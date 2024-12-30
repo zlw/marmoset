@@ -34,16 +34,39 @@ readChar = \lexer ->
             Ok c -> { lexer & ch: c, position: lexer.readPosition, readPosition: lexer.readPosition + 1 }
             Err _ -> crash "Lexer is unable to read character"
 
+peekChar : Lexer -> U8
+peekChar = \lexer ->
+    if lexer.readPosition >= List.len lexer.input then
+        0
+    else
+        when List.get lexer.input lexer.readPosition is
+            Ok c -> c
+            Err _ -> crash "Lexer is unable to read character"
+
 nextToken : (Lexer, List Token) -> (Lexer, List Token)
 nextToken = \(lexer, tokens) ->
     (new_lexer, token) =
         when lexer.ch is
-            '=' -> (readChar lexer, Token.new Assign "=")
+            '=' ->
+                when peekChar lexer is
+                    '=' -> (readChar (readChar lexer), Token.new Eq "==")
+                    _ -> (readChar lexer, Token.new Assign "=")
+
+            '+' -> (readChar lexer, Token.new Plus "+")
+            '-' -> (readChar lexer, Token.new Minus "-")
+            '!' ->
+                when peekChar lexer is
+                    '=' -> (readChar (readChar lexer), Token.new NotEq "!=")
+                    _ -> (readChar lexer, Token.new Bang "!")
+
+            '*' -> (readChar lexer, Token.new Asterisk "*")
+            '/' -> (readChar lexer, Token.new Slash "/")
+            '<' -> (readChar lexer, Token.new Lt "<")
+            '>' -> (readChar lexer, Token.new Gt ">")
             ';' -> (readChar lexer, Token.new Semicolon ";")
             '(' -> (readChar lexer, Token.new LParen "(")
             ')' -> (readChar lexer, Token.new RParen ")")
             ',' -> (readChar lexer, Token.new Comma ",")
-            '+' -> (readChar lexer, Token.new Plus "+")
             '{' -> (readChar lexer, Token.new LBrace "{")
             '}' -> (readChar lexer, Token.new RBrace "}")
             0 -> (readChar lexer, Token.new EOF "")
@@ -83,6 +106,11 @@ lookupIdent = \ident ->
     when ident is
         "fn" -> Function
         "let" -> Let
+        "true" -> True
+        "false" -> False
+        "if" -> If
+        "else" -> Else
+        "return" -> Return
         _ -> Ident
 
 readUntil : Lexer, (U8 -> Bool) -> (Lexer, Str)

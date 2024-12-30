@@ -6,6 +6,7 @@ import Lexer
 main =
     Stdout.line! "Hi there, from inside a Roc app. 🎉"
 
+# Chapter 1.2: The Lexer
 expect
     input = "=+(){},;"
 
@@ -22,6 +23,7 @@ expect
         { type: EOF, literal: "" },
     ]
 
+# Chapter 1.2: The Lexer
 expect
     input =
         """
@@ -72,6 +74,109 @@ expect
         { type: Comma, literal: "," },
         { type: Ident, literal: "ten" },
         { type: RParen, literal: ")" },
+        { type: Semicolon, literal: ";" },
+        { type: EOF, literal: "" },
+    ]
+
+# Chapter 1.3: Extending our Token set and Lexer
+expect
+    input =
+        """
+        let five = 5;
+        let ten = 10;
+
+        let add = fn(x, y) {
+            x + y;
+        };
+
+        let result = add(five, ten);
+        !-/*5;
+        5 < 10 > 5;
+
+        if (5 < 10) {
+            return true;
+        } else {
+            return false;
+        }
+
+        10 == 10;
+        10 != 9;
+        """
+
+    Lexer.lex input
+    == [
+        { type: Let, literal: "let" },
+        { type: Ident, literal: "five" },
+        { type: Assign, literal: "=" },
+        { type: Int, literal: "5" },
+        { type: Semicolon, literal: ";" },
+        { type: Let, literal: "let" },
+        { type: Ident, literal: "ten" },
+        { type: Assign, literal: "=" },
+        { type: Int, literal: "10" },
+        { type: Semicolon, literal: ";" },
+        { type: Let, literal: "let" },
+        { type: Ident, literal: "add" },
+        { type: Assign, literal: "=" },
+        { type: Function, literal: "fn" },
+        { type: LParen, literal: "(" },
+        { type: Ident, literal: "x" },
+        { type: Comma, literal: "," },
+        { type: Ident, literal: "y" },
+        { type: RParen, literal: ")" },
+        { type: LBrace, literal: "{" },
+        { type: Ident, literal: "x" },
+        { type: Plus, literal: "+" },
+        { type: Ident, literal: "y" },
+        { type: Semicolon, literal: ";" },
+        { type: RBrace, literal: "}" },
+        { type: Semicolon, literal: ";" },
+        { type: Let, literal: "let" },
+        { type: Ident, literal: "result" },
+        { type: Assign, literal: "=" },
+        { type: Ident, literal: "add" },
+        { type: LParen, literal: "(" },
+        { type: Ident, literal: "five" },
+        { type: Comma, literal: "," },
+        { type: Ident, literal: "ten" },
+        { type: RParen, literal: ")" },
+        { type: Semicolon, literal: ";" },
+        { type: Bang, literal: "!" },
+        { type: Minus, literal: "-" },
+        { type: Slash, literal: "/" },
+        { type: Asterisk, literal: "*" },
+        { type: Int, literal: "5" },
+        { type: Semicolon, literal: ";" },
+        { type: Int, literal: "5" },
+        { type: Lt, literal: "<" },
+        { type: Int, literal: "10" },
+        { type: Gt, literal: ">" },
+        { type: Int, literal: "5" },
+        { type: Semicolon, literal: ";" },
+        { type: If, literal: "if" },
+        { type: LParen, literal: "(" },
+        { type: Int, literal: "5" },
+        { type: Lt, literal: "<" },
+        { type: Int, literal: "10" },
+        { type: RParen, literal: ")" },
+        { type: LBrace, literal: "{" },
+        { type: Return, literal: "return" },
+        { type: True, literal: "true" },
+        { type: Semicolon, literal: ";" },
+        { type: RBrace, literal: "}" },
+        { type: Else, literal: "else" },
+        { type: LBrace, literal: "{" },
+        { type: Return, literal: "return" },
+        { type: False, literal: "false" },
+        { type: Semicolon, literal: ";" },
+        { type: RBrace, literal: "}" },
+        { type: Int, literal: "10" },
+        { type: Eq, literal: "==" },
+        { type: Int, literal: "10" },
+        { type: Semicolon, literal: ";" },
+        { type: Int, literal: "10" },
+        { type: NotEq, literal: "!=" },
+        { type: Int, literal: "9" },
         { type: Semicolon, literal: ";" },
         { type: EOF, literal: "" },
     ]

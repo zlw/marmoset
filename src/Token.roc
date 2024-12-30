@@ -16,6 +16,14 @@ TokenType : [
     # Operators
     Assign,
     Plus,
+    Minus,
+    Bang,
+    Asterisk,
+    Slash,
+    Lt,
+    Gt,
+    Eq,
+    NotEq,
 
     # Delimiters
     Comma,
@@ -28,6 +36,11 @@ TokenType : [
     # Keywords
     Function,
     Let,
+    True,
+    False,
+    If,
+    Else,
+    Return,
 ]
 
 new : TokenType, Str -> Token
