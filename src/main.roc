@@ -1,10 +1,9 @@
-app [main] { pf: platform "https://github.com/roc-lang/basic-cli/releases/download/0.17.0/lZFLstMUCUvd5bjnnpYromZJXkQUrdhbva4xdBInicE.tar.br" }
+app [main] { cli: platform "https://github.com/roc-lang/basic-cli/releases/download/0.17.0/lZFLstMUCUvd5bjnnpYromZJXkQUrdhbva4xdBInicE.tar.br" }
 
-import pf.Stdout
 import Lexer
+import REPL
 
-main =
-    Stdout.line! "Hi there, from inside a Roc app. 🎉"
+main = REPL.start
 
 # Chapter 1.2: The Lexer
 expect
