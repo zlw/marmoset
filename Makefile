@@ -9,3 +9,6 @@ release: prepare
 
 unit:
 	roc test src/main.roc
+
+roc-repl:
+	cd src && roc repl
