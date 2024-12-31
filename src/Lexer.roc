@@ -13,38 +13,32 @@ lex : Str -> List Token
 lex = \input ->
     loop : Lexer, List Token -> List Token
     loop = \lexer, tokens ->
-        if List.last (tokens) == Ok ({ type: EOF, literal: "" }) then
-            tokens
-        else
-            (new_lexer, new_tokens) = Lexer.nextToken (skipWhitespace lexer, tokens)
-            loop new_lexer new_tokens
+        when List.last (tokens) is
+            Ok { type: EOF, literal: "" } -> tokens
+            _ ->
+                (new_lexer, new_token) = lexer |> skipWhitespace |> nextToken
+                loop new_lexer (List.append tokens new_token)
 
-    loop (Lexer.readChar (Lexer.new input)) []
+    loop (Lexer.new input) []
 
 new : Str -> Lexer
 new = \s ->
-    { input: Str.toUtf8 s, position: 0, readPosition: 0, ch: 0 }
+    readChar { input: Str.toUtf8 s, position: 0, readPosition: 0, ch: 0 }
 
 readChar : Lexer -> Lexer
 readChar = \lexer ->
-    if lexer.readPosition >= List.len lexer.input then
-        { lexer & ch: 0, position: lexer.readPosition, readPosition: lexer.readPosition + 1 }
-    else
-        when List.get lexer.input lexer.readPosition is
-            Ok c -> { lexer & ch: c, position: lexer.readPosition, readPosition: lexer.readPosition + 1 }
-            Err _ -> crash "Lexer is unable to read character"
+    when List.get lexer.input lexer.readPosition is
+        Ok c -> { lexer & ch: c, position: lexer.readPosition, readPosition: lexer.readPosition + 1 }
+        Err OutOfBounds -> { lexer & ch: 0, position: lexer.readPosition, readPosition: lexer.readPosition + 1 }
 
 peekChar : Lexer -> U8
 peekChar = \lexer ->
-    if lexer.readPosition >= List.len lexer.input then
-        0
-    else
-        when List.get lexer.input lexer.readPosition is
-            Ok c -> c
-            Err _ -> crash "Lexer is unable to read character"
+    when List.get lexer.input lexer.readPosition is
+        Ok c -> c
+        Err OutOfBounds -> 0
 
-nextToken : (Lexer, List Token) -> (Lexer, List Token)
-nextToken = \(lexer, tokens) ->
+nextToken : Lexer -> (Lexer, Token)
+nextToken = \lexer ->
     (new_lexer, token) =
         when lexer.ch is
             '=' ->
@@ -82,7 +76,7 @@ nextToken = \(lexer, tokens) ->
                         Ok ch -> (lexer, Token.new Illegal ch)
                         Err _ -> crash "Lexer is unable to read character"
 
-    (new_lexer, List.append tokens token)
+    (new_lexer, token)
 
 skipWhitespace : Lexer -> Lexer
 skipWhitespace = \lexer ->
