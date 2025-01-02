@@ -1,4 +1,4 @@
-module [lex]
+module [Lexer, lex, new, nextToken]
 
 import Token exposing [Token, TokenType]
 
@@ -16,7 +16,7 @@ lex = \input ->
         when List.last (tokens) is
             Ok { type: EOF, literal: "" } -> tokens
             _ ->
-                (new_lexer, new_token) = lexer |> skipWhitespace |> nextToken
+                (new_lexer, new_token) = nextToken lexer
                 loop new_lexer (List.append tokens new_token)
 
     loop (Lexer.new input) []
@@ -39,53 +39,43 @@ peekChar = \lexer ->
 
 nextToken : Lexer -> (Lexer, Token)
 nextToken = \lexer ->
-    (new_lexer, token) =
-        when lexer.ch is
-            '=' ->
-                when peekChar lexer is
-                    '=' -> (readChar (readChar lexer), Token.new Eq "==")
-                    _ -> (readChar lexer, Token.new Assign "=")
-
-            '+' -> (readChar lexer, Token.new Plus "+")
-            '-' -> (readChar lexer, Token.new Minus "-")
-            '!' ->
-                when peekChar lexer is
-                    '=' -> (readChar (readChar lexer), Token.new NotEq "!=")
-                    _ -> (readChar lexer, Token.new Bang "!")
-
-            '*' -> (readChar lexer, Token.new Asterisk "*")
-            '/' -> (readChar lexer, Token.new Slash "/")
-            '<' -> (readChar lexer, Token.new Lt "<")
-            '>' -> (readChar lexer, Token.new Gt ">")
-            ';' -> (readChar lexer, Token.new Semicolon ";")
-            '(' -> (readChar lexer, Token.new LParen "(")
-            ')' -> (readChar lexer, Token.new RParen ")")
-            ',' -> (readChar lexer, Token.new Comma ",")
-            '{' -> (readChar lexer, Token.new LBrace "{")
-            '}' -> (readChar lexer, Token.new RBrace "}")
-            0 -> (readChar lexer, Token.new EOF "")
-            _ ->
-                if isLetter (lexer.ch) then
-                    (lexer2, ident) = readIdentifier lexer
-                    (lexer2, Token.new (lookupIdent ident) ident)
-                else if isDigit (lexer.ch) then
-                    (lexer2, num) = readNumber lexer
-                    (lexer2, Token.new Int num)
-                else
-                    when Str.fromUtf8 [lexer.ch] is
-                        Ok ch -> (lexer, Token.new Illegal ch)
-                        Err _ -> crash "Lexer is unable to read character"
-
-    (new_lexer, token)
-
-skipWhitespace : Lexer -> Lexer
-skipWhitespace = \lexer ->
     when lexer.ch is
-        ' ' -> skipWhitespace (readChar lexer)
-        '\t' -> skipWhitespace (readChar lexer)
-        '\n' -> skipWhitespace (readChar lexer)
-        '\r' -> skipWhitespace (readChar lexer)
-        _ -> lexer
+        '=' ->
+            when peekChar lexer is
+                '=' -> (readChar (readChar lexer), Token.new Eq "==")
+                _ -> (readChar lexer, Token.new Assign "=")
+
+        '!' ->
+            when peekChar lexer is
+                '=' -> (readChar (readChar lexer), Token.new NotEq "!=")
+                _ -> (readChar lexer, Token.new Bang "!")
+
+        '+' -> (readChar lexer, Token.new Plus "+")
+        '-' -> (readChar lexer, Token.new Minus "-")
+        '*' -> (readChar lexer, Token.new Asterisk "*")
+        '/' -> (readChar lexer, Token.new Slash "/")
+        '<' -> (readChar lexer, Token.new Lt "<")
+        '>' -> (readChar lexer, Token.new Gt ">")
+        ';' -> (readChar lexer, Token.new Semicolon ";")
+        '(' -> (readChar lexer, Token.new LParen "(")
+        ')' -> (readChar lexer, Token.new RParen ")")
+        ',' -> (readChar lexer, Token.new Comma ",")
+        '{' -> (readChar lexer, Token.new LBrace "{")
+        '}' -> (readChar lexer, Token.new RBrace "}")
+        # skip whitespace
+        ' ' | '\t' | '\n' | '\r' -> nextToken (readChar lexer)
+        0 -> (readChar lexer, Token.new EOF "")
+        _ ->
+            if isLetter (lexer.ch) then
+                (lexer2, ident) = readIdentifier lexer
+                (lexer2, Token.new (lookupIdent ident) ident)
+            else if isDigit (lexer.ch) then
+                (lexer2, num) = readNumber lexer
+                (lexer2, Token.new Int num)
+            else
+                when Str.fromUtf8 [lexer.ch] is
+                    Ok ch -> (lexer, Token.new Illegal ch)
+                    Err _ -> crash "Lexer is unable to read character"
 
 readIdentifier : Lexer -> (Lexer, Str)
 readIdentifier = \lexer ->
