@@ -2,6 +2,7 @@ app [main] { cli: platform "https://github.com/roc-lang/basic-cli/releases/downl
 
 import Lexer
 import REPL
+import Parser
 
 main = REPL.start
 
@@ -179,3 +180,20 @@ expect
         { type: Semicolon, literal: ";" },
         { type: EOF, literal: "" },
     ]
+
+expect
+    input =
+        """
+        let x = 5;
+        let y = 10;
+        let foobar = 838383;
+        """
+    program =
+        Lexer.new input
+        |> Parser.new
+        |> Parser.parseProgram
+
+    match = List.map2 program ["x", "y", "foobar"] \Let actual, expected ->
+        actual == expected
+
+    match == [Bool.true, Bool.true, Bool.true]
