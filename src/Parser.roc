@@ -8,11 +8,12 @@ Parser : {
     lexer : Lexer,
     currToken : Token,
     peekToken : Token,
+    errors : List Str,
 }
 
 new : Lexer -> Parser
 new = \lexer ->
-    { lexer: lexer, currToken: Token.new Illegal "", peekToken: Token.new Illegal "" }
+    { lexer: lexer, currToken: Token.new Illegal "", peekToken: Token.new Illegal "", errors: [] }
     |> nextToken
     |> nextToken
 
@@ -33,20 +34,26 @@ expectPeek = \parser, t ->
     if peekTokenIs parser t then
         (nextToken parser, Bool.true)
     else
-        (parser, Bool.false)
+        (peekError parser t, Bool.false)
 
-parseProgram : Parser -> Program
+peekError : Parser, Token.TokenType -> Parser
+peekError = \parser, t ->
+    error = "expected next token to be $(Inspect.toStr t), got $(Inspect.toStr parser.peekToken.type)"
+    new_errors = List.append parser.errors error
+    { parser & errors: new_errors }
+
+parseProgram : Parser -> (Parser, Program)
 parseProgram = \parser ->
-    loop : Parser, Program -> Program
+    loop : Parser, Program -> (Parser, Program)
     loop = \looped_parser, program ->
         when looped_parser.currToken.type is
-            EOF -> program
+            EOF -> (looped_parser, program)
             _ ->
                 when parseStatement looped_parser is
                     Ok (new_parser, stmt) ->
-                        loop new_parser (addStatement program stmt)
+                        loop (new_parser) (addStatement program stmt)
 
-                    Err (UnknownStatement new_parser) -> loop new_parser program
+                    Err (UnknownStatement new_parser) -> loop (nextToken new_parser) program
 
     loop parser []
 
@@ -64,11 +71,11 @@ parseLetStatement : Parser -> Result (Parser, [Let Identifier]) [NotLet Parser]
 parseLetStatement = \parser ->
     (parser2, isIdent) = expectPeek parser Ident
     if !isIdent then
-        Err (NotLet parser)
+        Err (NotLet parser2)
     else
         (parser3, isAssign) = expectPeek parser2 Assign
         if !isAssign then
-            Err (NotLet parser2)
+            Err (NotLet parser3)
         else
             loop = \looped_parser ->
                 if currTokenIs looped_parser Semicolon then
@@ -76,4 +83,4 @@ parseLetStatement = \parser ->
                 else
                     loop (nextToken looped_parser)
 
-            Ok (loop parser3, Let parser2.currToken.literal)
+            Ok (loop parser, Let parser2.currToken.literal)

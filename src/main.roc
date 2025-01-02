@@ -181,6 +181,7 @@ expect
         { type: EOF, literal: "" },
     ]
 
+# Chapter 2.4: Parser's first steps: parsing let statements
 expect
     input =
         """
@@ -188,7 +189,7 @@ expect
         let y = 10;
         let foobar = 838383;
         """
-    program =
+    (_, program) =
         Lexer.new input
         |> Parser.new
         |> Parser.parseProgram
@@ -197,3 +198,26 @@ expect
         actual == expected
 
     match == [Bool.true, Bool.true, Bool.true]
+
+# Chapter 2.4: Parser's first steps: parsing let statements
+expect
+    input =
+        """
+        let x 5;
+        let = 10;
+        let 838383;
+        """
+
+    (parser, program) =
+        Lexer.new input
+        |> Parser.new
+        |> Parser.parseProgram
+
+    (List.len program)
+    == 0
+    && parser.errors
+    == [
+        "expected next token to be Assign, got Int",
+        "expected next token to be Ident, got Assign",
+        "expected next token to be Ident, got Int",
+    ]
