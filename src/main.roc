@@ -194,8 +194,10 @@ expect
         |> Parser.new
         |> Parser.parseProgram
 
-    match = List.map2 program ["x", "y", "foobar"] \Let actual, expected ->
-        actual == expected
+    match = List.map2 program ["x", "y", "foobar"] \statement, expected ->
+        when statement is
+            Let actual -> actual == expected
+            _ -> Bool.false
 
     match == [Bool.true, Bool.true, Bool.true]
 
@@ -221,3 +223,24 @@ expect
         "expected next token to be Ident, got Assign",
         "expected next token to be Ident, got Int",
     ]
+
+# Chapter 2.5 - Parsing return statements
+expect
+    input =
+        """
+        return 5;
+        return 10;
+        return 993322;
+        """
+
+    (_, program) =
+        Lexer.new input
+        |> Parser.new
+        |> Parser.parseProgram
+
+    match = List.all program \statement ->
+        when statement is
+            Return -> Bool.true
+            _ -> Bool.false
+
+    match == Bool.true && List.len program == 3
