@@ -2,6 +2,7 @@ module [Program, Statement, Identifier, addStatement]
 
 Statement : [
     Let Identifier,
+    Return,
 ]
 
 Program : List Statement

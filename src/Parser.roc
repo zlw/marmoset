@@ -65,6 +65,11 @@ parseStatement = \parser ->
                 Ok (new_parser, stmt) -> Ok ((new_parser, stmt))
                 Err (NotLet new_parser) -> Err (UnknownStatement new_parser)
 
+        Return ->
+            when parseReturnStatement parser is
+                Ok (new_parser, stmt) -> Ok ((new_parser, stmt))
+                Err (NotReturn new_parser) -> Err (UnknownStatement new_parser)
+
         _ -> Err (UnknownStatement parser)
 
 parseLetStatement : Parser -> Result (Parser, [Let Identifier]) [NotLet Parser]
@@ -84,3 +89,15 @@ parseLetStatement = \parser ->
                     loop (nextToken looped_parser)
 
             Ok (loop parser, Let parser2.currToken.literal)
+
+parseReturnStatement : Parser -> Result (Parser, [Return]) [NotReturn Parser]
+parseReturnStatement = \parser ->
+    parser2 = nextToken parser
+
+    loop = \looped_parser ->
+        if currTokenIs looped_parser Semicolon then
+            nextToken looped_parser
+        else
+            loop (nextToken looped_parser)
+
+    Ok (loop parser2, Return)
