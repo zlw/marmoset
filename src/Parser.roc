@@ -11,11 +11,14 @@ Parser : {
     errors : List Str,
 }
 
-prefixParseFns : Dict Token.TokenType (Parser -> Expression)
-prefixParseFns = Dict.fromList [
-    (Ident, parseIdentifier),
-    (Int, parseIntegerLiteral),
-]
+Precedence := U8
+precLowest = @Precedence 1
+precEquals = @Precedence 2
+precLessGreater = @Precedence 3
+precSum = @Precedence 4
+precProduct = @Precedence 5
+precPrefix = @Precedence 6
+precCall = @Precedence 7
 
 new : Lexer -> Parser
 new = \lexer ->
@@ -45,6 +48,12 @@ expectPeek = \parser, t ->
 peekError : Parser, Token.TokenType -> Parser
 peekError = \parser, t ->
     error = "expected next token to be $(Inspect.toStr t), got $(Inspect.toStr parser.peekToken.type)"
+    new_errors = List.append parser.errors error
+    { parser & errors: new_errors }
+
+noPrefixParseFnError : Parser, Token.TokenType -> Parser
+noPrefixParseFnError = \parser, t ->
+    error = "no prefix parse function for $(Inspect.toStr t) found"
     new_errors = List.append parser.errors error
     { parser & errors: new_errors }
 
@@ -112,37 +121,42 @@ parseReturnStatement = \parser ->
 parseExpressionStatement : Parser -> Result (Parser, [ExpressionStatement Expression]) [NotExpressionStatement Parser]
 parseExpressionStatement = \parser ->
     when parseExpression parser precLowest is
-        Ok expression ->
+        Ok (new_parser, expression) ->
             stmt = ExpressionStatement expression
 
-            if peekTokenIs parser Semicolon then
-                Ok (nextToken parser, stmt)
+            if peekTokenIs new_parser Semicolon then
+                Ok (nextToken new_parser, stmt)
             else
-                Ok (parser, stmt)
+                Ok (new_parser, stmt)
 
         Err (NoPrecRule new_parser) -> Err (NotExpressionStatement new_parser)
 
-Precedence := U8
-precLowest = @Precedence 1
-precEquals = @Precedence 2
-precLessGreater = @Precedence 3
-precSum = @Precedence 4
-precProduct = @Precedence 5
-precPrefix = @Precedence 6
-precCall = @Precedence 7
-
-parseExpression : Parser, Precedence -> Result Expression [NoPrecRule Parser]
+parseExpression : Parser, Precedence -> Result (Parser, Expression) [NoPrecRule Parser]
 parseExpression = \parser, _precedence ->
-    when Dict.get prefixParseFns parser.currToken.type is
-        Ok prefixFn -> Ok (prefixFn parser)
-        _ -> Err (NoPrecRule parser)
+    tokenType = parser.currToken.type
 
-parseIdentifier : Parser -> [Identifier Str]
+    when tokenType is
+        Ident -> Ok (parseIdentifier parser)
+        Int -> Ok (parseIntegerLiteral parser)
+        Bang -> Ok (parsePrefixExpression parser)
+        Minus -> Ok (parsePrefixExpression parser)
+        _ -> Err (NoPrecRule (noPrefixParseFnError parser tokenType))
+
+parseIdentifier : Parser -> (Parser, [Identifier Str])
 parseIdentifier = \parser ->
-    Identifier parser.currToken.literal
+    (parser, Identifier parser.currToken.literal)
 
-parseIntegerLiteral : Parser -> [Integer I64]
+parseIntegerLiteral : Parser -> (Parser, [Integer I64])
 parseIntegerLiteral = \parser ->
     when Str.toI64 parser.currToken.literal is
-        Ok int -> Integer int
+        Ok int -> (parser, Integer int)
         Err InvalidNumStr -> crash "can't parse number from $(parser.currToken.literal)"
+
+parsePrefixExpression : Parser -> (Parser, [Prefix Str Expression])
+parsePrefixExpression = \parser ->
+    operator = parser.currToken.literal
+    parser2 = nextToken parser
+
+    when parseExpression parser2 precPrefix is
+        Ok (_parser, right) -> (parser2, Prefix operator right)
+        Err (NoPrecRule new_parser) -> crash "can't parse prefix expression"
