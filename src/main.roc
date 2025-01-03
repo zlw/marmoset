@@ -3,6 +3,7 @@ app [main] { cli: platform "https://github.com/roc-lang/basic-cli/releases/downl
 import Lexer
 import REPL
 import Parser
+import AST
 
 main = REPL.start
 
@@ -189,17 +190,17 @@ expect
         let y = 10;
         let foobar = 838383;
         """
-    (_, program) =
+    (parser, program) =
         Lexer.new input
         |> Parser.new
         |> Parser.parseProgram
 
     match = List.map2 program ["x", "y", "foobar"] \statement, expected ->
         when statement is
-            Let actual -> actual == expected
+            Let (Identifier actual) -> actual == expected
             _ -> Bool.false
 
-    match == [Bool.true, Bool.true, Bool.true]
+    (expectNoErrors parser) && (expectStatementsCount program 3) && match == [Bool.true, Bool.true, Bool.true]
 
 # Chapter 2.4: Parser's first steps: parsing let statements
 expect
@@ -210,14 +211,12 @@ expect
         let 838383;
         """
 
-    (parser, program) =
+    (parser, _) =
         Lexer.new input
         |> Parser.new
         |> Parser.parseProgram
 
-    (List.len program)
-    == 0
-    && parser.errors
+    parser.errors
     == [
         "expected next token to be Assign, got Int",
         "expected next token to be Ident, got Assign",
@@ -233,7 +232,7 @@ expect
         return 993322;
         """
 
-    (_, program) =
+    (parser, program) =
         Lexer.new input
         |> Parser.new
         |> Parser.parseProgram
@@ -243,4 +242,44 @@ expect
             Return -> Bool.true
             _ -> Bool.false
 
-    match == Bool.true && List.len program == 3
+    (expectNoErrors parser) && (expectStatementsCount program 3) && match == Bool.true
+
+# Chapter 2.6 - Parsing expressions
+expect
+    input = "let myVar = anotherVar;"
+
+    (parser, program) =
+        Lexer.new input
+        |> Parser.new
+        |> Parser.parseProgram
+
+    (expectNoErrors parser) && AST.toStr program == "let myVar = ;"
+
+# Chapter 2.6 - Parsing expressions
+expect
+    input = "foobar;"
+
+    (parser, program) =
+        Lexer.new input
+        |> Parser.new
+        |> Parser.parseProgram
+
+    (expectNoErrors parser) && (expectStatementsCount program 1) && (List.first program) == Ok (ExpressionStatement (Identifier "foobar"))
+
+# Chapter 2.6 - Parsing expressions
+expect
+    input = "5;"
+
+    (parser, program) =
+        Lexer.new input
+        |> Parser.new
+        |> Parser.parseProgram
+
+    (expectNoErrors parser) && (expectStatementsCount program 1) && (List.first program) == Ok (ExpressionStatement (Integer 5))
+
+# Helpers
+expectNoErrors = \parser ->
+    (List.len parser.errors) == 0
+
+expectStatementsCount = \program, count ->
+    (List.len program) == count
