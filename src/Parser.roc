@@ -2,7 +2,7 @@ module [new, nextToken, parseProgram]
 
 import Lexer exposing [Lexer]
 import Token exposing [Token]
-import AST exposing [Program, Statement, Identifier, addStatement]
+import AST exposing [Program, Statement, Expression, addStatement]
 
 Parser : {
     lexer : Lexer,
@@ -10,6 +10,12 @@ Parser : {
     peekToken : Token,
     errors : List Str,
 }
+
+prefixParseFns : Dict Token.TokenType (Parser -> Expression)
+prefixParseFns = Dict.fromList [
+    (Ident, parseIdentifier),
+    (Int, parseIntegerLiteral),
+]
 
 new : Lexer -> Parser
 new = \lexer ->
@@ -29,12 +35,12 @@ currTokenIs = \parser, t -> parser.currToken.type == t
 peekTokenIs : Parser, Token.TokenType -> Bool
 peekTokenIs = \parser, t -> parser.peekToken.type == t
 
-expectPeek : Parser, Token.TokenType -> (Parser, Bool)
+expectPeek : Parser, Token.TokenType -> Result Parser [PeekError Parser]
 expectPeek = \parser, t ->
     if peekTokenIs parser t then
-        (nextToken parser, Bool.true)
+        Ok (nextToken parser)
     else
-        (peekError parser t, Bool.false)
+        Err (PeekError (peekError parser t))
 
 peekError : Parser, Token.TokenType -> Parser
 peekError = \parser, t ->
@@ -50,9 +56,7 @@ parseProgram = \parser ->
             EOF -> (looped_parser, program)
             _ ->
                 when parseStatement looped_parser is
-                    Ok (new_parser, stmt) ->
-                        loop (new_parser) (addStatement program stmt)
-
+                    Ok (new_parser, stmt) -> loop (nextToken new_parser) (addStatement program stmt)
                     Err (UnknownStatement new_parser) -> loop (nextToken new_parser) program
 
     loop parser []
@@ -70,34 +74,75 @@ parseStatement = \parser ->
                 Ok (new_parser, stmt) -> Ok ((new_parser, stmt))
                 Err (NotReturn new_parser) -> Err (UnknownStatement new_parser)
 
-        _ -> Err (UnknownStatement parser)
+        _ ->
+            when parseExpressionStatement parser is
+                Ok (new_parser, stmt) -> Ok ((new_parser, stmt))
+                Err (NotExpressionStatement new_parser) -> Err (UnknownStatement new_parser)
 
-parseLetStatement : Parser -> Result (Parser, [Let Identifier]) [NotLet Parser]
+parseLetStatement : Parser -> Result (Parser, [Let [Identifier Str]]) [NotLet Parser]
 parseLetStatement = \parser ->
-    (parser2, isIdent) = expectPeek parser Ident
-    if !isIdent then
-        Err (NotLet parser2)
-    else
-        (parser3, isAssign) = expectPeek parser2 Assign
-        if !isAssign then
-            Err (NotLet parser3)
-        else
-            loop = \looped_parser ->
-                if currTokenIs looped_parser Semicolon then
-                    nextToken looped_parser
-                else
-                    loop (nextToken looped_parser)
+    when expectPeek parser Ident is
+        Err (PeekError parser2) -> Err (NotLet parser2)
+        Ok parser2 ->
+            when expectPeek parser2 Assign is
+                Err (PeekError parser3) -> Err (NotLet parser3)
+                Ok parser3 ->
+                    loop : Parser -> Parser
+                    loop = \looped_parser ->
+                        if peekTokenIs looped_parser Semicolon then
+                            nextToken looped_parser
+                        else
+                            loop (nextToken looped_parser)
 
-            Ok (loop parser, Let parser2.currToken.literal)
+                    Ok (loop (nextToken parser3), Let (Identifier parser2.currToken.literal))
 
-parseReturnStatement : Parser -> Result (Parser, [Return]) [NotReturn Parser]
+parseReturnStatement : Parser -> Result (Parser, [Return]) []
 parseReturnStatement = \parser ->
     parser2 = nextToken parser
 
+    loop : Parser -> Parser
     loop = \looped_parser ->
-        if currTokenIs looped_parser Semicolon then
+        if peekTokenIs looped_parser Semicolon then
             nextToken looped_parser
         else
             loop (nextToken looped_parser)
 
     Ok (loop parser2, Return)
+
+parseExpressionStatement : Parser -> Result (Parser, [ExpressionStatement Expression]) [NotExpressionStatement Parser]
+parseExpressionStatement = \parser ->
+    when parseExpression parser precLowest is
+        Ok expression ->
+            stmt = ExpressionStatement expression
+
+            if peekTokenIs parser Semicolon then
+                Ok (nextToken parser, stmt)
+            else
+                Ok (parser, stmt)
+
+        Err (NoPrecRule new_parser) -> Err (NotExpressionStatement new_parser)
+
+Precedence := U8
+precLowest = @Precedence 1
+precEquals = @Precedence 2
+precLessGreater = @Precedence 3
+precSum = @Precedence 4
+precProduct = @Precedence 5
+precPrefix = @Precedence 6
+precCall = @Precedence 7
+
+parseExpression : Parser, Precedence -> Result Expression [NoPrecRule Parser]
+parseExpression = \parser, _precedence ->
+    when Dict.get prefixParseFns parser.currToken.type is
+        Ok prefixFn -> Ok (prefixFn parser)
+        _ -> Err (NoPrecRule parser)
+
+parseIdentifier : Parser -> [Identifier Str]
+parseIdentifier = \parser ->
+    Identifier parser.currToken.literal
+
+parseIntegerLiteral : Parser -> [Integer I64]
+parseIntegerLiteral = \parser ->
+    when Str.toI64 parser.currToken.literal is
+        Ok int -> Integer int
+        Err InvalidNumStr -> crash "can't parse number from $(parser.currToken.literal)"
