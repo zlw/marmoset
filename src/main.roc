@@ -264,7 +264,11 @@ expect
         |> Parser.new
         |> Parser.parseProgram
 
-    (expectNoErrors parser) && (expectStatementsCount program 1) && (List.first program) == Ok (Identifier "foobar")
+    (expectNoErrors parser)
+    &&
+    (expectStatementsCount program 1)
+    &&
+    (expectExpression program (Identifier "foobar"))
 
 # Chapter 2.6 - Parsing expressions - Integer Literals
 expect
@@ -275,7 +279,11 @@ expect
         |> Parser.new
         |> Parser.parseProgram
 
-    (expectNoErrors parser) && (expectStatementsCount program 1) && (List.first program) == Ok (Integer 5)
+    (expectNoErrors parser)
+    &&
+    (expectStatementsCount program 1)
+    &&
+    (expectExpression program (Integer 5))
 
 # Chapter 2.6 - Parsing expressions - Prefix Operators (Integers)
 expect
@@ -289,7 +297,11 @@ expect
             |> Parser.new
             |> Parser.parseProgram
 
-        (expectNoErrors parser) && (expectStatementsCount program 1) && (List.first program) == Ok (Prefix test.operator (Integer test.value))
+        (expectNoErrors parser)
+        &&
+        (expectStatementsCount program 1)
+        &&
+        (expectExpression program (Prefix test.operator (Integer test.value)))
     |> Bool.isEq [Bool.true, Bool.true]
 
 # Chapter 2.8 - Extending the Parser - Prefix Operators (Booleans)
@@ -304,7 +316,12 @@ expect
             |> Parser.new
             |> Parser.parseProgram
 
-        (expectNoErrors parser) && (expectStatementsCount program 1) && (List.first program) == Ok (Prefix test.operator (Boolean test.value))
+        (expectNoErrors parser)
+        &&
+        (expectStatementsCount program 1)
+        &&
+        (expectExpression program (Prefix test.operator (Boolean test.value)))
+
     |> Bool.isEq [Bool.true, Bool.true]
 
 # Chapter 2.6 - Parsing expressions - Infix Operators (Integers)
@@ -325,7 +342,12 @@ expect
             |> Parser.new
             |> Parser.parseProgram
 
-        (expectNoErrors parser) && (expectStatementsCount program 1) && (List.first program) == Ok (Infix (Integer test.leftValue) test.operator (Integer test.rightValue))
+        (expectNoErrors parser)
+        &&
+        (expectStatementsCount program 1)
+        &&
+        (expectExpression program (Infix (Integer test.leftValue) test.operator (Integer test.rightValue)))
+
     |> Bool.isEq [Bool.true, Bool.true, Bool.true, Bool.true, Bool.true, Bool.true, Bool.true, Bool.true]
 
 # Chapter 2.8 - Extendind the Parser - Infix Operators (Booleans)
@@ -341,7 +363,12 @@ expect
             |> Parser.new
             |> Parser.parseProgram
 
-        (expectNoErrors parser) && (expectStatementsCount program 1) && (List.first program) == Ok (Infix (Boolean test.leftValue) test.operator (Boolean test.rightValue))
+        (expectNoErrors parser)
+        &&
+        (expectStatementsCount program 1)
+        &&
+        (expectExpression program (Infix (Boolean test.leftValue) test.operator (Boolean test.rightValue)))
+
     |> Bool.isEq [Bool.true, Bool.true, Bool.true]
 
 # Chapter 2.6 - Parsing expressions - Operator Precedence
@@ -379,7 +406,10 @@ expect
 
         output = AST.toStr program
 
-        (expectNoErrors parser) && expected == output
+        (expectNoErrors parser)
+        &&
+        expected
+        == output
 
     |> Bool.isEq Bool.true
 
@@ -395,7 +425,12 @@ expect
             |> Parser.new
             |> Parser.parseProgram
 
-        (expectNoErrors parser) && (expectStatementsCount program 1) && (List.first program) == Ok (Boolean expected)
+        (expectNoErrors parser)
+        &&
+        (expectStatementsCount program 1)
+        &&
+        (expectExpression program (Boolean expected))
+
     |> Bool.isEq [Bool.true, Bool.true]
 
 # Chapter 2.8 - Extending Parser - If Expressions
@@ -411,8 +446,7 @@ expect
     &&
     (expectStatementsCount program 1)
     &&
-    (List.first program)
-    == Ok (If (Infix (Identifier "x") "<" (Identifier "y")) [Identifier "x"] NoElse)
+    (expectExpression program (If (Infix (Identifier "x") "<" (Identifier "y")) [Identifier "x"] NoElse))
 
 expect
     input = "if (x < y) { x } else { y }"
@@ -426,8 +460,7 @@ expect
     &&
     (expectStatementsCount program 1)
     &&
-    (List.first program)
-    == Ok (If (Infix (Identifier "x") "<" (Identifier "y")) [Identifier "x"] (WithElse [Identifier "y"]))
+    (expectExpression program (If (Infix (Identifier "x") "<" (Identifier "y")) [Identifier "x"] (WithElse [Identifier "y"])))
 
 # Helpers
 expectNoErrors = \parser ->
@@ -435,3 +468,6 @@ expectNoErrors = \parser ->
 
 expectStatementsCount = \program, count ->
     (List.len program) == count
+
+expectExpression = \program, expectation ->
+    List.first program == Ok expectation
