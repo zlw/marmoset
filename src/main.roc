@@ -313,6 +313,34 @@ expect
         (expectNoErrors parser) && (expectStatementsCount program 1) && (List.first program) == Ok (ExpressionStatement (Infix (Integer test.leftValue) test.operator (Integer test.rightValue)))
     |> Bool.isEq [Bool.true, Bool.true, Bool.true, Bool.true, Bool.true, Bool.true, Bool.true, Bool.true]
 
+expect
+    [
+        ("-a * b", "((-a) * b)"),
+        ("!-a", "(!(-a))"),
+        ("a + b + c", "((a + b) + c)"),
+        ("a + b - c", "((a + b) - c)"),
+        ("a * b * c", "((a * b) * c)"),
+        ("a * b / c", "((a * b) / c)"),
+        ("a + b / c", "(a + (b / c))"),
+        ("a + b * c + d / e - f", "(((a + (b * c)) + (d / e)) - f)"),
+        ("3 + 4; -5 * 5", "(3 + 4)((-5) * 5)"),
+        ("5 > 4 == 3 < 4", "((5 > 4) == (3 < 4))"),
+        ("5 < 4 != 3 > 4", "((5 < 4) != (3 > 4))"),
+        ("3 + 4 * 5 == 3 * 1 + 4 * 5", "((3 + (4 * 5)) == ((3 * 1) + (4 * 5)))"),
+        ("3 + 4 * 5 == 3 * 1 + 4 * 5", "((3 + (4 * 5)) == ((3 * 1) + (4 * 5)))"),
+    ]
+    |> List.all \(input, expected) ->
+        (parser, program) =
+            Lexer.new input
+            |> Parser.new
+            |> Parser.parseProgram
+
+        output = AST.toStr program
+
+        (expectNoErrors parser) && expected == output
+
+    |> Bool.isEq Bool.true
+
 # Helpers
 expectNoErrors = \parser ->
     (List.len parser.errors) == 0

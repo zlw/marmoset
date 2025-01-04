@@ -173,7 +173,7 @@ parseExpression = \parser, precedence ->
 
                             _ -> (looped_parser, left)
 
-                    loop (nextToken new_looped_parser) new_left
+                    loop (new_looped_parser) new_left
                 else
                     (looped_parser, left)
 
@@ -201,8 +201,8 @@ parsePrefixExpression = \parser ->
     parser2 = nextToken parser
 
     when parseExpression parser2 precPrefix is
-        Ok (_parser, right) -> (parser2, Prefix operator right)
-        Err (NoPrecRule new_parser) -> crash "can't parse prefix expression"
+        Ok (parser3, right) -> (parser3, Prefix operator right)
+        Err (NoPrecRule _parser3) -> crash "can't parse prefix expression"
 
 parseInfixExpression : Parser, Expression -> (Parser, [Infix Expression Str Expression])
 parseInfixExpression = \parser, left ->
@@ -211,5 +211,5 @@ parseInfixExpression = \parser, left ->
     parser2 = nextToken parser
 
     when parseExpression parser2 precedence is
-        Ok (_parser, right) -> (parser2, Infix left operator right)
-        Err (NoPrecRule new_parser) -> crash "can't parse infix expression"
+        Ok (parser3, right) -> (parser3, Infix left operator right)
+        Err (NoPrecRule _parser3) -> crash "can't parse infix expression"

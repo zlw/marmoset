@@ -24,8 +24,9 @@ addStatement = \program, statement ->
 
 toStr : Program -> Str
 toStr = \program ->
-    List.map program \statement -> statementToStr statement
-    |> Str.joinWith "\n"
+    program
+    |> List.map statementToStr
+    |> Str.joinWith ""
 
 statementToStr : Statement -> Str
 statementToStr = \statement ->
@@ -38,6 +39,6 @@ expressionToStr : Expression -> Str
 expressionToStr = \expression ->
     when expression is
         Identifier ident -> ident
-        Integer i -> Inspect.toStr i
+        Integer i -> Num.toStr i
         Prefix op expr -> "($(op)$(expressionToStr expr))"
         Infix left op right -> "($(expressionToStr left) $(op) $(expressionToStr right))"
