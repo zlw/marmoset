@@ -153,6 +153,7 @@ parseExpression = \parser, precedence ->
     tokenType = parser.currToken.type
 
     result =
+        # Mimic prefixParseFn
         when tokenType is
             Ident -> Ok (parseIdentifier parser)
             Int -> Ok (parseIntegerLiteral parser)
@@ -160,6 +161,7 @@ parseExpression = \parser, precedence ->
             Minus -> Ok (parsePrefixExpression parser)
             True -> Ok (parseBoolean parser)
             False -> Ok (parseBoolean parser)
+            LParen -> Ok (parseGroupedExpression parser)
             _ -> Err (NoPrecRule (noPrefixParseFnError parser tokenType))
 
     when result is
@@ -169,6 +171,7 @@ parseExpression = \parser, precedence ->
             loop = \looped_parser, left ->
                 if !(peekTokenIs looped_parser Semicolon) && (precLT precedence (peekPrecedence looped_parser)) then
                     (new_looped_parser, new_left) =
+                        # Mimic infixParseFn
                         when looped_parser.peekToken.type is
                             Plus | Minus | Slash | Asterisk | Eq | NotEq | Lt | Gt ->
                                 parseInfixExpression (nextToken looped_parser) left
@@ -219,3 +222,13 @@ parseInfixExpression = \parser, left ->
 parseBoolean : Parser -> (Parser, [Boolean Bool])
 parseBoolean = \parser ->
     (parser, Boolean (parser.currToken.type == True))
+
+parseGroupedExpression : Parser -> (Parser, Expression)
+parseGroupedExpression = \parser ->
+    when parseExpression (nextToken parser) precLowest is
+        Ok (parser2, expression) ->
+            when expectPeek parser2 RParen is
+                Ok (parser3) -> (parser3, expression)
+                Err (PeekError parser3) -> crash "can't parse grouped expression"
+
+        Err (NoPrecRule parser2) -> crash "can't parse grouped expression"
