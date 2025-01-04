@@ -197,7 +197,7 @@ expect
 
     match = List.map2 program ["x", "y", "foobar"] \statement, expected ->
         when statement is
-            Let (Identifier actual) -> actual == expected
+            Let actual -> actual == expected
             _ -> Bool.false
 
     (expectNoErrors parser) && (expectStatementsCount program 3) && match == [Bool.true, Bool.true, Bool.true]
@@ -264,7 +264,7 @@ expect
         |> Parser.new
         |> Parser.parseProgram
 
-    (expectNoErrors parser) && (expectStatementsCount program 1) && (List.first program) == Ok (ExpressionStatement (Identifier "foobar"))
+    (expectNoErrors parser) && (expectStatementsCount program 1) && (List.first program) == Ok (Identifier "foobar")
 
 # Chapter 2.6 - Parsing expressions - Integer Literals
 expect
@@ -275,7 +275,7 @@ expect
         |> Parser.new
         |> Parser.parseProgram
 
-    (expectNoErrors parser) && (expectStatementsCount program 1) && (List.first program) == Ok (ExpressionStatement (Integer 5))
+    (expectNoErrors parser) && (expectStatementsCount program 1) && (List.first program) == Ok (Integer 5)
 
 # Chapter 2.6 - Parsing expressions - Prefix Operators (Integers)
 expect
@@ -289,7 +289,7 @@ expect
             |> Parser.new
             |> Parser.parseProgram
 
-        (expectNoErrors parser) && (expectStatementsCount program 1) && (List.first program) == Ok (ExpressionStatement (Prefix test.operator (Integer test.value)))
+        (expectNoErrors parser) && (expectStatementsCount program 1) && (List.first program) == Ok (Prefix test.operator (Integer test.value))
     |> Bool.isEq [Bool.true, Bool.true]
 
 # Chapter 2.8 - Extending the Parser - Prefix Operators (Booleans)
@@ -304,7 +304,7 @@ expect
             |> Parser.new
             |> Parser.parseProgram
 
-        (expectNoErrors parser) && (expectStatementsCount program 1) && (List.first program) == Ok (ExpressionStatement (Prefix test.operator (Boolean test.value)))
+        (expectNoErrors parser) && (expectStatementsCount program 1) && (List.first program) == Ok (Prefix test.operator (Boolean test.value))
     |> Bool.isEq [Bool.true, Bool.true]
 
 # Chapter 2.6 - Parsing expressions - Infix Operators (Integers)
@@ -325,7 +325,7 @@ expect
             |> Parser.new
             |> Parser.parseProgram
 
-        (expectNoErrors parser) && (expectStatementsCount program 1) && (List.first program) == Ok (ExpressionStatement (Infix (Integer test.leftValue) test.operator (Integer test.rightValue)))
+        (expectNoErrors parser) && (expectStatementsCount program 1) && (List.first program) == Ok (Infix (Integer test.leftValue) test.operator (Integer test.rightValue))
     |> Bool.isEq [Bool.true, Bool.true, Bool.true, Bool.true, Bool.true, Bool.true, Bool.true, Bool.true]
 
 # Chapter 2.8 - Extendind the Parser - Infix Operators (Booleans)
@@ -341,7 +341,7 @@ expect
             |> Parser.new
             |> Parser.parseProgram
 
-        (expectNoErrors parser) && (expectStatementsCount program 1) && (List.first program) == Ok (ExpressionStatement (Infix (Boolean test.leftValue) test.operator (Boolean test.rightValue)))
+        (expectNoErrors parser) && (expectStatementsCount program 1) && (List.first program) == Ok (Infix (Boolean test.leftValue) test.operator (Boolean test.rightValue))
     |> Bool.isEq [Bool.true, Bool.true, Bool.true]
 
 # Chapter 2.6 - Parsing expressions - Operator Precedence
@@ -395,7 +395,7 @@ expect
             |> Parser.new
             |> Parser.parseProgram
 
-        (expectNoErrors parser) && (expectStatementsCount program 1) && (List.first program) == Ok (ExpressionStatement (Boolean expected))
+        (expectNoErrors parser) && (expectStatementsCount program 1) && (List.first program) == Ok (Boolean expected)
     |> Bool.isEq [Bool.true, Bool.true]
 
 # Helpers

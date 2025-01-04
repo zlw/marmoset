@@ -2,7 +2,7 @@ module [Parser, new, nextToken, parseProgram]
 
 import Lexer exposing [Lexer]
 import Token exposing [Token]
-import AST exposing [Program, Statement, Expression, addStatement]
+import AST exposing [Program, Expression, addStatement]
 
 Parser : {
     lexer : Lexer,
@@ -78,16 +78,19 @@ parseProgram : Parser -> (Parser, Program)
 parseProgram = \parser ->
     loop : Parser, Program -> (Parser, Program)
     loop = \looped_parser, program ->
-        when looped_parser.currToken.type is
-            EOF -> (looped_parser, program)
-            _ ->
+        if currTokenIs looped_parser EOF then
+            (looped_parser, program)
+        else
+            (new_looped_parser, new_program) =
                 when parseStatement looped_parser is
-                    Ok (new_parser, stmt) -> loop (nextToken new_parser) (addStatement program stmt)
-                    Err (UnknownStatement new_parser) -> loop (nextToken new_parser) program
+                    Ok (new_parser, stmt) -> (new_parser, (addStatement program stmt))
+                    Err (UnknownStatement new_parser) -> (new_parser, program)
+
+            loop (nextToken new_looped_parser) new_program
 
     loop parser []
 
-parseStatement : Parser -> Result (Parser, Statement) [UnknownStatement Parser]
+parseStatement : Parser -> Result (Parser, Expression) [UnknownStatement Parser]
 parseStatement = \parser ->
     when parser.currToken.type is
         Let ->
@@ -105,7 +108,7 @@ parseStatement = \parser ->
                 Ok (new_parser, stmt) -> Ok ((new_parser, stmt))
                 Err (NotExpressionStatement new_parser) -> Err (UnknownStatement new_parser)
 
-parseLetStatement : Parser -> Result (Parser, [Let [Identifier Str]]) [NotLet Parser]
+parseLetStatement : Parser -> Result (Parser, [Let Str]) [NotLet Parser]
 parseLetStatement = \parser ->
     when expectPeek parser Ident is
         Err (PeekError parser2) -> Err (NotLet parser2)
@@ -120,7 +123,7 @@ parseLetStatement = \parser ->
                         else
                             loop (nextToken looped_parser)
 
-                    Ok (loop (nextToken parser3), Let (Identifier parser2.currToken.literal))
+                    Ok (loop (nextToken parser3), Let parser2.currToken.literal)
 
 parseReturnStatement : Parser -> Result (Parser, [Return]) []
 parseReturnStatement = \parser ->
@@ -135,16 +138,14 @@ parseReturnStatement = \parser ->
 
     Ok (loop parser2, Return)
 
-parseExpressionStatement : Parser -> Result (Parser, [ExpressionStatement Expression]) [NotExpressionStatement Parser]
+parseExpressionStatement : Parser -> Result (Parser, Expression) [NotExpressionStatement Parser]
 parseExpressionStatement = \parser ->
     when parseExpression parser precLowest is
         Ok (new_parser, expression) ->
-            stmt = ExpressionStatement expression
-
             if peekTokenIs new_parser Semicolon then
-                Ok (nextToken new_parser, stmt)
+                Ok (nextToken new_parser, expression)
             else
-                Ok (new_parser, stmt)
+                Ok (new_parser, expression)
 
         Err (NoPrecRule new_parser) -> Err (NotExpressionStatement new_parser)
 
@@ -229,6 +230,6 @@ parseGroupedExpression = \parser ->
         Ok (parser2, expression) ->
             when expectPeek parser2 RParen is
                 Ok (parser3) -> (parser3, expression)
-                Err (PeekError parser3) -> crash "can't parse grouped expression"
+                Err (PeekError _parser3) -> crash "can't parse grouped expression"
 
-        Err (NoPrecRule parser2) -> crash "can't parse grouped expression"
+        Err (NoPrecRule _parser2) -> crash "can't parse grouped expression"
