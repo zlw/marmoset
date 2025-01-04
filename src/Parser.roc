@@ -158,6 +158,8 @@ parseExpression = \parser, precedence ->
             Int -> Ok (parseIntegerLiteral parser)
             Bang -> Ok (parsePrefixExpression parser)
             Minus -> Ok (parsePrefixExpression parser)
+            True -> Ok (parseBoolean parser)
+            False -> Ok (parseBoolean parser)
             _ -> Err (NoPrecRule (noPrefixParseFnError parser tokenType))
 
     when result is
@@ -213,3 +215,7 @@ parseInfixExpression = \parser, left ->
     when parseExpression parser2 precedence is
         Ok (parser3, right) -> (parser3, Infix left operator right)
         Err (NoPrecRule _parser3) -> crash "can't parse infix expression"
+
+parseBoolean : Parser -> (Parser, [Boolean Bool])
+parseBoolean = \parser ->
+    (parser, Boolean (parser.currToken.type == True))

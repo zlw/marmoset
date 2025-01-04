@@ -8,6 +8,7 @@ Expression : [
     Integer I64,
     Prefix Operator Expression,
     Infix Expression Operator Expression,
+    Boolean Bool,
 ]
 
 Statement : [
@@ -42,3 +43,4 @@ expressionToStr = \expression ->
         Integer i -> Num.toStr i
         Prefix op expr -> "($(op)$(expressionToStr expr))"
         Infix left op right -> "($(expressionToStr left) $(op) $(expressionToStr right))"
+        Boolean b -> if b then "true" else "false"
