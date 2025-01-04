@@ -1,4 +1,4 @@
-module [new, nextToken, parseProgram]
+module [Parser, new, nextToken, parseProgram]
 
 import Lexer exposing [Lexer]
 import Token exposing [Token]
@@ -19,6 +19,23 @@ precSum = @Precedence 4
 precProduct = @Precedence 5
 precPrefix = @Precedence 6
 precCall = @Precedence 7
+
+precedences : Token.TokenType -> Precedence
+precedences = \token ->
+    when token is
+        Eq -> precEquals
+        NotEq -> precEquals
+        Lt -> precLessGreater
+        Gt -> precLessGreater
+        Plus -> precSum
+        Minus -> precSum
+        Slash -> precProduct
+        Asterisk -> precProduct
+        LParen -> precCall
+        _ -> precLowest
+
+precLT : Precedence, Precedence -> Bool
+precLT = \@Precedence p1, @Precedence p2 -> p1 < p2
 
 new : Lexer -> Parser
 new = \lexer ->
@@ -132,15 +149,41 @@ parseExpressionStatement = \parser ->
         Err (NoPrecRule new_parser) -> Err (NotExpressionStatement new_parser)
 
 parseExpression : Parser, Precedence -> Result (Parser, Expression) [NoPrecRule Parser]
-parseExpression = \parser, _precedence ->
+parseExpression = \parser, precedence ->
     tokenType = parser.currToken.type
 
-    when tokenType is
-        Ident -> Ok (parseIdentifier parser)
-        Int -> Ok (parseIntegerLiteral parser)
-        Bang -> Ok (parsePrefixExpression parser)
-        Minus -> Ok (parsePrefixExpression parser)
-        _ -> Err (NoPrecRule (noPrefixParseFnError parser tokenType))
+    result =
+        when tokenType is
+            Ident -> Ok (parseIdentifier parser)
+            Int -> Ok (parseIntegerLiteral parser)
+            Bang -> Ok (parsePrefixExpression parser)
+            Minus -> Ok (parsePrefixExpression parser)
+            _ -> Err (NoPrecRule (noPrefixParseFnError parser tokenType))
+
+    when result is
+        Err (NoPrecRule new_parser) -> Err (NoPrecRule new_parser)
+        Ok (parser2, leftExp) ->
+            loop : Parser, Expression -> (Parser, Expression)
+            loop = \looped_parser, left ->
+                if !(peekTokenIs looped_parser Semicolon) && (precLT precedence (peekPrecedence looped_parser)) then
+                    (new_looped_parser, new_left) =
+                        when looped_parser.peekToken.type is
+                            Plus | Minus | Slash | Asterisk | Eq | NotEq | Lt | Gt ->
+                                parseInfixExpression (nextToken looped_parser) left
+
+                            _ -> (looped_parser, left)
+
+                    loop (nextToken new_looped_parser) new_left
+                else
+                    (looped_parser, left)
+
+            Ok (loop parser2 leftExp)
+
+peekPrecedence : Parser -> Precedence
+peekPrecedence = \parser -> precedences parser.peekToken.type
+
+currPrecedence : Parser -> Precedence
+currPrecedence = \parser -> precedences parser.currToken.type
 
 parseIdentifier : Parser -> (Parser, [Identifier Str])
 parseIdentifier = \parser ->
@@ -160,3 +203,13 @@ parsePrefixExpression = \parser ->
     when parseExpression parser2 precPrefix is
         Ok (_parser, right) -> (parser2, Prefix operator right)
         Err (NoPrecRule new_parser) -> crash "can't parse prefix expression"
+
+parseInfixExpression : Parser, Expression -> (Parser, [Infix Expression Str Expression])
+parseInfixExpression = \parser, left ->
+    operator = parser.currToken.literal
+    precedence = currPrecedence parser
+    parser2 = nextToken parser
+
+    when parseExpression parser2 precedence is
+        Ok (_parser, right) -> (parser2, Infix left operator right)
+        Err (NoPrecRule new_parser) -> crash "can't parse infix expression"

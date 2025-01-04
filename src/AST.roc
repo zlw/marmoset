@@ -1,13 +1,17 @@
 module [Program, Statement, Expression, addStatement, toStr]
 
+Operator : Str
+Ident : [Identifier Str]
+
 Expression : [
     Identifier Str,
     Integer I64,
-    Prefix Str Expression,
+    Prefix Operator Expression,
+    Infix Expression Operator Expression,
 ]
 
 Statement : [
-    Let Expression, # expression is identifier, but we can't do Let Identifier, cause Roc doesn't like it
+    Let Ident, # expression is identifier, but we can't do Let Identifier, cause Roc doesn't like it
     Return,
     ExpressionStatement Expression,
 ]
@@ -29,7 +33,6 @@ statementToStr = \statement ->
         Let (Identifier ident) -> "let $(ident) = ;"
         Return -> "return ;"
         ExpressionStatement expr -> expressionToStr expr
-        _ -> "unknown statement"
 
 expressionToStr : Expression -> Str
 expressionToStr = \expression ->
@@ -37,3 +40,4 @@ expressionToStr = \expression ->
         Identifier ident -> ident
         Integer i -> Inspect.toStr i
         Prefix op expr -> "($(op)$(expressionToStr expr))"
+        Infix left op right -> "($(expressionToStr left) $(op) $(expressionToStr right))"

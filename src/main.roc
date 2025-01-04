@@ -244,7 +244,7 @@ expect
 
     (expectNoErrors parser) && (expectStatementsCount program 3) && match == Bool.true
 
-# Chapter 2.6 - Parsing expressions
+# Chapter 2.6 - Parsing expressions - Preparing AST
 expect
     input = "let myVar = anotherVar;"
 
@@ -255,7 +255,7 @@ expect
 
     (expectNoErrors parser) && AST.toStr program == "let myVar = ;"
 
-# Chapter 2.6 - Parsing expressions
+# Chapter 2.6: Parsing expressions - Identifiers
 expect
     input = "foobar;"
 
@@ -266,7 +266,7 @@ expect
 
     (expectNoErrors parser) && (expectStatementsCount program 1) && (List.first program) == Ok (ExpressionStatement (Identifier "foobar"))
 
-# Chapter 2.6 - Parsing expressions
+# Chapter 2.6 - Parsing expressions - Integer Literals
 expect
     input = "5;"
 
@@ -277,6 +277,7 @@ expect
 
     (expectNoErrors parser) && (expectStatementsCount program 1) && (List.first program) == Ok (ExpressionStatement (Integer 5))
 
+# Chapter 2.6 - Parsing expressions - Prefix Operators
 expect
     [
         { input: "!5;", operator: "!", value: 5 },
@@ -290,6 +291,27 @@ expect
 
         (expectNoErrors parser) && (expectStatementsCount program 1) && (List.first program) == Ok (ExpressionStatement (Prefix test.operator (Integer test.value)))
     |> Bool.isEq [Bool.true, Bool.true]
+
+# Chapter 2.6 - Parsing expressions - Infix Operators
+expect
+    [
+        { input: "5 + 5;", leftValue: 5, operator: "+", rightValue: 5 },
+        { input: "5 - 5;", leftValue: 5, operator: "-", rightValue: 5 },
+        { input: "5 * 5;", leftValue: 5, operator: "*", rightValue: 5 },
+        { input: "5 / 5;", leftValue: 5, operator: "/", rightValue: 5 },
+        { input: "5 > 5;", leftValue: 5, operator: ">", rightValue: 5 },
+        { input: "5 < 5;", leftValue: 5, operator: "<", rightValue: 5 },
+        { input: "5 == 5;", leftValue: 5, operator: "==", rightValue: 5 },
+        { input: "5 != 5;", leftValue: 5, operator: "!=", rightValue: 5 },
+    ]
+    |> List.map \test ->
+        (parser, program) =
+            Lexer.new test.input
+            |> Parser.new
+            |> Parser.parseProgram
+
+        (expectNoErrors parser) && (expectStatementsCount program 1) && (List.first program) == Ok (ExpressionStatement (Infix (Integer test.leftValue) test.operator (Integer test.rightValue)))
+    |> Bool.isEq [Bool.true, Bool.true, Bool.true, Bool.true, Bool.true, Bool.true, Bool.true, Bool.true]
 
 # Helpers
 expectNoErrors = \parser ->
