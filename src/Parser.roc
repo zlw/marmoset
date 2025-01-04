@@ -83,7 +83,7 @@ parseProgram = \parser ->
         else
             (new_looped_parser, new_program) =
                 when parseStatement looped_parser is
-                    Ok (new_parser, stmt) -> (new_parser, (addStatement program stmt))
+                    Ok (new_parser, stmt) -> (new_parser, addStatement program stmt)
                     Err (UnknownStatement new_parser) -> (new_parser, program)
 
             loop (nextToken new_looped_parser) new_program
@@ -163,6 +163,7 @@ parseExpression = \parser, precedence ->
             True -> Ok (parseBoolean parser)
             False -> Ok (parseBoolean parser)
             LParen -> Ok (parseGroupedExpression parser)
+            If -> Ok (parseIfExpression parser)
             _ -> Err (NoPrecRule (noPrefixParseFnError parser tokenType))
 
     when result is
@@ -229,7 +230,47 @@ parseGroupedExpression = \parser ->
     when parseExpression (nextToken parser) precLowest is
         Ok (parser2, expression) ->
             when expectPeek parser2 RParen is
-                Ok (parser3) -> (parser3, expression)
+                Ok parser3 -> (parser3, expression)
                 Err (PeekError _parser3) -> crash "can't parse grouped expression"
 
         Err (NoPrecRule _parser2) -> crash "can't parse grouped expression"
+
+parseIfExpression : Parser -> (Parser, [If Expression (List Expression) [NoElse, WithElse (List Expression)]])
+parseIfExpression = \parser ->
+    when expectPeek parser LParen is
+        Err (PeekError _parser2) -> crash "can't parse if expression"
+        Ok parser2 ->
+            when parseExpression (nextToken parser2) precLowest is
+                Err (NoPrecRule _parser3) -> crash "can't parse if expression"
+                Ok (parser3, condition) ->
+                    when expectPeek parser3 RParen is
+                        Err (PeekError _parser4) -> crash "can't parse if expression"
+                        Ok parser4 ->
+                            when expectPeek parser4 LBrace is
+                                Err (PeekError _parser5) -> crash "can't parse if expression"
+                                Ok parser5 ->
+                                    (parser6, consequence) = parseBlockStatement parser5
+
+                                    if !(peekTokenIs parser6 Else) then
+                                        (parser6, If condition consequence NoElse)
+                                    else
+                                        when expectPeek (nextToken parser6) LBrace is
+                                            Err (PeekError _parser7) -> crash "can't parse if expression"
+                                            Ok parser7 ->
+                                                (parser8, alternative) = parseBlockStatement parser7
+                                                (parser8, If condition consequence (WithElse alternative))
+
+parseBlockStatement : Parser -> (Parser, List Expression)
+parseBlockStatement = \parser ->
+    parser2 = nextToken parser
+
+    # loop : Parser, List Expression -> (Parser, List Expression)
+    loop = \looped_parser, expressions ->
+        if !(currTokenIs looped_parser RBrace) && !(currTokenIs looped_parser EOF) then
+            when parseStatement looped_parser is
+                Ok (new_looped_parser, expression) -> loop (nextToken new_looped_parser) (List.append expressions expression)
+                Err (UnknownStatement new_looped_parser) -> loop (nextToken new_looped_parser) expressions
+        else
+            (looped_parser, expressions)
+
+    loop parser2 []

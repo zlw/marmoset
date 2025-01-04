@@ -1,13 +1,14 @@
 module [Program, Expression, addStatement, toStr]
 
 Expression : [
-    Let Str,
-    Return,
+    Let Str, # statement
+    Return, # statement
     Identifier Str,
     Integer I64,
     Prefix Operator Expression,
     Infix Expression Operator Expression,
     Boolean Bool,
+    If Expression (List Expression) [NoElse, WithElse (List Expression)],
 ]
 
 Operator : Str
@@ -34,3 +35,12 @@ expressionToStr = \expression ->
         Prefix op expr -> "($(op)$(expressionToStr expr))"
         Infix left op right -> "($(expressionToStr left) $(op) $(expressionToStr right))"
         Boolean b -> if b then "true" else "false"
+        If cond consequence NoElse -> "if $(expressionToStr cond) $(blockToStr consequence)"
+        If cond consequence (WithElse alternative) -> "if $(expressionToStr cond) $(blockToStr consequence) else $(blockToStr alternative)"
+
+# This is exaclty the same as the toStr, but we can't reuse because of bug in the Roc compiler
+blockToStr : List Expression -> Str
+blockToStr = \block ->
+    block
+    |> List.map expressionToStr
+    |> Str.joinWith ""

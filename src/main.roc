@@ -369,7 +369,7 @@ expect
         ("2 / (5 + 5)", "(2 / (5 + 5))"),
         ("(5 + 5) * 2 * (5 + 5)", "(((5 + 5) * 2) * (5 + 5))"),
         ("-(5 + 5)", "(-(5 + 5))"),
-        ("!(true == true)", "(!(true == true))")
+        ("!(true == true)", "(!(true == true))"),
     ]
     |> List.all \(input, expected) ->
         (parser, program) =
@@ -397,6 +397,37 @@ expect
 
         (expectNoErrors parser) && (expectStatementsCount program 1) && (List.first program) == Ok (Boolean expected)
     |> Bool.isEq [Bool.true, Bool.true]
+
+# Chapter 2.8 - Extending Parser - If Expressions
+expect
+    input = "if (x < y) { x }"
+
+    (parser, program) =
+        Lexer.new input
+        |> Parser.new
+        |> Parser.parseProgram
+
+    (expectNoErrors parser)
+    &&
+    (expectStatementsCount program 1)
+    &&
+    (List.first program)
+    == Ok (If (Infix (Identifier "x") "<" (Identifier "y")) [Identifier "x"] NoElse)
+
+expect
+    input = "if (x < y) { x } else { y }"
+
+    (parser, program) =
+        Lexer.new input
+        |> Parser.new
+        |> Parser.parseProgram
+
+    (expectNoErrors parser)
+    &&
+    (expectStatementsCount program 1)
+    &&
+    (List.first program)
+    == Ok (If (Infix (Identifier "x") "<" (Identifier "y")) [Identifier "x"] (WithElse [Identifier "y"]))
 
 # Helpers
 expectNoErrors = \parser ->
