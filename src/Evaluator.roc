@@ -59,7 +59,24 @@ evalExpression = \expression ->
 
                 _ -> nullObject
 
+        If condition consequence alternative ->
+            conditionExpr = evalExpression condition
+
+            if isTruthy conditionExpr then
+                evalExpressions consequence
+            else
+                when alternative is
+                    WithElse block -> evalExpressions block
+                    NoElse -> nullObject
+
         _ -> nullObject
+
+isTruthy : Object -> Bool
+isTruthy = \object ->
+    when object is
+        Null -> Bool.false
+        Boolean b -> b
+        _ -> Bool.true
 
 # Test Eval Integer Expression
 expect
@@ -130,6 +147,26 @@ expect
         { input: "!!true;", expected: Boolean Bool.true },
         { input: "!!false;", expected: Boolean Bool.false },
         { input: "!!5;", expected: Boolean Bool.true },
+    ]
+    |> List.all \test ->
+        (_parser, program) =
+            test.input
+            |> Lexer.new
+            |> Parser.new
+            |> Parser.parseProgram
+
+        eval program == test.expected
+
+# Test If Else Expression
+expect
+    [
+        { input: "if (true) { 10 }", expected: Integer 10 },
+        { input: "if (false) { 10 }", expected: nullObject },
+        { input: "if (1) { 10 }", expected: Integer 10 },
+        { input: "if (1 < 2) { 10 }", expected: Integer 10 },
+        { input: "if (1 > 2) { 10 }", expected: nullObject },
+        { input: "if (1 > 2) { 10 } else { 20 }", expected: Integer 20 },
+        { input: "if (1 < 2) { 10 } else { 20 }", expected: Integer 10 },
     ]
     |> List.all \test ->
         (_parser, program) =
