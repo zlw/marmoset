@@ -164,6 +164,7 @@ parseExpression = \parser, precedence ->
             False -> Ok (parseBoolean parser)
             LParen -> Ok (parseGroupedExpression parser)
             If -> Ok (parseIfExpression parser)
+            Function -> Ok (parseFunctionLiteral parser)
             _ -> Err (NoPrecRule (noPrefixParseFnError parser tokenType))
 
     when result is
@@ -274,3 +275,38 @@ parseBlockStatement = \parser ->
             (looped_parser, expressions)
 
     loop parser2 []
+
+parseFunctionLiteral : Parser -> (Parser, [Function (List [Identifier Str]) (List Expression)])
+parseFunctionLiteral = \parser ->
+    when expectPeek parser LParen is
+        Err (PeekError _parser2) -> crash "can't parse function literal"
+        Ok parser2 ->
+            (parser3, parameters) = parseFunctionParameters parser2
+
+            when expectPeek parser3 LBrace is
+                Err (PeekError _parser4) -> crash "can't parse function literal"
+                Ok parser4 ->
+                    (parser5, body) = parseBlockStatement parser4
+
+                    (parser5, Function parameters body)
+
+parseFunctionParameters : Parser -> (Parser, List [Identifier Str])
+parseFunctionParameters = \parser ->
+    if peekTokenIs parser RParen then
+        (nextToken parser, [])
+    else
+        parser2 = nextToken parser
+
+        loop : Parser, List [Identifier Str] -> (Parser, List [Identifier Str])
+        loop = \looped_parser, identifiers ->
+            if peekTokenIs looped_parser Comma then
+                new_parser = nextToken (nextToken looped_parser)
+                new_identifiers = List.append identifiers (Identifier new_parser.currToken.literal)
+
+                loop new_parser new_identifiers
+            else
+                when expectPeek looped_parser RParen is
+                    Err (PeekError _new_looped_parser) -> crash "can't parse function parameters"
+                    Ok new_looped_parser -> (new_looped_parser, identifiers)
+
+        loop parser2 [Identifier parser2.currToken.literal]

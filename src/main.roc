@@ -448,6 +448,7 @@ expect
     &&
     (expectExpression program (If (Infix (Identifier "x") "<" (Identifier "y")) [Identifier "x"] NoElse))
 
+# Chapter 2.8 - Extending Parser - If Expressions
 expect
     input = "if (x < y) { x } else { y }"
 
@@ -461,6 +462,42 @@ expect
     (expectStatementsCount program 1)
     &&
     (expectExpression program (If (Infix (Identifier "x") "<" (Identifier "y")) [Identifier "x"] (WithElse [Identifier "y"])))
+
+# Chapter 2.8 - Extending Parser - Function Literals
+expect
+    input = "fn(x, y) { x + y; }"
+
+    (parser, program) =
+        Lexer.new input
+        |> Parser.new
+        |> Parser.parseProgram
+
+    (expectNoErrors parser)
+    &&
+    (expectStatementsCount program 1)
+    &&
+    (expectExpression program (Function [Identifier "x", Identifier "y"] [Infix (Identifier "x") "+" (Identifier "y")]))
+
+# Chapter 2.8 - Extending Parser - Function Literals
+expect
+    [
+        { input: "fn() {};", expectedParams: [] },
+        { input: "fn(x) {};", expectedParams: [Identifier "x"] },
+        { input: "fn(foo, bar, baz) {};", expectedParams: [Identifier "foo", Identifier "bar", Identifier "baz"] },
+    ]
+    |> List.all \test ->
+        (parser, program) =
+            Lexer.new test.input
+            |> Parser.new
+            |> Parser.parseProgram
+
+        (expectNoErrors parser)
+        &&
+        (expectStatementsCount program 1)
+        &&
+        (expectExpression program (Function test.expectedParams []))
+
+    |> Bool.isEq Bool.true
 
 # Helpers
 expectNoErrors = \parser ->
