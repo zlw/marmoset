@@ -10,5 +10,8 @@ release: prepare
 unit:
 	roc test src/main.roc
 
+repl: release
+	./bin/marmoset
+
 roc-repl:
 	cd src && roc repl
