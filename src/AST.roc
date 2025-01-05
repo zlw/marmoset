@@ -2,7 +2,7 @@ module [Program, Expression, addStatement, toStr]
 
 Expression : [
     Let [Identifier Str], # statement
-    Return, # statement
+    Return Expression, # statement
     Identifier Str,
     Integer I64,
     Prefix Operator Expression,
@@ -31,7 +31,7 @@ expressionToStr : Expression -> Str
 expressionToStr = \expression ->
     when expression is
         Let (Identifier identifier) -> "let $(identifier) = ;"
-        Return -> "return ;"
+        Return expr -> "return $(expressionToStr expr);"
         Identifier ident -> ident
         Integer i -> Num.toStr i
         Prefix op expr -> "($(op)$(expressionToStr expr))"

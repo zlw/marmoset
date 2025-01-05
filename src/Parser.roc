@@ -125,18 +125,15 @@ parseLetStatement = \parser ->
 
                     Ok (loop (nextToken parser3), Let (Identifier parser2.currToken.literal))
 
-parseReturnStatement : Parser -> Result (Parser, [Return]) []
+parseReturnStatement : Parser -> Result (Parser, [Return Expression]) [NotReturn Parser]
 parseReturnStatement = \parser ->
-    parser2 = nextToken parser
-
-    loop : Parser -> Parser
-    loop = \looped_parser ->
-        if peekTokenIs looped_parser Semicolon then
-            nextToken looped_parser
-        else
-            loop (nextToken looped_parser)
-
-    Ok (loop parser2, Return)
+    when parseExpression (nextToken parser) precLowest is
+        Err (NoPrecRule parser3) -> Err (NotReturn parser3)
+        Ok (parser3, expression) ->
+            if peekTokenIs parser3 Semicolon then
+                Ok (nextToken parser3, Return expression)
+            else
+                Ok (parser3, Return expression)
 
 parseExpressionStatement : Parser -> Result (Parser, Expression) [NotExpressionStatement Parser]
 parseExpressionStatement = \parser ->

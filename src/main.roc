@@ -225,24 +225,23 @@ expect
 
 # Chapter 2.5 - Parsing return statements
 expect
-    input =
-        """
-        return 5;
-        return 10;
-        return 993322;
-        """
+    [
+        { input: "return 5;", expected: 5 },
+        { input: "return 10;", expected: 10 },
+        { input: "return 993322;", expected: 993322 },
+    ]
+    |> List.all \test ->
+        (parser, program) =
+            Lexer.new test.input
+            |> Parser.new
+            |> Parser.parseProgram
 
-    (parser, program) =
-        Lexer.new input
-        |> Parser.new
-        |> Parser.parseProgram
-
-    match = List.all program \statement ->
-        when statement is
-            Return -> Bool.true
-            _ -> Bool.false
-
-    (expectNoErrors parser) && (expectStatementsCount program 3) && match == Bool.true
+        (expectNoErrors parser)
+        &&
+        (expectStatementsCount program 1)
+        &&
+        (expectExpression program (Return (Integer test.expected)))
+    |> Bool.isEq Bool.true
 
 # Chapter 2.6 - Parsing expressions - Preparing AST
 expect
