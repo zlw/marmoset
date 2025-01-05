@@ -108,7 +108,7 @@ parseStatement = \parser ->
                 Ok (new_parser, stmt) -> Ok ((new_parser, stmt))
                 Err (NotExpressionStatement new_parser) -> Err (UnknownStatement new_parser)
 
-parseLetStatement : Parser -> Result (Parser, [Let Str]) [NotLet Parser]
+parseLetStatement : Parser -> Result (Parser, [Let [Identifier Str]]) [NotLet Parser]
 parseLetStatement = \parser ->
     when expectPeek parser Ident is
         Err (PeekError parser2) -> Err (NotLet parser2)
@@ -123,7 +123,7 @@ parseLetStatement = \parser ->
                         else
                             loop (nextToken looped_parser)
 
-                    Ok (loop (nextToken parser3), Let parser2.currToken.literal)
+                    Ok (loop (nextToken parser3), Let (Identifier parser2.currToken.literal))
 
 parseReturnStatement : Parser -> Result (Parser, [Return]) []
 parseReturnStatement = \parser ->
@@ -268,7 +268,7 @@ parseBlockStatement : Parser -> (Parser, List Expression)
 parseBlockStatement = \parser ->
     parser2 = nextToken parser
 
-    # loop : Parser, List Expression -> (Parser, List Expression)
+    loop : Parser, List Expression -> (Parser, List Expression)
     loop = \looped_parser, expressions ->
         if !(currTokenIs looped_parser RBrace) && !(currTokenIs looped_parser EOF) then
             when parseStatement looped_parser is
@@ -314,10 +314,13 @@ parseFunctionParameters = \parser ->
 
         loop parser2 [Identifier parser2.currToken.literal]
 
-parseCallExpression : Parser, Expression -> (Parser, [Call Expression (List Expression)])
-parseCallExpression = \parser, function ->
+parseCallExpression : Parser, Expression -> (Parser, [Call [WithFunction [Function (List [Identifier Str]) (List Expression)], WithIdentifier [Identifier Str]] (List Expression)])
+parseCallExpression = \parser, callee ->
     (parser2, arguments) = parseCallArguments parser
-    (parser2, Call function arguments)
+    when callee is
+        Identifier ident -> (parser2, Call (WithIdentifier (Identifier ident)) arguments)
+        Function params body -> (parser2, Call (WithFunction (Function params body)) arguments)
+        _ -> crash "can't parse call expression"
 
 parseCallArguments : Parser -> (Parser, List Expression)
 parseCallArguments = \parser ->

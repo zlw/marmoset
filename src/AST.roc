@@ -1,7 +1,7 @@
 module [Program, Expression, addStatement, toStr]
 
 Expression : [
-    Let Str, # statement
+    Let [Identifier Str], # statement
     Return, # statement
     Identifier Str,
     Integer I64,
@@ -10,7 +10,7 @@ Expression : [
     Boolean Bool,
     If Expression (List Expression) [NoElse, WithElse (List Expression)],
     Function (List [Identifier Str]) (List Expression),
-    Call Expression (List Expression),
+    Call [WithFunction [Function (List [Identifier Str]) (List Expression)], WithIdentifier [Identifier Str]] (List Expression),
 ]
 
 Operator : Str
@@ -30,7 +30,7 @@ toStr = \program ->
 expressionToStr : Expression -> Str
 expressionToStr = \expression ->
     when expression is
-        Let identifiers -> "let $(identifiers) = ;"
+        Let (Identifier identifier) -> "let $(identifier) = ;"
         Return -> "return ;"
         Identifier ident -> ident
         Integer i -> Num.toStr i
@@ -39,8 +39,9 @@ expressionToStr = \expression ->
         Boolean b -> if b then "true" else "false"
         If cond consequence NoElse -> "if $(expressionToStr cond) $(blockToStr consequence)"
         If cond consequence (WithElse alternative) -> "if $(expressionToStr cond) $(blockToStr consequence) else $(blockToStr alternative)"
-        Function params body -> "fn ($((List.map params \Identifier p -> p) |> Str.joinWith ", ")) $(blockToStr body)"
-        Call func args -> "$(expressionToStr func)($(List.map args expressionToStr |> Str.joinWith ", "))"
+        Function params body -> functionToStr params body
+        Call (WithFunction (Function params body)) args -> "$(functionToStr params body)$(argsToStr args)"
+        Call (WithIdentifier (Identifier ident)) args -> "$(ident)$(argsToStr args)"
 
 # This is exaclty the same as the toStr, but we can't reuse because of bug in the Roc compiler
 blockToStr : List Expression -> Str
@@ -48,3 +49,11 @@ blockToStr = \block ->
     block
     |> List.map expressionToStr
     |> Str.joinWith ""
+
+functionToStr : List [Identifier Str], List Expression -> Str
+functionToStr = \params, body ->
+    "fn ($((List.map params \Identifier p -> p) |> Str.joinWith ", ")) $(blockToStr body)"
+
+argsToStr : List Expression -> Str
+argsToStr = \args ->
+    "($(args |> List.map expressionToStr |> Str.joinWith ", "))"

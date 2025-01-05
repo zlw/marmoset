@@ -197,7 +197,7 @@ expect
 
     match = List.map2 program ["x", "y", "foobar"] \statement, expected ->
         when statement is
-            Let actual -> actual == expected
+            Let (Identifier actual) -> actual == expected
             _ -> Bool.false
 
     (expectNoErrors parser) && (expectStatementsCount program 3) && match == [Bool.true, Bool.true, Bool.true]
@@ -501,20 +501,34 @@ expect
 
     |> Bool.isEq Bool.true
 
-# Chapter 2.8 - Extending Parser - Function Literals
+# Chapter 2.8 - Extending Parser - Call expressions
 expect
-    input = "add(1, 2 * 3, 4 + 5);"
+    [
+        {
+            input: "add(1, 2 * 3, 4 + 5);",
+            expected: Call (WithIdentifier (Identifier "add")) [Integer 1, Infix (Integer 2) "*" (Integer 3), Infix (Integer 4) "+" (Integer 5)],
+        },
+        {
+            input: "fn(x, y) { x + y; }(2, 3)",
+            expected: Call (WithFunction (Function [Identifier "x", Identifier "y"] [Infix (Identifier "x") "+" (Identifier "y")])) [Integer 2, Integer 3],
+        },
+        {
+            input: "callsFunction(2, 3, fn(x, y) { x + y; });",
+            expected: Call (WithIdentifier (Identifier "callsFunction")) [Integer 2, Integer 3, Function [Identifier "x", Identifier "y"] [Infix (Identifier "x") "+" (Identifier "y")]],
+        },
+    ]
+    |> List.all \test ->
+        (parser, program) =
+            Lexer.new test.input
+            |> Parser.new
+            |> Parser.parseProgram
 
-    (parser, program) =
-        Lexer.new input
-        |> Parser.new
-        |> Parser.parseProgram
-
-    (expectNoErrors parser)
-    &&
-    (expectStatementsCount program 1)
-    &&
-    (expectExpression program (Call (Identifier "add") [Integer 1, Infix (Integer 2) "*" (Integer 3), Infix (Integer 4) "+" (Integer 5)]))
+        (expectNoErrors parser)
+        &&
+        (expectStatementsCount program 1)
+        &&
+        (expectExpression program test.expected)
+    |> Bool.isEq Bool.true
 
 # Helpers
 expectNoErrors = \parser ->
