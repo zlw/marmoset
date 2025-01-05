@@ -179,6 +179,9 @@ parseExpression = \parser, precedence ->
                             Plus | Minus | Slash | Asterisk | Eq | NotEq | Lt | Gt ->
                                 parseInfixExpression (nextToken looped_parser) left
 
+                            LParen ->
+                                parseCallExpression (nextToken looped_parser) left
+
                             _ -> (looped_parser, left)
 
                     loop (new_looped_parser) new_left
@@ -310,3 +313,29 @@ parseFunctionParameters = \parser ->
                     Ok new_looped_parser -> (new_looped_parser, identifiers)
 
         loop parser2 [Identifier parser2.currToken.literal]
+
+parseCallExpression : Parser, Expression -> (Parser, [Call Expression (List Expression)])
+parseCallExpression = \parser, function ->
+    (parser2, arguments) = parseCallArguments parser
+    (parser2, Call function arguments)
+
+parseCallArguments : Parser -> (Parser, List Expression)
+parseCallArguments = \parser ->
+    if peekTokenIs parser RParen then
+        (nextToken parser, [])
+    else
+        when parseExpression (nextToken parser) precLowest is
+            Err (NoPrecRule _parser2) -> crash "can't parse call arguments"
+            Ok (parser2, arg) ->
+                loop : Parser, List Expression -> (Parser, List Expression)
+                loop = \looped_parser, args ->
+                    if peekTokenIs looped_parser Comma then
+                        when parseExpression (nextToken (nextToken looped_parser)) precLowest is
+                            Err (NoPrecRule _new_parser2) -> crash "can't parse call arguments"
+                            Ok (new_parser2, new_arg) -> loop new_parser2 (List.append args new_arg)
+                    else
+                        when expectPeek looped_parser RParen is
+                            Err (PeekError _new_parser2) -> crash "can't parse call arguments"
+                            Ok new_parser2 -> (new_parser2, args)
+
+                loop parser2 [arg]

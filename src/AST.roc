@@ -10,6 +10,7 @@ Expression : [
     Boolean Bool,
     If Expression (List Expression) [NoElse, WithElse (List Expression)],
     Function (List [Identifier Str]) (List Expression),
+    Call Expression (List Expression),
 ]
 
 Operator : Str
@@ -39,6 +40,7 @@ expressionToStr = \expression ->
         If cond consequence NoElse -> "if $(expressionToStr cond) $(blockToStr consequence)"
         If cond consequence (WithElse alternative) -> "if $(expressionToStr cond) $(blockToStr consequence) else $(blockToStr alternative)"
         Function params body -> "fn ($((List.map params \Identifier p -> p) |> Str.joinWith ", ")) $(blockToStr body)"
+        Call func args -> "$(expressionToStr func)($(List.map args expressionToStr |> Str.joinWith ", "))"
 
 # This is exaclty the same as the toStr, but we can't reuse because of bug in the Roc compiler
 blockToStr : List Expression -> Str

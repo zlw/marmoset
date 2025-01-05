@@ -386,7 +386,6 @@ expect
         ("5 > 4 == 3 < 4", "((5 > 4) == (3 < 4))"),
         ("5 < 4 != 3 > 4", "((5 < 4) != (3 > 4))"),
         ("3 + 4 * 5 == 3 * 1 + 4 * 5", "((3 + (4 * 5)) == ((3 * 1) + (4 * 5)))"),
-        ("3 + 4 * 5 == 3 * 1 + 4 * 5", "((3 + (4 * 5)) == ((3 * 1) + (4 * 5)))"),
         ("true", "true"),
         ("false", "false"),
         ("3 > 5 == false", "((3 > 5) == false)"),
@@ -397,6 +396,9 @@ expect
         ("(5 + 5) * 2 * (5 + 5)", "(((5 + 5) * 2) * (5 + 5))"),
         ("-(5 + 5)", "(-(5 + 5))"),
         ("!(true == true)", "(!(true == true))"),
+        ("a + add(b * c) + d", "((a + add((b * c))) + d)"),
+        ("add(a, b, 1, 2 * 3, 4 + 5, add(6, 7 * 8))", "add(a, b, 1, (2 * 3), (4 + 5), add(6, (7 * 8)))"),
+        ("add(a + b + c * d / f + g)", "add((((a + b) + ((c * d) / f)) + g))"),
     ]
     |> List.all \(input, expected) ->
         (parser, program) =
@@ -498,6 +500,21 @@ expect
         (expectExpression program (Function test.expectedParams []))
 
     |> Bool.isEq Bool.true
+
+# Chapter 2.8 - Extending Parser - Function Literals
+expect
+    input = "add(1, 2 * 3, 4 + 5);"
+
+    (parser, program) =
+        Lexer.new input
+        |> Parser.new
+        |> Parser.parseProgram
+
+    (expectNoErrors parser)
+    &&
+    (expectStatementsCount program 1)
+    &&
+    (expectExpression program (Call (Identifier "add") [Integer 1, Infix (Integer 2) "*" (Integer 3), Infix (Integer 4) "+" (Integer 5)]))
 
 # Helpers
 expectNoErrors = \parser ->
