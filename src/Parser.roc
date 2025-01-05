@@ -338,3 +338,302 @@ parseCallArguments = \parser ->
                             Ok new_parser2 -> (new_parser2, args)
 
                 loop parser2 [arg]
+
+# Test Let Statement
+expect
+    [
+        { input: "let x = 5;", expectedIdentifier: "x", expectedValue: 5 },
+        { input: "let y = 10;", expectedIdentifier: "y", expectedValue: 10 },
+        { input: "let foobar = 838383;", expectedIdentifier: "foobar", expectedValue: 838383 },
+    ]
+    |> List.all \test ->
+        (parser, program) =
+            Lexer.new test.input
+            |> Parser.new
+            |> Parser.parseProgram
+
+        (expectNoErrors parser)
+        &&
+        (expectStatementsCount program 1)
+        &&
+        (expectExpression program (Let (Identifier test.expectedIdentifier) (Integer test.expectedValue)))
+    |> Bool.isEq Bool.true
+
+# Test Return Statement
+expect
+    [
+        { input: "return 5;", expected: Integer 5 },
+        { input: "return 10;", expected: Integer 10 },
+        { input: "return foobar;", expected: Identifier "foobar" },
+    ]
+    |> List.all \test ->
+        (parser, program) =
+            Lexer.new test.input
+            |> Parser.new
+            |> Parser.parseProgram
+
+        (expectNoErrors parser)
+        &&
+        (expectStatementsCount program 1)
+        &&
+        (expectExpression program (Return test.expected))
+    |> Bool.isEq Bool.true
+
+# Test Identifier Expression
+expect
+    input = "foobar;"
+
+    (parser, program) =
+        Lexer.new input
+        |> Parser.new
+        |> Parser.parseProgram
+
+    (expectNoErrors parser)
+    &&
+    (expectStatementsCount program 1)
+    &&
+    (expectExpression program (Identifier "foobar"))
+
+# Test Integer Literal Expression
+expect
+    input = "5;"
+
+    (parser, program) =
+        Lexer.new input
+        |> Parser.new
+        |> Parser.parseProgram
+
+    (expectNoErrors parser)
+    &&
+    (expectStatementsCount program 1)
+    &&
+    (expectExpression program (Integer 5))
+
+# Test Prefix Expression
+expect
+    [
+        { input: "!5;", operator: "!", value: Integer 5 },
+        { input: "-15;", operator: "-", value: Integer 15 },
+        { input: "!true;", operator: "!", value: Boolean Bool.true },
+        { input: "!false;", operator: "!", value: Boolean Bool.false },
+    ]
+    |> List.all \test ->
+        (parser, program) =
+            Lexer.new test.input
+            |> Parser.new
+            |> Parser.parseProgram
+
+        (expectNoErrors parser)
+        &&
+        (expectStatementsCount program 1)
+        &&
+        (expectExpression program (Prefix test.operator test.value))
+    |> Bool.isEq Bool.true
+
+# Test Infix Expression
+expect
+    [
+        { input: "5 + 5;", leftValue: Integer 5, operator: "+", rightValue: Integer 5 },
+        { input: "5 - 5;", leftValue: Integer 5, operator: "-", rightValue: Integer 5 },
+        { input: "5 * 5;", leftValue: Integer 5, operator: "*", rightValue: Integer 5 },
+        { input: "5 / 5;", leftValue: Integer 5, operator: "/", rightValue: Integer 5 },
+        { input: "5 > 5;", leftValue: Integer 5, operator: ">", rightValue: Integer 5 },
+        { input: "5 < 5;", leftValue: Integer 5, operator: "<", rightValue: Integer 5 },
+        { input: "5 == 5;", leftValue: Integer 5, operator: "==", rightValue: Integer 5 },
+        { input: "5 != 5;", leftValue: Integer 5, operator: "!=", rightValue: Integer 5 },
+        { input: "true == true;", leftValue: Boolean Bool.true, operator: "==", rightValue: Boolean Bool.true },
+        { input: "true != false;", leftValue: Boolean Bool.true, operator: "!=", rightValue: Boolean Bool.false },
+        { input: "false == false;", leftValue: Boolean Bool.false, operator: "==", rightValue: Boolean Bool.false },
+    ]
+    |> List.all \test ->
+        (parser, program) =
+            Lexer.new test.input
+            |> Parser.new
+            |> Parser.parseProgram
+
+        (expectNoErrors parser)
+        &&
+        (expectStatementsCount program 1)
+        &&
+        (expectExpression program (Infix test.leftValue test.operator test.rightValue))
+
+    |> Bool.isEq Bool.true
+
+# Test Operator Precedence
+expect
+    [
+        ("-a * b", "((-a) * b)"),
+        ("!-a", "(!(-a))"),
+        ("a + b + c", "((a + b) + c)"),
+        ("a + b - c", "((a + b) - c)"),
+        ("a * b * c", "((a * b) * c)"),
+        ("a * b / c", "((a * b) / c)"),
+        ("a + b / c", "(a + (b / c))"),
+        ("a + b * c + d / e - f", "(((a + (b * c)) + (d / e)) - f)"),
+        ("3 + 4; -5 * 5", "(3 + 4)((-5) * 5)"),
+        ("5 > 4 == 3 < 4", "((5 > 4) == (3 < 4))"),
+        ("5 < 4 != 3 > 4", "((5 < 4) != (3 > 4))"),
+        ("3 + 4 * 5 == 3 * 1 + 4 * 5", "((3 + (4 * 5)) == ((3 * 1) + (4 * 5)))"),
+        ("true", "true"),
+        ("false", "false"),
+        ("3 > 5 == false", "((3 > 5) == false)"),
+        ("3 < 5 == true", "((3 < 5) == true)"),
+        ("1 + (2 + 3) + 4", "((1 + (2 + 3)) + 4)"),
+        ("(5 + 5) * 2", "((5 + 5) * 2)"),
+        ("2 / (5 + 5)", "(2 / (5 + 5))"),
+        ("(5 + 5) * 2 * (5 + 5)", "(((5 + 5) * 2) * (5 + 5))"),
+        ("-(5 + 5)", "(-(5 + 5))"),
+        ("!(true == true)", "(!(true == true))"),
+        ("a + add(b * c) + d", "((a + add((b * c))) + d)"),
+        ("add(a, b, 1, 2 * 3, 4 + 5, add(6, 7 * 8))", "add(a, b, 1, (2 * 3), (4 + 5), add(6, (7 * 8)))"),
+        ("add(a + b + c * d / f + g)", "add((((a + b) + ((c * d) / f)) + g))"),
+    ]
+    |> List.all \(input, expected) ->
+        (parser, program) =
+            Lexer.new input
+            |> Parser.new
+            |> Parser.parseProgram
+
+        output = AST.toStr program
+
+        (expectNoErrors parser)
+        &&
+        expected
+        == output
+
+    |> Bool.isEq Bool.true
+
+# Test Boolean Expression
+expect
+    [
+        { input: "true;", expected: Boolean Bool.true },
+        { input: "false;", expected: Boolean Bool.false },
+    ]
+    |> List.all \test ->
+        (parser, program) =
+            Lexer.new test.input
+            |> Parser.new
+            |> Parser.parseProgram
+
+        (expectNoErrors parser)
+        &&
+        (expectStatementsCount program 1)
+        &&
+        (expectExpression program test.expected)
+    |> Bool.isEq Bool.true
+
+# Test If Expression
+expect
+    [
+        {
+            input: "if (x < y) { x }",
+            expectedCondition: Infix (Identifier "x") "<" (Identifier "y"),
+            expectedConsequence: [Identifier "x"],
+            expectedAlternative: NoElse,
+        },
+        {
+            input: "if (x < y) { x } else { y }",
+            expectedCondition: Infix (Identifier "x") "<" (Identifier "y"),
+            expectedConsequence: [Identifier "x"],
+            expectedAlternative: WithElse [Identifier "y"],
+        },
+    ]
+    |> List.all \test ->
+        (parser, program) =
+            Lexer.new test.input
+            |> Parser.new
+            |> Parser.parseProgram
+
+        (expectNoErrors parser)
+        &&
+        (expectStatementsCount program 1)
+        &&
+        (expectExpression program (If test.expectedCondition test.expectedConsequence test.expectedAlternative))
+    |> Bool.isEq Bool.true
+
+# Test Function Expression
+expect
+    [
+        {
+            input: "fn(x, y) { x + y; }",
+            expectedParams: [Identifier "x", Identifier "y"],
+            expectedBody: [Infix (Identifier "x") "+" (Identifier "y")],
+        },
+        {
+            input: "fn() {}",
+            expectedParams: [],
+            expectedBody: [],
+        },
+        {
+            input: "fn(x) {};",
+            expectedParams: [Identifier "x"],
+            expectedBody: [],
+        },
+        {
+            input: "fn(foo, bar, baz) {}",
+            expectedParams: [Identifier "foo", Identifier "bar", Identifier "baz"],
+            expectedBody: [],
+        },
+    ]
+    |> List.all \test ->
+        (parser, program) =
+            Lexer.new test.input
+            |> Parser.new
+            |> Parser.parseProgram
+
+        (expectNoErrors parser)
+        &&
+        (expectStatementsCount program 1)
+        &&
+        (expectExpression program (Function test.expectedParams test.expectedBody))
+    |> Bool.isEq Bool.true
+
+# Test Call Expression
+expect
+    [
+        {
+            input: "add(1, 2 * 3, 4 + 5);",
+            expected: Call (WithIdentifier (Identifier "add")) [Integer 1, Infix (Integer 2) "*" (Integer 3), Infix (Integer 4) "+" (Integer 5)],
+        },
+        {
+            input: "fn(x, y) { x + y; }(2, 3)",
+            expected: Call (WithFunction (Function [Identifier "x", Identifier "y"] [Infix (Identifier "x") "+" (Identifier "y")])) [Integer 2, Integer 3],
+        },
+        {
+            input: "callsFunction(2, 3, fn(x, y) { x + y; });",
+            expected: Call (WithIdentifier (Identifier "callsFunction")) [Integer 2, Integer 3, Function [Identifier "x", Identifier "y"] [Infix (Identifier "x") "+" (Identifier "y")]],
+        },
+    ]
+    |> List.all \test ->
+        (parser, program) =
+            Lexer.new test.input
+            |> Parser.new
+            |> Parser.parseProgram
+
+        (expectNoErrors parser)
+        &&
+        (expectStatementsCount program 1)
+        &&
+        (expectExpression program test.expected)
+    |> Bool.isEq Bool.true
+
+# Test Prepraring AST
+expect
+    input = "let myVar = anotherVar;"
+
+    (parser, program) =
+        Lexer.new input
+        |> Parser.new
+        |> Parser.parseProgram
+
+    (expectNoErrors parser) && AST.toStr program == "let myVar = anotherVar;"
+
+# Helpers
+expectNoErrors = \parser ->
+    (List.len parser.errors) == 0
+
+expectStatementsCount = \program, count ->
+    (List.len program) == count
+
+expectExpression = \program, expectation ->
+    List.first program == Ok expectation
