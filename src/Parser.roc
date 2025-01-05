@@ -108,7 +108,7 @@ parseStatement = \parser ->
                 Ok (new_parser, stmt) -> Ok ((new_parser, stmt))
                 Err (NotExpressionStatement new_parser) -> Err (UnknownStatement new_parser)
 
-parseLetStatement : Parser -> Result (Parser, [Let [Identifier Str]]) [NotLet Parser]
+parseLetStatement : Parser -> Result (Parser, [Let [Identifier Str] Expression]) [NotLet Parser]
 parseLetStatement = \parser ->
     when expectPeek parser Ident is
         Err (PeekError parser2) -> Err (NotLet parser2)
@@ -116,14 +116,13 @@ parseLetStatement = \parser ->
             when expectPeek parser2 Assign is
                 Err (PeekError parser3) -> Err (NotLet parser3)
                 Ok parser3 ->
-                    loop : Parser -> Parser
-                    loop = \looped_parser ->
-                        if peekTokenIs looped_parser Semicolon then
-                            nextToken looped_parser
-                        else
-                            loop (nextToken looped_parser)
-
-                    Ok (loop (nextToken parser3), Let (Identifier parser2.currToken.literal))
+                    when parseExpression (nextToken parser3) precLowest is
+                        Err (NoPrecRule parser4) -> Err (NotLet parser4)
+                        Ok (parser4, expression) ->
+                            if peekTokenIs parser4 Semicolon then
+                                Ok (nextToken parser4, Let (Identifier parser2.currToken.literal) expression)
+                            else
+                                Ok (parser4, Let (Identifier parser2.currToken.literal) expression)
 
 parseReturnStatement : Parser -> Result (Parser, [Return Expression]) [NotReturn Parser]
 parseReturnStatement = \parser ->

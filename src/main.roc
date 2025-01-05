@@ -184,23 +184,23 @@ expect
 
 # Chapter 2.4: Parser's first steps: parsing let statements
 expect
-    input =
-        """
-        let x = 5;
-        let y = 10;
-        let foobar = 838383;
-        """
-    (parser, program) =
-        Lexer.new input
-        |> Parser.new
-        |> Parser.parseProgram
+    [
+        { input: "let x = 5;", expectedIdentifier: "x", expectedValue: 5 },
+        { input: "let y = 10;", expectedIdentifier: "y", expectedValue: 10 },
+        { input: "let foobar = 838383;", expectedIdentifier: "foobar", expectedValue: 838383 },
+    ]
+    |> List.all \test ->
+        (parser, program) =
+            Lexer.new test.input
+            |> Parser.new
+            |> Parser.parseProgram
 
-    match = List.map2 program ["x", "y", "foobar"] \statement, expected ->
-        when statement is
-            Let (Identifier actual) -> actual == expected
-            _ -> Bool.false
-
-    (expectNoErrors parser) && (expectStatementsCount program 3) && match == [Bool.true, Bool.true, Bool.true]
+        (expectNoErrors parser)
+        &&
+        (expectStatementsCount program 1)
+        &&
+        (expectExpression program (Let (Identifier test.expectedIdentifier) (Integer test.expectedValue)))
+    |> Bool.isEq Bool.true
 
 # Chapter 2.4: Parser's first steps: parsing let statements
 # expect
@@ -252,7 +252,7 @@ expect
         |> Parser.new
         |> Parser.parseProgram
 
-    (expectNoErrors parser) && AST.toStr program == "let myVar = ;"
+    (expectNoErrors parser) && AST.toStr program == "let myVar = anotherVar;"
 
 # Chapter 2.6: Parsing expressions - Identifiers
 expect
