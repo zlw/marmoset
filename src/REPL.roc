@@ -7,7 +7,7 @@ import Parser
 import AST
 
 start =
-    Stdout.line! "Welcome to the REPL of Marmoset (Monkey programming language) written in Roc! 🐵"
+    Stdout.line! "Welcome to the REPL of Marmoset (Monkey) programming language, written in Roc! 🐵🤘"
 
     Task.loop! 0 \_ ->
         Stdout.write! ">> "
