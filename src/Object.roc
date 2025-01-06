@@ -5,6 +5,7 @@ Object : [
     Integer I64,
     Boolean Bool,
     ReturnValue Object,
+    Error Str,
 ]
 
 trueObject : Object
@@ -23,3 +24,4 @@ toStr = \object ->
         Integer i -> Num.toStr i
         Boolean b -> if b then "true" else "false"
         ReturnValue value -> toStr value
+        Error message -> "ERROR: $(message)"

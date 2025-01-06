@@ -1,4 +1,4 @@
-module [Program, Expression, addStatement, toStr]
+module [Program, Expression, addStatement, toStr, typeOf]
 
 Expression : [
     Let [Identifier Str] Expression, # statement
@@ -57,3 +57,17 @@ functionToStr = \params, body ->
 argsToStr : List Expression -> Str
 argsToStr = \args ->
     "($(args |> List.map expressionToStr |> Str.joinWith ", "))"
+
+typeOf : Expression -> Str
+typeOf = \expression ->
+    when expression is
+        Let _ _ -> "Let"
+        Return _ -> "Return"
+        Identifier _ -> "Identifier"
+        Integer _ -> "Integer"
+        Prefix _ _ -> "Prefix"
+        Infix _ _ _ -> "Infix"
+        Boolean _ -> "Boolean"
+        If _ _ _ -> "If"
+        Function _ _ -> "Function"
+        Call _ _ -> "Call"

@@ -18,6 +18,7 @@ evalExpressions = \expressions ->
         when (exprs, result) is
             ([], _) -> result
             (_, ReturnValue _) -> result
+            (_, Error _) -> result
             ([expr, .. as rest], _) -> loop rest (evalExpression expr)
 
     loop expressions nullObject
@@ -35,7 +36,7 @@ evalExpression = \expression ->
         Prefix "-" expr ->
             when evalExpression expr is
                 Integer i -> Integer (-i)
-                _ -> nullObject
+                _ -> Error "unknown operator: -$(AST.typeOf expr)"
 
         Infix left operator right ->
             leftExpr = evalExpression left
@@ -58,9 +59,9 @@ evalExpression = \expression ->
                     when operator is
                         "==" -> Boolean (leftValue == rightValue)
                         "!=" -> Boolean (leftValue != rightValue)
-                        _ -> nullObject
+                        _ -> Error "unknown operator: Boolean $(operator) Boolean"
 
-                _ -> nullObject
+                _ -> Error "type mismatch: $(AST.typeOf left) $(operator) $(AST.typeOf right)"
 
         If condition consequence alternative ->
             conditionExpr = evalExpression condition
@@ -189,6 +190,26 @@ expect
         { input: "return 2 * 5; 9;", expected: Integer 10 },
         { input: "9; return 2 * 5; 9;", expected: Integer 10 },
         { input: "if (10 > 1) { if (10 > 1) { return 10; return 11; } return 1; }", expected: Integer 10 },
+    ]
+    |> List.all \test ->
+        (_parser, program) =
+            test.input
+            |> Lexer.new
+            |> Parser.new
+            |> Parser.parseProgram
+
+        eval program == test.expected
+
+# Test Error Handling
+expect
+    [
+        { input: "5 + true;", expected: Error "type mismatch: Integer + Boolean" },
+        { input: "5 + true; 5;", expected: Error "type mismatch: Integer + Boolean" },
+        { input: "-true;", expected: Error "unknown operator: -Boolean" },
+        { input: "true + false;", expected: Error "unknown operator: Boolean + Boolean" },
+        { input: "5; true + false; 5", expected: Error "unknown operator: Boolean + Boolean" },
+        { input: "if (10 > 1) { true + false; }", expected: Error "unknown operator: Boolean + Boolean" },
+        { input: "if (10 > 1) { if (10 > 1) { return true + false; } return 1; }", expected: Error "unknown operator: Boolean + Boolean" },
     ]
     |> List.all \test ->
         (_parser, program) =
