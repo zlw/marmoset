@@ -4,94 +4,98 @@ import Object exposing [Object, trueObject, falseObject, nullObject]
 import AST exposing [Program, Expression]
 import Parser
 import Lexer
+import Environment exposing [Environment]
 
-eval : Program -> Object
-eval = \program ->
-    when evalExpressions program is
-        ReturnValue returnValue -> returnValue
-        returnValue -> returnValue
+eval : Program, Environment -> (Object, Environment)
+eval = \program, env ->
+    when evalExpressions program env is
+        (ReturnValue returnValue, new_env) -> (returnValue, new_env)
+        (returnValue, new_env) -> (returnValue, new_env)
 
-evalExpressions : List Expression -> Object
-evalExpressions = \expressions ->
-    loop : List Expression, Object -> Object
-    loop = \exprs, result ->
+evalExpressions : List Expression, Environment -> (Object, Environment)
+evalExpressions = \expressions, env ->
+    loop : List Expression, (Object, Environment) -> (Object, Environment)
+    loop = \exprs, (result, looped_env) ->
         when (exprs, result) is
-            ([], _) -> result
-            (_, ReturnValue _) -> result
-            (_, Error _) -> result
-            ([expr, .. as rest], _) -> loop rest (evalExpression expr)
+            ([], _) -> (result, looped_env)
+            (_, ReturnValue _) -> (result, looped_env)
+            (_, Error _) -> (result, looped_env)
+            ([expr, .. as rest], _) ->
+                (evalExpression expr looped_env)
+                |> \(new_result, new_env) -> loop rest (new_result, new_env)
 
-    loop expressions nullObject
+    loop expressions (nullObject, env)
 
-evalExpression : Expression -> Object
-evalExpression = \expression ->
+evalExpression : Expression, Environment -> (Object, Environment)
+evalExpression = \expression, env ->
     when expression is
-        Integer i -> Integer i
-        Boolean b -> if b then trueObject else falseObject
+        Integer i -> (Integer i, env)
+        Boolean b -> (if b then trueObject else falseObject, env)
         Prefix "!" expr ->
-            when evalExpression expr is
-                Boolean b -> if b then falseObject else trueObject
-                _ -> falseObject
+            (evaluatedExpr, env2) = evalExpression expr env
+            when evaluatedExpr is
+                Boolean b -> (if b then falseObject else trueObject, env2)
+                _ -> (falseObject, env2)
 
         Prefix "-" expr ->
-            evaluatedExpr = evalExpression expr
+            (evaluatedExpr, env2) = evalExpression expr env
             when evaluatedExpr is
-                Error _ -> evaluatedExpr
-                Integer i -> Integer (-i)
-                _ -> Error "unknown operator: -$(AST.typeOf expr)"
+                Error _ -> (evaluatedExpr, env2)
+                Integer i -> (Integer (-i), env2)
+                _ -> (Error "unknown operator: -$(AST.typeOf expr)", env2)
 
         Infix left operator right ->
-            leftExpr = evalExpression left
+            (leftExpr, env2) = evalExpression left env
 
             when leftExpr is
-                Error _ -> leftExpr
+                Error _ -> (leftExpr, env2)
                 _ ->
-                    rightExpr = evalExpression right
+                    (rightExpr, env3) = evalExpression right env2
 
                     when rightExpr is
-                        Error _ -> rightExpr
+                        Error _ -> (rightExpr, env3)
                         _ ->
                             when (leftExpr, rightExpr) is
                                 (Integer leftValue, Integer rightValue) ->
                                     when operator is
-                                        "+" -> Integer (leftValue + rightValue)
-                                        "-" -> Integer (leftValue - rightValue)
-                                        "*" -> Integer (leftValue * rightValue)
-                                        "/" -> Integer (leftValue // rightValue)
-                                        "<" -> Boolean (leftValue < rightValue)
-                                        ">" -> Boolean (leftValue > rightValue)
-                                        "==" -> Boolean (leftValue == rightValue)
-                                        "!=" -> Boolean (leftValue != rightValue)
-                                        _ -> nullObject
+                                        "+" -> (Integer (leftValue + rightValue), env3)
+                                        "-" -> (Integer (leftValue - rightValue), env3)
+                                        "*" -> (Integer (leftValue * rightValue), env3)
+                                        "/" -> (Integer (leftValue // rightValue), env3)
+                                        "<" -> (Boolean (leftValue < rightValue), env3)
+                                        ">" -> (Boolean (leftValue > rightValue), env3)
+                                        "==" -> (Boolean (leftValue == rightValue), env3)
+                                        "!=" -> (Boolean (leftValue != rightValue), env3)
+                                        _ -> (nullObject, env3)
 
                                 (Boolean leftValue, Boolean rightValue) ->
                                     when operator is
-                                        "==" -> Boolean (leftValue == rightValue)
-                                        "!=" -> Boolean (leftValue != rightValue)
-                                        _ -> Error "unknown operator: Boolean $(operator) Boolean"
+                                        "==" -> (Boolean (leftValue == rightValue), env3)
+                                        "!=" -> (Boolean (leftValue != rightValue), env3)
+                                        _ -> (Error "unknown operator: Boolean $(operator) Boolean", env3)
 
-                                _ -> Error "type mismatch: $(AST.typeOf left) $(operator) $(AST.typeOf right)"
+                                _ -> (Error "type mismatch: $(AST.typeOf left) $(operator) $(AST.typeOf right)", env3)
 
         If condition consequence alternative ->
-            conditionExpr = evalExpression condition
+            (conditionExpr, env2) = evalExpression condition env
 
             when conditionExpr is
-                Error _ -> conditionExpr
+                Error _ -> (conditionExpr, env2)
                 _ ->
                     if isTruthy conditionExpr then
-                        evalExpressions consequence
+                        evalExpressions consequence env2
                     else
                         when alternative is
-                            WithElse block -> evalExpressions block
-                            NoElse -> nullObject
+                            WithElse block -> evalExpressions block env2
+                            NoElse -> (nullObject, env2)
 
         Return expr ->
-            evaluatedExpr = evalExpression expr
+            (evaluatedExpr, env2) = evalExpression expr env
             when evaluatedExpr is
-                Error _ -> evaluatedExpr
-                _ -> ReturnValue evaluatedExpr
+                Error _ -> (evaluatedExpr, env2)
+                _ -> (ReturnValue evaluatedExpr, env2)
 
-        _ -> nullObject
+        _ -> (nullObject, env)
 
 isTruthy : Object -> Bool
 isTruthy = \object ->
@@ -126,7 +130,7 @@ expect
             |> Parser.new
             |> Parser.parseProgram
 
-        eval program == test.expected
+        (eval program Environment.new).0 == test.expected
 
 # Test Eval Boolean Expression
 expect
@@ -158,7 +162,7 @@ expect
             |> Parser.new
             |> Parser.parseProgram
 
-        eval program == test.expected
+        (eval program Environment.new).0 == test.expected
 
 # Test Bang Operator
 expect
@@ -177,7 +181,7 @@ expect
             |> Parser.new
             |> Parser.parseProgram
 
-        eval program == test.expected
+        (eval program Environment.new).0 == test.expected
 
 # Test If Else Expression
 expect
@@ -197,7 +201,7 @@ expect
             |> Parser.new
             |> Parser.parseProgram
 
-        eval program == test.expected
+        (eval program Environment.new).0 == test.expected
 
 # Test Return Statement
 expect
@@ -215,7 +219,7 @@ expect
             |> Parser.new
             |> Parser.parseProgram
 
-        eval program == test.expected
+        (eval program Environment.new).0 == test.expected
 
 # Test Error Handling
 expect
@@ -235,4 +239,4 @@ expect
             |> Parser.new
             |> Parser.parseProgram
 
-        eval program == test.expected
+        (eval program Environment.new).0 == test.expected
