@@ -4,6 +4,7 @@ Object : [
     Null,
     Integer I64,
     Boolean Bool,
+    ReturnValue Object,
 ]
 
 trueObject : Object
@@ -21,3 +22,4 @@ toStr = \object ->
         Null -> "null"
         Integer i -> Num.toStr i
         Boolean b -> if b then "true" else "false"
+        ReturnValue value -> toStr value

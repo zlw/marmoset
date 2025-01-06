@@ -7,15 +7,18 @@ import Lexer
 
 eval : Program -> Object
 eval = \program ->
-    evalExpressions program
+    when evalExpressions program is
+        ReturnValue returnValue -> returnValue
+        returnValue -> returnValue
 
 evalExpressions : List Expression -> Object
 evalExpressions = \expressions ->
     loop : List Expression, Object -> Object
     loop = \exprs, result ->
-        when exprs is
-            [] -> result
-            [expr, .. as rest] -> loop rest (evalExpression expr)
+        when (exprs, result) is
+            ([], _) -> result
+            (_, ReturnValue _) -> result
+            ([expr, .. as rest], _) -> loop rest (evalExpression expr)
 
     loop expressions nullObject
 
@@ -69,6 +72,7 @@ evalExpression = \expression ->
                     WithElse block -> evalExpressions block
                     NoElse -> nullObject
 
+        Return expr -> ReturnValue (evalExpression expr)
         _ -> nullObject
 
 isTruthy : Object -> Bool
@@ -167,6 +171,24 @@ expect
         { input: "if (1 > 2) { 10 }", expected: nullObject },
         { input: "if (1 > 2) { 10 } else { 20 }", expected: Integer 20 },
         { input: "if (1 < 2) { 10 } else { 20 }", expected: Integer 10 },
+    ]
+    |> List.all \test ->
+        (_parser, program) =
+            test.input
+            |> Lexer.new
+            |> Parser.new
+            |> Parser.parseProgram
+
+        eval program == test.expected
+
+# Test Return Statement
+expect
+    [
+        { input: "return 10;", expected: Integer 10 },
+        { input: "return 10; 9;", expected: Integer 10 },
+        { input: "return 2 * 5; 9;", expected: Integer 10 },
+        { input: "9; return 2 * 5; 9;", expected: Integer 10 },
+        { input: "if (10 > 1) { if (10 > 1) { return 10; return 11; } return 1; }", expected: Integer 10 },
     ]
     |> List.all \test ->
         (_parser, program) =
