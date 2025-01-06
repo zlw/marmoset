@@ -1,4 +1,11 @@
-# Monkey Language but in Roc 🐵
+# Note
+
+I got stucked at building Environment object needed for functions and closures.
+Currently Roc does not support recursive types, which makes it impossible to implement this feature.
+
+I might come back to this in the future when Roc supports recursive types.
+
+## Monkey Language but in Roc 🐵
 * [Writing Interpreter in Go](https://interpreterbook.com/) / [Writing Compiler in Go](https://compilerbook.com/)'s Monkey Language but in [Roc](https://www.roc-lang.org/)
 * [Marmoset](https://en.wikipedia.org/wiki/Marmoset) is a small monkey, sometimes called Pug Monkey, and I do like pugs 🙈
 
