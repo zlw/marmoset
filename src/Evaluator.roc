@@ -89,6 +89,17 @@ evalExpression = \expression, env ->
                             WithElse block -> evalExpressions block env2
                             NoElse -> (nullObject, env2)
 
+        Let (Identifier ident) expr ->
+            (evaluatedExpr, env2) = evalExpression expr env
+            when evaluatedExpr is
+                Error _ -> (evaluatedExpr, env2)
+                _ -> (evaluatedExpr, Environment.set env2 ident evaluatedExpr)
+
+        Identifier ident ->
+            when Environment.get env ident is
+                Ok value -> (value, env)
+                Err _ -> (Error "identifier not found: $(ident)", env)
+
         Return expr ->
             (evaluatedExpr, env2) = evalExpression expr env
             when evaluatedExpr is
@@ -231,6 +242,24 @@ expect
         { input: "5; true + false; 5", expected: Error "unknown operator: Boolean + Boolean" },
         { input: "if (10 > 1) { true + false; }", expected: Error "unknown operator: Boolean + Boolean" },
         { input: "if (10 > 1) { if (10 > 1) { return true + false; } return 1; }", expected: Error "unknown operator: Boolean + Boolean" },
+        { input: "foobar", expected: Error "identifier not found: foobar" },
+    ]
+    |> List.all \test ->
+        (_parser, program) =
+            test.input
+            |> Lexer.new
+            |> Parser.new
+            |> Parser.parseProgram
+
+        (eval program Environment.new).0 == test.expected
+
+# Test Let Statements
+expect
+    [
+        { input: "let a = 5; a;", expected: Integer 5 },
+        { input: "let a = 5 * 5; a;", expected: Integer 25 },
+        { input: "let a = 5; let b = a; b;", expected: Integer 5 },
+        { input: "let a = 5; let b = a; let c = a + b + 5; c;", expected: Integer 15 },
     ]
     |> List.all \test ->
         (_parser, program) =
