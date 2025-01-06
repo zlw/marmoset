@@ -34,46 +34,63 @@ evalExpression = \expression ->
                 _ -> falseObject
 
         Prefix "-" expr ->
-            when evalExpression expr is
+            evaluatedExpr = evalExpression expr
+            when evaluatedExpr is
+                Error _ -> evaluatedExpr
                 Integer i -> Integer (-i)
                 _ -> Error "unknown operator: -$(AST.typeOf expr)"
 
         Infix left operator right ->
             leftExpr = evalExpression left
-            rightExpr = evalExpression right
 
-            when (leftExpr, rightExpr) is
-                (Integer leftValue, Integer rightValue) ->
-                    when operator is
-                        "+" -> Integer (leftValue + rightValue)
-                        "-" -> Integer (leftValue - rightValue)
-                        "*" -> Integer (leftValue * rightValue)
-                        "/" -> Integer (leftValue // rightValue)
-                        "<" -> Boolean (leftValue < rightValue)
-                        ">" -> Boolean (leftValue > rightValue)
-                        "==" -> Boolean (leftValue == rightValue)
-                        "!=" -> Boolean (leftValue != rightValue)
-                        _ -> nullObject
+            when leftExpr is
+                Error _ -> leftExpr
+                _ ->
+                    rightExpr = evalExpression right
 
-                (Boolean leftValue, Boolean rightValue) ->
-                    when operator is
-                        "==" -> Boolean (leftValue == rightValue)
-                        "!=" -> Boolean (leftValue != rightValue)
-                        _ -> Error "unknown operator: Boolean $(operator) Boolean"
+                    when rightExpr is
+                        Error _ -> rightExpr
+                        _ ->
+                            when (leftExpr, rightExpr) is
+                                (Integer leftValue, Integer rightValue) ->
+                                    when operator is
+                                        "+" -> Integer (leftValue + rightValue)
+                                        "-" -> Integer (leftValue - rightValue)
+                                        "*" -> Integer (leftValue * rightValue)
+                                        "/" -> Integer (leftValue // rightValue)
+                                        "<" -> Boolean (leftValue < rightValue)
+                                        ">" -> Boolean (leftValue > rightValue)
+                                        "==" -> Boolean (leftValue == rightValue)
+                                        "!=" -> Boolean (leftValue != rightValue)
+                                        _ -> nullObject
 
-                _ -> Error "type mismatch: $(AST.typeOf left) $(operator) $(AST.typeOf right)"
+                                (Boolean leftValue, Boolean rightValue) ->
+                                    when operator is
+                                        "==" -> Boolean (leftValue == rightValue)
+                                        "!=" -> Boolean (leftValue != rightValue)
+                                        _ -> Error "unknown operator: Boolean $(operator) Boolean"
+
+                                _ -> Error "type mismatch: $(AST.typeOf left) $(operator) $(AST.typeOf right)"
 
         If condition consequence alternative ->
             conditionExpr = evalExpression condition
 
-            if isTruthy conditionExpr then
-                evalExpressions consequence
-            else
-                when alternative is
-                    WithElse block -> evalExpressions block
-                    NoElse -> nullObject
+            when conditionExpr is
+                Error _ -> conditionExpr
+                _ ->
+                    if isTruthy conditionExpr then
+                        evalExpressions consequence
+                    else
+                        when alternative is
+                            WithElse block -> evalExpressions block
+                            NoElse -> nullObject
 
-        Return expr -> ReturnValue (evalExpression expr)
+        Return expr ->
+            evaluatedExpr = evalExpression expr
+            when evaluatedExpr is
+                Error _ -> evaluatedExpr
+                _ -> ReturnValue evaluatedExpr
+
         _ -> nullObject
 
 isTruthy : Object -> Bool
