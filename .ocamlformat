@@ -1,0 +1,8 @@
+profile = default
+version = 0.27.0
+break-string-literals = never
+type-decl = sparse
+if-then-else = vertical
+break-fun-decl = smart
+break-fun-sig = smart
+margin = 90

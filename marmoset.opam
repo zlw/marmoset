@@ -12,6 +12,8 @@ bug-reports: "https://github.com/zlw/marmoset-ml/issues"
 depends: [
   "dune" {>= "3.17"}
   "ocaml"
+  "ppx_deriving"
+  "ppx_inline_test" {with-test}
   "odoc" {with-doc}
 ]
 build: [
