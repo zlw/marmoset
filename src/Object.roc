@@ -1,11 +1,14 @@
 module [Object, toStr, nullObject, trueObject, falseObject]
 
+import AST exposing [Expression]
+
 Object : [
     Null,
     Integer I64,
     Boolean Bool,
     ReturnValue Object,
     Error Str,
+    Function (List [Identifier Str]) (List Expression),
 ]
 
 trueObject : Object
@@ -25,3 +28,4 @@ toStr = \object ->
         Boolean b -> if b then "true" else "false"
         ReturnValue value -> toStr value
         Error message -> "ERROR: $(message)"
+        Function params _ -> "fn($((List.map params \Identifier p -> p) |> Str.joinWith ", ")) { ... }"

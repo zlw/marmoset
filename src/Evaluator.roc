@@ -100,6 +100,9 @@ evalExpression = \expression, env ->
                 Ok value -> (value, env)
                 Err _ -> (Error "identifier not found: $(ident)", env)
 
+        Function params body ->
+            (Function params body, env)
+
         Return expr ->
             (evaluatedExpr, env2) = evalExpression expr env
             when evaluatedExpr is
@@ -260,6 +263,21 @@ expect
         { input: "let a = 5 * 5; a;", expected: Integer 25 },
         { input: "let a = 5; let b = a; b;", expected: Integer 5 },
         { input: "let a = 5; let b = a; let c = a + b + 5; c;", expected: Integer 15 },
+    ]
+    |> List.all \test ->
+        (_parser, program) =
+            test.input
+            |> Lexer.new
+            |> Parser.new
+            |> Parser.parseProgram
+
+        (eval program Environment.new).0 == test.expected
+
+# Test Function Object
+expect
+    [
+        { input: "fn(x) { x + 2 }", expected: Function [Identifier "x"] [Infix (Identifier "x") "+" (Integer 2)] },
+        { input: "fn(x, y) { if (x < y) { x } else { y } }", expected: Function [Identifier "x", Identifier "y"] [If (Infix (Identifier "x") "<" (Identifier "y")) [Identifier "x"] (WithElse [Identifier "y"])] },
     ]
     |> List.all \test ->
         (_parser, program) =
