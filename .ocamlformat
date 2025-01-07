@@ -3,7 +3,8 @@ version = 0.27.0
 break-string-literals = never
 type-decl = sparse
 if-then-else = vertical
-break-fun-decl = smart
+break-fun-decl = wrap
 break-fun-sig = smart
-margin = 90
+margin = 114
 break-infix = wrap-or-vertical
+break-infix-before-func
