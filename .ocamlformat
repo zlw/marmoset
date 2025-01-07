@@ -6,3 +6,4 @@ if-then-else = vertical
 break-fun-decl = smart
 break-fun-sig = smart
 margin = 90
+break-infix = wrap-or-vertical

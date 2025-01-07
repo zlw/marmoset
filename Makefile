@@ -5,10 +5,10 @@ release:
 	dune build --profile release
 
 unit:
-	dune runtest
+	dune runtest --force
 
 repl:
 	dune exec marmoset
 
 watch:
-	dune build -w
+	dune runtest -w --force
