@@ -1,4 +1,4 @@
-let rec repl () =
+let rec repl env =
   Printf.printf ">> ";
   flush stdout;
 
@@ -7,12 +7,14 @@ let rec repl () =
   if input = "exit" then
     print_endline "Goodbye!"
   else
-    Marmoset.Lexer.lex input
-    |> List.iter (fun t -> Printf.printf "%s\n" (Marmoset.Token.show_token t));
+    let _, program = Marmoset.Lexer.init input |> Marmoset.Parser.init |> Marmoset.Parser.parse_program in
+    let value, env' = Marmoset.Eval.eval program env in
+    let str = Marmoset.Value.to_string value in
 
-  repl ()
+    print_endline str;
+    repl env'
 
 let () =
-  print_endline
-    "Welcome to the REPL of Marmoset (Monkey) programming language, written in OCaml! 🐵🐫";
-  repl ()
+  print_endline "Welcome to the REPL of Marmoset (Monkey) programming language, written in OCaml! 🐵🐫";
+
+  repl Marmoset.Env.init

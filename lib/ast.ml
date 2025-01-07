@@ -17,6 +17,17 @@ module AST = struct
     | Function of expression list * statement
     | Call of expression * expression list
 
+  let type_of (e : expression) : string =
+    match e with
+    | Identifier _ -> "Identifier"
+    | Integer _ -> "Integer"
+    | Prefix _ -> "Prefix"
+    | Infix _ -> "Infix"
+    | Boolean _ -> "Boolean"
+    | If _ -> "If"
+    | Function _ -> "Function"
+    | Call _ -> "Call"
+
   let to_string (program : program) : string =
     let rec statement_to_string (s : statement) : string =
       match s with
