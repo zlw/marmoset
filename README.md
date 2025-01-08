@@ -49,19 +49,19 @@ make unit
 
 | Feature                | Interpreter | Compiler |
 |------------------------|-------------|----------|
-| Bindings               | ❌          | ❌       |
-| Conditionals           | ❌          | ❌       |
+| Bindings               | ✅          | ❌       |
+| Conditionals           | ✅          | ❌       |
 | Strings                | ❌          | ❌       |
-| Integers               | ❌          | ❌       |
-| Arithmetic +-/*        | ❌          | ❌       |
+| Integers               | ✅          | ❌       |
+| Arithmetic +-/*        | ✅          | ❌       |
 | Arrays                 | ❌          | ❌       |
 | Indexing               | ❌          | ❌       |
 | Dictionaries           | ❌          | ❌       |
-| Functions              | ❌          | ❌       |
-| First class functions  | ❌          | ❌       |
-| Higher order functions | ❌          | ❌       |
-| Closures               | ❌          | ❌       |
-| Recursion              | ❌          | ❌       |
+| Functions              | ✅          | ❌       |
+| First class functions  | ✅          | ❌       |
+| Higher order functions | ✅          | ❌       |
+| Closures               | ✅          | ❌       |
+| Recursion              | ✅          | ❌       |
 | Built-In Functions     | ❌          | ❌       |
 | Loops                  | ❌          | ❌       |
 | Floats                 | ❌          | ❌       |

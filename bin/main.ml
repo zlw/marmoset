@@ -17,4 +17,4 @@ let rec repl env =
 let () =
   print_endline "Welcome to the REPL of Marmoset (Monkey) programming language, written in OCaml! 🐵🐫";
 
-  repl Marmoset.Env.init
+  repl (Marmoset.Env.init ())

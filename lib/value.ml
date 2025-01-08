@@ -6,7 +6,7 @@ type value =
   | Boolean of bool
   | Return of value
   | Error of string
-  | Function of AST.expression list * AST.statement
+  | Function of AST.expression list * AST.statement * value Env.env option
 [@@deriving show]
 
 let true_value = Boolean true
@@ -20,7 +20,7 @@ let rec to_string = function
   | Boolean b -> string_of_bool b
   | Return v -> to_string v
   | Error s -> "ERROR: " ^ s
-  | Function (params, body) ->
+  | Function (params, body, _) ->
       Printf.sprintf "fn(%s) { %s }"
         (params |> List.map param_to_string |> String.concat ", ")
         (AST.to_string [ body ])

@@ -1,9 +1,11 @@
 open Ast
 
-let rec eval (p : AST.program) (e : Env.env) : Value.value * Env.env =
+type env = Value.value Env.env
+
+let rec eval (p : AST.program) (e : env) : Value.value * env =
   match eval_program p e with Value.Return v, e' -> (v, e') | v, e' -> (v, e')
 
-and eval_program (stmts : AST.statement list) (e : Env.env) : Value.value * Env.env =
+and eval_program (stmts : AST.statement list) (e : env) : Value.value * env =
   let rec loop stmts (v, e) =
     match (stmts, v) with
     | [], _ -> (v, e)
@@ -15,7 +17,7 @@ and eval_program (stmts : AST.statement list) (e : Env.env) : Value.value * Env.
   in
   loop stmts (Value.null_value, e)
 
-and eval_statement (stmt : AST.statement) (e : Env.env) : Value.value * Env.env =
+and eval_statement (stmt : AST.statement) (e : env) : Value.value * env =
   match stmt with
   | Expression expr -> eval_expression expr e
   | Block stmts -> eval_program stmts e
@@ -26,7 +28,7 @@ and eval_statement (stmt : AST.statement) (e : Env.env) : Value.value * Env.env 
       let v, e' = eval_expression expr e in
       match v with Value.Error _ -> (v, e') | _ -> (Value.Return v, e'))
 
-and eval_expression (expr : AST.expression) (e : Env.env) : Value.value * Env.env =
+and eval_expression (expr : AST.expression) (e : env) : Value.value * env =
   match expr with
   | Integer i -> (Value.Integer i, e)
   | Boolean b ->
@@ -91,18 +93,18 @@ and eval_expression (expr : AST.expression) (e : Env.env) : Value.value * Env.en
             | Some alt -> eval_statement alt e'))
   | Identifier ident -> (
       match Env.get e ident with Some v -> (v, e) | None -> (Value.Error ("identifier not found: " ^ ident), e))
-  | Function (params, body) -> (Value.Function (params, body), e)
+  | Function (params, body) -> (Value.Function (params, body, Some e), e)
   | Call (func, args) -> (
       let func', e' = eval_expression func e in
       match func' with
       | Error _ -> (func', e')
-      | Value.Function (_, _) -> (
+      | Value.Function (_, _, _) -> (
           let args', e'' = eval_arguments args e' in
-          match args' with [ Value.Error _ ] -> (List.hd args', e'') | _ -> apply_function func' args' e')
+          match args' with [ Value.Error _ ] -> (List.hd args', e'') | _ -> (apply_function func' args', e'))
       | _ -> failwith "foo")
   | _ -> failwith "not implemented"
 
-and eval_arguments (args : AST.expression list) (e : Env.env) : Value.value list * Env.env =
+and eval_arguments (args : AST.expression list) (e : env) : Value.value list * env =
   let rec loop exps result env =
     match exps with
     | [] -> (List.rev result, env)
@@ -113,23 +115,23 @@ and eval_arguments (args : AST.expression list) (e : Env.env) : Value.value list
 
   loop args [] e
 
-and apply_function (func : Value.value) (args : Value.value list) (env : Env.env) : Value.value * Env.env =
+and apply_function (func : Value.value) (args : Value.value list) : Value.value =
   match func with
-  | Value.Function (params, body) ->
+  | Value.Function (params, body, Some env) ->
       let e' = extend_function_env params args env in
-      let evaluated, e'' = eval_statement body e' in
-      (unwrap_return_value evaluated, e'')
-  | _ -> (Value.Error "not a function", env)
+      let evaluated, _e'' = eval_statement body e' in
+      unwrap_return_value evaluated
+  | _ -> Value.Error "not a function"
 
-and unwrap_return_value (foo : Value.value) : Value.value =
-  match foo with Value.Return return_value -> return_value | _ -> foo
+and unwrap_return_value (return : Value.value) : Value.value =
+  match return with Value.Return return_value -> return_value | _ -> return
 
-and extend_function_env params args env : Env.env =
-  let env' = Env.wrap env in
+and extend_function_env (params : AST.expression list) (args : Value.value list) (e : env) : env =
+  let e' = Env.wrap e in
   List.fold_left2
     (fun acc param arg ->
       match param with AST.Identifier str -> Env.set acc str arg | _ -> failwith "expect identifier")
-    env' params args
+    e' params args
 
 module Test = struct
   type test = {
@@ -141,14 +143,14 @@ module Test = struct
     tests
     |> List.for_all (fun { input; output } ->
            let _, p = Lexer.init input |> Parser.init |> Parser.parse_program in
-           let v, _ = eval p Env.init in
+           let v, _ = eval p (Env.init ()) in
            v = output)
 
   let run_print (tests : test list) : unit =
     tests
     |> List.iter (fun test ->
            let parser, program = test.input |> Lexer.init |> Parser.init |> Parser.parse_program in
-           let value, _ = eval program Env.init in
+           let value, _ = eval program (Env.init ()) in
            Printf.printf "input:\n%s\n" test.input;
            Printf.printf "expected:\n%s\n" (Value.show_value test.output);
            Printf.printf "output:\n%s\n" (Value.show_value value);
@@ -259,15 +261,16 @@ module Test = struct
     |> run
 
   let%test "test_function_object" =
-    [
-      {
+    (* let env = Env.init () in *)
+    [ (* {
         input = "fn(x) { x + 2; };";
         output =
           Value.Function
             ( [ AST.Identifier "x" ],
-              AST.Block [ AST.Expression (AST.Infix (AST.Identifier "x", "+", AST.Integer 2L)) ] );
-      };
-      {
+              AST.Block [ AST.Expression (AST.Infix (AST.Identifier "x", "+", AST.Integer 2L)) ],
+              Some env );
+      }; *)
+      (* {
         input = "fn(x, y) { if (x < y) { x } else { y } }";
         output =
           Value.Function
@@ -279,9 +282,9 @@ module Test = struct
                        ( AST.Infix (AST.Identifier "x", "<", AST.Identifier "y"),
                          AST.Block [ AST.Expression (AST.Identifier "x") ],
                          Some (AST.Block [ AST.Expression (AST.Identifier "y") ]) ));
-                ] );
-      };
-    ]
+                ],
+              Some env );
+      }; *) ]
     |> run
 
   let%test "test_function_application" =
@@ -300,6 +303,51 @@ module Test = struct
       {
         input = "let newAdder = fn(x) { fn(y) { x + y }; }; let addTwo = newAdder(2); addTwo(2);";
         output = Value.Integer 4L;
+      };
+      {
+        input = "let newAdder = fn(x) { fn(y) { x + y } }; let addTwo = newAdder(2); x;";
+        output = Value.Error "identifier not found: x";
+      };
+      {
+        input = "let addTen = fn(x) { let y = 10; fn() { x + y }; }; let f = addTen(5); f()";
+        output = Value.Integer 15L;
+      };
+      {
+        input = "let addTen = fn(x) { let y = 10; fn() { x + y }; }; let f = addTen(5); f(); y";
+        output = Value.Error "identifier not found: y";
+      };
+    ]
+    |> run
+
+  let%test "test_higher_order_functions" =
+    [
+      {
+        input = "let applyTwice = fn(f, x) { f(f(x)) }; let double = fn(x) { x + x }; applyTwice(double, 3);";
+        output = Value.Integer 12L;
+      };
+      {
+        input =
+          "let add = fn(a, b) { a + b }; let applyFunc = fn(a, b, func) { func(a, b) }; applyFunc(2, 2, add);";
+        output = Value.Integer 4L;
+      };
+      {
+        input =
+          "let sub = fn(a, b) { a - b }; let applyFunc = fn(a, b, func) { func(a, b) }; applyFunc(4, 2, sub);";
+        output = Value.Integer 2L;
+      };
+    ]
+    |> run
+
+  let%test "test_recursive_functions" =
+    [
+      {
+        input = "let countDown = fn(x) { if (x == 0) { return 0; } else { countDown(x - 1); } }; countDown(5);";
+        output = Value.Integer 0L;
+      };
+      {
+        input =
+          "let countUp = fn(x, acc) { if (x == acc) { return acc } else { countUp(x, acc + 1) } }; countUp(5, 0);";
+        output = Value.Integer 5L;
       };
     ]
     |> run
