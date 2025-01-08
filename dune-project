@@ -11,18 +11,14 @@
 
 (maintainers "Krzysztof Zalewski <zlw.zalewski@gmail.com>")
 
-(license "MIT")
+(license MIT)
 
-(documentation "https://github.com/zlw/marmoset-ml")
+(documentation https://github.com/zlw/marmoset-ml)
 
 (package
  (name marmoset)
  (synopsis "Monkey Language but in OCaml")
  (description "Monkey Language but in OCaml")
- (tags("monkey" "interpreter" "compiler" "bytecode" "virtual machine"))
- (depends
-  ocaml
-  ppx_deriving
-  (ppx_inline_test :with-test)))
-
-; See the complete stanza docs at https://dune.readthedocs.io/en/stable/reference/dune-project/index.html
+ (tags
+  (monkey interpreter compiler bytecode "virtual machine"))
+ (depends ocaml ppx_deriving ppx_inline_test))
