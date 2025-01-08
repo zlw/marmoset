@@ -40,13 +40,14 @@ let init (l : Lexer.lexer) : parser =
 
 let curr_token_is (p : parser) (t : Token.token_type) : bool = p.curr_token.token_type = t
 let peek_token_is (p : parser) (t : Token.token_type) : bool = p.peek_token.token_type = t
+let add_error (p : parser) (msg : string) : parser = { p with errors = [ msg ] @ p.errors }
 
 let peek_error (p : parser) (tt : Token.token_type) : parser =
   let msg =
     Printf.sprintf "expected next token to be %s, got %s instead" (Token.show_token_type tt)
       (Token.show_token_type p.peek_token.token_type)
   in
-  { p with errors = p.errors @ [ msg ] }
+  add_error p msg
 
 let expect_peek (p : parser) (tt : Token.token_type) : (parser, parser) result =
   if peek_token_is p tt then
@@ -56,9 +57,23 @@ let expect_peek (p : parser) (tt : Token.token_type) : (parser, parser) result =
 
 let no_prefix_parse_fn_error (p : parser) (t : Token.token_type) : parser =
   let msg = Printf.sprintf "no prefix parse function for %s found" (Token.show_token_type t) in
-  { p with errors = p.errors @ [ msg ] }
+  add_error p msg
 
-let rec parse_statement (p : parser) : (parser * AST.statement, parser) result =
+let rec parse_program (p : parser) : parser * AST.program =
+  let rec loop (lp : parser) (prog : AST.program) =
+    if curr_token_is lp Token.EOF then
+      (lp, List.rev prog)
+    else
+      let lp2, prog2 =
+        match parse_statement lp with Ok (lp3, stmt) -> (lp3, [ stmt ] @ prog) | Error lp3 -> (lp3, prog)
+      in
+
+      loop (next_token lp2) prog2
+  in
+
+  loop p []
+
+and parse_statement (p : parser) : (parser * AST.statement, parser) result =
   match p.curr_token.token_type with
   | Token.Let -> parse_let_statement p
   | Token.Return -> parse_return_statement p
@@ -190,11 +205,11 @@ and parse_if_expression (p : parser) : parser * AST.expression =
 and parse_block_statement (p : parser) : parser * AST.statement =
   let rec loop (lp : parser) (stmts : AST.statement list) =
     if curr_token_is lp Token.RBrace || curr_token_is lp Token.EOF then
-      (lp, AST.Block stmts)
+      (lp, AST.Block (List.rev stmts))
     else
       let lp2, new_block =
         match parse_statement lp with
-        | Ok (new_parser, stmt) -> (new_parser, stmts @ [ stmt ])
+        | Ok (new_parser, stmt) -> (new_parser, [ stmt ] @ stmts)
         | Error new_parser -> (new_parser, stmts)
       in
 
@@ -223,13 +238,13 @@ and parse_function_parameters (p : parser) : parser * AST.expression list =
     let rec loop (lp : parser) (idents : AST.expression list) =
       if peek_token_is lp Token.Comma then
         let lp2 = next_token (next_token lp) in
-        let ident = idents @ [ AST.Identifier lp2.curr_token.literal ] in
+        let ident = [ AST.Identifier lp2.curr_token.literal ] @ idents in
 
         loop lp2 ident
       else
         match expect_peek lp Token.RParen with
         | Error _lp2 -> failwith "can't parse function parameters"
-        | Ok lp2 -> (lp2, idents)
+        | Ok lp2 -> (lp2, List.rev idents)
     in
     let p2 = next_token p in
 
@@ -250,28 +265,22 @@ and parse_call_arguments (p : parser) : parser * AST.expression list =
           if peek_token_is lp Token.Comma then
             match parse_expression (next_token (next_token lp)) prec_lowest with
             | Error _lp2 -> failwith "can't parse call arguments"
-            | Ok (lp2, arg) -> loop lp2 (args @ [ arg ])
+            | Ok (lp2, arg) -> loop lp2 ([ arg ] @ args)
           else
             match expect_peek lp Token.RParen with
             | Error _lp2 -> failwith "can't parse call arguments"
-            | Ok lp2 -> (lp2, args)
+            | Ok lp2 -> (lp2, List.rev args)
         in
 
         loop p2 [ arg ]
 
-let parse_program (p : parser) : parser * AST.program =
-  let rec loop (lp : parser) (prog : AST.program) =
-    if curr_token_is lp Token.EOF then
-      (lp, prog)
-    else
-      let lp2, prog2 =
-        match parse_statement lp with Ok (lp3, stmt) -> (lp3, prog @ [ stmt ]) | Error lp3 -> (lp3, prog)
-      in
+let parse (s : string) : (AST.program, string list) result =
+  let parser, program = s |> Lexer.init |> init |> parse_program in
 
-      loop (next_token lp2) prog2
-  in
-
-  loop p []
+  if parser.errors = [] then
+    Ok program
+  else
+    Error (List.rev parser.errors)
 
 module Test = struct
   type test = {
@@ -279,25 +288,24 @@ module Test = struct
     output : AST.program;
   }
 
-  let expect_no_errors (parser : parser) : bool = List.length parser.errors = 0
-
   let run (tests : test list) : bool =
     tests
     |> List.for_all (fun test ->
-           let parser, program = test.input |> Lexer.init |> init |> parse_program in
-
-           expect_no_errors parser && program = test.output)
+           match test.input |> parse with Ok program -> program = test.output | Error _ -> false)
 
   let run_print (tests : test list) : unit =
     tests
     |> List.iter (fun test ->
-           let parser, program = test.input |> Lexer.init |> init |> parse_program in
-
-           Printf.printf "input:\n%s\n" test.input;
-           Printf.printf "expected:\n%s\n" (AST.show_program test.output);
-           Printf.printf "output:\n%s\n" (AST.show_program program);
-           Printf.printf "errors:\n%s\n" (String.concat ", " parser.errors);
-           flush stdout)
+           match test.input |> parse with
+           | Ok program ->
+               Printf.printf "input:\n%s\n" test.input;
+               Printf.printf "expected:\n%s\n" (AST.show_program test.output);
+               Printf.printf "output:\n%s\n" (AST.show_program program);
+               flush stdout
+           | Error errors ->
+               Printf.printf "input:\n%s\n" test.input;
+               Printf.printf "errors:\n%s\n" (String.concat "\n" errors);
+               flush stdout)
 
   let%test "test_let_statements" =
     [
@@ -420,9 +428,7 @@ module Test = struct
     |> List.for_all (fun test ->
            let input, output = test in
 
-           let parser, program = input |> Lexer.init |> init |> parse_program in
-
-           expect_no_errors parser && AST.to_string program = output)
+           match input |> parse with Ok program -> AST.to_string program = output | Error _ -> false)
 
   let%test "test_boolean_expression" =
     [
@@ -433,17 +439,17 @@ module Test = struct
 
   let%test "test_if_expression" =
     [
-      (* {
+      {
         input = "if (x < y) { x }";
         output =
           [
             AST.Expression
               (AST.If
                  ( AST.Infix (AST.Identifier "x", "<", AST.Identifier "y"),
-                   (AST.Block [AST.Expression (AST.Identifier "x")]),
+                   AST.Block [ AST.Expression (AST.Identifier "x") ],
                    None ));
           ];
-      }; *)
+      };
       {
         input = "if (x < y) { x } else { y }";
         output =

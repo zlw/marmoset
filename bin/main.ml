@@ -7,14 +7,18 @@ let rec repl env =
   if input = "exit" then
     print_endline "Goodbye!"
   else
-    let _, program = Marmoset.Lexer.init input |> Marmoset.Parser.init |> Marmoset.Parser.parse_program in
-    let value, env' = Marmoset.Eval.eval program env in
-    let str = Marmoset.Value.to_string value in
-
-    print_endline str;
-    repl env'
+    match Marmoset.Parser.parse input with
+    | Error msgs ->
+        List.iter (fun msg -> print_endline msg) msgs;
+        repl env
+    | Ok program ->
+        let value, env' = Marmoset.Eval.eval program env in
+        let str = Marmoset.Value.to_string value in
+        print_endline str;
+        repl env'
 
 let () =
   print_endline "Welcome to the REPL of Marmoset (Monkey) programming language, written in OCaml! 🐵🐫";
+  print_endline "Enter 'exit' to quit the REPL.";
 
   repl (Marmoset.Env.init ())
