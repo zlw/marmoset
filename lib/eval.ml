@@ -398,11 +398,90 @@ module Test = struct
 
   let%test "test_builtin_functions" =
     [
+      (* len string *)
       { input = "len(\"\")"; output = Value.Integer 0L };
       { input = "len(\"four\")"; output = Value.Integer 4L };
       { input = "len(\"hello world\")"; output = Value.Integer 11L };
       { input = "len(1)"; output = Value.Error "argument to `len` not supported, got Integer" };
       { input = "len(\"one\", \"two\")"; output = Value.Error "wrong number of arguments. got=2, want=1" };
+      (* len array *)
+      { input = "len([]);"; output = Value.Integer 0L };
+      { input = "len([1, 2, 3]);"; output = Value.Integer 3L };
+      { input = "len([1, 2 * 3, 4, 5]);"; output = Value.Integer 4L };
+      { input = "len(1);"; output = Value.Error "argument to `len` not supported, got Integer" };
+      { input = "len([1, 2], [3, 4]);"; output = Value.Error "wrong number of arguments. got=2, want=1" };
+      (* first *)
+      { input = "first([1, 2, 3])"; output = Value.Integer 1L };
+      { input = "first([])"; output = Value.null_value };
+      { input = "first(1)"; output = Value.Error "argument to `first` not supported, got Integer" };
+      { input = "first([1, 2], [3, 4])"; output = Value.Error "wrong number of arguments. got=2, want=1" };
+      (* last *)
+      { input = "last([1, 2, 3])"; output = Value.Integer 3L };
+      { input = "last([])"; output = Value.null_value };
+      { input = "last(1)"; output = Value.Error "argument to `last` not supported, got Integer" };
+      { input = "last([1, 2], [3, 4])"; output = Value.Error "wrong number of arguments. got=2, want=1" };
+      (* rest *)
+      { input = "rest([1, 2, 3])"; output = Value.Array [ Value.Integer 2L; Value.Integer 3L ] };
+      { input = "rest([])"; output = Value.null_value };
+      { input = "rest(1)"; output = Value.Error "argument to `rest` not supported, got Integer" };
+      { input = "rest([1, 2], [3, 4])"; output = Value.Error "wrong number of arguments. got=2, want=1" };
+      (* push *)
+      { input = "push([], 1)"; output = Value.Array [ Value.Integer 1L ] };
+      { input = "push([1], 2)"; output = Value.Array [ Value.Integer 1L; Value.Integer 2L ] };
+      { input = "push([1, 2], 3)"; output = Value.Array [ Value.Integer 1L; Value.Integer 2L; Value.Integer 3L ] };
+      { input = "push(1, 2)"; output = Value.Error "argument to `push` not supported, got Integer" };
+      { input = "push([1], 2, 3)"; output = Value.Error "wrong number of arguments. got=3, want=2" };
+    ]
+    |> run
+
+  let%test "test_builtin_functions_integration" =
+    let map =
+      "
+      let map = fn(arr, f) {
+        let iter = fn(arr, accumulated) {
+          if (len(arr) == 0) {
+            accumulated
+          } else {
+            iter(rest(arr), push(accumulated, f(first(arr))));
+          }
+        };
+        iter(arr, []);
+      };
+      "
+    in
+
+    let reduce =
+      "
+      let reduce = fn(arr, initial, f) {
+        let iter = fn(arr, result) {
+          if (len(arr) == 0) {
+            result
+          } else {
+            iter(rest(arr), f(result, first(arr)));
+          }
+        };
+        iter(arr, initial);
+      };
+
+      let sum = fn(arr) {
+        reduce(arr, 0, fn(initial, el) { initial + el });
+      };
+      "
+    in
+
+    let sum =
+      "
+      let sum = fn(arr) {
+        reduce(arr, 0, fn(initial, el) { initial + el });
+      };
+      "
+    in
+    [
+      {
+        input = "" ^ map ^ "let a = [1, 2, 3, 4]; let double = fn(x) { x * 2 }; map(a, double);";
+        output = Value.Array [ Value.Integer 2L; Value.Integer 4L; Value.Integer 6L; Value.Integer 8L ];
+      };
+      { input = "" ^ reduce ^ "" ^ sum ^ "sum([1,2,3,4,5]);"; output = Value.Integer 15L };
     ]
     |> run
 
