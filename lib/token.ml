@@ -29,6 +29,8 @@ and token_type =
   | RParen
   | LBrace
   | RBrace
+  | LBracket
+  | RBracket
   (* Keywords *)
   | Function
   | Let

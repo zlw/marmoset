@@ -16,6 +16,7 @@ let prec_sum = 4
 let prec_product = 5
 let prec_prefix = 6
 let prec_call = 7
+let prec_index = 8
 
 let precedences = function
   | Token.Eq | Token.NotEq -> prec_equals
@@ -23,6 +24,7 @@ let precedences = function
   | Token.Plus | Token.Minus -> prec_sum
   | Token.Asterisk | Token.Slash -> prec_product
   | Token.LParen -> prec_call
+  | Token.LBracket -> prec_index
   | _ -> prec_lowest
 
 let peek_precedence (p : parser) : precedence = precedences p.peek_token.token_type
@@ -122,6 +124,7 @@ and parse_expression (p : parser) (prec : precedence) : (parser * AST.expression
     | Token.Bang | Token.Minus -> Ok (parse_prefix_expression p)
     | Token.True | Token.False -> Ok (parse_boolean p)
     | Token.LParen -> Ok (parse_grouped_expression p)
+    | Token.LBracket -> Ok (parse_array_literal p)
     | Token.If -> Ok (parse_if_expression p)
     | Token.Function -> Ok (parse_function_literal p)
     | _ -> Error (no_prefix_parse_fn_error p tt)
@@ -140,6 +143,7 @@ and parse_expression (p : parser) (prec : precedence) : (parser * AST.expression
             | Token.Gt ->
                 parse_infix_expression (next_token lp) left
             | LParen -> parse_call_expression (next_token lp) left
+            | LBracket -> parse_index_expression (next_token lp) left
             | _ -> (lp, left)
           in
           loop lp2 left2
@@ -254,11 +258,11 @@ and parse_function_parameters (p : parser) : parser * AST.expression list =
     loop p2 [ AST.Identifier p2.curr_token.literal ]
 
 and parse_call_expression (p : parser) (c : AST.expression) : parser * AST.expression =
-  let p2, arguments = parse_call_arguments p in
+  let p2, arguments = parse_expression_list p Token.RParen in
   (p2, AST.Call (c, arguments))
 
-and parse_call_arguments (p : parser) : parser * AST.expression list =
-  if peek_token_is p Token.RParen then
+and parse_expression_list (p : parser) (end_tt : Token.token_type) : parser * AST.expression list =
+  if peek_token_is p end_tt then
     (next_token p, [])
   else
     match parse_expression (next_token p) prec_lowest with
@@ -270,12 +274,25 @@ and parse_call_arguments (p : parser) : parser * AST.expression list =
             | Error _lp2 -> failwith "can't parse call arguments"
             | Ok (lp2, arg) -> loop lp2 ([ arg ] @ args)
           else
-            match expect_peek lp Token.RParen with
+            match expect_peek lp end_tt with
             | Error _lp2 -> failwith "can't parse call arguments"
             | Ok lp2 -> (lp2, List.rev args)
         in
 
         loop p2 [ arg ]
+
+and parse_array_literal (p : parser) : parser * AST.expression =
+  let p2, exprs = parse_expression_list p Token.RBracket in
+  (p2, AST.Array exprs)
+
+and parse_index_expression (p : parser) (left : AST.expression) : parser * AST.expression =
+  let p2 = next_token p in
+  match parse_expression p2 prec_lowest with
+  | Error _p3 -> failwith "parse_index_expression failed"
+  | Ok (p3, index) -> (
+      match expect_peek p3 Token.RBracket with
+      | Error _p4 -> failwith "parse_index_expression failed"
+      | Ok p4 -> (p4, AST.Index (left, index)))
 
 let parse (s : string) : (AST.program, string list) result =
   let parser, program = s |> Lexer.init |> init |> parse_program in
@@ -334,6 +351,44 @@ module Test = struct
 
   let%test "test_string_literal_expressions" =
     [ { input = "\"hello world\";"; output = [ AST.Expression (AST.String "hello world") ] } ] |> run
+
+  let%test "test_array_literals" =
+    [
+      {
+        input = "[1, 2, 3];";
+        output = [ AST.Expression (AST.Array [ AST.Integer 1L; AST.Integer 2L; AST.Integer 3L ]) ];
+      };
+      {
+        input = "[1, 2 * 2, 3 + 3];";
+        output =
+          [
+            AST.Expression
+              (AST.Array
+                 [
+                   AST.Integer 1L;
+                   AST.Infix (AST.Integer 2L, "*", AST.Integer 2L);
+                   AST.Infix (AST.Integer 3L, "+", AST.Integer 3L);
+                 ]);
+          ];
+      };
+    ]
+    |> run
+
+  let%test "test_index_expressions" =
+    [
+      {
+        input = "myArray[1 + 1];";
+        output =
+          [
+            AST.Expression (AST.Index (AST.Identifier "myArray", AST.Infix (AST.Integer 1L, "+", AST.Integer 1L)));
+          ];
+      };
+      {
+        input = "myArray[1];";
+        output = [ AST.Expression (AST.Index (AST.Identifier "myArray", AST.Integer 1L)) ];
+      };
+    ]
+    |> run
 
   let%test "test_prefix_expressions" =
     [
@@ -430,10 +485,11 @@ module Test = struct
       ("a + add(b * c) + d", "((a + add((b * c))) + d)");
       ("add(a, b, 1, 2 * 3, 4 + 5, add(6, 7 * 8))", "add(a, b, 1, (2 * 3), (4 + 5), add(6, (7 * 8)))");
       ("add(a + b + c * d / f + g)", "add((((a + b) + ((c * d) / f)) + g))");
+      ("a * [1, 2, 3, 4][b * c] * d", "((a * ([1, 2, 3, 4][(b * c)])) * d)");
+      ("add(a * b[2], b[1], 2 * [1, 2][1])", "add((a * (b[2])), (b[1]), (2 * ([1, 2][1])))");
     ]
     |> List.for_all (fun test ->
            let input, output = test in
-
            match input |> parse with Ok program -> AST.to_string program = output | Error _ -> false)
 
   let%test "test_boolean_expression" =

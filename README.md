@@ -54,16 +54,14 @@ make unit
 | Strings                | ✅          | ❌       |
 | Integers               | ✅          | ❌       |
 | Arithmetic +-/*        | ✅          | ❌       |
-| Arrays                 | ❌          | ❌       |
-| Indexing               | ❌          | ❌       |
+| Arrays                 | ✅          | ❌       |
 | Dictionaries           | ❌          | ❌       |
 | Functions              | ✅          | ❌       |
 | First class functions  | ✅          | ❌       |
 | Higher order functions | ✅          | ❌       |
 | Closures               | ✅          | ❌       |
 | Recursion              | ✅          | ❌       |
-| Built-In Functions     | ❌          | ❌       |
-| Loops                  | ❌          | ❌       |
+| Built-In Functions     | ✅          | ❌       |
 | Floats                 | ❌          | ❌       |
 | Macros                 | ❌          | ❌       |
 

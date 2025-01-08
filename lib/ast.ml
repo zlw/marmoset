@@ -12,6 +12,8 @@ module AST = struct
     | Integer of int64
     | Boolean of bool
     | String of string
+    | Array of expression list
+    | Index of expression * expression
     | Prefix of string * expression
     | Infix of expression * string * expression
     | If of expression * statement * statement option
@@ -23,6 +25,8 @@ module AST = struct
     | Identifier _ -> "Identifier"
     | Integer _ -> "Integer"
     | String _ -> "String"
+    | Array _ -> "Array"
+    | Index _ -> "Index"
     | Prefix _ -> "Prefix"
     | Infix _ -> "Infix"
     | Boolean _ -> "Boolean"
@@ -42,6 +46,8 @@ module AST = struct
       | Identifier ident -> ident
       | Integer i -> Int64.to_string i
       | String s -> Printf.sprintf "\"%s\"" s
+      | Array exprs -> Printf.sprintf "[%s]" (args_to_string exprs)
+      | Index (arr, idx) -> Printf.sprintf "(%s[%s])" (expression_to_string arr) (expression_to_string idx)
       | Prefix (op, expr) -> Printf.sprintf "(%s%s)" op (expression_to_string expr)
       | Infix (left, op, right) ->
           Printf.sprintf "(%s %s %s)" (expression_to_string left) op (expression_to_string right)

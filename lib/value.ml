@@ -5,6 +5,7 @@ type value =
   | Integer of int64
   | Boolean of bool
   | String of string
+  | Array of value list
   | Return of value
   | Error of string
   | Function of AST.expression list * AST.statement * value Env.env option
@@ -21,6 +22,7 @@ let rec to_string = function
   | Integer i -> Int64.to_string i
   | Boolean b -> string_of_bool b
   | String s -> "\"" ^ s ^ "\""
+  | Array vs -> Printf.sprintf "[%s]" (vs |> List.map to_string |> String.concat ", ")
   | Return v -> to_string v
   | Error s -> "ERROR: " ^ s
   | Function (params, body, _) ->
@@ -36,6 +38,7 @@ let rec type_of = function
   | Integer _ -> "Integer"
   | Boolean _ -> "Boolean"
   | String _ -> "String"
+  | Array _ -> "Array"
   | Return v -> type_of v
   | Error _ -> "Error"
   | Function _ -> "Function"

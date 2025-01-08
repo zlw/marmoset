@@ -37,6 +37,27 @@ and eval_expression (expr : AST.expression) (e : env) : Value.value * env =
       else
         (Value.false_value, e)
   | String s -> (Value.String s, e)
+  | Array exprs ->
+      let vs, e' = eval_expressions exprs e in
+      (Value.Array vs, e')
+  | Index (arr, idx) -> (
+      let arr', e' = eval_expression arr e in
+      match arr' with
+      | Value.Error _ -> (arr', e')
+      | _ -> (
+          let idx', e'' = eval_expression idx e' in
+          match idx' with
+          | Value.Error _ -> (idx', e'')
+          | _ -> (
+              match (arr', idx') with
+              | Value.Array vs, Value.Integer i ->
+                  if i < 0L || Int64.to_int i >= List.length vs then
+                    (Value.null_value, e'')
+                  else
+                    (List.nth vs (Int64.to_int i), e'')
+              | _ ->
+                  let msg = Printf.sprintf "index operator not supported: %s" (Value.type_of arr') in
+                  (Value.Error msg, e'))))
   | Prefix ("!", right) -> (
       let v, e' = eval_expression right e in
       match v with Value.Boolean b -> (Value.Boolean (not b), e') | _ -> (Value.false_value, e'))
@@ -111,12 +132,12 @@ and eval_expression (expr : AST.expression) (e : env) : Value.value * env =
       match func' with
       | Error _ -> (func', e')
       | Value.Function (_, _, _) | Value.BuiltinFunction _ -> (
-          let args', e'' = eval_arguments args e' in
+          let args', e'' = eval_expressions args e' in
           match args' with [ Value.Error _ ] -> (List.hd args', e'') | _ -> (apply_function func' args', e'))
       | _ -> failwith "not a function")
   | _ -> failwith "not implemented"
 
-and eval_arguments (args : AST.expression list) (e : env) : Value.value list * env =
+and eval_expressions (args : AST.expression list) (e : env) : Value.value list * env =
   let rec loop exps result env =
     match exps with
     | [] -> (List.rev result, env)
@@ -187,14 +208,6 @@ module Test = struct
       { input = "3 * 3 * 3 + 10;"; output = Value.Integer 37L };
       { input = "3 * (3 * 3) + 10;"; output = Value.Integer 37L };
       { input = "(5 + 10 * 2 + 15 / 3) * 2 + -10;"; output = Value.Integer 50L };
-    ]
-    |> run
-
-  let%test "test_eval_string_expression" =
-    [
-      { input = "\"foobar\";"; output = Value.String "foobar" };
-      { input = "\"foo\" + \"bar\";"; output = Value.String "foobar" };
-      { input = "\"foo\" + \"bar\" + \"baz\";"; output = Value.String "foobarbaz" };
     ]
     |> run
 
@@ -375,6 +388,14 @@ module Test = struct
     ]
     |> run
 
+  let%test "test_eval_string_expression" =
+    [
+      { input = "\"foobar\";"; output = Value.String "foobar" };
+      { input = "\"foo\" + \"bar\";"; output = Value.String "foobar" };
+      { input = "\"foo\" + \"bar\" + \"baz\";"; output = Value.String "foobarbaz" };
+    ]
+    |> run
+
   let%test "test_builtin_functions" =
     [
       { input = "len(\"\")"; output = Value.Integer 0L };
@@ -382,6 +403,32 @@ module Test = struct
       { input = "len(\"hello world\")"; output = Value.Integer 11L };
       { input = "len(1)"; output = Value.Error "argument to `len` not supported, got Integer" };
       { input = "len(\"one\", \"two\")"; output = Value.Error "wrong number of arguments. got=2, want=1" };
+    ]
+    |> run
+
+  let%test "test_array_literals" =
+    [
+      { input = "[]"; output = Value.Array [] };
+      { input = "[1, 2, 3]"; output = Value.Array [ Value.Integer 1L; Value.Integer 2L; Value.Integer 3L ] };
+      {
+        input = "[1 + 2, 3 * 4, 5 + 6]";
+        output = Value.Array [ Value.Integer 3L; Value.Integer 12L; Value.Integer 11L ];
+      };
+    ]
+    |> run
+
+  let%test "test_array_indexing" =
+    [
+      { input = "[1, 2, 3][0]"; output = Value.Integer 1L };
+      { input = "[1, 2, 3][1]"; output = Value.Integer 2L };
+      { input = "[1, 2, 3][2]"; output = Value.Integer 3L };
+      { input = "let i = 0; [1][i]"; output = Value.Integer 1L };
+      { input = "[1, 2, 3][1 + 1]"; output = Value.Integer 3L };
+      { input = "let myArray = [1, 2, 3]; myArray[2]"; output = Value.Integer 3L };
+      { input = "let myArray = [1, 2, 3]; myArray[0] + myArray[1] + myArray[2]"; output = Value.Integer 6L };
+      { input = "let myArray = [1, 2, 3]; let i = myArray[0]; myArray[i]"; output = Value.Integer 2L };
+      { input = "[1, 2, 3][3]"; output = Value.null_value };
+      { input = "[1, 2, 3][-1]"; output = Value.null_value };
     ]
     |> run
 end
