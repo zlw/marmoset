@@ -151,9 +151,16 @@ and eval_expressions (args : AST.expression list) (e : env) : Value.value list *
 and apply_function (func : Value.value) (args : Value.value list) : Value.value =
   match func with
   | Value.Function (params, body, Some env) ->
-      let e' = extend_function_env params args env in
-      let evaluated, _e'' = eval_statement body e' in
-      unwrap_return_value evaluated
+      let params_len = List.length params in
+      let args_len = List.length args in
+
+      if params_len <> args_len then
+        let msg = Printf.sprintf "wrong number of arguments. got=%d, want=%d" args_len params_len in
+        Value.Error msg
+      else
+        let e' = extend_function_env params args env in
+        let evaluated, _e'' = eval_statement body e' in
+        unwrap_return_value evaluated
   | Value.BuiltinFunction f -> f args
   | _ -> Value.Error "not a function"
 
@@ -296,33 +303,6 @@ module Test = struct
     ]
     |> run
 
-  let%test "test_function_object" =
-    (* let env = Env.init () in *)
-    [ (* {
-        input = "fn(x) { x + 2; };";
-        output =
-          Value.Function
-            ( [ AST.Identifier "x" ],
-              AST.Block [ AST.Expression (AST.Infix (AST.Identifier "x", "+", AST.Integer 2L)) ],
-              Some env );
-      }; *)
-      (* {
-        input = "fn(x, y) { if (x < y) { x } else { y } }";
-        output =
-          Value.Function
-            ( [ AST.Identifier "x"; AST.Identifier "y" ],
-              AST.Block
-                [
-                  AST.Expression
-                    (AST.If
-                       ( AST.Infix (AST.Identifier "x", "<", AST.Identifier "y"),
-                         AST.Block [ AST.Expression (AST.Identifier "x") ],
-                         Some (AST.Block [ AST.Expression (AST.Identifier "y") ]) ));
-                ],
-              Some env );
-      }; *) ]
-    |> run
-
   let%test "test_function_application" =
     [
       { input = "let identity = fn(x) { x; }; identity(5);"; output = Value.Integer 5L };
@@ -331,6 +311,7 @@ module Test = struct
       { input = "let add = fn(x, y) { x + y; }; add(5, 5);"; output = Value.Integer 10L };
       { input = "let add = fn(x, y) { x + y; }; add(5 + 5, add(5, 5));"; output = Value.Integer 20L };
       { input = "fn(x) { x; }(5)"; output = Value.Integer 5L };
+      { input = "fn(x) { x }(1,2)"; output = Value.Error "wrong number of arguments. got=2, want=1" };
     ]
     |> run
 
