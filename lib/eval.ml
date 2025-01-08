@@ -36,6 +36,7 @@ and eval_expression (expr : AST.expression) (e : env) : Value.value * env =
         (Value.true_value, e)
       else
         (Value.false_value, e)
+  | String s -> (Value.String s, e)
   | Prefix ("!", right) -> (
       let v, e' = eval_expression right e in
       match v with Value.Boolean b -> (Value.Boolean (not b), e') | _ -> (Value.false_value, e'))
@@ -74,6 +75,12 @@ and eval_expression (expr : AST.expression) (e : env) : Value.value * env =
                   match op with
                   | "==" -> (Value.Boolean (left'' = right''), e'')
                   | "!=" -> (Value.Boolean (left'' <> right''), e'')
+                  | _ ->
+                      let error = Value.unknown_infix_operator_error left op right in
+                      (error, e''))
+              | Value.String left'', Value.String right'' -> (
+                  match op with
+                  | "+" -> (Value.String (left'' ^ right''), e'')
                   | _ ->
                       let error = Value.unknown_infix_operator_error left op right in
                       (error, e''))
@@ -177,6 +184,14 @@ module Test = struct
     ]
     |> run
 
+  let%test "test_eval_string_expression" =
+    [
+      { input = "\"foobar\";"; output = Value.String "foobar" };
+      { input = "\"foo\" + \"bar\";"; output = Value.String "foobar" };
+      { input = "\"foo\" + \"bar\" + \"baz\";"; output = Value.String "foobarbaz" };
+    ]
+    |> run
+
   let%test "test_eval_boolean_expression" =
     [
       { input = "true;"; output = Value.Boolean true };
@@ -238,11 +253,13 @@ module Test = struct
     [
       { input = "5 + true;"; output = Value.Error "type mismatch: Integer + Boolean" };
       { input = "5 + true; 5;"; output = Value.Error "type mismatch: Integer + Boolean" };
+      { input = "5 + \"foo\";"; output = Value.Error "type mismatch: Integer + String" };
       { input = "-true;"; output = Value.Error "unknown operator: -Boolean" };
       { input = "true + false;"; output = Value.Error "unknown operator: Boolean + Boolean" };
       { input = "true + false + true + false;"; output = Value.Error "unknown operator: Boolean + Boolean" };
       { input = "5; true + false; 5"; output = Value.Error "unknown operator: Boolean + Boolean" };
       { input = "if (10 > 1) { true + false; }"; output = Value.Error "unknown operator: Boolean + Boolean" };
+      { input = "\"foo\" - \"bar\""; output = Value.Error "unknown operator: String - String" };
       {
         input = "if (10 > 1) { if (10 > 1) { return true + false; } return 1; }";
         output = Value.Error "unknown operator: Boolean + Boolean";

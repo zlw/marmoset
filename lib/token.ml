@@ -10,6 +10,7 @@ and token_type =
   (* Identifiers + literals *)
   | Ident
   | Int
+  | String
   (* Operators *)
   | Assign
   | Plus

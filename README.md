@@ -42,7 +42,7 @@ make unit
 
 - [x] Lexer
 - [x] Parser
-- [ ] Evaluator
+- [x] Evaluator
 - [ ] Compiler
 
 ## Features
@@ -51,7 +51,7 @@ make unit
 |------------------------|-------------|----------|
 | Bindings               | ✅          | ❌       |
 | Conditionals           | ✅          | ❌       |
-| Strings                | ❌          | ❌       |
+| Strings                | ✅          | ❌       |
 | Integers               | ✅          | ❌       |
 | Arithmetic +-/*        | ✅          | ❌       |
 | Arrays                 | ❌          | ❌       |
@@ -74,6 +74,7 @@ make unit
   - [ ] Return `result`
     - [ ] `parse_identifier`
     - [ ] `parse_integerLiteral`
+    - [ ] `parse_string_lLiteral`
     - [ ] `parse_prefixExpression`
     - [ ] `parse_infixExpression`
     - [ ] `parse_boolean`

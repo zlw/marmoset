@@ -42,6 +42,9 @@ let rec next_token (l : lexer) : lexer * Token.token =
   | '{' -> (read_char l, Token.init LBrace "{")
   | '}' -> (read_char l, Token.init RBrace "}")
   | ',' -> (read_char l, Token.init Comma ",")
+  | '"' ->
+      let l2, lit = read_string (read_char l) in
+      (read_char l2, Token.init String lit)
   | ' ' | '\t' | '\n' | '\r' -> next_token (read_char l)
   | '\000' -> (read_char l, Token.init EOF "")
   | _ ->
@@ -57,18 +60,18 @@ let rec next_token (l : lexer) : lexer * Token.token =
 
 and read_identifier (l : lexer) : lexer * string = read_until l is_letter
 and read_number (l : lexer) : lexer * string = read_until l is_digit
+and read_string (l : lexer) : lexer * string = read_until l (fun c -> c <> '"' && c <> '\000')
 
 and read_until (l : lexer) (f : char -> bool) : lexer * string =
   let start = l.position in
-
-  let rec loop (l : lexer) len =
-    if f l.ch then
-      loop (read_char l) (len + 1)
+  let rec loop (ll : lexer) =
+    if f ll.ch then
+      loop (read_char ll)
     else
-      (l, String.sub l.input start len)
+      (ll, String.sub ll.input start (ll.position - start))
   in
 
-  loop l 0
+  loop l
 
 and is_letter (c : char) : bool = ('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z') || c = '_'
 and is_digit (c : char) : bool = '0' <= c && c <= '9'
@@ -105,6 +108,8 @@ let%test "test_lexer" =
 
     10 == 10;
     10 != 9;
+    \"foobar\"
+    \"Hello, World!\"
   "
   in
   lex input
@@ -182,5 +187,7 @@ let%test "test_lexer" =
       Token.init NotEq "!=";
       Token.init Int "9";
       Token.init Semicolon ";";
+      Token.init String "foobar";
+      Token.init String "Hello, World!";
       Token.init EOF "";
     ]

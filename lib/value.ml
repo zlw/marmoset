@@ -4,6 +4,7 @@ type value =
   | Null
   | Integer of int64
   | Boolean of bool
+  | String of string
   | Return of value
   | Error of string
   | Function of AST.expression list * AST.statement * value Env.env option
@@ -18,6 +19,7 @@ let rec to_string = function
   | Null -> "null"
   | Integer i -> Int64.to_string i
   | Boolean b -> string_of_bool b
+  | String s -> "\"" ^ s ^ "\""
   | Return v -> to_string v
   | Error s -> "ERROR: " ^ s
   | Function (params, body, _) ->

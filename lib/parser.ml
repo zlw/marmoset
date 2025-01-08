@@ -118,6 +118,7 @@ and parse_expression (p : parser) (prec : precedence) : (parser * AST.expression
     match tt with
     | Token.Ident -> Ok (parse_identifier p)
     | Token.Int -> Ok (parse_integer_literal p)
+    | Token.String -> Ok (parse_string_literal p)
     | Token.Bang | Token.Minus -> Ok (parse_prefix_expression p)
     | Token.True | Token.False -> Ok (parse_boolean p)
     | Token.LParen -> Ok (parse_grouped_expression p)
@@ -153,6 +154,8 @@ and parse_integer_literal (p : parser) : parser * AST.expression =
   match Int64.of_string_opt p.curr_token.literal with
   | Some int -> (p, AST.Integer int)
   | None -> failwith ("can't parse number from " ^ p.curr_token.literal)
+
+and parse_string_literal (p : parser) : parser * AST.expression = (p, AST.String p.curr_token.literal)
 
 and parse_prefix_expression (p : parser) : parser * AST.expression =
   let op = p.curr_token.literal in
@@ -328,6 +331,9 @@ module Test = struct
 
   let%test "test_integer_literal_expressions" =
     [ { input = "5;"; output = [ AST.Expression (AST.Integer 5L) ] } ] |> run
+
+  let%test "test_string_literal_expressions" =
+    [ { input = "\"hello world\";"; output = [ AST.Expression (AST.String "hello world") ] } ] |> run
 
   let%test "test_prefix_expressions" =
     [

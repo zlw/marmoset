@@ -10,9 +10,10 @@ module AST = struct
   and expression =
     | Identifier of string
     | Integer of int64
+    | Boolean of bool
+    | String of string
     | Prefix of string * expression
     | Infix of expression * string * expression
-    | Boolean of bool
     | If of expression * statement * statement option
     | Function of expression list * statement
     | Call of expression * expression list
@@ -21,6 +22,7 @@ module AST = struct
     match e with
     | Identifier _ -> "Identifier"
     | Integer _ -> "Integer"
+    | String _ -> "String"
     | Prefix _ -> "Prefix"
     | Infix _ -> "Infix"
     | Boolean _ -> "Boolean"
@@ -39,6 +41,7 @@ module AST = struct
       match e with
       | Identifier ident -> ident
       | Integer i -> Int64.to_string i
+      | String s -> Printf.sprintf "\"%s\"" s
       | Prefix (op, expr) -> Printf.sprintf "(%s%s)" op (expression_to_string expr)
       | Infix (left, op, right) ->
           Printf.sprintf "(%s %s %s)" (expression_to_string left) op (expression_to_string right)
