@@ -99,16 +99,21 @@ and eval_expression (expr : AST.expression) (e : env) : Value.value * env =
             | None -> (Value.null_value, e')
             | Some alt -> eval_statement alt e'))
   | Identifier ident -> (
-      match Env.get e ident with Some v -> (v, e) | None -> (Value.Error ("identifier not found: " ^ ident), e))
+      match Env.get e ident with
+      | Some v -> (v, e)
+      | None -> (
+          match Builtins.builtin ident with
+          | Some f -> (Value.BuiltinFunction f, e)
+          | None -> (Value.Error ("identifier not found: " ^ ident), e)))
   | Function (params, body) -> (Value.Function (params, body, Some e), e)
   | Call (func, args) -> (
       let func', e' = eval_expression func e in
       match func' with
       | Error _ -> (func', e')
-      | Value.Function (_, _, _) -> (
+      | Value.Function (_, _, _) | Value.BuiltinFunction _ -> (
           let args', e'' = eval_arguments args e' in
           match args' with [ Value.Error _ ] -> (List.hd args', e'') | _ -> (apply_function func' args', e'))
-      | _ -> failwith "foo")
+      | _ -> failwith "not a function")
   | _ -> failwith "not implemented"
 
 and eval_arguments (args : AST.expression list) (e : env) : Value.value list * env =
@@ -128,6 +133,7 @@ and apply_function (func : Value.value) (args : Value.value list) : Value.value 
       let e' = extend_function_env params args env in
       let evaluated, _e'' = eval_statement body e' in
       unwrap_return_value evaluated
+  | Value.BuiltinFunction f -> f args
   | _ -> Value.Error "not a function"
 
 and unwrap_return_value (return : Value.value) : Value.value =
@@ -366,6 +372,16 @@ module Test = struct
           "let countUp = fn(x, acc) { if (x == acc) { return acc } else { countUp(x, acc + 1) } }; countUp(5, 0);";
         output = Value.Integer 5L;
       };
+    ]
+    |> run
+
+  let%test "test_builtin_functions" =
+    [
+      { input = "len(\"\")"; output = Value.Integer 0L };
+      { input = "len(\"four\")"; output = Value.Integer 4L };
+      { input = "len(\"hello world\")"; output = Value.Integer 11L };
+      { input = "len(1)"; output = Value.Error "argument to `len` not supported, got Integer" };
+      { input = "len(\"one\", \"two\")"; output = Value.Error "wrong number of arguments. got=2, want=1" };
     ]
     |> run
 end
