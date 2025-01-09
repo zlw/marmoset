@@ -14,6 +14,7 @@ module AST = struct
     | String of string
     | Array of expression list
     | Index of expression * expression
+    | Hash of (expression * expression) list
     | Prefix of string * expression
     | Infix of expression * string * expression
     | If of expression * statement * statement option
@@ -27,6 +28,7 @@ module AST = struct
     | String _ -> "String"
     | Array _ -> "Array"
     | Index _ -> "Index"
+    | Hash _ -> "Hash"
     | Prefix _ -> "Prefix"
     | Infix _ -> "Infix"
     | Boolean _ -> "Boolean"
@@ -48,6 +50,11 @@ module AST = struct
       | String s -> Printf.sprintf "\"%s\"" s
       | Array exprs -> Printf.sprintf "[%s]" (args_to_string exprs)
       | Index (arr, idx) -> Printf.sprintf "(%s[%s])" (expression_to_string arr) (expression_to_string idx)
+      | Hash pairs ->
+          Printf.sprintf "{%s}"
+            (pairs
+            |> List.map (fun (k, v) -> Printf.sprintf "%s: %s" (expression_to_string k) (expression_to_string v))
+            |> String.concat ", ")
       | Prefix (op, expr) -> Printf.sprintf "(%s%s)" op (expression_to_string expr)
       | Infix (left, op, right) ->
           Printf.sprintf "(%s %s %s)" (expression_to_string left) op (expression_to_string right)

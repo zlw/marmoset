@@ -37,6 +37,7 @@ let rec next_token (l : lexer) : lexer * Token.token =
   | '<' -> (read_char l, Token.init Lt "<")
   | '>' -> (read_char l, Token.init Gt ">")
   | ';' -> (read_char l, Token.init Semicolon ";")
+  | ':' -> (read_char l, Token.init Colon ":")
   | '(' -> (read_char l, Token.init LParen "(")
   | ')' -> (read_char l, Token.init RParen ")")
   | '{' -> (read_char l, Token.init LBrace "{")
@@ -113,6 +114,7 @@ let%test "test_lexer" =
     \"foobar\"
     \"Hello, World!\"
     [1, 2];
+    {\"foo\": \"bar\", 1: 2}
   "
   in
   lex input
@@ -198,5 +200,14 @@ let%test "test_lexer" =
       Token.init Int "2";
       Token.init RBracket "]";
       Token.init Semicolon ";";
+      Token.init LBrace "{";
+      Token.init String "foo";
+      Token.init Colon ":";
+      Token.init String "bar";
+      Token.init Comma ",";
+      Token.init Int "1";
+      Token.init Colon ":";
+      Token.init Int "2";
+      Token.init RBrace "}";
       Token.init EOF "";
     ]

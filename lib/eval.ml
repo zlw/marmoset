@@ -55,9 +55,25 @@ and eval_expression (expr : AST.expression) (e : env) : Value.value * env =
                     (Value.null_value, e'')
                   else
                     (List.nth vs (Int64.to_int i), e'')
+              | Value.Hash _, _ -> (
+                  match Value.get arr' idx' with Some v -> (v, e'') | None -> (Value.null_value, e''))
               | _ ->
                   let msg = Printf.sprintf "index operator not supported: %s" (Value.type_of arr') in
                   (Value.Error msg, e'))))
+  | Hash pairs ->
+      let rec loop pairs (acc : Value.value) env =
+        match pairs with
+        | [] -> (acc, env)
+        | (k, v) :: rest -> (
+            let k', env' = eval_expression k env in
+            match k' with
+            | Value.Error _ -> (k', env')
+            | _ -> (
+                match eval_expression v env' with
+                | (Value.Error _, _) as error -> error
+                | v', env'' -> loop rest (Value.set acc k' v') env''))
+      in
+      loop pairs (Value.init ()) e
   | Prefix ("!", right) -> (
       let v, e' = eval_expression right e in
       match v with Value.Boolean b -> (Value.Boolean (not b), e') | _ -> (Value.false_value, e'))
@@ -443,10 +459,6 @@ module Test = struct
         };
         iter(arr, initial);
       };
-
-      let sum = fn(arr) {
-        reduce(arr, 0, fn(initial, el) { initial + el });
-      };
       "
     in
 
@@ -491,4 +503,65 @@ module Test = struct
       { input = "[1, 2, 3][-1]"; output = Value.null_value };
     ]
     |> run
+
+  let%test "test_hash_literals" =
+    [
+      { input = "{}"; output = Value.Hash (Hashtbl.create 0) };
+      {
+        input = "{1: 2, 2: 3}";
+        output =
+          Value.Hash
+            (Hashtbl.of_seq
+               (List.to_seq [ (Value.Integer 1L, Value.Integer 2L); (Value.Integer 2L, Value.Integer 3L) ]));
+      };
+      {
+        input = "{1 + 1: 2 * 2, 3 + 3: 4 * 4}";
+        output =
+          Value.Hash
+            (Hashtbl.of_seq
+               (List.to_seq [ (Value.Integer 2L, Value.Integer 4L); (Value.Integer 6L, Value.Integer 16L) ]));
+      };
+      {
+        input =
+          "let two = \"two\"; { \"one\": 10 - 9, two: 1 + 1, \"thr\" + \"ee\": 6 / 2, 4: 4, true: 5, false: 6 }";
+        output =
+          Value.Hash
+            (Hashtbl.of_seq
+               (List.to_seq
+                  [
+                    (Value.String "one", Value.Integer 1L);
+                    (Value.String "two", Value.Integer 2L);
+                    (Value.String "three", Value.Integer 3L);
+                    (Value.Integer 4L, Value.Integer 4L);
+                    (Value.Boolean true, Value.Integer 5L);
+                    (Value.Boolean false, Value.Integer 6L);
+                  ]));
+      };
+    ]
+    |> run
+
+  let%test "test_hash_index_expressions" =
+    [
+      { input = "{\"foo\": 5}[\"foo\"]"; output = Value.Integer 5L };
+      { input = "{\"foo\": 5}[\"bar\"]"; output = Value.null_value };
+      { input = "let key = \"foo\"; {\"foo\": 5}[key]"; output = Value.Integer 5L };
+      { input = "{}[\"foo\"]"; output = Value.null_value };
+      { input = "{5: 5}[5]"; output = Value.Integer 5L };
+      { input = "{true: 5}[true]"; output = Value.Integer 5L };
+      { input = "{false: 5}[false]"; output = Value.Integer 5L };
+      { input = "{\"name\": \"Monkey\"}[fn(x) { x }];"; output = Value.Error "unusable as hash key: Function" };
+    ]
+    |> run
+
+  let%test "test_integration" =
+    let input =
+      "
+        let people = [{\"name\": \"Alice\", \"age\": 24}, {\"name\": \"Anna\", \"age\": 28}];
+        let getName = fn(person) { person[\"name\"] };
+        let getAge = fn(person) { person[\"age\"] };
+
+        [getName(people[0]), getName(people[1]), getAge(people[0]) + getAge(people[1])];
+      "
+    in
+    [ { input; output = Value.Array [ Value.String "Alice"; Value.String "Anna"; Value.Integer 52L ] } ] |> run
 end

@@ -124,9 +124,10 @@ and parse_expression (p : parser) (prec : precedence) : (parser * AST.expression
     | Token.Bang | Token.Minus -> Ok (parse_prefix_expression p)
     | Token.True | Token.False -> Ok (parse_boolean p)
     | Token.LParen -> Ok (parse_grouped_expression p)
-    | Token.LBracket -> Ok (parse_array_literal p)
     | Token.If -> Ok (parse_if_expression p)
     | Token.Function -> Ok (parse_function_literal p)
+    | Token.LBracket -> Ok (parse_array_literal p)
+    | Token.LBrace -> Ok (parse_hash_literal p)
     | _ -> Error (no_prefix_parse_fn_error p tt)
   in
 
@@ -294,6 +295,36 @@ and parse_index_expression (p : parser) (left : AST.expression) : parser * AST.e
       | Error _p4 -> failwith "parse_index_expression failed"
       | Ok p4 -> (p4, AST.Index (left, index)))
 
+and parse_hash_literal (p : parser) : parser * AST.expression =
+  let rec loop (lp : parser) (pairs : (AST.expression * AST.expression) list) =
+    if peek_token_is lp Token.RBrace then
+      (next_token lp, AST.Hash (List.rev pairs))
+    else
+      let lp2, key =
+        match parse_expression (next_token lp) prec_lowest with
+        | Error _lp2 -> failwith "parse_hash_literal failed"
+        | Ok (lp2, key) -> (lp2, key)
+      in
+
+      match expect_peek lp2 Token.Colon with
+      | Error _lp3 -> failwith "parse_hash_literal failed#2"
+      | Ok lp3 ->
+          let lp4, value =
+            match parse_expression (next_token lp3) prec_lowest with
+            | Error _lp4 -> failwith "parse_hash_literal failed"
+            | Ok (lp4, value) -> (lp4, value)
+          in
+
+          if peek_token_is lp4 Token.Comma then
+            loop (next_token lp4) ([ (key, value) ] @ pairs)
+          else if not (peek_token_is lp4 Token.RBrace) then
+            failwith "parse_hash_literal failed"
+          else
+            loop lp4 ([ (key, value) ] @ pairs)
+  in
+
+  loop p []
+
 let parse (s : string) : (AST.program, string list) result =
   let parser, program = s |> Lexer.init |> init |> parse_program in
 
@@ -354,6 +385,7 @@ module Test = struct
 
   let%test "test_array_literals" =
     [
+      { input = "[]"; output = [ AST.Expression (AST.Array []) ] };
       {
         input = "[1, 2, 3];";
         output = [ AST.Expression (AST.Array [ AST.Integer 1L; AST.Integer 2L; AST.Integer 3L ]) ];
@@ -593,6 +625,38 @@ module Test = struct
                        ( [ AST.Identifier "x"; AST.Identifier "y" ],
                          AST.Block [ AST.Expression (AST.Infix (AST.Identifier "x", "+", AST.Identifier "y")) ] );
                    ] ));
+          ];
+      };
+    ]
+    |> run
+
+  let%test "test_hash_literal" =
+    [
+      { input = "{}"; output = [ AST.Expression (AST.Hash []) ] };
+      {
+        input = "{\"one\": 1, \"two\": 2, \"three\": 3}";
+        output =
+          [
+            AST.Expression
+              (AST.Hash
+                 [
+                   (AST.String "one", AST.Integer 1L);
+                   (AST.String "two", AST.Integer 2L);
+                   (AST.String "three", AST.Integer 3L);
+                 ]);
+          ];
+      };
+      {
+        input = "{ \"one\": 0 + 1, \"two\": 10 - 8, \"three\": 15 / 5 }";
+        output =
+          [
+            AST.Expression
+              (AST.Hash
+                 [
+                   (AST.String "one", AST.Infix (AST.Integer 0L, "+", AST.Integer 1L));
+                   (AST.String "two", AST.Infix (AST.Integer 10L, "-", AST.Integer 8L));
+                   (AST.String "three", AST.Infix (AST.Integer 15L, "/", AST.Integer 5L));
+                 ]);
           ];
       };
     ]

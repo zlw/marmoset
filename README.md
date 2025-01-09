@@ -55,7 +55,7 @@ make unit
 | Integers               | ✅          | ❌       |
 | Arithmetic +-/*        | ✅          | ❌       |
 | Arrays                 | ✅          | ❌       |
-| Dictionaries           | ❌          | ❌       |
+| Hashes                 | ✅          | ❌       |
 | Functions              | ✅          | ❌       |
 | First class functions  | ✅          | ❌       |
 | Higher order functions | ✅          | ❌       |

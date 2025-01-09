@@ -25,6 +25,7 @@ and token_type =
   (* Delimiters *)
   | Comma
   | Semicolon
+  | Colon
   | LParen
   | RParen
   | LBrace
