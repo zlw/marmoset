@@ -39,10 +39,15 @@ let builtin_push args =
       let msg = Printf.sprintf "wrong number of arguments. got=%d, want=2" (List.length args) in
       Error msg
 
+let builtin_puts args =
+  List.iter (fun arg -> print_endline (Value.to_string arg)) args;
+  Value.Null
+
 let builtin = function
   | "len" -> Some builtin_len
   | "first" -> Some builtin_first
   | "last" -> Some builtin_last
   | "rest" -> Some builtin_rest
   | "push" -> Some builtin_push
+  | "puts" -> Some builtin_puts
   | _ -> None
