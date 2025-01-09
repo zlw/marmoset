@@ -1,5 +1,7 @@
 open Ast
 
+let ( let* ) res f = Result.bind res f
+
 type parser = {
   lexer : Lexer.lexer;
   curr_token : Token.token;
@@ -44,6 +46,12 @@ let curr_token_is (p : parser) (t : Token.token_type) : bool = p.curr_token.toke
 let peek_token_is (p : parser) (t : Token.token_type) : bool = p.peek_token.token_type = t
 let add_error (p : parser) (msg : string) : parser = { p with errors = [ msg ] @ p.errors }
 
+let skip (p : parser) (t : Token.token_type) : parser =
+  if peek_token_is p t then
+    next_token p
+  else
+    p
+
 let peek_error (p : parser) (tt : Token.token_type) : parser =
   let msg =
     Printf.sprintf "expected next token to be %s, got %s instead" (Token.show_token_type tt)
@@ -82,37 +90,22 @@ and parse_statement (p : parser) : (parser * AST.statement, parser) result =
   | _ -> parse_expression_statement p
 
 and parse_let_statement (p : parser) : (parser * AST.statement, parser) result =
-  match expect_peek p Token.Ident with
-  | Error p2 -> Error p2
-  | Ok p2 -> (
-      match expect_peek p2 Token.Assign with
-      | Error p3 -> Error p3
-      | Ok p3 -> (
-          match parse_expression (next_token p3) prec_lowest with
-          | Error p4 -> Error p4
-          | Ok (p4, expr) ->
-              if peek_token_is p4 Token.Semicolon then
-                Ok (next_token p4, AST.Let (p2.curr_token.literal, expr))
-              else
-                Ok (p4, AST.Let (p2.curr_token.literal, expr))))
+  let* p2 = expect_peek p Token.Ident in
+  let* p3 = expect_peek p2 Token.Assign in
+  let* p4, expr = parse_expression (next_token p3) prec_lowest in
+  let p5 = skip p4 Token.Semicolon in
+  Ok (p5, AST.Let (p2.curr_token.literal, expr))
 
 and parse_return_statement (p : parser) : (parser * AST.statement, parser) result =
-  match parse_expression (next_token p) prec_lowest with
-  | Error p2 -> Error p2
-  | Ok (p2, expr) ->
-      if peek_token_is p2 Token.Semicolon then
-        Ok (next_token p2, AST.Return expr)
-      else
-        Ok (p2, AST.Return expr)
+  let* p2, expr = parse_expression (next_token p) prec_lowest in
+  let p3 = skip p2 Token.Semicolon in
+  Ok (p3, AST.Return expr)
 
 and parse_expression_statement (p : parser) : (parser * AST.statement, parser) result =
-  match parse_expression p prec_lowest with
-  | Error p2 -> Error p2
-  | Ok (p2, expr) ->
-      if peek_token_is p2 Token.Semicolon then
-        Ok (next_token p2, AST.Expression expr)
-      else
-        Ok (p2, AST.Expression expr)
+  let* p2, expr = parse_expression p prec_lowest in
+  let p3 = skip p2 Token.Semicolon in
+
+  Ok (p3, AST.Expression expr)
 
 and parse_expression (p : parser) (prec : precedence) : (parser * AST.expression, parser) result =
   let tt = p.curr_token.token_type in
