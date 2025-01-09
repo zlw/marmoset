@@ -199,20 +199,25 @@ module Test = struct
   let run (tests : test list) : bool =
     tests
     |> List.for_all (fun { input; output } ->
-           let _, p = Lexer.init input |> Parser.init |> Parser.parse_program in
-           let v, _ = eval p (Env.init ()) in
-           v = output)
+           match Parser.parse input with
+           | Error _ -> false
+           | Ok p ->
+               let v, _ = eval p (Env.init ()) in
+               v = output)
 
   let run_print (tests : test list) : unit =
     tests
-    |> List.iter (fun test ->
-           let parser, program = test.input |> Lexer.init |> Parser.init |> Parser.parse_program in
-           let value, _ = eval program (Env.init ()) in
-           Printf.printf "input:\n%s\n" test.input;
-           Printf.printf "expected:\n%s\n" (Value.show_value test.output);
-           Printf.printf "output:\n%s\n" (Value.show_value value);
-           Printf.printf "errors:\n%s\n" (String.concat ", " parser.errors);
-           flush stdout)
+    |> List.iter (fun { input; output } ->
+           match Parser.parse input with
+           | Error e ->
+               Printf.printf "errors:\n%s\n" (String.concat ", " e);
+               flush stdout
+           | Ok p ->
+               let value, _ = eval p (Env.init ()) in
+               Printf.printf "input:\n%s\n" input;
+               Printf.printf "expected:\n%s\n" (Value.show_value output);
+               Printf.printf "output:\n%s\n" (Value.show_value value);
+               flush stdout)
 
   let%test "test_eval_integer_expression" =
     [

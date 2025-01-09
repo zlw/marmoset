@@ -69,16 +69,18 @@ let no_prefix_parse_fn_error (p : parser) (t : Token.token_type) : parser =
   let msg = Printf.sprintf "no prefix parse function for %s found" (Token.show_token_type t) in
   add_error p msg
 
-let rec parse_program (p : parser) : parser * AST.program =
+let rec parse_program (p : parser) : (parser * AST.program, parser) result =
   let rec loop (lp : parser) (prog : AST.program) =
     if curr_token_is lp Token.EOF then
-      (lp, List.rev prog)
+      Ok (lp, List.rev prog)
     else
-      let lp2, prog2 =
+      let* lp2, prog2 = parse_statement lp in
+      loop (next_token lp2) ([ prog2 ] @ prog)
+    (* let lp2, prog2 =
         match parse_statement lp with Ok (lp3, stmt) -> (lp3, [ stmt ] @ prog) | Error lp3 -> (lp3, prog)
       in
 
-      loop (next_token lp2) prog2
+      loop (next_token lp2) prog2 *)
   in
 
   loop p []
@@ -108,133 +110,115 @@ and parse_expression_statement (p : parser) : (parser * AST.statement, parser) r
   Ok (p3, AST.Expression expr)
 
 and parse_expression (p : parser) (prec : precedence) : (parser * AST.expression, parser) result =
+  let* p2, left_expr = prefixFn p in
+  let* p3, left = infixFn p2 left_expr prec in
+  Ok (p3, left)
+
+and prefixFn (p : parser) : (parser * AST.expression, parser) result =
   let tt = p.curr_token.token_type in
-  let result =
-    match tt with
-    | Token.Ident -> Ok (parse_identifier p)
-    | Token.Int -> Ok (parse_integer_literal p)
-    | Token.String -> Ok (parse_string_literal p)
-    | Token.Bang | Token.Minus -> Ok (parse_prefix_expression p)
-    | Token.True | Token.False -> Ok (parse_boolean p)
-    | Token.LParen -> Ok (parse_grouped_expression p)
-    | Token.If -> Ok (parse_if_expression p)
-    | Token.Function -> Ok (parse_function_literal p)
-    | Token.LBracket -> Ok (parse_array_literal p)
-    | Token.LBrace -> Ok (parse_hash_literal p)
-    | _ -> Error (no_prefix_parse_fn_error p tt)
-  in
+  match tt with
+  | Token.Ident -> parse_identifier p
+  | Token.Int -> parse_integer_literal p
+  | Token.String -> parse_string_literal p
+  | Token.Bang | Token.Minus -> parse_prefix_expression p
+  | Token.True | Token.False -> parse_boolean p
+  | Token.LParen -> parse_grouped_expression p
+  | Token.If -> parse_if_expression p
+  | Token.Function -> parse_function_literal p
+  | Token.LBracket -> parse_array_literal p
+  | Token.LBrace -> parse_hash_literal p
+  | _ -> Error (no_prefix_parse_fn_error p tt)
 
-  match result with
-  | Error p2 -> Error p2
-  | Ok (p2, left_expr) ->
-      let rec loop (lp : parser) (left : AST.expression) : parser * AST.expression =
-        let peek_is_semicolon = peek_token_is lp Token.Semicolon in
-        let lower_precedence = prec < peek_precedence lp in
-        if (not peek_is_semicolon) && lower_precedence then
-          let lp2, left2 =
-            match lp.peek_token.token_type with
-            | Token.Plus | Token.Minus | Token.Slash | Token.Asterisk | Token.Eq | Token.NotEq | Token.Lt
-            | Token.Gt ->
-                parse_infix_expression (next_token lp) left
-            | LParen -> parse_call_expression (next_token lp) left
-            | LBracket -> parse_index_expression (next_token lp) left
-            | _ -> (lp, left)
-          in
-          loop lp2 left2
-        else
-          (lp, left)
+and infixFn (p : parser) (left_expr : AST.expression) (prec : precedence) :
+    (parser * AST.expression, parser) result =
+  let rec loop (lp : parser) (left : AST.expression) : (parser * AST.expression, parser) result =
+    let peek_is_semicolon = peek_token_is lp Token.Semicolon in
+    let lower_precedence = prec < peek_precedence lp in
+    if (not peek_is_semicolon) && lower_precedence then
+      let* lp2, left2 =
+        match lp.peek_token.token_type with
+        | Token.Plus | Token.Minus | Token.Slash | Token.Asterisk | Token.Eq | Token.NotEq | Token.Lt | Token.Gt
+          ->
+            parse_infix_expression (next_token lp) left
+        | LParen -> parse_call_expression (next_token lp) left
+        | LBracket -> parse_index_expression (next_token lp) left
+        | _ -> Ok (lp, left)
       in
-      Ok (loop p2 left_expr)
+      loop lp2 left2
+    else
+      Ok (lp, left)
+  in
+  loop p left_expr
 
-and parse_identifier (p : parser) : parser * AST.expression = (p, AST.Identifier p.curr_token.literal)
+and parse_identifier (p : parser) : (parser * AST.expression, parser) result =
+  Ok (p, AST.Identifier p.curr_token.literal)
 
-and parse_integer_literal (p : parser) : parser * AST.expression =
+and parse_integer_literal (p : parser) : (parser * AST.expression, parser) result =
   match Int64.of_string_opt p.curr_token.literal with
-  | Some int -> (p, AST.Integer int)
-  | None -> failwith ("can't parse number from " ^ p.curr_token.literal)
+  | Some int -> Ok (p, AST.Integer int)
+  | None ->
+      let msg = Printf.sprintf "can't parse number from %s" p.curr_token.literal in
+      Error (add_error p msg)
 
-and parse_string_literal (p : parser) : parser * AST.expression = (p, AST.String p.curr_token.literal)
+and parse_string_literal (p : parser) : (parser * AST.expression, parser) result =
+  Ok (p, AST.String p.curr_token.literal)
 
-and parse_prefix_expression (p : parser) : parser * AST.expression =
+and parse_prefix_expression (p : parser) : (parser * AST.expression, parser) result =
   let op = p.curr_token.literal in
   let p2 = next_token p in
-  match parse_expression p2 prec_prefix with
-  | Ok (p3, right) -> (p3, AST.Prefix (op, right))
-  | Error _p3 -> failwith "parse_prefix_expression failed"
+  let* p3, right = parse_expression p2 prec_prefix in
+  Ok (p3, AST.Prefix (op, right))
 
-and parse_infix_expression (p : parser) (left : AST.expression) : parser * AST.expression =
+and parse_infix_expression (p : parser) (left : AST.expression) : (parser * AST.expression, parser) result =
   let op = p.curr_token.literal in
   let prec = curr_precedence p in
   let p2 = next_token p in
-  match parse_expression p2 prec with
-  | Ok (p3, right) -> (p3, AST.Infix (left, op, right))
-  | Error _p3 -> failwith "parse_infix_expression failed"
+  let* p3, right = parse_expression p2 prec in
+  Ok (p3, AST.Infix (left, op, right))
 
-and parse_boolean (p : parser) : parser * AST.expression = (p, AST.Boolean (p.curr_token.token_type = Token.True))
+and parse_boolean (p : parser) : (parser * AST.expression, parser) result =
+  Ok (p, AST.Boolean (p.curr_token.token_type = Token.True))
 
-and parse_grouped_expression (p : parser) : parser * AST.expression =
-  match parse_expression (next_token p) prec_lowest with
-  | Error _p2 -> failwith "parse_grouped_expression failed"
-  | Ok (p2, expr) -> (
-      match expect_peek p2 Token.RParen with
-      | Ok p3 -> (p3, expr)
-      | Error _p3 -> failwith "parse_grouped_expression failed")
+and parse_grouped_expression (p : parser) : (parser * AST.expression, parser) result =
+  let* p2, expr = parse_expression (next_token p) prec_lowest in
+  let* p3 = expect_peek p2 Token.RParen in
+  Ok (p3, expr)
 
-and parse_if_expression (p : parser) : parser * AST.expression =
-  match expect_peek p Token.LParen with
-  | Error _p2 -> failwith "parse_if_expression failed"
-  | Ok p2 -> (
-      match parse_expression (next_token p2) prec_lowest with
-      | Error _p3 -> failwith "parse_if_expression failed"
-      | Ok (p3, cond) -> (
-          match expect_peek p3 Token.RParen with
-          | Error _p4 -> failwith "parse_if_expression failed"
-          | Ok p4 -> (
-              match expect_peek p4 Token.LBrace with
-              | Error _p5 -> failwith "parse_if_expression failed"
-              | Ok p5 -> (
-                  let p6, cons = parse_block_statement p5 in
-                  if not (peek_token_is p6 Token.Else) then
-                    (p6, AST.If (cond, cons, None))
-                  else
-                    match expect_peek (next_token p6) Token.LBrace with
-                    | Error _p7 -> failwith "parse_if_expression failed"
-                    | Ok p7 ->
-                        let p8, alt = parse_block_statement p7 in
-                        (p8, AST.If (cond, cons, Some alt))))))
+and parse_if_expression (p : parser) : (parser * AST.expression, parser) result =
+  let* p2 = expect_peek p Token.LParen in
+  let* p3, cond = parse_expression (next_token p2) prec_lowest in
+  let* p4 = expect_peek p3 Token.RParen in
+  let* p5 = expect_peek p4 Token.LBrace in
+  let* p6, cons = parse_block_statement p5 in
 
-and parse_block_statement (p : parser) : parser * AST.statement =
-  let rec loop (lp : parser) (stmts : AST.statement list) =
+  if not (peek_token_is p6 Token.Else) then
+    Ok (p6, AST.If (cond, cons, None))
+  else
+    let* p7 = expect_peek (next_token p6) Token.LBrace in
+    let* p8, alt = parse_block_statement p7 in
+    Ok (p8, AST.If (cond, cons, Some alt))
+
+and parse_block_statement (p : parser) : (parser * AST.statement, parser) result =
+  let rec loop (lp : parser) (stmts : AST.statement list) : (parser * AST.statement, parser) result =
     if curr_token_is lp Token.RBrace || curr_token_is lp Token.EOF then
-      (lp, AST.Block (List.rev stmts))
+      Ok (lp, AST.Block (List.rev stmts))
     else
-      let lp2, new_block =
-        match parse_statement lp with
-        | Ok (new_parser, stmt) -> (new_parser, [ stmt ] @ stmts)
-        | Error new_parser -> (new_parser, stmts)
-      in
-
-      loop (next_token lp2) new_block
+      let* lp2, new_block = parse_statement lp in
+      loop (next_token lp2) ([ new_block ] @ stmts)
   in
-  let p2 = next_token p in
 
-  loop p2 []
+  loop (next_token p) []
 
-and parse_function_literal (p : parser) : parser * AST.expression =
-  match expect_peek p Token.LParen with
-  | Error _p2 -> failwith "parse_function_literal failed"
-  | Ok p2 -> (
-      let p3, params = parse_function_parameters p2 in
+and parse_function_literal (p : parser) : (parser * AST.expression, parser) result =
+  let* p2 = expect_peek p Token.LParen in
+  let* p3, params = parse_function_parameters p2 in
+  let* p4 = expect_peek p3 Token.LBrace in
+  let* p5, body = parse_block_statement p4 in
+  Ok (p5, AST.Function (params, body))
 
-      match expect_peek p3 Token.LBrace with
-      | Error _p4 -> failwith "parse_function_literal failed"
-      | Ok p4 ->
-          let p5, body = parse_block_statement p4 in
-          (p5, AST.Function (params, body)))
-
-and parse_function_parameters (p : parser) : parser * AST.expression list =
+and parse_function_parameters (p : parser) : (parser * AST.expression list, parser) result =
   if peek_token_is p Token.RParen then
-    (next_token p, [])
+    Ok (next_token p, [])
   else
     let rec loop (lp : parser) (idents : AST.expression list) =
       if peek_token_is lp Token.Comma then
@@ -243,88 +227,68 @@ and parse_function_parameters (p : parser) : parser * AST.expression list =
 
         loop lp2 ident
       else
-        match expect_peek lp Token.RParen with
-        | Error _lp2 -> failwith "can't parse function parameters"
-        | Ok lp2 -> (lp2, List.rev idents)
+        let* lp2 = expect_peek lp Token.RParen in
+        Ok (lp2, List.rev idents)
     in
     let p2 = next_token p in
 
     loop p2 [ AST.Identifier p2.curr_token.literal ]
 
-and parse_call_expression (p : parser) (c : AST.expression) : parser * AST.expression =
-  let p2, arguments = parse_expression_list p Token.RParen in
-  (p2, AST.Call (c, arguments))
+and parse_call_expression (p : parser) (c : AST.expression) : (parser * AST.expression, parser) result =
+  let* p2, arguments = parse_expression_list p Token.RParen in
+  Ok (p2, AST.Call (c, arguments))
 
-and parse_expression_list (p : parser) (end_tt : Token.token_type) : parser * AST.expression list =
+and parse_expression_list (p : parser) (end_tt : Token.token_type) : (parser * AST.expression list, parser) result
+    =
   if peek_token_is p end_tt then
-    (next_token p, [])
+    Ok (next_token p, [])
   else
-    match parse_expression (next_token p) prec_lowest with
-    | Error _p2 -> failwith "can't parse call arguments"
-    | Ok (p2, arg) ->
-        let rec loop (lp : parser) (args : AST.expression list) =
-          if peek_token_is lp Token.Comma then
-            match parse_expression (next_token (next_token lp)) prec_lowest with
-            | Error _lp2 -> failwith "can't parse call arguments"
-            | Ok (lp2, arg) -> loop lp2 ([ arg ] @ args)
-          else
-            match expect_peek lp end_tt with
-            | Error _lp2 -> failwith "can't parse call arguments"
-            | Ok lp2 -> (lp2, List.rev args)
-        in
+    let* p2, arg = parse_expression (next_token p) prec_lowest in
 
-        loop p2 [ arg ]
+    let rec loop (lp : parser) (args : AST.expression list) =
+      if peek_token_is lp Token.Comma then
+        let* lp2, arg = parse_expression (next_token (next_token lp)) prec_lowest in
+        loop lp2 ([ arg ] @ args)
+      else
+        let* lp2 = expect_peek lp end_tt in
+        Ok (lp2, List.rev args)
+    in
 
-and parse_array_literal (p : parser) : parser * AST.expression =
-  let p2, exprs = parse_expression_list p Token.RBracket in
-  (p2, AST.Array exprs)
+    loop p2 [ arg ]
 
-and parse_index_expression (p : parser) (left : AST.expression) : parser * AST.expression =
+and parse_array_literal (p : parser) : (parser * AST.expression, parser) result =
+  let* p2, exprs = parse_expression_list p Token.RBracket in
+  Ok (p2, AST.Array exprs)
+
+and parse_index_expression (p : parser) (left : AST.expression) : (parser * AST.expression, parser) result =
   let p2 = next_token p in
-  match parse_expression p2 prec_lowest with
-  | Error _p3 -> failwith "parse_index_expression failed"
-  | Ok (p3, index) -> (
-      match expect_peek p3 Token.RBracket with
-      | Error _p4 -> failwith "parse_index_expression failed"
-      | Ok p4 -> (p4, AST.Index (left, index)))
+  let* p3, index = parse_expression p2 prec_lowest in
+  let* p4 = expect_peek p3 Token.RBracket in
+  Ok (p4, AST.Index (left, index))
 
-and parse_hash_literal (p : parser) : parser * AST.expression =
-  let rec loop (lp : parser) (pairs : (AST.expression * AST.expression) list) =
+and parse_hash_literal (p : parser) : (parser * AST.expression, parser) result =
+  let rec loop lp (pairs : (AST.expression * AST.expression) list) =
     if peek_token_is lp Token.RBrace then
-      (next_token lp, AST.Hash (List.rev pairs))
+      Ok (next_token lp, AST.Hash (List.rev pairs))
     else
-      let lp2, key =
-        match parse_expression (next_token lp) prec_lowest with
-        | Error _lp2 -> failwith "parse_hash_literal failed"
-        | Ok (lp2, key) -> (lp2, key)
-      in
+      let* lp2, key = parse_expression (next_token lp) prec_lowest in
+      let* lp3 = expect_peek lp2 Token.Colon in
+      let* lp4, value = parse_expression (next_token lp3) prec_lowest in
 
-      match expect_peek lp2 Token.Colon with
-      | Error _lp3 -> failwith "parse_hash_literal failed#2"
-      | Ok lp3 ->
-          let lp4, value =
-            match parse_expression (next_token lp3) prec_lowest with
-            | Error _lp4 -> failwith "parse_hash_literal failed"
-            | Ok (lp4, value) -> (lp4, value)
-          in
-
-          if peek_token_is lp4 Token.Comma then
-            loop (next_token lp4) ([ (key, value) ] @ pairs)
-          else if not (peek_token_is lp4 Token.RBrace) then
-            failwith "parse_hash_literal failed"
-          else
-            loop lp4 ([ (key, value) ] @ pairs)
+      if peek_token_is lp4 Token.Comma then
+        loop (next_token lp4) ([ (key, value) ] @ pairs)
+      else if not (peek_token_is lp4 Token.RBrace) then
+        Error lp4
+      else
+        loop lp4 ([ (key, value) ] @ pairs)
   in
 
   loop p []
 
 let parse (s : string) : (AST.program, string list) result =
-  let parser, program = s |> Lexer.init |> init |> parse_program in
-
-  if parser.errors = [] then
-    Ok program
-  else
-    Error (List.rev parser.errors)
+  match s |> Lexer.init |> init |> parse_program with
+  | Ok (_, program) -> Ok program
+  | Error parser -> Error (List.rev parser.errors)
 
 module Test = struct
   type test = {

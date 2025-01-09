@@ -67,26 +67,9 @@ make unit
 
 ## TODO
 
-- [ ] Cleanup pyramid of doom in `Parser`
-    - Use `Result.bind`
-      - [x] `parse_let_statment`
-      - [x] `parse_return_statement`
-      - [x] `parse_expression_statement`
-  - [ ] Propagate parsing errors instead of crashing
-    - [ ] Return `result`
-      - [ ] `parse_identifier`
-      - [ ] `parse_integerLiteral`
-      - [ ] `parse_string_lLiteral`
-      - [ ] `parse_prefixExpression`
-      - [ ] `parse_infixExpression`
-      - [ ] `parse_boolean`
-      - [ ] `parse_groupedExpression`
-      - [ ] `parse_if_expression`
-      - [ ] `parse_block_statement`
-      - [ ] `parse_function_literal`
-      - [ ] `parse_function_parameters`
-      - [ ] `parse_call_expression`
-      - [ ] `parse_call_arguments`
+- [x] Cleanup pyramid of doom in `Parser`
+    - [x] Use `Result.bind`
+    - [x] Propagate parsing errors instead of crashing
 - [ ] Add system tests
   - [ ] test runner
   - [ ] test cases (maybe reuse some from Crafting Interpreters?)
