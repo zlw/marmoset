@@ -10,6 +10,7 @@ end
 type value =
   | Null
   | Integer of int64
+  | Float of float
   | Boolean of bool
   | String of string
   | Array of value list
@@ -32,6 +33,7 @@ let is_truthy = function
 let rec to_string = function
   | Null -> "null"
   | Integer i -> Int64.to_string i
+  | Float f -> Printf.sprintf "%f" f
   | Boolean b -> string_of_bool b
   | String s -> "\"" ^ s ^ "\""
   | Array vs -> Printf.sprintf "[%s]" (vs |> List.map to_string |> String.concat ", ")
@@ -53,6 +55,7 @@ and param_to_string = function
 let rec type_of = function
   | Null -> "Null"
   | Integer _ -> "Integer"
+  | Float _ -> "Float"
   | Boolean _ -> "Boolean"
   | String _ -> "String"
   | Array _ -> "Array"

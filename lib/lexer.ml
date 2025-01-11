@@ -57,7 +57,11 @@ let rec next_token (l : lexer) : lexer * Token.token =
         (l2, Token.init tt lit)
       else if is_digit l.ch then
         let l2, lit = read_number l in
-        (l2, Token.init Int lit)
+        if is_float l2 then
+          let l4, lit2 = read_number (read_char l2) in
+          (l4, Token.init Float (lit ^ "." ^ lit2))
+        else
+          (l2, Token.init Int lit)
       else
         (l, Token.init Illegal (String.make 1 l.ch))
 
@@ -78,6 +82,7 @@ and read_until (l : lexer) (f : char -> bool) : lexer * string =
 
 and is_letter (c : char) : bool = ('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z') || c = '_'
 and is_digit (c : char) : bool = '0' <= c && c <= '9'
+and is_float (l : lexer) : bool = l.ch = '.' && is_digit (peek_char l)
 
 let lex (i : string) : Token.token list =
   let rec loop (l : lexer) (ts : Token.token list) =
@@ -114,7 +119,8 @@ let%test "test_lexer" =
     \"foobar\"
     \"Hello, World!\"
     [1, 2];
-    {\"foo\": \"bar\", 1: 2}
+    {\"foo\": \"bar\", 1: 2};
+    3.14;
   "
   in
   lex input
@@ -209,5 +215,8 @@ let%test "test_lexer" =
       Token.init Colon ":";
       Token.init Int "2";
       Token.init RBrace "}";
+      Token.init Semicolon ";";
+      Token.init Float "3.14";
+      Token.init Semicolon ";";
       Token.init EOF "";
     ]

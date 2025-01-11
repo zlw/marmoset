@@ -76,11 +76,6 @@ let rec parse_program (p : parser) : (parser * AST.program, parser) result =
     else
       let* lp2, prog2 = parse_statement lp in
       loop (next_token lp2) ([ prog2 ] @ prog)
-    (* let lp2, prog2 =
-        match parse_statement lp with Ok (lp3, stmt) -> (lp3, [ stmt ] @ prog) | Error lp3 -> (lp3, prog)
-      in
-
-      loop (next_token lp2) prog2 *)
   in
 
   loop p []
@@ -119,6 +114,7 @@ and prefixFn (p : parser) : (parser * AST.expression, parser) result =
   match tt with
   | Token.Ident -> parse_identifier p
   | Token.Int -> parse_integer_literal p
+  | Token.Float -> parse_float_literal p
   | Token.String -> parse_string_literal p
   | Token.Bang | Token.Minus -> parse_prefix_expression p
   | Token.True | Token.False -> parse_boolean p
@@ -156,6 +152,13 @@ and parse_identifier (p : parser) : (parser * AST.expression, parser) result =
 and parse_integer_literal (p : parser) : (parser * AST.expression, parser) result =
   match Int64.of_string_opt p.curr_token.literal with
   | Some int -> Ok (p, AST.Integer int)
+  | None ->
+      let msg = Printf.sprintf "can't parse number from %s" p.curr_token.literal in
+      Error (add_error p msg)
+
+and parse_float_literal (p : parser) : (parser * AST.expression, parser) result =
+  match float_of_string_opt p.curr_token.literal with
+  | Some float -> Ok (p, AST.Float float)
   | None ->
       let msg = Printf.sprintf "can't parse number from %s" p.curr_token.literal in
       Error (add_error p msg)
@@ -338,6 +341,9 @@ module Test = struct
 
   let%test "test_integer_literal_expressions" =
     [ { input = "5;"; output = [ AST.Expression (AST.Integer 5L) ] } ] |> run
+
+  let%test "test_float_literal_expressions" =
+    [ { input = "5.5;"; output = [ AST.Expression (AST.Float 5.5) ] } ] |> run
 
   let%test "test_string_literal_expressions" =
     [ { input = "\"hello world\";"; output = [ AST.Expression (AST.String "hello world") ] } ] |> run

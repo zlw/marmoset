@@ -38,6 +38,7 @@ and eval_statement (stmt : AST.statement) (e : env) : Value.value * env =
 and eval_expression (expr : AST.expression) (e : env) : Value.value * env =
   match expr with
   | Integer i -> (Value.Integer i, e)
+  | Float f -> (Value.Float f, e)
   | Boolean b ->
       if b then
         (Value.true_value, e)
@@ -97,6 +98,7 @@ and eval_expression (expr : AST.expression) (e : env) : Value.value * env =
       let v, e' = eval_expression right e in
       match v with
       | Value.Integer i -> (Value.Integer (Int64.neg i), e')
+      | Value.Float f -> (Value.Float (-.f), e')
       | _ ->
           let error = Value.unknown_prefix_operator_error "-" right in
           (error, e'))
@@ -110,6 +112,19 @@ and eval_expression (expr : AST.expression) (e : env) : Value.value * env =
           | "-" -> (Value.Integer (Int64.sub left'' right''), e'')
           | "*" -> (Value.Integer (Int64.mul left'' right''), e'')
           | "/" -> (Value.Integer (Int64.div left'' right''), e'')
+          | "<" -> (Value.Boolean (left'' < right''), e'')
+          | ">" -> (Value.Boolean (left'' > right''), e'')
+          | "==" -> (Value.Boolean (left'' = right''), e'')
+          | "!=" -> (Value.Boolean (left'' <> right''), e'')
+          | _ ->
+              let error = Value.unknown_infix_operator_error left op right in
+              (error, e''))
+      | Value.Float left'', Value.Float right'' -> (
+          match op with
+          | "+" -> (Value.Float (left'' +. right''), e'')
+          | "-" -> (Value.Float (left'' -. right''), e'')
+          | "*" -> (Value.Float (left'' *. right''), e'')
+          | "/" -> (Value.Float (left'' /. right''), e'')
           | "<" -> (Value.Boolean (left'' < right''), e'')
           | ">" -> (Value.Boolean (left'' > right''), e'')
           | "==" -> (Value.Boolean (left'' = right''), e'')
@@ -252,6 +267,26 @@ module Test = struct
     ]
     |> run
 
+  let%test "test_eval_float_expression" =
+    [
+      { input = "5.0;"; output = Value.Float 5.0 };
+      { input = "10.0;"; output = Value.Float 10.0 };
+      { input = "-5.0;"; output = Value.Float (-5.0) };
+      { input = "-10.0;"; output = Value.Float (-10.0) };
+      { input = "5.0 + 5.0 + 5.0 + 5.0 - 10.0;"; output = Value.Float 10.0 };
+      { input = "2.0 * 2.0 * 2.0 * 2.0 * 2.0;"; output = Value.Float 32.0 };
+      { input = "-50.0 + 100.0 + -50.0;"; output = Value.Float 0.0 };
+      { input = "5.0 * 2.0 + 10.0;"; output = Value.Float 20.0 };
+      { input = "5.0 + 2.0 * 10.0;"; output = Value.Float 25.0 };
+      { input = "20.0 + 2.0 * -10.0;"; output = Value.Float 0.0 };
+      { input = "50.0 / 2.0 * 2.0 + 10.0;"; output = Value.Float 60.0 };
+      { input = "2.0 * (5.0 + 10.0);"; output = Value.Float 30.0 };
+      { input = "3.0 * 3.0 * 3.0 + 10.0;"; output = Value.Float 37.0 };
+      { input = "3.0 * (3.0 * 3.0) + 10.0;"; output = Value.Float 37.0 };
+      { input = "(5.0 + 10.0 * 2.0 + 15.0 / 3.0) * 2.0 + -10.0;"; output = Value.Float 50.0 };
+    ]
+    |> run
+
   let%test "test_eval_boolean_expression" =
     [
       { input = "true;"; output = Value.Boolean true };
@@ -264,6 +299,14 @@ module Test = struct
       { input = "1 != 1;"; output = Value.Boolean false };
       { input = "1 == 2;"; output = Value.Boolean false };
       { input = "1 != 2;"; output = Value.Boolean true };
+      { input = "1.0 < 2.0;"; output = Value.Boolean true };
+      { input = "1.0 > 2.0;"; output = Value.Boolean false };
+      { input = "1.0 < 1.0;"; output = Value.Boolean false };
+      { input = "1.0 > 1.0;"; output = Value.Boolean false };
+      { input = "1.0 == 1.0;"; output = Value.Boolean true };
+      { input = "1.0 != 1.0;"; output = Value.Boolean false };
+      { input = "1.0 == 2.0;"; output = Value.Boolean false };
+      { input = "1.0 != 2.0;"; output = Value.Boolean true };
       { input = "true == true;"; output = Value.Boolean true };
       { input = "false == false;"; output = Value.Boolean true };
       { input = "true == false;"; output = Value.Boolean false };
@@ -273,6 +316,10 @@ module Test = struct
       { input = "(1 < 2) == false;"; output = Value.Boolean false };
       { input = "(1 > 2) == true;"; output = Value.Boolean false };
       { input = "(1 > 2) == false;"; output = Value.Boolean true };
+      { input = "(1.0 < 2.0) == true;"; output = Value.Boolean true };
+      { input = "(1.0 < 2.0) == false;"; output = Value.Boolean false };
+      { input = "(1.0 > 2.0) == true;"; output = Value.Boolean false };
+      { input = "(1.0 > 2.0) == false;"; output = Value.Boolean true };
     ]
     |> run
 

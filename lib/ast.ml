@@ -10,6 +10,7 @@ module AST = struct
   and expression =
     | Identifier of string
     | Integer of int64
+    | Float of float
     | Boolean of bool
     | String of string
     | Array of expression list
@@ -25,6 +26,7 @@ module AST = struct
     match e with
     | Identifier _ -> "Identifier"
     | Integer _ -> "Integer"
+    | Float _ -> "Float"
     | String _ -> "String"
     | Array _ -> "Array"
     | Index _ -> "Index"
@@ -47,6 +49,7 @@ module AST = struct
       match e with
       | Identifier ident -> ident
       | Integer i -> Int64.to_string i
+      | Float f -> string_of_float f
       | String s -> Printf.sprintf "\"%s\"" s
       | Array exprs -> Printf.sprintf "[%s]" (args_to_string exprs)
       | Index (arr, idx) -> Printf.sprintf "(%s[%s])" (expression_to_string arr) (expression_to_string idx)
