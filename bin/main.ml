@@ -41,9 +41,11 @@ let run_file () =
   let input = read_file filename in
   match Marmoset.Parser.parse input with
   | Error msgs -> List.iter (fun msg -> print_endline msg) msgs
-  | Ok program ->
+  | Ok program -> (
       let env = Marmoset.Env.init () in
-      Marmoset.Eval.eval program env |> ignore
+      match Marmoset.Eval.eval program env with
+      | Marmoset.Value.Error msg, _ -> print_endline ("ERROR: " ^ msg)
+      | _, _ -> ())
 
 let () =
   let arg_len = Array.length Sys.argv in
