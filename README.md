@@ -65,6 +65,24 @@ make unit
 | Floats                 | ❌          | ❌       |
 | Macros                 | ❌          | ❌       |
 
+## Differences from the original implementation
+
+### String Indexing (Positive and Negative)
+
+```
+let a = "hello";
+a[0];  // => "h"
+a[-1]; // => "o"
+```
+
+### Array Negative Indexing
+
+```
+let a = ["h", "e", "l", "l", "o"];
+a[0];  // => "h" 👈 this was in the original implementation
+a[-1]; // => "o"
+```
+
 ## TODO
 
 - [x] Cleanup pyramid of doom in `Parser`

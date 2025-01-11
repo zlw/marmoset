@@ -47,15 +47,25 @@ and eval_expression (expr : AST.expression) (e : env) : Value.value * env =
       let* idx', e'' = eval_expression idx e' in
       match (arr', idx') with
       | Value.Array vs, Value.Integer i ->
-          if i < 0L || Int64.to_int i >= List.length vs then
+          if Int64.to_int i >= List.length vs then
             (Value.null_value, e'')
+          else if i < 0L then
+            if Int64.to_int i + List.length vs < 0 then
+              (Value.null_value, e'')
+            else
+              (List.nth vs (List.length vs + Int64.to_int i), e'')
           else
             (List.nth vs (Int64.to_int i), e'')
       | Value.Hash _, _ -> (
           match Value.get arr' idx' with Some v -> (v, e'') | None -> (Value.null_value, e''))
       | Value.String s, Value.Integer i ->
-          if i < 0L || Int64.to_int i >= String.length s then
+          if Int64.to_int i >= String.length s then
             (Value.null_value, e'')
+          else if i < 0L then
+            if Int64.to_int i + String.length s < 0 then
+              (Value.null_value, e'')
+            else
+              (Value.String (String.make 1 s.[String.length s + Int64.to_int i]), e'')
           else
             (Value.String (String.sub s (Int64.to_int i) 1), e'')
       | _ ->
@@ -392,6 +402,12 @@ module Test = struct
       { input = "\"hello\"[3]"; output = Value.String "l" };
       { input = "\"hello\"[4]"; output = Value.String "o" };
       { input = "\"hello\"[5]"; output = Value.null_value };
+      { input = "\"hello\"[-1]"; output = Value.String "o" };
+      { input = "\"hello\"[-2]"; output = Value.String "l" };
+      { input = "\"hello\"[-3]"; output = Value.String "l" };
+      { input = "\"hello\"[-4]"; output = Value.String "e" };
+      { input = "\"hello\"[-5]"; output = Value.String "h" };
+      { input = "\"hello\"[-6]"; output = Value.null_value };
     ]
     |> run
 
@@ -502,7 +518,10 @@ module Test = struct
       { input = "let myArray = [1, 2, 3]; myArray[0] + myArray[1] + myArray[2]"; output = Value.Integer 6L };
       { input = "let myArray = [1, 2, 3]; let i = myArray[0]; myArray[i]"; output = Value.Integer 2L };
       { input = "[1, 2, 3][3]"; output = Value.null_value };
-      { input = "[1, 2, 3][-1]"; output = Value.null_value };
+      { input = "[1, 2, 3][-1]"; output = Value.Integer 3L };
+      { input = "[1, 2, 3][-2]"; output = Value.Integer 2L };
+      { input = "[1, 2, 3][-3]"; output = Value.Integer 1L };
+      { input = "[1, 2, 3][-4]"; output = Value.null_value };
     ]
     |> run
 
