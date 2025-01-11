@@ -1,5 +1,7 @@
 open Ast
 
+let ( let* ) res f = match res with Value.Error _, _ -> res | _ -> f res
+
 type env = Value.value Env.env
 
 let rec eval (p : AST.program) (e : env) : Value.value * env =
@@ -21,12 +23,12 @@ and eval_statement (stmt : AST.statement) (e : env) : Value.value * env =
   match stmt with
   | Expression expr -> eval_expression expr e
   | Block stmts -> eval_program stmts e
-  | Let (ident, expr) -> (
-      let v, e' = eval_expression expr e in
-      match v with Value.Error _ -> (v, e') | _ -> (v, Env.set e' ident v))
-  | Return expr -> (
-      let v, e' = eval_expression expr e in
-      match v with Value.Error _ -> (v, e') | _ -> (Value.Return v, e'))
+  | Let (ident, expr) ->
+      let* v, e' = eval_expression expr e in
+      (v, Env.set e' ident v)
+  | Return expr ->
+      let* v, e' = eval_expression expr e in
+      (Value.Return v, e')
 
 and eval_expression (expr : AST.expression) (e : env) : Value.value * env =
   match expr with
@@ -41,37 +43,27 @@ and eval_expression (expr : AST.expression) (e : env) : Value.value * env =
       let vs, e' = eval_expressions exprs e in
       (Value.Array vs, e')
   | Index (arr, idx) -> (
-      let arr', e' = eval_expression arr e in
-      match arr' with
-      | Value.Error _ -> (arr', e')
-      | _ -> (
-          let idx', e'' = eval_expression idx e' in
-          match idx' with
-          | Value.Error _ -> (idx', e'')
-          | _ -> (
-              match (arr', idx') with
-              | Value.Array vs, Value.Integer i ->
-                  if i < 0L || Int64.to_int i >= List.length vs then
-                    (Value.null_value, e'')
-                  else
-                    (List.nth vs (Int64.to_int i), e'')
-              | Value.Hash _, _ -> (
-                  match Value.get arr' idx' with Some v -> (v, e'') | None -> (Value.null_value, e''))
-              | _ ->
-                  let msg = Printf.sprintf "index operator not supported: %s" (Value.type_of arr') in
-                  (Value.Error msg, e'))))
+      let* arr', e' = eval_expression arr e in
+      let* idx', e'' = eval_expression idx e' in
+      match (arr', idx') with
+      | Value.Array vs, Value.Integer i ->
+          if i < 0L || Int64.to_int i >= List.length vs then
+            (Value.null_value, e'')
+          else
+            (List.nth vs (Int64.to_int i), e'')
+      | Value.Hash _, _ -> (
+          match Value.get arr' idx' with Some v -> (v, e'') | None -> (Value.null_value, e''))
+      | _ ->
+          let msg = Printf.sprintf "index operator not supported: %s" (Value.type_of arr') in
+          (Value.Error msg, e'))
   | Hash pairs ->
       let rec loop pairs (acc : Value.value) env =
         match pairs with
         | [] -> (acc, env)
-        | (k, v) :: rest -> (
-            let k', env' = eval_expression k env in
-            match k' with
-            | Value.Error _ -> (k', env')
-            | _ -> (
-                match eval_expression v env' with
-                | (Value.Error _, _) as error -> error
-                | v', env'' -> loop rest (Value.set acc k' v') env''))
+        | (k, v) :: rest ->
+            let* k', env' = eval_expression k env in
+            let* v', env'' = eval_expression v env' in
+            loop rest (Value.set acc k' v') env''
       in
       loop pairs (Value.init ()) e
   | Prefix ("!", right) -> (
@@ -85,56 +77,46 @@ and eval_expression (expr : AST.expression) (e : env) : Value.value * env =
           let error = Value.unknown_prefix_operator_error "-" right in
           (error, e'))
   | Infix (left, op, right) -> (
-      let left', e' = eval_expression left e in
-
-      match left' with
-      | Value.Error _ -> (left', e')
-      | _ -> (
-          let right', e'' = eval_expression right e' in
-          match right' with
-          | Value.Error _ -> (right', e'')
-          | _ -> (
-              match (left', right') with
-              | Value.Integer left'', Value.Integer right'' -> (
-                  match op with
-                  | "+" -> (Value.Integer (Int64.add left'' right''), e'')
-                  | "-" -> (Value.Integer (Int64.sub left'' right''), e'')
-                  | "*" -> (Value.Integer (Int64.mul left'' right''), e'')
-                  | "/" -> (Value.Integer (Int64.div left'' right''), e'')
-                  | "<" -> (Value.Boolean (left'' < right''), e'')
-                  | ">" -> (Value.Boolean (left'' > right''), e'')
-                  | "==" -> (Value.Boolean (left'' = right''), e'')
-                  | "!=" -> (Value.Boolean (left'' <> right''), e'')
-                  | _ ->
-                      let error = Value.unknown_infix_operator_error left op right in
-                      (error, e''))
-              | Value.Boolean left'', Value.Boolean right'' -> (
-                  match op with
-                  | "==" -> (Value.Boolean (left'' = right''), e'')
-                  | "!=" -> (Value.Boolean (left'' <> right''), e'')
-                  | _ ->
-                      let error = Value.unknown_infix_operator_error left op right in
-                      (error, e''))
-              | Value.String left'', Value.String right'' -> (
-                  match op with
-                  | "+" -> (Value.String (left'' ^ right''), e'')
-                  | _ ->
-                      let error = Value.unknown_infix_operator_error left op right in
-                      (error, e''))
-              | _ ->
-                  let error = Value.type_mismatch_error left op right in
-                  (error, e''))))
+      let* left', e' = eval_expression left e in
+      let* right', e'' = eval_expression right e' in
+      match (left', right') with
+      | Value.Integer left'', Value.Integer right'' -> (
+          match op with
+          | "+" -> (Value.Integer (Int64.add left'' right''), e'')
+          | "-" -> (Value.Integer (Int64.sub left'' right''), e'')
+          | "*" -> (Value.Integer (Int64.mul left'' right''), e'')
+          | "/" -> (Value.Integer (Int64.div left'' right''), e'')
+          | "<" -> (Value.Boolean (left'' < right''), e'')
+          | ">" -> (Value.Boolean (left'' > right''), e'')
+          | "==" -> (Value.Boolean (left'' = right''), e'')
+          | "!=" -> (Value.Boolean (left'' <> right''), e'')
+          | _ ->
+              let error = Value.unknown_infix_operator_error left op right in
+              (error, e''))
+      | Value.Boolean left'', Value.Boolean right'' -> (
+          match op with
+          | "==" -> (Value.Boolean (left'' = right''), e'')
+          | "!=" -> (Value.Boolean (left'' <> right''), e'')
+          | _ ->
+              let error = Value.unknown_infix_operator_error left op right in
+              (error, e''))
+      | Value.String left'', Value.String right'' -> (
+          match op with
+          | "+" -> (Value.String (left'' ^ right''), e'')
+          | _ ->
+              let error = Value.unknown_infix_operator_error left op right in
+              (error, e''))
+      | _ ->
+          let error = Value.type_mismatch_error left op right in
+          (error, e''))
   | If (condition, consequence, alternative) -> (
-      let cond, e' = eval_expression condition e in
-      match cond with
-      | Value.Error _ -> (cond, e')
-      | _ -> (
-          if Value.is_truthy cond then
-            eval_statement consequence e'
-          else
-            match alternative with
-            | None -> (Value.null_value, e')
-            | Some alt -> eval_statement alt e'))
+      let* cond, e' = eval_expression condition e in
+      if Value.is_truthy cond then
+        eval_statement consequence e'
+      else
+        match alternative with
+        | None -> (Value.null_value, e')
+        | Some alt -> eval_statement alt e')
   | Identifier ident -> (
       match Env.get e ident with
       | Some v -> (v, e)
@@ -144,9 +126,8 @@ and eval_expression (expr : AST.expression) (e : env) : Value.value * env =
           | None -> (Value.Error ("identifier not found: " ^ ident), e)))
   | Function (params, body) -> (Value.Function (params, body, Some e), e)
   | Call (func, args) -> (
-      let func', e' = eval_expression func e in
+      let* func', e' = eval_expression func e in
       match func' with
-      | Error _ -> (func', e')
       | Value.Function (_, _, _) | Value.BuiltinFunction _ -> (
           let args', e'' = eval_expressions args e' in
           match args' with [ Value.Error _ ] -> (List.hd args', e'') | _ -> (apply_function func' args', e'))
