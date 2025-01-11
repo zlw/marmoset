@@ -1,11 +1,16 @@
 open Ast
 
-let ( let* ) res f = match res with Value.Error _, _ -> res | _ -> f res
+let ( let* ) res f =
+  match res with
+  | Value.Error _, _ -> res
+  | _ -> f res
 
 type env = Value.value Env.env
 
 let rec eval (p : AST.program) (e : env) : Value.value * env =
-  match eval_program p e with Value.Return v, e' -> (v, e') | v, e' -> (v, e')
+  match eval_program p e with
+  | Value.Return v, e' -> (v, e')
+  | v, e' -> (v, e')
 
 and eval_program (stmts : AST.statement list) (e : env) : Value.value * env =
   let rec loop stmts (v, e) =
@@ -57,7 +62,9 @@ and eval_expression (expr : AST.expression) (e : env) : Value.value * env =
           else
             (List.nth vs (Int64.to_int i), e'')
       | Value.Hash _, _ -> (
-          match Value.get arr' idx' with Some v -> (v, e'') | None -> (Value.null_value, e''))
+          match Value.get arr' idx' with
+          | Some v -> (v, e'')
+          | None -> (Value.null_value, e''))
       | Value.String s, Value.Integer i ->
           if Int64.to_int i >= String.length s then
             (Value.null_value, e'')
@@ -83,7 +90,9 @@ and eval_expression (expr : AST.expression) (e : env) : Value.value * env =
       loop pairs (Value.init ()) e
   | Prefix ("!", right) -> (
       let v, e' = eval_expression right e in
-      match v with Value.Boolean b -> (Value.Boolean (not b), e') | _ -> (Value.false_value, e'))
+      match v with
+      | Value.Boolean b -> (Value.Boolean (not b), e')
+      | _ -> (Value.false_value, e'))
   | Prefix ("-", right) -> (
       let v, e' = eval_expression right e in
       match v with
@@ -145,7 +154,9 @@ and eval_expression (expr : AST.expression) (e : env) : Value.value * env =
       match func' with
       | Value.Function (_, _, _) | Value.BuiltinFunction _ -> (
           let args', e'' = eval_expressions args e' in
-          match args' with [ Value.Error _ ] -> (List.hd args', e'') | _ -> (apply_function func' args', e'))
+          match args' with
+          | [ Value.Error _ ] -> (List.hd args', e'')
+          | _ -> (apply_function func' args', e'))
       | _ -> failwith "not a function")
   | _ -> failwith "not implemented"
 
@@ -155,7 +166,9 @@ and eval_expressions (args : AST.expression list) (e : env) : Value.value list *
     | [] -> (List.rev result, env)
     | head :: rest -> (
         let v, e' = eval_expression head env in
-        match v with Value.Error _ -> ([ v ], e') | _ -> loop rest (v :: result) e')
+        match v with
+        | Value.Error _ -> ([ v ], e')
+        | _ -> loop rest (v :: result) e')
   in
 
   loop args [] e
@@ -177,13 +190,17 @@ and apply_function (func : Value.value) (args : Value.value list) : Value.value 
   | _ -> Value.Error "not a function"
 
 and unwrap_return_value (return : Value.value) : Value.value =
-  match return with Value.Return return_value -> return_value | _ -> return
+  match return with
+  | Value.Return return_value -> return_value
+  | _ -> return
 
 and extend_function_env (params : AST.expression list) (args : Value.value list) (e : env) : env =
   let e' = Env.wrap e in
   List.fold_left2
     (fun acc param arg ->
-      match param with AST.Identifier str -> Env.set acc str arg | _ -> failwith "expect identifier")
+      match param with
+      | AST.Identifier str -> Env.set acc str arg
+      | _ -> failwith "expect identifier")
     e' params args
 
 module Test = struct

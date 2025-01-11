@@ -9,7 +9,10 @@ let builtin_len args =
 
 let builtin_first args =
   match args with
-  | [ Value.Array a ] -> ( match a with [] -> Value.Null | _ -> List.hd a)
+  | [ Value.Array a ] -> (
+      match a with
+      | [] -> Value.Null
+      | _ -> List.hd a)
   | [ _ ] -> Error ("argument to `first` not supported, got " ^ Value.type_of (List.hd args))
   | _ ->
       let msg = Printf.sprintf "wrong number of arguments. got=%d, want=1" (List.length args) in
@@ -17,7 +20,10 @@ let builtin_first args =
 
 let builtin_last args =
   match args with
-  | [ Value.Array a ] -> ( match a with [] -> Value.Null | _ -> List.hd (List.rev a))
+  | [ Value.Array a ] -> (
+      match a with
+      | [] -> Value.Null
+      | _ -> List.hd (List.rev a))
   | [ _ ] -> Error ("argument to `last` not supported, got " ^ Value.type_of (List.hd args))
   | _ ->
       let msg = Printf.sprintf "wrong number of arguments. got=%d, want=1" (List.length args) in
@@ -25,7 +31,10 @@ let builtin_last args =
 
 let builtin_rest args =
   match args with
-  | [ Value.Array a ] -> ( match a with [] -> Value.Null | _ -> Value.Array (List.tl a))
+  | [ Value.Array a ] -> (
+      match a with
+      | [] -> Value.Null
+      | _ -> Value.Array (List.tl a))
   | [ _ ] -> Error ("argument to `rest` not supported, got " ^ Value.type_of (List.hd args))
   | _ ->
       let msg = Printf.sprintf "wrong number of arguments. got=%d, want=1" (List.length args) in

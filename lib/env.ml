@@ -16,7 +16,10 @@ let init () : 'a env = { store = Hashtbl.create 10; outer = None }
 let rec get (e : 'a env) (key : string) : 'a option =
   match Hashtbl.find_opt e.store key with
   | Some v -> Some v
-  | None -> ( match e.outer with Some outer -> get outer key | None -> None)
+  | None -> (
+      match e.outer with
+      | Some outer -> get outer key
+      | None -> None)
 
 let set e key val' =
   Hashtbl.replace e.store key val';

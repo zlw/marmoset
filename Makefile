@@ -14,10 +14,10 @@ unit:
 	dune runtest --force
 
 repl: release
-	@./_build/default/bin/main.exe
+	@./_build/install/default/bin/marmoset
 
 run: release
-	@./_build/default/bin/main.exe $(file)
+	@./_build/install/default/bin/marmoset $(file)
 
 watch:
 	dune runtest -w --force

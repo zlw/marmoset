@@ -299,7 +299,9 @@ module Test = struct
   let run (tests : test list) : bool =
     tests
     |> List.for_all (fun test ->
-           match test.input |> parse with Ok program -> program = test.output | Error _ -> false)
+           match test.input |> parse with
+           | Ok program -> program = test.output
+           | Error _ -> false)
 
   let run_print (tests : test list) : unit =
     tests
@@ -479,7 +481,9 @@ module Test = struct
     ]
     |> List.for_all (fun test ->
            let input, output = test in
-           match input |> parse with Ok program -> AST.to_string program = output | Error _ -> false)
+           match input |> parse with
+           | Ok program -> AST.to_string program = output
+           | Error _ -> false)
 
   let%test "test_boolean_expression" =
     [

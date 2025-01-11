@@ -65,7 +65,9 @@ module AST = struct
             "false"
       | If (cond, cons, alt) ->
           Printf.sprintf "if %s %s%s" (expression_to_string cond) (block_to_string cons)
-            (match alt with Some a -> Printf.sprintf " else %s" (block_to_string a) | None -> "")
+            (match alt with
+            | Some a -> Printf.sprintf " else %s" (block_to_string a)
+            | None -> "")
       | Function (params, body) -> function_to_string params body
       | Call (expr, args) -> Printf.sprintf "%s(%s)" (expression_to_string expr) (args_to_string args)
     and block_to_string (block : statement) : string = statement_to_string block

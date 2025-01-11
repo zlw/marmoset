@@ -23,7 +23,11 @@ type value =
 let true_value = Boolean true
 let false_value = Boolean false
 let null_value = Null
-let is_truthy = function Null -> false | Boolean b -> b | _ -> true
+
+let is_truthy = function
+  | Null -> false
+  | Boolean b -> b
+  | _ -> true
 
 let rec to_string = function
   | Null -> "null"
@@ -42,7 +46,9 @@ let rec to_string = function
         (AST.to_string [ body ])
   | BuiltinFunction _ -> "<builtin function>"
 
-and param_to_string = function AST.Identifier p -> p | _ -> failwith "invalid parameter"
+and param_to_string = function
+  | AST.Identifier p -> p
+  | _ -> failwith "invalid parameter"
 
 let rec type_of = function
   | Null -> "Null"
