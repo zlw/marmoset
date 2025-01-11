@@ -33,7 +33,24 @@ let is_truthy = function
 let rec to_string = function
   | Null -> "null"
   | Integer i -> Int64.to_string i
-  | Float f -> Printf.sprintf "%f" f
+  | Float f ->
+      let length_of_fractional_part (f : float) : int =
+        (* Convert the float to a string *)
+        let float_str = Printf.sprintf "%.16g" f in
+        (* Split the string at the decimal point *)
+        match String.split_on_char '.' float_str with
+        | [ _; frac_part ] -> String.length frac_part
+        | _ -> 0 (* If there is no fractional part, return 0 *)
+      in
+      let format_of_float (f : float) =
+        (* Use the shortest representation of the float *)
+        let length = Int.max (length_of_fractional_part f) 1 |> string_of_int in
+        let format = "%." ^ length ^ "f" in
+        let format = Scanf.format_from_string format "%f" in
+
+        format
+      in
+      Printf.sprintf (format_of_float f) f
   | Boolean b -> string_of_bool b
   | String s -> "\"" ^ s ^ "\""
   | Array vs -> Printf.sprintf "[%s]" (vs |> List.map to_string |> String.concat ", ")
@@ -119,3 +136,8 @@ let%test "test_hashing" =
   Hashtbl.replace h1 str1 (Integer 1L);
   Hashtbl.remove h1 str1;
   Hashtbl.find_opt h1 str1 = None && Hashtbl.find_opt h1 str2 = None
+
+let%test "test_float_to_string" =
+  to_string (Float 3.14) = "3.14"
+  && to_string (Float 3.0) = "3.0"
+  && to_string (Float 3.000000000000001) = "3.000000000000001"
