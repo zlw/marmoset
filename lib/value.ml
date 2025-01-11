@@ -52,6 +52,11 @@ and param_to_string = function
   | AST.Identifier p -> p
   | _ -> failwith "invalid parameter"
 
+let to_float = function
+  | Integer i -> Int64.to_float i
+  | Float f -> f
+  | _ -> failwith "cannot convert to float"
+
 let rec type_of = function
   | Null -> "Null"
   | Integer _ -> "Integer"

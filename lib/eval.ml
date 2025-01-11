@@ -119,7 +119,9 @@ and eval_expression (expr : AST.expression) (e : env) : Value.value * env =
           | _ ->
               let error = Value.unknown_infix_operator_error left op right in
               (error, e''))
-      | Value.Float left'', Value.Float right'' -> (
+      | Value.Float _, Value.Float _ | Value.Float _, Value.Integer _ | Value.Integer _, Value.Float _ -> (
+          let left'' = Value.to_float left' in
+          let right'' = Value.to_float right' in
           match op with
           | "+" -> (Value.Float (left'' +. right''), e'')
           | "-" -> (Value.Float (left'' -. right''), e'')
@@ -284,6 +286,19 @@ module Test = struct
       { input = "3.0 * 3.0 * 3.0 + 10.0;"; output = Value.Float 37.0 };
       { input = "3.0 * (3.0 * 3.0) + 10.0;"; output = Value.Float 37.0 };
       { input = "(5.0 + 10.0 * 2.0 + 15.0 / 3.0) * 2.0 + -10.0;"; output = Value.Float 50.0 };
+    ]
+    |> run
+
+  let%test "test_eval_integer_float_expression" =
+    [
+      { input = "5 + 5.0;"; output = Value.Float 10.0 };
+      { input = "5.0 + 5;"; output = Value.Float 10.0 };
+      { input = "5 - 5.0;"; output = Value.Float 0.0 };
+      { input = "5.0 - 5;"; output = Value.Float 0.0 };
+      { input = "5 * 5.0;"; output = Value.Float 25.0 };
+      { input = "5.0 * 5;"; output = Value.Float 25.0 };
+      { input = "5 / 5.0;"; output = Value.Float 1.0 };
+      { input = "5.0 / 5;"; output = Value.Float 1.0 };
     ]
     |> run
 

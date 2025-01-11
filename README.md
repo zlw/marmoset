@@ -91,7 +91,12 @@ a[-1]; // => "o"
 - [ ] Add system tests
   - [ ] test runner
   - [ ] test cases (maybe reuse some from Crafting Interpreters?)
-- [ ] Support Integer/Float arithmetic (currently there's Int/Int and Float/Float)
+- [x] Add support for negative array indexing
+- [x] Add support for string indexing
+  - [x] Positive
+  - [x] Negative
+- [x] Add support for Floats
+  - [x] Support Integer/Float arithmetic (currently there's Int/Int and Float/Float)
 
 ## Ideas
 
