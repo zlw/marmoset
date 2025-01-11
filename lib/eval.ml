@@ -53,6 +53,11 @@ and eval_expression (expr : AST.expression) (e : env) : Value.value * env =
             (List.nth vs (Int64.to_int i), e'')
       | Value.Hash _, _ -> (
           match Value.get arr' idx' with Some v -> (v, e'') | None -> (Value.null_value, e''))
+      | Value.String s, Value.Integer i ->
+          if i < 0L || Int64.to_int i >= String.length s then
+            (Value.null_value, e'')
+          else
+            (Value.String (String.sub s (Int64.to_int i) 1), e'')
       | _ ->
           let msg = Printf.sprintf "index operator not supported: %s" (Value.type_of arr') in
           (Value.Error msg, e'))
@@ -376,6 +381,17 @@ module Test = struct
       { input = "\"foobar\";"; output = Value.String "foobar" };
       { input = "\"foo\" + \"bar\";"; output = Value.String "foobar" };
       { input = "\"foo\" + \"bar\" + \"baz\";"; output = Value.String "foobarbaz" };
+    ]
+    |> run
+
+  let%test "test_string_indexing" =
+    [
+      { input = "\"hello\"[0]"; output = Value.String "h" };
+      { input = "\"hello\"[1]"; output = Value.String "e" };
+      { input = "\"hello\"[2]"; output = Value.String "l" };
+      { input = "\"hello\"[3]"; output = Value.String "l" };
+      { input = "\"hello\"[4]"; output = Value.String "o" };
+      { input = "\"hello\"[5]"; output = Value.null_value };
     ]
     |> run
 
