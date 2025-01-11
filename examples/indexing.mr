@@ -1,0 +1,5 @@
+let str = "hello";
+let arr = ["h", "e", "l", "l", "o"]
+
+puts(str[-1] == arr[-1]);
+puts(str[1] == arr[1]);

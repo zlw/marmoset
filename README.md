@@ -48,7 +48,7 @@ make unit
 ## Features
 
 | Feature                | Interpreter | Compiler |
-|------------------------|-------------|----------|
+|------------------------|:-----------:|:--------:|
 | Bindings               | ✅          | ❌       |
 | Conditionals           | ✅          | ❌       |
 | Strings                | ✅          | ❌       |
@@ -62,26 +62,18 @@ make unit
 | Closures               | ✅          | ❌       |
 | Recursion              | ✅          | ❌       |
 | Built-In Functions     | ✅          | ❌       |
-| Floats                 | ✅          | ❌       |
 | Macros                 | ❌          | ❌       |
 
-## Differences from the original implementation
-
-### String Indexing (Positive and Negative)
-
-```
-let a = "hello";
-a[0];  // => "h"
-a[-1]; // => "o"
-```
-
-### Array Negative Indexing
-
-```
-let a = ["h", "e", "l", "l", "o"];
-a[0];  // => "h" 👈 this was in the original implementation
-a[-1]; // => "o"
-```
+## Additional Features (not present in the original implementation)
+| Feature                | Interpreter | Compiler |
+|------------------------|:-----------:|:--------:|
+| Floats                 | ✅          | ❌       |
+| Float Arithmetic       | ✅          | ❌       |
+| String Indexing        | ✅          | ❌       |
+| String Concatenation   | ✅          | ❌       |
+| String Indexing        | ✅          | ❌       |
+| String Equality        | ✅          | ❌       |
+| Negative Indexing      | ✅          | ❌       |
 
 ## TODO
 

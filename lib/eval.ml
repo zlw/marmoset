@@ -144,6 +144,8 @@ and eval_expression (expr : AST.expression) (e : env) : Value.value * env =
       | Value.String left'', Value.String right'' -> (
           match op with
           | "+" -> (Value.String (left'' ^ right''), e'')
+          | "==" -> (Value.Boolean (left'' = right''), e'')
+          | "!=" -> (Value.Boolean (left'' <> right''), e'')
           | _ ->
               let error = Value.unknown_infix_operator_error left op right in
               (error, e''))
@@ -335,6 +337,10 @@ module Test = struct
       { input = "(1.0 < 2.0) == false;"; output = Value.Boolean false };
       { input = "(1.0 > 2.0) == true;"; output = Value.Boolean false };
       { input = "(1.0 > 2.0) == false;"; output = Value.Boolean true };
+      { input = "\"foo\" == \"foo\""; output = Value.Boolean true };
+      { input = "\"foo\" == \"bar\""; output = Value.Boolean false };
+      { input = "\"foo\" != \"foo\""; output = Value.Boolean false };
+      { input = "\"foo\" != \"bar\""; output = Value.Boolean true };
     ]
     |> run
 
@@ -376,6 +382,10 @@ module Test = struct
       { input = "5 + true;"; output = Value.Error "type mismatch: Integer + Boolean" };
       { input = "5 + true; 5;"; output = Value.Error "type mismatch: Integer + Boolean" };
       { input = "5 + \"foo\";"; output = Value.Error "type mismatch: Integer + String" };
+      { input = "-true;"; output = Value.Error "unknown operator: -Boolean" };
+      { input = "5.0 + true;"; output = Value.Error "type mismatch: Float + Boolean" };
+      { input = "5.0 + true; 5.0;"; output = Value.Error "type mismatch: Float + Boolean" };
+      { input = "5.0 + \"foo\";"; output = Value.Error "type mismatch: Float + String" };
       { input = "-true;"; output = Value.Error "unknown operator: -Boolean" };
       { input = "true + false;"; output = Value.Error "unknown operator: Boolean + Boolean" };
       { input = "true + false + true + false;"; output = Value.Error "unknown operator: Boolean + Boolean" };
@@ -487,6 +497,13 @@ module Test = struct
       { input = "\"hello\"[-4]"; output = Value.String "e" };
       { input = "\"hello\"[-5]"; output = Value.String "h" };
       { input = "\"hello\"[-6]"; output = Value.null_value };
+    ]
+    |> run
+
+  let%test "test_string_concatenation" =
+    [
+      { input = "\"hello\" + \" \" + \"world\""; output = Value.String "hello world" };
+      { input = "\"hello\" + \" \" + \"world\" + \"!\""; output = Value.String "hello world!" };
     ]
     |> run
 
