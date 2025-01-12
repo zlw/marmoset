@@ -66,7 +66,7 @@ let expect_peek (p : parser) (tt : Token.token_type) : (parser, parser) result =
     Error (peek_error p tt)
 
 let no_prefix_parse_fn_error (p : parser) (t : Token.token_type) : parser =
-  let msg = Printf.sprintf "no prefix parse function for %s found" (Token.show_token_type t) in
+  let msg = Printf.sprintf "syntax error, unexpected %s found" (Token.show_token_type t) in
   add_error p msg
 
 let rec parse_program (p : parser) : (parser * AST.program, parser) result =
