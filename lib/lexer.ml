@@ -45,6 +45,7 @@ let rec next_token (l : lexer) : lexer * Token.token =
   | '[' -> (read_char l, Token.init LBracket "[")
   | ']' -> (read_char l, Token.init RBracket "]")
   | ',' -> (read_char l, Token.init Comma ",")
+  | '#' -> next_token (fst (read_until (read_char l) (fun c -> c <> '\n' && c <> '\000')))
   | '"' ->
       let l2, lit = read_string (read_char l) in
       (read_char l2, Token.init String lit)
@@ -104,6 +105,8 @@ let%test "test_lexer" =
         x + y;
     };
 
+    # this is a comment
+
     let result = add(five, ten);
     !-/*5;
     5 < 10 > 5;
@@ -113,6 +116,8 @@ let%test "test_lexer" =
     } else {
         return false;
     }
+
+    # this is another a comment
 
     10 == 10;
     10 != 9;

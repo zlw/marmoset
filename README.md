@@ -74,6 +74,7 @@ make unit
 | String Indexing        | ✅          | ❌       |
 | String Equality        | ✅          | ❌       |
 | Negative Indexing      | ✅          | ❌       |
+| Comments               | ✅          | ❌       |
 
 ## TODO
 
