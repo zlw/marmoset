@@ -108,6 +108,18 @@ and compile_expression (c : compiler) (e : AST.expression) : (compiler, string) 
       in
       let c', _pos = emit c opcode [] in
       Ok c'
+  | AST.Prefix (op, right) ->
+      (* First compile the operand, then emit the prefix operation *)
+      let* c' = compile_expression c right in
+      let opcode =
+        match op with
+        | "-" -> Ok Code.OpMinus
+        | "!" -> Ok Code.OpBang
+        | _ -> Error (Printf.sprintf "unknown prefix operator %s" op)
+      in
+      let* opcode = opcode in
+      let c'', _pos = emit c' opcode [] in
+      Ok c''
   | _ -> failwith "Not implemented"
 
 (* Convert the working compiler to final immutable bytecode *)

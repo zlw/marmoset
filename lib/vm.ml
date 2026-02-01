@@ -142,6 +142,23 @@ let run (vm : vm) : (unit, string) result =
     | Some Code.OpEqual -> execute_comparison vm Code.OpEqual
     | Some Code.OpNotEqual -> execute_comparison vm Code.OpNotEqual
     | Some Code.OpGreaterThan -> execute_comparison vm Code.OpGreaterThan
+    | Some Code.OpMinus -> (
+        (* Negate the top of the stack - works for Integer and Float *)
+        let operand = pop vm in
+        match operand with
+        | Value.Integer i ->
+            let _ = push vm (Value.Integer (Int64.neg i)) in
+            ()
+        | Value.Float f ->
+            let _ = push vm (Value.Float (-.f)) in
+            ()
+        | _ -> ())
+    | Some Code.OpBang ->
+        (* Logical NOT - uses truthiness rules *)
+        let operand = pop vm in
+        let result = not (Value.is_truthy operand) in
+        let _ = push vm (Value.Boolean result) in
+        ()
     | None -> ());
 
     vm.ip <- vm.ip + 1
@@ -223,6 +240,27 @@ module Test = struct
       (* Mixed int/float comparisons (Marmoset addition) *)
       { input = "1 == 1.0"; expected = Value.Boolean true };
       { input = "2 > 1.5"; expected = Value.Boolean true };
+    ]
+    |> List.for_all run_vm_test
+
+  let%test "test_prefix_expressions" =
+    [
+      (* Minus - integer negation *)
+      { input = "-5"; expected = Value.Integer (-5L) };
+      { input = "-10"; expected = Value.Integer (-10L) };
+      { input = "--5"; expected = Value.Integer 5L };
+      { input = "-50 + 100 + -50"; expected = Value.Integer 0L };
+      (* Minus - float negation (Marmoset addition) *)
+      { input = "-1.5"; expected = Value.Float (-1.5) };
+      { input = "--2.5"; expected = Value.Float 2.5 };
+      (* Bang - logical NOT *)
+      { input = "!true"; expected = Value.Boolean false };
+      { input = "!false"; expected = Value.Boolean true };
+      { input = "!!true"; expected = Value.Boolean true };
+      { input = "!!false"; expected = Value.Boolean false };
+      (* Bang with non-boolean values (truthiness) *)
+      { input = "!5"; expected = Value.Boolean false };
+      { input = "!!5"; expected = Value.Boolean true };
     ]
     |> List.for_all run_vm_test
 end
