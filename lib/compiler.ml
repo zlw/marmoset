@@ -83,6 +83,15 @@ and compile_expression (c : compiler) (e : AST.expression) : (compiler, string) 
       let c', index = add_constant c (Value.Float f) in
       let c'', _pos = emit c' Code.OpConstant [ index ] in
       Ok c''
+  | AST.Boolean b ->
+      let opcode =
+        if b then
+          Code.OpTrue
+        else
+          Code.OpFalse
+      in
+      let c', _pos = emit c opcode [] in
+      Ok c'
   | _ -> failwith "Not implemented"
 
 (* Convert the working compiler to final immutable bytecode *)

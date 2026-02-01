@@ -91,6 +91,12 @@ let run (vm : vm) : (unit, string) result =
     | Some Code.OpPop ->
         let _ = pop vm in
         ()
+    | Some Code.OpTrue ->
+        let _ = push vm (Value.Boolean true) in
+        ()
+    | Some Code.OpFalse ->
+        let _ = push vm (Value.Boolean false) in
+        ()
     | None -> ());
 
     vm.ip <- vm.ip + 1
@@ -143,5 +149,9 @@ module Test = struct
       { input = "1 + 2.5"; expected = Value.Float 3.5 };
       { input = "2.5 + 1"; expected = Value.Float 3.5 };
     ]
+    |> List.for_all run_vm_test
+
+  let%test "test_boolean_expressions" =
+    [ { input = "true"; expected = Value.Boolean true }; { input = "false"; expected = Value.Boolean false } ]
     |> List.for_all run_vm_test
 end
