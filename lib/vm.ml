@@ -33,6 +33,44 @@ let pop (vm : vm) : Value.value =
 (* For testing: get the last popped element (still on stack, just below sp) *)
 let last_popped_stack_elem (vm : vm) : Value.value = vm.stack.(vm.sp)
 
+let execute_binary_integer_op (op : Code.opcode) (l : int64) (r : int64) : int64 =
+  match op with
+  | Code.OpAdd -> Int64.add l r
+  | Code.OpSub -> Int64.sub l r
+  | Code.OpMul -> Int64.mul l r
+  | Code.OpDiv -> Int64.div l r
+  | _ -> 0L
+
+let execute_binary_float_op (op : Code.opcode) (l : float) (r : float) : float =
+  match op with
+  | Code.OpAdd -> l +. r
+  | Code.OpSub -> l -. r
+  | Code.OpMul -> l *. r
+  | Code.OpDiv -> l /. r
+  | _ -> 0.0
+
+let execute_binary_op (vm : vm) (op : Code.opcode) : unit =
+  let right = pop vm in
+  let left = pop vm in
+  match (left, right) with
+  | Value.Integer l, Value.Integer r ->
+      let result = execute_binary_integer_op op l r in
+      let _ = push vm (Value.Integer result) in
+      ()
+  | Value.Float l, Value.Float r ->
+      let result = execute_binary_float_op op l r in
+      let _ = push vm (Value.Float result) in
+      ()
+  | Value.Integer l, Value.Float r ->
+      let result = execute_binary_float_op op (Int64.to_float l) r in
+      let _ = push vm (Value.Float result) in
+      ()
+  | Value.Float l, Value.Integer r ->
+      let result = execute_binary_float_op op l (Int64.to_float r) in
+      let _ = push vm (Value.Float result) in
+      ()
+  | _ -> ()
+
 let run (vm : vm) : (unit, string) result =
   let len = Bytes.length vm.instructions in
   vm.ip <- 0;
@@ -46,14 +84,10 @@ let run (vm : vm) : (unit, string) result =
         vm.ip <- vm.ip + 2;
         let _ = push vm vm.constants.(const_index) in
         ()
-    | Some Code.OpAdd -> (
-        let right = pop vm in
-        let left = pop vm in
-        match (left, right) with
-        | Value.Integer l, Value.Integer r ->
-            let _ = push vm (Value.Integer (Int64.add l r)) in
-            ()
-        | _ -> ())
+    | Some Code.OpAdd -> execute_binary_op vm Code.OpAdd
+    | Some Code.OpSub -> execute_binary_op vm Code.OpSub
+    | Some Code.OpMul -> execute_binary_op vm Code.OpMul
+    | Some Code.OpDiv -> execute_binary_op vm Code.OpDiv
     | Some Code.OpPop ->
         let _ = pop vm in
         ()
@@ -90,6 +124,24 @@ module Test = struct
       { input = "1"; expected = Value.Integer 1L };
       { input = "2"; expected = Value.Integer 2L };
       { input = "1 + 2"; expected = Value.Integer 3L };
+      { input = "1 - 2"; expected = Value.Integer (-1L) };
+      { input = "2 * 3"; expected = Value.Integer 6L };
+      { input = "6 / 2"; expected = Value.Integer 3L };
+      { input = "50 / 2 * 2 + 10 - 5"; expected = Value.Integer 55L };
+      { input = "5 * (2 + 10)"; expected = Value.Integer 60L };
+    ]
+    |> List.for_all run_vm_test
+
+  let%test "test_float_arithmetic" =
+    [
+      { input = "1.5"; expected = Value.Float 1.5 };
+      { input = "1.5 + 2.5"; expected = Value.Float 4.0 };
+      { input = "3.0 - 1.5"; expected = Value.Float 1.5 };
+      { input = "2.0 * 3.0"; expected = Value.Float 6.0 };
+      { input = "6.0 / 2.0"; expected = Value.Float 3.0 };
+      (* Mixed integer/float *)
+      { input = "1 + 2.5"; expected = Value.Float 3.5 };
+      { input = "2.5 + 1"; expected = Value.Float 3.5 };
     ]
     |> List.for_all run_vm_test
 end

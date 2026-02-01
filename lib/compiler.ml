@@ -61,13 +61,26 @@ and compile_statement (c : compiler) (s : AST.statement) : (compiler, string) re
 
 and compile_expression (c : compiler) (e : AST.expression) : (compiler, string) result =
   match e with
-  | AST.Infix (left, _, right) ->
+  | AST.Infix (left, op, right) ->
       let* c' = compile_expression c left in
       let* c'' = compile_expression c' right in
-      let c''', _pos = emit c'' Code.OpAdd [] in
+      let opcode =
+        match op with
+        | "+" -> Ok Code.OpAdd
+        | "-" -> Ok Code.OpSub
+        | "*" -> Ok Code.OpMul
+        | "/" -> Ok Code.OpDiv
+        | _ -> Error (Printf.sprintf "unknown operator %s" op)
+      in
+      let* opcode = opcode in
+      let c''', _pos = emit c'' opcode [] in
       Ok c'''
   | AST.Integer i ->
       let c', index = add_constant c (Value.Integer i) in
+      let c'', _pos = emit c' Code.OpConstant [ index ] in
+      Ok c''
+  | AST.Float f ->
+      let c', index = add_constant c (Value.Float f) in
       let c'', _pos = emit c' Code.OpConstant [ index ] in
       Ok c''
   | _ -> failwith "Not implemented"

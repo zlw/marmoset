@@ -5,6 +5,9 @@ and opcode =
   | OpConstant
   | OpAdd
   | OpPop
+  | OpSub
+  | OpMul
+  | OpDiv
 
 and definition = {
   name : string;
@@ -15,17 +18,26 @@ let to_int = function
   | OpConstant -> 0
   | OpAdd -> 1
   | OpPop -> 2
+  | OpSub -> 3
+  | OpMul -> 4
+  | OpDiv -> 5
 
 let of_int = function
   | 0 -> Some OpConstant
   | 1 -> Some OpAdd
   | 2 -> Some OpPop
+  | 3 -> Some OpSub
+  | 4 -> Some OpMul
+  | 5 -> Some OpDiv
   | _ -> None
 
 let to_definition = function
   | OpConstant -> { name = "OpConstant"; operand_widths = [ 2 ] }
   | OpAdd -> { name = "OpAdd"; operand_widths = [] }
   | OpPop -> { name = "OpPop"; operand_widths = [] }
+  | OpSub -> { name = "OpSub"; operand_widths = [] }
+  | OpMul -> { name = "OpMul"; operand_widths = [] }
+  | OpDiv -> { name = "OpDiv"; operand_widths = [] }
 
 let make (op : opcode) (operands : int list) : bytes =
   let def = to_definition op in
