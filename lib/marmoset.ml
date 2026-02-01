@@ -4,3 +4,6 @@ module Parser = Parser
 module Value = Value
 module Env = Env
 module Eval = Eval
+module Code = Code
+module Compiler = Compiler
+module Vm = Vm

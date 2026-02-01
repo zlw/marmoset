@@ -174,6 +174,9 @@ let run (vm : vm) : (unit, string) result =
         else
           (* Don't jump: skip over the 2-byte operand *)
           vm.ip <- vm.ip + 2
+    | Some Code.OpNull ->
+        let _ = push vm Value.Null in
+        ()
     | None -> ());
 
     vm.ip <- vm.ip + 1
@@ -276,6 +279,29 @@ module Test = struct
       (* Bang with non-boolean values (truthiness) *)
       { input = "!5"; expected = Value.Boolean false };
       { input = "!!5"; expected = Value.Boolean true };
+    ]
+    |> List.for_all run_vm_test
+
+  let%test "test_conditionals" =
+    [
+      (* Basic if with truthy condition *)
+      { input = "if (true) { 10 }"; expected = Value.Integer 10L };
+      { input = "if (true) { 10 } else { 20 }"; expected = Value.Integer 10L };
+      { input = "if (false) { 10 } else { 20 }"; expected = Value.Integer 20L };
+      (* If without else when condition is falsy returns null *)
+      { input = "if (false) { 10 }"; expected = Value.Null };
+      (* Truthy integer conditions *)
+      { input = "if (1) { 10 }"; expected = Value.Integer 10L };
+      { input = "if (1 < 2) { 10 }"; expected = Value.Integer 10L };
+      { input = "if (1 > 2) { 10 }"; expected = Value.Null };
+      { input = "if (1 > 2) { 10 } else { 20 }"; expected = Value.Integer 20L };
+      (* Complex conditions *)
+      { input = "if (1 < 2) { 10 } else { 20 }"; expected = Value.Integer 10L };
+      { input = "if (1 == 1) { 10 }"; expected = Value.Integer 10L };
+      { input = "if (1 != 1) { 10 } else { 20 }"; expected = Value.Integer 20L };
+      (* Nested expressions in consequence/alternative *)
+      { input = "if (true) { 1 + 2 }"; expected = Value.Integer 3L };
+      { input = "if (false) { 1 } else { 2 + 3 }"; expected = Value.Integer 5L };
     ]
     |> List.for_all run_vm_test
 end

@@ -3,10 +3,18 @@ open Ast
 let ( let* ) res f = Result.bind res f
 let buffer_size = 256
 
+(* Track emitted instructions for backpatching *)
+type emitted_instruction = {
+  opcode : Code.opcode;
+  position : int;
+}
+
 (* Compiler uses Buffer.t and Dynarray.t internally for efficient building *)
 type compiler = {
   instructions : Buffer.t;
   constants : Value.value Dynarray.t;
+  mutable last_instruction : emitted_instruction option;
+  mutable previous_instruction : emitted_instruction option;
 }
 
 (* Bytecode is the final, immutable result *)
@@ -15,7 +23,13 @@ type bytecode = {
   constants : Value.value array;
 }
 
-let init : compiler = { instructions = Buffer.create buffer_size; constants = Dynarray.create () }
+let init : compiler =
+  {
+    instructions = Buffer.create buffer_size;
+    constants = Dynarray.create ();
+    last_instruction = None;
+    previous_instruction = None;
+  }
 
 (* Add a constant to the pool, returns new compiler and the constant's index *)
 let add_constant (c : compiler) (obj : Value.value) : compiler * int =
@@ -28,7 +42,43 @@ let emit (c : compiler) (op : Code.opcode) (operands : int list) : compiler * in
   let ins = Code.make op operands in
   let pos = Buffer.length c.instructions in
   Buffer.add_bytes c.instructions ins;
+  (* Track last and previous instructions for backpatching *)
+  c.previous_instruction <- c.last_instruction;
+  c.last_instruction <- Some { opcode = op; position = pos };
   (c, pos)
+
+(* Helper to get current instruction position (next byte to be written) *)
+let current_instructions_len (c : compiler) : int = Buffer.length c.instructions
+
+(* Check if the last emitted instruction is OpPop *)
+let last_instruction_is_pop (c : compiler) : bool =
+  match c.last_instruction with
+  | Some { opcode = Code.OpPop; _ } -> true
+  | _ -> false
+
+(* Remove the last OpPop instruction (used when compiling if/else blocks) *)
+let remove_last_pop (c : compiler) : unit =
+  match c.last_instruction with
+  | Some { opcode = Code.OpPop; position } ->
+      (* Truncate the buffer to remove the OpPop *)
+      let contents = Buffer.to_bytes c.instructions in
+      Buffer.reset c.instructions;
+      Buffer.add_subbytes c.instructions contents 0 position;
+      c.last_instruction <- c.previous_instruction
+  | _ -> ()
+
+(* Change the operand of an already-emitted instruction at the given position.
+   Used for backpatching jump addresses. *)
+let change_operand (c : compiler) (op_position : int) (operand : int) : unit =
+  (* Write the new operand as big-endian uint16 at position + 1 (after the opcode byte) *)
+  let b1 = Char.chr ((operand lsr 8) land 0xFF) in
+  let b2 = Char.chr (operand land 0xFF) in
+  let buf_bytes = Buffer.to_bytes c.instructions in
+  Bytes.set buf_bytes (op_position + 1) b1;
+  Bytes.set buf_bytes (op_position + 2) b2;
+  (* Replace buffer contents *)
+  Buffer.reset c.instructions;
+  Buffer.add_bytes c.instructions buf_bytes
 
 let rec compile (c : compiler) (s : AST.program) : (compiler, string) result =
   (* Create fresh mutable structures starting with c's existing state *)
@@ -39,7 +89,14 @@ let rec compile (c : compiler) (s : AST.program) : (compiler, string) result =
   let consts = Dynarray.create () in
   Dynarray.append_seq consts (Dynarray.to_seq c.constants);
 
-  let working_c : compiler = { instructions = buf; constants = consts } in
+  let working_c : compiler =
+    {
+      instructions = buf;
+      constants = consts;
+      last_instruction = c.last_instruction;
+      previous_instruction = c.previous_instruction;
+    }
+  in
 
   let rec loop c s =
     match s with
@@ -57,6 +114,15 @@ and compile_statement (c : compiler) (s : AST.statement) : (compiler, string) re
       let* c' = compile_expression c e in
       let c'', _pos = emit c' Code.OpPop [] in
       Ok c''
+  | AST.Block stmts ->
+      (* Compile each statement in the block *)
+      let rec loop c = function
+        | [] -> Ok c
+        | stmt :: rest ->
+            let* c' = compile_statement c stmt in
+            loop c' rest
+      in
+      loop c stmts
   | _ -> failwith "Not implemented"
 
 and compile_expression (c : compiler) (e : AST.expression) : (compiler, string) result =
@@ -120,6 +186,46 @@ and compile_expression (c : compiler) (e : AST.expression) : (compiler, string) 
       let* opcode = opcode in
       let c'', _pos = emit c' opcode [] in
       Ok c''
+  | AST.If (condition, consequence, alternative) ->
+      (* Compile the condition *)
+      let* c' = compile_expression c condition in
+
+      (* Emit OpJumpNotTruthy with placeholder address *)
+      let c'', jump_not_truthy_pos = emit c' Code.OpJumpNotTruthy [ 9999 ] in
+
+      (* Compile consequence block *)
+      let* c''' = compile_statement c'' consequence in
+
+      (* Remove the trailing OpPop from consequence (we want the value) *)
+      if last_instruction_is_pop c''' then
+        remove_last_pop c''';
+
+      (* Emit OpJump with placeholder (to skip alternative) *)
+      let c4, jump_pos = emit c''' Code.OpJump [ 9999 ] in
+
+      (* Now we know where the alternative starts - backpatch OpJumpNotTruthy *)
+      let after_consequence_pos = current_instructions_len c4 in
+      change_operand c4 jump_not_truthy_pos after_consequence_pos;
+
+      (* Compile alternative (or emit OpNull if none) *)
+      let* c5 =
+        match alternative with
+        | None ->
+            let c5, _pos = emit c4 Code.OpNull [] in
+            Ok c5
+        | Some alt ->
+            let* c5 = compile_statement c4 alt in
+            (* Remove the trailing OpPop from alternative (we want the value) *)
+            if last_instruction_is_pop c5 then
+              remove_last_pop c5;
+            Ok c5
+      in
+
+      (* Backpatch OpJump to skip over alternative *)
+      let after_alternative_pos = current_instructions_len c5 in
+      change_operand c5 jump_pos after_alternative_pos;
+
+      Ok c5
   | _ -> failwith "Not implemented"
 
 (* Convert the working compiler to final immutable bytecode *)
@@ -130,8 +236,12 @@ module Test = struct
   type test = {
     input : string;
     expectedConstants : Value.value array;
-    expectedInstructions : Buffer.t;
+    expectedInstructions : Code.instructions;
   }
+
+  (* Helper to build expected instructions from a list of (opcode, operands) *)
+  let make_instructions (ops : (Code.opcode * int list) list) : Code.instructions =
+    Code.concat (List.map (fun (op, operands) -> Code.make op operands) ops)
 
   let run (tests : test list) : bool =
     tests
@@ -143,25 +253,168 @@ module Test = struct
                match c with
                | Ok c' ->
                    let b = bytecode c' in
-                   let expected_instructions = Buffer.to_bytes test.expectedInstructions in
-                   b.constants = test.expectedConstants && b.instructions = expected_instructions
+                   b.constants = test.expectedConstants && b.instructions = test.expectedInstructions
                | Error _ -> false)
            | Error _ -> false)
 
   let%test "test_integer_arithmetic" =
-    let expected_instructions =
-      let c : compiler = { instructions = Buffer.create 32; constants = Dynarray.create () } in
-      let c, _ = emit c Code.OpConstant [ 0 ] in
-      let c, _ = emit c Code.OpConstant [ 1 ] in
-      let c, _ = emit c Code.OpAdd [] in
-      let c, _ = emit c Code.OpPop [] in
-      c.instructions
-    in
     [
       {
         input = "1 + 2";
         expectedConstants = [| Value.Integer 1L; Value.Integer 2L |];
-        expectedInstructions = expected_instructions;
+        expectedInstructions =
+          make_instructions
+            [ (Code.OpConstant, [ 0 ]); (Code.OpConstant, [ 1 ]); (Code.OpAdd, []); (Code.OpPop, []) ];
+      };
+      {
+        input = "1; 2";
+        expectedConstants = [| Value.Integer 1L; Value.Integer 2L |];
+        expectedInstructions =
+          make_instructions
+            [ (Code.OpConstant, [ 0 ]); (Code.OpPop, []); (Code.OpConstant, [ 1 ]); (Code.OpPop, []) ];
+      };
+      {
+        input = "1 - 2";
+        expectedConstants = [| Value.Integer 1L; Value.Integer 2L |];
+        expectedInstructions =
+          make_instructions
+            [ (Code.OpConstant, [ 0 ]); (Code.OpConstant, [ 1 ]); (Code.OpSub, []); (Code.OpPop, []) ];
+      };
+      {
+        input = "1 * 2";
+        expectedConstants = [| Value.Integer 1L; Value.Integer 2L |];
+        expectedInstructions =
+          make_instructions
+            [ (Code.OpConstant, [ 0 ]); (Code.OpConstant, [ 1 ]); (Code.OpMul, []); (Code.OpPop, []) ];
+      };
+      {
+        input = "2 / 1";
+        expectedConstants = [| Value.Integer 2L; Value.Integer 1L |];
+        expectedInstructions =
+          make_instructions
+            [ (Code.OpConstant, [ 0 ]); (Code.OpConstant, [ 1 ]); (Code.OpDiv, []); (Code.OpPop, []) ];
+      };
+      {
+        input = "-1";
+        expectedConstants = [| Value.Integer 1L |];
+        expectedInstructions =
+          make_instructions [ (Code.OpConstant, [ 0 ]); (Code.OpMinus, []); (Code.OpPop, []) ];
+      };
+    ]
+    |> run
+
+  let%test "test_boolean_expressions" =
+    [
+      {
+        input = "true";
+        expectedConstants = [||];
+        expectedInstructions = make_instructions [ (Code.OpTrue, []); (Code.OpPop, []) ];
+      };
+      {
+        input = "false";
+        expectedConstants = [||];
+        expectedInstructions = make_instructions [ (Code.OpFalse, []); (Code.OpPop, []) ];
+      };
+      {
+        input = "1 > 2";
+        expectedConstants = [| Value.Integer 1L; Value.Integer 2L |];
+        expectedInstructions =
+          make_instructions
+            [ (Code.OpConstant, [ 0 ]); (Code.OpConstant, [ 1 ]); (Code.OpGreaterThan, []); (Code.OpPop, []) ];
+      };
+      {
+        input = "1 < 2";
+        (* Note: operands are swapped for < *)
+        expectedConstants = [| Value.Integer 2L; Value.Integer 1L |];
+        expectedInstructions =
+          make_instructions
+            [ (Code.OpConstant, [ 0 ]); (Code.OpConstant, [ 1 ]); (Code.OpGreaterThan, []); (Code.OpPop, []) ];
+      };
+      {
+        input = "1 == 2";
+        expectedConstants = [| Value.Integer 1L; Value.Integer 2L |];
+        expectedInstructions =
+          make_instructions
+            [ (Code.OpConstant, [ 0 ]); (Code.OpConstant, [ 1 ]); (Code.OpEqual, []); (Code.OpPop, []) ];
+      };
+      {
+        input = "1 != 2";
+        expectedConstants = [| Value.Integer 1L; Value.Integer 2L |];
+        expectedInstructions =
+          make_instructions
+            [ (Code.OpConstant, [ 0 ]); (Code.OpConstant, [ 1 ]); (Code.OpNotEqual, []); (Code.OpPop, []) ];
+      };
+      {
+        input = "true == false";
+        expectedConstants = [||];
+        expectedInstructions =
+          make_instructions [ (Code.OpTrue, []); (Code.OpFalse, []); (Code.OpEqual, []); (Code.OpPop, []) ];
+      };
+      {
+        input = "true != false";
+        expectedConstants = [||];
+        expectedInstructions =
+          make_instructions [ (Code.OpTrue, []); (Code.OpFalse, []); (Code.OpNotEqual, []); (Code.OpPop, []) ];
+      };
+      {
+        input = "!true";
+        expectedConstants = [||];
+        expectedInstructions = make_instructions [ (Code.OpTrue, []); (Code.OpBang, []); (Code.OpPop, []) ];
+      };
+    ]
+    |> run
+
+  let%test "test_conditionals" =
+    [
+      (* if (true) { 10 }; 3333; *)
+      {
+        input = "if (true) { 10 }; 3333;";
+        expectedConstants = [| Value.Integer 10L; Value.Integer 3333L |];
+        expectedInstructions =
+          make_instructions
+            [
+              (* 0000 *)
+              (Code.OpTrue, []);
+              (* 0001 *)
+              (Code.OpJumpNotTruthy, [ 10 ]);
+              (* 0004 *)
+              (Code.OpConstant, [ 0 ]);
+              (* 0007 *)
+              (Code.OpJump, [ 11 ]);
+              (* 0010 *)
+              (Code.OpNull, []);
+              (* 0011 *)
+              (Code.OpPop, []);
+              (* 0012 *)
+              (Code.OpConstant, [ 1 ]);
+              (* 0015 *)
+              (Code.OpPop, []);
+            ];
+      };
+      (* if (true) { 10 } else { 20 }; 3333; *)
+      {
+        input = "if (true) { 10 } else { 20 }; 3333;";
+        expectedConstants = [| Value.Integer 10L; Value.Integer 20L; Value.Integer 3333L |];
+        expectedInstructions =
+          make_instructions
+            [
+              (* 0000 *)
+              (Code.OpTrue, []);
+              (* 0001 *)
+              (Code.OpJumpNotTruthy, [ 10 ]);
+              (* 0004 *)
+              (Code.OpConstant, [ 0 ]);
+              (* 0007 *)
+              (Code.OpJump, [ 13 ]);
+              (* 0010 *)
+              (Code.OpConstant, [ 1 ]);
+              (* 0013 *)
+              (Code.OpPop, []);
+              (* 0014 *)
+              (Code.OpConstant, [ 2 ]);
+              (* 0017 *)
+              (Code.OpPop, []);
+            ];
       };
     ]
     |> run
