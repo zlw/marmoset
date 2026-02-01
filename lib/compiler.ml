@@ -3,24 +3,25 @@ open Ast
 let ( let* ) res f = Result.bind res f
 let buffer_size = 256
 
-(* Compiler uses Buffer.t internally for efficient instruction building *)
+(* Compiler uses Buffer.t and Dynarray.t internally for efficient building *)
 type compiler = {
   instructions : Buffer.t;
-  constants : Value.value list;
+  constants : Value.value Dynarray.t;
 }
 
 (* Bytecode is the final, immutable result *)
 type bytecode = {
   instructions : Code.instructions; (* bytes *)
-  constants : Value.value list;
+  constants : Value.value array;
 }
 
-let init : compiler = { instructions = Buffer.create buffer_size; constants = [] }
+let init : compiler = { instructions = Buffer.create buffer_size; constants = Dynarray.create () }
 
 (* Add a constant to the pool, returns new compiler and the constant's index *)
 let add_constant (c : compiler) (obj : Value.value) : compiler * int =
-  let index = List.length c.constants in
-  ({ c with constants = c.constants @ [ obj ] }, index)
+  let index = Dynarray.length c.constants in
+  Dynarray.add_last c.constants obj;
+  (c, index)
 
 (* Emit an instruction into the buffer, returns new compiler and the instruction's position *)
 let emit (c : compiler) (op : Code.opcode) (operands : int list) : compiler * int =
@@ -30,12 +31,15 @@ let emit (c : compiler) (op : Code.opcode) (operands : int list) : compiler * in
   (c, pos)
 
 let rec compile (c : compiler) (s : AST.program) : (compiler, string) result =
-  (* Create a fresh buffer starting with c's existing instructions *)
-  (* This encapsulates mutation: each compile call gets its own buffer *)
+  (* Create fresh mutable structures starting with c's existing state *)
+  (* This encapsulates mutation: each compile call gets its own buffers *)
   let buf = Buffer.create (max buffer_size (Buffer.length c.instructions)) in
   Buffer.add_buffer buf c.instructions;
 
-  let working_c = { c with instructions = buf } in
+  let consts = Dynarray.create () in
+  Dynarray.append_seq consts (Dynarray.to_seq c.constants);
+
+  let working_c : compiler = { instructions = buf; constants = consts } in
 
   let rec loop c s =
     match s with
@@ -67,12 +71,12 @@ and compile_expression (c : compiler) (e : AST.expression) : (compiler, string) 
 
 (* Convert the working compiler to final immutable bytecode *)
 let bytecode (c : compiler) : bytecode =
-  { instructions = Buffer.to_bytes c.instructions; constants = c.constants }
+  { instructions = Buffer.to_bytes c.instructions; constants = Dynarray.to_array c.constants }
 
 module Test = struct
   type test = {
     input : string;
-    expectedConstants : Value.value list;
+    expectedConstants : Value.value array;
     expectedInstructions : Buffer.t;
   }
 
@@ -93,7 +97,7 @@ module Test = struct
 
   let%test "test_integer_arithmetic" =
     let expected_instructions =
-      let c : compiler = { instructions = Buffer.create 32; constants = [] } in
+      let c : compiler = { instructions = Buffer.create 32; constants = Dynarray.create () } in
       let c, _ = emit c Code.OpConstant [ 0 ] in
       let c, _ = emit c Code.OpConstant [ 1 ] in
       let c, _ = emit c Code.OpAdd [] in
@@ -102,7 +106,7 @@ module Test = struct
     [
       {
         input = "1 + 2";
-        expectedConstants = [ Value.Integer 1L; Value.Integer 2L ];
+        expectedConstants = [| Value.Integer 1L; Value.Integer 2L |];
         expectedInstructions = expected_instructions;
       };
     ]
