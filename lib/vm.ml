@@ -30,21 +30,21 @@ type vm = {
 }
 
 (* Get the current frame *)
-let current_frame (vm : vm) : frame = vm.frames.(vm.frame_index)
+let[@inline] current_frame (vm : vm) : frame = vm.frames.(vm.frame_index)
 
 (* Push a new frame *)
-let push_frame (vm : vm) (f : frame) : unit =
+let[@inline] push_frame (vm : vm) (f : frame) : unit =
   vm.frame_index <- vm.frame_index + 1;
   vm.frames.(vm.frame_index) <- f
 
 (* Pop the current frame *)
-let pop_frame (vm : vm) : frame =
+let[@inline] pop_frame (vm : vm) : frame =
   let f = vm.frames.(vm.frame_index) in
   vm.frame_index <- vm.frame_index - 1;
   f
 
 (* Get current instructions from current frame *)
-let current_instructions (vm : vm) : bytes = (current_frame vm).cl.fn.instructions
+let[@inline] current_instructions (vm : vm) : bytes = (current_frame vm).cl.fn.instructions
 
 let create (bytecode : Compiler.bytecode) : vm =
   (* Wrap the main program in a "main" closure *)
@@ -80,23 +80,23 @@ let create_with_globals (bytecode : Compiler.bytecode) (globals : Value.value ar
     sp = 0;
   }
 
-let push (vm : vm) (value : Value.value) : (unit, string) result =
+let[@inline] push (vm : vm) (value : Value.value) : (unit, string) result =
   if vm.sp >= stack_size then
     Error "stack overflow"
   else (
-    vm.stack.(vm.sp) <- value;
+    Array.unsafe_set vm.stack vm.sp value;
     vm.sp <- vm.sp + 1;
     Ok ())
 
-let pop (vm : vm) : Value.value =
-  let value = vm.stack.(vm.sp - 1) in
+let[@inline] pop (vm : vm) : Value.value =
+  let value = Array.unsafe_get vm.stack (vm.sp - 1) in
   vm.sp <- vm.sp - 1;
   value
 
 (* For testing: get the last popped element (still on stack, just below sp) *)
-let last_popped_stack_elem (vm : vm) : Value.value = vm.stack.(vm.sp)
+let last_popped_stack_elem (vm : vm) : Value.value = Array.unsafe_get vm.stack vm.sp
 
-let execute_binary_integer_op (op : Code.opcode) (l : int64) (r : int64) : int64 =
+let[@inline] execute_binary_integer_op (op : Code.opcode) (l : int64) (r : int64) : int64 =
   match op with
   | Code.OpAdd -> Int64.add l r
   | Code.OpSub -> Int64.sub l r
@@ -104,7 +104,7 @@ let execute_binary_integer_op (op : Code.opcode) (l : int64) (r : int64) : int64
   | Code.OpDiv -> Int64.div l r
   | _ -> 0L
 
-let execute_binary_float_op (op : Code.opcode) (l : float) (r : float) : float =
+let[@inline] execute_binary_float_op (op : Code.opcode) (l : float) (r : float) : float =
   match op with
   | Code.OpAdd -> l +. r
   | Code.OpSub -> l -. r
@@ -112,7 +112,7 @@ let execute_binary_float_op (op : Code.opcode) (l : float) (r : float) : float =
   | Code.OpDiv -> l /. r
   | _ -> 0.0
 
-let execute_binary_op (vm : vm) (op : Code.opcode) : unit =
+let[@inline] execute_binary_op (vm : vm) (op : Code.opcode) : unit =
   let right = pop vm in
   let left = pop vm in
   match (left, right) with
@@ -138,7 +138,7 @@ let execute_binary_op (vm : vm) (op : Code.opcode) : unit =
   | _ -> ()
 
 (* Execute comparison operations - always returns a boolean *)
-let execute_comparison (vm : vm) (op : Code.opcode) : unit =
+let[@inline] execute_comparison (vm : vm) (op : Code.opcode) : unit =
   let right = pop vm in
   let left = pop vm in
   let result =
@@ -184,7 +184,7 @@ let run (vm : vm) : (unit, string) result =
     let frame = current_frame vm in
     let ins = frame.cl.fn.instructions in
     let ip = frame.ip in
-    let op_byte = Char.code (Bytes.get ins ip) in
+    let op_byte = Char.code (Bytes.unsafe_get ins ip) in
 
     (* Use unsafe_of_int for fast opcode dispatch - we trust the compiler emitted valid opcodes *)
     (match Code.unsafe_of_int op_byte with

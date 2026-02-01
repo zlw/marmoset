@@ -39,7 +39,7 @@ let true_value = Boolean true
 let false_value = Boolean false
 let null_value = Null
 
-let is_truthy = function
+let[@inline] is_truthy = function
   | Null -> false
   | Boolean b -> b
   | _ -> true

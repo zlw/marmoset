@@ -110,7 +110,7 @@ let num_opcodes = 30
    Uses Obj.magic since OCaml represents simple variants as integers.
    INVARIANT: The opcode variant order MUST match to_int mapping.
    Only use after bounds checking: 0 <= n < num_opcodes *)
-let unsafe_of_int (n : int) : opcode = Obj.magic n
+let[@inline] unsafe_of_int (n : int) : opcode = Obj.magic n
 
 let to_definition = function
   | OpConstant -> { name = "OpConstant"; operand_widths = [ 2 ] }
@@ -176,13 +176,13 @@ let concat (instrs : bytes list) : instructions =
   Buffer.to_bytes buf
 
 (* Read a big-endian uint16 from instructions at offset *)
-let read_uint16 (ins : instructions) (offset : int) : int =
-  let b1 = Char.code (Bytes.get ins offset) in
-  let b2 = Char.code (Bytes.get ins (offset + 1)) in
+let[@inline] read_uint16 (ins : instructions) (offset : int) : int =
+  let b1 = Char.code (Bytes.unsafe_get ins offset) in
+  let b2 = Char.code (Bytes.unsafe_get ins (offset + 1)) in
   (b1 lsl 8) lor b2
 
 (* Read a uint8 from instructions at offset *)
-let read_uint8 (ins : instructions) (offset : int) : int = Char.code (Bytes.get ins offset)
+let[@inline] read_uint8 (ins : instructions) (offset : int) : int = Char.code (Bytes.unsafe_get ins offset)
 
 module Test = struct
   type test = {
