@@ -71,6 +71,48 @@ let execute_binary_op (vm : vm) (op : Code.opcode) : unit =
       ()
   | _ -> ()
 
+(* Execute comparison operations - always returns a boolean *)
+let execute_comparison (vm : vm) (op : Code.opcode) : unit =
+  let right = pop vm in
+  let left = pop vm in
+  let result =
+    match (left, right) with
+    | Value.Integer l, Value.Integer r -> (
+        match op with
+        | Code.OpEqual -> l = r
+        | Code.OpNotEqual -> l <> r
+        | Code.OpGreaterThan -> l > r
+        | _ -> false)
+    | Value.Float l, Value.Float r -> (
+        match op with
+        | Code.OpEqual -> l = r
+        | Code.OpNotEqual -> l <> r
+        | Code.OpGreaterThan -> l > r
+        | _ -> false)
+    | Value.Integer l, Value.Float r -> (
+        let l = Int64.to_float l in
+        match op with
+        | Code.OpEqual -> l = r
+        | Code.OpNotEqual -> l <> r
+        | Code.OpGreaterThan -> l > r
+        | _ -> false)
+    | Value.Float l, Value.Integer r -> (
+        let r = Int64.to_float r in
+        match op with
+        | Code.OpEqual -> l = r
+        | Code.OpNotEqual -> l <> r
+        | Code.OpGreaterThan -> l > r
+        | _ -> false)
+    | Value.Boolean l, Value.Boolean r -> (
+        match op with
+        | Code.OpEqual -> l = r
+        | Code.OpNotEqual -> l <> r
+        | _ -> false)
+    | _ -> false
+  in
+  let _ = push vm (Value.Boolean result) in
+  ()
+
 let run (vm : vm) : (unit, string) result =
   let len = Bytes.length vm.instructions in
   vm.ip <- 0;
@@ -97,6 +139,9 @@ let run (vm : vm) : (unit, string) result =
     | Some Code.OpFalse ->
         let _ = push vm (Value.Boolean false) in
         ()
+    | Some Code.OpEqual -> execute_comparison vm Code.OpEqual
+    | Some Code.OpNotEqual -> execute_comparison vm Code.OpNotEqual
+    | Some Code.OpGreaterThan -> execute_comparison vm Code.OpGreaterThan
     | None -> ());
 
     vm.ip <- vm.ip + 1
@@ -153,5 +198,31 @@ module Test = struct
 
   let%test "test_boolean_expressions" =
     [ { input = "true"; expected = Value.Boolean true }; { input = "false"; expected = Value.Boolean false } ]
+    |> List.for_all run_vm_test
+
+  let%test "test_comparison_expressions" =
+    [
+      (* Integer comparisons *)
+      { input = "1 == 1"; expected = Value.Boolean true };
+      { input = "1 == 2"; expected = Value.Boolean false };
+      { input = "1 != 2"; expected = Value.Boolean true };
+      { input = "1 != 1"; expected = Value.Boolean false };
+      { input = "1 > 2"; expected = Value.Boolean false };
+      { input = "2 > 1"; expected = Value.Boolean true };
+      { input = "1 < 2"; expected = Value.Boolean true };
+      { input = "2 < 1"; expected = Value.Boolean false };
+      (* Boolean comparisons *)
+      { input = "true == true"; expected = Value.Boolean true };
+      { input = "true == false"; expected = Value.Boolean false };
+      { input = "true != false"; expected = Value.Boolean true };
+      { input = "false != false"; expected = Value.Boolean false };
+      (* Float comparisons (Marmoset addition) *)
+      { input = "1.5 == 1.5"; expected = Value.Boolean true };
+      { input = "1.5 > 1.0"; expected = Value.Boolean true };
+      { input = "1.0 < 1.5"; expected = Value.Boolean true };
+      (* Mixed int/float comparisons (Marmoset addition) *)
+      { input = "1 == 1.0"; expected = Value.Boolean true };
+      { input = "2 > 1.5"; expected = Value.Boolean true };
+    ]
     |> List.for_all run_vm_test
 end

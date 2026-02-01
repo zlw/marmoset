@@ -10,6 +10,9 @@ and opcode =
   | OpDiv
   | OpTrue
   | OpFalse
+  | OpEqual
+  | OpNotEqual
+  | OpGreaterThan
 
 and definition = {
   name : string;
@@ -25,6 +28,9 @@ let to_int = function
   | OpDiv -> 5
   | OpTrue -> 6
   | OpFalse -> 7
+  | OpEqual -> 8
+  | OpNotEqual -> 9
+  | OpGreaterThan -> 10
 
 let of_int = function
   | 0 -> Some OpConstant
@@ -35,6 +41,9 @@ let of_int = function
   | 5 -> Some OpDiv
   | 6 -> Some OpTrue
   | 7 -> Some OpFalse
+  | 8 -> Some OpEqual
+  | 9 -> Some OpNotEqual
+  | 10 -> Some OpGreaterThan
   | _ -> None
 
 let to_definition = function
@@ -46,6 +55,9 @@ let to_definition = function
   | OpDiv -> { name = "OpDiv"; operand_widths = [] }
   | OpTrue -> { name = "OpTrue"; operand_widths = [] }
   | OpFalse -> { name = "OpFalse"; operand_widths = [] }
+  | OpEqual -> { name = "OpEqual"; operand_widths = [] }
+  | OpNotEqual -> { name = "OpNotEqual"; operand_widths = [] }
+  | OpGreaterThan -> { name = "OpGreaterThan"; operand_widths = [] }
 
 let make (op : opcode) (operands : int list) : bytes =
   let def = to_definition op in

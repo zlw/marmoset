@@ -62,14 +62,30 @@ and compile_statement (c : compiler) (s : AST.statement) : (compiler, string) re
 and compile_expression (c : compiler) (e : AST.expression) : (compiler, string) result =
   match e with
   | AST.Infix (left, op, right) ->
-      let* c' = compile_expression c left in
-      let* c'' = compile_expression c' right in
+      (* For "<", we swap operands and use OpGreaterThan instead *)
+      (* e.g., "3 < 5" becomes: compile(5), compile(3), OpGreaterThan *)
+      let* c' =
+        if op = "<" then
+          compile_expression c right
+        else
+          compile_expression c left
+      in
+      let* c'' =
+        if op = "<" then
+          compile_expression c' left
+        else
+          compile_expression c' right
+      in
       let opcode =
         match op with
         | "+" -> Ok Code.OpAdd
         | "-" -> Ok Code.OpSub
         | "*" -> Ok Code.OpMul
         | "/" -> Ok Code.OpDiv
+        | "==" -> Ok Code.OpEqual
+        | "!=" -> Ok Code.OpNotEqual
+        | ">" -> Ok Code.OpGreaterThan
+        | "<" -> Ok Code.OpGreaterThan (* swapped operands above! *)
         | _ -> Error (Printf.sprintf "unknown operator %s" op)
       in
       let* opcode = opcode in
