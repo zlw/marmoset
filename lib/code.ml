@@ -4,6 +4,7 @@ type instructions = bytes
 and opcode =
   | OpConstant
   | OpAdd
+  | OpPop
 
 and definition = {
   name : string;
@@ -13,10 +14,18 @@ and definition = {
 let to_int = function
   | OpConstant -> 0
   | OpAdd -> 1
+  | OpPop -> 2
+
+let of_int = function
+  | 0 -> Some OpConstant
+  | 1 -> Some OpAdd
+  | 2 -> Some OpPop
+  | _ -> None
 
 let to_definition = function
   | OpConstant -> { name = "OpConstant"; operand_widths = [ 2 ] }
   | OpAdd -> { name = "OpAdd"; operand_widths = [] }
+  | OpPop -> { name = "OpPop"; operand_widths = [] }
 
 let make (op : opcode) (operands : int list) : bytes =
   let def = to_definition op in
@@ -47,6 +56,12 @@ let concat (instrs : bytes list) : instructions =
   let buf = Buffer.create 256 in
   List.iter (Buffer.add_bytes buf) instrs;
   Buffer.to_bytes buf
+
+(* Read a big-endian uint16 from instructions at offset *)
+let read_uint16 (ins : instructions) (offset : int) : int =
+  let b1 = Char.code (Bytes.get ins offset) in
+  let b2 = Char.code (Bytes.get ins (offset + 1)) in
+  (b1 lsl 8) lor b2
 
 module Test = struct
   type test = {

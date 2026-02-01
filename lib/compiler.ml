@@ -53,7 +53,10 @@ let rec compile (c : compiler) (s : AST.program) : (compiler, string) result =
 
 and compile_statement (c : compiler) (s : AST.statement) : (compiler, string) result =
   match s with
-  | AST.Expression e -> compile_expression c e
+  | AST.Expression e ->
+      let* c' = compile_expression c e in
+      let c'', _pos = emit c' Code.OpPop [] in
+      Ok c''
   | _ -> failwith "Not implemented"
 
 and compile_expression (c : compiler) (e : AST.expression) : (compiler, string) result =
@@ -101,6 +104,7 @@ module Test = struct
       let c, _ = emit c Code.OpConstant [ 0 ] in
       let c, _ = emit c Code.OpConstant [ 1 ] in
       let c, _ = emit c Code.OpAdd [] in
+      let c, _ = emit c Code.OpPop [] in
       c.instructions
     in
     [
