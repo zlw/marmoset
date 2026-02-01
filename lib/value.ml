@@ -7,6 +7,13 @@ module Hashtbl_printable = struct
     values |> Hashtbl.iter (fun key data -> Stdlib.Format.fprintf ppf "@[<1>%a: %a@]@." pp_key key pp_value data)
 end
 
+type compiled_function = {
+  instructions : bytes;
+  num_locals : int;
+  num_parameters : int;
+}
+[@@deriving show]
+
 type value =
   | Null
   | Integer of int64
@@ -19,6 +26,13 @@ type value =
   | Error of string
   | Function of AST.expression list * AST.statement * value Env.env option
   | BuiltinFunction of (value list -> value)
+  | CompiledFunction of compiled_function
+  | Closure of closure
+
+and closure = {
+  fn : compiled_function;
+  free : value array;
+}
 [@@deriving show]
 
 let true_value = Boolean true
@@ -64,6 +78,8 @@ let rec to_string = function
         (params |> List.map param_to_string |> String.concat ", ")
         (AST.to_string [ body ])
   | BuiltinFunction _ -> "<builtin function>"
+  | CompiledFunction _ -> "<compiled function>"
+  | Closure _ -> "<closure>"
 
 and param_to_string = function
   | AST.Identifier p -> p
@@ -86,6 +102,8 @@ let rec type_of = function
   | Error _ -> "Error"
   | Function _ -> "Function"
   | BuiltinFunction _ -> "BuiltinFunction"
+  | CompiledFunction _ -> "CompiledFunction"
+  | Closure _ -> "Closure"
 
 let type_mismatch_error left op right =
   let msg = Printf.sprintf "%s %s %s" (AST.type_of left) op (AST.type_of right) in

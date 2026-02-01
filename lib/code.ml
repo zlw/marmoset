@@ -20,6 +20,18 @@ and opcode =
   | OpNull
   | OpGetGlobal
   | OpSetGlobal
+  | OpArray
+  | OpHash
+  | OpIndex
+  | OpCall
+  | OpReturnValue
+  | OpReturn
+  | OpGetLocal
+  | OpSetLocal
+  | OpGetBuiltin
+  | OpClosure
+  | OpGetFree
+  | OpCurrentClosure
 
 and definition = {
   name : string;
@@ -45,6 +57,18 @@ let to_int = function
   | OpNull -> 15
   | OpGetGlobal -> 16
   | OpSetGlobal -> 17
+  | OpArray -> 18
+  | OpHash -> 19
+  | OpIndex -> 20
+  | OpCall -> 21
+  | OpReturnValue -> 22
+  | OpReturn -> 23
+  | OpGetLocal -> 24
+  | OpSetLocal -> 25
+  | OpGetBuiltin -> 26
+  | OpClosure -> 27
+  | OpGetFree -> 28
+  | OpCurrentClosure -> 29
 
 let of_int = function
   | 0 -> Some OpConstant
@@ -65,7 +89,28 @@ let of_int = function
   | 15 -> Some OpNull
   | 16 -> Some OpGetGlobal
   | 17 -> Some OpSetGlobal
+  | 18 -> Some OpArray
+  | 19 -> Some OpHash
+  | 20 -> Some OpIndex
+  | 21 -> Some OpCall
+  | 22 -> Some OpReturnValue
+  | 23 -> Some OpReturn
+  | 24 -> Some OpGetLocal
+  | 25 -> Some OpSetLocal
+  | 26 -> Some OpGetBuiltin
+  | 27 -> Some OpClosure
+  | 28 -> Some OpGetFree
+  | 29 -> Some OpCurrentClosure
   | _ -> None
+
+(* Number of opcodes - used for bounds checking in unsafe_of_int *)
+let num_opcodes = 30
+
+(* Fast unsafe conversion from int to opcode.
+   Uses Obj.magic since OCaml represents simple variants as integers.
+   INVARIANT: The opcode variant order MUST match to_int mapping.
+   Only use after bounds checking: 0 <= n < num_opcodes *)
+let unsafe_of_int (n : int) : opcode = Obj.magic n
 
 let to_definition = function
   | OpConstant -> { name = "OpConstant"; operand_widths = [ 2 ] }
@@ -86,6 +131,18 @@ let to_definition = function
   | OpNull -> { name = "OpNull"; operand_widths = [] }
   | OpGetGlobal -> { name = "OpGetGlobal"; operand_widths = [ 2 ] }
   | OpSetGlobal -> { name = "OpSetGlobal"; operand_widths = [ 2 ] }
+  | OpArray -> { name = "OpArray"; operand_widths = [ 2 ] }
+  | OpHash -> { name = "OpHash"; operand_widths = [ 2 ] }
+  | OpIndex -> { name = "OpIndex"; operand_widths = [] }
+  | OpCall -> { name = "OpCall"; operand_widths = [ 1 ] }
+  | OpReturnValue -> { name = "OpReturnValue"; operand_widths = [] }
+  | OpReturn -> { name = "OpReturn"; operand_widths = [] }
+  | OpGetLocal -> { name = "OpGetLocal"; operand_widths = [ 1 ] }
+  | OpSetLocal -> { name = "OpSetLocal"; operand_widths = [ 1 ] }
+  | OpGetBuiltin -> { name = "OpGetBuiltin"; operand_widths = [ 1 ] }
+  | OpClosure -> { name = "OpClosure"; operand_widths = [ 2; 1 ] } (* const_index, num_free *)
+  | OpGetFree -> { name = "OpGetFree"; operand_widths = [ 1 ] }
+  | OpCurrentClosure -> { name = "OpCurrentClosure"; operand_widths = [] }
 
 let make (op : opcode) (operands : int list) : bytes =
   let def = to_definition op in
@@ -104,6 +161,7 @@ let make (op : opcode) (operands : int list) : bytes =
             let b2 = Char.chr (o land 0xFF) in
             Bytes.set instruction offset b1;
             Bytes.set instruction (offset + 1) b2
+        | 1 -> Bytes.set instruction offset (Char.chr (o land 0xFF))
         | _ -> ());
         fill_instruction (offset + w) os ws
     | _ -> ()
@@ -122,6 +180,9 @@ let read_uint16 (ins : instructions) (offset : int) : int =
   let b1 = Char.code (Bytes.get ins offset) in
   let b2 = Char.code (Bytes.get ins (offset + 1)) in
   (b1 lsl 8) lor b2
+
+(* Read a uint8 from instructions at offset *)
+let read_uint8 (ins : instructions) (offset : int) : int = Char.code (Bytes.get ins offset)
 
 module Test = struct
   type test = {
