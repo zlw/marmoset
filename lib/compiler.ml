@@ -13,6 +13,7 @@ type emitted_instruction = {
 type compiler = {
   instructions : Buffer.t;
   constants : Value.value Dynarray.t;
+  symbol_table : Symbol_table.t;
   mutable last_instruction : emitted_instruction option;
   mutable previous_instruction : emitted_instruction option;
 }
@@ -23,10 +24,11 @@ type bytecode = {
   constants : Value.value array;
 }
 
-let init : compiler =
+let init () : compiler =
   {
     instructions = Buffer.create buffer_size;
     constants = Dynarray.create ();
+    symbol_table = Symbol_table.create ();
     last_instruction = None;
     previous_instruction = None;
   }
@@ -93,6 +95,7 @@ let rec compile (c : compiler) (s : AST.program) : (compiler, string) result =
     {
       instructions = buf;
       constants = consts;
+      symbol_table = c.symbol_table;
       last_instruction = c.last_instruction;
       previous_instruction = c.previous_instruction;
     }
@@ -123,6 +126,14 @@ and compile_statement (c : compiler) (s : AST.statement) : (compiler, string) re
             loop c' rest
       in
       loop c stmts
+  | AST.Let (name, value) ->
+      (* Compile the value expression *)
+      let* c' = compile_expression c value in
+      (* Define the symbol and get its index *)
+      let symbol = Symbol_table.define c'.symbol_table name in
+      (* Emit OpSetGlobal to store the value *)
+      let c'', _pos = emit c' Code.OpSetGlobal [ symbol.index ] in
+      Ok c''
   | _ -> failwith "Not implemented"
 
 and compile_expression (c : compiler) (e : AST.expression) : (compiler, string) result =
@@ -226,6 +237,13 @@ and compile_expression (c : compiler) (e : AST.expression) : (compiler, string) 
       change_operand c5 jump_pos after_alternative_pos;
 
       Ok c5
+  | AST.Identifier name -> (
+      (* Look up the identifier in the symbol table *)
+      match Symbol_table.resolve c.symbol_table name with
+      | Some symbol ->
+          let c', _pos = emit c Code.OpGetGlobal [ symbol.index ] in
+          Ok c'
+      | None -> Error (Printf.sprintf "undefined variable %s" name))
   | _ -> failwith "Not implemented"
 
 (* Convert the working compiler to final immutable bytecode *)
@@ -249,7 +267,7 @@ module Test = struct
            let p = Parser.parse test.input in
            match p with
            | Ok p -> (
-               let c = compile init p in
+               let c = compile (init ()) p in
                match c with
                | Ok c' ->
                    let b = bytecode c' in
@@ -413,6 +431,55 @@ module Test = struct
               (* 0014 *)
               (Code.OpConstant, [ 2 ]);
               (* 0017 *)
+              (Code.OpPop, []);
+            ];
+      };
+    ]
+    |> run
+
+  let%test "test_global_let_statements" =
+    [
+      (* let one = 1; *)
+      {
+        input = "let one = 1;";
+        expectedConstants = [| Value.Integer 1L |];
+        expectedInstructions = make_instructions [ (Code.OpConstant, [ 0 ]); (Code.OpSetGlobal, [ 0 ]) ];
+      };
+      (* let one = 1; let two = 2; *)
+      {
+        input = "let one = 1; let two = 2;";
+        expectedConstants = [| Value.Integer 1L; Value.Integer 2L |];
+        expectedInstructions =
+          make_instructions
+            [
+              (Code.OpConstant, [ 0 ]);
+              (Code.OpSetGlobal, [ 0 ]);
+              (Code.OpConstant, [ 1 ]);
+              (Code.OpSetGlobal, [ 1 ]);
+            ];
+      };
+      (* let one = 1; one; *)
+      {
+        input = "let one = 1; one;";
+        expectedConstants = [| Value.Integer 1L |];
+        expectedInstructions =
+          make_instructions
+            [ (Code.OpConstant, [ 0 ]); (Code.OpSetGlobal, [ 0 ]); (Code.OpGetGlobal, [ 0 ]); (Code.OpPop, []) ];
+      };
+      (* let one = 1; let two = one + one; two; *)
+      {
+        input = "let one = 1; let two = one + one; two;";
+        expectedConstants = [| Value.Integer 1L |];
+        expectedInstructions =
+          make_instructions
+            [
+              (Code.OpConstant, [ 0 ]);
+              (Code.OpSetGlobal, [ 0 ]);
+              (Code.OpGetGlobal, [ 0 ]);
+              (Code.OpGetGlobal, [ 0 ]);
+              (Code.OpAdd, []);
+              (Code.OpSetGlobal, [ 1 ]);
+              (Code.OpGetGlobal, [ 1 ]);
               (Code.OpPop, []);
             ];
       };

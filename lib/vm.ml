@@ -1,9 +1,11 @@
 let stack_size = 2048
+let globals_size = 65536
 
 type vm = {
   constants : Value.value array;
   instructions : Code.instructions;
   stack : Value.value array;
+  globals : Value.value array;
   mutable sp : int; (* Stack pointer: always points to next free slot. Top is stack[sp-1] *)
   mutable ip : int; (* Instruction pointer: current position in instructions *)
 }
@@ -13,6 +15,18 @@ let create (bytecode : Compiler.bytecode) : vm =
     instructions = bytecode.instructions;
     constants = bytecode.constants;
     stack = Array.make stack_size Value.Null;
+    globals = Array.make globals_size Value.Null;
+    sp = 0;
+    ip = 0;
+  }
+
+(* Create VM with existing globals (for REPL continuity) *)
+let create_with_globals (bytecode : Compiler.bytecode) (globals : Value.value array) : vm =
+  {
+    instructions = bytecode.instructions;
+    constants = bytecode.constants;
+    stack = Array.make stack_size Value.Null;
+    globals;
     sp = 0;
     ip = 0;
   }
@@ -177,6 +191,15 @@ let run (vm : vm) : (unit, string) result =
     | Some Code.OpNull ->
         let _ = push vm Value.Null in
         ()
+    | Some Code.OpGetGlobal ->
+        let global_index = Code.read_uint16 vm.instructions (vm.ip + 1) in
+        vm.ip <- vm.ip + 2;
+        let _ = push vm vm.globals.(global_index) in
+        ()
+    | Some Code.OpSetGlobal ->
+        let global_index = Code.read_uint16 vm.instructions (vm.ip + 1) in
+        vm.ip <- vm.ip + 2;
+        vm.globals.(global_index) <- pop vm
     | None -> ());
 
     vm.ip <- vm.ip + 1
@@ -194,7 +217,7 @@ module Test = struct
     match Parser.parse test.input with
     | Error _ -> false
     | Ok program -> (
-        match Compiler.compile Compiler.init program with
+        match Compiler.compile (Compiler.init ()) program with
         | Error _ -> false
         | Ok compiler -> (
             let bytecode = Compiler.bytecode compiler in
@@ -302,6 +325,24 @@ module Test = struct
       (* Nested expressions in consequence/alternative *)
       { input = "if (true) { 1 + 2 }"; expected = Value.Integer 3L };
       { input = "if (false) { 1 } else { 2 + 3 }"; expected = Value.Integer 5L };
+    ]
+    |> List.for_all run_vm_test
+
+  let%test "test_global_let_statements" =
+    [
+      (* Simple binding *)
+      { input = "let one = 1; one"; expected = Value.Integer 1L };
+      { input = "let one = 1; let two = 2; one + two"; expected = Value.Integer 3L };
+      { input = "let one = 1; let two = one + one; one + two"; expected = Value.Integer 3L };
+      (* Float bindings (Marmoset) *)
+      { input = "let x = 1.5; x"; expected = Value.Float 1.5 };
+      { input = "let x = 1.5; let y = 2.5; x + y"; expected = Value.Float 4.0 };
+      (* Boolean bindings *)
+      { input = "let t = true; t"; expected = Value.Boolean true };
+      { input = "let f = false; !f"; expected = Value.Boolean true };
+      (* Expression in binding *)
+      { input = "let x = 5 * 5; x"; expected = Value.Integer 25L };
+      { input = "let x = if (true) { 10 } else { 20 }; x"; expected = Value.Integer 10L };
     ]
     |> List.for_all run_vm_test
 end

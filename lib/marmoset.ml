@@ -5,5 +5,6 @@ module Value = Value
 module Env = Env
 module Eval = Eval
 module Code = Code
+module Symbol_table = Symbol_table
 module Compiler = Compiler
 module Vm = Vm

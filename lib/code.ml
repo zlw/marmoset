@@ -18,6 +18,8 @@ and opcode =
   | OpJump
   | OpJumpNotTruthy
   | OpNull
+  | OpGetGlobal
+  | OpSetGlobal
 
 and definition = {
   name : string;
@@ -41,6 +43,8 @@ let to_int = function
   | OpJump -> 13
   | OpJumpNotTruthy -> 14
   | OpNull -> 15
+  | OpGetGlobal -> 16
+  | OpSetGlobal -> 17
 
 let of_int = function
   | 0 -> Some OpConstant
@@ -59,6 +63,8 @@ let of_int = function
   | 13 -> Some OpJump
   | 14 -> Some OpJumpNotTruthy
   | 15 -> Some OpNull
+  | 16 -> Some OpGetGlobal
+  | 17 -> Some OpSetGlobal
   | _ -> None
 
 let to_definition = function
@@ -78,6 +84,8 @@ let to_definition = function
   | OpJump -> { name = "OpJump"; operand_widths = [ 2 ] }
   | OpJumpNotTruthy -> { name = "OpJumpNotTruthy"; operand_widths = [ 2 ] }
   | OpNull -> { name = "OpNull"; operand_widths = [] }
+  | OpGetGlobal -> { name = "OpGetGlobal"; operand_widths = [ 2 ] }
+  | OpSetGlobal -> { name = "OpSetGlobal"; operand_widths = [ 2 ] }
 
 let make (op : opcode) (operands : int list) : bytes =
   let def = to_definition op in
