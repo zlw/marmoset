@@ -6,8 +6,10 @@ type parser = {
   lexer : Lexer.lexer;
   curr_token : Token.token;
   peek_token : Token.token;
-  errors : string list;
+  errors : errors;
 }
+
+and errors = string list
 
 type precedence = int
 
@@ -288,7 +290,7 @@ and parse_hash_literal (p : parser) : (parser * AST.expression, parser) result =
 
   loop p []
 
-let parse (s : string) : (AST.program, string list) result =
+let parse (s : string) : (AST.program, errors) result =
   match s |> Lexer.init |> init |> parse_program with
   | Ok (_, program) -> Ok program
   | Error parser -> Error (List.rev parser.errors)
