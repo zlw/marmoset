@@ -15,6 +15,8 @@ and opcode =
   | OpGreaterThan
   | OpMinus
   | OpBang
+  | OpJump
+  | OpJumpNotTruthy
 
 and definition = {
   name : string;
@@ -35,6 +37,8 @@ let to_int = function
   | OpGreaterThan -> 10
   | OpMinus -> 11
   | OpBang -> 12
+  | OpJump -> 13
+  | OpJumpNotTruthy -> 14
 
 let of_int = function
   | 0 -> Some OpConstant
@@ -50,6 +54,8 @@ let of_int = function
   | 10 -> Some OpGreaterThan
   | 11 -> Some OpMinus
   | 12 -> Some OpBang
+  | 13 -> Some OpJump
+  | 14 -> Some OpJumpNotTruthy
   | _ -> None
 
 let to_definition = function
@@ -66,6 +72,8 @@ let to_definition = function
   | OpGreaterThan -> { name = "OpGreaterThan"; operand_widths = [] }
   | OpMinus -> { name = "OpMinus"; operand_widths = [] }
   | OpBang -> { name = "OpBang"; operand_widths = [] }
+  | OpJump -> { name = "OpJump"; operand_widths = [ 2 ] }
+  | OpJumpNotTruthy -> { name = "OpJumpNotTruthy"; operand_widths = [ 2 ] }
 
 let make (op : opcode) (operands : int list) : bytes =
   let def = to_definition op in

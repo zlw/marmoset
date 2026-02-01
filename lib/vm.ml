@@ -159,6 +159,21 @@ let run (vm : vm) : (unit, string) result =
         let result = not (Value.is_truthy operand) in
         let _ = push vm (Value.Boolean result) in
         ()
+    | Some Code.OpJump ->
+        (* Unconditional jump - read 2-byte target address *)
+        let target = Code.read_uint16 vm.instructions (vm.ip + 1) in
+        (* Set ip to target - 1 because the loop will do +1 *)
+        vm.ip <- target - 1
+    | Some Code.OpJumpNotTruthy ->
+        (* Conditional jump - jump only if top of stack is falsy *)
+        let target = Code.read_uint16 vm.instructions (vm.ip + 1) in
+        let condition = pop vm in
+        if not (Value.is_truthy condition) then
+          (* Jump: set ip to target - 1 *)
+          vm.ip <- target - 1
+        else
+          (* Don't jump: skip over the 2-byte operand *)
+          vm.ip <- vm.ip + 2
     | None -> ());
 
     vm.ip <- vm.ip + 1
