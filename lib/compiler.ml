@@ -1,0 +1,110 @@
+open Ast
+
+let ( let* ) res f = Result.bind res f
+let buffer_size = 256
+
+(* Compiler uses Buffer.t internally for efficient instruction building *)
+type compiler = {
+  instructions : Buffer.t;
+  constants : Value.value list;
+}
+
+(* Bytecode is the final, immutable result *)
+type bytecode = {
+  instructions : Code.instructions; (* bytes *)
+  constants : Value.value list;
+}
+
+let init : compiler = { instructions = Buffer.create buffer_size; constants = [] }
+
+(* Add a constant to the pool, returns new compiler and the constant's index *)
+let add_constant (c : compiler) (obj : Value.value) : compiler * int =
+  let index = List.length c.constants in
+  ({ c with constants = c.constants @ [ obj ] }, index)
+
+(* Emit an instruction into the buffer, returns new compiler and the instruction's position *)
+let emit (c : compiler) (op : Code.opcode) (operands : int list) : compiler * int =
+  let ins = Code.make op operands in
+  let pos = Buffer.length c.instructions in
+  Buffer.add_bytes c.instructions ins;
+  (c, pos)
+
+let rec compile (c : compiler) (s : AST.program) : (compiler, string) result =
+  (* Create a fresh buffer starting with c's existing instructions *)
+  (* This encapsulates mutation: each compile call gets its own buffer *)
+  let buf = Buffer.create (max buffer_size (Buffer.length c.instructions)) in
+  Buffer.add_buffer buf c.instructions;
+
+  let working_c = { c with instructions = buf } in
+
+  let rec loop c s =
+    match s with
+    | [] -> Ok c
+    | hd :: tl -> (
+        match compile_statement c hd with
+        | Ok c' -> loop c' tl
+        | Error e -> Error e)
+  in
+  loop working_c s
+
+and compile_statement (c : compiler) (s : AST.statement) : (compiler, string) result =
+  match s with
+  | AST.Expression e -> compile_expression c e
+  | _ -> failwith "Not implemented"
+
+and compile_expression (c : compiler) (e : AST.expression) : (compiler, string) result =
+  match e with
+  | AST.Infix (left, _, right) ->
+      let* c' = compile_expression c left in
+      let* c'' = compile_expression c' right in
+      let c''', _pos = emit c'' Code.OpAdd [] in
+      Ok c'''
+  | AST.Integer i ->
+      let c', index = add_constant c (Value.Integer i) in
+      let c'', _pos = emit c' Code.OpConstant [ index ] in
+      Ok c''
+  | _ -> failwith "Not implemented"
+
+(* Convert the working compiler to final immutable bytecode *)
+let bytecode (c : compiler) : bytecode =
+  { instructions = Buffer.to_bytes c.instructions; constants = c.constants }
+
+module Test = struct
+  type test = {
+    input : string;
+    expectedConstants : Value.value list;
+    expectedInstructions : Buffer.t;
+  }
+
+  let run (tests : test list) : bool =
+    tests
+    |> List.for_all (fun test ->
+           let p = Parser.parse test.input in
+           match p with
+           | Ok p -> (
+               let c = compile init p in
+               match c with
+               | Ok c' ->
+                   let b = bytecode c' in
+                   let expected_instructions = Buffer.to_bytes test.expectedInstructions in
+                   b.constants = test.expectedConstants && b.instructions = expected_instructions
+               | Error _ -> false)
+           | Error _ -> false)
+
+  let%test "test_integer_arithmetic" =
+    let expected_instructions =
+      let c : compiler = { instructions = Buffer.create 32; constants = [] } in
+      let c, _ = emit c Code.OpConstant [ 0 ] in
+      let c, _ = emit c Code.OpConstant [ 1 ] in
+      let c, _ = emit c Code.OpAdd [] in
+      c.instructions
+    in
+    [
+      {
+        input = "1 + 2";
+        expectedConstants = [ Value.Integer 1L; Value.Integer 2L ];
+        expectedInstructions = expected_instructions;
+      };
+    ]
+    |> run
+end
