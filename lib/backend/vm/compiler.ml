@@ -1,4 +1,5 @@
-open Ast
+open Syntax.Ast
+module Value = Interpreter.Value
 
 let ( let* ) res f = Result.bind res f
 let buffer_size = 256
@@ -483,7 +484,7 @@ module Test = struct
   let run (tests : test list) : bool =
     tests
     |> List.for_all (fun test ->
-           let p = Parser.parse test.input in
+           let p = Syntax.Parser.parse test.input in
            match p with
            | Ok p -> (
                let c = compile (init ()) p in

@@ -1,4 +1,4 @@
-open Ast
+open Syntax.Ast
 
 let ( let* ) res f =
   match res with
@@ -233,7 +233,7 @@ module Test = struct
   let run (tests : test list) : bool =
     tests
     |> List.for_all (fun { input; output } ->
-           match Parser.parse input with
+           match Syntax.Parser.parse input with
            | Error _ -> false
            | Ok p ->
                let v, _ = eval p (Env.init ()) in
@@ -242,7 +242,7 @@ module Test = struct
   let run_print (tests : test list) : unit =
     tests
     |> List.iter (fun { input; output } ->
-           match Parser.parse input with
+           match Syntax.Parser.parse input with
            | Error e ->
                Printf.printf "errors:\n%s\n" (String.concat ", " e);
                flush stdout

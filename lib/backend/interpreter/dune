@@ -1,6 +1,6 @@
 (library
- (name marmoset)
- (libraries syntax typecheck interpreter vm codegen)
+ (name interpreter)
+ (libraries syntax)
  (inline_tests
   (flags (-verbose)))
  (preprocess

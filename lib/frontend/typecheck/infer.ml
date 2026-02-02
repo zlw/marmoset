@@ -2,7 +2,7 @@
 
 open Types
 open Unify
-module AST = Ast.AST
+module AST = Syntax.Ast.AST
 
 (* ============================================================
    Type Environment
@@ -628,7 +628,7 @@ module Test = struct
   (* Helper to parse and infer *)
   let infer_string code =
     reset_fresh_counter ();
-    match Parser.parse code with
+    match Syntax.Parser.parse code with
     | Error _ -> Error (error (UnboundVariable "parse error"))
     | Ok program -> infer_program program
 

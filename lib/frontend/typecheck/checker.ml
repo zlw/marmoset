@@ -49,7 +49,7 @@ let format_error_with_context (source : string) (err : error) : string =
 (* Type check a program (list of statements).
    Returns the type of the last expression and the final environment.
    Note: Without source, we can't provide location info. Use check_string for that. *)
-let check_program ?(env = Infer.empty_env) (program : Ast.AST.program) : (typecheck_result, error) result =
+let check_program ?(env = Infer.empty_env) (program : Syntax.Ast.AST.program) : (typecheck_result, error) result =
   match Infer.infer_program ~env program with
   | Error e -> Error (error_of_infer_error e)
   | Ok (final_env, result_type) -> Ok { result_type; environment = final_env }
@@ -58,7 +58,7 @@ let check_program ?(env = Infer.empty_env) (program : Ast.AST.program) : (typech
    Parses and type checks in one step.
    Errors include source location information. *)
 let check_string ?(env = Infer.empty_env) (source : string) : (typecheck_result, error) result =
-  match Parser.parse source with
+  match Syntax.Parser.parse source with
   | Error errors -> Error { message = "Parse error: " ^ String.concat ", " errors; loc = None }
   | Ok program -> (
       match Infer.infer_program ~env program with

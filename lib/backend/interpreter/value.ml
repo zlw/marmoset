@@ -1,4 +1,4 @@
-open Ast
+open Syntax.Ast
 
 module Hashtbl_printable = struct
   type ('k, 's) t = ('k, 's) Hashtbl.t

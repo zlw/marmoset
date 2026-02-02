@@ -10,12 +10,12 @@ type config = {
 
 (* Type check a program, returning Ok type_string or Error with message *)
 let typecheck source program =
-  let env = Marmoset.Builtins.prelude_env () in
-  match Marmoset.Infer.infer_program ~env program with
-  | Ok (_, result_type) -> Ok (Marmoset.Types.to_string_pretty result_type)
+  let env = Marmoset.Lib.Builtins.prelude_env () in
+  match Marmoset.Lib.Infer.infer_program ~env program with
+  | Ok (_, result_type) -> Ok (Marmoset.Lib.Types.to_string_pretty result_type)
   | Error e ->
-      let err = Marmoset.Typecheck.error_of_infer_error ~source e in
-      Error (Marmoset.Typecheck.format_error err)
+      let err = Marmoset.Lib.Checker.error_of_infer_error ~source e in
+      Error (Marmoset.Lib.Checker.format_error err)
 
 let parse_args () : config =
   let engine = ref Eval in
@@ -48,21 +48,21 @@ let parse_args () : config =
 
 (* Run program with tree-walking interpreter *)
 let run_eval program =
-  let env = Marmoset.Env.init () in
-  let value, _ = Marmoset.Eval.eval program env in
+  let env = Marmoset.Lib.Env.init () in
+  let value, _ = Marmoset.Lib.Eval.eval program env in
   value
 
 (* Run program with bytecode compiler + VM *)
 let run_vm program =
-  let compiler = Marmoset.Compiler.init () in
-  match Marmoset.Compiler.compile compiler program with
-  | Error msg -> Marmoset.Value.Error msg
+  let compiler = Marmoset.Lib.Compiler.init () in
+  match Marmoset.Lib.Compiler.compile compiler program with
+  | Error msg -> Marmoset.Lib.Value.Error msg
   | Ok compiler' -> (
-      let bytecode = Marmoset.Compiler.bytecode compiler' in
-      let vm = Marmoset.Vm.create bytecode in
-      match Marmoset.Vm.run vm with
-      | Error msg -> Marmoset.Value.Error msg
-      | Ok () -> Marmoset.Vm.last_popped_stack_elem vm)
+      let bytecode = Marmoset.Lib.Compiler.bytecode compiler' in
+      let vm = Marmoset.Lib.Machine.create bytecode in
+      match Marmoset.Lib.Machine.run vm with
+      | Error msg -> Marmoset.Lib.Value.Error msg
+      | Ok () -> Marmoset.Lib.Machine.last_popped_stack_elem vm)
 
 (* Time a function and return (result, duration_in_seconds) *)
 let time_it f =
@@ -89,7 +89,7 @@ let run_repl config =
     if input = "exit" then
       print_endline "Goodbye!"
     else
-      match Marmoset.Parser.parse input with
+      match Marmoset.Lib.Parser.parse input with
       | Error msgs ->
           List.iter (fun msg -> print_endline msg) msgs;
           loop_eval env
@@ -100,8 +100,8 @@ let run_repl config =
               Printf.printf "Type error: %s\n" msg;
               loop_eval env
           | Ok type_str ->
-              let value, env' = Marmoset.Eval.eval program env in
-              let str = Marmoset.Value.to_string value in
+              let value, env' = Marmoset.Lib.Eval.eval program env in
+              let str = Marmoset.Lib.Value.to_string value in
               print_endline ("=> " ^ str ^ " : " ^ type_str);
               loop_eval env')
   in
@@ -115,7 +115,7 @@ let run_repl config =
     if input = "exit" then
       print_endline "Goodbye!"
     else
-      match Marmoset.Parser.parse input with
+      match Marmoset.Lib.Parser.parse input with
       | Error msgs ->
           List.iter (fun msg -> print_endline msg) msgs;
           loop_vm ()
@@ -127,7 +127,7 @@ let run_repl config =
               loop_vm ()
           | Ok type_str ->
               let value = run_vm program in
-              let str = Marmoset.Value.to_string value in
+              let str = Marmoset.Lib.Value.to_string value in
               print_endline ("=> " ^ str ^ " : " ^ type_str);
               loop_vm ())
   in
@@ -136,7 +136,7 @@ let run_repl config =
   Printf.printf "Engine: %s | Enter 'exit' to quit.\n" engine_name;
 
   match config.engine with
-  | Eval -> loop_eval (Marmoset.Env.init ())
+  | Eval -> loop_eval (Marmoset.Lib.Env.init ())
   | Vm -> loop_vm ()
 
 let run_file config filename =
@@ -154,7 +154,7 @@ let run_file config filename =
   in
 
   let input = read_file filename in
-  match Marmoset.Parser.parse input with
+  match Marmoset.Lib.Parser.parse input with
   | Error msgs -> List.iter (fun msg -> print_endline msg) msgs
   | Ok program -> (
       (* Type check before running *)
@@ -177,13 +177,13 @@ let run_file config filename =
             in
             let value, duration = time_it run_fn in
             match value with
-            | Marmoset.Value.Error msg -> Printf.printf "ERROR: %s\n" msg
+            | Marmoset.Lib.Value.Error msg -> Printf.printf "ERROR: %s\n" msg
             | _ ->
                 Printf.printf "engine=%s, result=%s, duration=%.4fs\n" engine_name
-                  (Marmoset.Value.to_string value) duration
+                  (Marmoset.Lib.Value.to_string value) duration
           else
             match run_fn () with
-            | Marmoset.Value.Error msg -> print_endline ("ERROR: " ^ msg)
+            | Marmoset.Lib.Value.Error msg -> print_endline ("ERROR: " ^ msg)
             | _ -> ()))
 
 let () =

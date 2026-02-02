@@ -2,6 +2,9 @@ let stack_size = 2048
 let globals_size = 65536
 let max_frames = 1024
 
+module Value = Interpreter.Value
+module Builtins = Interpreter.Builtins
+
 (* Array of built-in functions, indexed by their builtin index *)
 let builtins : Value.value array =
   [|
@@ -438,7 +441,7 @@ module Test = struct
   }
 
   let run_vm_test (test : vm_test) : bool =
-    match Parser.parse test.input with
+    match Syntax.Parser.parse test.input with
     | Error _ -> false
     | Ok program -> (
         match Compiler.compile (Compiler.init ()) program with
@@ -754,7 +757,7 @@ module Test = struct
   let%test "test_calling_functions_with_wrong_arguments" =
     (* This should fail - test that it raises an exception *)
     let input = "let f = fn(a) { a; }; f();" in
-    match Parser.parse input with
+    match Syntax.Parser.parse input with
     | Error _ -> false
     | Ok program -> (
         match Compiler.compile (Compiler.init ()) program with
