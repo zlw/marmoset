@@ -501,18 +501,38 @@ and infer_index env container index_expr =
               | Ok subst3 -> Ok (compose_substitution subst subst3, TString))
           | TVar _ -> (
               (* Unknown container type - could be array or hash *)
-              (* For now, assume array with Int index *)
-              let elem_type = fresh_type_var () in
-              match unify container_type' (TArray elem_type) with
-              | Error e -> Error (error_at (UnificationError e) container)
-              | Ok subst3 -> (
-                  let subst' = compose_substitution subst subst3 in
-                  match unify index_type TInt with
-                  | Error _ -> Error (error_at (IndexTypeMismatch (TInt, index_type)) index_expr)
-                  | Ok subst4 ->
-                      let final_subst = compose_substitution subst' subst4 in
-                      let elem_type' = apply_substitution (compose_substitution subst3 subst4) elem_type in
-                      Ok (final_subst, elem_type')))
+              (* Infer the container type based on the index type *)
+              match index_type with
+              | TInt -> (
+                  (* Int index -> assume array *)
+                  let elem_type = fresh_type_var () in
+                  match unify container_type' (TArray elem_type) with
+                  | Error e -> Error (error_at (UnificationError e) container)
+                  | Ok subst3 ->
+                      let final_subst = compose_substitution subst subst3 in
+                      let elem_type' = apply_substitution subst3 elem_type in
+                      Ok (final_subst, elem_type'))
+              | TString | TFloat | TBool | TNull | TArray _ | THash _ | TFun _ -> (
+                  (* Non-int index -> assume hash *)
+                  let val_type = fresh_type_var () in
+                  match unify container_type' (THash (index_type, val_type)) with
+                  | Error e -> Error (error_at (UnificationError e) container)
+                  | Ok subst3 ->
+                      let final_subst = compose_substitution subst subst3 in
+                      let val_type' = apply_substitution subst3 val_type in
+                      Ok (final_subst, val_type'))
+              | TVar _ -> (
+                  (* Index is also unknown - assume array with Int index *)
+                  let elem_type = fresh_type_var () in
+                  match unify container_type' (TArray elem_type) with
+                  | Error e -> Error (error_at (UnificationError e) container)
+                  | Ok subst3 -> (
+                      match unify index_type TInt with
+                      | Error _ -> Error (error_at (IndexTypeMismatch (TInt, index_type)) index_expr)
+                      | Ok subst4 ->
+                          let final_subst = compose_substitution subst (compose_substitution subst3 subst4) in
+                          let elem_type' = apply_substitution (compose_substitution subst3 subst4) elem_type in
+                          Ok (final_subst, elem_type'))))
           | _ -> Error (error_at (NotIndexable container_type') container)))
 
 (* ============================================================
