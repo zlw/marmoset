@@ -570,18 +570,18 @@ let emit_specialized_func (state : emit_state) (inst : instantiation) : string =
   Printf.sprintf "func %s(%s) %s {\n%s}\n" mangled_name params_str return_type_str body_str
 
 (* ============================================================
-   Program Emission
-   ============================================================ *)
+    Program Emission
+    ============================================================ *)
 
-let emit_program (program : AST.program) : string =
+let emit_program_with_typed_env (typed_env : Infer.type_env) (program : AST.program) : string =
   let mono_state = create_mono_state () in
   let base_env = Typecheck.Builtins.prelude_env () in
 
   (* Pass 1: Collect function definitions *)
   List.iter (collect_funcs_stmt mono_state) program;
 
-  (* Pass 2: Collect instantiations *)
-  ignore (List.fold_left (collect_insts_stmt mono_state) base_env program);
+  (* Pass 2: Collect instantiations using the already-typed environment *)
+  ignore (List.fold_left (collect_insts_stmt mono_state) typed_env program);
 
   let emit_state = create_emit_state mono_state in
 
@@ -604,6 +604,12 @@ let emit_program (program : AST.program) : string =
   in
 
   Printf.sprintf "package main\n\n%sfunc main() {\n%s}\n" top_funcs main_body
+
+let emit_program (program : AST.program) : string =
+  let base_env = Typecheck.Builtins.prelude_env () in
+  match Infer.infer_program ~env:base_env program with
+  | Error _ -> emit_program_with_typed_env base_env program
+  | Ok (typed_env, _) -> emit_program_with_typed_env typed_env program
 
 (* ============================================================
    Runtime
@@ -670,8 +676,8 @@ func push[T any](arr []T, v T) []T {
 |}
 
 (* ============================================================
-   Main Entry Point
-   ============================================================ *)
+    Main Entry Point
+    ============================================================ *)
 
 let compile_string (source : string) : (string, string) result =
   match Syntax.Parser.parse source with
@@ -680,7 +686,7 @@ let compile_string (source : string) : (string, string) result =
       let env = Typecheck.Builtins.prelude_env () in
       match Infer.infer_program ~env program with
       | Error e -> Error ("Type error: " ^ Infer.error_to_string e)
-      | Ok _ -> Ok (emit_program program))
+      | Ok (typed_env, _) -> Ok (emit_program_with_typed_env typed_env program))
 
 type build_output = {
   main_go : string;
