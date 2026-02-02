@@ -506,9 +506,23 @@ and emit_stmt (state : emit_state) (env : Infer.type_env) (stmt : AST.statement)
   | AST.Return expr ->
       let expr_str = emit_expr state env expr in
       (Printf.sprintf "%sreturn %s\n" ind expr_str, env)
-  | AST.ExpressionStmt expr ->
-      let expr_str = emit_expr state env expr in
-      (Printf.sprintf "%s_ = %s\n" ind expr_str, env)
+  | AST.ExpressionStmt expr -> (
+      match expr.expr with
+      (* Handle if statements in statement context *)
+      | AST.If (cond, cons, alt) ->
+          let cond_str = emit_expr state env cond in
+          let cons_code, _ = emit_stmt state env cons in
+          let code =
+            match alt with
+            | None -> Printf.sprintf "%sif %s {\n%s%s}\n" ind cond_str cons_code ind
+            | Some alt_stmt ->
+                let alt_code, _ = emit_stmt state env alt_stmt in
+                Printf.sprintf "%sif %s {\n%s%s} else {\n%s%s}\n" ind cond_str cons_code ind alt_code ind
+          in
+          (code, env)
+      | _ ->
+          let expr_str = emit_expr state env expr in
+          (Printf.sprintf "%s_ = %s\n" ind expr_str, env))
   | AST.Block stmts ->
       let code, env' = emit_stmts state env stmts in
       (code, env')
