@@ -90,7 +90,8 @@ let generalize (env : type_env) (mono : mono_type) : poly_type =
    Inference Errors
    ============================================================ *)
 
-type infer_error =
+(* The kind of type error (without position info) *)
+type error_kind =
   | UnboundVariable of string
   | UnificationError of unify_error
   | InvalidOperator of string * mono_type
@@ -105,7 +106,22 @@ type infer_error =
   | EmptyArrayUnknownType
   | EmptyHashUnknownType
 
-let error_to_string = function
+(* An error with optional position info *)
+type infer_error = {
+  kind : error_kind;
+  pos : int option; (* byte offset in source, if available *)
+}
+
+(* Create an error without position *)
+let error kind = { kind; pos = None }
+
+(* Create an error with position from an expression *)
+let error_at kind (expr : AST.expression) = { kind; pos = Some expr.pos }
+
+(* Create an error with position from a statement *)
+let error_at_stmt kind (stmt : AST.statement) = { kind; pos = Some stmt.pos }
+
+let error_kind_to_string = function
   | UnboundVariable name -> "Unbound variable: " ^ name
   | UnificationError err -> Unify.error_to_string err
   | InvalidOperator (op, t) -> "Invalid operator " ^ op ^ " for type " ^ to_string t
@@ -123,6 +139,8 @@ let error_to_string = function
       "Index type mismatch: expected " ^ to_string expected ^ ", got " ^ to_string got
   | EmptyArrayUnknownType -> "Cannot infer type of empty array"
   | EmptyHashUnknownType -> "Cannot infer type of empty hash"
+
+let error_to_string (err : infer_error) : string = error_kind_to_string err.kind
 
 (* Result type for inference *)
 type 'a infer_result = ('a, infer_error) result
@@ -144,7 +162,7 @@ type 'a infer_result = ('a, infer_error) result
 *)
 
 let rec infer_expression (env : type_env) (expr : AST.expression) : (substitution * mono_type) infer_result =
-  match expr with
+  match expr.expr with
   (* Literals have known types *)
   | AST.Integer _ -> Ok (empty_substitution, TInt)
   | AST.Float _ -> Ok (empty_substitution, TFloat)
@@ -153,7 +171,7 @@ let rec infer_expression (env : type_env) (expr : AST.expression) : (substitutio
   (* Variable lookup - instantiate its poly_type *)
   | AST.Identifier name -> (
       match TypeEnv.find_opt name env with
-      | None -> Error (UnboundVariable name)
+      | None -> Error (error_at (UnboundVariable name) expr)
       | Some poly_type ->
           let mono = instantiate poly_type in
           Ok (empty_substitution, mono))
@@ -186,7 +204,7 @@ and infer_prefix env op operand =
       | "!" -> (
           (* ! requires Bool, returns Bool *)
           match unify operand_type TBool with
-          | Error e -> Error (UnificationError e)
+          | Error e -> Error (error_at (UnificationError e) operand)
           | Ok subst2 -> Ok (compose_substitution subst subst2, TBool))
       | "-" -> (
           (* - requires numeric type (Int or Float), returns same type *)
@@ -201,11 +219,11 @@ and infer_prefix env op operand =
                   (* If operand is a type variable, default to Int for now *)
                   (* TODO: This needs proper numeric type class support *)
                   match unify operand_type result_type with
-                  | Error e -> Error (UnificationError e)
+                  | Error e -> Error (error_at (UnificationError e) operand)
                   | Ok subst2 ->
                       let subst3 = compose_substitution subst subst2 in
                       Ok (subst3, apply_substitution subst3 result_type))))
-      | _ -> Error (InvalidOperator (op, operand_type)))
+      | _ -> Error (error_at (InvalidOperator (op, operand_type)) operand))
 
 (* ============================================================
    Infix Operators
@@ -226,7 +244,7 @@ and infer_infix env left op right =
           | "+" | "-" | "*" | "/" -> (
               (* First unify left and right *)
               match unify left_type' right_type with
-              | Error e -> Error (UnificationError e)
+              | Error e -> Error (error_at (UnificationError e) right)
               | Ok subst3 ->
                   let subst' = compose_substitution subst subst3 in
                   let result_type = apply_substitution subst3 left_type' in
@@ -240,14 +258,14 @@ and infer_infix env left op right =
           (* Comparison operators: both same type, result Bool *)
           | "<" | ">" | "<=" | ">=" -> (
               match unify left_type' right_type with
-              | Error e -> Error (UnificationError e)
+              | Error e -> Error (error_at (UnificationError e) right)
               | Ok subst3 -> Ok (compose_substitution subst subst3, TBool))
           (* Equality operators: both same type, result Bool *)
           | "==" | "!=" -> (
               match unify left_type' right_type with
-              | Error e -> Error (UnificationError e)
+              | Error e -> Error (error_at (UnificationError e) right)
               | Ok subst3 -> Ok (compose_substitution subst subst3, TBool))
-          | _ -> Error (InvalidOperator (op, left_type'))))
+          | _ -> Error (error_at (InvalidOperator (op, left_type')) left)))
 
 (* ============================================================
    If Expressions
@@ -260,7 +278,7 @@ and infer_if env condition consequence alternative =
   | Ok (subst1, cond_type) -> (
       (* Condition must be Bool *)
       match unify cond_type TBool with
-      | Error _ -> Error (IfConditionNotBool cond_type)
+      | Error _ -> Error (error_at (IfConditionNotBool cond_type) condition)
       | Ok subst2 -> (
           let subst = compose_substitution subst1 subst2 in
           let env' = apply_substitution_env subst env in
@@ -283,7 +301,7 @@ and infer_if env condition consequence alternative =
                       let cons_type' = apply_substitution subst4 cons_type in
                       (* Both branches must have same type *)
                       match unify cons_type' alt_type with
-                      | Error _ -> Error (IfBranchMismatch (cons_type', alt_type))
+                      | Error _ -> Error (error_at_stmt (IfBranchMismatch (cons_type', alt_type)) alt)
                       | Ok subst5 ->
                           let final_subst = compose_substitution subst'' subst5 in
                           let result_type = apply_substitution subst5 cons_type' in
@@ -297,7 +315,8 @@ and infer_function env params body =
   (* Create fresh type variables for each parameter *)
   let param_names =
     List.map
-      (function
+      (fun (p : AST.expression) ->
+        match p.expr with
         | AST.Identifier name -> name
         | _ -> failwith "Function parameter must be identifier")
       params
@@ -336,7 +355,7 @@ and infer_call env func args =
           let expected_func_type = List.fold_right (fun arg_t acc -> TFun (arg_t, acc)) arg_types result_type in
           (* Unify actual function type with expected *)
           match unify func_type' expected_func_type with
-          | Error e -> Error (UnificationError e)
+          | Error e -> Error (error_at (UnificationError e) func)
           | Ok subst3 ->
               let final_subst = compose_substitution subst2 subst3 in
               let final_result = apply_substitution subst3 result_type in
@@ -386,7 +405,7 @@ and infer_array_elements env subst elem_type elements =
           let subst' = compose_substitution subst subst1 in
           let elem_type' = apply_substitution subst1 elem_type in
           match unify elem_type' this_type with
-          | Error _ -> Error (ArrayElementMismatch (elem_type', this_type))
+          | Error _ -> Error (error_at (ArrayElementMismatch (elem_type', this_type)) elem)
           | Ok subst2 ->
               let subst'' = compose_substitution subst' subst2 in
               let elem_type'' = apply_substitution subst2 elem_type' in
@@ -425,7 +444,7 @@ and infer_hash_pairs env subst key_type val_type pairs =
           let subst' = compose_substitution subst subst1 in
           let key_type' = apply_substitution subst1 key_type in
           match unify key_type' this_key_type with
-          | Error _ -> Error (HashKeyMismatch (key_type', this_key_type))
+          | Error _ -> Error (error_at (HashKeyMismatch (key_type', this_key_type)) k)
           | Ok subst2 -> (
               let subst'' = compose_substitution subst' subst2 in
               let env' = apply_substitution_env subst2 env in
@@ -435,7 +454,7 @@ and infer_hash_pairs env subst key_type val_type pairs =
                   let subst''' = compose_substitution subst'' subst3 in
                   let val_type' = apply_substitution (compose_substitution subst2 subst3) val_type in
                   match unify val_type' this_val_type with
-                  | Error _ -> Error (HashValueMismatch (val_type', this_val_type))
+                  | Error _ -> Error (error_at (HashValueMismatch (val_type', this_val_type)) v)
                   | Ok subst4 ->
                       let final_subst = compose_substitution subst''' subst4 in
                       let key_type'' = apply_substitution (compose_substitution subst3 subst4) key_type' in
@@ -462,7 +481,7 @@ and infer_index env container index_expr =
           | TArray elem_type -> (
               (* Array index must be Int *)
               match unify index_type TInt with
-              | Error _ -> Error (IndexTypeMismatch (TInt, index_type))
+              | Error _ -> Error (error_at (IndexTypeMismatch (TInt, index_type)) index_expr)
               | Ok subst3 ->
                   let final_subst = compose_substitution subst subst3 in
                   let elem_type' = apply_substitution subst3 elem_type in
@@ -470,7 +489,7 @@ and infer_index env container index_expr =
           | THash (key_type, val_type) -> (
               (* Hash index must match key type *)
               match unify index_type key_type with
-              | Error _ -> Error (IndexTypeMismatch (key_type, index_type))
+              | Error _ -> Error (error_at (IndexTypeMismatch (key_type, index_type)) index_expr)
               | Ok subst3 ->
                   let final_subst = compose_substitution subst subst3 in
                   let val_type' = apply_substitution subst3 val_type in
@@ -478,31 +497,31 @@ and infer_index env container index_expr =
           | TString -> (
               (* String index must be Int, returns String *)
               match unify index_type TInt with
-              | Error _ -> Error (IndexTypeMismatch (TInt, index_type))
+              | Error _ -> Error (error_at (IndexTypeMismatch (TInt, index_type)) index_expr)
               | Ok subst3 -> Ok (compose_substitution subst subst3, TString))
           | TVar _ -> (
               (* Unknown container type - could be array or hash *)
               (* For now, assume array with Int index *)
               let elem_type = fresh_type_var () in
               match unify container_type' (TArray elem_type) with
-              | Error e -> Error (UnificationError e)
+              | Error e -> Error (error_at (UnificationError e) container)
               | Ok subst3 -> (
                   let subst' = compose_substitution subst subst3 in
                   match unify index_type TInt with
-                  | Error _ -> Error (IndexTypeMismatch (TInt, index_type))
+                  | Error _ -> Error (error_at (IndexTypeMismatch (TInt, index_type)) index_expr)
                   | Ok subst4 ->
                       let final_subst = compose_substitution subst' subst4 in
                       let elem_type' = apply_substitution (compose_substitution subst3 subst4) elem_type in
                       Ok (final_subst, elem_type')))
-          | _ -> Error (NotIndexable container_type')))
+          | _ -> Error (error_at (NotIndexable container_type') container)))
 
 (* ============================================================
    Statements
    ============================================================ *)
 
 and infer_statement env stmt =
-  match stmt with
-  | AST.Expression expr -> infer_expression env expr
+  match stmt.stmt with
+  | AST.ExpressionStmt expr -> infer_expression env expr
   | AST.Return expr -> infer_expression env expr
   | AST.Block stmts -> infer_block env stmts
   | AST.Let (name, expr) -> infer_let env name expr
@@ -532,7 +551,7 @@ and infer_let env name expr =
       (* Unify the inferred type with our placeholder *)
       let self_type' = apply_substitution subst1 self_type in
       match unify self_type' expr_type with
-      | Error e -> Error (UnificationError e)
+      | Error e -> Error (error_at (UnificationError e) expr)
       | Ok subst2 ->
           let final_subst = compose_substitution subst1 subst2 in
           let final_type = apply_substitution subst2 expr_type in
@@ -552,7 +571,7 @@ and infer_block env stmts =
       | Ok (subst1, stmt_type) -> (
           (* For let statements, add the binding to the environment *)
           let env' =
-            match stmt with
+            match stmt.stmt with
             | AST.Let (name, _) ->
                 let env_subst = apply_substitution_env subst1 env in
                 let poly = generalize env_subst stmt_type in
@@ -580,7 +599,7 @@ let infer_program ?(env = empty_env) (program : AST.program) : (type_env * mono_
             let result_type' = apply_substitution subst' result_type in
             (* Add let bindings to final environment *)
             let env'' =
-              match stmt with
+              match stmt.stmt with
               | AST.Let (name, _) ->
                   let poly = generalize env' result_type' in
                   TypeEnv.add name poly env'
@@ -595,7 +614,7 @@ let infer_program ?(env = empty_env) (program : AST.program) : (type_env * mono_
             let env' = apply_substitution_env subst' env in
             (* Add let bindings to environment for subsequent statements *)
             let env'' =
-              match stmt with
+              match stmt.stmt with
               | AST.Let (name, _) ->
                   let poly = generalize env' stmt_type in
                   TypeEnv.add name poly env'
@@ -605,163 +624,157 @@ let infer_program ?(env = empty_env) (program : AST.program) : (type_env * mono_
   in
   go env empty_substitution program
 
-(* ============================================================
-   Tests
-   ============================================================ *)
+module Test = struct
+  (* Helper to parse and infer *)
+  let infer_string code =
+    reset_fresh_counter ();
+    match Parser.parse code with
+    | Error _ -> Error (error (UnboundVariable "parse error"))
+    | Ok program -> infer_program program
 
-(* Helper to parse and infer *)
-let infer_string code =
-  reset_fresh_counter ();
-  match Parser.parse code with
-  | Error _ -> Error (UnboundVariable "parse error")
-  | Ok program -> infer_program program
+  (* Helper to check inferred type *)
+  let infers_to code expected_type =
+    match infer_string code with
+    | Error e ->
+        Printf.printf "Error: %s\n" (error_to_string e);
+        false
+    | Ok (_, t) ->
+        if t = expected_type then
+          true
+        else (
+          Printf.printf "Expected %s but got %s\n" (to_string expected_type) (to_string t);
+          false)
 
-(* Helper to check inferred type *)
-let infers_to code expected_type =
-  match infer_string code with
-  | Error e ->
-      Printf.printf "Error: %s\n" (error_to_string e);
-      false
-  | Ok (_, t) ->
-      if t = expected_type then
-        true
-      else (
-        Printf.printf "Expected %s but got %s\n" (to_string expected_type) (to_string t);
-        false)
+  let%test "infer integer literal" = infers_to "42" TInt
+  let%test "infer float literal" = infers_to "3.14" TFloat
+  let%test "infer boolean literal" = infers_to "true" TBool && infers_to "false" TBool
+  let%test "infer string literal" = infers_to "\"hello\"" TString
 
-let%test "infer integer literal" = infers_to "42" TInt
-let%test "infer float literal" = infers_to "3.14" TFloat
-let%test "infer boolean literal" = infers_to "true" TBool && infers_to "false" TBool
-let%test "infer string literal" = infers_to "\"hello\"" TString
+  let%test "infer arithmetic" =
+    infers_to "1 + 2" TInt && infers_to "1 - 2" TInt && infers_to "2 * 3" TInt && infers_to "4 / 2" TInt
 
-let%test "infer arithmetic" =
-  infers_to "1 + 2" TInt && infers_to "1 - 2" TInt && infers_to "2 * 3" TInt && infers_to "4 / 2" TInt
+  let%test "infer float arithmetic" = infers_to "1.0 + 2.0" TFloat && infers_to "3.14 * 2.0" TFloat
 
-let%test "infer float arithmetic" = infers_to "1.0 + 2.0" TFloat && infers_to "3.14 * 2.0" TFloat
+  let%test "infer comparison" =
+    infers_to "1 < 2" TBool && infers_to "1 > 2" TBool && infers_to "1 == 2" TBool && infers_to "1 != 2" TBool
 
-let%test "infer comparison" =
-  infers_to "1 < 2" TBool && infers_to "1 > 2" TBool && infers_to "1 == 2" TBool && infers_to "1 != 2" TBool
+  let%test "infer prefix operators" = infers_to "!true" TBool && infers_to "-5" TInt && infers_to "-3.14" TFloat
+  let%test "infer if expression" = infers_to "if (true) { 1 } else { 2 }" TInt
 
-let%test "infer prefix operators" = infers_to "!true" TBool && infers_to "-5" TInt && infers_to "-3.14" TFloat
-let%test "infer if expression" = infers_to "if (true) { 1 } else { 2 }" TInt
+  let%test "infer simple function" =
+    (* fn(x) { x + 1 } should be Int -> Int *)
+    infers_to "fn(x) { x + 1 }" (TFun (TInt, TInt))
 
-let%test "infer simple function" =
-  (* fn(x) { x + 1 } should be Int -> Int *)
-  infers_to "fn(x) { x + 1 }" (TFun (TInt, TInt))
+  let%test "infer identity function" =
+    (* fn(x) { x } should be t0 -> t0 (polymorphic) *)
+    match infer_string "fn(x) { x }" with
+    | Error _ -> false
+    | Ok (_, TFun (TVar a, TVar b)) -> a = b (* same type variable *)
+    | Ok _ -> false
 
-let%test "infer identity function" =
-  (* fn(x) { x } should be t0 -> t0 (polymorphic) *)
-  match infer_string "fn(x) { x }" with
-  | Error _ -> false
-  | Ok (_, TFun (TVar a, TVar b)) -> a = b (* same type variable *)
-  | Ok _ -> false
+  let%test "infer two-arg function" =
+    (* fn(x, y) { x + y } should have both args same type and return same type *)
+    (* Without type classes, we can't constrain to just numeric types *)
+    match infer_string "fn(x, y) { x + y }" with
+    | Error _ -> false
+    | Ok (_, TFun (TVar a, TFun (TVar b, TVar c))) ->
+        (* All three type vars should be the same *)
+        a = b && b = c
+    | Ok _ -> false
 
-let%test "infer two-arg function" =
-  (* fn(x, y) { x + y } should have both args same type and return same type *)
-  (* Without type classes, we can't constrain to just numeric types *)
-  match infer_string "fn(x, y) { x + y }" with
-  | Error _ -> false
-  | Ok (_, TFun (TVar a, TFun (TVar b, TVar c))) ->
-      (* All three type vars should be the same *)
-      a = b && b = c
-  | Ok _ -> false
+  let%test "infer two-arg function with literal" =
+    (* fn(x, y) { x + y + 1 } should be (Int, Int) -> Int because of the literal *)
+    infers_to "fn(x, y) { x + y + 1 }" (TFun (TInt, TFun (TInt, TInt)))
 
-let%test "infer two-arg function with literal" =
-  (* fn(x, y) { x + y + 1 } should be (Int, Int) -> Int because of the literal *)
-  infers_to "fn(x, y) { x + y + 1 }" (TFun (TInt, TFun (TInt, TInt)))
+  let%test "infer function call" =
+    (* fn(x) { x + 1 }(5) should be Int *)
+    infers_to "fn(x) { x + 1 }(5)" TInt
 
-let%test "infer function call" =
-  (* fn(x) { x + 1 }(5) should be Int *)
-  infers_to "fn(x) { x + 1 }(5)" TInt
+  let%test "infer let binding" =
+    (* let x = 5; x should be Int *)
+    infers_to "let x = 5; x" TInt
 
-let%test "infer let binding" =
-  (* let x = 5; x should be Int *)
-  infers_to "let x = 5; x" TInt
+  let%test "infer let with function" =
+    (* let f = fn(x) { x + 1 }; f(5) should be Int *)
+    infers_to "let f = fn(x) { x + 1 }; f(5)" TInt
 
-let%test "infer let with function" =
-  (* let f = fn(x) { x + 1 }; f(5) should be Int *)
-  infers_to "let f = fn(x) { x + 1 }; f(5)" TInt
+  let%test "infer array literal" =
+    (* [1, 2, 3] should be [Int] *)
+    infers_to "[1, 2, 3]" (TArray TInt)
 
-let%test "infer array literal" =
-  (* [1, 2, 3] should be [Int] *)
-  infers_to "[1, 2, 3]" (TArray TInt)
+  let%test "infer array index" =
+    (* [1, 2, 3][0] should be Int *)
+    infers_to "[1, 2, 3][0]" TInt
 
-let%test "infer array index" =
-  (* [1, 2, 3][0] should be Int *)
-  infers_to "[1, 2, 3][0]" TInt
+  let%test "infer hash literal" =
+    (* {"a": 1} should be {String: Int} *)
+    infers_to "{\"a\": 1}" (THash (TString, TInt))
 
-let%test "infer hash literal" =
-  (* {"a": 1} should be {String: Int} *)
-  infers_to "{\"a\": 1}" (THash (TString, TInt))
+  let%test "infer hash index" =
+    (* {"a": 1}["a"] should be Int *)
+    infers_to "{\"a\": 1}[\"a\"]" TInt
 
-let%test "infer hash index" =
-  (* {"a": 1}["a"] should be Int *)
-  infers_to "{\"a\": 1}[\"a\"]" TInt
+  let%test "infer polymorphic let" =
+    (* let id = fn(x) { x }; id(5) should work and be Int *)
+    infers_to "let id = fn(x) { x }; id(5)" TInt
 
-let%test "infer polymorphic let" =
-  (* let id = fn(x) { x }; id(5) should work and be Int *)
-  infers_to "let id = fn(x) { x }; id(5)" TInt
+  let%test "infer polymorphic let used twice" =
+    (* let id = fn(x) { x }; id(5); id(true) should work *)
+    (* The result type is the type of the last expression: Bool *)
+    infers_to "let id = fn(x) { x }; id(5); id(true)" TBool
 
-let%test "infer polymorphic let used twice" =
-  (* let id = fn(x) { x }; id(5); id(true) should work *)
-  (* The result type is the type of the last expression: Bool *)
-  infers_to "let id = fn(x) { x }; id(5); id(true)" TBool
+  let%test "infer higher order function" =
+    (* let apply = fn(f, x) { f(x) }; apply(fn(n) { n + 1 }, 5) should be Int *)
+    infers_to "let apply = fn(f, x) { f(x) }; apply(fn(n) { n + 1 }, 5)" TInt
 
-let%test "infer higher order function" =
-  (* let apply = fn(f, x) { f(x) }; apply(fn(n) { n + 1 }, 5) should be Int *)
-  infers_to "let apply = fn(f, x) { f(x) }; apply(fn(n) { n + 1 }, 5)" TInt
+  let%test "error on unbound variable" =
+    match infer_string "x" with
+    | Error { kind = UnboundVariable "x"; _ } -> true
+    | _ -> false
 
-let%test "error on unbound variable" =
-  match infer_string "x" with
-  | Error (UnboundVariable "x") -> true
-  | _ -> false
+  let%test "error on type mismatch in if" =
+    match infer_string "if (true) { 1 } else { \"hello\" }" with
+    | Error { kind = IfBranchMismatch _; _ } -> true
+    | _ -> false
 
-let%test "error on type mismatch in if" =
-  match infer_string "if (true) { 1 } else { \"hello\" }" with
-  | Error (IfBranchMismatch _) -> true
-  | _ -> false
+  let%test "error on non-bool condition" =
+    match infer_string "if (5) { 1 }" with
+    | Error { kind = IfConditionNotBool _; _ } -> true
+    | _ -> false
 
-let%test "error on non-bool condition" =
-  match infer_string "if (5) { 1 }" with
-  | Error (IfConditionNotBool _) -> true
-  | _ -> false
+  let%test "error on array element mismatch" =
+    match infer_string "[1, \"hello\"]" with
+    | Error { kind = ArrayElementMismatch _; _ } -> true
+    | _ -> false
 
-let%test "error on array element mismatch" =
-  match infer_string "[1, \"hello\"]" with
-  | Error (ArrayElementMismatch _) -> true
-  | _ -> false
+  let%test "infer simple recursive function" =
+    (* Factorial: fn(n) { if (n == 0) { 1 } else { n * fact(n - 1) } } *)
+    let code = "let fact = fn(n) { if (n == 0) { 1 } else { n * fact(n - 1) } }; fact(5)" in
+    infers_to code TInt
 
-(* ============================================================
-   Recursive Function Tests
-   ============================================================ *)
+  let%test "infer recursive function type" =
+    (* The factorial function should have type Int -> Int *)
+    let code = "let fact = fn(n) { if (n == 0) { 1 } else { n * fact(n - 1) } }; fact" in
+    infers_to code (TFun (TInt, TInt))
 
-let%test "infer simple recursive function" =
-  (* Factorial: fn(n) { if (n == 0) { 1 } else { n * fact(n - 1) } } *)
-  let code = "let fact = fn(n) { if (n == 0) { 1 } else { n * fact(n - 1) } }; fact(5)" in
-  infers_to code TInt
+  let%test "infer fibonacci" =
+    let code = "let fib = fn(n) { if (n < 2) { n } else { fib(n - 1) + fib(n - 2) } }; fib(10)" in
+    infers_to code TInt
 
-let%test "infer recursive function type" =
-  (* The factorial function should have type Int -> Int *)
-  let code = "let fact = fn(n) { if (n == 0) { 1 } else { n * fact(n - 1) } }; fact" in
-  infers_to code (TFun (TInt, TInt))
+  let%test "infer mutually referencing let" =
+    (* A let that references itself but isn't a function - should still work *)
+    (* let x = x would be infinite, but let x = 5 should be fine *)
+    infers_to "let x = 5; x" TInt
 
-let%test "infer fibonacci" =
-  let code = "let fib = fn(n) { if (n < 2) { n } else { fib(n - 1) + fib(n - 2) } }; fib(10)" in
-  infers_to code TInt
+  let%test "infer countdown" =
+    (* Recursive function that returns unit/last value *)
+    let code = "let countdown = fn(n) { if (n == 0) { 0 } else { countdown(n - 1) } }; countdown(10)" in
+    infers_to code TInt
 
-let%test "infer mutually referencing let" =
-  (* A let that references itself but isn't a function - should still work *)
-  (* let x = x would be infinite, but let x = 5 should be fine *)
-  infers_to "let x = 5; x" TInt
-
-let%test "infer countdown" =
-  (* Recursive function that returns unit/last value *)
-  let code = "let countdown = fn(n) { if (n == 0) { 0 } else { countdown(n - 1) } }; countdown(10)" in
-  infers_to code TInt
-
-let%test "infer recursive with array" =
-  (* Recursive function that works with arrays *)
-  let code =
-    "let sum = fn(arr, i) { if (i == 0) { arr[0] } else { arr[i] + sum(arr, i - 1) } }; sum([1,2,3], 2)"
-  in
-  infers_to code TInt
+  let%test "infer recursive with array" =
+    (* Recursive function that works with arrays *)
+    let code =
+      "let sum = fn(arr, i) { if (i == 0) { arr[0] } else { arr[i] + sum(arr, i - 1) } }; sum([1,2,3], 2)"
+    in
+    infers_to code TInt
+end

@@ -1,6 +1,7 @@
 type token = {
   token_type : token_type;
   literal : string;
+  pos : int; (* byte offset in source *)
 }
 [@@deriving show]
 
@@ -43,7 +44,10 @@ and token_type =
   | Return
 [@@deriving show]
 
-let init t l = { token_type = t; literal = l }
+let init ?(pos = 0) t l = { token_type = t; literal = l; pos }
+
+(* Equality ignoring position (for testing) *)
+let equal_ignoring_pos t1 t2 = t1.token_type = t2.token_type && t1.literal = t2.literal
 
 let lookup_ident s =
   match s with

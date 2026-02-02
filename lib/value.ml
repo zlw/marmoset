@@ -81,7 +81,8 @@ let rec to_string = function
   | CompiledFunction _ -> "<compiled function>"
   | Closure _ -> "<closure>"
 
-and param_to_string = function
+and param_to_string (param : AST.expression) =
+  match param.expr with
   | AST.Identifier p -> p
   | _ -> failwith "invalid parameter"
 

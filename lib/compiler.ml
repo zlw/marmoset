@@ -152,8 +152,8 @@ let rec compile_function_literal
   ignore (Symbol_table.define_function_name c.symbol_table name);
   (* Define each parameter in the symbol table (they become locals) *)
   List.iter
-    (fun param ->
-      match param with
+    (fun (param : AST.expression) ->
+      match param.expr with
       | AST.Identifier pname -> ignore (Symbol_table.define c.symbol_table pname)
       | _ -> failwith "invalid function parameter")
     params;
@@ -205,8 +205,8 @@ and compile (c : compiler) (s : AST.program) : (compiler, string) result =
   loop c s
 
 and compile_statement (c : compiler) (s : AST.statement) : (compiler, string) result =
-  match s with
-  | AST.Expression e ->
+  match s.stmt with
+  | AST.ExpressionStmt e ->
       let* c' = compile_expression c e in
       let c'', _pos = emit c' Code.OpPop [] in
       Ok c''
@@ -223,7 +223,7 @@ and compile_statement (c : compiler) (s : AST.statement) : (compiler, string) re
       (* For function literals, we need to define the function name inside
          the function scope to enable recursion *)
       let* c' =
-        match value with
+        match value.expr with
         | AST.Function (params, body) ->
             (* Special handling for function literals to support recursion *)
             compile_function_literal c name params body
@@ -249,7 +249,7 @@ and compile_statement (c : compiler) (s : AST.statement) : (compiler, string) re
       Ok c''
 
 and compile_expression (c : compiler) (e : AST.expression) : (compiler, string) result =
-  match e with
+  match e.expr with
   | AST.Infix (left, op, right) ->
       (* For "<", we swap operands and use OpGreaterThan instead *)
       (* e.g., "3 < 5" becomes: compile(5), compile(3), OpGreaterThan *)
@@ -405,8 +405,8 @@ and compile_expression (c : compiler) (e : AST.expression) : (compiler, string) 
       enter_scope c;
       (* Define each parameter in the symbol table (they become locals) *)
       List.iter
-        (fun param ->
-          match param with
+        (fun (param : AST.expression) ->
+          match param.expr with
           | AST.Identifier name -> ignore (Symbol_table.define c.symbol_table name)
           | _ -> failwith "invalid function parameter")
         params;

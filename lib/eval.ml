@@ -25,8 +25,8 @@ and eval_program (stmts : AST.statement list) (e : env) : Value.value * env =
   loop stmts (Value.null_value, e)
 
 and eval_statement (stmt : AST.statement) (e : env) : Value.value * env =
-  match stmt with
-  | Expression expr -> eval_expression expr e
+  match stmt.stmt with
+  | ExpressionStmt expr -> eval_expression expr e
   | Block stmts -> eval_program stmts e
   | Let (ident, expr) ->
       let* v, e' = eval_expression expr e in
@@ -36,7 +36,7 @@ and eval_statement (stmt : AST.statement) (e : env) : Value.value * env =
       (Value.Return v, e')
 
 and eval_expression (expr : AST.expression) (e : env) : Value.value * env =
-  match expr with
+  match expr.expr with
   | Integer i -> (Value.Integer i, e)
   | Float f -> (Value.Float f, e)
   | Boolean b ->
@@ -102,6 +102,9 @@ and eval_expression (expr : AST.expression) (e : env) : Value.value * env =
       | _ ->
           let error = Value.unknown_prefix_operator_error "-" right in
           (error, e'))
+  | Prefix (op, right) ->
+      let error = Value.unknown_prefix_operator_error op right in
+      (error, e)
   | Infix (left, op, right) -> (
       let* left', e' = eval_expression left e in
       let* right', e'' = eval_expression right e' in
@@ -177,7 +180,6 @@ and eval_expression (expr : AST.expression) (e : env) : Value.value * env =
           | [ Value.Error _ ] -> (List.hd args', e'')
           | _ -> (apply_function func' args', e'))
       | _ -> failwith "not a function")
-  | _ -> failwith "not implemented"
 
 and eval_expressions (args : AST.expression list) (e : env) : Value.value list * env =
   let rec loop exps result env =
@@ -216,8 +218,8 @@ and unwrap_return_value (return : Value.value) : Value.value =
 and extend_function_env (params : AST.expression list) (args : Value.value list) (e : env) : env =
   let e' = Env.wrap e in
   List.fold_left2
-    (fun acc param arg ->
-      match param with
+    (fun acc (param : AST.expression) arg ->
+      match param.expr with
       | AST.Identifier str -> Env.set acc str arg
       | _ -> failwith "expect identifier")
     e' params args

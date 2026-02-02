@@ -13,28 +13,57 @@ type typecheck_result = {
   environment : Infer.type_env; (* Final type environment with all bindings *)
 }
 
-(* Errors with source location info (for future use) *)
-type error = { message : string (* TODO: Add source location when AST has it *) }
+(* Error with source location info *)
+type error = {
+  message : string;
+  loc : Source_loc.loc option; (* line/column if available *)
+}
 
-let error_of_infer_error (e : Infer.infer_error) : error = { message = Infer.error_to_string e }
+(* Convert infer error to typecheck error, optionally with source for location *)
+let error_of_infer_error ?(source : string option) (e : Infer.infer_error) : error =
+  let loc =
+    match (source, e.pos) with
+    | Some src, Some pos -> Some (Source_loc.offset_to_loc src pos)
+    | _ -> None
+  in
+  { message = Infer.error_to_string e; loc }
+
+(* Format error with location prefix *)
+let format_error (err : error) : string =
+  match err.loc with
+  | None -> err.message
+  | Some loc -> Printf.sprintf "%s: %s" (Source_loc.to_string loc) err.message
+
+(* Format error with source context showing the offending line *)
+let format_error_with_context (source : string) (err : error) : string =
+  match err.loc with
+  | None -> err.message
+  | Some loc ->
+      let context = Source_loc.format_with_context source loc in
+      Printf.sprintf "%s: %s\n%s" (Source_loc.to_string loc) err.message context
 
 (* ============================================================
    Main API
    ============================================================ *)
 
 (* Type check a program (list of statements).
-   Returns the type of the last expression and the final environment. *)
+   Returns the type of the last expression and the final environment.
+   Note: Without source, we can't provide location info. Use check_string for that. *)
 let check_program ?(env = Infer.empty_env) (program : Ast.AST.program) : (typecheck_result, error) result =
   match Infer.infer_program ~env program with
   | Error e -> Error (error_of_infer_error e)
   | Ok (final_env, result_type) -> Ok { result_type; environment = final_env }
 
 (* Type check source code string.
-   Parses and type checks in one step. *)
+   Parses and type checks in one step.
+   Errors include source location information. *)
 let check_string ?(env = Infer.empty_env) (source : string) : (typecheck_result, error) result =
   match Parser.parse source with
-  | Error errors -> Error { message = "Parse error: " ^ String.concat ", " errors }
-  | Ok program -> check_program ~env program
+  | Error errors -> Error { message = "Parse error: " ^ String.concat ", " errors; loc = None }
+  | Ok program -> (
+      match Infer.infer_program ~env program with
+      | Error e -> Error (error_of_infer_error ~source e)
+      | Ok (final_env, result_type) -> Ok { result_type; environment = final_env })
 
 (* Get the type of an expression as a string *)
 let type_string (source : string) : string =
@@ -182,3 +211,37 @@ let%test "push then len" =
   match check "len(push([1, 2], 3))" with
   | Ok { result_type = TInt; _ } -> true
   | _ -> false
+
+(* ============================================================
+   Source Location Tests
+   ============================================================ *)
+
+let%test "error includes source location" =
+  match check_string "1 + true" with
+  | Error { loc = Some loc; _ } -> loc.line = 1 && loc.column > 0
+  | _ -> false
+
+let%test "error location points to problematic expression" =
+  (* "true" starts at column 5 (1-indexed) in "1 + true" *)
+  match check_string "1 + true" with
+  | Error { loc = Some loc; _ } -> loc.column = 5
+  | _ -> false
+
+let%test "multiline error location" =
+  let code = "let x = 5;\nlet y = x + true;" in
+  match check_string code with
+  | Error { loc = Some loc; _ } -> loc.line = 2
+  | _ -> false
+
+let%test "format_error includes line:col" =
+  match check_string "1 + true" with
+  | Error err -> String.sub (format_error err) 0 4 = "1:5:"
+  | Ok _ -> false
+
+let%test "format_error_with_context shows source line" =
+  let source = "1 + true" in
+  match check_string source with
+  | Error err ->
+      let formatted = format_error_with_context source err in
+      String.length formatted > 0 && String.sub formatted 0 4 = "1:5:"
+  | Ok _ -> false

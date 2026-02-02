@@ -1,13 +1,24 @@
 module AST = struct
   type program = statement list [@@deriving show]
 
-  and statement =
+  and statement = {
+    stmt : stmt_kind;
+    pos : int;
+  }
+
+  and stmt_kind =
     | Let of string * expression
     | Return of expression
-    | Expression of expression
+    | ExpressionStmt of expression
     | Block of statement list
+  [@@deriving show]
 
-  and expression =
+  and expression = {
+    expr : expr_kind;
+    pos : int;
+  }
+
+  and expr_kind =
     | Identifier of string
     | Integer of int64
     | Float of float
@@ -21,9 +32,54 @@ module AST = struct
     | If of expression * statement * statement option
     | Function of expression list * statement
     | Call of expression * expression list
+  [@@deriving show]
+
+  (* Smart constructors with default pos=0 (for tests) *)
+  let mk_expr ?(pos = 0) expr = { expr; pos }
+  let mk_stmt ?(pos = 0) stmt = { stmt; pos }
+
+  (* Equality functions that ignore positions (for testing) *)
+  let rec expr_equal (e1 : expression) (e2 : expression) : bool =
+    match (e1.expr, e2.expr) with
+    | Identifier a, Identifier b -> a = b
+    | Integer a, Integer b -> a = b
+    | Float a, Float b -> a = b
+    | Boolean a, Boolean b -> a = b
+    | String a, String b -> a = b
+    | Array a, Array b -> List.length a = List.length b && List.for_all2 expr_equal a b
+    | Index (a1, a2), Index (b1, b2) -> expr_equal a1 b1 && expr_equal a2 b2
+    | Hash a, Hash b ->
+        List.length a = List.length b
+        && List.for_all2 (fun (k1, v1) (k2, v2) -> expr_equal k1 k2 && expr_equal v1 v2) a b
+    | Prefix (op1, e1), Prefix (op2, e2) -> op1 = op2 && expr_equal e1 e2
+    | Infix (l1, op1, r1), Infix (l2, op2, r2) -> op1 = op2 && expr_equal l1 l2 && expr_equal r1 r2
+    | If (c1, t1, e1), If (c2, t2, e2) -> (
+        expr_equal c1 c2
+        && stmt_equal t1 t2
+        &&
+        match (e1, e2) with
+        | None, None -> true
+        | Some a, Some b -> stmt_equal a b
+        | _ -> false)
+    | Function (p1, b1), Function (p2, b2) ->
+        List.length p1 = List.length p2 && List.for_all2 expr_equal p1 p2 && stmt_equal b1 b2
+    | Call (f1, a1), Call (f2, a2) ->
+        expr_equal f1 f2 && List.length a1 = List.length a2 && List.for_all2 expr_equal a1 a2
+    | _ -> false
+
+  and stmt_equal (s1 : statement) (s2 : statement) : bool =
+    match (s1.stmt, s2.stmt) with
+    | Let (n1, e1), Let (n2, e2) -> n1 = n2 && expr_equal e1 e2
+    | Return e1, Return e2 -> expr_equal e1 e2
+    | ExpressionStmt e1, ExpressionStmt e2 -> expr_equal e1 e2
+    | Block ss1, Block ss2 -> List.length ss1 = List.length ss2 && List.for_all2 stmt_equal ss1 ss2
+    | _ -> false
+
+  let program_equal (p1 : program) (p2 : program) : bool =
+    List.length p1 = List.length p2 && List.for_all2 stmt_equal p1 p2
 
   let type_of (e : expression) : string =
-    match e with
+    match e.expr with
     | Identifier _ -> "Identifier"
     | Integer _ -> "Integer"
     | Float _ -> "Float"
@@ -40,13 +96,13 @@ module AST = struct
 
   let to_string (program : program) : string =
     let rec statement_to_string (s : statement) : string =
-      match s with
+      match s.stmt with
       | Let (ident, expr) -> Printf.sprintf "let %s = %s;" ident (expression_to_string expr)
       | Return expr -> Printf.sprintf "return %s;" (expression_to_string expr)
-      | Expression expr -> expression_to_string expr
+      | ExpressionStmt expr -> expression_to_string expr
       | Block stmts -> List.map statement_to_string stmts |> String.concat ""
     and expression_to_string (e : expression) : string =
-      match e with
+      match e.expr with
       | Identifier ident -> ident
       | Integer i -> Int64.to_string i
       | Float f -> string_of_float f

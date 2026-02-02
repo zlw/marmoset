@@ -8,12 +8,14 @@ type config = {
   filename : string option;
 }
 
-(* Type check a program, returning Ok () or Error with message *)
-let typecheck program =
+(* Type check a program, returning Ok type_string or Error with message *)
+let typecheck source program =
   let env = Marmoset.Builtins.prelude_env () in
   match Marmoset.Infer.infer_program ~env program with
-  | Ok _ -> Ok ()
-  | Error e -> Error (Marmoset.Infer.error_to_string e)
+  | Ok (_, result_type) -> Ok (Marmoset.Types.to_string_pretty result_type)
+  | Error e ->
+      let err = Marmoset.Typecheck.error_of_infer_error ~source e in
+      Error (Marmoset.Typecheck.format_error err)
 
 let parse_args () : config =
   let engine = ref Eval in
@@ -93,14 +95,14 @@ let run_repl config =
           loop_eval env
       | Ok program -> (
           (* Type check before running *)
-          match typecheck program with
+          match typecheck input program with
           | Error msg ->
               Printf.printf "Type error: %s\n" msg;
               loop_eval env
-          | Ok () ->
+          | Ok type_str ->
               let value, env' = Marmoset.Eval.eval program env in
               let str = Marmoset.Value.to_string value in
-              print_endline ("=> " ^ str);
+              print_endline ("=> " ^ str ^ " : " ^ type_str);
               loop_eval env')
   in
 
@@ -119,14 +121,14 @@ let run_repl config =
           loop_vm ()
       | Ok program -> (
           (* Type check before running *)
-          match typecheck program with
+          match typecheck input program with
           | Error msg ->
               Printf.printf "Type error: %s\n" msg;
               loop_vm ()
-          | Ok () ->
+          | Ok type_str ->
               let value = run_vm program in
               let str = Marmoset.Value.to_string value in
-              print_endline ("=> " ^ str);
+              print_endline ("=> " ^ str ^ " : " ^ type_str);
               loop_vm ())
   in
 
@@ -156,11 +158,11 @@ let run_file config filename =
   | Error msgs -> List.iter (fun msg -> print_endline msg) msgs
   | Ok program -> (
       (* Type check before running *)
-      match typecheck program with
+      match typecheck input program with
       | Error msg ->
           Printf.eprintf "Type error: %s\n" msg;
           exit 1
-      | Ok () -> (
+      | Ok _ -> (
           let run_fn =
             match config.engine with
             | Eval -> fun () -> run_eval program

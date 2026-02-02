@@ -2,6 +2,10 @@ open Ast
 
 let ( let* ) res f = Result.bind res f
 
+(* Helpers to create AST nodes with position from current token *)
+let mk_expr pos kind = AST.{ expr = kind; pos }
+let mk_stmt pos kind = AST.{ stmt = kind; pos }
+
 type parser = {
   lexer : Lexer.lexer;
   curr_token : Token.token;
@@ -89,22 +93,24 @@ and parse_statement (p : parser) : (parser * AST.statement, parser) result =
   | _ -> parse_expression_statement p
 
 and parse_let_statement (p : parser) : (parser * AST.statement, parser) result =
+  let pos = p.curr_token.pos in
   let* p2 = expect_peek p Token.Ident in
   let* p3 = expect_peek p2 Token.Assign in
   let* p4, expr = parse_expression (next_token p3) prec_lowest in
   let p5 = skip p4 Token.Semicolon in
-  Ok (p5, AST.Let (p2.curr_token.literal, expr))
+  Ok (p5, mk_stmt pos (AST.Let (p2.curr_token.literal, expr)))
 
 and parse_return_statement (p : parser) : (parser * AST.statement, parser) result =
+  let pos = p.curr_token.pos in
   let* p2, expr = parse_expression (next_token p) prec_lowest in
   let p3 = skip p2 Token.Semicolon in
-  Ok (p3, AST.Return expr)
+  Ok (p3, mk_stmt pos (AST.Return expr))
 
 and parse_expression_statement (p : parser) : (parser * AST.statement, parser) result =
+  let pos = p.curr_token.pos in
   let* p2, expr = parse_expression p prec_lowest in
   let p3 = skip p2 Token.Semicolon in
-
-  Ok (p3, AST.Expression expr)
+  Ok (p3, mk_stmt pos (AST.ExpressionStmt expr))
 
 and parse_expression (p : parser) (prec : precedence) : (parser * AST.expression, parser) result =
   let* p2, left_expr = prefixFn p in
@@ -149,40 +155,47 @@ and infixFn (p : parser) (left_expr : AST.expression) (prec : precedence) :
   loop p left_expr
 
 and parse_identifier (p : parser) : (parser * AST.expression, parser) result =
-  Ok (p, AST.Identifier p.curr_token.literal)
+  let pos = p.curr_token.pos in
+  Ok (p, mk_expr pos (AST.Identifier p.curr_token.literal))
 
 and parse_integer_literal (p : parser) : (parser * AST.expression, parser) result =
+  let pos = p.curr_token.pos in
   match Int64.of_string_opt p.curr_token.literal with
-  | Some int -> Ok (p, AST.Integer int)
+  | Some int -> Ok (p, mk_expr pos (AST.Integer int))
   | None ->
       let msg = Printf.sprintf "can't parse number from %s" p.curr_token.literal in
       Error (add_error p msg)
 
 and parse_float_literal (p : parser) : (parser * AST.expression, parser) result =
+  let pos = p.curr_token.pos in
   match float_of_string_opt p.curr_token.literal with
-  | Some float -> Ok (p, AST.Float float)
+  | Some float -> Ok (p, mk_expr pos (AST.Float float))
   | None ->
       let msg = Printf.sprintf "can't parse number from %s" p.curr_token.literal in
       Error (add_error p msg)
 
 and parse_string_literal (p : parser) : (parser * AST.expression, parser) result =
-  Ok (p, AST.String p.curr_token.literal)
+  let pos = p.curr_token.pos in
+  Ok (p, mk_expr pos (AST.String p.curr_token.literal))
 
 and parse_prefix_expression (p : parser) : (parser * AST.expression, parser) result =
+  let pos = p.curr_token.pos in
   let op = p.curr_token.literal in
   let p2 = next_token p in
   let* p3, right = parse_expression p2 prec_prefix in
-  Ok (p3, AST.Prefix (op, right))
+  Ok (p3, mk_expr pos (AST.Prefix (op, right)))
 
 and parse_infix_expression (p : parser) (left : AST.expression) : (parser * AST.expression, parser) result =
+  let pos = p.curr_token.pos in
   let op = p.curr_token.literal in
   let prec = curr_precedence p in
   let p2 = next_token p in
   let* p3, right = parse_expression p2 prec in
-  Ok (p3, AST.Infix (left, op, right))
+  Ok (p3, mk_expr pos (AST.Infix (left, op, right)))
 
 and parse_boolean (p : parser) : (parser * AST.expression, parser) result =
-  Ok (p, AST.Boolean (p.curr_token.token_type = Token.True))
+  let pos = p.curr_token.pos in
+  Ok (p, mk_expr pos (AST.Boolean (p.curr_token.token_type = Token.True)))
 
 and parse_grouped_expression (p : parser) : (parser * AST.expression, parser) result =
   let* p2, expr = parse_expression (next_token p) prec_lowest in
@@ -190,6 +203,7 @@ and parse_grouped_expression (p : parser) : (parser * AST.expression, parser) re
   Ok (p3, expr)
 
 and parse_if_expression (p : parser) : (parser * AST.expression, parser) result =
+  let pos = p.curr_token.pos in
   let* p2 = expect_peek p Token.LParen in
   let* p3, cond = parse_expression (next_token p2) prec_lowest in
   let* p4 = expect_peek p3 Token.RParen in
@@ -197,16 +211,17 @@ and parse_if_expression (p : parser) : (parser * AST.expression, parser) result 
   let* p6, cons = parse_block_statement p5 in
 
   if not (peek_token_is p6 Token.Else) then
-    Ok (p6, AST.If (cond, cons, None))
+    Ok (p6, mk_expr pos (AST.If (cond, cons, None)))
   else
     let* p7 = expect_peek (next_token p6) Token.LBrace in
     let* p8, alt = parse_block_statement p7 in
-    Ok (p8, AST.If (cond, cons, Some alt))
+    Ok (p8, mk_expr pos (AST.If (cond, cons, Some alt)))
 
 and parse_block_statement (p : parser) : (parser * AST.statement, parser) result =
+  let pos = p.curr_token.pos in
   let rec loop (lp : parser) (stmts : AST.statement list) : (parser * AST.statement, parser) result =
     if curr_token_is lp Token.RBrace || curr_token_is lp Token.EOF then
-      Ok (lp, AST.Block (List.rev stmts))
+      Ok (lp, mk_stmt pos (AST.Block (List.rev stmts)))
     else
       let* lp2, new_block = parse_statement lp in
       loop (next_token lp2) ([ new_block ] @ stmts)
@@ -215,11 +230,12 @@ and parse_block_statement (p : parser) : (parser * AST.statement, parser) result
   loop (next_token p) []
 
 and parse_function_literal (p : parser) : (parser * AST.expression, parser) result =
+  let pos = p.curr_token.pos in
   let* p2 = expect_peek p Token.LParen in
   let* p3, params = parse_function_parameters p2 in
   let* p4 = expect_peek p3 Token.LBrace in
   let* p5, body = parse_block_statement p4 in
-  Ok (p5, AST.Function (params, body))
+  Ok (p5, mk_expr pos (AST.Function (params, body)))
 
 and parse_function_parameters (p : parser) : (parser * AST.expression list, parser) result =
   if peek_token_is p Token.RParen then
@@ -228,7 +244,8 @@ and parse_function_parameters (p : parser) : (parser * AST.expression list, pars
     let rec loop (lp : parser) (idents : AST.expression list) =
       if peek_token_is lp Token.Comma then
         let lp2 = next_token (next_token lp) in
-        let ident = [ AST.Identifier lp2.curr_token.literal ] @ idents in
+        let pos = lp2.curr_token.pos in
+        let ident = [ mk_expr pos (AST.Identifier lp2.curr_token.literal) ] @ idents in
 
         loop lp2 ident
       else
@@ -236,12 +253,14 @@ and parse_function_parameters (p : parser) : (parser * AST.expression list, pars
         Ok (lp2, List.rev idents)
     in
     let p2 = next_token p in
+    let pos = p2.curr_token.pos in
 
-    loop p2 [ AST.Identifier p2.curr_token.literal ]
+    loop p2 [ mk_expr pos (AST.Identifier p2.curr_token.literal) ]
 
 and parse_call_expression (p : parser) (c : AST.expression) : (parser * AST.expression, parser) result =
+  let pos = p.curr_token.pos in
   let* p2, arguments = parse_expression_list p Token.RParen in
-  Ok (p2, AST.Call (c, arguments))
+  Ok (p2, mk_expr pos (AST.Call (c, arguments)))
 
 and parse_expression_list (p : parser) (end_tt : Token.token_type) : (parser * AST.expression list, parser) result
     =
@@ -262,19 +281,22 @@ and parse_expression_list (p : parser) (end_tt : Token.token_type) : (parser * A
     loop p2 [ arg ]
 
 and parse_array_literal (p : parser) : (parser * AST.expression, parser) result =
+  let pos = p.curr_token.pos in
   let* p2, exprs = parse_expression_list p Token.RBracket in
-  Ok (p2, AST.Array exprs)
+  Ok (p2, mk_expr pos (AST.Array exprs))
 
 and parse_index_expression (p : parser) (left : AST.expression) : (parser * AST.expression, parser) result =
+  let pos = p.curr_token.pos in
   let p2 = next_token p in
   let* p3, index = parse_expression p2 prec_lowest in
   let* p4 = expect_peek p3 Token.RBracket in
-  Ok (p4, AST.Index (left, index))
+  Ok (p4, mk_expr pos (AST.Index (left, index)))
 
 and parse_hash_literal (p : parser) : (parser * AST.expression, parser) result =
+  let pos = p.curr_token.pos in
   let rec loop lp (pairs : (AST.expression * AST.expression) list) =
     if peek_token_is lp Token.RBrace then
-      Ok (next_token lp, AST.Hash (List.rev pairs))
+      Ok (next_token lp, mk_expr pos (AST.Hash (List.rev pairs)))
     else
       let* lp2, key = parse_expression (next_token lp) prec_lowest in
       let* lp3 = expect_peek lp2 Token.Colon in
@@ -301,11 +323,15 @@ module Test = struct
     output : AST.program;
   }
 
+  (* Shorthand constructors for tests (ignoring positions) *)
+  let e kind = AST.mk_expr kind
+  let s kind = AST.mk_stmt kind
+
   let run (tests : test list) : bool =
     tests
     |> List.for_all (fun test ->
            match test.input |> parse with
-           | Ok program -> program = test.output
+           | Ok program -> AST.program_equal program test.output
            | Error _ -> false)
 
   let run_print (tests : test list) : unit =
@@ -324,50 +350,55 @@ module Test = struct
 
   let%test "test_let_statements" =
     [
-      { input = "let x = 5;"; output = [ AST.Let ("x", AST.Integer 5L) ] };
-      { input = "let y = 10;"; output = [ AST.Let ("y", AST.Integer 10L) ] };
-      { input = "let foobar = 838383;"; output = [ AST.Let ("foobar", AST.Integer 838383L) ] };
+      { input = "let x = 5;"; output = [ s (AST.Let ("x", e (AST.Integer 5L))) ] };
+      { input = "let y = 10;"; output = [ s (AST.Let ("y", e (AST.Integer 10L))) ] };
+      { input = "let foobar = 838383;"; output = [ s (AST.Let ("foobar", e (AST.Integer 838383L))) ] };
     ]
     |> run
 
   let%test "test_return_statements" =
     [
-      { input = "return 5;"; output = [ AST.Return (AST.Integer 5L) ] };
-      { input = "return 10;"; output = [ AST.Return (AST.Integer 10L) ] };
-      { input = "return foobar;"; output = [ AST.Return (AST.Identifier "foobar") ] };
+      { input = "return 5;"; output = [ s (AST.Return (e (AST.Integer 5L))) ] };
+      { input = "return 10;"; output = [ s (AST.Return (e (AST.Integer 10L))) ] };
+      { input = "return foobar;"; output = [ s (AST.Return (e (AST.Identifier "foobar"))) ] };
     ]
     |> run
 
   let%test "test_identifier_expressions" =
-    [ { input = "foobar;"; output = [ AST.Expression (AST.Identifier "foobar") ] } ] |> run
+    [ { input = "foobar;"; output = [ s (AST.ExpressionStmt (e (AST.Identifier "foobar"))) ] } ] |> run
 
   let%test "test_integer_literal_expressions" =
-    [ { input = "5;"; output = [ AST.Expression (AST.Integer 5L) ] } ] |> run
+    [ { input = "5;"; output = [ s (AST.ExpressionStmt (e (AST.Integer 5L))) ] } ] |> run
 
   let%test "test_float_literal_expressions" =
-    [ { input = "5.5;"; output = [ AST.Expression (AST.Float 5.5) ] } ] |> run
+    [ { input = "5.5;"; output = [ s (AST.ExpressionStmt (e (AST.Float 5.5))) ] } ] |> run
 
   let%test "test_string_literal_expressions" =
-    [ { input = "\"hello world\";"; output = [ AST.Expression (AST.String "hello world") ] } ] |> run
+    [ { input = "\"hello world\";"; output = [ s (AST.ExpressionStmt (e (AST.String "hello world"))) ] } ] |> run
 
   let%test "test_array_literals" =
     [
-      { input = "[]"; output = [ AST.Expression (AST.Array []) ] };
+      { input = "[]"; output = [ s (AST.ExpressionStmt (e (AST.Array []))) ] };
       {
         input = "[1, 2, 3];";
-        output = [ AST.Expression (AST.Array [ AST.Integer 1L; AST.Integer 2L; AST.Integer 3L ]) ];
+        output =
+          [
+            s (AST.ExpressionStmt (e (AST.Array [ e (AST.Integer 1L); e (AST.Integer 2L); e (AST.Integer 3L) ])));
+          ];
       };
       {
         input = "[1, 2 * 2, 3 + 3];";
         output =
           [
-            AST.Expression
-              (AST.Array
-                 [
-                   AST.Integer 1L;
-                   AST.Infix (AST.Integer 2L, "*", AST.Integer 2L);
-                   AST.Infix (AST.Integer 3L, "+", AST.Integer 3L);
-                 ]);
+            s
+              (AST.ExpressionStmt
+                 (e
+                    (AST.Array
+                       [
+                         e (AST.Integer 1L);
+                         e (AST.Infix (e (AST.Integer 2L), "*", e (AST.Integer 2L)));
+                         e (AST.Infix (e (AST.Integer 3L), "+", e (AST.Integer 3L)));
+                       ])));
           ];
       };
     ]
@@ -379,80 +410,122 @@ module Test = struct
         input = "myArray[1 + 1];";
         output =
           [
-            AST.Expression (AST.Index (AST.Identifier "myArray", AST.Infix (AST.Integer 1L, "+", AST.Integer 1L)));
+            s
+              (AST.ExpressionStmt
+                 (e
+                    (AST.Index
+                       (e (AST.Identifier "myArray"), e (AST.Infix (e (AST.Integer 1L), "+", e (AST.Integer 1L)))))));
           ];
       };
       {
         input = "myArray[1];";
-        output = [ AST.Expression (AST.Index (AST.Identifier "myArray", AST.Integer 1L)) ];
+        output = [ s (AST.ExpressionStmt (e (AST.Index (e (AST.Identifier "myArray"), e (AST.Integer 1L))))) ];
       };
     ]
     |> run
 
   let%test "test_prefix_expressions" =
     [
-      { input = "!5;"; output = [ AST.Expression (AST.Prefix ("!", AST.Integer 5L)) ] };
-      { input = "-15;"; output = [ AST.Expression (AST.Prefix ("-", AST.Integer 15L)) ] };
-      { input = "!foobar;"; output = [ AST.Expression (AST.Prefix ("!", AST.Identifier "foobar")) ] };
-      { input = "-foobar;"; output = [ AST.Expression (AST.Prefix ("-", AST.Identifier "foobar")) ] };
-      { input = "!true;"; output = [ AST.Expression (AST.Prefix ("!", AST.Boolean true)) ] };
-      { input = "!false;"; output = [ AST.Expression (AST.Prefix ("!", AST.Boolean false)) ] };
+      { input = "!5;"; output = [ s (AST.ExpressionStmt (e (AST.Prefix ("!", e (AST.Integer 5L))))) ] };
+      { input = "-15;"; output = [ s (AST.ExpressionStmt (e (AST.Prefix ("-", e (AST.Integer 15L))))) ] };
+      {
+        input = "!foobar;";
+        output = [ s (AST.ExpressionStmt (e (AST.Prefix ("!", e (AST.Identifier "foobar"))))) ];
+      };
+      {
+        input = "-foobar;";
+        output = [ s (AST.ExpressionStmt (e (AST.Prefix ("-", e (AST.Identifier "foobar"))))) ];
+      };
+      { input = "!true;"; output = [ s (AST.ExpressionStmt (e (AST.Prefix ("!", e (AST.Boolean true))))) ] };
+      { input = "!false;"; output = [ s (AST.ExpressionStmt (e (AST.Prefix ("!", e (AST.Boolean false))))) ] };
     ]
     |> run
 
   let%test "test_infix_expressions" =
     [
-      { input = "5 + 5;"; output = [ AST.Expression (AST.Infix (AST.Integer 5L, "+", AST.Integer 5L)) ] };
-      { input = "5 - 5;"; output = [ AST.Expression (AST.Infix (AST.Integer 5L, "-", AST.Integer 5L)) ] };
-      { input = "5 * 5;"; output = [ AST.Expression (AST.Infix (AST.Integer 5L, "*", AST.Integer 5L)) ] };
-      { input = "5 / 5;"; output = [ AST.Expression (AST.Infix (AST.Integer 5L, "/", AST.Integer 5L)) ] };
-      { input = "5 > 5;"; output = [ AST.Expression (AST.Infix (AST.Integer 5L, ">", AST.Integer 5L)) ] };
-      { input = "5 < 5;"; output = [ AST.Expression (AST.Infix (AST.Integer 5L, "<", AST.Integer 5L)) ] };
-      { input = "5 == 5;"; output = [ AST.Expression (AST.Infix (AST.Integer 5L, "==", AST.Integer 5L)) ] };
-      { input = "5 != 5;"; output = [ AST.Expression (AST.Infix (AST.Integer 5L, "!=", AST.Integer 5L)) ] };
+      {
+        input = "5 + 5;";
+        output = [ s (AST.ExpressionStmt (e (AST.Infix (e (AST.Integer 5L), "+", e (AST.Integer 5L))))) ];
+      };
+      {
+        input = "5 - 5;";
+        output = [ s (AST.ExpressionStmt (e (AST.Infix (e (AST.Integer 5L), "-", e (AST.Integer 5L))))) ];
+      };
+      {
+        input = "5 * 5;";
+        output = [ s (AST.ExpressionStmt (e (AST.Infix (e (AST.Integer 5L), "*", e (AST.Integer 5L))))) ];
+      };
+      {
+        input = "5 / 5;";
+        output = [ s (AST.ExpressionStmt (e (AST.Infix (e (AST.Integer 5L), "/", e (AST.Integer 5L))))) ];
+      };
+      {
+        input = "5 > 5;";
+        output = [ s (AST.ExpressionStmt (e (AST.Infix (e (AST.Integer 5L), ">", e (AST.Integer 5L))))) ];
+      };
+      {
+        input = "5 < 5;";
+        output = [ s (AST.ExpressionStmt (e (AST.Infix (e (AST.Integer 5L), "<", e (AST.Integer 5L))))) ];
+      };
+      {
+        input = "5 == 5;";
+        output = [ s (AST.ExpressionStmt (e (AST.Infix (e (AST.Integer 5L), "==", e (AST.Integer 5L))))) ];
+      };
+      {
+        input = "5 != 5;";
+        output = [ s (AST.ExpressionStmt (e (AST.Infix (e (AST.Integer 5L), "!=", e (AST.Integer 5L))))) ];
+      };
       {
         input = "foo + bar;";
-        output = [ AST.Expression (AST.Infix (AST.Identifier "foo", "+", AST.Identifier "bar")) ];
+        output =
+          [ s (AST.ExpressionStmt (e (AST.Infix (e (AST.Identifier "foo"), "+", e (AST.Identifier "bar"))))) ];
       };
       {
         input = "foo - bar;";
-        output = [ AST.Expression (AST.Infix (AST.Identifier "foo", "-", AST.Identifier "bar")) ];
+        output =
+          [ s (AST.ExpressionStmt (e (AST.Infix (e (AST.Identifier "foo"), "-", e (AST.Identifier "bar"))))) ];
       };
       {
         input = "foo * bar;";
-        output = [ AST.Expression (AST.Infix (AST.Identifier "foo", "*", AST.Identifier "bar")) ];
+        output =
+          [ s (AST.ExpressionStmt (e (AST.Infix (e (AST.Identifier "foo"), "*", e (AST.Identifier "bar"))))) ];
       };
       {
         input = "foo / bar;";
-        output = [ AST.Expression (AST.Infix (AST.Identifier "foo", "/", AST.Identifier "bar")) ];
+        output =
+          [ s (AST.ExpressionStmt (e (AST.Infix (e (AST.Identifier "foo"), "/", e (AST.Identifier "bar"))))) ];
       };
       {
         input = "foo > bar;";
-        output = [ AST.Expression (AST.Infix (AST.Identifier "foo", ">", AST.Identifier "bar")) ];
+        output =
+          [ s (AST.ExpressionStmt (e (AST.Infix (e (AST.Identifier "foo"), ">", e (AST.Identifier "bar"))))) ];
       };
       {
         input = "foo < bar;";
-        output = [ AST.Expression (AST.Infix (AST.Identifier "foo", "<", AST.Identifier "bar")) ];
+        output =
+          [ s (AST.ExpressionStmt (e (AST.Infix (e (AST.Identifier "foo"), "<", e (AST.Identifier "bar"))))) ];
       };
       {
         input = "foo == bar;";
-        output = [ AST.Expression (AST.Infix (AST.Identifier "foo", "==", AST.Identifier "bar")) ];
+        output =
+          [ s (AST.ExpressionStmt (e (AST.Infix (e (AST.Identifier "foo"), "==", e (AST.Identifier "bar"))))) ];
       };
       {
         input = "foo != bar;";
-        output = [ AST.Expression (AST.Infix (AST.Identifier "foo", "!=", AST.Identifier "bar")) ];
+        output =
+          [ s (AST.ExpressionStmt (e (AST.Infix (e (AST.Identifier "foo"), "!=", e (AST.Identifier "bar"))))) ];
       };
       {
         input = "true == true;";
-        output = [ AST.Expression (AST.Infix (AST.Boolean true, "==", AST.Boolean true)) ];
+        output = [ s (AST.ExpressionStmt (e (AST.Infix (e (AST.Boolean true), "==", e (AST.Boolean true))))) ];
       };
       {
         input = "true != false;";
-        output = [ AST.Expression (AST.Infix (AST.Boolean true, "!=", AST.Boolean false)) ];
+        output = [ s (AST.ExpressionStmt (e (AST.Infix (e (AST.Boolean true), "!=", e (AST.Boolean false))))) ];
       };
       {
         input = "false == false;";
-        output = [ AST.Expression (AST.Infix (AST.Boolean false, "==", AST.Boolean false)) ];
+        output = [ s (AST.ExpressionStmt (e (AST.Infix (e (AST.Boolean false), "==", e (AST.Boolean false))))) ];
       };
     ]
     |> run
@@ -495,8 +568,8 @@ module Test = struct
 
   let%test "test_boolean_expression" =
     [
-      { input = "true;"; output = [ AST.Expression (AST.Boolean true) ] };
-      { input = "false;"; output = [ AST.Expression (AST.Boolean false) ] };
+      { input = "true;"; output = [ s (AST.ExpressionStmt (e (AST.Boolean true))) ] };
+      { input = "false;"; output = [ s (AST.ExpressionStmt (e (AST.Boolean false))) ] };
     ]
     |> run
 
@@ -506,22 +579,26 @@ module Test = struct
         input = "if (x < y) { x }";
         output =
           [
-            AST.Expression
-              (AST.If
-                 ( AST.Infix (AST.Identifier "x", "<", AST.Identifier "y"),
-                   AST.Block [ AST.Expression (AST.Identifier "x") ],
-                   None ));
+            s
+              (AST.ExpressionStmt
+                 (e
+                    (AST.If
+                       ( e (AST.Infix (e (AST.Identifier "x"), "<", e (AST.Identifier "y"))),
+                         s (AST.Block [ s (AST.ExpressionStmt (e (AST.Identifier "x"))) ]),
+                         None ))));
           ];
       };
       {
         input = "if (x < y) { x } else { y }";
         output =
           [
-            AST.Expression
-              (AST.If
-                 ( AST.Infix (AST.Identifier "x", "<", AST.Identifier "y"),
-                   AST.Block [ AST.Expression (AST.Identifier "x") ],
-                   Some (AST.Block [ AST.Expression (AST.Identifier "y") ]) ));
+            s
+              (AST.ExpressionStmt
+                 (e
+                    (AST.If
+                       ( e (AST.Infix (e (AST.Identifier "x"), "<", e (AST.Identifier "y"))),
+                         s (AST.Block [ s (AST.ExpressionStmt (e (AST.Identifier "x"))) ]),
+                         Some (s (AST.Block [ s (AST.ExpressionStmt (e (AST.Identifier "y"))) ])) ))));
           ];
       };
     ]
@@ -533,20 +610,35 @@ module Test = struct
         input = "fn(x, y) { x + y; }";
         output =
           [
-            AST.Expression
-              (AST.Function
-                 ( [ AST.Identifier "x"; AST.Identifier "y" ],
-                   AST.Block [ AST.Expression (AST.Infix (AST.Identifier "x", "+", AST.Identifier "y")) ] ));
+            s
+              (AST.ExpressionStmt
+                 (e
+                    (AST.Function
+                       ( [ e (AST.Identifier "x"); e (AST.Identifier "y") ],
+                         s
+                           (AST.Block
+                              [
+                                s
+                                  (AST.ExpressionStmt
+                                     (e (AST.Infix (e (AST.Identifier "x"), "+", e (AST.Identifier "y")))));
+                              ]) ))));
           ];
       };
-      { input = "fn() {}"; output = [ AST.Expression (AST.Function ([], AST.Block [])) ] };
-      { input = "fn(x) {}"; output = [ AST.Expression (AST.Function ([ AST.Identifier "x" ], AST.Block [])) ] };
+      { input = "fn() {}"; output = [ s (AST.ExpressionStmt (e (AST.Function ([], s (AST.Block []))))) ] };
+      {
+        input = "fn(x) {}";
+        output = [ s (AST.ExpressionStmt (e (AST.Function ([ e (AST.Identifier "x") ], s (AST.Block []))))) ];
+      };
       {
         input = "fn(foo, bar, baz) {};";
         output =
           [
-            AST.Expression
-              (AST.Function ([ AST.Identifier "foo"; AST.Identifier "bar"; AST.Identifier "baz" ], AST.Block []));
+            s
+              (AST.ExpressionStmt
+                 (e
+                    (AST.Function
+                       ( [ e (AST.Identifier "foo"); e (AST.Identifier "bar"); e (AST.Identifier "baz") ],
+                         s (AST.Block []) ))));
           ];
       };
     ]
@@ -558,42 +650,63 @@ module Test = struct
         input = "add(1, 2 * 3, 4 + 5);";
         output =
           [
-            AST.Expression
-              (AST.Call
-                 ( AST.Identifier "add",
-                   [
-                     AST.Integer 1L;
-                     AST.Infix (AST.Integer 2L, "*", AST.Integer 3L);
-                     AST.Infix (AST.Integer 4L, "+", AST.Integer 5L);
-                   ] ));
+            s
+              (AST.ExpressionStmt
+                 (e
+                    (AST.Call
+                       ( e (AST.Identifier "add"),
+                         [
+                           e (AST.Integer 1L);
+                           e (AST.Infix (e (AST.Integer 2L), "*", e (AST.Integer 3L)));
+                           e (AST.Infix (e (AST.Integer 4L), "+", e (AST.Integer 5L)));
+                         ] ))));
           ];
       };
       {
         input = "fn(x, y) { x + y; }(2, 3)";
         output =
           [
-            AST.Expression
-              (AST.Call
-                 ( AST.Function
-                     ( [ AST.Identifier "x"; AST.Identifier "y" ],
-                       AST.Block [ AST.Expression (AST.Infix (AST.Identifier "x", "+", AST.Identifier "y")) ] ),
-                   [ AST.Integer 2L; AST.Integer 3L ] ));
+            s
+              (AST.ExpressionStmt
+                 (e
+                    (AST.Call
+                       ( e
+                           (AST.Function
+                              ( [ e (AST.Identifier "x"); e (AST.Identifier "y") ],
+                                s
+                                  (AST.Block
+                                     [
+                                       s
+                                         (AST.ExpressionStmt
+                                            (e (AST.Infix (e (AST.Identifier "x"), "+", e (AST.Identifier "y")))));
+                                     ]) )),
+                         [ e (AST.Integer 2L); e (AST.Integer 3L) ] ))));
           ];
       };
       {
         input = "callsFunction(2, 3, fn(x, y) { x + y; });";
         output =
           [
-            AST.Expression
-              (AST.Call
-                 ( AST.Identifier "callsFunction",
-                   [
-                     AST.Integer 2L;
-                     AST.Integer 3L;
-                     AST.Function
-                       ( [ AST.Identifier "x"; AST.Identifier "y" ],
-                         AST.Block [ AST.Expression (AST.Infix (AST.Identifier "x", "+", AST.Identifier "y")) ] );
-                   ] ));
+            s
+              (AST.ExpressionStmt
+                 (e
+                    (AST.Call
+                       ( e (AST.Identifier "callsFunction"),
+                         [
+                           e (AST.Integer 2L);
+                           e (AST.Integer 3L);
+                           e
+                             (AST.Function
+                                ( [ e (AST.Identifier "x"); e (AST.Identifier "y") ],
+                                  s
+                                    (AST.Block
+                                       [
+                                         s
+                                           (AST.ExpressionStmt
+                                              (e
+                                                 (AST.Infix (e (AST.Identifier "x"), "+", e (AST.Identifier "y")))));
+                                       ]) ));
+                         ] ))));
           ];
       };
     ]
@@ -601,31 +714,35 @@ module Test = struct
 
   let%test "test_hash_literal" =
     [
-      { input = "{}"; output = [ AST.Expression (AST.Hash []) ] };
+      { input = "{}"; output = [ s (AST.ExpressionStmt (e (AST.Hash []))) ] };
       {
         input = "{\"one\": 1, \"two\": 2, \"three\": 3}";
         output =
           [
-            AST.Expression
-              (AST.Hash
-                 [
-                   (AST.String "one", AST.Integer 1L);
-                   (AST.String "two", AST.Integer 2L);
-                   (AST.String "three", AST.Integer 3L);
-                 ]);
+            s
+              (AST.ExpressionStmt
+                 (e
+                    (AST.Hash
+                       [
+                         (e (AST.String "one"), e (AST.Integer 1L));
+                         (e (AST.String "two"), e (AST.Integer 2L));
+                         (e (AST.String "three"), e (AST.Integer 3L));
+                       ])));
           ];
       };
       {
         input = "{ \"one\": 0 + 1, \"two\": 10 - 8, \"three\": 15 / 5 }";
         output =
           [
-            AST.Expression
-              (AST.Hash
-                 [
-                   (AST.String "one", AST.Infix (AST.Integer 0L, "+", AST.Integer 1L));
-                   (AST.String "two", AST.Infix (AST.Integer 10L, "-", AST.Integer 8L));
-                   (AST.String "three", AST.Infix (AST.Integer 15L, "/", AST.Integer 5L));
-                 ]);
+            s
+              (AST.ExpressionStmt
+                 (e
+                    (AST.Hash
+                       [
+                         (e (AST.String "one"), e (AST.Infix (e (AST.Integer 0L), "+", e (AST.Integer 1L))));
+                         (e (AST.String "two"), e (AST.Infix (e (AST.Integer 10L), "-", e (AST.Integer 8L))));
+                         (e (AST.String "three"), e (AST.Infix (e (AST.Integer 15L), "/", e (AST.Integer 5L))));
+                       ])));
           ];
       };
     ]

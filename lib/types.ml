@@ -118,6 +118,51 @@ let free_type_vars_poly (Forall (quantified_vars, mono)) : TypeVarSet.t =
 let occurs_in (var_name : string) (mono : mono_type) : bool = TypeVarSet.mem var_name (free_type_vars mono)
 
 (* ============================================================
+   Pretty printing with normalized type variable names
+   ============================================================
+   
+   Renames type variables like t0, t1, t2 to a, b, c for nicer display.
+   Variables are renamed in order of first appearance.
+*)
+
+(* Generate nice variable name from index: 0->a, 1->b, ..., 25->z, 26->a1, etc. *)
+let nice_var_name (idx : int) : string =
+  if idx < 26 then
+    String.make 1 (Char.chr (Char.code 'a' + idx))
+  else
+    String.make 1 (Char.chr (Char.code 'a' + (idx mod 26))) ^ string_of_int (idx / 26)
+
+(* Collect type variables in order of first appearance (left-to-right, depth-first) *)
+let rec collect_vars_in_order (mono : mono_type) : string list =
+  match mono with
+  | TInt | TFloat | TBool | TString | TNull -> []
+  | TVar name -> [ name ]
+  | TFun (arg, ret) -> collect_vars_in_order arg @ collect_vars_in_order ret
+  | TArray element -> collect_vars_in_order element
+  | THash (key, value) -> collect_vars_in_order key @ collect_vars_in_order value
+
+(* Remove duplicates while preserving order *)
+let unique_in_order (lst : string list) : string list =
+  let seen = Hashtbl.create 16 in
+  List.filter
+    (fun x ->
+      if Hashtbl.mem seen x then
+        false
+      else (
+        Hashtbl.add seen x ();
+        true))
+    lst
+
+(* Normalize a type - rename type variables to a, b, c, ... *)
+let normalize (mono : mono_type) : mono_type =
+  let vars = unique_in_order (collect_vars_in_order mono) in
+  let renaming = List.mapi (fun i old_name -> (old_name, TVar (nice_var_name i))) vars in
+  apply_substitution renaming mono
+
+(* Convert type to string with normalized variable names *)
+let to_string_pretty (mono : mono_type) : string = to_string (normalize mono)
+
+(* ============================================================
    Tests
    ============================================================ *)
 
@@ -199,3 +244,18 @@ let%test "occurs_in check" =
   && occurs_in "a" (TFun (TVar "a", TInt))
   && (not (occurs_in "a" (TFun (TVar "b", TInt))))
   && not (occurs_in "a" TInt)
+
+let%test "nice_var_name" =
+  nice_var_name 0 = "a" && nice_var_name 25 = "z" && nice_var_name 26 = "a1" && nice_var_name 27 = "b1"
+
+let%test "normalize renames vars in order" =
+  (* t5 -> t3 becomes a -> b *)
+  normalize (TFun (TVar "t5", TVar "t3")) = TFun (TVar "a", TVar "b")
+
+let%test "normalize same var keeps same name" =
+  (* t2 -> t2 becomes a -> a *)
+  normalize (TFun (TVar "t2", TVar "t2")) = TFun (TVar "a", TVar "a")
+
+let%test "to_string_pretty" =
+  to_string_pretty (TFun (TVar "t99", TVar "t99")) = "a -> a"
+  && to_string_pretty (TFun (TVar "x", TFun (TVar "y", TVar "x"))) = "(a, b) -> a"

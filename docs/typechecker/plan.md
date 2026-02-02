@@ -178,6 +178,181 @@ Ambitious features for later exploration.
 
 ---
 
+## Architectural Decisions
+
+Key decisions made about the overall language design and implementation.
+
+### Numeric Types (Int / Float)
+
+**Decision:** Strict typing, no implicit coercion.
+
+- `1 * 1.0` is a **type error** (Int and Float don't mix implicitly)
+- Follows OCaml/Rust/Gleam approach, not Ruby/Scala/Python
+- When we add typeclasses, numeric literals will become polymorphic (Haskell-style):
+  - `1` will have type `Num a => a`, not `Int`
+  - `1 * 1.0` will work because both unify to `Float`
+  - But `(x: Int) * (y: Float)` will still be an error
+- This gives convenience for literals + safety for variables
+
+### Compilation Target
+
+**Decision:** Compile to Go source code.
+
+Why Go:
+- Excellent runtime (fast GC, low latency)
+- Goroutines/scheduler built-in (for future concurrency)
+- Static binaries, easy cross-compilation
+- Decent ecosystem
+
+Why not:
+- LLVM: Too much work (need GC, everything from scratch)
+- JVM: No true native binaries (GraalVM native-image is heavy)
+- Rust/OCaml: Would work but Go runtime is simpler
+
+### Monomorphization vs Boxing
+
+**Decision:** Monomorphization (not Go generics).
+
+- Full monomorphization at compile time
+- Each polymorphic function generates specialized versions per concrete type
+- Go becomes a "typed assembly" target, not a constraint on our type system
+
+Why not Go generics:
+- Go generics are limited (no HKT, no existentials, only invariance)
+- Go's "GC shape stenciling" isn't full monomorphization
+- We'd fight the system constantly
+
+Benefits:
+- Best runtime performance (no type switches, no boxing)
+- Generated Go can be faster than hand-written Go (we know more than Go's compiler)
+- Our type system isn't limited by Go's type system
+
+### Compilation Model
+
+**Decision:** Whole-program compilation.
+
+- Compiler sees all code at once
+- Knows every call site, every type instantiation
+- Single compilation unit -> single binary
+
+Implications:
+- MRS -> MRS: Works naturally (we see all instantiations)
+- MRS -> Go: Works (Go functions have concrete types, just need FFI declarations)
+- Go -> MRS: Not supported in v1; v2 will have explicit `@export` annotations
+
+Why not separate compilation:
+- With monomorphization, you need to know all instantiations
+- Would require shipping typed AST/IR for libraries
+- Whole-program is simpler, better optimizations
+- Can revisit later if needed
+
+### Typeclasses / Traits
+
+**Decision:** Compile-time dispatch (Haskell/Rust style, not Clojure/Elixir protocols).
+
+- Typeclasses are a frontend concept (type checking, inference)
+- By codegen time, everything is concrete
+- Maps to monomorphized Go functions
+
+Comparison:
+| Language | Mechanism | Dispatch |
+|----------|-----------|----------|
+| Haskell | Typeclasses | Compile-time |
+| Rust | Traits | Compile-time |
+| Swift | Protocols | Compile + runtime |
+| Clojure/Elixir | Protocols | Runtime |
+
+We get zero runtime cost, but can't add instances dynamically (fine for our use case).
+
+---
+
+## Phase 5: Effect System (Future)
+
+Track side effects in the type system. Pure functions can't do IO.
+
+### Inspirations to Explore
+- **Koka** - algebraic effects, handlers
+- **Unison** - abilities (effects with a nice name)
+- **Flix** - effect polymorphism
+- **Roc** - effects in signature (`->` vs `=>`), not as a type
+- **Haskell** - IO monad (proven but verbose)
+
+### Possible Directions
+
+**Option A: Effect as type (Haskell/Flix style)**
+```
+let readFile: String -> IO[String]
+let pure: fn(x: Int): Int { x + 1 }        // no effect
+let impure: fn(x: Int): IO[Int] { print(x); x }  // has IO effect
+```
+
+**Option B: Arrow annotation (Roc style)**
+```
+let pure: Int -> Int
+let impure: Int => Int   // => means effectful
+```
+
+**Option C: Effect polymorphism**
+```
+let map: fn<e>(f: a -> e b, xs: [a]): e [b]  // effect-polymorphic
+```
+
+### Concurrency Effects
+- Structured concurrency (no leaked goroutines)
+- Async/await or similar
+- Compiles down to goroutines + channels
+- User never sees the ugly Go parts
+
+TBD: Need to explore options and find the right balance of power vs simplicity.
+
+---
+
+## Language Inspirations
+
+Marmoset sits at the intersection of several languages:
+
+### Type System
+| Feature | Inspiration |
+|---------|-------------|
+| HM inference | OCaml, Haskell, ML family |
+| Bidirectional checking | Scala, Rust |
+| Typeclasses | Haskell, Rust traits, Scala givens |
+| Polymorphic literals | Haskell |
+| Strict numerics | OCaml, Rust, Gleam |
+| ADTs + pattern matching | ML, Haskell, Rust |
+
+### Runtime / Compilation
+| Feature | Inspiration |
+|---------|-------------|
+| Compile to other lang | Scala->JVM, Flix->JVM, Gleam->BEAM/JS |
+| Go as target | Novel (Go runtime without Go language) |
+| Monomorphization | Rust, C++ |
+| Whole-program compilation | MLton |
+
+### Philosophy
+| Feature | Inspiration |
+|---------|-------------|
+| FP-first, no OO | Flix, Gleam, Elm |
+| Effect tracking | Koka, Unison, Flix, Roc |
+| Pragmatic FP | Scala, F#, OCaml |
+
+### Closest Relatives
+- **Flix**: Scala - OO + effects, on JVM
+- **Marmoset**: Scala - OO + effects, on Go
+
+### Design Tension
+
+PL-theory-nerd language... but on Go runtime. Need to balance:
+
+- **Nerdy**: Typeclasses, effects, HM inference, monomorphization
+- **Pragmatic**: Simple syntax, good errors, fast compile, easy deploy
+
+There are lots of "balanced" languages already. Maybe it's okay to be a bit nerdy, as long as the developer experience is good. The Go runtime gives us pragmatic deployment benefits even if the type system is sophisticated.
+
+TBD: Find the right balance as we go.
+
+---
+
 ## Resources
 
 - [Algorithm W Step by Step](http://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.65.7733&rep=rep1&type=pdf)

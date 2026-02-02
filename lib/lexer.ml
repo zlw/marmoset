@@ -19,52 +19,53 @@ and peek_char (l : lexer) : char =
     String.get l.input l.read_position
 
 let rec next_token (l : lexer) : lexer * Token.token =
+  let pos = l.position in
   match l.ch with
   | '=' ->
       if peek_char l = '=' then
-        (read_char (read_char l), Token.init Eq "==")
+        (read_char (read_char l), Token.init ~pos Eq "==")
       else
-        (read_char l, Token.init Assign "=")
+        (read_char l, Token.init ~pos Assign "=")
   | '!' ->
       if peek_char l = '=' then
-        (read_char (read_char l), Token.init NotEq "!=")
+        (read_char (read_char l), Token.init ~pos NotEq "!=")
       else
-        (read_char l, Token.init Bang "!")
-  | '+' -> (read_char l, Token.init Plus "+")
-  | '-' -> (read_char l, Token.init Minus "-")
-  | '*' -> (read_char l, Token.init Asterisk "*")
-  | '/' -> (read_char l, Token.init Slash "/")
-  | '<' -> (read_char l, Token.init Lt "<")
-  | '>' -> (read_char l, Token.init Gt ">")
-  | ';' -> (read_char l, Token.init Semicolon ";")
-  | ':' -> (read_char l, Token.init Colon ":")
-  | '(' -> (read_char l, Token.init LParen "(")
-  | ')' -> (read_char l, Token.init RParen ")")
-  | '{' -> (read_char l, Token.init LBrace "{")
-  | '}' -> (read_char l, Token.init RBrace "}")
-  | '[' -> (read_char l, Token.init LBracket "[")
-  | ']' -> (read_char l, Token.init RBracket "]")
-  | ',' -> (read_char l, Token.init Comma ",")
+        (read_char l, Token.init ~pos Bang "!")
+  | '+' -> (read_char l, Token.init ~pos Plus "+")
+  | '-' -> (read_char l, Token.init ~pos Minus "-")
+  | '*' -> (read_char l, Token.init ~pos Asterisk "*")
+  | '/' -> (read_char l, Token.init ~pos Slash "/")
+  | '<' -> (read_char l, Token.init ~pos Lt "<")
+  | '>' -> (read_char l, Token.init ~pos Gt ">")
+  | ';' -> (read_char l, Token.init ~pos Semicolon ";")
+  | ':' -> (read_char l, Token.init ~pos Colon ":")
+  | '(' -> (read_char l, Token.init ~pos LParen "(")
+  | ')' -> (read_char l, Token.init ~pos RParen ")")
+  | '{' -> (read_char l, Token.init ~pos LBrace "{")
+  | '}' -> (read_char l, Token.init ~pos RBrace "}")
+  | '[' -> (read_char l, Token.init ~pos LBracket "[")
+  | ']' -> (read_char l, Token.init ~pos RBracket "]")
+  | ',' -> (read_char l, Token.init ~pos Comma ",")
   | '#' -> next_token (fst (read_until (read_char l) (fun c -> c <> '\n' && c <> '\000')))
   | '"' ->
       let l2, lit = read_string (read_char l) in
-      (read_char l2, Token.init String lit)
+      (read_char l2, Token.init ~pos String lit)
   | ' ' | '\t' | '\n' | '\r' -> next_token (read_char l)
-  | '\000' -> (read_char l, Token.init EOF "")
+  | '\000' -> (read_char l, Token.init ~pos EOF "")
   | _ ->
       if is_letter l.ch then
         let l2, lit = read_identifier l in
         let tt = Token.lookup_ident lit in
-        (l2, Token.init tt lit)
+        (l2, Token.init ~pos tt lit)
       else if is_digit l.ch then
         let l2, lit = read_number l in
         if is_float l2 then
           let l4, lit2 = read_number (read_char l2) in
-          (l4, Token.init Float (lit ^ "." ^ lit2))
+          (l4, Token.init ~pos Float (lit ^ "." ^ lit2))
         else
-          (l2, Token.init Int lit)
+          (l2, Token.init ~pos Int lit)
       else
-        (l, Token.init Illegal (String.make 1 l.ch))
+        (l, Token.init ~pos Illegal (String.make 1 l.ch))
 
 and read_identifier (l : lexer) : lexer * string = read_until l is_letter
 and read_number (l : lexer) : lexer * string = read_until l is_digit
@@ -88,7 +89,7 @@ and is_float (l : lexer) : bool = l.ch = '.' && is_digit (peek_char l)
 let lex (i : string) : Token.token list =
   let rec loop (l : lexer) (ts : Token.token list) =
     match ts with
-    | { token_type = EOF; literal = "" } :: _ -> List.rev ts
+    | { token_type = EOF; literal = ""; _ } :: _ -> List.rev ts
     | _ ->
         let l2, t = next_token l in
         loop l2 ([ t ] @ ts)
@@ -128,8 +129,8 @@ let%test "test_lexer" =
     3.14;
   "
   in
-  lex input
-  = [
+  let expected =
+    [
       Token.init Let "let";
       Token.init Ident "five";
       Token.init Assign "=";
@@ -225,3 +226,6 @@ let%test "test_lexer" =
       Token.init Semicolon ";";
       Token.init EOF "";
     ]
+  in
+  let actual = lex input in
+  List.length actual = List.length expected && List.for_all2 Token.equal_ignoring_pos actual expected
