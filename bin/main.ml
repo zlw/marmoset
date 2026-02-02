@@ -8,6 +8,13 @@ type config = {
   filename : string option;
 }
 
+(* Type check a program, returning Ok () or Error with message *)
+let typecheck program =
+  let env = Marmoset.Builtins.prelude_env () in
+  match Marmoset.Infer.infer_program ~env program with
+  | Ok _ -> Ok ()
+  | Error e -> Error (Marmoset.Infer.error_to_string e)
+
 let parse_args () : config =
   let engine = ref Eval in
   let benchmark = ref false in
@@ -84,11 +91,17 @@ let run_repl config =
       | Error msgs ->
           List.iter (fun msg -> print_endline msg) msgs;
           loop_eval env
-      | Ok program ->
-          let value, env' = Marmoset.Eval.eval program env in
-          let str = Marmoset.Value.to_string value in
-          print_endline ("=> " ^ str);
-          loop_eval env'
+      | Ok program -> (
+          (* Type check before running *)
+          match typecheck program with
+          | Error msg ->
+              Printf.printf "Type error: %s\n" msg;
+              loop_eval env
+          | Ok () ->
+              let value, env' = Marmoset.Eval.eval program env in
+              let str = Marmoset.Value.to_string value in
+              print_endline ("=> " ^ str);
+              loop_eval env')
   in
 
   let rec loop_vm () =
@@ -104,11 +117,17 @@ let run_repl config =
       | Error msgs ->
           List.iter (fun msg -> print_endline msg) msgs;
           loop_vm ()
-      | Ok program ->
-          let value = run_vm program in
-          let str = Marmoset.Value.to_string value in
-          print_endline ("=> " ^ str);
-          loop_vm ()
+      | Ok program -> (
+          (* Type check before running *)
+          match typecheck program with
+          | Error msg ->
+              Printf.printf "Type error: %s\n" msg;
+              loop_vm ()
+          | Ok () ->
+              let value = run_vm program in
+              let str = Marmoset.Value.to_string value in
+              print_endline ("=> " ^ str);
+              loop_vm ())
   in
 
   print_endline "Welcome to the REPL of Marmoset (Monkey) programming language, written in OCaml!";
@@ -136,28 +155,34 @@ let run_file config filename =
   match Marmoset.Parser.parse input with
   | Error msgs -> List.iter (fun msg -> print_endline msg) msgs
   | Ok program -> (
-      let run_fn =
-        match config.engine with
-        | Eval -> fun () -> run_eval program
-        | Vm -> fun () -> run_vm program
-      in
+      (* Type check before running *)
+      match typecheck program with
+      | Error msg ->
+          Printf.eprintf "Type error: %s\n" msg;
+          exit 1
+      | Ok () -> (
+          let run_fn =
+            match config.engine with
+            | Eval -> fun () -> run_eval program
+            | Vm -> fun () -> run_vm program
+          in
 
-      if config.benchmark then
-        let engine_name =
-          match config.engine with
-          | Eval -> "eval"
-          | Vm -> "vm"
-        in
-        let value, duration = time_it run_fn in
-        match value with
-        | Marmoset.Value.Error msg -> Printf.printf "ERROR: %s\n" msg
-        | _ ->
-            Printf.printf "engine=%s, result=%s, duration=%.4fs\n" engine_name (Marmoset.Value.to_string value)
-              duration
-      else
-        match run_fn () with
-        | Marmoset.Value.Error msg -> print_endline ("ERROR: " ^ msg)
-        | _ -> ())
+          if config.benchmark then
+            let engine_name =
+              match config.engine with
+              | Eval -> "eval"
+              | Vm -> "vm"
+            in
+            let value, duration = time_it run_fn in
+            match value with
+            | Marmoset.Value.Error msg -> Printf.printf "ERROR: %s\n" msg
+            | _ ->
+                Printf.printf "engine=%s, result=%s, duration=%.4fs\n" engine_name
+                  (Marmoset.Value.to_string value) duration
+          else
+            match run_fn () with
+            | Marmoset.Value.Error msg -> print_endline ("ERROR: " ^ msg)
+            | _ -> ()))
 
 let () =
   let config = parse_args () in
