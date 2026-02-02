@@ -106,16 +106,60 @@ Features that require annotations (HM can't infer these).
 - [ ] Pattern matching to extract values
 - [ ] Exhaustiveness checking in match
 
+### Result Handling with `try` (Zig-style)
+- [ ] `try expr` - propagate error, like Rust's `?` but prefix
+- [ ] `try expr else default` - provide default on error
+- [ ] `try expr else |err| handler` - transform/handle error
+
+```
+// Propagate error
+let user = try fetch_user(id)
+
+// Provide default
+let user = try fetch_user(id) else default_user
+
+// Transform error
+let user = try fetch_user(id) else |err| custom_error(err)
+
+// Handle inline
+let user = try fetch_user(id) else {
+    log("failed")
+    return err(not_found)
+}
+
+// Chaining
+fn process(id: int) => result[string, error] {
+    let user = try fetch_user(id)
+    let order = try fetch_order(user.order_id)
+    let item = try fetch_item(order.item_id)
+    ok(item.name)
+}
+```
+
+Why `try` over `?`:
+- Reads left-to-right (see `try` before expression)
+- `else` clause is natural English
+- Harder to miss than suffix `?`
+- Zig has proven it works well
+
 ### Literal Types
 - [ ] String literals: `"hello"` as a type
 - [ ] Integer literals: `5` as a type
 - [ ] Boolean literals: `true`, `false` as types
 
-### Traits / Type Classes
-- [ ] Trait definition: `trait Show { fn show(self): String }`
-- [ ] Trait implementation: `impl Show for Int { ... }`
-- [ ] Trait bounds: `fn<T: Show>(x: T): String`
+### Traits / Type Classes (Rust + TypeScript hybrid)
+- [ ] Trait definition with methods: `trait Show { show: (self) -> string }`
+- [ ] Trait definition with fields: `trait HasName { name: string }` (TS-like)
+- [ ] Trait with both: `trait Entity { id: int, show: (self) -> string }`
+- [ ] Trait composition: `trait PrintableEntity : HasName + Show { }`
+- [ ] Impl blocks: `impl user { ... }` for methods
+- [ ] Trait impl: `impl Show for user { ... }`
+- [ ] Foreign type impl: `impl Show for library.foreign_type { ... }`
+- [ ] Generic impl: `impl Show for list[a] where a: Show { ... }`
+- [ ] Trait bounds: `fn print(x: a) where a: Show`
 - [ ] Built-in traits: `Eq`, `Ord`, `Show`, `Add`, etc.
+
+See `approach.md` for full details on the impl-based dispatch model.
 
 ### Example (Phase 3 complete)
 ```
@@ -147,9 +191,22 @@ Ambitious features for later exploration.
 - [ ] Type constructors: `Functor`, `Monad`
 - [ ] Syntax TBD: `fn<F<_>: Functor, A, B>(fa: F<A>, f: fn(A): B): F<B>`
 
-### Existential Types
-- [ ] Pack/unpack existentials
-- [ ] Syntax TBD: `exists T. { value: T, show: fn(T): String }`
+### Existential Types (Trait Objects)
+- [ ] Syntax: `dyn Trait` for type-erased trait objects
+- [ ] Runtime dispatch via vtable (compiles to Go interface)
+- [ ] Heterogeneous collections: `list[dyn Show]`
+- [ ] Static dispatch by default, dynamic only when explicit
+
+```
+// Static dispatch (default) - zero cost, monomorphized
+fn print(x: a) where a: Show { x.show().puts() }
+
+// Dynamic dispatch (explicit) - runtime vtable
+fn print_dyn(x: dyn Show) { x.show().puts() }
+
+// Heterogeneous list
+let items: list[dyn Show] = [42, "hello", my_user]
+```
 
 ### Dependent Types (Maybe)
 - [ ] Types depending on values
@@ -248,21 +305,38 @@ Why not separate compilation:
 
 ### Typeclasses / Traits
 
-**Decision:** Compile-time dispatch (Haskell/Rust style, not Clojure/Elixir protocols).
+**Decision:** Rust-like `impl` blocks with TypeScript-like structural traits.
 
-- Typeclasses are a frontend concept (type checking, inference)
-- By codegen time, everything is concrete
-- Maps to monomorphized Go functions
+**Traits:**
+- Can have methods AND fields (unlike Rust, like TypeScript)
+- Structural satisfaction (like Go interfaces)
+- Composition with `:`
+
+**Dispatch:**
+- Static by default (monomorphization)
+- Dynamic when explicit (`dyn Trait`) - compiles to Go interface
+
+**Impl blocks:**
+- One syntax for everything
+- `impl Type { ... }` - add methods
+- `impl Trait for Type { ... }` - implement trait
+- `impl foreign.Type { ... }` - extend foreign types (same syntax!)
+
+**Union types + traits:**
+- Union satisfies trait if ALL variants satisfy it
+- Monomorphize when concrete type known at compile time
+- Runtime dispatch (type switch) when unknown
 
 Comparison:
-| Language | Mechanism | Dispatch |
-|----------|-----------|----------|
-| Haskell | Typeclasses | Compile-time |
-| Rust | Traits | Compile-time |
-| Swift | Protocols | Compile + runtime |
-| Clojure/Elixir | Protocols | Runtime |
+| Language | Mechanism | Dispatch | Fields in traits? |
+|----------|-----------|----------|-------------------|
+| Haskell | Typeclasses | Dictionary passing | No |
+| Rust | Traits + impl | Monomorphization | No |
+| Swift | Protocols | Mix | Yes |
+| TypeScript | Interfaces | Structural | Yes |
+| **Marmoset** | **Traits + impl** | **Mono + dyn** | **Yes** |
 
-We get zero runtime cost, but can't add instances dynamically (fine for our use case).
+See `approach.md` for full details and rationale.
 
 ---
 
