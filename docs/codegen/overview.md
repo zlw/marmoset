@@ -38,13 +38,16 @@ Typed AST → Bytecode compiler → Bytecode → VM execution
 **Files:**
 ```
 lib/backend/vm/
-├── compiler.ml      # Typed AST → Bytecode
+├── compiler.ml      # AST → Bytecode
 ├── code.ml          # Bytecode definitions
 ├── symbol_table.ml  # Symbol management
-├── vm.ml            # Bytecode interpreter
+└── machine.ml       # Bytecode interpreter
+
+lib/backend/interpreter/
 ├── value.ml         # Runtime values
 ├── env.ml           # Environments
-└── builtins.ml      # Built-in functions
+├── eval.ml          # Tree-walking interpreter
+└── builtins.ml      # Built-in functions (runtime)
 ```
 
 ### Go Backend (Compiled)
@@ -65,9 +68,8 @@ Typed AST → Go codegen → Go source → go build → Native binary
 **Files:**
 ```
 lib/backend/go/
-├── codegen.ml       # Typed AST → Go source
-├── emit.ml          # Go code emission helpers
-└── prelude.go       # Runtime support (copied to output)
+├── emitter.ml       # AST → Go source
+└── runtime.go       # Runtime support (copied to output)
 ```
 
 ## User Experience
@@ -244,33 +246,39 @@ This file is copied to the temp build directory.
 
 ```
 lib/
+├── lib.ml                    # Re-exports for external use
+│
 ├── frontend/
-│   ├── lexer.ml
-│   ├── token.ml
-│   ├── parser.ml
-│   ├── ast.ml
-│   ├── types.ml
-│   ├── infer.ml
-│   ├── unify.ml
-│   ├── typecheck.ml
-│   └── source_loc.ml
-│
-├── backend/
-│   ├── vm/
-│   │   ├── compiler.ml
-│   │   ├── code.ml
-│   │   ├── symbol_table.ml
-│   │   ├── vm.ml
-│   │   ├── value.ml
-│   │   ├── env.ml
-│   │   └── builtins.ml
+│   ├── syntax/               # Library: Syntax
+│   │   ├── lexer.ml
+│   │   ├── token.ml
+│   │   ├── parser.ml
+│   │   └── ast.ml
 │   │
-│   └── go/
-│       ├── codegen.ml
-│       ├── emit.ml
-│       └── prelude.go
+│   └── typecheck/            # Library: Typecheck
+│       ├── types.ml
+│       ├── unify.ml
+│       ├── infer.ml
+│       ├── checker.ml
+│       ├── source_loc.ml
+│       └── builtins.ml       # Type signatures
 │
-└── marmoset.ml
+└── backend/
+    ├── interpreter/          # Library: Interpreter
+    │   ├── value.ml
+    │   ├── env.ml
+    │   ├── eval.ml
+    │   └── builtins.ml       # Runtime implementations
+    │
+    ├── vm/                   # Library: Vm
+    │   ├── compiler.ml
+    │   ├── code.ml
+    │   ├── symbol_table.ml
+    │   └── machine.ml
+    │
+    └── go/                   # Library: Codegen
+        ├── emitter.ml
+        └── runtime.go
 ```
 
 ## Comparison with Other Languages

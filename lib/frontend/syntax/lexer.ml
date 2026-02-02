@@ -67,7 +67,7 @@ let rec next_token (l : lexer) : lexer * Token.token =
       else
         (l, Token.init ~pos Illegal (String.make 1 l.ch))
 
-and read_identifier (l : lexer) : lexer * string = read_until l is_letter
+and read_identifier (l : lexer) : lexer * string = read_until l is_ident_char
 and read_number (l : lexer) : lexer * string = read_until l is_digit
 and read_string (l : lexer) : lexer * string = read_until l (fun c -> c <> '"' && c <> '\000')
 
@@ -84,6 +84,7 @@ and read_until (l : lexer) (f : char -> bool) : lexer * string =
 
 and is_letter (c : char) : bool = ('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z') || c = '_'
 and is_digit (c : char) : bool = '0' <= c && c <= '9'
+and is_ident_char (c : char) : bool = is_letter c || is_digit c
 and is_float (l : lexer) : bool = l.ch = '.' && is_digit (peek_char l)
 
 let lex (i : string) : Token.token list =
@@ -229,3 +230,13 @@ let%test "test_lexer" =
   in
   let actual = lex input in
   List.length actual = List.length expected && List.for_all2 Token.equal_ignoring_pos actual expected
+
+let%test "identifiers with digits" =
+  let input = "let foo5 = 5; let x2y = foo5" in
+  let tokens = lex input in
+  let idents = List.filter (fun t -> t.Token.token_type = Token.Ident) tokens in
+  (* foo5 appears twice (definition and use), x2y appears once *)
+  List.length idents = 3
+  && (List.nth idents 0).literal = "foo5"
+  && (List.nth idents 1).literal = "x2y"
+  && (List.nth idents 2).literal = "foo5"
