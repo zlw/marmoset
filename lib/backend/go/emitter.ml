@@ -825,3 +825,27 @@ let%test "emit negative string index" =
   match compile_string "let s = \"hello\"; s[-2]" with
   | Ok code -> string_contains code "s[len(s)-2]"
   | Error _ -> false
+
+let%test "if statement without else in function followed by return" =
+  match compile_string "let fib = fn(n) { if (n < 2) { return n }; return n + 1 }; fib(5)" with
+  | Ok code ->
+      (* Should emit as regular if statement, not wrapped in function *)
+      string_contains code "if (n < int64(2))"
+      && (not (string_contains code "func() int64"))
+      && string_contains code "return n"
+  | Error _ -> false
+
+let%test "if statement with else in function followed by return" =
+  match compile_string "let test = fn(x) { if (x > 0) { return 1 } else { return -1 }; return 0 }; test(5)" with
+  | Ok code ->
+      (* Should compile without nil errors *)
+      string_contains code "if (x > int64(0))" && string_contains code "} else {"
+  | Error _ -> false
+
+let%test "fibonacci with if statement and subsequent return" =
+  match compile_string "let fib = fn(n) { if (n < 2) { return n }; return fib(n - 1) + fib(n - 2) }; fib(10)" with
+  | Ok code ->
+      string_contains code "func fib_int64(n int64) int64"
+      && string_contains code "if (n < int64(2))"
+      && not (string_contains code "return nil")
+  | Error _ -> false
