@@ -239,12 +239,49 @@ let%test "emit addition" =
   emit_program "1 + 2" = "package main\n\nfunc main() {\n\t_ = (1 + 2)\n}\n"
 ```
 
+## Known Limitations
+
+### Polymorphic Higher-Order Functions
+**Status**: Not yet supported
+**Example that fails**:
+```
+let map = fn(arr, f) {
+    let iter = fn(arr, accumulated) {
+        if (len(arr) == 0) { accumulated }
+        else { iter(rest(arr), push(accumulated, f(first(arr)))) }
+    };
+    iter(arr, [])
+};
+```
+
+**Issue**: 
+- Type checker correctly infers polymorphic function types
+- Code generator attempts monomorphization but fails because:
+  - Function parameters (like `f`) have polymorphic types
+  - Current monomorphization only handles concrete type instantiations
+  - No way to emit Go code for unknown polymorphic function parameters
+
+**Solution** (Phase 3+):
+- Implement constraint-based monomorphization
+- Generate specialized versions of functions for each concrete type
+- Handle function parameters by generating adapter functions
+- Or: use Go generics (1.18+) for polymorphic functions
+
+### Type Variables in Generated Code
+**Issue**: When monomorphization encounters unresolved type variables, it emits `T<number>` or `UNKNOWN` in Go code
+**Desired**: Should fail at type check time or generate valid Go
+
+**Solution**: Strengthen monomorphization to reject programs with unresolved type variables
+
 ## Next Steps
 
-1. [ ] Implement `emit_type` - convert Marmoset type to Go type string
-2. [ ] Implement `emit_expr` - emit expressions
-3. [ ] Implement `emit_stmt` - emit statements  
-4. [ ] Implement `emit_program` - wrap in package/main
-5. [ ] Add runtime.go with puts
-6. [ ] Add CLI command `marmoset build`
-7. [ ] Test with simple programs
+1. [x] Implement `emit_type` - convert Marmoset type to Go type string
+2. [x] Implement `emit_expr` - emit expressions
+3. [x] Implement `emit_stmt` - emit statements  
+4. [x] Implement `emit_program` - wrap in package/main
+5. [x] Add runtime.go with puts
+6. [x] Add CLI command `marmoset build`
+7. [x] Test with simple programs
+8. [ ] **Phase 2 (Type Annotations)** - Add explicit type annotations to enable better inference
+9. [ ] **Phase 3 (Better Monomorphization)** - Handle polymorphic higher-order functions properly
+10. [ ] Consider using Go generics for polymorphic functions
