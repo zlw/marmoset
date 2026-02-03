@@ -343,9 +343,13 @@ Then create PR or notify of changes.
   - Test: `test/test_typecheck_and_codegen.sh` TEST 10
   - Status: Needs parser fix
 
-- **BUG #2:** Type inference shows type variables in conditional branches
+- **BUG #2:** Type inference shows type variables with multiple recursive calls in binary ops
+  - Pattern: `fn(n: int) -> int { if (n < 2) { n } else { f(n-1) + f(n-1) } }`
+  - Root cause: Type inference for binary op with two recursive function calls in conditional doesn't fully resolve
+  - Error shows: `expected int but inferred t2` (type variable instead of actual type)
   - Test: `test/test_typecheck_and_codegen.sh` TEST 13
-  - Status: Needs type inference fix
+  - Workaround: Manually remove return type annotation for now
+  - Status: Complex - requires deep investigation of unification in recursive contexts
 
 ### Ongoing Work:
 
