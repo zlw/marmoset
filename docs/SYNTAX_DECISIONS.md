@@ -203,16 +203,23 @@ match value {
 ### Enum/Variant Definition (Phase 3)
 ```marmoset
 // Phase 3 syntax (not Phase 2):
+// Tagged unions with data (Rust/OCaml-style, not C-style enums)
+
 enum option[a] {
     some(a)
     none
+}
+
+enum result[a, e] {
+    ok(a)
+    err(e)
 }
 
 // Custom error types for result handling
 enum user_repo_error {
     not_saved
     not_unique
-    full_storage
+    full_storage(string)  // Can carry data
 }
 
 // Using in result type
@@ -220,16 +227,20 @@ fn persist_user(u: user) => result[user, user_repo_error] {
     ...
 }
 
-// Pattern matching on result
+// Pattern matching on result - extracts data from variants
 match persist_user(user) {
     case ok(saved_user) => ...
     case err(not_saved) => ...
     case err(not_unique) => ...
-    case err(full_storage) => ...
+    case err(full_storage(msg)) => println(msg)
 }
+
+// Constructors are functions
+let x = some(5)           // x: option[int]
+let y = err(full_storage("disk full"))  // y: result[user, user_repo_error]
 ```
 
-**Key principle**: Custom error types are just enums. Use specific error enums in result types for exhaustive matching and clear error semantics. No catch-all `error` type needed.
+**Key principle**: Enums are tagged unions with data (like Rust, OCaml, not C). Each variant can carry associated data. Pattern matching extracts the data. Compile to Go `interface{}` with runtime type switches or discriminated unions.
 
 ### Trait Definition (Phase 3)
 ```marmoset
@@ -274,8 +285,10 @@ The following are Phase 3+ and should NOT be implemented in Phase 2:
 - ❌ Union types as a type construct (Phase 3) — syntax only
 - ❌ Pattern matching (Phase 3)
 - ❌ Enum/variant definitions (Phase 3)
-  - Including custom error types: `enum user_repo_error { not_saved, not_unique, full_storage }`
-  - In Phase 2, you can write `result[user, error]` but custom enums come in Phase 3
+  - Tagged unions with data: `enum option[a] { some(a), none }`
+  - Custom error types: `enum user_repo_error { not_saved, not_unique, full_storage(string) }`
+  - In Phase 2, you can write `result[user, user_repo_error]` as a type, but enum *definitions* come in Phase 3
+  - Pattern matching on variants also Phase 3
 - ❌ Try expressions (Phase 3)
 - ❌ Effect system semantics (Phase 5) — only syntax parsing in Phase 2
 - ❌ Full bidirectional type checking (Phase 2.5 or Phase 3)
@@ -301,7 +314,8 @@ Phase 2 = **Syntax + Minimal Checking Only**
 | Trait definitions | `trait show { }` | 3 | ✗ Phase 3 |
 | Impl blocks | `impl show for int` | 3 | ✗ Phase 3 |
 | Enum definitions | `enum option[a] { some(a), none }` | 3 | ✗ Phase 3 |
-| Custom error types | `enum user_repo_error { not_saved }` | 3 | ✗ Phase 3 |
+| Tagged unions with data | `some(5)`, `err(msg)` constructors | 3 | ✗ Phase 3 |
+| Custom error types | `enum user_repo_error { not_saved, full_storage(string) }` | 3 | ✗ Phase 3 |
 | Union types | `int \| string` | 3 | ✗ Phase 3 |
 | Try expressions | `try expr else ...` | 3 | ✗ Phase 3 |
 | Pattern matching | `match { case ... }` | 3 | ✗ Phase 3 |
