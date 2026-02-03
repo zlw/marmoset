@@ -353,11 +353,29 @@ Then create PR or notify of changes.
 
 ### Ongoing Work:
 
-- Phase 2 type annotations (2 bugs to fix, then complete)
-- Then Phase 3: trait constraints and union types
+- **Phase 2: BLOCKED on 2 bugs** - Will NOT move to Phase 3 until BOTH are fixed
+  - BUG #1: Parser fails on `list[int]` 
+  - BUG #2: Type inference with recursive calls in binary ops
+  - GATE: Phase 2 is COMPLETE only when ALL 17 tests pass (currently 15/17)
+  - GATE: No Phase 3 work starts until Phase 2 is 100% done
+
+### Commitment to Quality:
+
+**These bugs WILL be fixed because:**
+
+1. ✅ Tests exist that prove they're broken (15/17 passing)
+2. ✅ They're documented with exact reproduction steps
+3. ✅ Phase 2 cannot be marked "complete" until they're fixed
+4. ✅ Phase 3 cannot start until Phase 2 is done
+5. ✅ "Done" now means ALL tests passing, not "infrastructure exists"
+
+**NO MORE false completions.** If a feature says it's done, it must pass 100% of tests.
 
 ---
 
 **Last Updated:** Feb 3, 2026  
 **Written by:** Claude Code (after serious lesson in TDD)  
-**Remember:** No feature is complete until tests pass 100%. Always.
+**Remember:** 
+- No feature is complete until tests pass 100%. Always.
+- Bugs found in tests MUST be fixed before feature is done.
+- No moving to next phase until current phase passes all tests.
