@@ -332,15 +332,52 @@ and parse_if_expression (p : parser) : (parser * AST.expression, parser) result 
   let* p2 = expect_peek p Token.LParen in
   let* p3, cond = parse_expression (next_token p2) prec_lowest in
   let* p4 = expect_peek p3 Token.RParen in
-  let* p5 = expect_peek p4 Token.LBrace in
-  let* p6, cons = parse_block_statement p5 in
 
-  if not (peek_token_is p6 Token.Else) then
-    Ok (p6, mk_expr pos (AST.If (cond, cons, None)))
+  (* After ), check for { or return (with early return support) *)
+  let* p5, cons =
+    if peek_token_is p4 Token.LBrace then
+      (* Normal: { ... } *)
+      let* p5 = expect_peek p4 Token.LBrace in
+      let* p6, cons = parse_block_statement p5 in
+      Ok (p6, cons)
+    else if peek_token_is p4 Token.Return then
+      (* New: return expr without braces *)
+      let p5 = next_token p4 in
+      (* Now at 'return' token *)
+      let pos_ret = p5.curr_token.pos in
+      let* p6, expr = parse_expression (next_token p5) prec_lowest in
+      let p7 = skip p6 Token.Semicolon in
+      let ret_stmt = mk_stmt pos_ret (AST.Return expr) in
+      Ok (p7, mk_stmt pos_ret (AST.Block [ ret_stmt ]))
+    else
+      Error (add_error p4 "Expected '{' or 'return' after if condition")
+  in
+
+  if not (peek_token_is p5 Token.Else) then
+    Ok (p5, mk_expr pos (AST.If (cond, cons, None)))
   else
-    let* p7 = expect_peek (next_token p6) Token.LBrace in
-    let* p8, alt = parse_block_statement p7 in
-    Ok (p8, mk_expr pos (AST.If (cond, cons, Some alt)))
+    let p6 = next_token p5 in
+    (* Now at 'else' token *)
+    let* p7, alt =
+      if peek_token_is p6 Token.LBrace then
+        (* Normal: else { ... } *)
+        let* p7 = expect_peek p6 Token.LBrace in
+        let* p8, alt = parse_block_statement p7 in
+        Ok (p8, alt)
+      else if peek_token_is p6 Token.Return then
+        (* New: else return expr without braces *)
+        let p7 = next_token p6 in
+        (* Now at 'return' token *)
+        let pos_ret = p7.curr_token.pos in
+        let* p8, expr = parse_expression (next_token p7) prec_lowest in
+        let p9 = skip p8 Token.Semicolon in
+        let ret_stmt = mk_stmt pos_ret (AST.Return expr) in
+        Ok (p9, mk_stmt pos_ret (AST.Block [ ret_stmt ]))
+      else
+        (* Error: else without block or return *)
+        Error (add_error p6 "Expected '{' or 'return' after 'else'")
+    in
+    Ok (p7, mk_expr pos (AST.If (cond, cons, Some alt)))
 
 and parse_block_statement (p : parser) : (parser * AST.statement, parser) result =
   let pos = p.curr_token.pos in
