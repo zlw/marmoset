@@ -1,0 +1,221 @@
+╔════════════════════════════════════════════════════════════════════════════════╗
+║  POLYMORPHIC HOF MONOMORPHIZATION - QUICK REFERENCE                           ║
+╚════════════════════════════════════════════════════════════════════════════════╝
+
+THE PROBLEM
+───────────────────────────────────────────────────────────────────────────────
+let map = fn(arr, f) { ... f(...) ... }
+map([1,2,3], fn(x) { x*2 })
+
+ERROR: Generated Go references undefined type variables (T107, UNKNOWN)
+
+ROOT CAUSE
+───────────────────────────────────────────────────────────────────────────────
+Current monomorphization works only at call sites with CONCRETE types.
+When f: a -> b (polymorphic), there's no concrete type to instantiate.
+The system assumes all functions are defined, but f is a PARAMETER.
+
+HM SYSTEM: Sufficient ✓  |  CODEGEN STRATEGY: Needs enhancement ✗
+
+
+FOUR SOLUTIONS
+───────────────────────────────────────────────────────────────────────────────
+
+┌─ RECOMMENDED ─────────────────────────────────────────────────────────────┐
+│ 1. CONSTRAINT-BASED MONOMORPHIZATION                                     │
+│    Effort: Medium      Timeline: 5 days    Phase: 2 (minimal)             │
+│    Philosophy: ✓ Transparent               Performance: Excellent         │
+│                                                                            │
+│    How: Collect type constraints at call sites, compute specializations  │
+│          recursively, emit specialized functions                          │
+│                                                                            │
+│    Requires: Type annotations                                             │
+│      let map = fn(arr: [a], f: a -> b) -> [b] { ... }                   │
+│                                                                            │
+│    Pros: Full visibility, zero overhead, sets up Phase 3                 │
+│    Cons: Requires Phase 2, more complex than Go generics                 │
+│                                                                            │
+│    Generated code: Inspectable, optimizable                               │
+└────────────────────────────────────────────────────────────────────────────┘
+
+┌─ FAST MVP ────────────────────────────────────────────────────────────────┐
+│ 2. GO 1.18+ GENERICS                                                      │
+│    Effort: Easy        Timeline: 3 days    Phase: Now                     │
+│    Philosophy: ✗ Black box                 Performance: Good              │
+│                                                                            │
+│    How: Replace mangled names with Go generic syntax [T any, U any]     │
+│          Let Go compiler handle monomorphization                          │
+│                                                                            │
+│    Requires: Go 1.18+ (already used for runtime!)                        │
+│                                                                            │
+│    Pros: Minimal code changes, works immediately                         │
+│    Cons: Can't inspect generated code, Go version dependency             │
+│                                                                            │
+│    Generated code: Hidden inside Go compiler                              │
+└────────────────────────────────────────────────────────────────────────────┘
+
+┌─ NOT RECOMMENDED ─────────────────────────────────────────────────────────┐
+│ 3. CLOSURE WRAPPING / RUNTIME DISPATCH                                    │
+│    Effort: Medium-Hard Timeline: 4 days    Phase: Now                     │
+│    Philosophy: ✗ Type-unsafe               Performance: Poor              │
+│                                                                            │
+│    How: Use interface{} for all values, type switch at runtime           │
+│                                                                            │
+│    Cons: Type safety lost, runtime overhead, contradicts HM              │
+│    USE ONLY IF: Absolutely no other option (very unlikely)               │
+└────────────────────────────────────────────────────────────────────────────┘
+
+┌─ LONG-TERM ───────────────────────────────────────────────────────────────┐
+│ 4. TYPE CLASSES / TRAIT SYSTEM (Phase 3)                                  │
+│    Effort: Hard        Timeline: 4-6 weeks Phase: 3                       │
+│    Philosophy: ✓ Correct               Performance: Excellent             │
+│                                                                            │
+│    How: Add trait definitions, impl blocks, where-clauses, dispatch      │
+│                                                                            │
+│    Enables: Whole polymorphic ecosystem (Serialize, Show, Eq, Ord, etc.) │
+│                                                                            │
+│    Pros: Most powerful, industry-proven (Rust, Haskell)                  │
+│    Cons: Significant effort, defers HOF support until Phase 3            │
+└────────────────────────────────────────────────────────────────────────────┘
+
+
+DECISION MATRIX
+───────────────────────────────────────────────────────────────────────────────
+
+TIMELINE vs PHILOSOPHY:
+
+  Need HOF now?          → Go 1.18+ generics (3 days)
+  Can wait 1 week?       → Constraint-based (5 days, recommended)
+  Planning 3+ months?    → Phase 3 traits (4-6 weeks, best long-term)
+
+PHILOSOPHY vs PRIORITY:
+
+  Transparency is core?   → Constraint-based mono
+  Speed to MVP first?     → Go generics
+  Full ecosystem later?   → Plan Phase 3, use Go generics for now
+
+
+PHASE 2 REQUIREMENT
+───────────────────────────────────────────────────────────────────────────────
+
+CONSTRAINT-BASED needs MINIMAL Phase 2 (type annotations):
+
+  ✓ Parser: Function parameter type annotations        (~1 day)
+  ✓ Typechecker: Use annotations to seed type vars    (~1 day)
+  ✗ Traits: NOT needed yet (Phase 3)
+  ✗ Impl blocks: NOT needed yet (Phase 3)
+
+Example:
+  let map = fn(arr: [a], f: a -> b) -> [b] { ... }
+                    ↑      ↑              ↑
+                 annotations only, no trait system
+
+
+IMPLEMENTATION ROADMAP
+───────────────────────────────────────────────────────────────────────────────
+
+IF CHOOSING CONSTRAINT-BASED:
+
+  Phase 2 (2 days):
+    Day 1: Parser + annotation syntax
+    Day 2: Typechecker integration
+
+  Monomorphization (3 days):
+    Day 1: Constraint collection (collect_specialization_constraints)
+    Day 2: Constraint solving (compute_specializations)
+    Day 1: Recursive emission (emit_specialized_with_bindings)
+    Day 4: Integration + testing
+
+  Total: ~5 days from start to working HOF
+
+
+IF CHOOSING GO GENERICS:
+
+  (~3 days):
+    Day 1: Change type_to_go to emit [T any] syntax
+    Day 2: Adapt mangle_func_name to use generic syntax
+    Day 3: Testing + edge cases
+
+
+KEY FILES
+───────────────────────────────────────────────────────────────────────────────
+
+lib/backend/go/emitter.ml
+  ├─ Line 11-28: mangle_type (type name generation)
+  ├─ Line 24-28: mangle_func_name (where mangling happens)
+  ├─ Line 197-219: collect_insts_expr (where problem manifests)
+  ├─ Line 543-584: emit_specialized_func (what fails for HOF params)
+  └─ Line 590-620: emit_program_with_typed_env (three-pass pipeline)
+
+lib/frontend/typecheck/infer.ml
+  ├─ Line 1-88: Type environment and instantiation (HM algorithm)
+  ├─ Line 314-337: infer_function (parameter type inference)
+  └─ Line 343-362: infer_call (call site type unification)
+
+docs/codegen/backend-architecture.md
+  └─ "Known Limitations" section describes the problem
+
+
+KEY INSIGHTS
+───────────────────────────────────────────────────────────────────────────────
+
+1. HM TYPE SYSTEM IS SUFFICIENT
+   The type system works perfectly. The limitation is entirely in codegen
+   strategy (monomorphization), not type theory.
+
+2. AVAILABLE AT CODEGEN TIME
+   ✓ Full typed_env with all polymorphic types
+   ✓ Substitutions from unification
+   ✓ Use-site type information
+   ✗ Explicit specialization requirements (need to compute)
+
+3. NOT AN IMPOSSIBLE PROBLEM
+   - Haskell, Rust, Scala all solved this
+   - Techniques are well-known
+   - Just requires choosing philosophy vs. speed trade-off
+
+4. EITHER/OR
+   - Constraint-based: Best long-term, fits design goal
+   - Go generics: Best short-term, trade-off is acceptable
+
+5. ALIGNS WITH ROADMAP
+   - Constraint-based enables Phase 3 traits
+   - Go generics is compatible with traits later
+   - Both paths are valid
+
+
+RECOMMENDATION
+───────────────────────────────────────────────────────────────────────────────
+
+IMPLEMENT: Constraint-based monomorphization (RECOMMENDED)
+
+BECAUSE:
+  ✓ Aligns with "transparent, readable Go" design goal
+  ✓ Sets up Phase 3 traits infrastructure
+  ✓ Only 5 days total
+  ✓ Zero runtime overhead
+  ✓ Proves you have control over your compiler
+  ✓ Enables good debugging and optimization
+
+ALTERNATIVE: Go generics if you need MVP in 3 days
+  (But plan to migrate to constraint-based later)
+
+
+NEXT STEPS
+───────────────────────────────────────────────────────────────────────────────
+
+1. Choose: Constraint-based OR Go generics
+2. If constraint-based: Start with Phase 2 (type annotations)
+3. Create task: "Implement [chosen approach]"
+4. Estimate: 3-5 days depending on choice
+5. Start building!
+
+
+═════════════════════════════════════════════════════════════════════════════════
+
+For details, see:
+  - HOF_SUMMARY.md (6 KB, 5-10 min read)
+  - ANALYSIS_HOF_MONOMORPHIZATION.md (24 KB, 30-45 min read)
+  - APPROACH_COMPARISON.md (14 KB, 20-30 min read)
+
+═════════════════════════════════════════════════════════════════════════════════
