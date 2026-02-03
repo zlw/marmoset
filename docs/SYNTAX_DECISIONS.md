@@ -207,7 +207,29 @@ enum option[a] {
     some(a)
     none
 }
+
+// Custom error types for result handling
+enum user_repo_error {
+    not_saved
+    not_unique
+    full_storage
+}
+
+// Using in result type
+fn persist_user(u: user) => result[user, user_repo_error] {
+    ...
+}
+
+// Pattern matching on result
+match persist_user(user) {
+    case ok(saved_user) => ...
+    case err(not_saved) => ...
+    case err(not_unique) => ...
+    case err(full_storage) => ...
+}
 ```
+
+**Key principle**: Custom error types are just enums. Use specific error enums in result types for exhaustive matching and clear error semantics. No catch-all `error` type needed.
 
 ### Trait Definition (Phase 3)
 ```marmoset
@@ -252,11 +274,15 @@ The following are Phase 3+ and should NOT be implemented in Phase 2:
 - ❌ Union types as a type construct (Phase 3) — syntax only
 - ❌ Pattern matching (Phase 3)
 - ❌ Enum/variant definitions (Phase 3)
+  - Including custom error types: `enum user_repo_error { not_saved, not_unique, full_storage }`
+  - In Phase 2, you can write `result[user, error]` but custom enums come in Phase 3
 - ❌ Try expressions (Phase 3)
 - ❌ Effect system semantics (Phase 5) — only syntax parsing in Phase 2
 - ❌ Full bidirectional type checking (Phase 2.5 or Phase 3)
 
 Phase 2 = **Syntax + Minimal Checking Only**
+
+**Important**: Users can already write `result[user, user_repo_error]` as a type annotation in Phase 2 (it's just a generic type). The enum *definition* and *pattern matching* come in Phase 3. Phase 2 just accepts the syntax.
 
 ---
 
@@ -274,6 +300,8 @@ Phase 2 = **Syntax + Minimal Checking Only**
 | Type ascription | `(expr : type)` | 2 | ✓ Phase 2 |
 | Trait definitions | `trait show { }` | 3 | ✗ Phase 3 |
 | Impl blocks | `impl show for int` | 3 | ✗ Phase 3 |
+| Enum definitions | `enum option[a] { some(a), none }` | 3 | ✗ Phase 3 |
+| Custom error types | `enum user_repo_error { not_saved }` | 3 | ✗ Phase 3 |
 | Union types | `int \| string` | 3 | ✗ Phase 3 |
 | Try expressions | `try expr else ...` | 3 | ✗ Phase 3 |
 | Pattern matching | `match { case ... }` | 3 | ✗ Phase 3 |
