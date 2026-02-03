@@ -386,14 +386,18 @@ and infer_function_with_annotations env params return_annot body =
           (* Check that inferred return type matches annotation *)
           match unify body_type' expected_ret_type with
           | Error _e -> Error (error_at_stmt (ReturnTypeMismatch (expected_ret_type, body_type')) body)
-          | Ok subst2 ->
+          | Ok subst2 -> (
               let final_subst = compose_substitution subst subst2 in
               let final_body_type = apply_substitution subst2 body_type' in
-              let param_types' = List.map (apply_substitution final_subst) param_types in
-              let func_type =
-                List.fold_right (fun param_t acc -> TFun (param_t, acc)) param_types' final_body_type
-              in
-              Ok (final_subst, func_type)))
+              (* Also validate that all individual return statements match the expected type *)
+              match validate_return_statements env' expected_ret_type body with
+              | Error e -> Error e
+              | Ok () ->
+                  let param_types' = List.map (apply_substitution final_subst) param_types in
+                  let func_type =
+                    List.fold_right (fun param_t acc -> TFun (param_t, acc)) param_types' final_body_type
+                  in
+                  Ok (final_subst, func_type))))
 
 (* ============================================================
    Function Calls
@@ -605,18 +609,57 @@ and infer_statement env stmt =
   | AST.Block stmts -> infer_block env stmts
   | AST.Let let_binding -> infer_let env let_binding.name let_binding.value
 
+(* Validate that all return statements in a statement match the expected return type *)
+and validate_return_statements (env : type_env) (expected_type : mono_type) (stmt : AST.statement) :
+    (unit, infer_error) result =
+  match stmt.stmt with
+  | AST.Return expr -> (
+      (* Infer the type of the returned expression *)
+      match infer_expression env expr with
+      | Error e -> Error e
+      | Ok (_subst, inferred_type) -> (
+          (* Check if it matches the expected type *)
+          match Unify.unify inferred_type expected_type with
+          | Ok _ -> Ok ()
+          | Error _ -> Error (error_at_stmt (ReturnTypeMismatch (expected_type, inferred_type)) stmt)))
+  | AST.Block stmts ->
+      (* Validate all statements in the block *)
+      let rec validate_list stmts =
+        match stmts with
+        | [] -> Ok ()
+        | s :: rest -> (
+            match validate_return_statements env expected_type s with
+            | Error e -> Error e
+            | Ok () -> validate_list rest)
+      in
+      validate_list stmts
+  | AST.ExpressionStmt expr_stmt -> (
+      (* Check if the expression contains an if with returns *)
+      match expr_stmt.expr with
+      | AST.If (_cond, cons, alt) -> (
+          (* Validate consequence *)
+          match validate_return_statements env expected_type cons with
+          | Error e -> Error e
+          | Ok () -> (
+              (* Validate alternative if present *)
+              match alt with
+              | None -> Ok ()
+              | Some alt_stmt -> validate_return_statements env expected_type alt_stmt))
+      | _ -> Ok ())
+  | AST.Let _ -> Ok () (* Let statements don't have returns *)
+
 (* Infer a let binding.
    
-   For recursive functions, we use the following approach:
-   1. Create a fresh type variable for the binding
-   2. Add the binding to the environment with that type variable
-   3. Infer the expression type (now the name is in scope for recursion)
-   4. Unify the inferred type with the type variable
-   5. Generalize as usual
-   
-   This allows the function to reference itself in its body.
-   We treat ALL let bindings this way for simplicity - it's harmless
-   for non-recursive bindings and enables recursion for functions.
+    For recursive functions, we use the following approach:
+    1. Create a fresh type variable for the binding
+    2. Add the binding to the environment with that type variable
+    3. Infer the expression type (now the name is in scope for recursion)
+    4. Unify the inferred type with the type variable
+    5. Generalize as usual
+    
+    This allows the function to reference itself in its body.
+    We treat ALL let bindings this way for simplicity - it's harmless
+    for non-recursive bindings and enables recursion for functions.
 *)
 and infer_let env name expr =
   (* Check if the expression is a function with a return type annotation *)
