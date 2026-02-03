@@ -100,8 +100,10 @@ and parse_type_expr (p : parser) : (parser * AST.type_expr, parser) result =
     (* Check for generic application: list[int], map[string, int], etc. *)
     if curr_token_is p2 Token.LBracket then
       let* p3, type_args = parse_type_expr_list (next_token p2) in
-      let* p4 = expect_peek p3 Token.RBracket in
-      Ok (p4, AST.TApp (ident, type_args))
+      if curr_token_is p3 Token.RBracket then
+        Ok (next_token p3, AST.TApp (ident, type_args))
+      else
+        Error (peek_error p3 Token.RBracket)
     else
       Ok (p2, AST.TCon ident)
   else if curr_token_is p Token.Function then
