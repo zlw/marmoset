@@ -150,6 +150,24 @@ test_case "Phase 1 fibonacci (no annotations)" \
     "true"
 
 echo ""
+echo "-- PHASE 3: EARLY RETURN SYNTAX TESTS --"
+test_case "Early return without braces (consequence)" \
+    'let fib = fn(n: int) -> int { if (n < 2) return n else { fib(n - 1) + fib(n - 2) } }; fib(5)' \
+    "true"
+
+test_case "Early return in both branches" \
+    'let abs = fn(x: int) -> int { if (x < 0) return -x else return x; }; abs(-5)' \
+    "true"
+
+test_case "Early return with complex expression" \
+    'let max = fn(a: int, b: int) -> int { if (a < b) return b else return a; }; max(3, 7)' \
+    "true"
+
+test_case "Nested early returns" \
+    'let f = fn(n: int) -> int { if (n < 0) return -n else { if (n < 1) return 0 else return n * 2 } }; f(5)' \
+    "true"
+
+echo ""
 echo "-- CODEGEN OUTPUT TESTS --"
 # These tests check that Go code is actually being generated
 TMPGO=$(mktemp)
