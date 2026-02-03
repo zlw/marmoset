@@ -182,7 +182,11 @@ let rec infer_expression (env : type_env) (expr : AST.expression) : (substitutio
   (* If expressions *)
   | AST.If (condition, consequence, alternative) -> infer_if env condition consequence alternative
   (* Function literals *)
-  | AST.Function (params, body) -> infer_function env params body
+  | AST.Function f ->
+      (* Phase 2: Ignore generics and annotations for now, just use param names *)
+      let param_names = List.map fst f.params in
+      let param_exprs = List.map (fun name -> AST.mk_expr (AST.Identifier name)) param_names in
+      infer_function env param_exprs f.body
   (* Function calls *)
   | AST.Call (func, args) -> infer_call env func args
   (* Arrays *)
@@ -544,7 +548,7 @@ and infer_statement env stmt =
   | AST.ExpressionStmt expr -> infer_expression env expr
   | AST.Return expr -> infer_expression env expr
   | AST.Block stmts -> infer_block env stmts
-  | AST.Let (name, expr) -> infer_let env name expr
+  | AST.Let let_binding -> infer_let env let_binding.name let_binding.value
 
 (* Infer a let binding.
    
@@ -592,10 +596,10 @@ and infer_block env stmts =
           (* For let statements, add the binding to the environment *)
           let env' =
             match stmt.stmt with
-            | AST.Let (name, _) ->
+            | AST.Let let_binding ->
                 let env_subst = apply_substitution_env subst1 env in
                 let poly = generalize env_subst stmt_type in
-                TypeEnv.add name poly env_subst
+                TypeEnv.add let_binding.name poly env_subst
             | _ -> apply_substitution_env subst1 env
           in
           match infer_block env' rest with
@@ -620,9 +624,9 @@ let infer_program ?(env = empty_env) (program : AST.program) : (type_env * mono_
             (* Add let bindings to final environment *)
             let env'' =
               match stmt.stmt with
-              | AST.Let (name, _) ->
+              | AST.Let let_binding ->
                   let poly = generalize env' result_type' in
-                  TypeEnv.add name poly env'
+                  TypeEnv.add let_binding.name poly env'
               | _ -> env'
             in
             Ok (env'', result_type'))
@@ -635,9 +639,9 @@ let infer_program ?(env = empty_env) (program : AST.program) : (type_env * mono_
             (* Add let bindings to environment for subsequent statements *)
             let env'' =
               match stmt.stmt with
-              | AST.Let (name, _) ->
+              | AST.Let let_binding ->
                   let poly = generalize env' stmt_type in
-                  TypeEnv.add name poly env'
+                  TypeEnv.add let_binding.name poly env'
               | _ -> env'
             in
             go env'' subst'' rest)

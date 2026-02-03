@@ -24,6 +24,8 @@ let rec next_token (l : lexer) : lexer * Token.token =
   | '=' ->
       if peek_char l = '=' then
         (read_char (read_char l), Token.init ~pos Eq "==")
+      else if peek_char l = '>' then
+        (read_char (read_char l), Token.init ~pos FatArrow "=>")
       else
         (read_char l, Token.init ~pos Assign "=")
   | '!' ->
@@ -32,7 +34,11 @@ let rec next_token (l : lexer) : lexer * Token.token =
       else
         (read_char l, Token.init ~pos Bang "!")
   | '+' -> (read_char l, Token.init ~pos Plus "+")
-  | '-' -> (read_char l, Token.init ~pos Minus "-")
+  | '-' ->
+      if peek_char l = '>' then
+        (read_char (read_char l), Token.init ~pos Arrow "->")
+      else
+        (read_char l, Token.init ~pos Minus "-")
   | '*' -> (read_char l, Token.init ~pos Asterisk "*")
   | '/' -> (read_char l, Token.init ~pos Slash "/")
   | '<' -> (read_char l, Token.init ~pos Lt "<")
@@ -240,3 +246,13 @@ let%test "identifiers with digits" =
   && (List.nth idents 0).literal = "foo5"
   && (List.nth idents 1).literal = "x2y"
   && (List.nth idents 2).literal = "foo5"
+
+let%test "arrow token" =
+  let input = "fn(x: int) -> int" in
+  let tokens = lex input in
+  List.exists (fun t -> t.Token.token_type = Token.Arrow) tokens
+
+let%test "fat arrow token" =
+  let input = "fn(...) => result" in
+  let tokens = lex input in
+  List.exists (fun t -> t.Token.token_type = Token.FatArrow) tokens

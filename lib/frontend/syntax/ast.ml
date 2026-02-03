@@ -1,13 +1,32 @@
 module AST = struct
   type program = statement list [@@deriving show]
 
+  (* Phase 2: Type expressions for annotations *)
+  and type_expr =
+    | TVar of string (* 'a', 'b' *)
+    | TCon of string (* 'int', 'string', 'list', 'map', 'option' *)
+    | TApp of string * type_expr list (* list[int], map[string, int], option[a] *)
+    | TArrow of type_expr list * type_expr (* fn(int, string) -> bool *)
+    | TUnion of type_expr list (* int | string | bool *)
+  [@@deriving show]
+
+  and generic_param = {
+    name : string;
+    constraints : string list; (* trait names like "show", "eq" *)
+  }
+  [@@deriving show]
+
   and statement = {
     stmt : stmt_kind;
     pos : int;
   }
 
   and stmt_kind =
-    | Let of string * expression
+    | Let of {
+        name : string;
+        value : expression;
+        type_annotation : type_expr option;
+      }
     | Return of expression
     | ExpressionStmt of expression
     | Block of statement list
@@ -30,7 +49,12 @@ module AST = struct
     | Prefix of string * expression
     | Infix of expression * string * expression
     | If of expression * statement * statement option
-    | Function of expression list * statement
+    | Function of {
+        generics : generic_param list option; (* [a], [a: show], etc. *)
+        params : (string * type_expr option) list; (* parameter names and optional type annotations *)
+        return_type : type_expr option; (* return type annotation *)
+        body : statement;
+      }
     | Call of expression * expression list
   [@@deriving show]
 
@@ -61,15 +85,14 @@ module AST = struct
         | None, None -> true
         | Some a, Some b -> stmt_equal a b
         | _ -> false)
-    | Function (p1, b1), Function (p2, b2) ->
-        List.length p1 = List.length p2 && List.for_all2 expr_equal p1 p2 && stmt_equal b1 b2
+    | Function f1, Function f2 -> List.length f1.params = List.length f2.params && stmt_equal f1.body f2.body
     | Call (f1, a1), Call (f2, a2) ->
         expr_equal f1 f2 && List.length a1 = List.length a2 && List.for_all2 expr_equal a1 a2
     | _ -> false
 
   and stmt_equal (s1 : statement) (s2 : statement) : bool =
     match (s1.stmt, s2.stmt) with
-    | Let (n1, e1), Let (n2, e2) -> n1 = n2 && expr_equal e1 e2
+    | Let l1, Let l2 -> l1.name = l2.name && expr_equal l1.value l2.value
     | Return e1, Return e2 -> expr_equal e1 e2
     | ExpressionStmt e1, ExpressionStmt e2 -> expr_equal e1 e2
     | Block ss1, Block ss2 -> List.length ss1 = List.length ss2 && List.for_all2 stmt_equal ss1 ss2
@@ -97,7 +120,7 @@ module AST = struct
   let to_string (program : program) : string =
     let rec statement_to_string (s : statement) : string =
       match s.stmt with
-      | Let (ident, expr) -> Printf.sprintf "let %s = %s;" ident (expression_to_string expr)
+      | Let l -> Printf.sprintf "let %s = %s;" l.name (expression_to_string l.value)
       | Return expr -> Printf.sprintf "return %s;" (expression_to_string expr)
       | ExpressionStmt expr -> expression_to_string expr
       | Block stmts -> List.map statement_to_string stmts |> String.concat ""
@@ -127,13 +150,12 @@ module AST = struct
             (match alt with
             | Some a -> Printf.sprintf " else %s" (block_to_string a)
             | None -> "")
-      | Function (params, body) -> function_to_string params body
+      | Function f -> function_to_string f.params f.body
       | Call (expr, args) -> Printf.sprintf "%s(%s)" (expression_to_string expr) (args_to_string args)
     and block_to_string (block : statement) : string = statement_to_string block
-    and function_to_string (params : expression list) (body : statement) : string =
-      Printf.sprintf "fn (%s) %s"
-        (String.concat ", " (List.map expression_to_string params))
-        (block_to_string body)
+    and function_to_string (params : (string * type_expr option) list) (body : statement) : string =
+      let param_str = List.map (fun (name, _annot) -> name) params |> String.concat ", " in
+      Printf.sprintf "fn (%s) %s" param_str (block_to_string body)
     and args_to_string (args : expression list) : string =
       List.map expression_to_string args |> String.concat ", "
     in

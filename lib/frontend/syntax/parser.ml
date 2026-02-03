@@ -92,13 +92,98 @@ and parse_statement (p : parser) : (parser * AST.statement, parser) result =
   | Token.Return -> parse_return_statement p
   | _ -> parse_expression_statement p
 
+(* Phase 2: Type expression parsing *)
+and parse_type_expr (p : parser) : (parser * AST.type_expr, parser) result =
+  if curr_token_is p Token.Ident then
+    let ident = p.curr_token.literal in
+    let p2 = next_token p in
+    (* Check for generic application: list[int], map[string, int], etc. *)
+    if curr_token_is p2 Token.LBracket then
+      let* p3, type_args = parse_type_expr_list (next_token p2) in
+      let* p4 = expect_peek p3 Token.RBracket in
+      Ok (p4, AST.TApp (ident, type_args))
+    else
+      Ok (p2, AST.TCon ident)
+  else if curr_token_is p Token.LParen then
+    (* Function type: fn(int, string) -> bool *)
+    let* p2, param_types = parse_type_expr_list (next_token p) in
+    let* p3 = expect_peek p2 Token.RParen in
+    let* p4 = expect_peek p3 Token.Arrow in
+    let* p5, return_type = parse_type_expr (next_token p4) in
+    Ok (p5, AST.TArrow (param_types, return_type))
+  else
+    Error (no_prefix_parse_fn_error p p.curr_token.token_type)
+
+and parse_type_expr_list (p : parser) : (parser * AST.type_expr list, parser) result =
+  if curr_token_is p Token.RParen || curr_token_is p Token.RBracket then
+    Ok (p, [])
+  else
+    let rec loop (lp : parser) (types : AST.type_expr list) =
+      let* lp2, te = parse_type_expr lp in
+      if curr_token_is lp2 Token.Comma then
+        loop (next_token lp2) ([ te ] @ types)
+      else
+        Ok (lp2, List.rev ([ te ] @ types))
+    in
+    loop p []
+
+and parse_trait_constraint (p : parser) : (parser * string list, parser) result =
+  (* Parse trait constraints: show, eq, show + eq, etc. *)
+  let rec loop (lp : parser) (traits : string list) =
+    if curr_token_is lp Token.Ident then
+      let trait = lp.curr_token.literal in
+      let lp2 = next_token lp in
+      if curr_token_is lp2 Token.Plus then
+        loop (next_token lp2) ([ trait ] @ traits)
+      else
+        Ok (lp2, List.rev ([ trait ] @ traits))
+    else
+      Error (no_prefix_parse_fn_error lp lp.curr_token.token_type)
+  in
+  loop p []
+
+and parse_generic_params (p : parser) : (parser * AST.generic_param list option, parser) result =
+  (* Parse generic parameters: [a], [a: show], [a: show + eq, b: eq], etc. *)
+  if curr_token_is p Token.LBracket then
+    let rec loop (lp : parser) (params : AST.generic_param list) =
+      let* lp2 = expect_peek lp Token.Ident in
+      let name = lp2.curr_token.literal in
+      let lp3 = next_token lp2 in
+      let* lp4, constraints =
+        if curr_token_is lp3 Token.Colon then
+          parse_trait_constraint (next_token lp3)
+        else
+          Ok (lp3, [])
+      in
+      let param = AST.{ name; constraints } in
+      if curr_token_is lp4 Token.Comma then
+        loop (next_token lp4) ([ param ] @ params)
+      else
+        let* lp5 = expect_peek lp4 Token.RBracket in
+        Ok (lp5, List.rev ([ param ] @ params))
+    in
+    let* p2, params = loop (next_token p) [] in
+    Ok (p2, Some params)
+  else
+    Ok (p, None)
+
 and parse_let_statement (p : parser) : (parser * AST.statement, parser) result =
   let pos = p.curr_token.pos in
   let* p2 = expect_peek p Token.Ident in
-  let* p3 = expect_peek p2 Token.Assign in
-  let* p4, expr = parse_expression (next_token p3) prec_lowest in
-  let p5 = skip p4 Token.Semicolon in
-  Ok (p5, mk_stmt pos (AST.Let (p2.curr_token.literal, expr)))
+  let name = p2.curr_token.literal in
+  (* Phase 2: Parse optional type annotation *)
+  let* p3, type_annotation =
+    if peek_token_is p2 Token.Colon then
+      let p3 = next_token (next_token p2) in
+      let* p4, te = parse_type_expr p3 in
+      Ok (p4, Some te)
+    else
+      Ok (next_token p2, None)
+  in
+  let* p4 = expect_peek p3 Token.Assign in
+  let* p5, expr = parse_expression (next_token p4) prec_lowest in
+  let p6 = skip p5 Token.Semicolon in
+  Ok (p6, mk_stmt pos (AST.Let { name; value = expr; type_annotation }))
 
 and parse_return_statement (p : parser) : (parser * AST.statement, parser) result =
   let pos = p.curr_token.pos in
@@ -231,11 +316,36 @@ and parse_block_statement (p : parser) : (parser * AST.statement, parser) result
 
 and parse_function_literal (p : parser) : (parser * AST.expression, parser) result =
   let pos = p.curr_token.pos in
-  let* p2 = expect_peek p Token.LParen in
-  let* p3, params = parse_function_parameters p2 in
-  let* p4 = expect_peek p3 Token.LBrace in
-  let* p5, body = parse_block_statement p4 in
-  Ok (p5, mk_expr pos (AST.Function (params, body)))
+  (* Phase 2: Parse generic parameters if present *)
+  let* p2, generics = parse_generic_params p in
+  let* p3 = expect_peek p2 Token.LParen in
+  let* p4, params = parse_function_parameters p3 in
+  (* Phase 2: Parse return type annotation if present *)
+  let* p5, return_type =
+    if peek_token_is p4 Token.Arrow then
+      let p5 = next_token p4 in
+      let* p6, te = parse_type_expr (next_token p5) in
+      Ok (p6, Some te)
+    else if peek_token_is p4 Token.FatArrow then
+      (* Effect annotation - parse but ignore for Phase 2 *)
+      let p5 = next_token p4 in
+      let* p6, _te = parse_type_expr (next_token p5) in
+      Ok (p6, None)
+    else
+      Ok (p4, None)
+  in
+  let* p6 = expect_peek p5 Token.LBrace in
+  let* p7, body = parse_block_statement p6 in
+  (* Convert old-style params (expressions) to new-style (names with optional type) *)
+  let new_params =
+    List.map
+      (fun expr_param ->
+        match expr_param.AST.expr with
+        | AST.Identifier name -> (name, None)
+        | _ -> ("", None))
+      params
+  in
+  Ok (p7, mk_expr pos (AST.Function { generics; params = new_params; return_type; body }))
 
 and parse_function_parameters (p : parser) : (parser * AST.expression list, parser) result =
   if peek_token_is p Token.RParen then
@@ -327,6 +437,12 @@ module Test = struct
   let e kind = AST.mk_expr kind
   let s kind = AST.mk_stmt kind
 
+  (* Helper for Let statements with the new record structure *)
+  let let_stmt name value = AST.Let { name; value; type_annotation = None }
+
+  (* Helper for Function expressions with the new record structure *)
+  let fn_expr params body = AST.Function { generics = None; params; return_type = None; body }
+
   let run (tests : test list) : bool =
     tests
     |> List.for_all (fun test ->
@@ -350,9 +466,9 @@ module Test = struct
 
   let%test "test_let_statements" =
     [
-      { input = "let x = 5;"; output = [ s (AST.Let ("x", e (AST.Integer 5L))) ] };
-      { input = "let y = 10;"; output = [ s (AST.Let ("y", e (AST.Integer 10L))) ] };
-      { input = "let foobar = 838383;"; output = [ s (AST.Let ("foobar", e (AST.Integer 838383L))) ] };
+      { input = "let x = 5;"; output = [ s (let_stmt "x" (e (AST.Integer 5L))) ] };
+      { input = "let y = 10;"; output = [ s (let_stmt "y" (e (AST.Integer 10L))) ] };
+      { input = "let foobar = 838383;"; output = [ s (let_stmt "foobar" (e (AST.Integer 838383L))) ] };
     ]
     |> run
 
@@ -613,32 +729,25 @@ module Test = struct
             s
               (AST.ExpressionStmt
                  (e
-                    (AST.Function
-                       ( [ e (AST.Identifier "x"); e (AST.Identifier "y") ],
-                         s
-                           (AST.Block
-                              [
-                                s
-                                  (AST.ExpressionStmt
-                                     (e (AST.Infix (e (AST.Identifier "x"), "+", e (AST.Identifier "y")))));
-                              ]) ))));
+                    (fn_expr
+                       [ ("x", None); ("y", None) ]
+                       (s
+                          (AST.Block
+                             [
+                               s
+                                 (AST.ExpressionStmt
+                                    (e (AST.Infix (e (AST.Identifier "x"), "+", e (AST.Identifier "y")))));
+                             ])))));
           ];
       };
-      { input = "fn() {}"; output = [ s (AST.ExpressionStmt (e (AST.Function ([], s (AST.Block []))))) ] };
-      {
-        input = "fn(x) {}";
-        output = [ s (AST.ExpressionStmt (e (AST.Function ([ e (AST.Identifier "x") ], s (AST.Block []))))) ];
-      };
+      { input = "fn() {}"; output = [ s (AST.ExpressionStmt (e (fn_expr [] (s (AST.Block []))))) ] };
+      { input = "fn(x) {}"; output = [ s (AST.ExpressionStmt (e (fn_expr [ ("x", None) ] (s (AST.Block []))))) ] };
       {
         input = "fn(foo, bar, baz) {};";
         output =
           [
             s
-              (AST.ExpressionStmt
-                 (e
-                    (AST.Function
-                       ( [ e (AST.Identifier "foo"); e (AST.Identifier "bar"); e (AST.Identifier "baz") ],
-                         s (AST.Block []) ))));
+              (AST.ExpressionStmt (e (fn_expr [ ("foo", None); ("bar", None); ("baz", None) ] (s (AST.Block [])))));
           ];
       };
     ]
@@ -671,15 +780,15 @@ module Test = struct
                  (e
                     (AST.Call
                        ( e
-                           (AST.Function
-                              ( [ e (AST.Identifier "x"); e (AST.Identifier "y") ],
-                                s
-                                  (AST.Block
-                                     [
-                                       s
-                                         (AST.ExpressionStmt
-                                            (e (AST.Infix (e (AST.Identifier "x"), "+", e (AST.Identifier "y")))));
-                                     ]) )),
+                           (fn_expr
+                              [ ("x", None); ("y", None) ]
+                              (s
+                                 (AST.Block
+                                    [
+                                      s
+                                        (AST.ExpressionStmt
+                                           (e (AST.Infix (e (AST.Identifier "x"), "+", e (AST.Identifier "y")))));
+                                    ]))),
                          [ e (AST.Integer 2L); e (AST.Integer 3L) ] ))));
           ];
       };
@@ -696,16 +805,15 @@ module Test = struct
                            e (AST.Integer 2L);
                            e (AST.Integer 3L);
                            e
-                             (AST.Function
-                                ( [ e (AST.Identifier "x"); e (AST.Identifier "y") ],
-                                  s
-                                    (AST.Block
-                                       [
-                                         s
-                                           (AST.ExpressionStmt
-                                              (e
-                                                 (AST.Infix (e (AST.Identifier "x"), "+", e (AST.Identifier "y")))));
-                                       ]) ));
+                             (fn_expr
+                                [ ("x", None); ("y", None) ]
+                                (s
+                                   (AST.Block
+                                      [
+                                        s
+                                          (AST.ExpressionStmt
+                                             (e (AST.Infix (e (AST.Identifier "x"), "+", e (AST.Identifier "y")))));
+                                      ])));
                          ] ))));
           ];
       };

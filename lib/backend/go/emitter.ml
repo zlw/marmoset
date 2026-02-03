@@ -99,22 +99,24 @@ let create_mono_state () = { func_defs = []; instantiations = InstSet.empty; nam
 
 let rec collect_funcs_stmt (state : mono_state) (stmt : AST.statement) : unit =
   match stmt.stmt with
-  | AST.Let (name, expr) -> (
-      match expr.expr with
-      | AST.Function (params, body) ->
+  | AST.Let let_binding -> (
+      match let_binding.value.expr with
+      | AST.Function f ->
+          (* Phase 2: Convert new param format to expressions *)
+          let param_exprs = List.map (fun (pname, _) -> AST.mk_expr (AST.Identifier pname)) f.params in
           (* For now, assume no captures - we'll handle closures later *)
           state.func_defs <-
             {
-              name;
-              params;
-              body;
+              name = let_binding.name;
+              params = param_exprs;
+              body = f.body;
               poly_type = Types.Forall ([], Types.TNull);
               (* filled in later *)
               captures = [];
             }
             :: state.func_defs;
-          collect_funcs_stmt state body
-      | _ -> collect_funcs_expr state expr)
+          collect_funcs_stmt state f.body
+      | _ -> collect_funcs_expr state let_binding.value)
   | AST.Return e -> collect_funcs_expr state e
   | AST.ExpressionStmt e -> collect_funcs_expr state e
   | AST.Block stmts -> List.iter (collect_funcs_stmt state) stmts
@@ -143,9 +145,9 @@ and collect_funcs_expr (state : mono_state) (expr : AST.expression) : unit =
   | AST.Index (container, index) ->
       collect_funcs_expr state container;
       collect_funcs_expr state index
-  | AST.Function (_, body) ->
-      (* Anonymous function - not a top-level let binding *)
-      collect_funcs_stmt state body
+  | AST.Function f ->
+      (* Phase 2: Anonymous function - not a top-level let binding *)
+      collect_funcs_stmt state f.body
 
 (* ============================================================
    Pass 2: Collect instantiations at call sites
@@ -169,11 +171,11 @@ let rec extract_param_types n = function
 
 let rec collect_insts_stmt (state : mono_state) (env : Infer.type_env) (stmt : AST.statement) : Infer.type_env =
   match stmt.stmt with
-  | AST.Let (name, expr) ->
+  | AST.Let let_binding ->
       (* For recursive functions, add the binding first so the body can reference it *)
-      let expr_type = infer_type env expr in
-      let env_with_binding = Infer.TypeEnv.add name (Types.Forall ([], expr_type)) env in
-      collect_insts_expr state env_with_binding expr;
+      let expr_type = infer_type env let_binding.value in
+      let env_with_binding = Infer.TypeEnv.add let_binding.name (Types.Forall ([], expr_type)) env in
+      collect_insts_expr state env_with_binding let_binding.value;
       env_with_binding
   | AST.Return e ->
       collect_insts_expr state env e;
@@ -227,24 +229,17 @@ and collect_insts_expr (state : mono_state) (env : Infer.type_env) (expr : AST.e
   | AST.Index (container, index) ->
       collect_insts_expr state env container;
       collect_insts_expr state env index
-  | AST.Function (params, body) ->
-      (* Create env with params for the body *)
+  | AST.Function f ->
+      (* Phase 2: Create env with params for the body *)
       let func_type = infer_type env expr in
-      let param_types, _ = extract_param_types (List.length params) func_type in
-      let param_names =
-        List.map
-          (fun (p : AST.expression) ->
-            match p.expr with
-            | AST.Identifier n -> n
-            | _ -> "_")
-          params
-      in
+      let param_types, _ = extract_param_types (List.length f.params) func_type in
+      let param_names = List.map fst f.params in
       let body_env =
         List.fold_left2
           (fun acc name typ -> Infer.TypeEnv.add name (Types.Forall ([], typ)) acc)
           env param_names param_types
       in
-      ignore (collect_insts_stmt state body_env body)
+      ignore (collect_insts_stmt state body_env f.body)
 
 (* ============================================================
    Code Generation State
@@ -277,7 +272,10 @@ let rec emit_expr (state : emit_state) (env : Infer.type_env) (expr : AST.expres
   | AST.Array elements -> emit_array state env elements
   | AST.Hash pairs -> emit_hash state env pairs
   | AST.Index (container, index) -> emit_index state env container index
-  | AST.Function (params, body) -> emit_function_expr state env expr params body
+  | AST.Function f ->
+      (* Phase 2: Convert params to expressions for backward compat *)
+      let param_exprs = List.map (fun (name, _) -> AST.mk_expr (AST.Identifier name)) f.params in
+      emit_function_expr state env expr param_exprs f.body
 
 and emit_prefix state env op operand =
   let operand_str = emit_expr state env operand in
@@ -491,18 +489,18 @@ and emit_func_body state env stmt =
 and emit_stmt (state : emit_state) (env : Infer.type_env) (stmt : AST.statement) : string * Infer.type_env =
   let ind = indent_str state in
   match stmt.stmt with
-  | AST.Let (name, expr) -> (
-      match expr.expr with
-      | AST.Function _ when is_user_func state.mono name ->
+  | AST.Let let_binding -> (
+      match let_binding.value.expr with
+      | AST.Function _ when is_user_func state.mono let_binding.name ->
           (* Skip - this is a top-level function, emitted separately *)
-          let expr_type = infer_type env expr in
-          let env' = Infer.TypeEnv.add name (Types.Forall ([], expr_type)) env in
+          let expr_type = infer_type env let_binding.value in
+          let env' = Infer.TypeEnv.add let_binding.name (Types.Forall ([], expr_type)) env in
           ("", env')
       | _ ->
-          let expr_str = emit_expr state env expr in
-          let expr_type = infer_type env expr in
-          let env' = Infer.TypeEnv.add name (Types.Forall ([], expr_type)) env in
-          (Printf.sprintf "%s%s := %s\n" ind name expr_str, env'))
+          let expr_str = emit_expr state env let_binding.value in
+          let expr_type = infer_type env let_binding.value in
+          let env' = Infer.TypeEnv.add let_binding.name (Types.Forall ([], expr_type)) env in
+          (Printf.sprintf "%s%s := %s\n" ind let_binding.name expr_str, env'))
   | AST.Return expr ->
       let expr_str = emit_expr state env expr in
       (Printf.sprintf "%sreturn %s\n" ind expr_str, env)

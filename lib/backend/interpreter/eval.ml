@@ -28,9 +28,9 @@ and eval_statement (stmt : AST.statement) (e : env) : Value.value * env =
   match stmt.stmt with
   | ExpressionStmt expr -> eval_expression expr e
   | Block stmts -> eval_program stmts e
-  | Let (ident, expr) ->
-      let* v, e' = eval_expression expr e in
-      (v, Env.set e' ident v)
+  | Let let_binding ->
+      let* v, e' = eval_expression let_binding.value e in
+      (v, Env.set e' let_binding.name v)
   | Return expr ->
       let* v, e' = eval_expression expr e in
       (Value.Return v, e')
@@ -170,7 +170,10 @@ and eval_expression (expr : AST.expression) (e : env) : Value.value * env =
           match Builtins.builtin ident with
           | Some f -> (Value.BuiltinFunction f, e)
           | None -> (Value.Error ("identifier not found: " ^ ident), e)))
-  | Function (params, body) -> (Value.Function (params, body, Some e), e)
+  | Function f ->
+      (* Phase 2: Ignore generics and annotations, just use params and body *)
+      let param_exprs = List.map (fun (name, _) -> AST.mk_expr (AST.Identifier name)) f.params in
+      (Value.Function (param_exprs, f.body, Some e), e)
   | Call (func, args) -> (
       let* func', e' = eval_expression func e in
       match func' with

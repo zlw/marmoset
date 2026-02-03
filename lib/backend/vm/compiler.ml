@@ -220,18 +220,19 @@ and compile_statement (c : compiler) (s : AST.statement) : (compiler, string) re
             loop c' rest
       in
       loop c stmts
-  | AST.Let (name, value) ->
+  | AST.Let let_binding ->
       (* For function literals, we need to define the function name inside
-         the function scope to enable recursion *)
+          the function scope to enable recursion *)
       let* c' =
-        match value.expr with
-        | AST.Function (params, body) ->
+        match let_binding.value.expr with
+        | AST.Function f ->
             (* Special handling for function literals to support recursion *)
-            compile_function_literal c name params body
-        | _ -> compile_expression c value
+            let param_exprs = List.map (fun (pname, _) -> AST.mk_expr (AST.Identifier pname)) f.params in
+            compile_function_literal c let_binding.name param_exprs f.body
+        | _ -> compile_expression c let_binding.value
       in
       (* Define the symbol and get its index *)
-      let symbol = Symbol_table.define c'.symbol_table name in
+      let symbol = Symbol_table.define c'.symbol_table let_binding.name in
       (* Emit appropriate set opcode based on scope *)
       let c'', _pos =
         match symbol.scope with
@@ -401,7 +402,9 @@ and compile_expression (c : compiler) (e : AST.expression) : (compiler, string) 
       (* Emit OpIndex *)
       let c''', _pos = emit c'' Code.OpIndex [] in
       Ok c'''
-  | AST.Function (params, body) ->
+  | AST.Function f ->
+      (* Phase 2: Convert new param format to expressions for backward compat *)
+      let param_exprs = List.map (fun (name, _) -> AST.mk_expr (AST.Identifier name)) f.params in
       (* Enter a new compilation scope for the function *)
       enter_scope c;
       (* Define each parameter in the symbol table (they become locals) *)
@@ -410,12 +413,12 @@ and compile_expression (c : compiler) (e : AST.expression) : (compiler, string) 
           match param.expr with
           | AST.Identifier name -> ignore (Symbol_table.define c.symbol_table name)
           | _ -> failwith "invalid function parameter")
-        params;
+        param_exprs;
       (* Note: For named functions (recursive), the function name should be defined
-         with FunctionScope BEFORE compiling the body. This is handled by 
-         compile_function_literal when called from let statements. *)
+          with FunctionScope BEFORE compiling the body. This is handled by 
+          compile_function_literal when called from let statements. *)
       (* Compile the function body *)
-      let* c' = compile_statement c body in
+      let* c' = compile_statement c f.body in
       (* If the last instruction is OpPop, replace it with OpReturnValue *)
       if last_instruction_is_pop c' then
         replace_last_pop_with_return c';
@@ -431,7 +434,7 @@ and compile_expression (c : compiler) (e : AST.expression) : (compiler, string) 
       let instructions = leave_scope c in
       (* Create the CompiledFunction value *)
       let compiled_fn =
-        Value.CompiledFunction { instructions; num_locals; num_parameters = List.length params }
+        Value.CompiledFunction { instructions; num_locals; num_parameters = List.length f.params }
       in
       (* Add to constants *)
       let c'', fn_index = add_constant c compiled_fn in

@@ -24,6 +24,8 @@ and token_type =
   | Gt
   | Eq
   | NotEq
+  | Arrow (* -> for return type annotations *)
+  | FatArrow (* => for effect markers *)
   (* Delimiters *)
   | Comma
   | Semicolon
