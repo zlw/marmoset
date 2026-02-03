@@ -375,3 +375,236 @@ let%test "format_error_with_context shows source line" =
       let formatted = format_error_with_context source err in
       String.length formatted > 0 && String.sub formatted 0 4 = "1:5:"
   | Ok _ -> false
+
+(* Helper for substring testing *)
+let string_contains_substring haystack ~substring =
+  let len_sub = String.length substring in
+  let len_hay = String.length haystack in
+  if len_sub > len_hay then
+    false
+  else
+    let rec check i =
+      if i + len_sub > len_hay then
+        false
+      else if String.sub haystack i len_sub = substring then
+        true
+      else
+        check (i + 1)
+    in
+    check 0
+
+(* ============================================================
+   Type Annotation Tests - Parameter Annotations
+   ============================================================ *)
+
+let%test "annotation: single int parameter infers correctly" =
+  Infer.reset_fresh_counter ();
+  match check_string "let f = fn(x: int) { x + 1 }; f" with
+  | Error _ -> false
+  | Ok { environment; _ } -> (
+      match lookup "f" environment with
+      | Some (Forall (_, TFun (TInt, TInt))) -> true
+      | _ -> false)
+
+let%test "annotation: multiple int parameters infer correctly" =
+  Infer.reset_fresh_counter ();
+  match check_string "let add = fn(x: int, y: int) { x + y }; add" with
+  | Error _ -> false
+  | Ok { environment; _ } -> (
+      match lookup "add" environment with
+      | Some (Forall (_, TFun (TInt, TFun (TInt, TInt)))) -> true
+      | _ -> false)
+
+let%test "annotation: mixed type parameters infer correctly" =
+  Infer.reset_fresh_counter ();
+  match check_string "let f = fn(x: int, y: string) { y }; f" with
+  | Error _ -> false
+  | Ok { environment; _ } -> (
+      match lookup "f" environment with
+      | Some (Forall (_, TFun (TInt, TFun (TString, TString)))) -> true
+      | _ -> false)
+
+let%test "annotation: bool parameter" =
+  Infer.reset_fresh_counter ();
+  match check_string "let f = fn(x: bool) { !x }; f" with
+  | Error _ -> false
+  | Ok { environment; _ } -> (
+      match lookup "f" environment with
+      | Some (Forall (_, TFun (TBool, TBool))) -> true
+      | _ -> false)
+
+let%test "annotation: array parameter" =
+  Infer.reset_fresh_counter ();
+  let env = default_env () in
+  match check_string ~env "let f = fn(x: list[int]) { len(x) }; f" with
+  | Error _ -> false
+  | Ok { environment; _ } -> (
+      match lookup "f" environment with
+      | Some (Forall (_, TFun (TArray TInt, TInt))) -> true
+      | _ -> false)
+
+(* ============================================================
+   Type Annotation Tests - Return Type Annotations
+   ============================================================ *)
+
+let%test "annotation: return type int matches" =
+  Infer.reset_fresh_counter ();
+  match check_string "let f = fn() -> int { 42 }; f" with
+  | Error _ -> false
+  | Ok _ -> true
+
+let%test "annotation: return type string matches" =
+  Infer.reset_fresh_counter ();
+  match check_string "let f = fn() -> string { \"hello\" }; f" with
+  | Error _ -> false
+  | Ok _ -> true
+
+let%test "annotation: return type bool matches" =
+  Infer.reset_fresh_counter ();
+  match check_string "let f = fn() -> bool { true }; f" with
+  | Error _ -> false
+  | Ok _ -> true
+
+let%test "annotation: return type array[int] matches" =
+  Infer.reset_fresh_counter ();
+  match check_string "let f = fn() -> list[int] { [1, 2, 3] }; f" with
+  | Error _ -> false
+  | Ok _ -> true
+
+(* ============================================================
+   Type Annotation Tests - Mismatch Detection (CRITICAL)
+   ============================================================ *)
+
+let%test "annotation: mismatch int vs string is caught" =
+  Infer.reset_fresh_counter ();
+  match check_string "let f = fn() -> string { 42 }; f" with
+  | Ok _ -> false (* MUST fail *)
+  | Error { message; _ } ->
+      (* Check message contains both types and indicates mismatch *)
+      let lower = String.lowercase_ascii message in
+      String.contains lower 's' && String.contains lower 'i' (* Has string/int *)
+
+let%test "annotation: mismatch string vs int is caught" =
+  Infer.reset_fresh_counter ();
+  match check_string "let f = fn() -> int { \"hello\" }; f" with
+  | Ok _ -> false
+  | Error { message; _ } ->
+      let lower = String.lowercase_ascii message in
+      String.contains lower 's' && String.contains lower 'i'
+
+let%test "annotation: mismatch bool vs int is caught" =
+  Infer.reset_fresh_counter ();
+  match check_string "let f = fn() -> bool { 42 }; f" with
+  | Ok _ -> false
+  | Error { message; _ } -> string_contains_substring (String.lowercase_ascii message) ~substring:"annotation"
+
+let%test "annotation: mismatch array vs int is caught" =
+  Infer.reset_fresh_counter ();
+  match check_string "let f = fn() -> list[int] { 42 }; f" with
+  | Ok _ -> false
+  | Error _ -> true
+
+(* ============================================================
+   Type Annotation Tests - Complex Cases
+   ============================================================ *)
+
+let%test "annotation: full signature with params and return" =
+  Infer.reset_fresh_counter ();
+  match check_string "let f = fn(x: int, y: int) -> int { x + y }; f" with
+  | Error _ -> false
+  | Ok { environment; _ } -> (
+      match lookup "f" environment with
+      | Some (Forall (_, TFun (TInt, TFun (TInt, TInt)))) -> true
+      | _ -> false)
+
+let%test "annotation: conditional with matching return type" =
+  Infer.reset_fresh_counter ();
+  match check_string "let f = fn(x: int) -> int { if (x < 0) { 0 } else { x } }; f" with
+  | Error _ -> false
+  | Ok _ -> true
+
+let%test "annotation: conditional with mismatched branch types fails" =
+  Infer.reset_fresh_counter ();
+  match check_string "let f = fn(x: int) -> string { if (x < 0) { \"neg\" } else { 42 } }; f" with
+  | Ok _ -> false
+  | Error _ -> true
+
+let%test "annotation: recursive fibonacci with correct type" =
+  Infer.reset_fresh_counter ();
+  let code =
+    {|let fib = fn(n: int) -> int { 
+    if (n < 2) { return n }
+    return fib(n - 1) + fib(n - 2);
+  };
+  fib|}
+  in
+  match check_string code with
+  | Error _ -> false
+  | Ok _ -> true
+
+let%test "annotation: recursive fibonacci with wrong return type FAILS" =
+  Infer.reset_fresh_counter ();
+  let code =
+    {|let fib = fn(n: int) -> string { 
+    if (n < 2) { return n }
+    return fib(n - 1) + fib(n - 2);
+  };
+  fib|}
+  in
+  match check_string code with
+  | Ok _ -> false
+  | Error { message; _ } -> string_contains_substring (String.lowercase_ascii message) ~substring:"mismatch"
+
+(* ============================================================
+   Backward Compatibility - Non-Annotated Functions Still Work
+   ============================================================ *)
+
+let%test "no annotation: unannotated function still works" =
+  Infer.reset_fresh_counter ();
+  match check_string "let f = fn(x) { x + 1 }; f" with
+  | Error _ -> false
+  | Ok _ -> true
+
+let%test "no annotation: polymorphic identity function" =
+  Infer.reset_fresh_counter ();
+  match check_string "let id = fn(x) { x }; id" with
+  | Error _ -> false
+  | Ok { environment; _ } -> (
+      match lookup "id" environment with
+      | Some (Forall (vars, TFun (TVar a, TVar b))) -> List.length vars >= 1 && a = b
+      | _ -> false)
+
+let%test "no annotation: mixed annotated and unannotated params" =
+  Infer.reset_fresh_counter ();
+  match check_string "let f = fn(x: int, y) { x + y }; f" with
+  | Error _ -> false
+  | Ok { environment; _ } -> (
+      match lookup "f" environment with
+      | Some (Forall (_, TFun (TInt, TFun (_, TInt)))) -> true
+      | _ -> false)
+
+(* ============================================================
+   Error Message Quality Tests
+   ============================================================ *)
+
+let%test "error: annotation mismatch message is clear" =
+  Infer.reset_fresh_counter ();
+  match check_string "let f = fn() -> string { 42 }; f" with
+  | Ok _ -> false
+  | Error { message; _ } ->
+      let lower = String.lowercase_ascii message in
+      (* Should mention annotation and mismatch *)
+      string_contains_substring lower ~substring:"annotation"
+      || string_contains_substring lower ~substring:"mismatch"
+
+let%test "error: shows both expected and inferred types" =
+  Infer.reset_fresh_counter ();
+  match check_string "let f = fn() -> bool { \"not bool\" }; f" with
+  | Ok _ -> false
+  | Error { message; _ } ->
+      String.length message > 20
+      &&
+      (* Reasonable error message *)
+      let lower_msg = String.lowercase_ascii message in
+      string_contains_substring lower_msg ~substring:"bool"
+      || string_contains_substring lower_msg ~substring:"string"

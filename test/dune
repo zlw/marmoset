@@ -1,2 +1,6 @@
+(env
+ (_
+  (flags (:standard -w -27))))
+
 (test
  (name test_marmoset))
