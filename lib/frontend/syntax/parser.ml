@@ -104,8 +104,16 @@ and parse_type_expr (p : parser) : (parser * AST.type_expr, parser) result =
       Ok (p4, AST.TApp (ident, type_args))
     else
       Ok (p2, AST.TCon ident)
-  else if curr_token_is p Token.LParen then
+  else if curr_token_is p Token.Function then
     (* Function type: fn(int, string) -> bool *)
+    let* p2 = expect_peek p Token.LParen in
+    let* p3, param_types = parse_type_expr_list (next_token p2) in
+    let* p4 = expect_peek p3 Token.RParen in
+    let* p5 = expect_peek p4 Token.Arrow in
+    let* p6, return_type = parse_type_expr (next_token p5) in
+    Ok (p6, AST.TArrow (param_types, return_type))
+  else if curr_token_is p Token.LParen then
+    (* Function type (alternate syntax): (int, string) -> bool *)
     let* p2, param_types = parse_type_expr_list (next_token p) in
     let* p3 = expect_peek p2 Token.RParen in
     let* p4 = expect_peek p3 Token.Arrow in
@@ -174,13 +182,37 @@ and parse_let_statement (p : parser) : (parser * AST.statement, parser) result =
   (* Phase 2: Parse optional type annotation *)
   let* p3, type_annotation =
     if peek_token_is p2 Token.Colon then
-      let p3 = next_token (next_token p2) in
-      let* p4, te = parse_type_expr p3 in
-      Ok (p4, Some te)
+      let p_colon = next_token p2 in
+      (* Move to : *)
+      let p_type_start = next_token p_colon in
+      (* Move to type identifier *)
+      let* p_type_end, te = parse_type_expr p_type_start in
+      (* parse_type_expr returns parser positioned one past the type expression *)
+      (* For `int`, it's positioned at = *)
+      Ok (p_type_end, Some te)
     else
-      Ok (next_token p2, None)
+      (* No colon, so p2 is still at the identifier *)
+      (* We want to leave p2 as-is so that expect_peek can find = *)
+      Ok (p2, None)
   in
-  let* p4 = expect_peek p3 Token.Assign in
+  (* p3 is positioned appropriately for the next step *)
+  (* For annotated: p3 is at the token after the type (should be =) *)
+  (* For non-annotated: p3 is at the identifier, so expect_peek will find = *)
+  let* p4 =
+    match type_annotation with
+    | Some _ ->
+        (* After type parsing, we're positioned at/past the type *)
+        if curr_token_is p3 Token.Assign then
+          Ok p3 (* Already at = *)
+        else if peek_token_is p3 Token.Assign then
+          Ok (next_token p3)
+          (* Move to = *)
+        else
+          Error (peek_error p3 Token.Assign)
+    | None ->
+        (* No annotation, so expect_peek to find = *)
+        expect_peek p3 Token.Assign
+  in
   let* p5, expr = parse_expression (next_token p4) prec_lowest in
   let p6 = skip p5 Token.Semicolon in
   Ok (p6, mk_stmt pos (AST.Let { name; value = expr; type_annotation }))

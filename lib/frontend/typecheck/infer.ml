@@ -607,6 +607,28 @@ and infer_block env stmts =
           | Ok (subst2, result_type) -> Ok (compose_substitution subst1 subst2, result_type)))
 
 (* ============================================================
+   Phase 2: Bidirectional Type Checking
+   ============================================================ *)
+
+(* Check an expression against an expected type.
+   For Phase 2, this is simple: just infer the type and verify it matches.
+   In Phase 2.5+, this could do more sophisticated bidirectional flow.
+*)
+let check_expression (env : type_env) (expr : AST.expression) (expected : mono_type) :
+    (substitution * mono_type) infer_result =
+  match infer_expression env expr with
+  | Error e -> Error e
+  | Ok (subst, inferred) ->
+      (* For Phase 2, we do simple equality checking after applying substitution *)
+      let inferred_applied = apply_substitution subst inferred in
+      let expected_applied = apply_substitution subst expected in
+      if Annotation.check_annotation expected_applied inferred_applied then
+        Ok (subst, inferred)
+      else
+        (* Use IfBranchMismatch error as a proxy for type mismatch *)
+        Error (error_at (IfBranchMismatch (expected_applied, inferred_applied)) expr)
+
+(* ============================================================
    Program Inference
    ============================================================ *)
 

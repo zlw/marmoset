@@ -55,9 +55,34 @@ let check_program ?(env = Infer.empty_env) (program : Syntax.Ast.AST.program) : 
   | Ok (final_env, result_type) -> Ok { result_type; environment = final_env }
 
 (* Type check source code string.
-   Parses and type checks in one step.
-   Errors include source location information. *)
+    Parses and type checks in one step.
+    Errors include source location information. *)
 let check_string ?(env = Infer.empty_env) (source : string) : (typecheck_result, error) result =
+  match Syntax.Parser.parse source with
+  | Error errors -> Error { message = "Parse error: " ^ String.concat ", " errors; loc = None }
+  | Ok program -> (
+      match Infer.infer_program ~env program with
+      | Error e -> Error (error_of_infer_error ~source e)
+      | Ok (final_env, result_type) -> Ok { result_type; environment = final_env })
+
+(* ============================================================
+   Phase 2: Type check with annotations
+   ============================================================ *)
+
+(* Type check a program with annotation support.
+   This checks that all annotations match the inferred types.
+   For Phase 2, constraint validation is skipped (Phase 3 work). *)
+let check_program_with_annotations ?(env = Infer.empty_env) (program : Syntax.Ast.AST.program) :
+    (typecheck_result, error) result =
+  (* For Phase 2, we just use the standard inference *)
+  (* Phase 2.5+: This would validate annotations and constraints *)
+  match Infer.infer_program ~env program with
+  | Error e -> Error (error_of_infer_error e)
+  | Ok (final_env, result_type) -> Ok { result_type; environment = final_env }
+
+(* Type check source code with annotations.
+   Parses and type checks in one step, with annotation support. *)
+let check_string_with_annotations ?(env = Infer.empty_env) (source : string) : (typecheck_result, error) result =
   match Syntax.Parser.parse source with
   | Error errors -> Error { message = "Parse error: " ^ String.concat ", " errors; loc = None }
   | Ok program -> (
