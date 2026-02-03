@@ -67,11 +67,11 @@ generic_param ::= identifier
 trait_constraint ::= identifier ("+" identifier)*
 
 type_expr ::= identifier                          (* int, string, a, b *)
-            | "[" type_expr "]"                  (* [int], [a] *)
-            | "{" type_expr ":" type_expr "}"   (* {string: int} *)
+            | identifier "[" type_expr_list "]" (* list[int], map[string, int], option[a] *)
             | "fn" "(" param_types? ")" "->" type_expr  (* fn(int, string) -> bool *)
             | type_expr "|" type_expr             (* int | string — Phase 3, parse but error in Phase 2 *)
 
+type_expr_list ::= type_expr ("," type_expr)*
 param_types ::= type_expr ("," type_expr)*
 
 (* Modified rules *)
@@ -118,57 +118,10 @@ val parse_parameter : unit -> parameter       (* now handles : type *)
 (* New AST node for type expressions *)
 type type_expr =
   | TVar of string                                 (* 'a', 'b' *)
-  | TCon of string                                 (* 'int', 'string' *)
-  | TApp of type_expr * type_expr                 (* [int], [a] *)
+  | TCon of string                                 (* 'int', 'string', 'list', 'map', 'option', etc. *)
+  | TApp of string * type_expr list               (* list[int], map[string, int], option[a] *)
   | TArrow of type_expr list * type_expr          (* (int, string) -> bool *)
-  | THash of type_expr * type_expr                (* {string: int} *)
-
-(* Generic parameter with optional constraint *)
-type generic_param =
-  {
-    name: string;                                  (* 'a', 'b' *)
-    constraints: string list;                      (* ['show', 'eq'] from 'a: show + eq' *)
-  }
-
-(* Modified function expression *)
-type expression =
-  | ...
-  | Function of {
-      generics: generic_param list option;         (* [a: ord] *)
-      params: identifier list;
-      body: statement;
-      return_type: type_expr option;               (* : int *)
-    }
-
-(* Modified let statement *)
-type statement =
-  | ...
-  | Let of {
-      name: identifier;
-      type_annotation: type_expr option;           (* : int *)
-      value: expression;
-    }
-
-(* New identifier type with optional annotation *)
-type parameter =
-  {
-    name: identifier;
-    type_annotation: type_expr option;             (* x: int *)
-  }
-
-(* Effect marker for future use *)
-type effect_marker = Pure | Impure
-
-(* Optional: store effect marker on function *)
-type expression =
-  | ...
-  | Function of {
-      generics: generic_param list option;
-      params: parameter list;
-      body: statement;
-      return_type: type_expr option;
-      effect: effect_marker option;                (* -> vs => *)
-    }
+  | TUnion of type_expr list                      (* int | string | bool (Phase 3) *)
 ```
 
 **Migration from current AST**:

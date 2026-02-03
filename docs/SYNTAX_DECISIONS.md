@@ -15,8 +15,8 @@ This document captures ALL syntax decisions for the Marmoset language to avoid r
 ```marmoset
 let x: int = 5
 let y: string = "hello"
-let z: [int] = [1, 2, 3]
-let w: {string: int} = {"a": 1}
+let z: list[int] = [1, 2, 3]
+let w: map[string, int] = {"a": 1}
 ```
 
 #### Function Parameters
@@ -37,10 +37,10 @@ fn identity(x) -> a { x }               // Can use type variables in return
 ```marmoset
 fn id[a](x: a) -> a { x }
 fn max[a: ord](x: a, y: a) -> a { ... }
-fn map[a, b](arr: [a], f: fn(a) -> b) -> [b] { ... }
+fn map[a, b](arr: list[a], f: fn(a) -> b) -> list[b] { ... }
 ```
 
-**Key principle**: Generics use `[Type]` bracket notation, not `<Type>`. Type constraints go inside brackets.
+**Key principle**: Generics use `[Type]` bracket notation (Scala 3 style). Type constructors like `list`, `map`, `option`, `result` are just regular generics taking type arguments in brackets.
 
 #### Type Constraints (Trait Bounds)
 ```marmoset
@@ -84,28 +84,34 @@ All lowercase.
 
 ### Compound Types
 ```marmoset
-[int]                    // array of int
-{string: int}            // map/hash with string keys, int values
+list[int]                // list of int (generic type constructor)
+map[string, int]         // map with string keys, int values (generic)
+set[user]                // set of user (generic)
+option[string]           // option wrapping string (generic)
+result[int, error]       // result with value type and error type (generic)
 fn(int, string) -> bool  // function type: (int, string) -> bool
 fn(int) -> string        // function type: int -> string
 ```
+
+**Key principle**: No special syntax. `list`, `map`, `set`, `option`, `result` are all type constructors that take type arguments in brackets, just like user-defined generics.
 
 ### Union Types (Phase 3)
 ```marmoset
 int | string             // union of int and string
 int | string | bool      // three-way union
+list[int] | none         // union with generic types
 ```
 
-Use `|` for union types.
+Use `|` for union types. Works with any types, including generics.
 
 ### Generic Types
 ```marmoset
-[a]                      // array of any type a
-{a: b}                   // map with key type a, value type b
+list[a]                  // list of any type a
+map[a, b]                // map with key type a, value type b
 fn(a) -> b               // function from a to b
 ```
 
-Lowercase letters for type variables.
+Lowercase letters for type variables. Type constructors apply types using bracket notation.
 
 ### Traits (Phase 3)
 ```marmoset
