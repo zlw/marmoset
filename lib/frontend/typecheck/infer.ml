@@ -105,6 +105,7 @@ type error_kind =
   | IndexTypeMismatch of mono_type * mono_type (* expected, got *)
   | EmptyArrayUnknownType
   | EmptyHashUnknownType
+  | ReturnTypeMismatch of mono_type * mono_type (* expected, got *)
 
 (* An error with optional position info *)
 type infer_error = {
@@ -139,6 +140,11 @@ let error_kind_to_string = function
       "Index type mismatch: expected " ^ to_string expected ^ ", got " ^ to_string got
   | EmptyArrayUnknownType -> "Cannot infer type of empty array"
   | EmptyHashUnknownType -> "Cannot infer type of empty hash"
+  | ReturnTypeMismatch (expected, got) ->
+      "Function return type annotation mismatch: expected "
+      ^ to_string expected
+      ^ " but inferred "
+      ^ to_string got
 
 let error_to_string (err : infer_error) : string = error_kind_to_string err.kind
 
@@ -339,7 +345,7 @@ and infer_function env params body =
       Ok (subst, func_type)
 
 (* Infer function with parameter type annotations *)
-and infer_function_with_annotations env params _return_annot body =
+and infer_function_with_annotations env params return_annot body =
   (* Extract parameter names and type annotations *)
   let param_info = params in
   (* For each parameter, either use its annotation or create a fresh type variable *)
@@ -358,14 +364,36 @@ and infer_function_with_annotations env params _return_annot body =
   let env' =
     List.fold_left2 (fun acc name mono -> TypeEnv.add name (mono_to_poly mono) acc) env param_names param_types
   in
+  (* Extract expected return type from annotation if present *)
+  let expected_return_type_opt =
+    match return_annot with
+    | None -> None
+    | Some type_expr -> ( try Some (Annotation.type_expr_to_mono_type type_expr) with Failure _ -> None)
+  in
   (* Infer body type *)
   match infer_statement env' body with
   | Error e -> Error e
-  | Ok (subst, body_type) ->
-      (* Build function type: p1 -> p2 -> ... -> body_type *)
-      let param_types' = List.map (apply_substitution subst) param_types in
-      let func_type = List.fold_right (fun param_t acc -> TFun (param_t, acc)) param_types' body_type in
-      Ok (subst, func_type)
+  | Ok (subst, body_type) -> (
+      let body_type' = apply_substitution subst body_type in
+      (* If we have a return type annotation, unify with it to ensure type consistency *)
+      match expected_return_type_opt with
+      | None ->
+          (* No return type annotation *)
+          let param_types' = List.map (apply_substitution subst) param_types in
+          let func_type = List.fold_right (fun param_t acc -> TFun (param_t, acc)) param_types' body_type' in
+          Ok (subst, func_type)
+      | Some expected_ret_type -> (
+          (* Check that inferred return type matches annotation *)
+          match unify body_type' expected_ret_type with
+          | Error _e -> Error (error_at_stmt (ReturnTypeMismatch (expected_ret_type, body_type')) body)
+          | Ok subst2 ->
+              let final_subst = compose_substitution subst subst2 in
+              let final_body_type = apply_substitution subst2 body_type' in
+              let param_types' = List.map (apply_substitution final_subst) param_types in
+              let func_type =
+                List.fold_right (fun param_t acc -> TFun (param_t, acc)) param_types' final_body_type
+              in
+              Ok (final_subst, func_type)))
 
 (* ============================================================
    Function Calls
@@ -591,8 +619,30 @@ and infer_statement env stmt =
    for non-recursive bindings and enables recursion for functions.
 *)
 and infer_let env name expr =
-  (* Create a fresh type variable for this binding *)
-  let self_type = fresh_type_var () in
+  (* Check if the expression is a function with a return type annotation *)
+  (* If so, create a partially constrained type for recursion *)
+  let self_type =
+    match expr.expr with
+    | AST.Function f -> (
+        match f.return_type with
+        | None -> fresh_type_var ()
+        | Some type_expr -> (
+            try
+              (* Create a partially constrained function type: param1 -> param2 -> ... -> return_type *)
+              let return_type = Annotation.type_expr_to_mono_type type_expr in
+              let param_types =
+                List.map
+                  (fun (_name, annot_opt) ->
+                    match annot_opt with
+                    | None -> fresh_type_var ()
+                    | Some annot -> Annotation.type_expr_to_mono_type annot)
+                  f.params
+              in
+              (* Build function type from parameters and return type *)
+              List.fold_right (fun param_t acc -> TFun (param_t, acc)) param_types return_type
+            with Failure _ -> fresh_type_var ()))
+    | _ -> fresh_type_var ()
+  in
   (* Add to environment as monomorphic (not generalized yet) *)
   let env_with_self = TypeEnv.add name (mono_to_poly self_type) env in
   (* Infer expression type with self in scope *)
