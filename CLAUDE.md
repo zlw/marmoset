@@ -333,59 +333,49 @@ Then create PR or notify of changes.
 
 - ✅ Lexer/Parser: Well tested with inline tests
 - ✅ Type Inference: Good test coverage
-- ✅ Type Annotations: 25+ tests, 16/17 passing
-- ✅ Codegen: 17 integration tests, 16/17 passing
+- ✅ Type Annotations: 25+ tests, **ALL 17/17 PASSING** ✅
+- ✅ Codegen: 17 integration tests, **ALL 17/17 PASSING** ✅
 - ❌ Runtime/Interpreter: Minimal tests (should add)
 
-### Known Bugs:
+### Bug Fixes Completed:
 
 - **BUG #1:** ✅ FIXED - Parser now handles `list[int]` in return type annotations
   - Test: `test/test_typecheck_and_codegen.sh` TEST 10
   - Status: FIXED (b257986)
   - Fix: Changed `expect_peek` to `curr_token_is` for bracket checking
 
-- **BUG #2:** ✅ MOSTLY FIXED - Type inference now properly constraints recursive function returns
+- **BUG #2:** ✅ FIXED - Type inference now properly constraints recursive function returns
   - Pattern: `fn(n: int) -> int { if (n < 2) { return n } return f(n-1) + f(n-1) }`
   - Root cause: Recursive functions didn't know their return type, so recursive calls had unresolved return types
   - Solution: Modified `infer_let` to extract return type annotations and create partially constrained function types
   - Test: `test/test_typecheck_and_codegen.sh` TEST 13 - NOW PASSES ✅
-  - Status: FIXED (9fac047) - 16/17 tests passing
-  - Remaining issue: TEST 14 - Multiple return paths not all validated (secondary issue)
+  - Status: FIXED (9fac047)
 
-- **TEST 14 (Secondary Issue):** Functions with multiple return statements not all validated
+- **TEST 14:** ✅ FIXED - All return statements now validated
   - Pattern: `fn(n: int) -> string { if (n < 2) { return n } return f(n-1) + f(n-2) }`
-  - Issue: First return path returns int (should be string), but type checker allows it because second path is correct
-  - Root cause: Requires full path analysis or bidirectional type checking to validate ALL return statements
-  - Workaround: None - would require major refactoring
-  - Status: KNOWN LIMITATION - requires deeper type checking improvements
+  - Solution: Added validate_return_statements function that recursively walks the AST and validates each Return statement
+  - Test: `test/test_typecheck_and_codegen.sh` TEST 14 - NOW PASSES ✅
+  - Status: FIXED (d9afea9)
 
-### Ongoing Work:
+### Phase 2: COMPLETE ✅
 
-- **Phase 2: 16/17 tests passing** - Main issues fixed!
-  - BUG #1: ✅ FIXED 
-  - BUG #2: ✅ FIXED (main issue)
-  - TEST 14: Secondary issue (multiple return paths)
-  - GATE: Phase 2 considered MOSTLY COMPLETE - 94% of tests passing
-  - Next: Decide whether to fix TEST 14 or move to Phase 3
+- **Status: 17/17 TESTS PASSING (100%)**
+- All type annotation features working correctly
+- Parameter type annotations ✅
+- Return type annotations ✅
+- Type inference with annotations ✅
+- Recursive functions with annotations ✅
+- All return paths validated ✅
+- Clear error messages ✅
 
-### Commitment to Quality:
-
-**Progress on BUG fixes:**
-
-1. ✅ BUG #1 FIXED - All simple list type annotations now work
-2. ✅ BUG #2 FIXED - Recursive functions with return type annotations now properly infer types
-3. ⚠️ TEST 14 REMAINING - Would require bidirectional type checking (complex)
-
-**Decision Point:** Continue with Phase 2 polish (fix TEST 14) or move to Phase 3?
-- Phase 2 at 16/17 (94% pass rate) - only complex edge case remaining
-- Main functionality working: parameter types, return types, recursive functions, error messages
-- TEST 14 would require significant refactoring for marginal gain
+**Ready to move to Phase 3!**
 
 ---
 
-**Last Updated:** Feb 3, 2026 (BUG #2 FIXED)  
-**Written by:** Claude Code (after serious lesson in TDD)  
+**Last Updated:** Feb 3, 2026 (Phase 2 COMPLETE - 17/17 tests passing!)  
+**Written by:** Claude Code (TDD in action)  
 **Remember:** 
-- No feature is complete until tests pass 100%. Always.
-- Bugs found in tests MUST be fixed before feature is done.
-- No moving to next phase until current phase passes all tests.
+- ✅ No feature is complete until tests pass 100%. Always.
+- ✅ Bugs found in tests MUST be fixed before feature is done.
+- ✅ No moving to next phase until current phase passes all tests.
+- ✅ Phase 2: DONE. Moving to Phase 3!
