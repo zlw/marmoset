@@ -183,10 +183,8 @@ let rec infer_expression (env : type_env) (expr : AST.expression) : (substitutio
   | AST.If (condition, consequence, alternative) -> infer_if env condition consequence alternative
   (* Function literals *)
   | AST.Function f ->
-      (* Phase 2: Ignore generics and annotations for now, just use param names *)
-      let param_names = List.map fst f.params in
-      let param_exprs = List.map (fun name -> AST.mk_expr (AST.Identifier name)) param_names in
-      infer_function env param_exprs f.body
+      (* Phase 2: Use parameter and return type annotations to guide inference *)
+      infer_function_with_annotations env f.params f.return_type f.body
   (* Function calls *)
   | AST.Call (func, args) -> infer_call env func args
   (* Arrays *)
@@ -337,6 +335,35 @@ and infer_function env params body =
       (* Apply substitution to parameter types *)
       let param_types' = List.map (apply_substitution subst) param_types in
       (* Build function type: p1 -> p2 -> ... -> body_type *)
+      let func_type = List.fold_right (fun param_t acc -> TFun (param_t, acc)) param_types' body_type in
+      Ok (subst, func_type)
+
+(* Infer function with parameter type annotations *)
+and infer_function_with_annotations env params _return_annot body =
+  (* Extract parameter names and type annotations *)
+  let param_info = params in
+  (* For each parameter, either use its annotation or create a fresh type variable *)
+  let param_types =
+    List.map
+      (fun (_name, annot_opt) ->
+        match annot_opt with
+        | None -> fresh_type_var ()
+        | Some type_expr -> (
+            try Annotation.type_expr_to_mono_type type_expr
+            with Failure _ -> fresh_type_var () (* Fallback to fresh if annotation fails *)))
+      param_info
+  in
+  let param_names = List.map fst param_info in
+  (* Extend environment with parameters *)
+  let env' =
+    List.fold_left2 (fun acc name mono -> TypeEnv.add name (mono_to_poly mono) acc) env param_names param_types
+  in
+  (* Infer body type *)
+  match infer_statement env' body with
+  | Error e -> Error e
+  | Ok (subst, body_type) ->
+      (* Build function type: p1 -> p2 -> ... -> body_type *)
+      let param_types' = List.map (apply_substitution subst) param_types in
       let func_type = List.fold_right (fun param_t acc -> TFun (param_t, acc)) param_types' body_type in
       Ok (subst, func_type)
 

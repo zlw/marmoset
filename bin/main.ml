@@ -18,11 +18,9 @@ type command =
 (* Type check a program, returning Ok type_string or Error with message *)
 let typecheck source program =
   let env = Marmoset.Lib.Builtins.prelude_env () in
-  match Marmoset.Lib.Infer.infer_program ~env program with
-  | Ok (_, result_type) -> Ok (Marmoset.Lib.Types.to_string_pretty result_type)
-  | Error e ->
-      let err = Marmoset.Lib.Checker.error_of_infer_error ~source e in
-      Error (Marmoset.Lib.Checker.format_error err)
+  match Marmoset.Lib.Checker.check_program_with_annotations ~env program with
+  | Ok { result_type; _ } -> Ok (Marmoset.Lib.Types.to_string_pretty result_type)
+  | Error err -> Error (Marmoset.Lib.Checker.format_error_with_context source err)
 
 let parse_args () : command =
   let args = Array.to_list Sys.argv |> List.tl in

@@ -69,26 +69,131 @@ let check_string ?(env = Infer.empty_env) (source : string) : (typecheck_result,
    Phase 2: Type check with annotations
    ============================================================ *)
 
+(* Check if a let binding's annotation matches its inferred type *)
+let check_let_annotation
+    (name : string) (annotation : Syntax.Ast.AST.type_expr option) (inferred_type : mono_type) :
+    (unit, error) result =
+  match annotation with
+  | None ->
+      (* No annotation, nothing to check *)
+      Ok ()
+  | Some type_annot -> (
+      (* Convert annotation to mono_type and check match *)
+      try
+        let annotated_type = Annotation.type_expr_to_mono_type type_annot in
+        if Annotation.check_annotation annotated_type inferred_type then
+          Ok ()
+        else
+          Error
+            {
+              message =
+                Printf.sprintf "Type annotation mismatch for '%s': expected %s but inferred %s" name
+                  (Annotation.format_mono_type annotated_type)
+                  (Annotation.format_mono_type inferred_type);
+              loc = None;
+            }
+      with Failure msg ->
+        Error { message = Printf.sprintf "Invalid type annotation for '%s': %s" name msg; loc = None })
+
+(* Check if a function expression's return type annotation matches its inferred type *)
+let check_function_annotation (return_annotation : Syntax.Ast.AST.type_expr option) (inferred_type : mono_type) :
+    (unit, error) result =
+  match return_annotation with
+  | None ->
+      (* No annotation, nothing to check *)
+      Ok ()
+  | Some type_annot -> (
+      (* Extract the return type from the function type *)
+      (* inferred_type should be TFun(...) or possibly a polymorphic function *)
+      (* We need to extract just the return type *)
+      try
+        let annotated_return_type = Annotation.type_expr_to_mono_type type_annot in
+        (* Extract the return type from the function type by recursively unwrapping TFun *)
+        let rec extract_return_type (t : mono_type) : mono_type =
+          match t with
+          | TFun (_, ret) -> extract_return_type ret
+          | other -> other
+        in
+        let actual_return = extract_return_type inferred_type in
+        if Annotation.check_annotation annotated_return_type actual_return then
+          Ok ()
+        else
+          Error
+            {
+              message =
+                Printf.sprintf "Function return type annotation mismatch: expected %s but inferred %s"
+                  (Annotation.format_mono_type annotated_return_type)
+                  (Annotation.format_mono_type actual_return);
+              loc = None;
+            }
+      with Failure msg -> Error { message = Printf.sprintf "Invalid function annotation: %s" msg; loc = None })
+
 (* Type check a program with annotation support.
-   This checks that all annotations match the inferred types.
-   For Phase 2, constraint validation is skipped (Phase 3 work). *)
+    This checks that all annotations match the inferred types.
+    For Phase 2, constraint validation is skipped (Phase 3 work). *)
 let check_program_with_annotations ?(env = Infer.empty_env) (program : Syntax.Ast.AST.program) :
     (typecheck_result, error) result =
-  (* For Phase 2, we just use the standard inference *)
-  (* Phase 2.5+: This would validate annotations and constraints *)
+  (* First, do standard inference *)
   match Infer.infer_program ~env program with
   | Error e -> Error (error_of_infer_error e)
-  | Ok (final_env, result_type) -> Ok { result_type; environment = final_env }
+  | Ok (final_env, result_type) -> (
+      (* Phase 2: Validate annotations against inferred types *)
+      let rec check_stmts_with_infer (stmts : Syntax.Ast.AST.statement list) (env_check : env) :
+          (unit, error) result =
+        match stmts with
+        | [] -> Ok ()
+        | stmt :: rest -> (
+            match stmt.stmt with
+            | Syntax.Ast.AST.Let let_binding -> (
+                (* Check if annotation matches inferred type of the let binding *)
+                match Infer.TypeEnv.find_opt let_binding.name env_check with
+                | None ->
+                    (* Variable not in environment (shouldn't happen) *)
+                    Error
+                      {
+                        message =
+                          Printf.sprintf "Internal error: variable '%s' not in environment" let_binding.name;
+                        loc = None;
+                      }
+                | Some (Forall (_, mono_type)) -> (
+                    (* Check let binding annotation *)
+                    match check_let_annotation let_binding.name let_binding.type_annotation mono_type with
+                    | Error e -> Error e
+                    | Ok () -> (
+                        (* Also check function expression annotation if present *)
+                        match check_expr_annotations let_binding.value mono_type env_check with
+                        | Error e -> Error e
+                        | Ok () -> check_stmts_with_infer rest env_check)))
+            | Syntax.Ast.AST.Block nested_stmts -> (
+                (* Recursively check block statements *)
+                match check_stmts_with_infer nested_stmts env_check with
+                | Error e -> Error e
+                | Ok () -> check_stmts_with_infer rest env_check)
+            | _ ->
+                (* Other statements don't have annotations to check *)
+                check_stmts_with_infer rest env_check)
+      and check_expr_annotations (expr : Syntax.Ast.AST.expression) (inferred : mono_type) (env_check : env) :
+          (unit, error) result =
+        match expr.expr with
+        | Syntax.Ast.AST.Function { return_type; params = _; body; generics = _ } -> (
+            (* Check function return type annotation *)
+            match check_function_annotation return_type inferred with
+            | Error e -> Error e
+            | Ok () ->
+                (* Also recursively check body statements *)
+                check_stmts_with_infer [ body ] env_check)
+        | _ -> Ok () (* Other expressions don't have annotations to check *)
+      in
+      match check_stmts_with_infer program final_env with
+      | Error e -> Error e
+      | Ok () -> Ok { result_type; environment = final_env })
 
 (* Type check source code with annotations.
    Parses and type checks in one step, with annotation support. *)
 let check_string_with_annotations ?(env = Infer.empty_env) (source : string) : (typecheck_result, error) result =
   match Syntax.Parser.parse source with
   | Error errors -> Error { message = "Parse error: " ^ String.concat ", " errors; loc = None }
-  | Ok program -> (
-      match Infer.infer_program ~env program with
-      | Error e -> Error (error_of_infer_error ~source e)
-      | Ok (final_env, result_type) -> Ok { result_type; environment = final_env })
+  | Ok program -> check_program_with_annotations ~env program
 
 (* Get the type of an expression as a string *)
 let type_string (source : string) : string =

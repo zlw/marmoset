@@ -382,48 +382,33 @@ and parse_function_literal (p : parser) : (parser * AST.expression, parser) resu
       Error (peek_error p5 Token.LBrace)
   in
   let* p7, body = parse_block_statement p6 in
-  (* Convert old-style params (expressions) to new-style (names with optional type) *)
-  let new_params =
-    List.map
-      (fun expr_param ->
-        match expr_param.AST.expr with
-        | AST.Identifier name -> (name, None)
-        | _ -> ("", None))
-      params
-  in
-  Ok (p7, mk_expr pos (AST.Function { generics; params = new_params; return_type; body }))
+  Ok (p7, mk_expr pos (AST.Function { generics; params; return_type; body }))
 
-and parse_function_parameters (p : parser) : (parser * AST.expression list, parser) result =
+and parse_function_parameters (p : parser) : (parser * (string * AST.type_expr option) list, parser) result =
   if peek_token_is p Token.RParen then
     Ok (next_token p, [])
   else
-    let rec loop (lp : parser) (idents : AST.expression list) =
+    let rec loop (lp : parser) (params_acc : (string * AST.type_expr option) list) =
       (* Get the parameter name *)
       if not (curr_token_is lp Token.Ident) then
         Error (no_prefix_parse_fn_error lp lp.curr_token.token_type)
       else
         let param_name = lp.curr_token.literal in
-        let pos = lp.curr_token.pos in
         let lp_after_name = next_token lp in
-        (* Phase 2: Skip type annotation if present *)
-        let lp_after_annot =
+        (* Phase 2: Parse type annotation if present *)
+        let* lp_after_annot, type_annot =
           if curr_token_is lp_after_name Token.Colon then
-            (* Skip past the type expression *)
-            let rec skip_type (lp_skip : parser) =
-              if curr_token_is lp_skip Token.Comma || curr_token_is lp_skip Token.RParen then
-                lp_skip
-              else
-                skip_type (next_token lp_skip)
-            in
-            skip_type (next_token lp_after_name)
+            (* Parse the type expression *)
+            let* lp_parse, te = parse_type_expr (next_token lp_after_name) in
+            Ok (lp_parse, Some te)
           else
-            lp_after_name
+            Ok (lp_after_name, None)
         in
-        let ident = mk_expr pos (AST.Identifier param_name) in
+        let new_param = (param_name, type_annot) in
         if curr_token_is lp_after_annot Token.Comma then
-          loop (next_token lp_after_annot) ([ ident ] @ idents)
+          loop (next_token lp_after_annot) (params_acc @ [ new_param ])
         else if curr_token_is lp_after_annot Token.RParen then
-          Ok (lp_after_annot, List.rev ([ ident ] @ idents))
+          Ok (lp_after_annot, params_acc @ [ new_param ])
         else
           Error (peek_error lp_after_annot Token.RParen)
     in

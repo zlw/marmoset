@@ -696,9 +696,9 @@ let compile_string (source : string) : (string, string) result =
   | Error errors -> Error ("Parse error: " ^ String.concat ", " errors)
   | Ok program -> (
       let env = Typecheck.Builtins.prelude_env () in
-      match Infer.infer_program ~env program with
-      | Error e -> Error ("Type error: " ^ Infer.error_to_string e)
-      | Ok (typed_env, _) -> Ok (emit_program_with_typed_env typed_env program))
+      match Typecheck.Checker.check_program_with_annotations ~env program with
+      | Error err -> Error ("Type error: " ^ Typecheck.Checker.format_error err)
+      | Ok { environment = typed_env; _ } -> Ok (emit_program_with_typed_env typed_env program))
 
 type build_output = {
   main_go : string;
