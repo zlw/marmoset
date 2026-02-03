@@ -240,7 +240,19 @@ let x = some(5)           // x: option[int]
 let y = err(full_storage("disk full"))  // y: result[user, user_repo_error]
 ```
 
-**Key principle**: Enums are tagged unions with data (like Rust, OCaml, not C). Each variant can carry associated data. Pattern matching extracts the data. Compile to Go `interface{}` with runtime type switches or discriminated unions.
+**Key principle**: Enums are tagged unions with data (like Rust, OCaml, not C). Each variant can carry associated data. Pattern matching extracts the data.
+
+**Codegen Strategy** (Phase 3+):
+- **Initial implementation (Phase 3)**: Discriminated union structs
+  - Each enum becomes a Go struct with tag field + data field
+  - Example: `type Result struct { tag int8; data interface{} }`
+  - Pattern matching uses tag value to dispatch (fast, no reflection)
+  - Zero-copy, single pointer dereference per match
+  
+- **Future optimization (Phase 4+)**: Specialization
+  - When enum type is known at compile time, generate specialized match code
+  - No need to store/check tag if only one variant possible
+  - Avoid `interface{}` boxing when all variants have known concrete types
 
 ### Trait Definition (Phase 3)
 ```marmoset

@@ -111,6 +111,26 @@
 
 ---
 
+## Phase 3+ Optimization Opportunities
+
+### Enum/Tagged Union Codegen
+- **Phase 3**: Discriminated union structs (tag + data field)
+  - Each enum compiles to Go struct: `type Result struct { tag int8; data interface{} }`
+  - Pattern matching uses tag value to dispatch (no reflection, single pointer dereference)
+  - Fast, zero-copy approach
+  
+- **Phase 4+**: Specialization optimization
+  - When enum type known at compile time, skip tag storage
+  - Avoid `interface{}` boxing for monomorphic cases
+  - Could generate code as fast as hand-optimized Go
+
+### Higher-Order Function Monomorphization
+- **Phase 3**: Constraint-based monomorphization (not bypassed by Go generics)
+  - Each concrete type combination of `map(arr, f)` gets specialized
+  - Enables proper error handling with custom error types
+
+---
+
 ## Current Repository State
 
 ### Repository
