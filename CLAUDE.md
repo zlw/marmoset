@@ -214,16 +214,19 @@ dune runtest
 - Functions, conditionals, loops
 - **Status:** Complete with tests
 
-### Phase 2: Type Annotations IN PROGRESS
+### Phase 2: Type Annotations ✅ COMPLETE
 - Type syntax: `fn(x: int) -> string { ... }`
 - Type inference with annotations
 - Generic parameters: `fn[a](x: a) -> a { ... }`
-- **Current bugs:**
-  - Parser fails on `list[int]` in return types
-  - Type inference shows type variables in conditionals
-- **Status:** 15/17 tests passing, 2 bugs to fix
+- **Status:** ✅ 17/17 tests passing (ALL FIXED)
 
-### Phase 3: Type Constraints & Unions PLANNED
+### Phase 3: Expression-Based Returns with Early Exit ✅ COMPLETE
+- Early return syntax: `if (cond) return value else { ... }`
+- If-expression semantics: if without else returns TNull
+- Single-statement returns without braces
+- **Status:** ✅ 21/21 tests passing (17 Phase 2 + 4 Phase 3)
+
+### Phase 4: Type Constraints & Unions PLANNED
 - Trait constraints: `fn[a: show](x: a) { ... }`
 - Union types: `int | string | bool`
 - Type narrowing in conditionals
@@ -333,8 +336,9 @@ Then create PR or notify of changes.
 
 - ✅ Lexer/Parser: Well tested with inline tests
 - ✅ Type Inference: Good test coverage
-- ✅ Type Annotations: 25+ tests, **ALL 17/17 PASSING** ✅
-- ✅ Codegen: 17 integration tests, **ALL 17/17 PASSING** ✅
+- ✅ Type Annotations: **ALL 17/17 PASSING** ✅
+- ✅ Early Return Syntax: **4/4 NEW TESTS PASSING** ✅
+- ✅ Codegen: 18 integration tests, **ALL 18/18 PASSING** ✅
 - ❌ Runtime/Interpreter: Minimal tests (should add)
 
 ### Bug Fixes Completed:
@@ -368,14 +372,31 @@ Then create PR or notify of changes.
 - All return paths validated ✅
 - Clear error messages ✅
 
-**Ready to move to Phase 3!**
+### Phase 3: COMPLETE ✅
+
+- **Status: 21/21 TESTS PASSING (100%)**
+- Early return syntax fully working
+- If-without-else returns TNull (prevents value usage) ✅
+- If-with-else works as expression ✅
+- Single-statement return support: `if (cond) return expr` ✅
+- Return validation working correctly ✅
+- Parser enhancements complete ✅
+- Test coverage comprehensive ✅
+
+**Completed Tasks:**
+1. ✅ Task 3.0.1: If-as-expression type checking fix
+2. ✅ Task 3.0.2: Return validation integration
+3. ✅ Task 3.1: Parser support for single-statement returns
+4. ✅ Task 3.2: Comprehensive test suite (4 new tests)
+
+**Ready to move to Phase 4!**
 
 ---
 
-**Last Updated:** Feb 3, 2026 (Phase 2 COMPLETE - 17/17 tests passing!)  
+**Last Updated:** Feb 3, 2026 (Phase 3 COMPLETE - 21/21 tests passing!)  
 **Written by:** Claude Code (TDD in action)  
 **Remember:** 
 - ✅ No feature is complete until tests pass 100%. Always.
 - ✅ Bugs found in tests MUST be fixed before feature is done.
 - ✅ No moving to next phase until current phase passes all tests.
-- ✅ Phase 2: DONE. Moving to Phase 3!
+- ✅ Phase 3: DONE. Ready for Phase 4!
