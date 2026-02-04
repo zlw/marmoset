@@ -1,9 +1,9 @@
 # Phase 4, Milestone 3: Traits System
 
-**Timeline**: 4-5 weeks  
+**Timeline**: ~5 weeks  
 **Status**: Not started  
 **Dependencies**: Milestone 2 (Enums & Pattern Matching) complete  
-**Last Updated**: 2026-02-03
+**Last Updated**: 2026-02-04
 
 ---
 
@@ -12,12 +12,12 @@
 Traits provide:
 1. **Ad-hoc polymorphism**: Same function name, different implementations per type
 2. **Type constraints**: Generic functions can require capabilities (`fn[a: show](x: a)`)
-3. **Operator overloading**: `eq` trait enables `==` and `!=` operators
-4. **Derive mechanism**: Automatic implementations for simple cases
+3. **Row constraints**: Traits can require fields, enabling structural constraints (`fn[t: { name: string }]`)
+4. **Operator overloading**: `eq` trait enables `==` and `!=` operators
+5. **Derive mechanism**: Automatic implementations for simple cases
 
 ### Non-Goals (Deferred)
 - Associated types (use type parameters instead)
-- Trait objects / dynamic dispatch
 - Static methods / default trait
 - Higher-kinded types
 
@@ -28,6 +28,7 @@ Traits provide:
 | Feature | Decision |
 |---------|----------|
 | Trait syntax | `trait eq[a] { fn eq(x: a, y: a) -> bool }` |
+| Field syntax | Yes: `trait named { name: string }` |
 | Impl syntax | `impl eq for point { ... }` |
 | Self convention | Haskell-style type parameter: `trait eq[a]` |
 | Supertraits | Yes: `trait ord[a]: eq { ... }` |
@@ -42,7 +43,9 @@ Traits provide:
 | Trait scope | Top-level only |
 | Impl scope | Top-level only |
 | Primitive impls | Compiler provides |
-| Dispatch | Static only (monomorphization) |
+| Dispatch modes | Static (`[t: T]`) and Dynamic (`T` as type) |
+| Static dispatch | Monomorphization, direct field/method access |
+| Dynamic dispatch | Go interface with auto-generated getters |
 
 ---
 
@@ -91,6 +94,37 @@ enum ordering {
     greater
 }
 ```
+
+### Trait Fields
+
+Traits can require fields, not just methods. This enables using traits for both ad-hoc polymorphism (methods) and row constraints (fields).
+
+```marmoset
+# Field-only trait
+trait named {
+    name: string
+}
+
+# Mixed fields and methods
+trait printable {
+    name: string
+    fn format(self) -> string
+}
+
+# Using field constraint
+fn greet[t: named](x: t) -> string {
+    "Hello, " + x.name
+}
+
+# Implementation must provide the field
+impl named for person {
+    # Field 'name' must exist in person type
+}
+```
+
+**Field Access:**
+- **Static dispatch** (`[t: named]`): Direct field access (monomorphized)
+- **Dynamic dispatch** (`named` as type): Auto-generated getter method
 
 ### Operator Desugaring
 
@@ -157,7 +191,9 @@ trait eq[a] {
 
 **Grammar**:
 ```
-trait_def     ::= "trait" identifier type_params supertrait_clause? "{" method_sig* "}"
+trait_def     ::= "trait" identifier type_params supertrait_clause? "{" trait_member* "}"
+trait_member  ::= field_decl | method_sig
+field_decl    ::= identifier ":" type_expr
 type_params   ::= "[" identifier ("," identifier)* "]"
 supertrait_clause ::= ":" trait_ref ("+" trait_ref)*
 trait_ref     ::= identifier type_args?
@@ -267,6 +303,74 @@ fn debug[a: show + eq](x: a, y: a) -> string {
 
 ---
 
+## Dispatch Modes
+
+Traits support two dispatch modes based on how they are used:
+
+### Static Dispatch (Monomorphization)
+
+When a trait is used as a **constraint** on a type parameter:
+
+```marmoset
+fn greet[t: named](x: t) -> string {
+    "Hello, " + x.name
+}
+
+greet(person)   # Generates: greet_person with direct field access
+greet(company)  # Generates: greet_company with direct field access
+```
+
+**Characteristics:**
+- Zero runtime overhead
+- Direct field/method access
+- Function duplicated per concrete type
+- No vtable, no indirection
+
+### Dynamic Dispatch (Trait Objects)
+
+When a trait is used as a **type** directly (not as a constraint):
+
+```marmoset
+let items: list[named] = [person, company, robot]
+for item in items {
+    puts(item.name)  # Dynamic dispatch via getter
+}
+```
+
+**Characteristics:**
+- Enables heterogeneous collections
+- Open/extensible (foreign types can implement)
+- Field access via auto-generated getters
+- Method calls via Go interface dispatch
+- Small overhead (getter call, interface lookup)
+- **Performance note**: Go's aggressive inliner typically optimizes trivial getters to direct field access, so dynamic dispatch often approaches static performance in practice
+
+### Codegen Strategy
+
+| Usage | Field Access | Go Codegen | Performance |
+|-------|--------------|------------|-------------|
+| `[t: named]` | `x.name` → `x.Name` | Direct struct field | Zero overhead |
+| `named` as type | `x.name` → `x.GetName()` | Interface method | Getter call + interface dispatch |
+
+**Note:** Go's compiler inlines trivial getters and eliminates unused ones via dead code elimination, minimizing overhead.
+
+### Syntax Determines Dispatch
+
+The distinction is purely syntactic:
+
+```marmoset
+# Static dispatch - 't' is constrained by 'named'
+fn static_example[t: named](x: t) -> string { x.name }
+
+# Dynamic dispatch - parameter type is the trait itself
+fn dynamic_example(x: named) -> string { x.name }
+
+# Heterogeneous collection requires dynamic dispatch
+let mixed: list[named] = [person, company, robot]
+```
+
+---
+
 ## Current State Analysis
 
 ### What Already Exists
@@ -347,7 +451,13 @@ type trait_def = {
   name : string;
   type_param : string;  (* The 'a' in trait eq[a] *)
   supertraits : string list;  (* trait ord[a]: eq + hash *)
+  fields : field_decl list;  (* Required fields *)
   methods : method_sig list;
+}
+
+and field_decl = {
+  name : string;
+  typ : type_expr;
 }
 
 and method_sig = {
@@ -399,7 +509,7 @@ type program = declaration list
 **Duration**: 1-2 days  
 **Files**: `lib/frontend/syntax/parser.ml`
 
-Parse: `trait name[a]: supertrait1 + supertrait2 { fn methods... }`
+Parse: `trait name[a]: supertrait1 + supertrait2 { fields and methods... }`
 
 ```ocaml
 (* parse_trait_def : parser -> (parser * trait_def, parser) result *)
@@ -419,11 +529,29 @@ and parse_trait_def (p : parser) : (parser * AST.trait_def, parser) result =
     else
       Ok (next_token p6, [])
   in
-  (* Expect: { methods } *)
+  (* Expect: { fields and methods } *)
   let* p8 = expect_curr p7 Token.LBrace in
-  let* p9, methods = parse_method_sigs (next_token p8) in
+  let* p9, (fields, methods) = parse_trait_members (next_token p8) in
   let* p10 = expect_curr p9 Token.RBrace in
-  Ok (next_token p10, { name; type_param; supertraits; methods })
+  Ok (next_token p10, { name; type_param; supertraits; fields; methods })
+
+(* Parse trait members (fields and methods) *)
+and parse_trait_members (p : parser) : (parser * (field_decl list * method_sig list), parser) result =
+  let rec loop lp fields methods =
+    if curr_token_is lp Token.RBrace then
+      Ok (lp, (List.rev fields, List.rev methods))
+    else if curr_token_is lp Token.Fn then
+      (* Method signature *)
+      let* lp2, method_sig = parse_method_sig lp in
+      loop lp2 fields (method_sig :: methods)
+    else if curr_token_is lp Token.Ident then
+      (* Could be field: name: type *)
+      let* lp2, field = parse_field_decl lp in
+      loop lp2 (field :: fields) methods
+    else
+      Error (unexpected_token lp)
+  in
+  loop p [] []
 ```
 
 ---
@@ -864,7 +992,102 @@ let emit_prefix (op : string) (operand : string) (ty : Types.mono_type) : string
 
 ---
 
-### Step 3.13: Integration Tests
+### Step 3.13: Codegen - Dynamic Dispatch (Trait Objects)
+
+**Duration**: 2-3 days  
+**Files**: `lib/backend/go/emitter.ml`
+
+Generate Go interfaces and auto-getters for dynamic dispatch:
+
+```ocaml
+(* Generate Go interface for trait *)
+let emit_trait_interface (trait : trait_def) : string =
+  (* Fields → getter methods *)
+  let field_getters = List.map (fun f ->
+    Printf.sprintf "\tGet%s() %s" 
+      (capitalize f.name) 
+      (emit_type f.typ)
+  ) trait.fields in
+  
+  (* Methods → interface methods *)
+  let methods = List.map (fun m ->
+    Printf.sprintf "\t%s(%s) %s" 
+      (capitalize m.name)
+      (emit_params m.params) 
+      (emit_type m.return_type)
+  ) trait.methods in
+  
+  Printf.sprintf "type %s interface {\n%s\n}\n"
+    (capitalize trait.name)
+    (String.concat "\n" (field_getters @ methods))
+
+(* Auto-generate getter for implementing type *)
+let emit_field_getter (type_name : string) (field : field_decl) : string =
+  Printf.sprintf "func (x %s) Get%s() %s {\n\treturn x.%s\n}\n"
+    type_name
+    (capitalize field.name)
+    (emit_type field.typ)
+    (capitalize field.name)
+
+(* Detect if trait is used as type (not just constraint) *)
+let trait_needs_interface (trait_name : string) (program : AST.program) : bool =
+  (* Check if trait_name appears as a type (not in [t: trait_name]) *)
+  (* This is a simplified check - real implementation would traverse AST *)
+  true  (* For now, generate interfaces for all traits *)
+
+(* Transform field access on trait-typed value *)
+let emit_trait_field_access (expr : string) (field : string) (is_trait_typed : bool) : string =
+  if is_trait_typed then
+    (* Dynamic dispatch: x.name → x.GetName() *)
+    Printf.sprintf "%s.Get%s()" expr (capitalize field)
+  else
+    (* Static dispatch: x.name → x.Name *)
+    Printf.sprintf "%s.%s" expr (capitalize field)
+```
+
+**Example output:**
+
+Marmoset:
+```marmoset
+trait named { name: string }
+
+type person = { name: string, age: int }
+impl named for person
+
+let items: list[named] = [person1, person2]
+```
+
+Generated Go:
+```go
+// Trait interface
+type Named interface {
+	GetName() string
+}
+
+// Person struct
+type Person struct {
+	Name string
+	Age  int64
+}
+
+// Auto-generated getter
+func (x Person) GetName() string {
+	return x.Name
+}
+
+// Usage in code
+var items []Named = []Named{person1, person2}
+// Field access: items[0].name → items[0].GetName()
+```
+
+**Optimization notes:**
+- Go's compiler inlines trivial getters
+- Dead code elimination removes unused getters
+- Interface dispatch has minimal overhead
+
+---
+
+### Step 3.14: Integration Tests
 
 **Duration**: 2 days
 
@@ -1021,6 +1244,48 @@ test_case "float eq" \
 test_case "float arithmetic" \
     '1.5 + 2.5' \
     '4.0'
+
+# TEST 39: Trait with field constraint (static dispatch)
+test_case "trait field static dispatch" \
+    'trait named { name: string }
+     fn greet[t: named](x: t) -> string { "Hello, " + x.name }
+     greet({ name: "Alice" })' \
+    '"Hello, Alice"'
+
+# TEST 40: Field-only trait implementation
+test_case "field only trait" \
+    'trait named { name: string }
+     type person = { name: string, age: int }
+     impl named for person
+     fn get_name[t: named](x: t) -> string { x.name }
+     get_name({ name: "Bob", age: 30 })' \
+    '"Bob"'
+
+# TEST 41: Mixed field and method trait
+test_case "mixed fields and methods" \
+    'trait printable { 
+       name: string
+       fn format(self) -> string { "Name: " + self.name }
+     }
+     type item = { name: string, price: int }
+     impl printable for item
+     fn display[t: printable](x: t) -> string { format(x) }
+     display({ name: "Widget", price: 10 })' \
+    '"Name: Widget"'
+
+# TEST 42: Heterogeneous collection with trait object (dynamic dispatch)
+test_case "trait object heterogeneous list" \
+    'trait named { name: string }
+     type person = { name: string, age: int }
+     type company = { name: string, employees: int }
+     impl named for person
+     impl named for company
+     let items: list[named] = [
+       { name: "Alice", age: 30 },
+       { name: "ACME Corp", employees: 100 }
+     ]
+     items[0].name' \
+    '"Alice"'
 ```
 
 ---
@@ -1040,10 +1305,11 @@ test_case "float arithmetic" \
 | 3.9 Inference - operators | 1 day | 14 days |
 | 3.10 Derive impl | 2 days | 16 days |
 | 3.11 Builtin impls | 1 day | 17 days |
-| 3.12 Codegen | 3 days | 20 days |
-| 3.13 Tests | 2 days | 22 days |
+| 3.12 Codegen - static | 3 days | 20 days |
+| 3.13 Codegen - dynamic | 2.5 days | 22.5 days |
+| 3.14 Tests | 2 days | 24.5 days |
 
-**Total: ~4-5 weeks**
+**Total: ~5 weeks**
 
 ---
 
@@ -1054,6 +1320,7 @@ test_case "float arithmetic" \
 - [ ] `impl` keyword lexed
 - [ ] `derive` keyword lexed
 - [ ] Trait definition parsed
+- [ ] Field declarations in traits parsed
 - [ ] Supertrait clause parsed
 - [ ] Method signatures parsed
 - [ ] Default implementations parsed
@@ -1063,7 +1330,8 @@ test_case "float arithmetic" \
 
 ### Type System
 - [ ] Trait registry created
-- [ ] Trait definitions registered
+- [ ] Trait definitions registered (with fields)
+- [ ] Field requirements tracked
 - [ ] Impl blocks registered
 - [ ] Solver handles direct impls
 - [ ] Solver handles conditional impls
@@ -1074,6 +1342,8 @@ test_case "float arithmetic" \
 
 ### Inference
 - [ ] Constraint checking at call sites
+- [ ] Field access on constrained types (static)
+- [ ] Field access on trait-typed values (dynamic)
 - [ ] `==` desugars to `eq`
 - [ ] `!=` desugars to `!eq`
 - [ ] `<`, `>`, `<=`, `>=` desugar to `compare`
@@ -1096,16 +1366,27 @@ test_case "float arithmetic" \
 - [ ] list[a]: conditional impls
 - [ ] hash[k,v]: conditional impls
 
-### Codegen
+### Codegen - Static Dispatch
 - [ ] Builtin method implementations
 - [ ] User method implementations
 - [ ] Operator desugaring in emitter
 - [ ] Derived implementations
+- [ ] Direct field access for constrained types
+
+### Codegen - Dynamic Dispatch
+- [ ] Detect when trait is used as type
+- [ ] Generate Go interface for trait
+- [ ] Field → getter method in interface
+- [ ] Auto-generate getters for implementing types
+- [ ] Field access → getter call transformation
+- [ ] Method dispatch via Go interface
 
 ### Tests
 - [ ] All 38+ integration tests pass
 - [ ] Unit tests for solver
 - [ ] Error case tests
+- [ ] Static dispatch field access tests
+- [ ] Dynamic dispatch trait object tests
 
 ---
 
@@ -1126,7 +1407,9 @@ test_case "float arithmetic" \
 
 5. **Higher-kinded types**: Deferred, but needed for Functor/Monad
 
+6. **Go optimizer reliance**: We generate getters aggressively and rely on Go's inliner and dead code elimination. This seems to work well based on Go's track record, but if binary size becomes an issue, we could add analysis to only generate getters when trait is actually used as a type (not just constraint).
+
 ---
 
-**Last Updated**: 2026-02-03  
+**Last Updated**: 2026-02-04  
 **Author**: Claude Code + User collaboration
