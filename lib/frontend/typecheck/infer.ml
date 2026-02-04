@@ -211,7 +211,11 @@ let rec infer_expression (env : type_env) (expr : AST.expression) : (substitutio
   | AST.Hash pairs -> infer_hash env pairs
   (* Index expressions *)
   | AST.Index (container, index) -> infer_index env container index
-
+  (* Phase 4.2: Enums and pattern matching - to be implemented *)
+  | AST.EnumConstructor (_enum_name, _variant_name, _args) ->
+      Error { kind = EmptyArrayUnknownType; pos = Some expr.pos } (* Temporary placeholder *)
+  | AST.Match (_scrutinee, _arms) -> Error { kind = EmptyArrayUnknownType; pos = Some expr.pos }
+(* Temporary placeholder *)
 (* ============================================================
    Prefix Operators: !, -
    ============================================================ *)
@@ -701,6 +705,9 @@ and infer_statement env stmt =
   | AST.Return expr -> infer_expression env expr
   | AST.Block stmts -> infer_block env stmts
   | AST.Let let_binding -> infer_let env let_binding.name let_binding.value
+  | AST.EnumDef _ ->
+      (* Enum definitions are handled separately *)
+      Ok (empty_substitution, TNull)
 
 (* Simple validation: check that all explicit return statements match expected type *)
 and validate_return_statements (env : type_env) (expected_type : mono_type) (stmt : AST.statement) :
@@ -734,6 +741,7 @@ and validate_return_statements (env : type_env) (expected_type : mono_type) (stm
               | Some alt_stmt -> validate_return_statements env expected_type alt_stmt))
       | _ -> Ok ())
   | AST.Let _ -> Ok ()
+  | AST.EnumDef _ -> Ok ()
 
 (* Infer a let binding.
    

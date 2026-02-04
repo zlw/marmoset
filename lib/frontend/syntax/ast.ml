@@ -10,6 +10,13 @@ module AST = struct
     | TUnion of type_expr list (* int | string | bool *)
   [@@deriving show]
 
+  (* Phase 4.2: Variant definition for enums *)
+  and variant_def = {
+    variant_name : string;
+    variant_fields : type_expr list;
+  }
+  [@@deriving show]
+
   and generic_param = {
     name : string;
     constraints : string list; (* trait names like "show", "eq" *)
@@ -30,6 +37,11 @@ module AST = struct
     | Return of expression
     | ExpressionStmt of expression
     | Block of statement list
+    | EnumDef of {
+        name : string;
+        type_params : string list;
+        variants : variant_def list;
+      }
   [@@deriving show]
 
   and expression = {
@@ -57,11 +69,43 @@ module AST = struct
         body : statement;
       }
     | Call of expression * expression list
+    | EnumConstructor of string * string * expression list
+    (* enum_name, variant_name, arguments *)
+    (* e.g., option.some(42) -> ("option", "some", [Integer 42]) *)
+    | Match of expression * match_arm list (* match scrutinee { arm1, arm2, ... } *)
+  [@@deriving show]
+
+  (* Phase 4.2: Pattern matching *)
+  and pattern = {
+    pat : pattern_kind;
+    pos : int;
+  }
+
+  and pattern_kind =
+    | PWildcard (* _ *)
+    | PVariable of string (* x *)
+    | PLiteral of literal_value (* 42, "hello", true *)
+    | PConstructor of string * string * pattern list
+  (* enum_name, variant_name, field patterns *)
+  (* e.g., option.some(x) -> ("option", "some", [PVariable "x"]) *)
+  [@@deriving show]
+
+  and literal_value =
+    | LInt of int64
+    | LString of string
+    | LBool of bool
+  [@@deriving show]
+
+  and match_arm = {
+    patterns : pattern list; (* multiple patterns for | syntax *)
+    body : expression;
+  }
   [@@deriving show]
 
   (* Smart constructors with default pos=0 (for tests) *)
   let mk_expr ?(pos = 0) expr = { expr; pos }
   let mk_stmt ?(pos = 0) stmt = { stmt; pos }
+  let mk_pat ?(pos = 0) pat = { pat; pos }
 
   (* Equality functions that ignore positions (for testing) *)
   let rec expr_equal (e1 : expression) (e2 : expression) : bool =
@@ -118,6 +162,8 @@ module AST = struct
     | If _ -> "If"
     | Function _ -> "Function"
     | Call _ -> "Call"
+    | EnumConstructor _ -> "EnumConstructor"
+    | Match _ -> "Match"
 
   let to_string (program : program) : string =
     let rec statement_to_string (s : statement) : string =
@@ -126,6 +172,14 @@ module AST = struct
       | Return expr -> Printf.sprintf "return %s;" (expression_to_string expr)
       | ExpressionStmt expr -> expression_to_string expr
       | Block stmts -> List.map statement_to_string stmts |> String.concat ""
+      | EnumDef { name; type_params; variants = _ } ->
+          let params_str =
+            if type_params = [] then
+              ""
+            else
+              "[" ^ String.concat ", " type_params ^ "]"
+          in
+          Printf.sprintf "enum %s%s { ... }" name params_str
     and expression_to_string (e : expression) : string =
       match e.expr with
       | Identifier ident -> ident
@@ -156,6 +210,9 @@ module AST = struct
             | None -> "")
       | Function f -> function_to_string f.params f.body
       | Call (expr, args) -> Printf.sprintf "%s(%s)" (expression_to_string expr) (args_to_string args)
+      | EnumConstructor (enum_name, variant_name, args) ->
+          Printf.sprintf "%s.%s(%s)" enum_name variant_name (args_to_string args)
+      | Match (scrutinee, _arms) -> Printf.sprintf "match %s { ... }" (expression_to_string scrutinee)
     and block_to_string (block : statement) : string = statement_to_string block
     and function_to_string (params : (string * type_expr option) list) (body : statement) : string =
       let param_str = List.map (fun (name, _annot) -> name) params |> String.concat ", " in

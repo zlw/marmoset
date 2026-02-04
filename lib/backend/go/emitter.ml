@@ -132,6 +132,7 @@ let rec collect_funcs_stmt (state : mono_state) (stmt : AST.statement) : unit =
   | AST.Return e -> collect_funcs_expr state e
   | AST.ExpressionStmt e -> collect_funcs_expr state e
   | AST.Block stmts -> List.iter (collect_funcs_stmt state) stmts
+  | AST.EnumDef _ -> () (* Enums are compile-time only *)
 
 and collect_funcs_expr (state : mono_state) (expr : AST.expression) : unit =
   match expr.expr with
@@ -161,6 +162,10 @@ and collect_funcs_expr (state : mono_state) (expr : AST.expression) : unit =
   | AST.Function f ->
       (* Phase 2: Anonymous function - not a top-level let binding *)
       collect_funcs_stmt state f.body
+  | AST.EnumConstructor (_, _, args) -> List.iter (collect_funcs_expr state) args
+  | AST.Match (scrutinee, arms) ->
+      collect_funcs_expr state scrutinee;
+      List.iter (fun arm -> collect_funcs_expr state arm.AST.body) arms
 
 (* ============================================================
    Pass 2: Collect instantiations at call sites
@@ -197,6 +202,7 @@ let rec collect_insts_stmt (state : mono_state) (env : Infer.type_env) (stmt : A
       collect_insts_expr state env e;
       env
   | AST.Block stmts -> List.fold_left (collect_insts_stmt state) env stmts
+  | AST.EnumDef _ -> env (* Enums are compile-time only *)
 
 and collect_insts_expr (state : mono_state) (env : Infer.type_env) (expr : AST.expression) : unit =
   match expr.expr with
@@ -274,6 +280,10 @@ and collect_insts_expr (state : mono_state) (env : Infer.type_env) (expr : AST.e
           env param_names param_types
       in
       ignore (collect_insts_stmt state body_env f.body)
+  | AST.EnumConstructor (_, _, args) -> List.iter (collect_insts_expr state env) args
+  | AST.Match (scrutinee, arms) ->
+      collect_insts_expr state env scrutinee;
+      List.iter (fun arm -> collect_insts_expr state env arm.AST.body) arms
 
 (* ============================================================
    Code Generation State
@@ -311,6 +321,9 @@ let rec emit_expr (state : emit_state) (env : Infer.type_env) (expr : AST.expres
       (* Phase 2: Convert params to expressions for backward compat *)
       let param_exprs = List.map (fun (name, _) -> AST.mk_expr (AST.Identifier name)) f.params in
       emit_function_expr state env expr param_exprs f.body
+  | AST.EnumConstructor (_enum_name, _variant_name, _args) ->
+      failwith "enum constructors not yet supported in codegen"
+  | AST.Match (_scrutinee, _arms) -> failwith "pattern matching not yet supported in codegen"
 
 and emit_prefix state env op operand =
   let operand_str = emit_expr state env operand in
@@ -376,6 +389,7 @@ and substitute_identifier_in_expr old_name new_name expr =
     | AST.Return e -> { s with stmt = AST.Return (subst_expr e) }
     | AST.ExpressionStmt e -> { s with stmt = AST.ExpressionStmt (subst_expr e) }
     | AST.Block stmts -> { s with stmt = AST.Block (List.map subst_stmt stmts) }
+    | AST.EnumDef _ -> s (* Enum defs don't contain expressions to substitute *)
   in
   subst_expr expr
 
@@ -775,6 +789,9 @@ and emit_stmt (state : emit_state) (env : Infer.type_env) (stmt : AST.statement)
   | AST.Block stmts ->
       let code, env' = emit_stmts state env stmts in
       (code, env')
+  | AST.EnumDef _ ->
+      (* Enum definitions are compile-time only *)
+      ("", env)
 
 and emit_stmts state env stmts =
   let rec loop env acc = function

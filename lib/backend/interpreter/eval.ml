@@ -34,6 +34,9 @@ and eval_statement (stmt : AST.statement) (e : env) : Value.value * env =
   | Return expr ->
       let* v, e' = eval_expression expr e in
       (Value.Return v, e')
+  | EnumDef _ ->
+      (* Enum definitions are handled by type checker, not interpreter *)
+      (Value.null_value, e)
 
 and eval_expression (expr : AST.expression) (e : env) : Value.value * env =
   match expr.expr with
@@ -198,6 +201,12 @@ and eval_expression (expr : AST.expression) (e : env) : Value.value * env =
           | [ Value.Error _ ] -> (List.hd args', e'')
           | _ -> (apply_function func' args', e'))
       | _ -> failwith "not a function")
+  | EnumConstructor (_enum_name, _variant_name, _args) ->
+      (* Enums not yet implemented in interpreter *)
+      failwith "enum constructors not yet supported in interpreter"
+  | Match (_scrutinee, _arms) ->
+      (* Pattern matching not yet implemented in interpreter *)
+      failwith "pattern matching not yet supported in interpreter"
 
 and eval_expressions (args : AST.expression list) (e : env) : Value.value list * env =
   let rec loop exps result env =

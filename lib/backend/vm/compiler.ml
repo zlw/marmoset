@@ -249,6 +249,9 @@ and compile_statement (c : compiler) (s : AST.statement) : (compiler, string) re
       (* Emit OpReturnValue *)
       let c'', _pos = emit c' Code.OpReturnValue [] in
       Ok c''
+  | AST.EnumDef _ ->
+      (* Enum definitions are compile-time only *)
+      Ok c
 
 and compile_expression (c : compiler) (e : AST.expression) : (compiler, string) result =
   match e.expr with
@@ -475,6 +478,9 @@ and compile_expression (c : compiler) (e : AST.expression) : (compiler, string) 
       (* Emit OpCall with argument count *)
       let c''', _pos = emit c'' Code.OpCall [ List.length args ] in
       Ok c'''
+  | AST.EnumConstructor (_enum_name, _variant_name, _args) ->
+      Error "enum constructors not yet supported in VM compiler"
+  | AST.Match (_scrutinee, _arms) -> Error "pattern matching not yet supported in VM compiler"
 
 (* Convert the working compiler to final immutable bytecode *)
 let bytecode (c : compiler) : bytecode =

@@ -46,6 +46,8 @@ and token_type =
   | Else
   | Return
   | Is (* is keyword for type checking *)
+  | Enum (* enum keyword for algebraic data types *)
+  | Match (* match keyword for pattern matching *)
 [@@deriving show]
 
 let init ?(pos = 0) t l = { token_type = t; literal = l; pos }
@@ -63,4 +65,6 @@ let lookup_ident s =
   | "else" -> Else
   | "return" -> Return
   | "is" -> Is
+  | "enum" -> Enum
+  | "match" -> Match
   | _ -> Ident
