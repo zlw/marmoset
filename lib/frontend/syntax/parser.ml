@@ -310,7 +310,7 @@ and parse_enum_definition (p : parser) : (parser * AST.statement, parser) result
       expect_peek p5 Token.RBrace
   in
 
-  Ok (next_token p6, mk_stmt pos (AST.EnumDef { name; type_params; variants }))
+  Ok (p6, mk_stmt pos (AST.EnumDef { name; type_params; variants }))
 
 and parse_type_param_list (p : parser) : (parser * string list, parser) result =
   let rec loop lp params =
@@ -408,7 +408,28 @@ and infixFn (p : parser) (left_expr : AST.expression) (prec : precedence) :
 
 and parse_identifier (p : parser) : (parser * AST.expression, parser) result =
   let pos = p.curr_token.pos in
-  Ok (p, mk_expr pos (AST.Identifier p.curr_token.literal))
+  let enum_name = p.curr_token.literal in
+
+  (* Check if next token is Dot (for enum constructor: enum.variant) *)
+  if peek_token_is p Token.Dot then
+    let p2 = next_token (next_token p) in
+    (* skip identifier and dot *)
+    if curr_token_is p2 Token.Ident then
+      let variant_name = p2.curr_token.literal in
+      (* Check for constructor arguments: variant(args) *)
+      if peek_token_is p2 Token.LParen then
+        let p3 = next_token p2 in
+        (* move to LParen *)
+        let* p4, args = parse_expression_list p3 Token.RParen in
+        Ok (p4, mk_expr pos (AST.EnumConstructor (enum_name, variant_name, args)))
+      else
+        (* Nullary constructor: variant with no args *)
+        Ok (p2, mk_expr pos (AST.EnumConstructor (enum_name, variant_name, [])))
+    else
+      let msg = "expected variant name after '.'" in
+      Error (add_error p2 msg)
+  else
+    Ok (p, mk_expr pos (AST.Identifier enum_name))
 
 and parse_integer_literal (p : parser) : (parser * AST.expression, parser) result =
   let pos = p.curr_token.pos in

@@ -53,6 +53,12 @@ let rec next_token (l : lexer) : lexer * Token.token =
   | ']' -> (read_char l, Token.init ~pos RBracket "]")
   | ',' -> (read_char l, Token.init ~pos Comma ",")
   | '|' -> (read_char l, Token.init ~pos Pipe "|")
+  | '.' ->
+      (* Only emit Dot if NOT followed by digit (which would be a float) *)
+      if is_digit (peek_char l) then
+        (l, Token.init ~pos Illegal ".")
+      else
+        (read_char l, Token.init ~pos Dot ".")
   | '#' -> next_token (fst (read_until (read_char l) (fun c -> c <> '\n' && c <> '\000')))
   | '"' ->
       let l2, lit = read_string (read_char l) in

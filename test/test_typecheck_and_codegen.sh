@@ -271,6 +271,32 @@ test_case "Union return from both branches" \
     "true"
 
 echo ""
+echo "-- ENUM CONSTRUCTOR TESTS (Phase 4.2) --"
+test_case "Simple enum definition" \
+    'enum direction { north south east west }' \
+    "true"
+
+test_case "Generic enum option[a] with some constructor" \
+    'enum option[a] { some(a) none }
+     let x = option.some(42)' \
+    "true"
+
+test_case "Generic enum option[a] with none constructor" \
+    'enum option[a] { some(a) none }
+     let x = option.none' \
+    "true"
+
+test_case "Enum result[a,e] with success constructor" \
+    'enum result[a, e] { success(a) failure(e) }
+     let x = result.success("ok")' \
+    "true"
+
+test_case "Enum with multi-field variant" \
+    'enum http_response { ok(int, string) error(int, string) }
+     let x = http_response.ok(200, "OK")' \
+    "true"
+
+echo ""
 echo "=========================================="
 echo "RESULTS: $PASS passed, $FAIL failed out of $TOTAL tests"
 echo "=========================================="

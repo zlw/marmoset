@@ -31,6 +31,7 @@ and token_type =
   | Comma
   | Semicolon
   | Colon
+  | Dot
   | LParen
   | RParen
   | LBrace
