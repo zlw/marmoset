@@ -108,6 +108,8 @@ type error_kind =
   | ReturnTypeMismatch of mono_type * mono_type (* expected, got *)
   | IfExpressionWithoutElse (* if-value used but no else branch *)
   | ConstructorError of string (* generic constructor error *)
+  | PatternError of string (* pattern matching error *)
+  | MatchError of string (* match expression error *)
 
 (* An error with optional position info *)
 type infer_error = {
@@ -149,6 +151,8 @@ let error_kind_to_string = function
       ^ to_string got
   | IfExpressionWithoutElse -> "If-expression requires else branch when value is used"
   | ConstructorError msg -> msg
+  | PatternError msg -> msg
+  | MatchError msg -> msg
 
 let error_to_string (err : infer_error) : string = error_kind_to_string err.kind
 
@@ -282,8 +286,14 @@ let rec infer_expression (env : type_env) (expr : AST.expression) : (substitutio
                         let result_type = TEnum (enum_name, result_type_args) in
 
                         Ok (final_subst, result_type)))))
-  | AST.Match (_scrutinee, _arms) -> Error { kind = EmptyArrayUnknownType; pos = Some expr.pos }
-(* Temporary placeholder *)
+  | AST.Match (scrutinee, arms) -> (
+      (* Infer scrutinee type *)
+      match infer_expression env scrutinee with
+      | Error e -> Error e
+      | Ok (subst, scrutinee_type) ->
+          let env' = apply_substitution_env subst env in
+          (* Check each arm and collect body types *)
+          infer_match_arms env' scrutinee_type arms subst expr)
 (* ============================================================
    Prefix Operators: !, -
    ============================================================ *)
@@ -861,6 +871,130 @@ and validate_return_statements (env : type_env) (expected_type : mono_type) (stm
   | AST.Let _ -> Ok ()
   | AST.EnumDef _ -> Ok ()
 
+(* ============================================================
+   Pattern Matching Helpers
+   ============================================================ *)
+
+(* Check all arms of a match expression and collect their body types *)
+and infer_match_arms env scrutinee_type arms subst match_expr =
+  let rec loop acc_subst arm_types = function
+    | [] -> (
+        (* All arms processed, unify all arm body types *)
+        match arm_types with
+        | [] -> Error (error_at (MatchError "Match expression must have at least one arm") match_expr)
+        | first :: rest -> (
+            let rec unify_all s types =
+              match types with
+              | [] -> Ok s
+              | t :: rest_types -> (
+                  let first' = apply_substitution s first in
+                  let t' = apply_substitution s t in
+                  match Unify.unify first' t' with
+                  | Error e -> Error (error_at (UnificationError e) match_expr)
+                  | Ok s2 ->
+                      let new_s = compose_substitution s s2 in
+                      unify_all new_s rest_types)
+            in
+            match unify_all empty_substitution rest with
+            | Error e -> Error e
+            | Ok unify_subst ->
+                let final_subst = compose_substitution acc_subst unify_subst in
+                let result_type = apply_substitution unify_subst first in
+                Ok (final_subst, result_type)))
+    | arm :: rest_arms -> (
+        match infer_match_arm env scrutinee_type arm with
+        | Error e -> Error e
+        | Ok (arm_subst, body_type) ->
+            let new_subst = compose_substitution acc_subst arm_subst in
+            loop new_subst (body_type :: arm_types) rest_arms)
+  in
+  loop subst [] arms
+
+(* Infer the type of a single match arm *)
+and infer_match_arm env scrutinee_type arm =
+  (* Check patterns and get bindings *)
+  match check_patterns arm.AST.patterns scrutinee_type with
+  | Error e -> Error e
+  | Ok bindings ->
+      (* Extend environment with pattern bindings *)
+      let env' = List.fold_left (fun e (name, ty) -> TypeEnv.add name (mono_to_poly ty) e) env bindings in
+      (* Infer body type *)
+      infer_expression env' arm.AST.body
+
+(* Check a list of patterns (for | syntax) against the scrutinee type *)
+and check_patterns patterns scrutinee_type =
+  match patterns with
+  | [] -> Error (error (PatternError "Match arm must have at least one pattern"))
+  | first :: rest -> (
+      match check_pattern first scrutinee_type with
+      | Error e -> Error e
+      | Ok bindings ->
+          (* Verify rest match same type - TODO: they might bind different vars *)
+          let rec check_rest = function
+            | [] -> Ok bindings
+            | pat :: rest_pats -> (
+                match check_pattern pat scrutinee_type with
+                | Error e -> Error e
+                | Ok _ -> check_rest rest_pats)
+          in
+          check_rest rest)
+
+(* Check a single pattern against the scrutinee type, return variable bindings *)
+and check_pattern pattern scrutinee_type =
+  match pattern.AST.pat with
+  | AST.PWildcard -> Ok []
+  | AST.PVariable name -> Ok [ (name, scrutinee_type) ]
+  | AST.PLiteral lit -> (
+      let lit_type =
+        match lit with
+        | AST.LInt _ -> TInt
+        | AST.LString _ -> TString
+        | AST.LBool _ -> TBool
+      in
+      match Unify.unify lit_type scrutinee_type with
+      | Error e -> Error (error (UnificationError e))
+      | Ok _ -> Ok [])
+  | AST.PConstructor (enum_name, variant_name, field_patterns) -> (
+      (* Check scrutinee is the right enum type *)
+      match scrutinee_type with
+      | TEnum (sname, type_args) when sname = enum_name -> (
+          (* Look up variant *)
+          match Enum_registry.lookup_variant enum_name variant_name with
+          | None -> Error (error (PatternError (Printf.sprintf "Unknown variant: %s.%s" enum_name variant_name)))
+          | Some variant ->
+              if List.length field_patterns <> List.length variant.fields then
+                Error
+                  (error
+                     (PatternError
+                        (Printf.sprintf "Pattern %s.%s expects %d fields, got %d" enum_name variant_name
+                           (List.length variant.fields) (List.length field_patterns))))
+              else
+                (* Get field types with type args substituted *)
+                let enum_def = Option.get (Enum_registry.lookup enum_name) in
+                let subst = List.combine enum_def.type_params type_args in
+                let field_types = List.map (apply_substitution subst) variant.fields in
+                (* Check each field pattern and collect bindings *)
+                let rec check_fields bindings_acc pats types =
+                  match (pats, types) with
+                  | [], [] -> Ok bindings_acc
+                  | pat :: rest_pats, ty :: rest_types -> (
+                      match check_pattern pat ty with
+                      | Error e -> Error e
+                      | Ok new_bindings -> check_fields (bindings_acc @ new_bindings) rest_pats rest_types)
+                  | _ -> Error (error (PatternError "Field pattern count mismatch"))
+                in
+                check_fields [] field_patterns field_types)
+      | _ ->
+          Error
+            (error
+               (PatternError
+                  (Printf.sprintf "Pattern %s.%s doesn't match scrutinee type %s" enum_name variant_name
+                     (to_string scrutinee_type)))))
+
+(* ============================================================
+   Let Binding Inference
+   ============================================================ *)
+
 (* Infer a let binding.
    
     For recursive functions, we use the following approach:
@@ -1210,6 +1344,60 @@ result.failure(\"error\")" in
   let%test "infer constructor with wrong arg count" =
     let code = "enum option[a] { some(a) none }
 option.some(1, 2)" in
+    match infer_string code with
+    | Error _ -> true
+    | Ok _ -> false
+
+  (* Match expression tests *)
+  let%test "infer simple match with option" =
+    let code =
+      "enum option[a] { some(a) none }
+let x = option.some(42)
+match x {
+  option.some(v): v + 1
+  option.none: 0
+}"
+    in
+    infers_to code TInt
+
+  let%test "infer match with wildcard" =
+    let code = "match 5 {
+  0: \"zero\"
+  _: \"other\"
+}" in
+    infers_to code TString
+
+  let%test "infer match with variable pattern" =
+    let code = "match 42 {
+  n: n + 1
+}" in
+    infers_to code TInt
+
+  let%test "infer match extracts constructor value" =
+    let code =
+      "enum result[a, e] { success(a) failure(e) }
+let r = result.success(100)
+match r {
+  result.success(val): val * 2
+  result.failure(err): 0
+}"
+    in
+    infers_to code TInt
+
+  let%test "infer match with literal patterns" =
+    let code = "let x = 5
+match x {
+  0: \"zero\"
+  1: \"one\"
+  _: \"many\"
+}" in
+    infers_to code TString
+
+  let%test "match expression type error: mismatched arm types" =
+    let code = "match 5 {
+  0: 42
+  _: \"string\"
+}" in
     match infer_string code with
     | Error _ -> true
     | Ok _ -> false

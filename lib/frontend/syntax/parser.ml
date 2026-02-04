@@ -711,7 +711,8 @@ and parse_match_arms (p : parser) : (parser * AST.match_arm list, parser) result
       let* lp4, body = parse_expression (next_token lp3) prec_lowest in
 
       let arm = AST.{ patterns; body } in
-      loop lp4 (arm :: arms)
+      (* Advance past the body expression before continuing *)
+      loop (next_token lp4) (arm :: arms)
   in
   loop p []
 
