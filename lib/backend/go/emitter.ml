@@ -16,7 +16,7 @@ let rec mangle_type (t : Types.mono_type) : string =
   | Types.TBool -> "bool"
   | Types.TString -> "string"
   | Types.TNull -> "unit"
-  | Types.TVar name -> "T" ^ name (* shouldn't happen after monomorphization *)
+  | Types.TVar _name -> "any" (* Unresolved type variable - use 'any' in mangled names *)
   | Types.TFun (arg, ret) -> "fn_" ^ mangle_type arg ^ "_" ^ mangle_type ret
   | Types.TArray elem -> "arr_" ^ mangle_type elem
   | Types.THash (key, value) -> "map_" ^ mangle_type key ^ "_" ^ mangle_type value
@@ -39,36 +39,6 @@ let mangle_func_name name (param_types : Types.mono_type list) : string =
     name
   else
     name ^ "_" ^ (List.map mangle_type param_types |> String.concat "_")
-
-(* ============================================================
-   Type to Go Type String
-   ============================================================ *)
-
-let rec type_to_go (t : Types.mono_type) : string =
-  match t with
-  | Types.TInt -> "int64"
-  | Types.TFloat -> "float64"
-  | Types.TBool -> "bool"
-  | Types.TString -> "string"
-  | Types.TNull -> "struct{}"
-  | Types.TVar name -> String.uppercase_ascii name (* shouldn't happen *)
-  | Types.TFun (arg, ret) -> emit_func_type arg ret
-  | Types.TArray elem -> "[]" ^ type_to_go elem
-  | Types.THash (key, value) -> "map[" ^ type_to_go key ^ "]" ^ type_to_go value
-  | Types.TUnion _ -> "interface{}" (* Phase 4.1: unions compile to interface{} *)
-  | Types.TEnum (name, []) -> String.capitalize_ascii name
-  | Types.TEnum (name, args) -> String.capitalize_ascii name ^ "_" ^ String.concat "_" (List.map mangle_type args)
-
-and emit_func_type arg ret =
-  let rec collect_args = function
-    | Types.TFun (a, r) ->
-        let args, final_ret = collect_args r in
-        (a :: args, final_ret)
-    | t -> ([], t)
-  in
-  let args, final_ret = collect_args (Types.TFun (arg, ret)) in
-  let args_str = List.map type_to_go args |> String.concat ", " in
-  Printf.sprintf "func(%s) %s" args_str (type_to_go final_ret)
 
 (* ============================================================
    Function Registry - track function definitions and instantiations
@@ -101,13 +71,67 @@ module InstSet = Set.Make (struct
       compare a.concrete_types b.concrete_types
 end)
 
+(* Set to track enum type instantiations *)
+module EnumInstSet = Set.Make (struct
+  type t = string * Types.mono_type list (* enum_name, type_args *)
+
+  let compare = compare
+end)
+
 type mono_state = {
   mutable func_defs : func_def list;
   mutable instantiations : InstSet.t;
+  mutable enum_insts : EnumInstSet.t; (* Track which enum types we need to generate *)
   mutable name_counter : int;
+  concrete_only : bool; (* Phase 4.3: Rust-style (true) vs TypeScript-style (false) codegen *)
 }
 
-let create_mono_state () = { func_defs = []; instantiations = InstSet.empty; name_counter = 0 }
+let create_mono_state ?(concrete_only = false) () =
+  {
+    func_defs = [];
+    instantiations = InstSet.empty;
+    enum_insts = EnumInstSet.empty;
+    name_counter = 0;
+    concrete_only;
+  }
+
+(* ============================================================
+   Type to Go Type String
+   ============================================================ *)
+
+let rec type_to_go (state : mono_state) (t : Types.mono_type) : string =
+  match t with
+  | Types.TInt -> "int64"
+  | Types.TFloat -> "float64"
+  | Types.TBool -> "bool"
+  | Types.TString -> "string"
+  | Types.TNull -> "struct{}"
+  | Types.TVar _name ->
+      (* Phase 4.3: In Rust-style mode, unresolved type variables are an error *)
+      if state.concrete_only then
+        failwith
+          (Printf.sprintf
+             "Cannot generate code for unresolved type variable. Add type annotation to resolve this type.")
+      else
+        "interface{}"
+        (* TypeScript-style fallback *)
+  | Types.TFun (arg, ret) -> emit_func_type state arg ret
+  | Types.TArray elem -> "[]" ^ type_to_go state elem
+  | Types.THash (key, value) -> "map[" ^ type_to_go state key ^ "]" ^ type_to_go state value
+  | Types.TUnion _ -> "interface{}" (* Phase 4.1: unions compile to interface{} *)
+  | Types.TEnum (name, []) -> String.capitalize_ascii name
+  | Types.TEnum (name, args) -> String.capitalize_ascii name ^ "_" ^ String.concat "_" (List.map mangle_type args)
+
+and emit_func_type state arg ret =
+  let rec collect_args = function
+    | Types.TFun (a, r) ->
+        let args, final_ret = collect_args r in
+        (a :: args, final_ret)
+    | t -> ([], t)
+  in
+  let args, final_ret = collect_args (Types.TFun (arg, ret)) in
+  let args_str = List.map (type_to_go state) args |> String.concat ", " in
+  Printf.sprintf "func(%s) %s" args_str (type_to_go state final_ret)
 
 (* ============================================================
    Pass 1: Collect function definitions
@@ -177,10 +201,29 @@ and collect_funcs_expr (state : mono_state) (expr : AST.expression) : unit =
 
 let infer_type env expr =
   match Infer.infer_expression env expr with
-  | Ok (subst, t) -> Types.apply_substitution subst t
-  | Error _ -> Types.TVar "unknown"
+  | Ok (_, t) -> t
+  | Error _ -> Types.TNull
 
-(* Check if a name is a user-defined function *)
+(* Check if a type contains unresolved type variables *)
+let rec has_type_vars (t : Types.mono_type) : bool =
+  match t with
+  | Types.TVar _ -> true
+  | Types.TFun (arg, ret) -> has_type_vars arg || has_type_vars ret
+  | Types.TArray elem -> has_type_vars elem
+  | Types.THash (k, v) -> has_type_vars k || has_type_vars v
+  | Types.TEnum (_, args) -> List.exists has_type_vars args
+  | Types.TUnion types -> List.exists has_type_vars types
+  | _ -> false
+
+(* Track an enum instantiation *)
+let track_enum_inst state (t : Types.mono_type) =
+  match t with
+  | Types.TEnum (name, args) ->
+      (* Track all enum instantiations, even with type variables *)
+      (* Type variables will be compiled as interface{} *)
+      state.enum_insts <- EnumInstSet.add (name, args) state.enum_insts
+  | _ -> ()
+
 let is_user_func (state : mono_state) (name : string) : bool =
   List.exists (fun fd -> fd.name = name) state.func_defs
 
@@ -284,9 +327,16 @@ and collect_insts_expr (state : mono_state) (env : Infer.type_env) (expr : AST.e
           env param_names param_types
       in
       ignore (collect_insts_stmt state body_env f.body)
-  | AST.EnumConstructor (_, _, args) -> List.iter (collect_insts_expr state env) args
+  | AST.EnumConstructor (_, _, args) ->
+      List.iter (collect_insts_expr state env) args;
+      (* Track the enum type instantiation *)
+      let enum_type = infer_type env expr in
+      track_enum_inst state enum_type
   | AST.Match (scrutinee, arms) ->
       collect_insts_expr state env scrutinee;
+      (* Track scrutinee enum type if it's an enum *)
+      let scrutinee_type = infer_type env scrutinee in
+      track_enum_inst state scrutinee_type;
       List.iter (fun arm -> collect_insts_expr state env arm.AST.body) arms
 
 (* ============================================================
@@ -325,9 +375,199 @@ let rec emit_expr (state : emit_state) (env : Infer.type_env) (expr : AST.expres
       (* Phase 2: Convert params to expressions for backward compat *)
       let param_exprs = List.map (fun (name, _) -> AST.mk_expr (AST.Identifier name)) f.params in
       emit_function_expr state env expr param_exprs f.body
-  | AST.EnumConstructor (_enum_name, _variant_name, _args) ->
-      failwith "enum constructors not yet supported in codegen"
-  | AST.Match (_scrutinee, _arms) -> failwith "pattern matching not yet supported in codegen"
+  | AST.EnumConstructor (enum_name, variant_name, args) ->
+      (* Get the type of this constructor call *)
+      let enum_type = infer_type env expr in
+      let type_args =
+        match enum_type with
+        | Types.TEnum (_, args) -> args
+        | _ -> []
+      in
+      (* Generate the mangled constructor name *)
+      let go_type_name = mangle_type (Types.TEnum (enum_name, type_args)) in
+      let constructor_name = Printf.sprintf "%s_%s" go_type_name variant_name in
+      (* Emit arguments *)
+      let arg_strs = List.map (emit_expr state env) args in
+      if arg_strs = [] then
+        Printf.sprintf "%s()" constructor_name
+      else
+        Printf.sprintf "%s(%s)" constructor_name (String.concat ", " arg_strs)
+  | AST.Match (scrutinee, arms) -> emit_match state env scrutinee arms
+
+(* ============================================================
+     Match Expression Codegen
+     ============================================================ *)
+
+and emit_match state env scrutinee arms =
+  (* Get the type of the scrutinee *)
+  let scrutinee_type = infer_type env scrutinee in
+
+  match scrutinee_type with
+  | Types.TEnum (enum_name, type_args) ->
+      (* Enum match: switch on Tag field *)
+      emit_match_enum state env scrutinee scrutinee_type enum_name type_args arms
+  | Types.TInt | Types.TString | Types.TBool ->
+      (* Primitive match: switch on value directly *)
+      emit_match_primitive state env scrutinee scrutinee_type arms
+  | _ -> failwith (Printf.sprintf "Match on type %s not yet supported" (Types.to_string scrutinee_type))
+
+and emit_match_enum state env scrutinee scrutinee_type enum_name type_args arms =
+  (* Generate mangled enum type name *)
+  let go_type_name = mangle_type scrutinee_type in
+
+  (* Look up the enum definition *)
+  let enum_def_opt = Typecheck.Enum_registry.lookup enum_name in
+  let enum_def =
+    match enum_def_opt with
+    | Some def -> def
+    | None -> failwith (Printf.sprintf "Unknown enum: %s" enum_name)
+  in
+
+  (* Emit scrutinee to a temporary variable *)
+  let scrutinee_str = emit_expr state env scrutinee in
+
+  (* Generate a Go anonymous function that returns the match result *)
+  (* This allows match to be used as an expression *)
+  let match_body =
+    (* For each match arm, generate a case *)
+    let cases =
+      List.map
+        (fun (arm : AST.match_arm) ->
+          (* For simplicity, only handle single pattern per arm for now *)
+          match arm.patterns with
+          | [ pattern ] -> emit_match_arm_enum state env go_type_name enum_def type_args pattern arm.body
+          | [] -> failwith "Match arm must have at least one pattern"
+          | _ -> failwith "Multiple patterns per arm not yet supported in codegen")
+        arms
+    in
+    String.concat "\n" cases
+  in
+
+  (* Generate: func() T { __scrutinee := <expr>; switch __scrutinee.Tag { cases... } }() *)
+  Printf.sprintf
+    "(func() interface{} {\n\t__scrutinee := %s\n\tswitch __scrutinee.Tag {\n%s\n\t}\n\treturn nil\n})()"
+    scrutinee_str match_body
+
+and emit_match_primitive state env scrutinee scrutinee_type arms =
+  (* Emit scrutinee expression *)
+  let scrutinee_str = emit_expr state env scrutinee in
+
+  (* Generate match body *)
+  let match_body =
+    let cases =
+      List.map
+        (fun (arm : AST.match_arm) ->
+          match arm.patterns with
+          | [ pattern ] -> emit_match_arm_primitive state env scrutinee_type pattern arm.body
+          | [] -> failwith "Match arm must have at least one pattern"
+          | _ -> failwith "Multiple patterns per arm not yet supported in codegen")
+        arms
+    in
+    String.concat "\n" cases
+  in
+
+  (* Generate: func() T { __scrutinee := <expr>; switch __scrutinee { cases... } }() *)
+  Printf.sprintf "(func() interface{} {\n\t__scrutinee := %s\n\tswitch __scrutinee {\n%s\n\t}\n\treturn nil\n})()"
+    scrutinee_str match_body
+
+and emit_match_arm_primitive state env _scrutinee_type pattern body =
+  match pattern.AST.pat with
+  | AST.PWildcard ->
+      let body_str = emit_expr state env body in
+      Printf.sprintf "\tdefault:\n\t\treturn %s" body_str
+  | AST.PVariable var_name ->
+      (* Variable pattern binds the scrutinee *)
+      let body_str = emit_expr state env body in
+      Printf.sprintf "\tdefault:\n\t\t%s := __scrutinee\n\t\treturn %s" var_name body_str
+  | AST.PLiteral lit ->
+      (* Literal pattern - match exact value *)
+      let lit_str =
+        match lit with
+        | AST.LInt n -> Printf.sprintf "int64(%Ld)" n
+        | AST.LString s -> Printf.sprintf "\"%s\"" (String.escaped s)
+        | AST.LBool b ->
+            if b then
+              "true"
+            else
+              "false"
+      in
+      let body_str = emit_expr state env body in
+      Printf.sprintf "\tcase %s:\n\t\treturn %s" lit_str body_str
+  | AST.PConstructor _ -> failwith "Constructor patterns not valid for primitive match"
+
+and emit_match_arm_enum state env go_type_name enum_def type_args pattern body =
+  match pattern.AST.pat with
+  | AST.PWildcard ->
+      (* Wildcard matches everything - use default case *)
+      let body_str = emit_expr state env body in
+      Printf.sprintf "\tdefault:\n\t\treturn %s" body_str
+  | AST.PLiteral _lit ->
+      (* Literal patterns - not for enums, shouldn't happen *)
+      failwith "Literal patterns not supported for enum match"
+  | AST.PVariable _var_name ->
+      (* Variable pattern - binds the entire enum value *)
+      (* For now, treat as wildcard since we don't track variable bindings in Go codegen *)
+      let body_str = emit_expr state env body in
+      Printf.sprintf "\tdefault:\n\t\treturn %s" body_str
+  | AST.PConstructor (enum_name_pat, variant_name, field_patterns) ->
+      (* Constructor pattern - match specific variant and extract fields *)
+      (* Find the variant definition *)
+      let variant_opt =
+        List.find_opt (fun (v : Typecheck.Enum_registry.variant_def) -> v.name = variant_name) enum_def.variants
+      in
+
+      let variant =
+        match variant_opt with
+        | Some v -> v
+        | None -> failwith (Printf.sprintf "Unknown variant %s.%s" enum_name_pat variant_name)
+      in
+
+      (* Generate case for this tag *)
+      let tag_constant = Printf.sprintf "%s_%s_tag" go_type_name variant_name in
+
+      (* Extract field bindings *)
+      let bindings = emit_pattern_bindings enum_def.type_params type_args field_patterns variant.fields in
+
+      (* Generate the case *)
+      let binding_strs =
+        List.map
+          (fun (var_name, var_type) ->
+            (* Cast Data field to appropriate type *)
+            let go_type = type_to_go state.mono var_type in
+            Printf.sprintf "\t\t%s := __scrutinee.Data.(%s)" var_name go_type)
+          bindings
+      in
+
+      let bindings_code =
+        if bindings = [] then
+          ""
+        else
+          String.concat "\n" binding_strs ^ "\n"
+      in
+
+      (* Emit body with bindings *)
+      let body_str = emit_expr state env body in
+
+      Printf.sprintf "\tcase %s:\n%s\t\treturn %s" tag_constant bindings_code body_str
+
+and emit_pattern_bindings type_params type_args field_patterns field_types : (string * Types.mono_type) list =
+  (* Extract variable bindings from patterns *)
+  (* Apply substitution to field types *)
+  let subst = List.combine type_params type_args in
+  let substituted_field_types = List.map (Types.apply_substitution subst) field_types in
+
+  (* For now, only support single field with variable pattern *)
+  match field_patterns with
+  | [] -> []
+  | [ pat ] -> (
+      match pat.AST.pat with
+      | AST.PVariable var_name ->
+          (* Get the substituted field type *)
+          let field_type = List.hd substituted_field_types in
+          [ (var_name, field_type) ]
+      | AST.PWildcard -> []
+      | _ -> failwith "Complex field patterns not yet supported")
+  | _ -> failwith "Multiple field patterns not yet supported in codegen"
 
 and emit_prefix state env op operand =
   let operand_str = emit_expr state env operand in
@@ -413,8 +653,8 @@ and compute_complement_type (current_type : Types.mono_type) (narrow_type : Type
 
 (* Emit a Go type switch for type narrowing *)
 and emit_type_switch state env _if_expr var_name narrow_type complement_type_opt cons alt result_type =
-  let result_type_str = type_to_go result_type in
-  let narrow_type_str = type_to_go narrow_type in
+  let result_type_str = type_to_go state.mono result_type in
+  let narrow_type_str = type_to_go state.mono narrow_type in
   let ind = indent_str state in
   let inner_ind = ind ^ "    " in
 
@@ -461,7 +701,7 @@ and emit_type_switch state env _if_expr var_name narrow_type complement_type_opt
     let type_assertion_prefix =
       match complement_type_opt with
       | Some complement_type when complement_type <> Types.TUnion [] ->
-          let complement_type_str = type_to_go complement_type in
+          let complement_type_str = type_to_go state.mono complement_type in
           inner_ind ^ "        " ^ var_to_use ^ " := " ^ original_var ^ ".(" ^ complement_type_str ^ ")\n"
       | _ -> ""
     in
@@ -538,7 +778,7 @@ and emit_type_switch state env _if_expr var_name narrow_type complement_type_opt
 
 and emit_if state env if_expr cond cons alt =
   let result_type = infer_type env if_expr in
-  let result_type_str = type_to_go result_type in
+  let result_type_str = type_to_go state.mono result_type in
   let ind = indent_str state in
   let inner_ind = ind ^ "    " in
 
@@ -657,7 +897,7 @@ and emit_array state env elements =
   | [] -> "[]interface{}{}"
   | first :: _ ->
       let elem_type = infer_type env first in
-      let elem_type_str = type_to_go elem_type in
+      let elem_type_str = type_to_go state.mono elem_type in
       let elems_str = List.map (emit_expr state env) elements |> String.concat ", " in
       Printf.sprintf "[]%s{%s}" elem_type_str elems_str
 
@@ -670,7 +910,7 @@ and emit_hash state env pairs =
       let pairs_str =
         List.map (fun (k, v) -> emit_expr state env k ^ ": " ^ emit_expr state env v) pairs |> String.concat ", "
       in
-      Printf.sprintf "map[%s]%s{%s}" (type_to_go key_type) (type_to_go val_type) pairs_str
+      Printf.sprintf "map[%s]%s{%s}" (type_to_go state.mono key_type) (type_to_go state.mono val_type) pairs_str
 
 and emit_index state env container index =
   let container_str = emit_expr state env container in
@@ -717,9 +957,11 @@ and emit_function_expr state env func_expr params body =
       params
   in
 
-  let params_with_types = List.map2 (fun name typ -> name ^ " " ^ type_to_go typ) param_names param_types in
+  let params_with_types =
+    List.map2 (fun name typ -> name ^ " " ^ type_to_go state.mono typ) param_names param_types
+  in
   let params_str = String.concat ", " params_with_types in
-  let return_type_str = type_to_go return_type in
+  let return_type_str = type_to_go state.mono return_type in
 
   (* Extend environment with parameter bindings for the body *)
   let body_env =
@@ -826,10 +1068,10 @@ let emit_specialized_func (state : emit_state) (inst : instantiation) : string =
   let mangled_name = mangle_func_name inst.func_name inst.concrete_types in
 
   let params_with_types =
-    List.map2 (fun name typ -> name ^ " " ^ type_to_go typ) param_names inst.concrete_types
+    List.map2 (fun name typ -> name ^ " " ^ type_to_go state.mono typ) param_names inst.concrete_types
   in
   let params_str = String.concat ", " params_with_types in
-  let return_type_str = type_to_go inst.return_type in
+  let return_type_str = type_to_go state.mono inst.return_type in
 
   (* Create env with parameter types for the body *)
   let base_env = Typecheck.Builtins.prelude_env () in
@@ -854,6 +1096,65 @@ let emit_specialized_func (state : emit_state) (inst : instantiation) : string =
   Printf.sprintf "func %s(%s) %s {\n%s}\n" mangled_name params_str return_type_str body_str
 
 (* ============================================================
+   Enum Type Generation
+   ============================================================ *)
+
+(* Generate Go struct and constructors for an enum type *)
+let emit_enum_type (state : mono_state) (enum_name : string) (type_args : Types.mono_type list) : string =
+  let go_type_name = mangle_type (Types.TEnum (enum_name, type_args)) in
+
+  (* Look up enum definition *)
+  match Typecheck.Enum_registry.lookup enum_name with
+  | None -> ""
+  | Some enum_def ->
+      (* Generate struct type *)
+      let struct_def = Printf.sprintf "type %s struct {\n\tTag int8\n\tData interface{}\n}\n\n" go_type_name in
+
+      (* Generate tag constants *)
+      let tag_constants =
+        String.concat "\n"
+          (List.mapi
+             (fun i (v : Typecheck.Enum_registry.variant_def) ->
+               Printf.sprintf "const %s_%s_tag = %d" go_type_name v.name i)
+             enum_def.variants)
+        ^ "\n\n"
+      in
+
+      (* Generate constructors for each variant *)
+      let constructors =
+        String.concat "\n"
+          (List.map
+             (fun (v : Typecheck.Enum_registry.variant_def) ->
+               let constructor_name = Printf.sprintf "%s_%s" go_type_name v.name in
+               if v.fields = [] then
+                 (* Nullary constructor *)
+                 Printf.sprintf "func %s() %s {\n\treturn %s{Tag: %s_%s_tag}\n}\n" constructor_name go_type_name
+                   go_type_name go_type_name v.name
+               else
+                 (* Constructor with fields *)
+                 (* Apply type arguments to field types *)
+                 let subst = List.combine enum_def.type_params type_args in
+                 let field_types = List.map (Types.apply_substitution subst) v.fields in
+                 let params =
+                   List.mapi (fun i t -> Printf.sprintf "v%d %s" i (type_to_go state t)) field_types
+                   |> String.concat ", "
+                 in
+                 (* For now, store first field in Data. TODO: support multiple fields *)
+                 let data_init =
+                   if List.length field_types > 0 then
+                     ", Data: v0"
+                   else
+                     ""
+                 in
+                 Printf.sprintf "func %s(%s) %s {\n\treturn %s{Tag: %s_%s_tag%s}\n}\n" constructor_name params
+                   go_type_name go_type_name go_type_name v.name data_init)
+             enum_def.variants)
+        ^ "\n"
+      in
+
+      struct_def ^ tag_constants ^ constructors
+
+(* ============================================================
     Program Emission
     ============================================================ *)
 
@@ -869,6 +1170,13 @@ let emit_program_with_typed_env (typed_env : Infer.type_env) (program : AST.prog
 
   let emit_state = create_emit_state mono_state in
 
+  (* Generate enum types *)
+  let enum_types =
+    EnumInstSet.elements mono_state.enum_insts
+    |> List.map (fun (name, args) -> emit_enum_type mono_state name args)
+    |> String.concat "\n"
+  in
+
   (* Generate specialized functions *)
   let specialized_funcs =
     InstSet.elements mono_state.instantiations
@@ -880,6 +1188,12 @@ let emit_program_with_typed_env (typed_env : Infer.type_env) (program : AST.prog
   let main_body, _ = emit_stmts emit_state base_env program in
 
   (* Build final output *)
+  let type_defs =
+    if enum_types = "" then
+      ""
+    else
+      enum_types ^ "\n"
+  in
   let top_funcs =
     if specialized_funcs = "" then
       ""
@@ -887,7 +1201,7 @@ let emit_program_with_typed_env (typed_env : Infer.type_env) (program : AST.prog
       specialized_funcs ^ "\n"
   in
 
-  Printf.sprintf "package main\n\n%sfunc main() {\n%s}\n" top_funcs main_body
+  Printf.sprintf "package main\n\n%s%sfunc main() {\n%s}\n" type_defs top_funcs main_body
 
 let emit_program (program : AST.program) : string =
   let base_env = Typecheck.Builtins.prelude_env () in
