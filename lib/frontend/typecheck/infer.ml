@@ -319,6 +319,30 @@ and narrow_type_in_env (env : type_env) (var_name : string) (narrow_type : mono_
           env)
   | _ -> env
 
+(* Helper: Compute complement type (all members except narrow_type) *)
+and compute_complement_type (current_type : mono_type) (narrow_type : mono_type) : mono_type option =
+  match current_type with
+  | TUnion members -> (
+      let remaining = List.filter (fun t -> t <> narrow_type) members in
+      match remaining with
+      | [] -> None (* No members left *)
+      | [ single ] -> Some single (* Single type remains *)
+      | multiple -> Some (TUnion multiple)
+      (* Multiple types remain *))
+  | _ when current_type = narrow_type -> None (* Narrowing to same type, no complement *)
+  | _ -> Some current_type (* Not a union, complement is the whole type *)
+
+(* Helper: Narrow to complement type in else branch *)
+and narrow_to_complement (env : type_env) (var_name : string) (narrow_type : mono_type) : type_env =
+  match TypeEnv.find_opt var_name env with
+  | Some (Forall ([], current_type)) -> (
+      match compute_complement_type current_type narrow_type with
+      | Some complement -> TypeEnv.add var_name (Forall ([], complement)) env
+      | None ->
+          (* No complement (all cases exhausted), keep current env *)
+          env)
+  | _ -> env
+
 and infer_if env condition consequence alternative =
   (* Infer condition type *)
   match infer_expression env condition with
@@ -352,9 +376,13 @@ and infer_if env condition consequence alternative =
                   Ok (subst', TNull)
               | Some alt -> (
                   let env'' = apply_substitution_env subst' env' in
-                  (* TODO: For alternative branch, narrow to complement type *)
-                  (* For now, just use the base environment *)
-                  match infer_statement env'' alt with
+                  (* For alternative branch, narrow to complement type *)
+                  let env_alt =
+                    match narrowing with
+                    | Some (var_name, narrow_type) -> narrow_to_complement env'' var_name narrow_type
+                    | None -> env''
+                  in
+                  match infer_statement env_alt alt with
                   | Error e -> Error e
                   | Ok (subst4, alt_type) -> (
                       let subst'' = compose_substitution subst' subst4 in
@@ -363,9 +391,9 @@ and infer_if env condition consequence alternative =
                       (* If we have type narrowing, preserve the wider (union) type *)
                       match narrowing with
                       | Some _ ->
-                          (* With narrowing, use the alternative type (non-narrowed) *)
-                          (* This preserves the union type from the function signature *)
-                          Ok (subst'', alt_type)
+                          (* With narrowing, create union of both branch types *)
+                          let union_type = Types.normalize_union [ cons_type'; alt_type ] in
+                          Ok (subst'', union_type)
                       | None -> (
                           (* No narrowing - try to unify both branches *)
                           match unify cons_type' alt_type with

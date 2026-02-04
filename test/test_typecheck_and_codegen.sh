@@ -215,6 +215,62 @@ test_case "Type narrowing allows int operations" \
     "true"
 
 echo ""
+echo "-- PHASE 4.1: EXHAUSTIVENESS & EDGE CASES --"
+
+test_case "Complement narrowing in else branch" \
+    'let f = fn(x: int | string) -> string {
+       if (x is int) { 
+           "was int"
+       } else {
+           x
+       }
+     }; f("hello")' \
+    "true"
+
+test_case "Three-way union exhaustiveness" \
+    'let f = fn(x: int | string | bool) -> string {
+       if (x is int) {
+           "int"
+       } else {
+           if (x is string) {
+               x
+           } else {
+               "bool"
+           }
+       }
+     }; f(true)' \
+    "true"
+
+test_case "Nested type narrowing" \
+    'let outer = fn(x: int | string) -> int {
+       if (x is int) {
+           let inner = fn(y: int | bool) -> int {
+               if (y is int) { y } else { 0 }
+           };
+           inner(x)
+       } else {
+           0
+       }
+     }; outer(42)' \
+    "true"
+
+test_case "Type narrowing with string operations" \
+    'let f = fn(x: int | string) -> int {
+       if (x is string) {
+           len(x)
+       } else {
+           x
+       }
+     }; f(42)' \
+    "true"
+
+test_case "Union return from both branches" \
+    'let f = fn(b: bool, x: int | string) -> int | string {
+       if (b) { x } else { x }
+     }; f(true, 5)' \
+    "true"
+
+echo ""
 echo "=========================================="
 echo "RESULTS: $PASS passed, $FAIL failed out of $TOTAL tests"
 echo "=========================================="
