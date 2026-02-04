@@ -90,6 +90,7 @@ and parse_statement (p : parser) : (parser * AST.statement, parser) result =
   match p.curr_token.token_type with
   | Token.Let -> parse_let_statement p
   | Token.Return -> parse_return_statement p
+  | Token.Enum -> parse_enum_definition p
   | _ -> parse_expression_statement p
 
 (* Phase 2: Type expression parsing *)
@@ -274,6 +275,88 @@ and parse_return_statement (p : parser) : (parser * AST.statement, parser) resul
   let* p2, expr = parse_expression (next_token p) prec_lowest in
   let p3 = skip p2 Token.Semicolon in
   Ok (p3, mk_stmt pos (AST.Return expr))
+
+(* Phase 4.2: Parse enum definition *)
+and parse_enum_definition (p : parser) : (parser * AST.statement, parser) result =
+  (* Current token is 'enum' *)
+  let pos = p.curr_token.pos in
+  let* p2 = expect_peek p Token.Ident in
+  let name = p2.curr_token.literal in
+
+  (* Parse optional type parameters: [a, b] *)
+  let* p3, type_params =
+    if peek_token_is p2 Token.LBracket then
+      parse_type_param_list (next_token (next_token p2))
+    else
+      Ok (next_token p2, [])
+  in
+
+  (* Expect opening brace *)
+  let* p4 =
+    if curr_token_is p3 Token.LBrace then
+      Ok p3
+    else
+      expect_peek p3 Token.LBrace
+  in
+
+  (* Parse variants *)
+  let* p5, variants = parse_variant_list (next_token p4) in
+
+  (* Expect closing brace *)
+  let* p6 =
+    if curr_token_is p5 Token.RBrace then
+      Ok p5
+    else
+      expect_peek p5 Token.RBrace
+  in
+
+  Ok (next_token p6, mk_stmt pos (AST.EnumDef { name; type_params; variants }))
+
+and parse_type_param_list (p : parser) : (parser * string list, parser) result =
+  let rec loop lp params =
+    if curr_token_is lp Token.Ident then
+      let param = lp.curr_token.literal in
+      let lp2 = next_token lp in
+      if curr_token_is lp2 Token.Comma then
+        loop (next_token lp2) (params @ [ param ])
+      else if curr_token_is lp2 Token.RBracket then
+        Ok (next_token lp2, params @ [ param ])
+      else
+        Error (peek_error lp2 Token.RBracket)
+    else if curr_token_is lp Token.RBracket then
+      Ok (next_token lp, params)
+    else
+      Error (no_prefix_parse_fn_error lp lp.curr_token.token_type)
+  in
+  loop p []
+
+and parse_variant_list (p : parser) : (parser * AST.variant_def list, parser) result =
+  let rec loop lp variants =
+    if curr_token_is lp Token.RBrace then
+      Ok (lp, List.rev variants)
+    else if curr_token_is lp Token.Ident then
+      let variant_name = lp.curr_token.literal in
+      let lp2 = next_token lp in
+      (* Check for variant data: some(a) *)
+      let* lp3, variant_fields =
+        if curr_token_is lp2 Token.LParen then
+          let* lp3, fields = parse_type_expr_list (next_token lp2) in
+          let* lp4 =
+            if curr_token_is lp3 Token.RParen then
+              Ok lp3
+            else
+              expect_peek lp3 Token.RParen
+          in
+          Ok (next_token lp4, fields)
+        else
+          Ok (lp2, [])
+      in
+      let variant = AST.{ variant_name; variant_fields } in
+      loop lp3 (variant :: variants)
+    else
+      Error (no_prefix_parse_fn_error lp lp.curr_token.token_type)
+  in
+  loop p []
 
 and parse_expression_statement (p : parser) : (parser * AST.statement, parser) result =
   let pos = p.curr_token.pos in
