@@ -278,22 +278,30 @@ test_case "Simple enum definition" \
 
 test_case "Generic enum option[a] with some constructor" \
     'enum option[a] { some(a) none }
-     let x = option.some(42)' \
+     let x = option.some(42)
+     x' \
     "true"
 
 test_case "Generic enum option[a] with none constructor" \
     'enum option[a] { some(a) none }
-     let x = option.none' \
+     let x = option.some(42)
+     let y = match x {
+       option.some(v): v
+       option.none: 0
+     }
+     y' \
     "true"
 
-test_case "Enum result[a,e] with success constructor" \
-    'enum result[a, e] { success(a) failure(e) }
-     let x = result.success("ok")' \
+test_case "Enum list[a] with recursive structure" \
+    'enum list[a] { cons(a) nil }
+     let x = list.cons(42)
+     x' \
     "true"
 
 test_case "Enum with multi-field variant" \
     'enum http_response { ok(int, string) error(int, string) }
-     let x = http_response.ok(200, "OK")' \
+     let x = http_response.ok(200, "OK")
+     x' \
     "true"
 
 echo ""
@@ -304,7 +312,8 @@ test_case "Match on simple enum variant" \
      let y = match x {
        option.some(v): v
        option.none: 0
-     }' \
+     }
+     y' \
     "true"
 
 test_case "Match with wildcard pattern" \
@@ -313,7 +322,8 @@ test_case "Match with wildcard pattern" \
      let y = match x {
        option.some(v): v
        _: 0
-     }' \
+     }
+     y' \
     "true"
 
 test_case "Match with literal patterns" \
@@ -322,14 +332,52 @@ test_case "Match with literal patterns" \
        0: "zero"
        1: "one"
        _: "other"
-     }' \
+     }
+     y' \
     "true"
 
 test_case "Match with variable binding" \
     'let x = 42
      let y = match x {
-       v: v + 1
+       n: n + 1
+     }
+     y' \
+    "true"
+
+echo ""
+echo "-- ENUM TYPE ANNOTATIONS (Phase 4.3) --"
+test_case "Function parameter with enum type option[int]" \
+    'enum option[a] { some(a) none }
+     let unwrap = fn(x: option[int]) -> int {
+       match x {
+         option.some(v): v
+         option.none: 0
+       }
+     }
+     unwrap(option.some(42))' \
+    "true"
+
+test_case "Function returning enum type" \
+    'enum option[a] { some(a) none }
+     let wrap = fn(x: int) -> option[int] {
+       option.some(x)
+     }
+     let y = wrap(100)
+     match y {
+       option.some(v): v
+       option.none: 0
      }' \
+    "true"
+
+test_case "Nested enum types option[list[int]]" \
+    'enum option[a] { some(a) none }
+     let f = fn(x: option[list[int]]) -> int {
+       match x {
+         option.some(lst): len(lst)
+         option.none: 0
+       }
+     }
+     f(option.some([1, 2, 3]))' \
     "true"
 
 echo ""

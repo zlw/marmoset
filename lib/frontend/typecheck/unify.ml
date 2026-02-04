@@ -43,6 +43,15 @@ let rec unify (type1 : mono_type) (type2 : mono_type) : (substitution, unify_err
   | TArray elem1, TArray elem2 -> unify elem1 elem2
   (* Hash types - unify key and value types *)
   | THash (key1, val1), THash (key2, val2) -> unify_two_pairs (key1, key2) (val1, val2)
+  (* Enum types - unify name and all type arguments *)
+  | TEnum (name1, args1), TEnum (name2, args2) ->
+      if name1 <> name2 then
+        Error (TypeMismatch (type1, type2))
+      else if List.length args1 <> List.length args2 then
+        Error (TypeMismatch (type1, type2))
+      else
+        (* Unify all type arguments *)
+        unify_list args1 args2
   (* Both unions - check equality (must come before single-sided union cases) *)
   | TUnion members1, TUnion members2 -> unify_union_with_union members1 members2
   (* Union on right - concrete type must match at least one member *)
@@ -114,6 +123,25 @@ and unify_two_pairs (t1a, t2a) (t1b, t2b) : (substitution, unify_error) result =
       | Ok subst2 ->
           (* Compose the substitutions *)
           Ok (compose_substitution subst1 subst2))
+
+(* Unify two lists of types element-wise.
+   Used for enum type arguments. *)
+and unify_list (list1 : mono_type list) (list2 : mono_type list) : (substitution, unify_error) result =
+  match (list1, list2) with
+  | [], [] -> Ok empty_substitution
+  | t1 :: rest1, t2 :: rest2 -> (
+      match unify t1 t2 with
+      | Error e -> Error e
+      | Ok subst1 -> (
+          (* Apply substitution to remaining elements *)
+          let rest1' = List.map (apply_substitution subst1) rest1 in
+          let rest2' = List.map (apply_substitution subst1) rest2 in
+          (* Unify remaining elements *)
+          match unify_list rest1' rest2' with
+          | Error e -> Error e
+          | Ok subst2 -> Ok (compose_substitution subst1 subst2)))
+  | _, _ -> Error (TypeMismatch (TNull, TNull))
+(* Length mismatch - shouldn't happen for enum args *)
 
 (* ============================================================
    Tests

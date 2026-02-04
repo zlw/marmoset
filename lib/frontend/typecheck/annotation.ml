@@ -37,9 +37,20 @@ let rec type_expr_to_mono_type (te : Syntax.Ast.AST.type_expr) : Types.mono_type
           match arg_types with
           | [ key_type; value_type ] -> Types.THash (key_type, value_type)
           | _ -> failwith ("map type expects 2 arguments, got " ^ string_of_int (List.length arg_types)))
-      | "option" | "result" | "set" ->
-          failwith ("Type constructor not yet fully supported: " ^ con_name ^ " (Phase 3)")
-      | _ -> failwith ("Unknown type constructor: " ^ con_name))
+      | _ -> (
+          (* Phase 4.3: Check if this is a registered enum type *)
+          match Enum_registry.lookup con_name with
+          | Some enum_def ->
+              (* Verify arity matches *)
+              let expected_arity = List.length enum_def.type_params in
+              let actual_arity = List.length arg_types in
+              if expected_arity <> actual_arity then
+                failwith
+                  (Printf.sprintf "Enum %s expects %d type argument(s), got %d" con_name expected_arity
+                     actual_arity)
+              else
+                Types.TEnum (con_name, arg_types)
+          | None -> failwith ("Unknown type constructor: " ^ con_name)))
   | Syntax.Ast.AST.TArrow (param_types, return_type) ->
       (* Function type: (int, string) -> bool *)
       let param_mono = List.map type_expr_to_mono_type param_types in
@@ -65,6 +76,8 @@ let rec mono_types_equal (t1 : Types.mono_type) (t2 : Types.mono_type) : bool =
   | Types.TFun (p1, r1), Types.TFun (p2, r2) -> mono_types_equal p1 p2 && mono_types_equal r1 r2
   | Types.TUnion t1s, Types.TUnion t2s ->
       List.length t1s = List.length t2s && List.for_all2 mono_types_equal t1s t2s
+  | Types.TEnum (name1, args1), Types.TEnum (name2, args2) ->
+      name1 = name2 && List.length args1 = List.length args2 && List.for_all2 mono_types_equal args1 args2
   | _ -> false
 
 (* Check if annotation matches inferred type *)
@@ -97,3 +110,61 @@ let rec format_mono_type (t : Types.mono_type) : string =
   | Types.TUnion types -> String.concat " | " (List.map format_mono_type types)
   | Types.TEnum (name, []) -> name
   | Types.TEnum (name, args) -> Printf.sprintf "%s[%s]" name (String.concat ", " (List.map format_mono_type args))
+
+(* ============================================================
+   Phase 4.3: Tests for Enum Type Annotations
+   ============================================================ *)
+
+(* Test helper: register a test enum *)
+let setup_test_enums () =
+  Enum_registry.clear ();
+  (* Register option[a] *)
+  Enum_registry.register
+    {
+      name = "option";
+      type_params = [ "a" ];
+      variants = [ { name = "some"; fields = [ Types.TVar "a" ] }; { name = "none"; fields = [] } ];
+    };
+  (* Register result[a, b] *)
+  Enum_registry.register
+    {
+      name = "result";
+      type_params = [ "a"; "b" ];
+      variants = [ { name = "ok"; fields = [ Types.TVar "a" ] }; { name = "err"; fields = [ Types.TVar "b" ] } ];
+    }
+
+let%test "enum annotation option[int]" =
+  setup_test_enums ();
+  let te = Syntax.Ast.AST.TApp ("option", [ Syntax.Ast.AST.TCon "int" ]) in
+  let result = type_expr_to_mono_type te in
+  result = Types.TEnum ("option", [ Types.TInt ])
+
+let%test "enum annotation result[string, int]" =
+  setup_test_enums ();
+  let te = Syntax.Ast.AST.TApp ("result", [ Syntax.Ast.AST.TCon "string"; Syntax.Ast.AST.TCon "int" ]) in
+  let result = type_expr_to_mono_type te in
+  result = Types.TEnum ("result", [ Types.TString; Types.TInt ])
+
+let%test "enum annotation nested option[list[int]]" =
+  setup_test_enums ();
+  let te = Syntax.Ast.AST.TApp ("option", [ Syntax.Ast.AST.TApp ("list", [ Syntax.Ast.AST.TCon "int" ]) ]) in
+  let result = type_expr_to_mono_type te in
+  result = Types.TEnum ("option", [ Types.TArray Types.TInt ])
+
+(* This test should fail with unknown type constructor *)
+let%test "unknown enum foo[int] fails" =
+  setup_test_enums ();
+  let te = Syntax.Ast.AST.TApp ("foo", [ Syntax.Ast.AST.TCon "int" ]) in
+  try
+    let _ = type_expr_to_mono_type te in
+    false (* Should have thrown *)
+  with Failure msg -> String.length msg > 0 (* Should have error message *)
+
+(* This test should fail with arity mismatch *)
+let%test "option with wrong arity fails" =
+  setup_test_enums ();
+  let te = Syntax.Ast.AST.TApp ("option", [ Syntax.Ast.AST.TCon "int"; Syntax.Ast.AST.TCon "string" ]) in
+  try
+    let _ = type_expr_to_mono_type te in
+    false (* Should have thrown *)
+  with Failure msg -> String.length msg > 0 (* Should have error message *)
