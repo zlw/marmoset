@@ -12,6 +12,7 @@ type mono_type =
   | TArray of mono_type (* Array: [T] *)
   | THash of mono_type * mono_type (* Hash: {K: V} *)
   | TUnion of mono_type list (* Union: Int | String | Bool *)
+  | TEnum of string * mono_type list (* Enum: option[Int], result[String, Int] *)
 
 (* A polytype (type scheme) - a type with "forall" quantifiers.
    Example: ∀a. a -> a  is  Forall(["a"], TFun(TVar "a", TVar "a"))
@@ -53,6 +54,8 @@ and to_string = function
   | TArray element -> "[" ^ to_string element ^ "]"
   | THash (key, value) -> "{" ^ to_string key ^ ": " ^ to_string value ^ "}"
   | TUnion types -> String.concat " | " (List.map to_string types)
+  | TEnum (name, []) -> name
+  | TEnum (name, args) -> name ^ "[" ^ String.concat ", " (List.map to_string args) ^ "]"
 
 (* Convert poly_type to string *)
 let poly_type_to_string (Forall (vars, mono)) =
@@ -83,6 +86,7 @@ let rec apply_substitution (subst : substitution) (mono : mono_type) : mono_type
   | TArray element -> TArray (apply_substitution subst element)
   | THash (key, value) -> THash (apply_substitution subst key, apply_substitution subst value)
   | TUnion types -> TUnion (List.map (apply_substitution subst) types)
+  | TEnum (name, args) -> TEnum (name, List.map (apply_substitution subst) args)
 
 (* Apply substitution to a poly_type - don't touch quantified variables *)
 let apply_substitution_poly (subst : substitution) (Forall (quantified_vars, mono)) : poly_type =
@@ -112,6 +116,7 @@ let rec free_type_vars (mono : mono_type) : TypeVarSet.t =
   | TArray element -> free_type_vars element
   | THash (key, value) -> TypeVarSet.union (free_type_vars key) (free_type_vars value)
   | TUnion types -> List.fold_left (fun acc t -> TypeVarSet.union acc (free_type_vars t)) TypeVarSet.empty types
+  | TEnum (_, args) -> List.fold_left (fun acc t -> TypeVarSet.union acc (free_type_vars t)) TypeVarSet.empty args
 
 (* Free type variables in a poly_type - quantified vars are NOT free *)
 let free_type_vars_poly (Forall (quantified_vars, mono)) : TypeVarSet.t =
@@ -145,6 +150,7 @@ let rec collect_vars_in_order (mono : mono_type) : string list =
   | TArray element -> collect_vars_in_order element
   | THash (key, value) -> collect_vars_in_order key @ collect_vars_in_order value
   | TUnion types -> List.concat_map collect_vars_in_order types
+  | TEnum (_, args) -> List.concat_map collect_vars_in_order args
 
 (* Remove duplicates while preserving order *)
 let unique_in_order (lst : string list) : string list =
@@ -310,3 +316,24 @@ let%test "apply_substitution to union" =
   let subst = [ ("a", TInt); ("b", TString) ] in
   let union = TUnion [ TVar "a"; TVar "b"; TBool ] in
   apply_substitution subst union = TUnion [ TInt; TString; TBool ]
+
+(* Enum type tests *)
+
+let%test "to_string enum no args" = to_string (TEnum ("direction", [])) = "direction"
+let%test "to_string enum with one arg" = to_string (TEnum ("option", [ TInt ])) = "option[Int]"
+
+let%test "to_string enum with multiple args" =
+  to_string (TEnum ("result", [ TString; TInt ])) = "result[String, Int]"
+
+let%test "apply_substitution to enum" =
+  let subst = [ ("a", TInt); ("b", TString) ] in
+  let enum = TEnum ("result", [ TVar "a"; TVar "b" ]) in
+  apply_substitution subst enum = TEnum ("result", [ TInt; TString ])
+
+let%test "free_type_vars in enum" =
+  let enum = TEnum ("option", [ TVar "a" ]) in
+  TypeVarSet.equal (free_type_vars enum) (TypeVarSet.singleton "a")
+
+let%test "collect_vars_in_order with enum" =
+  let enum = TEnum ("result", [ TVar "a"; TVar "b" ]) in
+  collect_vars_in_order enum = [ "a"; "b" ]

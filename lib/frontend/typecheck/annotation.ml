@@ -95,3 +95,5 @@ let rec format_mono_type (t : Types.mono_type) : string =
       (* Format as a->b->c (right-associative) *)
       Printf.sprintf "%s -> %s" (format_mono_type param_type) (format_mono_type return_type)
   | Types.TUnion types -> String.concat " | " (List.map format_mono_type types)
+  | Types.TEnum (name, []) -> name
+  | Types.TEnum (name, args) -> Printf.sprintf "%s[%s]" name (String.concat ", " (List.map format_mono_type args))

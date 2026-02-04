@@ -297,6 +297,42 @@ test_case "Enum with multi-field variant" \
     "true"
 
 echo ""
+echo "-- MATCH EXPRESSION TESTS (Phase 4.2) --"
+test_case "Match on simple enum variant" \
+    'enum option[a] { some(a) none }
+     let x = option.some(42)
+     let y = match x {
+       option.some(v): v
+       option.none: 0
+     }' \
+    "true"
+
+test_case "Match with wildcard pattern" \
+    'enum option[a] { some(a) none }
+     let x = option.some(42)
+     let y = match x {
+       option.some(v): v
+       _: 0
+     }' \
+    "true"
+
+test_case "Match with literal patterns" \
+    'let x = 42
+     let y = match x {
+       0: "zero"
+       1: "one"
+       _: "other"
+     }' \
+    "true"
+
+test_case "Match with variable binding" \
+    'let x = 42
+     let y = match x {
+       v: v + 1
+     }' \
+    "true"
+
+echo ""
 echo "=========================================="
 echo "RESULTS: $PASS passed, $FAIL failed out of $TOTAL tests"
 echo "=========================================="

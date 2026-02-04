@@ -380,6 +380,7 @@ and prefixFn (p : parser) : (parser * AST.expression, parser) result =
   | Token.True | Token.False -> parse_boolean p
   | Token.LParen -> parse_grouped_expression p
   | Token.If -> parse_if_expression p
+  | Token.Match -> parse_match_expression p
   | Token.Function -> parse_function_literal p
   | Token.LBracket -> parse_array_literal p
   | Token.LBrace -> parse_hash_literal p
@@ -670,6 +671,123 @@ and parse_hash_literal (p : parser) : (parser * AST.expression, parser) result =
   in
 
   loop p []
+
+(* Phase 4.2: Match expression parsing *)
+and parse_match_expression (p : parser) : (parser * AST.expression, parser) result =
+  (* Current token is 'match' *)
+  let pos = p.curr_token.pos in
+
+  (* Parse the scrutinee expression *)
+  let* p2, scrutinee = parse_expression (next_token p) prec_lowest in
+
+  (* Expect opening brace *)
+  let* p3 = expect_peek p2 Token.LBrace in
+
+  (* Parse match arms *)
+  let* p4, arms = parse_match_arms (next_token p3) in
+
+  (* Expect closing brace *)
+  let* p5 =
+    if curr_token_is p4 Token.RBrace then
+      Ok p4
+    else
+      expect_peek p4 Token.RBrace
+  in
+
+  Ok (p5, mk_expr pos (AST.Match (scrutinee, arms)))
+
+and parse_match_arms (p : parser) : (parser * AST.match_arm list, parser) result =
+  let rec loop lp arms =
+    if curr_token_is lp Token.RBrace then
+      Ok (lp, List.rev arms)
+    else
+      (* Parse patterns (may be multiple with | separator) *)
+      let* lp2, patterns = parse_patterns lp in
+
+      (* Expect colon *)
+      let* lp3 = expect_peek lp2 Token.Colon in
+
+      (* Parse arm body *)
+      let* lp4, body = parse_expression (next_token lp3) prec_lowest in
+
+      let arm = AST.{ patterns; body } in
+      loop lp4 (arm :: arms)
+  in
+  loop p []
+
+and parse_patterns (p : parser) : (parser * AST.pattern list, parser) result =
+  let* p2, first_pattern = parse_pattern p in
+
+  let rec loop lp patterns =
+    if peek_token_is lp Token.Pipe then
+      let* lp2, pat = parse_pattern (next_token (next_token lp)) in
+      loop lp2 (pat :: patterns)
+    else
+      Ok (lp, List.rev patterns)
+  in
+
+  loop p2 [ first_pattern ]
+
+and parse_pattern (p : parser) : (parser * AST.pattern, parser) result =
+  match p.curr_token.token_type with
+  | Token.Ident ->
+      (* Could be: variable binding, or enum.variant(patterns) *)
+      if peek_token_is p Token.Dot then
+        (* Enum constructor pattern: enum.variant or enum.variant(patterns) *)
+        let enum_name = p.curr_token.literal in
+        let p2 = next_token (next_token p) in
+        (* skip enum and dot *)
+        if curr_token_is p2 Token.Ident then
+          let variant_name = p2.curr_token.literal in
+          (* Check for nested patterns *)
+          if peek_token_is p2 Token.LParen then
+            let p3 = next_token p2 in
+            (* move to LParen *)
+            let* p4, nested_patterns = parse_pattern_list p3 in
+            Ok (p4, AST.mk_pat ~pos:p.curr_token.pos (AST.PConstructor (enum_name, variant_name, nested_patterns)))
+          else
+            (* Nullary constructor *)
+            Ok (p2, AST.mk_pat ~pos:p.curr_token.pos (AST.PConstructor (enum_name, variant_name, [])))
+        else
+          Error (add_error p2 "expected variant name after '.'")
+      else
+        (* Variable binding *)
+        Ok (p, AST.mk_pat ~pos:p.curr_token.pos (AST.PVariable p.curr_token.literal))
+  | Token.Int -> (
+      match Int64.of_string_opt p.curr_token.literal with
+      | Some i -> Ok (p, AST.mk_pat ~pos:p.curr_token.pos (AST.PLiteral (AST.LInt i)))
+      | None -> Error (add_error p "invalid integer literal in pattern"))
+  | Token.String -> Ok (p, AST.mk_pat ~pos:p.curr_token.pos (AST.PLiteral (AST.LString p.curr_token.literal)))
+  | Token.True -> Ok (p, AST.mk_pat ~pos:p.curr_token.pos (AST.PLiteral (AST.LBool true)))
+  | Token.False -> Ok (p, AST.mk_pat ~pos:p.curr_token.pos (AST.PLiteral (AST.LBool false)))
+  | Token.Minus ->
+      (* Underscore is not a token, but we use it for wildcard *)
+      (* Actually, wildcard should be an identifier "_" *)
+      Ok (p, AST.mk_pat ~pos:p.curr_token.pos AST.PWildcard)
+  | _ ->
+      (* Check if it's underscore identifier *)
+      if p.curr_token.token_type = Token.Ident && p.curr_token.literal = "_" then
+        Ok (p, AST.mk_pat ~pos:p.curr_token.pos AST.PWildcard)
+      else
+        Error (add_error p "invalid pattern")
+
+and parse_pattern_list (p : parser) : (parser * AST.pattern list, parser) result =
+  (* p is at LParen *)
+  if peek_token_is p Token.RParen then
+    Ok (next_token p, [])
+  else
+    let* p2, first_pat = parse_pattern (next_token p) in
+
+    let rec loop lp pats =
+      if peek_token_is lp Token.Comma then
+        let* lp2, pat = parse_pattern (next_token (next_token lp)) in
+        loop lp2 (pat :: pats)
+      else
+        let* lp2 = expect_peek lp Token.RParen in
+        Ok (lp2, List.rev pats)
+    in
+
+    loop p2 [ first_pat ]
 
 let parse (s : string) : (AST.program, errors) result =
   match s |> Lexer.init |> init |> parse_program with

@@ -21,6 +21,8 @@ let rec mangle_type (t : Types.mono_type) : string =
   | Types.TArray elem -> "arr_" ^ mangle_type elem
   | Types.THash (key, value) -> "map_" ^ mangle_type key ^ "_" ^ mangle_type value
   | Types.TUnion _ -> "union" (* Phase 4.1: unions will be interface{} *)
+  | Types.TEnum (name, []) -> name
+  | Types.TEnum (name, args) -> name ^ "_" ^ String.concat "_" (List.map mangle_type args)
 
 (* Generate mangled function name: name_type1_type2_... *)
 (* For functions with union parameters, don't mangle - use base name *)
@@ -54,6 +56,8 @@ let rec type_to_go (t : Types.mono_type) : string =
   | Types.TArray elem -> "[]" ^ type_to_go elem
   | Types.THash (key, value) -> "map[" ^ type_to_go key ^ "]" ^ type_to_go value
   | Types.TUnion _ -> "interface{}" (* Phase 4.1: unions compile to interface{} *)
+  | Types.TEnum (name, []) -> String.capitalize_ascii name
+  | Types.TEnum (name, args) -> String.capitalize_ascii name ^ "_" ^ String.concat "_" (List.map mangle_type args)
 
 and emit_func_type arg ret =
   let rec collect_args = function

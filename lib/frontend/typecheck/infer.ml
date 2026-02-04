@@ -672,7 +672,7 @@ and infer_index env container index_expr =
                       let final_subst = compose_substitution subst subst3 in
                       let elem_type' = apply_substitution subst3 elem_type in
                       Ok (final_subst, elem_type'))
-              | TString | TFloat | TBool | TNull | TArray _ | THash _ | TFun _ | TUnion _ -> (
+              | TString | TFloat | TBool | TNull | TArray _ | THash _ | TFun _ | TUnion _ | TEnum _ -> (
                   (* Non-int index -> assume hash *)
                   let val_type = fresh_type_var () in
                   match unify container_type' (THash (index_type, val_type)) with
