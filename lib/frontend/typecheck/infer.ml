@@ -187,8 +187,8 @@ let rec infer_expression (env : type_env) (expr : AST.expression) : (substitutio
       match TypeEnv.find_opt name env with
       | None -> Error (error_at (UnboundVariable name) expr)
       | Some poly_type ->
-          let mono = instantiate poly_type in
-          Ok (empty_substitution, mono))
+          let instantiated = instantiate poly_type in
+          Ok (empty_substitution, instantiated))
   (* Prefix operators *)
   | AST.Prefix (op, operand) -> infer_prefix env op operand
   (* Infix operators *)
@@ -786,7 +786,7 @@ and infer_statement env stmt =
   | AST.ExpressionStmt expr -> infer_expression env expr
   | AST.Return expr -> infer_expression env expr
   | AST.Block stmts -> infer_block env stmts
-  | AST.Let let_binding -> infer_let env let_binding.name let_binding.value
+  | AST.Let let_binding -> infer_let env let_binding.name let_binding.value let_binding.type_annotation
   | AST.EnumDef { name; type_params; variants } ->
       (* Register the enum in the registry *)
       (* Convert type expressions to mono_types, treating type_params as TVar *)
@@ -1012,12 +1012,12 @@ and check_pattern pattern scrutinee_type =
     We treat ALL let bindings this way for simplicity - it's harmless
     for non-recursive bindings and enables recursion for functions.
 *)
-and infer_let env name expr =
+and infer_let env name expr type_annotation =
   (* Check if the expression is a function with a return type annotation *)
   (* If so, create a partially constrained type for recursion *)
   let self_type =
-    match expr.expr with
-    | AST.Function f -> (
+    match (expr.expr, type_annotation) with
+    | AST.Function f, _ -> (
         match f.return_type with
         | None -> fresh_type_var ()
         | Some type_expr -> (
@@ -1035,7 +1035,10 @@ and infer_let env name expr =
               (* Build function type from parameters and return type *)
               List.fold_right (fun param_t acc -> TFun (param_t, acc)) param_types return_type
             with Failure _ -> fresh_type_var ()))
-    | _ -> fresh_type_var ()
+    | _, Some type_expr -> (
+        (* Phase 4.4: Use type annotation from let binding *)
+        try Annotation.type_expr_to_mono_type type_expr with Failure _ -> fresh_type_var ())
+    | _, None -> fresh_type_var ()
   in
   (* Add to environment as monomorphic (not generalized yet) *)
   let env_with_self = TypeEnv.add name (mono_to_poly self_type) env in
@@ -1053,7 +1056,7 @@ and infer_let env name expr =
           (* Generalize the type *)
           let env' = apply_substitution_env final_subst env in
           let poly_type = generalize env' final_type in
-          let _ = TypeEnv.add name poly_type env' in
+          let _ = poly_type in
           Ok (final_subst, final_type))
 
 and infer_block env stmts =

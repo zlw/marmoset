@@ -86,7 +86,7 @@ type mono_state = {
   concrete_only : bool; (* Phase 4.3: Rust-style (true) vs TypeScript-style (false) codegen *)
 }
 
-let create_mono_state ?(concrete_only = false) () =
+let create_mono_state ?(concrete_only = true) () =
   {
     func_defs = [];
     instantiations = InstSet.empty;
@@ -96,7 +96,37 @@ let create_mono_state ?(concrete_only = false) () =
   }
 
 (* ============================================================
-   Type to Go Type String
+   Enum Layout Types (Phase 4.4: Multi-field support)
+   ============================================================ *)
+
+(* Types for enum field layout analysis *)
+type field_mapping = {
+  data_field_name : string; (* e.g., "Data0" *)
+  data_field_type : Types.mono_type;
+  go_type : string; (* e.g., "int64" *)
+}
+
+type variant_field_map = (int * field_mapping) list (* position -> mapping *)
+
+type enum_layout = {
+  fields : field_mapping list; (* All DataN fields in order *)
+  variant_maps : (string * variant_field_map) list; (* variant_name -> mappings *)
+}
+
+(* Get size/alignment of a type for sorting (used for optimal field layout) *)
+let type_size (t : Types.mono_type) : int =
+  match t with
+  | Types.TInt | Types.TFloat | Types.TArray _ | Types.THash _ | Types.TEnum _ | Types.TString ->
+      8 (* 64-bit types, pointers *)
+  | Types.TBool -> 1
+  | Types.TNull -> 0
+  | Types.TVar _ -> 8 (* Treat as pointer *)
+  | Types.TFun _ -> 8 (* Function pointer *)
+  | Types.TUnion _ -> 8 (* Interface *)
+
+(* ============================================================
+   Type to Go Type String and Enum Layout Analysis
+   (Mutually recursive because analyze_enum_layout needs type_to_go)
    ============================================================ *)
 
 let rec type_to_go (state : mono_state) (t : Types.mono_type) : string =
@@ -108,6 +138,7 @@ let rec type_to_go (state : mono_state) (t : Types.mono_type) : string =
   | Types.TNull -> "struct{}"
   | Types.TVar _name ->
       (* Phase 4.3: In Rust-style mode, unresolved type variables are an error *)
+      (* However, we allow interface{} fallback during enum layout analysis *)
       if state.concrete_only then
         failwith
           (Printf.sprintf
@@ -119,8 +150,7 @@ let rec type_to_go (state : mono_state) (t : Types.mono_type) : string =
   | Types.TArray elem -> "[]" ^ type_to_go state elem
   | Types.THash (key, value) -> "map[" ^ type_to_go state key ^ "]" ^ type_to_go state value
   | Types.TUnion _ -> "interface{}" (* Phase 4.1: unions compile to interface{} *)
-  | Types.TEnum (name, []) -> String.capitalize_ascii name
-  | Types.TEnum (name, args) -> String.capitalize_ascii name ^ "_" ^ String.concat "_" (List.map mangle_type args)
+  | Types.TEnum (name, args) -> mangle_type (Types.TEnum (name, args))
 
 and emit_func_type state arg ret =
   let rec collect_args = function
@@ -132,6 +162,80 @@ and emit_func_type state arg ret =
   let args, final_ret = collect_args (Types.TFun (arg, ret)) in
   let args_str = List.map (type_to_go state) args |> String.concat ", " in
   Printf.sprintf "func(%s) %s" args_str (type_to_go state final_ret)
+
+(* Analyze enum fields and build layout mapping *)
+and analyze_enum_layout
+    (state : mono_state) (enum_def : Typecheck.Enum_registry.enum_def) (type_args : Types.mono_type list) :
+    enum_layout =
+  (* Find the maximum number of fields across all variants *)
+  let max_fields =
+    List.fold_left
+      (fun acc (v : Typecheck.Enum_registry.variant_def) -> max acc (List.length v.fields))
+      0 enum_def.variants
+  in
+
+  (* For each position 0..max_fields-1, collect ALL unique types used at that position *)
+  let position_type_lists =
+    List.init max_fields (fun pos ->
+        (* Get all types used at this position across all variants *)
+        let types_at_pos =
+          List.filter_map
+            (fun (v : Typecheck.Enum_registry.variant_def) ->
+              if pos < List.length v.fields then
+                let subst = List.combine enum_def.type_params type_args in
+                Some (Types.apply_substitution subst (List.nth v.fields pos))
+              else
+                None)
+            enum_def.variants
+        in
+        (* Get unique types at this position *)
+        List.sort_uniq compare types_at_pos)
+  in
+
+  (* Flatten all position types into a list of (position, type) pairs *)
+  let all_position_types =
+    List.concat (List.mapi (fun pos types -> List.map (fun t -> (pos, t)) types) position_type_lists)
+  in
+
+  (* Create field mappings - one field per (position, type) pair *)
+  (* Use sequential Data0, Data1, Data2, ... naming - one for each unique (pos, type) pair *)
+  let field_mappings_with_pos =
+    List.mapi
+      (fun idx (pos, field_type) ->
+        let field_name = Printf.sprintf "Data%d" idx in
+        ( pos,
+          field_type,
+          { data_field_name = field_name; data_field_type = field_type; go_type = type_to_go state field_type } ))
+      all_position_types
+  in
+
+  (* Create a list of unique field mappings *)
+  let field_mappings =
+    List.map (fun (_, _, fm) -> fm) field_mappings_with_pos
+    |> List.sort_uniq (fun a b -> compare a.data_field_name b.data_field_name)
+  in
+
+  (* Build mapping from (variant, position) to field_mapping *)
+  let variant_maps =
+    List.map
+      (fun (v : Typecheck.Enum_registry.variant_def) ->
+        let subst = List.combine enum_def.type_params type_args in
+        let substituted_fields = List.map (Types.apply_substitution subst) v.fields in
+        let mappings =
+          List.mapi
+            (fun pos field_type ->
+              (* Find the field mapping for this (pos, type) pair *)
+              let _, _, mapping =
+                List.find (fun (p, t, _) -> p = pos && t = field_type) field_mappings_with_pos
+              in
+              (pos, mapping))
+            substituted_fields
+        in
+        (v.name, mappings))
+      enum_def.variants
+  in
+
+  { fields = field_mappings; variant_maps }
 
 (* ============================================================
    Pass 1: Collect function definitions
@@ -201,7 +305,7 @@ and collect_funcs_expr (state : mono_state) (expr : AST.expression) : unit =
 
 let infer_type env expr =
   match Infer.infer_expression env expr with
-  | Ok (_, t) -> t
+  | Ok (subst, t) -> Types.apply_substitution subst t
   | Error _ -> Types.TNull
 
 (* Check if a type contains unresolved type variables *)
@@ -219,9 +323,13 @@ let rec has_type_vars (t : Types.mono_type) : bool =
 let track_enum_inst state (t : Types.mono_type) =
   match t with
   | Types.TEnum (name, args) ->
-      (* Track all enum instantiations, even with type variables *)
-      (* Type variables will be compiled as interface{} *)
-      state.enum_insts <- EnumInstSet.add (name, args) state.enum_insts
+      (* In Rust-style mode, skip instantiations with unresolved type variables *)
+      (* In TypeScript-style mode, track all instantiations (type vars become interface{}) *)
+      if state.concrete_only && List.exists has_type_vars args then
+        ()
+        (* Skip - unresolved type variables in Rust-style mode *)
+      else
+        state.enum_insts <- EnumInstSet.add (name, args) state.enum_insts
   | _ -> ()
 
 let is_user_func (state : mono_state) (name : string) : bool =
@@ -237,10 +345,16 @@ let rec extract_param_types n = function
 let rec collect_insts_stmt (state : mono_state) (env : Infer.type_env) (stmt : AST.statement) : Infer.type_env =
   match stmt.stmt with
   | AST.Let let_binding ->
-      (* For recursive functions, add the binding first so the body can reference it *)
-      let expr_type = infer_type env let_binding.value in
+      (* Use the type from the environment if it exists (from type checking),
+         otherwise infer it (for recursive functions that need binding first) *)
+      let expr_type =
+        match Infer.TypeEnv.find_opt let_binding.name env with
+        | Some (Types.Forall (_, t)) -> t
+        | None -> infer_type env let_binding.value
+      in
       let env_with_binding = Infer.TypeEnv.add let_binding.name (Types.Forall ([], expr_type)) env in
-      collect_insts_expr state env_with_binding let_binding.value;
+      (* Pass the expected type to collect_insts_expr so it can use it for EnumConstructors *)
+      collect_insts_expr ~expected_type:(Some expr_type) state env_with_binding let_binding.value;
       env_with_binding
   | AST.Return e ->
       collect_insts_expr state env e;
@@ -251,7 +365,11 @@ let rec collect_insts_stmt (state : mono_state) (env : Infer.type_env) (stmt : A
   | AST.Block stmts -> List.fold_left (collect_insts_stmt state) env stmts
   | AST.EnumDef _ -> env (* Enums are compile-time only *)
 
-and collect_insts_expr (state : mono_state) (env : Infer.type_env) (expr : AST.expression) : unit =
+and collect_insts_expr
+    ?(expected_type : Types.mono_type option = None)
+    (state : mono_state)
+    (env : Infer.type_env)
+    (expr : AST.expression) : unit =
   match expr.expr with
   | AST.Integer _ | AST.Float _ | AST.Boolean _ | AST.String _ | AST.Identifier _ -> ()
   | AST.Prefix (_, e) -> collect_insts_expr state env e
@@ -329,8 +447,12 @@ and collect_insts_expr (state : mono_state) (env : Infer.type_env) (expr : AST.e
       ignore (collect_insts_stmt state body_env f.body)
   | AST.EnumConstructor (_, _, args) ->
       List.iter (collect_insts_expr state env) args;
-      (* Track the enum type instantiation *)
-      let enum_type = infer_type env expr in
+      (* Use expected_type if available (from let binding context), otherwise infer *)
+      let enum_type =
+        match expected_type with
+        | Some t -> t
+        | None -> infer_type env expr
+      in
       track_enum_inst state enum_type
   | AST.Match (scrutinee, arms) ->
       collect_insts_expr state env scrutinee;
@@ -355,7 +477,11 @@ let indent_str state = String.make (state.indent * 4) ' '
    Expression Emission
    ============================================================ *)
 
-let rec emit_expr (state : emit_state) (env : Infer.type_env) (expr : AST.expression) : string =
+let rec emit_expr
+    ?(expected_type : Types.mono_type option = None)
+    (state : emit_state)
+    (env : Infer.type_env)
+    (expr : AST.expression) : string =
   match expr.expr with
   | AST.Integer i -> Printf.sprintf "int64(%Ld)" i
   | AST.Float f -> Printf.sprintf "float64(%g)" f
@@ -376,8 +502,12 @@ let rec emit_expr (state : emit_state) (env : Infer.type_env) (expr : AST.expres
       let param_exprs = List.map (fun (name, _) -> AST.mk_expr (AST.Identifier name)) f.params in
       emit_function_expr state env expr param_exprs f.body
   | AST.EnumConstructor (enum_name, variant_name, args) ->
-      (* Get the type of this constructor call *)
-      let enum_type = infer_type env expr in
+      (* Use expected_type if available (from let binding context), otherwise infer *)
+      let enum_type =
+        match expected_type with
+        | Some t -> t
+        | None -> infer_type env expr
+      in
       let type_args =
         match enum_type with
         | Types.TEnum (_, args) -> args
@@ -402,16 +532,20 @@ and emit_match state env scrutinee arms =
   (* Get the type of the scrutinee *)
   let scrutinee_type = infer_type env scrutinee in
 
+  (* Infer the type of the entire match expression *)
+  let match_expr = AST.{ expr = Match (scrutinee, arms); pos = scrutinee.pos } in
+  let match_result_type = infer_type env match_expr in
+
   match scrutinee_type with
   | Types.TEnum (enum_name, type_args) ->
       (* Enum match: switch on Tag field *)
-      emit_match_enum state env scrutinee scrutinee_type enum_name type_args arms
+      emit_match_enum state env scrutinee scrutinee_type enum_name type_args arms match_result_type
   | Types.TInt | Types.TString | Types.TBool ->
       (* Primitive match: switch on value directly *)
-      emit_match_primitive state env scrutinee scrutinee_type arms
+      emit_match_primitive state env scrutinee scrutinee_type arms match_result_type
   | _ -> failwith (Printf.sprintf "Match on type %s not yet supported" (Types.to_string scrutinee_type))
 
-and emit_match_enum state env scrutinee scrutinee_type enum_name type_args arms =
+and emit_match_enum state env scrutinee scrutinee_type enum_name type_args arms match_result_type =
   (* Generate mangled enum type name *)
   let go_type_name = mangle_type scrutinee_type in
 
@@ -425,6 +559,9 @@ and emit_match_enum state env scrutinee scrutinee_type enum_name type_args arms 
 
   (* Emit scrutinee to a temporary variable *)
   let scrutinee_str = emit_expr state env scrutinee in
+
+  (* Convert match result type to Go type *)
+  let match_result_go_type = type_to_go state.mono match_result_type in
 
   (* Generate a Go anonymous function that returns the match result *)
   (* This allows match to be used as an expression *)
@@ -445,12 +582,15 @@ and emit_match_enum state env scrutinee scrutinee_type enum_name type_args arms 
 
   (* Generate: func() T { __scrutinee := <expr>; switch __scrutinee.Tag { cases... } }() *)
   Printf.sprintf
-    "(func() interface{} {\n\t__scrutinee := %s\n\tswitch __scrutinee.Tag {\n%s\n\t}\n\treturn nil\n})()"
-    scrutinee_str match_body
+    "(func() %s {\n\t__scrutinee := %s\n\tswitch __scrutinee.Tag {\n%s\n\t}\n\tpanic(\"non-exhaustive match\")\n})()"
+    match_result_go_type scrutinee_str match_body
 
-and emit_match_primitive state env scrutinee scrutinee_type arms =
+and emit_match_primitive state env scrutinee scrutinee_type arms match_result_type =
   (* Emit scrutinee expression *)
   let scrutinee_str = emit_expr state env scrutinee in
+
+  (* Convert match result type to Go type *)
+  let match_result_go_type = type_to_go state.mono match_result_type in
 
   (* Generate match body *)
   let match_body =
@@ -467,8 +607,9 @@ and emit_match_primitive state env scrutinee scrutinee_type arms =
   in
 
   (* Generate: func() T { __scrutinee := <expr>; switch __scrutinee { cases... } }() *)
-  Printf.sprintf "(func() interface{} {\n\t__scrutinee := %s\n\tswitch __scrutinee {\n%s\n\t}\n\treturn nil\n})()"
-    scrutinee_str match_body
+  Printf.sprintf
+    "(func() %s {\n\t__scrutinee := %s\n\tswitch __scrutinee {\n%s\n\t}\n\tpanic(\"non-exhaustive match\")\n})()"
+    match_result_go_type scrutinee_str match_body
 
 and emit_match_arm_primitive state env _scrutinee_type pattern body =
   match pattern.AST.pat with
@@ -525,16 +666,17 @@ and emit_match_arm_enum state env go_type_name enum_def type_args pattern body =
       (* Generate case for this tag *)
       let tag_constant = Printf.sprintf "%s_%s_tag" go_type_name variant_name in
 
-      (* Extract field bindings *)
-      let bindings = emit_pattern_bindings enum_def.type_params type_args field_patterns variant.fields in
+      (* Get layout for field mapping *)
+      let layout = analyze_enum_layout state.mono enum_def type_args in
+
+      (* Extract field bindings with layout mapping *)
+      let bindings = emit_pattern_bindings layout variant_name field_patterns variant.fields in
 
       (* Generate the case *)
       let binding_strs =
         List.map
-          (fun (var_name, var_type) ->
-            (* Cast Data field to appropriate type *)
-            let go_type = type_to_go state.mono var_type in
-            Printf.sprintf "\t\t%s := __scrutinee.Data.(%s)" var_name go_type)
+          (fun (var_name, data_field_name, _field_type) ->
+            Printf.sprintf "\t\t%s := __scrutinee.%s" var_name data_field_name)
           bindings
       in
 
@@ -550,24 +692,29 @@ and emit_match_arm_enum state env go_type_name enum_def type_args pattern body =
 
       Printf.sprintf "\tcase %s:\n%s\t\treturn %s" tag_constant bindings_code body_str
 
-and emit_pattern_bindings type_params type_args field_patterns field_types : (string * Types.mono_type) list =
-  (* Extract variable bindings from patterns *)
-  (* Apply substitution to field types *)
-  let subst = List.combine type_params type_args in
-  let substituted_field_types = List.map (Types.apply_substitution subst) field_types in
+and emit_pattern_bindings
+    (layout : enum_layout)
+    (variant_name : string)
+    (field_patterns : AST.pattern list)
+    (_field_types : Types.mono_type list) : (string * string * Types.mono_type) list =
+  (* Get the field mapping for this variant *)
+  let variant_field_map = List.assoc variant_name layout.variant_maps in
 
-  (* For now, only support single field with variable pattern *)
+  (* Match patterns with field positions *)
   match field_patterns with
   | [] -> []
-  | [ pat ] -> (
-      match pat.AST.pat with
-      | AST.PVariable var_name ->
-          (* Get the substituted field type *)
-          let field_type = List.hd substituted_field_types in
-          [ (var_name, field_type) ]
-      | AST.PWildcard -> []
-      | _ -> failwith "Complex field patterns not yet supported")
-  | _ -> failwith "Multiple field patterns not yet supported in codegen"
+  | patterns ->
+      List.mapi
+        (fun pos pat ->
+          match pat.AST.pat with
+          | AST.PVariable var_name ->
+              (* Find the mapping for this position *)
+              let _pos, mapping = List.find (fun (p, _) -> p = pos) variant_field_map in
+              Some (var_name, mapping.data_field_name, mapping.data_field_type)
+          | AST.PWildcard -> None
+          | _ -> failwith "Complex field patterns not yet supported")
+        patterns
+      |> List.filter_map Fun.id
 
 and emit_prefix state env op operand =
   let operand_str = emit_expr state env operand in
@@ -1001,15 +1148,20 @@ and emit_stmt (state : emit_state) (env : Infer.type_env) (stmt : AST.statement)
   let ind = indent_str state in
   match stmt.stmt with
   | AST.Let let_binding -> (
+      (* Use the type from the environment if it exists, otherwise infer *)
+      let expr_type =
+        match Infer.TypeEnv.find_opt let_binding.name env with
+        | Some (Types.Forall (_, t)) -> t
+        | None -> infer_type env let_binding.value
+      in
       match let_binding.value.expr with
       | AST.Function _ when is_user_func state.mono let_binding.name ->
           (* Skip - this is a top-level function, emitted separately *)
-          let expr_type = infer_type env let_binding.value in
           let env' = Infer.TypeEnv.add let_binding.name (Types.Forall ([], expr_type)) env in
           ("", env')
       | _ ->
-          let expr_str = emit_expr state env let_binding.value in
-          let expr_type = infer_type env let_binding.value in
+          (* Pass expected_type so EnumConstructors get the correct concrete type *)
+          let expr_str = emit_expr ~expected_type:(Some expr_type) state env let_binding.value in
           let env' = Infer.TypeEnv.add let_binding.name (Types.Forall ([], expr_type)) env in
           (Printf.sprintf "%s%s := %s\n" ind let_binding.name expr_str, env'))
   | AST.Return expr ->
@@ -1107,8 +1259,22 @@ let emit_enum_type (state : mono_state) (enum_name : string) (type_args : Types.
   match Typecheck.Enum_registry.lookup enum_name with
   | None -> ""
   | Some enum_def ->
-      (* Generate struct type *)
-      let struct_def = Printf.sprintf "type %s struct {\n\tTag int8\n\tData interface{}\n}\n\n" go_type_name in
+      (* Analyze layout for multi-field and heterogeneous support *)
+      let layout = analyze_enum_layout state enum_def type_args in
+
+      (* Generate struct type with optimal field ordering *)
+      let struct_def =
+        if layout.fields = [] then
+          (* Nullary enum - only Tag field *)
+          Printf.sprintf "type %s struct {\n\tTag int8\n}\n\n" go_type_name
+        else
+          (* Generate DataN fields, sorted by size (already sorted in layout) *)
+          let fields_str =
+            List.map (fun fm -> Printf.sprintf "\t%s %s" fm.data_field_name fm.go_type) layout.fields
+            |> String.concat "\n"
+          in
+          Printf.sprintf "type %s struct {\n%s\n\tTag int8\n}\n\n" go_type_name fields_str
+      in
 
       (* Generate tag constants *)
       let tag_constants =
@@ -1131,23 +1297,25 @@ let emit_enum_type (state : mono_state) (enum_name : string) (type_args : Types.
                  Printf.sprintf "func %s() %s {\n\treturn %s{Tag: %s_%s_tag}\n}\n" constructor_name go_type_name
                    go_type_name go_type_name v.name
                else
-                 (* Constructor with fields *)
-                 (* Apply type arguments to field types *)
+                 (* Constructor with fields - use layout mapping *)
                  let subst = List.combine enum_def.type_params type_args in
                  let field_types = List.map (Types.apply_substitution subst) v.fields in
                  let params =
                    List.mapi (fun i t -> Printf.sprintf "v%d %s" i (type_to_go state t)) field_types
                    |> String.concat ", "
                  in
-                 (* For now, store first field in Data. TODO: support multiple fields *)
-                 let data_init =
-                   if List.length field_types > 0 then
-                     ", Data: v0"
-                   else
-                     ""
+
+                 (* Get field mappings for this variant *)
+                 let variant_field_map = List.assoc v.name layout.variant_maps in
+                 let field_inits =
+                   List.map
+                     (fun (pos, mapping) -> Printf.sprintf "%s: v%d" mapping.data_field_name pos)
+                     variant_field_map
+                   |> String.concat ", "
                  in
-                 Printf.sprintf "func %s(%s) %s {\n\treturn %s{Tag: %s_%s_tag%s}\n}\n" constructor_name params
-                   go_type_name go_type_name go_type_name v.name data_init)
+
+                 Printf.sprintf "func %s(%s) %s {\n\treturn %s{Tag: %s_%s_tag, %s}\n}\n" constructor_name params
+                   go_type_name go_type_name go_type_name v.name field_inits)
              enum_def.variants)
         ^ "\n"
       in
@@ -1160,7 +1328,6 @@ let emit_enum_type (state : mono_state) (enum_name : string) (type_args : Types.
 
 let emit_program_with_typed_env (typed_env : Infer.type_env) (program : AST.program) : string =
   let mono_state = create_mono_state () in
-  let base_env = Typecheck.Builtins.prelude_env () in
 
   (* Pass 1: Collect function definitions *)
   List.iter (collect_funcs_stmt mono_state) program;
@@ -1185,7 +1352,7 @@ let emit_program_with_typed_env (typed_env : Infer.type_env) (program : AST.prog
   in
 
   (* Emit main body *)
-  let main_body, _ = emit_stmts emit_state base_env program in
+  let main_body, _ = emit_stmts emit_state typed_env program in
 
   (* Build final output *)
   let type_defs =

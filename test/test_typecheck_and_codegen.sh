@@ -381,6 +381,46 @@ test_case "Nested enum types option[list[int]]" \
     "true"
 
 echo ""
+echo "-- PHASE 4.4: MULTI-FIELD ENUM VARIANTS --"
+
+test_case "Multi-field variant extraction" \
+    'enum http_response { ok(int, string) error(int, string) }
+     let x = http_response.ok(200, "OK")
+     match x {
+       http_response.ok(code, _): code
+       http_response.error(code, _): code
+     }' \
+    "true"
+
+test_case "Heterogeneous result type" \
+    'enum result[a, b] { ok(a) error(b) }
+     let x: result[int, string] = result.ok(42)
+     match x {
+       result.ok(v): v + 1
+       result.error(_): 0
+     }' \
+    "true"
+
+test_case "Three-field variant" \
+    'enum triple { t(int, string, bool) }
+     let x = triple.t(1, "two", true)
+     match x {
+       triple.t(a, _, _): a
+     }' \
+    "true"
+
+test_case "Mixed field count variants" \
+    'enum mixed { none zero(int) pair(int, int) triple(int, int, int) }
+     let x = mixed.pair(1, 2)
+     match x {
+       mixed.none: 0
+       mixed.zero(a): a
+       mixed.pair(a, _): a
+       mixed.triple(a, _, _): a
+     }' \
+    "true"
+
+echo ""
 echo "=========================================="
 echo "RESULTS: $PASS passed, $FAIL failed out of $TOTAL tests"
 echo "=========================================="

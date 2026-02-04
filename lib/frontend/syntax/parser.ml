@@ -732,8 +732,11 @@ and parse_patterns (p : parser) : (parser * AST.pattern list, parser) result =
 and parse_pattern (p : parser) : (parser * AST.pattern, parser) result =
   match p.curr_token.token_type with
   | Token.Ident ->
-      (* Could be: variable binding, or enum.variant(patterns) *)
-      if peek_token_is p Token.Dot then
+      (* Check for wildcard first *)
+      if p.curr_token.literal = "_" then
+        Ok (p, AST.mk_pat ~pos:p.curr_token.pos AST.PWildcard)
+        (* Could be: variable binding, or enum.variant(patterns) *)
+      else if peek_token_is p Token.Dot then
         (* Enum constructor pattern: enum.variant or enum.variant(patterns) *)
         let enum_name = p.curr_token.literal in
         let p2 = next_token (next_token p) in
