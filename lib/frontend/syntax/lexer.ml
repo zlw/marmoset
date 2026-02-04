@@ -52,6 +52,7 @@ let rec next_token (l : lexer) : lexer * Token.token =
   | '[' -> (read_char l, Token.init ~pos LBracket "[")
   | ']' -> (read_char l, Token.init ~pos RBracket "]")
   | ',' -> (read_char l, Token.init ~pos Comma ",")
+  | '|' -> (read_char l, Token.init ~pos Pipe "|")
   | '#' -> next_token (fst (read_until (read_char l) (fun c -> c <> '\n' && c <> '\000')))
   | '"' ->
       let l2, lit = read_string (read_char l) in
@@ -256,3 +257,8 @@ let%test "fat arrow token" =
   let input = "fn(...) => result" in
   let tokens = lex input in
   List.exists (fun t -> t.Token.token_type = Token.FatArrow) tokens
+
+let%test "pipe token for union types" =
+  let input = "fn(x: int | string) -> bool" in
+  let tokens = lex input in
+  List.exists (fun t -> t.Token.token_type = Token.Pipe) tokens

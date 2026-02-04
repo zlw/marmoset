@@ -11,6 +11,7 @@ type mono_type =
   | TFun of mono_type * mono_type (* Function: T -> U (nested for multi-arg) *)
   | TArray of mono_type (* Array: [T] *)
   | THash of mono_type * mono_type (* Hash: {K: V} *)
+  | TUnion of mono_type list (* Union: Int | String | Bool *)
 
 (* A polytype (type scheme) - a type with "forall" quantifiers.
    Example: ∀a. a -> a  is  Forall(["a"], TFun(TVar "a", TVar "a"))
@@ -51,6 +52,7 @@ and to_string = function
       args_str ^ " -> " ^ to_string ret
   | TArray element -> "[" ^ to_string element ^ "]"
   | THash (key, value) -> "{" ^ to_string key ^ ": " ^ to_string value ^ "}"
+  | TUnion types -> String.concat " | " (List.map to_string types)
 
 (* Convert poly_type to string *)
 let poly_type_to_string (Forall (vars, mono)) =
@@ -80,6 +82,7 @@ let rec apply_substitution (subst : substitution) (mono : mono_type) : mono_type
   | TFun (arg, ret) -> TFun (apply_substitution subst arg, apply_substitution subst ret)
   | TArray element -> TArray (apply_substitution subst element)
   | THash (key, value) -> THash (apply_substitution subst key, apply_substitution subst value)
+  | TUnion types -> TUnion (List.map (apply_substitution subst) types)
 
 (* Apply substitution to a poly_type - don't touch quantified variables *)
 let apply_substitution_poly (subst : substitution) (Forall (quantified_vars, mono)) : poly_type =
@@ -108,6 +111,7 @@ let rec free_type_vars (mono : mono_type) : TypeVarSet.t =
   | TFun (arg, ret) -> TypeVarSet.union (free_type_vars arg) (free_type_vars ret)
   | TArray element -> free_type_vars element
   | THash (key, value) -> TypeVarSet.union (free_type_vars key) (free_type_vars value)
+  | TUnion types -> List.fold_left (fun acc t -> TypeVarSet.union acc (free_type_vars t)) TypeVarSet.empty types
 
 (* Free type variables in a poly_type - quantified vars are NOT free *)
 let free_type_vars_poly (Forall (quantified_vars, mono)) : TypeVarSet.t =
@@ -140,6 +144,7 @@ let rec collect_vars_in_order (mono : mono_type) : string list =
   | TFun (arg, ret) -> collect_vars_in_order arg @ collect_vars_in_order ret
   | TArray element -> collect_vars_in_order element
   | THash (key, value) -> collect_vars_in_order key @ collect_vars_in_order value
+  | TUnion types -> List.concat_map collect_vars_in_order types
 
 (* Remove duplicates while preserving order *)
 let unique_in_order (lst : string list) : string list =
@@ -161,6 +166,35 @@ let normalize (mono : mono_type) : mono_type =
 
 (* Convert type to string with normalized variable names *)
 let to_string_pretty (mono : mono_type) : string = to_string (normalize mono)
+
+(* ============================================================
+   Union Type Normalization
+   ============================================================ *)
+
+(* Normalize a union type: flatten, dedupe, sort *)
+let normalize_union (types : mono_type list) : mono_type =
+  (* Step 1: Flatten nested unions *)
+  let rec flatten = function
+    | TUnion inner -> List.concat_map flatten inner
+    | t -> [ t ]
+  in
+  let flattened = List.concat_map flatten types in
+
+  (* Step 2: Remove duplicates by sorting and filtering *)
+  let sorted = List.sort compare flattened in
+  let rec dedup = function
+    | [] -> []
+    | [ x ] -> [ x ]
+    | x :: y :: rest when x = y -> dedup (y :: rest)
+    | x :: rest -> x :: dedup rest
+  in
+  let unique = dedup sorted in
+
+  (* Step 3: Return normalized result *)
+  match unique with
+  | [] -> failwith "Empty union type"
+  | [ single ] -> single (* Single-element union = just the type *)
+  | multiple -> TUnion multiple
 
 (* ============================================================
    Tests
@@ -259,3 +293,20 @@ let%test "normalize same var keeps same name" =
 let%test "to_string_pretty" =
   to_string_pretty (TFun (TVar "t99", TVar "t99")) = "a -> a"
   && to_string_pretty (TFun (TVar "x", TFun (TVar "y", TVar "x"))) = "(a, b) -> a"
+
+(* Union type tests *)
+
+let%test "to_string union" = to_string (TUnion [ TInt; TString ]) = "Int | String"
+let%test "to_string multi-member union" = to_string (TUnion [ TInt; TString; TBool ]) = "Int | String | Bool"
+let%test "normalize_union dedupes" = normalize_union [ TInt; TString; TInt ] = TUnion [ TInt; TString ]
+
+let%test "normalize_union flattens nested" =
+  let nested = TUnion [ TInt; TUnion [ TString; TBool ] ] in
+  normalize_union [ nested; TFloat ] = TUnion [ TBool; TFloat; TInt; TString ]
+
+let%test "normalize_union single element" = normalize_union [ TInt ] = TInt
+
+let%test "apply_substitution to union" =
+  let subst = [ ("a", TInt); ("b", TString) ] in
+  let union = TUnion [ TVar "a"; TVar "b"; TBool ] in
+  apply_substitution subst union = TUnion [ TInt; TString; TBool ]

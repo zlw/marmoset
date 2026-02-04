@@ -93,7 +93,9 @@ and parse_statement (p : parser) : (parser * AST.statement, parser) result =
   | _ -> parse_expression_statement p
 
 (* Phase 2: Type expression parsing *)
-and parse_type_expr (p : parser) : (parser * AST.type_expr, parser) result =
+
+(* Parse a single type atom (not union) *)
+and parse_type_atom (p : parser) : (parser * AST.type_expr, parser) result =
   if curr_token_is p Token.Ident then
     let ident = p.curr_token.literal in
     let p2 = next_token p in
@@ -115,14 +117,56 @@ and parse_type_expr (p : parser) : (parser * AST.type_expr, parser) result =
     let* p6, return_type = parse_type_expr (next_token p5) in
     Ok (p6, AST.TArrow (param_types, return_type))
   else if curr_token_is p Token.LParen then
-    (* Function type (alternate syntax): (int, string) -> bool *)
-    let* p2, param_types = parse_type_expr_list (next_token p) in
-    let* p3 = expect_peek p2 Token.RParen in
-    let* p4 = expect_peek p3 Token.Arrow in
-    let* p5, return_type = parse_type_expr (next_token p4) in
-    Ok (p5, AST.TArrow (param_types, return_type))
+    (* Parenthesized type or function type: (int | string) or (int, string) -> bool *)
+    let* p2, first = parse_type_expr (next_token p) in
+    if curr_token_is p2 Token.Comma then
+      (* Multiple params: (int, string) -> bool *)
+      let rec collect_params lp params =
+        let* lp2, param_type = parse_type_expr (next_token lp) in
+        let new_params = params @ [ param_type ] in
+        if curr_token_is lp2 Token.Comma then
+          collect_params lp2 new_params
+        else if curr_token_is lp2 Token.RParen then
+          Ok (next_token lp2, new_params)
+        else
+          Error (peek_error lp2 Token.RParen)
+      in
+      let* p3, params = collect_params p2 [ first ] in
+      let* p4 = expect_peek p3 Token.Arrow in
+      let* p5, return_type = parse_type_expr (next_token p4) in
+      Ok (p5, AST.TArrow (params, return_type))
+    else if curr_token_is p2 Token.RParen then
+      (* Single type in parens: (int) or (int | string) *)
+      let p3 = next_token p2 in
+      if curr_token_is p3 Token.Arrow then
+        (* Single-param function: (int) -> bool *)
+        let* p4 = expect_peek p3 Token.Arrow in
+        let* p5, return_type = parse_type_expr (next_token p4) in
+        Ok (p5, AST.TArrow ([ first ], return_type))
+      else
+        (* Just grouping: (int) or (int | string) *)
+        Ok (p3, first)
+    else
+      Error (peek_error p2 Token.RParen)
   else
     Error (no_prefix_parse_fn_error p p.curr_token.token_type)
+
+(* Parse a type expression, including unions: int | string | bool *)
+and parse_type_expr (p : parser) : (parser * AST.type_expr, parser) result =
+  let* p2, first_type = parse_type_atom p in
+  (* Check for union: type | type | type ... *)
+  if curr_token_is p2 Token.Pipe then
+    let rec collect_union_members lp members =
+      let* lp2, next_type = parse_type_atom (next_token lp) in
+      let new_members = members @ [ next_type ] in
+      if curr_token_is lp2 Token.Pipe then
+        collect_union_members lp2 new_members
+      else
+        Ok (lp2, AST.TUnion new_members)
+    in
+    collect_union_members p2 [ first_type ]
+  else
+    Ok (p2, first_type)
 
 and parse_type_expr_list (p : parser) : (parser * AST.type_expr list, parser) result =
   if curr_token_is p Token.RParen || curr_token_is p Token.RBracket then

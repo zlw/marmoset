@@ -26,6 +26,7 @@ and token_type =
   | NotEq
   | Arrow (* -> for return type annotations *)
   | FatArrow (* => for effect markers *)
+  | Pipe (* | for union types *)
   (* Delimiters *)
   | Comma
   | Semicolon

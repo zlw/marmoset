@@ -46,9 +46,10 @@ let rec type_expr_to_mono_type (te : Syntax.Ast.AST.type_expr) : Types.mono_type
       let return_mono = type_expr_to_mono_type return_type in
       (* Build nested function types: (a, b, c) -> d becomes a -> b -> c -> d *)
       List.fold_right (fun param_type ret_type -> Types.TFun (param_type, ret_type)) param_mono return_mono
-  | Syntax.Ast.AST.TUnion _ ->
-      (* Union types (Phase 3): int | string | bool *)
-      failwith "Union types not yet supported (Phase 3)"
+  | Syntax.Ast.AST.TUnion type_exprs ->
+      (* Union types (Phase 4.1): int | string | bool *)
+      let mono_types = List.map type_expr_to_mono_type type_exprs in
+      Types.normalize_union mono_types
 
 (* Check if two types are equal (for annotation verification) *)
 let rec mono_types_equal (t1 : Types.mono_type) (t2 : Types.mono_type) : bool =
@@ -62,6 +63,8 @@ let rec mono_types_equal (t1 : Types.mono_type) (t2 : Types.mono_type) : bool =
   | Types.TArray elem1, Types.TArray elem2 -> mono_types_equal elem1 elem2
   | Types.THash (k1, v1), Types.THash (k2, v2) -> mono_types_equal k1 k2 && mono_types_equal v1 v2
   | Types.TFun (p1, r1), Types.TFun (p2, r2) -> mono_types_equal p1 p2 && mono_types_equal r1 r2
+  | Types.TUnion t1s, Types.TUnion t2s ->
+      List.length t1s = List.length t2s && List.for_all2 mono_types_equal t1s t2s
   | _ -> false
 
 (* Check if annotation matches inferred type *)
@@ -89,3 +92,4 @@ let rec format_mono_type (t : Types.mono_type) : string =
   | Types.TFun (param_type, return_type) ->
       (* Format as a->b->c (right-associative) *)
       Printf.sprintf "%s -> %s" (format_mono_type param_type) (format_mono_type return_type)
+  | Types.TUnion types -> String.concat " | " (List.map format_mono_type types)

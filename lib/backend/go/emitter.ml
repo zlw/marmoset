@@ -19,6 +19,7 @@ let rec mangle_type (t : Types.mono_type) : string =
   | Types.TFun (arg, ret) -> "fn_" ^ mangle_type arg ^ "_" ^ mangle_type ret
   | Types.TArray elem -> "arr_" ^ mangle_type elem
   | Types.THash (key, value) -> "map_" ^ mangle_type key ^ "_" ^ mangle_type value
+  | Types.TUnion _ -> "union" (* Phase 4.1: unions will be interface{} *)
 
 (* Generate mangled function name: name_type1_type2_... *)
 let mangle_func_name name (param_types : Types.mono_type list) : string =
@@ -42,6 +43,7 @@ let rec type_to_go (t : Types.mono_type) : string =
   | Types.TFun (arg, ret) -> emit_func_type arg ret
   | Types.TArray elem -> "[]" ^ type_to_go elem
   | Types.THash (key, value) -> "map[" ^ type_to_go key ^ "]" ^ type_to_go value
+  | Types.TUnion _ -> "interface{}" (* Phase 4.1: unions compile to interface{} *)
 
 and emit_func_type arg ret =
   let rec collect_args = function

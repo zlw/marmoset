@@ -186,6 +186,20 @@ fi
 rm -rf "$(dirname $TMPGO)"
 
 echo ""
+echo "-- PHASE 4.1: UNION TYPE TESTS --"
+test_case "Parse union in parameter type" \
+    'let f = fn(x: int | string) -> string { "ok" }; f(5)' \
+    "true"
+
+test_case "Parse union in return type" \
+    'let f = fn(x: int) -> int | string { if (x > 0) { x } else { "negative" } }; f(5)' \
+    "true"
+
+test_case "Parse multi-member union" \
+    'let f = fn(x: int | string | bool) { x }; f(true)' \
+    "true"
+
+echo ""
 echo "=========================================="
 echo "RESULTS: $PASS passed, $FAIL failed out of $TOTAL tests"
 echo "=========================================="
