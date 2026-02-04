@@ -290,10 +290,14 @@ let rec infer_expression (env : type_env) (expr : AST.expression) : (substitutio
       (* Infer scrutinee type *)
       match infer_expression env scrutinee with
       | Error e -> Error e
-      | Ok (subst, scrutinee_type) ->
+      | Ok (subst, scrutinee_type) -> (
           let env' = apply_substitution_env subst env in
-          (* Check each arm and collect body types *)
-          infer_match_arms env' scrutinee_type arms subst expr)
+          (* Check exhaustiveness *)
+          match Exhaustiveness.check_exhaustive scrutinee_type arms with
+          | Error msg -> Error (error_at (MatchError msg) expr)
+          | Ok () ->
+              (* Check each arm and collect body types *)
+              infer_match_arms env' scrutinee_type arms subst expr))
 (* ============================================================
    Prefix Operators: !, -
    ============================================================ *)
@@ -1398,6 +1402,74 @@ match x {
   0: 42
   _: \"string\"
 }" in
+    match infer_string code with
+    | Error _ -> true
+    | Ok _ -> false
+
+  (* Exhaustiveness checking tests *)
+  let%test "non-exhaustive match on option is error" =
+    let code = "enum option[a] { some(a) none }
+let x = option.some(42)
+match x {
+  option.some(v): v
+}" in
+    match infer_string code with
+    | Error e ->
+        let msg = error_to_string e in
+        String.length msg > 0 && String.sub msg 0 (min 17 (String.length msg)) = "Non-exhaustive ma"
+    | Ok _ -> false
+
+  let%test "exhaustive match on option passes" =
+    let code =
+      "enum option[a] { some(a) none }
+let x = option.some(42)
+match x {
+  option.some(v): v
+  option.none: 0
+}"
+    in
+    infers_to code TInt
+
+  let%test "match with wildcard is exhaustive" =
+    let code =
+      "enum result[a, e] { success(a) failure(e) }
+let r = result.success(100)
+match r {
+  result.success(v): v
+  _: 0
+}"
+    in
+    infers_to code TInt
+
+  let%test "match with variable pattern is exhaustive" =
+    let code = "enum option[a] { some(a) none }
+match option.some(5) {
+  x: 42
+}" in
+    infers_to code TInt
+
+  let%test "non-exhaustive match on bool is error" =
+    let code = "match true {
+  true: 1
+}" in
+    match infer_string code with
+    | Error _ -> true
+    | Ok _ -> false
+
+  let%test "exhaustive match on bool passes" =
+    let code = "match true {
+  true: 1
+  false: 0
+}" in
+    infers_to code TInt
+
+  let%test "non-exhaustive match on result is error" =
+    let code =
+      "enum result[a, e] { success(a) failure(e) }
+match result.success(42) {
+  result.success(v): v
+}"
+    in
     match infer_string code with
     | Error _ -> true
     | Ok _ -> false
