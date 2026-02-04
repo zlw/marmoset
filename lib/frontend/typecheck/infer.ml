@@ -705,8 +705,58 @@ and infer_statement env stmt =
   | AST.Return expr -> infer_expression env expr
   | AST.Block stmts -> infer_block env stmts
   | AST.Let let_binding -> infer_let env let_binding.name let_binding.value
-  | AST.EnumDef _ ->
-      (* Enum definitions are handled separately *)
+  | AST.EnumDef { name; type_params; variants } ->
+      (* Register the enum in the registry *)
+      (* Convert type expressions to mono_types, treating type_params as TVar *)
+      let convert_type_expr (te : AST.type_expr) : mono_type =
+        let rec convert = function
+          | AST.TVar v -> TVar v
+          | AST.TCon c ->
+              (* Check if it's a type parameter *)
+              if List.mem c type_params then
+                TVar c
+              else
+                Annotation.type_expr_to_mono_type (AST.TCon c)
+          | AST.TApp (con_name, args) -> (
+              if
+                (* Check if constructor is a type param (shouldn't happen but handle it) *)
+                List.mem con_name type_params
+              then
+                failwith (Printf.sprintf "Type parameter '%s' cannot be used as type constructor" con_name)
+              else
+                Annotation.type_expr_to_mono_type (AST.TApp (con_name, List.map (fun _ -> AST.TCon "dummy") args))
+                |> fun _ ->
+                (* Actually convert properly *)
+                match con_name with
+                | "list" -> (
+                    match args with
+                    | [ elem ] -> TArray (convert elem)
+                    | _ -> failwith "list expects 1 argument")
+                | "map" -> (
+                    match args with
+                    | [ k; v ] -> THash (convert k, convert v)
+                    | _ -> failwith "map expects 2 arguments")
+                | _ -> failwith (Printf.sprintf "Unknown type constructor in enum: %s" con_name))
+          | AST.TArrow (params, ret) ->
+              let param_types = List.map convert params in
+              let ret_type = convert ret in
+              List.fold_right (fun p r -> TFun (p, r)) param_types ret_type
+          | AST.TUnion types -> normalize_union (List.map convert types)
+        in
+        convert te
+      in
+
+      let variant_defs =
+        List.map
+          (fun (v : AST.variant_def) ->
+            let field_types = List.map convert_type_expr v.variant_fields in
+            { Enum_registry.name = v.variant_name; fields = field_types })
+          variants
+      in
+
+      Enum_registry.register { Enum_registry.name; type_params; variants = variant_defs };
+
+      (* Enum def doesn't have a value *)
       Ok (empty_substitution, TNull)
 
 (* Simple validation: check that all explicit return statements match expected type *)
