@@ -204,6 +204,16 @@ test_case "is operator returns bool" \
     'let x: int | string = 5; if (x is int) { true } else { false }' \
     "true"
 
+test_case "Type narrowing allows int operations" \
+    'let f = fn(x: int | string) -> int | string {
+       if (x is int) { 
+           x + 1 
+       } else { 
+           x
+       }
+     }; f(5)' \
+    "true"
+
 echo ""
 echo "=========================================="
 echo "RESULTS: $PASS passed, $FAIL failed out of $TOTAL tests"

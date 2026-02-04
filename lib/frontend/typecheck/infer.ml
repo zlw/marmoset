@@ -291,6 +291,34 @@ and infer_infix env left op right =
    If Expressions
    ============================================================ *)
 
+(* Helper: Detect type narrowing pattern: x is int *)
+and detect_is_narrowing (expr : AST.expression) : (string * mono_type) option =
+  match expr.expr with
+  | AST.TypeCheck (var_expr, type_ann) -> (
+      match var_expr.expr with
+      | AST.Identifier var_name ->
+          let narrow_type = Annotation.type_expr_to_mono_type type_ann in
+          Some (var_name, narrow_type)
+      | _ -> None)
+  | _ -> None
+
+(* Helper: Narrow a variable's type in the environment *)
+and narrow_type_in_env (env : type_env) (var_name : string) (narrow_type : mono_type) : type_env =
+  match TypeEnv.find_opt var_name env with
+  | Some (Forall ([], current_type)) -> (
+      (* Check if current type is a union containing the narrow type *)
+      match current_type with
+      | TUnion members when List.mem narrow_type members ->
+          (* Replace var's type with narrowed type *)
+          TypeEnv.add var_name (Forall ([], narrow_type)) env
+      | _ when current_type = narrow_type ->
+          (* Already the right type, no change needed *)
+          env
+      | _ ->
+          (* Not a union or doesn't contain the narrow type - don't narrow *)
+          env)
+  | _ -> env
+
 and infer_if env condition consequence alternative =
   (* Infer condition type *)
   match infer_expression env condition with
@@ -302,18 +330,30 @@ and infer_if env condition consequence alternative =
       | Ok subst2 -> (
           let subst = compose_substitution subst1 subst2 in
           let env' = apply_substitution_env subst env in
-          (* Infer consequence type *)
-          match infer_statement env' consequence with
+
+          (* Check if condition is an 'is' narrowing pattern *)
+          let narrowing = detect_is_narrowing condition in
+
+          (* Create narrowed environment for consequence branch *)
+          let env_cons =
+            match narrowing with
+            | Some (var_name, narrow_type) -> narrow_type_in_env env' var_name narrow_type
+            | None -> env'
+          in
+
+          (* Infer consequence type with narrowed environment *)
+          match infer_statement env_cons consequence with
           | Error e -> Error e
           | Ok (subst3, cons_type) -> (
               let subst' = compose_substitution subst subst3 in
               match alternative with
               | None ->
                   (* No else branch - if-expression has type Null *)
-                  (* This allows if-statements (value unused) but prevents if-expressions (value used) *)
                   Ok (subst', TNull)
               | Some alt -> (
                   let env'' = apply_substitution_env subst' env' in
+                  (* TODO: For alternative branch, narrow to complement type *)
+                  (* For now, just use the base environment *)
                   match infer_statement env'' alt with
                   | Error e -> Error e
                   | Ok (subst4, alt_type) -> (
