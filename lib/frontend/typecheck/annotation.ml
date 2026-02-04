@@ -69,9 +69,11 @@ let rec mono_types_equal (t1 : Types.mono_type) (t2 : Types.mono_type) : bool =
 
 (* Check if annotation matches inferred type *)
 let check_annotation (annot_type : Types.mono_type) (inferred_type : Types.mono_type) : bool =
-  (* For Phase 2, we do simple equality checking *)
-  (* In Phase 2.5+, this could do sophisticated subtype checking *)
-  mono_types_equal annot_type inferred_type
+  (* Phase 4.1: Use unification for union types *)
+  (* This allows int to match int | string (widening) *)
+  match Unify.unify annot_type inferred_type with
+  | Ok _ -> true
+  | Error _ -> false
 
 (* Extract constraint names from generic parameters *)
 let extract_constraints (params : Syntax.Ast.AST.generic_param list) : string list list =

@@ -170,12 +170,12 @@ test_case "Nested early returns" \
 echo ""
 echo "-- CODEGEN OUTPUT TESTS --"
 # These tests check that Go code is actually being generated
-TMPGO=$(mktemp)
+TMPDIR_GO=$(mktemp -d)
 echo "let x = 42; x" > /tmp/simple.mr
-$EXECUTABLE build /tmp/simple.mr --emit-go "$(dirname $TMPGO)" 2>/dev/null
-if [ -f "$(dirname $TMPGO)/main.go" ]; then
+$EXECUTABLE build /tmp/simple.mr --emit-go "$TMPDIR_GO" 2>/dev/null
+if [ -f "$TMPDIR_GO/main.go" ]; then
     TOTAL=$((TOTAL + 1))
-    if grep -q "int64" "$(dirname $TMPGO)/main.go"; then
+    if grep -q "int64" "$TMPDIR_GO/main.go"; then
         echo "TEST [$TOTAL] Codegen produces valid Go ... ✓ PASS"
         PASS=$((PASS + 1))
     else
@@ -183,7 +183,8 @@ if [ -f "$(dirname $TMPGO)/main.go" ]; then
         FAIL=$((FAIL + 1))
     fi
 fi
-rm -rf "$(dirname $TMPGO)"
+# Clean up temp directory
+rm -rf "$TMPDIR_GO" /tmp/simple.mr
 
 echo ""
 echo "-- PHASE 4.1: UNION TYPE TESTS --"

@@ -43,8 +43,51 @@ let rec unify (type1 : mono_type) (type2 : mono_type) : (substitution, unify_err
   | TArray elem1, TArray elem2 -> unify elem1 elem2
   (* Hash types - unify key and value types *)
   | THash (key1, val1), THash (key2, val2) -> unify_two_pairs (key1, key2) (val1, val2)
+  (* Both unions - check equality (must come before single-sided union cases) *)
+  | TUnion members1, TUnion members2 -> unify_union_with_union members1 members2
+  (* Union on right - concrete type must match at least one member *)
+  | concrete, TUnion members -> unify_concrete_with_union concrete members
+  (* Union on left - same as right case (symmetrical) *)
+  | TUnion members, concrete -> unify_concrete_with_union concrete members
   (* No match - types are incompatible *)
   | _, _ -> Error (TypeMismatch (type1, type2))
+
+(* Helper: Check if concrete type matches any union member *)
+and unify_concrete_with_union (concrete : mono_type) (members : mono_type list) :
+    (substitution, unify_error) result =
+  match members with
+  | [] -> Error (TypeMismatch (concrete, TUnion members))
+  | first :: rest -> (
+      (* Try to unify with first member *)
+      match unify concrete first with
+      | Ok subst -> Ok subst
+      | Error _ ->
+          (* Failed, try remaining members *)
+          unify_concrete_with_union concrete rest)
+
+(* Helper: Unify two union types (all members of left must be in right) *)
+and unify_union_with_union (members1 : mono_type list) (members2 : mono_type list) :
+    (substitution, unify_error) result =
+  (* For simplicity: unions must be equal *)
+  (* Full subtyping would check if members1 ⊆ members2 *)
+  if List.length members1 = List.length members2 then
+    (* Try to unify element-wise *)
+    let rec unify_all subst ms1 ms2 =
+      match (ms1, ms2) with
+      | [], [] -> Ok subst
+      | m1 :: rest1, m2 :: rest2 -> (
+          let m1' = apply_substitution subst m1 in
+          let m2' = apply_substitution subst m2 in
+          match unify m1' m2' with
+          | Ok subst' ->
+              let composed = compose_substitution subst subst' in
+              unify_all composed rest1 rest2
+          | Error e -> Error e)
+      | _ -> Error (TypeMismatch (TUnion members1, TUnion members2))
+    in
+    unify_all empty_substitution members1 members2
+  else
+    Error (TypeMismatch (TUnion members1, TUnion members2))
 
 (* Bind a type variable to a type.
    Performs the occurs check to prevent infinite types. *)
@@ -190,3 +233,34 @@ let%test "unify array of functions" =
   match unify t1 t2 with
   | Error _ -> false
   | Ok subst -> apply_substitution subst (TVar "a") = TInt && apply_substitution subst (TVar "b") = TInt
+
+(* Union type unification tests *)
+
+let%test "unify concrete with union member" =
+  (* int unifies with int | string *)
+  match unify TInt (TUnion [ TInt; TString ]) with
+  | Ok _ -> true
+  | Error _ -> false
+
+let%test "unify union with concrete member" =
+  (* int | string unifies with int *)
+  match unify (TUnion [ TInt; TString ]) TInt with
+  | Ok _ -> true
+  | Error _ -> false
+
+let%test "fail unify concrete not in union" =
+  (* bool does NOT unify with int | string *)
+  fails_to_unify TBool (TUnion [ TInt; TString ])
+
+let%test "unify equal unions" =
+  let union1 = TUnion [ TInt; TString ] in
+  let union2 = TUnion [ TInt; TString ] in
+  match unify union1 union2 with
+  | Ok _ -> true
+  | Error _ -> false
+
+let%test "unify union with type variable" =
+  (* 'a unifies with int | string, binding 'a to union *)
+  match unify (TVar "a") (TUnion [ TInt; TString ]) with
+  | Ok subst -> apply_substitution subst (TVar "a") = TUnion [ TInt; TString ]
+  | Error _ -> false
