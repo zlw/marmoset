@@ -107,6 +107,7 @@ type error_kind =
   | EmptyHashUnknownType
   | ReturnTypeMismatch of mono_type * mono_type (* expected, got *)
   | IfExpressionWithoutElse (* if-value used but no else branch *)
+  | ConstructorError of string (* generic constructor error *)
 
 (* An error with optional position info *)
 type infer_error = {
@@ -147,6 +148,7 @@ let error_kind_to_string = function
       ^ " but inferred "
       ^ to_string got
   | IfExpressionWithoutElse -> "If-expression requires else branch when value is used"
+  | ConstructorError msg -> msg
 
 let error_to_string (err : infer_error) : string = error_kind_to_string err.kind
 
@@ -212,8 +214,74 @@ let rec infer_expression (env : type_env) (expr : AST.expression) : (substitutio
   (* Index expressions *)
   | AST.Index (container, index) -> infer_index env container index
   (* Phase 4.2: Enums and pattern matching - to be implemented *)
-  | AST.EnumConstructor (_enum_name, _variant_name, _args) ->
-      Error { kind = EmptyArrayUnknownType; pos = Some expr.pos } (* Temporary placeholder *)
+  | AST.EnumConstructor (enum_name, variant_name, args) -> (
+      (* Look up the variant in the registry *)
+      match Enum_registry.lookup_variant enum_name variant_name with
+      | None ->
+          Error
+            {
+              kind = ConstructorError (Printf.sprintf "Unknown enum constructor: %s.%s" enum_name variant_name);
+              pos = Some expr.pos;
+            }
+      | Some variant -> (
+          (* Infer types of constructor arguments *)
+          match infer_args env empty_substitution args with
+          | Error e -> Error e
+          | Ok (subst, arg_types) -> (
+              if
+                (* Check argument count matches *)
+                List.length args <> List.length variant.fields
+              then
+                Error
+                  {
+                    kind =
+                      ConstructorError
+                        (Printf.sprintf "%s.%s expects %d arguments, got %d" enum_name variant_name
+                           (List.length variant.fields) (List.length args));
+                    pos = Some expr.pos;
+                  }
+              else
+                (* Get the enum definition to know type parameters *)
+                match Enum_registry.lookup enum_name with
+                | None ->
+                    Error
+                      {
+                        kind = ConstructorError (Printf.sprintf "Unknown enum: %s" enum_name);
+                        pos = Some expr.pos;
+                      }
+                | Some enum_def -> (
+                    (* Create fresh type variables for each type parameter *)
+                    let fresh_vars = List.map (fun _ -> fresh_type_var ()) enum_def.type_params in
+                    let param_subst = List.combine enum_def.type_params fresh_vars in
+
+                    (* Substitute type parameters in variant field types *)
+                    let expected_types = List.map (apply_substitution param_subst) variant.fields in
+
+                    (* Unify argument types with expected field types *)
+                    let arg_types' = List.map (apply_substitution subst) arg_types in
+                    let rec unify_all subst_acc types1 types2 =
+                      match (types1, types2) with
+                      | [], [] -> Ok subst_acc
+                      | t1 :: rest1, t2 :: rest2 -> (
+                          let t1' = apply_substitution subst_acc t1 in
+                          let t2' = apply_substitution subst_acc t2 in
+                          match unify t1' t2' with
+                          | Error e -> Error (error_at (UnificationError e) expr)
+                          | Ok subst2 ->
+                              let new_subst = compose_substitution subst_acc subst2 in
+                              unify_all new_subst rest1 rest2)
+                      | _ -> Error (error_at (ConstructorError "Argument count mismatch") expr)
+                    in
+                    match unify_all empty_substitution arg_types' expected_types with
+                    | Error e -> Error e
+                    | Ok subst2 ->
+                        let final_subst = compose_substitution subst subst2 in
+
+                        (* Build the result enum type with substituted type arguments *)
+                        let result_type_args = List.map (apply_substitution final_subst) fresh_vars in
+                        let result_type = TEnum (enum_name, result_type_args) in
+
+                        Ok (final_subst, result_type)))))
   | AST.Match (_scrutinee, _arms) -> Error { kind = EmptyArrayUnknownType; pos = Some expr.pos }
 (* Temporary placeholder *)
 (* ============================================================
@@ -940,7 +1008,10 @@ module Test = struct
   let infer_string code =
     reset_fresh_counter ();
     match Syntax.Parser.parse code with
-    | Error _ -> Error (error (UnboundVariable "parse error"))
+    | Error errs ->
+        let msg = String.concat "; " errs in
+        Printf.printf "Parse errors: %s\n" msg;
+        Error (error (UnboundVariable ("parse error: " ^ msg)))
     | Ok program -> infer_program program
 
   (* Helper to check inferred type *)
@@ -1088,4 +1159,58 @@ module Test = struct
       "let sum = fn(arr, i) { if (i == 0) { arr[0] } else { arr[i] + sum(arr, i - 1) } }; sum([1,2,3], 2)"
     in
     infers_to code TInt
+
+  (* Enum constructor tests *)
+  let%test "infer simple enum constructor" =
+    let code = "enum direction { north south east west }
+direction.north" in
+    infers_to code (TEnum ("direction", []))
+
+  let%test "infer option.some with int" =
+    let code = "enum option[a] { some(a) none }
+option.some(42)" in
+    infers_to code (TEnum ("option", [ TInt ]))
+
+  let%test "infer option.none" =
+    let code = "enum option[a] { some(a) none }
+option.none" in
+    match infer_string code with
+    | Error _ -> false
+    | Ok (_, t) -> (
+        match t with
+        | TEnum ("option", [ TVar _ ]) -> true
+        | _ ->
+            Printf.printf "Expected option[_] but got %s\n" (to_string t);
+            false)
+
+  let%test "infer result.success with int" =
+    let code = "enum result[a, e] { success(a) failure(e) }
+result.success(42)" in
+    match infer_string code with
+    | Error _ -> false
+    | Ok (_, t) -> (
+        match t with
+        | TEnum ("result", [ TInt; TVar _ ]) -> true
+        | _ ->
+            Printf.printf "Expected result[Int, _] but got %s\n" (to_string t);
+            false)
+
+  let%test "infer result.failure with string" =
+    let code = "enum result[a, e] { success(a) failure(e) }
+result.failure(\"error\")" in
+    match infer_string code with
+    | Error _ -> false
+    | Ok (_, t) -> (
+        match t with
+        | TEnum ("result", [ TVar _; TString ]) -> true
+        | _ ->
+            Printf.printf "Expected result[_, String] but got %s\n" (to_string t);
+            false)
+
+  let%test "infer constructor with wrong arg count" =
+    let code = "enum option[a] { some(a) none }
+option.some(1, 2)" in
+    match infer_string code with
+    | Error _ -> true
+    | Ok _ -> false
 end
