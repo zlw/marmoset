@@ -359,17 +359,25 @@ and infer_if env condition consequence alternative =
                   | Ok (subst4, alt_type) -> (
                       let subst'' = compose_substitution subst' subst4 in
                       let cons_type' = apply_substitution subst4 cons_type in
-                      (* Try to unify both branches *)
-                      match unify cons_type' alt_type with
-                      | Ok subst5 ->
-                          (* Types unified successfully *)
-                          let final_subst = compose_substitution subst'' subst5 in
-                          let result_type = apply_substitution subst5 cons_type' in
-                          Ok (final_subst, result_type)
-                      | Error _ ->
-                          (* Types don't unify - create union (Phase 4.1) *)
-                          let union_type = Types.normalize_union [ cons_type'; alt_type ] in
-                          Ok (subst'', union_type))))))
+
+                      (* If we have type narrowing, preserve the wider (union) type *)
+                      match narrowing with
+                      | Some _ ->
+                          (* With narrowing, use the alternative type (non-narrowed) *)
+                          (* This preserves the union type from the function signature *)
+                          Ok (subst'', alt_type)
+                      | None -> (
+                          (* No narrowing - try to unify both branches *)
+                          match unify cons_type' alt_type with
+                          | Ok subst5 ->
+                              (* Types unified successfully *)
+                              let final_subst = compose_substitution subst'' subst5 in
+                              let result_type = apply_substitution subst5 cons_type' in
+                              Ok (final_subst, result_type)
+                          | Error _ ->
+                              (* Types don't unify - create union (Phase 4.1) *)
+                              let union_type = Types.normalize_union [ cons_type'; alt_type ] in
+                              Ok (subst'', union_type)))))))
 
 (* ============================================================
    Functions

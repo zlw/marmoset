@@ -23,8 +23,17 @@ let rec mangle_type (t : Types.mono_type) : string =
   | Types.TUnion _ -> "union" (* Phase 4.1: unions will be interface{} *)
 
 (* Generate mangled function name: name_type1_type2_... *)
+(* For functions with union parameters, don't mangle - use base name *)
 let mangle_func_name name (param_types : Types.mono_type list) : string =
-  if param_types = [] then
+  (* Check if any param is a union - if so, don't mangle *)
+  let has_union =
+    List.exists
+      (function
+        | Types.TUnion _ -> true
+        | _ -> false)
+      param_types
+  in
+  if has_union || param_types = [] then
     name
   else
     name ^ "_" ^ (List.map mangle_type param_types |> String.concat "_")
@@ -208,20 +217,40 @@ and collect_insts_expr (state : mono_state) (env : Infer.type_env) (expr : AST.e
       (* Check if this is a call to a user-defined function *)
       match func.expr with
       | AST.Identifier name when is_user_func state name ->
-          (* Get concrete types from the arguments *)
-          let arg_types = List.map (infer_type env) args in
-          (* Get return type by inferring the whole call expression *)
-          let call_type = infer_type env expr in
-          (* If return type is still a type variable, try to resolve it:
-             For many polymorphic functions (identity, arithmetic), return type = param type *)
-          let return_type =
-            match call_type with
-            | Types.TVar _ when List.length arg_types > 0 ->
-                (* Use first arg type as return type heuristic *)
-                List.hd arg_types
-            | t -> t
+          (* Get the function type from environment *)
+          let func_type =
+            match Infer.TypeEnv.find_opt name env with
+            | Some (Types.Forall (_, t)) -> t
+            | None -> infer_type env func
           in
-          let inst = { func_name = name; concrete_types = arg_types; return_type } in
+
+          (* Extract declared parameter types and return type from function type *)
+          let declared_param_types, declared_return_type = extract_param_types (List.length args) func_type in
+
+          (* Use declared types for instantiation *)
+          let param_types =
+            if List.length declared_param_types = List.length args then
+              declared_param_types
+            else
+              List.map (infer_type env) args
+          in
+
+          (* Use declared return type if available and concrete *)
+          let return_type =
+            let is_concrete_type = function
+              | Types.TVar _ | Types.TNull -> false
+              | _ -> true
+            in
+            if is_concrete_type declared_return_type && List.length declared_param_types = List.length args then
+              declared_return_type
+            else
+              (* Fallback to inferring from call site *)
+              let call_type = infer_type env expr in
+              match call_type with
+              | Types.TVar _ when List.length param_types > 0 -> List.hd param_types
+              | t -> t
+          in
+          let inst = { func_name = name; concrete_types = param_types; return_type } in
           state.instantiations <- InstSet.add inst state.instantiations
       | _ -> ())
   | AST.Array elements -> List.iter (collect_insts_expr state env) elements
@@ -323,43 +352,85 @@ and emit_type_check state env expr type_ann =
   in
   Printf.sprintf "typeIs(%s, \"%s\")" expr_str go_type_name
 
-and emit_if state env if_expr cond cons alt =
-  let result_type = infer_type env if_expr in
+(* Helper: Substitute identifier references in expressions *)
+and substitute_identifier_in_expr old_name new_name expr =
+  let rec subst_expr e =
+    match e.AST.expr with
+    | AST.Identifier id when id = old_name -> { e with expr = AST.Identifier new_name }
+    | AST.Prefix (op, operand) -> { e with expr = AST.Prefix (op, subst_expr operand) }
+    | AST.Infix (left, op, right) -> { e with expr = AST.Infix (subst_expr left, op, subst_expr right) }
+    | AST.TypeCheck (expr, type_ann) -> { e with expr = AST.TypeCheck (subst_expr expr, type_ann) }
+    | AST.If (cond, cons, alt) ->
+        { e with expr = AST.If (subst_expr cond, subst_stmt cons, Option.map subst_stmt alt) }
+    | AST.Call (func, args) -> { e with expr = AST.Call (subst_expr func, List.map subst_expr args) }
+    | AST.Array elements -> { e with expr = AST.Array (List.map subst_expr elements) }
+    | AST.Hash pairs -> { e with expr = AST.Hash (List.map (fun (k, v) -> (subst_expr k, subst_expr v)) pairs) }
+    | AST.Index (container, index) -> { e with expr = AST.Index (subst_expr container, subst_expr index) }
+    | AST.Function _ ->
+        (* Don't substitute inside function bodies - would need scope tracking *)
+        e
+    | _ -> e
+  and subst_stmt s =
+    match s.AST.stmt with
+    | AST.Let let_binding -> { s with stmt = AST.Let { let_binding with value = subst_expr let_binding.value } }
+    | AST.Return e -> { s with stmt = AST.Return (subst_expr e) }
+    | AST.ExpressionStmt e -> { s with stmt = AST.ExpressionStmt (subst_expr e) }
+    | AST.Block stmts -> { s with stmt = AST.Block (List.map subst_stmt stmts) }
+  in
+  subst_expr expr
+
+(* Emit a Go type switch for type narrowing *)
+and emit_type_switch state env _if_expr var_name narrow_type cons alt result_type =
   let result_type_str = type_to_go result_type in
-  let cond_str = emit_expr state env cond in
+  let narrow_type_str = type_to_go narrow_type in
   let ind = indent_str state in
   let inner_ind = ind ^ "    " in
 
-  let emit_branch stmt =
+  (* Create narrowed variable name *)
+  let narrowed_var = var_name ^ "_typed" in
+
+  (* Emit branch with variable substitution *)
+  let emit_branch_with_var var_to_use narrow_env stmt =
     match stmt.AST.stmt with
     | AST.Block stmts -> (
         match List.rev stmts with
         | [] ->
-            inner_ind ^ "    return "
+            inner_ind ^ "        return "
             ^ (if result_type = Types.TNull then
                  "struct{}{}"
                else
                  "nil")
             ^ "\n"
         | last :: rest ->
-            let prefix, env' = emit_stmts state env (List.rev rest) in
+            let prefix, env' = emit_stmts state narrow_env (List.rev rest) in
             let last_str =
               match last.stmt with
-              | AST.ExpressionStmt e -> inner_ind ^ "    return " ^ emit_expr state env' e ^ "\n"
-              | AST.Return e -> inner_ind ^ "    return " ^ emit_expr state env' e ^ "\n"
+              | AST.ExpressionStmt e ->
+                  (* Substitute variable references in expression before emitting *)
+                  let e_subst = substitute_identifier_in_expr var_name var_to_use e in
+                  inner_ind ^ "        return " ^ emit_expr state env' e_subst ^ "\n"
+              | AST.Return e ->
+                  let e_subst = substitute_identifier_in_expr var_name var_to_use e in
+                  inner_ind ^ "        return " ^ emit_expr state env' e_subst ^ "\n"
               | _ -> fst (emit_stmt state env' last)
             in
             prefix ^ last_str)
-    | AST.ExpressionStmt e -> inner_ind ^ "    return " ^ emit_expr state env e ^ "\n"
-    | _ -> fst (emit_stmt state env stmt)
+    | AST.ExpressionStmt e ->
+        let e_subst = substitute_identifier_in_expr var_name var_to_use e in
+        inner_ind ^ "        return " ^ emit_expr state narrow_env e_subst ^ "\n"
+    | _ -> fst (emit_stmt state narrow_env stmt)
   in
 
-  let cons_str = emit_branch cons in
+  (* Emit consequence branch with narrowed variable *)
+  let narrowed_env = Infer.TypeEnv.add narrowed_var (Types.Forall ([], narrow_type)) env in
+  let cons_str = emit_branch_with_var narrowed_var narrowed_env cons in
+
+  (* Emit alternative branch with original variable *)
   let alt_str =
     match alt with
-    | Some alt_stmt -> emit_branch alt_stmt
+    | Some alt_stmt -> emit_branch_with_var var_name env alt_stmt
     | None ->
-        inner_ind ^ "    return "
+        inner_ind ^ "        return "
         ^ (if result_type = Types.TNull then
              "struct{}{}"
            else
@@ -367,8 +438,75 @@ and emit_if state env if_expr cond cons alt =
         ^ "\n"
   in
 
-  Printf.sprintf "func() %s {\n%s    if %s {\n%s%s    } else {\n%s%s    }\n%s}()" result_type_str ind cond_str
-    cons_str ind alt_str ind ind
+  (* Generate type switch *)
+  Printf.sprintf "func() %s {\n%s    switch %s := %s.(type) {\n%s    case %s:\n%s%s    default:\n%s%s    }\n%s}()"
+    result_type_str ind narrowed_var var_name ind narrow_type_str cons_str ind alt_str ind ind
+
+and emit_if state env if_expr cond cons alt =
+  let result_type = infer_type env if_expr in
+  let result_type_str = type_to_go result_type in
+  let ind = indent_str state in
+  let inner_ind = ind ^ "    " in
+
+  (* Check if condition is a type check (x is T) *)
+  let type_check_info =
+    match cond.expr with
+    | AST.TypeCheck (var_expr, type_ann) -> (
+        match var_expr.expr with
+        | AST.Identifier var_name ->
+            let narrow_type = Annotation.type_expr_to_mono_type type_ann in
+            Some (var_name, narrow_type)
+        | _ -> None)
+    | _ -> None
+  in
+
+  match type_check_info with
+  | Some (var_name, narrow_type) ->
+      (* Emit type switch instead of if *)
+      emit_type_switch state env if_expr var_name narrow_type cons alt result_type
+  | None ->
+      (* Normal if-expression *)
+      let cond_str = emit_expr state env cond in
+
+      let emit_branch stmt =
+        match stmt.AST.stmt with
+        | AST.Block stmts -> (
+            match List.rev stmts with
+            | [] ->
+                inner_ind ^ "    return "
+                ^ (if result_type = Types.TNull then
+                     "struct{}{}"
+                   else
+                     "nil")
+                ^ "\n"
+            | last :: rest ->
+                let prefix, env' = emit_stmts state env (List.rev rest) in
+                let last_str =
+                  match last.stmt with
+                  | AST.ExpressionStmt e -> inner_ind ^ "    return " ^ emit_expr state env' e ^ "\n"
+                  | AST.Return e -> inner_ind ^ "    return " ^ emit_expr state env' e ^ "\n"
+                  | _ -> fst (emit_stmt state env' last)
+                in
+                prefix ^ last_str)
+        | AST.ExpressionStmt e -> inner_ind ^ "    return " ^ emit_expr state env e ^ "\n"
+        | _ -> fst (emit_stmt state env stmt)
+      in
+
+      let cons_str = emit_branch cons in
+      let alt_str =
+        match alt with
+        | Some alt_stmt -> emit_branch alt_stmt
+        | None ->
+            inner_ind ^ "    return "
+            ^ (if result_type = Types.TNull then
+                 "struct{}{}"
+               else
+                 "nil")
+            ^ "\n"
+      in
+
+      Printf.sprintf "func() %s {\n%s    if %s {\n%s%s    } else {\n%s%s    }\n%s}()" result_type_str ind cond_str
+        cons_str ind alt_str ind ind
 
 and emit_call state env func args =
   (* Check for builtin function calls that need special handling *)
@@ -393,9 +531,20 @@ and emit_call state env func args =
       let val_str = emit_expr state env (List.nth args 1) in
       Printf.sprintf "push(%s, %s)" arr_str val_str
   | AST.Identifier name when is_user_func state.mono name ->
-      (* User-defined function - use monomorphized name based on argument types *)
-      let arg_types = List.map (infer_type env) args in
-      let mangled_name = mangle_func_name name arg_types in
+      (* User-defined function - use function's declared parameter types for mangling *)
+      let func_type =
+        match Infer.TypeEnv.find_opt name env with
+        | Some (Types.Forall (_, t)) -> t
+        | None -> infer_type env func
+      in
+      let declared_param_types, _ = extract_param_types (List.length args) func_type in
+      let param_types =
+        if List.length declared_param_types = List.length args then
+          declared_param_types
+        else
+          List.map (infer_type env) args
+      in
+      let mangled_name = mangle_func_name name param_types in
       let args_str = List.map (emit_expr state env) args |> String.concat ", " in
       Printf.sprintf "%s(%s)" mangled_name args_str
   | _ ->
