@@ -62,7 +62,7 @@ let b = maybe(-3)     // b: int | string
 4. ❌ **No `TUnion`** in `lib/frontend/typecheck/types.ml` mono_type
 5. ❌ **No unification rules** for unions
 6. ❌ **No type inference** that creates unions from if-else
-7. ❌ **No type narrowing** with `typeof` checks
+7. ❌ **No type narrowing** with `is` checks
 8. ❌ **No codegen** for unions to Go
 
 ---
@@ -132,13 +132,13 @@ type mono_type =
 
 ---
 
-### 3. Type Narrowing with `typeof`
+### 3. Type Narrowing with `is`
 
-**Decision**: Introduce `typeof` builtin for runtime type checks.
+**Decision**: Introduce `is` as an infix type-checking operator.
 
 **Syntax**:
 ```marmoset
-typeof(expr) == "typename"
+expr is TypeName
 ```
 
 **Narrowing rules**:
@@ -146,7 +146,7 @@ typeof(expr) == "typename"
 1. **In consequence branch**, narrow to matched type:
    ```marmoset
    fn process(x: int | string) -> int {
-       if (typeof(x) == "int") {
+       if (x is int) {
            return x + 1    // x narrowed to int
        } else {
            return len(x)   // x narrowed to string
@@ -156,7 +156,7 @@ typeof(expr) == "typename"
 
 2. **In alternative branch**, narrow to complement:
    ```marmoset
-   if (typeof(x) == "int") {
+   if (x is int) {
        // x: int
    } else {
        // x: string (if original was int | string)
@@ -166,23 +166,20 @@ typeof(expr) == "typename"
 3. **Multiple checks compose**:
    ```marmoset
    fn handle(x: int | string | bool) {
-       if (typeof(x) == "int") {
+       if (x is int) {
            // x: int
        }
-       if (typeof(x) == "string") {
+       if (x is string) {
            // x: string
        }
        // x: bool (only option left)
    }
    ```
 
-**Type names**:
-- `"int"` for `TInt`
-- `"float"` for `TFloat`
-- `"string"` for `TString`
-- `"bool"` for `TBool`
-- `"null"` for `TNull`
-- `"array"` for `TArray`
+**Type syntax** (same as type annotations):
+- `int`, `float`, `string`, `bool`, `null`
+- `array[T]`, `hash[K, V]`
+- Union types: `int | string`
 - `"hash"` for `THash`
 - `"function"` for `TFun`
 
@@ -210,7 +207,7 @@ let x = arr[0]    // x: int | null (explicit option type)
 x + 1             // ✗ Type error
 
 // OK: narrow first
-if (typeof(x) == "int") {
+if (x is int) {
     x + 1         // ✓ x is int here
 }
 ```
@@ -243,11 +240,11 @@ var x interface{} = int64(42)       // int in union
 var y interface{} = "hello"         // string in union
 ```
 
-**Type narrowing** with `typeof` becomes Go type switch:
+**Type narrowing** with `is` becomes Go type switch:
 
 **Marmoset**:
 ```marmoset
-if (typeof(x) == "int") {
+if (x is int) {
     x + 1
 } else {
     len(x)
@@ -820,74 +817,80 @@ Find code similar to:
 
 Run integration tests: `./test/test_typecheck_and_codegen.sh`
 
-Tests should progress further but still fail (no `typeof` builtin yet).
+Tests should progress further but still fail (no `is` operator yet).
 
 ---
 
-### Step 1.7: Add `typeof` Builtin
+### Step 1.7: Add `is` Operator
 
-**Duration**: 1 day  
-**Files**: `lib/frontend/typecheck/builtins.ml`, `lib/backend/interpreter/builtins.ml`, `lib/backend/vm/compiler.ml`
+**Duration**: 1-2 days  
+**Files**: `lib/frontend/syntax/token.ml`, `lib/frontend/syntax/lexer.ml`, `lib/frontend/syntax/parser.ml`, `lib/frontend/syntax/ast.ml`, `lib/frontend/typecheck/infer.ml`
 
 #### Test (RED)
 
 ```bash
-test_case "typeof returns string" \
-    'let x = 42; typeof(x)' \
+test_case "is operator basic check" \
+    'let x: int | string = 5; if (x is int) { true } else { false }' \
     "true"
 ```
 
-**Expected**: FAIL - `typeof` not defined
+**Expected**: FAIL - `is` operator not defined
 
 #### Implementation
 
-**File**: `lib/frontend/typecheck/builtins.ml`
-
-Add after the `puts` definition (around line 45):
+**A. Add `Is` token** (`lib/frontend/syntax/token.ml`):
 
 ```ocaml
-    (* typeof : a -> string
-       Returns string representation of type for runtime checks *)
-    ("typeof", forall ["a"] (TFun (TVar "a", TString)));
+| Is       (* is keyword for type checking *)
 ```
 
-**File**: `lib/backend/interpreter/builtins.ml`
+**B. Add lexer support** (`lib/frontend/syntax/lexer.ml`):
 
-Add implementation after `puts` (around line 60):
+Add to keyword matching (around line 150):
 
 ```ocaml
-let typeof_builtin = function
-  | [arg] -> (
-      let type_name = match arg with
-        | Value.Integer _ -> "int"
-        | Value.Float _ -> "float"
-        | Value.Boolean _ -> "bool"
-        | Value.String _ -> "string"
-        | Value.Null -> "null"
-        | Value.Array _ -> "array"
-        | Value.Hash _ -> "hash"
-        | Value.Function _ | Value.Closure _ | Value.Builtin _ -> "function"
-      in
-      Value.String type_name)
-  | _ -> failwith "typeof expects 1 argument"
+| "is" -> Token.Is
 ```
 
-Add to builtins list:
+**C. Add AST node** (`lib/frontend/syntax/ast.ml`):
+
+Add new infix expression type:
 
 ```ocaml
-let builtins = [
-  ...
-  ("typeof", typeof_builtin);
-]
+| TypeCheck of expression * type_expr  (* x is int *)
 ```
 
-**File**: `lib/backend/vm/compiler.ml`
+**D. Parser support** (`lib/frontend/syntax/parser.ml`):
 
-Add to builtin compilation if needed (search for `compile_builtin_call`).
+1. Add `Is` to infix precedence (around line 50):
+```ocaml
+| Token.Is -> Some Equals  (* Same precedence as == *)
+```
+
+2. Add infix parsing case (in `parse_infix_expression`):
+```ocaml
+| Token.Is ->
+    let right_type = parse_type_expr parser in
+    AST.TypeCheck (left, right_type)
+```
+
+**E. Type inference** (`lib/frontend/typecheck/infer.ml`):
+
+Add case to `infer_expression`:
+
+```ocaml
+| AST.TypeCheck (expr, type_ann) ->
+    (* x is int  →  bool *)
+    let* subst1, expr_type = infer_expression env expr in
+    (* Convert type annotation to mono_type *)
+    let check_type = Annotation.type_expr_to_mono_type type_ann in
+    (* Result is always bool *)
+    Ok (subst1, TBool)
+```
 
 #### Verification
 
-Test that `typeof(42)` returns `"int"`.
+Test that `x is int` returns a boolean value.
 
 ---
 
@@ -896,14 +899,14 @@ Test that `typeof(42)` returns `"int"`.
 **Duration**: 2-3 days  
 **Files**: `lib/frontend/typecheck/infer.ml`
 
-This is the most complex step. It requires detecting `typeof` patterns and refining types in branches.
+This is the most complex step. It requires detecting `is` patterns and refining types in branches.
 
 #### Test (RED)
 
 ```bash
-test_case "Type narrowing with typeof in if" \
+test_case "Type narrowing with is in if" \
     'let f = fn(x: int | string) -> int {
-       if (typeof(x) == "int") { 
+       if (x is int) { 
            x + 1 
        } else { 
            len(x) 
@@ -923,8 +926,8 @@ test_case "Type narrowing error without check" \
 #### Implementation
 
 **Strategy**:
-1. Detect pattern: `typeof(identifier) == "literal"`
-2. Extract the identifier and type name
+1. Detect pattern: `identifier is TypeExpr`
+2. Extract the identifier and type
 3. Narrow the identifier's type in the environment for the consequence branch
 4. Narrow to complement type in alternative branch
 
@@ -933,32 +936,16 @@ This requires:
 **A. Add narrowing detection function** (add to `infer.ml`):
 
 ```ocaml
-(* Detect typeof narrowing pattern: typeof(var) == "typename" *)
-let detect_typeof_narrowing (expr : AST.expression) 
-    : (string * string) option =
+(* Detect type narrowing pattern: x is int *)
+let detect_is_narrowing (expr : AST.expression) 
+    : (string * mono_type) option =
   match expr.expr with
-  | AST.Infix (left, "==", right) -> (
-      (* Check if left is typeof(var) *)
-      match (left.expr, right.expr) with
-      | AST.Call (fn_expr, [arg_expr]), AST.String type_name -> (
-          match (fn_expr.expr, arg_expr.expr) with
-          | AST.Identifier "typeof", AST.Identifier var_name ->
-              Some (var_name, type_name)
-          | _ -> None)
+  | AST.TypeCheck (var_expr, type_ann) -> (
+      match var_expr.expr with
+      | AST.Identifier var_name ->
+          let narrow_type = Annotation.type_expr_to_mono_type type_ann in
+          Some (var_name, narrow_type)
       | _ -> None)
-  | _ -> None
-
-(* Convert type name string to mono_type *)
-let string_to_mono_type (type_name : string) : mono_type option =
-  match type_name with
-  | "int" -> Some TInt
-  | "float" -> Some TFloat
-  | "bool" -> Some TBool
-  | "string" -> Some TString
-  | "null" -> Some TNull
-  | "array" -> None  (* Can't narrow to generic array *)
-  | "hash" -> None
-  | "function" -> None
   | _ -> None
 ```
 
@@ -971,25 +958,21 @@ let string_to_mono_type (type_name : string) : mono_type option =
     (* Check for unification with Bool *)
     ...
     
-    (* Check if condition is a typeof narrowing *)
-    let narrowing = detect_typeof_narrowing condition in
+    (* Check if condition is an 'is' narrowing *)
+    let narrowing = detect_is_narrowing condition in
     
     (* Create narrowed environment for consequence *)
     let env_cons = match narrowing with
-      | Some (var_name, type_name) ->
-          (match string_to_mono_type type_name with
-           | Some narrow_type ->
-               (* Look up current type of var *)
-               (match Env.get env' var_name with
-                | Some (Forall ([], current_type)) ->
-                    (* Narrow union to specific member *)
-                    (match current_type with
-                     | TUnion members when List.mem narrow_type members ->
-                         (* Replace var's type with narrowed type *)
-                         Env.extend env' var_name (Forall ([], narrow_type))
-                     | _ -> env')
+      | Some (var_name, narrow_type) ->
+          (match Env.get env' var_name with
+           | Some (Forall ([], current_type)) ->
+               (* Narrow union to specific member *)
+               (match current_type with
+                | TUnion members when List.mem narrow_type members ->
+                    (* Replace var's type with narrowed type *)
+                    Env.extend env' var_name (Forall ([], narrow_type))
                 | _ -> env')
-           | None -> env')
+           | _ -> env')
       | None -> env'
     in
     
@@ -1002,7 +985,7 @@ let string_to_mono_type (type_name : string) : mono_type option =
 
 Similar logic for alternative, but narrow to the "other" types in the union.
 
-**Implementation note**: This is complex and may require multiple iterations. Start with simple case (single typeof check) and expand.
+**Implementation note**: This is complex and may require multiple iterations. Start with simple case (single `is` check) and expand.
 
 #### Verification
 
@@ -1043,15 +1026,15 @@ All union values are boxed in `interface{}`.
 
 When emitting a value that goes into a union, ensure it's boxed. Find value emission code. No changes needed if Go already boxes primitives in `interface{}`.
 
-**C. typeof check to type switch**:
+**C. is check to type switch**:
 
-Find if-expression emission. When condition is `typeof(x) == "typename"`:
+Find if-expression emission. When condition is `x is int`:
 
 ```ocaml
 (* Pseudo-code for emitter logic *)
-if is_typeof_check condition then
+if is_type_check condition then
   (* Generate type switch instead of if *)
-  emit_type_switch var type_name consequence alternative
+  emit_type_switch var narrow_type consequence alternative
 else
   (* Normal if *)
   emit_if condition consequence alternative
@@ -1060,7 +1043,7 @@ else
 **D. Type switch template**:
 
 ```ocaml
-let emit_type_switch var_name type_name consequence alternative =
+let emit_type_switch var_name check_type consequence alternative =
   (* Generate:
      switch v := x.(type) {
      case int64:
@@ -1070,18 +1053,18 @@ let emit_type_switch var_name type_name consequence alternative =
      }
   *)
   Printf.sprintf "switch %s_typed := %s.(type) {\n" var_name var_name ^
-  Printf.sprintf "case %s:\n" (type_name_to_go type_name) ^
+  Printf.sprintf "case %s:\n" (mono_type_to_go check_type) ^
   emit_block consequence (with var renamed to var_typed) ^
   "default:\n" ^
   emit_block alternative ^
   "}"
 ```
 
-Map type names:
-- `"int"` → `int64`
-- `"float"` → `float64`
-- `"string"` → `string`
-- `"bool"` → `bool`
+Map types to Go:
+- `TInt` → `int64`
+- `TFloat` → `float64`
+- `TString` → `string`
+- `TBool` → `bool`
 
 **E. Variable substitution**:
 
@@ -1109,8 +1092,8 @@ Should see unions compile and run correctly.
 ```bash
 test_case "Missing union case is error" \
     'let f = fn(x: int | string | bool) -> int {
-       if (typeof(x) == "int") { x }
-       else if (typeof(x) == "string") { len(x) }
+       if (x is int) { x }
+       else if (x is string) { len(x) }
        // Missing bool case
      }
      f(5)' \
@@ -1127,28 +1110,20 @@ test_case "Missing union case is error" \
 Add exhaustiveness checking for union types in if-expressions:
 
 ```ocaml
-(* Check if all union members are covered by typeof checks *)
+(* Check if all union members are covered by is checks *)
 let check_union_exhaustiveness 
     (union_type : Types.mono_type) 
-    (checks : string list) 
+    (checks : Types.mono_type list) 
     : (unit, string) result =
   match union_type with
   | Types.TUnion members ->
-      let member_names = List.map (fun t ->
-        match t with
-        | Types.TInt -> "int"
-        | Types.TString -> "string"
-        | Types.TBool -> "bool"
-        | Types.TFloat -> "float"
-        | Types.TNull -> "null"
-        | _ -> "unknown"
-      ) members in
-      let unchecked = List.filter (fun m -> not (List.mem m checks)) member_names in
+      let unchecked = List.filter (fun m -> not (List.mem m checks)) members in
       if unchecked = [] then
         Ok ()
       else
-        Error (Printf.sprintf "Non-exhaustive typeof checks. Missing: %s" 
-                 (String.concat ", " unchecked))
+        let names = List.map Types.to_string unchecked in
+        Error (Printf.sprintf "Non-exhaustive type checks. Missing: %s" 
+                 (String.concat ", " names))
   | _ -> Ok ()  (* Not a union, no exhaustiveness needed *)
 ```
 
@@ -1212,8 +1187,8 @@ test_case "Cannot use union without narrowing" \
 - [ ] Parse union syntax
 - [ ] Union parameter accepts member types
 - [ ] If-else creates unions from different types
-- [ ] typeof returns type names
-- [ ] Type narrowing with typeof
+- [ ] `is` operator type checking
+- [ ] Type narrowing with `is`
 - [ ] Narrowing in consequence branch
 - [ ] Narrowing in alternative branch
 - [ ] Compile unions to Go
@@ -1224,12 +1199,12 @@ test_case "Cannot use union without narrowing" \
 
 ### Features Working
 
-- [ ] **Lexer**: `|` token
-- [ ] **Parser**: Union type syntax in all positions
+- [ ] **Lexer**: `|` token, `is` keyword
+- [ ] **Parser**: Union type syntax, `is` operator
 - [ ] **Type system**: `TUnion` in `mono_type`
 - [ ] **Unification**: Union compatibility rules
 - [ ] **Inference**: Create unions from if-else
-- [ ] **Narrowing**: `typeof` checks refine types
+- [ ] **Narrowing**: `is` checks refine types
 - [ ] **Codegen**: Unions → `interface{}` + type switches
 - [ ] **Runtime**: Compiled code runs correctly
 
@@ -1262,14 +1237,14 @@ let x = arr[0]   // x: int | null
 let y = x + 1    // ✗ ERROR: cannot add to union
 
 // Must narrow first:
-if (typeof(x) == "int") {
+if (x is int) {
     let y = x + 1  // ✓ OK
 }
 ```
 
 **Migration steps**:
 1. Update all existing tests to handle `| null` return types
-2. Add `typeof` checks where needed
+2. Add `is` checks where needed
 3. Run test suite, fix failures one by one
 4. Document breaking changes in commit message
 
@@ -1281,7 +1256,7 @@ if (typeof(x) == "int") {
 
 ### Explicitly OUT OF SCOPE for Milestone 1:
 
-1. **Full exhaustiveness analysis** - only basic typeof checks
+1. **Full exhaustiveness analysis** - only basic is checks
 2. **Pattern matching** - comes in Milestone 2
 3. **Enum definitions** - comes in Milestone 2 (`option[a]`, `result[a,e]`)
 4. **Union subtyping in function positions** - simplified rules only
