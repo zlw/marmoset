@@ -155,6 +155,21 @@ and eval_expression (expr : AST.expression) (e : env) : Value.value * env =
       | _ ->
           let error = Value.type_mismatch_error left op right in
           (error, e''))
+  | TypeCheck (expr, type_ann) ->
+      (* Evaluate expression and check its runtime type *)
+      let* v, e' = eval_expression expr e in
+      let matches =
+        match (v, type_ann) with
+        | Value.Integer _, AST.TCon "int" -> true
+        | Value.Float _, AST.TCon "float" -> true
+        | Value.Boolean _, AST.TCon "bool" -> true
+        | Value.String _, AST.TCon "string" -> true
+        | Value.Null, AST.TCon "null" -> true
+        | Value.Array _, AST.TApp ("array", _) -> true
+        | Value.Hash _, AST.TApp ("hash", _) -> true
+        | _ -> false
+      in
+      (Value.Boolean matches, e')
   | If (condition, consequence, alternative) -> (
       let* cond, e' = eval_expression condition e in
       if Value.is_truthy cond then

@@ -187,6 +187,16 @@ let rec infer_expression (env : type_env) (expr : AST.expression) : (substitutio
   | AST.Prefix (op, operand) -> infer_prefix env op operand
   (* Infix operators *)
   | AST.Infix (left, op, right) -> infer_infix env left op right
+  (* Type checking operator: x is int *)
+  | AST.TypeCheck (expr, type_ann) -> (
+      (* Infer type of expression *)
+      match infer_expression env expr with
+      | Error e -> Error e
+      | Ok (subst1, _expr_type) ->
+          (* Convert type annotation to mono_type (for validation, not currently used) *)
+          let _check_type = Annotation.type_expr_to_mono_type type_ann in
+          (* Result is always bool *)
+          Ok (subst1, TBool))
   (* If expressions *)
   | AST.If (condition, consequence, alternative) -> infer_if env condition consequence alternative
   (* Function literals *)

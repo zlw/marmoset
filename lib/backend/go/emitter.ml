@@ -3,6 +3,7 @@
 module AST = Syntax.Ast.AST
 module Types = Typecheck.Types
 module Infer = Typecheck.Infer
+module Annotation = Typecheck.Annotation
 
 (* ============================================================
    Type Mangling - convert types to Go-safe identifiers
@@ -130,6 +131,7 @@ and collect_funcs_expr (state : mono_state) (expr : AST.expression) : unit =
   | AST.Infix (l, _, r) ->
       collect_funcs_expr state l;
       collect_funcs_expr state r
+  | AST.TypeCheck (e, _) -> collect_funcs_expr state e
   | AST.If (cond, cons, alt) ->
       collect_funcs_expr state cond;
       collect_funcs_stmt state cons;
@@ -194,6 +196,7 @@ and collect_insts_expr (state : mono_state) (env : Infer.type_env) (expr : AST.e
   | AST.Infix (l, _, r) ->
       collect_insts_expr state env l;
       collect_insts_expr state env r
+  | AST.TypeCheck (e, _) -> collect_insts_expr state env e
   | AST.If (cond, cons, alt) ->
       collect_insts_expr state env cond;
       ignore (collect_insts_stmt state env cons);
@@ -269,6 +272,7 @@ let rec emit_expr (state : emit_state) (env : Infer.type_env) (expr : AST.expres
   | AST.Identifier name -> name
   | AST.Prefix (op, operand) -> emit_prefix state env op operand
   | AST.Infix (left, op, right) -> emit_infix state env left op right
+  | AST.TypeCheck (expr, type_ann) -> emit_type_check state env expr type_ann
   | AST.If (cond, cons, alt) -> emit_if state env expr cond cons alt
   | AST.Call (func, args) -> emit_call state env func args
   | AST.Array elements -> emit_array state env elements
@@ -304,6 +308,20 @@ and emit_infix state env left op right =
     | _ -> failwith ("Unknown infix operator: " ^ op)
   in
   Printf.sprintf "(%s %s %s)" left_str go_op right_str
+
+and emit_type_check state env expr type_ann =
+  (* Use runtime helper function for type checking *)
+  let expr_str = emit_expr state env expr in
+  let check_type = Annotation.type_expr_to_mono_type type_ann in
+  let go_type_name =
+    match check_type with
+    | Types.TInt -> "int64"
+    | Types.TString -> "string"
+    | Types.TBool -> "bool"
+    | Types.TFloat -> "float64"
+    | _ -> failwith "Type check for complex types not yet implemented"
+  in
+  Printf.sprintf "typeIs(%s, \"%s\")" expr_str go_type_name
 
 and emit_if state env if_expr cond cons alt =
   let result_type = infer_type env if_expr in
@@ -633,12 +651,20 @@ let runtime_go =
   {|// Marmoset Runtime - builtin functions for generated Go code
 package main
 
-import "fmt"
+import (
+	"fmt"
+	"reflect"
+)
 
 // puts prints values to stdout, returns struct{}
 func puts[T any](v T) struct{} {
 	fmt.Println(v)
 	return struct{}{}
+}
+
+// typeIs checks if a value is of a specific Go type
+func typeIs[T any](v T, typeName string) bool {
+	return reflect.TypeOf(v).String() == typeName
 }
 
 // indexArr handles negative indexing for arrays

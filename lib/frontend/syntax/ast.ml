@@ -48,6 +48,7 @@ module AST = struct
     | Hash of (expression * expression) list
     | Prefix of string * expression
     | Infix of expression * string * expression
+    | TypeCheck of expression * type_expr (* x is int *)
     | If of expression * statement * statement option
     | Function of {
         generics : generic_param list option; (* [a], [a: show], etc. *)
@@ -112,6 +113,7 @@ module AST = struct
     | Hash _ -> "Hash"
     | Prefix _ -> "Prefix"
     | Infix _ -> "Infix"
+    | TypeCheck _ -> "TypeCheck"
     | Boolean _ -> "Boolean"
     | If _ -> "If"
     | Function _ -> "Function"
@@ -140,6 +142,8 @@ module AST = struct
       | Prefix (op, expr) -> Printf.sprintf "(%s%s)" op (expression_to_string expr)
       | Infix (left, op, right) ->
           Printf.sprintf "(%s %s %s)" (expression_to_string left) op (expression_to_string right)
+      | TypeCheck (expr, type_ann) ->
+          Printf.sprintf "(%s is %s)" (expression_to_string expr) (show_type_expr type_ann)
       | Boolean b ->
           if b then
             "true"

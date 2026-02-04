@@ -282,6 +282,13 @@ and compile_expression (c : compiler) (e : AST.expression) : (compiler, string) 
       let* opcode = opcode in
       let c''', _pos = emit c'' opcode [] in
       Ok c'''
+  | AST.TypeCheck (expr, _type_ann) ->
+      (* For now, emit a placeholder that always returns true
+         TODO: Implement proper runtime type checking in Step 1.9 *)
+      let* _c' = compile_expression c expr in
+      (* Just push true for now - type checking will be properly implemented later *)
+      let c'', _pos = emit c Code.OpTrue [] in
+      Ok c''
   | AST.Integer i ->
       let c', index = add_constant c (Value.Integer i) in
       let c'', _pos = emit c' Code.OpConstant [ index ] in

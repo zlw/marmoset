@@ -45,6 +45,7 @@ and token_type =
   | If
   | Else
   | Return
+  | Is (* is keyword for type checking *)
 [@@deriving show]
 
 let init ?(pos = 0) t l = { token_type = t; literal = l; pos }
@@ -61,4 +62,5 @@ let lookup_ident s =
   | "if" -> If
   | "else" -> Else
   | "return" -> Return
+  | "is" -> Is
   | _ -> Ident

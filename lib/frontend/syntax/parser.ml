@@ -27,7 +27,7 @@ let prec_call = 7
 let prec_index = 8
 
 let precedences = function
-  | Token.Eq | Token.NotEq -> prec_equals
+  | Token.Eq | Token.NotEq | Token.Is -> prec_equals
   | Token.Lt | Token.Gt -> prec_less_greater
   | Token.Plus | Token.Minus -> prec_sum
   | Token.Asterisk | Token.Slash -> prec_product
@@ -311,7 +311,7 @@ and infixFn (p : parser) (left_expr : AST.expression) (prec : precedence) :
       let* lp2, left2 =
         match lp.peek_token.token_type with
         | Token.Plus | Token.Minus | Token.Slash | Token.Asterisk | Token.Eq | Token.NotEq | Token.Lt | Token.Gt
-          ->
+        | Token.Is ->
             parse_infix_expression (next_token lp) left
         | LParen -> parse_call_expression (next_token lp) left
         | LBracket -> parse_index_expression (next_token lp) left
@@ -356,11 +356,25 @@ and parse_prefix_expression (p : parser) : (parser * AST.expression, parser) res
 
 and parse_infix_expression (p : parser) (left : AST.expression) : (parser * AST.expression, parser) result =
   let pos = p.curr_token.pos in
-  let op = p.curr_token.literal in
-  let prec = curr_precedence p in
-  let p2 = next_token p in
-  let* p3, right = parse_expression p2 prec in
-  Ok (p3, mk_expr pos (AST.Infix (left, op, right)))
+  match p.curr_token.token_type with
+  | Token.Is ->
+      (* x is int - for now, only support simple type identifiers *)
+      (* Advance to the type name *)
+      let p2 = next_token p in
+      if not (curr_token_is p2 Token.Ident) then
+        Error (add_error p2 "Expected type name after 'is'")
+      else
+        let type_name = p2.curr_token.literal in
+        let type_expr = AST.TCon type_name in
+        (* Don't advance further - stay at the type identifier *)
+        (* This matches the convention of other infix operators *)
+        Ok (p2, mk_expr pos (AST.TypeCheck (left, type_expr)))
+  | _ ->
+      let op = p.curr_token.literal in
+      let prec = curr_precedence p in
+      let p2 = next_token p in
+      let* p3, right = parse_expression p2 prec in
+      Ok (p3, mk_expr pos (AST.Infix (left, op, right)))
 
 and parse_boolean (p : parser) : (parser * AST.expression, parser) result =
   let pos = p.curr_token.pos in

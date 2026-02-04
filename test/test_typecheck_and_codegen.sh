@@ -200,6 +200,10 @@ test_case "Parse multi-member union" \
     'let f = fn(x: int | string | bool) { x }; f(true)' \
     "true"
 
+test_case "is operator returns bool" \
+    'let x: int | string = 5; if (x is int) { true } else { false }' \
+    "true"
+
 echo ""
 echo "=========================================="
 echo "RESULTS: $PASS passed, $FAIL failed out of $TOTAL tests"
