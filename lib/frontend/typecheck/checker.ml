@@ -11,6 +11,7 @@ type env = Infer.type_env
 type typecheck_result = {
   result_type : mono_type; (* Type of the final expression *)
   environment : Infer.type_env; (* Final type environment with all bindings *)
+  type_map : Infer.type_map; (* Map from expression IDs to their inferred types *)
 }
 
 (* Error with source location info *)
@@ -52,7 +53,7 @@ let format_error_with_context (source : string) (err : error) : string =
 let check_program ?(env = Infer.empty_env) (program : Syntax.Ast.AST.program) : (typecheck_result, error) result =
   match Infer.infer_program ~env program with
   | Error e -> Error (error_of_infer_error e)
-  | Ok (final_env, result_type) -> Ok { result_type; environment = final_env }
+  | Ok (final_env, type_map, result_type) -> Ok { result_type; environment = final_env; type_map }
 
 (* Type check source code string.
     Parses and type checks in one step.
@@ -63,7 +64,7 @@ let check_string ?(env = Infer.empty_env) (source : string) : (typecheck_result,
   | Ok program -> (
       match Infer.infer_program ~env program with
       | Error e -> Error (error_of_infer_error ~source e)
-      | Ok (final_env, result_type) -> Ok { result_type; environment = final_env })
+      | Ok (final_env, type_map, result_type) -> Ok { result_type; environment = final_env; type_map })
 
 (* ============================================================
    Phase 2: Type check with annotations
@@ -136,7 +137,7 @@ let check_program_with_annotations ?(env = Infer.empty_env) (program : Syntax.As
   (* First, do standard inference *)
   match Infer.infer_program ~env program with
   | Error e -> Error (error_of_infer_error e)
-  | Ok (final_env, result_type) -> (
+  | Ok (final_env, type_map, result_type) -> (
       (* Phase 2: Validate annotations against inferred types *)
       let rec check_stmts_with_infer (stmts : Syntax.Ast.AST.statement list) (env_check : env) :
           (unit, error) result =
@@ -186,7 +187,7 @@ let check_program_with_annotations ?(env = Infer.empty_env) (program : Syntax.As
       in
       match check_stmts_with_infer program final_env with
       | Error e -> Error e
-      | Ok () -> Ok { result_type; environment = final_env })
+      | Ok () -> Ok { result_type; environment = final_env; type_map })
 
 (* Type check source code with annotations.
    Parses and type checks in one step, with annotation support. *)
@@ -247,7 +248,7 @@ let%test "check_string function" =
 
 let%test "check_string let binding adds to env" =
   match check_string "let x = 5; x" with
-  | Ok { result_type = TInt; environment } -> (
+  | Ok { result_type = TInt; environment; _ } -> (
       match lookup "x" environment with
       | Some (Forall ([], TInt)) -> true
       | _ -> false)

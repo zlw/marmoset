@@ -45,6 +45,7 @@ module AST = struct
   [@@deriving show]
 
   and expression = {
+    id : int;
     expr : expr_kind;
     pos : int;
   }
@@ -102,8 +103,8 @@ module AST = struct
   }
   [@@deriving show]
 
-  (* Smart constructors with default pos=0 (for tests) *)
-  let mk_expr ?(pos = 0) expr = { expr; pos }
+  (* Smart constructors with default pos=0 and id=0 (for tests) *)
+  let mk_expr ?(id = 0) ?(pos = 0) expr = { id; expr; pos }
   let mk_stmt ?(pos = 0) stmt = { stmt; pos }
   let mk_pat ?(pos = 0) pat = { pat; pos }
 

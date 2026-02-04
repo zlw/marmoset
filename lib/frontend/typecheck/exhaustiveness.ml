@@ -77,7 +77,7 @@ let check_exhaustive (scrutinee_type : mono_type) (arms : AST.match_arm list) : 
 module Test = struct
   (* Helper to create patterns *)
   let mk_pat kind = AST.{ pat = kind; pos = 0 }
-  let mk_expr kind = AST.{ expr = kind; pos = 0 }
+  let mk_expr kind = AST.{ id = 0; expr = kind; pos = 0 }
   let mk_arm patterns = AST.{ patterns; body = mk_expr (AST.Integer 0L) }
 
   let%test "wildcard is exhaustive for any type" =

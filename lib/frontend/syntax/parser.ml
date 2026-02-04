@@ -2,8 +2,8 @@ open Ast
 
 let ( let* ) res f = Result.bind res f
 
-(* Helpers to create AST nodes with position from current token *)
-let mk_expr pos kind = AST.{ expr = kind; pos }
+(* Helpers to create AST nodes with position and ID from parser *)
+let mk_expr id pos kind = AST.{ id; expr = kind; pos }
 let mk_stmt pos kind = AST.{ stmt = kind; pos }
 
 type parser = {
@@ -11,9 +11,13 @@ type parser = {
   curr_token : Token.token;
   peek_token : Token.token;
   errors : errors;
+  next_id : int;
 }
 
 and errors = string list
+
+(* Helper to get fresh ID and increment counter *)
+let fresh_id p = (p.next_id, { p with next_id = p.next_id + 1 })
 
 type precedence = int
 
@@ -44,7 +48,7 @@ let next_token (p : parser) : parser =
   { p with lexer; curr_token; peek_token }
 
 let init (l : Lexer.lexer) : parser =
-  { lexer = l; curr_token = Token.init Illegal ""; peek_token = Token.init Illegal ""; errors = [] }
+  { lexer = l; curr_token = Token.init Illegal ""; peek_token = Token.init Illegal ""; errors = []; next_id = 0 }
   |> next_token
   |> next_token
 
@@ -422,20 +426,25 @@ and parse_identifier (p : parser) : (parser * AST.expression, parser) result =
         let p3 = next_token p2 in
         (* move to LParen *)
         let* p4, args = parse_expression_list p3 Token.RParen in
-        Ok (p4, mk_expr pos (AST.EnumConstructor (enum_name, variant_name, args)))
+        let id, p5 = fresh_id p4 in
+        Ok (p5, mk_expr id pos (AST.EnumConstructor (enum_name, variant_name, args)))
       else
         (* Nullary constructor: variant with no args *)
-        Ok (p2, mk_expr pos (AST.EnumConstructor (enum_name, variant_name, [])))
+        let id, p3 = fresh_id p2 in
+        Ok (p3, mk_expr id pos (AST.EnumConstructor (enum_name, variant_name, [])))
     else
       let msg = "expected variant name after '.'" in
       Error (add_error p2 msg)
   else
-    Ok (p, mk_expr pos (AST.Identifier enum_name))
+    let id, p1 = fresh_id p in
+    Ok (p1, mk_expr id pos (AST.Identifier enum_name))
 
 and parse_integer_literal (p : parser) : (parser * AST.expression, parser) result =
   let pos = p.curr_token.pos in
   match Int64.of_string_opt p.curr_token.literal with
-  | Some int -> Ok (p, mk_expr pos (AST.Integer int))
+  | Some int ->
+      let id, p1 = fresh_id p in
+      Ok (p1, mk_expr id pos (AST.Integer int))
   | None ->
       let msg = Printf.sprintf "can't parse number from %s" p.curr_token.literal in
       Error (add_error p msg)
@@ -443,21 +452,25 @@ and parse_integer_literal (p : parser) : (parser * AST.expression, parser) resul
 and parse_float_literal (p : parser) : (parser * AST.expression, parser) result =
   let pos = p.curr_token.pos in
   match float_of_string_opt p.curr_token.literal with
-  | Some float -> Ok (p, mk_expr pos (AST.Float float))
+  | Some float ->
+      let id, p1 = fresh_id p in
+      Ok (p1, mk_expr id pos (AST.Float float))
   | None ->
       let msg = Printf.sprintf "can't parse number from %s" p.curr_token.literal in
       Error (add_error p msg)
 
 and parse_string_literal (p : parser) : (parser * AST.expression, parser) result =
   let pos = p.curr_token.pos in
-  Ok (p, mk_expr pos (AST.String p.curr_token.literal))
+  let id, p1 = fresh_id p in
+  Ok (p1, mk_expr id pos (AST.String p.curr_token.literal))
 
 and parse_prefix_expression (p : parser) : (parser * AST.expression, parser) result =
   let pos = p.curr_token.pos in
   let op = p.curr_token.literal in
   let p2 = next_token p in
   let* p3, right = parse_expression p2 prec_prefix in
-  Ok (p3, mk_expr pos (AST.Prefix (op, right)))
+  let id, p4 = fresh_id p3 in
+  Ok (p4, mk_expr id pos (AST.Prefix (op, right)))
 
 and parse_infix_expression (p : parser) (left : AST.expression) : (parser * AST.expression, parser) result =
   let pos = p.curr_token.pos in
@@ -473,17 +486,20 @@ and parse_infix_expression (p : parser) (left : AST.expression) : (parser * AST.
         let type_expr = AST.TCon type_name in
         (* Don't advance further - stay at the type identifier *)
         (* This matches the convention of other infix operators *)
-        Ok (p2, mk_expr pos (AST.TypeCheck (left, type_expr)))
+        let id, p3 = fresh_id p2 in
+        Ok (p3, mk_expr id pos (AST.TypeCheck (left, type_expr)))
   | _ ->
       let op = p.curr_token.literal in
       let prec = curr_precedence p in
       let p2 = next_token p in
       let* p3, right = parse_expression p2 prec in
-      Ok (p3, mk_expr pos (AST.Infix (left, op, right)))
+      let id, p4 = fresh_id p3 in
+      Ok (p4, mk_expr id pos (AST.Infix (left, op, right)))
 
 and parse_boolean (p : parser) : (parser * AST.expression, parser) result =
   let pos = p.curr_token.pos in
-  Ok (p, mk_expr pos (AST.Boolean (p.curr_token.token_type = Token.True)))
+  let id, p1 = fresh_id p in
+  Ok (p1, mk_expr id pos (AST.Boolean (p.curr_token.token_type = Token.True)))
 
 and parse_grouped_expression (p : parser) : (parser * AST.expression, parser) result =
   let* p2, expr = parse_expression (next_token p) prec_lowest in
@@ -517,7 +533,8 @@ and parse_if_expression (p : parser) : (parser * AST.expression, parser) result 
   in
 
   if not (peek_token_is p5 Token.Else) then
-    Ok (p5, mk_expr pos (AST.If (cond, cons, None)))
+    let id, p6 = fresh_id p5 in
+    Ok (p6, mk_expr id pos (AST.If (cond, cons, None)))
   else
     let p6 = next_token p5 in
     (* Now at 'else' token *)
@@ -540,7 +557,8 @@ and parse_if_expression (p : parser) : (parser * AST.expression, parser) result 
         (* Error: else without block or return *)
         Error (add_error p6 "Expected '{' or 'return' after 'else'")
     in
-    Ok (p7, mk_expr pos (AST.If (cond, cons, Some alt)))
+    let id, p8 = fresh_id p7 in
+    Ok (p8, mk_expr id pos (AST.If (cond, cons, Some alt)))
 
 and parse_block_statement (p : parser) : (parser * AST.statement, parser) result =
   let pos = p.curr_token.pos in
@@ -584,7 +602,8 @@ and parse_function_literal (p : parser) : (parser * AST.expression, parser) resu
       Error (peek_error p5 Token.LBrace)
   in
   let* p7, body = parse_block_statement p6 in
-  Ok (p7, mk_expr pos (AST.Function { generics; params; return_type; body }))
+  let id, p8 = fresh_id p7 in
+  Ok (p8, mk_expr id pos (AST.Function { generics; params; return_type; body }))
 
 and parse_function_parameters (p : parser) : (parser * (string * AST.type_expr option) list, parser) result =
   if peek_token_is p Token.RParen then
@@ -620,7 +639,8 @@ and parse_function_parameters (p : parser) : (parser * (string * AST.type_expr o
 and parse_call_expression (p : parser) (c : AST.expression) : (parser * AST.expression, parser) result =
   let pos = p.curr_token.pos in
   let* p2, arguments = parse_expression_list p Token.RParen in
-  Ok (p2, mk_expr pos (AST.Call (c, arguments)))
+  let id, p3 = fresh_id p2 in
+  Ok (p3, mk_expr id pos (AST.Call (c, arguments)))
 
 and parse_expression_list (p : parser) (end_tt : Token.token_type) : (parser * AST.expression list, parser) result
     =
@@ -643,20 +663,23 @@ and parse_expression_list (p : parser) (end_tt : Token.token_type) : (parser * A
 and parse_array_literal (p : parser) : (parser * AST.expression, parser) result =
   let pos = p.curr_token.pos in
   let* p2, exprs = parse_expression_list p Token.RBracket in
-  Ok (p2, mk_expr pos (AST.Array exprs))
+  let id, p3 = fresh_id p2 in
+  Ok (p3, mk_expr id pos (AST.Array exprs))
 
 and parse_index_expression (p : parser) (left : AST.expression) : (parser * AST.expression, parser) result =
   let pos = p.curr_token.pos in
   let p2 = next_token p in
   let* p3, index = parse_expression p2 prec_lowest in
   let* p4 = expect_peek p3 Token.RBracket in
-  Ok (p4, mk_expr pos (AST.Index (left, index)))
+  let id, p5 = fresh_id p4 in
+  Ok (p5, mk_expr id pos (AST.Index (left, index)))
 
 and parse_hash_literal (p : parser) : (parser * AST.expression, parser) result =
   let pos = p.curr_token.pos in
   let rec loop lp (pairs : (AST.expression * AST.expression) list) =
     if peek_token_is lp Token.RBrace then
-      Ok (next_token lp, mk_expr pos (AST.Hash (List.rev pairs)))
+      let id, lp1 = fresh_id (next_token lp) in
+      Ok (lp1, mk_expr id pos (AST.Hash (List.rev pairs)))
     else
       let* lp2, key = parse_expression (next_token lp) prec_lowest in
       let* lp3 = expect_peek lp2 Token.Colon in
@@ -694,7 +717,8 @@ and parse_match_expression (p : parser) : (parser * AST.expression, parser) resu
       expect_peek p4 Token.RBrace
   in
 
-  Ok (p5, mk_expr pos (AST.Match (scrutinee, arms)))
+  let id, p6 = fresh_id p5 in
+  Ok (p6, mk_expr id pos (AST.Match (scrutinee, arms)))
 
 and parse_match_arms (p : parser) : (parser * AST.match_arm list, parser) result =
   let rec loop lp arms =

@@ -36,6 +36,21 @@ let apply_substitution_env (subst : substitution) (env : type_env) : type_env =
   TypeEnv.map (apply_substitution_poly subst) env
 
 (* ============================================================
+   Type Map
+   ============================================================
+   
+   Maps expression IDs to their inferred types.
+   This allows codegen to lookup types without re-inferring.
+*)
+
+type type_map = (int, mono_type) Hashtbl.t
+
+let create_type_map () : type_map = Hashtbl.create 256
+
+let record_type (type_map : type_map) (expr : AST.expression) (t : mono_type) : unit =
+  Hashtbl.add type_map expr.id t
+
+(* ============================================================
    Fresh Type Variables
    ============================================================
    
@@ -175,135 +190,144 @@ type 'a infer_result = ('a, infer_error) result
    After inference, apply the final substitution to get concrete types.
 *)
 
-let rec infer_expression (env : type_env) (expr : AST.expression) : (substitution * mono_type) infer_result =
-  match expr.expr with
-  (* Literals have known types *)
-  | AST.Integer _ -> Ok (empty_substitution, TInt)
-  | AST.Float _ -> Ok (empty_substitution, TFloat)
-  | AST.Boolean _ -> Ok (empty_substitution, TBool)
-  | AST.String _ -> Ok (empty_substitution, TString)
-  (* Variable lookup - instantiate its poly_type *)
-  | AST.Identifier name -> (
-      match TypeEnv.find_opt name env with
-      | None -> Error (error_at (UnboundVariable name) expr)
-      | Some poly_type ->
-          let instantiated = instantiate poly_type in
-          Ok (empty_substitution, instantiated))
-  (* Prefix operators *)
-  | AST.Prefix (op, operand) -> infer_prefix env op operand
-  (* Infix operators *)
-  | AST.Infix (left, op, right) -> infer_infix env left op right
-  (* Type checking operator: x is int *)
-  | AST.TypeCheck (expr, type_ann) -> (
-      (* Infer type of expression *)
-      match infer_expression env expr with
-      | Error e -> Error e
-      | Ok (subst1, _expr_type) ->
-          (* Convert type annotation to mono_type (for validation, not currently used) *)
-          let _check_type = Annotation.type_expr_to_mono_type type_ann in
-          (* Result is always bool *)
-          Ok (subst1, TBool))
-  (* If expressions *)
-  | AST.If (condition, consequence, alternative) -> infer_if env condition consequence alternative
-  (* Function literals *)
-  | AST.Function f ->
-      (* Phase 2: Use parameter and return type annotations to guide inference *)
-      infer_function_with_annotations env f.params f.return_type f.body
-  (* Function calls *)
-  | AST.Call (func, args) -> infer_call env func args
-  (* Arrays *)
-  | AST.Array elements -> infer_array env elements
-  (* Hashes *)
-  | AST.Hash pairs -> infer_hash env pairs
-  (* Index expressions *)
-  | AST.Index (container, index) -> infer_index env container index
-  (* Phase 4.2: Enums and pattern matching - to be implemented *)
-  | AST.EnumConstructor (enum_name, variant_name, args) -> (
-      (* Look up the variant in the registry *)
-      match Enum_registry.lookup_variant enum_name variant_name with
-      | None ->
-          Error
-            {
-              kind = ConstructorError (Printf.sprintf "Unknown enum constructor: %s.%s" enum_name variant_name);
-              pos = Some expr.pos;
-            }
-      | Some variant -> (
-          (* Infer types of constructor arguments *)
-          match infer_args env empty_substitution args with
-          | Error e -> Error e
-          | Ok (subst, arg_types) -> (
-              if
-                (* Check argument count matches *)
-                List.length args <> List.length variant.fields
-              then
-                Error
-                  {
-                    kind =
-                      ConstructorError
-                        (Printf.sprintf "%s.%s expects %d arguments, got %d" enum_name variant_name
-                           (List.length variant.fields) (List.length args));
-                    pos = Some expr.pos;
-                  }
-              else
-                (* Get the enum definition to know type parameters *)
-                match Enum_registry.lookup enum_name with
-                | None ->
-                    Error
-                      {
-                        kind = ConstructorError (Printf.sprintf "Unknown enum: %s" enum_name);
-                        pos = Some expr.pos;
-                      }
-                | Some enum_def -> (
-                    (* Create fresh type variables for each type parameter *)
-                    let fresh_vars = List.map (fun _ -> fresh_type_var ()) enum_def.type_params in
-                    let param_subst = List.combine enum_def.type_params fresh_vars in
+let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expression) :
+    (substitution * mono_type) infer_result =
+  let result =
+    match expr.expr with
+    (* Literals have known types *)
+    | AST.Integer _ -> Ok (empty_substitution, TInt)
+    | AST.Float _ -> Ok (empty_substitution, TFloat)
+    | AST.Boolean _ -> Ok (empty_substitution, TBool)
+    | AST.String _ -> Ok (empty_substitution, TString)
+    (* Variable lookup - instantiate its poly_type *)
+    | AST.Identifier name -> (
+        match TypeEnv.find_opt name env with
+        | None -> Error (error_at (UnboundVariable name) expr)
+        | Some poly_type ->
+            let instantiated = instantiate poly_type in
+            Ok (empty_substitution, instantiated))
+    (* Prefix operators *)
+    | AST.Prefix (op, operand) -> infer_prefix type_map env op operand
+    (* Infix operators *)
+    | AST.Infix (left, op, right) -> infer_infix type_map env left op right
+    (* Type checking operator: x is int *)
+    | AST.TypeCheck (expr, type_ann) -> (
+        (* Infer type of expression *)
+        match infer_expression type_map env expr with
+        | Error e -> Error e
+        | Ok (subst1, _expr_type) ->
+            (* Convert type annotation to mono_type (for validation, not currently used) *)
+            let _check_type = Annotation.type_expr_to_mono_type type_ann in
+            (* Result is always bool *)
+            Ok (subst1, TBool))
+    (* If expressions *)
+    | AST.If (condition, consequence, alternative) -> infer_if type_map env condition consequence alternative
+    (* Function literals *)
+    | AST.Function f ->
+        (* Phase 2: Use parameter and return type annotations to guide inference *)
+        infer_function_with_annotations type_map env f.params f.return_type f.body
+    (* Function calls *)
+    | AST.Call (func, args) -> infer_call type_map env func args
+    (* Arrays *)
+    | AST.Array elements -> infer_array type_map env elements
+    (* Hashes *)
+    | AST.Hash pairs -> infer_hash type_map env pairs
+    (* Index expressions *)
+    | AST.Index (container, index) -> infer_index type_map env container index
+    (* Phase 4.2: Enums and pattern matching - to be implemented *)
+    | AST.EnumConstructor (enum_name, variant_name, args) -> (
+        (* Look up the variant in the registry *)
+        match Enum_registry.lookup_variant enum_name variant_name with
+        | None ->
+            Error
+              {
+                kind = ConstructorError (Printf.sprintf "Unknown enum constructor: %s.%s" enum_name variant_name);
+                pos = Some expr.pos;
+              }
+        | Some variant -> (
+            (* Infer types of constructor arguments *)
+            match infer_args type_map env empty_substitution args with
+            | Error e -> Error e
+            | Ok (subst, arg_types) -> (
+                if
+                  (* Check argument count matches *)
+                  List.length args <> List.length variant.fields
+                then
+                  Error
+                    {
+                      kind =
+                        ConstructorError
+                          (Printf.sprintf "%s.%s expects %d arguments, got %d" enum_name variant_name
+                             (List.length variant.fields) (List.length args));
+                      pos = Some expr.pos;
+                    }
+                else
+                  (* Get the enum definition to know type parameters *)
+                  match Enum_registry.lookup enum_name with
+                  | None ->
+                      Error
+                        {
+                          kind = ConstructorError (Printf.sprintf "Unknown enum: %s" enum_name);
+                          pos = Some expr.pos;
+                        }
+                  | Some enum_def -> (
+                      (* Create fresh type variables for each type parameter *)
+                      let fresh_vars = List.map (fun _ -> fresh_type_var ()) enum_def.type_params in
+                      let param_subst = List.combine enum_def.type_params fresh_vars in
 
-                    (* Substitute type parameters in variant field types *)
-                    let expected_types = List.map (apply_substitution param_subst) variant.fields in
+                      (* Substitute type parameters in variant field types *)
+                      let expected_types = List.map (apply_substitution param_subst) variant.fields in
 
-                    (* Unify argument types with expected field types *)
-                    let arg_types' = List.map (apply_substitution subst) arg_types in
-                    let rec unify_all subst_acc types1 types2 =
-                      match (types1, types2) with
-                      | [], [] -> Ok subst_acc
-                      | t1 :: rest1, t2 :: rest2 -> (
-                          let t1' = apply_substitution subst_acc t1 in
-                          let t2' = apply_substitution subst_acc t2 in
-                          match unify t1' t2' with
-                          | Error e -> Error (error_at (UnificationError e) expr)
-                          | Ok subst2 ->
-                              let new_subst = compose_substitution subst_acc subst2 in
-                              unify_all new_subst rest1 rest2)
-                      | _ -> Error (error_at (ConstructorError "Argument count mismatch") expr)
-                    in
-                    match unify_all empty_substitution arg_types' expected_types with
-                    | Error e -> Error e
-                    | Ok subst2 ->
-                        let final_subst = compose_substitution subst subst2 in
+                      (* Unify argument types with expected field types *)
+                      let arg_types' = List.map (apply_substitution subst) arg_types in
+                      let rec unify_all subst_acc types1 types2 =
+                        match (types1, types2) with
+                        | [], [] -> Ok subst_acc
+                        | t1 :: rest1, t2 :: rest2 -> (
+                            let t1' = apply_substitution subst_acc t1 in
+                            let t2' = apply_substitution subst_acc t2 in
+                            match unify t1' t2' with
+                            | Error e -> Error (error_at (UnificationError e) expr)
+                            | Ok subst2 ->
+                                let new_subst = compose_substitution subst_acc subst2 in
+                                unify_all new_subst rest1 rest2)
+                        | _ -> Error (error_at (ConstructorError "Argument count mismatch") expr)
+                      in
+                      match unify_all empty_substitution arg_types' expected_types with
+                      | Error e -> Error e
+                      | Ok subst2 ->
+                          let final_subst = compose_substitution subst subst2 in
 
-                        (* Build the result enum type with substituted type arguments *)
-                        let result_type_args = List.map (apply_substitution final_subst) fresh_vars in
-                        let result_type = TEnum (enum_name, result_type_args) in
+                          (* Build the result enum type with substituted type arguments *)
+                          let result_type_args = List.map (apply_substitution final_subst) fresh_vars in
+                          let result_type = TEnum (enum_name, result_type_args) in
 
-                        Ok (final_subst, result_type)))))
-  | AST.Match (scrutinee, arms) -> (
-      (* Infer scrutinee type *)
-      match infer_expression env scrutinee with
-      | Error e -> Error e
-      | Ok (subst, scrutinee_type) -> (
-          let env' = apply_substitution_env subst env in
-          (* Check exhaustiveness *)
-          match Exhaustiveness.check_exhaustive scrutinee_type arms with
-          | Error msg -> Error (error_at (MatchError msg) expr)
-          | Ok () ->
-              (* Check each arm and collect body types *)
-              infer_match_arms env' scrutinee_type arms subst expr))
+                          Ok (final_subst, result_type)))))
+    | AST.Match (scrutinee, arms) -> (
+        (* Infer scrutinee type *)
+        match infer_expression type_map env scrutinee with
+        | Error e -> Error e
+        | Ok (subst, scrutinee_type) -> (
+            let env' = apply_substitution_env subst env in
+            (* Check exhaustiveness *)
+            match Exhaustiveness.check_exhaustive scrutinee_type arms with
+            | Error msg -> Error (error_at (MatchError msg) expr)
+            | Ok () ->
+                (* Check each arm and collect body types *)
+                infer_match_arms type_map env' scrutinee_type arms subst expr))
+  in
+  (* Record the type in the type map before returning *)
+  match result with
+  | Ok (subst, t) ->
+      record_type type_map expr t;
+      Ok (subst, t)
+  | Error e -> Error e
 (* ============================================================
    Prefix Operators: !, -
    ============================================================ *)
 
-and infer_prefix env op operand =
-  match infer_expression env operand with
+and infer_prefix type_map env op operand =
+  match infer_expression type_map env operand with
   | Error e -> Error e
   | Ok (subst, operand_type) -> (
       match op with
@@ -335,12 +359,12 @@ and infer_prefix env op operand =
    Infix Operators
    ============================================================ *)
 
-and infer_infix env left op right =
-  match infer_expression env left with
+and infer_infix type_map env left op right =
+  match infer_expression type_map env left with
   | Error e -> Error e
   | Ok (subst1, left_type) -> (
       let env' = apply_substitution_env subst1 env in
-      match infer_expression env' right with
+      match infer_expression type_map env' right with
       | Error e -> Error e
       | Ok (subst2, right_type) -> (
           let subst = compose_substitution subst1 subst2 in
@@ -429,9 +453,9 @@ and narrow_to_complement (env : type_env) (var_name : string) (narrow_type : mon
           env)
   | _ -> env
 
-and infer_if env condition consequence alternative =
+and infer_if type_map env condition consequence alternative =
   (* Infer condition type *)
-  match infer_expression env condition with
+  match infer_expression type_map env condition with
   | Error e -> Error e
   | Ok (subst1, cond_type) -> (
       (* Condition must be Bool *)
@@ -452,7 +476,7 @@ and infer_if env condition consequence alternative =
           in
 
           (* Infer consequence type with narrowed environment *)
-          match infer_statement env_cons consequence with
+          match infer_statement type_map env_cons consequence with
           | Error e -> Error e
           | Ok (subst3, cons_type) -> (
               let subst' = compose_substitution subst subst3 in
@@ -468,7 +492,7 @@ and infer_if env condition consequence alternative =
                     | Some (var_name, narrow_type) -> narrow_to_complement env'' var_name narrow_type
                     | None -> env''
                   in
-                  match infer_statement env_alt alt with
+                  match infer_statement type_map env_alt alt with
                   | Error e -> Error e
                   | Ok (subst4, alt_type) -> (
                       let subst'' = compose_substitution subst' subst4 in
@@ -497,7 +521,7 @@ and infer_if env condition consequence alternative =
    Functions
    ============================================================ *)
 
-and infer_function env params body =
+and infer_function type_map env params body =
   (* Create fresh type variables for each parameter *)
   let param_names =
     List.map
@@ -513,7 +537,7 @@ and infer_function env params body =
     List.fold_left2 (fun acc name mono -> TypeEnv.add name (mono_to_poly mono) acc) env param_names param_types
   in
   (* Infer body type *)
-  match infer_statement env' body with
+  match infer_statement type_map env' body with
   | Error e -> Error e
   | Ok (subst, body_type) ->
       (* Apply substitution to parameter types *)
@@ -523,7 +547,7 @@ and infer_function env params body =
       Ok (subst, func_type)
 
 (* Infer function with parameter type annotations *)
-and infer_function_with_annotations env params return_annot body =
+and infer_function_with_annotations type_map env params return_annot body =
   (* Extract parameter names and type annotations *)
   let param_info = params in
   (* For each parameter, either use its annotation or create a fresh type variable *)
@@ -549,7 +573,7 @@ and infer_function_with_annotations env params return_annot body =
     | Some type_expr -> ( try Some (Annotation.type_expr_to_mono_type type_expr) with Failure _ -> None)
   in
   (* Infer body type *)
-  match infer_statement env' body with
+  match infer_statement type_map env' body with
   | Error e -> Error e
   | Ok (subst, body_type) -> (
       let body_type' = apply_substitution subst body_type in
@@ -562,7 +586,7 @@ and infer_function_with_annotations env params return_annot body =
           Ok (subst, func_type)
       | Some expected_ret_type -> (
           (* First, validate all explicit return statements match expected type *)
-          match validate_return_statements env' expected_ret_type body with
+          match validate_return_statements type_map env' expected_ret_type body with
           | Error e -> Error e
           | Ok () -> (
               (* Then check that inferred return type matches annotation *)
@@ -582,13 +606,13 @@ and infer_function_with_annotations env params return_annot body =
    Function Calls
    ============================================================ *)
 
-and infer_call env func args =
+and infer_call type_map env func args =
   (* Infer function type *)
-  match infer_expression env func with
+  match infer_expression type_map env func with
   | Error e -> Error e
   | Ok (subst1, func_type) -> (
       (* Infer argument types *)
-      match infer_args (apply_substitution_env subst1 env) subst1 args with
+      match infer_args type_map (apply_substitution_env subst1 env) subst1 args with
       | Error e -> Error e
       | Ok (subst2, arg_types) -> (
           let func_type' = apply_substitution subst2 func_type in
@@ -604,16 +628,16 @@ and infer_call env func args =
               Ok (final_subst, final_result)))
 
 (* Helper to infer types of a list of arguments *)
-and infer_args env subst args =
+and infer_args type_map env subst args =
   match args with
   | [] -> Ok (subst, [])
   | arg :: rest -> (
-      match infer_expression env arg with
+      match infer_expression type_map env arg with
       | Error e -> Error e
       | Ok (subst1, arg_type) -> (
           let subst' = compose_substitution subst subst1 in
           let env' = apply_substitution_env subst1 env in
-          match infer_args env' subst' rest with
+          match infer_args type_map env' subst' rest with
           | Error e -> Error e
           | Ok (subst'', rest_types) ->
               let arg_type' = apply_substitution subst'' arg_type in
@@ -623,7 +647,7 @@ and infer_args env subst args =
    Arrays
    ============================================================ *)
 
-and infer_array env elements =
+and infer_array type_map env elements =
   match elements with
   | [] ->
       (* Empty array - create fresh type variable for element type *)
@@ -631,17 +655,17 @@ and infer_array env elements =
       Ok (empty_substitution, TArray elem_type)
   | first :: rest -> (
       (* Infer first element type *)
-      match infer_expression env first with
+      match infer_expression type_map env first with
       | Error e -> Error e
       | Ok (subst1, first_type) ->
           (* All other elements must have same type *)
-          infer_array_elements (apply_substitution_env subst1 env) subst1 first_type rest)
+          infer_array_elements type_map (apply_substitution_env subst1 env) subst1 first_type rest)
 
-and infer_array_elements env subst elem_type elements =
+and infer_array_elements type_map env subst elem_type elements =
   match elements with
   | [] -> Ok (subst, TArray elem_type)
   | elem :: rest -> (
-      match infer_expression env elem with
+      match infer_expression type_map env elem with
       | Error e -> Error e
       | Ok (subst1, this_type) -> (
           let subst' = compose_substitution subst subst1 in
@@ -651,13 +675,13 @@ and infer_array_elements env subst elem_type elements =
           | Ok subst2 ->
               let subst'' = compose_substitution subst' subst2 in
               let elem_type'' = apply_substitution subst2 elem_type' in
-              infer_array_elements (apply_substitution_env subst2 env) subst'' elem_type'' rest))
+              infer_array_elements type_map (apply_substitution_env subst2 env) subst'' elem_type'' rest))
 
 (* ============================================================
    Hashes
    ============================================================ *)
 
-and infer_hash env pairs =
+and infer_hash type_map env pairs =
   match pairs with
   | [] ->
       (* Empty hash - create fresh type variables *)
@@ -665,22 +689,22 @@ and infer_hash env pairs =
       let val_type = fresh_type_var () in
       Ok (empty_substitution, THash (key_type, val_type))
   | (first_key, first_val) :: rest -> (
-      match infer_expression env first_key with
+      match infer_expression type_map env first_key with
       | Error e -> Error e
       | Ok (subst1, key_type) -> (
           let env' = apply_substitution_env subst1 env in
-          match infer_expression env' first_val with
+          match infer_expression type_map env' first_val with
           | Error e -> Error e
           | Ok (subst2, val_type) ->
               let subst = compose_substitution subst1 subst2 in
               let key_type' = apply_substitution subst2 key_type in
-              infer_hash_pairs (apply_substitution_env subst2 env') subst key_type' val_type rest))
+              infer_hash_pairs type_map (apply_substitution_env subst2 env') subst key_type' val_type rest))
 
-and infer_hash_pairs env subst key_type val_type pairs =
+and infer_hash_pairs type_map env subst key_type val_type pairs =
   match pairs with
   | [] -> Ok (subst, THash (key_type, val_type))
   | (k, v) :: rest -> (
-      match infer_expression env k with
+      match infer_expression type_map env k with
       | Error e -> Error e
       | Ok (subst1, this_key_type) -> (
           let subst' = compose_substitution subst subst1 in
@@ -690,7 +714,7 @@ and infer_hash_pairs env subst key_type val_type pairs =
           | Ok subst2 -> (
               let subst'' = compose_substitution subst' subst2 in
               let env' = apply_substitution_env subst2 env in
-              match infer_expression env' v with
+              match infer_expression type_map env' v with
               | Error e -> Error e
               | Ok (subst3, this_val_type) -> (
                   let subst''' = compose_substitution subst'' subst3 in
@@ -701,19 +725,19 @@ and infer_hash_pairs env subst key_type val_type pairs =
                       let final_subst = compose_substitution subst''' subst4 in
                       let key_type'' = apply_substitution (compose_substitution subst3 subst4) key_type' in
                       let val_type'' = apply_substitution subst4 val_type' in
-                      infer_hash_pairs (apply_substitution_env subst4 env') final_subst key_type'' val_type'' rest
-                  ))))
+                      infer_hash_pairs type_map (apply_substitution_env subst4 env') final_subst key_type''
+                        val_type'' rest))))
 
 (* ============================================================
    Index Expressions
    ============================================================ *)
 
-and infer_index env container index_expr =
-  match infer_expression env container with
+and infer_index type_map env container index_expr =
+  match infer_expression type_map env container with
   | Error e -> Error e
   | Ok (subst1, container_type) -> (
       let env' = apply_substitution_env subst1 env in
-      match infer_expression env' index_expr with
+      match infer_expression type_map env' index_expr with
       | Error e -> Error e
       | Ok (subst2, index_type) -> (
           let subst = compose_substitution subst1 subst2 in
@@ -781,12 +805,12 @@ and infer_index env container index_expr =
    Statements
    ============================================================ *)
 
-and infer_statement env stmt =
+and infer_statement type_map env stmt =
   match stmt.stmt with
-  | AST.ExpressionStmt expr -> infer_expression env expr
-  | AST.Return expr -> infer_expression env expr
-  | AST.Block stmts -> infer_block env stmts
-  | AST.Let let_binding -> infer_let env let_binding.name let_binding.value let_binding.type_annotation
+  | AST.ExpressionStmt expr -> infer_expression type_map env expr
+  | AST.Return expr -> infer_expression type_map env expr
+  | AST.Block stmts -> infer_block type_map env stmts
+  | AST.Let let_binding -> infer_let type_map env let_binding.name let_binding.value let_binding.type_annotation
   | AST.EnumDef { name; type_params; variants } ->
       (* Register the enum in the registry *)
       (* Convert type expressions to mono_types, treating type_params as TVar *)
@@ -842,11 +866,12 @@ and infer_statement env stmt =
       Ok (empty_substitution, TNull)
 
 (* Simple validation: check that all explicit return statements match expected type *)
-and validate_return_statements (env : type_env) (expected_type : mono_type) (stmt : AST.statement) :
+and validate_return_statements
+    (type_map : type_map) (env : type_env) (expected_type : mono_type) (stmt : AST.statement) :
     (unit, infer_error) result =
   match stmt.stmt with
   | AST.Return expr -> (
-      match infer_expression env expr with
+      match infer_expression type_map env expr with
       | Error e -> Error e
       | Ok (_subst, inferred_type) -> (
           match Unify.unify inferred_type expected_type with
@@ -857,7 +882,7 @@ and validate_return_statements (env : type_env) (expected_type : mono_type) (stm
         match stmts with
         | [] -> Ok ()
         | s :: rest -> (
-            match validate_return_statements env expected_type s with
+            match validate_return_statements type_map env expected_type s with
             | Error e -> Error e
             | Ok () -> check_all rest)
       in
@@ -865,12 +890,12 @@ and validate_return_statements (env : type_env) (expected_type : mono_type) (stm
   | AST.ExpressionStmt expr -> (
       match expr.expr with
       | AST.If (_cond, cons, alt) -> (
-          match validate_return_statements env expected_type cons with
+          match validate_return_statements type_map env expected_type cons with
           | Error e -> Error e
           | Ok () -> (
               match alt with
               | None -> Ok ()
-              | Some alt_stmt -> validate_return_statements env expected_type alt_stmt))
+              | Some alt_stmt -> validate_return_statements type_map env expected_type alt_stmt))
       | _ -> Ok ())
   | AST.Let _ -> Ok ()
   | AST.EnumDef _ -> Ok ()
@@ -880,7 +905,7 @@ and validate_return_statements (env : type_env) (expected_type : mono_type) (stm
    ============================================================ *)
 
 (* Check all arms of a match expression and collect their body types *)
-and infer_match_arms env scrutinee_type arms subst match_expr =
+and infer_match_arms type_map env scrutinee_type arms subst match_expr =
   let rec loop acc_subst arm_types = function
     | [] -> (
         (* All arms processed, unify all arm body types *)
@@ -906,7 +931,7 @@ and infer_match_arms env scrutinee_type arms subst match_expr =
                 let result_type = apply_substitution unify_subst first in
                 Ok (final_subst, result_type)))
     | arm :: rest_arms -> (
-        match infer_match_arm env scrutinee_type arm with
+        match infer_match_arm type_map env scrutinee_type arm with
         | Error e -> Error e
         | Ok (arm_subst, body_type) ->
             let new_subst = compose_substitution acc_subst arm_subst in
@@ -915,7 +940,7 @@ and infer_match_arms env scrutinee_type arms subst match_expr =
   loop subst [] arms
 
 (* Infer the type of a single match arm *)
-and infer_match_arm env scrutinee_type arm =
+and infer_match_arm type_map env scrutinee_type arm =
   (* Check patterns and get bindings *)
   match check_patterns arm.AST.patterns scrutinee_type with
   | Error e -> Error e
@@ -923,7 +948,7 @@ and infer_match_arm env scrutinee_type arm =
       (* Extend environment with pattern bindings *)
       let env' = List.fold_left (fun e (name, ty) -> TypeEnv.add name (mono_to_poly ty) e) env bindings in
       (* Infer body type *)
-      infer_expression env' arm.AST.body
+      infer_expression type_map env' arm.AST.body
 
 (* Check a list of patterns (for | syntax) against the scrutinee type *)
 and check_patterns patterns scrutinee_type =
@@ -1012,7 +1037,7 @@ and check_pattern pattern scrutinee_type =
     We treat ALL let bindings this way for simplicity - it's harmless
     for non-recursive bindings and enables recursion for functions.
 *)
-and infer_let env name expr type_annotation =
+and infer_let type_map env name expr type_annotation =
   (* Check if the expression is a function with a return type annotation *)
   (* If so, create a partially constrained type for recursion *)
   let self_type =
@@ -1043,7 +1068,7 @@ and infer_let env name expr type_annotation =
   (* Add to environment as monomorphic (not generalized yet) *)
   let env_with_self = TypeEnv.add name (mono_to_poly self_type) env in
   (* Infer expression type with self in scope *)
-  match infer_expression env_with_self expr with
+  match infer_expression type_map env_with_self expr with
   | Error e -> Error e
   | Ok (subst1, expr_type) -> (
       (* Unify the inferred type with our placeholder *)
@@ -1059,12 +1084,12 @@ and infer_let env name expr type_annotation =
           let _ = poly_type in
           Ok (final_subst, final_type))
 
-and infer_block env stmts =
+and infer_block type_map env stmts =
   match stmts with
   | [] -> Ok (empty_substitution, TNull)
-  | [ stmt ] -> infer_statement env stmt
+  | [ stmt ] -> infer_statement type_map env stmt
   | stmt :: rest -> (
-      match infer_statement env stmt with
+      match infer_statement type_map env stmt with
       | Error e -> Error e
       | Ok (subst1, stmt_type) -> (
           (* For let statements, add the binding to the environment *)
@@ -1076,7 +1101,7 @@ and infer_block env stmts =
                 TypeEnv.add let_binding.name poly env_subst
             | _ -> apply_substitution_env subst1 env
           in
-          match infer_block env' rest with
+          match infer_block type_map env' rest with
           | Error e -> Error e
           | Ok (subst2, result_type) -> Ok (compose_substitution subst1 subst2, result_type)))
 
@@ -1088,9 +1113,9 @@ and infer_block env stmts =
    For Phase 2, this is simple: just infer the type and verify it matches.
    In Phase 2.5+, this could do more sophisticated bidirectional flow.
 *)
-let check_expression (env : type_env) (expr : AST.expression) (expected : mono_type) :
+let check_expression (type_map : type_map) (env : type_env) (expr : AST.expression) (expected : mono_type) :
     (substitution * mono_type) infer_result =
-  match infer_expression env expr with
+  match infer_expression type_map env expr with
   | Error e -> Error e
   | Ok (subst, inferred) ->
       (* For Phase 2, we do simple equality checking after applying substitution *)
@@ -1106,13 +1131,14 @@ let check_expression (env : type_env) (expr : AST.expression) (expected : mono_t
    Program Inference
    ============================================================ *)
 
-let infer_program ?(env = empty_env) (program : AST.program) : (type_env * mono_type) infer_result =
+let infer_program ?(env = empty_env) (program : AST.program) : (type_env * type_map * mono_type) infer_result =
   reset_fresh_counter ();
+  let type_map = create_type_map () in
   let rec go env subst stmts =
     match stmts with
     | [] -> Ok (env, TNull)
     | [ stmt ] -> (
-        match infer_statement env stmt with
+        match infer_statement type_map env stmt with
         | Error e -> Error e
         | Ok (subst', result_type) ->
             let env' = apply_substitution_env (compose_substitution subst subst') env in
@@ -1127,7 +1153,7 @@ let infer_program ?(env = empty_env) (program : AST.program) : (type_env * mono_
             in
             Ok (env'', result_type'))
     | stmt :: rest -> (
-        match infer_statement env stmt with
+        match infer_statement type_map env stmt with
         | Error e -> Error e
         | Ok (subst', stmt_type) ->
             let subst'' = compose_substitution subst subst' in
@@ -1142,7 +1168,9 @@ let infer_program ?(env = empty_env) (program : AST.program) : (type_env * mono_
             in
             go env'' subst'' rest)
   in
-  go env empty_substitution program
+  match go env empty_substitution program with
+  | Error e -> Error e
+  | Ok (env', result_type) -> Ok (env', type_map, result_type)
 
 module Test = struct
   (* Helper to parse and infer *)
@@ -1161,7 +1189,7 @@ module Test = struct
     | Error e ->
         Printf.printf "Error: %s\n" (error_to_string e);
         false
-    | Ok (_, t) ->
+    | Ok (_, _type_map, t) ->
         if t = expected_type then
           true
         else (
@@ -1192,7 +1220,7 @@ module Test = struct
     (* fn(x) { x } should be t0 -> t0 (polymorphic) *)
     match infer_string "fn(x) { x }" with
     | Error _ -> false
-    | Ok (_, TFun (TVar a, TVar b)) -> a = b (* same type variable *)
+    | Ok (_, _type_map, TFun (TVar a, TVar b)) -> a = b (* same type variable *)
     | Ok _ -> false
 
   let%test "infer two-arg function" =
@@ -1200,7 +1228,7 @@ module Test = struct
     (* Without type classes, we can't constrain to just numeric types *)
     match infer_string "fn(x, y) { x + y }" with
     | Error _ -> false
-    | Ok (_, TFun (TVar a, TFun (TVar b, TVar c))) ->
+    | Ok (_, _type_map, TFun (TVar a, TFun (TVar b, TVar c))) ->
         (* All three type vars should be the same *)
         a = b && b = c
     | Ok _ -> false
@@ -1317,7 +1345,7 @@ option.some(42)" in
 option.none" in
     match infer_string code with
     | Error _ -> false
-    | Ok (_, t) -> (
+    | Ok (_, _type_map, t) -> (
         match t with
         | TEnum ("option", [ TVar _ ]) -> true
         | _ ->
@@ -1329,7 +1357,7 @@ option.none" in
 result.success(42)" in
     match infer_string code with
     | Error _ -> false
-    | Ok (_, t) -> (
+    | Ok (_, _type_map, t) -> (
         match t with
         | TEnum ("result", [ TInt; TVar _ ]) -> true
         | _ ->
@@ -1341,7 +1369,7 @@ result.success(42)" in
 result.failure(\"error\")" in
     match infer_string code with
     | Error _ -> false
-    | Ok (_, t) -> (
+    | Ok (_, _type_map, t) -> (
         match t with
         | TEnum ("result", [ TVar _; TString ]) -> true
         | _ ->
