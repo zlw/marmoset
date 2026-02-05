@@ -121,3 +121,28 @@ handler WaitGroupHandler {
 ```
 this way, we can have a consistent approach to concurrency in Marmoset ML, while still leveraging Go's powerful concurrency model under the hood.
 Overall, by leveraging algebraic effects and handlers, we can provide a flexible and composable approachi
+
+im not sure if this is the best approach. im still struggling to se a real world example, with db call, http requests, etc.
+example:
+```marmoset
+effect Http {
+    get(url: string): HttpResponse
+    post(url: string, body: string): HttpResponse
+}
+handler HttpHandler {
+    handle get(url) {
+        return http.get(url)
+    }
+    handle post(url, body) {
+        return http.post(url, body)
+    }
+}
+task = async {
+    match HttpHandler.get("https://api.example.com/data") {
+        case HttpResponse(200, body) => return body
+        case error => error
+    }
+}
+result = await(task)
+```
+to concurrency in Marmoset ML, while still leveraging Go's powerful concurrency model under the hood

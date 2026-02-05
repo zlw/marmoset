@@ -55,6 +55,82 @@ let implements_trait (trait_name : string) (for_type : mono_type) : bool =
   | Some _ -> true
   | None -> false
 
+(* Check if a trait can be auto-derived *)
+let is_derivable (trait_name : string) : bool =
+  (* For now, only specific traits are derivable *)
+  match trait_name with
+  | "eq" | "show" | "debug" -> true
+  | _ -> false
+
+(* Validate that a type can derive a trait *)
+let can_derive (trait_name : string) (for_type : mono_type) : (unit, string) result =
+  (* Check if trait exists *)
+  match lookup_trait trait_name with
+  | None -> Error (Printf.sprintf "Cannot derive undefined trait: %s" trait_name)
+  | Some _ -> (
+      if
+        (* Check if trait is derivable *)
+        not (is_derivable trait_name)
+      then
+        Error (Printf.sprintf "Trait '%s' cannot be auto-derived" trait_name)
+      else
+        (* Check if type is a valid target for derivation *)
+        match for_type with
+        | TInt | TBool | TString | TNull -> Ok () (* Primitives can always derive *)
+        | TEnum _ -> Ok () (* Enums can derive if variants are derivable - we'll check this later *)
+        | TArray _ | THash _ ->
+            (* Arrays/hashes can derive eq/show if element types can derive *)
+            Ok () (* TODO: Check element types recursively *)
+        | TFun _ -> Error "Cannot derive traits for function types"
+        | TVar _ -> Ok () (* Type vars can derive - will be checked at instantiation *)
+        | TUnion _ -> Ok () (* Unions can derive if all members can derive *)
+        | _ -> Ok ())
+
+(* Auto-generate an impl for a derived trait *)
+let generate_derived_impl (trait_name : string) (for_type : mono_type) : impl_def option =
+  (* Look up the trait definition *)
+  match lookup_trait trait_name with
+  | None -> None
+  | Some trait_def ->
+      (* Generate method implementations based on trait and type *)
+      (* For now, we'll just create stub implementations *)
+      (* TODO: Generate actual implementations based on type structure *)
+      let generated_methods =
+        List.map
+          (fun (m : method_sig) ->
+            (* Substitute type parameter with concrete type *)
+            let substitute_type (t : mono_type) : mono_type =
+              match trait_def.trait_type_param with
+              | None -> t
+              | Some type_param -> apply_substitution [ (type_param, for_type) ] t
+            in
+            let params = List.map (fun (name, t) -> (name, substitute_type t)) m.method_params in
+            let return_type = substitute_type m.method_return_type in
+            { method_name = m.method_name; method_params = params; method_return_type = return_type })
+          trait_def.trait_methods
+      in
+      Some
+        {
+          impl_trait_name = trait_name;
+          impl_type_params = [];
+          impl_for_type = for_type;
+          impl_methods = generated_methods;
+        }
+
+(* Validate and register a derived implementation *)
+let derive_impl (trait_name : string) (for_type : mono_type) : (unit, string) result =
+  (* Validate that trait can be derived for this type *)
+  match can_derive trait_name for_type with
+  | Error msg -> Error msg
+  | Ok () -> (
+      (* Generate the impl *)
+      match generate_derived_impl trait_name for_type with
+      | None -> Error (Printf.sprintf "Failed to generate impl for trait '%s'" trait_name)
+      | Some impl_def ->
+          (* Register it *)
+          register_impl impl_def;
+          Ok ())
+
 (* Validate that a trait definition is well-formed *)
 let validate_trait_def (def : trait_def) : (unit, string) result =
   (* Check for duplicate method names *)
@@ -483,3 +559,171 @@ let%test "validate_impl - multiple methods" =
   match validate_impl good_impl with
   | Ok () -> true
   | Error _ -> false
+
+(* Derive validation tests *)
+
+let%test "is_derivable - eq is derivable" =
+  is_derivable "eq"
+
+let%test "is_derivable - show is derivable" =
+  is_derivable "show"
+
+let%test "is_derivable - custom trait not derivable" =
+  not (is_derivable "my_custom_trait")
+
+let%test "can_derive - undefined trait" =
+  clear ();
+  match can_derive "undefined" TInt with
+  | Ok () -> false
+  | Error msg -> String.length msg > 0
+
+let%test "can_derive - non-derivable trait" =
+  clear ();
+  let custom_trait =
+    {
+      trait_name = "custom";
+      trait_type_param = Some "a";
+      trait_supertraits = [];
+      trait_methods = [ { method_name = "custom"; method_params = [ ("x", TVar "a") ]; method_return_type = TInt } ];
+    }
+  in
+  register_trait custom_trait;
+  match can_derive "custom" TInt with
+  | Ok () -> false
+  | Error msg -> String.sub msg 0 (min 6 (String.length msg)) = "Trait "
+
+let%test "can_derive - primitive types" =
+  clear ();
+  let eq_trait =
+    {
+      trait_name = "eq";
+      trait_type_param = Some "a";
+      trait_supertraits = [];
+      trait_methods =
+        [ { method_name = "eq"; method_params = [ ("x", TVar "a"); ("y", TVar "a") ]; method_return_type = TBool } ];
+    }
+  in
+  register_trait eq_trait;
+  (* All primitives can derive eq *)
+  match can_derive "eq" TInt with
+  | Ok () -> (
+      match can_derive "eq" TBool with
+      | Ok () -> (
+          match can_derive "eq" TString with
+          | Ok () -> true
+          | Error _ -> false)
+      | Error _ -> false)
+  | Error _ -> false
+
+let%test "can_derive - function types fail" =
+  clear ();
+  let eq_trait =
+    {
+      trait_name = "eq";
+      trait_type_param = Some "a";
+      trait_supertraits = [];
+      trait_methods =
+        [ { method_name = "eq"; method_params = [ ("x", TVar "a"); ("y", TVar "a") ]; method_return_type = TBool } ];
+    }
+  in
+  register_trait eq_trait;
+  match can_derive "eq" (TFun (TInt, TInt)) with
+  | Ok () -> false
+  | Error msg -> String.length msg > 0
+
+let%test "generate_derived_impl - eq for int" =
+  clear ();
+  let eq_trait =
+    {
+      trait_name = "eq";
+      trait_type_param = Some "a";
+      trait_supertraits = [];
+      trait_methods =
+        [ { method_name = "eq"; method_params = [ ("x", TVar "a"); ("y", TVar "a") ]; method_return_type = TBool } ];
+    }
+  in
+  register_trait eq_trait;
+  match generate_derived_impl "eq" TInt with
+  | None -> false
+  | Some impl_def ->
+      impl_def.impl_trait_name = "eq"
+      && impl_def.impl_for_type = TInt
+      && List.length impl_def.impl_methods = 1
+
+let%test "generate_derived_impl - show for string" =
+  clear ();
+  let show_trait =
+    {
+      trait_name = "show";
+      trait_type_param = Some "a";
+      trait_supertraits = [];
+      trait_methods =
+        [ { method_name = "show"; method_params = [ ("x", TVar "a") ]; method_return_type = TString } ];
+    }
+  in
+  register_trait show_trait;
+  match generate_derived_impl "show" TString with
+  | None -> false
+  | Some impl_def ->
+      impl_def.impl_trait_name = "show"
+      && impl_def.impl_for_type = TString
+      && List.length impl_def.impl_methods = 1
+      && (List.hd impl_def.impl_methods).method_return_type = TString
+
+let%test "derive_impl - registers impl" =
+  clear ();
+  let eq_trait =
+    {
+      trait_name = "eq";
+      trait_type_param = Some "a";
+      trait_supertraits = [];
+      trait_methods =
+        [ { method_name = "eq"; method_params = [ ("x", TVar "a"); ("y", TVar "a") ]; method_return_type = TBool } ];
+    }
+  in
+  register_trait eq_trait;
+  match derive_impl "eq" TInt with
+  | Error _ -> false
+  | Ok () -> (
+      (* Check that impl was registered *)
+      match lookup_impl "eq" TInt with
+      | None -> false
+      | Some _ -> implements_trait "eq" TInt)
+
+let%test "derive_impl - fails for non-derivable" =
+  clear ();
+  let custom_trait =
+    {
+      trait_name = "custom";
+      trait_type_param = None;
+      trait_supertraits = [];
+      trait_methods = [ { method_name = "foo"; method_params = []; method_return_type = TInt } ];
+    }
+  in
+  register_trait custom_trait;
+  match derive_impl "custom" TInt with
+  | Ok () -> false
+  | Error _ -> true
+
+let%test "derive_impl - type parameter substitution" =
+  clear ();
+  let show_trait =
+    {
+      trait_name = "show";
+      trait_type_param = Some "a";
+      trait_supertraits = [];
+      trait_methods =
+        [ { method_name = "show"; method_params = [ ("x", TVar "a") ]; method_return_type = TString } ];
+    }
+  in
+  register_trait show_trait;
+  match derive_impl "show" TBool with
+  | Error _ -> false
+  | Ok () -> (
+      match lookup_impl "show" TBool with
+      | None -> false
+      | Some impl_def ->
+          (* Check that TVar "a" was substituted with TBool *)
+          let method_impl = List.hd impl_def.impl_methods in
+          let (_param_name, param_type) = List.hd method_impl.method_params in
+          param_type = TBool && method_impl.method_return_type = TString)

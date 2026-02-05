@@ -1035,19 +1035,22 @@ and infer_statement type_map env stmt =
       | Ok () ->
           Trait_registry.register_impl impl_def;
           Ok (empty_substitution, TNull))
-  | AST.DeriveDef { derive_traits; derive_for_type = _ } ->
-      (* TODO: Phase 4.3 - Auto-generate implementations for derived traits *)
-      (* For now, just validate that the traits exist *)
-      let missing_traits =
-        List.filter
-          (fun (t : AST.derive_trait) -> Trait_registry.lookup_trait t.derive_trait_name = None)
+  | AST.DeriveDef { derive_traits; derive_for_type } ->
+      (* Auto-generate implementations for derived traits *)
+      let for_type_mono = Annotation.type_expr_to_mono_type derive_for_type in
+
+      (* Process each trait to derive *)
+      let derive_errors =
+        List.filter_map
+          (fun (t : AST.derive_trait) ->
+            match Trait_registry.derive_impl t.derive_trait_name for_type_mono with
+            | Ok () -> None
+            | Error msg -> Some msg)
           derive_traits
       in
-      if missing_traits <> [] then
-        let names = List.map (fun (t : AST.derive_trait) -> t.derive_trait_name) missing_traits in
-        Error
-          (error
-             (ConstructorError (Printf.sprintf "Cannot derive undefined traits: %s" (String.concat ", " names))))
+
+      if derive_errors <> [] then
+        Error (error (ConstructorError (String.concat "; " derive_errors)))
       else
         Ok (empty_substitution, TNull)
 
