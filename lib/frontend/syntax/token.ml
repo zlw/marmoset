@@ -32,6 +32,7 @@ and token_type =
   | Semicolon
   | Colon
   | Dot
+  | Spread (* ... for record spread/row variables *)
   | LParen
   | RParen
   | LBrace
@@ -52,6 +53,7 @@ and token_type =
   | Trait (* trait keyword for trait definitions *)
   | Impl (* impl keyword for trait implementations *)
   | Derive (* derive keyword for automatic trait derivation *)
+  | Type (* type keyword for type aliases *)
 [@@deriving show]
 
 let init ?(pos = 0) t l = { token_type = t; literal = l; pos }
@@ -74,4 +76,5 @@ let lookup_ident s =
   | "trait" -> Trait
   | "impl" -> Impl
   | "derive" -> Derive
+  | "type" -> Type
   | _ -> Ident

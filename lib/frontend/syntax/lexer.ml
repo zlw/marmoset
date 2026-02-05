@@ -54,8 +54,17 @@ let rec next_token (l : lexer) : lexer * Token.token =
   | ',' -> (read_char l, Token.init ~pos Comma ",")
   | '|' -> (read_char l, Token.init ~pos Pipe "|")
   | '.' ->
-      (* Only emit Dot if NOT followed by digit (which would be a float) *)
-      if is_digit (peek_char l) then
+      (* Check for ... (spread operator) *)
+      if peek_char l = '.' then
+        let l2 = read_char l in
+        if peek_char l2 = '.' then
+          (* ... spread token *)
+          (read_char (read_char l2), Token.init ~pos Spread "...")
+        else
+          (* .. not a valid token *)
+          (l, Token.init ~pos Illegal "..")
+        (* Only emit Dot if NOT followed by digit (which would be a float) *)
+      else if is_digit (peek_char l) then
         (l, Token.init ~pos Illegal ".")
       else
         (read_char l, Token.init ~pos Dot ".")
@@ -291,3 +300,21 @@ let%test "all trait keywords together" =
   let has_impl = List.exists (fun t -> t.Token.token_type = Token.Impl) tokens in
   let has_derive = List.exists (fun t -> t.Token.token_type = Token.Derive) tokens in
   has_trait && has_impl && has_derive
+
+(* Phase 4.4: Records - Lexer tests *)
+let%test "spread token - three dots" =
+  let input = "{ ...record, x: 5 }" in
+  let tokens = lex input in
+  List.exists (fun t -> t.Token.token_type = Token.Spread && t.Token.literal = "...") tokens
+
+let%test "type keyword" =
+  let input = "type point = { x: int, y: int }" in
+  let tokens = lex input in
+  List.exists (fun t -> t.Token.token_type = Token.Type && t.Token.literal = "type") tokens
+
+let%test "dot vs spread distinction" =
+  let input = "record.x ... record2" in
+  let tokens = lex input in
+  let has_dot = List.exists (fun t -> t.Token.token_type = Token.Dot && t.Token.literal = ".") tokens in
+  let has_spread = List.exists (fun t -> t.Token.token_type = Token.Spread && t.Token.literal = "...") tokens in
+  has_dot && has_spread
