@@ -240,12 +240,23 @@ dune runtest
 - Multi-field enum variants with field extraction
 - **Status:** ✅ 47/47 tests passing
 
-### Phase 4, Milestone 3: Traits System PLANNED
-- Trait definitions: `trait show { fn show(self) -> string }`
+### Phase 4, Milestone 3: Traits System ✅ COMPLETE
+- Trait definitions: `trait show[a] { fn show(x: a) -> string }`
 - Trait implementations: `impl show for int { ... }`
-- Generic constraints: `fn[a: show](x: a) { ... }`
-- Trait method resolution and monomorphization
-- **Status:** Not started
+- Implementation validation (full signature checking with type parameter substitution)
+- Automatic derivation: `derive eq, show for int;`
+- Supertraits: `trait ord[a]: eq { ... }`
+- **Status:** ✅ 57/57 tests passing (33 unit + 10 integration + 14 parser)
+- **Features:**
+  - ✅ Trait registry with global hashtables
+  - ✅ Method signature validation (param count, param types, return types)
+  - ✅ Type parameter substitution (TVar "a" → concrete type)
+  - ✅ Derivable traits: eq, show, debug
+  - ✅ Manual and derived impls can coexist
+  - ✅ Detailed error messages for all validation failures
+- **Commits:** 9 commits (315efd8 through f39b0a4)
+- **Lines of Code:** ~1,600 lines added (38% tests)
+- **Deferred:** Generic function constraints `fn[a: show](x: a)` (requires parser changes)
 
 ## 7. Git Workflow
 
