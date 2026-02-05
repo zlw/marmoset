@@ -96,6 +96,7 @@ and parse_statement (p : parser) : (parser * AST.statement, parser) result =
   | Token.Return -> parse_return_statement p
   | Token.Enum -> parse_enum_definition p
   | Token.Trait -> parse_trait_definition p
+  | Token.Impl -> parse_impl_definition p
   | _ -> parse_expression_statement p
 
 (* Phase 2: Type expression parsing *)
@@ -480,6 +481,161 @@ and parse_param_list_with_types (p : parser) : (parser * (string * AST.type_expr
       Error (no_prefix_parse_fn_error lp lp.curr_token.token_type)
   in
   loop p []
+
+(* Phase 4.3: Impl definition parsing *)
+and parse_impl_definition (p : parser) : (parser * AST.statement, parser) result =
+  (* Current token is 'impl' *)
+  let pos = p.curr_token.pos in
+
+  (* Expect trait name *)
+  let* p2 = expect_peek p Token.Ident in
+  let impl_trait_name = p2.curr_token.literal in
+
+  (* Parse optional type parameters with constraints: [a: eq, b: show] *)
+  let* p3, impl_type_params =
+    if peek_token_is p2 Token.LBracket then
+      parse_generic_param_list (next_token (next_token p2))
+    else
+      Ok (next_token p2, [])
+  in
+
+  (* Expect 'for' keyword (treated as identifier, not reserved) *)
+  let* p4 =
+    if curr_token_is p3 Token.Ident && p3.curr_token.literal = "for" then
+      Ok (next_token p3)
+    else
+      Error (add_error p3 "expected 'for' keyword in impl definition")
+  in
+
+  (* Parse the type being implemented for *)
+  let* p5, impl_for_type = parse_type_expr p4 in
+
+  (* Expect opening brace *)
+  let* p6 =
+    if curr_token_is p5 Token.LBrace then
+      Ok p5
+    else
+      expect_peek p5 Token.LBrace
+  in
+
+  (* Parse method implementations *)
+  let* p7, impl_methods = parse_method_impl_list (next_token p6) in
+
+  (* Expect closing brace *)
+  let* p8 =
+    if curr_token_is p7 Token.RBrace then
+      Ok p7
+    else
+      expect_peek p7 Token.RBrace
+  in
+
+  Ok (p8, mk_stmt pos (AST.ImplDef { impl_type_params; impl_trait_name; impl_for_type; impl_methods }))
+
+and parse_generic_param_list (p : parser) : (parser * AST.generic_param list, parser) result =
+  let rec loop lp params =
+    if curr_token_is lp Token.Ident then
+      let param_name = lp.curr_token.literal in
+      let* lp2, constraints =
+        if peek_token_is lp Token.Colon then
+          (* Parse constraints: a: eq + ord *)
+          parse_constraint_list (next_token (next_token lp))
+        else
+          Ok (next_token lp, [])
+      in
+      let generic_param = AST.{ name = param_name; constraints } in
+      let lp3 = lp2 in
+      if curr_token_is lp3 Token.Comma then
+        loop (next_token lp3) (params @ [ generic_param ])
+      else if curr_token_is lp3 Token.RBracket then
+        Ok (next_token lp3, params @ [ generic_param ])
+      else
+        Error (peek_error lp3 Token.RBracket)
+    else if curr_token_is lp Token.RBracket then
+      Ok (next_token lp, params)
+    else
+      Error (no_prefix_parse_fn_error lp lp.curr_token.token_type)
+  in
+  loop p []
+
+and parse_constraint_list (p : parser) : (parser * string list, parser) result =
+  let rec loop lp constraints =
+    if curr_token_is lp Token.Ident then
+      let constraint_name = lp.curr_token.literal in
+      let lp2 = next_token lp in
+      if curr_token_is lp2 Token.Plus then
+        (* More constraints: + trait *)
+        loop (next_token lp2) (constraints @ [ constraint_name ])
+      else
+        (* End of constraint list *)
+        Ok (lp2, constraints @ [ constraint_name ])
+    else
+      Error (no_prefix_parse_fn_error lp lp.curr_token.token_type)
+  in
+  loop p []
+
+and parse_method_impl_list (p : parser) : (parser * AST.method_impl list, parser) result =
+  let rec loop lp methods =
+    if curr_token_is lp Token.RBrace then
+      Ok (lp, List.rev methods)
+    else if curr_token_is lp Token.Function then
+      let* lp2, method_impl = parse_method_impl lp in
+      loop lp2 (method_impl :: methods)
+    else
+      Error (no_prefix_parse_fn_error lp lp.curr_token.token_type)
+  in
+  loop p []
+
+and parse_method_impl (p : parser) : (parser * AST.method_impl, parser) result =
+  (* Current token is 'fn' *)
+  let* p2 = expect_peek p Token.Ident in
+  let impl_method_name = p2.curr_token.literal in
+
+  (* Expect opening paren *)
+  let* p3 = expect_peek p2 Token.LParen in
+
+  (* Parse function parameters (can have optional types) *)
+  let* p4, params = parse_function_parameters p3 in
+
+  (* Expect closing paren *)
+  let* p5 =
+    if curr_token_is p4 Token.RParen then
+      Ok p4
+    else
+      expect_peek p4 Token.RParen
+  in
+
+  (* Parse optional return type *)
+  let* p6, impl_method_return_type =
+    if peek_token_is p5 Token.Arrow then
+      let* p6, ret_type = parse_type_expr (next_token (next_token p5)) in
+      Ok (p6, Some ret_type)
+    else
+      Ok (next_token p5, None)
+  in
+
+  (* Expect opening brace for body *)
+  let* p7 =
+    if curr_token_is p6 Token.LBrace then
+      Ok p6
+    else
+      expect_peek p6 Token.LBrace
+  in
+
+  (* Parse method body as an expression *)
+  let* p8, body_expr = parse_expression (next_token p7) prec_lowest in
+
+  (* Expect closing brace *)
+  let* p9 =
+    if curr_token_is p8 Token.RBrace then
+      Ok p8
+    else
+      expect_peek p8 Token.RBrace
+  in
+
+  Ok
+    ( next_token p9,
+      AST.{ impl_method_name; impl_method_params = params; impl_method_return_type; impl_method_body = body_expr }
+    )
 
 and parse_expression_statement (p : parser) : (parser * AST.statement, parser) result =
   let pos = p.curr_token.pos in
@@ -1433,6 +1589,114 @@ let%test "parse trait with multiple supertraits" =
               && trait_def.type_param = "a"
               && trait_def.supertraits = [ "eq"; "show" ]
               && List.length trait_def.methods = 1
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
+(* Phase 4.3: Impl block tests *)
+let%test "parse impl - just keyword" =
+  let input = "impl" in
+  let lexer = Lexer.init input in
+  let p = init lexer in
+  curr_token_is p Token.Impl
+
+let%test "parse basic impl block - debug" =
+  let input = "impl show for int { fn show(x: int) -> string { x } }" in
+  let lexer = Lexer.init input in
+  match parse_program (init lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [] ->
+          Printf.printf "Empty program\n%!";
+          false
+      | [ stmt ] -> (
+          match stmt.stmt with
+          | AST.ImplDef _ ->
+              Printf.printf "Got ImplDef!\n%!";
+              true
+          | _ ->
+              Printf.printf "Not ImplDef: %s\n%!" (AST.show_stmt_kind stmt.stmt);
+              false)
+      | _ ->
+          Printf.printf "Multiple statements: %d\n%!" (List.length program);
+          false)
+  | Error p ->
+      Printf.printf "Parse error: %s\n%!" (String.concat "; " p.errors);
+      false
+
+let%test "parse basic impl block" =
+  let input = "impl show for int { fn show(x: int) -> string { x } }" in
+  let lexer = Lexer.init input in
+  match parse_program (init lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ stmt ] -> (
+          match stmt.stmt with
+          | AST.ImplDef impl_def ->
+              impl_def.impl_trait_name = "show"
+              && impl_def.impl_type_params = []
+              && List.length impl_def.impl_methods = 1
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
+let%test "parse impl with type params" =
+  let input = "impl eq[a: eq] for list[a] { fn eq(x: list[a], y: list[a]) -> bool { true } }" in
+  let lexer = Lexer.init input in
+  match parse_program (init lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ stmt ] -> (
+          match stmt.stmt with
+          | AST.ImplDef impl_def ->
+              let ok1 = impl_def.impl_trait_name = "eq" in
+              let ok2 = List.length impl_def.impl_type_params = 1 in
+              let ok3 = List.length impl_def.impl_methods = 1 in
+              if not ok1 then
+                Printf.printf "trait_name: %s\n%!" impl_def.impl_trait_name;
+              if not ok2 then
+                Printf.printf "type_params: %d\n%!" (List.length impl_def.impl_type_params);
+              if not ok3 then
+                Printf.printf "methods: %d\n%!" (List.length impl_def.impl_methods);
+              ok1 && ok2 && ok3
+          | _ ->
+              Printf.printf "Not ImplDef\n%!";
+              false)
+      | _ ->
+          Printf.printf "Wrong program length: %d\n%!" (List.length program);
+          false)
+  | Error p ->
+      Printf.printf "Parse error: %s\n%!" (String.concat "; " p.errors);
+      false
+
+let%test "parse impl with multiple constraints" =
+  let input = "impl show[a: eq + ord] for option[a] { fn show(x: option[a]) -> string { \"\" } }" in
+  let lexer = Lexer.init input in
+  match parse_program (init lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ stmt ] -> (
+          match stmt.stmt with
+          | AST.ImplDef impl_def -> (
+              impl_def.impl_trait_name = "show"
+              && List.length impl_def.impl_type_params = 1
+              &&
+              match List.hd impl_def.impl_type_params with
+              | { name = "a"; constraints = [ "eq"; "ord" ] } -> true
+              | _ -> false)
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
+let%test "parse impl with multiple methods" =
+  let input = "impl num for int { fn add(x: int, y: int) -> int { x } fn sub(x: int, y: int) -> int { y } }" in
+  let lexer = Lexer.init input in
+  match parse_program (init lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ stmt ] -> (
+          match stmt.stmt with
+          | AST.ImplDef impl_def -> impl_def.impl_trait_name = "num" && List.length impl_def.impl_methods = 2
           | _ -> false)
       | _ -> false)
   | Error _ -> false
