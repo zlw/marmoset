@@ -226,16 +226,25 @@ dune runtest
 - Single-statement returns without braces
 - **Status:** ✅ 21/21 tests passing (17 Phase 2 + 4 Phase 3)
 
-### Phase 4: Type Constraints & Unions PLANNED
-- Trait constraints: `fn[a: show](x: a) { ... }`
-- Union types: `int | string | bool`
-- Type narrowing in conditionals
-- **Status:** Not started
+### Phase 4, Milestone 1: Union Types ✅ COMPLETE
+- Union type inference from if-expressions
+- Union type annotations: `int | string`
+- Runtime type tags and Go codegen
+- **Status:** ✅ 31/31 tests passing
 
-### Phase 4: Advanced Features PLANNED
-- Pattern matching
-- Algebraic data types
-- Module system
+### Phase 4, Milestone 2: Enums & Pattern Matching ✅ COMPLETE
+- Enum definitions: `enum option[a] { some(a) none }`
+- Generic enum parameters with monomorphization
+- Pattern matching: `match x { pattern: expr }`
+- Constructor patterns, wildcard patterns, literal patterns
+- Multi-field enum variants with field extraction
+- **Status:** ✅ 47/47 tests passing
+
+### Phase 4, Milestone 3: Traits System PLANNED
+- Trait definitions: `trait show { fn show(self) -> string }`
+- Trait implementations: `impl show for int { ... }`
+- Generic constraints: `fn[a: show](x: a) { ... }`
+- Trait method resolution and monomorphization
 - **Status:** Not started
 
 ## 7. Git Workflow
@@ -338,7 +347,9 @@ Then create PR or notify of changes.
 - ✅ Type Inference: Good test coverage
 - ✅ Type Annotations: **ALL 17/17 PASSING** ✅
 - ✅ Early Return Syntax: **4/4 NEW TESTS PASSING** ✅
-- ✅ Codegen: 18 integration tests, **ALL 18/18 PASSING** ✅
+- ✅ Union Types: **10 integration tests PASSING** ✅
+- ✅ Enums & Pattern Matching: **16 integration tests PASSING** ✅
+- ✅ Codegen: **47 integration tests, ALL 47/47 PASSING** ✅
 - ❌ Runtime/Interpreter: Minimal tests (should add)
 
 ### Bug Fixes Completed:
@@ -389,14 +400,39 @@ Then create PR or notify of changes.
 3. ✅ Task 3.1: Parser support for single-statement returns
 4. ✅ Task 3.2: Comprehensive test suite (4 new tests)
 
-**Ready to move to Phase 4!**
+### Phase 4, Milestone 1: COMPLETE ✅
+
+- **Status: 31/31 TESTS PASSING (100%)**
+- Union type inference from if-expressions ✅
+- Union type annotations: `int | string` ✅
+- Runtime type tags and Go codegen ✅
+- Clear error messages ✅
+
+### Phase 4, Milestone 2: COMPLETE ✅
+
+- **Status: 47/47 TESTS PASSING (100%)**
+- Enum definitions: `enum option[a] { some(a) none }` ✅
+- Generic enum parameters with monomorphization ✅
+- Pattern matching: `match x { pattern: expr }` ✅
+- Constructor patterns, wildcard patterns, literal patterns ✅
+- Multi-field enum variants with field extraction ✅
+- Match expression codegen (enum and primitive types) ✅
+- Exhaustiveness checking ✅
+- Typed AST refactoring (type_map) ✅
+
+**Major Commits:**
+1. ✅ f756cc5: Refactor: Replace type re-inference with typed AST (type_map)
+2. ✅ d6fa627: Fix: Match arms with different types now create union types
+3. ✅ 994fdc9: Fix: Separate emit_match_primitive from emit_match_enum, handle wildcard patterns correctly
+
+**Ready to move to Phase 4, Milestone 3 (Traits System)!**
 
 ---
 
-**Last Updated:** Feb 3, 2026 (Phase 3 COMPLETE - 21/21 tests passing!)  
+**Last Updated:** Feb 5, 2026 (Phase 4, Milestone 2 COMPLETE - 47/47 tests passing!)  
 **Written by:** Claude Code (TDD in action)  
 **Remember:** 
 - ✅ No feature is complete until tests pass 100%. Always.
 - ✅ Bugs found in tests MUST be fixed before feature is done.
 - ✅ No moving to next phase until current phase passes all tests.
-- ✅ Phase 3: DONE. Ready for Phase 4!
+- ✅ Phase 4, Milestone 2: DONE. Ready for Phase 4, Milestone 3!
