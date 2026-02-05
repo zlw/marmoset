@@ -587,23 +587,45 @@ and emit_match_enum state type_map env scrutinee scrutinee_type enum_name type_a
     String.concat "\n" cases
   in
 
+  (* Check if any arm has a wildcard pattern - if so, no panic needed *)
+  let has_wildcard =
+    List.exists
+      (fun (arm : AST.match_arm) ->
+        List.exists
+          (fun (pat : AST.pattern) ->
+            match pat.pat with
+            | AST.PWildcard -> true
+            | AST.PVariable _ -> true (* Variable patterns also act as wildcards *)
+            | _ -> false)
+          arm.patterns)
+      arms
+  in
+
   (* Generate: func() T { __scrutinee := <expr>; switch __scrutinee.Tag { cases... } }() *)
-  Printf.sprintf
-    "(func() %s {\n\t__scrutinee := %s\n\tswitch __scrutinee.Tag {\n%s\n\t}\n\tpanic(\"non-exhaustive match\")\n})()"
-    match_result_go_type scrutinee_str match_body
+  (* Note: If no wildcard, add panic for Go's control flow analysis *)
+  if has_wildcard then
+    Printf.sprintf "(func() %s {\n\t__scrutinee := %s\n\tswitch __scrutinee.Tag {\n%s\n\t}\n})()"
+      match_result_go_type scrutinee_str match_body
+  else
+    Printf.sprintf
+      "(func() %s {\n\t__scrutinee := %s\n\tswitch __scrutinee.Tag {\n%s\n\tdefault:\n\t\tpanic(\"unreachable: exhaustive match\")\n\t}\n})()"
+      match_result_go_type scrutinee_str match_body
 
 and emit_match_primitive state type_map env scrutinee scrutinee_type arms match_result_type =
-  (* Emit scrutinee expression *)
+  (* Emit scrutinee to a temporary variable *)
   let scrutinee_str = emit_expr state type_map env scrutinee in
 
   (* Convert match result type to Go type *)
   let match_result_go_type = type_to_go state.mono match_result_type in
 
-  (* Generate match body *)
+  (* Generate a Go anonymous function that returns the match result *)
+  (* This allows match to be used as an expression *)
   let match_body =
+    (* For each match arm, generate a case *)
     let cases =
       List.map
         (fun (arm : AST.match_arm) ->
+          (* For simplicity, only handle single pattern per arm for now *)
           match arm.patterns with
           | [ pattern ] -> emit_match_arm_primitive state type_map env scrutinee_type pattern arm.body
           | [] -> failwith "Match arm must have at least one pattern"
@@ -614,9 +636,9 @@ and emit_match_primitive state type_map env scrutinee scrutinee_type arms match_
   in
 
   (* Generate: func() T { __scrutinee := <expr>; switch __scrutinee { cases... } }() *)
-  Printf.sprintf
-    "(func() %s {\n\t__scrutinee := %s\n\tswitch __scrutinee {\n%s\n\t}\n\tpanic(\"non-exhaustive match\")\n})()"
-    match_result_go_type scrutinee_str match_body
+  (* Note: Primitive matches have explicit default case from wildcard patterns, no panic needed *)
+  Printf.sprintf "(func() %s {\n\t__scrutinee := %s\n\tswitch __scrutinee {\n%s\n\t}\n})()" match_result_go_type
+    scrutinee_str match_body
 
 and emit_match_arm_primitive state type_map env _scrutinee_type pattern body =
   match pattern.AST.pat with
