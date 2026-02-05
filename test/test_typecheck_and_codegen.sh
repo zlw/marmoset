@@ -421,6 +421,121 @@ test_case "Mixed field count variants" \
     "true"
 
 echo ""
+echo "-- PHASE 4.3: TRAIT SYSTEM --"
+
+test_case "Basic trait definition" \
+    'trait show[a] {
+       fn show(x: a) -> string
+     }
+     42' \
+    "true"
+
+test_case "Trait with multiple methods" \
+    'trait eq[a] {
+       fn eq(x: a, y: a) -> bool
+       fn ne(x: a, y: a) -> bool
+     }
+     42' \
+    "true"
+
+test_case "Trait with supertraits" \
+    'trait eq[a] {
+       fn eq(x: a, y: a) -> bool
+     }
+     trait ord[a]: eq {
+       fn compare(x: a, y: a) -> int
+     }
+     42' \
+    "true"
+
+test_case "Basic impl for primitive" \
+    'trait show[a] {
+       fn show(x: a) -> string
+     }
+     impl show for int {
+       fn show(x: int) -> string {
+         "int"
+       }
+     }
+     42' \
+    "true"
+
+test_case "Impl with multiple methods" \
+    'trait eq[a] {
+       fn eq(x: a, y: a) -> bool
+       fn ne(x: a, y: a) -> bool
+     }
+     impl eq for int {
+       fn eq(x: int, y: int) -> bool {
+         true
+       }
+       fn ne(x: int, y: int) -> bool {
+         false
+       }
+     }
+     42' \
+    "true"
+
+test_case "Multiple impls for different types" \
+    'trait show[a] {
+       fn show(x: a) -> string
+     }
+     impl show for int {
+       fn show(x: int) -> string {
+         "int"
+       }
+     }
+     impl show for bool {
+       fn show(x: bool) -> string {
+         "bool"
+       }
+     }
+     42' \
+    "true"
+
+test_case "Derive single trait for primitive" \
+    'trait eq[a] {
+       fn eq(x: a, y: a) -> bool
+     }
+     derive eq for int;
+     42' \
+    "true"
+
+test_case "Derive multiple traits" \
+    'trait eq[a] {
+       fn eq(x: a, y: a) -> bool
+     }
+     trait show[a] {
+       fn show(x: a) -> string
+     }
+     derive eq, show for int;
+     42' \
+    "true"
+
+test_case "Derive for multiple types" \
+    'trait show[a] {
+       fn show(x: a) -> string
+     }
+     derive show for int;
+     derive show for bool;
+     derive show for string;
+     42' \
+    "true"
+
+test_case "Mixed manual and derived impls" \
+    'trait show[a] {
+       fn show(x: a) -> string
+     }
+     impl show for int {
+       fn show(x: int) -> string {
+         "manual"
+       }
+     }
+     derive show for bool;
+     42' \
+    "true"
+
+echo ""
 echo "=========================================="
 echo "RESULTS: $PASS passed, $FAIL failed out of $TOTAL tests"
 echo "=========================================="
