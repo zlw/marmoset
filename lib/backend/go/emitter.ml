@@ -265,6 +265,7 @@ let rec collect_funcs_stmt (state : mono_state) (stmt : AST.statement) : unit =
   | AST.ExpressionStmt e -> collect_funcs_expr state e
   | AST.Block stmts -> List.iter (collect_funcs_stmt state) stmts
   | AST.EnumDef _ -> () (* Enums are compile-time only *)
+  | AST.TraitDef _ | AST.ImplDef _ | AST.DeriveDef _ -> () (* Traits are compile-time only *)
 
 and collect_funcs_expr (state : mono_state) (expr : AST.expression) : unit =
   match expr.expr with
@@ -370,6 +371,7 @@ let rec collect_insts_stmt
       env
   | AST.Block stmts -> List.fold_left (collect_insts_stmt state type_map) env stmts
   | AST.EnumDef _ -> env (* Enums are compile-time only *)
+  | AST.TraitDef _ | AST.ImplDef _ | AST.DeriveDef _ -> env (* Traits are compile-time only *)
 
 and collect_insts_expr
     ?(expected_type : Types.mono_type option = None)
@@ -805,6 +807,7 @@ and substitute_identifier_in_expr old_name new_name expr =
     | AST.ExpressionStmt e -> { s with stmt = AST.ExpressionStmt (subst_expr e) }
     | AST.Block stmts -> { s with stmt = AST.Block (List.map subst_stmt stmts) }
     | AST.EnumDef _ -> s (* Enum defs don't contain expressions to substitute *)
+    | AST.TraitDef _ | AST.ImplDef _ | AST.DeriveDef _ -> s (* Trait defs don't contain expressions *)
   in
   subst_expr expr
 
@@ -1226,6 +1229,9 @@ and emit_stmt (state : emit_state) (type_map : Infer.type_map) (env : Infer.type
       (code, env')
   | AST.EnumDef _ ->
       (* Enum definitions are compile-time only *)
+      ("", env)
+  | AST.TraitDef _ | AST.ImplDef _ | AST.DeriveDef _ ->
+      (* Trait definitions/impls/derives are compile-time only *)
       ("", env)
 
 and emit_stmts state type_map env stmts =

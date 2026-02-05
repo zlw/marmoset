@@ -37,6 +37,15 @@ and eval_statement (stmt : AST.statement) (e : env) : Value.value * env =
   | EnumDef _ ->
       (* Enum definitions are handled by type checker, not interpreter *)
       (Value.null_value, e)
+  | TraitDef _ ->
+      (* Trait definitions are handled by type checker, not interpreter *)
+      (Value.null_value, e)
+  | ImplDef _ ->
+      (* Impl definitions are handled by type checker, not interpreter *)
+      (Value.null_value, e)
+  | DeriveDef _ ->
+      (* Derive statements are handled by type checker, not interpreter *)
+      (Value.null_value, e)
 
 and eval_expression (expr : AST.expression) (e : env) : Value.value * env =
   match expr.expr with

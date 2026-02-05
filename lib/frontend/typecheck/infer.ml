@@ -561,6 +561,10 @@ and collect_and_unify_returns type_map env expected_ret_type (stmt : AST.stateme
       | _ -> Ok (subst, expected_ret_type))
   | AST.Let _ -> Ok (subst, expected_ret_type)
   | AST.EnumDef _ -> Ok (subst, expected_ret_type)
+  | AST.TraitDef _ -> Ok (subst, expected_ret_type) (* TODO: Phase 4.3 - handle trait defs *)
+  | AST.ImplDef _ -> Ok (subst, expected_ret_type) (* TODO: Phase 4.3 - handle impl defs *)
+  | AST.DeriveDef _ -> Ok (subst, expected_ret_type)
+(* TODO: Phase 4.3 - handle derive defs *)
 
 and infer_function type_map env params body =
   (* Create fresh type variables for each parameter *)
@@ -923,6 +927,15 @@ and infer_statement type_map env stmt =
 
       (* Enum def doesn't have a value *)
       Ok (empty_substitution, TNull)
+  | AST.TraitDef _ ->
+      (* TODO: Phase 4.3 - Register trait definitions *)
+      Ok (empty_substitution, TNull)
+  | AST.ImplDef _ ->
+      (* TODO: Phase 4.3 - Register trait implementations *)
+      Ok (empty_substitution, TNull)
+  | AST.DeriveDef _ ->
+      (* TODO: Phase 4.3 - Handle derive statements *)
+      Ok (empty_substitution, TNull)
 
 (* Simple validation: check that all explicit return statements match expected type *)
 and validate_return_statements
@@ -960,6 +973,9 @@ and validate_return_statements
       | _ -> Ok ())
   | AST.Let _ -> Ok ()
   | AST.EnumDef _ -> Ok ()
+  | AST.TraitDef _ -> Ok () (* TODO: Phase 4.3 - validate trait defs *)
+  | AST.ImplDef _ -> Ok () (* TODO: Phase 4.3 - validate impl defs *)
+  | AST.DeriveDef _ -> Ok () (* TODO: Phase 4.3 - validate derive defs *)
 
 (* ============================================================
    Pattern Matching Helpers

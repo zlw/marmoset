@@ -252,6 +252,9 @@ and compile_statement (c : compiler) (s : AST.statement) : (compiler, string) re
   | AST.EnumDef _ ->
       (* Enum definitions are compile-time only *)
       Ok c
+  | AST.TraitDef _ | AST.ImplDef _ | AST.DeriveDef _ ->
+      (* Trait definitions/impls/derives are compile-time only *)
+      Ok c
 
 and compile_expression (c : compiler) (e : AST.expression) : (compiler, string) result =
   match e.expr with

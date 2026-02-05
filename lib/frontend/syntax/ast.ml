@@ -23,6 +23,48 @@ module AST = struct
   }
   [@@deriving show]
 
+  (* Phase 4.3: Trait definitions *)
+  and trait_def = {
+    name : string;
+    type_param : string; (* The 'a' in trait eq[a] *)
+    supertraits : string list; (* trait ord[a]: eq + hash *)
+    methods : method_sig list;
+  }
+
+  and method_sig = {
+    method_name : string;
+    method_params : (string * type_expr) list;
+    method_return_type : type_expr;
+    method_default_impl : expression option;
+  }
+
+  (* Phase 4.3: Trait implementations *)
+  and impl_def = {
+    impl_type_params : generic_param list; (* impl eq[a: eq] for list[a] *)
+    impl_trait_name : string;
+    impl_for_type : type_expr;
+    impl_methods : method_impl list;
+  }
+
+  and method_impl = {
+    impl_method_name : string;
+    impl_method_params : (string * type_expr option) list;
+    impl_method_return_type : type_expr option;
+    impl_method_body : expression;
+  }
+
+  (* Phase 4.3: Derive statements *)
+  and derive_def = {
+    derive_traits : derive_trait list;
+    derive_for_type : type_expr;
+  }
+
+  and derive_trait = {
+    derive_trait_name : string;
+    derive_trait_constraints : generic_param list; (* derive eq[a: eq] for option[a] *)
+  }
+  [@@deriving show]
+
   and statement = {
     stmt : stmt_kind;
     pos : int;
@@ -42,6 +84,9 @@ module AST = struct
         type_params : string list;
         variants : variant_def list;
       }
+    | TraitDef of trait_def (* Phase 4.3: trait show[a] { ... } *)
+    | ImplDef of impl_def (* Phase 4.3: impl show for int { ... } *)
+    | DeriveDef of derive_def (* Phase 4.3: derive eq, show for color *)
   [@@deriving show]
 
   and expression = {
@@ -181,6 +226,12 @@ module AST = struct
               "[" ^ String.concat ", " type_params ^ "]"
           in
           Printf.sprintf "enum %s%s { ... }" name params_str
+      | TraitDef { name; type_param; _ } -> Printf.sprintf "trait %s[%s] { ... }" name type_param
+      | ImplDef { impl_trait_name; impl_for_type; _ } ->
+          Printf.sprintf "impl %s for %s { ... }" impl_trait_name (show_type_expr impl_for_type)
+      | DeriveDef { derive_traits; derive_for_type } ->
+          let traits_str = List.map (fun t -> t.derive_trait_name) derive_traits |> String.concat ", " in
+          Printf.sprintf "derive %s for %s" traits_str (show_type_expr derive_for_type)
     and expression_to_string (e : expression) : string =
       match e.expr with
       | Identifier ident -> ident
