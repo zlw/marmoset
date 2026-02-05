@@ -268,3 +268,26 @@ let%test "pipe token for union types" =
   let input = "fn(x: int | string) -> bool" in
   let tokens = lex input in
   List.exists (fun t -> t.Token.token_type = Token.Pipe) tokens
+
+let%test "trait keyword" =
+  let input = "trait show { fn show(x: a) -> string }" in
+  let tokens = lex input in
+  List.exists (fun t -> t.Token.token_type = Token.Trait && t.Token.literal = "trait") tokens
+
+let%test "impl keyword" =
+  let input = "impl show for color { }" in
+  let tokens = lex input in
+  List.exists (fun t -> t.Token.token_type = Token.Impl && t.Token.literal = "impl") tokens
+
+let%test "derive keyword" =
+  let input = "derive eq, show for color" in
+  let tokens = lex input in
+  List.exists (fun t -> t.Token.token_type = Token.Derive && t.Token.literal = "derive") tokens
+
+let%test "all trait keywords together" =
+  let input = "trait eq[a] { fn eq(x: a, y: a) -> bool } impl eq for int { } derive show for color" in
+  let tokens = lex input in
+  let has_trait = List.exists (fun t -> t.Token.token_type = Token.Trait) tokens in
+  let has_impl = List.exists (fun t -> t.Token.token_type = Token.Impl) tokens in
+  let has_derive = List.exists (fun t -> t.Token.token_type = Token.Derive) tokens in
+  has_trait && has_impl && has_derive

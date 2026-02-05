@@ -49,6 +49,9 @@ and token_type =
   | Is (* is keyword for type checking *)
   | Enum (* enum keyword for algebraic data types *)
   | Match (* match keyword for pattern matching *)
+  | Trait (* trait keyword for trait definitions *)
+  | Impl (* impl keyword for trait implementations *)
+  | Derive (* derive keyword for automatic trait derivation *)
 [@@deriving show]
 
 let init ?(pos = 0) t l = { token_type = t; literal = l; pos }
@@ -68,4 +71,7 @@ let lookup_ident s =
   | "is" -> Is
   | "enum" -> Enum
   | "match" -> Match
+  | "trait" -> Trait
+  | "impl" -> Impl
+  | "derive" -> Derive
   | _ -> Ident
