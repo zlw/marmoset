@@ -927,15 +927,129 @@ and infer_statement type_map env stmt =
 
       (* Enum def doesn't have a value *)
       Ok (empty_substitution, TNull)
-  | AST.TraitDef _ ->
-      (* TODO: Phase 4.3 - Register trait definitions *)
-      Ok (empty_substitution, TNull)
-  | AST.ImplDef _ ->
-      (* TODO: Phase 4.3 - Register trait implementations *)
-      Ok (empty_substitution, TNull)
-  | AST.DeriveDef _ ->
-      (* TODO: Phase 4.3 - Handle derive statements *)
-      Ok (empty_substitution, TNull)
+  | AST.TraitDef { name; type_param; supertraits; methods } -> (
+      (* Convert AST method signatures to trait registry method signatures *)
+      (* We need to treat type_param as a type variable, not a type constructor *)
+      let convert_type_expr (te : AST.type_expr) : mono_type =
+        let rec convert = function
+          | AST.TVar v -> TVar v
+          | AST.TCon c ->
+              (* Check if it's the trait's type parameter *)
+              if c = type_param then
+                TVar c
+              else
+                Annotation.type_expr_to_mono_type (AST.TCon c)
+          | AST.TApp (con_name, args) -> (
+              if
+                (* For generic types, convert recursively *)
+                con_name = type_param
+              then
+                failwith (Printf.sprintf "Type parameter '%s' cannot be used as type constructor" con_name)
+              else
+                match con_name with
+                | "list" -> (
+                    match args with
+                    | [ elem ] -> TArray (convert elem)
+                    | _ -> failwith "list expects 1 argument")
+                | "map" -> (
+                    match args with
+                    | [ k; v ] -> THash (convert k, convert v)
+                    | _ -> failwith "map expects 2 arguments")
+                | _ -> Annotation.type_expr_to_mono_type (AST.TApp (con_name, args)))
+          | AST.TArrow (params, ret) ->
+              let param_types = List.map convert params in
+              let ret_type = convert ret in
+              List.fold_right (fun p r -> TFun (p, r)) param_types ret_type
+          | AST.TUnion types -> normalize_union (List.map convert types)
+        in
+        convert te
+      in
+
+      let convert_method_sig (m : AST.method_sig) : Trait_registry.method_sig =
+        let param_types = List.map (fun (pname, ptype) -> (pname, convert_type_expr ptype)) m.method_params in
+        let return_type = convert_type_expr m.method_return_type in
+        {
+          Trait_registry.method_name = m.method_name;
+          method_params = param_types;
+          method_return_type = return_type;
+        }
+      in
+
+      let method_sigs = List.map convert_method_sig methods in
+
+      let trait_def =
+        {
+          Trait_registry.trait_name = name;
+          trait_type_param = Some type_param;
+          trait_supertraits = supertraits;
+          trait_methods = method_sigs;
+        }
+      in
+
+      (* Validate and register trait *)
+      match Trait_registry.validate_trait_def trait_def with
+      | Error msg -> Error (error (ConstructorError msg))
+      | Ok () ->
+          Trait_registry.register_trait trait_def;
+          Ok (empty_substitution, TNull))
+  | AST.ImplDef { impl_trait_name; impl_type_params; impl_for_type; impl_methods } -> (
+      (* Convert impl_for_type from AST.type_expr to mono_type *)
+      let for_type_mono = Annotation.type_expr_to_mono_type impl_for_type in
+
+      (* Convert method implementations to method signatures *)
+      let convert_method_impl (m : AST.method_impl) : Trait_registry.method_sig =
+        let param_types =
+          List.map
+            (fun (pname, ptype_opt) ->
+              match ptype_opt with
+              | Some ptype -> (pname, Annotation.type_expr_to_mono_type ptype)
+              | None -> (pname, fresh_type_var ()))
+            m.impl_method_params
+        in
+        let return_type =
+          match m.impl_method_return_type with
+          | Some rt -> Annotation.type_expr_to_mono_type rt
+          | None -> fresh_type_var ()
+        in
+        {
+          Trait_registry.method_name = m.impl_method_name;
+          method_params = param_types;
+          method_return_type = return_type;
+        }
+      in
+
+      let methods = List.map convert_method_impl impl_methods in
+
+      let impl_def =
+        {
+          Trait_registry.impl_trait_name;
+          impl_type_params;
+          impl_for_type = for_type_mono;
+          impl_methods = methods;
+        }
+      in
+
+      (* Validate and register impl *)
+      match Trait_registry.validate_impl impl_def with
+      | Error msg -> Error (error (ConstructorError msg))
+      | Ok () ->
+          Trait_registry.register_impl impl_def;
+          Ok (empty_substitution, TNull))
+  | AST.DeriveDef { derive_traits; derive_for_type = _ } ->
+      (* TODO: Phase 4.3 - Auto-generate implementations for derived traits *)
+      (* For now, just validate that the traits exist *)
+      let missing_traits =
+        List.filter
+          (fun (t : AST.derive_trait) -> Trait_registry.lookup_trait t.derive_trait_name = None)
+          derive_traits
+      in
+      if missing_traits <> [] then
+        let names = List.map (fun (t : AST.derive_trait) -> t.derive_trait_name) missing_traits in
+        Error
+          (error
+             (ConstructorError (Printf.sprintf "Cannot derive undefined traits: %s" (String.concat ", " names))))
+      else
+        Ok (empty_substitution, TNull)
 
 (* Simple validation: check that all explicit return statements match expected type *)
 and validate_return_statements
