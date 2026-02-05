@@ -530,18 +530,17 @@ let rec emit_expr
         Printf.sprintf "%s()" constructor_name
       else
         Printf.sprintf "%s(%s)" constructor_name (String.concat ", " arg_strs)
-  | AST.Match (scrutinee, arms) -> emit_match state type_map env scrutinee arms
+  | AST.Match (scrutinee, arms) -> emit_match state type_map env expr scrutinee arms
 
 (* ============================================================
      Match Expression Codegen
      ============================================================ *)
 
-and emit_match state type_map env scrutinee arms =
+and emit_match state type_map env match_expr scrutinee arms =
   (* Get the type of the scrutinee *)
   let scrutinee_type = get_type type_map scrutinee in
 
-  (* Infer the type of the entire match expression *)
-  let match_expr = AST.{ id = 0; expr = Match (scrutinee, arms); pos = scrutinee.pos } in
+  (* Get the type of the entire match expression from the type_map *)
   let match_result_type = get_type type_map match_expr in
 
   match scrutinee_type with

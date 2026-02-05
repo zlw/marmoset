@@ -908,28 +908,37 @@ and validate_return_statements
 and infer_match_arms type_map env scrutinee_type arms subst match_expr =
   let rec loop acc_subst arm_types = function
     | [] -> (
-        (* All arms processed, unify all arm body types *)
+        (* All arms processed, unify all arm body types or create union *)
         match arm_types with
         | [] -> Error (error_at (MatchError "Match expression must have at least one arm") match_expr)
+        | [ single_type ] -> Ok (acc_subst, single_type) (* Single arm, return its type *)
         | first :: rest -> (
-            let rec unify_all s types =
-              match types with
-              | [] -> Ok s
+            (* Try to unify all types together *)
+            let rec try_unify_all s unified_types remaining =
+              match remaining with
+              | [] -> Ok (s, unified_types) (* All unified successfully *)
               | t :: rest_types -> (
-                  let first' = apply_substitution s first in
+                  let first' = apply_substitution s (List.hd unified_types) in
                   let t' = apply_substitution s t in
                   match Unify.unify first' t' with
-                  | Error e -> Error (error_at (UnificationError e) match_expr)
                   | Ok s2 ->
+                      (* Unified successfully, continue *)
                       let new_s = compose_substitution s s2 in
-                      unify_all new_s rest_types)
+                      try_unify_all new_s unified_types rest_types
+                  | Error _ ->
+                      (* Couldn't unify, add this type to the list *)
+                      try_unify_all s (t :: unified_types) rest_types)
             in
-            match unify_all empty_substitution rest with
-            | Error e -> Error e
-            | Ok unify_subst ->
+            match try_unify_all empty_substitution [ first ] rest with
+            | Ok (unify_subst, unified) -> (
+                (* Apply final substitution *)
                 let final_subst = compose_substitution acc_subst unify_subst in
-                let result_type = apply_substitution unify_subst first in
-                Ok (final_subst, result_type)))
+                let final_types = List.map (apply_substitution final_subst) unified in
+                (* If all unified to one type, return it; otherwise create union *)
+                match final_types with
+                | [ single ] -> Ok (final_subst, single)
+                | multiple -> Ok (final_subst, Types.normalize_union (List.rev multiple)))
+            | Error e -> Error e))
     | arm :: rest_arms -> (
         match infer_match_arm type_map env scrutinee_type arm with
         | Error e -> Error e
