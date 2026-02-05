@@ -97,6 +97,7 @@ and parse_statement (p : parser) : (parser * AST.statement, parser) result =
   | Token.Enum -> parse_enum_definition p
   | Token.Trait -> parse_trait_definition p
   | Token.Impl -> parse_impl_definition p
+  | Token.Derive -> parse_derive_definition p
   | _ -> parse_expression_statement p
 
 (* Phase 2: Type expression parsing *)
@@ -636,6 +637,54 @@ and parse_method_impl (p : parser) : (parser * AST.method_impl, parser) result =
     ( next_token p9,
       AST.{ impl_method_name; impl_method_params = params; impl_method_return_type; impl_method_body = body_expr }
     )
+
+(* Phase 4.3: Derive statement parsing *)
+and parse_derive_definition (p : parser) : (parser * AST.statement, parser) result =
+  (* Current token is 'derive' *)
+  let pos = p.curr_token.pos in
+
+  (* Parse trait list: eq, show, ord *)
+  let* p2, derive_traits = parse_derive_trait_list (next_token p) in
+
+  (* Expect 'for' keyword (treated as identifier, not reserved) *)
+  let* p3 =
+    if curr_token_is p2 Token.Ident && p2.curr_token.literal = "for" then
+      Ok (next_token p2)
+    else
+      Error (add_error p2 "expected 'for' keyword in derive statement")
+  in
+
+  (* Parse the type being derived for *)
+  let* p4, derive_for_type = parse_type_expr p3 in
+
+  Ok (p4, mk_stmt pos (AST.DeriveDef { derive_traits; derive_for_type }))
+
+and parse_derive_trait_list (p : parser) : (parser * AST.derive_trait list, parser) result =
+  let rec loop lp traits =
+    if curr_token_is lp Token.Ident then
+      let trait_name = lp.curr_token.literal in
+      let lp2 = next_token lp in
+
+      (* Check for type parameters: eq[a: show] *)
+      let* lp3, constraints =
+        if curr_token_is lp2 Token.LBracket then
+          parse_generic_param_list (next_token lp2)
+        else
+          Ok (lp2, [])
+      in
+
+      let derive_trait = AST.{ derive_trait_name = trait_name; derive_trait_constraints = constraints } in
+
+      (* Check for comma (more traits) *)
+      if curr_token_is lp3 Token.Comma then
+        loop (next_token lp3) (traits @ [ derive_trait ])
+      else
+        (* End of trait list *)
+        Ok (lp3, traits @ [ derive_trait ])
+    else
+      Error (no_prefix_parse_fn_error lp lp.curr_token.token_type)
+  in
+  loop p []
 
 and parse_expression_statement (p : parser) : (parser * AST.statement, parser) result =
   let pos = p.curr_token.pos in
@@ -1697,6 +1746,61 @@ let%test "parse impl with multiple methods" =
       | [ stmt ] -> (
           match stmt.stmt with
           | AST.ImplDef impl_def -> impl_def.impl_trait_name = "num" && List.length impl_def.impl_methods = 2
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
+(* Phase 4.3: Derive statement tests *)
+let%test "parse derive - just keyword" =
+  let input = "derive" in
+  let lexer = Lexer.init input in
+  let p = init lexer in
+  curr_token_is p Token.Derive
+
+let%test "parse single derive" =
+  let input = "derive eq for color" in
+  let lexer = Lexer.init input in
+  match parse_program (init lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ stmt ] -> (
+          match stmt.stmt with
+          | AST.DeriveDef derive_def ->
+              List.length derive_def.derive_traits = 1
+              && (List.hd derive_def.derive_traits).derive_trait_name = "eq"
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
+let%test "parse multiple derive traits" =
+  let input = "derive eq, show, ord for person" in
+  let lexer = Lexer.init input in
+  match parse_program (init lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ stmt ] -> (
+          match stmt.stmt with
+          | AST.DeriveDef derive_def ->
+              let trait_names = List.map (fun t -> t.AST.derive_trait_name) derive_def.derive_traits in
+              List.length trait_names = 3 && trait_names = [ "eq"; "show"; "ord" ]
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
+let%test "parse derive with generic type" =
+  let input = "derive eq for option[int]" in
+  let lexer = Lexer.init input in
+  match parse_program (init lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ stmt ] -> (
+          match stmt.stmt with
+          | AST.DeriveDef derive_def -> (
+              List.length derive_def.derive_traits = 1
+              &&
+              match derive_def.derive_for_type with
+              | AST.TApp ("option", [ AST.TCon "int" ]) -> true
+              | _ -> false)
           | _ -> false)
       | _ -> false)
   | Error _ -> false
