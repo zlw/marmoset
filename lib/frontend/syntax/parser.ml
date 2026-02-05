@@ -95,6 +95,7 @@ and parse_statement (p : parser) : (parser * AST.statement, parser) result =
   | Token.Let -> parse_let_statement p
   | Token.Return -> parse_return_statement p
   | Token.Enum -> parse_enum_definition p
+  | Token.Trait -> parse_trait_definition p
   | _ -> parse_expression_statement p
 
 (* Phase 2: Type expression parsing *)
@@ -357,6 +358,124 @@ and parse_variant_list (p : parser) : (parser * AST.variant_def list, parser) re
       in
       let variant = AST.{ variant_name; variant_fields } in
       loop lp3 (variant :: variants)
+    else
+      Error (no_prefix_parse_fn_error lp lp.curr_token.token_type)
+  in
+  loop p []
+
+(* Phase 4.3: Trait definition parsing *)
+and parse_trait_definition (p : parser) : (parser * AST.statement, parser) result =
+  (* Current token is 'trait' *)
+  let pos = p.curr_token.pos in
+  let* p2 = expect_peek p Token.Ident in
+  let name = p2.curr_token.literal in
+
+  (* Expect type parameter: [a] *)
+  let* p3 = expect_peek p2 Token.LBracket in
+  let* p4 = expect_peek p3 Token.Ident in
+  let type_param = p4.curr_token.literal in
+  let* p5 = expect_peek p4 Token.RBracket in
+
+  (* Parse optional supertraits: : eq or : eq + show *)
+  let* p6, supertraits =
+    if peek_token_is p5 Token.Colon then
+      parse_supertrait_list (next_token (next_token p5))
+    else
+      Ok (next_token p5, [])
+  in
+
+  (* Expect opening brace *)
+  let* p7 =
+    if curr_token_is p6 Token.LBrace then
+      Ok p6
+    else
+      expect_peek p6 Token.LBrace
+  in
+
+  (* Parse method signatures *)
+  let* p8, methods = parse_method_sig_list (next_token p7) in
+
+  (* Expect closing brace *)
+  let* p9 =
+    if curr_token_is p8 Token.RBrace then
+      Ok p8
+    else
+      expect_peek p8 Token.RBrace
+  in
+
+  Ok (p9, mk_stmt pos (AST.TraitDef { name; type_param; supertraits; methods }))
+
+and parse_supertrait_list (p : parser) : (parser * string list, parser) result =
+  let rec loop lp traits =
+    if curr_token_is lp Token.Ident then
+      let trait_name = lp.curr_token.literal in
+      let lp2 = next_token lp in
+      if curr_token_is lp2 Token.Plus then
+        (* More supertraits: + trait *)
+        loop (next_token lp2) (traits @ [ trait_name ])
+      else
+        (* End of supertrait list *)
+        Ok (lp2, traits @ [ trait_name ])
+    else
+      Error (no_prefix_parse_fn_error lp lp.curr_token.token_type)
+  in
+  loop p []
+
+and parse_method_sig_list (p : parser) : (parser * AST.method_sig list, parser) result =
+  let rec loop lp methods =
+    if curr_token_is lp Token.RBrace then
+      Ok (lp, List.rev methods)
+    else if curr_token_is lp Token.Function then
+      let* lp2, method_sig = parse_method_sig lp in
+      loop lp2 (method_sig :: methods)
+    else
+      Error (no_prefix_parse_fn_error lp lp.curr_token.token_type)
+  in
+  loop p []
+
+and parse_method_sig (p : parser) : (parser * AST.method_sig, parser) result =
+  (* Current token is 'fn' *)
+  let* p2 = expect_peek p Token.Ident in
+  let method_name = p2.curr_token.literal in
+
+  (* Expect opening paren *)
+  let* p3 = expect_peek p2 Token.LParen in
+
+  (* Parse parameter list (name: type pairs) *)
+  let* p4, params = parse_param_list_with_types (next_token p3) in
+
+  (* Expect closing paren *)
+  let* p5 =
+    if curr_token_is p4 Token.RParen then
+      Ok p4
+    else
+      expect_peek p4 Token.RParen
+  in
+
+  (* Expect arrow *)
+  let* p6 = expect_peek p5 Token.Arrow in
+
+  (* Parse return type *)
+  let* p7, return_type = parse_type_expr (next_token p6) in
+
+  (* For now, we don't support default implementations *)
+  let method_default_impl = None in
+
+  Ok (p7, AST.{ method_name; method_params = params; method_return_type = return_type; method_default_impl })
+
+and parse_param_list_with_types (p : parser) : (parser * (string * AST.type_expr) list, parser) result =
+  let rec loop lp params =
+    if curr_token_is lp Token.Ident then
+      let param_name = lp.curr_token.literal in
+      let* lp2 = expect_peek lp Token.Colon in
+      let* lp3, param_type = parse_type_expr (next_token lp2) in
+      let lp4 = lp3 in
+      if curr_token_is lp4 Token.Comma then
+        loop (next_token lp4) (params @ [ (param_name, param_type) ])
+      else
+        Ok (lp4, params @ [ (param_name, param_type) ])
+    else if curr_token_is lp Token.RParen then
+      Ok (lp, params)
     else
       Error (no_prefix_parse_fn_error lp lp.curr_token.token_type)
   in
@@ -1251,3 +1370,69 @@ module Test = struct
     ]
     |> run
 end
+
+(* Phase 4.3: Trait definition tests *)
+let%test "parse simple trait definition" =
+  let input = "trait show[a] { fn show(x: a) -> string }" in
+  let lexer = Lexer.init input in
+  match parse_program (init lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ stmt ] -> (
+          match stmt.stmt with
+          | AST.TraitDef trait_def ->
+              trait_def.name = "show"
+              && trait_def.type_param = "a"
+              && trait_def.supertraits = []
+              && List.length trait_def.methods = 1
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
+let%test "parse trait with multiple methods" =
+  let input = "trait num[a] { fn add(x: a, y: a) -> a fn sub(x: a, y: a) -> a }" in
+  let lexer = Lexer.init input in
+  match parse_program (init lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ stmt ] -> (
+          match stmt.stmt with
+          | AST.TraitDef trait_def ->
+              trait_def.name = "num" && trait_def.type_param = "a" && List.length trait_def.methods = 2
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
+let%test "parse trait with supertraits" =
+  let input = "trait ord[a]: eq { fn compare(x: a, y: a) -> int }" in
+  let lexer = Lexer.init input in
+  match parse_program (init lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ stmt ] -> (
+          match stmt.stmt with
+          | AST.TraitDef trait_def ->
+              trait_def.name = "ord"
+              && trait_def.type_param = "a"
+              && trait_def.supertraits = [ "eq" ]
+              && List.length trait_def.methods = 1
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
+let%test "parse trait with multiple supertraits" =
+  let input = "trait hashable[a]: eq + show { fn hash(x: a) -> int }" in
+  let lexer = Lexer.init input in
+  match parse_program (init lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ stmt ] -> (
+          match stmt.stmt with
+          | AST.TraitDef trait_def ->
+              trait_def.name = "hashable"
+              && trait_def.type_param = "a"
+              && trait_def.supertraits = [ "eq"; "show" ]
+              && List.length trait_def.methods = 1
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
