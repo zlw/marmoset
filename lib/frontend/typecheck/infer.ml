@@ -315,6 +315,12 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
             | Ok () ->
                 (* Check each arm and collect body types *)
                 infer_match_arms type_map env' scrutinee_type arms subst expr))
+    | AST.RecordLit (_fields, _spread) ->
+        (* Phase 4.4: Record literals - not yet implemented *)
+        Error (error_at (ConstructorError "Record literals not yet implemented") expr)
+    | AST.FieldAccess (_expr, _field) ->
+        (* Phase 4.4: Field access - not yet implemented *)
+        Error (error_at (ConstructorError "Field access not yet implemented") expr)
   in
   (* Record the type in the type map before returning *)
   match result with
@@ -563,8 +569,9 @@ and collect_and_unify_returns type_map env expected_ret_type (stmt : AST.stateme
   | AST.EnumDef _ -> Ok (subst, expected_ret_type)
   | AST.TraitDef _ -> Ok (subst, expected_ret_type) (* TODO: Phase 4.3 - handle trait defs *)
   | AST.ImplDef _ -> Ok (subst, expected_ret_type) (* TODO: Phase 4.3 - handle impl defs *)
-  | AST.DeriveDef _ -> Ok (subst, expected_ret_type)
-(* TODO: Phase 4.3 - handle derive defs *)
+  | AST.DeriveDef _ -> Ok (subst, expected_ret_type) (* TODO: Phase 4.3 - handle derive defs *)
+  | AST.TypeAlias _ -> Ok (subst, expected_ret_type)
+(* TODO: Phase 4.4 - handle type aliases *)
 
 and infer_function type_map env params body =
   (* Create fresh type variables for each parameter *)
@@ -911,6 +918,7 @@ and infer_statement type_map env stmt =
               let ret_type = convert ret in
               List.fold_right (fun p r -> TFun (p, r)) param_types ret_type
           | AST.TUnion types -> normalize_union (List.map convert types)
+          | AST.TRecord (_fields, _row) -> failwith "Record types not yet implemented in enum definition"
         in
         convert te
       in
@@ -961,6 +969,7 @@ and infer_statement type_map env stmt =
               let ret_type = convert ret in
               List.fold_right (fun p r -> TFun (p, r)) param_types ret_type
           | AST.TUnion types -> normalize_union (List.map convert types)
+          | AST.TRecord (_fields, _row) -> failwith "Record types not yet implemented in trait definition"
         in
         convert te
       in
@@ -1053,6 +1062,9 @@ and infer_statement type_map env stmt =
         Error (error (ConstructorError (String.concat "; " derive_errors)))
       else
         Ok (empty_substitution, TNull)
+  | AST.TypeAlias _ ->
+      (* Phase 4.4: Type aliases - not yet implemented *)
+      Ok (empty_substitution, TNull)
 
 (* Simple validation: check that all explicit return statements match expected type *)
 and validate_return_statements
@@ -1093,6 +1105,7 @@ and validate_return_statements
   | AST.TraitDef _ -> Ok () (* TODO: Phase 4.3 - validate trait defs *)
   | AST.ImplDef _ -> Ok () (* TODO: Phase 4.3 - validate impl defs *)
   | AST.DeriveDef _ -> Ok () (* TODO: Phase 4.3 - validate derive defs *)
+  | AST.TypeAlias _ -> Ok () (* TODO: Phase 4.4 - validate type aliases *)
 
 (* ============================================================
    Pattern Matching Helpers
@@ -1222,6 +1235,9 @@ and check_pattern pattern scrutinee_type =
                (PatternError
                   (Printf.sprintf "Pattern %s.%s doesn't match scrutinee type %s" enum_name variant_name
                      (to_string scrutinee_type)))))
+  | AST.PRecord (_fields, _rest) ->
+      (* Phase 4.4: Record patterns - not yet implemented *)
+      Error (error (PatternError "Record patterns not yet implemented"))
 
 (* ============================================================
    Let Binding Inference

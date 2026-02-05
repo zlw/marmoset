@@ -265,7 +265,8 @@ let rec collect_funcs_stmt (state : mono_state) (stmt : AST.statement) : unit =
   | AST.ExpressionStmt e -> collect_funcs_expr state e
   | AST.Block stmts -> List.iter (collect_funcs_stmt state) stmts
   | AST.EnumDef _ -> () (* Enums are compile-time only *)
-  | AST.TraitDef _ | AST.ImplDef _ | AST.DeriveDef _ -> () (* Traits are compile-time only *)
+  | AST.TraitDef _ | AST.ImplDef _ | AST.DeriveDef _ | AST.TypeAlias _ ->
+      () (* Traits/type aliases are compile-time only *)
 
 and collect_funcs_expr (state : mono_state) (expr : AST.expression) : unit =
   match expr.expr with
@@ -299,6 +300,17 @@ and collect_funcs_expr (state : mono_state) (expr : AST.expression) : unit =
   | AST.Match (scrutinee, arms) ->
       collect_funcs_expr state scrutinee;
       List.iter (fun arm -> collect_funcs_expr state arm.AST.body) arms
+  | AST.RecordLit (fields, spread) -> (
+      List.iter
+        (fun field ->
+          match field.AST.field_value with
+          | Some expr -> collect_funcs_expr state expr
+          | None -> ())
+        fields;
+      match spread with
+      | Some expr -> collect_funcs_expr state expr
+      | None -> ())
+  | AST.FieldAccess (expr, _field) -> collect_funcs_expr state expr
 
 (* ============================================================
    Pass 2: Collect instantiations at call sites
@@ -371,7 +383,9 @@ let rec collect_insts_stmt
       env
   | AST.Block stmts -> List.fold_left (collect_insts_stmt state type_map) env stmts
   | AST.EnumDef _ -> env (* Enums are compile-time only *)
-  | AST.TraitDef _ | AST.ImplDef _ | AST.DeriveDef _ -> env (* Traits are compile-time only *)
+  | AST.TraitDef _ | AST.ImplDef _ | AST.DeriveDef _ | AST.TypeAlias _ -> env
+(* Traits/type aliases are compile-time only *)
+(* Traits are compile-time only *)
 
 and collect_insts_expr
     ?(expected_type : Types.mono_type option = None)
@@ -464,6 +478,17 @@ and collect_insts_expr
       let scrutinee_type = get_type type_map scrutinee in
       track_enum_inst state scrutinee_type;
       List.iter (fun arm -> collect_insts_expr state type_map env arm.AST.body) arms
+  | AST.RecordLit (fields, spread) -> (
+      List.iter
+        (fun field ->
+          match field.AST.field_value with
+          | Some expr -> collect_insts_expr state type_map env expr
+          | None -> ())
+        fields;
+      match spread with
+      | Some expr -> collect_insts_expr state type_map env expr
+      | None -> ())
+  | AST.FieldAccess (expr, _field) -> collect_insts_expr state type_map env expr
 
 (* ============================================================
    Code Generation State
@@ -528,6 +553,8 @@ let rec emit_expr
       else
         Printf.sprintf "%s(%s)" constructor_name (String.concat ", " arg_strs)
   | AST.Match (scrutinee, arms) -> emit_match state type_map env expr scrutinee arms
+  | AST.RecordLit (_fields, _spread) -> failwith "Record literals not yet implemented in codegen"
+  | AST.FieldAccess (_expr, _field) -> failwith "Field access not yet implemented in codegen"
 
 (* ============================================================
      Match Expression Codegen
@@ -661,6 +688,7 @@ and emit_match_arm_primitive state type_map env _scrutinee_type pattern body =
       let body_str = emit_expr state type_map env body in
       Printf.sprintf "\tcase %s:\n\t\treturn %s" lit_str body_str
   | AST.PConstructor _ -> failwith "Constructor patterns not valid for primitive match"
+  | AST.PRecord _ -> failwith "Record patterns not valid for primitive match"
 
 and emit_match_arm_enum state type_map env go_type_name enum_def type_args pattern body =
   match pattern.AST.pat with
@@ -717,6 +745,7 @@ and emit_match_arm_enum state type_map env go_type_name enum_def type_args patte
       let body_str = emit_expr state type_map env body in
 
       Printf.sprintf "\tcase %s:\n%s\t\treturn %s" tag_constant bindings_code body_str
+  | AST.PRecord _ -> failwith "Record patterns not yet implemented in enum match"
 
 and emit_pattern_bindings
     (layout : enum_layout)
@@ -807,7 +836,8 @@ and substitute_identifier_in_expr old_name new_name expr =
     | AST.ExpressionStmt e -> { s with stmt = AST.ExpressionStmt (subst_expr e) }
     | AST.Block stmts -> { s with stmt = AST.Block (List.map subst_stmt stmts) }
     | AST.EnumDef _ -> s (* Enum defs don't contain expressions to substitute *)
-    | AST.TraitDef _ | AST.ImplDef _ | AST.DeriveDef _ -> s (* Trait defs don't contain expressions *)
+    | AST.TraitDef _ | AST.ImplDef _ | AST.DeriveDef _ | AST.TypeAlias _ ->
+        s (* Trait defs/type aliases don't contain expressions *)
   in
   subst_expr expr
 
@@ -1230,8 +1260,8 @@ and emit_stmt (state : emit_state) (type_map : Infer.type_map) (env : Infer.type
   | AST.EnumDef _ ->
       (* Enum definitions are compile-time only *)
       ("", env)
-  | AST.TraitDef _ | AST.ImplDef _ | AST.DeriveDef _ ->
-      (* Trait definitions/impls/derives are compile-time only *)
+  | AST.TraitDef _ | AST.ImplDef _ | AST.DeriveDef _ | AST.TypeAlias _ ->
+      (* Trait definitions/impls/derives/type aliases are compile-time only *)
       ("", env)
 
 and emit_stmts state type_map env stmts =

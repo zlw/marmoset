@@ -61,6 +61,9 @@ let rec type_expr_to_mono_type (te : Syntax.Ast.AST.type_expr) : Types.mono_type
       (* Union types (Phase 4.1): int | string | bool *)
       let mono_types = List.map type_expr_to_mono_type type_exprs in
       Types.normalize_union mono_types
+  | Syntax.Ast.AST.TRecord (_fields, _row_var) ->
+      (* Phase 4.4: Record types - not yet implemented *)
+      failwith "Record types not yet implemented"
 
 (* Check if two types are equal (for annotation verification) *)
 let rec mono_types_equal (t1 : Types.mono_type) (t2 : Types.mono_type) : bool =

@@ -252,8 +252,8 @@ and compile_statement (c : compiler) (s : AST.statement) : (compiler, string) re
   | AST.EnumDef _ ->
       (* Enum definitions are compile-time only *)
       Ok c
-  | AST.TraitDef _ | AST.ImplDef _ | AST.DeriveDef _ ->
-      (* Trait definitions/impls/derives are compile-time only *)
+  | AST.TraitDef _ | AST.ImplDef _ | AST.DeriveDef _ | AST.TypeAlias _ ->
+      (* Trait definitions/impls/derives/type aliases are compile-time only *)
       Ok c
 
 and compile_expression (c : compiler) (e : AST.expression) : (compiler, string) result =
@@ -484,6 +484,8 @@ and compile_expression (c : compiler) (e : AST.expression) : (compiler, string) 
   | AST.EnumConstructor (_enum_name, _variant_name, _args) ->
       Error "enum constructors not yet supported in VM compiler"
   | AST.Match (_scrutinee, _arms) -> Error "pattern matching not yet supported in VM compiler"
+  | AST.RecordLit (_fields, _spread) -> Error "record literals not yet supported in VM compiler"
+  | AST.FieldAccess (_expr, _field) -> Error "field access not yet supported in VM compiler"
 
 (* Convert the working compiler to final immutable bytecode *)
 let bytecode (c : compiler) : bytecode =

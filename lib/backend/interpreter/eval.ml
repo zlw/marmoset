@@ -46,6 +46,9 @@ and eval_statement (stmt : AST.statement) (e : env) : Value.value * env =
   | DeriveDef _ ->
       (* Derive statements are handled by type checker, not interpreter *)
       (Value.null_value, e)
+  | TypeAlias _ ->
+      (* Type alias statements are handled by type checker, not interpreter *)
+      (Value.null_value, e)
 
 and eval_expression (expr : AST.expression) (e : env) : Value.value * env =
   match expr.expr with
@@ -216,6 +219,12 @@ and eval_expression (expr : AST.expression) (e : env) : Value.value * env =
   | Match (_scrutinee, _arms) ->
       (* Pattern matching not yet implemented in interpreter *)
       failwith "pattern matching not yet supported in interpreter"
+  | RecordLit (_fields, _spread) ->
+      (* Phase 4.4: Record literals - not yet implemented *)
+      failwith "record literals not yet supported in interpreter"
+  | FieldAccess (_expr, _field) ->
+      (* Phase 4.4: Field access - not yet implemented *)
+      failwith "field access not yet supported in interpreter"
 
 and eval_expressions (args : AST.expression list) (e : env) : Value.value list * env =
   let rec loop exps result env =

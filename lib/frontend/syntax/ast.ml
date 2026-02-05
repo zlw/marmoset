@@ -8,6 +8,15 @@ module AST = struct
     | TApp of string * type_expr list (* list[int], map[string, int], option[a] *)
     | TArrow of type_expr list * type_expr (* fn(int, string) -> bool *)
     | TUnion of type_expr list (* int | string | bool *)
+    | TRecord of record_type_field list * type_expr option
+      (* { x: int, y: string } or { x: int, ...r } - fields + optional row variable *)
+  [@@deriving show]
+
+  (* Phase 4.4: Record type field *)
+  and record_type_field = {
+    field_name : string;
+    field_type : type_expr;
+  }
   [@@deriving show]
 
   (* Phase 4.2: Variant definition for enums *)
@@ -87,6 +96,15 @@ module AST = struct
     | TraitDef of trait_def (* Phase 4.3: trait show[a] { ... } *)
     | ImplDef of impl_def (* Phase 4.3: impl show for int { ... } *)
     | DeriveDef of derive_def (* Phase 4.3: derive eq, show for color *)
+    | TypeAlias of type_alias_def (* Phase 4.4: type point = { x: int, y: int } *)
+  [@@deriving show]
+
+  (* Phase 4.4: Type alias definition *)
+  and type_alias_def = {
+    alias_name : string;
+    alias_type_params : string list;
+    alias_body : type_expr;
+  }
   [@@deriving show]
 
   and expression = {
@@ -119,6 +137,15 @@ module AST = struct
     (* enum_name, variant_name, arguments *)
     (* e.g., option.some(42) -> ("option", "some", [Integer 42]) *)
     | Match of expression * match_arm list (* match scrutinee { arm1, arm2, ... } *)
+    | RecordLit of record_field list * expression option (* { x: 1, y: 2, ...base } - fields + optional spread *)
+    | FieldAccess of expression * string (* expr.field_name *)
+  [@@deriving show]
+
+  (* Phase 4.4: Record field in record literal *)
+  and record_field = {
+    field_name : string;
+    field_value : expression option; (* None = punning, use variable with same name *)
+  }
   [@@deriving show]
 
   (* Phase 4.2: Pattern matching *)
@@ -132,8 +159,17 @@ module AST = struct
     | PVariable of string (* x *)
     | PLiteral of literal_value (* 42, "hello", true *)
     | PConstructor of string * string * pattern list
-  (* enum_name, variant_name, field patterns *)
-  (* e.g., option.some(x) -> ("option", "some", [PVariable "x"]) *)
+    (* enum_name, variant_name, field patterns *)
+    (* e.g., option.some(x) -> ("option", "some", [PVariable "x"]) *)
+    | PRecord of record_pattern_field list * string option
+      (* { x:, y:, ...rest } - fields + optional rest variable *)
+  [@@deriving show]
+
+  (* Phase 4.4: Record pattern field *)
+  and record_pattern_field = {
+    pat_field_name : string;
+    pat_field_pattern : pattern option; (* None = punning *)
+  }
   [@@deriving show]
 
   and literal_value =
@@ -210,6 +246,8 @@ module AST = struct
     | Call _ -> "Call"
     | EnumConstructor _ -> "EnumConstructor"
     | Match _ -> "Match"
+    | RecordLit _ -> "RecordLit"
+    | FieldAccess _ -> "FieldAccess"
 
   let to_string (program : program) : string =
     let rec statement_to_string (s : statement) : string =
@@ -232,6 +270,14 @@ module AST = struct
       | DeriveDef { derive_traits; derive_for_type } ->
           let traits_str = List.map (fun t -> t.derive_trait_name) derive_traits |> String.concat ", " in
           Printf.sprintf "derive %s for %s" traits_str (show_type_expr derive_for_type)
+      | TypeAlias { alias_name; alias_type_params; alias_body } ->
+          let params_str =
+            if alias_type_params = [] then
+              ""
+            else
+              "[" ^ String.concat ", " alias_type_params ^ "]"
+          in
+          Printf.sprintf "type %s%s = %s" alias_name params_str (show_type_expr alias_body)
     and expression_to_string (e : expression) : string =
       match e.expr with
       | Identifier ident -> ident
@@ -265,6 +311,22 @@ module AST = struct
       | EnumConstructor (enum_name, variant_name, args) ->
           Printf.sprintf "%s.%s(%s)" enum_name variant_name (args_to_string args)
       | Match (scrutinee, _arms) -> Printf.sprintf "match %s { ... }" (expression_to_string scrutinee)
+      | RecordLit (fields, spread) ->
+          let fields_str =
+            fields
+            |> List.map (fun f ->
+                   match f.field_value with
+                   | Some v -> Printf.sprintf "%s: %s" f.field_name (expression_to_string v)
+                   | None -> Printf.sprintf "%s:" f.field_name)
+            |> String.concat ", "
+          in
+          let spread_str =
+            match spread with
+            | Some e -> ", ..." ^ expression_to_string e
+            | None -> ""
+          in
+          Printf.sprintf "{ %s%s }" fields_str spread_str
+      | FieldAccess (expr, field) -> Printf.sprintf "%s.%s" (expression_to_string expr) field
     and block_to_string (block : statement) : string = statement_to_string block
     and function_to_string (params : (string * type_expr option) list) (body : statement) : string =
       let param_str = List.map (fun (name, _annot) -> name) params |> String.concat ", " in
