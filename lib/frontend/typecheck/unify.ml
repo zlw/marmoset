@@ -54,9 +54,10 @@ let rec unify (type1 : mono_type) (type2 : mono_type) : (substitution, unify_err
         unify_list args1 args2
   (* Both unions - check equality (must come before single-sided union cases) *)
   | TUnion members1, TUnion members2 -> unify_union_with_union members1 members2
-  (* Union on right - concrete type must match at least one member *)
+  (* Union on right - concrete type must match at least one member (widening) *)
   | concrete, TUnion members -> unify_concrete_with_union concrete members
-  (* Union on left - same as right case (symmetrical) *)
+  (* Union on left - concrete on right: concrete must match at least one member *)
+  (* This is symmetrical because unification is about finding substitution, not subtyping *)
   | TUnion members, concrete -> unify_concrete_with_union concrete members
   (* No match - types are incompatible *)
   | _, _ -> Error (TypeMismatch (type1, type2))
@@ -73,6 +74,24 @@ and unify_concrete_with_union (concrete : mono_type) (members : mono_type list) 
       | Error _ ->
           (* Failed, try remaining members *)
           unify_concrete_with_union concrete rest)
+
+(* Helper: ALL union members must unify with concrete type.
+   This is for when a union is on the LEFT side - you can't assign string|int to a string slot
+   unless all members are compatible with string (which is impossible for int). *)
+and unify_union_all_with_concrete (members : mono_type list) (concrete : mono_type) :
+    (substitution, unify_error) result =
+  let rec unify_all subst = function
+    | [] -> Ok subst
+    | member :: rest -> (
+        let member' = apply_substitution subst member in
+        let concrete' = apply_substitution subst concrete in
+        match unify member' concrete' with
+        | Error _ -> Error (TypeMismatch (TUnion members, concrete))
+        | Ok subst' ->
+            let composed = compose_substitution subst subst' in
+            unify_all composed rest)
+  in
+  unify_all empty_substitution members
 
 (* Helper: Unify two union types (all members of left must be in right) *)
 and unify_union_with_union (members1 : mono_type list) (members2 : mono_type list) :
@@ -271,7 +290,7 @@ let%test "unify concrete with union member" =
   | Error _ -> false
 
 let%test "unify union with concrete member" =
-  (* int | string unifies with int *)
+  (* int | string unifies with int (symmetrical) *)
   match unify (TUnion [ TInt; TString ]) TInt with
   | Ok _ -> true
   | Error _ -> false

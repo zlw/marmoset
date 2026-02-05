@@ -319,7 +319,8 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
   (* Record the type in the type map before returning *)
   match result with
   | Ok (subst, t) ->
-      record_type type_map expr t;
+      let t' = apply_substitution subst t in
+      record_type type_map expr t';
       Ok (subst, t)
   | Error e -> Error e
 (* ============================================================
@@ -521,6 +522,46 @@ and infer_if type_map env condition consequence alternative =
    Functions
    ============================================================ *)
 
+(* Collect all return types from a statement, unifying them with an expected type.
+   Returns the updated substitution and the unified return type. *)
+and collect_and_unify_returns type_map env expected_ret_type (stmt : AST.statement) subst :
+    (substitution * mono_type, infer_error) result =
+  match stmt.AST.stmt with
+  | AST.Return expr -> (
+      match infer_expression type_map env expr with
+      | Error e -> Error e
+      | Ok (subst1, ret_type) -> (
+          let subst' = compose_substitution subst subst1 in
+          let expected' = apply_substitution subst' expected_ret_type in
+          let ret_type' = apply_substitution subst' ret_type in
+          match Unify.unify expected' ret_type' with
+          | Error e -> Error (error_at (UnificationError e) expr)
+          | Ok subst2 ->
+              let final_subst = compose_substitution subst' subst2 in
+              let final_ret = apply_substitution subst2 ret_type' in
+              Ok (final_subst, final_ret)))
+  | AST.Block stmts ->
+      let rec go subst ret_type = function
+        | [] -> Ok (subst, ret_type)
+        | s :: rest -> (
+            match collect_and_unify_returns type_map env ret_type s subst with
+            | Error e -> Error e
+            | Ok (subst', ret_type') -> go subst' ret_type' rest)
+      in
+      go subst expected_ret_type stmts
+  | AST.ExpressionStmt expr -> (
+      match expr.AST.expr with
+      | AST.If (_cond, cons, alt_opt) -> (
+          match collect_and_unify_returns type_map env expected_ret_type cons subst with
+          | Error e -> Error e
+          | Ok (subst', ret_type') -> (
+              match alt_opt with
+              | None -> Ok (subst', ret_type')
+              | Some alt -> collect_and_unify_returns type_map env ret_type' alt subst'))
+      | _ -> Ok (subst, expected_ret_type))
+  | AST.Let _ -> Ok (subst, expected_ret_type)
+  | AST.EnumDef _ -> Ok (subst, expected_ret_type)
+
 and infer_function type_map env params body =
   (* Create fresh type variables for each parameter *)
   let param_names =
@@ -539,12 +580,19 @@ and infer_function type_map env params body =
   (* Infer body type *)
   match infer_statement type_map env' body with
   | Error e -> Error e
-  | Ok (subst, body_type) ->
-      (* Apply substitution to parameter types *)
-      let param_types' = List.map (apply_substitution subst) param_types in
-      (* Build function type: p1 -> p2 -> ... -> body_type *)
-      let func_type = List.fold_right (fun param_t acc -> TFun (param_t, acc)) param_types' body_type in
-      Ok (subst, func_type)
+  | Ok (subst, body_type) -> (
+      (* Collect and unify all return types with the body type *)
+      let body_type' = apply_substitution subst body_type in
+      match collect_and_unify_returns type_map env' body_type' body subst with
+      | Error e -> Error e
+      | Ok (subst', unified_ret_type) ->
+          (* Apply substitution to parameter types *)
+          let param_types' = List.map (apply_substitution subst') param_types in
+          (* Build function type: p1 -> p2 -> ... -> unified_ret_type *)
+          let func_type =
+            List.fold_right (fun param_t acc -> TFun (param_t, acc)) param_types' unified_ret_type
+          in
+          Ok (subst', func_type))
 
 (* Infer function with parameter type annotations *)
 and infer_function_with_annotations type_map env params return_annot body =
@@ -579,28 +627,39 @@ and infer_function_with_annotations type_map env params return_annot body =
       let body_type' = apply_substitution subst body_type in
       (* If we have a return type annotation, unify with it to ensure type consistency *)
       match expected_return_type_opt with
-      | None ->
-          (* No return type annotation *)
-          let param_types' = List.map (apply_substitution subst) param_types in
-          let func_type = List.fold_right (fun param_t acc -> TFun (param_t, acc)) param_types' body_type' in
-          Ok (subst, func_type)
+      | None -> (
+          (* No return type annotation - collect all return types and unify with body type *)
+          match collect_and_unify_returns type_map env' body_type' body subst with
+          | Error e -> Error e
+          | Ok (subst', unified_ret_type) ->
+              let param_types' = List.map (apply_substitution subst') param_types in
+              let func_type =
+                List.fold_right (fun param_t acc -> TFun (param_t, acc)) param_types' unified_ret_type
+              in
+              Ok (subst', func_type))
       | Some expected_ret_type -> (
           (* First, validate all explicit return statements match expected type *)
           match validate_return_statements type_map env' expected_ret_type body with
           | Error e -> Error e
-          | Ok () -> (
-              (* Then check that inferred return type matches annotation *)
-              match unify body_type' expected_ret_type with
-              | Error _e -> Error (error_at_stmt (ReturnTypeMismatch (expected_ret_type, body_type')) body)
-              | Ok subst2 ->
-                  let final_subst = compose_substitution subst subst2 in
-                  let final_body_type = apply_substitution subst2 body_type' in
-                  (* Type checking is automatic via unification above *)
-                  let param_types' = List.map (apply_substitution final_subst) param_types in
-                  let func_type =
-                    List.fold_right (fun param_t acc -> TFun (param_t, acc)) param_types' final_body_type
-                  in
-                  Ok (final_subst, func_type))))
+          | Ok () ->
+              (* Then check that inferred body type is a subtype of expected return type *)
+              (* This catches cases like `fn() -> string { if (...) { "a" } else { 42 } }`
+                 where body type is string|int which is NOT a subtype of string *)
+              if Annotation.is_subtype_of body_type' expected_ret_type then
+                (* Body type is compatible, now unify to propagate constraints *)
+                match unify body_type' expected_ret_type with
+                | Error _e -> Error (error_at_stmt (ReturnTypeMismatch (expected_ret_type, body_type')) body)
+                | Ok subst2 ->
+                    let final_subst = compose_substitution subst subst2 in
+                    let final_body_type = apply_substitution subst2 body_type' in
+                    (* Type checking is automatic via unification above *)
+                    let param_types' = List.map (apply_substitution final_subst) param_types in
+                    let func_type =
+                      List.fold_right (fun param_t acc -> TFun (param_t, acc)) param_types' final_body_type
+                    in
+                    Ok (final_subst, func_type)
+              else
+                Error (error_at_stmt (ReturnTypeMismatch (expected_ret_type, body_type')) body)))
 
 (* ============================================================
    Function Calls
@@ -873,10 +932,12 @@ and validate_return_statements
   | AST.Return expr -> (
       match infer_expression type_map env expr with
       | Error e -> Error e
-      | Ok (_subst, inferred_type) -> (
-          match Unify.unify inferred_type expected_type with
-          | Ok _ -> Ok ()
-          | Error _ -> Error (error_at_stmt (ReturnTypeMismatch (expected_type, inferred_type)) stmt)))
+      | Ok (_subst, inferred_type) ->
+          (* Use subtyping check: inferred must be subtype of expected *)
+          if Annotation.is_subtype_of inferred_type expected_type then
+            Ok ()
+          else
+            Error (error_at_stmt (ReturnTypeMismatch (expected_type, inferred_type)) stmt))
   | AST.Block stmts ->
       let rec check_all stmts =
         match stmts with
@@ -1145,13 +1206,14 @@ let infer_program ?(env = empty_env) (program : AST.program) : (type_env * type_
   let type_map = create_type_map () in
   let rec go env subst stmts =
     match stmts with
-    | [] -> Ok (env, TNull)
+    | [] -> Ok (env, subst, TNull)
     | [ stmt ] -> (
         match infer_statement type_map env stmt with
         | Error e -> Error e
         | Ok (subst', result_type) ->
-            let env' = apply_substitution_env (compose_substitution subst subst') env in
-            let result_type' = apply_substitution subst' result_type in
+            let final_subst = compose_substitution subst subst' in
+            let env' = apply_substitution_env final_subst env in
+            let result_type' = apply_substitution final_subst result_type in
             (* Add let bindings to final environment *)
             let env'' =
               match stmt.stmt with
@@ -1160,7 +1222,7 @@ let infer_program ?(env = empty_env) (program : AST.program) : (type_env * type_
                   TypeEnv.add let_binding.name poly env'
               | _ -> env'
             in
-            Ok (env'', result_type'))
+            Ok (env'', final_subst, result_type'))
     | stmt :: rest -> (
         match infer_statement type_map env stmt with
         | Error e -> Error e
@@ -1179,7 +1241,17 @@ let infer_program ?(env = empty_env) (program : AST.program) : (type_env * type_
   in
   match go env empty_substitution program with
   | Error e -> Error e
-  | Ok (env', result_type) -> Ok (env', type_map, result_type)
+  | Ok (env', final_subst, result_type) ->
+      (* Apply final substitution to all types in type_map *)
+      let apply_subst_to_type_map () =
+        Hashtbl.iter
+          (fun id ty ->
+            let ty' = apply_substitution final_subst ty in
+            Hashtbl.replace type_map id ty')
+          type_map
+      in
+      apply_subst_to_type_map ();
+      Ok (env', type_map, result_type)
 
 module Test = struct
   (* Helper to parse and infer *)
@@ -1292,9 +1364,10 @@ module Test = struct
     | Error { kind = UnboundVariable "x"; _ } -> true
     | _ -> false
 
-  let%test "error on type mismatch in if" =
+  let%test "union type from if with different branch types" =
+    (* Phase 4.1: Different branch types create unions instead of errors *)
     match infer_string "if (true) { 1 } else { \"hello\" }" with
-    | Error { kind = IfBranchMismatch _; _ } -> true
+    | Ok (_, _, TUnion _) -> true
     | _ -> false
 
   let%test "error on non-bool condition" =
@@ -1437,14 +1510,15 @@ match x {
 }" in
     infers_to code TString
 
-  let%test "match expression type error: mismatched arm types" =
+  let%test "match expression union type from different arm types" =
+    (* Phase 4.2: Different arm types create unions instead of errors *)
     let code = "match 5 {
   0: 42
   _: \"string\"
 }" in
     match infer_string code with
-    | Error _ -> true
-    | Ok _ -> false
+    | Ok (_, _, TUnion _) -> true
+    | _ -> false
 
   (* Exhaustiveness checking tests *)
   let%test "non-exhaustive match on option is error" =

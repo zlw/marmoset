@@ -395,39 +395,34 @@ and collect_insts_expr
       (* Check if this is a call to a user-defined function *)
       match func.expr with
       | AST.Identifier name when is_user_func state name ->
-          (* Get the function type from environment *)
-          let func_type =
+          (* Look up the function's declared type from the environment *)
+          let func_param_types =
             match Infer.TypeEnv.find_opt name env with
-            | Some (Types.Forall (_, t)) -> t
-            | None -> get_type type_map func
+            | Some (Types.Forall (_, func_type)) ->
+                (* Extract parameter types from the function type *)
+                let num_args = List.length args in
+                let declared_param_types, _ = extract_param_types num_args func_type in
+                declared_param_types
+            | None ->
+                (* Fallback to argument types if function not in env *)
+                List.map (get_type type_map) args
           in
-
-          (* Extract declared parameter types and return type from function type *)
-          let declared_param_types, declared_return_type = extract_param_types (List.length args) func_type in
-
-          (* Use declared types for instantiation *)
+          (* Check if any declared param is a union type *)
+          let has_union_param =
+            List.exists
+              (function
+                | Types.TUnion _ -> true
+                | _ -> false)
+              func_param_types
+          in
+          (* If function has union params, use declared types; otherwise use argument types *)
           let param_types =
-            if List.length declared_param_types = List.length args then
-              declared_param_types
+            if has_union_param then
+              func_param_types
             else
               List.map (get_type type_map) args
           in
-
-          (* Use declared return type if available and concrete *)
-          let return_type =
-            let is_concrete_type = function
-              | Types.TVar _ | Types.TNull -> false
-              | _ -> true
-            in
-            if is_concrete_type declared_return_type && List.length declared_param_types = List.length args then
-              declared_return_type
-            else
-              (* Fallback to getting from type_map *)
-              let call_type = get_type type_map expr in
-              match call_type with
-              | Types.TVar _ when List.length param_types > 0 -> List.hd param_types
-              | t -> t
-          in
+          let return_type = get_type type_map expr in
           let inst = { func_name = name; concrete_types = param_types; return_type } in
           state.instantiations <- InstSet.add inst state.instantiations
       | _ -> ())
@@ -1047,16 +1042,27 @@ and emit_call state type_map env func args =
       let val_str = emit_expr state type_map env (List.nth args 1) in
       Printf.sprintf "push(%s, %s)" arr_str val_str
   | AST.Identifier name when is_user_func state.mono name ->
-      (* User-defined function - use function's declared parameter types for mangling *)
-      let func_type =
+      (* User-defined function - look up declared parameter types to check for unions *)
+      let func_param_types =
         match Infer.TypeEnv.find_opt name env with
-        | Some (Types.Forall (_, t)) -> t
-        | None -> get_type type_map func
+        | Some (Types.Forall (_, func_type)) ->
+            let num_args = List.length args in
+            let declared_param_types, _ = extract_param_types num_args func_type in
+            declared_param_types
+        | None -> List.map (get_type type_map) args
       in
-      let declared_param_types, _ = extract_param_types (List.length args) func_type in
+      (* Check if any declared param is a union type *)
+      let has_union_param =
+        List.exists
+          (function
+            | Types.TUnion _ -> true
+            | _ -> false)
+          func_param_types
+      in
+      (* If function has union params, use declared types for name mangling; otherwise use argument types *)
       let param_types =
-        if List.length declared_param_types = List.length args then
-          declared_param_types
+        if has_union_param then
+          func_param_types
         else
           List.map (get_type type_map) args
       in

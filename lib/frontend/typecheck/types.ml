@@ -80,7 +80,9 @@ let rec apply_substitution (subst : substitution) (mono : mono_type) : mono_type
   | TInt | TFloat | TBool | TString | TNull -> mono
   | TVar name -> (
       match List.assoc_opt name subst with
-      | Some replacement -> replacement
+      | Some replacement ->
+          (* Recursively apply substitution to handle chains like t3 -> t5 -> int *)
+          apply_substitution subst replacement
       | None -> mono)
   | TFun (arg, ret) -> TFun (apply_substitution subst arg, apply_substitution subst ret)
   | TArray element -> TArray (apply_substitution subst element)
@@ -308,7 +310,8 @@ let%test "normalize_union dedupes" = normalize_union [ TInt; TString; TInt ] = T
 
 let%test "normalize_union flattens nested" =
   let nested = TUnion [ TInt; TUnion [ TString; TBool ] ] in
-  normalize_union [ nested; TFloat ] = TUnion [ TBool; TFloat; TInt; TString ]
+  (* OCaml compare sorts by constructor order: TInt, TFloat, TBool, TString *)
+  normalize_union [ nested; TFloat ] = TUnion [ TInt; TFloat; TBool; TString ]
 
 let%test "normalize_union single element" = normalize_union [ TInt ] = TInt
 

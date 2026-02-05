@@ -80,13 +80,53 @@ let rec mono_types_equal (t1 : Types.mono_type) (t2 : Types.mono_type) : bool =
       name1 = name2 && List.length args1 = List.length args2 && List.for_all2 mono_types_equal args1 args2
   | _ -> false
 
+(* Check if actual_type is a subtype of expected_type.
+   This is used for return type checking where we need to ensure the actual
+   return value can safely be used where the expected type is expected.
+   
+   Key rules:
+   - A concrete type is subtype of itself (int <: int)
+   - A concrete type is subtype of a union containing it (int <: int | string)
+   - A union is subtype of another union if ALL members are in the target union
+   - A union is subtype of a concrete ONLY if it contains only that type
+*)
+let rec is_subtype_of (actual : Types.mono_type) (expected : Types.mono_type) : bool =
+  match (actual, expected) with
+  (* Type variables: use equality *)
+  | Types.TVar a, Types.TVar b -> a = b
+  (* Same primitive types *)
+  | Types.TInt, Types.TInt -> true
+  | Types.TFloat, Types.TFloat -> true
+  | Types.TBool, Types.TBool -> true
+  | Types.TString, Types.TString -> true
+  | Types.TNull, Types.TNull -> true
+  (* Arrays: covariant in element type *)
+  | Types.TArray elem1, Types.TArray elem2 -> is_subtype_of elem1 elem2
+  (* Hashes: covariant in key and value types *)
+  | Types.THash (k1, v1), Types.THash (k2, v2) -> is_subtype_of k1 k2 && is_subtype_of v1 v2
+  (* Functions: contravariant in params, covariant in return *)
+  | Types.TFun (p1, r1), Types.TFun (p2, r2) -> is_subtype_of p2 p1 && is_subtype_of r1 r2
+  (* Enums: same name, subtypes for all args *)
+  | Types.TEnum (name1, args1), Types.TEnum (name2, args2) ->
+      name1 = name2 && List.length args1 = List.length args2 && List.for_all2 is_subtype_of args1 args2
+  (* Union is subtype of another union if ALL members are subtypes - must come before single-sided cases *)
+  | Types.TUnion members1, Types.TUnion members2 ->
+      List.for_all (fun m1 -> List.exists (is_subtype_of m1) members2) members1
+  (* Concrete type is subtype of union if it's a member *)
+  | concrete, Types.TUnion members -> List.exists (is_subtype_of concrete) members
+  (* Union is subtype of concrete ONLY if all members equal that concrete type *)
+  | Types.TUnion members, concrete -> List.for_all (fun m -> is_subtype_of m concrete) members
+  (* Different concrete types *)
+  | _ -> false
+
 (* Check if annotation matches inferred type *)
 let check_annotation (annot_type : Types.mono_type) (inferred_type : Types.mono_type) : bool =
-  (* Phase 4.1: Use unification for union types *)
-  (* This allows int to match int | string (widening) *)
-  match Unify.unify annot_type inferred_type with
-  | Ok _ -> true
-  | Error _ -> false
+  (* For return type annotations, we check if the inferred type is a subtype 
+     of the annotated type. This means:
+     - int matches int (equal)
+     - int matches int | string (widening is ok)
+     - int | string does NOT match int (narrowing is not ok) *)
+  is_subtype_of inferred_type annot_type
 
 (* Extract constraint names from generic parameters *)
 let extract_constraints (params : Syntax.Ast.AST.generic_param list) : string list list =
