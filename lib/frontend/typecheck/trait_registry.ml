@@ -92,8 +92,68 @@ let validate_impl (def : impl_def) : (unit, string) result =
              (String.concat ", " trait_method_names)
              (String.concat ", " impl_method_names))
       else
-        (* TODO: Check method signatures match (param types and return types) *)
-        Ok ()
+        (* Check each method signature matches *)
+        let check_method_sig (trait_method : method_sig) (impl_method : method_sig) : (unit, string) result =
+          (* Substitute trait type parameter with impl_for_type *)
+          let substitute_type (t : mono_type) : mono_type =
+            match trait_def.trait_type_param with
+            | None -> t (* No type param, use as-is *)
+            | Some type_param -> apply_substitution [ (type_param, def.impl_for_type) ] t
+          in
+
+          (* Check param count *)
+          if List.length trait_method.method_params <> List.length impl_method.method_params then
+            Error
+              (Printf.sprintf "Method '%s': expected %d parameters, got %d" trait_method.method_name
+                 (List.length trait_method.method_params)
+                 (List.length impl_method.method_params))
+          else
+            (* Check param types *)
+            let param_errors =
+              List.map2
+                (fun (_tname, ttype) (_iname, itype) ->
+                  let expected_type = substitute_type ttype in
+                  if expected_type = itype then
+                    None
+                  else
+                    Some
+                      (Printf.sprintf "parameter type mismatch: expected %s, got %s" (to_string expected_type)
+                         (to_string itype)))
+                trait_method.method_params impl_method.method_params
+              |> List.filter_map (fun x -> x)
+            in
+
+            if param_errors <> [] then
+              Error (Printf.sprintf "Method '%s': %s" trait_method.method_name (List.hd param_errors))
+            else
+              (* Check return type *)
+              let expected_return = substitute_type trait_method.method_return_type in
+              if expected_return = impl_method.method_return_type then
+                Ok ()
+              else
+                Error
+                  (Printf.sprintf "Method '%s': return type mismatch: expected %s, got %s"
+                     trait_method.method_name (to_string expected_return)
+                     (to_string impl_method.method_return_type))
+        in
+
+        (* Find each trait method in impl methods and validate *)
+        let errors =
+          List.filter_map
+            (fun trait_method ->
+              match List.find_opt (fun im -> im.method_name = trait_method.method_name) def.impl_methods with
+              | None -> Some (Printf.sprintf "Method '%s' not implemented" trait_method.method_name)
+              | Some impl_method -> (
+                  match check_method_sig trait_method impl_method with
+                  | Ok () -> None
+                  | Error msg -> Some msg))
+            trait_def.trait_methods
+        in
+
+        if errors <> [] then
+          Error (String.concat "; " errors)
+        else
+          Ok ()
 
 (* Initialize with built-in traits (if any) *)
 let init_builtins () = clear ()
@@ -201,3 +261,225 @@ let%test "implements_trait checks impl registry" =
   register_impl show_for_int;
 
   implements_trait "show" TInt && not (implements_trait "show" TString)
+
+(* Comprehensive impl validation tests *)
+
+let%test "validate_impl - undefined trait" =
+  clear ();
+  let bad_impl =
+    {
+      impl_trait_name = "undefined";
+      impl_type_params = [];
+      impl_for_type = TInt;
+      impl_methods = [ { method_name = "foo"; method_params = []; method_return_type = TInt } ];
+    }
+  in
+  match validate_impl bad_impl with
+  | Ok () -> false
+  | Error msg ->
+      (* Check the error message contains "Cannot implement undefined" *)
+      String.length msg >= 18 && String.sub msg 0 18 = "Cannot implement u"
+
+let%test "validate_impl - missing method" =
+  clear ();
+  let eq_trait =
+    {
+      trait_name = "eq";
+      trait_type_param = Some "a";
+      trait_supertraits = [];
+      trait_methods =
+        [
+          { method_name = "eq"; method_params = [ ("x", TVar "a"); ("y", TVar "a") ]; method_return_type = TBool };
+        ];
+    }
+  in
+  register_trait eq_trait;
+
+  let bad_impl =
+    { impl_trait_name = "eq"; impl_type_params = []; impl_for_type = TInt; impl_methods = [] (* No methods! *) }
+  in
+  match validate_impl bad_impl with
+  | Ok () -> false
+  | Error msg -> String.length msg > 0
+
+let%test "validate_impl - extra method" =
+  clear ();
+  let show_trait =
+    {
+      trait_name = "show";
+      trait_type_param = Some "a";
+      trait_supertraits = [];
+      trait_methods =
+        [ { method_name = "show"; method_params = [ ("x", TVar "a") ]; method_return_type = TString } ];
+    }
+  in
+  register_trait show_trait;
+
+  let bad_impl =
+    {
+      impl_trait_name = "show";
+      impl_type_params = [];
+      impl_for_type = TInt;
+      impl_methods =
+        [
+          { method_name = "show"; method_params = [ ("x", TInt) ]; method_return_type = TString };
+          { method_name = "extra"; method_params = []; method_return_type = TInt };
+          (* Extra method *)
+        ];
+    }
+  in
+  match validate_impl bad_impl with
+  | Ok () -> false
+  | Error msg -> String.length msg > 0
+
+let%test "validate_impl - wrong param count" =
+  clear ();
+  let eq_trait =
+    {
+      trait_name = "eq";
+      trait_type_param = Some "a";
+      trait_supertraits = [];
+      trait_methods =
+        [
+          {
+            method_name = "eq";
+            method_params = [ ("x", TVar "a"); ("y", TVar "a") ];
+            (* 2 params *)
+            method_return_type = TBool;
+          };
+        ];
+    }
+  in
+  register_trait eq_trait;
+
+  let bad_impl =
+    {
+      impl_trait_name = "eq";
+      impl_type_params = [];
+      impl_for_type = TInt;
+      impl_methods = [ { method_name = "eq"; method_params = [ ("x", TInt) ]; method_return_type = TBool } ];
+      (* Only 1 param! *)
+    }
+  in
+  match validate_impl bad_impl with
+  | Ok () -> false
+  | Error msg -> String.length msg > 0
+
+let%test "validate_impl - wrong param type" =
+  clear ();
+  let show_trait =
+    {
+      trait_name = "show";
+      trait_type_param = Some "a";
+      trait_supertraits = [];
+      trait_methods =
+        [ { method_name = "show"; method_params = [ ("x", TVar "a") ]; method_return_type = TString } ];
+    }
+  in
+  register_trait show_trait;
+
+  let bad_impl =
+    {
+      impl_trait_name = "show";
+      impl_type_params = [];
+      impl_for_type = TInt;
+      impl_methods =
+        [ { method_name = "show"; method_params = [ ("x", TString) ]; method_return_type = TString } ];
+      (* x should be TInt! *)
+    }
+  in
+  match validate_impl bad_impl with
+  | Ok () -> false
+  | Error msg -> String.length msg > 0
+
+let%test "validate_impl - wrong return type" =
+  clear ();
+  let show_trait =
+    {
+      trait_name = "show";
+      trait_type_param = Some "a";
+      trait_supertraits = [];
+      trait_methods =
+        [ { method_name = "show"; method_params = [ ("x", TVar "a") ]; method_return_type = TString } ];
+    }
+  in
+  register_trait show_trait;
+
+  let bad_impl =
+    {
+      impl_trait_name = "show";
+      impl_type_params = [];
+      impl_for_type = TInt;
+      impl_methods = [ { method_name = "show"; method_params = [ ("x", TInt) ]; method_return_type = TInt } ];
+      (* Should return TString! *)
+    }
+  in
+  match validate_impl bad_impl with
+  | Ok () -> false
+  | Error msg -> String.length msg > 0
+
+let%test "validate_impl - correct substitution" =
+  clear ();
+  let show_trait =
+    {
+      trait_name = "show";
+      trait_type_param = Some "a";
+      trait_supertraits = [];
+      trait_methods =
+        [ { method_name = "show"; method_params = [ ("x", TVar "a") ]; method_return_type = TString } ];
+    }
+  in
+  register_trait show_trait;
+
+  let good_impl =
+    {
+      impl_trait_name = "show";
+      impl_type_params = [];
+      impl_for_type = TInt;
+      impl_methods = [ { method_name = "show"; method_params = [ ("x", TInt) ]; method_return_type = TString } ];
+      (* TVar "a" -> TInt *)
+    }
+  in
+  match validate_impl good_impl with
+  | Ok () -> true
+  | Error _ -> false
+
+let%test "validate_impl - multiple methods" =
+  clear ();
+  let ord_trait =
+    {
+      trait_name = "ord";
+      trait_type_param = Some "a";
+      trait_supertraits = [];
+      trait_methods =
+        [
+          {
+            method_name = "compare";
+            method_params = [ ("x", TVar "a"); ("y", TVar "a") ];
+            method_return_type = TInt;
+          };
+          {
+            method_name = "less_than";
+            method_params = [ ("x", TVar "a"); ("y", TVar "a") ];
+            method_return_type = TBool;
+          };
+        ];
+    }
+  in
+  register_trait ord_trait;
+
+  let good_impl =
+    {
+      impl_trait_name = "ord";
+      impl_type_params = [];
+      impl_for_type = TInt;
+      impl_methods =
+        [
+          { method_name = "compare"; method_params = [ ("x", TInt); ("y", TInt) ]; method_return_type = TInt };
+          { method_name = "less_than"; method_params = [ ("x", TInt); ("y", TInt) ]; method_return_type = TBool };
+        ];
+    }
+  in
+  match validate_impl good_impl with
+  | Ok () -> true
+  | Error _ -> false
