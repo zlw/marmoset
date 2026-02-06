@@ -22,15 +22,15 @@ test_case() {
     local source="$2"
     local should_succeed="$3"  # "true" or "false"
     local expected_output="$4" # optional
-    
+
     TOTAL=$((TOTAL + 1))
-    
+
     echo -n "TEST [$TOTAL] $name ... "
-    
+
     # Write source to temp file
     tmpfile=$(mktemp)
     echo "$source" > "$tmpfile"
-    
+
     # Try to build
     if output=$($EXECUTABLE build "$tmpfile" 2>&1); then
         if [ "$should_succeed" = "true" ]; then
@@ -62,8 +62,135 @@ test_case() {
             FAIL=$((FAIL + 1))
         fi
     fi
-    
+
     rm -f "$tmpfile"
+}
+
+# Build + execute helper for runtime-output tests.
+# Usage:
+#   run_case_from_stdin "Name" "expected output" << 'EOF'
+#   <program>
+#   EOF
+run_case_from_stdin() {
+    local name="$1"
+    local expected_output="$2"
+    local source
+    source="$(cat)"
+
+    TOTAL=$((TOTAL + 1))
+    echo -n "TEST [$TOTAL] $name ... "
+
+    local tmpfile
+    local binpath
+    tmpfile=$(mktemp)
+    binpath=$(mktemp /tmp/marmoset_test_bin.XXXXXX)
+    rm -f "$binpath"
+    echo "$source" > "$tmpfile"
+
+    if binary_output=$($EXECUTABLE build "$tmpfile" -o "$binpath" 2>&1) && output=$("$binpath" 2>&1); then
+        if [ "$output" = "$expected_output" ]; then
+            echo "✓ PASS"
+            PASS=$((PASS + 1))
+        else
+            echo "✗ FAIL (expected '$expected_output', got '$output')"
+            FAIL=$((FAIL + 1))
+        fi
+    else
+        echo "✗ FAIL (build or execution failed)"
+        echo "  Output: $binary_output"
+        FAIL=$((FAIL + 1))
+    fi
+
+    rm -f "$tmpfile" "$binpath"
+}
+
+run_build_ok_from_stdin() {
+    local name="$1"
+    local source
+    source="$(cat)"
+
+    TOTAL=$((TOTAL + 1))
+    echo -n "TEST [$TOTAL] $name ... "
+
+    local tmpfile
+    tmpfile=$(mktemp)
+    echo "$source" > "$tmpfile"
+
+    if build_output=$($EXECUTABLE build "$tmpfile" 2>&1); then
+        echo "✓ PASS"
+        PASS=$((PASS + 1))
+    else
+        echo "✗ FAIL (build failed)"
+        echo "  Output: $build_output"
+        FAIL=$((FAIL + 1))
+    fi
+
+    rm -f "$tmpfile"
+}
+
+run_build_fail_contains_from_stdin() {
+    local name="$1"
+    local expected_fragment="$2"
+    local source
+    source="$(cat)"
+
+    TOTAL=$((TOTAL + 1))
+    echo -n "TEST [$TOTAL] $name ... "
+
+    local tmpfile
+    tmpfile=$(mktemp)
+    echo "$source" > "$tmpfile"
+
+    if build_output=$($EXECUTABLE build "$tmpfile" 2>&1); then
+        if echo "$build_output" | grep -q "$expected_fragment"; then
+            echo "✓ PASS"
+            PASS=$((PASS + 1))
+        else
+            echo "✗ FAIL (expected build to fail)"
+            FAIL=$((FAIL + 1))
+        fi
+    else
+        if echo "$build_output" | grep -q "$expected_fragment"; then
+            echo "✓ PASS"
+            PASS=$((PASS + 1))
+        else
+            echo "✗ FAIL (missing expected error fragment '$expected_fragment')"
+            echo "  Output: $build_output"
+            FAIL=$((FAIL + 1))
+        fi
+    fi
+
+    rm -f "$tmpfile"
+}
+
+test_emit_go_contains() {
+    local name="$1"
+    local source="$2"
+    local expected_fragment="$3"
+
+    TOTAL=$((TOTAL + 1))
+    echo -n "TEST [$TOTAL] $name ... "
+
+    local tmpdir_go
+    local tmpfile
+    tmpdir_go=$(mktemp -d)
+    tmpfile=$(mktemp)
+    echo "$source" > "$tmpfile"
+
+    if $EXECUTABLE build "$tmpfile" --emit-go "$tmpdir_go" >/dev/null 2>&1 && [ -f "$tmpdir_go/main.go" ]; then
+        if grep -q "$expected_fragment" "$tmpdir_go/main.go"; then
+            echo "✓ PASS"
+            PASS=$((PASS + 1))
+        else
+            echo "✗ FAIL"
+            FAIL=$((FAIL + 1))
+        fi
+    else
+        echo "✗ FAIL (Go source emission failed)"
+        FAIL=$((FAIL + 1))
+    fi
+
+    rm -rf "$tmpdir_go" "$tmpfile"
 }
 
 echo "=========================================="
@@ -169,22 +296,7 @@ test_case "Nested early returns" \
 
 echo ""
 echo "-- CODEGEN OUTPUT TESTS --"
-# These tests check that Go code is actually being generated
-TMPDIR_GO=$(mktemp -d)
-echo "let x = 42; x" > /tmp/simple.mr
-$EXECUTABLE build /tmp/simple.mr --emit-go "$TMPDIR_GO" 2>/dev/null
-if [ -f "$TMPDIR_GO/main.go" ]; then
-    TOTAL=$((TOTAL + 1))
-    if grep -q "int64" "$TMPDIR_GO/main.go"; then
-        echo "TEST [$TOTAL] Codegen produces valid Go ... ✓ PASS"
-        PASS=$((PASS + 1))
-    else
-        echo "TEST [$TOTAL] Codegen produces valid Go ... ✗ FAIL"
-        FAIL=$((FAIL + 1))
-    fi
-fi
-# Clean up temp directory
-rm -rf "$TMPDIR_GO" /tmp/simple.mr
+test_emit_go_contains "Codegen produces valid Go" "let x = 42; x" "int64"
 
 echo ""
 echo "-- PHASE 4.1: UNION TYPE TESTS --"
@@ -206,9 +318,9 @@ test_case "is operator returns bool" \
 
 test_case "Type narrowing allows int operations" \
     'let f = fn(x: int | string) -> int | string {
-       if (x is int) { 
-           x + 1 
-       } else { 
+       if (x is int) {
+           x + 1
+       } else {
            x
        }
      }; f(5)' \
@@ -219,7 +331,7 @@ echo "-- PHASE 4.1: EXHAUSTIVENESS & EDGE CASES --"
 
 test_case "Complement narrowing in else branch" \
     'let f = fn(x: int | string) -> string {
-       if (x is int) { 
+       if (x is int) {
            "was int"
        } else {
            x
@@ -537,11 +649,7 @@ test_case "Mixed manual and derived impls" \
 
 echo "-- PHASE 4.3: TRAIT METHOD CALLS --"
 
-# Test 58: Basic trait method call
-TOTAL=$((TOTAL + 1))
-echo -n "TEST [$TOTAL] Basic trait method call on int ... "
-tmpfile=$(mktemp)
-cat > "$tmpfile" << 'EOF'
+run_case_from_stdin "Basic trait method call on int" "42" << 'EOF'
 trait show[a] {
   fn show(x: a) -> string
 }
@@ -553,25 +661,8 @@ impl show for int {
 let x = 42
 puts(x.show())
 EOF
-if binary_output=$($EXECUTABLE build "$tmpfile" -o /tmp/test58 2>&1) && output=$(/tmp/test58 2>&1); then
-    if [ "$output" = "42" ]; then
-        echo "✓ PASS"
-        PASS=$((PASS + 1))
-    else
-        echo "✗ FAIL (expected '42', got '$output')"
-        FAIL=$((FAIL + 1))
-    fi
-else
-    echo "✗ FAIL (build or execution failed)"
-    FAIL=$((FAIL + 1))
-fi
-rm -f "$tmpfile" /tmp/test58
 
-# Test 59: Method call with parameter
-TOTAL=$((TOTAL + 1))
-echo -n "TEST [$TOTAL] Method call with parameter ... "
-tmpfile=$(mktemp)
-cat > "$tmpfile" << 'EOF'
+run_case_from_stdin "Method call with parameter" "true" << 'EOF'
 trait eq[a] {
   fn eq(x: a, y: a) -> bool
 }
@@ -584,25 +675,8 @@ let a = 42
 let b = 42
 puts(a.eq(b))
 EOF
-if binary_output=$($EXECUTABLE build "$tmpfile" -o /tmp/test59 2>&1) && output=$(/tmp/test59 2>&1); then
-    if [ "$output" = "true" ]; then
-        echo "✓ PASS"
-        PASS=$((PASS + 1))
-    else
-        echo "✗ FAIL (expected 'true', got '$output')"
-        FAIL=$((FAIL + 1))
-    fi
-else
-    echo "✗ FAIL (build or execution failed)"
-    FAIL=$((FAIL + 1))
-fi
-rm -f "$tmpfile" /tmp/test59
 
-# Test 60: Method call on string
-TOTAL=$((TOTAL + 1))
-echo -n "TEST [$TOTAL] Method call on string ... "
-tmpfile=$(mktemp)
-cat > "$tmpfile" << 'EOF'
+run_case_from_stdin "Method call on string" "hello" << 'EOF'
 trait show[a] {
   fn show(x: a) -> string
 }
@@ -614,25 +688,9 @@ impl show for string {
 let s = "hello"
 puts(s.show())
 EOF
-if binary_output=$($EXECUTABLE build "$tmpfile" -o /tmp/test60 2>&1) && output=$(/tmp/test60 2>&1); then
-    if [ "$output" = "hello" ]; then
-        echo "✓ PASS"
-        PASS=$((PASS + 1))
-    else
-        echo "✗ FAIL (expected 'hello', got '$output')"
-        FAIL=$((FAIL + 1))
-    fi
-else
-    echo "✗ FAIL (build or execution failed)"
-    FAIL=$((FAIL + 1))
-fi
-rm -f "$tmpfile" /tmp/test60
 
-# Test 61: Multiple method calls in sequence
-TOTAL=$((TOTAL + 1))
-echo -n "TEST [$TOTAL] Multiple method calls in sequence ... "
-tmpfile=$(mktemp)
-cat > "$tmpfile" << 'EOF'
+run_case_from_stdin "Multiple method calls in sequence" "number
+number" << 'EOF'
 trait show[a] {
   fn show(x: a) -> string
 }
@@ -646,27 +704,8 @@ let y = 2
 puts(x.show())
 puts(y.show())
 EOF
-if binary_output=$($EXECUTABLE build "$tmpfile" -o /tmp/test61 2>&1) && output=$(/tmp/test61 2>&1); then
-    expected="number
-number"
-    if [ "$output" = "$expected" ]; then
-        echo "✓ PASS"
-        PASS=$((PASS + 1))
-    else
-        echo "✗ FAIL (expected '$expected', got '$output')"
-        FAIL=$((FAIL + 1))
-    fi
-else
-    echo "✗ FAIL (build or execution failed)"
-    FAIL=$((FAIL + 1))
-fi
-rm -f "$tmpfile" /tmp/test61
 
-# Test 62: Method call result used in expression
-TOTAL=$((TOTAL + 1))
-echo -n "TEST [$TOTAL] Method call result used in expression ... "
-tmpfile=$(mktemp)
-cat > "$tmpfile" << 'EOF'
+run_case_from_stdin "Method call result used in expression" "42" << 'EOF'
 trait double[a] {
   fn double(x: a) -> int
 }
@@ -679,28 +718,10 @@ let n = 21
 let result = n.double()
 puts(result)
 EOF
-if binary_output=$($EXECUTABLE build "$tmpfile" -o /tmp/test62 2>&1) && output=$(/tmp/test62 2>&1); then
-    if [ "$output" = "42" ]; then
-        echo "✓ PASS"
-        PASS=$((PASS + 1))
-    else
-        echo "✗ FAIL (expected '42', got '$output')"
-        FAIL=$((FAIL + 1))
-    fi
-else
-    echo "✗ FAIL (build or execution failed)"
-    echo "  Build output: $binary_output"
-    FAIL=$((FAIL + 1))
-fi
-rm -f "$tmpfile" /tmp/test62
 
 echo "-- BUILTIN TRAITS --"
 
-# Test 63: Builtin show trait is defined
-TOTAL=$((TOTAL + 1))
-echo -n "TEST [$TOTAL] Builtin show trait exists ... "
-tmpfile=$(mktemp)
-cat > "$tmpfile" << 'EOF'
+run_build_ok_from_stdin "Builtin show trait exists" << 'EOF'
 impl show for int {
   fn show(x: int) -> string {
     "test"
@@ -708,21 +729,8 @@ impl show for int {
 }
 42
 EOF
-if binary_output=$($EXECUTABLE build "$tmpfile" -o /tmp/test63 2>&1); then
-    echo "✓ PASS"
-    PASS=$((PASS + 1))
-else
-    echo "✗ FAIL (build failed)"
-    echo "  Build output: $binary_output"
-    FAIL=$((FAIL + 1))
-fi
-rm -f "$tmpfile" /tmp/test63
 
-# Test 64: Builtin eq trait is defined
-TOTAL=$((TOTAL + 1))
-echo -n "TEST [$TOTAL] Builtin eq trait exists ... "
-tmpfile=$(mktemp)
-cat > "$tmpfile" << 'EOF'
+run_build_ok_from_stdin "Builtin eq trait exists" << 'EOF'
 impl eq for int {
   fn eq(x: int, y: int) -> bool {
     true
@@ -730,21 +738,8 @@ impl eq for int {
 }
 42
 EOF
-if binary_output=$($EXECUTABLE build "$tmpfile" -o /tmp/test64 2>&1); then
-    echo "✓ PASS"
-    PASS=$((PASS + 1))
-else
-    echo "✗ FAIL (build failed)"
-    echo "  Build output: $binary_output"
-    FAIL=$((FAIL + 1))
-fi
-rm -f "$tmpfile" /tmp/test64
 
-# Test 65: Builtin ord trait is defined
-TOTAL=$((TOTAL + 1))
-echo -n "TEST [$TOTAL] Builtin ord trait exists ... "
-tmpfile=$(mktemp)
-cat > "$tmpfile" << 'EOF'
+run_build_ok_from_stdin "Builtin ord trait exists" << 'EOF'
 enum ordering { less equal greater }
 impl ord for int {
   fn compare(x: int, y: int) -> ordering {
@@ -753,147 +748,44 @@ impl ord for int {
 }
 42
 EOF
-if binary_output=$($EXECUTABLE build "$tmpfile" -o /tmp/test65 2>&1); then
-    echo "✓ PASS"
-    PASS=$((PASS + 1))
-else
-    echo "✗ FAIL (build failed)"
-    echo "  Build output: $binary_output"
-    FAIL=$((FAIL + 1))
-fi
-rm -f "$tmpfile" /tmp/test65
 
 echo "-- BUILTIN TRAIT IMPLS FOR PRIMITIVES --"
 
-# Test 66: int implements show (builtin)
-TOTAL=$((TOTAL + 1))
-echo -n "TEST [$TOTAL] int implements show (builtin) ... "
-tmpfile=$(mktemp)
-cat > "$tmpfile" << 'EOF'
+run_case_from_stdin "int implements show (builtin)" "42" << 'EOF'
 let x = 42
 let s = x.show()
 puts(s)
 EOF
-if binary_output=$($EXECUTABLE build "$tmpfile" -o /tmp/test66 2>&1) && output=$(/tmp/test66 2>&1); then
-    if [ "$output" = "42" ]; then
-        echo "✓ PASS"
-        PASS=$((PASS + 1))
-    else
-        echo "✗ FAIL (expected '42', got '$output')"
-        FAIL=$((FAIL + 1))
-    fi
-else
-    echo "✗ FAIL (build or execution failed)"
-    echo "  Build output: $binary_output"
-    FAIL=$((FAIL + 1))
-fi
-rm -f "$tmpfile" /tmp/test66
 
-# Test 67: int implements eq (builtin)
-TOTAL=$((TOTAL + 1))
-echo -n "TEST [$TOTAL] int implements eq (builtin) ... "
-tmpfile=$(mktemp)
-cat > "$tmpfile" << 'EOF'
+run_case_from_stdin "int implements eq (builtin)" "true" << 'EOF'
 let a = 42
 let b = 42
 let result = a.eq(b)
 puts(result)
 EOF
-if binary_output=$($EXECUTABLE build "$tmpfile" -o /tmp/test67 2>&1) && output=$(/tmp/test67 2>&1); then
-    if [ "$output" = "true" ]; then
-        echo "✓ PASS"
-        PASS=$((PASS + 1))
-    else
-        echo "✗ FAIL (expected 'true', got '$output')"
-        FAIL=$((FAIL + 1))
-    fi
-else
-    echo "✗ FAIL (build or execution failed)"
-    echo "  Build output: $binary_output"
-    FAIL=$((FAIL + 1))
-fi
-rm -f "$tmpfile" /tmp/test67
 
-# Test 68: string implements show (builtin)
-TOTAL=$((TOTAL + 1))
-echo -n "TEST [$TOTAL] string implements show (builtin) ... "
-tmpfile=$(mktemp)
-cat > "$tmpfile" << 'EOF'
+run_case_from_stdin "string implements show (builtin)" "hello" << 'EOF'
 let s = "hello"
 puts(s.show())
 EOF
-if binary_output=$($EXECUTABLE build "$tmpfile" -o /tmp/test68 2>&1) && output=$(/tmp/test68 2>&1); then
-    if [ "$output" = "hello" ]; then
-        echo "✓ PASS"
-        PASS=$((PASS + 1))
-    else
-        echo "✗ FAIL (expected 'hello', got '$output')"
-        FAIL=$((FAIL + 1))
-    fi
-else
-    echo "✗ FAIL (build or execution failed)"
-    echo "  Build output: $binary_output"
-    FAIL=$((FAIL + 1))
-fi
-rm -f "$tmpfile" /tmp/test68
 
-# Test 69: bool implements show (builtin)
-TOTAL=$((TOTAL + 1))
-echo -n "TEST [$TOTAL] bool implements show (builtin) ... "
-tmpfile=$(mktemp)
-cat > "$tmpfile" << 'EOF'
+run_case_from_stdin "bool implements show (builtin)" "true" << 'EOF'
 let b = true
 puts(b.show())
 EOF
-if binary_output=$($EXECUTABLE build "$tmpfile" -o /tmp/test69 2>&1) && output=$(/tmp/test69 2>&1); then
-    if [ "$output" = "true" ]; then
-        echo "✓ PASS"
-        PASS=$((PASS + 1))
-    else
-        echo "✗ FAIL (expected 'true', got '$output')"
-        FAIL=$((FAIL + 1))
-    fi
-else
-    echo "✗ FAIL (build or execution failed)"
-    echo "  Build output: $binary_output"
-    FAIL=$((FAIL + 1))
-fi
-rm -f "$tmpfile" /tmp/test69
 
 echo ""
 echo "-- TRAIT SOLVER --"
 
-# Test 70: Check if int implements show (builtin)
-TOTAL=$((TOTAL + 1))
-echo -n "TEST [$TOTAL] Trait solver: int implements show ... "
-tmpfile=$(mktemp)
-cat > "$tmpfile" << 'EOF'
+run_case_from_stdin "Trait solver: int implements show" "42" << 'EOF'
 let check = fn[a: show](x: a) -> string {
   x.show()
 }
 let result = check(42)
 puts(result)
 EOF
-if binary_output=$(dune exec -- marmoset build "$tmpfile" -o /tmp/test70 2>&1) && output=$(/tmp/test70 2>&1); then
-    if [ "$output" = "42" ]; then
-        echo "✓ PASS"
-        PASS=$((PASS + 1))
-    else
-        echo "✗ FAIL (expected '42', got '$output')"
-        FAIL=$((FAIL + 1))
-    fi
-else
-    echo "✗ FAIL (build or execution failed)"
-    echo "  Build output: $binary_output"
-    FAIL=$((FAIL + 1))
-fi
-rm -f "$tmpfile" /tmp/test70
 
-# Test 71: Check constraint violation: array doesn't implement show
-TOTAL=$((TOTAL + 1))
-echo -n "TEST [$TOTAL] Trait solver: array lacks show (should fail typecheck) ... "
-tmpfile=$(mktemp)
-cat > "$tmpfile" << 'EOF'
+run_build_fail_contains_from_stdin "Trait solver: array lacks show (should fail typecheck)" "does not implement trait" << 'EOF'
 let check = fn[a: show](x: a) -> string {
   x.show()
 }
@@ -901,23 +793,8 @@ let arr = [1, 2, 3]
 let result = check(arr)
 puts(result)
 EOF
-if output=$(dune exec -- marmoset build "$tmpfile" 2>&1) && echo "$output" | grep -q "does not implement trait"; then
-    echo "✓ PASS"
-    PASS=$((PASS + 1))
-elif echo "$output" | grep -q "does not implement trait"; then
-    echo "✓ PASS"
-    PASS=$((PASS + 1))
-else
-    echo "✗ FAIL (should reject, got: $output)"
-    FAIL=$((FAIL + 1))
-fi
-rm -f "$tmpfile"
 
-# Test 72: Multiple constraints
-TOTAL=$((TOTAL + 1))
-echo -n "TEST [$TOTAL] Trait solver: multiple constraints work ... "
-tmpfile=$(mktemp)
-cat > "$tmpfile" << 'EOF'
+run_case_from_stdin "Trait solver: multiple constraints work" "42" << 'EOF'
 let show_if_equal = fn[a: show + eq](x: a, y: a) -> string {
   if (x.eq(y)) {
     x.show()
@@ -928,26 +805,8 @@ let show_if_equal = fn[a: show + eq](x: a, y: a) -> string {
 let result = show_if_equal(42, 42)
 puts(result)
 EOF
-if binary_output=$(dune exec -- marmoset build "$tmpfile" -o /tmp/test72 2>&1) && output=$(/tmp/test72 2>&1); then
-    if [ "$output" = "42" ]; then
-        echo "✓ PASS"
-        PASS=$((PASS + 1))
-    else
-        echo "✗ FAIL (expected '42', got '$output')"
-        FAIL=$((FAIL + 1))
-    fi
-else
-    echo "✗ FAIL (build or execution failed)"
-    echo "  Output: $binary_output"
-    FAIL=$((FAIL + 1))
-fi
-rm -f "$tmpfile" /tmp/test72
 
-# Test 73: Multiple constraints with different result
-TOTAL=$((TOTAL + 1))
-echo -n "TEST [$TOTAL] Trait solver: multiple constraints with different values ... "
-tmpfile=$(mktemp)
-cat > "$tmpfile" << 'EOF'
+run_case_from_stdin "Trait solver: multiple constraints with different values" "different" << 'EOF'
 let show_if_equal = fn[a: show + eq](x: a, y: a) -> string {
   if (x.eq(y)) {
     x.show()
@@ -958,20 +817,118 @@ let show_if_equal = fn[a: show + eq](x: a, y: a) -> string {
 let result = show_if_equal(42, 99)
 puts(result)
 EOF
-if binary_output=$(dune exec -- marmoset build "$tmpfile" -o /tmp/test73 2>&1) && output=$(/tmp/test73 2>&1); then
-    if [ "$output" = "different" ]; then
-        echo "✓ PASS"
-        PASS=$((PASS + 1))
-    else
-        echo "✗ FAIL (expected 'different', got '$output')"
-        FAIL=$((FAIL + 1))
-    fi
-else
-    echo "✗ FAIL (build or execution failed)"
-    echo "  Output: $binary_output"
-    FAIL=$((FAIL + 1))
-fi
-rm -f "$tmpfile" /tmp/test73
+
+echo ""
+echo "-- PHASE 4.4: RECORDS & ROW POLYMORPHISM --"
+
+run_case_from_stdin "Record literal + field access" "30" << 'EOF'
+let p = { x: 10, y: 20 }
+puts(p.x + p.y)
+EOF
+
+run_case_from_stdin "Type alias with record annotation" "3" << 'EOF'
+type point = { x: int, y: int }
+let p: point = { x: 1, y: 2 }
+puts(p.x + p.y)
+EOF
+
+run_case_from_stdin "Record spread update" "12" << 'EOF'
+let p = { x: 1, y: 2 }
+let p2 = { ...p, x: 10 }
+puts(p2.x + p2.y)
+EOF
+
+run_case_from_stdin "Explicit row-polymorphic function" "5" << 'EOF'
+let p = { x: 5, y: 10, z: 20 }
+let get_x = fn(r: { x: int, ...row }) -> int { r.x }
+puts(get_x(p))
+EOF
+
+run_case_from_stdin "Record pattern match" "30" << 'EOF'
+let p = { x: 10, y: 20 }
+let result = match p {
+  { x:, y: }: x + y
+  _: 0
+}
+puts(result)
+EOF
+
+run_case_from_stdin "Derive eq for record" "true" << 'EOF'
+trait eq[a] {
+  fn eq(x: a, y: a) -> bool
+}
+type point = { x: int, y: int }
+derive eq for point;
+let p1: point = { x: 1, y: 2 }
+let p2: point = { x: 1, y: 2 }
+puts(p1.eq(p2))
+EOF
+
+run_case_from_stdin "Derive show for record" "{ x: 1, y: 2 }" << 'EOF'
+trait show[a] {
+  fn show(x: a) -> string
+}
+type point = { x: int, y: int }
+derive show for point;
+let p: point = { x: 1, y: 2 }
+puts(p.show())
+EOF
+
+run_case_from_stdin "Derive ord for record" "0" << 'EOF'
+trait ord[a] {
+  fn compare(x: a, y: a) -> int
+}
+type point = { x: int, y: int }
+derive ord for point;
+let p1: point = { x: 1, y: 2 }
+let p2: point = { x: 1, y: 3 }
+puts(p1.compare(p2))
+EOF
+
+run_case_from_stdin "Derive hash for record" "16370" << 'EOF'
+trait hash[a] {
+  fn hash(x: a) -> int
+}
+type point = { x: int, y: int }
+derive hash for point;
+let p: point = { x: 1, y: 2 }
+puts(p.hash())
+EOF
+
+echo ""
+echo "-- RUNTIME OUTPUT TESTS --"
+
+run_case_from_stdin "Print integer" "42" << 'EOF'
+puts(42)
+EOF
+
+run_case_from_stdin "Print string" "hello" << 'EOF'
+puts("hello")
+EOF
+
+run_case_from_stdin "Print boolean" "true" << 'EOF'
+puts(true)
+EOF
+
+run_case_from_stdin "Print enum value with data" "some(42)" << 'EOF'
+enum option[a] {
+  some(a)
+  none
+}
+
+let x = option.some(42)
+puts(x)
+EOF
+
+run_case_from_stdin "Print enum with no data" "none" << 'EOF'
+enum option[a] {
+  some(a)
+  none
+}
+
+let x: option[int] = option.none()
+puts(x)
+EOF
 
 echo "=========================================="
 echo "RESULTS: $PASS passed, $FAIL failed out of $TOTAL tests"

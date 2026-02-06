@@ -1,4 +1,0 @@
-# Test 1: Simple method call on integer
-let x = 42
-let s = x.show()
-s

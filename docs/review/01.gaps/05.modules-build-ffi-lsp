@@ -1,0 +1,41 @@
+E. Modules / build / FFI / LSP specific concerns
+
+E1) Modules will force you to pick: “whole program compile” vs “incremental compilation”
+
+For Go backend, whole-program compile is simplest and still fast enough for most projects.
+
+Future issue: if you aim for incremental later, your internal compiler architecture must be query-based (rust-analyzer style). But you can postpone that.
+
+Fix: adopt a “workspace build” model:
+	•	parse all modules
+	•	build module graph
+	•	typecheck in dependency order (or SCC with recursion if you have it)
+	•	then emit one Go package
+
+⸻
+
+E2) FFI requires stable type representations
+
+If you want to call Go:
+	•	you need mapping for primitives, records, enums, lists/maps
+	•	you need ownership/lifetime rules (esp for strings, slices)
+	•	you need error mapping (result ↔ (value, error) or custom struct)
+
+Future issue: if you don’t design FFI types early, you’ll bake in a representation you later regret.
+
+Fix: define an extern system that’s “d.ts-like”:
+	•	extern fn net.http.get(url: string) => result[string, http_err]
+	•	the compiler generates Go wrapper glue
+
+But you should do this after modules/build so you can import extern decls from packages.
+
+⸻
+
+E3) LSP needs stable spans + project model, not Go FFI
+
+You can do LSP v0 once:
+	•	parser is robust
+	•	you have spans (byte offsets)
+	•	module graph exists
+
+No relation to Go FFI.

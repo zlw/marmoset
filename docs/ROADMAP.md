@@ -1,0 +1,183 @@
+# Marmoset Roadmap (Deferred / Future Work)
+
+## Maintenance
+
+- Last verified: 2026-02-06
+- Implementation status: Canonical (actively maintained)
+- Update trigger: Any language behavior, typechecker, or codegen change affecting this topic
+
+This roadmap consolidates deferred decisions and future improvements from all archived docs.
+Nothing in `docs/archive/` is lost; this file centralizes actionable direction.
+
+## 1. Language and Type-System Enhancements
+
+### 1.1 Records and Rows
+
+- Optional field syntax (`?`) for records (currently `option[T]` workaround).
+- Canonical field-order policy for hashing/derives/debug printing.
+- Nominal wrapper/newtype capability over structural records.
+- Let-destructuring syntax (current recommendation is `match` destructuring).
+- Stronger recursive row-polymorphism diagnostics and edge-case handling.
+- Spread/update optimization model beyond simple copy semantics.
+
+### 1.2 Traits
+
+- Associated types.
+- Default methods and richer override semantics.
+- More complete conditional impl resolution and overlap diagnostics.
+- Dynamic dispatch mode (explicit trait objects), if needed.
+- Better coherence/orphan policy and warnings.
+- Potential polymorphic literal behavior policy (`1 + 1.0` style concerns).
+- Higher-kinded type design exploration for advanced abstractions.
+
+### 1.3 Enums and Pattern Matching
+
+- Pattern guards.
+- Multi-pattern arm sugar improvements.
+- Tuple patterns (if tuples are added).
+- More exhaustive-check depth for complex nested unions/records.
+- Array/list patterns (explicitly deferred in phase docs).
+- Constructor ergonomics polish and nested pattern diagnostics.
+
+### 1.4 Unions
+
+- Optimize representation beyond `interface{}` where possible.
+- Improve narrowing precision in deeply nested control flow.
+- Potential tagged representation for selected unions.
+- Variance-aware union compatibility for function positions.
+- Better branch-complement narrowing in complex boolean flow.
+- Optional specialized codegen when concrete union alternative is statically known.
+
+### 1.5 Functions / Polymorphism
+
+- Better support for polymorphic higher-order functions in codegen.
+- Evaluate constraint-driven specialization for HOF-heavy code.
+- Potential selective use of Go generics as backend strategy toggles.
+- Specialization deduping and explosion-control heuristics.
+- Clarify long-term policy: static mono by default vs hybrid backend strategy.
+
+### 1.6 Effects / Error model
+
+- Effect annotation semantics (`=>`) beyond parsing-level ideas.
+- Error propagation ergonomics once effect model is formalized.
+
+## 2. Backend and Performance Roadmap
+
+### 2.1 Record performance
+
+- Spread/update optimization (copy elision / uniqueness-style analysis).
+- Escape analysis-guided lowering to reduce allocations.
+- Shape canonicalization strategy for repeated structural records.
+
+### 2.2 Enum performance
+
+- Layout tuning and cross-variant packing improvements.
+- Constructor/match codegen micro-optimizations.
+- Evaluate memory overhead trade-offs for heterogeneous multi-field variants.
+
+### 2.3 Trait call performance
+
+- Improve call-site inlining opportunities in generated Go.
+- Avoid unnecessary helper indirection for simple builtins.
+- Explicit static-vs-dynamic dispatch selection model (if trait objects land).
+
+### 2.4 Union performance
+
+- Reduce boxing/alloc costs in hot paths.
+- Optimize narrowing/type-switch patterns.
+- Optional generated wrapper representation for selected hot unions.
+
+### 2.5 Monomorphization strategy
+
+- Better specialization for HOF patterns.
+- Deduplicate equivalent specializations more aggressively.
+- Optional instrumentation to analyze specialization explosion.
+- Revisit type-map plumbing hardening where backend type facts are incomplete.
+
+### 2.6 Backend architecture evolution
+
+- Add mid-level IR only when optimization pressure justifies added complexity.
+- Keep Go source emission as baseline until IR-backed transforms show clear benefit.
+- Preserve generated-source readability as a non-functional requirement.
+
+## 3. Architecture Improvements
+
+- Introduce explicit mid-level IR only when optimization requirements justify complexity.
+- Keep stage boundaries strict (parser/typechecker/codegen) to improve maintainability.
+- Formalize backend capability matrix (what each construct guarantees at codegen time).
+- Continue moving backend decisions from ad-hoc emitter logic to typed metadata contracts.
+- Evaluate whole-program assumptions and future module-aware compilation boundaries.
+
+## 4. Tooling and Testing
+
+- Expand system/e2e test coverage beyond current integration shell suites.
+- Add stress/performance benchmark suite with reproducible baselines.
+- Add docs validation checks (staleness markers, link checks, canonical-source checks).
+- Add regression suites for trait solver overlap and record/row unification edge cases.
+- Add generated-Go snapshot tests for representative feature combinations.
+- Consolidate repetitive shell test setup helpers and keep one canonical integration harness.
+
+## 5. Documentation Process Improvements
+
+- Every canonical doc should include:
+  - `Last verified` date,
+  - `Implementation status`,
+  - explicit `Chosen vs Alternatives` sections.
+- Archive-first policy for superseded plans: keep history, prevent ambiguity.
+- Keep milestone docs archived as historical context, not current spec.
+- Require roadmap entry when a design decision is explicitly deferred.
+
+## 6. Syntax and Surface-Language Follow-ups
+
+- Reconfirm and maintain the hybrid syntax direction from archived syntax decisions.
+- Keep explicit decision records for any syntax-level change proposals.
+- Revisit postponed syntax sugar only after core type/codegen stability:
+  - postfix return syntax variants,
+  - extra match ergonomics,
+  - optional future operators that were deferred.
+- Keep editor/highlighting support aligned with final syntax choices.
+
+## 7. Out-of-Scope but Preserved Explorations
+
+- Concurrency model exploration (channels/goroutines vs effect-based model) is archived and intentionally not in active implementation scope.
+- Modules-system exploratory docs are archived and should be reintroduced only with a dedicated design pass.
+
+## 8. Historical Context Sources
+
+These roadmap items were consolidated from:
+- `docs/archive/typechecker/phase4/milestone-*.md`
+- `docs/archive/typechecker/approach.md`, `docs/archive/typechecker/plan.md`
+- `docs/archive/codegen/*.md` and `docs/archive/codegen/*.txt`
+- `docs/archive/SYNTAX_*.md`
+- `docs/archive/*PLAN*.md`, `docs/archive/CURRENT_STATE.md`
+- `docs/archive/channels-goroutines/approach.md` (preserved context, deferred)
+- `docs/archive/modules/approach.md` (preserved context, deferred)
+
+When adding a new deferred item, link to implementation constraints and expected impact.
+
+## 9. Source-by-Source Carry-Forward Notes
+
+- `docs/archive/typechecker/phase4/milestone-1.md`
+  - Deferred: richer union variance, advanced narrowing precision, union performance specialization.
+- `docs/archive/typechecker/phase4/milestone-2.md`
+  - Deferred: guards, tuple/array pattern families, deeper exhaustiveness in complex pattern spaces.
+- `docs/archive/typechecker/phase4/milestone-3.md`
+  - Deferred: associated types, HKT exploration, broader dispatch modes and solver sophistication.
+- `docs/archive/typechecker/phase4/milestone-4.md`
+  - Deferred: optional-field syntax, let-destructuring, spread/update performance model.
+- `docs/archive/TYPE_MAP_REFACTOR_PLAN.md`
+  - Deferred: stronger expression-ID-based type-map plumbing and backend integration hardening.
+- `docs/archive/ENUM_VARIANT_STRUCTS_PLAN.md`
+  - Deferred: memory/layout optimization for heterogeneous multi-field enum variants.
+- `docs/archive/PHASE_2_IMPLEMENTATION.md`
+  - Deferred: fuller bidirectional checking, effect semantics, and post-phase parser/type checks.
+- `docs/archive/PHASE3_PLAN.md`
+  - Deferred: selected syntax sugar (postfix return variants) and additional polish paths.
+- `docs/archive/codegen/overview.md`
+  - Deferred: optional MIR stage when optimization pressure becomes material.
+- `docs/archive/codegen/data-representation.md`
+  - Deferred: uniqueness/ownership-style optimization for copy reduction.
+- `docs/archive/codegen/ANALYSIS_HOF_MONOMORPHIZATION.md`
+  - Deferred: constraint-based HOF specialization strategy and comparative backend options.
+- `docs/archive/SYNTAX_*.md`
+  - Deferred: any syntax revisit must go through explicit decision record process.
