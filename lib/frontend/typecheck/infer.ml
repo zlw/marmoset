@@ -408,9 +408,7 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
             | Ok () ->
                 (* Check each arm and collect body types *)
                 infer_match_arms type_map env' scrutinee_type arms subst expr))
-    | AST.RecordLit (_fields, _spread) ->
-        (* Phase 4.4: Record literals - not yet implemented *)
-        Error (error_at (ConstructorError "Record literals not yet implemented") expr)
+    | AST.RecordLit (fields, spread) -> infer_record_literal type_map env fields spread expr
     | AST.FieldAccess (receiver, variant_name) -> (
         (* Phase 4.3/4.4: Could be field access or nullary enum constructor *)
         (* Check if this is actually a nullary enum constructor (receiver is enum type identifier) *)
@@ -443,8 +441,58 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                       let result_type = TEnum (enum_name, fresh_vars) in
                       Ok (empty_substitution, result_type)))
         | _ ->
-            (* Real field access on records/structs - not yet implemented *)
-            Error (error_at (ConstructorError "Field access not yet implemented") expr))
+            (* Real field access on records *)
+            match infer_expression type_map env receiver with
+            | Error e -> Error e
+            | Ok (subst1, receiver_type) ->
+                let receiver_type' = apply_substitution subst1 receiver_type in
+                (* Exact record access *)
+                let lookup_field fields =
+                  List.find_opt (fun (f : Types.record_field_type) -> f.name = variant_name) fields
+                in
+                let field_result =
+                  match receiver_type' with
+                  | TRecord (fields, row) -> (
+                      match lookup_field fields with
+                      | Some field -> Ok (subst1, field.typ)
+                      | None -> (
+                          match row with
+                          | Some row_var ->
+                              (* Open row: the field may live in the tail; constrain it. *)
+                              let field_type = fresh_type_var () in
+                              let expected = TRecord ([ { name = variant_name; typ = field_type } ], Some row_var) in
+                              (match unify receiver_type' expected with
+                              | Error e -> Error (error_at (UnificationError e) expr)
+                              | Ok subst2 ->
+                                  let final_subst = compose_substitution subst1 subst2 in
+                                  Ok (final_subst, apply_substitution subst2 field_type))
+                          | None ->
+                              Error
+                                (error_at
+                                   (ConstructorError
+                                      (Printf.sprintf "Record field '%s' not found in type %s" variant_name
+                                         (Types.to_string receiver_type')))
+                                   expr)))
+                  | TVar _ ->
+                      (* Row-polymorphic field access: receiver must have this field plus unknown tail *)
+                      let field_type = fresh_type_var () in
+                      let row_var = TRowVar ("r" ^ string_of_int !fresh_var_counter) in
+                      fresh_var_counter := !fresh_var_counter + 1;
+                      let expected = TRecord ([ { name = variant_name; typ = field_type } ], Some row_var) in
+                      (match unify receiver_type' expected with
+                      | Error e -> Error (error_at (UnificationError e) expr)
+                      | Ok subst2 ->
+                          let final_subst = compose_substitution subst1 subst2 in
+                          Ok (final_subst, apply_substitution subst2 field_type))
+                  | _ ->
+                      Error
+                        (error_at
+                           (ConstructorError
+                              (Printf.sprintf "Field access requires record type, got %s"
+                                 (Types.to_string receiver_type')))
+                           expr)
+                in
+                field_result)
     | AST.MethodCall (receiver, method_name, args) -> (
         (* Phase 4.3: Method calls and enum constructors *)
         (* Check if this is actually an enum constructor (receiver is enum type identifier) *)
@@ -958,6 +1006,13 @@ and infer_function_with_annotations type_map env generics_opt params return_anno
                       | TFun (arg, ret) -> TFun (subst_generic arg, subst_generic ret)
                       | TArray elem -> TArray (subst_generic elem)
                       | THash (k, v) -> THash (subst_generic k, subst_generic v)
+                      | TRecord (fields, row) ->
+                          let fields' =
+                            List.map (fun (f : Types.record_field_type) -> { f with typ = subst_generic f.typ }) fields
+                          in
+                          let row' = Option.map subst_generic row in
+                          TRecord (fields', row')
+                      | TRowVar r when r = gen_name -> gen_var
                       | TEnum (name, args) -> TEnum (name, List.map subst_generic args)
                       | TUnion types -> TUnion (List.map subst_generic types)
                       | other -> other
@@ -1180,6 +1235,93 @@ and infer_hash_pairs type_map env subst key_type val_type pairs =
                         val_type'' rest))))
 
 (* ============================================================
+   Records
+   ============================================================ *)
+
+and infer_record_literal type_map env fields spread expr =
+  let rec infer_record_fields env_acc subst_acc typed_fields = function
+    | [] -> Ok (env_acc, subst_acc, List.rev typed_fields)
+    | (field : AST.record_field) :: rest -> (
+        let field_expr =
+          match field.field_value with
+          | Some e -> e
+          | None -> AST.mk_expr ~pos:expr.pos (AST.Identifier field.field_name)
+        in
+        match infer_expression type_map env_acc field_expr with
+        | Error e -> Error e
+        | Ok (subst1, field_type) ->
+            let env' = apply_substitution_env subst1 env_acc in
+            let subst' = compose_substitution subst_acc subst1 in
+            let field_type' = apply_substitution subst' field_type in
+            let typed_field = { Types.name = field.field_name; typ = field_type' } in
+            infer_record_fields env' subst' (typed_field :: typed_fields) rest)
+  in
+  let dedupe_fields_last_wins (field_types : Types.record_field_type list) : Types.record_field_type list =
+    let tbl = Hashtbl.create 16 in
+    List.iter (fun (f : Types.record_field_type) -> Hashtbl.replace tbl f.name f.typ) field_types;
+    field_types
+    |> List.filter (fun (f : Types.record_field_type) -> Hashtbl.mem tbl f.name)
+    |> List.filter_map (fun (f : Types.record_field_type) ->
+           match Hashtbl.find_opt tbl f.name with
+           | None -> None
+           | Some typ ->
+               Hashtbl.remove tbl f.name;
+               Some { Types.name = f.name; typ })
+  in
+  match infer_record_fields env empty_substitution [] fields with
+  | Error e -> Error e
+  | Ok (env1, subst1, field_types) ->
+      let field_types = dedupe_fields_last_wins field_types in
+      let merge_fields (base_fields : Types.record_field_type list) (new_fields : Types.record_field_type list) =
+        let tbl = Hashtbl.create 16 in
+        List.iter (fun (f : Types.record_field_type) -> Hashtbl.replace tbl f.name f.typ) base_fields;
+        List.iter (fun (f : Types.record_field_type) -> Hashtbl.replace tbl f.name f.typ) new_fields;
+        let names_in_order =
+          List.map (fun (f : Types.record_field_type) -> f.name) base_fields
+          @ List.map (fun (f : Types.record_field_type) -> f.name) new_fields
+        in
+        let seen = Hashtbl.create 16 in
+        List.filter_map
+          (fun name ->
+            if Hashtbl.mem seen name then
+              None
+            else (
+              Hashtbl.add seen name ();
+              match Hashtbl.find_opt tbl name with
+              | None -> None
+              | Some typ -> Some { Types.name; typ }))
+          names_in_order
+      in
+      (match spread with
+      | None -> Ok (subst1, TRecord (field_types, None))
+      | Some spread_expr -> (
+          match infer_expression type_map env1 spread_expr with
+          | Error e -> Error e
+          | Ok (subst2, spread_type) ->
+              let subst = compose_substitution subst1 subst2 in
+              let spread_type' = apply_substitution subst spread_type in
+              match spread_type' with
+              | TRecord (base_fields, base_row) ->
+                  let merged = merge_fields base_fields field_types in
+                  Ok (subst, TRecord (merged, base_row))
+              | TVar _ ->
+                  let row_var = TRowVar ("r" ^ string_of_int !fresh_var_counter) in
+                  fresh_var_counter := !fresh_var_counter + 1;
+                  let expected_base = TRecord ([], Some row_var) in
+                  (match unify spread_type' expected_base with
+                  | Error e -> Error (error_at (UnificationError e) spread_expr)
+                  | Ok subst3 ->
+                      let final_subst = compose_substitution subst subst3 in
+                      let result_row = Some (apply_substitution subst3 row_var) in
+                      Ok (final_subst, TRecord (field_types, result_row)))
+              | _ ->
+                  Error
+                    (error_at
+                       (ConstructorError
+                          (Printf.sprintf "Record spread expects a record, got %s" (to_string spread_type')))
+                       spread_expr)))
+
+(* ============================================================
    Index Expressions
    ============================================================ *)
 
@@ -1229,7 +1371,8 @@ and infer_index type_map env container index_expr =
                       let final_subst = compose_substitution subst subst3 in
                       let elem_type' = apply_substitution subst3 elem_type in
                       Ok (final_subst, elem_type'))
-              | TString | TFloat | TBool | TNull | TArray _ | THash _ | TFun _ | TUnion _ | TEnum _ -> (
+              | TString | TFloat | TBool | TNull | TArray _ | THash _ | TRecord _ | TRowVar _ | TFun _ | TUnion _
+              | TEnum _ -> (
                   (* Non-int index -> assume hash *)
                   let val_type = fresh_type_var () in
                   match unify container_type' (THash (index_type, val_type)) with
@@ -1444,7 +1587,8 @@ and infer_statement type_map env stmt =
       else
         Ok (empty_substitution, TNull)
   | AST.TypeAlias _ ->
-      (* Phase 4.4: Type aliases - not yet implemented *)
+      (* Type aliases are registered for annotation/type conversion *)
+      (* Runtime value is unit-like *)
       Ok (empty_substitution, TNull)
 
 (* Simple validation: check that all explicit return statements match expected type *)
@@ -1616,9 +1760,47 @@ and check_pattern pattern scrutinee_type =
                (PatternError
                   (Printf.sprintf "Pattern %s.%s doesn't match scrutinee type %s" enum_name variant_name
                      (to_string scrutinee_type)))))
-  | AST.PRecord (_fields, _rest) ->
-      (* Phase 4.4: Record patterns - not yet implemented *)
-      Error (error (PatternError "Record patterns not yet implemented"))
+  | AST.PRecord (fields, rest) -> (
+      match scrutinee_type with
+      | TRecord (scrutinee_fields, scrutinee_row) ->
+          let rec check_fields seen_names bindings = function
+            | [] ->
+                let rest_bindings =
+                  match rest with
+                  | None -> []
+                  | Some rest_name ->
+                      let remaining_fields =
+                        List.filter
+                          (fun (f : Types.record_field_type) -> not (List.mem f.name seen_names))
+                          scrutinee_fields
+                      in
+                      [ (rest_name, TRecord (remaining_fields, scrutinee_row)) ]
+                in
+                Ok (bindings @ rest_bindings)
+            | (field : AST.record_pattern_field) :: rest_fields -> (
+                let field_name = field.pat_field_name in
+                match List.find_opt (fun (f : Types.record_field_type) -> f.name = field_name) scrutinee_fields with
+                | None ->
+                    Error
+                      (error
+                         (PatternError
+                            (Printf.sprintf "Record pattern field '%s' not found in scrutinee type %s" field_name
+                               (to_string scrutinee_type))))
+                | Some scrutinee_field ->
+                    let effective_pat =
+                      match field.pat_field_pattern with
+                      | Some p -> p
+                      | None -> AST.{ pat = PVariable field_name; pos = pattern.pos }
+                    in
+                    (match check_pattern effective_pat scrutinee_field.typ with
+                    | Error e -> Error e
+                    | Ok field_bindings -> check_fields (field_name :: seen_names) (bindings @ field_bindings) rest_fields))
+          in
+          check_fields [] [] fields
+      | _ ->
+          Error
+            (error
+               (PatternError (Printf.sprintf "Record pattern doesn't match scrutinee type %s" (to_string scrutinee_type)))))
 
 (* ============================================================
    Let Binding Inference
@@ -1733,11 +1915,16 @@ let check_expression (type_map : type_map) (env : type_env) (expr : AST.expressi
 
 let infer_program ?(env = empty_env) (program : AST.program) : (type_env * type_map * mono_type) infer_result =
   reset_fresh_counter ();
+  Annotation.clear_type_aliases ();
   let type_map = create_type_map () in
   let rec go env subst stmts =
     match stmts with
     | [] -> Ok (env, subst, TNull)
-    | [ stmt ] -> (
+    | [ stmt_node ] -> (
+        let stmt : AST.statement = stmt_node in
+        (match stmt.stmt with
+        | AST.TypeAlias alias_def -> Annotation.register_type_alias alias_def
+        | _ -> ());
         match infer_statement type_map env stmt with
         | Error e -> Error e
         | Ok (subst', result_type) ->
@@ -1753,7 +1940,11 @@ let infer_program ?(env = empty_env) (program : AST.program) : (type_env * type_
               | _ -> env'
             in
             Ok (env'', final_subst, result_type'))
-    | stmt :: rest -> (
+    | stmt_node :: rest -> (
+        let stmt : AST.statement = stmt_node in
+        (match stmt.stmt with
+        | AST.TypeAlias alias_def -> Annotation.register_type_alias alias_def
+        | _ -> ());
         match infer_statement type_map env stmt with
         | Error e -> Error e
         | Ok (subst', stmt_type) ->
@@ -1875,6 +2066,36 @@ module Test = struct
   let%test "infer hash index" =
     (* {"a": 1}["a"] should be Int *)
     infers_to "{\"a\": 1}[\"a\"]" TInt
+
+  let%test "infer record literal" =
+    match infer_string "let p = { x: 1, y: \"s\" }; p" with
+    | Ok (_, _, TRecord (fields, None)) ->
+        List.length fields = 2
+        && List.exists (fun (f : Types.record_field_type) -> f.name = "x" && f.typ = TInt) fields
+        && List.exists (fun (f : Types.record_field_type) -> f.name = "y" && f.typ = TString) fields
+    | _ -> false
+
+  let%test "infer record field access" = infers_to "let p = { x: 1, y: 2 }; p.x + p.y" TInt
+
+  let%test "infer type alias for record annotation" =
+    infers_to "type point = { x: int, y: int }; let p: point = { x: 1, y: 2 }; p.x" TInt
+
+  let%test "infer generic type alias annotation" =
+    infers_to "type box[a] = { value: a }; let p: box[string] = { value: \"ok\" }; p.value" TString
+
+  let%test "infer explicit row-polymorphic parameter annotation" =
+    infers_to "let p = { x: 5, y: 10, z: 20 }; let get_x = fn(r: { x: int, ...row }) -> int { r.x }; get_x(p)" TInt
+
+  let%test "infer explicit row-polymorphic parameter with multiple field accesses" =
+    infers_to
+      "let p = { x: 5, y: 10, z: 20 }; let sum_xy = fn(r: { x: int, y: int, ...row }) -> int { r.x + r.y }; sum_xy(p)"
+      TInt
+
+  let%test "infer record match pattern with punning" =
+    infers_to "let p = { x: 10, y: 20 }; match p { { x:, y: }: x + y _: 0 }" TInt
+
+  let%test "infer record match pattern with rest binding" =
+    infers_to "let p = { x: 10, y: 20, z: 30 }; match p { { x:, ...rest }: x + rest.y _: 0 }" TInt
 
   let%test "infer polymorphic let" =
     (* let id = fn(x) { x }; id(5) should work and be Int *)

@@ -11,8 +11,16 @@ type mono_type =
   | TFun of mono_type * mono_type (* Function: T -> U (nested for multi-arg) *)
   | TArray of mono_type (* Array: [T] *)
   | THash of mono_type * mono_type (* Hash: {K: V} *)
+  | TRecord of record_field_type list * mono_type option
+    (* Record: {x: Int, y: String} or open record {x: Int, ...r} *)
+  | TRowVar of string (* Row type variable *)
   | TUnion of mono_type list (* Union: Int | String | Bool *)
   | TEnum of string * mono_type list (* Enum: option[Int], result[String, Int] *)
+
+and record_field_type = {
+  name : string;
+  typ : mono_type;
+}
 
 (* A polytype (type scheme) - a type with "forall" quantifiers.
    Example: ∀a. a -> a  is  Forall(["a"], TFun(TVar "a", TVar "a"))
@@ -53,6 +61,15 @@ and to_string = function
       args_str ^ " -> " ^ to_string ret
   | TArray element -> "[" ^ to_string element ^ "]"
   | THash (key, value) -> "{" ^ to_string key ^ ": " ^ to_string value ^ "}"
+  | TRecord (fields, row) ->
+      let field_strs = List.map (fun f -> f.name ^ ": " ^ to_string f.typ) fields in
+      let row_str =
+        match row with
+        | None -> ""
+        | Some r -> if field_strs = [] then "..." ^ to_string r else ", ..." ^ to_string r
+      in
+      "{ " ^ String.concat ", " field_strs ^ row_str ^ " }"
+  | TRowVar name -> name
   | TUnion types -> String.concat " | " (List.map to_string types)
   | TEnum (name, []) -> name
   | TEnum (name, args) -> name ^ "[" ^ String.concat ", " (List.map to_string args) ^ "]"
@@ -87,6 +104,14 @@ let rec apply_substitution (subst : substitution) (mono : mono_type) : mono_type
   | TFun (arg, ret) -> TFun (apply_substitution subst arg, apply_substitution subst ret)
   | TArray element -> TArray (apply_substitution subst element)
   | THash (key, value) -> THash (apply_substitution subst key, apply_substitution subst value)
+  | TRecord (fields, row) ->
+      let fields' = List.map (fun f -> { f with typ = apply_substitution subst f.typ }) fields in
+      let row' = Option.map (apply_substitution subst) row in
+      TRecord (fields', row')
+  | TRowVar name -> (
+      match List.assoc_opt name subst with
+      | Some replacement -> apply_substitution subst replacement
+      | None -> mono)
   | TUnion types -> TUnion (List.map (apply_substitution subst) types)
   | TEnum (name, args) -> TEnum (name, List.map (apply_substitution subst) args)
 
@@ -117,6 +142,17 @@ let rec free_type_vars (mono : mono_type) : TypeVarSet.t =
   | TFun (arg, ret) -> TypeVarSet.union (free_type_vars arg) (free_type_vars ret)
   | TArray element -> free_type_vars element
   | THash (key, value) -> TypeVarSet.union (free_type_vars key) (free_type_vars value)
+  | TRecord (fields, row) ->
+      let field_vars =
+        List.fold_left (fun acc f -> TypeVarSet.union acc (free_type_vars f.typ)) TypeVarSet.empty fields
+      in
+      let row_vars =
+        match row with
+        | None -> TypeVarSet.empty
+        | Some r -> free_type_vars r
+      in
+      TypeVarSet.union field_vars row_vars
+  | TRowVar name -> TypeVarSet.singleton name
   | TUnion types -> List.fold_left (fun acc t -> TypeVarSet.union acc (free_type_vars t)) TypeVarSet.empty types
   | TEnum (_, args) -> List.fold_left (fun acc t -> TypeVarSet.union acc (free_type_vars t)) TypeVarSet.empty args
 
@@ -151,6 +187,15 @@ let rec collect_vars_in_order (mono : mono_type) : string list =
   | TFun (arg, ret) -> collect_vars_in_order arg @ collect_vars_in_order ret
   | TArray element -> collect_vars_in_order element
   | THash (key, value) -> collect_vars_in_order key @ collect_vars_in_order value
+  | TRecord (fields, row) ->
+      let field_vars = List.concat_map (fun f -> collect_vars_in_order f.typ) fields in
+      let row_vars =
+        match row with
+        | None -> []
+        | Some r -> collect_vars_in_order r
+      in
+      field_vars @ row_vars
+  | TRowVar name -> [ name ]
   | TUnion types -> List.concat_map collect_vars_in_order types
   | TEnum (_, args) -> List.concat_map collect_vars_in_order args
 
@@ -225,6 +270,13 @@ let%test "to_string nested function" =
 let%test "to_string array and hash" =
   to_string (TArray TInt) = "[Int]" && to_string (THash (TString, TInt)) = "{String: Int}"
 
+let%test "to_string closed record" =
+  to_string (TRecord ([ { name = "x"; typ = TInt }; { name = "y"; typ = TString } ], None))
+  = "{ x: Int, y: String }"
+
+let%test "to_string open record" =
+  to_string (TRecord ([ { name = "x"; typ = TInt } ], Some (TRowVar "r"))) = "{ x: Int, ...r }"
+
 let%test "poly_type_to_string monomorphic" =
   (* No quantifiers - just the type *)
   poly_type_to_string (mono_to_poly TInt) = "Int"
@@ -251,6 +303,12 @@ let%test "apply_substitution to function" =
   let subst = [ ("a", TInt); ("b", TString) ] in
   apply_substitution subst (TFun (TVar "a", TVar "b")) = TFun (TInt, TString)
 
+let%test "apply_substitution to record" =
+  let subst = [ ("a", TInt); ("r", TRecord ([ { name = "y"; typ = TString } ], None)) ] in
+  let record = TRecord ([ { name = "x"; typ = TVar "a" } ], Some (TRowVar "r")) in
+  apply_substitution subst record
+  = TRecord ([ { name = "x"; typ = TInt } ], Some (TRecord ([ { name = "y"; typ = TString } ], None)))
+
 let%test "apply_substitution_poly respects quantified vars" =
   (* ∀a. a -> b  with {a -> Int, b -> String}  should give  ∀a. a -> String *)
   (* The 'a' is quantified so it should NOT be replaced *)
@@ -275,6 +333,10 @@ let%test "free_type_vars function" =
   (* a -> b has free vars {a, b} *)
   let free = free_type_vars (TFun (TVar "a", TVar "b")) in
   TypeVarSet.equal free (TypeVarSet.of_list [ "a"; "b" ])
+
+let%test "free_type_vars record" =
+  let free = free_type_vars (TRecord ([ { name = "x"; typ = TVar "a" } ], Some (TRowVar "r"))) in
+  TypeVarSet.equal free (TypeVarSet.of_list [ "a"; "r" ])
 
 let%test "free_type_vars_poly quantified" =
   (* ∀a. a -> b  has free vars {b} only (a is bound) *)

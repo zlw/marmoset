@@ -86,7 +86,17 @@ let rec parse_program (p : parser) : (parser * AST.program, parser) result =
       Ok (lp, List.rev prog)
     else
       let* lp2, prog2 = parse_statement lp in
-      loop (next_token lp2) ([ prog2 ] @ prog)
+      let lp3 =
+        match prog2.stmt with
+        | AST.TypeAlias _ ->
+            (* parse_type_expr leaves us at the token after the alias body *)
+            if curr_token_is lp2 Token.Semicolon then
+              next_token lp2
+            else
+              lp2
+        | _ -> next_token lp2
+      in
+      loop lp3 ([ prog2 ] @ prog)
   in
 
   loop p []
@@ -1106,7 +1116,7 @@ and parse_record_literal (p : parser) : (parser * AST.expression, parser) result
     if curr_token_is lp Token.RBrace then
       (* End of record *)
       let id, _lp1 = fresh_id lp in
-      Ok (next_token lp, mk_expr id pos (AST.RecordLit (List.rev fields, spread)))
+      Ok (lp, mk_expr id pos (AST.RecordLit (List.rev fields, spread)))
     else if curr_token_is lp Token.Spread then
       (* Spread: { ...base, x: 1 } *)
       let lp2 = next_token lp in
@@ -1170,7 +1180,7 @@ and parse_record_literal_with_spread (p : parser) (pos : int) : (parser * AST.ex
     let rec loop lp fields =
       if curr_token_is lp Token.RBrace then
         let id, _lp1 = fresh_id lp in
-        Ok (next_token lp, mk_expr id pos (AST.RecordLit (List.rev fields, Some spread_expr)))
+        Ok (lp, mk_expr id pos (AST.RecordLit (List.rev fields, Some spread_expr)))
       else if curr_token_is lp Token.Ident then
         let field_name = lp.curr_token.literal in
         let* lp2 = expect_peek lp Token.Colon in
@@ -1203,7 +1213,7 @@ and parse_record_literal_with_spread (p : parser) (pos : int) : (parser * AST.ex
   else if peek_token_is p4 Token.RBrace then
     (* Just spread: { ...base } *)
     let id, _p5 = fresh_id p4 in
-    Ok (next_token (next_token p4), mk_expr id pos (AST.RecordLit ([], Some spread_expr)))
+    Ok (next_token p4, mk_expr id pos (AST.RecordLit ([], Some spread_expr)))
   else
     Error (peek_error p4 Token.RBrace)
 
@@ -2105,6 +2115,13 @@ let%test "parse simple type alias" =
       | _ -> false)
   | Error _ -> false
 
+let%test "parse type alias followed by let without semicolon" =
+  let input = "type myint = int\nlet x: myint = 1\nx" in
+  let lexer = Lexer.init input in
+  match parse_program (init lexer) with
+  | Ok (_p, program) -> List.length program = 3
+  | Error _ -> false
+
 let%test "parse type alias with generic param" =
   let input = "type box[a] = a" in
   let lexer = Lexer.init input in
@@ -2283,6 +2300,13 @@ let%test "parse record literal - multiple fields" =
               | _ -> false)
           | _ -> false)
       | _ -> false)
+  | Error _ -> false
+
+let%test "parse let with record literal followed by let" =
+  let input = "let p = { x: 1, y: 2 }\nlet q = p.x\nq" in
+  let lexer = Lexer.init input in
+  match parse_program (init lexer) with
+  | Ok (_p, program) -> List.length program = 3
   | Error _ -> false
 
 let%test "parse record literal - punning single" =

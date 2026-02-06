@@ -12,6 +12,13 @@ let error_to_string = function
   | TypeMismatch (t1, t2) -> "Cannot unify " ^ to_string t1 ^ " with " ^ to_string t2
   | OccursCheck (var, mono) -> "Infinite type: " ^ var ^ " occurs in " ^ to_string mono
 
+let fresh_row_counter = ref 0
+
+let fresh_row_var () =
+  let n = !fresh_row_counter in
+  fresh_row_counter := n + 1;
+  TRowVar ("row" ^ string_of_int n)
+
 (* Main unification function.
    
    Given two types, find a substitution that makes them equal.
@@ -31,8 +38,13 @@ let rec unify (type1 : mono_type) (type2 : mono_type) : (substitution, unify_err
   | TBool, TBool -> Ok empty_substitution
   | TString, TString -> Ok empty_substitution
   | TNull, TNull -> Ok empty_substitution
+  | TRowVar a, TRowVar b when a = b -> Ok empty_substitution
   (* Same type variable - nothing to do *)
   | TVar a, TVar b when a = b -> Ok empty_substitution
+  (* Row variable on left - bind it *)
+  | TRowVar var, other -> bind_variable var other
+  (* Row variable on right - bind it *)
+  | other, TRowVar var -> bind_variable var other
   (* Type variable on left - bind it *)
   | TVar var, other -> bind_variable var other
   (* Type variable on right - bind it *)
@@ -43,6 +55,8 @@ let rec unify (type1 : mono_type) (type2 : mono_type) : (substitution, unify_err
   | TArray elem1, TArray elem2 -> unify elem1 elem2
   (* Hash types - unify key and value types *)
   | THash (key1, val1), THash (key2, val2) -> unify_two_pairs (key1, key2) (val1, val2)
+  (* Record types - unify fields and row tails *)
+  | TRecord (fields1, row1), TRecord (fields2, row2) -> unify_records fields1 row1 fields2 row2
   (* Enum types - unify name and all type arguments *)
   | TEnum (name1, args1), TEnum (name2, args2) ->
       if name1 <> name2 then
@@ -61,6 +75,93 @@ let rec unify (type1 : mono_type) (type2 : mono_type) : (substitution, unify_err
   | TUnion members, concrete -> unify_concrete_with_union concrete members
   (* No match - types are incompatible *)
   | _, _ -> Error (TypeMismatch (type1, type2))
+
+and find_field (field_name : string) (fields : record_field_type list) : record_field_type option =
+  List.find_opt (fun f -> f.name = field_name) fields
+
+and filter_fields_not_in (fields : record_field_type list) (other : record_field_type list) : record_field_type list =
+  List.filter (fun f -> find_field f.name other = None) fields
+
+and unify_records
+    (fields1 : record_field_type list)
+    (row1 : mono_type option)
+    (fields2 : record_field_type list)
+    (row2 : mono_type option) : (substitution, unify_error) result =
+  let common_pairs =
+    List.filter_map
+      (fun f1 ->
+        match find_field f1.name fields2 with
+        | Some f2 -> Some (f1.typ, f2.typ)
+        | None -> None)
+      fields1
+  in
+  let only1 = filter_fields_not_in fields1 fields2 in
+  let only2 = filter_fields_not_in fields2 fields1 in
+  let rec unify_common subst = function
+    | [] -> Ok subst
+    | (t1, t2) :: rest -> (
+        let t1' = apply_substitution subst t1 in
+        let t2' = apply_substitution subst t2 in
+        match unify t1' t2' with
+        | Error e -> Error e
+        | Ok subst2 ->
+            let composed = compose_substitution subst subst2 in
+            unify_common composed rest)
+  in
+  match unify_common empty_substitution common_pairs with
+  | Error e -> Error e
+  | Ok subst_common ->
+      let only1' = List.map (fun f -> { f with typ = apply_substitution subst_common f.typ }) only1 in
+      let only2' = List.map (fun f -> { f with typ = apply_substitution subst_common f.typ }) only2 in
+      let row1' = Option.map (apply_substitution subst_common) row1 in
+      let row2' = Option.map (apply_substitution subst_common) row2 in
+      let compose_with_common subst_tail = Ok (compose_substitution subst_common subst_tail) in
+      match (row1', row2') with
+      | None, None ->
+          if only1' = [] && only2' = [] then
+            Ok subst_common
+          else
+            Error (TypeMismatch (TRecord (fields1, row1), TRecord (fields2, row2)))
+      | Some r1, None ->
+          if only1' <> [] then
+            Error (TypeMismatch (TRecord (fields1, row1), TRecord (fields2, row2)))
+          else (
+            match unify r1 (TRecord (only2', None)) with
+            | Error e -> Error e
+            | Ok subst2 -> compose_with_common subst2)
+      | None, Some r2 ->
+          if only2' <> [] then
+            Error (TypeMismatch (TRecord (fields1, row1), TRecord (fields2, row2)))
+          else (
+            match unify r2 (TRecord (only1', None)) with
+            | Error e -> Error e
+            | Ok subst2 -> compose_with_common subst2)
+      | Some r1, Some r2 ->
+          if only1' = [] && only2' = [] then (
+            match unify r1 r2 with
+            | Error e -> Error e
+            | Ok subst2 -> compose_with_common subst2)
+          else if only1' = [] then (
+            match unify r1 (TRecord (only2', Some r2)) with
+            | Error e -> Error e
+            | Ok subst2 -> compose_with_common subst2)
+          else if only2' = [] then (
+            match unify r2 (TRecord (only1', Some r1)) with
+            | Error e -> Error e
+            | Ok subst2 -> compose_with_common subst2)
+          else
+            let shared = fresh_row_var () in
+            match unify r1 (TRecord (only2', Some shared)) with
+            | Error e -> Error e
+            | Ok subst2 -> (
+                let r2' = apply_substitution subst2 r2 in
+                let shared' = apply_substitution subst2 shared in
+                let only1'' = List.map (fun f -> { f with typ = apply_substitution subst2 f.typ }) only1' in
+                match unify r2' (TRecord (only1'', Some shared')) with
+                | Error e -> Error e
+                | Ok subst3 ->
+                    let subst23 = compose_substitution subst2 subst3 in
+                    compose_with_common subst23)
 
 (* Helper: Check if concrete type matches any union member *)
 and unify_concrete_with_union (concrete : mono_type) (members : mono_type list) :
@@ -230,6 +331,25 @@ let%test "unify hashes" =
   match unify t1 t2 with
   | Error _ -> false
   | Ok subst -> apply_substitution subst (TVar "k") = TString && apply_substitution subst (TVar "v") = TInt
+
+let%test "unify closed records same fields" =
+  let r1 = TRecord ([ { name = "x"; typ = TInt }; { name = "y"; typ = TString } ], None) in
+  let r2 = TRecord ([ { name = "y"; typ = TString }; { name = "x"; typ = TInt } ], None) in
+  match unify r1 r2 with
+  | Ok _ -> true
+  | Error _ -> false
+
+let%test "unify open record with closed record" =
+  let r1 = TRecord ([ { name = "x"; typ = TInt } ], Some (TRowVar "r")) in
+  let r2 = TRecord ([ { name = "x"; typ = TInt }; { name = "y"; typ = TString } ], None) in
+  match unify r1 r2 with
+  | Ok subst -> apply_substitution subst (TRowVar "r") = TRecord ([ { name = "y"; typ = TString } ], None)
+  | Error _ -> false
+
+let%test "fail unify missing required record field" =
+  let r1 = TRecord ([ { name = "x"; typ = TInt }; { name = "y"; typ = TString } ], None) in
+  let r2 = TRecord ([ { name = "x"; typ = TInt } ], None) in
+  fails_to_unify r1 r2
 
 (* Tests for type mismatches *)
 let%test "fail to unify different primitives" =

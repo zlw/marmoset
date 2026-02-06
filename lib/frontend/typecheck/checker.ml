@@ -609,3 +609,47 @@ let%test "error: shows both expected and inferred types" =
       let lower_msg = String.lowercase_ascii message in
       string_contains_substring lower_msg ~substring:"bool"
       || string_contains_substring lower_msg ~substring:"string"
+
+(* ============================================================
+   Phase 4.4: Record Typechecking Tests
+   ============================================================ *)
+
+let%test "record literal and field access typecheck" =
+  Infer.reset_fresh_counter ();
+  match check "let p = { x: 10, y: 20 }; p.x + p.y" with
+  | Ok { result_type = TInt; _ } -> true
+  | _ -> false
+
+let%test "record literal with punning typechecks" =
+  Infer.reset_fresh_counter ();
+  match check "let x = 10; let y = 20; let p = { x:, y: }; p.x + p.y" with
+  | Ok { result_type = TInt; _ } -> true
+  | _ -> false
+
+let%test "type alias for record typechecks" =
+  Infer.reset_fresh_counter ();
+  let code = "type point = { x: int, y: int }; let p: point = { x: 1, y: 2 }; p.x + p.y" in
+  match check code with
+  | Ok { result_type = TInt; _ } -> true
+  | _ -> false
+
+let%test "generic type alias for record typechecks" =
+  Infer.reset_fresh_counter ();
+  let code = "type box[a] = { value: a }; let p: box[int] = { value: 42 }; p.value" in
+  match check code with
+  | Ok { result_type = TInt; _ } -> true
+  | _ -> false
+
+let%test "explicit row-polymorphic function annotation typechecks" =
+  Infer.reset_fresh_counter ();
+  let code = "let p = { x: 5, y: 10, z: 20 }; let get_x = fn(r: { x: int, ...row }) -> int { r.x }; get_x(p)" in
+  match check code with
+  | Ok { result_type = TInt; _ } -> true
+  | _ -> false
+
+let%test "record match pattern typechecks" =
+  Infer.reset_fresh_counter ();
+  let code = "let p = { x: 10, y: 20 }; match p { { x:, y: }: x + y _: 0 }" in
+  match check code with
+  | Ok { result_type = TInt; _ } -> true
+  | _ -> false

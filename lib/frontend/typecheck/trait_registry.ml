@@ -49,6 +49,9 @@ let lookup_trait (name : string) : trait_def option = Hashtbl.find_opt trait_reg
 let lookup_impl (trait_name : string) (for_type : mono_type) : impl_def option =
   Hashtbl.find_opt impl_registry (trait_name, for_type)
 
+(* Return all registered impls (manual and derived). *)
+let all_impls () : impl_def list = Hashtbl.fold (fun _ impl acc -> impl :: acc) impl_registry []
+
 (* Check if a type implements a trait (directly or through derivation) *)
 let implements_trait (trait_name : string) (for_type : mono_type) : bool =
   match lookup_impl trait_name for_type with
@@ -83,7 +86,7 @@ let lookup_method (for_type : mono_type) (method_name : string) : (string * meth
 let is_derivable (trait_name : string) : bool =
   (* For now, only specific traits are derivable *)
   match trait_name with
-  | "eq" | "show" | "debug" -> true
+  | "eq" | "show" | "debug" | "ord" | "hash" -> true
   | _ -> false
 
 (* Validate that a type can derive a trait *)

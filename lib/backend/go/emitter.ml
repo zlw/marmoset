@@ -20,6 +20,17 @@ let rec mangle_type (t : Types.mono_type) : string =
   | Types.TFun (arg, ret) -> "fn_" ^ mangle_type arg ^ "_" ^ mangle_type ret
   | Types.TArray elem -> "arr_" ^ mangle_type elem
   | Types.THash (key, value) -> "map_" ^ mangle_type key ^ "_" ^ mangle_type value
+  | Types.TRecord (fields, row) ->
+      let field_bits =
+        fields |> List.map (fun (f : Types.record_field_type) -> f.name ^ "_" ^ mangle_type f.typ) |> String.concat "_"
+      in
+      let row_bit =
+        match row with
+        | None -> "closed"
+        | Some _ -> "open"
+      in
+      "record_" ^ field_bits ^ "_" ^ row_bit
+  | Types.TRowVar name -> "row_" ^ name
   | Types.TUnion _ -> "union" (* Phase 4.1: unions will be interface{} *)
   | Types.TEnum (name, []) -> name
   | Types.TEnum (name, args) -> name ^ "_" ^ String.concat "_" (List.map mangle_type args)
@@ -121,6 +132,8 @@ let type_size (t : Types.mono_type) : int =
   | Types.TBool -> 1
   | Types.TNull -> 0
   | Types.TVar _ -> 8 (* Treat as pointer *)
+  | Types.TRecord _ -> 8 (* Lowered as pointer/interface for now *)
+  | Types.TRowVar _ -> 8
   | Types.TFun _ -> 8 (* Function pointer *)
   | Types.TUnion _ -> 8 (* Interface *)
 
@@ -149,6 +162,21 @@ let rec type_to_go (state : mono_state) (t : Types.mono_type) : string =
   | Types.TFun (arg, ret) -> emit_func_type state arg ret
   | Types.TArray elem -> "[]" ^ type_to_go state elem
   | Types.THash (key, value) -> "map[" ^ type_to_go state key ^ "]" ^ type_to_go state value
+  | Types.TRecord (fields, _row) ->
+      let go_fields =
+        List.map
+          (fun (f : Types.record_field_type) ->
+            let go_name =
+              if f.name = "" then
+                f.name
+              else
+                String.uppercase_ascii (String.sub f.name 0 1) ^ String.sub f.name 1 (String.length f.name - 1)
+            in
+            Printf.sprintf "%s %s" go_name (type_to_go state f.typ))
+          fields
+      in
+      Printf.sprintf "struct{%s}" (String.concat "; " go_fields)
+  | Types.TRowVar _ -> "interface{}"
   | Types.TUnion _ -> "interface{}" (* Phase 4.1: unions compile to interface{} *)
   | Types.TEnum (name, args) -> mangle_type (Types.TEnum (name, args))
 
@@ -527,6 +555,33 @@ type emit_state = {
 let create_emit_state mono = { indent = 1; mono }
 let indent_str state = String.make (state.indent * 4) ' '
 
+let go_record_field_name (name : string) : string =
+  if name = "" then
+    name
+  else
+    String.uppercase_ascii (String.sub name 0 1) ^ String.sub name 1 (String.length name - 1)
+
+let emit_record_struct_type (state : emit_state) (fields : Types.record_field_type list) : string =
+  let go_fields =
+    List.map
+      (fun (f : Types.record_field_type) ->
+        Printf.sprintf "%s %s" (go_record_field_name f.name) (type_to_go state.mono f.typ))
+      fields
+  in
+  Printf.sprintf "struct{%s}" (String.concat "; " go_fields)
+
+let rec find_last_record_field_expr (field_name : string) (fields : AST.record_field list) : AST.expression option =
+  match fields with
+  | [] -> None
+  | field :: rest ->
+      let rest_result = find_last_record_field_expr field_name rest in
+      if field.field_name = field_name then
+        match field.field_value with
+        | Some expr -> Some expr
+        | None -> Some (AST.mk_expr (AST.Identifier field.field_name))
+      else
+        rest_result
+
 (* ============================================================
    Expression Emission
    ============================================================ *)
@@ -578,7 +633,36 @@ let rec emit_expr
       else
         Printf.sprintf "%s(%s)" constructor_name (String.concat ", " arg_strs)
   | AST.Match (scrutinee, arms) -> emit_match state type_map env expr scrutinee arms
-  | AST.RecordLit (_fields, _spread) -> failwith "Record literals not yet implemented in codegen"
+  | AST.RecordLit (fields, spread) -> (
+      let record_type = get_type type_map expr in
+      let result_fields, _result_row =
+        match record_type with
+        | Types.TRecord (f, row) -> (f, row)
+        | _ -> failwith (Printf.sprintf "Record literal expected record type, got %s" (Types.to_string record_type))
+      in
+      let struct_type = emit_record_struct_type state result_fields in
+      let emit_field_assignment field base_var_opt =
+        let go_name = go_record_field_name field.Types.name in
+        match find_last_record_field_expr field.Types.name fields with
+        | Some field_expr ->
+            let field_str = emit_expr state type_map env field_expr in
+            Printf.sprintf "%s: %s" go_name field_str
+        | None -> (
+            match base_var_opt with
+            | Some base_var -> Printf.sprintf "%s: %s.%s" go_name base_var go_name
+            | None ->
+                failwith
+                  (Printf.sprintf "Record field '%s' not provided and no spread base available" field.Types.name))
+      in
+      match spread with
+      | None ->
+          let assignments = List.map (fun f -> emit_field_assignment f None) result_fields in
+          Printf.sprintf "%s{%s}" struct_type (String.concat ", " assignments)
+      | Some base_expr ->
+          let base_str = emit_expr state type_map env base_expr in
+          let assignments = List.map (fun f -> emit_field_assignment f (Some "__base")) result_fields in
+          Printf.sprintf "(func() %s { __base := %s; return %s{%s} })()" struct_type base_str struct_type
+            (String.concat ", " assignments))
   | AST.FieldAccess (receiver, variant_name) -> (
       (* Check if this is a nullary enum constructor *)
       match receiver.expr with
@@ -595,8 +679,9 @@ let rec emit_expr
           let constructor_name = Printf.sprintf "%s_%s" go_type_name variant_name in
           Printf.sprintf "%s()" constructor_name
       | _ ->
-          (* Real field access - not yet implemented *)
-          failwith "Field access not yet implemented in codegen")
+          (* Real field access *)
+          let receiver_str = emit_expr state type_map env receiver in
+          Printf.sprintf "(%s).%s" receiver_str (go_record_field_name variant_name))
   | AST.MethodCall (receiver, variant_name, args) -> (
       (* Check if this is an enum constructor *)
       match receiver.expr with
@@ -659,7 +744,75 @@ and emit_match state type_map env match_expr scrutinee arms =
   | Types.TInt | Types.TString | Types.TBool ->
       (* Primitive match: switch on value directly *)
       emit_match_primitive state type_map env scrutinee scrutinee_type arms match_result_type
+  | Types.TRecord _ ->
+      (* Record match: compile as if/else chain *)
+      emit_match_record state type_map env scrutinee arms match_result_type
   | _ -> failwith (Printf.sprintf "Match on type %s not yet supported" (Types.to_string scrutinee_type))
+
+and emit_match_record state type_map env scrutinee arms match_result_type =
+  let scrutinee_str = emit_expr state type_map env scrutinee in
+  let match_result_go_type = type_to_go state.mono match_result_type in
+  let emit_lit = function
+    | AST.LInt n -> Printf.sprintf "int64(%Ld)" n
+    | AST.LString s -> Printf.sprintf "%S" s
+    | AST.LBool b -> if b then "true" else "false"
+  in
+  let emit_record_arm pattern body is_first =
+    let branch_prefix_if = if is_first then "\tif" else " else if" in
+    let branch_prefix_else = if is_first then "\tif true" else " else" in
+    match pattern.AST.pat with
+    | AST.PWildcard ->
+        let body_str = emit_expr state type_map env body in
+        Printf.sprintf "%s {\n\t\treturn %s\n\t}" branch_prefix_else body_str
+    | AST.PVariable name ->
+        let body_str = emit_expr state type_map env body in
+        Printf.sprintf "%s {\n\t\t%s := __scrutinee\n\t\treturn %s\n\t}" branch_prefix_else name body_str
+    | AST.PRecord (fields, rest) ->
+        let cond_parts, bind_lines =
+          List.fold_left
+            (fun (conds, binds) (f : AST.record_pattern_field) ->
+              let access = Printf.sprintf "__scrutinee.%s" (go_record_field_name f.pat_field_name) in
+              match f.pat_field_pattern with
+              | None ->
+                  (conds, (Printf.sprintf "%s := %s" f.pat_field_name access) :: binds)
+              | Some p -> (
+                  match p.AST.pat with
+                  | AST.PWildcard -> (conds, binds)
+                  | AST.PVariable name -> (conds, (Printf.sprintf "%s := %s" name access) :: binds)
+                  | AST.PLiteral lit -> ((Printf.sprintf "(%s == %s)" access (emit_lit lit)) :: conds, binds)
+                  | _ -> failwith "Complex record patterns in codegen are not yet supported"))
+            ([], []) fields
+        in
+        let bind_lines =
+          match rest with
+          | None -> bind_lines
+          | Some rest_name -> (Printf.sprintf "%s := __scrutinee" rest_name) :: bind_lines
+        in
+        let cond_str =
+          match List.rev cond_parts with
+          | [] -> "true"
+          | cs -> String.concat " && " cs
+        in
+        let body_str = emit_expr state type_map env body in
+        let binds_block =
+          match List.rev bind_lines with
+          | [] -> ""
+          | lines -> String.concat "\n" (List.map (fun l -> "\t\t" ^ l) lines) ^ "\n"
+        in
+        Printf.sprintf "%s %s {\n%s\t\treturn %s\n\t}" branch_prefix_if cond_str binds_block body_str
+    | _ -> failwith "Only record, wildcard, or variable patterns are supported for record match codegen"
+  in
+  let arm_blocks =
+    List.mapi
+      (fun idx (arm : AST.match_arm) ->
+        match arm.patterns with
+        | [ pattern ] -> emit_record_arm pattern arm.body (idx = 0)
+        | [] -> failwith "Match arm must have at least one pattern"
+        | _ -> failwith "Multiple patterns per arm not yet supported in codegen")
+      arms
+  in
+  Printf.sprintf "(func() %s {\n\t__scrutinee := %s\n%s\n\tpanic(\"non-exhaustive record match\")\n})()"
+    match_result_go_type scrutinee_str (String.concat "" arm_blocks)
 
 and emit_match_enum state type_map env scrutinee scrutinee_type enum_name type_args arms match_result_type =
   (* Generate mangled enum type name *)
@@ -910,6 +1063,33 @@ and substitute_identifier_in_expr old_name new_name expr =
     | AST.Array elements -> { e with expr = AST.Array (List.map subst_expr elements) }
     | AST.Hash pairs -> { e with expr = AST.Hash (List.map (fun (k, v) -> (subst_expr k, subst_expr v)) pairs) }
     | AST.Index (container, index) -> { e with expr = AST.Index (subst_expr container, subst_expr index) }
+    | AST.RecordLit (fields, spread) ->
+        let fields' =
+          List.map
+            (fun (f : AST.record_field) ->
+              {
+                f with
+                field_value =
+                  (match f.field_value with
+                  | Some v -> Some (subst_expr v)
+                  | None -> None);
+              })
+            fields
+        in
+        let spread' = Option.map subst_expr spread in
+        { e with expr = AST.RecordLit (fields', spread') }
+    | AST.FieldAccess (recv, field) -> { e with expr = AST.FieldAccess (subst_expr recv, field) }
+    | AST.MethodCall (recv, name, args) ->
+        { e with expr = AST.MethodCall (subst_expr recv, name, List.map subst_expr args) }
+    | AST.Match (scrutinee, arms) ->
+        let arms' =
+          List.map
+            (fun (arm : AST.match_arm) ->
+              (* Keep patterns unchanged; substitute only in arm body *)
+              { arm with body = subst_expr arm.body })
+            arms
+        in
+        { e with expr = AST.Match (subst_expr scrutinee, arms') }
     | AST.Function _ ->
         (* Don't substitute inside function bodies - would need scope tracking *)
         e
@@ -1583,6 +1763,128 @@ let collect_impl_defs (program : AST.program) : AST.impl_def list =
       | _ -> None)
     program
 
+let builtin_impl_keys : (string * string) list =
+  [
+    ("show", "int64");
+    ("show", "bool");
+    ("show", "string");
+    ("show", "float64");
+    ("debug", "int64");
+    ("debug", "bool");
+    ("debug", "string");
+    ("debug", "float64");
+    ("eq", "int64");
+    ("eq", "bool");
+    ("eq", "string");
+    ("eq", "float64");
+    ("ord", "int64");
+    ("ord", "bool");
+    ("ord", "string");
+    ("ord", "float64");
+    ("hash", "int64");
+    ("hash", "bool");
+    ("hash", "string");
+    ("num", "int64");
+    ("num", "float64");
+    ("neg", "int64");
+    ("neg", "float64");
+  ]
+
+let emit_record_derived_impl (state : emit_state) (trait_name : string) (record_type : Types.mono_type) : string option =
+  let type_suffix = mangle_type record_type in
+  let type_str = type_to_go state.mono record_type in
+  let fields, _row =
+    match record_type with
+    | Types.TRecord (fields, row) -> (fields, row)
+    | _ -> ([], None)
+  in
+  let go_field_access prefix (f : Types.record_field_type) = prefix ^ "." ^ go_record_field_name f.name in
+  match trait_name with
+  | "eq" ->
+      let body =
+        match fields with
+        | [] -> "true"
+        | _ ->
+            fields
+            |> List.map (fun f -> Printf.sprintf "(%s == %s)" (go_field_access "x" f) (go_field_access "y" f))
+            |> String.concat " && "
+      in
+      Some (Printf.sprintf "func eq_eq_%s(x, y %s) bool {\n\treturn %s\n}\n" type_suffix type_str body)
+  | "show" | "debug" ->
+      let fn_prefix =
+        if trait_name = "show" then
+          "show_show_"
+        else
+          "debug_debug_"
+      in
+      let format_str, args_str =
+        match fields with
+        | [] -> ("{}", "")
+        | _ ->
+            let pieces = List.map (fun (f : Types.record_field_type) -> Printf.sprintf "%s: %%v" f.name) fields in
+            let args = List.map (go_field_access "x") fields in
+            ("{ " ^ String.concat ", " pieces ^ " }", String.concat ", " args)
+      in
+      let return_expr =
+        if args_str = "" then
+          Printf.sprintf "%S" format_str
+        else
+          Printf.sprintf "fmt.Sprintf(%S, %s)" format_str args_str
+      in
+      Some (Printf.sprintf "func %s%s(x %s) string {\n\treturn %s\n}\n" fn_prefix type_suffix type_str return_expr)
+  | "ord" ->
+      let compare_pair (f : Types.record_field_type) =
+        let x_access = go_field_access "x" f in
+        let y_access = go_field_access "y" f in
+        match f.typ with
+        | Types.TBool -> (Printf.sprintf "(!%s && %s)" x_access y_access, Printf.sprintf "(%s == %s)" x_access y_access)
+        | _ -> (Printf.sprintf "(%s < %s)" x_access y_access, Printf.sprintf "(%s == %s)" x_access y_access)
+      in
+      let body =
+        match fields with
+        | [] -> "\treturn int64(1)\n"
+        | _ ->
+            fields
+            |> List.map compare_pair
+            |> List.map (fun (less_expr, eq_expr) ->
+                   Printf.sprintf "\tif %s { return int64(0) }\n\tif !%s { return int64(2) }\n" less_expr eq_expr)
+            |> String.concat ""
+      in
+      Some (Printf.sprintf "func ord_compare_%s(x, y %s) int64 {\n%s\treturn int64(1)\n}\n" type_suffix type_str body)
+  | "hash" ->
+      let hash_steps =
+        fields
+        |> List.map (fun (f : Types.record_field_type) ->
+               Printf.sprintf "\th = h*31 + hash_hash_%s(%s)\n" (mangle_type f.typ) (go_field_access "x" f))
+        |> String.concat ""
+      in
+      Some (Printf.sprintf "func hash_hash_%s(x %s) int64 {\n\th := int64(17)\n%s\treturn h\n}\n" type_suffix type_str hash_steps)
+  | _ -> None
+
+let emit_registry_derived_impls (state : emit_state) (program : AST.program) : string =
+  let user_impls = collect_impl_defs program in
+  let user_impl_set =
+    List.fold_left
+      (fun acc (impl : AST.impl_def) ->
+        let for_type = Annotation.type_expr_to_mono_type impl.AST.impl_for_type in
+        (impl.AST.impl_trait_name, mangle_type for_type) :: acc)
+      [] user_impls
+  in
+  let should_emit trait_name type_suffix =
+    (not (List.mem (trait_name, type_suffix) user_impl_set))
+    && not (List.mem (trait_name, type_suffix) builtin_impl_keys)
+  in
+  Typecheck.Trait_registry.all_impls ()
+  |> List.filter_map (fun (impl : Typecheck.Trait_registry.impl_def) ->
+         let type_suffix = mangle_type impl.impl_for_type in
+         if should_emit impl.impl_trait_name type_suffix then
+           match impl.impl_for_type with
+           | Types.TRecord _ -> emit_record_derived_impl state impl.impl_trait_name impl.impl_for_type
+           | _ -> None
+         else
+           None)
+  |> String.concat "\n"
+
 (* ============================================================
     Builtin Trait Implementations - Go Code Generation
     ============================================================ *)
@@ -1713,6 +2015,7 @@ let emit_program_with_typed_env (type_map : Infer.type_map) (typed_env : Infer.t
   (* Generate trait impl functions *)
   let impl_defs = collect_impl_defs program in
   let impl_funcs = List.map (emit_impl_def emit_state type_map) impl_defs |> String.concat "\n" in
+  let derived_impl_funcs = emit_registry_derived_impls emit_state program in
 
   (* Emit main body *)
   let main_body, _ = emit_stmts emit_state type_map typed_env program in
@@ -1739,7 +2042,13 @@ let emit_program_with_typed_env (type_map : Infer.type_map) (typed_env : Infer.t
     else
       impl_funcs ^ "\n"
   in
-  let top_funcs = specialized_funcs_str ^ builtin_impl_funcs_str ^ impl_funcs_str in
+  let derived_impl_funcs_str =
+    if derived_impl_funcs = "" then
+      ""
+    else
+      derived_impl_funcs ^ "\n"
+  in
+  let top_funcs = specialized_funcs_str ^ builtin_impl_funcs_str ^ impl_funcs_str ^ derived_impl_funcs_str in
 
   Printf.sprintf "package main\n\n%s%s%sfunc main() {\n%s}\n" imports type_defs top_funcs main_body
 
@@ -1984,4 +2293,23 @@ let%test "fibonacci with if statement and subsequent return" =
       string_contains code "func fib_int64(n int64) int64"
       && string_contains code "if (n < int64(2))"
       && not (string_contains code "return nil")
+  | Error _ -> false
+
+let%test "emit record literal and field access" =
+  match compile_string "let p = { x: 10, y: 20 }; p.x + p.y" with
+  | Ok code ->
+      string_contains code "struct{X int64; Y int64}"
+      && string_contains code "p := struct{X int64; Y int64}{X: int64(10), Y: int64(20)}"
+      && string_contains code "(p).X"
+      && string_contains code "(p).Y"
+  | Error _ -> false
+
+let%test "emit record spread" =
+  match compile_string "let p = { x: 1, y: 2 }; let p2 = { ...p, x: 10 }; p2.x + p2.y" with
+  | Ok code -> string_contains code "__base := p" && string_contains code "return struct{X int64; Y int64}{X: int64(10), Y: __base.Y}"
+  | Error _ -> false
+
+let%test "emit record match pattern" =
+  match compile_string "let p = { x: 10, y: 20 }; match p { { x:, y: }: x + y _: 0 }" with
+  | Ok code -> string_contains code "__scrutinee :=" && string_contains code "if true" && string_contains code "x := __scrutinee.X"
   | Error _ -> false
