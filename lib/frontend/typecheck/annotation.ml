@@ -24,7 +24,16 @@ let rec type_expr_to_mono_type (te : Syntax.Ast.AST.type_expr) : Types.mono_type
       | "bool" -> Types.TBool
       | "string" -> Types.TString
       | "unit" | "null" -> Types.TNull
-      | other -> failwith ("Unknown type constructor: " ^ other))
+      | other -> (
+          (* Check if it's a registered enum type (like ordering) *)
+          match Enum_registry.lookup other with
+          | Some enum_def ->
+              (* Non-generic enum *)
+              if enum_def.type_params = [] then
+                Types.TEnum (other, [])
+              else
+                failwith (Printf.sprintf "Enum %s expects type arguments" other)
+          | None -> failwith ("Unknown type constructor: " ^ other)))
   | Syntax.Ast.AST.TApp (con_name, type_args) -> (
       (* Generic type application: list[int], map[string, int], option[a] *)
       let arg_types = List.map type_expr_to_mono_type type_args in

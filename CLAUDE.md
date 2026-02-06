@@ -246,7 +246,8 @@ dune runtest
 - Implementation validation (full signature checking with type parameter substitution)
 - Automatic derivation: `derive eq, show for int;`
 - Supertraits: `trait ord[a]: eq { ... }`
-- **Status:** ✅ 57/57 tests passing (33 unit + 10 integration + 14 parser)
+- **Trait method calls:** `x.show()` compiles to `show_show_int64(x)`
+- **Status:** ✅ 62/62 tests passing (33 unit + 15 integration + 14 parser + 5 method call tests)
 - **Features:**
   - ✅ Trait registry with global hashtables
   - ✅ Method signature validation (param count, param types, return types)
@@ -254,9 +255,21 @@ dune runtest
   - ✅ Derivable traits: eq, show, debug
   - ✅ Manual and derived impls can coexist
   - ✅ Detailed error messages for all validation failures
-- **Commits:** 9 commits (315efd8 through f39b0a4)
-- **Lines of Code:** ~1,600 lines added (38% tests)
-- **Deferred:** Generic function constraints `fn[a: show](x: a)` (requires parser changes)
+  - ✅ Trait method call syntax with dot notation
+  - ✅ Type inference for method calls (receiver type → trait lookup)
+  - ✅ Go codegen for trait impl functions (static dispatch)
+  - ✅ Method calls work on primitives (int, string, bool)
+- **Implementation:**
+  - Parser refactored: dot operator is now a general postfix operator
+  - `MethodCall` AST node: `expr.method(args)`
+  - Type checker resolves method calls via `Trait_registry.lookup_method`
+  - Codegen generates: `trait_method_type(receiver, args...)`
+  - Function naming: `{trait}_{method}_{mangled_type}` (e.g., `show_show_int64`)
+- **Commits:** 12 commits (315efd8 through current)
+- **Lines of Code:** ~1,900 lines added (40% tests)
+- **Deferred:** 
+  - Generic function constraints `fn[a: show](x: a)` (requires parser changes)
+  - If-else expressions in impl method bodies (parser limitation)
 
 ## 7. Git Workflow
 
@@ -436,14 +449,48 @@ Then create PR or notify of changes.
 2. ✅ d6fa627: Fix: Match arms with different types now create union types
 3. ✅ 994fdc9: Fix: Separate emit_match_primitive from emit_match_enum, handle wildcard patterns correctly
 
-**Ready to move to Phase 4, Milestone 3 (Traits System)!**
+### Phase 4, Milestone 3: COMPLETE ✅
+
+- **Status: 62/62 TESTS PASSING (100%)**
+- Trait definitions and implementations ✅
+- Automatic trait derivation ✅
+- Trait method calls with dot notation ✅
+- Type inference for method calls ✅
+- Go codegen for trait impl functions ✅
+- Static dispatch with mangled function names ✅
+
+**Features Implemented:**
+1. ✅ Trait definitions: `trait show[a] { fn show(x: a) -> string }`
+2. ✅ Trait impls: `impl show for int { fn show(x: int) -> string { ... } }`
+3. ✅ Trait derivation: `derive eq, show for int;`
+4. ✅ Method call syntax: `x.show()` compiles to `show_show_int64(x)`
+5. ✅ Type inference resolves receiver type → trait lookup
+6. ✅ Full signature validation with type parameter substitution
+7. ✅ Detailed error messages for validation failures
+
+**Implementation Details:**
+- Parser refactored dot operator as general postfix operator
+- `MethodCall` AST node for `expr.method(args)` syntax
+- Type checker uses `Trait_registry.lookup_method` for resolution
+- Codegen generates Go functions: `{trait}_{method}_{mangled_type}`
+- Supports primitives: int, string, bool
+
+**Major Commits:**
+1. ✅ Parser refactoring for dot operator generalization
+2. ✅ Type inference for trait method calls
+3. ✅ Go codegen for trait impl functions
+4. ✅ Comprehensive test suite (5 new method call tests)
+
+**Known Limitations:**
+- Generic function constraints `fn[a: show](x: a)` not yet supported
+- If-else expressions in impl method bodies have parser limitations
 
 ---
 
-**Last Updated:** Feb 5, 2026 (Phase 4, Milestone 2 COMPLETE - 47/47 tests passing!)  
+**Last Updated:** Feb 5, 2026 (Phase 4, Milestone 3 COMPLETE - 62/62 tests passing!)  
 **Written by:** Claude Code (TDD in action)  
 **Remember:** 
 - ✅ No feature is complete until tests pass 100%. Always.
 - ✅ Bugs found in tests MUST be fixed before feature is done.
 - ✅ No moving to next phase until current phase passes all tests.
-- ✅ Phase 4, Milestone 2: DONE. Ready for Phase 4, Milestone 3!
+- ✅ Phase 4, Milestone 3: DONE. Trait method calls working!

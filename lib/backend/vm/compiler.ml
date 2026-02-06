@@ -486,6 +486,8 @@ and compile_expression (c : compiler) (e : AST.expression) : (compiler, string) 
   | AST.Match (_scrutinee, _arms) -> Error "pattern matching not yet supported in VM compiler"
   | AST.RecordLit (_fields, _spread) -> Error "record literals not yet supported in VM compiler"
   | AST.FieldAccess (_expr, _field) -> Error "field access not yet supported in VM compiler"
+  | AST.MethodCall (_receiver, method_name, _args) ->
+      Error (Printf.sprintf "method calls not yet supported in VM compiler: %s" method_name)
 
 (* Convert the working compiler to final immutable bytecode *)
 let bytecode (c : compiler) : bytecode =

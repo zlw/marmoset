@@ -37,6 +37,7 @@ let precedences = function
   | Token.Asterisk | Token.Slash -> prec_product
   | Token.LParen -> prec_call
   | Token.LBracket -> prec_index
+  | Token.Dot -> prec_index (* Same precedence as indexing *)
   | _ -> prec_lowest
 
 let peek_precedence (p : parser) : precedence = precedences p.peek_token.token_type
@@ -98,6 +99,7 @@ and parse_statement (p : parser) : (parser * AST.statement, parser) result =
   | Token.Trait -> parse_trait_definition p
   | Token.Impl -> parse_impl_definition p
   | Token.Derive -> parse_derive_definition p
+  | Token.Type -> parse_type_alias p
   | _ -> parse_expression_statement p
 
 (* Phase 2: Type expression parsing *)
@@ -156,6 +158,9 @@ and parse_type_atom (p : parser) : (parser * AST.type_expr, parser) result =
         Ok (p3, first)
     else
       Error (peek_error p2 Token.RParen)
+  else if curr_token_is p Token.LBrace then
+    (* Record type: { x: int, y: string } or { x: int, ...r } *)
+    parse_record_type p
   else
     Error (no_prefix_parse_fn_error p p.curr_token.token_type)
 
@@ -234,6 +239,45 @@ and parse_generic_params (p : parser) : (parser * AST.generic_param list option,
     Ok (p2, Some params)
   else
     Ok (p, None)
+
+(* Phase 4.5: Parse record type: { x: int, y: string, ...r } *)
+and parse_record_type (p : parser) : (parser * AST.type_expr, parser) result =
+  (* Current token is { *)
+  let p2 = next_token p in
+
+  (* Parse fields and optional row variable *)
+  let rec parse_fields lp fields =
+    if curr_token_is lp Token.RBrace then
+      (* Empty record or end of fields: { } *)
+      Ok (next_token lp, AST.TRecord (List.rev fields, None))
+    else if curr_token_is lp Token.Spread then
+      (* Row variable: ...r *)
+      let lp2 = next_token lp in
+      let* lp3, row_var = parse_type_expr lp2 in
+      let* lp4 =
+        if curr_token_is lp3 Token.RBrace then
+          Ok lp3
+        else
+          expect_peek lp3 Token.RBrace
+      in
+      Ok (next_token lp4, AST.TRecord (List.rev fields, Some row_var))
+    else if curr_token_is lp Token.Ident then
+      (* Field: field_name: type *)
+      let field_name = lp.curr_token.literal in
+      let* lp2 = expect_peek lp Token.Colon in
+      let lp2 = next_token lp2 in
+      let* lp3, field_type = parse_type_expr lp2 in
+      let field = AST.{ field_name; field_type } in
+      if curr_token_is lp3 Token.Comma then
+        (* More fields *)
+        parse_fields (next_token lp3) (field :: fields)
+      else
+        (* End of fields - continue to check for } or ...r *)
+        parse_fields lp3 (field :: fields)
+    else
+      Error (no_prefix_parse_fn_error lp lp.curr_token.token_type)
+  in
+  parse_fields p2 []
 
 and parse_let_statement (p : parser) : (parser * AST.statement, parser) result =
   let pos = p.curr_token.pos in
@@ -364,6 +408,34 @@ and parse_variant_list (p : parser) : (parser * AST.variant_def list, parser) re
       Error (no_prefix_parse_fn_error lp lp.curr_token.token_type)
   in
   loop p []
+
+(* Phase 4.4: Type alias parsing *)
+and parse_type_alias (p : parser) : (parser * AST.statement, parser) result =
+  (* Current token is 'type' *)
+  let pos = p.curr_token.pos in
+  let* p2 = expect_peek p Token.Ident in
+  let alias_name = p2.curr_token.literal in
+
+  (* Parse optional type parameters: [a, b] *)
+  let* p3, alias_type_params =
+    if peek_token_is p2 Token.LBracket then
+      parse_type_param_list (next_token (next_token p2))
+    else
+      Ok (next_token p2, [])
+  in
+
+  (* Expect: = *)
+  let* p4 =
+    if curr_token_is p3 Token.Assign then
+      Ok p3
+    else
+      expect_peek p3 Token.Assign
+  in
+
+  (* Parse type expression *)
+  let* p5, alias_body = parse_type_expr (next_token p4) in
+
+  Ok (p5, mk_stmt pos (AST.TypeAlias { alias_name; alias_type_params; alias_body }))
 
 (* Phase 4.3: Trait definition parsing *)
 and parse_trait_definition (p : parser) : (parser * AST.statement, parser) result =
@@ -711,7 +783,7 @@ and prefixFn (p : parser) : (parser * AST.expression, parser) result =
   | Token.Match -> parse_match_expression p
   | Token.Function -> parse_function_literal p
   | Token.LBracket -> parse_array_literal p
-  | Token.LBrace -> parse_hash_literal p
+  | Token.LBrace -> parse_record_or_hash_literal p
   | _ -> Error (no_prefix_parse_fn_error p tt)
 
 and infixFn (p : parser) (left_expr : AST.expression) (prec : precedence) :
@@ -727,6 +799,7 @@ and infixFn (p : parser) (left_expr : AST.expression) (prec : precedence) :
             parse_infix_expression (next_token lp) left
         | LParen -> parse_call_expression (next_token lp) left
         | LBracket -> parse_index_expression (next_token lp) left
+        | Dot -> parse_dot_expression (next_token lp) left
         | _ -> Ok (lp, left)
       in
       loop lp2 left2
@@ -737,31 +810,10 @@ and infixFn (p : parser) (left_expr : AST.expression) (prec : precedence) :
 
 and parse_identifier (p : parser) : (parser * AST.expression, parser) result =
   let pos = p.curr_token.pos in
-  let enum_name = p.curr_token.literal in
-
-  (* Check if next token is Dot (for enum constructor: enum.variant) *)
-  if peek_token_is p Token.Dot then
-    let p2 = next_token (next_token p) in
-    (* skip identifier and dot *)
-    if curr_token_is p2 Token.Ident then
-      let variant_name = p2.curr_token.literal in
-      (* Check for constructor arguments: variant(args) *)
-      if peek_token_is p2 Token.LParen then
-        let p3 = next_token p2 in
-        (* move to LParen *)
-        let* p4, args = parse_expression_list p3 Token.RParen in
-        let id, p5 = fresh_id p4 in
-        Ok (p5, mk_expr id pos (AST.EnumConstructor (enum_name, variant_name, args)))
-      else
-        (* Nullary constructor: variant with no args *)
-        let id, p3 = fresh_id p2 in
-        Ok (p3, mk_expr id pos (AST.EnumConstructor (enum_name, variant_name, [])))
-    else
-      let msg = "expected variant name after '.'" in
-      Error (add_error p2 msg)
-  else
-    let id, p1 = fresh_id p in
-    Ok (p1, mk_expr id pos (AST.Identifier enum_name))
+  let name = p.curr_token.literal in
+  (* Just parse as identifier - let postfix dot parser handle member access *)
+  let id, p1 = fresh_id p in
+  Ok (p1, mk_expr id pos (AST.Identifier name))
 
 and parse_integer_literal (p : parser) : (parser * AST.expression, parser) result =
   let pos = p.curr_token.pos in
@@ -998,6 +1050,163 @@ and parse_index_expression (p : parser) (left : AST.expression) : (parser * AST.
   let id, p5 = fresh_id p4 in
   Ok (p5, mk_expr id pos (AST.Index (left, index)))
 
+(* Phase 4.3: Dot expression parsing - handles method calls and field access *)
+(* Note: enum constructors are also parsed as MethodCall here, type checker will distinguish *)
+and parse_dot_expression (p : parser) (left : AST.expression) : (parser * AST.expression, parser) result =
+  let pos = p.curr_token.pos in
+  (* p.curr_token is Dot, advance to the identifier *)
+  let p2 = next_token p in
+  if not (curr_token_is p2 Token.Ident) then
+    Error (add_error p2 "expected identifier after '.'")
+  else
+    let member_name = p2.curr_token.literal in
+
+    if peek_token_is p2 Token.LParen then
+      (* expr.member(args) -> Method call or enum constructor *)
+      let p3 = next_token p2 in
+      let* p4, args = parse_expression_list p3 Token.RParen in
+      let id, p5 = fresh_id p4 in
+      Ok (p5, mk_expr id pos (AST.MethodCall (left, member_name, args)))
+    else
+      (* expr.member -> Field access or nullary enum constructor *)
+      let id, p3 = fresh_id p2 in
+      Ok (p3, mk_expr id pos (AST.FieldAccess (left, member_name)))
+
+(* Phase 4.6: Distinguish record literal from hash literal *)
+and parse_record_or_hash_literal (p : parser) : (parser * AST.expression, parser) result =
+  (* Current token is { *)
+  let pos = p.curr_token.pos in
+  let p2 = next_token p in
+
+  if curr_token_is p2 Token.RBrace then
+    (* Empty braces: treat as empty hash for backwards compatibility *)
+    let id, _p3 = fresh_id p2 in
+    Ok (next_token p2, mk_expr id pos (AST.Hash []))
+  else if curr_token_is p2 Token.Spread then
+    (* Starts with spread: { ...base } or { ...base, x: 1 } *)
+    parse_record_literal_with_spread p pos
+  else if curr_token_is p2 Token.Ident then
+    (* Check if it's a record (identifier key) or hash (expression key) *)
+    (* Lookahead: is next token a colon? *)
+    if peek_token_is p2 Token.Colon then
+      (* Record literal: { x: ... } or { x:, ... } (punning) *)
+      parse_record_literal p
+    else
+      (* Not a record field, treat as hash with expression key *)
+      parse_hash_literal p
+  else
+    (* Starts with expression (string, int, etc.) - must be hash *)
+    parse_hash_literal p
+
+(* Parse record literal: { x: 1, y: 2 } or { x:, y: } *)
+and parse_record_literal (p : parser) : (parser * AST.expression, parser) result =
+  (* Current token is { *)
+  let pos = p.curr_token.pos in
+  let rec loop lp fields spread =
+    if curr_token_is lp Token.RBrace then
+      (* End of record *)
+      let id, _lp1 = fresh_id lp in
+      Ok (next_token lp, mk_expr id pos (AST.RecordLit (List.rev fields, spread)))
+    else if curr_token_is lp Token.Spread then
+      (* Spread: { ...base, x: 1 } *)
+      let lp2 = next_token lp in
+      let* lp3, spread_expr = parse_expression lp2 prec_lowest in
+      if peek_token_is lp3 Token.Comma then
+        (* More fields after spread *)
+        loop (next_token (next_token lp3)) fields (Some spread_expr)
+      else
+        (* End after spread *)
+        loop (next_token lp3) fields (Some spread_expr)
+    else if curr_token_is lp Token.Ident then
+      (* Field: name: value or name: (punning) *)
+      let field_name = lp.curr_token.literal in
+      let* lp2 = expect_peek lp Token.Colon in
+
+      (* Check for punning: { x:, y: } or { x: } *)
+      (* After expect_peek, lp2 is at the colon, peek is the next token *)
+      let* lp3, field_value =
+        if peek_token_is lp2 Token.Comma || peek_token_is lp2 Token.RBrace then
+          (* Punning: no value, use variable with same name *)
+          (* Advance past colon to comma/brace *)
+          Ok (next_token lp2, None)
+        else
+          (* Parse value *)
+          let lp2 = next_token lp2 in
+          let* lp3, value = parse_expression lp2 prec_lowest in
+          Ok (lp3, Some value)
+      in
+
+      let field = AST.{ field_name; field_value } in
+      match field_value with
+      | None ->
+          (* Punning: lp3 is already at , or } *)
+          if curr_token_is lp3 Token.Comma then
+            loop (next_token lp3) (field :: fields) spread
+          else
+            loop lp3 (field :: fields) spread
+      | Some _ ->
+          (* Non-punning: lp3 is at the value, need to advance *)
+          if peek_token_is lp3 Token.Comma then
+            loop (next_token (next_token lp3)) (field :: fields) spread
+          else
+            loop (next_token lp3) (field :: fields) spread
+    else
+      Error (no_prefix_parse_fn_error lp lp.curr_token.token_type)
+  in
+  loop (next_token p) [] None
+
+(* Parse record literal starting with spread: { ...base } or { ...base, x: 1 } *)
+and parse_record_literal_with_spread (p : parser) (pos : int) : (parser * AST.expression, parser) result =
+  (* Current token is { *)
+  let p2 = next_token p in
+  (* Now at ... *)
+  let p3 = next_token p2 in
+  (* Parse spread expression *)
+  let* p4, spread_expr = parse_expression p3 prec_lowest in
+
+  (* Check for more fields *)
+  if peek_token_is p4 Token.Comma then
+    (* More fields: { ...base, x: 1 } *)
+    let rec loop lp fields =
+      if curr_token_is lp Token.RBrace then
+        let id, _lp1 = fresh_id lp in
+        Ok (next_token lp, mk_expr id pos (AST.RecordLit (List.rev fields, Some spread_expr)))
+      else if curr_token_is lp Token.Ident then
+        let field_name = lp.curr_token.literal in
+        let* lp2 = expect_peek lp Token.Colon in
+
+        let* lp3, field_value =
+          if peek_token_is lp2 Token.Comma || peek_token_is lp2 Token.RBrace then
+            Ok (next_token lp2, None)
+          else
+            let lp2 = next_token lp2 in
+            let* lp3, value = parse_expression lp2 prec_lowest in
+            Ok (lp3, Some value)
+        in
+
+        let field = AST.{ field_name; field_value } in
+        match field_value with
+        | None ->
+            if curr_token_is lp3 Token.Comma then
+              loop (next_token lp3) (field :: fields)
+            else
+              loop lp3 (field :: fields)
+        | Some _ ->
+            if peek_token_is lp3 Token.Comma then
+              loop (next_token (next_token lp3)) (field :: fields)
+            else
+              loop (next_token lp3) (field :: fields)
+      else
+        Error (no_prefix_parse_fn_error lp lp.curr_token.token_type)
+    in
+    loop (next_token (next_token p4)) []
+  else if peek_token_is p4 Token.RBrace then
+    (* Just spread: { ...base } *)
+    let id, _p5 = fresh_id p4 in
+    Ok (next_token (next_token p4), mk_expr id pos (AST.RecordLit ([], Some spread_expr)))
+  else
+    Error (peek_error p4 Token.RBrace)
+
 and parse_hash_literal (p : parser) : (parser * AST.expression, parser) result =
   let pos = p.curr_token.pos in
   let rec loop lp (pairs : (AST.expression * AST.expression) list) =
@@ -1112,6 +1321,7 @@ and parse_pattern (p : parser) : (parser * AST.pattern, parser) result =
   | Token.String -> Ok (p, AST.mk_pat ~pos:p.curr_token.pos (AST.PLiteral (AST.LString p.curr_token.literal)))
   | Token.True -> Ok (p, AST.mk_pat ~pos:p.curr_token.pos (AST.PLiteral (AST.LBool true)))
   | Token.False -> Ok (p, AST.mk_pat ~pos:p.curr_token.pos (AST.PLiteral (AST.LBool false)))
+  | Token.LBrace -> parse_record_pattern p
   | Token.Minus ->
       (* Underscore is not a token, but we use it for wildcard *)
       (* Actually, wildcard should be an identifier "_" *)
@@ -1122,6 +1332,70 @@ and parse_pattern (p : parser) : (parser * AST.pattern, parser) result =
         Ok (p, AST.mk_pat ~pos:p.curr_token.pos AST.PWildcard)
       else
         Error (add_error p "invalid pattern")
+
+(* Phase 4.8: Parse record pattern: { x:, y: z, ...rest } *)
+and parse_record_pattern (p : parser) : (parser * AST.pattern, parser) result =
+  (* Current token is { *)
+  let pos = p.curr_token.pos in
+  let p2 = next_token p in
+
+  let rec loop lp fields rest =
+    if curr_token_is lp Token.RBrace then
+      (* End of record pattern *)
+      Ok (lp, AST.mk_pat ~pos (AST.PRecord (List.rev fields, rest)))
+    else if curr_token_is lp Token.Spread then
+      (* Rest pattern: { x:, ...rest } *)
+      let lp2 = next_token lp in
+      if curr_token_is lp2 Token.Ident then
+        let rest_name = lp2.curr_token.literal in
+        let* lp3 = expect_peek lp2 Token.RBrace in
+        Ok (lp3, AST.mk_pat ~pos (AST.PRecord (List.rev fields, Some rest_name)))
+      else
+        Error (add_error lp2 "expected identifier after '...' in record pattern")
+    else if curr_token_is lp Token.Ident then
+      (* Field pattern: x: or x: pat *)
+      let field_name = lp.curr_token.literal in
+      let* lp2 = expect_peek lp Token.Colon in
+
+      (* Check for punning: { x:, y: } *)
+      let* lp3, field_pattern =
+        if peek_token_is lp2 Token.Comma || peek_token_is lp2 Token.RBrace then
+          (* Punning: bind to variable with same name *)
+          Ok (next_token lp2, None)
+        else
+          (* Parse nested pattern *)
+          let* lp3, pat = parse_pattern (next_token lp2) in
+          Ok (lp3, Some pat)
+      in
+
+      let field = AST.{ pat_field_name = field_name; pat_field_pattern = field_pattern } in
+
+      (* Handle comma or end *)
+      (* For punning, lp3 is at comma or rbrace; for non-punning, lp3 is at pattern token *)
+      if curr_token_is lp3 Token.Comma then
+        (* Punning case: already at comma, advance to next field *)
+        loop (next_token lp3) (field :: fields) rest
+      else if peek_token_is lp3 Token.Comma then
+        (* Non-punning case: at pattern token, peek is comma *)
+        loop (next_token (next_token lp3)) (field :: fields) rest
+      else if
+        (* No comma: either at rbrace (punning) or pattern with no comma after (non-punning) *)
+        (* Either way, continue loop to check for rbrace *)
+        curr_token_is lp3 Token.RBrace || peek_token_is lp3 Token.RBrace
+      then
+        loop
+          (if curr_token_is lp3 Token.RBrace then
+             lp3
+           else
+             next_token lp3)
+          (field :: fields) rest
+      else
+        Error (add_error lp3 "expected comma or closing brace after record pattern field")
+    else
+      Error (add_error lp "invalid record pattern field")
+  in
+
+  loop p2 [] None
 
 and parse_pattern_list (p : parser) : (parser * AST.pattern list, parser) result =
   (* p is at LParen *)
@@ -1800,6 +2074,507 @@ let%test "parse derive with generic type" =
               &&
               match derive_def.derive_for_type with
               | AST.TApp ("option", [ AST.TCon "int" ]) -> true
+              | _ -> false)
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
+(* Phase 4.4: Type alias tests *)
+let%test "parse type - just keyword" =
+  let input = "type" in
+  let lexer = Lexer.init input in
+  let p = init lexer in
+  curr_token_is p Token.Type
+
+let%test "parse simple type alias" =
+  let input = "type point = int" in
+  let lexer = Lexer.init input in
+  match parse_program (init lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ stmt ] -> (
+          match stmt.stmt with
+          | AST.TypeAlias alias_def -> (
+              alias_def.alias_name = "point"
+              && alias_def.alias_type_params = []
+              &&
+              match alias_def.alias_body with
+              | AST.TCon "int" -> true
+              | _ -> false)
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
+let%test "parse type alias with generic param" =
+  let input = "type box[a] = a" in
+  let lexer = Lexer.init input in
+  match parse_program (init lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ stmt ] -> (
+          match stmt.stmt with
+          | AST.TypeAlias alias_def -> (
+              alias_def.alias_name = "box"
+              && alias_def.alias_type_params = [ "a" ]
+              &&
+              match alias_def.alias_body with
+              | AST.TCon "a" -> true
+              | _ -> false)
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
+let%test "parse type alias with multiple generic params" =
+  let input = "type pair[a, b] = int" in
+  let lexer = Lexer.init input in
+  match parse_program (init lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ stmt ] -> (
+          match stmt.stmt with
+          | AST.TypeAlias alias_def -> alias_def.alias_name = "pair" && alias_def.alias_type_params = [ "a"; "b" ]
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
+let%test "parse record type - empty" =
+  let input = "type unit = { }" in
+  let lexer = Lexer.init input in
+  match parse_program (init lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ stmt ] -> (
+          match stmt.stmt with
+          | AST.TypeAlias alias_def -> (
+              match alias_def.alias_body with
+              | AST.TRecord (fields, None) -> List.length fields = 0
+              | _ -> false)
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
+let%test "parse record type - single field" =
+  let input = "type point = { x: int }" in
+  let lexer = Lexer.init input in
+  match parse_program (init lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ stmt ] -> (
+          match stmt.stmt with
+          | AST.TypeAlias alias_def -> (
+              match alias_def.alias_body with
+              | AST.TRecord (fields, None) -> (
+                  List.length fields = 1
+                  && (List.hd fields).field_name = "x"
+                  &&
+                  match (List.hd fields).field_type with
+                  | AST.TCon "int" -> true
+                  | _ -> false)
+              | _ -> false)
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
+let%test "parse record type - multiple fields" =
+  let input = "type point = { x: int, y: int }" in
+  let lexer = Lexer.init input in
+  match parse_program (init lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ stmt ] -> (
+          match stmt.stmt with
+          | AST.TypeAlias alias_def -> (
+              match alias_def.alias_body with
+              | AST.TRecord (fields, None) ->
+                  List.length fields = 2
+                  && (List.nth fields 0).field_name = "x"
+                  && (List.nth fields 1).field_name = "y"
+              | _ -> false)
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
+let%test "parse record type - with row variable" =
+  let input = "type point[r] = { x: int, ...r }" in
+  let lexer = Lexer.init input in
+  match parse_program (init lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ stmt ] -> (
+          match stmt.stmt with
+          | AST.TypeAlias alias_def -> (
+              match alias_def.alias_body with
+              | AST.TRecord (fields, Some (AST.TCon "r")) ->
+                  List.length fields = 1 && (List.hd fields).field_name = "x"
+              | _ -> false)
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
+let%test "parse record type - only row variable" =
+  let input = "type any[r] = { ...r }" in
+  let lexer = Lexer.init input in
+  match parse_program (init lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ stmt ] -> (
+          match stmt.stmt with
+          | AST.TypeAlias alias_def -> (
+              match alias_def.alias_body with
+              | AST.TRecord ([], Some (AST.TCon "r")) -> true
+              | _ -> false)
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
+(* Phase 4.6: Record literal tests *)
+let%test "parse empty record literal with spread" =
+  let input = "let x = { ...base }" in
+  let lexer = Lexer.init input in
+  match parse_program (init lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ stmt ] -> (
+          match stmt.stmt with
+          | AST.Let { value; _ } -> (
+              match value.expr with
+              | AST.RecordLit (fields, Some _) -> List.length fields = 0
+              | _ -> false)
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
+let%test "parse record literal - single field" =
+  let input = "let p = { x: 10 }" in
+  let lexer = Lexer.init input in
+  match parse_program (init lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ stmt ] -> (
+          match stmt.stmt with
+          | AST.Let { value; _ } -> (
+              match value.expr with
+              | AST.RecordLit (fields, None) -> (
+                  List.length fields = 1
+                  && (List.hd fields).field_name = "x"
+                  &&
+                  match (List.hd fields).field_value with
+                  | Some _ -> true
+                  | None -> false)
+              | _ -> false)
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
+let%test "parse record literal - multiple fields" =
+  let input = "let p = { x: 10, y: 20 }" in
+  let lexer = Lexer.init input in
+  match parse_program (init lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ stmt ] -> (
+          match stmt.stmt with
+          | AST.Let { value; _ } -> (
+              match value.expr with
+              | AST.RecordLit (fields, None) ->
+                  List.length fields = 2
+                  && (List.nth fields 0).field_name = "x"
+                  && (List.nth fields 1).field_name = "y"
+              | _ -> false)
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
+let%test "parse record literal - punning single" =
+  let input = "let p = { x: }" in
+  let lexer = Lexer.init input in
+  match parse_program (init lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ stmt ] -> (
+          match stmt.stmt with
+          | AST.Let { value; _ } -> (
+              match value.expr with
+              | AST.RecordLit (fields, None) -> (
+                  List.length fields = 1
+                  && (List.hd fields).field_name = "x"
+                  &&
+                  match (List.hd fields).field_value with
+                  | None -> true
+                  | Some _ -> false)
+              | _ -> false)
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
+let%test "parse record literal - punning multiple" =
+  let input = "let p = { x:, y: }" in
+  let lexer = Lexer.init input in
+  match parse_program (init lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ stmt ] -> (
+          match stmt.stmt with
+          | AST.Let { value; _ } -> (
+              match value.expr with
+              | AST.RecordLit (fields, None) -> (
+                  List.length fields = 2
+                  && (List.nth fields 0).field_name = "x"
+                  && (List.nth fields 1).field_name = "y"
+                  && (match (List.nth fields 0).field_value with
+                     | None -> true
+                     | _ -> false)
+                  &&
+                  match (List.nth fields 1).field_value with
+                  | None -> true
+                  | _ -> false)
+              | _ -> false)
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
+let%test "parse record literal - spread only" =
+  let input = "let p = { ...base }" in
+  let lexer = Lexer.init input in
+  match parse_program (init lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ stmt ] -> (
+          match stmt.stmt with
+          | AST.Let { value; _ } -> (
+              match value.expr with
+              | AST.RecordLit (fields, Some _) -> List.length fields = 0
+              | _ -> false)
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
+let%test "parse record literal - spread with fields after" =
+  let input = "let p = { ...base, x: 10 }" in
+  let lexer = Lexer.init input in
+  match parse_program (init lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ stmt ] -> (
+          match stmt.stmt with
+          | AST.Let { value; _ } -> (
+              match value.expr with
+              | AST.RecordLit (fields, Some _) -> List.length fields = 1 && (List.hd fields).field_name = "x"
+              | _ -> false)
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
+let%test "parse record literal - fields with spread in middle" =
+  let input = "let p = { x: 10, ...base, y: 20 }" in
+  let lexer = Lexer.init input in
+  match parse_program (init lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ stmt ] -> (
+          match stmt.stmt with
+          | AST.Let { value; _ } -> (
+              match value.expr with
+              | AST.RecordLit (fields, Some _) ->
+                  (* Should have x before spread, and y after spread *)
+                  List.length fields = 2
+                  && (List.nth fields 0).field_name = "x"
+                  && (List.nth fields 1).field_name = "y"
+              | _ -> false)
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
+let%test "parse hash literal still works" =
+  let input = "let h = { \"x\": 10 }" in
+  let lexer = Lexer.init input in
+  match parse_program (init lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ stmt ] -> (
+          match stmt.stmt with
+          | AST.Let { value; _ } -> (
+              match value.expr with
+              | AST.Hash _ -> true
+              | _ -> false)
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
+(* Phase 4.7: Field access tests *)
+let%test "parse field access" =
+  let input = "let x = r.field" in
+  let lexer = Lexer.init input in
+  match parse_program (init lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ stmt ] -> (
+          match stmt.stmt with
+          | AST.Let { value; _ } -> (
+              match value.expr with
+              | AST.FieldAccess (receiver, field) -> (
+                  field = "field"
+                  &&
+                  match receiver.expr with
+                  | AST.Identifier "r" -> true
+                  | _ -> false)
+              | _ -> false)
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
+let%test "parse field access - chained" =
+  let input = "let x = r.a.b.c" in
+  let lexer = Lexer.init input in
+  match parse_program (init lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ stmt ] -> (
+          match stmt.stmt with
+          | AST.Let { value; _ } -> (
+              match value.expr with
+              | AST.FieldAccess (inner, "c") -> (
+                  match inner.expr with
+                  | AST.FieldAccess (inner2, "b") -> (
+                      match inner2.expr with
+                      | AST.FieldAccess (receiver, "a") -> (
+                          match receiver.expr with
+                          | AST.Identifier "r" -> true
+                          | _ -> false)
+                      | _ -> false)
+                  | _ -> false)
+              | _ -> false)
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
+let%test "parse field access vs method call" =
+  let input = "let x = r.field; let y = r.method()" in
+  let lexer = Lexer.init input in
+  match parse_program (init lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ stmt1; stmt2 ] -> (
+          match (stmt1.stmt, stmt2.stmt) with
+          | AST.Let { name = "x"; value = v1; _ }, AST.Let { name = "y"; value = v2; _ } -> (
+              match (v1.expr, v2.expr) with
+              | AST.FieldAccess (_, "field"), AST.MethodCall (_, "method", []) -> true
+              | _ -> false)
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
+(* Phase 4.8: Record pattern tests *)
+let%test "parse record pattern - simple punning" =
+  let input = "match p { { x:, y: }: x }" in
+  let lexer = Lexer.init input in
+  match parse_program (init lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ stmt ] -> (
+          match stmt.stmt with
+          | AST.ExpressionStmt expr -> (
+              match expr.expr with
+              | AST.Match (_, arms) -> (
+                  match arms with
+                  | [ arm ] -> (
+                      match arm.patterns with
+                      | [ pattern ] -> (
+                          match pattern.pat with
+                          | AST.PRecord (fields, None) ->
+                              List.length fields = 2
+                              && (List.nth fields 0).pat_field_name = "x"
+                              && (List.nth fields 0).pat_field_pattern = None
+                              && (List.nth fields 1).pat_field_name = "y"
+                              && (List.nth fields 1).pat_field_pattern = None
+                          | _ -> false)
+                      | _ -> false)
+                  | _ -> false)
+              | _ -> false)
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
+let%test "parse record pattern - with nested patterns" =
+  let input = "match p { { x: a, y: b }: a }" in
+  let lexer = Lexer.init input in
+  match parse_program (init lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ stmt ] -> (
+          match stmt.stmt with
+          | AST.ExpressionStmt expr -> (
+              match expr.expr with
+              | AST.Match (_, arms) -> (
+                  match arms with
+                  | [ arm ] -> (
+                      match arm.patterns with
+                      | [ pattern ] -> (
+                          match pattern.pat with
+                          | AST.PRecord (fields, None) -> (
+                              List.length fields = 2
+                              && (List.nth fields 0).pat_field_name = "x"
+                              &&
+                              match (List.nth fields 0).pat_field_pattern with
+                              | Some p -> (
+                                  match p.pat with
+                                  | AST.PVariable "a" -> true
+                                  | _ -> false)
+                              | None -> false)
+                          | _ -> false)
+                      | _ -> false)
+                  | _ -> false)
+              | _ -> false)
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
+let%test "parse record pattern - with rest" =
+  let input = "match p { { x:, ...rest }: x }" in
+  let lexer = Lexer.init input in
+  match parse_program (init lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ stmt ] -> (
+          match stmt.stmt with
+          | AST.ExpressionStmt expr -> (
+              match expr.expr with
+              | AST.Match (_, arms) -> (
+                  match arms with
+                  | [ arm ] -> (
+                      match arm.patterns with
+                      | [ pattern ] -> (
+                          match pattern.pat with
+                          | AST.PRecord (fields, Some "rest") ->
+                              List.length fields = 1 && (List.hd fields).pat_field_name = "x"
+                          | _ -> false)
+                      | _ -> false)
+                  | _ -> false)
+              | _ -> false)
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
+let%test "parse record pattern - empty" =
+  let input = "match p { { }: 42 }" in
+  let lexer = Lexer.init input in
+  match parse_program (init lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ stmt ] -> (
+          match stmt.stmt with
+          | AST.ExpressionStmt expr -> (
+              match expr.expr with
+              | AST.Match (_, arms) -> (
+                  match arms with
+                  | [ arm ] -> (
+                      match arm.patterns with
+                      | [ pattern ] -> (
+                          match pattern.pat with
+                          | AST.PRecord ([], None) -> true
+                          | _ -> false)
+                      | _ -> false)
+                  | _ -> false)
               | _ -> false)
           | _ -> false)
       | _ -> false)

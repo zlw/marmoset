@@ -311,6 +311,9 @@ and collect_funcs_expr (state : mono_state) (expr : AST.expression) : unit =
       | Some expr -> collect_funcs_expr state expr
       | None -> ())
   | AST.FieldAccess (expr, _field) -> collect_funcs_expr state expr
+  | AST.MethodCall (receiver, _method_name, args) ->
+      collect_funcs_expr state receiver;
+      List.iter (collect_funcs_expr state) args
 
 (* ============================================================
    Pass 2: Collect instantiations at call sites
@@ -488,7 +491,29 @@ and collect_insts_expr
       match spread with
       | Some expr -> collect_insts_expr state type_map env expr
       | None -> ())
-  | AST.FieldAccess (expr, _field) -> collect_insts_expr state type_map env expr
+  | AST.FieldAccess (receiver, _field) -> (
+      (* Check if this is a nullary enum constructor *)
+      match receiver.expr with
+      | AST.Identifier enum_name when Typecheck.Enum_registry.lookup enum_name <> None ->
+          (* This is a nullary enum constructor - track it *)
+          let enum_type = get_type type_map expr in
+          track_enum_inst state enum_type
+      | _ ->
+          (* Real field access - collect insts in receiver *)
+          collect_insts_expr state type_map env receiver)
+  | AST.MethodCall (receiver, _method_name, args) -> (
+      (* Check if this is an enum constructor and register it *)
+      match receiver.expr with
+      | AST.Identifier enum_name when Typecheck.Enum_registry.lookup enum_name <> None ->
+          (* This is an enum constructor - track it like EnumConstructor *)
+          let enum_type = get_type type_map expr in
+          track_enum_inst state enum_type;
+          (* Also collect instantiations in arguments *)
+          List.iter (fun arg -> collect_insts_expr state type_map env arg) args
+      | _ ->
+          (* Real method call - collect insts in receiver and args *)
+          collect_insts_expr state type_map env receiver;
+          List.iter (fun arg -> collect_insts_expr state type_map env arg) args)
 
 (* ============================================================
    Code Generation State
@@ -554,7 +579,67 @@ let rec emit_expr
         Printf.sprintf "%s(%s)" constructor_name (String.concat ", " arg_strs)
   | AST.Match (scrutinee, arms) -> emit_match state type_map env expr scrutinee arms
   | AST.RecordLit (_fields, _spread) -> failwith "Record literals not yet implemented in codegen"
-  | AST.FieldAccess (_expr, _field) -> failwith "Field access not yet implemented in codegen"
+  | AST.FieldAccess (receiver, variant_name) -> (
+      (* Check if this is a nullary enum constructor *)
+      match receiver.expr with
+      | AST.Identifier enum_name when Typecheck.Enum_registry.lookup enum_name <> None ->
+          (* This is a nullary enum constructor - emit like EnumConstructor with no args *)
+          let enum_type = get_type type_map expr in
+          let type_args =
+            match enum_type with
+            | Types.TEnum (_, args) -> args
+            | _ -> []
+          in
+          (* Generate the mangled constructor name *)
+          let go_type_name = mangle_type (Types.TEnum (enum_name, type_args)) in
+          let constructor_name = Printf.sprintf "%s_%s" go_type_name variant_name in
+          Printf.sprintf "%s()" constructor_name
+      | _ ->
+          (* Real field access - not yet implemented *)
+          failwith "Field access not yet implemented in codegen")
+  | AST.MethodCall (receiver, variant_name, args) -> (
+      (* Check if this is an enum constructor *)
+      match receiver.expr with
+      | AST.Identifier enum_name when Typecheck.Enum_registry.lookup enum_name <> None ->
+          (* This is an enum constructor - emit like EnumConstructor *)
+          (* Get the enum type from the type_map (MethodCall node itself should be typed) *)
+          let enum_type = get_type type_map expr in
+          let type_args =
+            match enum_type with
+            | Types.TEnum (_, args) -> args
+            | _ -> []
+          in
+          (* Generate the mangled constructor name *)
+          let go_type_name = mangle_type (Types.TEnum (enum_name, type_args)) in
+          let constructor_name = Printf.sprintf "%s_%s" go_type_name variant_name in
+          (* Emit arguments *)
+          let arg_strs = List.map (emit_expr state type_map env) args in
+          if arg_strs = [] then
+            Printf.sprintf "%s()" constructor_name
+          else
+            Printf.sprintf "%s(%s)" constructor_name (String.concat ", " arg_strs)
+      | _ -> (
+          (* Real method call - emit as trait method call *)
+          (* Get receiver type *)
+          let receiver_type = get_type type_map receiver in
+
+          (* Look up which trait provides this method *)
+          match Typecheck.Trait_registry.lookup_method receiver_type variant_name with
+          | None ->
+              failwith
+                (Printf.sprintf "No method '%s' found for type %s" variant_name (Types.to_string receiver_type))
+          | Some (trait_name, _method_sig) ->
+              (* Generate mangled function name: trait_method_type *)
+              (* e.g., show_show_int64 for show trait, show method, int64 type *)
+              let type_suffix = mangle_type receiver_type in
+              let func_name = Printf.sprintf "%s_%s_%s" trait_name variant_name type_suffix in
+
+              (* Emit receiver and arguments *)
+              let receiver_str = emit_expr state type_map env receiver in
+              let arg_strs = List.map (emit_expr state type_map env) args in
+              let all_args = receiver_str :: arg_strs in
+
+              Printf.sprintf "%s(%s)" func_name (String.concat ", " all_args)))
 
 (* ============================================================
      Match Expression Codegen
@@ -1436,6 +1521,150 @@ let emit_enum_type (state : mono_state) (enum_name : string) (type_args : Types.
       (struct_def ^ tag_constants ^ constructors ^ string_method, needs_fmt)
 
 (* ============================================================
+   Generate Trait Implementation Functions
+   ============================================================ *)
+
+(* Emit a single trait impl method as a Go function *)
+let emit_impl_method
+    (state : emit_state) (type_map : Infer.type_map) (impl : AST.impl_def) (method_impl : AST.method_impl) :
+    string =
+  let trait_name = impl.impl_trait_name in
+  let method_name = method_impl.impl_method_name in
+
+  (* Convert impl_for_type from AST type_expr to mono_type *)
+  let for_type = Annotation.type_expr_to_mono_type impl.impl_for_type in
+
+  (* Generate mangled function name: trait_method_type *)
+  let type_suffix = mangle_type for_type in
+  let func_name = Printf.sprintf "%s_%s_%s" trait_name method_name type_suffix in
+
+  (* Convert parameter types *)
+  let param_strs =
+    List.map
+      (fun (param_name, opt_type) ->
+        match opt_type with
+        | Some type_expr ->
+            let mono_type = Annotation.type_expr_to_mono_type type_expr in
+            let go_type = type_to_go state.mono mono_type in
+            Printf.sprintf "%s %s" param_name go_type
+        | None -> failwith "Impl method parameters must have type annotations")
+      method_impl.impl_method_params
+  in
+  let params_str = String.concat ", " param_strs in
+
+  (* Convert return type *)
+  let return_type_str =
+    match method_impl.impl_method_return_type with
+    | Some type_expr ->
+        let mono_type = Annotation.type_expr_to_mono_type type_expr in
+        type_to_go state.mono mono_type
+    | None -> failwith "Impl method must have return type annotation"
+  in
+
+  (* Emit the method body as an expression *)
+  let base_env = Typecheck.Builtins.prelude_env () in
+  let body_expr = method_impl.impl_method_body in
+  let body_str = emit_expr state type_map base_env body_expr in
+
+  (* Generate the Go function *)
+  Printf.sprintf "func %s(%s) %s {\n\treturn %s\n}\n" func_name params_str return_type_str body_str
+
+(* Emit all methods for a trait impl *)
+let emit_impl_def (state : emit_state) (type_map : Infer.type_map) (impl : AST.impl_def) : string =
+  let method_funcs = List.map (emit_impl_method state type_map impl) impl.impl_methods in
+  String.concat "\n" method_funcs
+
+(* Extract all ImplDef statements from a program *)
+let collect_impl_defs (program : AST.program) : AST.impl_def list =
+  List.filter_map
+    (fun (stmt : AST.statement) ->
+      match stmt.stmt with
+      | AST.ImplDef impl -> Some impl
+      | _ -> None)
+    program
+
+(* ============================================================
+    Builtin Trait Implementations - Go Code Generation
+    ============================================================ *)
+
+(* Emit Go code for builtin trait implementations for primitives *)
+(* Only emit builtins that are NOT overridden by user impls *)
+let emit_builtin_impls (program : AST.program) : string =
+  (* Collect user-defined impls from program *)
+  let user_impls = collect_impl_defs program in
+
+  (* Build set of (trait_name, for_type) pairs that user defined *)
+  let user_impl_set =
+    List.fold_left
+      (fun acc (impl : AST.impl_def) ->
+        let for_type = Annotation.type_expr_to_mono_type impl.AST.impl_for_type in
+        let key = (impl.AST.impl_trait_name, mangle_type for_type) in
+        key :: acc)
+      [] user_impls
+  in
+
+  (* Helper to check if an impl is user-defined *)
+  let is_user_defined trait_name type_name = List.mem (trait_name, type_name) user_impl_set in
+
+  (* Define all possible builtin impls with their keys *)
+  let all_builtins =
+    [
+      (* show trait implementations *)
+      (("show", "int64"), "func show_show_int64(x int64) string {\n\treturn fmt.Sprintf(\"%d\", x)\n}");
+      (("show", "bool"), "func show_show_bool(x bool) string {\n\treturn fmt.Sprintf(\"%t\", x)\n}");
+      (("show", "string"), "func show_show_string(x string) string {\n\treturn x\n}");
+      (("show", "float64"), "func show_show_float64(x float64) string {\n\treturn fmt.Sprintf(\"%g\", x)\n}");
+      (* debug trait implementations *)
+      (("debug", "int64"), "func debug_debug_int64(x int64) string {\n\treturn fmt.Sprintf(\"%d\", x)\n}");
+      (("debug", "bool"), "func debug_debug_bool(x bool) string {\n\treturn fmt.Sprintf(\"%t\", x)\n}");
+      (("debug", "string"), "func debug_debug_string(x string) string {\n\treturn fmt.Sprintf(\"%q\", x)\n}");
+      (("debug", "float64"), "func debug_debug_float64(x float64) string {\n\treturn fmt.Sprintf(\"%g\", x)\n}");
+      (* eq trait implementations *)
+      (("eq", "int64"), "func eq_eq_int64(x, y int64) bool {\n\treturn x == y\n}");
+      (("eq", "bool"), "func eq_eq_bool(x, y bool) bool {\n\treturn x == y\n}");
+      (("eq", "string"), "func eq_eq_string(x, y string) bool {\n\treturn x == y\n}");
+      (("eq", "float64"), "func eq_eq_float64(x, y float64) bool {\n\treturn x == y\n}");
+      (* ord trait implementations - returns ordering enum *)
+      ( ("ord", "int64"),
+        "func ord_compare_int64(x, y int64) int64 {\n\tif x < y { return 0 } else if x == y { return 1 } else { return 2 }\n}"
+      );
+      ( ("ord", "bool"),
+        "func ord_compare_bool(x, y bool) int64 {\n\tif !x && y { return 0 } else if x == y { return 1 } else { return 2 }\n}"
+      );
+      ( ("ord", "string"),
+        "func ord_compare_string(x, y string) int64 {\n\tif x < y { return 0 } else if x == y { return 1 } else { return 2 }\n}"
+      );
+      ( ("ord", "float64"),
+        "func ord_compare_float64(x, y float64) int64 {\n\tif x < y { return 0 } else if x == y { return 1 } else { return 2 }\n}"
+      );
+      (* hash trait implementations *)
+      (("hash", "int64"), "func hash_hash_int64(x int64) int64 {\n\treturn x\n}");
+      (("hash", "bool"), "func hash_hash_bool(x bool) int64 {\n\tif x { return 1 } else { return 0 }\n}");
+      ( ("hash", "string"),
+        "func hash_hash_string(x string) int64 {\n\tvar h int64 = 0\n\tfor _, c := range x { h = h*31 + int64(c) }\n\treturn h\n}"
+      );
+      (* num trait implementations *)
+      ( ("num", "int64"),
+        "func num_add_int64(x, y int64) int64 {\n\treturn x + y\n}\nfunc num_sub_int64(x, y int64) int64 {\n\treturn x - y\n}\nfunc num_mul_int64(x, y int64) int64 {\n\treturn x * y\n}\nfunc num_div_int64(x, y int64) int64 {\n\treturn x / y\n}"
+      );
+      ( ("num", "float64"),
+        "func num_add_float64(x, y float64) float64 {\n\treturn x + y\n}\nfunc num_sub_float64(x, y float64) float64 {\n\treturn x - y\n}\nfunc num_mul_float64(x, y float64) float64 {\n\treturn x * y\n}\nfunc num_div_float64(x, y float64) float64 {\n\treturn x / y\n}"
+      );
+      (* neg trait implementations *)
+      (("neg", "int64"), "func neg_neg_int64(x int64) int64 {\n\treturn -x\n}");
+      (("neg", "float64"), "func neg_neg_float64(x float64) float64 {\n\treturn -x\n}");
+    ]
+  in
+
+  (* Filter out user-defined impls *)
+  let needed_impls =
+    List.filter (fun ((trait_name, type_name), _code) -> not (is_user_defined trait_name type_name)) all_builtins
+  in
+
+  let impl_codes = List.map snd needed_impls in
+  String.concat "\n\n" impl_codes
+
+(* ============================================================
     Program Emission
     ============================================================ *)
 
@@ -1449,6 +1678,19 @@ let emit_program_with_typed_env (type_map : Infer.type_map) (typed_env : Infer.t
   (* Pass 2: Collect instantiations using the already-typed environment and type_map *)
   ignore (List.fold_left (collect_insts_stmt mono_state type_map) typed_env program);
 
+  (* Ensure builtin enums are always generated if referenced *)
+  (* Check if ordering enum is used in any impl *)
+  let ordering_used =
+    List.exists
+      (fun stmt ->
+        match stmt.AST.stmt with
+        | AST.ImplDef impl -> impl.impl_trait_name = "ord"
+        | _ -> false)
+      program
+  in
+  if ordering_used then
+    mono_state.enum_insts <- EnumInstSet.add ("ordering", []) mono_state.enum_insts;
+
   let emit_state = create_emit_state mono_state in
 
   (* Generate enum types *)
@@ -1457,7 +1699,6 @@ let emit_program_with_typed_env (type_map : Infer.type_map) (typed_env : Infer.t
     |> List.map (fun (name, args) -> emit_enum_type mono_state name args)
   in
   let enum_types = List.map fst enum_results |> String.concat "\n" in
-  let needs_fmt = List.exists snd enum_results in
 
   (* Generate specialized functions *)
   let specialized_funcs =
@@ -1466,29 +1707,39 @@ let emit_program_with_typed_env (type_map : Infer.type_map) (typed_env : Infer.t
     |> String.concat "\n"
   in
 
+  (* Generate builtin trait impl functions *)
+  let builtin_impl_funcs = emit_builtin_impls program in
+
+  (* Generate trait impl functions *)
+  let impl_defs = collect_impl_defs program in
+  let impl_funcs = List.map (emit_impl_def emit_state type_map) impl_defs |> String.concat "\n" in
+
   (* Emit main body *)
   let main_body, _ = emit_stmts emit_state type_map typed_env program in
 
   (* Build final output *)
-  let has_enums = enum_types <> "" in
-  let imports =
-    if has_enums && needs_fmt then
-      "import \"fmt\"\n\n"
-    else
-      ""
-  in
+  (* Always import fmt since builtin impls use it *)
+  let imports = "import \"fmt\"\n\n" in
   let type_defs =
     if enum_types = "" then
       ""
     else
       enum_types ^ "\n"
   in
-  let top_funcs =
+  let specialized_funcs_str =
     if specialized_funcs = "" then
       ""
     else
       specialized_funcs ^ "\n"
   in
+  let builtin_impl_funcs_str = builtin_impl_funcs ^ "\n" in
+  let impl_funcs_str =
+    if impl_funcs = "" then
+      ""
+    else
+      impl_funcs ^ "\n"
+  in
+  let top_funcs = specialized_funcs_str ^ builtin_impl_funcs_str ^ impl_funcs_str in
 
   Printf.sprintf "package main\n\n%s%s%sfunc main() {\n%s}\n" imports type_defs top_funcs main_body
 

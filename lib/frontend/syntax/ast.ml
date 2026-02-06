@@ -139,6 +139,7 @@ module AST = struct
     | Match of expression * match_arm list (* match scrutinee { arm1, arm2, ... } *)
     | RecordLit of record_field list * expression option (* { x: 1, y: 2, ...base } - fields + optional spread *)
     | FieldAccess of expression * string (* expr.field_name *)
+    | MethodCall of expression * string * expression list (* receiver.method(args) *)
   [@@deriving show]
 
   (* Phase 4.4: Record field in record literal *)
@@ -248,6 +249,7 @@ module AST = struct
     | Match _ -> "Match"
     | RecordLit _ -> "RecordLit"
     | FieldAccess _ -> "FieldAccess"
+    | MethodCall _ -> "MethodCall"
 
   let to_string (program : program) : string =
     let rec statement_to_string (s : statement) : string =
@@ -327,6 +329,8 @@ module AST = struct
           in
           Printf.sprintf "{ %s%s }" fields_str spread_str
       | FieldAccess (expr, field) -> Printf.sprintf "%s.%s" (expression_to_string expr) field
+      | MethodCall (receiver, method_name, args) ->
+          Printf.sprintf "%s.%s(%s)" (expression_to_string receiver) method_name (args_to_string args)
     and block_to_string (block : statement) : string = statement_to_string block
     and function_to_string (params : (string * type_expr option) list) (body : statement) : string =
       let param_str = List.map (fun (name, _annot) -> name) params |> String.concat ", " in

@@ -51,6 +51,88 @@ let record_type (type_map : type_map) (expr : AST.expression) (t : mono_type) : 
   Hashtbl.add type_map expr.id t
 
 (* ============================================================
+   Constraint Context
+   ============================================================
+   
+   Tracks trait constraints for type variables.
+   Global store (like trait_registry) for simplicity.
+*)
+
+let constraint_store : (string, string list) Hashtbl.t = Hashtbl.create 64
+
+let add_type_var_constraints (type_var_name : string) (traits : string list) : unit =
+  Hashtbl.add constraint_store type_var_name traits
+
+let lookup_type_var_constraints (type_var_name : string) : string list =
+  match Hashtbl.find_opt constraint_store type_var_name with
+  | Some traits -> traits
+  | None -> []
+
+let clear_constraint_store () : unit = Hashtbl.clear constraint_store
+
+module ConstraintCtx = Map.Make (String)
+
+type constraint_ctx = string list ConstraintCtx.t
+
+let empty_constraints : constraint_ctx = ConstraintCtx.empty
+
+let add_constraint (ctx : constraint_ctx) (type_var : string) (traits : string list) : constraint_ctx =
+  ConstraintCtx.add type_var traits ctx
+
+let lookup_constraints (ctx : constraint_ctx) (type_var : string) : string list =
+  match ConstraintCtx.find_opt type_var ctx with
+  | Some traits -> traits
+  | None -> []
+
+(* Apply substitution to constraint context - when t0 -> Int, update constraints *)
+let apply_substitution_constraints (subst : substitution) (ctx : constraint_ctx) : constraint_ctx =
+  ConstraintCtx.fold
+    (fun var traits acc ->
+      match List.assoc_opt var subst with
+      | Some (TVar new_var) ->
+          (* Type var substituted to another type var - move constraints *)
+          ConstraintCtx.add new_var traits acc
+      | Some concrete_type -> (
+          (* Type var substituted to concrete type - check constraints *)
+          match Trait_solver.check_constraints concrete_type traits with
+          | Ok () -> acc (* Constraints satisfied, remove from context *)
+          | Error msg -> failwith msg (* Constraint violation *))
+      | None ->
+          (* No substitution for this var, keep constraint *)
+          ConstraintCtx.add var traits acc)
+    ctx empty_constraints
+
+(* Verify that all type variable constraints in the global constraint_store
+   are satisfied after applying a substitution.
+   Returns Error if any constraint is violated. *)
+let verify_constraints_in_substitution (subst : substitution) : (unit, string) result =
+  (* For each substitution (var -> type), check if var has constraints *)
+  let rec check_all = function
+    | [] -> Ok ()
+    | (var_name, resolved_type) :: rest -> (
+        let constraints = lookup_type_var_constraints var_name in
+        if constraints = [] then
+          (* No constraints on this var *)
+          check_all rest
+        else
+          (* Has constraints - check if resolved type satisfies them *)
+          let concrete_type =
+            (* Follow the substitution chain to get the fully resolved type *)
+            apply_substitution subst resolved_type
+          in
+          match concrete_type with
+          | TVar _ ->
+              (* Still a type variable, constraints will be checked when it's resolved *)
+              check_all rest
+          | _ -> (
+              (* Concrete type - check constraints *)
+              match Trait_solver.check_constraints concrete_type constraints with
+              | Ok () -> check_all rest
+              | Error msg -> Error msg))
+  in
+  check_all subst
+
+(* ============================================================
    Fresh Type Variables
    ============================================================
    
@@ -81,6 +163,16 @@ let reset_fresh_counter () = fresh_var_counter := 0
 let instantiate (Forall (quantified_vars, mono)) : mono_type =
   (* Create a substitution mapping each quantified var to a fresh var *)
   let subst = List.map (fun var -> (var, fresh_type_var ())) quantified_vars in
+  (* Copy constraints from old type vars to new ones *)
+  List.iter
+    (fun (old_var, new_type) ->
+      match new_type with
+      | TVar new_var ->
+          let constraints = lookup_type_var_constraints old_var in
+          if constraints <> [] then
+            add_type_var_constraints new_var constraints
+      | _ -> ())
+    subst;
   apply_substitution subst mono
 
 (* ============================================================
@@ -225,7 +317,8 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
     (* Function literals *)
     | AST.Function f ->
         (* Phase 2: Use parameter and return type annotations to guide inference *)
-        infer_function_with_annotations type_map env f.params f.return_type f.body
+        (* Phase 4.3+: Handle generic parameters with constraints *)
+        infer_function_with_annotations type_map env f.generics f.params f.return_type f.body
     (* Function calls *)
     | AST.Call (func, args) -> infer_call type_map env func args
     (* Arrays *)
@@ -318,9 +411,225 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
     | AST.RecordLit (_fields, _spread) ->
         (* Phase 4.4: Record literals - not yet implemented *)
         Error (error_at (ConstructorError "Record literals not yet implemented") expr)
-    | AST.FieldAccess (_expr, _field) ->
-        (* Phase 4.4: Field access - not yet implemented *)
-        Error (error_at (ConstructorError "Field access not yet implemented") expr)
+    | AST.FieldAccess (receiver, variant_name) -> (
+        (* Phase 4.3/4.4: Could be field access or nullary enum constructor *)
+        (* Check if this is actually a nullary enum constructor (receiver is enum type identifier) *)
+        match receiver.expr with
+        | AST.Identifier enum_name when Enum_registry.lookup enum_name <> None -> (
+            (* This is a nullary enum constructor like option.none or direction.north *)
+            (* Redirect to enum constructor logic with empty args *)
+            match Enum_registry.lookup_variant enum_name variant_name with
+            | None ->
+                Error
+                  (error_at
+                     (ConstructorError (Printf.sprintf "Unknown enum constructor: %s.%s" enum_name variant_name))
+                     expr)
+            | Some variant -> (
+                if List.length variant.fields <> 0 then
+                  Error
+                    (error_at
+                       (ConstructorError
+                          (Printf.sprintf "%s.%s expects %d arguments, got 0" enum_name variant_name
+                             (List.length variant.fields)))
+                       expr)
+                else
+                  (* Get the enum definition to know type parameters *)
+                  match Enum_registry.lookup enum_name with
+                  | None -> Error (error_at (ConstructorError (Printf.sprintf "Unknown enum: %s" enum_name)) expr)
+                  | Some enum_def ->
+                      (* Create fresh type variables for each type parameter *)
+                      let fresh_vars = List.map (fun _ -> fresh_type_var ()) enum_def.type_params in
+                      (* Build the result enum type with fresh type variables *)
+                      let result_type = TEnum (enum_name, fresh_vars) in
+                      Ok (empty_substitution, result_type)))
+        | _ ->
+            (* Real field access on records/structs - not yet implemented *)
+            Error (error_at (ConstructorError "Field access not yet implemented") expr))
+    | AST.MethodCall (receiver, method_name, args) -> (
+        (* Phase 4.3: Method calls and enum constructors *)
+        (* Check if this is actually an enum constructor (receiver is enum type identifier) *)
+        match receiver.expr with
+        | AST.Identifier enum_name when Enum_registry.lookup enum_name <> None -> (
+            (* This is actually an enum constructor like option.some(42) *)
+            (* Redirect to enum constructor logic - same as EnumConstructor handling *)
+            match Enum_registry.lookup_variant enum_name method_name with
+            | None ->
+                Error
+                  (error_at
+                     (ConstructorError (Printf.sprintf "Unknown enum constructor: %s.%s" enum_name method_name))
+                     expr)
+            | Some variant -> (
+                (* Infer types of constructor arguments *)
+                match infer_args type_map env empty_substitution args with
+                | Error e -> Error e
+                | Ok (subst, arg_types) -> (
+                    if List.length args <> List.length variant.fields then
+                      Error
+                        (error_at
+                           (ConstructorError
+                              (Printf.sprintf "%s.%s expects %d arguments, got %d" enum_name method_name
+                                 (List.length variant.fields) (List.length args)))
+                           expr)
+                    else
+                      (* Get the enum definition to know type parameters *)
+                      match Enum_registry.lookup enum_name with
+                      | None ->
+                          Error (error_at (ConstructorError (Printf.sprintf "Unknown enum: %s" enum_name)) expr)
+                      | Some enum_def -> (
+                          (* Create fresh type variables for each type parameter *)
+                          let fresh_vars = List.map (fun _ -> fresh_type_var ()) enum_def.type_params in
+                          let param_subst = List.combine enum_def.type_params fresh_vars in
+
+                          (* Substitute type parameters in variant field types *)
+                          let expected_types = List.map (apply_substitution param_subst) variant.fields in
+
+                          (* Unify argument types with expected field types *)
+                          let arg_types' = List.map (apply_substitution subst) arg_types in
+                          let rec unify_all subst_acc types1 types2 =
+                            match (types1, types2) with
+                            | [], [] -> Ok subst_acc
+                            | t1 :: rest1, t2 :: rest2 -> (
+                                let t1' = apply_substitution subst_acc t1 in
+                                let t2' = apply_substitution subst_acc t2 in
+                                match unify t1' t2' with
+                                | Ok new_subst -> unify_all (compose_substitution new_subst subst_acc) rest1 rest2
+                                | Error e -> Error (error_at (UnificationError e) expr))
+                            | _ -> Error (error_at (ConstructorError "Argument count mismatch") expr)
+                          in
+                          match unify_all subst arg_types' expected_types with
+                          | Error e -> Error e
+                          | Ok final_subst ->
+                              (* Build the result enum type with substituted type arguments *)
+                              let result_type_args = List.map (apply_substitution final_subst) fresh_vars in
+                              let result_type = TEnum (enum_name, result_type_args) in
+                              Ok (final_subst, result_type)))))
+        | _ -> (
+            (* Not an enum constructor - this is a real method call *)
+            (* Phase 4.3: Trait method resolution *)
+            match infer_expression type_map env receiver with
+            | Error e -> Error e
+            | Ok (subst1, receiver_type) -> (
+                let env1 = apply_substitution_env subst1 env in
+                let receiver_type' = apply_substitution subst1 receiver_type in
+
+                (* Look up the method for this type *)
+                (* Phase 4.3+: For type variables, check constraints *)
+                let method_lookup_result =
+                  match receiver_type' with
+                  | TVar type_var_name -> (
+                      (* Check if this type variable has constraints *)
+                      let constraints = lookup_type_var_constraints type_var_name in
+                      if constraints = [] then
+                        (* No constraints, can't find method *)
+                        None
+                      else
+                        (* Check if any constraint provides this method *)
+                        match Trait_solver.method_available method_name constraints with
+                        | None -> None
+                        | Some trait_name -> (
+                            (* Found the trait that provides this method *)
+                            match Trait_registry.lookup_trait trait_name with
+                            | None -> None
+                            | Some trait_def -> (
+                                (* Find the method signature in the trait *)
+                                match
+                                  List.find_opt
+                                    (fun (m : Trait_registry.method_sig) -> m.method_name = method_name)
+                                    trait_def.trait_methods
+                                with
+                                | None -> None
+                                | Some method_sig -> Some (trait_name, method_sig))))
+                  | _ ->
+                      (* Concrete type, use normal lookup *)
+                      Trait_registry.lookup_method receiver_type' method_name
+                in
+
+                match method_lookup_result with
+                | None ->
+                    Error
+                      (error_at
+                         (ConstructorError
+                            (Printf.sprintf "No method '%s' found for type %s" method_name
+                               (Types.to_string receiver_type')))
+                         expr)
+                | Some (trait_name, method_sig) -> (
+                    (* Type check the method call *)
+                    (* Method signature has receiver as first parameter *)
+                    (* receiver.method(arg1, arg2) becomes method(receiver, arg1, arg2) *)
+
+                    (* IMPORTANT: Instantiate the method signature by replacing the trait's
+                       type parameter with the receiver type. This prevents corruption of
+                       the caller's type variables when unifying.
+                       
+                       For example, if we have `fn[a: show](x: a) { x.show() }`:
+                       - receiver_type' = TVar "t0" (the fresh var for generic param "a")
+                       - trait show has type param "a" with method show(x: a) -> string
+                       - We substitute "a" -> TVar "t0" in the method signature
+                       - This gives us show(x: TVar "t0") -> string
+                       - Now unifying TVar "t0" with TVar "t0" produces empty subst (no corruption) *)
+                    let instantiated_method_sig =
+                      match Trait_registry.lookup_trait trait_name with
+                      | None -> method_sig (* Shouldn't happen, but fallback *)
+                      | Some trait_def -> (
+                          match trait_def.trait_type_param with
+                          | None -> method_sig (* No type param to substitute *)
+                          | Some type_param ->
+                              (* Substitute the trait's type param with the receiver type *)
+                              let subst_type_param = [ (type_param, receiver_type') ] in
+                              {
+                                Trait_registry.method_name = method_sig.method_name;
+                                method_params =
+                                  List.map
+                                    (fun (name, ty) -> (name, apply_substitution subst_type_param ty))
+                                    method_sig.method_params;
+                                method_return_type =
+                                  apply_substitution subst_type_param method_sig.method_return_type;
+                              })
+                    in
+
+                    (* Infer types of call arguments *)
+                    match infer_args type_map env1 subst1 args with
+                    | Error e -> Error e
+                    | Ok (subst2, arg_types) -> (
+                        (* Combine receiver type with argument types *)
+                        let all_arg_types = receiver_type' :: arg_types in
+
+                        (* Get expected parameter types from instantiated method signature *)
+                        let expected_param_types = List.map snd instantiated_method_sig.method_params in
+
+                        (* Check argument count *)
+                        if List.length all_arg_types <> List.length expected_param_types then
+                          Error
+                            (error_at
+                               (ConstructorError
+                                  (Printf.sprintf "Method '%s' expects %d arguments, got %d" method_name
+                                     (List.length expected_param_types - 1)
+                                     (List.length args)))
+                               expr)
+                        else
+                          (* Unify each argument type with expected parameter type *)
+                          let rec unify_params subst_acc actual_types expected_types =
+                            match (actual_types, expected_types) with
+                            | [], [] -> Ok subst_acc
+                            | actual :: rest_actual, expected :: rest_expected -> (
+                                let actual' = apply_substitution subst_acc actual in
+                                let expected' = apply_substitution subst_acc expected in
+                                match unify actual' expected' with
+                                | Error e -> Error (error_at (UnificationError e) expr)
+                                | Ok new_subst ->
+                                    unify_params
+                                      (compose_substitution new_subst subst_acc)
+                                      rest_actual rest_expected)
+                            | _ -> Error (error_at (ConstructorError "Argument count mismatch") expr)
+                          in
+                          match unify_params subst2 all_arg_types expected_param_types with
+                          | Error e -> Error e
+                          | Ok final_subst ->
+                              (* Return the method's return type with substitutions applied *)
+                              let return_type =
+                                apply_substitution final_subst instantiated_method_sig.method_return_type
+                              in
+                              Ok (final_subst, return_type))))))
   in
   (* Record the type in the type map before returning *)
   match result with
@@ -606,7 +915,25 @@ and infer_function type_map env params body =
           Ok (subst', func_type))
 
 (* Infer function with parameter type annotations *)
-and infer_function_with_annotations type_map env params return_annot body =
+and infer_function_with_annotations type_map env generics_opt params return_annot body =
+  (* Phase 4.3+: Process generic parameters and their constraints *)
+  let type_var_map =
+    match generics_opt with
+    | None -> []
+    | Some generics ->
+        (* For each generic parameter like {name="a"; constraints=["show"; "eq"]},
+           create a fresh type variable and track its constraints *)
+        List.map
+          (fun (generic : AST.generic_param) ->
+            let fresh_var = fresh_type_var () in
+            (* Store constraints in global store *)
+            (match fresh_var with
+            | TVar n -> add_type_var_constraints n generic.constraints
+            | _ -> ());
+            (generic.name, fresh_var))
+          generics
+  in
+
   (* Extract parameter names and type annotations *)
   let param_info = params in
   (* For each parameter, either use its annotation or create a fresh type variable *)
@@ -616,8 +943,56 @@ and infer_function_with_annotations type_map env params return_annot body =
         match annot_opt with
         | None -> fresh_type_var ()
         | Some type_expr -> (
-            try Annotation.type_expr_to_mono_type type_expr
-            with Failure _ -> fresh_type_var () (* Fallback to fresh if annotation fails *)))
+            try
+              (* Convert annotation to mono_type *)
+              let mono = Annotation.type_expr_to_mono_type type_expr in
+              (* Replace generic parameter names (like "a") with their fresh type vars (like "t0") *)
+              (* Handle both TVar "a" (if parsed as type variable) and TCon "a" (if parsed as type constructor) *)
+              let mono_with_subst =
+                List.fold_left
+                  (fun ty_acc (gen_name, gen_var) ->
+                    (* Substitute both TVar gen_name and references in the type *)
+                    let rec subst_generic ty =
+                      match ty with
+                      | TVar v when v = gen_name -> gen_var
+                      | TFun (arg, ret) -> TFun (subst_generic arg, subst_generic ret)
+                      | TArray elem -> TArray (subst_generic elem)
+                      | THash (k, v) -> THash (subst_generic k, subst_generic v)
+                      | TEnum (name, args) -> TEnum (name, List.map subst_generic args)
+                      | TUnion types -> TUnion (List.map subst_generic types)
+                      | other -> other
+                    in
+                    subst_generic ty_acc)
+                  mono type_var_map
+              in
+              mono_with_subst
+            with Failure msg -> (
+              (* If annotation parsing fails (e.g., "Unknown type constructor: a"),
+                 check if it's a generic parameter name *)
+              let is_generic_ref =
+                match type_expr with
+                | Syntax.Ast.AST.TCon name -> List.assoc_opt name type_var_map
+                | _ -> None
+              in
+              match is_generic_ref with
+              | Some gen_var -> gen_var
+              | None ->
+                  (* Not a generic, re-raise or create fresh *)
+                  if
+                    String.length msg > 0
+                    && String.sub msg 0 (min 23 (String.length msg)) = "Unknown type constructor"
+                  then
+                    (* Extract the name and check if it's in our generics *)
+                    let parts = String.split_on_char ':' msg in
+                    if List.length parts > 1 then
+                      let name = String.trim (List.nth parts 1) in
+                      match List.assoc_opt name type_var_map with
+                      | Some gen_var -> gen_var
+                      | None -> fresh_type_var ()
+                    else
+                      fresh_type_var ()
+                  else
+                    fresh_type_var ())))
       param_info
   in
   let param_names = List.map fst param_info in
@@ -692,10 +1067,16 @@ and infer_call type_map env func args =
           (* Unify actual function type with expected *)
           match unify func_type' expected_func_type with
           | Error e -> Error (error_at (UnificationError e) func)
-          | Ok subst3 ->
+          | Ok subst3 -> (
               let final_subst = compose_substitution subst2 subst3 in
-              let final_result = apply_substitution subst3 result_type in
-              Ok (final_subst, final_result)))
+              (* Phase 4.3+: Verify trait constraints are satisfied.
+                 When calling a constrained generic function like fn[a: show](x: a),
+                 we need to check that the actual argument type implements the required traits. *)
+              match verify_constraints_in_substitution final_subst with
+              | Error msg -> Error (error_at (ConstructorError msg) func)
+              | Ok () ->
+                  let final_result = apply_substitution subst3 result_type in
+                  Ok (final_subst, final_result))))
 
 (* Helper to infer types of a list of arguments *)
 and infer_args type_map env subst args =

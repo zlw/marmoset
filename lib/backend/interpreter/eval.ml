@@ -225,6 +225,16 @@ and eval_expression (expr : AST.expression) (e : env) : Value.value * env =
   | FieldAccess (_expr, _field) ->
       (* Phase 4.4: Field access - not yet implemented *)
       failwith "field access not yet supported in interpreter"
+  | MethodCall (receiver, variant_name, _args) -> (
+      (* Phase 4.3: Check if this is an enum constructor *)
+      match receiver.expr with
+      | AST.Identifier _enum_name ->
+          (* This is an enum constructor like option.some(42) *)
+          (* Enums not yet implemented in interpreter *)
+          failwith (Printf.sprintf "enum constructors not yet supported in interpreter: %s" variant_name)
+      | _ ->
+          (* Real method call - not yet implemented *)
+          failwith (Printf.sprintf "method calls not yet supported in interpreter: %s" variant_name))
 
 and eval_expressions (args : AST.expression list) (e : env) : Value.value list * env =
   let rec loop exps result env =

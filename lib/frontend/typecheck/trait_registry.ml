@@ -55,6 +55,30 @@ let implements_trait (trait_name : string) (for_type : mono_type) : bool =
   | Some _ -> true
   | None -> false
 
+(* Lookup a method implementation for a type by method name *)
+(* Returns: (trait_name, method_sig) option *)
+let lookup_method (for_type : mono_type) (method_name : string) : (string * method_sig) option =
+  (* Search through all registered impls for this type *)
+  let matching_impls =
+    Hashtbl.fold
+      (fun (_trait_name, impl_type) impl_def acc ->
+        if impl_type = for_type then
+          impl_def :: acc
+        else
+          acc)
+      impl_registry []
+  in
+  (* Search for the method in matching impls *)
+  let rec find_method impls =
+    match impls with
+    | [] -> None
+    | impl_def :: rest -> (
+        match List.find_opt (fun m -> m.method_name = method_name) impl_def.impl_methods with
+        | Some method_sig -> Some (impl_def.impl_trait_name, method_sig)
+        | None -> find_method rest)
+  in
+  find_method matching_impls
+
 (* Check if a trait can be auto-derived *)
 let is_derivable (trait_name : string) : bool =
   (* For now, only specific traits are derivable *)
@@ -562,14 +586,9 @@ let%test "validate_impl - multiple methods" =
 
 (* Derive validation tests *)
 
-let%test "is_derivable - eq is derivable" =
-  is_derivable "eq"
-
-let%test "is_derivable - show is derivable" =
-  is_derivable "show"
-
-let%test "is_derivable - custom trait not derivable" =
-  not (is_derivable "my_custom_trait")
+let%test "is_derivable - eq is derivable" = is_derivable "eq"
+let%test "is_derivable - show is derivable" = is_derivable "show"
+let%test "is_derivable - custom trait not derivable" = not (is_derivable "my_custom_trait")
 
 let%test "can_derive - undefined trait" =
   clear ();
@@ -584,7 +603,8 @@ let%test "can_derive - non-derivable trait" =
       trait_name = "custom";
       trait_type_param = Some "a";
       trait_supertraits = [];
-      trait_methods = [ { method_name = "custom"; method_params = [ ("x", TVar "a") ]; method_return_type = TInt } ];
+      trait_methods =
+        [ { method_name = "custom"; method_params = [ ("x", TVar "a") ]; method_return_type = TInt } ];
     }
   in
   register_trait custom_trait;
@@ -600,7 +620,9 @@ let%test "can_derive - primitive types" =
       trait_type_param = Some "a";
       trait_supertraits = [];
       trait_methods =
-        [ { method_name = "eq"; method_params = [ ("x", TVar "a"); ("y", TVar "a") ]; method_return_type = TBool } ];
+        [
+          { method_name = "eq"; method_params = [ ("x", TVar "a"); ("y", TVar "a") ]; method_return_type = TBool };
+        ];
     }
   in
   register_trait eq_trait;
@@ -623,7 +645,9 @@ let%test "can_derive - function types fail" =
       trait_type_param = Some "a";
       trait_supertraits = [];
       trait_methods =
-        [ { method_name = "eq"; method_params = [ ("x", TVar "a"); ("y", TVar "a") ]; method_return_type = TBool } ];
+        [
+          { method_name = "eq"; method_params = [ ("x", TVar "a"); ("y", TVar "a") ]; method_return_type = TBool };
+        ];
     }
   in
   register_trait eq_trait;
@@ -639,16 +663,16 @@ let%test "generate_derived_impl - eq for int" =
       trait_type_param = Some "a";
       trait_supertraits = [];
       trait_methods =
-        [ { method_name = "eq"; method_params = [ ("x", TVar "a"); ("y", TVar "a") ]; method_return_type = TBool } ];
+        [
+          { method_name = "eq"; method_params = [ ("x", TVar "a"); ("y", TVar "a") ]; method_return_type = TBool };
+        ];
     }
   in
   register_trait eq_trait;
   match generate_derived_impl "eq" TInt with
   | None -> false
   | Some impl_def ->
-      impl_def.impl_trait_name = "eq"
-      && impl_def.impl_for_type = TInt
-      && List.length impl_def.impl_methods = 1
+      impl_def.impl_trait_name = "eq" && impl_def.impl_for_type = TInt && List.length impl_def.impl_methods = 1
 
 let%test "generate_derived_impl - show for string" =
   clear ();
@@ -678,7 +702,9 @@ let%test "derive_impl - registers impl" =
       trait_type_param = Some "a";
       trait_supertraits = [];
       trait_methods =
-        [ { method_name = "eq"; method_params = [ ("x", TVar "a"); ("y", TVar "a") ]; method_return_type = TBool } ];
+        [
+          { method_name = "eq"; method_params = [ ("x", TVar "a"); ("y", TVar "a") ]; method_return_type = TBool };
+        ];
     }
   in
   register_trait eq_trait;
@@ -725,5 +751,5 @@ let%test "derive_impl - type parameter substitution" =
       | Some impl_def ->
           (* Check that TVar "a" was substituted with TBool *)
           let method_impl = List.hd impl_def.impl_methods in
-          let (_param_name, param_type) = List.hd method_impl.method_params in
+          let _param_name, param_type = List.hd method_impl.method_params in
           param_type = TBool && method_impl.method_return_type = TString)
