@@ -6,6 +6,20 @@ let ( let* ) res f = Result.bind res f
 let mk_expr id pos kind = AST.{ id; expr = kind; pos; end_pos = pos; file_id = None }
 let mk_stmt pos kind = AST.{ stmt = kind; pos; end_pos = pos; file_id = None }
 
+let token_end (t : Token.token) : int =
+  let len = String.length t.literal in
+  match t.token_type with
+  | Token.EOF ->
+      t.pos
+  | Token.String ->
+      (* Token literal stores the inner string content; include both quotes. *)
+      t.pos + len + 1
+  | _ ->
+      if len = 0 then
+        t.pos
+      else
+        t.pos + len - 1
+
 type parser = {
   lexer : Lexer.lexer;
   curr_token : Token.token;
@@ -15,6 +29,10 @@ type parser = {
 }
 
 and errors = string list
+
+let with_expr_end p (e : AST.expression) : AST.expression = { e with end_pos = max e.end_pos (token_end p.curr_token) }
+let with_stmt_end p (s : AST.statement) : AST.statement = { s with end_pos = max s.end_pos (token_end p.curr_token) }
+let with_pat_end p (pat : AST.pattern) : AST.pattern = { pat with end_pos = max pat.end_pos (token_end p.curr_token) }
 
 (* Helper to get fresh ID and increment counter *)
 let fresh_id p = (p.next_id, { p with next_id = p.next_id + 1 })
@@ -102,7 +120,11 @@ let rec parse_program (p : parser) : (parser * AST.program, parser) result =
   loop p []
 
 and parse_statement (p : parser) : (parser * AST.statement, parser) result =
-  match p.curr_token.token_type with
+  let finalize = function
+    | Ok (lp, stmt) -> Ok (lp, with_stmt_end lp stmt)
+    | Error _ as err -> err
+  in
+  (match p.curr_token.token_type with
   | Token.Let -> parse_let_statement p
   | Token.Return -> parse_return_statement p
   | Token.Enum -> parse_enum_definition p
@@ -110,7 +132,8 @@ and parse_statement (p : parser) : (parser * AST.statement, parser) result =
   | Token.Impl -> parse_impl_definition p
   | Token.Derive -> parse_derive_definition p
   | Token.Type -> parse_type_alias p
-  | _ -> parse_expression_statement p
+  | _ -> parse_expression_statement p)
+  |> finalize
 
 (* Phase 2: Type expression parsing *)
 
@@ -777,7 +800,7 @@ and parse_expression_statement (p : parser) : (parser * AST.statement, parser) r
 and parse_expression (p : parser) (prec : precedence) : (parser * AST.expression, parser) result =
   let* p2, left_expr = prefixFn p in
   let* p3, left = infixFn p2 left_expr prec in
-  Ok (p3, left)
+  Ok (p3, with_expr_end p3 left)
 
 and prefixFn (p : parser) : (parser * AST.expression, parser) result =
   let tt = p.curr_token.token_type in
@@ -912,8 +935,8 @@ and parse_if_expression (p : parser) : (parser * AST.expression, parser) result 
       let pos_ret = p5.curr_token.pos in
       let* p6, expr = parse_expression (next_token p5) prec_lowest in
       let p7 = skip p6 Token.Semicolon in
-      let ret_stmt = mk_stmt pos_ret (AST.Return expr) in
-      Ok (p7, mk_stmt pos_ret (AST.Block [ ret_stmt ]))
+      let ret_stmt = with_stmt_end p7 (mk_stmt pos_ret (AST.Return expr)) in
+      Ok (p7, with_stmt_end p7 (mk_stmt pos_ret (AST.Block [ ret_stmt ])))
     else
       Error (add_error p4 "Expected '{' or 'return' after if condition")
   in
@@ -937,8 +960,8 @@ and parse_if_expression (p : parser) : (parser * AST.expression, parser) result 
         let pos_ret = p7.curr_token.pos in
         let* p8, expr = parse_expression (next_token p7) prec_lowest in
         let p9 = skip p8 Token.Semicolon in
-        let ret_stmt = mk_stmt pos_ret (AST.Return expr) in
-        Ok (p9, mk_stmt pos_ret (AST.Block [ ret_stmt ]))
+        let ret_stmt = with_stmt_end p9 (mk_stmt pos_ret (AST.Return expr)) in
+        Ok (p9, with_stmt_end p9 (mk_stmt pos_ret (AST.Block [ ret_stmt ])))
       else
         (* Error: else without block or return *)
         Error (add_error p6 "Expected '{' or 'return' after 'else'")
@@ -950,7 +973,7 @@ and parse_block_statement (p : parser) : (parser * AST.statement, parser) result
   let pos = p.curr_token.pos in
   let rec loop (lp : parser) (stmts : AST.statement list) : (parser * AST.statement, parser) result =
     if curr_token_is lp Token.RBrace || curr_token_is lp Token.EOF then
-      Ok (lp, mk_stmt pos (AST.Block (List.rev stmts)))
+      Ok (lp, with_stmt_end lp (mk_stmt pos (AST.Block (List.rev stmts))))
     else
       let* lp2, new_block = parse_statement lp in
       loop (next_token lp2) ([ new_block ] @ stmts)
@@ -1303,7 +1326,11 @@ and parse_patterns (p : parser) : (parser * AST.pattern list, parser) result =
   loop p2 [ first_pattern ]
 
 and parse_pattern (p : parser) : (parser * AST.pattern, parser) result =
-  match p.curr_token.token_type with
+  let finalize = function
+    | Ok (lp, pat) -> Ok (lp, with_pat_end lp pat)
+    | Error _ as err -> err
+  in
+  (match p.curr_token.token_type with
   | Token.Ident ->
       (* Check for wildcard first *)
       if p.curr_token.literal = "_" then
@@ -1347,7 +1374,8 @@ and parse_pattern (p : parser) : (parser * AST.pattern, parser) result =
       if p.curr_token.token_type = Token.Ident && p.curr_token.literal = "_" then
         Ok (p, AST.mk_pat ~pos:p.curr_token.pos AST.PWildcard)
       else
-        Error (add_error p "invalid pattern")
+        Error (add_error p "invalid pattern"))
+  |> finalize
 
 (* Phase 4.8: Parse record pattern: { x:, y: z, ...rest } *)
 and parse_record_pattern (p : parser) : (parser * AST.pattern, parser) result =
@@ -1500,6 +1528,21 @@ module Test = struct
 
   let%test "test_string_literal_expressions" =
     [ { input = "\"hello world\";"; output = [ s (AST.ExpressionStmt (e (AST.String "hello world"))) ] } ] |> run
+
+  let%test "expression span tracks token width" =
+    match parse "123;" with
+    | Ok [ { AST.stmt = AST.ExpressionStmt expr; _ } ] -> expr.pos = 0 && expr.end_pos = 2
+    | _ -> false
+
+  let%test "string literal span includes quotes" =
+    match parse "\"ab\";" with
+    | Ok [ { AST.stmt = AST.ExpressionStmt expr; _ } ] -> expr.pos = 0 && expr.end_pos = 3
+    | _ -> false
+
+  let%test "statement span includes trailing semicolon when present" =
+    match parse "let x = 1;" with
+    | Ok [ stmt ] -> stmt.pos = 0 && stmt.end_pos = 9
+    | _ -> false
 
   let%test "test_array_literals" =
     [

@@ -365,13 +365,13 @@ let%test "push then len" =
 
 let%test "error includes source location" =
   match check_string "1 + true" with
-  | Error { loc = Some loc; _ } -> loc.line = 1 && loc.column > 0
+  | Error { loc = Some loc; loc_end = Some loc_end; _ } -> loc.line = 1 && loc.column > 0 && loc_end.column >= loc.column
   | _ -> false
 
 let%test "error location points to problematic expression" =
   (* "true" starts at column 5 (1-indexed) in "1 + true" *)
   match check_string "1 + true" with
-  | Error { loc = Some loc; _ } -> loc.column = 5
+  | Error { loc = Some loc; loc_end = Some loc_end; _ } -> loc.column = 5 && loc_end.column = 8
   | _ -> false
 
 let%test "multiline error location" =
@@ -382,7 +382,7 @@ let%test "multiline error location" =
 
 let%test "format_error includes line:col" =
   match check_string "1 + true" with
-  | Error err -> String.sub (format_error err) 0 4 = "1:5:"
+  | Error err -> String.length (format_error err) >= 3 && String.sub (format_error err) 0 3 = "1:5"
   | Ok _ -> false
 
 let%test "format_error_with_context shows source line" =
@@ -390,7 +390,7 @@ let%test "format_error_with_context shows source line" =
   match check_string source with
   | Error err ->
       let formatted = format_error_with_context source err in
-      String.length formatted > 0 && String.sub formatted 0 4 = "1:5:"
+      String.length formatted >= 3 && String.sub formatted 0 3 = "1:5"
   | Ok _ -> false
 
 (* Helper for substring testing *)
