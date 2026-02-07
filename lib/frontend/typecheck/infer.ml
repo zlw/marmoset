@@ -70,6 +70,59 @@ let lookup_type_var_constraints (type_var_name : string) : string list =
 
 let clear_constraint_store () : unit = Hashtbl.clear constraint_store
 
+type obligation_reason = GenericConstraint of string
+
+type obligation = {
+  trait_name : string;
+  typ : mono_type;
+  reason : obligation_reason;
+}
+
+let obligation_reason_to_string = function
+  | GenericConstraint type_var_name -> Printf.sprintf "constraint on type variable '%s'" type_var_name
+
+let obligations_from_substitution (subst : substitution) : obligation list =
+  let build_for_var (var_name : string) (resolved_type : mono_type) : obligation list =
+    let constraints = lookup_type_var_constraints var_name in
+    if constraints = [] then
+      []
+    else
+      let concrete_type =
+        (* Follow the substitution chain to get the fully resolved type *)
+        apply_substitution subst resolved_type
+      in
+      match concrete_type with
+      | TVar _ ->
+          (* Still unresolved - keep waiting until a concrete type is known. *)
+          []
+      | _ ->
+          List.map
+            (fun trait_name ->
+              { trait_name; typ = concrete_type; reason = GenericConstraint var_name })
+            constraints
+  in
+  List.fold_left
+    (fun acc (var_name, resolved_type) -> List.rev_append (build_for_var var_name resolved_type) acc)
+    [] subst
+  |> List.rev
+
+let verify_obligation (o : obligation) : (unit, string) result =
+  match Trait_solver.check_constraints o.typ [ o.trait_name ] with
+  | Ok () -> Ok ()
+  | Error msg ->
+      let reason = obligation_reason_to_string o.reason in
+      Error (Printf.sprintf "Trait obligation failed (%s): %s" reason msg)
+
+let verify_obligations (obligations : obligation list) : (unit, string) result =
+  let rec go = function
+    | [] -> Ok ()
+    | o :: rest -> (
+        match verify_obligation o with
+        | Ok () -> go rest
+        | Error _ as err -> err)
+  in
+  go obligations
+
 module ConstraintCtx = Map.Make (String)
 
 type constraint_ctx = string list ConstraintCtx.t
@@ -106,31 +159,8 @@ let apply_substitution_constraints (subst : substitution) (ctx : constraint_ctx)
    are satisfied after applying a substitution.
    Returns Error if any constraint is violated. *)
 let verify_constraints_in_substitution (subst : substitution) : (unit, string) result =
-  (* For each substitution (var -> type), check if var has constraints *)
-  let rec check_all = function
-    | [] -> Ok ()
-    | (var_name, resolved_type) :: rest -> (
-        let constraints = lookup_type_var_constraints var_name in
-        if constraints = [] then
-          (* No constraints on this var *)
-          check_all rest
-        else
-          (* Has constraints - check if resolved type satisfies them *)
-          let concrete_type =
-            (* Follow the substitution chain to get the fully resolved type *)
-            apply_substitution subst resolved_type
-          in
-          match concrete_type with
-          | TVar _ ->
-              (* Still a type variable, constraints will be checked when it's resolved *)
-              check_all rest
-          | _ -> (
-              (* Concrete type - check constraints *)
-              match Trait_solver.check_constraints concrete_type constraints with
-              | Ok () -> check_all rest
-              | Error msg -> Error msg))
-  in
-  check_all subst
+  let obligations = obligations_from_substitution subst in
+  verify_obligations obligations
 
 (* ============================================================
    Fresh Type Variables
@@ -2419,6 +2449,36 @@ f"
         match infer_string unconstrained_code with
         | Error _ -> false
         | Ok (_, _, inferred_type) -> inferred_type = TArray TInt)
+
+  let%test "obligations_from_substitution creates one obligation per trait" =
+    clear_constraint_store ();
+    add_type_var_constraints "t0" [ "show"; "eq" ];
+    let obligations = obligations_from_substitution [ ("t0", TInt) ] in
+    List.length obligations = 2
+    && List.exists (fun (o : obligation) -> o.trait_name = "show" && o.typ = TInt) obligations
+    && List.exists (fun (o : obligation) -> o.trait_name = "eq" && o.typ = TInt) obligations
+
+  let%test "verify_constraints_in_substitution includes obligation context in errors" =
+    let contains_substring s sub =
+      let len_s = String.length s in
+      let len_sub = String.length sub in
+      let rec loop i =
+        if i + len_sub > len_s then
+          false
+        else if String.sub s i len_sub = sub then
+          true
+        else
+          loop (i + 1)
+      in
+      loop 0
+    in
+    clear_constraint_store ();
+    add_type_var_constraints "t0" [ "show" ];
+    match verify_constraints_in_substitution [ ("t0", TFun (TInt, TInt)) ] with
+    | Ok () -> false
+    | Error msg ->
+        contains_substring msg "Trait obligation failed"
+        && contains_substring msg "type variable 't0'"
 
   let%test "infer_program isolates itself from stale global constraint state" =
     (* Simulate stale process-global state from an earlier session. *)
