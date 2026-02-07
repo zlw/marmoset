@@ -30,6 +30,10 @@ type parser = {
 
 and errors = string list
 
+type brace_literal_mode =
+  | RecordMode
+  | HashMode
+
 let with_expr_end p (e : AST.expression) : AST.expression = { e with end_pos = max e.end_pos (token_end p.curr_token) }
 let with_stmt_end p (s : AST.statement) : AST.statement = { s with end_pos = max s.end_pos (token_end p.curr_token) }
 let with_pat_end p (pat : AST.pattern) : AST.pattern = { pat with end_pos = max pat.end_pos (token_end p.curr_token) }
@@ -1105,167 +1109,100 @@ and parse_dot_expression (p : parser) (left : AST.expression) : (parser * AST.ex
       let id, p3 = fresh_id p2 in
       Ok (p3, mk_expr id pos (AST.FieldAccess (left, member_name)))
 
-(* Phase 4.6: Distinguish record literal from hash literal *)
+(* Phase 4.6: Distinguish record literal from hash literal using one mode-locked loop *)
 and parse_record_or_hash_literal (p : parser) : (parser * AST.expression, parser) result =
-  (* Current token is { *)
   let pos = p.curr_token.pos in
-  let p2 = next_token p in
-
-  if curr_token_is p2 Token.RBrace then
-    (* Empty braces: treat as empty hash for backwards compatibility *)
-    let id, _p3 = fresh_id p2 in
-    Ok (next_token p2, mk_expr id pos (AST.Hash []))
-  else if curr_token_is p2 Token.Spread then
-    (* Starts with spread: { ...base } or { ...base, x: 1 } *)
-    parse_record_literal_with_spread p pos
-  else if curr_token_is p2 Token.Ident then
-    (* Check if it's a record (identifier key) or hash (expression key) *)
-    (* Lookahead: is next token a colon? *)
-    if peek_token_is p2 Token.Colon then
-      (* Record literal: { x: ... } or { x:, ... } (punning) *)
-      parse_record_literal p
-    else
-      (* Not a record field, treat as hash with expression key *)
-      parse_hash_literal p
-  else
-    (* Starts with expression (string, int, etc.) - must be hash *)
-    parse_hash_literal p
-
-(* Parse record literal: { x: 1, y: 2 } or { x:, y: } *)
-and parse_record_literal (p : parser) : (parser * AST.expression, parser) result =
-  (* Current token is { *)
-  let pos = p.curr_token.pos in
-  let rec loop lp fields spread =
+  let finish mode (fields : AST.record_field list) spread (pairs : (AST.expression * AST.expression) list) lp =
+    let id, _ = fresh_id lp in
+    match mode with
+    | RecordMode -> Ok (lp, mk_expr id pos (AST.RecordLit (List.rev fields, spread)))
+    | HashMode -> Ok (lp, mk_expr id pos (AST.Hash (List.rev pairs)))
+  in
+  let rec loop
+      (lp : parser)
+      (mode : brace_literal_mode option)
+      (fields : AST.record_field list)
+      (spread : AST.expression option)
+      (pairs : (AST.expression * AST.expression) list) : (parser * AST.expression, parser) result =
     if curr_token_is lp Token.RBrace then
-      (* End of record *)
-      let id, _lp1 = fresh_id lp in
-      Ok (lp, mk_expr id pos (AST.RecordLit (List.rev fields, spread)))
-    else if curr_token_is lp Token.Spread then
-      (* Spread: { ...base, x: 1 } *)
-      let lp2 = next_token lp in
-      let* lp3, spread_expr = parse_expression lp2 prec_lowest in
-      if peek_token_is lp3 Token.Comma then
-        (* More fields after spread *)
-        loop (next_token (next_token lp3)) fields (Some spread_expr)
-      else
-        (* End after spread *)
-        loop (next_token lp3) fields (Some spread_expr)
-    else if curr_token_is lp Token.Ident then
-      (* Field: name: value or name: (punning) *)
-      let field_name = lp.curr_token.literal in
-      let* lp2 = expect_peek lp Token.Colon in
-
-      (* Check for punning: { x:, y: } or { x: } *)
-      (* After expect_peek, lp2 is at the colon, peek is the next token *)
-      let* lp3, field_value =
-        if peek_token_is lp2 Token.Comma || peek_token_is lp2 Token.RBrace then
-          (* Punning: no value, use variable with same name *)
-          (* Advance past colon to comma/brace *)
-          Ok (next_token lp2, None)
-        else
-          (* Parse value *)
-          let lp2 = next_token lp2 in
-          let* lp3, value = parse_expression lp2 prec_lowest in
-          Ok (lp3, Some value)
-      in
-
-      let field = AST.{ field_name; field_value } in
-      match field_value with
+      match mode with
+      | Some mode' -> finish mode' fields spread pairs lp
       | None ->
-          (* Punning: lp3 is already at , or } *)
-          if curr_token_is lp3 Token.Comma then
-            loop (next_token lp3) (field :: fields) spread
-          else
-            loop lp3 (field :: fields) spread
-      | Some _ ->
-          (* Non-punning: lp3 is at the value, need to advance *)
-          if peek_token_is lp3 Token.Comma then
-            loop (next_token (next_token lp3)) (field :: fields) spread
-          else
-            loop (next_token lp3) (field :: fields) spread
+          (* "{}" is treated as empty hash for backwards compatibility. *)
+          let id, _ = fresh_id lp in
+          Ok (lp, mk_expr id pos (AST.Hash []))
     else
-      Error (add_error lp "cannot mix hash-style entries into record literal")
-  in
-  loop (next_token p) [] None
-
-(* Parse record literal starting with spread: { ...base } or { ...base, x: 1 } *)
-and parse_record_literal_with_spread (p : parser) (pos : int) : (parser * AST.expression, parser) result =
-  (* Current token is { *)
-  let p2 = next_token p in
-  (* Now at ... *)
-  let p3 = next_token p2 in
-  (* Parse spread expression *)
-  let* p4, spread_expr = parse_expression p3 prec_lowest in
-
-  (* Check for more fields *)
-  if peek_token_is p4 Token.Comma then
-    (* More fields: { ...base, x: 1 } *)
-    let rec loop lp fields =
-      if curr_token_is lp Token.RBrace then
-        let id, _lp1 = fresh_id lp in
-        Ok (lp, mk_expr id pos (AST.RecordLit (List.rev fields, Some spread_expr)))
-      else if curr_token_is lp Token.Ident then
-        let field_name = lp.curr_token.literal in
-        let* lp2 = expect_peek lp Token.Colon in
-
-        let* lp3, field_value =
-          if peek_token_is lp2 Token.Comma || peek_token_is lp2 Token.RBrace then
-            Ok (next_token lp2, None)
+      match mode with
+      | Some RecordMode -> (
+          let* lp_entry, entry = parse_record_entry lp in
+          let* lp_sep = consume_brace_entry_separator lp_entry "expected ',' or '}' after record literal entry" in
+          match entry with
+          | `Field field -> loop lp_sep mode (field :: fields) spread pairs
+          | `Spread spread_expr ->
+              if Option.is_some spread then
+                Error (add_error lp "multiple spread entries in record literal are not supported yet")
+              else
+                loop lp_sep mode fields (Some spread_expr) pairs)
+      | Some HashMode ->
+          let* lp_entry, pair = parse_hash_entry lp in
+          let* lp_sep = consume_brace_entry_separator lp_entry "expected ',' or '}' after hash literal entry" in
+          loop lp_sep mode fields spread (pair :: pairs)
+      | None ->
+          if curr_token_is lp Token.Spread || (curr_token_is lp Token.Ident && peek_token_is lp Token.Colon) then
+            let* lp_entry, entry = parse_record_entry lp in
+            let* lp_sep = consume_brace_entry_separator lp_entry "expected ',' or '}' after record literal entry" in
+            (match entry with
+            | `Field field -> loop lp_sep (Some RecordMode) (field :: fields) spread pairs
+            | `Spread spread_expr -> loop lp_sep (Some RecordMode) fields (Some spread_expr) pairs)
           else
-            let lp2 = next_token lp2 in
-            let* lp3, value = parse_expression lp2 prec_lowest in
-            Ok (lp3, Some value)
-        in
+            let* lp_entry, pair = parse_hash_entry lp in
+            let* lp_sep = consume_brace_entry_separator lp_entry "expected ',' or '}' after hash literal entry" in
+            loop lp_sep (Some HashMode) fields spread (pair :: pairs)
+  in
+  loop (next_token p) None [] None []
 
-        let field = AST.{ field_name; field_value } in
-        match field_value with
-        | None ->
-            if curr_token_is lp3 Token.Comma then
-              loop (next_token lp3) (field :: fields)
-            else
-              loop lp3 (field :: fields)
-        | Some _ ->
-            if peek_token_is lp3 Token.Comma then
-              loop (next_token (next_token lp3)) (field :: fields)
-            else
-              loop (next_token lp3) (field :: fields)
+and parse_record_entry (p : parser) : (parser * [ `Field of AST.record_field | `Spread of AST.expression ], parser) result
+    =
+  if curr_token_is p Token.Spread then
+    let p2 = next_token p in
+    let* p3, spread_expr = parse_expression p2 prec_lowest in
+    Ok (p3, `Spread spread_expr)
+  else if curr_token_is p Token.Ident && peek_token_is p Token.Colon then
+    let field_name = p.curr_token.literal in
+    let* p2 = expect_peek p Token.Colon in
+    let* p3, field_value =
+      if peek_token_is p2 Token.Comma || peek_token_is p2 Token.RBrace then
+        Ok (next_token p2, None)
       else
-        Error (add_error lp "cannot mix hash-style entries into record literal")
+        let* p3, value = parse_expression (next_token p2) prec_lowest in
+        Ok (p3, Some value)
     in
-    loop (next_token (next_token p4)) []
-  else if peek_token_is p4 Token.RBrace then
-    (* Just spread: { ...base } *)
-    let id, _p5 = fresh_id p4 in
-    Ok (next_token p4, mk_expr id pos (AST.RecordLit ([], Some spread_expr)))
+    Ok (p3, `Field AST.{ field_name; field_value })
   else
-    Error (peek_error p4 Token.RBrace)
+    Error (add_error p "cannot mix hash-style entries into record literal")
 
-and parse_hash_literal (p : parser) : (parser * AST.expression, parser) result =
-  let pos = p.curr_token.pos in
-  let rec loop lp (pairs : (AST.expression * AST.expression) list) =
-    if peek_token_is lp Token.RBrace then
-      let id, lp1 = fresh_id (next_token lp) in
-      Ok (lp1, mk_expr id pos (AST.Hash (List.rev pairs)))
-    else
-      let key_start = next_token lp in
-      if curr_token_is key_start Token.Spread then
-        Error (add_error key_start "cannot mix record-style spread into hash literal")
-      else if curr_token_is key_start Token.Ident && peek_token_is key_start Token.Colon then
-        Error (add_error key_start "cannot mix record-style field into hash literal")
-      else
-        let* lp2, key = parse_expression key_start prec_lowest in
-      let* lp3 = expect_peek lp2 Token.Colon in
-      let* lp4, value = parse_expression (next_token lp3) prec_lowest in
+and parse_hash_entry (p : parser) : (parser * (AST.expression * AST.expression), parser) result =
+  if curr_token_is p Token.Spread then
+    Error (add_error p "cannot mix record-style spread into hash literal")
+  else if curr_token_is p Token.Ident && peek_token_is p Token.Colon then
+    Error (add_error p "cannot mix record-style field into hash literal")
+  else
+    let* p2, key = parse_expression p prec_lowest in
+    let* p3 = expect_peek p2 Token.Colon in
+    let* p4, value = parse_expression (next_token p3) prec_lowest in
+    Ok (p4, (key, value))
 
-      if peek_token_is lp4 Token.Comma then
-        loop (next_token lp4) ([ (key, value) ] @ pairs)
-      else if not (peek_token_is lp4 Token.RBrace) then
-        Error lp4
-      else
-        loop lp4 ([ (key, value) ] @ pairs)
-  in
-
-  loop p []
+and consume_brace_entry_separator (p : parser) (err_msg : string) : (parser, parser) result =
+  if curr_token_is p Token.Comma then
+    Ok (next_token p)
+  else if curr_token_is p Token.RBrace then
+    Ok p
+  else if peek_token_is p Token.Comma then
+    Ok (next_token (next_token p))
+  else if peek_token_is p Token.RBrace then
+    Ok (next_token p)
+  else
+    Error (add_error p err_msg)
 
 (* Phase 4.2: Match expression parsing *)
 and parse_match_expression (p : parser) : (parser * AST.expression, parser) result =
@@ -1908,62 +1845,63 @@ module Test = struct
     ]
     |> run
 
-  let%test "mixed record then hash entry errors deterministically" =
-    let contains_substring s sub =
-      let len_s = String.length s in
-      let len_sub = String.length sub in
-      let rec loop i =
-        if i + len_sub > len_s then
-          false
-        else if String.sub s i len_sub = sub then
-          true
-        else
-          loop (i + 1)
-      in
-      loop 0
+  let contains_substring s sub =
+    let len_s = String.length s in
+    let len_sub = String.length sub in
+    let rec loop i =
+      if i + len_sub > len_s then
+        false
+      else if String.sub s i len_sub = sub then
+        true
+      else
+        loop (i + 1)
     in
+    loop 0
+
+  let%test "mixed record then hash entry errors deterministically" =
     let input = "let x = { a: 1, \"b\": 2 }" in
     match parse input with
     | Ok _ -> false
     | Error errs -> List.exists (fun msg -> contains_substring msg "cannot mix hash-style entries into record literal") errs
 
   let%test "mixed hash then spread entry errors deterministically" =
-    let contains_substring s sub =
-      let len_s = String.length s in
-      let len_sub = String.length sub in
-      let rec loop i =
-        if i + len_sub > len_s then
-          false
-        else if String.sub s i len_sub = sub then
-          true
-        else
-          loop (i + 1)
-      in
-      loop 0
-    in
     let input = "let x = { \"a\": 1, ...rest }" in
     match parse input with
     | Ok _ -> false
     | Error errs -> List.exists (fun msg -> contains_substring msg "cannot mix record-style spread into hash literal") errs
 
   let%test "mixed hash then record field errors deterministically" =
-    let contains_substring s sub =
-      let len_s = String.length s in
-      let len_sub = String.length sub in
-      let rec loop i =
-        if i + len_sub > len_s then
-          false
-        else if String.sub s i len_sub = sub then
-          true
-        else
-          loop (i + 1)
-      in
-      loop 0
-    in
     let input = "let x = { \"a\": 1, b: 2 }" in
     match parse input with
     | Ok _ -> false
     | Error errs -> List.exists (fun msg -> contains_substring msg "cannot mix record-style field into hash literal") errs
+
+  let%test "hash literal missing comma reports deterministic error" =
+    let input = "let x = { \"a\": 1 b: 2 }" in
+    match parse input with
+    | Ok _ -> false
+    | Error errs ->
+        List.exists
+          (fun msg -> contains_substring msg "expected ',' or '}' after hash literal entry")
+          errs
+
+  let%test "record literal missing comma reports deterministic error" =
+    let input = "let x = { a: 1 b: 2 }" in
+    match parse input with
+    | Ok _ -> false
+    | Error errs ->
+        List.exists
+          (fun msg -> contains_substring msg "expected ',' or '}' after record literal entry")
+          errs
+
+  let%test "record literal duplicate spread reports deterministic error" =
+    let input = "let x = { ...a, ...b }" in
+    match parse input with
+    | Ok _ -> false
+    | Error errs ->
+        List.exists
+          (fun msg -> contains_substring msg "multiple spread entries in record literal are not supported yet")
+          errs
 end
 
 (* Phase 4.3: Trait definition tests *)

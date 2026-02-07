@@ -7,10 +7,8 @@ set -e
 BINDIR="./_build/default/bin"
 EXECUTABLE="$BINDIR/main.exe"
 
-if [ ! -f "$EXECUTABLE" ]; then
-    echo "Building project..."
-    dune build
-fi
+echo "Building project..."
+dune build "$EXECUTABLE"
 
 PASS=0
 FAIL=0
@@ -1009,6 +1007,18 @@ type point = { x: int, y: int }
 derive show for point;
 let p: point = { y: 2, x: 1 }
 puts(p.show())
+EOF
+
+run_build_fail_contains_from_stdin "Hash literal missing comma reports clear parse error" "expected ',' or '}' after hash literal entry" << 'EOF'
+let x = { "a": 1 b: 2 }
+EOF
+
+run_build_fail_contains_from_stdin "Record literal missing comma reports clear parse error" "expected ',' or '}' after record literal entry" << 'EOF'
+let x = { a: 1 b: 2 }
+EOF
+
+run_build_fail_contains_from_stdin "Record literal duplicate spread reports clear parse error" "multiple spread entries in record literal are not supported yet" << 'EOF'
+let x = { ...a, ...b }
 EOF
 
 echo ""
