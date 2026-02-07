@@ -1883,7 +1883,8 @@ and check_pattern pattern scrutinee_type =
                     let effective_pat =
                       match field.pat_field_pattern with
                       | Some p -> p
-                      | None -> AST.{ pat = PVariable field_name; pos = pattern.pos }
+                      | None ->
+                          AST.{ pat = PVariable field_name; pos = pattern.pos; end_pos = pattern.end_pos; file_id = pattern.file_id }
                     in
                     (match check_pattern effective_pat scrutinee_field.typ with
                     | Error e -> Error e

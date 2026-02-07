@@ -77,6 +77,8 @@ module AST = struct
   and statement = {
     stmt : stmt_kind;
     pos : int;
+    end_pos : int;
+    file_id : string option;
   }
 
   and stmt_kind =
@@ -111,6 +113,8 @@ module AST = struct
     id : int;
     expr : expr_kind;
     pos : int;
+    end_pos : int;
+    file_id : string option;
   }
 
   and expr_kind =
@@ -153,6 +157,8 @@ module AST = struct
   and pattern = {
     pat : pattern_kind;
     pos : int;
+    end_pos : int;
+    file_id : string option;
   }
 
   and pattern_kind =
@@ -185,10 +191,18 @@ module AST = struct
   }
   [@@deriving show]
 
-  (* Smart constructors with default pos=0 and id=0 (for tests) *)
-  let mk_expr ?(id = 0) ?(pos = 0) expr = { id; expr; pos }
-  let mk_stmt ?(pos = 0) stmt = { stmt; pos }
-  let mk_pat ?(pos = 0) pat = { pat; pos }
+  (* Smart constructors with default metadata (for tests and parser helpers) *)
+  let mk_expr ?(id = 0) ?(pos = 0) ?end_pos ?(file_id = None) expr =
+    let end_pos = Option.value end_pos ~default:pos in
+    { id; expr; pos; end_pos; file_id }
+
+  let mk_stmt ?(pos = 0) ?end_pos ?(file_id = None) stmt =
+    let end_pos = Option.value end_pos ~default:pos in
+    { stmt; pos; end_pos; file_id }
+
+  let mk_pat ?(pos = 0) ?end_pos ?(file_id = None) pat =
+    let end_pos = Option.value end_pos ~default:pos in
+    { pat; pos; end_pos; file_id }
 
   (* Equality functions that ignore positions (for testing) *)
   let rec expr_equal (e1 : expression) (e2 : expression) : bool =
@@ -339,4 +353,14 @@ module AST = struct
       List.map expression_to_string args |> String.concat ", "
     in
     List.map statement_to_string program |> String.concat ""
+
+  let%test "mk_expr defaults end_pos and file_id" =
+    let e = mk_expr ~id:7 ~pos:11 (Integer 1L) in
+    e.pos = 11 && e.end_pos = 11 && e.file_id = None
+
+  let%test "mk_stmt and mk_pat accept explicit span metadata" =
+    let s = mk_stmt ~pos:5 ~end_pos:12 ~file_id:(Some "main.mr") (Return (mk_expr (Integer 0L))) in
+    let p = mk_pat ~pos:2 ~end_pos:4 ~file_id:(Some "main.mr") (PVariable "x") in
+    s.pos = 5 && s.end_pos = 12 && s.file_id = Some "main.mr"
+    && p.pos = 2 && p.end_pos = 4 && p.file_id = Some "main.mr"
 end

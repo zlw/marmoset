@@ -3,8 +3,8 @@ open Ast
 let ( let* ) res f = Result.bind res f
 
 (* Helpers to create AST nodes with position and ID from parser *)
-let mk_expr id pos kind = AST.{ id; expr = kind; pos }
-let mk_stmt pos kind = AST.{ stmt = kind; pos }
+let mk_expr id pos kind = AST.{ id; expr = kind; pos; end_pos = pos; file_id = None }
+let mk_stmt pos kind = AST.{ stmt = kind; pos; end_pos = pos; file_id = None }
 
 type parser = {
   lexer : Lexer.lexer;
