@@ -1161,7 +1161,7 @@ and parse_record_literal (p : parser) : (parser * AST.expression, parser) result
           else
             loop (next_token lp3) (field :: fields) spread
     else
-      Error (no_prefix_parse_fn_error lp lp.curr_token.token_type)
+      Error (add_error lp "cannot mix hash-style entries into record literal")
   in
   loop (next_token p) [] None
 
@@ -1207,7 +1207,7 @@ and parse_record_literal_with_spread (p : parser) (pos : int) : (parser * AST.ex
             else
               loop (next_token lp3) (field :: fields)
       else
-        Error (no_prefix_parse_fn_error lp lp.curr_token.token_type)
+        Error (add_error lp "cannot mix hash-style entries into record literal")
     in
     loop (next_token (next_token p4)) []
   else if peek_token_is p4 Token.RBrace then
@@ -1224,7 +1224,11 @@ and parse_hash_literal (p : parser) : (parser * AST.expression, parser) result =
       let id, lp1 = fresh_id (next_token lp) in
       Ok (lp1, mk_expr id pos (AST.Hash (List.rev pairs)))
     else
-      let* lp2, key = parse_expression (next_token lp) prec_lowest in
+      let key_start = next_token lp in
+      if curr_token_is key_start Token.Spread then
+        Error (add_error key_start "cannot mix record-style spread into hash literal")
+      else
+        let* lp2, key = parse_expression key_start prec_lowest in
       let* lp3 = expect_peek lp2 Token.Colon in
       let* lp4, value = parse_expression (next_token lp3) prec_lowest in
 
@@ -1858,6 +1862,44 @@ module Test = struct
       };
     ]
     |> run
+
+  let%test "mixed record then hash entry errors deterministically" =
+    let contains_substring s sub =
+      let len_s = String.length s in
+      let len_sub = String.length sub in
+      let rec loop i =
+        if i + len_sub > len_s then
+          false
+        else if String.sub s i len_sub = sub then
+          true
+        else
+          loop (i + 1)
+      in
+      loop 0
+    in
+    let input = "let x = { a: 1, \"b\": 2 }" in
+    match parse input with
+    | Ok _ -> false
+    | Error errs -> List.exists (fun msg -> contains_substring msg "cannot mix hash-style entries into record literal") errs
+
+  let%test "mixed hash then spread entry errors deterministically" =
+    let contains_substring s sub =
+      let len_s = String.length s in
+      let len_sub = String.length sub in
+      let rec loop i =
+        if i + len_sub > len_s then
+          false
+        else if String.sub s i len_sub = sub then
+          true
+        else
+          loop (i + 1)
+      in
+      loop 0
+    in
+    let input = "let x = { \"a\": 1, ...rest }" in
+    match parse input with
+    | Ok _ -> false
+    | Error errs -> List.exists (fun msg -> contains_substring msg "cannot mix record-style spread into hash literal") errs
 end
 
 (* Phase 4.3: Trait definition tests *)

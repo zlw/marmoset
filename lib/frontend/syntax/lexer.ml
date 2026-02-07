@@ -62,10 +62,10 @@ let rec next_token (l : lexer) : lexer * Token.token =
           (read_char (read_char l2), Token.init ~pos Spread "...")
         else
           (* .. not a valid token *)
-          (l, Token.init ~pos Illegal "..")
+          (read_char l2, Token.init ~pos Illegal "..")
         (* Only emit Dot if NOT followed by digit (which would be a float) *)
       else if is_digit (peek_char l) then
-        (l, Token.init ~pos Illegal ".")
+        (read_char l, Token.init ~pos Illegal ".")
       else
         (read_char l, Token.init ~pos Dot ".")
   | '#' -> next_token (fst (read_until (read_char l) (fun c -> c <> '\n' && c <> '\000')))
@@ -318,3 +318,18 @@ let%test "dot vs spread distinction" =
   let has_dot = List.exists (fun t -> t.Token.token_type = Token.Dot && t.Token.literal = ".") tokens in
   let has_spread = List.exists (fun t -> t.Token.token_type = Token.Spread && t.Token.literal = "...") tokens in
   has_dot && has_spread
+
+let%test "illegal double dot advances lexer" =
+  let l0 = init ".." in
+  let l1, tok = next_token l0 in
+  tok.Token.token_type = Token.Illegal && tok.Token.literal = ".." && l1.position > l0.position
+
+let%test "dot before digit is illegal but lexer advances" =
+  let l0 = init ".1" in
+  let l1, tok1 = next_token l0 in
+  let _l2, tok2 = next_token l1 in
+  tok1.Token.token_type = Token.Illegal
+  && tok1.Token.literal = "."
+  && l1.position > l0.position
+  && tok2.Token.token_type = Token.Int
+  && tok2.Token.literal = "1"
