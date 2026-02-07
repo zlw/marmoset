@@ -254,16 +254,17 @@ type error_kind =
 type infer_error = {
   kind : error_kind;
   pos : int option; (* byte offset in source, if available *)
+  end_pos : int option; (* end byte offset in source, if available *)
 }
 
 (* Create an error without position *)
-let error kind = { kind; pos = None }
+let error kind = { kind; pos = None; end_pos = None }
 
 (* Create an error with position from an expression *)
-let error_at kind (expr : AST.expression) = { kind; pos = Some expr.pos }
+let error_at kind (expr : AST.expression) = { kind; pos = Some expr.pos; end_pos = Some expr.end_pos }
 
 (* Create an error with position from a statement *)
-let error_at_stmt kind (stmt : AST.statement) = { kind; pos = Some stmt.pos }
+let error_at_stmt kind (stmt : AST.statement) = { kind; pos = Some stmt.pos; end_pos = Some stmt.end_pos }
 
 let error_kind_to_string = function
   | UnboundVariable name -> "Unbound variable: " ^ name
@@ -364,10 +365,11 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
         (* Look up the variant in the registry *)
         match Enum_registry.lookup_variant enum_name variant_name with
         | None ->
-            Error
+          Error
               {
                 kind = ConstructorError (Printf.sprintf "Unknown enum constructor: %s.%s" enum_name variant_name);
                 pos = Some expr.pos;
+                end_pos = Some expr.end_pos;
               }
         | Some variant -> (
             (* Infer types of constructor arguments *)
@@ -385,6 +387,7 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                           (Printf.sprintf "%s.%s expects %d arguments, got %d" enum_name variant_name
                              (List.length variant.fields) (List.length args));
                       pos = Some expr.pos;
+                      end_pos = Some expr.end_pos;
                     }
                 else
                   (* Get the enum definition to know type parameters *)
@@ -394,6 +397,7 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                         {
                           kind = ConstructorError (Printf.sprintf "Unknown enum: %s" enum_name);
                           pos = Some expr.pos;
+                          end_pos = Some expr.end_pos;
                         }
                   | Some enum_def -> (
                       (* Create fresh type variables for each type parameter *)

@@ -18,30 +18,37 @@ type typecheck_result = {
 type error = {
   message : string;
   loc : Source_loc.loc option; (* line/column if available *)
+  loc_end : Source_loc.loc option; (* end line/column if available *)
 }
 
 (* Convert infer error to typecheck error, optionally with source for location *)
 let error_of_infer_error ?(source : string option) (e : Infer.infer_error) : error =
-  let loc =
-    match (source, e.pos) with
-    | Some src, Some pos -> Some (Source_loc.offset_to_loc src pos)
-    | _ -> None
+  let loc, loc_end =
+    match (source, e.pos, e.end_pos) with
+    | Some src, Some pos, Some end_pos ->
+        (Some (Source_loc.offset_to_loc src pos), Some (Source_loc.offset_to_loc src end_pos))
+    | Some src, Some pos, None -> (Some (Source_loc.offset_to_loc src pos), None)
+    | _ -> (None, None)
   in
-  { message = Infer.error_to_string e; loc }
+  { message = Infer.error_to_string e; loc; loc_end }
 
 (* Format error with location prefix *)
 let format_error (err : error) : string =
-  match err.loc with
-  | None -> err.message
-  | Some loc -> Printf.sprintf "%s: %s" (Source_loc.to_string loc) err.message
+  match (err.loc, err.loc_end) with
+  | None, _ -> err.message
+  | Some loc, None -> Printf.sprintf "%s: %s" (Source_loc.to_string loc) err.message
+  | Some loc, Some loc_end -> Printf.sprintf "%s: %s" (Source_loc.to_string_range loc loc_end) err.message
 
 (* Format error with source context showing the offending line *)
 let format_error_with_context (source : string) (err : error) : string =
-  match err.loc with
-  | None -> err.message
-  | Some loc ->
+  match (err.loc, err.loc_end) with
+  | None, _ -> err.message
+  | Some loc, None ->
       let context = Source_loc.format_with_context source loc in
       Printf.sprintf "%s: %s\n%s" (Source_loc.to_string loc) err.message context
+  | Some loc, Some loc_end ->
+      let context = Source_loc.format_with_context_range source loc loc_end in
+      Printf.sprintf "%s: %s\n%s" (Source_loc.to_string_range loc loc_end) err.message context
 
 (* ============================================================
    Main API
@@ -60,7 +67,7 @@ let check_program ?(env = Infer.empty_env) (program : Syntax.Ast.AST.program) : 
     Errors include source location information. *)
 let check_string ?(env = Infer.empty_env) (source : string) : (typecheck_result, error) result =
   match Syntax.Parser.parse source with
-  | Error errors -> Error { message = "Parse error: " ^ String.concat ", " errors; loc = None }
+  | Error errors -> Error { message = "Parse error: " ^ String.concat ", " errors; loc = None; loc_end = None }
   | Ok program -> (
       match Infer.infer_program ~env program with
       | Error e -> Error (error_of_infer_error ~source e)
@@ -92,9 +99,15 @@ let check_let_annotation
                   (Annotation.format_mono_type annotated_type)
                   (Annotation.format_mono_type inferred_type);
               loc = None;
+              loc_end = None;
             }
       with Failure msg ->
-        Error { message = Printf.sprintf "Invalid type annotation for '%s': %s" name msg; loc = None })
+        Error
+          {
+            message = Printf.sprintf "Invalid type annotation for '%s': %s" name msg;
+            loc = None;
+            loc_end = None;
+          })
 
 (* Check if a function expression's return type annotation matches its inferred type *)
 let check_function_annotation (return_annotation : Syntax.Ast.AST.type_expr option) (inferred_type : mono_type) :
@@ -126,8 +139,10 @@ let check_function_annotation (return_annotation : Syntax.Ast.AST.type_expr opti
                   (Annotation.format_mono_type annotated_return_type)
                   (Annotation.format_mono_type actual_return);
               loc = None;
+              loc_end = None;
             }
-      with Failure msg -> Error { message = Printf.sprintf "Invalid function annotation: %s" msg; loc = None })
+      with Failure msg ->
+        Error { message = Printf.sprintf "Invalid function annotation: %s" msg; loc = None; loc_end = None })
 
 (* Type check a program with annotation support.
     This checks that all annotations match the inferred types.
@@ -155,6 +170,7 @@ let check_program_with_annotations ?(env = Infer.empty_env) (program : Syntax.As
                         message =
                           Printf.sprintf "Internal error: variable '%s' not in environment" let_binding.name;
                         loc = None;
+                        loc_end = None;
                       }
                 | Some (Forall (_, mono_type)) -> (
                     (* Check let binding annotation *)
@@ -193,7 +209,7 @@ let check_program_with_annotations ?(env = Infer.empty_env) (program : Syntax.As
    Parses and type checks in one step, with annotation support. *)
 let check_string_with_annotations ?(env = Infer.empty_env) (source : string) : (typecheck_result, error) result =
   match Syntax.Parser.parse source with
-  | Error errors -> Error { message = "Parse error: " ^ String.concat ", " errors; loc = None }
+  | Error errors -> Error { message = "Parse error: " ^ String.concat ", " errors; loc = None; loc_end = None }
   | Ok program -> check_program_with_annotations ~env program
 
 (* Get the type of an expression as a string *)
