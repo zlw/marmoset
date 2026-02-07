@@ -1048,6 +1048,18 @@ run_build_fail_contains_from_stdin "Record literal duplicate spread reports clea
 let x = { ...a, ...b }
 EOF
 
+run_build_fail_contains_from_stdin "Malformed single dot token errors deterministically" "unexpected Token.Dot found" << 'EOF'
+.
+EOF
+
+run_build_fail_contains_from_stdin "Malformed double dot token errors deterministically" "unexpected Token.Illegal found" << 'EOF'
+..
+EOF
+
+run_build_fail_contains_from_stdin "Unknown symbol token errors deterministically" "unexpected Token.Illegal found" << 'EOF'
+@
+EOF
+
 echo ""
 echo "-- P0.1: TYPE MAP COMPLETENESS (NO EMITTER RE-INFERENCE) --"
 
