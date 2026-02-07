@@ -70,6 +70,9 @@ type func_def = {
 (* An instantiation: concrete types for a polymorphic function *)
 type instantiation = {
   func_name : string;
+  func_expr_id : int; (* Stable symbol identity within a program *)
+  func_arity : int;
+  concrete_only_mode : bool;
   concrete_types : Types.mono_type list; (* param types *)
   return_type : Types.mono_type;
 }
@@ -78,11 +81,27 @@ module InstSet = Set.Make (struct
   type t = instantiation
 
   let compare a b =
-    let c = String.compare a.func_name b.func_name in
+    let c = compare a.func_expr_id b.func_expr_id in
     if c <> 0 then
       c
     else
-      compare a.concrete_types b.concrete_types
+      let c = String.compare a.func_name b.func_name in
+      if c <> 0 then
+        c
+      else
+        let c = compare a.func_arity b.func_arity in
+        if c <> 0 then
+          c
+        else
+          let c = compare a.concrete_only_mode b.concrete_only_mode in
+          if c <> 0 then
+            c
+          else
+            let c = compare a.concrete_types b.concrete_types in
+            if c <> 0 then
+              c
+            else
+              compare a.return_type b.return_type
 end)
 
 (* Set to track enum type instantiations *)
@@ -389,6 +408,16 @@ let track_enum_inst state (t : Types.mono_type) =
 let is_user_func (state : mono_state) (name : string) : bool =
   List.exists (fun fd -> fd.name = name) state.func_defs
 
+let lookup_func_def_for_call (state : mono_state) (name : string) (arity : int) : func_def option =
+  let candidates = List.filter (fun fd -> fd.name = name && List.length fd.params = arity) state.func_defs in
+  match candidates with
+  | [] -> None
+  | [ fd ] -> Some fd
+  | many ->
+      (* Deterministic tie-breaker for now; modules/symbol tables will refine this later. *)
+      let sorted = List.sort (fun (a : func_def) (b : func_def) -> Int.compare a.func_expr_id b.func_expr_id) many in
+      Some (List.hd sorted)
+
 (* Extract parameter types from a function type *)
 let rec extract_param_types n = function
   | Types.TFun (arg, ret) when n > 0 ->
@@ -464,13 +493,14 @@ and collect_insts_expr
       (* Check if this is a call to a user-defined function *)
       match func.expr with
       | AST.Identifier name when is_user_func state name ->
+          let arity = List.length args in
+          let func_def_opt = lookup_func_def_for_call state name arity in
           (* Look up the function's declared type from the environment *)
           let func_param_types =
             match Infer.TypeEnv.find_opt name env with
             | Some (Types.Forall (_, func_type)) ->
                 (* Extract parameter types from the function type *)
-                let num_args = List.length args in
-                let declared_param_types, _ = extract_param_types num_args func_type in
+                let declared_param_types, _ = extract_param_types arity func_type in
                 declared_param_types
             | None ->
                 (* Fallback to argument types if function not in env *)
@@ -492,8 +522,20 @@ and collect_insts_expr
               List.map (get_type type_map) args
           in
           let return_type = get_type type_map expr in
-          let inst = { func_name = name; concrete_types = param_types; return_type } in
-          state.instantiations <- InstSet.add inst state.instantiations
+          (match func_def_opt with
+          | None -> ()
+          | Some func_def ->
+              let inst =
+                {
+                  func_name = func_def.name;
+                  func_expr_id = func_def.func_expr_id;
+                  func_arity = arity;
+                  concrete_only_mode = state.concrete_only;
+                  concrete_types = param_types;
+                  return_type;
+                }
+              in
+              state.instantiations <- InstSet.add inst state.instantiations)
       | _ -> ())
   | AST.Array elements -> List.iter (collect_insts_expr state type_map env) elements
   | AST.Hash pairs ->
@@ -1634,8 +1676,13 @@ and emit_stmts state type_map env stmts =
 let emit_specialized_func
     (state : emit_state) (global_type_map : Infer.type_map) (typed_env : Infer.type_env) (inst : instantiation) :
     string =
-  (* Find the function definition *)
-  let func_def = List.find (fun fd -> fd.name = inst.func_name) state.mono.func_defs in
+  (* Resolve by symbol id (not just name) to avoid scope/module collisions. *)
+  let func_def =
+    List.find
+      (fun (fd : func_def) ->
+        fd.func_expr_id = inst.func_expr_id && fd.name = inst.func_name && List.length fd.params = inst.func_arity)
+      state.mono.func_defs
+  in
 
   let param_names =
     List.map
