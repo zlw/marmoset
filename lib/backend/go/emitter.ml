@@ -4,6 +4,7 @@ module AST = Syntax.Ast.AST
 module Types = Typecheck.Types
 module Infer = Typecheck.Infer
 module Annotation = Typecheck.Annotation
+module Unify = Typecheck.Unify
 
 (* ============================================================
    Type Mangling - convert types to Go-safe identifiers
@@ -60,6 +61,7 @@ type func_def = {
   name : string;
   params : AST.expression list;
   body : AST.statement;
+  func_expr_id : int;
   poly_type : Types.poly_type;
   captures : string list; (* variables captured from outer scope - for closures *)
 }
@@ -282,6 +284,7 @@ let rec collect_funcs_stmt (state : mono_state) (stmt : AST.statement) : unit =
               name = let_binding.name;
               params = param_exprs;
               body = f.body;
+              func_expr_id = let_binding.value.id;
               poly_type = Types.Forall ([], Types.TNull);
               (* filled in later *)
               captures = [];
@@ -352,9 +355,10 @@ let get_type (type_map : Infer.type_map) (expr : AST.expression) : Types.mono_ty
   match Hashtbl.find_opt type_map expr.id with
   | Some t -> t
   | None ->
-      (* Fallback to TNull if type not found - shouldn't happen with proper type checking *)
-      Printf.eprintf "Warning: No type found for expression id %d\n%!" expr.id;
-      Types.TNull
+      failwith
+        (Printf.sprintf
+           "Codegen error: missing type for expression id %d (%s). Type map should be complete before emission."
+           expr.id (AST.type_of expr))
 
 (* Check if a type contains unresolved type variables *)
 let rec has_type_vars (t : Types.mono_type) : bool =
@@ -414,9 +418,25 @@ let rec collect_insts_stmt
       env
   | AST.Block stmts -> List.fold_left (collect_insts_stmt state type_map) env stmts
   | AST.EnumDef _ -> env (* Enums are compile-time only *)
-  | AST.TraitDef _ | AST.ImplDef _ | AST.DeriveDef _ | AST.TypeAlias _ -> env
-(* Traits/type aliases are compile-time only *)
-(* Traits are compile-time only *)
+  | AST.TraitDef _ | AST.DeriveDef _ | AST.TypeAlias _ -> env
+  | AST.ImplDef impl ->
+      (* Collect instantiations from impl method bodies.
+         This ensures helper functions referenced only in impls are emitted. *)
+      List.iter
+        (fun (m : AST.method_impl) ->
+          let method_env =
+            List.fold_left
+              (fun env_acc (param_name, param_type_opt) ->
+                match param_type_opt with
+                | Some param_type ->
+                    let mono_type = Annotation.type_expr_to_mono_type param_type in
+                    Infer.TypeEnv.add param_name (Types.Forall ([], mono_type)) env_acc
+                | None -> env_acc)
+              env m.impl_method_params
+          in
+          collect_insts_expr state type_map method_env m.impl_method_body)
+        impl.impl_methods;
+      env
 
 and collect_insts_expr
     ?(expected_type : Types.mono_type option = None)
@@ -581,6 +601,74 @@ let rec find_last_record_field_expr (field_name : string) (fields : AST.record_f
         | None -> Some (AST.mk_expr (AST.Identifier field.field_name))
       else
         rest_result
+
+let rec copy_specialized_expr_types
+    (source_map : Infer.type_map)
+    (target_map : Infer.type_map)
+    (specialization_subst : Types.substitution)
+    (expr : AST.expression) : unit =
+  (match Hashtbl.find_opt source_map expr.id with
+  | Some ty -> Hashtbl.replace target_map expr.id (Types.apply_substitution specialization_subst ty)
+  | None -> ());
+  match expr.expr with
+  | AST.Integer _ | AST.Float _ | AST.Boolean _ | AST.String _ | AST.Identifier _ -> ()
+  | AST.Prefix (_, operand) -> copy_specialized_expr_types source_map target_map specialization_subst operand
+  | AST.Infix (left, _, right) ->
+      copy_specialized_expr_types source_map target_map specialization_subst left;
+      copy_specialized_expr_types source_map target_map specialization_subst right
+  | AST.TypeCheck (e, _) -> copy_specialized_expr_types source_map target_map specialization_subst e
+  | AST.If (condition, consequence, alternative) ->
+      copy_specialized_expr_types source_map target_map specialization_subst condition;
+      copy_specialized_stmt_types source_map target_map specialization_subst consequence;
+      Option.iter (copy_specialized_stmt_types source_map target_map specialization_subst) alternative
+  | AST.Call (f, args) ->
+      copy_specialized_expr_types source_map target_map specialization_subst f;
+      List.iter (copy_specialized_expr_types source_map target_map specialization_subst) args
+  | AST.Array elements ->
+      List.iter (copy_specialized_expr_types source_map target_map specialization_subst) elements
+  | AST.Hash pairs ->
+      List.iter
+        (fun (k, v) ->
+          copy_specialized_expr_types source_map target_map specialization_subst k;
+          copy_specialized_expr_types source_map target_map specialization_subst v)
+        pairs
+  | AST.Index (container, index) ->
+      copy_specialized_expr_types source_map target_map specialization_subst container;
+      copy_specialized_expr_types source_map target_map specialization_subst index
+  | AST.Function f -> copy_specialized_stmt_types source_map target_map specialization_subst f.body
+  | AST.EnumConstructor (_, _, args) ->
+      List.iter (copy_specialized_expr_types source_map target_map specialization_subst) args
+  | AST.Match (scrutinee, arms) ->
+      copy_specialized_expr_types source_map target_map specialization_subst scrutinee;
+      List.iter
+        (fun (arm : AST.match_arm) -> copy_specialized_expr_types source_map target_map specialization_subst arm.body)
+        arms
+  | AST.RecordLit (fields, spread) ->
+      List.iter
+        (fun (field : AST.record_field) ->
+          match field.field_value with
+          | Some field_expr -> copy_specialized_expr_types source_map target_map specialization_subst field_expr
+          | None -> ())
+        fields;
+      Option.iter (copy_specialized_expr_types source_map target_map specialization_subst) spread
+  | AST.FieldAccess (receiver, _) ->
+      copy_specialized_expr_types source_map target_map specialization_subst receiver
+  | AST.MethodCall (receiver, _, args) ->
+      copy_specialized_expr_types source_map target_map specialization_subst receiver;
+      List.iter (copy_specialized_expr_types source_map target_map specialization_subst) args
+
+and copy_specialized_stmt_types
+    (source_map : Infer.type_map)
+    (target_map : Infer.type_map)
+    (specialization_subst : Types.substitution)
+    (stmt : AST.statement) : unit =
+  match stmt.stmt with
+  | AST.Let let_binding ->
+      copy_specialized_expr_types source_map target_map specialization_subst let_binding.value
+  | AST.Return expr | AST.ExpressionStmt expr ->
+      copy_specialized_expr_types source_map target_map specialization_subst expr
+  | AST.Block stmts -> List.iter (copy_specialized_stmt_types source_map target_map specialization_subst) stmts
+  | AST.EnumDef _ | AST.TraitDef _ | AST.ImplDef _ | AST.DeriveDef _ | AST.TypeAlias _ -> ()
 
 (* ============================================================
    Expression Emission
@@ -1542,7 +1630,9 @@ and emit_stmts state type_map env stmts =
    Generate Monomorphized Functions
    ============================================================ *)
 
-let emit_specialized_func (state : emit_state) (inst : instantiation) : string =
+let emit_specialized_func
+    (state : emit_state) (global_type_map : Infer.type_map) (typed_env : Infer.type_env) (inst : instantiation) :
+    string =
   (* Find the function definition *)
   let func_def = List.find (fun fd -> fd.name = inst.func_name) state.mono.func_defs in
 
@@ -1563,28 +1653,47 @@ let emit_specialized_func (state : emit_state) (inst : instantiation) : string =
   let params_str = String.concat ", " params_with_types in
   let return_type_str = type_to_go state.mono inst.return_type in
 
-  (* Create env with parameter types for the body *)
-  let base_env = Typecheck.Builtins.prelude_env () in
-  (* Build the concrete function type from param types and return type *)
-  let func_type =
+  (* Build the concrete function type from parameter types and return type *)
+  let concrete_func_type =
     List.fold_right (fun param_t acc -> Types.TFun (param_t, acc)) inst.concrete_types inst.return_type
   in
-  (* Add the function itself for recursive calls *)
-  let env_with_func = Infer.TypeEnv.add inst.func_name (Types.Forall ([], func_type)) base_env in
+
+  let generic_func_type =
+    match Hashtbl.find_opt global_type_map func_def.func_expr_id with
+    | Some t -> t
+    | None ->
+        failwith
+          (Printf.sprintf
+             "Codegen error: missing function literal type for '%s' (expr id %d). Type map should be complete before \
+              emission."
+             inst.func_name func_def.func_expr_id)
+  in
+
+  let specialization_subst =
+    match Unify.unify generic_func_type concrete_func_type with
+    | Ok subst -> subst
+    | Error err ->
+        failwith
+          (Printf.sprintf "Codegen error: failed to specialize function '%s' to concrete type %s: %s" inst.func_name
+             (Types.to_string concrete_func_type)
+             (Typecheck.Unify.error_to_string err))
+  in
+
+  let specialized_type_map = Infer.create_type_map () in
+  copy_specialized_stmt_types global_type_map specialized_type_map specialization_subst func_def.body;
+
+  (* Add function and parameters with concrete types for recursive calls/body emission *)
+  let env_with_func = Infer.TypeEnv.add inst.func_name (Types.Forall ([], concrete_func_type)) typed_env in
   let body_env =
     List.fold_left2
       (fun acc name typ -> Infer.TypeEnv.add name (Types.Forall ([], typ)) acc)
       env_with_func param_names inst.concrete_types
   in
 
-  (* Create a type_map for the function body by running inference *)
-  let func_body_type_map = Infer.create_type_map () in
-  let _ = Infer.infer_statement func_body_type_map body_env func_def.body in
-
   (* Save and reset indent for top-level function *)
   let saved_indent = state.indent in
   state.indent <- 0;
-  let body_str = emit_func_body state func_body_type_map body_env func_def.body in
+  let body_str = emit_func_body state specialized_type_map body_env func_def.body in
   state.indent <- saved_indent;
 
   Printf.sprintf "func %s(%s) %s {\n%s}\n" mangled_name params_str return_type_str body_str
@@ -1706,7 +1815,11 @@ let emit_enum_type (state : mono_state) (enum_name : string) (type_args : Types.
 
 (* Emit a single trait impl method as a Go function *)
 let emit_impl_method
-    (state : emit_state) (type_map : Infer.type_map) (impl : AST.impl_def) (method_impl : AST.method_impl) :
+    (state : emit_state)
+    (type_map : Infer.type_map)
+    (typed_env : Infer.type_env)
+    (impl : AST.impl_def)
+    (method_impl : AST.method_impl) :
     string =
   let trait_name = impl.impl_trait_name in
   let method_name = method_impl.impl_method_name in
@@ -1719,39 +1832,56 @@ let emit_impl_method
   let func_name = Printf.sprintf "%s_%s_%s" trait_name method_name type_suffix in
 
   (* Convert parameter types *)
-  let param_strs =
+  let method_params_with_types =
     List.map
       (fun (param_name, opt_type) ->
         match opt_type with
         | Some type_expr ->
             let mono_type = Annotation.type_expr_to_mono_type type_expr in
-            let go_type = type_to_go state.mono mono_type in
-            Printf.sprintf "%s %s" param_name go_type
+            (param_name, mono_type)
         | None -> failwith "Impl method parameters must have type annotations")
       method_impl.impl_method_params
+  in
+  let param_strs =
+    List.map
+      (fun (param_name, mono_type) ->
+        let go_type = type_to_go state.mono mono_type in
+        Printf.sprintf "%s %s" param_name go_type)
+      method_params_with_types
   in
   let params_str = String.concat ", " param_strs in
 
   (* Convert return type *)
-  let return_type_str =
+  let return_type_mono, return_type_str =
     match method_impl.impl_method_return_type with
     | Some type_expr ->
         let mono_type = Annotation.type_expr_to_mono_type type_expr in
-        type_to_go state.mono mono_type
+        (mono_type, type_to_go state.mono mono_type)
     | None -> failwith "Impl method must have return type annotation"
   in
 
-  (* Emit the method body as an expression *)
-  let base_env = Typecheck.Builtins.prelude_env () in
+  (* Method body types come from the global type_map produced by typechecker. *)
+  let method_env =
+    List.fold_left
+      (fun env_acc (param_name, mono_type) -> Infer.TypeEnv.add param_name (Types.Forall ([], mono_type)) env_acc)
+      typed_env method_params_with_types
+  in
   let body_expr = method_impl.impl_method_body in
-  let body_str = emit_expr state type_map base_env body_expr in
+  let inferred_body_type = get_type type_map body_expr in
+  if not (Annotation.check_annotation return_type_mono inferred_body_type) then
+    failwith
+      (Printf.sprintf "Codegen error: impl %s.%s return type mismatch: expected %s, got %s" trait_name method_name
+         (Types.to_string return_type_mono)
+         (Types.to_string inferred_body_type));
+  let body_str = emit_expr state type_map method_env body_expr in
 
   (* Generate the Go function *)
   Printf.sprintf "func %s(%s) %s {\n\treturn %s\n}\n" func_name params_str return_type_str body_str
 
 (* Emit all methods for a trait impl *)
-let emit_impl_def (state : emit_state) (type_map : Infer.type_map) (impl : AST.impl_def) : string =
-  let method_funcs = List.map (emit_impl_method state type_map impl) impl.impl_methods in
+let emit_impl_def
+    (state : emit_state) (type_map : Infer.type_map) (typed_env : Infer.type_env) (impl : AST.impl_def) : string =
+  let method_funcs = List.map (emit_impl_method state type_map typed_env impl) impl.impl_methods in
   String.concat "\n" method_funcs
 
 (* Extract all ImplDef statements from a program *)
@@ -2005,7 +2135,7 @@ let emit_program_with_typed_env (type_map : Infer.type_map) (typed_env : Infer.t
   (* Generate specialized functions *)
   let specialized_funcs =
     InstSet.elements mono_state.instantiations
-    |> List.map (emit_specialized_func emit_state)
+    |> List.map (emit_specialized_func emit_state type_map typed_env)
     |> String.concat "\n"
   in
 
@@ -2014,7 +2144,7 @@ let emit_program_with_typed_env (type_map : Infer.type_map) (typed_env : Infer.t
 
   (* Generate trait impl functions *)
   let impl_defs = collect_impl_defs program in
-  let impl_funcs = List.map (emit_impl_def emit_state type_map) impl_defs |> String.concat "\n" in
+  let impl_funcs = List.map (emit_impl_def emit_state type_map typed_env) impl_defs |> String.concat "\n" in
   let derived_impl_funcs = emit_registry_derived_impls emit_state program in
 
   (* Emit main body *)
@@ -2053,13 +2183,12 @@ let emit_program_with_typed_env (type_map : Infer.type_map) (typed_env : Infer.t
   Printf.sprintf "package main\n\n%s%s%sfunc main() {\n%s}\n" imports type_defs top_funcs main_body
 
 let emit_program (program : AST.program) : string =
-  let base_env = Typecheck.Builtins.prelude_env () in
-  match Infer.infer_program ~env:base_env program with
-  | Error _ ->
-      (* If inference fails, create an empty type_map *)
-      let empty_type_map = Infer.create_type_map () in
-      emit_program_with_typed_env empty_type_map base_env program
-  | Ok (typed_env, type_map, _result_type) -> emit_program_with_typed_env type_map typed_env program
+  let env = Typecheck.Builtins.prelude_env () in
+  match Typecheck.Checker.check_program_with_annotations ~env program with
+  | Error err ->
+      failwith
+        (Printf.sprintf "Codegen error: cannot emit untyped program: %s" (Typecheck.Checker.format_error err))
+  | Ok { environment = typed_env; type_map; _ } -> emit_program_with_typed_env type_map typed_env program
 
 (* ============================================================
    Runtime

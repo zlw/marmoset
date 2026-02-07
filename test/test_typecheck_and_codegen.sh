@@ -896,6 +896,26 @@ puts(p.hash())
 EOF
 
 echo ""
+echo "-- P0.1: TYPE MAP COMPLETENESS (NO EMITTER RE-INFERENCE) --"
+
+run_case_from_stdin "Top-level function calling top-level function compiles and runs" "1" << 'EOF'
+let f = fn(x: int) -> int { x }
+let g = fn(y: int) -> int { f(y) }
+puts(g(1))
+EOF
+
+run_case_from_stdin "Impl method calling union-param helper resolves using typed env" "int" << 'EOF'
+let helper = fn(x: int | string) -> string {
+  if (x is int) { "int" } else { "string" }
+}
+trait show[a] { fn show(x: a) -> string }
+impl show for int {
+  fn show(x: int) -> string { helper(x) }
+}
+puts(1.show())
+EOF
+
+echo ""
 echo "-- RUNTIME OUTPUT TESTS --"
 
 run_case_from_stdin "Print integer" "42" << 'EOF'
