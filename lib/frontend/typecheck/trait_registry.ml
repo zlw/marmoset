@@ -30,6 +30,8 @@ type impl_def = {
 let trait_registry : (string, trait_def) Hashtbl.t = Hashtbl.create 16
 let impl_registry : (string * mono_type, impl_def) Hashtbl.t = Hashtbl.create 32 (* key: (trait_name, for_type) *)
 
+let canonical_type (t : mono_type) : mono_type = canonicalize_mono_type t
+
 let clear () =
   Hashtbl.clear trait_registry;
   Hashtbl.clear impl_registry
@@ -39,15 +41,17 @@ let register_trait (def : trait_def) : unit = Hashtbl.replace trait_registry def
 
 (* Register an impl block *)
 let register_impl (def : impl_def) : unit =
-  let key = (def.impl_trait_name, def.impl_for_type) in
-  Hashtbl.replace impl_registry key def
+  let canonical_for_type = canonical_type def.impl_for_type in
+  let def' = { def with impl_for_type = canonical_for_type } in
+  let key = (def'.impl_trait_name, def'.impl_for_type) in
+  Hashtbl.replace impl_registry key def'
 
 (* Lookup a trait by name *)
 let lookup_trait (name : string) : trait_def option = Hashtbl.find_opt trait_registry name
 
 (* Lookup an impl for a specific trait and type *)
 let lookup_impl (trait_name : string) (for_type : mono_type) : impl_def option =
-  Hashtbl.find_opt impl_registry (trait_name, for_type)
+  Hashtbl.find_opt impl_registry (trait_name, canonical_type for_type)
 
 (* Return all registered impls (manual and derived). *)
 let all_impls () : impl_def list = Hashtbl.fold (fun _ impl acc -> impl :: acc) impl_registry []
@@ -61,11 +65,12 @@ let implements_trait (trait_name : string) (for_type : mono_type) : bool =
 (* Lookup a method implementation for a type by method name *)
 (* Returns: (trait_name, method_sig) option *)
 let lookup_method (for_type : mono_type) (method_name : string) : (string * method_sig) option =
+  let for_type' = canonical_type for_type in
   (* Search through all registered impls for this type *)
   let matching_impls =
     Hashtbl.fold
       (fun (_trait_name, impl_type) impl_def acc ->
-        if impl_type = for_type then
+        if impl_type = for_type' then
           impl_def :: acc
         else
           acc)
@@ -212,16 +217,17 @@ let validate_impl (def : impl_def) : (unit, string) result =
                  (List.length impl_method.method_params))
           else
             (* Check param types *)
-            let param_errors =
+          let param_errors =
               List.map2
                 (fun (_tname, ttype) (_iname, itype) ->
-                  let expected_type = substitute_type ttype in
-                  if expected_type = itype then
+                  let expected_type = canonical_type (substitute_type ttype) in
+                  let impl_type = canonical_type itype in
+                  if expected_type = impl_type then
                     None
                   else
                     Some
                       (Printf.sprintf "parameter type mismatch: expected %s, got %s" (to_string expected_type)
-                         (to_string itype)))
+                         (to_string impl_type)))
                 trait_method.method_params impl_method.method_params
               |> List.filter_map (fun x -> x)
             in
@@ -230,14 +236,14 @@ let validate_impl (def : impl_def) : (unit, string) result =
               Error (Printf.sprintf "Method '%s': %s" trait_method.method_name (List.hd param_errors))
             else
               (* Check return type *)
-              let expected_return = substitute_type trait_method.method_return_type in
-              if expected_return = impl_method.method_return_type then
+              let expected_return = canonical_type (substitute_type trait_method.method_return_type) in
+              let impl_return = canonical_type impl_method.method_return_type in
+              if expected_return = impl_return then
                 Ok ()
               else
                 Error
                   (Printf.sprintf "Method '%s': return type mismatch: expected %s, got %s"
-                     trait_method.method_name (to_string expected_return)
-                     (to_string impl_method.method_return_type))
+                     trait_method.method_name (to_string expected_return) (to_string impl_return))
         in
 
         (* Find each trait method in impl methods and validate *)
@@ -364,6 +370,36 @@ let%test "implements_trait checks impl registry" =
   register_impl show_for_int;
 
   implements_trait "show" TInt && not (implements_trait "show" TString)
+
+let%test "lookup_method canonicalizes reordered record receiver" =
+  clear ();
+  let show_trait =
+    {
+      trait_name = "show";
+      trait_type_param = Some "a";
+      trait_supertraits = [];
+      trait_methods =
+        [ { method_name = "show"; method_params = [ ("x", TVar "a") ]; method_return_type = TString } ];
+    }
+  in
+  register_trait show_trait;
+  register_impl
+    {
+      impl_trait_name = "show";
+      impl_type_params = [];
+      impl_for_type = TRecord ([ { name = "x"; typ = TInt }; { name = "y"; typ = TInt } ], None);
+      impl_methods =
+        [
+          {
+            method_name = "show";
+            method_params = [ ("x", TRecord ([ { name = "x"; typ = TInt }; { name = "y"; typ = TInt } ], None)) ];
+            method_return_type = TString;
+          };
+        ];
+    };
+  match lookup_method (TRecord ([ { name = "y"; typ = TInt }; { name = "x"; typ = TInt } ], None)) "show" with
+  | Some ("show", _) -> true
+  | _ -> false
 
 (* Comprehensive impl validation tests *)
 

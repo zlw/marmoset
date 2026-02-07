@@ -121,7 +121,7 @@ let rec type_expr_to_mono_type_with
         | Some (Syntax.Ast.AST.TVar name) -> Some (Types.TRowVar name)
         | Some other -> Some (type_expr_to_mono_type_with type_bindings other)
       in
-      Types.TRecord (field_types, row_type)
+      Types.canonicalize_mono_type (Types.TRecord (field_types, row_type))
 
 and type_expr_to_mono_type (te : Syntax.Ast.AST.type_expr) : Types.mono_type = type_expr_to_mono_type_with [] te
 

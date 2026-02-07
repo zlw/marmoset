@@ -22,6 +22,7 @@ let rec mangle_type (t : Types.mono_type) : string =
   | Types.TArray elem -> "arr_" ^ mangle_type elem
   | Types.THash (key, value) -> "map_" ^ mangle_type key ^ "_" ^ mangle_type value
   | Types.TRecord (fields, row) ->
+      let fields = Types.normalize_record_fields fields in
       let field_bits =
         fields |> List.map (fun (f : Types.record_field_type) -> f.name ^ "_" ^ mangle_type f.typ) |> String.concat "_"
       in
@@ -165,6 +166,7 @@ let rec type_to_go (state : mono_state) (t : Types.mono_type) : string =
   | Types.TArray elem -> "[]" ^ type_to_go state elem
   | Types.THash (key, value) -> "map[" ^ type_to_go state key ^ "]" ^ type_to_go state value
   | Types.TRecord (fields, _row) ->
+      let fields = Types.normalize_record_fields fields in
       let go_fields =
         List.map
           (fun (f : Types.record_field_type) ->
@@ -582,6 +584,7 @@ let go_record_field_name (name : string) : string =
     String.uppercase_ascii (String.sub name 0 1) ^ String.sub name 1 (String.length name - 1)
 
 let emit_record_struct_type (state : emit_state) (fields : Types.record_field_type list) : string =
+  let fields = Types.normalize_record_fields fields in
   let go_fields =
     List.map
       (fun (f : Types.record_field_type) ->
@@ -1925,7 +1928,7 @@ let emit_record_derived_impl (state : emit_state) (trait_name : string) (record_
   let type_str = type_to_go state.mono record_type in
   let fields, _row =
     match record_type with
-    | Types.TRecord (fields, row) -> (fields, row)
+    | Types.TRecord (fields, row) -> (Types.normalize_record_fields fields, row)
     | _ -> ([], None)
   in
   let go_field_access prefix (f : Types.record_field_type) = prefix ^ "." ^ go_record_field_name f.name in

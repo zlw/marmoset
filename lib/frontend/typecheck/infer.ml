@@ -1293,7 +1293,7 @@ and infer_record_literal type_map env fields spread expr =
           names_in_order
       in
       (match spread with
-      | None -> Ok (subst1, TRecord (field_types, None))
+      | None -> Ok (subst1, Types.canonicalize_mono_type (TRecord (field_types, None)))
       | Some spread_expr -> (
           match infer_expression type_map env1 spread_expr with
           | Error e -> Error e
@@ -1303,7 +1303,7 @@ and infer_record_literal type_map env fields spread expr =
               match spread_type' with
               | TRecord (base_fields, base_row) ->
                   let merged = merge_fields base_fields field_types in
-                  Ok (subst, TRecord (merged, base_row))
+                  Ok (subst, Types.canonicalize_mono_type (TRecord (merged, base_row)))
               | TVar _ ->
                   let row_var = TRowVar ("r" ^ string_of_int !fresh_var_counter) in
                   fresh_var_counter := !fresh_var_counter + 1;
@@ -1313,7 +1313,7 @@ and infer_record_literal type_map env fields spread expr =
                   | Ok subst3 ->
                       let final_subst = compose_substitution subst subst3 in
                       let result_row = Some (apply_substitution subst3 row_var) in
-                      Ok (final_subst, TRecord (field_types, result_row)))
+                      Ok (final_subst, Types.canonicalize_mono_type (TRecord (field_types, result_row))))
               | _ ->
                   Error
                     (error_at

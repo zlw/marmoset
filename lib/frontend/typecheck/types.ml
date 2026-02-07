@@ -22,6 +22,33 @@ and record_field_type = {
   typ : mono_type;
 }
 
+(* Canonicalize record fields by name. If duplicates exist, last write wins. *)
+let normalize_record_fields (fields : record_field_type list) : record_field_type list =
+  let tbl : (string, mono_type) Hashtbl.t = Hashtbl.create (max 16 (List.length fields)) in
+  List.iter (fun (f : record_field_type) -> Hashtbl.replace tbl f.name f.typ) fields;
+  Hashtbl.to_seq_keys tbl |> List.of_seq |> List.sort String.compare
+  |> List.map (fun name ->
+         match Hashtbl.find_opt tbl name with
+         | Some typ -> { name; typ }
+         | None -> failwith "normalize_record_fields: impossible missing key")
+
+let rec canonicalize_mono_type (mono : mono_type) : mono_type =
+  match mono with
+  | TInt | TFloat | TBool | TString | TNull | TVar _ | TRowVar _ -> mono
+  | TFun (arg, ret) -> TFun (canonicalize_mono_type arg, canonicalize_mono_type ret)
+  | TArray element -> TArray (canonicalize_mono_type element)
+  | THash (key, value) -> THash (canonicalize_mono_type key, canonicalize_mono_type value)
+  | TRecord (fields, row) ->
+      let canonical_fields =
+        fields
+        |> List.map (fun (f : record_field_type) -> { f with typ = canonicalize_mono_type f.typ })
+        |> normalize_record_fields
+      in
+      let canonical_row = Option.map canonicalize_mono_type row in
+      TRecord (canonical_fields, canonical_row)
+  | TUnion types -> TUnion (List.map canonicalize_mono_type types)
+  | TEnum (name, args) -> TEnum (name, List.map canonicalize_mono_type args)
+
 (* A polytype (type scheme) - a type with "forall" quantifiers.
    Example: ∀a. a -> a  is  Forall(["a"], TFun(TVar "a", TVar "a"))
    
@@ -105,7 +132,11 @@ let rec apply_substitution (subst : substitution) (mono : mono_type) : mono_type
   | TArray element -> TArray (apply_substitution subst element)
   | THash (key, value) -> THash (apply_substitution subst key, apply_substitution subst value)
   | TRecord (fields, row) ->
-      let fields' = List.map (fun f -> { f with typ = apply_substitution subst f.typ }) fields in
+      let fields' =
+        fields
+        |> List.map (fun (f : record_field_type) -> { f with typ = apply_substitution subst f.typ })
+        |> normalize_record_fields
+      in
       let row' = Option.map (apply_substitution subst) row in
       TRecord (fields', row')
   | TRowVar name -> (
@@ -394,6 +425,17 @@ let%test "apply_substitution to enum" =
   let subst = [ ("a", TInt); ("b", TString) ] in
   let enum = TEnum ("result", [ TVar "a"; TVar "b" ]) in
   apply_substitution subst enum = TEnum ("result", [ TInt; TString ])
+
+let%test "normalize_record_fields sorts and keeps last duplicate" =
+  let fields =
+    [ { name = "z"; typ = TInt }; { name = "x"; typ = TBool }; { name = "x"; typ = TString }; { name = "y"; typ = TInt } ]
+  in
+  normalize_record_fields fields
+  = [ { name = "x"; typ = TString }; { name = "y"; typ = TInt }; { name = "z"; typ = TInt } ]
+
+let%test "canonicalize_mono_type sorts record fields" =
+  let record = TRecord ([ { name = "y"; typ = TInt }; { name = "x"; typ = TBool } ], None) in
+  canonicalize_mono_type record = TRecord ([ { name = "x"; typ = TBool }; { name = "y"; typ = TInt } ], None)
 
 let%test "free_type_vars in enum" =
   let enum = TEnum ("option", [ TVar "a" ]) in

@@ -966,6 +966,16 @@ let p: point = { x: 1, y: 2 }
 puts(p.hash())
 EOF
 
+run_case_from_stdin "Reordered record literal still resolves derived show" "{ x: 1, y: 2 }" << 'EOF'
+trait show[a] {
+  fn show(x: a) -> string
+}
+type point = { x: int, y: int }
+derive show for point;
+let p: point = { y: 2, x: 1 }
+puts(p.show())
+EOF
+
 echo ""
 echo "-- P0.1: TYPE MAP COMPLETENESS (NO EMITTER RE-INFERENCE) --"
 
