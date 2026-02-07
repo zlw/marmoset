@@ -800,11 +800,9 @@ let rec emit_expr
           let receiver_type = get_type type_map receiver in
 
           (* Look up which trait provides this method *)
-          match Typecheck.Trait_registry.lookup_method receiver_type variant_name with
-          | None ->
-              failwith
-                (Printf.sprintf "No method '%s' found for type %s" variant_name (Types.to_string receiver_type))
-          | Some (trait_name, _method_sig) ->
+          match Typecheck.Trait_registry.resolve_method receiver_type variant_name with
+          | Error msg -> failwith msg
+          | Ok (trait_name, _method_sig) ->
               (* Generate mangled function name: trait_method_type *)
               (* e.g., show_show_int64 for show trait, show method, int64 type *)
               let type_suffix = mangle_type receiver_type in

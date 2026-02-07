@@ -676,6 +676,41 @@ test_case "Multiple impls for different types" \
      42' \
     "true"
 
+test_case "Duplicate impl for same trait and type fails" \
+    'trait show[a] {
+       fn show(x: a) -> string
+     }
+     impl show for int {
+       fn show(x: int) -> string {
+         "first"
+       }
+     }
+     impl show for int {
+       fn show(x: int) -> string {
+         "second"
+       }
+     }
+     42' \
+    "false" \
+    "Duplicate impl for trait"
+
+run_build_fail_contains_from_stdin "Ambiguous method dispatch fails during typecheck" "Ambiguous method 'render'" << 'EOF'
+trait render_a[a] {
+  fn render(x: a) -> string
+}
+trait render_b[a] {
+  fn render(x: a) -> string
+}
+impl render_a for int {
+  fn render(x: int) -> string { "a" }
+}
+impl render_b for int {
+  fn render(x: int) -> string { "b" }
+}
+let x = 1
+puts(x.render())
+EOF
+
 test_case "Derive single trait for primitive" \
     'trait eq[a] {
        fn eq(x: a, y: a) -> bool

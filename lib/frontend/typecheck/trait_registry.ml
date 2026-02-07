@@ -29,21 +29,29 @@ type impl_def = {
 (* Global mutable registries *)
 let trait_registry : (string, trait_def) Hashtbl.t = Hashtbl.create 16
 let impl_registry : (string * mono_type, impl_def) Hashtbl.t = Hashtbl.create 32 (* key: (trait_name, for_type) *)
+let builtin_impl_keys : (string * mono_type, unit) Hashtbl.t = Hashtbl.create 32
 
 let canonical_type (t : mono_type) : mono_type = canonicalize_mono_type t
+let is_builtin_impl_key (trait_name : string) (for_type : mono_type) : bool =
+  Hashtbl.mem builtin_impl_keys (trait_name, canonical_type for_type)
 
 let clear () =
   Hashtbl.clear trait_registry;
-  Hashtbl.clear impl_registry
+  Hashtbl.clear impl_registry;
+  Hashtbl.clear builtin_impl_keys
 
 (* Register a trait definition *)
 let register_trait (def : trait_def) : unit = Hashtbl.replace trait_registry def.trait_name def
 
 (* Register an impl block *)
-let register_impl (def : impl_def) : unit =
+let register_impl ?(builtin = false) (def : impl_def) : unit =
   let canonical_for_type = canonical_type def.impl_for_type in
   let def' = { def with impl_for_type = canonical_for_type } in
   let key = (def'.impl_trait_name, def'.impl_for_type) in
+  if builtin then
+    Hashtbl.replace builtin_impl_keys key ()
+  else
+    Hashtbl.remove builtin_impl_keys key;
   Hashtbl.replace impl_registry key def'
 
 (* Lookup a trait by name *)
@@ -64,28 +72,44 @@ let implements_trait (trait_name : string) (for_type : mono_type) : bool =
 
 (* Lookup a method implementation for a type by method name *)
 (* Returns: (trait_name, method_sig) option *)
-let lookup_method (for_type : mono_type) (method_name : string) : (string * method_sig) option =
+let lookup_method_candidates (for_type : mono_type) (method_name : string) : (string * method_sig) list =
   let for_type' = canonical_type for_type in
-  (* Search through all registered impls for this type *)
-  let matching_impls =
-    Hashtbl.fold
-      (fun (_trait_name, impl_type) impl_def acc ->
-        if impl_type = for_type' then
-          impl_def :: acc
-        else
-          acc)
-      impl_registry []
-  in
-  (* Search for the method in matching impls *)
-  let rec find_method impls =
-    match impls with
-    | [] -> None
-    | impl_def :: rest -> (
+  Hashtbl.fold
+    (fun (_trait_name, impl_type) impl_def acc ->
+      if impl_type <> for_type' then
+        acc
+      else
         match List.find_opt (fun m -> m.method_name = method_name) impl_def.impl_methods with
-        | Some method_sig -> Some (impl_def.impl_trait_name, method_sig)
-        | None -> find_method rest)
-  in
-  find_method matching_impls
+        | None -> acc
+        | Some method_sig -> (impl_def.impl_trait_name, method_sig) :: acc)
+    impl_registry []
+  |> List.sort (fun (trait_a, _) (trait_b, _) -> String.compare trait_a trait_b)
+
+let resolve_method (for_type : mono_type) (method_name : string) : ((string * method_sig), string) result =
+  let for_type' = canonical_type for_type in
+  let candidates = lookup_method_candidates for_type' method_name in
+  match candidates with
+  | [] ->
+      Error (Printf.sprintf "No method '%s' found for type %s" method_name (to_string for_type'))
+  | [ candidate ] -> Ok candidate
+  | many ->
+      let trait_names = many |> List.map fst |> List.sort_uniq String.compare in
+      Error
+        (Printf.sprintf "Ambiguous method '%s' for type %s (provided by traits: %s)" method_name
+           (to_string for_type')
+           (String.concat ", " trait_names))
+
+let lookup_method_unsafe_first (for_type : mono_type) (method_name : string) : (string * method_sig) option =
+  let matching = lookup_method_candidates for_type method_name in
+  match matching with
+  | [] -> None
+  | m :: _ -> Some m
+
+(*
+   Keep a deterministic "first match" lookup for compatibility with existing tests.
+   New typechecker/codegen call sites should use [resolve_method] for ambiguity errors.
+*)
+let lookup_method = lookup_method_unsafe_first
 
 (* Check if a trait can be auto-derived *)
 let is_derivable (trait_name : string) : bool =
@@ -151,17 +175,21 @@ let generate_derived_impl (trait_name : string) (for_type : mono_type) : impl_de
 
 (* Validate and register a derived implementation *)
 let derive_impl (trait_name : string) (for_type : mono_type) : (unit, string) result =
-  (* Validate that trait can be derived for this type *)
-  match can_derive trait_name for_type with
-  | Error msg -> Error msg
-  | Ok () -> (
-      (* Generate the impl *)
-      match generate_derived_impl trait_name for_type with
-      | None -> Error (Printf.sprintf "Failed to generate impl for trait '%s'" trait_name)
-      | Some impl_def ->
-          (* Register it *)
-          register_impl impl_def;
-          Ok ())
+  let for_type' = canonical_type for_type in
+  let generate () =
+    match can_derive trait_name for_type' with
+    | Error msg -> Error msg
+    | Ok () -> (
+        match generate_derived_impl trait_name for_type' with
+        | None -> Error (Printf.sprintf "Failed to generate impl for trait '%s'" trait_name)
+        | Some impl_def ->
+            register_impl impl_def;
+            Ok ())
+  in
+  match lookup_impl trait_name for_type' with
+  | Some _ when not (is_builtin_impl_key trait_name for_type') ->
+      Error (Printf.sprintf "Duplicate impl for trait '%s' and type %s" trait_name (to_string for_type'))
+  | _ -> generate ()
 
 (* Validate that a trait definition is well-formed *)
 let validate_trait_def (def : trait_def) : (unit, string) result =
@@ -182,87 +210,93 @@ let validate_trait_def (def : trait_def) : (unit, string) result =
     else
       Ok ()
 
+let validate_impl_signature (trait_def : trait_def) (def : impl_def) : (unit, string) result =
+  (* Check that all trait methods are implemented *)
+  let trait_method_names = List.map (fun m -> m.method_name) trait_def.trait_methods |> List.sort String.compare in
+  let impl_method_names = List.map (fun m -> m.method_name) def.impl_methods |> List.sort String.compare in
+
+  if trait_method_names <> impl_method_names then
+    Error
+      (Printf.sprintf "Impl for trait '%s' does not match trait signature (expected methods: %s, got: %s)"
+         def.impl_trait_name
+         (String.concat ", " trait_method_names)
+         (String.concat ", " impl_method_names))
+  else
+    (* Check each method signature matches *)
+    let check_method_sig (trait_method : method_sig) (impl_method : method_sig) : (unit, string) result =
+      (* Substitute trait type parameter with impl_for_type *)
+      let substitute_type (t : mono_type) : mono_type =
+        match trait_def.trait_type_param with
+        | None -> t (* No type param, use as-is *)
+        | Some type_param -> apply_substitution [ (type_param, def.impl_for_type) ] t
+      in
+
+      (* Check param count *)
+      if List.length trait_method.method_params <> List.length impl_method.method_params then
+        Error
+          (Printf.sprintf "Method '%s': expected %d parameters, got %d" trait_method.method_name
+             (List.length trait_method.method_params)
+             (List.length impl_method.method_params))
+      else
+        (* Check param types *)
+        let param_errors =
+          List.map2
+            (fun (_tname, ttype) (_iname, itype) ->
+              let expected_type = canonical_type (substitute_type ttype) in
+              let impl_type = canonical_type itype in
+              if expected_type = impl_type then
+                None
+              else
+                Some
+                  (Printf.sprintf "parameter type mismatch: expected %s, got %s" (to_string expected_type)
+                     (to_string impl_type)))
+            trait_method.method_params impl_method.method_params
+          |> List.filter_map (fun x -> x)
+        in
+
+        if param_errors <> [] then
+          Error (Printf.sprintf "Method '%s': %s" trait_method.method_name (List.hd param_errors))
+        else
+          (* Check return type *)
+          let expected_return = canonical_type (substitute_type trait_method.method_return_type) in
+          let impl_return = canonical_type impl_method.method_return_type in
+          if expected_return = impl_return then
+            Ok ()
+          else
+            Error
+              (Printf.sprintf "Method '%s': return type mismatch: expected %s, got %s" trait_method.method_name
+                 (to_string expected_return) (to_string impl_return))
+    in
+
+    (* Find each trait method in impl methods and validate *)
+    let errors =
+      List.filter_map
+        (fun trait_method ->
+          match List.find_opt (fun im -> im.method_name = trait_method.method_name) def.impl_methods with
+          | None -> Some (Printf.sprintf "Method '%s' not implemented" trait_method.method_name)
+          | Some impl_method -> (
+              match check_method_sig trait_method impl_method with
+              | Ok () -> None
+              | Error msg -> Some msg))
+        trait_def.trait_methods
+    in
+
+    if errors <> [] then
+      Error (String.concat "; " errors)
+    else
+      Ok ()
+
 (* Validate that an impl matches its trait signature *)
 let validate_impl (def : impl_def) : (unit, string) result =
-  match lookup_trait def.impl_trait_name with
-  | None -> Error (Printf.sprintf "Cannot implement undefined trait: %s" def.impl_trait_name)
-  | Some trait_def ->
-      (* Check that all trait methods are implemented *)
-      let trait_method_names =
-        List.map (fun m -> m.method_name) trait_def.trait_methods |> List.sort String.compare
-      in
-      let impl_method_names = List.map (fun m -> m.method_name) def.impl_methods |> List.sort String.compare in
-
-      if trait_method_names <> impl_method_names then
-        Error
-          (Printf.sprintf "Impl for trait '%s' does not match trait signature (expected methods: %s, got: %s)"
-             def.impl_trait_name
-             (String.concat ", " trait_method_names)
-             (String.concat ", " impl_method_names))
-      else
-        (* Check each method signature matches *)
-        let check_method_sig (trait_method : method_sig) (impl_method : method_sig) : (unit, string) result =
-          (* Substitute trait type parameter with impl_for_type *)
-          let substitute_type (t : mono_type) : mono_type =
-            match trait_def.trait_type_param with
-            | None -> t (* No type param, use as-is *)
-            | Some type_param -> apply_substitution [ (type_param, def.impl_for_type) ] t
-          in
-
-          (* Check param count *)
-          if List.length trait_method.method_params <> List.length impl_method.method_params then
-            Error
-              (Printf.sprintf "Method '%s': expected %d parameters, got %d" trait_method.method_name
-                 (List.length trait_method.method_params)
-                 (List.length impl_method.method_params))
-          else
-            (* Check param types *)
-          let param_errors =
-              List.map2
-                (fun (_tname, ttype) (_iname, itype) ->
-                  let expected_type = canonical_type (substitute_type ttype) in
-                  let impl_type = canonical_type itype in
-                  if expected_type = impl_type then
-                    None
-                  else
-                    Some
-                      (Printf.sprintf "parameter type mismatch: expected %s, got %s" (to_string expected_type)
-                         (to_string impl_type)))
-                trait_method.method_params impl_method.method_params
-              |> List.filter_map (fun x -> x)
-            in
-
-            if param_errors <> [] then
-              Error (Printf.sprintf "Method '%s': %s" trait_method.method_name (List.hd param_errors))
-            else
-              (* Check return type *)
-              let expected_return = canonical_type (substitute_type trait_method.method_return_type) in
-              let impl_return = canonical_type impl_method.method_return_type in
-              if expected_return = impl_return then
-                Ok ()
-              else
-                Error
-                  (Printf.sprintf "Method '%s': return type mismatch: expected %s, got %s"
-                     trait_method.method_name (to_string expected_return) (to_string impl_return))
-        in
-
-        (* Find each trait method in impl methods and validate *)
-        let errors =
-          List.filter_map
-            (fun trait_method ->
-              match List.find_opt (fun im -> im.method_name = trait_method.method_name) def.impl_methods with
-              | None -> Some (Printf.sprintf "Method '%s' not implemented" trait_method.method_name)
-              | Some impl_method -> (
-                  match check_method_sig trait_method impl_method with
-                  | Ok () -> None
-                  | Error msg -> Some msg))
-            trait_def.trait_methods
-        in
-
-        if errors <> [] then
-          Error (String.concat "; " errors)
-        else
-          Ok ()
+  let for_type' = canonical_type def.impl_for_type in
+  let def' = { def with impl_for_type = for_type' } in
+  match lookup_impl def'.impl_trait_name for_type' with
+  | Some _ when not (is_builtin_impl_key def'.impl_trait_name for_type') ->
+      Error (Printf.sprintf "Duplicate impl for trait '%s' and type %s" def'.impl_trait_name (to_string for_type'))
+  | _ -> (
+      match lookup_trait def'.impl_trait_name with
+      | None -> Error (Printf.sprintf "Cannot implement undefined trait: %s" def'.impl_trait_name)
+      | Some trait_def -> validate_impl_signature trait_def def')
 
 (* Initialize with built-in traits (if any) *)
 let init_builtins () = clear ()
@@ -400,6 +434,113 @@ let%test "lookup_method canonicalizes reordered record receiver" =
   match lookup_method (TRecord ([ { name = "y"; typ = TInt }; { name = "x"; typ = TInt } ], None)) "show" with
   | Some ("show", _) -> true
   | _ -> false
+
+let%test "resolve_method reports ambiguity for multiple matching traits" =
+  clear ();
+  register_trait
+    {
+      trait_name = "render_a";
+      trait_type_param = Some "a";
+      trait_supertraits = [];
+      trait_methods =
+        [ { method_name = "render"; method_params = [ ("x", TVar "a") ]; method_return_type = TString } ];
+    };
+  register_trait
+    {
+      trait_name = "render_b";
+      trait_type_param = Some "a";
+      trait_supertraits = [];
+      trait_methods =
+        [ { method_name = "render"; method_params = [ ("x", TVar "a") ]; method_return_type = TString } ];
+    };
+  register_impl
+    {
+      impl_trait_name = "render_a";
+      impl_type_params = [];
+      impl_for_type = TInt;
+      impl_methods = [ { method_name = "render"; method_params = [ ("x", TInt) ]; method_return_type = TString } ];
+    };
+  register_impl
+    {
+      impl_trait_name = "render_b";
+      impl_type_params = [];
+      impl_for_type = TInt;
+      impl_methods = [ { method_name = "render"; method_params = [ ("x", TInt) ]; method_return_type = TString } ];
+    };
+  match resolve_method TInt "render" with
+  | Ok _ -> false
+  | Error msg ->
+      String.length msg > 0 && String.sub msg 0 (min 16 (String.length msg)) = "Ambiguous method"
+
+let%test "validate_impl rejects duplicate trait/type pair" =
+  clear ();
+  let show_trait =
+    {
+      trait_name = "show";
+      trait_type_param = Some "a";
+      trait_supertraits = [];
+      trait_methods =
+        [ { method_name = "show"; method_params = [ ("x", TVar "a") ]; method_return_type = TString } ];
+    }
+  in
+  register_trait show_trait;
+  register_impl
+    {
+      impl_trait_name = "show";
+      impl_type_params = [];
+      impl_for_type = TInt;
+      impl_methods = [ { method_name = "show"; method_params = [ ("x", TInt) ]; method_return_type = TString } ];
+    };
+  match
+    validate_impl
+      {
+        impl_trait_name = "show";
+        impl_type_params = [];
+        impl_for_type = TInt;
+        impl_methods = [ { method_name = "show"; method_params = [ ("x", TInt) ]; method_return_type = TString } ];
+      }
+  with
+  | Error msg ->
+      String.length msg > 0 && String.sub msg 0 (min 24 (String.length msg)) = "Duplicate impl for trait"
+  | Ok () -> false
+
+let%test "validate_impl allows overriding builtin impl once" =
+  clear ();
+  let show_trait =
+    {
+      trait_name = "show";
+      trait_type_param = Some "a";
+      trait_supertraits = [];
+      trait_methods =
+        [ { method_name = "show"; method_params = [ ("x", TVar "a") ]; method_return_type = TString } ];
+    }
+  in
+  register_trait show_trait;
+  let builtin_show_for_int =
+    {
+      impl_trait_name = "show";
+      impl_type_params = [];
+      impl_for_type = TInt;
+      impl_methods = [ { method_name = "show"; method_params = [ ("x", TInt) ]; method_return_type = TString } ];
+    }
+  in
+  let user_show_for_int =
+    {
+      impl_trait_name = "show";
+      impl_type_params = [];
+      impl_for_type = TInt;
+      impl_methods = [ { method_name = "show"; method_params = [ ("x", TInt) ]; method_return_type = TString } ];
+    }
+  in
+  register_impl ~builtin:true builtin_show_for_int;
+  match validate_impl user_show_for_int with
+  | Error _ -> false
+  | Ok () ->
+      register_impl user_show_for_int;
+      (match validate_impl user_show_for_int with
+      | Ok () -> false
+      | Error msg ->
+          String.length msg > 0 && String.sub msg 0 (min 24 (String.length msg)) = "Duplicate impl for trait")
 
 (* Comprehensive impl validation tests *)
 
@@ -754,6 +895,33 @@ let%test "derive_impl - registers impl" =
       match lookup_impl "eq" TInt with
       | None -> false
       | Some _ -> implements_trait "eq" TInt)
+
+let%test "derive_impl - overriding builtin impl is allowed once" =
+  clear ();
+  let show_trait =
+    {
+      trait_name = "show";
+      trait_type_param = Some "a";
+      trait_supertraits = [];
+      trait_methods =
+        [ { method_name = "show"; method_params = [ ("x", TVar "a") ]; method_return_type = TString } ];
+    }
+  in
+  register_trait show_trait;
+  register_impl ~builtin:true
+    {
+      impl_trait_name = "show";
+      impl_type_params = [];
+      impl_for_type = TInt;
+      impl_methods = [ { method_name = "show"; method_params = [ ("x", TInt) ]; method_return_type = TString } ];
+    };
+  match derive_impl "show" TInt with
+  | Error _ -> false
+  | Ok () -> (
+      match derive_impl "show" TInt with
+      | Ok () -> false
+      | Error msg ->
+          String.length msg > 0 && String.sub msg 0 (min 24 (String.length msg)) = "Duplicate impl for trait")
 
 let%test "derive_impl - fails for non-derivable" =
   clear ();

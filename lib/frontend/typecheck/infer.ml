@@ -148,7 +148,9 @@ let fresh_type_var () : mono_type =
   TVar ("t" ^ string_of_int n)
 
 (* Reset counter (useful for testing to get predictable names) *)
-let reset_fresh_counter () = fresh_var_counter := 0
+let reset_fresh_counter () =
+  fresh_var_counter := 0;
+  clear_constraint_store ()
 
 (* ============================================================
    Instantiation
@@ -569,15 +571,15 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                       let constraints = lookup_type_var_constraints type_var_name in
                       if constraints = [] then
                         (* No constraints, can't find method *)
-                        None
+                        `Not_found
                       else
                         (* Check if any constraint provides this method *)
                         match Trait_solver.method_available method_name constraints with
-                        | None -> None
+                        | None -> `Not_found
                         | Some trait_name -> (
                             (* Found the trait that provides this method *)
                             match Trait_registry.lookup_trait trait_name with
-                            | None -> None
+                            | None -> `Not_found
                             | Some trait_def -> (
                                 (* Find the method signature in the trait *)
                                 match
@@ -585,22 +587,26 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                                     (fun (m : Trait_registry.method_sig) -> m.method_name = method_name)
                                     trait_def.trait_methods
                                 with
-                                | None -> None
-                                | Some method_sig -> Some (trait_name, method_sig))))
+                                | None -> `Not_found
+                                | Some method_sig -> `Found (trait_name, method_sig))))
                   | _ ->
-                      (* Concrete type, use normal lookup *)
-                      Trait_registry.lookup_method receiver_type' method_name
+                      (* Concrete type: resolve ambiguity deterministically. *)
+                      (match Trait_registry.resolve_method receiver_type' method_name with
+                      | Ok method_info -> `Found method_info
+                      | Error msg -> `Error msg)
                 in
 
                 match method_lookup_result with
-                | None ->
+                | `Error msg ->
+                    Error (error_at (ConstructorError msg) expr)
+                | `Not_found ->
                     Error
                       (error_at
                          (ConstructorError
                             (Printf.sprintf "No method '%s' found for type %s" method_name
                                (Types.to_string receiver_type')))
                          expr)
-                | Some (trait_name, method_sig) -> (
+                | `Found (trait_name, method_sig) -> (
                     (* Type check the method call *)
                     (* Method signature has receiver as first parameter *)
                     (* receiver.method(arg1, arg2) becomes method(receiver, arg1, arg2) *)
@@ -1971,7 +1977,6 @@ let check_expression (type_map : type_map) (env : type_env) (expr : AST.expressi
    ============================================================ *)
 
 let infer_program ?(env = empty_env) (program : AST.program) : (type_env * type_map * mono_type) infer_result =
-  reset_fresh_counter ();
   Annotation.clear_type_aliases ();
   let type_map = create_type_map () in
   let rec go env subst stmts =
@@ -2395,4 +2400,20 @@ match result.success(42) {
     match infer_string code with
     | Error _ -> true
     | Ok _ -> false
+
+  let%test "constraint store does not leak across independent runs" =
+    let constrained_code =
+      "trait show[a] {
+  fn show(x: a) -> string
+}
+let f = fn[a: show](x: a) -> string { x.show() }
+f"
+    in
+    let unconstrained_code = "let id = fn(x) { x }; id([1, 2, 3])" in
+    match infer_string constrained_code with
+    | Error _ -> false
+    | Ok _ -> (
+        match infer_string unconstrained_code with
+        | Error _ -> false
+        | Ok (_, _, inferred_type) -> inferred_type = TArray TInt)
 end

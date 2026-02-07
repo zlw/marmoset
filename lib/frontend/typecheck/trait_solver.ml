@@ -99,7 +99,7 @@ let setup_builtins () =
         ];
     };
   (* Register impls for int *)
-  Trait_registry.register_impl
+  Trait_registry.register_impl ~builtin:true
     {
       impl_trait_name = "show";
       impl_type_params = [];
@@ -107,7 +107,7 @@ let setup_builtins () =
       impl_methods =
         [ { method_name = "show"; method_params = [ ("x", Types.TInt) ]; method_return_type = Types.TString } ];
     };
-  Trait_registry.register_impl
+  Trait_registry.register_impl ~builtin:true
     {
       impl_trait_name = "eq";
       impl_type_params = [];
@@ -122,7 +122,7 @@ let setup_builtins () =
         ];
     };
   (* Register impl for string *)
-  Trait_registry.register_impl
+  Trait_registry.register_impl ~builtin:true
     {
       impl_trait_name = "show";
       impl_type_params = [];

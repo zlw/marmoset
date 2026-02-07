@@ -174,7 +174,7 @@ let init_builtin_impls () =
   (* int: show, eq, debug, ord, hash, num, neg *)
 
   (* impl show for int *)
-  Trait_registry.register_impl
+  Trait_registry.register_impl ~builtin:true
     {
       impl_trait_name = "show";
       impl_type_params = [];
@@ -183,7 +183,7 @@ let init_builtin_impls () =
     };
 
   (* impl eq for int *)
-  Trait_registry.register_impl
+  Trait_registry.register_impl ~builtin:true
     {
       impl_trait_name = "eq";
       impl_type_params = [];
@@ -193,7 +193,7 @@ let init_builtin_impls () =
     };
 
   (* impl debug for int *)
-  Trait_registry.register_impl
+  Trait_registry.register_impl ~builtin:true
     {
       impl_trait_name = "debug";
       impl_type_params = [];
@@ -202,7 +202,7 @@ let init_builtin_impls () =
     };
 
   (* impl ord for int *)
-  Trait_registry.register_impl
+  Trait_registry.register_impl ~builtin:true
     {
       impl_trait_name = "ord";
       impl_type_params = [];
@@ -218,7 +218,7 @@ let init_builtin_impls () =
     };
 
   (* impl hash for int *)
-  Trait_registry.register_impl
+  Trait_registry.register_impl ~builtin:true
     {
       impl_trait_name = "hash";
       impl_type_params = [];
@@ -227,7 +227,7 @@ let init_builtin_impls () =
     };
 
   (* impl num for int *)
-  Trait_registry.register_impl
+  Trait_registry.register_impl ~builtin:true
     {
       impl_trait_name = "num";
       impl_type_params = [];
@@ -242,7 +242,7 @@ let init_builtin_impls () =
     };
 
   (* impl neg for int *)
-  Trait_registry.register_impl
+  Trait_registry.register_impl ~builtin:true
     {
       impl_trait_name = "neg";
       impl_type_params = [];
@@ -253,7 +253,7 @@ let init_builtin_impls () =
   (* bool: show, eq, debug, ord, hash *)
 
   (* impl show for bool *)
-  Trait_registry.register_impl
+  Trait_registry.register_impl ~builtin:true
     {
       impl_trait_name = "show";
       impl_type_params = [];
@@ -262,7 +262,7 @@ let init_builtin_impls () =
     };
 
   (* impl eq for bool *)
-  Trait_registry.register_impl
+  Trait_registry.register_impl ~builtin:true
     {
       impl_trait_name = "eq";
       impl_type_params = [];
@@ -272,7 +272,7 @@ let init_builtin_impls () =
     };
 
   (* impl debug for bool *)
-  Trait_registry.register_impl
+  Trait_registry.register_impl ~builtin:true
     {
       impl_trait_name = "debug";
       impl_type_params = [];
@@ -281,7 +281,7 @@ let init_builtin_impls () =
     };
 
   (* impl ord for bool *)
-  Trait_registry.register_impl
+  Trait_registry.register_impl ~builtin:true
     {
       impl_trait_name = "ord";
       impl_type_params = [];
@@ -297,7 +297,7 @@ let init_builtin_impls () =
     };
 
   (* impl hash for bool *)
-  Trait_registry.register_impl
+  Trait_registry.register_impl ~builtin:true
     {
       impl_trait_name = "hash";
       impl_type_params = [];
@@ -308,7 +308,7 @@ let init_builtin_impls () =
   (* string: show, eq, debug, ord, hash *)
 
   (* impl show for string *)
-  Trait_registry.register_impl
+  Trait_registry.register_impl ~builtin:true
     {
       impl_trait_name = "show";
       impl_type_params = [];
@@ -318,7 +318,7 @@ let init_builtin_impls () =
     };
 
   (* impl eq for string *)
-  Trait_registry.register_impl
+  Trait_registry.register_impl ~builtin:true
     {
       impl_trait_name = "eq";
       impl_type_params = [];
@@ -328,7 +328,7 @@ let init_builtin_impls () =
     };
 
   (* impl debug for string *)
-  Trait_registry.register_impl
+  Trait_registry.register_impl ~builtin:true
     {
       impl_trait_name = "debug";
       impl_type_params = [];
@@ -338,7 +338,7 @@ let init_builtin_impls () =
     };
 
   (* impl ord for string *)
-  Trait_registry.register_impl
+  Trait_registry.register_impl ~builtin:true
     {
       impl_trait_name = "ord";
       impl_type_params = [];
@@ -354,7 +354,7 @@ let init_builtin_impls () =
     };
 
   (* impl hash for string *)
-  Trait_registry.register_impl
+  Trait_registry.register_impl ~builtin:true
     {
       impl_trait_name = "hash";
       impl_type_params = [];
@@ -365,7 +365,7 @@ let init_builtin_impls () =
   (* float: show, eq, debug, ord, num, neg (NO hash) *)
 
   (* impl show for float *)
-  Trait_registry.register_impl
+  Trait_registry.register_impl ~builtin:true
     {
       impl_trait_name = "show";
       impl_type_params = [];
@@ -374,7 +374,7 @@ let init_builtin_impls () =
     };
 
   (* impl eq for float *)
-  Trait_registry.register_impl
+  Trait_registry.register_impl ~builtin:true
     {
       impl_trait_name = "eq";
       impl_type_params = [];
@@ -384,7 +384,7 @@ let init_builtin_impls () =
     };
 
   (* impl debug for float *)
-  Trait_registry.register_impl
+  Trait_registry.register_impl ~builtin:true
     {
       impl_trait_name = "debug";
       impl_type_params = [];
@@ -394,7 +394,7 @@ let init_builtin_impls () =
     };
 
   (* impl ord for float *)
-  Trait_registry.register_impl
+  Trait_registry.register_impl ~builtin:true
     {
       impl_trait_name = "ord";
       impl_type_params = [];
@@ -410,7 +410,7 @@ let init_builtin_impls () =
     };
 
   (* impl num for float *)
-  Trait_registry.register_impl
+  Trait_registry.register_impl ~builtin:true
     {
       impl_trait_name = "num";
       impl_type_params = [];
@@ -425,7 +425,7 @@ let init_builtin_impls () =
     };
 
   (* impl neg for float *)
-  Trait_registry.register_impl
+  Trait_registry.register_impl ~builtin:true
     {
       impl_trait_name = "neg";
       impl_type_params = [];
