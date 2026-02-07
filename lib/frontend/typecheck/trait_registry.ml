@@ -99,17 +99,10 @@ let resolve_method (for_type : mono_type) (method_name : string) : ((string * me
            (to_string for_type')
            (String.concat ", " trait_names))
 
-let lookup_method_unsafe_first (for_type : mono_type) (method_name : string) : (string * method_sig) option =
-  let matching = lookup_method_candidates for_type method_name in
-  match matching with
-  | [] -> None
-  | m :: _ -> Some m
-
-(*
-   Keep a deterministic "first match" lookup for compatibility with existing tests.
-   New typechecker/codegen call sites should use [resolve_method] for ambiguity errors.
-*)
-let lookup_method = lookup_method_unsafe_first
+let lookup_method (for_type : mono_type) (method_name : string) : (string * method_sig) option =
+  match resolve_method for_type method_name with
+  | Ok resolved -> Some resolved
+  | Error _ -> None
 
 (* Check if a trait can be auto-derived *)
 let is_derivable (trait_name : string) : bool =
@@ -471,6 +464,42 @@ let%test "resolve_method reports ambiguity for multiple matching traits" =
   | Ok _ -> false
   | Error msg ->
       String.length msg > 0 && String.sub msg 0 (min 16 (String.length msg)) = "Ambiguous method"
+
+let%test "lookup_method no longer picks first candidate on ambiguity" =
+  clear ();
+  register_trait
+    {
+      trait_name = "render_a";
+      trait_type_param = Some "a";
+      trait_supertraits = [];
+      trait_methods =
+        [ { method_name = "render"; method_params = [ ("x", TVar "a") ]; method_return_type = TString } ];
+    };
+  register_trait
+    {
+      trait_name = "render_b";
+      trait_type_param = Some "a";
+      trait_supertraits = [];
+      trait_methods =
+        [ { method_name = "render"; method_params = [ ("x", TVar "a") ]; method_return_type = TString } ];
+    };
+  register_impl
+    {
+      impl_trait_name = "render_a";
+      impl_type_params = [];
+      impl_for_type = TInt;
+      impl_methods = [ { method_name = "render"; method_params = [ ("x", TInt) ]; method_return_type = TString } ];
+    };
+  register_impl
+    {
+      impl_trait_name = "render_b";
+      impl_type_params = [];
+      impl_for_type = TInt;
+      impl_methods = [ { method_name = "render"; method_params = [ ("x", TInt) ]; method_return_type = TString } ];
+    };
+  match lookup_method TInt "render" with
+  | None -> true
+  | Some _ -> false
 
 let%test "validate_impl rejects duplicate trait/type pair" =
   clear ();
