@@ -1977,6 +1977,9 @@ let check_expression (type_map : type_map) (env : type_env) (expr : AST.expressi
    ============================================================ *)
 
 let infer_program ?(env = empty_env) (program : AST.program) : (type_env * type_map * mono_type) infer_result =
+  (* Each program inference run must start from isolated inference state.
+     This prevents stale trait constraints from prior runs influencing new checks. *)
+  reset_fresh_counter ();
   Annotation.clear_type_aliases ();
   let type_map = create_type_map () in
   let rec go env subst stmts =
@@ -2416,4 +2419,17 @@ f"
         match infer_string unconstrained_code with
         | Error _ -> false
         | Ok (_, _, inferred_type) -> inferred_type = TArray TInt)
+
+  let%test "infer_program isolates itself from stale global constraint state" =
+    (* Simulate stale process-global state from an earlier session. *)
+    clear_constraint_store ();
+    fresh_var_counter := 0;
+    add_type_var_constraints "t0" [ "show" ];
+    let code = "(fn(x) { x })(fn(y) { y })" in
+    match Syntax.Parser.parse code with
+    | Error _ -> false
+    | Ok program -> (
+        match infer_program program with
+        | Error _ -> false
+        | Ok (_, _, _) -> true)
 end
