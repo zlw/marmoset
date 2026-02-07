@@ -70,6 +70,7 @@ type func_def = {
 (* An instantiation: concrete types for a polymorphic function *)
 type instantiation = {
   func_name : string;
+  module_path : string; (* Future-proof symbol namespace for modules *)
   func_expr_id : int; (* Stable symbol identity within a program *)
   func_arity : int;
   concrete_only_mode : bool;
@@ -81,27 +82,31 @@ module InstSet = Set.Make (struct
   type t = instantiation
 
   let compare a b =
-    let c = compare a.func_expr_id b.func_expr_id in
+    let c = String.compare a.module_path b.module_path in
     if c <> 0 then
       c
     else
-      let c = String.compare a.func_name b.func_name in
+      let c = compare a.func_expr_id b.func_expr_id in
       if c <> 0 then
         c
       else
-        let c = compare a.func_arity b.func_arity in
+        let c = String.compare a.func_name b.func_name in
         if c <> 0 then
           c
         else
-          let c = compare a.concrete_only_mode b.concrete_only_mode in
+          let c = compare a.func_arity b.func_arity in
           if c <> 0 then
             c
           else
-            let c = compare a.concrete_types b.concrete_types in
+            let c = compare a.concrete_only_mode b.concrete_only_mode in
             if c <> 0 then
               c
             else
-              compare a.return_type b.return_type
+              let c = compare a.concrete_types b.concrete_types in
+              if c <> 0 then
+                c
+              else
+                compare a.return_type b.return_type
 end)
 
 (* Set to track enum type instantiations *)
@@ -116,15 +121,17 @@ type mono_state = {
   mutable instantiations : InstSet.t;
   mutable enum_insts : EnumInstSet.t; (* Track which enum types we need to generate *)
   mutable name_counter : int;
+  module_path : string; (* namespace identity for future module-aware builds *)
   concrete_only : bool; (* Phase 4.3: Rust-style (true) vs TypeScript-style (false) codegen *)
 }
 
-let create_mono_state ?(concrete_only = true) () =
+let create_mono_state ?(module_path = "main") ?(concrete_only = true) () =
   {
     func_defs = [];
     instantiations = InstSet.empty;
     enum_insts = EnumInstSet.empty;
     name_counter = 0;
+    module_path;
     concrete_only;
   }
 
@@ -528,6 +535,7 @@ and collect_insts_expr
               let inst =
                 {
                   func_name = func_def.name;
+                  module_path = state.module_path;
                   func_expr_id = func_def.func_expr_id;
                   func_arity = arity;
                   concrete_only_mode = state.concrete_only;
@@ -2415,6 +2423,21 @@ let%test "polymorphic function multiple instantiations" =
       && string_contains code "id_int64(int64(5))"
       && string_contains code "id_bool(true)"
   | Error _ -> false
+
+let%test "instantiation identity includes module path" =
+  let mk module_path =
+    {
+      func_name = "f";
+      module_path;
+      func_expr_id = 1;
+      func_arity = 1;
+      concrete_only_mode = true;
+      concrete_types = [ Types.TInt ];
+      return_type = Types.TInt;
+    }
+  in
+  let set = InstSet.empty |> InstSet.add (mk "main") |> InstSet.add (mk "pkg/math") in
+  InstSet.cardinal set = 2
 
 let%test "emit array index with literal" =
   match compile_string "let a = [1,2,3]; a[0]" with
