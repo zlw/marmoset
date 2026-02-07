@@ -48,11 +48,27 @@ let register_impl ?(builtin = false) (def : impl_def) : unit =
   let canonical_for_type = canonical_type def.impl_for_type in
   let def' = { def with impl_for_type = canonical_for_type } in
   let key = (def'.impl_trait_name, def'.impl_for_type) in
-  if builtin then
-    Hashtbl.replace builtin_impl_keys key ()
+  let existing = Hashtbl.find_opt impl_registry key in
+  if builtin then (
+    match existing with
+    | Some _ when not (Hashtbl.mem builtin_impl_keys key) ->
+        failwith
+          (Printf.sprintf
+             "Duplicate impl registration for trait '%s' and type %s (existing user impl cannot be replaced by builtin)"
+             def'.impl_trait_name (to_string def'.impl_for_type))
+    | _ ->
+        Hashtbl.replace builtin_impl_keys key ();
+        Hashtbl.replace impl_registry key def')
   else
-    Hashtbl.remove builtin_impl_keys key;
-  Hashtbl.replace impl_registry key def'
+    match existing with
+    | Some _ when not (Hashtbl.mem builtin_impl_keys key) ->
+        failwith
+          (Printf.sprintf "Duplicate impl registration for trait '%s' and type %s" def'.impl_trait_name
+             (to_string def'.impl_for_type))
+    | _ ->
+        (* User impl replaces builtin marker for this key (allowed exactly once). *)
+        Hashtbl.remove builtin_impl_keys key;
+        Hashtbl.replace impl_registry key def'
 
 (* Lookup a trait by name *)
 let lookup_trait (name : string) : trait_def option = Hashtbl.find_opt trait_registry name
@@ -372,6 +388,79 @@ let%test "register and lookup impl" =
   match lookup_impl "show" TInt with
   | None -> false
   | Some def -> def.impl_trait_name = "show" && def.impl_for_type = TInt
+
+let%test "register_impl rejects duplicate user impl at registration" =
+  clear ();
+  register_trait
+    {
+      trait_name = "show";
+      trait_type_param = Some "a";
+      trait_supertraits = [];
+      trait_methods =
+        [ { method_name = "show"; method_params = [ ("x", TVar "a") ]; method_return_type = TString } ];
+    };
+  let show_for_int =
+    {
+      impl_trait_name = "show";
+      impl_type_params = [];
+      impl_for_type = TInt;
+      impl_methods = [ { method_name = "show"; method_params = [ ("x", TInt) ]; method_return_type = TString } ];
+    }
+  in
+  register_impl show_for_int;
+  let contains_substring s sub =
+    let len_s = String.length s in
+    let len_sub = String.length sub in
+    let rec loop i =
+      if i + len_sub > len_s then
+        false
+      else if String.sub s i len_sub = sub then
+        true
+      else
+        loop (i + 1)
+    in
+    loop 0
+  in
+  match
+    try
+      register_impl show_for_int;
+      None
+    with Failure msg -> Some msg
+  with
+  | None -> false
+  | Some msg -> contains_substring msg "Duplicate impl registration"
+
+let%test "register_impl allows user override of builtin impl key" =
+  clear ();
+  register_trait
+    {
+      trait_name = "show";
+      trait_type_param = Some "a";
+      trait_supertraits = [];
+      trait_methods =
+        [ { method_name = "show"; method_params = [ ("x", TVar "a") ]; method_return_type = TString } ];
+    };
+  let builtin_show_for_int =
+    {
+      impl_trait_name = "show";
+      impl_type_params = [];
+      impl_for_type = TInt;
+      impl_methods = [ { method_name = "show"; method_params = [ ("x", TInt) ]; method_return_type = TString } ];
+    }
+  in
+  let user_show_for_int =
+    {
+      impl_trait_name = "show";
+      impl_type_params = [];
+      impl_for_type = TInt;
+      impl_methods = [ { method_name = "show"; method_params = [ ("x", TInt) ]; method_return_type = TString } ];
+    }
+  in
+  register_impl ~builtin:true builtin_show_for_int;
+  (try
+     register_impl user_show_for_int;
+     true
+   with Failure _ -> false)
 
 let%test "implements_trait checks impl registry" =
   clear ();
