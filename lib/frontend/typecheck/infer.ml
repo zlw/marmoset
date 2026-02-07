@@ -51,24 +51,53 @@ let record_type (type_map : type_map) (expr : AST.expression) (t : mono_type) : 
   Hashtbl.add type_map expr.id t
 
 (* ============================================================
-   Constraint Context
+   Inference Session State
    ============================================================
    
-   Tracks trait constraints for type variables.
-   Global store (like trait_registry) for simplicity.
+   Tracks mutable per-inference-run state:
+   - fresh type-variable counter
+   - trait constraints attached to type variables
+   
+   We keep this state explicit so callers can choose:
+   - isolated runs (fresh state per check), or
+   - session runs (shared state across multiple checks, e.g. REPL).
 *)
 
-let constraint_store : (string, string list) Hashtbl.t = Hashtbl.create 64
+type inference_state = {
+  fresh_var_counter : int ref;
+  constraint_store : (string, string list) Hashtbl.t;
+}
+
+let create_inference_state () : inference_state =
+  {
+    fresh_var_counter = ref 0;
+    constraint_store = Hashtbl.create 64;
+  }
+
+let active_inference_state : inference_state ref = ref (create_inference_state ())
+
+let with_inference_state (state : inference_state) (f : unit -> 'a) : 'a =
+  let previous = !active_inference_state in
+  active_inference_state := state;
+  try
+    let result = f () in
+    active_inference_state := previous;
+    result
+  with exn ->
+    active_inference_state := previous;
+    raise exn
+
+let current_constraint_store () : (string, string list) Hashtbl.t = (!active_inference_state).constraint_store
 
 let add_type_var_constraints (type_var_name : string) (traits : string list) : unit =
-  Hashtbl.add constraint_store type_var_name traits
+  Hashtbl.add (current_constraint_store ()) type_var_name traits
 
 let lookup_type_var_constraints (type_var_name : string) : string list =
-  match Hashtbl.find_opt constraint_store type_var_name with
+  match Hashtbl.find_opt (current_constraint_store ()) type_var_name with
   | Some traits -> traits
   | None -> []
 
-let clear_constraint_store () : unit = Hashtbl.clear constraint_store
+let clear_constraint_store () : unit = Hashtbl.clear (current_constraint_store ())
 
 type obligation_reason = GenericConstraint of string
 
@@ -170,16 +199,22 @@ let verify_constraints_in_substitution (subst : substitution) : (unit, string) r
    Using a simple counter: t0, t1, t2, ...
 *)
 
-let fresh_var_counter = ref 0
-
 let fresh_type_var () : mono_type =
-  let n = !fresh_var_counter in
-  fresh_var_counter := n + 1;
+  let counter = (!active_inference_state).fresh_var_counter in
+  let n = !counter in
+  counter := n + 1;
   TVar ("t" ^ string_of_int n)
+
+let fresh_row_var () : mono_type =
+  let counter = (!active_inference_state).fresh_var_counter in
+  let n = !counter in
+  counter := n + 1;
+  TRowVar ("r" ^ string_of_int n)
 
 (* Reset counter (useful for testing to get predictable names) *)
 let reset_fresh_counter () =
-  fresh_var_counter := 0;
+  let state = !active_inference_state in
+  state.fresh_var_counter := 0;
   clear_constraint_store ()
 
 (* ============================================================
@@ -517,8 +552,7 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                   | TVar _ ->
                       (* Row-polymorphic field access: receiver must have this field plus unknown tail *)
                       let field_type = fresh_type_var () in
-                      let row_var = TRowVar ("r" ^ string_of_int !fresh_var_counter) in
-                      fresh_var_counter := !fresh_var_counter + 1;
+                      let row_var = fresh_row_var () in
                       let expected = TRecord ([ { name = variant_name; typ = field_type } ], Some row_var) in
                       (match unify receiver_type' expected with
                       | Error e -> Error (error_at (UnificationError e) expr)
@@ -612,22 +646,30 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                         (* No constraints, can't find method *)
                         `Not_found
                       else
-                        (* Check if any constraint provides this method *)
-                        match Trait_solver.method_available method_name constraints with
-                        | None -> `Not_found
-                        | Some trait_name -> (
-                            (* Found the trait that provides this method *)
-                            match Trait_registry.lookup_trait trait_name with
-                            | None -> `Not_found
-                            | Some trait_def -> (
-                                (* Find the method signature in the trait *)
-                                match
-                                  List.find_opt
-                                    (fun (m : Trait_registry.method_sig) -> m.method_name = method_name)
-                                    trait_def.trait_methods
-                                with
-                                | None -> `Not_found
-                                | Some method_sig -> `Found (trait_name, method_sig))))
+                        let candidates =
+                          constraints
+                          |> List.filter_map (fun trait_name ->
+                                 match Trait_registry.lookup_trait trait_name with
+                                 | None -> None
+                                 | Some trait_def -> (
+                                     match
+                                       List.find_opt
+                                         (fun (m : Trait_registry.method_sig) -> m.method_name = method_name)
+                                         trait_def.trait_methods
+                                     with
+                                     | None -> None
+                                     | Some method_sig -> Some (trait_name, method_sig)))
+                          |> List.sort (fun (a, _) (b, _) -> String.compare a b)
+                        in
+                        (match candidates with
+                        | [] -> `Not_found
+                        | [ candidate ] -> `Found candidate
+                        | many ->
+                            let trait_names = many |> List.map fst |> List.sort_uniq String.compare in
+                            `Error
+                              (Printf.sprintf
+                                 "Ambiguous method '%s' for constrained type variable '%s' (provided by traits: %s)"
+                                 method_name type_var_name (String.concat ", " trait_names))))
                   | _ ->
                       (* Concrete type: resolve ambiguity deterministically. *)
                       (match Trait_registry.resolve_method receiver_type' method_name with
@@ -1350,8 +1392,7 @@ and infer_record_literal type_map env fields spread expr =
                   let merged = merge_fields base_fields field_types in
                   Ok (subst, Types.canonicalize_mono_type (TRecord (merged, base_row)))
               | TVar _ ->
-                  let row_var = TRowVar ("r" ^ string_of_int !fresh_var_counter) in
-                  fresh_var_counter := !fresh_var_counter + 1;
+                  let row_var = fresh_row_var () in
                   let expected_base = TRecord ([], Some row_var) in
                   (match unify spread_type' expected_base with
                   | Error e -> Error (error_at (UnificationError e) spread_expr)
@@ -2016,73 +2057,71 @@ let check_expression (type_map : type_map) (env : type_env) (expr : AST.expressi
    Program Inference
    ============================================================ *)
 
-let infer_program ?(env = empty_env) (program : AST.program) : (type_env * type_map * mono_type) infer_result =
-  (* Each program inference run must start from isolated inference state.
-     This prevents stale trait constraints from prior runs influencing new checks. *)
-  reset_fresh_counter ();
-  Annotation.clear_type_aliases ();
-  let type_map = create_type_map () in
-  let rec go env subst stmts =
-    match stmts with
-    | [] -> Ok (env, subst, TNull)
-    | [ stmt_node ] -> (
-        let stmt : AST.statement = stmt_node in
-        (match stmt.stmt with
-        | AST.TypeAlias alias_def -> Annotation.register_type_alias alias_def
-        | _ -> ());
-        match infer_statement type_map env stmt with
-        | Error e -> Error e
-        | Ok (subst', result_type) ->
-            let final_subst = compose_substitution subst subst' in
-            let env' = apply_substitution_env final_subst env in
-            let result_type' = apply_substitution final_subst result_type in
-            (* Add let bindings to final environment *)
-            let env'' =
-              match stmt.stmt with
-              | AST.Let let_binding ->
-                  let poly = generalize env' result_type' in
-                  TypeEnv.add let_binding.name poly env'
-              | _ -> env'
-            in
-            Ok (env'', final_subst, result_type'))
-    | stmt_node :: rest -> (
-        let stmt : AST.statement = stmt_node in
-        (match stmt.stmt with
-        | AST.TypeAlias alias_def -> Annotation.register_type_alias alias_def
-        | _ -> ());
-        match infer_statement type_map env stmt with
-        | Error e -> Error e
-        | Ok (subst', stmt_type) ->
-            let subst'' = compose_substitution subst subst' in
-            let env' = apply_substitution_env subst' env in
-            (* Add let bindings to environment for subsequent statements *)
-            let env'' =
-              match stmt.stmt with
-              | AST.Let let_binding ->
-                  let poly = generalize env' stmt_type in
-                  TypeEnv.add let_binding.name poly env'
-              | _ -> env'
-            in
-            go env'' subst'' rest)
-  in
-  match go env empty_substitution program with
-  | Error e -> Error e
-  | Ok (env', final_subst, result_type) ->
-      (* Apply final substitution to all types in type_map *)
-      let apply_subst_to_type_map () =
-        Hashtbl.iter
-          (fun id ty ->
-            let ty' = apply_substitution final_subst ty in
-            Hashtbl.replace type_map id ty')
-          type_map
+let infer_program ?(env = empty_env) ?state (program : AST.program) : (type_env * type_map * mono_type) infer_result =
+  let state = Option.value state ~default:(create_inference_state ()) in
+  with_inference_state state (fun () ->
+      Annotation.clear_type_aliases ();
+      let type_map = create_type_map () in
+      let rec go env subst stmts =
+        match stmts with
+        | [] -> Ok (env, subst, TNull)
+        | [ stmt_node ] -> (
+            let stmt : AST.statement = stmt_node in
+            (match stmt.stmt with
+            | AST.TypeAlias alias_def -> Annotation.register_type_alias alias_def
+            | _ -> ());
+            match infer_statement type_map env stmt with
+            | Error e -> Error e
+            | Ok (subst', result_type) ->
+                let final_subst = compose_substitution subst subst' in
+                let env' = apply_substitution_env final_subst env in
+                let result_type' = apply_substitution final_subst result_type in
+                (* Add let bindings to final environment *)
+                let env'' =
+                  match stmt.stmt with
+                  | AST.Let let_binding ->
+                      let poly = generalize env' result_type' in
+                      TypeEnv.add let_binding.name poly env'
+                  | _ -> env'
+                in
+                Ok (env'', final_subst, result_type'))
+        | stmt_node :: rest -> (
+            let stmt : AST.statement = stmt_node in
+            (match stmt.stmt with
+            | AST.TypeAlias alias_def -> Annotation.register_type_alias alias_def
+            | _ -> ());
+            match infer_statement type_map env stmt with
+            | Error e -> Error e
+            | Ok (subst', stmt_type) ->
+                let subst'' = compose_substitution subst subst' in
+                let env' = apply_substitution_env subst' env in
+                (* Add let bindings to environment for subsequent statements *)
+                let env'' =
+                  match stmt.stmt with
+                  | AST.Let let_binding ->
+                      let poly = generalize env' stmt_type in
+                      TypeEnv.add let_binding.name poly env'
+                  | _ -> env'
+                in
+                go env'' subst'' rest)
       in
-      apply_subst_to_type_map ();
-      Ok (env', type_map, result_type)
+      match go env empty_substitution program with
+      | Error e -> Error e
+      | Ok (env', final_subst, result_type) ->
+          (* Apply final substitution to all types in type_map *)
+          let apply_subst_to_type_map () =
+            Hashtbl.iter
+              (fun id ty ->
+                let ty' = apply_substitution final_subst ty in
+                Hashtbl.replace type_map id ty')
+              type_map
+          in
+          apply_subst_to_type_map ();
+          Ok (env', type_map, result_type))
 
 module Test = struct
   (* Helper to parse and infer *)
   let infer_string code =
-    reset_fresh_counter ();
     match Syntax.Parser.parse code with
     | Error errs ->
         let msg = String.concat "; " errs in
@@ -2490,10 +2529,47 @@ f"
         contains_substring msg "Trait obligation failed"
         && contains_substring msg "type variable 't0'"
 
+  let%test "constrained type-variable method lookup reports ambiguity" =
+    let contains_substring s sub =
+      let len_s = String.length s in
+      let len_sub = String.length sub in
+      let rec loop i =
+        if i + len_sub > len_s then
+          false
+        else if String.sub s i len_sub = sub then
+          true
+        else
+          loop (i + 1)
+      in
+      loop 0
+    in
+    Trait_registry.clear ();
+    Trait_registry.register_trait
+      {
+        trait_name = "t1";
+        trait_type_param = Some "a";
+        trait_supertraits = [];
+        trait_methods =
+          [ { method_name = "render"; method_params = [ ("x", TVar "a") ]; method_return_type = TString } ];
+      };
+    Trait_registry.register_trait
+      {
+        trait_name = "t2";
+        trait_type_param = Some "a";
+        trait_supertraits = [];
+        trait_methods =
+          [ { method_name = "render"; method_params = [ ("x", TVar "a") ]; method_return_type = TString } ];
+      };
+    match infer_string "let f = fn[a: t1 + t2](x: a) -> string { x.render() }; f" with
+    | Ok _ -> false
+    | Error e ->
+        let msg = error_to_string e in
+        contains_substring msg "Ambiguous method 'render'"
+
   let%test "infer_program isolates itself from stale global constraint state" =
     (* Simulate stale process-global state from an earlier session. *)
     clear_constraint_store ();
-    fresh_var_counter := 0;
+    reset_fresh_counter ();
     add_type_var_constraints "t0" [ "show" ];
     let code = "(fn(x) { x })(fn(y) { y })" in
     match Syntax.Parser.parse code with
@@ -2502,6 +2578,59 @@ f"
         match infer_program program with
         | Error _ -> false
         | Ok (_, _, _) -> true)
+
+  let%test "reused env preserves constrained generic obligations across infer_program runs" =
+    let contains_substring s sub =
+      let len_s = String.length s in
+      let len_sub = String.length sub in
+      let rec loop i =
+        if i + len_sub > len_s then
+          false
+        else if String.sub s i len_sub = sub then
+          true
+        else
+          loop (i + 1)
+      in
+      loop 0
+    in
+    Trait_registry.clear ();
+    Trait_registry.register_trait
+      {
+        Trait_registry.trait_name = "show";
+        trait_type_param = Some "a";
+        trait_supertraits = [];
+        trait_methods =
+          [
+            {
+              method_name = "show";
+              method_params = [ ("x", TVar "a") ];
+              method_return_type = TString;
+            };
+          ];
+      };
+    Trait_registry.register_impl ~builtin:true
+      {
+        impl_trait_name = "show";
+        impl_type_params = [];
+        impl_for_type = TInt;
+        impl_methods =
+          [ { method_name = "show"; method_params = [ ("x", TInt) ]; method_return_type = TString } ];
+      };
+    let shared_state = create_inference_state () in
+    match Syntax.Parser.parse "let check = fn[a: show](x: a) -> string { x.show() }" with
+    | Error _ -> false
+    | Ok first_program -> (
+        match infer_program ~state:shared_state first_program with
+        | Error _ -> false
+        | Ok (env_with_check, _, _) -> (
+            match Syntax.Parser.parse "check(fn(y) { y })" with
+            | Error _ -> false
+            | Ok second_program -> (
+                match infer_program ~state:shared_state ~env:env_with_check second_program with
+                | Ok _ -> false
+                | Error e ->
+                    let msg = error_to_string e in
+                    contains_substring msg "does not implement trait show")))
 
   let%test "infer errors preserve parser file_id metadata" =
     match Syntax.Parser.parse ~file_id:"main.mr" "1 + true" with
