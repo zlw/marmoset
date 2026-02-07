@@ -1009,6 +1009,33 @@ let p: point = { y: 2, x: 1 }
 puts(p.show())
 EOF
 
+run_case_from_stdin "Reordered record aliases are assignment-compatible" "3" << 'EOF'
+type point = { x: int, y: int }
+type vec = { y: int, x: int }
+let p: point = { x: 1, y: 2 }
+let v: vec = p
+puts(v.x + v.y)
+EOF
+
+run_case_from_stdin "Derived eq/hash are stable across field order" "ok" << 'EOF'
+trait eq[a] {
+  fn eq(x: a, y: a) -> bool
+}
+trait hash[a] {
+  fn hash(x: a) -> int
+}
+type point = { x: int, y: int }
+derive eq, hash for point;
+let p1: point = { x: 1, y: 2 }
+let p2: point = { y: 2, x: 1 }
+let out = if (p1.eq(p2)) {
+  if (p1.hash() == p2.hash()) { "ok" } else { "hash_bad" }
+} else {
+  "eq_bad"
+}
+puts(out)
+EOF
+
 run_build_fail_contains_from_stdin "Hash literal missing comma reports clear parse error" "expected ',' or '}' after hash literal entry" << 'EOF'
 let x = { "a": 1 b: 2 }
 EOF
