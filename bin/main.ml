@@ -18,7 +18,7 @@ type command =
 (* Type check a program, returning Ok type_string or Error with message *)
 let typecheck source program =
   let env = Marmoset.Lib.Builtins.prelude_env () in
-  match Marmoset.Lib.Checker.check_program_with_annotations ~env program with
+  match Marmoset.Lib.Checker.check_program_with_annotations ~source ~env program with
   | Ok { result_type; _ } -> Ok (Marmoset.Lib.Types.to_string_pretty result_type)
   | Error err -> Error (Marmoset.Lib.Checker.format_error_with_context source err)
 
@@ -191,7 +191,7 @@ let read_file filename =
 
 let run_file engine benchmark filename =
   let input = read_file filename in
-  match Marmoset.Lib.Parser.parse input with
+  match Marmoset.Lib.Parser.parse ~file_id:filename input with
   | Error msgs -> List.iter (fun msg -> print_endline msg) msgs
   | Ok program -> (
       match typecheck input program with
@@ -228,7 +228,7 @@ let run_build input output_opt emit_go_opt =
   let source = read_file input in
 
   (* Compile to Go *)
-  match Marmoset.Lib.Go_emitter.compile_to_build source with
+  match Marmoset.Lib.Go_emitter.compile_to_build ~file_id:input source with
   | Error msg ->
       Printf.eprintf "Error: %s\n" msg;
       exit 1

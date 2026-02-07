@@ -19,6 +19,7 @@ type error = {
   message : string;
   loc : Source_loc.loc option; (* line/column if available *)
   loc_end : Source_loc.loc option; (* end line/column if available *)
+  file_id : string option;
 }
 
 (* Convert infer error to typecheck error, optionally with source for location *)
@@ -30,25 +31,38 @@ let error_of_infer_error ?(source : string option) (e : Infer.infer_error) : err
     | Some src, Some pos, None -> (Some (Source_loc.offset_to_loc src pos), None)
     | _ -> (None, None)
   in
-  { message = Infer.error_to_string e; loc; loc_end }
+  { message = Infer.error_to_string e; loc; loc_end; file_id = e.file_id }
+
+let format_loc_prefix (err : error) : string option =
+  match (err.file_id, err.loc, err.loc_end) with
+  | None, None, _ -> None
+  | None, Some loc, None -> Some (Source_loc.to_string loc)
+  | None, Some loc, Some loc_end -> Some (Source_loc.to_string_range loc loc_end)
+  | Some file_id, None, _ -> Some file_id
+  | Some file_id, Some loc, None -> Some (Printf.sprintf "%s:%s" file_id (Source_loc.to_string loc))
+  | Some file_id, Some loc, Some loc_end ->
+      Some (Printf.sprintf "%s:%s" file_id (Source_loc.to_string_range loc loc_end))
 
 (* Format error with location prefix *)
 let format_error (err : error) : string =
-  match (err.loc, err.loc_end) with
-  | None, _ -> err.message
-  | Some loc, None -> Printf.sprintf "%s: %s" (Source_loc.to_string loc) err.message
-  | Some loc, Some loc_end -> Printf.sprintf "%s: %s" (Source_loc.to_string_range loc loc_end) err.message
+  match format_loc_prefix err with
+  | None -> err.message
+  | Some prefix -> Printf.sprintf "%s: %s" prefix err.message
 
 (* Format error with source context showing the offending line *)
 let format_error_with_context (source : string) (err : error) : string =
-  match (err.loc, err.loc_end) with
-  | None, _ -> err.message
-  | Some loc, None ->
+  match (err.loc, err.loc_end, format_loc_prefix err) with
+  | None, _, None -> err.message
+  | None, _, Some prefix -> Printf.sprintf "%s: %s" prefix err.message
+  | Some loc, None, Some prefix ->
       let context = Source_loc.format_with_context source loc in
-      Printf.sprintf "%s: %s\n%s" (Source_loc.to_string loc) err.message context
-  | Some loc, Some loc_end ->
+      Printf.sprintf "%s: %s\n%s" prefix err.message context
+  | Some loc, Some loc_end, Some prefix ->
       let context = Source_loc.format_with_context_range source loc loc_end in
-      Printf.sprintf "%s: %s\n%s" (Source_loc.to_string_range loc loc_end) err.message context
+      Printf.sprintf "%s: %s\n%s" prefix err.message context
+  | Some _, _, None ->
+      (* Shouldn't happen because loc always yields a prefix; keep a safe fallback. *)
+      err.message
 
 (* ============================================================
    Main API
@@ -57,17 +71,18 @@ let format_error_with_context (source : string) (err : error) : string =
 (* Type check a program (list of statements).
    Returns the type of the last expression and the final environment.
    Note: Without source, we can't provide location info. Use check_string for that. *)
-let check_program ?(env = Infer.empty_env) (program : Syntax.Ast.AST.program) : (typecheck_result, error) result =
+let check_program ?source ?(env = Infer.empty_env) (program : Syntax.Ast.AST.program) : (typecheck_result, error) result =
   match Infer.infer_program ~env program with
-  | Error e -> Error (error_of_infer_error e)
+  | Error e -> Error (error_of_infer_error ?source e)
   | Ok (final_env, type_map, result_type) -> Ok { result_type; environment = final_env; type_map }
 
 (* Type check source code string.
     Parses and type checks in one step.
     Errors include source location information. *)
-let check_string ?(env = Infer.empty_env) (source : string) : (typecheck_result, error) result =
-  match Syntax.Parser.parse source with
-  | Error errors -> Error { message = "Parse error: " ^ String.concat ", " errors; loc = None; loc_end = None }
+let check_string ?(env = Infer.empty_env) ?file_id (source : string) : (typecheck_result, error) result =
+  match Syntax.Parser.parse ?file_id source with
+  | Error errors ->
+      Error { message = "Parse error: " ^ String.concat ", " errors; loc = None; loc_end = None; file_id = None }
   | Ok program -> (
       match Infer.infer_program ~env program with
       | Error e -> Error (error_of_infer_error ~source e)
@@ -100,6 +115,7 @@ let check_let_annotation
                   (Annotation.format_mono_type inferred_type);
               loc = None;
               loc_end = None;
+              file_id = None;
             }
       with Failure msg ->
         Error
@@ -107,6 +123,7 @@ let check_let_annotation
             message = Printf.sprintf "Invalid type annotation for '%s': %s" name msg;
             loc = None;
             loc_end = None;
+            file_id = None;
           })
 
 (* Check if a function expression's return type annotation matches its inferred type *)
@@ -140,18 +157,19 @@ let check_function_annotation (return_annotation : Syntax.Ast.AST.type_expr opti
                   (Annotation.format_mono_type actual_return);
               loc = None;
               loc_end = None;
+              file_id = None;
             }
       with Failure msg ->
-        Error { message = Printf.sprintf "Invalid function annotation: %s" msg; loc = None; loc_end = None })
+        Error { message = Printf.sprintf "Invalid function annotation: %s" msg; loc = None; loc_end = None; file_id = None })
 
 (* Type check a program with annotation support.
     This checks that all annotations match the inferred types.
     For Phase 2, constraint validation is skipped (Phase 3 work). *)
-let check_program_with_annotations ?(env = Infer.empty_env) (program : Syntax.Ast.AST.program) :
+let check_program_with_annotations ?source ?(env = Infer.empty_env) (program : Syntax.Ast.AST.program) :
     (typecheck_result, error) result =
   (* First, do standard inference *)
   match Infer.infer_program ~env program with
-  | Error e -> Error (error_of_infer_error e)
+  | Error e -> Error (error_of_infer_error ?source e)
   | Ok (final_env, type_map, result_type) -> (
       (* Phase 2: Validate annotations against inferred types *)
       let rec check_stmts_with_infer (stmts : Syntax.Ast.AST.statement list) (env_check : env) :
@@ -171,6 +189,7 @@ let check_program_with_annotations ?(env = Infer.empty_env) (program : Syntax.As
                           Printf.sprintf "Internal error: variable '%s' not in environment" let_binding.name;
                         loc = None;
                         loc_end = None;
+                        file_id = None;
                       }
                 | Some (Forall (_, mono_type)) -> (
                     (* Check let binding annotation *)
@@ -207,10 +226,11 @@ let check_program_with_annotations ?(env = Infer.empty_env) (program : Syntax.As
 
 (* Type check source code with annotations.
    Parses and type checks in one step, with annotation support. *)
-let check_string_with_annotations ?(env = Infer.empty_env) (source : string) : (typecheck_result, error) result =
-  match Syntax.Parser.parse source with
-  | Error errors -> Error { message = "Parse error: " ^ String.concat ", " errors; loc = None; loc_end = None }
-  | Ok program -> check_program_with_annotations ~env program
+let check_string_with_annotations ?(env = Infer.empty_env) ?file_id (source : string) : (typecheck_result, error) result =
+  match Syntax.Parser.parse ?file_id source with
+  | Error errors ->
+      Error { message = "Parse error: " ^ String.concat ", " errors; loc = None; loc_end = None; file_id = None }
+  | Ok program -> check_program_with_annotations ~source ~env program
 
 (* Get the type of an expression as a string *)
 let type_string (source : string) : string =
@@ -391,6 +411,13 @@ let%test "format_error_with_context shows source line" =
   | Error err ->
       let formatted = format_error_with_context source err in
       String.length formatted >= 3 && String.sub formatted 0 3 = "1:5"
+  | Ok _ -> false
+
+let%test "format_error includes file id when provided" =
+  match check_string ~file_id:"main.mr" "1 + true" with
+  | Error err ->
+      let formatted = format_error err in
+      String.length formatted >= 11 && String.sub formatted 0 11 = "main.mr:1:5"
   | Ok _ -> false
 
 (* Helper for substring testing *)

@@ -26,6 +26,7 @@ type parser = {
   peek_token : Token.token;
   errors : errors;
   next_id : int;
+  file_id : string option;
 }
 
 and errors = string list
@@ -34,9 +35,19 @@ type brace_literal_mode =
   | RecordMode
   | HashMode
 
-let with_expr_end p (e : AST.expression) : AST.expression = { e with end_pos = max e.end_pos (token_end p.curr_token) }
-let with_stmt_end p (s : AST.statement) : AST.statement = { s with end_pos = max s.end_pos (token_end p.curr_token) }
-let with_pat_end p (pat : AST.pattern) : AST.pattern = { pat with end_pos = max pat.end_pos (token_end p.curr_token) }
+let first_some a b =
+  match a with
+  | Some _ -> a
+  | None -> b
+
+let with_expr_end p (e : AST.expression) : AST.expression =
+  { e with end_pos = max e.end_pos (token_end p.curr_token); file_id = first_some e.file_id p.file_id }
+
+let with_stmt_end p (s : AST.statement) : AST.statement =
+  { s with end_pos = max s.end_pos (token_end p.curr_token); file_id = first_some s.file_id p.file_id }
+
+let with_pat_end p (pat : AST.pattern) : AST.pattern =
+  { pat with end_pos = max pat.end_pos (token_end p.curr_token); file_id = first_some pat.file_id p.file_id }
 
 (* Helper to get fresh ID and increment counter *)
 let fresh_id p = (p.next_id, { p with next_id = p.next_id + 1 })
@@ -70,8 +81,15 @@ let next_token (p : parser) : parser =
   let lexer, peek_token = Lexer.next_token p.lexer in
   { p with lexer; curr_token; peek_token }
 
-let init (l : Lexer.lexer) : parser =
-  { lexer = l; curr_token = Token.init Illegal ""; peek_token = Token.init Illegal ""; errors = []; next_id = 0 }
+let init ?file_id (l : Lexer.lexer) : parser =
+  {
+    lexer = l;
+    curr_token = Token.init Illegal "";
+    peek_token = Token.init Illegal "";
+    errors = [];
+    next_id = 0;
+    file_id;
+  }
   |> next_token
   |> next_token
 
@@ -1396,8 +1414,8 @@ and parse_pattern_list (p : parser) : (parser * AST.pattern list, parser) result
 
     loop p2 [ first_pat ]
 
-let parse (s : string) : (AST.program, errors) result =
-  match s |> Lexer.init |> init |> parse_program with
+let parse ?file_id (s : string) : (AST.program, errors) result =
+  match s |> Lexer.init |> init ?file_id |> parse_program with
   | Ok (_, program) -> Ok program
   | Error parser -> Error (List.rev parser.errors)
 
@@ -1479,6 +1497,12 @@ module Test = struct
   let%test "statement span includes trailing semicolon when present" =
     match parse "let x = 1;" with
     | Ok [ stmt ] -> stmt.pos = 0 && stmt.end_pos = 9
+    | _ -> false
+
+  let%test "parser threads optional file_id into nodes" =
+    match parse ~file_id:"main.mr" "let x = 1;" with
+    | Ok [ { AST.stmt = AST.Let { value; _ }; file_id = Some file_id; _ } ] ->
+        file_id = "main.mr" && value.file_id = Some "main.mr"
     | _ -> false
 
   let%test "test_array_literals" =

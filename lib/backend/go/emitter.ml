@@ -2322,12 +2322,12 @@ func push[T any](arr []T, v T) []T {
     Main Entry Point
     ============================================================ *)
 
-let compile_string (source : string) : (string, string) result =
-  match Syntax.Parser.parse source with
+let compile_string ?file_id (source : string) : (string, string) result =
+  match Syntax.Parser.parse ?file_id source with
   | Error errors -> Error ("Parse error: " ^ String.concat ", " errors)
   | Ok program -> (
       let env = Typecheck.Builtins.prelude_env () in
-      match Typecheck.Checker.check_program_with_annotations ~env program with
+      match Typecheck.Checker.check_program_with_annotations ~source ~env program with
       | Error err -> Error ("Type error: " ^ Typecheck.Checker.format_error err)
       | Ok { environment = typed_env; type_map; _ } -> (
           let normalize_codegen_error msg =
@@ -2348,8 +2348,8 @@ type build_output = {
   runtime_go : string;
 }
 
-let compile_to_build (source : string) : (build_output, string) result =
-  match compile_string source with
+let compile_to_build ?file_id (source : string) : (build_output, string) result =
+  match compile_string ?file_id source with
   | Error e -> Error e
   | Ok main_go -> Ok { main_go; runtime_go }
 
