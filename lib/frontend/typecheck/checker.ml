@@ -71,20 +71,21 @@ let format_error_with_context (source : string) (err : error) : string =
 (* Type check a program (list of statements).
    Returns the type of the last expression and the final environment.
    Note: Without source, we can't provide location info. Use check_string for that. *)
-let check_program ?source ?(env = Infer.empty_env) (program : Syntax.Ast.AST.program) : (typecheck_result, error) result =
-  match Infer.infer_program ~env program with
+let check_program ?state ?source ?(env = Infer.empty_env) (program : Syntax.Ast.AST.program) :
+    (typecheck_result, error) result =
+  match Infer.infer_program ?state ~env program with
   | Error e -> Error (error_of_infer_error ?source e)
   | Ok (final_env, type_map, result_type) -> Ok { result_type; environment = final_env; type_map }
 
 (* Type check source code string.
     Parses and type checks in one step.
     Errors include source location information. *)
-let check_string ?(env = Infer.empty_env) ?file_id (source : string) : (typecheck_result, error) result =
+let check_string ?state ?(env = Infer.empty_env) ?file_id (source : string) : (typecheck_result, error) result =
   match Syntax.Parser.parse ?file_id source with
   | Error errors ->
       Error { message = "Parse error: " ^ String.concat ", " errors; loc = None; loc_end = None; file_id = None }
   | Ok program -> (
-      match Infer.infer_program ~env program with
+      match Infer.infer_program ?state ~env program with
       | Error e -> Error (error_of_infer_error ~source e)
       | Ok (final_env, type_map, result_type) -> Ok { result_type; environment = final_env; type_map })
 
@@ -165,10 +166,10 @@ let check_function_annotation (return_annotation : Syntax.Ast.AST.type_expr opti
 (* Type check a program with annotation support.
     This checks that all annotations match the inferred types.
     For Phase 2, constraint validation is skipped (Phase 3 work). *)
-let check_program_with_annotations ?source ?(env = Infer.empty_env) (program : Syntax.Ast.AST.program) :
+let check_program_with_annotations ?state ?source ?(env = Infer.empty_env) (program : Syntax.Ast.AST.program) :
     (typecheck_result, error) result =
   (* First, do standard inference *)
-  match Infer.infer_program ~env program with
+  match Infer.infer_program ?state ~env program with
   | Error e -> Error (error_of_infer_error ?source e)
   | Ok (final_env, type_map, result_type) -> (
       (* Phase 2: Validate annotations against inferred types *)
@@ -226,11 +227,12 @@ let check_program_with_annotations ?source ?(env = Infer.empty_env) (program : S
 
 (* Type check source code with annotations.
    Parses and type checks in one step, with annotation support. *)
-let check_string_with_annotations ?(env = Infer.empty_env) ?file_id (source : string) : (typecheck_result, error) result =
+let check_string_with_annotations ?state ?(env = Infer.empty_env) ?file_id (source : string) :
+    (typecheck_result, error) result =
   match Syntax.Parser.parse ?file_id source with
   | Error errors ->
       Error { message = "Parse error: " ^ String.concat ", " errors; loc = None; loc_end = None; file_id = None }
-  | Ok program -> check_program_with_annotations ~source ~env program
+  | Ok program -> check_program_with_annotations ?state ~source ~env program
 
 (* Get the type of an expression as a string *)
 let type_string (source : string) : string =
@@ -696,3 +698,43 @@ let%test "record match pattern typechecks" =
   match check code with
   | Ok { result_type = TInt; _ } -> true
   | _ -> false
+
+let%test "env reuse with shared inference state preserves constrained generic obligations" =
+  let contains_substring s sub =
+    let len_s = String.length s in
+    let len_sub = String.length sub in
+    let rec loop i =
+      if i + len_sub > len_s then
+        false
+      else if String.sub s i len_sub = sub then
+        true
+      else
+        loop (i + 1)
+    in
+    loop 0
+  in
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  Trait_registry.register_trait
+    {
+      Trait_registry.trait_name = "show";
+      trait_type_param = Some "a";
+      trait_supertraits = [];
+      trait_methods =
+        [ { method_name = "show"; method_params = [ ("x", TVar "a") ]; method_return_type = TString } ];
+    };
+  Trait_registry.register_impl ~builtin:true
+    {
+      impl_trait_name = "show";
+      impl_type_params = [];
+      impl_for_type = TInt;
+      impl_methods =
+        [ { method_name = "show"; method_params = [ ("x", TInt) ]; method_return_type = TString } ];
+    };
+  let shared_state = Infer.create_inference_state () in
+  match check_string ~state:shared_state "let check = fn[a: show](x: a) -> string { x.show() }; check" with
+  | Error _ -> false
+  | Ok first -> (
+      match check_string ~state:shared_state ~env:first.environment "check(fn(y) { y })" with
+      | Ok _ -> false
+      | Error err -> contains_substring err.message "does not implement trait show")
