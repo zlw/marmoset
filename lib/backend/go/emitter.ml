@@ -2273,7 +2273,18 @@ let compile_string (source : string) : (string, string) result =
       let env = Typecheck.Builtins.prelude_env () in
       match Typecheck.Checker.check_program_with_annotations ~env program with
       | Error err -> Error ("Type error: " ^ Typecheck.Checker.format_error err)
-      | Ok { environment = typed_env; type_map; _ } -> Ok (emit_program_with_typed_env type_map typed_env program)
+      | Ok { environment = typed_env; type_map; _ } -> (
+          let normalize_codegen_error msg =
+            let prefix = "Codegen error: " in
+            let prefix_len = String.length prefix in
+            if String.length msg >= prefix_len && String.sub msg 0 prefix_len = prefix then
+              msg
+            else
+              prefix ^ msg
+          in
+          try Ok (emit_program_with_typed_env type_map typed_env program) with
+          | Failure msg -> Error (normalize_codegen_error msg)
+          | exn -> Error (normalize_codegen_error (Printexc.to_string exn)))
       )
 
 type build_output = {

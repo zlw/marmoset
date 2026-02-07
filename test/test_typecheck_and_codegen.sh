@@ -128,6 +128,37 @@ run_build_ok_from_stdin() {
     rm -f "$tmpfile"
 }
 
+run_build_ok_not_contains_from_stdin() {
+    local name="$1"
+    local forbidden_fragment="$2"
+    local source
+    source="$(cat)"
+
+    TOTAL=$((TOTAL + 1))
+    echo -n "TEST [$TOTAL] $name ... "
+
+    local tmpfile
+    tmpfile=$(mktemp)
+    echo "$source" > "$tmpfile"
+
+    if build_output=$($EXECUTABLE build "$tmpfile" 2>&1); then
+        if echo "$build_output" | grep -q "$forbidden_fragment"; then
+            echo "✗ FAIL (output contains forbidden fragment '$forbidden_fragment')"
+            echo "  Output: $build_output"
+            FAIL=$((FAIL + 1))
+        else
+            echo "✓ PASS"
+            PASS=$((PASS + 1))
+        fi
+    else
+        echo "✗ FAIL (build failed)"
+        echo "  Output: $build_output"
+        FAIL=$((FAIL + 1))
+    fi
+
+    rm -f "$tmpfile"
+}
+
 run_build_fail_contains_from_stdin() {
     local name="$1"
     local expected_fragment="$2"
@@ -161,6 +192,46 @@ run_build_fail_contains_from_stdin() {
     fi
 
     rm -f "$tmpfile"
+}
+
+run_codegen_deterministic_from_stdin() {
+    local name="$1"
+    local source
+    source="$(cat)"
+
+    TOTAL=$((TOTAL + 1))
+    echo -n "TEST [$TOTAL] $name ... "
+
+    local tmpfile out1 out2 bin1 bin2
+    tmpfile=$(mktemp)
+    out1=$(mktemp -d /tmp/marmoset_emit1.XXXXXX)
+    out2=$(mktemp -d /tmp/marmoset_emit2.XXXXXX)
+    bin1=$(mktemp /tmp/marmoset_bin1.XXXXXX)
+    bin2=$(mktemp /tmp/marmoset_bin2.XXXXXX)
+    rm -f "$bin1" "$bin2"
+    echo "$source" > "$tmpfile"
+
+    if build1=$($EXECUTABLE build "$tmpfile" --emit-go "$out1" -o "$bin1" 2>&1) && build2=$($EXECUTABLE build "$tmpfile" --emit-go "$out2" -o "$bin2" 2>&1); then
+        if diff -u "$out1/main.go" "$out2/main.go" >/dev/null 2>&1 && diff -u "$out1/runtime.go" "$out2/runtime.go" >/dev/null 2>&1; then
+            echo "✓ PASS"
+            PASS=$((PASS + 1))
+        else
+            echo "✗ FAIL (emitted Go is not deterministic)"
+            FAIL=$((FAIL + 1))
+        fi
+    else
+        echo "✗ FAIL (build failed)"
+        if [ -n "$build1" ]; then
+            echo "  First build output: $build1"
+        fi
+        if [ -n "$build2" ]; then
+            echo "  Second build output: $build2"
+        fi
+        FAIL=$((FAIL + 1))
+    fi
+
+    rm -f "$tmpfile" "$bin1" "$bin2"
+    rm -rf "$out1" "$out2"
 }
 
 test_emit_go_contains() {
@@ -913,6 +984,27 @@ impl show for int {
   fn show(x: int) -> string { helper(x) }
 }
 puts(1.show())
+EOF
+
+run_build_ok_not_contains_from_stdin "Successful build emits no missing-type warning text" "missing type for expression id" << 'EOF'
+let f = fn(x: int) -> int { x + 1 }
+puts(f(1))
+EOF
+
+run_build_fail_contains_from_stdin "Specialized body codegen failure is surfaced cleanly" "Codegen error: Multiple patterns per arm not yet supported in codegen" << 'EOF'
+let f = fn(x: int) -> int {
+  match x {
+    1 | 2: 1
+    _: 0
+  }
+}
+puts(f(1))
+EOF
+
+run_codegen_deterministic_from_stdin "Codegen output is deterministic for identical input" << 'EOF'
+let f = fn(x: int) -> int { x + 1 }
+let g = fn(y: int) -> int { f(y) }
+puts(g(1))
 EOF
 
 echo ""
