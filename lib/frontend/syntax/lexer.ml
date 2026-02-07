@@ -87,7 +87,7 @@ let rec next_token (l : lexer) : lexer * Token.token =
         else
           (l2, Token.init ~pos Int lit)
       else
-        (l, Token.init ~pos Illegal (String.make 1 l.ch))
+        (read_char l, Token.init ~pos Illegal (String.make 1 l.ch))
 
 and read_identifier (l : lexer) : lexer * string = read_until l is_ident_char
 and read_number (l : lexer) : lexer * string = read_until l is_digit
@@ -333,3 +333,8 @@ let%test "dot before digit is illegal but lexer advances" =
   && l1.position > l0.position
   && tok2.Token.token_type = Token.Int
   && tok2.Token.literal = "1"
+
+let%test "generic illegal character advances lexer" =
+  let l0 = init "@" in
+  let l1, tok = next_token l0 in
+  tok.Token.token_type = Token.Illegal && tok.Token.literal = "@" && l1.position > l0.position
