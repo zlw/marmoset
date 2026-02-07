@@ -2,7 +2,7 @@
 
 ## Maintenance
 
-- Last verified: 2026-02-06
+- Last verified: 2026-02-07
 - Implementation status: Canonical (actively maintained)
 - Update trigger: Any language behavior, typechecker, or codegen change affecting this topic
 
@@ -107,6 +107,14 @@ Nothing in `docs/archive/` is lost; this file centralizes actionable direction.
 - Formalize backend capability matrix (what each construct guarantees at codegen time).
 - Continue moving backend decisions from ad-hoc emitter logic to typed metadata contracts.
 - Evaluate whole-program assumptions and future module-aware compilation boundaries.
+
+### 3.1 Locked near-term modules/FFI policy
+
+These guardrails are intentionally locked until a dedicated modules+extern design pass lands:
+- Backend remains one Go package per build.
+- Extern ABI starts with primitives/unit only.
+- Records/enums/unions/trait objects stay out of ABI until representation and ownership rules are frozen.
+- Trait-object representation is treated as deferred design work, not a soft-inferred backend feature.
 
 ## 4. Tooling and Testing
 

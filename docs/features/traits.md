@@ -2,7 +2,7 @@
 
 ## Maintenance
 
-- Last verified: 2026-02-06
+- Last verified: 2026-02-07
 - Implementation status: Canonical (actively maintained)
 - Update trigger: Any language behavior, typechecker, or codegen change affecting this topic
 
@@ -191,6 +191,42 @@ Pros:
 Cons:
 - no first-class trait-object story yet,
 - derived behavior coverage is intentionally scoped.
+
+## Deferred Trait-Object / Existential Design Guardrail
+
+This section is normative for future dynamic dispatch work. It does not indicate current implementation.
+
+### Current status
+
+- Trait calls are statically resolved and lowered to concrete helper functions.
+- No first-class trait-object runtime value exists in the compiler pipeline today.
+
+### Candidate representation shape (future)
+
+If dynamic trait values are introduced, the representation should be treated as an explicit existential package:
+- erased concrete payload,
+- concrete type identity tag,
+- trait witness table (method function pointers for the bound trait set).
+
+This should be modeled as a first-class internal form (typed AST or IR node), not inferred ad hoc in codegen.
+
+### Erasure rules (future)
+
+- Generic type parameters captured by trait objects are erased at the package boundary.
+- Only methods guaranteed by the trait bound are callable on erased values.
+- Reification from erased value back to concrete type requires explicit checked cast semantics.
+
+### Operation limits on existential values
+
+- `eq`/`hash`/`show` cannot be assumed for a trait object unless those capabilities are explicitly part of the bound.
+- Equality and hashing must be rejected for existential values lacking required trait evidence.
+- Any fallback “compare addresses” behavior is disallowed for language-level `eq`/`hash`.
+
+### Module and FFI boundary constraints
+
+- Trait-object ABI is not stable yet and must not be exposed through extern/FFI surfaces.
+- Cross-module trait-object passing is deferred until representation layout and witness-table ABI are frozen.
+- Until then, trait-object-like behavior remains an internal design target only; public APIs use static dispatch.
 
 ## Related Docs
 

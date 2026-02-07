@@ -2,7 +2,7 @@
 
 ## Maintenance
 
-- Last verified: 2026-02-06
+- Last verified: 2026-02-07
 - Implementation status: Canonical (actively maintained)
 - Update trigger: Any language behavior, typechecker, or codegen change affecting this topic
 
@@ -164,6 +164,23 @@ Cons:
 - Enums -> tagged struct forms with generated constructors and match dispatch.
 - Records -> struct-shaped values with field access/update lowering.
 - Trait methods -> static free functions with mangled names.
+
+### 4.4 Modules/FFI guardrail policy (current, binding)
+
+Until module and extern features are fully designed:
+- One Go package per build is the backend policy.
+- Trait impl emission assumes single-package visibility; cross-package impl stitching is out of scope.
+- No trait-object ABI is exposed across boundaries.
+
+Initial extern ABI mapping constraints (when extern is enabled):
+- Allowed first-wave value types: `int`, `float`, `bool`, `string`, `unit`.
+- Deferred until representation freeze: records, enums, unions, trait objects, and unconstrained polymorphic values.
+- Deferred until ownership rules are explicit: arrays/maps with mutation/aliasing semantics across boundary.
+
+Rationale:
+- keeps codegen coherent while modules are introduced,
+- avoids locking an unstable runtime layout into public ABI,
+- reduces rewrite risk for future IR and dispatch changes.
 
 ## 5. Error Architecture
 
