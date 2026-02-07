@@ -126,6 +126,9 @@ type mono_state = {
 }
 
 let create_mono_state ?(module_path = "main") ?(concrete_only = true) () =
+  if module_path <> "main" then
+    failwith
+      "Module codegen policy: single Go package per build (module_path must be 'main' until module backend ships)";
   {
     func_defs = [];
     instantiations = InstSet.empty;
@@ -2438,6 +2441,16 @@ let%test "instantiation identity includes module path" =
   in
   let set = InstSet.empty |> InstSet.add (mk "main") |> InstSet.add (mk "pkg/math") in
   InstSet.cardinal set = 2
+
+let%test "module codegen policy rejects non-main module path" =
+  match
+    try
+      let _ = create_mono_state ~module_path:"pkg/math" () in
+      None
+    with Failure msg -> Some msg
+  with
+  | None -> false
+  | Some msg -> string_contains msg "single Go package"
 
 let%test "emit array index with literal" =
   match compile_string "let a = [1,2,3]; a[0]" with
