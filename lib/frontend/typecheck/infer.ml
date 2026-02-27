@@ -90,7 +90,16 @@ let with_inference_state (state : inference_state) (f : unit -> 'a) : 'a =
 let current_constraint_store () : (string, string list) Hashtbl.t = (!active_inference_state).constraint_store
 
 let add_type_var_constraints (type_var_name : string) (traits : string list) : unit =
-  Hashtbl.add (current_constraint_store ()) type_var_name traits
+  let store = current_constraint_store () in
+  let merged =
+    match Hashtbl.find_opt store type_var_name with
+    | None -> traits
+    | Some existing ->
+        List.fold_left
+          (fun acc trait_name -> if List.mem trait_name acc then acc else acc @ [ trait_name ])
+          existing traits
+  in
+  Hashtbl.replace store type_var_name merged
 
 let lookup_type_var_constraints (type_var_name : string) : string list =
   match Hashtbl.find_opt (current_constraint_store ()) type_var_name with
@@ -190,6 +199,17 @@ let apply_substitution_constraints (subst : substitution) (ctx : constraint_ctx)
 let verify_constraints_in_substitution (subst : substitution) : (unit, string) result =
   let obligations = obligations_from_substitution subst in
   verify_obligations obligations
+
+let enforce_trait_requirement_on_type (typ : mono_type) (trait_name : string) : (unit, string) result =
+  if Trait_registry.lookup_trait trait_name = None then
+    Ok ()
+  else
+    let typ' = canonicalize_mono_type typ in
+    match typ' with
+    | TVar type_var_name ->
+        add_type_var_constraints type_var_name [ trait_name ];
+        Ok ()
+    | _ -> Trait_solver.satisfies_trait typ' trait_name
 
 (* ============================================================
    Fresh Type Variables
@@ -835,22 +855,11 @@ and infer_prefix type_map env op operand =
           | Error e -> Error (error_at (UnificationError e) operand)
           | Ok subst2 -> Ok (compose_substitution subst subst2, TBool))
       | "-" -> (
-          (* - requires numeric type (Int or Float), returns same type *)
-          let result_type = fresh_type_var () in
-          (* Try to unify with Int first, then Float *)
-          match unify operand_type TInt with
-          | Ok subst2 -> Ok (compose_substitution subst subst2, TInt)
-          | Error _ -> (
-              match unify operand_type TFloat with
-              | Ok subst2 -> Ok (compose_substitution subst subst2, TFloat)
-              | Error _ -> (
-                  (* If operand is a type variable, default to Int for now *)
-                  (* TODO: This needs proper numeric type class support *)
-                  match unify operand_type result_type with
-                  | Error e -> Error (error_at (UnificationError e) operand)
-                  | Ok subst2 ->
-                      let subst3 = compose_substitution subst subst2 in
-                      Ok (subst3, apply_substitution subst3 result_type))))
+          (* Unary negation requires neg trait. *)
+          let operand_type' = apply_substitution subst operand_type in
+          (match enforce_trait_requirement_on_type operand_type' "neg" with
+          | Ok () -> Ok (subst, operand_type')
+          | Error msg -> Error (error_at (ConstructorError msg) operand)))
       | _ -> Error (error_at (InvalidOperator (op, operand_type)) operand))
 
 (* ============================================================
@@ -877,22 +886,33 @@ and infer_infix type_map env left op right =
                   let subst' = compose_substitution subst subst3 in
                   let result_type = apply_substitution subst3 left_type' in
                   (* For +, also allow String concatenation *)
-                  if op = "+" then
+                  if op = "+" && result_type = TString then
                     Ok (subst', result_type)
                   else
-                    (* For -, *, /, require numeric *)
-                    (* TODO: proper numeric type class *)
-                    Ok (subst', result_type))
+                    (* Arithmetic requires num trait. *)
+                    (match enforce_trait_requirement_on_type result_type "num" with
+                    | Ok () -> Ok (subst', result_type)
+                    | Error msg -> Error (error_at (ConstructorError msg) right)))
           (* Comparison operators: both same type, result Bool *)
           | "<" | ">" | "<=" | ">=" -> (
               match unify left_type' right_type with
               | Error e -> Error (error_at (UnificationError e) right)
-              | Ok subst3 -> Ok (compose_substitution subst subst3, TBool))
+              | Ok subst3 ->
+                  let subst' = compose_substitution subst subst3 in
+                  let operand_type = apply_substitution subst3 left_type' in
+                  (match enforce_trait_requirement_on_type operand_type "ord" with
+                  | Ok () -> Ok (subst', TBool)
+                  | Error msg -> Error (error_at (ConstructorError msg) right)))
           (* Equality operators: both same type, result Bool *)
           | "==" | "!=" -> (
               match unify left_type' right_type with
               | Error e -> Error (error_at (UnificationError e) right)
-              | Ok subst3 -> Ok (compose_substitution subst subst3, TBool))
+              | Ok subst3 ->
+                  let subst' = compose_substitution subst subst3 in
+                  let operand_type = apply_substitution subst3 left_type' in
+                  (match enforce_trait_requirement_on_type operand_type "eq" with
+                  | Ok () -> Ok (subst', TBool)
+                  | Error msg -> Error (error_at (ConstructorError msg) right)))
           | _ -> Error (error_at (InvalidOperator (op, left_type')) left)))
 
 (* ============================================================

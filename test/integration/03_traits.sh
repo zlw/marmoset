@@ -214,6 +214,35 @@ impl show[b: show] for list[b] {
 }
 EOF
 
+echo "-- PHASE 4.3: OPERATOR TRAIT OBLIGATIONS --"
+
+run_build_fail_contains_from_stdin "Equality requires eq trait (functions should fail)" "missing-impl" << 'EOF'
+let same = fn[a](x: a, y: a) -> bool {
+  x == y
+};
+let id1 = fn(n: int) -> int { n };
+let id2 = fn(n: int) -> int { n + 1 };
+same(id1, id2)
+EOF
+
+run_build_fail_contains_from_stdin "Ordering requires ord trait (arrays should fail)" "missing-impl" << 'EOF'
+let less = fn[a](x: a, y: a) -> bool {
+  x < y
+};
+less([1], [2])
+EOF
+
+run_build_fail_contains_from_stdin "Arithmetic requires num trait (bool should fail)" "missing-impl" << 'EOF'
+let add = fn[a](x: a, y: a) {
+  x + y
+};
+add(true, false)
+EOF
+
+run_case_from_stdin "String concatenation still works with builtin operator lowering" "ab" << 'EOF'
+puts("a" + "b")
+EOF
+
 echo "-- PHASE 4.3: TRAIT METHOD CALLS --"
 
 run_case_from_stdin "Basic trait method call on int" "42" << 'EOF'
