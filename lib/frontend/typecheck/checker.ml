@@ -173,7 +173,7 @@ let check_program_with_annotations ?state ?source ?(env = Infer.empty_env) (prog
   | Error e -> Error (error_of_infer_error ?source e)
   | Ok (final_env, type_map, result_type) -> (
       (* Phase 2: Validate annotations against inferred types *)
-      let rec check_stmts_with_infer (stmts : Syntax.Ast.AST.statement list) (env_check : env) :
+      let rec check_stmts_with_infer (stmts : Syntax.Ast.AST.statement list) :
           (unit, error) result =
         match stmts with
         | [] -> Ok ()
@@ -181,35 +181,43 @@ let check_program_with_annotations ?state ?source ?(env = Infer.empty_env) (prog
             match stmt.stmt with
             | Syntax.Ast.AST.Let let_binding -> (
                 (* Check if annotation matches inferred type of the let binding *)
-                match Infer.TypeEnv.find_opt let_binding.name env_check with
+                let inferred =
+                  match Hashtbl.find_opt type_map let_binding.value.id with
+                  | Some t -> Some t
+                  | None -> (
+                      match Infer.TypeEnv.find_opt let_binding.name final_env with
+                      | Some (Forall (_, mono_type)) -> Some mono_type
+                      | None -> None)
+                in
+                match inferred with
                 | None ->
-                    (* Variable not in environment (shouldn't happen) *)
                     Error
                       {
                         message =
-                          Printf.sprintf "Internal error: variable '%s' not in environment" let_binding.name;
+                          Printf.sprintf "Internal error: missing inferred type for let '%s' (expr id %d)"
+                            let_binding.name let_binding.value.id;
                         loc = None;
                         loc_end = None;
                         file_id = None;
                       }
-                | Some (Forall (_, mono_type)) -> (
+                | Some mono_type -> (
                     (* Check let binding annotation *)
                     match check_let_annotation let_binding.name let_binding.type_annotation mono_type with
                     | Error e -> Error e
                     | Ok () -> (
                         (* Also check function expression annotation if present *)
-                        match check_expr_annotations let_binding.value mono_type env_check with
+                        match check_expr_annotations let_binding.value mono_type with
                         | Error e -> Error e
-                        | Ok () -> check_stmts_with_infer rest env_check)))
+                        | Ok () -> check_stmts_with_infer rest)))
             | Syntax.Ast.AST.Block nested_stmts -> (
                 (* Recursively check block statements *)
-                match check_stmts_with_infer nested_stmts env_check with
+                match check_stmts_with_infer nested_stmts with
                 | Error e -> Error e
-                | Ok () -> check_stmts_with_infer rest env_check)
+                | Ok () -> check_stmts_with_infer rest)
             | _ ->
                 (* Other statements don't have annotations to check *)
-                check_stmts_with_infer rest env_check)
-      and check_expr_annotations (expr : Syntax.Ast.AST.expression) (inferred : mono_type) (env_check : env) :
+                check_stmts_with_infer rest)
+      and check_expr_annotations (expr : Syntax.Ast.AST.expression) (inferred : mono_type) :
           (unit, error) result =
         match expr.expr with
         | Syntax.Ast.AST.Function { return_type; params = _; body; generics = _ } -> (
@@ -218,10 +226,10 @@ let check_program_with_annotations ?state ?source ?(env = Infer.empty_env) (prog
             | Error e -> Error e
             | Ok () ->
                 (* Also recursively check body statements *)
-                check_stmts_with_infer [ body ] env_check)
+                check_stmts_with_infer [ body ])
         | _ -> Ok () (* Other expressions don't have annotations to check *)
       in
-      match check_stmts_with_infer program final_env with
+      match check_stmts_with_infer program with
       | Error e -> Error e
       | Ok () -> Ok { result_type; environment = final_env; type_map })
 
@@ -628,6 +636,27 @@ let%test "no annotation: mixed annotated and unannotated params" =
       match lookup "f" environment with
       | Some (Forall (_, TFun (TInt, TFun (_, TInt)))) -> true
       | _ -> false)
+
+let%test "annotation checker: local let bindings in function body do not require global env entries" =
+  Infer.reset_fresh_counter ();
+  let env = default_env () in
+  let code =
+    {|
+    let book = {
+      "title": "Writing A Compiler In Go",
+      "author": "Thorsten Ball"
+    };
+    let printBookName = fn(book) {
+      let title = book["title"];
+      let author = book["author"];
+      puts(author + " - " + title);
+    };
+    printBookName(book)
+  |}
+  in
+  match check_string_with_annotations ~env code with
+  | Ok _ -> true
+  | Error _ -> false
 
 (* ============================================================
    Error Message Quality Tests
