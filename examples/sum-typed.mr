@@ -1,0 +1,16 @@
+let reduce = fn(values: list[int], initial: int, step) -> int {
+  let iter = fn(remaining: list[int], acc: int) -> int {
+    if (len(remaining) == 0) {
+      acc
+    } else {
+      iter(rest(remaining), step(acc, first(remaining)))
+    }
+  }
+  iter(values, initial)
+}
+
+let sum = fn(values: list[int]) -> int {
+  reduce(values, 0, fn(acc: int, value: int) -> int { acc + value })
+}
+
+puts(sum([1, 2, 3, 4, 5]))

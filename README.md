@@ -16,7 +16,7 @@ It typechecks source programs and compiles them to Go.
 ## Requirements
 
 - OCaml + opam + dune
-- Go (required for `marmoset build`)
+- Go (required for `marmoset run` and `marmoset build`)
 
 ## Setup
 
@@ -53,6 +53,31 @@ Emit generated Go source alongside build:
 
 ```sh
 ./marmoset build examples/fibonacci-typed.mr --emit-go out
+```
+
+## Examples
+
+Core:
+
+- `examples/fibonacci.mr`
+- `examples/fibonacci-typed.mr`
+- `examples/indexing.mr`
+- `examples/indexing-typed.mr`
+- `examples/sum.mr`
+- `examples/sum-typed.mr`
+- `examples/monkey.mr`
+
+Feature-focused typed examples:
+
+- `examples/unions-typed.mr`
+- `examples/enums-typed.mr`
+- `examples/traits-typed.mr`
+- `examples/records-typed.mr`
+
+Run any example with:
+
+```sh
+./marmoset examples/<file>.mr
 ```
 
 ## Testing

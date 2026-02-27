@@ -1,17 +1,10 @@
-trait show[a] {
-    fn show(x: a) -> string
+trait named {
+  name: string
 }
 
-impl show for int {
-    fn show(x: int) -> string {
-        "" + x + ""
-    }
+let get_name = fn[t: named](value: t) -> string {
+  value.name
 }
 
-impl show for bool {
-    fn show(x: bool) -> string {
-        "bool"
-    }
-}
-
-puts(1.show())
+let user = { name: "alice", age: 42 }
+puts(get_name(user))

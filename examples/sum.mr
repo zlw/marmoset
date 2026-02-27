@@ -1,16 +1,16 @@
-let reduce = fn(arr, initial, f) {
-    let iter = fn(arr, result) {
-        if (len(arr) == 0) {
-            result
-        } else {
-            iter(rest(arr), f(result, first(arr)))
-        }
+let reduce = fn(values, initial, step) {
+  let iter = fn(remaining, acc) {
+    if (len(remaining) == 0) {
+      acc
+    } else {
+      iter(rest(remaining), step(acc, first(remaining)))
     }
-    iter(arr, initial)
+  }
+  iter(values, initial)
 }
 
-let sum = fn(arr) {
-    reduce(arr, 0, fn(initial, el) { initial + el })
+let sum = fn(values) {
+  reduce(values, 0, fn(acc, value) { acc + value })
 }
 
 puts(sum([1,2,3,4,5]))

@@ -1,0 +1,11 @@
+type point = { x: int, y: int }
+
+let point: point = { x: 1, y: 2 }
+let moved = { ...point, x: 10 }
+
+let get_x = fn(value: { x: int, ...row }) -> int {
+  value.x
+}
+
+puts(get_x(moved))
+puts(moved.x + moved.y)

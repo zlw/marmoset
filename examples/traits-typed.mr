@@ -1,0 +1,13 @@
+trait named {
+  name: string
+}
+
+let get_name = fn[t: named](value: t) -> string {
+  value.name
+}
+
+let person = { name: "alice", age: 42 }
+let company = { name: "acme", employees: 10 }
+
+puts(get_name(person))
+puts(get_name(company))

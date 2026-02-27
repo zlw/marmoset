@@ -1,0 +1,15 @@
+let describe = fn(value: int | string | bool) -> string {
+  if (value is int) {
+    "int"
+  } else {
+    if (value is string) {
+      "string"
+    } else {
+      "bool"
+    }
+  }
+}
+
+puts(describe(42))
+puts(describe("marmoset"))
+puts(describe(true))

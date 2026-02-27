@@ -1,0 +1,14 @@
+enum option[a] {
+  some(a)
+  none
+}
+
+let unwrap_or = fn(value: option[int], fallback: int) -> int {
+  match value {
+    option.some(x): x
+    option.none: fallback
+  }
+}
+
+puts(unwrap_or(option.some(42), 0))
+puts(unwrap_or(option.none(), 7))
