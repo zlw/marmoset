@@ -499,40 +499,48 @@ and parse_trait_definition (p : parser) : (parser * AST.statement, parser) resul
   let* p2 = expect_peek p Token.Ident in
   let name = p2.curr_token.literal in
 
-  (* Expect type parameter: [a] *)
-  let* p3 = expect_peek p2 Token.LBracket in
-  let* p4 = expect_peek p3 Token.Ident in
-  let type_param = p4.curr_token.literal in
-  let* p5 = expect_peek p4 Token.RBracket in
+  (* Parse optional type parameter: [a] *)
+  let* p3, type_param =
+    if peek_token_is p2 Token.LBracket then
+      let* p3 = expect_peek p2 Token.LBracket in
+      let* p4 = expect_peek p3 Token.Ident in
+      let type_param = Some p4.curr_token.literal in
+      let* p5 = expect_peek p4 Token.RBracket in
+      Ok (p5, type_param)
+    else
+      Ok (next_token p2, None)
+  in
 
   (* Parse optional supertraits: : eq or : eq + show *)
-  let* p6, supertraits =
-    if peek_token_is p5 Token.Colon then
-      parse_supertrait_list (next_token (next_token p5))
+  let* p4, supertraits =
+    if peek_token_is p3 Token.Colon then
+      parse_supertrait_list (next_token (next_token p3))
+    else if curr_token_is p3 Token.LBrace then
+      Ok (p3, [])
     else
-      Ok (next_token p5, [])
+      Ok (next_token p3, [])
   in
 
   (* Expect opening brace *)
-  let* p7 =
-    if curr_token_is p6 Token.LBrace then
-      Ok p6
+  let* p5 =
+    if curr_token_is p4 Token.LBrace then
+      Ok p4
     else
-      expect_peek p6 Token.LBrace
+      expect_peek p4 Token.LBrace
   in
 
-  (* Parse method signatures *)
-  let* p8, methods = parse_method_sig_list (next_token p7) in
+  (* Parse trait members: fields and method signatures *)
+  let* p6, fields, methods = parse_trait_member_list (next_token p5) in
 
   (* Expect closing brace *)
-  let* p9 =
-    if curr_token_is p8 Token.RBrace then
-      Ok p8
+  let* p7 =
+    if curr_token_is p6 Token.RBrace then
+      Ok p6
     else
-      expect_peek p8 Token.RBrace
+      expect_peek p6 Token.RBrace
   in
 
-  Ok (p9, mk_stmt pos (AST.TraitDef { name; type_param; supertraits; methods }))
+  Ok (p7, mk_stmt pos (AST.TraitDef { name; type_param; supertraits; fields; methods }))
 
 and parse_supertrait_list (p : parser) : (parser * string list, parser) result =
   let rec loop lp traits =
@@ -561,6 +569,29 @@ and parse_method_sig_list (p : parser) : (parser * AST.method_sig list, parser) 
       Error (no_prefix_parse_fn_error lp lp.curr_token.token_type)
   in
   loop p []
+
+and parse_trait_member_list (p : parser) : (parser * AST.record_type_field list * AST.method_sig list, parser) result =
+  let rec loop lp fields methods =
+    if curr_token_is lp Token.RBrace then
+      Ok (lp, List.rev fields, List.rev methods)
+    else if curr_token_is lp Token.Function then
+      let* lp2, method_sig = parse_method_sig lp in
+      loop lp2 fields (method_sig :: methods)
+    else if curr_token_is lp Token.Ident then
+      let field_name = lp.curr_token.literal in
+      let* lp2 = expect_peek lp Token.Colon in
+      let* lp3, field_type = parse_type_expr (next_token lp2) in
+      let next_lp =
+        if curr_token_is lp3 Token.Comma then
+          next_token lp3
+        else
+          lp3
+      in
+      loop next_lp (AST.{ field_name; field_type } :: fields) methods
+    else
+      Error (no_prefix_parse_fn_error lp lp.curr_token.token_type)
+  in
+  loop p [] []
 
 and parse_method_sig (p : parser) : (parser * AST.method_sig, parser) result =
   (* Current token is 'fn' *)
@@ -1939,8 +1970,9 @@ let%test "parse simple trait definition" =
           match stmt.stmt with
           | AST.TraitDef trait_def ->
               trait_def.name = "show"
-              && trait_def.type_param = "a"
+              && trait_def.type_param = Some "a"
               && trait_def.supertraits = []
+              && trait_def.fields = []
               && List.length trait_def.methods = 1
           | _ -> false)
       | _ -> false)
@@ -1955,7 +1987,28 @@ let%test "parse trait with multiple methods" =
       | [ stmt ] -> (
           match stmt.stmt with
           | AST.TraitDef trait_def ->
-              trait_def.name = "num" && trait_def.type_param = "a" && List.length trait_def.methods = 2
+              trait_def.name = "num"
+              && trait_def.type_param = Some "a"
+              && trait_def.fields = []
+              && List.length trait_def.methods = 2
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
+let%test "parse trait without type parameter" =
+  let input = "trait ping { fn ping(x: int) -> int }" in
+  let lexer = Lexer.init input in
+  match parse_program (init lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ stmt ] -> (
+          match stmt.stmt with
+          | AST.TraitDef trait_def ->
+              trait_def.name = "ping"
+              && trait_def.type_param = None
+              && trait_def.supertraits = []
+              && trait_def.fields = []
+              && List.length trait_def.methods = 1
           | _ -> false)
       | _ -> false)
   | Error _ -> false
@@ -1970,8 +2023,9 @@ let%test "parse trait with supertraits" =
           match stmt.stmt with
           | AST.TraitDef trait_def ->
               trait_def.name = "ord"
-              && trait_def.type_param = "a"
+              && trait_def.type_param = Some "a"
               && trait_def.supertraits = [ "eq" ]
+              && trait_def.fields = []
               && List.length trait_def.methods = 1
           | _ -> false)
       | _ -> false)
@@ -1987,8 +2041,45 @@ let%test "parse trait with multiple supertraits" =
           match stmt.stmt with
           | AST.TraitDef trait_def ->
               trait_def.name = "hashable"
-              && trait_def.type_param = "a"
+              && trait_def.type_param = Some "a"
               && trait_def.supertraits = [ "eq"; "show" ]
+              && trait_def.fields = []
+              && List.length trait_def.methods = 1
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
+let%test "parse field-only trait definition" =
+  let input = "trait named { name: string }" in
+  let lexer = Lexer.init input in
+  match parse_program (init lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ stmt ] -> (
+          match stmt.stmt with
+          | AST.TraitDef trait_def ->
+              trait_def.name = "named"
+              && trait_def.type_param = None
+              && trait_def.supertraits = []
+              && List.length trait_def.fields = 1
+              && List.length trait_def.methods = 0
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
+let%test "parse mixed trait definition" =
+  let input = "trait printable[a] { name: string fn format(x: a) -> string }" in
+  let lexer = Lexer.init input in
+  match parse_program (init lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ stmt ] -> (
+          match stmt.stmt with
+          | AST.TraitDef trait_def ->
+              trait_def.name = "printable"
+              && trait_def.type_param = Some "a"
+              && trait_def.supertraits = []
+              && List.length trait_def.fields = 1
               && List.length trait_def.methods = 1
           | _ -> false)
       | _ -> false)

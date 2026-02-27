@@ -24,6 +24,24 @@ test_case "Trait with multiple methods" \
      42' \
     "true"
 
+run_case_from_stdin "Method-only trait without type parameter" "42" << 'EOF'
+trait ping {
+  fn ping(x: int) -> int
+}
+impl ping for int {
+  fn ping(x: int) -> int {
+    x
+  }
+}
+puts(42.ping())
+EOF
+
+run_build_fail_contains_from_stdin "Field-only trait is parsed and rejected with typed phase error" "field traits are not supported in this phase" << 'EOF'
+trait named {
+  name: string
+}
+EOF
+
 test_case "Trait with supertraits" \
     'trait eq[a] {
        fn eq(x: a, y: a) -> bool

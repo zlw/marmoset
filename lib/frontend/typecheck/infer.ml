@@ -1542,22 +1542,27 @@ and infer_statement type_map env stmt =
 
       (* Enum def doesn't have a value *)
       Ok (empty_substitution, TNull)
-  | AST.TraitDef { name; type_param; supertraits; methods } -> (
+  | AST.TraitDef { name; type_param; supertraits; fields; methods } -> (
       (* Convert AST method signatures to trait registry method signatures *)
       (* We need to treat type_param as a type variable, not a type constructor *)
       let convert_type_expr (te : AST.type_expr) : mono_type =
+        let is_trait_type_param (type_name : string) : bool =
+          match type_param with
+          | Some tp -> type_name = tp
+          | None -> false
+        in
         let rec convert = function
           | AST.TVar v -> TVar v
           | AST.TCon c ->
               (* Check if it's the trait's type parameter *)
-              if c = type_param then
+              if is_trait_type_param c then
                 TVar c
               else
                 Annotation.type_expr_to_mono_type (AST.TCon c)
           | AST.TApp (con_name, args) -> (
               if
                 (* For generic types, convert recursively *)
-                con_name = type_param
+                is_trait_type_param con_name
               then
                 failwith (Printf.sprintf "Type parameter '%s' cannot be used as type constructor" con_name)
               else
@@ -1581,33 +1586,39 @@ and infer_statement type_map env stmt =
         convert te
       in
 
-      let convert_method_sig (m : AST.method_sig) : Trait_registry.method_sig =
-        let param_types = List.map (fun (pname, ptype) -> (pname, convert_type_expr ptype)) m.method_params in
-        let return_type = convert_type_expr m.method_return_type in
-        {
-          Trait_registry.method_name = m.method_name;
-          method_params = param_types;
-          method_return_type = return_type;
-        }
-      in
+      if fields <> [] then
+        Error
+          (error
+             (ConstructorError
+                "Trait fields are parsed but field traits are not supported in this phase. Use method-only traits for now."))
+      else
+        let convert_method_sig (m : AST.method_sig) : Trait_registry.method_sig =
+          let param_types = List.map (fun (pname, ptype) -> (pname, convert_type_expr ptype)) m.method_params in
+          let return_type = convert_type_expr m.method_return_type in
+          {
+            Trait_registry.method_name = m.method_name;
+            method_params = param_types;
+            method_return_type = return_type;
+          }
+        in
 
-      let method_sigs = List.map convert_method_sig methods in
+        let method_sigs = List.map convert_method_sig methods in
 
-      let trait_def =
-        {
-          Trait_registry.trait_name = name;
-          trait_type_param = Some type_param;
-          trait_supertraits = supertraits;
-          trait_methods = method_sigs;
-        }
-      in
+        let trait_def =
+          {
+            Trait_registry.trait_name = name;
+            trait_type_param = type_param;
+            trait_supertraits = supertraits;
+            trait_methods = method_sigs;
+          }
+        in
 
-      (* Validate and register trait *)
-      match Trait_registry.validate_trait_def trait_def with
-      | Error msg -> Error (error (ConstructorError msg))
-      | Ok () ->
-          Trait_registry.register_trait trait_def;
-          Ok (empty_substitution, TNull))
+        (* Validate and register trait *)
+        match Trait_registry.validate_trait_def trait_def with
+        | Error msg -> Error (error (ConstructorError msg))
+        | Ok () ->
+            Trait_registry.register_trait trait_def;
+            Ok (empty_substitution, TNull))
   | AST.ImplDef { impl_trait_name; impl_type_params; impl_for_type; impl_methods } -> (
       let convert_impl_type_expr (te : AST.type_expr) : (mono_type, infer_error) result =
         try Ok (Annotation.type_expr_to_mono_type te) with

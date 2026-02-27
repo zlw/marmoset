@@ -35,8 +35,9 @@ module AST = struct
   (* Phase 4.3: Trait definitions *)
   and trait_def = {
     name : string;
-    type_param : string; (* The 'a' in trait eq[a] *)
+    type_param : string option; (* The 'a' in trait eq[a], or None for non-generic traits *)
     supertraits : string list; (* trait ord[a]: eq + hash *)
+    fields : record_type_field list; (* field-only/mixed trait members *)
     methods : method_sig list;
   }
 
@@ -280,7 +281,13 @@ module AST = struct
               "[" ^ String.concat ", " type_params ^ "]"
           in
           Printf.sprintf "enum %s%s { ... }" name params_str
-      | TraitDef { name; type_param; _ } -> Printf.sprintf "trait %s[%s] { ... }" name type_param
+      | TraitDef { name; type_param; _ } ->
+          let params =
+            match type_param with
+            | None -> ""
+            | Some p -> Printf.sprintf "[%s]" p
+          in
+          Printf.sprintf "trait %s%s { ... }" name params
       | ImplDef { impl_trait_name; impl_for_type; _ } ->
           Printf.sprintf "impl %s for %s { ... }" impl_trait_name (show_type_expr impl_for_type)
       | DeriveDef { derive_traits; derive_for_type } ->
