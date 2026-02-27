@@ -1,0 +1,33 @@
+{
+  "name": "marmoset",
+  "displayName": "Marmoset",
+  "description": "Marmoset language support",
+  "version": "0.1.0",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "marmoset",
+        "aliases": [
+          "Marmoset"
+        ],
+        "extensions": [
+          ".mr"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "marmoset",
+        "scopeName": "source.marmoset",
+        "path": "./syntaxes/marmoset.tmLanguage.json"
+      }
+    ]
+  }
+}
