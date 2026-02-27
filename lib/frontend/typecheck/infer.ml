@@ -66,15 +66,18 @@ let record_type (type_map : type_map) (expr : AST.expression) (t : mono_type) : 
 type inference_state = {
   fresh_var_counter : int ref;
   constraint_store : (string, string list) Hashtbl.t;
+  method_resolution_store : (int, string) Hashtbl.t;
 }
 
 let create_inference_state () : inference_state =
   {
     fresh_var_counter = ref 0;
     constraint_store = Hashtbl.create 64;
+    method_resolution_store = Hashtbl.create 128;
   }
 
 let active_inference_state : inference_state ref = ref (create_inference_state ())
+let global_method_resolution_store : (int, string) Hashtbl.t = Hashtbl.create 256
 
 let with_inference_state (state : inference_state) (f : unit -> 'a) : 'a =
   let previous = !active_inference_state in
@@ -107,6 +110,14 @@ let lookup_type_var_constraints (type_var_name : string) : string list =
   | None -> []
 
 let clear_constraint_store () : unit = Hashtbl.clear (current_constraint_store ())
+
+let clear_method_resolution_store () : unit = Hashtbl.clear global_method_resolution_store
+
+let record_method_resolution (expr : AST.expression) (trait_name : string) : unit =
+  Hashtbl.replace global_method_resolution_store expr.id trait_name
+
+let lookup_method_resolution (expr_id : int) : string option =
+  Hashtbl.find_opt global_method_resolution_store expr_id
 
 type obligation_reason = GenericConstraint of string
 
@@ -831,6 +842,7 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                               let return_type =
                                 apply_substitution final_subst instantiated_method_sig.method_return_type
                               in
+                              record_method_resolution expr trait_name;
                               Ok (final_subst, return_type))))))
   in
   (* Record the type in the type map before returning *)
@@ -2184,6 +2196,7 @@ let infer_program ?(env = empty_env) ?state (program : AST.program) : (type_env 
   let state = Option.value state ~default:(create_inference_state ()) in
   with_inference_state state (fun () ->
       Annotation.clear_type_aliases ();
+      clear_method_resolution_store ();
       let type_map = create_type_map () in
       let rec go env subst stmts =
         match stmts with

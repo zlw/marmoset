@@ -899,21 +899,27 @@ let rec emit_expr
           (* Get receiver type *)
           let receiver_type = get_type type_map receiver in
 
-          (* Look up which trait provides this method *)
-          match Typecheck.Trait_registry.resolve_method receiver_type variant_name with
-          | Error msg -> failwith msg
-          | Ok (trait_name, _method_sig) ->
-              (* Generate mangled function name: trait_method_type *)
-              (* e.g., show_show_int64 for show trait, show method, int64 type *)
-              let type_suffix = mangle_type receiver_type in
-              let func_name = Printf.sprintf "%s_%s_%s" trait_name variant_name type_suffix in
+          (* Use method-resolution metadata from typechecking; codegen must not re-resolve. *)
+          let trait_name =
+            match Typecheck.Infer.lookup_method_resolution expr.id with
+            | Some name -> name
+            | None ->
+                failwith
+                  (Printf.sprintf
+                     "Codegen error: missing resolved trait metadata for method call id %d ('%s'). Typechecker must record method resolution before emission."
+                     expr.id variant_name)
+          in
+          (* Generate mangled function name: trait_method_type *)
+          (* e.g., show_show_int64 for show trait, show method, int64 type *)
+          let type_suffix = mangle_type receiver_type in
+          let func_name = Printf.sprintf "%s_%s_%s" trait_name variant_name type_suffix in
 
-              (* Emit receiver and arguments *)
-              let receiver_str = emit_expr state type_map env receiver in
-              let arg_strs = List.map (emit_expr state type_map env) args in
-              let all_args = receiver_str :: arg_strs in
+          (* Emit receiver and arguments *)
+          let receiver_str = emit_expr state type_map env receiver in
+          let arg_strs = List.map (emit_expr state type_map env) args in
+          let all_args = receiver_str :: arg_strs in
 
-              Printf.sprintf "%s(%s)" func_name (String.concat ", " all_args)))
+          Printf.sprintf "%s(%s)" func_name (String.concat ", " all_args)))
   in
   maybe_project_to_expected_record_type state type_map env expr expected_type emitted
 
@@ -2598,3 +2604,32 @@ let%test "emit record match pattern" =
   match compile_string "let p = { x: 10, y: 20 }; match p { { x:, y: }: x + y _: 0 }" with
   | Ok code -> string_contains code "__scrutinee :=" && string_contains code "if true" && string_contains code "x := __scrutinee.X"
   | Error _ -> false
+
+let%test "emitter method calls use typechecker resolution metadata" =
+  let source =
+    {|
+trait ping {
+  fn ping(x: int) -> int
+}
+impl ping for int {
+  fn ping(x: int) -> int { x }
+}
+let v = 1
+v.ping()
+|}
+  in
+  match Syntax.Parser.parse source with
+  | Error _ -> false
+  | Ok program -> (
+      let env = Typecheck.Builtins.prelude_env () in
+      match Typecheck.Checker.check_program_with_annotations ~source ~env program with
+      | Error _ -> false
+      | Ok { environment = typed_env; type_map; _ } ->
+          (* If emitter re-resolves methods from the registry, this clear would break codegen. *)
+          Typecheck.Trait_registry.clear ();
+          (match
+             try Some (emit_program_with_typed_env type_map typed_env program) with
+             | _ -> None
+           with
+          | Some code -> string_contains code "ping_ping_int64"
+          | None -> false))
