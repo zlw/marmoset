@@ -155,7 +155,7 @@ test_case "Duplicate impl for same trait and type fails" \
     "false" \
     "Duplicate impl for trait"
 
-run_build_fail_contains_from_stdin "Ambiguous method dispatch fails during typecheck" "Ambiguous method 'render'" << 'EOF'
+run_build_fail_contains_from_stdin "Ambiguous method dispatch reports conflicting impl sites" "impl sites:" << 'EOF'
 trait render_a[a] {
   fn render(x: a) -> string
 }

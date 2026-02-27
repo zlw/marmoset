@@ -23,6 +23,12 @@ type trait_kind =
   | MethodOnly
   | Mixed
 
+type impl_source = {
+  file_id : string option;
+  start_pos : int;
+  end_pos : int;
+}
+
 (* A trait implementation *)
 type impl_def = {
   impl_trait_name : string;
@@ -34,6 +40,7 @@ type impl_def = {
 (* Global mutable registries *)
 let trait_registry : (string, trait_def) Hashtbl.t = Hashtbl.create 16
 let impl_registry : (string * mono_type, impl_def) Hashtbl.t = Hashtbl.create 32 (* key: (trait_name, for_type) *)
+let impl_source_registry : (string * mono_type, impl_source) Hashtbl.t = Hashtbl.create 32
 let builtin_impl_keys : (string * mono_type, unit) Hashtbl.t = Hashtbl.create 32
 let trait_field_registry : (string, record_field_type list) Hashtbl.t = Hashtbl.create 16
 
@@ -44,6 +51,7 @@ let is_builtin_impl_key (trait_name : string) (for_type : mono_type) : bool =
 let clear () =
   Hashtbl.clear trait_registry;
   Hashtbl.clear impl_registry;
+  Hashtbl.clear impl_source_registry;
   Hashtbl.clear builtin_impl_keys;
   Hashtbl.clear trait_field_registry
 
@@ -90,7 +98,7 @@ let validate_trait_fields (trait_name : string) (fields : record_field_type list
     Ok ()
 
 (* Register an impl block *)
-let register_impl ?(builtin = false) (def : impl_def) : unit =
+let register_impl ?(builtin = false) ?source (def : impl_def) : unit =
   let canonical_for_type = canonical_type def.impl_for_type in
   let def' = { def with impl_for_type = canonical_for_type } in
   let key = (def'.impl_trait_name, def'.impl_for_type) in
@@ -104,6 +112,7 @@ let register_impl ?(builtin = false) (def : impl_def) : unit =
              def'.impl_trait_name (to_string def'.impl_for_type))
     | _ ->
         Hashtbl.replace builtin_impl_keys key ();
+        Hashtbl.remove impl_source_registry key;
         Hashtbl.replace impl_registry key def')
   else
     match existing with
@@ -114,6 +123,9 @@ let register_impl ?(builtin = false) (def : impl_def) : unit =
     | _ ->
         (* User impl replaces builtin marker for this key (allowed exactly once). *)
         Hashtbl.remove builtin_impl_keys key;
+        (match source with
+        | Some src -> Hashtbl.replace impl_source_registry key src
+        | None -> Hashtbl.remove impl_source_registry key);
         Hashtbl.replace impl_registry key def'
 
 (* Lookup a trait by name *)
@@ -167,6 +179,13 @@ let lookup_method_candidates (for_type : mono_type) (method_name : string) : (st
     impl_registry []
   |> List.sort (fun (trait_a, _) (trait_b, _) -> String.compare trait_a trait_b)
 
+let format_impl_site (trait_name : string) (for_type : mono_type) : string =
+  match Hashtbl.find_opt impl_source_registry (trait_name, canonical_type for_type) with
+  | Some src ->
+      let file = match src.file_id with Some f -> f | None -> "<unknown-file>" in
+      Printf.sprintf "%s@%s:%d-%d" trait_name file src.start_pos src.end_pos
+  | None -> Printf.sprintf "%s@<builtin-or-unknown>" trait_name
+
 let resolve_method (for_type : mono_type) (method_name : string) : ((string * method_sig), string) result =
   let for_type' = canonical_type for_type in
   let candidates = lookup_method_candidates for_type' method_name in
@@ -176,10 +195,16 @@ let resolve_method (for_type : mono_type) (method_name : string) : ((string * me
   | [ candidate ] -> Ok candidate
   | many ->
       let trait_names = many |> List.map fst |> List.sort_uniq String.compare in
+      let impl_sites =
+        trait_names
+        |> List.map (fun trait_name -> format_impl_site trait_name for_type')
+        |> String.concat ", "
+      in
       Error
-        (Printf.sprintf "Ambiguous method '%s' for type %s (provided by traits: %s)" method_name
+        (Printf.sprintf "Ambiguous method '%s' for type %s (provided by traits: %s; impl sites: %s)" method_name
            (to_string for_type')
-           (String.concat ", " trait_names))
+           (String.concat ", " trait_names)
+           impl_sites)
 
 let lookup_method (for_type : mono_type) (method_name : string) : (string * method_sig) option =
   match resolve_method for_type method_name with
@@ -623,24 +648,41 @@ let%test "resolve_method reports ambiguity for multiple matching traits" =
       trait_methods =
         [ { method_name = "render"; method_params = [ ("x", TVar "a") ]; method_return_type = TString } ];
     };
-  register_impl
+  register_impl ~source:{ file_id = Some "test.mr"; start_pos = 10; end_pos = 20 }
     {
       impl_trait_name = "render_a";
       impl_type_params = [];
       impl_for_type = TInt;
       impl_methods = [ { method_name = "render"; method_params = [ ("x", TInt) ]; method_return_type = TString } ];
     };
-  register_impl
+  register_impl ~source:{ file_id = Some "test.mr"; start_pos = 30; end_pos = 40 }
     {
       impl_trait_name = "render_b";
       impl_type_params = [];
       impl_for_type = TInt;
       impl_methods = [ { method_name = "render"; method_params = [ ("x", TInt) ]; method_return_type = TString } ];
     };
+  let contains_substring s sub =
+    let len_s = String.length s in
+    let len_sub = String.length sub in
+    let rec loop i =
+      if i + len_sub > len_s then
+        false
+      else if String.sub s i len_sub = sub then
+        true
+      else
+        loop (i + 1)
+    in
+    loop 0
+  in
   match resolve_method TInt "render" with
   | Ok _ -> false
   | Error msg ->
-      String.length msg > 0 && String.sub msg 0 (min 16 (String.length msg)) = "Ambiguous method"
+      String.length msg > 0
+      && String.sub msg 0 (min 16 (String.length msg)) = "Ambiguous method"
+      && contains_substring msg "impl sites:"
+      && contains_substring msg "render_a@test.mr:10-20"
+      && contains_substring msg "render_b@test.mr:30-40"
 
 let%test "lookup_method no longer picks first candidate on ambiguity" =
   clear ();

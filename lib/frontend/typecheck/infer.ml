@@ -1821,7 +1821,10 @@ and infer_statement type_map env stmt =
               match Trait_registry.validate_impl impl_def with
               | Error msg -> Error (error (ConstructorError msg))
               | Ok () ->
-                  Trait_registry.register_impl impl_def;
+                  let impl_source : Trait_registry.impl_source =
+                    { file_id = stmt.file_id; start_pos = stmt.pos; end_pos = stmt.end_pos }
+                  in
+                  Trait_registry.register_impl ~source:impl_source impl_def;
                   Ok (method_subst, TNull)))
   | AST.DeriveDef { derive_traits; derive_for_type } ->
       (* Auto-generate implementations for derived traits *)
