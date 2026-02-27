@@ -79,7 +79,8 @@ let rec unify (type1 : mono_type) (type2 : mono_type) : (substitution, unify_err
 and find_field (field_name : string) (fields : record_field_type list) : record_field_type option =
   List.find_opt (fun f -> f.name = field_name) fields
 
-and filter_fields_not_in (fields : record_field_type list) (other : record_field_type list) : record_field_type list =
+and filter_fields_not_in (fields : record_field_type list) (other : record_field_type list) :
+    record_field_type list =
   List.filter (fun f -> find_field f.name other = None) fields
 
 and unify_records
@@ -110,7 +111,7 @@ and unify_records
   in
   match unify_common empty_substitution common_pairs with
   | Error e -> Error e
-  | Ok subst_common ->
+  | Ok subst_common -> (
       let only1' = List.map (fun f -> { f with typ = apply_substitution subst_common f.typ }) only1 in
       let only2' = List.map (fun f -> { f with typ = apply_substitution subst_common f.typ }) only2 in
       let row1' = Option.map (apply_substitution subst_common) row1 in
@@ -122,33 +123,33 @@ and unify_records
             Ok subst_common
           else
             Error (TypeMismatch (TRecord (fields1, row1), TRecord (fields2, row2)))
-      | Some r1, None ->
+      | Some r1, None -> (
           if only1' <> [] then
             Error (TypeMismatch (TRecord (fields1, row1), TRecord (fields2, row2)))
-          else (
+          else
             match unify r1 (TRecord (only2', None)) with
             | Error e -> Error e
             | Ok subst2 -> compose_with_common subst2)
-      | None, Some r2 ->
+      | None, Some r2 -> (
           if only2' <> [] then
             Error (TypeMismatch (TRecord (fields1, row1), TRecord (fields2, row2)))
-          else (
+          else
             match unify r2 (TRecord (only1', None)) with
             | Error e -> Error e
             | Ok subst2 -> compose_with_common subst2)
-      | Some r1, Some r2 ->
-          if only1' = [] && only2' = [] then (
+      | Some r1, Some r2 -> (
+          if only1' = [] && only2' = [] then
             match unify r1 r2 with
             | Error e -> Error e
-            | Ok subst2 -> compose_with_common subst2)
-          else if only1' = [] then (
+            | Ok subst2 -> compose_with_common subst2
+          else if only1' = [] then
             match unify r1 (TRecord (only2', Some r2)) with
             | Error e -> Error e
-            | Ok subst2 -> compose_with_common subst2)
-          else if only2' = [] then (
+            | Ok subst2 -> compose_with_common subst2
+          else if only2' = [] then
             match unify r2 (TRecord (only1', Some r1)) with
             | Error e -> Error e
-            | Ok subst2 -> compose_with_common subst2)
+            | Ok subst2 -> compose_with_common subst2
           else
             let shared = fresh_row_var () in
             match unify r1 (TRecord (only2', Some shared)) with
@@ -161,7 +162,7 @@ and unify_records
                 | Error e -> Error e
                 | Ok subst3 ->
                     let subst23 = compose_substitution subst2 subst3 in
-                    compose_with_common subst23)
+                    compose_with_common subst23)))
 
 (* Helper: Check if concrete type matches any union member *)
 and unify_concrete_with_union (concrete : mono_type) (members : mono_type list) :

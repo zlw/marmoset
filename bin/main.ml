@@ -20,7 +20,7 @@ let print_usage () =
 let parse_args () : command =
   let args = Array.to_list Sys.argv |> List.tl in
   match args with
-  | "build" :: rest ->
+  | "build" :: rest -> (
       let input = ref None in
       let output = ref None in
       let emit_go = ref None in
@@ -40,12 +40,12 @@ let parse_args () : command =
             exit 1
       in
       parse rest;
-      (match !input with
+      match !input with
       | Some input -> Build { input; output = !output; emit_go = !emit_go }
       | None ->
           print_usage ();
           exit 1)
-  | "run" :: rest ->
+  | "run" :: rest -> (
       let benchmark = ref false in
       let input = ref None in
       let rec parse = function
@@ -61,7 +61,7 @@ let parse_args () : command =
             exit 1
       in
       parse rest;
-      (match !input with
+      match !input with
       | Some filename -> Run { benchmark = !benchmark; filename }
       | None ->
           print_usage ();
@@ -95,10 +95,8 @@ let output_absolute_path (output : string) : string =
     output
 
 let compile_to_binary
-    ~(input_file : string)
-    ~(source : string)
-    ~(output_bin : string)
-    ~(emit_go_dir : string option) : (unit, string) result =
+    ~(input_file : string) ~(source : string) ~(output_bin : string) ~(emit_go_dir : string option) :
+    (unit, string) result =
   match Marmoset.Lib.Go_emitter.compile_to_build ~file_id:input_file source with
   | Error msg -> Error msg
   | Ok build_output ->

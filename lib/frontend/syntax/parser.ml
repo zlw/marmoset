@@ -9,8 +9,7 @@ let mk_stmt pos kind = AST.{ stmt = kind; pos; end_pos = pos; file_id = None }
 let token_end (t : Token.token) : int =
   let len = String.length t.literal in
   match t.token_type with
-  | Token.EOF ->
-      t.pos
+  | Token.EOF -> t.pos
   | Token.String ->
       (* Token literal stores the inner string content; include both quotes. *)
       t.pos + len + 1
@@ -570,7 +569,8 @@ and parse_method_sig_list (p : parser) : (parser * AST.method_sig list, parser) 
   in
   loop p []
 
-and parse_trait_member_list (p : parser) : (parser * AST.record_type_field list * AST.method_sig list, parser) result =
+and parse_trait_member_list (p : parser) :
+    (parser * AST.record_type_field list * AST.method_sig list, parser) result =
   let rec loop lp fields methods =
     if curr_token_is lp Token.RBrace then
       Ok (lp, List.rev fields, List.rev methods)
@@ -1199,10 +1199,12 @@ and parse_record_or_hash_literal (p : parser) : (parser * AST.expression, parser
       | None ->
           if curr_token_is lp Token.Spread || (curr_token_is lp Token.Ident && peek_token_is lp Token.Colon) then
             let* lp_entry, entry = parse_record_entry lp in
-            let* lp_sep = consume_brace_entry_separator lp_entry "expected ',' or '}' after record literal entry" in
-            (match entry with
+            let* lp_sep =
+              consume_brace_entry_separator lp_entry "expected ',' or '}' after record literal entry"
+            in
+            match entry with
             | `Field field -> loop lp_sep (Some RecordMode) (field :: fields) spread pairs
-            | `Spread spread_expr -> loop lp_sep (Some RecordMode) fields (Some spread_expr) pairs)
+            | `Spread spread_expr -> loop lp_sep (Some RecordMode) fields (Some spread_expr) pairs
           else
             let* lp_entry, pair = parse_hash_entry lp in
             let* lp_sep = consume_brace_entry_separator lp_entry "expected ',' or '}' after hash literal entry" in
@@ -1210,8 +1212,8 @@ and parse_record_or_hash_literal (p : parser) : (parser * AST.expression, parser
   in
   loop (next_token p) None [] None []
 
-and parse_record_entry (p : parser) : (parser * [ `Field of AST.record_field | `Spread of AST.expression ], parser) result
-    =
+and parse_record_entry (p : parser) :
+    (parser * [ `Field of AST.record_field | `Spread of AST.expression ], parser) result =
   if curr_token_is p Token.Spread then
     let p2 = next_token p in
     let* p3, spread_expr = parse_expression p2 prec_lowest in
@@ -1917,37 +1919,36 @@ module Test = struct
     let input = "let x = { a: 1, \"b\": 2 }" in
     match parse input with
     | Ok _ -> false
-    | Error errs -> List.exists (fun msg -> contains_substring msg "cannot mix hash-style entries into record literal") errs
+    | Error errs ->
+        List.exists (fun msg -> contains_substring msg "cannot mix hash-style entries into record literal") errs
 
   let%test "mixed hash then spread entry errors deterministically" =
     let input = "let x = { \"a\": 1, ...rest }" in
     match parse input with
     | Ok _ -> false
-    | Error errs -> List.exists (fun msg -> contains_substring msg "cannot mix record-style spread into hash literal") errs
+    | Error errs ->
+        List.exists (fun msg -> contains_substring msg "cannot mix record-style spread into hash literal") errs
 
   let%test "mixed hash then record field errors deterministically" =
     let input = "let x = { \"a\": 1, b: 2 }" in
     match parse input with
     | Ok _ -> false
-    | Error errs -> List.exists (fun msg -> contains_substring msg "cannot mix record-style field into hash literal") errs
+    | Error errs ->
+        List.exists (fun msg -> contains_substring msg "cannot mix record-style field into hash literal") errs
 
   let%test "hash literal missing comma reports deterministic error" =
     let input = "let x = { \"a\": 1 b: 2 }" in
     match parse input with
     | Ok _ -> false
     | Error errs ->
-        List.exists
-          (fun msg -> contains_substring msg "expected ',' or '}' after hash literal entry")
-          errs
+        List.exists (fun msg -> contains_substring msg "expected ',' or '}' after hash literal entry") errs
 
   let%test "record literal missing comma reports deterministic error" =
     let input = "let x = { a: 1 b: 2 }" in
     match parse input with
     | Ok _ -> false
     | Error errs ->
-        List.exists
-          (fun msg -> contains_substring msg "expected ',' or '}' after record literal entry")
-          errs
+        List.exists (fun msg -> contains_substring msg "expected ',' or '}' after record literal entry") errs
 
   let%test "record literal duplicate spread reports deterministic error" =
     let input = "let x = { ...a, ...b }" in

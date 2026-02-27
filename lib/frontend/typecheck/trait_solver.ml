@@ -18,9 +18,7 @@ let dedupe_preserve_order (traits : string list) : string list =
 
 let expand_constraints_with_supertraits (constraints : string list) : string list =
   constraints
-  |> List.fold_left
-       (fun acc trait_name -> acc @ Trait_registry.trait_with_supertraits trait_name)
-       []
+  |> List.fold_left (fun acc trait_name -> acc @ Trait_registry.trait_with_supertraits trait_name) []
   |> dedupe_preserve_order
 
 let check_trait_fields (typ : Types.mono_type) (trait_name : string) : (unit, string) result =
@@ -33,7 +31,9 @@ let check_trait_fields (typ : Types.mono_type) (trait_name : string) : (unit, st
           let rec check_required = function
             | [] -> Ok ()
             | (required : Types.record_field_type) :: rest -> (
-                match List.find_opt (fun (f : Types.record_field_type) -> f.name = required.name) actual_fields with
+                match
+                  List.find_opt (fun (f : Types.record_field_type) -> f.name = required.name) actual_fields
+                with
                 | None ->
                     Error
                       (Printf.sprintf
@@ -56,8 +56,7 @@ let check_trait_fields (typ : Types.mono_type) (trait_name : string) : (unit, st
           Error
             (Printf.sprintf
                "Trait satisfaction failed [non-record-for-field-trait]: type %s does not satisfy trait %s because field traits require a record receiver"
-               type_str
-               trait_name))
+               type_str trait_name))
 
 let check_trait_methods (typ : Types.mono_type) (trait_name : string) : (unit, string) result =
   if Trait_registry.implements_trait trait_name typ then
@@ -95,7 +94,8 @@ let rec check_trait_with_supertraits (visited : StringSet.t) (typ : Types.mono_t
         | None -> Ok ()
         | Some trait_def -> check_supertraits visited' typ trait_def.trait_supertraits)
 
-and check_supertraits (visited : StringSet.t) (typ : Types.mono_type) (traits : string list) : (unit, string) result =
+and check_supertraits (visited : StringSet.t) (typ : Types.mono_type) (traits : string list) :
+    (unit, string) result =
   match traits with
   | [] -> Ok ()
   | trait_name :: rest -> (
@@ -112,16 +112,15 @@ let satisfies_trait_bool (typ : Types.mono_type) (trait_name : string) : bool =
   | Error _ -> false
 
 (* Check if a concrete type implements a trait *)
-let implements_trait (typ : Types.mono_type) (trait_name : string) : bool =
-  satisfies_trait_bool typ trait_name
+let implements_trait (typ : Types.mono_type) (trait_name : string) : bool = satisfies_trait_bool typ trait_name
 
 (* Check if a type satisfies constraints, returning error if not *)
 let check_constraints (typ : Types.mono_type) (constraints : string list) : (unit, string) result =
   let rec check traits =
     match traits with
     | [] -> Ok ()
-    | trait :: rest ->
-        (match satisfies_trait typ trait with
+    | trait :: rest -> (
+        match satisfies_trait typ trait with
         | Ok () -> check rest
         | Error _ as err -> err)
   in
@@ -308,7 +307,11 @@ let%test "check_constraints enforces supertrait obligations transitively" =
       trait_supertraits = [];
       trait_methods =
         [
-          { method_name = "eq"; method_params = [ ("x", Types.TVar "a"); ("y", Types.TVar "a") ]; method_return_type = Types.TBool };
+          {
+            method_name = "eq";
+            method_params = [ ("x", Types.TVar "a"); ("y", Types.TVar "a") ];
+            method_return_type = Types.TBool;
+          };
         ];
     };
   Trait_registry.register_trait
@@ -352,7 +355,11 @@ let%test "satisfies_trait enforces supertrait obligations transitively" =
       trait_supertraits = [];
       trait_methods =
         [
-          { method_name = "eq"; method_params = [ ("x", Types.TVar "a"); ("y", Types.TVar "a") ]; method_return_type = Types.TBool };
+          {
+            method_name = "eq";
+            method_params = [ ("x", Types.TVar "a"); ("y", Types.TVar "a") ];
+            method_return_type = Types.TBool;
+          };
         ];
     };
   Trait_registry.register_trait
@@ -390,12 +397,7 @@ let%test "satisfies_trait enforces supertrait obligations transitively" =
 let%test "field-only trait is satisfied structurally by matching record" =
   Trait_registry.clear ();
   Trait_registry.register_trait
-    {
-      trait_name = "named";
-      trait_type_param = None;
-      trait_supertraits = [];
-      trait_methods = [];
-    };
+    { trait_name = "named"; trait_type_param = None; trait_supertraits = []; trait_methods = [] };
   Trait_registry.set_trait_fields "named" [ { Types.name = "name"; typ = Types.TString } ];
   match satisfies_trait (Types.TRecord ([ { Types.name = "name"; typ = Types.TString } ], None)) "named" with
   | Ok () -> true
@@ -404,34 +406,20 @@ let%test "field-only trait is satisfied structurally by matching record" =
 let%test "field-only trait rejects non-record types" =
   Trait_registry.clear ();
   Trait_registry.register_trait
-    {
-      trait_name = "named";
-      trait_type_param = None;
-      trait_supertraits = [];
-      trait_methods = [];
-    };
+    { trait_name = "named"; trait_type_param = None; trait_supertraits = []; trait_methods = [] };
   Trait_registry.set_trait_fields "named" [ { Types.name = "name"; typ = Types.TString } ];
   match satisfies_trait Types.TInt "named" with
   | Ok () -> false
-  | Error msg ->
-      contains_substring msg "record"
-      && contains_substring msg "[non-record-for-field-trait]"
+  | Error msg -> contains_substring msg "record" && contains_substring msg "[non-record-for-field-trait]"
 
 let%test "field-only trait missing-field error includes category" =
   Trait_registry.clear ();
   Trait_registry.register_trait
-    {
-      trait_name = "named";
-      trait_type_param = None;
-      trait_supertraits = [];
-      trait_methods = [];
-    };
+    { trait_name = "named"; trait_type_param = None; trait_supertraits = []; trait_methods = [] };
   Trait_registry.set_trait_fields "named" [ { Types.name = "name"; typ = Types.TString } ];
   match satisfies_trait (Types.TRecord ([ { Types.name = "age"; typ = Types.TInt } ], None)) "named" with
   | Ok () -> false
-  | Error msg ->
-      contains_substring msg "missing-field"
-      && contains_substring msg "field 'name'"
+  | Error msg -> contains_substring msg "missing-field" && contains_substring msg "field 'name'"
 
 let%test "mixed trait requires both structural fields and nominal impl" =
   Trait_registry.clear ();
@@ -442,13 +430,7 @@ let%test "mixed trait requires both structural fields and nominal impl" =
       trait_type_param = None;
       trait_supertraits = [];
       trait_methods =
-        [
-          {
-            method_name = "show";
-            method_params = [ ("x", person_type) ];
-            method_return_type = Types.TString;
-          };
-        ];
+        [ { method_name = "show"; method_params = [ ("x", person_type) ]; method_return_type = Types.TString } ];
     };
   Trait_registry.set_trait_fields "named_show" [ { Types.name = "name"; typ = Types.TString } ];
   let fails_without_impl =
@@ -462,13 +444,7 @@ let%test "mixed trait requires both structural fields and nominal impl" =
       impl_type_params = [];
       impl_for_type = person_type;
       impl_methods =
-        [
-          {
-            method_name = "show";
-            method_params = [ ("x", person_type) ];
-            method_return_type = Types.TString;
-          };
-        ];
+        [ { method_name = "show"; method_params = [ ("x", person_type) ]; method_return_type = Types.TString } ];
     };
   let passes_with_impl =
     match satisfies_trait person_type "named_show" with

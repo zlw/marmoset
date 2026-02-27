@@ -43,8 +43,8 @@ let impl_registry : (string * mono_type, impl_def) Hashtbl.t = Hashtbl.create 32
 let impl_source_registry : (string * mono_type, impl_source) Hashtbl.t = Hashtbl.create 32
 let builtin_impl_keys : (string * mono_type, unit) Hashtbl.t = Hashtbl.create 32
 let trait_field_registry : (string, record_field_type list) Hashtbl.t = Hashtbl.create 16
-
 let canonical_type (t : mono_type) : mono_type = canonicalize_mono_type t
+
 let is_builtin_impl_key (trait_name : string) (for_type : mono_type) : bool =
   Hashtbl.mem builtin_impl_keys (trait_name, canonical_type for_type)
 
@@ -182,29 +182,28 @@ let lookup_method_candidates (for_type : mono_type) (method_name : string) : (st
 let format_impl_site (trait_name : string) (for_type : mono_type) : string =
   match Hashtbl.find_opt impl_source_registry (trait_name, canonical_type for_type) with
   | Some src ->
-      let file = match src.file_id with Some f -> f | None -> "<unknown-file>" in
+      let file =
+        match src.file_id with
+        | Some f -> f
+        | None -> "<unknown-file>"
+      in
       Printf.sprintf "%s@%s:%d-%d" trait_name file src.start_pos src.end_pos
   | None -> Printf.sprintf "%s@<builtin-or-unknown>" trait_name
 
-let resolve_method (for_type : mono_type) (method_name : string) : ((string * method_sig), string) result =
+let resolve_method (for_type : mono_type) (method_name : string) : (string * method_sig, string) result =
   let for_type' = canonical_type for_type in
   let candidates = lookup_method_candidates for_type' method_name in
   match candidates with
-  | [] ->
-      Error (Printf.sprintf "No method '%s' found for type %s" method_name (to_string for_type'))
+  | [] -> Error (Printf.sprintf "No method '%s' found for type %s" method_name (to_string for_type'))
   | [ candidate ] -> Ok candidate
   | many ->
       let trait_names = many |> List.map fst |> List.sort_uniq String.compare in
       let impl_sites =
-        trait_names
-        |> List.map (fun trait_name -> format_impl_site trait_name for_type')
-        |> String.concat ", "
+        trait_names |> List.map (fun trait_name -> format_impl_site trait_name for_type') |> String.concat ", "
       in
       Error
         (Printf.sprintf "Ambiguous method '%s' for type %s (provided by traits: %s; impl sites: %s)" method_name
-           (to_string for_type')
-           (String.concat ", " trait_names)
-           impl_sites)
+           (to_string for_type') (String.concat ", " trait_names) impl_sites)
 
 let lookup_method (for_type : mono_type) (method_name : string) : (string * method_sig) option =
   match resolve_method for_type method_name with
@@ -240,15 +239,16 @@ let derive_kind_for_impl (impl : impl_def) : derive_kind option =
   | None -> None
   | Some kind ->
       let expected = List.sort String.compare (derive_method_names kind) in
-      let actual = List.map (fun (m : method_sig) -> m.method_name) impl.impl_methods |> List.sort String.compare in
+      let actual =
+        List.map (fun (m : method_sig) -> m.method_name) impl.impl_methods |> List.sort String.compare
+      in
       if expected = actual then
         Some kind
       else
         None
 
 (* Check if a trait can be auto-derived *)
-let is_derivable (trait_name : string) : bool =
-  derive_kind_of_trait_name trait_name <> None
+let is_derivable (trait_name : string) : bool = derive_kind_of_trait_name trait_name <> None
 
 (* Validate that a type can derive a trait *)
 let can_derive (trait_name : string) (for_type : mono_type) : (unit, string) result =
@@ -344,7 +344,9 @@ let validate_trait_def (def : trait_def) : (unit, string) result =
 
 let validate_impl_signature (trait_def : trait_def) (def : impl_def) : (unit, string) result =
   (* Check that all trait methods are implemented *)
-  let trait_method_names = List.map (fun m -> m.method_name) trait_def.trait_methods |> List.sort String.compare in
+  let trait_method_names =
+    List.map (fun m -> m.method_name) trait_def.trait_methods |> List.sort String.compare
+  in
   let impl_method_names = List.map (fun m -> m.method_name) def.impl_methods |> List.sort String.compare in
 
   if trait_method_names <> impl_method_names then
@@ -424,7 +426,8 @@ let validate_impl (def : impl_def) : (unit, string) result =
   let def' = { def with impl_for_type = for_type' } in
   match lookup_impl def'.impl_trait_name for_type' with
   | Some _ when not (is_builtin_impl_key def'.impl_trait_name for_type') ->
-      Error (Printf.sprintf "Duplicate impl for trait '%s' and type %s" def'.impl_trait_name (to_string for_type'))
+      Error
+        (Printf.sprintf "Duplicate impl for trait '%s' and type %s" def'.impl_trait_name (to_string for_type'))
   | _ -> (
       match lookup_trait def'.impl_trait_name with
       | None -> Error (Printf.sprintf "Cannot implement undefined trait: %s" def'.impl_trait_name)
@@ -602,10 +605,10 @@ let%test "register_impl allows user override of builtin impl key" =
     }
   in
   register_impl ~builtin:true builtin_show_for_int;
-  (try
-     register_impl user_show_for_int;
-     true
-   with Failure _ -> false)
+  try
+    register_impl user_show_for_int;
+    true
+  with Failure _ -> false
 
 let%test "implements_trait checks impl registry" =
   clear ();
@@ -680,14 +683,16 @@ let%test "resolve_method reports ambiguity for multiple matching traits" =
       trait_methods =
         [ { method_name = "render"; method_params = [ ("x", TVar "a") ]; method_return_type = TString } ];
     };
-  register_impl ~source:{ file_id = Some "test.mr"; start_pos = 10; end_pos = 20 }
+  register_impl
+    ~source:{ file_id = Some "test.mr"; start_pos = 10; end_pos = 20 }
     {
       impl_trait_name = "render_a";
       impl_type_params = [];
       impl_for_type = TInt;
       impl_methods = [ { method_name = "render"; method_params = [ ("x", TInt) ]; method_return_type = TString } ];
     };
-  register_impl ~source:{ file_id = Some "test.mr"; start_pos = 30; end_pos = 40 }
+  register_impl
+    ~source:{ file_id = Some "test.mr"; start_pos = 30; end_pos = 40 }
     {
       impl_trait_name = "render_b";
       impl_type_params = [];
@@ -815,9 +820,9 @@ let%test "validate_impl allows overriding builtin impl once" =
   register_impl ~builtin:true builtin_show_for_int;
   match validate_impl user_show_for_int with
   | Error _ -> false
-  | Ok () ->
+  | Ok () -> (
       register_impl user_show_for_int;
-      (match validate_impl user_show_for_int with
+      match validate_impl user_show_for_int with
       | Ok () -> false
       | Error msg ->
           String.length msg > 0 && String.sub msg 0 (min 24 (String.length msg)) = "Duplicate impl for trait")
@@ -1056,7 +1061,8 @@ let%test "derive_kind_for_impl recognizes eq contract" =
       impl_trait_name = "eq";
       impl_type_params = [];
       impl_for_type = TInt;
-      impl_methods = [ { method_name = "eq"; method_params = [ ("x", TInt); ("y", TInt) ]; method_return_type = TBool } ];
+      impl_methods =
+        [ { method_name = "eq"; method_params = [ ("x", TInt); ("y", TInt) ]; method_return_type = TBool } ];
     }
   in
   match derive_kind_for_impl impl with
@@ -1069,7 +1075,8 @@ let%test "derive_kind_for_impl rejects mismatched method set" =
       impl_trait_name = "eq";
       impl_type_params = [];
       impl_for_type = TInt;
-      impl_methods = [ { method_name = "compare"; method_params = [ ("x", TInt); ("y", TInt) ]; method_return_type = TBool } ];
+      impl_methods =
+        [ { method_name = "compare"; method_params = [ ("x", TInt); ("y", TInt) ]; method_return_type = TBool } ];
     }
   in
   derive_kind_for_impl impl = None
@@ -1273,7 +1280,9 @@ let%test "validate_impl rejects missing required supertrait implementation" =
       trait_type_param = Some "a";
       trait_supertraits = [];
       trait_methods =
-        [ { method_name = "eq"; method_params = [ ("x", TVar "a"); ("y", TVar "a") ]; method_return_type = TBool } ];
+        [
+          { method_name = "eq"; method_params = [ ("x", TVar "a"); ("y", TVar "a") ]; method_return_type = TBool };
+        ];
     };
   register_trait
     {
@@ -1282,7 +1291,11 @@ let%test "validate_impl rejects missing required supertrait implementation" =
       trait_supertraits = [ "eq" ];
       trait_methods =
         [
-          { method_name = "compare"; method_params = [ ("x", TVar "a"); ("y", TVar "a") ]; method_return_type = TInt };
+          {
+            method_name = "compare";
+            method_params = [ ("x", TVar "a"); ("y", TVar "a") ];
+            method_return_type = TInt;
+          };
         ];
     };
   match
@@ -1293,7 +1306,11 @@ let%test "validate_impl rejects missing required supertrait implementation" =
         impl_for_type = TString;
         impl_methods =
           [
-            { method_name = "compare"; method_params = [ ("x", TString); ("y", TString) ]; method_return_type = TInt };
+            {
+              method_name = "compare";
+              method_params = [ ("x", TString); ("y", TString) ];
+              method_return_type = TInt;
+            };
           ];
       }
   with
@@ -1302,13 +1319,7 @@ let%test "validate_impl rejects missing required supertrait implementation" =
 
 let%test "validate_impl rejects impl blocks for field-only traits" =
   clear ();
-  register_trait
-    {
-      trait_name = "named";
-      trait_type_param = None;
-      trait_supertraits = [];
-      trait_methods = [];
-    };
+  register_trait { trait_name = "named"; trait_type_param = None; trait_supertraits = []; trait_methods = [] };
   set_trait_fields "named" [ { name = "name"; typ = TString } ];
   match
     validate_impl
@@ -1320,6 +1331,4 @@ let%test "validate_impl rejects impl blocks for field-only traits" =
       }
   with
   | Ok () -> false
-  | Error msg ->
-      String.length msg > 0
-      && String.sub msg 0 (min (String.length msg) 5) = "Trait"
+  | Error msg -> String.length msg > 0 && String.sub msg 0 (min (String.length msg) 5) = "Trait"

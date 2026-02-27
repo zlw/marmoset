@@ -64,7 +64,9 @@ let field_only_trait_object_type (trait_name : string) : Types.mono_type =
   in
   List.iter gather_trait_fields trait_chain;
   let fields =
-    Hashtbl.to_seq_keys field_tbl |> List.of_seq |> List.sort String.compare
+    Hashtbl.to_seq_keys field_tbl
+    |> List.of_seq
+    |> List.sort String.compare
     |> List.map (fun name ->
            match Hashtbl.find_opt field_tbl name with
            | Some typ -> { Types.name; typ }
@@ -78,23 +80,21 @@ let type_position_error_for_constructor (name : string) : string =
       Printf.sprintf "Trait '%s' cannot be used here as a type constructor with arguments" name
   | Some Trait_registry.MethodOnly | Some Trait_registry.Mixed ->
       Printf.sprintf
-        "Trait '%s' cannot be used as a type: method and mixed trait objects are not supported in this phase"
-        name
+        "Trait '%s' cannot be used as a type: method and mixed trait objects are not supported in this phase" name
   | None -> "Unknown type constructor: " ^ name
 
 let rec type_expr_to_mono_type_with
-    (type_bindings : (string * Types.mono_type) list)
-    (te : Syntax.Ast.AST.type_expr) : Types.mono_type =
+    (type_bindings : (string * Types.mono_type) list) (te : Syntax.Ast.AST.type_expr) : Types.mono_type =
   match te with
-  | Syntax.Ast.AST.TVar name ->
+  | Syntax.Ast.AST.TVar name -> (
       (* Type variables represent generic parameters *)
-      (match List.assoc_opt name type_bindings with
+      match List.assoc_opt name type_bindings with
       | Some ty -> ty
       | None -> Types.TVar name)
-  | Syntax.Ast.AST.TCon name ->
-      (match List.assoc_opt name type_bindings with
+  | Syntax.Ast.AST.TCon name -> (
+      match List.assoc_opt name type_bindings with
       | Some ty -> ty
-      | None ->
+      | None -> (
           match name with
           | "int" -> Types.TInt
           | "float" -> Types.TFloat
@@ -132,7 +132,7 @@ let rec type_expr_to_mono_type_with
                             field_only_trait_object_type other
                       | Some Trait_registry.MethodOnly | Some Trait_registry.Mixed ->
                           failwith (type_position_error_for_constructor other)
-                      | None -> failwith (type_position_error_for_constructor other)))))
+                      | None -> failwith (type_position_error_for_constructor other))))))
   | Syntax.Ast.AST.TApp (con_name, type_args) -> (
       (* Generic type application: list[int], map[string, int], option[a] *)
       let arg_types = List.map (type_expr_to_mono_type_with type_bindings) type_args in
@@ -217,18 +217,17 @@ let rec mono_types_equal (t1 : Types.mono_type) (t2 : Types.mono_type) : bool =
   | Types.TNull, Types.TNull -> true
   | Types.TArray elem1, Types.TArray elem2 -> mono_types_equal elem1 elem2
   | Types.THash (k1, v1), Types.THash (k2, v2) -> mono_types_equal k1 k2 && mono_types_equal v1 v2
-  | Types.TRecord (fields1, row1), Types.TRecord (fields2, row2) ->
+  | Types.TRecord (fields1, row1), Types.TRecord (fields2, row2) -> (
       let compare_field_names a b = String.compare a.Types.name b.Types.name in
       let sort_fields fields = List.sort (fun a b -> compare_field_names a b) fields in
       let fields1' = sort_fields fields1 in
       let fields2' = sort_fields fields2 in
       List.length fields1' = List.length fields2'
+      && List.for_all2
+           (fun f1 f2 -> f1.Types.name = f2.Types.name && mono_types_equal f1.Types.typ f2.Types.typ)
+           fields1' fields2'
       &&
-      List.for_all2
-        (fun f1 f2 -> f1.Types.name = f2.Types.name && mono_types_equal f1.Types.typ f2.Types.typ)
-        fields1' fields2'
-      &&
-      (match (row1, row2) with
+      match (row1, row2) with
       | None, None -> true
       | Some r1, Some r2 -> mono_types_equal r1 r2
       | _ -> false)
@@ -264,7 +263,7 @@ let rec is_subtype_of (actual : Types.mono_type) (expected : Types.mono_type) : 
   | Types.TArray elem1, Types.TArray elem2 -> is_subtype_of elem1 elem2
   (* Hashes: covariant in key and value types *)
   | Types.THash (k1, v1), Types.THash (k2, v2) -> is_subtype_of k1 k2 && is_subtype_of v1 v2
-  | Types.TRecord (fields1, row1), Types.TRecord (fields2, row2) ->
+  | Types.TRecord (fields1, row1), Types.TRecord (fields2, row2) -> (
       let field_lookup fields name = List.find_opt (fun (f : Types.record_field_type) -> f.name = name) fields in
       let fields_ok =
         List.for_all
@@ -280,7 +279,7 @@ let rec is_subtype_of (actual : Types.mono_type) (expected : Types.mono_type) : 
         let has_extra_fields =
           List.exists (fun (f : Types.record_field_type) -> field_lookup fields2 f.name = None) fields1
         in
-        (match row2 with
+        match row2 with
         | Some _ -> true
         | None ->
             if has_extra_fields then
@@ -331,11 +330,17 @@ let rec format_mono_type (t : Types.mono_type) : string =
   | Types.THash (key_type, value_type) ->
       Printf.sprintf "map[%s, %s]" (format_mono_type key_type) (format_mono_type value_type)
   | Types.TRecord (fields, row) ->
-      let field_strs = List.map (fun (f : Types.record_field_type) -> f.name ^ ": " ^ format_mono_type f.typ) fields in
+      let field_strs =
+        List.map (fun (f : Types.record_field_type) -> f.name ^ ": " ^ format_mono_type f.typ) fields
+      in
       let row_str =
         match row with
         | None -> ""
-        | Some r -> if field_strs = [] then "..." ^ format_mono_type r else ", ..." ^ format_mono_type r
+        | Some r ->
+            if field_strs = [] then
+              "..." ^ format_mono_type r
+            else
+              ", ..." ^ format_mono_type r
       in
       Printf.sprintf "{ %s%s }" (String.concat ", " field_strs) row_str
   | Types.TRowVar name -> name
@@ -408,7 +413,8 @@ let%test "option with wrong arity fails" =
 let%test "record annotation converts to record mono type" =
   let te =
     Syntax.Ast.AST.TRecord
-      ([ { Syntax.Ast.AST.field_name = "x"; field_type = Syntax.Ast.AST.TCon "int" } ], Some (Syntax.Ast.AST.TCon "r"))
+      ( [ { Syntax.Ast.AST.field_name = "x"; field_type = Syntax.Ast.AST.TCon "int" } ],
+        Some (Syntax.Ast.AST.TCon "r") )
   in
   type_expr_to_mono_type te = Types.TRecord ([ { Types.name = "x"; typ = Types.TInt } ], Some (Types.TRowVar "r"))
 
@@ -452,7 +458,13 @@ let setup_trait_object_annotation_tests () =
       trait_type_param = Some "a";
       trait_supertraits = [];
       trait_methods =
-        [ { Trait_registry.method_name = "show"; method_params = [ ("x", Types.TVar "a") ]; method_return_type = Types.TString } ];
+        [
+          {
+            Trait_registry.method_name = "show";
+            method_params = [ ("x", Types.TVar "a") ];
+            method_return_type = Types.TString;
+          };
+        ];
     }
 
 let%test "field-only trait annotation lowers to open record requirement" =

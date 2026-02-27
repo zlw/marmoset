@@ -161,7 +161,13 @@ let check_function_annotation (return_annotation : Syntax.Ast.AST.type_expr opti
               file_id = None;
             }
       with Failure msg ->
-        Error { message = Printf.sprintf "Invalid function annotation: %s" msg; loc = None; loc_end = None; file_id = None })
+        Error
+          {
+            message = Printf.sprintf "Invalid function annotation: %s" msg;
+            loc = None;
+            loc_end = None;
+            file_id = None;
+          })
 
 (* Type check a program with annotation support.
     This checks that all annotations match the inferred types.
@@ -173,8 +179,7 @@ let check_program_with_annotations ?state ?source ?(env = Infer.empty_env) (prog
   | Error e -> Error (error_of_infer_error ?source e)
   | Ok (final_env, type_map, result_type) -> (
       (* Phase 2: Validate annotations against inferred types *)
-      let rec check_stmts_with_infer (stmts : Syntax.Ast.AST.statement list) :
-          (unit, error) result =
+      let rec check_stmts_with_infer (stmts : Syntax.Ast.AST.statement list) : (unit, error) result =
         match stmts with
         | [] -> Ok ()
         | stmt :: rest -> (
@@ -217,8 +222,8 @@ let check_program_with_annotations ?state ?source ?(env = Infer.empty_env) (prog
             | _ ->
                 (* Other statements don't have annotations to check *)
                 check_stmts_with_infer rest)
-      and check_expr_annotations (expr : Syntax.Ast.AST.expression) (inferred : mono_type) :
-          (unit, error) result =
+      and check_expr_annotations (expr : Syntax.Ast.AST.expression) (inferred : mono_type) : (unit, error) result
+          =
         match expr.expr with
         | Syntax.Ast.AST.Function { return_type; params = _; body; generics = _ } -> (
             (* Check function return type annotation *)
@@ -395,7 +400,8 @@ let%test "push then len" =
 
 let%test "error includes source location" =
   match check_string "1 + true" with
-  | Error { loc = Some loc; loc_end = Some loc_end; _ } -> loc.line = 1 && loc.column > 0 && loc_end.column >= loc.column
+  | Error { loc = Some loc; loc_end = Some loc_end; _ } ->
+      loc.line = 1 && loc.column > 0 && loc_end.column >= loc.column
   | _ -> false
 
 let%test "error location points to problematic expression" =
@@ -757,8 +763,7 @@ let%test "env reuse with shared inference state preserves constrained generic ob
       impl_trait_name = "show";
       impl_type_params = [];
       impl_for_type = TInt;
-      impl_methods =
-        [ { method_name = "show"; method_params = [ ("x", TInt) ]; method_return_type = TString } ];
+      impl_methods = [ { method_name = "show"; method_params = [ ("x", TInt) ]; method_return_type = TString } ];
     };
   let shared_state = Infer.create_inference_state () in
   match check_string ~state:shared_state "let check = fn[a: show](x: a) -> string { x.show() }; check" with

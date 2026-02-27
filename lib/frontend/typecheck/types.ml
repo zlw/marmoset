@@ -26,7 +26,9 @@ and record_field_type = {
 let normalize_record_fields (fields : record_field_type list) : record_field_type list =
   let tbl : (string, mono_type) Hashtbl.t = Hashtbl.create (max 16 (List.length fields)) in
   List.iter (fun (f : record_field_type) -> Hashtbl.replace tbl f.name f.typ) fields;
-  Hashtbl.to_seq_keys tbl |> List.of_seq |> List.sort String.compare
+  Hashtbl.to_seq_keys tbl
+  |> List.of_seq
+  |> List.sort String.compare
   |> List.map (fun name ->
          match Hashtbl.find_opt tbl name with
          | Some typ -> { name; typ }
@@ -93,7 +95,11 @@ and to_string = function
       let row_str =
         match row with
         | None -> ""
-        | Some r -> if field_strs = [] then "..." ^ to_string r else ", ..." ^ to_string r
+        | Some r ->
+            if field_strs = [] then
+              "..." ^ to_string r
+            else
+              ", ..." ^ to_string r
       in
       "{ " ^ String.concat ", " field_strs ^ row_str ^ " }"
   | TRowVar name -> name
@@ -428,7 +434,12 @@ let%test "apply_substitution to enum" =
 
 let%test "normalize_record_fields sorts and keeps last duplicate" =
   let fields =
-    [ { name = "z"; typ = TInt }; { name = "x"; typ = TBool }; { name = "x"; typ = TString }; { name = "y"; typ = TInt } ]
+    [
+      { name = "z"; typ = TInt };
+      { name = "x"; typ = TBool };
+      { name = "x"; typ = TString };
+      { name = "y"; typ = TInt };
+    ]
   in
   normalize_record_fields fields
   = [ { name = "x"; typ = TString }; { name = "y"; typ = TInt }; { name = "z"; typ = TInt } ]

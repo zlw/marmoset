@@ -368,6 +368,10 @@ module AST = struct
   let%test "mk_stmt and mk_pat accept explicit span metadata" =
     let s = mk_stmt ~pos:5 ~end_pos:12 ~file_id:(Some "main.mr") (Return (mk_expr (Integer 0L))) in
     let p = mk_pat ~pos:2 ~end_pos:4 ~file_id:(Some "main.mr") (PVariable "x") in
-    s.pos = 5 && s.end_pos = 12 && s.file_id = Some "main.mr"
-    && p.pos = 2 && p.end_pos = 4 && p.file_id = Some "main.mr"
+    s.pos = 5
+    && s.end_pos = 12
+    && s.file_id = Some "main.mr"
+    && p.pos = 2
+    && p.end_pos = 4
+    && p.file_id = Some "main.mr"
 end

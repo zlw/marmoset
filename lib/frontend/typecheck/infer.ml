@@ -90,7 +90,7 @@ let with_inference_state (state : inference_state) (f : unit -> 'a) : 'a =
     active_inference_state := previous;
     raise exn
 
-let current_constraint_store () : (string, string list) Hashtbl.t = (!active_inference_state).constraint_store
+let current_constraint_store () : (string, string list) Hashtbl.t = !active_inference_state.constraint_store
 
 let add_type_var_constraints (type_var_name : string) (traits : string list) : unit =
   let store = current_constraint_store () in
@@ -99,7 +99,11 @@ let add_type_var_constraints (type_var_name : string) (traits : string list) : u
     | None -> traits
     | Some existing ->
         List.fold_left
-          (fun acc trait_name -> if List.mem trait_name acc then acc else acc @ [ trait_name ])
+          (fun acc trait_name ->
+            if List.mem trait_name acc then
+              acc
+            else
+              acc @ [ trait_name ])
           existing traits
   in
   Hashtbl.replace store type_var_name merged
@@ -110,7 +114,6 @@ let lookup_type_var_constraints (type_var_name : string) : string list =
   | None -> []
 
 let clear_constraint_store () : unit = Hashtbl.clear (current_constraint_store ())
-
 let clear_method_resolution_store () : unit = Hashtbl.clear global_method_resolution_store
 
 let record_method_resolution (expr : AST.expression) (trait_name : string) : unit =
@@ -146,8 +149,7 @@ let obligations_from_substitution (subst : substitution) : obligation list =
           []
       | _ ->
           List.map
-            (fun trait_name ->
-              { trait_name; typ = concrete_type; reason = GenericConstraint var_name })
+            (fun trait_name -> { trait_name; typ = concrete_type; reason = GenericConstraint var_name })
             constraints
   in
   List.fold_left
@@ -231,13 +233,13 @@ let enforce_trait_requirement_on_type (typ : mono_type) (trait_name : string) : 
 *)
 
 let fresh_type_var () : mono_type =
-  let counter = (!active_inference_state).fresh_var_counter in
+  let counter = !active_inference_state.fresh_var_counter in
   let n = !counter in
   counter := n + 1;
   TVar ("t" ^ string_of_int n)
 
 let fresh_row_var () : mono_type =
-  let counter = (!active_inference_state).fresh_var_counter in
+  let counter = !active_inference_state.fresh_var_counter in
   let n = !counter in
   counter := n + 1;
   TRowVar ("r" ^ string_of_int n)
@@ -328,7 +330,8 @@ type infer_error = {
 let error kind = { kind; pos = None; end_pos = None; file_id = None }
 
 (* Create an error with position from an expression *)
-let error_at kind (expr : AST.expression) = { kind; pos = Some expr.pos; end_pos = Some expr.end_pos; file_id = expr.file_id }
+let error_at kind (expr : AST.expression) =
+  { kind; pos = Some expr.pos; end_pos = Some expr.end_pos; file_id = expr.file_id }
 
 (* Create an error with position from a statement *)
 let error_at_stmt kind (stmt : AST.statement) =
@@ -433,7 +436,7 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
         (* Look up the variant in the registry *)
         match Enum_registry.lookup_variant enum_name variant_name with
         | None ->
-          Error
+            Error
               {
                 kind = ConstructorError (Printf.sprintf "Unknown enum constructor: %s.%s" enum_name variant_name);
                 pos = Some expr.pos;
@@ -547,7 +550,7 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                       (* Build the result enum type with fresh type variables *)
                       let result_type = TEnum (enum_name, fresh_vars) in
                       Ok (empty_substitution, result_type)))
-        | _ ->
+        | _ -> (
             (* Real field access on records *)
             match infer_expression type_map env receiver with
             | Error e -> Error e
@@ -564,11 +567,13 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                       | Some field -> Ok (subst1, field.typ)
                       | None -> (
                           match row with
-                          | Some row_var ->
+                          | Some row_var -> (
                               (* Open row: the field may live in the tail; constrain it. *)
                               let field_type = fresh_type_var () in
-                              let expected = TRecord ([ { name = variant_name; typ = field_type } ], Some row_var) in
-                              (match unify receiver_type' expected with
+                              let expected =
+                                TRecord ([ { name = variant_name; typ = field_type } ], Some row_var)
+                              in
+                              match unify receiver_type' expected with
                               | Error e -> Error (error_at (UnificationError e) expr)
                               | Ok subst2 ->
                                   let final_subst = compose_substitution subst1 subst2 in
@@ -580,7 +585,7 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                                       (Printf.sprintf "Record field '%s' not found in type %s" variant_name
                                          (Types.to_string receiver_type')))
                                    expr)))
-                  | TVar _ ->
+                  | TVar _ -> (
                       (* Row-polymorphic field access: receiver must have this field plus unknown tail *)
                       let field_type_result =
                         match receiver_type' with
@@ -630,12 +635,12 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                             resolve_constrained_field_type constrained_field_types
                         | _ -> Ok (fresh_type_var ())
                       in
-                      (match field_type_result with
+                      match field_type_result with
                       | Error msg -> Error (error_at (ConstructorError msg) expr)
-                      | Ok field_type ->
+                      | Ok field_type -> (
                           let row_var = fresh_row_var () in
                           let expected = TRecord ([ { name = variant_name; typ = field_type } ], Some row_var) in
-                          (match unify receiver_type' expected with
+                          match unify receiver_type' expected with
                           | Error e -> Error (error_at (UnificationError e) expr)
                           | Ok subst2 ->
                               let final_subst = compose_substitution subst1 subst2 in
@@ -648,7 +653,7 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                                  (Types.to_string receiver_type')))
                            expr)
                 in
-                field_result)
+                field_result))
     | AST.MethodCall (receiver, method_name, args) -> (
         (* Phase 4.3: Method calls and enum constructors *)
         (* Check if this is actually an enum constructor (receiver is enum type identifier) *)
@@ -739,7 +744,7 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                                  | Some method_sig -> Some (trait_name, method_sig))
                           |> List.sort (fun (a, _) (b, _) -> String.compare a b)
                         in
-                        (match candidates with
+                        match candidates with
                         | [] -> `Not_found
                         | [ candidate ] -> `Found candidate
                         | many ->
@@ -747,17 +752,16 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                             `Error
                               (Printf.sprintf
                                  "Ambiguous method '%s' for constrained type variable '%s' (provided by traits: %s)"
-                                 method_name type_var_name (String.concat ", " trait_names))))
-                  | _ ->
+                                 method_name type_var_name (String.concat ", " trait_names)))
+                  | _ -> (
                       (* Concrete type: resolve ambiguity deterministically. *)
-                      (match Trait_registry.resolve_method receiver_type' method_name with
+                      match Trait_registry.resolve_method receiver_type' method_name with
                       | Ok method_info -> `Found method_info
                       | Error msg -> `Error msg)
                 in
 
                 match method_lookup_result with
-                | `Error msg ->
-                    Error (error_at (ConstructorError msg) expr)
+                | `Error msg -> Error (error_at (ConstructorError msg) expr)
                 | `Not_found ->
                     Error
                       (error_at
@@ -869,9 +873,9 @@ and infer_prefix type_map env op operand =
       | "-" -> (
           (* Unary negation requires neg trait. *)
           let operand_type' = apply_substitution subst operand_type in
-          (match enforce_trait_requirement_on_type operand_type' "neg" with
+          match enforce_trait_requirement_on_type operand_type' "neg" with
           | Ok () -> Ok (subst, operand_type')
-          | Error msg -> Error (error_at (ConstructorError msg) operand)))
+          | Error msg -> Error (error_at (ConstructorError msg) operand))
       | _ -> Error (error_at (InvalidOperator (op, operand_type)) operand))
 
 (* ============================================================
@@ -894,7 +898,7 @@ and infer_infix type_map env left op right =
               (* First unify left and right *)
               match unify left_type' right_type with
               | Error e -> Error (error_at (UnificationError e) right)
-              | Ok subst3 ->
+              | Ok subst3 -> (
                   let subst' = compose_substitution subst subst3 in
                   let result_type = apply_substitution subst3 left_type' in
                   (* For +, also allow String concatenation *)
@@ -902,27 +906,27 @@ and infer_infix type_map env left op right =
                     Ok (subst', result_type)
                   else
                     (* Arithmetic requires num trait. *)
-                    (match enforce_trait_requirement_on_type result_type "num" with
+                    match enforce_trait_requirement_on_type result_type "num" with
                     | Ok () -> Ok (subst', result_type)
                     | Error msg -> Error (error_at (ConstructorError msg) right)))
           (* Comparison operators: both same type, result Bool *)
           | "<" | ">" | "<=" | ">=" -> (
               match unify left_type' right_type with
               | Error e -> Error (error_at (UnificationError e) right)
-              | Ok subst3 ->
+              | Ok subst3 -> (
                   let subst' = compose_substitution subst subst3 in
                   let operand_type = apply_substitution subst3 left_type' in
-                  (match enforce_trait_requirement_on_type operand_type "ord" with
+                  match enforce_trait_requirement_on_type operand_type "ord" with
                   | Ok () -> Ok (subst', TBool)
                   | Error msg -> Error (error_at (ConstructorError msg) right)))
           (* Equality operators: both same type, result Bool *)
           | "==" | "!=" -> (
               match unify left_type' right_type with
               | Error e -> Error (error_at (UnificationError e) right)
-              | Ok subst3 ->
+              | Ok subst3 -> (
                   let subst' = compose_substitution subst subst3 in
                   let operand_type = apply_substitution subst3 left_type' in
-                  (match enforce_trait_requirement_on_type operand_type "eq" with
+                  match enforce_trait_requirement_on_type operand_type "eq" with
                   | Ok () -> Ok (subst', TBool)
                   | Error msg -> Error (error_at (ConstructorError msg) right)))
           | _ -> Error (error_at (InvalidOperator (op, left_type')) left)))
@@ -1174,7 +1178,9 @@ and infer_function_with_annotations type_map env generics_opt params return_anno
                       | THash (k, v) -> THash (subst_generic k, subst_generic v)
                       | TRecord (fields, row) ->
                           let fields' =
-                            List.map (fun (f : Types.record_field_type) -> { f with typ = subst_generic f.typ }) fields
+                            List.map
+                              (fun (f : Types.record_field_type) -> { f with typ = subst_generic f.typ })
+                              fields
                           in
                           let row' = Option.map subst_generic row in
                           TRecord (fields', row')
@@ -1436,7 +1442,7 @@ and infer_record_literal type_map env fields spread expr =
   in
   match infer_record_fields env empty_substitution [] fields with
   | Error e -> Error e
-  | Ok (env1, subst1, field_types) ->
+  | Ok (env1, subst1, field_types) -> (
       let field_types = dedupe_fields_last_wins field_types in
       let merge_fields (base_fields : Types.record_field_type list) (new_fields : Types.record_field_type list) =
         let tbl = Hashtbl.create 16 in
@@ -1458,22 +1464,22 @@ and infer_record_literal type_map env fields spread expr =
               | Some typ -> Some { Types.name; typ }))
           names_in_order
       in
-      (match spread with
+      match spread with
       | None -> Ok (subst1, Types.canonicalize_mono_type (TRecord (field_types, None)))
       | Some spread_expr -> (
           match infer_expression type_map env1 spread_expr with
           | Error e -> Error e
-          | Ok (subst2, spread_type) ->
+          | Ok (subst2, spread_type) -> (
               let subst = compose_substitution subst1 subst2 in
               let spread_type' = apply_substitution subst spread_type in
               match spread_type' with
               | TRecord (base_fields, base_row) ->
                   let merged = merge_fields base_fields field_types in
                   Ok (subst, Types.canonicalize_mono_type (TRecord (merged, base_row)))
-              | TVar _ ->
+              | TVar _ -> (
                   let row_var = fresh_row_var () in
                   let expected_base = TRecord ([], Some row_var) in
-                  (match unify spread_type' expected_base with
+                  match unify spread_type' expected_base with
                   | Error e -> Error (error_at (UnificationError e) spread_expr)
                   | Ok subst3 ->
                       let final_subst = compose_substitution subst subst3 in
@@ -1484,7 +1490,7 @@ and infer_record_literal type_map env fields spread expr =
                     (error_at
                        (ConstructorError
                           (Printf.sprintf "Record spread expects a record, got %s" (to_string spread_type')))
-                       spread_expr)))
+                       spread_expr))))
 
 (* ============================================================
    Index Expressions
@@ -1624,7 +1630,7 @@ and infer_statement type_map env stmt =
 
       (* Enum def doesn't have a value *)
       Ok (empty_substitution, TNull)
-  | AST.TraitDef { name; type_param; supertraits; fields; methods } -> (
+  | AST.TraitDef { name; type_param; supertraits; fields; methods } ->
       (* Convert AST method signatures to trait registry method signatures *)
       (* We need to treat type_param as a type variable, not a type constructor *)
       let convert_type_expr (te : AST.type_expr) : mono_type =
@@ -1666,8 +1672,7 @@ and infer_statement type_map env stmt =
           | AST.TRecord (fields, row) ->
               let field_types =
                 List.map
-                  (fun (f : AST.record_type_field) ->
-                    { Types.name = f.field_name; typ = convert f.field_type })
+                  (fun (f : AST.record_type_field) -> { Types.name = f.field_name; typ = convert f.field_type })
                   fields
               in
               let row_type = Option.map convert row in
@@ -1712,11 +1717,10 @@ and infer_statement type_map env stmt =
                   Ok (empty_substitution, TNull))
         with Failure msg -> Error (error (ConstructorError msg))
       in
-      result)
+      result
   | AST.ImplDef { impl_trait_name; impl_type_params; impl_for_type; impl_methods } -> (
       let convert_impl_type_expr (te : AST.type_expr) : (mono_type, infer_error) result =
-        try Ok (Annotation.type_expr_to_mono_type te) with
-        | Failure msg -> Error (error (ConstructorError msg))
+        try Ok (Annotation.type_expr_to_mono_type te) with Failure msg -> Error (error (ConstructorError msg))
       in
 
       if impl_type_params <> [] then
@@ -1731,113 +1735,113 @@ and infer_statement type_map env stmt =
         match convert_impl_type_expr impl_for_type with
         | Error e -> Error e
         | Ok for_type_mono -> (
-
-          (* Infer and validate method bodies so codegen can rely on a complete type_map. *)
-          let infer_impl_method_body (m : AST.method_impl) :
-              ((Trait_registry.method_sig * substitution) option, infer_error) result =
-            let param_types_result =
-              List.fold_left
-                (fun acc (pname, ptype_opt) ->
-                  match acc with
-                  | Error _ as err -> err
-                  | Ok params -> (
-                      match ptype_opt with
-                      | Some ptype -> (
-                          match convert_impl_type_expr ptype with
-                          | Ok mono -> Ok (params @ [ (pname, mono) ])
-                          | Error _ as err -> err)
-                      | None ->
-                          Error
-                            (error
-                               (ConstructorError
-                                  (Printf.sprintf
-                                     "Impl method '%s' parameter '%s' is missing a type annotation"
-                                     m.impl_method_name pname)))))
-                (Ok []) m.impl_method_params
+            (* Infer and validate method bodies so codegen can rely on a complete type_map. *)
+            let infer_impl_method_body (m : AST.method_impl) :
+                ((Trait_registry.method_sig * substitution) option, infer_error) result =
+              let param_types_result =
+                List.fold_left
+                  (fun acc (pname, ptype_opt) ->
+                    match acc with
+                    | Error _ as err -> err
+                    | Ok params -> (
+                        match ptype_opt with
+                        | Some ptype -> (
+                            match convert_impl_type_expr ptype with
+                            | Ok mono -> Ok (params @ [ (pname, mono) ])
+                            | Error _ as err -> err)
+                        | None ->
+                            Error
+                              (error
+                                 (ConstructorError
+                                    (Printf.sprintf "Impl method '%s' parameter '%s' is missing a type annotation"
+                                       m.impl_method_name pname)))))
+                  (Ok []) m.impl_method_params
+              in
+              match param_types_result with
+              | Error e -> Error e
+              | Ok param_types -> (
+                  match m.impl_method_return_type with
+                  | None ->
+                      Error
+                        (error
+                           (ConstructorError
+                              (Printf.sprintf "Impl method '%s' is missing a return type annotation"
+                                 m.impl_method_name)))
+                  | Some rt -> (
+                      match convert_impl_type_expr rt with
+                      | Error e -> Error e
+                      | Ok return_type -> (
+                          let method_env =
+                            List.fold_left
+                              (fun env_acc (pname, ptype) -> TypeEnv.add pname (mono_to_poly ptype) env_acc)
+                              env param_types
+                          in
+                          match infer_expression type_map method_env m.impl_method_body with
+                          | Error e -> Error e
+                          | Ok (subst, inferred_body_type) ->
+                              let inferred_body_type' = apply_substitution subst inferred_body_type in
+                              let return_type' = apply_substitution subst return_type in
+                              if Annotation.check_annotation return_type' inferred_body_type' then
+                                Ok
+                                  (Some
+                                     ( {
+                                         Trait_registry.method_name = m.impl_method_name;
+                                         method_params = param_types;
+                                         method_return_type = return_type;
+                                       },
+                                       subst ))
+                              else
+                                Error
+                                  (error_at
+                                     (ReturnTypeMismatch (return_type', inferred_body_type'))
+                                     m.impl_method_body))))
             in
-            match param_types_result with
+
+            let rec collect_methods_and_subst subst_acc methods_acc = function
+              | [] -> Ok (List.rev methods_acc, subst_acc)
+              | m :: rest -> (
+                  match infer_impl_method_body m with
+                  | Error e -> Error e
+                  | Ok None -> collect_methods_and_subst subst_acc methods_acc rest
+                  | Ok (Some (method_sig, subst_method)) ->
+                      let subst' = compose_substitution subst_acc subst_method in
+                      collect_methods_and_subst subst' (method_sig :: methods_acc) rest)
+            in
+
+            match collect_methods_and_subst empty_substitution [] impl_methods with
             | Error e -> Error e
-            | Ok param_types -> (
-                match m.impl_method_return_type with
-                | None ->
-                    Error
-                      (error
-                         (ConstructorError
-                            (Printf.sprintf "Impl method '%s' is missing a return type annotation"
-                               m.impl_method_name)))
-                | Some rt -> (
-                    match convert_impl_type_expr rt with
-                    | Error e -> Error e
-                    | Ok return_type ->
-                        let method_env =
-                          List.fold_left
-                            (fun env_acc (pname, ptype) -> TypeEnv.add pname (mono_to_poly ptype) env_acc)
-                            env param_types
-                        in
-                        match infer_expression type_map method_env m.impl_method_body with
-                        | Error e -> Error e
-                        | Ok (subst, inferred_body_type) ->
-                            let inferred_body_type' = apply_substitution subst inferred_body_type in
-                            let return_type' = apply_substitution subst return_type in
-                            if Annotation.check_annotation return_type' inferred_body_type' then
-                              Ok
-                                (Some
-                                   ( {
-                                       Trait_registry.method_name = m.impl_method_name;
-                                       method_params = param_types;
-                                       method_return_type = return_type;
-                                     },
-                                     subst ))
-                            else
-                              Error
-                                (error_at (ReturnTypeMismatch (return_type', inferred_body_type')) m.impl_method_body)))
-          in
+            | Ok (methods, method_subst) -> (
+                let for_type_mono' = apply_substitution method_subst for_type_mono in
+                let methods' =
+                  List.map
+                    (fun (m : Trait_registry.method_sig) ->
+                      {
+                        m with
+                        method_params =
+                          List.map (fun (name, ty) -> (name, apply_substitution method_subst ty)) m.method_params;
+                        method_return_type = apply_substitution method_subst m.method_return_type;
+                      })
+                    methods
+                in
 
-          let rec collect_methods_and_subst subst_acc methods_acc = function
-            | [] -> Ok (List.rev methods_acc, subst_acc)
-            | m :: rest -> (
-                match infer_impl_method_body m with
-                | Error e -> Error e
-                | Ok None -> collect_methods_and_subst subst_acc methods_acc rest
-                | Ok (Some (method_sig, subst_method)) ->
-                    let subst' = compose_substitution subst_acc subst_method in
-                    collect_methods_and_subst subst' (method_sig :: methods_acc) rest)
-          in
+                let impl_def =
+                  {
+                    Trait_registry.impl_trait_name;
+                    impl_type_params;
+                    impl_for_type = for_type_mono';
+                    impl_methods = methods';
+                  }
+                in
 
-          match collect_methods_and_subst empty_substitution [] impl_methods with
-          | Error e -> Error e
-          | Ok (methods, method_subst) ->
-              let for_type_mono' = apply_substitution method_subst for_type_mono in
-              let methods' =
-                List.map
-                  (fun (m : Trait_registry.method_sig) ->
-                    {
-                      m with
-                      method_params =
-                        List.map (fun (name, ty) -> (name, apply_substitution method_subst ty)) m.method_params;
-                      method_return_type = apply_substitution method_subst m.method_return_type;
-                    })
-                  methods
-              in
-
-              let impl_def =
-                {
-                  Trait_registry.impl_trait_name;
-                  impl_type_params;
-                  impl_for_type = for_type_mono';
-                  impl_methods = methods';
-                }
-              in
-
-              (* Validate and register impl *)
-              match Trait_registry.validate_impl impl_def with
-              | Error msg -> Error (error (ConstructorError msg))
-              | Ok () ->
-                  let impl_source : Trait_registry.impl_source =
-                    { file_id = stmt.file_id; start_pos = stmt.pos; end_pos = stmt.end_pos }
-                  in
-                  Trait_registry.register_impl ~source:impl_source impl_def;
-                  Ok (method_subst, TNull)))
+                (* Validate and register impl *)
+                match Trait_registry.validate_impl impl_def with
+                | Error msg -> Error (error (ConstructorError msg))
+                | Ok () ->
+                    let impl_source : Trait_registry.impl_source =
+                      { file_id = stmt.file_id; start_pos = stmt.pos; end_pos = stmt.end_pos }
+                    in
+                    Trait_registry.register_impl ~source:impl_source impl_def;
+                    Ok (method_subst, TNull))))
   | AST.DeriveDef { derive_traits; derive_for_type } ->
       (* Auto-generate implementations for derived traits *)
       let for_type_mono = Annotation.type_expr_to_mono_type derive_for_type in
@@ -2049,29 +2053,39 @@ and check_pattern pattern scrutinee_type =
                 Ok (bindings @ rest_bindings)
             | (field : AST.record_pattern_field) :: rest_fields -> (
                 let field_name = field.pat_field_name in
-                match List.find_opt (fun (f : Types.record_field_type) -> f.name = field_name) scrutinee_fields with
+                match
+                  List.find_opt (fun (f : Types.record_field_type) -> f.name = field_name) scrutinee_fields
+                with
                 | None ->
                     Error
                       (error
                          (PatternError
                             (Printf.sprintf "Record pattern field '%s' not found in scrutinee type %s" field_name
                                (to_string scrutinee_type))))
-                | Some scrutinee_field ->
+                | Some scrutinee_field -> (
                     let effective_pat =
                       match field.pat_field_pattern with
                       | Some p -> p
                       | None ->
-                          AST.{ pat = PVariable field_name; pos = pattern.pos; end_pos = pattern.end_pos; file_id = pattern.file_id }
+                          AST.
+                            {
+                              pat = PVariable field_name;
+                              pos = pattern.pos;
+                              end_pos = pattern.end_pos;
+                              file_id = pattern.file_id;
+                            }
                     in
-                    (match check_pattern effective_pat scrutinee_field.typ with
+                    match check_pattern effective_pat scrutinee_field.typ with
                     | Error e -> Error e
-                    | Ok field_bindings -> check_fields (field_name :: seen_names) (bindings @ field_bindings) rest_fields))
+                    | Ok field_bindings ->
+                        check_fields (field_name :: seen_names) (bindings @ field_bindings) rest_fields))
           in
           check_fields [] [] fields
       | _ ->
           Error
             (error
-               (PatternError (Printf.sprintf "Record pattern doesn't match scrutinee type %s" (to_string scrutinee_type)))))
+               (PatternError
+                  (Printf.sprintf "Record pattern doesn't match scrutinee type %s" (to_string scrutinee_type)))))
 
 (* ============================================================
    Let Binding Inference
@@ -2135,9 +2149,7 @@ and infer_let type_map env name expr type_annotation =
             match type_annotation with
             | None -> inferred_final_type
             | Some type_expr -> (
-                try
-                  Annotation.type_expr_to_mono_type type_expr
-                with Failure _ -> inferred_final_type)
+                try Annotation.type_expr_to_mono_type type_expr with Failure _ -> inferred_final_type)
           in
           (* Generalize the type *)
           let env' = apply_substitution_env final_subst env in
@@ -2192,7 +2204,8 @@ let check_expression (type_map : type_map) (env : type_env) (expr : AST.expressi
    Program Inference
    ============================================================ *)
 
-let infer_program ?(env = empty_env) ?state (program : AST.program) : (type_env * type_map * mono_type) infer_result =
+let infer_program ?(env = empty_env) ?state (program : AST.program) :
+    (type_env * type_map * mono_type) infer_result =
   let state = Option.value state ~default:(create_inference_state ()) in
   with_inference_state state (fun () ->
       Annotation.clear_type_aliases ();
@@ -2364,7 +2377,8 @@ module Test = struct
     infers_to "type box[a] = { value: a }; let p: box[string] = { value: \"ok\" }; p.value" TString
 
   let%test "infer explicit row-polymorphic parameter annotation" =
-    infers_to "let p = { x: 5, y: 10, z: 20 }; let get_x = fn(r: { x: int, ...row }) -> int { r.x }; get_x(p)" TInt
+    infers_to "let p = { x: 5, y: 10, z: 20 }; let get_x = fn(r: { x: int, ...row }) -> int { r.x }; get_x(p)"
+      TInt
 
   let%test "infer explicit row-polymorphic parameter with multiple field accesses" =
     infers_to
@@ -2661,9 +2675,7 @@ f"
     add_type_var_constraints "t0" [ "show" ];
     match verify_constraints_in_substitution [ ("t0", TFun (TInt, TInt)) ] with
     | Ok () -> false
-    | Error msg ->
-        contains_substring msg "Trait obligation failed"
-        && contains_substring msg "type variable 't0'"
+    | Error msg -> contains_substring msg "Trait obligation failed" && contains_substring msg "type variable 't0'"
 
   let%test "constrained type-variable method lookup reports ambiguity" =
     let contains_substring s sub =
@@ -2736,21 +2748,14 @@ f"
         trait_type_param = Some "a";
         trait_supertraits = [];
         trait_methods =
-          [
-            {
-              method_name = "show";
-              method_params = [ ("x", TVar "a") ];
-              method_return_type = TString;
-            };
-          ];
+          [ { method_name = "show"; method_params = [ ("x", TVar "a") ]; method_return_type = TString } ];
       };
     Trait_registry.register_impl ~builtin:true
       {
         impl_trait_name = "show";
         impl_type_params = [];
         impl_for_type = TInt;
-        impl_methods =
-          [ { method_name = "show"; method_params = [ ("x", TInt) ]; method_return_type = TString } ];
+        impl_methods = [ { method_name = "show"; method_params = [ ("x", TInt) ]; method_return_type = TString } ];
       };
     let shared_state = create_inference_state () in
     match Syntax.Parser.parse "let check = fn[a: show](x: a) -> string { x.show() }" with
