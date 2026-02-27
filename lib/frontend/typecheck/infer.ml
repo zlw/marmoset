@@ -2115,7 +2115,15 @@ and infer_let type_map env name expr type_annotation =
       | Error e -> Error (error_at (UnificationError e) expr)
       | Ok subst2 ->
           let final_subst = compose_substitution subst1 subst2 in
-          let final_type = apply_substitution subst2 expr_type in
+          let inferred_final_type = apply_substitution subst2 expr_type in
+          let final_type =
+            match type_annotation with
+            | None -> inferred_final_type
+            | Some type_expr -> (
+                try
+                  Annotation.type_expr_to_mono_type type_expr
+                with Failure _ -> inferred_final_type)
+          in
           (* Generalize the type *)
           let env' = apply_substitution_env final_subst env in
           let poly_type = generalize env' final_type in

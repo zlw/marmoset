@@ -646,6 +646,46 @@ let emit_record_struct_type (state : emit_state) (fields : Types.record_field_ty
   in
   Printf.sprintf "struct{%s}" (String.concat "; " go_fields)
 
+let maybe_project_to_expected_record_type
+    (state : emit_state)
+    (type_map : Infer.type_map)
+    (env : Infer.type_env)
+    (expr : AST.expression)
+    (expected_type : Types.mono_type option)
+    (expr_str : string) : string =
+  match expected_type with
+  | None -> expr_str
+  | Some (Types.TRecord (expected_fields, _expected_row)) -> (
+      let actual_type_opt =
+        match expr.expr with
+        | AST.Identifier name -> (
+            match Infer.TypeEnv.find_opt name env with
+            | Some (Types.Forall (_, t)) -> Some t
+            | None -> Hashtbl.find_opt type_map expr.id)
+        | _ -> Hashtbl.find_opt type_map expr.id
+      in
+      (match actual_type_opt with
+      | Some (Types.TRecord (actual_fields, actual_row)) ->
+          let expected_fields = Types.normalize_record_fields expected_fields in
+          let actual_fields = Types.normalize_record_fields actual_fields in
+          if expected_fields = actual_fields then
+            expr_str
+          else
+            let expected_struct_type = emit_record_struct_type state expected_fields in
+            let actual_type = Types.TRecord (actual_fields, actual_row) in
+            let actual_go_type = type_to_go state.mono actual_type in
+            let assignments =
+              expected_fields
+              |> List.map (fun (f : Types.record_field_type) ->
+                     let go_name = go_record_field_name f.name in
+                     Printf.sprintf "%s: __src.%s" go_name go_name)
+              |> String.concat ", "
+            in
+            Printf.sprintf "(func(__src %s) %s { return %s{%s} })(%s)" actual_go_type expected_struct_type
+              expected_struct_type assignments expr_str
+      | _ -> expr_str))
+  | Some _ -> expr_str
+
 let rec find_last_record_field_expr (field_name : string) (fields : AST.record_field list) : AST.expression option =
   match fields with
   | [] -> None
@@ -736,7 +776,8 @@ let rec emit_expr
     (type_map : Infer.type_map)
     (env : Infer.type_env)
     (expr : AST.expression) : string =
-  match expr.expr with
+  let emitted =
+    match expr.expr with
   | AST.Integer i -> Printf.sprintf "int64(%Ld)" i
   | AST.Float f -> Printf.sprintf "float64(%g)" f
   | AST.Boolean true -> "true"
@@ -748,7 +789,13 @@ let rec emit_expr
   | AST.TypeCheck (expr, type_ann) -> emit_type_check state type_map env expr type_ann
   | AST.If (cond, cons, alt) -> emit_if state type_map env expr cond cons alt
   | AST.Call (func, args) -> emit_call state type_map env func args
-  | AST.Array elements -> emit_array state type_map env elements
+    | AST.Array elements ->
+        let expected_elem_type =
+          match expected_type with
+          | Some (Types.TArray elem_type) -> Some elem_type
+          | _ -> None
+        in
+        emit_array ?expected_elem_type state type_map env elements
   | AST.Hash pairs -> emit_hash state type_map env pairs
   | AST.Index (container, index) -> emit_index state type_map env container index
   | AST.Function f ->
@@ -867,6 +914,8 @@ let rec emit_expr
               let all_args = receiver_str :: arg_strs in
 
               Printf.sprintf "%s(%s)" func_name (String.concat ", " all_args)))
+  in
+  maybe_project_to_expected_record_type state type_map env expr expected_type emitted
 
 (* ============================================================
      Match Expression Codegen
@@ -1514,13 +1563,18 @@ and emit_call state type_map env func args =
       let args_str = List.map (emit_expr state type_map env) args |> String.concat ", " in
       Printf.sprintf "%s(%s)" func_str args_str
 
-and emit_array state type_map env elements =
+and emit_array ?expected_elem_type state type_map env elements =
   match elements with
   | [] -> "[]interface{}{}"
   | first :: _ ->
-      let elem_type = get_type type_map first in
+      let elem_type =
+        match expected_elem_type with
+        | Some t -> t
+        | None -> get_type type_map first
+      in
       let elem_type_str = type_to_go state.mono elem_type in
-      let elems_str = List.map (emit_expr state type_map env) elements |> String.concat ", " in
+      let emit_elem e = emit_expr ~expected_type:(Some elem_type) state type_map env e in
+      let elems_str = List.map emit_elem elements |> String.concat ", " in
       Printf.sprintf "[]%s{%s}" elem_type_str elems_str
 
 and emit_hash state type_map env pairs =
@@ -1639,8 +1693,15 @@ and emit_stmt (state : emit_state) (type_map : Infer.type_map) (env : Infer.type
       | _ ->
           (* Pass expected_type so EnumConstructors get the correct concrete type *)
           let expr_str = emit_expr ~expected_type:(Some expr_type) state type_map env let_binding.value in
+          let binding_code =
+            match let_binding.type_annotation with
+            | Some _ ->
+                let go_type = type_to_go state.mono expr_type in
+                Printf.sprintf "%svar %s %s = %s\n" ind let_binding.name go_type expr_str
+            | None -> Printf.sprintf "%s%s := %s\n" ind let_binding.name expr_str
+          in
           let env' = Infer.TypeEnv.add let_binding.name (Types.Forall ([], expr_type)) env in
-          (Printf.sprintf "%s%s := %s\n" ind let_binding.name expr_str, env'))
+          (binding_code, env'))
   | AST.Return expr ->
       let expr_str = emit_expr state type_map env expr in
       (Printf.sprintf "%sreturn %s\n" ind expr_str, env)

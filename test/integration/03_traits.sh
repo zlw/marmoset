@@ -57,11 +57,22 @@ let get_name = fn[t: named](x: t) -> string {
 get_name({ age: 42 })
 EOF
 
-run_build_fail_contains_from_stdin "Field-only trait as type shows dedicated v1 diagnostic" "field-only trait objects are not implemented in this phase" << 'EOF'
+run_case_from_stdin "Field-only trait as type projects records to required shape" "alice" << 'EOF'
 trait named {
   name: string
 }
-let x: named = { name: "alice" }
+let x: named = { name: "alice", age: 42 }
+puts(x.name)
+EOF
+
+run_case_from_stdin "Field-only trait object arrays can be built from annotated values" "acme" << 'EOF'
+trait named {
+  name: string
+}
+let person: named = { name: "alice", age: 42 }
+let company: named = { name: "acme", employees: 10 }
+let xs: list[named] = [person, company]
+puts(xs[1].name)
 EOF
 
 run_build_fail_contains_from_stdin "Method trait as type shows dedicated v1 diagnostic" "method and mixed trait objects are not supported in this phase" << 'EOF'

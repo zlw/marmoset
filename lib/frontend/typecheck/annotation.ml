@@ -17,20 +17,65 @@ type type_alias_info = {
 }
 
 let type_alias_registry : (string, type_alias_info) Hashtbl.t = Hashtbl.create 64
+let fresh_trait_object_row_counter = ref 0
 
 let register_type_alias (alias_def : Syntax.Ast.AST.type_alias_def) : unit =
   Hashtbl.replace type_alias_registry alias_def.alias_name
     { alias_type_params = alias_def.alias_type_params; alias_body = alias_def.alias_body }
 
-let clear_type_aliases () : unit = Hashtbl.clear type_alias_registry
+let clear_type_aliases () : unit =
+  Hashtbl.clear type_alias_registry;
+  fresh_trait_object_row_counter := 0
+
 let lookup_type_alias (name : string) : type_alias_info option = Hashtbl.find_opt type_alias_registry name
+
+let fresh_trait_object_row_var () : Types.mono_type =
+  let n = !fresh_trait_object_row_counter in
+  fresh_trait_object_row_counter := n + 1;
+  Types.TRowVar (Printf.sprintf "trait_obj_row_%d" n)
+
+let field_only_trait_object_type (trait_name : string) : Types.mono_type =
+  let trait_chain = Trait_registry.trait_with_supertraits trait_name in
+  let field_tbl : (string, Types.mono_type) Hashtbl.t = Hashtbl.create 8 in
+  let merge_field (owner_trait : string) (field : Types.record_field_type) : unit =
+    match Hashtbl.find_opt field_tbl field.name with
+    | None -> Hashtbl.replace field_tbl field.name (Types.canonicalize_mono_type field.typ)
+    | Some existing_type ->
+        let expected = Types.canonicalize_mono_type existing_type in
+        let got = Types.canonicalize_mono_type field.typ in
+        if expected <> got then
+          failwith
+            (Printf.sprintf
+               "Trait '%s' cannot be used as a type: field '%s' has conflicting types across supertraits (%s vs %s, from '%s')"
+               trait_name field.name (Types.to_string expected) (Types.to_string got) owner_trait)
+  in
+  let gather_trait_fields (name : string) : unit =
+    match Trait_registry.trait_kind name with
+    | Some Trait_registry.FieldOnly -> (
+        match Trait_registry.lookup_trait_fields name with
+        | None -> ()
+        | Some fields -> List.iter (merge_field name) fields)
+    | Some Trait_registry.MethodOnly | Some Trait_registry.Mixed ->
+        failwith
+          (Printf.sprintf
+             "Trait '%s' cannot be used as a type: supertrait '%s' requires methods and trait-object method dispatch is not supported in this phase"
+             trait_name name)
+    | None -> failwith ("Unknown trait in supertrait closure: " ^ name)
+  in
+  List.iter gather_trait_fields trait_chain;
+  let fields =
+    Hashtbl.to_seq_keys field_tbl |> List.of_seq |> List.sort String.compare
+    |> List.map (fun name ->
+           match Hashtbl.find_opt field_tbl name with
+           | Some typ -> { Types.name; typ }
+           | None -> failwith "field_only_trait_object_type: impossible missing field")
+  in
+  Types.canonicalize_mono_type (Types.TRecord (fields, Some (fresh_trait_object_row_var ())))
 
 let type_position_error_for_constructor (name : string) : string =
   match Trait_registry.trait_kind name with
   | Some Trait_registry.FieldOnly ->
-      Printf.sprintf
-        "Trait '%s' cannot be used as a type: field-only trait objects are not implemented in this phase; use a generic constraint (t: %s) instead"
-        name name
+      Printf.sprintf "Trait '%s' cannot be used here as a type constructor with arguments" name
   | Some Trait_registry.MethodOnly | Some Trait_registry.Mixed ->
       Printf.sprintf
         "Trait '%s' cannot be used as a type: method and mixed trait objects are not supported in this phase"
@@ -46,10 +91,10 @@ let rec type_expr_to_mono_type_with
       (match List.assoc_opt name type_bindings with
       | Some ty -> ty
       | None -> Types.TVar name)
-  | Syntax.Ast.AST.TCon name -> (
-      match List.assoc_opt name type_bindings with
+  | Syntax.Ast.AST.TCon name ->
+      (match List.assoc_opt name type_bindings with
       | Some ty -> ty
-      | None -> (
+      | None ->
           match name with
           | "int" -> Types.TInt
           | "float" -> Types.TFloat
@@ -70,7 +115,24 @@ let rec type_expr_to_mono_type_with
                         type_expr_to_mono_type_with type_bindings alias_info.alias_body
                       else
                         failwith (Printf.sprintf "Type alias %s expects type arguments" other)
-                  | None -> failwith (type_position_error_for_constructor other)))))
+                  | None -> (
+                      match Trait_registry.trait_kind other with
+                      | Some Trait_registry.FieldOnly ->
+                          let trait_def =
+                            match Trait_registry.lookup_trait other with
+                            | Some def -> def
+                            | None -> failwith ("Unknown trait in registry: " ^ other)
+                          in
+                          if trait_def.trait_type_param <> None then
+                            failwith
+                              (Printf.sprintf
+                                 "Trait '%s' cannot be used as a type: generic field-only trait objects are not supported in this phase"
+                                 other)
+                          else
+                            field_only_trait_object_type other
+                      | Some Trait_registry.MethodOnly | Some Trait_registry.Mixed ->
+                          failwith (type_position_error_for_constructor other)
+                      | None -> failwith (type_position_error_for_constructor other)))))
   | Syntax.Ast.AST.TApp (con_name, type_args) -> (
       (* Generic type application: list[int], map[string, int], option[a] *)
       let arg_types = List.map (type_expr_to_mono_type_with type_bindings) type_args in
@@ -108,7 +170,14 @@ let rec type_expr_to_mono_type_with
                   else
                     let alias_bindings = List.combine alias_info.alias_type_params arg_types in
                     type_expr_to_mono_type_with (alias_bindings @ type_bindings) alias_info.alias_body
-              | None -> failwith (type_position_error_for_constructor con_name))))
+              | None ->
+                  if Trait_registry.lookup_trait con_name <> None then
+                    failwith
+                      (Printf.sprintf
+                         "Trait '%s' cannot be used here as a type constructor with arguments in this phase"
+                         con_name)
+                  else
+                    failwith (type_position_error_for_constructor con_name))))
   | Syntax.Ast.AST.TArrow (param_types, return_type) ->
       (* Function type: (int, string) -> bool *)
       let param_mono = List.map (type_expr_to_mono_type_with type_bindings) param_types in
@@ -371,3 +440,30 @@ let%test "type alias annotation resolves generic alias application" =
     };
   type_expr_to_mono_type (Syntax.Ast.AST.TApp ("box", [ Syntax.Ast.AST.TCon "string" ]))
   = Types.TRecord ([ { Types.name = "value"; typ = Types.TString } ], None)
+
+let setup_trait_object_annotation_tests () =
+  Trait_registry.clear ();
+  Trait_registry.register_trait
+    { trait_name = "named"; trait_type_param = None; trait_supertraits = []; trait_methods = [] };
+  Trait_registry.set_trait_fields "named" [ { Types.name = "name"; typ = Types.TString } ];
+  Trait_registry.register_trait
+    {
+      trait_name = "show";
+      trait_type_param = Some "a";
+      trait_supertraits = [];
+      trait_methods =
+        [ { Trait_registry.method_name = "show"; method_params = [ ("x", Types.TVar "a") ]; method_return_type = Types.TString } ];
+    }
+
+let%test "field-only trait annotation lowers to open record requirement" =
+  setup_trait_object_annotation_tests ();
+  match type_expr_to_mono_type (Syntax.Ast.AST.TCon "named") with
+  | Types.TRecord ([ { Types.name = "name"; typ = Types.TString } ], Some (Types.TRowVar _)) -> true
+  | _ -> false
+
+let%test "method trait annotation is rejected in type position" =
+  setup_trait_object_annotation_tests ();
+  try
+    let _ = type_expr_to_mono_type (Syntax.Ast.AST.TCon "show") in
+    false
+  with Failure msg -> String.length msg > 0 && String.contains msg 'm'
