@@ -1,0 +1,5 @@
+(executable
+ (name main)
+ (public_name marmoset-lsp)
+ (package marmoset)
+ (libraries marmoset_lsp linol-lwt))

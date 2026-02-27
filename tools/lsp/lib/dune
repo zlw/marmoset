@@ -1,0 +1,7 @@
+(library
+ (name marmoset_lsp)
+ (libraries marmoset linol)
+ (inline_tests
+  (flags (-verbose)))
+ (preprocess
+  (pps ppx_inline_test)))
