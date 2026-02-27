@@ -211,12 +211,44 @@ let lookup_method (for_type : mono_type) (method_name : string) : (string * meth
   | Ok resolved -> Some resolved
   | Error _ -> None
 
+type derive_kind =
+  | DeriveEq
+  | DeriveShow
+  | DeriveDebug
+  | DeriveOrd
+  | DeriveHash
+
+let derive_kind_of_trait_name (trait_name : string) : derive_kind option =
+  match trait_name with
+  | "eq" -> Some DeriveEq
+  | "show" -> Some DeriveShow
+  | "debug" -> Some DeriveDebug
+  | "ord" -> Some DeriveOrd
+  | "hash" -> Some DeriveHash
+  | _ -> None
+
+let derive_method_names (kind : derive_kind) : string list =
+  match kind with
+  | DeriveEq -> [ "eq" ]
+  | DeriveShow -> [ "show" ]
+  | DeriveDebug -> [ "debug" ]
+  | DeriveOrd -> [ "compare" ]
+  | DeriveHash -> [ "hash" ]
+
+let derive_kind_for_impl (impl : impl_def) : derive_kind option =
+  match derive_kind_of_trait_name impl.impl_trait_name with
+  | None -> None
+  | Some kind ->
+      let expected = List.sort String.compare (derive_method_names kind) in
+      let actual = List.map (fun (m : method_sig) -> m.method_name) impl.impl_methods |> List.sort String.compare in
+      if expected = actual then
+        Some kind
+      else
+        None
+
 (* Check if a trait can be auto-derived *)
 let is_derivable (trait_name : string) : bool =
-  (* For now, only specific traits are derivable *)
-  match trait_name with
-  | "eq" | "show" | "debug" | "ord" | "hash" -> true
-  | _ -> false
+  derive_kind_of_trait_name trait_name <> None
 
 (* Validate that a type can derive a trait *)
 let can_derive (trait_name : string) (for_type : mono_type) : (unit, string) result =
@@ -1017,6 +1049,30 @@ let%test "validate_impl - multiple methods" =
 let%test "is_derivable - eq is derivable" = is_derivable "eq"
 let%test "is_derivable - show is derivable" = is_derivable "show"
 let%test "is_derivable - custom trait not derivable" = not (is_derivable "my_custom_trait")
+
+let%test "derive_kind_for_impl recognizes eq contract" =
+  let impl =
+    {
+      impl_trait_name = "eq";
+      impl_type_params = [];
+      impl_for_type = TInt;
+      impl_methods = [ { method_name = "eq"; method_params = [ ("x", TInt); ("y", TInt) ]; method_return_type = TBool } ];
+    }
+  in
+  match derive_kind_for_impl impl with
+  | Some DeriveEq -> true
+  | _ -> false
+
+let%test "derive_kind_for_impl rejects mismatched method set" =
+  let impl =
+    {
+      impl_trait_name = "eq";
+      impl_type_params = [];
+      impl_for_type = TInt;
+      impl_methods = [ { method_name = "compare"; method_params = [ ("x", TInt); ("y", TInt) ]; method_return_type = TBool } ];
+    }
+  in
+  derive_kind_for_impl impl = None
 
 let%test "can_derive - undefined trait" =
   clear ();

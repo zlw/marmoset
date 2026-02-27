@@ -2046,7 +2046,10 @@ let builtin_impl_keys : (string * string) list =
     ("neg", "float64");
   ]
 
-let emit_record_derived_impl (state : emit_state) (trait_name : string) (record_type : Types.mono_type) : string option =
+let emit_record_derived_impl
+    (state : emit_state)
+    (derive_kind : Typecheck.Trait_registry.derive_kind)
+    (record_type : Types.mono_type) : string option =
   let type_suffix = mangle_type record_type in
   let type_str = type_to_go state.mono record_type in
   let fields, _row =
@@ -2055,8 +2058,8 @@ let emit_record_derived_impl (state : emit_state) (trait_name : string) (record_
     | _ -> ([], None)
   in
   let go_field_access prefix (f : Types.record_field_type) = prefix ^ "." ^ go_record_field_name f.name in
-  match trait_name with
-  | "eq" ->
+  match derive_kind with
+  | Typecheck.Trait_registry.DeriveEq ->
       let body =
         match fields with
         | [] -> "true"
@@ -2066,9 +2069,9 @@ let emit_record_derived_impl (state : emit_state) (trait_name : string) (record_
             |> String.concat " && "
       in
       Some (Printf.sprintf "func eq_eq_%s(x, y %s) bool {\n\treturn %s\n}\n" type_suffix type_str body)
-  | "show" | "debug" ->
+  | Typecheck.Trait_registry.DeriveShow | Typecheck.Trait_registry.DeriveDebug ->
       let fn_prefix =
-        if trait_name = "show" then
+        if derive_kind = Typecheck.Trait_registry.DeriveShow then
           "show_show_"
         else
           "debug_debug_"
@@ -2088,7 +2091,7 @@ let emit_record_derived_impl (state : emit_state) (trait_name : string) (record_
           Printf.sprintf "fmt.Sprintf(%S, %s)" format_str args_str
       in
       Some (Printf.sprintf "func %s%s(x %s) string {\n\treturn %s\n}\n" fn_prefix type_suffix type_str return_expr)
-  | "ord" ->
+  | Typecheck.Trait_registry.DeriveOrd ->
       let compare_pair (f : Types.record_field_type) =
         let x_access = go_field_access "x" f in
         let y_access = go_field_access "y" f in
@@ -2107,7 +2110,7 @@ let emit_record_derived_impl (state : emit_state) (trait_name : string) (record_
             |> String.concat ""
       in
       Some (Printf.sprintf "func ord_compare_%s(x, y %s) int64 {\n%s\treturn int64(1)\n}\n" type_suffix type_str body)
-  | "hash" ->
+  | Typecheck.Trait_registry.DeriveHash ->
       let hash_steps =
         fields
         |> List.map (fun (f : Types.record_field_type) ->
@@ -2115,7 +2118,6 @@ let emit_record_derived_impl (state : emit_state) (trait_name : string) (record_
         |> String.concat ""
       in
       Some (Printf.sprintf "func hash_hash_%s(x %s) int64 {\n\th := int64(17)\n%s\treturn h\n}\n" type_suffix type_str hash_steps)
-  | _ -> None
 
 let emit_registry_derived_impls (state : emit_state) (program : AST.program) : string =
   let user_impls = collect_impl_defs program in
@@ -2134,9 +2136,12 @@ let emit_registry_derived_impls (state : emit_state) (program : AST.program) : s
   |> List.filter_map (fun (impl : Typecheck.Trait_registry.impl_def) ->
          let type_suffix = mangle_type impl.impl_for_type in
          if should_emit impl.impl_trait_name type_suffix then
-           match impl.impl_for_type with
-           | Types.TRecord _ -> emit_record_derived_impl state impl.impl_trait_name impl.impl_for_type
-           | _ -> None
+           match Typecheck.Trait_registry.derive_kind_for_impl impl with
+           | Some derive_kind -> (
+               match impl.impl_for_type with
+               | Types.TRecord _ -> emit_record_derived_impl state derive_kind impl.impl_for_type
+               | _ -> None)
+           | None -> None
          else
            None)
   |> String.concat "\n"
