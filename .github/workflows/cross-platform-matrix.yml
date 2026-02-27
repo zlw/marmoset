@@ -2,6 +2,10 @@ name: Cross Platform Matrix (Manual)
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - "main"
+      - "master"
 
 jobs:
   integration-cross-platform:
