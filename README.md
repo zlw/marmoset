@@ -64,13 +64,13 @@ make unit
 Run integration suites:
 
 ```sh
-./test/test_typecheck_and_codegen.sh
+./test/integration.sh
 ```
 
 Run a specific integration suite:
 
 ```sh
-./test/test_typecheck_and_codegen.sh traits
+./test/integration.sh traits
 ```
 
 ## Documentation

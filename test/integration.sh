@@ -22,10 +22,10 @@ resolve_suite() {
     local name="$1"
     case "$name" in
         all) echo "${ALL_SUITES[*]}" ;;
-        core|annotations) echo "01_core_annotations.sh" ;;
-        unions|enums) echo "02_unions_enums.sh" ;;
-        traits) echo "03_traits.sh" ;;
-        records) echo "04_records.sh" ;;
+        core|annotation|annotations) echo "01_core_annotations.sh" ;;
+        union|unions|enum|enums) echo "02_unions_enums.sh" ;;
+        trait|traits) echo "03_traits.sh" ;;
+        record|records) echo "04_records.sh" ;;
         codegen) echo "05_codegen.sh" ;;
         runtime) echo "06_runtime_output.sh" ;;
         *.sh)
@@ -48,10 +48,10 @@ Usage:
   ./test/integration.sh <suite> [...]   # run selected suites
 
 Suite aliases:
-  core|annotations
-  unions|enums
-  traits
-  records
+  core|annotation|annotations
+  union|unions|enum|enums
+  trait|traits
+  record|records
   codegen
   runtime
   all

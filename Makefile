@@ -13,6 +13,15 @@ release:
 unit:
 	dune runtest --force
 
+integration:
+	@./test/integration.sh $(filter-out integration,$(MAKECMDGOALS))
+
+# Allow: make integration <suite> (e.g. make integration trait)
+ifneq (,$(filter integration,$(MAKECMDGOALS)))
+$(filter-out integration,$(MAKECMDGOALS)):
+	@:
+endif
+
 repl:
 	@echo "REPL is removed. Use 'make run file=examples/fibonacci-typed.mr'." && exit 1
 
