@@ -47,7 +47,7 @@ let person = { name: "alice", age: 42 }
 puts(get_name(person))
 EOF
 
-run_build_fail_contains_from_stdin "Field-only trait constraint rejects missing required field" "missing required field 'name'" << 'EOF'
+run_build_fail_contains_from_stdin "Field-only trait constraint rejects missing required field" "missing-field" << 'EOF'
 trait named {
   name: string
 }

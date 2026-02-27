@@ -36,8 +36,9 @@ let check_trait_fields (typ : Types.mono_type) (trait_name : string) : (unit, st
                 match List.find_opt (fun (f : Types.record_field_type) -> f.name = required.name) actual_fields with
                 | None ->
                     Error
-                      (Printf.sprintf "Type %s does not satisfy trait %s: missing required field '%s'" type_str
-                         trait_name required.name)
+                      (Printf.sprintf
+                         "Trait satisfaction failed [missing-field]: type %s does not satisfy trait %s because field '%s' is required"
+                         type_str trait_name required.name)
                 | Some actual -> (
                     let actual_type = Types.canonicalize_mono_type actual.typ in
                     let required_type = Types.canonicalize_mono_type required.typ in
@@ -46,25 +47,29 @@ let check_trait_fields (typ : Types.mono_type) (trait_name : string) : (unit, st
                     | Error _ ->
                         Error
                           (Printf.sprintf
-                             "Type %s does not satisfy trait %s: field '%s' has type %s but expected %s"
+                             "Trait satisfaction failed [field-type-mismatch]: type %s does not satisfy trait %s because field '%s' has type %s but expected %s"
                              type_str trait_name required.name (Types.to_string actual_type)
                              (Types.to_string required_type))))
           in
           check_required required_fields
       | _ ->
           Error
-            (Printf.sprintf "Type %s does not satisfy trait %s: field traits require a record type" type_str
+            (Printf.sprintf
+               "Trait satisfaction failed [non-record-for-field-trait]: type %s does not satisfy trait %s because field traits require a record receiver"
+               type_str
                trait_name))
 
 let check_trait_methods (typ : Types.mono_type) (trait_name : string) : (unit, string) result =
   if Trait_registry.implements_trait trait_name typ then
     Ok ()
   else
-    Error (Printf.sprintf "Type %s does not implement trait %s" (Types.to_string typ) trait_name)
+    Error
+      (Printf.sprintf "Trait satisfaction failed [missing-impl]: type %s does not implement trait %s"
+         (Types.to_string typ) trait_name)
 
 let check_trait_self_requirements (typ : Types.mono_type) (trait_name : string) : (unit, string) result =
   match Trait_registry.lookup_trait trait_name with
-  | None -> Error (Printf.sprintf "Unknown trait: %s" trait_name)
+  | None -> Error (Printf.sprintf "Trait satisfaction failed [unknown-trait]: %s" trait_name)
   | Some _ -> (
       let kind = Trait_registry.trait_kind trait_name in
       let field_result = check_trait_fields typ trait_name in
@@ -227,6 +232,19 @@ let setup_builtins () =
         [ { method_name = "show"; method_params = [ ("x", Types.TString) ]; method_return_type = Types.TString } ];
     }
 
+let contains_substring s sub =
+  let len_s = String.length s in
+  let len_sub = String.length sub in
+  let rec loop i =
+    if i + len_sub > len_s then
+      false
+    else if String.sub s i len_sub = sub then
+      true
+    else
+      loop (i + 1)
+  in
+  loop 0
+
 let%test "int implements show (builtin)" =
   setup_builtins ();
   implements_trait Types.TInt "show"
@@ -261,7 +279,7 @@ let%test "check_constraints failure" =
   setup_builtins ();
   match check_constraints (Types.TArray Types.TInt) [ "show" ] with
   | Ok () -> false
-  | Error msg -> String.length msg > 0
+  | Error msg -> String.length msg > 0 && contains_substring msg "[missing-impl]"
 
 let%test "satisfies_trait succeeds for builtin eq[int]" =
   setup_builtins ();
@@ -393,22 +411,27 @@ let%test "field-only trait rejects non-record types" =
       trait_methods = [];
     };
   Trait_registry.set_trait_fields "named" [ { Types.name = "name"; typ = Types.TString } ];
-  let contains_substring s sub =
-    let len_s = String.length s in
-    let len_sub = String.length sub in
-    let rec loop i =
-      if i + len_sub > len_s then
-        false
-      else if String.sub s i len_sub = sub then
-        true
-      else
-        loop (i + 1)
-    in
-    loop 0
-  in
   match satisfies_trait Types.TInt "named" with
   | Ok () -> false
-  | Error msg -> contains_substring msg "record type"
+  | Error msg ->
+      contains_substring msg "record"
+      && contains_substring msg "[non-record-for-field-trait]"
+
+let%test "field-only trait missing-field error includes category" =
+  Trait_registry.clear ();
+  Trait_registry.register_trait
+    {
+      trait_name = "named";
+      trait_type_param = None;
+      trait_supertraits = [];
+      trait_methods = [];
+    };
+  Trait_registry.set_trait_fields "named" [ { Types.name = "name"; typ = Types.TString } ];
+  match satisfies_trait (Types.TRecord ([ { Types.name = "age"; typ = Types.TInt } ], None)) "named" with
+  | Ok () -> false
+  | Error msg ->
+      contains_substring msg "missing-field"
+      && contains_substring msg "field 'name'"
 
 let%test "mixed trait requires both structural fields and nominal impl" =
   Trait_registry.clear ();
