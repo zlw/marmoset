@@ -40,12 +40,6 @@ Run a program:
 dune exec marmoset -- examples/fibonacci-typed.mr
 ```
 
-Start REPL:
-
-```sh
-make repl
-```
-
 Compile Marmoset source to a Go-built binary:
 
 ```sh

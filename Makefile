@@ -13,8 +13,8 @@ release:
 unit:
 	dune runtest --force
 
-repl: release
-	@./_build/install/default/bin/marmoset
+repl:
+	@echo "REPL is removed. Use 'make run file=examples/fibonacci-typed.mr'." && exit 1
 
 run: release
 	@./_build/install/default/bin/marmoset $(file)
