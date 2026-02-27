@@ -14,7 +14,7 @@ ALL_SUITES=(
   "02_unions_enums.sh"
   "03_traits.sh"
   "04_records.sh"
-  "05_codegen_p0.sh"
+  "05_codegen.sh"
   "06_runtime_output.sh"
 )
 
@@ -26,7 +26,7 @@ resolve_suite() {
         unions|enums) echo "02_unions_enums.sh" ;;
         traits) echo "03_traits.sh" ;;
         records) echo "04_records.sh" ;;
-        codegen|p0) echo "05_codegen_p0.sh" ;;
+        codegen) echo "05_codegen.sh" ;;
         runtime) echo "06_runtime_output.sh" ;;
         *.sh)
             if [ -f "$INTEGRATION_DIR/$name" ]; then
@@ -44,15 +44,15 @@ resolve_suite() {
 print_usage() {
     cat <<USAGE
 Usage:
-  ./test/test_typecheck_and_codegen.sh                 # run all suites
-  ./test/test_typecheck_and_codegen.sh <suite> [...]   # run selected suites
+  ./test/integration.sh                 # run all suites
+  ./test/integration.sh <suite> [...]   # run selected suites
 
 Suite aliases:
   core|annotations
   unions|enums
   traits
   records
-  codegen|p0
+  codegen
   runtime
   all
 USAGE
