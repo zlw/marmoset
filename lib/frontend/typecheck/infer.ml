@@ -551,14 +551,64 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                                    expr)))
                   | TVar _ ->
                       (* Row-polymorphic field access: receiver must have this field plus unknown tail *)
-                      let field_type = fresh_type_var () in
-                      let row_var = fresh_row_var () in
-                      let expected = TRecord ([ { name = variant_name; typ = field_type } ], Some row_var) in
-                      (match unify receiver_type' expected with
-                      | Error e -> Error (error_at (UnificationError e) expr)
-                      | Ok subst2 ->
-                          let final_subst = compose_substitution subst1 subst2 in
-                          Ok (final_subst, apply_substitution subst2 field_type))
+                      let field_type_result =
+                        match receiver_type' with
+                        | TVar type_var_name ->
+                            let constraints = lookup_type_var_constraints type_var_name in
+                            let expanded_constraints =
+                              constraints
+                              |> List.fold_left
+                                   (fun acc trait_name -> acc @ Trait_registry.trait_with_supertraits trait_name)
+                                   []
+                              |> List.sort_uniq String.compare
+                            in
+                            let constrained_field_types =
+                              expanded_constraints
+                              |> List.filter_map (fun trait_name ->
+                                     match Trait_registry.lookup_trait_fields trait_name with
+                                     | None -> None
+                                     | Some fields -> (
+                                         match
+                                           List.find_opt
+                                             (fun (f : Types.record_field_type) -> f.name = variant_name)
+                                             fields
+                                         with
+                                         | None -> None
+                                         | Some f -> Some (trait_name, f.typ)))
+                            in
+                            let resolve_constrained_field_type candidates =
+                              match candidates with
+                              | [] -> Ok (fresh_type_var ())
+                              | (_trait_name, first_type) :: rest ->
+                                  let rec unify_candidates current_type subst_acc = function
+                                    | [] -> Ok (apply_substitution subst_acc current_type)
+                                    | (candidate_trait, candidate_type) :: tail -> (
+                                        let lhs = apply_substitution subst_acc current_type in
+                                        let rhs = apply_substitution subst_acc candidate_type in
+                                        match unify lhs rhs with
+                                        | Ok subst' ->
+                                            unify_candidates lhs (compose_substitution subst' subst_acc) tail
+                                        | Error _ ->
+                                            Error
+                                              (Printf.sprintf
+                                                 "Conflicting field type requirements for field '%s' on constrained type variable '%s' (trait '%s')"
+                                                 variant_name type_var_name candidate_trait))
+                                  in
+                                  unify_candidates first_type empty_substitution rest
+                            in
+                            resolve_constrained_field_type constrained_field_types
+                        | _ -> Ok (fresh_type_var ())
+                      in
+                      (match field_type_result with
+                      | Error msg -> Error (error_at (ConstructorError msg) expr)
+                      | Ok field_type ->
+                          let row_var = fresh_row_var () in
+                          let expected = TRecord ([ { name = variant_name; typ = field_type } ], Some row_var) in
+                          (match unify receiver_type' expected with
+                          | Error e -> Error (error_at (UnificationError e) expr)
+                          | Ok subst2 ->
+                              let final_subst = compose_substitution subst1 subst2 in
+                              Ok (final_subst, apply_substitution subst2 field_type)))
                   | _ ->
                       Error
                         (error_at
@@ -1581,44 +1631,56 @@ and infer_statement type_map env stmt =
               let ret_type = convert ret in
               List.fold_right (fun p r -> TFun (p, r)) param_types ret_type
           | AST.TUnion types -> normalize_union (List.map convert types)
-          | AST.TRecord (_fields, _row) -> failwith "Record types not yet implemented in trait definition"
+          | AST.TRecord (fields, row) ->
+              let field_types =
+                List.map
+                  (fun (f : AST.record_type_field) ->
+                    { Types.name = f.field_name; typ = convert f.field_type })
+                  fields
+              in
+              let row_type = Option.map convert row in
+              TRecord (field_types, row_type)
         in
         convert te
       in
+      let convert_method_sig (m : AST.method_sig) : Trait_registry.method_sig =
+        let param_types = List.map (fun (pname, ptype) -> (pname, convert_type_expr ptype)) m.method_params in
+        let return_type = convert_type_expr m.method_return_type in
+        {
+          Trait_registry.method_name = m.method_name;
+          method_params = param_types;
+          method_return_type = return_type;
+        }
+      in
+      let convert_trait_field (f : AST.record_type_field) : Types.record_field_type =
+        { Types.name = f.field_name; typ = convert_type_expr f.field_type }
+      in
+      let result =
+        try
+          let method_sigs = List.map convert_method_sig methods in
+          let trait_fields = List.map convert_trait_field fields in
+          let trait_def =
+            {
+              Trait_registry.trait_name = name;
+              trait_type_param = type_param;
+              trait_supertraits = supertraits;
+              trait_methods = method_sigs;
+            }
+          in
 
-      if fields <> [] then
-        Error
-          (error
-             (ConstructorError
-                "Trait fields are parsed but field traits are not supported in this phase. Use method-only traits for now."))
-      else
-        let convert_method_sig (m : AST.method_sig) : Trait_registry.method_sig =
-          let param_types = List.map (fun (pname, ptype) -> (pname, convert_type_expr ptype)) m.method_params in
-          let return_type = convert_type_expr m.method_return_type in
-          {
-            Trait_registry.method_name = m.method_name;
-            method_params = param_types;
-            method_return_type = return_type;
-          }
-        in
-
-        let method_sigs = List.map convert_method_sig methods in
-
-        let trait_def =
-          {
-            Trait_registry.trait_name = name;
-            trait_type_param = type_param;
-            trait_supertraits = supertraits;
-            trait_methods = method_sigs;
-          }
-        in
-
-        (* Validate and register trait *)
-        match Trait_registry.validate_trait_def trait_def with
-        | Error msg -> Error (error (ConstructorError msg))
-        | Ok () ->
-            Trait_registry.register_trait trait_def;
-            Ok (empty_substitution, TNull))
+          (* Validate and register trait *)
+          match Trait_registry.validate_trait_def trait_def with
+          | Error msg -> Error (error (ConstructorError msg))
+          | Ok () -> (
+              match Trait_registry.validate_trait_fields name trait_fields with
+              | Error msg -> Error (error (ConstructorError msg))
+              | Ok () ->
+                  Trait_registry.register_trait trait_def;
+                  Trait_registry.set_trait_fields name trait_fields;
+                  Ok (empty_substitution, TNull))
+        with Failure msg -> Error (error (ConstructorError msg))
+      in
+      result)
   | AST.ImplDef { impl_trait_name; impl_type_params; impl_for_type; impl_methods } -> (
       let convert_impl_type_expr (te : AST.type_expr) : (mono_type, infer_error) result =
         try Ok (Annotation.type_expr_to_mono_type te) with

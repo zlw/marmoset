@@ -36,10 +36,25 @@ impl ping for int {
 puts(42.ping())
 EOF
 
-run_build_fail_contains_from_stdin "Field-only trait is parsed and rejected with typed phase error" "field traits are not supported in this phase" << 'EOF'
+run_case_from_stdin "Field-only trait constraint accepts matching record shape" "alice" << 'EOF'
 trait named {
   name: string
 }
+let get_name = fn[t: named](x: t) -> string {
+  x.name
+};
+let person = { name: "alice", age: 42 }
+puts(get_name(person))
+EOF
+
+run_build_fail_contains_from_stdin "Field-only trait constraint rejects missing required field" "missing required field 'name'" << 'EOF'
+trait named {
+  name: string
+}
+let get_name = fn[t: named](x: t) -> string {
+  "ok"
+};
+get_name({ age: 42 })
 EOF
 
 test_case "Trait with supertraits" \

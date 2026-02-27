@@ -18,6 +18,11 @@ type trait_def = {
   trait_methods : method_sig list;
 }
 
+type trait_kind =
+  | FieldOnly
+  | MethodOnly
+  | Mixed
+
 (* A trait implementation *)
 type impl_def = {
   impl_trait_name : string;
@@ -30,6 +35,7 @@ type impl_def = {
 let trait_registry : (string, trait_def) Hashtbl.t = Hashtbl.create 16
 let impl_registry : (string * mono_type, impl_def) Hashtbl.t = Hashtbl.create 32 (* key: (trait_name, for_type) *)
 let builtin_impl_keys : (string * mono_type, unit) Hashtbl.t = Hashtbl.create 32
+let trait_field_registry : (string, record_field_type list) Hashtbl.t = Hashtbl.create 16
 
 let canonical_type (t : mono_type) : mono_type = canonicalize_mono_type t
 let is_builtin_impl_key (trait_name : string) (for_type : mono_type) : bool =
@@ -38,10 +44,50 @@ let is_builtin_impl_key (trait_name : string) (for_type : mono_type) : bool =
 let clear () =
   Hashtbl.clear trait_registry;
   Hashtbl.clear impl_registry;
-  Hashtbl.clear builtin_impl_keys
+  Hashtbl.clear builtin_impl_keys;
+  Hashtbl.clear trait_field_registry
 
 (* Register a trait definition *)
 let register_trait (def : trait_def) : unit = Hashtbl.replace trait_registry def.trait_name def
+
+let set_trait_fields (trait_name : string) (fields : record_field_type list) : unit =
+  let canonical_fields =
+    fields
+    |> List.map (fun (f : record_field_type) -> { f with typ = canonical_type f.typ })
+    |> normalize_record_fields
+  in
+  if canonical_fields = [] then
+    Hashtbl.remove trait_field_registry trait_name
+  else
+    Hashtbl.replace trait_field_registry trait_name canonical_fields
+
+let lookup_trait_fields (trait_name : string) : record_field_type list option =
+  Hashtbl.find_opt trait_field_registry trait_name
+
+let trait_kind (trait_name : string) : trait_kind option =
+  match Hashtbl.find_opt trait_registry trait_name with
+  | None -> None
+  | Some trait_def ->
+      let has_methods = trait_def.trait_methods <> [] in
+      let has_fields =
+        match lookup_trait_fields trait_name with
+        | Some fields when fields <> [] -> true
+        | _ -> false
+      in
+      if has_fields && has_methods then
+        Some Mixed
+      else if has_fields then
+        Some FieldOnly
+      else
+        Some MethodOnly
+
+let validate_trait_fields (trait_name : string) (fields : record_field_type list) : (unit, string) result =
+  let field_names = List.map (fun (f : record_field_type) -> f.name) fields in
+  let unique_names = List.sort_uniq String.compare field_names in
+  if List.length unique_names <> List.length field_names then
+    Error (Printf.sprintf "Trait '%s' has duplicate field names" trait_name)
+  else
+    Ok ()
 
 (* Register an impl block *)
 let register_impl ?(builtin = false) (def : impl_def) : unit =
@@ -326,21 +372,28 @@ let validate_impl (def : impl_def) : (unit, string) result =
       match lookup_trait def'.impl_trait_name with
       | None -> Error (Printf.sprintf "Cannot implement undefined trait: %s" def'.impl_trait_name)
       | Some trait_def -> (
-          match validate_impl_signature trait_def def' with
-          | Error _ as err -> err
-          | Ok () ->
-              let rec check_supertraits = function
-                | [] -> Ok ()
-                | supertrait :: rest ->
-                    if implements_trait supertrait for_type' then
-                      check_supertraits rest
-                    else
-                      Error
-                        (Printf.sprintf
-                           "Impl for trait '%s' on type %s is missing required supertrait '%s' implementation"
-                           def'.impl_trait_name (to_string for_type') supertrait)
-              in
-              check_supertraits (supertraits_of_trait def'.impl_trait_name)))
+          match trait_kind def'.impl_trait_name with
+          | Some FieldOnly ->
+              Error
+                (Printf.sprintf
+                   "Trait '%s' is field-only and cannot have impl blocks (field traits are structural)"
+                   def'.impl_trait_name)
+          | _ -> (
+              match validate_impl_signature trait_def def' with
+              | Error _ as err -> err
+              | Ok () ->
+                  let rec check_supertraits = function
+                    | [] -> Ok ()
+                    | supertrait :: rest ->
+                        if implements_trait supertrait for_type' then
+                          check_supertraits rest
+                        else
+                          Error
+                            (Printf.sprintf
+                               "Impl for trait '%s' on type %s is missing required supertrait '%s' implementation"
+                               def'.impl_trait_name (to_string for_type') supertrait)
+                  in
+                  check_supertraits (supertraits_of_trait def'.impl_trait_name))))
 
 (* Initialize with built-in traits (if any) *)
 let init_builtins () = clear ()
@@ -1148,3 +1201,27 @@ let%test "validate_impl rejects missing required supertrait implementation" =
   with
   | Ok () -> false
   | Error msg -> String.length msg > 0
+
+let%test "validate_impl rejects impl blocks for field-only traits" =
+  clear ();
+  register_trait
+    {
+      trait_name = "named";
+      trait_type_param = None;
+      trait_supertraits = [];
+      trait_methods = [];
+    };
+  set_trait_fields "named" [ { name = "name"; typ = TString } ];
+  match
+    validate_impl
+      {
+        impl_trait_name = "named";
+        impl_type_params = [];
+        impl_for_type = TRecord ([ { name = "name"; typ = TString } ], None);
+        impl_methods = [];
+      }
+  with
+  | Ok () -> false
+  | Error msg ->
+      String.length msg > 0
+      && String.sub msg 0 (min (String.length msg) 5) = "Trait"

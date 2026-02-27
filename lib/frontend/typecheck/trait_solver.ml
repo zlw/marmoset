@@ -2,6 +2,7 @@
 
 module Types = Types
 module Trait_registry = Trait_registry
+module Unify = Unify
 module StringSet = Set.Make (String)
 
 let dedupe_preserve_order (traits : string list) : string list =
@@ -22,19 +23,72 @@ let expand_constraints_with_supertraits (constraints : string list) : string lis
        []
   |> dedupe_preserve_order
 
+let check_trait_fields (typ : Types.mono_type) (trait_name : string) : (unit, string) result =
+  match Trait_registry.lookup_trait_fields trait_name with
+  | None | Some [] -> Ok ()
+  | Some required_fields -> (
+      let type_str = Types.to_string typ in
+      match typ with
+      | Types.TRecord (actual_fields, _row) ->
+          let rec check_required = function
+            | [] -> Ok ()
+            | (required : Types.record_field_type) :: rest -> (
+                match List.find_opt (fun (f : Types.record_field_type) -> f.name = required.name) actual_fields with
+                | None ->
+                    Error
+                      (Printf.sprintf "Type %s does not satisfy trait %s: missing required field '%s'" type_str
+                         trait_name required.name)
+                | Some actual -> (
+                    let actual_type = Types.canonicalize_mono_type actual.typ in
+                    let required_type = Types.canonicalize_mono_type required.typ in
+                    match Unify.unify actual_type required_type with
+                    | Ok _ -> check_required rest
+                    | Error _ ->
+                        Error
+                          (Printf.sprintf
+                             "Type %s does not satisfy trait %s: field '%s' has type %s but expected %s"
+                             type_str trait_name required.name (Types.to_string actual_type)
+                             (Types.to_string required_type))))
+          in
+          check_required required_fields
+      | _ ->
+          Error
+            (Printf.sprintf "Type %s does not satisfy trait %s: field traits require a record type" type_str
+               trait_name))
+
+let check_trait_methods (typ : Types.mono_type) (trait_name : string) : (unit, string) result =
+  if Trait_registry.implements_trait trait_name typ then
+    Ok ()
+  else
+    Error (Printf.sprintf "Type %s does not implement trait %s" (Types.to_string typ) trait_name)
+
+let check_trait_self_requirements (typ : Types.mono_type) (trait_name : string) : (unit, string) result =
+  match Trait_registry.lookup_trait trait_name with
+  | None -> Error (Printf.sprintf "Unknown trait: %s" trait_name)
+  | Some _ -> (
+      let kind = Trait_registry.trait_kind trait_name in
+      let field_result = check_trait_fields typ trait_name in
+      let method_result =
+        match kind with
+        | Some Trait_registry.FieldOnly -> Ok ()
+        | Some Trait_registry.MethodOnly | Some Trait_registry.Mixed | None -> check_trait_methods typ trait_name
+      in
+      match field_result with
+      | Error _ as err -> err
+      | Ok () -> method_result)
+
 let rec check_trait_with_supertraits (visited : StringSet.t) (typ : Types.mono_type) (trait_name : string) :
     (unit, string) result =
   if StringSet.mem trait_name visited then
     Ok ()
   else
     let visited' = StringSet.add trait_name visited in
-    if not (Trait_registry.implements_trait trait_name typ) then
-      let type_str = Types.to_string typ in
-      Error (Printf.sprintf "Type %s does not implement trait %s" type_str trait_name)
-    else
-      match Trait_registry.lookup_trait trait_name with
-      | None -> Ok ()
-      | Some trait_def -> check_supertraits visited' typ trait_def.trait_supertraits
+    match check_trait_self_requirements typ trait_name with
+    | Error _ as err -> err
+    | Ok () -> (
+        match Trait_registry.lookup_trait trait_name with
+        | None -> Ok ()
+        | Some trait_def -> check_supertraits visited' typ trait_def.trait_supertraits)
 
 and check_supertraits (visited : StringSet.t) (typ : Types.mono_type) (traits : string list) : (unit, string) result =
   match traits with
@@ -45,7 +99,7 @@ and check_supertraits (visited : StringSet.t) (typ : Types.mono_type) (traits : 
       | Error _ as err -> err)
 
 let satisfies_trait (typ : Types.mono_type) (trait_name : string) : (unit, string) result =
-  check_trait_with_supertraits StringSet.empty typ trait_name
+  check_trait_with_supertraits StringSet.empty (Types.canonicalize_mono_type typ) trait_name
 
 let satisfies_trait_bool (typ : Types.mono_type) (trait_name : string) : bool =
   match satisfies_trait typ trait_name with
@@ -314,3 +368,88 @@ let%test "satisfies_trait enforces supertrait obligations transitively" =
   match satisfies_trait Types.TString "ord" with
   | Ok () -> false
   | Error msg -> String.length msg > 0
+
+let%test "field-only trait is satisfied structurally by matching record" =
+  Trait_registry.clear ();
+  Trait_registry.register_trait
+    {
+      trait_name = "named";
+      trait_type_param = None;
+      trait_supertraits = [];
+      trait_methods = [];
+    };
+  Trait_registry.set_trait_fields "named" [ { Types.name = "name"; typ = Types.TString } ];
+  match satisfies_trait (Types.TRecord ([ { Types.name = "name"; typ = Types.TString } ], None)) "named" with
+  | Ok () -> true
+  | Error _ -> false
+
+let%test "field-only trait rejects non-record types" =
+  Trait_registry.clear ();
+  Trait_registry.register_trait
+    {
+      trait_name = "named";
+      trait_type_param = None;
+      trait_supertraits = [];
+      trait_methods = [];
+    };
+  Trait_registry.set_trait_fields "named" [ { Types.name = "name"; typ = Types.TString } ];
+  let contains_substring s sub =
+    let len_s = String.length s in
+    let len_sub = String.length sub in
+    let rec loop i =
+      if i + len_sub > len_s then
+        false
+      else if String.sub s i len_sub = sub then
+        true
+      else
+        loop (i + 1)
+    in
+    loop 0
+  in
+  match satisfies_trait Types.TInt "named" with
+  | Ok () -> false
+  | Error msg -> contains_substring msg "record type"
+
+let%test "mixed trait requires both structural fields and nominal impl" =
+  Trait_registry.clear ();
+  let person_type = Types.TRecord ([ { Types.name = "name"; typ = Types.TString } ], None) in
+  Trait_registry.register_trait
+    {
+      trait_name = "named_show";
+      trait_type_param = None;
+      trait_supertraits = [];
+      trait_methods =
+        [
+          {
+            method_name = "show";
+            method_params = [ ("x", person_type) ];
+            method_return_type = Types.TString;
+          };
+        ];
+    };
+  Trait_registry.set_trait_fields "named_show" [ { Types.name = "name"; typ = Types.TString } ];
+  let fails_without_impl =
+    match satisfies_trait person_type "named_show" with
+    | Ok () -> false
+    | Error _ -> true
+  in
+  Trait_registry.register_impl
+    {
+      impl_trait_name = "named_show";
+      impl_type_params = [];
+      impl_for_type = person_type;
+      impl_methods =
+        [
+          {
+            method_name = "show";
+            method_params = [ ("x", person_type) ];
+            method_return_type = Types.TString;
+          };
+        ];
+    };
+  let passes_with_impl =
+    match satisfies_trait person_type "named_show" with
+    | Ok () -> true
+    | Error _ -> false
+  in
+  fails_without_impl && passes_with_impl
