@@ -26,7 +26,9 @@ Nothing in `docs/archive/` is lost; this file centralizes actionable direction.
 - Associated types.
 - Default methods and richer override semantics.
 - More complete conditional impl resolution and overlap diagnostics.
-- Dynamic dispatch mode (explicit trait objects), if needed.
+- Dynamic dispatch mode (explicit trait objects / existentials), if needed.
+- First-class existential representation design (`type_id` + payload + witness), before any method/mixed trait-object surface feature.
+- Lock capability semantics for existential values (`eq`/`ord`/`hash`/`show`) before enabling dynamic dispatch.
 - Better coherence/orphan policy and warnings.
 - Potential polymorphic literal behavior policy (`1 + 1.0` style concerns).
 - Higher-kinded type design exploration for advanced abstractions.
@@ -81,6 +83,7 @@ Nothing in `docs/archive/` is lost; this file centralizes actionable direction.
 - Improve call-site inlining opportunities in generated Go.
 - Avoid unnecessary helper indirection for simple builtins.
 - Explicit static-vs-dynamic dispatch selection model (if trait objects land).
+- Benchmark dynamic dispatch representation options (interface-only vs dictionary vs tagged existential package) before locking backend strategy.
 
 ### 2.4 Union performance
 
@@ -116,6 +119,7 @@ These guardrails are intentionally locked until a dedicated modules+extern desig
 - Extern ABI starts with primitives/unit only.
 - Records/enums/unions/trait objects stay out of ABI until representation and ownership rules are frozen.
 - Trait-object representation is treated as deferred design work, not a soft-inferred backend feature.
+- Any future trait-object ABI must use an explicit stable representation; raw Go interface internals are not the public contract.
 
 ## 4. Tooling and Testing
 

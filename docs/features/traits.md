@@ -264,6 +264,30 @@ Status:
 - Inherent methods are still pending; collision policy is documented separately.
 - Qualified trait-call syntax is not implemented.
 
+## Deferred: Method/Mixed Trait Objects and Existentials
+
+This is intentionally deferred work, but the design constraints are locked to avoid future ABI drift.
+
+### Representation options considered
+
+1. Interface-only runtime values (Go interface-based dispatch)
+2. Dictionary passing (explicit witness records)
+3. Tagged existential package (`type_id`, payload, witness)
+
+### Guardrails
+
+- Do not expose method/mixed trait-object syntax until a first-class internal representation exists (typed AST/IR), with explicit witness-carrying semantics.
+- Do not treat ad-hoc emitter-only lowering as acceptable for dynamic trait values.
+- Do not expose raw Go interface internals as stable module/FFI ABI.
+- Lock operation semantics (`eq`, `ord`, `hash`, `show`) for existential values before enabling them.
+
+### Preconditions before implementation
+
+1. Add typed IR/AST support for existential values and dynamic trait dispatch.
+2. Thread resolution/coherence metadata from typechecker to codegen without re-resolution.
+3. Freeze module/FFI ABI representation for existential payloads/witnesses.
+4. Add deterministic tests for dispatch behavior and capability limits.
+
 ## Why This Design
 
 The current model keeps method behavior explicit and coherent while preserving structural ergonomics for records. It also keeps codegen simple and performant by using static dispatch and projection-based field trait typing.
@@ -273,7 +297,6 @@ The current model keeps method behavior explicit and coherent while preserving s
 - `docs/features/functions-and-polymorphism.md`
 - `docs/features/records.md`
 - `docs/features/inherent-methods.md`
-- `docs/features/trait-objects-existentials-ffi.md`
 - `docs/ROADMAP.md`
 - `docs/archive/typechecker/phase4/milestone-3.md`
 
