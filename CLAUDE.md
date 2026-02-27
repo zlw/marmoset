@@ -208,6 +208,16 @@ dune runtest
 
 ## 6. Git Workflow
 
+### NEVER Commit These:
+
+- `docs/review/` — analysis/progress tracking docs (local only)
+- Temporary test directories (e.g., `test_alias/`, `test_derive/`, `test_row_check/`)
+- Build artifacts or binaries
+- `.claude/` directory contents
+- Any file in `/tmp/`
+
+Always use `git add <specific files>` — never `git add .` or `git add -A`.
+
 ### Branch Naming:
 
 - `feature/description` - New features
