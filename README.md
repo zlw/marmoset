@@ -26,31 +26,33 @@ Install dependencies:
 make install
 ```
 
-Build:
+Build the release executable:
 
 ```sh
-make build
+make release
 ```
+
+This creates `./marmoset`.
 
 ## Usage
 
 Run a program:
 
 ```sh
-dune exec marmoset -- examples/fibonacci-typed.mr
+./marmoset examples/fibonacci-typed.mr
 ```
 
 Compile Marmoset source to a Go-built binary:
 
 ```sh
-dune exec marmoset -- build examples/fibonacci-typed.mr -o fibonacci
+./marmoset build examples/fibonacci-typed.mr -o fibonacci
 ./fibonacci
 ```
 
 Emit generated Go source alongside build:
 
 ```sh
-dune exec marmoset -- build examples/fibonacci-typed.mr --emit-go out
+./marmoset build examples/fibonacci-typed.mr --emit-go out
 ```
 
 ## Testing

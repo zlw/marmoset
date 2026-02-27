@@ -3,12 +3,15 @@ install:
 
 clean:
 	@rm -rf _build
+	@rm -f ./marmoset
 
 build:
 	dune build
 
 release:
-	dune build --profile release
+	dune build --profile release ./bin/main.exe
+	@cp -f _build/default/bin/main.exe ./marmoset
+	@chmod +x ./marmoset
 
 unit:
 	dune runtest --force
@@ -26,7 +29,7 @@ repl:
 	@echo "REPL is removed. Use 'make run file=examples/fibonacci-typed.mr'." && exit 1
 
 run: release
-	@./_build/install/default/bin/marmoset $(file)
+	@./marmoset $(file)
 
 watch:
 	dune runtest -w --force
