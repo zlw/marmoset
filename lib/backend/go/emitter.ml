@@ -435,6 +435,13 @@ let rec extract_param_types n = function
       (arg :: rest, final)
   | t -> ([], t)
 
+let extract_all_param_types (t : Types.mono_type) : Types.mono_type list * Types.mono_type =
+  let rec go acc = function
+    | Types.TFun (arg, ret) -> go (arg :: acc) ret
+    | final_ret -> (List.rev acc, final_ret)
+  in
+  go [] t
+
 let rec collect_insts_stmt
     (state : mono_state) (type_map : Infer.type_map) (env : Infer.type_env) (stmt : AST.statement) :
     Infer.type_env =
@@ -783,7 +790,14 @@ let rec emit_expr
   | AST.Boolean true -> "true"
   | AST.Boolean false -> "false"
   | AST.String s -> Printf.sprintf "%S" s
-  | AST.Identifier name -> name
+  | AST.Identifier name -> (
+      match expected_type with
+      | Some expected_func_type when is_user_func state.mono name -> (
+          let param_types, _ = extract_all_param_types expected_func_type in
+          match param_types with
+          | [] -> name
+          | _ -> mangle_func_name name param_types)
+      | _ -> name)
   | AST.Prefix (op, operand) -> emit_prefix state type_map env op operand
   | AST.Infix (left, op, right) -> emit_infix state type_map env left op right
   | AST.TypeCheck (expr, type_ann) -> emit_type_check state type_map env expr type_ann
@@ -796,7 +810,13 @@ let rec emit_expr
           | _ -> None
         in
         emit_array ?expected_elem_type state type_map env elements
-  | AST.Hash pairs -> emit_hash state type_map env pairs
+  | AST.Hash pairs -> (
+      let expected_hash_types =
+        match expected_type with
+        | Some (Types.THash (k, v)) -> Some (k, v)
+        | _ -> None
+      in
+      emit_hash ?expected_hash_types state type_map env pairs)
   | AST.Index (container, index) -> emit_index state type_map env container index
   | AST.Function f ->
       (* Phase 2: Convert params to expressions for backward compat *)
@@ -1515,6 +1535,32 @@ and emit_if state type_map env if_expr cond cons alt =
         cons_str ind alt_str ind ind
 
 and emit_call state type_map env func args =
+  let callee_type_opt =
+    match func.expr with
+    | AST.Identifier name -> (
+        match Infer.TypeEnv.find_opt name env with
+        | Some (Types.Forall (_, t)) -> Some t
+        | None -> Hashtbl.find_opt type_map func.id)
+    | _ -> Hashtbl.find_opt type_map func.id
+  in
+  let call_param_types =
+    match callee_type_opt with
+    | Some callee_type -> fst (extract_param_types (List.length args) callee_type)
+    | None -> []
+  in
+  let emit_args_with_expected_types (expected_types : Types.mono_type list) : string =
+    List.mapi
+      (fun i arg ->
+        let expected =
+          if i < List.length expected_types then
+            Some (List.nth expected_types i)
+          else
+            None
+        in
+        emit_expr ~expected_type:expected state type_map env arg)
+      args
+    |> String.concat ", "
+  in
   (* Check for builtin function calls that need special handling *)
   match func.expr with
   | AST.Identifier "len" when List.length args = 1 ->
@@ -1562,16 +1608,22 @@ and emit_call state type_map env func args =
           List.map (get_type type_map) args
       in
       let mangled_name = mangle_func_name name param_types in
-      let args_str = List.map (emit_expr state type_map env) args |> String.concat ", " in
+      let args_str = emit_args_with_expected_types param_types in
       Printf.sprintf "%s(%s)" mangled_name args_str
   | _ ->
       let func_str = emit_expr state type_map env func in
-      let args_str = List.map (emit_expr state type_map env) args |> String.concat ", " in
+      let args_str = emit_args_with_expected_types call_param_types in
       Printf.sprintf "%s(%s)" func_str args_str
 
 and emit_array ?expected_elem_type state type_map env elements =
   match elements with
-  | [] -> "[]interface{}{}"
+  | [] ->
+      let elem_type_str =
+        match expected_elem_type with
+        | Some t -> type_to_go state.mono t
+        | None -> "interface{}"
+      in
+      Printf.sprintf "[]%s{}" elem_type_str
   | first :: _ ->
       let elem_type =
         match expected_elem_type with
@@ -1583,9 +1635,13 @@ and emit_array ?expected_elem_type state type_map env elements =
       let elems_str = List.map emit_elem elements |> String.concat ", " in
       Printf.sprintf "[]%s{%s}" elem_type_str elems_str
 
-and emit_hash state type_map env pairs =
+and emit_hash ?expected_hash_types state type_map env pairs =
   match pairs with
-  | [] -> "map[interface{}]interface{}{}"
+  | [] -> (
+      match expected_hash_types with
+      | Some (key_t, val_t) ->
+          Printf.sprintf "map[%s]%s{}" (type_to_go state.mono key_t) (type_to_go state.mono val_t)
+      | None -> "map[interface{}]interface{}{}")
   | (first_key, first_val) :: _ ->
       let key_type = get_type type_map first_key in
       let val_type = get_type type_map first_val in
@@ -1702,7 +1758,8 @@ and emit_stmt (state : emit_state) (type_map : Infer.type_map) (env : Infer.type
           let expr_str = emit_expr ~expected_type:(Some expr_type) state type_map env let_binding.value in
           let go_type = type_to_go state.mono expr_type in
           let binding_code =
-            Printf.sprintf "%svar %s %s\n%s%s = %s\n" ind let_binding.name go_type ind let_binding.name expr_str
+            Printf.sprintf "%svar %s %s\n%s%s = %s\n%s_ = %s\n" ind let_binding.name go_type ind let_binding.name
+              expr_str ind let_binding.name
           in
           let env' = Infer.TypeEnv.add let_binding.name (Types.Forall ([], expr_type)) env in
           (binding_code, env')
@@ -1713,8 +1770,9 @@ and emit_stmt (state : emit_state) (type_map : Infer.type_map) (env : Infer.type
             match let_binding.type_annotation with
             | Some _ ->
                 let go_type = type_to_go state.mono expr_type in
-                Printf.sprintf "%svar %s %s = %s\n" ind let_binding.name go_type expr_str
-            | None -> Printf.sprintf "%s%s := %s\n" ind let_binding.name expr_str
+                Printf.sprintf "%svar %s %s = %s\n%s_ = %s\n" ind let_binding.name go_type expr_str ind
+                  let_binding.name
+            | None -> Printf.sprintf "%s%s := %s\n%s_ = %s\n" ind let_binding.name expr_str ind let_binding.name
           in
           let env' = Infer.TypeEnv.add let_binding.name (Types.Forall ([], expr_type)) env in
           (binding_code, env'))
