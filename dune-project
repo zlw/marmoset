@@ -17,8 +17,8 @@
 
 (package
  (name marmoset)
- (synopsis "Monkey Language but in OCaml")
- (description "Monkey Language but in OCaml")
+ (synopsis "Statically typed language compiling to Go")
+ (description "A statically typed language implemented in OCaml with Go code generation")
  (tags
-  (monkey interpreter compiler bytecode "virtual machine"))
+  (language compiler typechecker go))
  (depends ocaml ppx_deriving ppx_inline_test))

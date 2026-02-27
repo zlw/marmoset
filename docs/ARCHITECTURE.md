@@ -122,7 +122,7 @@ Cons:
 ### 4.1 Why Go source emission
 
 Alternatives considered:
-- Direct bytecode backend only.
+- In-process OCaml runtime backend (interpreter/VM).
 - LLVM/MLIR-style IR and native backend.
 - Go source generation.
 
