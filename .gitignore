@@ -29,16 +29,12 @@ setup.log
 _opam/
 
 # Test binaries and artifacts
-/test_*
-/enum_*
-/fibonacci
-/fibonacci-typed
-/simple
-/stdin
 /tmp
-*.backup
 
 # Marmoset compiled binaries
 *.mar.out
-/fib_test
-/poly
+
+
+# Editors
+.idea
+.zed
