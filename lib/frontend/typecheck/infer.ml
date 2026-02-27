@@ -647,18 +647,15 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                         `Not_found
                       else
                         let candidates =
-                          constraints
-                          |> List.filter_map (fun trait_name ->
-                                 match Trait_registry.lookup_trait trait_name with
+                          Trait_solver.available_methods constraints
+                          |> List.filter_map (fun (trait_name, trait_def) ->
+                                 match
+                                   List.find_opt
+                                     (fun (m : Trait_registry.method_sig) -> m.method_name = method_name)
+                                     trait_def.Trait_registry.trait_methods
+                                 with
                                  | None -> None
-                                 | Some trait_def -> (
-                                     match
-                                       List.find_opt
-                                         (fun (m : Trait_registry.method_sig) -> m.method_name = method_name)
-                                         trait_def.trait_methods
-                                     with
-                                     | None -> None
-                                     | Some method_sig -> Some (trait_name, method_sig)))
+                                 | Some method_sig -> Some (trait_name, method_sig))
                           |> List.sort (fun (a, _) (b, _) -> String.compare a b)
                         in
                         (match candidates with

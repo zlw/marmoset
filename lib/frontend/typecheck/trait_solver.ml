@@ -2,23 +2,53 @@
 
 module Types = Types
 module Trait_registry = Trait_registry
+module StringSet = Set.Make (String)
+
+let dedupe_preserve_order (traits : string list) : string list =
+  let rec go seen acc = function
+    | [] -> List.rev acc
+    | trait_name :: rest ->
+        if StringSet.mem trait_name seen then
+          go seen acc rest
+        else
+          go (StringSet.add trait_name seen) (trait_name :: acc) rest
+  in
+  go StringSet.empty [] traits
+
+let expand_constraints_with_supertraits (constraints : string list) : string list =
+  constraints
+  |> List.fold_left
+       (fun acc trait_name -> acc @ Trait_registry.trait_with_supertraits trait_name)
+       []
+  |> dedupe_preserve_order
+
+let rec check_trait_with_supertraits (visited : StringSet.t) (typ : Types.mono_type) (trait_name : string) :
+    (unit, string) result =
+  if StringSet.mem trait_name visited then
+    Ok ()
+  else
+    let visited' = StringSet.add trait_name visited in
+    if not (Trait_registry.implements_trait trait_name typ) then
+      let type_str = Types.to_string typ in
+      Error (Printf.sprintf "Type %s does not implement trait %s" type_str trait_name)
+    else
+      match Trait_registry.lookup_trait trait_name with
+      | None -> Ok ()
+      | Some trait_def -> check_supertraits visited' typ trait_def.trait_supertraits
+
+and check_supertraits (visited : StringSet.t) (typ : Types.mono_type) (traits : string list) : (unit, string) result =
+  match traits with
+  | [] -> Ok ()
+  | trait_name :: rest -> (
+      match check_trait_with_supertraits visited typ trait_name with
+      | Ok () -> check_supertraits visited typ rest
+      | Error _ as err -> err)
 
 (* Check if a concrete type implements a trait *)
 let implements_trait (typ : Types.mono_type) (trait_name : string) : bool =
-  (* First check direct implementations *)
-  let direct_impl = Trait_registry.implements_trait trait_name typ in
-
-  if direct_impl then
-    true
-  else
-    (* Check if there's a supertrait chain *)
-    (* If trait Tr has supertraits, we don't need those for this check *)
-    (* We only care: does this TYPE have an impl for THIS TRAIT? *)
-    false
-
-(* Check if a type satisfies a list of trait constraints *)
-let satisfies_constraints (typ : Types.mono_type) (constraints : string list) : bool =
-  List.for_all (implements_trait typ) constraints
+  match check_trait_with_supertraits StringSet.empty typ trait_name with
+  | Ok () -> true
+  | Error _ -> false
 
 (* Check if a type satisfies constraints, returning error if not *)
 let check_constraints (typ : Types.mono_type) (constraints : string list) : (unit, string) result =
@@ -26,26 +56,32 @@ let check_constraints (typ : Types.mono_type) (constraints : string list) : (uni
     match traits with
     | [] -> Ok ()
     | trait :: rest ->
-        if implements_trait typ trait then
-          check rest
-        else
-          let type_str = Types.to_string typ in
-          Error (Printf.sprintf "Type %s does not implement trait %s" type_str trait)
+        (match check_trait_with_supertraits StringSet.empty typ trait with
+        | Ok () -> check rest
+        | Error _ as err -> err)
   in
   check constraints
+
+(* Check if a type satisfies a list of trait constraints *)
+let satisfies_constraints (typ : Types.mono_type) (constraints : string list) : bool =
+  match check_constraints typ constraints with
+  | Ok () -> true
+  | Error _ -> false
 
 (* Given a type variable's constraints, find what methods are available *)
 let available_methods (constraints : string list) : (string * Trait_registry.trait_def) list =
   (* For each constraint (trait name), get the trait definition *)
+  let expanded_constraints = expand_constraints_with_supertraits constraints in
   List.filter_map
     (fun trait_name ->
       match Trait_registry.lookup_trait trait_name with
       | Some trait_def -> Some (trait_name, trait_def)
       | None -> None)
-    constraints
+    expanded_constraints
 
 (* Check if a method is available for a type given constraints *)
 let method_available (method_name : string) (constraints : string list) : string option =
+  let expanded_constraints = expand_constraints_with_supertraits constraints in
   (* Returns the trait name that provides this method, if any *)
   let rec find_in_traits traits =
     match traits with
@@ -65,7 +101,7 @@ let method_available (method_name : string) (constraints : string list) : string
               find_in_traits rest
         | None -> find_in_traits rest)
   in
-  find_in_traits constraints
+  find_in_traits expanded_constraints
 
 (* Inline tests *)
 (* Helper to setup builtin traits and impls for tests.
@@ -178,3 +214,47 @@ let%test "method_available - eq method in eq trait" =
 let%test "method_available - not found" =
   setup_builtins ();
   method_available "nonexistent" [ "show" ] = None
+
+let%test "check_constraints enforces supertrait obligations transitively" =
+  Trait_registry.clear ();
+  Trait_registry.register_trait
+    {
+      trait_name = "eq";
+      trait_type_param = Some "a";
+      trait_supertraits = [];
+      trait_methods =
+        [
+          { method_name = "eq"; method_params = [ ("x", Types.TVar "a"); ("y", Types.TVar "a") ]; method_return_type = Types.TBool };
+        ];
+    };
+  Trait_registry.register_trait
+    {
+      trait_name = "ord";
+      trait_type_param = Some "a";
+      trait_supertraits = [ "eq" ];
+      trait_methods =
+        [
+          {
+            method_name = "compare";
+            method_params = [ ("x", Types.TVar "a"); ("y", Types.TVar "a") ];
+            method_return_type = Types.TInt;
+          };
+        ];
+    };
+  Trait_registry.register_impl
+    {
+      impl_trait_name = "ord";
+      impl_type_params = [];
+      impl_for_type = Types.TString;
+      impl_methods =
+        [
+          {
+            method_name = "compare";
+            method_params = [ ("x", Types.TString); ("y", Types.TString) ];
+            method_return_type = Types.TInt;
+          };
+        ];
+    };
+  match check_constraints Types.TString [ "ord" ] with
+  | Ok () -> false
+  | Error msg -> String.length msg > 0

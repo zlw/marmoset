@@ -73,6 +73,26 @@ let register_impl ?(builtin = false) (def : impl_def) : unit =
 (* Lookup a trait by name *)
 let lookup_trait (name : string) : trait_def option = Hashtbl.find_opt trait_registry name
 
+(* Expand a trait into itself plus all transitive supertraits (deterministic order). *)
+let trait_with_supertraits (trait_name : string) : string list =
+  let visited : (string, unit) Hashtbl.t = Hashtbl.create 16 in
+  let rec visit acc name =
+    if Hashtbl.mem visited name then
+      acc
+    else (
+      Hashtbl.replace visited name ();
+      let acc' = name :: acc in
+      match lookup_trait name with
+      | None -> acc'
+      | Some def -> List.fold_left visit acc' def.trait_supertraits)
+  in
+  List.rev (visit [] trait_name)
+
+let supertraits_of_trait (trait_name : string) : string list =
+  match trait_with_supertraits trait_name with
+  | [] -> []
+  | _self :: rest -> rest
+
 (* Lookup an impl for a specific trait and type *)
 let lookup_impl (trait_name : string) (for_type : mono_type) : impl_def option =
   Hashtbl.find_opt impl_registry (trait_name, canonical_type for_type)
@@ -305,7 +325,22 @@ let validate_impl (def : impl_def) : (unit, string) result =
   | _ -> (
       match lookup_trait def'.impl_trait_name with
       | None -> Error (Printf.sprintf "Cannot implement undefined trait: %s" def'.impl_trait_name)
-      | Some trait_def -> validate_impl_signature trait_def def')
+      | Some trait_def -> (
+          match validate_impl_signature trait_def def' with
+          | Error _ as err -> err
+          | Ok () ->
+              let rec check_supertraits = function
+                | [] -> Ok ()
+                | supertrait :: rest ->
+                    if implements_trait supertrait for_type' then
+                      check_supertraits rest
+                    else
+                      Error
+                        (Printf.sprintf
+                           "Impl for trait '%s' on type %s is missing required supertrait '%s' implementation"
+                           def'.impl_trait_name (to_string for_type') supertrait)
+              in
+              check_supertraits (supertraits_of_trait def'.impl_trait_name)))
 
 (* Initialize with built-in traits (if any) *)
 let init_builtins () = clear ()
@@ -1078,3 +1113,38 @@ let%test "derive_impl - type parameter substitution" =
           let method_impl = List.hd impl_def.impl_methods in
           let _param_name, param_type = List.hd method_impl.method_params in
           param_type = TBool && method_impl.method_return_type = TString)
+
+let%test "validate_impl rejects missing required supertrait implementation" =
+  clear ();
+  register_trait
+    {
+      trait_name = "eq";
+      trait_type_param = Some "a";
+      trait_supertraits = [];
+      trait_methods =
+        [ { method_name = "eq"; method_params = [ ("x", TVar "a"); ("y", TVar "a") ]; method_return_type = TBool } ];
+    };
+  register_trait
+    {
+      trait_name = "ord";
+      trait_type_param = Some "a";
+      trait_supertraits = [ "eq" ];
+      trait_methods =
+        [
+          { method_name = "compare"; method_params = [ ("x", TVar "a"); ("y", TVar "a") ]; method_return_type = TInt };
+        ];
+    };
+  match
+    validate_impl
+      {
+        impl_trait_name = "ord";
+        impl_type_params = [];
+        impl_for_type = TString;
+        impl_methods =
+          [
+            { method_name = "compare"; method_params = [ ("x", TString); ("y", TString) ]; method_return_type = TInt };
+          ];
+      }
+  with
+  | Ok () -> false
+  | Error msg -> String.length msg > 0

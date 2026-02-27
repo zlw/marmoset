@@ -922,6 +922,69 @@ let result = show_if_equal(42, 99)
 puts(result)
 EOF
 
+run_build_fail_contains_from_stdin "Supertrait: impl ord requires eq for same type" "supertrait" << 'EOF'
+trait eq[a] {
+  fn eq(x: a, y: a) -> bool
+}
+trait ord[a]: eq {
+  fn compare(x: a, y: a) -> int
+}
+type point = { x: int }
+impl ord for point {
+  fn compare(x: point, y: point) -> int {
+    0
+  }
+}
+let p: point = { x: 1 }
+puts(p.compare(p))
+EOF
+
+run_case_from_stdin "Supertrait: methods from supertrait available through ord constraint" "true" << 'EOF'
+trait eq[a] {
+  fn eq(x: a, y: a) -> bool
+}
+trait ord[a]: eq {
+  fn compare(x: a, y: a) -> int
+}
+type point = { x: int }
+impl eq for point {
+  fn eq(x: point, y: point) -> bool {
+    x.x == y.x
+  }
+}
+impl ord for point {
+  fn compare(x: point, y: point) -> int {
+    0
+  }
+}
+let eq_via_ord = fn[a: ord](x: a, y: a) -> bool {
+  x.eq(y)
+}
+let p1: point = { x: 1 }
+let p2: point = { x: 1 }
+puts(eq_via_ord(p1, p2))
+EOF
+
+run_build_fail_contains_from_stdin "Supertrait: ord constraint also requires eq transitively" "supertrait" << 'EOF'
+trait eq[a] {
+  fn eq(x: a, y: a) -> bool
+}
+trait ord[a]: eq {
+  fn compare(x: a, y: a) -> int
+}
+type point = { x: int }
+impl ord for point {
+  fn compare(x: point, y: point) -> int {
+    0
+  }
+}
+let compare_self = fn[a: ord](x: a) -> int {
+  x.compare(x)
+}
+let p: point = { x: 1 }
+puts(compare_self(p))
+EOF
+
 echo ""
 echo "-- PHASE 4.4: RECORDS & ROW POLYMORPHISM --"
 
