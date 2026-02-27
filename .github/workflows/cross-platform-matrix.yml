@@ -38,4 +38,4 @@ jobs:
 
       - run: opam install . --deps-only --with-test
 
-      - run: opam exec -- ./test/integration.sh
+      - run: opam exec -- bash ./test/integration.sh
