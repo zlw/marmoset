@@ -82,4 +82,4 @@ Run a specific integration suite:
 
 ## Status
 
-This repository is under active development and cleanup while preparing for migration to a dedicated `marmoset` repository.
+This repository is under active development, expect frequent breaking changes.
