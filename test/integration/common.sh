@@ -73,7 +73,7 @@ expect_runtime_output() {
     local tmpfile
     local binpath
     tmpfile=$(mktemp)
-    binpath=$(mktemp /tmp/marmoset_test_bin.XXXXXX)
+    binpath=$(mktemp ./marmoset_test_bin.XXXXXX)
     rm -f "$binpath"
     echo "$source" > "$tmpfile"
 
@@ -195,10 +195,10 @@ run_codegen_deterministic_from_stdin() {
 
     local tmpfile out1 out2 bin1 bin2
     tmpfile=$(mktemp)
-    out1=$(mktemp -d /tmp/marmoset_emit1.XXXXXX)
-    out2=$(mktemp -d /tmp/marmoset_emit2.XXXXXX)
-    bin1=$(mktemp /tmp/marmoset_bin1.XXXXXX)
-    bin2=$(mktemp /tmp/marmoset_bin2.XXXXXX)
+    out1=$(mktemp -d marmoset_emit1.XXXXXX)
+    out2=$(mktemp -d marmoset_emit2.XXXXXX)
+    bin1=$(mktemp ./marmoset_bin1.XXXXXX)
+    bin2=$(mktemp ./marmoset_bin2.XXXXXX)
     rm -f "$bin1" "$bin2"
     echo "$source" > "$tmpfile"
 
@@ -236,8 +236,8 @@ run_emit_go_not_contains_from_stdin() {
 
     local tmpfile outdir binpath
     tmpfile=$(mktemp)
-    outdir=$(mktemp -d /tmp/marmoset_emit.XXXXXX)
-    binpath=$(mktemp /tmp/marmoset_bin.XXXXXX)
+    outdir=$(mktemp -d marmoset_emit.XXXXXX)
+    binpath=$(mktemp ./marmoset_bin.XXXXXX)
     rm -f "$binpath"
     echo "$source" > "$tmpfile"
 

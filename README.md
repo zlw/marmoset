@@ -75,10 +75,10 @@ Run a specific integration suite:
 
 ## Documentation
 
-- `/Users/zlw/src/marmoset/marmoset-ml/docs/INDEX.md`
-- `/Users/zlw/src/marmoset/marmoset-ml/docs/ARCHITECTURE.md`
-- `/Users/zlw/src/marmoset/marmoset-ml/docs/ROADMAP.md`
-- `/Users/zlw/src/marmoset/marmoset-ml/docs/features/`
+- `docs/INDEX.md`
+- `docs/ARCHITECTURE.md`
+- `docs/ROADMAP.md`
+- `docs/features/`
 
 ## Status
 

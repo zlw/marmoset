@@ -21,8 +21,8 @@ Non-goals for v1:
 ## Readiness Gate (Blocking)
 
 This feature is currently blocked by trait-system core gaps documented in:
-- `/Users/zlw/src/marmoset/marmoset-ml/docs/features/traits.md`
-- `/Users/zlw/src/marmoset/marmoset-ml/docs/ROADMAP.md`
+- `docs/features/traits.md`
+- `docs/ROADMAP.md`
 
 Required before implementation starts:
 1. Generic impl handling must be fixed (no uncaught exceptions in impl type conversion / applicability).
@@ -227,7 +227,7 @@ The compiler already resolves calls statically and emits explicit helper functio
 
 ## Phase 0: Trait Core Prerequisites (must pass first)
 
-- Complete trait-core prerequisites listed in `/Users/zlw/src/marmoset/marmoset-ml/docs/features/traits.md`.
+- Complete trait-core prerequisites listed in `docs/features/traits.md`.
 - Add regression tests proving:
   - supertrait obligations are enforced,
   - generic impl matching is safe and non-crashing,
@@ -280,8 +280,8 @@ The compiler already resolves calls statically and emits explicit helper functio
 
 ## Related Docs
 
-- `/Users/zlw/src/marmoset/marmoset-ml/docs/features/traits.md`
-- `/Users/zlw/src/marmoset/marmoset-ml/docs/features/records.md`
-- `/Users/zlw/src/marmoset/marmoset-ml/docs/features/functions-and-polymorphism.md`
-- `/Users/zlw/src/marmoset/marmoset-ml/docs/ARCHITECTURE.md`
-- `/Users/zlw/src/marmoset/marmoset-ml/docs/ROADMAP.md`
+- `docs/features/traits.md`
+- `docs/features/records.md`
+- `docs/features/functions-and-polymorphism.md`
+- `docs/ARCHITECTURE.md`
+- `docs/ROADMAP.md`
