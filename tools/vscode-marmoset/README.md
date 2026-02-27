@@ -1,6 +1,6 @@
 # Marmoset for VS Code
 
-Syntax highlighting for [Marmoset](https://github.com/zlwaterfield/marmoset-ml) `.mr` files in VS Code.
+Syntax highlighting for [Marmoset](https://github.com/zlw/marmoset) `.mr` files in VS Code.
 
 ## Install
 

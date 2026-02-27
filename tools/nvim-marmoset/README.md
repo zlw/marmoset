@@ -1,6 +1,6 @@
 # Marmoset for Neovim
 
-Tree-sitter syntax highlighting, code folding, indentation, and textobjects for [Marmoset](https://github.com/zlwaterfield/marmoset-ml) `.mr` files in Neovim.
+Tree-sitter syntax highlighting, code folding, indentation, and textobjects for [Marmoset](https://github.com/zlw/marmoset) `.mr` files in Neovim.
 
 ## Install
 
@@ -10,7 +10,7 @@ Requires [nvim-treesitter](https://github.com/nvim-treesitter/nvim-treesitter).
 
 ```lua
 {
-  "zlwaterfield/marmoset-ml",
+  "zlw/marmoset",
   config = function()
     require("marmoset").setup()
     -- Then install the parser:
@@ -23,7 +23,7 @@ Requires [nvim-treesitter](https://github.com/nvim-treesitter/nvim-treesitter).
 
 ```lua
 use {
-  "zlwaterfield/marmoset-ml",
+  "zlw/marmoset",
   config = function()
     require("marmoset").setup()
   end,

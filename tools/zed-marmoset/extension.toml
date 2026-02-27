@@ -7,6 +7,6 @@ authors = ["Marmoset Contributors"]
 description = "Marmoset language support for Zed — syntax highlighting, brackets, indentation, and code outline."
 
 [grammars.marmoset]
-repository = "https://github.com/zlwaterfield/marmoset-ml"
+repository = "https://github.com/zlw/marmoset"
 path = "tools/tree-sitter-marmoset"
 rev = "6f1fc06"

@@ -1,6 +1,6 @@
 # Marmoset for Zed
 
-Syntax highlighting, bracket matching, auto-indentation, and code outline for [Marmoset](https://github.com/zlwaterfield/marmoset-ml) `.mr` files in [Zed](https://zed.dev).
+Syntax highlighting, bracket matching, auto-indentation, and code outline for [Marmoset](https://github.com/zlw/marmoset) `.mr` files in [Zed](https://zed.dev).
 
 ## Install
 
