@@ -21,7 +21,7 @@ jobs:
       - name: Set-up OCaml
         uses: ocaml/setup-ocaml@v3
         with:
-          ocaml-compiler: 5
+          ocaml-compiler: 5.2.x
 
       - run: opam install . --deps-only --with-test
 
@@ -40,7 +40,7 @@ jobs:
       - name: Set-up OCaml
         uses: ocaml/setup-ocaml@v3
         with:
-          ocaml-compiler: 5
+          ocaml-compiler: 5.2.x
 
       - name: Set-up Go
         uses: actions/setup-go@v5
