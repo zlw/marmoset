@@ -1193,33 +1193,35 @@ and infer_function_with_annotations type_map env generics_opt params return_anno
                   mono type_var_map
               in
               mono_with_subst
-            with Failure msg -> (
-              (* If annotation parsing fails (e.g., "Unknown type constructor: a"),
+            with
+            | Annotation.Open_row_rejected msg -> raise (Annotation.Open_row_rejected msg)
+            | Failure msg -> (
+                (* If annotation parsing fails (e.g., "Unknown type constructor: a"),
                  check if it's a generic parameter name *)
-              let is_generic_ref =
-                match type_expr with
-                | Syntax.Ast.AST.TCon name -> List.assoc_opt name type_var_map
-                | _ -> None
-              in
-              match is_generic_ref with
-              | Some gen_var -> gen_var
-              | None ->
-                  (* Not a generic, re-raise or create fresh *)
-                  if
-                    String.length msg > 0
-                    && String.sub msg 0 (min 23 (String.length msg)) = "Unknown type constructor"
-                  then
-                    (* Extract the name and check if it's in our generics *)
-                    let parts = String.split_on_char ':' msg in
-                    if List.length parts > 1 then
-                      let name = String.trim (List.nth parts 1) in
-                      match List.assoc_opt name type_var_map with
-                      | Some gen_var -> gen_var
-                      | None -> fresh_type_var ()
+                let is_generic_ref =
+                  match type_expr with
+                  | Syntax.Ast.AST.TCon name -> List.assoc_opt name type_var_map
+                  | _ -> None
+                in
+                match is_generic_ref with
+                | Some gen_var -> gen_var
+                | None ->
+                    (* Not a generic, re-raise or create fresh *)
+                    if
+                      String.length msg > 0
+                      && String.sub msg 0 (min 23 (String.length msg)) = "Unknown type constructor"
+                    then
+                      (* Extract the name and check if it's in our generics *)
+                      let parts = String.split_on_char ':' msg in
+                      if List.length parts > 1 then
+                        let name = String.trim (List.nth parts 1) in
+                        match List.assoc_opt name type_var_map with
+                        | Some gen_var -> gen_var
+                        | None -> fresh_type_var ()
+                      else
+                        fresh_type_var ()
                     else
-                      fresh_type_var ()
-                  else
-                    fresh_type_var ())))
+                      fresh_type_var ())))
       param_info
   in
   let param_names = List.map fst param_info in
@@ -1231,7 +1233,10 @@ and infer_function_with_annotations type_map env generics_opt params return_anno
   let expected_return_type_opt =
     match return_annot with
     | None -> None
-    | Some type_expr -> ( try Some (Annotation.type_expr_to_mono_type type_expr) with Failure _ -> None)
+    | Some type_expr -> (
+        try Some (Annotation.type_expr_to_mono_type type_expr) with
+        | Annotation.Open_row_rejected _ as e -> raise e
+        | Failure _ -> None)
   in
   (* Infer body type *)
   match infer_statement type_map env' body with
@@ -2126,10 +2131,14 @@ and infer_let type_map env name expr type_annotation =
               in
               (* Build function type from parameters and return type *)
               List.fold_right (fun param_t acc -> TFun (param_t, acc)) param_types return_type
-            with Failure _ -> fresh_type_var ()))
+            with
+            | Annotation.Open_row_rejected _ as e -> raise e
+            | Failure _ -> fresh_type_var ()))
     | _, Some type_expr -> (
         (* Phase 4.4: Use type annotation from let binding *)
-        try Annotation.type_expr_to_mono_type type_expr with Failure _ -> fresh_type_var ())
+        try Annotation.type_expr_to_mono_type type_expr with
+        | Annotation.Open_row_rejected _ as e -> raise e
+        | Failure _ -> fresh_type_var ())
     | _, None -> fresh_type_var ()
   in
   (* Add to environment as monomorphic (not generalized yet) *)
@@ -2149,7 +2158,9 @@ and infer_let type_map env name expr type_annotation =
             match type_annotation with
             | None -> inferred_final_type
             | Some type_expr -> (
-                try Annotation.type_expr_to_mono_type type_expr with Failure _ -> inferred_final_type)
+                try Annotation.type_expr_to_mono_type type_expr with
+                | Annotation.Open_row_rejected _ as e -> raise e
+                | Failure _ -> inferred_final_type)
           in
           (* Generalize the type *)
           let env' = apply_substitution_env final_subst env in
@@ -2207,66 +2218,68 @@ let check_expression (type_map : type_map) (env : type_env) (expr : AST.expressi
 let infer_program ?(env = empty_env) ?state (program : AST.program) :
     (type_env * type_map * mono_type) infer_result =
   let state = Option.value state ~default:(create_inference_state ()) in
-  with_inference_state state (fun () ->
-      Annotation.clear_type_aliases ();
-      clear_method_resolution_store ();
-      let type_map = create_type_map () in
-      let rec go env subst stmts =
-        match stmts with
-        | [] -> Ok (env, subst, TNull)
-        | [ stmt_node ] -> (
-            let stmt : AST.statement = stmt_node in
-            (match stmt.stmt with
-            | AST.TypeAlias alias_def -> Annotation.register_type_alias alias_def
-            | _ -> ());
-            match infer_statement type_map env stmt with
-            | Error e -> Error e
-            | Ok (subst', result_type) ->
-                let final_subst = compose_substitution subst subst' in
-                let env' = apply_substitution_env final_subst env in
-                let result_type' = apply_substitution final_subst result_type in
-                (* Add let bindings to final environment *)
-                let env'' =
-                  match stmt.stmt with
-                  | AST.Let let_binding ->
-                      let poly = generalize env' result_type' in
-                      TypeEnv.add let_binding.name poly env'
-                  | _ -> env'
-                in
-                Ok (env'', final_subst, result_type'))
-        | stmt_node :: rest -> (
-            let stmt : AST.statement = stmt_node in
-            (match stmt.stmt with
-            | AST.TypeAlias alias_def -> Annotation.register_type_alias alias_def
-            | _ -> ());
-            match infer_statement type_map env stmt with
-            | Error e -> Error e
-            | Ok (subst', stmt_type) ->
-                let subst'' = compose_substitution subst subst' in
-                let env' = apply_substitution_env subst' env in
-                (* Add let bindings to environment for subsequent statements *)
-                let env'' =
-                  match stmt.stmt with
-                  | AST.Let let_binding ->
-                      let poly = generalize env' stmt_type in
-                      TypeEnv.add let_binding.name poly env'
-                  | _ -> env'
-                in
-                go env'' subst'' rest)
-      in
-      match go env empty_substitution program with
-      | Error e -> Error e
-      | Ok (env', final_subst, result_type) ->
-          (* Apply final substitution to all types in type_map *)
-          let apply_subst_to_type_map () =
-            Hashtbl.iter
-              (fun id ty ->
-                let ty' = apply_substitution final_subst ty in
-                Hashtbl.replace type_map id ty')
-              type_map
-          in
-          apply_subst_to_type_map ();
-          Ok (env', type_map, result_type))
+  try
+    with_inference_state state (fun () ->
+        Annotation.clear_type_aliases ();
+        clear_method_resolution_store ();
+        let type_map = create_type_map () in
+        let rec go env subst stmts =
+          match stmts with
+          | [] -> Ok (env, subst, TNull)
+          | [ stmt_node ] -> (
+              let stmt : AST.statement = stmt_node in
+              (match stmt.stmt with
+              | AST.TypeAlias alias_def -> Annotation.register_type_alias alias_def
+              | _ -> ());
+              match infer_statement type_map env stmt with
+              | Error e -> Error e
+              | Ok (subst', result_type) ->
+                  let final_subst = compose_substitution subst subst' in
+                  let env' = apply_substitution_env final_subst env in
+                  let result_type' = apply_substitution final_subst result_type in
+                  (* Add let bindings to final environment *)
+                  let env'' =
+                    match stmt.stmt with
+                    | AST.Let let_binding ->
+                        let poly = generalize env' result_type' in
+                        TypeEnv.add let_binding.name poly env'
+                    | _ -> env'
+                  in
+                  Ok (env'', final_subst, result_type'))
+          | stmt_node :: rest -> (
+              let stmt : AST.statement = stmt_node in
+              (match stmt.stmt with
+              | AST.TypeAlias alias_def -> Annotation.register_type_alias alias_def
+              | _ -> ());
+              match infer_statement type_map env stmt with
+              | Error e -> Error e
+              | Ok (subst', stmt_type) ->
+                  let subst'' = compose_substitution subst subst' in
+                  let env' = apply_substitution_env subst' env in
+                  (* Add let bindings to environment for subsequent statements *)
+                  let env'' =
+                    match stmt.stmt with
+                    | AST.Let let_binding ->
+                        let poly = generalize env' stmt_type in
+                        TypeEnv.add let_binding.name poly env'
+                    | _ -> env'
+                  in
+                  go env'' subst'' rest)
+        in
+        match go env empty_substitution program with
+        | Error e -> Error e
+        | Ok (env', final_subst, result_type) ->
+            (* Apply final substitution to all types in type_map *)
+            let apply_subst_to_type_map () =
+              Hashtbl.iter
+                (fun id ty ->
+                  let ty' = apply_substitution final_subst ty in
+                  Hashtbl.replace type_map id ty')
+                type_map
+            in
+            apply_subst_to_type_map ();
+            Ok (env', type_map, result_type))
+  with Annotation.Open_row_rejected msg -> Error (error (ConstructorError msg))
 
 module Test = struct
   (* Helper to parse and infer *)
@@ -2376,14 +2389,17 @@ module Test = struct
   let%test "infer generic type alias annotation" =
     infers_to "type box[a] = { value: a }; let p: box[string] = { value: \"ok\" }; p.value" TString
 
-  let%test "infer explicit row-polymorphic parameter annotation" =
-    infers_to "let p = { x: 5, y: 10, z: 20 }; let get_x = fn(r: { x: int, ...row }) -> int { r.x }; get_x(p)"
-      TInt
+  let%test "explicit row-polymorphic annotation is rejected in v1" =
+    reset_fresh_counter ();
+    match infer_string "let get_x = fn(r: { x: int, ...row }) -> int { r.x }" with
+    | Error _ -> true
+    | Ok _ -> false
 
-  let%test "infer explicit row-polymorphic parameter with multiple field accesses" =
-    infers_to
-      "let p = { x: 5, y: 10, z: 20 }; let sum_xy = fn(r: { x: int, y: int, ...row }) -> int { r.x + r.y }; sum_xy(p)"
-      TInt
+  let%test "field access on unannotated record param works" =
+    infers_to "let p = { x: 5, y: 10, z: 20 }; let get_x = fn(r) { r.x }; get_x(p)" TInt
+
+  let%test "multiple field access with closed record annotation works" =
+    infers_to "let p = { x: 5, y: 10 }; let sum_xy = fn(r: { x: int, y: int }) { r.x + r.y }; sum_xy(p)" TInt
 
   let%test "infer record match pattern with punning" =
     infers_to "let p = { x: 10, y: 20 }; match p { { x:, y: }: x + y _: 0 }" TInt

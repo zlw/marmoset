@@ -720,9 +720,16 @@ let%test "generic type alias for record typechecks" =
   | Ok { result_type = TInt; _ } -> true
   | _ -> false
 
-let%test "explicit row-polymorphic function annotation typechecks" =
+let%test "explicit row-polymorphic annotation is rejected in v1" =
   Infer.reset_fresh_counter ();
-  let code = "let p = { x: 5, y: 10, z: 20 }; let get_x = fn(r: { x: int, ...row }) -> int { r.x }; get_x(p)" in
+  let code = "let get_x = fn(r: { x: int, ...row }) -> int { r.x }" in
+  match check code with
+  | Error _ -> true
+  | Ok _ -> false
+
+let%test "field access on record without row annotation works" =
+  Infer.reset_fresh_counter ();
+  let code = "let p = { x: 5, y: 10, z: 20 }; let get_x = fn(r) { r.x }; get_x(p)" in
   match check code with
   | Ok { result_type = TInt; _ } -> true
   | _ -> false

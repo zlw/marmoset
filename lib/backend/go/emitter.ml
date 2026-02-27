@@ -125,6 +125,10 @@ type mono_state = {
   mutable name_counter : int;
   module_path : string; (* namespace identity for future module-aware builds *)
   concrete_only : bool; (* Phase 4.3: Rust-style (true) vs TypeScript-style (false) codegen *)
+  record_shapes : (string, string) Hashtbl.t;
+      (* shape_name -> Go struct body, e.g. "Record_x_int64_y_int64" -> "X int64; Y int64" *)
+  type_alias_shapes : (string, string) Hashtbl.t;
+      (* canonical_shape_name -> alias_display_name, e.g. "Record_x_int64_y_int64" -> "Point" *)
 }
 
 let create_mono_state ?(module_path = "main") ?(concrete_only = true) () =
@@ -138,6 +142,8 @@ let create_mono_state ?(module_path = "main") ?(concrete_only = true) () =
     name_counter = 0;
     module_path;
     concrete_only;
+    record_shapes = Hashtbl.create 16;
+    type_alias_shapes = Hashtbl.create 16;
   }
 
 (* ============================================================
@@ -172,6 +178,98 @@ let type_size (t : Types.mono_type) : int =
   | Types.TUnion _ -> 8 (* Interface *)
 
 (* ============================================================
+   Record Shape Interning
+   ============================================================ *)
+
+(* Compute canonical shape name for a closed record type.
+   Fields must be pre-normalized (alphabetical order).
+   Returns shape name like "Record_x_int64_y_int64" *)
+let record_shape_name (fields : Types.record_field_type list) : string =
+  let field_bits =
+    fields
+    |> List.map (fun (f : Types.record_field_type) -> f.name ^ "_" ^ mangle_type f.typ)
+    |> String.concat "_"
+  in
+  "Record_" ^ field_bits
+
+(* Convert mono_type to Go type string for shape registration.
+   Needs to be defined before intern_record_shape since it's called during registration.
+   Mirrors type_to_go but without mono_state dependency for shape body generation. *)
+let rec mangle_type_to_go (t : Types.mono_type) : string =
+  match t with
+  | Types.TInt -> "int64"
+  | Types.TFloat -> "float64"
+  | Types.TBool -> "bool"
+  | Types.TString -> "string"
+  | Types.TNull -> "struct{}"
+  | Types.TVar _ -> "interface{}"
+  | Types.TFun _ as t ->
+      let rec collect_args = function
+        | Types.TFun (a, r) ->
+            let args, final_ret = collect_args r in
+            (a :: args, final_ret)
+        | ret -> ([], ret)
+      in
+      let args, final_ret = collect_args t in
+      let args_str = List.map mangle_type_to_go args |> String.concat ", " in
+      Printf.sprintf "func(%s) %s" args_str (mangle_type_to_go final_ret)
+  | Types.TArray elem -> "[]" ^ mangle_type_to_go elem
+  | Types.THash (key, value) -> "map[" ^ mangle_type_to_go key ^ "]" ^ mangle_type_to_go value
+  | Types.TRecord (fields, _row) ->
+      let fields = Types.normalize_record_fields fields in
+      record_shape_name fields
+  | Types.TRowVar _ -> "interface{}"
+  | Types.TUnion _ -> "interface{}"
+  | Types.TEnum (name, args) -> mangle_type (Types.TEnum (name, args))
+
+(* Register a record shape and return its display name.
+   If a type alias is registered for this shape, uses the alias name.
+   If already registered, returns existing name (dedup). *)
+let intern_record_shape (state : mono_state) (fields : Types.record_field_type list) : string =
+  let fields = Types.normalize_record_fields fields in
+  let canonical_name = record_shape_name fields in
+  (* Determine display name: alias name if registered, otherwise canonical *)
+  let display_name =
+    match Hashtbl.find_opt state.type_alias_shapes canonical_name with
+    | Some alias_name -> alias_name
+    | None -> canonical_name
+  in
+  (if not (Hashtbl.mem state.record_shapes display_name) then
+     let go_fields =
+       List.map
+         (fun (f : Types.record_field_type) ->
+           let go_name =
+             if f.name = "" then
+               f.name
+             else
+               String.uppercase_ascii (String.sub f.name 0 1) ^ String.sub f.name 1 (String.length f.name - 1)
+           in
+           Printf.sprintf "%s %s" go_name (mangle_type_to_go f.typ))
+         fields
+     in
+     Hashtbl.replace state.record_shapes display_name (String.concat "; " go_fields));
+  display_name
+
+(* Register a type alias for a record shape.
+   e.g., "type point = { x: int, y: int }" registers "Record_x_int64_y_int64" -> "Point" *)
+let register_type_alias_shape (state : mono_state) (alias_name : string) (fields : Types.record_field_type list) :
+    unit =
+  let fields = Types.normalize_record_fields fields in
+  let canonical_name = record_shape_name fields in
+  let go_alias_name =
+    String.uppercase_ascii (String.sub alias_name 0 1) ^ String.sub alias_name 1 (String.length alias_name - 1)
+  in
+  Hashtbl.replace state.type_alias_shapes canonical_name go_alias_name
+
+(* Emit all registered record shape type definitions *)
+let emit_record_shape_defs (state : mono_state) : string =
+  Hashtbl.fold
+    (fun name body acc -> Printf.sprintf "type %s struct{%s}\n" name body :: acc)
+    state.record_shapes []
+  |> List.sort String.compare
+  |> String.concat ""
+
+(* ============================================================
    Type to Go Type String and Enum Layout Analysis
    (Mutually recursive because analyze_enum_layout needs type_to_go)
    ============================================================ *)
@@ -198,19 +296,7 @@ let rec type_to_go (state : mono_state) (t : Types.mono_type) : string =
   | Types.THash (key, value) -> "map[" ^ type_to_go state key ^ "]" ^ type_to_go state value
   | Types.TRecord (fields, _row) ->
       let fields = Types.normalize_record_fields fields in
-      let go_fields =
-        List.map
-          (fun (f : Types.record_field_type) ->
-            let go_name =
-              if f.name = "" then
-                f.name
-              else
-                String.uppercase_ascii (String.sub f.name 0 1) ^ String.sub f.name 1 (String.length f.name - 1)
-            in
-            Printf.sprintf "%s %s" go_name (type_to_go state f.typ))
-          fields
-      in
-      Printf.sprintf "struct{%s}" (String.concat "; " go_fields)
+      intern_record_shape state fields
   | Types.TRowVar _ -> "interface{}"
   | Types.TUnion _ -> "interface{}" (* Phase 4.1: unions compile to interface{} *)
   | Types.TEnum (name, args) -> mangle_type (Types.TEnum (name, args))
@@ -649,13 +735,7 @@ let go_record_field_name (name : string) : string =
 
 let emit_record_struct_type (state : emit_state) (fields : Types.record_field_type list) : string =
   let fields = Types.normalize_record_fields fields in
-  let go_fields =
-    List.map
-      (fun (f : Types.record_field_type) ->
-        Printf.sprintf "%s %s" (go_record_field_name f.name) (type_to_go state.mono f.typ))
-      fields
-  in
-  Printf.sprintf "struct{%s}" (String.concat "; " go_fields)
+  intern_record_shape state.mono fields
 
 let maybe_project_to_expected_record_type
     (state : emit_state)
@@ -2331,6 +2411,18 @@ let emit_program_with_typed_env (type_map : Infer.type_map) (typed_env : Infer.t
   (* Pass 2: Collect instantiations using the already-typed environment and type_map *)
   ignore (List.fold_left (collect_insts_stmt mono_state type_map) typed_env program);
 
+  (* Pass 3: Register type alias shapes for records *)
+  List.iter
+    (fun (stmt : AST.statement) ->
+      match stmt.stmt with
+      | AST.TypeAlias alias_def -> (
+          let mono_type = Annotation.type_expr_to_mono_type alias_def.alias_body in
+          match mono_type with
+          | Types.TRecord (fields, _row) -> register_type_alias_shape mono_state alias_def.alias_name fields
+          | _ -> ())
+      | _ -> ())
+    program;
+
   (* Ensure builtin enums are always generated if referenced *)
   (* Check if ordering enum is used in any impl *)
   let ordering_used =
@@ -2371,14 +2463,26 @@ let emit_program_with_typed_env (type_map : Infer.type_map) (typed_env : Infer.t
   (* Emit main body *)
   let main_body, _ = emit_stmts emit_state type_map typed_env program in
 
+  (* Generate record shape type definitions *)
+  let record_shape_defs = emit_record_shape_defs mono_state in
+
   (* Build final output *)
   (* Always import fmt since builtin impls use it *)
   let imports = "import \"fmt\"\n\n" in
   let type_defs =
-    if enum_types = "" then
-      ""
-    else
-      enum_types ^ "\n"
+    let enum_section =
+      if enum_types = "" then
+        ""
+      else
+        enum_types ^ "\n"
+    in
+    let record_section =
+      if record_shape_defs = "" then
+        ""
+      else
+        record_shape_defs ^ "\n"
+    in
+    enum_section ^ record_section
   in
   let specialized_funcs_str =
     if specialized_funcs = "" then
@@ -2683,17 +2787,55 @@ let%test "fibonacci with if statement and subsequent return" =
 let%test "emit record literal and field access" =
   match compile_string "let p = { x: 10, y: 20 }; p.x + p.y" with
   | Ok code ->
-      string_contains code "struct{X int64; Y int64}"
-      && string_contains code "p := struct{X int64; Y int64}{X: int64(10), Y: int64(20)}"
+      (* Record literals should use named shape types, not inline structs *)
+      string_contains code "Record_x_int64_y_int64"
       && string_contains code "(p).X"
       && string_contains code "(p).Y"
   | Error _ -> false
 
+let%test "record shape type definition is emitted" =
+  match compile_string "let p = { x: 10, y: 20 }; p.x" with
+  | Ok code ->
+      (* A top-level type definition should exist for the record shape *)
+      string_contains code "type Record_x_int64_y_int64 struct"
+  | Error _ -> false
+
+let%test "same record shape reuses type name" =
+  match compile_string "let p = { x: 1, y: 2 }; let q = { x: 10, y: 20 }; p.x + q.y" with
+  | Ok code ->
+      (* Both should use the same named type — only one type definition *)
+      let count =
+        let needle = "type Record_x_int64_y_int64 struct" in
+        let rec count_from i acc =
+          if i + String.length needle > String.length code then
+            acc
+          else if String.sub code i (String.length needle) = needle then
+            count_from (i + 1) (acc + 1)
+          else
+            count_from (i + 1) acc
+        in
+        count_from 0 0
+      in
+      count = 1
+  | Error _ -> false
+
+let%test "different record shapes get different type names" =
+  match compile_string "let p = { x: 1, y: 2 }; let q = { a: 10, b: 20 }; p.x + q.a" with
+  | Ok code ->
+      string_contains code "type Record_x_int64_y_int64 struct"
+      && string_contains code "type Record_a_int64_b_int64 struct"
+  | Error _ -> false
+
+let%test "record field ordering is canonical in shape name" =
+  match compile_string "let p = { y: 2, x: 1 }; p.x" with
+  | Ok code ->
+      (* Fields sorted alphabetically: x before y *)
+      string_contains code "Record_x_int64_y_int64"
+  | Error _ -> false
+
 let%test "emit record spread" =
   match compile_string "let p = { x: 1, y: 2 }; let p2 = { ...p, x: 10 }; p2.x + p2.y" with
-  | Ok code ->
-      string_contains code "__base := p"
-      && string_contains code "return struct{X int64; Y int64}{X: int64(10), Y: __base.Y}"
+  | Ok code -> string_contains code "__base := p" && string_contains code "Record_x_int64_y_int64"
   | Error _ -> false
 
 let%test "emit record match pattern" =
@@ -2702,6 +2844,27 @@ let%test "emit record match pattern" =
       string_contains code "__scrutinee :="
       && string_contains code "if true"
       && string_contains code "x := __scrutinee.X"
+  | Error _ -> false
+
+let%test "type alias emits named Go type" =
+  match compile_string "type point = { x: int, y: int }; let p: point = { x: 1, y: 2 }; p.x" with
+  | Ok code ->
+      (* Should emit "type Point struct{...}" using alias name, not Record_... *)
+      string_contains code "type Point struct"
+  | Error _ -> false
+
+let%test "type alias used in record literal" =
+  match compile_string "type point = { x: int, y: int }; let p: point = { x: 1, y: 2 }; p.x" with
+  | Ok code ->
+      (* Record literal should use alias name *)
+      string_contains code "Point{X:"
+  | Error _ -> false
+
+let%test "type alias replaces generated shape name" =
+  match compile_string "type point = { x: int, y: int }; let p: point = { x: 1, y: 2 }; p.x" with
+  | Ok code ->
+      (* Should NOT emit Record_x_int64_y_int64 when alias exists *)
+      not (string_contains code "Record_x_int64_y_int64")
   | Error _ -> false
 
 let%test "emitter method calls use typechecker resolution metadata" =

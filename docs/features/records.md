@@ -2,7 +2,7 @@
 
 ## Maintenance
 
-- Last verified: 2026-02-06
+- Last verified: 2026-02-27
 - Implementation status: Canonical (actively maintained)
 - Update trigger: Any language behavior, typechecker, or codegen change affecting this topic
 
@@ -14,7 +14,7 @@ Capabilities:
 - record type aliases,
 - record literals and field access,
 - spread/update,
-- row-variable type annotations,
+- shape interning with named Go types,
 - record pattern matching support.
 
 ## Syntax
@@ -42,10 +42,17 @@ let p = { x:, y: }
 let p2 = { ...p, x: 10 }
 ```
 
-### Row-polymorphic annotation shape
+### Row-polymorphic annotation shape (v1 restriction)
+
+Open row variables (`...row`) in type annotations are rejected in v1.
+The inference engine handles row polymorphism internally, but user-written
+`...row` syntax in annotations is not supported due to codegen limitations
+with multiple call sites.
 
 ```marmoset
-let get_x = fn(r: { x: int, ...row }) -> int { r.x }
+// v1: use closed annotations or omit annotations for field access
+let get_x = fn(r: { x: int }) -> int { r.x }
+let get_x = fn(r) { r.x }  // inference handles the row internally
 ```
 
 ## Sub-Features and Use Cases
@@ -68,7 +75,7 @@ Core behavior:
 Inference behavior:
 - record literals infer concrete structural record types,
 - spread/update preserves known fields and unifies overlaps (last write wins),
-- row-polymorphic signatures constrain "at least these fields" without requiring closed shapes.
+- row-polymorphic behavior is handled internally by inference (users cannot write `...row` in annotations in v1).
 
 ## Design Alternatives Considered
 
@@ -107,23 +114,26 @@ Chosen now:
 
 ### Candidate approaches
 
-1. Lower records to Go struct-shaped values + explicit spread copy/update (Chosen).
+1. Lower records to Go struct-shaped values + explicit spread copy/update.
 2. Lower records to `map[string]interface{}`.
-3. Generate nominal struct declarations for every structural form globally.
+3. Generate nominal struct declarations for every structural form globally (Chosen: shape interning).
 
-### Approach 1 (Chosen)
+### Approach 3 (Chosen: shape interning)
 
 Current style:
-- emit struct-shaped record values,
-- emit field access as Go field access,
+- emit top-level named struct type definitions for each unique record shape,
+- type aliases (e.g., `type point = { x: int, y: int }`) produce Go types with the alias name (e.g., `type Point struct{...}`),
+- anonymous record shapes get canonical names (e.g., `Record_x_int64_y_int64`),
+- identical shapes are deduplicated (only one type definition per canonical shape),
+- field access as Go field access,
 - spread/update lowered through copy-like construction preserving last-write-wins semantics,
 - record match lowered to branch chains with extracted bindings.
 
 Lowering pipeline:
 1. Parser distinguishes record literals from hash/map literals by key form.
-2. Annotation conversion resolves record alias and row-tail syntax into internal types.
-3. Inference/unification validates structural compatibility and row constraints.
-4. Emitter lowers record operations into struct construction/access/update code.
+2. Annotation conversion resolves record alias syntax into internal types.
+3. Inference/unification validates structural compatibility.
+4. Emitter interns record shapes, registers type aliases, and emits named type definitions.
 
 Representative lowering:
 
@@ -167,29 +177,32 @@ Cons:
 - dynamic checks everywhere,
 - poor static performance characteristics.
 
-### Approach 3 (global nominalization)
+### Approach 1 (inline anonymous structs, previous)
 
 Pros:
-- cleaner backend type names.
+- simple implementation.
 
 Cons:
-- heavy shape deduplication machinery,
-- can drift from structural semantics expectations.
+- no type sharing,
+- opaque Go debugging/tooling,
+- does not scale to modules.
 
 ## Why Current Choice
 
-Struct-shaped lowering preserves static intent and keeps runtime access efficient while supporting current feature scope.
+Shape interning with named Go types preserves static intent, keeps runtime access efficient, supports type aliases for readable generated code, and provides deduplication needed for modules.
 
 ## Pros and Cons of Current Record Model
 
 Pros:
 - expressive structural typing,
-- row-polymorphism support for practical APIs,
+- named Go types improve debuggability and tool integration,
+- type alias support for user-defined record names,
 - performant field operations in generated code.
 
 Cons:
-- empty-record/hash ambiguity and advanced row features still need ongoing refinement,
-- spread/update optimizations are not fully mature yet.
+- open row variables in annotations deferred to post-v1,
+- spread in monomorphized functions has codegen limitations,
+- empty-record/hash ambiguity needs ongoing refinement.
 
 ## Related Docs
 

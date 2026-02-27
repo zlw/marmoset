@@ -26,9 +26,13 @@ let p2 = { ...p, x: 10 }
 puts(p2.x + p2.y)
 EOF
 
-expect_runtime_output "Explicit row-polymorphic function" "5" << 'EOF'
-let p = { x: 5, y: 10, z: 20 }
+expect_build "Open row in type annotation rejected in v1" "Open row variables" << 'EOF'
 let get_x = fn(r: { x: int, ...row }) -> int { r.x }
+EOF
+
+expect_runtime_output "Field access without row annotation works" "5" << 'EOF'
+let p = { x: 5, y: 10, z: 20 }
+let get_x = fn(r) { r.x }
 puts(get_x(p))
 EOF
 

@@ -171,7 +171,7 @@ Locked function/closure policy (2026-02-27):
 - Maps/hashes -> typed maps.
 - Unions -> `interface{}` + type assertions/switches.
 - Enums -> tagged struct forms with generated constructors and match dispatch.
-- Records -> struct-shaped values with field access/update lowering.
+- Records -> named struct types via shape interning, with type alias support.
 - Trait methods -> static free functions with mangled names.
 
 ### 4.4 Modules/FFI guardrail policy (current, binding)

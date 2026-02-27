@@ -10,6 +10,9 @@
    - extract_constraints: Extract trait constraints for Phase 3
 *)
 
+(* v1 restriction: open row variables in type annotations are not supported *)
+exception Open_row_rejected of string
+
 (* Convert a parsed type expression to an internal mono_type *)
 type type_alias_info = {
   alias_type_params : string list;
@@ -189,20 +192,23 @@ let rec type_expr_to_mono_type_with
       let mono_types = List.map (type_expr_to_mono_type_with type_bindings) type_exprs in
       Types.normalize_union mono_types
   | Syntax.Ast.AST.TRecord (fields, row_var) ->
+      (* v1 restriction: reject open row variables in user-written type annotations.
+         Open rows (e.g., { x: int, ...row }) are broken in codegen for multi-call and spread cases.
+         Users should use closed record annotations or omit annotations to let inference handle it.
+         Internal row variables (from trait objects, inference) are unaffected. *)
+      (match row_var with
+      | Some _ ->
+          raise
+            (Open_row_rejected
+               "Open row variables (e.g., '...row') in type annotations are not supported in v1. Use a closed record type annotation (e.g., '{ x: int, y: int }') or omit the annotation.")
+      | None -> ());
       let field_types =
         List.map
           (fun (f : Syntax.Ast.AST.record_type_field) ->
             { Types.name = f.field_name; typ = type_expr_to_mono_type_with type_bindings f.field_type })
           fields
       in
-      let row_type =
-        match row_var with
-        | None -> None
-        | Some (Syntax.Ast.AST.TCon name) -> Some (Types.TRowVar name)
-        | Some (Syntax.Ast.AST.TVar name) -> Some (Types.TRowVar name)
-        | Some other -> Some (type_expr_to_mono_type_with type_bindings other)
-      in
-      Types.canonicalize_mono_type (Types.TRecord (field_types, row_type))
+      Types.canonicalize_mono_type (Types.TRecord (field_types, None))
 
 and type_expr_to_mono_type (te : Syntax.Ast.AST.type_expr) : Types.mono_type = type_expr_to_mono_type_with [] te
 
@@ -410,13 +416,22 @@ let%test "option with wrong arity fails" =
     false (* Should have thrown *)
   with Failure msg -> String.length msg > 0 (* Should have error message *)
 
-let%test "record annotation converts to record mono type" =
+let%test "open row in record annotation is rejected" =
   let te =
     Syntax.Ast.AST.TRecord
       ( [ { Syntax.Ast.AST.field_name = "x"; field_type = Syntax.Ast.AST.TCon "int" } ],
         Some (Syntax.Ast.AST.TCon "r") )
   in
-  type_expr_to_mono_type te = Types.TRecord ([ { Types.name = "x"; typ = Types.TInt } ], Some (Types.TRowVar "r"))
+  try
+    let _ = type_expr_to_mono_type te in
+    false
+  with Open_row_rejected _ -> true
+
+let%test "closed record annotation still works" =
+  let te =
+    Syntax.Ast.AST.TRecord ([ { Syntax.Ast.AST.field_name = "x"; field_type = Syntax.Ast.AST.TCon "int" } ], None)
+  in
+  type_expr_to_mono_type te = Types.TRecord ([ { Types.name = "x"; typ = Types.TInt } ], None)
 
 let%test "type alias annotation resolves non-generic alias" =
   clear_type_aliases ();
