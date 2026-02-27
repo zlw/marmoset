@@ -156,6 +156,17 @@ test_case "Mixed manual and derived impls" \
      42' \
     "true"
 
+run_build_fail_contains_from_stdin "Generic impls fail with typed error (no compiler crash)" "Generic impls are not supported yet" << 'EOF'
+trait show[a] {
+  fn show(x: a) -> string
+}
+impl show[b: show] for list[b] {
+  fn show(x: list[b]) -> string {
+    "ok"
+  }
+}
+EOF
+
 echo "-- PHASE 4.3: TRAIT METHOD CALLS --"
 
 run_case_from_stdin "Basic trait method call on int" "42" << 'EOF'

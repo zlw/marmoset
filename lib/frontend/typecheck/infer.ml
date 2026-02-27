@@ -1609,105 +1609,127 @@ and infer_statement type_map env stmt =
           Trait_registry.register_trait trait_def;
           Ok (empty_substitution, TNull))
   | AST.ImplDef { impl_trait_name; impl_type_params; impl_for_type; impl_methods } -> (
-      (* Convert impl_for_type from AST.type_expr to mono_type *)
-      let for_type_mono = Annotation.type_expr_to_mono_type impl_for_type in
+      let convert_impl_type_expr (te : AST.type_expr) : (mono_type, infer_error) result =
+        try Ok (Annotation.type_expr_to_mono_type te) with
+        | Failure msg -> Error (error (ConstructorError msg))
+      in
 
-      (* Infer and validate method bodies so codegen can rely on a complete type_map. *)
-      let infer_impl_method_body (m : AST.method_impl) :
-          ((Trait_registry.method_sig * substitution) option, infer_error) result =
-        let param_types_result =
-          List.fold_left
-            (fun acc (pname, ptype_opt) ->
-              match acc with
-              | Error _ as err -> err
-              | Ok params -> (
-                  match ptype_opt with
-                  | Some ptype -> Ok (params @ [ (pname, Annotation.type_expr_to_mono_type ptype) ])
-                  | None ->
-                      Error
-                        (error
-                           (ConstructorError
-                              (Printf.sprintf
-                                 "Impl method '%s' parameter '%s' is missing a type annotation" m.impl_method_name
-                                 pname)))))
-            (Ok []) m.impl_method_params
-        in
-        match param_types_result with
+      if impl_type_params <> [] then
+        Error
+          (error
+             (ConstructorError
+                (Printf.sprintf
+                   "Generic impls are not supported yet: impl '%s' declares type parameters in this phase"
+                   impl_trait_name)))
+      else
+        (* Convert impl_for_type from AST.type_expr to mono_type *)
+        match convert_impl_type_expr impl_for_type with
         | Error e -> Error e
-        | Ok param_types -> (
-            match m.impl_method_return_type with
-            | None ->
-                Error
-                  (error
-                     (ConstructorError
-                        (Printf.sprintf "Impl method '%s' is missing a return type annotation" m.impl_method_name)))
-            | Some rt ->
-                let return_type = Annotation.type_expr_to_mono_type rt in
-                let method_env =
-                  List.fold_left
-                    (fun env_acc (pname, ptype) -> TypeEnv.add pname (mono_to_poly ptype) env_acc)
-                    env param_types
-                in
-                (match infer_expression type_map method_env m.impl_method_body with
-                | Error e -> Error e
-                | Ok (subst, inferred_body_type) ->
-                    let inferred_body_type' = apply_substitution subst inferred_body_type in
-                    let return_type' = apply_substitution subst return_type in
-                    if Annotation.check_annotation return_type' inferred_body_type' then
-                      Ok
-                        (Some
-                           ( {
-                               Trait_registry.method_name = m.impl_method_name;
-                               method_params = param_types;
-                               method_return_type = return_type;
-                             },
-                             subst ))
-                    else
-                      Error (error_at (ReturnTypeMismatch (return_type', inferred_body_type')) m.impl_method_body)))
-      in
+        | Ok for_type_mono -> (
 
-      let rec collect_methods_and_subst subst_acc methods_acc = function
-        | [] -> Ok (List.rev methods_acc, subst_acc)
-        | m :: rest -> (
-            match infer_impl_method_body m with
+          (* Infer and validate method bodies so codegen can rely on a complete type_map. *)
+          let infer_impl_method_body (m : AST.method_impl) :
+              ((Trait_registry.method_sig * substitution) option, infer_error) result =
+            let param_types_result =
+              List.fold_left
+                (fun acc (pname, ptype_opt) ->
+                  match acc with
+                  | Error _ as err -> err
+                  | Ok params -> (
+                      match ptype_opt with
+                      | Some ptype -> (
+                          match convert_impl_type_expr ptype with
+                          | Ok mono -> Ok (params @ [ (pname, mono) ])
+                          | Error _ as err -> err)
+                      | None ->
+                          Error
+                            (error
+                               (ConstructorError
+                                  (Printf.sprintf
+                                     "Impl method '%s' parameter '%s' is missing a type annotation"
+                                     m.impl_method_name pname)))))
+                (Ok []) m.impl_method_params
+            in
+            match param_types_result with
             | Error e -> Error e
-            | Ok None -> collect_methods_and_subst subst_acc methods_acc rest
-            | Ok (Some (method_sig, subst_method)) ->
-                let subst' = compose_substitution subst_acc subst_method in
-                collect_methods_and_subst subst' (method_sig :: methods_acc) rest)
-      in
+            | Ok param_types -> (
+                match m.impl_method_return_type with
+                | None ->
+                    Error
+                      (error
+                         (ConstructorError
+                            (Printf.sprintf "Impl method '%s' is missing a return type annotation"
+                               m.impl_method_name)))
+                | Some rt -> (
+                    match convert_impl_type_expr rt with
+                    | Error e -> Error e
+                    | Ok return_type ->
+                        let method_env =
+                          List.fold_left
+                            (fun env_acc (pname, ptype) -> TypeEnv.add pname (mono_to_poly ptype) env_acc)
+                            env param_types
+                        in
+                        match infer_expression type_map method_env m.impl_method_body with
+                        | Error e -> Error e
+                        | Ok (subst, inferred_body_type) ->
+                            let inferred_body_type' = apply_substitution subst inferred_body_type in
+                            let return_type' = apply_substitution subst return_type in
+                            if Annotation.check_annotation return_type' inferred_body_type' then
+                              Ok
+                                (Some
+                                   ( {
+                                       Trait_registry.method_name = m.impl_method_name;
+                                       method_params = param_types;
+                                       method_return_type = return_type;
+                                     },
+                                     subst ))
+                            else
+                              Error
+                                (error_at (ReturnTypeMismatch (return_type', inferred_body_type')) m.impl_method_body)))
+          in
 
-      match collect_methods_and_subst empty_substitution [] impl_methods with
-      | Error e -> Error e
-      | Ok (methods, method_subst) ->
-          let for_type_mono' = apply_substitution method_subst for_type_mono in
-          let methods' =
-            List.map
-              (fun (m : Trait_registry.method_sig) ->
+          let rec collect_methods_and_subst subst_acc methods_acc = function
+            | [] -> Ok (List.rev methods_acc, subst_acc)
+            | m :: rest -> (
+                match infer_impl_method_body m with
+                | Error e -> Error e
+                | Ok None -> collect_methods_and_subst subst_acc methods_acc rest
+                | Ok (Some (method_sig, subst_method)) ->
+                    let subst' = compose_substitution subst_acc subst_method in
+                    collect_methods_and_subst subst' (method_sig :: methods_acc) rest)
+          in
+
+          match collect_methods_and_subst empty_substitution [] impl_methods with
+          | Error e -> Error e
+          | Ok (methods, method_subst) ->
+              let for_type_mono' = apply_substitution method_subst for_type_mono in
+              let methods' =
+                List.map
+                  (fun (m : Trait_registry.method_sig) ->
+                    {
+                      m with
+                      method_params =
+                        List.map (fun (name, ty) -> (name, apply_substitution method_subst ty)) m.method_params;
+                      method_return_type = apply_substitution method_subst m.method_return_type;
+                    })
+                  methods
+              in
+
+              let impl_def =
                 {
-                  m with
-                  method_params =
-                    List.map (fun (name, ty) -> (name, apply_substitution method_subst ty)) m.method_params;
-                  method_return_type = apply_substitution method_subst m.method_return_type;
-                })
-              methods
-          in
+                  Trait_registry.impl_trait_name;
+                  impl_type_params;
+                  impl_for_type = for_type_mono';
+                  impl_methods = methods';
+                }
+              in
 
-          let impl_def =
-            {
-              Trait_registry.impl_trait_name;
-              impl_type_params;
-              impl_for_type = for_type_mono';
-              impl_methods = methods';
-            }
-          in
-
-          (* Validate and register impl *)
-          match Trait_registry.validate_impl impl_def with
-          | Error msg -> Error (error (ConstructorError msg))
-          | Ok () ->
-              Trait_registry.register_impl impl_def;
-              Ok (method_subst, TNull))
+              (* Validate and register impl *)
+              match Trait_registry.validate_impl impl_def with
+              | Error msg -> Error (error (ConstructorError msg))
+              | Ok () ->
+                  Trait_registry.register_impl impl_def;
+                  Ok (method_subst, TNull)))
   | AST.DeriveDef { derive_traits; derive_for_type } ->
       (* Auto-generate implementations for derived traits *)
       let for_type_mono = Annotation.type_expr_to_mono_type derive_for_type in
