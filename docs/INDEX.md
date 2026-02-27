@@ -22,6 +22,7 @@ This directory is the current source of truth for language and compiler design.
 - `docs/features/unions.md`
 - `docs/features/enums.md`
 - `docs/features/traits.md`
+- `docs/features/inherent-methods.md` (planned feature; implementation not started)
 - `docs/features/records.md`
 - `docs/features/pattern-matching.md`
 

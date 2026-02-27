@@ -22,6 +22,7 @@ Nothing in `docs/archive/` is lost; this file centralizes actionable direction.
 
 ### 1.2 Traits
 
+- Inherent methods (`impl <type> { ... }`) without trait boilerplate.
 - Associated types.
 - Default methods and richer override semantics.
 - More complete conditional impl resolution and overlap diagnostics.
