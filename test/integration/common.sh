@@ -268,6 +268,40 @@ run_codegen_deterministic_from_stdin() {
     rm -rf "$out1" "$out2"
 }
 
+run_emit_go_not_contains_from_stdin() {
+    local name="$1"
+    local forbidden_fragment="$2"
+    local source
+    source="$(cat)"
+
+    TOTAL=$((TOTAL + 1))
+    echo -n "TEST [$TOTAL] $name ... "
+
+    local tmpfile outdir binpath
+    tmpfile=$(mktemp)
+    outdir=$(mktemp -d /tmp/marmoset_emit.XXXXXX)
+    binpath=$(mktemp /tmp/marmoset_bin.XXXXXX)
+    rm -f "$binpath"
+    echo "$source" > "$tmpfile"
+
+    if build_output=$($EXECUTABLE build "$tmpfile" --emit-go "$outdir" -o "$binpath" 2>&1); then
+        if rg -n "$forbidden_fragment" "$outdir/main.go" "$outdir/runtime.go" >/dev/null 2>&1; then
+            echo "✗ FAIL (emitted Go contains forbidden fragment '$forbidden_fragment')"
+            FAIL=$((FAIL + 1))
+        else
+            echo "✓ PASS"
+            PASS=$((PASS + 1))
+        fi
+    else
+        echo "✗ FAIL (build failed)"
+        echo "  Output: $build_output"
+        FAIL=$((FAIL + 1))
+    fi
+
+    rm -f "$tmpfile" "$binpath"
+    rm -rf "$outdir"
+}
+
 test_emit_go_contains() {
     local name="$1"
     local source="$2"

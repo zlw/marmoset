@@ -286,6 +286,21 @@ let result = n.double()
 puts(result)
 EOF
 
+run_emit_go_not_contains_from_stdin "Constrained generic method call does not emit any-mangled specialization" "_any" << 'EOF'
+trait show[a] {
+  fn show(x: a) -> string
+}
+impl show for int {
+  fn show(x: int) -> string {
+    "int"
+  }
+}
+let id = fn[t: show](x: t) -> string {
+  x.show()
+};
+puts(id(1))
+EOF
+
 echo "-- BUILTIN TRAITS --"
 
 run_build_ok_from_stdin "Builtin show trait exists" << 'EOF'
