@@ -1,22 +1,18 @@
-name: Test
+name: CI
 
 on:
   push:
-    branches: ["main"]
+    branches:
+      - "**"
   pull_request:
-    branches: ["main"]
+    branches:
+      - "main"
+      - "master"
 
 jobs:
-  build:
-    strategy:
-      fail-fast: false
-      matrix:
-        os:
-          - ubuntu-latest
-          - macos-latest
-          - windows-latest
-
-    runs-on: ${{ matrix.os }}
+  unit:
+    name: Unit (Linux)
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout tree
@@ -32,6 +28,61 @@ jobs:
       - run: opam exec -- dune build
 
       - run: opam exec -- dune runtest
+
+  integration-linux:
+    name: Integration (Linux)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout tree
+        uses: actions/checkout@v4
+
+      - name: Set-up OCaml
+        uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: 5
+
+      - name: Set-up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22.x"
+
+      - run: opam install . --deps-only --with-test
+
+      - run: opam exec -- ./test/integration.sh
+
+  integration-cross-platform:
+    name: Integration (${{ matrix.os }})
+    if: github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master')
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - macos-latest
+          - windows-latest
+
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout tree
+        uses: actions/checkout@v4
+
+      - name: Set-up OCaml
+        uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: 5
+
+      - name: Set-up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22.x"
+
+      - run: opam install . --deps-only --with-test
+
+      - run: opam exec -- ./test/integration.sh
 
   lint-doc:
     runs-on: ubuntu-latest
