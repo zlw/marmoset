@@ -41,6 +41,6 @@ let x: option[int] = option.none()
 puts(x)
 EOF
 
-expect_runtime_output "Example monkey source builds and runs" $'Monkey\n1\n[Scheme Lisp JavaScript Clojure]\nThorsten Ball - Writing A Compiler In Go\n55' "$(cat "$REPO_ROOT/examples/monkey.mr")"
+expect_runtime_output "Example monkey source builds and runs" $'Thorsten Ball - Writing A Compiler In Go\n[1 1 2 3 5 8]' "$(cat "$REPO_ROOT/examples/monkey.mr")"
 
 suite_end
