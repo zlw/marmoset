@@ -40,3 +40,5 @@ _opam/
 
 # Marmoset compiled binaries
 *.mar.out
+/fib_test
+/poly

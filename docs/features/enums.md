@@ -194,7 +194,6 @@ Cons:
 - `docs/features/pattern-matching.md`
 - `docs/features/unions.md`
 - `docs/ROADMAP.md`
-- `docs/archive/typechecker/phase4/milestone-2.md`
 
 ## Implementation Touchpoints
 

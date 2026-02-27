@@ -165,7 +165,6 @@ Cons:
 - `docs/features/pattern-matching.md`
 - `docs/features/enums.md`
 - `docs/ROADMAP.md`
-- `docs/archive/typechecker/phase4/milestone-1.md`
 
 ## Implementation Touchpoints
 

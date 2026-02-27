@@ -2,12 +2,11 @@
 
 ## Maintenance
 
-- Last verified: 2026-02-07
+- Last verified: 2026-02-27
 - Implementation status: Canonical (actively maintained)
 - Update trigger: Any language behavior, typechecker, or codegen change affecting this topic
 
-This roadmap consolidates deferred decisions and future improvements from all archived docs.
-Nothing in `docs/archive/` is lost; this file centralizes actionable direction.
+This roadmap tracks deferred decisions and future improvements from current canonical docs and implementation constraints.
 
 ## 1. Language and Type-System Enhancements
 
@@ -136,13 +135,11 @@ These guardrails are intentionally locked until a dedicated modules+extern desig
   - `Last verified` date,
   - `Implementation status`,
   - explicit `Chosen vs Alternatives` sections.
-- Archive-first policy for superseded plans: keep history, prevent ambiguity.
-- Keep milestone docs archived as historical context, not current spec.
+- Keep docs focused on current behavior and near-term design decisions.
 - Require roadmap entry when a design decision is explicitly deferred.
 
 ## 6. Syntax and Surface-Language Follow-ups
 
-- Reconfirm and maintain the hybrid syntax direction from archived syntax decisions.
 - Keep explicit decision records for any syntax-level change proposals.
 - Revisit postponed syntax sugar only after core type/codegen stability:
   - postfix return syntax variants,
@@ -152,45 +149,5 @@ These guardrails are intentionally locked until a dedicated modules+extern desig
 
 ## 7. Out-of-Scope but Preserved Explorations
 
-- Concurrency model exploration (channels/goroutines vs effect-based model) is archived and intentionally not in active implementation scope.
-- Modules-system exploratory docs are archived and should be reintroduced only with a dedicated design pass.
-
-## 8. Historical Context Sources
-
-These roadmap items were consolidated from:
-- `docs/archive/typechecker/phase4/milestone-*.md`
-- `docs/archive/typechecker/approach.md`, `docs/archive/typechecker/plan.md`
-- `docs/archive/codegen/*.md` and `docs/archive/codegen/*.txt`
-- `docs/archive/SYNTAX_*.md`
-- `docs/archive/*PLAN*.md`, `docs/archive/CURRENT_STATE.md`
-- `docs/archive/channels-goroutines/approach.md` (preserved context, deferred)
-- `docs/archive/modules/approach.md` (preserved context, deferred)
-
-When adding a new deferred item, link to implementation constraints and expected impact.
-
-## 9. Source-by-Source Carry-Forward Notes
-
-- `docs/archive/typechecker/phase4/milestone-1.md`
-  - Deferred: richer union variance, advanced narrowing precision, union performance specialization.
-- `docs/archive/typechecker/phase4/milestone-2.md`
-  - Deferred: guards, tuple/array pattern families, deeper exhaustiveness in complex pattern spaces.
-- `docs/archive/typechecker/phase4/milestone-3.md`
-  - Deferred: associated types, HKT exploration, broader dispatch modes and solver sophistication.
-- `docs/archive/typechecker/phase4/milestone-4.md`
-  - Deferred: optional-field syntax, let-destructuring, spread/update performance model.
-- `docs/archive/TYPE_MAP_REFACTOR_PLAN.md`
-  - Deferred: stronger expression-ID-based type-map plumbing and backend integration hardening.
-- `docs/archive/ENUM_VARIANT_STRUCTS_PLAN.md`
-  - Deferred: memory/layout optimization for heterogeneous multi-field enum variants.
-- `docs/archive/PHASE_2_IMPLEMENTATION.md`
-  - Deferred: fuller bidirectional checking, effect semantics, and post-phase parser/type checks.
-- `docs/archive/PHASE3_PLAN.md`
-  - Deferred: selected syntax sugar (postfix return variants) and additional polish paths.
-- `docs/archive/codegen/overview.md`
-  - Deferred: optional MIR stage when optimization pressure becomes material.
-- `docs/archive/codegen/data-representation.md`
-  - Deferred: uniqueness/ownership-style optimization for copy reduction.
-- `docs/archive/codegen/ANALYSIS_HOF_MONOMORPHIZATION.md`
-  - Deferred: constraint-based HOF specialization strategy and comparative backend options.
-- `docs/archive/SYNTAX_*.md`
-  - Deferred: any syntax revisit must go through explicit decision record process.
+- Concurrency model exploration (channels/goroutines vs effect-based model) is intentionally not in active implementation scope.
+- Modules-system exploratory work should be reintroduced only with a dedicated design pass.

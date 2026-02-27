@@ -196,7 +196,6 @@ Cons:
 - `docs/features/type-annotations-and-aliases.md`
 - `docs/features/pattern-matching.md`
 - `docs/ROADMAP.md`
-- `docs/archive/typechecker/phase4/milestone-4.md`
 
 ## Implementation Touchpoints
 

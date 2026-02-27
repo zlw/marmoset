@@ -216,5 +216,3 @@ Why this split:
 - `docs/ARCHITECTURE.md`
 - Feature docs under `docs/features/`
 - `docs/ROADMAP.md`
-
-Historical references remain in `docs/archive/`.

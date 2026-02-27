@@ -298,7 +298,6 @@ The current model keeps method behavior explicit and coherent while preserving s
 - `docs/features/records.md`
 - `docs/features/inherent-methods.md`
 - `docs/ROADMAP.md`
-- `docs/archive/typechecker/phase4/milestone-3.md`
 
 ## Implementation Touchpoints
 
