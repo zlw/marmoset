@@ -142,8 +142,10 @@ Cons:
 
 Emitter phases:
 1. Collect function definitions.
-2. Collect concrete instantiations from typed call sites.
-3. Emit specialized functions + trait helpers + enum helpers + main body.
+2. Collect concrete instantiations from typed call sites and function-value flows.
+3. Compute free-variable capture sets for nested functions.
+4. Perform lambda lifting for nested functions with explicit environment parameters.
+5. Emit specialized functions + trait helpers + enum helpers + main body.
 
 Typed data dependency:
 - Emitter uses type map from typechecker (no re-inference in codegen path).
@@ -154,6 +156,13 @@ Pros:
 
 Cons:
 - Requires full and consistent type-map coverage.
+
+Locked function/closure policy (2026-02-27):
+- Rank-1 polymorphism with polymorphic function values.
+- True rank-N polymorphism deferred.
+- Closure lowering uses explicit environment structs plus lifted helpers.
+- Function value traits: `eq`/`ord`/`hash` are disallowed; `show` is allowed via stable placeholder rendering.
+- Empty collection literals must emit concrete typed forms when expected type is known.
 
 ### 4.3 Runtime representation strategy
 

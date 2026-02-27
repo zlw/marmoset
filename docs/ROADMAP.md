@@ -52,11 +52,14 @@ This roadmap tracks deferred decisions and future improvements from current cano
 
 ### 1.5 Functions / Polymorphism
 
-- Better support for polymorphic higher-order functions in codegen.
-- Evaluate constraint-driven specialization for HOF-heavy code.
+- Implement lambda-lifted closure lowering with explicit environment structs.
+- Complete polymorphic function-value support under rank-1 HM.
+- Ensure function identifiers used as values lower to specialized symbols deterministically.
+- Implement typed empty collection literal emission in all expected-type codegen paths.
 - Potential selective use of Go generics as backend strategy toggles.
 - Specialization deduping and explosion-control heuristics.
-- Clarify long-term policy: static mono by default vs hybrid backend strategy.
+- True rank-N polymorphism (`forall` in function-typed positions) is deferred.
+- Function trait policy extension beyond v1 (`eq`/`ord`/`hash` for functions) is deferred.
 
 ### 1.6 Effects / Error model
 
