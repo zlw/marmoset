@@ -44,11 +44,17 @@ and check_supertraits (visited : StringSet.t) (typ : Types.mono_type) (traits : 
       | Ok () -> check_supertraits visited typ rest
       | Error _ as err -> err)
 
-(* Check if a concrete type implements a trait *)
-let implements_trait (typ : Types.mono_type) (trait_name : string) : bool =
-  match check_trait_with_supertraits StringSet.empty typ trait_name with
+let satisfies_trait (typ : Types.mono_type) (trait_name : string) : (unit, string) result =
+  check_trait_with_supertraits StringSet.empty typ trait_name
+
+let satisfies_trait_bool (typ : Types.mono_type) (trait_name : string) : bool =
+  match satisfies_trait typ trait_name with
   | Ok () -> true
   | Error _ -> false
+
+(* Check if a concrete type implements a trait *)
+let implements_trait (typ : Types.mono_type) (trait_name : string) : bool =
+  satisfies_trait_bool typ trait_name
 
 (* Check if a type satisfies constraints, returning error if not *)
 let check_constraints (typ : Types.mono_type) (constraints : string list) : (unit, string) result =
@@ -56,7 +62,7 @@ let check_constraints (typ : Types.mono_type) (constraints : string list) : (uni
     match traits with
     | [] -> Ok ()
     | trait :: rest ->
-        (match check_trait_with_supertraits StringSet.empty typ trait with
+        (match satisfies_trait typ trait with
         | Ok () -> check rest
         | Error _ as err -> err)
   in
@@ -203,6 +209,12 @@ let%test "check_constraints failure" =
   | Ok () -> false
   | Error msg -> String.length msg > 0
 
+let%test "satisfies_trait succeeds for builtin eq[int]" =
+  setup_builtins ();
+  match satisfies_trait Types.TInt "eq" with
+  | Ok () -> true
+  | Error _ -> false
+
 let%test "method_available - show method in show trait" =
   setup_builtins ();
   method_available "show" [ "show" ] = Some "show"
@@ -256,5 +268,49 @@ let%test "check_constraints enforces supertrait obligations transitively" =
         ];
     };
   match check_constraints Types.TString [ "ord" ] with
+  | Ok () -> false
+  | Error msg -> String.length msg > 0
+
+let%test "satisfies_trait enforces supertrait obligations transitively" =
+  Trait_registry.clear ();
+  Trait_registry.register_trait
+    {
+      trait_name = "eq";
+      trait_type_param = Some "a";
+      trait_supertraits = [];
+      trait_methods =
+        [
+          { method_name = "eq"; method_params = [ ("x", Types.TVar "a"); ("y", Types.TVar "a") ]; method_return_type = Types.TBool };
+        ];
+    };
+  Trait_registry.register_trait
+    {
+      trait_name = "ord";
+      trait_type_param = Some "a";
+      trait_supertraits = [ "eq" ];
+      trait_methods =
+        [
+          {
+            method_name = "compare";
+            method_params = [ ("x", Types.TVar "a"); ("y", Types.TVar "a") ];
+            method_return_type = Types.TInt;
+          };
+        ];
+    };
+  Trait_registry.register_impl
+    {
+      impl_trait_name = "ord";
+      impl_type_params = [];
+      impl_for_type = Types.TString;
+      impl_methods =
+        [
+          {
+            method_name = "compare";
+            method_params = [ ("x", Types.TString); ("y", Types.TString) ];
+            method_return_type = Types.TInt;
+          };
+        ];
+    };
+  match satisfies_trait Types.TString "ord" with
   | Ok () -> false
   | Error msg -> String.length msg > 0

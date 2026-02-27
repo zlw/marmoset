@@ -136,7 +136,7 @@ let obligations_from_substitution (subst : substitution) : obligation list =
   |> List.rev
 
 let verify_obligation (o : obligation) : (unit, string) result =
-  match Trait_solver.check_constraints o.typ [ o.trait_name ] with
+  match Trait_solver.satisfies_trait o.typ o.trait_name with
   | Ok () -> Ok ()
   | Error msg ->
       let reason = obligation_reason_to_string o.reason in
