@@ -1925,7 +1925,7 @@ let emit_enum_type (state : mono_state) (enum_name : string) (type_args : Types.
           |> String.concat "\n"
         in
         Printf.sprintf
-          "func (e %s) String() string {\n\tswitch e.Tag {\n%s\n\tdefault:\n\t\treturn \"<unknown>\"\n\t}\n}\n\n"
+          "func (e %s) String() string {\n\tswitch e.Tag {\n%s\n\tdefault:\n\t\tpanic(\"unreachable: invalid enum tag\")\n\t}\n}\n\n"
           go_type_name cases
       in
 
