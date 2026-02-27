@@ -8,7 +8,7 @@ Syntax highlighting, bracket matching, auto-indentation, and code outline for [M
 
 1. Open the command palette in Zed
 2. Run **zed: install dev extension**
-3. Select this `zed-marmoset/` directory
+3. Select the `tools/zed-marmoset/` directory
 
 ### From source (after pushing)
 

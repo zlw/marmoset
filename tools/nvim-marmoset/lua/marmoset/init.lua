@@ -7,7 +7,7 @@ function M.setup(opts)
   parser_config.marmoset = {
     install_info = {
       url = "https://github.com/zlwaterfield/marmoset-ml",
-      files = { "tree-sitter-marmoset/src/parser.c" },
+      files = { "tools/tree-sitter-marmoset/src/parser.c" },
       branch = "main",
       generate_requires_npm = true,
     },

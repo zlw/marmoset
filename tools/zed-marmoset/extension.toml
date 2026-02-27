@@ -8,5 +8,5 @@ description = "Marmoset language support for Zed — syntax highlighting, bracke
 
 [grammars.marmoset]
 repository = "https://github.com/zlwaterfield/marmoset-ml"
-path = "tree-sitter-marmoset"
+path = "tools/tree-sitter-marmoset"
 rev = "6f1fc06"
