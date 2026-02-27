@@ -321,7 +321,7 @@ let rec collect_funcs_stmt (state : mono_state) (stmt : AST.statement) : unit =
               captures = [];
             }
             :: state.func_defs;
-          collect_funcs_stmt state f.body
+          ()
       | _ -> collect_funcs_expr state let_binding.value)
   | AST.Return e -> collect_funcs_expr state e
   | AST.ExpressionStmt e -> collect_funcs_expr state e
@@ -355,9 +355,9 @@ and collect_funcs_expr (state : mono_state) (expr : AST.expression) : unit =
   | AST.Index (container, index) ->
       collect_funcs_expr state container;
       collect_funcs_expr state index
-  | AST.Function f ->
-      (* Phase 2: Anonymous function - not a top-level let binding *)
-      collect_funcs_stmt state f.body
+  | AST.Function _ ->
+      (* Nested/anonymous functions are emitted as local closures, not monomorphized top-level defs. *)
+      ()
   | AST.EnumConstructor (_, _, args) -> List.iter (collect_funcs_expr state) args
   | AST.Match (scrutinee, arms) ->
       collect_funcs_expr state scrutinee;
@@ -1696,6 +1696,16 @@ and emit_stmt (state : emit_state) (type_map : Infer.type_map) (env : Infer.type
           (* Skip - this is a top-level function, emitted separately *)
           let env' = Infer.TypeEnv.add let_binding.name (Types.Forall ([], expr_type)) env in
           ("", env')
+      | AST.Function _ ->
+          (* Emit local function values with split declaration+assignment.
+             This keeps the name in scope inside the function literal body for recursion/captures. *)
+          let expr_str = emit_expr ~expected_type:(Some expr_type) state type_map env let_binding.value in
+          let go_type = type_to_go state.mono expr_type in
+          let binding_code =
+            Printf.sprintf "%svar %s %s\n%s%s = %s\n" ind let_binding.name go_type ind let_binding.name expr_str
+          in
+          let env' = Infer.TypeEnv.add let_binding.name (Types.Forall ([], expr_type)) env in
+          (binding_code, env')
       | _ ->
           (* Pass expected_type so EnumConstructors get the correct concrete type *)
           let expr_str = emit_expr ~expected_type:(Some expr_type) state type_map env let_binding.value in
