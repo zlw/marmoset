@@ -309,4 +309,4 @@ The current model keeps method behavior explicit and coherent while preserving s
 - Method-call typing and operator obligations: `lib/frontend/typecheck/infer.ml`
 - Builtin trait definitions/impls: `lib/frontend/typecheck/builtins.ml`
 - Static dispatch + projection lowering: `lib/backend/go/emitter.ml`
-- Integration coverage: `test/integration/03_traits.sh`
+- Integration coverage: `test/integration/04_traits.sh`

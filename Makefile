@@ -16,7 +16,7 @@ unit:
 integration:
 	@./test/integration.sh $(filter-out integration,$(MAKECMDGOALS))
 
-# Allow: make integration <suite> (e.g. make integration trait)
+# Allow: make integration <suite> (e.g. make integration unions)
 ifneq (,$(filter integration,$(MAKECMDGOALS)))
 $(filter-out integration,$(MAKECMDGOALS)):
 	@:

@@ -47,5 +47,11 @@ let g = fn(y: int) -> int { f(y) }
 puts(g(1))
 EOF
 
+test_emit_go_contains "Enum String default branch panics on invalid tag" \
+    'enum status { ok fail }
+     let x = status.ok
+     puts(x)' \
+    'panic("unreachable: invalid enum tag")'
+
 
 suite_end

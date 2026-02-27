@@ -11,23 +11,25 @@ BUILD_TARGET="./_build/default/bin/main.exe"
 
 ALL_SUITES=(
   "01_core_annotations.sh"
-  "02_unions_enums.sh"
-  "03_traits.sh"
-  "04_records.sh"
-  "05_codegen.sh"
-  "06_runtime_output.sh"
+  "02_unions.sh"
+  "03_enums.sh"
+  "04_traits.sh"
+  "05_records.sh"
+  "06_codegen.sh"
+  "07_runtime_output.sh"
 )
 
 resolve_suite() {
     local name="$1"
     case "$name" in
         all) echo "${ALL_SUITES[*]}" ;;
-        core|annotations) echo "01_core_annotations.sh" ;;
-        unions|enums) echo "02_unions_enums.sh" ;;
-        traits) echo "03_traits.sh" ;;
-        records) echo "04_records.sh" ;;
-        codegen) echo "05_codegen.sh" ;;
-        runtime) echo "06_runtime_output.sh" ;;
+        core) echo "01_core_annotations.sh" ;;
+        unions) echo "02_unions.sh" ;;
+        enums) echo "03_enums.sh" ;;
+        traits) echo "04_traits.sh" ;;
+        records) echo "05_records.sh" ;;
+        codegen) echo "06_codegen.sh" ;;
+        runtime) echo "07_runtime_output.sh" ;;
         *.sh)
             if [ -f "$INTEGRATION_DIR/$name" ]; then
                 echo "$name"
@@ -47,9 +49,10 @@ Usage:
   ./test/integration.sh                 # run all suites
   ./test/integration.sh <suite> [...]   # run selected suites
 
-Suite aliases:
-  core|annotations
-  unions|enums
+Suites:
+  core
+  unions
+  enums
   traits
   records
   codegen
