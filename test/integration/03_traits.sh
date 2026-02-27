@@ -57,6 +57,20 @@ let get_name = fn[t: named](x: t) -> string {
 get_name({ age: 42 })
 EOF
 
+run_build_fail_contains_from_stdin "Field-only trait as type shows dedicated v1 diagnostic" "field-only trait objects are not implemented in this phase" << 'EOF'
+trait named {
+  name: string
+}
+let x: named = { name: "alice" }
+EOF
+
+run_build_fail_contains_from_stdin "Method trait as type shows dedicated v1 diagnostic" "method and mixed trait objects are not supported in this phase" << 'EOF'
+trait show[a] {
+  fn show(x: a) -> string
+}
+let x: show = 1
+EOF
+
 test_case "Trait with supertraits" \
     'trait eq[a] {
        fn eq(x: a, y: a) -> bool

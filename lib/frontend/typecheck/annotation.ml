@@ -25,6 +25,18 @@ let register_type_alias (alias_def : Syntax.Ast.AST.type_alias_def) : unit =
 let clear_type_aliases () : unit = Hashtbl.clear type_alias_registry
 let lookup_type_alias (name : string) : type_alias_info option = Hashtbl.find_opt type_alias_registry name
 
+let type_position_error_for_constructor (name : string) : string =
+  match Trait_registry.trait_kind name with
+  | Some Trait_registry.FieldOnly ->
+      Printf.sprintf
+        "Trait '%s' cannot be used as a type: field-only trait objects are not implemented in this phase; use a generic constraint (t: %s) instead"
+        name name
+  | Some Trait_registry.MethodOnly | Some Trait_registry.Mixed ->
+      Printf.sprintf
+        "Trait '%s' cannot be used as a type: method and mixed trait objects are not supported in this phase"
+        name
+  | None -> "Unknown type constructor: " ^ name
+
 let rec type_expr_to_mono_type_with
     (type_bindings : (string * Types.mono_type) list)
     (te : Syntax.Ast.AST.type_expr) : Types.mono_type =
@@ -58,7 +70,7 @@ let rec type_expr_to_mono_type_with
                         type_expr_to_mono_type_with type_bindings alias_info.alias_body
                       else
                         failwith (Printf.sprintf "Type alias %s expects type arguments" other)
-                  | None -> failwith ("Unknown type constructor: " ^ other)))))
+                  | None -> failwith (type_position_error_for_constructor other)))))
   | Syntax.Ast.AST.TApp (con_name, type_args) -> (
       (* Generic type application: list[int], map[string, int], option[a] *)
       let arg_types = List.map (type_expr_to_mono_type_with type_bindings) type_args in
@@ -96,7 +108,7 @@ let rec type_expr_to_mono_type_with
                   else
                     let alias_bindings = List.combine alias_info.alias_type_params arg_types in
                     type_expr_to_mono_type_with (alias_bindings @ type_bindings) alias_info.alias_body
-              | None -> failwith ("Unknown type constructor: " ^ con_name))))
+              | None -> failwith (type_position_error_for_constructor con_name))))
   | Syntax.Ast.AST.TArrow (param_types, return_type) ->
       (* Function type: (int, string) -> bool *)
       let param_mono = List.map (type_expr_to_mono_type_with type_bindings) param_types in
