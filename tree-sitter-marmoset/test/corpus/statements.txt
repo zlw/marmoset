@@ -1,0 +1,171 @@
+================================================================================
+Let statement
+================================================================================
+
+let x = 5;
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (let_statement
+    name: (identifier)
+    value: (integer_literal)))
+
+================================================================================
+Let statement without semicolon
+================================================================================
+
+let x = 5
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (let_statement
+    name: (identifier)
+    value: (integer_literal)))
+
+================================================================================
+Let with type annotation
+================================================================================
+
+let x: int = 5
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (let_statement
+    name: (identifier)
+    type: (type_identifier)
+    value: (integer_literal)))
+
+================================================================================
+Let with union type annotation
+================================================================================
+
+let x: int | string = 5
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (let_statement
+    name: (identifier)
+    type: (union_type
+      (type_identifier)
+      (type_identifier))
+    value: (integer_literal)))
+
+================================================================================
+Let with generic type annotation
+================================================================================
+
+let x: option[int] = option.some(42)
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (let_statement
+    name: (identifier)
+    type: (generic_type
+      name: (identifier)
+      arg: (type_identifier))
+    value: (call_expression
+      function: (field_access
+        object: (identifier)
+        field: (identifier))
+      (integer_literal))))
+
+================================================================================
+Return statement
+================================================================================
+
+return 5;
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (return_statement
+    value: (integer_literal)))
+
+================================================================================
+Return statement without semicolon
+================================================================================
+
+return x
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (return_statement
+    value: (identifier)))
+
+================================================================================
+Expression statement
+================================================================================
+
+puts(42);
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (expression_statement
+    (call_expression
+      function: (identifier)
+      (integer_literal))))
+
+================================================================================
+Block with multiple statements
+================================================================================
+
+let add = fn(x, y) {
+  let sum = x + y;
+  return sum;
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (let_statement
+    name: (identifier)
+    value: (function_literal
+      (parameter
+        name: (identifier))
+      (parameter
+        name: (identifier))
+      body: (block
+        (let_statement
+          name: (identifier)
+          value: (infix_expression
+            left: (identifier)
+            right: (identifier)))
+        (return_statement
+          value: (identifier))))))
+
+================================================================================
+Early return syntax
+================================================================================
+
+let abs = fn(x: int) -> int {
+  if (x < 0) return -x else return x;
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (let_statement
+    name: (identifier)
+    value: (function_literal
+      (parameter
+        name: (identifier)
+        type: (type_identifier))
+      return_type: (type_identifier)
+      body: (block
+        (expression_statement
+          (if_expression
+            condition: (infix_expression
+              left: (identifier)
+              right: (integer_literal))
+            consequence: (return_shorthand
+              (prefix_expression
+                operand: (identifier)))
+            alternative: (return_shorthand
+              (identifier))))))))

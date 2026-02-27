@@ -1,0 +1,454 @@
+================================================================================
+Identifier
+================================================================================
+
+foobar
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (expression_statement
+    (identifier)))
+
+================================================================================
+Prefix not
+================================================================================
+
+!true
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (expression_statement
+    (prefix_expression
+      operand: (boolean_literal))))
+
+================================================================================
+Prefix negate
+================================================================================
+
+-5
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (expression_statement
+    (prefix_expression
+      operand: (integer_literal))))
+
+================================================================================
+Infix addition
+================================================================================
+
+5 + 3
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (expression_statement
+    (infix_expression
+      left: (integer_literal)
+      right: (integer_literal))))
+
+================================================================================
+Infix all operators
+================================================================================
+
+a + b;
+a - b;
+a * b;
+a / b;
+a == b;
+a != b;
+a < b;
+a > b;
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (expression_statement
+    (infix_expression
+      left: (identifier)
+      right: (identifier)))
+  (expression_statement
+    (infix_expression
+      left: (identifier)
+      right: (identifier)))
+  (expression_statement
+    (infix_expression
+      left: (identifier)
+      right: (identifier)))
+  (expression_statement
+    (infix_expression
+      left: (identifier)
+      right: (identifier)))
+  (expression_statement
+    (infix_expression
+      left: (identifier)
+      right: (identifier)))
+  (expression_statement
+    (infix_expression
+      left: (identifier)
+      right: (identifier)))
+  (expression_statement
+    (infix_expression
+      left: (identifier)
+      right: (identifier)))
+  (expression_statement
+    (infix_expression
+      left: (identifier)
+      right: (identifier))))
+
+================================================================================
+Operator precedence: product over sum
+================================================================================
+
+a + b * c
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (expression_statement
+    (infix_expression
+      left: (identifier)
+      right: (infix_expression
+        left: (identifier)
+        right: (identifier)))))
+
+================================================================================
+Left associativity
+================================================================================
+
+a + b + c
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (expression_statement
+    (infix_expression
+      left: (infix_expression
+        left: (identifier)
+        right: (identifier))
+      right: (identifier))))
+
+================================================================================
+Parenthesized expression
+================================================================================
+
+(5 + 5) * 2
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (expression_statement
+    (infix_expression
+      left: (parenthesized_expression
+        (infix_expression
+          left: (integer_literal)
+          right: (integer_literal)))
+      right: (integer_literal))))
+
+================================================================================
+Function call
+================================================================================
+
+add(1, 2)
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (expression_statement
+    (call_expression
+      function: (identifier)
+      (integer_literal)
+      (integer_literal))))
+
+================================================================================
+Function call with no args
+================================================================================
+
+f()
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (expression_statement
+    (call_expression
+      function: (identifier))))
+
+================================================================================
+Nested function calls
+================================================================================
+
+puts(fib(10))
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (expression_statement
+    (call_expression
+      function: (identifier)
+      (call_expression
+        function: (identifier)
+        (integer_literal)))))
+
+================================================================================
+Index expression
+================================================================================
+
+arr[0]
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (expression_statement
+    (index_expression
+      object: (identifier)
+      index: (integer_literal))))
+
+================================================================================
+Field access
+================================================================================
+
+p.x
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (expression_statement
+    (field_access
+      object: (identifier)
+      field: (identifier))))
+
+================================================================================
+Method call via field access
+================================================================================
+
+x.show()
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (expression_statement
+    (call_expression
+      function: (field_access
+        object: (identifier)
+        field: (identifier)))))
+
+================================================================================
+Method call with argument
+================================================================================
+
+a.eq(b)
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (expression_statement
+    (call_expression
+      function: (field_access
+        object: (identifier)
+        field: (identifier))
+      (identifier))))
+
+================================================================================
+If expression
+================================================================================
+
+if (x < y) { x } else { y }
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (expression_statement
+    (if_expression
+      condition: (infix_expression
+        left: (identifier)
+        right: (identifier))
+      consequence: (block
+        (expression_statement
+          (identifier)))
+      alternative: (block
+        (expression_statement
+          (identifier))))))
+
+================================================================================
+If without else
+================================================================================
+
+if (x < y) { x }
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (expression_statement
+    (if_expression
+      condition: (infix_expression
+        left: (identifier)
+        right: (identifier))
+      consequence: (block
+        (expression_statement
+          (identifier))))))
+
+================================================================================
+Is expression
+================================================================================
+
+x is int
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (expression_statement
+    (is_expression
+      value: (identifier)
+      type: (type_identifier))))
+
+================================================================================
+Function literal
+================================================================================
+
+fn(x, y) { x + y }
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (expression_statement
+    (function_literal
+      (parameter
+        name: (identifier))
+      (parameter
+        name: (identifier))
+      body: (block
+        (expression_statement
+          (infix_expression
+            left: (identifier)
+            right: (identifier)))))))
+
+================================================================================
+Function literal with types
+================================================================================
+
+fn(x: int, y: int) -> int { x + y }
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (expression_statement
+    (function_literal
+      (parameter
+        name: (identifier)
+        type: (type_identifier))
+      (parameter
+        name: (identifier)
+        type: (type_identifier))
+      return_type: (type_identifier)
+      body: (block
+        (expression_statement
+          (infix_expression
+            left: (identifier)
+            right: (identifier)))))))
+
+================================================================================
+Function literal with generic constraints
+================================================================================
+
+fn[a: show + eq](x: a) -> string { x.show() }
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (expression_statement
+    (function_literal
+      type_params: (type_parameter_list
+        (constrained_type_param
+          name: (identifier)
+          constraints: (constraint_list
+            (identifier)
+            (identifier))))
+      (parameter
+        name: (identifier)
+        type: (type_variable
+          (identifier)))
+      return_type: (type_identifier)
+      body: (block
+        (expression_statement
+          (call_expression
+            function: (field_access
+              object: (identifier)
+              field: (identifier))))))))
+
+================================================================================
+Match expression on enum
+================================================================================
+
+match x {
+  option.some(v): v
+  option.none: 0
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (expression_statement
+    (match_expression
+      value: (identifier)
+      (match_arm
+        pattern: (constructor_pattern
+          enum: (identifier)
+          variant: (identifier)
+          (variable_pattern
+            (identifier)))
+        body: (identifier))
+      (match_arm
+        pattern: (constructor_pattern
+          enum: (identifier)
+          variant: (identifier))
+        body: (integer_literal)))))
+
+================================================================================
+Match expression on literals
+================================================================================
+
+match x {
+  0: "zero"
+  1: "one"
+  _: "other"
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (expression_statement
+    (match_expression
+      value: (identifier)
+      (match_arm
+        pattern: (literal_pattern
+          (integer_literal))
+        body: (string_literal
+          (string_content)))
+      (match_arm
+        pattern: (literal_pattern
+          (integer_literal))
+        body: (string_literal
+          (string_content)))
+      (match_arm
+        pattern: (wildcard_pattern)
+        body: (string_literal
+          (string_content))))))
+
+================================================================================
+Enum constructor call
+================================================================================
+
+option.some(42)
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (expression_statement
+    (call_expression
+      function: (field_access
+        object: (identifier)
+        field: (identifier))
+      (integer_literal))))

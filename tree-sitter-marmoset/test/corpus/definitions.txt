@@ -1,0 +1,301 @@
+================================================================================
+Simple enum definition
+================================================================================
+
+enum direction { north south east west }
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (enum_definition
+    name: (identifier)
+    (enum_variant
+      name: (identifier))
+    (enum_variant
+      name: (identifier))
+    (enum_variant
+      name: (identifier))
+    (enum_variant
+      name: (identifier))))
+
+================================================================================
+Generic enum with variants
+================================================================================
+
+enum option[a] { some(a) none }
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (enum_definition
+    name: (identifier)
+    type_params: (type_parameter_list
+      (identifier))
+    (enum_variant
+      name: (identifier)
+      (type_variable
+        (identifier)))
+    (enum_variant
+      name: (identifier))))
+
+================================================================================
+Enum with multi-type-param and multi-field variants
+================================================================================
+
+enum result[a, b] { ok(a) error(b) }
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (enum_definition
+    name: (identifier)
+    type_params: (type_parameter_list
+      (identifier)
+      (identifier))
+    (enum_variant
+      name: (identifier)
+      (type_variable
+        (identifier)))
+    (enum_variant
+      name: (identifier)
+      (type_variable
+        (identifier)))))
+
+================================================================================
+Enum with multiple field variant
+================================================================================
+
+enum http_response { ok(int, string) error(int, string) }
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (enum_definition
+    name: (identifier)
+    (enum_variant
+      name: (identifier)
+      (type_identifier)
+      (type_identifier))
+    (enum_variant
+      name: (identifier)
+      (type_identifier)
+      (type_identifier))))
+
+================================================================================
+Trait definition
+================================================================================
+
+trait show[a] {
+  fn show(x: a) -> string
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (trait_definition
+    name: (identifier)
+    type_params: (type_parameter_list
+      (identifier))
+    (trait_method_signature
+      name: (identifier)
+      (parameter
+        name: (identifier)
+        type: (type_variable
+          (identifier)))
+      return_type: (type_identifier))))
+
+================================================================================
+Trait with multiple methods
+================================================================================
+
+trait eq[a] {
+  fn eq(x: a, y: a) -> bool
+  fn ne(x: a, y: a) -> bool
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (trait_definition
+    name: (identifier)
+    type_params: (type_parameter_list
+      (identifier))
+    (trait_method_signature
+      name: (identifier)
+      (parameter
+        name: (identifier)
+        type: (type_variable
+          (identifier)))
+      (parameter
+        name: (identifier)
+        type: (type_variable
+          (identifier)))
+      return_type: (type_identifier))
+    (trait_method_signature
+      name: (identifier)
+      (parameter
+        name: (identifier)
+        type: (type_variable
+          (identifier)))
+      (parameter
+        name: (identifier)
+        type: (type_variable
+          (identifier)))
+      return_type: (type_identifier))))
+
+================================================================================
+Trait with supertraits
+================================================================================
+
+trait ord[a]: eq {
+  fn compare(x: a, y: a) -> int
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (trait_definition
+    name: (identifier)
+    type_params: (type_parameter_list
+      (identifier))
+    supertraits: (supertrait_list
+      (identifier))
+    (trait_method_signature
+      name: (identifier)
+      (parameter
+        name: (identifier)
+        type: (type_variable
+          (identifier)))
+      (parameter
+        name: (identifier)
+        type: (type_variable
+          (identifier)))
+      return_type: (type_identifier))))
+
+================================================================================
+Trait with field
+================================================================================
+
+trait named {
+  name: string
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (trait_definition
+    name: (identifier)
+    (trait_field
+      name: (identifier)
+      type: (type_identifier))))
+
+================================================================================
+Impl block
+================================================================================
+
+impl show for int {
+  fn show(x: int) -> string {
+    "int"
+  }
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (impl_block
+    trait: (identifier)
+    type: (type_identifier)
+    (method_definition
+      name: (identifier)
+      (parameter
+        name: (identifier)
+        type: (type_identifier))
+      return_type: (type_identifier)
+      body: (block
+        (expression_statement
+          (string_literal
+            (string_content)))))))
+
+================================================================================
+Generic impl block
+================================================================================
+
+impl show[b: show] for list[b] {
+  fn show(x: list[b]) -> string {
+    "ok"
+  }
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (impl_block
+    trait: (identifier)
+    type_params: (impl_type_parameter_list
+      (constrained_type_param
+        name: (identifier)
+        constraints: (constraint_list
+          (identifier))))
+    type: (generic_type
+      name: (identifier)
+      arg: (type_variable
+        (identifier)))
+    (method_definition
+      name: (identifier)
+      (parameter
+        name: (identifier)
+        type: (generic_type
+          name: (identifier)
+          arg: (type_variable
+            (identifier))))
+      return_type: (type_identifier)
+      body: (block
+        (expression_statement
+          (string_literal
+            (string_content)))))))
+
+================================================================================
+Derive single trait
+================================================================================
+
+derive eq for int;
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (derive_statement
+    trait: (identifier)
+    type: (type_identifier)))
+
+================================================================================
+Derive multiple traits
+================================================================================
+
+derive eq, show for int;
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (derive_statement
+    trait: (identifier)
+    trait: (identifier)
+    type: (type_identifier)))
+
+================================================================================
+Type alias
+================================================================================
+
+type point = { x: int, y: int }
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (type_alias
+    name: (identifier)
+    type: (record_type
+      (record_type_field
+        name: (identifier)
+        type: (type_identifier))
+      (record_type_field
+        name: (identifier)
+        type: (type_identifier)))))

@@ -1,0 +1,188 @@
+================================================================================
+Simple type annotation
+================================================================================
+
+let x: int = 5
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (let_statement
+    name: (identifier)
+    type: (type_identifier)
+    value: (integer_literal)))
+
+================================================================================
+Union type annotation
+================================================================================
+
+let x: int | string = 5
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (let_statement
+    name: (identifier)
+    type: (union_type
+      (type_identifier)
+      (type_identifier))
+    value: (integer_literal)))
+
+================================================================================
+Three-member union type
+================================================================================
+
+let f = fn(x: int | string | bool) { x }
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (let_statement
+    name: (identifier)
+    value: (function_literal
+      (parameter
+        name: (identifier)
+        type: (union_type
+          (type_identifier)
+          (type_identifier)
+          (type_identifier)))
+      body: (block
+        (expression_statement
+          (identifier))))))
+
+================================================================================
+Generic type
+================================================================================
+
+let x: list[int] = [1, 2, 3]
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (let_statement
+    name: (identifier)
+    type: (generic_type
+      name: (identifier)
+      arg: (type_identifier))
+    value: (array_literal
+      (integer_literal)
+      (integer_literal)
+      (integer_literal))))
+
+================================================================================
+Nested generic type
+================================================================================
+
+let x: option[list[int]] = option.some([1, 2, 3])
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (let_statement
+    name: (identifier)
+    type: (generic_type
+      name: (identifier)
+      arg: (generic_type
+        name: (identifier)
+        arg: (type_identifier)))
+    value: (call_expression
+      function: (field_access
+        object: (identifier)
+        field: (identifier))
+      (array_literal
+        (integer_literal)
+        (integer_literal)
+        (integer_literal)))))
+
+================================================================================
+Record type
+================================================================================
+
+type point = { x: int, y: int }
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (type_alias
+    name: (identifier)
+    type: (record_type
+      (record_type_field
+        name: (identifier)
+        type: (type_identifier))
+      (record_type_field
+        name: (identifier)
+        type: (type_identifier)))))
+
+================================================================================
+Record type with row variable
+================================================================================
+
+let f = fn(r: { x: int, ...row }) -> int { r.x }
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (let_statement
+    name: (identifier)
+    value: (function_literal
+      (parameter
+        name: (identifier)
+        type: (record_type
+          (record_type_field
+            name: (identifier)
+            type: (type_identifier))
+          (row_variable
+            (identifier))))
+      return_type: (type_identifier)
+      body: (block
+        (expression_statement
+          (field_access
+            object: (identifier)
+            field: (identifier)))))))
+
+================================================================================
+Function type with return annotation
+================================================================================
+
+let f = fn(x: int, y: int) -> int { x + y }
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (let_statement
+    name: (identifier)
+    value: (function_literal
+      (parameter
+        name: (identifier)
+        type: (type_identifier))
+      (parameter
+        name: (identifier)
+        type: (type_identifier))
+      return_type: (type_identifier)
+      body: (block
+        (expression_statement
+          (infix_expression
+            left: (identifier)
+            right: (identifier)))))))
+
+================================================================================
+Union return type
+================================================================================
+
+let f = fn(x: int) -> int | string { x }
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (let_statement
+    name: (identifier)
+    value: (function_literal
+      (parameter
+        name: (identifier)
+        type: (type_identifier))
+      return_type: (union_type
+        (type_identifier)
+        (type_identifier))
+      body: (block
+        (expression_statement
+          (identifier))))))

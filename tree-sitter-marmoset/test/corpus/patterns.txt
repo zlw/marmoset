@@ -1,0 +1,186 @@
+================================================================================
+Wildcard pattern
+================================================================================
+
+match x {
+  _: 0
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (expression_statement
+    (match_expression
+      value: (identifier)
+      (match_arm
+        pattern: (wildcard_pattern)
+        body: (integer_literal)))))
+
+================================================================================
+Variable pattern
+================================================================================
+
+match x {
+  n: n + 1
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (expression_statement
+    (match_expression
+      value: (identifier)
+      (match_arm
+        pattern: (variable_pattern
+          (identifier))
+        body: (infix_expression
+          left: (identifier)
+          right: (integer_literal))))))
+
+================================================================================
+Literal patterns
+================================================================================
+
+match x {
+  0: "zero"
+  1: "one"
+  _: "other"
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (expression_statement
+    (match_expression
+      value: (identifier)
+      (match_arm
+        pattern: (literal_pattern
+          (integer_literal))
+        body: (string_literal
+          (string_content)))
+      (match_arm
+        pattern: (literal_pattern
+          (integer_literal))
+        body: (string_literal
+          (string_content)))
+      (match_arm
+        pattern: (wildcard_pattern)
+        body: (string_literal
+          (string_content))))))
+
+================================================================================
+Constructor pattern with field
+================================================================================
+
+match x {
+  option.some(v): v
+  option.none: 0
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (expression_statement
+    (match_expression
+      value: (identifier)
+      (match_arm
+        pattern: (constructor_pattern
+          enum: (identifier)
+          variant: (identifier)
+          (variable_pattern
+            (identifier)))
+        body: (identifier))
+      (match_arm
+        pattern: (constructor_pattern
+          enum: (identifier)
+          variant: (identifier))
+        body: (integer_literal)))))
+
+================================================================================
+Constructor pattern with multiple fields
+================================================================================
+
+match x {
+  http_response.ok(code, msg): code
+  http_response.error(code, _): code
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (expression_statement
+    (match_expression
+      value: (identifier)
+      (match_arm
+        pattern: (constructor_pattern
+          enum: (identifier)
+          variant: (identifier)
+          (variable_pattern
+            (identifier))
+          (variable_pattern
+            (identifier)))
+        body: (identifier))
+      (match_arm
+        pattern: (constructor_pattern
+          enum: (identifier)
+          variant: (identifier)
+          (variable_pattern
+            (identifier))
+          (wildcard_pattern))
+        body: (identifier)))))
+
+================================================================================
+Record pattern with punning
+================================================================================
+
+match p {
+  { x:, y: }: x + y
+  _: 0
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (expression_statement
+    (match_expression
+      value: (identifier)
+      (match_arm
+        pattern: (record_pattern
+          (record_pattern_punned
+            name: (identifier))
+          (record_pattern_punned
+            name: (identifier)))
+        body: (infix_expression
+          left: (identifier)
+          right: (identifier)))
+      (match_arm
+        pattern: (wildcard_pattern)
+        body: (integer_literal)))))
+
+================================================================================
+Alternative pattern
+================================================================================
+
+match x {
+  1 | 2: "small"
+  _: "big"
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (expression_statement
+    (match_expression
+      value: (identifier)
+      (match_arm
+        pattern: (alternative_pattern
+          (literal_pattern
+            (integer_literal))
+          (literal_pattern
+            (integer_literal)))
+        body: (string_literal
+          (string_content)))
+      (match_arm
+        pattern: (wildcard_pattern)
+        body: (string_literal
+          (string_content))))))
