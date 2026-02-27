@@ -4,7 +4,7 @@
 
 - Status: Future design note (non-implemented surface)
 - Last updated: 2026-02-27
-- Source of truth for current behavior: `/Users/zlw/src/marmoset/marmoset-ml/docs/features/trait-satisfaction.md`
+- Source of truth for current behavior: `/Users/zlw/src/marmoset/marmoset-ml/docs/features/traits.md`
 
 ## Purpose
 

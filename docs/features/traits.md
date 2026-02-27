@@ -2,32 +2,58 @@
 
 ## Maintenance
 
-- Last verified: 2026-02-07
+- Last verified: 2026-02-27
 - Implementation status: Canonical (actively maintained)
-- Update trigger: Any language behavior, typechecker, or codegen change affecting this topic
+- Merge note: This document now includes the former `docs/features/trait-satisfaction.md` content.
+- Update trigger: Any parser/typechecker/codegen/test change affecting trait declaration, satisfaction, resolution, or lowering
 
 ## Scope
 
-Traits provide ad-hoc polymorphism and constrained generic programming.
-
-Capabilities:
-- trait declarations,
-- supertraits,
-- implementations for concrete types,
-- derive support for selected traits,
-- method-call syntax lowering.
+Traits provide:
+- nominal method capabilities via explicit impls,
+- structural field constraints via field-only traits,
+- hybrid constraints via mixed traits,
+- supertrait closure,
+- constrained generics,
+- method-call syntax (`x.foo(...)`) lowering,
+- field-only trait use in type position.
 
 ## Syntax
 
-### Trait definition
+### Method-only trait
 
 ```marmoset
 trait show[a] {
   fn show(x: a) -> string
 }
+```
+
+### Field-only trait
+
+```marmoset
+trait named {
+  name: string
+}
+```
+
+### Mixed trait
+
+```marmoset
+trait named_show {
+  name: string
+  fn show(x: { name: string }) -> string
+}
+```
+
+### Supertraits
+
+```marmoset
+trait eq[a] {
+  fn eq(x: a, y: a) -> bool
+}
 
 trait ord[a]: eq {
-  fn compare(x: a, y: a) -> int
+  fn compare(x: a, y: a) -> ordering
 }
 ```
 
@@ -41,205 +67,224 @@ impl show for int {
 }
 ```
 
-### Derive
+### Constraint and method call
 
 ```marmoset
-derive eq, show, ord, hash for point;
+let show_it = fn[t: show](x: t) -> string {
+  x.show()
+}
 ```
 
-### Method call use
+### Field-only trait in type position
 
 ```marmoset
-let x = 42
-puts(x.show())
+trait named {
+  name: string
+}
+
+let p: named = { name: "alice", age: 42 }
+puts(p.name)
 ```
 
-## Sub-Features and Use Cases
+## Trait Kinds
 
-- capability constraints in generic functions,
-- operator-related behavior via builtin traits,
-- reusable behavior across unrelated nominal/structural types,
-- auto-derivation for boilerplate reductions.
+Trait kind is derived from members:
+- `FieldOnly`: fields present, methods absent.
+- `MethodOnly`: methods present, fields absent.
+- `Mixed`: both present.
 
-## Type-System Semantics
+Supertraits are orthogonal and may themselves be field-only, method-only, or mixed.
 
-Core components:
-- trait registry for definitions and impls,
-- validation for impl signature compatibility,
-- solver checks for constrained type vars,
-- method lookup by receiver type.
+## Satisfaction Semantics
 
-Resolution model:
-- explicit impl registration (user + compiler-provided),
-- method calls resolved to concrete impl at compile time in static mode,
-- constrained generics require satisfiable trait bounds.
+### Big rule
 
-## Design Alternatives Considered
+- Fields are structural.
+- Methods are nominal.
+- Mixed traits require both structural field satisfaction and nominal method satisfaction.
+- Supertraits are enforced transitively.
 
-### Alternative A: Where-clause-heavy typeclass syntax
+### Field satisfaction
 
-Pros:
-- very expressive constraint language.
+A type satisfies required trait fields when:
+- receiver type is a record (aliases resolving to records included),
+- every required field exists,
+- each field type unifies with the required type.
 
-Cons:
-- heavier syntax and parser/typechecker complexity.
+Non-record receivers for field traits are rejected with an explicit diagnostic category.
 
-### Alternative B: Structural method-only typing without explicit impls
+### Method satisfaction
 
-Pros:
-- lightweight surface model.
+A type satisfies required trait methods when:
+- an explicit impl exists for `(trait_name, concrete_type)` in the registry, or
+- a builtin impl exists for that pair.
 
-Cons:
-- weaker coherence and conflict control.
+Structural method probing is forbidden. Having a field/method with the same name does not imply trait satisfaction.
 
-### Alternative C: Explicit trait + impl registry model (Chosen)
+### Supertraits
 
-Pros:
-- predictable resolution path,
-- explicit capabilities,
-- strong validation points.
+For `trait child: parent1 + parent2`, satisfying `child` requires satisfying all supertraits recursively.
+This applies to:
+- impl validation,
+- generic constraint checking,
+- constrained method availability (`[a: ord]` exposes `eq` methods if `ord: eq`).
 
-Cons:
-- more declarations in user code.
+### Generic impl status
+
+Generic impl blocks (`impl show[b] for list[b]`) are intentionally unsupported in this phase and fail with a typed error.
+
+### Failure categories
+
+Trait-satisfaction diagnostics include structured categories such as:
+- `[missing-impl]`
+- `[missing-field]`
+- `[field-type-mismatch]`
+- `[non-record-for-field-trait]`
+- `[unknown-trait]`
+
+## Coherence and Ambiguity
+
+- Duplicate impl for the same canonical `(trait, type)` pair is rejected.
+- Field-only traits cannot have `impl` blocks (field traits are structural by design).
+- If multiple trait impls expose the same method name for the same receiver type, method resolution is a hard ambiguity error and includes impl sites.
+- Builtin impls may be overridden once by user impl for the same key.
+
+## Constraint Checking
+
+Constraint checking is enforced at call/instantiation time:
+- type-variable obligations are collected from substitutions,
+- each obligation runs through `Trait_solver.satisfies_trait`,
+- first failing obligation aborts with an explicit trait-satisfaction reason.
+
+Multiple constraints (`[a: show + eq]`) are conjunctive.
+
+## Method Resolution Rules
+
+Method-call resolution for `receiver.method(args...)`:
+1. If `receiver` is an enum type identifier, parse as enum constructor call.
+2. If receiver type is a constrained type variable, search methods from the expanded constraint set (including supertraits).
+3. Otherwise resolve via trait impl registry for the concrete receiver type.
+
+Resolution guarantees:
+- no structural method lookup,
+- deterministic ambiguity errors,
+- field access (`x.name`) is separate from method resolution (`x.show()`).
+
+Current state:
+- inherent methods are not implemented yet, so no inherent-vs-trait precedence path is active.
+
+## Trait-as-Type Policy (v1)
+
+### Allowed
+
+- Field-only traits in type position, if non-generic.
+- Field-only trait supertraits composed from field-only chains.
+
+### Rejected
+
+- Method-only traits in type position.
+- Mixed traits in type position.
+- Field-only traits that are generic.
+- Field-only traits whose supertrait closure includes method/mixed traits.
+
+### Internal lowering
+
+Field-only trait types lower to open record requirements assembled from trait fields plus supertrait field closure, with deterministic field merging.
+
+## Operator Requirements via Traits
+
+Operator typing enforces trait obligations:
+- unary `-` requires `neg`
+- `+ - * /` require `num` (except string concatenation special-case for `+`)
+- `< > <= >=` require `ord`
+- `== !=` require `eq`
+
+This phase enforces trait obligations in typechecking; it does not rewrite operators into trait method calls in codegen.
 
 ## Codegen: Detailed Design
 
-### Candidate approaches
+### Method dispatch (chosen)
 
-1. Static free-function dispatch by resolved type (Chosen).
-2. Vtable/trait-object dynamic dispatch default.
-3. Reflection-based method dispatch.
+Trait method calls lower to static helper function calls:
+- `x.show()` -> `show_show_<type>(x)`
 
-### Approach 1 (Chosen)
+The emitter uses method-resolution metadata recorded by the typechecker (`expr.id -> trait_name`) and does not re-infer resolution decisions.
 
-Method calls lower to mangled free functions:
-- `x.show()` -> `show_show_int64(x)` (example)
+### Field-only trait values
 
-Generated code includes:
-- user impl functions,
-- builtin primitive impl helpers,
-- derived impl helpers (including records for selected traits).
+v1 uses structural record projection, not runtime trait-object dispatch:
+- when expression actual type has a superset of fields and expected type is a narrower record shape (from field-only trait typing), emitter inserts a projection wrapper,
+- emitted value is a concrete Go struct literal with required fields copied.
 
-Lowering pipeline:
-1. Parser captures trait/impl/derive declarations.
-2. Typechecker registers traits and impls in trait registry.
-3. Solver resolves constrained calls and validates bounds.
-4. Emitter rewrites method-call syntax to concrete helper functions.
+This enables heterogeneous containers through shared projected shape while avoiding trait-object/vtable ABI commitments.
 
-Representative lowering:
+### Derive integration
 
-Marmoset:
-```marmoset
-trait show[a] {
-  fn show(x: a) -> string
-}
+Derive surface supports selected traits (`eq`, `show`, `debug`, `ord`, `hash`) with registry validation and emitter-side body generation for supported shapes.
 
-impl show for int {
-  fn show(x: int) -> string { "int" }
-}
+## Design Alternatives Considered
 
-let x = 42
-puts(x.show())
-```
-
-Representative Go shape:
-```go
-func show_show_int64(x int64) string { return "int" }
-
-func main() {
-  x := int64(42)
-  _ = puts(show_show_int64(x))
-}
-```
+### Alternative A: Structural methods (TypeScript-style)
 
 Pros:
-- efficient static dispatch,
-- transparent generated code,
-- easy to test and reason about.
+- fewer explicit impls.
 
 Cons:
-- many generated helper names,
-- dynamic polymorphism requires explicit future design if needed.
+- weak coherence and hard-to-debug accidental matches.
 
-### Approach 2 (trait objects)
+Status:
+- rejected.
+
+### Alternative B: Named trait constraints + structural fields (chosen)
 
 Pros:
-- runtime polymorphism flexibility.
+- explicit method coherence,
+- ergonomic record-shape constraints,
+- clear typechecker responsibilities.
 
 Cons:
-- overhead, complexity, and less predictable performance.
+- two satisfaction modes (field vs method) increase conceptual surface.
 
-### Approach 3 (reflection)
+### Alternative C: Full method trait objects in v1
 
 Pros:
-- implementation convenience for prototypes.
+- dynamic dispatch flexibility.
 
 Cons:
-- weak type safety, high runtime overhead.
+- early ABI/runtime commitment,
+- higher complexity before module/FFI design is stable.
 
-## Why Current Choice
+Status:
+- deferred.
 
-Static dispatch aligns with performance goals and existing typechecker resolution model, while preserving generated-code clarity.
+## Current Limitations
 
-## Pros and Cons of Current Trait Model
+- Generic impls are not supported yet.
+- Method/mixed trait objects are intentionally unsupported in this phase.
+- Inherent methods are still pending; collision policy is documented separately.
+- Qualified trait-call syntax is not implemented.
 
-Pros:
-- strong compile-time checking,
-- good performance,
-- clear linkage between type and behavior.
+## Why This Design
 
-Cons:
-- no first-class trait-object story yet,
-- derived behavior coverage is intentionally scoped.
-
-## Deferred Trait-Object / Existential Design Guardrail
-
-This section is normative for future dynamic dispatch work. It does not indicate current implementation.
-
-### Current status
-
-- Trait calls are statically resolved and lowered to concrete helper functions.
-- No first-class trait-object runtime value exists in the compiler pipeline today.
-
-### Candidate representation shape (future)
-
-If dynamic trait values are introduced, the representation should be treated as an explicit existential package:
-- erased concrete payload,
-- concrete type identity tag,
-- trait witness table (method function pointers for the bound trait set).
-
-This should be modeled as a first-class internal form (typed AST or IR node), not inferred ad hoc in codegen.
-
-### Erasure rules (future)
-
-- Generic type parameters captured by trait objects are erased at the package boundary.
-- Only methods guaranteed by the trait bound are callable on erased values.
-- Reification from erased value back to concrete type requires explicit checked cast semantics.
-
-### Operation limits on existential values
-
-- `eq`/`hash`/`show` cannot be assumed for a trait object unless those capabilities are explicitly part of the bound.
-- Equality and hashing must be rejected for existential values lacking required trait evidence.
-- Any fallback “compare addresses” behavior is disallowed for language-level `eq`/`hash`.
-
-### Module and FFI boundary constraints
-
-- Trait-object ABI is not stable yet and must not be exposed through extern/FFI surfaces.
-- Cross-module trait-object passing is deferred until representation layout and witness-table ABI are frozen.
-- Until then, trait-object-like behavior remains an internal design target only; public APIs use static dispatch.
+The current model keeps method behavior explicit and coherent while preserving structural ergonomics for records. It also keeps codegen simple and performant by using static dispatch and projection-based field trait typing.
 
 ## Related Docs
 
 - `docs/features/functions-and-polymorphism.md`
 - `docs/features/records.md`
+- `docs/features/inherent-methods.md`
+- `docs/features/trait-objects-existentials-ffi.md`
 - `docs/ROADMAP.md`
 - `docs/archive/typechecker/phase4/milestone-3.md`
 
 ## Implementation Touchpoints
 
-- Trait/impl/derive parsing: `lib/frontend/syntax/parser.ml`
-- Trait registry and coherence checks: `lib/frontend/typecheck/trait_registry.ml`
-- Constraint solving and impl lookup: `lib/frontend/typecheck/trait_solver.ml`
-- Method-call typing and operator desugaring: `lib/frontend/typecheck/infer.ml`
-- Typechecker orchestration and diagnostics: `lib/frontend/typecheck/checker.ml`
-- Static dispatch helper emission: `lib/backend/go/emitter.ml`
+- Trait parsing: `lib/frontend/syntax/parser.ml`
+- Trait AST shape: `lib/frontend/syntax/ast.ml`
+- Trait registry/coherence: `lib/frontend/typecheck/trait_registry.ml`
+- Trait satisfaction solver: `lib/frontend/typecheck/trait_solver.ml`
+- Trait annotations/type-position policy: `lib/frontend/typecheck/annotation.ml`
+- Method-call typing and operator obligations: `lib/frontend/typecheck/infer.ml`
+- Builtin trait definitions/impls: `lib/frontend/typecheck/builtins.ml`
+- Static dispatch + projection lowering: `lib/backend/go/emitter.ml`
+- Integration coverage: `test/integration/03_traits.sh`
