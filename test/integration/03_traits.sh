@@ -24,7 +24,7 @@ test_case "Trait with multiple methods" \
      42' \
     "true"
 
-run_case_from_stdin "Method-only trait without type parameter" "42" << 'EOF'
+expect_runtime_output "Method-only trait without type parameter" "42" << 'EOF'
 trait ping {
   fn ping(x: int) -> int
 }
@@ -36,7 +36,7 @@ impl ping for int {
 puts(42.ping())
 EOF
 
-run_case_from_stdin "Field-only trait constraint accepts matching record shape" "alice" << 'EOF'
+expect_runtime_output "Field-only trait constraint accepts matching record shape" "alice" << 'EOF'
 trait named {
   name: string
 }
@@ -47,7 +47,7 @@ let person = { name: "alice", age: 42 }
 puts(get_name(person))
 EOF
 
-run_build_fail_contains_from_stdin "Field-only trait constraint rejects missing required field" "missing-field" << 'EOF'
+expect_build "Field-only trait constraint rejects missing required field" "missing-field" << 'EOF'
 trait named {
   name: string
 }
@@ -57,7 +57,7 @@ let get_name = fn[t: named](x: t) -> string {
 get_name({ age: 42 })
 EOF
 
-run_case_from_stdin "Field-only trait as type projects records to required shape" "alice" << 'EOF'
+expect_runtime_output "Field-only trait as type projects records to required shape" "alice" << 'EOF'
 trait named {
   name: string
 }
@@ -65,7 +65,7 @@ let x: named = { name: "alice", age: 42 }
 puts(x.name)
 EOF
 
-run_case_from_stdin "Field-only trait object arrays can be built from annotated values" "acme" << 'EOF'
+expect_runtime_output "Field-only trait object arrays can be built from annotated values" "acme" << 'EOF'
 trait named {
   name: string
 }
@@ -75,7 +75,7 @@ let xs: list[named] = [person, company]
 puts(xs[1].name)
 EOF
 
-run_build_fail_contains_from_stdin "Method trait as type shows dedicated v1 diagnostic" "method and mixed trait objects are not supported in this phase" << 'EOF'
+expect_build "Method trait as type shows dedicated v1 diagnostic" "method and mixed trait objects are not supported in this phase" << 'EOF'
 trait show[a] {
   fn show(x: a) -> string
 }
@@ -155,7 +155,7 @@ test_case "Duplicate impl for same trait and type fails" \
     "false" \
     "Duplicate impl for trait"
 
-run_build_fail_contains_from_stdin "Ambiguous method dispatch reports conflicting impl sites" "impl sites:" << 'EOF'
+expect_build "Ambiguous method dispatch reports conflicting impl sites" "impl sites:" << 'EOF'
 trait render_a[a] {
   fn render(x: a) -> string
 }
@@ -214,7 +214,7 @@ test_case "Mixed manual and derived impls" \
      42' \
     "true"
 
-run_build_fail_contains_from_stdin "Generic impls fail with typed error (no compiler crash)" "Generic impls are not supported yet" << 'EOF'
+expect_build "Generic impls fail with typed error (no compiler crash)" "Generic impls are not supported yet" << 'EOF'
 trait show[a] {
   fn show(x: a) -> string
 }
@@ -227,7 +227,7 @@ EOF
 
 echo "-- PHASE 4.3: OPERATOR TRAIT OBLIGATIONS --"
 
-run_build_fail_contains_from_stdin "Equality requires eq trait (functions should fail)" "missing-impl" << 'EOF'
+expect_build "Equality requires eq trait (functions should fail)" "missing-impl" << 'EOF'
 let same = fn[a](x: a, y: a) -> bool {
   x == y
 };
@@ -236,27 +236,27 @@ let id2 = fn(n: int) -> int { n + 1 };
 same(id1, id2)
 EOF
 
-run_build_fail_contains_from_stdin "Ordering requires ord trait (arrays should fail)" "missing-impl" << 'EOF'
+expect_build "Ordering requires ord trait (arrays should fail)" "missing-impl" << 'EOF'
 let less = fn[a](x: a, y: a) -> bool {
   x < y
 };
 less([1], [2])
 EOF
 
-run_build_fail_contains_from_stdin "Arithmetic requires num trait (bool should fail)" "missing-impl" << 'EOF'
+expect_build "Arithmetic requires num trait (bool should fail)" "missing-impl" << 'EOF'
 let add = fn[a](x: a, y: a) {
   x + y
 };
 add(true, false)
 EOF
 
-run_case_from_stdin "String concatenation still works with builtin operator lowering" "ab" << 'EOF'
+expect_runtime_output "String concatenation still works with builtin operator lowering" "ab" << 'EOF'
 puts("a" + "b")
 EOF
 
 echo "-- PHASE 4.3: TRAIT METHOD CALLS --"
 
-run_case_from_stdin "Basic trait method call on int" "42" << 'EOF'
+expect_runtime_output "Basic trait method call on int" "42" << 'EOF'
 trait show[a] {
   fn show(x: a) -> string
 }
@@ -269,7 +269,7 @@ let x = 42
 puts(x.show())
 EOF
 
-run_case_from_stdin "Method call with parameter" "true" << 'EOF'
+expect_runtime_output "Method call with parameter" "true" << 'EOF'
 trait eq[a] {
   fn eq(x: a, y: a) -> bool
 }
@@ -283,7 +283,7 @@ let b = 42
 puts(a.eq(b))
 EOF
 
-run_case_from_stdin "Method call on string" "hello" << 'EOF'
+expect_runtime_output "Method call on string" "hello" << 'EOF'
 trait show[a] {
   fn show(x: a) -> string
 }
@@ -296,7 +296,7 @@ let s = "hello"
 puts(s.show())
 EOF
 
-run_case_from_stdin "Multiple method calls in sequence" "number
+expect_runtime_output "Multiple method calls in sequence" "number
 number" << 'EOF'
 trait show[a] {
   fn show(x: a) -> string
@@ -312,7 +312,7 @@ puts(x.show())
 puts(y.show())
 EOF
 
-run_case_from_stdin "Method call result used in expression" "42" << 'EOF'
+expect_runtime_output "Method call result used in expression" "42" << 'EOF'
 trait double[a] {
   fn double(x: a) -> int
 }
@@ -343,7 +343,7 @@ EOF
 
 echo "-- BUILTIN TRAITS --"
 
-run_build_ok_from_stdin "Builtin show trait exists" << 'EOF'
+expect_build "Builtin show trait exists" << 'EOF'
 impl show for int {
   fn show(x: int) -> string {
     "test"
@@ -352,7 +352,7 @@ impl show for int {
 42
 EOF
 
-run_build_ok_from_stdin "Builtin eq trait exists" << 'EOF'
+expect_build "Builtin eq trait exists" << 'EOF'
 impl eq for int {
   fn eq(x: int, y: int) -> bool {
     true
@@ -361,7 +361,7 @@ impl eq for int {
 42
 EOF
 
-run_build_ok_from_stdin "Builtin ord trait exists" << 'EOF'
+expect_build "Builtin ord trait exists" << 'EOF'
 enum ordering { less equal greater }
 impl ord for int {
   fn compare(x: int, y: int) -> ordering {
@@ -373,25 +373,25 @@ EOF
 
 echo "-- BUILTIN TRAIT IMPLS FOR PRIMITIVES --"
 
-run_case_from_stdin "int implements show (builtin)" "42" << 'EOF'
+expect_runtime_output "int implements show (builtin)" "42" << 'EOF'
 let x = 42
 let s = x.show()
 puts(s)
 EOF
 
-run_case_from_stdin "int implements eq (builtin)" "true" << 'EOF'
+expect_runtime_output "int implements eq (builtin)" "true" << 'EOF'
 let a = 42
 let b = 42
 let result = a.eq(b)
 puts(result)
 EOF
 
-run_case_from_stdin "string implements show (builtin)" "hello" << 'EOF'
+expect_runtime_output "string implements show (builtin)" "hello" << 'EOF'
 let s = "hello"
 puts(s.show())
 EOF
 
-run_case_from_stdin "bool implements show (builtin)" "true" << 'EOF'
+expect_runtime_output "bool implements show (builtin)" "true" << 'EOF'
 let b = true
 puts(b.show())
 EOF
@@ -399,7 +399,7 @@ EOF
 echo ""
 echo "-- TRAIT SOLVER --"
 
-run_case_from_stdin "Trait solver: int implements show" "42" << 'EOF'
+expect_runtime_output "Trait solver: int implements show" "42" << 'EOF'
 let check = fn[a: show](x: a) -> string {
   x.show()
 }
@@ -407,7 +407,7 @@ let result = check(42)
 puts(result)
 EOF
 
-run_build_fail_contains_from_stdin "Trait solver: array lacks show (should fail typecheck)" "does not implement trait" << 'EOF'
+expect_build "Trait solver: array lacks show (should fail typecheck)" "does not implement trait" << 'EOF'
 let check = fn[a: show](x: a) -> string {
   x.show()
 }
@@ -416,7 +416,7 @@ let result = check(arr)
 puts(result)
 EOF
 
-run_case_from_stdin "Trait solver: multiple constraints work" "42" << 'EOF'
+expect_runtime_output "Trait solver: multiple constraints work" "42" << 'EOF'
 let show_if_equal = fn[a: show + eq](x: a, y: a) -> string {
   if (x.eq(y)) {
     x.show()
@@ -428,7 +428,7 @@ let result = show_if_equal(42, 42)
 puts(result)
 EOF
 
-run_case_from_stdin "Trait solver: multiple constraints with different values" "different" << 'EOF'
+expect_runtime_output "Trait solver: multiple constraints with different values" "different" << 'EOF'
 let show_if_equal = fn[a: show + eq](x: a, y: a) -> string {
   if (x.eq(y)) {
     x.show()
@@ -440,7 +440,7 @@ let result = show_if_equal(42, 99)
 puts(result)
 EOF
 
-run_build_fail_contains_from_stdin "Supertrait: impl ord requires eq for same type" "supertrait" << 'EOF'
+expect_build "Supertrait: impl ord requires eq for same type" "supertrait" << 'EOF'
 trait eq[a] {
   fn eq(x: a, y: a) -> bool
 }
@@ -457,7 +457,7 @@ let p: point = { x: 1 }
 puts(p.compare(p))
 EOF
 
-run_case_from_stdin "Supertrait: methods from supertrait available through ord constraint" "true" << 'EOF'
+expect_runtime_output "Supertrait: methods from supertrait available through ord constraint" "true" << 'EOF'
 trait eq[a] {
   fn eq(x: a, y: a) -> bool
 }
@@ -483,7 +483,7 @@ let p2: point = { x: 1 }
 puts(eq_via_ord(p1, p2))
 EOF
 
-run_build_fail_contains_from_stdin "Supertrait: ord constraint also requires eq transitively" "supertrait" << 'EOF'
+expect_build "Supertrait: ord constraint also requires eq transitively" "supertrait" << 'EOF'
 trait eq[a] {
   fn eq(x: a, y: a) -> bool
 }

@@ -9,30 +9,30 @@ source "$SCRIPT_DIR/common.sh"
 suite_begin "TYPECHECK & CODEGEN INTEGRATION TESTS - RECORDS"
 echo "-- PHASE 4.4: RECORDS & ROW POLYMORPHISM --"
 
-run_case_from_stdin "Record literal + field access" "30" << 'EOF'
+expect_runtime_output "Record literal + field access" "30" << 'EOF'
 let p = { x: 10, y: 20 }
 puts(p.x + p.y)
 EOF
 
-run_case_from_stdin "Type alias with record annotation" "3" << 'EOF'
+expect_runtime_output "Type alias with record annotation" "3" << 'EOF'
 type point = { x: int, y: int }
 let p: point = { x: 1, y: 2 }
 puts(p.x + p.y)
 EOF
 
-run_case_from_stdin "Record spread update" "12" << 'EOF'
+expect_runtime_output "Record spread update" "12" << 'EOF'
 let p = { x: 1, y: 2 }
 let p2 = { ...p, x: 10 }
 puts(p2.x + p2.y)
 EOF
 
-run_case_from_stdin "Explicit row-polymorphic function" "5" << 'EOF'
+expect_runtime_output "Explicit row-polymorphic function" "5" << 'EOF'
 let p = { x: 5, y: 10, z: 20 }
 let get_x = fn(r: { x: int, ...row }) -> int { r.x }
 puts(get_x(p))
 EOF
 
-run_case_from_stdin "Record pattern match" "30" << 'EOF'
+expect_runtime_output "Record pattern match" "30" << 'EOF'
 let p = { x: 10, y: 20 }
 let result = match p {
   { x:, y: }: x + y
@@ -41,7 +41,7 @@ let result = match p {
 puts(result)
 EOF
 
-run_case_from_stdin "Derive eq for record" "true" << 'EOF'
+expect_runtime_output "Derive eq for record" "true" << 'EOF'
 trait eq[a] {
   fn eq(x: a, y: a) -> bool
 }
@@ -52,7 +52,7 @@ let p2: point = { x: 1, y: 2 }
 puts(p1.eq(p2))
 EOF
 
-run_case_from_stdin "Derive show for record" "{ x: 1, y: 2 }" << 'EOF'
+expect_runtime_output "Derive show for record" "{ x: 1, y: 2 }" << 'EOF'
 trait show[a] {
   fn show(x: a) -> string
 }
@@ -62,7 +62,7 @@ let p: point = { x: 1, y: 2 }
 puts(p.show())
 EOF
 
-run_case_from_stdin "Derive ord for record" "0" << 'EOF'
+expect_runtime_output "Derive ord for record" "0" << 'EOF'
 trait ord[a] {
   fn compare(x: a, y: a) -> int
 }
@@ -73,7 +73,7 @@ let p2: point = { x: 1, y: 3 }
 puts(p1.compare(p2))
 EOF
 
-run_case_from_stdin "Derive hash for record" "16370" << 'EOF'
+expect_runtime_output "Derive hash for record" "16370" << 'EOF'
 trait hash[a] {
   fn hash(x: a) -> int
 }
@@ -83,7 +83,7 @@ let p: point = { x: 1, y: 2 }
 puts(p.hash())
 EOF
 
-run_case_from_stdin "Reordered record literal still resolves derived show" "{ x: 1, y: 2 }" << 'EOF'
+expect_runtime_output "Reordered record literal still resolves derived show" "{ x: 1, y: 2 }" << 'EOF'
 trait show[a] {
   fn show(x: a) -> string
 }
@@ -93,7 +93,7 @@ let p: point = { y: 2, x: 1 }
 puts(p.show())
 EOF
 
-run_case_from_stdin "Reordered record aliases are assignment-compatible" "3" << 'EOF'
+expect_runtime_output "Reordered record aliases are assignment-compatible" "3" << 'EOF'
 type point = { x: int, y: int }
 type vec = { y: int, x: int }
 let p: point = { x: 1, y: 2 }
@@ -101,7 +101,7 @@ let v: vec = p
 puts(v.x + v.y)
 EOF
 
-run_case_from_stdin "Derived eq/hash are stable across field order" "ok" << 'EOF'
+expect_runtime_output "Derived eq/hash are stable across field order" "ok" << 'EOF'
 trait eq[a] {
   fn eq(x: a, y: a) -> bool
 }
@@ -120,27 +120,27 @@ let out = if (p1.eq(p2)) {
 puts(out)
 EOF
 
-run_build_fail_contains_from_stdin "Hash literal missing comma reports clear parse error" "expected ',' or '}' after hash literal entry" << 'EOF'
+expect_build "Hash literal missing comma reports clear parse error" "expected ',' or '}' after hash literal entry" << 'EOF'
 let x = { "a": 1 b: 2 }
 EOF
 
-run_build_fail_contains_from_stdin "Record literal missing comma reports clear parse error" "expected ',' or '}' after record literal entry" << 'EOF'
+expect_build "Record literal missing comma reports clear parse error" "expected ',' or '}' after record literal entry" << 'EOF'
 let x = { a: 1 b: 2 }
 EOF
 
-run_build_fail_contains_from_stdin "Record literal duplicate spread reports clear parse error" "multiple spread entries in record literal are not supported yet" << 'EOF'
+expect_build "Record literal duplicate spread reports clear parse error" "multiple spread entries in record literal are not supported yet" << 'EOF'
 let x = { ...a, ...b }
 EOF
 
-run_build_fail_contains_from_stdin "Malformed single dot token errors deterministically" "unexpected Token.Dot found" << 'EOF'
+expect_build "Malformed single dot token errors deterministically" "unexpected Token.Dot found" << 'EOF'
 .
 EOF
 
-run_build_fail_contains_from_stdin "Malformed double dot token errors deterministically" "unexpected Token.Illegal found" << 'EOF'
+expect_build "Malformed double dot token errors deterministically" "unexpected Token.Illegal found" << 'EOF'
 ..
 EOF
 
-run_build_fail_contains_from_stdin "Unknown symbol token errors deterministically" "unexpected Token.Illegal found" << 'EOF'
+expect_build "Unknown symbol token errors deterministically" "unexpected Token.Illegal found" << 'EOF'
 @
 EOF
 

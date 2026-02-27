@@ -48,68 +48,24 @@ suite_end() {
     return 1
 }
 
-# Helper function for testing
+########################################
+# Canonical helpers
+#
+# 1) expect_runtime_output
+# 2) expect_build
+#
+# Both accept source either:
+# - as the last argument, or
+# - from stdin (heredoc/pipe).
+########################################
 
-test_case() {
-    local name="$1"
-    local source="$2"
-    local should_succeed="$3"  # "true" or "false"
-    local expected_output="$4" # optional
-
-    TOTAL=$((TOTAL + 1))
-
-    echo -n "TEST [$TOTAL] $name ... "
-
-    # Write source to temp file
-    tmpfile=$(mktemp)
-    echo "$source" > "$tmpfile"
-
-    # Try to build
-    if output=$($EXECUTABLE build "$tmpfile" 2>&1); then
-        if [ "$should_succeed" = "true" ]; then
-            echo "✓ PASS"
-            PASS=$((PASS + 1))
-        else
-            echo "✗ FAIL (expected to fail but passed)"
-            FAIL=$((FAIL + 1))
-        fi
-    else
-        if [ "$should_succeed" = "false" ]; then
-            # Check if error message contains expected substring
-            if [ -n "$expected_output" ]; then
-                if echo "$output" | grep -q "$expected_output"; then
-                    echo "✓ PASS"
-                    PASS=$((PASS + 1))
-                else
-                    echo "✗ FAIL (error message doesn't contain '$expected_output')"
-                    echo "  Got: $output"
-                    FAIL=$((FAIL + 1))
-                fi
-            else
-                echo "✓ PASS"
-                PASS=$((PASS + 1))
-            fi
-        else
-            echo "✗ FAIL"
-            echo "  Error: $output"
-            FAIL=$((FAIL + 1))
-        fi
-    fi
-
-    rm -f "$tmpfile"
-}
-
-# Build + execute helper for runtime-output tests.
-# Usage:
-#   run_case_from_stdin "Name" "expected output" << 'EOF'
-#   <program>
-#   EOF
-
-run_case_from_stdin() {
+expect_runtime_output() {
     local name="$1"
     local expected_output="$2"
-    local source
-    source="$(cat)"
+    local source="${3:-}"
+    if [ -z "$source" ]; then
+        source="$(cat)"
+    fi
 
     TOTAL=$((TOTAL + 1))
     echo -n "TEST [$TOTAL] $name ... "
@@ -121,7 +77,9 @@ run_case_from_stdin() {
     rm -f "$binpath"
     echo "$source" > "$tmpfile"
 
-    if binary_output=$($EXECUTABLE build "$tmpfile" -o "$binpath" 2>&1) && output=$("$binpath" 2>&1); then
+    local build_output
+    local output
+    if build_output=$($EXECUTABLE build "$tmpfile" -o "$binpath" 2>&1) && output=$("$binpath" 2>&1); then
         if [ "$output" = "$expected_output" ]; then
             echo "✓ PASS"
             PASS=$((PASS + 1))
@@ -131,17 +89,20 @@ run_case_from_stdin() {
         fi
     else
         echo "✗ FAIL (build or execution failed)"
-        echo "  Output: $binary_output"
+        echo "  Build output: $build_output"
         FAIL=$((FAIL + 1))
     fi
 
     rm -f "$tmpfile" "$binpath"
 }
 
-run_build_ok_from_stdin() {
+expect_build() {
     local name="$1"
-    local source
-    source="$(cat)"
+    local expected_error_fragment="${2:-}"
+    local source="${3:-}"
+    if [ -z "$source" ]; then
+        source="$(cat)"
+    fi
 
     TOTAL=$((TOTAL + 1))
     echo -n "TEST [$TOTAL] $name ... "
@@ -150,16 +111,47 @@ run_build_ok_from_stdin() {
     tmpfile=$(mktemp)
     echo "$source" > "$tmpfile"
 
+    local build_output
     if build_output=$($EXECUTABLE build "$tmpfile" 2>&1); then
-        echo "✓ PASS"
-        PASS=$((PASS + 1))
+        if [ -z "$expected_error_fragment" ]; then
+            echo "✓ PASS"
+            PASS=$((PASS + 1))
+        else
+            echo "✗ FAIL (expected build failure containing '$expected_error_fragment')"
+            echo "  Output: $build_output"
+            FAIL=$((FAIL + 1))
+        fi
     else
-        echo "✗ FAIL (build failed)"
-        echo "  Output: $build_output"
-        FAIL=$((FAIL + 1))
+        if [ -z "$expected_error_fragment" ]; then
+            echo "✗ FAIL (build failed)"
+            echo "  Output: $build_output"
+            FAIL=$((FAIL + 1))
+        elif [ "$expected_error_fragment" = "__ANY_ERROR__" ] || echo "$build_output" | grep -q "$expected_error_fragment"; then
+            echo "✓ PASS"
+            PASS=$((PASS + 1))
+        else
+            echo "✗ FAIL (missing expected error fragment '$expected_error_fragment')"
+            echo "  Output: $build_output"
+            FAIL=$((FAIL + 1))
+        fi
     fi
 
     rm -f "$tmpfile"
+}
+
+test_case() {
+    # Legacy convenience helper for inline source strings used in older suites.
+    # Prefer expect_build / expect_runtime_output in new tests.
+    local name="$1"
+    local source="$2"
+    local should_succeed="$3"  # "true" or "false"
+    local expected_output="$4" # optional error fragment for failing cases
+
+    if [ "$should_succeed" = "true" ]; then
+        expect_build "$name" "" "$source"
+    else
+        expect_build "$name" "${expected_output:-__ANY_ERROR__}" "$source"
+    fi
 }
 
 run_build_ok_not_contains_from_stdin() {
@@ -188,41 +180,6 @@ run_build_ok_not_contains_from_stdin() {
         echo "✗ FAIL (build failed)"
         echo "  Output: $build_output"
         FAIL=$((FAIL + 1))
-    fi
-
-    rm -f "$tmpfile"
-}
-
-run_build_fail_contains_from_stdin() {
-    local name="$1"
-    local expected_fragment="$2"
-    local source
-    source="$(cat)"
-
-    TOTAL=$((TOTAL + 1))
-    echo -n "TEST [$TOTAL] $name ... "
-
-    local tmpfile
-    tmpfile=$(mktemp)
-    echo "$source" > "$tmpfile"
-
-    if build_output=$($EXECUTABLE build "$tmpfile" 2>&1); then
-        if echo "$build_output" | grep -q "$expected_fragment"; then
-            echo "✓ PASS"
-            PASS=$((PASS + 1))
-        else
-            echo "✗ FAIL (expected build to fail)"
-            FAIL=$((FAIL + 1))
-        fi
-    else
-        if echo "$build_output" | grep -q "$expected_fragment"; then
-            echo "✓ PASS"
-            PASS=$((PASS + 1))
-        else
-            echo "✗ FAIL (missing expected error fragment '$expected_fragment')"
-            echo "  Output: $build_output"
-            FAIL=$((FAIL + 1))
-        fi
     fi
 
     rm -f "$tmpfile"

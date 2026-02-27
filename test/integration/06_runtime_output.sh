@@ -9,19 +9,19 @@ source "$SCRIPT_DIR/common.sh"
 suite_begin "TYPECHECK & CODEGEN INTEGRATION TESTS - RUNTIME OUTPUT"
 echo "-- RUNTIME OUTPUT TESTS --"
 
-run_case_from_stdin "Print integer" "42" << 'EOF'
+expect_runtime_output "Print integer" "42" << 'EOF'
 puts(42)
 EOF
 
-run_case_from_stdin "Print string" "hello" << 'EOF'
+expect_runtime_output "Print string" "hello" << 'EOF'
 puts("hello")
 EOF
 
-run_case_from_stdin "Print boolean" "true" << 'EOF'
+expect_runtime_output "Print boolean" "true" << 'EOF'
 puts(true)
 EOF
 
-run_case_from_stdin "Print enum value with data" "some(42)" << 'EOF'
+expect_runtime_output "Print enum value with data" "some(42)" << 'EOF'
 enum option[a] {
   some(a)
   none
@@ -31,7 +31,7 @@ let x = option.some(42)
 puts(x)
 EOF
 
-run_case_from_stdin "Print enum with no data" "none" << 'EOF'
+expect_runtime_output "Print enum with no data" "none" << 'EOF'
 enum option[a] {
   some(a)
   none
