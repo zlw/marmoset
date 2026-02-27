@@ -1,0 +1,5 @@
+name = "Marmoset"
+grammar = "marmoset"
+path_suffixes = ["mr"]
+line_comments = ["# "]
+tab_size = 2
