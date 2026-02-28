@@ -32,6 +32,10 @@ let position_to_offset ~(source : string) ~(line : int) ~(character : int) : int
   in
   scan 0 0
 
+(* Convert a byte offset to an LSP Position (0-indexed) *)
+let offset_to_position ~(source : string) ~(offset : int) : Lsp_t.Position.t =
+  loc_to_position (Marmoset.Lib.Source_loc.offset_to_loc source offset)
+
 (* ============================================================
    Tests
    ============================================================ *)

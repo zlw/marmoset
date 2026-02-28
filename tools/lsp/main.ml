@@ -21,6 +21,7 @@ class marmoset_server =
     (* Advertise capabilities *)
     method! config_hover = Some (`Bool true)
     method! config_symbol = Some (`Bool true)
+    method! config_inlay_hints = Some (`Bool true)
 
     method! config_sync_opts =
       Lsp_t.TextDocumentSyncOptions.create ~change:Lsp_t.TextDocumentSyncKind.Full ~openClose:true
@@ -109,6 +110,19 @@ class marmoset_server =
                 let symbols = Marmoset_lsp.Doc_symbols.document_symbols ~source:analysis.source ~program:prog in
                 Some (`DocumentSymbol symbols)
             | None -> None)
+      in
+      Lwt.return result
+
+    method! on_req_inlay_hint ~notify_back:_ ~id:_ ~uri ~range () =
+      let result =
+        match Hashtbl.find_opt analysis_cache uri with
+        | None -> None
+        | Some { analysis } -> (
+            match (analysis.program, analysis.type_map) with
+            | Some prog, Some tm ->
+                Some
+                  (Marmoset_lsp.Inlay_hints.inlay_hints ~source:analysis.source ~program:prog ~type_map:tm ~range)
+            | _ -> None)
       in
       Lwt.return result
   end
