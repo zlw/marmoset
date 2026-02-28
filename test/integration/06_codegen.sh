@@ -248,5 +248,23 @@ let f = fn(x: int) -> int { x + 2 }
 puts(f(1))
 EOF
 
+expect_runtime_output "Function-parameter shadowing via let compiles and runs" "3" << 'EOF'
+let x = 1
+let f = fn(x: int) -> int {
+  let x = x + 1
+  x + 1
+}
+puts(f(x))
+EOF
+
+expect_runtime_output "Closure capture before shadowing keeps outer binding" "11" << 'EOF'
+let f = fn(x: int) -> int {
+  let g = fn(y: int) -> int { x + y }
+  let x = x + 1
+  g(0) + x
+}
+puts(f(5))
+EOF
+
 
 suite_end

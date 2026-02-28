@@ -41,6 +41,19 @@ let x: option[int] = option.none()
 puts(x)
 EOF
 
+expect_runtime_output "Match arm binding can be unused in effectful arm" "got one" << 'EOF'
+enum option[a] {
+  some(a)
+  none
+}
+
+let x = option.some(1)
+match x {
+  option.some(n): puts("got one")
+  option.none(): puts("got none")
+}
+EOF
+
 expect_runtime_output "Example monkey source builds and runs" $'Thorsten Ball - Writing A Compiler In Go\n[1 1 2 3 5 8]' "$(cat "$REPO_ROOT/examples/monkey.mr")"
 
 suite_end
