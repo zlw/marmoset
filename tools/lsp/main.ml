@@ -22,6 +22,7 @@ class marmoset_server =
     method! config_hover = Some (`Bool true)
     method! config_symbol = Some (`Bool true)
     method! config_inlay_hints = Some (`Bool true)
+    method! config_completion = Some (Lsp_t.CompletionOptions.create ~triggerCharacters:[ "." ] ())
 
     method! config_sync_opts =
       Lsp_t.TextDocumentSyncOptions.create ~change:Lsp_t.TextDocumentSyncKind.Full ~openClose:true
@@ -123,6 +124,27 @@ class marmoset_server =
                 Some
                   (Marmoset_lsp.Inlay_hints.inlay_hints ~source:analysis.source ~program:prog ~type_map:tm ~range)
             | _ -> None)
+      in
+      Lwt.return result
+
+    method! on_req_completion
+        ~notify_back:_
+        ~id:_
+        ~uri
+        ~pos:_
+        ~ctx:_
+        ~workDoneToken:_
+        ~partialResultToken:_
+        (_doc_state : Linol_lwt.doc_state) =
+      let result =
+        match Hashtbl.find_opt analysis_cache uri with
+        | None -> None
+        | Some { analysis } -> (
+            match analysis.environment with
+            | Some env ->
+                let items = Marmoset_lsp.Completions.completions ~environment:env in
+                Some (`List items)
+            | None -> None)
       in
       Lwt.return result
   end
