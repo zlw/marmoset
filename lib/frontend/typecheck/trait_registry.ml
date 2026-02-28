@@ -37,22 +37,48 @@ type impl_def = {
   impl_methods : method_sig list; (* Actual method implementations *)
 }
 
+type resolved_impl = {
+  impl : impl_def;
+  specialization_subst : Types.substitution;
+  source_site : string;
+}
+
 (* Global mutable registries *)
 let trait_registry : (string, trait_def) Hashtbl.t = Hashtbl.create 16
 let impl_registry : (string * mono_type, impl_def) Hashtbl.t = Hashtbl.create 32 (* key: (trait_name, for_type) *)
+let generic_impl_registry : (string * mono_type, impl_def) Hashtbl.t = Hashtbl.create 32
 let impl_source_registry : (string * mono_type, impl_source) Hashtbl.t = Hashtbl.create 32
 let builtin_impl_keys : (string * mono_type, unit) Hashtbl.t = Hashtbl.create 32
+let generic_impl_source_registry : (string * mono_type, impl_source) Hashtbl.t = Hashtbl.create 32
+let builtin_generic_impl_keys : (string * mono_type, unit) Hashtbl.t = Hashtbl.create 32
 let trait_field_registry : (string, record_field_type list) Hashtbl.t = Hashtbl.create 16
 let canonical_type (t : mono_type) : mono_type = canonicalize_mono_type t
 
 let is_builtin_impl_key (trait_name : string) (for_type : mono_type) : bool =
   Hashtbl.mem builtin_impl_keys (trait_name, canonical_type for_type)
 
+let canonical_generic_impl_for_type (def : impl_def) : mono_type =
+  let rename_subst =
+    List.mapi
+      (fun idx (p : AST.generic_param) -> (p.name, TVar (Printf.sprintf "__impl_param_%d" idx)))
+      def.impl_type_params
+  in
+  canonical_type (apply_substitution rename_subst def.impl_for_type)
+
+let generic_impl_key (def : impl_def) : string * mono_type =
+  (def.impl_trait_name, canonical_generic_impl_for_type def)
+
+let is_builtin_generic_impl_key (trait_name : string) (generic_for_type : mono_type) : bool =
+  Hashtbl.mem builtin_generic_impl_keys (trait_name, canonical_type generic_for_type)
+
 let clear () =
   Hashtbl.clear trait_registry;
   Hashtbl.clear impl_registry;
+  Hashtbl.clear generic_impl_registry;
   Hashtbl.clear impl_source_registry;
+  Hashtbl.clear generic_impl_source_registry;
   Hashtbl.clear builtin_impl_keys;
+  Hashtbl.clear builtin_generic_impl_keys;
   Hashtbl.clear trait_field_registry
 
 (* Register a trait definition *)
@@ -116,32 +142,59 @@ let validate_trait_fields (trait_name : string) (fields : record_field_type list
 let register_impl ?(builtin = false) ?source (def : impl_def) : unit =
   let canonical_for_type = canonical_type def.impl_for_type in
   let def' = { def with impl_for_type = canonical_for_type } in
-  let key = (def'.impl_trait_name, def'.impl_for_type) in
-  let existing = Hashtbl.find_opt impl_registry key in
-  if builtin then (
-    match existing with
-    | Some _ when not (Hashtbl.mem builtin_impl_keys key) ->
-        failwith
-          (Printf.sprintf
-             "Duplicate impl registration for trait '%s' and type %s (existing user impl cannot be replaced by builtin)"
-             def'.impl_trait_name (to_string def'.impl_for_type))
-    | _ ->
-        Hashtbl.replace builtin_impl_keys key ();
-        Hashtbl.remove impl_source_registry key;
-        Hashtbl.replace impl_registry key def')
+  if def'.impl_type_params = [] then
+    let key = (def'.impl_trait_name, def'.impl_for_type) in
+    let existing = Hashtbl.find_opt impl_registry key in
+    if builtin then (
+      match existing with
+      | Some _ when not (Hashtbl.mem builtin_impl_keys key) ->
+          failwith
+            (Printf.sprintf
+               "Duplicate impl registration for trait '%s' and type %s (existing user impl cannot be replaced by builtin)"
+               def'.impl_trait_name (to_string def'.impl_for_type))
+      | _ ->
+          Hashtbl.replace builtin_impl_keys key ();
+          Hashtbl.remove impl_source_registry key;
+          Hashtbl.replace impl_registry key def')
+    else
+      match existing with
+      | Some _ when not (Hashtbl.mem builtin_impl_keys key) ->
+          failwith
+            (Printf.sprintf "Duplicate impl registration for trait '%s' and type %s" def'.impl_trait_name
+               (to_string def'.impl_for_type))
+      | _ ->
+          (* User impl replaces builtin marker for this key (allowed exactly once). *)
+          Hashtbl.remove builtin_impl_keys key;
+          (match source with
+          | Some src -> Hashtbl.replace impl_source_registry key src
+          | None -> Hashtbl.remove impl_source_registry key);
+          Hashtbl.replace impl_registry key def'
   else
-    match existing with
-    | Some _ when not (Hashtbl.mem builtin_impl_keys key) ->
-        failwith
-          (Printf.sprintf "Duplicate impl registration for trait '%s' and type %s" def'.impl_trait_name
-             (to_string def'.impl_for_type))
-    | _ ->
-        (* User impl replaces builtin marker for this key (allowed exactly once). *)
-        Hashtbl.remove builtin_impl_keys key;
-        (match source with
-        | Some src -> Hashtbl.replace impl_source_registry key src
-        | None -> Hashtbl.remove impl_source_registry key);
-        Hashtbl.replace impl_registry key def'
+    let key = generic_impl_key def' in
+    let existing = Hashtbl.find_opt generic_impl_registry key in
+    if builtin then (
+      match existing with
+      | Some _ when not (Hashtbl.mem builtin_generic_impl_keys key) ->
+          failwith
+            (Printf.sprintf
+               "Duplicate generic impl registration for trait '%s' and pattern %s (existing user impl cannot be replaced by builtin)"
+               def'.impl_trait_name (to_string (snd key)))
+      | _ ->
+          Hashtbl.replace builtin_generic_impl_keys key ();
+          Hashtbl.remove generic_impl_source_registry key;
+          Hashtbl.replace generic_impl_registry key def')
+    else
+      match existing with
+      | Some _ when not (Hashtbl.mem builtin_generic_impl_keys key) ->
+          failwith
+            (Printf.sprintf "Duplicate generic impl registration for trait '%s' and pattern %s"
+               def'.impl_trait_name (to_string (snd key)))
+      | _ ->
+          Hashtbl.remove builtin_generic_impl_keys key;
+          (match source with
+          | Some src -> Hashtbl.replace generic_impl_source_registry key src
+          | None -> Hashtbl.remove generic_impl_source_registry key);
+          Hashtbl.replace generic_impl_registry key def'
 
 (* Lookup a trait by name *)
 let lookup_trait (name : string) : trait_def option = Hashtbl.find_opt trait_registry name
@@ -166,18 +219,114 @@ let supertraits_of_trait (trait_name : string) : string list =
   | [] -> []
   | _self :: rest -> rest
 
+let format_impl_site_from_source (trait_name : string) (source_opt : impl_source option) : string =
+  match source_opt with
+  | Some src ->
+      let file =
+        match src.file_id with
+        | Some f -> f
+        | None -> "<unknown-file>"
+      in
+      Printf.sprintf "%s@%s:%d-%d" trait_name file src.start_pos src.end_pos
+  | None -> Printf.sprintf "%s@<builtin-or-unknown>" trait_name
+
+let format_concrete_impl_site (trait_name : string) (for_type : mono_type) : string =
+  format_impl_site_from_source trait_name
+    (Hashtbl.find_opt impl_source_registry (trait_name, canonical_type for_type))
+
+let format_generic_impl_site (trait_name : string) (generic_for_type : mono_type) : string =
+  format_impl_site_from_source trait_name
+    (Hashtbl.find_opt generic_impl_source_registry (trait_name, canonical_type generic_for_type))
+
+let specialized_impl (def : impl_def) (for_type : mono_type) (subst : Types.substitution) : impl_def =
+  let for_type' = canonical_type for_type in
+  let methods' =
+    List.map
+      (fun (m : method_sig) ->
+        {
+          method_name = m.method_name;
+          method_params =
+            List.map (fun (name, ty) -> (name, canonical_type (apply_substitution subst ty))) m.method_params;
+          method_return_type = canonical_type (apply_substitution subst m.method_return_type);
+        })
+      def.impl_methods
+  in
+  {
+    impl_trait_name = def.impl_trait_name;
+    impl_type_params = def.impl_type_params;
+    impl_for_type = for_type';
+    impl_methods = methods';
+  }
+
+let resolve_generic_impl
+    (trait_name : string)
+    (for_type : mono_type) : (resolved_impl option, string) result =
+  let for_type' = canonical_type for_type in
+  let matches =
+    Hashtbl.fold
+      (fun (candidate_trait_name, generic_for_type) candidate_def acc ->
+        if candidate_trait_name <> trait_name then
+          acc
+        else
+          let pattern_type = canonical_type candidate_def.impl_for_type in
+          match Unify.unify pattern_type for_type' with
+          | Error _ -> acc
+          | Ok subst ->
+              let specialization_subst =
+                List.map
+                  (fun (p : AST.generic_param) -> (p.name, canonical_type (apply_substitution subst (TVar p.name))))
+                  candidate_def.impl_type_params
+              in
+              let impl = specialized_impl candidate_def for_type' specialization_subst in
+              let source_site = format_generic_impl_site trait_name generic_for_type in
+              { impl; specialization_subst; source_site } :: acc)
+      generic_impl_registry []
+  in
+  match matches with
+  | [] -> Ok None
+  | [ resolved ] -> Ok (Some resolved)
+  | many ->
+      let sites =
+        many
+        |> List.map (fun (r : resolved_impl) -> r.source_site)
+        |> List.sort_uniq String.compare
+        |> String.concat ", "
+      in
+      Error
+        (Printf.sprintf "Ambiguous impl selection for trait '%s' and type %s (matching generic impl sites: %s)"
+           trait_name (to_string for_type') sites)
+
+(* Resolve an impl for a specific trait and concrete type.
+   Concrete impls have precedence over generic impls. *)
+let resolve_impl (trait_name : string) (for_type : mono_type) : (resolved_impl option, string) result =
+  let for_type' = canonical_type for_type in
+  match Hashtbl.find_opt impl_registry (trait_name, for_type') with
+  | Some concrete_impl ->
+      Ok
+        (Some
+           {
+             impl = concrete_impl;
+             specialization_subst = [];
+             source_site = format_concrete_impl_site trait_name for_type';
+           })
+  | None -> resolve_generic_impl trait_name for_type'
+
 (* Lookup an impl for a specific trait and type *)
 let lookup_impl (trait_name : string) (for_type : mono_type) : impl_def option =
-  Hashtbl.find_opt impl_registry (trait_name, canonical_type for_type)
+  match resolve_impl trait_name for_type with
+  | Ok (Some resolved) -> Some resolved.impl
+  | Ok None | Error _ -> None
 
 (* Return all registered impls (manual and derived). *)
-let all_impls () : impl_def list = Hashtbl.fold (fun _ impl acc -> impl :: acc) impl_registry []
+let all_impls () : impl_def list =
+  let concrete = Hashtbl.fold (fun _ impl acc -> impl :: acc) impl_registry [] in
+  Hashtbl.fold (fun _ impl acc -> impl :: acc) generic_impl_registry concrete
 
 (* Check if a type implements a trait (directly or through derivation) *)
 let implements_trait (trait_name : string) (for_type : mono_type) : bool =
-  match lookup_impl trait_name for_type with
-  | Some _ -> true
-  | None -> false
+  match resolve_impl trait_name for_type with
+  | Ok (Some _) -> true
+  | Ok None | Error _ -> false
 
 let structurally_satisfies_field_trait (trait_name : string) (for_type : mono_type) : bool =
   match lookup_trait_fields trait_name with
@@ -198,42 +347,39 @@ let structurally_satisfies_field_trait (trait_name : string) (for_type : mono_ty
             required_fields
       | _ -> false)
 
-(* Lookup a method implementation for a type by method name *)
-(* Returns: (trait_name, method_sig) option *)
-let lookup_method_candidates (for_type : mono_type) (method_name : string) : (string * method_sig) list =
-  let for_type' = canonical_type for_type in
-  Hashtbl.fold
-    (fun (_trait_name, impl_type) impl_def acc ->
-      if impl_type <> for_type' then
-        acc
-      else
-        match List.find_opt (fun m -> m.method_name = method_name) impl_def.impl_methods with
-        | None -> acc
-        | Some method_sig -> (impl_def.impl_trait_name, method_sig) :: acc)
-    impl_registry []
-  |> List.sort (fun (trait_a, _) (trait_b, _) -> String.compare trait_a trait_b)
-
-let format_impl_site (trait_name : string) (for_type : mono_type) : string =
-  match Hashtbl.find_opt impl_source_registry (trait_name, canonical_type for_type) with
-  | Some src ->
-      let file =
-        match src.file_id with
-        | Some f -> f
-        | None -> "<unknown-file>"
-      in
-      Printf.sprintf "%s@%s:%d-%d" trait_name file src.start_pos src.end_pos
-  | None -> Printf.sprintf "%s@<builtin-or-unknown>" trait_name
-
 let resolve_method (for_type : mono_type) (method_name : string) : (string * method_sig, string) result =
   let for_type' = canonical_type for_type in
-  let candidates = lookup_method_candidates for_type' method_name in
+  let trait_names = Hashtbl.to_seq_keys trait_registry |> List.of_seq |> List.sort String.compare in
+  let candidates, resolution_errors =
+    List.fold_left
+      (fun (cands_acc, errs_acc) trait_name ->
+        match resolve_impl trait_name for_type' with
+        | Error msg -> (cands_acc, msg :: errs_acc)
+        | Ok None -> (cands_acc, errs_acc)
+        | Ok (Some resolved) -> (
+            match List.find_opt (fun m -> m.method_name = method_name) resolved.impl.impl_methods with
+            | None -> (cands_acc, errs_acc)
+            | Some method_sig -> ((trait_name, method_sig, resolved.source_site) :: cands_acc, errs_acc)))
+      ([], []) trait_names
+  in
+  if resolution_errors <> [] then
+    let errs = String.concat "; " (List.rev resolution_errors) in
+    Error (Printf.sprintf "Method resolution failed for type %s: %s" (to_string for_type') errs)
+  else
+    let candidates =
+      List.sort (fun (a, _, _) (b, _, _) -> String.compare a b) candidates
+      |> List.map (fun (trait_name, method_sig, site) -> (trait_name, method_sig, site))
+    in
   match candidates with
   | [] -> Error (Printf.sprintf "No method '%s' found for type %s" method_name (to_string for_type'))
-  | [ candidate ] -> Ok candidate
+  | [ (trait_name, method_sig, _site) ] -> Ok (trait_name, method_sig)
   | many ->
-      let trait_names = many |> List.map fst |> List.sort_uniq String.compare in
+      let trait_names = many |> List.map (fun (name, _, _) -> name) |> List.sort_uniq String.compare in
       let impl_sites =
-        trait_names |> List.map (fun trait_name -> format_impl_site trait_name for_type') |> String.concat ", "
+        many
+        |> List.map (fun (_name, _method_sig, site) -> site)
+        |> List.sort_uniq String.compare
+        |> String.concat ", "
       in
       Error
         (Printf.sprintf "Ambiguous method '%s' for type %s (provided by traits: %s; impl sites: %s)" method_name
@@ -352,7 +498,7 @@ let derive_impl (trait_name : string) (for_type : mono_type) : (unit, string) re
             register_impl impl_def;
             Ok ())
   in
-  match lookup_impl trait_name for_type' with
+  match Hashtbl.find_opt impl_registry (trait_name, for_type') with
   | Some _ when not (is_builtin_impl_key trait_name for_type') ->
       Error (Printf.sprintf "Duplicate impl for trait '%s' and type %s" trait_name (to_string for_type'))
   | _ -> generate ()
@@ -458,12 +604,27 @@ let validate_impl_signature (trait_def : trait_def) (def : impl_def) : (unit, st
 let validate_impl (def : impl_def) : (unit, string) result =
   let for_type' = canonical_type def.impl_for_type in
   let def' = { def with impl_for_type = for_type' } in
-  match lookup_impl def'.impl_trait_name for_type' with
-  | Some _ when not (is_builtin_impl_key def'.impl_trait_name for_type') ->
-      Error
-        (Printf.sprintf "Duplicate impl for trait '%s' and type %s" def'.impl_trait_name (to_string for_type'))
-  | _ -> (
-      match lookup_trait def'.impl_trait_name with
+  let duplicate_error =
+    if def'.impl_type_params = [] then
+      match Hashtbl.find_opt impl_registry (def'.impl_trait_name, for_type') with
+      | Some _ when not (is_builtin_impl_key def'.impl_trait_name for_type') ->
+          Some
+            (Printf.sprintf "Duplicate impl for trait '%s' and type %s" def'.impl_trait_name
+               (to_string for_type'))
+      | _ -> None
+    else
+      let generic_key = generic_impl_key def' in
+      match Hashtbl.find_opt generic_impl_registry generic_key with
+      | Some _ when not (is_builtin_generic_impl_key (fst generic_key) (snd generic_key)) ->
+          Some
+            (Printf.sprintf "Duplicate generic impl for trait '%s' and pattern %s" def'.impl_trait_name
+               (to_string (snd generic_key)))
+      | _ -> None
+  in
+  match duplicate_error with
+  | Some msg -> Error msg
+  | None ->
+      (match lookup_trait def'.impl_trait_name with
       | None -> Error (Printf.sprintf "Cannot implement undefined trait: %s" def'.impl_trait_name)
       | Some trait_def -> (
           match trait_kind def'.impl_trait_name with
@@ -472,27 +633,46 @@ let validate_impl (def : impl_def) : (unit, string) result =
                 (Printf.sprintf
                    "Trait '%s' is field-only and cannot have impl blocks (field traits are structural)"
                    def'.impl_trait_name)
-          | _ -> (
-              match validate_impl_signature trait_def def' with
-              | Error _ as err -> err
-              | Ok () ->
-                  let rec check_supertraits = function
-                    | [] -> Ok ()
-                    | supertrait :: rest ->
-                        let supertrait_satisfied =
-                          match trait_kind supertrait with
-                          | Some FieldOnly -> structurally_satisfies_field_trait supertrait for_type'
-                          | _ -> implements_trait supertrait for_type'
-                        in
-                        if supertrait_satisfied then
-                          check_supertraits rest
-                        else
-                          Error
-                            (Printf.sprintf
-                               "Impl for trait '%s' on type %s is missing required supertrait '%s' implementation"
-                               def'.impl_trait_name (to_string for_type') supertrait)
-                  in
-                  check_supertraits (supertraits_of_trait def'.impl_trait_name))))
+          | _ ->
+              let unused_impl_params =
+                List.filter
+                  (fun (p : AST.generic_param) -> not (occurs_in p.name def'.impl_for_type))
+                  def'.impl_type_params
+              in
+              if unused_impl_params <> [] then
+                let names =
+                  unused_impl_params
+                  |> List.map (fun (p : AST.generic_param) -> p.name)
+                  |> String.concat ", "
+                in
+                Error
+                  (Printf.sprintf
+                     "Generic impl for trait '%s' has type parameter(s) not used in impl target type: %s"
+                     def'.impl_trait_name names)
+              else
+                match validate_impl_signature trait_def def' with
+                | Error _ as err -> err
+                | Ok () ->
+                    if def'.impl_type_params <> [] then
+                      Ok ()
+                    else
+                      let rec check_supertraits = function
+                        | [] -> Ok ()
+                        | supertrait :: rest ->
+                            let supertrait_satisfied =
+                              match trait_kind supertrait with
+                              | Some FieldOnly -> structurally_satisfies_field_trait supertrait for_type'
+                              | _ -> implements_trait supertrait for_type'
+                            in
+                            if supertrait_satisfied then
+                              check_supertraits rest
+                            else
+                              Error
+                                (Printf.sprintf
+                                   "Impl for trait '%s' on type %s is missing required supertrait '%s' implementation"
+                                   def'.impl_trait_name (to_string for_type') supertrait)
+                      in
+                      check_supertraits (supertraits_of_trait def'.impl_trait_name)))
 
 (* Initialize with built-in traits (if any) *)
 let init_builtins () = clear ()
@@ -709,6 +889,70 @@ let%test "implements_trait checks impl registry" =
   register_impl show_for_int;
 
   implements_trait "show" TInt && not (implements_trait "show" TString)
+
+let%test "implements_trait supports generic impl matching for concrete types" =
+  clear ();
+  register_trait
+    {
+      trait_name = "show";
+      trait_type_param = Some "a";
+      trait_supertraits = [];
+      trait_methods =
+        [ { method_name = "show"; method_params = [ ("x", TVar "a") ]; method_return_type = TString } ];
+    };
+  register_impl
+    {
+      impl_trait_name = "show";
+      impl_type_params = [];
+      impl_for_type = TInt;
+      impl_methods = [ { method_name = "show"; method_params = [ ("x", TInt) ]; method_return_type = TString } ];
+    };
+  register_impl
+    {
+      impl_trait_name = "show";
+      impl_type_params = [ { AST.name = "b"; constraints = [ "show" ] } ];
+      impl_for_type = TArray (TVar "b");
+      impl_methods =
+        [
+          {
+            method_name = "show";
+            method_params = [ ("x", TArray (TVar "b")) ];
+            method_return_type = TString;
+          };
+        ];
+    };
+  implements_trait "show" (TArray TInt)
+
+let%test "lookup_method specializes generic impl method signature for receiver type" =
+  clear ();
+  register_trait
+    {
+      trait_name = "show";
+      trait_type_param = Some "a";
+      trait_supertraits = [];
+      trait_methods =
+        [ { method_name = "show"; method_params = [ ("x", TVar "a") ]; method_return_type = TString } ];
+    };
+  register_impl
+    {
+      impl_trait_name = "show";
+      impl_type_params = [ { AST.name = "b"; constraints = [] } ];
+      impl_for_type = TArray (TVar "b");
+      impl_methods =
+        [
+          {
+            method_name = "show";
+            method_params = [ ("x", TArray (TVar "b")) ];
+            method_return_type = TString;
+          };
+        ];
+    };
+  match lookup_method (TArray TInt) "show" with
+  | Some ("show", method_sig) -> (
+      match method_sig.method_params with
+      | [ ("x", TArray TInt) ] -> method_sig.method_return_type = TString
+      | _ -> false)
+  | _ -> false
 
 let%test "lookup_method canonicalizes reordered record receiver" =
   clear ();
