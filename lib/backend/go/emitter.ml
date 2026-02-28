@@ -793,10 +793,12 @@ let indent_str state = String.make (state.indent * 4) ' '
 type emit_target =
   | ReturnTarget
   | AssignTarget of string
+  | DiscardTarget
 
 let target_prefix = function
   | ReturnTarget -> "return "
   | AssignTarget name -> name ^ " = "
+  | DiscardTarget -> "_ = "
 
 let emit_record_struct_type (state : emit_state) (fields : Types.record_field_type list) : string =
   let fields = Types.normalize_record_fields fields in
@@ -1239,7 +1241,7 @@ and emit_match_record ?target state type_map env scrutinee arms match_result_typ
       arms
   in
   match target with
-  | Some ReturnTarget ->
+  | Some ReturnTarget | Some DiscardTarget ->
       (* Panic needed after if-chain for Go control flow analysis when no wildcard *)
       let ind = indent_str state in
       Printf.sprintf "%s__scrutinee := %s\n%s\n%spanic(\"non-exhaustive record match\")\n" ind scrutinee_str
@@ -1508,8 +1510,8 @@ and emit_type_check state type_map env expr type_ann =
   in
   Printf.sprintf "typeIs(%s, \"%s\")" expr_str go_type_name
 
-(* Helper: Substitute identifier references in expressions *)
-and substitute_identifier_in_expr old_name new_name expr =
+(* Helper: Substitute identifier references in expressions/statements. *)
+and make_identifier_substituter old_name new_name =
   let rec subst_expr e =
     match e.AST.expr with
     | AST.Identifier id when id = old_name -> { e with expr = AST.Identifier new_name }
@@ -1544,13 +1546,13 @@ and substitute_identifier_in_expr old_name new_name expr =
         let arms' =
           List.map
             (fun (arm : AST.match_arm) ->
-              (* Keep patterns unchanged; substitute only in arm body *)
+              (* Keep patterns unchanged; substitute only in arm body. *)
               { arm with body = subst_expr arm.body })
             arms
         in
         { e with expr = AST.Match (subst_expr scrutinee, arms') }
     | AST.Function _ ->
-        (* Don't substitute inside function bodies - would need scope tracking *)
+        (* Don't substitute inside function bodies - would need scope tracking. *)
         e
     | _ -> e
   and subst_stmt s =
@@ -1559,11 +1561,18 @@ and substitute_identifier_in_expr old_name new_name expr =
     | AST.Return e -> { s with stmt = AST.Return (subst_expr e) }
     | AST.ExpressionStmt e -> { s with stmt = AST.ExpressionStmt (subst_expr e) }
     | AST.Block stmts -> { s with stmt = AST.Block (List.map subst_stmt stmts) }
-    | AST.EnumDef _ -> s (* Enum defs don't contain expressions to substitute *)
-    | AST.TraitDef _ | AST.ImplDef _ | AST.DeriveDef _ | AST.TypeAlias _ ->
-        s (* Trait defs/type aliases don't contain expressions *)
+    | AST.EnumDef _ -> s
+    | AST.TraitDef _ | AST.ImplDef _ | AST.DeriveDef _ | AST.TypeAlias _ -> s
   in
+  (subst_expr, subst_stmt)
+
+and substitute_identifier_in_expr old_name new_name expr =
+  let subst_expr, _ = make_identifier_substituter old_name new_name in
   subst_expr expr
+
+and substitute_identifier_in_stmt old_name new_name stmt =
+  let _, subst_stmt = make_identifier_substituter old_name new_name in
+  subst_stmt stmt
 
 (* Helper: Compute complement type (all union members except narrow_type) *)
 and compute_complement_type (current_type : Types.mono_type) (narrow_type : Types.mono_type) :
@@ -1588,6 +1597,17 @@ and emit_type_switch state type_map env _if_expr var_name narrow_type complement
 
   (* Create narrowed variable name *)
   let narrowed_var = var_name ^ "_typed" in
+  let emit_return_expr branch_env e =
+    if result_type = Types.TNull then
+      inner_ind
+      ^ "        _ = "
+      ^ emit_expr state type_map branch_env e
+      ^ "\n"
+      ^ inner_ind
+      ^ "        return struct{}{}\n"
+    else
+      inner_ind ^ "        return " ^ emit_expr state type_map branch_env e ^ "\n"
+  in
 
   (* Emit branch with variable substitution *)
   let emit_branch_with_var var_to_use narrow_env stmt =
@@ -1610,16 +1630,16 @@ and emit_type_switch state type_map env _if_expr var_name narrow_type complement
               | AST.ExpressionStmt e ->
                   (* Substitute variable references in expression before emitting *)
                   let e_subst = substitute_identifier_in_expr var_name var_to_use e in
-                  inner_ind ^ "        return " ^ emit_expr state type_map env' e_subst ^ "\n"
+                  emit_return_expr env' e_subst
               | AST.Return e ->
                   let e_subst = substitute_identifier_in_expr var_name var_to_use e in
-                  inner_ind ^ "        return " ^ emit_expr state type_map env' e_subst ^ "\n"
+                  emit_return_expr env' e_subst
               | _ -> fst (emit_stmt state type_map env' last)
             in
             var_marker ^ prefix ^ last_str)
     | AST.ExpressionStmt e ->
         let e_subst = substitute_identifier_in_expr var_name var_to_use e in
-        var_marker ^ inner_ind ^ "        return " ^ emit_expr state type_map narrow_env e_subst ^ "\n"
+        var_marker ^ emit_return_expr narrow_env e_subst
     | _ -> var_marker ^ fst (emit_stmt state type_map narrow_env stmt)
   in
 
@@ -1657,21 +1677,16 @@ and emit_type_switch state type_map env _if_expr var_name narrow_type complement
               | AST.ExpressionStmt e ->
                   (* Substitute variable references in expression before emitting *)
                   let e_subst = substitute_identifier_in_expr original_var var_to_use e in
-                  inner_ind ^ "        return " ^ emit_expr state type_map env' e_subst ^ "\n"
+                  emit_return_expr env' e_subst
               | AST.Return e ->
                   let e_subst = substitute_identifier_in_expr original_var var_to_use e in
-                  inner_ind ^ "        return " ^ emit_expr state type_map env' e_subst ^ "\n"
+                  emit_return_expr env' e_subst
               | _ -> fst (emit_stmt state type_map env' last)
             in
             type_assertion_prefix ^ var_marker ^ prefix ^ last_str)
     | AST.ExpressionStmt e ->
         let e_subst = substitute_identifier_in_expr original_var var_to_use e in
-        type_assertion_prefix
-        ^ var_marker
-        ^ inner_ind
-        ^ "        return "
-        ^ emit_expr state type_map narrow_env e_subst
-        ^ "\n"
+        type_assertion_prefix ^ var_marker ^ emit_return_expr narrow_env e_subst
     | _ -> type_assertion_prefix ^ var_marker ^ fst (emit_stmt state type_map narrow_env stmt)
   in
 
@@ -1704,6 +1719,85 @@ and emit_type_switch state type_map env _if_expr var_name narrow_type complement
   Printf.sprintf "func() %s {\n%s    switch %s := %s.(type) {\n%s    case %s:\n%s%s    default:\n%s%s    }\n%s}()"
     result_type_str ind narrowed_var var_name ind narrow_type_str cons_str ind alt_str ind ind
 
+and emit_type_switch_to_target
+    state
+    type_map
+    env
+    var_name
+    narrow_type
+    complement_type_opt
+    result_type
+    cons
+    alt
+    target =
+  let ind = indent_str state in
+  let inner_ind = ind ^ "    " in
+  let value_prefix =
+    if result_type = Types.TNull then
+      "_ = "
+    else
+      target_prefix target
+  in
+  let narrow_type_str = type_to_go state.mono narrow_type in
+  let narrowed_var = var_name ^ "_typed" in
+  let emit_branch_to_target branch_env stmt =
+    match stmt.AST.stmt with
+    | AST.Block stmts -> (
+        match List.rev stmts with
+        | [] -> ""
+        | last :: rest ->
+            let stmts_prefix, env' = emit_stmts state type_map branch_env (List.rev rest) in
+            let last_str =
+              match last.stmt with
+              | AST.ExpressionStmt e ->
+                  inner_ind ^ "    " ^ value_prefix ^ emit_expr state type_map env' e ^ "\n"
+              | AST.Return e -> inner_ind ^ "    return " ^ emit_expr state type_map env' e ^ "\n"
+              | _ -> fst (emit_stmt state type_map env' last)
+            in
+            stmts_prefix ^ last_str)
+    | AST.ExpressionStmt e -> inner_ind ^ "    " ^ value_prefix ^ emit_expr state type_map branch_env e ^ "\n"
+    | AST.Return e -> inner_ind ^ "    return " ^ emit_expr state type_map branch_env e ^ "\n"
+    | _ -> fst (emit_stmt state type_map branch_env stmt)
+  in
+  let cons_stmt = substitute_identifier_in_stmt var_name narrowed_var cons in
+  let narrowed_env = Infer.TypeEnv.add narrowed_var (Types.Forall ([], narrow_type)) env in
+  let cons_str =
+    let marker = inner_ind ^ "        _ = " ^ narrowed_var ^ "\n" in
+    marker ^ emit_branch_to_target narrowed_env cons_stmt
+  in
+  let default_branch =
+    match alt with
+    | None -> ""
+    | Some alt_stmt -> (
+        match complement_type_opt with
+        | Some complement_type when complement_type <> Types.TUnion [] ->
+            let complement_var = var_name ^ "_complement" in
+            let complement_type_str = type_to_go state.mono complement_type in
+            let alt_stmt' = substitute_identifier_in_stmt var_name complement_var alt_stmt in
+            let complement_env = Infer.TypeEnv.add complement_var (Types.Forall ([], complement_type)) env in
+            let assertion = inner_ind ^ "        " ^ complement_var ^ " := " ^ var_name ^ ".(" ^ complement_type_str ^ ")\n" in
+            let marker = inner_ind ^ "        _ = " ^ complement_var ^ "\n" in
+            let body = emit_branch_to_target complement_env alt_stmt' in
+            ind ^ "    default:\n" ^ assertion ^ marker ^ body
+        | _ ->
+            let body = emit_branch_to_target env alt_stmt in
+            ind ^ "    default:\n" ^ body)
+  in
+  let switch_code =
+    Printf.sprintf "%sswitch %s := %s.(type) {\n%scase %s:\n%s%s%s}\n" ind narrowed_var var_name ind narrow_type_str
+      cons_str default_branch ind
+  in
+  let unit_tail =
+    if result_type <> Types.TNull then
+      ""
+    else
+      match target with
+      | ReturnTarget -> ind ^ "return struct{}{}\n"
+      | AssignTarget name -> ind ^ name ^ " = struct{}{}\n"
+      | DiscardTarget -> ""
+  in
+  switch_code ^ unit_tail
+
 and emit_if state type_map env if_expr cond cons alt =
   let result_type = get_type type_map if_expr in
   let result_type_str = type_to_go state.mono result_type in
@@ -1735,6 +1829,17 @@ and emit_if state type_map env if_expr cond cons alt =
   | None ->
       (* Normal if-expression *)
       let cond_str = emit_expr state type_map env cond in
+      let emit_return_expr branch_env e =
+        if result_type = Types.TNull then
+          inner_ind
+          ^ "    _ = "
+          ^ emit_expr state type_map branch_env e
+          ^ "\n"
+          ^ inner_ind
+          ^ "    return struct{}{}\n"
+        else
+          inner_ind ^ "    return " ^ emit_expr state type_map branch_env e ^ "\n"
+      in
 
       let emit_branch stmt =
         match stmt.AST.stmt with
@@ -1751,12 +1856,12 @@ and emit_if state type_map env if_expr cond cons alt =
                 let prefix, env' = emit_stmts state type_map env (List.rev rest) in
                 let last_str =
                   match last.stmt with
-                  | AST.ExpressionStmt e -> inner_ind ^ "    return " ^ emit_expr state type_map env' e ^ "\n"
-                  | AST.Return e -> inner_ind ^ "    return " ^ emit_expr state type_map env' e ^ "\n"
+                  | AST.ExpressionStmt e -> emit_return_expr env' e
+                  | AST.Return e -> emit_return_expr env' e
                   | _ -> fst (emit_stmt state type_map env' last)
                 in
                 prefix ^ last_str)
-        | AST.ExpressionStmt e -> inner_ind ^ "    return " ^ emit_expr state type_map env e ^ "\n"
+        | AST.ExpressionStmt e -> emit_return_expr env e
         | _ -> fst (emit_stmt state type_map env stmt)
       in
 
@@ -1776,34 +1881,73 @@ and emit_if state type_map env if_expr cond cons alt =
       Printf.sprintf "func() %s {\n%s    if %s {\n%s%s    } else {\n%s%s    }\n%s}()" result_type_str ind cond_str
         cons_str ind alt_str ind ind
 
-and emit_if_to_target state type_map env cond cons alt target =
-  let ind = indent_str state in
-  let inner_ind = ind ^ "    " in
-  let cond_str = emit_expr state type_map env cond in
-  let prefix = target_prefix target in
-  let emit_branch stmt =
-    match stmt.AST.stmt with
-    | AST.Block stmts -> (
-        match List.rev stmts with
-        | [] -> ""
-        | last :: rest ->
-            let stmts_prefix, env' = emit_stmts state type_map env (List.rev rest) in
-            let last_str =
-              match last.stmt with
-              | AST.ExpressionStmt e | AST.Return e ->
-                  inner_ind ^ "    " ^ prefix ^ emit_expr state type_map env' e ^ "\n"
-              | _ -> fst (emit_stmt state type_map env' last)
-            in
-            stmts_prefix ^ last_str)
-    | AST.ExpressionStmt e -> inner_ind ^ "    " ^ prefix ^ emit_expr state type_map env e ^ "\n"
-    | _ -> fst (emit_stmt state type_map env stmt)
+and emit_if_to_target state type_map env if_expr (cond : AST.expression) cons alt target =
+  let result_type = get_type type_map if_expr in
+  let type_check_info =
+    match cond.expr with
+    | AST.TypeCheck (var_expr, type_ann) -> (
+        match var_expr.expr with
+        | AST.Identifier var_name ->
+            let narrow_type = Annotation.type_expr_to_mono_type type_ann in
+            Some (var_name, narrow_type)
+        | _ -> None)
+    | _ -> None
   in
-  let cons_str = emit_branch cons in
-  match alt with
-  | Some alt_stmt ->
-      let alt_str = emit_branch alt_stmt in
-      Printf.sprintf "%sif %s {\n%s%s} else {\n%s%s}\n" ind cond_str cons_str ind alt_str ind
-  | None -> Printf.sprintf "%sif %s {\n%s%s}\n" ind cond_str cons_str ind
+  match type_check_info with
+  | Some (var_name, narrow_type) ->
+      let complement_type_opt =
+        match Infer.TypeEnv.find_opt var_name env with
+        | Some (Types.Forall ([], original_type)) -> compute_complement_type original_type narrow_type
+        | _ -> None
+      in
+      emit_type_switch_to_target state type_map env var_name narrow_type complement_type_opt result_type cons alt target
+  | None ->
+      let ind = indent_str state in
+      let inner_ind = ind ^ "    " in
+      let cond_str = emit_expr state type_map env cond in
+      let value_prefix =
+        if result_type = Types.TNull then
+          "_ = "
+        else
+          target_prefix target
+      in
+      let emit_branch stmt =
+        match stmt.AST.stmt with
+        | AST.Block stmts -> (
+            match List.rev stmts with
+            | [] -> ""
+            | last :: rest ->
+                let stmts_prefix, env' = emit_stmts state type_map env (List.rev rest) in
+                let last_str =
+                  match last.stmt with
+                  | AST.ExpressionStmt e ->
+                      inner_ind ^ "    " ^ value_prefix ^ emit_expr state type_map env' e ^ "\n"
+                  | AST.Return e -> inner_ind ^ "    return " ^ emit_expr state type_map env' e ^ "\n"
+                  | _ -> fst (emit_stmt state type_map env' last)
+                in
+                stmts_prefix ^ last_str)
+        | AST.ExpressionStmt e -> inner_ind ^ "    " ^ value_prefix ^ emit_expr state type_map env e ^ "\n"
+        | AST.Return e -> inner_ind ^ "    return " ^ emit_expr state type_map env e ^ "\n"
+        | _ -> fst (emit_stmt state type_map env stmt)
+      in
+      let cons_str = emit_branch cons in
+      let if_code =
+        match alt with
+        | Some alt_stmt ->
+            let alt_str = emit_branch alt_stmt in
+            Printf.sprintf "%sif %s {\n%s%s} else {\n%s%s}\n" ind cond_str cons_str ind alt_str ind
+        | None -> Printf.sprintf "%sif %s {\n%s%s}\n" ind cond_str cons_str ind
+      in
+      let unit_tail =
+        if result_type <> Types.TNull then
+          ""
+        else
+          match target with
+          | ReturnTarget -> ind ^ "return struct{}{}\n"
+          | AssignTarget name -> ind ^ name ^ " = struct{}{}\n"
+          | DiscardTarget -> ""
+      in
+      if_code ^ unit_tail
 
 and emit_call state type_map env func args =
   let callee_type_opt =
@@ -2015,16 +2159,11 @@ and emit_func_body state type_map env stmt =
   (* Emit a tail-position expression, flattening if/match to avoid IIFE *)
   let emit_tail_expr env' e =
     match e.AST.expr with
-    | AST.If (cond, cons, alt) -> (
-        match cond.expr with
-        | AST.TypeCheck _ ->
-            (* Keep IIFE for type-switch — not yet flattened *)
-            inner_ind ^ "return " ^ emit_expr state type_map env' e ^ "\n"
-        | _ ->
-            state.indent <- state.indent + 1;
-            let r = emit_if_to_target state type_map env' cond cons alt ReturnTarget in
-            state.indent <- state.indent - 1;
-            r)
+    | AST.If (cond, cons, alt) ->
+        state.indent <- state.indent + 1;
+        let r = emit_if_to_target state type_map env' e cond cons alt ReturnTarget in
+        state.indent <- state.indent - 1;
+        r
     | AST.Match (scrutinee, arms) ->
         state.indent <- state.indent + 1;
         let r = emit_match ~target:ReturnTarget state type_map env' e scrutinee arms in
@@ -2248,24 +2387,14 @@ and emit_stmt
           in
           let env' = Infer.TypeEnv.add let_binding.name (Types.Forall ([], expr_type)) env in
           (binding_code, env')
-      | AST.If (cond, cons, alt) -> (
-          match cond.expr with
-          | AST.TypeCheck _ ->
-              (* Keep IIFE for type-switch — not yet flattened *)
-              let expr_str = emit_expr ~expected_type:(Some expr_type) state type_map env let_binding.value in
-              let go_type = type_to_go state.mono expr_type in
-              let binding_code =
-                Printf.sprintf "%svar %s %s = %s\n%s_ = %s\n" ind let_binding.name go_type expr_str ind
-                  let_binding.name
-              in
-              let env' = Infer.TypeEnv.add let_binding.name (Types.Forall ([], expr_type)) env in
-              (binding_code, env')
-          | _ ->
-              let go_type = type_to_go state.mono expr_type in
-              let decl = Printf.sprintf "%svar %s %s\n" ind let_binding.name go_type in
-              let if_code = emit_if_to_target state type_map env cond cons alt (AssignTarget let_binding.name) in
-              let env' = Infer.TypeEnv.add let_binding.name (Types.Forall ([], expr_type)) env in
-              (decl ^ if_code, env'))
+      | AST.If (cond, cons, alt) ->
+          let go_type = type_to_go state.mono expr_type in
+          let decl = Printf.sprintf "%svar %s %s\n" ind let_binding.name go_type in
+          let if_code =
+            emit_if_to_target state type_map env let_binding.value cond cons alt (AssignTarget let_binding.name)
+          in
+          let env' = Infer.TypeEnv.add let_binding.name (Types.Forall ([], expr_type)) env in
+          (decl ^ if_code, env')
       | AST.Match (scrutinee, arms) ->
           let go_type = type_to_go state.mono expr_type in
           let decl = Printf.sprintf "%svar %s %s\n" ind let_binding.name go_type in
@@ -2335,17 +2464,11 @@ and emit_stmt
       (Printf.sprintf "%sreturn %s\n" ind expr_str, env)
   | AST.ExpressionStmt expr -> (
       match expr.expr with
-      (* Handle if statements in statement context *)
       | AST.If (cond, cons, alt) ->
-          let cond_str = emit_expr state type_map env cond in
-          let cons_code, _ = emit_stmt state type_map env cons in
-          let code =
-            match alt with
-            | None -> Printf.sprintf "%sif %s {\n%s%s}\n" ind cond_str cons_code ind
-            | Some alt_stmt ->
-                let alt_code, _ = emit_stmt state type_map env alt_stmt in
-                Printf.sprintf "%sif %s {\n%s%s} else {\n%s%s}\n" ind cond_str cons_code ind alt_code ind
-          in
+          let code = emit_if_to_target state type_map env expr cond cons alt DiscardTarget in
+          (code, env)
+      | AST.Match (scrutinee, arms) ->
+          let code = emit_match ~target:DiscardTarget state type_map env expr scrutinee arms in
           (code, env)
       | _ ->
           let expr_str = emit_expr state type_map env expr in
@@ -3443,6 +3566,50 @@ let%test "if-expression in function argument still uses IIFE" =
   | Ok code ->
       (* IIFE still needed when if is a function argument *)
       string_contains code "func()" && string_contains code "if true"
+  | Error _ -> false
+
+let%test "type-check if in let binding emits without IIFE" =
+  match compile_string "let x: int | string = 1; let y = if (x is int) { x + 1 } else { 0 }; y" with
+  | Ok code -> not (string_contains code "func() int64") && string_contains code "switch x_typed := x.(type)"
+  | Error _ -> false
+
+let%test "type-check if in tail position emits without IIFE" =
+  match compile_string "let f = fn(x: int | string) -> int { if (x is int) { x + 1 } else { 0 } }; f(1)" with
+  | Ok code -> not (string_contains code "func() int64") && string_contains code "switch x_typed := x.(type)"
+  | Error _ -> false
+
+let%test "type-check if in function argument still uses IIFE" =
+  match compile_string "let x: int | string = 1; puts(if (x is int) { x } else { 0 })" with
+  | Ok code -> string_contains code "func()" && string_contains code "switch x_typed := x.(type)"
+  | Error _ -> false
+
+let%test "if without else in tail position emits unit return without IIFE" =
+  match compile_string "let f = fn(x: bool) { if (x) { 1 } }; f(true)" with
+  | Ok code ->
+      not (string_contains code "func() struct{}")
+      && string_contains code "if x"
+      && string_contains code "return struct{}{}"
+  | Error _ -> false
+
+let%test "type-check if without else in let binding emits unit assignment" =
+  match compile_string "let x: int | string = 1; let y = if (x is int) { x + 1 }; y" with
+  | Ok code ->
+      not (string_contains code "func()")
+      && string_contains code "switch x_typed := x.(type)"
+      && string_contains code "y = struct{}{}"
+  | Error _ -> false
+
+let%test "type-check statement if preserves explicit return without IIFE" =
+  match compile_string "let f = fn(x: int | string) -> int { if (x is int) { return 1 }; return 0 }; f(1)" with
+  | Ok code ->
+      not (string_contains code "func() int64")
+      && string_contains code "switch x_typed := x.(type)"
+      && string_contains code "return int64(1)"
+  | Error _ -> false
+
+let%test "match expression statement emits without IIFE" =
+  match compile_string "match 1 { 1: 10 _: 20 }" with
+  | Ok code -> not (string_contains code "func() int64") && string_contains code "switch __scrutinee"
   | Error _ -> false
 
 let%test "record spread emits without IIFE" =
