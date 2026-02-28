@@ -176,7 +176,12 @@ and parse_type_atom (p : parser) : (parser * AST.type_expr, parser) result =
     (* Function type: fn(int, string) -> bool *)
     let* p2 = expect_peek p Token.LParen in
     let* p3, param_types = parse_type_expr_list (next_token p2) in
-    let* p4 = expect_peek p3 Token.RParen in
+    let* p4 =
+      if curr_token_is p3 Token.RParen then
+        Ok p3
+      else
+        expect_peek p3 Token.RParen
+    in
     let* p5 = expect_peek p4 Token.Arrow in
     let* p6, return_type = parse_type_expr (next_token p5) in
     Ok (p6, AST.TArrow (param_types, return_type))
@@ -191,7 +196,7 @@ and parse_type_atom (p : parser) : (parser * AST.type_expr, parser) result =
         if curr_token_is lp2 Token.Comma then
           collect_params lp2 new_params
         else if curr_token_is lp2 Token.RParen then
-          Ok (next_token lp2, new_params)
+          Ok (lp2, new_params)
         else
           Error (peek_error lp2 Token.RParen)
       in
@@ -204,8 +209,7 @@ and parse_type_atom (p : parser) : (parser * AST.type_expr, parser) result =
       let p3 = next_token p2 in
       if curr_token_is p3 Token.Arrow then
         (* Single-param function: (int) -> bool *)
-        let* p4 = expect_peek p3 Token.Arrow in
-        let* p5, return_type = parse_type_expr (next_token p4) in
+        let* p5, return_type = parse_type_expr (next_token p3) in
         Ok (p5, AST.TArrow ([ first ], return_type))
       else
         (* Just grouping: (int) or (int | string) *)
@@ -2419,6 +2423,40 @@ let%test "parse simple type alias" =
               &&
               match alias_def.alias_body with
               | AST.TCon "int" -> true
+              | _ -> false)
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
+let%test "parse type alias with function type body" =
+  let input = "type endo = fn(int) -> int" in
+  let lexer = Lexer.init input in
+  match parse_program (init lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ stmt ] -> (
+          match stmt.stmt with
+          | AST.TypeAlias alias_def -> (
+              match alias_def.alias_body with
+              | AST.TArrow ([ AST.TCon "int" ], AST.TCon "int") -> true
+              | _ -> false)
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
+let%test "parse function parameter annotation with function type" =
+  let input = "let apply = fn(f: fn(int) -> int, x: int) -> int { f(x) }" in
+  let lexer = Lexer.init input in
+  match parse_program (init lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ stmt ] -> (
+          match stmt.stmt with
+          | AST.Let { value = { expr = AST.Function fn; _ }; _ } -> (
+              match fn.params with
+              | [ ("f", Some (AST.TArrow ([ AST.TCon "int" ], AST.TCon "int"))); ("x", Some (AST.TCon "int")) ]
+                ->
+                  true
               | _ -> false)
           | _ -> false)
       | _ -> false)
