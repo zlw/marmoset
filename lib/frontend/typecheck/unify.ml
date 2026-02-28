@@ -49,8 +49,12 @@ let rec unify (type1 : mono_type) (type2 : mono_type) : (substitution, unify_err
   | TVar var, other -> bind_variable var other
   (* Type variable on right - bind it *)
   | other, TVar var -> bind_variable var other
-  (* Function types - unify argument and return types (effect bit ignored for now) *)
-  | TFun (arg1, ret1, _), TFun (arg2, ret2, _) -> unify_two_pairs (arg1, arg2) (ret1, ret2)
+  (* Function types - effects must match exactly. *)
+  | TFun (arg1, ret1, eff1), TFun (arg2, ret2, eff2) ->
+      if eff1 = eff2 then
+        unify_two_pairs (arg1, arg2) (ret1, ret2)
+      else
+        Error (TypeMismatch (type1, type2))
   (* Array types - unify element types *)
   | TArray elem1, TArray elem2 -> unify elem1 elem2
   (* Hash types - unify key and value types *)
@@ -326,6 +330,8 @@ let%test "unify functions with shared variable" =
       let t1' = apply_substitution subst t1 in
       let t2' = apply_substitution subst t2 in
       t1' = t2' && t1' = tfun TInt TInt
+
+let%test "fail unify pure and effectful function types" = fails_to_unify (tfun TInt TInt) (tfun_eff TInt TInt)
 
 let%test "unify arrays" = unifies_to (TArray (TVar "a")) (TArray TInt) [ ("a", TInt) ]
 

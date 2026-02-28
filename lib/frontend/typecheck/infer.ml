@@ -1201,12 +1201,18 @@ and body_has_effectful_call (type_map : type_map) (stmt : AST.statement) : bool 
   | AST.Block stmts -> List.exists (body_has_effectful_call type_map) stmts
   | AST.EnumDef _ | AST.TraitDef _ | AST.ImplDef _ | AST.DeriveDef _ | AST.TypeAlias _ -> false
 
+and type_may_be_effectful_callable (typ : mono_type) : bool =
+  match typ with
+  | TFun (_, _, true) -> true
+  | TUnion members -> List.exists type_may_be_effectful_callable members
+  | _ -> false
+
 and expr_has_effectful_call (type_map : type_map) (expr : AST.expression) : bool =
   match expr.expr with
   | AST.Call (func, args) ->
       let func_is_effectful =
         match Hashtbl.find_opt type_map func.id with
-        | Some (TFun (_, _, true)) -> true
+        | Some typ -> type_may_be_effectful_callable typ
         | _ -> false
       in
       func_is_effectful
@@ -1405,11 +1411,14 @@ and infer_function_with_annotations type_map env generics_opt params return_anno
                   | Error _e -> Error (error_at_stmt (ReturnTypeMismatch (expected_ret_type, body_type')) body)
                   | Ok subst2 ->
                       let final_subst = compose_substitution subst subst2 in
-                      let final_body_type = apply_substitution subst2 body_type' in
+                      (* Expose the annotation surface type, not the wider inferred body type.
+                         In particular, keep trait-object projection rows opaque so callers
+                         cannot recover extra fields by unification side effects. *)
+                      let final_return_type = expected_ret_type in
                       (* Type checking is automatic via unification above *)
                       let param_types' = List.map (apply_substitution final_subst) param_types in
                       let func_type =
-                        List.fold_right (fun param_t acc -> mk_fun param_t acc) param_types' final_body_type
+                        List.fold_right (fun param_t acc -> mk_fun param_t acc) param_types' final_return_type
                       in
                       Ok (final_subst, func_type)
                 else
@@ -1429,13 +1438,27 @@ and infer_call type_map env func args =
       | Error e -> Error e
       | Ok (subst2, arg_types) -> (
           let func_type' = apply_substitution subst2 func_type in
-          (* Create expected function type: arg1 -> arg2 -> ... -> result *)
-          let result_type = fresh_type_var () in
-          let expected_func_type = List.fold_right (fun arg_t acc -> tfun arg_t acc) arg_types result_type in
-          (* Unify actual function type with expected *)
-          match unify func_type' expected_func_type with
+          (* Create expected function type: arg1 -> arg2 -> ... -> result.
+             Try pure first, then effectful, so calls accept both arrow kinds. *)
+          let fresh_result_type () = fresh_type_var () in
+          let expected_func_type_for is_effectful result_type =
+            List.fold_right (fun arg_t acc -> TFun (arg_t, acc, is_effectful)) arg_types result_type
+          in
+          let call_result =
+            let result_type_pure = fresh_result_type () in
+            let expected_pure = expected_func_type_for false result_type_pure in
+            match unify func_type' expected_pure with
+            | Ok subst3 -> Ok (subst3, result_type_pure)
+            | Error pure_err ->
+                let result_type_eff = fresh_result_type () in
+                let expected_eff = expected_func_type_for true result_type_eff in
+                (match unify func_type' expected_eff with
+                | Ok subst3 -> Ok (subst3, result_type_eff)
+                | Error _ -> Error pure_err)
+          in
+          match call_result with
           | Error e -> Error (error_at (UnificationError e) func)
-          | Ok subst3 -> (
+          | Ok (subst3, result_type) -> (
               let final_subst = compose_substitution subst2 subst3 in
               (* Phase 4.3+: Verify trait constraints are satisfied.
                  When calling a constrained generic function like fn[a: show](x: a),
@@ -2546,6 +2569,31 @@ module Test = struct
         has_needle 0
     | _ -> false
 
+  let%test "function return trait-object annotation projects away extra fields" =
+    match
+      infer_string
+        "trait named { name: string }\nlet mk = fn(n: int) -> named { { name: \"alice\", age: n } }\nlet x = mk(42)\nx.age"
+    with
+    | Error { kind = ConstructorError msg; _ } ->
+        let needle = "Record field 'age' not found in type" in
+        let len_msg = String.length msg in
+        let len_needle = String.length needle in
+        let rec has_needle i =
+          if i + len_needle > len_msg then
+            false
+          else if String.sub msg i len_needle = needle then
+            true
+          else
+            has_needle (i + 1)
+        in
+        has_needle 0
+    | _ -> false
+
+  let%test "function return trait-object annotation keeps projected fields accessible" =
+    infers_to
+      "trait named { name: string }\nlet mk = fn(n: int) -> named { { name: \"alice\", age: n } }\nlet x = mk(42)\nx.name"
+      TString
+
   let%test "explicit row-polymorphic annotation is rejected in v1" =
     reset_fresh_counter ();
     match infer_string "let get_x = fn(r: { x: int, ...row }) -> int { r.x }" with
@@ -3022,6 +3070,22 @@ f"
     let code = "let eff = fn(x: int) => int { x }; fn(y: int) -> int { if (true) { eff(y) } else { 0 } }" in
     match infer_string code with
     | Error { kind = PurityViolation _; _ } -> true
+    | _ -> false
+
+  let%test "pure function calling maybe-effectful function from union is error" =
+    let code =
+      "fn(flag: bool) -> int { let f = if (flag) { fn(x: int) -> int { x + 1 } } else { fn(x: int) => int { x } }; f(1) }"
+    in
+    match infer_string code with
+    | Error { kind = PurityViolation _; _ } -> true
+    | _ -> false
+
+  let%test "unannotated function calling maybe-effectful union infers effectful" =
+    let code =
+      "fn(flag: bool) { let f = if (flag) { fn(x: int) -> int { x + 1 } } else { fn(x: int) => int { x } }; f(1) }"
+    in
+    match infer_string code with
+    | Ok (_, _, TFun (TBool, TInt, true)) -> true
     | _ -> false
 
   let%test "pure function defining effectful function is ok" =
