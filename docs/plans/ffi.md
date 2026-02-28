@@ -338,7 +338,7 @@ func main() {
 
 1. **`int64` vs `int`** — mitigated by generated Go wrapper functions that handle conversion
 2. **Extern qualifier collision with module names** — mitigated by validation in registry, clear error
-3. **`.` disambiguation** — extern qualifiers checked alongside module qualifiers in the resolver
+3. **`.` disambiguation** — extern qualifiers are priority 6 in the unified dot resolution order defined in `docs/plans/module-system.md` (after value > module > enum > trait > type alias)
 4. **Generated Go size** — wrappers only emitted for functions actually called
 5. **Go function signatures evolving** — wrapper modules are user-maintained, updated as needed
 

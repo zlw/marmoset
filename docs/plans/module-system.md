@@ -2,7 +2,7 @@
 
 ## Maintenance
 
-- Last verified: 2026-02-28
+- Last verified: 2026-03-01
 - Implementation status: Planning (not started)
 - Update trigger: Any module/import/export syntax or compilation model change
 
@@ -66,12 +66,29 @@ let p: point = { x: 1, y: 2 }  # direct-imported type
 let c = math.color.red          # qualified enum constructor
 ```
 
-**Disambiguation:** When the resolver sees `a.b`, it checks:
-1. Is `a` an imported module name? → module access
-2. Is `a` an enum name? → enum constructor (existing behavior)
-3. Otherwise → field access / method call (existing behavior)
+**Unified Dot Resolution Order:** `.` is used for field access, method calls, enum constructors, module access, trait-qualified calls, inherent-qualified calls, and extern package access. The resolver uses a single, ordered resolution chain. This is the canonical reference — other plans (`docs/plans/function-model.md`, `docs/plans/ffi.md`) defer to this order.
 
-This works because module names are known from import statements, and imports are processed before any expression resolution.
+Given `a.b` or `a.b(args)` where `a` is a bare identifier:
+
+| Priority | Check | Result | Example |
+|----------|-------|--------|---------|
+| 1 | Is `a` a value binding in scope? | Infer type, then field access or method call | `x.show()`, `record.field` |
+| 2 | Is `a` an imported module name? | Module-qualified access | `math.add(1, 2)` |
+| 3 | Is `a` an enum name? | Sub-resolve (see below) | `option.some(42)`, `result.map(r, f)` |
+| 4 | Is `a` a trait name? | Trait-qualified call | `show.show(x)` |
+| 5 | Is `a` a type alias name? | Inherent-qualified call | `point.distance(p)` |
+| 6 | Is `a` an extern package qualifier? | FFI call | `fmt.Println(s)` |
+| 7 | None of the above | Error: unknown identifier | |
+
+**Enum sub-resolution (priority 3):** When `a` is an enum name, check `b`:
+- Is `b` a variant of enum `a`? → enum constructor (`option.some(42)`, `option.none`)
+- Is `b` an inherent method on type `a`? → inherent-qualified call (`result.map(r, f)`)
+- Neither → error: unknown variant or method
+
+**Key rules:**
+- Value bindings always win (priority 1) — a local variable shadows a module/enum/trait name
+- Enum variants are checked before inherent methods — constructors take priority within the enum namespace
+- This order is stable across all plans and must be implemented as one centralized resolution function
 
 **FFI-relevant:** The `import` keyword and `.`-separated paths establish the convention that FFI declarations will also follow.
 
@@ -362,7 +379,7 @@ These are flagged but NOT designed here. FFI is a separate plan.
 1. **Expression ID collision across files** — mitigated by per-file ID offset ranges in Phase M2
 2. **`infer_program` refactor scope** — the biggest risk. Currently monolithic with global mutable state. Refactoring to accept external env/registries touches the core of type checking. Mitigated by: keeping the internal inference logic unchanged, only changing how state is initialized and extracted.
 3. **Enum/type name collision across modules** — mitigated by module-prefixed registry keys
-4. **`.` disambiguation** — resolved by import context: module names are known from import statements before expression resolution runs. If `math` is an imported module, `math.add` is module access; otherwise it's field access/method call (existing behavior unchanged).
+4. **`.` disambiguation** — resolved by the unified dot resolution order defined in the Syntax Design section. Value bindings win first, then modules, then enums (variants before inherent methods), then traits, then type aliases, then extern qualifiers. All plans reference this single order.
 5. **Monomorphization across modules** — emitter runs whole-program across all checked modules. `collect_insts_stmt` sees all call sites from all modules.
 6. **Trait impl visibility** — impls must be visible across modules even without explicit import (coherence). The per-module approach must auto-inject upstream impls into each module's registry.
 

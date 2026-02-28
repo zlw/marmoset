@@ -72,7 +72,7 @@ Create tests that:
 - Go code compiles to binary ✅
 - Binary runs and produces correct output ✅
 
-Example location: `test/test_typecheck_and_codegen.sh` has integration tests
+Example location: `test/integration/*.sh` has integration tests
 
 ### Test File Organization:
 
@@ -127,9 +127,9 @@ Phase 2: Complete type annotation validation and parameter type parsing
 - Fixed return type extraction for multi-parameter functions
 
 **Testing:**
-✅ 25+ inline tests in checker.ml
-✅ 17 integration tests pass (15/17 before fixing parser bugs)
-✅ No Phase 1 regressions
+✅ Relevant unit tests pass
+✅ Relevant integration suite(s) pass
+✅ No regressions in touched areas
 ```
 
 ### Known Issues/Bugs:
@@ -188,14 +188,15 @@ make build
 # Unit tests (inline let%test in .ml files)
 make unit
 
-# All integration tests (compiles .mr files, runs Go binaries, checks output)
-make integration
-
-# Single integration suite
+# Focused integration run (preferred during development)
+make integration <subset>
+# Examples:
 make integration traits
-make integration records
+make integration 04_traits_inherent.sh
 make integration codegen
-# Available suites: core, unions, enums, traits, records, codegen, runtime
+
+# Full integration run (required before final handoff)
+make integration
 
 # Both unit + integration
 make unit && make integration
@@ -238,8 +239,6 @@ Always use `git add <specific files>` — never `git add .` or `git add -A`.
 
 - `feature/description` - New features
 - `fix/description` - Bug fixes
-- `typecheck` - Type system work (current)
-- `codegen` - Code generation work
 
 ### Before Push:
 
@@ -301,7 +300,7 @@ Then create PR or notify of changes.
 ### Adding a New Phase:
 
 1. Create tests first (they should fail)
-2. Update this CLAUDE.md with phase info
+2. Update `docs/plans/*.md` and/or `docs/features/*.md` if semantics change
 3. Implement features incrementally
 4. Each commit should pass all tests
 5. Only update README when feature is 100% done and tested
