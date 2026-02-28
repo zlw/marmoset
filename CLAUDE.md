@@ -208,6 +208,15 @@ dune runtest
 
 ## 6. Git Workflow
 
+### Worktree Rule — CRITICAL
+
+**NEVER switch worktrees mid-task.** If a session starts in a worktree (or the main tree), ALL commits for that task MUST go to that same tree. Do NOT create a second worktree and commit there, then try to cherry-pick later. This splits history and causes merge pain.
+
+- Check which tree you're in at the start: `git worktree list`
+- If the user's working branch is in the main tree, work there
+- If a worktree already exists with the right branch, use it
+- Do NOT start a fresh worktree when an existing branch has prior commits for the same task
+
 ### NEVER Commit These:
 
 - `docs/review/` — analysis/progress tracking docs (local only)
