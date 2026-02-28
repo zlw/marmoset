@@ -60,6 +60,12 @@ let mangle_func_name name (param_types : Types.mono_type list) : string =
   else
     name ^ "_" ^ (List.map mangle_type param_types |> String.concat "_")
 
+let fingerprint_types (types : Types.mono_type list) : string =
+  if types = [] then
+    "unit"
+  else
+    String.concat "__" (List.map mangle_type types)
+
 (* ============================================================
    Function Registry - track function definitions and instantiations
    ============================================================ *)
@@ -82,6 +88,7 @@ type instantiation = {
   func_arity : int;
   concrete_only_mode : bool;
   concrete_types : Types.mono_type list; (* param types *)
+  type_fingerprint : string;
   return_type : Types.mono_type;
 }
 
@@ -104,16 +111,51 @@ module InstSet = Set.Make (struct
           let c = compare a.func_arity b.func_arity in
           if c <> 0 then
             c
+        else
+          let c = compare a.concrete_only_mode b.concrete_only_mode in
+          if c <> 0 then
+            c
           else
-            let c = compare a.concrete_only_mode b.concrete_only_mode in
-            if c <> 0 then
-              c
-            else
-              let c = compare a.concrete_types b.concrete_types in
-              if c <> 0 then
-                c
-              else
-                compare a.return_type b.return_type
+            String.compare a.type_fingerprint b.type_fingerprint
+end)
+
+type impl_instantiation = {
+  trait_name : string;
+  method_name : string;
+  module_path : string;
+  concrete_only_mode : bool;
+  for_type : Types.mono_type;
+  type_fingerprint : string;
+}
+
+type impl_inst_payload = {
+  param_names : string list;
+  param_types : Types.mono_type list;
+  return_type : Types.mono_type;
+  body_expr : AST.expression;
+}
+
+module ImplInstSet = Set.Make (struct
+  type t = impl_instantiation
+
+  let compare a b =
+    let c = String.compare a.module_path b.module_path in
+    if c <> 0 then
+      c
+    else
+      let c = compare a.concrete_only_mode b.concrete_only_mode in
+      if c <> 0 then
+        c
+      else
+        let c = String.compare a.trait_name b.trait_name in
+        if c <> 0 then
+          c
+        else
+          let c = String.compare a.method_name b.method_name in
+          if c <> 0 then
+            c
+          else
+            String.compare a.type_fingerprint b.type_fingerprint
 end)
 
 (* Set to track enum type instantiations *)
@@ -126,6 +168,8 @@ end)
 type mono_state = {
   mutable func_defs : func_def list;
   mutable instantiations : InstSet.t;
+  mutable impl_instantiations : ImplInstSet.t;
+  impl_inst_payloads : (string, impl_inst_payload) Hashtbl.t;
   mutable enum_insts : EnumInstSet.t; (* Track which enum types we need to generate *)
   mutable name_counter : int;
   module_path : string; (* namespace identity for future module-aware builds *)
@@ -143,6 +187,8 @@ let create_mono_state ?(module_path = "main") ?(concrete_only = true) () =
   {
     func_defs = [];
     instantiations = InstSet.empty;
+    impl_instantiations = ImplInstSet.empty;
+    impl_inst_payloads = Hashtbl.create 32;
     enum_insts = EnumInstSet.empty;
     name_counter = 0;
     module_path;
@@ -577,6 +623,45 @@ let infer_return_type_from_signature
   | Some subst -> Some (Types.apply_substitution subst declared_return_type)
   | None -> None
 
+let same_instantiation_identity (a : instantiation) (b : instantiation) : bool =
+  a.module_path = b.module_path
+  && a.func_expr_id = b.func_expr_id
+  && a.func_name = b.func_name
+  && a.func_arity = b.func_arity
+  && a.concrete_only_mode = b.concrete_only_mode
+  && a.type_fingerprint = b.type_fingerprint
+
+let add_instantiation (state : mono_state) (inst : instantiation) : unit =
+  let existing =
+    InstSet.elements state.instantiations |> List.find_opt (fun candidate -> same_instantiation_identity candidate inst)
+  in
+  match existing with
+  | Some existing_inst when existing_inst.return_type <> inst.return_type ->
+      failwith
+        (Printf.sprintf
+           "Codegen error: inconsistent return type for instantiation '%s' (expr id %d, fingerprint %s): %s vs %s"
+           inst.func_name inst.func_expr_id inst.type_fingerprint (Types.to_string existing_inst.return_type)
+           (Types.to_string inst.return_type))
+  | _ -> state.instantiations <- InstSet.add inst state.instantiations
+
+let impl_inst_payload_key (inst : impl_instantiation) : string =
+  Printf.sprintf "%s|%b|%s|%s|%s" inst.module_path inst.concrete_only_mode inst.trait_name inst.method_name
+    inst.type_fingerprint
+
+let add_impl_instantiation (state : mono_state) (inst : impl_instantiation) (payload : impl_inst_payload) : unit =
+  let payload_key = impl_inst_payload_key inst in
+  let existing_payload_opt = Hashtbl.find_opt state.impl_inst_payloads payload_key in
+  (match existing_payload_opt with
+  | Some existing when existing.return_type <> payload.return_type ->
+      failwith
+        (Printf.sprintf
+           "Codegen error: inconsistent return type for impl instantiation '%s.%s' (%s): %s vs %s"
+           inst.trait_name inst.method_name inst.type_fingerprint (Types.to_string existing.return_type)
+           (Types.to_string payload.return_type))
+  | Some _ -> ()
+  | None -> Hashtbl.replace state.impl_inst_payloads payload_key payload);
+  state.impl_instantiations <- ImplInstSet.add inst state.impl_instantiations
+
 let rec collect_insts_stmt
     (state : mono_state) (type_map : Infer.type_map) (env : Infer.type_env) (stmt : AST.statement) :
     Infer.type_env =
@@ -603,20 +688,53 @@ let rec collect_insts_stmt
   | AST.EnumDef _ -> env (* Enums are compile-time only *)
   | AST.TraitDef _ | AST.DeriveDef _ | AST.TypeAlias _ -> env
   | AST.ImplDef impl ->
-      (* Collect instantiations from impl method bodies.
-         This ensures helper functions referenced only in impls are emitted. *)
+      let for_type = Annotation.type_expr_to_mono_type impl.impl_for_type in
+      let for_type_fingerprint = fingerprint_types [ for_type ] in
+      (* Register impl methods in the same cache-driven pipeline.
+         Also collect helper function instantiations from method bodies. *)
       List.iter
         (fun (m : AST.method_impl) ->
-          let method_env =
-            List.fold_left
-              (fun env_acc (param_name, param_type_opt) ->
-                match param_type_opt with
-                | Some param_type ->
-                    let mono_type = Annotation.type_expr_to_mono_type param_type in
-                    Infer.TypeEnv.add param_name (Types.Forall ([], mono_type)) env_acc
-                | None -> env_acc)
-              env m.impl_method_params
+          let method_param_names, method_param_types =
+            List.split
+              (List.map
+                 (fun (param_name, param_type_opt) ->
+                   match param_type_opt with
+                   | Some param_type -> (param_name, Annotation.type_expr_to_mono_type param_type)
+                   | None ->
+                       failwith
+                         (Printf.sprintf
+                            "Codegen error: impl %s.%s parameter '%s' is missing a type annotation"
+                            impl.impl_trait_name m.impl_method_name param_name))
+                 m.impl_method_params)
           in
+          let return_type =
+            match m.impl_method_return_type with
+            | Some ret_ann -> Annotation.type_expr_to_mono_type ret_ann
+            | None ->
+                failwith
+                  (Printf.sprintf "Codegen error: impl %s.%s is missing a return type annotation"
+                     impl.impl_trait_name m.impl_method_name)
+          in
+          let impl_inst =
+            {
+              trait_name = impl.impl_trait_name;
+              method_name = m.impl_method_name;
+              module_path = state.module_path;
+              concrete_only_mode = state.concrete_only;
+              for_type;
+              type_fingerprint = for_type_fingerprint;
+            }
+          in
+          let payload =
+            {
+              param_names = method_param_names;
+              param_types = method_param_types;
+              return_type;
+              body_expr = m.impl_method_body;
+            }
+          in
+          add_impl_instantiation state impl_inst payload;
+          let method_env = add_param_bindings env method_param_names method_param_types in
           collect_insts_expr state type_map method_env m.impl_method_body)
         impl.impl_methods;
       env
@@ -696,10 +814,11 @@ and collect_insts_expr
                   func_arity = arity;
                   concrete_only_mode = state.concrete_only;
                   concrete_types = concrete_param_types;
+                  type_fingerprint = fingerprint_types concrete_param_types;
                   return_type;
                 }
               in
-              state.instantiations <- InstSet.add inst state.instantiations)
+              add_instantiation state inst)
       | _ -> ())
   | AST.Array elements -> List.iter (collect_insts_expr state type_map env) elements
   | AST.Hash pairs ->
@@ -2777,74 +2896,44 @@ let emit_enum_type (state : mono_state) (enum_name : string) (type_args : Types.
    Generate Trait Implementation Functions
    ============================================================ *)
 
-(* Emit a single trait impl method as a Go function *)
-let emit_impl_method
+let emit_cached_impl_method
     (state : emit_state)
     (type_map : Infer.type_map)
     (typed_env : Infer.type_env)
-    (impl : AST.impl_def)
-    (method_impl : AST.method_impl) : string =
-  let trait_name = impl.impl_trait_name in
-  let method_name = method_impl.impl_method_name in
-
-  (* Convert impl_for_type from AST type_expr to mono_type *)
-  let for_type = Annotation.type_expr_to_mono_type impl.impl_for_type in
-
-  (* Generate mangled function name: trait_method_type *)
-  let type_suffix = mangle_type for_type in
-  let func_name = Printf.sprintf "%s_%s_%s" trait_name method_name type_suffix in
-
-  (* Convert parameter types *)
-  let method_params_with_types =
-    List.map
-      (fun (param_name, opt_type) ->
-        match opt_type with
-        | Some type_expr ->
-            let mono_type = Annotation.type_expr_to_mono_type type_expr in
-            (param_name, mono_type)
-        | None -> failwith "Impl method parameters must have type annotations")
-      method_impl.impl_method_params
+    (impl_inst : impl_instantiation) : string =
+  let payload_key = impl_inst_payload_key impl_inst in
+  let payload =
+    match Hashtbl.find_opt state.mono.impl_inst_payloads payload_key with
+    | Some p -> p
+    | None ->
+        failwith
+          (Printf.sprintf "Codegen error: missing payload for impl instantiation '%s.%s' (%s)"
+             impl_inst.trait_name impl_inst.method_name impl_inst.type_fingerprint)
   in
-  let param_strs =
-    List.map
-      (fun (param_name, mono_type) ->
-        let go_type = type_to_go state.mono mono_type in
-        Printf.sprintf "%s %s" param_name go_type)
-      method_params_with_types
-  in
-  let params_str = String.concat ", " param_strs in
-
-  (* Convert return type *)
-  let return_type_mono, return_type_str =
-    match method_impl.impl_method_return_type with
-    | Some type_expr ->
-        let mono_type = Annotation.type_expr_to_mono_type type_expr in
-        (mono_type, type_to_go state.mono mono_type)
-    | None -> failwith "Impl method must have return type annotation"
-  in
-
-  (* Method body types come from the global type_map produced by typechecker. *)
-  let method_env =
-    List.fold_left
-      (fun env_acc (param_name, mono_type) -> Infer.TypeEnv.add param_name (Types.Forall ([], mono_type)) env_acc)
-      typed_env method_params_with_types
-  in
-  let body_expr = method_impl.impl_method_body in
-  let inferred_body_type = get_type type_map body_expr in
-  if not (Annotation.check_annotation return_type_mono inferred_body_type) then
+  if List.length payload.param_names <> List.length payload.param_types then
     failwith
-      (Printf.sprintf "Codegen error: impl %s.%s return type mismatch: expected %s, got %s" trait_name method_name
-         (Types.to_string return_type_mono) (Types.to_string inferred_body_type));
-  let body_str = emit_expr state type_map method_env body_expr in
+      (Printf.sprintf "Codegen error: impl %s.%s has %d params but %d param types"
+         impl_inst.trait_name impl_inst.method_name (List.length payload.param_names)
+         (List.length payload.param_types));
 
-  (* Generate the Go function *)
+  let type_suffix = mangle_type impl_inst.for_type in
+  let func_name = Printf.sprintf "%s_%s_%s" impl_inst.trait_name impl_inst.method_name type_suffix in
+  let params_str =
+    List.map2
+      (fun name typ -> Printf.sprintf "%s %s" name (type_to_go state.mono typ))
+      payload.param_names payload.param_types
+    |> String.concat ", "
+  in
+  let return_type_str = type_to_go state.mono payload.return_type in
+  let method_env = add_param_bindings typed_env payload.param_names payload.param_types in
+  let inferred_body_type = get_type type_map payload.body_expr in
+  if not (Annotation.check_annotation payload.return_type inferred_body_type) then
+    failwith
+      (Printf.sprintf "Codegen error: impl %s.%s return type mismatch: expected %s, got %s"
+         impl_inst.trait_name impl_inst.method_name (Types.to_string payload.return_type)
+         (Types.to_string inferred_body_type));
+  let body_str = emit_expr state type_map method_env payload.body_expr in
   Printf.sprintf "func %s(%s) %s {\n\treturn %s\n}\n" func_name params_str return_type_str body_str
-
-(* Emit all methods for a trait impl *)
-let emit_impl_def
-    (state : emit_state) (type_map : Infer.type_map) (typed_env : Infer.type_env) (impl : AST.impl_def) : string =
-  let method_funcs = List.map (emit_impl_method state type_map typed_env impl) impl.impl_methods in
-  String.concat "\n" method_funcs
 
 (* Extract all ImplDef statements from a program *)
 let collect_impl_defs (program : AST.program) : AST.impl_def list =
@@ -3126,8 +3215,11 @@ let emit_program_with_typed_env (type_map : Infer.type_map) (typed_env : Infer.t
   let builtin_impl_funcs = emit_builtin_impls program in
 
   (* Generate trait impl functions *)
-  let impl_defs = collect_impl_defs program in
-  let impl_funcs = List.map (emit_impl_def emit_state type_map typed_env) impl_defs |> String.concat "\n" in
+  let impl_funcs =
+    ImplInstSet.elements mono_state.impl_instantiations
+    |> List.map (emit_cached_impl_method emit_state type_map typed_env)
+    |> String.concat "\n"
+  in
   let derived_impl_funcs = emit_registry_derived_impls emit_state program in
 
   (* Emit main body *)
@@ -3371,6 +3463,7 @@ let%test "instantiation identity includes module path" =
       func_arity = 1;
       concrete_only_mode = true;
       concrete_types = [ Types.TInt ];
+      type_fingerprint = fingerprint_types [ Types.TInt ];
       return_type = Types.TInt;
     }
   in
@@ -3736,6 +3829,79 @@ let%test "mangle_type errors on nested TVar" =
   match try Some (mangle_type (Types.TArray (Types.TVar "x"))) with Failure _ -> None with
   | Some _ -> false
   | None -> true
+
+let%test "fingerprint_types is stable and explicit" =
+  fingerprint_types [ Types.TInt; Types.TArray Types.TBool ] = "int64__arr_bool"
+
+let%test "instantiation identity ignores return type" =
+  let mk return_type =
+    {
+      func_name = "id";
+      module_path = "main";
+      func_expr_id = 99;
+      func_arity = 1;
+      concrete_only_mode = true;
+      concrete_types = [ Types.TInt ];
+      type_fingerprint = fingerprint_types [ Types.TInt ];
+      return_type;
+    }
+  in
+  let set = InstSet.empty |> InstSet.add (mk Types.TInt) |> InstSet.add (mk Types.TBool) in
+  InstSet.cardinal set = 1
+
+let%test "add_instantiation rejects conflicting return type for same identity" =
+  let state = create_mono_state () in
+  let mk return_type =
+    {
+      func_name = "id";
+      module_path = "main";
+      func_expr_id = 100;
+      func_arity = 1;
+      concrete_only_mode = true;
+      concrete_types = [ Types.TInt ];
+      type_fingerprint = fingerprint_types [ Types.TInt ];
+      return_type;
+    }
+  in
+  add_instantiation state (mk Types.TInt);
+  match
+    try
+      add_instantiation state (mk Types.TBool);
+      None
+    with Failure msg -> Some msg
+  with
+  | None -> false
+  | Some msg -> string_contains msg "inconsistent return type for instantiation"
+
+let%test "collect_insts registers impl methods in cache" =
+  let source =
+    {|
+trait show[a] {
+  fn show(x: a) -> string
+}
+impl show for int {
+  fn show(x: int) -> string { "int!" }
+}
+puts(1.show())
+|}
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      Typecheck.Trait_registry.clear ();
+      Typecheck.Builtins.init_builtin_impls ())
+    (fun () ->
+      match Syntax.Parser.parse source with
+      | Error _ -> false
+      | Ok program -> (
+          let env = Typecheck.Builtins.prelude_env () in
+          match Typecheck.Checker.check_program_with_annotations ~source ~env program with
+          | Error _ -> false
+          | Ok { environment = typed_env; type_map; _ } ->
+              let mono_state = create_mono_state () in
+              List.iter (collect_funcs_stmt mono_state) program;
+              ignore (List.fold_left (collect_insts_stmt mono_state type_map) typed_env program);
+              ImplInstSet.cardinal mono_state.impl_instantiations = 1
+              && Hashtbl.length mono_state.impl_inst_payloads = 1))
 
 let%test "trait impl methods are emitted exactly once" =
   (* Builtin show_show_int64 should appear exactly once as a function definition *)
