@@ -90,6 +90,24 @@ jobs:
           npm install
           npm run compile
 
+  jetbrains-compile:
+    name: JetBrains Plugin
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout tree
+        uses: actions/checkout@v4
+
+      - name: Set-up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Build plugin
+        working-directory: tools/jetbrains-marmoset
+        run: ./gradlew buildPlugin
+
   integration-linux:
     name: Integration (Linux)
     runs-on: ubuntu-latest
