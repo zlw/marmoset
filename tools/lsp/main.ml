@@ -1,6 +1,6 @@
 (* Marmoset LSP server entry point *)
 
-module Lsp_t = Lsp.Types
+module Lsp_t = Marmoset_lsp.Lsp_compat.Types
 
 (* Per-document cached analysis *)
 type cached_doc = { analysis : Marmoset_lsp.Doc_state.analysis_result }

@@ -1,6 +1,6 @@
 (* Document analysis: parse + typecheck → diagnostics *)
 
-module Lsp_t = Lsp.Types
+module Lsp_t = Lsp_compat.Types
 module Checker = Marmoset.Lib.Checker
 module Parser = Marmoset.Lib.Parser
 module Infer = Marmoset.Lib.Infer

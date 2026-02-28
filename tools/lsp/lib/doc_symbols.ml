@@ -1,6 +1,6 @@
 (* Document symbols: extract top-level definitions for outline view *)
 
-module Lsp_t = Lsp.Types
+module Lsp_t = Lsp_compat.Types
 module Ast = Marmoset.Lib.Ast
 
 (* Extract document symbols from a program's top-level statements *)

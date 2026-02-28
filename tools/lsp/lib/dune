@@ -1,6 +1,13 @@
 (library
  (name marmoset_lsp)
- (libraries marmoset linol)
+ (libraries
+  marmoset
+  linol
+  (select
+   lsp_compat.ml
+   from
+   (lsp -> lsp_compat.standalone.ml)
+   (-> lsp_compat.bundled.ml)))
  (inline_tests
   (flags (-verbose)))
  (preprocess

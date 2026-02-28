@@ -1,6 +1,6 @@
 (* Hover: find expression at cursor and show its type *)
 
-module Lsp_t = Lsp.Types
+module Lsp_t = Lsp_compat.Types
 module Ast = Marmoset.Lib.Ast
 module Infer = Marmoset.Lib.Infer
 module Types = Marmoset.Lib.Types

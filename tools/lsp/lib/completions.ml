@@ -1,6 +1,6 @@
 (* Completions: offer names from the type environment and keywords *)
 
-module Lsp_t = Lsp.Types
+module Lsp_t = Lsp_compat.Types
 module Infer = Marmoset.Lib.Infer
 module Types = Marmoset.Lib.Types
 

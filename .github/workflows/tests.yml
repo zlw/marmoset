@@ -39,15 +39,6 @@ jobs:
 
       - run: opam install . --deps-only --with-test
 
-      # Debug: show what lsp/linol libraries are actually installed
-      - name: Show installed library layout
-        run: |
-          opam exec -- ocamlfind list | grep -iE '^(linol|lsp|jsonrpc)' || true
-          ls -la "$(opam var lib)/lsp/" 2>/dev/null | head -5 || echo "No /lib/lsp/ directory"
-          ls -la "$(opam var lib)/linol/" 2>/dev/null || true
-          ls -la "$(opam var lib)/linol/lsp/" 2>/dev/null || echo "No /lib/linol/lsp/ directory"
-          cat "$(opam var lib)/linol/META" 2>/dev/null || true
-
       - run: opam exec -- make unit lsp
 
   treesitter:
@@ -70,6 +61,7 @@ jobs:
         working-directory: tools/tree-sitter-marmoset
         run: |
           npm install
+          tree-sitter generate
           npm test
 
   vscode-compile:

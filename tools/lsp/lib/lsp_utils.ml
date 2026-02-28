@@ -1,6 +1,6 @@
 (* LSP ↔ Marmoset position/range conversion utilities *)
 
-module Lsp_t = Lsp.Types
+module Lsp_t = Lsp_compat.Types
 
 (* Convert Marmoset Source_loc.loc (1-indexed) to LSP Position (0-indexed) *)
 let loc_to_position (loc : Marmoset.Lib.Source_loc.loc) : Lsp_t.Position.t =
