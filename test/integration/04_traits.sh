@@ -152,6 +152,33 @@ impl named for int {
 puts(1)
 EOF
 
+expect_build "Field-only trait object rejects access to non-projected field" "Record field 'age' not found in type" << 'EOF'
+trait named {
+  name: string
+}
+let x: named = { name: "alice", age: 1 }
+puts(x.age)
+EOF
+
+expect_build "Type-alias to field-only trait object still hides non-projected fields" "Record field 'age' not found in type" << 'EOF'
+trait named {
+  name: string
+}
+type named_alias = named
+let x: named_alias = { name: "alice", age: 1 }
+puts(x.age)
+EOF
+
+expect_build "Field-only trait object in list still hides non-projected fields" "Record field 'age' not found in type" << 'EOF'
+trait named {
+  name: string
+}
+let a: named = { name: "alice", age: 1 }
+let b: named = { name: "bob", age: 2 }
+let xs: list[named] = [a, b]
+puts(xs[0].age)
+EOF
+
 expect_build "Field-only trait object does not allow method dispatch" "No method 'show' found for type" << 'EOF'
 trait named {
   name: string

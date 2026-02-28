@@ -142,6 +142,9 @@ and unify_records
             match unify r1 r2 with
             | Error e -> Error e
             | Ok subst2 -> compose_with_common subst2
+          else if r1 = r2 then
+            (* Avoid recursive row equations like {x, ...r} ~ {y, ...r}. *)
+            Error (TypeMismatch (TRecord (fields1, row1), TRecord (fields2, row2)))
           else if only1' = [] then
             match unify r1 (TRecord (only2', Some r2)) with
             | Error e -> Error e
@@ -346,6 +349,12 @@ let%test "unify open record with closed record" =
   match unify r1 r2 with
   | Ok subst -> apply_substitution subst (TRowVar "r") = TRecord ([ { name = "y"; typ = TString } ], None)
   | Error _ -> false
+
+let%test "fail unify open records sharing row var with conflicting extra fields" =
+  let row = Some (TRowVar "r") in
+  let r1 = TRecord ([ { name = "x"; typ = TInt } ], row) in
+  let r2 = TRecord ([ { name = "y"; typ = TString } ], row) in
+  fails_to_unify r1 r2
 
 let%test "fail unify missing required record field" =
   let r1 = TRecord ([ { name = "x"; typ = TInt }; { name = "y"; typ = TString } ], None) in

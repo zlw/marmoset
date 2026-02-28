@@ -244,6 +244,37 @@ let fresh_row_var () : mono_type =
   counter := n + 1;
   TRowVar ("r" ^ string_of_int n)
 
+let has_prefix (s : string) (prefix : string) : bool =
+  let len_s = String.length s in
+  let len_prefix = String.length prefix in
+  len_s >= len_prefix && String.sub s 0 len_prefix = prefix
+
+let rec row_vars_in_type (mono : mono_type) : TypeVarSet.t =
+  match mono with
+  | TInt | TFloat | TBool | TString | TNull | TVar _ -> TypeVarSet.empty
+  | TFun (arg, ret, _) -> TypeVarSet.union (row_vars_in_type arg) (row_vars_in_type ret)
+  | TArray element -> row_vars_in_type element
+  | THash (k, v) -> TypeVarSet.union (row_vars_in_type k) (row_vars_in_type v)
+  | TRecord (fields, row) ->
+      let field_rows =
+        List.fold_left
+          (fun acc (f : Types.record_field_type) -> TypeVarSet.union acc (row_vars_in_type f.typ))
+          TypeVarSet.empty fields
+      in
+      let row_rows =
+        match row with
+        | None -> TypeVarSet.empty
+        | Some r -> row_vars_in_type r
+      in
+      TypeVarSet.union field_rows row_rows
+  | TRowVar name -> TypeVarSet.singleton name
+  | TUnion members -> List.fold_left (fun acc t -> TypeVarSet.union acc (row_vars_in_type t)) TypeVarSet.empty members
+  | TEnum (_, args) -> List.fold_left (fun acc t -> TypeVarSet.union acc (row_vars_in_type t)) TypeVarSet.empty args
+
+let is_trait_object_row = function
+  | TRowVar row_name -> has_prefix row_name "trait_obj_row_"
+  | _ -> false
+
 (* Reset counter (useful for testing to get predictable names) *)
 let reset_fresh_counter () =
   let state = !active_inference_state in
@@ -261,8 +292,17 @@ let reset_fresh_counter () =
 *)
 
 let instantiate (Forall (quantified_vars, mono)) : mono_type =
-  (* Create a substitution mapping each quantified var to a fresh var *)
-  let subst = List.map (fun var -> (var, fresh_type_var ())) quantified_vars in
+  let row_vars = row_vars_in_type mono in
+  (* Preserve kinding: quantified row vars must instantiate to fresh row vars, not plain type vars. *)
+  let subst =
+    List.map
+      (fun var ->
+        if TypeVarSet.mem var row_vars then
+          (var, fresh_row_var ())
+        else
+          (var, fresh_type_var ()))
+      quantified_vars
+  in
   (* Copy constraints from old type vars to new ones *)
   List.iter
     (fun (old_var, new_type) ->
@@ -290,7 +330,10 @@ let instantiate (Forall (quantified_vars, mono)) : mono_type =
 let generalize (env : type_env) (mono : mono_type) : poly_type =
   let free_in_mono = free_type_vars mono in
   let free_in_env = free_type_vars_env env in
-  let can_generalize = TypeVarSet.diff free_in_mono free_in_env in
+  let can_generalize =
+    TypeVarSet.diff free_in_mono free_in_env
+    |> TypeVarSet.filter (fun var_name -> not (has_prefix var_name "trait_obj_row_"))
+  in
   Forall (TypeVarSet.elements can_generalize, mono)
 
 (* ============================================================
@@ -569,11 +612,19 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                       | Some field -> Ok (subst1, field.typ)
                       | None -> (
                           match row with
-                          | Some row_var -> (
-                              (* Open row: the field may live in the tail; constrain it. *)
+                          | Some row_var when is_trait_object_row row_var ->
+                              Error
+                                (error_at
+                                   (ConstructorError
+                                      (Printf.sprintf "Record field '%s' not found in type %s" variant_name
+                                         (Types.to_string receiver_type')))
+                                   expr)
+                          | Some _ -> (
+                              (* Open row: the field may live in the tail; constrain it.
+                                 Use a fresh tail variable to avoid recursive same-row constraints. *)
                               let field_type = fresh_type_var () in
                               let expected =
-                                TRecord ([ { name = variant_name; typ = field_type } ], Some row_var)
+                                TRecord ([ { name = variant_name; typ = field_type } ], Some (fresh_row_var ()))
                               in
                               match unify receiver_type' expected with
                               | Error e -> Error (error_at (UnificationError e) expr)
@@ -2475,6 +2526,26 @@ module Test = struct
   let%test "infer generic type alias annotation" =
     infers_to "type box[a] = { value: a }; let p: box[string] = { value: \"ok\" }; p.value" TString
 
+  let%test "field-only trait object rejects access to fields outside trait projection" =
+    match
+      infer_string
+        "trait named { name: string }\nlet x: named = { name: \"alice\", age: 42 }\nx.age"
+    with
+    | Error { kind = ConstructorError msg; _ } ->
+        let needle = "Record field 'age' not found in type" in
+        let len_msg = String.length msg in
+        let len_needle = String.length needle in
+        let rec has_needle i =
+          if i + len_needle > len_msg then
+            false
+          else if String.sub msg i len_needle = needle then
+            true
+          else
+            has_needle (i + 1)
+        in
+        has_needle 0
+    | _ -> false
+
   let%test "explicit row-polymorphic annotation is rejected in v1" =
     reset_fresh_counter ();
     match infer_string "let get_x = fn(r: { x: int, ...row }) -> int { r.x }" with
@@ -2483,6 +2554,11 @@ module Test = struct
 
   let%test "field access on unannotated record param works" =
     infers_to "let p = { x: 5, y: 10, z: 20 }; let get_x = fn(r) { r.x }; get_x(p)" TInt
+
+  let%test "row-polymorphic field accessor can be reused across distinct record tails" =
+    infers_to
+      "let get_x = fn(r) { r.x }; let a = get_x({ x: 1, y: true }); let b = get_x({ x: 2, z: \"s\" }); a + b"
+      TInt
 
   let%test "multiple field access with closed record annotation works" =
     infers_to "let p = { x: 5, y: 10 }; let sum_xy = fn(r: { x: int, y: int }) { r.x + r.y }; sum_xy(p)" TInt
