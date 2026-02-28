@@ -14,8 +14,29 @@ release:
 	@cp -f _build/default/bin/main.exe ./marmoset
 	@chmod +x ./marmoset
 
+# Ensure dune uses this directory as root (needed for worktrees)
+DUNE_ROOT := --root $(CURDIR)
+
+# Unit tests — run all or a specific component
+# Usage: make unit              (all)
+#        make unit compiler     (compiler only)
+#        make unit lsp          (LSP only)
+UNIT_TARGETS := compiler lsp
+UNIT_COMPONENT := $(filter $(UNIT_TARGETS),$(MAKECMDGOALS))
+
 unit:
-	dune runtest --force
+ifeq ($(UNIT_COMPONENT),compiler)
+	dune runtest $(DUNE_ROOT) lib/ --force
+else ifeq ($(UNIT_COMPONENT),lsp)
+	dune runtest $(DUNE_ROOT) tools/lsp/ --force
+else
+	dune runtest $(DUNE_ROOT) --force
+endif
+
+ifneq (,$(filter unit,$(MAKECMDGOALS)))
+$(filter $(UNIT_TARGETS),$(MAKECMDGOALS)):
+	@:
+endif
 
 integration:
 	@./test/integration.sh $(filter-out integration,$(MAKECMDGOALS))
@@ -32,10 +53,13 @@ repl:
 run: release
 	@./marmoset $(file)
 
-lsp:
-	dune build tools/lsp/main.exe
+lsp-build:
+	dune build $(DUNE_ROOT) tools/lsp/main.exe
 	@cp -f _build/default/tools/lsp/main.exe ./marmoset-lsp
 	@chmod +x ./marmoset-lsp
+
+treesitter:
+	cd tools/tree-sitter-marmoset && npm test
 
 watch:
 	dune runtest -w --force

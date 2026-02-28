@@ -7,8 +7,8 @@ on:
   pull_request:
 
 jobs:
-  unit:
-    name: Unit (Linux)
+  compiler-unit:
+    name: Compiler Unit Tests
     runs-on: ubuntu-latest
 
     steps:
@@ -22,9 +22,74 @@ jobs:
 
       - run: opam install . --deps-only --with-test
 
-      - run: opam exec -- dune build
+      - run: opam exec -- make unit compiler
 
-      - run: opam exec -- dune runtest
+  lsp-unit:
+    name: LSP Unit Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout tree
+        uses: actions/checkout@v4
+
+      - name: Set-up OCaml
+        uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: 5.2.x
+
+      - run: opam install . --deps-only --with-test
+
+      # Debug: show what lsp/linol libraries are actually installed
+      - name: Show installed library layout
+        run: |
+          opam exec -- ocamlfind list | grep -iE '^(linol|lsp|jsonrpc)' || true
+          ls -la "$(opam var lib)/lsp/" 2>/dev/null | head -5 || echo "No /lib/lsp/ directory"
+          ls -la "$(opam var lib)/linol/" 2>/dev/null || true
+          ls -la "$(opam var lib)/linol/lsp/" 2>/dev/null || echo "No /lib/linol/lsp/ directory"
+          cat "$(opam var lib)/linol/META" 2>/dev/null || true
+
+      - run: opam exec -- make unit lsp
+
+  treesitter:
+    name: Tree-sitter Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout tree
+        uses: actions/checkout@v4
+
+      - name: Set-up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install tree-sitter CLI
+        run: npm install -g tree-sitter-cli
+
+      - name: Run grammar tests
+        working-directory: tools/tree-sitter-marmoset
+        run: |
+          npm install
+          npm test
+
+  vscode-compile:
+    name: VS Code Extension
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout tree
+        uses: actions/checkout@v4
+
+      - name: Set-up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Compile extension
+        working-directory: tools/vscode-marmoset
+        run: |
+          npm install
+          npm run compile
 
   integration-linux:
     name: Integration (Linux)

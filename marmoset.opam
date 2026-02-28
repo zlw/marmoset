@@ -15,7 +15,6 @@ depends: [
   "ocaml"
   "ppx_deriving"
   "ppx_inline_test"
-  "lsp" {>= "1.17" & < "1.18"}
   "linol"
   "linol-lwt"
   "odoc" {with-doc}
