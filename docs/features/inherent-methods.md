@@ -109,6 +109,9 @@ Why this choice:
 ## Current Limitations
 
 - Inherent method signatures only support `->` (pure arrow) in parser; `=>` is rejected.
+- Generic inherent impl targets are supported when type parameters appear in the impl target (for example `impl result[a, b] { ... }`).
+- Inherent generic targets currently do not have explicit per-impl constraint syntax (unlike trait generic impls).
+- Generic inherent method call sites still require receiver type arguments to be concretely determined by program context before codegen specialization.
 - Receiver shorthand (`self`) is not a dedicated syntax form; receiver is an explicit first parameter.
 - No module-scoped visibility/override policy yet (single-program scope today).
 - Integer literal dot-call parsing can still be ambiguous in some lexer edge cases; use `(5).method()` when needed.

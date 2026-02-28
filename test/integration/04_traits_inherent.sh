@@ -406,6 +406,49 @@ let p: point = { x: 1 }
 puts(p.nonexistent())
 EOF
 
+expect_runtime_output "Generic inherent impl target on enum type works" "true
+false" << 'EOF'
+enum result[a, b] {
+  success(a)
+  failure(b)
+}
+impl result[a, b] {
+  fn is_success(r: result[a, b]) -> bool {
+    match r {
+      result.success(_): true
+      result.failure(_): false
+    }
+  }
+}
+let ok = if (true) { result.success(1) } else { result.failure("x") }
+let err = if (false) { result.success(1) } else { result.failure("x") }
+puts(ok.is_success())
+puts(err.is_success())
+EOF
+
+expect_runtime_output "Concrete inherent impl target takes precedence over matching generic target" "concrete
+failure" << 'EOF'
+enum result[a, b] {
+  success(a)
+  failure(b)
+}
+impl result[a, b] {
+  fn tag(r: result[a, b]) -> string {
+    match r {
+      result.success(_): "success"
+      result.failure(_): "failure"
+    }
+  }
+}
+impl result[int, string] {
+  fn tag(r: result[int, string]) -> string { "concrete" }
+}
+let x = if (true) { result.success(1) } else { result.failure("boom") }
+let y = if (false) { result.success(true) } else { result.failure("boom") }
+puts(x.tag())
+puts(y.tag())
+EOF
+
 # ===========================================================================
 # GROUP 10: Interaction edge cases and bug detectors
 # ===========================================================================

@@ -1292,17 +1292,18 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                         else
                           `Error msg)
               in
-              let inherent_method =
+              let inherent_method_result =
                 match receiver_type' with
-                | TVar _ -> None
-                | _ -> Inherent_registry.lookup_method receiver_type' method_name
+                | TVar _ -> Ok None
+                | _ -> Inherent_registry.resolve_method receiver_type' method_name
               in
               match method_lookup_result with
               | `Error msg -> Error (error_at (ConstructorError msg) expr)
               | `Not_found -> (
-                  match inherent_method with
-                  | Some inherent_sig -> infer_with_method_signature inherent_sig InherentMethod
-                  | None ->
+                  match inherent_method_result with
+                  | Error msg -> Error (error_at (ConstructorError msg) expr)
+                  | Ok (Some inherent_sig) -> infer_with_method_signature inherent_sig InherentMethod
+                  | Ok None ->
                       let field_expr =
                         AST.mk_expr ~pos:expr.pos ~end_pos:expr.end_pos ~file_id:expr.file_id
                           (AST.FieldAccess (receiver, method_name))
@@ -1321,8 +1322,9 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                                      (Types.to_string receiver_type')))
                                expr)))
               | `Found (trait_name, method_sig) -> (
-                  match inherent_method with
-                  | Some _ ->
+                  match inherent_method_result with
+                  | Error msg -> Error (error_at (ConstructorError msg) expr)
+                  | Ok (Some _) ->
                       Error
                         (error_at
                            (ConstructorError
@@ -1330,7 +1332,7 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                                  "Ambiguous method '%s' for type %s (provided by inherent method and trait '%s')"
                                  method_name (Types.to_string receiver_type') trait_name))
                            expr)
-                  | None ->
+                  | Ok None ->
                   let instantiated_method_sig =
                     match Trait_registry.lookup_trait trait_name with
                     | None -> method_sig
@@ -2553,8 +2555,53 @@ and infer_statement type_map env stmt =
                         Trait_registry.register_impl ~source:impl_source impl_def;
                         Ok (method_subst, TNull)))))
   | AST.InherentImplDef { inherent_for_type; inherent_methods } -> (
+      let is_known_type_name (name : string) : bool =
+        match name with
+        | "int" | "float" | "bool" | "string" | "unit" -> true
+        | _ ->
+            Enum_registry.lookup name <> None
+            || Annotation.lookup_type_alias name <> None
+            || Trait_registry.lookup_trait name <> None
+      in
+      let rec collect_target_generic_names ~(in_head : bool) (te : AST.type_expr) (acc : StringSet.t) :
+          StringSet.t =
+        match te with
+        | AST.TCon name ->
+            if in_head || is_known_type_name name then
+              acc
+            else
+              StringSet.add name acc
+        | AST.TVar name ->
+            if in_head then
+              acc
+            else
+              StringSet.add name acc
+        | AST.TApp (_con_name, args) ->
+            List.fold_left (fun acc' arg -> collect_target_generic_names ~in_head:false arg acc') acc args
+        | AST.TArrow (params, ret) ->
+            let acc' =
+              List.fold_left
+                (fun acc' param -> collect_target_generic_names ~in_head:false param acc')
+                acc params
+            in
+            collect_target_generic_names ~in_head:false ret acc'
+        | AST.TUnion members ->
+            List.fold_left
+              (fun acc' member -> collect_target_generic_names ~in_head:false member acc')
+              acc members
+        | AST.TRecord (fields, _row_var) ->
+            List.fold_left
+              (fun acc' (field : AST.record_type_field) ->
+                collect_target_generic_names ~in_head:false field.field_type acc')
+              acc fields
+      in
+      let generic_type_bindings : (string * mono_type) list =
+        collect_target_generic_names ~in_head:true inherent_for_type StringSet.empty
+        |> StringSet.elements
+        |> List.map (fun name -> (name, TVar name))
+      in
       let convert_inherent_type_expr (te : AST.type_expr) : (mono_type, infer_error) result =
-        try Ok (Annotation.type_expr_to_mono_type te) with
+        try Ok (Annotation.type_expr_to_mono_type_with generic_type_bindings te) with
         | Annotation.Open_row_rejected msg -> Error (error (ConstructorError msg))
         | Failure msg -> Error (error (ConstructorError msg))
       in
@@ -2633,6 +2680,21 @@ and infer_statement type_map env stmt =
                                      (ReturnTypeMismatch (return_type', inferred_body_type'))
                                      m.impl_method_body))))
           in
+          let rec has_type_vars (t : mono_type) : bool =
+            match t with
+            | TVar _ | TRowVar _ -> true
+            | TFun (arg, ret, _) -> has_type_vars arg || has_type_vars ret
+            | TArray elem -> has_type_vars elem
+            | THash (k, v) -> has_type_vars k || has_type_vars v
+            | TRecord (fields, row) ->
+                List.exists (fun (f : Types.record_field_type) -> has_type_vars f.typ) fields
+                ||
+                (match row with
+                | None -> false
+                | Some r -> has_type_vars r)
+            | TEnum (_, args) | TUnion args -> List.exists has_type_vars args
+            | TInt | TFloat | TBool | TString | TNull -> false
+          in
           let rec register_methods subst_acc = function
             | [] -> Ok (subst_acc, TNull)
             | m :: rest -> (
@@ -2656,6 +2718,13 @@ and infer_statement type_map env stmt =
                       | (_, first_param_type) :: _ -> canonicalize_mono_type first_param_type
                     in
                     let target_type = canonicalize_mono_type inherent_for_type_mono in
+                    let register_current_method () =
+                      match Inherent_registry.register_method ~for_type:target_type method_sig with
+                      | Error msg -> Error (error (ConstructorError msg))
+                      | Ok () ->
+                          let subst' = compose_substitution subst_acc method_subst in
+                          register_methods subst' rest
+                    in
                     (match Unify.unify receiver_type target_type with
                     | Error _ ->
                         Error
@@ -2666,29 +2735,31 @@ and infer_statement type_map env stmt =
                                    method_sig.method_name (Types.to_string receiver_type)
                                    (Types.to_string target_type))))
                     | Ok _ ->
-                        (match Trait_registry.resolve_method target_type method_sig.method_name with
-                        | Ok (trait_name, _) ->
-                            Error
-                              (error
-                                 (ConstructorError
-                                    (Printf.sprintf
-                                       "Inherent method '%s' for type %s collides with trait method from trait '%s'"
-                                       method_sig.method_name (Types.to_string target_type) trait_name)))
-                        | Error msg ->
-                            if starts_with "No method '" msg then
-                              (match Inherent_registry.register_method ~for_type:target_type method_sig with
-                              | Error msg -> Error (error (ConstructorError msg))
-                              | Ok () ->
-                                  let subst' = compose_substitution subst_acc method_subst in
-                                  register_methods subst' rest)
-                            else
+                        if has_type_vars target_type then
+                          (* Generic inherent targets are allowed. Trait collisions are resolved at
+                             call sites using the concrete receiver type. *)
+                          register_current_method ()
+                        else
+                          match Trait_registry.resolve_method target_type method_sig.method_name with
+                          | Ok (trait_name, _) ->
                               Error
                                 (error
                                    (ConstructorError
                                       (Printf.sprintf
-                                         "Cannot define inherent method '%s' for type %s due to trait method \
-                                          ambiguity: %s"
-                                         method_sig.method_name (Types.to_string target_type) msg))))))
+                                         "Inherent method '%s' for type %s collides with trait method from trait \
+                                         '%s'"
+                                         method_sig.method_name (Types.to_string target_type) trait_name)))
+                          | Error msg ->
+                              if starts_with "No method '" msg then
+                                register_current_method ()
+                              else
+                                Error
+                                  (error
+                                     (ConstructorError
+                                        (Printf.sprintf
+                                           "Cannot define inherent method '%s' for type %s due to trait method \
+                                            ambiguity: %s"
+                                           method_sig.method_name (Types.to_string target_type) msg)))))
           in
           register_methods empty_substitution inherent_methods)
   | AST.DeriveDef { derive_traits; derive_for_type } ->
