@@ -37,6 +37,14 @@ class marmoset_server =
                   ()));
         foldingRangeProvider = Some (`Bool true);
         selectionRangeProvider = Some (`Bool true);
+        signatureHelpProvider =
+          Some
+            (Lsp_t.SignatureHelpOptions.create ~triggerCharacters:[ "("; "," ]
+               ~retriggerCharacters:[ ")" ] ());
+        codeActionProvider =
+          Some
+            (`CodeActionOptions
+               (Lsp_t.CodeActionOptions.create ~codeActionKinds:[ Lsp_t.CodeActionKind.QuickFix ] ()));
       }
 
     method! config_sync_opts =
@@ -210,6 +218,39 @@ class marmoset_server =
                       let range = Lsp_t.Range.create ~start:pos ~end_:pos in
                       Lsp_t.SelectionRange.create ~range ())
                     p.positions
+            in
+            Lwt.return result
+        | Linol_lsp.Client_request.SignatureHelp p ->
+            let uri = p.textDocument.uri in
+            let empty = Lsp_t.SignatureHelp.create ~signatures:[] () in
+            let result =
+              match Hashtbl.find_opt analysis_cache uri with
+              | None -> empty
+              | Some { analysis } -> (
+                  match (analysis.program, analysis.type_map, analysis.environment) with
+                  | Some prog, Some tm, Some env -> (
+                      match
+                        Signature_help.signature_help ~source:analysis.source ~program:prog ~type_map:tm
+                          ~environment:env ~line:p.position.line ~character:p.position.character
+                      with
+                      | Some sh -> sh
+                      | None -> empty)
+                  | _ -> empty)
+            in
+            Lwt.return result
+        | Linol_lsp.Client_request.CodeAction p ->
+            let uri = p.textDocument.uri in
+            let result =
+              match Hashtbl.find_opt analysis_cache uri with
+              | None -> None
+              | Some { analysis } -> (
+                  match (analysis.program, analysis.type_map) with
+                  | Some prog, Some tm ->
+                      let actions =
+                        Code_actions.compute ~source:analysis.source ~uri ~program:prog ~type_map:tm ~range:p.range
+                      in
+                      Some (List.map (fun a -> `CodeAction a) actions)
+                  | _ -> None)
             in
             Lwt.return result
         | _ -> super#on_request_unhandled ~notify_back ~id req
