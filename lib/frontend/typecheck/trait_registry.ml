@@ -75,13 +75,28 @@ let lookup_trait_fields (trait_name : string) : record_field_type list option =
 let trait_kind (trait_name : string) : trait_kind option =
   match Hashtbl.find_opt trait_registry trait_name with
   | None -> None
-  | Some trait_def ->
-      let has_methods = trait_def.trait_methods <> [] in
-      let has_fields =
-        match lookup_trait_fields trait_name with
-        | Some fields when fields <> [] -> true
-        | _ -> false
+  | Some _ ->
+      let visited : (string, unit) Hashtbl.t = Hashtbl.create 16 in
+      let rec accumulate (name : string) ((has_fields, has_methods) : bool * bool) : bool * bool =
+        if Hashtbl.mem visited name then
+          (has_fields, has_methods)
+        else (
+          Hashtbl.replace visited name ();
+          match Hashtbl.find_opt trait_registry name with
+          | None -> (has_fields, has_methods)
+          | Some trait_def ->
+              let has_methods' = has_methods || trait_def.trait_methods <> [] in
+              let has_fields' =
+                has_fields
+                ||
+                match lookup_trait_fields name with
+                | Some fields when fields <> [] -> true
+                | _ -> false
+              in
+              List.fold_left (fun acc super_name -> accumulate super_name acc) (has_fields', has_methods')
+                trait_def.trait_supertraits)
       in
+      let has_fields, has_methods = accumulate trait_name (false, false) in
       if has_fields && has_methods then
         Some Mixed
       else if has_fields then
@@ -476,6 +491,42 @@ let%test "register and lookup trait" =
   match lookup_trait "show" with
   | None -> false
   | Some def -> def.trait_name = "show" && List.length def.trait_methods = 1
+
+let%test "trait_kind includes field-only supertraits" =
+  clear ();
+  register_trait { trait_name = "named"; trait_type_param = None; trait_supertraits = []; trait_methods = [] };
+  set_trait_fields "named" [ { name = "name"; typ = TString } ];
+  register_trait { trait_name = "alias"; trait_type_param = None; trait_supertraits = [ "named" ]; trait_methods = [] };
+  trait_kind "alias" = Some FieldOnly
+
+let%test "trait_kind includes method supertraits" =
+  clear ();
+  register_trait
+    {
+      trait_name = "show";
+      trait_type_param = Some "a";
+      trait_supertraits = [];
+      trait_methods =
+        [ { method_name = "show"; method_params = [ ("x", TVar "a") ]; method_return_type = TString } ];
+    };
+  register_trait { trait_name = "display"; trait_type_param = None; trait_supertraits = [ "show" ]; trait_methods = [] };
+  trait_kind "display" = Some MethodOnly
+
+let%test "trait_kind becomes mixed with field and method supertraits" =
+  clear ();
+  register_trait { trait_name = "named"; trait_type_param = None; trait_supertraits = []; trait_methods = [] };
+  set_trait_fields "named" [ { name = "name"; typ = TString } ];
+  register_trait
+    {
+      trait_name = "show";
+      trait_type_param = Some "a";
+      trait_supertraits = [];
+      trait_methods =
+        [ { method_name = "show"; method_params = [ ("x", TVar "a") ]; method_return_type = TString } ];
+    };
+  register_trait
+    { trait_name = "named_show"; trait_type_param = None; trait_supertraits = [ "named"; "show" ]; trait_methods = [] };
+  trait_kind "named_show" = Some Mixed
 
 let%test "validate_trait_def - duplicate methods" =
   clear ();

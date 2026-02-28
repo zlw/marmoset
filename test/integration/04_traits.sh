@@ -82,6 +82,54 @@ trait show[a] {
 let x: show = 1
 EOF
 
+expect_build "Mixed trait as type is rejected" "method and mixed trait objects are not supported in this phase" << 'EOF'
+trait named_show[a] {
+  name: string
+  fn show(x: a) -> string
+}
+let x: named_show = { name: "alice" }
+EOF
+
+expect_build "Generic field-only trait as type is rejected" "generic field-only trait objects are not supported in this phase" << 'EOF'
+trait tagged[a] {
+  tag: a
+}
+let x: tagged = { tag: 1 }
+EOF
+
+expect_build "Trait with method supertrait is rejected in type position" "method and mixed trait objects are not supported in this phase" << 'EOF'
+trait named {
+  name: string
+}
+trait show[a] {
+  fn show(x: a) -> string
+}
+trait named_show: named + show {
+}
+let x: named_show = { name: "alice" }
+EOF
+
+expect_build "Field-only trait conflicting supertrait fields are rejected" "conflicting types across supertraits" << 'EOF'
+trait has_int {
+  x: int
+}
+trait has_string {
+  x: string
+}
+trait bad: has_int + has_string {
+}
+let x: bad = { x: 1 }
+EOF
+
+expect_build "Impl block for field-only trait is rejected" "field-only and cannot have impl blocks" << 'EOF'
+trait named {
+  name: string
+}
+impl named for int {
+}
+puts(1)
+EOF
+
 test_case "Trait with supertraits" \
     'trait eq[a] {
        fn eq(x: a, y: a) -> bool

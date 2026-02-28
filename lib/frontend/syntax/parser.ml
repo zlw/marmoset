@@ -512,7 +512,9 @@ and parse_trait_definition (p : parser) : (parser * AST.statement, parser) resul
 
   (* Parse optional supertraits: : eq or : eq + show *)
   let* p4, supertraits =
-    if peek_token_is p3 Token.Colon then
+    if curr_token_is p3 Token.Colon then
+      parse_supertrait_list (next_token p3)
+    else if peek_token_is p3 Token.Colon then
       parse_supertrait_list (next_token (next_token p3))
     else if curr_token_is p3 Token.LBrace then
       Ok (p3, [])
@@ -2103,6 +2105,24 @@ let%test "parse trait with multiple supertraits" =
               trait_def.name = "hashable"
               && trait_def.type_param = Some "a"
               && trait_def.supertraits = [ "eq"; "show" ]
+              && trait_def.fields = []
+              && List.length trait_def.methods = 1
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
+let%test "parse non-generic trait with supertraits" =
+  let input = "trait named_show: named + show { fn label() -> string }" in
+  let lexer = Lexer.init input in
+  match parse_program (init lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ stmt ] -> (
+          match stmt.stmt with
+          | AST.TraitDef trait_def ->
+              trait_def.name = "named_show"
+              && trait_def.type_param = None
+              && trait_def.supertraits = [ "named"; "show" ]
               && trait_def.fields = []
               && List.length trait_def.methods = 1
           | _ -> false)
