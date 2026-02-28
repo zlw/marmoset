@@ -13,7 +13,7 @@ let debounce_delay = 0.3
 
 class marmoset_server =
   object (self)
-    inherit Linol_lwt.Jsonrpc2.server
+    inherit Linol_lwt.Jsonrpc2.server as super
     val analysis_cache : (Lsp_t.DocumentUri.t, cached_doc) Hashtbl.t = Hashtbl.create 16
     val pending_analyses : (Lsp_t.DocumentUri.t, pending) Hashtbl.t = Hashtbl.create 16
     method spawn_query_handler f = Linol_lwt.spawn f
@@ -23,6 +23,21 @@ class marmoset_server =
     method! config_symbol = Some (`Bool true)
     method! config_inlay_hints = Some (`Bool true)
     method! config_completion = Some (Lsp_t.CompletionOptions.create ~triggerCharacters:[ "." ] ())
+
+    method! config_modify_capabilities c =
+      {
+        c with
+        semanticTokensProvider =
+          Some
+            (`SemanticTokensOptions
+               (Lsp_t.SemanticTokensOptions.create ~full:(`Bool true)
+                  ~legend:
+                    (Lsp_t.SemanticTokensLegend.create ~tokenTypes:Semantic_tokens.token_types
+                       ~tokenModifiers:Semantic_tokens.token_modifiers)
+                  ()));
+        foldingRangeProvider = Some (`Bool true);
+        selectionRangeProvider = Some (`Bool true);
+      }
 
     method! config_sync_opts =
       Lsp_t.TextDocumentSyncOptions.create ~change:Lsp_t.TextDocumentSyncKind.Full ~openClose:true
@@ -146,6 +161,46 @@ class marmoset_server =
             | None -> None)
       in
       Lwt.return result
+
+    method! on_request_unhandled : type r. notify_back:_ -> id:_ -> r Linol_lsp.Client_request.t -> r Lwt.t =
+      fun ~notify_back ~id req ->
+        match req with
+        | Linol_lsp.Client_request.SemanticTokensFull p ->
+            let uri = p.textDocument.uri in
+            let result =
+              match Hashtbl.find_opt analysis_cache uri with
+              | None -> None
+              | Some { analysis } -> (
+                  match (analysis.program, analysis.type_map, analysis.environment) with
+                  | Some prog, Some tm, Some env ->
+                      Semantic_tokens.compute ~source:analysis.source ~program:prog ~type_map:tm ~environment:env
+                  | _ -> None)
+            in
+            Lwt.return result
+        | Linol_lsp.Client_request.TextDocumentFoldingRange p ->
+            let uri = p.textDocument.uri in
+            let result =
+              match Hashtbl.find_opt analysis_cache uri with
+              | None -> None
+              | Some { analysis } -> (
+                  match analysis.program with
+                  | Some prog -> Some (Folding_ranges.compute ~source:analysis.source ~program:prog)
+                  | None -> None)
+            in
+            Lwt.return result
+        | Linol_lsp.Client_request.SelectionRange p ->
+            let uri = p.textDocument.uri in
+            let result =
+              match Hashtbl.find_opt analysis_cache uri with
+              | None -> []
+              | Some { analysis } -> (
+                  match analysis.program with
+                  | Some prog ->
+                      Selection_ranges.compute ~source:analysis.source ~program:prog ~positions:p.positions
+                  | None -> [])
+            in
+            Lwt.return result
+        | _ -> super#on_request_unhandled ~notify_back ~id req
   end
 
 let run () =
