@@ -112,5 +112,35 @@ match 1 {
 puts(1)
 EOF
 
+expect_build "Instantiation fingerprint collision surfaces as clear codegen error" "Codegen error: instantiation fingerprint collision for 'id'" << 'EOF'
+enum b { v }
+enum a[t] { wrap(t) }
+enum a_b { wrap }
+let id = fn(x) { x }
+let x = id(a_b.wrap)
+let y = id(a.wrap(b.v))
+puts(1)
+EOF
+
+expect_build "Impl instantiation fingerprint collision surfaces as clear codegen error" "Codegen error: impl instantiation fingerprint collision for 'show.show'" << 'EOF'
+enum b { v }
+enum a[t] { wrap(t) }
+enum a_b { wrap }
+trait show[x] { fn show(x: x) -> string }
+impl show for a_b {
+  fn show(x: a_b) -> string { "AB" }
+}
+impl show for a[b] {
+  fn show(x: a[b]) -> string { "AofB" }
+}
+puts(1)
+EOF
+
+expect_build "Duplicate top-level function name/arity is rejected with clear diagnostic" "Codegen error: ambiguous function reference 'f/1'" << 'EOF'
+let f = fn(x: int) -> int { x + 1 }
+let f = fn(x: int) -> int { x + 2 }
+puts(f(1))
+EOF
+
 
 suite_end

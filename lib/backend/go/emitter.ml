@@ -566,11 +566,13 @@ let lookup_func_def_for_call (state : mono_state) (name : string) (arity : int) 
   | [] -> None
   | [ fd ] -> Some fd
   | many ->
-      (* Deterministic tie-breaker for now; modules/symbol tables will refine this later. *)
-      let sorted =
-        List.sort (fun (a : func_def) (b : func_def) -> Int.compare a.func_expr_id b.func_expr_id) many
+      let ids =
+        many |> List.map (fun (fd : func_def) -> string_of_int fd.func_expr_id) |> String.concat ", "
       in
-      Some (List.hd sorted)
+      failwith
+        (Printf.sprintf
+           "Codegen error: ambiguous function reference '%s/%d': multiple function definitions share this name/arity (expr ids: %s). Rename one definition or use distinct helper names until symbol-based resolution ships."
+           name arity ids)
 
 (* Extract parameter types from a function type *)
 let rec extract_param_types n = function
@@ -636,6 +638,13 @@ let add_instantiation (state : mono_state) (inst : instantiation) : unit =
     InstSet.elements state.instantiations |> List.find_opt (fun candidate -> same_instantiation_identity candidate inst)
   in
   match existing with
+  | Some existing_inst when existing_inst.concrete_types <> inst.concrete_types ->
+      failwith
+        (Printf.sprintf
+           "Codegen error: instantiation fingerprint collision for '%s' (expr id %d, fingerprint %s): %s vs %s"
+           inst.func_name inst.func_expr_id inst.type_fingerprint
+           (String.concat ", " (List.map Types.to_string existing_inst.concrete_types))
+           (String.concat ", " (List.map Types.to_string inst.concrete_types)))
   | Some existing_inst when existing_inst.return_type <> inst.return_type ->
       failwith
         (Printf.sprintf
@@ -652,6 +661,24 @@ let add_impl_instantiation (state : mono_state) (inst : impl_instantiation) (pay
   let payload_key = impl_inst_payload_key inst in
   let existing_payload_opt = Hashtbl.find_opt state.impl_inst_payloads payload_key in
   (match existing_payload_opt with
+  | Some _existing when
+      (match ImplInstSet.find_opt inst state.impl_instantiations with
+      | Some existing_inst -> existing_inst.for_type <> inst.for_type
+      | None -> false) ->
+      failwith
+        (Printf.sprintf "Codegen error: impl instantiation fingerprint collision for '%s.%s' (%s): %s vs %s"
+           inst.trait_name inst.method_name inst.type_fingerprint
+           (match ImplInstSet.find_opt inst state.impl_instantiations with
+           | Some existing_inst -> Types.to_string existing_inst.for_type
+           | None -> "<missing>")
+           (Types.to_string inst.for_type))
+  | Some existing when existing.param_types <> payload.param_types ->
+      failwith
+        (Printf.sprintf
+           "Codegen error: inconsistent parameter types for impl instantiation '%s.%s' (%s): [%s] vs [%s]"
+           inst.trait_name inst.method_name inst.type_fingerprint
+           (String.concat ", " (List.map Types.to_string existing.param_types))
+           (String.concat ", " (List.map Types.to_string payload.param_types)))
   | Some existing when existing.return_type <> payload.return_type ->
       failwith
         (Printf.sprintf
@@ -3872,6 +3899,73 @@ let%test "add_instantiation rejects conflicting return type for same identity" =
   with
   | None -> false
   | Some msg -> string_contains msg "inconsistent return type for instantiation"
+
+let%test "add_instantiation rejects fingerprint collision with different concrete types" =
+  let state = create_mono_state () in
+  let t1 = Types.TEnum ("a_b", []) in
+  let t2 = Types.TEnum ("a", [ Types.TEnum ("b", []) ]) in
+  if fingerprint_types [ t1 ] <> fingerprint_types [ t2 ] then
+    false
+  else
+    let mk concrete_type =
+      {
+        func_name = "id";
+        module_path = "main";
+        func_expr_id = 101;
+        func_arity = 1;
+        concrete_only_mode = true;
+        concrete_types = [ concrete_type ];
+        type_fingerprint = fingerprint_types [ concrete_type ];
+        return_type = Types.TNull;
+      }
+    in
+    add_instantiation state (mk t1);
+    match
+      try
+        add_instantiation state (mk t2);
+        None
+      with Failure msg -> Some msg
+    with
+    | None -> false
+    | Some msg -> string_contains msg "instantiation fingerprint collision"
+
+let%test "add_impl_instantiation rejects fingerprint collision with different for_type" =
+  let state = create_mono_state () in
+  let t1 = Types.TEnum ("a_b", []) in
+  let t2 = Types.TEnum ("a", [ Types.TEnum ("b", []) ]) in
+  if fingerprint_types [ t1 ] <> fingerprint_types [ t2 ] then
+    false
+  else
+    let mk_inst for_type =
+      {
+        trait_name = "show";
+        method_name = "show";
+        module_path = "main";
+        concrete_only_mode = true;
+        for_type;
+        type_fingerprint = fingerprint_types [ for_type ];
+      }
+    in
+    let payload =
+      { param_names = [ "x" ]; param_types = [ Types.TInt ]; return_type = Types.TString; body_expr = AST.mk_expr (AST.String "x") }
+    in
+    add_impl_instantiation state (mk_inst t1) payload;
+    match
+      try
+        add_impl_instantiation state (mk_inst t2) payload;
+        None
+      with Failure msg -> Some msg
+    with
+    | None -> false
+    | Some msg -> string_contains msg "impl instantiation fingerprint collision"
+
+let%test "duplicate top-level function name and arity is rejected" =
+  match
+    compile_string
+      "let f = fn(x: int) -> int { x + 1 }; let f = fn(x: int) -> int { x + 2 }; let y = f(1); puts(y)"
+  with
+  | Ok _ -> false
+  | Error msg -> string_contains msg "ambiguous function reference 'f/1'"
 
 let%test "collect_insts registers impl methods in cache" =
   let source =
