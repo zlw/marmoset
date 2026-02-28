@@ -36,6 +36,12 @@ let get_x = fn(r) { r.x }
 puts(get_x(p))
 EOF
 
+expect_runtime_output "Inline record argument to wrapper function" "3" << 'EOF'
+let mk = fn(r: { x: int }) { { inner: r } }
+let o = mk({ x: 3 })
+puts(o.inner.x)
+EOF
+
 expect_runtime_output "Record pattern match" "30" << 'EOF'
 let p = { x: 10, y: 20 }
 let result = match p {

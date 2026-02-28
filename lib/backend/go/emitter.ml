@@ -561,6 +561,25 @@ let add_param_bindings
   in
   go env param_names param_types
 
+let infer_return_type_from_signature
+    (declared_param_types : Types.mono_type list)
+    (declared_return_type : Types.mono_type)
+    (concrete_param_types : Types.mono_type list) : Types.mono_type option =
+  let rec unify_params subst actual_types expected_types =
+    match (actual_types, expected_types) with
+    | [], [] -> Some subst
+    | actual :: rest_actual, expected :: rest_expected -> (
+        let actual' = Types.apply_substitution subst actual in
+        let expected' = Types.apply_substitution subst expected in
+        match Unify.unify actual' expected' with
+        | Ok new_subst -> unify_params (Types.compose_substitution new_subst subst) rest_actual rest_expected
+        | Error _ -> None)
+    | _ -> None
+  in
+  match unify_params Types.empty_substitution declared_param_types concrete_param_types with
+  | Some subst -> Some (Types.apply_substitution subst declared_return_type)
+  | None -> None
+
 let rec collect_insts_stmt
     (state : mono_state) (type_map : Infer.type_map) (env : Infer.type_env) (stmt : AST.statement) :
     Infer.type_env =
@@ -631,16 +650,18 @@ and collect_insts_expr
       | AST.Identifier name when is_user_func state name -> (
           let arity = List.length args in
           let func_def_opt = lookup_func_def_for_call state name arity in
+          let arg_types = List.map (get_type type_map) args in
           (* Look up the function's declared type from the environment *)
-          let func_param_types =
+          let declared_signature_opt =
             match Infer.TypeEnv.find_opt name env with
             | Some (Types.Forall (_, func_type)) ->
-                (* Extract parameter types from the function type *)
-                let declared_param_types, _ = extract_param_types arity func_type in
-                declared_param_types
-            | None ->
-                (* Fallback to argument types if function not in env *)
-                List.map (get_type type_map) args
+                extract_param_types_exact arity func_type
+            | None -> None
+          in
+          let declared_param_types, declared_return_type_opt =
+            match declared_signature_opt with
+            | Some (params, ret) -> (params, Some ret)
+            | None -> (arg_types, None)
           in
           (* Check if any declared param is a union type *)
           let has_union_param =
@@ -648,16 +669,25 @@ and collect_insts_expr
               (function
                 | Types.TUnion _ -> true
                 | _ -> false)
-              func_param_types
+              declared_param_types
           in
           (* If function has union params, use declared types; otherwise use argument types *)
-          let param_types =
+          let concrete_param_types =
             if has_union_param then
-              func_param_types
+              declared_param_types
             else
-              List.map (get_type type_map) args
+              arg_types
           in
-          let return_type = get_type type_map expr in
+          let return_type =
+            match declared_return_type_opt with
+            | Some declared_return_type -> (
+                match
+                  infer_return_type_from_signature declared_param_types declared_return_type concrete_param_types
+                with
+                | Some inferred_ret -> inferred_ret
+                | None -> get_type type_map expr)
+            | None -> get_type type_map expr
+          in
           match func_def_opt with
           | None -> ()
           | Some func_def ->
@@ -668,7 +698,7 @@ and collect_insts_expr
                   func_expr_id = func_def.func_expr_id;
                   func_arity = arity;
                   concrete_only_mode = state.concrete_only;
-                  concrete_types = param_types;
+                  concrete_types = concrete_param_types;
                   return_type;
                 }
               in
@@ -788,16 +818,37 @@ let maybe_project_to_expected_record_type
     (expr : AST.expression)
     (expected_type : Types.mono_type option)
     (expr_str : string) : string =
+  let type_from_env_or_map (e : AST.expression) : Types.mono_type option =
+    match e.expr with
+    | AST.Identifier name -> (
+        match Infer.TypeEnv.find_opt name env with
+        | Some (Types.Forall (_, t)) -> Some t
+        | None -> Hashtbl.find_opt type_map e.id)
+    | _ -> Hashtbl.find_opt type_map e.id
+  in
+  let rec all_some = function
+    | [] -> Some []
+    | x :: xs -> (
+        match (x, all_some xs) with
+        | Some v, Some rest -> Some (v :: rest)
+        | _ -> None)
+  in
   match expected_type with
   | None -> expr_str
   | Some (Types.TRecord (expected_fields, _expected_row)) -> (
       let actual_type_opt =
         match expr.expr with
-        | AST.Identifier name -> (
-            match Infer.TypeEnv.find_opt name env with
-            | Some (Types.Forall (_, t)) -> Some t
-            | None -> Hashtbl.find_opt type_map expr.id)
-        | _ -> Hashtbl.find_opt type_map expr.id
+        | AST.Call ({ expr = AST.Identifier func_name; _ }, args) -> (
+            match (Infer.TypeEnv.find_opt func_name env, all_some (List.map type_from_env_or_map args)) with
+            | Some (Types.Forall (_, func_type)), Some arg_types -> (
+                match extract_param_types_exact (List.length args) func_type with
+                | Some (declared_params, declared_ret) -> (
+                    match infer_return_type_from_signature declared_params declared_ret arg_types with
+                    | Some inferred_ret -> Some inferred_ret
+                    | None -> type_from_env_or_map expr)
+                | None -> type_from_env_or_map expr)
+            | _ -> type_from_env_or_map expr)
+        | _ -> type_from_env_or_map expr
       in
       match actual_type_opt with
       | Some (Types.TRecord (actual_fields, actual_row)) ->
@@ -3063,6 +3114,11 @@ let%test "function returning wrapped record compiles" =
       string_contains code "type Record_x_int64 struct"
       && string_contains code "type Record_inner_"
       && string_contains code "func mk_record_x_int64_closed("
+  | Error _ -> false
+
+let%test "function wrapping inline record literal argument compiles" =
+  match compile_string "let mk = fn(r: { x: int }) { { inner: r } }; let o = mk({ x: 3 }); o.inner.x" with
+  | Ok code -> string_contains code "func mk_record_x_int64_closed(" && string_contains code "type Record_inner_"
   | Error _ -> false
 
 let%test "emit record spread" =
