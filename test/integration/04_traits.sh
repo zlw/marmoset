@@ -179,6 +179,17 @@ let xs: list[named] = [a, b]
 puts(xs[0].age)
 EOF
 
+expect_build "Field-only trait object returned from annotated function still hides non-projected fields" "Record field 'age' not found in type" << 'EOF'
+trait named {
+  name: string
+}
+let mk = fn(age: int) -> named {
+  { name: "alice", age: age }
+}
+let x = mk(1)
+puts(x.age)
+EOF
+
 expect_build "Field-only trait object does not allow method dispatch" "No method 'show' found for type" << 'EOF'
 trait named {
   name: string
@@ -359,6 +370,56 @@ expect_runtime_output "String concatenation still works with builtin operator lo
 puts("a" + "b")
 EOF
 
+expect_runtime_output "Bool ordering operators lower through ord trait helpers" "false
+true
+true" << 'EOF'
+puts(true < false)
+puts(false <= true)
+puts(true >= true)
+EOF
+
+expect_runtime_output "Custom eq impl drives == operator on non-primitive types" "false" << 'EOF'
+type point = { x: int }
+impl eq for point {
+  fn eq(x: point, y: point) -> bool {
+    false
+  }
+}
+let p1: point = { x: 1 }
+let p2: point = { x: 1 }
+puts(p1 == p2)
+EOF
+
+expect_runtime_output "Custom num impl drives + operator on non-primitive types" "13" << 'EOF'
+enum boxed {
+  val(int)
+}
+impl num for boxed {
+  fn add(x: boxed, y: boxed) -> boxed { x }
+  fn sub(x: boxed, y: boxed) -> boxed { x }
+  fn mul(x: boxed, y: boxed) -> boxed { x }
+  fn div(x: boxed, y: boxed) -> boxed { x }
+}
+let a = boxed.val(13)
+let b = boxed.val(2)
+match (a + b) {
+  boxed.val(n): puts(n)
+}
+EOF
+
+expect_runtime_output "Custom neg impl drives unary - operator on non-primitive types" "5" << 'EOF'
+enum boxed {
+  val(int)
+}
+impl neg for boxed {
+  fn neg(x: boxed) -> boxed { x }
+}
+let a = boxed.val(5)
+match (-a) {
+  boxed.val(n): puts(n)
+}
+EOF
+
 echo "-- PHASE 4.3: TRAIT METHOD CALLS --"
 
 expect_runtime_output "Basic trait method call on int" "42" << 'EOF'
@@ -386,6 +447,18 @@ impl eq for int {
 let a = 42
 let b = 42
 puts(a.eq(b))
+EOF
+
+expect_runtime_output "Impl method body can return direct record literal" "5" << 'EOF'
+type box = { value: int }
+trait wrap[a] {
+  fn wrap(x: a) -> box
+}
+impl wrap for int {
+  fn wrap(x: int) -> box { { value: x } }
+}
+let b = 5.wrap()
+puts(b.value)
 EOF
 
 expect_runtime_output "Method call on string" "hello" << 'EOF'

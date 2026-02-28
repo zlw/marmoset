@@ -64,7 +64,7 @@ let prec_index = 8
 
 let precedences = function
   | Token.Eq | Token.NotEq | Token.Is -> prec_equals
-  | Token.Lt | Token.Gt -> prec_less_greater
+  | Token.Lt | Token.Gt | Token.Le | Token.Ge -> prec_less_greater
   | Token.Plus | Token.Minus -> prec_sum
   | Token.Asterisk | Token.Slash -> prec_product
   | Token.LParen -> prec_call
@@ -785,13 +785,9 @@ and parse_method_impl (p : parser) : (parser * AST.method_impl, parser) result =
   (* Parse method body as an expression *)
   let* p8, body_expr = parse_expression (next_token p7) prec_lowest in
 
-  (* Expect closing brace *)
-  let* p9 =
-    if curr_token_is p8 Token.RBrace then
-      Ok p8
-    else
-      expect_peek p8 Token.RBrace
-  in
+  (* Method body is expression-only. Its final token may itself be '}' (e.g. record/if/match),
+     so we must always consume the method-closing brace from peek_token. *)
+  let* p9 = expect_peek p8 Token.RBrace in
 
   Ok
     ( next_token p9,
@@ -882,7 +878,16 @@ and infixFn (p : parser) (left_expr : AST.expression) (prec : precedence) :
     if (not peek_is_semicolon) && lower_precedence then
       let* lp2, left2 =
         match lp.peek_token.token_type with
-        | Token.Plus | Token.Minus | Token.Slash | Token.Asterisk | Token.Eq | Token.NotEq | Token.Lt | Token.Gt
+        | Token.Plus
+        | Token.Minus
+        | Token.Slash
+        | Token.Asterisk
+        | Token.Eq
+        | Token.NotEq
+        | Token.Lt
+        | Token.Gt
+        | Token.Le
+        | Token.Ge
         | Token.Is ->
             parse_infix_expression (next_token lp) left
         | LParen -> parse_call_expression (next_token lp) left
@@ -1637,6 +1642,14 @@ module Test = struct
         output = [ s (AST.ExpressionStmt (e (AST.Infix (e (AST.Integer 5L), "<", e (AST.Integer 5L))))) ];
       };
       {
+        input = "5 <= 5;";
+        output = [ s (AST.ExpressionStmt (e (AST.Infix (e (AST.Integer 5L), "<=", e (AST.Integer 5L))))) ];
+      };
+      {
+        input = "5 >= 5;";
+        output = [ s (AST.ExpressionStmt (e (AST.Infix (e (AST.Integer 5L), ">=", e (AST.Integer 5L))))) ];
+      };
+      {
         input = "5 == 5;";
         output = [ s (AST.ExpressionStmt (e (AST.Infix (e (AST.Integer 5L), "==", e (AST.Integer 5L))))) ];
       };
@@ -1673,6 +1686,16 @@ module Test = struct
         input = "foo < bar;";
         output =
           [ s (AST.ExpressionStmt (e (AST.Infix (e (AST.Identifier "foo"), "<", e (AST.Identifier "bar"))))) ];
+      };
+      {
+        input = "foo <= bar;";
+        output =
+          [ s (AST.ExpressionStmt (e (AST.Infix (e (AST.Identifier "foo"), "<=", e (AST.Identifier "bar"))))) ];
+      };
+      {
+        input = "foo >= bar;";
+        output =
+          [ s (AST.ExpressionStmt (e (AST.Infix (e (AST.Identifier "foo"), ">=", e (AST.Identifier "bar"))))) ];
       };
       {
         input = "foo == bar;";
@@ -1712,6 +1735,7 @@ module Test = struct
       ("3 + 4; -5 * 5", "(3 + 4)((-5) * 5)");
       ("5 > 4 == 3 < 4", "((5 > 4) == (3 < 4))");
       ("5 < 4 != 3 > 4", "((5 < 4) != (3 > 4))");
+      ("5 <= 4 == 3 >= 4", "((5 <= 4) == (3 >= 4))");
       ("3 + 4 * 5 == 3 * 1 + 4 * 5", "((3 + (4 * 5)) == ((3 * 1) + (4 * 5)))");
       ("true", "true");
       ("false", "false");
@@ -2269,6 +2293,52 @@ let%test "parse impl with multiple methods" =
       | [ stmt ] -> (
           match stmt.stmt with
           | AST.ImplDef impl_def -> impl_def.impl_trait_name = "num" && List.length impl_def.impl_methods = 2
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
+let%test "parse impl method body with direct record literal" =
+  let input =
+    "type vec2 = { x: int }\n\
+     trait num[a] { fn add(x: a, y: a) -> a }\n\
+     impl num for vec2 { fn add(x: vec2, y: vec2) -> vec2 { { x: x.x + y.x } } }"
+  in
+  let lexer = Lexer.init input in
+  match parse_program (init lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ _; _; stmt ] -> (
+          match stmt.stmt with
+          | AST.ImplDef impl_def -> (
+              match impl_def.impl_methods with
+              | [ method_impl ] -> (
+                  match method_impl.impl_method_body.expr with
+                  | AST.RecordLit _ -> true
+                  | _ -> false)
+              | _ -> false)
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
+let%test "parse impl method body with if expression and continue parsing next statement" =
+  let input =
+    "trait pick[a] { fn pick(x: a, y: a) -> a }\n\
+     impl pick for int { fn pick(x: int, y: int) -> int { if (true) { x } else { y } } }\n\
+     1"
+  in
+  let lexer = Lexer.init input in
+  match parse_program (init lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ _trait; impl_stmt; expr_stmt ] -> (
+          match (impl_stmt.stmt, expr_stmt.stmt) with
+          | AST.ImplDef impl_def, AST.ExpressionStmt expr -> (
+              match impl_def.impl_methods with
+              | [ method_impl ] -> (
+                  match (method_impl.impl_method_body.expr, expr.expr) with
+                  | AST.If _, AST.Integer 1L -> true
+                  | _ -> false)
+              | _ -> false)
           | _ -> false)
       | _ -> false)
   | Error _ -> false

@@ -22,6 +22,8 @@ and token_type =
   | Slash
   | Lt
   | Gt
+  | Le
+  | Ge
   | Eq
   | NotEq
   | Arrow (* -> for return type annotations *)

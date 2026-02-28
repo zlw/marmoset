@@ -41,8 +41,16 @@ let rec next_token (l : lexer) : lexer * Token.token =
         (read_char l, Token.init ~pos Minus "-")
   | '*' -> (read_char l, Token.init ~pos Asterisk "*")
   | '/' -> (read_char l, Token.init ~pos Slash "/")
-  | '<' -> (read_char l, Token.init ~pos Lt "<")
-  | '>' -> (read_char l, Token.init ~pos Gt ">")
+  | '<' ->
+      if peek_char l = '=' then
+        (read_char (read_char l), Token.init ~pos Le "<=")
+      else
+        (read_char l, Token.init ~pos Lt "<")
+  | '>' ->
+      if peek_char l = '=' then
+        (read_char (read_char l), Token.init ~pos Ge ">=")
+      else
+        (read_char l, Token.init ~pos Gt ">")
   | ';' -> (read_char l, Token.init ~pos Semicolon ";")
   | ':' -> (read_char l, Token.init ~pos Colon ":")
   | '(' -> (read_char l, Token.init ~pos LParen "(")
@@ -272,6 +280,16 @@ let%test "fat arrow token" =
   let input = "fn(...) => result" in
   let tokens = lex input in
   List.exists (fun t -> t.Token.token_type = Token.FatArrow) tokens
+
+let%test "less-equal token" =
+  let input = "1 <= 2" in
+  let tokens = lex input in
+  List.exists (fun t -> t.Token.token_type = Token.Le && t.Token.literal = "<=") tokens
+
+let%test "greater-equal token" =
+  let input = "2 >= 1" in
+  let tokens = lex input in
+  List.exists (fun t -> t.Token.token_type = Token.Ge && t.Token.literal = ">=") tokens
 
 let%test "pipe token for union types" =
   let input = "fn(x: int | string) -> bool" in

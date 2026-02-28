@@ -1684,29 +1684,91 @@ and emit_pattern_bindings
 
 and emit_prefix state type_map env op operand =
   let operand_str = emit_expr state type_map env operand in
+  let operand_type = Types.canonicalize_mono_type (get_type type_map operand) in
   match op with
   | "!" -> Printf.sprintf "!(%s)" operand_str
-  | "-" -> Printf.sprintf "-(%s)" operand_str
+  | "-" -> (
+      match operand_type with
+      | Types.TInt | Types.TFloat -> Printf.sprintf "-(%s)" operand_str
+      | _ ->
+          let type_suffix = mangle_type operand_type in
+          Printf.sprintf "neg_neg_%s(%s)" type_suffix operand_str)
   | _ -> failwith ("Unknown prefix operator: " ^ op)
 
 and emit_infix state type_map env left op right =
   let left_str = emit_expr state type_map env left in
   let right_str = emit_expr state type_map env right in
-  let go_op =
-    match op with
-    | "+" -> "+"
-    | "-" -> "-"
-    | "*" -> "*"
-    | "/" -> "/"
-    | "<" -> "<"
-    | ">" -> ">"
-    | "==" -> "=="
-    | "!=" -> "!="
-    | "<=" -> "<="
-    | ">=" -> ">="
-    | _ -> failwith ("Unknown infix operator: " ^ op)
+  let left_type = Types.canonicalize_mono_type (get_type type_map left) in
+  let type_suffix = mangle_type left_type in
+  let is_num_primitive =
+    match left_type with
+    | Types.TInt | Types.TFloat -> true
+    | _ -> false
   in
-  Printf.sprintf "(%s %s %s)" left_str go_op right_str
+  let is_eq_primitive =
+    match left_type with
+    | Types.TInt | Types.TFloat | Types.TBool | Types.TString -> true
+    | _ -> false
+  in
+  let is_ord_primitive =
+    match left_type with
+    | Types.TInt | Types.TFloat | Types.TString -> true
+    | _ -> false
+  in
+  match op with
+  | "+" ->
+      if left_type = Types.TString then
+        Printf.sprintf "(%s + %s)" left_str right_str
+      else if is_num_primitive then
+        Printf.sprintf "(%s + %s)" left_str right_str
+      else
+        Printf.sprintf "num_add_%s(%s, %s)" type_suffix left_str right_str
+  | "-" ->
+      if is_num_primitive then
+        Printf.sprintf "(%s - %s)" left_str right_str
+      else
+        Printf.sprintf "num_sub_%s(%s, %s)" type_suffix left_str right_str
+  | "*" ->
+      if is_num_primitive then
+        Printf.sprintf "(%s * %s)" left_str right_str
+      else
+        Printf.sprintf "num_mul_%s(%s, %s)" type_suffix left_str right_str
+  | "/" ->
+      if is_num_primitive then
+        Printf.sprintf "(%s / %s)" left_str right_str
+      else
+        Printf.sprintf "num_div_%s(%s, %s)" type_suffix left_str right_str
+  | "==" ->
+      if is_eq_primitive then
+        Printf.sprintf "(%s == %s)" left_str right_str
+      else
+        Printf.sprintf "eq_eq_%s(%s, %s)" type_suffix left_str right_str
+  | "!=" ->
+      if is_eq_primitive then
+        Printf.sprintf "(%s != %s)" left_str right_str
+      else
+        Printf.sprintf "!eq_eq_%s(%s, %s)" type_suffix left_str right_str
+  | "<" ->
+      if is_ord_primitive then
+        Printf.sprintf "(%s < %s)" left_str right_str
+      else
+        Printf.sprintf "(ord_compare_%s(%s, %s) == int64(0))" type_suffix left_str right_str
+  | ">" ->
+      if is_ord_primitive then
+        Printf.sprintf "(%s > %s)" left_str right_str
+      else
+        Printf.sprintf "(ord_compare_%s(%s, %s) == int64(2))" type_suffix left_str right_str
+  | "<=" ->
+      if is_ord_primitive then
+        Printf.sprintf "(%s <= %s)" left_str right_str
+      else
+        Printf.sprintf "(ord_compare_%s(%s, %s) != int64(2))" type_suffix left_str right_str
+  | ">=" ->
+      if is_ord_primitive then
+        Printf.sprintf "(%s >= %s)" left_str right_str
+      else
+        Printf.sprintf "(ord_compare_%s(%s, %s) != int64(0))" type_suffix left_str right_str
+  | _ -> failwith ("Unknown infix operator: " ^ op)
 
 and emit_type_check state type_map env expr type_ann =
   (* Use runtime helper function for type checking *)
@@ -2748,11 +2810,6 @@ let emit_specialized_func
   let params_str = String.concat ", " params_with_types in
   let return_type_str = type_to_go state.mono inst.return_type in
 
-  (* Build the concrete function type from parameter types and return type *)
-  let concrete_func_type =
-    List.fold_right (fun param_t acc -> Types.tfun param_t acc) inst.concrete_types inst.return_type
-  in
-
   let has_arity t = Option.is_some (extract_param_types_exact inst.func_arity t) in
   let type_from_map = Hashtbl.find_opt global_type_map func_def.func_expr_id in
   let type_from_env =
@@ -2783,6 +2840,21 @@ let emit_specialized_func
                  "Codegen error: missing arity-%d function type for '%s' (expr id %d). type_map=%s, env=%s"
                  inst.func_arity inst.func_name func_def.func_expr_id map_type_desc env_type_desc))
   in
+
+  (* Build the concrete function type from parameter types and return type,
+     preserving the inferred function-effect arrow kind. *)
+  let arrow_is_effectful =
+    match generic_func_type with
+    | Types.TFun (_, _, eff) -> eff
+    | _ -> false
+  in
+  let mk_fun =
+    if arrow_is_effectful then
+      Types.tfun_eff
+    else
+      Types.tfun
+  in
+  let concrete_func_type = List.fold_right (fun param_t acc -> mk_fun param_t acc) inst.concrete_types inst.return_type in
 
   let specialization_subst =
     match Unify.unify generic_func_type concrete_func_type with
@@ -3460,6 +3532,19 @@ let%test "emit string" =
 let%test "emit comparison" =
   match compile_string "1 < 2" with
   | Ok code -> string_contains code "(int64(1) < int64(2))"
+  | Error _ -> false
+
+let%test "emit bool ordering via ord helper" =
+  match compile_string "true < false" with
+  | Ok code -> string_contains code "ord_compare_bool(true, false)"
+  | Error _ -> false
+
+let%test "emit non-primitive equality via eq helper" =
+  match
+    compile_string
+      "type point = { x: int }\nimpl eq for point {\n  fn eq(x: point, y: point) -> bool { false }\n}\nlet a: point = { x: 1 }\nlet b: point = { x: 1 }\na == b"
+  with
+  | Ok code -> string_contains code "func eq_eq_record_x_int64_closed" && string_contains code "return false"
   | Error _ -> false
 
 let%test "monomorphized function" =
