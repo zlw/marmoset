@@ -127,6 +127,10 @@ let rec type_expr_to_mono_type_with
                             | None -> failwith ("Unknown trait in registry: " ^ other)
                           in
                           if trait_def.trait_type_param <> None then
+                            (* Generic field-only traits rejected in type position because the
+                               projected record type depends on the type parameter, and codegen
+                               cannot resolve which concrete shape to emit without call-site
+                               monomorphization — which trait-as-type usage lacks. *)
                             failwith
                               (Printf.sprintf
                                  "Trait '%s' cannot be used as a type: generic field-only trait objects are not supported in this phase"
