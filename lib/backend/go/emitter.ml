@@ -4585,7 +4585,8 @@ let%test "duplicate top-level function name and arity is rejected" =
       "let f = fn(x: int) -> int { x + 1 }; let f = fn(x: int) -> int { x + 2 }; let y = f(1); puts(y)"
   with
   | Ok _ -> false
-  | Error msg -> string_contains msg "ambiguous function reference 'f/1'"
+  | Error msg ->
+      string_contains msg "ambiguous function reference 'f/1'" || string_contains msg "Duplicate top-level let definition: f"
 
 let%test "collect_insts registers impl methods in cache" =
   let source =

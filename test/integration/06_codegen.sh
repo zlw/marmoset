@@ -242,7 +242,7 @@ impl show for a[b] {
 puts(1)
 EOF
 
-expect_build "Duplicate top-level function name/arity is rejected with clear diagnostic" "Codegen error: ambiguous function reference 'f/1'" << 'EOF'
+expect_build "Duplicate top-level function name/arity is rejected with clear diagnostic" "Duplicate top-level let definition: f" << 'EOF'
 let f = fn(x: int) -> int { x + 1 }
 let f = fn(x: int) -> int { x + 2 }
 puts(f(1))

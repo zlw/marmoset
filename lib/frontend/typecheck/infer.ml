@@ -23,6 +23,7 @@ module AST = Syntax.Ast.AST
 
 module TypeEnv = Map.Make (String)
 module StringSet = Set.Make (String)
+module NameMap = Map.Make (String)
 
 type type_env = poly_type TypeEnv.t
 
@@ -58,6 +59,41 @@ let apply_substitution_type_map (subst : substitution) (type_map : type_map) : u
       Hashtbl.replace type_map id ty')
     type_map
 
+type symbol_id = int
+
+type symbol_kind =
+  | BuiltinValue
+  | TopLevelLet
+  | LocalLet
+  | Param
+  | PatternVar
+  | TypeAliasSym
+  | TraitSym
+  | EnumSym
+  | EnumVariantSym
+  | ImplMethodParam
+
+type symbol = {
+  id : symbol_id;
+  name : string;
+  kind : symbol_kind;
+  definition_pos : int;
+  definition_end_pos : int;
+  file_id : string option;
+}
+
+let symbol_kind_tag = function
+  | BuiltinValue -> "builtin-value"
+  | TopLevelLet -> "toplevel-let"
+  | LocalLet -> "local-let"
+  | Param -> "param"
+  | PatternVar -> "pattern-var"
+  | TypeAliasSym -> "type-alias"
+  | TraitSym -> "trait"
+  | EnumSym -> "enum"
+  | EnumVariantSym -> "enum-variant"
+  | ImplMethodParam -> "impl-method-param"
+
 (* ============================================================
    Inference Session State
    ============================================================
@@ -75,6 +111,10 @@ type inference_state = {
   fresh_var_counter : int ref;
   constraint_store : (string, string list) Hashtbl.t;
   constrained_field_store : (string, (string * record_field_type) list) Hashtbl.t;
+  top_level_placeholder_store : (string, mono_type) Hashtbl.t;
+  symbol_table : (symbol_id, symbol) Hashtbl.t;
+  symbol_key_store : (symbol_id, string) Hashtbl.t;
+  identifier_symbol_store : (int, symbol_id) Hashtbl.t;
   method_resolution_store : (int, method_resolution) Hashtbl.t;
 }
 
@@ -87,6 +127,10 @@ let create_inference_state () : inference_state =
     fresh_var_counter = ref 0;
     constraint_store = Hashtbl.create 64;
     constrained_field_store = Hashtbl.create 64;
+    top_level_placeholder_store = Hashtbl.create 64;
+    symbol_table = Hashtbl.create 256;
+    symbol_key_store = Hashtbl.create 256;
+    identifier_symbol_store = Hashtbl.create 512;
     method_resolution_store = Hashtbl.create 128;
   }
 
@@ -107,6 +151,96 @@ let with_inference_state (state : inference_state) (f : unit -> 'a) : 'a =
 let current_constraint_store () : (string, string list) Hashtbl.t = !active_inference_state.constraint_store
 let current_constrained_field_store () : (string, (string * record_field_type) list) Hashtbl.t =
   !active_inference_state.constrained_field_store
+let current_top_level_placeholder_store () : (string, mono_type) Hashtbl.t =
+  !active_inference_state.top_level_placeholder_store
+let current_symbol_table () : (symbol_id, symbol) Hashtbl.t = !active_inference_state.symbol_table
+let current_symbol_key_store () : (symbol_id, string) Hashtbl.t = !active_inference_state.symbol_key_store
+let current_identifier_symbol_store () : (int, symbol_id) Hashtbl.t =
+  !active_inference_state.identifier_symbol_store
+
+let stable_symbol_id_from_key (key : string) (salt : int) : symbol_id =
+  let salted =
+    if salt = 0 then
+      key
+    else
+      key ^ "#" ^ string_of_int salt
+  in
+  let hex = Digest.to_hex (Digest.string salted) in
+  let raw =
+    Int64.of_string ("0x" ^ String.sub hex 0 15)
+    |> Int64.logand 0x3fffffffffffffffL
+    |> Int64.to_int
+  in
+  if raw = 0 then
+    1
+  else
+    raw
+
+let rec allocate_stable_symbol_id (key : string) (salt : int) : symbol_id =
+  let id = stable_symbol_id_from_key key salt in
+  let key_store = current_symbol_key_store () in
+  match Hashtbl.find_opt key_store id with
+  | None ->
+      Hashtbl.replace key_store id key;
+      id
+  | Some existing when existing = key -> id
+  | Some _ -> allocate_stable_symbol_id key (salt + 1)
+
+let register_symbol ~(name : string) ~(kind : symbol_kind) ~(pos : int) ~(end_pos : int) ~(file_id : string option) :
+    symbol_id =
+  let key =
+    Printf.sprintf "%s|%s|%s|%d|%d" (symbol_kind_tag kind) name
+      (match file_id with
+      | Some f -> f
+      | None -> "<none>")
+      pos end_pos
+  in
+  let id = allocate_stable_symbol_id key 0 in
+  let table = current_symbol_table () in
+  if Hashtbl.mem table id then
+    id
+  else (
+    Hashtbl.replace table id { id; name; kind; definition_pos = pos; definition_end_pos = end_pos; file_id };
+    id)
+
+let record_identifier_symbol (expr_id : int) (symbol_id : symbol_id) : unit =
+  Hashtbl.replace (current_identifier_symbol_store ()) expr_id symbol_id
+
+let lookup_identifier_symbol (expr_id : int) : symbol_id option =
+  Hashtbl.find_opt (current_identifier_symbol_store ()) expr_id
+
+let lookup_symbol (id : symbol_id) : symbol option = Hashtbl.find_opt (current_symbol_table ()) id
+
+let lookup_identifier_symbol_in_state (state : inference_state) (expr_id : int) : symbol_id option =
+  Hashtbl.find_opt state.identifier_symbol_store expr_id
+
+let lookup_symbol_in_state (state : inference_state) (id : symbol_id) : symbol option =
+  Hashtbl.find_opt state.symbol_table id
+
+let symbol_table_bindings () : (symbol_id * symbol) list =
+  Hashtbl.to_seq (current_symbol_table ()) |> List.of_seq
+
+let identifier_symbol_bindings () : (int * symbol_id) list =
+  Hashtbl.to_seq (current_identifier_symbol_store ()) |> List.of_seq
+
+let symbol_table_bindings_in_state (state : inference_state) : (symbol_id * symbol) list =
+  Hashtbl.to_seq state.symbol_table |> List.of_seq
+
+let identifier_symbol_bindings_in_state (state : inference_state) : (int * symbol_id) list =
+  Hashtbl.to_seq state.identifier_symbol_store |> List.of_seq
+
+let clear_symbol_stores () : unit =
+  Hashtbl.clear (current_symbol_table ());
+  Hashtbl.clear (current_symbol_key_store ());
+  Hashtbl.clear (current_identifier_symbol_store ())
+
+let clear_top_level_placeholders () : unit = Hashtbl.clear (current_top_level_placeholder_store ())
+
+let set_top_level_placeholder (name : string) (typ : mono_type) : unit =
+  Hashtbl.replace (current_top_level_placeholder_store ()) name typ
+
+let lookup_top_level_placeholder (name : string) : mono_type option =
+  Hashtbl.find_opt (current_top_level_placeholder_store ()) name
 
 let lowered_trait_fields_for_constraints (traits : string list) : (string * record_field_type) list =
   Trait_solver.expand_constraints_with_supertraits traits
@@ -322,7 +456,9 @@ let is_trait_object_row = function
 let reset_fresh_counter () =
   let state = !active_inference_state in
   state.fresh_var_counter := 0;
-  clear_constraint_store ()
+  clear_constraint_store ();
+  clear_top_level_placeholders ();
+  clear_symbol_stores ()
 
 (* ============================================================
    Instantiation
@@ -457,6 +593,286 @@ let error_to_string (err : infer_error) : string = error_kind_to_string err.kind
 
 (* Result type for inference *)
 type 'a infer_result = ('a, infer_error) result
+
+type symbol_scope = symbol_id NameMap.t
+type symbol_scope_stack = symbol_scope list
+
+let empty_scope_stack (root_scope : symbol_scope) : symbol_scope_stack = [ root_scope ]
+
+let push_scope (stack : symbol_scope_stack) : symbol_scope_stack = NameMap.empty :: stack
+
+let add_scope_binding (stack : symbol_scope_stack) (name : string) (sid : symbol_id) : symbol_scope_stack =
+  match stack with
+  | [] -> [ NameMap.singleton name sid ]
+  | scope :: rest -> NameMap.add name sid scope :: rest
+
+let rec lookup_scope_binding (stack : symbol_scope_stack) (name : string) : symbol_id option =
+  match stack with
+  | [] -> None
+  | scope :: rest -> (
+      match NameMap.find_opt name scope with
+      | Some sid -> Some sid
+      | None -> lookup_scope_binding rest name)
+
+let register_prebound_symbols (env : type_env) : symbol_scope =
+  TypeEnv.fold
+    (fun name _poly scope ->
+      let sid = register_symbol ~name ~kind:BuiltinValue ~pos:(-1) ~end_pos:(-1) ~file_id:None in
+      NameMap.add name sid scope)
+    env NameMap.empty
+
+let register_top_level_symbol_definitions (root_scope : symbol_scope) (program : AST.program) :
+    (symbol_scope, infer_error) result =
+  let rec go (scope : symbol_scope) (seen_lets : StringSet.t) (stmts : AST.statement list) :
+      (symbol_scope, infer_error) result =
+    match stmts with
+    | [] -> Ok scope
+    | stmt :: rest -> (
+        match stmt.stmt with
+        | AST.Let let_binding ->
+            if let_binding.name = "_" then
+              go scope seen_lets rest
+            else if StringSet.mem let_binding.name seen_lets then
+              Error
+                {
+                  kind = ConstructorError (Printf.sprintf "Duplicate top-level let definition: %s" let_binding.name);
+                  pos = Some stmt.pos;
+                  end_pos = Some stmt.end_pos;
+                  file_id = stmt.file_id;
+                }
+            else
+              let sid =
+                register_symbol ~name:let_binding.name ~kind:TopLevelLet ~pos:stmt.pos ~end_pos:stmt.end_pos
+                  ~file_id:stmt.file_id
+              in
+              let scope' =
+                match let_binding.value.expr with
+                | AST.Function _ -> NameMap.add let_binding.name sid scope
+                | _ ->
+                    (* Top-level value bindings remain declaration-ordered; only function
+                       declarations participate in forward reference resolution. *)
+                    scope
+              in
+              go scope' (StringSet.add let_binding.name seen_lets) rest
+        | AST.TypeAlias alias_def ->
+            let _ =
+              register_symbol ~name:alias_def.alias_name ~kind:TypeAliasSym ~pos:stmt.pos ~end_pos:stmt.end_pos
+                ~file_id:stmt.file_id
+            in
+            go scope seen_lets rest
+        | AST.TraitDef trait_def ->
+            let _ =
+              register_symbol ~name:trait_def.name ~kind:TraitSym ~pos:stmt.pos ~end_pos:stmt.end_pos
+                ~file_id:stmt.file_id
+            in
+            go scope seen_lets rest
+        | AST.EnumDef enum_def ->
+            let _ =
+              register_symbol ~name:enum_def.name ~kind:EnumSym ~pos:stmt.pos ~end_pos:stmt.end_pos
+                ~file_id:stmt.file_id
+            in
+            let _ =
+              List.iter
+                (fun (v : AST.variant_def) ->
+                  let _ =
+                    register_symbol ~name:(enum_def.name ^ "." ^ v.variant_name) ~kind:EnumVariantSym ~pos:stmt.pos
+                      ~end_pos:stmt.end_pos ~file_id:stmt.file_id
+                  in
+                  ())
+                enum_def.variants
+            in
+            go scope seen_lets rest
+        | _ -> go scope seen_lets rest)
+  in
+  go root_scope StringSet.empty program
+
+let resolve_let_binding_symbol
+    ~(is_top_level : bool)
+    (stack : symbol_scope_stack)
+    (stmt : AST.statement)
+    (name : string) : symbol_scope_stack =
+  if name = "_" then
+    stack
+  else if is_top_level then (
+    match lookup_scope_binding stack name with
+    | Some _ -> stack
+    | None ->
+        let sid = register_symbol ~name ~kind:TopLevelLet ~pos:stmt.pos ~end_pos:stmt.end_pos ~file_id:stmt.file_id in
+        add_scope_binding stack name sid)
+  else
+    let sid = register_symbol ~name ~kind:LocalLet ~pos:stmt.pos ~end_pos:stmt.end_pos ~file_id:stmt.file_id in
+    add_scope_binding stack name sid
+
+let resolve_param_symbols (stack : symbol_scope_stack) (params : (string * 'a) list) (expr : AST.expression) :
+    symbol_scope_stack =
+  List.fold_left
+    (fun acc (name, _annot) ->
+      let sid = register_symbol ~name ~kind:Param ~pos:expr.pos ~end_pos:expr.end_pos ~file_id:expr.file_id in
+      add_scope_binding acc name sid)
+    stack params
+
+let resolve_impl_method_params (stack : symbol_scope_stack) (m : AST.method_impl) : symbol_scope_stack =
+  List.fold_left
+    (fun acc (name, _annot) ->
+      let sid =
+        register_symbol ~name ~kind:ImplMethodParam ~pos:m.impl_method_body.pos ~end_pos:m.impl_method_body.end_pos
+          ~file_id:m.impl_method_body.file_id
+      in
+      add_scope_binding acc name sid)
+    stack m.impl_method_params
+
+let rec resolve_pattern_bindings (stack : symbol_scope_stack) (pat : AST.pattern) : symbol_scope_stack =
+  match pat.pat with
+  | AST.PWildcard | AST.PLiteral _ -> stack
+  | AST.PVariable name ->
+      let sid = register_symbol ~name ~kind:PatternVar ~pos:pat.pos ~end_pos:pat.end_pos ~file_id:pat.file_id in
+      add_scope_binding stack name sid
+  | AST.PConstructor (_enum_name, _variant_name, fields) ->
+      List.fold_left resolve_pattern_bindings stack fields
+  | AST.PRecord (fields, rest) ->
+      let with_fields =
+        List.fold_left
+          (fun acc (field : AST.record_pattern_field) ->
+            match field.pat_field_pattern with
+            | Some nested -> resolve_pattern_bindings acc nested
+            | None ->
+                let sid =
+                  register_symbol ~name:field.pat_field_name ~kind:PatternVar ~pos:pat.pos ~end_pos:pat.end_pos
+                    ~file_id:pat.file_id
+                in
+                add_scope_binding acc field.pat_field_name sid)
+          stack fields
+      in
+      (match rest with
+      | Some rest_name ->
+          let sid =
+            register_symbol ~name:rest_name ~kind:PatternVar ~pos:pat.pos ~end_pos:pat.end_pos ~file_id:pat.file_id
+          in
+          add_scope_binding with_fields rest_name sid
+      | None -> with_fields)
+
+let rec resolve_expr_symbols (stack : symbol_scope_stack) (expr : AST.expression) : unit =
+  match expr.expr with
+  | AST.Identifier name -> (
+      match lookup_scope_binding stack name with
+      | Some sid -> record_identifier_symbol expr.id sid
+      | None -> ())
+  | AST.Integer _ | AST.Float _ | AST.Boolean _ | AST.String _ -> ()
+  | AST.Array xs -> List.iter (resolve_expr_symbols stack) xs
+  | AST.Index (a, b) ->
+      resolve_expr_symbols stack a;
+      resolve_expr_symbols stack b
+  | AST.Hash pairs ->
+      List.iter
+        (fun (k, v) ->
+          resolve_expr_symbols stack k;
+          resolve_expr_symbols stack v)
+        pairs
+  | AST.Prefix (_, e) -> resolve_expr_symbols stack e
+  | AST.Infix (l, _, r) ->
+      resolve_expr_symbols stack l;
+      resolve_expr_symbols stack r
+  | AST.TypeCheck (e, _t) -> resolve_expr_symbols stack e
+  | AST.If (cond, cons, alt) ->
+      resolve_expr_symbols stack cond;
+      ignore (resolve_stmt_symbols stack ~is_top_level:false cons);
+      (match alt with
+      | Some b -> ignore (resolve_stmt_symbols stack ~is_top_level:false b)
+      | None -> ())
+  | AST.Function fn_expr ->
+      let scoped = resolve_param_symbols (push_scope stack) fn_expr.params expr in
+      ignore (resolve_stmt_symbols scoped ~is_top_level:false fn_expr.body)
+  | AST.Call (f, args) ->
+      resolve_expr_symbols stack f;
+      List.iter (resolve_expr_symbols stack) args
+  | AST.EnumConstructor (_enum_name, _variant_name, args) -> List.iter (resolve_expr_symbols stack) args
+  | AST.Match (scrutinee, arms) ->
+      resolve_expr_symbols stack scrutinee;
+      List.iter (resolve_match_arm_symbols stack) arms
+  | AST.RecordLit (fields, spread) ->
+      List.iter
+        (fun (f : AST.record_field) ->
+          match f.field_value with
+          | Some v -> resolve_expr_symbols stack v
+          | None -> ())
+        fields;
+      (match spread with
+      | Some s -> resolve_expr_symbols stack s
+      | None -> ())
+  | AST.FieldAccess (receiver, _field_name) -> resolve_expr_symbols stack receiver
+  | AST.MethodCall (receiver, _method_name, args) ->
+      resolve_expr_symbols stack receiver;
+      List.iter (resolve_expr_symbols stack) args
+
+and resolve_match_arm_symbols (stack : symbol_scope_stack) (arm : AST.match_arm) : unit =
+  let arm_scope =
+    match arm.patterns with
+    | [] -> push_scope stack
+    | first :: _ -> resolve_pattern_bindings (push_scope stack) first
+  in
+  resolve_expr_symbols arm_scope arm.body
+
+and resolve_impl_method_symbols (stack : symbol_scope_stack) (m : AST.method_impl) : unit =
+  let method_scope = resolve_impl_method_params (push_scope stack) m in
+  resolve_expr_symbols method_scope m.impl_method_body
+
+and resolve_stmt_symbols (stack : symbol_scope_stack) ~(is_top_level : bool) (stmt : AST.statement) :
+    symbol_scope_stack =
+  match stmt.stmt with
+  | AST.ExpressionStmt expr ->
+      resolve_expr_symbols stack expr;
+      stack
+  | AST.Return expr ->
+      resolve_expr_symbols stack expr;
+      stack
+  | AST.Block stmts ->
+      ignore (resolve_stmt_list_symbols (push_scope stack) ~is_top_level:false stmts);
+      stack
+  | AST.Let let_binding ->
+      let scope_with_binding = resolve_let_binding_symbol ~is_top_level stack stmt let_binding.name in
+      resolve_expr_symbols scope_with_binding let_binding.value;
+      scope_with_binding
+  | AST.EnumDef enum_def ->
+      let sid =
+        register_symbol ~name:enum_def.name ~kind:EnumSym ~pos:stmt.pos ~end_pos:stmt.end_pos ~file_id:stmt.file_id
+      in
+      let with_enum = add_scope_binding stack enum_def.name sid in
+      List.iter
+        (fun (v : AST.variant_def) ->
+          ignore
+            (register_symbol ~name:(enum_def.name ^ "." ^ v.variant_name) ~kind:EnumVariantSym ~pos:stmt.pos
+               ~end_pos:stmt.end_pos ~file_id:stmt.file_id))
+        enum_def.variants;
+      with_enum
+  | AST.TraitDef trait_def ->
+      ignore
+        (register_symbol ~name:trait_def.name ~kind:TraitSym ~pos:stmt.pos ~end_pos:stmt.end_pos ~file_id:stmt.file_id);
+      stack
+  | AST.TypeAlias alias_def ->
+      ignore
+        (register_symbol ~name:alias_def.alias_name ~kind:TypeAliasSym ~pos:stmt.pos ~end_pos:stmt.end_pos
+           ~file_id:stmt.file_id);
+      stack
+  | AST.ImplDef impl_def ->
+      List.iter (resolve_impl_method_symbols stack) impl_def.impl_methods;
+      stack
+  | AST.InherentImplDef impl_def ->
+      List.iter (resolve_impl_method_symbols stack) impl_def.inherent_methods;
+      stack
+  | AST.DeriveDef _ -> stack
+
+and resolve_stmt_list_symbols (stack : symbol_scope_stack) ~(is_top_level : bool) (stmts : AST.statement list) :
+    symbol_scope_stack =
+  List.fold_left (fun acc stmt -> resolve_stmt_symbols acc ~is_top_level stmt) stack stmts
+
+let resolve_program_symbols (env : type_env) (program : AST.program) : (unit, infer_error) result =
+  clear_symbol_stores ();
+  let root_scope = register_prebound_symbols env in
+  match register_top_level_symbol_definitions root_scope program with
+  | Error e -> Error e
+  | Ok root_scope' ->
+      ignore (resolve_stmt_list_symbols (empty_scope_stack root_scope') ~is_top_level:true program);
+      Ok ()
 
 (* ============================================================
    Main Inference Function
@@ -704,7 +1120,7 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                             let expanded_constraints = Trait_solver.expand_constraints_with_supertraits constraints in
                             let constrained_field_types =
                               lookup_type_var_constrained_fields type_var_name
-                              |> List.filter_map (fun (trait_name, field) ->
+                              |> List.filter_map (fun (trait_name, (field : Types.record_field_type)) ->
                                      if field.name = variant_name then
                                        Some (trait_name, field.typ)
                                      else
@@ -2524,10 +2940,10 @@ and unify_function_shape_ignoring_effect (left : mono_type) (right : mono_type) 
     We treat ALL let bindings this way for simplicity - it's harmless
     for non-recursive bindings and enables recursion for functions.
 *)
-and infer_let type_map env name expr type_annotation =
+and infer_let ?(prefer_existing_self = false) type_map env name expr type_annotation =
   (* Check if the expression is a function with a return type annotation *)
   (* If so, create a partially constrained type for recursion *)
-  let self_type =
+  let inferred_self_type =
     match (expr.expr, type_annotation) with
     | AST.Function f, _ -> (
         try
@@ -2556,6 +2972,14 @@ and infer_let type_map env name expr type_annotation =
         | Annotation.Open_row_rejected _ as e -> raise e
         | Failure _ -> fresh_type_var ())
     | _, None -> fresh_type_var ()
+  in
+  let self_type =
+    if prefer_existing_self && name <> "_" then
+      match lookup_top_level_placeholder name with
+      | Some existing -> existing
+      | None -> inferred_self_type
+    else
+      inferred_self_type
   in
   (* Add to environment as monomorphic (not generalized yet) *)
   let env_with_self =
@@ -2594,8 +3018,15 @@ and infer_let type_map env name expr type_annotation =
                 | Annotation.Open_row_rejected _ as e -> raise e
                 | Failure _ -> inferred_final_type)
           in
-          (* Generalize the type *)
-          let env' = apply_substitution_env final_subst env in
+          (* For top-level forward-reference placeholders, avoid self-leak in Γ:
+             otherwise the placeholder binding can block intended generalization. *)
+          let env_for_generalize =
+            if prefer_existing_self && name <> "_" then
+              TypeEnv.remove name env
+            else
+              env
+          in
+          let env' = apply_substitution_env final_subst env_for_generalize in
           let poly_type = generalize env' final_type in
           let _ = poly_type in
           Ok (final_subst, final_type))
@@ -2650,91 +3081,152 @@ let check_expression (type_map : type_map) (env : type_env) (expr : AST.expressi
    Program Inference
    ============================================================ *)
 
+let predeclare_top_level_lets (env : type_env) (program : AST.program) : (type_env, infer_error) result =
+  let rec go (seen : StringSet.t) (env_acc : type_env) (stmts : AST.statement list) :
+      (type_env, infer_error) result =
+    match stmts with
+    | [] -> Ok env_acc
+    | stmt :: rest -> (
+        match stmt.stmt with
+        | AST.Let let_binding when let_binding.name <> "_" ->
+            if StringSet.mem let_binding.name seen then
+              Error
+                {
+                  kind = ConstructorError (Printf.sprintf "Duplicate top-level let definition: %s" let_binding.name);
+                  pos = Some stmt.pos;
+                  end_pos = Some stmt.end_pos;
+                  file_id = stmt.file_id;
+                }
+            else
+              let seen' = StringSet.add let_binding.name seen in
+              if TypeEnv.mem let_binding.name env_acc then
+                go seen' env_acc rest
+              else
+                (match let_binding.value.expr with
+                | AST.Function f ->
+                    let return_type =
+                      match f.return_type with
+                      | Some type_expr -> (
+                          try Annotation.type_expr_to_mono_type type_expr with
+                          | Annotation.Open_row_rejected _ as e -> raise e
+                          | Failure _ -> fresh_type_var ())
+                      | None -> fresh_type_var ()
+                    in
+                    let param_types =
+                      List.map
+                        (fun (_name, annot_opt) ->
+                          match annot_opt with
+                          | Some type_expr -> (
+                              try Annotation.type_expr_to_mono_type type_expr with
+                              | Annotation.Open_row_rejected _ as e -> raise e
+                              | Failure _ -> fresh_type_var ())
+                          | None -> fresh_type_var ())
+                        f.params
+                    in
+                    let placeholder =
+                      List.fold_right (fun param_type acc -> TFun (param_type, acc, f.is_effectful)) param_types
+                        return_type
+                    in
+                    set_top_level_placeholder let_binding.name placeholder;
+                    go seen' (TypeEnv.add let_binding.name (mono_to_poly placeholder) env_acc) rest
+                | _ ->
+                    (* Keep value bindings strict-order for now; only function
+                       declarations participate in top-level forward references. *)
+                    go seen' env_acc rest)
+        | _ -> go seen env_acc rest)
+  in
+  go StringSet.empty env program
+
 let infer_program ?(env = empty_env) ?state (program : AST.program) :
     (type_env * type_map * mono_type) infer_result =
   let state = Option.value state ~default:(create_inference_state ()) in
   try
     with_inference_state state (fun () ->
-        Annotation.clear_type_aliases ();
-        Inherent_registry.clear ();
-        clear_method_resolution_store ();
-        let type_map = create_type_map () in
-        let register_top_level_declaration seen_traits seen_enums seen_aliases (stmt : AST.statement) =
-          match stmt.stmt with
-          | AST.TypeAlias alias_def ->
-              if StringSet.mem alias_def.alias_name seen_aliases then
-                Error (error (ConstructorError (Printf.sprintf "Duplicate type alias definition: %s" alias_def.alias_name)))
-              else (
-                Annotation.register_type_alias alias_def;
-                Ok (seen_traits, seen_enums, StringSet.add alias_def.alias_name seen_aliases))
-          | AST.TraitDef trait_def ->
-              if StringSet.mem trait_def.name seen_traits then
-                Error (error (ConstructorError (Printf.sprintf "Duplicate trait definition: %s" trait_def.name)))
-              else
-                Ok (StringSet.add trait_def.name seen_traits, seen_enums, seen_aliases)
-          | AST.EnumDef enum_def ->
-              if StringSet.mem enum_def.name seen_enums then
-                Error (error (ConstructorError (Printf.sprintf "Duplicate enum definition: %s" enum_def.name)))
-              else
-                Ok (seen_traits, StringSet.add enum_def.name seen_enums, seen_aliases)
-          | _ -> Ok (seen_traits, seen_enums, seen_aliases)
-        in
-        let rec go env subst seen_traits seen_enums seen_aliases stmts =
-          match stmts with
-          | [] -> Ok (env, subst, TNull)
-          | [ stmt_node ] ->
-              let stmt : AST.statement = stmt_node in
-              (match register_top_level_declaration seen_traits seen_enums seen_aliases stmt with
+      Annotation.clear_type_aliases ();
+      Inherent_registry.clear ();
+      clear_method_resolution_store ();
+      clear_top_level_placeholders ();
+      match resolve_program_symbols env program with
+      | Error e -> Error e
+      | Ok () ->
+          let type_map = create_type_map () in
+          let register_top_level_declaration seen_traits seen_enums seen_aliases (stmt : AST.statement) =
+            match stmt.stmt with
+            | AST.TypeAlias alias_def ->
+                if StringSet.mem alias_def.alias_name seen_aliases then
+                  Error (error (ConstructorError (Printf.sprintf "Duplicate type alias definition: %s" alias_def.alias_name)))
+                else (
+                  Annotation.register_type_alias alias_def;
+                  Ok (seen_traits, seen_enums, StringSet.add alias_def.alias_name seen_aliases))
+            | AST.TraitDef trait_def ->
+                if StringSet.mem trait_def.name seen_traits then
+                  Error (error (ConstructorError (Printf.sprintf "Duplicate trait definition: %s" trait_def.name)))
+                else
+                  Ok (StringSet.add trait_def.name seen_traits, seen_enums, seen_aliases)
+            | AST.EnumDef enum_def ->
+                if StringSet.mem enum_def.name seen_enums then
+                  Error (error (ConstructorError (Printf.sprintf "Duplicate enum definition: %s" enum_def.name)))
+                else
+                  Ok (seen_traits, StringSet.add enum_def.name seen_enums, seen_aliases)
+            | _ -> Ok (seen_traits, seen_enums, seen_aliases)
+          in
+          let infer_top_level_stmt env (stmt : AST.statement) =
+            match stmt.stmt with
+            | AST.Let let_binding ->
+                infer_let ~prefer_existing_self:true type_map env let_binding.name let_binding.value
+                  let_binding.type_annotation
+            | _ -> infer_statement type_map env stmt
+          in
+          let add_let_binding env (stmt : AST.statement) stmt_type =
+            match stmt.stmt with
+            | AST.Let let_binding ->
+                if let_binding.name = "_" then
+                  env
+                else
+                  let env_for_generalize = TypeEnv.remove let_binding.name env in
+                  let poly = generalize env_for_generalize stmt_type in
+                  TypeEnv.add let_binding.name poly env
+            | _ -> env
+          in
+          let rec go env subst seen_traits seen_enums seen_aliases (stmts : AST.statement list) =
+            match stmts with
+            | [] -> Ok (env, subst, TNull)
+            | [ stmt ] -> (
+                match register_top_level_declaration seen_traits seen_enums seen_aliases stmt with
+                | Error e -> Error e
+                | Ok (_seen_traits', _seen_enums', _seen_aliases') -> (
+                    match infer_top_level_stmt env stmt with
+                    | Error e -> Error e
+                    | Ok (stmt_subst, stmt_type) ->
+                        let final_subst = compose_substitution subst stmt_subst in
+                        let env' = apply_substitution_env final_subst env in
+                        let stmt_type' = apply_substitution final_subst stmt_type in
+                        let env'' = add_let_binding env' stmt stmt_type' in
+                        Ok (env'', final_subst, stmt_type')))
+            | stmt :: rest -> (
+                match register_top_level_declaration seen_traits seen_enums seen_aliases stmt with
+                | Error e -> Error e
+                | Ok (seen_traits', seen_enums', seen_aliases') -> (
+                    match infer_top_level_stmt env stmt with
+                    | Error e -> Error e
+                    | Ok (stmt_subst, stmt_type) ->
+                        let subst' = compose_substitution subst stmt_subst in
+                        let env' = apply_substitution_env stmt_subst env in
+                        let env'' = add_let_binding env' stmt stmt_type in
+                        go env'' subst' seen_traits' seen_enums' seen_aliases' rest))
+          in
+          match predeclare_top_level_lets env program with
+          | Error e -> Error e
+          | Ok env_with_placeholders -> (
+              match
+                go env_with_placeholders empty_substitution StringSet.empty StringSet.empty StringSet.empty program
+              with
               | Error e -> Error e
-              | Ok (_seen_traits', _seen_enums', _seen_aliases') -> (
-                  match infer_statement type_map env stmt with
-                  | Error e -> Error e
-                  | Ok (subst', result_type) ->
-                      let final_subst = compose_substitution subst subst' in
-                      let env' = apply_substitution_env final_subst env in
-                      let result_type' = apply_substitution final_subst result_type in
-                      (* Add let bindings to final environment *)
-                      let env'' =
-                        match stmt.stmt with
-                        | AST.Let let_binding ->
-                            if let_binding.name = "_" then
-                              env'
-                            else
-                              let poly = generalize env' result_type' in
-                              TypeEnv.add let_binding.name poly env'
-                        | _ -> env'
-                      in
-                      Ok (env'', final_subst, result_type')))
-          | stmt_node :: rest ->
-              let stmt : AST.statement = stmt_node in
-              (match register_top_level_declaration seen_traits seen_enums seen_aliases stmt with
-              | Error e -> Error e
-              | Ok (seen_traits', seen_enums', seen_aliases') -> (
-                  match infer_statement type_map env stmt with
-                  | Error e -> Error e
-                  | Ok (subst', stmt_type) ->
-                      let subst'' = compose_substitution subst subst' in
-                      let env' = apply_substitution_env subst' env in
-                      (* Add let bindings to environment for subsequent statements *)
-                      let env'' =
-                        match stmt.stmt with
-                        | AST.Let let_binding ->
-                            if let_binding.name = "_" then
-                              env'
-                            else
-                              let poly = generalize env' stmt_type in
-                              TypeEnv.add let_binding.name poly env'
-                        | _ -> env'
-                      in
-                      go env'' subst'' seen_traits' seen_enums' seen_aliases' rest))
-        in
-        match go env empty_substitution StringSet.empty StringSet.empty StringSet.empty program with
-        | Error e -> Error e
-        | Ok (env', final_subst, result_type) ->
-            (* Apply final substitution to all types in type_map *)
-            apply_substitution_type_map final_subst type_map;
-            Ok (env', type_map, result_type))
-  with Annotation.Open_row_rejected msg -> Error (error (ConstructorError msg))
+              | Ok (env', final_subst, result_type) ->
+                  apply_substitution_type_map final_subst type_map;
+                  Ok (env', type_map, result_type)))
+  with
+  | Annotation.Open_row_rejected msg -> Error (error (ConstructorError msg))
 
 module Test = struct
   (* Helper to parse and infer *)
@@ -2758,6 +3250,87 @@ module Test = struct
         else (
           Printf.printf "Expected %s but got %s\n" (to_string expected_type) (to_string t);
           false)
+
+  let contains_substring (s : string) (sub : string) : bool =
+    let len_s = String.length s in
+    let len_sub = String.length sub in
+    let rec go i =
+      if i + len_sub > len_s then
+        false
+      else if String.sub s i len_sub = sub then
+        true
+      else
+        go (i + 1)
+    in
+    go 0
+
+  let rec identifier_occurrences_in_expr (name : string) (expr : AST.expression) : (int * int) list =
+    match expr.expr with
+    | AST.Identifier n when n = name -> [ (expr.id, expr.pos) ]
+    | AST.Identifier _ | AST.Integer _ | AST.Float _ | AST.Boolean _ | AST.String _ -> []
+    | AST.Array xs -> List.concat_map (identifier_occurrences_in_expr name) xs
+    | AST.Index (a, b) ->
+        identifier_occurrences_in_expr name a @ identifier_occurrences_in_expr name b
+    | AST.Hash pairs ->
+        List.concat_map
+          (fun (k, v) -> identifier_occurrences_in_expr name k @ identifier_occurrences_in_expr name v)
+          pairs
+    | AST.Prefix (_, e) -> identifier_occurrences_in_expr name e
+    | AST.Infix (l, _, r) ->
+        identifier_occurrences_in_expr name l @ identifier_occurrences_in_expr name r
+    | AST.TypeCheck (e, _) -> identifier_occurrences_in_expr name e
+    | AST.If (cond, cons, alt) ->
+        identifier_occurrences_in_expr name cond
+        @ identifier_occurrences_in_stmt name cons
+        @
+        (match alt with
+        | None -> []
+        | Some s -> identifier_occurrences_in_stmt name s)
+    | AST.Function fn_expr -> identifier_occurrences_in_stmt name fn_expr.body
+    | AST.Call (f, args) ->
+        identifier_occurrences_in_expr name f @ List.concat_map (identifier_occurrences_in_expr name) args
+    | AST.EnumConstructor (_, _, args) -> List.concat_map (identifier_occurrences_in_expr name) args
+    | AST.Match (scrutinee, arms) ->
+        identifier_occurrences_in_expr name scrutinee
+        @ List.concat_map (fun (arm : AST.match_arm) -> identifier_occurrences_in_expr name arm.body) arms
+    | AST.RecordLit (fields, spread) ->
+        List.concat_map
+          (fun (f : AST.record_field) ->
+            match f.field_value with
+            | None -> []
+            | Some v -> identifier_occurrences_in_expr name v)
+          fields
+        @
+        (match spread with
+        | None -> []
+        | Some e -> identifier_occurrences_in_expr name e)
+    | AST.FieldAccess (receiver, _) -> identifier_occurrences_in_expr name receiver
+    | AST.MethodCall (receiver, _, args) ->
+        identifier_occurrences_in_expr name receiver @ List.concat_map (identifier_occurrences_in_expr name) args
+
+  and identifier_occurrences_in_stmt (name : string) (stmt : AST.statement) : (int * int) list =
+    match stmt.stmt with
+    | AST.ExpressionStmt e | AST.Return e -> identifier_occurrences_in_expr name e
+    | AST.Block stmts -> List.concat_map (identifier_occurrences_in_stmt name) stmts
+    | AST.Let let_binding -> identifier_occurrences_in_expr name let_binding.value
+    | AST.ImplDef impl_def ->
+        List.concat_map (fun (m : AST.method_impl) -> identifier_occurrences_in_expr name m.impl_method_body)
+          impl_def.impl_methods
+    | AST.InherentImplDef impl_def ->
+        List.concat_map (fun (m : AST.method_impl) -> identifier_occurrences_in_expr name m.impl_method_body)
+          impl_def.inherent_methods
+    | AST.EnumDef _ | AST.TraitDef _ | AST.DeriveDef _ | AST.TypeAlias _ -> []
+
+  let identifier_occurrences_in_program (name : string) (program : AST.program) : (int * int) list =
+    List.concat_map (identifier_occurrences_in_stmt name) program
+
+  let find_symbol_id_by_name_kind (state : inference_state) (name : string) (kind : symbol_kind) : symbol_id option =
+    symbol_table_bindings_in_state state
+    |> List.find_map (fun (sid, (sym : symbol)) ->
+           if sym.name = name && sym.kind = kind then
+             Some sid
+           else
+             None)
 
   let%test "infer integer literal" = infers_to "42" TInt
   let%test "infer float literal" = infers_to "3.14" TFloat
@@ -2903,6 +3476,177 @@ module Test = struct
         in
         has_needle 0
     | _ -> false
+
+  let%test "top-level forward reference to later function infers" =
+    infers_to "let y = add1(41); let add1 = fn(x: int) -> int { x + 1 }; y" TInt
+
+  let%test "top-level forward reference to later non-function value is rejected" =
+    match infer_string "let a = b; let b = 1; a" with
+    | Error { kind = UnboundVariable "b"; _ } -> true
+    | _ -> false
+
+  let%test "top-level mutual recursion with forward references infers" =
+    infers_to
+      "let even = fn(n: int) -> bool { if (n == 0) { true } else { odd(n - 1) } }; let odd = fn(n: int) -> bool { if (n == 0) { false } else { even(n - 1) } }; even(4)"
+      TBool
+
+  let%test "symbol resolution maps forward top-level function references to declaration symbols" =
+    match Syntax.Parser.parse "let y = add1(41); let add1 = fn(x: int) -> int { x + 1 }; y" with
+    | Error _ -> false
+    | Ok program ->
+        let state = create_inference_state () in
+        (match infer_program ~state program with
+        | Error _ -> false
+        | Ok _ ->
+            let add1_refs = identifier_occurrences_in_program "add1" program in
+            let add1_symbol = find_symbol_id_by_name_kind state "add1" TopLevelLet in
+            match (add1_refs, add1_symbol) with
+            | [ (add1_ref_id, _) ], Some add1_sid ->
+                lookup_identifier_symbol_in_state state add1_ref_id = Some add1_sid
+            | _ -> false)
+
+  let%test "symbol resolution leaves forward top-level value refs unresolved" =
+    match Syntax.Parser.parse "let a = b; let b = 1; a" with
+    | Error _ -> false
+    | Ok program ->
+        let state = create_inference_state () in
+        (match infer_program ~state program with
+        | Error { kind = UnboundVariable "b"; _ } ->
+            let b_refs = identifier_occurrences_in_program "b" program in
+            let b_symbol = find_symbol_id_by_name_kind state "b" TopLevelLet in
+            (match (b_refs, b_symbol) with
+            | [ (b_ref_id, _) ], Some _ -> lookup_identifier_symbol_in_state state b_ref_id = None
+            | _ -> false)
+        | _ -> false)
+
+  let%test "symbol resolution maps enum constructor receiver after enum definition" =
+    match Syntax.Parser.parse "enum direction { north }\nlet x = direction.north\nx" with
+    | Error _ -> false
+    | Ok program ->
+        let state = create_inference_state () in
+        (match infer_program ~state program with
+        | Error _ -> false
+        | Ok _ ->
+            let direction_refs = identifier_occurrences_in_program "direction" program in
+            let enum_symbol = find_symbol_id_by_name_kind state "direction" EnumSym in
+            match (direction_refs, enum_symbol) with
+            | [ (direction_ref_id, _) ], Some enum_sid ->
+                lookup_identifier_symbol_in_state state direction_ref_id = Some enum_sid
+            | _ -> false)
+
+  let%test "symbol resolution leaves forward enum receiver refs unresolved" =
+    match Syntax.Parser.parse "let x = direction.north\nenum direction { north }\nx" with
+    | Error _ -> false
+    | Ok program ->
+        let state = create_inference_state () in
+        let _ = infer_program ~state program in
+        let direction_refs = identifier_occurrences_in_program "direction" program in
+        match direction_refs with
+        | [ (direction_ref_id, _) ] -> lookup_identifier_symbol_in_state state direction_ref_id = None
+        | _ -> false
+
+  let%test "duplicate top-level let definition is rejected" =
+    match infer_string "let x = 1; let x = 2; x" with
+    | Error { kind = ConstructorError msg; _ } -> contains_substring msg "Duplicate top-level let definition: x"
+    | _ -> false
+
+  let%test "symbol resolution maps top-level identifiers to top-level symbols" =
+    match Syntax.Parser.parse "let x = 1; let y = x; y" with
+    | Error _ -> false
+    | Ok program ->
+        let state = create_inference_state () in
+        (match infer_program ~state program with
+        | Error _ -> false
+        | Ok _ ->
+            let x_refs = identifier_occurrences_in_program "x" program in
+            let y_refs = identifier_occurrences_in_program "y" program in
+            let x_symbol = find_symbol_id_by_name_kind state "x" TopLevelLet in
+            let y_symbol = find_symbol_id_by_name_kind state "y" TopLevelLet in
+            match (x_refs, y_refs, x_symbol, y_symbol) with
+            | [ (x_ref_id, _) ], [ (y_ref_id, _) ], Some x_sid, Some y_sid ->
+                lookup_identifier_symbol_in_state state x_ref_id = Some x_sid
+                && lookup_identifier_symbol_in_state state y_ref_id = Some y_sid
+                &&
+                (match lookup_symbol_in_state state x_sid with
+                | Some (sym : symbol) -> sym.kind = TopLevelLet && sym.name = "x"
+                | None -> false)
+            | _ -> false)
+
+  let%test "symbol resolution prefers inner parameter over top-level binding when shadowed" =
+    match Syntax.Parser.parse "let x = 1; let f = fn(x: int) -> int { x }; f(2); x" with
+    | Error _ -> false
+    | Ok program ->
+        let state = create_inference_state () in
+        (match infer_program ~state program with
+        | Error _ -> false
+        | Ok _ ->
+            let x_refs =
+              identifier_occurrences_in_program "x" program |> List.sort (fun (_, p1) (_, p2) -> Int.compare p1 p2)
+            in
+            let top_level_symbol = find_symbol_id_by_name_kind state "x" TopLevelLet in
+            let param_symbol = find_symbol_id_by_name_kind state "x" Param in
+            match (x_refs, top_level_symbol, param_symbol) with
+            | [ (inner_x_id, _); (outer_x_id, _) ], Some top_sid, Some param_sid ->
+                lookup_identifier_symbol_in_state state inner_x_id = Some param_sid
+                && lookup_identifier_symbol_in_state state outer_x_id = Some top_sid
+            | _ -> false)
+
+  let%test "builtin identifiers are tracked as builtin symbols when resolved from prelude env" =
+    match Syntax.Parser.parse "puts(1)" with
+    | Error _ -> false
+    | Ok program ->
+        let state = create_inference_state () in
+        let env = TypeEnv.add "puts" (mono_to_poly (TFun (TInt, TInt, true))) empty_env in
+        (match infer_program ~state ~env program with
+        | Error _ -> false
+        | Ok _ ->
+            let puts_refs = identifier_occurrences_in_program "puts" program in
+            let puts_builtin = find_symbol_id_by_name_kind state "puts" BuiltinValue in
+            match (puts_refs, puts_builtin) with
+            | [ (puts_ref_id, _) ], Some sid ->
+                lookup_identifier_symbol_in_state state puts_ref_id = Some sid
+                &&
+                (match lookup_symbol_in_state state sid with
+                | Some (sym : symbol) -> sym.kind = BuiltinValue
+                | None -> false)
+            | _ -> false)
+
+  let%test "top-level let can shadow prelude builtin in symbol resolution" =
+    match Syntax.Parser.parse "let puts = fn(x: int) -> int { x }; puts(1)" with
+    | Error _ -> false
+    | Ok program ->
+        let state = create_inference_state () in
+        let env = TypeEnv.add "puts" (mono_to_poly (TFun (TInt, TInt, true))) empty_env in
+        (match infer_program ~state ~env program with
+        | Error _ -> false
+        | Ok _ ->
+            let puts_refs = identifier_occurrences_in_program "puts" program in
+            let puts_builtin = find_symbol_id_by_name_kind state "puts" BuiltinValue in
+            let puts_top_level = find_symbol_id_by_name_kind state "puts" TopLevelLet in
+            match (puts_refs, puts_builtin, puts_top_level) with
+            | [ (puts_ref_id, _) ], Some builtin_sid, Some top_sid ->
+                lookup_identifier_symbol_in_state state puts_ref_id = Some top_sid && top_sid <> builtin_sid
+            | _ -> false)
+
+  let%test "symbol ids are stable across independent inference runs for identical source spans" =
+    match Syntax.Parser.parse ~file_id:"main.mr" "let x = 1; let y = x; y" with
+    | Error _ -> false
+    | Ok program ->
+        let state1 = create_inference_state () in
+        let state2 = create_inference_state () in
+        (match (infer_program ~state:state1 program, infer_program ~state:state2 program) with
+        | Ok _, Ok _ ->
+            let top_level_signature state =
+              symbol_table_bindings_in_state state
+              |> List.filter_map (fun (_sid, (sym : symbol)) ->
+                     if sym.kind = TopLevelLet then
+                       Some (sym.name, sym.id, sym.definition_pos, sym.definition_end_pos, sym.file_id)
+                     else
+                       None)
+              |> List.sort compare
+            in
+            top_level_signature state1 = top_level_signature state2
+        | _ -> false)
 
   let%test "field-only trait object rejects access to fields outside trait projection" =
     match
@@ -3337,7 +4081,9 @@ f"
     clear_constraint_store ();
     add_type_var_constraints "t0" [ "labeled" ];
     let lowered = lookup_type_var_constrained_fields "t0" in
-    List.exists (fun (_trait_name, field) -> field.name = "name" && field.typ = TString) lowered
+    List.exists
+      (fun (_trait_name, (field : Types.record_field_type)) -> field.name = "name" && field.typ = TString)
+      lowered
 
   let%test "add_type_var_constraints refreshes lowered fields after merged constraints" =
     Trait_registry.clear ();
@@ -3361,8 +4107,12 @@ f"
     add_type_var_constraints "t0" [ "named" ];
     add_type_var_constraints "t0" [ "aged" ];
     let lowered = lookup_type_var_constrained_fields "t0" in
-    List.exists (fun (_trait_name, field) -> field.name = "name" && field.typ = TString) lowered
-    && List.exists (fun (_trait_name, field) -> field.name = "age" && field.typ = TInt) lowered
+    List.exists
+      (fun (_trait_name, (field : Types.record_field_type)) -> field.name = "name" && field.typ = TString)
+      lowered
+    && List.exists
+         (fun (_trait_name, (field : Types.record_field_type)) -> field.name = "age" && field.typ = TInt)
+         lowered
 
   let%test "clear_constraint_store clears lowered constrained field requirements" =
     Trait_registry.clear ();
