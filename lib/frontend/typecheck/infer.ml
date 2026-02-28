@@ -639,11 +639,25 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                                          (Types.to_string receiver_type')))
                                    expr)))
                   | TVar _ -> (
-                      (* Row-polymorphic field access: receiver must have this field plus unknown tail *)
-                      let field_type_result =
-                        match receiver_type' with
-                        | TVar type_var_name ->
-                            let constraints = lookup_type_var_constraints type_var_name in
+                      match receiver_type' with
+                      | TVar type_var_name ->
+                          let constraints = lookup_type_var_constraints type_var_name in
+                          if constraints = [] then
+                            (* Unconstrained TVar: row-polymorphic field access. *)
+                            let field_type = fresh_type_var () in
+                            let row_var = fresh_row_var () in
+                            let expected =
+                              TRecord ([ { name = variant_name; typ = field_type } ], Some row_var)
+                            in
+                            (match unify receiver_type' expected with
+                            | Error e -> Error (error_at (UnificationError e) expr)
+                            | Ok subst2 ->
+                                let final_subst = compose_substitution subst1 subst2 in
+                                Ok (final_subst, apply_substitution subst2 field_type))
+                          else
+                            (* Constrained TVar: only fields guaranteed by constraints are accessible.
+                               Do not unify away the type variable here, otherwise we can lose attached
+                               trait obligations before call-site verification. *)
                             let expanded_constraints =
                               constraints
                               |> List.fold_left
@@ -667,7 +681,11 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                             in
                             let resolve_constrained_field_type candidates =
                               match candidates with
-                              | [] -> Ok (fresh_type_var ())
+                              | [] ->
+                                  Error
+                                    (Printf.sprintf
+                                       "Field '%s' is not guaranteed by constraints on type variable '%s' (%s)"
+                                       variant_name type_var_name (String.concat ", " expanded_constraints))
                               | (_trait_name, first_type) :: rest ->
                                   let rec unify_candidates current_type subst_acc = function
                                     | [] -> Ok (apply_substitution subst_acc current_type)
@@ -685,19 +703,10 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                                   in
                                   unify_candidates first_type empty_substitution rest
                             in
-                            resolve_constrained_field_type constrained_field_types
-                        | _ -> Ok (fresh_type_var ())
-                      in
-                      match field_type_result with
-                      | Error msg -> Error (error_at (ConstructorError msg) expr)
-                      | Ok field_type -> (
-                          let row_var = fresh_row_var () in
-                          let expected = TRecord ([ { name = variant_name; typ = field_type } ], Some row_var) in
-                          match unify receiver_type' expected with
-                          | Error e -> Error (error_at (UnificationError e) expr)
-                          | Ok subst2 ->
-                              let final_subst = compose_substitution subst1 subst2 in
-                              Ok (final_subst, apply_substitution subst2 field_type)))
+                            (match resolve_constrained_field_type constrained_field_types with
+                            | Error msg -> Error (error_at (ConstructorError msg) expr)
+                            | Ok field_type -> Ok (subst1, field_type))
+                      | _ -> Error (error_at (ConstructorError "internal error: expected type variable") expr))
                   | _ ->
                       Error
                         (error_at
@@ -2592,6 +2601,64 @@ module Test = struct
   let%test "function return trait-object annotation keeps projected fields accessible" =
     infers_to
       "trait named { name: string }\nlet mk = fn(n: int) -> named { { name: \"alice\", age: n } }\nlet x = mk(42)\nx.name"
+      TString
+
+  let%test "constrained field access preserves non-field trait obligations at call sites" =
+    match
+      infer_string
+        "trait named { name: string }\n\
+         trait shown[a] { fn show(x: a) -> string }\n\
+         let get_name = fn[t: named + shown](x: t) { x.name }\n\
+         let p = { name: \"alice\" }\n\
+         get_name(p)"
+    with
+    | Error { kind = ConstructorError msg; _ } ->
+        let has needle =
+          let len_msg = String.length msg in
+          let len_needle = String.length needle in
+          let rec go i =
+            if i + len_needle > len_msg then
+              false
+            else if String.sub msg i len_needle = needle then
+              true
+            else
+              go (i + 1)
+          in
+          go 0
+        in
+        has "Trait obligation failed" && has "does not implement trait shown"
+    | _ -> false
+
+  let%test "constrained field access rejects fields not guaranteed by constraints" =
+    match infer_string "trait named { name: string }\nlet get_age = fn[t: named](x: t) { x.age }\n1" with
+    | Error { kind = ConstructorError msg; _ } ->
+        let needle = "Field 'age' is not guaranteed by constraints on type variable" in
+        let len_msg = String.length msg in
+        let len_needle = String.length needle in
+        let rec has_needle i =
+          if i + len_needle > len_msg then
+            false
+          else if String.sub msg i len_needle = needle then
+            true
+          else
+            has_needle (i + 1)
+        in
+        has_needle 0
+    | _ -> false
+
+  let%test "constrained field access works when all constraints are satisfied" =
+    infers_to
+      "type person = { name: string, age: int }\n\
+       trait named { name: string }\n\
+       trait shown[a] { fn show(x: a) -> string }\n\
+       impl shown for person {\n\
+      \  fn show(x: person) -> string {\n\
+      \    x.name\n\
+      \  }\n\
+       }\n\
+       let get_name = fn[t: named + shown](x: t) { x.name }\n\
+       let p: person = { name: \"alice\", age: 42 }\n\
+       get_name(p)"
       TString
 
   let%test "explicit row-polymorphic annotation is rejected in v1" =

@@ -57,6 +57,51 @@ let get_name = fn[t: named](x: t) -> string {
 get_name({ age: 42 })
 EOF
 
+expect_build "Mixed field+method constraints still enforce method trait obligations" "does not implement trait shown" << 'EOF'
+trait named {
+  name: string
+}
+trait shown[a] {
+  fn show(x: a) -> string
+}
+let get_name = fn[t: named + shown](x: t) -> string {
+  x.name
+};
+let p = { name: "alice" }
+puts(get_name(p))
+EOF
+
+expect_build "Constrained generic cannot access fields absent from constraints" "not guaranteed by constraints" << 'EOF'
+trait named {
+  name: string
+}
+let get_age = fn[t: named](x: t) -> int {
+  x.age
+};
+let p = { name: "alice", age: 42 }
+puts(get_age(p))
+EOF
+
+expect_runtime_output "Mixed field+method constraints succeed with satisfying impl" "alice" << 'EOF'
+type person = { name: string, age: int }
+trait named {
+  name: string
+}
+trait shown[a] {
+  fn show(x: a) -> string
+}
+impl shown for person {
+  fn show(x: person) -> string {
+    x.name
+  }
+}
+let get_name = fn[t: named + shown](x: t) -> string {
+  x.name
+};
+let p: person = { name: "alice", age: 42 }
+puts(get_name(p))
+EOF
+
 expect_runtime_output "Field-only trait as type projects records to required shape" "alice" << 'EOF'
 trait named {
   name: string
