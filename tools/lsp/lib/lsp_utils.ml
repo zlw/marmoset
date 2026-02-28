@@ -16,13 +16,14 @@ let offset_range_to_lsp ~(source : string) ~(pos : int) ~(end_pos : int) : Lsp_t
   let end_ = Lsp_t.Position.create ~line:(end_loc.line - 1) ~character:end_loc.column in
   Lsp_t.Range.create ~start ~end_
 
-(* Convert LSP Position (0-indexed line/character) to byte offset in source *)
+(* Convert LSP Position (0-indexed line/character) to byte offset in source.
+   Clamps to [0, len] — offset=len represents end-of-file (one past last char). *)
 let position_to_offset ~(source : string) ~(line : int) ~(character : int) : int =
   let len = String.length source in
   let rec scan pos current_line =
     if current_line >= line then
       (* We're on the target line, advance by character count *)
-      min (pos + character) (len - 1) |> max 0
+      min (pos + character) len |> max 0
     else if pos >= len then
       len
     else
@@ -76,10 +77,10 @@ let%test "position_to_offset beginning of file" =
   let offset = position_to_offset ~source ~line:0 ~character:0 in
   offset = 0
 
-let%test "position_to_offset past end clamps" =
+let%test "position_to_offset past end clamps to len" =
   let source = "hello" in
   let offset = position_to_offset ~source ~line:0 ~character:100 in
-  offset = 4 (* last valid index *)
+  offset = 5 (* one past last char = end of file *)
 
 let%test "round trip: offset -> loc -> position -> offset" =
   let source = "let x = 5;\nlet y = 10;\nlet z = 15;" in

@@ -192,12 +192,24 @@ class marmoset_server =
             let uri = p.textDocument.uri in
             let result =
               match Hashtbl.find_opt analysis_cache uri with
-              | None -> []
               | Some { analysis } -> (
                   match analysis.program with
                   | Some prog ->
                       Selection_ranges.compute ~source:analysis.source ~program:prog ~positions:p.positions
-                  | None -> [])
+                  | None ->
+                      (* No program — return a zero-range for each position (LSP requires one per position) *)
+                      List.map
+                        (fun (pos : Lsp_t.Position.t) ->
+                          let range = Lsp_t.Range.create ~start:pos ~end_:pos in
+                          Lsp_t.SelectionRange.create ~range ())
+                        p.positions)
+              | None ->
+                  (* No cache — return a zero-range for each position *)
+                  List.map
+                    (fun (pos : Lsp_t.Position.t) ->
+                      let range = Lsp_t.Range.create ~start:pos ~end_:pos in
+                      Lsp_t.SelectionRange.create ~range ())
+                    p.positions
             in
             Lwt.return result
         | _ -> super#on_request_unhandled ~notify_back ~id req

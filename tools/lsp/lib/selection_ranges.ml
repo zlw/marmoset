@@ -20,53 +20,47 @@ let rec find_in_expr ~source ~offset ~parent (expr : Ast.AST.expression) : Lsp_t
     let child =
       match expr.expr with
       | Ast.AST.Infix (left, _, right) ->
-          first_some
-            (find_in_expr ~source ~offset ~parent:current left)
-            (find_in_expr ~source ~offset ~parent:current right)
+          first_some (find_in_expr ~source ~offset ~parent:current left) (fun () ->
+              find_in_expr ~source ~offset ~parent:current right)
       | Ast.AST.Prefix (_, e) -> find_in_expr ~source ~offset ~parent:current e
       | Ast.AST.Call (fn_expr, args) ->
-          first_some
-            (find_in_expr ~source ~offset ~parent:current fn_expr)
-            (find_first_in_exprs ~source ~offset ~parent:current args)
+          first_some (find_in_expr ~source ~offset ~parent:current fn_expr) (fun () ->
+              find_first_in_exprs ~source ~offset ~parent:current args)
       | Ast.AST.If (cond, then_, else_) ->
-          first_some
-            (find_in_expr ~source ~offset ~parent:current cond)
-            (first_some
-               (find_in_stmt ~source ~offset ~parent:current then_)
-               (match else_ with
-               | Some e -> find_in_stmt ~source ~offset ~parent:current e
-               | None -> None))
+          first_some (find_in_expr ~source ~offset ~parent:current cond) (fun () ->
+              first_some (find_in_stmt ~source ~offset ~parent:current then_) (fun () ->
+                  match else_ with
+                  | Some e -> find_in_stmt ~source ~offset ~parent:current e
+                  | None -> None))
       | Ast.AST.Function { body; _ } -> find_in_stmt ~source ~offset ~parent:current body
       | Ast.AST.Index (arr, idx) ->
-          first_some
-            (find_in_expr ~source ~offset ~parent:current arr)
-            (find_in_expr ~source ~offset ~parent:current idx)
+          first_some (find_in_expr ~source ~offset ~parent:current arr) (fun () ->
+              find_in_expr ~source ~offset ~parent:current idx)
       | Ast.AST.Array elts -> find_first_in_exprs ~source ~offset ~parent:current elts
       | Ast.AST.Hash pairs ->
           List.find_map
             (fun (k, v) ->
-              first_some
-                (find_in_expr ~source ~offset ~parent:current k)
-                (find_in_expr ~source ~offset ~parent:current v))
+              first_some (find_in_expr ~source ~offset ~parent:current k) (fun () ->
+                  find_in_expr ~source ~offset ~parent:current v))
             pairs
       | Ast.AST.FieldAccess (e, _) -> find_in_expr ~source ~offset ~parent:current e
       | Ast.AST.MethodCall (recv, _, args) ->
-          first_some
-            (find_in_expr ~source ~offset ~parent:current recv)
-            (find_first_in_exprs ~source ~offset ~parent:current args)
+          first_some (find_in_expr ~source ~offset ~parent:current recv) (fun () ->
+              find_first_in_exprs ~source ~offset ~parent:current args)
       | Ast.AST.Match (scrutinee, arms) ->
-          first_some
-            (find_in_expr ~source ~offset ~parent:current scrutinee)
-            (List.find_map
-               (fun (arm : Ast.AST.match_arm) -> find_in_expr ~source ~offset ~parent:current arm.body)
-               arms)
+          first_some (find_in_expr ~source ~offset ~parent:current scrutinee) (fun () ->
+              List.find_map
+                (fun (arm : Ast.AST.match_arm) ->
+                  first_some (find_first_in_patterns ~source ~offset ~parent:current arm.patterns) (fun () ->
+                      find_in_expr ~source ~offset ~parent:current arm.body))
+                arms)
       | Ast.AST.RecordLit (fields, spread) ->
           first_some
             (List.find_map
                (fun (f : Ast.AST.record_field) ->
                  Option.bind f.field_value (find_in_expr ~source ~offset ~parent:current))
                fields)
-            (Option.bind spread (find_in_expr ~source ~offset ~parent:current))
+            (fun () -> Option.bind spread (find_in_expr ~source ~offset ~parent:current))
       | Ast.AST.EnumConstructor (_, _, args) -> find_first_in_exprs ~source ~offset ~parent:current args
       | Ast.AST.TypeCheck (e, _) -> find_in_expr ~source ~offset ~parent:current e
       | Ast.AST.Identifier _ | Ast.AST.Integer _ | Ast.AST.Float _ | Ast.AST.Boolean _ | Ast.AST.String _ -> None
@@ -86,20 +80,51 @@ and find_in_stmt ~source ~offset ~parent (stmt : Ast.AST.statement) : Lsp_t.Sele
       | Ast.AST.ExpressionStmt e -> find_in_expr ~source ~offset ~parent:current e
       | Ast.AST.Return e -> find_in_expr ~source ~offset ~parent:current e
       | Ast.AST.Block stmts -> find_first_in_stmts ~source ~offset ~parent:current stmts
-      | Ast.AST.EnumDef _ | Ast.AST.TraitDef _ | Ast.AST.ImplDef _ | Ast.AST.DeriveDef _ | Ast.AST.TypeAlias _ ->
-          None
+      | Ast.AST.ImplDef { impl_methods; _ } ->
+          List.find_map
+            (fun (m : Ast.AST.method_impl) -> find_in_expr ~source ~offset ~parent:current m.impl_method_body)
+            impl_methods
+      | Ast.AST.TraitDef { methods; _ } ->
+          List.find_map
+            (fun (m : Ast.AST.method_sig) ->
+              Option.bind m.method_default_impl (find_in_expr ~source ~offset ~parent:current))
+            methods
+      | Ast.AST.EnumDef _ | Ast.AST.DeriveDef _ | Ast.AST.TypeAlias _ -> None
     in
     match child with
     | Some _ -> child
     | None -> current
 
+and find_in_pattern ~source ~offset ~parent (pat : Ast.AST.pattern) : Lsp_t.SelectionRange.t option =
+  if offset < pat.pos || offset > pat.end_pos then
+    None
+  else
+    let current = Some (sel_range ~source ~pos:pat.pos ~end_pos:pat.end_pos ~parent) in
+    let child =
+      match pat.pat with
+      | Ast.AST.PConstructor (_, _, sub_pats) -> find_first_in_patterns ~source ~offset ~parent:current sub_pats
+      | Ast.AST.PRecord (fields, _) ->
+          List.find_map
+            (fun (f : Ast.AST.record_pattern_field) ->
+              Option.bind f.pat_field_pattern (find_in_pattern ~source ~offset ~parent:current))
+            fields
+      | Ast.AST.PWildcard | Ast.AST.PVariable _ | Ast.AST.PLiteral _ -> None
+    in
+    match child with
+    | Some _ -> child
+    | None -> current
+
+and find_first_in_patterns ~source ~offset ~parent pats =
+  List.find_map (find_in_pattern ~source ~offset ~parent) pats
+
 and find_first_in_exprs ~source ~offset ~parent exprs = List.find_map (find_in_expr ~source ~offset ~parent) exprs
 and find_first_in_stmts ~source ~offset ~parent stmts = List.find_map (find_in_stmt ~source ~offset ~parent) stmts
 
-and first_some a b =
+(* Lazy first_some: only evaluates second thunk if first returns None *)
+and first_some a b_thunk =
   match a with
   | Some _ -> a
-  | None -> b
+  | None -> b_thunk ()
 
 (* Find selection range for a single position across the whole program *)
 let find_at_position ~source ~program ~offset : Lsp_t.SelectionRange.t =

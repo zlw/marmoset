@@ -157,7 +157,7 @@ let%test "hover on whitespace/out of range returns None" =
   result = None
 
 let%test "hover on function shows function type" =
-  match check_hover "let f = fn(x) { x + 1 }; f" 0 26 with
+  match check_hover "let f = fn(x) { x + 1 }; f" 0 25 with
   | Some hover -> (
       match hover.contents with
       | `MarkupContent mc -> string_contains mc.value "->"

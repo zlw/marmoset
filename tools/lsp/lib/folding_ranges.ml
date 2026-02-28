@@ -3,31 +3,29 @@
 module Lsp_t = Linol_lsp.Types
 module Ast = Marmoset.Lib.Ast
 
-(* Emit a folding range only if it spans 2+ lines *)
+(* Emit a folding range only if it spans 2+ lines.
+   Uses offset_range_to_lsp to correctly handle Marmoset's inclusive end_pos
+   vs LSP's exclusive end position. *)
 let maybe_range ~source ~pos ~end_pos ~kind ranges =
-  let start_pos = Lsp_utils.offset_to_position ~source ~offset:pos in
-  let end_position = Lsp_utils.offset_to_position ~source ~offset:end_pos in
-  if end_position.line > start_pos.line then
+  let range = Lsp_utils.offset_range_to_lsp ~source ~pos ~end_pos in
+  if range.end_.line > range.start.line then
     ranges :=
-      Lsp_t.FoldingRange.create ~startLine:start_pos.line ~startCharacter:start_pos.character
-        ~endLine:end_position.line ~endCharacter:end_position.character ~kind ()
+      Lsp_t.FoldingRange.create ~startLine:range.start.line ~startCharacter:range.start.character
+        ~endLine:range.end_.line ~endCharacter:range.end_.character ~kind ()
       :: !ranges
 
 (* Walk an expression collecting folding ranges *)
 let rec walk_expr ~source ~ranges (expr : Ast.AST.expression) =
   match expr.expr with
   | Ast.AST.Function { body; _ } ->
+      (* Emit range for the whole function (fn(...) { ... }), not the inner block *)
       maybe_range ~source ~pos:expr.pos ~end_pos:expr.end_pos ~kind:Lsp_t.FoldingRangeKind.Region ranges;
-      walk_stmt ~source ~ranges body
+      walk_stmt_skip_block ~source ~ranges body
   | Ast.AST.If (cond, then_, else_) -> (
       walk_expr ~source ~ranges cond;
-      maybe_range ~source ~pos:then_.pos ~end_pos:then_.end_pos ~kind:Lsp_t.FoldingRangeKind.Region ranges;
       walk_stmt ~source ~ranges then_;
       match else_ with
-      | Some else_stmt ->
-          maybe_range ~source ~pos:else_stmt.pos ~end_pos:else_stmt.end_pos ~kind:Lsp_t.FoldingRangeKind.Region
-            ranges;
-          walk_stmt ~source ~ranges else_stmt
+      | Some else_stmt -> walk_stmt ~source ~ranges else_stmt
       | None -> ())
   | Ast.AST.Match (scrutinee, arms) ->
       maybe_range ~source ~pos:expr.pos ~end_pos:expr.end_pos ~kind:Lsp_t.FoldingRangeKind.Region ranges;
@@ -65,6 +63,13 @@ let rec walk_expr ~source ~ranges (expr : Ast.AST.expression) =
   | Ast.AST.TypeCheck (e, _) -> walk_expr ~source ~ranges e
   | Ast.AST.Identifier _ | Ast.AST.Integer _ | Ast.AST.Float _ | Ast.AST.Boolean _ | Ast.AST.String _ -> ()
 
+(* Walk a statement but skip Block-level range emission to avoid duplicates
+   with the parent construct that already emitted a range *)
+and walk_stmt_skip_block ~source ~ranges (stmt : Ast.AST.statement) =
+  match stmt.stmt with
+  | Ast.AST.Block stmts -> List.iter (walk_stmt ~source ~ranges) stmts
+  | _ -> walk_stmt ~source ~ranges stmt
+
 (* Walk a statement collecting folding ranges *)
 and walk_stmt ~source ~ranges (stmt : Ast.AST.statement) =
   match stmt.stmt with
@@ -101,7 +106,8 @@ let get_ranges source =
 
 let%test "multi-line function body produces folding range" =
   let ranges = get_ranges "let f = fn(x) {\n  x + 1\n}" in
-  List.length ranges >= 1
+  (* Exactly 1 range for the function, no duplicate from the inner block *)
+  List.length ranges = 1
 
 let%test "single-line function produces no folding range" =
   let ranges = get_ranges "let f = fn(x) { x }" in
@@ -114,8 +120,8 @@ let%test "multi-line enum produces folding range" =
 let%test "multi-line if/else produces ranges for each branch" =
   let src = "let f = fn(x) {\n  if (x == 0) {\n    x\n  } else {\n    0\n  }\n}" in
   let ranges = get_ranges src in
-  (* Function body + then branch + else branch = at least 3 *)
-  List.length ranges >= 3
+  (* Function (1) + then block (1) + else block (1) = 3, no duplicates *)
+  List.length ranges = 3
 
 let%test "single-line constructs produce no ranges" =
   let ranges = get_ranges "let x = 42;" in
@@ -130,5 +136,5 @@ let%test "match expression produces folding range" =
     "enum opt[a] {\n  some(a)\n  none\n}\nlet f = fn(x: opt[int]) {\n  match x {\n    opt.some(v): v\n    opt.none: 0\n  }\n}"
   in
   let ranges = get_ranges src in
-  (* enum + function + match = at least 3 *)
-  List.length ranges >= 3
+  (* enum (1) + function (1) + match (1) = 3, no duplicates *)
+  List.length ranges = 3

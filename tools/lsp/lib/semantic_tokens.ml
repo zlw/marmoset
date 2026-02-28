@@ -7,7 +7,7 @@ module Types = Marmoset.Lib.Types
 
 (* Token type indices — must match the legend order in server.ml *)
 let namespace_type = 0
-let type_type = 1
+let _type_type = 1
 let enum_type = 2
 let interface_type = 3
 let parameter_type = 4
@@ -76,6 +76,21 @@ let find_name ~source ~start ~limit name =
   in
   scan start
 
+(* Find a substring without word-boundary checks — for operators and punctuation *)
+let find_substr ~source ~start ~limit name =
+  let name_len = String.length name in
+  let src_len = String.length source in
+  let limit = min limit src_len in
+  let rec scan i =
+    if i + name_len > limit then
+      None
+    else if String.sub source i name_len = name then
+      Some (i, i + name_len)
+    else
+      scan (i + 1)
+  in
+  scan start
+
 (* Collect raw tokens from an expression *)
 let rec collect_expr ~source ~type_map ~environment ~params ~tokens (expr : Ast.AST.expression) =
   match expr.expr with
@@ -107,9 +122,9 @@ let rec collect_expr ~source ~type_map ~environment ~params ~tokens (expr : Ast.
       collect_expr ~source ~type_map ~environment ~params ~tokens e
   | Ast.AST.Infix (left, op, right) ->
       collect_expr ~source ~type_map ~environment ~params ~tokens left;
-      (* Find operator position between left and right *)
+      (* Find operator position between left and right — use find_substr for operators *)
       let op_len = String.length op in
-      (match find_name ~source ~start:(left.end_pos + 1) ~limit:right.pos op with
+      (match find_substr ~source ~start:left.end_pos ~limit:(right.pos + 1) op with
       | Some (op_start, _) ->
           tokens :=
             { pos = op_start; end_pos = op_start + op_len - 1; token_type = operator_type; modifiers = 0 }
@@ -128,13 +143,6 @@ let rec collect_expr ~source ~type_map ~environment ~params ~tokens (expr : Ast.
               tokens :=
                 { pos = pstart; end_pos = pend - 1; token_type = parameter_type; modifiers = declaration_mod }
                 :: !tokens
-          | None -> ())
-        fn_params;
-      (* Emit type annotation tokens for params *)
-      List.iter
-        (fun (_pname, annotation) ->
-          match annotation with
-          | Some te -> collect_type_expr ~source ~tokens te expr.pos expr.end_pos
           | None -> ())
         fn_params;
       (* Recurse into body with params in scope *)
@@ -170,7 +178,7 @@ let rec collect_expr ~source ~type_map ~environment ~params ~tokens (expr : Ast.
   | Ast.AST.MethodCall (recv, method_name, args) ->
       collect_expr ~source ~type_map ~environment ~params ~tokens recv;
       let mlen = String.length method_name in
-      (match find_name ~source ~start:(recv.end_pos + 1) ~limit:expr.end_pos method_name with
+      (match find_name ~source ~start:(recv.end_pos + 1) ~limit:(expr.end_pos + 1) method_name with
       | Some (mstart, _) ->
           tokens :=
             { pos = mstart; end_pos = mstart + mlen - 1; token_type = method_type; modifiers = 0 } :: !tokens
@@ -184,13 +192,15 @@ let rec collect_expr ~source ~type_map ~environment ~params ~tokens (expr : Ast.
           collect_expr ~source ~type_map ~environment ~params ~tokens arm.body)
         arms
   | Ast.AST.RecordLit (fields, spread) ->
+      let search_from = ref expr.pos in
       List.iter
         (fun (f : Ast.AST.record_field) ->
           (* Field name as property *)
           let fname = f.field_name in
           let fname_len = String.length fname in
-          (match find_name ~source ~start:expr.pos ~limit:(expr.end_pos + 1) fname with
-          | Some (fstart, _) ->
+          (match find_name ~source ~start:!search_from ~limit:(expr.end_pos + 1) fname with
+          | Some (fstart, fend) ->
+              search_from := fend;
               tokens :=
                 { pos = fstart; end_pos = fstart + fname_len - 1; token_type = property_type; modifiers = 0 }
                 :: !tokens
@@ -216,27 +226,8 @@ let rec collect_expr ~source ~type_map ~environment ~params ~tokens (expr : Ast.
       List.iter (collect_expr ~source ~type_map ~environment ~params ~tokens) args
   | Ast.AST.TypeCheck (e, _te) -> collect_expr ~source ~type_map ~environment ~params ~tokens e
 
-(* Collect tokens from a type expression (annotations) *)
-and collect_type_expr ~source ~tokens (te : Ast.AST.type_expr) stmt_pos stmt_end =
-  let _ = stmt_pos in
-  let _ = stmt_end in
-  match te with
-  | Ast.AST.TCon name | Ast.AST.TVar name ->
-      let name_len = String.length name in
-      (* We can't precisely locate type annotations without pos info in type_expr,
-         so we skip emitting tokens for standalone type names.
-         They'll be handled by tree-sitter. *)
-      ignore (name_len, source, tokens)
-  | Ast.AST.TApp (name, args) ->
-      ignore name;
-      List.iter (fun arg -> collect_type_expr ~source ~tokens arg stmt_pos stmt_end) args
-  | Ast.AST.TArrow (params, ret) ->
-      List.iter (fun p -> collect_type_expr ~source ~tokens p stmt_pos stmt_end) params;
-      collect_type_expr ~source ~tokens ret stmt_pos stmt_end
-  | Ast.AST.TUnion parts -> List.iter (fun p -> collect_type_expr ~source ~tokens p stmt_pos stmt_end) parts
-  | Ast.AST.TRecord (fields, spread) ->
-      List.iter (fun (_f : Ast.AST.record_type_field) -> ()) fields;
-      Option.iter (fun s -> collect_type_expr ~source ~tokens s stmt_pos stmt_end) spread
+(* Note: type annotations (type_expr) lack byte-position info in the AST,
+   so we cannot emit semantic tokens for them. Tree-sitter handles type highlighting. *)
 
 (* Collect tokens from match patterns *)
 and collect_pattern ~source ~tokens (pat : Ast.AST.pattern) =
@@ -281,7 +272,7 @@ and collect_pattern ~source ~tokens (pat : Ast.AST.pattern) =
 (* Collect tokens from a statement *)
 and collect_stmt ~source ~type_map ~environment ~params ~tokens (stmt : Ast.AST.statement) =
   match stmt.stmt with
-  | Ast.AST.Let { name; value; type_annotation; _ } ->
+  | Ast.AST.Let { name; value; _ } ->
       (* Determine if this is a function binding *)
       let is_fn =
         match value.expr with
@@ -300,18 +291,16 @@ and collect_stmt ~source ~type_map ~environment ~params ~tokens (stmt : Ast.AST.
           tokens :=
             { pos = nstart; end_pos = nstart + nlen - 1; token_type; modifiers = declaration_mod } :: !tokens
       | None -> ());
-      (* Type annotation *)
-      (match type_annotation with
-      | Some te -> collect_type_expr ~source ~tokens te stmt.pos stmt.end_pos
-      | None -> ());
       collect_expr ~source ~type_map ~environment ~params ~tokens value
   | Ast.AST.ExpressionStmt e -> collect_expr ~source ~type_map ~environment ~params ~tokens e
   | Ast.AST.Return e -> collect_expr ~source ~type_map ~environment ~params ~tokens e
   | Ast.AST.Block stmts -> List.iter (collect_stmt ~source ~type_map ~environment ~params ~tokens) stmts
   | Ast.AST.EnumDef { name; variants; _ } ->
       let nlen = String.length name in
-      (match find_name ~source ~start:stmt.pos ~limit:stmt.end_pos name with
-      | Some (nstart, _) ->
+      let search_from = ref stmt.pos in
+      (match find_name ~source ~start:!search_from ~limit:(stmt.end_pos + 1) name with
+      | Some (nstart, nend) ->
+          search_from := nend;
           tokens :=
             { pos = nstart; end_pos = nstart + nlen - 1; token_type = enum_type; modifiers = declaration_mod }
             :: !tokens
@@ -320,8 +309,9 @@ and collect_stmt ~source ~type_map ~environment ~params ~tokens (stmt : Ast.AST.
         (fun (v : Ast.AST.variant_def) ->
           let vname = v.variant_name in
           let vlen = String.length vname in
-          match find_name ~source ~start:stmt.pos ~limit:stmt.end_pos vname with
-          | Some (vstart, _) ->
+          match find_name ~source ~start:!search_from ~limit:(stmt.end_pos + 1) vname with
+          | Some (vstart, vend) ->
+              search_from := vend;
               tokens :=
                 {
                   pos = vstart;
@@ -334,8 +324,10 @@ and collect_stmt ~source ~type_map ~environment ~params ~tokens (stmt : Ast.AST.
         variants
   | Ast.AST.TraitDef { name; methods; _ } ->
       let nlen = String.length name in
-      (match find_name ~source ~start:stmt.pos ~limit:stmt.end_pos name with
-      | Some (nstart, _) ->
+      let search_from = ref stmt.pos in
+      (match find_name ~source ~start:!search_from ~limit:(stmt.end_pos + 1) name with
+      | Some (nstart, nend) ->
+          search_from := nend;
           tokens :=
             {
               pos = nstart;
@@ -349,8 +341,9 @@ and collect_stmt ~source ~type_map ~environment ~params ~tokens (stmt : Ast.AST.
         (fun (m : Ast.AST.method_sig) ->
           let mname = m.method_name in
           let mlen = String.length mname in
-          match find_name ~source ~start:stmt.pos ~limit:stmt.end_pos mname with
-          | Some (mstart, _) ->
+          match find_name ~source ~start:!search_from ~limit:(stmt.end_pos + 1) mname with
+          | Some (mstart, mend) ->
+              search_from := mend;
               tokens :=
                 {
                   pos = mstart;
@@ -363,8 +356,10 @@ and collect_stmt ~source ~type_map ~environment ~params ~tokens (stmt : Ast.AST.
         methods
   | Ast.AST.ImplDef { impl_trait_name; impl_methods; _ } ->
       let tlen = String.length impl_trait_name in
-      (match find_name ~source ~start:stmt.pos ~limit:stmt.end_pos impl_trait_name with
-      | Some (tstart, _) ->
+      let search_from = ref stmt.pos in
+      (match find_name ~source ~start:!search_from ~limit:(stmt.end_pos + 1) impl_trait_name with
+      | Some (tstart, tend) ->
+          search_from := tend;
           tokens :=
             { pos = tstart; end_pos = tstart + tlen - 1; token_type = interface_type; modifiers = 0 } :: !tokens
       | None -> ());
@@ -372,8 +367,9 @@ and collect_stmt ~source ~type_map ~environment ~params ~tokens (stmt : Ast.AST.
         (fun (m : Ast.AST.method_impl) ->
           let mname = m.impl_method_name in
           let mlen = String.length mname in
-          (match find_name ~source ~start:stmt.pos ~limit:stmt.end_pos mname with
-          | Some (mstart, _) ->
+          (match find_name ~source ~start:!search_from ~limit:(stmt.end_pos + 1) mname with
+          | Some (mstart, mend) ->
+              search_from := mend;
               tokens :=
                 {
                   pos = mstart;
