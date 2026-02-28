@@ -54,14 +54,11 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Install tree-sitter CLI
-        run: npm install -g tree-sitter-cli
-
       - name: Run grammar tests
         working-directory: tools/tree-sitter-marmoset
         run: |
           npm install
-          tree-sitter generate
+          npm run generate
           npm test
 
   vscode-compile:

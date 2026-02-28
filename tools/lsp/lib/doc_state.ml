@@ -24,7 +24,7 @@ let reset_globals () =
 
 let make_diagnostic ~(range : Lsp_t.Range.t) ~(severity : Lsp_t.DiagnosticSeverity.t) ~(message : string) :
     Lsp_t.Diagnostic.t =
-  Lsp_t.Diagnostic.create ~range ~severity ~source:"marmoset" ~message ()
+  Lsp_t.Diagnostic.create ~range ~severity ~source:"marmoset" ~message:(Lsp_compat.diagnostic_message message) ()
 
 let zero_range =
   let zero = Lsp_t.Position.create ~line:0 ~character:0 in
