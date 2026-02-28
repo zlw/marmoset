@@ -536,12 +536,30 @@ let rec extract_param_types n = function
       (arg :: rest, final)
   | t -> ([], t)
 
+let rec extract_param_types_exact n = function
+  | t when n = 0 -> Some ([], t)
+  | Types.TFun (arg, ret, _) -> (
+      match extract_param_types_exact (n - 1) ret with
+      | Some (rest, final) -> Some (arg :: rest, final)
+      | None -> None)
+  | _ -> None
+
 let extract_all_param_types (t : Types.mono_type) : Types.mono_type list * Types.mono_type =
   let rec go acc = function
     | Types.TFun (arg, ret, _) -> go (arg :: acc) ret
     | final_ret -> (List.rev acc, final_ret)
   in
   go [] t
+
+let add_param_bindings
+    (env : Infer.type_env) (param_names : string list) (param_types : Types.mono_type list) : Infer.type_env =
+  let rec go acc names types =
+    match (names, types) with
+    | name :: names_tail, typ :: types_tail ->
+        go (Infer.TypeEnv.add name (Types.Forall ([], typ)) acc) names_tail types_tail
+    | _ -> acc
+  in
+  go env param_names param_types
 
 let rec collect_insts_stmt
     (state : mono_state) (type_map : Infer.type_map) (env : Infer.type_env) (stmt : AST.statement) :
@@ -668,14 +686,21 @@ and collect_insts_expr
       collect_insts_expr state type_map env index
   | AST.Function f ->
       (* Phase 2: Create env with params for the body *)
-      let func_type = get_type type_map expr in
-      let param_types, _ = extract_param_types (List.length f.params) func_type in
       let param_names = List.map fst f.params in
-      let body_env =
-        List.fold_left2
-          (fun acc name typ -> Infer.TypeEnv.add name (Types.Forall ([], typ)) acc)
-          env param_names param_types
+      let arity = List.length param_names in
+      let func_type = get_type type_map expr in
+      let param_types =
+        match extract_param_types_exact arity func_type with
+        | Some (types, _) -> types
+        | None -> (
+            match expected_type with
+            | Some expected_func_type -> (
+                match extract_param_types_exact arity expected_func_type with
+                | Some (types, _) -> types
+                | None -> [])
+            | None -> [])
       in
+      let body_env = add_param_bindings env param_names param_types in
       ignore (collect_insts_stmt state type_map body_env f.body)
   | AST.EnumConstructor (_, _, args) ->
       List.iter (collect_insts_expr state type_map env) args;
@@ -1869,7 +1894,16 @@ and emit_index state type_map env container index =
 and emit_function_expr state type_map env func_expr params body =
   (* Inline anonymous function - no monomorphization needed *)
   let func_type = get_type type_map func_expr in
-  let param_types, return_type = extract_param_types (List.length params) func_type in
+  let arity = List.length params in
+  let param_types, return_type =
+    match extract_param_types_exact arity func_type with
+    | Some types -> types
+    | None ->
+        failwith
+          (Printf.sprintf
+             "Codegen error: function literal expr id %d expected %d parameters but inferred type %s"
+             func_expr.id arity (Types.to_string func_type))
+  in
 
   let param_names =
     List.map
@@ -1880,6 +1914,12 @@ and emit_function_expr state type_map env func_expr params body =
       params
   in
 
+  if List.length param_names <> List.length param_types then
+    failwith
+      (Printf.sprintf
+         "Codegen error: function literal expr id %d parameter name/type arity mismatch (%d names vs %d types)"
+         func_expr.id (List.length param_names) (List.length param_types));
+
   let params_with_types =
     List.map2 (fun name typ -> name ^ " " ^ type_to_go state.mono typ) param_names param_types
   in
@@ -1887,11 +1927,7 @@ and emit_function_expr state type_map env func_expr params body =
   let return_type_str = type_to_go state.mono return_type in
 
   (* Extend environment with parameter bindings for the body *)
-  let body_env =
-    List.fold_left2
-      (fun acc name typ -> Infer.TypeEnv.add name (Types.Forall ([], typ)) acc)
-      env param_names param_types
-  in
+  let body_env = add_param_bindings env param_names param_types in
 
   let body_str = emit_func_body state type_map body_env body in
 
@@ -2099,6 +2135,12 @@ let emit_specialized_func
 
   let mangled_name = mangle_func_name inst.func_name inst.concrete_types in
 
+  if List.length param_names <> List.length inst.concrete_types then
+    failwith
+      (Printf.sprintf
+         "Codegen error: specialization for '%s' has arity mismatch (%d params vs %d concrete types)"
+         inst.func_name (List.length param_names) (List.length inst.concrete_types));
+
   let params_with_types =
     List.map2 (fun name typ -> name ^ " " ^ type_to_go state.mono typ) param_names inst.concrete_types
   in
@@ -2110,14 +2152,35 @@ let emit_specialized_func
     List.fold_right (fun param_t acc -> Types.tfun param_t acc) inst.concrete_types inst.return_type
   in
 
+  let has_arity t = Option.is_some (extract_param_types_exact inst.func_arity t) in
+  let type_from_map = Hashtbl.find_opt global_type_map func_def.func_expr_id in
+  let type_from_env =
+    match Infer.TypeEnv.find_opt inst.func_name typed_env with
+    | Some (Types.Forall (_, t)) -> Some t
+    | None -> None
+  in
+
   let generic_func_type =
-    match Hashtbl.find_opt global_type_map func_def.func_expr_id with
-    | Some t -> t
-    | None ->
-        failwith
-          (Printf.sprintf
-             "Codegen error: missing function literal type for '%s' (expr id %d). Type map should be complete before emission."
-             inst.func_name func_def.func_expr_id)
+    match type_from_map with
+    | Some t when has_arity t -> t
+    | _ -> (
+        match type_from_env with
+        | Some t when has_arity t -> t
+        | _ ->
+            let map_type_desc =
+              match type_from_map with
+              | Some t -> Types.to_string t
+              | None -> "<missing>"
+            in
+            let env_type_desc =
+              match type_from_env with
+              | Some t -> Types.to_string t
+              | None -> "<missing>"
+            in
+            failwith
+              (Printf.sprintf
+                 "Codegen error: missing arity-%d function type for '%s' (expr id %d). type_map=%s, env=%s"
+                 inst.func_arity inst.func_name func_def.func_expr_id map_type_desc env_type_desc))
   in
 
   let specialization_subst =
@@ -2134,11 +2197,7 @@ let emit_specialized_func
 
   (* Add function and parameters with concrete types for recursive calls/body emission *)
   let env_with_func = Infer.TypeEnv.add inst.func_name (Types.Forall ([], concrete_func_type)) typed_env in
-  let body_env =
-    List.fold_left2
-      (fun acc name typ -> Infer.TypeEnv.add name (Types.Forall ([], typ)) acc)
-      env_with_func param_names inst.concrete_types
-  in
+  let body_env = add_param_bindings env_with_func param_names inst.concrete_types in
 
   (* Save and reset indent for top-level function *)
   let saved_indent = state.indent in
@@ -2987,6 +3046,23 @@ let%test "record field ordering is canonical in shape name" =
   | Ok code ->
       (* Fields sorted alphabetically: x before y *)
       string_contains code "Record_x_int64_y_int64"
+  | Error _ -> false
+
+let%test "function returning wrapped scalar record compiles" =
+  match compile_string "let mk = fn(i) { { inner: i } }; let o = mk(1); o.inner" with
+  | Ok code ->
+      string_contains code "func mk_int64(i int64)"
+      && string_contains code "type Record_inner_int64 struct"
+  | Error _ -> false
+
+let%test "function returning wrapped record compiles" =
+  match compile_string
+          "let mk = fn(i: { x: int }) { { inner: i } }; let i = { x: 1 }; let o = mk(i); o.inner.x"
+  with
+  | Ok code ->
+      string_contains code "type Record_x_int64 struct"
+      && string_contains code "type Record_inner_"
+      && string_contains code "func mk_record_x_int64_closed("
   | Error _ -> false
 
 let%test "emit record spread" =
