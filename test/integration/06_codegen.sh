@@ -15,6 +15,81 @@ let g = fn(y: int) -> int { f(y) }
 puts(g(1))
 EOF
 
+expect_runtime_output "Unannotated higher-order caller handles pure and effectful callbacks" "2
+1
+3" << 'EOF'
+let hof = fn(f) { f(1) }
+let pure = fn(x: int) -> int { x + 1 }
+let eff = fn(x: int) => int { puts(x); x + 2 }
+puts(hof(pure))
+puts(hof(eff))
+EOF
+
+expect_build "Pure annotated higher-order caller rejects unknown callback calls conservatively" "Pure function (declared with ->) cannot call effectful operations" << 'EOF'
+let hof = fn(f) -> int { f(1) }
+let eff = fn(x: int) => int { x }
+puts(hof(eff))
+EOF
+
+expect_runtime_output "Union of pure/effectful callables remains callable in codegen" "1
+3" << 'EOF'
+let choose = fn(flag: bool) {
+  if (flag) {
+    fn(x: int) -> int { x + 1 }
+  } else {
+    fn(x: int) => int { puts(x); x + 2 }
+  }
+}
+let f = choose(false)
+puts(f(1))
+EOF
+
+expect_runtime_output "Higher-order callback through local alias keeps effectful behavior" "1
+3" << 'EOF'
+let hof = fn(f) {
+  let g = f
+  g(1)
+}
+let eff = fn(x: int) => int { puts(x); x + 2 }
+puts(hof(eff))
+EOF
+
+expect_build "Union of callable and non-callable value is rejected at call site" "Cannot unify" << 'EOF'
+let f = if (true) { fn(x: int) -> int { x + 1 } } else { 0 }
+puts(f(1))
+EOF
+
+expect_build "Union of callables with mismatched arity is rejected at call site" "Cannot unify" << 'EOF'
+let f = if (true) { fn(x: int) -> int { x } } else { fn(x: int, y: int) -> int { x + y } }
+puts(f(1))
+EOF
+
+expect_runtime_output "Unannotated recursive function with effectful body infers and runs as effectful" "2
+1
+0" << 'EOF'
+let loop = fn(n: int) {
+  if (n == 0) {
+    0
+  } else {
+    puts(n)
+    loop(n - 1)
+  }
+}
+puts(loop(2))
+EOF
+
+expect_build "Pure annotated recursive function with effectful body is rejected" "Pure function (declared with ->) cannot call effectful operations" << 'EOF'
+let loop = fn(n: int) -> int {
+  if (n == 0) {
+    0
+  } else {
+    puts(n)
+    loop(n - 1)
+  }
+}
+puts(loop(2))
+EOF
+
 expect_runtime_output "Impl method calling union-param helper resolves using typed env" "int" << 'EOF'
 let helper = fn(x: int | string) -> string {
   if (x is int) { "int" } else { "string" }

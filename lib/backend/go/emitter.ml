@@ -589,6 +589,26 @@ let rec extract_param_types_exact n = function
       | None -> None)
   | _ -> None
 
+let rec collect_callable_signatures_exact (arity : int) (t : Types.mono_type) :
+    (Types.mono_type list * Types.mono_type) list =
+  match t with
+  | Types.TFun _ -> (
+      match extract_param_types_exact arity t with
+      | Some sig_ -> [ sig_ ]
+      | None -> [])
+  | Types.TUnion members -> List.concat_map (collect_callable_signatures_exact arity) members
+  | _ -> []
+
+let callable_signature_exact (arity : int) (t : Types.mono_type) : (Types.mono_type list * Types.mono_type) option =
+  match collect_callable_signatures_exact arity t with
+  | [] -> None
+  | (params0, ret0) :: rest ->
+      let all_match = List.for_all (fun (params, ret) -> params = params0 && ret = ret0) rest in
+      if all_match then
+        Some (params0, ret0)
+      else
+        None
+
 let extract_all_param_types (t : Types.mono_type) : Types.mono_type list * Types.mono_type =
   let rec go acc = function
     | Types.TFun (arg, ret, _) -> go (arg :: acc) ret
@@ -606,10 +626,10 @@ let add_param_bindings
   in
   go env param_names param_types
 
-let infer_return_type_from_signature
+let specialize_signature
     (declared_param_types : Types.mono_type list)
     (declared_return_type : Types.mono_type)
-    (concrete_param_types : Types.mono_type list) : Types.mono_type option =
+    (actual_param_types : Types.mono_type list) : (Types.mono_type list * Types.mono_type) option =
   let rec unify_params subst actual_types expected_types =
     match (actual_types, expected_types) with
     | [], [] -> Some subst
@@ -621,8 +641,19 @@ let infer_return_type_from_signature
         | Error _ -> None)
     | _ -> None
   in
-  match unify_params Types.empty_substitution declared_param_types concrete_param_types with
-  | Some subst -> Some (Types.apply_substitution subst declared_return_type)
+  match unify_params Types.empty_substitution declared_param_types actual_param_types with
+  | None -> None
+  | Some subst ->
+      let specialized_params = List.map (Types.apply_substitution subst) declared_param_types in
+      let specialized_return = Types.apply_substitution subst declared_return_type in
+      Some (specialized_params, specialized_return)
+
+let infer_return_type_from_signature
+    (declared_param_types : Types.mono_type list)
+    (declared_return_type : Types.mono_type)
+    (concrete_param_types : Types.mono_type list) : Types.mono_type option =
+  match specialize_signature declared_param_types declared_return_type concrete_param_types with
+  | Some (_specialized_params, specialized_return) -> Some specialized_return
   | None -> None
 
 let same_instantiation_identity (a : instantiation) (b : instantiation) : bool =
@@ -773,7 +804,44 @@ and collect_insts_expr
     (env : Infer.type_env)
     (expr : AST.expression) : unit =
   match expr.expr with
-  | AST.Integer _ | AST.Float _ | AST.Boolean _ | AST.String _ | AST.Identifier _ -> ()
+  | AST.Integer _ | AST.Float _ | AST.Boolean _ | AST.String _ -> ()
+  | AST.Identifier name when is_user_func state name -> (
+      let inferred_func_type =
+        match Infer.TypeEnv.find_opt name env with
+        | Some (Types.Forall (_, t)) -> t
+        | None -> get_type type_map expr
+      in
+      let inferred_params, inferred_ret = extract_all_param_types inferred_func_type in
+      let selected_params, selected_ret =
+        match expected_type with
+        | Some expected_func_type -> (
+            let expected_params, expected_ret = extract_all_param_types expected_func_type in
+            if expected_params <> [] then
+              (expected_params, expected_ret)
+            else
+              (inferred_params, inferred_ret))
+        | None -> (inferred_params, inferred_ret)
+      in
+      let arity = List.length selected_params in
+      let has_unresolved = List.exists has_type_vars (selected_ret :: selected_params) in
+      if arity > 0 && not has_unresolved then
+        match lookup_func_def_for_call state name arity with
+        | None -> ()
+        | Some func_def ->
+            let inst =
+              {
+                func_name = func_def.name;
+                module_path = state.module_path;
+                func_expr_id = func_def.func_expr_id;
+                func_arity = arity;
+                concrete_only_mode = state.concrete_only;
+                concrete_types = selected_params;
+                type_fingerprint = fingerprint_types selected_params;
+                return_type = selected_ret;
+              }
+            in
+            add_instantiation state inst)
+  | AST.Identifier _ -> ()
   | AST.Prefix (_, e) -> collect_insts_expr state type_map env e
   | AST.Infix (l, _, r) ->
       collect_insts_expr state type_map env l;
@@ -805,6 +873,12 @@ and collect_insts_expr
             | Some (params, ret) -> (params, Some ret)
             | None -> (arg_types, None)
           in
+          let specialized_declared_signature =
+            match (declared_signature_opt, declared_return_type_opt) with
+            | Some (_params, _ret), Some declared_return ->
+                specialize_signature declared_param_types declared_return arg_types
+            | _ -> None
+          in
           (* Check if any declared param is a union type *)
           let has_union_param =
             List.exists
@@ -816,18 +890,23 @@ and collect_insts_expr
           (* If function has union params, use declared types; otherwise use argument types *)
           let concrete_param_types =
             if has_union_param then
-              declared_param_types
+              (match specialized_declared_signature with
+              | Some (specialized_params, _specialized_return) -> specialized_params
+              | None -> declared_param_types)
             else
               arg_types
           in
           let return_type =
             match declared_return_type_opt with
             | Some declared_return_type -> (
-                match
-                  infer_return_type_from_signature declared_param_types declared_return_type concrete_param_types
-                with
-                | Some inferred_ret -> inferred_ret
-                | None -> get_type type_map expr)
+                match specialized_declared_signature with
+                | Some (_specialized_params, specialized_return) -> specialized_return
+                | None -> (
+                    match
+                      infer_return_type_from_signature declared_param_types declared_return_type concrete_param_types
+                    with
+                    | Some inferred_ret -> inferred_ret
+                    | None -> get_type type_map expr))
             | None -> get_type type_map expr
           in
           match func_def_opt with
@@ -1122,7 +1201,19 @@ let rec emit_expr
     | AST.Identifier name -> (
         match expected_type with
         | Some expected_func_type when is_user_func state.mono name -> (
-            let param_types, _ = extract_all_param_types expected_func_type in
+            let expected_param_types, _ = extract_all_param_types expected_func_type in
+            let param_types =
+              if expected_param_types <> [] then
+                expected_param_types
+              else
+                match Infer.TypeEnv.find_opt name env with
+                | Some (Types.Forall (_, inferred_func_type)) ->
+                    fst (extract_all_param_types inferred_func_type)
+                | None -> (
+                    match Hashtbl.find_opt type_map expr.id with
+                    | Some inferred_func_type -> fst (extract_all_param_types inferred_func_type)
+                    | None -> [])
+            in
             match param_types with
             | [] -> name
             | _ -> mangle_func_name name param_types)
@@ -2238,10 +2329,18 @@ and emit_call state type_map env func args =
         | None -> Hashtbl.find_opt type_map func.id)
     | _ -> Hashtbl.find_opt type_map func.id
   in
-  let call_param_types =
+  let call_signature_opt =
     match callee_type_opt with
-    | Some callee_type -> fst (extract_param_types (List.length args) callee_type)
-    | None -> []
+    | Some callee_type -> callable_signature_exact (List.length args) callee_type
+    | None -> None
+  in
+  let call_param_types =
+    match call_signature_opt with
+    | Some (params, _ret) -> params
+    | None -> (
+        match callee_type_opt with
+        | Some callee_type -> fst (extract_param_types (List.length args) callee_type)
+        | None -> [])
   in
   let emit_args_with_expected_types (expected_types : Types.mono_type list) : string =
     List.mapi
@@ -2308,7 +2407,12 @@ and emit_call state type_map env func args =
   | _ ->
       let func_str = emit_expr state type_map env func in
       let args_str = emit_args_with_expected_types call_param_types in
-      Printf.sprintf "%s(%s)" func_str args_str
+      (match (callee_type_opt, call_signature_opt) with
+      | Some (Types.TUnion _), Some (params, ret) ->
+          let callable_type = List.fold_right (fun p acc -> Types.TFun (p, acc, false)) params ret in
+          let callable_go_type = type_to_go state.mono callable_type in
+          Printf.sprintf "(%s.(%s))(%s)" func_str callable_go_type args_str
+      | _ -> Printf.sprintf "%s(%s)" func_str args_str)
 
 and emit_array ?expected_elem_type state type_map env elements =
   match elements with
