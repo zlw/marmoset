@@ -54,6 +54,13 @@ match x {
 }
 EOF
 
+expect_runtime_output "Primitive match variable binding can be unused in effectful arm" "hit" << 'EOF'
+let x = 1
+match x {
+  n: puts("hit")
+}
+EOF
+
 expect_runtime_output "Example monkey source builds and runs" $'Thorsten Ball - Writing A Compiler In Go\n[1 1 2 3 5 8]' "$(cat "$REPO_ROOT/examples/monkey.mr")"
 
 suite_end
