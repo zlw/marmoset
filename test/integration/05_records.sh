@@ -51,6 +51,15 @@ let o = outer(5)
 puts(o.inner)
 EOF
 
+expect_runtime_output "Typed local wrapper preserves wrapped record fields" "7" << 'EOF'
+let outer = fn(r: { x: int }) {
+  let mk = fn(v: { x: int }) { { inner: v } }
+  mk(r)
+}
+let o = outer({ x: 7 })
+puts(o.inner.x)
+EOF
+
 expect_runtime_output "Duplicate record fields are last-write-wins" "2" << 'EOF'
 let p = { x: 1, x: 2 }
 puts(p.x)
@@ -65,6 +74,12 @@ expect_runtime_output "Record spread with all fields overridden" "10" << 'EOF'
 let p = { x: 1, X: 2 }
 let q = { ...p, x: 4, X: 6 }
 puts(q.x + q.X)
+EOF
+
+expect_runtime_output "Record spread preserves nested record fields" "7" << 'EOF'
+let p = { x: 1, y: { z: 2 } }
+let q = { ...p, x: 5 }
+puts(q.x + q.y.z)
 EOF
 
 expect_runtime_output "Record pattern match" "30" << 'EOF'
@@ -134,6 +149,14 @@ type vec = { y: int, x: int }
 let p: point = { x: 1, y: 2 }
 let v: vec = p
 puts(v.x + v.y)
+EOF
+
+expect_runtime_output "Alias and structural record params interoperate through wrapper" "5" << 'EOF'
+type point = { x: int, y: int }
+let add = fn(a: point, b: { x: int, y: int }) -> int { a.x + b.y }
+let p: point = { x: 1, y: 2 }
+let q = { y: 4, x: 3 }
+puts(add(p, q))
 EOF
 
 expect_runtime_output "Derived eq/hash are stable across field order" "ok" << 'EOF'

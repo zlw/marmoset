@@ -112,6 +112,37 @@ match 1 {
 puts(1)
 EOF
 
+run_emit_go_not_contains_from_stdin "Type-check if branch with nested match avoids IIFE in emitted Go" "func\\(\\) int64" << 'EOF'
+let x: int | string = 1
+let y = if (x is int) {
+  match x { 1: 10 _: 20 }
+} else {
+  0
+}
+puts(y)
+EOF
+
+run_emit_go_not_contains_from_stdin "Nested if containing type-check if avoids IIFE in emitted Go" "func\\(\\) int64" << 'EOF'
+let f = fn(x: int | string, y: bool) -> int {
+  if (y) {
+    if (x is int) { x } else { 0 }
+  } else {
+    0
+  }
+}
+puts(f(1, true))
+EOF
+
+run_emit_go_not_contains_from_stdin "Match in let binding with type-check if arm avoids IIFE in emitted Go" "func\\(\\) int64" << 'EOF'
+let x: int | string = 1
+let tag = 1
+let y = match tag {
+  1: if (x is int) { x + 1 } else { 0 }
+  _: 0
+}
+puts(y)
+EOF
+
 expect_build "Instantiation fingerprint collision surfaces as clear codegen error" "Codegen error: instantiation fingerprint collision for 'id'" << 'EOF'
 enum b { v }
 enum a[t] { wrap(t) }
