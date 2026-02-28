@@ -1782,7 +1782,8 @@ and infer_function_with_annotations type_map env generics_opt params return_anno
                 match is_generic_ref with
                 | Some gen_var -> gen_var
                 | None ->
-                    (* Not a generic, re-raise or create fresh *)
+                    (* Not a direct generic reference. Preserve annotation errors unless
+                       this is the "unknown constructor" form for a declared generic. *)
                     if
                       String.length msg > 0
                       && String.sub msg 0 (min 23 (String.length msg)) = "Unknown type constructor"
@@ -1793,11 +1794,11 @@ and infer_function_with_annotations type_map env generics_opt params return_anno
                         let name = String.trim (List.nth parts 1) in
                         match List.assoc_opt name type_var_map with
                         | Some gen_var -> gen_var
-                        | None -> fresh_type_var ()
+                        | None -> raise (Failure msg)
                       else
-                        fresh_type_var ()
+                        raise (Failure msg)
                     else
-                      fresh_type_var ())))
+                      raise (Failure msg))))
       param_info
   in
   let param_names = List.map fst param_info in
