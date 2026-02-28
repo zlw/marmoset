@@ -44,9 +44,45 @@ let rec mangle_type (t : Types.mono_type) : string =
   | Types.TEnum (name, []) -> name
   | Types.TEnum (name, args) -> name ^ "_" ^ String.concat "_" (List.map mangle_type args)
 
+let go_keywords =
+  [
+    "break";
+    "default";
+    "func";
+    "interface";
+    "select";
+    "case";
+    "defer";
+    "go";
+    "map";
+    "struct";
+    "chan";
+    "else";
+    "goto";
+    "package";
+    "switch";
+    "const";
+    "fallthrough";
+    "if";
+    "range";
+    "type";
+    "continue";
+    "for";
+    "import";
+    "return";
+    "var";
+  ]
+
+let go_safe_ident (name : string) : string =
+  if List.mem name go_keywords then
+    name ^ "_"
+  else
+    name
+
 (* Generate mangled function name: name_type1_type2_... *)
 (* For functions with union parameters, don't mangle - use base name *)
 let mangle_func_name name (param_types : Types.mono_type list) : string =
+  let go_name = go_safe_ident name in
   (* Check if any param is a union - if so, don't mangle *)
   let has_union =
     List.exists
@@ -56,9 +92,9 @@ let mangle_func_name name (param_types : Types.mono_type list) : string =
       param_types
   in
   if has_union || param_types = [] then
-    name
+    go_name
   else
-    name ^ "_" ^ (List.map mangle_type param_types |> String.concat "_")
+    go_name ^ "_" ^ (List.map mangle_type param_types |> String.concat "_")
 
 let fingerprint_types (types : Types.mono_type list) : string =
   if types = [] then
@@ -290,7 +326,7 @@ let rec mangle_type_to_go (t : Types.mono_type) : string =
   | Types.TUnion _ -> "interface{}"
   | Types.TEnum (name, args) -> mangle_type (Types.TEnum (name, args))
 
-let go_record_field_name (name : string) : string = name
+let go_record_field_name (name : string) : string = go_safe_ident name
 
 (* Register a record shape and return its display name.
    If a type alias is registered for this shape, uses the alias name.
@@ -1302,6 +1338,11 @@ type emit_state = {
 let create_emit_state mono = { indent = 1; mono }
 let indent_str state = String.make (state.indent * 4) ' '
 
+let fresh_temp_name (state : emit_state) (prefix : string) : string =
+  let n = state.mono.name_counter in
+  state.mono.name_counter <- n + 1;
+  Printf.sprintf "%s_%d" prefix n
+
 let with_indent_delta (state : emit_state) (delta : int) (f : unit -> 'a) : 'a =
   state.indent <- state.indent + delta;
   Fun.protect ~finally:(fun () -> state.indent <- state.indent - delta) f
@@ -1486,26 +1527,32 @@ let rec emit_expr
     | AST.Boolean true -> "true"
     | AST.Boolean false -> "false"
     | AST.String s -> Printf.sprintf "%S" s
-    | AST.Identifier name -> (
-        match expected_type with
-        | Some expected_func_type when is_user_func state.mono name -> (
-            let expected_param_types, _ = extract_all_param_types expected_func_type in
-            let param_types =
-              if expected_param_types <> [] then
-                expected_param_types
-              else
-                match Infer.TypeEnv.find_opt name env with
-                | Some (Types.Forall (_, inferred_func_type)) ->
-                    fst (extract_all_param_types inferred_func_type)
-                | None -> (
-                    match Hashtbl.find_opt type_map expr.id with
-                    | Some inferred_func_type -> fst (extract_all_param_types inferred_func_type)
-                    | None -> [])
-            in
-            match param_types with
-            | [] -> name
-            | _ -> mangle_func_name name param_types)
-        | _ -> name)
+    | AST.Identifier name ->
+        if is_user_func state.mono name then
+          let inferred_param_types =
+            match Infer.TypeEnv.find_opt name env with
+            | Some (Types.Forall (_, inferred_func_type)) -> fst (extract_all_param_types inferred_func_type)
+            | None -> (
+                match Hashtbl.find_opt type_map expr.id with
+                | Some inferred_func_type -> fst (extract_all_param_types inferred_func_type)
+                | None -> [])
+          in
+          let param_types =
+            match expected_type with
+            | Some expected_func_type ->
+                let expected_param_types, _ = extract_all_param_types expected_func_type in
+                if expected_param_types <> [] then
+                  expected_param_types
+                else
+                  inferred_param_types
+            | None -> inferred_param_types
+          in
+          if List.exists has_type_vars param_types then
+            go_safe_ident name
+          else
+            mangle_func_name name param_types
+        else
+          go_safe_ident name
     | AST.Prefix (op, operand) -> emit_prefix state type_map env op operand
     | AST.Infix (left, op, right) -> emit_infix state type_map env left op right
     | AST.TypeCheck (expr, type_ann) -> emit_type_check state type_map env expr type_ann
@@ -1693,6 +1740,7 @@ and emit_match ?target state type_map env match_expr scrutinee arms =
 
 and emit_match_record ?target state type_map env scrutinee arms match_result_type =
   let scrutinee_str = emit_expr state type_map env scrutinee in
+  let scrutinee_var = fresh_temp_name state "__scrutinee" in
   let match_result_go_type = type_to_go state.mono match_result_type in
   let result_prefix =
     match target with
@@ -1732,18 +1780,19 @@ and emit_match_record ?target state type_map env scrutinee arms match_result_typ
     | AST.PWildcard ->
         Printf.sprintf "%s {\n%s\t}" branch_prefix_else body_code
     | AST.PVariable name ->
-        Printf.sprintf "%s {\n\t\t%s := __scrutinee\n%s\t}" branch_prefix_else name body_code
+        let go_name = go_safe_ident name in
+        Printf.sprintf "%s {\n\t\t%s := %s\n%s\t}" branch_prefix_else go_name scrutinee_var body_code
     | AST.PRecord (fields, rest) ->
         let cond_parts, bind_lines =
           List.fold_left
             (fun (conds, binds) (f : AST.record_pattern_field) ->
-              let access = Printf.sprintf "__scrutinee.%s" (go_record_field_name f.pat_field_name) in
+              let access = Printf.sprintf "%s.%s" scrutinee_var (go_record_field_name f.pat_field_name) in
               match f.pat_field_pattern with
-              | None -> (conds, Printf.sprintf "%s := %s" f.pat_field_name access :: binds)
+              | None -> (conds, Printf.sprintf "%s := %s" (go_safe_ident f.pat_field_name) access :: binds)
               | Some p -> (
                   match p.AST.pat with
                   | AST.PWildcard -> (conds, binds)
-                  | AST.PVariable name -> (conds, Printf.sprintf "%s := %s" name access :: binds)
+                  | AST.PVariable name -> (conds, Printf.sprintf "%s := %s" (go_safe_ident name) access :: binds)
                   | AST.PLiteral lit -> (Printf.sprintf "(%s == %s)" access (emit_lit lit) :: conds, binds)
                   | _ -> failwith "Complex record patterns in codegen are not yet supported"))
             ([], []) fields
@@ -1751,7 +1800,7 @@ and emit_match_record ?target state type_map env scrutinee arms match_result_typ
         let bind_lines =
           match rest with
           | None -> bind_lines
-          | Some rest_name -> Printf.sprintf "%s := __scrutinee" rest_name :: bind_lines
+          | Some rest_name -> Printf.sprintf "%s := %s" (go_safe_ident rest_name) scrutinee_var :: bind_lines
         in
         let cond_str =
           match List.rev cond_parts with
@@ -1779,15 +1828,15 @@ and emit_match_record ?target state type_map env scrutinee arms match_result_typ
   | Some ReturnTarget | Some DiscardTarget ->
       (* Panic needed after if-chain for Go control flow analysis when no wildcard *)
       let ind = indent_str state in
-      Printf.sprintf "%s__scrutinee := %s\n%s\n%spanic(\"non-exhaustive record match\")\n" ind scrutinee_str
+      Printf.sprintf "%s%s := %s\n%s\n%spanic(\"non-exhaustive record match\")\n" ind scrutinee_var scrutinee_str
         (String.concat "" arm_blocks) ind
   | Some (AssignTarget _) ->
       (* No panic for assignment — execution continues after the if-chain *)
       let ind = indent_str state in
-      Printf.sprintf "%s__scrutinee := %s\n%s\n" ind scrutinee_str (String.concat "" arm_blocks)
+      Printf.sprintf "%s%s := %s\n%s\n" ind scrutinee_var scrutinee_str (String.concat "" arm_blocks)
   | None ->
-      Printf.sprintf "(func() %s {\n\t__scrutinee := %s\n%s\n\tpanic(\"non-exhaustive record match\")\n})()"
-        match_result_go_type scrutinee_str (String.concat "" arm_blocks)
+      Printf.sprintf "(func() %s {\n\t%s := %s\n%s\n\tpanic(\"non-exhaustive record match\")\n})()"
+        match_result_go_type scrutinee_var scrutinee_str (String.concat "" arm_blocks)
 
 and emit_match_enum ?target state type_map env scrutinee scrutinee_type enum_name type_args arms match_result_type
     =
@@ -1804,6 +1853,7 @@ and emit_match_enum ?target state type_map env scrutinee scrutinee_type enum_nam
 
   (* Emit scrutinee to a temporary variable *)
   let scrutinee_str = emit_expr state type_map env scrutinee in
+  let scrutinee_var = fresh_temp_name state "__scrutinee" in
 
   (* Convert match result type to Go type *)
   let match_result_go_type = type_to_go state.mono match_result_type in
@@ -1834,8 +1884,9 @@ and emit_match_enum ?target state type_map env scrutinee scrutinee_type enum_nam
                 Printf.sprintf "%sdefault:\n%s" (ind ^ "    ") (emit_arm_body ())
             | AST.PVariable var_name ->
                 let ind = indent_str state in
-                Printf.sprintf "%sdefault:\n%s%s := __scrutinee\n%s" (ind ^ "    ") (ind ^ "        ") var_name
-                  (emit_arm_body ())
+                let go_var_name = go_safe_ident var_name in
+                Printf.sprintf "%sdefault:\n%s%s := %s\n%s" (ind ^ "    ") (ind ^ "        ") go_var_name
+                  scrutinee_var (emit_arm_body ())
             | AST.PConstructor (enum_name_pat, variant_name, field_patterns) ->
                 let variant_opt =
                   List.find_opt (fun (v : Typecheck.Enum_registry.variant_def) -> v.name = variant_name) enum_def.variants
@@ -1852,7 +1903,8 @@ and emit_match_enum ?target state type_map env scrutinee scrutinee_type enum_nam
                 let binding_lines =
                   List.map
                     (fun (var_name, data_field_name, _field_type) ->
-                      Printf.sprintf "%s%s := __scrutinee.%s\n" (ind ^ "        ") var_name data_field_name)
+                      Printf.sprintf "%s%s := %s.%s\n" (ind ^ "        ") (go_safe_ident var_name) scrutinee_var
+                        data_field_name)
                     bindings
                   |> String.concat ""
                 in
@@ -1865,12 +1917,12 @@ and emit_match_enum ?target state type_map env scrutinee scrutinee_type enum_nam
       let match_body = String.concat "" (List.map emit_case_target arms) in
       let ind = indent_str state in
       if has_wildcard then
-        Printf.sprintf "%s__scrutinee := %s\n%sswitch __scrutinee.Tag {\n%s\n%s}\n" ind scrutinee_str ind
+        Printf.sprintf "%s%s := %s\n%sswitch %s.Tag {\n%s\n%s}\n" ind scrutinee_var scrutinee_str ind scrutinee_var
           match_body ind
       else
         Printf.sprintf
-          "%s__scrutinee := %s\n%sswitch __scrutinee.Tag {\n%s\n%sdefault:\n%s\tpanic(\"unreachable: exhaustive match\")\n%s}\n"
-          ind scrutinee_str ind match_body ind ind ind
+          "%s%s := %s\n%sswitch %s.Tag {\n%s\n%sdefault:\n%s\tpanic(\"unreachable: exhaustive match\")\n%s}\n"
+          ind scrutinee_var scrutinee_str ind scrutinee_var match_body ind ind ind
   | None ->
       let result_prefix = "return " in
       let match_body =
@@ -1879,7 +1931,8 @@ and emit_match_enum ?target state type_map env scrutinee scrutinee_type enum_nam
             (fun (arm : AST.match_arm) ->
               match arm.patterns with
               | [ pattern ] ->
-                  emit_match_arm_enum ~result_prefix state type_map env go_type_name enum_def type_args pattern
+                  emit_match_arm_enum ~result_prefix ~scrutinee_var state type_map env go_type_name enum_def type_args
+                    pattern
                     arm.body
               | [] -> failwith "Match arm must have at least one pattern"
               | _ -> failwith "Multiple patterns per arm not yet supported in codegen")
@@ -1888,16 +1941,17 @@ and emit_match_enum ?target state type_map env scrutinee scrutinee_type enum_nam
         String.concat "\n" cases
       in
       if has_wildcard then
-        Printf.sprintf "(func() %s {\n\t__scrutinee := %s\n\tswitch __scrutinee.Tag {\n%s\n\t}\n})()"
-          match_result_go_type scrutinee_str match_body
+        Printf.sprintf "(func() %s {\n\t%s := %s\n\tswitch %s.Tag {\n%s\n\t}\n})()" match_result_go_type
+          scrutinee_var scrutinee_str scrutinee_var match_body
       else
         Printf.sprintf
-          "(func() %s {\n\t__scrutinee := %s\n\tswitch __scrutinee.Tag {\n%s\n\tdefault:\n\t\tpanic(\"unreachable: exhaustive match\")\n\t}\n})()"
-          match_result_go_type scrutinee_str match_body
+          "(func() %s {\n\t%s := %s\n\tswitch %s.Tag {\n%s\n\tdefault:\n\t\tpanic(\"unreachable: exhaustive match\")\n\t}\n})()"
+          match_result_go_type scrutinee_var scrutinee_str scrutinee_var match_body
 
 and emit_match_primitive ?target state type_map env scrutinee scrutinee_type arms match_result_type =
   (* Emit scrutinee to a temporary variable *)
   let scrutinee_str = emit_expr state type_map env scrutinee in
+  let scrutinee_var = fresh_temp_name state "__scrutinee" in
 
   (* Convert match result type to Go type *)
   let match_result_go_type = type_to_go state.mono match_result_type in
@@ -1914,8 +1968,9 @@ and emit_match_primitive ?target state type_map env scrutinee scrutinee_type arm
                 Printf.sprintf "%sdefault:\n%s" (ind ^ "    ") (emit_arm_body ())
             | AST.PVariable var_name ->
                 let ind = indent_str state in
-                Printf.sprintf "%sdefault:\n%s%s := __scrutinee\n%s" (ind ^ "    ") (ind ^ "        ") var_name
-                  (emit_arm_body ())
+                let go_var_name = go_safe_ident var_name in
+                Printf.sprintf "%sdefault:\n%s%s := %s\n%s" (ind ^ "    ") (ind ^ "        ") go_var_name
+                  scrutinee_var (emit_arm_body ())
             | AST.PLiteral lit ->
                 let lit_str =
                   match lit with
@@ -1936,7 +1991,8 @@ and emit_match_primitive ?target state type_map env scrutinee scrutinee_type arm
       in
       let match_body = String.concat "" (List.map emit_case_target arms) in
       let ind = indent_str state in
-      Printf.sprintf "%s__scrutinee := %s\n%sswitch __scrutinee {\n%s\n%s}\n" ind scrutinee_str ind match_body ind
+      Printf.sprintf "%s%s := %s\n%sswitch %s {\n%s\n%s}\n" ind scrutinee_var scrutinee_str ind scrutinee_var
+        match_body ind
   | None ->
       let result_prefix = "return " in
       let match_body =
@@ -1945,17 +2001,19 @@ and emit_match_primitive ?target state type_map env scrutinee scrutinee_type arm
             (fun (arm : AST.match_arm) ->
               match arm.patterns with
               | [ pattern ] ->
-                  emit_match_arm_primitive ~result_prefix state type_map env scrutinee_type pattern arm.body
+                  emit_match_arm_primitive ~result_prefix ~scrutinee_var state type_map env scrutinee_type pattern
+                    arm.body
               | [] -> failwith "Match arm must have at least one pattern"
               | _ -> failwith "Multiple patterns per arm not yet supported in codegen")
             arms
         in
         String.concat "\n" cases
       in
-      Printf.sprintf "(func() %s {\n\t__scrutinee := %s\n\tswitch __scrutinee {\n%s\n\t}\n})()"
-        match_result_go_type scrutinee_str match_body
+      Printf.sprintf "(func() %s {\n\t%s := %s\n\tswitch %s {\n%s\n\t}\n})()" match_result_go_type
+        scrutinee_var scrutinee_str scrutinee_var match_body
 
-and emit_match_arm_primitive ?(result_prefix = "return ") state type_map env _scrutinee_type pattern body =
+and emit_match_arm_primitive ?(result_prefix = "return ") ?(scrutinee_var = "__scrutinee") state type_map env
+    _scrutinee_type pattern body =
   match pattern.AST.pat with
   | AST.PWildcard ->
       let body_str = emit_expr state type_map env body in
@@ -1963,7 +2021,8 @@ and emit_match_arm_primitive ?(result_prefix = "return ") state type_map env _sc
   | AST.PVariable var_name ->
       (* Variable pattern binds the scrutinee *)
       let body_str = emit_expr state type_map env body in
-      Printf.sprintf "\tdefault:\n\t\t%s := __scrutinee\n\t\t%s%s" var_name result_prefix body_str
+      Printf.sprintf "\tdefault:\n\t\t%s := %s\n\t\t%s%s" (go_safe_ident var_name) scrutinee_var result_prefix
+        body_str
   | AST.PLiteral lit ->
       (* Literal pattern - match exact value *)
       let lit_str =
@@ -1982,7 +2041,8 @@ and emit_match_arm_primitive ?(result_prefix = "return ") state type_map env _sc
   | AST.PRecord _ -> failwith "Record patterns not valid for primitive match"
 
 and emit_match_arm_enum
-    ?(result_prefix = "return ") state type_map env go_type_name enum_def type_args pattern body =
+    ?(result_prefix = "return ") ?(scrutinee_var = "__scrutinee") state type_map env go_type_name enum_def
+    type_args pattern body =
   match pattern.AST.pat with
   | AST.PWildcard ->
       (* Wildcard matches everything - use default case *)
@@ -2022,7 +2082,7 @@ and emit_match_arm_enum
       let binding_strs =
         List.map
           (fun (var_name, data_field_name, _field_type) ->
-            Printf.sprintf "\t\t%s := __scrutinee.%s" var_name data_field_name)
+            Printf.sprintf "\t\t%s := %s.%s" (go_safe_ident var_name) scrutinee_var data_field_name)
           bindings
       in
 
@@ -2798,6 +2858,7 @@ and emit_function_expr ?func_type_override state type_map env func_expr params b
         | _ -> failwith "Function parameter must be identifier")
       params
   in
+  let go_param_names = List.map go_safe_ident param_names in
 
   if List.length param_names <> List.length param_types then
     failwith
@@ -2806,7 +2867,7 @@ and emit_function_expr ?func_type_override state type_map env func_expr params b
          func_expr.id (List.length param_names) (List.length param_types));
 
   let params_with_types =
-    List.map2 (fun name typ -> name ^ " " ^ type_to_go state.mono typ) param_names param_types
+    List.map2 (fun name typ -> name ^ " " ^ type_to_go state.mono typ) go_param_names param_types
   in
   let params_str = String.concat ", " params_with_types in
   let return_type_str = type_to_go state.mono return_type in
@@ -3050,6 +3111,7 @@ and emit_stmt
             (Printf.sprintf "%s_ = %s\n" ind expr_str, env))
       else
       (* Use the type from the environment if it exists, otherwise get from type_map *)
+      let go_binding_name = go_safe_ident let_binding.name in
       let expr_type =
         match Infer.TypeEnv.find_opt let_binding.name env with
         | Some (Types.Forall (_, t)) -> t
@@ -3074,27 +3136,29 @@ and emit_stmt
           let expr_str = emit_expr ~expected_type:(Some expr_type) state type_map env let_binding.value in
           let go_type = type_to_go state.mono expr_type in
           let binding_code =
-            Printf.sprintf "%svar %s %s\n%s%s = %s\n%s_ = %s\n" ind let_binding.name go_type ind let_binding.name
-              expr_str ind let_binding.name
+            Printf.sprintf "%svar %s %s\n%s%s = %s\n%s_ = %s\n" ind go_binding_name go_type ind go_binding_name
+              expr_str ind go_binding_name
           in
           let env' = Infer.TypeEnv.add let_binding.name (Types.Forall ([], expr_type)) env in
           (binding_code, env')
       | AST.If (cond, cons, alt) ->
           let go_type = type_to_go state.mono expr_type in
-          let decl = Printf.sprintf "%svar %s %s\n" ind let_binding.name go_type in
+          let decl = Printf.sprintf "%svar %s %s\n" ind go_binding_name go_type in
           let if_code =
-            emit_if_to_target state type_map env let_binding.value cond cons alt (AssignTarget let_binding.name)
+            emit_if_to_target state type_map env let_binding.value cond cons alt (AssignTarget go_binding_name)
           in
+          let used_marker = Printf.sprintf "%s_ = %s\n" ind go_binding_name in
           let env' = Infer.TypeEnv.add let_binding.name (Types.Forall ([], expr_type)) env in
-          (decl ^ if_code, env')
+          (decl ^ if_code ^ used_marker, env')
       | AST.Match (scrutinee, arms) ->
           let go_type = type_to_go state.mono expr_type in
-          let decl = Printf.sprintf "%svar %s %s\n" ind let_binding.name go_type in
+          let decl = Printf.sprintf "%svar %s %s\n" ind go_binding_name go_type in
           let match_code =
-            emit_match ~target:(AssignTarget let_binding.name) state type_map env let_binding.value scrutinee arms
+            emit_match ~target:(AssignTarget go_binding_name) state type_map env let_binding.value scrutinee arms
           in
+          let used_marker = Printf.sprintf "%s_ = %s\n" ind go_binding_name in
           let env' = Infer.TypeEnv.add let_binding.name (Types.Forall ([], expr_type)) env in
-          (decl ^ match_code, env')
+          (decl ^ match_code ^ used_marker, env')
       | AST.RecordLit (fields, Some base_expr) ->
           (* Record spread without IIFE *)
           let record_type = get_type type_map let_binding.value in
@@ -3133,8 +3197,8 @@ and emit_stmt
           in
           let assignments = List.map emit_field_assignment result_fields in
           let binding_code =
-            Printf.sprintf "%s%s := %s{%s}\n%s_ = %s\n" ind let_binding.name struct_type
-              (String.concat ", " assignments) ind let_binding.name
+            Printf.sprintf "%s%s := %s{%s}\n%s_ = %s\n" ind go_binding_name struct_type
+              (String.concat ", " assignments) ind go_binding_name
           in
           let env' = Infer.TypeEnv.add let_binding.name (Types.Forall ([], expr_type)) env in
           (spread_decl ^ binding_code, env')
@@ -3145,9 +3209,9 @@ and emit_stmt
             match let_binding.type_annotation with
             | Some _ ->
                 let go_type = type_to_go state.mono expr_type in
-                Printf.sprintf "%svar %s %s = %s\n%s_ = %s\n" ind let_binding.name go_type expr_str ind
-                  let_binding.name
-            | None -> Printf.sprintf "%s%s := %s\n%s_ = %s\n" ind let_binding.name expr_str ind let_binding.name
+                Printf.sprintf "%svar %s %s = %s\n%s_ = %s\n" ind go_binding_name go_type expr_str ind
+                  go_binding_name
+            | None -> Printf.sprintf "%s%s := %s\n%s_ = %s\n" ind go_binding_name expr_str ind go_binding_name
           in
           let env' = Infer.TypeEnv.add let_binding.name (Types.Forall ([], expr_type)) env in
           (binding_code, env'))
@@ -3217,7 +3281,7 @@ let emit_specialized_func
          inst.func_name (List.length param_names) (List.length inst.concrete_types));
 
   let params_with_types =
-    List.map2 (fun name typ -> name ^ " " ^ type_to_go state.mono typ) param_names inst.concrete_types
+    List.map2 (fun name typ -> go_safe_ident name ^ " " ^ type_to_go state.mono typ) param_names inst.concrete_types
   in
   let params_str = String.concat ", " params_with_types in
   let return_type_str = type_to_go state.mono inst.return_type in
@@ -3431,7 +3495,7 @@ let emit_cached_impl_method
   let func_name = Printf.sprintf "%s_%s_%s" impl_inst.trait_name impl_inst.method_name type_suffix in
   let params_str =
     List.map2
-      (fun name typ -> Printf.sprintf "%s %s" name (type_to_go state.mono typ))
+      (fun name typ -> Printf.sprintf "%s %s" (go_safe_ident name) (type_to_go state.mono typ))
       payload.param_names payload.param_types
     |> String.concat ", "
   in
@@ -3482,7 +3546,7 @@ let emit_inherent_method
   let func_name = Printf.sprintf "inherent_%s_%s" method_impl.impl_method_name type_suffix in
   let params_str =
     List.map2
-      (fun name typ -> Printf.sprintf "%s %s" name (type_to_go state.mono typ))
+      (fun name typ -> Printf.sprintf "%s %s" (go_safe_ident name) (type_to_go state.mono typ))
       method_param_names method_param_types
     |> String.concat ", "
   in
