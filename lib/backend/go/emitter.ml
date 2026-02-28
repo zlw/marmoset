@@ -17,7 +17,11 @@ let rec mangle_type (t : Types.mono_type) : string =
   | Types.TBool -> "bool"
   | Types.TString -> "string"
   | Types.TNull -> "unit"
-  | Types.TVar _name -> "any" (* Unresolved type variable - use 'any' in mangled names *)
+  | Types.TVar name ->
+      failwith
+        (Printf.sprintf
+           "Codegen error: unresolved type variable '%s' reached mangle_type. All type variables must be resolved before code generation."
+           name)
   | Types.TFun (arg, ret) -> "fn_" ^ mangle_type arg ^ "_" ^ mangle_type ret
   | Types.TArray elem -> "arr_" ^ mangle_type elem
   | Types.THash (key, value) -> "map_" ^ mangle_type key ^ "_" ^ mangle_type value
@@ -3083,4 +3087,39 @@ let%test "record spread emits without IIFE" =
   | Ok code ->
       (* Should NOT use IIFE for spread *)
       (not (string_contains code "(func()")) && string_contains code "__spread"
+  | Error _ -> false
+
+(* ============================================================
+   Problem 3: Monomorphization Cache Hardening Tests
+   ============================================================ *)
+
+let%test "mangle_type errors on TVar" =
+  match try Some (mangle_type (Types.TVar "a")) with Failure _ -> None with
+  | Some _ -> false (* Should have raised *)
+  | None -> true
+
+let%test "mangle_type errors on nested TVar" =
+  match try Some (mangle_type (Types.TArray (Types.TVar "x"))) with Failure _ -> None with
+  | Some _ -> false
+  | None -> true
+
+let%test "trait impl methods are emitted exactly once" =
+  (* Builtin show_show_int64 should appear exactly once as a function definition *)
+  match compile_string "puts(42)" with
+  | Ok code ->
+      let count_occurrences haystack needle =
+        let nl = String.length needle in
+        let rec loop pos acc =
+          match String.index_from_opt haystack pos needle.[0] with
+          | None -> acc
+          | Some i ->
+              if i + nl <= String.length haystack && String.sub haystack i nl = needle then
+                loop (i + 1) (acc + 1)
+              else
+                loop (i + 1) acc
+        in
+        loop 0 0
+      in
+      (* Each builtin trait function should be defined exactly once *)
+      count_occurrences code "func show_show_int64(" = 1 && count_occurrences code "func eq_eq_int64(" = 1
   | Error _ -> false
