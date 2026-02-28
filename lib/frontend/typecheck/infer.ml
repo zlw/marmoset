@@ -22,6 +22,7 @@ module AST = Syntax.Ast.AST
 *)
 
 module TypeEnv = Map.Make (String)
+module StringSet = Set.Make (String)
 
 type type_env = poly_type TypeEnv.t
 
@@ -2392,50 +2393,70 @@ let infer_program ?(env = empty_env) ?state (program : AST.program) :
         Annotation.clear_type_aliases ();
         clear_method_resolution_store ();
         let type_map = create_type_map () in
-        let rec go env subst stmts =
+        let register_top_level_declaration seen_traits seen_enums seen_aliases (stmt : AST.statement) =
+          match stmt.stmt with
+          | AST.TypeAlias alias_def ->
+              if StringSet.mem alias_def.alias_name seen_aliases then
+                Error (error (ConstructorError (Printf.sprintf "Duplicate type alias definition: %s" alias_def.alias_name)))
+              else (
+                Annotation.register_type_alias alias_def;
+                Ok (seen_traits, seen_enums, StringSet.add alias_def.alias_name seen_aliases))
+          | AST.TraitDef trait_def ->
+              if StringSet.mem trait_def.name seen_traits then
+                Error (error (ConstructorError (Printf.sprintf "Duplicate trait definition: %s" trait_def.name)))
+              else
+                Ok (StringSet.add trait_def.name seen_traits, seen_enums, seen_aliases)
+          | AST.EnumDef enum_def ->
+              if StringSet.mem enum_def.name seen_enums then
+                Error (error (ConstructorError (Printf.sprintf "Duplicate enum definition: %s" enum_def.name)))
+              else
+                Ok (seen_traits, StringSet.add enum_def.name seen_enums, seen_aliases)
+          | _ -> Ok (seen_traits, seen_enums, seen_aliases)
+        in
+        let rec go env subst seen_traits seen_enums seen_aliases stmts =
           match stmts with
           | [] -> Ok (env, subst, TNull)
-          | [ stmt_node ] -> (
+          | [ stmt_node ] ->
               let stmt : AST.statement = stmt_node in
-              (match stmt.stmt with
-              | AST.TypeAlias alias_def -> Annotation.register_type_alias alias_def
-              | _ -> ());
-              match infer_statement type_map env stmt with
+              (match register_top_level_declaration seen_traits seen_enums seen_aliases stmt with
               | Error e -> Error e
-              | Ok (subst', result_type) ->
-                  let final_subst = compose_substitution subst subst' in
-                  let env' = apply_substitution_env final_subst env in
-                  let result_type' = apply_substitution final_subst result_type in
-                  (* Add let bindings to final environment *)
-                  let env'' =
-                    match stmt.stmt with
-                    | AST.Let let_binding ->
-                        let poly = generalize env' result_type' in
-                        TypeEnv.add let_binding.name poly env'
-                    | _ -> env'
-                  in
-                  Ok (env'', final_subst, result_type'))
-          | stmt_node :: rest -> (
+              | Ok (_seen_traits', _seen_enums', _seen_aliases') -> (
+                  match infer_statement type_map env stmt with
+                  | Error e -> Error e
+                  | Ok (subst', result_type) ->
+                      let final_subst = compose_substitution subst subst' in
+                      let env' = apply_substitution_env final_subst env in
+                      let result_type' = apply_substitution final_subst result_type in
+                      (* Add let bindings to final environment *)
+                      let env'' =
+                        match stmt.stmt with
+                        | AST.Let let_binding ->
+                            let poly = generalize env' result_type' in
+                            TypeEnv.add let_binding.name poly env'
+                        | _ -> env'
+                      in
+                      Ok (env'', final_subst, result_type')))
+          | stmt_node :: rest ->
               let stmt : AST.statement = stmt_node in
-              (match stmt.stmt with
-              | AST.TypeAlias alias_def -> Annotation.register_type_alias alias_def
-              | _ -> ());
-              match infer_statement type_map env stmt with
+              (match register_top_level_declaration seen_traits seen_enums seen_aliases stmt with
               | Error e -> Error e
-              | Ok (subst', stmt_type) ->
-                  let subst'' = compose_substitution subst subst' in
-                  let env' = apply_substitution_env subst' env in
-                  (* Add let bindings to environment for subsequent statements *)
-                  let env'' =
-                    match stmt.stmt with
-                    | AST.Let let_binding ->
-                        let poly = generalize env' stmt_type in
-                        TypeEnv.add let_binding.name poly env'
-                    | _ -> env'
-                  in
-                  go env'' subst'' rest)
+              | Ok (seen_traits', seen_enums', seen_aliases') -> (
+                  match infer_statement type_map env stmt with
+                  | Error e -> Error e
+                  | Ok (subst', stmt_type) ->
+                      let subst'' = compose_substitution subst subst' in
+                      let env' = apply_substitution_env subst' env in
+                      (* Add let bindings to environment for subsequent statements *)
+                      let env'' =
+                        match stmt.stmt with
+                        | AST.Let let_binding ->
+                            let poly = generalize env' stmt_type in
+                            TypeEnv.add let_binding.name poly env'
+                        | _ -> env'
+                      in
+                      go env'' subst'' seen_traits' seen_enums' seen_aliases' rest))
         in
-        match go env empty_substitution program with
+        match go env empty_substitution StringSet.empty StringSet.empty StringSet.empty program with
         | Error e -> Error e
         | Ok (env', final_subst, result_type) ->
             (* Apply final substitution to all types in type_map *)
@@ -2557,6 +2578,57 @@ module Test = struct
 
   let%test "infer generic type alias annotation" =
     infers_to "type box[a] = { value: a }; let p: box[string] = { value: \"ok\" }; p.value" TString
+
+  let%test "duplicate trait definition in one program is rejected" =
+    match infer_string "trait ping[a] { fn ping(x: a) -> int }\ntrait ping[a] { fn pong(x: a) -> int }\n1" with
+    | Error { kind = ConstructorError msg; _ } ->
+        let needle = "Duplicate trait definition: ping" in
+        let len_msg = String.length msg in
+        let len_needle = String.length needle in
+        let rec has_needle i =
+          if i + len_needle > len_msg then
+            false
+          else if String.sub msg i len_needle = needle then
+            true
+          else
+            has_needle (i + 1)
+        in
+        has_needle 0
+    | _ -> false
+
+  let%test "duplicate enum definition in one program is rejected" =
+    match infer_string "enum dup { a }\nenum dup { b }\n1" with
+    | Error { kind = ConstructorError msg; _ } ->
+        let needle = "Duplicate enum definition: dup" in
+        let len_msg = String.length msg in
+        let len_needle = String.length needle in
+        let rec has_needle i =
+          if i + len_needle > len_msg then
+            false
+          else if String.sub msg i len_needle = needle then
+            true
+          else
+            has_needle (i + 1)
+        in
+        has_needle 0
+    | _ -> false
+
+  let%test "duplicate type alias definition in one program is rejected" =
+    match infer_string "type point = { x: int }\ntype point = { y: int }\n1" with
+    | Error { kind = ConstructorError msg; _ } ->
+        let needle = "Duplicate type alias definition: point" in
+        let len_msg = String.length msg in
+        let len_needle = String.length needle in
+        let rec has_needle i =
+          if i + len_needle > len_msg then
+            false
+          else if String.sub msg i len_needle = needle then
+            true
+          else
+            has_needle (i + 1)
+        in
+        has_needle 0
+    | _ -> false
 
   let%test "field-only trait object rejects access to fields outside trait projection" =
     match

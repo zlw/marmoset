@@ -12,6 +12,12 @@ test_case "Simple enum definition" \
     'enum direction { north south east west }' \
     "true"
 
+expect_build "Duplicate enum definition is rejected in one program" "Duplicate enum definition: direction" << 'EOF'
+enum direction { north south east west }
+enum direction { up down }
+puts(1)
+EOF
+
 test_case "Generic enum option[a] with some constructor" \
     'enum option[a] { some(a) none }
      let x = option.some(42)

@@ -20,6 +20,12 @@ let p: point = { x: 1, y: 2 }
 puts(p.x + p.y)
 EOF
 
+expect_build "Duplicate type alias definition is rejected in one program" "Duplicate type alias definition: point" << 'EOF'
+type point = { x: int, y: int }
+type point = { y: int, x: int }
+puts(1)
+EOF
+
 expect_runtime_output "Record spread update" "12" << 'EOF'
 let p = { x: 1, y: 2 }
 let p2 = { ...p, x: 10 }

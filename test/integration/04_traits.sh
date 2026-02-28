@@ -24,6 +24,16 @@ test_case "Trait with multiple methods" \
      42' \
     "true"
 
+expect_build "Duplicate trait definition is rejected in one program" "Duplicate trait definition: ping" << 'EOF'
+trait ping[a] {
+  fn ping(x: a) -> int
+}
+trait ping[a] {
+  fn pong(x: a) -> int
+}
+puts(1)
+EOF
+
 expect_runtime_output "Method-only trait without type parameter" "42" << 'EOF'
 trait ping {
   fn ping(x: int) -> int
