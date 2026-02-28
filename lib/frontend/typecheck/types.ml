@@ -135,32 +135,39 @@ type substitution = (string * mono_type) list
 let empty_substitution : substitution = []
 
 (* Apply substitution to a type - replace TVars according to the map *)
-let rec apply_substitution (subst : substitution) (mono : mono_type) : mono_type =
-  match mono with
-  | TInt | TFloat | TBool | TString | TNull -> mono
-  | TVar name -> (
-      match List.assoc_opt name subst with
-      | Some replacement ->
-          (* Recursively apply substitution to handle chains like t3 -> t5 -> int *)
-          apply_substitution subst replacement
-      | None -> mono)
-  | TFun (arg, ret, eff) -> TFun (apply_substitution subst arg, apply_substitution subst ret, eff)
-  | TArray element -> TArray (apply_substitution subst element)
-  | THash (key, value) -> THash (apply_substitution subst key, apply_substitution subst value)
-  | TRecord (fields, row) ->
-      let fields' =
-        fields
-        |> List.map (fun (f : record_field_type) -> { f with typ = apply_substitution subst f.typ })
-        |> normalize_record_fields
-      in
-      let row' = Option.map (apply_substitution subst) row in
-      TRecord (fields', row')
-  | TRowVar name -> (
-      match List.assoc_opt name subst with
-      | Some replacement -> apply_substitution subst replacement
-      | None -> mono)
-  | TUnion types -> TUnion (List.map (apply_substitution subst) types)
-  | TEnum (name, args) -> TEnum (name, List.map (apply_substitution subst) args)
+let apply_substitution (subst : substitution) (mono : mono_type) : mono_type =
+  let rec go (seen : string list) (ty : mono_type) : mono_type =
+    match ty with
+    | TInt | TFloat | TBool | TString | TNull -> ty
+    | TVar name -> (
+        if List.mem name seen then
+          ty
+        else
+          match List.assoc_opt name subst with
+          | Some replacement -> go (name :: seen) replacement
+          | None -> ty)
+    | TFun (arg, ret, eff) -> TFun (go seen arg, go seen ret, eff)
+    | TArray element -> TArray (go seen element)
+    | THash (key, value) -> THash (go seen key, go seen value)
+    | TRecord (fields, row) ->
+        let fields' =
+          fields
+          |> List.map (fun (f : record_field_type) -> { f with typ = go seen f.typ })
+          |> normalize_record_fields
+        in
+        let row' = Option.map (go seen) row in
+        TRecord (fields', row')
+    | TRowVar name -> (
+        if List.mem name seen then
+          ty
+        else
+          match List.assoc_opt name subst with
+          | Some replacement -> go (name :: seen) replacement
+          | None -> ty)
+    | TUnion types -> TUnion (List.map (go seen) types)
+    | TEnum (name, args) -> TEnum (name, List.map (go seen) args)
+  in
+  go [] mono
 
 (* Apply substitution to a poly_type - don't touch quantified variables *)
 let apply_substitution_poly (subst : substitution) (Forall (quantified_vars, mono)) : poly_type =
@@ -355,6 +362,18 @@ let%test "apply_substitution to record" =
   let record = TRecord ([ { name = "x"; typ = TVar "a" } ], Some (TRowVar "r")) in
   apply_substitution subst record
   = TRecord ([ { name = "x"; typ = TInt } ], Some (TRecord ([ { name = "y"; typ = TString } ], None)))
+
+let%test "apply_substitution avoids immediate self-cycle" =
+  let subst = [ ("a", TVar "a") ] in
+  apply_substitution subst (TVar "a") = TVar "a"
+
+let%test "apply_substitution avoids two-node cycle" =
+  let subst = [ ("a", TVar "b"); ("b", TVar "a") ] in
+  apply_substitution subst (TVar "a") = TVar "a"
+
+let%test "apply_substitution avoids var-row cycle" =
+  let subst = [ ("a", TRowVar "a") ] in
+  apply_substitution subst (TVar "a") = TRowVar "a"
 
 let%test "apply_substitution_poly respects quantified vars" =
   (* ∀a. a -> b  with {a -> Int, b -> String}  should give  ∀a. a -> String *)

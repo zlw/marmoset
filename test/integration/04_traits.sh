@@ -479,6 +479,18 @@ impl show[b: show] for list[b] {
 puts([1, 2, 3].show())
 EOF
 
+expect_runtime_output "Generic impl constraints do not overflow with type param name a" "ok" << 'EOF'
+trait show[a] {
+  fn show(x: a) -> string
+}
+impl show[a: show] for list[a] {
+  fn show(x: list[a]) -> string {
+    "ok"
+  }
+}
+puts([1, 2, 3].show())
+EOF
+
 expect_build "Generic impl constraints are enforced at use sites" "does not satisfy trait named" << 'EOF'
 trait named {
   name: string
