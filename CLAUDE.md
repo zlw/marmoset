@@ -181,17 +181,24 @@ Type error
 
 ## 5. Building and Testing
 
-### Normal Development:
-
 ```bash
 # Build
-dune build
+make build
 
-# Run tests
-dune runtest
+# Unit tests (inline let%test in .ml files)
+make unit
 
-# Or specific test suite
-./test/test_typecheck_and_codegen.sh
+# All integration tests (compiles .mr files, runs Go binaries, checks output)
+make integration
+
+# Single integration suite
+make integration traits
+make integration records
+make integration codegen
+# Available suites: core, unions, enums, traits, records, codegen, runtime
+
+# Both unit + integration
+make unit && make integration
 ```
 
 ### Performance:
