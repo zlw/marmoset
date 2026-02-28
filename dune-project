@@ -21,4 +21,4 @@
  (description "A statically typed language implemented in OCaml with Go code generation")
  (tags
   (language compiler typechecker go))
- (depends ocaml ppx_deriving ppx_inline_test linol linol-lwt))
+ (depends ocaml ppx_deriving ppx_inline_test lsp linol linol-lwt))
