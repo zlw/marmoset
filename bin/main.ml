@@ -15,7 +15,7 @@ type command =
 let print_usage () =
   Printf.eprintf "Usage:\n";
   Printf.eprintf "  marmoset run [--benchmark] <input.mr>\n";
-  Printf.eprintf "  marmoset build [--release] <input.mr> [-o output] [--emit-go dir]\n";
+  Printf.eprintf "  marmoset build [--release] <input.mr> [-o output] [-go dir]\n";
   Printf.eprintf "  marmoset check <input.mr>\n";
   Printf.eprintf "  marmoset lsp\n"
 
@@ -32,7 +32,7 @@ let parse_args () : command =
         | "-o" :: out :: tail ->
             output := Some out;
             parse tail
-        | "--emit-go" :: dir :: tail ->
+        | ("-go" | "--emit-go") :: dir :: tail ->
             emit_go := Some dir;
             parse tail
         | "--release" :: tail ->

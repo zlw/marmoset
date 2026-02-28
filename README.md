@@ -52,7 +52,7 @@ Compile Marmoset source to a Go-built binary:
 Emit generated Go source alongside build:
 
 ```sh
-./marmoset build examples/fibonacci-typed.mr --emit-go out
+./marmoset build examples/fibonacci-typed.mr -go out
 ```
 
 ## Examples
