@@ -119,7 +119,10 @@ let output_absolute_path (output : string) : string =
     output
 
 let compile_to_binary
-    ~(input_file : string) ~(source : string) ~(output_bin : string) ~(emit_go_dir : string option)
+    ~(input_file : string)
+    ~(source : string)
+    ~(output_bin : string)
+    ~(emit_go_dir : string option)
     ~(release : bool) : (unit, string) result =
   match Marmoset.Lib.Go_emitter.compile_to_build ~file_id:input_file source with
   | Error msg -> Error msg
@@ -143,7 +146,12 @@ let compile_to_binary
       | None -> ());
 
       let output_abs = output_absolute_path output_bin in
-      let go_flags = if release then "-ldflags=\"-s -w\" -trimpath" else "" in
+      let go_flags =
+        if release then
+          "-ldflags=\"-s -w\" -trimpath"
+        else
+          ""
+      in
       let cmd = Printf.sprintf "cd %s && go build %s -o %s ." temp_dir go_flags output_abs in
       let exit_code = Sys.command cmd in
 
