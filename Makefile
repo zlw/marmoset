@@ -4,7 +4,6 @@ install:
 clean:
 	@rm -rf _build
 	@rm -f ./marmoset
-	@rm -f ./marmoset-lsp
 
 build:
 	dune build
@@ -52,11 +51,6 @@ repl:
 
 run: release
 	@./marmoset $(file)
-
-lsp-build:
-	dune build $(DUNE_ROOT) tools/lsp/main.exe
-	@cp -f _build/default/tools/lsp/main.exe ./marmoset-lsp
-	@chmod +x ./marmoset-lsp
 
 treesitter:
 	cd tools/tree-sitter-marmoset && npm test

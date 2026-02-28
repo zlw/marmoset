@@ -3,7 +3,7 @@ local M = {}
 M._config = {
   lsp = {
     enable = true,
-    cmd = { "marmoset-lsp" },
+    cmd = { "marmoset", "lsp" },
   },
 }
 
@@ -52,7 +52,7 @@ function M._start_lsp()
     or vim.fn.fnamemodify(vim.api.nvim_buf_get_name(0), ":h")
 
   vim.lsp.start({
-    name = "marmoset-lsp",
+    name = "marmoset",
     cmd = cmd,
     root_dir = root_dir,
   })

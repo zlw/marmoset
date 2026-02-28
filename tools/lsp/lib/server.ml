@@ -1,9 +1,9 @@
-(* Marmoset LSP server entry point *)
+(* LSP server: class + entry point *)
 
 module Lsp_t = Linol_lsp.Types
 
 (* Per-document cached analysis *)
-type cached_doc = { analysis : Marmoset_lsp.Doc_state.analysis_result }
+type cached_doc = { analysis : Doc_state.analysis_result }
 
 (* Per-document pending debounce state *)
 type pending = { mutable task : unit Lwt.t option }
@@ -32,7 +32,7 @@ class marmoset_server =
     (* Run analysis and push diagnostics — called after debounce or immediately on open *)
     method private analyze_and_notify
         ~(notify_back : Linol_lwt.Jsonrpc2.notify_back) (uri : Lsp_t.DocumentUri.t) (content : string) =
-      let analysis = Marmoset_lsp.Doc_state.analyze ~source:content in
+      let analysis = Doc_state.analyze ~source:content in
       Hashtbl.replace analysis_cache uri { analysis };
       notify_back#send_diagnostic analysis.diagnostics
 
@@ -95,8 +95,8 @@ class marmoset_server =
         | Some { analysis } -> (
             match (analysis.program, analysis.type_map, analysis.environment) with
             | Some prog, Some tm, Some env ->
-                Marmoset_lsp.Hover.hover_at ~source:analysis.source ~program:prog ~type_map:tm ~environment:env
-                  ~line:pos.line ~character:pos.character
+                Hover.hover_at ~source:analysis.source ~program:prog ~type_map:tm ~environment:env ~line:pos.line
+                  ~character:pos.character
             | _ -> None)
       in
       Lwt.return result
@@ -108,7 +108,7 @@ class marmoset_server =
         | Some { analysis } -> (
             match analysis.program with
             | Some prog ->
-                let symbols = Marmoset_lsp.Doc_symbols.document_symbols ~source:analysis.source ~program:prog in
+                let symbols = Doc_symbols.document_symbols ~source:analysis.source ~program:prog in
                 Some (`DocumentSymbol symbols)
             | None -> None)
       in
@@ -121,8 +121,7 @@ class marmoset_server =
         | Some { analysis } -> (
             match (analysis.program, analysis.type_map) with
             | Some prog, Some tm ->
-                Some
-                  (Marmoset_lsp.Inlay_hints.inlay_hints ~source:analysis.source ~program:prog ~type_map:tm ~range)
+                Some (Inlay_hints.inlay_hints ~source:analysis.source ~program:prog ~type_map:tm ~range)
             | _ -> None)
       in
       Lwt.return result
@@ -142,14 +141,14 @@ class marmoset_server =
         | Some { analysis } -> (
             match analysis.environment with
             | Some env ->
-                let items = Marmoset_lsp.Completions.completions ~environment:env in
+                let items = Completions.completions ~environment:env in
                 Some (`List items)
             | None -> None)
       in
       Lwt.return result
   end
 
-let () =
+let run () =
   let server = new marmoset_server in
   let task =
     let rpc = Linol_lwt.Jsonrpc2.create_stdio ~env:() (server :> Linol_lwt.Jsonrpc2.server) in

@@ -1,6 +1,6 @@
 (library
  (name marmoset_lsp)
- (libraries marmoset linol linol.lsp)
+ (libraries marmoset linol linol.lsp linol-lwt)
  (inline_tests
   (flags (-verbose)))
  (preprocess

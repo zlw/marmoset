@@ -7,15 +7,17 @@ type command =
       input : string;
       output : string option;
       emit_go : string option;
+      release : bool;
     }
+  | Check of { filename : string }
+  | Lsp
 
 let print_usage () =
   Printf.eprintf "Usage:\n";
   Printf.eprintf "  marmoset run [--benchmark] <input.mr>\n";
-  Printf.eprintf "  marmoset build <input.mr> [-o output] [--emit-go dir]\n";
-  Printf.eprintf "\n";
-  Printf.eprintf "Notes:\n";
-  Printf.eprintf "  - This CLI is Go-codegen only (no eval/vm engines).\n"
+  Printf.eprintf "  marmoset build [--release] <input.mr> [-o output] [--emit-go dir]\n";
+  Printf.eprintf "  marmoset check <input.mr>\n";
+  Printf.eprintf "  marmoset lsp\n"
 
 let parse_args () : command =
   let args = Array.to_list Sys.argv |> List.tl in
@@ -24,6 +26,7 @@ let parse_args () : command =
       let input = ref None in
       let output = ref None in
       let emit_go = ref None in
+      let release = ref false in
       let rec parse = function
         | [] -> ()
         | "-o" :: out :: tail ->
@@ -31,6 +34,9 @@ let parse_args () : command =
             parse tail
         | "--emit-go" :: dir :: tail ->
             emit_go := Some dir;
+            parse tail
+        | "--release" :: tail ->
+            release := true;
             parse tail
         | arg :: tail when String.length arg > 0 && arg.[0] <> '-' ->
             input := Some arg;
@@ -41,7 +47,7 @@ let parse_args () : command =
       in
       parse rest;
       match !input with
-      | Some input -> Build { input; output = !output; emit_go = !emit_go }
+      | Some input -> Build { input; output = !output; emit_go = !emit_go; release = !release }
       | None ->
           print_usage ();
           exit 1)
@@ -66,6 +72,24 @@ let parse_args () : command =
       | None ->
           print_usage ();
           exit 1)
+  | "check" :: rest -> (
+      let input = ref None in
+      let rec parse = function
+        | [] -> ()
+        | arg :: tail when String.length arg > 0 && arg.[0] <> '-' ->
+            input := Some arg;
+            parse tail
+        | _ ->
+            print_usage ();
+            exit 1
+      in
+      parse rest;
+      match !input with
+      | Some filename -> Check { filename }
+      | None ->
+          print_usage ();
+          exit 1)
+  | [ "lsp" ] -> Lsp
   | [ filename ] -> Run { benchmark = false; filename }
   | _ ->
       print_usage ();
@@ -95,8 +119,8 @@ let output_absolute_path (output : string) : string =
     output
 
 let compile_to_binary
-    ~(input_file : string) ~(source : string) ~(output_bin : string) ~(emit_go_dir : string option) :
-    (unit, string) result =
+    ~(input_file : string) ~(source : string) ~(output_bin : string) ~(emit_go_dir : string option)
+    ~(release : bool) : (unit, string) result =
   match Marmoset.Lib.Go_emitter.compile_to_build ~file_id:input_file source with
   | Error msg -> Error msg
   | Ok build_output ->
@@ -119,7 +143,8 @@ let compile_to_binary
       | None -> ());
 
       let output_abs = output_absolute_path output_bin in
-      let cmd = Printf.sprintf "cd %s && go build -o %s ." temp_dir output_abs in
+      let go_flags = if release then "-ldflags=\"-s -w\" -trimpath" else "" in
+      let cmd = Printf.sprintf "cd %s && go build %s -o %s ." temp_dir go_flags output_abs in
       let exit_code = Sys.command cmd in
 
       (try
@@ -134,14 +159,14 @@ let compile_to_binary
       else
         Error "Go build failed"
 
-let run_build input output_opt emit_go_opt =
+let run_build input output_opt emit_go_opt release =
   let source = read_file input in
   let output =
     match output_opt with
     | Some o -> o
     | None -> Filename.basename (Filename.remove_extension input)
   in
-  match compile_to_binary ~input_file:input ~source ~output_bin:output ~emit_go_dir:emit_go_opt with
+  match compile_to_binary ~input_file:input ~source ~output_bin:output ~emit_go_dir:emit_go_opt ~release with
   | Ok () ->
       (match emit_go_opt with
       | Some dir -> Printf.printf "Go source written to %s/\n" dir
@@ -156,7 +181,8 @@ let run_file ~(benchmark : bool) ~(filename : string) =
   let tmp_bin = Filename.temp_file "marmoset-run" "" in
   (try Sys.remove tmp_bin with _ -> ());
 
-  match compile_to_binary ~input_file:filename ~source ~output_bin:tmp_bin ~emit_go_dir:None with
+  let release = benchmark in
+  match compile_to_binary ~input_file:filename ~source ~output_bin:tmp_bin ~emit_go_dir:None ~release with
   | Error msg ->
       Printf.eprintf "Error: %s\n" msg;
       exit 1
@@ -170,7 +196,20 @@ let run_file ~(benchmark : bool) ~(filename : string) =
       if exit_code <> 0 then
         exit exit_code
 
+let run_check filename =
+  let source = read_file filename in
+  Marmoset_lsp.Doc_state.reset_globals ();
+  let env = Marmoset.Lib.Builtins.prelude_env () in
+  match Marmoset.Lib.Checker.check_string_with_annotations ~env ~file_id:filename source with
+  | Ok _ -> Printf.printf "OK\n"
+  | Error err ->
+      let msg = Marmoset.Lib.Checker.format_error_with_context source err in
+      Printf.eprintf "%s\n" msg;
+      exit 1
+
 let () =
   match parse_args () with
   | Run { benchmark; filename } -> run_file ~benchmark ~filename
-  | Build { input; output; emit_go } -> run_build input output emit_go
+  | Build { input; output; emit_go; release } -> run_build input output emit_go release
+  | Check { filename } -> run_check filename
+  | Lsp -> Marmoset_lsp.Server.run ()

@@ -13,12 +13,12 @@ impl zed::Extension for MarmosetExtension {
         worktree: &zed::Worktree,
     ) -> Result<zed::Command> {
         let path = worktree
-            .which("marmoset-lsp")
-            .ok_or_else(|| "marmoset-lsp not found in PATH. Install it with: dune install".to_string())?;
+            .which("marmoset")
+            .ok_or_else(|| "marmoset not found in PATH. Install it with: dune install".to_string())?;
 
         Ok(zed::Command {
             command: path,
-            args: vec![],
+            args: vec!["lsp".into()],
             env: worktree.shell_env(),
         })
     }

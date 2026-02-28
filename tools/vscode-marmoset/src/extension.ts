@@ -9,10 +9,11 @@ let client: LanguageClient | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
   const config = vscode.workspace.getConfiguration("marmoset");
-  const serverPath = config.get<string>("lsp.path", "marmoset-lsp");
+  const serverPath = config.get<string>("lsp.path", "marmoset");
 
   const serverOptions: ServerOptions = {
     command: serverPath,
+    args: ["lsp"],
   };
 
   const clientOptions: LanguageClientOptions = {

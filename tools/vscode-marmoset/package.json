@@ -36,8 +36,8 @@
       "properties": {
         "marmoset.lsp.path": {
           "type": "string",
-          "default": "marmoset-lsp",
-          "description": "Path to the marmoset-lsp binary"
+          "default": "marmoset",
+          "description": "Path to the marmoset binary"
         }
       }
     }

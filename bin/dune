@@ -1,4 +1,4 @@
 (executable
  (public_name marmoset)
  (name main)
- (libraries marmoset))
+ (libraries marmoset marmoset_lsp linol-lwt))
