@@ -2364,7 +2364,12 @@ and infer_let type_map env name expr type_annotation =
     | _, None -> fresh_type_var ()
   in
   (* Add to environment as monomorphic (not generalized yet) *)
-  let env_with_self = TypeEnv.add name (mono_to_poly self_type) env in
+  let env_with_self =
+    if name = "_" then
+      env
+    else
+      TypeEnv.add name (mono_to_poly self_type) env
+  in
   (* Infer expression type with self in scope *)
   match infer_expression type_map env_with_self expr with
   | Error e -> Error e
@@ -2414,8 +2419,11 @@ and infer_block type_map env stmts =
             match stmt.stmt with
             | AST.Let let_binding ->
                 let env_subst = apply_substitution_env subst1 env in
-                let poly = generalize env_subst stmt_type in
-                TypeEnv.add let_binding.name poly env_subst
+                if let_binding.name = "_" then
+                  env_subst
+                else
+                  let poly = generalize env_subst stmt_type in
+                  TypeEnv.add let_binding.name poly env_subst
             | _ -> apply_substitution_env subst1 env
           in
           match infer_block type_map env' rest with
@@ -2494,8 +2502,11 @@ let infer_program ?(env = empty_env) ?state (program : AST.program) :
                       let env'' =
                         match stmt.stmt with
                         | AST.Let let_binding ->
-                            let poly = generalize env' result_type' in
-                            TypeEnv.add let_binding.name poly env'
+                            if let_binding.name = "_" then
+                              env'
+                            else
+                              let poly = generalize env' result_type' in
+                              TypeEnv.add let_binding.name poly env'
                         | _ -> env'
                       in
                       Ok (env'', final_subst, result_type')))
@@ -2513,8 +2524,11 @@ let infer_program ?(env = empty_env) ?state (program : AST.program) :
                       let env'' =
                         match stmt.stmt with
                         | AST.Let let_binding ->
-                            let poly = generalize env' stmt_type in
-                            TypeEnv.add let_binding.name poly env'
+                            if let_binding.name = "_" then
+                              env'
+                            else
+                              let poly = generalize env' stmt_type in
+                              TypeEnv.add let_binding.name poly env'
                         | _ -> env'
                       in
                       go env'' subst'' seen_traits' seen_enums' seen_aliases' rest))
@@ -2598,6 +2612,15 @@ module Test = struct
   let%test "infer let binding" =
     (* let x = 5; x should be Int *)
     infers_to "let x = 5; x" TInt
+
+  let%test "infer underscore let binding acts as discard" =
+    (* let _ = 5; 1 should still infer as Int and not bind '_' *)
+    infers_to "let _ = 5; 1" TInt
+
+  let%test "infer underscore is not available as value after let discard" =
+    match infer_string "let _ = 5; _" with
+    | Error { kind = UnboundVariable "_"; _ } -> true
+    | _ -> false
 
   let%test "infer let with function" =
     (* let f = fn(x) { x + 1 }; f(5) should be Int *)

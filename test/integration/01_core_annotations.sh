@@ -20,6 +20,12 @@ test_case "Mixed type parameters" \
     'let f = fn(x: int, y: string) { y }; f(5, "hi")' \
     "true"
 
+expect_runtime_output "Function type annotation in parameter works" "2" << 'EOF'
+let apply = fn(f: fn(int) -> int, x: int) -> int { f(x) }
+let inc = fn(n: int) -> int { n + 1 }
+puts(apply(inc, 1))
+EOF
+
 echo ""
 echo "-- RETURN TYPE ANNOTATION TESTS --"
 test_case "Return type int matches" \
@@ -80,6 +86,19 @@ echo "-- BACKWARD COMPATIBILITY TESTS --"
 test_case "Unannotated function still works" \
     'let f = fn(x) { x + 1 }; f(5)' \
     "true"
+
+expect_runtime_output "Underscore let binding discards value and compiles" "1" << 'EOF'
+let f = fn(x: int) -> int {
+  let _ = x
+  x
+}
+puts(f(1))
+EOF
+
+expect_build "Underscore let binding does not introduce '_' as value" "Unbound variable" << 'EOF'
+let _ = 1
+puts(_)
+EOF
 
 test_case "Phase 1 fibonacci (no annotations)" \
     'let fib = fn(n) { if (n < 2) { return n } return fib(n - 2) + fib(n - 1); }; fib(10)' \

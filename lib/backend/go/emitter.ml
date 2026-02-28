@@ -2741,6 +2741,20 @@ and emit_stmt
   let ind = indent_str state in
   match stmt.stmt with
   | AST.Let let_binding -> (
+      if let_binding.name = "_" then
+        (* Blank binding is a discard, not a named variable declaration. *)
+        (match let_binding.value.expr with
+        | AST.If (cond, cons, alt) ->
+            let code = emit_if_to_target state type_map env let_binding.value cond cons alt DiscardTarget in
+            (code, env)
+        | AST.Match (scrutinee, arms) ->
+            let code = emit_match ~target:DiscardTarget state type_map env let_binding.value scrutinee arms in
+            (code, env)
+        | _ ->
+            let expr_type = get_type type_map let_binding.value in
+            let expr_str = emit_expr ~expected_type:(Some expr_type) state type_map env let_binding.value in
+            (Printf.sprintf "%s_ = %s\n" ind expr_str, env))
+      else
       (* Use the type from the environment if it exists, otherwise get from type_map *)
       let expr_type =
         match Infer.TypeEnv.find_opt let_binding.name env with
@@ -3737,6 +3751,11 @@ let%test "emit negative array index" =
 let%test "emit negative string index" =
   match compile_string "let s = \"hello\"; s[-2]" with
   | Ok code -> string_contains code "s[len(s)-2]"
+  | Error _ -> false
+
+let%test "underscore let binding emits discard assignment" =
+  match compile_string "let f = fn(x: int) -> int { let _ = x; x }; f(1)" with
+  | Ok code -> string_contains code "_ = x" && not (string_contains code "_ := x")
   | Error _ -> false
 
 let%test "if statement without else in function followed by return" =
