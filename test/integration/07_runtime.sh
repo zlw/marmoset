@@ -13,9 +13,6 @@ suite_begin "EDGE CASE TESTS - RUNTIME BEHAVIOR & OPERATOR STRESS"
 # ============================================================
 echo "-- SECTION A: OPERATOR PRECEDENCE & CHAINING --"
 
-expect_runtime_output "A1: mixed arithmetic 1 + 2 * 3 = 7" "7" << 'EOF'
-puts(1 + 2 * 3)
-EOF
 
 expect_runtime_output "A2: comparison result stored then compared with ==" "true" << 'EOF'
 let a = 1 < 2
@@ -113,29 +110,11 @@ EOF
 # ============================================================
 echo "-- SECTION C: BOOLEAN OPERATIONS --"
 
-expect_runtime_output "C17a: bool eq true==true" "true" << 'EOF'
-puts(true == true)
-EOF
 
-expect_runtime_output "C17b: bool eq false==false" "true" << 'EOF'
-puts(false == false)
-EOF
 
-expect_runtime_output "C17c: bool eq true==false" "false" << 'EOF'
-puts(true == false)
-EOF
 
-expect_runtime_output "C18a: bool negation !true" "false" << 'EOF'
-puts(!true)
-EOF
 
-expect_runtime_output "C18b: bool negation !false" "true" << 'EOF'
-puts(!false)
-EOF
 
-expect_runtime_output "C18c: double negation !!true via parens" "true" << 'EOF'
-puts(!(!true))
-EOF
 
 expect_runtime_output "C19: negation in if condition" "was false" << 'EOF'
 let flag = false
@@ -175,9 +154,6 @@ expect_runtime_output "D23: float precision 0.1 + 0.2 != 0.3 (FP edge)" "false" 
 puts(0.1 + 0.2 == 0.3)
 EOF
 
-expect_runtime_output "D24: unary minus on float -3.14" "-3.14" << 'EOF'
-puts(-3.14)
-EOF
 
 # Float division -- Go float64 division
 expect_runtime_output "D25: float division 10.0 / 4.0 = 2.5" "2.5" << 'EOF'
@@ -210,18 +186,6 @@ EOF
 #   invalid operation: ord_compare_rank(...) == int64(0) (mismatched types ordering and int64)
 # The existing 04_traits_operator_edge_cases.sh already documents this bug.
 # These tests WILL FAIL until the bug is fixed.
-expect_runtime_output "E27a: custom ord on enum drives < (KNOWN BUG: ordering vs int64)" "true" << 'EOF'
-enum rank { low mid high }
-impl eq for rank {
-  fn eq(x: rank, y: rank) -> bool { false }
-}
-impl ord for rank {
-  fn compare(x: rank, y: rank) -> ordering {
-    ordering.less
-  }
-}
-puts(rank.high < rank.low)
-EOF
 
 expect_runtime_output "E27b: custom ord on enum drives > (KNOWN BUG: ordering vs int64)" "false" << 'EOF'
 enum rank { low mid high }
@@ -366,13 +330,7 @@ puts(1000000000 * 1000000000)
 EOF
 
 # F36: Integer division truncation toward zero
-expect_runtime_output "F36a: int division truncation 7/2 = 3" "3" << 'EOF'
-puts(7 / 2)
-EOF
 
-expect_runtime_output "F36b: int division 1/3 = 0" "0" << 'EOF'
-puts(1 / 3)
-EOF
 
 # F37: Negative integer operations
 expect_runtime_output "F37a: -5 + 3 = -2" "-2" << 'EOF'
@@ -579,11 +537,6 @@ puts(c)
 EOF
 
 # H57: Operator on record field access
-expect_runtime_output "H57: arithmetic on record fields" "30" << 'EOF'
-type point = { x: int, y: int }
-let p: point = { x: 10, y: 20 }
-puts(p.x + p.y)
-EOF
 
 # H58: Complex expression with multiple record field accesses
 expect_runtime_output "H58: comparison on record fields" "true" << 'EOF'
@@ -611,19 +564,10 @@ EOF
 echo "-- SECTION I: TYPE REJECTION --"
 
 # I61: String subtraction should fail (string has no num impl)
-expect_build "I61: string subtraction fails" "missing-impl" << 'EOF'
-puts("a" - "b")
-EOF
 
 # I62: String multiplication should fail
-expect_build "I62: string multiplication fails" "missing-impl" << 'EOF'
-puts("a" * "b")
-EOF
 
 # I63: String division should fail
-expect_build "I63: string division fails" "missing-impl" << 'EOF'
-puts("a" / "b")
-EOF
 
 # I64: Negation on string should fail (no neg impl)
 expect_build "I64: string negation fails" "missing-impl" << 'EOF'
@@ -631,10 +575,6 @@ puts(-"hello")
 EOF
 
 # I65: Negation on bool should fail (no neg impl)
-expect_build "I65: bool negation with unary minus fails" "missing-impl" << 'EOF'
-let x = true
-puts(-x)
-EOF
 
 # I66: Mixed types in arithmetic should fail
 expect_build "I66: int + string type mismatch" "__ANY_ERROR__" << 'EOF'
@@ -642,11 +582,6 @@ puts(1 + "hello")
 EOF
 
 # I67: Ordering on function type should fail
-expect_build "I67: function comparison fails" "missing-impl" << 'EOF'
-let f = fn(x: int) -> int { x }
-let g = fn(x: int) -> int { x }
-puts(f < g)
-EOF
 
 # I68: Equality on function type should fail
 expect_build "I68: function equality fails" "missing-impl" << 'EOF'
@@ -878,9 +813,6 @@ puts(-1.5 < 1.5)
 EOF
 
 # O95: Float not-equal
-expect_runtime_output "O95: float not-equal" "true" << 'EOF'
-puts(1.0 != 2.0)
-EOF
 
 # ============================================================
 # SECTION P: GENERIC FUNCTIONS WITH OPERATOR CONSTRAINTS

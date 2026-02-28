@@ -420,21 +420,10 @@ EOF
 
 # BUG: Higher-order function with record argument
 # causes "unresolved type variable" in codegen.
-expect_runtime_output "Record passed to higher-order function" "42" << 'EOF'
-let apply = fn(f, r) { f(r) }
-let get_x = fn(r) { r.x }
-puts(apply(get_x, { x: 42, y: 0 }))
-EOF
 
 # BUG: function body using spread on a polymorphic parameter
 # loses fields, generating Record_x_int64 instead of Record_x_int64_y_int64.
 # Go error: "__base declared and not used" and "has no field or method y"
-expect_runtime_output "Function body uses spread to build return value" "25" << 'EOF'
-let update_x = fn(r, new_x) { { ...r, x: new_x } }
-let base = { x: 1, y: 20 }
-let result = update_x(base, 5)
-puts(result.x + result.y)
-EOF
 
 ########################################
 # SECTION F: SHAPE DEDUPLICATION

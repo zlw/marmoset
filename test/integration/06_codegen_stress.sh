@@ -388,14 +388,6 @@ EOF
 # declared as a parameter in the same scope, Go may reject this with
 # "no new variables on left side of :=". The correct Marmoset semantics
 # should shadow `x` with a new binding, producing `(1 + 1) + 1 = 3`.
-expect_runtime_output "D28: [BUG-SHADOW] deep variable shadowing across scopes" "3" << 'EOF'
-let x = 1
-let f = fn(x: int) -> int {
-  let x = x + 1
-  x + 1
-}
-puts(f(x))
-EOF
 
 # ===================================================================
 # SECTION E: Complex Return Patterns

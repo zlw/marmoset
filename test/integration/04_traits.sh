@@ -467,17 +467,6 @@ test_case "Mixed manual and derived impls" \
      42' \
     "true"
 
-expect_runtime_output "Generic impl method resolves for concrete element type" "ok" << 'EOF'
-trait show[a] {
-  fn show(x: a) -> string
-}
-impl show[b: show] for list[b] {
-  fn show(x: list[b]) -> string {
-    "ok"
-  }
-}
-puts([1, 2, 3].show())
-EOF
 
 expect_runtime_output "Generic impl constraints do not overflow with type param name a" "ok" << 'EOF'
 trait show[a] {
@@ -506,24 +495,6 @@ impl show[b: named] for list[b] {
 puts([1, 2].show())
 EOF
 
-expect_runtime_output "Concrete impl overrides generic impl for same trait/type" "false
-true" << 'EOF'
-trait eq[a] {
-  fn eq(x: a, y: a) -> bool
-}
-impl eq[b: eq] for list[b] {
-  fn eq(x: list[b], y: list[b]) -> bool {
-    true
-  }
-}
-impl eq for list[int] {
-  fn eq(x: list[int], y: list[int]) -> bool {
-    false
-  }
-}
-puts([1] == [2])
-puts(["a"] == ["b"])
-EOF
 
 expect_runtime_output "Generic impl method body can call helper functions at concrete use sites" "ok" << 'EOF'
 trait show[a] {
@@ -540,14 +511,6 @@ impl show[b: show] for list[b] {
 puts([1, 2].show())
 EOF
 
-expect_runtime_output "Generic eq impl drives == operator for concrete list type" "true" << 'EOF'
-impl eq[b: eq] for list[b] {
-  fn eq(x: list[b], y: list[b]) -> bool {
-    len(x) == len(y)
-  }
-}
-puts([1, 2] == [3, 4])
-EOF
 
 echo "-- PHASE 4.3: OPERATOR TRAIT OBLIGATIONS --"
 

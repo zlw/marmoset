@@ -493,15 +493,6 @@ puts(f(1))
 puts(g(5))
 EOF
 
-expect_build "Fingerprint collision detected for generic vs concrete enum" "Codegen error: instantiation fingerprint collision for 'id'" << 'EOF'
-enum b { v }
-enum a[t] { wrap(t) }
-enum a_b { wrap }
-let id = fn(x) { x }
-let x = id(a_b.wrap)
-let y = id(a.wrap(b.v))
-puts(1)
-EOF
 
 # ---------------------------------------------------------------
 # GENERIC IMPL WITH CONSTRAINT

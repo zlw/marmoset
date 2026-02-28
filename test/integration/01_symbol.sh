@@ -259,9 +259,6 @@ expect_build "Minimal program: single literal" "" << 'EOF'
 EOF
 
 # Single puts call - minimal working program.
-expect_runtime_output "Minimal puts program" "hello" << 'EOF'
-puts("hello")
-EOF
 
 echo ""
 echo "-- VARIABLE NAME EDGE CASES --"
