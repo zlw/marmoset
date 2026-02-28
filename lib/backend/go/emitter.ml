@@ -98,6 +98,38 @@ let rec mangle_type_for_shape (t : Types.mono_type) : string =
   | Types.TEnum (name, []) -> name
   | Types.TEnum (name, args) -> name ^ "_" ^ String.concat "_" (List.map mangle_type_for_shape args)
 
+let rec erase_unresolved_type_vars_for_codegen (t : Types.mono_type) : Types.mono_type =
+  match t with
+  | Types.TVar _ | Types.TRowVar _ -> Types.TUnion []
+  | Types.TFun (arg, ret, is_effectful) ->
+      Types.TFun
+        ( erase_unresolved_type_vars_for_codegen arg,
+          erase_unresolved_type_vars_for_codegen ret,
+          is_effectful )
+  | Types.TArray elem -> Types.TArray (erase_unresolved_type_vars_for_codegen elem)
+  | Types.THash (key, value) ->
+      Types.THash
+        (erase_unresolved_type_vars_for_codegen key, erase_unresolved_type_vars_for_codegen value)
+  | Types.TRecord (fields, row) ->
+      let fields' =
+        List.map
+          (fun (f : Types.record_field_type) ->
+            { f with typ = erase_unresolved_type_vars_for_codegen f.typ })
+          fields
+      in
+      let row' = Option.map erase_unresolved_type_vars_for_codegen row in
+      Types.TRecord (fields', row')
+  | Types.TUnion members -> Types.TUnion (List.map erase_unresolved_type_vars_for_codegen members)
+  | Types.TEnum (name, args) -> Types.TEnum (name, List.map erase_unresolved_type_vars_for_codegen args)
+  | Types.TInt | Types.TFloat | Types.TBool | Types.TString | Types.TNull -> t
+
+let normalize_type_for_codegen ~(concrete_only : bool) (t : Types.mono_type) : Types.mono_type =
+  let t = Types.canonicalize_mono_type t in
+  if concrete_only then
+    Types.canonicalize_mono_type (erase_unresolved_type_vars_for_codegen t)
+  else
+    t
+
 let go_keywords =
   [
     "break";
@@ -378,7 +410,7 @@ let rec mangle_type_to_go (t : Types.mono_type) : string =
       record_shape_name fields
   | Types.TRowVar _ -> "interface{}"
   | Types.TUnion _ -> "interface{}"
-  | Types.TEnum (name, args) -> mangle_type (Types.TEnum (name, args))
+  | Types.TEnum _ -> mangle_type_for_shape t
 
 let go_record_field_name (name : string) : string = go_safe_ident name
 
@@ -789,15 +821,23 @@ let rec has_open_record_rows (t : Types.mono_type) : bool =
 
 let has_unresolved_codegen_type (t : Types.mono_type) : bool = has_type_vars t || has_open_record_rows t
 
+let enum_allows_unresolved_erasure (enum_name : string) : bool =
+  Typecheck.Inherent_registry.all_methods ()
+  |> List.exists (fun (for_type, _method_sig) ->
+         match for_type with
+         | Types.TEnum (name, args) -> name = enum_name && List.exists has_type_vars args
+         | _ -> false)
+
 (* Track an enum instantiation *)
 let track_enum_inst state (t : Types.mono_type) =
   match t with
   | Types.TEnum (name, args) ->
-      (* In Rust-style mode, skip instantiations with unresolved type variables *)
-      (* In TypeScript-style mode, track all instantiations (type vars become interface{}) *)
       if state.concrete_only && List.exists has_type_vars args then
-        ()
-        (* Skip - unresolved type variables in Rust-style mode *)
+        if enum_allows_unresolved_erasure name then
+          let erased_args = List.map erase_unresolved_type_vars_for_codegen args in
+          state.enum_insts <- EnumInstSet.add (name, erased_args) state.enum_insts
+        else
+          ()
       else
         state.enum_insts <- EnumInstSet.add (name, args) state.enum_insts
   | _ -> ()
@@ -2038,13 +2078,24 @@ let rec emit_expr
           | Some t -> t
           | None -> get_type type_map expr
         in
-        let type_args =
+        let enum_type =
           match enum_type with
-          | Types.TEnum (_, args) -> args
-          | _ -> []
+          | Types.TEnum (_, type_args) -> Types.TEnum (enum_name, type_args)
+          | _ -> Types.TEnum (enum_name, [])
+        in
+        let enum_type = Types.canonicalize_mono_type enum_type in
+        let enum_type =
+          if
+            state.mono.concrete_only
+            && has_type_vars enum_type
+            && enum_allows_unresolved_erasure enum_name
+          then
+            normalize_type_for_codegen ~concrete_only:state.mono.concrete_only enum_type
+          else
+            enum_type
         in
         (* Generate the mangled constructor name *)
-        let go_type_name = mangle_type (Types.TEnum (enum_name, type_args)) in
+        let go_type_name = mangle_type enum_type in
         let constructor_name = Printf.sprintf "%s_%s" go_type_name variant_name in
         (* Emit arguments *)
         let arg_strs = List.map (emit_expr state type_map env) args in
@@ -2113,14 +2164,29 @@ let rec emit_expr
         match receiver.expr with
         | AST.Identifier enum_name when Typecheck.Enum_registry.lookup enum_name <> None ->
             (* This is a nullary enum constructor - emit like EnumConstructor with no args *)
-            let enum_type = get_type type_map expr in
-            let type_args =
+            let enum_type =
+              match expected_type with
+              | Some t -> t
+              | None -> get_type type_map expr
+            in
+            let enum_type =
               match enum_type with
-              | Types.TEnum (_, args) -> args
-              | _ -> []
+              | Types.TEnum (_, type_args) -> Types.TEnum (enum_name, type_args)
+              | _ -> Types.TEnum (enum_name, [])
+            in
+            let enum_type = Types.canonicalize_mono_type enum_type in
+            let enum_type =
+              if
+                state.mono.concrete_only
+                && has_type_vars enum_type
+                && enum_allows_unresolved_erasure enum_name
+              then
+                normalize_type_for_codegen ~concrete_only:state.mono.concrete_only enum_type
+              else
+                enum_type
             in
             (* Generate the mangled constructor name *)
-            let go_type_name = mangle_type (Types.TEnum (enum_name, type_args)) in
+            let go_type_name = mangle_type enum_type in
             let constructor_name = Printf.sprintf "%s_%s" go_type_name variant_name in
             Printf.sprintf "%s()" constructor_name
         | _ ->
@@ -2132,15 +2198,30 @@ let rec emit_expr
         match receiver.expr with
         | AST.Identifier enum_name when Typecheck.Enum_registry.lookup enum_name <> None ->
             (* This is an enum constructor - emit like EnumConstructor *)
-            (* Get the enum type from the type_map (MethodCall node itself should be typed) *)
-            let enum_type = get_type type_map expr in
-            let type_args =
+            (* Use expected_type when available, otherwise fall back to inferred constructor type. *)
+            let enum_type =
+              match expected_type with
+              | Some t -> t
+              | None -> get_type type_map expr
+            in
+            let enum_type =
               match enum_type with
-              | Types.TEnum (_, args) -> args
-              | _ -> []
+              | Types.TEnum (_, type_args) -> Types.TEnum (enum_name, type_args)
+              | _ -> Types.TEnum (enum_name, [])
+            in
+            let enum_type = Types.canonicalize_mono_type enum_type in
+            let enum_type =
+              if
+                state.mono.concrete_only
+                && has_type_vars enum_type
+                && enum_allows_unresolved_erasure enum_name
+              then
+                normalize_type_for_codegen ~concrete_only:state.mono.concrete_only enum_type
+              else
+                enum_type
             in
             (* Generate the mangled constructor name *)
-            let go_type_name = mangle_type (Types.TEnum (enum_name, type_args)) in
+            let go_type_name = mangle_type enum_type in
             let constructor_name = Printf.sprintf "%s_%s" go_type_name variant_name in
             (* Emit arguments *)
             let arg_strs = List.map (emit_expr state type_map env) args in
@@ -2151,7 +2232,10 @@ let rec emit_expr
         | _ ->
             (* Real method call - emit using typechecker-selected method source *)
             (* Get receiver type *)
-            let receiver_type = get_type type_map receiver in
+            let receiver_type =
+              normalize_type_for_codegen ~concrete_only:state.mono.concrete_only
+                (get_type type_map receiver)
+            in
 
             (* Use method-resolution metadata from typechecking; codegen must not re-resolve. *)
             let method_resolution = Typecheck.Infer.lookup_method_resolution expr.id in
@@ -4169,7 +4253,10 @@ let add_inherent_call_site_if_new (sites : inherent_call_site list) (site : inhe
   else
     site :: sites
 
-let collect_inherent_call_sites (type_map : Infer.type_map) (program : AST.program) : inherent_call_site list =
+let collect_inherent_call_sites
+    ~(concrete_only : bool)
+    (type_map : Infer.type_map)
+    (program : AST.program) : inherent_call_site list =
   let rec collect_expr (acc : inherent_call_site list) (expr : AST.expression) : inherent_call_site list =
     match expr.expr with
     | AST.Identifier _ | AST.Integer _ | AST.Float _ | AST.Boolean _ | AST.String _ -> acc
@@ -4218,12 +4305,12 @@ let collect_inherent_call_sites (type_map : Infer.type_map) (program : AST.progr
         let acc'' = List.fold_left collect_expr acc' args in
         (match Infer.lookup_method_resolution expr.id with
         | Some Infer.InherentMethod ->
-            let receiver_type = Types.canonicalize_mono_type (get_type type_map receiver) in
-            if has_type_vars receiver_type then
-              acc''
-            else
-              add_inherent_call_site_if_new acc''
-                { call_method_name = method_name; call_receiver_type = receiver_type }
+            let receiver_type =
+              normalize_type_for_codegen ~concrete_only
+                (Types.canonicalize_mono_type (get_type type_map receiver))
+            in
+            add_inherent_call_site_if_new acc''
+              { call_method_name = method_name; call_receiver_type = receiver_type }
         | Some (Infer.TraitMethod _) | None -> acc'')
   and collect_stmt (acc : inherent_call_site list) (stmt : AST.statement) : inherent_call_site list =
     match stmt.stmt with
@@ -4400,7 +4487,7 @@ let emit_inherent_methods
     (typed_env : Infer.type_env)
     (program : AST.program) : string =
   let inherent_impls = collect_inherent_impl_defs program in
-  let call_sites = collect_inherent_call_sites type_map program in
+  let call_sites = collect_inherent_call_sites ~concrete_only:state.mono.concrete_only type_map program in
 
   let concrete_method_targets : (string * Types.mono_type) list =
     inherent_impls

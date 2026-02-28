@@ -426,6 +426,23 @@ puts(ok.is_success())
 puts(err.is_success())
 EOF
 
+expect_runtime_output "Generic inherent method call works with unconstrained enum type arguments" "true" << 'EOF'
+enum result[a, b] {
+  success(a)
+  failure(b)
+}
+impl result[a, b] {
+  fn is_success(r: result[a, b]) -> bool {
+    match r {
+      result.success(_): true
+      result.failure(_): false
+    }
+  }
+}
+let ok = result.success(1)
+puts(ok.is_success())
+EOF
+
 expect_runtime_output "Concrete inherent impl target takes precedence over matching generic target" "concrete
 failure" << 'EOF'
 enum result[a, b] {
