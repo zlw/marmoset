@@ -1,7 +1,7 @@
 [extension]
 id = "marmoset"
 name = "Marmoset"
-version = "0.1.0"
+version = "0.2.0"
 schema_version = 1
 authors = ["Marmoset Contributors"]
 description = "Marmoset language support for Zed — syntax highlighting, brackets, indentation, and code outline."
@@ -10,3 +10,7 @@ description = "Marmoset language support for Zed — syntax highlighting, bracke
 repository = "https://github.com/zlw/marmoset"
 path = "tools/tree-sitter-marmoset"
 rev = "6f1fc06"
+
+[language_servers.marmoset-lsp]
+name = "marmoset-lsp"
+language = "Marmoset"
