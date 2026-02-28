@@ -1303,12 +1303,23 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                   match inherent_method with
                   | Some inherent_sig -> infer_with_method_signature inherent_sig InherentMethod
                   | None ->
-                      Error
-                        (error_at
-                           (ConstructorError
-                              (Printf.sprintf "No method '%s' found for type %s" method_name
-                                 (Types.to_string receiver_type')))
-                           expr))
+                      let field_expr =
+                        AST.mk_expr ~pos:expr.pos ~end_pos:expr.end_pos ~file_id:expr.file_id
+                          (AST.FieldAccess (receiver, method_name))
+                      in
+                      let call_expr =
+                        AST.mk_expr ~pos:expr.pos ~end_pos:expr.end_pos ~file_id:expr.file_id
+                          (AST.Call (field_expr, args))
+                      in
+                      (match infer_expression type_map env call_expr with
+                      | Ok (subst_field_call, field_call_type) -> Ok (subst_field_call, field_call_type)
+                      | Error _ ->
+                          Error
+                            (error_at
+                               (ConstructorError
+                                  (Printf.sprintf "No method '%s' found for type %s" method_name
+                                     (Types.to_string receiver_type')))
+                               expr)))
               | `Found (trait_name, method_sig) -> (
                   match inherent_method with
                   | Some _ ->
@@ -2081,12 +2092,29 @@ and infer_record_literal type_map env fields spread expr =
     List.iter (fun (f : Types.record_field_type) -> Hashtbl.replace tbl f.name f.typ) field_types;
     field_types
     |> List.filter (fun (f : Types.record_field_type) -> Hashtbl.mem tbl f.name)
-    |> List.filter_map (fun (f : Types.record_field_type) ->
-           match Hashtbl.find_opt tbl f.name with
-           | None -> None
-           | Some typ ->
-               Hashtbl.remove tbl f.name;
-               Some { Types.name = f.name; typ })
+      |> List.filter_map (fun (f : Types.record_field_type) ->
+             match Hashtbl.find_opt tbl f.name with
+             | None -> None
+             | Some typ ->
+                 Hashtbl.remove tbl f.name;
+                 Some { Types.name = f.name; typ })
+  in
+  let remove_override_names_from_row
+      (override_names : string list) (row : Types.mono_type option) : Types.mono_type option =
+    let rec go = function
+      | None -> None
+      | Some (TRecord (row_fields, row_tail)) ->
+          let kept_fields =
+            List.filter (fun (f : Types.record_field_type) -> not (List.mem f.name override_names)) row_fields
+          in
+          let kept_tail = go row_tail in
+          if kept_fields = [] then
+            kept_tail
+          else
+            Some (Types.canonicalize_mono_type (TRecord (kept_fields, kept_tail)))
+      | other -> other
+    in
+    go row
   in
   match infer_record_fields env empty_substitution [] fields with
   | Error e -> Error e
@@ -2123,7 +2151,9 @@ and infer_record_literal type_map env fields spread expr =
               match spread_type' with
               | TRecord (base_fields, base_row) ->
                   let merged = merge_fields base_fields field_types in
-                  Ok (subst, Types.canonicalize_mono_type (TRecord (merged, base_row)))
+                  let override_names = List.map (fun (f : Types.record_field_type) -> f.name) field_types in
+                  let pruned_row = remove_override_names_from_row override_names base_row in
+                  Ok (subst, Types.canonicalize_mono_type (TRecord (merged, pruned_row)))
               | TVar _ -> (
                   let row_var = fresh_row_var () in
                   let expected_base = TRecord ([], Some row_var) in
@@ -3048,7 +3078,11 @@ and infer_block type_map env stmts =
                 if let_binding.name = "_" then
                   env_subst
                 else
-                  let poly = generalize env_subst stmt_type in
+                  let poly =
+                    match let_binding.value.expr with
+                    | AST.RecordLit _ | AST.FieldAccess _ -> mono_to_poly stmt_type
+                    | _ -> generalize env_subst stmt_type
+                  in
                   TypeEnv.add let_binding.name poly env_subst
             | _ -> apply_substitution_env subst1 env
           in
@@ -3185,7 +3219,11 @@ let infer_program ?(env = empty_env) ?state (program : AST.program) :
                   env
                 else
                   let env_for_generalize = TypeEnv.remove let_binding.name env in
-                  let poly = generalize env_for_generalize stmt_type in
+                  let poly =
+                    match let_binding.value.expr with
+                    | AST.RecordLit _ | AST.FieldAccess _ -> mono_to_poly stmt_type
+                    | _ -> generalize env_for_generalize stmt_type
+                  in
                   TypeEnv.add let_binding.name poly env
             | _ -> env
           in

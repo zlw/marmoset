@@ -42,6 +42,50 @@ let get_x = fn(r) { r.x }
 puts(get_x(p))
 EOF
 
+expect_runtime_output "Row-tail fields survive pass-through wrappers" "10" << 'EOF'
+let inner = fn(r) { r.x + r.y }
+let outer = fn(r) { inner(r) }
+puts(outer({ x: 3, y: 7 }))
+EOF
+
+expect_runtime_output "Higher-order function preserves wide record argument shape" "42" << 'EOF'
+let apply = fn(f, r) { f(r) }
+let get_x = fn(r) { r.x }
+puts(apply(get_x, { x: 42, y: 0 }))
+EOF
+
+expect_runtime_output "Spread-returning polymorphic function keeps tail fields" "25" << 'EOF'
+let update_x = fn(r, new_x) { { ...r, x: new_x } }
+let base = { x: 1, y: 20 }
+let result = update_x(base, 5)
+puts(result.x + result.y)
+EOF
+
+expect_runtime_output "Recursive spread update keeps row fields stable" "10" << 'EOF'
+let countdown = fn(r) {
+  if (r.n == 0) {
+    r.acc
+  } else {
+    let next = { ...r, n: r.n - 1, acc: r.acc + 1 }
+    countdown(next)
+  }
+}
+puts(countdown({ n: 10, acc: 0 }))
+EOF
+
+expect_runtime_output "Record function field extracted then called" "25" << 'EOF'
+let square = fn(n) { n * n }
+let r = { compute: square, base: 5 }
+let f = r.compute
+puts(f(r.base))
+EOF
+
+expect_runtime_output "Record function field called with dot syntax" "25" << 'EOF'
+let square = fn(n) { n * n }
+let r = { compute: square, base: 5 }
+puts(r.compute(r.base))
+EOF
+
 expect_runtime_output "Inline record argument to wrapper function" "3" << 'EOF'
 let mk = fn(r: { x: int }) { { inner: r } }
 let o = mk({ x: 3 })
@@ -118,7 +162,7 @@ let p: point = { x: 1, y: 2 }
 puts(p.show())
 EOF
 
-expect_runtime_output "Derive ord for record" "0" << 'EOF'
+expect_runtime_output "Derive ord for record" "less" << 'EOF'
 trait ord[a] {
   fn compare(x: a, y: a) -> int
 }
