@@ -401,10 +401,7 @@ let%test "nested call — innermost wins" =
   | Some sh ->
       let sig0 = List.hd sh.signatures in
       (* Should show g's signature, not f's *)
-      let has_g =
-        try String.sub sig0.label 0 1 = "g" with
-        | _ -> false
-      in
+      let has_g = try String.sub sig0.label 0 1 = "g" with _ -> false in
       has_g
   | None -> false
 
@@ -494,10 +491,7 @@ let%test "inner function in nested call gets signature help (BUG-27)" =
   | Some sh ->
       let sig0 = List.hd sh.signatures in
       (* Should show g's signature, not f's *)
-      let has_g =
-        try String.sub sig0.label 0 1 = "g" with
-        | _ -> false
-      in
+      let has_g = try String.sub sig0.label 0 1 = "g" with _ -> false in
       has_g
   | None -> false
 
@@ -505,13 +499,11 @@ let%test "outer function in nested call still works (BUG-27 regression)" =
   (* f(g(1), 2) — cursor on '2' should show f's signature *)
   let source = "let g = fn(x: int) { x }; let f = fn(y: int, z: int) { y + z }; f(g(1), 2)" in
   (* f(...) args: g(1) then , then 2 — cursor on '2' should be in f but not g *)
-  let pos = String.length source - 2 in (* position of '2' *)
+  let pos = String.length source - 2 in
+  (* position of '2' *)
   match check_sig source 0 pos with
   | Some sh ->
       let sig0 = List.hd sh.signatures in
-      let has_f =
-        try String.sub sig0.label 0 1 = "f" with
-        | _ -> false
-      in
+      let has_f = try String.sub sig0.label 0 1 = "f" with _ -> false in
       has_f
   | None -> false
