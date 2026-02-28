@@ -7,8 +7,60 @@ on:
   pull_request:
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    outputs:
+      compiler: ${{ steps.filter.outputs.compiler }}
+      lsp: ${{ steps.filter.outputs.lsp }}
+      integration: ${{ steps.filter.outputs.integration }}
+      treesitter: ${{ steps.filter.outputs.treesitter }}
+      vscode: ${{ steps.filter.outputs.vscode }}
+      jetbrains: ${{ steps.filter.outputs.jetbrains }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            compiler:
+              - 'lib/**'
+              - 'bin/**'
+              - 'dune-project'
+              - 'marmoset.opam'
+              - 'Makefile'
+              - '.github/workflows/tests.yml'
+            lsp:
+              - 'lib/**'
+              - 'bin/**'
+              - 'marmoset-lsp/**'
+              - 'dune-project'
+              - 'marmoset.opam'
+              - 'Makefile'
+              - '.github/workflows/tests.yml'
+            integration:
+              - 'lib/**'
+              - 'bin/**'
+              - 'test/**'
+              - 'dune-project'
+              - 'marmoset.opam'
+              - 'Makefile'
+              - '.github/workflows/tests.yml'
+            treesitter:
+              - 'tools/tree-sitter-marmoset/**'
+              - '.github/workflows/tests.yml'
+            vscode:
+              - 'tools/vscode-marmoset/**'
+              - '.github/workflows/tests.yml'
+            jetbrains:
+              - 'tools/jetbrains-marmoset/**'
+              - '.github/workflows/tests.yml'
+
   compiler-unit:
     name: Compiler Unit Tests
+    needs: changes
+    if: needs.changes.outputs.compiler == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -31,6 +83,8 @@ jobs:
 
   lsp-unit:
     name: LSP Unit Tests
+    needs: changes
+    if: needs.changes.outputs.lsp == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -53,6 +107,8 @@ jobs:
 
   treesitter:
     name: Tree-sitter Tests
+    needs: changes
+    if: needs.changes.outputs.treesitter == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -73,6 +129,8 @@ jobs:
 
   vscode-compile:
     name: VS Code Extension
+    needs: changes
+    if: needs.changes.outputs.vscode == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -92,6 +150,8 @@ jobs:
 
   jetbrains-compile:
     name: JetBrains Plugin
+    needs: changes
+    if: needs.changes.outputs.jetbrains == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -110,6 +170,8 @@ jobs:
 
   integration-linux:
     name: Integration (Linux)
+    needs: changes
+    if: needs.changes.outputs.integration == 'true'
     runs-on: ubuntu-latest
 
     steps:
