@@ -5,10 +5,17 @@ module Lsp_t = Lsp.Types
 (* Per-document cached analysis *)
 type cached_doc = { analysis : Marmoset_lsp.Doc_state.analysis_result }
 
+(* Per-document pending debounce state *)
+type pending = { mutable task : unit Lwt.t option }
+
+(* Debounce delay in seconds *)
+let debounce_delay = 0.3
+
 class marmoset_server =
   object (self)
     inherit Linol_lwt.Jsonrpc2.server
     val analysis_cache : (Lsp_t.DocumentUri.t, cached_doc) Hashtbl.t = Hashtbl.create 16
+    val pending_analyses : (Lsp_t.DocumentUri.t, pending) Hashtbl.t = Hashtbl.create 16
     method spawn_query_handler f = Linol_lwt.spawn f
 
     (* Advertise capabilities *)
@@ -20,21 +27,62 @@ class marmoset_server =
         ~save:(`SaveOptions (Lsp_t.SaveOptions.create ~includeText:false ()))
         ~willSave:false ()
 
-    (* Shared handler: analyze document, cache result, push diagnostics *)
+    (* Run analysis and push diagnostics — called after debounce or immediately on open *)
     method private analyze_and_notify
         ~(notify_back : Linol_lwt.Jsonrpc2.notify_back) (uri : Lsp_t.DocumentUri.t) (content : string) =
       let analysis = Marmoset_lsp.Doc_state.analyze ~source:content in
       Hashtbl.replace analysis_cache uri { analysis };
       notify_back#send_diagnostic analysis.diagnostics
 
+    (* Cancel any pending analysis for a URI *)
+    method private cancel_pending (uri : Lsp_t.DocumentUri.t) =
+      match Hashtbl.find_opt pending_analyses uri with
+      | Some p -> (
+          match p.task with
+          | Some t ->
+              Lwt.cancel t;
+              p.task <- None
+          | None -> ())
+      | None -> ()
+
+    (* Schedule analysis after debounce delay, cancelling any previous pending *)
+    method private debounce_analyze
+        ~(notify_back : Linol_lwt.Jsonrpc2.notify_back) (uri : Lsp_t.DocumentUri.t) (content : string) =
+      self#cancel_pending uri;
+      let p =
+        match Hashtbl.find_opt pending_analyses uri with
+        | Some p -> p
+        | None ->
+            let p = { task = None } in
+            Hashtbl.replace pending_analyses uri p;
+            p
+      in
+      let task =
+        Lwt.catch
+          (fun () ->
+            let open Lwt.Syntax in
+            let* () = Lwt_unix.sleep debounce_delay in
+            p.task <- None;
+            self#analyze_and_notify ~notify_back uri content)
+          (function
+            | Lwt.Canceled -> Lwt.return ()
+            | exn -> Lwt.fail exn)
+      in
+      p.task <- Some task;
+      task
+
     method on_notif_doc_did_open ~notify_back (doc : Lsp_t.TextDocumentItem.t) ~content =
+      (* Analyze immediately on open — no debounce *)
       self#analyze_and_notify ~notify_back doc.uri content
 
     method on_notif_doc_did_change
         ~notify_back (doc : Lsp_t.VersionedTextDocumentIdentifier.t) _changes ~old_content:_ ~new_content =
-      self#analyze_and_notify ~notify_back doc.uri new_content
+      (* Debounce on change *)
+      self#debounce_analyze ~notify_back doc.uri new_content
 
     method on_notif_doc_did_close ~notify_back:_ (doc : Lsp_t.TextDocumentIdentifier.t) =
+      self#cancel_pending doc.uri;
+      Hashtbl.remove pending_analyses doc.uri;
       Hashtbl.remove analysis_cache doc.uri;
       Lwt.return ()
 
