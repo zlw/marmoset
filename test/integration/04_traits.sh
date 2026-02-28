@@ -75,6 +75,19 @@ let xs: list[named] = [person, company]
 puts(xs[1].name)
 EOF
 
+expect_runtime_output "Field-only trait object includes inherited fields from supertraits" "43" << 'EOF'
+trait named {
+  name: string
+}
+trait aged {
+  age: int
+}
+trait person: named + aged {
+}
+let p: person = { name: "alice", age: 43, active: true }
+puts(p.age)
+EOF
+
 expect_build "Method trait as type shows dedicated v1 diagnostic" "method and mixed trait objects are not supported in this phase" << 'EOF'
 trait show[a] {
   fn show(x: a) -> string
@@ -109,6 +122,15 @@ trait named_show: named + show {
 let x: named_show = { name: "alice" }
 EOF
 
+expect_build "Generic field-only supertrait in trait object is rejected explicitly" "generic field-only supertrait 'tagged' is not supported" << 'EOF'
+trait tagged[a] {
+  tag: a
+}
+trait tagged_like: tagged {
+}
+let x: tagged_like = { tag: 1 }
+EOF
+
 expect_build "Field-only trait conflicting supertrait fields are rejected" "conflicting types across supertraits" << 'EOF'
 trait has_int {
   x: int
@@ -128,6 +150,14 @@ trait named {
 impl named for int {
 }
 puts(1)
+EOF
+
+expect_build "Field-only trait object does not allow method dispatch" "No method 'show' found for type" << 'EOF'
+trait named {
+  name: string
+}
+let x: named = { name: "alice", age: 1 }
+puts(x.show())
 EOF
 
 test_case "Trait with supertraits" \

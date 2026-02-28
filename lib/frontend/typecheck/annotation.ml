@@ -55,6 +55,16 @@ let field_only_trait_object_type (trait_name : string) : Types.mono_type =
   let gather_trait_fields (name : string) : unit =
     match Trait_registry.trait_kind name with
     | Some Trait_registry.FieldOnly -> (
+        let trait_def =
+          match Trait_registry.lookup_trait name with
+          | Some def -> def
+          | None -> failwith ("Unknown trait in registry: " ^ name)
+        in
+        if trait_def.trait_type_param <> None then
+          failwith
+            (Printf.sprintf
+               "Trait '%s' cannot be used as a type: generic field-only supertrait '%s' is not supported in this phase"
+               trait_name name);
         match Trait_registry.lookup_trait_fields name with
         | None -> ()
         | Some fields -> List.iter (merge_field name) fields)
@@ -503,3 +513,28 @@ let%test "method trait annotation is rejected in type position" =
     let _ = type_expr_to_mono_type (Syntax.Ast.AST.TCon "show") in
     false
   with Failure msg -> String.length msg > 0 && String.contains msg 'm'
+
+let%test "generic field-only supertrait is rejected in type position" =
+  Trait_registry.clear ();
+  Trait_registry.register_trait
+    { trait_name = "tagged"; trait_type_param = Some "a"; trait_supertraits = []; trait_methods = [] };
+  Trait_registry.set_trait_fields "tagged" [ { Types.name = "tag"; typ = Types.TVar "a" } ];
+  Trait_registry.register_trait
+    { trait_name = "tagged_like"; trait_type_param = None; trait_supertraits = [ "tagged" ]; trait_methods = [] };
+  let contains_substring s sub =
+    let len_s = String.length s in
+    let len_sub = String.length sub in
+    let rec loop i =
+      if i + len_sub > len_s then
+        false
+      else if String.sub s i len_sub = sub then
+        true
+      else
+        loop (i + 1)
+    in
+    loop 0
+  in
+  try
+    let _ = type_expr_to_mono_type (Syntax.Ast.AST.TCon "tagged_like") in
+    false
+  with Failure msg -> contains_substring msg "generic field-only supertrait"
