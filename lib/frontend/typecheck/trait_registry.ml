@@ -179,6 +179,25 @@ let implements_trait (trait_name : string) (for_type : mono_type) : bool =
   | Some _ -> true
   | None -> false
 
+let structurally_satisfies_field_trait (trait_name : string) (for_type : mono_type) : bool =
+  match lookup_trait_fields trait_name with
+  | None | Some [] -> true
+  | Some required_fields -> (
+      match canonical_type for_type with
+      | TRecord (actual_fields, _row) ->
+          List.for_all
+            (fun (required : record_field_type) ->
+              match List.find_opt (fun (f : record_field_type) -> f.name = required.name) actual_fields with
+              | None -> false
+              | Some actual ->
+                  let actual_type = canonical_type actual.typ in
+                  let required_type = canonical_type required.typ in
+                  match Unify.unify actual_type required_type with
+                  | Ok _ -> true
+                  | Error _ -> false)
+            required_fields
+      | _ -> false)
+
 (* Lookup a method implementation for a type by method name *)
 (* Returns: (trait_name, method_sig) option *)
 let lookup_method_candidates (for_type : mono_type) (method_name : string) : (string * method_sig) list =
@@ -460,7 +479,12 @@ let validate_impl (def : impl_def) : (unit, string) result =
                   let rec check_supertraits = function
                     | [] -> Ok ()
                     | supertrait :: rest ->
-                        if implements_trait supertrait for_type' then
+                        let supertrait_satisfied =
+                          match trait_kind supertrait with
+                          | Some FieldOnly -> structurally_satisfies_field_trait supertrait for_type'
+                          | _ -> implements_trait supertrait for_type'
+                        in
+                        if supertrait_satisfied then
                           check_supertraits rest
                         else
                           Error
@@ -1363,6 +1387,62 @@ let%test "validate_impl rejects missing required supertrait implementation" =
               method_return_type = TInt;
             };
           ];
+      }
+  with
+  | Ok () -> false
+  | Error msg -> String.length msg > 0
+
+let%test "validate_impl accepts structural field-only supertrait satisfaction" =
+  clear ();
+  register_trait { trait_name = "named"; trait_type_param = None; trait_supertraits = []; trait_methods = [] };
+  set_trait_fields "named" [ { name = "name"; typ = TString } ];
+  register_trait
+    {
+      trait_name = "shown";
+      trait_type_param = Some "a";
+      trait_supertraits = [ "named" ];
+      trait_methods =
+        [ { method_name = "show"; method_params = [ ("x", TVar "a") ]; method_return_type = TString } ];
+    };
+  match
+    validate_impl
+      {
+        impl_trait_name = "shown";
+        impl_type_params = [];
+        impl_for_type = TRecord ([ { name = "name"; typ = TString } ], None);
+        impl_methods =
+          [
+            {
+              method_name = "show";
+              method_params = [ ("x", TRecord ([ { name = "name"; typ = TString } ], None)) ];
+              method_return_type = TString;
+            };
+          ];
+      }
+  with
+  | Ok () -> true
+  | Error _ -> false
+
+let%test "validate_impl rejects field-only supertrait when structural fields are missing" =
+  clear ();
+  register_trait { trait_name = "named"; trait_type_param = None; trait_supertraits = []; trait_methods = [] };
+  set_trait_fields "named" [ { name = "name"; typ = TString } ];
+  register_trait
+    {
+      trait_name = "shown";
+      trait_type_param = Some "a";
+      trait_supertraits = [ "named" ];
+      trait_methods =
+        [ { method_name = "show"; method_params = [ ("x", TVar "a") ]; method_return_type = TString } ];
+    };
+  match
+    validate_impl
+      {
+        impl_trait_name = "shown";
+        impl_type_params = [];
+        impl_for_type = TInt;
+        impl_methods =
+          [ { method_name = "show"; method_params = [ ("x", TInt) ]; method_return_type = TString } ];
       }
   with
   | Ok () -> false

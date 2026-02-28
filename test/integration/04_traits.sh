@@ -112,6 +112,23 @@ let p: person = { name: "alice", age: 42 }
 puts(get_name(p))
 EOF
 
+expect_runtime_output "Method trait impl can satisfy field-only supertrait structurally" "alice" << 'EOF'
+type person = { name: string, age: int }
+trait named {
+  name: string
+}
+trait shown[a]: named {
+  fn show(x: a) -> string
+}
+impl shown for person {
+  fn show(x: person) -> string {
+    x.name
+  }
+}
+let p: person = { name: "alice", age: 42 }
+puts(p.show())
+EOF
+
 expect_runtime_output "Field-only trait as type projects records to required shape" "alice" << 'EOF'
 trait named {
   name: string
