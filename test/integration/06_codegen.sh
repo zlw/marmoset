@@ -90,5 +90,27 @@ let y = if (x is int) { x + 1 }
 puts(y)
 EOF
 
+run_emit_go_not_contains_from_stdin "Nested if in tail position avoids IIFE in emitted Go" "func\\(\\) int64" << 'EOF'
+let f = fn(a: bool, b: bool) -> int {
+  if (a) { if (b) { 1 } else { 2 } } else { 3 }
+}
+puts(f(true, false))
+EOF
+
+run_emit_go_not_contains_from_stdin "Nested match in tail position avoids IIFE in emitted Go" "func\\(\\) int64" << 'EOF'
+let f = fn(x: int) -> int {
+  match x { 0: match x { 0: 10 _: 20 } _: 30 }
+}
+puts(f(0))
+EOF
+
+run_emit_go_not_contains_from_stdin "Match statement with nested if avoids IIFE in emitted Go" "func\\(\\) int64" << 'EOF'
+match 1 {
+  1: if (true) { 10 } else { 20 }
+  _: 0
+}
+puts(1)
+EOF
+
 
 suite_end

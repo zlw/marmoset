@@ -790,6 +790,10 @@ type emit_state = {
 let create_emit_state mono = { indent = 1; mono }
 let indent_str state = String.make (state.indent * 4) ' '
 
+let with_indent_delta (state : emit_state) (delta : int) (f : unit -> 'a) : 'a =
+  state.indent <- state.indent + delta;
+  Fun.protect ~finally:(fun () -> state.indent <- state.indent - delta) f
+
 type emit_target =
   | ReturnTarget
   | AssignTarget of string
@@ -1178,6 +1182,13 @@ and emit_match_record ?target state type_map env scrutinee arms match_result_typ
           "false"
   in
   let emit_record_arm pattern body is_first =
+    let body_code =
+      match target with
+      | Some t -> with_indent_delta state 2 (fun () -> emit_expr_to_target state type_map env body t)
+      | None ->
+          let body_str = emit_expr state type_map env body in
+          "\t\t" ^ result_prefix ^ body_str ^ "\n"
+    in
     let branch_prefix_if =
       if is_first then
         "\tif"
@@ -1192,11 +1203,9 @@ and emit_match_record ?target state type_map env scrutinee arms match_result_typ
     in
     match pattern.AST.pat with
     | AST.PWildcard ->
-        let body_str = emit_expr state type_map env body in
-        Printf.sprintf "%s {\n\t\t%s%s\n\t}" branch_prefix_else result_prefix body_str
+        Printf.sprintf "%s {\n%s\t}" branch_prefix_else body_code
     | AST.PVariable name ->
-        let body_str = emit_expr state type_map env body in
-        Printf.sprintf "%s {\n\t\t%s := __scrutinee\n\t\t%s%s\n\t}" branch_prefix_else name result_prefix body_str
+        Printf.sprintf "%s {\n\t\t%s := __scrutinee\n%s\t}" branch_prefix_else name body_code
     | AST.PRecord (fields, rest) ->
         let cond_parts, bind_lines =
           List.fold_left
@@ -1222,13 +1231,12 @@ and emit_match_record ?target state type_map env scrutinee arms match_result_typ
           | [] -> "true"
           | cs -> String.concat " && " cs
         in
-        let body_str = emit_expr state type_map env body in
         let binds_block =
           match List.rev bind_lines with
           | [] -> ""
           | lines -> String.concat "\n" (List.map (fun l -> "\t\t" ^ l) lines) ^ "\n"
         in
-        Printf.sprintf "%s %s {\n%s\t\t%s%s\n\t}" branch_prefix_if cond_str binds_block result_prefix body_str
+        Printf.sprintf "%s %s {\n%s%s\t}" branch_prefix_if cond_str binds_block body_code
     | _ -> failwith "Only record, wildcard, or variable patterns are supported for record match codegen"
   in
   let arm_blocks =
@@ -1273,27 +1281,6 @@ and emit_match_enum ?target state type_map env scrutinee scrutinee_type enum_nam
   (* Convert match result type to Go type *)
   let match_result_go_type = type_to_go state.mono match_result_type in
 
-  let result_prefix =
-    match target with
-    | Some t -> target_prefix t
-    | None -> "return "
-  in
-
-  let match_body =
-    let cases =
-      List.map
-        (fun (arm : AST.match_arm) ->
-          match arm.patterns with
-          | [ pattern ] ->
-              emit_match_arm_enum ~result_prefix state type_map env go_type_name enum_def type_args pattern
-                arm.body
-          | [] -> failwith "Match arm must have at least one pattern"
-          | _ -> failwith "Multiple patterns per arm not yet supported in codegen")
-        arms
-    in
-    String.concat "\n" cases
-  in
-
   (* Check if any arm has a wildcard pattern - if so, no panic needed *)
   let has_wildcard =
     List.exists
@@ -1309,7 +1296,46 @@ and emit_match_enum ?target state type_map env scrutinee scrutinee_type enum_nam
   in
 
   match target with
-  | Some _ ->
+  | Some t ->
+      let emit_case_target (arm : AST.match_arm) =
+        match arm.patterns with
+        | [ pattern ] -> (
+            let emit_arm_body () = with_indent_delta state 2 (fun () -> emit_expr_to_target state type_map env arm.body t) in
+            match pattern.AST.pat with
+            | AST.PWildcard ->
+                let ind = indent_str state in
+                Printf.sprintf "%sdefault:\n%s" (ind ^ "    ") (emit_arm_body ())
+            | AST.PVariable var_name ->
+                let ind = indent_str state in
+                Printf.sprintf "%sdefault:\n%s%s := __scrutinee\n%s" (ind ^ "    ") (ind ^ "        ") var_name
+                  (emit_arm_body ())
+            | AST.PConstructor (enum_name_pat, variant_name, field_patterns) ->
+                let variant_opt =
+                  List.find_opt (fun (v : Typecheck.Enum_registry.variant_def) -> v.name = variant_name) enum_def.variants
+                in
+                let variant =
+                  match variant_opt with
+                  | Some v -> v
+                  | None -> failwith (Printf.sprintf "Unknown variant %s.%s" enum_name_pat variant_name)
+                in
+                let tag_constant = Printf.sprintf "%s_%s_tag" go_type_name variant_name in
+                let layout = analyze_enum_layout state.mono enum_def type_args in
+                let bindings = emit_pattern_bindings layout variant_name field_patterns variant.fields in
+                let ind = indent_str state in
+                let binding_lines =
+                  List.map
+                    (fun (var_name, data_field_name, _field_type) ->
+                      Printf.sprintf "%s%s := __scrutinee.%s\n" (ind ^ "        ") var_name data_field_name)
+                    bindings
+                  |> String.concat ""
+                in
+                Printf.sprintf "%scase %s:\n%s%s" (ind ^ "    ") tag_constant binding_lines (emit_arm_body ())
+            | AST.PLiteral _ -> failwith "Literal patterns not supported for enum match"
+            | AST.PRecord _ -> failwith "Record patterns not yet implemented in enum match")
+        | [] -> failwith "Match arm must have at least one pattern"
+        | _ -> failwith "Multiple patterns per arm not yet supported in codegen"
+      in
+      let match_body = String.concat "" (List.map emit_case_target arms) in
       let ind = indent_str state in
       if has_wildcard then
         Printf.sprintf "%s__scrutinee := %s\n%sswitch __scrutinee.Tag {\n%s\n%s}\n" ind scrutinee_str ind
@@ -1319,6 +1345,21 @@ and emit_match_enum ?target state type_map env scrutinee scrutinee_type enum_nam
           "%s__scrutinee := %s\n%sswitch __scrutinee.Tag {\n%s\n%sdefault:\n%s\tpanic(\"unreachable: exhaustive match\")\n%s}\n"
           ind scrutinee_str ind match_body ind ind ind
   | None ->
+      let result_prefix = "return " in
+      let match_body =
+        let cases =
+          List.map
+            (fun (arm : AST.match_arm) ->
+              match arm.patterns with
+              | [ pattern ] ->
+                  emit_match_arm_enum ~result_prefix state type_map env go_type_name enum_def type_args pattern
+                    arm.body
+              | [] -> failwith "Match arm must have at least one pattern"
+              | _ -> failwith "Multiple patterns per arm not yet supported in codegen")
+            arms
+        in
+        String.concat "\n" cases
+      in
       if has_wildcard then
         Printf.sprintf "(func() %s {\n\t__scrutinee := %s\n\tswitch __scrutinee.Tag {\n%s\n\t}\n})()"
           match_result_go_type scrutinee_str match_body
@@ -1334,31 +1375,56 @@ and emit_match_primitive ?target state type_map env scrutinee scrutinee_type arm
   (* Convert match result type to Go type *)
   let match_result_go_type = type_to_go state.mono match_result_type in
 
-  let result_prefix =
-    match target with
-    | Some t -> target_prefix t
-    | None -> "return "
-  in
-
-  let match_body =
-    let cases =
-      List.map
-        (fun (arm : AST.match_arm) ->
-          match arm.patterns with
-          | [ pattern ] ->
-              emit_match_arm_primitive ~result_prefix state type_map env scrutinee_type pattern arm.body
-          | [] -> failwith "Match arm must have at least one pattern"
-          | _ -> failwith "Multiple patterns per arm not yet supported in codegen")
-        arms
-    in
-    String.concat "\n" cases
-  in
-
   match target with
-  | Some _ ->
+  | Some t ->
+      let emit_case_target (arm : AST.match_arm) =
+        match arm.patterns with
+        | [ pattern ] -> (
+            let emit_arm_body () = with_indent_delta state 2 (fun () -> emit_expr_to_target state type_map env arm.body t) in
+            match pattern.AST.pat with
+            | AST.PWildcard ->
+                let ind = indent_str state in
+                Printf.sprintf "%sdefault:\n%s" (ind ^ "    ") (emit_arm_body ())
+            | AST.PVariable var_name ->
+                let ind = indent_str state in
+                Printf.sprintf "%sdefault:\n%s%s := __scrutinee\n%s" (ind ^ "    ") (ind ^ "        ") var_name
+                  (emit_arm_body ())
+            | AST.PLiteral lit ->
+                let lit_str =
+                  match lit with
+                  | AST.LInt n -> Printf.sprintf "int64(%Ld)" n
+                  | AST.LString s -> Printf.sprintf "\"%s\"" (String.escaped s)
+                  | AST.LBool b ->
+                      if b then
+                        "true"
+                      else
+                        "false"
+                in
+                let ind = indent_str state in
+                Printf.sprintf "%scase %s:\n%s" (ind ^ "    ") lit_str (emit_arm_body ())
+            | AST.PConstructor _ -> failwith "Constructor patterns not valid for primitive match"
+            | AST.PRecord _ -> failwith "Record patterns not valid for primitive match")
+        | [] -> failwith "Match arm must have at least one pattern"
+        | _ -> failwith "Multiple patterns per arm not yet supported in codegen"
+      in
+      let match_body = String.concat "" (List.map emit_case_target arms) in
       let ind = indent_str state in
       Printf.sprintf "%s__scrutinee := %s\n%sswitch __scrutinee {\n%s\n%s}\n" ind scrutinee_str ind match_body ind
   | None ->
+      let result_prefix = "return " in
+      let match_body =
+        let cases =
+          List.map
+            (fun (arm : AST.match_arm) ->
+              match arm.patterns with
+              | [ pattern ] ->
+                  emit_match_arm_primitive ~result_prefix state type_map env scrutinee_type pattern arm.body
+              | [] -> failwith "Match arm must have at least one pattern"
+              | _ -> failwith "Multiple patterns per arm not yet supported in codegen")
+            arms
+        in
+        String.concat "\n" cases
+      in
       Printf.sprintf "(func() %s {\n\t__scrutinee := %s\n\tswitch __scrutinee {\n%s\n\t}\n})()"
         match_result_go_type scrutinee_str match_body
 
@@ -1732,11 +1798,11 @@ and emit_type_switch_to_target
     target =
   let ind = indent_str state in
   let inner_ind = ind ^ "    " in
-  let value_prefix =
+  let value_target =
     if result_type = Types.TNull then
-      "_ = "
+      DiscardTarget
     else
-      target_prefix target
+      target
   in
   let narrow_type_str = type_to_go state.mono narrow_type in
   let narrowed_var = var_name ^ "_typed" in
@@ -1749,13 +1815,12 @@ and emit_type_switch_to_target
             let stmts_prefix, env' = emit_stmts state type_map branch_env (List.rev rest) in
             let last_str =
               match last.stmt with
-              | AST.ExpressionStmt e ->
-                  inner_ind ^ "    " ^ value_prefix ^ emit_expr state type_map env' e ^ "\n"
+              | AST.ExpressionStmt e -> with_indent_delta state 1 (fun () -> emit_expr_to_target state type_map env' e value_target)
               | AST.Return e -> inner_ind ^ "    return " ^ emit_expr state type_map env' e ^ "\n"
               | _ -> fst (emit_stmt state type_map env' last)
             in
             stmts_prefix ^ last_str)
-    | AST.ExpressionStmt e -> inner_ind ^ "    " ^ value_prefix ^ emit_expr state type_map branch_env e ^ "\n"
+    | AST.ExpressionStmt e -> with_indent_delta state 1 (fun () -> emit_expr_to_target state type_map branch_env e value_target)
     | AST.Return e -> inner_ind ^ "    return " ^ emit_expr state type_map branch_env e ^ "\n"
     | _ -> fst (emit_stmt state type_map branch_env stmt)
   in
@@ -1881,6 +1946,14 @@ and emit_if state type_map env if_expr cond cons alt =
       Printf.sprintf "func() %s {\n%s    if %s {\n%s%s    } else {\n%s%s    }\n%s}()" result_type_str ind cond_str
         cons_str ind alt_str ind ind
 
+and emit_expr_to_target state type_map env expr target =
+  let ind = indent_str state in
+  match expr.AST.expr with
+  | AST.If (cond, cons, alt) -> with_indent_delta state 1 (fun () -> emit_if_to_target state type_map env expr cond cons alt target)
+  | AST.Match (scrutinee, arms) ->
+      with_indent_delta state 1 (fun () -> emit_match ~target state type_map env expr scrutinee arms)
+  | _ -> ind ^ target_prefix target ^ emit_expr state type_map env expr ^ "\n"
+
 and emit_if_to_target state type_map env if_expr (cond : AST.expression) cons alt target =
   let result_type = get_type type_map if_expr in
   let type_check_info =
@@ -1905,11 +1978,11 @@ and emit_if_to_target state type_map env if_expr (cond : AST.expression) cons al
       let ind = indent_str state in
       let inner_ind = ind ^ "    " in
       let cond_str = emit_expr state type_map env cond in
-      let value_prefix =
+      let value_target =
         if result_type = Types.TNull then
-          "_ = "
+          DiscardTarget
         else
-          target_prefix target
+          target
       in
       let emit_branch stmt =
         match stmt.AST.stmt with
@@ -1920,13 +1993,12 @@ and emit_if_to_target state type_map env if_expr (cond : AST.expression) cons al
                 let stmts_prefix, env' = emit_stmts state type_map env (List.rev rest) in
                 let last_str =
                   match last.stmt with
-                  | AST.ExpressionStmt e ->
-                      inner_ind ^ "    " ^ value_prefix ^ emit_expr state type_map env' e ^ "\n"
+                  | AST.ExpressionStmt e -> with_indent_delta state 1 (fun () -> emit_expr_to_target state type_map env' e value_target)
                   | AST.Return e -> inner_ind ^ "    return " ^ emit_expr state type_map env' e ^ "\n"
                   | _ -> fst (emit_stmt state type_map env' last)
                 in
                 stmts_prefix ^ last_str)
-        | AST.ExpressionStmt e -> inner_ind ^ "    " ^ value_prefix ^ emit_expr state type_map env e ^ "\n"
+        | AST.ExpressionStmt e -> with_indent_delta state 1 (fun () -> emit_expr_to_target state type_map env e value_target)
         | AST.Return e -> inner_ind ^ "    return " ^ emit_expr state type_map env e ^ "\n"
         | _ -> fst (emit_stmt state type_map env stmt)
       in
@@ -3610,6 +3682,26 @@ let%test "type-check statement if preserves explicit return without IIFE" =
 let%test "match expression statement emits without IIFE" =
   match compile_string "match 1 { 1: 10 _: 20 }" with
   | Ok code -> not (string_contains code "func() int64") && string_contains code "switch __scrutinee"
+  | Error _ -> false
+
+let%test "nested if in tail position emits without IIFE" =
+  match compile_string "let f = fn(a: bool, b: bool) -> int { if (a) { if (b) { 1 } else { 2 } } else { 3 } }; f(true, false)" with
+  | Ok code -> not (string_contains code "func() int64")
+  | Error _ -> false
+
+let%test "nested match in tail position emits without IIFE" =
+  match compile_string "let f = fn(x: int) -> int { match x { 0: match x { 0: 10 _: 20 } _: 30 } }; f(0)" with
+  | Ok code -> not (string_contains code "func() int64")
+  | Error _ -> false
+
+let%test "if branch containing match in let binding emits without IIFE" =
+  match compile_string "let x = 1; let y = if (x == 1) { match x { 1: 10 _: 20 } } else { 0 }; y" with
+  | Ok code -> not (string_contains code "func() int64")
+  | Error _ -> false
+
+let%test "match statement with nested if emits without IIFE" =
+  match compile_string "match 1 { 1: if (true) { 10 } else { 20 } _: 0 }" with
+  | Ok code -> not (string_contains code "func() int64")
   | Error _ -> false
 
 let%test "record spread emits without IIFE" =
