@@ -3,7 +3,7 @@ type point = { x: int, y: int }
 let point: point = { x: 1, y: 2 }
 let moved = { ...point, x: 10 }
 
-let get_x = fn(value: { x: int, ...row }) -> int {
+let get_x = fn(value: point) -> int {
   value.x
 }
 
