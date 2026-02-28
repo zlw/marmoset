@@ -74,6 +74,7 @@ let apply_substitution_type_map (subst : substitution) (type_map : type_map) : u
 type inference_state = {
   fresh_var_counter : int ref;
   constraint_store : (string, string list) Hashtbl.t;
+  constrained_field_store : (string, (string * record_field_type) list) Hashtbl.t;
   method_resolution_store : (int, method_resolution) Hashtbl.t;
 }
 
@@ -85,6 +86,7 @@ let create_inference_state () : inference_state =
   {
     fresh_var_counter = ref 0;
     constraint_store = Hashtbl.create 64;
+    constrained_field_store = Hashtbl.create 64;
     method_resolution_store = Hashtbl.create 128;
   }
 
@@ -103,6 +105,27 @@ let with_inference_state (state : inference_state) (f : unit -> 'a) : 'a =
     raise exn
 
 let current_constraint_store () : (string, string list) Hashtbl.t = !active_inference_state.constraint_store
+let current_constrained_field_store () : (string, (string * record_field_type) list) Hashtbl.t =
+  !active_inference_state.constrained_field_store
+
+let lowered_trait_fields_for_constraints (traits : string list) : (string * record_field_type) list =
+  Trait_solver.expand_constraints_with_supertraits traits
+  |> List.concat_map (fun trait_name ->
+         match Trait_registry.lookup_trait_fields trait_name with
+         | None -> []
+         | Some fields ->
+             List.map
+               (fun (field : record_field_type) ->
+                 (trait_name, { name = field.name; typ = canonicalize_mono_type field.typ }))
+               fields)
+
+let update_type_var_constrained_fields (type_var_name : string) (traits : string list) : unit =
+  let store = current_constrained_field_store () in
+  let lowered = lowered_trait_fields_for_constraints traits in
+  if lowered = [] then
+    Hashtbl.remove store type_var_name
+  else
+    Hashtbl.replace store type_var_name lowered
 
 let add_type_var_constraints (type_var_name : string) (traits : string list) : unit =
   let store = current_constraint_store () in
@@ -118,14 +141,22 @@ let add_type_var_constraints (type_var_name : string) (traits : string list) : u
               acc @ [ trait_name ])
           existing traits
   in
-  Hashtbl.replace store type_var_name merged
+  Hashtbl.replace store type_var_name merged;
+  update_type_var_constrained_fields type_var_name merged
 
 let lookup_type_var_constraints (type_var_name : string) : string list =
   match Hashtbl.find_opt (current_constraint_store ()) type_var_name with
   | Some traits -> traits
   | None -> []
 
-let clear_constraint_store () : unit = Hashtbl.clear (current_constraint_store ())
+let lookup_type_var_constrained_fields (type_var_name : string) : (string * record_field_type) list =
+  match Hashtbl.find_opt (current_constrained_field_store ()) type_var_name with
+  | Some fields -> fields
+  | None -> []
+
+let clear_constraint_store () : unit =
+  Hashtbl.clear (current_constraint_store ());
+  Hashtbl.clear (current_constrained_field_store ())
 let clear_method_resolution_store () : unit = Hashtbl.clear global_method_resolution_store
 
 let record_method_resolution (expr : AST.expression) (resolution : method_resolution) : unit =
@@ -670,26 +701,14 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                             (* Constrained TVar: only fields guaranteed by constraints are accessible.
                                Do not unify away the type variable here, otherwise we can lose attached
                                trait obligations before call-site verification. *)
-                            let expanded_constraints =
-                              constraints
-                              |> List.fold_left
-                                   (fun acc trait_name -> acc @ Trait_registry.trait_with_supertraits trait_name)
-                                   []
-                              |> List.sort_uniq String.compare
-                            in
+                            let expanded_constraints = Trait_solver.expand_constraints_with_supertraits constraints in
                             let constrained_field_types =
-                              expanded_constraints
-                              |> List.filter_map (fun trait_name ->
-                                     match Trait_registry.lookup_trait_fields trait_name with
-                                     | None -> None
-                                     | Some fields -> (
-                                         match
-                                           List.find_opt
-                                             (fun (f : Types.record_field_type) -> f.name = variant_name)
-                                             fields
-                                         with
-                                         | None -> None
-                                         | Some f -> Some (trait_name, f.typ)))
+                              lookup_type_var_constrained_fields type_var_name
+                              |> List.filter_map (fun (trait_name, field) ->
+                                     if field.name = variant_name then
+                                       Some (trait_name, field.typ)
+                                     else
+                                       None)
                             in
                             let resolve_constrained_field_type candidates =
                               match candidates with
@@ -1949,19 +1968,28 @@ and infer_statement type_map env stmt =
         in
         let with_impl_type_param_constraints (f : unit -> (substitution * mono_type, infer_error) result) :
             (substitution * mono_type, infer_error) result =
-          let store = current_constraint_store () in
+          let constraint_store = current_constraint_store () in
+          let constrained_field_store = current_constrained_field_store () in
           let snapshots =
-            List.map (fun (p : AST.generic_param) -> (p.name, Hashtbl.find_opt store p.name)) impl_type_params
+            List.map
+              (fun (p : AST.generic_param) ->
+                ( p.name,
+                  Hashtbl.find_opt constraint_store p.name,
+                  Hashtbl.find_opt constrained_field_store p.name ))
+              impl_type_params
           in
           let restore () =
             List.iter
-              (fun (name, old_value_opt) ->
-                match old_value_opt with
-                | Some constraints -> Hashtbl.replace store name constraints
-                | None -> Hashtbl.remove store name)
+              (fun (name, old_constraints_opt, old_fields_opt) ->
+                (match old_constraints_opt with
+                | Some constraints -> Hashtbl.replace constraint_store name constraints
+                | None -> Hashtbl.remove constraint_store name);
+                match old_fields_opt with
+                | Some fields -> Hashtbl.replace constrained_field_store name fields
+                | None -> Hashtbl.remove constrained_field_store name)
               snapshots
           in
-          List.iter (fun (p : AST.generic_param) -> Hashtbl.replace store p.name p.constraints) impl_type_params;
+          List.iter (fun (p : AST.generic_param) -> add_type_var_constraints p.name p.constraints) impl_type_params;
           Fun.protect ~finally:restore f
         in
         with_impl_type_param_constraints (fun () ->
@@ -3287,6 +3315,70 @@ f"
     match verify_constraints_in_substitution [ ("t0", tfun TInt TInt) ] with
     | Ok () -> false
     | Error msg -> contains_substring msg "Trait obligation failed" && contains_substring msg "type variable 't0'"
+
+  let%test "add_type_var_constraints lowers field requirements from supertraits" =
+    Trait_registry.clear ();
+    Trait_registry.register_trait
+      {
+        trait_name = "named";
+        trait_type_param = None;
+        trait_supertraits = [];
+        trait_methods = [];
+      };
+    Trait_registry.set_trait_fields "named" [ { name = "name"; typ = TString } ];
+    Trait_registry.register_trait
+      {
+        trait_name = "labeled";
+        trait_type_param = None;
+        trait_supertraits = [ "named" ];
+        trait_methods = [];
+      };
+    Trait_registry.set_trait_fields "labeled" [];
+    clear_constraint_store ();
+    add_type_var_constraints "t0" [ "labeled" ];
+    let lowered = lookup_type_var_constrained_fields "t0" in
+    List.exists (fun (_trait_name, field) -> field.name = "name" && field.typ = TString) lowered
+
+  let%test "add_type_var_constraints refreshes lowered fields after merged constraints" =
+    Trait_registry.clear ();
+    Trait_registry.register_trait
+      {
+        trait_name = "named";
+        trait_type_param = None;
+        trait_supertraits = [];
+        trait_methods = [];
+      };
+    Trait_registry.register_trait
+      {
+        trait_name = "aged";
+        trait_type_param = None;
+        trait_supertraits = [];
+        trait_methods = [];
+      };
+    Trait_registry.set_trait_fields "named" [ { name = "name"; typ = TString } ];
+    Trait_registry.set_trait_fields "aged" [ { name = "age"; typ = TInt } ];
+    clear_constraint_store ();
+    add_type_var_constraints "t0" [ "named" ];
+    add_type_var_constraints "t0" [ "aged" ];
+    let lowered = lookup_type_var_constrained_fields "t0" in
+    List.exists (fun (_trait_name, field) -> field.name = "name" && field.typ = TString) lowered
+    && List.exists (fun (_trait_name, field) -> field.name = "age" && field.typ = TInt) lowered
+
+  let%test "clear_constraint_store clears lowered constrained field requirements" =
+    Trait_registry.clear ();
+    Trait_registry.register_trait
+      {
+        trait_name = "named";
+        trait_type_param = None;
+        trait_supertraits = [];
+        trait_methods = [];
+      };
+    Trait_registry.set_trait_fields "named" [ { name = "name"; typ = TString } ];
+    clear_constraint_store ();
+    add_type_var_constraints "t0" [ "named" ];
+    let had_fields = lookup_type_var_constrained_fields "t0" <> [] in
+    clear_constraint_store ();
+    had_fields && lookup_type_var_constrained_fields "t0" = []
 
   let%test "constrained type-variable method lookup reports ambiguity" =
     let contains_substring s sub =
