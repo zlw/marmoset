@@ -480,7 +480,7 @@ let rec collect_funcs_stmt (state : mono_state) (stmt : AST.statement) : unit =
   | AST.ExpressionStmt e -> collect_funcs_expr state e
   | AST.Block stmts -> List.iter (collect_funcs_stmt state) stmts
   | AST.EnumDef _ -> () (* Enums are compile-time only *)
-  | AST.TraitDef _ | AST.ImplDef _ | AST.DeriveDef _ | AST.TypeAlias _ ->
+  | AST.TraitDef _ | AST.ImplDef _ | AST.InherentImplDef _ | AST.DeriveDef _ | AST.TypeAlias _ ->
       () (* Traits/type aliases are compile-time only *)
 
 and collect_funcs_expr (state : mono_state) (expr : AST.expression) : unit =
@@ -929,6 +929,35 @@ let rec collect_insts_stmt
             collect_insts_expr state type_map method_env m.impl_method_body)
           impl.impl_methods);
       env
+  | AST.InherentImplDef impl ->
+      let _for_type = Annotation.type_expr_to_mono_type impl.inherent_for_type in
+      List.iter
+        (fun (m : AST.method_impl) ->
+          let method_param_names, method_param_types =
+            List.split
+              (List.map
+                 (fun (param_name, param_type_opt) ->
+                   match param_type_opt with
+                   | Some param_type -> (param_name, Annotation.type_expr_to_mono_type param_type)
+                   | None ->
+                       failwith
+                         (Printf.sprintf
+                            "Codegen error: inherent method %s parameter '%s' is missing a type annotation"
+                            m.impl_method_name param_name))
+                 m.impl_method_params)
+          in
+          let _return_type =
+            match m.impl_method_return_type with
+            | Some ret_ann -> Annotation.type_expr_to_mono_type ret_ann
+            | None ->
+                failwith
+                  (Printf.sprintf "Codegen error: inherent method %s is missing a return type annotation"
+                     m.impl_method_name)
+          in
+          let method_env = add_param_bindings env method_param_names method_param_types in
+          collect_insts_expr state type_map method_env m.impl_method_body)
+        impl.inherent_methods;
+      env
 
 and register_impl_method_use
     (state : mono_state)
@@ -1246,17 +1275,20 @@ and collect_insts_expr
           collect_insts_expr state type_map env receiver;
           List.iter (fun arg -> collect_insts_expr state type_map env arg) args;
           let receiver_type = Types.canonicalize_mono_type (get_type type_map receiver) in
-          let trait_name =
+          let method_resolution =
             match Typecheck.Infer.lookup_method_resolution expr.id with
-            | Some name -> name
+            | Some resolution -> resolution
             | None ->
                 failwith
                   (Printf.sprintf
-                     "Codegen error: missing resolved trait metadata for method call id %d ('%s'). Typechecker \
+                     "Codegen error: missing resolved method metadata for method call id %d ('%s'). Typechecker \
                       must record method resolution before emission."
                      expr.id method_name)
           in
-          register_impl_method_use state type_map env ~trait_name ~method_name ~for_type:receiver_type)
+          (match method_resolution with
+          | Typecheck.Infer.TraitMethod trait_name ->
+              register_impl_method_use state type_map env ~trait_name ~method_name ~for_type:receiver_type
+          | Typecheck.Infer.InherentMethod -> ()))
 
 (* ============================================================
    Code Generation State
@@ -1434,7 +1466,8 @@ and copy_specialized_stmt_types
   | AST.Return expr | AST.ExpressionStmt expr ->
       copy_specialized_expr_types source_map target_map specialization_subst expr
   | AST.Block stmts -> List.iter (copy_specialized_stmt_types source_map target_map specialization_subst) stmts
-  | AST.EnumDef _ | AST.TraitDef _ | AST.ImplDef _ | AST.DeriveDef _ | AST.TypeAlias _ -> ()
+  | AST.EnumDef _ | AST.TraitDef _ | AST.ImplDef _ | AST.InherentImplDef _ | AST.DeriveDef _ | AST.TypeAlias _ ->
+      ()
 
 (* ============================================================
    Expression Emission
@@ -1608,24 +1641,26 @@ let rec emit_expr
             else
               Printf.sprintf "%s(%s)" constructor_name (String.concat ", " arg_strs)
         | _ ->
-            (* Real method call - emit as trait method call *)
+            (* Real method call - emit using typechecker-selected method source *)
             (* Get receiver type *)
             let receiver_type = get_type type_map receiver in
 
             (* Use method-resolution metadata from typechecking; codegen must not re-resolve. *)
-            let trait_name =
+            let method_resolution =
               match Typecheck.Infer.lookup_method_resolution expr.id with
-              | Some name -> name
+              | Some resolution -> resolution
               | None ->
                   failwith
                     (Printf.sprintf
-                       "Codegen error: missing resolved trait metadata for method call id %d ('%s'). Typechecker must record method resolution before emission."
+                       "Codegen error: missing resolved method metadata for method call id %d ('%s'). Typechecker must record method resolution before emission."
                        expr.id variant_name)
             in
-            (* Generate mangled function name: trait_method_type *)
-            (* e.g., show_show_int64 for show trait, show method, int64 type *)
             let type_suffix = mangle_type receiver_type in
-            let func_name = Printf.sprintf "%s_%s_%s" trait_name variant_name type_suffix in
+            let func_name =
+              match method_resolution with
+              | Typecheck.Infer.TraitMethod trait_name -> Printf.sprintf "%s_%s_%s" trait_name variant_name type_suffix
+              | Typecheck.Infer.InherentMethod -> Printf.sprintf "inherent_%s_%s" variant_name type_suffix
+            in
 
             (* Emit receiver and arguments *)
             let receiver_str = emit_expr state type_map env receiver in
@@ -2182,7 +2217,7 @@ and make_identifier_substituter old_name new_name =
     | AST.ExpressionStmt e -> { s with stmt = AST.ExpressionStmt (subst_expr e) }
     | AST.Block stmts -> { s with stmt = AST.Block (List.map subst_stmt stmts) }
     | AST.EnumDef _ -> s
-    | AST.TraitDef _ | AST.ImplDef _ | AST.DeriveDef _ | AST.TypeAlias _ -> s
+    | AST.TraitDef _ | AST.ImplDef _ | AST.InherentImplDef _ | AST.DeriveDef _ | AST.TypeAlias _ -> s
   in
   (subst_expr, subst_stmt)
 
@@ -2939,6 +2974,10 @@ and collect_local_call_arg_types_stmt
       List.concat_map
         (fun (m : AST.method_impl) -> collect_local_call_arg_types_expr name type_map env m.impl_method_body)
         impl.impl_methods
+  | AST.InherentImplDef impl ->
+      List.concat_map
+        (fun (m : AST.method_impl) -> collect_local_call_arg_types_expr name type_map env m.impl_method_body)
+        impl.inherent_methods
   | AST.EnumDef _ | AST.TraitDef _ | AST.DeriveDef _ | AST.TypeAlias _ -> []
 
 and resolve_local_function_type_from_calls
@@ -3132,7 +3171,7 @@ and emit_stmt
   | AST.EnumDef _ ->
       (* Enum definitions are compile-time only *)
       ("", env)
-  | AST.TraitDef _ | AST.ImplDef _ | AST.DeriveDef _ | AST.TypeAlias _ ->
+  | AST.TraitDef _ | AST.ImplDef _ | AST.InherentImplDef _ | AST.DeriveDef _ | AST.TypeAlias _ ->
       (* Trait definitions/impls/derives/type aliases are compile-time only *)
       ("", env)
 
@@ -3407,12 +3446,70 @@ let emit_cached_impl_method
   let body_str = emit_expr state type_map method_env payload.body_expr in
   Printf.sprintf "func %s(%s) %s {\n\treturn %s\n}\n" func_name params_str return_type_str body_str
 
+let emit_inherent_method
+    (state : emit_state)
+    (type_map : Infer.type_map)
+    (typed_env : Infer.type_env)
+    (for_type : Types.mono_type)
+    (method_impl : AST.method_impl) : string =
+  let method_param_names, method_param_types =
+    List.split
+      (List.map
+         (fun (param_name, param_type_opt) ->
+           match param_type_opt with
+           | Some param_type -> (param_name, Annotation.type_expr_to_mono_type param_type)
+           | None ->
+               failwith
+                 (Printf.sprintf
+                    "Codegen error: inherent method %s parameter '%s' is missing a type annotation"
+                    method_impl.impl_method_name param_name))
+         method_impl.impl_method_params)
+  in
+  let return_type =
+    match method_impl.impl_method_return_type with
+    | Some ret_ann -> Annotation.type_expr_to_mono_type ret_ann
+    | None ->
+        failwith
+          (Printf.sprintf "Codegen error: inherent method %s is missing a return type annotation"
+             method_impl.impl_method_name)
+  in
+  if List.length method_param_names <> List.length method_param_types then
+    failwith
+      (Printf.sprintf "Codegen error: inherent method %s has %d params but %d param types"
+         method_impl.impl_method_name (List.length method_param_names) (List.length method_param_types));
+  let for_type = Types.canonicalize_mono_type for_type in
+  let type_suffix = mangle_type for_type in
+  let func_name = Printf.sprintf "inherent_%s_%s" method_impl.impl_method_name type_suffix in
+  let params_str =
+    List.map2
+      (fun name typ -> Printf.sprintf "%s %s" name (type_to_go state.mono typ))
+      method_param_names method_param_types
+    |> String.concat ", "
+  in
+  let return_type_str = type_to_go state.mono return_type in
+  let method_env = add_param_bindings typed_env method_param_names method_param_types in
+  let inferred_body_type = get_type type_map method_impl.impl_method_body in
+  if not (Annotation.check_annotation return_type inferred_body_type) then
+    failwith
+      (Printf.sprintf "Codegen error: inherent method %s return type mismatch: expected %s, got %s"
+         method_impl.impl_method_name (Types.to_string return_type) (Types.to_string inferred_body_type));
+  let body_str = emit_expr state type_map method_env method_impl.impl_method_body in
+  Printf.sprintf "func %s(%s) %s {\n\treturn %s\n}\n" func_name params_str return_type_str body_str
+
 (* Extract all ImplDef statements from a program *)
 let collect_impl_defs (program : AST.program) : AST.impl_def list =
   List.filter_map
     (fun (stmt : AST.statement) ->
       match stmt.stmt with
       | AST.ImplDef impl -> Some impl
+      | _ -> None)
+    program
+
+let collect_inherent_impl_defs (program : AST.program) : AST.inherent_impl_def list =
+  List.filter_map
+    (fun (stmt : AST.statement) ->
+      match stmt.stmt with
+      | AST.InherentImplDef impl -> Some impl
       | _ -> None)
     program
 
@@ -3551,6 +3648,17 @@ let emit_registry_derived_impls (state : emit_state) (program : AST.program) : s
              | None -> None
            else
              None)
+  |> String.concat "\n"
+
+let emit_inherent_methods
+    (state : emit_state)
+    (type_map : Infer.type_map)
+    (typed_env : Infer.type_env)
+    (program : AST.program) : string =
+  collect_inherent_impl_defs program
+  |> List.concat_map (fun (impl : AST.inherent_impl_def) ->
+         let for_type = Annotation.type_expr_to_mono_type impl.inherent_for_type in
+         List.map (emit_inherent_method state type_map typed_env for_type) impl.inherent_methods)
   |> String.concat "\n"
 
 (* ============================================================
@@ -3701,6 +3809,7 @@ let emit_program_with_typed_env (type_map : Infer.type_map) (typed_env : Infer.t
     |> List.map (emit_cached_impl_method emit_state type_map typed_env)
     |> String.concat "\n"
   in
+  let inherent_funcs = emit_inherent_methods emit_state type_map typed_env program in
   let derived_impl_funcs = emit_registry_derived_impls emit_state program in
 
   (* Emit main body *)
@@ -3740,13 +3849,21 @@ let emit_program_with_typed_env (type_map : Infer.type_map) (typed_env : Infer.t
     else
       impl_funcs ^ "\n"
   in
+  let inherent_funcs_str =
+    if inherent_funcs = "" then
+      ""
+    else
+      inherent_funcs ^ "\n"
+  in
   let derived_impl_funcs_str =
     if derived_impl_funcs = "" then
       ""
     else
       derived_impl_funcs ^ "\n"
   in
-  let top_funcs = specialized_funcs_str ^ builtin_impl_funcs_str ^ impl_funcs_str ^ derived_impl_funcs_str in
+  let top_funcs =
+    specialized_funcs_str ^ builtin_impl_funcs_str ^ impl_funcs_str ^ inherent_funcs_str ^ derived_impl_funcs_str
+  in
 
   Printf.sprintf "package main\n\n%s%s%sfunc main() {\n%s}\n" imports type_defs top_funcs main_body
 
@@ -4190,6 +4307,37 @@ v.ping()
           Typecheck.Trait_registry.clear ();
           match try Some (emit_program_with_typed_env type_map typed_env program) with _ -> None with
           | Some code -> string_contains code "ping_ping_int64"
+          | None -> false))
+
+let%test "emitter lowers inherent methods to inherent_* helpers" =
+  match
+    compile_string
+      "impl int { fn double(x: int) -> int { x + x } }\n\
+       let v = 2\n\
+       v.double()"
+  with
+  | Ok code -> string_contains code "func inherent_double_int64(" && string_contains code "inherent_double_int64(v)"
+  | Error _ -> false
+
+let%test "emitter inherent method calls use typechecker resolution metadata" =
+  let source =
+    {|
+impl int {
+  fn ping(x: int) -> int { x }
+}
+let v = 1
+v.ping()
+|}
+  in
+  match Syntax.Parser.parse source with
+  | Error _ -> false
+  | Ok program -> (
+      match Typecheck.Checker.check_program_with_annotations ~source program with
+      | Error _ -> false
+      | Ok { environment = typed_env; type_map; _ } -> (
+          Typecheck.Inherent_registry.clear ();
+          match try Some (emit_program_with_typed_env type_map typed_env program) with _ -> None with
+          | Some code -> string_contains code "inherent_ping_int64"
           | None -> false))
 
 (* ============================================================

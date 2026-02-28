@@ -74,8 +74,12 @@ let apply_substitution_type_map (subst : substitution) (type_map : type_map) : u
 type inference_state = {
   fresh_var_counter : int ref;
   constraint_store : (string, string list) Hashtbl.t;
-  method_resolution_store : (int, string) Hashtbl.t;
+  method_resolution_store : (int, method_resolution) Hashtbl.t;
 }
+
+and method_resolution =
+  | TraitMethod of string
+  | InherentMethod
 
 let create_inference_state () : inference_state =
   {
@@ -85,7 +89,7 @@ let create_inference_state () : inference_state =
   }
 
 let active_inference_state : inference_state ref = ref (create_inference_state ())
-let global_method_resolution_store : (int, string) Hashtbl.t = Hashtbl.create 256
+let global_method_resolution_store : (int, method_resolution) Hashtbl.t = Hashtbl.create 256
 
 let with_inference_state (state : inference_state) (f : unit -> 'a) : 'a =
   let previous = !active_inference_state in
@@ -124,10 +128,10 @@ let lookup_type_var_constraints (type_var_name : string) : string list =
 let clear_constraint_store () : unit = Hashtbl.clear (current_constraint_store ())
 let clear_method_resolution_store () : unit = Hashtbl.clear global_method_resolution_store
 
-let record_method_resolution (expr : AST.expression) (trait_name : string) : unit =
-  Hashtbl.replace global_method_resolution_store expr.id trait_name
+let record_method_resolution (expr : AST.expression) (resolution : method_resolution) : unit =
+  Hashtbl.replace global_method_resolution_store expr.id resolution
 
-let lookup_method_resolution (expr_id : int) : string option =
+let lookup_method_resolution (expr_id : int) : method_resolution option =
   Hashtbl.find_opt global_method_resolution_store expr_id
 
 type obligation_reason = GenericConstraint of string
@@ -776,6 +780,42 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
           | Ok (subst1, receiver_type) ->
               let env1 = apply_substitution_env subst1 env in
               let receiver_type' = apply_substitution subst1 receiver_type in
+              let infer_with_method_signature
+                  (resolved_method : Trait_registry.method_sig)
+                  (resolution : method_resolution) : (substitution * mono_type) infer_result =
+                match infer_args type_map env1 subst1 args with
+                | Error e -> Error e
+                | Ok (subst2, arg_types) ->
+                    let all_arg_types = receiver_type' :: arg_types in
+                    let expected_param_types = List.map snd resolved_method.method_params in
+                    if List.length all_arg_types <> List.length expected_param_types then
+                      Error
+                        (error_at
+                           (ConstructorError
+                              (Printf.sprintf "Method '%s' expects %d arguments, got %d" method_name
+                                 (List.length expected_param_types - 1)
+                                 (List.length args)))
+                           expr)
+                    else
+                      let rec unify_params subst_acc actual_types expected_types =
+                        match (actual_types, expected_types) with
+                        | [], [] -> Ok subst_acc
+                        | actual :: rest_actual, expected :: rest_expected -> (
+                            let actual' = apply_substitution subst_acc actual in
+                            let expected' = apply_substitution subst_acc expected in
+                            match unify actual' expected' with
+                            | Error e -> Error (error_at (UnificationError e) expr)
+                            | Ok new_subst ->
+                                unify_params (compose_substitution new_subst subst_acc) rest_actual rest_expected)
+                        | _ -> Error (error_at (ConstructorError "Argument count mismatch") expr)
+                      in
+                      (match unify_params subst2 all_arg_types expected_param_types with
+                      | Error e -> Error e
+                      | Ok final_subst ->
+                          let return_type = apply_substitution final_subst resolved_method.method_return_type in
+                          record_method_resolution expr resolution;
+                          Ok (final_subst, return_type))
+              in
               let method_lookup_result =
                 match receiver_type' with
                 | TVar type_var_name -> (
@@ -807,18 +847,44 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                 | _ -> (
                     match Trait_registry.resolve_method receiver_type' method_name with
                     | Ok method_info -> `Found method_info
-                    | Error msg -> `Error msg)
+                    | Error msg ->
+                        let no_method_prefix = "No method '" in
+                        if
+                          String.length msg >= String.length no_method_prefix
+                          && String.sub msg 0 (String.length no_method_prefix) = no_method_prefix
+                        then
+                          `Not_found
+                        else
+                          `Error msg)
+              in
+              let inherent_method =
+                match receiver_type' with
+                | TVar _ -> None
+                | _ -> Inherent_registry.lookup_method receiver_type' method_name
               in
               match method_lookup_result with
               | `Error msg -> Error (error_at (ConstructorError msg) expr)
-              | `Not_found ->
-                  Error
-                    (error_at
-                       (ConstructorError
-                          (Printf.sprintf "No method '%s' found for type %s" method_name
-                             (Types.to_string receiver_type')))
-                       expr)
-              | `Found (trait_name, method_sig) ->
+              | `Not_found -> (
+                  match inherent_method with
+                  | Some inherent_sig -> infer_with_method_signature inherent_sig InherentMethod
+                  | None ->
+                      Error
+                        (error_at
+                           (ConstructorError
+                              (Printf.sprintf "No method '%s' found for type %s" method_name
+                                 (Types.to_string receiver_type')))
+                           expr))
+              | `Found (trait_name, method_sig) -> (
+                  match inherent_method with
+                  | Some _ ->
+                      Error
+                        (error_at
+                           (ConstructorError
+                              (Printf.sprintf
+                                 "Ambiguous method '%s' for type %s (provided by inherent method and trait '%s')"
+                                 method_name (Types.to_string receiver_type') trait_name))
+                           expr)
+                  | None ->
                   let instantiated_method_sig =
                     match Trait_registry.lookup_trait trait_name with
                     | None -> method_sig
@@ -844,43 +910,7 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                   in
                   match trait_requirement_result with
                   | Error msg -> Error (error_at (ConstructorError msg) expr)
-                  | Ok () -> (
-                      match infer_args type_map env1 subst1 args with
-                      | Error e -> Error e
-                      | Ok (subst2, arg_types) ->
-                          let all_arg_types = receiver_type' :: arg_types in
-                          let expected_param_types = List.map snd instantiated_method_sig.method_params in
-                          if List.length all_arg_types <> List.length expected_param_types then
-                            Error
-                              (error_at
-                                 (ConstructorError
-                                    (Printf.sprintf "Method '%s' expects %d arguments, got %d" method_name
-                                       (List.length expected_param_types - 1)
-                                       (List.length args)))
-                                 expr)
-                          else
-                            let rec unify_params subst_acc actual_types expected_types =
-                              match (actual_types, expected_types) with
-                              | [], [] -> Ok subst_acc
-                              | actual :: rest_actual, expected :: rest_expected -> (
-                                  let actual' = apply_substitution subst_acc actual in
-                                  let expected' = apply_substitution subst_acc expected in
-                                  match unify actual' expected' with
-                                  | Error e -> Error (error_at (UnificationError e) expr)
-                                  | Ok new_subst ->
-                                      unify_params
-                                        (compose_substitution new_subst subst_acc)
-                                        rest_actual rest_expected)
-                              | _ -> Error (error_at (ConstructorError "Argument count mismatch") expr)
-                            in
-                            (match unify_params subst2 all_arg_types expected_param_types with
-                            | Error e -> Error e
-                            | Ok final_subst ->
-                                let return_type =
-                                  apply_substitution final_subst instantiated_method_sig.method_return_type
-                                in
-                                record_method_resolution expr trait_name;
-                                Ok (final_subst, return_type)))
+                  | Ok () -> infer_with_method_signature instantiated_method_sig (TraitMethod trait_name))
         in
         (match receiver.expr with
         | AST.Identifier enum_name ->
@@ -1137,6 +1167,7 @@ and collect_and_unify_returns type_map env expected_ret_type (stmt : AST.stateme
   | AST.EnumDef _ -> Ok (subst, expected_ret_type)
   | AST.TraitDef _ -> Ok (subst, expected_ret_type) (* TODO: Phase 4.3 - handle trait defs *)
   | AST.ImplDef _ -> Ok (subst, expected_ret_type) (* TODO: Phase 4.3 - handle impl defs *)
+  | AST.InherentImplDef _ -> Ok (subst, expected_ret_type) (* TODO: Phase 4.5 - handle inherent impl defs *)
   | AST.DeriveDef _ -> Ok (subst, expected_ret_type) (* TODO: Phase 4.3 - handle derive defs *)
   | AST.TypeAlias _ -> Ok (subst, expected_ret_type)
 (* TODO: Phase 4.4 - handle type aliases *)
@@ -1187,7 +1218,8 @@ and body_has_effectful_call (type_map : type_map) (stmt : AST.statement) : bool 
   | AST.Return expr -> expr_has_effectful_call type_map expr
   | AST.ExpressionStmt expr -> expr_has_effectful_call type_map expr
   | AST.Block stmts -> List.exists (body_has_effectful_call type_map) stmts
-  | AST.EnumDef _ | AST.TraitDef _ | AST.ImplDef _ | AST.DeriveDef _ | AST.TypeAlias _ -> false
+  | AST.EnumDef _ | AST.TraitDef _ | AST.ImplDef _ | AST.InherentImplDef _ | AST.DeriveDef _ | AST.TypeAlias _ ->
+      false
 
 and type_may_be_effectful_callable (typ : mono_type) : bool =
   match typ with
@@ -2045,6 +2077,145 @@ and infer_statement type_map env stmt =
                         in
                         Trait_registry.register_impl ~source:impl_source impl_def;
                         Ok (method_subst, TNull)))))
+  | AST.InherentImplDef { inherent_for_type; inherent_methods } -> (
+      let convert_inherent_type_expr (te : AST.type_expr) : (mono_type, infer_error) result =
+        try Ok (Annotation.type_expr_to_mono_type te) with
+        | Annotation.Open_row_rejected msg -> Error (error (ConstructorError msg))
+        | Failure msg -> Error (error (ConstructorError msg))
+      in
+      let starts_with (prefix : string) (s : string) : bool =
+        let len_prefix = String.length prefix in
+        String.length s >= len_prefix && String.sub s 0 len_prefix = prefix
+      in
+      match convert_inherent_type_expr inherent_for_type with
+      | Error e -> Error e
+      | Ok inherent_for_type_mono ->
+          let inherent_for_type_mono = canonicalize_mono_type inherent_for_type_mono in
+          let infer_inherent_method_body (m : AST.method_impl) :
+              (Trait_registry.method_sig * substitution, infer_error) result =
+            let param_types_result =
+              List.fold_left
+                (fun acc (pname, ptype_opt) ->
+                  match acc with
+                  | Error _ as err -> err
+                  | Ok params -> (
+                      match ptype_opt with
+                      | Some ptype -> (
+                          match convert_inherent_type_expr ptype with
+                          | Ok mono -> Ok (params @ [ (pname, mono) ])
+                          | Error _ as err -> err)
+                      | None ->
+                          Error
+                            (error
+                               (ConstructorError
+                                  (Printf.sprintf
+                                     "Inherent method '%s' parameter '%s' is missing a type annotation"
+                                     m.impl_method_name pname)))))
+                (Ok []) m.impl_method_params
+            in
+            match param_types_result with
+            | Error e -> Error e
+            | Ok param_types -> (
+                if param_types = [] then
+                  Error
+                    (error
+                       (ConstructorError
+                          (Printf.sprintf "Inherent method '%s' must declare a receiver parameter"
+                             m.impl_method_name)))
+                else
+                  match m.impl_method_return_type with
+                  | None ->
+                      Error
+                        (error
+                           (ConstructorError
+                              (Printf.sprintf "Inherent method '%s' is missing a return type annotation"
+                                 m.impl_method_name)))
+                  | Some rt -> (
+                      match convert_inherent_type_expr rt with
+                      | Error e -> Error e
+                      | Ok return_type -> (
+                          let method_env =
+                            List.fold_left
+                              (fun env_acc (pname, ptype) -> TypeEnv.add pname (mono_to_poly ptype) env_acc)
+                              env param_types
+                          in
+                          match infer_expression type_map method_env m.impl_method_body with
+                          | Error e -> Error e
+                          | Ok (subst, inferred_body_type) ->
+                              let inferred_body_type' = apply_substitution subst inferred_body_type in
+                              let return_type' = apply_substitution subst return_type in
+                              if Annotation.check_annotation return_type' inferred_body_type' then
+                                Ok
+                                  ( {
+                                      Trait_registry.method_name = m.impl_method_name;
+                                      method_params = param_types;
+                                      method_return_type = return_type;
+                                    },
+                                    subst )
+                              else
+                                Error
+                                  (error_at
+                                     (ReturnTypeMismatch (return_type', inferred_body_type'))
+                                     m.impl_method_body))))
+          in
+          let rec register_methods subst_acc = function
+            | [] -> Ok (subst_acc, TNull)
+            | m :: rest -> (
+                match infer_inherent_method_body m with
+                | Error e -> Error e
+                | Ok (method_sig, method_subst) ->
+                    let method_sig =
+                      {
+                        method_sig with
+                        method_params =
+                          List.map
+                            (fun (name, ty) -> (name, apply_substitution method_subst ty))
+                            method_sig.method_params;
+                        method_return_type = apply_substitution method_subst method_sig.method_return_type;
+                      }
+                    in
+                    let receiver_type =
+                      match method_sig.method_params with
+                      | [] ->
+                          failwith "impossible: inherent method parameter list unexpectedly empty after validation"
+                      | (_, first_param_type) :: _ -> canonicalize_mono_type first_param_type
+                    in
+                    let target_type = canonicalize_mono_type inherent_for_type_mono in
+                    (match Unify.unify receiver_type target_type with
+                    | Error _ ->
+                        Error
+                          (error
+                             (ConstructorError
+                                (Printf.sprintf
+                                   "Inherent method '%s' receiver type %s does not match impl target type %s"
+                                   method_sig.method_name (Types.to_string receiver_type)
+                                   (Types.to_string target_type))))
+                    | Ok _ ->
+                        (match Trait_registry.resolve_method target_type method_sig.method_name with
+                        | Ok (trait_name, _) ->
+                            Error
+                              (error
+                                 (ConstructorError
+                                    (Printf.sprintf
+                                       "Inherent method '%s' for type %s collides with trait method from trait '%s'"
+                                       method_sig.method_name (Types.to_string target_type) trait_name)))
+                        | Error msg ->
+                            if starts_with "No method '" msg then
+                              (match Inherent_registry.register_method ~for_type:target_type method_sig with
+                              | Error msg -> Error (error (ConstructorError msg))
+                              | Ok () ->
+                                  let subst' = compose_substitution subst_acc method_subst in
+                                  register_methods subst' rest)
+                            else
+                              Error
+                                (error
+                                   (ConstructorError
+                                      (Printf.sprintf
+                                         "Cannot define inherent method '%s' for type %s due to trait method \
+                                          ambiguity: %s"
+                                         method_sig.method_name (Types.to_string target_type) msg))))))
+          in
+          register_methods empty_substitution inherent_methods)
   | AST.DeriveDef { derive_traits; derive_for_type } ->
       (* Auto-generate implementations for derived traits *)
       let for_type_mono = Annotation.type_expr_to_mono_type derive_for_type in
@@ -2106,6 +2277,7 @@ and validate_return_statements
   | AST.EnumDef _ -> Ok ()
   | AST.TraitDef _ -> Ok () (* TODO: Phase 4.3 - validate trait defs *)
   | AST.ImplDef _ -> Ok () (* TODO: Phase 4.3 - validate impl defs *)
+  | AST.InherentImplDef _ -> Ok () (* TODO: Phase 4.5 - validate inherent impl defs *)
   | AST.DeriveDef _ -> Ok () (* TODO: Phase 4.3 - validate derive defs *)
   | AST.TypeAlias _ -> Ok () (* TODO: Phase 4.4 - validate type aliases *)
 
@@ -2456,6 +2628,7 @@ let infer_program ?(env = empty_env) ?state (program : AST.program) :
   try
     with_inference_state state (fun () ->
         Annotation.clear_type_aliases ();
+        Inherent_registry.clear ();
         clear_method_resolution_store ();
         let type_map = create_type_map () in
         let register_top_level_declaration seen_traits seen_enums seen_aliases (stmt : AST.statement) =
@@ -3151,6 +3324,124 @@ f"
     | Error e ->
         let msg = error_to_string e in
         contains_substring msg "Ambiguous method 'render'"
+
+  let%test "inherent method call resolves for concrete receiver" =
+    let code =
+      "type point = { x: int, y: int }\n\
+       impl point { fn sum(p: point) -> int { p.x + p.y } }\n\
+       let p: point = { x: 1, y: 2 }\n\
+       p.sum()"
+    in
+    infers_to code TInt
+
+  let%test "inherent method call resolves for type-application receiver" =
+    let code =
+      "impl list[int] { fn size(xs: list[int]) -> int { 1 } }\n\
+       [1, 2, 3].size()"
+    in
+    infers_to code TInt
+
+  let%test "inherent method receiver must match impl target type" =
+    let contains_substring s sub =
+      let len_s = String.length s in
+      let len_sub = String.length sub in
+      let rec loop i =
+        if i + len_sub > len_s then
+          false
+        else if String.sub s i len_sub = sub then
+          true
+        else
+          loop (i + 1)
+      in
+      loop 0
+    in
+    let code = "type point = { x: int }\nimpl point { fn bad(x: int) -> int { x } }\n1" in
+    match infer_string code with
+    | Ok _ -> false
+    | Error e ->
+        let msg = error_to_string e in
+        contains_substring msg "receiver type" && contains_substring msg "does not match impl target type"
+
+  let%test "duplicate inherent method for same type is rejected" =
+    let contains_substring s sub =
+      let len_s = String.length s in
+      let len_sub = String.length sub in
+      let rec loop i =
+        if i + len_sub > len_s then
+          false
+        else if String.sub s i len_sub = sub then
+          true
+        else
+          loop (i + 1)
+      in
+      loop 0
+    in
+    let code =
+      "impl int { fn ping(x: int) -> int { x } }\n\
+       impl int { fn ping(x: int) -> int { x } }\n\
+       1"
+    in
+    match infer_string code with
+    | Ok _ -> false
+    | Error e ->
+        let msg = error_to_string e in
+        contains_substring msg "Duplicate inherent method 'ping'"
+
+  let%test "inherent method registration rejects trait collision on same type and method name" =
+    let contains_substring s sub =
+      let len_s = String.length s in
+      let len_sub = String.length sub in
+      let rec loop i =
+        if i + len_sub > len_s then
+          false
+        else if String.sub s i len_sub = sub then
+          true
+        else
+          loop (i + 1)
+      in
+      loop 0
+    in
+    Trait_registry.clear ();
+    let code =
+      "trait show[a] { fn show(x: a) -> string }\n\
+       impl show for int { fn show(x: int) -> string { \"trait\" } }\n\
+       impl int { fn show(x: int) -> string { \"inherent\" } }\n\
+       1"
+    in
+    match infer_string code with
+    | Ok _ -> false
+    | Error e ->
+        let msg = error_to_string e in
+        contains_substring msg "collides with trait method"
+
+  let%test "inherent methods do not satisfy trait constraints" =
+    let contains_substring s sub =
+      let len_s = String.length s in
+      let len_sub = String.length sub in
+      let rec loop i =
+        if i + len_sub > len_s then
+          false
+        else if String.sub s i len_sub = sub then
+          true
+        else
+          loop (i + 1)
+      in
+      loop 0
+    in
+    Trait_registry.clear ();
+    let code =
+      "trait show[a] { fn show(x: a) -> string }\n\
+       type point = { x: int }\n\
+       impl point { fn show(p: point) -> string { \"p\" } }\n\
+       let f = fn[t: show](x: t) -> string { x.show() }\n\
+       let p: point = { x: 1 }\n\
+       f(p)"
+    in
+    match infer_string code with
+    | Ok _ -> false
+    | Error e ->
+        let msg = error_to_string e in
+        contains_substring msg "does not implement trait show"
 
   let%test "infer_program isolates itself from stale global constraint state" =
     (* Simulate stale process-global state from an earlier session. *)

@@ -652,49 +652,63 @@ and parse_impl_definition (p : parser) : (parser * AST.statement, parser) result
   (* Current token is 'impl' *)
   let pos = p.curr_token.pos in
 
-  (* Expect trait name *)
+  let parse_methods_block (lp : parser) : (parser * AST.method_impl list, parser) result =
+    let* lp2 =
+      if curr_token_is lp Token.LBrace then
+        Ok lp
+      else
+        expect_peek lp Token.LBrace
+    in
+    let* lp3, methods = parse_method_impl_list (next_token lp2) in
+    let* lp4 =
+      if curr_token_is lp3 Token.RBrace then
+        Ok lp3
+      else
+        expect_peek lp3 Token.RBrace
+    in
+    Ok (lp4, methods)
+  in
+  let parse_trait_impl
+      (lp : parser)
+      (impl_trait_name : string)
+      (impl_type_params : AST.generic_param list) : (parser * AST.statement, parser) result =
+    let* p_for_type =
+      if curr_token_is lp Token.Ident && lp.curr_token.literal = "for" then
+        Ok (next_token lp)
+      else
+        Error (add_error lp "expected 'for' keyword in impl definition")
+    in
+    let* p_after_type, impl_for_type = parse_type_expr p_for_type in
+    let* p_end, impl_methods = parse_methods_block p_after_type in
+    Ok (p_end, mk_stmt pos (AST.ImplDef { impl_type_params; impl_trait_name; impl_for_type; impl_methods }))
+  in
+  let parse_inherent_impl (lp : parser) : (parser * AST.statement, parser) result =
+    let* p_after_type, inherent_for_type = parse_type_expr lp in
+    let* p_end, inherent_methods = parse_methods_block p_after_type in
+    Ok (p_end, mk_stmt pos (AST.InherentImplDef { inherent_for_type; inherent_methods }))
+  in
+
+  (* First token after 'impl' may be either trait name (trait impl) or target type (inherent impl). *)
   let* p2 = expect_peek p Token.Ident in
-  let impl_trait_name = p2.curr_token.literal in
-
-  (* Parse optional type parameters with constraints: [a: eq, b: show] *)
-  let* p3, impl_type_params =
+  let trait_candidate = p2.curr_token.literal in
+  let trait_with_type_params =
     if peek_token_is p2 Token.LBracket then
-      parse_generic_param_list (next_token (next_token p2))
+      match parse_generic_param_list (next_token (next_token p2)) with
+      | Ok (p_after_params, impl_type_params)
+        when curr_token_is p_after_params Token.Ident && p_after_params.curr_token.literal = "for" ->
+          Some (p_after_params, impl_type_params)
+      | _ -> None
     else
-      Ok (next_token p2, [])
+      None
   in
-
-  (* Expect 'for' keyword (treated as identifier, not reserved) *)
-  let* p4 =
-    if curr_token_is p3 Token.Ident && p3.curr_token.literal = "for" then
-      Ok (next_token p3)
-    else
-      Error (add_error p3 "expected 'for' keyword in impl definition")
-  in
-
-  (* Parse the type being implemented for *)
-  let* p5, impl_for_type = parse_type_expr p4 in
-
-  (* Expect opening brace *)
-  let* p6 =
-    if curr_token_is p5 Token.LBrace then
-      Ok p5
-    else
-      expect_peek p5 Token.LBrace
-  in
-
-  (* Parse method implementations *)
-  let* p7, impl_methods = parse_method_impl_list (next_token p6) in
-
-  (* Expect closing brace *)
-  let* p8 =
-    if curr_token_is p7 Token.RBrace then
-      Ok p7
-    else
-      expect_peek p7 Token.RBrace
-  in
-
-  Ok (p8, mk_stmt pos (AST.ImplDef { impl_type_params; impl_trait_name; impl_for_type; impl_methods }))
+  match trait_with_type_params with
+  | Some (p_for, impl_type_params) -> parse_trait_impl p_for trait_candidate impl_type_params
+  | None ->
+      let p3 = next_token p2 in
+      if curr_token_is p3 Token.Ident && p3.curr_token.literal = "for" then
+        parse_trait_impl p3 trait_candidate []
+      else
+        parse_inherent_impl p2
 
 and parse_generic_param_list (p : parser) : (parser * AST.generic_param list, parser) result =
   let rec loop lp params =
@@ -2037,7 +2051,8 @@ module Test = struct
     | AST.Let { value; _ } -> collect_expr_ids value
     | AST.Return e | AST.ExpressionStmt e -> collect_expr_ids e
     | AST.Block stmts -> List.concat_map collect_stmt_ids stmts
-    | AST.EnumDef _ | AST.TraitDef _ | AST.ImplDef _ | AST.DeriveDef _ | AST.TypeAlias _ -> []
+    | AST.EnumDef _ | AST.TraitDef _ | AST.ImplDef _ | AST.InherentImplDef _ | AST.DeriveDef _ | AST.TypeAlias _ ->
+        []
 
   let%test "parser assigns unique expression ids for nested function and record literals" =
     let input = "let outer = fn(x) { let mk = fn(v) { { inner: v } }; mk(x) }; let o = outer(5); puts(o.inner)" in
@@ -2236,6 +2251,38 @@ let%test "parse basic impl block" =
               impl_def.impl_trait_name = "show"
               && impl_def.impl_type_params = []
               && List.length impl_def.impl_methods = 1
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
+let%test "parse basic inherent impl block" =
+  let input = "impl point { fn sum(p: point) -> int { p.x + p.y } }" in
+  let lexer = Lexer.init input in
+  match parse_program (init lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ stmt ] -> (
+          match stmt.stmt with
+          | AST.InherentImplDef inherent_def -> (
+              match inherent_def.inherent_for_type with
+              | AST.TCon "point" -> List.length inherent_def.inherent_methods = 1
+              | _ -> false)
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
+let%test "parse inherent impl with bracketed type target" =
+  let input = "impl list[int] { fn size(xs: list[int]) -> int { 0 } }" in
+  let lexer = Lexer.init input in
+  match parse_program (init lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ stmt ] -> (
+          match stmt.stmt with
+          | AST.InherentImplDef inherent_def -> (
+              match inherent_def.inherent_for_type with
+              | AST.TApp ("list", [ AST.TCon "int" ]) -> List.length inherent_def.inherent_methods = 1
+              | _ -> false)
           | _ -> false)
       | _ -> false)
   | Error _ -> false

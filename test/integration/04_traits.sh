@@ -46,6 +46,71 @@ impl ping for int {
 puts(42.ping())
 EOF
 
+expect_runtime_output "Inherent method call on int" "4" << 'EOF'
+impl int {
+  fn twice(x: int) -> int {
+    x + x
+  }
+}
+puts(2.twice())
+EOF
+
+expect_runtime_output "Inherent method call on list[int] receiver" "1" << 'EOF'
+impl list[int] {
+  fn size(xs: list[int]) -> int {
+    1
+  }
+}
+puts([1, 2, 3].size())
+EOF
+
+expect_build "Duplicate inherent method for same type is rejected" "Duplicate inherent method 'ping'" << 'EOF'
+impl int {
+  fn ping(x: int) -> int {
+    x
+  }
+}
+impl int {
+  fn ping(x: int) -> int {
+    x
+  }
+}
+puts(1)
+EOF
+
+expect_build "Inherent method receiver type must match impl target type" "does not match impl target type" << 'EOF'
+type point = { x: int }
+impl point {
+  fn bad(x: int) -> int {
+    x
+  }
+}
+puts(1)
+EOF
+
+expect_build "Inherent method colliding with trait method is rejected" "collides with trait method" << 'EOF'
+impl int {
+  fn show(x: int) -> string {
+    "inherent"
+  }
+}
+puts(1)
+EOF
+
+expect_build "Inherent methods do not satisfy trait constraints" "does not implement trait show" << 'EOF'
+type point = { x: int }
+impl point {
+  fn show(p: point) -> string {
+    "point"
+  }
+}
+let f = fn[t: show](x: t) -> string {
+  x.show()
+};
+let p: point = { x: 1 }
+puts(f(p))
+EOF
+
 expect_runtime_output "Field-only trait constraint accepts matching record shape" "alice" << 'EOF'
 trait named {
   name: string
