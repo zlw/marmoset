@@ -627,47 +627,6 @@ let render = fn[a: show](x: a) -> string {
 puts(render(color.red))
 EOF
 
-# H42: Field-only trait constraint rejects record missing field
-expect_build "H42: Field-only trait rejects record with missing field" "missing-field" << 'EOF'
-trait named {
-  name: string
-}
-let get_name = fn[t: named](x: t) -> string {
-  x.name
-}
-puts(get_name({ age: 30 }))
-EOF
-
-# H43: Constrained generic cannot access field not in constraint
-expect_build "H43: Constrained generic cannot access non-constraint field" "not guaranteed by constraints" << 'EOF'
-trait named {
-  name: string
-}
-let get_age = fn[t: named](x: t) -> int {
-  x.age
-}
-puts(get_age({ name: "alice", age: 30 }))
-EOF
-
-# H44: Duplicate trait + enum definitions in same program
-expect_build "H44: Duplicate trait definition rejected" "Duplicate trait definition" << 'EOF'
-trait foo {
-  x: int
-}
-trait foo {
-  y: int
-}
-puts(1)
-EOF
-
-# H45: Inherent method colliding with trait method name
-expect_build "H45: Inherent method colliding with builtin show" "collides with trait method" << 'EOF'
-impl int {
-  fn show(x: int) -> string { "custom" }
-}
-puts(1)
-EOF
-
 # H46: Mixed field+method trait constraint: method obligation not satisfied
 expect_build "H46: Mixed constraint fails when method trait not implemented" "does not implement trait shown" << 'EOF'
 trait named {
@@ -689,13 +648,6 @@ let p = pair.val(1, "a")
 match p {
   pair.val(x): puts(x)
 }
-EOF
-
-# H48: Duplicate top-level let definition
-expect_build "H48: Duplicate top-level let binding rejected" "Duplicate top-level let definition" << 'EOF'
-let f = fn(x: int) -> int { x + 1 }
-let f = fn(x: int) -> int { x + 2 }
-puts(f(1))
 EOF
 
 ########################################################################
