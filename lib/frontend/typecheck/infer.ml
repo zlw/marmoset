@@ -51,6 +51,13 @@ let create_type_map () : type_map = Hashtbl.create 256
 let record_type (type_map : type_map) (expr : AST.expression) (t : mono_type) : unit =
   Hashtbl.add type_map expr.id t
 
+let apply_substitution_type_map (subst : substitution) (type_map : type_map) : unit =
+  Hashtbl.iter
+    (fun id ty ->
+      let ty' = apply_substitution subst ty in
+      Hashtbl.replace type_map id ty')
+    type_map
+
 (* ============================================================
    Inference Session State
    ============================================================
@@ -1374,6 +1381,7 @@ and infer_function_with_annotations type_map env generics_opt params return_anno
   | Error e -> Error e
   | Ok (subst, body_type) -> (
       let body_type' = apply_substitution subst body_type in
+      apply_substitution_type_map subst type_map;
       (* Purity enforcement: check if the body calls effectful operations *)
       let has_effects = body_has_effectful_call type_map body in
       (* Case 1: Pure function (->) calling effectful operation is an error *)
@@ -1449,12 +1457,23 @@ and infer_call type_map env func args =
       | Ok (subst2, arg_types) -> (
           let func_type' = apply_substitution subst2 func_type in
           (* Create expected function type: arg1 -> arg2 -> ... -> result.
-             Try pure first, then effectful, so calls accept both arrow kinds. *)
+             For unknown/union callees, first try an effect-polymorphic callable
+             (pure | effectful) so higher-order callbacks remain flexible.
+             Fall back to legacy pure-then-effectful probing. *)
           let fresh_result_type () = fresh_type_var () in
           let expected_func_type_for is_effectful result_type =
             List.fold_right (fun arg_t acc -> TFun (arg_t, acc, is_effectful)) arg_types result_type
           in
-          let call_result =
+          let try_effect_polymorphic_callable () =
+            let result_type = fresh_result_type () in
+            let expected_pure = expected_func_type_for false result_type in
+            let expected_effectful = expected_func_type_for true result_type in
+            let expected_union = Types.normalize_union [ expected_pure; expected_effectful ] in
+            match unify func_type' expected_union with
+            | Ok subst3 -> Ok (subst3, result_type)
+            | Error e -> Error e
+          in
+          let try_legacy_pure_then_effectful () =
             let result_type_pure = fresh_result_type () in
             let expected_pure = expected_func_type_for false result_type_pure in
             match unify func_type' expected_pure with
@@ -1465,6 +1484,22 @@ and infer_call type_map env func args =
                 (match unify func_type' expected_eff with
                 | Ok subst3 -> Ok (subst3, result_type_eff)
                 | Error _ -> Error pure_err)
+          in
+          let call_result =
+            match func_type' with
+            | TVar _ -> (
+                match try_effect_polymorphic_callable () with
+                | Ok _ as ok -> ok
+                | Error _ -> try_legacy_pure_then_effectful ())
+            | TUnion members ->
+                let result_type = fresh_result_type () in
+                let expected_pure = expected_func_type_for false result_type in
+                let expected_effectful = expected_func_type_for true result_type in
+                let expected_union = Types.normalize_union [ expected_pure; expected_effectful ] in
+                (match Unify.unify_union_all_with_concrete members expected_union with
+                | Ok subst3 -> Ok (subst3, result_type)
+                | Error e -> Error e)
+            | _ -> try_legacy_pure_then_effectful ()
           in
           match call_result with
           | Error e -> Error (error_at (UnificationError e) func)
@@ -2261,6 +2296,23 @@ and check_pattern pattern scrutinee_type =
                (PatternError
                   (Printf.sprintf "Record pattern doesn't match scrutinee type %s" (to_string scrutinee_type)))))
 
+(* Unify function shapes while ignoring only the effect flag on arrows.
+   Used to reconcile recursive placeholders for unannotated functions that
+   may later infer as either pure or effectful. *)
+and unify_function_shape_ignoring_effect (left : mono_type) (right : mono_type) :
+    (substitution, unify_error) result =
+  match (left, right) with
+  | TFun (arg_l, ret_l, _), TFun (arg_r, ret_r, _) -> (
+      match unify arg_l arg_r with
+      | Error e -> Error e
+      | Ok subst1 ->
+          let ret_l' = apply_substitution subst1 ret_l in
+          let ret_r' = apply_substitution subst1 ret_r in
+          (match unify_function_shape_ignoring_effect ret_l' ret_r' with
+          | Error e -> Error e
+          | Ok subst2 -> Ok (compose_substitution subst1 subst2)))
+  | _ -> unify left right
+
 (* ============================================================
    Let Binding Inference
    ============================================================ *)
@@ -2284,26 +2336,26 @@ and infer_let type_map env name expr type_annotation =
   let self_type =
     match (expr.expr, type_annotation) with
     | AST.Function f, _ -> (
-        match f.return_type with
-        | None -> fresh_type_var ()
-        | Some type_expr -> (
-            try
-              (* Create a partially constrained function type: param1 -> param2 -> ... -> return_type *)
-              let return_type = Annotation.type_expr_to_mono_type type_expr in
-              let mk_f a b = TFun (a, b, f.is_effectful) in
-              let param_types =
-                List.map
-                  (fun (_name, annot_opt) ->
-                    match annot_opt with
-                    | None -> fresh_type_var ()
-                    | Some annot -> Annotation.type_expr_to_mono_type annot)
-                  f.params
-              in
-              (* Build function type from parameters and return type *)
-              List.fold_right (fun param_t acc -> mk_f param_t acc) param_types return_type
-            with
-            | Annotation.Open_row_rejected _ as e -> raise e
-            | Failure _ -> fresh_type_var ()))
+        try
+          (* Create a partially constrained function type for recursive calls. *)
+          let return_type =
+            match f.return_type with
+            | Some type_expr -> Annotation.type_expr_to_mono_type type_expr
+            | None -> fresh_type_var ()
+          in
+          let mk_f a b = TFun (a, b, f.is_effectful) in
+          let param_types =
+            List.map
+              (fun (_name, annot_opt) ->
+                match annot_opt with
+                | None -> fresh_type_var ()
+                | Some annot -> Annotation.type_expr_to_mono_type annot)
+              f.params
+          in
+          List.fold_right (fun param_t acc -> mk_f param_t acc) param_types return_type
+        with
+        | Annotation.Open_row_rejected _ as e -> raise e
+        | Failure _ -> fresh_type_var ())
     | _, Some type_expr -> (
         (* Phase 4.4: Use type annotation from let binding *)
         try Annotation.type_expr_to_mono_type type_expr with
@@ -2319,7 +2371,18 @@ and infer_let type_map env name expr type_annotation =
   | Ok (subst1, expr_type) -> (
       (* Unify the inferred type with our placeholder *)
       let self_type' = apply_substitution subst1 self_type in
-      match unify self_type' expr_type with
+      let unify_result =
+        match unify self_type' expr_type with
+        | Ok subst2 -> Ok subst2
+        | Error e -> (
+            match expr.expr with
+            | AST.Function _ -> (
+                match unify_function_shape_ignoring_effect self_type' expr_type with
+                | Ok subst2 -> Ok subst2
+                | Error _ -> Error e)
+            | _ -> Error e)
+      in
+      match unify_result with
       | Error e -> Error (error_at (UnificationError e) expr)
       | Ok subst2 ->
           let final_subst = compose_substitution subst1 subst2 in
@@ -2460,14 +2523,7 @@ let infer_program ?(env = empty_env) ?state (program : AST.program) :
         | Error e -> Error e
         | Ok (env', final_subst, result_type) ->
             (* Apply final substitution to all types in type_map *)
-            let apply_subst_to_type_map () =
-              Hashtbl.iter
-                (fun id ty ->
-                  let ty' = apply_substitution final_subst ty in
-                  Hashtbl.replace type_map id ty')
-                type_map
-            in
-            apply_subst_to_type_map ();
+            apply_substitution_type_map final_subst type_map;
             Ok (env', type_map, result_type))
   with Annotation.Open_row_rejected msg -> Error (error (ConstructorError msg))
 
@@ -3227,10 +3283,64 @@ f"
     | Ok (_, _, TFun (TBool, TInt, true)) -> true
     | _ -> false
 
+  let%test "unannotated higher-order caller accepts pure and effectful callbacks" =
+    let code =
+      "let hof = fn(f) { f(1) }; let pure = fn(x: int) -> int { x + 1 }; let eff = fn(x: int) => int { x + 2 }; hof(pure) + hof(eff)"
+    in
+    infers_to code TInt
+
+  let%test "pure annotated higher-order caller with unknown callback is rejected conservatively" =
+    let code = "let hof = fn(f) -> int { f(1) }; let eff = fn(x: int) => int { x }; hof(eff)" in
+    match infer_string code with
+    | Error { kind = PurityViolation _; _ } -> true
+    | _ -> false
+
+  let%test "union of pure/effectful callables normalizes to callable and can be called" =
+    let code =
+      "let choose = fn(flag: bool) { if (flag) { fn(x: int) -> int { x + 1 } } else { fn(x: int) => int { x + 2 } } }; let f = choose(true); f(1)"
+    in
+    infers_to code TInt
+
+  let%test "higher-order callback via local alias still infers call result" =
+    let code =
+      "let hof = fn(f) { let g = f; g(1) }; let eff = fn(x: int) => int { x + 2 }; hof(eff)"
+    in
+    infers_to code TInt
+
+  let%test "union of callable and non-callable cannot be called" =
+    let code = "let f = if (true) { fn(x: int) -> int { x + 1 } } else { 0 }; f(1)" in
+    match infer_string code with
+    | Error { kind = UnificationError _; _ } -> true
+    | _ -> false
+
+  let%test "union of callables with mismatched arity cannot be called" =
+    let code =
+      "let f = if (true) { fn(x: int) -> int { x } } else { fn(x: int, y: int) -> int { x + y } }; f(1)"
+    in
+    match infer_string code with
+    | Error { kind = UnificationError _; _ } -> true
+    | _ -> false
+
   let%test "pure function defining effectful function is ok" =
     (* Defining (not calling) an effectful function inside a pure function is fine *)
     let code = "fn(x: int) { fn(y: int) => int { y } }" in
     match infer_string code with
     | Ok _ -> true
     | Error _ -> false
+
+  let%test "unannotated recursive function with effectful call infers as effectful" =
+    let code =
+      "let eff = fn(x: int) => int { x }; let loop = fn(n: int) { if (n == 0) { 0 } else { eff(n); loop(n - 1) } }; loop"
+    in
+    match infer_string code with
+    | Ok (_, _, TFun (TInt, TInt, true)) -> true
+    | _ -> false
+
+  let%test "pure annotated recursive function with effectful call is rejected" =
+    let code =
+      "let eff = fn(x: int) => int { x }; let loop = fn(n: int) -> int { if (n == 0) { 0 } else { eff(n); loop(n - 1) } }; loop(2)"
+    in
+    match infer_string code with
+    | Error { kind = PurityViolation _; _ } -> true
+    | _ -> false
 end
