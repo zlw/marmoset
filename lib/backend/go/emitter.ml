@@ -493,6 +493,12 @@ let rec has_type_vars (t : Types.mono_type) : bool =
   | Types.THash (k, v) -> has_type_vars k || has_type_vars v
   | Types.TEnum (_, args) -> List.exists has_type_vars args
   | Types.TUnion types -> List.exists has_type_vars types
+  | Types.TRecord (fields, row) ->
+      List.exists (fun (f : Types.record_field_type) -> has_type_vars f.typ) fields
+      || (match row with
+          | Some r -> has_type_vars r
+          | None -> false)
+  | Types.TRowVar _ -> true
   | _ -> false
 
 (* Track an enum instantiation *)
@@ -3093,6 +3099,18 @@ let%test "record spread emits without IIFE" =
 (* ============================================================
    Problem 3: Monomorphization Cache Hardening Tests
    ============================================================ *)
+
+let%test "has_type_vars detects TVar in record fields" =
+  has_type_vars (Types.TRecord ([ { Types.name = "x"; typ = Types.TVar "a" } ], None))
+
+let%test "has_type_vars detects TRowVar in record row" =
+  has_type_vars (Types.TRecord ([ { Types.name = "x"; typ = Types.TInt } ], Some (Types.TRowVar "r")))
+
+let%test "has_type_vars returns false for concrete record" =
+  not (has_type_vars (Types.TRecord ([ { Types.name = "x"; typ = Types.TInt } ], None)))
+
+let%test "has_type_vars detects standalone TRowVar" =
+  has_type_vars (Types.TRowVar "r")
 
 let%test "mangle_type errors on TVar" =
   match try Some (mangle_type (Types.TVar "a")) with Failure _ -> None with
