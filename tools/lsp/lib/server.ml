@@ -55,9 +55,18 @@ class marmoset_server =
     (* Run analysis and push diagnostics — called after debounce or immediately on open *)
     method private analyze_and_notify
         ~(notify_back : Linol_lwt.Jsonrpc2.notify_back) (uri : Lsp_t.DocumentUri.t) (content : string) =
-      let analysis = Doc_state.analyze ~source:content in
-      Hashtbl.replace analysis_cache uri { analysis };
-      notify_back#send_diagnostic analysis.diagnostics
+      let analysis, diagnostics =
+        try
+          let a = Doc_state.analyze ~source:content in
+          (Some a, a.diagnostics)
+        with _exn ->
+          (* On unexpected exception, clear stale cache and report no diagnostics *)
+          (None, [])
+      in
+      (match analysis with
+       | Some a -> Hashtbl.replace analysis_cache uri { analysis = a }
+       | None -> Hashtbl.remove analysis_cache uri);
+      notify_back#send_diagnostic diagnostics
 
     (* Cancel any pending analysis for a URI *)
     method private cancel_pending (uri : Lsp_t.DocumentUri.t) =
@@ -105,11 +114,12 @@ class marmoset_server =
       (* Debounce on change *)
       self#debounce_analyze ~notify_back doc.uri new_content
 
-    method on_notif_doc_did_close ~notify_back:_ (doc : Lsp_t.TextDocumentIdentifier.t) =
+    method on_notif_doc_did_close ~notify_back (doc : Lsp_t.TextDocumentIdentifier.t) =
       self#cancel_pending doc.uri;
       Hashtbl.remove pending_analyses doc.uri;
       Hashtbl.remove analysis_cache doc.uri;
-      Lwt.return ()
+      (* Clear diagnostics for the closed document *)
+      notify_back#send_diagnostic []
 
     method! on_req_hover ~notify_back:_ ~id:_ ~uri ~pos ~workDoneToken:_ (_doc_state : Linol_lwt.doc_state) =
       let result =
@@ -149,26 +159,55 @@ class marmoset_server =
       in
       Lwt.return result
 
+    method! on_req_code_action ~notify_back:_ ~id:_ (p : Lsp_t.CodeActionParams.t) =
+      let uri = p.textDocument.uri in
+      let result =
+        match Hashtbl.find_opt analysis_cache uri with
+        | None -> None
+        | Some { analysis } -> (
+            match (analysis.program, analysis.type_map) with
+            | Some prog, Some tm ->
+                let actions =
+                  Code_actions.compute ~source:analysis.source ~uri ~program:prog ~type_map:tm ~range:p.range
+                in
+                Some (List.map (fun a -> `CodeAction a) actions)
+            | _ -> None)
+      in
+      Lwt.return result
+
     method! on_req_completion
         ~notify_back:_
         ~id:_
         ~uri
         ~pos:_
-        ~ctx:_
+        ~ctx
         ~workDoneToken:_
         ~partialResultToken:_
         (_doc_state : Linol_lwt.doc_state) =
-      let result =
-        match Hashtbl.find_opt analysis_cache uri with
-        | None -> None
-        | Some { analysis } -> (
-            match analysis.environment with
-            | Some env ->
-                let items = Completions.completions ~environment:env in
-                Some (`List items)
-            | None -> None)
+      (* Don't return global completions when trigger char is "." — that should
+         be method/field completions which we don't yet support. *)
+      let is_dot_trigger =
+        match ctx with
+        | Some ctx -> (
+            match ctx.triggerCharacter with
+            | Some "." -> true
+            | _ -> false)
+        | None -> false
       in
-      Lwt.return result
+      if is_dot_trigger then Lwt.return None
+      else
+        let env =
+          match Hashtbl.find_opt analysis_cache uri with
+          | Some { analysis } -> analysis.environment
+          | None -> None
+        in
+        let environment =
+          match env with
+          | Some e -> e
+          | None -> Marmoset.Lib.Infer.empty_env
+        in
+        let items = Completions.completions ~environment in
+        Lwt.return (Some (`List items))
 
     method! on_request_unhandled : type r. notify_back:_ -> id:_ -> r Linol_lsp.Client_request.t -> r Lwt.t =
       fun ~notify_back ~id req ->
@@ -236,21 +275,6 @@ class marmoset_server =
                       | Some sh -> sh
                       | None -> empty)
                   | _ -> empty)
-            in
-            Lwt.return result
-        | Linol_lsp.Client_request.CodeAction p ->
-            let uri = p.textDocument.uri in
-            let result =
-              match Hashtbl.find_opt analysis_cache uri with
-              | None -> None
-              | Some { analysis } -> (
-                  match (analysis.program, analysis.type_map) with
-                  | Some prog, Some tm ->
-                      let actions =
-                        Code_actions.compute ~source:analysis.source ~uri ~program:prog ~type_map:tm ~range:p.range
-                      in
-                      Some (List.map (fun a -> `CodeAction a) actions)
-                  | _ -> None)
             in
             Lwt.return result
         | _ -> super#on_request_unhandled ~notify_back ~id req

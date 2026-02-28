@@ -167,9 +167,10 @@ let rec collect_expr ~source ~type_map ~environment ~params ~tokens (expr : Ast.
         pairs
   | Ast.AST.FieldAccess (e, field) -> (
       collect_expr ~source ~type_map ~environment ~params ~tokens e;
-      (* Field name token *)
+      (* Field name token — search from the dot (expr.pos) since inner chain
+         expressions may have incorrect end_pos *)
       let field_len = String.length field in
-      match find_name ~source ~start:(e.end_pos + 1) ~limit:(expr.end_pos + 1) field with
+      match find_name ~source ~start:expr.pos ~limit:(expr.end_pos + 1) field with
       | Some (fstart, _) ->
           tokens :=
             { pos = fstart; end_pos = fstart + field_len - 1; token_type = property_type; modifiers = 0 }
@@ -177,8 +178,10 @@ let rec collect_expr ~source ~type_map ~environment ~params ~tokens (expr : Ast.
       | None -> ())
   | Ast.AST.MethodCall (recv, method_name, args) ->
       collect_expr ~source ~type_map ~environment ~params ~tokens recv;
+      (* Method name token — search from the dot (expr.pos) since inner chain
+         expressions may have incorrect end_pos *)
       let mlen = String.length method_name in
-      (match find_name ~source ~start:(recv.end_pos + 1) ~limit:(expr.end_pos + 1) method_name with
+      (match find_name ~source ~start:expr.pos ~limit:(expr.end_pos + 1) method_name with
       | Some (mstart, _) ->
           tokens :=
             { pos = mstart; end_pos = mstart + mlen - 1; token_type = method_type; modifiers = 0 } :: !tokens
@@ -242,26 +245,31 @@ and collect_pattern ~source ~tokens (pat : Ast.AST.pattern) =
   | Ast.AST.PConstructor (enum_name, variant_name, sub_pats) ->
       (* Enum name as namespace *)
       let elen = String.length enum_name in
-      (match find_name ~source ~start:pat.pos ~limit:(pat.end_pos + 1) enum_name with
-      | Some (estart, _) ->
-          tokens :=
-            { pos = estart; end_pos = estart + elen - 1; token_type = namespace_type; modifiers = 0 } :: !tokens
-      | None -> ());
-      (* Variant name as enum member *)
+      let enum_end =
+        match find_name ~source ~start:pat.pos ~limit:(pat.end_pos + 1) enum_name with
+        | Some (estart, eend) ->
+            tokens :=
+              { pos = estart; end_pos = estart + elen - 1; token_type = namespace_type; modifiers = 0 } :: !tokens;
+            eend
+        | None -> pat.pos + elen
+      in
+      (* Variant name as enum member — search AFTER enum name *)
       let vlen = String.length variant_name in
-      (match find_name ~source ~start:pat.pos ~limit:(pat.end_pos + 1) variant_name with
+      (match find_name ~source ~start:enum_end ~limit:(pat.end_pos + 1) variant_name with
       | Some (vstart, _) ->
           tokens :=
             { pos = vstart; end_pos = vstart + vlen - 1; token_type = enum_member_type; modifiers = 0 } :: !tokens
       | None -> ());
       List.iter (collect_pattern ~source ~tokens) sub_pats
   | Ast.AST.PRecord (fields, _rest) ->
+      let search_from = ref pat.pos in
       List.iter
         (fun (f : Ast.AST.record_pattern_field) ->
           let fname = f.pat_field_name in
           let flen = String.length fname in
-          (match find_name ~source ~start:pat.pos ~limit:(pat.end_pos + 1) fname with
-          | Some (fstart, _) ->
+          (match find_name ~source ~start:!search_from ~limit:(pat.end_pos + 1) fname with
+          | Some (fstart, fend) ->
+              search_from := fend;
               tokens :=
                 { pos = fstart; end_pos = fstart + flen - 1; token_type = property_type; modifiers = 0 }
                 :: !tokens
@@ -367,7 +375,9 @@ and collect_stmt ~source ~type_map ~environment ~params ~tokens (stmt : Ast.AST.
         (fun (m : Ast.AST.method_impl) ->
           let mname = m.impl_method_name in
           let mlen = String.length mname in
-          (match find_name ~source ~start:!search_from ~limit:(stmt.end_pos + 1) mname with
+          (* Limit search to BEFORE the method body to avoid matching uses inside
+             prior method bodies that share a name *)
+          (match find_name ~source ~start:!search_from ~limit:m.impl_method_body.pos mname with
           | Some (mstart, mend) ->
               search_from := mend;
               tokens :=
@@ -379,7 +389,9 @@ and collect_stmt ~source ~type_map ~environment ~params ~tokens (stmt : Ast.AST.
                 }
                 :: !tokens
           | None -> ());
-          collect_expr ~source ~type_map ~environment ~params ~tokens m.impl_method_body)
+          collect_expr ~source ~type_map ~environment ~params ~tokens m.impl_method_body;
+          (* Advance search_from past the method body *)
+          search_from := m.impl_method_body.end_pos + 1)
         impl_methods
   | Ast.AST.DeriveDef _ | Ast.AST.TypeAlias _ -> ()
 

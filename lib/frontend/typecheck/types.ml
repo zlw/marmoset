@@ -269,6 +269,13 @@ let unique_in_order (lst : string list) : string list =
 let normalize (mono : mono_type) : mono_type =
   let vars = unique_in_order (collect_vars_in_order mono) in
   let renaming = List.mapi (fun i old_name -> (old_name, TVar (nice_var_name i))) vars in
+  (* Filter out identity mappings (e.g. "a" -> TVar "a") to avoid infinite
+     recursion in apply_substitution, which recursively applies to replacements *)
+  let renaming =
+    List.filter
+      (fun (old_name, new_ty) -> match new_ty with TVar n -> n <> old_name | _ -> true)
+      renaming
+  in
   apply_substitution renaming mono
 
 (* Convert type to string with normalized variable names *)

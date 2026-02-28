@@ -11,7 +11,7 @@ type loc = {
    Lines and columns are 1-indexed for human readability. *)
 let offset_to_loc (source : string) (offset : int) : loc =
   let len = String.length source in
-  let offset = min offset (len - 1) |> max 0 in
+  let offset = min offset len |> max 0 in
   let rec scan pos line col =
     if pos >= offset then
       { line; column = col; offset }
@@ -132,7 +132,7 @@ module Test = struct
   let%test "offset_to_loc handles offset past end" =
     let source = "hello" in
     let loc = offset_to_loc source 100 in
-    loc.line = 1 && loc.column = 5 (* at last char *)
+    loc.line = 1 && loc.column = 6 (* one past last char *)
 
   let%test "to_string formats correctly" =
     let loc = { line = 5; column = 10; offset = 42 } in

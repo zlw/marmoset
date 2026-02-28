@@ -3,6 +3,29 @@
 module Lsp_t = Linol_lsp.Types
 module Ast = Marmoset.Lib.Ast
 
+(* Convert a type_expr to a human-readable string for display *)
+let rec type_expr_to_string (te : Ast.AST.type_expr) : string =
+  match te with
+  | Ast.AST.TVar name -> name
+  | Ast.AST.TCon name -> name
+  | Ast.AST.TApp (name, args) ->
+      Printf.sprintf "%s[%s]" name (String.concat ", " (List.map type_expr_to_string args))
+  | Ast.AST.TArrow (params, ret) ->
+      Printf.sprintf "(%s) -> %s" (String.concat ", " (List.map type_expr_to_string params)) (type_expr_to_string ret)
+  | Ast.AST.TUnion types -> String.concat " | " (List.map type_expr_to_string types)
+  | Ast.AST.TRecord (fields, row) ->
+      let field_strs =
+        List.map (fun (f : Ast.AST.record_type_field) -> f.field_name ^ ": " ^ type_expr_to_string f.field_type) fields
+      in
+      let row_str =
+        match row with
+        | None -> ""
+        | Some r ->
+            if field_strs = [] then "..." ^ type_expr_to_string r
+            else ", ..." ^ type_expr_to_string r
+      in
+      "{ " ^ String.concat ", " field_strs ^ row_str ^ " }"
+
 (* Extract document symbols from a program's top-level statements *)
 let document_symbols ~(source : string) ~(program : Ast.AST.program) : Lsp_t.DocumentSymbol.t list =
   let symbol
@@ -42,11 +65,24 @@ let document_symbols ~(source : string) ~(program : Ast.AST.program) : Lsp_t.Doc
               variants
           in
           Some (symbol ~name ~kind:Lsp_t.SymbolKind.Enum ~range:(range_of_stmt stmt) ~children ())
-      | Ast.AST.TraitDef { name; _ } ->
-          Some (symbol ~name ~kind:Lsp_t.SymbolKind.Interface ~range:(range_of_stmt stmt) ())
-      | Ast.AST.ImplDef { impl_trait_name; impl_for_type; _ } ->
-          let name = Printf.sprintf "impl %s for %s" impl_trait_name (Ast.AST.show_type_expr impl_for_type) in
-          Some (symbol ~name ~kind:Lsp_t.SymbolKind.Class ~range:(range_of_stmt stmt) ())
+      | Ast.AST.TraitDef { name; methods; _ } ->
+          let children =
+            List.map
+              (fun (m : Ast.AST.method_sig) ->
+                symbol ~name:m.method_name ~kind:Lsp_t.SymbolKind.Method ~range:(range_of_stmt stmt) ())
+              methods
+          in
+          Some (symbol ~name ~kind:Lsp_t.SymbolKind.Interface ~range:(range_of_stmt stmt) ~children ())
+      | Ast.AST.ImplDef { impl_trait_name; impl_for_type; impl_methods; _ } ->
+          let type_name = type_expr_to_string impl_for_type in
+          let name = Printf.sprintf "impl %s for %s" impl_trait_name type_name in
+          let children =
+            List.map
+              (fun (m : Ast.AST.method_impl) ->
+                symbol ~name:m.impl_method_name ~kind:Lsp_t.SymbolKind.Method ~range:(range_of_stmt stmt) ())
+              impl_methods
+          in
+          Some (symbol ~name ~kind:Lsp_t.SymbolKind.Class ~range:(range_of_stmt stmt) ~children ())
       | Ast.AST.TypeAlias { alias_name; _ } ->
           Some (symbol ~name:alias_name ~kind:Lsp_t.SymbolKind.TypeParameter ~range:(range_of_stmt stmt) ())
       | Ast.AST.DeriveDef _ | Ast.AST.ExpressionStmt _ | Ast.AST.Return _ | Ast.AST.Block _ -> None)

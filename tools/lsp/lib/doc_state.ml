@@ -18,6 +18,7 @@ type analysis_result = {
 (* Reset all global mutable state before a fresh analysis *)
 let reset_globals () =
   Infer.reset_fresh_counter ();
+  Infer.clear_method_resolution_store ();
   Typecheck.Trait_registry.clear ();
   Typecheck.Enum_registry.clear ();
   Typecheck.Annotation.clear_type_aliases ()

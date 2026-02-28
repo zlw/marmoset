@@ -10,9 +10,16 @@ let first_some a b =
   | Some _ -> a
   | None -> b
 
-(* Find the deepest expression in the AST that contains the given byte offset *)
+(* Find the deepest expression in the AST that contains the given byte offset.
+   Note: MethodCall/FieldAccess pos is the DOT position, not the receiver start,
+   so we expand the containment check for those to include the receiver range. *)
 let rec find_expr_at (offset : int) (expr : Ast.AST.expression) : Ast.AST.expression option =
-  if offset < expr.pos || offset > expr.end_pos then
+  let start_pos =
+    match expr.expr with
+    | Ast.AST.MethodCall (recv, _, _) | Ast.AST.FieldAccess (recv, _) -> min recv.pos expr.pos
+    | _ -> expr.pos
+  in
+  if offset < start_pos || offset > expr.end_pos then
     None
   else
     let child =
@@ -55,7 +62,14 @@ and find_expr_in_stmt (offset : int) (stmt : Ast.AST.statement) : Ast.AST.expres
   | Ast.AST.Let { value; _ } -> find_expr_at offset value
   | Ast.AST.Return e -> find_expr_at offset e
   | Ast.AST.Block stmts -> List.find_map (find_expr_in_stmt offset) stmts
-  | Ast.AST.EnumDef _ | Ast.AST.TraitDef _ | Ast.AST.ImplDef _ | Ast.AST.DeriveDef _ | Ast.AST.TypeAlias _ -> None
+  | Ast.AST.ImplDef { impl_methods; _ } ->
+      List.find_map (fun (m : Ast.AST.method_impl) -> find_expr_at offset m.impl_method_body) impl_methods
+  | Ast.AST.TraitDef { methods; _ } ->
+      List.find_map
+        (fun (m : Ast.AST.method_sig) ->
+          Option.bind m.method_default_impl (find_expr_at offset))
+        methods
+  | Ast.AST.EnumDef _ | Ast.AST.DeriveDef _ | Ast.AST.TypeAlias _ -> None
 
 (* Find an expression at a given offset across the entire program *)
 let find_in_program (offset : int) (program : Ast.AST.program) : Ast.AST.expression option =

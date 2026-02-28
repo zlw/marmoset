@@ -31,12 +31,16 @@ let kind_of_type (mono : Types.mono_type) : Lsp_t.CompletionItemKind.t =
   | Types.TRecord _ -> Lsp_t.CompletionItemKind.Struct
   | _ -> Lsp_t.CompletionItemKind.Variable
 
-(* Format a poly_type for completion detail in Marmoset syntax *)
+(* Format a poly_type for completion detail in Marmoset syntax.
+   Normalizes the mono_type first so var names in the bracket match the type. *)
 let detail_of_poly (Types.Forall (vars, mono)) : string =
-  let type_str = Types.to_string_pretty mono in
   match vars with
-  | [] -> type_str
-  | _ -> Printf.sprintf "[%s]: %s" (String.concat ", " vars) type_str
+  | [] -> Types.to_string_pretty mono
+  | _ ->
+      let norm = Types.normalize mono in
+      let norm_str = Types.to_string norm in
+      let norm_vars = List.mapi (fun i _ -> Types.nice_var_name i) vars in
+      Printf.sprintf "[%s]: %s" (String.concat ", " norm_vars) norm_str
 
 (* Build completion items from the type environment *)
 let completions_from_env (env : Infer.type_env) : Lsp_t.CompletionItem.t list =

@@ -60,6 +60,52 @@ let find_close_paren ~source ~start ~limit =
   in
   scan (limit - 1)
 
+(* Check if an expression is a chain-able receiver (MethodCall or FieldAccess) *)
+let is_chain_receiver (expr : Ast.AST.expression) =
+  match expr.expr with
+  | Ast.AST.MethodCall _ | Ast.AST.FieldAccess _ -> true
+  | _ -> false
+
+(* Find the byte offset right after the receiver's actual last character,
+   by scanning backward from the outer expression's dot position past whitespace
+   and # line comments.
+   NOTE: inner MethodCalls in a chain have incorrect end_pos (set to the dot
+   position instead of ')'), so we cannot rely on recv.end_pos. Instead we
+   derive the receiver's visual end from the known dot position of the outer
+   expression.
+   KNOWN LIMITATION: a '#' inside a string literal in method arguments on the
+   same line as the closing paren can fool the comment detection. This is rare
+   in practice. *)
+let find_recv_actual_end ~source ~dot_pos =
+  let rec scan i =
+    if i < 0 then 0
+    else
+      match source.[i] with
+      | ' ' | '\t' | '\r' | '\n' -> scan (i - 1)
+      | _ ->
+          (* Check if this character is inside a # line comment.
+             Scan backward on the same line to find a '#'. *)
+          let rec find_hash j =
+            if j < 0 || source.[j] = '\n' then None
+            else if source.[j] = '#' then Some j
+            else find_hash (j - 1)
+          in
+          (match find_hash i with
+           | Some hash_pos -> scan (hash_pos - 1)
+           | None -> i + 1)
+  in
+  scan (dot_pos - 1)
+
+(* Check if there's a newline between two byte offsets *)
+let has_newline_between ~source ~from_offset ~to_offset =
+  let hi = min to_offset (String.length source) in
+  let rec scan i =
+    if i >= hi then false
+    else if source.[i] = '\n' then true
+    else scan (i + 1)
+  in
+  scan from_offset
+
 (* Generate inlay hints for a single function expression *)
 let hints_for_function ~source ~type_map ~hints (fn_expr : Ast.AST.expression) =
   match fn_expr.expr with
@@ -70,33 +116,29 @@ let hints_for_function ~source ~type_map ~hints (fn_expr : Ast.AST.expression) =
           let param_types = take_param_types n_params fn_type in
           (* Parameter type hints *)
           let search_from = ref fn_expr.pos in
-          List.iter2
-            (fun (pname, annotation) ptype ->
-              if annotation = None then
-                match find_name_end ~source ~start:!search_from ~limit:fn_expr.end_pos pname with
-                | Some pend ->
-                    search_from := pend;
-                    let position = Lsp_utils.offset_to_position ~source ~offset:pend in
-                    let type_str = Types.to_string_pretty ptype in
-                    hints :=
-                      Lsp_t.InlayHint.create ~position
-                        ~label:(`String (": " ^ type_str))
-                        ~kind:Lsp_t.InlayHintKind.Type ()
-                      :: !hints
-                | None -> ()
-              else
-                (* Still advance search_from past annotated params *)
-                match find_name_end ~source ~start:!search_from ~limit:fn_expr.end_pos pname with
-                | Some pend -> search_from := pend
-                | None -> ())
-            params
-            (if List.length param_types = n_params then
-               param_types
-             else
-               (* Type doesn't match param count — skip param hints *)
-               List.init n_params (fun _ -> Types.TNull));
+          (if List.length param_types = n_params then
+             List.iter2
+               (fun (pname, annotation) ptype ->
+                 if annotation = None then
+                   match find_name_end ~source ~start:!search_from ~limit:fn_expr.end_pos pname with
+                   | Some pend ->
+                       search_from := pend;
+                       let position = Lsp_utils.offset_to_position ~source ~offset:pend in
+                       let type_str = Types.to_string_pretty ptype in
+                       hints :=
+                         Lsp_t.InlayHint.create ~position
+                           ~label:(`String (": " ^ type_str))
+                           ~kind:Lsp_t.InlayHintKind.Type ()
+                         :: !hints
+                   | None -> ()
+                 else
+                   (* Still advance search_from past annotated params *)
+                   match find_name_end ~source ~start:!search_from ~limit:fn_expr.end_pos pname with
+                   | Some pend -> search_from := pend
+                   | None -> ())
+               params param_types);
           (* Return type hint *)
-          if return_type = None && n_params > 0 then
+          if return_type = None then
             match get_return_type n_params fn_type with
             | Some ret_type -> (
                 let body_start = body.pos in
@@ -146,7 +188,17 @@ let rec walk_stmt ~source ~type_map ~range_start ~range_end ~hints (stmt : Ast.A
     | Ast.AST.Block stmts -> List.iter (walk_stmt ~source ~type_map ~range_start ~range_end ~hints) stmts
     | Ast.AST.ExpressionStmt e -> walk_expr ~source ~type_map ~range_start ~range_end ~hints e
     | Ast.AST.Return e -> walk_expr ~source ~type_map ~range_start ~range_end ~hints e
-    | Ast.AST.EnumDef _ | Ast.AST.TraitDef _ | Ast.AST.ImplDef _ | Ast.AST.DeriveDef _ | Ast.AST.TypeAlias _ -> ()
+    | Ast.AST.ImplDef { impl_methods; _ } ->
+        List.iter
+          (fun (m : Ast.AST.method_impl) ->
+            walk_expr ~source ~type_map ~range_start ~range_end ~hints m.impl_method_body)
+          impl_methods
+    | Ast.AST.TraitDef { methods; _ } ->
+        List.iter
+          (fun (m : Ast.AST.method_sig) ->
+            Option.iter (walk_expr ~source ~type_map ~range_start ~range_end ~hints) m.method_default_impl)
+          methods
+    | Ast.AST.EnumDef _ | Ast.AST.DeriveDef _ | Ast.AST.TypeAlias _ -> ()
 
 (* Walk expressions to find nested functions *)
 and walk_expr ~source ~type_map ~range_start ~range_end ~hints (expr : Ast.AST.expression) =
@@ -178,8 +230,35 @@ and walk_expr ~source ~type_map ~range_start ~range_end ~hints (expr : Ast.AST.e
             walk_expr ~source ~type_map ~range_start ~range_end ~hints k;
             walk_expr ~source ~type_map ~range_start ~range_end ~hints v)
           pairs
-    | Ast.AST.FieldAccess (e, _) -> walk_expr ~source ~type_map ~range_start ~range_end ~hints e
+    | Ast.AST.FieldAccess (recv, _) ->
+        (if is_chain_receiver recv then
+           let recv_end = find_recv_actual_end ~source ~dot_pos:expr.pos in
+           if has_newline_between ~source ~from_offset:recv_end ~to_offset:expr.pos then
+             match Hashtbl.find_opt type_map recv.id with
+             | Some mono ->
+                 let position = Lsp_utils.offset_to_position ~source ~offset:recv_end in
+                 let type_str = Types.to_string_pretty mono in
+                 hints :=
+                   Lsp_t.InlayHint.create ~position
+                     ~label:(`String (": " ^ type_str))
+                     ~kind:Lsp_t.InlayHintKind.Type ~paddingLeft:true ()
+                   :: !hints
+             | None -> ());
+        walk_expr ~source ~type_map ~range_start ~range_end ~hints recv
     | Ast.AST.MethodCall (recv, _, args) ->
+        (if is_chain_receiver recv then
+           let recv_end = find_recv_actual_end ~source ~dot_pos:expr.pos in
+           if has_newline_between ~source ~from_offset:recv_end ~to_offset:expr.pos then
+             match Hashtbl.find_opt type_map recv.id with
+             | Some mono ->
+                 let position = Lsp_utils.offset_to_position ~source ~offset:recv_end in
+                 let type_str = Types.to_string_pretty mono in
+                 hints :=
+                   Lsp_t.InlayHint.create ~position
+                     ~label:(`String (": " ^ type_str))
+                     ~kind:Lsp_t.InlayHintKind.Type ~paddingLeft:true ()
+                   :: !hints
+             | None -> ());
         walk_expr ~source ~type_map ~range_start ~range_end ~hints recv;
         List.iter (walk_expr ~source ~type_map ~range_start ~range_end ~hints) args
     | Ast.AST.Match (scrutinee, arms) ->
@@ -286,3 +365,121 @@ let%test "multiple let bindings each get hints" =
   List.exists (fun l -> l = ": Int") labels
   && List.exists (fun l -> l = ": Bool") labels
   && List.exists (fun l -> l = ": String") labels
+
+let%test "multiline method chain shows intermediate type hint" =
+  let source = "let result = 42.show()\n  .show();" in
+  let hints = get_hints source in
+  let labels = hint_labels hints in
+  (* Let binding hint ": String" + chain hint ": String" for 42.show() receiver *)
+  let string_hints = List.filter (fun l -> l = ": String") labels in
+  List.length string_hints >= 2
+
+let%test "single-line method chain gets no chain hint" =
+  let source = "let result = 42.show().show();" in
+  let hints = get_hints source in
+  let labels = hint_labels hints in
+  (* Only the let binding hint ": String", no intermediate chain hint *)
+  let string_hints = List.filter (fun l -> l = ": String") labels in
+  List.length string_hints = 1
+
+let%test "multiline chain with 3 steps shows intermediate type hints" =
+  let source = "let result = 42.add(1)\n  .add(2)\n  .show();" in
+  let hints = get_hints source in
+  let labels = hint_labels hints in
+  (* Two chain hints ": Int" for .add(1) and .add(2) intermediate results *)
+  let int_hints = List.filter (fun l -> l = ": Int") labels in
+  List.length int_hints >= 2
+
+let%test "non-chain multiline expression gets no chain hint" =
+  let source = "let x = len(\n  [1, 2, 3]\n);" in
+  let hints = get_hints source in
+  let labels = hint_labels hints in
+  (* Only let binding hint, no chain hints *)
+  List.length labels = 1 && List.hd labels = ": Int"
+
+let%test "chain hint position is after receiver closing paren, not at dot" =
+  (* "let result = 42.show()\n  .show();"
+     offset: l=0..t=2, ' '=3, r=4..t=9, ' '=10, '='=11, ' '=12,
+             '4'=13, '2'=14, '.'=15, s=16..w=19, '('=20, ')'=21,
+             '\n'=22, ' '=23, ' '=24, '.'=25, s=26..w=29, '('=30, ')'=31, ';'=32
+     The chain hint should be at offset 22 (right after ')' at 21), which is
+     line 0, character 22 in LSP terms (end of first line). *)
+  let source = "let result = 42.show()\n  .show();" in
+  let hints = get_hints source in
+  let chain_hints =
+    List.filter
+      (fun (h : Lsp_t.InlayHint.t) ->
+        h.paddingLeft = Some true
+        && (match h.label with `String s -> s = ": String" | _ -> false))
+      hints
+  in
+  match chain_hints with
+  | [ h ] -> h.position.line = 0 && h.position.character = 22
+  | _ -> false
+
+let%test "multiline chain with tab indentation" =
+  let source = "let result = 42.show()\n\t.show();" in
+  let hints = get_hints source in
+  let labels = hint_labels hints in
+  let string_hints = List.filter (fun l -> l = ": String") labels in
+  (* Let binding hint + chain hint *)
+  List.length string_hints >= 2
+
+let%test "expression-statement chain (no let binding) gets chain hint" =
+  let source = "42.show()\n  .show();" in
+  let hints = get_hints source in
+  let chain_hints =
+    List.filter
+      (fun (h : Lsp_t.InlayHint.t) ->
+        h.paddingLeft = Some true
+        && (match h.label with `String s -> s = ": String" | _ -> false))
+      hints
+  in
+  List.length chain_hints = 1
+
+let%test "find_recv_actual_end skips # line comments" =
+  (* Test the helper directly: "42.show()  # comment\n  ."
+     dot_pos=33 (the second dot). Backward from 32: '\n' skip, then 'tnemm' etc.
+     Without comment skipping, we'd land inside the comment text.
+     With comment skipping, we should land right after ')'. *)
+  let source = "42.show()  # comment\n  .show();" in
+  (* The second '.' is at position 23 (after \n and two spaces) *)
+  let dot_pos =
+    let rec find i = if source.[i] = '.' && i > 10 then i else find (i + 1) in
+    find 10
+  in
+  let recv_end = find_recv_actual_end ~source ~dot_pos in
+  (* ')' is at position 8, so recv_end should be 9 *)
+  recv_end = 9
+
+let%test "multiline chain with # comment between segments shows hint" =
+  (* End-to-end: comment between chain segments should not break hint placement.
+     "let r = 42.show()  # comment\n  .show();"
+     ')' at offset 16, hint should be at offset 17 = line 0 char 17 *)
+  let source = "let r = 42.show()  # comment\n  .show();" in
+  let hints = get_hints source in
+  let chain_hints =
+    List.filter
+      (fun (h : Lsp_t.InlayHint.t) ->
+        h.paddingLeft = Some true
+        && (match h.label with `String s -> s = ": String" | _ -> false))
+      hints
+  in
+  match chain_hints with
+  | [ h ] -> h.position.line = 0 && h.position.character = 17
+  | _ -> false
+
+let%test "find_recv_actual_end with only whitespace between dot and recv" =
+  (* Simple case: just newline + spaces *)
+  let source = "42.show()\n  .show();" in
+  let dot_pos = 12 in (* the second '.' *)
+  let recv_end = find_recv_actual_end ~source ~dot_pos in
+  recv_end = 9 (* right after ')' at pos 8 *)
+
+let%test "find_recv_actual_end skips full-line # comment" =
+  (* Full-line comment between chain segments:
+     "42.show()\n  # full line comment\n  .show();"
+     ')' at 8, '#' at 12, second '.' at 34 *)
+  let source = "42.show()\n  # full line comment\n  .show();" in
+  let recv_end = find_recv_actual_end ~source ~dot_pos:34 in
+  recv_end = 9 (* right after ')' at pos 8 *)

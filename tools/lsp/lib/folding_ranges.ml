@@ -39,6 +39,7 @@ let rec walk_expr ~source ~ranges (expr : Ast.AST.expression) =
       maybe_range ~source ~pos:expr.pos ~end_pos:expr.end_pos ~kind:Lsp_t.FoldingRangeKind.Region ranges;
       List.iter (walk_expr ~source ~ranges) elts
   | Ast.AST.Call (fn_expr, args) ->
+      maybe_range ~source ~pos:expr.pos ~end_pos:expr.end_pos ~kind:Lsp_t.FoldingRangeKind.Region ranges;
       walk_expr ~source ~ranges fn_expr;
       List.iter (walk_expr ~source ~ranges) args
   | Ast.AST.Infix (l, _, r) ->
@@ -57,6 +58,7 @@ let rec walk_expr ~source ~ranges (expr : Ast.AST.expression) =
         pairs
   | Ast.AST.FieldAccess (e, _) -> walk_expr ~source ~ranges e
   | Ast.AST.MethodCall (recv, _, args) ->
+      maybe_range ~source ~pos:expr.pos ~end_pos:expr.end_pos ~kind:Lsp_t.FoldingRangeKind.Region ranges;
       walk_expr ~source ~ranges recv;
       List.iter (walk_expr ~source ~ranges) args
   | Ast.AST.EnumConstructor (_, _, args) -> List.iter (walk_expr ~source ~ranges) args
@@ -81,8 +83,12 @@ and walk_stmt ~source ~ranges (stmt : Ast.AST.statement) =
       List.iter (walk_stmt ~source ~ranges) stmts
   | Ast.AST.EnumDef _ ->
       maybe_range ~source ~pos:stmt.pos ~end_pos:stmt.end_pos ~kind:Lsp_t.FoldingRangeKind.Region ranges
-  | Ast.AST.TraitDef _ ->
-      maybe_range ~source ~pos:stmt.pos ~end_pos:stmt.end_pos ~kind:Lsp_t.FoldingRangeKind.Region ranges
+  | Ast.AST.TraitDef { methods; _ } ->
+      maybe_range ~source ~pos:stmt.pos ~end_pos:stmt.end_pos ~kind:Lsp_t.FoldingRangeKind.Region ranges;
+      List.iter
+        (fun (m : Ast.AST.method_sig) ->
+          Option.iter (walk_expr ~source ~ranges) m.method_default_impl)
+        methods
   | Ast.AST.ImplDef { impl_methods; _ } ->
       maybe_range ~source ~pos:stmt.pos ~end_pos:stmt.end_pos ~kind:Lsp_t.FoldingRangeKind.Region ranges;
       List.iter (fun (m : Ast.AST.method_impl) -> walk_expr ~source ~ranges m.impl_method_body) impl_methods

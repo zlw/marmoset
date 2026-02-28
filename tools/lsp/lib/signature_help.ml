@@ -36,6 +36,30 @@ let find_open_paren ~(source : string) ~(from : int) ~(limit : int) : int option
   in
   scan from
 
+(* Find the matching ')' starting from the position after '(', tracking nesting.
+   Returns the position OF the ')'. *)
+let find_matching_close_paren ~(source : string) ~(from : int) : int option =
+  let len = String.length source in
+  let rec scan i depth =
+    if i >= len then None
+    else
+      match source.[i] with
+      | '(' -> scan (i + 1) (depth + 1)
+      | ')' ->
+          if depth = 0 then Some i
+          else scan (i + 1) (depth - 1)
+      | '"' -> skip_string (i + 1) depth
+      | _ -> scan (i + 1) depth
+  and skip_string i depth =
+    if i >= len then None
+    else
+      match source.[i] with
+      | '"' -> scan (i + 1) depth
+      | '\\' -> skip_string (i + 2) depth
+      | _ -> skip_string (i + 1) depth
+  in
+  scan from 0
+
 (* Find the innermost enclosing Call or MethodCall whose argument region
    contains the cursor offset. We need the *enclosing* call — cursor may be
    on whitespace between args, not on any expression. *)
@@ -54,18 +78,29 @@ let find_enclosing_call ~(source : string) (offset : int) (program : Ast.AST.pro
     match expr.expr with
     | Ast.AST.Call (fn_expr, args) ->
         (* The call spans expr.pos..expr.end_pos. Find the '(' after fn_expr
-           to determine where args actually begin. *)
-        if offset > fn_expr.end_pos && offset <= expr.end_pos then (
-          let fn_name =
-            match fn_expr.expr with
-            | Ast.AST.Identifier name -> Some name
-            | _ -> None
-          in
-          let args_start =
-            match find_open_paren ~source ~from:(fn_expr.end_pos + 1) ~limit:expr.end_pos with
-            | Some pos -> pos
-            | None -> fn_expr.end_pos + 2
-          in
+           to determine where args actually begin.
+           Only trigger when cursor is INSIDE the parens, not on the function name.
+           Use find_matching_close_paren instead of expr.end_pos because inner
+           calls in chains have wrong end_pos (points to dot, not closing paren). *)
+        let fn_name =
+          match fn_expr.expr with
+          | Ast.AST.Identifier name -> Some name
+          | _ -> None
+        in
+        let open_paren =
+          find_open_paren ~source ~from:(fn_expr.end_pos + 1) ~limit:(String.length source)
+        in
+        let args_start =
+          match open_paren with
+          | Some pos -> pos
+          | None -> fn_expr.end_pos + 2
+        in
+        let effective_end =
+          match find_matching_close_paren ~source ~from:args_start with
+          | Some close -> close
+          | None -> expr.end_pos
+        in
+        if offset >= args_start && offset <= effective_end then (
           update_best
             {
               fn_id = fn_expr.id;
@@ -73,19 +108,31 @@ let find_enclosing_call ~(source : string) (offset : int) (program : Ast.AST.pro
               method_name = None;
               recv_id = None;
               args_start;
-              call_end = expr.end_pos;
+              call_end = effective_end;
               arg_count = List.length args;
             });
         visit_expr fn_expr;
         List.iter visit_expr args
     | Ast.AST.MethodCall (recv, mname, args) ->
-        (* For method calls like recv.method(args), find '(' after the method name *)
-        if offset > recv.end_pos && offset <= expr.end_pos then (
-          let args_start =
-            match find_open_paren ~source ~from:(recv.end_pos + 1) ~limit:expr.end_pos with
-            | Some pos -> pos
-            | None -> recv.end_pos + 2
-          in
+        (* For method calls like recv.method(args), find '(' after the dot.
+           Use expr.pos (the dot position) as search start since recv.end_pos
+           may be wrong for inner chain expressions.
+           Use find_matching_close_paren instead of expr.end_pos for the same
+           reason as Call — inner chain expressions have wrong end_pos. *)
+        let open_paren =
+          find_open_paren ~source ~from:expr.pos ~limit:(String.length source)
+        in
+        let args_start =
+          match open_paren with
+          | Some pos -> pos
+          | None -> expr.pos + String.length mname + 2
+        in
+        let effective_end =
+          match find_matching_close_paren ~source ~from:args_start with
+          | Some close -> close
+          | None -> expr.end_pos
+        in
+        if offset >= args_start && offset <= effective_end then (
           update_best
             {
               fn_id = expr.id;
@@ -93,7 +140,7 @@ let find_enclosing_call ~(source : string) (offset : int) (program : Ast.AST.pro
               method_name = Some mname;
               recv_id = Some recv.id;
               args_start;
-              call_end = expr.end_pos;
+              call_end = effective_end;
               arg_count = List.length args;
             });
         visit_expr recv;
@@ -201,12 +248,12 @@ let build_label ~(param_names : string list) ~(param_types : Types.mono_type lis
       let start = Buffer.length buf in
       Buffer.add_string buf name;
       Buffer.add_string buf ": ";
-      Buffer.add_string buf (Types.to_string_pretty typ);
+      Buffer.add_string buf (Types.to_string typ);
       let stop = Buffer.length buf in
       offsets := (start, stop) :: !offsets)
     param_types;
   Buffer.add_string buf ") -> ";
-  Buffer.add_string buf (Types.to_string_pretty ret_type);
+  Buffer.add_string buf (Types.to_string ret_type);
   (Buffer.contents buf, List.rev !offsets)
 
 (* Provide signature help at a given cursor position *)
@@ -258,9 +305,18 @@ let signature_help
           let param_types, ret_type, method_param_names =
             match info with
             | `FnType fn_type ->
-                let params, ret = collect_params fn_type in
+                (* Normalize the full function type once to preserve type variable identity *)
+                let norm = Types.normalize fn_type in
+                let params, ret = collect_params norm in
                 (params, ret, None)
-            | `Method (ptypes, ret, pnames) -> (ptypes, ret, Some pnames)
+            | `Method (ptypes, ret, pnames) ->
+                (* Method types come from trait registry — normalize together *)
+                let dummy_fn =
+                  List.fold_right (fun p acc -> Types.TFun (p, acc)) ptypes ret
+                in
+                let norm = Types.normalize dummy_fn in
+                let params, ret_n = collect_params norm in
+                (params, ret_n, Some pnames)
           in
           match param_types with
           | [] -> None (* Not a function type — e.g. 42() *)
@@ -291,7 +347,10 @@ let signature_help
                     Lsp_t.ParameterInformation.create ~label:(`Offset (start, stop)) ())
                   offsets
               in
-              let active_param = count_active_param ~source ~from:call.args_start ~cursor:offset in
+              let active_param =
+                let raw = count_active_param ~source ~from:call.args_start ~cursor:offset in
+                min raw (List.length param_types - 1)
+              in
               let sig_info =
                 Lsp_t.SignatureInformation.create ~label ~parameters ~activeParameter:(Some active_param) ()
               in
@@ -425,4 +484,34 @@ let%test "parameter offsets use Offset label" =
               | `String _ -> false)
             params
       | None -> false)
+  | None -> false
+
+let%test "inner function in nested call gets signature help (BUG-27)" =
+  (* f(g(1)) — cursor on '1' inside g(1) should show g's signature *)
+  let source = "let g = fn(x: int) { x }; let f = fn(y: int) { y }; f(g(1))" in
+  (* Positions: f(52) ((53) g(54) ((55) 1(56) )(57) )(58) *)
+  match check_sig source 0 56 with
+  | Some sh ->
+      let sig0 = List.hd sh.signatures in
+      (* Should show g's signature, not f's *)
+      let has_g =
+        try String.sub sig0.label 0 1 = "g" with
+        | _ -> false
+      in
+      has_g
+  | None -> false
+
+let%test "outer function in nested call still works (BUG-27 regression)" =
+  (* f(g(1), 2) — cursor on '2' should show f's signature *)
+  let source = "let g = fn(x: int) { x }; let f = fn(y: int, z: int) { y + z }; f(g(1), 2)" in
+  (* f(...) args: g(1) then , then 2 — cursor on '2' should be in f but not g *)
+  let pos = String.length source - 2 in (* position of '2' *)
+  match check_sig source 0 pos with
+  | Some sh ->
+      let sig0 = List.hd sh.signatures in
+      let has_f =
+        try String.sub sig0.label 0 1 = "f" with
+        | _ -> false
+      in
+      has_f
   | None -> false

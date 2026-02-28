@@ -34,7 +34,7 @@ let rec type_to_source (mono : Types.mono_type) : string =
       let args, ret = collect_args mono in
       let args_str =
         match args with
-        | [ single ] -> type_to_source single
+        | [ single ] -> "(" ^ type_to_source single ^ ")"
         | _ -> "(" ^ String.concat ", " (List.map type_to_source args) ^ ")"
       in
       args_str ^ " -> " ^ type_to_source ret
@@ -100,12 +100,21 @@ let rec get_return_type n mono =
     | _ -> None
 
 (* Find the byte offset just past ')' for function parameters.
-   Search backward from `limit` for ')'. *)
+   Search backward from `limit` for ')', skipping content inside # comments. *)
 let find_close_paren ~source ~start ~limit =
+  (* Check if offset i is inside a # comment by scanning backward on the same line *)
+  let in_comment i =
+    let rec scan j =
+      if j < 0 || source.[j] = '\n' then false
+      else if source.[j] = '#' then true
+      else scan (j - 1)
+    in
+    scan (i - 1)
+  in
   let rec scan i =
     if i < start then
       None
-    else if source.[i] = ')' then
+    else if source.[i] = ')' && not (in_comment i) then
       Some (i + 1)
     else
       scan (i - 1)
@@ -129,7 +138,9 @@ let sites_for_function ~source ~type_map ~sites (fn_expr : Ast.AST.expression) =
       match Hashtbl.find_opt type_map fn_expr.id with
       | Some fn_type ->
           let n_params = List.length params in
-          let param_types = take_param_types n_params fn_type in
+          (* Normalize the FULL function type once to preserve type variable identity *)
+          let norm_fn_type = Types.normalize fn_type in
+          let param_types = take_param_types n_params norm_fn_type in
           (* Parameter annotation sites *)
           let search_from = ref fn_expr.pos in
           List.iter2
@@ -138,7 +149,7 @@ let sites_for_function ~source ~type_map ~sites (fn_expr : Ast.AST.expression) =
                 match find_name_end ~source ~start:!search_from ~limit:fn_expr.end_pos pname with
                 | Some pend ->
                     search_from := pend;
-                    let type_str = type_to_source (Types.normalize ptype) in
+                    let type_str = type_to_source ptype in
                     sites :=
                       {
                         insert_offset = pend;
@@ -158,12 +169,12 @@ let sites_for_function ~source ~type_map ~sites (fn_expr : Ast.AST.expression) =
                List.init n_params (fun _ -> Types.TNull));
           (* Return type annotation site *)
           if return_type = None && n_params > 0 then (
-            match get_return_type n_params fn_type with
+            match get_return_type n_params norm_fn_type with
             | Some ret_type -> (
                 let body_start = body.pos in
                 match find_close_paren ~source ~start:fn_expr.pos ~limit:body_start with
                 | Some paren_end ->
-                    let type_str = type_to_source (Types.normalize ret_type) in
+                    let type_str = type_to_source ret_type in
                     sites :=
                       {
                         insert_offset = paren_end;
@@ -214,7 +225,8 @@ and walk_expr ~source ~type_map ~range_start ~range_end ~sites (expr : Ast.AST.e
   else
     match expr.expr with
     | Ast.AST.Function { body; _ } ->
-        sites_for_function ~source ~type_map ~sites expr;
+        (* NOTE: sites_for_function is NOT called here — it's called by walk_stmt
+           for let bindings. Calling it here too would produce duplicate sites. *)
         walk_stmt ~source ~type_map ~range_start ~range_end ~sites body
     | Ast.AST.If (cond, then_, else_) ->
         walk_expr ~source ~type_map ~range_start ~range_end ~sites cond;
@@ -345,7 +357,7 @@ let%test "type_to_source nested array" =
 let%test "type_to_source hash" = type_to_source (Types.THash (Types.TString, Types.TInt)) = "map[string, int]"
 
 let%test "type_to_source single-arg function" =
-  type_to_source (Types.TFun (Types.TInt, Types.TBool)) = "int -> bool"
+  type_to_source (Types.TFun (Types.TInt, Types.TBool)) = "(int) -> bool"
 
 let%test "type_to_source multi-arg function" =
   type_to_source (Types.TFun (Types.TInt, Types.TFun (Types.TString, Types.TBool))) = "(int, string) -> bool"

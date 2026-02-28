@@ -11,9 +11,15 @@ let sel_range ~source ~pos ~end_pos ~parent =
   let range = make_range ~source ~pos ~end_pos in
   Lsp_t.SelectionRange.create ~range ?parent ()
 
-(* Find the deepest expression containing the offset, returning a chain of ranges *)
+(* Find the deepest expression containing the offset, returning a chain of ranges.
+   Note: MethodCall/FieldAccess pos is the DOT position, not the receiver start. *)
 let rec find_in_expr ~source ~offset ~parent (expr : Ast.AST.expression) : Lsp_t.SelectionRange.t option =
-  if offset < expr.pos || offset > expr.end_pos then
+  let start_pos =
+    match expr.expr with
+    | Ast.AST.MethodCall (recv, _, _) | Ast.AST.FieldAccess (recv, _) -> min recv.pos expr.pos
+    | _ -> expr.pos
+  in
+  if offset < start_pos || offset > expr.end_pos then
     None
   else
     let current = Some (sel_range ~source ~pos:expr.pos ~end_pos:expr.end_pos ~parent) in
