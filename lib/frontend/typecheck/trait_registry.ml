@@ -269,7 +269,7 @@ let can_derive (trait_name : string) (for_type : mono_type) : (unit, string) res
         | TArray _ | THash _ ->
             (* Arrays/hashes can derive eq/show if element types can derive *)
             Ok () (* TODO: Check element types recursively *)
-        | TFun _ -> Error "Cannot derive traits for function types"
+        | TFun (_, _, _) -> Error "Cannot derive traits for function types"
         | TVar _ -> Ok () (* Type vars can derive - will be checked at instantiation *)
         | TUnion _ -> Ok () (* Unions can derive if all members can derive *)
         | _ -> Ok ())
@@ -1142,7 +1142,7 @@ let%test "can_derive - function types fail" =
     }
   in
   register_trait eq_trait;
-  match can_derive "eq" (TFun (TInt, TInt)) with
+  match can_derive "eq" (tfun TInt TInt) with
   | Ok () -> false
   | Error msg -> String.length msg > 0
 

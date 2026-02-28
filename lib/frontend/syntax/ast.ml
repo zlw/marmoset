@@ -135,6 +135,7 @@ module AST = struct
         generics : generic_param list option; (* [a], [a: show], etc. *)
         params : (string * type_expr option) list; (* parameter names and optional type annotations *)
         return_type : type_expr option; (* return type annotation *)
+        is_effectful : bool; (* true when => is used instead of -> *)
         body : statement;
       }
     | Call of expression * expression list

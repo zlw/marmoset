@@ -20,9 +20,10 @@ let rec mangle_type (t : Types.mono_type) : string =
   | Types.TVar name ->
       failwith
         (Printf.sprintf
-           "Codegen error: unresolved type variable '%s' reached mangle_type. All type variables must be resolved before code generation."
+           "Codegen error: unresolved type variable '%s' reached mangle_type. All type variables must be resolved \
+            before code generation."
            name)
-  | Types.TFun (arg, ret) -> "fn_" ^ mangle_type arg ^ "_" ^ mangle_type ret
+  | Types.TFun (arg, ret, _) -> "fn_" ^ mangle_type arg ^ "_" ^ mangle_type ret
   | Types.TArray elem -> "arr_" ^ mangle_type elem
   | Types.THash (key, value) -> "map_" ^ mangle_type key ^ "_" ^ mangle_type value
   | Types.TRecord (fields, row) ->
@@ -209,7 +210,7 @@ let rec mangle_type_to_go (t : Types.mono_type) : string =
   | Types.TVar _ -> "interface{}"
   | Types.TFun _ as t ->
       let rec collect_args = function
-        | Types.TFun (a, r) ->
+        | Types.TFun (a, r, _) ->
             let args, final_ret = collect_args r in
             (a :: args, final_ret)
         | ret -> ([], ret)
@@ -295,7 +296,7 @@ let rec type_to_go (state : mono_state) (t : Types.mono_type) : string =
       else
         "interface{}"
         (* TypeScript-style fallback *)
-  | Types.TFun (arg, ret) -> emit_func_type state arg ret
+  | Types.TFun (arg, ret, _) -> emit_func_type state arg ret
   | Types.TArray elem -> "[]" ^ type_to_go state elem
   | Types.THash (key, value) -> "map[" ^ type_to_go state key ^ "]" ^ type_to_go state value
   | Types.TRecord (fields, _row) ->
@@ -307,12 +308,12 @@ let rec type_to_go (state : mono_state) (t : Types.mono_type) : string =
 
 and emit_func_type state arg ret =
   let rec collect_args = function
-    | Types.TFun (a, r) ->
+    | Types.TFun (a, r, _) ->
         let args, final_ret = collect_args r in
         (a :: args, final_ret)
     | t -> ([], t)
   in
-  let args, final_ret = collect_args (Types.TFun (arg, ret)) in
+  let args, final_ret = collect_args (Types.TFun (arg, ret, false)) in
   let args_str = List.map (type_to_go state) args |> String.concat ", " in
   Printf.sprintf "func(%s) %s" args_str (type_to_go state final_ret)
 
@@ -487,7 +488,7 @@ let get_type (type_map : Infer.type_map) (expr : AST.expression) : Types.mono_ty
 let rec has_type_vars (t : Types.mono_type) : bool =
   match t with
   | Types.TVar _ -> true
-  | Types.TFun (arg, ret) -> has_type_vars arg || has_type_vars ret
+  | Types.TFun (arg, ret, _) -> has_type_vars arg || has_type_vars ret
   | Types.TArray elem -> has_type_vars elem
   | Types.THash (k, v) -> has_type_vars k || has_type_vars v
   | Types.TEnum (_, args) -> List.exists has_type_vars args
@@ -524,14 +525,14 @@ let lookup_func_def_for_call (state : mono_state) (name : string) (arity : int) 
 
 (* Extract parameter types from a function type *)
 let rec extract_param_types n = function
-  | Types.TFun (arg, ret) when n > 0 ->
+  | Types.TFun (arg, ret, _) when n > 0 ->
       let rest, final = extract_param_types (n - 1) ret in
       (arg :: rest, final)
   | t -> ([], t)
 
 let extract_all_param_types (t : Types.mono_type) : Types.mono_type list * Types.mono_type =
   let rec go acc = function
-    | Types.TFun (arg, ret) -> go (arg :: acc) ret
+    | Types.TFun (arg, ret, _) -> go (arg :: acc) ret
     | final_ret -> (List.rev acc, final_ret)
   in
   go [] t
@@ -2100,7 +2101,7 @@ let emit_specialized_func
 
   (* Build the concrete function type from parameter types and return type *)
   let concrete_func_type =
-    List.fold_right (fun param_t acc -> Types.TFun (param_t, acc)) inst.concrete_types inst.return_type
+    List.fold_right (fun param_t acc -> Types.tfun param_t acc) inst.concrete_types inst.return_type
   in
 
   let generic_func_type =

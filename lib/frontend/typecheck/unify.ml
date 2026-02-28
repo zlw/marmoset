@@ -49,8 +49,8 @@ let rec unify (type1 : mono_type) (type2 : mono_type) : (substitution, unify_err
   | TVar var, other -> bind_variable var other
   (* Type variable on right - bind it *)
   | other, TVar var -> bind_variable var other
-  (* Function types - unify argument and return types *)
-  | TFun (arg1, ret1), TFun (arg2, ret2) -> unify_two_pairs (arg1, arg2) (ret1, ret2)
+  (* Function types - unify argument and return types (effect bit ignored for now) *)
+  | TFun (arg1, ret1, _), TFun (arg2, ret2, _) -> unify_two_pairs (arg1, arg2) (ret1, ret2)
   (* Array types - unify element types *)
   | TArray elem1, TArray elem2 -> unify elem1 elem2
   (* Hash types - unify key and value types *)
@@ -307,22 +307,22 @@ let%test "unify two different TVars" =
 (* Tests for compound types *)
 let%test "unify simple functions" =
   (* (a -> b) unified with (Int -> Bool) *)
-  let t1 = TFun (TVar "a", TVar "b") in
-  let t2 = TFun (TInt, TBool) in
+  let t1 = tfun (TVar "a") (TVar "b") in
+  let t2 = tfun TInt TBool in
   match unify t1 t2 with
   | Error _ -> false
   | Ok subst -> apply_substitution subst (TVar "a") = TInt && apply_substitution subst (TVar "b") = TBool
 
 let%test "unify functions with shared variable" =
   (* (a -> a) unified with (Int -> b) should give {a -> Int, b -> Int} *)
-  let t1 = TFun (TVar "a", TVar "a") in
-  let t2 = TFun (TInt, TVar "b") in
+  let t1 = tfun (TVar "a") (TVar "a") in
+  let t2 = tfun TInt (TVar "b") in
   match unify t1 t2 with
   | Error _ -> false
   | Ok subst ->
       let t1' = apply_substitution subst t1 in
       let t2' = apply_substitution subst t2 in
-      t1' = t2' && t1' = TFun (TInt, TInt)
+      t1' = t2' && t1' = tfun TInt TInt
 
 let%test "unify arrays" = unifies_to (TArray (TVar "a")) (TArray TInt) [ ("a", TInt) ]
 
@@ -356,13 +356,13 @@ let%test "fail unify missing required record field" =
 let%test "fail to unify different primitives" =
   fails_to_unify TInt TString && fails_to_unify TBool TInt && fails_to_unify TFloat TString
 
-let%test "fail to unify function with primitive" = fails_to_unify (TFun (TInt, TBool)) TInt
+let%test "fail to unify function with primitive" = fails_to_unify (tfun TInt TBool) TInt
 let%test "fail to unify array with hash" = fails_to_unify (TArray TInt) (THash (TString, TInt))
 
 (* Tests for occurs check *)
 let%test "occurs check prevents infinite type" =
   (* Can't unify a with (a -> Int) - would create infinite type *)
-  fails_to_unify (TVar "a") (TFun (TVar "a", TInt))
+  fails_to_unify (TVar "a") (tfun (TVar "a") TInt)
 
 let%test "occurs check in nested structure" =
   (* Can't unify a with [a] *)
@@ -375,8 +375,8 @@ let%test "occurs check in hash" =
 (* More complex tests *)
 let%test "unify nested functions" =
   (* (a -> b -> c) unified with (Int -> String -> Bool) *)
-  let t1 = TFun (TVar "a", TFun (TVar "b", TVar "c")) in
-  let t2 = TFun (TInt, TFun (TString, TBool)) in
+  let t1 = tfun (TVar "a") (tfun (TVar "b") (TVar "c")) in
+  let t2 = tfun TInt (tfun TString TBool) in
   match unify t1 t2 with
   | Error _ -> false
   | Ok subst ->
@@ -386,8 +386,8 @@ let%test "unify nested functions" =
 
 let%test "unify higher-order function" =
   (* ((a -> b) -> a -> b) unified with ((Int -> String) -> Int -> c) *)
-  let t1 = TFun (TFun (TVar "a", TVar "b"), TFun (TVar "a", TVar "b")) in
-  let t2 = TFun (TFun (TInt, TString), TFun (TInt, TVar "c")) in
+  let t1 = tfun (tfun (TVar "a") (TVar "b")) (tfun (TVar "a") (TVar "b")) in
+  let t2 = tfun (tfun TInt TString) (tfun TInt (TVar "c")) in
   match unify t1 t2 with
   | Error _ -> false
   | Ok subst ->
@@ -396,8 +396,8 @@ let%test "unify higher-order function" =
       t1' = t2' && apply_substitution subst (TVar "c") = TString
 
 let%test "unify array of functions" =
-  let t1 = TArray (TFun (TVar "a", TVar "a")) in
-  let t2 = TArray (TFun (TInt, TVar "b")) in
+  let t1 = TArray (tfun (TVar "a") (TVar "a")) in
+  let t2 = TArray (tfun TInt (TVar "b")) in
   match unify t1 t2 with
   | Error _ -> false
   | Ok subst -> apply_substitution subst (TVar "a") = TInt && apply_substitution subst (TVar "b") = TInt

@@ -103,7 +103,7 @@ let rec type_expr_to_mono_type_with
           | "float" -> Types.TFloat
           | "bool" -> Types.TBool
           | "string" -> Types.TString
-          | "unit" | "null" -> Types.TNull
+          | "unit" -> Types.TNull
           | other -> (
               match Enum_registry.lookup other with
               | Some enum_def ->
@@ -190,7 +190,7 @@ let rec type_expr_to_mono_type_with
       let param_mono = List.map (type_expr_to_mono_type_with type_bindings) param_types in
       let return_mono = type_expr_to_mono_type_with type_bindings return_type in
       (* Build nested function types: (a, b, c) -> d becomes a -> b -> c -> d *)
-      List.fold_right (fun param_type ret_type -> Types.TFun (param_type, ret_type)) param_mono return_mono
+      List.fold_right (fun param_type ret_type -> Types.tfun param_type ret_type) param_mono return_mono
   | Syntax.Ast.AST.TUnion type_exprs ->
       (* Union types (Phase 4.1): int | string | bool *)
       let mono_types = List.map (type_expr_to_mono_type_with type_bindings) type_exprs in
@@ -242,7 +242,7 @@ let rec mono_types_equal (t1 : Types.mono_type) (t2 : Types.mono_type) : bool =
       | Some r1, Some r2 -> mono_types_equal r1 r2
       | _ -> false)
   | Types.TRowVar r1, Types.TRowVar r2 -> r1 = r2
-  | Types.TFun (p1, r1), Types.TFun (p2, r2) -> mono_types_equal p1 p2 && mono_types_equal r1 r2
+  | Types.TFun (p1, r1, _), Types.TFun (p2, r2, _) -> mono_types_equal p1 p2 && mono_types_equal r1 r2
   | Types.TUnion t1s, Types.TUnion t2s ->
       List.length t1s = List.length t2s && List.for_all2 mono_types_equal t1s t2s
   | Types.TEnum (name1, args1), Types.TEnum (name2, args2) ->
@@ -300,7 +300,7 @@ let rec is_subtype_of (actual : Types.mono_type) (expected : Types.mono_type) : 
               true)
   | Types.TRowVar a, Types.TRowVar b -> a = b
   (* Functions: contravariant in params, covariant in return *)
-  | Types.TFun (p1, r1), Types.TFun (p2, r2) -> is_subtype_of p2 p1 && is_subtype_of r1 r2
+  | Types.TFun (p1, r1, _), Types.TFun (p2, r2, _) -> is_subtype_of p2 p1 && is_subtype_of r1 r2
   (* Enums: same name, subtypes for all args *)
   | Types.TEnum (name1, args1), Types.TEnum (name2, args2) ->
       name1 = name2 && List.length args1 = List.length args2 && List.for_all2 is_subtype_of args1 args2
@@ -335,7 +335,7 @@ let rec format_mono_type (t : Types.mono_type) : string =
   | Types.TFloat -> "float"
   | Types.TBool -> "bool"
   | Types.TString -> "string"
-  | Types.TNull -> "null"
+  | Types.TNull -> "unit"
   | Types.TArray elem_type -> Printf.sprintf "list[%s]" (format_mono_type elem_type)
   | Types.THash (key_type, value_type) ->
       Printf.sprintf "map[%s, %s]" (format_mono_type key_type) (format_mono_type value_type)
@@ -354,9 +354,14 @@ let rec format_mono_type (t : Types.mono_type) : string =
       in
       Printf.sprintf "{ %s%s }" (String.concat ", " field_strs) row_str
   | Types.TRowVar name -> name
-  | Types.TFun (param_type, return_type) ->
-      (* Format as a->b->c (right-associative) *)
-      Printf.sprintf "%s -> %s" (format_mono_type param_type) (format_mono_type return_type)
+  | Types.TFun (param_type, return_type, eff) ->
+      let arrow =
+        if eff then
+          " => "
+        else
+          " -> "
+      in
+      Printf.sprintf "%s%s%s" (format_mono_type param_type) arrow (format_mono_type return_type)
   | Types.TUnion types -> String.concat " | " (List.map format_mono_type types)
   | Types.TEnum (name, []) -> name
   | Types.TEnum (name, args) -> Printf.sprintf "%s[%s]" name (String.concat ", " (List.map format_mono_type args))

@@ -317,6 +317,7 @@ type error_kind =
   | ConstructorError of string (* generic constructor error *)
   | PatternError of string (* pattern matching error *)
   | MatchError of string (* match expression error *)
+  | PurityViolation of string (* pure function calls effectful operation *)
 
 (* An error with optional position info *)
 type infer_error = {
@@ -364,6 +365,7 @@ let error_kind_to_string = function
   | ConstructorError msg -> msg
   | PatternError msg -> msg
   | MatchError msg -> msg
+  | PurityViolation msg -> msg
 
 let error_to_string (err : infer_error) : string = error_kind_to_string err.kind
 
@@ -422,7 +424,7 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
     | AST.Function f ->
         (* Phase 2: Use parameter and return type annotations to guide inference *)
         (* Phase 4.3+: Handle generic parameters with constraints *)
-        infer_function_with_annotations type_map env f.generics f.params f.return_type f.body
+        infer_function_with_annotations type_map env f.generics f.params f.return_type f.is_effectful f.body
     (* Function calls *)
     | AST.Call (func, args) -> infer_call type_map env func args
     (* Arrays *)
@@ -1127,13 +1129,75 @@ and infer_function type_map env params body =
           (* Apply substitution to parameter types *)
           let param_types' = List.map (apply_substitution subst') param_types in
           (* Build function type: p1 -> p2 -> ... -> unified_ret_type *)
-          let func_type =
-            List.fold_right (fun param_t acc -> TFun (param_t, acc)) param_types' unified_ret_type
-          in
+          let func_type = List.fold_right (fun param_t acc -> tfun param_t acc) param_types' unified_ret_type in
           Ok (subst', func_type))
 
+(* ============================================================
+   Purity Enforcement
+   ============================================================
+
+   Walks a function body to detect calls to effectful functions.
+   Used for:
+   - Case 1: Error when a pure (->) function calls effectful operations
+   - Case 3: Infer effectfulness for unannotated functions
+*)
+
+and body_has_effectful_call (type_map : type_map) (stmt : AST.statement) : bool =
+  match stmt.stmt with
+  | AST.Let { value; _ } -> expr_has_effectful_call type_map value
+  | AST.Return expr -> expr_has_effectful_call type_map expr
+  | AST.ExpressionStmt expr -> expr_has_effectful_call type_map expr
+  | AST.Block stmts -> List.exists (body_has_effectful_call type_map) stmts
+  | AST.EnumDef _ | AST.TraitDef _ | AST.ImplDef _ | AST.DeriveDef _ | AST.TypeAlias _ -> false
+
+and expr_has_effectful_call (type_map : type_map) (expr : AST.expression) : bool =
+  match expr.expr with
+  | AST.Call (func, args) ->
+      let func_is_effectful =
+        match Hashtbl.find_opt type_map func.id with
+        | Some (TFun (_, _, true)) -> true
+        | _ -> false
+      in
+      func_is_effectful
+      || expr_has_effectful_call type_map func
+      || List.exists (expr_has_effectful_call type_map) args
+  | AST.MethodCall (receiver, _, args) ->
+      expr_has_effectful_call type_map receiver || List.exists (expr_has_effectful_call type_map) args
+  | AST.If (cond, then_branch, else_branch) -> (
+      expr_has_effectful_call type_map cond
+      || body_has_effectful_call type_map then_branch
+      ||
+      match else_branch with
+      | None -> false
+      | Some b -> body_has_effectful_call type_map b)
+  | AST.Function _ -> false (* defining a function is not calling one *)
+  | AST.Prefix (_, e) -> expr_has_effectful_call type_map e
+  | AST.Infix (l, _, r) -> expr_has_effectful_call type_map l || expr_has_effectful_call type_map r
+  | AST.Array elements -> List.exists (expr_has_effectful_call type_map) elements
+  | AST.Index (arr, idx) -> expr_has_effectful_call type_map arr || expr_has_effectful_call type_map idx
+  | AST.Hash pairs ->
+      List.exists (fun (k, v) -> expr_has_effectful_call type_map k || expr_has_effectful_call type_map v) pairs
+  | AST.Match (scrutinee, arms) ->
+      expr_has_effectful_call type_map scrutinee
+      || List.exists (fun (arm : AST.match_arm) -> expr_has_effectful_call type_map arm.body) arms
+  | AST.RecordLit (fields, spread) -> (
+      List.exists
+        (fun (f : AST.record_field) ->
+          match f.field_value with
+          | None -> false
+          | Some v -> expr_has_effectful_call type_map v)
+        fields
+      ||
+      match spread with
+      | None -> false
+      | Some e -> expr_has_effectful_call type_map e)
+  | AST.FieldAccess (e, _) -> expr_has_effectful_call type_map e
+  | AST.TypeCheck (e, _) -> expr_has_effectful_call type_map e
+  | AST.EnumConstructor (_, _, args) -> List.exists (expr_has_effectful_call type_map) args
+  | AST.Identifier _ | AST.Integer _ | AST.Float _ | AST.Boolean _ | AST.String _ -> false
+
 (* Infer function with parameter type annotations *)
-and infer_function_with_annotations type_map env generics_opt params return_annot body =
+and infer_function_with_annotations type_map env generics_opt params return_annot is_effectful body =
   (* Phase 4.3+: Process generic parameters and their constraints *)
   let type_var_map =
     match generics_opt with
@@ -1173,7 +1237,7 @@ and infer_function_with_annotations type_map env generics_opt params return_anno
                     let rec subst_generic ty =
                       match ty with
                       | TVar v when v = gen_name -> gen_var
-                      | TFun (arg, ret) -> TFun (subst_generic arg, subst_generic ret)
+                      | TFun (arg, ret, eff) -> TFun (subst_generic arg, subst_generic ret, eff)
                       | TArray elem -> TArray (subst_generic elem)
                       | THash (k, v) -> THash (subst_generic k, subst_generic v)
                       | TRecord (fields, row) ->
@@ -1243,41 +1307,62 @@ and infer_function_with_annotations type_map env generics_opt params return_anno
   | Error e -> Error e
   | Ok (subst, body_type) -> (
       let body_type' = apply_substitution subst body_type in
-      (* If we have a return type annotation, unify with it to ensure type consistency *)
-      match expected_return_type_opt with
-      | None -> (
-          (* No return type annotation - collect all return types and unify with body type *)
-          match collect_and_unify_returns type_map env' body_type' body subst with
-          | Error e -> Error e
-          | Ok (subst', unified_ret_type) ->
-              let param_types' = List.map (apply_substitution subst') param_types in
-              let func_type =
-                List.fold_right (fun param_t acc -> TFun (param_t, acc)) param_types' unified_ret_type
-              in
-              Ok (subst', func_type))
-      | Some expected_ret_type -> (
-          (* First, validate all explicit return statements match expected type *)
-          match validate_return_statements type_map env' expected_ret_type body with
-          | Error e -> Error e
-          | Ok () ->
-              (* Then check that inferred body type is a subtype of expected return type *)
-              (* This catches cases like `fn() -> string { if (...) { "a" } else { 42 } }`
-                 where body type is string|int which is NOT a subtype of string *)
-              if Annotation.is_subtype_of body_type' expected_ret_type then
-                (* Body type is compatible, now unify to propagate constraints *)
-                match unify body_type' expected_ret_type with
-                | Error _e -> Error (error_at_stmt (ReturnTypeMismatch (expected_ret_type, body_type')) body)
-                | Ok subst2 ->
-                    let final_subst = compose_substitution subst subst2 in
-                    let final_body_type = apply_substitution subst2 body_type' in
-                    (* Type checking is automatic via unification above *)
-                    let param_types' = List.map (apply_substitution final_subst) param_types in
-                    let func_type =
-                      List.fold_right (fun param_t acc -> TFun (param_t, acc)) param_types' final_body_type
-                    in
-                    Ok (final_subst, func_type)
-              else
-                Error (error_at_stmt (ReturnTypeMismatch (expected_ret_type, body_type')) body)))
+      (* Purity enforcement: check if the body calls effectful operations *)
+      let has_effects = body_has_effectful_call type_map body in
+      (* Case 1: Pure function (->) calling effectful operation is an error *)
+      if (not is_effectful) && Option.is_some return_annot && has_effects then
+        Error
+          (error_at_stmt
+             (PurityViolation
+                "Pure function (declared with ->) cannot call effectful operations. Use => to declare an effectful function.")
+             body)
+      else
+        (* Determine actual effectfulness:
+           - User wrote =>: keep effectful
+           - User wrote -> (pure body verified above): keep pure
+           - No annotation: infer from body *)
+        let actual_effectful =
+          if is_effectful then
+            true
+          else
+            has_effects
+        in
+        let mk_fun a b = TFun (a, b, actual_effectful) in
+        (* If we have a return type annotation, unify with it to ensure type consistency *)
+        match expected_return_type_opt with
+        | None -> (
+            (* No return type annotation - collect all return types and unify with body type *)
+            match collect_and_unify_returns type_map env' body_type' body subst with
+            | Error e -> Error e
+            | Ok (subst', unified_ret_type) ->
+                let param_types' = List.map (apply_substitution subst') param_types in
+                let func_type =
+                  List.fold_right (fun param_t acc -> mk_fun param_t acc) param_types' unified_ret_type
+                in
+                Ok (subst', func_type))
+        | Some expected_ret_type -> (
+            (* First, validate all explicit return statements match expected type *)
+            match validate_return_statements type_map env' expected_ret_type body with
+            | Error e -> Error e
+            | Ok () ->
+                (* Then check that inferred body type is a subtype of expected return type *)
+                (* This catches cases like `fn() -> string { if (...) { "a" } else { 42 } }`
+                   where body type is string|int which is NOT a subtype of string *)
+                if Annotation.is_subtype_of body_type' expected_ret_type then
+                  (* Body type is compatible, now unify to propagate constraints *)
+                  match unify body_type' expected_ret_type with
+                  | Error _e -> Error (error_at_stmt (ReturnTypeMismatch (expected_ret_type, body_type')) body)
+                  | Ok subst2 ->
+                      let final_subst = compose_substitution subst subst2 in
+                      let final_body_type = apply_substitution subst2 body_type' in
+                      (* Type checking is automatic via unification above *)
+                      let param_types' = List.map (apply_substitution final_subst) param_types in
+                      let func_type =
+                        List.fold_right (fun param_t acc -> mk_fun param_t acc) param_types' final_body_type
+                      in
+                      Ok (final_subst, func_type)
+                else
+                  Error (error_at_stmt (ReturnTypeMismatch (expected_ret_type, body_type')) body)))
 
 (* ============================================================
    Function Calls
@@ -1295,7 +1380,7 @@ and infer_call type_map env func args =
           let func_type' = apply_substitution subst2 func_type in
           (* Create expected function type: arg1 -> arg2 -> ... -> result *)
           let result_type = fresh_type_var () in
-          let expected_func_type = List.fold_right (fun arg_t acc -> TFun (arg_t, acc)) arg_types result_type in
+          let expected_func_type = List.fold_right (fun arg_t acc -> tfun arg_t acc) arg_types result_type in
           (* Unify actual function type with expected *)
           match unify func_type' expected_func_type with
           | Error e -> Error (error_at (UnificationError e) func)
@@ -1616,7 +1701,7 @@ and infer_statement type_map env stmt =
           | AST.TArrow (params, ret) ->
               let param_types = List.map convert params in
               let ret_type = convert ret in
-              List.fold_right (fun p r -> TFun (p, r)) param_types ret_type
+              List.fold_right (fun p r -> tfun p r) param_types ret_type
           | AST.TUnion types -> normalize_union (List.map convert types)
           | AST.TRecord (_fields, _row) -> failwith "Record types not yet implemented in enum definition"
         in
@@ -1672,7 +1757,7 @@ and infer_statement type_map env stmt =
           | AST.TArrow (params, ret) ->
               let param_types = List.map convert params in
               let ret_type = convert ret in
-              List.fold_right (fun p r -> TFun (p, r)) param_types ret_type
+              List.fold_right (fun p r -> tfun p r) param_types ret_type
           | AST.TUnion types -> normalize_union (List.map convert types)
           | AST.TRecord (fields, row) ->
               let field_types =
@@ -2121,6 +2206,7 @@ and infer_let type_map env name expr type_annotation =
             try
               (* Create a partially constrained function type: param1 -> param2 -> ... -> return_type *)
               let return_type = Annotation.type_expr_to_mono_type type_expr in
+              let mk_f a b = TFun (a, b, f.is_effectful) in
               let param_types =
                 List.map
                   (fun (_name, annot_opt) ->
@@ -2130,7 +2216,7 @@ and infer_let type_map env name expr type_annotation =
                   f.params
               in
               (* Build function type from parameters and return type *)
-              List.fold_right (fun param_t acc -> TFun (param_t, acc)) param_types return_type
+              List.fold_right (fun param_t acc -> mk_f param_t acc) param_types return_type
             with
             | Annotation.Open_row_rejected _ as e -> raise e
             | Failure _ -> fresh_type_var ()))
@@ -2322,13 +2408,13 @@ module Test = struct
 
   let%test "infer simple function" =
     (* fn(x) { x + 1 } should be Int -> Int *)
-    infers_to "fn(x) { x + 1 }" (TFun (TInt, TInt))
+    infers_to "fn(x) { x + 1 }" (tfun TInt TInt)
 
   let%test "infer identity function" =
     (* fn(x) { x } should be t0 -> t0 (polymorphic) *)
     match infer_string "fn(x) { x }" with
     | Error _ -> false
-    | Ok (_, _type_map, TFun (TVar a, TVar b)) -> a = b (* same type variable *)
+    | Ok (_, _type_map, TFun (TVar a, TVar b, _)) -> a = b (* same type variable *)
     | Ok _ -> false
 
   let%test "infer two-arg function" =
@@ -2336,14 +2422,14 @@ module Test = struct
     (* Without type classes, we can't constrain to just numeric types *)
     match infer_string "fn(x, y) { x + y }" with
     | Error _ -> false
-    | Ok (_, _type_map, TFun (TVar a, TFun (TVar b, TVar c))) ->
+    | Ok (_, _type_map, TFun (TVar a, TFun (TVar b, TVar c, _), _)) ->
         (* All three type vars should be the same *)
         a = b && b = c
     | Ok _ -> false
 
   let%test "infer two-arg function with literal" =
     (* fn(x, y) { x + y + 1 } should be (Int, Int) -> Int because of the literal *)
-    infers_to "fn(x, y) { x + y + 1 }" (TFun (TInt, TFun (TInt, TInt)))
+    infers_to "fn(x, y) { x + y + 1 }" (tfun TInt (tfun TInt TInt))
 
   let%test "infer function call" =
     (* fn(x) { x + 1 }(5) should be Int *)
@@ -2449,7 +2535,7 @@ module Test = struct
   let%test "infer recursive function type" =
     (* The factorial function should have type Int -> Int *)
     let code = "let fact = fn(n) { if (n == 0) { 1 } else { n * fact(n - 1) } }; fact" in
-    infers_to code (TFun (TInt, TInt))
+    infers_to code (tfun TInt TInt)
 
   let%test "infer fibonacci" =
     let code = "let fib = fn(n) { if (n < 2) { n } else { fib(n - 1) + fib(n - 2) } }; fib(10)" in
@@ -2689,7 +2775,7 @@ f"
     in
     clear_constraint_store ();
     add_type_var_constraints "t0" [ "show" ];
-    match verify_constraints_in_substitution [ ("t0", TFun (TInt, TInt)) ] with
+    match verify_constraints_in_substitution [ ("t0", tfun TInt TInt) ] with
     | Ok () -> false
     | Error msg -> contains_substring msg "Trait obligation failed" && contains_substring msg "type variable 't0'"
 
@@ -2796,4 +2882,76 @@ f"
         match infer_program program with
         | Error { file_id = Some "main.mr"; _ } -> true
         | _ -> false)
+
+  let%test "infer effectful function type uses fat arrow" =
+    (* fn(x: int) => int { x + 1 } should infer as Int => Int *)
+    match infer_string "fn(x: int) => int { x + 1 }" with
+    | Error _ -> false
+    | Ok (_, _, TFun (TInt, TInt, true)) -> true
+    | Ok _ -> false
+
+  let%test "infer pure function type uses thin arrow" =
+    (* fn(x: int) -> int { x + 1 } should infer as Int -> Int (not effectful) *)
+    match infer_string "fn(x: int) -> int { x + 1 }" with
+    | Error _ -> false
+    | Ok (_, _, TFun (TInt, TInt, false)) -> true
+    | Ok _ -> false
+
+  let%test "infer unannotated function is pure by default" =
+    match infer_string "fn(x) { x + 1 }" with
+    | Error _ -> false
+    | Ok (_, _, TFun (_, _, false)) -> true
+    | Ok _ -> false
+
+  (* Purity enforcement tests *)
+  (* Note: infer_string uses empty_env (no builtins), so we define effectful
+     functions inline using => to test purity enforcement *)
+
+  let%test "pure function calling effectful operation is error" =
+    (* Define an effectful function, then a pure function that calls it *)
+    let code = "let eff = fn(x: int) => int { x }; fn(y: int) -> int { eff(y) }" in
+    match infer_string code with
+    | Error { kind = PurityViolation _; _ } -> true
+    | _ -> false
+
+  let%test "pure function with pure body is ok" =
+    match infer_string "fn(x: int) -> int { x + 1 }" with
+    | Ok (_, _, TFun (TInt, TInt, false)) -> true
+    | _ -> false
+
+  let%test "effectful annotation with pure body is ok (no enforcement yet)" =
+    (* Case 2 is not enforced — => with pure body is allowed *)
+    match infer_string "fn(x: int) => int { x + 1 }" with
+    | Ok (_, _, TFun (TInt, TInt, true)) -> true
+    | _ -> false
+
+  let%test "unannotated function calling effectful infers as effectful" =
+    let code = "let eff = fn(x: int) => int { x }; fn(y: int) { eff(y) }" in
+    match infer_string code with
+    | Ok (_, _, TFun (TInt, TInt, true)) -> true
+    | _ -> false
+
+  let%test "unannotated function with pure body infers as pure" =
+    match infer_string "fn(x) { x + 1 }" with
+    | Ok (_, _, TFun (_, _, false)) -> true
+    | _ -> false
+
+  let%test "pure function calling effectful in let binding is error" =
+    let code = "let eff = fn(x: int) => int { x }; fn(y: int) -> int { let z = eff(y); z }" in
+    match infer_string code with
+    | Error { kind = PurityViolation _; _ } -> true
+    | _ -> false
+
+  let%test "pure function calling effectful in if branch is error" =
+    let code = "let eff = fn(x: int) => int { x }; fn(y: int) -> int { if (true) { eff(y) } else { 0 } }" in
+    match infer_string code with
+    | Error { kind = PurityViolation _; _ } -> true
+    | _ -> false
+
+  let%test "pure function defining effectful function is ok" =
+    (* Defining (not calling) an effectful function inside a pure function is fine *)
+    let code = "fn(x: int) { fn(y: int) => int { y } }" in
+    match infer_string code with
+    | Ok _ -> true
+    | Error _ -> false
 end

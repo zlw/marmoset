@@ -1041,18 +1041,17 @@ and parse_function_literal (p : parser) : (parser * AST.expression, parser) resu
   let* p3 = expect_peek p2 Token.LParen in
   let* p4, params = parse_function_parameters p3 in
   (* Phase 2: Parse return type annotation if present *)
-  let* p5, return_type =
+  let* p5, return_type, is_effectful =
     if peek_token_is p4 Token.Arrow then
       let p5 = next_token p4 in
       let* p6, te = parse_type_expr (next_token p5) in
-      Ok (p6, Some te)
+      Ok (p6, Some te, false)
     else if peek_token_is p4 Token.FatArrow then
-      (* Effect annotation - parse but ignore for Phase 2 *)
       let p5 = next_token p4 in
-      let* p6, _te = parse_type_expr (next_token p5) in
-      Ok (p6, None)
+      let* p6, te = parse_type_expr (next_token p5) in
+      Ok (p6, Some te, true)
     else
-      Ok (p4, None)
+      Ok (p4, None, false)
   in
   (* After parsing return type or parameters, check for { *)
   let* p6 =
@@ -1065,7 +1064,7 @@ and parse_function_literal (p : parser) : (parser * AST.expression, parser) resu
   in
   let* p7, body = parse_block_statement p6 in
   let id, p8 = fresh_id p7 in
-  Ok (p8, mk_expr id pos (AST.Function { generics; params; return_type; body }))
+  Ok (p8, mk_expr id pos (AST.Function { generics; params; return_type; is_effectful; body }))
 
 and parse_function_parameters (p : parser) : (parser * (string * AST.type_expr option) list, parser) result =
   if peek_token_is p Token.RParen then
@@ -1466,7 +1465,8 @@ module Test = struct
   let let_stmt name value = AST.Let { name; value; type_annotation = None }
 
   (* Helper for Function expressions with the new record structure *)
-  let fn_expr params body = AST.Function { generics = None; params; return_type = None; body }
+  let fn_expr params body =
+    AST.Function { generics = None; params; return_type = None; is_effectful = false; body }
 
   let run (tests : test list) : bool =
     tests

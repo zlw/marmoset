@@ -8,7 +8,7 @@ type mono_type =
   | TString (* String *)
   | TNull (* Null / unit *)
   | TVar of string (* Type variable: 'a, 'b, etc. *)
-  | TFun of mono_type * mono_type (* Function: T -> U (nested for multi-arg) *)
+  | TFun of mono_type * mono_type * bool (* Function: T -> U, bool = is_effectful (=> vs ->) *)
   | TArray of mono_type (* Array: [T] *)
   | THash of mono_type * mono_type (* Hash: {K: V} *)
   | TRecord of record_field_type list * mono_type option
@@ -21,6 +21,10 @@ and record_field_type = {
   name : string;
   typ : mono_type;
 }
+
+(* Convenience constructors for function types *)
+let tfun arg ret = TFun (arg, ret, false)
+let tfun_eff arg ret = TFun (arg, ret, true)
 
 (* Canonicalize record fields by name. If duplicates exist, last write wins. *)
 let normalize_record_fields (fields : record_field_type list) : record_field_type list =
@@ -37,7 +41,7 @@ let normalize_record_fields (fields : record_field_type list) : record_field_typ
 let rec canonicalize_mono_type (mono : mono_type) : mono_type =
   match mono with
   | TInt | TFloat | TBool | TString | TNull | TVar _ | TRowVar _ -> mono
-  | TFun (arg, ret) -> TFun (canonicalize_mono_type arg, canonicalize_mono_type ret)
+  | TFun (arg, ret, eff) -> TFun (canonicalize_mono_type arg, canonicalize_mono_type ret, eff)
   | TArray element -> TArray (canonicalize_mono_type element)
   | THash (key, value) -> THash (canonicalize_mono_type key, canonicalize_mono_type value)
   | TRecord (fields, row) ->
@@ -72,22 +76,28 @@ and to_string = function
   | TFloat -> "Float"
   | TBool -> "Bool"
   | TString -> "String"
-  | TNull -> "Null"
+  | TNull -> "Unit"
   | TVar name -> name
   | TFun _ as t ->
-      let rec collect_args = function
-        | TFun (arg, rest) ->
-            let args, ret = collect_args rest in
-            (arg :: args, ret)
-        | t -> ([], t)
+      let rec collect_args eff = function
+        | TFun (arg, rest, e) ->
+            let args, ret, eff' = collect_args (eff || e) rest in
+            (arg :: args, ret, eff')
+        | t -> ([], t, eff)
       in
-      let args, ret = collect_args t in
+      let args, ret, eff = collect_args false t in
       let args_str =
         match args with
         | [ single ] -> to_string_parens single (* single arg: parens if it's a function *)
         | _ -> "(" ^ String.concat ", " (List.map to_string args) ^ ")"
       in
-      args_str ^ " -> " ^ to_string ret
+      let arrow =
+        if eff then
+          " => "
+        else
+          " -> "
+      in
+      args_str ^ arrow ^ to_string ret
   | TArray element -> "[" ^ to_string element ^ "]"
   | THash (key, value) -> "{" ^ to_string key ^ ": " ^ to_string value ^ "}"
   | TRecord (fields, row) ->
@@ -134,7 +144,7 @@ let rec apply_substitution (subst : substitution) (mono : mono_type) : mono_type
           (* Recursively apply substitution to handle chains like t3 -> t5 -> int *)
           apply_substitution subst replacement
       | None -> mono)
-  | TFun (arg, ret) -> TFun (apply_substitution subst arg, apply_substitution subst ret)
+  | TFun (arg, ret, eff) -> TFun (apply_substitution subst arg, apply_substitution subst ret, eff)
   | TArray element -> TArray (apply_substitution subst element)
   | THash (key, value) -> THash (apply_substitution subst key, apply_substitution subst value)
   | TRecord (fields, row) ->
@@ -176,7 +186,7 @@ let rec free_type_vars (mono : mono_type) : TypeVarSet.t =
   match mono with
   | TInt | TFloat | TBool | TString | TNull -> TypeVarSet.empty
   | TVar name -> TypeVarSet.singleton name
-  | TFun (arg, ret) -> TypeVarSet.union (free_type_vars arg) (free_type_vars ret)
+  | TFun (arg, ret, _) -> TypeVarSet.union (free_type_vars arg) (free_type_vars ret)
   | TArray element -> free_type_vars element
   | THash (key, value) -> TypeVarSet.union (free_type_vars key) (free_type_vars value)
   | TRecord (fields, row) ->
@@ -221,7 +231,7 @@ let rec collect_vars_in_order (mono : mono_type) : string list =
   match mono with
   | TInt | TFloat | TBool | TString | TNull -> []
   | TVar name -> [ name ]
-  | TFun (arg, ret) -> collect_vars_in_order arg @ collect_vars_in_order ret
+  | TFun (arg, ret, _) -> collect_vars_in_order arg @ collect_vars_in_order ret
   | TArray element -> collect_vars_in_order element
   | THash (key, value) -> collect_vars_in_order key @ collect_vars_in_order value
   | TRecord (fields, row) ->
@@ -294,15 +304,15 @@ let%test "to_string primitives" = to_string TInt = "Int" && to_string TBool = "B
 
 let%test "to_string single arg function" =
   (* Int -> Bool displays as: Int -> Bool *)
-  to_string (TFun (TInt, TBool)) = "Int -> Bool"
+  to_string (tfun TInt TBool) = "Int -> Bool"
 
 let%test "to_string multi arg function" =
   (* Int -> String -> Bool displays as: (Int, String) -> Bool *)
-  to_string (TFun (TInt, TFun (TString, TBool))) = "(Int, String) -> Bool"
+  to_string (tfun TInt (tfun TString TBool)) = "(Int, String) -> Bool"
 
 let%test "to_string nested function" =
   (* (Int -> Bool) -> String displays as: (Int -> Bool) -> String *)
-  to_string (TFun (TFun (TInt, TBool), TString)) = "(Int -> Bool) -> String"
+  to_string (tfun (tfun TInt TBool) TString) = "(Int -> Bool) -> String"
 
 let%test "to_string array and hash" =
   to_string (TArray TInt) = "[Int]" && to_string (THash (TString, TInt)) = "{String: Int}"
@@ -320,12 +330,12 @@ let%test "poly_type_to_string monomorphic" =
 
 let%test "poly_type_to_string polymorphic" =
   (* ∀a. a -> a *)
-  let id_type = Forall ([ "a" ], TFun (TVar "a", TVar "a")) in
+  let id_type = Forall ([ "a" ], tfun (TVar "a") (TVar "a")) in
   poly_type_to_string id_type = "∀a. a -> a"
 
 let%test "poly_type_to_string multi var" =
   (* ∀a b. (a, b) -> a *)
-  let const_type = Forall ([ "a"; "b" ], TFun (TVar "a", TFun (TVar "b", TVar "a"))) in
+  let const_type = Forall ([ "a"; "b" ], tfun (TVar "a") (tfun (TVar "b") (TVar "a"))) in
   poly_type_to_string const_type = "∀a b. (a, b) -> a"
 
 let%test "apply_substitution to TVar" =
@@ -338,7 +348,7 @@ let%test "apply_substitution to unknown TVar" =
 
 let%test "apply_substitution to function" =
   let subst = [ ("a", TInt); ("b", TString) ] in
-  apply_substitution subst (TFun (TVar "a", TVar "b")) = TFun (TInt, TString)
+  apply_substitution subst (tfun (TVar "a") (TVar "b")) = tfun TInt TString
 
 let%test "apply_substitution to record" =
   let subst = [ ("a", TInt); ("r", TRecord ([ { name = "y"; typ = TString } ], None)) ] in
@@ -350,8 +360,8 @@ let%test "apply_substitution_poly respects quantified vars" =
   (* ∀a. a -> b  with {a -> Int, b -> String}  should give  ∀a. a -> String *)
   (* The 'a' is quantified so it should NOT be replaced *)
   let subst = [ ("a", TInt); ("b", TString) ] in
-  let poly = Forall ([ "a" ], TFun (TVar "a", TVar "b")) in
-  apply_substitution_poly subst poly = Forall ([ "a" ], TFun (TVar "a", TString))
+  let poly = Forall ([ "a" ], tfun (TVar "a") (TVar "b")) in
+  apply_substitution_poly subst poly = Forall ([ "a" ], tfun (TVar "a") TString)
 
 let%test "compose_substitution" =
   (* first = {a -> b}, second = {b -> Int} *)
@@ -368,7 +378,7 @@ let%test "free_type_vars TVar" = TypeVarSet.equal (free_type_vars (TVar "a")) (T
 
 let%test "free_type_vars function" =
   (* a -> b has free vars {a, b} *)
-  let free = free_type_vars (TFun (TVar "a", TVar "b")) in
+  let free = free_type_vars (tfun (TVar "a") (TVar "b")) in
   TypeVarSet.equal free (TypeVarSet.of_list [ "a"; "b" ])
 
 let%test "free_type_vars record" =
@@ -377,13 +387,13 @@ let%test "free_type_vars record" =
 
 let%test "free_type_vars_poly quantified" =
   (* ∀a. a -> b  has free vars {b} only (a is bound) *)
-  let free = free_type_vars_poly (Forall ([ "a" ], TFun (TVar "a", TVar "b"))) in
+  let free = free_type_vars_poly (Forall ([ "a" ], tfun (TVar "a") (TVar "b"))) in
   TypeVarSet.equal free (TypeVarSet.singleton "b")
 
 let%test "occurs_in check" =
   occurs_in "a" (TVar "a")
-  && occurs_in "a" (TFun (TVar "a", TInt))
-  && (not (occurs_in "a" (TFun (TVar "b", TInt))))
+  && occurs_in "a" (tfun (TVar "a") TInt)
+  && (not (occurs_in "a" (tfun (TVar "b") TInt)))
   && not (occurs_in "a" TInt)
 
 let%test "nice_var_name" =
@@ -391,15 +401,19 @@ let%test "nice_var_name" =
 
 let%test "normalize renames vars in order" =
   (* t5 -> t3 becomes a -> b *)
-  normalize (TFun (TVar "t5", TVar "t3")) = TFun (TVar "a", TVar "b")
+  normalize (tfun (TVar "t5") (TVar "t3")) = tfun (TVar "a") (TVar "b")
 
 let%test "normalize same var keeps same name" =
   (* t2 -> t2 becomes a -> a *)
-  normalize (TFun (TVar "t2", TVar "t2")) = TFun (TVar "a", TVar "a")
+  normalize (tfun (TVar "t2") (TVar "t2")) = tfun (TVar "a") (TVar "a")
 
 let%test "to_string_pretty" =
-  to_string_pretty (TFun (TVar "t99", TVar "t99")) = "a -> a"
-  && to_string_pretty (TFun (TVar "x", TFun (TVar "y", TVar "x"))) = "(a, b) -> a"
+  to_string_pretty (tfun (TVar "t99") (TVar "t99")) = "a -> a"
+  && to_string_pretty (tfun (TVar "x") (tfun (TVar "y") (TVar "x"))) = "(a, b) -> a"
+
+let%test "to_string effectful function" =
+  to_string (tfun_eff TInt TBool) = "Int => Bool"
+  && to_string (tfun_eff TInt (tfun_eff TString TBool)) = "(Int, String) => Bool"
 
 (* Union type tests *)
 
