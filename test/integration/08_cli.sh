@@ -69,15 +69,15 @@ else
     fi
 fi
 
-# --- marmoset build --release ---
+# --- marmoset release ---
 
 TOTAL=$((TOTAL + 1))
-echo -n "TEST [$TOTAL] build --release: produces binary ... "
+echo -n "TEST [$TOTAL] release: produces binary ... "
 tmpfile=$(mktemp)
 binpath=$(mktemp ./marmoset_test_bin.XXXXXX)
 rm -f "$binpath"
 echo 'puts(1)' > "$tmpfile"
-if $EXECUTABLE build --release "$tmpfile" -o "$binpath" >/dev/null 2>&1 && [ -x "$binpath" ]; then
+if $EXECUTABLE release "$tmpfile" -o "$binpath" >/dev/null 2>&1 && [ -x "$binpath" ]; then
     echo "✓ PASS"
     PASS=$((PASS + 1))
 else

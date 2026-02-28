@@ -7,7 +7,10 @@ type command =
       input : string;
       output : string option;
       emit_go : string option;
-      release : bool;
+    }
+  | Release of {
+      input : string;
+      output : string option;
     }
   | Check of { filename : string }
   | Lsp
@@ -15,7 +18,8 @@ type command =
 let print_usage () =
   Printf.eprintf "Usage:\n";
   Printf.eprintf "  marmoset run [--benchmark] <input.mr>\n";
-  Printf.eprintf "  marmoset build [--release] <input.mr> [-o output] [-go dir]\n";
+  Printf.eprintf "  marmoset build <input.mr> [-o output] [-go dir]\n";
+  Printf.eprintf "  marmoset release <input.mr> [-o output]\n";
   Printf.eprintf "  marmoset check <input.mr>\n";
   Printf.eprintf "  marmoset lsp\n"
 
@@ -26,7 +30,6 @@ let parse_args () : command =
       let input = ref None in
       let output = ref None in
       let emit_go = ref None in
-      let release = ref false in
       let rec parse = function
         | [] -> ()
         | "-o" :: out :: tail ->
@@ -34,9 +37,6 @@ let parse_args () : command =
             parse tail
         | ("-go" | "--emit-go") :: dir :: tail ->
             emit_go := Some dir;
-            parse tail
-        | "--release" :: tail ->
-            release := true;
             parse tail
         | arg :: tail when String.length arg > 0 && arg.[0] <> '-' ->
             input := Some arg;
@@ -47,7 +47,28 @@ let parse_args () : command =
       in
       parse rest;
       match !input with
-      | Some input -> Build { input; output = !output; emit_go = !emit_go; release = !release }
+      | Some input -> Build { input; output = !output; emit_go = !emit_go }
+      | None ->
+          print_usage ();
+          exit 1)
+  | "release" :: rest -> (
+      let input = ref None in
+      let output = ref None in
+      let rec parse = function
+        | [] -> ()
+        | "-o" :: out :: tail ->
+            output := Some out;
+            parse tail
+        | arg :: tail when String.length arg > 0 && arg.[0] <> '-' ->
+            input := Some arg;
+            parse tail
+        | _ ->
+            print_usage ();
+            exit 1
+      in
+      parse rest;
+      match !input with
+      | Some input -> Release { input; output = !output }
       | None ->
           print_usage ();
           exit 1)
@@ -167,19 +188,34 @@ let compile_to_binary
       else
         Error "Go build failed"
 
-let run_build input output_opt emit_go_opt release =
+let run_build input output_opt emit_go_opt =
   let source = read_file input in
   let output =
     match output_opt with
     | Some o -> o
     | None -> Filename.basename (Filename.remove_extension input)
   in
-  match compile_to_binary ~input_file:input ~source ~output_bin:output ~emit_go_dir:emit_go_opt ~release with
+  match
+    compile_to_binary ~input_file:input ~source ~output_bin:output ~emit_go_dir:emit_go_opt ~release:false
+  with
   | Ok () ->
       (match emit_go_opt with
       | Some dir -> Printf.printf "Go source written to %s/\n" dir
       | None -> ());
       Printf.printf "Built: %s\n" output
+  | Error msg ->
+      Printf.eprintf "Error: %s\n" msg;
+      exit 1
+
+let run_release input output_opt =
+  let source = read_file input in
+  let output =
+    match output_opt with
+    | Some o -> o
+    | None -> Filename.basename (Filename.remove_extension input)
+  in
+  match compile_to_binary ~input_file:input ~source ~output_bin:output ~emit_go_dir:None ~release:true with
+  | Ok () -> Printf.printf "Built (release): %s\n" output
   | Error msg ->
       Printf.eprintf "Error: %s\n" msg;
       exit 1
@@ -218,6 +254,7 @@ let run_check filename =
 let () =
   match parse_args () with
   | Run { benchmark; filename } -> run_file ~benchmark ~filename
-  | Build { input; output; emit_go; release } -> run_build input output emit_go release
+  | Build { input; output; emit_go } -> run_build input output emit_go
+  | Release { input; output } -> run_release input output
   | Check { filename } -> run_check filename
   | Lsp -> Marmoset_lsp.Server.run ()

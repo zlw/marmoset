@@ -55,6 +55,12 @@ Emit generated Go source alongside build:
 ./marmoset build examples/fibonacci-typed.mr -go out
 ```
 
+Build an optimized release binary (strips symbols, trims paths):
+
+```sh
+./marmoset release examples/fibonacci-typed.mr -o fibonacci
+```
+
 ## Examples
 
 Core:
