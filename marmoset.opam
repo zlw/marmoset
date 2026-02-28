@@ -15,8 +15,8 @@ depends: [
   "ocaml"
   "ppx_deriving"
   "ppx_inline_test"
-  "linol"
-  "linol-lwt"
+  "linol" {>= "0.10"}
+  "linol-lwt" {>= "0.10"}
   "odoc" {with-doc}
 ]
 build: [

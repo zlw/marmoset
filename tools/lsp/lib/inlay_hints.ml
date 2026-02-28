@@ -1,6 +1,6 @@
 (* Inlay hints: show inferred types for unannotated bindings and parameters *)
 
-module Lsp_t = Lsp_compat.Types
+module Lsp_t = Linol_lsp.Types
 module Ast = Marmoset.Lib.Ast
 module Infer = Marmoset.Lib.Infer
 module Types = Marmoset.Lib.Types

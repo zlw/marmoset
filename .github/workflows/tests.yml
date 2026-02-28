@@ -20,6 +20,11 @@ jobs:
         with:
           ocaml-compiler: 5.2.x
 
+      - name: Pin linol 0.10
+        run: |
+          opam pin add linol https://github.com/c-cube/linol.git#v0.10 -n
+          opam pin add linol-lwt https://github.com/c-cube/linol.git#v0.10 -n
+
       - run: opam install . --deps-only --with-test
 
       - run: opam exec -- make unit compiler
@@ -36,6 +41,11 @@ jobs:
         uses: ocaml/setup-ocaml@v3
         with:
           ocaml-compiler: 5.2.x
+
+      - name: Pin linol 0.10
+        run: |
+          opam pin add linol https://github.com/c-cube/linol.git#v0.10 -n
+          opam pin add linol-lwt https://github.com/c-cube/linol.git#v0.10 -n
 
       - run: opam install . --deps-only --with-test
 
@@ -97,6 +107,11 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: "1.22.x"
+
+      - name: Pin linol 0.10
+        run: |
+          opam pin add linol https://github.com/c-cube/linol.git#v0.10 -n
+          opam pin add linol-lwt https://github.com/c-cube/linol.git#v0.10 -n
 
       - run: opam install . --deps-only --with-test
 
