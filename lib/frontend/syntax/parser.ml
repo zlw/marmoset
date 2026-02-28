@@ -1161,10 +1161,10 @@ and parse_dot_expression (p : parser) (left : AST.expression) : (parser * AST.ex
 and parse_record_or_hash_literal (p : parser) : (parser * AST.expression, parser) result =
   let pos = p.curr_token.pos in
   let finish mode (fields : AST.record_field list) spread (pairs : (AST.expression * AST.expression) list) lp =
-    let id, _ = fresh_id lp in
+    let id, lp' = fresh_id lp in
     match mode with
-    | RecordMode -> Ok (lp, mk_expr id pos (AST.RecordLit (List.rev fields, spread)))
-    | HashMode -> Ok (lp, mk_expr id pos (AST.Hash (List.rev pairs)))
+    | RecordMode -> Ok (lp', mk_expr id pos (AST.RecordLit (List.rev fields, spread)))
+    | HashMode -> Ok (lp', mk_expr id pos (AST.Hash (List.rev pairs)))
   in
   let rec loop
       (lp : parser)
@@ -1177,8 +1177,8 @@ and parse_record_or_hash_literal (p : parser) : (parser * AST.expression, parser
       | Some mode' -> finish mode' fields spread pairs lp
       | None ->
           (* "{}" is treated as empty hash for backwards compatibility. *)
-          let id, _ = fresh_id lp in
-          Ok (lp, mk_expr id pos (AST.Hash []))
+          let id, lp' = fresh_id lp in
+          Ok (lp', mk_expr id pos (AST.Hash []))
     else
       match mode with
       | Some RecordMode -> (
@@ -1246,7 +1246,12 @@ and consume_brace_entry_separator (p : parser) (err_msg : string) : (parser, par
   if curr_token_is p Token.Comma then
     Ok (next_token p)
   else if curr_token_is p Token.RBrace then
-    Ok p
+    if peek_token_is p Token.Comma then
+      Ok (next_token (next_token p))
+    else if peek_token_is p Token.RBrace then
+      Ok (next_token p)
+    else
+      Ok p
   else if peek_token_is p Token.Comma then
     Ok (next_token (next_token p))
   else if peek_token_is p Token.RBrace then
@@ -1958,6 +1963,60 @@ module Test = struct
         List.exists
           (fun msg -> contains_substring msg "multiple spread entries in record literal are not supported yet")
           errs
+
+  let rec collect_expr_ids (expr : AST.expression) : int list =
+    let child_ids =
+      match expr.expr with
+      | AST.Integer _ | AST.Float _ | AST.Boolean _ | AST.String _ | AST.Identifier _ -> []
+      | AST.Prefix (_, e) -> collect_expr_ids e
+      | AST.Infix (l, _, r) -> collect_expr_ids l @ collect_expr_ids r
+      | AST.TypeCheck (e, _) -> collect_expr_ids e
+      | AST.If (cond, cons, alt) ->
+          collect_expr_ids cond @ collect_stmt_ids cons
+          @
+          (match alt with
+          | Some s -> collect_stmt_ids s
+          | None -> [])
+      | AST.Function f -> collect_stmt_ids f.body
+      | AST.Call (f, args) -> collect_expr_ids f @ List.concat_map collect_expr_ids args
+      | AST.Array elements -> List.concat_map collect_expr_ids elements
+      | AST.Hash pairs ->
+          List.concat_map (fun (k, v) -> collect_expr_ids k @ collect_expr_ids v) pairs
+      | AST.Index (container, index) -> collect_expr_ids container @ collect_expr_ids index
+      | AST.EnumConstructor (_, _, args) -> List.concat_map collect_expr_ids args
+      | AST.Match (scrutinee, arms) ->
+          collect_expr_ids scrutinee @ List.concat_map (fun (arm : AST.match_arm) -> collect_expr_ids arm.body) arms
+      | AST.RecordLit (fields, spread) ->
+          List.concat_map
+            (fun (field : AST.record_field) ->
+              match field.field_value with
+              | Some e -> collect_expr_ids e
+              | None -> [])
+            fields
+          @
+          (match spread with
+          | Some e -> collect_expr_ids e
+          | None -> [])
+      | AST.FieldAccess (receiver, _) -> collect_expr_ids receiver
+      | AST.MethodCall (receiver, _, args) -> collect_expr_ids receiver @ List.concat_map collect_expr_ids args
+    in
+    expr.id :: child_ids
+
+  and collect_stmt_ids (stmt : AST.statement) : int list =
+    match stmt.stmt with
+    | AST.Let { value; _ } -> collect_expr_ids value
+    | AST.Return e | AST.ExpressionStmt e -> collect_expr_ids e
+    | AST.Block stmts -> List.concat_map collect_stmt_ids stmts
+    | AST.EnumDef _ | AST.TraitDef _ | AST.ImplDef _ | AST.DeriveDef _ | AST.TypeAlias _ -> []
+
+  let%test "parser assigns unique expression ids for nested function and record literals" =
+    let input = "let outer = fn(x) { let mk = fn(v) { { inner: v } }; mk(x) }; let o = outer(5); puts(o.inner)" in
+    match parse input with
+    | Error _ -> false
+    | Ok program ->
+        let ids = List.concat_map collect_stmt_ids program in
+        let unique_ids = List.sort_uniq Int.compare ids in
+        List.length ids = List.length unique_ids
 end
 
 (* Phase 4.3: Trait definition tests *)
@@ -2457,6 +2516,31 @@ let%test "parse record literal - multiple fields" =
                   List.length fields = 2
                   && (List.nth fields 0).field_name = "x"
                   && (List.nth fields 1).field_name = "y"
+              | _ -> false)
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
+let%test "parse record literal - nested record field value" =
+  let input = "let p = { a: { x: 2, y: 3 } }" in
+  let lexer = Lexer.init input in
+  match parse_program (init lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ stmt ] -> (
+          match stmt.stmt with
+          | AST.Let { value; _ } -> (
+              match value.expr with
+              | AST.RecordLit (fields, None) -> (
+                  match fields with
+                  | [ field ] when field.field_name = "a" -> (
+                      match field.field_value with
+                      | Some { expr = AST.RecordLit (inner_fields, None); _ } ->
+                          List.length inner_fields = 2
+                          && (List.nth inner_fields 0).field_name = "x"
+                          && (List.nth inner_fields 1).field_name = "y"
+                      | _ -> false)
+                  | _ -> false)
               | _ -> false)
           | _ -> false)
       | _ -> false)

@@ -42,6 +42,31 @@ let o = mk({ x: 3 })
 puts(o.inner.x)
 EOF
 
+expect_runtime_output "Local wrapper function inside function body" "5" << 'EOF'
+let outer = fn(x) {
+  let mk = fn(v) { { inner: v } }
+  mk(x)
+}
+let o = outer(5)
+puts(o.inner)
+EOF
+
+expect_runtime_output "Duplicate record fields are last-write-wins" "2" << 'EOF'
+let p = { x: 1, x: 2 }
+puts(p.x)
+EOF
+
+expect_runtime_output "Case-distinct record fields coexist" "3" << 'EOF'
+let p = { x: 1, X: 2 }
+puts(p.x + p.X)
+EOF
+
+expect_runtime_output "Record spread with all fields overridden" "10" << 'EOF'
+let p = { x: 1, X: 2 }
+let q = { ...p, x: 4, X: 6 }
+puts(q.x + q.X)
+EOF
+
 expect_runtime_output "Record pattern match" "30" << 'EOF'
 let p = { x: 10, y: 20 }
 let result = match p {
