@@ -2,7 +2,7 @@
 
 ## Maintenance
 
-- Last verified: 2026-02-06
+- Last verified: 2026-02-28
 - Implementation status: Canonical (actively maintained)
 - Update trigger: Any language behavior, typechecker, or codegen change affecting this topic
 
@@ -22,6 +22,6 @@ This directory is the current source of truth for language and compiler design.
 - `docs/features/unions.md`
 - `docs/features/enums.md`
 - `docs/features/traits.md`
-- `docs/features/inherent-methods.md` (planned feature; implementation not started)
+- `docs/features/inherent-methods.md`
 - `docs/features/records.md`
 - `docs/features/pattern-matching.md`

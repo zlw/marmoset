@@ -2,7 +2,7 @@
 
 ## Maintenance
 
-- Last verified: 2026-02-27
+- Last verified: 2026-02-28
 - Implementation status: Canonical (actively maintained)
 - Update trigger: Any language behavior, typechecker, or codegen change affecting this topic
 
@@ -210,25 +210,12 @@ Not supported (deferred):
 - explicit rank-N polymorphism syntax/typing,
 - eq/ord/hash operations over function values.
 
-## TDD Plan (Implementation)
+## Regression Coverage Highlights
 
-Phase A: Typechecker regression coverage
-- Add tests for:
-- passing let-polymorphic function values through HOFs (rank-1),
-- nested closure capture in function return values,
-- function-operator errors (`eq/ord/hash`) and `show` behavior.
-
-Phase B: Codegen closure conversion
-- Add emitter/integration red tests:
-- lifted nested function receives env,
-- captured variables resolve through env,
-- `map(numbers, fib)` lowers to specialized function symbol.
-
-Phase C: Empty literal typing
-- Add red tests ensuring typed empty literals in emitted Go for array/map contexts.
-
-Phase D: End-to-end compatibility
-- Ensure `dune exec marmoset -- build examples/monkey.mr -o monkey` succeeds and output is stable.
+- Integration tests validate higher-order call paths across pure/effectful callbacks.
+- Integration tests validate closure capture in nested/lifted function scenarios.
+- Operator constraints over function types are checked (`eq`/`ord`/`hash` rejected, `show` allowed).
+- Codegen tests validate deterministic specialization and typed empty-literal emission for array/map contexts.
 
 ## Related Docs
 

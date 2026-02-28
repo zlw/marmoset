@@ -2,7 +2,7 @@
 
 ## Maintenance
 
-- Last verified: 2026-02-27
+- Last verified: 2026-02-28
 - Implementation status: Canonical (actively maintained)
 - Update trigger: Any language behavior, typechecker, or codegen change affecting this topic
 
@@ -201,7 +201,7 @@ Pros:
 
 Cons:
 - open row variables in annotations deferred to post-v1,
-- spread in monomorphized functions has codegen limitations,
+- multiple spread entries in one record literal are intentionally rejected in v1,
 - empty-record/hash ambiguity needs ongoing refinement.
 
 ## Related Docs

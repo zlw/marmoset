@@ -2,7 +2,7 @@
 
 ## Maintenance
 
-- Last verified: 2026-02-27
+- Last verified: 2026-02-28
 - Status: Redirect (do not maintain independently)
 - Canonical spec: `docs/features/traits.md`
 - Update trigger: Never edit this file for semantics; update `docs/features/traits.md` instead

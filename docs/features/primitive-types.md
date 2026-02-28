@@ -2,7 +2,7 @@
 
 ## Maintenance
 
-- Last verified: 2026-02-06
+- Last verified: 2026-02-28
 - Implementation status: Canonical (actively maintained)
 - Update trigger: Any language behavior, typechecker, or codegen change affecting this topic
 

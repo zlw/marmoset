@@ -2,7 +2,7 @@
 
 ## Maintenance
 
-- Last verified: 2026-02-07
+- Last verified: 2026-02-28
 - Implementation status: Canonical (actively maintained)
 - Update trigger: Any language behavior, typechecker, or codegen change affecting this topic
 
@@ -74,7 +74,7 @@ Main modules:
 - `annotation.ml`: AST type-expression -> internal mono type conversion + alias resolution.
 - `infer.ml`: inference/checking (Algorithm W style with extensions).
 - `checker.ml`: entry points and formatted diagnostics.
-- `trait_registry.ml`, `trait_solver.ml`, `enum_registry.ml`, `exhaustiveness.ml`: feature-specific systems.
+- `trait_registry.ml`, `trait_solver.ml`, `inherent_registry.ml`, `enum_registry.ml`, `exhaustiveness.ml`: feature-specific systems.
 
 ### 3.1 Core Representation
 
@@ -205,7 +205,7 @@ Design goals:
 
 Three layers:
 - Inline unit tests in parser/typechecker/emitter modules.
-- Integration shell tests (`test/test_typecheck_and_codegen*.sh`) for parse+typecheck+codegen+runtime.
+- Integration shell tests (`test/integration/*.sh`) for parse+typecheck+codegen+runtime.
 - Future: larger system/e2e suites (see roadmap).
 
 Why this split:
