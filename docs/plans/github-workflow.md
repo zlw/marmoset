@@ -403,3 +403,7 @@ If migration causes disruption:
   - updated GitHub ruleset `branch: main` (`id=13342513`) pull-request parameters to set `require_last_push_approval=false`
   - retained all required status checks and strict required-status policy
   - retained bypass actor configuration (`RepositoryRole: admin`) for explicit bypass when needed
+- 2026-03-01 19:38 CET: Corrective ruleset update after policy clarification:
+  - restored `require_last_push_approval=true` in ruleset `branch: main` (`id=13342513`) so non-bypass users cannot merge immediately after their own push
+  - attempted to scope bypass to repository user `zlw`, but GitHub rulesets update API rejected `actor_type: User` (`Validation Failed: User is not a valid actor type`)
+  - current bypass remains role-based (`RepositoryRole: admin`, `bypass_mode: always`)
