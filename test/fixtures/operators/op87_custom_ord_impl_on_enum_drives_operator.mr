@@ -1,0 +1,12 @@
+# OP87: Custom ord impl on enum drives >= operator
+# output: false
+enum rank { low mid high }
+impl eq for rank {
+  fn eq(x: rank, y: rank) -> bool { false }
+}
+impl ord for rank {
+  fn compare(x: rank, y: rank) -> ordering {
+    ordering.less
+  }
+}
+puts(rank.high >= rank.low)

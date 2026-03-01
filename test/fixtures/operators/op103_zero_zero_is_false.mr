@@ -1,0 +1,3 @@
+# OP103: Zero < zero is false
+# output: false
+puts(0 < 0)

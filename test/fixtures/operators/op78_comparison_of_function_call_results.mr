@@ -1,0 +1,5 @@
+# OP78: Comparison of function call results
+# output: true
+let f = fn(x: int) -> int { x * 10 }
+let g = fn(x: int) -> int { x + 1 }
+puts(f(1) > g(1))

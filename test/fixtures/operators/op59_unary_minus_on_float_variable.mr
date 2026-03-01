@@ -1,0 +1,4 @@
+# OP59: Unary minus on float variable
+# output: -2.5
+let x = 2.5
+puts(-x)

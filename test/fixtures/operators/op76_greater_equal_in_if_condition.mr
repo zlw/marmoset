@@ -1,0 +1,4 @@
+# OP76: Greater-equal in if condition
+# output: yes
+let result = if (10 >= 3) { "yes" } else { "no" }
+puts(result)

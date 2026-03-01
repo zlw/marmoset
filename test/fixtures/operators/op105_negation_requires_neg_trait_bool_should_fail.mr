@@ -1,0 +1,4 @@
+# OP105: Negation requires neg trait (bool should fail)
+# error: missing-impl
+let x = true
+puts(-x)

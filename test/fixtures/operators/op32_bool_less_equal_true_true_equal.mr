@@ -1,0 +1,3 @@
+# OP32: Bool less-equal: true <= true (equal)
+# output: true
+puts(true <= true)

@@ -1,0 +1,3 @@
+# OP48: Int subtraction
+# output: 2
+puts(5 - 3)

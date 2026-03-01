@@ -1,0 +1,3 @@
+# OP30: Bool less-than: true < false
+# output: false
+puts(true < false)

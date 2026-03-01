@@ -1,0 +1,4 @@
+# OP72: Greater-than in if condition
+# output: no
+let result = if (1 > 2) { "yes" } else { "no" }
+puts(result)

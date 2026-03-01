@@ -1,0 +1,4 @@
+# OP106: Negation requires neg trait (string should fail)
+# error: missing-impl
+let x = "hello"
+puts(-x)

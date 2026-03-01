@@ -1,0 +1,4 @@
+# OP112: Multiple operators in single let-binding
+# output: 14
+let x = 2 + 3 * 4
+puts(x)

@@ -1,0 +1,5 @@
+# OP111: Operator result in let-binding chain
+# output: 13
+let a = 3 + 4
+let b = a + 6
+puts(b)

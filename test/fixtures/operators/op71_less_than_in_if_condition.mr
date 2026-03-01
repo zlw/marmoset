@@ -1,0 +1,4 @@
+# OP71: Less-than in if condition
+# output: yes
+let result = if (1 < 2) { "yes" } else { "no" }
+puts(result)

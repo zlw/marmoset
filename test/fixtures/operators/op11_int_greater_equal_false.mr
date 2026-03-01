@@ -1,0 +1,3 @@
+# OP11: Int greater-equal false
+# output: false
+puts(2 >= 3)

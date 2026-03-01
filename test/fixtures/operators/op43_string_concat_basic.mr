@@ -1,0 +1,3 @@
+# OP43: String concat basic
+# output: helloworld
+puts("hello" + "world")

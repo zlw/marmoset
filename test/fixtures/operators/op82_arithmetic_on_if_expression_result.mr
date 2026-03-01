@@ -1,0 +1,4 @@
+# OP82: Arithmetic on if-expression result
+# output: 15
+let x = if (true) { 10 } else { 20 }
+puts(x + 5)

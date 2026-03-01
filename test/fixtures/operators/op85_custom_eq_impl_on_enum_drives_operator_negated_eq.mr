@@ -1,0 +1,9 @@
+# OP85: Custom eq impl on enum drives != operator (negated eq)
+# output: false
+enum color { red green blue }
+impl eq for color {
+  fn eq(x: color, y: color) -> bool {
+    true
+  }
+}
+puts(color.red != color.blue)
