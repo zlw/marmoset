@@ -124,10 +124,10 @@ PR checks are driven by `.github/workflows/pr-ci.yml` and run on pull request ev
   - `PR CI / editor-nvim (pull_request)`
   - `PR CI / editor-jetbrains (pull_request)`
 
-Before merging to `main`, run `.github/workflows/manual-cross-platform.yml` via `workflow_dispatch` on the PR head so both required checks pass:
+Before merging to `main`, run `.github/workflows/pr-ci.yml` via `workflow_dispatch` on the PR head so both required checks pass:
 
-- `Manual Cross-Platform / compiler-integration-macos (workflow_dispatch)`
-- `Manual Cross-Platform / compiler-integration-windows (workflow_dispatch)`
+- `PR CI / compiler-integration-macos (workflow_dispatch)`
+- `PR CI / compiler-integration-windows (workflow_dispatch)`
 
 Local command equivalents used by CI:
 

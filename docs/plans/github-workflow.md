@@ -425,3 +425,8 @@ If migration causes disruption:
     - PR workflow checks -> `(... pull_request)`
     - manual cross-platform checks -> `(... workflow_dispatch)`
   - updated README check-name examples to match these exact required contexts
+- 2026-03-01 19:55 CET: Workflow-split rollback to keep manual gating dispatchable pre-merge:
+  - removed `.github/workflows/manual-cross-platform.yml` because workflow files not on default branch are not dispatchable (`HTTP 404`) for current PR gating
+  - restored `workflow_dispatch` trigger and manual `compiler-integration-macos` / `compiler-integration-windows` jobs inside `.github/workflows/pr-ci.yml`
+  - kept macOS and Windows as separate jobs and retained event-qualified required-check naming strategy
+  - updated README manual-run path back to `.github/workflows/pr-ci.yml`
