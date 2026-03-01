@@ -7,5 +7,5 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 VSCODE_DIR="$REPO_ROOT/tools/vscode-marmoset"
 
 cd "$VSCODE_DIR"
-npm ci
+npm install --no-package-lock
 npm run compile

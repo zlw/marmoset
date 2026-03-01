@@ -372,3 +372,6 @@ If migration causes disruption:
   - to:
     - `PR CI / compiler-integration-macos`
     - `PR CI / compiler-integration-windows`
+- 2026-03-01 19:02 CET: CI break/fix follow-up:
+  - fixed `quality-lint-fmt-doc` failure by ensuring `ocamlformat` and `odoc` are installed in `test/ci/quality.sh` before running `@fmt`/`@doc`
+  - fixed `editor-vscode` failure by replacing `npm ci` with `npm install --no-package-lock` in `test/ci/editor-vscode.sh` (repo currently has no lockfile)

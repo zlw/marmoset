@@ -7,6 +7,9 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 cd "$REPO_ROOT"
 
+# Ensure formatter and doc toolchain are available in CI quality job.
+opam install ocamlformat odoc
+
 # Format, docs, and opam metadata lint.
 dune build --root "$REPO_ROOT" @fmt
 dune build --root "$REPO_ROOT" @doc
