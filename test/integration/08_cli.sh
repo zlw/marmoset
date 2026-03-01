@@ -74,7 +74,9 @@ fi
 TOTAL=$((TOTAL + 1))
 echo -n "TEST [$TOTAL] release: produces binary ... "
 tmpfile=$(mktemp)
-binpath=$(mktemp ./marmoset_test_bin.XXXXXX)
+test_build_dir="$REPO_ROOT/.marmoset/build"
+mkdir -p "$test_build_dir"
+binpath=$(mktemp "$test_build_dir/marmoset_test_bin.XXXXXX")
 rm -f "$binpath"
 echo 'puts(1)' > "$tmpfile"
 if $EXECUTABLE release "$tmpfile" -o "$binpath" >/dev/null 2>&1 && [ -x "$binpath" ]; then

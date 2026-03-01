@@ -72,8 +72,10 @@ expect_runtime_output() {
 
     local tmpfile
     local binpath
+    local test_build_dir="$REPO_ROOT/.marmoset/build"
+    mkdir -p "$test_build_dir"
     tmpfile=$(mktemp)
-    binpath=$(mktemp ./marmoset_test_bin.XXXXXX)
+    binpath=$(mktemp "$test_build_dir/marmoset_test_bin.XXXXXX")
     rm -f "$binpath"
     echo "$source" > "$tmpfile"
 
