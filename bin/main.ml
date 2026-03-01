@@ -154,7 +154,7 @@ let compile_to_binary
   match Marmoset.Lib.Go_emitter.compile_to_build ~file_id:input_file source with
   | Error msg -> Error msg
   | Ok build_output ->
-      let temp_dir = ".marmoset-build" in
+      let temp_dir = ".marmoset/build/" ^ string_of_int (Unix.getpid ()) in
       ignore (Sys.command ("mkdir -p " ^ temp_dir));
 
       let main_go_path = Filename.concat temp_dir "main.go" in
@@ -182,12 +182,7 @@ let compile_to_binary
       let cmd = Printf.sprintf "cd %s && go build %s -o %s ." temp_dir go_flags output_abs in
       let exit_code = Sys.command cmd in
 
-      (try
-         Sys.remove main_go_path;
-         Sys.remove runtime_go_path;
-         Sys.remove go_mod_path;
-         ignore (Sys.command ("rmdir " ^ temp_dir))
-       with _ -> ());
+      (try ignore (Sys.command ("rm -rf " ^ temp_dir)) with _ -> ());
 
       if exit_code = 0 then
         Ok ()
