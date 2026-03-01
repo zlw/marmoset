@@ -86,8 +86,7 @@ and walk_stmt ~source ~ranges (stmt : Ast.AST.statement) =
   | Ast.AST.TraitDef { methods; _ } ->
       maybe_range ~source ~pos:stmt.pos ~end_pos:stmt.end_pos ~kind:Lsp_t.FoldingRangeKind.Region ranges;
       List.iter
-        (fun (m : Ast.AST.method_sig) ->
-          Option.iter (walk_expr ~source ~ranges) m.method_default_impl)
+        (fun (m : Ast.AST.method_sig) -> Option.iter (walk_expr ~source ~ranges) m.method_default_impl)
         methods
   | Ast.AST.ImplDef { impl_methods; _ } ->
       maybe_range ~source ~pos:stmt.pos ~end_pos:stmt.end_pos ~kind:Lsp_t.FoldingRangeKind.Region ranges;

@@ -38,9 +38,7 @@ class marmoset_server =
         foldingRangeProvider = Some (`Bool true);
         selectionRangeProvider = Some (`Bool true);
         signatureHelpProvider =
-          Some
-            (Lsp_t.SignatureHelpOptions.create ~triggerCharacters:[ "("; "," ]
-               ~retriggerCharacters:[ ")" ] ());
+          Some (Lsp_t.SignatureHelpOptions.create ~triggerCharacters:[ "("; "," ] ~retriggerCharacters:[ ")" ] ());
         codeActionProvider =
           Some
             (`CodeActionOptions
@@ -64,8 +62,8 @@ class marmoset_server =
           (None, [])
       in
       (match analysis with
-       | Some a -> Hashtbl.replace analysis_cache uri { analysis = a }
-       | None -> Hashtbl.remove analysis_cache uri);
+      | Some a -> Hashtbl.replace analysis_cache uri { analysis = a }
+      | None -> Hashtbl.remove analysis_cache uri);
       notify_back#send_diagnostic diagnostics
 
     (* Cancel any pending analysis for a URI *)
@@ -194,7 +192,8 @@ class marmoset_server =
             | _ -> false)
         | None -> false
       in
-      if is_dot_trigger then Lwt.return None
+      if is_dot_trigger then
+        Lwt.return None
       else
         let env =
           match Hashtbl.find_opt analysis_cache uri with

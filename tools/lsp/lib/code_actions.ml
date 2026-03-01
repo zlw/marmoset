@@ -39,7 +39,9 @@ let rec type_to_source (mono : Types.mono_type) : string =
       in
       args_str ^ " -> " ^ type_to_source ret
   | Types.TRecord (fields, row) ->
-      let field_strs = List.map (fun (f : Types.record_field_type) -> f.name ^ ": " ^ type_to_source f.typ) fields in
+      let field_strs =
+        List.map (fun (f : Types.record_field_type) -> f.name ^ ": " ^ type_to_source f.typ) fields
+      in
       let row_str =
         match row with
         | None -> ""
@@ -105,9 +107,12 @@ let find_close_paren ~source ~start ~limit =
   (* Check if offset i is inside a # comment by scanning backward on the same line *)
   let in_comment i =
     let rec scan j =
-      if j < 0 || source.[j] = '\n' then false
-      else if source.[j] = '#' then true
-      else scan (j - 1)
+      if j < 0 || source.[j] = '\n' then
+        false
+      else if source.[j] = '#' then
+        true
+      else
+        scan (j - 1)
     in
     scan (i - 1)
   in
@@ -136,7 +141,7 @@ let sites_for_function ~source ~type_map ~sites (fn_expr : Ast.AST.expression) =
   match fn_expr.expr with
   | Ast.AST.Function { params; return_type; body; _ } -> (
       match Hashtbl.find_opt type_map fn_expr.id with
-      | Some fn_type ->
+      | Some fn_type -> (
           let n_params = List.length params in
           (* Normalize the FULL function type once to preserve type variable identity *)
           let norm_fn_type = Types.normalize fn_type in
@@ -145,7 +150,7 @@ let sites_for_function ~source ~type_map ~sites (fn_expr : Ast.AST.expression) =
           let search_from = ref fn_expr.pos in
           List.iter2
             (fun (pname, annotation) ptype ->
-              if annotation = None then (
+              if annotation = None then
                 match find_name_end ~source ~start:!search_from ~limit:fn_expr.end_pos pname with
                 | Some pend ->
                     search_from := pend;
@@ -157,7 +162,7 @@ let sites_for_function ~source ~type_map ~sites (fn_expr : Ast.AST.expression) =
                         title = "Add type annotation: " ^ pname ^ ": " ^ type_str;
                       }
                       :: !sites
-                | None -> ())
+                | None -> ()
               else
                 match find_name_end ~source ~start:!search_from ~limit:fn_expr.end_pos pname with
                 | Some pend -> search_from := pend
@@ -168,7 +173,7 @@ let sites_for_function ~source ~type_map ~sites (fn_expr : Ast.AST.expression) =
              else
                List.init n_params (fun _ -> Types.TNull));
           (* Return type annotation site *)
-          if return_type = None && n_params > 0 then (
+          if return_type = None && n_params > 0 then
             match get_return_type n_params norm_fn_type with
             | Some ret_type -> (
                 let body_start = body.pos in
@@ -217,7 +222,9 @@ let rec walk_stmt ~source ~type_map ~range_start ~range_end ~sites (stmt : Ast.A
     | Ast.AST.Block stmts -> List.iter (walk_stmt ~source ~type_map ~range_start ~range_end ~sites) stmts
     | Ast.AST.ExpressionStmt e -> walk_expr ~source ~type_map ~range_start ~range_end ~sites e
     | Ast.AST.Return e -> walk_expr ~source ~type_map ~range_start ~range_end ~sites e
-    | Ast.AST.EnumDef _ | Ast.AST.TraitDef _ | Ast.AST.ImplDef _ | Ast.AST.InherentImplDef _ | Ast.AST.DeriveDef _ | Ast.AST.TypeAlias _ -> ()
+    | Ast.AST.EnumDef _ | Ast.AST.TraitDef _ | Ast.AST.ImplDef _ | Ast.AST.InherentImplDef _ | Ast.AST.DeriveDef _
+    | Ast.AST.TypeAlias _ ->
+        ()
 
 and walk_expr ~source ~type_map ~range_start ~range_end ~sites (expr : Ast.AST.expression) =
   if expr.end_pos < range_start || expr.pos > range_end then
@@ -363,17 +370,12 @@ let%test "type_to_source multi-arg function" =
   type_to_source (Types.tfun Types.TInt (Types.tfun Types.TString Types.TBool)) = "(int, string) -> bool"
 
 let%test "type_to_source record" =
-  type_to_source
-    (Types.TRecord ([ { name = "x"; typ = Types.TInt }; { name = "y"; typ = Types.TString } ], None))
+  type_to_source (Types.TRecord ([ { name = "x"; typ = Types.TInt }; { name = "y"; typ = Types.TString } ], None))
   = "{ x: int, y: string }"
 
-let%test "type_to_source union" =
-  type_to_source (Types.TUnion [ Types.TInt; Types.TString ]) = "int | string"
-
+let%test "type_to_source union" = type_to_source (Types.TUnion [ Types.TInt; Types.TString ]) = "int | string"
 let%test "type_to_source enum no args" = type_to_source (Types.TEnum ("direction", [])) = "direction"
-
-let%test "type_to_source enum with args" =
-  type_to_source (Types.TEnum ("option", [ Types.TInt ])) = "option[int]"
+let%test "type_to_source enum with args" = type_to_source (Types.TEnum ("option", [ Types.TInt ])) = "option[int]"
 
 let%test "type_to_source enum multi args" =
   type_to_source (Types.TEnum ("result", [ Types.TString; Types.TInt ])) = "result[string, int]"
@@ -400,7 +402,7 @@ let%test "function with annotated param gets no param action but gets return typ
 let%test "fully annotated function gets no param or return actions" =
   let actions = get_actions "let f: int -> int = fn(x: int) -> int { x + 1 };" in
   let titles = action_titles actions in
-  not (List.exists (fun t -> starts_with t "Add type annotation:") titles)
+  (not (List.exists (fun t -> starts_with t "Add type annotation:") titles))
   && not (List.exists (fun t -> starts_with t "Add return type annotation") titles)
 
 let%test "multiple sites produces annotate-all action" =
@@ -429,7 +431,9 @@ let%test "range filtering works" =
           ~start:(Lsp_t.Position.create ~line:0 ~character:0)
           ~end_:(Lsp_t.Position.create ~line:0 ~character:10)
       in
-      let actions = compute ~source ~uri:(Lsp_t.DocumentUri.of_string "file:///test.mr") ~program:prog ~type_map:tm ~range in
+      let actions =
+        compute ~source ~uri:(Lsp_t.DocumentUri.of_string "file:///test.mr") ~program:prog ~type_map:tm ~range
+      in
       let titles = action_titles actions in
       let has_x = List.exists (fun t -> starts_with t "Add type annotation: x:") titles in
       let has_y = List.exists (fun t -> starts_with t "Add type annotation: y:") titles in

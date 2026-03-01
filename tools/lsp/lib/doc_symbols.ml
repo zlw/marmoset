@@ -11,18 +11,24 @@ let rec type_expr_to_string (te : Ast.AST.type_expr) : string =
   | Ast.AST.TApp (name, args) ->
       Printf.sprintf "%s[%s]" name (String.concat ", " (List.map type_expr_to_string args))
   | Ast.AST.TArrow (params, ret) ->
-      Printf.sprintf "(%s) -> %s" (String.concat ", " (List.map type_expr_to_string params)) (type_expr_to_string ret)
+      Printf.sprintf "(%s) -> %s"
+        (String.concat ", " (List.map type_expr_to_string params))
+        (type_expr_to_string ret)
   | Ast.AST.TUnion types -> String.concat " | " (List.map type_expr_to_string types)
   | Ast.AST.TRecord (fields, row) ->
       let field_strs =
-        List.map (fun (f : Ast.AST.record_type_field) -> f.field_name ^ ": " ^ type_expr_to_string f.field_type) fields
+        List.map
+          (fun (f : Ast.AST.record_type_field) -> f.field_name ^ ": " ^ type_expr_to_string f.field_type)
+          fields
       in
       let row_str =
         match row with
         | None -> ""
         | Some r ->
-            if field_strs = [] then "..." ^ type_expr_to_string r
-            else ", ..." ^ type_expr_to_string r
+            if field_strs = [] then
+              "..." ^ type_expr_to_string r
+            else
+              ", ..." ^ type_expr_to_string r
       in
       "{ " ^ String.concat ", " field_strs ^ row_str ^ " }"
 
@@ -85,7 +91,9 @@ let document_symbols ~(source : string) ~(program : Ast.AST.program) : Lsp_t.Doc
           Some (symbol ~name ~kind:Lsp_t.SymbolKind.Class ~range:(range_of_stmt stmt) ~children ())
       | Ast.AST.TypeAlias { alias_name; _ } ->
           Some (symbol ~name:alias_name ~kind:Lsp_t.SymbolKind.TypeParameter ~range:(range_of_stmt stmt) ())
-      | Ast.AST.InherentImplDef _ | Ast.AST.DeriveDef _ | Ast.AST.ExpressionStmt _ | Ast.AST.Return _ | Ast.AST.Block _ -> None)
+      | Ast.AST.InherentImplDef _ | Ast.AST.DeriveDef _ | Ast.AST.ExpressionStmt _ | Ast.AST.Return _
+      | Ast.AST.Block _ ->
+          None)
     program
 
 (* ============================================================

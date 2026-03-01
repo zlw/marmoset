@@ -273,7 +273,10 @@ let normalize (mono : mono_type) : mono_type =
      recursion in apply_substitution, which recursively applies to replacements *)
   let renaming =
     List.filter
-      (fun (old_name, new_ty) -> match new_ty with TVar n -> n <> old_name | _ -> true)
+      (fun (old_name, new_ty) ->
+        match new_ty with
+        | TVar n -> n <> old_name
+        | _ -> true)
       renaming
   in
   apply_substitution renaming mono

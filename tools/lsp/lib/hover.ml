@@ -68,8 +68,7 @@ and find_expr_in_stmt (offset : int) (stmt : Ast.AST.statement) : Ast.AST.expres
       List.find_map (fun (m : Ast.AST.method_impl) -> find_expr_at offset m.impl_method_body) inherent_methods
   | Ast.AST.TraitDef { methods; _ } ->
       List.find_map
-        (fun (m : Ast.AST.method_sig) ->
-          Option.bind m.method_default_impl (find_expr_at offset))
+        (fun (m : Ast.AST.method_sig) -> Option.bind m.method_default_impl (find_expr_at offset))
         methods
   | Ast.AST.EnumDef _ | Ast.AST.DeriveDef _ | Ast.AST.TypeAlias _ -> None
 

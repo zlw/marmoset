@@ -30,9 +30,13 @@ let find_open_paren ~(source : string) ~(from : int) ~(limit : int) : int option
   let len = String.length source in
   let limit = min limit len in
   let rec scan i =
-    if i >= limit then None
-    else if source.[i] = '(' then Some (i + 1) (* return position after '(' *)
-    else scan (i + 1)
+    if i >= limit then
+      None
+    else if source.[i] = '(' then
+      Some (i + 1)
+      (* return position after '(' *)
+    else
+      scan (i + 1)
   in
   scan from
 
@@ -41,17 +45,21 @@ let find_open_paren ~(source : string) ~(from : int) ~(limit : int) : int option
 let find_matching_close_paren ~(source : string) ~(from : int) : int option =
   let len = String.length source in
   let rec scan i depth =
-    if i >= len then None
+    if i >= len then
+      None
     else
       match source.[i] with
       | '(' -> scan (i + 1) (depth + 1)
       | ')' ->
-          if depth = 0 then Some i
-          else scan (i + 1) (depth - 1)
+          if depth = 0 then
+            Some i
+          else
+            scan (i + 1) (depth - 1)
       | '"' -> skip_string (i + 1) depth
       | _ -> scan (i + 1) depth
   and skip_string i depth =
-    if i >= len then None
+    if i >= len then
+      None
     else
       match source.[i] with
       | '"' -> scan (i + 1) depth
@@ -72,7 +80,8 @@ let find_enclosing_call ~(source : string) (offset : int) (program : Ast.AST.pro
         (* Prefer tighter (smaller) span *)
         let prev_span = prev.call_end - prev.args_start in
         let new_span = info.call_end - info.args_start in
-        if new_span < prev_span then best := Some info
+        if new_span < prev_span then
+          best := Some info
   in
   let rec visit_expr (expr : Ast.AST.expression) =
     match expr.expr with
@@ -87,9 +96,7 @@ let find_enclosing_call ~(source : string) (offset : int) (program : Ast.AST.pro
           | Ast.AST.Identifier name -> Some name
           | _ -> None
         in
-        let open_paren =
-          find_open_paren ~source ~from:(fn_expr.end_pos + 1) ~limit:(String.length source)
-        in
+        let open_paren = find_open_paren ~source ~from:(fn_expr.end_pos + 1) ~limit:(String.length source) in
         let args_start =
           match open_paren with
           | Some pos -> pos
@@ -100,7 +107,7 @@ let find_enclosing_call ~(source : string) (offset : int) (program : Ast.AST.pro
           | Some close -> close
           | None -> expr.end_pos
         in
-        if offset >= args_start && offset <= effective_end then (
+        if offset >= args_start && offset <= effective_end then
           update_best
             {
               fn_id = fn_expr.id;
@@ -110,7 +117,7 @@ let find_enclosing_call ~(source : string) (offset : int) (program : Ast.AST.pro
               args_start;
               call_end = effective_end;
               arg_count = List.length args;
-            });
+            };
         visit_expr fn_expr;
         List.iter visit_expr args
     | Ast.AST.MethodCall (recv, mname, args) ->
@@ -119,9 +126,7 @@ let find_enclosing_call ~(source : string) (offset : int) (program : Ast.AST.pro
            may be wrong for inner chain expressions.
            Use find_matching_close_paren instead of expr.end_pos for the same
            reason as Call — inner chain expressions have wrong end_pos. *)
-        let open_paren =
-          find_open_paren ~source ~from:expr.pos ~limit:(String.length source)
-        in
+        let open_paren = find_open_paren ~source ~from:expr.pos ~limit:(String.length source) in
         let args_start =
           match open_paren with
           | Some pos -> pos
@@ -132,7 +137,7 @@ let find_enclosing_call ~(source : string) (offset : int) (program : Ast.AST.pro
           | Some close -> close
           | None -> expr.end_pos
         in
-        if offset >= args_start && offset <= effective_end then (
+        if offset >= args_start && offset <= effective_end then
           update_best
             {
               fn_id = expr.id;
@@ -142,7 +147,7 @@ let find_enclosing_call ~(source : string) (offset : int) (program : Ast.AST.pro
               args_start;
               call_end = effective_end;
               arg_count = List.length args;
-            });
+            };
         visit_expr recv;
         List.iter visit_expr args
     | Ast.AST.Infix (l, _, r) ->
@@ -169,22 +174,20 @@ let find_enclosing_call ~(source : string) (offset : int) (program : Ast.AST.pro
         visit_expr scrutinee;
         List.iter (fun (arm : Ast.AST.match_arm) -> visit_expr arm.body) arms
     | Ast.AST.RecordLit (fields, spread) ->
-        List.iter
-          (fun (f : Ast.AST.record_field) -> Option.iter visit_expr f.field_value)
-          fields;
+        List.iter (fun (f : Ast.AST.record_field) -> Option.iter visit_expr f.field_value) fields;
         Option.iter visit_expr spread
     | Ast.AST.EnumConstructor (_, _, args) -> List.iter visit_expr args
     | Ast.AST.TypeCheck (e, _) -> visit_expr e
-    | Ast.AST.Identifier _ | Ast.AST.Integer _ | Ast.AST.Float _ | Ast.AST.Boolean _
-    | Ast.AST.String _ ->
-        ()
+    | Ast.AST.Identifier _ | Ast.AST.Integer _ | Ast.AST.Float _ | Ast.AST.Boolean _ | Ast.AST.String _ -> ()
   and visit_stmt (stmt : Ast.AST.statement) =
     match stmt.stmt with
     | Ast.AST.ExpressionStmt e -> visit_expr e
     | Ast.AST.Let { value; _ } -> visit_expr value
     | Ast.AST.Return e -> visit_expr e
     | Ast.AST.Block stmts -> List.iter visit_stmt stmts
-    | Ast.AST.EnumDef _ | Ast.AST.TraitDef _ | Ast.AST.ImplDef _ | Ast.AST.InherentImplDef _ | Ast.AST.DeriveDef _ | Ast.AST.TypeAlias _ -> ()
+    | Ast.AST.EnumDef _ | Ast.AST.TraitDef _ | Ast.AST.ImplDef _ | Ast.AST.InherentImplDef _ | Ast.AST.DeriveDef _
+    | Ast.AST.TypeAlias _ ->
+        ()
   in
   List.iter visit_stmt program;
   !best
@@ -195,7 +198,8 @@ let count_active_param ~(source : string) ~(from : int) ~(cursor : int) : int =
   let len = String.length source in
   let cursor = min cursor len in
   let rec scan i depth count =
-    if i >= cursor then count
+    if i >= cursor then
+      count
     else
       let c = source.[i] in
       match c with
@@ -205,7 +209,8 @@ let count_active_param ~(source : string) ~(from : int) ~(cursor : int) : int =
       | '"' -> skip_string (i + 1) depth count
       | _ -> scan (i + 1) depth count
   and skip_string i depth count =
-    if i >= cursor then count
+    if i >= cursor then
+      count
     else
       match source.[i] with
       | '"' -> scan (i + 1) depth count
@@ -232,18 +237,24 @@ let find_param_names ~(program : Ast.AST.program) ~(name : string) : string list
 
 (* Build a signature label string like "fn(x: Int, y: String) -> Bool"
    and return the byte offset ranges for each parameter within the label. *)
-let build_label ~(param_names : string list) ~(param_types : Types.mono_type list)
-    ~(ret_type : Types.mono_type) ~(fn_display_name : string) : string * (int * int) list =
+let build_label
+    ~(param_names : string list)
+    ~(param_types : Types.mono_type list)
+    ~(ret_type : Types.mono_type)
+    ~(fn_display_name : string) : string * (int * int) list =
   let buf = Buffer.create 64 in
   Buffer.add_string buf fn_display_name;
   Buffer.add_char buf '(';
   let offsets = ref [] in
   List.iteri
     (fun i typ ->
-      if i > 0 then Buffer.add_string buf ", ";
+      if i > 0 then
+        Buffer.add_string buf ", ";
       let name =
-        if i < List.length param_names then List.nth param_names i
-        else Printf.sprintf "arg%d" (i + 1)
+        if i < List.length param_names then
+          List.nth param_names i
+        else
+          Printf.sprintf "arg%d" (i + 1)
       in
       let start = Buffer.length buf in
       Buffer.add_string buf name;
@@ -311,9 +322,7 @@ let signature_help
                 (params, ret, None)
             | `Method (ptypes, ret, pnames) ->
                 (* Method types come from trait registry — normalize together *)
-                let dummy_fn =
-                  List.fold_right (fun p acc -> Types.tfun p acc) ptypes ret
-                in
+                let dummy_fn = List.fold_right (fun p acc -> Types.tfun p acc) ptypes ret in
                 let norm = Types.normalize dummy_fn in
                 let params, ret_n = collect_params norm in
                 (params, ret_n, Some pnames)
@@ -343,8 +352,7 @@ let signature_help
               let label, offsets = build_label ~param_names ~param_types ~ret_type ~fn_display_name in
               let parameters =
                 List.map
-                  (fun (start, stop) ->
-                    Lsp_t.ParameterInformation.create ~label:(`Offset (start, stop)) ())
+                  (fun (start, stop) -> Lsp_t.ParameterInformation.create ~label:(`Offset (start, stop)) ())
                   offsets
               in
               let active_param =
@@ -375,13 +383,15 @@ let%test "single param function — cursor inside parens shows signature" =
   (* cursor at the '1' inside f(1) *)
   let source = "let f = fn(x: int) { x }; f(1)" in
   match check_sig source 0 29 with
-  | Some sh ->
+  | Some sh -> (
       List.length sh.signatures = 1
-      && (let sig0 = List.hd sh.signatures in
-          sig0.label <> ""
-          && (match sig0.parameters with
-             | Some params -> List.length params = 1
-             | None -> false))
+      &&
+      let sig0 = List.hd sh.signatures in
+      sig0.label <> ""
+      &&
+      match sig0.parameters with
+      | Some params -> List.length params = 1
+      | None -> false)
   | None -> false
 
 let%test "two param function — cursor after comma shows activeParam=1" =
@@ -449,12 +459,16 @@ let%test "empty args shows signature with activeParam=0" =
 let string_contains haystack needle =
   let len_h = String.length haystack in
   let len_n = String.length needle in
-  if len_n > len_h then false
+  if len_n > len_h then
+    false
   else
     let rec check i =
-      if i + len_n > len_h then false
-      else if String.sub haystack i len_n = needle then true
-      else check (i + 1)
+      if i + len_n > len_h then
+        false
+      else if String.sub haystack i len_n = needle then
+        true
+      else
+        check (i + 1)
     in
     check 0
 

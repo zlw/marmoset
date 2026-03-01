@@ -74,8 +74,7 @@ let env_with bindings =
 
 let%test "completions include env names" =
   let env =
-    env_with
-      [ ("x", Types.Forall ([], Types.TInt)); ("f", Types.Forall ([], Types.tfun Types.TInt Types.TBool)) ]
+    env_with [ ("x", Types.Forall ([], Types.TInt)); ("f", Types.Forall ([], Types.tfun Types.TInt Types.TBool)) ]
   in
   let items = completions ~environment:env in
   let labels = List.map (fun (i : Lsp_t.CompletionItem.t) -> i.label) items in

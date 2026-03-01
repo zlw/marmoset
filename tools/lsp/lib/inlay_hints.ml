@@ -78,21 +78,25 @@ let is_chain_receiver (expr : Ast.AST.expression) =
    in practice. *)
 let find_recv_actual_end ~source ~dot_pos =
   let rec scan i =
-    if i < 0 then 0
+    if i < 0 then
+      0
     else
       match source.[i] with
       | ' ' | '\t' | '\r' | '\n' -> scan (i - 1)
-      | _ ->
+      | _ -> (
           (* Check if this character is inside a # line comment.
              Scan backward on the same line to find a '#'. *)
           let rec find_hash j =
-            if j < 0 || source.[j] = '\n' then None
-            else if source.[j] = '#' then Some j
-            else find_hash (j - 1)
+            if j < 0 || source.[j] = '\n' then
+              None
+            else if source.[j] = '#' then
+              Some j
+            else
+              find_hash (j - 1)
           in
-          (match find_hash i with
-           | Some hash_pos -> scan (hash_pos - 1)
-           | None -> i + 1)
+          match find_hash i with
+          | Some hash_pos -> scan (hash_pos - 1)
+          | None -> i + 1)
   in
   scan (dot_pos - 1)
 
@@ -100,9 +104,12 @@ let find_recv_actual_end ~source ~dot_pos =
 let has_newline_between ~source ~from_offset ~to_offset =
   let hi = min to_offset (String.length source) in
   let rec scan i =
-    if i >= hi then false
-    else if source.[i] = '\n' then true
-    else scan (i + 1)
+    if i >= hi then
+      false
+    else if source.[i] = '\n' then
+      true
+    else
+      scan (i + 1)
   in
   scan from_offset
 
@@ -116,27 +123,27 @@ let hints_for_function ~source ~type_map ~hints (fn_expr : Ast.AST.expression) =
           let param_types = take_param_types n_params fn_type in
           (* Parameter type hints *)
           let search_from = ref fn_expr.pos in
-          (if List.length param_types = n_params then
-             List.iter2
-               (fun (pname, annotation) ptype ->
-                 if annotation = None then
-                   match find_name_end ~source ~start:!search_from ~limit:fn_expr.end_pos pname with
-                   | Some pend ->
-                       search_from := pend;
-                       let position = Lsp_utils.offset_to_position ~source ~offset:pend in
-                       let type_str = Types.to_string_pretty ptype in
-                       hints :=
-                         Lsp_t.InlayHint.create ~position
-                           ~label:(`String (": " ^ type_str))
-                           ~kind:Lsp_t.InlayHintKind.Type ()
-                         :: !hints
-                   | None -> ()
-                 else
-                   (* Still advance search_from past annotated params *)
-                   match find_name_end ~source ~start:!search_from ~limit:fn_expr.end_pos pname with
-                   | Some pend -> search_from := pend
-                   | None -> ())
-               params param_types);
+          if List.length param_types = n_params then
+            List.iter2
+              (fun (pname, annotation) ptype ->
+                if annotation = None then
+                  match find_name_end ~source ~start:!search_from ~limit:fn_expr.end_pos pname with
+                  | Some pend ->
+                      search_from := pend;
+                      let position = Lsp_utils.offset_to_position ~source ~offset:pend in
+                      let type_str = Types.to_string_pretty ptype in
+                      hints :=
+                        Lsp_t.InlayHint.create ~position
+                          ~label:(`String (": " ^ type_str))
+                          ~kind:Lsp_t.InlayHintKind.Type ()
+                        :: !hints
+                  | None -> ()
+                else
+                  (* Still advance search_from past annotated params *)
+                  match find_name_end ~source ~start:!search_from ~limit:fn_expr.end_pos pname with
+                  | Some pend -> search_from := pend
+                  | None -> ())
+              params param_types;
           (* Return type hint *)
           if return_type = None then
             match get_return_type n_params fn_type with
@@ -415,7 +422,10 @@ let%test "chain hint position is after receiver closing paren, not at dot" =
     List.filter
       (fun (h : Lsp_t.InlayHint.t) ->
         h.paddingLeft = Some true
-        && (match h.label with `String s -> s = ": String" | _ -> false))
+        &&
+        match h.label with
+        | `String s -> s = ": String"
+        | _ -> false)
       hints
   in
   match chain_hints with
@@ -437,7 +447,10 @@ let%test "expression-statement chain (no let binding) gets chain hint" =
     List.filter
       (fun (h : Lsp_t.InlayHint.t) ->
         h.paddingLeft = Some true
-        && (match h.label with `String s -> s = ": String" | _ -> false))
+        &&
+        match h.label with
+        | `String s -> s = ": String"
+        | _ -> false)
       hints
   in
   List.length chain_hints = 1
@@ -450,7 +463,12 @@ let%test "find_recv_actual_end skips # line comments" =
   let source = "42.show()  # comment\n  .show();" in
   (* The second '.' is at position 23 (after \n and two spaces) *)
   let dot_pos =
-    let rec find i = if source.[i] = '.' && i > 10 then i else find (i + 1) in
+    let rec find i =
+      if source.[i] = '.' && i > 10 then
+        i
+      else
+        find (i + 1)
+    in
     find 10
   in
   let recv_end = find_recv_actual_end ~source ~dot_pos in
@@ -467,7 +485,10 @@ let%test "multiline chain with # comment between segments shows hint" =
     List.filter
       (fun (h : Lsp_t.InlayHint.t) ->
         h.paddingLeft = Some true
-        && (match h.label with `String s -> s = ": String" | _ -> false))
+        &&
+        match h.label with
+        | `String s -> s = ": String"
+        | _ -> false)
       hints
   in
   match chain_hints with
@@ -477,7 +498,8 @@ let%test "multiline chain with # comment between segments shows hint" =
 let%test "find_recv_actual_end with only whitespace between dot and recv" =
   (* Simple case: just newline + spaces *)
   let source = "42.show()\n  .show();" in
-  let dot_pos = 12 in (* the second '.' *)
+  let dot_pos = 12 in
+  (* the second '.' *)
   let recv_end = find_recv_actual_end ~source ~dot_pos in
   recv_end = 9 (* right after ')' at pos 8 *)
 
