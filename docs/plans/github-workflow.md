@@ -337,3 +337,13 @@ If migration causes disruption:
   - `Manual Cross-Platform / integration (macos-latest)`
   - `Manual Cross-Platform / integration (windows-latest)`
 - 2026-03-01 18:52 CET: `strict_required_status_checks_policy` is enabled and ruleset bypass actors are now empty (`current_user_can_bypass=never`).
+- 2026-03-01 18:57 CET: Completed Step 7 validation matrix by checking `pr-ci.yml` filters + job guards against scenario paths:
+  - compiler-only -> `compiler-unit`, `compiler-integration-linux`, `quality-lint-fmt-doc`
+  - lsp-only -> `lsp-unit`, `lsp-integration`, `quality-lint-fmt-doc`
+  - vscode-only -> `editor-vscode`
+  - zed-only -> `editor-zed`
+  - jetbrains-only -> `editor-jetbrains`
+  - nvim-only -> `editor-nvim`
+- 2026-03-01 18:57 CET: Manual merge-gate expectation verified in ruleset required checks via:
+  - `Manual Cross-Platform / integration (macos-latest)`
+  - `Manual Cross-Platform / integration (windows-latest)`
