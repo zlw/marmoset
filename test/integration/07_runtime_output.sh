@@ -9,49 +9,13 @@ source "$SCRIPT_DIR/common.sh"
 suite_begin "TYPECHECK & CODEGEN INTEGRATION TESTS - RUNTIME OUTPUT"
 echo "-- RUNTIME OUTPUT TESTS --"
 
+# Tests migrated to test/fixtures/runtime/:
+#   - Print enum value with data          -> print_enum_with_data.mr
+#   - Print enum with no data             -> print_enum_no_data.mr
+#   - Match arm binding unused            -> match_arm_unused_binding.mr
+#   - Primitive match unused binding      -> primitive_match_unused_binding.mr
 
-
-
-expect_runtime_output "Print enum value with data" "some(42)" << 'EOF'
-enum option[a] {
-  some(a)
-  none
-}
-
-let x = option.some(42)
-puts(x)
-EOF
-
-expect_runtime_output "Print enum with no data" "none" << 'EOF'
-enum option[a] {
-  some(a)
-  none
-}
-
-let x: option[int] = option.none()
-puts(x)
-EOF
-
-expect_runtime_output "Match arm binding can be unused in effectful arm" "got one" << 'EOF'
-enum option[a] {
-  some(a)
-  none
-}
-
-let x = option.some(1)
-match x {
-  option.some(n): puts("got one")
-  option.none(): puts("got none")
-}
-EOF
-
-expect_runtime_output "Primitive match variable binding can be unused in effectful arm" "hit" << 'EOF'
-let x = 1
-match x {
-  n: puts("hit")
-}
-EOF
-
+# Kept in shell: reads external example file, not suitable for fixture model.
 expect_runtime_output "Example monkey source builds and runs" $'Thorsten Ball - Writing A Compiler In Go\n[1 1 2 3 5 8]' "$(cat "$REPO_ROOT/examples/monkey.mr")"
 
 suite_end
