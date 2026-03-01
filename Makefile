@@ -46,13 +46,8 @@ $(filter-out integration,$(MAKECMDGOALS)):
 	@:
 endif
 
-LEGACY_SUITES := $(patsubst test/integration/%,%,$(wildcard test/integration/[0-8]*.sh))
-
-integration-legacy:
-	@./test/integration.sh $(LEGACY_SUITES)
-
 integration-fixtures:
-	@./test/integration.sh 99_fixtures.sh
+	@./test/integration.sh
 
 repl:
 	@echo "REPL is removed. Use 'make run file=examples/fibonacci-typed.mr'." && exit 1
@@ -77,7 +72,7 @@ ci-compiler-integration-linux:
 	@$(MAKE) integration
 
 ci-lsp-integration:
-	@./test/integration.sh 08_cli.sh
+	@./test/integration.sh cli
 
 ci-quality-lint-fmt-doc:
 	@./test/ci/quality.sh
