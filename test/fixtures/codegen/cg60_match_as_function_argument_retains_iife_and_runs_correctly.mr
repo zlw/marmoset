@@ -1,0 +1,5 @@
+# CG60: Match as function argument retains IIFE and runs correctly
+# output: 20
+let id = fn(x: int) -> int { x }
+let result = id(match 2 { 1: 10 2: 20 _: 0 })
+puts(result)

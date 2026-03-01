@@ -1,0 +1,5 @@
+# CG53: if with function call only in then branch
+# output: 11
+let inc = fn(x: int) -> int { x + 1 }
+let x = if (true) { inc(10) } else { 0 }
+puts(x)

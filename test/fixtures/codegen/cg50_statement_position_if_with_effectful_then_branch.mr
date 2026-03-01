@@ -1,0 +1,4 @@
+# CG50: Statement-position if with effectful then-branch
+# output: hello
+let flag = true
+if (flag) { puts("hello") }

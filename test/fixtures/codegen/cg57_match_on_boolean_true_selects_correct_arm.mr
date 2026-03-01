@@ -1,0 +1,8 @@
+# CG57: Match on boolean true selects correct arm
+# output: 1
+let flag = true
+let x = match flag {
+  true: 1
+  false: 0
+}
+puts(x)

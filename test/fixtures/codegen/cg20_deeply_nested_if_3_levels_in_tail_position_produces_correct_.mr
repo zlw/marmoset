@@ -1,0 +1,6 @@
+# CG20: Deeply nested if (3 levels) in tail position produces correct value
+# output: 3
+let f = fn(a: bool, b: bool, c: bool) -> int {
+  if (a) { if (b) { if (c) { 1 } else { 2 } } else { 3 } } else { 4 }
+}
+puts(f(true, false, true))

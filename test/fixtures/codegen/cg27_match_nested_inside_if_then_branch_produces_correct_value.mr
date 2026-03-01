@@ -1,0 +1,14 @@
+# CG27: Match nested inside if-then branch produces correct value
+# output: 20
+let f = fn(flag: bool, x: int) -> int {
+  if (flag) {
+    match x {
+      1: 10
+      2: 20
+      _: 30
+    }
+  } else {
+    0
+  }
+}
+puts(f(true, 2))

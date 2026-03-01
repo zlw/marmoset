@@ -1,0 +1,4 @@
+# CG67: if in discard position executes side effects correctly
+# output: branch_a
+let x = 1
+let _ = if (x == 1) { puts("branch_a") } else { puts("branch_b") }

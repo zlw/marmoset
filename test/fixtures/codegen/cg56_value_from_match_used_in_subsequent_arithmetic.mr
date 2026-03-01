@@ -1,0 +1,10 @@
+# CG56: Value from match used in subsequent arithmetic
+# output: 25
+let n = 2
+let base = match n {
+  1: 10
+  2: 20
+  _: 0
+}
+let result = base + 5
+puts(result)

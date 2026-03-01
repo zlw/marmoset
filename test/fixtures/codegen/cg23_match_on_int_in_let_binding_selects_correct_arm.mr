@@ -1,0 +1,9 @@
+# CG23: Match on int in let binding selects correct arm
+# output: 42
+let x = 2
+let y = match x {
+  1: 10
+  2: 42
+  _: 0
+}
+puts(y)

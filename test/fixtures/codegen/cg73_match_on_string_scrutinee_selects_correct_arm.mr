@@ -1,0 +1,9 @@
+# CG73: Match on string scrutinee selects correct arm
+# output: found_hello
+let s = "hello"
+let result = match s {
+  "hello": "found_hello"
+  "world": "found_world"
+  _: "unknown"
+}
+puts(result)

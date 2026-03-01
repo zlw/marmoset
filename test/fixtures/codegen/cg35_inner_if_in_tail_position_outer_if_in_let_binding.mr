@@ -1,0 +1,7 @@
+# CG35: Inner if in tail position, outer if in let binding
+# output: 5
+let f = fn(a: bool, b: bool) -> int {
+  if (a) { if (b) { 5 } else { 10 } } else { 0 }
+}
+let x = f(true, true)
+puts(x)

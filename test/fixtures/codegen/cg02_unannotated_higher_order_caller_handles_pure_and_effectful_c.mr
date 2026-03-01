@@ -1,0 +1,9 @@
+# CG02: Unannotated higher-order caller handles pure and effectful callbacks
+# output: 2
+# output: 1
+# output: 3
+let hof = fn(f) { f(1) }
+let pure = fn(x: int) -> int { x + 1 }
+let eff = fn(x: int) => int { puts(x); x + 2 }
+puts(hof(pure))
+puts(hof(eff))

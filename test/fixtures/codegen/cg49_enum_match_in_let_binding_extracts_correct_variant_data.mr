@@ -1,0 +1,12 @@
+# CG49: Enum match in let binding extracts correct variant data
+# output: 42
+enum option[a] {
+  some(a)
+  none
+}
+let val = option.some(42)
+let result = match val {
+  option.some(v): v
+  option.none: 0
+}
+puts(result)

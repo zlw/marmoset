@@ -1,0 +1,6 @@
+# CG37: Recursive function with if in tail position
+# output: 120
+let factorial = fn(n: int, acc: int) -> int {
+  if (n == 0) { acc } else { factorial(n - 1, acc * n) }
+}
+puts(factorial(5, 1))

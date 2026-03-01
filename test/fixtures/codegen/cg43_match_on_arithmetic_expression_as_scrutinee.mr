@@ -1,0 +1,11 @@
+# CG43: Match on arithmetic expression as scrutinee
+# output: 30
+let a = 1
+let b = 2
+let x = match a + b {
+  1: 10
+  2: 20
+  3: 30
+  _: 0
+}
+puts(x)

@@ -1,0 +1,4 @@
+# CG07: Union of callables with mismatched arity is rejected at call site
+# error: Cannot unify
+let f = if (true) { fn(x: int) -> int { x } } else { fn(x: int, y: int) -> int { x + y } }
+puts(f(1))

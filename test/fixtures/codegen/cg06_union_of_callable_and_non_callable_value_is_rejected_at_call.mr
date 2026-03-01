@@ -1,0 +1,4 @@
+# CG06: Union of callable and non-callable value is rejected at call site
+# error: Cannot unify
+let f = if (true) { fn(x: int) -> int { x + 1 } } else { 0 }
+puts(f(1))

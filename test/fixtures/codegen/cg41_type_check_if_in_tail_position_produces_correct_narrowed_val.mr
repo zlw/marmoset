@@ -1,0 +1,6 @@
+# CG41: Type-check if in tail position produces correct narrowed value
+# output: 3
+let f = fn(x: int | string) -> int {
+  if (x is int) { x + 2 } else { 0 }
+}
+puts(f(1))

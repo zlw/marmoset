@@ -1,0 +1,13 @@
+# CG62: if in tail position with let bindings takes else branch
+# output: 5
+let f = fn(flag: bool) -> int {
+  if (flag) {
+    let a = 10
+    let b = 20
+    a + b
+  } else {
+    let c = 5
+    c
+  }
+}
+puts(f(false))

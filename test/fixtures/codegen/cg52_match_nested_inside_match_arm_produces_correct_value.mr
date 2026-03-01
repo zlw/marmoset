@@ -1,0 +1,17 @@
+# CG52: Match nested inside match arm produces correct value
+# output: 99
+let f = fn(x: int, y: int) -> int {
+  match x {
+    1: match y {
+      1: 11
+      2: 12
+      _: 19
+    }
+    2: match y {
+      1: 21
+      _: 99
+    }
+    _: 0
+  }
+}
+puts(f(2, 3))

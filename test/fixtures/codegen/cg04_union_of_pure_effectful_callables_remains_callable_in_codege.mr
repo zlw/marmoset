@@ -1,0 +1,12 @@
+# CG04: Union of pure/effectful callables remains callable in codegen
+# output: 1
+# output: 3
+let choose = fn(flag: bool) {
+  if (flag) {
+    fn(x: int) -> int { x + 1 }
+  } else {
+    fn(x: int) => int { puts(x); x + 2 }
+  }
+}
+let f = choose(false)
+puts(f(1))

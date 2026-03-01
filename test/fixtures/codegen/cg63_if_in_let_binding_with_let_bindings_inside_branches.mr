@@ -1,0 +1,12 @@
+# CG63: if in let binding with let bindings inside branches
+# output: 30
+let flag = true
+let x = if (flag) {
+  let a = 10
+  let b = 20
+  a + b
+} else {
+  let c = 5
+  c
+}
+puts(x)

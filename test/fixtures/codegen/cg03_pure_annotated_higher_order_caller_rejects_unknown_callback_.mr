@@ -1,0 +1,5 @@
+# CG03: Pure annotated higher-order caller rejects unknown callback calls conservatively
+# error: Pure function (declared with ->) cannot call effectful operations
+let hof = fn(f) -> int { f(1) }
+let eff = fn(x: int) => int { x }
+puts(hof(eff))

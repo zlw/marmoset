@@ -1,0 +1,10 @@
+# CG46: Match returning strings in arms
+# output: two
+let n = 2
+let s = match n {
+  1: "one"
+  2: "two"
+  3: "three"
+  _: "other"
+}
+puts(s)

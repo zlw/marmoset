@@ -1,0 +1,9 @@
+# CG05: Higher-order callback through local alias keeps effectful behavior
+# output: 1
+# output: 3
+let hof = fn(f) {
+  let g = f
+  g(1)
+}
+let eff = fn(x: int) => int { puts(x); x + 2 }
+puts(hof(eff))
