@@ -123,7 +123,7 @@ expect_reject() {
         echo "✗ FAIL (expected build failure but build succeeded)"
         FAIL=$((FAIL + 1))
     else
-        if [ "$expected_diag" = "*" ] || echo "$build_output" | grep -q "$expected_diag"; then
+        if [ "$expected_diag" = "*" ] || echo "$build_output" | grep -qF "$expected_diag"; then
             echo "✓ PASS"
             PASS=$((PASS + 1))
         else
