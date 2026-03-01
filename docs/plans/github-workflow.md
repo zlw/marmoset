@@ -443,3 +443,11 @@ If migration causes disruption:
   - reintroduced `.github/workflows/manual-cross-platform.yml` on `worktree-lsp`
   - restored `.github/workflows/pr-ci.yml` to `pull_request`-only (manual macOS/windows jobs removed from PR workflow)
   - updated README manual-gate instructions and check names back to `Manual Cross-Platform / ... (workflow_dispatch)`
+- 2026-03-01 20:10 CET: Ruleset final alignment for split topology:
+  - updated required manual-gate check contexts in ruleset `branch: main` (`id=13342513`) from:
+    - `PR CI / compiler-integration-macos (workflow_dispatch)`
+    - `PR CI / compiler-integration-windows (workflow_dispatch)`
+  - to:
+    - `Manual Cross-Platform / compiler-integration-macos (workflow_dispatch)`
+    - `Manual Cross-Platform / compiler-integration-windows (workflow_dispatch)`
+  - retained all `PR CI / ... (pull_request)` required contexts unchanged
