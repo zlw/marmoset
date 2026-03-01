@@ -1,0 +1,6 @@
+# E10: Match with variable binding
+let x = 42
+let y = match x {
+  n: n + 1
+}
+y

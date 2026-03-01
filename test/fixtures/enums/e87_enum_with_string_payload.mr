@@ -1,0 +1,9 @@
+# E87: Enum with string payload
+# output: hello world
+enum option[a] { some(a) none }
+let x = option.some("hello world")
+let v = match x {
+  option.some(s): s
+  option.none: ""
+}
+puts(v)

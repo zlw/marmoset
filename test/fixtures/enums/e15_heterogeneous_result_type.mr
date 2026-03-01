@@ -1,0 +1,7 @@
+# E15: Heterogeneous result type
+enum result[a, b] { ok(a) error(b) }
+let x: result[int, string] = result.ok(42)
+match x {
+  result.ok(v): v + 1
+  result.error(_): 0
+}

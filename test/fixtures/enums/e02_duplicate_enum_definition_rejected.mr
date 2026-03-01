@@ -1,0 +1,5 @@
+# E02: Duplicate enum definition is rejected in one program
+# error: Duplicate enum definition: direction
+enum direction { north south east west }
+enum direction { up down }
+puts(1)

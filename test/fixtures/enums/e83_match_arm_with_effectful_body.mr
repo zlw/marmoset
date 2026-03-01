@@ -1,0 +1,8 @@
+# E83: Match arm with effectful body (puts)
+# output: hello
+enum option[a] { some(a) none }
+let x = option.some("hello")
+match x {
+  option.some(v): puts(v)
+  option.none: puts("nothing")
+}

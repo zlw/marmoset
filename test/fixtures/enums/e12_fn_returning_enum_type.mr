@@ -1,0 +1,10 @@
+# E12: Function returning enum type
+enum option[a] { some(a) none }
+let wrap = fn(x: int) -> option[int] {
+  option.some(x)
+}
+let y = wrap(100)
+match y {
+  option.some(v): v
+  option.none: 0
+}

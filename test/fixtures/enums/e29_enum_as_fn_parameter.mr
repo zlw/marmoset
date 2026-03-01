@@ -1,0 +1,10 @@
+# E29: Enum as function parameter
+# output: 1
+enum direction { north south east west }
+let is_north = fn(d: direction) -> int {
+  match d {
+    direction.north: 1
+    _: 0
+  }
+}
+puts(is_north(direction.north))

@@ -1,0 +1,8 @@
+# E31: Enum round-trip through wrap/unwrap
+# output: 42
+enum option[a] { some(a) none }
+let wrap = fn(x: int) -> option[int] { option.some(x) }
+let unwrap = fn(x: option[int]) -> int {
+  match x { option.some(v): v option.none: 0 }
+}
+puts(unwrap(wrap(42)))

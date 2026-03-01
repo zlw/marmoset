@@ -1,0 +1,9 @@
+# E64: Mixed-type multi-field variant
+# output: hello
+enum tagged { item(int, string, bool) nothing }
+let x = tagged.item(42, "hello", true)
+let out = match x {
+  tagged.item(_, s, _): s
+  tagged.nothing: "nothing"
+}
+puts(out)

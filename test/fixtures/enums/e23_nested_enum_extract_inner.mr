@@ -1,0 +1,13 @@
+# E23: Enum with another enum as payload - extract inner
+# output: 42
+enum inner { a(int) b }
+enum outer { wrap(inner) empty }
+let x = outer.wrap(inner.a(42))
+let result = match x {
+  outer.wrap(i): match i {
+    inner.a(n): n
+    inner.b: 0
+  }
+  outer.empty: 0
+}
+puts(result)

@@ -1,0 +1,5 @@
+# E22: Enum name coexists with other variables
+# output: 42
+enum color { red green blue }
+let color_val = 42
+puts(color_val)

@@ -1,0 +1,10 @@
+# E48: Enum match used as if condition
+# output: yes
+enum option[a] { some(a) none }
+let x = option.some(42)
+let is_some = match x {
+  option.some(_): true
+  option.none: false
+}
+let out = if (is_some) { "yes" } else { "no" }
+puts(out)

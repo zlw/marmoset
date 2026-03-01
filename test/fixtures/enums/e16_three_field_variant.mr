@@ -1,0 +1,6 @@
+# E16: Three-field variant
+enum triple { t(int, string, bool) }
+let x = triple.t(1, "two", true)
+match x {
+  triple.t(a, _, _): a
+}

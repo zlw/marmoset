@@ -1,0 +1,16 @@
+# E58: Match returns different enum type then re-matched
+# output: 7
+enum color { red green blue }
+enum size { small medium large }
+let c = color.green
+let s = match c {
+  color.red: size.small
+  color.green: size.medium
+  color.blue: size.large
+}
+let out = match s {
+  size.small: 3
+  size.medium: 7
+  size.large: 11
+}
+puts(out)

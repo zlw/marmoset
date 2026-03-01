@@ -1,0 +1,5 @@
+# E21: Enum variant name same as let binding does not shadow
+# output: hello
+let x = "hello"
+enum myenum { x y z }
+puts(x)

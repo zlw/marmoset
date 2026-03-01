@@ -1,0 +1,13 @@
+# E92: Enum match function called multiple times
+# output: 3
+enum option[a] { some(a) none }
+let unwrap = fn(x: option[int], fallback: int) -> int {
+  match x {
+    option.some(v): v
+    option.none: fallback
+  }
+}
+let a = unwrap(option.some(1), 0)
+let b = unwrap(option.some(2), 0)
+let c = unwrap(option.none(), 99)
+puts(a + b + c - 99)

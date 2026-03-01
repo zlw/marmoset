@@ -1,0 +1,9 @@
+# E61: result[a, b] with two type params - error case
+# output: 0
+enum result[a, b] { ok(a) err(b) }
+let x: result[int, string] = result.err("oops")
+let v = match x {
+  result.ok(n): n
+  result.err(_): 0
+}
+puts(v)

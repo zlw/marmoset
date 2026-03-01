@@ -1,0 +1,10 @@
+# E71: All-nullary enum match
+# output: 2
+enum traffic { red yellow green }
+let t = traffic.yellow
+let v = match t {
+  traffic.red: 1
+  traffic.yellow: 2
+  traffic.green: 3
+}
+puts(v)

@@ -1,0 +1,2 @@
+# E01: Simple enum definition
+enum direction { north south east west }

@@ -1,0 +1,8 @@
+# E96: Constructor pattern allows partially unused bindings
+# output: 1
+enum pair { p(int, int) }
+let x = pair.p(1, 2)
+let out = match x {
+  pair.p(a, b): a
+}
+puts(out)

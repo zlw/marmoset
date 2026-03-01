@@ -1,0 +1,9 @@
+# E63: Three-field variant extraction
+# output: 6
+enum data { triple(int, int, int) empty }
+let x = data.triple(1, 2, 3)
+let sum = match x {
+  data.triple(a, b, c): a + b + c
+  data.empty: 0
+}
+puts(sum)

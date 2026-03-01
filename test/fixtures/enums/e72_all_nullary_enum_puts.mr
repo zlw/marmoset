@@ -1,0 +1,4 @@
+# E72: All-nullary enum printed via puts uses String method
+# output: red
+enum traffic { red yellow green }
+puts(traffic.red)

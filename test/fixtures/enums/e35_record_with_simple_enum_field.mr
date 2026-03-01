@@ -1,0 +1,5 @@
+# E35: Record with simple enum field
+# output: east
+enum direction { north south east west }
+let r = { name: "compass", dir: direction.east }
+puts(r.dir)

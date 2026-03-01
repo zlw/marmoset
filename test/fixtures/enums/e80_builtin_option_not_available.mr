@@ -1,0 +1,4 @@
+# E80: Builtin option not available without explicit declaration
+# error: Unbound
+let x = option.some(42)
+puts(x)

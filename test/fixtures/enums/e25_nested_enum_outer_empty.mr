@@ -1,0 +1,13 @@
+# E25: Nested enum - outer empty case
+# output: -1
+enum inner { a(int) b }
+enum outer { wrap(inner) empty }
+let x = outer.empty
+let result = match x {
+  outer.wrap(i): match i {
+    inner.a(n): n
+    inner.b: 0
+  }
+  outer.empty: 0 - 1
+}
+puts(result)

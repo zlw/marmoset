@@ -1,0 +1,9 @@
+# E89: First element of enum list matched
+# output: 10
+enum option[a] { some(a) none }
+let xs = [option.some(10), option.some(20), option.none()]
+let first_val = match xs[0] {
+  option.some(v): v
+  option.none: 0
+}
+puts(first_val)

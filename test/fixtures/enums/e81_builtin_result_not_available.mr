@@ -1,0 +1,4 @@
+# E81: Builtin result not available without explicit declaration
+# error: Unbound
+let x = result.success(100)
+puts(x)

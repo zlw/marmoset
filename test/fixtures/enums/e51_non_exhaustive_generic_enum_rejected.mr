@@ -1,0 +1,7 @@
+# E51: Non-exhaustive match on generic enum is rejected
+# error: Non-exhaustive
+enum option[a] { some(a) none }
+let x = option.some(42)
+match x {
+  option.some(v): v
+}

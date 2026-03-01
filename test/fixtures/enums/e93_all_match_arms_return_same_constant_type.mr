@@ -1,0 +1,11 @@
+# E93: All match arms return same constant type
+# output: 42
+enum choice { left right up down }
+let c = choice.up
+let v = match c {
+  choice.left: 10
+  choice.right: 20
+  choice.up: 42
+  choice.down: 50
+}
+puts(v)
