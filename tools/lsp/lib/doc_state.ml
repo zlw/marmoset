@@ -19,6 +19,7 @@ type analysis_result = {
 let reset_globals () =
   Infer.reset_fresh_counter ();
   Infer.clear_method_resolution_store ();
+  Infer.clear_type_var_user_names ();
   Typecheck.Trait_registry.clear ();
   Typecheck.Enum_registry.clear ();
   Typecheck.Annotation.clear_type_aliases ()
@@ -51,11 +52,14 @@ let analyze ~(source : string) : analysis_result =
             match (err.loc, err.loc_end) with
             | Some loc, Some loc_end ->
                 let start = Lsp_utils.loc_to_position loc in
-                let end_ = Lsp_utils.loc_to_position loc_end in
+                (* LSP Range.end is exclusive, so use column (not column-1) *)
+                let end_ = Lsp_t.Position.create ~line:(loc_end.line - 1) ~character:loc_end.column in
                 Lsp_t.Range.create ~start ~end_
             | Some loc, None ->
-                let pos = Lsp_utils.loc_to_position loc in
-                Lsp_t.Range.create ~start:pos ~end_:pos
+                let start = Lsp_utils.loc_to_position loc in
+                (* Underline at least one character *)
+                let end_ = Lsp_t.Position.create ~line:(loc.line - 1) ~character:loc.column in
+                Lsp_t.Range.create ~start ~end_
             | None, _ -> zero_range
           in
           let diagnostics =

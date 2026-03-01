@@ -137,6 +137,10 @@ let create_inference_state () : inference_state =
 let active_inference_state : inference_state ref = ref (create_inference_state ())
 let global_method_resolution_store : (int, method_resolution) Hashtbl.t = Hashtbl.create 256
 
+(* Maps fresh type variable names (e.g., "t0") to user-defined names (e.g., "t")
+   from generic parameter declarations like fn[t: named](...) *)
+let type_var_user_names : (string, string) Hashtbl.t = Hashtbl.create 32
+
 let with_inference_state (state : inference_state) (f : unit -> 'a) : 'a =
   let previous = !active_inference_state in
   active_inference_state := state;
@@ -292,6 +296,13 @@ let clear_constraint_store () : unit =
   Hashtbl.clear (current_constrained_field_store ())
 
 let clear_method_resolution_store () : unit = Hashtbl.clear global_method_resolution_store
+let clear_type_var_user_names () : unit = Hashtbl.clear type_var_user_names
+
+let record_type_var_user_name ~(fresh_name : string) ~(user_name : string) : unit =
+  Hashtbl.replace type_var_user_names fresh_name user_name
+
+let lookup_type_var_user_name (fresh_name : string) : string option =
+  Hashtbl.find_opt type_var_user_names fresh_name
 
 let record_method_resolution (expr : AST.expression) (resolution : method_resolution) : unit =
   Hashtbl.replace global_method_resolution_store expr.id resolution
@@ -933,7 +944,7 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
         (* Phase 4.3+: Handle generic parameters with constraints *)
         infer_function_with_annotations type_map env f.generics f.params f.return_type f.is_effectful f.body
     (* Function calls *)
-    | AST.Call (func, args) -> infer_call type_map env func args
+    | AST.Call (func, args) -> infer_call type_map env expr func args
     (* Arrays *)
     | AST.Array elements -> infer_array type_map env elements
     (* Hashes *)
@@ -1741,9 +1752,11 @@ and infer_function_with_annotations type_map env generics_opt params return_anno
         List.map
           (fun (generic : AST.generic_param) ->
             let fresh_var = fresh_type_var () in
-            (* Store constraints in global store *)
+            (* Store constraints and user name mapping *)
             (match fresh_var with
-            | TVar n -> add_type_var_constraints n generic.constraints
+            | TVar n ->
+                add_type_var_constraints n generic.constraints;
+                record_type_var_user_name ~fresh_name:n ~user_name:generic.name
             | _ -> ());
             (generic.name, fresh_var))
           generics
@@ -1906,7 +1919,7 @@ and infer_function_with_annotations type_map env generics_opt params return_anno
    Function Calls
    ============================================================ *)
 
-and infer_call type_map env func args =
+and infer_call type_map env (call_expr : AST.expression) func args =
   (* Infer function type *)
   match infer_expression type_map env func with
   | Error e -> Error e
@@ -1962,14 +1975,14 @@ and infer_call type_map env func args =
             | _ -> try_legacy_pure_then_effectful ()
           in
           match call_result with
-          | Error e -> Error (error_at (UnificationError e) func)
+          | Error e -> Error (error_at (UnificationError e) call_expr)
           | Ok (subst3, result_type) -> (
               let final_subst = compose_substitution subst2 subst3 in
               (* Phase 4.3+: Verify trait constraints are satisfied.
                  When calling a constrained generic function like fn[a: show](x: a),
                  we need to check that the actual argument type implements the required traits. *)
               match verify_constraints_in_substitution final_subst with
-              | Error msg -> Error (error_at (ConstructorError msg) func)
+              | Error msg -> Error (error_at (ConstructorError msg) call_expr)
               | Ok () ->
                   let final_result = apply_substitution subst3 result_type in
                   Ok (final_subst, final_result))))
@@ -3544,6 +3557,11 @@ module Test = struct
     | _ -> false
 
   let%test "infer record field access" = infers_to "let p = { x: 1, y: 2 }; p.x + p.y" TInt
+
+  (* Regression: return type annotation with unresolved record field type variable.
+     fn(value) -> string { value.name } should succeed — the field type var unifies with string. *)
+  let%test "return annotation unifies with record field type var" =
+    infers_to "let f = fn(r) -> string { r.name }; f({ name: \"hi\" })" TString
 
   let%test "infer type alias for record annotation" =
     infers_to "type point = { x: int, y: int }; let p: point = { x: 1, y: 2 }; p.x" TInt
