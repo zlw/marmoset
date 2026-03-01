@@ -204,7 +204,7 @@ reject_mode() {
         return
     fi
 
-    # Check each expected diagnostic is present (substring match)
+    # --- One-way: each expected diagnostic must be present ---
     local all_found=true
     local missing=""
     for ((i = 0; i < ${#DIAG_VALUES[@]}; i++)); do
@@ -218,14 +218,42 @@ reject_mode() {
         fi
     done
 
-    if $all_found; then
-        echo "✓ PASS"
-        PASS=$((PASS + 1))
-    else
+    if ! $all_found; then
         echo "✗ FAIL (missing expected diagnostics)"
         echo -e "  Missing:$missing"
         echo "  Build output: $(echo "$build_output" | head -10)"
         FAIL=$((FAIL + 1))
+        return
+    fi
+
+    # --- Two-way: each actual diagnostic line must be covered by an annotation ---
+    local unexpected=""
+    while IFS= read -r diag_line; do
+        [ -z "$diag_line" ] && continue
+        local covered=false
+        for ((i = 0; i < ${#DIAG_VALUES[@]}; i++)); do
+            local val="${DIAG_VALUES[$i]}"
+            if [ "$val" = "*" ]; then
+                covered=true
+                break
+            fi
+            if echo "$diag_line" | grep -qF "$val"; then
+                covered=true
+                break
+            fi
+        done
+        if ! $covered; then
+            unexpected="$unexpected\n  - $diag_line"
+        fi
+    done < <(echo "$build_output" | grep -iE '^[^:]*:[0-9]+:[0-9]+.*error|^(Type |Parse )?[Ee]rror|^[Ww]arning|^[Ii]nfo')
+
+    if [ -n "$unexpected" ]; then
+        echo "✗ FAIL (unexpected diagnostics)"
+        echo -e "  Unexpected:$unexpected"
+        FAIL=$((FAIL + 1))
+    else
+        echo "✓ PASS"
+        PASS=$((PASS + 1))
     fi
 }
 
