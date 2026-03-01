@@ -1,0 +1,7 @@
+# CM18: Builtin show on int, bool, string
+# output: 42
+# output: true
+# output: hello
+puts(42.show())
+puts(true.show())
+puts("hello".show())

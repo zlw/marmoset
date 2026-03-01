@@ -1,0 +1,7 @@
+# CM16: Poly fn at top-level and inside function body
+# output: 42
+# output: hello
+let id = fn(x) { x }
+puts(id(42))
+let use_id = fn() { puts(id("hello")) }
+use_id()

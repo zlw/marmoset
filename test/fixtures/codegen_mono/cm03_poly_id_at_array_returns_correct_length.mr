@@ -1,0 +1,4 @@
+# CM03: Poly id at array returns correct length
+# output: 3
+let id = fn(x) { x }
+puts(len(id([1, 2, 3])))

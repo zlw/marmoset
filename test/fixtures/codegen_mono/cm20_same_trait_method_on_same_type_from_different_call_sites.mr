@@ -1,0 +1,7 @@
+# CM20: Same trait method on same type from different call sites
+# output: 42
+# output: 99
+let a = 42
+let b = 99
+puts(a.show())
+puts(b.show())

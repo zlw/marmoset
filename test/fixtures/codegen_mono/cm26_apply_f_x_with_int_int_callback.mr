@@ -1,0 +1,5 @@
+# CM26: apply(f, x) with int->int callback
+# output: 43
+let apply = fn(f, x) { f(x) }
+let inc = fn(n: int) -> int { n + 1 }
+puts(apply(inc, 42))

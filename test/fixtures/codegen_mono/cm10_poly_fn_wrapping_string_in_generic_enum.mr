@@ -1,0 +1,9 @@
+# CM10: Poly fn wrapping string in generic enum
+# output: hello
+enum option[a] { some(a) none }
+let wrap = fn(x) { option.some(x) }
+let v = wrap("hello")
+match v {
+  option.some(s): puts(s)
+  option.none: puts("none")
+}

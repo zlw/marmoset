@@ -1,0 +1,4 @@
+# CM06: Nested id(id(42))
+# output: 42
+let id = fn(x) { x }
+puts(id(id(42)))

@@ -1,0 +1,6 @@
+# CM39: Poly id at int and bool
+# output: 42
+# output: true
+let id = fn(x) { x }
+puts(id(42))
+puts(id(true))

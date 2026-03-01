@@ -1,0 +1,8 @@
+# CM28: Constrained fn[t: show] at int and string
+# output: 42
+# output: hello
+let stringify = fn[t: show](x: t) -> string {
+  x.show()
+};
+puts(stringify(42))
+puts(stringify("hello"))

@@ -1,0 +1,8 @@
+# CM27: [BUG-3] apply with different callback types
+# output: 43
+# output: hello!
+let apply = fn(f, x) { f(x) }
+let inc = fn(n: int) -> int { n + 1 }
+let bang = fn(s: string) -> string { s + "!" }
+puts(apply(inc, 42))
+puts(apply(bang, "hello"))

@@ -1,0 +1,6 @@
+# CM08: Chain of different typed fns composes correctly
+# output: 41
+let add1 = fn(x: int) -> int { x + 1 }
+let double = fn(x: int) -> int { x * 2 }
+let negate = fn(x: int) -> int { 0 - x }
+puts(negate(negate(add1(double(20)))))

@@ -1,0 +1,8 @@
+# CM05: Poly fn called 3x with same type deduplicates
+# output: 1
+# output: 2
+# output: 3
+let id = fn(x) { x }
+puts(id(1))
+puts(id(2))
+puts(id(3))

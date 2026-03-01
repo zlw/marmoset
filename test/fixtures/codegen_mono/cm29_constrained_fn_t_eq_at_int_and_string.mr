@@ -1,0 +1,8 @@
+# CM29: Constrained fn[t: eq] at int and string
+# output: true
+# output: false
+let same = fn[t: eq](a: t, b: t) -> bool {
+  a == b
+};
+puts(same(1, 1))
+puts(same("a", "b"))

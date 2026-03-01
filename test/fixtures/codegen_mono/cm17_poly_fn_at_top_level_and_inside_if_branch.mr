@@ -1,0 +1,8 @@
+# CM17: Poly fn at top-level and inside if branch
+# output: 1
+# output: 2
+let id = fn(x) { x }
+puts(id(1))
+if (true) {
+  puts(id(2))
+}

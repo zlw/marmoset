@@ -1,0 +1,7 @@
+# CM35: Two typed fns with same param types
+# output: 2
+# output: 10
+let f = fn(x: int) -> int { x + 1 }
+let g = fn(x: int) -> int { x * 2 }
+puts(f(1))
+puts(g(5))
