@@ -668,10 +668,8 @@ and parse_impl_definition (p : parser) : (parser * AST.statement, parser) result
     in
     Ok (lp4, methods)
   in
-  let parse_trait_impl
-      (lp : parser)
-      (impl_trait_name : string)
-      (impl_type_params : AST.generic_param list) : (parser * AST.statement, parser) result =
+  let parse_trait_impl (lp : parser) (impl_trait_name : string) (impl_type_params : AST.generic_param list) :
+      (parser * AST.statement, parser) result =
     let* p_for_type =
       if curr_token_is lp Token.Ident && lp.curr_token.literal = "for" then
         Ok (next_token lp)
@@ -896,17 +894,8 @@ and infixFn (p : parser) (left_expr : AST.expression) (prec : precedence) :
     if (not peek_is_semicolon) && lower_precedence then
       let* lp2, left2 =
         match lp.peek_token.token_type with
-        | Token.Plus
-        | Token.Minus
-        | Token.Slash
-        | Token.Asterisk
-        | Token.Eq
-        | Token.NotEq
-        | Token.Lt
-        | Token.Gt
-        | Token.Le
-        | Token.Ge
-        | Token.Is ->
+        | Token.Plus | Token.Minus | Token.Slash | Token.Asterisk | Token.Eq | Token.NotEq | Token.Lt | Token.Gt
+        | Token.Le | Token.Ge | Token.Is ->
             parse_infix_expression (next_token lp) left
         | LParen -> parse_call_expression (next_token lp) left
         | LBracket -> parse_index_expression (next_token lp) left
@@ -2015,22 +2004,23 @@ module Test = struct
       | AST.Prefix (_, e) -> collect_expr_ids e
       | AST.Infix (l, _, r) -> collect_expr_ids l @ collect_expr_ids r
       | AST.TypeCheck (e, _) -> collect_expr_ids e
-      | AST.If (cond, cons, alt) ->
-          collect_expr_ids cond @ collect_stmt_ids cons
+      | AST.If (cond, cons, alt) -> (
+          collect_expr_ids cond
+          @ collect_stmt_ids cons
           @
-          (match alt with
+          match alt with
           | Some s -> collect_stmt_ids s
           | None -> [])
       | AST.Function f -> collect_stmt_ids f.body
       | AST.Call (f, args) -> collect_expr_ids f @ List.concat_map collect_expr_ids args
       | AST.Array elements -> List.concat_map collect_expr_ids elements
-      | AST.Hash pairs ->
-          List.concat_map (fun (k, v) -> collect_expr_ids k @ collect_expr_ids v) pairs
+      | AST.Hash pairs -> List.concat_map (fun (k, v) -> collect_expr_ids k @ collect_expr_ids v) pairs
       | AST.Index (container, index) -> collect_expr_ids container @ collect_expr_ids index
       | AST.EnumConstructor (_, _, args) -> List.concat_map collect_expr_ids args
       | AST.Match (scrutinee, arms) ->
-          collect_expr_ids scrutinee @ List.concat_map (fun (arm : AST.match_arm) -> collect_expr_ids arm.body) arms
-      | AST.RecordLit (fields, spread) ->
+          collect_expr_ids scrutinee
+          @ List.concat_map (fun (arm : AST.match_arm) -> collect_expr_ids arm.body) arms
+      | AST.RecordLit (fields, spread) -> (
           List.concat_map
             (fun (field : AST.record_field) ->
               match field.field_value with
@@ -2038,7 +2028,7 @@ module Test = struct
               | None -> [])
             fields
           @
-          (match spread with
+          match spread with
           | Some e -> collect_expr_ids e
           | None -> [])
       | AST.FieldAccess (receiver, _) -> collect_expr_ids receiver
@@ -2051,7 +2041,8 @@ module Test = struct
     | AST.Let { value; _ } -> collect_expr_ids value
     | AST.Return e | AST.ExpressionStmt e -> collect_expr_ids e
     | AST.Block stmts -> List.concat_map collect_stmt_ids stmts
-    | AST.EnumDef _ | AST.TraitDef _ | AST.ImplDef _ | AST.InherentImplDef _ | AST.DeriveDef _ | AST.TypeAlias _ ->
+    | AST.EnumDef _ | AST.TraitDef _ | AST.ImplDef _ | AST.InherentImplDef _ | AST.DeriveDef _ | AST.TypeAlias _
+      ->
         []
 
   let%test "parser assigns unique expression ids for nested function and record literals" =
@@ -2350,9 +2341,7 @@ let%test "parse impl with multiple methods" =
 
 let%test "parse impl method body with direct record literal" =
   let input =
-    "type vec2 = { x: int }\n\
-     trait num[a] { fn add(x: a, y: a) -> a }\n\
-     impl num for vec2 { fn add(x: vec2, y: vec2) -> vec2 { { x: x.x + y.x } } }"
+    "type vec2 = { x: int }\ntrait num[a] { fn add(x: a, y: a) -> a }\nimpl num for vec2 { fn add(x: vec2, y: vec2) -> vec2 { { x: x.x + y.x } } }"
   in
   let lexer = Lexer.init input in
   match parse_program (init lexer) with
@@ -2373,9 +2362,7 @@ let%test "parse impl method body with direct record literal" =
 
 let%test "parse impl method body with if expression and continue parsing next statement" =
   let input =
-    "trait pick[a] { fn pick(x: a, y: a) -> a }\n\
-     impl pick for int { fn pick(x: int, y: int) -> int { if (true) { x } else { y } } }\n\
-     1"
+    "trait pick[a] { fn pick(x: a, y: a) -> a }\nimpl pick for int { fn pick(x: int, y: int) -> int { if (true) { x } else { y } } }\n1"
   in
   let lexer = Lexer.init input in
   match parse_program (init lexer) with
@@ -2501,8 +2488,7 @@ let%test "parse function parameter annotation with function type" =
           match stmt.stmt with
           | AST.Let { value = { expr = AST.Function fn; _ }; _ } -> (
               match fn.params with
-              | [ ("f", Some (AST.TArrow ([ AST.TCon "int" ], AST.TCon "int"))); ("x", Some (AST.TCon "int")) ]
-                ->
+              | [ ("f", Some (AST.TArrow ([ AST.TCon "int" ], AST.TCon "int"))); ("x", Some (AST.TCon "int")) ] ->
                   true
               | _ -> false)
           | _ -> false)

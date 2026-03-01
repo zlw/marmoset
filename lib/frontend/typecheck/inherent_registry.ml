@@ -10,8 +10,8 @@ type generic_method_entry = {
   method_sig : method_sig;
 }
 
-let concrete_registry : ((mono_type * string), method_sig) Hashtbl.t = Hashtbl.create 64
-let generic_registry : ((mono_type * string), generic_method_entry) Hashtbl.t = Hashtbl.create 64
+let concrete_registry : (mono_type * string, method_sig) Hashtbl.t = Hashtbl.create 64
+let generic_registry : (mono_type * string, generic_method_entry) Hashtbl.t = Hashtbl.create 64
 
 let clear () : unit =
   Hashtbl.clear concrete_registry;
@@ -33,10 +33,10 @@ let rec has_type_vars (t : mono_type) : bool =
   | TFun (arg, ret, _) -> has_type_vars arg || has_type_vars ret
   | TArray elem -> has_type_vars elem
   | THash (k, v) -> has_type_vars k || has_type_vars v
-  | TRecord (fields, row) ->
+  | TRecord (fields, row) -> (
       List.exists (fun (f : Types.record_field_type) -> has_type_vars f.typ) fields
       ||
-      (match row with
+      match row with
       | None -> false
       | Some r -> has_type_vars r)
   | TEnum (_, args) | TUnion args -> List.exists has_type_vars args
@@ -54,7 +54,7 @@ let register_method ~(for_type : mono_type) (method_sig : method_sig) : (unit, s
   let for_type' = canonicalize_mono_type for_type in
   let method_sig' = canonicalize_method_sig method_sig in
   let key = (for_type', method_sig'.method_name) in
-  if has_type_vars for_type' then
+  if has_type_vars for_type' then (
     match Hashtbl.find_opt generic_registry key with
     | Some _ ->
         Error
@@ -62,7 +62,7 @@ let register_method ~(for_type : mono_type) (method_sig : method_sig) : (unit, s
              (to_string for_type'))
     | None ->
         Hashtbl.replace generic_registry key { for_type_pattern = for_type'; method_sig = method_sig' };
-        Ok ()
+        Ok ())
   else
     match Hashtbl.find_opt concrete_registry key with
     | Some _ ->
@@ -78,7 +78,7 @@ let resolve_method (for_type : mono_type) (method_name : string) : (method_sig o
   let concrete_key = (for_type', method_name) in
   match Hashtbl.find_opt concrete_registry concrete_key with
   | Some method_sig -> Ok (Some method_sig)
-  | None ->
+  | None -> (
       let matches : (mono_type * method_sig) list =
         Hashtbl.fold
           (fun (pattern_type, registered_name) entry acc ->
@@ -92,7 +92,7 @@ let resolve_method (for_type : mono_type) (method_name : string) : (method_sig o
                   (pattern_type, specialized) :: acc)
           generic_registry []
       in
-      (match matches with
+      match matches with
       | [] -> Ok None
       | [ (_pattern, method_sig) ] -> Ok (Some method_sig)
       | many ->
@@ -103,8 +103,7 @@ let resolve_method (for_type : mono_type) (method_name : string) : (method_sig o
             |> String.concat ", "
           in
           Error
-            (Printf.sprintf
-               "Ambiguous inherent method '%s' for type %s (matching inherent impl targets: %s)"
+            (Printf.sprintf "Ambiguous inherent method '%s' for type %s (matching inherent impl targets: %s)"
                method_name (to_string for_type') matching_patterns))
 
 let lookup_method (for_type : mono_type) (method_name : string) : method_sig option =
@@ -164,11 +163,7 @@ let%test "lookup_method canonicalizes record field ordering" =
   let for_type_registered = TRecord ([ { name = "x"; typ = TInt }; { name = "y"; typ = TInt } ], None) in
   let for_type_query = TRecord ([ { name = "y"; typ = TInt }; { name = "x"; typ = TInt } ], None) in
   let method_sig : method_sig =
-    {
-      method_name = "sum";
-      method_params = [ ("p", for_type_registered) ];
-      method_return_type = TInt;
-    }
+    { method_name = "sum"; method_params = [ ("p", for_type_registered) ]; method_return_type = TInt }
   in
   match register_method ~for_type:for_type_registered method_sig with
   | Error _ -> false
@@ -178,11 +173,7 @@ let%test "generic inherent method resolves for concrete receiver" =
   clear ();
   let pattern = TEnum ("result", [ TVar "a"; TVar "b" ]) in
   let method_sig : method_sig =
-    {
-      method_name = "is_success";
-      method_params = [ ("r", pattern) ];
-      method_return_type = TBool;
-    }
+    { method_name = "is_success"; method_params = [ ("r", pattern) ]; method_return_type = TBool }
   in
   match register_method ~for_type:pattern method_sig with
   | Error _ -> false
@@ -196,19 +187,11 @@ let%test "concrete inherent method takes precedence over generic" =
   clear ();
   let generic_pattern = TEnum ("result", [ TVar "a"; TVar "b" ]) in
   let generic_sig : method_sig =
-    {
-      method_name = "tag";
-      method_params = [ ("r", generic_pattern) ];
-      method_return_type = TString;
-    }
+    { method_name = "tag"; method_params = [ ("r", generic_pattern) ]; method_return_type = TString }
   in
   let concrete_type = TEnum ("result", [ TInt; TString ]) in
   let concrete_sig : method_sig =
-    {
-      method_name = "tag";
-      method_params = [ ("r", concrete_type) ];
-      method_return_type = TString;
-    }
+    { method_name = "tag"; method_params = [ ("r", concrete_type) ]; method_return_type = TString }
   in
   match register_method ~for_type:generic_pattern generic_sig with
   | Error _ -> false
@@ -226,18 +209,10 @@ let%test "ambiguous generic inherent methods are rejected at resolve-time" =
   let m1_pattern = TEnum ("result", [ TVar "a"; TVar "b" ]) in
   let m2_pattern = TEnum ("result", [ TVar "x"; TVar "y" ]) in
   let m1 : method_sig =
-    {
-      method_name = "name";
-      method_params = [ ("r", m1_pattern) ];
-      method_return_type = TString;
-    }
+    { method_name = "name"; method_params = [ ("r", m1_pattern) ]; method_return_type = TString }
   in
   let m2 : method_sig =
-    {
-      method_name = "name";
-      method_params = [ ("r", m2_pattern) ];
-      method_return_type = TString;
-    }
+    { method_name = "name"; method_params = [ ("r", m2_pattern) ]; method_return_type = TString }
   in
   match register_method ~for_type:m1_pattern m1 with
   | Error _ -> false

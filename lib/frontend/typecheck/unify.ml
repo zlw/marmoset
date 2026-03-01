@@ -332,7 +332,6 @@ let%test "unify functions with shared variable" =
       t1' = t2' && t1' = tfun TInt TInt
 
 let%test "fail unify pure and effectful function types" = fails_to_unify (tfun TInt TInt) (tfun_eff TInt TInt)
-
 let%test "unify arrays" = unifies_to (TArray (TVar "a")) (TArray TInt) [ ("a", TInt) ]
 
 let%test "unify hashes" =

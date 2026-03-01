@@ -77,22 +77,26 @@ let rec check_trait_methods (typ : Types.mono_type) (trait_name : string) : (uni
                   (Printf.sprintf
                      "Trait satisfaction failed [impl-specialization]: generic impl for trait %s could not resolve parameter '%s' for type %s"
                      trait_name p.name (Types.to_string typ'))
-            | Some concrete_param_type ->
+            | Some concrete_param_type -> (
                 let concrete_param_type' = Types.canonicalize_mono_type concrete_param_type in
                 let rec check_param_constraints = function
                   | [] -> Ok ()
                   | constraint_trait :: constraints_rest -> (
-                      match check_trait_with_supertraits StringSet.empty concrete_param_type' constraint_trait with
+                      match
+                        check_trait_with_supertraits StringSet.empty concrete_param_type' constraint_trait
+                      with
                       | Ok () -> check_param_constraints constraints_rest
                       | Error msg ->
                           Error
                             (Printf.sprintf
                                "Trait satisfaction failed [generic-impl-constraint]: parameter '%s' resolved to type %s does not satisfy required constraint %s (%s)"
-                               p.name (Types.to_string concrete_param_type') constraint_trait msg))
+                               p.name
+                               (Types.to_string concrete_param_type')
+                               constraint_trait msg))
                 in
                 match check_param_constraints p.constraints with
                 | Ok () -> check_generic_constraints rest
-                | Error _ as err -> err)
+                | Error _ as err -> err))
       in
       check_generic_constraints resolved_impl.impl.impl_type_params
 
