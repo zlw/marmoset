@@ -476,3 +476,7 @@ If migration causes disruption:
   - disabled workflows on `main` to stop macOS/windows usage immediately:
     - `manual-cross-platform.yml`
     - `cross-platform-matrix.yml`
+- 2026-03-01 20:33 CET: Required-check context simplification (duplication investigation):
+  - updated ruleset `branch: main` (`id=13342513`) required status checks from event-qualified names (`... (pull_request)`) to unsuffixed names (`PR CI / <job>`)
+  - retained Linux-only required set (9 PR CI checks)
+  - updated README CI check-name examples to unsuffixed contexts
