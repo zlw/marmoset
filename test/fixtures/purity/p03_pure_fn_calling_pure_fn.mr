@@ -1,0 +1,4 @@
+# P3: Pure function calling another pure function should compile
+let double = fn(x: int) -> int { x * 2 }
+let triple_half = fn(x: int) -> int { double(x) + x }
+puts(triple_half(2))

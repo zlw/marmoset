@@ -1,0 +1,6 @@
+# P12: Let-bound effectful fn compiles
+let say = fn(msg: string) => string {
+  puts(msg)
+  msg
+}
+say("hello")

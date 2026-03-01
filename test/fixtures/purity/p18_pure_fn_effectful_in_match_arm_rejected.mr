@@ -1,0 +1,10 @@
+# P18: Pure fn with effectful call in match-arm is rejected
+enum choice { yes no }
+let log = fn(x: int) => int { puts(x); x }
+let decide = fn(c: choice, x: int) -> int {  # error: effectful
+  match c {
+    choice.yes: log(x)
+    choice.no: x
+  }
+}
+decide(choice.yes, 1)

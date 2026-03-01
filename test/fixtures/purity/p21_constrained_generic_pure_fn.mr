@@ -1,0 +1,3 @@
+# P21: Constrained generic pure fn compiles
+let stringify = fn[t: show](x: t) -> string { x.show() }
+puts(stringify(42))

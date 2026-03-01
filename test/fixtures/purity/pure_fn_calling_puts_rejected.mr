@@ -1,5 +1,0 @@
-let greet = fn(x: int) -> int {
-  puts(x)  # error: effectful
-  x
-}
-greet(1)
