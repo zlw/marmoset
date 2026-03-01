@@ -1,0 +1,1 @@
+let f = fn(x: int, y: int) -> int { x + y }; f(1, 2)

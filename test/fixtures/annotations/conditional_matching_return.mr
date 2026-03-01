@@ -1,0 +1,1 @@
+let f = fn(x: int) -> int { if (x < 0) { 0 } else { x } }; f(-5)

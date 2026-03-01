@@ -1,0 +1,1 @@
+let abs = fn(x: int) -> int { if (x < 0) return -x else return x; }; abs(-5)

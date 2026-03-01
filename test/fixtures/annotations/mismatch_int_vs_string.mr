@@ -1,0 +1,1 @@
+let f = fn() -> string { 42 }; f()  # error: annotation mismatch

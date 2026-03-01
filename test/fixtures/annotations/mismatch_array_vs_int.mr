@@ -1,0 +1,1 @@
+let f = fn() -> list[int] { 42 }; f()  # error: annotation mismatch

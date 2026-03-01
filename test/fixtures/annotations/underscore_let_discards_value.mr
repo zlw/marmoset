@@ -1,0 +1,5 @@
+let f = fn(x: int) -> int {
+  let _ = x
+  x
+}
+puts(f(1))  # output: 1
