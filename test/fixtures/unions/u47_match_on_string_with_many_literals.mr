@@ -1,0 +1,10 @@
+# U47: Match on string with many literals and wildcard
+# output: found c
+let x = "c"
+let out = match x {
+  "a": "found a"
+  "b": "found b"
+  "c": "found c"
+  _: "other"
+}
+puts(out)

@@ -1,0 +1,9 @@
+# U05: Type narrowing allows int operations
+let f = fn(x: int | string) -> int | string {
+   if (x is int) {
+       x + 1
+   } else {
+       x
+   }
+ }
+f(5)

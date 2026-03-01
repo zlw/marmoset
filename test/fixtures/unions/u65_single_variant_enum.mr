@@ -1,0 +1,8 @@
+# U65: Single-variant enum
+# output: 42
+enum box[a] { wrap(a) }
+let x = box.wrap(42)
+let out = match x {
+  box.wrap(v): v
+}
+puts(out)

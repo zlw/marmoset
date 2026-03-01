@@ -1,0 +1,6 @@
+# U83: Nullary constructor with parens
+# output: 1
+enum option[a] { some(a) none }
+let a: option[int] = option.none()
+let b = match a { option.some(_): 0 option.none: 1 }
+puts(b)

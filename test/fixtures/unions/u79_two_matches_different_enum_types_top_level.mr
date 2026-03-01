@@ -1,0 +1,9 @@
+# U79: Two matches on different enum types in top-level scope
+# output: hello
+enum option[a] { some(a) none }
+enum result[a, e] { ok(a) err(e) }
+let x = option.some(42)
+let y: result[string, int] = result.ok("hello")
+let a = match x { option.some(v): v option.none: 0 }
+let b = match y { result.ok(v): v result.err(_): "?" }
+puts(b)

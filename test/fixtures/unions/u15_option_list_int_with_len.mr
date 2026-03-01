@@ -1,0 +1,6 @@
+# U15: option[list[int]] with len in match arm
+# output: 3
+enum option[a] { some(a) none }
+let a = option.some([1, 2, 3])
+let la = match a { option.some(v): len(v) option.none: 0 }
+puts(la)

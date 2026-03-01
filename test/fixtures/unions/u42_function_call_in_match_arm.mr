@@ -1,0 +1,9 @@
+# U42: Function call in match arm body
+# output: 5
+enum option[a] { some(a) none }
+let x = option.some([1, 2, 3, 4, 5])
+let out = match x {
+  option.some(arr): len(arr)
+  option.none: 0
+}
+puts(out)

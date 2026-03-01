@@ -1,0 +1,13 @@
+# U17: Enum with 7 variants and wildcard fallback
+# output: weekend
+enum day { mon tue wed thu fri sat sun }
+let d = day.sun
+let kind = match d {
+  day.mon: "weekday"
+  day.tue: "weekday"
+  day.wed: "weekday"
+  day.thu: "weekday"
+  day.fri: "weekday"
+  _: "weekend"
+}
+puts(kind)

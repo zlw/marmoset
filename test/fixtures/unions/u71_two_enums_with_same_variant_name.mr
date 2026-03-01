@@ -1,0 +1,7 @@
+# U71: Two enums with same variant name (used separately)
+# output: 1
+enum result1[a] { ok(a) fail }
+enum result2[a] { ok(a) fail }
+let r1 = result1.ok(1)
+let a = match r1 { result1.ok(v): v result1.fail: 0 }
+puts(a)

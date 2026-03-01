@@ -1,0 +1,8 @@
+# U46: Multi-field variant with int and string
+# output: 42
+enum tagged { item(int, string) }
+let x = tagged.item(42, "hello")
+let out = match x {
+  tagged.item(id, _): id
+}
+puts(out)

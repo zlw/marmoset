@@ -1,0 +1,9 @@
+# U33: Non-exhaustive match on 4-variant enum missing one
+# error: Non-exhaustive
+enum dir { north south east west }
+let d = dir.north
+match d {
+  dir.north: 1
+  dir.south: 2
+  dir.east: 3
+}

@@ -1,0 +1,3 @@
+# U04: is operator returns bool
+let x: int | string = 5
+if (x is int) { true } else { false }

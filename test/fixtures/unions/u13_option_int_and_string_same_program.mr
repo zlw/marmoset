@@ -1,0 +1,8 @@
+# U13: option[int] and option[string] in same program
+# output: hello
+enum option[a] { some(a) none }
+let a = option.some(42)
+let b = option.some("hello")
+let va = match a { option.some(v): v option.none: 0 }
+let vb = match b { option.some(v): v option.none: "?" }
+puts(vb)

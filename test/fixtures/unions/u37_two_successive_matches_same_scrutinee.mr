@@ -1,0 +1,6 @@
+# U37: Two successive matches on the same scrutinee variable
+# output: 42
+enum option[a] { some(a) none }
+let x = option.some(42)
+let a = match x { option.some(v): v option.none: 0 }
+puts(a)

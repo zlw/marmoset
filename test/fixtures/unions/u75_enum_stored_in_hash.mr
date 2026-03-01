@@ -1,0 +1,10 @@
+# U75: Enum stored in and retrieved from hash
+# output: 42
+enum option[a] { some(a) none }
+let m = {"key": option.some(42)}
+let val = m["key"]
+let out = match val {
+  option.some(v): v
+  option.none: 0
+}
+puts(out)

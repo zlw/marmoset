@@ -1,0 +1,9 @@
+# U09: Type narrowing with string operations
+let f = fn(x: int | string) -> int {
+   if (x is string) {
+       len(x)
+   } else {
+       x
+   }
+ }
+f(42)

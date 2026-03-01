@@ -1,0 +1,16 @@
+# U63: Recursive function with enum match
+# output: 6
+enum option[a] { some(a) none }
+let sum_options = fn(arr: list[option[int]], idx: int, acc: int) -> int {
+  if (idx >= len(arr)) {
+    acc
+  } else {
+    let val = match arr[idx] {
+      option.some(v): v
+      option.none: 0
+    }
+    sum_options(arr, idx + 1, acc + val)
+  }
+}
+let arr = [option.some(1), option.none(), option.some(2), option.some(3)]
+puts(sum_options(arr, 0, 0))

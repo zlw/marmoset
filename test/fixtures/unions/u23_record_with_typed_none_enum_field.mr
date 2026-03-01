@@ -1,0 +1,11 @@
+# U23: Record with typed none enum field accessed after let binding
+# output: hello
+enum option[a] { some(a) none }
+let n: option[string] = option.none()
+let r = { name: "hello", data: n }
+let d = r.data
+let out = match d {
+  option.some(v): v
+  option.none: r.name
+}
+puts(out)

@@ -1,0 +1,4 @@
+# U88: Unknown enum in constructor
+# error: *
+let x = nonexistent.variant(1)
+x

@@ -1,0 +1,9 @@
+# U44: String concat with show in match arm body
+# output: value: 42
+enum option[a] { some(a) none }
+let x = option.some(42)
+let out = match x {
+  option.some(v): "value: " + v.show()
+  option.none: "nothing"
+}
+puts(out)

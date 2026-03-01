@@ -1,0 +1,9 @@
+# U22: Record with enum field
+# output: 42
+enum option[a] { some(a) none }
+let r = { value: option.some(42), label: "test" }
+let out = match r.value {
+  option.some(v): v
+  option.none: 0
+}
+puts(out)

@@ -1,0 +1,6 @@
+# U14: Two result instantiations used sequentially
+# output: 42
+enum result[a, e] { ok(a) err(e) }
+let r1: result[int, string] = result.ok(42)
+let v1 = match r1 { result.ok(v): v result.err(_): 0 }
+puts(v1)

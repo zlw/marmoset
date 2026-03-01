@@ -1,0 +1,13 @@
+# U21: result containing option: ok(some(5))
+# output: 5
+enum option[a] { some(a) none }
+enum result[a, e] { ok(a) err(e) }
+let x: result[option[int], string] = result.ok(option.some(5))
+let out = match x {
+  result.ok(inner): match inner {
+    option.some(v): v
+    option.none: 0
+  }
+  result.err(_): 0
+}
+puts(out)

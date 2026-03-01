@@ -1,0 +1,24 @@
+# U18: 8-variant enum with mixed field counts
+# output: 42
+enum ast {
+  num(int)
+  str(string)
+  add(int, int)
+  neg(int)
+  cond(bool, int, int)
+  nil
+  pair(int, int)
+  triple(int, int, int)
+}
+let x = ast.cond(true, 42, 0)
+let out = match x {
+  ast.num(n): n
+  ast.str(_): 0
+  ast.add(a, b): a + b
+  ast.neg(n): 0 - n
+  ast.cond(c, t, f): if (c) { t } else { f }
+  ast.nil: 0
+  ast.pair(a, b): a + b
+  ast.triple(a, b, c): a + b + c
+}
+puts(out)

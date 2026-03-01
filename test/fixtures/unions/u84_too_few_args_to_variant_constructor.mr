@@ -1,0 +1,5 @@
+# U84: Too few args to variant constructor
+# error: *
+enum pair { mk(int, int) }
+let x = pair.mk(1)
+x

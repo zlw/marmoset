@@ -1,0 +1,9 @@
+# U06: Complement narrowing in else branch
+let f = fn(x: int | string) -> string {
+   if (x is int) {
+       "was int"
+   } else {
+       x
+   }
+ }
+f("hello")

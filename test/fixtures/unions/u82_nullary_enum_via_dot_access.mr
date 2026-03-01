@@ -1,0 +1,11 @@
+# U82: Nullary enum via dot access (no parens)
+# output: north
+enum direction { north south east west }
+let d = direction.north
+let out = match d {
+  direction.north: "north"
+  direction.south: "south"
+  direction.east: "east"
+  direction.west: "west"
+}
+puts(out)

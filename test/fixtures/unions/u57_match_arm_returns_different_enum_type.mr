@@ -1,0 +1,14 @@
+# U57: Match arm returns different enum type than scrutinee
+# output: success
+enum option[a] { some(a) none }
+enum result[a, e] { ok(a) err(e) }
+let x = option.some(42)
+let r: result[int, string] = match x {
+  option.some(v): result.ok(v)
+  option.none: result.err("missing")
+}
+let out = match r {
+  result.ok(_): "success"
+  result.err(e): e
+}
+puts(out)

@@ -1,0 +1,6 @@
+# U76: Sequential enum definitions interleaved with usage
+# output: 10
+enum wrapper[a] { wrap(a) }
+let x = wrapper.wrap(10)
+let a = match x { wrapper.wrap(v): v }
+puts(a)

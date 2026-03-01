@@ -1,0 +1,9 @@
+# U41: Arithmetic in match arm body
+# output: 110
+enum option[a] { some(a) none }
+let x = option.some(10)
+let out = match x {
+  option.some(v): v * 10 + v
+  option.none: 0
+}
+puts(out)

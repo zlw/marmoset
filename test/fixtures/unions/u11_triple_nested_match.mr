@@ -1,0 +1,16 @@
+# U11: Triple-nested match (match inside match arm body)
+# output: inner
+enum option[a] { some(a) none }
+enum result[a, e] { ok(a) err(e) }
+let x: option[result[int, string]] = option.some(result.ok(42))
+let out = match x {
+  option.some(inner): match inner {
+    result.ok(v): match v {
+      42: "inner"
+      _: "other"
+    }
+    result.err(_): "error"
+  }
+  option.none: "nothing"
+}
+puts(out)

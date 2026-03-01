@@ -1,0 +1,8 @@
+# U60: Wildcard as first and only arm catches all
+# output: caught
+enum option[a] { some(a) none }
+let x = option.some(42)
+let out = match x {
+  _: "caught"
+}
+puts(out)

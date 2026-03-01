@@ -1,0 +1,8 @@
+# U51: Nullary constructor passed to function
+# output: 0
+enum option[a] { some(a) none }
+let n: option[int] = option.none()
+let unwrap = fn(x: option[int]) -> int {
+  match x { option.some(v): v option.none: 0 }
+}
+puts(unwrap(n))

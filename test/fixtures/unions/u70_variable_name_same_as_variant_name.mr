@@ -1,0 +1,10 @@
+# U70: Variable name same as variant name
+# output: 42
+enum option[a] { some(a) none }
+let some = 42
+let x = option.some(some)
+let out = match x {
+  option.some(v): v
+  option.none: 0
+}
+puts(out)

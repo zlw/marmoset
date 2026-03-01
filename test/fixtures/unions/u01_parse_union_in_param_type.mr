@@ -1,0 +1,3 @@
+# U01: Parse union in parameter type
+let f = fn(x: int | string) -> string { "ok" }
+f(5)

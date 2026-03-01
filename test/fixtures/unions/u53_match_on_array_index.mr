@@ -1,0 +1,10 @@
+# U53: Match on integer from array index
+# output: second
+let arr = [10, 20, 30]
+let out = match arr[1] {
+  10: "first"
+  20: "second"
+  30: "third"
+  _: "other"
+}
+puts(out)
