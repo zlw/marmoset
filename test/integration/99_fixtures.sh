@@ -288,7 +288,7 @@ build_only_mode() {
 fixtures=()
 while IFS= read -r f; do
     fixtures+=("$f")
-done < <(find "$FIXTURE_ROOT" -type f -name '*.mr' | LC_ALL=C sort)
+done < <(find "$FIXTURE_ROOT" -type f -name '*.mr' ${FIXTURE_FILTER:+-path "*$FIXTURE_FILTER*"} | LC_ALL=C sort)
 
 if [ ${#fixtures[@]} -eq 0 ]; then
     echo "(no fixtures found — skipping)"
