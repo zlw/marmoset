@@ -323,3 +323,17 @@ If migration causes disruption:
   - deleted `.github/workflows/tests.yml`
   - deleted `.github/workflows/lint.yml`
 - 2026-03-01 18:48 CET: `PR CI` is now the single workflow source for PR required checks.
+- 2026-03-01 18:52 CET: Completed Step 6 by updating GitHub ruleset `branch: main` (`id=13342513`) via `gh api`.
+- 2026-03-01 18:52 CET: Branch enforcement now requires 11 status checks:
+  - `PR CI / compiler-unit`
+  - `PR CI / compiler-integration-linux`
+  - `PR CI / lsp-unit`
+  - `PR CI / lsp-integration`
+  - `PR CI / quality-lint-fmt-doc`
+  - `PR CI / editor-zed`
+  - `PR CI / editor-vscode`
+  - `PR CI / editor-nvim`
+  - `PR CI / editor-jetbrains`
+  - `Manual Cross-Platform / integration (macos-latest)`
+  - `Manual Cross-Platform / integration (windows-latest)`
+- 2026-03-01 18:52 CET: `strict_required_status_checks_policy` is enabled and ruleset bypass actors are now empty (`current_user_can_bypass=never`).
