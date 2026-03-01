@@ -15,8 +15,7 @@ let first_some a b =
    the true start by walking into left children recursively. *)
 let rec effective_start_pos (expr : Ast.AST.expression) : int =
   match expr.expr with
-  | Ast.AST.MethodCall (recv, _, _) | Ast.AST.FieldAccess (recv, _) ->
-      min (effective_start_pos recv) expr.pos
+  | Ast.AST.MethodCall (recv, _, _) | Ast.AST.FieldAccess (recv, _) -> min (effective_start_pos recv) expr.pos
   | Ast.AST.Infix (left, _, _) -> min (effective_start_pos left) expr.pos
   | Ast.AST.Call (fn_expr, _) -> min (effective_start_pos fn_expr) expr.pos
   | _ -> expr.pos
@@ -64,21 +63,25 @@ let rec find_expr_at (offset : int) (expr : Ast.AST.expression) : Ast.AST.expres
 and find_expr_in_stmt (offset : int) (stmt : Ast.AST.statement) : Ast.AST.expression option =
   match stmt.stmt with
   | Ast.AST.ExpressionStmt e -> find_expr_at offset e
-  | Ast.AST.Let { value; _ } ->
+  | Ast.AST.Let { value; _ } -> (
       (* Search inside the value expression first; if not found and offset is
          within the statement range (e.g. on the binding name), return the value
          itself so the hover shows the binding's type. *)
-      (match find_expr_at offset value with
+      match find_expr_at offset value with
       | Some _ as found -> found
       | None ->
-          if offset >= stmt.pos && offset <= value.pos then Some value
-          else None)
-  | Ast.AST.Return e ->
-      (match find_expr_at offset e with
+          if offset >= stmt.pos && offset <= value.pos then
+            Some value
+          else
+            None)
+  | Ast.AST.Return e -> (
+      match find_expr_at offset e with
       | Some _ as found -> found
       | None ->
-          if offset >= stmt.pos && offset <= e.pos then Some e
-          else None)
+          if offset >= stmt.pos && offset <= e.pos then
+            Some e
+          else
+            None)
   | Ast.AST.Block stmts -> List.find_map (find_expr_in_stmt offset) stmts
   | Ast.AST.ImplDef { impl_methods; _ } ->
       List.find_map (fun (m : Ast.AST.method_impl) -> find_expr_at offset m.impl_method_body) impl_methods
@@ -131,7 +134,12 @@ let rec type_to_source (mono : Types.mono_type) : string =
         | [ single ] -> "(" ^ type_to_source_parens single ^ ")"
         | _ -> "(" ^ String.concat ", " (List.map type_to_source args) ^ ")"
       in
-      let arrow = if is_eff then " => " else " -> " in
+      let arrow =
+        if is_eff then
+          " => "
+        else
+          " -> "
+      in
       args_str ^ arrow ^ type_to_source ret
   | Types.TRecord (fields, row) ->
       let field_strs =
@@ -140,7 +148,11 @@ let rec type_to_source (mono : Types.mono_type) : string =
       let row_str =
         match row with
         | None -> ""
-        | Some r -> if field_strs = [] then "..." ^ type_to_source r else ", ..." ^ type_to_source r
+        | Some r ->
+            if field_strs = [] then
+              "..." ^ type_to_source r
+            else
+              ", ..." ^ type_to_source r
       in
       "{ " ^ String.concat ", " field_strs ^ row_str ^ " }"
   | Types.TUnion types -> String.concat " | " (List.map type_to_source types)
@@ -160,11 +172,17 @@ let normalize_with_user_names (mono : Types.mono_type) : Types.mono_type =
         match Infer.lookup_type_var_user_name old_name with
         | Some user_name ->
             (* Preserve user's name *)
-            if user_name = old_name then None else Some (old_name, Types.TVar user_name)
+            if user_name = old_name then
+              None
+            else
+              Some (old_name, Types.TVar user_name)
         | None ->
             (* Auto-generated var: normalize to a, b, c, ... *)
             let nice = Types.nice_var_name i in
-            if nice = old_name then None else Some (old_name, Types.TVar nice))
+            if nice = old_name then
+              None
+            else
+              Some (old_name, Types.TVar nice))
       vars
   in
   let renaming = List.filter_map Fun.id renaming in
@@ -393,8 +411,7 @@ let%test "hover on infix operator: type=int, highlights whole expression" =
    Tests: nested calls inside infix (the fib pattern)
    ============================================================ *)
 
-let fib_source =
-  "let fib = fn(n) {\n  if (n < 2) { return n }\n  return fib(n - 2) + fib(n - 1);\n}"
+let fib_source = "let fib = fn(n) {\n  if (n < 2) { return n }\n  return fib(n - 2) + fib(n - 1);\n}"
 
 (*  line 2: "  return fib(n - 2) + fib(n - 1);"
              0123456789012345678901234567890123
@@ -411,8 +428,7 @@ let%test "fib source analyzes without errors" =
   let result = Doc_state.analyze ~source:fib_source in
   result.diagnostics = [] && result.type_map <> None
 
-let%test "hover on fib inside recursive body finds something" =
-  check_hover fib_source 2 9 <> None
+let%test "hover on fib inside recursive body finds something" = check_hover fib_source 2 9 <> None
 
 let%test "hover on n inside fib body" =
   (* line 2: "  return fib(n - 2) + fib(n - 1);"   col 13 = n *)

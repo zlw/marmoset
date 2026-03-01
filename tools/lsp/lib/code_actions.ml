@@ -55,7 +55,12 @@ let rec type_to_source (mono : Types.mono_type) : string =
         | [ single ] -> "(" ^ type_to_source_parens single ^ ")"
         | _ -> "(" ^ String.concat ", " (List.map type_to_source args) ^ ")"
       in
-      let arrow = if is_eff then " => " else " -> " in
+      let arrow =
+        if is_eff then
+          " => "
+        else
+          " -> "
+      in
       args_str ^ arrow ^ type_to_source ret
   | Types.TRecord (fields, row) ->
       let field_strs =
@@ -71,9 +76,9 @@ let rec type_to_source (mono : Types.mono_type) : string =
               ", ..." ^ type_to_source r
       in
       "{ " ^ String.concat ", " field_strs ^ row_str ^ " }"
-  | Types.TUnion types ->
+  | Types.TUnion types -> (
       let collapsed = collapse_purity_union types in
-      (match collapsed with
+      match collapsed with
       | [ single ] -> type_to_source single
       | _ -> String.concat " | " (List.map type_to_source collapsed))
   | Types.TEnum (name, []) -> name
@@ -168,12 +173,13 @@ type annotation_site = {
    the signature (from `fn` keyword to the start of the body). *)
 let sites_for_function ~source ~type_map ~range_start ~range_end ~sites (fn_expr : Ast.AST.expression) =
   match fn_expr.expr with
-  | Ast.AST.Function { params; return_type; body; _ } ->
+  | Ast.AST.Function { params; return_type; body; _ } -> (
       let sig_end = body.pos in
-      if fn_expr.pos > range_end || sig_end < range_start then ()
-      else (
+      if fn_expr.pos > range_end || sig_end < range_start then
+        ()
+      else
         match Hashtbl.find_opt type_map fn_expr.id with
-        | Some fn_type ->
+        | Some fn_type -> (
             let n_params = List.length params in
             (* Normalize the FULL function type once to preserve type variable identity *)
             let norm_fn_type = Types.normalize fn_type in
@@ -182,7 +188,7 @@ let sites_for_function ~source ~type_map ~range_start ~range_end ~sites (fn_expr
             let search_from = ref fn_expr.pos in
             List.iter2
               (fun (pname, annotation) ptype ->
-                if annotation = None then (
+                if annotation = None then
                   match find_name_end ~source ~start:!search_from ~limit:fn_expr.end_pos pname with
                   | Some pend ->
                       search_from := pend;
@@ -194,16 +200,18 @@ let sites_for_function ~source ~type_map ~range_start ~range_end ~sites (fn_expr
                           title = "Add type annotation: " ^ pname ^ ": " ^ type_str;
                         }
                         :: !sites
-                  | None -> ())
-                else (
+                  | None -> ()
+                else
                   match find_name_end ~source ~start:!search_from ~limit:fn_expr.end_pos pname with
                   | Some pend -> search_from := pend
-                  | None -> ()))
+                  | None -> ())
               params
-              (if List.length param_types = n_params then param_types
-               else List.init n_params (fun _ -> Types.TNull));
+              (if List.length param_types = n_params then
+                 param_types
+               else
+                 List.init n_params (fun _ -> Types.TNull));
             (* Return type annotation site *)
-            if return_type = None && n_params > 0 then (
+            if return_type = None && n_params > 0 then
               match get_return_type n_params norm_fn_type with
               | Some ret_type -> (
                   let body_start = body.pos in

@@ -544,11 +544,6 @@ let%test "generic field-only supertrait is rejected in type position" =
 (* Regression: type variables must be compatible with concrete types in is_subtype_of.
    Without this, fn(value) -> string { value.name } fails because the
    record field type variable is not considered a subtype of string. *)
-let%test "is_subtype_of: TVar is subtype of any concrete type" =
-  is_subtype_of (Types.TVar "t3") Types.TString
-
-let%test "is_subtype_of: concrete type is subtype of TVar" =
-  is_subtype_of Types.TInt (Types.TVar "a")
-
-let%test "is_subtype_of: TVar is subtype of TVar" =
-  is_subtype_of (Types.TVar "a") (Types.TVar "b")
+let%test "is_subtype_of: TVar is subtype of any concrete type" = is_subtype_of (Types.TVar "t3") Types.TString
+let%test "is_subtype_of: concrete type is subtype of TVar" = is_subtype_of Types.TInt (Types.TVar "a")
+let%test "is_subtype_of: TVar is subtype of TVar" = is_subtype_of (Types.TVar "a") (Types.TVar "b")

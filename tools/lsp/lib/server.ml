@@ -123,14 +123,15 @@ class marmoset_server =
       let result =
         match Hashtbl.find_opt analysis_cache uri with
         | None ->
-            Printf.eprintf "[marmoset-lsp] hover %s:%d:%d — no analysis cached\n%!" (Lsp_t.DocumentUri.to_string uri) pos.line pos.character;
+            Printf.eprintf "[marmoset-lsp] hover %s:%d:%d — no analysis cached\n%!"
+              (Lsp_t.DocumentUri.to_string uri) pos.line pos.character;
             None
         | Some { analysis } -> (
             match (analysis.program, analysis.type_map, analysis.environment) with
             | Some prog, Some tm, Some env ->
                 let r =
-                  Hover.hover_at ~source:analysis.source ~program:prog ~type_map:tm ~environment:env ~line:pos.line
-                    ~character:pos.character
+                  Hover.hover_at ~source:analysis.source ~program:prog ~type_map:tm ~environment:env
+                    ~line:pos.line ~character:pos.character
                 in
                 (match r with
                 | Some hover ->
@@ -141,11 +142,11 @@ class marmoset_server =
                     in
                     Printf.eprintf "[marmoset-lsp] hover %d:%d → %s\n%!" pos.line pos.character
                       (String.escaped text)
-                | None ->
-                    Printf.eprintf "[marmoset-lsp] hover %d:%d → None\n%!" pos.line pos.character);
+                | None -> Printf.eprintf "[marmoset-lsp] hover %d:%d → None\n%!" pos.line pos.character);
                 r
             | _ ->
-                Printf.eprintf "[marmoset-lsp] hover %d:%d — no type_map (parse/type error?)\n%!" pos.line pos.character;
+                Printf.eprintf "[marmoset-lsp] hover %d:%d — no type_map (parse/type error?)\n%!" pos.line
+                  pos.character;
                 None)
       in
       Lwt.return result
