@@ -451,3 +451,6 @@ If migration causes disruption:
     - `Manual Cross-Platform / compiler-integration-macos (workflow_dispatch)`
     - `Manual Cross-Platform / compiler-integration-windows (workflow_dispatch)`
   - retained all `PR CI / ... (pull_request)` required contexts unchanged
+- 2026-03-01 20:16 CET: Integration cache warning cleanup:
+  - disabled Go module cache in `.github/actions/setup-ocaml-go/action.yml` (`actions/setup-go@v5` `cache: false`)
+  - removes noisy warnings when repository has no `go.sum` / module-cache path for integration jobs
