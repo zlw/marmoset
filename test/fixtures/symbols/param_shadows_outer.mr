@@ -1,0 +1,3 @@
+let x = 1
+let f = fn(x: int) -> int { x }
+puts(f(10))  # output: 10

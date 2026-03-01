@@ -1,0 +1,7 @@
+trait myshow[a] {
+  fn myshow(x: a) -> string
+}
+trait myshow[a] {  # error: Duplicate trait definition: myshow
+  fn myshow(x: a) -> int
+}
+puts(1)

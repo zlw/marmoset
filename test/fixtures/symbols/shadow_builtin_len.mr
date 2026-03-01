@@ -1,0 +1,3 @@
+# BUG: Codegen emits Go builtin len() instead of user-defined function
+let len = fn(x: int) -> int { x * 100 }  # error: *
+puts(len(1))

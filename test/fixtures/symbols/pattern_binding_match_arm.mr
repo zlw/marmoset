@@ -1,0 +1,5 @@
+let val = 42
+let result = match val {
+  n: n
+}
+puts(result)  # output: 42

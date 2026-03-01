@@ -1,0 +1,3 @@
+enum status { ok fail }
+let status = 7
+puts(status)  # output: 7

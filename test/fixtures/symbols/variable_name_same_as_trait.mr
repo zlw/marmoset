@@ -1,0 +1,5 @@
+trait myval[a] {
+  fn myval(x: a) -> int
+}
+let myval = 42
+puts(myval)  # output: 42

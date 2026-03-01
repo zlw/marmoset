@@ -1,0 +1,3 @@
+let x = color.red  # error: *
+enum color { red green blue }
+puts(x)

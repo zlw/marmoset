@@ -1,0 +1,7 @@
+enum option[a] { some(a) none }
+let x = option.some(7)
+let result = match x {
+  option.some(v): v
+  option.none: 0
+}
+puts(v)  # error: Unbound variable

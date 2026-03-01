@@ -1,0 +1,3 @@
+# BUG: Codegen emits runtime helper first() instead of user-defined function
+let first = fn(x: int) -> int { x }  # error: *
+puts(first(99))
