@@ -1,0 +1,9 @@
+# CS45: H46: generic function with match body
+# output: 42
+let choose = fn(x, n: int) {
+  match n {
+    1: x
+    _: x
+  }
+}
+puts(choose(42, 1))

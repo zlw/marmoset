@@ -1,0 +1,5 @@
+# CS59: H60: two generic functions composed
+# output: 42
+let wrap_a = fn(x) { x }
+let wrap_b = fn(x) { x }
+puts(wrap_a(wrap_b(42)))

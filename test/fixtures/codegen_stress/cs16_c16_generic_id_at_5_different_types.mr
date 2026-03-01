@@ -1,0 +1,14 @@
+# CS16: C16: generic id at 5 different types
+# output: 42
+# output: 3.14
+# output: true
+# output: hello
+# output: none
+enum option[a] { some(a) none }
+let id = fn(x) { x }
+puts(id(42))
+puts(id(3.14))
+puts(id(true))
+puts(id("hello"))
+let n: option[int] = option.none()
+puts(id(n))

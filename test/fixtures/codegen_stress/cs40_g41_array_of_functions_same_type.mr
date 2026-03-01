@@ -1,0 +1,6 @@
+# CS40: G41: array of functions (same type)
+# output: 10
+let f = fn(x: int) -> int { x + 1 }
+let g = fn(x: int) -> int { x * 2 }
+let arr = [f, g]
+puts(arr[1](5))

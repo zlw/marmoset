@@ -1,0 +1,6 @@
+# CS12: B12: [BUG-CAPTURE] lambda passed as argument with captures
+# output: 15
+let apply = fn(f, x) { f(x) }
+let base = 10
+let add_base = fn(x: int) -> int { base + x }
+puts(apply(add_base, 5))

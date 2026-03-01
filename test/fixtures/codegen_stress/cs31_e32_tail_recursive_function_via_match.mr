@@ -1,0 +1,9 @@
+# CS31: E32: tail-recursive function via match
+# output: 0
+let countdown = fn(n: int) -> int {
+  match n {
+    0: 0
+    _: countdown(n - 1)
+  }
+}
+puts(countdown(100))

@@ -1,0 +1,9 @@
+# CS58: H59: record spread then match on field
+# output: 100
+let base = { x: 10, y: 20 }
+let extended = { ...base, x: 100 }
+let result = match extended.x {
+  100: 100
+  _: 0
+}
+puts(result)

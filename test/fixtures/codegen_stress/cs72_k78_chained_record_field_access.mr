@@ -1,0 +1,5 @@
+# CS72: K78: chained record field access
+# output: 42
+let inner = { val: 42 }
+let outer = { child: inner }
+puts(outer.child.val)

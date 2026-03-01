@@ -1,0 +1,5 @@
+# CS53: H54: record with if-expression field values
+# output: 10
+let flag = true
+let p = { x: if (flag) { 10 } else { 0 }, y: if (flag) { 20 } else { 0 } }
+puts(p.x)

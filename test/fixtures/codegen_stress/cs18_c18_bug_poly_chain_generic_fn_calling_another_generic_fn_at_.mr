@@ -1,0 +1,7 @@
+# CS18: C18: [BUG-POLY-CHAIN] generic fn calling another generic fn at different types
+# output: 42
+# output: hello
+let id = fn(x) { x }
+let process = fn(x) { id(x) }
+puts(process(42))
+puts(process("hello"))

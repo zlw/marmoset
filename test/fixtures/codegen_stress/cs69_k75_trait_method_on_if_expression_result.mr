@@ -1,0 +1,4 @@
+# CS69: K75: trait method on if-expression result
+# output: 42
+let x = if (true) { 42 } else { 0 }
+puts(x.show())

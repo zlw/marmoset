@@ -1,0 +1,11 @@
+# CS22: C23: generic fn called from 3 non-generic functions
+# output: 2
+# output: 4
+# output: 6
+let id = fn(x) { x }
+let f = fn(n: int) -> int { id(n * 2) }
+let g = fn(n: int) -> int { id(n * 2) }
+let h = fn(n: int) -> int { id(n * 2) }
+puts(f(1))
+puts(g(2))
+puts(h(3))

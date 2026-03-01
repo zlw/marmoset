@@ -1,0 +1,6 @@
+# CS67: K73: direct function composition
+# output: 21
+let double = fn(x: int) -> int { x * 2 }
+let inc = fn(x: int) -> int { x + 1 }
+let double_then_inc = fn(x: int) -> int { inc(double(x)) }
+puts(double_then_inc(10))

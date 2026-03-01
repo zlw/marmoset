@@ -1,0 +1,6 @@
+# CS29: E30: function body is single if
+# output: positive
+let sign = fn(n: int) -> string {
+  if (n > 0) { "positive" } else { "non-positive" }
+}
+puts(sign(5))

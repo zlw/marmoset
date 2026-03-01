@@ -1,0 +1,8 @@
+# CS63: K70: enum with single-field variant
+# output: 42
+enum result { ok(int) err(string) }
+let r = result.ok(42)
+match r {
+  result.ok(v): puts(v)
+  result.err(s): puts(s)
+}

@@ -1,0 +1,6 @@
+# CS32: E33: tail-recursive function via if
+# output: 0
+let countdown = fn(n: int) -> int {
+  if (n == 0) { 0 } else { countdown(n - 1) }
+}
+puts(countdown(100))

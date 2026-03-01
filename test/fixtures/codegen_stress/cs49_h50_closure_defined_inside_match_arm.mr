@@ -1,0 +1,8 @@
+# CS49: H50: closure defined inside match arm
+# output: 10
+let n = 1
+let f = match n {
+  1: fn(x: int) -> int { x + 5 }
+  _: fn(x: int) -> int { x }
+}
+puts(f(5))

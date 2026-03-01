@@ -1,0 +1,12 @@
+# CS21: C22: generic fn with generic enum at multiple types
+# output: 42
+# output: hello
+enum box[a] { wrap(a) }
+let unwrap = fn(b: box[int]) -> int {
+  match b { box.wrap(v): v }
+}
+let unwrap_str = fn(b: box[string]) -> string {
+  match b { box.wrap(v): v }
+}
+puts(unwrap(box.wrap(42)))
+puts(unwrap_str(box.wrap("hello")))

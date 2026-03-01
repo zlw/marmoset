@@ -1,0 +1,13 @@
+# CS48: H49: [BUG-1] three matches different types same scope
+# output: 10
+# output: hello
+# output: true
+let a = 1
+let b = "hello"
+let c = true
+let x = match a { 1: 10 _: 0 }
+puts(x)
+let y = match b { "hello": "hello" _: "other" }
+puts(y)
+let z = match c { true: true false: false }
+puts(z)

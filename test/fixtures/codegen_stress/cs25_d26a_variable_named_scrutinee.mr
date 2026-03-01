@@ -1,0 +1,4 @@
+# CS25: D26a: variable named 'scrutinee'
+# output: 10
+let scrutinee = 10
+puts(scrutinee)

@@ -1,0 +1,4 @@
+# CS26: D26b: variable named 'spread'
+# output: 20
+let spread = 20
+puts(spread)

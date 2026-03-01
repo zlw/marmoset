@@ -1,0 +1,8 @@
+# CS44: H45: generic function with if-expression body
+# output: 10
+# output: hello
+let process = fn(x, flag: bool) {
+  if (flag) { x } else { x }
+}
+puts(process(10, true))
+puts(process("hello", false))

@@ -1,0 +1,14 @@
+# CS52: H53: enum match inside if-branch
+# output: 42
+enum option[a] { some(a) none }
+let f = fn(flag: bool, opt: option[int]) -> int {
+  if (flag) {
+    match opt {
+      option.some(v): v
+      option.none: 0
+    }
+  } else {
+    0
+  }
+}
+puts(f(true, option.some(42)))

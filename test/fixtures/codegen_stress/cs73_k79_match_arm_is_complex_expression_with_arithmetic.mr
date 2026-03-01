@@ -1,0 +1,10 @@
+# CS73: K79: match arm is complex expression with arithmetic
+# output: 150
+let n = 3
+let result = match n {
+  1: 10 * 5
+  2: 20 * 5
+  3: 30 * 5
+  _: 0
+}
+puts(result)

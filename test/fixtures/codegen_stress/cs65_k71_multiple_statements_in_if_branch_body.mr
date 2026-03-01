@@ -1,0 +1,12 @@
+# CS65: K71: multiple statements in if-branch body
+# output: 30
+let f = fn(flag: bool) -> int {
+  if (flag) {
+    let a = 10
+    let b = 20
+    a + b
+  } else {
+    0
+  }
+}
+puts(f(true))

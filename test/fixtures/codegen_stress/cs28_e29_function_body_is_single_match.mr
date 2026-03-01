@@ -1,0 +1,11 @@
+# CS28: E29: function body is single match
+# output: 20
+let classify = fn(n: int) -> int {
+  match n {
+    0: 0
+    1: 10
+    2: 20
+    _: 99
+  }
+}
+puts(classify(2))

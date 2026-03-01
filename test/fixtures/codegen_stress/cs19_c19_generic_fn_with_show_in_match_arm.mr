@@ -1,0 +1,9 @@
+# CS19: C19: generic fn with show in match arm
+# output: 42
+let id = fn(x) { x }
+let n = 1
+let result = match n {
+  1: id(42).show()
+  _: "other"
+}
+puts(result)
