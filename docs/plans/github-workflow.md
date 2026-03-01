@@ -430,3 +430,11 @@ If migration causes disruption:
   - restored `workflow_dispatch` trigger and manual `compiler-integration-macos` / `compiler-integration-windows` jobs inside `.github/workflows/pr-ci.yml`
   - kept macOS and Windows as separate jobs and retained event-qualified required-check naming strategy
   - updated README manual-run path back to `.github/workflows/pr-ci.yml`
+- 2026-03-01 19:55 CET: Ruleset context fix after manual-workflow rollback:
+  - updated required manual check contexts in ruleset `branch: main` (`id=13342513`) from:
+    - `Manual Cross-Platform / compiler-integration-macos (workflow_dispatch)`
+    - `Manual Cross-Platform / compiler-integration-windows (workflow_dispatch)`
+  - to:
+    - `PR CI / compiler-integration-macos (workflow_dispatch)`
+    - `PR CI / compiler-integration-windows (workflow_dispatch)`
+  - kept pull-request required checks unchanged with `(... pull_request)` suffixes
