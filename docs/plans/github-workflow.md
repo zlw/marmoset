@@ -382,3 +382,8 @@ If migration causes disruption:
   - updated README manual-run reference to dispatch `pr-ci.yml` directly
 - 2026-03-01 19:12 CET: Quality check fix refined:
   - pinned formatter install to `ocamlformat.0.27.0` in `test/ci/quality.sh` to match `.ocamlformat` version guard.
+- 2026-03-01 19:25 CET: PR-label trigger for cross-platform checks added:
+  - `pr-ci.yml` now listens to `pull_request:labeled`
+  - adding `ci:cross-platform` on a PR runs `compiler-integration-macos` + `compiler-integration-windows` against `pull_request.head.sha`
+  - normal PR routing jobs (`changes` + domain jobs + `summary`) are skipped for label-only runs
+  - concurrency grouping now isolates label-triggered runs from regular PR runs to avoid cancellation clashes
