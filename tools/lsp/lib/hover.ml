@@ -64,6 +64,8 @@ and find_expr_in_stmt (offset : int) (stmt : Ast.AST.statement) : Ast.AST.expres
   | Ast.AST.Block stmts -> List.find_map (find_expr_in_stmt offset) stmts
   | Ast.AST.ImplDef { impl_methods; _ } ->
       List.find_map (fun (m : Ast.AST.method_impl) -> find_expr_at offset m.impl_method_body) impl_methods
+  | Ast.AST.InherentImplDef { inherent_methods; _ } ->
+      List.find_map (fun (m : Ast.AST.method_impl) -> find_expr_at offset m.impl_method_body) inherent_methods
   | Ast.AST.TraitDef { methods; _ } ->
       List.find_map
         (fun (m : Ast.AST.method_sig) ->

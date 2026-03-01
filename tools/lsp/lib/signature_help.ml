@@ -9,7 +9,7 @@ module Trait_registry = Typecheck.Trait_registry
 (* Decompose a curried TFun into a flat param list and return type.
    TFun(a, TFun(b, c)) → ([a; b], c) *)
 let rec collect_params = function
-  | Types.TFun (arg, rest) ->
+  | Types.TFun (arg, rest, _) ->
       let params, ret = collect_params rest in
       (arg :: params, ret)
   | t -> ([], t)
@@ -184,7 +184,7 @@ let find_enclosing_call ~(source : string) (offset : int) (program : Ast.AST.pro
     | Ast.AST.Let { value; _ } -> visit_expr value
     | Ast.AST.Return e -> visit_expr e
     | Ast.AST.Block stmts -> List.iter visit_stmt stmts
-    | Ast.AST.EnumDef _ | Ast.AST.TraitDef _ | Ast.AST.ImplDef _ | Ast.AST.DeriveDef _ | Ast.AST.TypeAlias _ -> ()
+    | Ast.AST.EnumDef _ | Ast.AST.TraitDef _ | Ast.AST.ImplDef _ | Ast.AST.InherentImplDef _ | Ast.AST.DeriveDef _ | Ast.AST.TypeAlias _ -> ()
   in
   List.iter visit_stmt program;
   !best
@@ -312,7 +312,7 @@ let signature_help
             | `Method (ptypes, ret, pnames) ->
                 (* Method types come from trait registry — normalize together *)
                 let dummy_fn =
-                  List.fold_right (fun p acc -> Types.TFun (p, acc)) ptypes ret
+                  List.fold_right (fun p acc -> Types.tfun p acc) ptypes ret
                 in
                 let norm = Types.normalize dummy_fn in
                 let params, ret_n = collect_params norm in

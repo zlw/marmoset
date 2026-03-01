@@ -26,7 +26,7 @@ let rec type_to_source (mono : Types.mono_type) : string =
   | Types.THash (key, value) -> "map[" ^ type_to_source key ^ ", " ^ type_to_source value ^ "]"
   | Types.TFun _ ->
       let rec collect_args = function
-        | Types.TFun (arg, rest) ->
+        | Types.TFun (arg, rest, _) ->
             let args, ret = collect_args rest in
             (arg :: args, ret)
         | t -> ([], t)
@@ -87,7 +87,7 @@ let rec take_param_types n mono =
     []
   else
     match mono with
-    | Types.TFun (param, rest) -> param :: take_param_types (n - 1) rest
+    | Types.TFun (param, rest, _) -> param :: take_param_types (n - 1) rest
     | _ -> []
 
 (* Extract the return type of a function with n parameters *)
@@ -96,7 +96,7 @@ let rec get_return_type n mono =
     Some mono
   else
     match mono with
-    | Types.TFun (_, rest) -> get_return_type (n - 1) rest
+    | Types.TFun (_, rest, _) -> get_return_type (n - 1) rest
     | _ -> None
 
 (* Find the byte offset just past ')' for function parameters.
@@ -217,7 +217,7 @@ let rec walk_stmt ~source ~type_map ~range_start ~range_end ~sites (stmt : Ast.A
     | Ast.AST.Block stmts -> List.iter (walk_stmt ~source ~type_map ~range_start ~range_end ~sites) stmts
     | Ast.AST.ExpressionStmt e -> walk_expr ~source ~type_map ~range_start ~range_end ~sites e
     | Ast.AST.Return e -> walk_expr ~source ~type_map ~range_start ~range_end ~sites e
-    | Ast.AST.EnumDef _ | Ast.AST.TraitDef _ | Ast.AST.ImplDef _ | Ast.AST.DeriveDef _ | Ast.AST.TypeAlias _ -> ()
+    | Ast.AST.EnumDef _ | Ast.AST.TraitDef _ | Ast.AST.ImplDef _ | Ast.AST.InherentImplDef _ | Ast.AST.DeriveDef _ | Ast.AST.TypeAlias _ -> ()
 
 and walk_expr ~source ~type_map ~range_start ~range_end ~sites (expr : Ast.AST.expression) =
   if expr.end_pos < range_start || expr.pos > range_end then
@@ -357,10 +357,10 @@ let%test "type_to_source nested array" =
 let%test "type_to_source hash" = type_to_source (Types.THash (Types.TString, Types.TInt)) = "map[string, int]"
 
 let%test "type_to_source single-arg function" =
-  type_to_source (Types.TFun (Types.TInt, Types.TBool)) = "(int) -> bool"
+  type_to_source (Types.tfun Types.TInt Types.TBool) = "(int) -> bool"
 
 let%test "type_to_source multi-arg function" =
-  type_to_source (Types.TFun (Types.TInt, Types.TFun (Types.TString, Types.TBool))) = "(int, string) -> bool"
+  type_to_source (Types.tfun Types.TInt (Types.tfun Types.TString Types.TBool)) = "(int, string) -> bool"
 
 let%test "type_to_source record" =
   type_to_source

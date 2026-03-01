@@ -35,7 +35,7 @@ let rec take_param_types n mono =
     []
   else
     match mono with
-    | Types.TFun (param, rest) -> param :: take_param_types (n - 1) rest
+    | Types.TFun (param, rest, _) -> param :: take_param_types (n - 1) rest
     | _ -> []
 
 (* Extract the return type of a function with n parameters *)
@@ -44,7 +44,7 @@ let rec get_return_type n mono =
     Some mono
   else
     match mono with
-    | Types.TFun (_, rest) -> get_return_type (n - 1) rest
+    | Types.TFun (_, rest, _) -> get_return_type (n - 1) rest
     | _ -> None
 
 (* Find the byte offset of the closing ) for function parameters.
@@ -193,6 +193,11 @@ let rec walk_stmt ~source ~type_map ~range_start ~range_end ~hints (stmt : Ast.A
           (fun (m : Ast.AST.method_impl) ->
             walk_expr ~source ~type_map ~range_start ~range_end ~hints m.impl_method_body)
           impl_methods
+    | Ast.AST.InherentImplDef { inherent_methods; _ } ->
+        List.iter
+          (fun (m : Ast.AST.method_impl) ->
+            walk_expr ~source ~type_map ~range_start ~range_end ~hints m.impl_method_body)
+          inherent_methods
     | Ast.AST.TraitDef { methods; _ } ->
         List.iter
           (fun (m : Ast.AST.method_sig) ->

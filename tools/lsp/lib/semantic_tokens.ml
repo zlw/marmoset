@@ -393,6 +393,27 @@ and collect_stmt ~source ~type_map ~environment ~params ~tokens (stmt : Ast.AST.
           (* Advance search_from past the method body *)
           search_from := m.impl_method_body.end_pos + 1)
         impl_methods
+  | Ast.AST.InherentImplDef { inherent_methods; _ } ->
+      let search_from = ref stmt.pos in
+      List.iter
+        (fun (m : Ast.AST.method_impl) ->
+          let mname = m.impl_method_name in
+          let mlen = String.length mname in
+          (match find_name ~source ~start:!search_from ~limit:m.impl_method_body.pos mname with
+          | Some (mstart, mend) ->
+              search_from := mend;
+              tokens :=
+                {
+                  pos = mstart;
+                  end_pos = mstart + mlen - 1;
+                  token_type = method_type;
+                  modifiers = definition_mod;
+                }
+                :: !tokens
+          | None -> ());
+          collect_expr ~source ~type_map ~environment ~params ~tokens m.impl_method_body;
+          search_from := m.impl_method_body.end_pos + 1)
+        inherent_methods
   | Ast.AST.DeriveDef _ | Ast.AST.TypeAlias _ -> ()
 
 (* Sort tokens by position, then delta-encode *)

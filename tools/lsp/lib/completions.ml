@@ -75,7 +75,7 @@ let env_with bindings =
 let%test "completions include env names" =
   let env =
     env_with
-      [ ("x", Types.Forall ([], Types.TInt)); ("f", Types.Forall ([], Types.TFun (Types.TInt, Types.TBool))) ]
+      [ ("x", Types.Forall ([], Types.TInt)); ("f", Types.Forall ([], Types.tfun Types.TInt Types.TBool)) ]
   in
   let items = completions ~environment:env in
   let labels = List.map (fun (i : Lsp_t.CompletionItem.t) -> i.label) items in
@@ -88,7 +88,7 @@ let%test "completions include keywords" =
   List.mem "let" labels && List.mem "fn" labels && List.mem "match" labels
 
 let%test "function gets Function kind" =
-  let env = env_with [ ("f", Types.Forall ([], Types.TFun (Types.TInt, Types.TBool))) ] in
+  let env = env_with [ ("f", Types.Forall ([], Types.tfun Types.TInt Types.TBool)) ] in
   let items = completions ~environment:env in
   match List.find_opt (fun (i : Lsp_t.CompletionItem.t) -> i.label = "f") items with
   | Some item -> item.kind = Some Lsp_t.CompletionItemKind.Function
@@ -103,7 +103,7 @@ let%test "variable gets Variable kind" =
 
 let%test "polymorphic function shows bracket syntax in detail" =
   (* Use "t0" not "a" — normalize maps t0->a but a->a causes infinite loop in apply_substitution *)
-  let env = env_with [ ("id", Types.Forall ([ "t0" ], Types.TFun (Types.TVar "t0", Types.TVar "t0"))) ] in
+  let env = env_with [ ("id", Types.Forall ([ "t0" ], Types.tfun (Types.TVar "t0") (Types.TVar "t0"))) ] in
   let items = completions ~environment:env in
   match List.find_opt (fun (i : Lsp_t.CompletionItem.t) -> i.label = "id") items with
   | Some item -> (

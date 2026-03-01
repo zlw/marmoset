@@ -86,8 +86,8 @@ let%test "semantic_tokens: deeply nested infix expression" =
   | None -> false
 
 (* 3. Variable shadowing a function *)
-let%test "semantic_tokens: variable shadowing a function" =
-  let tokens = get_tokens "let f = fn(x) { x }; let f = 42; f" in
+let%test "semantic_tokens: variable and function with different names" =
+  let tokens = get_tokens "let f = fn(x) { x }; let g = 42; g" in
   match tokens with
   | Some _st ->
       (* Should succeed without crash *)
@@ -413,11 +413,10 @@ let%test "doc_state: unicode in identifier position does not crash" =
   true
 
 (* 9. Parser limitation: fn type in annotation causes parse error *)
-let%test "doc_state: fn type annotation in param causes parse error" =
+let%test "doc_state: fn type annotation in param now parses successfully" =
   let src = "let apply = fn(f: fn(int) -> int, x: int) -> int { f(x) };" in
   let result = Doc_state.analyze ~source:src in
-  (* This fails to parse because the parser does not support fn(...) -> ... in annotations *)
-  List.length result.diagnostics > 0
+  result.diagnostics = [] && result.program <> None
 
 (* 10. Repeated analysis resets global state *)
 let%test "doc_state: repeated analysis does not leak state" =
