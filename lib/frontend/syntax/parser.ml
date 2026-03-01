@@ -913,14 +913,14 @@ and parse_identifier (p : parser) : (parser * AST.expression, parser) result =
   let name = p.curr_token.literal in
   (* Just parse as identifier - let postfix dot parser handle member access *)
   let id, p1 = fresh_id p in
-  Ok (p1, mk_expr id pos (AST.Identifier name))
+  Ok (p1, with_expr_end p (mk_expr id pos (AST.Identifier name)))
 
 and parse_integer_literal (p : parser) : (parser * AST.expression, parser) result =
   let pos = p.curr_token.pos in
   match Int64.of_string_opt p.curr_token.literal with
   | Some int ->
       let id, p1 = fresh_id p in
-      Ok (p1, mk_expr id pos (AST.Integer int))
+      Ok (p1, with_expr_end p (mk_expr id pos (AST.Integer int)))
   | None ->
       let msg = Printf.sprintf "can't parse number from %s" p.curr_token.literal in
       Error (add_error p msg)
@@ -930,7 +930,7 @@ and parse_float_literal (p : parser) : (parser * AST.expression, parser) result 
   match float_of_string_opt p.curr_token.literal with
   | Some float ->
       let id, p1 = fresh_id p in
-      Ok (p1, mk_expr id pos (AST.Float float))
+      Ok (p1, with_expr_end p (mk_expr id pos (AST.Float float)))
   | None ->
       let msg = Printf.sprintf "can't parse number from %s" p.curr_token.literal in
       Error (add_error p msg)
@@ -938,7 +938,7 @@ and parse_float_literal (p : parser) : (parser * AST.expression, parser) result 
 and parse_string_literal (p : parser) : (parser * AST.expression, parser) result =
   let pos = p.curr_token.pos in
   let id, p1 = fresh_id p in
-  Ok (p1, mk_expr id pos (AST.String p.curr_token.literal))
+  Ok (p1, with_expr_end p (mk_expr id pos (AST.String p.curr_token.literal)))
 
 and parse_prefix_expression (p : parser) : (parser * AST.expression, parser) result =
   let pos = p.curr_token.pos in
@@ -975,7 +975,7 @@ and parse_infix_expression (p : parser) (left : AST.expression) : (parser * AST.
 and parse_boolean (p : parser) : (parser * AST.expression, parser) result =
   let pos = p.curr_token.pos in
   let id, p1 = fresh_id p in
-  Ok (p1, mk_expr id pos (AST.Boolean (p.curr_token.token_type = Token.True)))
+  Ok (p1, with_expr_end p (mk_expr id pos (AST.Boolean (p.curr_token.token_type = Token.True))))
 
 and parse_grouped_expression (p : parser) : (parser * AST.expression, parser) result =
   let* p2, expr = parse_expression (next_token p) prec_lowest in
@@ -1115,7 +1115,8 @@ and parse_call_expression (p : parser) (c : AST.expression) : (parser * AST.expr
   let pos = p.curr_token.pos in
   let* p2, arguments = parse_expression_list p Token.RParen in
   let id, p3 = fresh_id p2 in
-  Ok (p3, mk_expr id pos (AST.Call (c, arguments)))
+  (* p2.curr_token is RParen — use it to set end_pos correctly *)
+  Ok (p3, with_expr_end p2 (mk_expr id pos (AST.Call (c, arguments))))
 
 and parse_expression_list (p : parser) (end_tt : Token.token_type) : (parser * AST.expression list, parser) result
     =
@@ -1147,7 +1148,8 @@ and parse_index_expression (p : parser) (left : AST.expression) : (parser * AST.
   let* p3, index = parse_expression p2 prec_lowest in
   let* p4 = expect_peek p3 Token.RBracket in
   let id, p5 = fresh_id p4 in
-  Ok (p5, mk_expr id pos (AST.Index (left, index)))
+  (* p4.curr_token is RBracket — use it to set end_pos correctly *)
+  Ok (p5, with_expr_end p4 (mk_expr id pos (AST.Index (left, index))))
 
 (* Phase 4.3: Dot expression parsing - handles method calls and field access *)
 (* Note: enum constructors are also parsed as MethodCall here, type checker will distinguish *)
@@ -1165,11 +1167,13 @@ and parse_dot_expression (p : parser) (left : AST.expression) : (parser * AST.ex
       let p3 = next_token p2 in
       let* p4, args = parse_expression_list p3 Token.RParen in
       let id, p5 = fresh_id p4 in
-      Ok (p5, mk_expr id pos (AST.MethodCall (left, member_name, args)))
+      (* p4.curr_token is RParen — use it to set end_pos correctly *)
+      Ok (p5, with_expr_end p4 (mk_expr id pos (AST.MethodCall (left, member_name, args))))
     else
       (* expr.member -> Field access or nullary enum constructor *)
       let id, p3 = fresh_id p2 in
-      Ok (p3, mk_expr id pos (AST.FieldAccess (left, member_name)))
+      (* p2.curr_token is the member name identifier *)
+      Ok (p3, with_expr_end p2 (mk_expr id pos (AST.FieldAccess (left, member_name))))
 
 (* Phase 4.6: Distinguish record literal from hash literal using one mode-locked loop *)
 and parse_record_or_hash_literal (p : parser) : (parser * AST.expression, parser) result =
@@ -1549,6 +1553,55 @@ module Test = struct
   let%test "statement span includes trailing semicolon when present" =
     match parse "let x = 1;" with
     | Ok [ stmt ] -> stmt.pos = 0 && stmt.end_pos = 9
+    | _ -> false
+
+  let%test "identifier span covers full name" =
+    (* "foo" is 3 chars: pos=0, end_pos=2 *)
+    match parse "foo;" with
+    | Ok [ { AST.stmt = AST.ExpressionStmt expr; _ } ] -> expr.pos = 0 && expr.end_pos = 2
+    | _ -> false
+
+  let%test "call expression span covers closing paren" =
+    (* "f(1)" has call at pos=1 '(', end_pos should be 3 ')' *)
+    match parse "f(1);" with
+    | Ok [ { AST.stmt = AST.ExpressionStmt expr; _ } ] -> (
+        match expr.expr with
+        | AST.Call (fn_e, _) ->
+            (* Outer expression (top-level) spans f..): 0-3 *)
+            expr.pos = 1 && expr.end_pos = 3
+            (* Inner fn identifier spans f: 0-0 *)
+            && fn_e.pos = 0 && fn_e.end_pos = 0
+        | _ -> false)
+    | _ -> false
+
+  let%test "nested call inside infix has correct end_pos" =
+    (* "f(1) + 2" — the Call f(1) should have end_pos=3 (the ')') *)
+    match parse "f(1) + 2;" with
+    | Ok [ { AST.stmt = AST.ExpressionStmt expr; _ } ] -> (
+        match expr.expr with
+        | AST.Infix (left, _, _) -> (
+            match left.expr with
+            | AST.Call _ -> left.end_pos = 3
+            | _ -> false)
+        | _ -> false)
+    | _ -> false
+
+  let%test "field access span covers field name" =
+    (* "x.name" — FieldAccess has pos at '.', end_pos should cover 'name' *)
+    match parse "x.name;" with
+    | Ok [ { AST.stmt = AST.ExpressionStmt expr; _ } ] -> (
+        match expr.expr with
+        | AST.FieldAccess _ -> expr.end_pos = 5 (* 'e' in 'name' is at offset 5 *)
+        | _ -> false)
+    | _ -> false
+
+  let%test "index expression span covers closing bracket" =
+    (* "a[0]" — Index has end_pos at ']' *)
+    match parse "a[0];" with
+    | Ok [ { AST.stmt = AST.ExpressionStmt expr; _ } ] -> (
+        match expr.expr with
+        | AST.Index _ -> expr.end_pos = 3 (* ']' at offset 3 *)
+        | _ -> false)
     | _ -> false
 
   let%test "parser threads optional file_id into nodes" =
