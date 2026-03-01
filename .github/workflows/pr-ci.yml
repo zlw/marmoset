@@ -258,3 +258,11 @@ jobs:
           echo "  editor-vscode=${{ needs.editor-vscode.result }}"
           echo "  editor-nvim=${{ needs.editor-nvim.result }}"
           echo "  editor-jetbrains=${{ needs.editor-jetbrains.result }}"
+
+      - name: Gate on failures
+        if: >-
+          contains(needs.*.result, 'failure') ||
+          contains(needs.*.result, 'cancelled')
+        run: |
+          echo "One or more jobs failed or were cancelled."
+          exit 1
