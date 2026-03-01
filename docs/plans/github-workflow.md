@@ -291,3 +291,15 @@ If migration causes disruption:
   - `PR CI / editor-jetbrains`
   - `Manual Cross-Platform / integration (macos-latest)`
   - `Manual Cross-Platform / integration (windows-latest)`
+- 2026-03-01 18:31 CET: Completed Step 1 by adding stable CI entrypoints in `Makefile`:
+  - `ci-unit-compiler`
+  - `ci-unit-lsp`
+  - `ci-integration-compiler-linux`
+  - `ci-integration-lsp`
+  - `ci-quality`
+  - `ci-editor-zed`
+  - `ci-editor-vscode`
+  - `ci-editor-nvim`
+  - `ci-editor-jetbrains`
+- 2026-03-01 18:31 CET: Added `test/ci/quality.sh` and editor scripts (`editor-zed.sh`, `editor-vscode.sh`, `editor-nvim.sh`, `editor-jetbrains.sh`) with independent pass/fail exits.
+- 2026-03-01 18:31 CET: Wired LSP integration CI entrypoint to `./test/integration.sh 08_cli.sh` for explicit LSP smoke coverage.

@@ -57,3 +57,31 @@ treesitter:
 
 watch:
 	dune runtest -w --force
+
+# CI entrypoints (stable command contract for GitHub workflows)
+ci-unit-compiler:
+	@$(MAKE) unit compiler
+
+ci-unit-lsp:
+	@$(MAKE) unit lsp
+
+ci-integration-compiler-linux:
+	@$(MAKE) integration
+
+ci-integration-lsp:
+	@./test/integration.sh 08_cli.sh
+
+ci-quality:
+	@./test/ci/quality.sh
+
+ci-editor-zed:
+	@./test/ci/editor-zed.sh
+
+ci-editor-vscode:
+	@./test/ci/editor-vscode.sh
+
+ci-editor-nvim:
+	@./test/ci/editor-nvim.sh
+
+ci-editor-jetbrains:
+	@./test/ci/editor-jetbrains.sh
