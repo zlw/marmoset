@@ -407,3 +407,7 @@ If migration causes disruption:
   - restored `require_last_push_approval=true` in ruleset `branch: main` (`id=13342513`) so non-bypass users cannot merge immediately after their own push
   - attempted to scope bypass to repository user `zlw`, but GitHub rulesets update API rejected `actor_type: User` (`Validation Failed: User is not a valid actor type`)
   - current bypass remains role-based (`RepositoryRole: admin`, `bypass_mode: always`)
+- 2026-03-01 19:42 CET: Check-context collision remediation (workflow split):
+  - moved manual `compiler-integration-macos` and `compiler-integration-windows` jobs out of `pr-ci.yml` into new `.github/workflows/manual-cross-platform.yml`
+  - restored `pr-ci.yml` to pull_request-only trigger scope to avoid event-qualified context suffix collisions in PR required checks
+  - updated README merge-gate instructions to run `manual-cross-platform.yml` and corresponding check names under `Manual Cross-Platform / ...`
