@@ -1,0 +1,12 @@
+# XF39: H46: Mixed constraint fails when method trait not implemented
+# error: does not implement trait shown
+trait named {
+  name: string
+}
+trait shown[a] {
+  fn show(x: a) -> string
+}
+let get_name = fn[t: named + shown](x: t) -> string {
+  x.name
+}
+puts(get_name({ name: "alice" }))

@@ -1,0 +1,7 @@
+# XF38: H41: Enum without show impl fails show constraint
+# error: does not implement trait
+enum color { red green blue }
+let render = fn[a: show](x: a) -> string {
+  x.show()
+}
+puts(render(color.red))

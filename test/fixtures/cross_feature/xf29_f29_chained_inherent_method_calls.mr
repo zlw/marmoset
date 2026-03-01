@@ -1,0 +1,8 @@
+# XF29: F29: Chained inherent method calls
+# output: 20
+impl int {
+  fn double(x: int) -> int { x + x }
+  fn add_one(x: int) -> int { x + 1 }
+}
+let n = 5
+puts(n.double().double())

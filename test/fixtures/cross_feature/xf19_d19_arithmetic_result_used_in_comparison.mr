@@ -1,0 +1,5 @@
+# XF19: D19: Arithmetic result used in comparison
+# output: true
+let a = 3 + 4
+let b = 2 * 4
+puts(a < b)

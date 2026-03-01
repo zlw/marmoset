@@ -1,0 +1,10 @@
+# XF28: F28: Inherent method returning a record literal
+# output: 99
+type box = { value: int }
+impl int {
+  fn boxed(x: int) -> box {
+    { value: x }
+  }
+}
+let b = 99.boxed()
+puts(b.value)

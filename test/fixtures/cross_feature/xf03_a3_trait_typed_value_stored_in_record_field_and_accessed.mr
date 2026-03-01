@@ -1,0 +1,8 @@
+# XF03: A3: Trait-typed value stored in record field and accessed
+# output: bob
+trait named {
+  name: string
+}
+let n: named = { name: "bob", extra: 99 }
+let wrapper = { inner: n }
+puts(wrapper.inner.name)

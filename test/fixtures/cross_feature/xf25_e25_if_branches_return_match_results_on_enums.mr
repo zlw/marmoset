@@ -1,0 +1,14 @@
+# XF25: E25: If branches return match results on enums
+# output: found: 42
+enum option_int { some(int) none }
+let describe = fn(flag: bool, val: option_int) -> string {
+  if (flag) {
+    match val {
+      option_int.some(n): "found: " + n.show()
+      option_int.none: "empty"
+    }
+  } else {
+    "skipped"
+  }
+}
+puts(describe(true, option_int.some(42)))

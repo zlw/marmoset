@@ -1,0 +1,27 @@
+# XF15: C14: Multiple trait impls for distinct enum types
+# output: red
+# output: ready
+enum color { red green blue }
+enum light { stop ready }
+trait render[a] {
+  fn render(x: a) -> string
+}
+impl render for color {
+  fn render(x: color) -> string {
+    match x {
+      color.red: "red"
+      color.green: "green"
+      color.blue: "blue"
+    }
+  }
+}
+impl render for light {
+  fn render(x: light) -> string {
+    match x {
+      light.stop: "stop"
+      light.ready: "ready"
+    }
+  }
+}
+puts(color.red.render())
+puts(light.ready.render())

@@ -1,0 +1,4 @@
+# XF44: I52: Chained field access + show
+# output: 7
+let mk = fn() { { inner: { val: 7 } } }
+puts(mk().inner.val.show())

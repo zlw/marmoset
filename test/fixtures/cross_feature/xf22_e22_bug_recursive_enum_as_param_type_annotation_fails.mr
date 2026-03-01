@@ -1,0 +1,11 @@
+# XF22: E22: BUG: Recursive enum as param type annotation fails
+# error: Unknown type constructor: mylist
+enum mylist { cons(int, mylist) nil }
+let sum = fn(xs: mylist) -> int {
+  match xs {
+    mylist.cons(h, t): h + sum(t)
+    mylist.nil: 0
+  }
+}
+let xs = mylist.cons(1, mylist.cons(2, mylist.cons(3, mylist.nil)))
+puts(sum(xs))

@@ -1,0 +1,11 @@
+# XF45: I53: Multiple records same shape from different paths
+# output: 15
+let make1 = fn(v: int) -> int {
+  let r = { x: v, y: v + 1 }
+  r.x
+}
+let make2 = fn(v: int) -> int {
+  let r = { x: v * 2, y: v * 3 }
+  r.x
+}
+puts(make1(5) + make2(5))

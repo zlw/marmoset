@@ -1,0 +1,10 @@
+# XF10: B10: Enum containing record, unwrap and access fields
+# output: 30
+type point = { x: int, y: int }
+enum container { point_val(point) }
+let p: point = { x: 10, y: 20 }
+let c = container.point_val(p)
+let sum = match c {
+  container.point_val(q): q.x + q.y
+}
+puts(sum)

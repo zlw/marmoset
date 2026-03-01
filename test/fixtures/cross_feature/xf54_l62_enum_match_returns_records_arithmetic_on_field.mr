@@ -1,0 +1,8 @@
+# XF54: L62: Enum match returns records, arithmetic on field
+# output: 101
+enum flag { on off }
+let result = match flag.on {
+  flag.on: { val: 100 }
+  flag.off: { val: 0 }
+}
+puts(result.val + 1)

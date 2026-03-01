@@ -1,0 +1,13 @@
+# XF12: C12: Impl show for simple enum type, call show()
+# output: red
+enum color { red green blue }
+impl show for color {
+  fn show(x: color) -> string {
+    match x {
+      color.red: "red"
+      color.green: "green"
+      color.blue: "blue"
+    }
+  }
+}
+puts(color.red.show())

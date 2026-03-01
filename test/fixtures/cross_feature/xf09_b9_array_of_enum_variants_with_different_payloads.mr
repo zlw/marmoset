@@ -1,0 +1,8 @@
+# XF09: B9: Array of enum variants with different payloads
+# output: 42
+enum item { num(int) text(string) }
+let items = [item.num(42), item.text("hello")]
+match items[0] {
+  item.num(n): puts(n)
+  item.text(s): puts(s)
+}

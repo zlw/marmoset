@@ -1,0 +1,15 @@
+# XF13: C13: Trait method on enum dispatches via match (wildcard)
+# output: found
+enum option_int { some(int) none }
+trait render[a] {
+  fn render(x: a) -> string
+}
+impl render for option_int {
+  fn render(x: option_int) -> string {
+    match x {
+      option_int.some(_): "found"
+      option_int.none: "empty"
+    }
+  }
+}
+puts(option_int.some(42).render())

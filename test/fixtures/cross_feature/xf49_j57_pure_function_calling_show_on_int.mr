@@ -1,0 +1,6 @@
+# XF49: J57: Pure function calling show on int
+# output: 42
+let to_string = fn(x: int) -> string {
+  x.show()
+}
+puts(to_string(42))

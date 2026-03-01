@@ -1,0 +1,11 @@
+# XF43: I51: Show of match result from enum
+# output: 42
+enum option_int { some(int) none }
+let unwrap_show = fn(v: option_int) -> string {
+  let n = match v {
+    option_int.some(x): x
+    option_int.none: 0
+  }
+  n.show()
+}
+puts(unwrap_show(option_int.some(42)))

@@ -1,0 +1,5 @@
+# XF62: N71: len() + arithmetic + comparison on arrays
+# output: true
+let arr = [1, 2, 3, 4, 5]
+let n = len(arr)
+puts(n > 3)
