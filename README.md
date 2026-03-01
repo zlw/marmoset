@@ -111,23 +111,23 @@ Run a specific integration suite:
 PR checks are driven by `.github/workflows/pr-ci.yml` and run on pull request events (`opened`, `reopened`, `synchronize`, `ready_for_review`).
 
 - Compiler changes run:
-  - `PR CI / compiler-unit`
-  - `PR CI / compiler-integration-linux`
-  - `PR CI / quality-lint-fmt-doc`
+  - `PR CI / compiler-unit (pull_request)`
+  - `PR CI / compiler-integration-linux (pull_request)`
+  - `PR CI / quality-lint-fmt-doc (pull_request)`
 - LSP changes run:
-  - `PR CI / lsp-unit`
-  - `PR CI / lsp-integration`
-  - `PR CI / quality-lint-fmt-doc`
+  - `PR CI / lsp-unit (pull_request)`
+  - `PR CI / lsp-integration (pull_request)`
+  - `PR CI / quality-lint-fmt-doc (pull_request)`
 - Editor changes run only the changed editor check:
-  - `PR CI / editor-zed`
-  - `PR CI / editor-vscode`
-  - `PR CI / editor-nvim`
-  - `PR CI / editor-jetbrains`
+  - `PR CI / editor-zed (pull_request)`
+  - `PR CI / editor-vscode (pull_request)`
+  - `PR CI / editor-nvim (pull_request)`
+  - `PR CI / editor-jetbrains (pull_request)`
 
 Before merging to `main`, run `.github/workflows/manual-cross-platform.yml` via `workflow_dispatch` on the PR head so both required checks pass:
 
-- `Manual Cross-Platform / compiler-integration-macos`
-- `Manual Cross-Platform / compiler-integration-windows`
+- `Manual Cross-Platform / compiler-integration-macos (workflow_dispatch)`
+- `Manual Cross-Platform / compiler-integration-windows (workflow_dispatch)`
 
 Local command equivalents used by CI:
 

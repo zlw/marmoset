@@ -419,3 +419,9 @@ If migration causes disruption:
     - `Manual Cross-Platform / compiler-integration-macos`
     - `Manual Cross-Platform / compiler-integration-windows`
   - kept `require_last_push_approval=true` and all PR CI required checks unchanged
+- 2026-03-01 19:48 CET: Required-check context normalization to GitHub-emitted names:
+  - root cause confirmed from UI/state: running checks render as event-qualified contexts (for example `PR CI / compiler-unit (pull_request)`) while ruleset required unsuffixed contexts remained `Expected`
+  - updated all required status check contexts in ruleset `branch: main` (`id=13342513`) to exact emitted names:
+    - PR workflow checks -> `(... pull_request)`
+    - manual cross-platform checks -> `(... workflow_dispatch)`
+  - updated README check-name examples to match these exact required contexts
