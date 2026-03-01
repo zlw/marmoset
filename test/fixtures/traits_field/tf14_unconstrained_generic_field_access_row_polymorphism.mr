@@ -1,0 +1,5 @@
+# TF14: Unconstrained generic field access (row polymorphism)
+# output: 5
+let get_x = fn(r) { r.x };
+let p = { x: 5, y: 10 }
+puts(get_x(p))

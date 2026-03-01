@@ -1,0 +1,10 @@
+# TF21: Constrained generic: return int field and use in arithmetic
+# output: 84
+trait has_n {
+  n: int
+}
+let doubled = fn[t: has_n](v: t) -> int {
+  v.n + v.n
+};
+let r = { n: 42 }
+puts(doubled(r))

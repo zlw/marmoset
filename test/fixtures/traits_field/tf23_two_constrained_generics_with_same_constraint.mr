@@ -1,0 +1,11 @@
+# TF23: Two constrained generics with same constraint
+# output: hello world
+trait has_name {
+  name: string
+}
+let concat_names = fn[a: has_name, b: has_name](x: a, y: b) -> string {
+  x.name + " " + y.name
+};
+let r1 = { name: "hello", id: 1 }
+let r2 = { name: "world", active: true }
+puts(concat_names(r1, r2))

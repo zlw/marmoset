@@ -1,0 +1,12 @@
+# TF33: Empty child trait inherits parent fields
+# output: inherited
+trait base {
+  value: string
+}
+trait child: base {
+}
+let get_value = fn[t: child](v: t) -> string {
+  v.value
+};
+let r = { value: "inherited" }
+puts(get_value(r))

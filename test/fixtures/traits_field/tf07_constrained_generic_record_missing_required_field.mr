@@ -1,0 +1,9 @@
+# TF07: Constrained generic: record missing required field
+# error: missing-field
+trait has_name {
+  name: string
+}
+let get_name = fn[t: has_name](v: t) -> string {
+  v.name
+};
+get_name({ age: 42 })

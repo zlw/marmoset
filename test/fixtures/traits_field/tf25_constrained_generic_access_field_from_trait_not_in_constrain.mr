@@ -1,0 +1,12 @@
+# TF25: Constrained generic: access field from trait not in constraints
+# error: not guaranteed by constraints
+trait has_name {
+  name: string
+}
+trait has_age {
+  age: int
+}
+let get_age = fn[t: has_name](v: t) -> int {
+  v.age
+};
+get_age({ name: "alice", age: 42 })

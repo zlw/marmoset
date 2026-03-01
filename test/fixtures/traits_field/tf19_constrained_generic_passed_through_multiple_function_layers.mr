@@ -1,0 +1,13 @@
+# TF19: Constrained generic passed through multiple function layers
+# output: inner:bob
+trait has_name {
+  name: string
+}
+let inner = fn[t: has_name](v: t) -> string {
+  "inner:" + v.name
+};
+let outer = fn[t: has_name](v: t) -> string {
+  inner(v)
+};
+let r = { name: "bob", extra: 1 }
+puts(outer(r))

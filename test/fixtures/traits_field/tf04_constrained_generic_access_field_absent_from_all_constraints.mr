@@ -1,0 +1,9 @@
+# TF04: Constrained generic: access field absent from all constraints
+# error: not guaranteed by constraints
+trait has_name {
+  name: string
+}
+let get_missing = fn[t: has_name](v: t) -> int {
+  v.missing_field
+};
+get_missing({ name: "test", missing_field: 1 })

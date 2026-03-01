@@ -1,0 +1,14 @@
+# TF16: Constrained generic field used in if-expression
+# output: big
+trait has_val {
+  val: int
+}
+let classify = fn[t: has_val](v: t) -> string {
+  if (v.val > 10) {
+    "big"
+  } else {
+    "small"
+  }
+};
+let r = { val: 42 }
+puts(classify(r))
