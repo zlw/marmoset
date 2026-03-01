@@ -1,15 +1,16 @@
-name: Cross Platform Matrix (Manual)
+name: Manual Cross-Platform
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - "main"
-      - "master"
+    inputs:
+      ref:
+        description: "Git ref (branch, tag, or SHA) to test"
+        required: false
+        type: string
 
 jobs:
   integration-cross-platform:
-    name: Integration (${{ matrix.os }})
+    name: integration (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -25,17 +26,11 @@ jobs:
     steps:
       - name: Checkout tree
         uses: actions/checkout@v4
-
-      - name: Set-up OCaml
-        uses: ocaml/setup-ocaml@v3
         with:
-          ocaml-compiler: 5.2.x
+          ref: ${{ inputs.ref || github.sha }}
 
-      - name: Set-up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: "1.22.x"
+      - name: Shared OCaml+Go setup
+        uses: ./.github/actions/setup-ocaml-go
 
-      - run: opam install . --deps-only --with-test
-
-      - run: opam exec -- bash ./test/integration.sh
+      - name: Run compiler integration suite
+        run: opam exec -- bash ./test/integration.sh

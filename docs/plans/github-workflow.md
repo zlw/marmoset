@@ -313,3 +313,9 @@ If migration causes disruption:
   - domain jobs: `compiler-unit`, `compiler-integration-linux`, `lsp-unit`, `lsp-integration`, `quality-lint-fmt-doc`, `editor-zed`, `editor-vscode`, `editor-nvim`, `editor-jetbrains`
   - workflow concurrency with stale run cancellation per PR
 - 2026-03-01 18:43 CET: Job names in `PR CI` now match the required-check contract from Step 0.
+- 2026-03-01 18:46 CET: Completed Step 4 by converting `.github/workflows/cross-platform-matrix.yml` to manual-gate behavior:
+  - workflow name is now `Manual Cross-Platform`
+  - trigger is `workflow_dispatch` only
+  - optional `ref` input added for PR head/manual target selection
+  - matrix job names use `integration (${{ matrix.os }})` for required-check stability
+  - shared setup now uses `.github/actions/setup-ocaml-go`
