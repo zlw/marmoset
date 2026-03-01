@@ -33,12 +33,15 @@ _opam/
 
 # Marmoset compiled binaries
 *.mar.out
+/marmoset
 
 
 # Build artifacts
 .marmoset/
 
-# Zed extension build artifacts (contains a dune-project that conflicts)
+# Zed extension build artifacts
+tools/zed-marmoset/*.wasm
+tools/zed-marmoset/grammars/*.wasm
 tools/zed-marmoset/grammars/marmoset/
 tools/zed-marmoset/target/
 
