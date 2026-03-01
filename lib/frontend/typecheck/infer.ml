@@ -1893,10 +1893,36 @@ and infer_function_with_annotations type_map env generics_opt params return_anno
             match validate_return_statements type_map env' expected_ret_type body with
             | Error e -> Error e
             | Ok () ->
+                let rec has_unresolved_var (t : mono_type) : bool =
+                  match t with
+                  | TVar _ | TRowVar _ -> true
+                  | TFun (arg, ret, _) -> has_unresolved_var arg || has_unresolved_var ret
+                  | TArray elem -> has_unresolved_var elem
+                  | THash (k, v) -> has_unresolved_var k || has_unresolved_var v
+                  | TRecord (fields, row) -> (
+                      List.exists (fun (f : record_field_type) -> has_unresolved_var f.typ) fields
+                      ||
+                      match row with
+                      | None -> false
+                      | Some r -> has_unresolved_var r)
+                  | TEnum (_, args) | TUnion args -> List.exists has_unresolved_var args
+                  | TInt | TFloat | TBool | TString | TNull -> false
+                in
                 (* Then check that inferred body type is a subtype of expected return type *)
                 (* This catches cases like `fn() -> string { if (...) { "a" } else { 42 } }`
                    where body type is string|int which is NOT a subtype of string *)
-                if Annotation.is_subtype_of body_type' expected_ret_type then
+                let subtype_ok = Annotation.is_subtype_of body_type' expected_ret_type in
+                (* When inference leaves unresolved vars in the return expression,
+                   allow a unification-based compatibility probe to avoid rejecting
+                   programs that are valid once constraints are solved. *)
+                let unify_compatible =
+                  (has_unresolved_var body_type' || has_unresolved_var expected_ret_type)
+                  &&
+                  match unify body_type' expected_ret_type with
+                  | Ok _ -> true
+                  | Error _ -> false
+                in
+                if subtype_ok || unify_compatible then
                   (* Body type is compatible, now unify to propagate constraints *)
                   match unify body_type' expected_ret_type with
                   | Error _e -> Error (error_at_stmt (ReturnTypeMismatch (expected_ret_type, body_type')) body)
@@ -3877,6 +3903,14 @@ module Test = struct
     infers_to
       "type person = { name: string, age: int }\ntrait named { name: string }\ntrait shown[a] { fn show(x: a) -> string }\nimpl shown for person {\n\  fn show(x: person) -> string {\n\    x.name\n\  }\n}\nlet get_name = fn[t: named + shown](x: t) { x.name }\nlet p: person = { name: \"alice\", age: 42 }\nget_name(p)"
       TString
+
+  let%test "generic impl cannot specialize generic return type from body literals" =
+    match
+      infer_string
+        "trait id[a] { fn id(x: a) -> a }\nimpl id[b] for list[b] {\n  fn id(x: list[b]) -> list[b] { [1] }\n}\n1"
+    with
+    | Error { kind = ReturnTypeMismatch _; _ } -> true
+    | _ -> false
 
   let%test "explicit row-polymorphic annotation is rejected in v1" =
     reset_fresh_counter ();
