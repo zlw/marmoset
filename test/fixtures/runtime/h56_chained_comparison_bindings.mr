@@ -1,0 +1,5 @@
+let x = 5
+let a = x > 0
+let b = x < 10
+let c = a == b
+puts(c)  # output: true

@@ -1,0 +1,3 @@
+type point = { x: int, y: int }
+let p: point = { x: 10, y: 20 }
+puts(-(p.x))  # output: -10

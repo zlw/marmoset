@@ -1,0 +1,1 @@
+puts("abc" == "abc")  # output: true

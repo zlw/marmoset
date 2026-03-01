@@ -1,0 +1,2 @@
+let show_int = fn(x: int) -> int { x }
+puts(show_int(3 + 7))  # output: 10

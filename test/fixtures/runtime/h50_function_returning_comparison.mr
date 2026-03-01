@@ -1,0 +1,3 @@
+let is_big = fn(x: int) -> bool { x > 100 }
+let r = if (is_big(200)) { "big" } else { "small" }
+puts(r)  # output: big

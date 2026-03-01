@@ -1,0 +1,16 @@
+enum boxed { val(int) }
+impl num for boxed {
+  fn add(x: boxed, y: boxed) -> boxed { x }
+  fn sub(x: boxed, y: boxed) -> boxed { x }
+  fn mul(x: boxed, y: boxed) -> boxed { x }
+  fn div(x: boxed, y: boxed) -> boxed { x }
+}
+impl eq for boxed {
+  fn eq(x: boxed, y: boxed) -> bool { true }
+}
+let a = boxed.val(1)
+let b = boxed.val(2)
+let c = a + b
+let d = boxed.val(1)
+let result = if (c == d) { "first" } else { "second" }
+puts(result)  # output: first

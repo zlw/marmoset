@@ -1,0 +1,6 @@
+enum option[a] {
+  some(a)
+  none
+}
+let x = option.some(42)
+puts(x)  # output: some(42)

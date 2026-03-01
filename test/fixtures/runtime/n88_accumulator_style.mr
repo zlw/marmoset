@@ -1,0 +1,7 @@
+let a = 0
+let b = a + 1
+let c = b + 2
+let d = c + 3
+let e = d + 4
+let f = e + 5
+puts(f)  # output: 15

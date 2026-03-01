@@ -1,0 +1,2 @@
+let r = if (!(1 < 2)) { "yes" } else { "no" }
+puts(r)  # output: no

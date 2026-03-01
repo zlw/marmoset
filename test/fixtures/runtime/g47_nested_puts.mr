@@ -1,0 +1,3 @@
+# output: 42
+# output: {}
+puts(puts(42))

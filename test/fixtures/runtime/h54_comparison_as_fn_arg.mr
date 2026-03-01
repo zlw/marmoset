@@ -1,0 +1,4 @@
+let to_str = fn(b: bool) -> string {
+  if (b) { "yes" } else { "no" }
+}
+puts(to_str(10 > 5))  # output: yes

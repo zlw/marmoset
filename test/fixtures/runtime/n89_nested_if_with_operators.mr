@@ -1,0 +1,5 @@
+let x = 50
+let small = x < 10
+let big = x >= 100
+let r = if (small) { "small" } else { if (big) { "large" } else { "medium" } }
+puts(r)  # output: medium
