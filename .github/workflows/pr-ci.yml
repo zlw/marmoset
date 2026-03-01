@@ -85,6 +85,8 @@ jobs:
 
       - name: Shared OCaml setup
         uses: ./.github/actions/setup-ocaml
+        with:
+          cache-prefix: marmoset-pr-ci-ocaml-v2
 
       - name: Run compiler unit tests
         run: opam exec -- make ci-unit-compiler
@@ -100,6 +102,8 @@ jobs:
 
       - name: Shared OCaml+Go setup
         uses: ./.github/actions/setup-ocaml-go
+        with:
+          cache-prefix: marmoset-pr-ci-integration-v2
 
       - name: Run compiler integration (Linux)
         run: opam exec -- make ci-integration-compiler-linux
@@ -115,6 +119,8 @@ jobs:
 
       - name: Shared OCaml setup
         uses: ./.github/actions/setup-ocaml
+        with:
+          cache-prefix: marmoset-pr-ci-ocaml-v2
 
       - name: Run LSP unit tests
         run: opam exec -- make ci-unit-lsp
@@ -130,6 +136,8 @@ jobs:
 
       - name: Shared OCaml+Go setup
         uses: ./.github/actions/setup-ocaml-go
+        with:
+          cache-prefix: marmoset-pr-ci-integration-v2
 
       - name: Run LSP integration tests
         run: opam exec -- make ci-integration-lsp
@@ -145,6 +153,8 @@ jobs:
 
       - name: Shared OCaml setup
         uses: ./.github/actions/setup-ocaml
+        with:
+          cache-prefix: marmoset-pr-ci-ocaml-v2
 
       - name: Run quality checks
         run: opam exec -- make ci-quality
@@ -210,3 +220,40 @@ jobs:
 
       - name: Run JetBrains editor tests
         run: make ci-editor-jetbrains
+
+  summary:
+    name: summary
+    needs:
+      - changes
+      - compiler-unit
+      - compiler-integration-linux
+      - lsp-unit
+      - lsp-integration
+      - quality-lint-fmt-doc
+      - editor-zed
+      - editor-vscode
+      - editor-nvim
+      - editor-jetbrains
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Print CI routing summary
+        run: |
+          echo "Detected change domains:"
+          echo "  compiler=${{ needs.changes.outputs.compiler }}"
+          echo "  lsp=${{ needs.changes.outputs.lsp }}"
+          echo "  zed=${{ needs.changes.outputs.zed }}"
+          echo "  vscode=${{ needs.changes.outputs.vscode }}"
+          echo "  nvim=${{ needs.changes.outputs.nvim }}"
+          echo "  jetbrains=${{ needs.changes.outputs.jetbrains }}"
+          echo ""
+          echo "Job results:"
+          echo "  compiler-unit=${{ needs.compiler-unit.result }}"
+          echo "  compiler-integration-linux=${{ needs.compiler-integration-linux.result }}"
+          echo "  lsp-unit=${{ needs.lsp-unit.result }}"
+          echo "  lsp-integration=${{ needs.lsp-integration.result }}"
+          echo "  quality-lint-fmt-doc=${{ needs.quality-lint-fmt-doc.result }}"
+          echo "  editor-zed=${{ needs.editor-zed.result }}"
+          echo "  editor-vscode=${{ needs.editor-vscode.result }}"
+          echo "  editor-nvim=${{ needs.editor-nvim.result }}"
+          echo "  editor-jetbrains=${{ needs.editor-jetbrains.result }}"

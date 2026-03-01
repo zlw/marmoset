@@ -106,6 +106,43 @@ Run a specific integration suite:
 ./test/integration.sh traits
 ```
 
+## CI Policy
+
+PR checks are driven by `.github/workflows/pr-ci.yml` and run on pull request updates (`opened`, `reopened`, `synchronize`, `ready_for_review`).
+
+- Compiler changes run:
+  - `PR CI / compiler-unit`
+  - `PR CI / compiler-integration-linux`
+  - `PR CI / quality-lint-fmt-doc`
+- LSP changes run:
+  - `PR CI / lsp-unit`
+  - `PR CI / lsp-integration`
+  - `PR CI / quality-lint-fmt-doc`
+- Editor changes run only the changed editor check:
+  - `PR CI / editor-zed`
+  - `PR CI / editor-vscode`
+  - `PR CI / editor-nvim`
+  - `PR CI / editor-jetbrains`
+
+Before merging to `main`, manually run `.github/workflows/cross-platform-matrix.yml` (`Manual Cross-Platform`) on the PR head so both required checks pass:
+
+- `Manual Cross-Platform / integration (macos-latest)`
+- `Manual Cross-Platform / integration (windows-latest)`
+
+Local command equivalents used by CI:
+
+```sh
+make ci-unit-compiler
+make ci-integration-compiler-linux
+make ci-unit-lsp
+make ci-integration-lsp
+make ci-quality
+make ci-editor-zed
+make ci-editor-vscode
+make ci-editor-nvim
+make ci-editor-jetbrains
+```
+
 ## Documentation
 
 - `docs/INDEX.md`

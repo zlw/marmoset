@@ -31,6 +31,8 @@ jobs:
 
       - name: Shared OCaml+Go setup
         uses: ./.github/actions/setup-ocaml-go
+        with:
+          cache-prefix: marmoset-manual-cross-platform-v2
 
       - name: Run compiler integration suite
         run: opam exec -- bash ./test/integration.sh

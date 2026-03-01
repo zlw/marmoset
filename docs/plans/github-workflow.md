@@ -347,3 +347,8 @@ If migration causes disruption:
 - 2026-03-01 18:57 CET: Manual merge-gate expectation verified in ruleset required checks via:
   - `Manual Cross-Platform / integration (macos-latest)`
   - `Manual Cross-Platform / integration (windows-latest)`
+- 2026-03-01 19:01 CET: Step 8 hardening pass implemented:
+  - tuned cache-prefix routing in `pr-ci.yml` and manual cross-platform workflow (`marmoset-pr-ci-ocaml-v2`, `marmoset-pr-ci-integration-v2`, `marmoset-manual-cross-platform-v2`)
+  - added `summary` job in `PR CI` to print detected domains and per-job run/skip/fail status
+  - documented CI policy and local `make ci-*` command mapping in `README.md`
+- 2026-03-01 19:01 CET: Step 8 item 2 (splitting slow suites into optional/nightly) deferred until real PR latency data is collected after this workflow rollout.
