@@ -1,4 +1,4 @@
-name: Manual Cross-Platform
+name: PR CI
 
 on:
   workflow_dispatch:
@@ -10,13 +10,15 @@ on:
 
 jobs:
   integration-cross-platform:
-    name: integration (${{ matrix.os }})
+    name: compiler-integration-${{ matrix.target }}
     strategy:
       fail-fast: false
       matrix:
-        os:
-          - macos-latest
-          - windows-latest
+        include:
+          - os: macos-latest
+            target: macos
+          - os: windows-latest
+            target: windows
 
     runs-on: ${{ matrix.os }}
     defaults:

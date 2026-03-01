@@ -124,10 +124,10 @@ PR checks are driven by `.github/workflows/pr-ci.yml` and run on pull request up
   - `PR CI / editor-nvim`
   - `PR CI / editor-jetbrains`
 
-Before merging to `main`, manually run `.github/workflows/cross-platform-matrix.yml` (`Manual Cross-Platform`) on the PR head so both required checks pass:
+Before merging to `main`, manually run `.github/workflows/cross-platform-matrix.yml` on the PR head so both required checks pass:
 
-- `Manual Cross-Platform / integration (macos-latest)`
-- `Manual Cross-Platform / integration (windows-latest)`
+- `PR CI / compiler-integration-macos`
+- `PR CI / compiler-integration-windows`
 
 Local command equivalents used by CI:
 

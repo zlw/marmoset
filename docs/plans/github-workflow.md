@@ -64,8 +64,8 @@ Recommended final required-check names:
 - `PR CI / editor-vscode`
 - `PR CI / editor-nvim`
 - `PR CI / editor-jetbrains`
-- `Manual Cross-Platform / integration (macos-latest)`
-- `Manual Cross-Platform / integration (windows-latest)`
+- `PR CI / compiler-integration-macos`
+- `PR CI / compiler-integration-windows`
 
 Note: if a PR does not touch a domain, the corresponding job can be skipped; skipped checks are acceptable as required checks.
 
@@ -289,8 +289,8 @@ If migration causes disruption:
   - `PR CI / editor-vscode`
   - `PR CI / editor-nvim`
   - `PR CI / editor-jetbrains`
-  - `Manual Cross-Platform / integration (macos-latest)`
-  - `Manual Cross-Platform / integration (windows-latest)`
+  - `PR CI / compiler-integration-macos`
+  - `PR CI / compiler-integration-windows`
 - 2026-03-01 18:31 CET: Completed Step 1 by adding stable CI entrypoints in `Makefile`:
   - `ci-compiler-unit`
   - `ci-lsp-unit`
@@ -314,10 +314,10 @@ If migration causes disruption:
   - workflow concurrency with stale run cancellation per PR
 - 2026-03-01 18:43 CET: Job names in `PR CI` now match the required-check contract from Step 0.
 - 2026-03-01 18:46 CET: Completed Step 4 by converting `.github/workflows/cross-platform-matrix.yml` to manual-gate behavior:
-  - workflow name is now `Manual Cross-Platform`
+  - workflow status prefix is `PR CI` for naming consistency with other checks
   - trigger is `workflow_dispatch` only
   - optional `ref` input added for PR head/manual target selection
-  - matrix job names use `integration (${{ matrix.os }})` for required-check stability
+  - matrix job names use `compiler-integration-macos` / `compiler-integration-windows` for required-check stability
   - shared setup now uses `.github/actions/setup-ocaml-go`
 - 2026-03-01 18:48 CET: Completed Step 5 by removing legacy overlapping workflows:
   - deleted `.github/workflows/tests.yml`
@@ -334,8 +334,8 @@ If migration causes disruption:
   - `PR CI / editor-vscode`
   - `PR CI / editor-nvim`
   - `PR CI / editor-jetbrains`
-  - `Manual Cross-Platform / integration (macos-latest)`
-  - `Manual Cross-Platform / integration (windows-latest)`
+  - `PR CI / compiler-integration-macos`
+  - `PR CI / compiler-integration-windows`
 - 2026-03-01 18:52 CET: `strict_required_status_checks_policy` is enabled and ruleset bypass actors are now empty (`current_user_can_bypass=never`).
 - 2026-03-01 18:57 CET: Completed Step 7 validation matrix by checking `pr-ci.yml` filters + job guards against scenario paths:
   - compiler-only -> `compiler-unit`, `compiler-integration-linux`, `quality-lint-fmt-doc`
@@ -345,8 +345,8 @@ If migration causes disruption:
   - jetbrains-only -> `editor-jetbrains`
   - nvim-only -> `editor-nvim`
 - 2026-03-01 18:57 CET: Manual merge-gate expectation verified in ruleset required checks via:
-  - `Manual Cross-Platform / integration (macos-latest)`
-  - `Manual Cross-Platform / integration (windows-latest)`
+  - `PR CI / compiler-integration-macos`
+  - `PR CI / compiler-integration-windows`
 - 2026-03-01 19:01 CET: Step 8 hardening pass implemented:
   - tuned cache-prefix routing in `pr-ci.yml` and manual cross-platform workflow (`marmoset-pr-ci-ocaml-v2`, `marmoset-pr-ci-integration-v2`, `marmoset-manual-cross-platform-v2`)
   - added `summary` job in `PR CI` to print detected domains and per-job run/skip/fail status
@@ -360,3 +360,8 @@ If migration causes disruption:
     - `ci-lsp-integration`
     - `ci-quality-lint-fmt-doc`
   - updated all workflow and docs references to use the new target names.
+- 2026-03-01 18:39 CET: Follow-up naming alignment (manual cross-platform checks) applied:
+  - `.github/workflows/cross-platform-matrix.yml` now emits:
+    - `PR CI / compiler-integration-macos`
+    - `PR CI / compiler-integration-windows`
+  - updated plan and README references to match the new check names.
