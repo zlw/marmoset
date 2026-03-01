@@ -38,6 +38,9 @@ _opam/
 # Marmoset local directory (build cache, temp files)
 .marmoset/
 
+# Marmoset binary
+marmoset
+
 # Editors
 .idea
 .zed
