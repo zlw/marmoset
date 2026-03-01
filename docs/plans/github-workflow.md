@@ -319,3 +319,7 @@ If migration causes disruption:
   - optional `ref` input added for PR head/manual target selection
   - matrix job names use `integration (${{ matrix.os }})` for required-check stability
   - shared setup now uses `.github/actions/setup-ocaml-go`
+- 2026-03-01 18:48 CET: Completed Step 5 by removing legacy overlapping workflows:
+  - deleted `.github/workflows/tests.yml`
+  - deleted `.github/workflows/lint.yml`
+- 2026-03-01 18:48 CET: `PR CI` is now the single workflow source for PR required checks.
