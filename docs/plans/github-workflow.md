@@ -411,3 +411,11 @@ If migration causes disruption:
   - moved manual `compiler-integration-macos` and `compiler-integration-windows` jobs out of `pr-ci.yml` into new `.github/workflows/manual-cross-platform.yml`
   - restored `pr-ci.yml` to pull_request-only trigger scope to avoid event-qualified context suffix collisions in PR required checks
   - updated README merge-gate instructions to run `manual-cross-platform.yml` and corresponding check names under `Manual Cross-Platform / ...`
+- 2026-03-01 19:43 CET: Ruleset context alignment after workflow split:
+  - updated required status check contexts in ruleset `branch: main` (`id=13342513`) from:
+    - `PR CI / compiler-integration-macos`
+    - `PR CI / compiler-integration-windows`
+  - to:
+    - `Manual Cross-Platform / compiler-integration-macos`
+    - `Manual Cross-Platform / compiler-integration-windows`
+  - kept `require_last_push_approval=true` and all PR CI required checks unchanged
