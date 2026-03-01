@@ -4896,6 +4896,20 @@ let string_contains s substring =
     in
     check 0
 
+let string_not_contains s substring = not (string_contains s substring)
+
+let is_deterministic source =
+  let build () =
+    Fun.protect
+      ~finally:(fun () ->
+        Typecheck.Trait_registry.clear ();
+        Typecheck.Builtins.init_builtin_impls ())
+      (fun () -> compile_to_build source)
+  in
+  match (build (), build ()) with
+  | Ok a, Ok b -> a.main_go = b.main_go && a.runtime_go = b.runtime_go
+  | _ -> false
+
 let%test "emit integer" =
   match compile_string "42" with
   | Ok code -> string_contains code "int64(42)"
@@ -5532,3 +5546,477 @@ let%test "trait impl methods are emitted exactly once" =
       (* Each builtin trait function should be defined exactly once *)
       count_occurrences code "func show_show_int64(" = 1 && count_occurrences code "func eq_eq_int64(" = 1
   | Error _ -> false
+
+(* ============================================================
+   Migrated Go-inspection tests (from shell harness)
+   ============================================================ *)
+
+(* --- run_emit_go_not_contains_from_stdin: IIFE avoidance --- *)
+
+let%test "type-check if in let binding avoids IIFE" =
+  match
+    compile_string
+      {|let x: int | string = 1
+let y = if (x is int) { x + 1 } else { 0 }
+puts(y)|}
+  with
+  | Ok code -> string_not_contains code "func() int64"
+  | Error _ -> false
+
+let%test "type-check if in tail position avoids IIFE" =
+  match
+    compile_string
+      {|let f = fn(x: int | string) -> int {
+  if (x is int) { x + 1 } else { 0 }
+}
+puts(f(1))|}
+  with
+  | Ok code -> string_not_contains code "func() int64"
+  | Error _ -> false
+
+let%test "match statement avoids IIFE" =
+  match
+    compile_string
+      {|match 1 {
+  1: 10
+  _: 20
+}
+puts(1)|}
+  with
+  | Ok code -> string_not_contains code "func() int64"
+  | Error _ -> false
+
+let%test "tail if without else avoids IIFE" =
+  match compile_string {|let f = fn(x: bool) { if (x) { 1 } }
+puts(f(true))|} with
+  | Ok code -> string_not_contains code "func() struct{}"
+  | Error _ -> false
+
+let%test "nested if in tail position avoids IIFE" =
+  match
+    compile_string
+      {|let f = fn(a: bool, b: bool) -> int {
+  if (a) { if (b) { 1 } else { 2 } } else { 3 }
+}
+puts(f(true, false))|}
+  with
+  | Ok code -> string_not_contains code "func() int64"
+  | Error _ -> false
+
+let%test "nested match in tail position avoids IIFE" =
+  match
+    compile_string
+      {|let f = fn(x: int) -> int {
+  match x { 0: match x { 0: 10 _: 20 } _: 30 }
+}
+puts(f(0))|}
+  with
+  | Ok code -> string_not_contains code "func() int64"
+  | Error _ -> false
+
+let%test "match with nested if avoids IIFE" =
+  match
+    compile_string
+      {|match 1 {
+  1: if (true) { 10 } else { 20 }
+  _: 0
+}
+puts(1)|}
+  with
+  | Ok code -> string_not_contains code "func() int64"
+  | Error _ -> false
+
+let%test "type-check if branch with nested match avoids IIFE" =
+  match
+    compile_string
+      {|let x: int | string = 1
+let y = if (x is int) {
+  match x { 1: 10 _: 20 }
+} else {
+  0
+}
+puts(y)|}
+  with
+  | Ok code -> string_not_contains code "func() int64"
+  | Error _ -> false
+
+let%test "nested if containing type-check if avoids IIFE" =
+  match
+    compile_string
+      {|let f = fn(x: int | string, y: bool) -> int {
+  if (y) {
+    if (x is int) { x } else { 0 }
+  } else {
+    0
+  }
+}
+puts(f(1, true))|}
+  with
+  | Ok code -> string_not_contains code "func() int64"
+  | Error _ -> false
+
+let%test "match in let binding with type-check if arm avoids IIFE" =
+  match
+    compile_string
+      {|let x: int | string = 1
+let tag = 1
+let y = match tag {
+  1: if (x is int) { x + 1 } else { 0 }
+  _: 0
+}
+puts(y)|}
+  with
+  | Ok code -> string_not_contains code "func() int64"
+  | Error _ -> false
+
+let%test "deeply nested if (3 levels) in let binding avoids IIFE" =
+  match
+    compile_string
+      {|let a = true
+let b = false
+let c = true
+let x = if (a) { if (b) { if (c) { 1 } else { 2 } } else { 3 } } else { 4 }
+puts(x)|}
+  with
+  | Ok code -> string_not_contains code "func() int64"
+  | Error _ -> false
+
+let%test "deeply nested if (3 levels) in tail position avoids IIFE" =
+  match
+    compile_string
+      {|let f = fn(a: bool, b: bool, c: bool) -> int {
+  if (a) { if (b) { if (c) { 1 } else { 2 } } else { 3 } } else { 4 }
+}
+puts(f(true, false, true))|}
+  with
+  | Ok code -> string_not_contains code "func() int64"
+  | Error _ -> false
+
+let%test "match on int in let binding avoids IIFE" =
+  match
+    compile_string
+      {|let x = 2
+let y = match x {
+  1: 10
+  2: 42
+  _: 0
+}
+puts(y)|}
+  with
+  | Ok code -> string_not_contains code "func() int64"
+  | Error _ -> false
+
+let%test "match on int in tail position avoids IIFE" =
+  match
+    compile_string
+      {|let choose = fn(x: int) -> int {
+  match x {
+    1: 10
+    2: 42
+    _: 0
+  }
+}
+puts(choose(2))|}
+  with
+  | Ok code -> string_not_contains code "func() int64"
+  | Error _ -> false
+
+let%test "match nested inside if-then branch avoids IIFE" =
+  match
+    compile_string
+      {|let f = fn(flag: bool, x: int) -> int {
+  if (flag) {
+    match x {
+      1: 10
+      2: 20
+      _: 30
+    }
+  } else {
+    0
+  }
+}
+puts(f(true, 2))|}
+  with
+  | Ok code -> string_not_contains code "func() int64"
+  | Error _ -> false
+
+let%test "if inside match arm body avoids IIFE" =
+  match
+    compile_string
+      {|let f = fn(x: int, flag: bool) -> int {
+  match x {
+    1: if (flag) { 99 } else { 0 }
+    _: 50
+  }
+}
+puts(f(1, true))|}
+  with
+  | Ok code -> string_not_contains code "func() int64"
+  | Error _ -> false
+
+let%test "three chained let bindings each using if avoid IIFE" =
+  match
+    compile_string
+      {|let a = if (true) { 1 } else { 0 }
+let b = if (true) { a + 2 } else { 0 }
+let c = if (true) { b + 3 } else { 0 }
+puts(c)|}
+  with
+  | Ok code -> string_not_contains code "func() int64"
+  | Error _ -> false
+
+let%test "enum match in let binding avoids IIFE" =
+  match
+    compile_string
+      {|enum option[a] {
+  some(a)
+  none
+}
+let val = option.some(42)
+let result = match val {
+  option.some(v): v
+  option.none: 0
+}
+puts(result)|}
+  with
+  | Ok code -> string_not_contains code "func()"
+  | Error _ -> false
+
+let%test "match nested inside match arm avoids IIFE" =
+  match
+    compile_string
+      {|let f = fn(x: int, y: int) -> int {
+  match x {
+    1: match y {
+      1: 11
+      2: 12
+      _: 19
+    }
+    2: match y {
+      1: 21
+      _: 99
+    }
+    _: 0
+  }
+}
+puts(f(2, 3))|}
+  with
+  | Ok code -> string_not_contains code "func() int64"
+  | Error _ -> false
+
+let%test "deeply nested if (4 levels) in let binding avoids IIFE" =
+  match
+    compile_string
+      {|let a = true
+let b = true
+let c = false
+let d = true
+let x = if (a) { if (b) { if (c) { if (d) { 1 } else { 2 } } else { 4 } } else { 5 } } else { 6 }
+puts(x)|}
+  with
+  | Ok code -> string_not_contains code "func() int64"
+  | Error _ -> false
+
+(* --- stress IIFE tests --- *)
+
+let%test "I61: 4-deep nested if in let avoids IIFE" =
+  match
+    compile_string
+      {|let a = true
+let b = true
+let c = true
+let d = true
+let x = if (a) { if (b) { if (c) { if (d) { 1 } else { 2 } } else { 3 } } else { 4 } } else { 5 }
+puts(x)|}
+  with
+  | Ok code -> string_not_contains code "func() int64"
+  | Error _ -> false
+
+let%test "I62: match in tail position avoids IIFE" =
+  match
+    compile_string
+      {|let f = fn(x: int) -> int {
+  match x { 1: 10 2: 20 _: 0 }
+}
+puts(f(1))|}
+  with
+  | Ok code -> string_not_contains code "func() int64"
+  | Error _ -> false
+
+let%test "I63: if-match-if chain in tail avoids IIFE" =
+  match
+    compile_string
+      {|let f = fn(flag: bool, n: int, check: bool) -> int {
+  if (flag) {
+    match n {
+      1: if (check) { 99 } else { 0 }
+      _: 50
+    }
+  } else {
+    0
+  }
+}
+puts(f(true, 1, true))|}
+  with
+  | Ok code -> string_not_contains code "func() int64"
+  | Error _ -> false
+
+let%test "I64: nested match in let binding avoids IIFE" =
+  match
+    compile_string
+      {|let x = 2
+let y = 3
+let result = match x {
+  1: match y { 10: 110 _: 100 }
+  2: match y { 3: 230 _: 200 }
+  _: 0
+}
+puts(result)|}
+  with
+  | Ok code -> string_not_contains code "func() int64"
+  | Error _ -> false
+
+let%test "K66: full-override spread avoids __spread" =
+  match
+    compile_string
+      {|let p = { x: 1, y: 2 }
+let q = { ...p, x: 10, y: 20 }
+puts(q.x)|}
+  with
+  | Ok code -> string_not_contains code "__spread"
+  | Error _ -> false
+
+let%test "full override spread has no __spread in Go output (records)" =
+  match
+    compile_string
+      {|let base = { x: 1, y: 2 }
+let updated = { ...base, x: 10, y: 20 }
+puts(updated.x + updated.y)|}
+  with
+  | Ok code -> string_not_contains code "__spread"
+  | Error _ -> false
+
+let%test "constrained generic method call does not emit any-mangled specialization" =
+  let source =
+    {|trait show[a] {
+  fn show(x: a) -> string
+}
+impl show for int {
+  fn show(x: int) -> string {
+    "int"
+  }
+}
+let id = fn[t: show](x: t) -> string {
+  x.show()
+};
+puts(id(1))|}
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      Typecheck.Trait_registry.clear ();
+      Typecheck.Builtins.init_builtin_impls ())
+    (fun () ->
+      match compile_string source with
+      | Ok code -> string_not_contains code "_any"
+      | Error _ -> false)
+
+(* --- run_build_ok_not_contains_from_stdin --- *)
+
+let%test "successful build emits no missing-type warning text" =
+  match compile_string {|let f = fn(x: int) -> int { x + 1 }
+puts(f(1))|} with
+  | Ok code -> string_not_contains code "missing type for expression id"
+  | Error _ -> false
+
+(* --- test_emit_go_contains --- *)
+
+let%test "enum String default branch panics on invalid tag" =
+  match
+    compile_string
+      {|enum status { ok fail }
+let x = status.ok
+puts(x)|}
+  with
+  | Ok code -> string_contains code {|panic("unreachable: invalid enum tag")|}
+  | Error _ -> false
+
+let%test "codegen produces valid Go (int64)" =
+  match compile_string "let x = 42; x" with
+  | Ok code -> string_contains code "int64"
+  | Error _ -> false
+
+(* --- run_codegen_deterministic_from_stdin --- *)
+
+let%test "codegen deterministic for identical input" =
+  is_deterministic
+    {|let f = fn(x: int) -> int { x + 1 }
+let g = fn(y: int) -> int { f(y) }
+puts(g(1))|}
+
+let%test "J65: complex program deterministic across builds" =
+  is_deterministic
+    {|enum option[a] { some(a) none }
+let id = fn(x) { x }
+let f = fn(n: int) -> int { match n { 1: 10 2: 20 _: 0 } }
+let g = fn(flag: bool) -> int { if (flag) { 1 } else { 0 } }
+puts(id(42))
+puts(id("hello"))
+puts(f(2))
+puts(g(true))
+let opt = option.some(42)
+match opt {
+  option.some(v): puts(v)
+  option.none: puts(0)
+}|}
+
+let%test "record shape codegen is deterministic" =
+  is_deterministic
+    {|let a = { x: 1, y: 2 }
+let b = { x: 3, y: 4 }
+let c = { p: "hello", q: true }
+puts(a.x + b.y)|}
+
+let%test "deterministic: poly fn at multiple types" =
+  is_deterministic
+    {|let id = fn(x) { x }
+puts(id(42))
+puts(id(true))
+puts(id("hello"))|}
+
+let%test "deterministic: trait impls on multiple types" =
+  is_deterministic
+    {|trait label[a] {
+  fn label(x: a) -> string
+}
+impl label for int {
+  fn label(x: int) -> string { "INT" }
+}
+impl label for string {
+  fn label(x: string) -> string { "STR" }
+}
+impl label for bool {
+  fn label(x: bool) -> string { "BOOL" }
+}
+puts(1.label())
+puts("a".label())
+puts(true.label())|}
+
+let%test "Q81: codegen deterministic for records + enums + traits" =
+  is_deterministic
+    {|type point = { x: int, y: int }
+enum status { ok fail }
+trait named { name: string }
+let get_name = fn[t: named](x: t) -> string { x.name }
+let p = { name: "alice", score: 42 }
+let s = status.ok
+puts(get_name(p))|}
+
+let%test "Q82: codegen deterministic for inherent methods + operators" =
+  is_deterministic
+    {|type point = { x: int, y: int }
+impl point {
+  fn sum(p: point) -> int { p.x + p.y }
+}
+let p: point = { x: 3, y: 4 }
+let result = p.sum() + 10
+puts(result)|}
