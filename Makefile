@@ -46,13 +46,10 @@ $(filter-out integration,$(MAKECMDGOALS)):
 	@:
 endif
 
-integration-legacy:
-	@./test/integration.sh $(filter-out integration-legacy,$(MAKECMDGOALS))
+LEGACY_SUITES := $(patsubst test/integration/%,%,$(wildcard test/integration/[0-8]*.sh))
 
-ifneq (,$(filter integration-legacy,$(MAKECMDGOALS)))
-$(filter-out integration-legacy,$(MAKECMDGOALS)):
-	@:
-endif
+integration-legacy:
+	@./test/integration.sh $(LEGACY_SUITES)
 
 integration-fixtures:
 	@./test/integration.sh 99_fixtures.sh
