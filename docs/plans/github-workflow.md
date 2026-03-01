@@ -307,3 +307,9 @@ If migration causes disruption:
   - `.github/actions/setup-ocaml/action.yml`
   - `.github/actions/setup-ocaml-go/action.yml`
 - 2026-03-01 18:37 CET: Shared OCaml setup now centralizes compiler setup, dune/opam cache configuration, `linol` pins, and `opam install . --deps-only --with-test`.
+- 2026-03-01 18:43 CET: Completed Step 3 by adding `.github/workflows/pr-ci.yml`:
+  - PR lifecycle trigger only (`opened`, `reopened`, `synchronize`, `ready_for_review`)
+  - `changes` detection via `dorny/paths-filter@v3` with corrected `tools/lsp/**` filters
+  - domain jobs: `compiler-unit`, `compiler-integration-linux`, `lsp-unit`, `lsp-integration`, `quality-lint-fmt-doc`, `editor-zed`, `editor-vscode`, `editor-nvim`, `editor-jetbrains`
+  - workflow concurrency with stale run cancellation per PR
+- 2026-03-01 18:43 CET: Job names in `PR CI` now match the required-check contract from Step 0.

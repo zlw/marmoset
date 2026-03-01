@@ -1,0 +1,212 @@
+name: PR CI
+
+on:
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
+
+concurrency:
+  group: pr-ci-${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    name: changes
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    outputs:
+      compiler: ${{ steps.filter.outputs.compiler }}
+      lsp: ${{ steps.filter.outputs.lsp }}
+      zed: ${{ steps.filter.outputs.zed }}
+      vscode: ${{ steps.filter.outputs.vscode }}
+      nvim: ${{ steps.filter.outputs.nvim }}
+      jetbrains: ${{ steps.filter.outputs.jetbrains }}
+    steps:
+      - name: Checkout tree
+        uses: actions/checkout@v4
+
+      - name: Detect changed domains
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            compiler:
+              - 'lib/frontend/**'
+              - 'lib/backend/**'
+              - 'lib/**'
+              - 'bin/**'
+              - 'test/integration/**'
+              - 'test/ci/**'
+              - 'dune-project'
+              - '*.opam'
+              - 'Makefile'
+              - '.github/workflows/pr-ci.yml'
+              - '.github/actions/setup-ocaml/action.yml'
+              - '.github/actions/setup-ocaml-go/action.yml'
+            lsp:
+              - 'tools/lsp/**'
+              - 'bin/**'
+              - 'test/ci/**'
+              - 'dune-project'
+              - '*.opam'
+              - 'Makefile'
+              - '.github/workflows/pr-ci.yml'
+              - '.github/actions/setup-ocaml/action.yml'
+              - '.github/actions/setup-ocaml-go/action.yml'
+            zed:
+              - 'tools/zed-marmoset/**'
+              - 'test/ci/editor-zed.sh'
+              - '.github/workflows/pr-ci.yml'
+            vscode:
+              - 'tools/vscode-marmoset/**'
+              - 'test/ci/editor-vscode.sh'
+              - '.github/workflows/pr-ci.yml'
+            nvim:
+              - 'tools/nvim-marmoset/**'
+              - 'test/ci/editor-nvim.sh'
+              - '.github/workflows/pr-ci.yml'
+            jetbrains:
+              - 'tools/jetbrains-marmoset/**'
+              - 'test/ci/editor-jetbrains.sh'
+              - '.github/workflows/pr-ci.yml'
+
+  compiler-unit:
+    name: compiler-unit
+    needs: changes
+    if: needs.changes.outputs.compiler == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout tree
+        uses: actions/checkout@v4
+
+      - name: Shared OCaml setup
+        uses: ./.github/actions/setup-ocaml
+
+      - name: Run compiler unit tests
+        run: opam exec -- make ci-unit-compiler
+
+  compiler-integration-linux:
+    name: compiler-integration-linux
+    needs: changes
+    if: needs.changes.outputs.compiler == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout tree
+        uses: actions/checkout@v4
+
+      - name: Shared OCaml+Go setup
+        uses: ./.github/actions/setup-ocaml-go
+
+      - name: Run compiler integration (Linux)
+        run: opam exec -- make ci-integration-compiler-linux
+
+  lsp-unit:
+    name: lsp-unit
+    needs: changes
+    if: needs.changes.outputs.lsp == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout tree
+        uses: actions/checkout@v4
+
+      - name: Shared OCaml setup
+        uses: ./.github/actions/setup-ocaml
+
+      - name: Run LSP unit tests
+        run: opam exec -- make ci-unit-lsp
+
+  lsp-integration:
+    name: lsp-integration
+    needs: changes
+    if: needs.changes.outputs.lsp == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout tree
+        uses: actions/checkout@v4
+
+      - name: Shared OCaml+Go setup
+        uses: ./.github/actions/setup-ocaml-go
+
+      - name: Run LSP integration tests
+        run: opam exec -- make ci-integration-lsp
+
+  quality-lint-fmt-doc:
+    name: quality-lint-fmt-doc
+    needs: changes
+    if: needs.changes.outputs.compiler == 'true' || needs.changes.outputs.lsp == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout tree
+        uses: actions/checkout@v4
+
+      - name: Shared OCaml setup
+        uses: ./.github/actions/setup-ocaml
+
+      - name: Run quality checks
+        run: opam exec -- make ci-quality
+
+  editor-zed:
+    name: editor-zed
+    needs: changes
+    if: needs.changes.outputs.zed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout tree
+        uses: actions/checkout@v4
+
+      - name: Set-up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run Zed editor tests
+        run: make ci-editor-zed
+
+  editor-vscode:
+    name: editor-vscode
+    needs: changes
+    if: needs.changes.outputs.vscode == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout tree
+        uses: actions/checkout@v4
+
+      - name: Set-up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Run VS Code editor tests
+        run: make ci-editor-vscode
+
+  editor-nvim:
+    name: editor-nvim
+    needs: changes
+    if: needs.changes.outputs.nvim == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout tree
+        uses: actions/checkout@v4
+
+      - name: Run Neovim editor tests
+        run: make ci-editor-nvim
+
+  editor-jetbrains:
+    name: editor-jetbrains
+    needs: changes
+    if: needs.changes.outputs.jetbrains == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout tree
+        uses: actions/checkout@v4
+
+      - name: Set-up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Run JetBrains editor tests
+        run: make ci-editor-jetbrains
