@@ -1,0 +1,31 @@
+name: Setup OCaml and Go
+description: Configure OCaml and Go toolchains for integration CI jobs.
+
+inputs:
+  ocaml-compiler:
+    description: OCaml compiler version.
+    required: false
+    default: "5.2.x"
+  go-version:
+    description: Go version.
+    required: false
+    default: "1.22.x"
+  cache-prefix:
+    description: Prefix for OCaml cache keys.
+    required: false
+    default: "marmoset-pr-ci-v1"
+
+runs:
+  using: composite
+  steps:
+    - name: Set-up OCaml toolchain and deps
+      uses: ./.github/actions/setup-ocaml
+      with:
+        ocaml-compiler: ${{ inputs.ocaml-compiler }}
+        cache-prefix: ${{ inputs.cache-prefix }}
+
+    - name: Set-up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ inputs.go-version }}
+        cache: true

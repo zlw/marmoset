@@ -303,3 +303,7 @@ If migration causes disruption:
   - `ci-editor-jetbrains`
 - 2026-03-01 18:31 CET: Added `test/ci/quality.sh` and editor scripts (`editor-zed.sh`, `editor-vscode.sh`, `editor-nvim.sh`, `editor-jetbrains.sh`) with independent pass/fail exits.
 - 2026-03-01 18:31 CET: Wired LSP integration CI entrypoint to `./test/integration.sh 08_cli.sh` for explicit LSP smoke coverage.
+- 2026-03-01 18:37 CET: Completed Step 2 by adding shared composite actions:
+  - `.github/actions/setup-ocaml/action.yml`
+  - `.github/actions/setup-ocaml-go/action.yml`
+- 2026-03-01 18:37 CET: Shared OCaml setup now centralizes compiler setup, dune/opam cache configuration, `linol` pins, and `opam install . --deps-only --with-test`.
