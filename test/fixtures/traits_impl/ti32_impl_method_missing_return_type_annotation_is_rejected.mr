@@ -1,0 +1,9 @@
+# TI32: Impl method missing return type annotation is rejected
+# error: missing a return type annotation
+trait show[a] {
+  fn show(x: a) -> string
+}
+impl show for int {
+  fn show(x: int) { "int" }
+}
+puts(1)

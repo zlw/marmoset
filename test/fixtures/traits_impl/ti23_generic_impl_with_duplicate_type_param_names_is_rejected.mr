@@ -1,0 +1,9 @@
+# TI23: Generic impl with duplicate type param names is rejected
+# error: duplicate type parameter
+trait show[a] {
+  fn show(x: a) -> string
+}
+impl show[b: show, b: show] for list[b] {
+  fn show(x: list[b]) -> string { "ok" }
+}
+puts([1].show())

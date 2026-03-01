@@ -1,0 +1,12 @@
+# TI21: Concrete impl takes priority over generic impl
+# output: concrete
+trait label[a] {
+  fn label(x: a) -> string
+}
+impl label[b: show] for list[b] {
+  fn label(x: list[b]) -> string { "generic" }
+}
+impl label for list[int] {
+  fn label(x: list[int]) -> string { "concrete" }
+}
+puts([1, 2, 3].label())

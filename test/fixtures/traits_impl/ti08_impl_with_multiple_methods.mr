@@ -1,0 +1,13 @@
+# TI08: Impl with multiple methods
+# output: hello
+# output: goodbye
+trait dialog[a] {
+  fn hello(x: a) -> string
+  fn goodbye(x: a) -> string
+}
+impl dialog for int {
+  fn hello(x: int) -> string { "hello" }
+  fn goodbye(x: int) -> string { "goodbye" }
+}
+puts(1.hello())
+puts(1.goodbye())

@@ -1,0 +1,13 @@
+# TI05: Impl method calls another trait method
+# output: value:42
+type box = { value: int }
+trait describe[a] {
+  fn describe(x: a) -> string
+}
+impl describe for box {
+  fn describe(b: box) -> string {
+    "value:" + b.value.show()
+  }
+}
+let b: box = { value: 42 }
+puts(b.describe())

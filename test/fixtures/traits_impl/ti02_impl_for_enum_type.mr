@@ -1,0 +1,17 @@
+# TI02: Impl for enum type
+# output: red
+enum color { red green blue }
+trait show[a] {
+  fn show(x: a) -> string
+}
+impl show for color {
+  fn show(c: color) -> string {
+    match c {
+      color.red: "red"
+      color.green: "green"
+      color.blue: "blue"
+    }
+  }
+}
+let c = color.red
+puts(c.show())

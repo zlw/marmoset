@@ -1,0 +1,12 @@
+# TI35: Constrained generic fn calls trait method from generic impl
+# output: ok
+trait show[a] {
+  fn show(x: a) -> string
+}
+impl show[b: show] for list[b] {
+  fn show(x: list[b]) -> string { "ok" }
+}
+let render = fn[t: show](x: t) -> string {
+  x.show()
+};
+puts(render([1, 2]))
