@@ -365,3 +365,10 @@ If migration causes disruption:
     - `PR CI / compiler-integration-macos`
     - `PR CI / compiler-integration-windows`
   - updated plan and README references to match the new check names.
+- 2026-03-01 18:41 CET: Follow-up naming alignment (ruleset) applied:
+  - updated GitHub ruleset `branch: main` (`id=13342513`) required checks from:
+    - `Manual Cross-Platform / integration (macos-latest)`
+    - `Manual Cross-Platform / integration (windows-latest)`
+  - to:
+    - `PR CI / compiler-integration-macos`
+    - `PR CI / compiler-integration-windows`
