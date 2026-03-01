@@ -1,3 +1,6 @@
+let version_string =
+  Printf.sprintf "marmoset %s (built %s)" Build_info.git_hash Build_info.build_time
+
 type command =
   | Run of {
       benchmark : bool;
@@ -14,6 +17,7 @@ type command =
     }
   | Check of { filename : string }
   | Lsp
+  | Version
 
 let print_usage () =
   Printf.eprintf "Usage:\n";
@@ -21,7 +25,8 @@ let print_usage () =
   Printf.eprintf "  marmoset build <input.mr> [-o output] [-go dir]\n";
   Printf.eprintf "  marmoset release <input.mr> [-o output]\n";
   Printf.eprintf "  marmoset check <input.mr>\n";
-  Printf.eprintf "  marmoset lsp\n"
+  Printf.eprintf "  marmoset lsp\n";
+  Printf.eprintf "  marmoset --version\n"
 
 let parse_args () : command =
   let args = Array.to_list Sys.argv |> List.tl in
@@ -111,6 +116,7 @@ let parse_args () : command =
           print_usage ();
           exit 1)
   | [ "lsp" ] -> Lsp
+  | [ "--version" ] | [ "-v" ] | [ "version" ] -> Version
   | [ filename ] -> Run { benchmark = false; filename }
   | _ ->
       print_usage ();
@@ -257,4 +263,7 @@ let () =
   | Build { input; output; emit_go } -> run_build input output emit_go
   | Release { input; output } -> run_release input output
   | Check { filename } -> run_check filename
-  | Lsp -> Marmoset_lsp.Server.run ()
+  | Lsp ->
+      Printf.eprintf "[marmoset-lsp] %s\n%!" version_string;
+      Marmoset_lsp.Server.run ()
+  | Version -> Printf.printf "%s\n" version_string

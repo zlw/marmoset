@@ -122,13 +122,31 @@ class marmoset_server =
     method! on_req_hover ~notify_back:_ ~id:_ ~uri ~pos ~workDoneToken:_ (_doc_state : Linol_lwt.doc_state) =
       let result =
         match Hashtbl.find_opt analysis_cache uri with
-        | None -> None
+        | None ->
+            Printf.eprintf "[marmoset-lsp] hover %s:%d:%d — no analysis cached\n%!" (Lsp_t.DocumentUri.to_string uri) pos.line pos.character;
+            None
         | Some { analysis } -> (
             match (analysis.program, analysis.type_map, analysis.environment) with
             | Some prog, Some tm, Some env ->
-                Hover.hover_at ~source:analysis.source ~program:prog ~type_map:tm ~environment:env ~line:pos.line
-                  ~character:pos.character
-            | _ -> None)
+                let r =
+                  Hover.hover_at ~source:analysis.source ~program:prog ~type_map:tm ~environment:env ~line:pos.line
+                    ~character:pos.character
+                in
+                (match r with
+                | Some hover ->
+                    let text =
+                      match hover.contents with
+                      | `MarkupContent mc -> mc.value
+                      | _ -> "?"
+                    in
+                    Printf.eprintf "[marmoset-lsp] hover %d:%d → %s\n%!" pos.line pos.character
+                      (String.escaped text)
+                | None ->
+                    Printf.eprintf "[marmoset-lsp] hover %d:%d → None\n%!" pos.line pos.character);
+                r
+            | _ ->
+                Printf.eprintf "[marmoset-lsp] hover %d:%d — no type_map (parse/type error?)\n%!" pos.line pos.character;
+                None)
       in
       Lwt.return result
 

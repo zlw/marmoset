@@ -2,3 +2,11 @@
  (public_name marmoset)
  (name main)
  (libraries marmoset marmoset_lsp linol-lwt))
+
+(rule
+ (target build_info.ml)
+ (deps
+  (universe)
+  (file gen_build_info.sh))
+ (action
+  (bash "sh gen_build_info.sh > %{target}")))
