@@ -1,0 +1,7 @@
+enum option[a] {
+  some(a)
+  none
+}
+
+let x: option[int] = option.none()
+puts(x)  # output: none

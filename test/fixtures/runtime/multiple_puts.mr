@@ -1,0 +1,3 @@
+puts(1)    # output: 1
+puts("hi") # output: hi
+puts(true) # output: true

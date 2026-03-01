@@ -46,6 +46,17 @@ $(filter-out integration,$(MAKECMDGOALS)):
 	@:
 endif
 
+integration-legacy:
+	@./test/integration.sh $(filter-out integration-legacy,$(MAKECMDGOALS))
+
+ifneq (,$(filter integration-legacy,$(MAKECMDGOALS)))
+$(filter-out integration-legacy,$(MAKECMDGOALS)):
+	@:
+endif
+
+integration-fixtures:
+	@./test/integration.sh 99_fixtures.sh
+
 repl:
 	@echo "REPL is removed. Use 'make run file=examples/fibonacci-typed.mr'." && exit 1
 
