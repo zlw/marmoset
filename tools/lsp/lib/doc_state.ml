@@ -12,6 +12,7 @@ type analysis_result = {
   program : Ast.AST.program option;
   type_map : Infer.type_map option;
   environment : Infer.type_env option;
+  type_var_user_names : (string * string) list;
   diagnostics : Lsp_t.Diagnostic.t list;
 }
 
@@ -19,7 +20,6 @@ type analysis_result = {
 let reset_globals () =
   Infer.reset_fresh_counter ();
   Infer.clear_method_resolution_store ();
-  Infer.clear_type_var_user_names ();
   Typecheck.Trait_registry.clear ();
   Typecheck.Enum_registry.clear ();
   Typecheck.Annotation.clear_type_aliases ()
@@ -35,6 +35,7 @@ let zero_range =
 (* Analyze a document, returning parse/type errors as LSP diagnostics *)
 let analyze ~(source : string) : analysis_result =
   reset_globals ();
+  let state = Infer.create_inference_state () in
   match Parser.parse source with
   | Error errors ->
       (* Parser currently returns unlocated string errors *)
@@ -43,11 +44,12 @@ let analyze ~(source : string) : analysis_result =
           (fun msg -> make_diagnostic ~range:zero_range ~severity:Lsp_t.DiagnosticSeverity.Error ~message:msg)
           errors
       in
-      { source; program = None; type_map = None; environment = None; diagnostics }
+      { source; program = None; type_map = None; environment = None; type_var_user_names = []; diagnostics }
   | Ok program -> (
       let env = Builtins.prelude_env () in
-      match Checker.check_program_with_annotations ~source ~env program with
+      match Checker.check_program_with_annotations ~state ~source ~env program with
       | Error err ->
+          let type_var_user_names = Infer.type_var_user_name_bindings_in_state state in
           let range =
             match (err.loc, err.loc_end) with
             | Some loc, Some loc_end ->
@@ -65,13 +67,22 @@ let analyze ~(source : string) : analysis_result =
           let diagnostics =
             [ make_diagnostic ~range ~severity:Lsp_t.DiagnosticSeverity.Error ~message:err.message ]
           in
-          { source; program = Some program; type_map = None; environment = None; diagnostics }
+          {
+            source;
+            program = Some program;
+            type_map = None;
+            environment = None;
+            type_var_user_names;
+            diagnostics;
+          }
       | Ok result ->
+          let type_var_user_names = Infer.type_var_user_name_bindings_in_state state in
           {
             source;
             program = Some program;
             type_map = Some result.type_map;
             environment = Some result.environment;
+            type_var_user_names;
             diagnostics = [];
           })
 
@@ -109,3 +120,16 @@ let%test "analyze successful code stores type_map and environment" =
 let%test "analyze with builtins works" =
   let result = analyze ~source:"len([1, 2, 3])" in
   result.diagnostics = [] && result.type_map <> None
+
+let%test "analyze captures user generic names for hover formatting" =
+  let result =
+    analyze ~source:"trait named { name: string }\nlet get = fn[t: named](x: t) -> string { x.name }; get"
+  in
+  result.diagnostics = [] && List.exists (fun (_fresh, user_name) -> user_name = "t") result.type_var_user_names
+
+let%test "analyze does not leak generic-name mappings across documents" =
+  let _ =
+    analyze ~source:"trait named { name: string }\nlet get = fn[t: named](x: t) -> string { x.name }; get"
+  in
+  let result = analyze ~source:"let x = 1; x" in
+  result.type_var_user_names = []

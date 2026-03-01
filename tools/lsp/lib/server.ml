@@ -131,7 +131,7 @@ class marmoset_server =
             | Some prog, Some tm, Some env ->
                 let r =
                   Hover.hover_at ~source:analysis.source ~program:prog ~type_map:tm ~environment:env
-                    ~line:pos.line ~character:pos.character
+                    ~type_var_user_names:analysis.type_var_user_names ~line:pos.line ~character:pos.character
                 in
                 (match r with
                 | Some hover ->

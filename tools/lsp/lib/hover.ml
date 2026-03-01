@@ -5,6 +5,8 @@ module Ast = Marmoset.Lib.Ast
 module Infer = Marmoset.Lib.Infer
 module Types = Marmoset.Lib.Types
 
+type type_var_user_name_map = (string * string) list
+
 let first_some a b =
   match a with
   | Some _ -> a
@@ -105,22 +107,23 @@ let find_in_program (offset : int) (program : Ast.AST.program) : Ast.AST.express
    and resolves fresh type variable names to user-defined names
    from generic parameters (e.g., t0 -> t). *)
 
-let resolve_var_name (name : string) : string =
-  match Infer.lookup_type_var_user_name name with
+let resolve_var_name ~(type_var_user_names : type_var_user_name_map) (name : string) : string =
+  match List.assoc_opt name type_var_user_names with
   | Some user_name -> user_name
   | None -> name
 
-let rec type_to_source (mono : Types.mono_type) : string =
+let rec type_to_source ~(type_var_user_names : type_var_user_name_map) (mono : Types.mono_type) : string =
   match mono with
   | Types.TInt -> "int"
   | Types.TFloat -> "float"
   | Types.TBool -> "bool"
   | Types.TString -> "string"
   | Types.TNull -> "unit"
-  | Types.TVar name -> resolve_var_name name
-  | Types.TRowVar name -> resolve_var_name name
-  | Types.TArray element -> "list[" ^ type_to_source element ^ "]"
-  | Types.THash (key, value) -> "map[" ^ type_to_source key ^ ", " ^ type_to_source value ^ "]"
+  | Types.TVar name -> resolve_var_name ~type_var_user_names name
+  | Types.TRowVar name -> resolve_var_name ~type_var_user_names name
+  | Types.TArray element -> "list[" ^ type_to_source ~type_var_user_names element ^ "]"
+  | Types.THash (key, value) ->
+      "map[" ^ type_to_source ~type_var_user_names key ^ ", " ^ type_to_source ~type_var_user_names value ^ "]"
   | Types.TFun _ ->
       let rec collect_args eff = function
         | Types.TFun (arg, rest, e) ->
@@ -131,8 +134,8 @@ let rec type_to_source (mono : Types.mono_type) : string =
       let args, ret, is_eff = collect_args false mono in
       let args_str =
         match args with
-        | [ single ] -> "(" ^ type_to_source_parens single ^ ")"
-        | _ -> "(" ^ String.concat ", " (List.map type_to_source args) ^ ")"
+        | [ single ] -> "(" ^ type_to_source_parens ~type_var_user_names single ^ ")"
+        | _ -> "(" ^ String.concat ", " (List.map (type_to_source ~type_var_user_names) args) ^ ")"
       in
       let arrow =
         if is_eff then
@@ -140,36 +143,40 @@ let rec type_to_source (mono : Types.mono_type) : string =
         else
           " -> "
       in
-      args_str ^ arrow ^ type_to_source ret
+      args_str ^ arrow ^ type_to_source ~type_var_user_names ret
   | Types.TRecord (fields, row) ->
       let field_strs =
-        List.map (fun (f : Types.record_field_type) -> f.name ^ ": " ^ type_to_source f.typ) fields
+        List.map
+          (fun (f : Types.record_field_type) -> f.name ^ ": " ^ type_to_source ~type_var_user_names f.typ)
+          fields
       in
       let row_str =
         match row with
         | None -> ""
         | Some r ->
             if field_strs = [] then
-              "..." ^ type_to_source r
+              "..." ^ type_to_source ~type_var_user_names r
             else
-              ", ..." ^ type_to_source r
+              ", ..." ^ type_to_source ~type_var_user_names r
       in
       "{ " ^ String.concat ", " field_strs ^ row_str ^ " }"
-  | Types.TUnion types -> String.concat " | " (List.map type_to_source types)
+  | Types.TUnion types -> String.concat " | " (List.map (type_to_source ~type_var_user_names) types)
   | Types.TEnum (name, []) -> name
-  | Types.TEnum (name, args) -> name ^ "[" ^ String.concat ", " (List.map type_to_source args) ^ "]"
+  | Types.TEnum (name, args) ->
+      name ^ "[" ^ String.concat ", " (List.map (type_to_source ~type_var_user_names) args) ^ "]"
 
-and type_to_source_parens = function
-  | Types.TFun _ as t -> "(" ^ type_to_source t ^ ")"
-  | t -> type_to_source t
+and type_to_source_parens ~(type_var_user_names : type_var_user_name_map) = function
+  | Types.TFun _ as t -> "(" ^ type_to_source ~type_var_user_names t ^ ")"
+  | t -> type_to_source ~type_var_user_names t
 
 (* Normalize type variables to nice names, preserving user-defined names *)
-let normalize_with_user_names (mono : Types.mono_type) : Types.mono_type =
+let normalize_with_user_names ~(type_var_user_names : type_var_user_name_map) (mono : Types.mono_type) :
+    Types.mono_type =
   let vars = Types.unique_in_order (Types.collect_vars_in_order mono) in
   let renaming =
     List.mapi
       (fun i old_name ->
-        match Infer.lookup_type_var_user_name old_name with
+        match List.assoc_opt old_name type_var_user_names with
         | Some user_name ->
             (* Preserve user's name *)
             if user_name = old_name then
@@ -189,13 +196,14 @@ let normalize_with_user_names (mono : Types.mono_type) : Types.mono_type =
   Types.apply_substitution renaming mono
 
 (* Format a poly_type in Marmoset syntax: name[t, u]: type *)
-let format_poly ~(name : string) (Types.Forall (vars, mono)) : string =
-  let norm_mono = normalize_with_user_names mono in
-  let type_str = type_to_source norm_mono in
+let format_poly ~(type_var_user_names : type_var_user_name_map) ~(name : string) (Types.Forall (vars, mono)) :
+    string =
+  let norm_mono = normalize_with_user_names ~type_var_user_names mono in
+  let type_str = type_to_source ~type_var_user_names norm_mono in
   let display_vars =
     List.map
       (fun v ->
-        match Infer.lookup_type_var_user_name v with
+        match List.assoc_opt v type_var_user_names with
         | Some user_name -> user_name
         | None -> v)
       vars
@@ -205,24 +213,27 @@ let format_poly ~(name : string) (Types.Forall (vars, mono)) : string =
   | _ -> Printf.sprintf "%s[%s]: %s" name (String.concat ", " display_vars) type_str
 
 (* Format a type for hover display *)
-let format_hover_type ~(type_map : Infer.type_map) ~(environment : Infer.type_env) (expr : Ast.AST.expression) :
-    string option =
+let format_hover_type
+    ~(type_var_user_names : type_var_user_name_map)
+    ~(type_map : Infer.type_map)
+    ~(environment : Infer.type_env)
+    (expr : Ast.AST.expression) : string option =
   match expr.expr with
   | Ast.AST.Identifier name -> (
       (* For identifiers, prefer poly_type from env for better display *)
       match Infer.TypeEnv.find_opt name environment with
-      | Some poly -> Some (format_poly ~name poly)
+      | Some poly -> Some (format_poly ~type_var_user_names ~name poly)
       | None -> (
           match Hashtbl.find_opt type_map expr.id with
           | Some mono ->
-              let norm = normalize_with_user_names mono in
-              Some (Printf.sprintf "%s: %s" name (type_to_source norm))
+              let norm = normalize_with_user_names ~type_var_user_names mono in
+              Some (Printf.sprintf "%s: %s" name (type_to_source ~type_var_user_names norm))
           | None -> None))
   | _ -> (
       match Hashtbl.find_opt type_map expr.id with
       | Some mono ->
-          let norm = normalize_with_user_names mono in
-          Some (type_to_source norm)
+          let norm = normalize_with_user_names ~type_var_user_names mono in
+          Some (type_to_source ~type_var_user_names norm)
       | None -> None)
 
 (* Provide hover info at a given cursor position *)
@@ -231,13 +242,14 @@ let hover_at
     ~(program : Ast.AST.program)
     ~(type_map : Infer.type_map)
     ~(environment : Infer.type_env)
+    ~(type_var_user_names : type_var_user_name_map)
     ~(line : int)
     ~(character : int) : Lsp_t.Hover.t option =
   let offset = Lsp_utils.position_to_offset ~source ~line ~character in
   match find_in_program offset program with
   | None -> None
   | Some expr -> (
-      match format_hover_type ~type_map ~environment expr with
+      match format_hover_type ~type_var_user_names ~type_map ~environment expr with
       | None -> None
       | Some type_str ->
           let contents =
@@ -285,7 +297,9 @@ type hover_result = {
 let check_hover source line character =
   let result = Doc_state.analyze ~source in
   match (result.program, result.type_map, result.environment) with
-  | Some prog, Some tm, Some env -> hover_at ~source ~program:prog ~type_map:tm ~environment:env ~line ~character
+  | Some prog, Some tm, Some env ->
+      hover_at ~source ~program:prog ~type_map:tm ~environment:env ~type_var_user_names:result.type_var_user_names
+        ~line ~character
   | _ -> None
 
 let hover_info source line character : hover_result option =

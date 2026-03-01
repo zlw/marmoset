@@ -111,6 +111,7 @@ type inference_state = {
   fresh_var_counter : int ref;
   constraint_store : (string, string list) Hashtbl.t;
   constrained_field_store : (string, (string * record_field_type) list) Hashtbl.t;
+  type_var_user_names : (string, string) Hashtbl.t;
   top_level_placeholder_store : (string, mono_type) Hashtbl.t;
   symbol_table : (symbol_id, symbol) Hashtbl.t;
   symbol_key_store : (symbol_id, string) Hashtbl.t;
@@ -127,6 +128,7 @@ let create_inference_state () : inference_state =
     fresh_var_counter = ref 0;
     constraint_store = Hashtbl.create 64;
     constrained_field_store = Hashtbl.create 64;
+    type_var_user_names = Hashtbl.create 32;
     top_level_placeholder_store = Hashtbl.create 64;
     symbol_table = Hashtbl.create 256;
     symbol_key_store = Hashtbl.create 256;
@@ -136,10 +138,6 @@ let create_inference_state () : inference_state =
 
 let active_inference_state : inference_state ref = ref (create_inference_state ())
 let global_method_resolution_store : (int, method_resolution) Hashtbl.t = Hashtbl.create 256
-
-(* Maps fresh type variable names (e.g., "t0") to user-defined names (e.g., "t")
-   from generic parameter declarations like fn[t: named](...) *)
-let type_var_user_names : (string, string) Hashtbl.t = Hashtbl.create 32
 
 let with_inference_state (state : inference_state) (f : unit -> 'a) : 'a =
   let previous = !active_inference_state in
@@ -156,6 +154,9 @@ let current_constraint_store () : (string, string list) Hashtbl.t = !active_infe
 
 let current_constrained_field_store () : (string, (string * record_field_type) list) Hashtbl.t =
   !active_inference_state.constrained_field_store
+
+let current_type_var_user_names_store () : (string, string) Hashtbl.t =
+  !active_inference_state.type_var_user_names
 
 let current_top_level_placeholder_store () : (string, mono_type) Hashtbl.t =
   !active_inference_state.top_level_placeholder_store
@@ -296,13 +297,19 @@ let clear_constraint_store () : unit =
   Hashtbl.clear (current_constrained_field_store ())
 
 let clear_method_resolution_store () : unit = Hashtbl.clear global_method_resolution_store
-let clear_type_var_user_names () : unit = Hashtbl.clear type_var_user_names
+let clear_type_var_user_names () : unit = Hashtbl.clear (current_type_var_user_names_store ())
 
 let record_type_var_user_name ~(fresh_name : string) ~(user_name : string) : unit =
-  Hashtbl.replace type_var_user_names fresh_name user_name
+  Hashtbl.replace (current_type_var_user_names_store ()) fresh_name user_name
 
 let lookup_type_var_user_name (fresh_name : string) : string option =
-  Hashtbl.find_opt type_var_user_names fresh_name
+  Hashtbl.find_opt (current_type_var_user_names_store ()) fresh_name
+
+let lookup_type_var_user_name_in_state (state : inference_state) (fresh_name : string) : string option =
+  Hashtbl.find_opt state.type_var_user_names fresh_name
+
+let type_var_user_name_bindings_in_state (state : inference_state) : (string * string) list =
+  Hashtbl.to_seq state.type_var_user_names |> List.of_seq
 
 let record_method_resolution (expr : AST.expression) (resolution : method_resolution) : unit =
   Hashtbl.replace global_method_resolution_store expr.id resolution
@@ -470,6 +477,7 @@ let reset_fresh_counter () =
   let state = !active_inference_state in
   state.fresh_var_counter := 0;
   clear_constraint_store ();
+  clear_type_var_user_names ();
   clear_top_level_placeholders ();
   clear_symbol_stores ()
 
@@ -3299,6 +3307,7 @@ let infer_program ?(env = empty_env) ?state (program : AST.program) :
         Annotation.clear_type_aliases ();
         Inherent_registry.clear ();
         clear_method_resolution_store ();
+        clear_type_var_user_names ();
         clear_top_level_placeholders ();
         match resolve_program_symbols env program with
         | Error e -> Error e
@@ -4414,6 +4423,36 @@ f"
         match infer_program program with
         | Error _ -> false
         | Ok (_, _, _) -> true)
+
+  let%test "infer_program captures user generic names in inference state" =
+    match
+      Syntax.Parser.parse "trait named { name: string }\nlet get = fn[t: named](x: t) -> string { x.name }; get"
+    with
+    | Error _ -> false
+    | Ok program -> (
+        let state = create_inference_state () in
+        match infer_program ~state program with
+        | Error _ -> false
+        | Ok _ ->
+            type_var_user_name_bindings_in_state state
+            |> List.exists (fun (_fresh_name, user_name) -> user_name = "t"))
+
+  let%test "infer_program clears stale user generic-name mappings for shared state" =
+    let shared_state = create_inference_state () in
+    match
+      Syntax.Parser.parse "trait named { name: string }\nlet get = fn[t: named](x: t) -> string { x.name }; get"
+    with
+    | Error _ -> false
+    | Ok first_program -> (
+        match infer_program ~state:shared_state first_program with
+        | Error _ -> false
+        | Ok _ -> (
+            match Syntax.Parser.parse "let x = 1; x" with
+            | Error _ -> false
+            | Ok second_program -> (
+                match infer_program ~state:shared_state second_program with
+                | Error _ -> false
+                | Ok _ -> type_var_user_name_bindings_in_state shared_state = [])))
 
   let%test "reused env preserves constrained generic obligations across infer_program runs" =
     let contains_substring s sub =
