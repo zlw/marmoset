@@ -271,8 +271,10 @@ let rec mono_types_equal (t1 : Types.mono_type) (t2 : Types.mono_type) : bool =
 *)
 let rec is_subtype_of (actual : Types.mono_type) (expected : Types.mono_type) : bool =
   match (actual, expected) with
-  (* Type variables: use equality *)
-  | Types.TVar a, Types.TVar b -> a = b
+  (* Type variables are unresolved — they can unify with anything,
+     so treat them as compatible and let unification verify. *)
+  | Types.TVar _, _ | _, Types.TVar _ -> true
+  | Types.TRowVar _, _ | _, Types.TRowVar _ -> true
   (* Same primitive types *)
   | Types.TInt, Types.TInt -> true
   | Types.TFloat, Types.TFloat -> true
@@ -308,7 +310,7 @@ let rec is_subtype_of (actual : Types.mono_type) (expected : Types.mono_type) : 
               | None -> false
             else
               true)
-  | Types.TRowVar a, Types.TRowVar b -> a = b
+  (* TRowVar is already handled above by the TVar/TRowVar wildcard cases *)
   (* Functions: contravariant in params, covariant in return *)
   | Types.TFun (p1, r1, _), Types.TFun (p2, r2, _) -> is_subtype_of p2 p1 && is_subtype_of r1 r2
   (* Enums: same name, subtypes for all args *)
@@ -538,3 +540,15 @@ let%test "generic field-only supertrait is rejected in type position" =
     let _ = type_expr_to_mono_type (Syntax.Ast.AST.TCon "tagged_like") in
     false
   with Failure msg -> contains_substring msg "generic field-only supertrait"
+
+(* Regression: type variables must be compatible with concrete types in is_subtype_of.
+   Without this, fn(value) -> string { value.name } fails because the
+   record field type variable is not considered a subtype of string. *)
+let%test "is_subtype_of: TVar is subtype of any concrete type" =
+  is_subtype_of (Types.TVar "t3") Types.TString
+
+let%test "is_subtype_of: concrete type is subtype of TVar" =
+  is_subtype_of Types.TInt (Types.TVar "a")
+
+let%test "is_subtype_of: TVar is subtype of TVar" =
+  is_subtype_of (Types.TVar "a") (Types.TVar "b")
