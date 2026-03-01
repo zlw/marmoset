@@ -461,3 +461,18 @@ If migration causes disruption:
   - removed `.github/workflows/manual-cross-platform.yml` from branch (disabled macOS/windows manual integration path)
   - updated README CI policy to remove manual macOS/windows merge-gate instructions
   - canceled active `Manual Cross-Platform` run to reduce GitHub Actions usage
+- 2026-03-01 20:27 CET: Linux-only enforcement activated in repository settings:
+  - removed manual macOS/windows required checks from ruleset `branch: main` (`id=13342513`)
+  - required status checks are now PR-only contexts:
+    - `PR CI / compiler-unit (pull_request)`
+    - `PR CI / compiler-integration-linux (pull_request)`
+    - `PR CI / lsp-unit (pull_request)`
+    - `PR CI / lsp-integration (pull_request)`
+    - `PR CI / quality-lint-fmt-doc (pull_request)`
+    - `PR CI / editor-zed (pull_request)`
+    - `PR CI / editor-vscode (pull_request)`
+    - `PR CI / editor-nvim (pull_request)`
+    - `PR CI / editor-jetbrains (pull_request)`
+  - disabled workflows on `main` to stop macOS/windows usage immediately:
+    - `manual-cross-platform.yml`
+    - `cross-platform-matrix.yml`
