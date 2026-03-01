@@ -1,0 +1,8 @@
+# TH27: Inherent method on type alias for record, create and call
+# output: 3
+type pair = { a: int, b: int }
+impl pair {
+  fn sum(p: pair) -> int { p.a + p.b }
+}
+let p: pair = { a: 1, b: 2 }
+puts(p.sum())

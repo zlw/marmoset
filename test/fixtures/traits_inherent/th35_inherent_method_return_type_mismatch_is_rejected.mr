@@ -1,0 +1,6 @@
+# TH35: Inherent method return type mismatch is rejected
+# error: *
+impl int {
+  fn bad(x: int) -> string { x + 1 }
+}
+puts(1)

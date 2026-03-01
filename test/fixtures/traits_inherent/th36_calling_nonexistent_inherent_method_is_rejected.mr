@@ -1,0 +1,5 @@
+# TH36: Calling nonexistent inherent method is rejected
+# error: No method
+type point = { x: int }
+let p: point = { x: 1 }
+puts(p.nonexistent())

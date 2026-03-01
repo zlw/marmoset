@@ -1,0 +1,10 @@
+# TH06: Inherent method accessing receiver fields
+# output: 110
+type rect = { w: int, h: int }
+impl rect {
+  fn area(r: rect) -> int {
+    r.w * r.h
+  }
+}
+let r: rect = { w: 10, h: 11 }
+puts(r.area())

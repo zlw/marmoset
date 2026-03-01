@@ -1,0 +1,6 @@
+# TH21: Inherent method collides with builtin show on int
+# error: collides with trait method
+impl int {
+  fn show(x: int) -> string { "my-show" }
+}
+puts(1)

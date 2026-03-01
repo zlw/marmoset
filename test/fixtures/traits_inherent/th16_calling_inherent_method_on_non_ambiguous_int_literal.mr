@@ -1,0 +1,6 @@
+# TH16: Calling inherent method on non-ambiguous int literal
+# output: 6
+impl int {
+  fn triple(x: int) -> int { x + x + x }
+}
+puts(2.triple())

@@ -1,0 +1,12 @@
+# TH19: Inherent method same name as trait method is ambiguity error
+# error: collides with trait method
+trait describable[a] {
+  fn describe(x: a) -> string
+}
+impl describable for int {
+  fn describe(x: int) -> string { "trait" }
+}
+impl int {
+  fn describe(x: int) -> string { "inherent" }
+}
+puts(1)

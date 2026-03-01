@@ -1,0 +1,8 @@
+# TH47: Inherent method on record returns bool
+# output: true
+type point = { x: int, y: int }
+impl point {
+  fn is_origin(p: point) -> bool { p.x == 0 }
+}
+let p: point = { x: 0, y: 5 }
+puts(p.is_origin())

@@ -1,0 +1,22 @@
+# TH39: Concrete inherent impl target takes precedence over matching generic target
+# output: concrete
+# output: failure
+enum result[a, b] {
+  success(a)
+  failure(b)
+}
+impl result[a, b] {
+  fn tag(r: result[a, b]) -> string {
+    match r {
+      result.success(_): "success"
+      result.failure(_): "failure"
+    }
+  }
+}
+impl result[int, string] {
+  fn tag(r: result[int, string]) -> string { "concrete" }
+}
+let x = if (true) { result.success(1) } else { result.failure("boom") }
+let y = if (false) { result.success(true) } else { result.failure("boom") }
+puts(x.tag())
+puts(y.tag())

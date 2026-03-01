@@ -1,0 +1,8 @@
+# TH25: Inherent method result used as function argument
+# output: 20
+impl int {
+  fn double(x: int) -> int { x + x }
+}
+let show_num = fn(n: int) -> int { n }
+let n = 10
+puts(show_num(n.double()))

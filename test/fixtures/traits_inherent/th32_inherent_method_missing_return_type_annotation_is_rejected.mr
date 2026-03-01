@@ -1,0 +1,6 @@
+# TH32: Inherent method missing return type annotation is rejected
+# error: missing a return type annotation
+impl int {
+  fn oops(x: int) { x }
+}
+puts(1)

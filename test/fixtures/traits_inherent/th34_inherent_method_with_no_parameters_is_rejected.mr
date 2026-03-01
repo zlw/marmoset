@@ -1,0 +1,6 @@
+# TH34: Inherent method with no parameters is rejected
+# error: must declare a receiver parameter
+impl int {
+  fn oops() -> int { 1 }
+}
+puts(1)

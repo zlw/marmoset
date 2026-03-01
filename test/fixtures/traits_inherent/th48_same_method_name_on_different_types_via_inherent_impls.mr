@@ -1,0 +1,15 @@
+# TH48: Same method name on different types via inherent impls
+# output: 3
+# output: 7
+type point = { x: int, y: int }
+type rect = { w: int, h: int }
+impl point {
+  fn total(p: point) -> int { p.x + p.y }
+}
+impl rect {
+  fn total(r: rect) -> int { r.w + r.h }
+}
+let p: point = { x: 1, y: 2 }
+let r: rect = { w: 3, h: 4 }
+puts(p.total())
+puts(r.total())

@@ -1,0 +1,12 @@
+# TH45: Inherent method on record used in conditional
+# output: positive
+type point = { x: int, y: int }
+impl point {
+  fn sum(p: point) -> int { p.x + p.y }
+}
+let p: point = { x: 5, y: 3 }
+if (p.sum() > 0) {
+  puts("positive")
+} else {
+  puts("negative")
+}

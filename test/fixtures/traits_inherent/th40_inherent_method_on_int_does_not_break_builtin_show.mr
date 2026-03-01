@@ -1,0 +1,7 @@
+# TH40: Inherent method on int does not break builtin show
+# output: 42
+impl int {
+  fn double(x: int) -> int { x + x }
+}
+let n = 42
+puts(n.show())
