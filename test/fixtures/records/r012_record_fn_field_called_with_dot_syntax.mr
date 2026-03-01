@@ -1,0 +1,5 @@
+# R012: Record function field called with dot syntax
+# output: 25
+let square = fn(n) { n * n }
+let r = { compute: square, base: 5 }
+puts(r.compute(r.base))

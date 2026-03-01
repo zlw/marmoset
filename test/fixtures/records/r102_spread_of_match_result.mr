@@ -1,0 +1,9 @@
+# R102: Spread of match result
+# output: 110
+let x = 2
+let base = match x {
+  1: { a: 10, b: 20 }
+  _: { a: 100, b: 200 }
+}
+let r = { ...base, b: 10 }
+puts(r.a + r.b)

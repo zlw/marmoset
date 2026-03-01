@@ -1,0 +1,5 @@
+# R007: Row-tail fields survive pass-through wrappers
+# output: 10
+let inner = fn(r) { r.x + r.y }
+let outer = fn(r) { inner(r) }
+puts(outer({ x: 3, y: 7 }))

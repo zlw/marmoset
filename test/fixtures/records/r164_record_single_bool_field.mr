@@ -1,0 +1,5 @@
+# R164: Record with single bool field
+# output: yes
+let r = { ok: true }
+let out = if (r.ok) { "yes" } else { "no" }
+puts(out)

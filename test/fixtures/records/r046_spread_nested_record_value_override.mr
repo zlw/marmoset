@@ -1,0 +1,5 @@
+# R046: Spread with nested record value override
+# output: 999
+let base = { outer: { inner: 1 }, tag: 0 }
+let updated = { ...base, outer: { inner: 999 } }
+puts(updated.outer.inner)

@@ -1,0 +1,5 @@
+# R086: Record fields with arithmetic expressions
+# output: 15
+let a = 5
+let r = { x: a * 2, y: a + 0 }
+puts(r.x + r.y)

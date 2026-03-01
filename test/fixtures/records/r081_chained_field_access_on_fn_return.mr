@@ -1,0 +1,4 @@
+# R081: Chained field access on function return value
+# output: 9
+let mk = fn() { { inner: { val: 9 } } }
+puts(mk().inner.val)

@@ -1,0 +1,4 @@
+# R064: If expression returns record (false branch)
+# output: 4
+let r = if (false) { { x: 1, y: 2 } } else { { x: 3, y: 4 } }
+puts(r.y)

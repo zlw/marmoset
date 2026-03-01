@@ -1,0 +1,6 @@
+# R072: Type alias used for two different bindings
+# output: 30
+type point = { x: int, y: int }
+let p1: point = { x: 10, y: 20 }
+let p2: point = { x: 100, y: 200 }
+puts(p1.x + p1.y)

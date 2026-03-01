@@ -1,0 +1,4 @@
+# R161: Array of nested records
+# output: 40
+let items = [{ inner: { val: 10 } }, { inner: { val: 20 } }, { inner: { val: 30 } }]
+puts(items[0].inner.val + items[2].inner.val - items[1].inner.val + items[1].inner.val)

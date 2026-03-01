@@ -1,0 +1,4 @@
+# R148: Field name 'var' (Go keyword)
+# output: 1
+let r = { var: 1 }
+puts(r.var)

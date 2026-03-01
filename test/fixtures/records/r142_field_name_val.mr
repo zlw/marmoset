@@ -1,0 +1,4 @@
+# R142: Field name 'val' (not a Go keyword)
+# output: 42
+let r = { val: 42 }
+puts(r.val)

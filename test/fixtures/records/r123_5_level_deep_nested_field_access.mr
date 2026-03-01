@@ -1,0 +1,4 @@
+# R123: 5-level deep nested field access
+# output: 7
+let r = { a: { b: { c: { d: { e: 7 } } } } }
+puts(r.a.b.c.d.e)

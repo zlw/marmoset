@@ -1,0 +1,5 @@
+# R082: Let binding shadows record field name
+# output: 99
+let x = 99
+let r = { x: 1, y: 2 }
+puts(x)

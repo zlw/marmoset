@@ -1,0 +1,5 @@
+# R047: Spread base with nested record preserved in result
+# output: 7
+let base = { x: 1, nested: { val: 7 } }
+let updated = { ...base, x: 100 }
+puts(updated.nested.val)

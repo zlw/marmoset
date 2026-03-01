@@ -1,0 +1,4 @@
+# R143: Field name 'range' (Go keyword)
+# output: 1
+let r = { range: 1 }
+puts(r.range)

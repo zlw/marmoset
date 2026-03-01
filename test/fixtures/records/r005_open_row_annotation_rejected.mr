@@ -1,0 +1,3 @@
+# R005: Open row in type annotation rejected in v1
+# error: Open row variables
+let get_x = fn(r: { x: int, ...row }) -> int { r.x }

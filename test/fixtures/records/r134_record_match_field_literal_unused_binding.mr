@@ -1,0 +1,9 @@
+# R134: Record match with field literal, unused binding
+# output: first
+let r = { tag: 1, data: 42 }
+let out = match r {
+  { tag: 1, data: }: "first"
+  { tag: 2, data: }: "second"
+  _: "other"
+}
+puts(out)

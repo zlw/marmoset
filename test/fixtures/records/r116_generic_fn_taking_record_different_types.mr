@@ -1,0 +1,8 @@
+# R116: Generic fn taking record at different types
+# output: 10
+# output: hello
+let get_val = fn(r) { r.val }
+let a = get_val({ val: 10 })
+let b = get_val({ val: "hello" })
+puts(a)
+puts(b)

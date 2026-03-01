@@ -1,0 +1,5 @@
+# R087: Record field value from function call
+# output: 10
+let double = fn(n) { n * 2 }
+let r = { x: double(5) }
+puts(r.x)

@@ -1,0 +1,9 @@
+# R037: Nested record with mixed int and string fields
+# output: hello
+let r = { name: "hello", data: { count: 7, flag: true } }
+let out = if (r.data.flag) {
+  r.name
+} else {
+  "nope"
+}
+puts(out)

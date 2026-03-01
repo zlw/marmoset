@@ -1,0 +1,11 @@
+# R010: Recursive spread update keeps row fields stable
+# output: 10
+let countdown = fn(r) {
+  if (r.n == 0) {
+    r.acc
+  } else {
+    let next = { ...r, n: r.n - 1, acc: r.acc + 1 }
+    countdown(next)
+  }
+}
+puts(countdown({ n: 10, acc: 0 }))

@@ -1,0 +1,5 @@
+# R111: Spread of single-field record adding field
+# output: 11
+let base = { x: 1 }
+let bigger = { ...base, y: 10 }
+puts(bigger.x + bigger.y)

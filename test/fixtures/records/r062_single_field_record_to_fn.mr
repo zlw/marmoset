@@ -1,0 +1,4 @@
+# R062: Single field record passed to function
+# output: 7
+let get = fn(r) { r.value }
+puts(get({ value: 7 }))

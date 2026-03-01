@@ -1,0 +1,6 @@
+# R076: Record field punning (shorthand)
+# output: 7
+let x = 3
+let y = 4
+let r = { x:, y: }
+puts(r.x + r.y)

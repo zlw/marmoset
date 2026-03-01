@@ -1,0 +1,5 @@
+# R101: Spread of fn-call result in let binding
+# output: 25
+let make_base = fn() { { x: 5, y: 10, z: 15 } }
+let r = { ...make_base(), x: 25 }
+puts(r.x)

@@ -1,0 +1,6 @@
+# R049: Record passed through two function layers
+# output: 10
+let inner = fn(r) { r.x + r.y }
+let outer = fn(r) { inner(r) }
+let result = outer({ x: 3, y: 7 })
+puts(result)

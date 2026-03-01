@@ -1,0 +1,4 @@
+# R118: Complex expression using record fields
+# output: 110
+let compute = fn(r) { r.x * r.y + r.z }
+puts(compute({ x: 10, y: 10, z: 10 }))

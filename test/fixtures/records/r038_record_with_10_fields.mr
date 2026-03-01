@@ -1,0 +1,4 @@
+# R038: Record with 10 fields
+# output: 55
+let r = { a: 1, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, h: 8, i: 9, j: 10 }
+puts(r.a + r.b + r.c + r.d + r.e + r.f + r.g + r.h + r.i + r.j)

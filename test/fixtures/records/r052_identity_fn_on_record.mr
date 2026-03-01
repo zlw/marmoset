@@ -1,0 +1,5 @@
+# R052: Identity function on record
+# output: 42
+let id = fn(r) { r }
+let result = id({ x: 42 })
+puts(result.x)

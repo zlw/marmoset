@@ -1,0 +1,6 @@
+# R117: HOF applying function to record
+# output: 10
+let apply_to_rec = fn(f, r) { f(r) }
+let get_x = fn(r) { r.x }
+let result = apply_to_rec(get_x, { x: 10, y: 20 })
+puts(result)

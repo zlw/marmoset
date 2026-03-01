@@ -1,0 +1,5 @@
+# R175: Spread adds new field not in base
+# output: 6
+let base = { x: 1, y: 2 }
+let grown = { ...base, z: 3 }
+puts(grown.x + grown.y + grown.z)

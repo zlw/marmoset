@@ -1,0 +1,4 @@
+# R059: Record with float field
+# output: 3
+let r = { x: 1.5, n: 3 }
+puts(r.n)

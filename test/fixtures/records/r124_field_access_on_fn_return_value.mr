@@ -1,0 +1,4 @@
+# R124: Field access on fn return value
+# output: 99
+let make = fn(n) { { val: n, extra: 0 } }
+puts(make(99).val)

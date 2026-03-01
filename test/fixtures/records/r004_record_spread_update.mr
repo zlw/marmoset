@@ -1,0 +1,5 @@
+# R004: Record spread update
+# output: 12
+let p = { x: 1, y: 2 }
+let p2 = { ...p, x: 10 }
+puts(p2.x + p2.y)

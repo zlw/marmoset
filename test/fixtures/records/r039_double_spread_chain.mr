@@ -1,0 +1,6 @@
+# R039: Double spread chain (same shape)
+# output: 33
+let a = { x: 1, y: 2, z: 3 }
+let b = { ...a, x: 10 }
+let c = { ...b, y: 20 }
+puts(c.x + c.y + c.z)

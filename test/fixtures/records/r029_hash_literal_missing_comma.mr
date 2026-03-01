@@ -1,0 +1,3 @@
+# R029: Hash literal missing comma reports clear parse error
+# error: expected ',' or '}' after hash literal entry
+let x = { "a": 1 b: 2 }

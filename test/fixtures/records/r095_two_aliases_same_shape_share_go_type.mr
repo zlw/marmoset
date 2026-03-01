@@ -1,0 +1,8 @@
+# R095: Two aliases same shape share Go type
+# output: 9
+type point = { x: int, y: int }
+type vec2d = { x: int, y: int }
+let p: point = { x: 1, y: 2 }
+let v: vec2d = { x: 3, y: 4 }
+let sum_xy = fn(r) { r.x + r.y }
+puts(sum_xy(p) + sum_xy(v) - sum_xy({ x: 1, y: 0 }))

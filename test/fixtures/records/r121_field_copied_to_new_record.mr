@@ -1,0 +1,5 @@
+# R121: Field from one record copied to new record
+# output: 42
+let source = { a: 42, b: 99 }
+let copy_a = fn(r) { { val: r.a } }
+puts(copy_a(source).val)

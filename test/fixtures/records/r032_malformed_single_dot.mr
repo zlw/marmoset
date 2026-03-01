@@ -1,0 +1,3 @@
+# R032: Malformed single dot token errors deterministically
+# error: unexpected Token.Dot found
+.

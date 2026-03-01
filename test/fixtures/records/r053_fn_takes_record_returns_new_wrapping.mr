@@ -1,0 +1,5 @@
+# R053: Function takes record, returns new record wrapping it
+# output: 9
+let wrap = fn(r) { { inner: r, extra: r.val + 1 } }
+let w = wrap({ val: 8 })
+puts(w.extra)

@@ -1,0 +1,5 @@
+# R045: Spread preserves nested record, override sibling
+# output: 100
+let base = { a: 1, nested: { v: 99 } }
+let next = { ...base, a: 100 }
+puts(next.a)

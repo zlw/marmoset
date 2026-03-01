@@ -1,0 +1,5 @@
+# R165: Record field as function argument
+# output: 10
+let double = fn(n) { n * 2 }
+let r = { val: 5 }
+puts(double(r.val))

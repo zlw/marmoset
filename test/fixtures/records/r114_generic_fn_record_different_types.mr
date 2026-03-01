@@ -1,0 +1,6 @@
+# R114: Generic fn returning record called at different types
+# output: 42
+let wrap = fn(x) { { val: x } }
+let r1 = wrap(42)
+let r2 = wrap("hello")
+puts(r1.val)

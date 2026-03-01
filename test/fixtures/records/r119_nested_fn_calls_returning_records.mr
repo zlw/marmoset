@@ -1,0 +1,6 @@
+# R119: Nested fn calls returning records
+# output: 42
+let inner = fn(n) { { val: n } }
+let middle = fn(n) { { wrapped: inner(n) } }
+let outer = fn(n) { middle(n).wrapped.val }
+puts(outer(42))

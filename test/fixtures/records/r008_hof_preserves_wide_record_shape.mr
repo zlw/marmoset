@@ -1,0 +1,5 @@
+# R008: Higher-order function preserves wide record argument shape
+# output: 42
+let apply = fn(f, r) { f(r) }
+let get_x = fn(r) { r.x }
+puts(apply(get_x, { x: 42, y: 0 }))

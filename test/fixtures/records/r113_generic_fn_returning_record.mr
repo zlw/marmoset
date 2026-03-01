@@ -1,0 +1,5 @@
+# R113: Generic fn returning record with generic field
+# output: 42
+let wrap = fn(x) { { val: x } }
+let r = wrap(42)
+puts(r.val)

@@ -1,0 +1,4 @@
+# R144: Field name 'map' (Go keyword)
+# output: 5
+let r = { map: 5 }
+puts(r.map)

@@ -1,0 +1,4 @@
+# R061: Single field record
+# output: 42
+let r = { value: 42 }
+puts(r.value)

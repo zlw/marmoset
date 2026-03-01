@@ -1,0 +1,5 @@
+# R156: Field value from another record's field
+# output: 42
+let source = { data: 42 }
+let target = { copied: source.data }
+puts(target.copied)

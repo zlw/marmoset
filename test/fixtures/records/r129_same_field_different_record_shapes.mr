@@ -1,0 +1,5 @@
+# R129: Same field name from different record shapes
+# output: 30
+let r1 = { val: 10, extra1: true }
+let r2 = { val: 20, extra2: "hello" }
+puts(r1.val + r2.val)

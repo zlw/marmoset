@@ -1,0 +1,3 @@
+# R030: Record literal missing comma reports clear parse error
+# error: expected ',' or '}' after record literal entry
+let x = { a: 1 b: 2 }
