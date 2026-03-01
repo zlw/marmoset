@@ -64,7 +64,7 @@ let prec_index = 8
 
 let precedences = function
   | Token.Eq | Token.NotEq | Token.Is -> prec_equals
-  | Token.Lt | Token.Gt -> prec_less_greater
+  | Token.Lt | Token.Gt | Token.Le | Token.Ge -> prec_less_greater
   | Token.Plus | Token.Minus -> prec_sum
   | Token.Asterisk | Token.Slash -> prec_product
   | Token.LParen -> prec_call
@@ -176,7 +176,12 @@ and parse_type_atom (p : parser) : (parser * AST.type_expr, parser) result =
     (* Function type: fn(int, string) -> bool *)
     let* p2 = expect_peek p Token.LParen in
     let* p3, param_types = parse_type_expr_list (next_token p2) in
-    let* p4 = expect_peek p3 Token.RParen in
+    let* p4 =
+      if curr_token_is p3 Token.RParen then
+        Ok p3
+      else
+        expect_peek p3 Token.RParen
+    in
     let* p5 = expect_peek p4 Token.Arrow in
     let* p6, return_type = parse_type_expr (next_token p5) in
     Ok (p6, AST.TArrow (param_types, return_type))
@@ -191,7 +196,7 @@ and parse_type_atom (p : parser) : (parser * AST.type_expr, parser) result =
         if curr_token_is lp2 Token.Comma then
           collect_params lp2 new_params
         else if curr_token_is lp2 Token.RParen then
-          Ok (next_token lp2, new_params)
+          Ok (lp2, new_params)
         else
           Error (peek_error lp2 Token.RParen)
       in
@@ -204,8 +209,7 @@ and parse_type_atom (p : parser) : (parser * AST.type_expr, parser) result =
       let p3 = next_token p2 in
       if curr_token_is p3 Token.Arrow then
         (* Single-param function: (int) -> bool *)
-        let* p4 = expect_peek p3 Token.Arrow in
-        let* p5, return_type = parse_type_expr (next_token p4) in
+        let* p5, return_type = parse_type_expr (next_token p3) in
         Ok (p5, AST.TArrow ([ first ], return_type))
       else
         (* Just grouping: (int) or (int | string) *)
@@ -512,7 +516,9 @@ and parse_trait_definition (p : parser) : (parser * AST.statement, parser) resul
 
   (* Parse optional supertraits: : eq or : eq + show *)
   let* p4, supertraits =
-    if peek_token_is p3 Token.Colon then
+    if curr_token_is p3 Token.Colon then
+      parse_supertrait_list (next_token p3)
+    else if peek_token_is p3 Token.Colon then
       parse_supertrait_list (next_token (next_token p3))
     else if curr_token_is p3 Token.LBrace then
       Ok (p3, [])
@@ -646,49 +652,61 @@ and parse_impl_definition (p : parser) : (parser * AST.statement, parser) result
   (* Current token is 'impl' *)
   let pos = p.curr_token.pos in
 
-  (* Expect trait name *)
+  let parse_methods_block (lp : parser) : (parser * AST.method_impl list, parser) result =
+    let* lp2 =
+      if curr_token_is lp Token.LBrace then
+        Ok lp
+      else
+        expect_peek lp Token.LBrace
+    in
+    let* lp3, methods = parse_method_impl_list (next_token lp2) in
+    let* lp4 =
+      if curr_token_is lp3 Token.RBrace then
+        Ok lp3
+      else
+        expect_peek lp3 Token.RBrace
+    in
+    Ok (lp4, methods)
+  in
+  let parse_trait_impl (lp : parser) (impl_trait_name : string) (impl_type_params : AST.generic_param list) :
+      (parser * AST.statement, parser) result =
+    let* p_for_type =
+      if curr_token_is lp Token.Ident && lp.curr_token.literal = "for" then
+        Ok (next_token lp)
+      else
+        Error (add_error lp "expected 'for' keyword in impl definition")
+    in
+    let* p_after_type, impl_for_type = parse_type_expr p_for_type in
+    let* p_end, impl_methods = parse_methods_block p_after_type in
+    Ok (p_end, mk_stmt pos (AST.ImplDef { impl_type_params; impl_trait_name; impl_for_type; impl_methods }))
+  in
+  let parse_inherent_impl (lp : parser) : (parser * AST.statement, parser) result =
+    let* p_after_type, inherent_for_type = parse_type_expr lp in
+    let* p_end, inherent_methods = parse_methods_block p_after_type in
+    Ok (p_end, mk_stmt pos (AST.InherentImplDef { inherent_for_type; inherent_methods }))
+  in
+
+  (* First token after 'impl' may be either trait name (trait impl) or target type (inherent impl). *)
   let* p2 = expect_peek p Token.Ident in
-  let impl_trait_name = p2.curr_token.literal in
-
-  (* Parse optional type parameters with constraints: [a: eq, b: show] *)
-  let* p3, impl_type_params =
+  let trait_candidate = p2.curr_token.literal in
+  let trait_with_type_params =
     if peek_token_is p2 Token.LBracket then
-      parse_generic_param_list (next_token (next_token p2))
+      match parse_generic_param_list (next_token (next_token p2)) with
+      | Ok (p_after_params, impl_type_params)
+        when curr_token_is p_after_params Token.Ident && p_after_params.curr_token.literal = "for" ->
+          Some (p_after_params, impl_type_params)
+      | _ -> None
     else
-      Ok (next_token p2, [])
+      None
   in
-
-  (* Expect 'for' keyword (treated as identifier, not reserved) *)
-  let* p4 =
-    if curr_token_is p3 Token.Ident && p3.curr_token.literal = "for" then
-      Ok (next_token p3)
-    else
-      Error (add_error p3 "expected 'for' keyword in impl definition")
-  in
-
-  (* Parse the type being implemented for *)
-  let* p5, impl_for_type = parse_type_expr p4 in
-
-  (* Expect opening brace *)
-  let* p6 =
-    if curr_token_is p5 Token.LBrace then
-      Ok p5
-    else
-      expect_peek p5 Token.LBrace
-  in
-
-  (* Parse method implementations *)
-  let* p7, impl_methods = parse_method_impl_list (next_token p6) in
-
-  (* Expect closing brace *)
-  let* p8 =
-    if curr_token_is p7 Token.RBrace then
-      Ok p7
-    else
-      expect_peek p7 Token.RBrace
-  in
-
-  Ok (p8, mk_stmt pos (AST.ImplDef { impl_type_params; impl_trait_name; impl_for_type; impl_methods }))
+  match trait_with_type_params with
+  | Some (p_for, impl_type_params) -> parse_trait_impl p_for trait_candidate impl_type_params
+  | None ->
+      let p3 = next_token p2 in
+      if curr_token_is p3 Token.Ident && p3.curr_token.literal = "for" then
+        parse_trait_impl p3 trait_candidate []
+      else
+        parse_inherent_impl p2
 
 and parse_generic_param_list (p : parser) : (parser * AST.generic_param list, parser) result =
   let rec loop lp params =
@@ -783,13 +801,9 @@ and parse_method_impl (p : parser) : (parser * AST.method_impl, parser) result =
   (* Parse method body as an expression *)
   let* p8, body_expr = parse_expression (next_token p7) prec_lowest in
 
-  (* Expect closing brace *)
-  let* p9 =
-    if curr_token_is p8 Token.RBrace then
-      Ok p8
-    else
-      expect_peek p8 Token.RBrace
-  in
+  (* Method body is expression-only. Its final token may itself be '}' (e.g. record/if/match),
+     so we must always consume the method-closing brace from peek_token. *)
+  let* p9 = expect_peek p8 Token.RBrace in
 
   Ok
     ( next_token p9,
@@ -881,7 +895,7 @@ and infixFn (p : parser) (left_expr : AST.expression) (prec : precedence) :
       let* lp2, left2 =
         match lp.peek_token.token_type with
         | Token.Plus | Token.Minus | Token.Slash | Token.Asterisk | Token.Eq | Token.NotEq | Token.Lt | Token.Gt
-        | Token.Is ->
+        | Token.Le | Token.Ge | Token.Is ->
             parse_infix_expression (next_token lp) left
         | LParen -> parse_call_expression (next_token lp) left
         | LBracket -> parse_index_expression (next_token lp) left
@@ -1041,18 +1055,17 @@ and parse_function_literal (p : parser) : (parser * AST.expression, parser) resu
   let* p3 = expect_peek p2 Token.LParen in
   let* p4, params = parse_function_parameters p3 in
   (* Phase 2: Parse return type annotation if present *)
-  let* p5, return_type =
+  let* p5, return_type, is_effectful =
     if peek_token_is p4 Token.Arrow then
       let p5 = next_token p4 in
       let* p6, te = parse_type_expr (next_token p5) in
-      Ok (p6, Some te)
+      Ok (p6, Some te, false)
     else if peek_token_is p4 Token.FatArrow then
-      (* Effect annotation - parse but ignore for Phase 2 *)
       let p5 = next_token p4 in
-      let* p6, _te = parse_type_expr (next_token p5) in
-      Ok (p6, None)
+      let* p6, te = parse_type_expr (next_token p5) in
+      Ok (p6, Some te, true)
     else
-      Ok (p4, None)
+      Ok (p4, None, false)
   in
   (* After parsing return type or parameters, check for { *)
   let* p6 =
@@ -1065,7 +1078,7 @@ and parse_function_literal (p : parser) : (parser * AST.expression, parser) resu
   in
   let* p7, body = parse_block_statement p6 in
   let id, p8 = fresh_id p7 in
-  Ok (p8, mk_expr id pos (AST.Function { generics; params; return_type; body }))
+  Ok (p8, mk_expr id pos (AST.Function { generics; params; return_type; is_effectful; body }))
 
 and parse_function_parameters (p : parser) : (parser * (string * AST.type_expr option) list, parser) result =
   if peek_token_is p Token.RParen then
@@ -1162,10 +1175,10 @@ and parse_dot_expression (p : parser) (left : AST.expression) : (parser * AST.ex
 and parse_record_or_hash_literal (p : parser) : (parser * AST.expression, parser) result =
   let pos = p.curr_token.pos in
   let finish mode (fields : AST.record_field list) spread (pairs : (AST.expression * AST.expression) list) lp =
-    let id, _ = fresh_id lp in
+    let id, lp' = fresh_id lp in
     match mode with
-    | RecordMode -> Ok (lp, mk_expr id pos (AST.RecordLit (List.rev fields, spread)))
-    | HashMode -> Ok (lp, mk_expr id pos (AST.Hash (List.rev pairs)))
+    | RecordMode -> Ok (lp', mk_expr id pos (AST.RecordLit (List.rev fields, spread)))
+    | HashMode -> Ok (lp', mk_expr id pos (AST.Hash (List.rev pairs)))
   in
   let rec loop
       (lp : parser)
@@ -1178,8 +1191,8 @@ and parse_record_or_hash_literal (p : parser) : (parser * AST.expression, parser
       | Some mode' -> finish mode' fields spread pairs lp
       | None ->
           (* "{}" is treated as empty hash for backwards compatibility. *)
-          let id, _ = fresh_id lp in
-          Ok (lp, mk_expr id pos (AST.Hash []))
+          let id, lp' = fresh_id lp in
+          Ok (lp', mk_expr id pos (AST.Hash []))
     else
       match mode with
       | Some RecordMode -> (
@@ -1247,7 +1260,12 @@ and consume_brace_entry_separator (p : parser) (err_msg : string) : (parser, par
   if curr_token_is p Token.Comma then
     Ok (next_token p)
   else if curr_token_is p Token.RBrace then
-    Ok p
+    if peek_token_is p Token.Comma then
+      Ok (next_token (next_token p))
+    else if peek_token_is p Token.RBrace then
+      Ok (next_token p)
+    else
+      Ok p
   else if peek_token_is p Token.Comma then
     Ok (next_token (next_token p))
   else if peek_token_is p Token.RBrace then
@@ -1466,7 +1484,8 @@ module Test = struct
   let let_stmt name value = AST.Let { name; value; type_annotation = None }
 
   (* Helper for Function expressions with the new record structure *)
-  let fn_expr params body = AST.Function { generics = None; params; return_type = None; body }
+  let fn_expr params body =
+    AST.Function { generics = None; params; return_type = None; is_effectful = false; body }
 
   let run (tests : test list) : bool =
     tests
@@ -1630,6 +1649,14 @@ module Test = struct
         output = [ s (AST.ExpressionStmt (e (AST.Infix (e (AST.Integer 5L), "<", e (AST.Integer 5L))))) ];
       };
       {
+        input = "5 <= 5;";
+        output = [ s (AST.ExpressionStmt (e (AST.Infix (e (AST.Integer 5L), "<=", e (AST.Integer 5L))))) ];
+      };
+      {
+        input = "5 >= 5;";
+        output = [ s (AST.ExpressionStmt (e (AST.Infix (e (AST.Integer 5L), ">=", e (AST.Integer 5L))))) ];
+      };
+      {
         input = "5 == 5;";
         output = [ s (AST.ExpressionStmt (e (AST.Infix (e (AST.Integer 5L), "==", e (AST.Integer 5L))))) ];
       };
@@ -1666,6 +1693,16 @@ module Test = struct
         input = "foo < bar;";
         output =
           [ s (AST.ExpressionStmt (e (AST.Infix (e (AST.Identifier "foo"), "<", e (AST.Identifier "bar"))))) ];
+      };
+      {
+        input = "foo <= bar;";
+        output =
+          [ s (AST.ExpressionStmt (e (AST.Infix (e (AST.Identifier "foo"), "<=", e (AST.Identifier "bar"))))) ];
+      };
+      {
+        input = "foo >= bar;";
+        output =
+          [ s (AST.ExpressionStmt (e (AST.Infix (e (AST.Identifier "foo"), ">=", e (AST.Identifier "bar"))))) ];
       };
       {
         input = "foo == bar;";
@@ -1705,6 +1742,7 @@ module Test = struct
       ("3 + 4; -5 * 5", "(3 + 4)((-5) * 5)");
       ("5 > 4 == 3 < 4", "((5 > 4) == (3 < 4))");
       ("5 < 4 != 3 > 4", "((5 < 4) != (3 > 4))");
+      ("5 <= 4 == 3 >= 4", "((5 <= 4) == (3 >= 4))");
       ("3 + 4 * 5 == 3 * 1 + 4 * 5", "((3 + (4 * 5)) == ((3 * 1) + (4 * 5)))");
       ("true", "true");
       ("false", "false");
@@ -1958,6 +1996,63 @@ module Test = struct
         List.exists
           (fun msg -> contains_substring msg "multiple spread entries in record literal are not supported yet")
           errs
+
+  let rec collect_expr_ids (expr : AST.expression) : int list =
+    let child_ids =
+      match expr.expr with
+      | AST.Integer _ | AST.Float _ | AST.Boolean _ | AST.String _ | AST.Identifier _ -> []
+      | AST.Prefix (_, e) -> collect_expr_ids e
+      | AST.Infix (l, _, r) -> collect_expr_ids l @ collect_expr_ids r
+      | AST.TypeCheck (e, _) -> collect_expr_ids e
+      | AST.If (cond, cons, alt) -> (
+          collect_expr_ids cond
+          @ collect_stmt_ids cons
+          @
+          match alt with
+          | Some s -> collect_stmt_ids s
+          | None -> [])
+      | AST.Function f -> collect_stmt_ids f.body
+      | AST.Call (f, args) -> collect_expr_ids f @ List.concat_map collect_expr_ids args
+      | AST.Array elements -> List.concat_map collect_expr_ids elements
+      | AST.Hash pairs -> List.concat_map (fun (k, v) -> collect_expr_ids k @ collect_expr_ids v) pairs
+      | AST.Index (container, index) -> collect_expr_ids container @ collect_expr_ids index
+      | AST.EnumConstructor (_, _, args) -> List.concat_map collect_expr_ids args
+      | AST.Match (scrutinee, arms) ->
+          collect_expr_ids scrutinee
+          @ List.concat_map (fun (arm : AST.match_arm) -> collect_expr_ids arm.body) arms
+      | AST.RecordLit (fields, spread) -> (
+          List.concat_map
+            (fun (field : AST.record_field) ->
+              match field.field_value with
+              | Some e -> collect_expr_ids e
+              | None -> [])
+            fields
+          @
+          match spread with
+          | Some e -> collect_expr_ids e
+          | None -> [])
+      | AST.FieldAccess (receiver, _) -> collect_expr_ids receiver
+      | AST.MethodCall (receiver, _, args) -> collect_expr_ids receiver @ List.concat_map collect_expr_ids args
+    in
+    expr.id :: child_ids
+
+  and collect_stmt_ids (stmt : AST.statement) : int list =
+    match stmt.stmt with
+    | AST.Let { value; _ } -> collect_expr_ids value
+    | AST.Return e | AST.ExpressionStmt e -> collect_expr_ids e
+    | AST.Block stmts -> List.concat_map collect_stmt_ids stmts
+    | AST.EnumDef _ | AST.TraitDef _ | AST.ImplDef _ | AST.InherentImplDef _ | AST.DeriveDef _ | AST.TypeAlias _
+      ->
+        []
+
+  let%test "parser assigns unique expression ids for nested function and record literals" =
+    let input = "let outer = fn(x) { let mk = fn(v) { { inner: v } }; mk(x) }; let o = outer(5); puts(o.inner)" in
+    match parse input with
+    | Error _ -> false
+    | Ok program ->
+        let ids = List.concat_map collect_stmt_ids program in
+        let unique_ids = List.sort_uniq Int.compare ids in
+        List.length ids = List.length unique_ids
 end
 
 (* Phase 4.3: Trait definition tests *)
@@ -2050,6 +2145,24 @@ let%test "parse trait with multiple supertraits" =
       | _ -> false)
   | Error _ -> false
 
+let%test "parse non-generic trait with supertraits" =
+  let input = "trait named_show: named + show { fn label() -> string }" in
+  let lexer = Lexer.init input in
+  match parse_program (init lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ stmt ] -> (
+          match stmt.stmt with
+          | AST.TraitDef trait_def ->
+              trait_def.name = "named_show"
+              && trait_def.type_param = None
+              && trait_def.supertraits = [ "named"; "show" ]
+              && trait_def.fields = []
+              && List.length trait_def.methods = 1
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
 let%test "parse field-only trait definition" =
   let input = "trait named { name: string }" in
   let lexer = Lexer.init input in
@@ -2133,6 +2246,38 @@ let%test "parse basic impl block" =
       | _ -> false)
   | Error _ -> false
 
+let%test "parse basic inherent impl block" =
+  let input = "impl point { fn sum(p: point) -> int { p.x + p.y } }" in
+  let lexer = Lexer.init input in
+  match parse_program (init lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ stmt ] -> (
+          match stmt.stmt with
+          | AST.InherentImplDef inherent_def -> (
+              match inherent_def.inherent_for_type with
+              | AST.TCon "point" -> List.length inherent_def.inherent_methods = 1
+              | _ -> false)
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
+let%test "parse inherent impl with bracketed type target" =
+  let input = "impl list[int] { fn size(xs: list[int]) -> int { 0 } }" in
+  let lexer = Lexer.init input in
+  match parse_program (init lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ stmt ] -> (
+          match stmt.stmt with
+          | AST.InherentImplDef inherent_def -> (
+              match inherent_def.inherent_for_type with
+              | AST.TApp ("list", [ AST.TCon "int" ]) -> List.length inherent_def.inherent_methods = 1
+              | _ -> false)
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
 let%test "parse impl with type params" =
   let input = "impl eq[a: eq] for list[a] { fn eq(x: list[a], y: list[a]) -> bool { true } }" in
   let lexer = Lexer.init input in
@@ -2190,6 +2335,48 @@ let%test "parse impl with multiple methods" =
       | [ stmt ] -> (
           match stmt.stmt with
           | AST.ImplDef impl_def -> impl_def.impl_trait_name = "num" && List.length impl_def.impl_methods = 2
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
+let%test "parse impl method body with direct record literal" =
+  let input =
+    "type vec2 = { x: int }\ntrait num[a] { fn add(x: a, y: a) -> a }\nimpl num for vec2 { fn add(x: vec2, y: vec2) -> vec2 { { x: x.x + y.x } } }"
+  in
+  let lexer = Lexer.init input in
+  match parse_program (init lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ _; _; stmt ] -> (
+          match stmt.stmt with
+          | AST.ImplDef impl_def -> (
+              match impl_def.impl_methods with
+              | [ method_impl ] -> (
+                  match method_impl.impl_method_body.expr with
+                  | AST.RecordLit _ -> true
+                  | _ -> false)
+              | _ -> false)
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
+let%test "parse impl method body with if expression and continue parsing next statement" =
+  let input =
+    "trait pick[a] { fn pick(x: a, y: a) -> a }\nimpl pick for int { fn pick(x: int, y: int) -> int { if (true) { x } else { y } } }\n1"
+  in
+  let lexer = Lexer.init input in
+  match parse_program (init lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ _trait; impl_stmt; expr_stmt ] -> (
+          match (impl_stmt.stmt, expr_stmt.stmt) with
+          | AST.ImplDef impl_def, AST.ExpressionStmt expr -> (
+              match impl_def.impl_methods with
+              | [ method_impl ] -> (
+                  match (method_impl.impl_method_body.expr, expr.expr) with
+                  | AST.If _, AST.Integer 1L -> true
+                  | _ -> false)
+              | _ -> false)
           | _ -> false)
       | _ -> false)
   | Error _ -> false
@@ -2270,6 +2457,39 @@ let%test "parse simple type alias" =
               &&
               match alias_def.alias_body with
               | AST.TCon "int" -> true
+              | _ -> false)
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
+let%test "parse type alias with function type body" =
+  let input = "type endo = fn(int) -> int" in
+  let lexer = Lexer.init input in
+  match parse_program (init lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ stmt ] -> (
+          match stmt.stmt with
+          | AST.TypeAlias alias_def -> (
+              match alias_def.alias_body with
+              | AST.TArrow ([ AST.TCon "int" ], AST.TCon "int") -> true
+              | _ -> false)
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
+let%test "parse function parameter annotation with function type" =
+  let input = "let apply = fn(f: fn(int) -> int, x: int) -> int { f(x) }" in
+  let lexer = Lexer.init input in
+  match parse_program (init lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ stmt ] -> (
+          match stmt.stmt with
+          | AST.Let { value = { expr = AST.Function fn; _ }; _ } -> (
+              match fn.params with
+              | [ ("f", Some (AST.TArrow ([ AST.TCon "int" ], AST.TCon "int"))); ("x", Some (AST.TCon "int")) ] ->
+                  true
               | _ -> false)
           | _ -> false)
       | _ -> false)
@@ -2457,6 +2677,31 @@ let%test "parse record literal - multiple fields" =
                   List.length fields = 2
                   && (List.nth fields 0).field_name = "x"
                   && (List.nth fields 1).field_name = "y"
+              | _ -> false)
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
+let%test "parse record literal - nested record field value" =
+  let input = "let p = { a: { x: 2, y: 3 } }" in
+  let lexer = Lexer.init input in
+  match parse_program (init lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ stmt ] -> (
+          match stmt.stmt with
+          | AST.Let { value; _ } -> (
+              match value.expr with
+              | AST.RecordLit (fields, None) -> (
+                  match fields with
+                  | [ field ] when field.field_name = "a" -> (
+                      match field.field_value with
+                      | Some { expr = AST.RecordLit (inner_fields, None); _ } ->
+                          List.length inner_fields = 2
+                          && (List.nth inner_fields 0).field_name = "x"
+                          && (List.nth inner_fields 1).field_name = "y"
+                      | _ -> false)
+                  | _ -> false)
               | _ -> false)
           | _ -> false)
       | _ -> false)

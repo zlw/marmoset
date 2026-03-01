@@ -143,7 +143,7 @@ let check_function_annotation (return_annotation : Syntax.Ast.AST.type_expr opti
         (* Extract the return type from the function type by recursively unwrapping TFun *)
         let rec extract_return_type (t : mono_type) : mono_type =
           match t with
-          | TFun (_, ret) -> extract_return_type ret
+          | TFun (_, ret, _) -> extract_return_type ret
           | other -> other
         in
         let actual_return = extract_return_type inferred_type in
@@ -225,7 +225,7 @@ let check_program_with_annotations ?state ?source ?(env = Infer.empty_env) (prog
       and check_expr_annotations (expr : Syntax.Ast.AST.expression) (inferred : mono_type) : (unit, error) result
           =
         match expr.expr with
-        | Syntax.Ast.AST.Function { return_type; params = _; body; generics = _ } -> (
+        | Syntax.Ast.AST.Function { return_type; params = _; body; generics = _; is_effectful = _ } -> (
             (* Check function return type annotation *)
             match check_function_annotation return_type inferred with
             | Error e -> Error e
@@ -294,7 +294,7 @@ let%test "check_string literal" =
 
 let%test "check_string function" =
   match check_string "fn(x) { x + 1 }" with
-  | Ok { result_type = TFun (TInt, TInt); _ } -> true
+  | Ok { result_type = TFun (TInt, TInt, _); _ } -> true
   | _ -> false
 
 let%test "check_string let binding adds to env" =
@@ -309,7 +309,7 @@ let%test "check_string polymorphic function in env" =
   match check_string "let id = fn(x) { x }; id" with
   | Ok { environment; _ } -> (
       match lookup "id" environment with
-      | Some (Forall (vars, TFun (TVar a, TVar b))) -> List.length vars = 1 && a = b
+      | Some (Forall (vars, TFun (TVar a, TVar b, _))) -> List.length vars = 1 && a = b
       | _ -> false)
   | _ -> false
 
@@ -463,7 +463,7 @@ let%test "annotation: single int parameter infers correctly" =
   | Error _ -> false
   | Ok { environment; _ } -> (
       match lookup "f" environment with
-      | Some (Forall (_, TFun (TInt, TInt))) -> true
+      | Some (Forall (_, TFun (TInt, TInt, _))) -> true
       | _ -> false)
 
 let%test "annotation: multiple int parameters infer correctly" =
@@ -472,7 +472,7 @@ let%test "annotation: multiple int parameters infer correctly" =
   | Error _ -> false
   | Ok { environment; _ } -> (
       match lookup "add" environment with
-      | Some (Forall (_, TFun (TInt, TFun (TInt, TInt)))) -> true
+      | Some (Forall (_, TFun (TInt, TFun (TInt, TInt, _), _))) -> true
       | _ -> false)
 
 let%test "annotation: mixed type parameters infer correctly" =
@@ -481,7 +481,7 @@ let%test "annotation: mixed type parameters infer correctly" =
   | Error _ -> false
   | Ok { environment; _ } -> (
       match lookup "f" environment with
-      | Some (Forall (_, TFun (TInt, TFun (TString, TString)))) -> true
+      | Some (Forall (_, TFun (TInt, TFun (TString, TString, _), _))) -> true
       | _ -> false)
 
 let%test "annotation: bool parameter" =
@@ -490,7 +490,7 @@ let%test "annotation: bool parameter" =
   | Error _ -> false
   | Ok { environment; _ } -> (
       match lookup "f" environment with
-      | Some (Forall (_, TFun (TBool, TBool))) -> true
+      | Some (Forall (_, TFun (TBool, TBool, _))) -> true
       | _ -> false)
 
 let%test "annotation: array parameter" =
@@ -500,7 +500,7 @@ let%test "annotation: array parameter" =
   | Error _ -> false
   | Ok { environment; _ } -> (
       match lookup "f" environment with
-      | Some (Forall (_, TFun (TArray TInt, TInt))) -> true
+      | Some (Forall (_, TFun (TArray TInt, TInt, _))) -> true
       | _ -> false)
 
 (* ============================================================
@@ -574,7 +574,7 @@ let%test "annotation: full signature with params and return" =
   | Error _ -> false
   | Ok { environment; _ } -> (
       match lookup "f" environment with
-      | Some (Forall (_, TFun (TInt, TFun (TInt, TInt)))) -> true
+      | Some (Forall (_, TFun (TInt, TFun (TInt, TInt, _), _))) -> true
       | _ -> false)
 
 let%test "annotation: conditional with matching return type" =
@@ -631,7 +631,7 @@ let%test "no annotation: polymorphic identity function" =
   | Error _ -> false
   | Ok { environment; _ } -> (
       match lookup "id" environment with
-      | Some (Forall (vars, TFun (TVar a, TVar b))) -> List.length vars >= 1 && a = b
+      | Some (Forall (vars, TFun (TVar a, TVar b, _))) -> List.length vars >= 1 && a = b
       | _ -> false)
 
 let%test "no annotation: mixed annotated and unannotated params" =
@@ -640,7 +640,7 @@ let%test "no annotation: mixed annotated and unannotated params" =
   | Error _ -> false
   | Ok { environment; _ } -> (
       match lookup "f" environment with
-      | Some (Forall (_, TFun (TInt, TFun (_, TInt)))) -> true
+      | Some (Forall (_, TFun (TInt, TFun (_, TInt, _), _))) -> true
       | _ -> false)
 
 let%test "annotation checker: local let bindings in function body do not require global env entries" =
@@ -720,9 +720,16 @@ let%test "generic type alias for record typechecks" =
   | Ok { result_type = TInt; _ } -> true
   | _ -> false
 
-let%test "explicit row-polymorphic function annotation typechecks" =
+let%test "explicit row-polymorphic annotation is rejected in v1" =
   Infer.reset_fresh_counter ();
-  let code = "let p = { x: 5, y: 10, z: 20 }; let get_x = fn(r: { x: int, ...row }) -> int { r.x }; get_x(p)" in
+  let code = "let get_x = fn(r: { x: int, ...row }) -> int { r.x }" in
+  match check code with
+  | Error _ -> true
+  | Ok _ -> false
+
+let%test "field access on record without row annotation works" =
+  Infer.reset_fresh_counter ();
+  let code = "let p = { x: 5, y: 10, z: 20 }; let get_x = fn(r) { r.x }; get_x(p)" in
   match check code with
   | Ok { result_type = TInt; _ } -> true
   | _ -> false

@@ -1,4 +1,4 @@
-let reduce = fn(values: list[int], initial: int, step) -> int {
+let reduce = fn(values: list[int], initial: int, step: fn(int, int) -> int) -> int {
   let iter = fn(remaining: list[int], acc: int) -> int {
     if (len(remaining) == 0) {
       acc

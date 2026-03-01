@@ -72,7 +72,7 @@ Create tests that:
 - Go code compiles to binary ✅
 - Binary runs and produces correct output ✅
 
-Example location: `test/test_typecheck_and_codegen.sh` has integration tests
+Example location: `test/integration/*.sh` has integration tests
 
 ### Test File Organization:
 
@@ -127,9 +127,9 @@ Phase 2: Complete type annotation validation and parameter type parsing
 - Fixed return type extraction for multi-parameter functions
 
 **Testing:**
-✅ 25+ inline tests in checker.ml
-✅ 17 integration tests pass (15/17 before fixing parser bugs)
-✅ No Phase 1 regressions
+✅ Relevant unit tests pass
+✅ Relevant integration suite(s) pass
+✅ No regressions in touched areas
 ```
 
 ### Known Issues/Bugs:
@@ -181,17 +181,25 @@ Type error
 
 ## 5. Building and Testing
 
-### Normal Development:
-
 ```bash
 # Build
-dune build
+make build
 
-# Run tests
-dune runtest
+# Unit tests (inline let%test in .ml files)
+make unit
 
-# Or specific test suite
-./test/test_typecheck_and_codegen.sh
+# Focused integration run (preferred during development)
+make integration <subset>
+# Examples:
+make integration traits
+make integration 04_traits_inherent.sh
+make integration codegen
+
+# Full integration run (required before final handoff)
+make integration
+
+# Both unit + integration
+make unit && make integration
 ```
 
 ### Performance:
@@ -208,12 +216,29 @@ dune runtest
 
 ## 6. Git Workflow
 
+### Worktree Rule — CRITICAL
+
+**NEVER switch worktrees mid-task.** If a session starts in a worktree (or the main tree), ALL commits for that task MUST go to that same tree. Do NOT create a second worktree and commit there, then try to cherry-pick later. This splits history and causes merge pain.
+
+- Check which tree you're in at the start: `git worktree list`
+- If the user's working branch is in the main tree, work there
+- If a worktree already exists with the right branch, use it
+- Do NOT start a fresh worktree when an existing branch has prior commits for the same task
+
+### NEVER Commit These:
+
+- `docs/review/` — analysis/progress tracking docs (local only)
+- Temporary test directories (e.g., `test_alias/`, `test_derive/`, `test_row_check/`)
+- Build artifacts or binaries
+- `.claude/` directory contents
+- Any file in `/tmp/`
+
+Always use `git add <specific files>` — never `git add .` or `git add -A`.
+
 ### Branch Naming:
 
 - `feature/description` - New features
 - `fix/description` - Bug fixes
-- `typecheck` - Type system work (current)
-- `codegen` - Code generation work
 
 ### Before Push:
 
@@ -275,7 +300,7 @@ Then create PR or notify of changes.
 ### Adding a New Phase:
 
 1. Create tests first (they should fail)
-2. Update this CLAUDE.md with phase info
+2. Update `docs/plans/*.md` and/or `docs/features/*.md` if semantics change
 3. Implement features incrementally
 4. Each commit should pass all tests
 5. Only update README when feature is 100% done and tested

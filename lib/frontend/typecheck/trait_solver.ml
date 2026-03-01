@@ -3,6 +3,7 @@
 module Types = Types
 module Trait_registry = Trait_registry
 module Unify = Unify
+module AST = Syntax.Ast.AST
 module StringSet = Set.Make (String)
 
 let dedupe_preserve_order (traits : string list) : string list =
@@ -58,15 +59,48 @@ let check_trait_fields (typ : Types.mono_type) (trait_name : string) : (unit, st
                "Trait satisfaction failed [non-record-for-field-trait]: type %s does not satisfy trait %s because field traits require a record receiver"
                type_str trait_name))
 
-let check_trait_methods (typ : Types.mono_type) (trait_name : string) : (unit, string) result =
-  if Trait_registry.implements_trait trait_name typ then
-    Ok ()
-  else
-    Error
-      (Printf.sprintf "Trait satisfaction failed [missing-impl]: type %s does not implement trait %s"
-         (Types.to_string typ) trait_name)
+let rec check_trait_methods (typ : Types.mono_type) (trait_name : string) : (unit, string) result =
+  let typ' = Types.canonicalize_mono_type typ in
+  match Trait_registry.resolve_impl trait_name typ' with
+  | Error msg -> Error (Printf.sprintf "Trait satisfaction failed [impl-resolution]: %s" msg)
+  | Ok None ->
+      Error
+        (Printf.sprintf "Trait satisfaction failed [missing-impl]: type %s does not implement trait %s"
+           (Types.to_string typ') trait_name)
+  | Ok (Some resolved_impl) ->
+      let rec check_generic_constraints = function
+        | [] -> Ok ()
+        | (p : AST.generic_param) :: rest -> (
+            match List.assoc_opt p.name resolved_impl.specialization_subst with
+            | None ->
+                Error
+                  (Printf.sprintf
+                     "Trait satisfaction failed [impl-specialization]: generic impl for trait %s could not resolve parameter '%s' for type %s"
+                     trait_name p.name (Types.to_string typ'))
+            | Some concrete_param_type -> (
+                let concrete_param_type' = Types.canonicalize_mono_type concrete_param_type in
+                let rec check_param_constraints = function
+                  | [] -> Ok ()
+                  | constraint_trait :: constraints_rest -> (
+                      match
+                        check_trait_with_supertraits StringSet.empty concrete_param_type' constraint_trait
+                      with
+                      | Ok () -> check_param_constraints constraints_rest
+                      | Error msg ->
+                          Error
+                            (Printf.sprintf
+                               "Trait satisfaction failed [generic-impl-constraint]: parameter '%s' resolved to type %s does not satisfy required constraint %s (%s)"
+                               p.name
+                               (Types.to_string concrete_param_type')
+                               constraint_trait msg))
+                in
+                match check_param_constraints p.constraints with
+                | Ok () -> check_generic_constraints rest
+                | Error _ as err -> err))
+      in
+      check_generic_constraints resolved_impl.impl.impl_type_params
 
-let check_trait_self_requirements (typ : Types.mono_type) (trait_name : string) : (unit, string) result =
+and check_trait_self_requirements (typ : Types.mono_type) (trait_name : string) : (unit, string) result =
   match Trait_registry.lookup_trait trait_name with
   | None -> Error (Printf.sprintf "Trait satisfaction failed [unknown-trait]: %s" trait_name)
   | Some _ -> (
@@ -81,7 +115,7 @@ let check_trait_self_requirements (typ : Types.mono_type) (trait_name : string) 
       | Error _ as err -> err
       | Ok () -> method_result)
 
-let rec check_trait_with_supertraits (visited : StringSet.t) (typ : Types.mono_type) (trait_name : string) :
+and check_trait_with_supertraits (visited : StringSet.t) (typ : Types.mono_type) (trait_name : string) :
     (unit, string) result =
   if StringSet.mem trait_name visited then
     Ok ()
@@ -103,7 +137,7 @@ and check_supertraits (visited : StringSet.t) (typ : Types.mono_type) (traits : 
       | Ok () -> check_supertraits visited typ rest
       | Error _ as err -> err)
 
-let satisfies_trait (typ : Types.mono_type) (trait_name : string) : (unit, string) result =
+and satisfies_trait (typ : Types.mono_type) (trait_name : string) : (unit, string) result =
   check_trait_with_supertraits StringSet.empty (Types.canonicalize_mono_type typ) trait_name
 
 let satisfies_trait_bool (typ : Types.mono_type) (trait_name : string) : bool =

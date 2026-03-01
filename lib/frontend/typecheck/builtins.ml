@@ -26,24 +26,24 @@ let builtin_types : (string * poly_type) list =
     (* len : a -> Int
        Actually works on String and [a], but we use a -> Int for now.
        TODO: When we have unions: (String | [a]) -> Int *)
-    ("len", forall [ "a" ] (TFun (TVar "a", TInt)));
+    ("len", forall [ "a" ] (tfun (TVar "a") TInt));
     (* first : [a] -> a
        Returns first element of array, or Null if empty.
        TODO: Should return Option a or a? when we have those *)
-    ("first", forall [ "a" ] (TFun (TArray (TVar "a"), TVar "a")));
+    ("first", forall [ "a" ] (tfun (TArray (TVar "a")) (TVar "a")));
     (* last : [a] -> a
        Returns last element of array, or Null if empty. *)
-    ("last", forall [ "a" ] (TFun (TArray (TVar "a"), TVar "a")));
+    ("last", forall [ "a" ] (tfun (TArray (TVar "a")) (TVar "a")));
     (* rest : [a] -> [a]
        Returns all but the first element, or Null if empty.
        TODO: Should return [a] or Null - needs union types *)
-    ("rest", forall [ "a" ] (TFun (TArray (TVar "a"), TArray (TVar "a"))));
+    ("rest", forall [ "a" ] (tfun (TArray (TVar "a")) (TArray (TVar "a"))));
     (* push : ([a], a) -> [a]
        Appends element to array, returns new array. *)
-    ("push", forall [ "a" ] (TFun (TArray (TVar "a"), TFun (TVar "a", TArray (TVar "a")))));
-    (* puts : a -> Null
-       Prints any value to stdout, returns Null. *)
-    ("puts", forall [ "a" ] (TFun (TVar "a", TNull)));
+    ("push", forall [ "a" ] (tfun (TArray (TVar "a")) (tfun (TVar "a") (TArray (TVar "a")))));
+    (* puts : a => Null
+       Prints any value to stdout, returns Null. Effectful (I/O). *)
+    ("puts", forall [ "a" ] (tfun_eff (TVar "a") TNull));
   ]
 
 (* ============================================================
@@ -460,3 +460,18 @@ let%test "builtin traits are registered" =
   let eq_exists = Trait_registry.lookup_trait "eq" <> None in
   let ord_exists = Trait_registry.lookup_trait "ord" <> None in
   show_exists && eq_exists && ord_exists
+
+let%test "puts is effectful, other builtins are pure" =
+  let is_effectful = function
+    | Types.TFun (_, _, true) -> true
+    | _ -> false
+  in
+  let is_pure = function
+    | Types.TFun (_, _, false) -> true
+    | _ -> false
+  in
+  let puts_type = List.assoc "puts" builtin_types in
+  let len_type = List.assoc "len" builtin_types in
+  let (Types.Forall (_, puts_mono)) = puts_type in
+  let (Types.Forall (_, len_mono)) = len_type in
+  is_effectful puts_mono && is_pure len_mono

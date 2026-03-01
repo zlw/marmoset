@@ -44,7 +44,7 @@ let variant_type (enum_name : string) (variant_name : string) (type_args : mono_
           else
             (* Function from fields to enum *)
             let field_types = List.map (apply_substitution subst) variant.fields in
-            let fn_type = List.fold_right (fun field ret -> TFun (field, ret)) field_types result_type in
+            let fn_type = List.fold_right (fun field ret -> tfun field ret) field_types result_type in
             Some fn_type)
 
 (* Register builtins *)
@@ -110,7 +110,7 @@ let%test "variant_type for unary constructor" =
   register { name = "option"; type_params = [ "a" ]; variants = [ { name = "some"; fields = [ TVar "a" ] } ] };
   match variant_type "option" "some" [ TInt ] with
   | None -> false
-  | Some t -> t = TFun (TInt, TEnum ("option", [ TInt ]))
+  | Some t -> t = tfun TInt (TEnum ("option", [ TInt ]))
 
 let%test "init_builtins registers option and result" =
   init_builtins ();

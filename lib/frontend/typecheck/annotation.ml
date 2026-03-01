@@ -10,6 +10,9 @@
    - extract_constraints: Extract trait constraints for Phase 3
 *)
 
+(* v1 restriction: open row variables in type annotations are not supported *)
+exception Open_row_rejected of string
+
 (* Convert a parsed type expression to an internal mono_type *)
 type type_alias_info = {
   alias_type_params : string list;
@@ -52,6 +55,16 @@ let field_only_trait_object_type (trait_name : string) : Types.mono_type =
   let gather_trait_fields (name : string) : unit =
     match Trait_registry.trait_kind name with
     | Some Trait_registry.FieldOnly -> (
+        let trait_def =
+          match Trait_registry.lookup_trait name with
+          | Some def -> def
+          | None -> failwith ("Unknown trait in registry: " ^ name)
+        in
+        if trait_def.trait_type_param <> None then
+          failwith
+            (Printf.sprintf
+               "Trait '%s' cannot be used as a type: generic field-only supertrait '%s' is not supported in this phase"
+               trait_name name);
         match Trait_registry.lookup_trait_fields name with
         | None -> ()
         | Some fields -> List.iter (merge_field name) fields)
@@ -100,7 +113,7 @@ let rec type_expr_to_mono_type_with
           | "float" -> Types.TFloat
           | "bool" -> Types.TBool
           | "string" -> Types.TString
-          | "unit" | "null" -> Types.TNull
+          | "unit" -> Types.TNull
           | other -> (
               match Enum_registry.lookup other with
               | Some enum_def ->
@@ -124,6 +137,10 @@ let rec type_expr_to_mono_type_with
                             | None -> failwith ("Unknown trait in registry: " ^ other)
                           in
                           if trait_def.trait_type_param <> None then
+                            (* Generic field-only traits rejected in type position because the
+                               projected record type depends on the type parameter, and codegen
+                               cannot resolve which concrete shape to emit without call-site
+                               monomorphization — which trait-as-type usage lacks. *)
                             failwith
                               (Printf.sprintf
                                  "Trait '%s' cannot be used as a type: generic field-only trait objects are not supported in this phase"
@@ -183,26 +200,29 @@ let rec type_expr_to_mono_type_with
       let param_mono = List.map (type_expr_to_mono_type_with type_bindings) param_types in
       let return_mono = type_expr_to_mono_type_with type_bindings return_type in
       (* Build nested function types: (a, b, c) -> d becomes a -> b -> c -> d *)
-      List.fold_right (fun param_type ret_type -> Types.TFun (param_type, ret_type)) param_mono return_mono
+      List.fold_right (fun param_type ret_type -> Types.tfun param_type ret_type) param_mono return_mono
   | Syntax.Ast.AST.TUnion type_exprs ->
       (* Union types (Phase 4.1): int | string | bool *)
       let mono_types = List.map (type_expr_to_mono_type_with type_bindings) type_exprs in
       Types.normalize_union mono_types
   | Syntax.Ast.AST.TRecord (fields, row_var) ->
+      (* v1 restriction: reject open row variables in user-written type annotations.
+         Open rows (e.g., { x: int, ...row }) are broken in codegen for multi-call and spread cases.
+         Users should use closed record annotations or omit annotations to let inference handle it.
+         Internal row variables (from trait objects, inference) are unaffected. *)
+      (match row_var with
+      | Some _ ->
+          raise
+            (Open_row_rejected
+               "Open row variables (e.g., '...row') in type annotations are not supported in v1. Use a closed record type annotation (e.g., '{ x: int, y: int }') or omit the annotation.")
+      | None -> ());
       let field_types =
         List.map
           (fun (f : Syntax.Ast.AST.record_type_field) ->
             { Types.name = f.field_name; typ = type_expr_to_mono_type_with type_bindings f.field_type })
           fields
       in
-      let row_type =
-        match row_var with
-        | None -> None
-        | Some (Syntax.Ast.AST.TCon name) -> Some (Types.TRowVar name)
-        | Some (Syntax.Ast.AST.TVar name) -> Some (Types.TRowVar name)
-        | Some other -> Some (type_expr_to_mono_type_with type_bindings other)
-      in
-      Types.canonicalize_mono_type (Types.TRecord (field_types, row_type))
+      Types.canonicalize_mono_type (Types.TRecord (field_types, None))
 
 and type_expr_to_mono_type (te : Syntax.Ast.AST.type_expr) : Types.mono_type = type_expr_to_mono_type_with [] te
 
@@ -232,7 +252,7 @@ let rec mono_types_equal (t1 : Types.mono_type) (t2 : Types.mono_type) : bool =
       | Some r1, Some r2 -> mono_types_equal r1 r2
       | _ -> false)
   | Types.TRowVar r1, Types.TRowVar r2 -> r1 = r2
-  | Types.TFun (p1, r1), Types.TFun (p2, r2) -> mono_types_equal p1 p2 && mono_types_equal r1 r2
+  | Types.TFun (p1, r1, _), Types.TFun (p2, r2, _) -> mono_types_equal p1 p2 && mono_types_equal r1 r2
   | Types.TUnion t1s, Types.TUnion t2s ->
       List.length t1s = List.length t2s && List.for_all2 mono_types_equal t1s t2s
   | Types.TEnum (name1, args1), Types.TEnum (name2, args2) ->
@@ -290,7 +310,7 @@ let rec is_subtype_of (actual : Types.mono_type) (expected : Types.mono_type) : 
               true)
   | Types.TRowVar a, Types.TRowVar b -> a = b
   (* Functions: contravariant in params, covariant in return *)
-  | Types.TFun (p1, r1), Types.TFun (p2, r2) -> is_subtype_of p2 p1 && is_subtype_of r1 r2
+  | Types.TFun (p1, r1, _), Types.TFun (p2, r2, _) -> is_subtype_of p2 p1 && is_subtype_of r1 r2
   (* Enums: same name, subtypes for all args *)
   | Types.TEnum (name1, args1), Types.TEnum (name2, args2) ->
       name1 = name2 && List.length args1 = List.length args2 && List.for_all2 is_subtype_of args1 args2
@@ -325,7 +345,7 @@ let rec format_mono_type (t : Types.mono_type) : string =
   | Types.TFloat -> "float"
   | Types.TBool -> "bool"
   | Types.TString -> "string"
-  | Types.TNull -> "null"
+  | Types.TNull -> "unit"
   | Types.TArray elem_type -> Printf.sprintf "list[%s]" (format_mono_type elem_type)
   | Types.THash (key_type, value_type) ->
       Printf.sprintf "map[%s, %s]" (format_mono_type key_type) (format_mono_type value_type)
@@ -344,9 +364,14 @@ let rec format_mono_type (t : Types.mono_type) : string =
       in
       Printf.sprintf "{ %s%s }" (String.concat ", " field_strs) row_str
   | Types.TRowVar name -> name
-  | Types.TFun (param_type, return_type) ->
-      (* Format as a->b->c (right-associative) *)
-      Printf.sprintf "%s -> %s" (format_mono_type param_type) (format_mono_type return_type)
+  | Types.TFun (param_type, return_type, eff) ->
+      let arrow =
+        if eff then
+          " => "
+        else
+          " -> "
+      in
+      Printf.sprintf "%s%s%s" (format_mono_type param_type) arrow (format_mono_type return_type)
   | Types.TUnion types -> String.concat " | " (List.map format_mono_type types)
   | Types.TEnum (name, []) -> name
   | Types.TEnum (name, args) -> Printf.sprintf "%s[%s]" name (String.concat ", " (List.map format_mono_type args))
@@ -410,13 +435,22 @@ let%test "option with wrong arity fails" =
     false (* Should have thrown *)
   with Failure msg -> String.length msg > 0 (* Should have error message *)
 
-let%test "record annotation converts to record mono type" =
+let%test "open row in record annotation is rejected" =
   let te =
     Syntax.Ast.AST.TRecord
       ( [ { Syntax.Ast.AST.field_name = "x"; field_type = Syntax.Ast.AST.TCon "int" } ],
         Some (Syntax.Ast.AST.TCon "r") )
   in
-  type_expr_to_mono_type te = Types.TRecord ([ { Types.name = "x"; typ = Types.TInt } ], Some (Types.TRowVar "r"))
+  try
+    let _ = type_expr_to_mono_type te in
+    false
+  with Open_row_rejected _ -> true
+
+let%test "closed record annotation still works" =
+  let te =
+    Syntax.Ast.AST.TRecord ([ { Syntax.Ast.AST.field_name = "x"; field_type = Syntax.Ast.AST.TCon "int" } ], None)
+  in
+  type_expr_to_mono_type te = Types.TRecord ([ { Types.name = "x"; typ = Types.TInt } ], None)
 
 let%test "type alias annotation resolves non-generic alias" =
   clear_type_aliases ();
@@ -479,3 +513,28 @@ let%test "method trait annotation is rejected in type position" =
     let _ = type_expr_to_mono_type (Syntax.Ast.AST.TCon "show") in
     false
   with Failure msg -> String.length msg > 0 && String.contains msg 'm'
+
+let%test "generic field-only supertrait is rejected in type position" =
+  Trait_registry.clear ();
+  Trait_registry.register_trait
+    { trait_name = "tagged"; trait_type_param = Some "a"; trait_supertraits = []; trait_methods = [] };
+  Trait_registry.set_trait_fields "tagged" [ { Types.name = "tag"; typ = Types.TVar "a" } ];
+  Trait_registry.register_trait
+    { trait_name = "tagged_like"; trait_type_param = None; trait_supertraits = [ "tagged" ]; trait_methods = [] };
+  let contains_substring s sub =
+    let len_s = String.length s in
+    let len_sub = String.length sub in
+    let rec loop i =
+      if i + len_sub > len_s then
+        false
+      else if String.sub s i len_sub = sub then
+        true
+      else
+        loop (i + 1)
+    in
+    loop 0
+  in
+  try
+    let _ = type_expr_to_mono_type (Syntax.Ast.AST.TCon "tagged_like") in
+    false
+  with Failure msg -> contains_substring msg "generic field-only supertrait"

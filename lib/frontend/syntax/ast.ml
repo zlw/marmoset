@@ -56,6 +56,12 @@ module AST = struct
     impl_methods : method_impl list;
   }
 
+  (* Phase 4.5: Inherent implementations *)
+  and inherent_impl_def = {
+    inherent_for_type : type_expr; (* impl point { ... } *)
+    inherent_methods : method_impl list;
+  }
+
   and method_impl = {
     impl_method_name : string;
     impl_method_params : (string * type_expr option) list;
@@ -98,6 +104,7 @@ module AST = struct
       }
     | TraitDef of trait_def (* Phase 4.3: trait show[a] { ... } *)
     | ImplDef of impl_def (* Phase 4.3: impl show for int { ... } *)
+    | InherentImplDef of inherent_impl_def (* Phase 4.5: impl point { ... } *)
     | DeriveDef of derive_def (* Phase 4.3: derive eq, show for color *)
     | TypeAlias of type_alias_def (* Phase 4.4: type point = { x: int, y: int } *)
   [@@deriving show]
@@ -135,6 +142,7 @@ module AST = struct
         generics : generic_param list option; (* [a], [a: show], etc. *)
         params : (string * type_expr option) list; (* parameter names and optional type annotations *)
         return_type : type_expr option; (* return type annotation *)
+        is_effectful : bool; (* true when => is used instead of -> *)
         body : statement;
       }
     | Call of expression * expression list
@@ -290,6 +298,8 @@ module AST = struct
           Printf.sprintf "trait %s%s { ... }" name params
       | ImplDef { impl_trait_name; impl_for_type; _ } ->
           Printf.sprintf "impl %s for %s { ... }" impl_trait_name (show_type_expr impl_for_type)
+      | InherentImplDef { inherent_for_type; _ } ->
+          Printf.sprintf "impl %s { ... }" (show_type_expr inherent_for_type)
       | DeriveDef { derive_traits; derive_for_type } ->
           let traits_str = List.map (fun t -> t.derive_trait_name) derive_traits |> String.concat ", " in
           Printf.sprintf "derive %s for %s" traits_str (show_type_expr derive_for_type)
