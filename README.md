@@ -132,11 +132,11 @@ Before merging to `main`, manually run `.github/workflows/cross-platform-matrix.
 Local command equivalents used by CI:
 
 ```sh
-make ci-unit-compiler
-make ci-integration-compiler-linux
-make ci-unit-lsp
-make ci-integration-lsp
-make ci-quality
+make ci-compiler-unit
+make ci-compiler-integration-linux
+make ci-lsp-unit
+make ci-lsp-integration
+make ci-quality-lint-fmt-doc
 make ci-editor-zed
 make ci-editor-vscode
 make ci-editor-nvim

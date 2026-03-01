@@ -89,7 +89,7 @@ jobs:
           cache-prefix: marmoset-pr-ci-ocaml-v2
 
       - name: Run compiler unit tests
-        run: opam exec -- make ci-unit-compiler
+        run: opam exec -- make ci-compiler-unit
 
   compiler-integration-linux:
     name: compiler-integration-linux
@@ -106,7 +106,7 @@ jobs:
           cache-prefix: marmoset-pr-ci-integration-v2
 
       - name: Run compiler integration (Linux)
-        run: opam exec -- make ci-integration-compiler-linux
+        run: opam exec -- make ci-compiler-integration-linux
 
   lsp-unit:
     name: lsp-unit
@@ -123,7 +123,7 @@ jobs:
           cache-prefix: marmoset-pr-ci-ocaml-v2
 
       - name: Run LSP unit tests
-        run: opam exec -- make ci-unit-lsp
+        run: opam exec -- make ci-lsp-unit
 
   lsp-integration:
     name: lsp-integration
@@ -140,7 +140,7 @@ jobs:
           cache-prefix: marmoset-pr-ci-integration-v2
 
       - name: Run LSP integration tests
-        run: opam exec -- make ci-integration-lsp
+        run: opam exec -- make ci-lsp-integration
 
   quality-lint-fmt-doc:
     name: quality-lint-fmt-doc
@@ -157,7 +157,7 @@ jobs:
           cache-prefix: marmoset-pr-ci-ocaml-v2
 
       - name: Run quality checks
-        run: opam exec -- make ci-quality
+        run: opam exec -- make ci-quality-lint-fmt-doc
 
   editor-zed:
     name: editor-zed

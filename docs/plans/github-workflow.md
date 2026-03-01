@@ -73,18 +73,18 @@ Note: if a PR does not touch a domain, the corresponding job can be skipped; ski
 Add stable command wrappers so workflows call one command per concern.
 
 1. Update `Makefile` with explicit targets (or add `test/ci/*.sh` wrappers):
-- `ci-unit-compiler` -> `make unit compiler`
-- `ci-unit-lsp` -> `make unit lsp`
-- `ci-integration-compiler-linux` -> compiler-focused integration subset (or full compiler integration set)
-- `ci-integration-lsp` -> dedicated LSP integration target
-- `ci-quality` -> lint + fmt + doc checks
+- `ci-compiler-unit` -> `make unit compiler`
+- `ci-lsp-unit` -> `make unit lsp`
+- `ci-compiler-integration-linux` -> compiler-focused integration subset (or full compiler integration set)
+- `ci-lsp-integration` -> dedicated LSP integration target
+- `ci-quality-lint-fmt-doc` -> lint + fmt + doc checks
 - `ci-editor-zed`
 - `ci-editor-vscode`
 - `ci-editor-nvim`
 - `ci-editor-jetbrains`
 
 2. Make LSP integration explicit:
-- Preferred: add dedicated `test/integration/09_lsp.sh` (or `test/lsp/integration.sh`) and call it from `ci-integration-lsp`.
+- Preferred: add dedicated `test/integration/09_lsp.sh` (or `test/lsp/integration.sh`) and call it from `ci-lsp-integration`.
 - Minimal transitional option: run `test/integration/08_cli.sh` and document it as LSP integration smoke.
 
 3. Add editor test scripts where missing:
@@ -292,11 +292,11 @@ If migration causes disruption:
   - `Manual Cross-Platform / integration (macos-latest)`
   - `Manual Cross-Platform / integration (windows-latest)`
 - 2026-03-01 18:31 CET: Completed Step 1 by adding stable CI entrypoints in `Makefile`:
-  - `ci-unit-compiler`
-  - `ci-unit-lsp`
-  - `ci-integration-compiler-linux`
-  - `ci-integration-lsp`
-  - `ci-quality`
+  - `ci-compiler-unit`
+  - `ci-lsp-unit`
+  - `ci-compiler-integration-linux`
+  - `ci-lsp-integration`
+  - `ci-quality-lint-fmt-doc`
   - `ci-editor-zed`
   - `ci-editor-vscode`
   - `ci-editor-nvim`
@@ -352,3 +352,11 @@ If migration causes disruption:
   - added `summary` job in `PR CI` to print detected domains and per-job run/skip/fail status
   - documented CI policy and local `make ci-*` command mapping in `README.md`
 - 2026-03-01 19:01 CET: Step 8 item 2 (splitting slow suites into optional/nightly) deferred until real PR latency data is collected after this workflow rollout.
+- 2026-03-01 18:39 CET: Follow-up naming alignment (entrypoints) applied:
+  - renamed make targets to consistent `ci-<domain>-<kind>` order:
+    - `ci-compiler-unit`
+    - `ci-compiler-integration-linux`
+    - `ci-lsp-unit`
+    - `ci-lsp-integration`
+    - `ci-quality-lint-fmt-doc`
+  - updated all workflow and docs references to use the new target names.

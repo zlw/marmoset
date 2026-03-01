@@ -59,19 +59,19 @@ watch:
 	dune runtest -w --force
 
 # CI entrypoints (stable command contract for GitHub workflows)
-ci-unit-compiler:
+ci-compiler-unit:
 	@$(MAKE) unit compiler
 
-ci-unit-lsp:
+ci-lsp-unit:
 	@$(MAKE) unit lsp
 
-ci-integration-compiler-linux:
+ci-compiler-integration-linux:
 	@$(MAKE) integration
 
-ci-integration-lsp:
+ci-lsp-integration:
 	@./test/integration.sh 08_cli.sh
 
-ci-quality:
+ci-quality-lint-fmt-doc:
 	@./test/ci/quality.sh
 
 ci-editor-zed:
