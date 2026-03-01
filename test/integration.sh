@@ -1,5 +1,5 @@
 #!/bin/bash
-# Aggregated integration runner for typecheck + codegen suites.
+# Aggregated integration runner for all integration suites in test/integration/.
 
 set -e
 
@@ -9,40 +9,65 @@ INTEGRATION_DIR="$SCRIPT_DIR/integration"
 EXECUTABLE="$REPO_ROOT/_build/default/bin/main.exe"
 BUILD_TARGET="./_build/default/bin/main.exe"
 
-ALL_SUITES=(
-  "01_core_annotations.sh"
-  "02_unions.sh"
-  "03_enums.sh"
-  "04_traits.sh"
-  "05_records.sh"
-  "06_codegen.sh"
-  "07_runtime_output.sh"
-  "08_cli.sh"
-)
+discover_suites() {
+    find "$INTEGRATION_DIR" -maxdepth 1 -type f -name "*.sh" ! -name "common.sh" -print \
+        | sed "s#^.*/##" \
+        | LC_ALL=C sort
+}
+
+ALL_SUITES=()
+while IFS= read -r suite; do
+    ALL_SUITES+=("$suite")
+done < <(discover_suites)
+
+if [ "${#ALL_SUITES[@]}" -eq 0 ]; then
+    echo "No integration suites found in $INTEGRATION_DIR" >&2
+    exit 2
+fi
 
 resolve_suite() {
     local name="$1"
-    case "$name" in
-        all) echo "${ALL_SUITES[*]}" ;;
-        core) echo "01_core_annotations.sh" ;;
-        unions) echo "02_unions.sh" ;;
-        enums) echo "03_enums.sh" ;;
-        traits) echo "04_traits.sh" ;;
-        records) echo "05_records.sh" ;;
-        codegen) echo "06_codegen.sh" ;;
-        runtime) echo "07_runtime_output.sh" ;;
-        cli) echo "08_cli.sh" ;;
-        *.sh)
-            if [ -f "$INTEGRATION_DIR/$name" ]; then
-                echo "$name"
-            else
-                return 1
-            fi
-            ;;
-        *)
-            return 1
-            ;;
-    esac
+    local matches=()
+
+    if [ "$name" = "all" ]; then
+        echo "${ALL_SUITES[*]}"
+        return 0
+    fi
+
+    # Exact filename.
+    if [ -f "$INTEGRATION_DIR/$name" ]; then
+        echo "$name"
+        return 0
+    fi
+
+    # Exact basename without .sh.
+    if [ -f "$INTEGRATION_DIR/$name.sh" ]; then
+        echo "$name.sh"
+        return 0
+    fi
+
+    # Group by suite stem prefix:
+    #   make integration traits   -> 04_traits*.sh
+    #   make integration codegen  -> 06_codegen*.sh
+    #   make integration runtime  -> 07_runtime*.sh
+    for suite in "${ALL_SUITES[@]}"; do
+        local stem="${suite%.sh}"
+        local short="$stem"
+        if [[ "$stem" == *_* ]]; then
+            short="${stem#*_}"
+        fi
+
+        if [[ "$short" == "$name" || "$short" == "$name"_* ]]; then
+            matches+=("$suite")
+        fi
+    done
+
+    if [ "${#matches[@]}" -gt 0 ]; then
+        echo "${matches[*]}"
+        return 0
+    fi
+
+    return 1
 }
 
 print_usage() {
@@ -52,15 +77,10 @@ Usage:
   ./test/integration.sh <suite> [...]   # run selected suites
 
 Suites:
-  core
-  unions
-  enums
-  traits
-  records
-  codegen
-  runtime
-  cli
   all
+  <suite.sh>           # exact filename
+  <suite-stem>         # exact stem without .sh
+  <group-prefix>       # e.g. traits, codegen, runtime
 USAGE
 }
 
