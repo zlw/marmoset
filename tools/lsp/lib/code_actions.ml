@@ -13,6 +13,24 @@ module Types = Marmoset.Lib.Types
    Source syntax uses "int", "string", "list[int]", etc.
 *)
 
+(* Collapse unions of pure/effectful function types that differ only in purity.
+   e.g., (a, b) -> c | (a, b) => c  becomes  (a, b) => c *)
+let collapse_purity_union (types : Types.mono_type list) : Types.mono_type list =
+  let dominated = Hashtbl.create 8 in
+  (* For each pair, if one is pure and other is effectful with same args/ret, mark pure as dominated *)
+  List.iter
+    (fun a ->
+      List.iter
+        (fun b ->
+          match (a, b) with
+          | Types.TFun (arg1, ret1, false), Types.TFun (arg2, ret2, true) when arg1 = arg2 && ret1 = ret2 ->
+              (* Pure 'a' is dominated by effectful 'b' — keep only the effectful one *)
+              Hashtbl.replace dominated (Types.to_string a) true
+          | _ -> ())
+        types)
+    types;
+  List.filter (fun t -> not (Hashtbl.mem dominated (Types.to_string t))) types
+
 let rec type_to_source (mono : Types.mono_type) : string =
   match mono with
   | Types.TInt -> "int"
@@ -25,19 +43,20 @@ let rec type_to_source (mono : Types.mono_type) : string =
   | Types.TArray element -> "list[" ^ type_to_source element ^ "]"
   | Types.THash (key, value) -> "map[" ^ type_to_source key ^ ", " ^ type_to_source value ^ "]"
   | Types.TFun _ ->
-      let rec collect_args = function
-        | Types.TFun (arg, rest, _) ->
-            let args, ret = collect_args rest in
-            (arg :: args, ret)
-        | t -> ([], t)
+      let rec collect_args eff = function
+        | Types.TFun (arg, rest, e) ->
+            let args, ret, eff' = collect_args (eff || e) rest in
+            (arg :: args, ret, eff')
+        | t -> ([], t, eff)
       in
-      let args, ret = collect_args mono in
+      let args, ret, is_eff = collect_args false mono in
       let args_str =
         match args with
-        | [ single ] -> "(" ^ type_to_source single ^ ")"
+        | [ single ] -> "(" ^ type_to_source_parens single ^ ")"
         | _ -> "(" ^ String.concat ", " (List.map type_to_source args) ^ ")"
       in
-      args_str ^ " -> " ^ type_to_source ret
+      let arrow = if is_eff then " => " else " -> " in
+      args_str ^ arrow ^ type_to_source ret
   | Types.TRecord (fields, row) ->
       let field_strs =
         List.map (fun (f : Types.record_field_type) -> f.name ^ ": " ^ type_to_source f.typ) fields
@@ -52,9 +71,17 @@ let rec type_to_source (mono : Types.mono_type) : string =
               ", ..." ^ type_to_source r
       in
       "{ " ^ String.concat ", " field_strs ^ row_str ^ " }"
-  | Types.TUnion types -> String.concat " | " (List.map type_to_source types)
+  | Types.TUnion types ->
+      let collapsed = collapse_purity_union types in
+      (match collapsed with
+      | [ single ] -> type_to_source single
+      | _ -> String.concat " | " (List.map type_to_source collapsed))
   | Types.TEnum (name, []) -> name
   | Types.TEnum (name, args) -> name ^ "[" ^ String.concat ", " (List.map type_to_source args) ^ "]"
+
+and type_to_source_parens = function
+  | Types.TFun _ as t -> "(" ^ type_to_source t ^ ")"
+  | t -> type_to_source t
 
 (* ============================================================
    Position helpers (duplicated from inlay_hints.ml for independence)
@@ -136,60 +163,63 @@ type annotation_site = {
   title : string;
 }
 
-(* Collect annotation sites for a single function expression *)
-let sites_for_function ~source ~type_map ~sites (fn_expr : Ast.AST.expression) =
+(* Collect annotation sites for a single function expression.
+   Only offer param/return-type annotations when the cursor overlaps
+   the signature (from `fn` keyword to the start of the body). *)
+let sites_for_function ~source ~type_map ~range_start ~range_end ~sites (fn_expr : Ast.AST.expression) =
   match fn_expr.expr with
-  | Ast.AST.Function { params; return_type; body; _ } -> (
-      match Hashtbl.find_opt type_map fn_expr.id with
-      | Some fn_type -> (
-          let n_params = List.length params in
-          (* Normalize the FULL function type once to preserve type variable identity *)
-          let norm_fn_type = Types.normalize fn_type in
-          let param_types = take_param_types n_params norm_fn_type in
-          (* Parameter annotation sites *)
-          let search_from = ref fn_expr.pos in
-          List.iter2
-            (fun (pname, annotation) ptype ->
-              if annotation = None then
-                match find_name_end ~source ~start:!search_from ~limit:fn_expr.end_pos pname with
-                | Some pend ->
-                    search_from := pend;
-                    let type_str = type_to_source ptype in
-                    sites :=
-                      {
-                        insert_offset = pend;
-                        insert_text = ": " ^ type_str;
-                        title = "Add type annotation: " ^ pname ^ ": " ^ type_str;
-                      }
-                      :: !sites
-                | None -> ()
-              else
-                match find_name_end ~source ~start:!search_from ~limit:fn_expr.end_pos pname with
-                | Some pend -> search_from := pend
-                | None -> ())
-            params
-            (if List.length param_types = n_params then
-               param_types
-             else
-               List.init n_params (fun _ -> Types.TNull));
-          (* Return type annotation site *)
-          if return_type = None && n_params > 0 then
-            match get_return_type n_params norm_fn_type with
-            | Some ret_type -> (
-                let body_start = body.pos in
-                match find_close_paren ~source ~start:fn_expr.pos ~limit:body_start with
-                | Some paren_end ->
-                    let type_str = type_to_source ret_type in
-                    sites :=
-                      {
-                        insert_offset = paren_end;
-                        insert_text = " -> " ^ type_str;
-                        title = "Add return type annotation: -> " ^ type_str;
-                      }
-                      :: !sites
-                | None -> ())
-            | None -> ())
-      | None -> ())
+  | Ast.AST.Function { params; return_type; body; _ } ->
+      let sig_end = body.pos in
+      if fn_expr.pos > range_end || sig_end < range_start then ()
+      else (
+        match Hashtbl.find_opt type_map fn_expr.id with
+        | Some fn_type ->
+            let n_params = List.length params in
+            (* Normalize the FULL function type once to preserve type variable identity *)
+            let norm_fn_type = Types.normalize fn_type in
+            let param_types = take_param_types n_params norm_fn_type in
+            (* Parameter annotation sites *)
+            let search_from = ref fn_expr.pos in
+            List.iter2
+              (fun (pname, annotation) ptype ->
+                if annotation = None then (
+                  match find_name_end ~source ~start:!search_from ~limit:fn_expr.end_pos pname with
+                  | Some pend ->
+                      search_from := pend;
+                      let type_str = type_to_source ptype in
+                      sites :=
+                        {
+                          insert_offset = pend;
+                          insert_text = ": " ^ type_str;
+                          title = "Add type annotation: " ^ pname ^ ": " ^ type_str;
+                        }
+                        :: !sites
+                  | None -> ())
+                else (
+                  match find_name_end ~source ~start:!search_from ~limit:fn_expr.end_pos pname with
+                  | Some pend -> search_from := pend
+                  | None -> ()))
+              params
+              (if List.length param_types = n_params then param_types
+               else List.init n_params (fun _ -> Types.TNull));
+            (* Return type annotation site *)
+            if return_type = None && n_params > 0 then (
+              match get_return_type n_params norm_fn_type with
+              | Some ret_type -> (
+                  let body_start = body.pos in
+                  match find_close_paren ~source ~start:fn_expr.pos ~limit:body_start with
+                  | Some paren_end ->
+                      let type_str = type_to_source ret_type in
+                      sites :=
+                        {
+                          insert_offset = paren_end;
+                          insert_text = " -> " ^ type_str;
+                          title = "Add return type annotation: -> " ^ type_str;
+                        }
+                        :: !sites
+                  | None -> ())
+              | None -> ())
+        | None -> ())
   | _ -> ()
 
 (* Walk statements recursively, collecting annotation sites *)
@@ -214,10 +244,10 @@ let rec walk_stmt ~source ~type_map ~range_start ~range_end ~sites (stmt : Ast.A
                   :: !sites
             | None -> ())
         | None -> ());
-        sites_for_function ~source ~type_map ~sites value;
+        sites_for_function ~source ~type_map ~range_start ~range_end ~sites value;
         walk_expr ~source ~type_map ~range_start ~range_end ~sites value
     | Ast.AST.Let { value; _ } ->
-        sites_for_function ~source ~type_map ~sites value;
+        sites_for_function ~source ~type_map ~range_start ~range_end ~sites value;
         walk_expr ~source ~type_map ~range_start ~range_end ~sites value
     | Ast.AST.Block stmts -> List.iter (walk_stmt ~source ~type_map ~range_start ~range_end ~sites) stmts
     | Ast.AST.ExpressionStmt e -> walk_expr ~source ~type_map ~range_start ~range_end ~sites e
@@ -379,6 +409,21 @@ let%test "type_to_source enum with args" = type_to_source (Types.TEnum ("option"
 
 let%test "type_to_source enum multi args" =
   type_to_source (Types.TEnum ("result", [ Types.TString; Types.TInt ])) = "result[string, int]"
+
+let%test "type_to_source effectful function" =
+  type_to_source (Types.tfun_eff Types.TInt Types.TBool) = "(int) => bool"
+
+let%test "type_to_source mixed purity multi-arg" =
+  type_to_source (Types.TFun (Types.TInt, Types.TFun (Types.TString, Types.TBool, true), false))
+  = "(int, string) => bool"
+
+let%test "type_to_source union of pure/effectful collapses to effectful" =
+  let pure = Types.tfun Types.TInt Types.TBool in
+  let eff = Types.tfun_eff Types.TInt Types.TBool in
+  type_to_source (Types.TUnion [ pure; eff ]) = "(int) => bool"
+
+let%test "type_to_source union of unrelated types stays as union" =
+  type_to_source (Types.TUnion [ Types.TInt; Types.TString ]) = "int | string"
 
 (* Code action integration tests *)
 
