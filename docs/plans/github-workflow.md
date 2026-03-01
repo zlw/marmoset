@@ -457,3 +457,7 @@ If migration causes disruption:
 - 2026-03-01 20:17 CET: Strict-check freshness sync:
   - merged `main` into `worktree-lsp` to satisfy `strict_required_status_checks_policy` up-to-date requirement
   - this resolves false-looking `Expected` required-check states caused by `mergeStateStatus=BEHIND` on otherwise green runs
+- 2026-03-01 20:26 CET: Temporary scope reduction to Linux-only CI gating:
+  - removed `.github/workflows/manual-cross-platform.yml` from branch (disabled macOS/windows manual integration path)
+  - updated README CI policy to remove manual macOS/windows merge-gate instructions
+  - canceled active `Manual Cross-Platform` run to reduce GitHub Actions usage
