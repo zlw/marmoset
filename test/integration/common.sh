@@ -194,11 +194,13 @@ run_codegen_deterministic_from_stdin() {
     echo -n "TEST [$TOTAL] $name ... "
 
     local tmpfile out1 out2 bin1 bin2
+    local emit_dir="$REPO_ROOT/.marmoset/build/emit"
+    mkdir -p "$emit_dir"
     tmpfile=$(mktemp)
-    out1=$(mktemp -d marmoset_emit1.XXXXXX)
-    out2=$(mktemp -d marmoset_emit2.XXXXXX)
-    bin1=$(mktemp ./marmoset_bin1.XXXXXX)
-    bin2=$(mktemp ./marmoset_bin2.XXXXXX)
+    out1=$(mktemp -d "$emit_dir/emit1.XXXXXX")
+    out2=$(mktemp -d "$emit_dir/emit2.XXXXXX")
+    bin1=$(mktemp "$emit_dir/bin1.XXXXXX")
+    bin2=$(mktemp "$emit_dir/bin2.XXXXXX")
     rm -f "$bin1" "$bin2"
     echo "$source" > "$tmpfile"
 
@@ -235,9 +237,11 @@ run_emit_go_not_contains_from_stdin() {
     echo -n "TEST [$TOTAL] $name ... "
 
     local tmpfile outdir binpath
+    local emit_dir="$REPO_ROOT/.marmoset/build/emit"
+    mkdir -p "$emit_dir"
     tmpfile=$(mktemp)
-    outdir=$(mktemp -d marmoset_emit.XXXXXX)
-    binpath=$(mktemp ./marmoset_bin.XXXXXX)
+    outdir=$(mktemp -d "$emit_dir/emit.XXXXXX")
+    binpath=$(mktemp "$emit_dir/bin.XXXXXX")
     rm -f "$binpath"
     echo "$source" > "$tmpfile"
 
@@ -269,7 +273,9 @@ test_emit_go_contains() {
 
     local tmpdir_go
     local tmpfile
-    tmpdir_go=$(mktemp -d)
+    local emit_dir="$REPO_ROOT/.marmoset/build/emit"
+    mkdir -p "$emit_dir"
+    tmpdir_go=$(mktemp -d "$emit_dir/go.XXXXXX")
     tmpfile=$(mktemp)
     echo "$source" > "$tmpfile"
 

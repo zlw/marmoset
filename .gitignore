@@ -35,6 +35,13 @@ _opam/
 *.mar.out
 
 
+# Build artifacts
+.marmoset/
+
+# Zed extension build artifacts (contains a dune-project that conflicts)
+tools/zed-marmoset/grammars/marmoset/
+tools/zed-marmoset/target/
+
 # Editors
 .idea
 .zed
