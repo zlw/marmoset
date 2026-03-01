@@ -387,3 +387,8 @@ If migration causes disruption:
   - adding `ci:cross-platform` on a PR runs `compiler-integration-macos` + `compiler-integration-windows` against `pull_request.head.sha`
   - normal PR routing jobs (`changes` + domain jobs + `summary`) are skipped for label-only runs
   - concurrency grouping now isolates label-triggered runs from regular PR runs to avoid cancellation clashes
+- 2026-03-01 19:27 CET: PR-label flow validated on PR #1:
+  - created repository label `ci:cross-platform` via `gh api` (label did not previously exist)
+  - applied label to PR #1 and observed label-triggered run `22549698364`
+  - verified run `22549698364` executes only `compiler-integration-macos` + `compiler-integration-windows` while other jobs are skipped
+  - verified regular `synchronize` run `22549691215` continues independently (no cross-cancellation with label run)
