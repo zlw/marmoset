@@ -111,6 +111,7 @@ type inference_state = {
   fresh_var_counter : int ref;
   constraint_store : (string, string list) Hashtbl.t;
   constrained_field_store : (string, (string * record_field_type) list) Hashtbl.t;
+  type_var_user_names : (string, string) Hashtbl.t;
   top_level_placeholder_store : (string, mono_type) Hashtbl.t;
   symbol_table : (symbol_id, symbol) Hashtbl.t;
   symbol_key_store : (symbol_id, string) Hashtbl.t;
@@ -127,6 +128,7 @@ let create_inference_state () : inference_state =
     fresh_var_counter = ref 0;
     constraint_store = Hashtbl.create 64;
     constrained_field_store = Hashtbl.create 64;
+    type_var_user_names = Hashtbl.create 32;
     top_level_placeholder_store = Hashtbl.create 64;
     symbol_table = Hashtbl.create 256;
     symbol_key_store = Hashtbl.create 256;
@@ -152,6 +154,9 @@ let current_constraint_store () : (string, string list) Hashtbl.t = !active_infe
 
 let current_constrained_field_store () : (string, (string * record_field_type) list) Hashtbl.t =
   !active_inference_state.constrained_field_store
+
+let current_type_var_user_names_store () : (string, string) Hashtbl.t =
+  !active_inference_state.type_var_user_names
 
 let current_top_level_placeholder_store () : (string, mono_type) Hashtbl.t =
   !active_inference_state.top_level_placeholder_store
@@ -292,6 +297,19 @@ let clear_constraint_store () : unit =
   Hashtbl.clear (current_constrained_field_store ())
 
 let clear_method_resolution_store () : unit = Hashtbl.clear global_method_resolution_store
+let clear_type_var_user_names () : unit = Hashtbl.clear (current_type_var_user_names_store ())
+
+let record_type_var_user_name ~(fresh_name : string) ~(user_name : string) : unit =
+  Hashtbl.replace (current_type_var_user_names_store ()) fresh_name user_name
+
+let lookup_type_var_user_name (fresh_name : string) : string option =
+  Hashtbl.find_opt (current_type_var_user_names_store ()) fresh_name
+
+let lookup_type_var_user_name_in_state (state : inference_state) (fresh_name : string) : string option =
+  Hashtbl.find_opt state.type_var_user_names fresh_name
+
+let type_var_user_name_bindings_in_state (state : inference_state) : (string * string) list =
+  Hashtbl.to_seq state.type_var_user_names |> List.of_seq
 
 let record_method_resolution (expr : AST.expression) (resolution : method_resolution) : unit =
   Hashtbl.replace global_method_resolution_store expr.id resolution
@@ -459,6 +477,7 @@ let reset_fresh_counter () =
   let state = !active_inference_state in
   state.fresh_var_counter := 0;
   clear_constraint_store ();
+  clear_type_var_user_names ();
   clear_top_level_placeholders ();
   clear_symbol_stores ()
 
@@ -933,7 +952,7 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
         (* Phase 4.3+: Handle generic parameters with constraints *)
         infer_function_with_annotations type_map env f.generics f.params f.return_type f.is_effectful f.body
     (* Function calls *)
-    | AST.Call (func, args) -> infer_call type_map env func args
+    | AST.Call (func, args) -> infer_call type_map env expr func args
     (* Arrays *)
     | AST.Array elements -> infer_array type_map env elements
     (* Hashes *)
@@ -1741,9 +1760,11 @@ and infer_function_with_annotations type_map env generics_opt params return_anno
         List.map
           (fun (generic : AST.generic_param) ->
             let fresh_var = fresh_type_var () in
-            (* Store constraints in global store *)
+            (* Store constraints and user name mapping *)
             (match fresh_var with
-            | TVar n -> add_type_var_constraints n generic.constraints
+            | TVar n ->
+                add_type_var_constraints n generic.constraints;
+                record_type_var_user_name ~fresh_name:n ~user_name:generic.name
             | _ -> ());
             (generic.name, fresh_var))
           generics
@@ -1880,10 +1901,36 @@ and infer_function_with_annotations type_map env generics_opt params return_anno
             match validate_return_statements type_map env' expected_ret_type body with
             | Error e -> Error e
             | Ok () ->
+                let rec has_unresolved_var (t : mono_type) : bool =
+                  match t with
+                  | TVar _ | TRowVar _ -> true
+                  | TFun (arg, ret, _) -> has_unresolved_var arg || has_unresolved_var ret
+                  | TArray elem -> has_unresolved_var elem
+                  | THash (k, v) -> has_unresolved_var k || has_unresolved_var v
+                  | TRecord (fields, row) -> (
+                      List.exists (fun (f : record_field_type) -> has_unresolved_var f.typ) fields
+                      ||
+                      match row with
+                      | None -> false
+                      | Some r -> has_unresolved_var r)
+                  | TEnum (_, args) | TUnion args -> List.exists has_unresolved_var args
+                  | TInt | TFloat | TBool | TString | TNull -> false
+                in
                 (* Then check that inferred body type is a subtype of expected return type *)
                 (* This catches cases like `fn() -> string { if (...) { "a" } else { 42 } }`
                    where body type is string|int which is NOT a subtype of string *)
-                if Annotation.is_subtype_of body_type' expected_ret_type then
+                let subtype_ok = Annotation.is_subtype_of body_type' expected_ret_type in
+                (* When inference leaves unresolved vars in the return expression,
+                   allow a unification-based compatibility probe to avoid rejecting
+                   programs that are valid once constraints are solved. *)
+                let unify_compatible =
+                  (has_unresolved_var body_type' || has_unresolved_var expected_ret_type)
+                  &&
+                  match unify body_type' expected_ret_type with
+                  | Ok _ -> true
+                  | Error _ -> false
+                in
+                if subtype_ok || unify_compatible then
                   (* Body type is compatible, now unify to propagate constraints *)
                   match unify body_type' expected_ret_type with
                   | Error _e -> Error (error_at_stmt (ReturnTypeMismatch (expected_ret_type, body_type')) body)
@@ -1906,7 +1953,7 @@ and infer_function_with_annotations type_map env generics_opt params return_anno
    Function Calls
    ============================================================ *)
 
-and infer_call type_map env func args =
+and infer_call type_map env (call_expr : AST.expression) func args =
   (* Infer function type *)
   match infer_expression type_map env func with
   | Error e -> Error e
@@ -1962,14 +2009,14 @@ and infer_call type_map env func args =
             | _ -> try_legacy_pure_then_effectful ()
           in
           match call_result with
-          | Error e -> Error (error_at (UnificationError e) func)
+          | Error e -> Error (error_at (UnificationError e) call_expr)
           | Ok (subst3, result_type) -> (
               let final_subst = compose_substitution subst2 subst3 in
               (* Phase 4.3+: Verify trait constraints are satisfied.
                  When calling a constrained generic function like fn[a: show](x: a),
                  we need to check that the actual argument type implements the required traits. *)
               match verify_constraints_in_substitution final_subst with
-              | Error msg -> Error (error_at (ConstructorError msg) func)
+              | Error msg -> Error (error_at (ConstructorError msg) call_expr)
               | Ok () ->
                   let final_result = apply_substitution subst3 result_type in
                   Ok (final_subst, final_result))))
@@ -3260,6 +3307,7 @@ let infer_program ?(env = empty_env) ?state (program : AST.program) :
         Annotation.clear_type_aliases ();
         Inherent_registry.clear ();
         clear_method_resolution_store ();
+        clear_type_var_user_names ();
         clear_top_level_placeholders ();
         match resolve_program_symbols env program with
         | Error e -> Error e
@@ -3544,6 +3592,11 @@ module Test = struct
     | _ -> false
 
   let%test "infer record field access" = infers_to "let p = { x: 1, y: 2 }; p.x + p.y" TInt
+
+  (* Regression: return type annotation with unresolved record field type variable.
+     fn(value) -> string { value.name } should succeed — the field type var unifies with string. *)
+  let%test "return annotation unifies with record field type var" =
+    infers_to "let f = fn(r) -> string { r.name }; f({ name: \"hi\" })" TString
 
   let%test "infer type alias for record annotation" =
     infers_to "type point = { x: int, y: int }; let p: point = { x: 1, y: 2 }; p.x" TInt
@@ -3859,6 +3912,14 @@ module Test = struct
     infers_to
       "type person = { name: string, age: int }\ntrait named { name: string }\ntrait shown[a] { fn show(x: a) -> string }\nimpl shown for person {\n\  fn show(x: person) -> string {\n\    x.name\n\  }\n}\nlet get_name = fn[t: named + shown](x: t) { x.name }\nlet p: person = { name: \"alice\", age: 42 }\nget_name(p)"
       TString
+
+  let%test "generic impl cannot specialize generic return type from body literals" =
+    match
+      infer_string
+        "trait id[a] { fn id(x: a) -> a }\nimpl id[b] for list[b] {\n  fn id(x: list[b]) -> list[b] { [1] }\n}\n1"
+    with
+    | Error { kind = ReturnTypeMismatch _; _ } -> true
+    | _ -> false
 
   let%test "explicit row-polymorphic annotation is rejected in v1" =
     reset_fresh_counter ();
@@ -4362,6 +4423,36 @@ f"
         match infer_program program with
         | Error _ -> false
         | Ok (_, _, _) -> true)
+
+  let%test "infer_program captures user generic names in inference state" =
+    match
+      Syntax.Parser.parse "trait named { name: string }\nlet get = fn[t: named](x: t) -> string { x.name }; get"
+    with
+    | Error _ -> false
+    | Ok program -> (
+        let state = create_inference_state () in
+        match infer_program ~state program with
+        | Error _ -> false
+        | Ok _ ->
+            type_var_user_name_bindings_in_state state
+            |> List.exists (fun (_fresh_name, user_name) -> user_name = "t"))
+
+  let%test "infer_program clears stale user generic-name mappings for shared state" =
+    let shared_state = create_inference_state () in
+    match
+      Syntax.Parser.parse "trait named { name: string }\nlet get = fn[t: named](x: t) -> string { x.name }; get"
+    with
+    | Error _ -> false
+    | Ok first_program -> (
+        match infer_program ~state:shared_state first_program with
+        | Error _ -> false
+        | Ok _ -> (
+            match Syntax.Parser.parse "let x = 1; x" with
+            | Error _ -> false
+            | Ok second_program -> (
+                match infer_program ~state:shared_state second_program with
+                | Error _ -> false
+                | Ok _ -> type_var_user_name_bindings_in_state shared_state = [])))
 
   let%test "reused env preserves constrained generic obligations across infer_program runs" =
     let contains_substring s sub =

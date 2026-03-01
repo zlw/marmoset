@@ -1,3 +1,5 @@
+let version_string = Printf.sprintf "marmoset %s (built %s)" Build_info.git_hash Build_info.build_time
+
 type command =
   | Run of {
       benchmark : bool;
@@ -8,14 +10,22 @@ type command =
       output : string option;
       emit_go : string option;
     }
+  | Release of {
+      input : string;
+      output : string option;
+    }
+  | Check of { filename : string }
+  | Lsp
+  | Version
 
 let print_usage () =
   Printf.eprintf "Usage:\n";
   Printf.eprintf "  marmoset run [--benchmark] <input.mr>\n";
-  Printf.eprintf "  marmoset build <input.mr> [-o output] [--emit-go dir]\n";
-  Printf.eprintf "\n";
-  Printf.eprintf "Notes:\n";
-  Printf.eprintf "  - This CLI is Go-codegen only (no eval/vm engines).\n"
+  Printf.eprintf "  marmoset build <input.mr> [-o output] [-go dir]\n";
+  Printf.eprintf "  marmoset release <input.mr> [-o output]\n";
+  Printf.eprintf "  marmoset check <input.mr>\n";
+  Printf.eprintf "  marmoset lsp\n";
+  Printf.eprintf "  marmoset --version\n"
 
 let parse_args () : command =
   let args = Array.to_list Sys.argv |> List.tl in
@@ -29,7 +39,7 @@ let parse_args () : command =
         | "-o" :: out :: tail ->
             output := Some out;
             parse tail
-        | "--emit-go" :: dir :: tail ->
+        | ("-go" | "--emit-go") :: dir :: tail ->
             emit_go := Some dir;
             parse tail
         | arg :: tail when String.length arg > 0 && arg.[0] <> '-' ->
@@ -42,6 +52,27 @@ let parse_args () : command =
       parse rest;
       match !input with
       | Some input -> Build { input; output = !output; emit_go = !emit_go }
+      | None ->
+          print_usage ();
+          exit 1)
+  | "release" :: rest -> (
+      let input = ref None in
+      let output = ref None in
+      let rec parse = function
+        | [] -> ()
+        | "-o" :: out :: tail ->
+            output := Some out;
+            parse tail
+        | arg :: tail when String.length arg > 0 && arg.[0] <> '-' ->
+            input := Some arg;
+            parse tail
+        | _ ->
+            print_usage ();
+            exit 1
+      in
+      parse rest;
+      match !input with
+      | Some input -> Release { input; output = !output }
       | None ->
           print_usage ();
           exit 1)
@@ -66,6 +97,25 @@ let parse_args () : command =
       | None ->
           print_usage ();
           exit 1)
+  | "check" :: rest -> (
+      let input = ref None in
+      let rec parse = function
+        | [] -> ()
+        | arg :: tail when String.length arg > 0 && arg.[0] <> '-' ->
+            input := Some arg;
+            parse tail
+        | _ ->
+            print_usage ();
+            exit 1
+      in
+      parse rest;
+      match !input with
+      | Some filename -> Check { filename }
+      | None ->
+          print_usage ();
+          exit 1)
+  | [ "lsp" ] -> Lsp
+  | [ "--version" ] | [ "-v" ] | [ "version" ] -> Version
   | [ filename ] -> Run { benchmark = false; filename }
   | _ ->
       print_usage ();
@@ -95,12 +145,15 @@ let output_absolute_path (output : string) : string =
     output
 
 let compile_to_binary
-    ~(input_file : string) ~(source : string) ~(output_bin : string) ~(emit_go_dir : string option) :
-    (unit, string) result =
+    ~(input_file : string)
+    ~(source : string)
+    ~(output_bin : string)
+    ~(emit_go_dir : string option)
+    ~(release : bool) : (unit, string) result =
   match Marmoset.Lib.Go_emitter.compile_to_build ~file_id:input_file source with
   | Error msg -> Error msg
   | Ok build_output ->
-      let temp_dir = ".marmoset-build" in
+      let temp_dir = ".marmoset/build/" ^ string_of_int (Unix.getpid ()) in
       ignore (Sys.command ("mkdir -p " ^ temp_dir));
 
       let main_go_path = Filename.concat temp_dir "main.go" in
@@ -119,15 +172,16 @@ let compile_to_binary
       | None -> ());
 
       let output_abs = output_absolute_path output_bin in
-      let cmd = Printf.sprintf "cd %s && go build -o %s ." temp_dir output_abs in
+      let go_flags =
+        if release then
+          "-ldflags=\"-s -w\" -trimpath"
+        else
+          ""
+      in
+      let cmd = Printf.sprintf "cd %s && go build %s -o %s ." temp_dir go_flags output_abs in
       let exit_code = Sys.command cmd in
 
-      (try
-         Sys.remove main_go_path;
-         Sys.remove runtime_go_path;
-         Sys.remove go_mod_path;
-         ignore (Sys.command ("rmdir " ^ temp_dir))
-       with _ -> ());
+      (try ignore (Sys.command ("rm -rf " ^ temp_dir)) with _ -> ());
 
       if exit_code = 0 then
         Ok ()
@@ -141,7 +195,9 @@ let run_build input output_opt emit_go_opt =
     | Some o -> o
     | None -> Filename.basename (Filename.remove_extension input)
   in
-  match compile_to_binary ~input_file:input ~source ~output_bin:output ~emit_go_dir:emit_go_opt with
+  match
+    compile_to_binary ~input_file:input ~source ~output_bin:output ~emit_go_dir:emit_go_opt ~release:false
+  with
   | Ok () ->
       (match emit_go_opt with
       | Some dir -> Printf.printf "Go source written to %s/\n" dir
@@ -151,12 +207,26 @@ let run_build input output_opt emit_go_opt =
       Printf.eprintf "Error: %s\n" msg;
       exit 1
 
+let run_release input output_opt =
+  let source = read_file input in
+  let output =
+    match output_opt with
+    | Some o -> o
+    | None -> Filename.basename (Filename.remove_extension input)
+  in
+  match compile_to_binary ~input_file:input ~source ~output_bin:output ~emit_go_dir:None ~release:true with
+  | Ok () -> Printf.printf "Built (release): %s\n" output
+  | Error msg ->
+      Printf.eprintf "Error: %s\n" msg;
+      exit 1
+
 let run_file ~(benchmark : bool) ~(filename : string) =
   let source = read_file filename in
   let tmp_bin = Filename.temp_file "marmoset-run" "" in
   (try Sys.remove tmp_bin with _ -> ());
 
-  match compile_to_binary ~input_file:filename ~source ~output_bin:tmp_bin ~emit_go_dir:None with
+  let release = benchmark in
+  match compile_to_binary ~input_file:filename ~source ~output_bin:tmp_bin ~emit_go_dir:None ~release with
   | Error msg ->
       Printf.eprintf "Error: %s\n" msg;
       exit 1
@@ -170,7 +240,24 @@ let run_file ~(benchmark : bool) ~(filename : string) =
       if exit_code <> 0 then
         exit exit_code
 
+let run_check filename =
+  let source = read_file filename in
+  Marmoset_lsp.Doc_state.reset_globals ();
+  let env = Marmoset.Lib.Builtins.prelude_env () in
+  match Marmoset.Lib.Checker.check_string_with_annotations ~env ~file_id:filename source with
+  | Ok _ -> Printf.printf "OK\n"
+  | Error err ->
+      let msg = Marmoset.Lib.Checker.format_error_with_context source err in
+      Printf.eprintf "%s\n" msg;
+      exit 1
+
 let () =
   match parse_args () with
   | Run { benchmark; filename } -> run_file ~benchmark ~filename
   | Build { input; output; emit_go } -> run_build input output emit_go
+  | Release { input; output } -> run_release input output
+  | Check { filename } -> run_check filename
+  | Lsp ->
+      Printf.eprintf "[marmoset-lsp] %s\n%!" version_string;
+      Marmoset_lsp.Server.run ()
+  | Version -> Printf.printf "%s\n" version_string

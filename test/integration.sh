@@ -119,21 +119,58 @@ echo "Building project..."
 (cd "$REPO_ROOT" && dune build "$BUILD_TARGET")
 export MARMOSET_SKIP_BUILD=1
 
-suite_pass=0
-suite_fail=0
+suite_count=${#unique_suites[@]}
 
-for suite in "${unique_suites[@]}"; do
-    echo ""
-    if "$INTEGRATION_DIR/$suite"; then
-        suite_pass=$((suite_pass + 1))
-    else
-        suite_fail=$((suite_fail + 1))
-    fi
-done
+if [ "$suite_count" -le 1 ]; then
+    # Single suite — run directly (no parallelism overhead)
+    suite_pass=0
+    suite_fail=0
+    for suite in "${unique_suites[@]}"; do
+        echo ""
+        if "$INTEGRATION_DIR/$suite"; then
+            suite_pass=$((suite_pass + 1))
+        else
+            suite_fail=$((suite_fail + 1))
+        fi
+    done
+else
+    # Multiple suites — run in parallel
+    echo "Running $suite_count suites in parallel..."
+    LOG_DIR=$(mktemp -d)
+    pids=()
+    suite_names=()
+
+    for suite in "${unique_suites[@]}"; do
+        log_file="$LOG_DIR/$suite.log"
+        "$INTEGRATION_DIR/$suite" > "$log_file" 2>&1 &
+        pids+=($!)
+        suite_names+=("$suite")
+    done
+
+    suite_pass=0
+    suite_fail=0
+
+    for i in "${!pids[@]}"; do
+        pid=${pids[$i]}
+        suite=${suite_names[$i]}
+        log_file="$LOG_DIR/$suite.log"
+
+        if wait "$pid"; then
+            suite_pass=$((suite_pass + 1))
+        else
+            suite_fail=$((suite_fail + 1))
+        fi
+
+        echo ""
+        cat "$log_file"
+    done
+
+    rm -rf "$LOG_DIR"
+fi
 
 echo ""
 echo "=========================================="
-echo "SUITE RESULTS: $suite_pass passed, $suite_fail failed out of ${#unique_suites[@]} suites"
+echo "SUITE RESULTS: $suite_pass passed, $suite_fail failed out of $suite_count suites"
 echo "=========================================="
 
 if [ "$suite_fail" -eq 0 ]; then

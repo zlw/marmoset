@@ -271,8 +271,11 @@ let rec mono_types_equal (t1 : Types.mono_type) (t2 : Types.mono_type) : bool =
 *)
 let rec is_subtype_of (actual : Types.mono_type) (expected : Types.mono_type) : bool =
   match (actual, expected) with
-  (* Type variables: use equality *)
+  (* Type variables: only equal names are known-compatible at subtyping layer.
+     Unresolved-variable compatibility should be handled by callers with
+     explicit unification when appropriate. *)
   | Types.TVar a, Types.TVar b -> a = b
+  | Types.TRowVar a, Types.TRowVar b -> a = b
   (* Same primitive types *)
   | Types.TInt, Types.TInt -> true
   | Types.TFloat, Types.TFloat -> true
@@ -308,7 +311,6 @@ let rec is_subtype_of (actual : Types.mono_type) (expected : Types.mono_type) : 
               | None -> false
             else
               true)
-  | Types.TRowVar a, Types.TRowVar b -> a = b
   (* Functions: contravariant in params, covariant in return *)
   | Types.TFun (p1, r1, _), Types.TFun (p2, r2, _) -> is_subtype_of p2 p1 && is_subtype_of r1 r2
   (* Enums: same name, subtypes for all args *)
@@ -538,3 +540,9 @@ let%test "generic field-only supertrait is rejected in type position" =
     let _ = type_expr_to_mono_type (Syntax.Ast.AST.TCon "tagged_like") in
     false
   with Failure msg -> contains_substring msg "generic field-only supertrait"
+
+let%test "is_subtype_of: TVar only matches same TVar name" =
+  is_subtype_of (Types.TVar "a") (Types.TVar "a") && not (is_subtype_of (Types.TVar "a") (Types.TVar "b"))
+
+let%test "is_subtype_of: concrete does not subtype unresolved TVar" =
+  not (is_subtype_of Types.TInt (Types.TVar "a"))

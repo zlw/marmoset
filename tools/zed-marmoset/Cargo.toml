@@ -1,0 +1,11 @@
+[package]
+name = "marmoset-zed"
+version = "0.2.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+path = "src/marmoset.rs"
+
+[dependencies]
+zed_extension_api = "0.7.0"

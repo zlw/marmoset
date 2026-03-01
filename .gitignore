@@ -35,6 +35,12 @@ _opam/
 *.mar.out
 
 
+# Marmoset local directory (build cache, temp files)
+.marmoset/
+
+# Marmoset binary
+marmoset
+
 # Editors
 .idea
 .zed

@@ -52,7 +52,13 @@ Compile Marmoset source to a Go-built binary:
 Emit generated Go source alongside build:
 
 ```sh
-./marmoset build examples/fibonacci-typed.mr --emit-go out
+./marmoset build examples/fibonacci-typed.mr -go out
+```
+
+Build an optimized release binary (strips symbols, trims paths):
+
+```sh
+./marmoset release examples/fibonacci-typed.mr -o fibonacci
 ```
 
 ## Examples
@@ -98,6 +104,38 @@ Run a specific integration suite:
 
 ```sh
 ./test/integration.sh traits
+```
+
+## CI Policy
+
+PR checks are driven by `.github/workflows/pr-ci.yml` and run on pull request events (`opened`, `reopened`, `synchronize`, `ready_for_review`).
+
+- Compiler changes run:
+  - `PR CI / compiler-unit`
+  - `PR CI / compiler-integration-linux`
+  - `PR CI / quality-lint-fmt-doc`
+- LSP changes run:
+  - `PR CI / lsp-unit`
+  - `PR CI / lsp-integration`
+  - `PR CI / quality-lint-fmt-doc`
+- Editor changes run only the changed editor check:
+  - `PR CI / editor-zed`
+  - `PR CI / editor-vscode`
+  - `PR CI / editor-nvim`
+  - `PR CI / editor-jetbrains`
+
+Local command equivalents used by CI:
+
+```sh
+make ci-compiler-unit
+make ci-compiler-integration-linux
+make ci-lsp-unit
+make ci-lsp-integration
+make ci-quality-lint-fmt-doc
+make ci-editor-zed
+make ci-editor-vscode
+make ci-editor-nvim
+make ci-editor-jetbrains
 ```
 
 ## Documentation

@@ -1,0 +1,32 @@
+name: Setup OCaml
+description: Configure OCaml toolchain and project dependencies for CI jobs.
+
+inputs:
+  ocaml-compiler:
+    description: OCaml compiler version.
+    required: false
+    default: "5.2.x"
+  cache-prefix:
+    description: Prefix for opam/dune cache keys.
+    required: false
+    default: "marmoset-pr-ci-v1"
+
+runs:
+  using: composite
+  steps:
+    - name: Set-up OCaml
+      uses: ocaml/setup-ocaml@v3
+      with:
+        ocaml-compiler: ${{ inputs.ocaml-compiler }}
+        dune-cache: true
+        cache-prefix: ${{ inputs.cache-prefix }}
+
+    - name: Pin linol 0.10
+      shell: bash
+      run: |
+        opam pin add linol https://github.com/c-cube/linol.git#v0.10 -n
+        opam pin add linol-lwt https://github.com/c-cube/linol.git#v0.10 -n
+
+    - name: Install opam dependencies
+      shell: bash
+      run: opam install . --deps-only --with-test

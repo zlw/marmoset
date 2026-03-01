@@ -1,0 +1,30 @@
+<idea-plugin>
+    <id>com.github.zlw.marmoset</id>
+    <name>Marmoset</name>
+    <vendor>zlw</vendor>
+    <description><![CDATA[
+        Language support for the <a href="https://github.com/zlw/marmoset">Marmoset</a> programming language.
+        <ul>
+            <li>Syntax highlighting via TextMate grammar</li>
+            <li>LSP-powered diagnostics, hover, and completions via <code>marmoset lsp</code></li>
+        </ul>
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+    <depends>org.jetbrains.plugins.textmate</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <fileType
+            name="Marmoset"
+            implementationClass="com.github.zlw.marmoset.MarmosetFileType"
+            fieldName="INSTANCE"
+            language="Marmoset"
+            extensions="mr"/>
+
+        <platform.lsp.serverSupportProvider
+            implementation="com.github.zlw.marmoset.lsp.MarmosetLspServerSupportProvider"/>
+
+        <textmate.bundleProvider
+            implementation="com.github.zlw.marmoset.MarmosetTextMateBundleProvider"/>
+    </extensions>
+</idea-plugin>
