@@ -392,3 +392,10 @@ If migration causes disruption:
   - applied label to PR #1 and observed label-triggered run `22549698364`
   - verified run `22549698364` executes only `compiler-integration-macos` + `compiler-integration-windows` while other jobs are skipped
   - verified regular `synchronize` run `22549691215` continues independently (no cross-cancellation with label run)
+- 2026-03-01 19:32 CET: Simplified cross-platform trigger back to manual-only flow:
+  - removed `pull_request:labeled` trigger and all `ci:cross-platform` label condition logic from `pr-ci.yml`
+  - restored cross-platform jobs to run only on `workflow_dispatch` with `inputs.ref || github.sha`
+  - restored README guidance to manual Actions UI dispatch only (no PR label workflow)
+- 2026-03-01 19:32 CET: Cleaned up temporary label artifacts:
+  - removed `ci:cross-platform` label from PR #1
+  - deleted repository label `ci:cross-platform`

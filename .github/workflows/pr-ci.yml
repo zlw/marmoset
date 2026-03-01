@@ -7,7 +7,6 @@ on:
       - reopened
       - synchronize
       - ready_for_review
-      - labeled
   workflow_dispatch:
     inputs:
       ref:
@@ -16,13 +15,13 @@ on:
         type: string
 
 concurrency:
-  group: pr-ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}-${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && 'cross-platform' || 'default' }}
+  group: pr-ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: true
 
 jobs:
   changes:
     name: changes
-    if: github.event_name == 'pull_request' && github.event.action != 'labeled'
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       pull-requests: read
@@ -242,7 +241,7 @@ jobs:
       - editor-vscode
       - editor-nvim
       - editor-jetbrains
-    if: github.event_name == 'pull_request' && github.event.action != 'labeled' && always()
+    if: github.event_name == 'pull_request' && always()
     runs-on: ubuntu-latest
     steps:
       - name: Print CI routing summary
@@ -268,7 +267,7 @@ jobs:
 
   compiler-integration-macos:
     name: compiler-integration-macos
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'ci:cross-platform')
+    if: github.event_name == 'workflow_dispatch'
     runs-on: macos-latest
     defaults:
       run:
@@ -277,7 +276,7 @@ jobs:
       - name: Checkout tree
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && (inputs.ref || github.sha) || github.event.pull_request.head.sha }}
+          ref: ${{ inputs.ref || github.sha }}
 
       - name: Shared OCaml+Go setup
         uses: ./.github/actions/setup-ocaml-go
@@ -289,7 +288,7 @@ jobs:
 
   compiler-integration-windows:
     name: compiler-integration-windows
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'ci:cross-platform')
+    if: github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
     defaults:
       run:
@@ -298,7 +297,7 @@ jobs:
       - name: Checkout tree
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && (inputs.ref || github.sha) || github.event.pull_request.head.sha }}
+          ref: ${{ inputs.ref || github.sha }}
 
       - name: Shared OCaml+Go setup
         uses: ./.github/actions/setup-ocaml-go

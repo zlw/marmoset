@@ -108,7 +108,7 @@ Run a specific integration suite:
 
 ## CI Policy
 
-PR checks are driven by `.github/workflows/pr-ci.yml` and run on pull request events (`opened`, `reopened`, `synchronize`, `ready_for_review`, `labeled`).
+PR checks are driven by `.github/workflows/pr-ci.yml` and run on pull request events (`opened`, `reopened`, `synchronize`, `ready_for_review`).
 
 - Compiler changes run:
   - `PR CI / compiler-unit`
@@ -124,7 +124,7 @@ PR checks are driven by `.github/workflows/pr-ci.yml` and run on pull request ev
   - `PR CI / editor-nvim`
   - `PR CI / editor-jetbrains`
 
-Before merging to `main`, trigger cross-platform checks from the PR UI by adding label `ci:cross-platform` (or run `.github/workflows/pr-ci.yml` via `workflow_dispatch` on the PR head) so both required checks pass:
+Before merging to `main`, run `.github/workflows/pr-ci.yml` via `workflow_dispatch` on the PR head so both required checks pass:
 
 - `PR CI / compiler-integration-macos`
 - `PR CI / compiler-integration-windows`
