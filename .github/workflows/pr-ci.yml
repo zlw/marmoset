@@ -7,14 +7,21 @@ on:
       - reopened
       - synchronize
       - ready_for_review
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref (branch, tag, or SHA) to test"
+        required: false
+        type: string
 
 concurrency:
-  group: pr-ci-${{ github.workflow }}-${{ github.event.pull_request.number }}
+  group: pr-ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: true
 
 jobs:
   changes:
     name: changes
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       pull-requests: read
@@ -234,7 +241,7 @@ jobs:
       - editor-vscode
       - editor-nvim
       - editor-jetbrains
-    if: always()
+    if: github.event_name == 'pull_request' && always()
     runs-on: ubuntu-latest
     steps:
       - name: Print CI routing summary
@@ -257,3 +264,45 @@ jobs:
           echo "  editor-vscode=${{ needs.editor-vscode.result }}"
           echo "  editor-nvim=${{ needs.editor-nvim.result }}"
           echo "  editor-jetbrains=${{ needs.editor-jetbrains.result }}"
+
+  compiler-integration-macos:
+    name: compiler-integration-macos
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: macos-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout tree
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+
+      - name: Shared OCaml+Go setup
+        uses: ./.github/actions/setup-ocaml-go
+        with:
+          cache-prefix: marmoset-manual-cross-platform-v2
+
+      - name: Run compiler integration suite
+        run: opam exec -- bash ./test/integration.sh
+
+  compiler-integration-windows:
+    name: compiler-integration-windows
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout tree
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+
+      - name: Shared OCaml+Go setup
+        uses: ./.github/actions/setup-ocaml-go
+        with:
+          cache-prefix: marmoset-manual-cross-platform-v2
+
+      - name: Run compiler integration suite
+        run: opam exec -- bash ./test/integration.sh

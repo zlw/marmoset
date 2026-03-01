@@ -375,3 +375,10 @@ If migration causes disruption:
 - 2026-03-01 19:02 CET: CI break/fix follow-up:
   - fixed `quality-lint-fmt-doc` failure by ensuring `ocamlformat` and `odoc` are installed in `test/ci/quality.sh` before running `@fmt`/`@doc`
   - fixed `editor-vscode` failure by replacing `npm ci` with `npm install --no-package-lock` in `test/ci/editor-vscode.sh` (repo currently has no lockfile)
+- 2026-03-01 19:12 CET: Required-check duplication fix:
+  - root cause: two workflows shared `name: PR CI`, so GitHub reported event-qualified check contexts (`... (pull_request)`) that did not match ruleset required contexts
+  - moved manual macOS/windows integration jobs into `.github/workflows/pr-ci.yml` under `workflow_dispatch`
+  - removed `.github/workflows/cross-platform-matrix.yml` to eliminate context-name collision
+  - updated README manual-run reference to dispatch `pr-ci.yml` directly
+- 2026-03-01 19:12 CET: Quality check fix refined:
+  - pinned formatter install to `ocamlformat.0.27.0` in `test/ci/quality.sh` to match `.ocamlformat` version guard.
