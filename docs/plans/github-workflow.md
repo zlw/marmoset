@@ -399,3 +399,7 @@ If migration causes disruption:
 - 2026-03-01 19:32 CET: Cleaned up temporary label artifacts:
   - removed `ci:cross-platform` label from PR #1
   - deleted repository label `ci:cross-platform`
+- 2026-03-01 19:37 CET: Ruleset usability adjustment for owner/admin flow:
+  - updated GitHub ruleset `branch: main` (`id=13342513`) pull-request parameters to set `require_last_push_approval=false`
+  - retained all required status checks and strict required-status policy
+  - retained bypass actor configuration (`RepositoryRole: admin`) for explicit bypass when needed
