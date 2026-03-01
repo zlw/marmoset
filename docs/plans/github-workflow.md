@@ -454,3 +454,6 @@ If migration causes disruption:
 - 2026-03-01 20:16 CET: Integration cache warning cleanup:
   - disabled Go module cache in `.github/actions/setup-ocaml-go/action.yml` (`actions/setup-go@v5` `cache: false`)
   - removes noisy warnings when repository has no `go.sum` / module-cache path for integration jobs
+- 2026-03-01 20:17 CET: Strict-check freshness sync:
+  - merged `main` into `worktree-lsp` to satisfy `strict_required_status_checks_policy` up-to-date requirement
+  - this resolves false-looking `Expected` required-check states caused by `mergeStateStatus=BEHIND` on otherwise green runs
