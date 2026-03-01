@@ -1,0 +1,54 @@
+name: Manual Cross-Platform
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref (branch, tag, or SHA) to test"
+        required: false
+        type: string
+
+concurrency:
+  group: manual-cross-platform-${{ github.workflow }}-${{ inputs.ref || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  compiler-integration-macos:
+    name: compiler-integration-macos
+    runs-on: macos-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout tree
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+
+      - name: Shared OCaml+Go setup
+        uses: ./.github/actions/setup-ocaml-go
+        with:
+          cache-prefix: marmoset-manual-cross-platform-v2
+
+      - name: Run compiler integration suite
+        run: opam exec -- bash ./test/integration.sh
+
+  compiler-integration-windows:
+    name: compiler-integration-windows
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout tree
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+
+      - name: Shared OCaml+Go setup
+        uses: ./.github/actions/setup-ocaml-go
+        with:
+          cache-prefix: marmoset-manual-cross-platform-v2
+
+      - name: Run compiler integration suite
+        run: opam exec -- bash ./test/integration.sh
