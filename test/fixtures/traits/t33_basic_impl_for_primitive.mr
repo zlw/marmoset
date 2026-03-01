@@ -1,0 +1,10 @@
+# T33: Basic impl for primitive
+trait show[a] {
+       fn show(x: a) -> string
+     }
+     impl show for int {
+       fn show(x: int) -> string {
+         "int"
+       }
+     }
+     42

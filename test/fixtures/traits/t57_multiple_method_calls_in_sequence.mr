@@ -1,0 +1,15 @@
+# T57: Multiple method calls in sequence
+# output: number
+# output: number
+trait show[a] {
+  fn show(x: a) -> string
+}
+impl show for int {
+  fn show(x: int) -> string {
+    "number"
+  }
+}
+let x = 1
+let y = 2
+puts(x.show())
+puts(y.show())

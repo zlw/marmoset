@@ -1,0 +1,8 @@
+# T09: Inherent method colliding with trait method is rejected
+# error: collides with trait method
+impl int {
+  fn show(x: int) -> string {
+    "inherent"
+  }
+}
+puts(1)

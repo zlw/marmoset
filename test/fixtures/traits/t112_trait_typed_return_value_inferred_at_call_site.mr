@@ -1,0 +1,10 @@
+# T112: Trait-typed return value inferred at call site
+# output: alice
+trait named {
+  name: string
+}
+let extract = fn(x: named) -> string {
+  x.name
+}
+let result = extract({ name: "alice", age: 30, role: "admin" })
+puts(result)

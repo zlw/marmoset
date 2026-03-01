@@ -1,0 +1,16 @@
+# T70: Supertrait: impl ord requires eq for same type
+# error: supertrait
+trait eq[a] {
+  fn eq(x: a, y: a) -> bool
+}
+trait ord[a]: eq {
+  fn compare(x: a, y: a) -> int
+}
+type point = { x: int }
+impl ord for point {
+  fn compare(x: point, y: point) -> int {
+    0
+  }
+}
+let p: point = { x: 1 }
+puts(p.compare(p))

@@ -1,0 +1,14 @@
+# T43: Generic impl constraints are enforced at use sites
+# error: does not satisfy trait named
+trait named {
+  name: string
+}
+trait show[a] {
+  fn show(x: a) -> string
+}
+impl show[b: named] for list[b] {
+  fn show(x: list[b]) -> string {
+    "ok"
+  }
+}
+puts([1, 2].show())

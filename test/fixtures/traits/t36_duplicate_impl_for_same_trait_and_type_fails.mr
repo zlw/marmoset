@@ -1,0 +1,16 @@
+# T36: Duplicate impl for same trait and type fails
+# error: *
+trait show[a] {
+       fn show(x: a) -> string
+     }
+     impl show for int {
+       fn show(x: int) -> string {
+         "first"
+       }
+     }
+     impl show for int {
+       fn show(x: int) -> string {
+         "second"
+       }
+     }
+     42

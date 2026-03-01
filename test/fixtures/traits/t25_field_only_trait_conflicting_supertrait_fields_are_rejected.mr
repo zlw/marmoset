@@ -1,0 +1,11 @@
+# T25: Field-only trait conflicting supertrait fields are rejected
+# error: conflicting types across supertraits
+trait has_int {
+  x: int
+}
+trait has_string {
+  x: string
+}
+trait bad: has_int + has_string {
+}
+let x: bad = { x: 1 }

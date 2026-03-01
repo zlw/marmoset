@@ -1,0 +1,16 @@
+# T16: Method trait impl can satisfy field-only supertrait structurally
+# output: alice
+type person = { name: string, age: int }
+trait named {
+  name: string
+}
+trait shown[a]: named {
+  fn show(x: a) -> string
+}
+impl shown for person {
+  fn show(x: person) -> string {
+    x.name
+  }
+}
+let p: person = { name: "alice", age: 42 }
+puts(p.show())

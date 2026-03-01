@@ -1,0 +1,7 @@
+# T113: Field-only trait with bool field
+# output: true
+trait togglable {
+  active: bool
+}
+let x: togglable = { active: true, name: "switch" }
+puts(x.active)

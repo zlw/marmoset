@@ -1,0 +1,15 @@
+# T110: Diamond supertrait exposes all inherited fields
+# output: eng sf
+trait named {
+  name: string
+}
+trait worker: named {
+  job: string
+}
+trait resident: named {
+  city: string
+}
+trait citizen: worker + resident {
+}
+let x: citizen = { name: "alice", job: "eng", city: "sf", extra: true }
+puts(x.job + " " + x.city)

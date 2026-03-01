@@ -1,0 +1,8 @@
+# T05: Inherent method call on int
+# output: 4
+impl int {
+  fn twice(x: int) -> int {
+    x + x
+  }
+}
+puts(2.twice())

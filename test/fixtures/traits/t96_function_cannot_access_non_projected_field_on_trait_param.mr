@@ -1,0 +1,9 @@
+# T96: Function cannot access non-projected field on trait param
+# error: Record field 'id' not found in type
+trait greetable {
+  greeting: string
+}
+let get_id = fn(g: greetable) -> int {
+  g.id
+}
+puts(get_id({ greeting: "hello", id: 1 }))

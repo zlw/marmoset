@@ -1,0 +1,12 @@
+# T52: Custom neg impl drives unary - operator on non-primitive types
+# output: 5
+enum boxed {
+  val(int)
+}
+impl neg for boxed {
+  fn neg(x: boxed) -> boxed { x }
+}
+let a = boxed.val(5)
+match (-a) {
+  boxed.val(n): puts(n)
+}

@@ -1,0 +1,6 @@
+# T47: Arithmetic requires num trait (bool should fail)
+# error: missing-impl
+let add = fn[a](x: a, y: a) {
+  x + y
+};
+add(true, false)

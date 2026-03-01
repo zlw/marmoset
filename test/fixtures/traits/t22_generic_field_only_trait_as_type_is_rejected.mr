@@ -1,0 +1,6 @@
+# T22: Generic field-only trait as type is rejected
+# error: generic field-only trait objects are not supported in this phase
+trait tagged[a] {
+  tag: a
+}
+let x: tagged = { tag: 1 }

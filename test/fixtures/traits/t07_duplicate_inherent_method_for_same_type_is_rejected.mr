@@ -1,0 +1,13 @@
+# T07: Duplicate inherent method for same type is rejected
+# error: Duplicate inherent method 'ping'
+impl int {
+  fn ping(x: int) -> int {
+    x
+  }
+}
+impl int {
+  fn ping(x: int) -> int {
+    x
+  }
+}
+puts(1)

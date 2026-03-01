@@ -1,0 +1,11 @@
+# T23: Trait with method supertrait is rejected in type position
+# error: method and mixed trait objects are not supported in this phase
+trait named {
+  name: string
+}
+trait show[a] {
+  fn show(x: a) -> string
+}
+trait named_show: named + show {
+}
+let x: named_show = { name: "alice" }

@@ -1,0 +1,10 @@
+# T30: Field-only trait object returned from annotated function still hides non-projected fields
+# error: Record field 'age' not found in type
+trait named {
+  name: string
+}
+let mk = fn(age: int) -> named {
+  { name: "alice", age: age }
+}
+let x = mk(1)
+puts(x.age)

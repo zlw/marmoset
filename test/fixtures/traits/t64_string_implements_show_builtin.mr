@@ -1,0 +1,4 @@
+# T64: string implements show (builtin)
+# output: hello
+let s = "hello"
+puts(s.show())

@@ -1,0 +1,9 @@
+# T03: Duplicate trait definition is rejected in one program
+# error: Duplicate trait definition: ping
+trait ping[a] {
+  fn ping(x: a) -> int
+}
+trait ping[a] {
+  fn pong(x: a) -> int
+}
+puts(1)

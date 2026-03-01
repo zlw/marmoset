@@ -1,0 +1,10 @@
+# T91: Supertrait chain: access child's own fields
+# output: a person
+trait named {
+  name: string
+}
+trait described: named {
+  description: string
+}
+let x: described = { name: "alice", description: "a person", hobby: "chess" }
+puts(x.description)

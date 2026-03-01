@@ -1,0 +1,8 @@
+# T103: List of trait objects hides non-projected fields on element access
+# error: Record field 'role' not found in type
+trait named {
+  name: string
+}
+let a: named = { name: "alice", role: "admin" }
+let xs: list[named] = [a]
+puts(xs[0].role)

@@ -1,0 +1,12 @@
+# T53: Basic trait method call on int
+# output: 42
+trait show[a] {
+  fn show(x: a) -> string
+}
+impl show for int {
+  fn show(x: int) -> string {
+    "42"
+  }
+}
+let x = 42
+puts(x.show())

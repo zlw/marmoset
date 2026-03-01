@@ -1,0 +1,7 @@
+# T27: Field-only trait object rejects access to non-projected field
+# error: Record field 'age' not found in type
+trait named {
+  name: string
+}
+let x: named = { name: "alice", age: 1 }
+puts(x.age)

@@ -1,0 +1,6 @@
+# T38: Derive single trait for primitive
+trait eq[a] {
+       fn eq(x: a, y: a) -> bool
+     }
+     derive eq for int;
+     42

@@ -1,0 +1,10 @@
+# T90: Supertrait chain inherits parent fields
+# output: alice
+trait named {
+  name: string
+}
+trait described: named {
+  description: string
+}
+let x: described = { name: "alice", description: "a person", hobby: "chess" }
+puts(x.name)

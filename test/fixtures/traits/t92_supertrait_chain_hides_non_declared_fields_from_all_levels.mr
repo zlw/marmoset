@@ -1,0 +1,10 @@
+# T92: Supertrait chain hides non-declared fields from all levels
+# error: Record field 'hobby' not found in type
+trait named {
+  name: string
+}
+trait described: named {
+  description: string
+}
+let x: described = { name: "alice", description: "a person", hobby: "chess" }
+puts(x.hobby)

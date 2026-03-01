@@ -1,0 +1,12 @@
+# T56: Method call on string
+# output: hello
+trait show[a] {
+  fn show(x: a) -> string
+}
+impl show for string {
+  fn show(x: string) -> string {
+    x
+  }
+}
+let s = "hello"
+puts(s.show())
