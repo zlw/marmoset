@@ -432,7 +432,6 @@ emit_diag_record() {
 
 try_parse_canonical_header() {
     local line="$1"
-    CH_MATCHED=0
     CH_SEVERITY=""
     CH_CODE=""
     CH_MESSAGE=""
@@ -443,7 +442,6 @@ try_parse_canonical_header() {
     CH_END_COL=""
 
     if [[ "$line" =~ ^(.+):([0-9]+):([0-9]+)-([0-9]+):([0-9]+):[[:space:]]*([Ee]rror|[Ww]arning|[Ii]nfo)[[:space:]]+([A-Za-z0-9._-]+):[[:space:]]*(.*)$ ]]; then
-        CH_MATCHED=1
         CH_FILE="${BASH_REMATCH[1]}"
         CH_START_LINE="${BASH_REMATCH[2]}"
         CH_START_COL="${BASH_REMATCH[3]}"
@@ -456,7 +454,6 @@ try_parse_canonical_header() {
     fi
 
     if [[ "$line" =~ ^(.+):([0-9]+):([0-9]+):[[:space:]]*([Ee]rror|[Ww]arning|[Ii]nfo)[[:space:]]+([A-Za-z0-9._-]+):[[:space:]]*(.*)$ ]]; then
-        CH_MATCHED=1
         CH_FILE="${BASH_REMATCH[1]}"
         CH_START_LINE="${BASH_REMATCH[2]}"
         CH_START_COL="${BASH_REMATCH[3]}"
@@ -469,7 +466,6 @@ try_parse_canonical_header() {
     fi
 
     if [[ "$line" =~ ^([Ee]rror|[Ww]arning|[Ii]nfo)[[:space:]]+([A-Za-z0-9._-]+):[[:space:]]*(.*)$ ]]; then
-        CH_MATCHED=1
         CH_FILE=""
         CH_START_LINE=""
         CH_START_COL=""

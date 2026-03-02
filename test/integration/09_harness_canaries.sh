@@ -149,6 +149,11 @@ awk -v stub_exec="$STUB_EXEC" '
 ' "$HARNESS" > "$HARNESS_COPY"
 chmod +x "$HARNESS_COPY"
 
+if ! grep -q 'EXECUTABLE=' "$HARNESS_COPY"; then
+    echo "FATAL: stub EXECUTABLE= injection did not land in harness copy" >&2
+    exit 2
+fi
+
 rel_missing="${canary_missing#$FIXTURE_ROOT/}"
 rel_line="${canary_line#$FIXTURE_ROOT/}"
 rel_unexpected="${canary_unexpected#$FIXTURE_ROOT/}"
