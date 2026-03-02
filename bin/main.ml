@@ -1,4 +1,5 @@
 let version_string = Printf.sprintf "marmoset %s (built %s)" Build_info.git_hash Build_info.build_time
+module Diagnostic = Marmoset.Lib.Diagnostic
 
 type command =
   | Run of {
@@ -144,14 +145,60 @@ let output_absolute_path (output : string) : string =
   else
     output
 
+let string_contains (s : string) (needle : string) : bool =
+  let len_sub = String.length needle in
+  let len_s = String.length s in
+  if len_sub = 0 then
+    true
+  else if len_sub > len_s then
+    false
+  else
+    let rec check i =
+      if i + len_sub > len_s then
+        false
+      else if String.sub s i len_sub = needle then
+        true
+      else
+        check (i + 1)
+    in
+    check 0
+
+let read_all_lines (ic : in_channel) : string =
+  let buf = Buffer.create 256 in
+  (try
+     while true do
+       Buffer.add_string buf (input_line ic);
+       Buffer.add_char buf '\n'
+     done
+   with End_of_file -> ());
+  Buffer.contents buf
+
+let run_command_capture_combined_output (cmd : string) : int * string =
+  let ic = Unix.open_process_in (cmd ^ " 2>&1") in
+  let output = read_all_lines ic |> String.trim in
+  let status = Unix.close_process_in ic in
+  let exit_code =
+    match status with
+    | Unix.WEXITED code -> code
+    | Unix.WSIGNALED signal | Unix.WSTOPPED signal -> 128 + signal
+  in
+  (exit_code, output)
+
+let is_go_missing_output (output : string) : bool =
+  let lower = String.lowercase_ascii output in
+  string_contains lower "go: command not found"
+  || string_contains lower "go: not found"
+  || string_contains lower "'go' is not recognized"
+  || string_contains lower "executable file not found"
+
 let compile_to_binary
     ~(input_file : string)
     ~(source : string)
     ~(output_bin : string)
     ~(emit_go_dir : string option)
-    ~(release : bool) : (unit, string) result =
+    ~(release : bool) : (unit, Diagnostic.t) result =
   match Marmoset.Lib.Go_emitter.compile_to_build ~file_id:input_file source with
-  | Error msg -> Error msg
+  | Error diag -> Error diag
   | Ok build_output ->
       let temp_dir = ".marmoset/build/" ^ string_of_int (Unix.getpid ()) in
       ignore (Sys.command ("mkdir -p " ^ temp_dir));
@@ -179,14 +226,26 @@ let compile_to_binary
           ""
       in
       let cmd = Printf.sprintf "cd %s && go build %s -o %s ." temp_dir go_flags output_abs in
-      let exit_code = Sys.command cmd in
+      let exit_code, go_output = run_command_capture_combined_output cmd in
 
       (try ignore (Sys.command ("rm -rf " ^ temp_dir)) with _ -> ());
 
       if exit_code = 0 then
         Ok ()
       else
-        Error "Go build failed"
+        let message =
+          if go_output = "" then
+            "Go build failed"
+          else
+            go_output
+        in
+        let code =
+          if is_go_missing_output message then
+            "build-go-missing"
+          else
+            "build-go-compile"
+        in
+        Error (Diagnostic.error_no_span ~code ~message)
 
 let run_build input output_opt emit_go_opt =
   let source = read_file input in
@@ -203,8 +262,8 @@ let run_build input output_opt emit_go_opt =
       | Some dir -> Printf.printf "Go source written to %s/\n" dir
       | None -> ());
       Printf.printf "Built: %s\n" output
-  | Error msg ->
-      Printf.eprintf "Error: %s\n" msg;
+  | Error diag ->
+      Printf.eprintf "Error: %s\n" diag.message;
       exit 1
 
 let run_release input output_opt =
@@ -216,8 +275,8 @@ let run_release input output_opt =
   in
   match compile_to_binary ~input_file:input ~source ~output_bin:output ~emit_go_dir:None ~release:true with
   | Ok () -> Printf.printf "Built (release): %s\n" output
-  | Error msg ->
-      Printf.eprintf "Error: %s\n" msg;
+  | Error diag ->
+      Printf.eprintf "Error: %s\n" diag.message;
       exit 1
 
 let run_file ~(benchmark : bool) ~(filename : string) =
@@ -227,8 +286,8 @@ let run_file ~(benchmark : bool) ~(filename : string) =
 
   let release = benchmark in
   match compile_to_binary ~input_file:filename ~source ~output_bin:tmp_bin ~emit_go_dir:None ~release with
-  | Error msg ->
-      Printf.eprintf "Error: %s\n" msg;
+  | Error diag ->
+      Printf.eprintf "Error: %s\n" diag.message;
       exit 1
   | Ok () ->
       let start = Sys.time () in
