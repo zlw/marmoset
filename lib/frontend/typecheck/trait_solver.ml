@@ -3,6 +3,7 @@
 module Types = Types
 module Trait_registry = Trait_registry
 module Unify = Unify
+module Diagnostic = Diagnostics.Diagnostic
 module AST = Syntax.Ast.AST
 module StringSet = Set.Make (String)
 
@@ -22,7 +23,10 @@ let expand_constraints_with_supertraits (constraints : string list) : string lis
   |> List.fold_left (fun acc trait_name -> acc @ Trait_registry.trait_with_supertraits trait_name) []
   |> dedupe_preserve_order
 
-let check_trait_fields (typ : Types.mono_type) (trait_name : string) : (unit, string) result =
+let trait_error ~(code : string) (message : string) : (unit, Diagnostic.t) result =
+  Error (Diagnostic.error_no_span ~code ~message)
+
+let check_trait_fields (typ : Types.mono_type) (trait_name : string) : (unit, Diagnostic.t) result =
   match Trait_registry.lookup_trait_fields trait_name with
   | None | Some [] -> Ok ()
   | Some required_fields -> (
@@ -36,7 +40,7 @@ let check_trait_fields (typ : Types.mono_type) (trait_name : string) : (unit, st
                   List.find_opt (fun (f : Types.record_field_type) -> f.name = required.name) actual_fields
                 with
                 | None ->
-                    Error
+                    trait_error ~code:"type-trait-missing-field"
                       (Printf.sprintf
                          "Trait satisfaction failed [missing-field]: type %s does not satisfy trait %s because field '%s' is required"
                          type_str trait_name required.name)
@@ -46,7 +50,7 @@ let check_trait_fields (typ : Types.mono_type) (trait_name : string) : (unit, st
                     match Unify.unify actual_type required_type with
                     | Ok _ -> check_required rest
                     | Error _ ->
-                        Error
+                        trait_error ~code:"type-trait-type-mismatch"
                           (Printf.sprintf
                              "Trait satisfaction failed [field-type-mismatch]: type %s does not satisfy trait %s because field '%s' has type %s but expected %s"
                              type_str trait_name required.name (Types.to_string actual_type)
@@ -54,17 +58,19 @@ let check_trait_fields (typ : Types.mono_type) (trait_name : string) : (unit, st
           in
           check_required required_fields
       | _ ->
-          Error
+          trait_error ~code:"type-trait-non-record"
             (Printf.sprintf
                "Trait satisfaction failed [non-record-for-field-trait]: type %s does not satisfy trait %s because field traits require a record receiver"
                type_str trait_name))
 
-let rec check_trait_methods (typ : Types.mono_type) (trait_name : string) : (unit, string) result =
+let rec check_trait_methods (typ : Types.mono_type) (trait_name : string) : (unit, Diagnostic.t) result =
   let typ' = Types.canonicalize_mono_type typ in
   match Trait_registry.resolve_impl trait_name typ' with
-  | Error msg -> Error (Printf.sprintf "Trait satisfaction failed [impl-resolution]: %s" msg)
+  | Error msg ->
+      trait_error ~code:"type-trait-impl-resolution"
+        (Printf.sprintf "Trait satisfaction failed [impl-resolution]: %s" msg)
   | Ok None ->
-      Error
+      trait_error ~code:"type-trait-missing-impl"
         (Printf.sprintf "Trait satisfaction failed [missing-impl]: type %s does not implement trait %s"
            (Types.to_string typ') trait_name)
   | Ok (Some resolved_impl) ->
@@ -73,7 +79,7 @@ let rec check_trait_methods (typ : Types.mono_type) (trait_name : string) : (uni
         | (p : AST.generic_param) :: rest -> (
             match List.assoc_opt p.name resolved_impl.specialization_subst with
             | None ->
-                Error
+                trait_error ~code:"type-trait-specialization"
                   (Printf.sprintf
                      "Trait satisfaction failed [impl-specialization]: generic impl for trait %s could not resolve parameter '%s' for type %s"
                      trait_name p.name (Types.to_string typ'))
@@ -86,13 +92,13 @@ let rec check_trait_methods (typ : Types.mono_type) (trait_name : string) : (uni
                         check_trait_with_supertraits StringSet.empty concrete_param_type' constraint_trait
                       with
                       | Ok () -> check_param_constraints constraints_rest
-                      | Error msg ->
-                          Error
+                      | Error diag ->
+                          trait_error ~code:"type-trait-generic-constraint"
                             (Printf.sprintf
                                "Trait satisfaction failed [generic-impl-constraint]: parameter '%s' resolved to type %s does not satisfy required constraint %s (%s)"
                                p.name
                                (Types.to_string concrete_param_type')
-                               constraint_trait msg))
+                               constraint_trait diag.message))
                 in
                 match check_param_constraints p.constraints with
                 | Ok () -> check_generic_constraints rest
@@ -100,9 +106,9 @@ let rec check_trait_methods (typ : Types.mono_type) (trait_name : string) : (uni
       in
       check_generic_constraints resolved_impl.impl.impl_type_params
 
-and check_trait_self_requirements (typ : Types.mono_type) (trait_name : string) : (unit, string) result =
+and check_trait_self_requirements (typ : Types.mono_type) (trait_name : string) : (unit, Diagnostic.t) result =
   match Trait_registry.lookup_trait trait_name with
-  | None -> Error (Printf.sprintf "Trait satisfaction failed [unknown-trait]: %s" trait_name)
+  | None -> trait_error ~code:"type-trait-unknown" (Printf.sprintf "Trait satisfaction failed [unknown-trait]: %s" trait_name)
   | Some _ -> (
       let kind = Trait_registry.trait_kind trait_name in
       let field_result = check_trait_fields typ trait_name in
@@ -116,7 +122,7 @@ and check_trait_self_requirements (typ : Types.mono_type) (trait_name : string) 
       | Ok () -> method_result)
 
 and check_trait_with_supertraits (visited : StringSet.t) (typ : Types.mono_type) (trait_name : string) :
-    (unit, string) result =
+    (unit, Diagnostic.t) result =
   if StringSet.mem trait_name visited then
     Ok ()
   else
@@ -129,7 +135,7 @@ and check_trait_with_supertraits (visited : StringSet.t) (typ : Types.mono_type)
         | Some trait_def -> check_supertraits visited' typ trait_def.trait_supertraits)
 
 and check_supertraits (visited : StringSet.t) (typ : Types.mono_type) (traits : string list) :
-    (unit, string) result =
+    (unit, Diagnostic.t) result =
   match traits with
   | [] -> Ok ()
   | trait_name :: rest -> (
@@ -137,7 +143,7 @@ and check_supertraits (visited : StringSet.t) (typ : Types.mono_type) (traits : 
       | Ok () -> check_supertraits visited typ rest
       | Error _ as err -> err)
 
-and satisfies_trait (typ : Types.mono_type) (trait_name : string) : (unit, string) result =
+and satisfies_trait (typ : Types.mono_type) (trait_name : string) : (unit, Diagnostic.t) result =
   check_trait_with_supertraits StringSet.empty (Types.canonicalize_mono_type typ) trait_name
 
 let satisfies_trait_bool (typ : Types.mono_type) (trait_name : string) : bool =
@@ -149,7 +155,7 @@ let satisfies_trait_bool (typ : Types.mono_type) (trait_name : string) : bool =
 let implements_trait (typ : Types.mono_type) (trait_name : string) : bool = satisfies_trait_bool typ trait_name
 
 (* Check if a type satisfies constraints, returning error if not *)
-let check_constraints (typ : Types.mono_type) (constraints : string list) : (unit, string) result =
+let check_constraints (typ : Types.mono_type) (constraints : string list) : (unit, Diagnostic.t) result =
   let rec check traits =
     match traits with
     | [] -> Ok ()
@@ -312,7 +318,7 @@ let%test "check_constraints failure" =
   setup_builtins ();
   match check_constraints (Types.TArray Types.TInt) [ "show" ] with
   | Ok () -> false
-  | Error msg -> String.length msg > 0 && contains_substring msg "[missing-impl]"
+  | Error diag -> String.length diag.message > 0 && diag.code = "type-trait-missing-impl"
 
 let%test "satisfies_trait succeeds for builtin eq[int]" =
   setup_builtins ();
@@ -378,7 +384,7 @@ let%test "check_constraints enforces supertrait obligations transitively" =
     };
   match check_constraints Types.TString [ "ord" ] with
   | Ok () -> false
-  | Error msg -> String.length msg > 0
+  | Error diag -> String.length diag.message > 0
 
 let%test "satisfies_trait enforces supertrait obligations transitively" =
   Trait_registry.clear ();
@@ -426,7 +432,7 @@ let%test "satisfies_trait enforces supertrait obligations transitively" =
     };
   match satisfies_trait Types.TString "ord" with
   | Ok () -> false
-  | Error msg -> String.length msg > 0
+  | Error diag -> String.length diag.message > 0
 
 let%test "field-only trait is satisfied structurally by matching record" =
   Trait_registry.clear ();
@@ -444,7 +450,7 @@ let%test "field-only trait rejects non-record types" =
   Trait_registry.set_trait_fields "named" [ { Types.name = "name"; typ = Types.TString } ];
   match satisfies_trait Types.TInt "named" with
   | Ok () -> false
-  | Error msg -> contains_substring msg "record" && contains_substring msg "[non-record-for-field-trait]"
+  | Error diag -> contains_substring diag.message "record" && diag.code = "type-trait-non-record"
 
 let%test "field-only trait missing-field error includes category" =
   Trait_registry.clear ();
@@ -453,7 +459,7 @@ let%test "field-only trait missing-field error includes category" =
   Trait_registry.set_trait_fields "named" [ { Types.name = "name"; typ = Types.TString } ];
   match satisfies_trait (Types.TRecord ([ { Types.name = "age"; typ = Types.TInt } ], None)) "named" with
   | Ok () -> false
-  | Error msg -> contains_substring msg "missing-field" && contains_substring msg "field 'name'"
+  | Error diag -> diag.code = "type-trait-missing-field" && contains_substring diag.message "field 'name'"
 
 let%test "mixed trait requires both structural fields and nominal impl" =
   Trait_registry.clear ();

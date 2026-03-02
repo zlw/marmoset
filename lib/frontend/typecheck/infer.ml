@@ -356,9 +356,9 @@ let obligations_from_substitution (subst : substitution) : obligation list =
 let verify_obligation (o : obligation) : (unit, string) result =
   match Trait_solver.satisfies_trait o.typ o.trait_name with
   | Ok () -> Ok ()
-  | Error msg ->
+  | Error diag ->
       let reason = obligation_reason_to_string o.reason in
-      Error (Printf.sprintf "Trait obligation failed (%s): %s" reason msg)
+      Error (Printf.sprintf "Trait obligation failed (%s): %s" reason diag.message)
 
 let verify_obligations (obligations : obligation list) : (unit, string) result =
   let rec go = function
@@ -396,7 +396,7 @@ let apply_substitution_constraints (subst : substitution) (ctx : constraint_ctx)
           (* Type var substituted to concrete type - check constraints *)
           match Trait_solver.check_constraints concrete_type traits with
           | Ok () -> acc (* Constraints satisfied, remove from context *)
-          | Error msg -> failwith msg (* Constraint violation *))
+          | Error diag -> failwith diag.message (* Constraint violation *))
       | None ->
           (* No substitution for this var, keep constraint *)
           ConstraintCtx.add var traits acc)
@@ -418,7 +418,10 @@ let enforce_trait_requirement_on_type (typ : mono_type) (trait_name : string) : 
     | TVar type_var_name ->
         add_type_var_constraints type_var_name [ trait_name ];
         Ok ()
-    | _ -> Trait_solver.satisfies_trait typ' trait_name
+    | _ -> (
+        match Trait_solver.satisfies_trait typ' trait_name with
+        | Ok () -> Ok ()
+        | Error diag -> Error diag.message)
 
 (* ============================================================
    Fresh Type Variables
@@ -1382,7 +1385,10 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                       let trait_requirement_result =
                         match receiver_type' with
                         | TVar _ -> Ok ()
-                        | _ -> Trait_solver.satisfies_trait receiver_type' trait_name
+                        | _ -> (
+                            match Trait_solver.satisfies_trait receiver_type' trait_name with
+                            | Ok () -> Ok ()
+                            | Error diag -> Error diag.message)
                       in
                       match trait_requirement_result with
                       | Error msg -> Error (error_at (ConstructorError msg) expr)
