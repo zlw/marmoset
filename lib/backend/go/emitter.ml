@@ -4910,6 +4910,36 @@ let is_deterministic source =
   | Ok a, Ok b -> a.main_go = b.main_go && a.runtime_go = b.runtime_go
   | _ -> false
 
+let capture_stderr f =
+  let original_stderr = Unix.dup Unix.stderr in
+  let read_fd, write_fd = Unix.pipe () in
+  Unix.dup2 write_fd Unix.stderr;
+  Unix.close write_fd;
+  let result =
+    try Ok (f ()) with
+    | exn -> Error exn
+  in
+  flush stderr;
+  Unix.dup2 original_stderr Unix.stderr;
+  Unix.close original_stderr;
+
+  let buffer = Buffer.create 256 in
+  let chunk = Bytes.create 4096 in
+  let rec drain_pipe () =
+    match Unix.read read_fd chunk 0 (Bytes.length chunk) with
+    | 0 -> ()
+    | n ->
+        Buffer.add_string buffer (Bytes.sub_string chunk 0 n);
+        drain_pipe ()
+  in
+  drain_pipe ();
+  Unix.close read_fd;
+
+  let stderr_output = Buffer.contents buffer in
+  match result with
+  | Ok value -> (value, stderr_output)
+  | Error exn -> raise exn
+
 let%test "emit integer" =
   match compile_string "42" with
   | Ok code -> string_contains code "int64(42)"
@@ -5922,14 +5952,14 @@ puts(id(1))|}
 
 (* --- run_build_ok_not_contains_from_stdin --- *)
 
-(* Shell original (run_build_ok_not_contains_from_stdin) checks CLI stderr
-   for warning text.  compile_string cannot capture side-channel output, so
-   this unit test only verifies successful compilation. The CLI stderr path
-   remains covered by the legacy shell test until parity sign-off. *)
 let%test "successful build emits no missing-type warning text" =
-  match compile_string {|let f = fn(x: int) -> int { x + 1 }
-puts(f(1))|} with
-  | Ok _ -> true
+  let result, stderr_output =
+    capture_stderr (fun () ->
+      compile_string {|let f = fn(x: int) -> int { x + 1 }
+puts(f(1))|})
+  in
+  match result with
+  | Ok _ -> string_not_contains stderr_output "missing type for expression id"
   | Error _ -> false
 
 (* --- test_emit_go_contains --- *)
