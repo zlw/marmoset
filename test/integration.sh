@@ -41,6 +41,9 @@ Selectors:
   <group-prefix>       # prefix match (e.g. codegen -> codegen/codegen_*)
   <group>/<file>.mr    # single fixture file under test/fixtures
   test/fixtures/...mr  # fixture file path from repo root
+
+Env:
+  MARMOSET_STRICT_REJECT=1  # enforce two-way diagnostic coverage in reject mode
 USAGE
 }
 
@@ -279,6 +282,12 @@ $line"
 reject_mode() {
     local file="$1"
     local name="$2"
+    local strict_reject=false
+    case "${MARMOSET_STRICT_REJECT:-0}" in
+        1|true|TRUE|yes|YES|on|ON)
+            strict_reject=true
+            ;;
+    esac
 
     TOTAL=$((TOTAL + 1))
     echo -n "TEST [$TOTAL] $name ... "
@@ -330,6 +339,42 @@ reject_mode() {
         echo "✗ FAIL (missing expected diagnostics)"
         echo -e "  Missing:$missing"
         echo "  Build output: $(echo "$build_output" | head -10)"
+        FAIL=$((FAIL + 1))
+        return
+    fi
+
+    if ! $strict_reject; then
+        echo "✓ PASS"
+        PASS=$((PASS + 1))
+        return
+    fi
+
+    local unexpected=""
+    while IFS= read -r diag_line; do
+        [ -z "$diag_line" ] && continue
+        local covered=false
+        for ((i = 0; i < ${#DIAG_VALUES[@]}; i++)); do
+            local val="${DIAG_VALUES[$i]}"
+            if [ "$val" = "*" ]; then
+                covered=true
+                break
+            fi
+            if echo "$diag_line" | grep -qF "$val"; then
+                covered=true
+                break
+            fi
+        done
+        if ! $covered; then
+            unexpected="$unexpected\n  - $diag_line"
+        fi
+    done < <(echo "$build_output" \
+        | grep -iE '^[^:]*:[0-9]+:[0-9]+.*error|^(Type |Parse )?[Ee]rror|^[Ww]arning|^[Ii]nfo' \
+        | grep -vE '^Error:[[:space:]]+Go build failed$' \
+        || true)
+
+    if [ -n "$unexpected" ]; then
+        echo "✗ FAIL (unexpected diagnostics)"
+        echo -e "  Unexpected:$unexpected"
         FAIL=$((FAIL + 1))
         return
     fi
