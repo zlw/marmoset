@@ -9,6 +9,13 @@ module Diagnostic = Diagnostics.Diagnostic
 module String_utils = Diagnostics.String_utils
 module StringSet = Set.Make (String)
 
+(* Unwrap annotation Result — emitter processes type-checked code so annotation
+   errors here are internal failures *)
+let annotation_exn r =
+  match r with
+  | Ok t -> t
+  | Error (d : Diagnostic.t) -> failwith d.message
+
 let merge_record_fields_for_row
     (base_fields : Types.record_field_type list) (extra_fields : Types.record_field_type list) :
     Types.record_field_type list =
@@ -943,7 +950,7 @@ let impl_type_bindings (impl_type_params : AST.generic_param list) : (string * T
 let type_expr_to_mono_type_with_impl_bindings
     (impl_type_params : AST.generic_param list) (type_expr : AST.type_expr) : Types.mono_type =
   let bindings = impl_type_bindings impl_type_params in
-  Annotation.type_expr_to_mono_type_with bindings type_expr
+  annotation_exn (Annotation.type_expr_to_mono_type_with bindings type_expr)
 
 let is_known_inherent_type_name (name : string) : bool =
   match name with
@@ -1329,7 +1336,7 @@ let rec collect_insts_stmt
   | AST.ImplDef impl ->
       ignore (register_impl_template state impl);
       (if impl.impl_type_params = [] then
-         let for_type = Annotation.type_expr_to_mono_type impl.impl_for_type in
+         let for_type = annotation_exn (Annotation.type_expr_to_mono_type impl.impl_for_type) in
          let for_type_fingerprint = fingerprint_types [ for_type ] in
          List.iter
            (fun (m : AST.method_impl) ->
@@ -1338,7 +1345,7 @@ let rec collect_insts_stmt
                  (List.map
                     (fun (param_name, param_type_opt) ->
                       match param_type_opt with
-                      | Some param_type -> (param_name, Annotation.type_expr_to_mono_type param_type)
+                      | Some param_type -> (param_name, annotation_exn (Annotation.type_expr_to_mono_type param_type))
                       | None ->
                           failwith
                             (Printf.sprintf
@@ -1348,7 +1355,7 @@ let rec collect_insts_stmt
              in
              let return_type =
                match m.impl_method_return_type with
-               | Some ret_ann -> Annotation.type_expr_to_mono_type ret_ann
+               | Some ret_ann -> annotation_exn (Annotation.type_expr_to_mono_type ret_ann)
                | None ->
                    failwith
                      (Printf.sprintf "Codegen error: impl %s.%s is missing a return type annotation"
@@ -1379,7 +1386,7 @@ let rec collect_insts_stmt
       env
   | AST.InherentImplDef impl ->
       let bindings = inherent_type_bindings impl.inherent_for_type in
-      let _for_type = Annotation.type_expr_to_mono_type_with bindings impl.inherent_for_type in
+      let _for_type = annotation_exn (Annotation.type_expr_to_mono_type_with bindings impl.inherent_for_type) in
       List.iter
         (fun (m : AST.method_impl) ->
           let method_param_names, method_param_types =
@@ -1387,7 +1394,7 @@ let rec collect_insts_stmt
               (List.map
                  (fun (param_name, param_type_opt) ->
                    match param_type_opt with
-                   | Some param_type -> (param_name, Annotation.type_expr_to_mono_type_with bindings param_type)
+                   | Some param_type -> (param_name, annotation_exn (Annotation.type_expr_to_mono_type_with bindings param_type))
                    | None ->
                        failwith
                          (Printf.sprintf
@@ -1397,7 +1404,7 @@ let rec collect_insts_stmt
           in
           let _return_type =
             match m.impl_method_return_type with
-            | Some ret_ann -> Annotation.type_expr_to_mono_type_with bindings ret_ann
+            | Some ret_ann -> annotation_exn (Annotation.type_expr_to_mono_type_with bindings ret_ann)
             | None ->
                 failwith
                   (Printf.sprintf "Codegen error: inherent method %s is missing a return type annotation"
@@ -2771,7 +2778,7 @@ and emit_infix state type_map env left op right =
 and emit_type_check state type_map env expr type_ann =
   (* Use runtime helper function for type checking *)
   let expr_str = emit_expr state type_map env expr in
-  let check_type = Annotation.type_expr_to_mono_type type_ann in
+  let check_type = annotation_exn (Annotation.type_expr_to_mono_type type_ann) in
   let go_type_name =
     match check_type with
     | Types.TInt -> "int64"
@@ -3076,7 +3083,7 @@ and emit_if state type_map env if_expr cond cons alt =
     | AST.TypeCheck (var_expr, type_ann) -> (
         match var_expr.expr with
         | AST.Identifier var_name ->
-            let narrow_type = Annotation.type_expr_to_mono_type type_ann in
+            let narrow_type = annotation_exn (Annotation.type_expr_to_mono_type type_ann) in
             Some (var_name, narrow_type)
         | _ -> None)
     | _ -> None
@@ -3163,7 +3170,7 @@ and emit_if_to_target state type_map env if_expr (cond : AST.expression) cons al
     | AST.TypeCheck (var_expr, type_ann) -> (
         match var_expr.expr with
         | AST.Identifier var_name ->
-            let narrow_type = Annotation.type_expr_to_mono_type type_ann in
+            let narrow_type = annotation_exn (Annotation.type_expr_to_mono_type type_ann) in
             Some (var_name, narrow_type)
         | _ -> None)
     | _ -> None
@@ -4186,7 +4193,7 @@ let emit_inherent_method
       (List.map
          (fun (param_name, param_type_opt) ->
            match param_type_opt with
-           | Some param_type -> (param_name, Annotation.type_expr_to_mono_type_with bindings param_type)
+           | Some param_type -> (param_name, annotation_exn (Annotation.type_expr_to_mono_type_with bindings param_type))
            | None ->
                failwith
                  (Printf.sprintf "Codegen error: inherent method %s parameter '%s' is missing a type annotation"
@@ -4195,7 +4202,7 @@ let emit_inherent_method
   in
   let return_type =
     match method_impl.impl_method_return_type with
-    | Some ret_ann -> Annotation.type_expr_to_mono_type_with bindings ret_ann
+    | Some ret_ann -> annotation_exn (Annotation.type_expr_to_mono_type_with bindings ret_ann)
     | None ->
         failwith
           (Printf.sprintf "Codegen error: inherent method %s is missing a return type annotation"
@@ -4491,7 +4498,7 @@ let emit_inherent_methods
     inherent_impls
     |> List.concat_map (fun (impl : AST.inherent_impl_def) ->
            let bindings = inherent_type_bindings impl.inherent_for_type in
-           let for_type = Annotation.type_expr_to_mono_type_with bindings impl.inherent_for_type in
+           let for_type = annotation_exn (Annotation.type_expr_to_mono_type_with bindings impl.inherent_for_type) in
            let for_type = Types.canonicalize_mono_type for_type in
            if has_type_vars for_type then
              []
@@ -4514,7 +4521,7 @@ let emit_inherent_methods
   let emit_for_impl (impl : AST.inherent_impl_def) : string list =
     let bindings = inherent_type_bindings impl.inherent_for_type in
     let for_type_pattern =
-      Annotation.type_expr_to_mono_type_with bindings impl.inherent_for_type |> Types.canonicalize_mono_type
+      annotation_exn (Annotation.type_expr_to_mono_type_with bindings impl.inherent_for_type) |> Types.canonicalize_mono_type
     in
     if not (has_type_vars for_type_pattern) then
       impl.inherent_methods
@@ -4655,7 +4662,7 @@ let emit_program_with_typed_env (type_map : Infer.type_map) (typed_env : Infer.t
     (fun (stmt : AST.statement) ->
       match stmt.stmt with
       | AST.TypeAlias alias_def -> (
-          let mono_type = Annotation.type_expr_to_mono_type alias_def.alias_body in
+          let mono_type = annotation_exn (Annotation.type_expr_to_mono_type alias_def.alias_body) in
           match mono_type with
           | Types.TRecord (fields, _row) -> register_type_alias_shape mono_state alias_def.alias_name fields
           | _ -> ())

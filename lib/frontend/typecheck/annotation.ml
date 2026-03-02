@@ -10,8 +10,29 @@
    - extract_constraints: Extract trait constraints for Phase 3
 *)
 
-(* v1 restriction: open row variables in type annotations are not supported *)
-exception Open_row_rejected of string
+module Diagnostic = Diagnostics.Diagnostic
+
+let ( let* ) = Result.bind
+
+let map_result f xs =
+  let rec go acc = function
+    | [] -> Ok (List.rev acc)
+    | x :: rest -> (
+        match f x with
+        | Error e -> Error e
+        | Ok y -> go (y :: acc) rest)
+  in
+  go [] xs
+
+let iter_result f xs =
+  let rec go = function
+    | [] -> Ok ()
+    | x :: rest -> (
+        match f x with
+        | Error e -> Error e
+        | Ok () -> go rest)
+  in
+  go xs
 
 (* Convert a parsed type expression to an internal mono_type *)
 type type_alias_info = {
@@ -37,45 +58,62 @@ let fresh_trait_object_row_var () : Types.mono_type =
   fresh_trait_object_row_counter := n + 1;
   Types.TRowVar (Printf.sprintf "trait_obj_row_%d" n)
 
-let field_only_trait_object_type (trait_name : string) : Types.mono_type =
+let field_only_trait_object_type (trait_name : string) : (Types.mono_type, Diagnostic.t) result =
   let trait_chain = Trait_registry.trait_with_supertraits trait_name in
   let field_tbl : (string, Types.mono_type) Hashtbl.t = Hashtbl.create 8 in
-  let merge_field (owner_trait : string) (field : Types.record_field_type) : unit =
+  let merge_field (owner_trait : string) (field : Types.record_field_type) : (unit, Diagnostic.t) result =
     match Hashtbl.find_opt field_tbl field.name with
-    | None -> Hashtbl.replace field_tbl field.name (Types.canonicalize_mono_type field.typ)
+    | None ->
+        Hashtbl.replace field_tbl field.name (Types.canonicalize_mono_type field.typ);
+        Ok ()
     | Some existing_type ->
         let expected = Types.canonicalize_mono_type existing_type in
         let got = Types.canonicalize_mono_type field.typ in
         if expected <> got then
-          failwith
-            (Printf.sprintf
-               "Trait '%s' cannot be used as a type: field '%s' has conflicting types across supertraits (%s vs %s, from '%s')"
-               trait_name field.name (Types.to_string expected) (Types.to_string got) owner_trait)
+          Error
+            (Diagnostic.error_no_span ~code:"type-annotation-invalid"
+               ~message:
+                 (Printf.sprintf
+                    "Trait '%s' cannot be used as a type: field '%s' has conflicting types across supertraits (%s vs %s, from '%s')"
+                    trait_name field.name (Types.to_string expected) (Types.to_string got) owner_trait))
+        else
+          Ok ()
   in
-  let gather_trait_fields (name : string) : unit =
+  let gather_trait_fields (name : string) : (unit, Diagnostic.t) result =
     match Trait_registry.trait_kind name with
-    | Some Trait_registry.FieldOnly -> (
-        let trait_def =
+    | Some Trait_registry.FieldOnly ->
+        let* trait_def =
           match Trait_registry.lookup_trait name with
-          | Some def -> def
-          | None -> failwith ("Unknown trait in registry: " ^ name)
+          | Some def -> Ok def
+          | None ->
+              Error
+                (Diagnostic.error_no_span ~code:"type-annotation-invalid"
+                   ~message:("Unknown trait in registry: " ^ name))
         in
         if trait_def.trait_type_param <> None then
-          failwith
-            (Printf.sprintf
-               "Trait '%s' cannot be used as a type: generic field-only supertrait '%s' is not supported in this phase"
-               trait_name name);
-        match Trait_registry.lookup_trait_fields name with
-        | None -> ()
-        | Some fields -> List.iter (merge_field name) fields)
+          Error
+            (Diagnostic.error_no_span ~code:"type-annotation-invalid"
+               ~message:
+                 (Printf.sprintf
+                    "Trait '%s' cannot be used as a type: generic field-only supertrait '%s' is not supported in this phase"
+                    trait_name name))
+        else (
+          match Trait_registry.lookup_trait_fields name with
+          | None -> Ok ()
+          | Some fields -> iter_result (merge_field name) fields)
     | Some Trait_registry.MethodOnly | Some Trait_registry.Mixed ->
-        failwith
-          (Printf.sprintf
-             "Trait '%s' cannot be used as a type: supertrait '%s' requires methods and trait-object method dispatch is not supported in this phase"
-             trait_name name)
-    | None -> failwith ("Unknown trait in supertrait closure: " ^ name)
+        Error
+          (Diagnostic.error_no_span ~code:"type-annotation-invalid"
+             ~message:
+               (Printf.sprintf
+                  "Trait '%s' cannot be used as a type: supertrait '%s' requires methods and trait-object method dispatch is not supported in this phase"
+                  trait_name name))
+    | None ->
+        Error
+          (Diagnostic.error_no_span ~code:"type-annotation-invalid"
+             ~message:("Unknown trait in supertrait closure: " ^ name))
   in
-  List.iter gather_trait_fields trait_chain;
+  let* () = iter_result gather_trait_fields trait_chain in
   let fields =
     Hashtbl.to_seq_keys field_tbl
     |> List.of_seq
@@ -85,7 +123,7 @@ let field_only_trait_object_type (trait_name : string) : Types.mono_type =
            | Some typ -> { Types.name; typ }
            | None -> failwith "field_only_trait_object_type: impossible missing field")
   in
-  Types.canonicalize_mono_type (Types.TRecord (fields, Some (fresh_trait_object_row_var ())))
+  Ok (Types.canonicalize_mono_type (Types.TRecord (fields, Some (fresh_trait_object_row_var ()))))
 
 let type_position_error_for_constructor (name : string) : string =
   match Trait_registry.trait_kind name with
@@ -97,91 +135,87 @@ let type_position_error_for_constructor (name : string) : string =
   | None -> "Unknown type constructor: " ^ name
 
 let rec type_expr_to_mono_type_with
-    (type_bindings : (string * Types.mono_type) list) (te : Syntax.Ast.AST.type_expr) : Types.mono_type =
+    (type_bindings : (string * Types.mono_type) list) (te : Syntax.Ast.AST.type_expr) :
+    (Types.mono_type, Diagnostic.t) result =
+  let ann_error msg = Error (Diagnostic.error_no_span ~code:"type-annotation-invalid" ~message:msg) in
   match te with
   | Syntax.Ast.AST.TVar name -> (
-      (* Type variables represent generic parameters *)
       match List.assoc_opt name type_bindings with
-      | Some ty -> ty
-      | None -> Types.TVar name)
+      | Some ty -> Ok ty
+      | None -> Ok (Types.TVar name))
   | Syntax.Ast.AST.TCon name -> (
       match List.assoc_opt name type_bindings with
-      | Some ty -> ty
+      | Some ty -> Ok ty
       | None -> (
           match name with
-          | "int" -> Types.TInt
-          | "float" -> Types.TFloat
-          | "bool" -> Types.TBool
-          | "string" -> Types.TString
-          | "unit" -> Types.TNull
+          | "int" -> Ok Types.TInt
+          | "float" -> Ok Types.TFloat
+          | "bool" -> Ok Types.TBool
+          | "string" -> Ok Types.TString
+          | "unit" -> Ok Types.TNull
           | other -> (
               match Enum_registry.lookup other with
               | Some enum_def ->
                   if enum_def.type_params = [] then
-                    Types.TEnum (other, [])
+                    Ok (Types.TEnum (other, []))
                   else
-                    failwith (Printf.sprintf "Enum %s expects type arguments" other)
+                    ann_error (Printf.sprintf "Enum %s expects type arguments" other)
               | None -> (
                   match lookup_type_alias other with
                   | Some alias_info ->
                       if alias_info.alias_type_params = [] then
                         type_expr_to_mono_type_with type_bindings alias_info.alias_body
                       else
-                        failwith (Printf.sprintf "Type alias %s expects type arguments" other)
+                        ann_error (Printf.sprintf "Type alias %s expects type arguments" other)
                   | None -> (
                       match Trait_registry.trait_kind other with
                       | Some Trait_registry.FieldOnly ->
-                          let trait_def =
+                          let* trait_def =
                             match Trait_registry.lookup_trait other with
-                            | Some def -> def
-                            | None -> failwith ("Unknown trait in registry: " ^ other)
+                            | Some def -> Ok def
+                            | None ->
+                                ann_error ("Unknown trait in registry: " ^ other)
                           in
                           if trait_def.trait_type_param <> None then
-                            (* Generic field-only traits rejected in type position because the
-                               projected record type depends on the type parameter, and codegen
-                               cannot resolve which concrete shape to emit without call-site
-                               monomorphization — which trait-as-type usage lacks. *)
-                            failwith
+                            ann_error
                               (Printf.sprintf
                                  "Trait '%s' cannot be used as a type: generic field-only trait objects are not supported in this phase"
                                  other)
                           else
                             field_only_trait_object_type other
                       | Some Trait_registry.MethodOnly | Some Trait_registry.Mixed ->
-                          failwith (type_position_error_for_constructor other)
-                      | None -> failwith (type_position_error_for_constructor other))))))
-  | Syntax.Ast.AST.TApp (con_name, type_args) -> (
-      (* Generic type application: list[int], map[string, int], option[a] *)
-      let arg_types = List.map (type_expr_to_mono_type_with type_bindings) type_args in
-      match con_name with
+                          ann_error (type_position_error_for_constructor other)
+                      | None -> ann_error (type_position_error_for_constructor other))))))
+  | Syntax.Ast.AST.TApp (con_name, type_args) ->
+      let ann_error msg = Error (Diagnostic.error_no_span ~code:"type-annotation-invalid" ~message:msg) in
+      let* arg_types = map_result (type_expr_to_mono_type_with type_bindings) type_args in
+      (match con_name with
       | "list" -> (
           match arg_types with
-          | [ elem_type ] -> Types.TArray elem_type
-          | _ -> failwith ("list type expects 1 argument, got " ^ string_of_int (List.length arg_types)))
+          | [ elem_type ] -> Ok (Types.TArray elem_type)
+          | _ -> ann_error ("list type expects 1 argument, got " ^ string_of_int (List.length arg_types)))
       | "map" -> (
           match arg_types with
-          | [ key_type; value_type ] -> Types.THash (key_type, value_type)
-          | _ -> failwith ("map type expects 2 arguments, got " ^ string_of_int (List.length arg_types)))
+          | [ key_type; value_type ] -> Ok (Types.THash (key_type, value_type))
+          | _ -> ann_error ("map type expects 2 arguments, got " ^ string_of_int (List.length arg_types)))
       | _ -> (
-          (* Phase 4.3: Check if this is a registered enum type *)
           match Enum_registry.lookup con_name with
           | Some enum_def ->
-              (* Verify arity matches *)
               let expected_arity = List.length enum_def.type_params in
               let actual_arity = List.length arg_types in
               if expected_arity <> actual_arity then
-                failwith
+                ann_error
                   (Printf.sprintf "Enum %s expects %d type argument(s), got %d" con_name expected_arity
                      actual_arity)
               else
-                Types.TEnum (con_name, arg_types)
+                Ok (Types.TEnum (con_name, arg_types))
           | None -> (
               match lookup_type_alias con_name with
               | Some alias_info ->
                   let expected_arity = List.length alias_info.alias_type_params in
                   let actual_arity = List.length arg_types in
                   if expected_arity <> actual_arity then
-                    failwith
+                    ann_error
                       (Printf.sprintf "Type alias %s expects %d type argument(s), got %d" con_name expected_arity
                          actual_arity)
                   else
@@ -189,42 +223,38 @@ let rec type_expr_to_mono_type_with
                     type_expr_to_mono_type_with (alias_bindings @ type_bindings) alias_info.alias_body
               | None ->
                   if Trait_registry.lookup_trait con_name <> None then
-                    failwith
+                    ann_error
                       (Printf.sprintf
                          "Trait '%s' cannot be used here as a type constructor with arguments in this phase"
                          con_name)
                   else
-                    failwith (type_position_error_for_constructor con_name))))
+                    ann_error (type_position_error_for_constructor con_name))))
   | Syntax.Ast.AST.TArrow (param_types, return_type) ->
-      (* Function type: (int, string) -> bool *)
-      let param_mono = List.map (type_expr_to_mono_type_with type_bindings) param_types in
-      let return_mono = type_expr_to_mono_type_with type_bindings return_type in
-      (* Build nested function types: (a, b, c) -> d becomes a -> b -> c -> d *)
-      List.fold_right (fun param_type ret_type -> Types.tfun param_type ret_type) param_mono return_mono
+      let* param_mono = map_result (type_expr_to_mono_type_with type_bindings) param_types in
+      let* return_mono = type_expr_to_mono_type_with type_bindings return_type in
+      Ok (List.fold_right (fun param_type ret_type -> Types.tfun param_type ret_type) param_mono return_mono)
   | Syntax.Ast.AST.TUnion type_exprs ->
-      (* Union types (Phase 4.1): int | string | bool *)
-      let mono_types = List.map (type_expr_to_mono_type_with type_bindings) type_exprs in
-      Types.normalize_union mono_types
+      let* mono_types = map_result (type_expr_to_mono_type_with type_bindings) type_exprs in
+      Ok (Types.normalize_union mono_types)
   | Syntax.Ast.AST.TRecord (fields, row_var) ->
-      (* v1 restriction: reject open row variables in user-written type annotations.
-         Open rows (e.g., { x: int, ...row }) are broken in codegen for multi-call and spread cases.
-         Users should use closed record annotations or omit annotations to let inference handle it.
-         Internal row variables (from trait objects, inference) are unaffected. *)
       (match row_var with
       | Some _ ->
-          raise
-            (Open_row_rejected
-               "Open row variables (e.g., '...row') in type annotations are not supported in v1. Use a closed record type annotation (e.g., '{ x: int, y: int }') or omit the annotation.")
-      | None -> ());
-      let field_types =
-        List.map
-          (fun (f : Syntax.Ast.AST.record_type_field) ->
-            { Types.name = f.field_name; typ = type_expr_to_mono_type_with type_bindings f.field_type })
-          fields
-      in
-      Types.canonicalize_mono_type (Types.TRecord (field_types, None))
+          Error
+            (Diagnostic.error_no_span ~code:"type-open-row-rejected"
+               ~message:
+                 "Open row variables (e.g., '...row') in type annotations are not supported in v1. Use a closed record type annotation (e.g., '{ x: int, y: int }') or omit the annotation.")
+      | None ->
+          let* field_types =
+            map_result
+              (fun (f : Syntax.Ast.AST.record_type_field) ->
+                let* typ = type_expr_to_mono_type_with type_bindings f.field_type in
+                Ok { Types.name = f.field_name; typ })
+              fields
+          in
+          Ok (Types.canonicalize_mono_type (Types.TRecord (field_types, None))))
 
-and type_expr_to_mono_type (te : Syntax.Ast.AST.type_expr) : Types.mono_type = type_expr_to_mono_type_with [] te
+and type_expr_to_mono_type (te : Syntax.Ast.AST.type_expr) : (Types.mono_type, Diagnostic.t) result =
+  type_expr_to_mono_type_with [] te
 
 (* Check if two types are equal (for annotation verification) *)
 let rec mono_types_equal (t1 : Types.mono_type) (t2 : Types.mono_type) : bool =
@@ -404,38 +434,31 @@ let setup_test_enums () =
 let%test "enum annotation option[int]" =
   setup_test_enums ();
   let te = Syntax.Ast.AST.TApp ("option", [ Syntax.Ast.AST.TCon "int" ]) in
-  let result = type_expr_to_mono_type te in
-  result = Types.TEnum ("option", [ Types.TInt ])
+  type_expr_to_mono_type te = Ok (Types.TEnum ("option", [ Types.TInt ]))
 
 let%test "enum annotation result[string, int]" =
   setup_test_enums ();
   let te = Syntax.Ast.AST.TApp ("result", [ Syntax.Ast.AST.TCon "string"; Syntax.Ast.AST.TCon "int" ]) in
-  let result = type_expr_to_mono_type te in
-  result = Types.TEnum ("result", [ Types.TString; Types.TInt ])
+  type_expr_to_mono_type te = Ok (Types.TEnum ("result", [ Types.TString; Types.TInt ]))
 
 let%test "enum annotation nested option[list[int]]" =
   setup_test_enums ();
   let te = Syntax.Ast.AST.TApp ("option", [ Syntax.Ast.AST.TApp ("list", [ Syntax.Ast.AST.TCon "int" ]) ]) in
-  let result = type_expr_to_mono_type te in
-  result = Types.TEnum ("option", [ Types.TArray Types.TInt ])
+  type_expr_to_mono_type te = Ok (Types.TEnum ("option", [ Types.TArray Types.TInt ]))
 
-(* This test should fail with unknown type constructor *)
 let%test "unknown enum foo[int] fails" =
   setup_test_enums ();
   let te = Syntax.Ast.AST.TApp ("foo", [ Syntax.Ast.AST.TCon "int" ]) in
-  try
-    let _ = type_expr_to_mono_type te in
-    false (* Should have thrown *)
-  with Failure msg -> String.length msg > 0 (* Should have error message *)
+  match type_expr_to_mono_type te with
+  | Error d -> String.length d.message > 0
+  | Ok _ -> false
 
-(* This test should fail with arity mismatch *)
 let%test "option with wrong arity fails" =
   setup_test_enums ();
   let te = Syntax.Ast.AST.TApp ("option", [ Syntax.Ast.AST.TCon "int"; Syntax.Ast.AST.TCon "string" ]) in
-  try
-    let _ = type_expr_to_mono_type te in
-    false (* Should have thrown *)
-  with Failure msg -> String.length msg > 0 (* Should have error message *)
+  match type_expr_to_mono_type te with
+  | Error d -> String.length d.message > 0
+  | Ok _ -> false
 
 let%test "open row in record annotation is rejected" =
   let te =
@@ -443,16 +466,15 @@ let%test "open row in record annotation is rejected" =
       ( [ { Syntax.Ast.AST.field_name = "x"; field_type = Syntax.Ast.AST.TCon "int" } ],
         Some (Syntax.Ast.AST.TCon "r") )
   in
-  try
-    let _ = type_expr_to_mono_type te in
-    false
-  with Open_row_rejected _ -> true
+  match type_expr_to_mono_type te with
+  | Error d -> d.code = "type-open-row-rejected"
+  | Ok _ -> false
 
 let%test "closed record annotation still works" =
   let te =
     Syntax.Ast.AST.TRecord ([ { Syntax.Ast.AST.field_name = "x"; field_type = Syntax.Ast.AST.TCon "int" } ], None)
   in
-  type_expr_to_mono_type te = Types.TRecord ([ { Types.name = "x"; typ = Types.TInt } ], None)
+  type_expr_to_mono_type te = Ok (Types.TRecord ([ { Types.name = "x"; typ = Types.TInt } ], None))
 
 let%test "type alias annotation resolves non-generic alias" =
   clear_type_aliases ();
@@ -469,7 +491,7 @@ let%test "type alias annotation resolves non-generic alias" =
             None );
     };
   type_expr_to_mono_type (Syntax.Ast.AST.TCon "point")
-  = Types.TRecord ([ { Types.name = "x"; typ = Types.TInt }; { Types.name = "y"; typ = Types.TInt } ], None)
+  = Ok (Types.TRecord ([ { Types.name = "x"; typ = Types.TInt }; { Types.name = "y"; typ = Types.TInt } ], None))
 
 let%test "type alias annotation resolves generic alias application" =
   clear_type_aliases ();
@@ -481,7 +503,7 @@ let%test "type alias annotation resolves generic alias application" =
         Syntax.Ast.AST.TRecord ([ { field_name = "value"; field_type = Syntax.Ast.AST.TCon "a" } ], None);
     };
   type_expr_to_mono_type (Syntax.Ast.AST.TApp ("box", [ Syntax.Ast.AST.TCon "string" ]))
-  = Types.TRecord ([ { Types.name = "value"; typ = Types.TString } ], None)
+  = Ok (Types.TRecord ([ { Types.name = "value"; typ = Types.TString } ], None))
 
 let setup_trait_object_annotation_tests () =
   Trait_registry.clear ();
@@ -506,15 +528,14 @@ let setup_trait_object_annotation_tests () =
 let%test "field-only trait annotation lowers to open record requirement" =
   setup_trait_object_annotation_tests ();
   match type_expr_to_mono_type (Syntax.Ast.AST.TCon "named") with
-  | Types.TRecord ([ { Types.name = "name"; typ = Types.TString } ], Some (Types.TRowVar _)) -> true
+  | Ok (Types.TRecord ([ { Types.name = "name"; typ = Types.TString } ], Some (Types.TRowVar _))) -> true
   | _ -> false
 
 let%test "method trait annotation is rejected in type position" =
   setup_trait_object_annotation_tests ();
-  try
-    let _ = type_expr_to_mono_type (Syntax.Ast.AST.TCon "show") in
-    false
-  with Failure msg -> String.length msg > 0 && String.contains msg 'm'
+  match type_expr_to_mono_type (Syntax.Ast.AST.TCon "show") with
+  | Error d -> String.length d.message > 0 && String.contains d.message 'm'
+  | Ok _ -> false
 
 let%test "generic field-only supertrait is rejected in type position" =
   Trait_registry.clear ();
@@ -524,10 +545,9 @@ let%test "generic field-only supertrait is rejected in type position" =
   Trait_registry.register_trait
     { trait_name = "tagged_like"; trait_type_param = None; trait_supertraits = [ "tagged" ]; trait_methods = [] };
   let contains_substring s sub = Diagnostics.String_utils.contains_substring ~needle:sub s in
-  try
-    let _ = type_expr_to_mono_type (Syntax.Ast.AST.TCon "tagged_like") in
-    false
-  with Failure msg -> contains_substring msg "generic field-only supertrait"
+  match type_expr_to_mono_type (Syntax.Ast.AST.TCon "tagged_like") with
+  | Error d -> contains_substring d.message "generic field-only supertrait"
+  | Ok _ -> false
 
 let%test "is_subtype_of: TVar only matches same TVar name" =
   is_subtype_of (Types.TVar "a") (Types.TVar "a") && not (is_subtype_of (Types.TVar "a") (Types.TVar "b"))

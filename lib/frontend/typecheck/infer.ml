@@ -640,6 +640,14 @@ let error_at_stmt kind (stmt : AST.statement) =
 
 (* Result type for inference *)
 type 'a infer_result = ('a, Diagnostic.t) result
+
+(* Annotation helper: convert type expression, propagating open-row-rejected errors
+   but falling back to fresh_type_var for other annotation errors *)
+let annotation_or_fresh te =
+  match Annotation.type_expr_to_mono_type te with
+  | Error d when d.Diagnostic.code = "type-open-row-rejected" -> Error d
+  | Error _ -> Ok (fresh_type_var ())
+  | Ok t -> Ok t
 type symbol_scope = symbol_id NameMap.t
 type symbol_scope_stack = symbol_scope list
 
@@ -961,11 +969,13 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
         (* Infer type of expression *)
         match infer_expression type_map env expr with
         | Error e -> Error e
-        | Ok (subst1, _expr_type) ->
+        | Ok (subst1, _expr_type) -> (
             (* Convert type annotation to mono_type (for validation, not currently used) *)
-            let _check_type = Annotation.type_expr_to_mono_type type_ann in
-            (* Result is always bool *)
-            Ok (subst1, TBool))
+            match Annotation.type_expr_to_mono_type type_ann with
+            | Error e -> Error e
+            | Ok _check_type ->
+                (* Result is always bool *)
+                Ok (subst1, TBool)))
     (* If expressions *)
     | AST.If (condition, consequence, alternative) -> infer_if type_map env condition consequence alternative
     (* Function literals *)
@@ -1495,9 +1505,10 @@ and detect_is_narrowing (expr : AST.expression) : (string * mono_type) option =
   match expr.expr with
   | AST.TypeCheck (var_expr, type_ann) -> (
       match var_expr.expr with
-      | AST.Identifier var_name ->
-          let narrow_type = Annotation.type_expr_to_mono_type type_ann in
-          Some (var_name, narrow_type)
+      | AST.Identifier var_name -> (
+          match Annotation.type_expr_to_mono_type type_ann with
+          | Ok narrow_type -> Some (var_name, narrow_type)
+          | Error _ -> None)
       | _ -> None)
   | _ -> None
 
@@ -1782,90 +1793,95 @@ and infer_function_with_annotations type_map env generics_opt params return_anno
   (* Extract parameter names and type annotations *)
   let param_info = params in
   (* For each parameter, either use its annotation or create a fresh type variable *)
-  let param_types =
-    List.map
-      (fun (_name, annot_opt) ->
-        match annot_opt with
-        | None -> fresh_type_var ()
-        | Some type_expr -> (
-            try
-              (* Convert annotation to mono_type *)
-              let mono = Annotation.type_expr_to_mono_type type_expr in
-              (* Replace generic parameter names (like "a") with their fresh type vars (like "t0") *)
-              (* Handle both TVar "a" (if parsed as type variable) and TCon "a" (if parsed as type constructor) *)
-              let mono_with_subst =
-                List.fold_left
-                  (fun ty_acc (gen_name, gen_var) ->
-                    (* Substitute both TVar gen_name and references in the type *)
-                    let rec subst_generic ty =
-                      match ty with
-                      | TVar v when v = gen_name -> gen_var
-                      | TFun (arg, ret, eff) -> TFun (subst_generic arg, subst_generic ret, eff)
-                      | TArray elem -> TArray (subst_generic elem)
-                      | THash (k, v) -> THash (subst_generic k, subst_generic v)
-                      | TRecord (fields, row) ->
-                          let fields' =
-                            List.map
-                              (fun (f : Types.record_field_type) -> { f with typ = subst_generic f.typ })
-                              fields
-                          in
-                          let row' = Option.map subst_generic row in
-                          TRecord (fields', row')
-                      | TRowVar r when r = gen_name -> gen_var
-                      | TEnum (name, args) -> TEnum (name, List.map subst_generic args)
-                      | TUnion types -> TUnion (List.map subst_generic types)
-                      | other -> other
-                    in
-                    subst_generic ty_acc)
-                  mono type_var_map
+  let subst_generic_in_mono mono =
+    List.fold_left
+      (fun ty_acc (gen_name, gen_var) ->
+        let rec subst_generic ty =
+          match ty with
+          | TVar v when v = gen_name -> gen_var
+          | TFun (arg, ret, eff) -> TFun (subst_generic arg, subst_generic ret, eff)
+          | TArray elem -> TArray (subst_generic elem)
+          | THash (k, v) -> THash (subst_generic k, subst_generic v)
+          | TRecord (fields, row) ->
+              let fields' =
+                List.map (fun (f : Types.record_field_type) -> { f with typ = subst_generic f.typ }) fields
               in
-              mono_with_subst
-            with
-            | Annotation.Open_row_rejected msg -> raise (Annotation.Open_row_rejected msg)
-            | Failure msg -> (
-                (* If annotation parsing fails (e.g., "Unknown type constructor: a"),
-                 check if it's a generic parameter name *)
-                let is_generic_ref =
-                  match type_expr with
-                  | Syntax.Ast.AST.TCon name -> List.assoc_opt name type_var_map
-                  | _ -> None
-                in
-                match is_generic_ref with
-                | Some gen_var -> gen_var
-                | None ->
-                    (* Not a direct generic reference. Preserve annotation errors unless
-                       this is the "unknown constructor" form for a declared generic. *)
-                    if
-                      String.length msg > 0
-                      && String.sub msg 0 (min 23 (String.length msg)) = "Unknown type constructor"
-                    then
-                      (* Extract the name and check if it's in our generics *)
-                      let parts = String.split_on_char ':' msg in
-                      if List.length parts > 1 then
-                        let name = String.trim (List.nth parts 1) in
-                        match List.assoc_opt name type_var_map with
-                        | Some gen_var -> gen_var
-                        | None -> raise (Failure msg)
-                      else
-                        raise (Failure msg)
-                    else
-                      raise (Failure msg))))
-      param_info
+              let row' = Option.map subst_generic row in
+              TRecord (fields', row')
+          | TRowVar r when r = gen_name -> gen_var
+          | TEnum (name, args) -> TEnum (name, List.map subst_generic args)
+          | TUnion types -> TUnion (List.map subst_generic types)
+          | other -> other
+        in
+        subst_generic ty_acc)
+      mono type_var_map
   in
+  let convert_param_annotation type_expr =
+    match Annotation.type_expr_to_mono_type type_expr with
+    | Error d when d.Diagnostic.code = "type-open-row-rejected" -> Error d
+    | Error d ->
+        (* If annotation parsing fails (e.g., "Unknown type constructor: a"),
+           check if it's a generic parameter name *)
+        let is_generic_ref =
+          match type_expr with
+          | Syntax.Ast.AST.TCon name -> List.assoc_opt name type_var_map
+          | _ -> None
+        in
+        (match is_generic_ref with
+        | Some gen_var -> Ok gen_var
+        | None ->
+            let msg = d.Diagnostic.message in
+            if
+              String.length msg > 0
+              && String.sub msg 0 (min 23 (String.length msg)) = "Unknown type constructor"
+            then
+              let parts = String.split_on_char ':' msg in
+              if List.length parts > 1 then
+                let name = String.trim (List.nth parts 1) in
+                match List.assoc_opt name type_var_map with
+                | Some gen_var -> Ok gen_var
+                | None -> Error d
+              else
+                Error d
+            else
+              Error d)
+    | Ok mono -> Ok (subst_generic_in_mono mono)
+  in
+  let param_types_result =
+    List.fold_left
+      (fun acc (_name, annot_opt) ->
+        match acc with
+        | Error _ -> acc
+        | Ok types -> (
+            match annot_opt with
+            | None -> Ok (types @ [ fresh_type_var () ])
+            | Some type_expr -> (
+                match convert_param_annotation type_expr with
+                | Error e -> Error e
+                | Ok t -> Ok (types @ [ t ]))))
+      (Ok []) param_info
+  in
+  match param_types_result with
+  | Error e -> Error e
+  | Ok param_types ->
   let param_names = List.map fst param_info in
   (* Extend environment with parameters *)
   let env' =
     List.fold_left2 (fun acc name mono -> TypeEnv.add name (mono_to_poly mono) acc) env param_names param_types
   in
   (* Extract expected return type from annotation if present *)
-  let expected_return_type_opt =
+  let expected_return_type_result =
     match return_annot with
-    | None -> None
+    | None -> Ok None
     | Some type_expr -> (
-        try Some (Annotation.type_expr_to_mono_type type_expr) with
-        | Annotation.Open_row_rejected _ as e -> raise e
-        | Failure _ -> None)
+        match Annotation.type_expr_to_mono_type type_expr with
+        | Error d when d.Diagnostic.code = "type-open-row-rejected" -> Error d
+        | Error _ -> Ok None
+        | Ok t -> Ok (Some t))
   in
+  match expected_return_type_result with
+  | Error e -> Error e
+  | Ok expected_return_type_opt ->
   (* Infer body type *)
   match infer_statement type_map env' body with
   | Error e -> Error e
@@ -2330,8 +2346,10 @@ and infer_statement type_map env stmt =
               (* Check if it's a type parameter *)
               if List.mem c type_params then
                 TVar c
-              else
-                Annotation.type_expr_to_mono_type (AST.TCon c)
+              else (
+                match Annotation.type_expr_to_mono_type (AST.TCon c) with
+                | Ok t -> t
+                | Error d -> failwith d.Diagnostic.message)
           | AST.TApp (con_name, args) -> (
               if
                 (* Check if constructor is a type param (shouldn't happen but handle it) *)
@@ -2339,8 +2357,9 @@ and infer_statement type_map env stmt =
               then
                 failwith (Printf.sprintf "Type parameter '%s' cannot be used as type constructor" con_name)
               else
-                Annotation.type_expr_to_mono_type (AST.TApp (con_name, List.map (fun _ -> AST.TCon "dummy") args))
-                |> fun _ ->
+                (match Annotation.type_expr_to_mono_type (AST.TApp (con_name, List.map (fun _ -> AST.TCon "dummy") args)) with
+                | Ok _ | Error _ -> ())
+                |> fun () ->
                 (* Actually convert properly *)
                 match con_name with
                 | "list" -> (
@@ -2389,8 +2408,10 @@ and infer_statement type_map env stmt =
               (* Check if it's the trait's type parameter *)
               if is_trait_type_param c then
                 TVar c
-              else
-                Annotation.type_expr_to_mono_type (AST.TCon c)
+              else (
+                match Annotation.type_expr_to_mono_type (AST.TCon c) with
+                | Ok t -> t
+                | Error d -> failwith d.Diagnostic.message)
           | AST.TApp (con_name, args) -> (
               if
                 (* For generic types, convert recursively *)
@@ -2407,7 +2428,10 @@ and infer_statement type_map env stmt =
                     match args with
                     | [ k; v ] -> THash (convert k, convert v)
                     | _ -> failwith "map expects 2 arguments")
-                | _ -> Annotation.type_expr_to_mono_type (AST.TApp (con_name, args)))
+                | _ -> (
+                    match Annotation.type_expr_to_mono_type (AST.TApp (con_name, args)) with
+                    | Ok t -> t
+                    | Error d -> failwith d.Diagnostic.message))
           | AST.TArrow (params, ret) ->
               let param_types = List.map convert params in
               let ret_type = convert ret in
@@ -2475,9 +2499,7 @@ and infer_statement type_map env stmt =
           List.map (fun (p : AST.generic_param) -> (p.name, TVar p.name)) impl_type_params
         in
         let convert_impl_type_expr (te : AST.type_expr) : (mono_type, Diagnostic.t) result =
-          try Ok (Annotation.type_expr_to_mono_type_with impl_type_bindings te) with
-          | Annotation.Open_row_rejected msg -> Error (error (ConstructorError msg))
-          | Failure msg -> Error (error (ConstructorError msg))
+          Annotation.type_expr_to_mono_type_with impl_type_bindings te
         in
         let with_impl_type_param_constraints (f : unit -> (substitution * mono_type, Diagnostic.t) result) :
             (substitution * mono_type, Diagnostic.t) result =
@@ -2665,9 +2687,7 @@ and infer_statement type_map env stmt =
         |> List.map (fun name -> (name, TVar name))
       in
       let convert_inherent_type_expr (te : AST.type_expr) : (mono_type, Diagnostic.t) result =
-        try Ok (Annotation.type_expr_to_mono_type_with generic_type_bindings te) with
-        | Annotation.Open_row_rejected msg -> Error (error (ConstructorError msg))
-        | Failure msg -> Error (error (ConstructorError msg))
+        Annotation.type_expr_to_mono_type_with generic_type_bindings te
       in
       let starts_with (prefix : string) (s : string) : bool =
         let len_prefix = String.length prefix in
@@ -2827,7 +2847,9 @@ and infer_statement type_map env stmt =
           register_methods empty_substitution inherent_methods)
   | AST.DeriveDef { derive_traits; derive_for_type } ->
       (* Auto-generate implementations for derived traits *)
-      let for_type_mono = Annotation.type_expr_to_mono_type derive_for_type in
+      (match Annotation.type_expr_to_mono_type derive_for_type with
+      | Error e -> Error e
+      | Ok for_type_mono ->
 
       (* Process each trait to derive *)
       let derive_errors =
@@ -2842,7 +2864,7 @@ and infer_statement type_map env stmt =
       if derive_errors <> [] then
         Error (error (ConstructorError (String.concat "; " derive_errors)))
       else
-        Ok (empty_substitution, TNull)
+        Ok (empty_substitution, TNull))
   | AST.TypeAlias _ ->
       (* Type aliases are registered for annotation/type conversion *)
       (* Runtime value is unit-like *)
@@ -3108,36 +3130,42 @@ and unify_function_shape_ignoring_effect (left : mono_type) (right : mono_type) 
 and infer_let ?(prefer_existing_self = false) type_map env name expr type_annotation =
   (* Check if the expression is a function with a return type annotation *)
   (* If so, create a partially constrained type for recursion *)
-  let inferred_self_type =
+  let inferred_self_type_result =
     match (expr.expr, type_annotation) with
-    | AST.Function f, _ -> (
-        try
-          (* Create a partially constrained function type for recursive calls. *)
-          let return_type =
-            match f.return_type with
-            | Some type_expr -> Annotation.type_expr_to_mono_type type_expr
-            | None -> fresh_type_var ()
-          in
-          let mk_f a b = TFun (a, b, f.is_effectful) in
-          let param_types =
-            List.map
-              (fun (_name, annot_opt) ->
-                match annot_opt with
-                | None -> fresh_type_var ()
-                | Some annot -> Annotation.type_expr_to_mono_type annot)
-              f.params
-          in
-          List.fold_right (fun param_t acc -> mk_f param_t acc) param_types return_type
-        with
-        | Annotation.Open_row_rejected _ as e -> raise e
-        | Failure _ -> fresh_type_var ())
-    | _, Some type_expr -> (
-        (* Phase 4.4: Use type annotation from let binding *)
-        try Annotation.type_expr_to_mono_type type_expr with
-        | Annotation.Open_row_rejected _ as e -> raise e
-        | Failure _ -> fresh_type_var ())
-    | _, None -> fresh_type_var ()
+    | AST.Function f, _ ->
+        let return_type_result =
+          match f.return_type with
+          | Some type_expr -> annotation_or_fresh type_expr
+          | None -> Ok (fresh_type_var ())
+        in
+        (match return_type_result with
+        | Error _ as e -> e
+        | Ok return_type ->
+            let mk_f a b = TFun (a, b, f.is_effectful) in
+            let param_types_result =
+              List.fold_left
+                (fun acc (_name, annot_opt) ->
+                  match acc with
+                  | Error _ -> acc
+                  | Ok types -> (
+                      match annot_opt with
+                      | None -> Ok (types @ [ fresh_type_var () ])
+                      | Some annot -> (
+                          match annotation_or_fresh annot with
+                          | Error _ as e -> e
+                          | Ok t -> Ok (types @ [ t ]))))
+                (Ok []) f.params
+            in
+            (match param_types_result with
+            | Error _ as e -> e
+            | Ok param_types ->
+                Ok (List.fold_right (fun param_t acc -> mk_f param_t acc) param_types return_type)))
+    | _, Some type_expr -> annotation_or_fresh type_expr
+    | _, None -> Ok (fresh_type_var ())
   in
+  match inferred_self_type_result with
+  | Error e -> Error e
+  | Ok inferred_self_type ->
   let self_type =
     if prefer_existing_self && name <> "_" then
       match lookup_top_level_placeholder name with
@@ -3175,14 +3203,18 @@ and infer_let ?(prefer_existing_self = false) type_map env name expr type_annota
       | Ok subst2 ->
           let final_subst = compose_substitution subst1 subst2 in
           let inferred_final_type = apply_substitution subst2 expr_type in
-          let final_type =
+          let final_type_result =
             match type_annotation with
-            | None -> inferred_final_type
+            | None -> Ok inferred_final_type
             | Some type_expr -> (
-                try Annotation.type_expr_to_mono_type type_expr with
-                | Annotation.Open_row_rejected _ as e -> raise e
-                | Failure _ -> inferred_final_type)
+                match Annotation.type_expr_to_mono_type type_expr with
+                | Error d when d.Diagnostic.code = "type-open-row-rejected" -> Error d
+                | Error _ -> Ok inferred_final_type
+                | Ok t -> Ok t)
           in
+          match final_type_result with
+          | Error e -> Error e
+          | Ok final_type ->
           (* For top-level forward-reference placeholders, avoid self-leak in Γ:
              otherwise the placeholder binding can block intended generalization. *)
           let env_for_generalize =
@@ -3270,32 +3302,38 @@ let predeclare_top_level_lets (env : type_env) (program : AST.program) : (type_e
               else
                 match let_binding.value.expr with
                 | AST.Function f ->
-                    let return_type =
+                    let return_type_result =
                       match f.return_type with
-                      | Some type_expr -> (
-                          try Annotation.type_expr_to_mono_type type_expr with
-                          | Annotation.Open_row_rejected _ as e -> raise e
-                          | Failure _ -> fresh_type_var ())
-                      | None -> fresh_type_var ()
+                      | Some type_expr -> annotation_or_fresh type_expr
+                      | None -> Ok (fresh_type_var ())
                     in
-                    let param_types =
-                      List.map
-                        (fun (_name, annot_opt) ->
-                          match annot_opt with
-                          | Some type_expr -> (
-                              try Annotation.type_expr_to_mono_type type_expr with
-                              | Annotation.Open_row_rejected _ as e -> raise e
-                              | Failure _ -> fresh_type_var ())
-                          | None -> fresh_type_var ())
-                        f.params
-                    in
-                    let placeholder =
-                      List.fold_right
-                        (fun param_type acc -> TFun (param_type, acc, f.is_effectful))
-                        param_types return_type
-                    in
-                    set_top_level_placeholder let_binding.name placeholder;
-                    go seen' (TypeEnv.add let_binding.name (mono_to_poly placeholder) env_acc) rest
+                    (match return_type_result with
+                    | Error e -> Error e
+                    | Ok return_type ->
+                        let param_types_result =
+                          List.fold_left
+                            (fun acc (_name, annot_opt) ->
+                              match acc with
+                              | Error _ -> acc
+                              | Ok types -> (
+                                  match annot_opt with
+                                  | None -> Ok (types @ [ fresh_type_var () ])
+                                  | Some type_expr -> (
+                                      match annotation_or_fresh type_expr with
+                                      | Error _ as e -> e
+                                      | Ok t -> Ok (types @ [ t ]))))
+                            (Ok []) f.params
+                        in
+                        (match param_types_result with
+                        | Error e -> Error e
+                        | Ok param_types ->
+                            let placeholder =
+                              List.fold_right
+                                (fun param_type acc -> TFun (param_type, acc, f.is_effectful))
+                                param_types return_type
+                            in
+                            set_top_level_placeholder let_binding.name placeholder;
+                            go seen' (TypeEnv.add let_binding.name (mono_to_poly placeholder) env_acc) rest))
                 | _ ->
                     (* Keep value bindings strict-order for now; only function
                        declarations participate in top-level forward references. *)
@@ -3307,8 +3345,7 @@ let predeclare_top_level_lets (env : type_env) (program : AST.program) : (type_e
 let infer_program ?(env = empty_env) ?state (program : AST.program) :
     (type_env * type_map * mono_type) infer_result =
   let state = Option.value state ~default:(create_inference_state ()) in
-  try
-    with_inference_state state (fun () ->
+  with_inference_state state (fun () ->
         Annotation.clear_type_aliases ();
         Inherent_registry.clear ();
         clear_method_resolution_store ();
@@ -3403,7 +3440,6 @@ let infer_program ?(env = empty_env) ?state (program : AST.program) :
                 | Ok (env', final_subst, result_type) ->
                     apply_substitution_type_map final_subst type_map;
                     Ok (env', type_map, result_type))))
-  with Annotation.Open_row_rejected msg -> Error (error (ConstructorError msg))
 
 module Test = struct
   (* Helper to parse and infer *)

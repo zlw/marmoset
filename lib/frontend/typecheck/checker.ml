@@ -40,8 +40,6 @@ let infer_program_safe ?state ~(env : Infer.type_env) (program : Syntax.Ast.AST.
     | Ok result -> Ok result
     | Error e -> Error e
   with
-  | Annotation.Open_row_rejected msg ->
-      Error (Diagnostic.error_no_span ~code:"type-open-row-rejected" ~message:msg)
   | Failure msg -> Error (diagnostic_of_infer_exception_message msg)
   | exn -> Error (Diagnostic.error_no_span ~code:"type-internal" ~message:(Printexc.to_string exn))
 
@@ -90,22 +88,18 @@ let check_let_annotation
       (* No annotation, nothing to check *)
       Ok ()
   | Some type_annot -> (
-      (* Convert annotation to mono_type and check match *)
-      try
-        let annotated_type = Annotation.type_expr_to_mono_type type_annot in
-        if Annotation.check_annotation annotated_type inferred_type then
-          Ok ()
-        else
-          Error
-            (Diagnostic.error_no_span ~code:"type-annotation-mismatch"
-               ~message:
-                 (Printf.sprintf "Type annotation mismatch for '%s': expected %s but inferred %s" name
-                    (Annotation.format_mono_type annotated_type)
-                    (Annotation.format_mono_type inferred_type)))
-      with Failure msg ->
-        Error
-          (Diagnostic.error_no_span ~code:"type-annotation-invalid"
-             ~message:(Printf.sprintf "Invalid type annotation for '%s': %s" name msg)))
+      match Annotation.type_expr_to_mono_type type_annot with
+      | Error d -> Error d
+      | Ok annotated_type ->
+          if Annotation.check_annotation annotated_type inferred_type then
+            Ok ()
+          else
+            Error
+              (Diagnostic.error_no_span ~code:"type-annotation-mismatch"
+                 ~message:
+                   (Printf.sprintf "Type annotation mismatch for '%s': expected %s but inferred %s" name
+                      (Annotation.format_mono_type annotated_type)
+                      (Annotation.format_mono_type inferred_type))))
 
 (* Check if a function expression's return type annotation matches its inferred type *)
 let check_function_annotation (return_annotation : Syntax.Ast.AST.type_expr option) (inferred_type : mono_type) :
@@ -115,31 +109,24 @@ let check_function_annotation (return_annotation : Syntax.Ast.AST.type_expr opti
       (* No annotation, nothing to check *)
       Ok ()
   | Some type_annot -> (
-      (* Extract the return type from the function type *)
-      (* inferred_type should be TFun(...) or possibly a polymorphic function *)
-      (* We need to extract just the return type *)
-      try
-        let annotated_return_type = Annotation.type_expr_to_mono_type type_annot in
-        (* Extract the return type from the function type by recursively unwrapping TFun *)
-        let rec extract_return_type (t : mono_type) : mono_type =
-          match t with
-          | TFun (_, ret, _) -> extract_return_type ret
-          | other -> other
-        in
-        let actual_return = extract_return_type inferred_type in
-        if Annotation.check_annotation annotated_return_type actual_return then
-          Ok ()
-        else
-          Error
-            (Diagnostic.error_no_span ~code:"type-annotation-mismatch"
-               ~message:
-                 (Printf.sprintf "Function return type annotation mismatch: expected %s but inferred %s"
-                    (Annotation.format_mono_type annotated_return_type)
-                    (Annotation.format_mono_type actual_return)))
-      with Failure msg ->
-        Error
-          (Diagnostic.error_no_span ~code:"type-annotation-invalid"
-             ~message:(Printf.sprintf "Invalid function annotation: %s" msg)))
+      match Annotation.type_expr_to_mono_type type_annot with
+      | Error d -> Error d
+      | Ok annotated_return_type ->
+          let rec extract_return_type (t : mono_type) : mono_type =
+            match t with
+            | TFun (_, ret, _) -> extract_return_type ret
+            | other -> other
+          in
+          let actual_return = extract_return_type inferred_type in
+          if Annotation.check_annotation annotated_return_type actual_return then
+            Ok ()
+          else
+            Error
+              (Diagnostic.error_no_span ~code:"type-annotation-mismatch"
+                 ~message:
+                   (Printf.sprintf "Function return type annotation mismatch: expected %s but inferred %s"
+                      (Annotation.format_mono_type annotated_return_type)
+                      (Annotation.format_mono_type actual_return))))
 
 (* Type check a program with annotation support.
     This checks that all annotations match the inferred types.
