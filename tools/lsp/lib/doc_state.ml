@@ -38,22 +38,6 @@ let lsp_severity_of_diagnostic = function
   | Diagnostic.Warning -> Lsp_t.DiagnosticSeverity.Warning
   | Diagnostic.Info -> Lsp_t.DiagnosticSeverity.Information
 
-let first_diagnostic_span (diag : Diagnostic.t) : Diagnostic.span option =
-  let rec first_primary = function
-    | [] -> None
-    | { Diagnostic.primary = true; span = Diagnostic.NoSpan; _ } :: rest -> first_primary rest
-    | { Diagnostic.primary = true; span; _ } :: _ -> Some span
-    | _ :: rest -> first_primary rest
-  in
-  let rec first_with_span = function
-    | [] -> None
-    | { Diagnostic.span = Diagnostic.NoSpan; _ } :: rest -> first_with_span rest
-    | { Diagnostic.span; _ } :: _ -> Some span
-  in
-  match first_primary diag.labels with
-  | Some _ as span -> span
-  | None -> first_with_span diag.labels
-
 let range_of_diagnostic_span ~(source : string) ~(active_file_id : string) (span : Diagnostic.span option) :
     Lsp_t.Range.t =
   match span with
@@ -75,7 +59,7 @@ let lsp_code_of_diagnostic (diag : Diagnostic.t) = `String diag.code
 
 let lsp_diagnostic_of_canonical ~(source : string) ~(active_file_id : string) (diag : Diagnostic.t) :
     Lsp_t.Diagnostic.t =
-  let range = range_of_diagnostic_span ~source ~active_file_id (first_diagnostic_span diag) in
+  let range = range_of_diagnostic_span ~source ~active_file_id (Diagnostic.pick_primary_span diag.labels) in
   let severity = lsp_severity_of_diagnostic diag.severity in
   make_diagnostic ~code:(Some (lsp_code_of_diagnostic diag)) ~range ~severity ~message:diag.message
 

@@ -3941,7 +3941,7 @@ let emit_specialized_func
     | Error err ->
         failwith
           (Printf.sprintf "Codegen error: failed to specialize function '%s' to concrete type %s: %s"
-             inst.func_name (Types.to_string concrete_func_type) (Typecheck.Unify.error_to_string err))
+             inst.func_name (Types.to_string concrete_func_type) err.message)
   in
 
   let copied_specialized_type_map = Infer.create_type_map () in

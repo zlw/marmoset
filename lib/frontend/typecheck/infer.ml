@@ -570,7 +570,7 @@ type diag_kind =
 (* An error with optional position info *)
 let diag_kind_to_string = function
   | UnboundVariable name -> "Unbound variable: " ^ name
-  | UnificationError err -> Unify.error_to_string err
+  | UnificationError err -> err.message
   | InvalidOperator (op, t) -> "Invalid operator " ^ op ^ " for type " ^ to_string t
   | NonFunctionCall t -> "Cannot call non-function type: " ^ to_string t
   | IfBranchMismatch (t1, t2) -> "If branches have different types: " ^ to_string t1 ^ " vs " ^ to_string t2
@@ -637,8 +637,6 @@ let error_at kind (expr : AST.expression) =
 (* Create an error with position from a statement *)
 let error_at_stmt kind (stmt : AST.statement) =
   diagnostic_of_kind ~pos:stmt.pos ~end_pos:stmt.end_pos ?file_id:stmt.file_id kind
-
-let error_to_string (err : Diagnostic.t) : string = err.message
 
 (* Result type for inference *)
 type 'a infer_result = ('a, Diagnostic.t) result
@@ -3421,7 +3419,7 @@ module Test = struct
   let infers_to code expected_type =
     match infer_string code with
     | Error e ->
-        Printf.printf "Error: %s\n" (error_to_string e);
+        Printf.printf "Error: %s\n" (e.message);
         false
     | Ok (_, _type_map, t) ->
         if t = expected_type then
@@ -4147,7 +4145,7 @@ match x {
 }" in
     match infer_string code with
     | Error e ->
-        let msg = error_to_string e in
+        let msg = e.message in
         String.length msg > 0 && String.sub msg 0 (min 17 (String.length msg)) = "Non-exhaustive ma"
     | Ok _ -> false
 
@@ -4305,7 +4303,7 @@ f"
     match infer_string "let f = fn[a: t1 + t2](x: a) -> string { x.render() }; f" with
     | Ok _ -> false
     | Error e ->
-        let msg = error_to_string e in
+        let msg = e.message in
         contains_substring msg "Ambiguous method 'render'"
 
   let%test "inherent method call resolves for concrete receiver" =
@@ -4324,7 +4322,7 @@ f"
     match infer_string code with
     | Ok _ -> false
     | Error e ->
-        let msg = error_to_string e in
+        let msg = e.message in
         contains_substring msg "receiver type" && contains_substring msg "does not match impl target type"
 
   let%test "duplicate inherent method for same type is rejected" =
@@ -4333,7 +4331,7 @@ f"
     match infer_string code with
     | Ok _ -> false
     | Error e ->
-        let msg = error_to_string e in
+        let msg = e.message in
         contains_substring msg "Duplicate inherent method 'ping'"
 
   let%test "inherent method registration rejects trait collision on same type and method name" =
@@ -4345,7 +4343,7 @@ f"
     match infer_string code with
     | Ok _ -> false
     | Error e ->
-        let msg = error_to_string e in
+        let msg = e.message in
         contains_substring msg "collides with trait method"
 
   let%test "inherent methods do not satisfy trait constraints" =
@@ -4357,7 +4355,7 @@ f"
     match infer_string code with
     | Ok _ -> false
     | Error e ->
-        let msg = error_to_string e in
+        let msg = e.message in
         contains_substring msg "does not implement trait show"
 
   let%test "infer_program isolates itself from stale global constraint state" =
@@ -4434,7 +4432,7 @@ f"
                 match infer_program ~state:shared_state ~env:env_with_check second_program with
                 | Ok _ -> false
                 | Error e ->
-                    let msg = error_to_string e in
+                    let msg = e.message in
                     contains_substring msg "does not implement trait show")))
 
   let%test "infer errors preserve parser file_id metadata" =

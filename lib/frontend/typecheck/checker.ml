@@ -16,24 +16,6 @@ type typecheck_result = {
   type_map : Infer.type_map; (* Map from expression IDs to their inferred types *)
 }
 
-let error_of_infer_error (e : Diagnostic.t) : Diagnostic.t = e
-
-let first_diagnostic_span (diag : Diagnostic.t) : Diagnostic.span option =
-  let rec first_primary = function
-    | [] -> None
-    | { Diagnostic.primary = true; span = Diagnostic.NoSpan; _ } :: rest -> first_primary rest
-    | { Diagnostic.primary = true; span; _ } :: _ -> Some span
-    | _ :: rest -> first_primary rest
-  in
-  let rec first_with_span = function
-    | [] -> None
-    | { Diagnostic.span = Diagnostic.NoSpan; _ } :: rest -> first_with_span rest
-    | { Diagnostic.span; _ } :: _ -> Some span
-  in
-  match first_primary diag.labels with
-  | Some _ as span -> span
-  | None -> first_with_span diag.labels
-
 let parser_error_of_diagnostics (errors : Diagnostic.t list) : Diagnostic.t =
   match errors with
   | first :: _ -> first
@@ -56,7 +38,7 @@ let infer_program_safe ?state ~(env : Infer.type_env) (program : Syntax.Ast.AST.
   try
     match Infer.infer_program ?state ~env program with
     | Ok result -> Ok result
-    | Error e -> Error (error_of_infer_error e)
+    | Error e -> Error e
   with
   | Annotation.Open_row_rejected msg ->
       Error (Diagnostic.error_no_span ~code:"type-open-row-rejected" ~message:msg)
@@ -386,10 +368,10 @@ let%test "push then len" =
 let string_contains_substring haystack ~substring =
   String_utils.contains_substring ~needle:substring haystack
 
-let diagnostic_locs (source : string) (err : Diagnostic.t) : Source_loc.loc option * Source_loc.loc option =
-  match first_diagnostic_span err with
+let diagnostic_locs (source : string) (err : Diagnostic.t) : Diagnostics.Source_loc.loc option * Diagnostics.Source_loc.loc option =
+  match Diagnostic.pick_primary_span err.labels with
   | Some (Diagnostic.Span { start_pos; end_pos; _ }) ->
-      (Some (Source_loc.offset_to_loc source start_pos), Option.map (Source_loc.offset_to_loc source) end_pos)
+      (Some (Diagnostics.Source_loc.offset_to_loc source start_pos), Option.map (Diagnostics.Source_loc.offset_to_loc source) end_pos)
   | Some Diagnostic.NoSpan | None -> (None, None)
 
 let%test "error includes source location" =

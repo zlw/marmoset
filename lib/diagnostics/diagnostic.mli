@@ -50,5 +50,7 @@ val error_with_span :
 val with_note : t -> string -> t
 val with_secondary_label : t -> label -> t
 
+val pick_primary_span : label list -> span option
+
 val render_cli : source_lookup:(string -> string option) -> t -> string
 val render_many_cli : source_lookup:(string -> string option) -> t list -> string

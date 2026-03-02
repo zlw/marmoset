@@ -10,9 +10,6 @@ let occurs_check (var : string) (mono : mono_type) : Diagnostic.t =
   Diagnostic.error_no_span ~code:"type-occurs-check"
     ~message:("Infinite type: " ^ var ^ " occurs in " ^ to_string mono)
 
-(* Legacy helper kept for existing callsites/tests that stringify unify failures. *)
-let error_to_string (diag : Diagnostic.t) : string = diag.message
-
 let fresh_row_counter = ref 0
 
 let fresh_row_var () =
