@@ -43,6 +43,7 @@ let infer_program_safe ?state ~(env : Infer.type_env) (program : Syntax.Ast.AST.
   | Annotation.Open_row_rejected msg ->
       Error (Diagnostic.error_no_span ~code:"type-open-row-rejected" ~message:msg)
   | Failure msg -> Error (diagnostic_of_infer_exception_message msg)
+  | exn -> Error (Diagnostic.error_no_span ~code:"type-internal" ~message:(Printexc.to_string exn))
 
 let format_error (err : Diagnostic.t) : string = Diagnostic.render_cli ~source_lookup:(fun _ -> None) err
 
