@@ -41,9 +41,6 @@ Selectors:
   <group-prefix>       # prefix match (e.g. codegen -> codegen/codegen_*)
   <group>/<file>.mr    # single fixture file under test/fixtures
   test/fixtures/...mr  # fixture file path from repo root
-
-Env:
-  MARMOSET_STRICT_REJECT=1  # enforce two-way diagnostic coverage in reject mode
 USAGE
 }
 
@@ -374,12 +371,6 @@ $line"
 reject_mode() {
     local file="$1"
     local name="$2"
-    local strict_reject=false
-    case "${MARMOSET_STRICT_REJECT:-0}" in
-        1|true|TRUE|yes|YES|on|ON)
-            strict_reject=true
-            ;;
-    esac
 
     TOTAL=$((TOTAL + 1))
     echo -n "TEST [$TOTAL] $name ... "
@@ -432,12 +423,6 @@ reject_mode() {
         echo -e "  Missing:$missing"
         echo "  Build output: $(echo "$build_output" | head -10)"
         FAIL=$((FAIL + 1))
-        return
-    fi
-
-    if ! $strict_reject; then
-        echo "✓ PASS"
-        PASS=$((PASS + 1))
         return
     fi
 
