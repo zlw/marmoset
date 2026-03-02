@@ -39,7 +39,51 @@ Selectors:
   cli                  # run 08_cli.sh suite
   <group>              # exact fixture group (e.g. traits, runtime)
   <group-prefix>       # prefix match (e.g. codegen -> codegen/codegen_*)
+  <group>/<file>.mr    # single fixture file under test/fixtures
+  test/fixtures/...mr  # fixture file path from repo root
 USAGE
+}
+
+normalize_existing_file() {
+    local path="$1"
+    local dir
+    local base
+
+    dir=$(dirname "$path")
+    base=$(basename "$path")
+    (cd "$dir" 2>/dev/null && printf "%s/%s\n" "$(pwd)" "$base")
+}
+
+resolve_fixture_file_selector() {
+    local selector="$1"
+    local candidate=""
+    local abs=""
+
+    if [[ "$selector" == *.mr ]]; then
+        if [ -f "$FIXTURE_ROOT/$selector" ]; then
+            candidate="$FIXTURE_ROOT/$selector"
+        elif [ -f "$REPO_ROOT/$selector" ]; then
+            candidate="$REPO_ROOT/$selector"
+        elif [ -f "$selector" ]; then
+            candidate="$selector"
+        fi
+    fi
+
+    if [ -z "$candidate" ]; then
+        return 1
+    fi
+
+    abs=$(normalize_existing_file "$candidate") || return 1
+
+    case "$abs" in
+        "$FIXTURE_ROOT"/*)
+            echo "$abs"
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
 }
 
 resolve_selector() {
@@ -454,10 +498,17 @@ run_fixture_suite() {
 
 run_cli=0
 selected_groups=()
+selected_fixture_files=()
 if [ "$#" -eq 0 ]; then
     selected_groups=("${ALL_GROUPS[@]}")
 else
     for arg in "$@"; do
+        fixture_file=$(resolve_fixture_file_selector "$arg" || true)
+        if [ -n "$fixture_file" ]; then
+            selected_fixture_files+=("$fixture_file")
+            continue
+        fi
+
         resolved=$(resolve_selector "$arg") || {
             echo "Unknown selector: $arg" >&2
             print_usage
@@ -488,7 +539,7 @@ for group in "${selected_groups[@]}"; do
     fi
 done
 
-if [ "${#unique_groups[@]}" -eq 0 ] && [ "$run_cli" -eq 0 ]; then
+if [ "${#unique_groups[@]}" -eq 0 ] && [ "${#selected_fixture_files[@]}" -eq 0 ] && [ "$run_cli" -eq 0 ]; then
     echo "No test targets selected." >&2
     print_usage
     exit 2
@@ -500,6 +551,10 @@ for group in "${unique_groups[@]}"; do
     while IFS= read -r f; do
         SELECTED_FIXTURES+=("$f")
     done < <(find "$FIXTURE_ROOT/$group" -type f -name '*.mr' | LC_ALL=C sort)
+done
+
+for fixture in "${selected_fixture_files[@]}"; do
+    SELECTED_FIXTURES+=("$fixture")
 done
 
 # Deduplicate fixtures while preserving order.
@@ -527,7 +582,7 @@ suite_pass=0
 suite_fail=0
 suite_count=0
 
-if [ "${#unique_groups[@]}" -gt 0 ]; then
+if [ "${#SELECTED_FIXTURES[@]}" -gt 0 ]; then
     suite_count=$((suite_count + 1))
     echo ""
     if run_fixture_suite; then
