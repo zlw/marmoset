@@ -521,16 +521,13 @@ extract_new_diagnostic_records() {
         fi
 
         if [ "$active" -eq 1 ]; then
-            if [[ "$line" =~ ^[[:space:]]+ ]] || [ -z "$line" ]; then
-                local trimmed
-                trimmed=$(trim_ws "$line")
-                if [ -n "$trimmed" ]; then
-                    cur_match_text="$cur_match_text | $trimmed"
-                fi
-            else
-                emit_diag_record "canonical" "$cur_severity" "$cur_code" "$cur_message" "$cur_file" "$cur_start_line" \
-                    "$cur_start_col" "$cur_end_line" "$cur_end_col" "$cur_match_text"
-                active=0
+            # Keep non-header continuation lines attached to the active diagnostic block.
+            # This preserves matcher visibility for toolchain details that are emitted on
+            # following lines (for example Go compiler messages under build-go-compile).
+            local trimmed
+            trimmed=$(trim_ws "$line")
+            if [ -n "$trimmed" ]; then
+                cur_match_text="$cur_match_text | $trimmed"
             fi
         fi
     done <<< "$build_output"

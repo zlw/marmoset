@@ -45,6 +45,7 @@ TMP_FIXTURE_DIR=$(mktemp -d "$FIXTURE_ROOT/.harness_canary.XXXXXX")
 canary_missing="$TMP_FIXTURE_DIR/canary_missing_expected.mr"
 canary_line="$TMP_FIXTURE_DIR/canary_line_mismatch.mr"
 canary_unexpected="$TMP_FIXTURE_DIR/canary_unexpected.mr"
+canary_continuation="$TMP_FIXTURE_DIR/canary_no_span_continuation.mr"
 canary_annotation="$TMP_FIXTURE_DIR/canary_annotation_placement.mr"
 
 cat > "$canary_missing" <<'CANARY'
@@ -57,6 +58,10 @@ CANARY
 
 cat > "$canary_unexpected" <<'CANARY'
 let z = 3  # error: expected core marker
+CANARY
+
+cat > "$canary_continuation" <<'CANARY'
+let c = 4  # error: missing return
 CANARY
 
 cat > "$canary_annotation" <<'CANARY'
@@ -90,6 +95,11 @@ case "$file" in
         echo "$file:4:1: error test-extra: unexpected extra marker"
         exit 1
         ;;
+    *canary_no_span_continuation.mr)
+        echo "error build-go-compile: # marmoset_out"
+        echo "./main.go:50:1: missing return"
+        exit 1
+        ;;
     *)
         echo "Built: stub"
         exit 0
@@ -112,6 +122,7 @@ chmod +x "$HARNESS_COPY"
 rel_missing="${canary_missing#$FIXTURE_ROOT/}"
 rel_line="${canary_line#$FIXTURE_ROOT/}"
 rel_unexpected="${canary_unexpected#$FIXTURE_ROOT/}"
+rel_continuation="${canary_continuation#$FIXTURE_ROOT/}"
 rel_annotation="${canary_annotation#$FIXTURE_ROOT/}"
 
 TOTAL=$((TOTAL + 1))
@@ -130,6 +141,23 @@ else
         echo "$output" | sed 's/^/  /' | head -n 40
         FAIL=$((FAIL + 1))
     fi
+fi
+
+TOTAL=$((TOTAL + 1))
+echo -n "TEST [$TOTAL] canonical no-span continuation lines are matchable ... "
+if output=$($HARNESS_COPY "$rel_continuation" 2>&1); then
+    if echo "$output" | grep -q "✓ PASS"; then
+        echo "✓ PASS"
+        PASS=$((PASS + 1))
+    else
+        echo "✗ FAIL (continuation-line canary missing pass marker)"
+        echo "$output" | sed 's/^/  /' | head -n 40
+        FAIL=$((FAIL + 1))
+    fi
+else
+    echo "✗ FAIL (continuation-line canary unexpectedly failed)"
+    echo "$output" | sed 's/^/  /' | head -n 40
+    FAIL=$((FAIL + 1))
 fi
 
 TOTAL=$((TOTAL + 1))
