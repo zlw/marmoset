@@ -1,0 +1,6 @@
+# XF51: K59: Derived show on record + generic show constraint
+type point = { x: int, y: int }
+derive show for point;
+let render = fn[a: show](x: a) -> string { x.show() }
+let p: point = { x: 1, y: 2 }
+puts(render(p))  # output: { x: 1, y: 2 }

@@ -1,0 +1,3 @@
+let f = fn(x: int) -> int { x }
+let g = fn(x: int) -> int { x }
+puts(f == g)  # error: missing-impl

@@ -1,0 +1,9 @@
+# CS38: F39: nested is-checks
+let f = fn(x: int | string, y: int | bool) -> int {
+  if (x is int) {
+    if (y is int) { x + y } else { x }
+  } else {
+    0
+  }
+}
+puts(f(40, 2))  # output: 42

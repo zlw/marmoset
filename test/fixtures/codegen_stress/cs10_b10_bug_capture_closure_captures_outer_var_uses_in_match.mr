@@ -1,0 +1,10 @@
+# CS10: B10: [BUG-CAPTURE] closure captures outer var, uses in match
+let offset = 40
+let f = fn(x: int) -> int {
+  match x {
+    1: offset + 1
+    2: offset + 2
+    _: offset
+  }
+}
+puts(f(2))  # output: 42

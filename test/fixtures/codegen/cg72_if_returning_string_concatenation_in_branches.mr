@@ -1,0 +1,4 @@
+# CG72: if returning string concatenation in branches
+let flag = true
+let msg = if (flag) { "hello" + " " + "world" } else { "goodbye" }
+puts(msg)  # output: hello world

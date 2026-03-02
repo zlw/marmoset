@@ -1,0 +1,12 @@
+# E24: Nested enum - inner nullary case
+enum inner { a(int) b }
+enum outer { wrap(inner) empty }
+let x = outer.wrap(inner.b)
+let result = match x {
+  outer.wrap(i): match i {
+    inner.a(n): n
+    inner.b: 0
+  }
+  outer.empty: 0
+}
+puts(result)  # output: 0

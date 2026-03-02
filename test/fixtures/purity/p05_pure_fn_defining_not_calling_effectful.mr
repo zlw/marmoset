@@ -1,0 +1,9 @@
+# P5: Pure fn defining (not calling) effectful inner fn is OK
+let outer = fn(x: int) -> int {
+  let inner = fn(y: int) => int {
+    puts(y)
+    y
+  }
+  x + 1
+}
+puts(outer(5))

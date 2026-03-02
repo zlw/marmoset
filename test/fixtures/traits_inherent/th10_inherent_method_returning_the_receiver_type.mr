@@ -1,0 +1,8 @@
+# TH10: Inherent method returning the receiver type
+impl int {
+  fn double(x: int) -> int {
+    x + x
+  }
+}
+let n = 5
+puts(n.double())  # output: 10

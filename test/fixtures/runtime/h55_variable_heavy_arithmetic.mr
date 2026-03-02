@@ -1,0 +1,4 @@
+let a = 10
+let b = 20
+let c = 25
+puts(a + b + c)  # output: 55

@@ -1,0 +1,8 @@
+# E65: Four-field variant
+enum quad { q(int, int, int, int) z }
+let x = quad.q(1, 2, 3, 4)
+let sum = match x {
+  quad.q(a, b, c, d): a + b + c + d
+  quad.z: 0
+}
+puts(sum)  # output: 10

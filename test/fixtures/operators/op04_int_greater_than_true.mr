@@ -1,0 +1,2 @@
+# OP04: Int greater-than true
+puts(3 > 2)  # output: true

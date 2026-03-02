@@ -1,0 +1,8 @@
+# T104: Field-only trait with method supertrait is rejected as type
+trait show[a] {  # error: method and mixed trait objects are not supported in this phase
+  fn show(x: a) -> string
+}
+trait describable: show {
+  label: string
+}
+let x: describable = { label: "hi" }

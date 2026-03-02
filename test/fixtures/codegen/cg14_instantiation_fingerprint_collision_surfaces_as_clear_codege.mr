@@ -1,0 +1,8 @@
+# CG14: Instantiation fingerprint collision surfaces as clear codegen error
+enum b { v }  # error: Codegen error: instantiation fingerprint collision for 'id'
+enum a[t] { wrap(t) }
+enum a_b { wrap }
+let id = fn(x) { x }
+let x = id(a_b.wrap)
+let y = id(a.wrap(b.v))
+puts(1)

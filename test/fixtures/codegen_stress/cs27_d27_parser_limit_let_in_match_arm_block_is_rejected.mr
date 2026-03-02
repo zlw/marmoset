@@ -1,0 +1,12 @@
+# CS27: D27: [PARSER-LIMIT] let in match arm block is rejected
+let f = fn(x: int) => int {  # error: Parse error
+  match x {
+    1: {
+      let v = 100
+      puts(v)
+      v
+    }
+    _: 0
+  }
+}
+f(1)

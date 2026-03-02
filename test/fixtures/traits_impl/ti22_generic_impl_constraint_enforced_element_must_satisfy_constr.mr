@@ -1,0 +1,11 @@
+# TI22: Generic impl constraint enforced: element must satisfy constraint
+trait named {
+  name: string
+}
+trait show[a] {
+  fn show(x: a) -> string
+}
+impl show[b: named] for list[b] {
+  fn show(x: list[b]) -> string { "ok" }
+}
+puts([1, 2].show())  # error: does not satisfy

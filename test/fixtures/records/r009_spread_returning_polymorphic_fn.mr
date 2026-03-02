@@ -1,0 +1,5 @@
+# R009: Spread-returning polymorphic function keeps tail fields
+let update_x = fn(r, new_x) { { ...r, x: new_x } }
+let base = { x: 1, y: 20 }
+let result = update_x(base, 5)
+puts(result.x + result.y)  # output: 25

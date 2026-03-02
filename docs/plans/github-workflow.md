@@ -85,7 +85,7 @@ Add stable command wrappers so workflows call one command per concern.
 
 2. Make LSP integration explicit:
 - Preferred: add dedicated `test/integration/09_lsp.sh` (or `test/lsp/integration.sh`) and call it from `ci-lsp-integration`.
-- Minimal transitional option: run `test/integration/08_cli.sh` and document it as LSP integration smoke.
+- Minimal transitional option: run `./test/integration.sh cli` (or `make integration cli`) and document it as LSP integration smoke.
 
 3. Add editor test scripts where missing:
 - `test/editors/zed.sh` (e.g. `cargo check` / wasm build smoke)
@@ -302,7 +302,7 @@ If migration causes disruption:
   - `ci-editor-nvim`
   - `ci-editor-jetbrains`
 - 2026-03-01 18:31 CET: Added `test/ci/quality.sh` and editor scripts (`editor-zed.sh`, `editor-vscode.sh`, `editor-nvim.sh`, `editor-jetbrains.sh`) with independent pass/fail exits.
-- 2026-03-01 18:31 CET: Wired LSP integration CI entrypoint to `./test/integration.sh 08_cli.sh` for explicit LSP smoke coverage.
+- 2026-03-01 18:31 CET: Wired LSP integration CI entrypoint to `./test/integration.sh cli` for explicit LSP smoke coverage.
 - 2026-03-01 18:37 CET: Completed Step 2 by adding shared composite actions:
   - `.github/actions/setup-ocaml/action.yml`
   - `.github/actions/setup-ocaml-go/action.yml`

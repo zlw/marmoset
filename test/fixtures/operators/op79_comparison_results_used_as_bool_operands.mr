@@ -1,0 +1,4 @@
+# OP79: Comparison results used as bool operands
+let a = 1 < 2
+let b = 3 > 0
+puts(a == b)  # output: true

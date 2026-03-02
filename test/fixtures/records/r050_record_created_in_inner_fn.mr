@@ -1,0 +1,7 @@
+# R050: Record created in inner function, accessed in outer
+let make = fn(v) { { x: v, y: v } }
+let use = fn(v) {
+  let r = make(v)
+  r.x
+}
+puts(use(5))  # output: 5

@@ -1,0 +1,2 @@
+# T48: String concatenation still works with builtin operator lowering
+puts("a" + "b")  # output: ab

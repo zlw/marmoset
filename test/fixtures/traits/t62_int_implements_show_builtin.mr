@@ -1,0 +1,4 @@
+# T62: int implements show (builtin)
+let x = 42
+let s = x.show()
+puts(s)  # output: 42

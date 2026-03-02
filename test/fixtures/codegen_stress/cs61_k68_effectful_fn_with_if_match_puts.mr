@@ -1,0 +1,13 @@
+# CS61: K68: effectful fn with if+match+puts
+let f = fn(flag: bool, n: int) => int {
+  if (flag) {
+    puts("branch_a")
+    match n { 1: 99 _: 0 }
+  } else {
+    puts("branch_b")
+    0
+  }
+}
+# output: branch_a
+# output: 99
+puts(f(true, 1))

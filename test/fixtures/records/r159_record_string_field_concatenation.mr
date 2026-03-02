@@ -1,0 +1,3 @@
+# R159: Record string field concatenation
+let r = { first: "hello", sep: " ", last: "world" }
+puts(r.first + r.sep + r.last)  # output: hello world

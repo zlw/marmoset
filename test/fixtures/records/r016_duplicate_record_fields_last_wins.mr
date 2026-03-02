@@ -1,0 +1,3 @@
+# R016: Duplicate record fields are last-write-wins
+let p = { x: 1, x: 2 }
+puts(p.x)  # output: 2

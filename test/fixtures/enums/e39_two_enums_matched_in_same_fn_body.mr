@@ -1,0 +1,9 @@
+# E39: Two enums matched in same function body
+enum color { red green blue }
+enum shape { circle square triangle }
+let describe = fn(c: color, s: shape) -> int {
+  let cv = match c { color.red: 1 _: 0 }
+  let sv = match s { shape.circle: 1 _: 0 }
+  cv * sv
+}
+puts(describe(color.red, shape.circle))  # output: 1

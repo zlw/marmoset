@@ -1,0 +1,11 @@
+# BUG: Deep nesting closure capture fails codegen
+let a = 1  # error: *
+let f = fn() -> int {
+  let b = 2
+  let g = fn() -> int {
+    let c = 3
+    a + b + c
+  }
+  g()
+}
+puts(f())

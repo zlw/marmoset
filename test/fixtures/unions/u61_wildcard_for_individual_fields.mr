@@ -1,0 +1,7 @@
+# U61: Wildcard for individual fields in multi-field variant
+enum http { response(int, string) }
+let r = http.response(200, "OK")
+let out = match r {
+  http.response(code, _): code
+}
+puts(out)  # output: 200

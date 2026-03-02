@@ -1,0 +1,10 @@
+enum option[a] {
+  some(a)
+  none
+}
+let x = option.some(10)
+let r = match (x) {
+  option.some(n): n + 1
+  option.none(): 0
+}
+puts(r)  # output: 11

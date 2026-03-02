@@ -1,0 +1,19 @@
+# CM33: Two impls on same enum at different type args
+enum box[a] { wrap(a) }
+trait label[a] {
+  fn label(x: a) -> string
+}
+impl label for box[int] {
+  fn label(x: box[int]) -> string {
+    match x { box.wrap(v): "int:" + v.show() }
+  }
+}
+impl label for box[string] {
+  fn label(x: box[string]) -> string {
+    match x { box.wrap(v): "str:" + v }
+  }
+}
+let a: box[int] = box.wrap(42)
+let b: box[string] = box.wrap("hello")
+puts(a.label())  # output: int:42
+puts(b.label())  # output: str:hello

@@ -1,0 +1,19 @@
+# E26: Generic enum at 4 types via separate functions
+enum box[a] { full(a) empty }
+let count_int = fn(x: box[int]) -> int {
+  match x { box.full(_): 1 box.empty: 0 }
+}
+let count_str = fn(x: box[string]) -> int {
+  match x { box.full(_): 1 box.empty: 0 }
+}
+let count_bool = fn(x: box[bool]) -> int {
+  match x { box.full(_): 1 box.empty: 0 }
+}
+let count_list = fn(x: box[list[int]]) -> int {
+  match x { box.full(_): 1 box.empty: 0 }
+}
+let a = box.full(42)
+let b = box.full("hello")
+let c = box.full(true)
+let d = box.full([1, 2, 3])
+puts(count_int(a) + count_str(b) + count_bool(c) + count_list(d))  # output: 4

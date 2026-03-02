@@ -1,0 +1,13 @@
+# TF22: Two constrained generics with different constraints
+trait has_name {
+  name: string
+}
+trait has_age {
+  age: int
+}
+let combine = fn[a: has_name, b: has_age](x: a, y: b) -> string {
+  x.name + y.age.show()
+};
+let n = { name: "alice" }
+let a = { age: 42 }
+puts(combine(n, a))  # output: alice42

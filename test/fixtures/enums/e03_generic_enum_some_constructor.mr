@@ -1,0 +1,4 @@
+# E03: Generic enum option[a] with some constructor
+enum option[a] { some(a) none }
+let x = option.some(42)
+x

@@ -1,0 +1,6 @@
+# P1: Effectful function (=>) calling puts should compile fine
+let greet = fn(x: int) => int {
+  puts(x)
+  x
+}
+greet(42)

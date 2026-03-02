@@ -1,0 +1,6 @@
+# T114: Field-only trait with float field
+trait measured {
+  value: float
+}
+let x: measured = { value: 3.14, unit: "m" }
+puts(x.value)  # output: 3.14

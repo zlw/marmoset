@@ -1,0 +1,5 @@
+# TH33: Inherent method missing parameter type annotation is rejected
+impl int {  # error: missing a type annotation
+  fn oops(x) -> int { x }
+}
+puts(1)

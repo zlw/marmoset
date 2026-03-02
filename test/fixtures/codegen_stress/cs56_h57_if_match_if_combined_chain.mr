@@ -1,0 +1,12 @@
+# CS56: H57: if-match-if combined chain
+let f = fn(flag: bool, n: int, check: bool) -> int {
+  if (flag) {
+    match n {
+      1: if (check) { 99 } else { 0 }
+      _: 50
+    }
+  } else {
+    0
+  }
+}
+puts(f(true, 1, true))  # output: 99

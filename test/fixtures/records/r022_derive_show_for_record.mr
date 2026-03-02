@@ -1,0 +1,8 @@
+# R022: Derive show for record
+trait show[a] {
+  fn show(x: a) -> string
+}
+type point = { x: int, y: int }
+derive show for point;
+let p: point = { x: 1, y: 2 }
+puts(p.show())  # output: { x: 1, y: 2 }

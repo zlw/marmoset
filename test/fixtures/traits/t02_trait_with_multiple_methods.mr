@@ -1,0 +1,6 @@
+# T02: Trait with multiple methods
+trait eq[a] {
+       fn eq(x: a, y: a) -> bool
+       fn ne(x: a, y: a) -> bool
+     }
+     42

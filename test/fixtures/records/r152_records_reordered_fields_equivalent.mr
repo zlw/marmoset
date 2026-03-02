@@ -1,0 +1,4 @@
+# R152: Records with reordered fields are equivalent
+let r1 = { x: 1, y: 2 }
+let r2 = { y: 2, x: 1 }
+puts(r1.x + r2.y)  # output: 3

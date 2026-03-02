@@ -1,0 +1,10 @@
+enum priority { low high }
+impl eq for priority {
+  fn eq(x: priority, y: priority) -> bool { false }
+}
+impl ord for priority {
+  fn compare(x: priority, y: priority) -> ordering {
+    ordering.greater
+  }
+}
+puts(priority.low < priority.high)  # output: false

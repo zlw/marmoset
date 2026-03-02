@@ -1,0 +1,8 @@
+# TI28: Impl for string primitive
+trait length[a] {
+  fn length(x: a) -> int
+}
+impl length for string {
+  fn length(s: string) -> int { len(s) }
+}
+puts("hello".length())  # output: 5

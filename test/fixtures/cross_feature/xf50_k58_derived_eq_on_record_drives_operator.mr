@@ -1,0 +1,6 @@
+# XF50: K58: Derived eq on record drives == operator
+type point = { x: int, y: int }
+derive eq for point;
+let p1: point = { x: 1, y: 2 }
+let p2: point = { x: 1, y: 2 }
+puts(p1 == p2)  # output: true

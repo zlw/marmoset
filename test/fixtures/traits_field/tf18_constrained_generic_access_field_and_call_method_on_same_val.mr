@@ -1,0 +1,18 @@
+# TF18: Constrained generic: access field and call method on same value
+type person = { name: string, age: int }
+trait named {
+  name: string
+}
+trait shown[a] {
+  fn show(x: a) -> string
+}
+impl shown for person {
+  fn show(x: person) -> string {
+    "shown"
+  }
+}
+let describe = fn[t: named + shown](v: t) -> string {
+  v.name + ": " + v.show()
+};
+let p: person = { name: "alice", age: 30 }
+puts(describe(p))  # output: alice: shown

@@ -1,0 +1,5 @@
+# OP114: Boolean expression from comparison chain
+let low = 1 < 10
+let high = 100 > 50
+let both = low == high
+puts(both)  # output: true

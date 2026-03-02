@@ -1,0 +1,12 @@
+# TF12: Multiple constraints with same field name and same type
+trait tag_a {
+  label: string
+}
+trait tag_b {
+  label: string
+}
+let get_label = fn[t: tag_a + tag_b](v: t) -> string {
+  v.label
+};
+let r = { label: "hi" }
+puts(get_label(r))  # output: hi

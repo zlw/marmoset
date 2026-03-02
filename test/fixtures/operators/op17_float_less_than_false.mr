@@ -1,0 +1,2 @@
+# OP17: Float less-than false
+puts(3.0 < 2.0)  # output: false

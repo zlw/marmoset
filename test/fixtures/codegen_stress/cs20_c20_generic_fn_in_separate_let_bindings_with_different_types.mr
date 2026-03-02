@@ -1,0 +1,6 @@
+# CS20: C20: generic fn in separate let bindings with different types
+let id = fn(x) { x }
+let x = id(42)
+let y = id("hello")
+puts(x)  # output: 42
+puts(y)  # output: hello

@@ -1,0 +1,7 @@
+# T83: Multi-field trait object hides non-declared fields
+trait person_like {
+  name: string
+  age: int
+}
+let x: person_like = { name: "alice", age: 30, active: true }
+puts(x.active)  # error: Record field 'active' not found in type

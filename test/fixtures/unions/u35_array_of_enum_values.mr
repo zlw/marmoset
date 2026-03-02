@@ -1,0 +1,4 @@
+# U35: Array of enum values
+enum option[a] { some(a) none }
+let arr = [option.some(1), option.some(2), option.none()]
+puts(len(arr))  # output: 3

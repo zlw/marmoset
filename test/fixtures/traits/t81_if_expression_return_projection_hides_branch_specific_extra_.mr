@@ -1,0 +1,13 @@
+# T81: If-expression return projection hides branch-specific extra fields
+trait named {
+  name: string
+}
+let pick = fn(flag: bool) -> named {
+  if (flag) {
+    { name: "branch_a", extra1: 1 }
+  } else {
+    { name: "branch_b", extra2: "two" }
+  }
+}
+let x = pick(true)
+puts(x.extra1)  # error: Record field 'extra1' not found in type

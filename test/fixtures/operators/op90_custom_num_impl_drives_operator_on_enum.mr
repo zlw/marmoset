@@ -1,0 +1,13 @@
+# OP90: Custom num impl drives / operator on enum
+enum boxed { val(int) }
+impl num for boxed {
+  fn add(x: boxed, y: boxed) -> boxed { x }
+  fn sub(x: boxed, y: boxed) -> boxed { x }
+  fn mul(x: boxed, y: boxed) -> boxed { x }
+  fn div(x: boxed, y: boxed) -> boxed { y }
+}
+let a = boxed.val(7)
+let b = boxed.val(11)
+match (a / b) {  # output: 11
+  boxed.val(n): puts(n)
+}

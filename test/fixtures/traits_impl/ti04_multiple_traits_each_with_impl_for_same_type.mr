@@ -1,0 +1,15 @@
+# TI04: Multiple traits each with impl for same type
+trait greet[a] {
+  fn greet(x: a) -> string
+}
+trait check[a] {
+  fn check(x: a) -> bool
+}
+impl greet for string {
+  fn greet(s: string) -> string { "hello" }
+}
+impl check for string {
+  fn check(s: string) -> bool { true }
+}
+puts("world".greet())  # output: hello
+puts("world".check())  # output: true

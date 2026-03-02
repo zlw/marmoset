@@ -1,0 +1,8 @@
+# TI13: Impl method with wrong return type is rejected
+trait show[a] {  # error: *
+  fn show(x: a) -> string
+}
+impl show for int {
+  fn show(x: int) -> int { 42 }
+}
+puts(1)

@@ -1,0 +1,6 @@
+# R166: Chain of records from previous fields
+let r1 = { x: 2 }
+let r2 = { x: r1.x * 2 }
+let r3 = { x: r2.x * 2 }
+let r4 = { x: r3.x * 2 }
+puts(r4.x)  # output: 16

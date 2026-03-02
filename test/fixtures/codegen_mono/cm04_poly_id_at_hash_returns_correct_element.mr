@@ -1,0 +1,3 @@
+# CM04: Poly id at hash returns correct element
+let id = fn(x) { x }
+puts(id({"k": "val"})["k"])  # output: val

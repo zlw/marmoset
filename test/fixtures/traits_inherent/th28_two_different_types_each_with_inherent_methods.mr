@@ -1,0 +1,13 @@
+# TH28: Two different types each with inherent methods
+type point = { x: int, y: int }
+type label = { text: string }
+impl point {
+  fn sum(p: point) -> int { p.x + p.y }
+}
+impl label {
+  fn get_text(l: label) -> string { l.text }
+}
+let p: point = { x: 10, y: 20 }
+let l: label = { text: "hello" }
+puts(p.sum())  # output: 30
+puts(l.get_text())  # output: hello

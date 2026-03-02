@@ -1,0 +1,11 @@
+# TF35: Supertrait chain: call site record missing grandparent field
+trait has_a {
+  a: int
+}
+trait has_b: has_a {
+  b: int
+}
+let get_a = fn[t: has_b](v: t) -> int {
+  v.a
+};
+get_a({ b: 1 })  # error: missing-field

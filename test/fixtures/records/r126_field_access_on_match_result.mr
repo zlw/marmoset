@@ -1,0 +1,7 @@
+# R126: Field access on match result
+let x = 2
+let r = match x {
+  1: { val: 100 }
+  _: { val: 200 }
+}
+puts(r.val)  # output: 200

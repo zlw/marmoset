@@ -1,0 +1,1 @@
+let f = fn(x: int, y: string) { y }; f(5, "hi")

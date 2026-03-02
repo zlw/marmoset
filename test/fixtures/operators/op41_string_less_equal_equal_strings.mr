@@ -1,0 +1,2 @@
+# OP41: String less-equal (equal strings)
+puts("hello" <= "hello")  # output: true

@@ -1,0 +1,6 @@
+# TH31: Inherent method receiver type mismatch is rejected
+type point = { x: int }  # error: does not match impl target type
+impl point {
+  fn bad(x: int) -> int { x }
+}
+puts(1)

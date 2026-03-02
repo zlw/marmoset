@@ -1,0 +1,2 @@
+# OP08: Int less-equal false
+puts(6 <= 5)  # output: false

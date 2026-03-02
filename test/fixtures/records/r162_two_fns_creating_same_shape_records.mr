@@ -1,0 +1,6 @@
+# R162: Two fns creating same-shape records
+let mk1 = fn(n) { { x: n, y: n + 1 } }
+let mk2 = fn(n) { { x: n * 2, y: n * 3 } }
+let r1 = mk1(2)
+let r2 = mk2(3)
+puts(r1.x + r2.x - r1.y)  # output: 5

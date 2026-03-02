@@ -1,0 +1,9 @@
+# E13: Nested enum types option[list[int]]
+enum option[a] { some(a) none }
+let f = fn(x: option[list[int]]) -> int {
+  match x {
+    option.some(lst): len(lst)
+    option.none: 0
+  }
+}
+f(option.some([1, 2, 3]))

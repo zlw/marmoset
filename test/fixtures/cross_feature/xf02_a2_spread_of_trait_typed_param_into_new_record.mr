@@ -1,0 +1,9 @@
+# XF02: A2: Spread of trait-typed param into new record
+trait named {
+  name: string
+}
+let wrap = fn(x: named) -> named {
+  { name: x.name }
+}
+let result = wrap({ name: "alice", age: 30 })
+puts(result.name)  # output: alice

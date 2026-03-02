@@ -1,0 +1,5 @@
+# R150: Same fields, different types
+let r1 = { x: "hello", y: true }
+let r2 = { x: 42, y: 100 }
+puts(r1.x)  # output: hello
+puts(r2.x)  # output: 42

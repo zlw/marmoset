@@ -1,0 +1,5 @@
+# R094: Type alias as function return type
+type point = { x: int, y: int }
+let make_point = fn(a: int, b: int) -> point { { x: a, y: b } }
+let p = make_point(3, 4)
+puts(p.x + p.y)  # output: 7

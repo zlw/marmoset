@@ -1,0 +1,12 @@
+# U12: Match on int result of prior enum match (chained)
+enum option[a] { some(a) none }
+let x: option[int] = option.some(10)
+let y: option[int] = option.some(20)
+let a = match x { option.some(v): v option.none: 0 }
+let b = match y { option.some(v): v option.none: 0 }
+let sum = a + b
+let out = match sum {
+  30: "yes"
+  _: "no"
+}
+puts(out)  # output: yes

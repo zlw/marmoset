@@ -1,0 +1,7 @@
+# TH05: Inherent method calling another inherent method on same type
+impl int {
+  fn twice(x: int) -> int { x + x }
+  fn quadruple(x: int) -> int { x.twice().twice() }
+}
+let n = 5
+puts(n.quadruple())  # output: 20

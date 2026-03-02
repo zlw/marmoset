@@ -1,0 +1,4 @@
+# CG48: if with negated condition
+let flag = false
+let x = if (!flag) { 20 } else { 10 }
+puts(x)  # output: 20

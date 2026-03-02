@@ -1,0 +1,8 @@
+# TH11: Inherent method body with if expression
+impl int {
+  fn classify(x: int) -> string {
+    if (x > 100) { "big" } else { "small" }
+  }
+}
+let n = 999
+puts(n.classify())  # output: big

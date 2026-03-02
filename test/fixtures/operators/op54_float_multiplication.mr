@@ -1,0 +1,2 @@
+# OP54: Float multiplication
+puts(2.5 * 2.5)  # output: 6.25

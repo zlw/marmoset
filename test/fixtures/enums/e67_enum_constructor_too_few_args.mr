@@ -1,0 +1,4 @@
+# E67: Enum constructor with too few args is rejected
+enum data { pair(int, int) }
+let x = data.pair(1)  # error: expects
+puts(x)

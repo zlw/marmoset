@@ -1,0 +1,9 @@
+# U58: Pattern variable shadows outer let binding
+enum option[a] { some(a) none }
+let v = 999
+let x = option.some(10)
+let out = match x {
+  option.some(v): v
+  option.none: 0
+}
+puts(out)  # output: 10

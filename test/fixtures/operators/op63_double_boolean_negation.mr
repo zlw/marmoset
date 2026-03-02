@@ -1,0 +1,2 @@
+# OP63: Double boolean negation
+puts(!(!true))  # output: true

@@ -1,0 +1,8 @@
+# E33: Record with enum payload field - some
+enum option[a] { some(a) none }
+let r = { value: option.some(42) }
+let out = match r.value {
+  option.some(v): v
+  option.none: 0
+}
+puts(out)  # output: 42

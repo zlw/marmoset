@@ -1,0 +1,2 @@
+# OP02: Int less-than false
+puts(2 < 1)  # output: false

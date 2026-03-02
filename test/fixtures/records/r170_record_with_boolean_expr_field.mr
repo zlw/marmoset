@@ -1,0 +1,4 @@
+# R170: Record with boolean expr as field value
+let r = { result: 10 > 5 }
+let out = if (r.result) { "true" } else { "false" }
+puts(out)  # output: true

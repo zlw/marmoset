@@ -1,0 +1,9 @@
+# XF59: M67: Show+eq constraints with conditional using both
+let show_if_equal = fn[a: show + eq](x: a, y: a) -> string {
+  if (x.eq(y)) {
+    x.show()
+  } else {
+    "different"
+  }
+}
+puts(show_if_equal(42, 42))  # output: 42

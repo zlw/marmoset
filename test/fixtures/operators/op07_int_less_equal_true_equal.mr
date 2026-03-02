@@ -1,0 +1,2 @@
+# OP07: Int less-equal true (equal)
+puts(5 <= 5)  # output: true

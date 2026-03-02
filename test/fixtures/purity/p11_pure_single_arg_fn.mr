@@ -1,0 +1,6 @@
+# P11: Pure single-arg fn compiles
+let add = fn(x: int) -> int {
+  x + 2
+}
+let result = add(5)
+puts(result)

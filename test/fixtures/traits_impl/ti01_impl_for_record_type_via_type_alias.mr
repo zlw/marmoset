@@ -1,0 +1,12 @@
+# TI01: Impl for record type via type alias
+type point = { x: int, y: int }
+trait show[a] {
+  fn show(x: a) -> string
+}
+impl show for point {
+  fn show(p: point) -> string {
+    "point(" + p.x.show() + "," + p.y.show() + ")"
+  }
+}
+let p: point = { x: 1, y: 2 }
+puts(p.show())  # output: point(1,2)

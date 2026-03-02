@@ -1,0 +1,7 @@
+# TH44: Inherent method result passed through chained method calls
+impl int {
+  fn double(x: int) -> int { x + x }
+  fn add_one(x: int) -> int { x + 1 }
+}
+let n = 10
+puts(n.double().add_one())  # output: 21

@@ -1,0 +1,4 @@
+let sum = 3 + 4
+let product = 2 * 5
+let is_greater = sum > product
+puts(!is_greater)  # output: true

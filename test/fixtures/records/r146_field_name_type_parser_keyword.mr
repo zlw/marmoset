@@ -1,0 +1,3 @@
+# R146: Field name 'type' (parser keyword)
+let r = { type: 7 }  # error: *
+puts(r.type)

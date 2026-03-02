@@ -1,0 +1,3 @@
+# R080: Chained field access a.b.c
+let r = { a: { b: { c: 7 } } }
+puts(r.a.b.c)  # output: 7

@@ -1,0 +1,4 @@
+# CG16: Duplicate top-level function name/arity is rejected with clear diagnostic
+let f = fn(x: int) -> int { x + 1 }
+let f = fn(x: int) -> int { x + 2 }  # error: Duplicate top-level let definition: f
+puts(f(1))

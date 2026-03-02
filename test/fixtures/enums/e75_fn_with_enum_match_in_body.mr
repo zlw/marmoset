@@ -1,0 +1,9 @@
+# E75: Function with enum match in body
+enum option[a] { some(a) none }
+let describe = fn(x: option[int]) -> string {
+  match x {
+    option.some(_): "matched"
+    option.none: "empty"
+  }
+}
+puts(describe(option.some(42)))  # output: matched

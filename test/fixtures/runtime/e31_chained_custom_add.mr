@@ -1,0 +1,13 @@
+enum boxed { val(int) }
+impl num for boxed {
+  fn add(x: boxed, y: boxed) -> boxed { x }
+  fn sub(x: boxed, y: boxed) -> boxed { x }
+  fn mul(x: boxed, y: boxed) -> boxed { x }
+  fn div(x: boxed, y: boxed) -> boxed { x }
+}
+let a = boxed.val(10)
+let b = boxed.val(20)
+let c = boxed.val(30)
+match (a + b + c) {
+  boxed.val(n): puts(n)  # output: 10
+}

@@ -1,0 +1,4 @@
+# OP99: Negative int equality
+let x = -10
+let y = -10
+puts(x == y)  # output: true

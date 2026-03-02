@@ -1,0 +1,3 @@
+# R174: Record with field name 'id'
+let entity = { id: 100, name: "test" }
+puts(entity.id)  # output: 100

@@ -1,0 +1,3 @@
+# R068: Field access on if-expression returning record
+let x = if (true) { { val: 10 } } else { { val: 20 } }
+puts(x.val)  # output: 10

@@ -1,0 +1,8 @@
+# XF33: G34: Arithmetic on enum match result
+enum option_int { some(int) none }
+let val = option_int.some(42)
+let n = match val {
+  option_int.some(x): x
+  option_int.none: 0
+}
+puts(n + 1)  # output: 43

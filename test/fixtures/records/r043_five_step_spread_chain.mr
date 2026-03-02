@@ -1,0 +1,8 @@
+# R043: Five-step spread chain (same shape)
+let r0 = { a: 1, b: 2, c: 3, d: 4, e: 5 }
+let r1 = { ...r0, a: 10 }
+let r2 = { ...r1, b: 10 }
+let r3 = { ...r2, c: 10 }
+let r4 = { ...r3, d: 10 }
+let r5 = { ...r4, e: 10 }
+puts(r5.a + r5.b + r5.c + r5.d + r5.e)  # output: 50

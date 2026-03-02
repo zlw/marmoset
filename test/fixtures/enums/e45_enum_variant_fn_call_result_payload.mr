@@ -1,0 +1,9 @@
+# E45: Enum variant with function call result as payload
+enum option[a] { some(a) none }
+let double = fn(n: int) -> int { n * 2 }
+let x = option.some(double(5))
+let result = match x {
+  option.some(v): v
+  option.none: 0
+}
+puts(result)  # output: 10

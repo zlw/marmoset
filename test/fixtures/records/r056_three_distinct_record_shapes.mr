@@ -1,0 +1,5 @@
+# R056: Three distinct record shapes coexist
+let r1 = { a: 1 }
+let r2 = { b: 2, c: 3 }
+let r3 = { d: 4, e: 5, f: 6 }
+puts(r1.a + r2.b + r2.c)  # output: 6

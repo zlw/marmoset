@@ -1,0 +1,12 @@
+# T10: Inherent methods do not satisfy trait constraints
+type point = { x: int }
+impl point {
+  fn show(p: point) -> string {
+    "point"
+  }
+}
+let f = fn[t: show](x: t) -> string {
+  x.show()
+};
+let p: point = { x: 1 }
+puts(f(p))  # error: does not implement trait show

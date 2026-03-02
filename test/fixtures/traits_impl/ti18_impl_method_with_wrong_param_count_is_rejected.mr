@@ -1,0 +1,8 @@
+# TI18: Impl method with wrong param count is rejected
+trait show[a] {  # error: *
+  fn show(x: a) -> string
+}
+impl show for int {
+  fn show(x: int, y: int) -> string { "int" }
+}
+puts(1)

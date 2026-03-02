@@ -1,0 +1,6 @@
+trait greetable[a] {
+  fn greet(x: a) -> string
+}
+let x = 42
+let f = fn[t: greetable](x: t) -> string { x.greet() }
+puts(f(x))  # error: does not implement trait

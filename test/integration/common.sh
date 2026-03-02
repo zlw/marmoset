@@ -49,7 +49,95 @@ suite_end() {
 }
 
 ########################################
-# Canonical helpers
+# New canonical helpers (Phase 2)
+#
+# 1) expect_run  NAME EXPECTED_STDOUT [SOURCE]
+# 2) expect_reject NAME EXPECTED_DIAG [SOURCE]
+#
+# Both accept source either:
+# - as the last argument, or
+# - from stdin (heredoc/pipe).
+#
+# expect_run: build + execute + exact stdout equality.
+# expect_reject: build must fail.
+#   EXPECTED_DIAG="*"  -> any failing build is accepted.
+#   otherwise          -> build output must contain EXPECTED_DIAG substring.
+########################################
+
+expect_run() {
+    local name="$1"
+    local expected_output="$2"
+    local source="${3:-}"
+    if [ -z "$source" ]; then
+        source="$(cat)"
+    fi
+
+    TOTAL=$((TOTAL + 1))
+    echo -n "TEST [$TOTAL] $name ... "
+
+    local tmpfile
+    local binpath
+    local test_build_dir="$REPO_ROOT/.marmoset/build"
+    mkdir -p "$test_build_dir"
+    tmpfile=$(mktemp)
+    binpath=$(mktemp "$test_build_dir/marmoset_test_bin.XXXXXX")
+    rm -f "$binpath"
+    echo "$source" > "$tmpfile"
+
+    local build_output
+    local output
+    if build_output=$($EXECUTABLE build "$tmpfile" -o "$binpath" 2>&1) && output=$("$binpath" 2>&1); then
+        if [ "$output" = "$expected_output" ]; then
+            echo "✓ PASS"
+            PASS=$((PASS + 1))
+        else
+            echo "✗ FAIL (expected '$expected_output', got '$output')"
+            FAIL=$((FAIL + 1))
+        fi
+    else
+        echo "✗ FAIL (build or execution failed)"
+        echo "  Build output: $build_output"
+        FAIL=$((FAIL + 1))
+    fi
+
+    rm -f "$tmpfile" "$binpath"
+}
+
+expect_reject() {
+    local name="$1"
+    local expected_diag="${2:-*}"
+    local source="${3:-}"
+    if [ -z "$source" ]; then
+        source="$(cat)"
+    fi
+
+    TOTAL=$((TOTAL + 1))
+    echo -n "TEST [$TOTAL] $name ... "
+
+    local tmpfile
+    tmpfile=$(mktemp)
+    echo "$source" > "$tmpfile"
+
+    local build_output
+    if build_output=$($EXECUTABLE build "$tmpfile" 2>&1); then
+        echo "✗ FAIL (expected build failure but build succeeded)"
+        FAIL=$((FAIL + 1))
+    else
+        if [ "$expected_diag" = "*" ] || echo "$build_output" | grep -qF "$expected_diag"; then
+            echo "✓ PASS"
+            PASS=$((PASS + 1))
+        else
+            echo "✗ FAIL (missing expected diagnostic '$expected_diag')"
+            echo "  Output: $build_output"
+            FAIL=$((FAIL + 1))
+        fi
+    fi
+
+    rm -f "$tmpfile"
+}
+
+########################################
+# Legacy helpers (kept during migration)
 #
 # 1) expect_runtime_output
 # 2) expect_build

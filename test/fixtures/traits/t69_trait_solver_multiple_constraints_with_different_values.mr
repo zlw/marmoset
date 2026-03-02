@@ -1,0 +1,10 @@
+# T69: Trait solver: multiple constraints with different values
+let show_if_equal = fn[a: show + eq](x: a, y: a) -> string {
+  if (x.eq(y)) {
+    x.show()
+  } else {
+    "different"
+  }
+}
+let result = show_if_equal(42, 99)
+puts(result)  # output: different

@@ -1,0 +1,10 @@
+# T50: Custom eq impl drives == operator on non-primitive types
+type point = { x: int }
+impl eq for point {
+  fn eq(x: point, y: point) -> bool {
+    false
+  }
+}
+let p1: point = { x: 1 }
+let p2: point = { x: 1 }
+puts(p1 == p2)  # output: false

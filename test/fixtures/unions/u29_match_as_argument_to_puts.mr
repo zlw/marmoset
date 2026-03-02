@@ -1,0 +1,7 @@
+# U29: Match as argument to puts
+enum option[a] { some(a) none }
+let x = option.some(30)
+puts(match x {  # output: 30
+  option.some(v): v
+  option.none: 0
+})

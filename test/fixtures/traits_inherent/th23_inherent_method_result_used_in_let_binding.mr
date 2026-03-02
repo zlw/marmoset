@@ -1,0 +1,7 @@
+# TH23: Inherent method result used in let binding
+impl int {
+  fn double(x: int) -> int { x + x }
+}
+let n = 5
+let result = n.double()
+puts(result)  # output: 10

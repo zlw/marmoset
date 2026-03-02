@@ -1,0 +1,12 @@
+# T54: Method call with parameter
+trait eq[a] {
+  fn eq(x: a, y: a) -> bool
+}
+impl eq for int {
+  fn eq(x: int, y: int) -> bool {
+    x == y
+  }
+}
+let a = 42
+let b = 42
+puts(a.eq(b))  # output: true

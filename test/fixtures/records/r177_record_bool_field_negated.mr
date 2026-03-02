@@ -1,0 +1,4 @@
+# R177: Record bool field negated in condition
+let r = { enabled: false }
+let out = if (r.enabled) { "on" } else { "off" }
+puts(out)  # output: off

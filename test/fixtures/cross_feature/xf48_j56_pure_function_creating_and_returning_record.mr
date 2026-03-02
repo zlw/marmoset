@@ -1,0 +1,6 @@
+# XF48: J56: Pure function creating and returning record
+let make_point = fn(x: int, y: int) -> int {
+  let p = { x: x, y: y }
+  p.x
+}
+puts(make_point(5, 10))  # output: 5

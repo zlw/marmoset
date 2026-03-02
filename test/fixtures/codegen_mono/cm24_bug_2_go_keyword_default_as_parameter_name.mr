@@ -1,0 +1,3 @@
+# CM24: [BUG-2] Go keyword 'default' as parameter name
+let f = fn(fallback: int) -> int { fallback }
+puts(f(5))

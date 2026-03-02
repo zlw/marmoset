@@ -1,0 +1,3 @@
+# R088: Array of records, access field
+let arr = [{ x: 10 }, { x: 20 }, { x: 30 }]
+puts(arr[1].x)  # output: 20

@@ -1,0 +1,15 @@
+# U55: Three different enums in one program
+enum option[a] { some(a) none }
+enum direction { north south east west }
+enum result[a, e] { ok(a) err(e) }
+let d: result[direction, string] = result.ok(direction.north)
+let out = match d {
+  result.ok(dir): "ok:" + match dir {
+    direction.north: "north"
+    direction.south: "south"
+    direction.east: "east"
+    direction.west: "west"
+  }
+  result.err(_): "err"
+}
+puts(out)  # output: ok:north

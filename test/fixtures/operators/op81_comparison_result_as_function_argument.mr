@@ -1,0 +1,5 @@
+# OP81: Comparison result as function argument
+let check = fn(b: bool) -> string {
+  if (b) { "ok" } else { "fail" }
+}
+puts(check(3 <= 3))  # output: ok

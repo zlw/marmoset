@@ -1,0 +1,5 @@
+enum color { red green blue }
+impl eq for color {
+  fn eq(x: color, y: color) -> bool { false }
+}
+puts(color.red == color.red)  # output: false

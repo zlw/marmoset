@@ -1,0 +1,8 @@
+# E40: Three enums at top level
+enum ea { x y }
+enum eb { m n }
+enum ec { p q r }
+let va = match ea.x { ea.x: 1 ea.y: 2 }
+let vb = match eb.n { eb.m: 10 eb.n: 2 }
+let vc = match ec.r { ec.p: 100 ec.q: 200 ec.r: 3 }
+puts(va + vb + vc)  # output: 6

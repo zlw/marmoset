@@ -1,0 +1,6 @@
+# E28: Generic enum - extract string value
+enum box[a] { full(a) empty }
+let unwrap_str = fn(x: box[string]) -> string {
+  match x { box.full(v): v box.empty: "" }
+}
+puts(unwrap_str(box.full("hello")))  # output: hello

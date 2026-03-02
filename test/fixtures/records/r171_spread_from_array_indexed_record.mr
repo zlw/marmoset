@@ -1,0 +1,4 @@
+# R171: Spread from array-indexed record
+let arr = [{ x: 1, y: 2 }]
+let r = { ...arr[0], x: 20 }
+puts(r.x)  # output: 20

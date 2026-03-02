@@ -1,0 +1,3 @@
+# P23: Generic return type annotation -> a is rejected (known limitation)
+let identity = fn[a](x: a) -> a { x }  # error: Unknown type constructor
+identity(42)

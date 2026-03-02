@@ -1,0 +1,2 @@
+# OP108: String multiplication should fail (not num)
+puts("a" * "b")  # error: missing-impl

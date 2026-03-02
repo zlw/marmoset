@@ -1,0 +1,2 @@
+# OP97: Negative int less-than zero
+puts(-5 < 0)  # output: true

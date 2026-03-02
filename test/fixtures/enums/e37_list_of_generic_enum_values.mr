@@ -1,0 +1,4 @@
+# E37: List of generic enum values has correct length
+enum option[a] { some(a) none }
+let opts = [option.some(1), option.some(2), option.none()]
+puts(len(opts))  # output: 3

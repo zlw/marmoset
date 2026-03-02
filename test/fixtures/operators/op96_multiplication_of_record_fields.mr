@@ -1,0 +1,4 @@
+# OP96: Multiplication of record fields
+type rect = { w: int, h: int }
+let r: rect = { w: 10, h: 20 }
+puts(r.w * r.h)  # output: 200

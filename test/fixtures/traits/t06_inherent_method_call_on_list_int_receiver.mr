@@ -1,0 +1,7 @@
+# T06: Inherent method call on list[int] receiver
+impl list[int] {
+  fn size(xs: list[int]) -> int {
+    1
+  }
+}
+puts([1, 2, 3].size())  # output: 1

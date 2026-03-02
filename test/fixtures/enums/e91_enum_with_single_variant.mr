@@ -1,0 +1,7 @@
+# E91: Enum with single variant
+enum wrapper { wrap(int) }
+let x = wrapper.wrap(42)
+let v = match x {
+  wrapper.wrap(n): n
+}
+puts(v)  # output: 42

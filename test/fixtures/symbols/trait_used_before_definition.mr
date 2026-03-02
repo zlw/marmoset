@@ -1,0 +1,5 @@
+let f = fn[t: mything](x: t) -> string { x.name }  # error: *
+trait mything {
+  name: string
+}
+puts(f({ name: "hi" }))

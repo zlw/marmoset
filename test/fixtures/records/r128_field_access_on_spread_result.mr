@@ -1,0 +1,4 @@
+# R128: Field access on spread result
+let base = { x: 1, y: 2 }
+let updated = { ...base, x: 10 }
+puts(updated.x)  # output: 10

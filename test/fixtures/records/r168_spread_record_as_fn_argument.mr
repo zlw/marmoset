@@ -1,0 +1,4 @@
+# R168: Spread record as function argument
+let base = { x: 1, y: 2 }
+let sum = fn(r) { r.x + r.y }
+puts(sum({ ...base, x: 10 }))  # output: 12

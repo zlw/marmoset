@@ -1,0 +1,7 @@
+# E88: Untyped none alongside some - unresolved TVar
+enum option[a] { some(a) none }  # error: unresolved type variable
+let a = option.some(42)
+let b = option.none()
+let va = match a { option.some(v): v option.none: 0 }
+let vb = match b { option.some(v): v option.none: 0 }
+puts(va + vb)

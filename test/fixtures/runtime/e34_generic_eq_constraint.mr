@@ -1,0 +1,8 @@
+enum color { red green blue }
+impl eq for color {
+  fn eq(x: color, y: color) -> bool { true }
+}
+let are_equal = fn[t: eq](a: t, b: t) -> bool {
+  a == b
+}
+puts(are_equal(color.red, color.blue))  # output: true

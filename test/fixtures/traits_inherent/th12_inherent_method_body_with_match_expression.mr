@@ -1,0 +1,13 @@
+# TH12: Inherent method body with match expression
+enum color { red green blue }
+impl color {
+  fn rank(c: color) -> string {
+    match c {
+      color.red: "one"
+      color.green: "two"
+      color.blue: "three"
+    }
+  }
+}
+let c = color.red
+puts(c.rank())  # output: one

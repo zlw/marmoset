@@ -1,0 +1,5 @@
+# P2: Unannotated function calling puts should infer effectful and compile
+let say = fn(x) {
+  puts(x)
+}
+say("hello")

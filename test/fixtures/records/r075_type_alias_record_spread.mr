@@ -1,0 +1,5 @@
+# R075: Type alias record updated via spread
+type point = { x: int, y: int }
+let p: point = { x: 1, y: 2 }
+let q = { ...p, x: 10 }
+puts(q.x + q.y)  # output: 12

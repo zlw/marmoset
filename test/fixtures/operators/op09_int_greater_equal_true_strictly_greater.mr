@@ -1,0 +1,2 @@
+# OP09: Int greater-equal true (strictly greater)
+puts(3 >= 2)  # output: true

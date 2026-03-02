@@ -1,0 +1,14 @@
+# TI31: Two traits same method name, both impls causes ambiguous dispatch
+trait alpha_trait[a] {
+  fn tag(x: a) -> string
+}
+trait beta_trait[a] {
+  fn tag(x: a) -> string
+}
+impl alpha_trait for int {
+  fn tag(x: int) -> string { "alpha" }
+}
+impl beta_trait for int {
+  fn tag(x: int) -> string { "beta" }
+}
+puts(1.tag())  # error: Ambiguous

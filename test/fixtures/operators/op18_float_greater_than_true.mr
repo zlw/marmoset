@@ -1,0 +1,2 @@
+# OP18: Float greater-than true
+puts(2.5 > 1.5)  # output: true

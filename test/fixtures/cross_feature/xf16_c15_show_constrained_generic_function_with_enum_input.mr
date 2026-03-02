@@ -1,0 +1,15 @@
+# XF16: C15: Show-constrained generic function with enum input
+enum color { red green blue }
+impl show for color {
+  fn show(x: color) -> string {
+    match x {
+      color.red: "red"
+      color.green: "green"
+      color.blue: "blue"
+    }
+  }
+}
+let display = fn[a: show](x: a) -> string {
+  x.show()
+}
+puts(display(color.red))  # output: red

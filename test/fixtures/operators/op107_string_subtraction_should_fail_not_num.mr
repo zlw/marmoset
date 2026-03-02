@@ -1,0 +1,2 @@
+# OP107: String subtraction should fail (not num)
+puts("a" - "b")  # error: missing-impl

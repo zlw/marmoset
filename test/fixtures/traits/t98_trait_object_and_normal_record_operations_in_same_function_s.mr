@@ -1,0 +1,10 @@
+# T98: Trait object and normal record operations in same function scope
+trait named {
+  name: string
+}
+let process = fn(x: named, extra: int) -> string {
+  let n = x.name
+  let plain = { value: extra }
+  n + " " + plain.value.show()
+}
+puts(process({ name: "alice", age: 30 }, 42))  # output: alice 42

@@ -1,0 +1,6 @@
+# CG19: Deeply nested if (3 levels) in let binding produces correct value
+let a = true
+let b = false
+let c = true
+let x = if (a) { if (b) { if (c) { 1 } else { 2 } } else { 3 } } else { 4 }
+puts(x)  # output: 3

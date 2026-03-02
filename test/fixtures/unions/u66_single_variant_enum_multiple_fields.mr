@@ -1,0 +1,7 @@
+# U66: Single-variant enum with multiple fields
+enum entry { item(string, int) }
+let e = entry.item("hello", 42)
+let out = match e {
+  entry.item(s, n): s + " " + n.show()
+}
+puts(out)  # output: hello 42

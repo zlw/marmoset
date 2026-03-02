@@ -1,0 +1,2 @@
+# OP40: String greater-than lexicographic
+puts("z" > "a")  # output: true

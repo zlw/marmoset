@@ -1,0 +1,7 @@
+# U48: Match on bool true/false exhaustive
+let x = true
+let out = match x {
+  true: "yes"
+  false: "no"
+}
+puts(out)  # output: yes

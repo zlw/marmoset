@@ -1,0 +1,9 @@
+# T77: Fn returning wider record with trait return type
+trait named {
+  name: string
+}
+let mk_named = fn(n: string, a: int) -> named {
+  { name: n, age: a }
+}
+let x = mk_named("alice", 30)
+puts(x.name)  # output: alice

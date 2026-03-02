@@ -1,0 +1,11 @@
+# CG59: Record construction in enum match arm
+enum option[a] {
+  some(a)
+  none
+}
+let val = option.some(42)
+let p = match val {
+  option.some(v): { x: v, y: 0 }
+  option.none: { x: 0, y: 0 }
+}
+puts(p.x)  # output: 42

@@ -1,0 +1,14 @@
+# OP92: Mixed: primitive int + and custom enum + in same program
+enum boxed { val(int) }
+impl num for boxed {
+  fn add(x: boxed, y: boxed) -> boxed { x }
+  fn sub(x: boxed, y: boxed) -> boxed { x }
+  fn mul(x: boxed, y: boxed) -> boxed { x }
+  fn div(x: boxed, y: boxed) -> boxed { x }
+}
+puts(3 + 7)  # output: 10
+let a = boxed.val(42)
+let b = boxed.val(1)
+match (a + b) {  # output: 42
+  boxed.val(n): puts(n)
+}

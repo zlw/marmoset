@@ -1,0 +1,4 @@
+# XF53: L61: Spread record then compare fields
+let base = { x: 1, y: 2 }
+let updated = { ...base, x: 10 }
+puts(updated.x > base.x)  # output: true

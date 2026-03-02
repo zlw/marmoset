@@ -1,0 +1,9 @@
+# TI29: Method-only trait without type param, multiple impls
+trait ping {
+  fn ping(x: int) -> int
+}
+impl ping for int {
+  fn ping(x: int) -> int { x * 10 }
+}
+puts(1.ping())  # output: 10
+puts(2.ping())  # output: 20

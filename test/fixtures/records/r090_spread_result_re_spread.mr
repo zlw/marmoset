@@ -1,0 +1,5 @@
+# R090: Spread result used as base for another spread
+let a = { x: 1, y: 2, z: 3 }
+let b = { ...a, x: 10 }
+let c = { ...b, y: 100 }
+puts(c.x + c.y + c.z)  # output: 113

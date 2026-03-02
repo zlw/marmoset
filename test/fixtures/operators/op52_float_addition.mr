@@ -1,0 +1,2 @@
+# OP52: Float addition
+puts(1.5 + 2.0)  # output: 3.5

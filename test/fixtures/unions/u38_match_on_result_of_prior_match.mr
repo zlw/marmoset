@@ -1,0 +1,12 @@
+# U38: Match on result of a prior match (via let)
+enum option[a] { some(a) none }
+let x: option[option[int]] = option.some(option.some(99))
+let inner = match x {
+  option.some(v): v
+  option.none: option.none()
+}
+let out = match inner {
+  option.some(_): "found"
+  option.none: "empty"
+}
+puts(out)  # output: found

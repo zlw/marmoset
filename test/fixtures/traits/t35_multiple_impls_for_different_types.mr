@@ -1,0 +1,15 @@
+# T35: Multiple impls for different types
+trait show[a] {
+       fn show(x: a) -> string
+     }
+     impl show for int {
+       fn show(x: int) -> string {
+         "int"
+       }
+     }
+     impl show for bool {
+       fn show(x: bool) -> string {
+         "bool"
+       }
+     }
+     42

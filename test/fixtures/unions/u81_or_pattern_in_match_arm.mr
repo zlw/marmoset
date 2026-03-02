@@ -1,0 +1,8 @@
+# U81: Or-pattern in match arm (codegen limitation)
+enum color { red green blue yellow }  # error: *
+let c = color.red
+let kind = match c {
+  color.red | color.blue: "primary"
+  _: "other"
+}
+puts(kind)

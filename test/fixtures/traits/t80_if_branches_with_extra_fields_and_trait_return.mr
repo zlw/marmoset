@@ -1,0 +1,13 @@
+# T80: If branches with extra fields and trait return
+trait named {
+  name: string
+}
+let describe = fn(age: int) -> named {
+  if (age < 30) {
+    { name: "young", category: "a" }
+  } else {
+    { name: "old", category: "b" }
+  }
+}
+let x = describe(25)
+puts(x.name)  # output: young

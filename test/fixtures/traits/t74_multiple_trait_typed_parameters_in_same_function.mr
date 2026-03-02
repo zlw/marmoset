@@ -1,0 +1,8 @@
+# T74: Multiple trait-typed parameters in same function
+trait named {
+  name: string
+}
+let greet_both = fn(a: named, b: named) -> string {
+  a.name + " " + b.name
+}
+puts(greet_both({ name: "alice", age: 30 }, { name: "bob", role: "admin" }))  # output: alice bob

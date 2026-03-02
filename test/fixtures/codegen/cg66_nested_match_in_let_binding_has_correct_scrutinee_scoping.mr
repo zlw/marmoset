@@ -1,0 +1,15 @@
+# CG66: Nested match in let binding has correct __scrutinee scoping
+let x = 2
+let y = 3
+let result = match x {
+  1: match y {
+    10: 110
+    _: 100
+  }
+  2: match y {
+    3: 230
+    _: 200
+  }
+  _: 0
+}
+puts(result)  # output: 230

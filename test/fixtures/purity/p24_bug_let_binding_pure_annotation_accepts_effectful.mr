@@ -1,0 +1,5 @@
+# P24: BUG - let-binding pure annotation silently accepts effectful fn
+# EXPECTED (ideal): Should reject
+# ACTUAL: Builds successfully (effect bit not compared in annotation path)
+let f: fn(int) -> int = fn(x: int) => int { puts(x); x }
+f(1)

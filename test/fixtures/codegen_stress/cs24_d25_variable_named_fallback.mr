@@ -1,0 +1,3 @@
+# CS24: D25: variable named 'fallback'
+let fallback = 5
+puts(fallback)  # output: 5

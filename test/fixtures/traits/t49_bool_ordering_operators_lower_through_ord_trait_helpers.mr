@@ -1,0 +1,4 @@
+# T49: Bool ordering operators lower through ord trait helpers
+puts(true < false)  # output: false
+puts(false <= true)  # output: true
+puts(true >= true)  # output: true

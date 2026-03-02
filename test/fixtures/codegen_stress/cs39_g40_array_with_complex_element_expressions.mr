@@ -1,0 +1,5 @@
+# CS39: G40: array with complex element expressions
+let a = 1
+let b = 2
+let arr = [a + b, a * b, b - a]
+puts(arr[0])  # output: 3

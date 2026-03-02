@@ -1,0 +1,5 @@
+# T20: Method trait as type shows dedicated v1 diagnostic
+trait show[a] {  # error: method and mixed trait objects are not supported in this phase
+  fn show(x: a) -> string
+}
+let x: show = 1

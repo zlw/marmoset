@@ -1,0 +1,6 @@
+# TH14: Calling inherent method via dot syntax on let binding
+impl int {
+  fn double(x: int) -> int { x + x }
+}
+let n = 4
+puts(n.double())  # output: 8

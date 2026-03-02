@@ -1,0 +1,6 @@
+# R055: Same shape from different code paths
+let make1 = fn(v) { { x: v, y: v + 1 } }
+let make2 = fn(v) { { x: v * 2, y: v * 3 } }
+let r1 = make1(5)
+let r2 = make2(5)
+puts(r1.x + r2.x)  # output: 15

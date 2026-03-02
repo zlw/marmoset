@@ -1,0 +1,5 @@
+# T01: Basic trait definition
+trait show[a] {
+       fn show(x: a) -> string
+     }
+     42

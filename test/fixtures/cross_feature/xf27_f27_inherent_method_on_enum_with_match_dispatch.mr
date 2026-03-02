@@ -1,0 +1,12 @@
+# XF27: F27: Inherent method on enum with match dispatch
+enum box { val(int) empty }
+impl box {
+  fn unwrap_or(b: box, fallback: int) -> int {
+    match b {
+      box.val(n): n
+      box.empty: fallback
+    }
+  }
+}
+let b = box.val(42)
+puts(b.unwrap_or(0))  # output: 42

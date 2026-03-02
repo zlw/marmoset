@@ -1,0 +1,12 @@
+# U56: Match arm returns enum value, then matched again
+enum option[a] { some(a) none }
+let x = option.some(99)
+let y = match x {
+  option.some(v): option.some(v)
+  option.none: option.none()
+}
+let out = match y {
+  option.some(v): v
+  option.none: 0
+}
+puts(out)  # output: 99

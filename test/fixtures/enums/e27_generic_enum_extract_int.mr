@@ -1,0 +1,6 @@
+# E27: Generic enum - extract int value
+enum box[a] { full(a) empty }
+let unwrap_int = fn(x: box[int]) -> int {
+  match x { box.full(v): v box.empty: 0 }
+}
+puts(unwrap_int(box.full(42)))  # output: 42

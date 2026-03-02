@@ -1,0 +1,9 @@
+# T39: Derive multiple traits
+trait eq[a] {
+       fn eq(x: a, y: a) -> bool
+     }
+     trait show[a] {
+       fn show(x: a) -> string
+     }
+     derive eq, show for int;
+     42

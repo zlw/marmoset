@@ -1,0 +1,2 @@
+# OP58: Unary minus on float literal
+puts(-3.14)  # output: -3.14

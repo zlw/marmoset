@@ -1,0 +1,3 @@
+# BUG: Self-referential let (non-function) passes typecheck but fails codegen
+let x = x + 1  # error: *
+puts(x)

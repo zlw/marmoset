@@ -1,0 +1,9 @@
+# XF56: L64: Record spread preserving enum-valued field
+enum status { ok fail }
+let base = { tag: "hello", status: status.ok }
+let updated = { ...base, tag: "world" }
+let result = match updated.status {
+  status.ok: "found"
+  status.fail: "missing"
+}
+puts(result)  # output: found

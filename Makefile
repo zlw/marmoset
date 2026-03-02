@@ -46,6 +46,9 @@ $(filter-out integration,$(MAKECMDGOALS)):
 	@:
 endif
 
+integration-fixtures:
+	@./test/integration.sh
+
 repl:
 	@echo "REPL is removed. Use 'make run file=examples/fibonacci-typed.mr'." && exit 1
 
@@ -69,7 +72,7 @@ ci-compiler-integration-linux:
 	@$(MAKE) integration
 
 ci-lsp-integration:
-	@./test/integration.sh 08_cli.sh
+	@./test/integration.sh cli
 
 ci-quality-lint-fmt-doc:
 	@./test/ci/quality.sh

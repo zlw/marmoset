@@ -1,0 +1,9 @@
+# R021: Derive eq for record
+trait eq[a] {
+  fn eq(x: a, y: a) -> bool
+}
+type point = { x: int, y: int }
+derive eq for point;
+let p1: point = { x: 1, y: 2 }
+let p2: point = { x: 1, y: 2 }
+puts(p1.eq(p2))  # output: true

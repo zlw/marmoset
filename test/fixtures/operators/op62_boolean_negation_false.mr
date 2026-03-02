@@ -1,0 +1,2 @@
+# OP62: Boolean negation false
+puts(!false)  # output: true

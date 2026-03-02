@@ -1,0 +1,9 @@
+# E49: Enum match directly in if condition
+enum option[a] { some(a) none }
+let x = option.some(1)
+let out = if (match x { option.some(_): true option.none: false }) {
+  "present"
+} else {
+  "absent"
+}
+puts(out)  # output: present

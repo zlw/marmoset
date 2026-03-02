@@ -1,0 +1,12 @@
+# CG26: Match with 6 arms variable capture in wildcard
+let score = fn(n: int) -> int {
+  match n {
+    1: 100
+    2: 200
+    3: 300
+    4: 400
+    5: 500
+    _: 0
+  }
+}
+puts(score(7))  # output: 0

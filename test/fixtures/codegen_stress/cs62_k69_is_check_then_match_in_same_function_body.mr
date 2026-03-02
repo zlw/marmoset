@@ -1,0 +1,9 @@
+# CS62: K69: is-check then match in same function body
+let f = fn(x: int | string) -> int {
+  let base = if (x is int) { x } else { 0 }
+  match base {
+    0: 0
+    _: base + 10
+  }
+}
+puts(f(2))  # output: 12

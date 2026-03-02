@@ -1,0 +1,4 @@
+# R092: Record constructor function used multiple times
+let mk = fn(x, y) { { x: x, y: y } }
+let r1 = mk(3, 5)
+puts(r1.x + r1.y)  # output: 8

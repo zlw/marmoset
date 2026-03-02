@@ -1,0 +1,2 @@
+let long_name = 1
+puts(long_name)  # output: 1

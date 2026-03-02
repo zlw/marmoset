@@ -1,0 +1,2 @@
+# OP21: Float equality true
+puts(1.0 == 1.0)  # output: true

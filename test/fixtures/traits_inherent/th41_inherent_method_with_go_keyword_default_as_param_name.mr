@@ -1,0 +1,12 @@
+# TH41: Inherent method with Go keyword 'default' as param name
+enum option_int { some(int) none }
+impl option_int {
+  fn unwrap_or(o: option_int, default: int) -> int {
+    match o {
+      option_int.some(v): v
+      option_int.none: default
+    }
+  }
+}
+let x = option_int.some(1)
+puts(x.unwrap_or(0))  # output: 1

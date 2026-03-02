@@ -1,0 +1,5 @@
+# R158: Three spreads in same scope, different fields
+let r0 = { a: 1, b: 2, c: 3 }
+let r1 = { ...r0, a: 10 }
+let r2 = { ...r1, b: 20 }
+puts(r2.a + r2.b + r2.c)  # output: 33

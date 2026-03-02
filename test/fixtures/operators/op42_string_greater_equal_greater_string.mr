@@ -1,0 +1,2 @@
+# OP42: String greater-equal (greater string)
+puts("b" >= "a")  # output: true

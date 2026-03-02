@@ -1,0 +1,4 @@
+# E70: Duplicate enum definition in same program rejected
+enum color { red green blue }  # error: Duplicate enum definition
+enum color { cyan magenta yellow }
+puts(1)

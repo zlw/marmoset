@@ -1,0 +1,11 @@
+# R172: Type alias with derived eq used in function
+trait eq[a] {
+  fn eq(x: a, y: a) -> bool
+}
+type point = { x: int, y: int }
+derive eq for point;
+let check_eq = fn(a: point, b: point) -> bool { a.eq(b) }
+let p1: point = { x: 1, y: 2 }
+let p2: point = { x: 1, y: 2 }
+let out = if (check_eq(p1, p2)) { "true" } else { "false" }
+puts(out)  # output: true

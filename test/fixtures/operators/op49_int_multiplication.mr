@@ -1,0 +1,2 @@
+# OP49: Int multiplication
+puts(3 * 4)  # output: 12

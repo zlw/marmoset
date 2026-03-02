@@ -1,0 +1,4 @@
+# R127: Field access on if-expr result
+let flag = true
+let r = if (flag) { { val: 10 } } else { { val: 20 } }
+puts(r.val)  # output: 10

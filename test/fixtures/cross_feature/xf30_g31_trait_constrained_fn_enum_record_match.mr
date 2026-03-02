@@ -1,0 +1,13 @@
+# XF30: G31: Trait-constrained fn + enum + record + match
+trait named {
+  name: string
+}
+enum wrapper { some(int) none }
+let extract_name = fn[t: named](x: t, w: wrapper) -> string {
+  match w {
+    wrapper.some(_): x.name
+    wrapper.none: "unknown"
+  }
+}
+let p = { name: "alice", age: 30 }
+puts(extract_name(p, wrapper.some(1)))  # output: alice

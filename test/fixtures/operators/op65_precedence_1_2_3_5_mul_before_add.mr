@@ -1,0 +1,2 @@
+# OP65: Precedence: 1 * 2 + 3 = 5 (mul before add)
+puts(1 * 2 + 3)  # output: 5

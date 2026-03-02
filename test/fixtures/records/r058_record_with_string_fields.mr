@@ -1,0 +1,3 @@
+# R058: Record with string fields accessed individually
+let r = { first: "hello", second: "world" }
+puts(r.first)  # output: hello

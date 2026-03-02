@@ -1,0 +1,4 @@
+# P8: Explicit pure HOF param rejects effectful callback
+let apply = fn(f: fn(int) -> int, x: int) -> int { f(x) }
+let eff = fn(x: int) => int { puts(x); x }
+apply(eff, 1)  # error: *

@@ -1,0 +1,11 @@
+# T19: Field-only trait object includes inherited fields from supertraits
+trait named {
+  name: string
+}
+trait aged {
+  age: int
+}
+trait person: named + aged {
+}
+let p: person = { name: "alice", age: 43, active: true }
+puts(p.age)  # output: 43

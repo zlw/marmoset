@@ -1,0 +1,5 @@
+# CG47: if with compound boolean condition (and)
+let a = true
+let b = true
+let x = if (a == true) { if (b == true) { 1 } else { 2 } } else { 3 }
+puts(x)  # output: 1

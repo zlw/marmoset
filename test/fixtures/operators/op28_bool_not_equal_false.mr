@@ -1,0 +1,2 @@
+# OP28: Bool not-equal false
+puts(true != true)  # output: false

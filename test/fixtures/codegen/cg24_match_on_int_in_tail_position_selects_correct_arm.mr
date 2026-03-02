@@ -1,0 +1,10 @@
+# CG24: Match on int in tail position selects correct arm
+let choose = fn(x: int) -> int {
+  match x {
+    1: 10
+    2: 42
+    3: 99
+    _: 0
+  }
+}
+puts(choose(2))  # output: 42

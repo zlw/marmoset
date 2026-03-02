@@ -1,0 +1,4 @@
+# R098: Field access on aliased fn return
+type box = { val: int }
+let wrap = fn(n: int) -> box { { val: n } }
+puts(wrap(42).val)  # output: 42

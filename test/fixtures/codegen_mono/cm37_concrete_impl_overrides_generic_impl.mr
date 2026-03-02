@@ -1,0 +1,16 @@
+# CM37: Concrete impl overrides generic impl
+trait eq[a] {
+  fn eq(x: a, y: a) -> bool
+}
+impl eq[b: eq] for list[b] {
+  fn eq(x: list[b], y: list[b]) -> bool {
+    true
+  }
+}
+impl eq for list[int] {
+  fn eq(x: list[int], y: list[int]) -> bool {
+    false
+  }
+}
+puts([1] == [2])  # output: false
+puts(["a"] == ["b"])  # output: true

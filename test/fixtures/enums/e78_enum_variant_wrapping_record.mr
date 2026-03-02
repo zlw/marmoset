@@ -1,0 +1,8 @@
+# E78: Enum variant wrapping a record
+enum option[a] { some(a) none }
+let x = option.some({ name: "alice", age: 30 })
+let result = match x {
+  option.some(r): r.name
+  option.none: "nobody"
+}
+puts(result)  # output: alice

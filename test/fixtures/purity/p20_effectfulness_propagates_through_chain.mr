@@ -1,0 +1,5 @@
+# P20: Effectfulness propagates through call chain
+let inner = fn(x: int) => int { puts(x); x }
+let middle = fn(x: int) { inner(x) }
+let outer = fn(x: int) -> int { middle(x) }  # error: effectful
+outer(1)

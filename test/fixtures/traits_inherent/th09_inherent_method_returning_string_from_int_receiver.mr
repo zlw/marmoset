@@ -1,0 +1,8 @@
+# TH09: Inherent method returning string from int receiver
+impl int {
+  fn greet(x: int) -> string {
+    "hello"
+  }
+}
+let n = 1
+puts(n.greet())  # output: hello

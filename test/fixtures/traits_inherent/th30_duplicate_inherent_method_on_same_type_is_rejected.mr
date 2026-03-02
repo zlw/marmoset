@@ -1,0 +1,8 @@
+# TH30: Duplicate inherent method on same type is rejected
+impl int {  # error: Duplicate inherent method
+  fn ping(x: int) -> int { x }
+}
+impl int {
+  fn ping(x: int) -> int { x + 1 }
+}
+puts(1)

@@ -1,0 +1,2 @@
+# OP38: String not-equal false
+puts("same" != "same")  # output: false

@@ -1,0 +1,10 @@
+# E38: Index into list of enums and match
+enum color { red green blue }
+let colors = [color.red, color.green, color.blue]
+let c = colors[1]
+let name = match c {
+  color.red: "red"
+  color.green: "green"
+  color.blue: "blue"
+}
+puts(name)  # output: green

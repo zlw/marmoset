@@ -1,0 +1,3 @@
+# R147: Field name 'go' (Go keyword)
+let r = { go: 1 }
+puts(r.go)  # output: 1

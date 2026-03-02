@@ -1,0 +1,2 @@
+# OP67: Precedence: 10 / 2 + 1 = 6
+puts(10 / 2 + 1)  # output: 6

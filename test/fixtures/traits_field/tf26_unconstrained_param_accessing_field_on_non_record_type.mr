@@ -1,0 +1,6 @@
+# TF26: Unconstrained param accessing field on non-record type
+trait has_secret {
+  secret: int
+}
+let leak = fn(v) { v.secret };
+leak(42)  # error: Cannot unify

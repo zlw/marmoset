@@ -1,0 +1,7 @@
+# R070: Record match with literal pattern in field
+let r = { tag: 1, val: 42 }
+let out = match r {
+  { tag: 1, val: }: "yes"
+  _: "no"
+}
+puts(out)  # output: yes

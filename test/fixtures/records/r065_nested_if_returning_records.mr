@@ -1,0 +1,12 @@
+# R065: Nested if returning records
+let v = 2
+let r = if (v == 1) {
+  { x: 10 }
+} else {
+  if (v == 2) {
+    { x: 20 }
+  } else {
+    { x: 30 }
+  }
+}
+puts(r.x)  # output: 20

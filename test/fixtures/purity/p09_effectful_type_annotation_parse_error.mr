@@ -1,0 +1,4 @@
+# P9: fn(int) => int in type annotation is a parse error (syntax gap)
+let apply_eff = fn(f: fn(int) => int, x: int) => int { f(x) }  # error: Parse error
+let pure = fn(x: int) -> int { x + 1 }
+apply_eff(pure, 5)

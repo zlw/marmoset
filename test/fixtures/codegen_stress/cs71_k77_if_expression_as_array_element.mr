@@ -1,0 +1,3 @@
+# CS71: K77: if-expression as array element
+let arr = [if (true) { 1 } else { 0 }, if (false) { 0 } else { 2 }]
+puts(arr[1])  # output: 2

@@ -1,0 +1,8 @@
+# T88: BUG-PARAM-TYPE-TRAIT-KIND: generic field-only trait as param type should fail
+trait container[a] {  # error: generic field-only trait objects are not supported in this phase
+  value: a
+}
+let f = fn(x: container) -> int {
+  1
+}
+puts(f({ value: 42 }))

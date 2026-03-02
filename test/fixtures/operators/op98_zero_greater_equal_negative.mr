@@ -1,0 +1,2 @@
+# OP98: Zero greater-equal negative
+puts(0 >= -1)  # output: true

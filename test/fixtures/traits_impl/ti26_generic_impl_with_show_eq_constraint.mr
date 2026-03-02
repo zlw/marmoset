@@ -1,0 +1,14 @@
+# TI26: Generic impl with show+eq constraint
+trait show[a] {
+  fn show(x: a) -> string
+}
+trait eq[a] {
+  fn eq(x: a, y: a) -> bool
+}
+trait describe[a] {
+  fn describe(x: a) -> string
+}
+impl describe[b: show + eq] for list[b] {
+  fn describe(x: list[b]) -> string { "ok" }
+}
+puts([1, 2].describe())  # output: ok

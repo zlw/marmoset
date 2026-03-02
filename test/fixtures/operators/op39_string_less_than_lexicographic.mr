@@ -1,0 +1,2 @@
+# OP39: String less-than lexicographic
+puts("abc" < "abd")  # output: true

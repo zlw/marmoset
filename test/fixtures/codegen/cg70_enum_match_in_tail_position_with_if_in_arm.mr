@@ -1,0 +1,12 @@
+# CG70: Enum match in tail position with if in arm
+enum option[a] {
+  some(a)
+  none
+}
+let check = fn(o: option[int]) -> int {
+  match o {
+    option.some(v): if (v > 10) { 100 } else { v }
+    option.none: 0
+  }
+}
+puts(check(option.some(42)))  # output: 100

@@ -1,0 +1,6 @@
+# CS64: K70b: [PARSER-LIMIT] block body in match arm rejected
+enum pair { make(int, string) }  # error: Parse error
+let p = pair.make(42, "hello")
+match p {
+  pair.make(n, s): { puts(n) }
+}

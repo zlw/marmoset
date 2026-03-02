@@ -1,0 +1,5 @@
+# R106: Double spread rejected at parse time
+let a = { x: 1 }  # error: multiple spread entries in record literal are not supported yet
+let b = { y: 2 }
+let c = { ...a, ...b }
+puts(1)

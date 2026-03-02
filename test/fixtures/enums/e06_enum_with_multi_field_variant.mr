@@ -1,0 +1,4 @@
+# E06: Enum with multi-field variant
+enum http_response { ok(int, string) error(int, string) }
+let x = http_response.ok(200, "OK")
+x

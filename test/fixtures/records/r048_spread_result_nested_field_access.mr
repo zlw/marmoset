@@ -1,0 +1,4 @@
+# R048: Spread result nested field access
+let base = { data: { value: 42 }, meta: "info" }
+let updated = { ...base, meta: "updated" }
+puts(updated.data.value)  # output: 42

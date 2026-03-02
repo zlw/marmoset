@@ -1,0 +1,3 @@
+let flag = false
+let r = if (!flag) { "was false" } else { "was true" }
+puts(r)  # output: was false

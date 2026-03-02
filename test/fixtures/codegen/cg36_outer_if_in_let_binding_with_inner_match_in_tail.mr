@@ -1,0 +1,14 @@
+# CG36: Outer if in let binding with inner match in tail
+let flag = true
+let n = 3
+let x = if (flag) {
+  match n {
+    1: 10
+    2: 20
+    3: 30
+    _: 0
+  }
+} else {
+  0
+}
+puts(x)  # output: 30

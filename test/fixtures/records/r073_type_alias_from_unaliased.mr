@@ -1,0 +1,5 @@
+# R073: Type alias record assigned from unaliased record
+type point = { x: int, y: int }
+let raw = { x: 1, y: 2 }
+let p: point = raw
+puts(p.x + p.y)  # output: 3

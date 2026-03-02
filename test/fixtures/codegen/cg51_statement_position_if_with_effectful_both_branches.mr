@@ -1,0 +1,3 @@
+# CG51: Statement-position if with effectful both branches
+let flag = false
+if (flag) { puts("hello") } else { puts("world") }  # output: world

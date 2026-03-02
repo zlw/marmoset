@@ -1,0 +1,8 @@
+# CG11: Specialized body codegen failure is surfaced cleanly
+let f = fn(x: int) -> int {  # error: Codegen error: Multiple patterns per arm not yet supported in codegen
+  match x {
+    1 | 2: 1
+    _: 0
+  }
+}
+puts(f(1))

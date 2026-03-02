@@ -1,0 +1,12 @@
+# CG25: Match with 6 literal arms selects correct one
+let describe = fn(n: int) -> int {
+  match n {
+    1: 10
+    2: 20
+    3: 30
+    4: 40
+    5: 50
+    _: 60
+  }
+}
+puts(describe(99))  # output: 60

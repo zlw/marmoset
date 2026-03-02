@@ -1,0 +1,2 @@
+# OP56: Unary minus on int literal
+puts(-5)  # output: -5

@@ -1,0 +1,4 @@
+# CG30: if-expression returning records in branches
+let flag = true
+let p = if (flag) { { x: 10, y: 20 } } else { { x: 0, y: 0 } }
+puts(p.x)  # output: 10

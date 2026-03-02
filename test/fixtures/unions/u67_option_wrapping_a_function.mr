@@ -1,0 +1,9 @@
+# U67: option wrapping a function
+enum option[a] { some(a) none }
+let f = fn(x: int) -> int { x * 2 }
+let wrapped = option.some(f)
+let out = match wrapped {
+  option.some(func): func(5)
+  option.none: 0
+}
+puts(out)  # output: 10

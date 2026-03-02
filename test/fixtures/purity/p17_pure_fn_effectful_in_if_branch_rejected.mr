@@ -1,0 +1,6 @@
+# P17: Pure fn with effectful call in if-branch is rejected
+let log = fn(x: int) => int { puts(x); x }
+let maybe_log = fn(flag: bool, x: int) -> int {  # error: effectful
+  if (flag) { log(x) } else { x }
+}
+maybe_log(true, 42)

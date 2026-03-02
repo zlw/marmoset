@@ -1,0 +1,14 @@
+# U20: Triple-nested option: some(some(some(1)))
+enum option[a] { some(a) none }
+let x: option[option[option[int]]] = option.some(option.some(option.some(1)))
+let out = match x {
+  option.some(a): match a {
+    option.some(b): match b {
+      option.some(c): c
+      option.none: 0
+    }
+    option.none: 0
+  }
+  option.none: 0
+}
+puts(out)  # output: 1

@@ -1,0 +1,4 @@
+# CG21: if-expression as function argument compiles and runs
+let add = fn(x: int, y: int) -> int { x + y }
+let result = add(if (true) { 10 } else { 20 }, 1)
+puts(result)  # output: 11

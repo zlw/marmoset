@@ -1,0 +1,4 @@
+# CG54: if with function call only in else branch
+let dec = fn(x: int) -> int { x - 1 }
+let x = if (false) { 0 } else { dec(10) }
+puts(x)  # output: 9

@@ -1,0 +1,4 @@
+# OP95: Comparison of record fields
+type point = { x: int, y: int }
+let p: point = { x: 10, y: 20 }
+puts(p.x < p.y)  # output: true

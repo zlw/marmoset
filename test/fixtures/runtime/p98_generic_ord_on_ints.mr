@@ -1,0 +1,2 @@
+let is_less = fn[t: ord](a: t, b: t) -> bool { a < b }
+puts(is_less(1, 2))  # output: true

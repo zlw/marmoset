@@ -1,0 +1,11 @@
+# TF34: Constrained generic called with different records
+trait has_label {
+  label: string
+}
+let get_label = fn[t: has_label](v: t) -> string {
+  v.label
+};
+let r1 = { label: "first", x: 1 }
+let r2 = { label: "second", y: true }
+puts(get_label(r1))  # output: first
+puts(get_label(r2))  # output: second

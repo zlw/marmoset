@@ -1,0 +1,5 @@
+# OP73: Equality in if condition
+let x = 42
+let y = 42
+let result = if (x == y) { "equal" } else { "different" }
+puts(result)  # output: equal

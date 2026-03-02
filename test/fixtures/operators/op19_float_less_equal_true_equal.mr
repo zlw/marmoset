@@ -1,0 +1,2 @@
+# OP19: Float less-equal true (equal)
+puts(3.14 <= 3.14)  # output: true

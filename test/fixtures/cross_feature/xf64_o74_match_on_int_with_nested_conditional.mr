@@ -1,0 +1,8 @@
+# XF64: O74: Match on int with nested conditional
+let code = 2
+let result = match code {
+  1: 100
+  2: 200
+  _: 0
+}
+puts(result)  # output: 200

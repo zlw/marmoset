@@ -1,0 +1,3 @@
+# R135: Array of records, field access
+let items = [{ val: 10 }, { val: 20 }, { val: 30 }]
+puts(items[0].val + items[1].val + items[2].val)  # output: 60

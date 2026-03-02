@@ -1,0 +1,9 @@
+# E73: All-payload variants - add branch
+enum expr { lit(int) add(int, int) mul(int, int) }
+let e = expr.add(10, 20)
+let v = match e {
+  expr.lit(n): n
+  expr.add(a, b): a + b
+  expr.mul(a, b): a * b
+}
+puts(v)  # output: 30

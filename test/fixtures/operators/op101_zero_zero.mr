@@ -1,0 +1,2 @@
+# OP101: Zero <= zero
+puts(0 <= 0)  # output: true

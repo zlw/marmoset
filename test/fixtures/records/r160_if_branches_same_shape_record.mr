@@ -1,0 +1,8 @@
+# R160: If branches with same-shape record
+let n = 5
+let r = if (n > 3) {
+  { val: n * 4 }
+} else {
+  { val: n * 2 }
+}
+puts(r.val)  # output: 20

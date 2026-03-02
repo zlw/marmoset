@@ -1,0 +1,2 @@
+# OP34: Bool greater-than: true > false
+puts(true > false)  # output: true

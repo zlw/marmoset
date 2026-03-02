@@ -1,0 +1,4 @@
+# CG45: if returning strings in branches
+let flag = true
+let msg = if (flag) { "yes" } else { "no" }
+puts(msg)  # output: yes

@@ -1,0 +1,5 @@
+# CS51: H52: [BUG-CAPTURE] generic fn called inside capturing closure
+let id = fn(x) { x }
+let base = 10
+let f = fn(x: int) -> int { id(base + x) }
+puts(f(1))  # output: 11

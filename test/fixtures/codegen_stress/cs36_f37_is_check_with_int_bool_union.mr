@@ -1,0 +1,4 @@
+# CS36: F37: is-check with int|bool union
+let x: int | bool = true
+let result = if (x is bool) { "yes" } else { "no" }
+puts(result)  # output: yes

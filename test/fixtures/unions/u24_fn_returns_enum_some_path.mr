@@ -1,0 +1,11 @@
+# U24: Function returns enum some path, caller matches
+enum option[a] { some(a) none }
+let make = fn(x: int) -> option[int] {
+  if (x > 0) { option.some(x) } else { option.none() }
+}
+let r = make(7)
+let out = match r {
+  option.some(v): v
+  option.none: 0
+}
+puts(out)  # output: 7

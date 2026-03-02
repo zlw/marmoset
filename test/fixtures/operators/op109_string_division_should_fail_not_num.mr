@@ -1,0 +1,2 @@
+# OP109: String division should fail (not num)
+puts("a" / "b")  # error: missing-impl

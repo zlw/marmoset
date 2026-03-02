@@ -1,0 +1,3 @@
+# R035: 3-level nested record literal and access
+let r = { a: { b: { c: 42 } } }
+puts(r.a.b.c)  # output: 42

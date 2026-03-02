@@ -1,0 +1,6 @@
+# CM14: Same typed fn called from two let bindings
+let add1 = fn(x: int) -> int { x + 1 }
+let a = add1(2)
+let b = add1(6)
+puts(a)  # output: 3
+puts(b)  # output: 7

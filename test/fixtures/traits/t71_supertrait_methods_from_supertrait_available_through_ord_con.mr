@@ -1,0 +1,24 @@
+# T71: Supertrait: methods from supertrait available through ord constraint
+trait eq[a] {
+  fn eq(x: a, y: a) -> bool
+}
+trait ord[a]: eq {
+  fn compare(x: a, y: a) -> int
+}
+type point = { x: int }
+impl eq for point {
+  fn eq(x: point, y: point) -> bool {
+    x.x == y.x
+  }
+}
+impl ord for point {
+  fn compare(x: point, y: point) -> int {
+    0
+  }
+}
+let eq_via_ord = fn[a: ord](x: a, y: a) -> bool {
+  x.eq(y)
+}
+let p1: point = { x: 1 }
+let p2: point = { x: 1 }
+puts(eq_via_ord(p1, p2))  # output: true

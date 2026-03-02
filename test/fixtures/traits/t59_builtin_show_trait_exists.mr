@@ -1,0 +1,7 @@
+# T59: Builtin show trait exists
+impl show for int {
+  fn show(x: int) -> string {
+    "test"
+  }
+}
+42

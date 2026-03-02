@@ -1,0 +1,4 @@
+# R042: Spread overrides one field, preserves rest
+let base = { x: 1, y: 2, z: 3 }
+let updated = { ...base, y: 100 }
+puts(updated.x + updated.y + updated.z)  # output: 104

@@ -1,0 +1,4 @@
+# E05: Enum list[a] with recursive structure
+enum list[a] { cons(a) nil }
+let x = list.cons(42)
+x

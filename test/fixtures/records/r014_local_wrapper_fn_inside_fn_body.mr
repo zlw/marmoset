@@ -1,0 +1,7 @@
+# R014: Local wrapper function inside function body
+let outer = fn(x) {
+  let mk = fn(v) { { inner: v } }
+  mk(x)
+}
+let o = outer(5)
+puts(o.inner)  # output: 5

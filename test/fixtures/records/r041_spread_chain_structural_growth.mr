@@ -1,0 +1,5 @@
+# R041: Spread chain with field additions (structural growth)
+let a = { x: 1 }
+let b = { ...a, y: 2 }
+let c = { ...b, z: 12 }
+puts(c.x + c.y + c.z)  # output: 15

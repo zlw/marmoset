@@ -1,0 +1,5 @@
+# CG29: Three chained let bindings each using if produce correct final value
+let a = if (true) { 1 } else { 0 }
+let b = if (true) { a + 2 } else { 0 }
+let c = if (true) { b + 3 } else { 0 }
+puts(c)  # output: 6

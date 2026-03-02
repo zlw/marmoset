@@ -1,0 +1,5 @@
+# OP74: Not-equal in if condition
+let x = 1
+let y = 2
+let result = if (x != y) { "different" } else { "same" }
+puts(result)  # output: different

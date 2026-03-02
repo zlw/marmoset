@@ -1,0 +1,8 @@
+# R138: Record field used as match scrutinee
+let config = { mode: 2 }
+let out = match config.mode {
+  1: "init"
+  2: "found"
+  _: "unknown"
+}
+puts(out)  # output: found

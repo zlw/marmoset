@@ -1,0 +1,2 @@
+# OP44: String concat with empty string
+puts("hello" + "")  # output: hello

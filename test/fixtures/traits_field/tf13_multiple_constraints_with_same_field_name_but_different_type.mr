@@ -1,0 +1,11 @@
+# TF13: Multiple constraints with same field name but different types
+trait has_x_int {
+  x: int
+}
+trait has_x_string {
+  x: string
+}
+let get_x = fn[t: has_x_int + has_x_string](v: t) -> int {
+  v.x  # error: Conflicting field type
+};
+get_x({ x: 1 })

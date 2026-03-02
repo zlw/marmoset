@@ -1,0 +1,7 @@
+# CS68: K74: match on function call as scrutinee
+let double = fn(x: int) -> int { x * 2 }
+let result = match double(5) {
+  10: 20
+  _: 0
+}
+puts(result)  # output: 20

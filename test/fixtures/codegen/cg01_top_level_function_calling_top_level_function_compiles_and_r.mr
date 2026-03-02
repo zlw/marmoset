@@ -1,0 +1,4 @@
+# CG01: Top-level function calling top-level function compiles and runs
+let f = fn(x: int) -> int { x }
+let g = fn(y: int) -> int { f(y) }
+puts(g(1))  # output: 1

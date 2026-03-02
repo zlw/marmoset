@@ -1,0 +1,12 @@
+# CM13: [BUG-1] Two matches on same enum type
+enum option[a] { some(a) none }
+let v1: option[int] = option.some(42)
+let v2: option[int] = option.none()
+match v1 {  # output: 42
+  option.some(n): puts(n)
+  option.none: puts(0)
+}
+match v2 {  # output: 0
+  option.some(n): puts(n)
+  option.none: puts(0)
+}

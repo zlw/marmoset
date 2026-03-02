@@ -1,0 +1,3 @@
+# OP60: Double negation int
+let x = 7
+puts(-(-x))  # output: 7

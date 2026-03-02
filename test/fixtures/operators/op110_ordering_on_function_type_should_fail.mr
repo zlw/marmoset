@@ -1,0 +1,4 @@
+# OP110: Ordering on function type should fail
+let f = fn(x: int) -> int { x }
+let g = fn(x: int) -> int { x }
+puts(f < g)  # error: missing-impl

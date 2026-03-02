@@ -1,0 +1,2 @@
+# OP03: Int less-than equal values
+puts(5 < 5)  # output: false

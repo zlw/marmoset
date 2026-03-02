@@ -1,0 +1,2 @@
+# OP66: Precedence: 10 - 2 * 3 = 4
+puts(10 - 2 * 3)  # output: 4

@@ -1,0 +1,7 @@
+# CG65: Match variable binding in tail position
+let f = fn(x: int) -> int {
+  match x {
+    n: n + 100
+  }
+}
+puts(f(42))  # output: 142

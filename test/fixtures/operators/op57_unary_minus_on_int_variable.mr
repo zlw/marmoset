@@ -1,0 +1,3 @@
+# OP57: Unary minus on int variable
+let x = 42
+puts(-x)  # output: -42

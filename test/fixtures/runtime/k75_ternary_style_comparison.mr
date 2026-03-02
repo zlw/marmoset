@@ -1,0 +1,3 @@
+let x = 10
+let label = if (x * 2 > 15) { "bigger" } else { "smaller" }
+puts(label)  # output: bigger
