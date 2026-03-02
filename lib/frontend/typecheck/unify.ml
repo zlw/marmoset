@@ -266,8 +266,12 @@ and unify_list (list1 : mono_type list) (list2 : mono_type list) : (substitution
           match unify_list rest1' rest2' with
           | Error e -> Error e
           | Ok subst2 -> Ok (compose_substitution subst1 subst2)))
-  | _, _ -> Error (type_mismatch TNull TNull)
-(* Length mismatch - shouldn't happen for enum args *)
+  | _, _ ->
+      Error
+        (Diagnostic.error_no_span ~code:"type-mismatch"
+           ~message:
+             (Printf.sprintf "Type argument list length mismatch: expected %d but got %d" (List.length list1)
+                (List.length list2)))
 
 (* ============================================================
    Tests

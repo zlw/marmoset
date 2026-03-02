@@ -4880,7 +4880,7 @@ let compile_string ~file_id (source : string) : (string, Diagnostic.t) result =
   | Error [] -> Error (Diagnostic.error_no_span ~code:"parse-unexpected-token" ~message:"Parse error")
   | Ok program -> (
       let env = Typecheck.Builtins.prelude_env () in
-      match Typecheck.Checker.check_program_with_annotations ~source ~env program with
+      match Typecheck.Checker.check_program_with_annotations ~env program with
       | Error err -> Error err
       | Ok { environment = typed_env; type_map; _ } ->
           (try Ok (emit_program_with_typed_env type_map typed_env program) with
@@ -5243,7 +5243,7 @@ v.ping()
   | Error _ -> false
   | Ok program -> (
       let env = Typecheck.Builtins.prelude_env () in
-      match Typecheck.Checker.check_program_with_annotations ~source ~env program with
+      match Typecheck.Checker.check_program_with_annotations ~env program with
       | Error _ -> false
       | Ok { environment = typed_env; type_map; _ } -> (
           (* If emitter re-resolves methods from the registry, this clear would break codegen. *)
@@ -5269,7 +5269,7 @@ v.ping()
   match Syntax.Parser.parse ~file_id:"<codegen>" source with
   | Error _ -> false
   | Ok program -> (
-      match Typecheck.Checker.check_program_with_annotations ~source program with
+      match Typecheck.Checker.check_program_with_annotations program with
       | Error _ -> false
       | Ok { environment = typed_env; type_map; _ } -> (
           Typecheck.Inherent_registry.clear ();
@@ -5575,7 +5575,7 @@ puts(1.show())
       | Error _ -> false
       | Ok program -> (
           let env = Typecheck.Builtins.prelude_env () in
-          match Typecheck.Checker.check_program_with_annotations ~source ~env program with
+          match Typecheck.Checker.check_program_with_annotations ~env program with
           | Error _ -> false
           | Ok { environment = typed_env; type_map; _ } ->
               let mono_state = create_mono_state () in

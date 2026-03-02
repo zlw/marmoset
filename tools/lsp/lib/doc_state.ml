@@ -73,7 +73,7 @@ let analyze_with_file_id ~(file_id : string) ~(source : string) : analysis_resul
       { source; program = None; type_map = None; environment = None; type_var_user_names = []; diagnostics }
   | Ok program -> (
       let env = Builtins.prelude_env () in
-      match Checker.check_program_with_annotations ~state ~source ~env program with
+      match Checker.check_program_with_annotations ~state ~env program with
       | Error diag ->
           let type_var_user_names = Infer.type_var_user_name_bindings_in_state state in
           let diagnostics =
