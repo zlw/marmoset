@@ -48,6 +48,7 @@ canary_unexpected="$TMP_FIXTURE_DIR/canary_unexpected.mr"
 canary_continuation="$TMP_FIXTURE_DIR/canary_no_span_continuation.mr"
 canary_annotation="$TMP_FIXTURE_DIR/canary_annotation_placement.mr"
 canary_severity="$TMP_FIXTURE_DIR/canary_severity_mismatch.mr"
+canary_mixed_wc="$TMP_FIXTURE_DIR/canary_mixed_wildcard.mr"
 
 cat > "$canary_missing" <<'CANARY'
 let x = 1  # error: expected marker that is intentionally absent
@@ -74,6 +75,11 @@ cat > "$canary_severity" <<'CANARY'
 let s = 1  # warning: severity test marker
 CANARY
 
+cat > "$canary_mixed_wc" <<'CANARY'
+let w = 1  # error: concrete match
+let w2 = 2  # error: *
+CANARY
+
 STUB_EXEC=$(mktemp)
 cat > "$STUB_EXEC" <<'STUB'
 #!/bin/bash
@@ -98,6 +104,12 @@ case "$file" in
     *canary_unexpected.mr)
         echo "$file:1:1: error test-expected: expected core marker"
         echo "$file:4:1: error test-extra: unexpected extra marker"
+        exit 1
+        ;;
+    *canary_mixed_wildcard.mr)
+        echo "$file:1:1: error test-concrete: concrete match"
+        echo "$file:2:1: error test-extra1: wildcard absorbed extra"
+        echo "$file:3:1: error test-extra2: surplus unrelated extra"
         exit 1
         ;;
     *canary_severity_mismatch.mr)
@@ -134,6 +146,7 @@ rel_unexpected="${canary_unexpected#$FIXTURE_ROOT/}"
 rel_continuation="${canary_continuation#$FIXTURE_ROOT/}"
 rel_annotation="${canary_annotation#$FIXTURE_ROOT/}"
 rel_severity="${canary_severity#$FIXTURE_ROOT/}"
+rel_mixed_wc="${canary_mixed_wc#$FIXTURE_ROOT/}"
 
 TOTAL=$((TOTAL + 1))
 echo -n "TEST [$TOTAL] reject strictness: missing/line-mismatch/unexpected canaries ... "
@@ -197,6 +210,22 @@ else
         PASS=$((PASS + 1))
     else
         echo "✗ FAIL (severity mismatch failure marker missing)"
+        echo "$output" | sed 's/^/  /' | head -n 40
+        FAIL=$((FAIL + 1))
+    fi
+fi
+
+TOTAL=$((TOTAL + 1))
+echo -n "TEST [$TOTAL] mixed wildcard + concrete fails on surplus extras ... "
+if output=$($HARNESS_COPY "$rel_mixed_wc" 2>&1); then
+    echo "✗ FAIL (expected wildcard-scoped failure)"
+    FAIL=$((FAIL + 1))
+else
+    if echo "$output" | grep -q "✗ FAIL (unexpected diagnostics)"; then
+        echo "✓ PASS"
+        PASS=$((PASS + 1))
+    else
+        echo "✗ FAIL (wildcard scope failure marker missing)"
         echo "$output" | sed 's/^/  /' | head -n 40
         FAIL=$((FAIL + 1))
     fi

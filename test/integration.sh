@@ -742,11 +742,11 @@ reject_mode() {
     rm -f "$binpath"
 
     local all_wildcard=true
-    local wildcard_present=false
+    local wildcard_count=0
     local i
     for ((i = 0; i < ${#DIAG_VALUES[@]}; i++)); do
         if [ "${DIAG_VALUES[$i]}" = "*" ]; then
-            wildcard_present=true
+            wildcard_count=$((wildcard_count + 1))
         else
             all_wildcard=false
         fi
@@ -881,24 +881,28 @@ reject_mode() {
         return
     fi
 
-    if ! $wildcard_present; then
-        local unexpected=""
-        for ((i = 0; i < ${#PARSED_DIAG_MESSAGE[@]}; i++)); do
-            if [ "${diag_used[$i]}" -eq 0 ]; then
+    # Wildcard scoping: each wildcard expectation absorbs one unmatched
+    # diagnostic. Remaining unmatched diagnostics are unexpected → FAIL.
+    local unmatched_count=0
+    local unexpected=""
+    for ((i = 0; i < ${#PARSED_DIAG_MESSAGE[@]}; i++)); do
+        if [ "${diag_used[$i]}" -eq 0 ]; then
+            unmatched_count=$((unmatched_count + 1))
+            if [ "$unmatched_count" -gt "$wildcard_count" ]; then
                 local loc
                 loc=$(format_diag_location "$i")
                 unexpected="$unexpected\n  - ${PARSED_DIAG_SEVERITY[$i]} ${PARSED_DIAG_CODE[$i]} @ $loc: ${PARSED_DIAG_MESSAGE[$i]}"
             fi
-        done
-
-        if [ -n "$unexpected" ]; then
-            echo "✗ FAIL (unexpected diagnostics)"
-            echo -e "  Unexpected:$unexpected"
-            print_reject_debug_context "$file" "$build_output"
-            FAIL=$((FAIL + 1))
-            record_failed_test "$name" "unexpected diagnostics"
-            return
         fi
+    done
+
+    if [ -n "$unexpected" ]; then
+        echo "✗ FAIL (unexpected diagnostics)"
+        echo -e "  Unexpected:$unexpected"
+        print_reject_debug_context "$file" "$build_output"
+        FAIL=$((FAIL + 1))
+        record_failed_test "$name" "unexpected diagnostics"
+        return
     fi
 
     echo "✓ PASS"
