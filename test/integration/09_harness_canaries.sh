@@ -49,6 +49,7 @@ canary_continuation="$TMP_FIXTURE_DIR/canary_no_span_continuation.mr"
 canary_annotation="$TMP_FIXTURE_DIR/canary_annotation_placement.mr"
 canary_severity="$TMP_FIXTURE_DIR/canary_severity_mismatch.mr"
 canary_mixed_wc="$TMP_FIXTURE_DIR/canary_mixed_wildcard.mr"
+canary_colon="$TMP_FIXTURE_DIR/canary_colon_file_id.mr"
 
 cat > "$canary_missing" <<'CANARY'
 let x = 1  # error: expected marker that is intentionally absent
@@ -78,6 +79,10 @@ CANARY
 cat > "$canary_mixed_wc" <<'CANARY'
 let w = 1  # error: concrete match
 let w2 = 2  # error: *
+CANARY
+
+cat > "$canary_colon" <<'CANARY'
+let x = 1  # error: colon path diagnostic
 CANARY
 
 STUB_EXEC=$(mktemp)
@@ -116,6 +121,10 @@ case "$file" in
         echo "$file:1:1: error test-severity: severity test marker"
         exit 1
         ;;
+    *canary_colon_file_id.mr)
+        echo "C:\\test\\file.mr:1:1: error test-colon: colon path diagnostic"
+        exit 1
+        ;;
     *canary_no_span_continuation.mr)
         echo "error build-go-compile: # marmoset_out"
         echo "./main.go:50:1: missing return"
@@ -147,6 +156,7 @@ rel_continuation="${canary_continuation#$FIXTURE_ROOT/}"
 rel_annotation="${canary_annotation#$FIXTURE_ROOT/}"
 rel_severity="${canary_severity#$FIXTURE_ROOT/}"
 rel_mixed_wc="${canary_mixed_wc#$FIXTURE_ROOT/}"
+rel_colon="${canary_colon#$FIXTURE_ROOT/}"
 
 TOTAL=$((TOTAL + 1))
 echo -n "TEST [$TOTAL] reject strictness: missing/line-mismatch/unexpected canaries ... "
@@ -229,6 +239,23 @@ else
         echo "$output" | sed 's/^/  /' | head -n 40
         FAIL=$((FAIL + 1))
     fi
+fi
+
+TOTAL=$((TOTAL + 1))
+echo -n "TEST [$TOTAL] colon-bearing file-id header parses correctly ... "
+if output=$($HARNESS_COPY "$rel_colon" 2>&1); then
+    if echo "$output" | grep -q "✓ PASS"; then
+        echo "✓ PASS"
+        PASS=$((PASS + 1))
+    else
+        echo "✗ FAIL (colon file-id canary missing pass marker)"
+        echo "$output" | sed 's/^/  /' | head -n 40
+        FAIL=$((FAIL + 1))
+    fi
+else
+    echo "✗ FAIL (colon file-id canary unexpectedly failed)"
+    echo "$output" | sed 's/^/  /' | head -n 40
+    FAIL=$((FAIL + 1))
 fi
 
 TOTAL=$((TOTAL + 1))

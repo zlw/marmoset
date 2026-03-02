@@ -442,7 +442,7 @@ try_parse_canonical_header() {
     CH_END_LINE=""
     CH_END_COL=""
 
-    if [[ "$line" =~ ^([^:]+):([0-9]+):([0-9]+)-([0-9]+):([0-9]+):[[:space:]]*([Ee]rror|[Ww]arning|[Ii]nfo)[[:space:]]+([A-Za-z0-9._-]+):[[:space:]]*(.*)$ ]]; then
+    if [[ "$line" =~ ^(.+):([0-9]+):([0-9]+)-([0-9]+):([0-9]+):[[:space:]]*([Ee]rror|[Ww]arning|[Ii]nfo)[[:space:]]+([A-Za-z0-9._-]+):[[:space:]]*(.*)$ ]]; then
         CH_MATCHED=1
         CH_FILE="${BASH_REMATCH[1]}"
         CH_START_LINE="${BASH_REMATCH[2]}"
@@ -455,7 +455,7 @@ try_parse_canonical_header() {
         return 0
     fi
 
-    if [[ "$line" =~ ^([^:]+):([0-9]+):([0-9]+):[[:space:]]*([Ee]rror|[Ww]arning|[Ii]nfo)[[:space:]]+([A-Za-z0-9._-]+):[[:space:]]*(.*)$ ]]; then
+    if [[ "$line" =~ ^(.+):([0-9]+):([0-9]+):[[:space:]]*([Ee]rror|[Ww]arning|[Ii]nfo)[[:space:]]+([A-Za-z0-9._-]+):[[:space:]]*(.*)$ ]]; then
         CH_MATCHED=1
         CH_FILE="${BASH_REMATCH[1]}"
         CH_START_LINE="${BASH_REMATCH[2]}"
@@ -497,6 +497,8 @@ extract_new_diagnostic_records() {
     local cur_end_line=""
     local cur_end_col=""
     local cur_match_text=""
+    local cont_count=0
+    local cont_active=0
 
     while IFS= read -r line || [ -n "$line" ]; do
         line="${line%$'\r'}"
@@ -508,6 +510,8 @@ extract_new_diagnostic_records() {
             fi
 
             active=1
+            cont_count=0
+            cont_active=1
             cur_severity="$CH_SEVERITY"
             cur_code="$CH_CODE"
             cur_message="$CH_MESSAGE"
@@ -520,14 +524,18 @@ extract_new_diagnostic_records() {
             continue
         fi
 
-        if [ "$active" -eq 1 ]; then
+        if [ "$active" -eq 1 ] && [ "$cont_active" -eq 1 ]; then
             # Keep non-header continuation lines attached to the active diagnostic block.
             # This preserves matcher visibility for toolchain details that are emitted on
             # following lines (for example Go compiler messages under build-go-compile).
+            # Stop on blank lines (block boundary) or after 20 continuation lines.
             local trimmed
             trimmed=$(trim_ws "$line")
-            if [ -n "$trimmed" ]; then
+            if [ -z "$trimmed" ] || [ "$cont_count" -ge 20 ]; then
+                cont_active=0
+            else
                 cur_match_text="$cur_match_text | $trimmed"
+                cont_count=$((cont_count + 1))
             fi
         fi
     done <<< "$build_output"
