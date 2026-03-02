@@ -96,6 +96,35 @@ detect_fixture_jobs() {
 
 # --- Fixture parsing and execution ---
 
+monkey_fixture_in_sync() {
+    local fixture_file="$1"
+    local example_file="$REPO_ROOT/examples/monkey.mr"
+    local normalized_fixture
+    local diff_file
+
+    if [ ! -f "$example_file" ]; then
+        echo "  Missing source file: $example_file"
+        return 1
+    fi
+
+    normalized_fixture=$(mktemp)
+    diff_file=$(mktemp)
+
+    # Keep fixture annotations, but guard that the underlying source stays synced
+    # with examples/monkey.mr.
+    sed -E 's/[[:space:]]*#[[:space:]]*output:[[:space:]].*$//' "$fixture_file" > "$normalized_fixture"
+
+    if diff -u "$example_file" "$normalized_fixture" > "$diff_file"; then
+        rm -f "$normalized_fixture" "$diff_file"
+        return 0
+    fi
+
+    echo "  Fixture/source drift detected against examples/monkey.mr:"
+    sed -n '1,40p' "$diff_file" | sed 's/^/  /'
+    rm -f "$normalized_fixture" "$diff_file"
+    return 1
+}
+
 parse_fixture() {
     local file="$1"
 
@@ -313,6 +342,14 @@ run_fixture() {
     local file="$1"
     local rel_path="${file#$FIXTURE_ROOT/}"
     local name="${rel_path%.mr}"
+
+    if [ "$rel_path" = "runtime/monkey_example.mr" ] && ! monkey_fixture_in_sync "$file"; then
+        TOTAL=$((TOTAL + 1))
+        echo -n "TEST [$TOTAL] $name ... "
+        echo "✗ FAIL (fixture drift)"
+        FAIL=$((FAIL + 1))
+        return
+    fi
 
     parse_fixture "$file"
 
