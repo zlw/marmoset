@@ -17,37 +17,7 @@ type typecheck_result = {
 
 type error = Diagnostic.t
 
-let infer_error_code (kind : Infer.error_kind) : string =
-  match kind with
-  | Infer.UnboundVariable _ -> "type-unbound-var"
-  | Infer.UnificationError diag -> diag.code
-  | Infer.InvalidOperator _ -> "type-invalid-operator"
-  | Infer.NonFunctionCall _ -> "type-non-function"
-  | Infer.IfBranchMismatch _ -> "type-if-branch-mismatch"
-  | Infer.IfConditionNotBool _ -> "type-if-condition"
-  | Infer.ArrayElementMismatch _ -> "type-array-element"
-  | Infer.HashKeyMismatch _ -> "type-hash-key"
-  | Infer.HashValueMismatch _ -> "type-hash-value"
-  | Infer.NotIndexable _ -> "type-not-indexable"
-  | Infer.IndexTypeMismatch _ -> "type-index-mismatch"
-  | Infer.EmptyArrayUnknownType -> "type-empty-array"
-  | Infer.EmptyHashUnknownType -> "type-empty-hash"
-  | Infer.ReturnTypeMismatch _ -> "type-return-mismatch"
-  | Infer.IfExpressionWithoutElse -> "type-if-no-else"
-  | Infer.ConstructorError _ -> "type-constructor"
-  | Infer.PatternError _ -> "type-pattern"
-  | Infer.MatchError _ -> "type-match"
-  | Infer.PurityViolation _ -> "type-purity"
-
-(* Convert infer error to canonical diagnostic. *)
-let error_of_infer_error (e : Infer.infer_error) : error =
-  let code = infer_error_code e.kind in
-  let message = Infer.error_to_string e in
-  match e.pos with
-  | Some start_pos ->
-      let file_id = Option.value e.file_id ~default:"<unknown>" in
-      Diagnostic.error_with_span ~code ~message ~file_id ~start_pos ?end_pos:e.end_pos ()
-  | _ -> Diagnostic.error_no_span ~code ~message
+let error_of_infer_error (e : Diagnostic.t) : error = e
 
 let first_diagnostic_span (diag : Diagnostic.t) : Diagnostic.span option =
   let rec first_primary = function

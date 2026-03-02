@@ -567,24 +567,6 @@ type error_kind =
   | PurityViolation of string (* pure function calls effectful operation *)
 
 (* An error with optional position info *)
-type infer_error = {
-  kind : error_kind;
-  pos : int option; (* byte offset in source, if available *)
-  end_pos : int option; (* end byte offset in source, if available *)
-  file_id : string option;
-}
-
-(* Create an error without position *)
-let error kind = { kind; pos = None; end_pos = None; file_id = None }
-
-(* Create an error with position from an expression *)
-let error_at kind (expr : AST.expression) =
-  { kind; pos = Some expr.pos; end_pos = Some expr.end_pos; file_id = expr.file_id }
-
-(* Create an error with position from a statement *)
-let error_at_stmt kind (stmt : AST.statement) =
-  { kind; pos = Some stmt.pos; end_pos = Some stmt.end_pos; file_id = stmt.file_id }
-
 let error_kind_to_string = function
   | UnboundVariable name -> "Unbound variable: " ^ name
   | UnificationError err -> Unify.error_to_string err
@@ -614,10 +596,51 @@ let error_kind_to_string = function
   | MatchError msg -> msg
   | PurityViolation msg -> msg
 
-let error_to_string (err : infer_error) : string = error_kind_to_string err.kind
+let error_kind_code = function
+  | UnboundVariable _ -> "type-unbound-var"
+  | UnificationError diag -> diag.code
+  | InvalidOperator _ -> "type-invalid-operator"
+  | NonFunctionCall _ -> "type-non-function"
+  | IfBranchMismatch _ -> "type-if-branch-mismatch"
+  | IfConditionNotBool _ -> "type-if-condition"
+  | ArrayElementMismatch _ -> "type-array-element"
+  | HashKeyMismatch _ -> "type-hash-key"
+  | HashValueMismatch _ -> "type-hash-value"
+  | NotIndexable _ -> "type-not-indexable"
+  | IndexTypeMismatch _ -> "type-index-mismatch"
+  | EmptyArrayUnknownType -> "type-empty-array"
+  | EmptyHashUnknownType -> "type-empty-hash"
+  | ReturnTypeMismatch _ -> "type-return-mismatch"
+  | IfExpressionWithoutElse -> "type-if-no-else"
+  | ConstructorError _ -> "type-constructor"
+  | PatternError _ -> "type-pattern"
+  | MatchError _ -> "type-match"
+  | PurityViolation _ -> "type-purity"
+
+let diagnostic_of_error_kind ?pos ?end_pos ?file_id (kind : error_kind) : Diagnostic.t =
+  let code = error_kind_code kind in
+  let message = error_kind_to_string kind in
+  match pos with
+  | Some start_pos ->
+      let file_id = Option.value file_id ~default:"<unknown>" in
+      Diagnostic.error_with_span ~code ~message ~file_id ~start_pos ?end_pos ()
+  | None -> Diagnostic.error_no_span ~code ~message
+
+(* Create an error without position *)
+let error kind = diagnostic_of_error_kind kind
+
+(* Create an error with position from an expression *)
+let error_at kind (expr : AST.expression) =
+  diagnostic_of_error_kind ~pos:expr.pos ~end_pos:expr.end_pos ?file_id:expr.file_id kind
+
+(* Create an error with position from a statement *)
+let error_at_stmt kind (stmt : AST.statement) =
+  diagnostic_of_error_kind ~pos:stmt.pos ~end_pos:stmt.end_pos ?file_id:stmt.file_id kind
+
+let error_to_string (err : Diagnostic.t) : string = err.message
 
 (* Result type for inference *)
-type 'a infer_result = ('a, infer_error) result
+type 'a infer_result = ('a, Diagnostic.t) result
 type symbol_scope = symbol_id NameMap.t
 type symbol_scope_stack = symbol_scope list
 
@@ -645,9 +668,9 @@ let register_prebound_symbols (env : type_env) : symbol_scope =
     env NameMap.empty
 
 let register_top_level_symbol_definitions (root_scope : symbol_scope) (program : AST.program) :
-    (symbol_scope, infer_error) result =
+    (symbol_scope, Diagnostic.t) result =
   let rec go (scope : symbol_scope) (seen_lets : StringSet.t) (stmts : AST.statement list) :
-      (symbol_scope, infer_error) result =
+      (symbol_scope, Diagnostic.t) result =
     match stmts with
     | [] -> Ok scope
     | stmt :: rest -> (
@@ -657,13 +680,9 @@ let register_top_level_symbol_definitions (root_scope : symbol_scope) (program :
               go scope seen_lets rest
             else if StringSet.mem let_binding.name seen_lets then
               Error
-                {
-                  kind =
-                    ConstructorError (Printf.sprintf "Duplicate top-level let definition: %s" let_binding.name);
-                  pos = Some stmt.pos;
-                  end_pos = Some stmt.end_pos;
-                  file_id = stmt.file_id;
-                }
+                (error_at_stmt
+                   (ConstructorError (Printf.sprintf "Duplicate top-level let definition: %s" let_binding.name))
+                   stmt)
             else
               let sid =
                 register_symbol ~name:let_binding.name ~kind:TopLevelLet ~pos:stmt.pos ~end_pos:stmt.end_pos
@@ -893,7 +912,7 @@ and resolve_stmt_list_symbols (stack : symbol_scope_stack) ~(is_top_level : bool
     symbol_scope_stack =
   List.fold_left (fun acc stmt -> resolve_stmt_symbols acc ~is_top_level stmt) stack stmts
 
-let resolve_program_symbols (env : type_env) (program : AST.program) : (unit, infer_error) result =
+let resolve_program_symbols (env : type_env) (program : AST.program) : (unit, Diagnostic.t) result =
   clear_symbol_stores ();
   let root_scope = register_prebound_symbols env in
   match register_top_level_symbol_definitions root_scope program with
@@ -968,13 +987,7 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
         (* Look up the variant in the registry *)
         match Enum_registry.lookup_variant enum_name variant_name with
         | None ->
-            Error
-              {
-                kind = ConstructorError (Printf.sprintf "Unknown enum constructor: %s.%s" enum_name variant_name);
-                pos = Some expr.pos;
-                end_pos = Some expr.end_pos;
-                file_id = expr.file_id;
-              }
+            Error (error_at (ConstructorError (Printf.sprintf "Unknown enum constructor: %s.%s" enum_name variant_name)) expr)
         | Some variant -> (
             (* Infer types of constructor arguments *)
             match infer_args type_map env empty_substitution args with
@@ -985,26 +998,16 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                   List.length args <> List.length variant.fields
                 then
                   Error
-                    {
-                      kind =
-                        ConstructorError
+                    (error_at
+                       (ConstructorError
                           (Printf.sprintf "%s.%s expects %d arguments, got %d" enum_name variant_name
-                             (List.length variant.fields) (List.length args));
-                      pos = Some expr.pos;
-                      end_pos = Some expr.end_pos;
-                      file_id = expr.file_id;
-                    }
+                             (List.length variant.fields) (List.length args)))
+                       expr)
                 else
                   (* Get the enum definition to know type parameters *)
                   match Enum_registry.lookup enum_name with
                   | None ->
-                      Error
-                        {
-                          kind = ConstructorError (Printf.sprintf "Unknown enum: %s" enum_name);
-                          pos = Some expr.pos;
-                          end_pos = Some expr.end_pos;
-                          file_id = expr.file_id;
-                        }
+                      Error (error_at (ConstructorError (Printf.sprintf "Unknown enum: %s" enum_name)) expr)
                   | Some enum_def -> (
                       (* Create fresh type variables for each type parameter *)
                       let fresh_vars = List.map (fun _ -> fresh_type_var ()) enum_def.type_params in
@@ -1611,7 +1614,7 @@ and infer_if type_map env condition consequence alternative =
 (* Collect all return types from a statement, unifying them with an expected type.
    Returns the updated substitution and the unified return type. *)
 and collect_and_unify_returns type_map env expected_ret_type (stmt : AST.statement) subst :
-    (substitution * mono_type, infer_error) result =
+    (substitution * mono_type, Diagnostic.t) result =
   match stmt.AST.stmt with
   | AST.Return expr -> (
       match infer_expression type_map env expr with
@@ -2472,13 +2475,13 @@ and infer_statement type_map env stmt =
         let impl_type_bindings =
           List.map (fun (p : AST.generic_param) -> (p.name, TVar p.name)) impl_type_params
         in
-        let convert_impl_type_expr (te : AST.type_expr) : (mono_type, infer_error) result =
+        let convert_impl_type_expr (te : AST.type_expr) : (mono_type, Diagnostic.t) result =
           try Ok (Annotation.type_expr_to_mono_type_with impl_type_bindings te) with
           | Annotation.Open_row_rejected msg -> Error (error (ConstructorError msg))
           | Failure msg -> Error (error (ConstructorError msg))
         in
-        let with_impl_type_param_constraints (f : unit -> (substitution * mono_type, infer_error) result) :
-            (substitution * mono_type, infer_error) result =
+        let with_impl_type_param_constraints (f : unit -> (substitution * mono_type, Diagnostic.t) result) :
+            (substitution * mono_type, Diagnostic.t) result =
           let constraint_store = current_constraint_store () in
           let constrained_field_store = current_constrained_field_store () in
           let snapshots =
@@ -2510,7 +2513,7 @@ and infer_statement type_map env stmt =
             | Ok for_type_mono -> (
                 (* Infer and validate method bodies so codegen can rely on a complete type_map. *)
                 let infer_impl_method_body (m : AST.method_impl) :
-                    ((Trait_registry.method_sig * substitution) option, infer_error) result =
+                    ((Trait_registry.method_sig * substitution) option, Diagnostic.t) result =
                   let param_types_result =
                     List.fold_left
                       (fun acc (pname, ptype_opt) ->
@@ -2662,7 +2665,7 @@ and infer_statement type_map env stmt =
         |> StringSet.elements
         |> List.map (fun name -> (name, TVar name))
       in
-      let convert_inherent_type_expr (te : AST.type_expr) : (mono_type, infer_error) result =
+      let convert_inherent_type_expr (te : AST.type_expr) : (mono_type, Diagnostic.t) result =
         try Ok (Annotation.type_expr_to_mono_type_with generic_type_bindings te) with
         | Annotation.Open_row_rejected msg -> Error (error (ConstructorError msg))
         | Failure msg -> Error (error (ConstructorError msg))
@@ -2676,7 +2679,7 @@ and infer_statement type_map env stmt =
       | Ok inherent_for_type_mono ->
           let inherent_for_type_mono = canonicalize_mono_type inherent_for_type_mono in
           let infer_inherent_method_body (m : AST.method_impl) :
-              (Trait_registry.method_sig * substitution, infer_error) result =
+              (Trait_registry.method_sig * substitution, Diagnostic.t) result =
             let param_types_result =
               List.fold_left
                 (fun acc (pname, ptype_opt) ->
@@ -2849,7 +2852,7 @@ and infer_statement type_map env stmt =
 (* Simple validation: check that all explicit return statements match expected type *)
 and validate_return_statements
     (type_map : type_map) (env : type_env) (expected_type : mono_type) (stmt : AST.statement) :
-    (unit, infer_error) result =
+    (unit, Diagnostic.t) result =
   match stmt.stmt with
   | AST.Return expr -> (
       match infer_expression type_map env expr with
@@ -3248,9 +3251,9 @@ let check_expression (type_map : type_map) (env : type_env) (expr : AST.expressi
    Program Inference
    ============================================================ *)
 
-let predeclare_top_level_lets (env : type_env) (program : AST.program) : (type_env, infer_error) result =
+let predeclare_top_level_lets (env : type_env) (program : AST.program) : (type_env, Diagnostic.t) result =
   let rec go (seen : StringSet.t) (env_acc : type_env) (stmts : AST.statement list) :
-      (type_env, infer_error) result =
+      (type_env, Diagnostic.t) result =
     match stmts with
     | [] -> Ok env_acc
     | stmt :: rest -> (
@@ -3258,13 +3261,9 @@ let predeclare_top_level_lets (env : type_env) (program : AST.program) : (type_e
         | AST.Let let_binding when let_binding.name <> "_" -> (
             if StringSet.mem let_binding.name seen then
               Error
-                {
-                  kind =
-                    ConstructorError (Printf.sprintf "Duplicate top-level let definition: %s" let_binding.name);
-                  pos = Some stmt.pos;
-                  end_pos = Some stmt.end_pos;
-                  file_id = stmt.file_id;
-                }
+                (error_at_stmt
+                   (ConstructorError (Printf.sprintf "Duplicate top-level let definition: %s" let_binding.name))
+                   stmt)
             else
               let seen' = StringSet.add let_binding.name seen in
               if TypeEnv.mem let_binding.name env_acc then
@@ -3443,6 +3442,23 @@ module Test = struct
     in
     go 0
 
+  let is_code (diag : Diagnostic.t) (code : string) : bool = String.equal diag.code code
+
+  let diagnostic_has_file_id (diag : Diagnostic.t) (target : string) : bool =
+    let rec first_primary = function
+      | [] -> None
+      | { Diagnostic.primary = true; span = Diagnostic.NoSpan; _ } :: rest -> first_primary rest
+      | { Diagnostic.primary = true; span = Diagnostic.Span span; _ } :: _ -> Some span.file_id
+      | _ :: rest -> first_primary rest
+    in
+    let rec first_any = function
+      | [] -> None
+      | { Diagnostic.span = Diagnostic.NoSpan; _ } :: rest -> first_any rest
+      | { Diagnostic.span = Diagnostic.Span span; _ } :: _ -> Some span.file_id
+    in
+    let file_id = Option.value (first_primary diag.labels) ~default:(Option.value (first_any diag.labels) ~default:"") in
+    String.equal file_id target
+
   let rec identifier_occurrences_in_expr (name : string) (expr : AST.expression) : (int * int) list =
     match expr.expr with
     | AST.Identifier n when n = name -> [ (expr.id, expr.pos) ]
@@ -3567,7 +3583,7 @@ module Test = struct
 
   let%test "infer underscore is not available as value after let discard" =
     match infer_string "let _ = 5; _" with
-    | Error { kind = UnboundVariable "_"; _ } -> true
+    | Error diag -> is_code diag "type-unbound-var" && contains_substring diag.message "Unbound variable: _"
     | _ -> false
 
   let%test "infer let with function" =
@@ -3613,7 +3629,8 @@ module Test = struct
 
   let%test "duplicate trait definition in one program is rejected" =
     match infer_string "trait ping[a] { fn ping(x: a) -> int }\ntrait ping[a] { fn pong(x: a) -> int }\n1" with
-    | Error { kind = ConstructorError msg; _ } ->
+    | Error diag when is_code diag "type-constructor" ->
+        let msg = diag.message in
         let needle = "Duplicate trait definition: ping" in
         let len_msg = String.length msg in
         let len_needle = String.length needle in
@@ -3630,7 +3647,8 @@ module Test = struct
 
   let%test "duplicate enum definition in one program is rejected" =
     match infer_string "enum dup { a }\nenum dup { b }\n1" with
-    | Error { kind = ConstructorError msg; _ } ->
+    | Error diag when is_code diag "type-constructor" ->
+        let msg = diag.message in
         let needle = "Duplicate enum definition: dup" in
         let len_msg = String.length msg in
         let len_needle = String.length needle in
@@ -3647,7 +3665,8 @@ module Test = struct
 
   let%test "duplicate type alias definition in one program is rejected" =
     match infer_string "type point = { x: int }\ntype point = { y: int }\n1" with
-    | Error { kind = ConstructorError msg; _ } ->
+    | Error diag when is_code diag "type-constructor" ->
+        let msg = diag.message in
         let needle = "Duplicate type alias definition: point" in
         let len_msg = String.length msg in
         let len_needle = String.length needle in
@@ -3667,7 +3686,7 @@ module Test = struct
 
   let%test "top-level forward reference to later non-function value is rejected" =
     match infer_string "let a = b; let b = 1; a" with
-    | Error { kind = UnboundVariable "b"; _ } -> true
+    | Error diag -> is_code diag "type-unbound-var" && contains_substring diag.message "Unbound variable: b"
     | _ -> false
 
   let%test "top-level mutual recursion with forward references infers" =
@@ -3696,7 +3715,7 @@ module Test = struct
     | Ok program -> (
         let state = create_inference_state () in
         match infer_program ~state program with
-        | Error { kind = UnboundVariable "b"; _ } -> (
+        | Error diag when is_code diag "type-unbound-var" && contains_substring diag.message "Unbound variable: b" -> (
             let b_refs = identifier_occurrences_in_program "b" program in
             let b_symbol = find_symbol_id_by_name_kind state "b" TopLevelLet in
             match (b_refs, b_symbol) with
@@ -3732,7 +3751,8 @@ module Test = struct
 
   let%test "duplicate top-level let definition is rejected" =
     match infer_string "let x = 1; let x = 2; x" with
-    | Error { kind = ConstructorError msg; _ } -> contains_substring msg "Duplicate top-level let definition: x"
+    | Error diag ->
+        is_code diag "type-constructor" && contains_substring diag.message "Duplicate top-level let definition: x"
     | _ -> false
 
   let%test "symbol resolution maps top-level identifiers to top-level symbols" =
@@ -3836,7 +3856,8 @@ module Test = struct
 
   let%test "field-only trait object rejects access to fields outside trait projection" =
     match infer_string "trait named { name: string }\nlet x: named = { name: \"alice\", age: 42 }\nx.age" with
-    | Error { kind = ConstructorError msg; _ } ->
+    | Error diag when is_code diag "type-constructor" ->
+        let msg = diag.message in
         let needle = "Record field 'age' not found in type" in
         let len_msg = String.length msg in
         let len_needle = String.length needle in
@@ -3856,7 +3877,8 @@ module Test = struct
       infer_string
         "trait named { name: string }\nlet mk = fn(n: int) -> named { { name: \"alice\", age: n } }\nlet x = mk(42)\nx.age"
     with
-    | Error { kind = ConstructorError msg; _ } ->
+    | Error diag when is_code diag "type-constructor" ->
+        let msg = diag.message in
         let needle = "Record field 'age' not found in type" in
         let len_msg = String.length msg in
         let len_needle = String.length needle in
@@ -3881,7 +3903,8 @@ module Test = struct
       infer_string
         "trait named { name: string }\ntrait shown[a] { fn show(x: a) -> string }\nlet get_name = fn[t: named + shown](x: t) { x.name }\nlet p = { name: \"alice\" }\nget_name(p)"
     with
-    | Error { kind = ConstructorError msg; _ } ->
+    | Error diag when is_code diag "type-constructor" ->
+        let msg = diag.message in
         let has needle =
           let len_msg = String.length msg in
           let len_needle = String.length needle in
@@ -3900,7 +3923,8 @@ module Test = struct
 
   let%test "constrained field access rejects fields not guaranteed by constraints" =
     match infer_string "trait named { name: string }\nlet get_age = fn[t: named](x: t) { x.age }\n1" with
-    | Error { kind = ConstructorError msg; _ } ->
+    | Error diag when is_code diag "type-constructor" ->
+        let msg = diag.message in
         let needle = "Field 'age' is not guaranteed by constraints on type variable" in
         let len_msg = String.length msg in
         let len_needle = String.length needle in
@@ -3925,7 +3949,7 @@ module Test = struct
       infer_string
         "trait id[a] { fn id(x: a) -> a }\nimpl id[b] for list[b] {\n  fn id(x: list[b]) -> list[b] { [1] }\n}\n1"
     with
-    | Error { kind = ReturnTypeMismatch _; _ } -> true
+    | Error diag -> is_code diag "type-return-mismatch"
     | _ -> false
 
   let%test "explicit row-polymorphic annotation is rejected in v1" =
@@ -3965,7 +3989,7 @@ module Test = struct
 
   let%test "error on unbound variable" =
     match infer_string "x" with
-    | Error { kind = UnboundVariable "x"; _ } -> true
+    | Error diag -> is_code diag "type-unbound-var" && contains_substring diag.message "Unbound variable: x"
     | _ -> false
 
   let%test "union type from if with different branch types" =
@@ -3976,12 +4000,12 @@ module Test = struct
 
   let%test "error on non-bool condition" =
     match infer_string "if (5) { 1 }" with
-    | Error { kind = IfConditionNotBool _; _ } -> true
+    | Error diag -> is_code diag "type-if-condition"
     | _ -> false
 
   let%test "error on array element mismatch" =
     match infer_string "[1, \"hello\"]" with
-    | Error { kind = ArrayElementMismatch _; _ } -> true
+    | Error diag -> is_code diag "type-array-element"
     | _ -> false
 
   let%test "infer simple recursive function" =
@@ -4512,7 +4536,7 @@ f"
     | Error _ -> false
     | Ok program -> (
         match infer_program program with
-        | Error { file_id = Some "main.mr"; _ } -> true
+        | Error diag -> diagnostic_has_file_id diag "main.mr"
         | _ -> false)
 
   let%test "infer effectful function type uses fat arrow" =
@@ -4543,7 +4567,7 @@ f"
     (* Define an effectful function, then a pure function that calls it *)
     let code = "let eff = fn(x: int) => int { x }; fn(y: int) -> int { eff(y) }" in
     match infer_string code with
-    | Error { kind = PurityViolation _; _ } -> true
+    | Error diag -> is_code diag "type-purity"
     | _ -> false
 
   let%test "pure function with pure body is ok" =
@@ -4571,13 +4595,13 @@ f"
   let%test "pure function calling effectful in let binding is error" =
     let code = "let eff = fn(x: int) => int { x }; fn(y: int) -> int { let z = eff(y); z }" in
     match infer_string code with
-    | Error { kind = PurityViolation _; _ } -> true
+    | Error diag -> is_code diag "type-purity"
     | _ -> false
 
   let%test "pure function calling effectful in if branch is error" =
     let code = "let eff = fn(x: int) => int { x }; fn(y: int) -> int { if (true) { eff(y) } else { 0 } }" in
     match infer_string code with
-    | Error { kind = PurityViolation _; _ } -> true
+    | Error diag -> is_code diag "type-purity"
     | _ -> false
 
   let%test "pure function calling maybe-effectful function from union is error" =
@@ -4585,7 +4609,7 @@ f"
       "fn(flag: bool) -> int { let f = if (flag) { fn(x: int) -> int { x + 1 } } else { fn(x: int) => int { x } }; f(1) }"
     in
     match infer_string code with
-    | Error { kind = PurityViolation _; _ } -> true
+    | Error diag -> is_code diag "type-purity"
     | _ -> false
 
   let%test "unannotated function calling maybe-effectful union infers effectful" =
@@ -4605,7 +4629,7 @@ f"
   let%test "pure annotated higher-order caller with unknown callback is rejected conservatively" =
     let code = "let hof = fn(f) -> int { f(1) }; let eff = fn(x: int) => int { x }; hof(eff)" in
     match infer_string code with
-    | Error { kind = PurityViolation _; _ } -> true
+    | Error diag -> is_code diag "type-purity"
     | _ -> false
 
   let%test "union of pure/effectful callables normalizes to callable and can be called" =
@@ -4621,7 +4645,7 @@ f"
   let%test "union of callable and non-callable cannot be called" =
     let code = "let f = if (true) { fn(x: int) -> int { x + 1 } } else { 0 }; f(1)" in
     match infer_string code with
-    | Error { kind = UnificationError _; _ } -> true
+    | Error diag -> is_code diag "type-mismatch" || is_code diag "type-occurs-check"
     | _ -> false
 
   let%test "union of callables with mismatched arity cannot be called" =
@@ -4629,7 +4653,7 @@ f"
       "let f = if (true) { fn(x: int) -> int { x } } else { fn(x: int, y: int) -> int { x + y } }; f(1)"
     in
     match infer_string code with
-    | Error { kind = UnificationError _; _ } -> true
+    | Error diag -> is_code diag "type-mismatch" || is_code diag "type-occurs-check"
     | _ -> false
 
   let%test "pure function defining effectful function is ok" =
@@ -4652,6 +4676,6 @@ f"
       "let eff = fn(x: int) => int { x }; let loop = fn(n: int) -> int { if (n == 0) { 0 } else { eff(n); loop(n - 1) } }; loop(2)"
     in
     match infer_string code with
-    | Error { kind = PurityViolation _; _ } -> true
+    | Error diag -> is_code diag "type-purity"
     | _ -> false
 end
