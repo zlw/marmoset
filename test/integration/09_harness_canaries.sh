@@ -47,6 +47,7 @@ canary_line="$TMP_FIXTURE_DIR/canary_line_mismatch.mr"
 canary_unexpected="$TMP_FIXTURE_DIR/canary_unexpected.mr"
 canary_continuation="$TMP_FIXTURE_DIR/canary_no_span_continuation.mr"
 canary_annotation="$TMP_FIXTURE_DIR/canary_annotation_placement.mr"
+canary_severity="$TMP_FIXTURE_DIR/canary_severity_mismatch.mr"
 
 cat > "$canary_missing" <<'CANARY'
 let x = 1  # error: expected marker that is intentionally absent
@@ -67,6 +68,10 @@ CANARY
 cat > "$canary_annotation" <<'CANARY'
 # error: detached annotation should fail placement
 let detached = 1
+CANARY
+
+cat > "$canary_severity" <<'CANARY'
+let s = 1  # warning: severity test marker
 CANARY
 
 STUB_EXEC=$(mktemp)
@@ -93,6 +98,10 @@ case "$file" in
     *canary_unexpected.mr)
         echo "$file:1:1: error test-expected: expected core marker"
         echo "$file:4:1: error test-extra: unexpected extra marker"
+        exit 1
+        ;;
+    *canary_severity_mismatch.mr)
+        echo "$file:1:1: error test-severity: severity test marker"
         exit 1
         ;;
     *canary_no_span_continuation.mr)
@@ -124,6 +133,7 @@ rel_line="${canary_line#$FIXTURE_ROOT/}"
 rel_unexpected="${canary_unexpected#$FIXTURE_ROOT/}"
 rel_continuation="${canary_continuation#$FIXTURE_ROOT/}"
 rel_annotation="${canary_annotation#$FIXTURE_ROOT/}"
+rel_severity="${canary_severity#$FIXTURE_ROOT/}"
 
 TOTAL=$((TOTAL + 1))
 echo -n "TEST [$TOTAL] reject strictness: missing/line-mismatch/unexpected canaries ... "
@@ -171,6 +181,22 @@ else
         PASS=$((PASS + 1))
     else
         echo "✗ FAIL (annotation placement failure marker missing)"
+        echo "$output" | sed 's/^/  /' | head -n 40
+        FAIL=$((FAIL + 1))
+    fi
+fi
+
+TOTAL=$((TOTAL + 1))
+echo -n "TEST [$TOTAL] severity enforcement: warning annotation with error diagnostic fails ... "
+if output=$($HARNESS_COPY "$rel_severity" 2>&1); then
+    echo "✗ FAIL (expected severity mismatch failure)"
+    FAIL=$((FAIL + 1))
+else
+    if echo "$output" | grep -q "✗ FAIL (severity-mismatched diagnostics)"; then
+        echo "✓ PASS"
+        PASS=$((PASS + 1))
+    else
+        echo "✗ FAIL (severity mismatch failure marker missing)"
         echo "$output" | sed 's/^/  /' | head -n 40
         FAIL=$((FAIL + 1))
     fi

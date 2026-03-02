@@ -776,22 +776,40 @@ reject_mode() {
     local missing=""
     local line_mismatch=""
 
+    local severity_mismatch=""
+
     # One-to-one expectation matching: duplicates in emitted diagnostics require
     # duplicate fixture expectations (unless wildcard is used).
+    # Severity enforcement: annotation kind (error/warning/info) must match
+    # the emitted diagnostic severity.
+    # Line/file strictness: when a line-bound diagnostic exists for a given
+    # expectation, only line-bound matches are accepted (no fallback to
+    # diagnostics from unrelated lines/files).
     for ((i = 0; i < ${#DIAG_VALUES[@]}; i++)); do
         local val="${DIAG_VALUES[$i]}"
         [ "$val" = "*" ] && continue
 
         local expected_line="${DIAG_LINENOS[$i]}"
+        local expected_severity="${DIAG_TYPES[$i]}"
         local has_line_bound=false
         local has_line_bound_match=false
         local preferred_idx=-1
         local fallback_idx=-1
+        local severity_mismatch_idx=-1
         local j
 
         for ((j = 0; j < ${#PARSED_DIAG_MESSAGE[@]}; j++)); do
             local diag_text="${PARSED_DIAG_MATCH_TEXT[$j]}"
             if [[ "$diag_text" != *"$val"* ]]; then
+                continue
+            fi
+
+            # Severity enforcement: text matches but wrong severity → not a match.
+            local diag_sev="${PARSED_DIAG_SEVERITY[$j]}"
+            if [ "$diag_sev" != "$expected_severity" ]; then
+                if [ "${diag_used[$j]}" -eq 0 ] && [ "$severity_mismatch_idx" -lt 0 ]; then
+                    severity_mismatch_idx=$j
+                fi
                 continue
             fi
 
@@ -815,12 +833,22 @@ reject_mode() {
         fi
 
         local chosen_idx="$preferred_idx"
-        if [ "$chosen_idx" -lt 0 ]; then
+        # Line/file strictness: when a line-bound diagnostic exists for this
+        # expectation, do NOT fall back to an unrelated match.
+        if [ "$chosen_idx" -lt 0 ] && ! $has_line_bound; then
             chosen_idx="$fallback_idx"
         fi
 
         if [ "$chosen_idx" -lt 0 ]; then
-            missing="$missing\n  - line ${DIAG_LINENOS[$i]}: '${DIAG_TYPES[$i]}: $val'"
+            # Don't report as "missing" if already tracked as line-mismatch.
+            if $has_line_bound && ! $has_line_bound_match; then
+                : # already recorded in line_mismatch above
+            elif [ "$severity_mismatch_idx" -ge 0 ]; then
+                local sev_found="${PARSED_DIAG_SEVERITY[$severity_mismatch_idx]}"
+                severity_mismatch="$severity_mismatch\n  - line $expected_line: expected '$expected_severity: $val' but diagnostic has severity '$sev_found'"
+            else
+                missing="$missing\n  - line ${DIAG_LINENOS[$i]}: '${DIAG_TYPES[$i]}: $val'"
+            fi
         else
             diag_used[$chosen_idx]=1
         fi
@@ -841,6 +869,15 @@ reject_mode() {
         print_reject_debug_context "$file" "$build_output"
         FAIL=$((FAIL + 1))
         record_failed_test "$name" "line-mismatched diagnostics"
+        return
+    fi
+
+    if [ -n "$severity_mismatch" ]; then
+        echo "✗ FAIL (severity-mismatched diagnostics)"
+        echo -e "  Mismatch:$severity_mismatch"
+        print_reject_debug_context "$file" "$build_output"
+        FAIL=$((FAIL + 1))
+        record_failed_test "$name" "severity-mismatched diagnostics"
         return
     fi
 
