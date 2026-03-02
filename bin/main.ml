@@ -191,6 +191,18 @@ let is_go_missing_output (output : string) : bool =
   || string_contains lower "'go' is not recognized"
   || string_contains lower "executable file not found"
 
+let render_diagnostic ~(file_id : string) ~(source : string) (diag : Diagnostic.t) : string =
+  let source_lookup candidate_file_id =
+    if String.equal candidate_file_id file_id then
+      Some source
+    else
+      None
+  in
+  Diagnostic.render_cli ~source_lookup diag
+
+let print_diagnostic ~(file_id : string) ~(source : string) (diag : Diagnostic.t) : unit =
+  Printf.eprintf "%s\n" (render_diagnostic ~file_id ~source diag)
+
 let compile_to_binary
     ~(input_file : string)
     ~(source : string)
@@ -263,7 +275,7 @@ let run_build input output_opt emit_go_opt =
       | None -> ());
       Printf.printf "Built: %s\n" output
   | Error diag ->
-      Printf.eprintf "Error: %s\n" diag.message;
+      print_diagnostic ~file_id:input ~source diag;
       exit 1
 
 let run_release input output_opt =
@@ -276,7 +288,7 @@ let run_release input output_opt =
   match compile_to_binary ~input_file:input ~source ~output_bin:output ~emit_go_dir:None ~release:true with
   | Ok () -> Printf.printf "Built (release): %s\n" output
   | Error diag ->
-      Printf.eprintf "Error: %s\n" diag.message;
+      print_diagnostic ~file_id:input ~source diag;
       exit 1
 
 let run_file ~(benchmark : bool) ~(filename : string) =
@@ -287,7 +299,7 @@ let run_file ~(benchmark : bool) ~(filename : string) =
   let release = benchmark in
   match compile_to_binary ~input_file:filename ~source ~output_bin:tmp_bin ~emit_go_dir:None ~release with
   | Error diag ->
-      Printf.eprintf "Error: %s\n" diag.message;
+      print_diagnostic ~file_id:filename ~source diag;
       exit 1
   | Ok () ->
       let start = Sys.time () in
@@ -306,8 +318,7 @@ let run_check filename =
   match Marmoset.Lib.Checker.check_string_with_annotations ~env ~file_id:filename source with
   | Ok _ -> Printf.printf "OK\n"
   | Error err ->
-      let msg = Marmoset.Lib.Checker.format_error_with_context source err in
-      Printf.eprintf "%s\n" msg;
+      print_diagnostic ~file_id:filename ~source err;
       exit 1
 
 let () =

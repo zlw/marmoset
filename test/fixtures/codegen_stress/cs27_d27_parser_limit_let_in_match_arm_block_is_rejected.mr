@@ -1,8 +1,8 @@
 # CS27: D27: [PARSER-LIMIT] let in match arm block is rejected
-let f = fn(x: int) => int {  # error: Parse error
+let f = fn(x: int) => int {
   match x {
     1: {
-      let v = 100
+      let v = 100  # error: parse-unexpected-token
       puts(v)
       v
     }
