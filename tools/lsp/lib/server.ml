@@ -1,6 +1,7 @@
 (* LSP server: class + entry point *)
 
 module Lsp_t = Linol_lsp.Types
+module Diagnostic = Marmoset.Lib.Diagnostic
 
 (* Per-document cached analysis *)
 type cached_doc = { analysis : Doc_state.analysis_result }
@@ -58,9 +59,15 @@ class marmoset_server =
           let file_id = Lsp_t.DocumentUri.to_string uri in
           let a = Doc_state.analyze_with_file_id ~file_id ~source:content in
           (Some a, a.diagnostics)
-        with _exn ->
-          (* On unexpected exception, clear stale cache and report no diagnostics *)
-          (None, [])
+        with exn ->
+          let bt = Printexc.get_backtrace () in
+          Printf.eprintf "[marmoset-lsp] internal error: %s\n%s%!" (Printexc.to_string exn) bt;
+          let file_id = Lsp_t.DocumentUri.to_string uri in
+          let diag =
+            Diagnostic.error_no_span ~code:"lsp-internal" ~message:"Internal error during analysis"
+          in
+          let lsp_diag = Doc_state.lsp_diagnostic_of_canonical ~source:content ~active_file_id:file_id diag in
+          (None, [ lsp_diag ])
       in
       (match analysis with
       | Some a -> Hashtbl.replace analysis_cache uri { analysis = a }
