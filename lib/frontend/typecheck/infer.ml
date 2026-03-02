@@ -6,6 +6,13 @@ module AST = Syntax.Ast.AST
 module Diagnostic = Diagnostics.Diagnostic
 module String_utils = Diagnostics.String_utils
 
+let ( let* ) = Result.bind
+
+let map_result f xs =
+  List.fold_left
+    (fun acc x -> match acc with Error _ as e -> e | Ok ys -> match f x with Error _ as e -> e | Ok y -> Ok (ys @ [ y ]))
+    (Ok []) xs
+
 (* ============================================================
    Type Environment
    ============================================================
@@ -386,22 +393,21 @@ let lookup_constraints (ctx : constraint_ctx) (type_var : string) : string list 
   | None -> []
 
 (* Apply substitution to constraint context - when t0 -> Int, update constraints *)
-let apply_substitution_constraints (subst : substitution) (ctx : constraint_ctx) : constraint_ctx =
+let apply_substitution_constraints (subst : substitution) (ctx : constraint_ctx) :
+    (constraint_ctx, Diagnostic.t) result =
   ConstraintCtx.fold
     (fun var traits acc ->
+      let* acc = acc in
       match List.assoc_opt var subst with
       | Some (TVar new_var) ->
-          (* Type var substituted to another type var - move constraints *)
-          ConstraintCtx.add new_var traits acc
+          Ok (ConstraintCtx.add new_var traits acc)
       | Some concrete_type -> (
-          (* Type var substituted to concrete type - check constraints *)
           match Trait_solver.check_constraints concrete_type traits with
-          | Ok () -> acc (* Constraints satisfied, remove from context *)
-          | Error diag -> failwith diag.message (* Constraint violation *))
+          | Ok () -> Ok acc
+          | Error diag -> Error diag)
       | None ->
-          (* No substitution for this var, keep constraint *)
-          ConstraintCtx.add var traits acc)
-    ctx empty_constraints
+          Ok (ConstraintCtx.add var traits acc))
+    ctx (Ok empty_constraints)
 
 (* Verify that all type variable constraints in the global constraint_store
    are satisfied after applying a substitution.
@@ -1584,14 +1590,17 @@ and collect_and_unify_returns type_map env expected_ret_type (stmt : AST.stateme
 
 and infer_function type_map env params body =
   (* Create fresh type variables for each parameter *)
-  let param_names =
-    List.map
+  let param_names_result =
+    map_result
       (fun (p : AST.expression) ->
         match p.expr with
-        | AST.Identifier name -> name
-        | _ -> failwith "Function parameter must be identifier")
+        | AST.Identifier name -> Ok name
+        | _ -> Error (error_at ~code:"type-constructor" ~message:"Function parameter must be identifier" p))
       params
   in
+  match param_names_result with
+  | Error e -> Error e
+  | Ok param_names ->
   let param_types = List.map (fun _ -> fresh_type_var ()) param_names in
   (* Extend environment with parameters (monomorphic - no generalization) *)
   let env' =
@@ -2252,153 +2261,153 @@ and infer_statement type_map env stmt =
   | AST.EnumDef { name; type_params; variants } ->
       (* Register the enum in the registry *)
       (* Convert type expressions to mono_types, treating type_params as TVar *)
-      let convert_type_expr (te : AST.type_expr) : mono_type =
+      let convert_type_expr (te : AST.type_expr) : (mono_type, Diagnostic.t) result =
+        let enum_err msg = Error (error ~code:"type-constructor" ~message:msg) in
         let rec convert = function
-          | AST.TVar v -> TVar v
+          | AST.TVar v -> Ok (TVar v)
           | AST.TCon c ->
-              (* Check if it's a type parameter *)
-              if List.mem c type_params then
-                TVar c
+              if List.mem c type_params then Ok (TVar c)
+              else Annotation.type_expr_to_mono_type (AST.TCon c)
+          | AST.TApp (con_name, args) ->
+              if List.mem con_name type_params then
+                enum_err (Printf.sprintf "Type parameter '%s' cannot be used as type constructor" con_name)
               else (
-                match Annotation.type_expr_to_mono_type (AST.TCon c) with
-                | Ok t -> t
-                | Error d -> failwith d.Diagnostic.message)
-          | AST.TApp (con_name, args) -> (
-              if
-                (* Check if constructor is a type param (shouldn't happen but handle it) *)
-                List.mem con_name type_params
-              then
-                failwith (Printf.sprintf "Type parameter '%s' cannot be used as type constructor" con_name)
-              else
-                (match Annotation.type_expr_to_mono_type (AST.TApp (con_name, List.map (fun _ -> AST.TCon "dummy") args)) with
-                | Ok _ | Error _ -> ())
-                |> fun () ->
-                (* Actually convert properly *)
                 match con_name with
                 | "list" -> (
                     match args with
-                    | [ elem ] -> TArray (convert elem)
-                    | _ -> failwith "list expects 1 argument")
+                    | [ elem ] ->
+                        let* t = convert elem in
+                        Ok (TArray t)
+                    | _ -> enum_err "list expects 1 argument")
                 | "map" -> (
                     match args with
-                    | [ k; v ] -> THash (convert k, convert v)
-                    | _ -> failwith "map expects 2 arguments")
-                | _ -> failwith (Printf.sprintf "Unknown type constructor in enum: %s" con_name))
+                    | [ k; v ] ->
+                        let* kt = convert k in
+                        let* vt = convert v in
+                        Ok (THash (kt, vt))
+                    | _ -> enum_err "map expects 2 arguments")
+                | _ -> enum_err (Printf.sprintf "Unknown type constructor in enum: %s" con_name))
           | AST.TArrow (params, ret) ->
-              let param_types = List.map convert params in
-              let ret_type = convert ret in
-              List.fold_right (fun p r -> tfun p r) param_types ret_type
-          | AST.TUnion types -> normalize_union (List.map convert types)
-          | AST.TRecord (_fields, _row) -> failwith "Record types not yet implemented in enum definition"
+              let* param_types = map_result convert params in
+              let* ret_type = convert ret in
+              Ok (List.fold_right (fun p r -> tfun p r) param_types ret_type)
+          | AST.TUnion types ->
+              let* converted = map_result convert types in
+              Ok (normalize_union converted)
+          | AST.TRecord (_fields, _row) ->
+              enum_err "Record types not yet implemented in enum definition"
         in
         convert te
       in
 
-      let variant_defs =
-        List.map
+      let variant_defs_result =
+        map_result
           (fun (v : AST.variant_def) ->
-            let field_types = List.map convert_type_expr v.variant_fields in
-            { Enum_registry.name = v.variant_name; fields = field_types })
+            let* field_types = map_result convert_type_expr v.variant_fields in
+            Ok { Enum_registry.name = v.variant_name; fields = field_types })
           variants
       in
-
-      Enum_registry.register { Enum_registry.name; type_params; variants = variant_defs };
-
-      (* Enum def doesn't have a value *)
-      Ok (empty_substitution, TNull)
+      (match variant_defs_result with
+      | Error e -> Error e
+      | Ok variant_defs ->
+          Enum_registry.register { Enum_registry.name; type_params; variants = variant_defs };
+          Ok (empty_substitution, TNull))
   | AST.TraitDef { name; type_param; supertraits; fields; methods } ->
       (* Convert AST method signatures to trait registry method signatures *)
       (* We need to treat type_param as a type variable, not a type constructor *)
-      let convert_type_expr (te : AST.type_expr) : mono_type =
+      let convert_type_expr (te : AST.type_expr) : (mono_type, Diagnostic.t) result =
         let is_trait_type_param (type_name : string) : bool =
           match type_param with
           | Some tp -> type_name = tp
           | None -> false
         in
+        let trait_err msg = Error (error ~code:"type-constructor" ~message:msg) in
         let rec convert = function
-          | AST.TVar v -> TVar v
+          | AST.TVar v -> Ok (TVar v)
           | AST.TCon c ->
-              (* Check if it's the trait's type parameter *)
-              if is_trait_type_param c then
-                TVar c
+              if is_trait_type_param c then Ok (TVar c)
+              else Annotation.type_expr_to_mono_type (AST.TCon c)
+          | AST.TApp (con_name, args) ->
+              if is_trait_type_param con_name then
+                trait_err (Printf.sprintf "Type parameter '%s' cannot be used as type constructor" con_name)
               else (
-                match Annotation.type_expr_to_mono_type (AST.TCon c) with
-                | Ok t -> t
-                | Error d -> failwith d.Diagnostic.message)
-          | AST.TApp (con_name, args) -> (
-              if
-                (* For generic types, convert recursively *)
-                is_trait_type_param con_name
-              then
-                failwith (Printf.sprintf "Type parameter '%s' cannot be used as type constructor" con_name)
-              else
                 match con_name with
                 | "list" -> (
                     match args with
-                    | [ elem ] -> TArray (convert elem)
-                    | _ -> failwith "list expects 1 argument")
+                    | [ elem ] ->
+                        let* t = convert elem in
+                        Ok (TArray t)
+                    | _ -> trait_err "list expects 1 argument")
                 | "map" -> (
                     match args with
-                    | [ k; v ] -> THash (convert k, convert v)
-                    | _ -> failwith "map expects 2 arguments")
-                | _ -> (
-                    match Annotation.type_expr_to_mono_type (AST.TApp (con_name, args)) with
-                    | Ok t -> t
-                    | Error d -> failwith d.Diagnostic.message))
+                    | [ k; v ] ->
+                        let* kt = convert k in
+                        let* vt = convert v in
+                        Ok (THash (kt, vt))
+                    | _ -> trait_err "map expects 2 arguments")
+                | _ -> Annotation.type_expr_to_mono_type (AST.TApp (con_name, args)))
           | AST.TArrow (params, ret) ->
-              let param_types = List.map convert params in
-              let ret_type = convert ret in
-              List.fold_right (fun p r -> tfun p r) param_types ret_type
-          | AST.TUnion types -> normalize_union (List.map convert types)
+              let* param_types = map_result convert params in
+              let* ret_type = convert ret in
+              Ok (List.fold_right (fun p r -> tfun p r) param_types ret_type)
+          | AST.TUnion types ->
+              let* converted = map_result convert types in
+              Ok (normalize_union converted)
           | AST.TRecord (fields, row) ->
-              let field_types =
-                List.map
-                  (fun (f : AST.record_type_field) -> { Types.name = f.field_name; typ = convert f.field_type })
+              let* field_types =
+                map_result
+                  (fun (f : AST.record_type_field) ->
+                    let* typ = convert f.field_type in
+                    Ok { Types.name = f.field_name; typ })
                   fields
               in
-              let row_type = Option.map convert row in
-              TRecord (field_types, row_type)
+              let* row_type =
+                match row with
+                | None -> Ok None
+                | Some r ->
+                    let* t = convert r in
+                    Ok (Some t)
+              in
+              Ok (TRecord (field_types, row_type))
         in
         convert te
       in
-      let convert_method_sig (m : AST.method_sig) : Trait_registry.method_sig =
-        let param_types = List.map (fun (pname, ptype) -> (pname, convert_type_expr ptype)) m.method_params in
-        let return_type = convert_type_expr m.method_return_type in
+      let convert_method_sig (m : AST.method_sig) : (Trait_registry.method_sig, Diagnostic.t) result =
+        let* param_types =
+          map_result (fun (pname, ptype) -> let* t = convert_type_expr ptype in Ok (pname, t)) m.method_params
+        in
+        let* return_type = convert_type_expr m.method_return_type in
+        Ok
+          {
+            Trait_registry.method_name = m.method_name;
+            method_params = param_types;
+            method_return_type = return_type;
+          }
+      in
+      let convert_trait_field (f : AST.record_type_field) : (Types.record_field_type, Diagnostic.t) result =
+        let* typ = convert_type_expr f.field_type in
+        Ok { Types.name = f.field_name; typ }
+      in
+      let* method_sigs = map_result convert_method_sig methods in
+      let* trait_fields = map_result convert_trait_field fields in
+      let trait_def =
         {
-          Trait_registry.method_name = m.method_name;
-          method_params = param_types;
-          method_return_type = return_type;
+          Trait_registry.trait_name = name;
+          trait_type_param = type_param;
+          trait_supertraits = supertraits;
+          trait_methods = method_sigs;
         }
       in
-      let convert_trait_field (f : AST.record_type_field) : Types.record_field_type =
-        { Types.name = f.field_name; typ = convert_type_expr f.field_type }
-      in
-      let result =
-        try
-          let method_sigs = List.map convert_method_sig methods in
-          let trait_fields = List.map convert_trait_field fields in
-          let trait_def =
-            {
-              Trait_registry.trait_name = name;
-              trait_type_param = type_param;
-              trait_supertraits = supertraits;
-              trait_methods = method_sigs;
-            }
-          in
-
-          (* Validate and register trait *)
-          match Trait_registry.validate_trait_def trait_def with
+      (* Validate and register trait *)
+      (match Trait_registry.validate_trait_def trait_def with
+      | Error msg -> Error (error ~code:"type-constructor" ~message:msg)
+      | Ok () -> (
+          match Trait_registry.validate_trait_fields name trait_fields with
           | Error msg -> Error (error ~code:"type-constructor" ~message:msg)
-          | Ok () -> (
-              match Trait_registry.validate_trait_fields name trait_fields with
-              | Error msg -> Error (error ~code:"type-constructor" ~message:msg)
-              | Ok () ->
-                  Trait_registry.register_trait trait_def;
-                  Trait_registry.set_trait_fields name trait_fields;
-                  Ok (empty_substitution, TNull))
-        with Failure msg -> Error (error ~code:"type-constructor" ~message:msg)
-      in
-      result
+          | Ok () ->
+              Trait_registry.register_trait trait_def;
+              Trait_registry.set_trait_fields name trait_fields;
+              Ok (empty_substitution, TNull)))
   | AST.ImplDef { impl_trait_name; impl_type_params; impl_for_type; impl_methods } ->
       let type_param_names = List.map (fun (p : AST.generic_param) -> p.name) impl_type_params in
       let unique_param_names = List.sort_uniq String.compare type_param_names in
