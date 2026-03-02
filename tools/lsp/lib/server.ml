@@ -55,7 +55,8 @@ class marmoset_server =
         ~(notify_back : Linol_lwt.Jsonrpc2.notify_back) (uri : Lsp_t.DocumentUri.t) (content : string) =
       let analysis, diagnostics =
         try
-          let a = Doc_state.analyze ~source:content in
+          let file_id = Lsp_t.DocumentUri.to_string uri in
+          let a = Doc_state.analyze_with_file_id ~file_id ~source:content in
           (Some a, a.diagnostics)
         with _exn ->
           (* On unexpected exception, clear stale cache and report no diagnostics *)
