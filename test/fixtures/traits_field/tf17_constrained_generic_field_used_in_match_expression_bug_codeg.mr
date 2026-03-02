@@ -1,5 +1,5 @@
 # TF17: Constrained generic field used in match expression (BUG: codegen missing return)
-# error: *
+# error: missing return
 trait has_flag {
   flag: bool
 }
