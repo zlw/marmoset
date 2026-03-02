@@ -3,6 +3,7 @@
 module Types = Types
 module Trait_registry = Trait_registry
 module Unify = Unify
+module String_utils = Diagnostics.String_utils
 module Diagnostic = Diagnostics.Diagnostic
 module AST = Syntax.Ast.AST
 module StringSet = Set.Make (String)
@@ -271,18 +272,7 @@ let setup_builtins () =
         [ { method_name = "show"; method_params = [ ("x", Types.TString) ]; method_return_type = Types.TString } ];
     }
 
-let contains_substring s sub =
-  let len_s = String.length s in
-  let len_sub = String.length sub in
-  let rec loop i =
-    if i + len_sub > len_s then
-      false
-    else if String.sub s i len_sub = sub then
-      true
-    else
-      loop (i + 1)
-  in
-  loop 0
+let contains_substring s sub = String_utils.contains_substring ~needle:sub s
 
 let%test "int implements show (builtin)" =
   setup_builtins ();

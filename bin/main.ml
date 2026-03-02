@@ -1,5 +1,6 @@
 let version_string = Printf.sprintf "marmoset %s (built %s)" Build_info.git_hash Build_info.build_time
 module Diagnostic = Marmoset.Lib.Diagnostic
+module String_utils = Marmoset.Lib.String_utils
 
 type command =
   | Run of {
@@ -145,24 +146,6 @@ let output_absolute_path (output : string) : string =
   else
     output
 
-let string_contains (s : string) (needle : string) : bool =
-  let len_sub = String.length needle in
-  let len_s = String.length s in
-  if len_sub = 0 then
-    true
-  else if len_sub > len_s then
-    false
-  else
-    let rec check i =
-      if i + len_sub > len_s then
-        false
-      else if String.sub s i len_sub = needle then
-        true
-      else
-        check (i + 1)
-    in
-    check 0
-
 let read_all_lines (ic : in_channel) : string =
   let buf = Buffer.create 256 in
   (try
@@ -186,10 +169,10 @@ let run_command_capture_combined_output (cmd : string) : int * string =
 
 let is_go_missing_output (output : string) : bool =
   let lower = String.lowercase_ascii output in
-  string_contains lower "go: command not found"
-  || string_contains lower "go: not found"
-  || string_contains lower "'go' is not recognized"
-  || string_contains lower "executable file not found"
+  String_utils.contains_substring ~needle:"go: command not found" lower
+  || String_utils.contains_substring ~needle:"go: not found" lower
+  || String_utils.contains_substring ~needle:"'go' is not recognized" lower
+  || String_utils.contains_substring ~needle:"executable file not found" lower
 
 let render_diagnostic ~(file_id : string) ~(source : string) (diag : Diagnostic.t) : string =
   let source_lookup candidate_file_id =

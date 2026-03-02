@@ -2,6 +2,7 @@
 
 open Types
 module AST = Syntax.Ast.AST
+module String_utils = Diagnostics.String_utils
 
 (* A method signature in a trait *)
 type method_sig = {
@@ -817,19 +818,7 @@ let%test "register_impl rejects duplicate user impl at registration" =
     }
   in
   register_impl show_for_int;
-  let contains_substring s sub =
-    let len_s = String.length s in
-    let len_sub = String.length sub in
-    let rec loop i =
-      if i + len_sub > len_s then
-        false
-      else if String.sub s i len_sub = sub then
-        true
-      else
-        loop (i + 1)
-    in
-    loop 0
-  in
+  let contains_substring s sub = String_utils.contains_substring ~needle:sub s in
   match
     try
       register_impl show_for_int;
@@ -1012,19 +1001,7 @@ let%test "resolve_method reports ambiguity for multiple matching traits" =
       impl_for_type = TInt;
       impl_methods = [ { method_name = "render"; method_params = [ ("x", TInt) ]; method_return_type = TString } ];
     };
-  let contains_substring s sub =
-    let len_s = String.length s in
-    let len_sub = String.length sub in
-    let rec loop i =
-      if i + len_sub > len_s then
-        false
-      else if String.sub s i len_sub = sub then
-        true
-      else
-        loop (i + 1)
-    in
-    loop 0
-  in
+  let contains_substring s sub = String_utils.contains_substring ~needle:sub s in
   match resolve_method TInt "render" with
   | Ok _ -> false
   | Error msg ->

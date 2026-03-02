@@ -6,6 +6,7 @@ module Infer = Typecheck.Infer
 module Annotation = Typecheck.Annotation
 module Unify = Typecheck.Unify
 module Diagnostic = Diagnostics.Diagnostic
+module String_utils = Diagnostics.String_utils
 module StringSet = Set.Make (String)
 
 let merge_record_fields_for_row
@@ -4845,24 +4846,6 @@ func push[T any](arr []T, v T) []T {
     Main Entry Point
     ============================================================ *)
 
-let contains_substring (haystack : string) (needle : string) : bool =
-  let hay_len = String.length haystack in
-  let needle_len = String.length needle in
-  if needle_len = 0 then
-    true
-  else if needle_len > hay_len then
-    false
-  else
-    let rec search idx =
-      if idx + needle_len > hay_len then
-        false
-      else if String.sub haystack idx needle_len = needle then
-        true
-      else
-        search (idx + 1)
-    in
-    search 0
-
 let normalize_codegen_failure_message (msg : string) : string =
   let prefix = "Codegen error: " in
   let prefix_len = String.length prefix in
@@ -4873,9 +4856,9 @@ let normalize_codegen_failure_message (msg : string) : string =
 
 let classify_codegen_failure_code (normalized_message : string) : string =
   let lower = String.lowercase_ascii normalized_message in
-  if contains_substring lower "ambiguous function reference" then
+  if String_utils.contains_substring ~needle:"ambiguous function reference" lower then
     "codegen-ambiguous-fn"
-  else if contains_substring lower "unresolved type variable" || contains_substring lower "unresolved type variables" then
+  else if String_utils.contains_substring ~needle:"unresolved type variable" lower || String_utils.contains_substring ~needle:"unresolved type variables" lower then
     "codegen-unresolved-tvar"
   else
     "codegen-internal"
@@ -4915,22 +4898,7 @@ let get_runtime () = runtime_go
    Tests
    ============================================================ *)
 
-let string_contains s substring =
-  let len_sub = String.length substring in
-  let len_s = String.length s in
-  if len_sub > len_s then
-    false
-  else
-    let rec check i =
-      if i + len_sub > len_s then
-        false
-      else if String.sub s i len_sub = substring then
-        true
-      else
-        check (i + 1)
-    in
-    check 0
-
+let string_contains s substring = String_utils.contains_substring ~needle:substring s
 let string_not_contains s substring = not (string_contains s substring)
 
 let is_deterministic source =
@@ -5577,7 +5545,7 @@ let%test "compile_string returns structured parser diagnostic on parse failure" 
 let%test "compile_string preserves checker diagnostic on type failure" =
   match compile_string "let x: int = true; x" with
   | Ok _ -> false
-  | Error diag -> contains_substring diag.code "type-"
+  | Error diag -> string_contains diag.code "type-"
 
 let%test "collect_insts registers impl methods in cache" =
   let source =

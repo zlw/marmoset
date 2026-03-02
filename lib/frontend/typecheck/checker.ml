@@ -2,6 +2,7 @@
 
 open Types
 module Diagnostic = Diagnostics.Diagnostic
+module String_utils = Diagnostics.String_utils
 
 (* Re-export commonly used types *)
 type mono = mono_type
@@ -38,30 +39,12 @@ let parser_error_of_diagnostics (errors : Diagnostic.t list) : Diagnostic.t =
   | first :: _ -> first
   | [] -> Diagnostic.error_no_span ~code:"parse-unexpected-token" ~message:"Parse error"
 
-let string_contains (s : string) (needle : string) : bool =
-  let len_sub = String.length needle in
-  let len_s = String.length s in
-  if len_sub = 0 then
-    true
-  else if len_sub > len_s then
-    false
-  else
-    let rec check i =
-      if i + len_sub > len_s then
-        false
-      else if String.sub s i len_sub = needle then
-        true
-      else
-        check (i + 1)
-    in
-    check 0
-
 let diagnostic_of_infer_exception_message (msg : string) : Diagnostic.t =
   let lower = String.lowercase_ascii msg in
   let code =
-    if string_contains lower "unknown type constructor" then
+    if String_utils.contains_substring ~needle:"unknown type constructor" lower then
       "type-constructor"
-    else if string_contains lower "cannot be used as a type" then
+    else if String_utils.contains_substring ~needle:"cannot be used as a type" lower then
       "type-annotation-invalid"
     else
       "type-internal"
@@ -401,20 +384,7 @@ let%test "push then len" =
    ============================================================ *)
 
 let string_contains_substring haystack ~substring =
-  let len_sub = String.length substring in
-  let len_hay = String.length haystack in
-  if len_sub > len_hay then
-    false
-  else
-    let rec check i =
-      if i + len_sub > len_hay then
-        false
-      else if String.sub haystack i len_sub = substring then
-        true
-      else
-        check (i + 1)
-    in
-    check 0
+  String_utils.contains_substring ~needle:substring haystack
 
 let diagnostic_locs (source : string) (err : Diagnostic.t) : Source_loc.loc option * Source_loc.loc option =
   match first_diagnostic_span err with
@@ -757,19 +727,6 @@ let%test "record match pattern typechecks" =
   | _ -> false
 
 let%test "env reuse with shared inference state preserves constrained generic obligations" =
-  let contains_substring s sub =
-    let len_s = String.length s in
-    let len_sub = String.length sub in
-    let rec loop i =
-      if i + len_sub > len_s then
-        false
-      else if String.sub s i len_sub = sub then
-        true
-      else
-        loop (i + 1)
-    in
-    loop 0
-  in
   Infer.reset_fresh_counter ();
   Trait_registry.clear ();
   Trait_registry.register_trait
@@ -793,4 +750,4 @@ let%test "env reuse with shared inference state preserves constrained generic ob
   | Ok first -> (
       match check_string ~state:shared_state ~env:first.environment "check(fn(y) { y })" with
       | Ok _ -> false
-      | Error err -> contains_substring err.message "does not implement trait show")
+      | Error err -> String_utils.contains_substring ~needle:"does not implement trait show" err.message)

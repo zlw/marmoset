@@ -456,21 +456,7 @@ let%test "empty args shows signature with activeParam=0" =
       | _ -> false)
   | None -> false
 
-let string_contains haystack needle =
-  let len_h = String.length haystack in
-  let len_n = String.length needle in
-  if len_n > len_h then
-    false
-  else
-    let rec check i =
-      if i + len_n > len_h then
-        false
-      else if String.sub haystack i len_n = needle then
-        true
-      else
-        check (i + 1)
-    in
-    check 0
+let string_contains haystack needle = Diagnostics.String_utils.contains_substring ~needle haystack
 
 let%test "parameter names come from function definition" =
   let source = "let greet = fn(name: string) { name }; greet(\"hi\")" in

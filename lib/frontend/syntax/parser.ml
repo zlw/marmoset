@@ -1,5 +1,6 @@
 open Ast
 module Diagnostic = Diagnostics.Diagnostic
+module String_utils = Diagnostics.String_utils
 
 let ( let* ) res f = Result.bind res f
 
@@ -1985,18 +1986,7 @@ module Test = struct
     ]
     |> run
 
-  let contains_substring s sub =
-    let len_s = String.length s in
-    let len_sub = String.length sub in
-    let rec loop i =
-      if i + len_sub > len_s then
-        false
-      else if String.sub s i len_sub = sub then
-        true
-      else
-        loop (i + 1)
-    in
-    loop 0
+  let contains_substring s sub = String_utils.contains_substring ~needle:sub s
 
   let diagnostics_contain_substring (errs : Diagnostic.t list) (sub : string) : bool =
     List.exists (fun (d : Diagnostic.t) -> contains_substring d.message sub) errs

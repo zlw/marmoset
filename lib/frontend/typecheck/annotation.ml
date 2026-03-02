@@ -523,19 +523,7 @@ let%test "generic field-only supertrait is rejected in type position" =
   Trait_registry.set_trait_fields "tagged" [ { Types.name = "tag"; typ = Types.TVar "a" } ];
   Trait_registry.register_trait
     { trait_name = "tagged_like"; trait_type_param = None; trait_supertraits = [ "tagged" ]; trait_methods = [] };
-  let contains_substring s sub =
-    let len_s = String.length s in
-    let len_sub = String.length sub in
-    let rec loop i =
-      if i + len_sub > len_s then
-        false
-      else if String.sub s i len_sub = sub then
-        true
-      else
-        loop (i + 1)
-    in
-    loop 0
-  in
+  let contains_substring s sub = Diagnostics.String_utils.contains_substring ~needle:sub s in
   try
     let _ = type_expr_to_mono_type (Syntax.Ast.AST.TCon "tagged_like") in
     false

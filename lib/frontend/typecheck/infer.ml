@@ -4,6 +4,7 @@ open Types
 open Unify
 module AST = Syntax.Ast.AST
 module Diagnostic = Diagnostics.Diagnostic
+module String_utils = Diagnostics.String_utils
 
 (* ============================================================
    Type Environment
@@ -3429,18 +3430,7 @@ module Test = struct
           Printf.printf "Expected %s but got %s\n" (to_string expected_type) (to_string t);
           false)
 
-  let contains_substring (s : string) (sub : string) : bool =
-    let len_s = String.length s in
-    let len_sub = String.length sub in
-    let rec go i =
-      if i + len_sub > len_s then
-        false
-      else if String.sub s i len_sub = sub then
-        true
-      else
-        go (i + 1)
-    in
-    go 0
+  let contains_substring s sub = String_utils.contains_substring ~needle:sub s
 
   let is_code (diag : Diagnostic.t) (code : string) : bool = String.equal diag.code code
 
@@ -4241,19 +4231,7 @@ f"
     && List.exists (fun (o : obligation) -> o.trait_name = "eq" && o.typ = TInt) obligations
 
   let%test "verify_constraints_in_substitution includes obligation context in errors" =
-    let contains_substring s sub =
-      let len_s = String.length s in
-      let len_sub = String.length sub in
-      let rec loop i =
-        if i + len_sub > len_s then
-          false
-        else if String.sub s i len_sub = sub then
-          true
-        else
-          loop (i + 1)
-      in
-      loop 0
-    in
+    let contains_substring s sub = String_utils.contains_substring ~needle:sub s in
     clear_constraint_store ();
     add_type_var_constraints "t0" [ "show" ];
     match verify_constraints_in_substitution [ ("t0", tfun TInt TInt) ] with
@@ -4306,19 +4284,7 @@ f"
     had_fields && lookup_type_var_constrained_fields "t0" = []
 
   let%test "constrained type-variable method lookup reports ambiguity" =
-    let contains_substring s sub =
-      let len_s = String.length s in
-      let len_sub = String.length sub in
-      let rec loop i =
-        if i + len_sub > len_s then
-          false
-        else if String.sub s i len_sub = sub then
-          true
-        else
-          loop (i + 1)
-      in
-      loop 0
-    in
+    let contains_substring s sub = String_utils.contains_substring ~needle:sub s in
     Trait_registry.clear ();
     Trait_registry.register_trait
       {
@@ -4353,19 +4319,7 @@ f"
     infers_to code TInt
 
   let%test "inherent method receiver must match impl target type" =
-    let contains_substring s sub =
-      let len_s = String.length s in
-      let len_sub = String.length sub in
-      let rec loop i =
-        if i + len_sub > len_s then
-          false
-        else if String.sub s i len_sub = sub then
-          true
-        else
-          loop (i + 1)
-      in
-      loop 0
-    in
+    let contains_substring s sub = String_utils.contains_substring ~needle:sub s in
     let code = "type point = { x: int }\nimpl point { fn bad(x: int) -> int { x } }\n1" in
     match infer_string code with
     | Ok _ -> false
@@ -4374,19 +4328,7 @@ f"
         contains_substring msg "receiver type" && contains_substring msg "does not match impl target type"
 
   let%test "duplicate inherent method for same type is rejected" =
-    let contains_substring s sub =
-      let len_s = String.length s in
-      let len_sub = String.length sub in
-      let rec loop i =
-        if i + len_sub > len_s then
-          false
-        else if String.sub s i len_sub = sub then
-          true
-        else
-          loop (i + 1)
-      in
-      loop 0
-    in
+    let contains_substring s sub = String_utils.contains_substring ~needle:sub s in
     let code = "impl int { fn ping(x: int) -> int { x } }\nimpl int { fn ping(x: int) -> int { x } }\n1" in
     match infer_string code with
     | Ok _ -> false
@@ -4395,19 +4337,7 @@ f"
         contains_substring msg "Duplicate inherent method 'ping'"
 
   let%test "inherent method registration rejects trait collision on same type and method name" =
-    let contains_substring s sub =
-      let len_s = String.length s in
-      let len_sub = String.length sub in
-      let rec loop i =
-        if i + len_sub > len_s then
-          false
-        else if String.sub s i len_sub = sub then
-          true
-        else
-          loop (i + 1)
-      in
-      loop 0
-    in
+    let contains_substring s sub = String_utils.contains_substring ~needle:sub s in
     Trait_registry.clear ();
     let code =
       "trait show[a] { fn show(x: a) -> string }\nimpl show for int { fn show(x: int) -> string { \"trait\" } }\nimpl int { fn show(x: int) -> string { \"inherent\" } }\n1"
@@ -4419,19 +4349,7 @@ f"
         contains_substring msg "collides with trait method"
 
   let%test "inherent methods do not satisfy trait constraints" =
-    let contains_substring s sub =
-      let len_s = String.length s in
-      let len_sub = String.length sub in
-      let rec loop i =
-        if i + len_sub > len_s then
-          false
-        else if String.sub s i len_sub = sub then
-          true
-        else
-          loop (i + 1)
-      in
-      loop 0
-    in
+    let contains_substring s sub = String_utils.contains_substring ~needle:sub s in
     Trait_registry.clear ();
     let code =
       "trait show[a] { fn show(x: a) -> string }\ntype point = { x: int }\nimpl point { fn show(p: point) -> string { \"p\" } }\nlet f = fn[t: show](x: t) -> string { x.show() }\nlet p: point = { x: 1 }\nf(p)"
@@ -4486,19 +4404,7 @@ f"
                 | Ok _ -> type_var_user_name_bindings_in_state shared_state = [])))
 
   let%test "reused env preserves constrained generic obligations across infer_program runs" =
-    let contains_substring s sub =
-      let len_s = String.length s in
-      let len_sub = String.length sub in
-      let rec loop i =
-        if i + len_sub > len_s then
-          false
-        else if String.sub s i len_sub = sub then
-          true
-        else
-          loop (i + 1)
-      in
-      loop 0
-    in
+    let contains_substring s sub = String_utils.contains_substring ~needle:sub s in
     Trait_registry.clear ();
     Trait_registry.register_trait
       {
