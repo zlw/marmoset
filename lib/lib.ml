@@ -11,6 +11,7 @@ module Types = Typecheck.Types
 module Unify = Typecheck.Unify
 module Infer = Typecheck.Infer
 module Source_loc = Diagnostics.Source_loc
+module Diagnostic = Diagnostics.Diagnostic
 module Builtins = Typecheck.Builtins
 module Checker = Typecheck.Checker
 
