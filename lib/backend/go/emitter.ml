@@ -5,6 +5,7 @@ module Types = Typecheck.Types
 module Infer = Typecheck.Infer
 module Annotation = Typecheck.Annotation
 module Unify = Typecheck.Unify
+module Diagnostic = Diagnostics.Diagnostic
 module StringSet = Set.Make (String)
 
 let merge_record_fields_for_row
@@ -4844,34 +4845,66 @@ func push[T any](arr []T, v T) []T {
     Main Entry Point
     ============================================================ *)
 
-let compile_string ?file_id (source : string) : (string, string) result =
+let contains_substring (haystack : string) (needle : string) : bool =
+  let hay_len = String.length haystack in
+  let needle_len = String.length needle in
+  if needle_len = 0 then
+    true
+  else if needle_len > hay_len then
+    false
+  else
+    let rec search idx =
+      if idx + needle_len > hay_len then
+        false
+      else if String.sub haystack idx needle_len = needle then
+        true
+      else
+        search (idx + 1)
+    in
+    search 0
+
+let normalize_codegen_failure_message (msg : string) : string =
+  let prefix = "Codegen error: " in
+  let prefix_len = String.length prefix in
+  if String.length msg >= prefix_len && String.sub msg 0 prefix_len = prefix then
+    msg
+  else
+    prefix ^ msg
+
+let classify_codegen_failure_code (normalized_message : string) : string =
+  let lower = String.lowercase_ascii normalized_message in
+  if contains_substring lower "ambiguous function reference" then
+    "codegen-ambiguous-fn"
+  else if contains_substring lower "unresolved type variable" || contains_substring lower "unresolved type variables" then
+    "codegen-unresolved-tvar"
+  else
+    "codegen-internal"
+
+let diagnostic_of_codegen_failure_message (msg : string) : Diagnostic.t =
+  let normalized_message = normalize_codegen_failure_message msg in
+  Diagnostic.error_no_span ~code:(classify_codegen_failure_code normalized_message) ~message:normalized_message
+
+let compile_string ?file_id (source : string) : (string, Diagnostic.t) result =
   match Syntax.Parser.parse ?file_id source with
-  | Error errors ->
-      let msgs = List.map (fun (d : Diagnostics.Diagnostic.t) -> d.message) errors in
-      Error ("Parse error: " ^ String.concat ", " msgs)
+  | Error (first :: _) -> Error first
+  | Error [] -> Error (Diagnostic.error_no_span ~code:"parse-unexpected-token" ~message:"Parse error")
   | Ok program -> (
       let env = Typecheck.Builtins.prelude_env () in
       match Typecheck.Checker.check_program_with_annotations ~source ~env program with
-      | Error err -> Error ("Type error: " ^ Typecheck.Checker.format_error err)
-      | Ok { environment = typed_env; type_map; _ } -> (
-          let normalize_codegen_error msg =
-            let prefix = "Codegen error: " in
-            let prefix_len = String.length prefix in
-            if String.length msg >= prefix_len && String.sub msg 0 prefix_len = prefix then
-              msg
-            else
-              prefix ^ msg
-          in
-          try Ok (emit_program_with_typed_env type_map typed_env program) with
-          | Failure msg -> Error (normalize_codegen_error msg)
-          | exn -> Error (normalize_codegen_error (Printexc.to_string exn))))
+      | Error err -> Error err
+      | Ok { environment = typed_env; type_map; _ } ->
+          (try Ok (emit_program_with_typed_env type_map typed_env program) with
+          | Failure msg -> Error (diagnostic_of_codegen_failure_message msg)
+          | exn ->
+              let msg = normalize_codegen_failure_message (Printexc.to_string exn) in
+              Error (Diagnostic.error_no_span ~code:"codegen-internal" ~message:msg)))
 
 type build_output = {
   main_go : string;
   runtime_go : string;
 }
 
-let compile_to_build ?file_id (source : string) : (build_output, string) result =
+let compile_to_build ?file_id (source : string) : (build_output, Diagnostic.t) result =
   match compile_string ?file_id source with
   | Error e -> Error e
   | Ok main_go -> Ok { main_go; runtime_go }
@@ -5521,9 +5554,30 @@ let%test "duplicate top-level function name and arity is rejected" =
       "let f = fn(x: int) -> int { x + 1 }; let f = fn(x: int) -> int { x + 2 }; let y = f(1); puts(y)"
   with
   | Ok _ -> false
-  | Error msg ->
-      string_contains msg "ambiguous function reference 'f/1'"
-      || string_contains msg "Duplicate top-level let definition: f"
+  | Error diag ->
+      string_contains diag.message "ambiguous function reference 'f/1'"
+      || string_contains diag.message "Duplicate top-level let definition: f"
+
+let%test "codegen diagnostic classifier tags unresolved-type-variable failures" =
+  let diag = diagnostic_of_codegen_failure_message "Cannot generate code for unresolved type variable." in
+  diag.code = "codegen-unresolved-tvar" && string_contains diag.message "Codegen error:"
+
+let%test "codegen diagnostic classifier tags ambiguous-function failures" =
+  let diag =
+    diagnostic_of_codegen_failure_message
+      "Codegen error: ambiguous function reference 'f/1': multiple function definitions share this name/arity"
+  in
+  diag.code = "codegen-ambiguous-fn"
+
+let%test "compile_string returns structured parser diagnostic on parse failure" =
+  match compile_string "let x = " with
+  | Ok _ -> false
+  | Error diag -> string_contains diag.code "parse-"
+
+let%test "compile_string preserves checker diagnostic on type failure" =
+  match compile_string "let x: int = true; x" with
+  | Ok _ -> false
+  | Error diag -> contains_substring diag.code "type-"
 
 let%test "collect_insts registers impl methods in cache" =
   let source =
