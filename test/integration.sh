@@ -441,6 +441,52 @@ reject_mode() {
         return
     fi
 
+    local strict_diag_lines
+    strict_diag_lines=$(
+        echo "$build_output" \
+            | grep -iE '^[^:]*:[0-9]+:[0-9]+.*error|^(Type |Parse )?[Ee]rror|^[Ww]arning|^[Ii]nfo' \
+            | grep -vE '^Error:[[:space:]]+Go build failed$' \
+            || true
+    )
+
+    local line_mismatch=""
+    for ((i = 0; i < ${#DIAG_VALUES[@]}; i++)); do
+        local val="${DIAG_VALUES[$i]}"
+        if [ "$val" = "*" ]; then
+            continue
+        fi
+
+        local expected_line="${DIAG_LINENOS[$i]}"
+        local has_line_bound=false
+        local has_line_bound_match=false
+        while IFS= read -r diag_line; do
+            [ -z "$diag_line" ] && continue
+            if [[ "$diag_line" != *"$val"* ]]; then
+                continue
+            fi
+            if [[ "$diag_line" == *"$file:"* ]]; then
+                has_line_bound=true
+                local suffix="${diag_line#*"$file:"}"
+                local diag_line_no="${suffix%%:*}"
+                if [[ "$diag_line_no" =~ ^[0-9]+$ ]] && [ "$diag_line_no" -eq "$expected_line" ]; then
+                    has_line_bound_match=true
+                    break
+                fi
+            fi
+        done <<< "$strict_diag_lines"
+
+        if $has_line_bound && ! $has_line_bound_match; then
+            line_mismatch="$line_mismatch\n  - line $expected_line: '${DIAG_TYPES[$i]}: $val' (diagnostic found on a different source line)"
+        fi
+    done
+
+    if [ -n "$line_mismatch" ]; then
+        echo "✗ FAIL (line-mismatched diagnostics)"
+        echo -e "  Mismatch:$line_mismatch"
+        FAIL=$((FAIL + 1))
+        return
+    fi
+
     local unexpected=""
     while IFS= read -r diag_line; do
         [ -z "$diag_line" ] && continue
@@ -459,10 +505,7 @@ reject_mode() {
         if ! $covered; then
             unexpected="$unexpected\n  - $diag_line"
         fi
-    done < <(echo "$build_output" \
-        | grep -iE '^[^:]*:[0-9]+:[0-9]+.*error|^(Type |Parse )?[Ee]rror|^[Ww]arning|^[Ii]nfo' \
-        | grep -vE '^Error:[[:space:]]+Go build failed$' \
-        || true)
+    done <<< "$strict_diag_lines"
 
     if [ -n "$unexpected" ]; then
         echo "✗ FAIL (unexpected diagnostics)"

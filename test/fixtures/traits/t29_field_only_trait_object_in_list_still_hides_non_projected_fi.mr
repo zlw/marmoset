@@ -1,8 +1,8 @@
 # T29: Field-only trait object in list still hides non-projected fields
-trait named {  # error: Record field 'age' not found in type
+trait named {
   name: string
 }
 let a: named = { name: "alice", age: 1 }
 let b: named = { name: "bob", age: 2 }
 let xs: list[named] = [a, b]
-puts(xs[0].age)
+puts(xs[0].age)  # error: Record field 'age' not found in type

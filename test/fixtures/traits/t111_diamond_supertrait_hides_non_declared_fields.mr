@@ -1,5 +1,5 @@
 # T111: Diamond supertrait hides non-declared fields
-trait named {  # error: Record field 'extra' not found in type
+trait named {
   name: string
 }
 trait worker: named {
@@ -11,4 +11,4 @@ trait resident: named {
 trait citizen: worker + resident {
 }
 let x: citizen = { name: "alice", job: "eng", city: "sf", extra: true }
-puts(x.extra)
+puts(x.extra)  # error: Record field 'extra' not found in type

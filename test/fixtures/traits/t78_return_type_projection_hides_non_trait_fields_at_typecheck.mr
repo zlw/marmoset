@@ -1,9 +1,9 @@
 # T78: Return type projection hides non-trait fields at typecheck
-trait named {  # error: Record field 'age' not found in type
+trait named {
   name: string
 }
 let mk_named = fn(n: string, a: int) -> named {
   { name: n, age: a }
 }
 let x = mk_named("alice", 30)
-puts(x.age)
+puts(x.age)  # error: Record field 'age' not found in type

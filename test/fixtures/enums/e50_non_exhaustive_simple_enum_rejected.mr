@@ -1,7 +1,7 @@
 # E50: Non-exhaustive match on simple enum is rejected
-enum direction { north south east west }  # error: Non-exhaustive
+enum direction { north south east west }
 let d = direction.north
-match d {
+match d {  # error: Non-exhaustive
   direction.north: 1
   direction.south: 2
 }

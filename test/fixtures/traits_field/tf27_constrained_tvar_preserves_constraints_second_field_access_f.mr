@@ -1,8 +1,8 @@
 # TF27: Constrained TVar preserves constraints: second field access fails
-trait has_x {  # error: not guaranteed by constraints
+trait has_x {
   x: int
 }
 let bad = fn[t: has_x](v: t) -> int {
-  v.x + v.y
+  v.x + v.y  # error: not guaranteed by constraints
 };
 bad({ x: 1, y: 2 })

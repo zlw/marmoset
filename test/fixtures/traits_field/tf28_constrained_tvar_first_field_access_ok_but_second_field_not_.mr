@@ -1,8 +1,8 @@
 # TF28: Constrained TVar: first field access ok but second field not in constraints
-trait has_name {  # error: not guaranteed by constraints
+trait has_name {
   name: string
 }
 let bad = fn[t: has_name](v: t) -> string {
-  v.name + v.extra
+  v.name + v.extra  # error: not guaranteed by constraints
 };
 bad({ name: "hi", extra: "there" })

@@ -1,5 +1,5 @@
 # TI22: Generic impl constraint enforced: element must satisfy constraint
-trait named {  # error: does not satisfy
+trait named {
   name: string
 }
 trait show[a] {
@@ -8,4 +8,4 @@ trait show[a] {
 impl show[b: named] for list[b] {
   fn show(x: list[b]) -> string { "ok" }
 }
-puts([1, 2].show())
+puts([1, 2].show())  # error: does not satisfy

@@ -1,7 +1,7 @@
 # T107: Type alias to field-only trait hides non-trait fields
-trait named {  # error: Record field 'age' not found in type
+trait named {
   name: string
 }
 type nameable = named
 let x: nameable = { name: "alice", age: 30 }
-puts(x.age)
+puts(x.age)  # error: Record field 'age' not found in type

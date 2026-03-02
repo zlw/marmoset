@@ -1,7 +1,7 @@
 # U33: Non-exhaustive match on 4-variant enum missing one
-enum dir { north south east west }  # error: Non-exhaustive
+enum dir { north south east west }
 let d = dir.north
-match d {
+match d {  # error: Non-exhaustive
   dir.north: 1
   dir.south: 2
   dir.east: 3
