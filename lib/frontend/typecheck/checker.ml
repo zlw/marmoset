@@ -15,9 +15,7 @@ type typecheck_result = {
   type_map : Infer.type_map; (* Map from expression IDs to their inferred types *)
 }
 
-type error = Diagnostic.t
-
-let error_of_infer_error (e : Diagnostic.t) : error = e
+let error_of_infer_error (e : Diagnostic.t) : Diagnostic.t = e
 
 let first_diagnostic_span (diag : Diagnostic.t) : Diagnostic.span option =
   let rec first_primary = function
@@ -35,15 +33,15 @@ let first_diagnostic_span (diag : Diagnostic.t) : Diagnostic.span option =
   | Some _ as span -> span
   | None -> first_with_span diag.labels
 
-let parser_error_of_diagnostics (errors : Diagnostic.t list) : error =
+let parser_error_of_diagnostics (errors : Diagnostic.t list) : Diagnostic.t =
   match errors with
   | first :: _ -> first
   | [] -> Diagnostic.error_no_span ~code:"parse-unexpected-token" ~message:"Parse error"
 
-let format_error (err : error) : string = Diagnostic.render_cli ~source_lookup:(fun _ -> None) err
+let format_error (err : Diagnostic.t) : string = Diagnostic.render_cli ~source_lookup:(fun _ -> None) err
 
 (* Format error with source context showing the offending line *)
-let format_error_with_context (source : string) (err : error) : string =
+let format_error_with_context (source : string) (err : Diagnostic.t) : string =
   let source_lookup _file_id = Some source in
   Diagnostic.render_cli ~source_lookup err
 
@@ -55,7 +53,7 @@ let format_error_with_context (source : string) (err : error) : string =
    Returns the type of the last expression and the final environment.
    Note: Without source, we can't provide location info. Use check_string for that. *)
 let check_program ?state ?source:(_source) ?(env = Infer.empty_env) (program : Syntax.Ast.AST.program) :
-    (typecheck_result, error) result =
+    (typecheck_result, Diagnostic.t) result =
   match Infer.infer_program ?state ~env program with
   | Error e -> Error (error_of_infer_error e)
   | Ok (final_env, type_map, result_type) -> Ok { result_type; environment = final_env; type_map }
@@ -63,7 +61,8 @@ let check_program ?state ?source:(_source) ?(env = Infer.empty_env) (program : S
 (* Type check source code string.
     Parses and type checks in one step.
     Errors include source location information. *)
-let check_string ?state ?(env = Infer.empty_env) ?file_id (source : string) : (typecheck_result, error) result =
+let check_string ?state ?(env = Infer.empty_env) ?file_id (source : string) :
+    (typecheck_result, Diagnostic.t) result =
   match Syntax.Parser.parse ?file_id source with
   | Error errors -> Error (parser_error_of_diagnostics errors)
   | Ok program -> (
@@ -78,7 +77,7 @@ let check_string ?state ?(env = Infer.empty_env) ?file_id (source : string) : (t
 (* Check if a let binding's annotation matches its inferred type *)
 let check_let_annotation
     (name : string) (annotation : Syntax.Ast.AST.type_expr option) (inferred_type : mono_type) :
-    (unit, error) result =
+    (unit, Diagnostic.t) result =
   match annotation with
   | None ->
       (* No annotation, nothing to check *)
@@ -103,7 +102,7 @@ let check_let_annotation
 
 (* Check if a function expression's return type annotation matches its inferred type *)
 let check_function_annotation (return_annotation : Syntax.Ast.AST.type_expr option) (inferred_type : mono_type) :
-    (unit, error) result =
+    (unit, Diagnostic.t) result =
   match return_annotation with
   | None ->
       (* No annotation, nothing to check *)
@@ -139,13 +138,13 @@ let check_function_annotation (return_annotation : Syntax.Ast.AST.type_expr opti
     This checks that all annotations match the inferred types.
     For Phase 2, constraint validation is skipped (Phase 3 work). *)
 let check_program_with_annotations ?state ?source:(_source) ?(env = Infer.empty_env) (program : Syntax.Ast.AST.program) :
-    (typecheck_result, error) result =
+    (typecheck_result, Diagnostic.t) result =
   (* First, do standard inference *)
   match Infer.infer_program ?state ~env program with
   | Error e -> Error (error_of_infer_error e)
   | Ok (final_env, type_map, result_type) -> (
       (* Phase 2: Validate annotations against inferred types *)
-      let rec check_stmts_with_infer (stmts : Syntax.Ast.AST.statement list) : (unit, error) result =
+      let rec check_stmts_with_infer (stmts : Syntax.Ast.AST.statement list) : (unit, Diagnostic.t) result =
         match stmts with
         | [] -> Ok ()
         | stmt :: rest -> (
@@ -184,7 +183,8 @@ let check_program_with_annotations ?state ?source:(_source) ?(env = Infer.empty_
             | _ ->
                 (* Other statements don't have annotations to check *)
                 check_stmts_with_infer rest)
-      and check_expr_annotations (expr : Syntax.Ast.AST.expression) (inferred : mono_type) : (unit, error) result
+      and check_expr_annotations (expr : Syntax.Ast.AST.expression) (inferred : mono_type) :
+          (unit, Diagnostic.t) result
           =
         match expr.expr with
         | Syntax.Ast.AST.Function { return_type; params = _; body; generics = _; is_effectful = _ } -> (
@@ -203,7 +203,7 @@ let check_program_with_annotations ?state ?source:(_source) ?(env = Infer.empty_
 (* Type check source code with annotations.
    Parses and type checks in one step, with annotation support. *)
 let check_string_with_annotations ?state ?(env = Infer.empty_env) ?file_id (source : string) :
-    (typecheck_result, error) result =
+    (typecheck_result, Diagnostic.t) result =
   match Syntax.Parser.parse ?file_id source with
   | Error errors -> Error (parser_error_of_diagnostics errors)
   | Ok program -> check_program_with_annotations ?state ~source ~env program
@@ -375,7 +375,7 @@ let string_contains_substring haystack ~substring =
     in
     check 0
 
-let diagnostic_locs (source : string) (err : error) : Source_loc.loc option * Source_loc.loc option =
+let diagnostic_locs (source : string) (err : Diagnostic.t) : Source_loc.loc option * Source_loc.loc option =
   match first_diagnostic_span err with
   | Some (Diagnostic.Span { start_pos; end_pos; _ }) ->
       (Some (Source_loc.offset_to_loc source start_pos), Option.map (Source_loc.offset_to_loc source) end_pos)
