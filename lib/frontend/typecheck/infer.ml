@@ -3405,7 +3405,7 @@ module Test = struct
   let infer_string code =
     match Syntax.Parser.parse code with
     | Error errs ->
-        let msg = String.concat "; " errs in
+        let msg = String.concat "; " (List.map (fun (d : Diagnostics.Diagnostic.t) -> d.message) errs) in
         Printf.printf "Parse errors: %s\n" msg;
         Error (error (UnboundVariable ("parse error: " ^ msg)))
     | Ok program -> infer_program program

@@ -1,4 +1,5 @@
 open Ast
+module Diagnostic = Diagnostics.Diagnostic
 
 let ( let* ) res f = Result.bind res f
 
@@ -28,7 +29,7 @@ type parser = {
   file_id : string option;
 }
 
-and errors = string list
+and errors = Diagnostic.t list
 
 type brace_literal_mode =
   | RecordMode
@@ -94,7 +95,28 @@ let init ?file_id (l : Lexer.lexer) : parser =
 
 let curr_token_is (p : parser) (t : Token.token_type) : bool = p.curr_token.token_type = t
 let peek_token_is (p : parser) (t : Token.token_type) : bool = p.peek_token.token_type = t
-let add_error (p : parser) (msg : string) : parser = { p with errors = [ msg ] @ p.errors }
+
+let parser_file_id (p : parser) : string =
+  match p.file_id with
+  | Some file_id -> file_id
+  | None -> "<unknown>"
+
+let span_for_token (p : parser) (tok : Token.token) : Diagnostic.span =
+  Diagnostic.Span
+    { file_id = parser_file_id p; start_pos = tok.pos; end_pos = Some (max tok.pos (token_end tok)) }
+
+let add_error ?(code = "parse-unexpected-token") ?token (p : parser) (msg : string) : parser =
+  let tok =
+    match token with
+    | Some tok -> tok
+    | None -> p.curr_token
+  in
+  let diag =
+    Diagnostic.make ~code ~severity:Diagnostic.Error ~message:msg
+      ~labels:[ Diagnostic.primary_label (span_for_token p tok) ]
+      ()
+  in
+  { p with errors = diag :: p.errors }
 
 let skip (p : parser) (t : Token.token_type) : parser =
   if peek_token_is p t then
@@ -107,7 +129,7 @@ let peek_error (p : parser) (tt : Token.token_type) : parser =
     Printf.sprintf "expected next token to be %s, got %s instead" (Token.show_token_type tt)
       (Token.show_token_type p.peek_token.token_type)
   in
-  add_error p msg
+  add_error ~code:"parse-expected-token" ~token:p.peek_token p msg
 
 let expect_peek (p : parser) (tt : Token.token_type) : (parser, parser) result =
   if peek_token_is p tt then
@@ -117,7 +139,7 @@ let expect_peek (p : parser) (tt : Token.token_type) : (parser, parser) result =
 
 let no_prefix_parse_fn_error (p : parser) (t : Token.token_type) : parser =
   let msg = Printf.sprintf "syntax error, unexpected %s found" (Token.show_token_type t) in
-  add_error p msg
+  add_error ~code:"parse-unexpected-token" p msg
 
 let rec parse_program (p : parser) : (parser * AST.program, parser) result =
   let rec loop (lp : parser) (prog : AST.program) =
@@ -674,7 +696,7 @@ and parse_impl_definition (p : parser) : (parser * AST.statement, parser) result
       if curr_token_is lp Token.Ident && lp.curr_token.literal = "for" then
         Ok (next_token lp)
       else
-        Error (add_error lp "expected 'for' keyword in impl definition")
+        Error (add_error ~code:"parse-invalid-impl" lp "expected 'for' keyword in impl definition")
     in
     let* p_after_type, impl_for_type = parse_type_expr p_for_type in
     let* p_end, impl_methods = parse_methods_block p_after_type in
@@ -823,7 +845,7 @@ and parse_derive_definition (p : parser) : (parser * AST.statement, parser) resu
     if curr_token_is p2 Token.Ident && p2.curr_token.literal = "for" then
       Ok (next_token p2)
     else
-      Error (add_error p2 "expected 'for' keyword in derive statement")
+      Error (add_error ~code:"parse-invalid-impl" p2 "expected 'for' keyword in derive statement")
   in
 
   (* Parse the type being derived for *)
@@ -923,7 +945,7 @@ and parse_integer_literal (p : parser) : (parser * AST.expression, parser) resul
       Ok (p1, mk_expr id pos (AST.Integer int))
   | None ->
       let msg = Printf.sprintf "can't parse number from %s" p.curr_token.literal in
-      Error (add_error p msg)
+      Error (add_error ~code:"parse-invalid-number" p msg)
 
 and parse_float_literal (p : parser) : (parser * AST.expression, parser) result =
   let pos = p.curr_token.pos in
@@ -933,7 +955,7 @@ and parse_float_literal (p : parser) : (parser * AST.expression, parser) result 
       Ok (p1, mk_expr id pos (AST.Float float))
   | None ->
       let msg = Printf.sprintf "can't parse number from %s" p.curr_token.literal in
-      Error (add_error p msg)
+      Error (add_error ~code:"parse-invalid-number" p msg)
 
 and parse_string_literal (p : parser) : (parser * AST.expression, parser) result =
   let pos = p.curr_token.pos in
@@ -956,7 +978,7 @@ and parse_infix_expression (p : parser) (left : AST.expression) : (parser * AST.
       (* Advance to the type name *)
       let p2 = next_token p in
       if not (curr_token_is p2 Token.Ident) then
-        Error (add_error p2 "Expected type name after 'is'")
+        Error (add_error ~code:"parse-unexpected-token" p2 "Expected type name after 'is'")
       else
         let type_name = p2.curr_token.literal in
         let type_expr = AST.TCon type_name in
@@ -1005,7 +1027,7 @@ and parse_if_expression (p : parser) : (parser * AST.expression, parser) result 
       let ret_stmt = with_stmt_end p7 (mk_stmt pos_ret (AST.Return expr)) in
       Ok (p7, with_stmt_end p7 (mk_stmt pos_ret (AST.Block [ ret_stmt ])))
     else
-      Error (add_error p4 "Expected '{' or 'return' after if condition")
+      Error (add_error ~code:"parse-unexpected-token" p4 "Expected '{' or 'return' after if condition")
   in
 
   if not (peek_token_is p5 Token.Else) then
@@ -1031,7 +1053,7 @@ and parse_if_expression (p : parser) : (parser * AST.expression, parser) result 
         Ok (p9, with_stmt_end p9 (mk_stmt pos_ret (AST.Block [ ret_stmt ])))
       else
         (* Error: else without block or return *)
-        Error (add_error p6 "Expected '{' or 'return' after 'else'")
+        Error (add_error ~code:"parse-unexpected-token" p6 "Expected '{' or 'return' after 'else'")
     in
     let id, p8 = fresh_id p7 in
     Ok (p8, mk_expr id pos (AST.If (cond, cons, Some alt)))
@@ -1156,7 +1178,7 @@ and parse_dot_expression (p : parser) (left : AST.expression) : (parser * AST.ex
   (* p.curr_token is Dot, advance to the identifier *)
   let p2 = next_token p in
   if not (curr_token_is p2 Token.Ident) then
-    Error (add_error p2 "expected identifier after '.'")
+    Error (add_error ~code:"parse-unexpected-token" p2 "expected identifier after '.'")
   else
     let member_name = p2.curr_token.literal in
 
@@ -1202,7 +1224,9 @@ and parse_record_or_hash_literal (p : parser) : (parser * AST.expression, parser
           | `Field field -> loop lp_sep mode (field :: fields) spread pairs
           | `Spread spread_expr ->
               if Option.is_some spread then
-                Error (add_error lp "multiple spread entries in record literal are not supported yet")
+                Error
+                  (add_error ~code:"parse-invalid-record" lp
+                     "multiple spread entries in record literal are not supported yet")
               else
                 loop lp_sep mode fields (Some spread_expr) pairs)
       | Some HashMode ->
@@ -1243,13 +1267,13 @@ and parse_record_entry (p : parser) :
     in
     Ok (p3, `Field AST.{ field_name; field_value })
   else
-    Error (add_error p "cannot mix hash-style entries into record literal")
+    Error (add_error ~code:"parse-invalid-record" p "cannot mix hash-style entries into record literal")
 
 and parse_hash_entry (p : parser) : (parser * (AST.expression * AST.expression), parser) result =
   if curr_token_is p Token.Spread then
-    Error (add_error p "cannot mix record-style spread into hash literal")
+    Error (add_error ~code:"parse-invalid-record" p "cannot mix record-style spread into hash literal")
   else if curr_token_is p Token.Ident && peek_token_is p Token.Colon then
-    Error (add_error p "cannot mix record-style field into hash literal")
+    Error (add_error ~code:"parse-invalid-record" p "cannot mix record-style field into hash literal")
   else
     let* p2, key = parse_expression p prec_lowest in
     let* p3 = expect_peek p2 Token.Colon in
@@ -1271,7 +1295,7 @@ and consume_brace_entry_separator (p : parser) (err_msg : string) : (parser, par
   else if peek_token_is p Token.RBrace then
     Ok (next_token p)
   else
-    Error (add_error p err_msg)
+    Error (add_error ~code:"parse-invalid-record" p err_msg)
 
 (* Phase 4.2: Match expression parsing *)
 and parse_match_expression (p : parser) : (parser * AST.expression, parser) result =
@@ -1359,14 +1383,14 @@ and parse_pattern (p : parser) : (parser * AST.pattern, parser) result =
             (* Nullary constructor *)
             Ok (p2, AST.mk_pat ~pos:p.curr_token.pos (AST.PConstructor (enum_name, variant_name, [])))
         else
-          Error (add_error p2 "expected variant name after '.'")
+          Error (add_error ~code:"parse-invalid-pattern" p2 "expected variant name after '.'")
       else
         (* Variable binding *)
         Ok (p, AST.mk_pat ~pos:p.curr_token.pos (AST.PVariable p.curr_token.literal))
   | Token.Int -> (
       match Int64.of_string_opt p.curr_token.literal with
       | Some i -> Ok (p, AST.mk_pat ~pos:p.curr_token.pos (AST.PLiteral (AST.LInt i)))
-      | None -> Error (add_error p "invalid integer literal in pattern"))
+      | None -> Error (add_error ~code:"parse-invalid-number" p "invalid integer literal in pattern"))
   | Token.String -> Ok (p, AST.mk_pat ~pos:p.curr_token.pos (AST.PLiteral (AST.LString p.curr_token.literal)))
   | Token.True -> Ok (p, AST.mk_pat ~pos:p.curr_token.pos (AST.PLiteral (AST.LBool true)))
   | Token.False -> Ok (p, AST.mk_pat ~pos:p.curr_token.pos (AST.PLiteral (AST.LBool false)))
@@ -1380,7 +1404,7 @@ and parse_pattern (p : parser) : (parser * AST.pattern, parser) result =
       if p.curr_token.token_type = Token.Ident && p.curr_token.literal = "_" then
         Ok (p, AST.mk_pat ~pos:p.curr_token.pos AST.PWildcard)
       else
-        Error (add_error p "invalid pattern"))
+        Error (add_error ~code:"parse-invalid-pattern" p "invalid pattern"))
   |> finalize
 
 (* Phase 4.8: Parse record pattern: { x:, y: z, ...rest } *)
@@ -1401,7 +1425,7 @@ and parse_record_pattern (p : parser) : (parser * AST.pattern, parser) result =
         let* lp3 = expect_peek lp2 Token.RBrace in
         Ok (lp3, AST.mk_pat ~pos (AST.PRecord (List.rev fields, Some rest_name)))
       else
-        Error (add_error lp2 "expected identifier after '...' in record pattern")
+        Error (add_error ~code:"parse-invalid-pattern" lp2 "expected identifier after '...' in record pattern")
     else if curr_token_is lp Token.Ident then
       (* Field pattern: x: or x: pat *)
       let field_name = lp.curr_token.literal in
@@ -1440,9 +1464,11 @@ and parse_record_pattern (p : parser) : (parser * AST.pattern, parser) result =
              next_token lp3)
           (field :: fields) rest
       else
-        Error (add_error lp3 "expected comma or closing brace after record pattern field")
+        Error
+          (add_error ~code:"parse-invalid-pattern" lp3
+             "expected comma or closing brace after record pattern field")
     else
-      Error (add_error lp "invalid record pattern field")
+      Error (add_error ~code:"parse-invalid-pattern" lp "invalid record pattern field")
   in
 
   loop p2 [] None
@@ -1505,7 +1531,8 @@ module Test = struct
                flush stdout
            | Error errors ->
                Printf.printf "input:\n%s\n" test.input;
-               Printf.printf "errors:\n%s\n" (String.concat "\n" errors);
+               let msgs = List.map (fun (d : Diagnostic.t) -> d.message) errors in
+               Printf.printf "errors:\n%s\n" (String.concat "\n" msgs);
                flush stdout)
 
   let%test "test_let_statements" =
@@ -1555,6 +1582,24 @@ module Test = struct
     match parse ~file_id:"main.mr" "let x = 1;" with
     | Ok [ { AST.stmt = AST.Let { value; _ }; file_id = Some file_id; _ } ] ->
         file_id = "main.mr" && value.file_id = Some "main.mr"
+    | _ -> false
+
+  let%test "parser emits coded expected-token diagnostic with span" =
+    match parse ~file_id:"main.mr" "let x 1;" with
+    | Error
+        [
+          {
+            Diagnostic.code = "parse-expected-token";
+            labels = [ { span = Diagnostic.Span { file_id; start_pos; end_pos = Some end_pos }; primary = true; _ } ];
+            _;
+          };
+        ] ->
+        file_id = "main.mr" && start_pos >= 0 && end_pos >= start_pos
+    | _ -> false
+
+  let%test "parser emits parse-invalid-record for mixed record/hash literal" =
+    match parse "let x = { a: 1, \"b\": 2 }" with
+    | Error [ { Diagnostic.code = "parse-invalid-record"; _ } ] -> true
     | _ -> false
 
   let%test "test_array_literals" =
@@ -1953,49 +1998,44 @@ module Test = struct
     in
     loop 0
 
+  let diagnostics_contain_substring (errs : Diagnostic.t list) (sub : string) : bool =
+    List.exists (fun (d : Diagnostic.t) -> contains_substring d.message sub) errs
+
   let%test "mixed record then hash entry errors deterministically" =
     let input = "let x = { a: 1, \"b\": 2 }" in
     match parse input with
     | Ok _ -> false
-    | Error errs ->
-        List.exists (fun msg -> contains_substring msg "cannot mix hash-style entries into record literal") errs
+    | Error errs -> diagnostics_contain_substring errs "cannot mix hash-style entries into record literal"
 
   let%test "mixed hash then spread entry errors deterministically" =
     let input = "let x = { \"a\": 1, ...rest }" in
     match parse input with
     | Ok _ -> false
-    | Error errs ->
-        List.exists (fun msg -> contains_substring msg "cannot mix record-style spread into hash literal") errs
+    | Error errs -> diagnostics_contain_substring errs "cannot mix record-style spread into hash literal"
 
   let%test "mixed hash then record field errors deterministically" =
     let input = "let x = { \"a\": 1, b: 2 }" in
     match parse input with
     | Ok _ -> false
-    | Error errs ->
-        List.exists (fun msg -> contains_substring msg "cannot mix record-style field into hash literal") errs
+    | Error errs -> diagnostics_contain_substring errs "cannot mix record-style field into hash literal"
 
   let%test "hash literal missing comma reports deterministic error" =
     let input = "let x = { \"a\": 1 b: 2 }" in
     match parse input with
     | Ok _ -> false
-    | Error errs ->
-        List.exists (fun msg -> contains_substring msg "expected ',' or '}' after hash literal entry") errs
+    | Error errs -> diagnostics_contain_substring errs "expected ',' or '}' after hash literal entry"
 
   let%test "record literal missing comma reports deterministic error" =
     let input = "let x = { a: 1 b: 2 }" in
     match parse input with
     | Ok _ -> false
-    | Error errs ->
-        List.exists (fun msg -> contains_substring msg "expected ',' or '}' after record literal entry") errs
+    | Error errs -> diagnostics_contain_substring errs "expected ',' or '}' after record literal entry"
 
   let%test "record literal duplicate spread reports deterministic error" =
     let input = "let x = { ...a, ...b }" in
     match parse input with
     | Ok _ -> false
-    | Error errs ->
-        List.exists
-          (fun msg -> contains_substring msg "multiple spread entries in record literal are not supported yet")
-          errs
+    | Error errs -> diagnostics_contain_substring errs "multiple spread entries in record literal are not supported yet"
 
   let rec collect_expr_ids (expr : AST.expression) : int list =
     let child_ids =
@@ -2227,7 +2267,8 @@ let%test "parse basic impl block - debug" =
           Printf.printf "Multiple statements: %d\n%!" (List.length program);
           false)
   | Error p ->
-      Printf.printf "Parse error: %s\n%!" (String.concat "; " p.errors);
+      let msgs = List.map (fun (d : Diagnostic.t) -> d.message) p.errors in
+      Printf.printf "Parse error: %s\n%!" (String.concat "; " msgs);
       false
 
 let%test "parse basic impl block" =
@@ -2304,7 +2345,8 @@ let%test "parse impl with type params" =
           Printf.printf "Wrong program length: %d\n%!" (List.length program);
           false)
   | Error p ->
-      Printf.printf "Parse error: %s\n%!" (String.concat "; " p.errors);
+      let msgs = List.map (fun (d : Diagnostic.t) -> d.message) p.errors in
+      Printf.printf "Parse error: %s\n%!" (String.concat "; " msgs);
       false
 
 let%test "parse impl with multiple constraints" =
