@@ -43,7 +43,7 @@ let check_trait_fields (typ : Types.mono_type) (trait_name : string) : (unit, Di
                 | None ->
                     trait_error ~code:"type-trait-missing-field"
                       (Printf.sprintf
-                         "Trait satisfaction failed [missing-field]: type %s does not satisfy trait %s because field '%s' is required"
+                         "Type %s does not satisfy trait %s because field '%s' is required"
                          type_str trait_name required.name)
                 | Some actual -> (
                     let actual_type = Types.canonicalize_mono_type actual.typ in
@@ -53,7 +53,7 @@ let check_trait_fields (typ : Types.mono_type) (trait_name : string) : (unit, Di
                     | Error _ ->
                         trait_error ~code:"type-trait-type-mismatch"
                           (Printf.sprintf
-                             "Trait satisfaction failed [field-type-mismatch]: type %s does not satisfy trait %s because field '%s' has type %s but expected %s"
+                             "Type %s does not satisfy trait %s because field '%s' has type %s but expected %s"
                              type_str trait_name required.name (Types.to_string actual_type)
                              (Types.to_string required_type))))
           in
@@ -61,7 +61,7 @@ let check_trait_fields (typ : Types.mono_type) (trait_name : string) : (unit, Di
       | _ ->
           trait_error ~code:"type-trait-non-record"
             (Printf.sprintf
-               "Trait satisfaction failed [non-record-for-field-trait]: type %s does not satisfy trait %s because field traits require a record receiver"
+               "Type %s does not satisfy trait %s because field traits require a record receiver"
                type_str trait_name))
 
 let rec check_trait_methods (typ : Types.mono_type) (trait_name : string) : (unit, Diagnostic.t) result =
@@ -69,10 +69,10 @@ let rec check_trait_methods (typ : Types.mono_type) (trait_name : string) : (uni
   match Trait_registry.resolve_impl trait_name typ' with
   | Error msg ->
       trait_error ~code:"type-trait-impl-resolution"
-        (Printf.sprintf "Trait satisfaction failed [impl-resolution]: %s" msg)
+        (Printf.sprintf "Trait impl resolution failed: %s" msg)
   | Ok None ->
       trait_error ~code:"type-trait-missing-impl"
-        (Printf.sprintf "Trait satisfaction failed [missing-impl]: type %s does not implement trait %s"
+        (Printf.sprintf "Type %s does not implement trait %s"
            (Types.to_string typ') trait_name)
   | Ok (Some resolved_impl) ->
       let rec check_generic_constraints = function
@@ -82,7 +82,7 @@ let rec check_trait_methods (typ : Types.mono_type) (trait_name : string) : (uni
             | None ->
                 trait_error ~code:"type-trait-specialization"
                   (Printf.sprintf
-                     "Trait satisfaction failed [impl-specialization]: generic impl for trait %s could not resolve parameter '%s' for type %s"
+                     "Generic impl for trait %s could not resolve parameter '%s' for type %s"
                      trait_name p.name (Types.to_string typ'))
             | Some concrete_param_type -> (
                 let concrete_param_type' = Types.canonicalize_mono_type concrete_param_type in
@@ -96,7 +96,7 @@ let rec check_trait_methods (typ : Types.mono_type) (trait_name : string) : (uni
                       | Error diag ->
                           trait_error ~code:"type-trait-generic-constraint"
                             (Printf.sprintf
-                               "Trait satisfaction failed [generic-impl-constraint]: parameter '%s' resolved to type %s does not satisfy required constraint %s (%s)"
+                               "Parameter '%s' resolved to type %s does not satisfy required constraint %s (%s)"
                                p.name
                                (Types.to_string concrete_param_type')
                                constraint_trait diag.message))
@@ -109,7 +109,7 @@ let rec check_trait_methods (typ : Types.mono_type) (trait_name : string) : (uni
 
 and check_trait_self_requirements (typ : Types.mono_type) (trait_name : string) : (unit, Diagnostic.t) result =
   match Trait_registry.lookup_trait trait_name with
-  | None -> trait_error ~code:"type-trait-unknown" (Printf.sprintf "Trait satisfaction failed [unknown-trait]: %s" trait_name)
+  | None -> trait_error ~code:"type-trait-unknown" (Printf.sprintf "Unknown trait: %s" trait_name)
   | Some _ -> (
       let kind = Trait_registry.trait_kind trait_name in
       let field_result = check_trait_fields typ trait_name in

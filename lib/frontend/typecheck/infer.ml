@@ -361,14 +361,14 @@ let obligations_from_substitution (subst : substitution) : obligation list =
     [] subst
   |> List.rev
 
-let verify_obligation (o : obligation) : (unit, string) result =
+let verify_obligation (o : obligation) : (unit, Diagnostic.t) result =
   match Trait_solver.satisfies_trait o.typ o.trait_name with
   | Ok () -> Ok ()
   | Error diag ->
       let reason = obligation_reason_to_string o.reason in
-      Error (Printf.sprintf "Trait obligation failed (%s): %s" reason diag.message)
+      Error { diag with message = Printf.sprintf "Trait obligation failed (%s): %s" reason diag.message }
 
-let verify_obligations (obligations : obligation list) : (unit, string) result =
+let verify_obligations (obligations : obligation list) : (unit, Diagnostic.t) result =
   let rec go = function
     | [] -> Ok ()
     | o :: rest -> (
@@ -412,11 +412,11 @@ let apply_substitution_constraints (subst : substitution) (ctx : constraint_ctx)
 (* Verify that all type variable constraints in the global constraint_store
    are satisfied after applying a substitution.
    Returns Error if any constraint is violated. *)
-let verify_constraints_in_substitution (subst : substitution) : (unit, string) result =
+let verify_constraints_in_substitution (subst : substitution) : (unit, Diagnostic.t) result =
   let obligations = obligations_from_substitution subst in
   verify_obligations obligations
 
-let enforce_trait_requirement_on_type (typ : mono_type) (trait_name : string) : (unit, string) result =
+let enforce_trait_requirement_on_type (typ : mono_type) (trait_name : string) : (unit, Diagnostic.t) result =
   if Trait_registry.lookup_trait trait_name = None then
     Ok ()
   else
@@ -428,7 +428,7 @@ let enforce_trait_requirement_on_type (typ : mono_type) (trait_name : string) : 
     | _ -> (
         match Trait_solver.satisfies_trait typ' trait_name with
         | Ok () -> Ok ()
-        | Error diag -> Error diag.message)
+        | Error diag -> Error diag)
 
 (* ============================================================
    Fresh Type Variables
@@ -1321,10 +1321,10 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                         | _ -> (
                             match Trait_solver.satisfies_trait receiver_type' trait_name with
                             | Ok () -> Ok ()
-                            | Error diag -> Error diag.message)
+                            | Error diag -> Error diag)
                       in
                       match trait_requirement_result with
-                      | Error msg -> Error (error_at ~code:"type-constructor" ~message:msg expr)
+                      | Error diag -> Error (error_at ~code:diag.code ~message:diag.message expr)
                       | Ok () -> infer_with_method_signature instantiated_method_sig (TraitMethod trait_name))))
         in
         match receiver.expr with
@@ -1361,7 +1361,7 @@ and infer_prefix type_map env op operand =
           let operand_type' = apply_substitution subst operand_type in
           match enforce_trait_requirement_on_type operand_type' "neg" with
           | Ok () -> Ok (subst, operand_type')
-          | Error msg -> Error (error_at ~code:"type-constructor" ~message:msg operand))
+          | Error diag -> Error (error_at ~code:diag.code ~message:diag.message operand))
       | _ -> Error (error_at ~code:"type-invalid-operator" ~message:("Invalid operator " ^ op ^ " for type " ^ to_string operand_type) operand))
 
 (* ============================================================
@@ -1394,7 +1394,7 @@ and infer_infix type_map env left op right =
                     (* Arithmetic requires num trait. *)
                     match enforce_trait_requirement_on_type result_type "num" with
                     | Ok () -> Ok (subst', result_type)
-                    | Error msg -> Error (error_at ~code:"type-constructor" ~message:msg right)))
+                    | Error diag -> Error (error_at ~code:diag.code ~message:diag.message right)))
           (* Comparison operators: both same type, result Bool *)
           | "<" | ">" | "<=" | ">=" -> (
               match unify left_type' right_type with
@@ -1404,7 +1404,7 @@ and infer_infix type_map env left op right =
                   let operand_type = apply_substitution subst3 left_type' in
                   match enforce_trait_requirement_on_type operand_type "ord" with
                   | Ok () -> Ok (subst', TBool)
-                  | Error msg -> Error (error_at ~code:"type-constructor" ~message:msg right)))
+                  | Error diag -> Error (error_at ~code:diag.code ~message:diag.message right)))
           (* Equality operators: both same type, result Bool *)
           | "==" | "!=" -> (
               match unify left_type' right_type with
@@ -1414,7 +1414,7 @@ and infer_infix type_map env left op right =
                   let operand_type = apply_substitution subst3 left_type' in
                   match enforce_trait_requirement_on_type operand_type "eq" with
                   | Ok () -> Ok (subst', TBool)
-                  | Error msg -> Error (error_at ~code:"type-constructor" ~message:msg right)))
+                  | Error diag -> Error (error_at ~code:diag.code ~message:diag.message right)))
           | _ -> Error (error_at ~code:"type-invalid-operator" ~message:("Invalid operator " ^ op ^ " for type " ^ to_string left_type') left)))
 
 (* ============================================================
@@ -1964,7 +1964,7 @@ and infer_call type_map env (call_expr : AST.expression) func args =
                  When calling a constrained generic function like fn[a: show](x: a),
                  we need to check that the actual argument type implements the required traits. *)
               match verify_constraints_in_substitution final_subst with
-              | Error msg -> Error (error_at ~code:"type-constructor" ~message:msg call_expr)
+              | Error diag -> Error (error_at ~code:diag.code ~message:diag.message call_expr)
               | Ok () ->
                   let final_result = apply_substitution subst3 result_type in
                   Ok (final_subst, final_result))))
@@ -3835,22 +3835,9 @@ module Test = struct
       infer_string
         "trait named { name: string }\ntrait shown[a] { fn show(x: a) -> string }\nlet get_name = fn[t: named + shown](x: t) { x.name }\nlet p = { name: \"alice\" }\nget_name(p)"
     with
-    | Error diag when is_code diag "type-constructor" ->
-        let msg = diag.message in
-        let has needle =
-          let len_msg = String.length msg in
-          let len_needle = String.length needle in
-          let rec go i =
-            if i + len_needle > len_msg then
-              false
-            else if String.sub msg i len_needle = needle then
-              true
-            else
-              go (i + 1)
-          in
-          go 0
-        in
-        has "Trait obligation failed" && has "does not implement trait shown"
+    | Error diag when String_utils.contains_substring ~needle:"type-trait" diag.code ->
+        String_utils.contains_substring ~needle:"Trait obligation failed" diag.message
+        && String_utils.contains_substring ~needle:"does not implement trait shown" diag.message
     | _ -> false
 
   let%test "constrained field access rejects fields not guaranteed by constraints" =
@@ -4178,7 +4165,7 @@ f"
     add_type_var_constraints "t0" [ "show" ];
     match verify_constraints_in_substitution [ ("t0", tfun TInt TInt) ] with
     | Ok () -> false
-    | Error msg -> contains_substring msg "Trait obligation failed" && contains_substring msg "type variable 't0'"
+    | Error diag -> contains_substring diag.message "Trait obligation failed" && contains_substring diag.message "type variable 't0'"
 
   let%test "add_type_var_constraints lowers field requirements from supertraits" =
     Trait_registry.clear ();
