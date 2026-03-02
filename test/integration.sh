@@ -162,6 +162,34 @@ trim_ws() {
     echo "$s"
 }
 
+record_failed_test() {
+    local name="$1"
+    local reason="$2"
+    FAILED_TEST_NAMES+=("$name")
+    FAILED_TEST_REASONS+=("$reason")
+}
+
+collect_failure_from_log() {
+    local log_file="$1"
+    local line
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^TEST\ \[[0-9]+\]\ (.*)\ \.\.\.\ ✗\ FAIL\ \((.*)\)$ ]]; then
+            record_failed_test "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+            return
+        fi
+    done < "$log_file"
+}
+
+print_failed_tests_summary() {
+    [ "${#FAILED_TEST_NAMES[@]}" -eq 0 ] && return
+
+    echo "Failing tests:"
+    local i
+    for i in "${!FAILED_TEST_NAMES[@]}"; do
+        echo "  - ${FAILED_TEST_NAMES[$i]} (${FAILED_TEST_REASONS[$i]})"
+    done
+}
+
 is_output_anchor_line() {
     local line
     line=$(trim_ws "$1")
@@ -572,6 +600,36 @@ try_parse_legacy_line() {
         return 1
     fi
 
+    # Exception-based failures are still present in a few paths. Decode them
+    # into legacy diagnostics so reject-mode strictness can still validate.
+    local fatal_failure_re='^Fatal[[:space:]]+error:[[:space:]]+exception[[:space:]]+Failure\("(.*)"\)$'
+    local fatal_any_re='^Fatal[[:space:]]+error:[[:space:]]+exception[[:space:]]+(.+)$'
+    local exn_call_re='^[^()]+\("(.*)"\)$'
+
+    if [[ "$line" =~ $fatal_failure_re ]]; then
+        LG_MATCHED=1
+        LG_SEVERITY="error"
+        LG_CODE="legacy-error"
+        LG_MESSAGE="${BASH_REMATCH[1]}"
+        LG_MATCH_TEXT="$line"
+        return 0
+    fi
+
+    if [[ "$line" =~ $fatal_any_re ]]; then
+        local exn_payload="${BASH_REMATCH[1]}"
+        local decoded="$exn_payload"
+        if [[ "$exn_payload" =~ $exn_call_re ]]; then
+            decoded="${BASH_REMATCH[1]}"
+        fi
+
+        LG_MATCHED=1
+        LG_SEVERITY="error"
+        LG_CODE="legacy-error"
+        LG_MESSAGE="$decoded"
+        LG_MATCH_TEXT="$line"
+        return 0
+    fi
+
     if [[ "$line" =~ ^([^:]+):([0-9]+):([0-9]+)-([0-9]+):([0-9]+):[[:space:]]*(.*)$ ]]; then
         legacy_decode_message "error" "${BASH_REMATCH[6]}"
         LG_MATCHED=1
@@ -864,11 +922,13 @@ $line"
             echo "  Expected: $(echo "$expected_output" | head -5)"
             echo "  Got:      $(echo "$actual_output" | head -5)"
             FAIL=$((FAIL + 1))
+            record_failed_test "$name" "output mismatch"
         fi
     else
         echo "✗ FAIL (build or execution failed)"
         echo "  Build output: $build_output"
         FAIL=$((FAIL + 1))
+        record_failed_test "$name" "build or execution failed"
     fi
 
     rm -f "$binpath"
@@ -891,6 +951,7 @@ reject_mode() {
     if build_output=$($EXECUTABLE build "$file" -o "$binpath" 2>&1); then
         echo "✗ FAIL (expected build failure but build succeeded)"
         FAIL=$((FAIL + 1))
+        record_failed_test "$name" "expected build failure but build succeeded"
         rm -f "$binpath"
         return
     fi
@@ -919,6 +980,7 @@ reject_mode() {
         echo "✗ FAIL (diagnostic extractor failure)"
         print_reject_debug_context "$file" "$build_output"
         FAIL=$((FAIL + 1))
+        record_failed_test "$name" "diagnostic extractor failure"
         return
     fi
 
@@ -985,6 +1047,7 @@ reject_mode() {
         echo -e "  Missing:$missing"
         print_reject_debug_context "$file" "$build_output"
         FAIL=$((FAIL + 1))
+        record_failed_test "$name" "missing expected diagnostics"
         return
     fi
 
@@ -993,6 +1056,7 @@ reject_mode() {
         echo -e "  Mismatch:$line_mismatch"
         print_reject_debug_context "$file" "$build_output"
         FAIL=$((FAIL + 1))
+        record_failed_test "$name" "line-mismatched diagnostics"
         return
     fi
 
@@ -1011,6 +1075,7 @@ reject_mode() {
             echo -e "  Unexpected:$unexpected"
             print_reject_debug_context "$file" "$build_output"
             FAIL=$((FAIL + 1))
+            record_failed_test "$name" "unexpected diagnostics"
             return
         fi
     fi
@@ -1040,6 +1105,7 @@ build_only_mode() {
         echo "✗ FAIL (build failed)"
         echo "  Output: $build_output"
         FAIL=$((FAIL + 1))
+        record_failed_test "$name" "build failed"
     fi
 
     rm -f "$binpath"
@@ -1055,6 +1121,7 @@ run_fixture() {
         echo -n "TEST [$TOTAL] $name ... "
         echo "✗ FAIL (annotation placement)"
         FAIL=$((FAIL + 1))
+        record_failed_test "$name" "annotation placement"
         return
     fi
 
@@ -1063,6 +1130,7 @@ run_fixture() {
         echo -n "TEST [$TOTAL] $name ... "
         echo "✗ FAIL (fixture drift)"
         FAIL=$((FAIL + 1))
+        record_failed_test "$name" "fixture drift"
         return
     fi
 
@@ -1095,14 +1163,17 @@ run_fixture_isolated() {
 
 run_fixture_suite() {
     suite_begin "Fixture Tests"
+    FAILED_TEST_NAMES=()
+    FAILED_TEST_REASONS=()
 
     if [ "${#SELECTED_FIXTURES[@]}" -eq 0 ]; then
         echo "(no fixtures found — skipping)"
         PASS=0
         FAIL=0
         TOTAL=0
-        suite_end
-        return 0
+        local empty_rc=0
+        suite_end || empty_rc=$?
+        return "$empty_rc"
     fi
 
     local fixture_count=${#SELECTED_FIXTURES[@]}
@@ -1162,6 +1233,7 @@ run_fixture_suite() {
                         PASS=$((PASS + 1))
                     else
                         FAIL=$((FAIL + 1))
+                        collect_failure_from_log "$log_file"
                     fi
                     TOTAL=$((TOTAL + 1))
                     running=$((running - 1))
@@ -1180,7 +1252,12 @@ run_fixture_suite() {
         rm -rf "$log_dir"
     fi
 
-    suite_end
+    local suite_rc=0
+    suite_end || suite_rc=$?
+    if [ "$suite_rc" -ne 0 ]; then
+        print_failed_tests_summary
+    fi
+    return "$suite_rc"
 }
 
 # --- Target selection ---
