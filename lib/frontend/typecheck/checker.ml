@@ -38,6 +38,47 @@ let parser_error_of_diagnostics (errors : Diagnostic.t list) : Diagnostic.t =
   | first :: _ -> first
   | [] -> Diagnostic.error_no_span ~code:"parse-unexpected-token" ~message:"Parse error"
 
+let string_contains (s : string) (needle : string) : bool =
+  let len_sub = String.length needle in
+  let len_s = String.length s in
+  if len_sub = 0 then
+    true
+  else if len_sub > len_s then
+    false
+  else
+    let rec check i =
+      if i + len_sub > len_s then
+        false
+      else if String.sub s i len_sub = needle then
+        true
+      else
+        check (i + 1)
+    in
+    check 0
+
+let diagnostic_of_infer_exception_message (msg : string) : Diagnostic.t =
+  let lower = String.lowercase_ascii msg in
+  let code =
+    if string_contains lower "unknown type constructor" then
+      "type-constructor"
+    else if string_contains lower "cannot be used as a type" then
+      "type-annotation-invalid"
+    else
+      "type-internal"
+  in
+  Diagnostic.error_no_span ~code ~message:msg
+
+let infer_program_safe ?state ~(env : Infer.type_env) (program : Syntax.Ast.AST.program) :
+    (Infer.type_env * Infer.type_map * mono_type, Diagnostic.t) result =
+  try
+    match Infer.infer_program ?state ~env program with
+    | Ok result -> Ok result
+    | Error e -> Error (error_of_infer_error e)
+  with
+  | Annotation.Open_row_rejected msg ->
+      Error (Diagnostic.error_no_span ~code:"type-open-row-rejected" ~message:msg)
+  | Failure msg -> Error (diagnostic_of_infer_exception_message msg)
+
 let format_error (err : Diagnostic.t) : string = Diagnostic.render_cli ~source_lookup:(fun _ -> None) err
 
 (* Format error with source context showing the offending line *)
@@ -54,8 +95,8 @@ let format_error_with_context (source : string) (err : Diagnostic.t) : string =
    Note: Without source, we can't provide location info. Use check_string for that. *)
 let check_program ?state ?source:(_source) ?(env = Infer.empty_env) (program : Syntax.Ast.AST.program) :
     (typecheck_result, Diagnostic.t) result =
-  match Infer.infer_program ?state ~env program with
-  | Error e -> Error (error_of_infer_error e)
+  match infer_program_safe ?state ~env program with
+  | Error e -> Error e
   | Ok (final_env, type_map, result_type) -> Ok { result_type; environment = final_env; type_map }
 
 (* Type check source code string.
@@ -66,8 +107,8 @@ let check_string ?state ?(env = Infer.empty_env) ?file_id (source : string) :
   match Syntax.Parser.parse ?file_id source with
   | Error errors -> Error (parser_error_of_diagnostics errors)
   | Ok program -> (
-      match Infer.infer_program ?state ~env program with
-      | Error e -> Error (error_of_infer_error e)
+      match infer_program_safe ?state ~env program with
+      | Error e -> Error e
       | Ok (final_env, type_map, result_type) -> Ok { result_type; environment = final_env; type_map })
 
 (* ============================================================
@@ -140,8 +181,8 @@ let check_function_annotation (return_annotation : Syntax.Ast.AST.type_expr opti
 let check_program_with_annotations ?state ?source:(_source) ?(env = Infer.empty_env) (program : Syntax.Ast.AST.program) :
     (typecheck_result, Diagnostic.t) result =
   (* First, do standard inference *)
-  match Infer.infer_program ?state ~env program with
-  | Error e -> Error (error_of_infer_error e)
+  match infer_program_safe ?state ~env program with
+  | Error e -> Error e
   | Ok (final_env, type_map, result_type) -> (
       (* Phase 2: Validate annotations against inferred types *)
       let rec check_stmts_with_infer (stmts : Syntax.Ast.AST.statement list) : (unit, Diagnostic.t) result =

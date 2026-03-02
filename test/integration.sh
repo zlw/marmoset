@@ -356,7 +356,7 @@ parse_fixture() {
     fi
 }
 
-# --- Diagnostic extraction/matching helpers (Phase 2 dual-mode) ---
+# --- Diagnostic extraction/matching helpers (Phase 7 canonical-only) ---
 
 PARSED_DIAG_EXTRACTOR=()
 PARSED_DIAG_SEVERITY=()
@@ -503,7 +503,7 @@ extract_new_diagnostic_records() {
 
         if try_parse_canonical_header "$line"; then
             if [ "$active" -eq 1 ]; then
-                emit_diag_record "new" "$cur_severity" "$cur_code" "$cur_message" "$cur_file" "$cur_start_line" \
+                emit_diag_record "canonical" "$cur_severity" "$cur_code" "$cur_message" "$cur_file" "$cur_start_line" \
                     "$cur_start_col" "$cur_end_line" "$cur_end_col" "$cur_match_text"
             fi
 
@@ -528,7 +528,7 @@ extract_new_diagnostic_records() {
                     cur_match_text="$cur_match_text | $trimmed"
                 fi
             else
-                emit_diag_record "new" "$cur_severity" "$cur_code" "$cur_message" "$cur_file" "$cur_start_line" \
+                emit_diag_record "canonical" "$cur_severity" "$cur_code" "$cur_message" "$cur_file" "$cur_start_line" \
                     "$cur_start_col" "$cur_end_line" "$cur_end_col" "$cur_match_text"
                 active=0
             fi
@@ -536,183 +536,9 @@ extract_new_diagnostic_records() {
     done <<< "$build_output"
 
     if [ "$active" -eq 1 ]; then
-        emit_diag_record "new" "$cur_severity" "$cur_code" "$cur_message" "$cur_file" "$cur_start_line" \
+        emit_diag_record "canonical" "$cur_severity" "$cur_code" "$cur_message" "$cur_file" "$cur_start_line" \
             "$cur_start_col" "$cur_end_line" "$cur_end_col" "$cur_match_text"
     fi
-}
-
-legacy_decode_message() {
-    local default_severity="$1"
-    local message="$2"
-
-    LD_SEVERITY="$default_severity"
-    LD_CODE="legacy-$default_severity"
-    LD_MESSAGE="$message"
-
-    if [[ "$message" =~ ^([Ee]rror|[Ww]arning|[Ii]nfo)[[:space:]]+([A-Za-z0-9._-]+):[[:space:]]*(.*)$ ]]; then
-        LD_SEVERITY="$(to_lower "${BASH_REMATCH[1]}")"
-        LD_CODE="$(to_lower "${BASH_REMATCH[2]}")"
-        LD_MESSAGE="${BASH_REMATCH[3]}"
-        return 0
-    fi
-
-    if [[ "$message" =~ ^([Ee]rror|[Ww]arning|[Ii]nfo):[[:space:]]*(.*)$ ]]; then
-        LD_SEVERITY="$(to_lower "${BASH_REMATCH[1]}")"
-        LD_CODE="legacy-$LD_SEVERITY"
-        LD_MESSAGE="${BASH_REMATCH[2]}"
-        return 0
-    fi
-
-    return 0
-}
-
-try_parse_legacy_line() {
-    local line="$1"
-
-    LG_MATCHED=0
-    LG_SEVERITY=""
-    LG_CODE=""
-    LG_MESSAGE=""
-    LG_FILE=""
-    LG_START_LINE=""
-    LG_START_COL=""
-    LG_END_LINE=""
-    LG_END_COL=""
-    LG_MATCH_TEXT=""
-
-    # Legacy extractor runs alongside canonical parsing; it may parse the same
-    # header line, which is later deduped against the new extractor.
-    if try_parse_canonical_header "$line"; then
-        LG_MATCHED=1
-        LG_SEVERITY="$CH_SEVERITY"
-        LG_CODE="$CH_CODE"
-        LG_MESSAGE="$CH_MESSAGE"
-        LG_FILE="$CH_FILE"
-        LG_START_LINE="$CH_START_LINE"
-        LG_START_COL="$CH_START_COL"
-        LG_END_LINE="$CH_END_LINE"
-        LG_END_COL="$CH_END_COL"
-        LG_MATCH_TEXT="$line"
-        return 0
-    fi
-
-    if [ "$line" = "Error: Go build failed" ]; then
-        return 1
-    fi
-
-    # Exception-based failures are still present in a few paths. Decode them
-    # into legacy diagnostics so reject-mode strictness can still validate.
-    local fatal_failure_re='^Fatal[[:space:]]+error:[[:space:]]+exception[[:space:]]+Failure\("(.*)"\)$'
-    local fatal_any_re='^Fatal[[:space:]]+error:[[:space:]]+exception[[:space:]]+(.+)$'
-    local exn_call_re='^[^()]+\("(.*)"\)$'
-
-    if [[ "$line" =~ $fatal_failure_re ]]; then
-        LG_MATCHED=1
-        LG_SEVERITY="error"
-        LG_CODE="legacy-error"
-        LG_MESSAGE="${BASH_REMATCH[1]}"
-        LG_MATCH_TEXT="$line"
-        return 0
-    fi
-
-    if [[ "$line" =~ $fatal_any_re ]]; then
-        local exn_payload="${BASH_REMATCH[1]}"
-        local decoded="$exn_payload"
-        if [[ "$exn_payload" =~ $exn_call_re ]]; then
-            decoded="${BASH_REMATCH[1]}"
-        fi
-
-        LG_MATCHED=1
-        LG_SEVERITY="error"
-        LG_CODE="legacy-error"
-        LG_MESSAGE="$decoded"
-        LG_MATCH_TEXT="$line"
-        return 0
-    fi
-
-    if [[ "$line" =~ ^([^:]+):([0-9]+):([0-9]+)-([0-9]+):([0-9]+):[[:space:]]*(.*)$ ]]; then
-        legacy_decode_message "error" "${BASH_REMATCH[6]}"
-        LG_MATCHED=1
-        LG_SEVERITY="$LD_SEVERITY"
-        LG_CODE="$LD_CODE"
-        LG_MESSAGE="$LD_MESSAGE"
-        LG_FILE="${BASH_REMATCH[1]}"
-        LG_START_LINE="${BASH_REMATCH[2]}"
-        LG_START_COL="${BASH_REMATCH[3]}"
-        LG_END_LINE="${BASH_REMATCH[4]}"
-        LG_END_COL="${BASH_REMATCH[5]}"
-        LG_MATCH_TEXT="$line"
-        return 0
-    fi
-
-    if [[ "$line" =~ ^([^:]+):([0-9]+):([0-9]+):[[:space:]]*(.*)$ ]]; then
-        legacy_decode_message "error" "${BASH_REMATCH[4]}"
-        LG_MATCHED=1
-        LG_SEVERITY="$LD_SEVERITY"
-        LG_CODE="$LD_CODE"
-        LG_MESSAGE="$LD_MESSAGE"
-        LG_FILE="${BASH_REMATCH[1]}"
-        LG_START_LINE="${BASH_REMATCH[2]}"
-        LG_START_COL="${BASH_REMATCH[3]}"
-        LG_END_LINE=""
-        LG_END_COL=""
-        LG_MATCH_TEXT="$line"
-        return 0
-    fi
-
-    if [[ "$line" =~ ^[Ee]rror:[[:space:]]*(.*)$ ]]; then
-        legacy_decode_message "error" "${BASH_REMATCH[1]}"
-        LG_MATCHED=1
-        LG_SEVERITY="$LD_SEVERITY"
-        LG_CODE="$LD_CODE"
-        LG_MESSAGE="$LD_MESSAGE"
-        LG_MATCH_TEXT="$line"
-        return 0
-    fi
-
-    if [[ "$line" =~ ^[Ww]arning:[[:space:]]*(.*)$ ]]; then
-        legacy_decode_message "warning" "${BASH_REMATCH[1]}"
-        LG_MATCHED=1
-        LG_SEVERITY="$LD_SEVERITY"
-        LG_CODE="$LD_CODE"
-        LG_MESSAGE="$LD_MESSAGE"
-        LG_MATCH_TEXT="$line"
-        return 0
-    fi
-
-    if [[ "$line" =~ ^[Ii]nfo:[[:space:]]*(.*)$ ]]; then
-        legacy_decode_message "info" "${BASH_REMATCH[1]}"
-        LG_MATCHED=1
-        LG_SEVERITY="$LD_SEVERITY"
-        LG_CODE="$LD_CODE"
-        LG_MESSAGE="$LD_MESSAGE"
-        LG_MATCH_TEXT="$line"
-        return 0
-    fi
-
-    # Legacy support for historical "Parse error: ..." / "Type error: ..." lines.
-    if [[ "$line" =~ ^(Parse|Type)[[:space:]]+[Ee]rror:[[:space:]]*(.*)$ ]]; then
-        LG_MATCHED=1
-        LG_SEVERITY="error"
-        LG_CODE="legacy-error"
-        LG_MESSAGE="$line"
-        LG_MATCH_TEXT="$line"
-        return 0
-    fi
-
-    return 1
-}
-
-extract_legacy_diagnostic_records() {
-    local build_output="$1"
-
-    while IFS= read -r line || [ -n "$line" ]; do
-        line="${line%$'\r'}"
-        if try_parse_legacy_line "$line"; then
-            emit_diag_record "legacy" "$LG_SEVERITY" "$LG_CODE" "$LG_MESSAGE" "$LG_FILE" "$LG_START_LINE" \
-                "$LG_START_COL" "$LG_END_LINE" "$LG_END_COL" "$LG_MATCH_TEXT"
-        fi
-    done <<< "$build_output"
 }
 
 clear_parsed_diagnostics() {
@@ -733,51 +559,12 @@ parse_build_output_diagnostics() {
     local build_output="$1"
     clear_parsed_diagnostics
 
-    local -a new_records=()
-    local -a legacy_records=()
-    local -a legacy_canceled=()
     local -a merged_records=()
-    local i
 
     local rec
     while IFS= read -r rec || [ -n "$rec" ]; do
-        new_records+=("$rec")
-    done < <(extract_new_diagnostic_records "$build_output")
-
-    while IFS= read -r rec || [ -n "$rec" ]; do
-        legacy_records+=("$rec")
-    done < <(extract_legacy_diagnostic_records "$build_output")
-
-    for ((i = 0; i < ${#legacy_records[@]}; i++)); do
-        legacy_canceled+=(0)
-    done
-
-    # Pair-cancel dedup across extractors: keep all "new" diagnostics and
-    # cancel at most one matching "legacy" entry per "new" tuple.
-    for i in "${!new_records[@]}"; do
-        local rec="${new_records[$i]}"
-        [ -z "$rec" ] && continue
         merged_records+=("$rec")
-
-        IFS="$DIAG_RECORD_SEP" read -r _ _ _ _ _ _ _ _ _ _ new_key <<< "$rec"
-        local j
-        for ((j = 0; j < ${#legacy_records[@]}; j++)); do
-            [ "${legacy_canceled[$j]}" -eq 1 ] && continue
-            local legacy_rec="${legacy_records[$j]}"
-            [ -z "$legacy_rec" ] && continue
-            IFS="$DIAG_RECORD_SEP" read -r _ _ _ _ _ _ _ _ _ _ legacy_key <<< "$legacy_rec"
-            if [ "$new_key" = "$legacy_key" ]; then
-                legacy_canceled[$j]=1
-                break
-            fi
-        done
-    done
-
-    for ((i = 0; i < ${#legacy_records[@]}; i++)); do
-        [ "${legacy_canceled[$i]}" -eq 1 ] && continue
-        [ -z "${legacy_records[$i]}" ] && continue
-        merged_records+=("${legacy_records[$i]}")
-    done
+    done < <(extract_new_diagnostic_records "$build_output")
 
     for rec in "${merged_records[@]}"; do
         [ -z "$rec" ] && continue
