@@ -4846,7 +4846,9 @@ func push[T any](arr []T, v T) []T {
 
 let compile_string ?file_id (source : string) : (string, string) result =
   match Syntax.Parser.parse ?file_id source with
-  | Error errors -> Error ("Parse error: " ^ String.concat ", " errors)
+  | Error errors ->
+      let msgs = List.map (fun (d : Diagnostics.Diagnostic.t) -> d.message) errors in
+      Error ("Parse error: " ^ String.concat ", " msgs)
   | Ok program -> (
       let env = Typecheck.Builtins.prelude_env () in
       match Typecheck.Checker.check_program_with_annotations ~source ~env program with

@@ -1,6 +1,7 @@
 (* Typecheck module - main entry point for type checking *)
 
 open Types
+module Diagnostic = Diagnostics.Diagnostic
 
 (* Re-export commonly used types *)
 type mono = mono_type
@@ -32,6 +33,41 @@ let error_of_infer_error ?(source : string option) (e : Infer.infer_error) : err
     | _ -> (None, None)
   in
   { message = Infer.error_to_string e; loc; loc_end; file_id = e.file_id }
+
+let first_diagnostic_span (diag : Diagnostic.t) : Diagnostic.span option =
+  let rec first_primary = function
+    | [] -> None
+    | { Diagnostic.primary = true; span = Diagnostic.NoSpan; _ } :: rest -> first_primary rest
+    | { Diagnostic.primary = true; span; _ } :: _ -> Some span
+    | _ :: rest -> first_primary rest
+  in
+  let rec first_with_span = function
+    | [] -> None
+    | { Diagnostic.span = Diagnostic.NoSpan; _ } :: rest -> first_with_span rest
+    | { Diagnostic.span; _ } :: _ -> Some span
+  in
+  match first_primary diag.labels with
+  | Some _ as span -> span
+  | None -> first_with_span diag.labels
+
+let parser_error_of_diagnostics ?source (errors : Diagnostic.t list) : error =
+  let parse_message =
+    match errors with
+    | [] -> "Parse error"
+    | _ -> "Parse error: " ^ String.concat ", " (List.map (fun (d : Diagnostic.t) -> d.message) errors)
+  in
+  match errors with
+  | [] -> { message = parse_message; loc = None; loc_end = None; file_id = None }
+  | first :: _ -> (
+      match first_diagnostic_span first with
+      | Some (Diagnostic.Span { file_id; start_pos; end_pos }) -> (
+          match source with
+          | Some src ->
+              let loc = Some (Source_loc.offset_to_loc src start_pos) in
+              let loc_end = Option.map (Source_loc.offset_to_loc src) end_pos in
+              { message = parse_message; loc; loc_end; file_id = Some file_id }
+          | None -> { message = parse_message; loc = None; loc_end = None; file_id = Some file_id })
+      | Some Diagnostic.NoSpan | None -> { message = parse_message; loc = None; loc_end = None; file_id = None })
 
 let format_loc_prefix (err : error) : string option =
   match (err.file_id, err.loc, err.loc_end) with
@@ -82,8 +118,7 @@ let check_program ?state ?source ?(env = Infer.empty_env) (program : Syntax.Ast.
     Errors include source location information. *)
 let check_string ?state ?(env = Infer.empty_env) ?file_id (source : string) : (typecheck_result, error) result =
   match Syntax.Parser.parse ?file_id source with
-  | Error errors ->
-      Error { message = "Parse error: " ^ String.concat ", " errors; loc = None; loc_end = None; file_id = None }
+  | Error errors -> Error (parser_error_of_diagnostics ~source errors)
   | Ok program -> (
       match Infer.infer_program ?state ~env program with
       | Error e -> Error (error_of_infer_error ~source e)
@@ -243,8 +278,7 @@ let check_program_with_annotations ?state ?source ?(env = Infer.empty_env) (prog
 let check_string_with_annotations ?state ?(env = Infer.empty_env) ?file_id (source : string) :
     (typecheck_result, error) result =
   match Syntax.Parser.parse ?file_id source with
-  | Error errors ->
-      Error { message = "Parse error: " ^ String.concat ", " errors; loc = None; loc_end = None; file_id = None }
+  | Error errors -> Error (parser_error_of_diagnostics ~source errors)
   | Ok program -> check_program_with_annotations ?state ~source ~env program
 
 (* Get the type of an expression as a string *)

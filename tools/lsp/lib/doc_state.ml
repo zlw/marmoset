@@ -6,6 +6,7 @@ module Parser = Marmoset.Lib.Parser
 module Infer = Marmoset.Lib.Infer
 module Builtins = Marmoset.Lib.Builtins
 module Ast = Marmoset.Lib.Ast
+module Diagnostic = Marmoset.Lib.Diagnostic
 
 type analysis_result = {
   source : string;
@@ -32,16 +33,50 @@ let zero_range =
   let zero = Lsp_t.Position.create ~line:0 ~character:0 in
   Lsp_t.Range.create ~start:zero ~end_:zero
 
+let lsp_severity_of_diagnostic = function
+  | Diagnostic.Error -> Lsp_t.DiagnosticSeverity.Error
+  | Diagnostic.Warning -> Lsp_t.DiagnosticSeverity.Warning
+  | Diagnostic.Info -> Lsp_t.DiagnosticSeverity.Information
+
+let first_diagnostic_span (diag : Diagnostic.t) : Diagnostic.span option =
+  let rec first_primary = function
+    | [] -> None
+    | { Diagnostic.primary = true; span = Diagnostic.NoSpan; _ } :: rest -> first_primary rest
+    | { Diagnostic.primary = true; span; _ } :: _ -> Some span
+    | _ :: rest -> first_primary rest
+  in
+  let rec first_with_span = function
+    | [] -> None
+    | { Diagnostic.span = Diagnostic.NoSpan; _ } :: rest -> first_with_span rest
+    | { Diagnostic.span; _ } :: _ -> Some span
+  in
+  match first_primary diag.labels with
+  | Some _ as span -> span
+  | None -> first_with_span diag.labels
+
+let range_of_diagnostic_span ~(source : string) (span : Diagnostic.span option) : Lsp_t.Range.t =
+  match span with
+  | None | Some Diagnostic.NoSpan -> zero_range
+  | Some (Diagnostic.Span { start_pos; end_pos = Some end_pos; _ }) ->
+      Lsp_utils.offset_range_to_lsp ~source ~pos:start_pos ~end_pos
+  | Some (Diagnostic.Span { start_pos; end_pos = None; _ }) ->
+      let start = Lsp_utils.offset_to_position ~source ~offset:start_pos in
+      let end_ = Lsp_utils.offset_to_position ~source ~offset:(start_pos + 1) in
+      Lsp_t.Range.create ~start ~end_
+
 (* Analyze a document, returning parse/type errors as LSP diagnostics *)
 let analyze ~(source : string) : analysis_result =
   reset_globals ();
   let state = Infer.create_inference_state () in
   match Parser.parse source with
   | Error errors ->
-      (* Parser currently returns unlocated string errors *)
       let diagnostics =
         List.map
-          (fun msg -> make_diagnostic ~range:zero_range ~severity:Lsp_t.DiagnosticSeverity.Error ~message:msg)
+          (fun (diag : Diagnostic.t) ->
+            let range = range_of_diagnostic_span ~source (first_diagnostic_span diag) in
+            let severity = lsp_severity_of_diagnostic diag.severity in
+            let message = Printf.sprintf "%s: %s" diag.code diag.message in
+            make_diagnostic ~range ~severity ~message)
           errors
       in
       { source; program = None; type_map = None; environment = None; type_var_user_names = []; diagnostics }
