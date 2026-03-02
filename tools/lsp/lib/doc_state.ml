@@ -83,24 +83,13 @@ let analyze ~(source : string) : analysis_result =
   | Ok program -> (
       let env = Builtins.prelude_env () in
       match Checker.check_program_with_annotations ~state ~source ~env program with
-      | Error err ->
+      | Error diag ->
           let type_var_user_names = Infer.type_var_user_name_bindings_in_state state in
-          let range =
-            match (err.loc, err.loc_end) with
-            | Some loc, Some loc_end ->
-                let start = Lsp_utils.loc_to_position loc in
-                (* LSP Range.end is exclusive, so use column (not column-1) *)
-                let end_ = Lsp_t.Position.create ~line:(loc_end.line - 1) ~character:loc_end.column in
-                Lsp_t.Range.create ~start ~end_
-            | Some loc, None ->
-                let start = Lsp_utils.loc_to_position loc in
-                (* Underline at least one character *)
-                let end_ = Lsp_t.Position.create ~line:(loc.line - 1) ~character:loc.column in
-                Lsp_t.Range.create ~start ~end_
-            | None, _ -> zero_range
-          in
+          let range = range_of_diagnostic_span ~source (first_diagnostic_span diag) in
+          let severity = lsp_severity_of_diagnostic diag.severity in
+          let message = Printf.sprintf "%s: %s" diag.code diag.message in
           let diagnostics =
-            [ make_diagnostic ~range ~severity:Lsp_t.DiagnosticSeverity.Error ~message:err.message ]
+            [ make_diagnostic ~range ~severity ~message ]
           in
           {
             source;

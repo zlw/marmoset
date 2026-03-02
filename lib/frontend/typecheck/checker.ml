@@ -15,24 +15,40 @@ type typecheck_result = {
   type_map : Infer.type_map; (* Map from expression IDs to their inferred types *)
 }
 
-(* Error with source location info *)
-type error = {
-  message : string;
-  loc : Source_loc.loc option; (* line/column if available *)
-  loc_end : Source_loc.loc option; (* end line/column if available *)
-  file_id : string option;
-}
+type error = Diagnostic.t
 
-(* Convert infer error to typecheck error, optionally with source for location *)
-let error_of_infer_error ?(source : string option) (e : Infer.infer_error) : error =
-  let loc, loc_end =
-    match (source, e.pos, e.end_pos) with
-    | Some src, Some pos, Some end_pos ->
-        (Some (Source_loc.offset_to_loc src pos), Some (Source_loc.offset_to_loc src end_pos))
-    | Some src, Some pos, None -> (Some (Source_loc.offset_to_loc src pos), None)
-    | _ -> (None, None)
-  in
-  { message = Infer.error_to_string e; loc; loc_end; file_id = e.file_id }
+let infer_error_code (kind : Infer.error_kind) : string =
+  match kind with
+  | Infer.UnboundVariable _ -> "type-unbound-var"
+  | Infer.UnificationError (Unify.TypeMismatch _) -> "type-mismatch"
+  | Infer.UnificationError (Unify.OccursCheck _) -> "type-occurs-check"
+  | Infer.InvalidOperator _ -> "type-invalid-operator"
+  | Infer.NonFunctionCall _ -> "type-non-function"
+  | Infer.IfBranchMismatch _ -> "type-if-branch-mismatch"
+  | Infer.IfConditionNotBool _ -> "type-if-condition"
+  | Infer.ArrayElementMismatch _ -> "type-array-element"
+  | Infer.HashKeyMismatch _ -> "type-hash-key"
+  | Infer.HashValueMismatch _ -> "type-hash-value"
+  | Infer.NotIndexable _ -> "type-not-indexable"
+  | Infer.IndexTypeMismatch _ -> "type-index-mismatch"
+  | Infer.EmptyArrayUnknownType -> "type-empty-array"
+  | Infer.EmptyHashUnknownType -> "type-empty-hash"
+  | Infer.ReturnTypeMismatch _ -> "type-return-mismatch"
+  | Infer.IfExpressionWithoutElse -> "type-if-no-else"
+  | Infer.ConstructorError _ -> "type-constructor"
+  | Infer.PatternError _ -> "type-pattern"
+  | Infer.MatchError _ -> "type-match"
+  | Infer.PurityViolation _ -> "type-purity"
+
+(* Convert infer error to canonical diagnostic. *)
+let error_of_infer_error (e : Infer.infer_error) : error =
+  let code = infer_error_code e.kind in
+  let message = Infer.error_to_string e in
+  match e.pos with
+  | Some start_pos ->
+      let file_id = Option.value e.file_id ~default:"<unknown>" in
+      Diagnostic.error_with_span ~code ~message ~file_id ~start_pos ?end_pos:e.end_pos ()
+  | _ -> Diagnostic.error_no_span ~code ~message
 
 let first_diagnostic_span (diag : Diagnostic.t) : Diagnostic.span option =
   let rec first_primary = function
@@ -50,55 +66,17 @@ let first_diagnostic_span (diag : Diagnostic.t) : Diagnostic.span option =
   | Some _ as span -> span
   | None -> first_with_span diag.labels
 
-let parser_error_of_diagnostics ?source (errors : Diagnostic.t list) : error =
-  let parse_message =
-    match errors with
-    | [] -> "Parse error"
-    | _ -> "Parse error: " ^ String.concat ", " (List.map (fun (d : Diagnostic.t) -> d.message) errors)
-  in
+let parser_error_of_diagnostics (errors : Diagnostic.t list) : error =
   match errors with
-  | [] -> { message = parse_message; loc = None; loc_end = None; file_id = None }
-  | first :: _ -> (
-      match first_diagnostic_span first with
-      | Some (Diagnostic.Span { file_id; start_pos; end_pos }) -> (
-          match source with
-          | Some src ->
-              let loc = Some (Source_loc.offset_to_loc src start_pos) in
-              let loc_end = Option.map (Source_loc.offset_to_loc src) end_pos in
-              { message = parse_message; loc; loc_end; file_id = Some file_id }
-          | None -> { message = parse_message; loc = None; loc_end = None; file_id = Some file_id })
-      | Some Diagnostic.NoSpan | None -> { message = parse_message; loc = None; loc_end = None; file_id = None })
+  | first :: _ -> first
+  | [] -> Diagnostic.error_no_span ~code:"parse-unexpected-token" ~message:"Parse error"
 
-let format_loc_prefix (err : error) : string option =
-  match (err.file_id, err.loc, err.loc_end) with
-  | None, None, _ -> None
-  | None, Some loc, None -> Some (Source_loc.to_string loc)
-  | None, Some loc, Some loc_end -> Some (Source_loc.to_string_range loc loc_end)
-  | Some file_id, None, _ -> Some file_id
-  | Some file_id, Some loc, None -> Some (Printf.sprintf "%s:%s" file_id (Source_loc.to_string loc))
-  | Some file_id, Some loc, Some loc_end ->
-      Some (Printf.sprintf "%s:%s" file_id (Source_loc.to_string_range loc loc_end))
-
-(* Format error with location prefix *)
-let format_error (err : error) : string =
-  match format_loc_prefix err with
-  | None -> err.message
-  | Some prefix -> Printf.sprintf "%s: %s" prefix err.message
+let format_error (err : error) : string = Diagnostic.render_cli ~source_lookup:(fun _ -> None) err
 
 (* Format error with source context showing the offending line *)
 let format_error_with_context (source : string) (err : error) : string =
-  match (err.loc, err.loc_end, format_loc_prefix err) with
-  | None, _, None -> err.message
-  | None, _, Some prefix -> Printf.sprintf "%s: %s" prefix err.message
-  | Some loc, None, Some prefix ->
-      let context = Source_loc.format_with_context source loc in
-      Printf.sprintf "%s: %s\n%s" prefix err.message context
-  | Some loc, Some loc_end, Some prefix ->
-      let context = Source_loc.format_with_context_range source loc loc_end in
-      Printf.sprintf "%s: %s\n%s" prefix err.message context
-  | Some _, _, None ->
-      (* Shouldn't happen because loc always yields a prefix; keep a safe fallback. *)
-      err.message
+  let source_lookup _file_id = Some source in
+  Diagnostic.render_cli ~source_lookup err
 
 (* ============================================================
    Main API
@@ -107,10 +85,10 @@ let format_error_with_context (source : string) (err : error) : string =
 (* Type check a program (list of statements).
    Returns the type of the last expression and the final environment.
    Note: Without source, we can't provide location info. Use check_string for that. *)
-let check_program ?state ?source ?(env = Infer.empty_env) (program : Syntax.Ast.AST.program) :
+let check_program ?state ?source:(_source) ?(env = Infer.empty_env) (program : Syntax.Ast.AST.program) :
     (typecheck_result, error) result =
   match Infer.infer_program ?state ~env program with
-  | Error e -> Error (error_of_infer_error ?source e)
+  | Error e -> Error (error_of_infer_error e)
   | Ok (final_env, type_map, result_type) -> Ok { result_type; environment = final_env; type_map }
 
 (* Type check source code string.
@@ -118,10 +96,10 @@ let check_program ?state ?source ?(env = Infer.empty_env) (program : Syntax.Ast.
     Errors include source location information. *)
 let check_string ?state ?(env = Infer.empty_env) ?file_id (source : string) : (typecheck_result, error) result =
   match Syntax.Parser.parse ?file_id source with
-  | Error errors -> Error (parser_error_of_diagnostics ~source errors)
+  | Error errors -> Error (parser_error_of_diagnostics errors)
   | Ok program -> (
       match Infer.infer_program ?state ~env program with
-      | Error e -> Error (error_of_infer_error ~source e)
+      | Error e -> Error (error_of_infer_error e)
       | Ok (final_env, type_map, result_type) -> Ok { result_type; environment = final_env; type_map })
 
 (* ============================================================
@@ -144,23 +122,15 @@ let check_let_annotation
           Ok ()
         else
           Error
-            {
-              message =
-                Printf.sprintf "Type annotation mismatch for '%s': expected %s but inferred %s" name
-                  (Annotation.format_mono_type annotated_type)
-                  (Annotation.format_mono_type inferred_type);
-              loc = None;
-              loc_end = None;
-              file_id = None;
-            }
+            (Diagnostic.error_no_span ~code:"type-annotation-mismatch"
+               ~message:
+                 (Printf.sprintf "Type annotation mismatch for '%s': expected %s but inferred %s" name
+                    (Annotation.format_mono_type annotated_type)
+                    (Annotation.format_mono_type inferred_type)))
       with Failure msg ->
         Error
-          {
-            message = Printf.sprintf "Invalid type annotation for '%s': %s" name msg;
-            loc = None;
-            loc_end = None;
-            file_id = None;
-          })
+          (Diagnostic.error_no_span ~code:"type-annotation-invalid"
+             ~message:(Printf.sprintf "Invalid type annotation for '%s': %s" name msg)))
 
 (* Check if a function expression's return type annotation matches its inferred type *)
 let check_function_annotation (return_annotation : Syntax.Ast.AST.type_expr option) (inferred_type : mono_type) :
@@ -186,32 +156,24 @@ let check_function_annotation (return_annotation : Syntax.Ast.AST.type_expr opti
           Ok ()
         else
           Error
-            {
-              message =
-                Printf.sprintf "Function return type annotation mismatch: expected %s but inferred %s"
-                  (Annotation.format_mono_type annotated_return_type)
-                  (Annotation.format_mono_type actual_return);
-              loc = None;
-              loc_end = None;
-              file_id = None;
-            }
+            (Diagnostic.error_no_span ~code:"type-annotation-mismatch"
+               ~message:
+                 (Printf.sprintf "Function return type annotation mismatch: expected %s but inferred %s"
+                    (Annotation.format_mono_type annotated_return_type)
+                    (Annotation.format_mono_type actual_return)))
       with Failure msg ->
         Error
-          {
-            message = Printf.sprintf "Invalid function annotation: %s" msg;
-            loc = None;
-            loc_end = None;
-            file_id = None;
-          })
+          (Diagnostic.error_no_span ~code:"type-annotation-invalid"
+             ~message:(Printf.sprintf "Invalid function annotation: %s" msg)))
 
 (* Type check a program with annotation support.
     This checks that all annotations match the inferred types.
     For Phase 2, constraint validation is skipped (Phase 3 work). *)
-let check_program_with_annotations ?state ?source ?(env = Infer.empty_env) (program : Syntax.Ast.AST.program) :
+let check_program_with_annotations ?state ?source:(_source) ?(env = Infer.empty_env) (program : Syntax.Ast.AST.program) :
     (typecheck_result, error) result =
   (* First, do standard inference *)
   match Infer.infer_program ?state ~env program with
-  | Error e -> Error (error_of_infer_error ?source e)
+  | Error e -> Error (error_of_infer_error e)
   | Ok (final_env, type_map, result_type) -> (
       (* Phase 2: Validate annotations against inferred types *)
       let rec check_stmts_with_infer (stmts : Syntax.Ast.AST.statement list) : (unit, error) result =
@@ -232,14 +194,10 @@ let check_program_with_annotations ?state ?source ?(env = Infer.empty_env) (prog
                 match inferred with
                 | None ->
                     Error
-                      {
-                        message =
-                          Printf.sprintf "Internal error: missing inferred type for let '%s' (expr id %d)"
-                            let_binding.name let_binding.value.id;
-                        loc = None;
-                        loc_end = None;
-                        file_id = None;
-                      }
+                      (Diagnostic.error_no_span ~code:"type-constructor"
+                         ~message:
+                           (Printf.sprintf "Internal error: missing inferred type for let '%s' (expr id %d)"
+                              let_binding.name let_binding.value.id))
                 | Some mono_type -> (
                     (* Check let binding annotation *)
                     match check_let_annotation let_binding.name let_binding.type_annotation mono_type with
@@ -278,7 +236,7 @@ let check_program_with_annotations ?state ?source ?(env = Infer.empty_env) (prog
 let check_string_with_annotations ?state ?(env = Infer.empty_env) ?file_id (source : string) :
     (typecheck_result, error) result =
   match Syntax.Parser.parse ?file_id source with
-  | Error errors -> Error (parser_error_of_diagnostics ~source errors)
+  | Error errors -> Error (parser_error_of_diagnostics errors)
   | Ok program -> check_program_with_annotations ?state ~source ~env program
 
 (* Get the type of an expression as a string *)
@@ -432,45 +390,6 @@ let%test "push then len" =
    Source Location Tests
    ============================================================ *)
 
-let%test "error includes source location" =
-  match check_string "1 + true" with
-  | Error { loc = Some loc; loc_end = Some loc_end; _ } ->
-      loc.line = 1 && loc.column > 0 && loc_end.column >= loc.column
-  | _ -> false
-
-let%test "error location points to problematic expression" =
-  (* "true" starts at column 5 (1-indexed) in "1 + true" *)
-  match check_string "1 + true" with
-  | Error { loc = Some loc; loc_end = Some loc_end; _ } -> loc.column = 5 && loc_end.column = 8
-  | _ -> false
-
-let%test "multiline error location" =
-  let code = "let x = 5;\nlet y = x + true;" in
-  match check_string code with
-  | Error { loc = Some loc; _ } -> loc.line = 2
-  | _ -> false
-
-let%test "format_error includes line:col" =
-  match check_string "1 + true" with
-  | Error err -> String.length (format_error err) >= 3 && String.sub (format_error err) 0 3 = "1:5"
-  | Ok _ -> false
-
-let%test "format_error_with_context shows source line" =
-  let source = "1 + true" in
-  match check_string source with
-  | Error err ->
-      let formatted = format_error_with_context source err in
-      String.length formatted >= 3 && String.sub formatted 0 3 = "1:5"
-  | Ok _ -> false
-
-let%test "format_error includes file id when provided" =
-  match check_string ~file_id:"main.mr" "1 + true" with
-  | Error err ->
-      let formatted = format_error err in
-      String.length formatted >= 11 && String.sub formatted 0 11 = "main.mr:1:5"
-  | Ok _ -> false
-
-(* Helper for substring testing *)
 let string_contains_substring haystack ~substring =
   let len_sub = String.length substring in
   let len_hay = String.length haystack in
@@ -486,6 +405,58 @@ let string_contains_substring haystack ~substring =
         check (i + 1)
     in
     check 0
+
+let diagnostic_locs (source : string) (err : error) : Source_loc.loc option * Source_loc.loc option =
+  match first_diagnostic_span err with
+  | Some (Diagnostic.Span { start_pos; end_pos; _ }) ->
+      (Some (Source_loc.offset_to_loc source start_pos), Option.map (Source_loc.offset_to_loc source) end_pos)
+  | Some Diagnostic.NoSpan | None -> (None, None)
+
+let%test "error includes source location" =
+  match check_string "1 + true" with
+  | Error err -> (
+      match diagnostic_locs "1 + true" err with
+      | Some loc, Some loc_end -> loc.line = 1 && loc.column > 0 && loc_end.column >= loc.column
+      | _ -> false)
+  | _ -> false
+
+let%test "error location points to problematic expression" =
+  (* "true" starts at column 5 (1-indexed) in "1 + true" *)
+  match check_string "1 + true" with
+  | Error err -> (
+      match diagnostic_locs "1 + true" err with
+      | Some loc, Some loc_end -> loc.column = 5 && loc_end.column = 8
+      | _ -> false)
+  | _ -> false
+
+let%test "multiline error location" =
+  let code = "let x = 5;\nlet y = x + true;" in
+  match check_string code with
+  | Error err -> (
+      match diagnostic_locs code err with
+      | Some loc, _ -> loc.line = 2
+      | _ -> false)
+  | _ -> false
+
+let%test "format_error includes line:col" =
+  match check_string "1 + true" with
+  | Error err -> string_contains_substring (format_error err) ~substring:":1:5"
+  | Ok _ -> false
+
+let%test "format_error_with_context shows source line" =
+  let source = "1 + true" in
+  match check_string source with
+  | Error err ->
+      let formatted = format_error_with_context source err in
+      string_contains_substring formatted ~substring:":1:5"
+  | Ok _ -> false
+
+let%test "format_error includes file id when provided" =
+  match check_string ~file_id:"main.mr" "1 + true" with
+  | Error err ->
+      let formatted = format_error err in
+      string_contains_substring formatted ~substring:"main.mr:1:5"
+  | Ok _ -> false
 
 (* ============================================================
    Type Annotation Tests - Parameter Annotations
@@ -573,24 +544,24 @@ let%test "annotation: mismatch int vs string is caught" =
   Infer.reset_fresh_counter ();
   match check_string "let f = fn() -> string { 42 }; f" with
   | Ok _ -> false (* MUST fail *)
-  | Error { message; _ } ->
+  | Error err ->
       (* Check message contains both types and indicates mismatch *)
-      let lower = String.lowercase_ascii message in
+      let lower = String.lowercase_ascii err.message in
       String.contains lower 's' && String.contains lower 'i' (* Has string/int *)
 
 let%test "annotation: mismatch string vs int is caught" =
   Infer.reset_fresh_counter ();
   match check_string "let f = fn() -> int { \"hello\" }; f" with
   | Ok _ -> false
-  | Error { message; _ } ->
-      let lower = String.lowercase_ascii message in
+  | Error err ->
+      let lower = String.lowercase_ascii err.message in
       String.contains lower 's' && String.contains lower 'i'
 
 let%test "annotation: mismatch bool vs int is caught" =
   Infer.reset_fresh_counter ();
   match check_string "let f = fn() -> bool { 42 }; f" with
   | Ok _ -> false
-  | Error { message; _ } -> string_contains_substring (String.lowercase_ascii message) ~substring:"annotation"
+  | Error err -> string_contains_substring (String.lowercase_ascii err.message) ~substring:"annotation"
 
 let%test "annotation: mismatch array vs int is caught" =
   Infer.reset_fresh_counter ();
@@ -647,7 +618,7 @@ let%test "annotation: recursive fibonacci with wrong return type FAILS" =
   in
   match check_string code with
   | Ok _ -> false
-  | Error { message; _ } -> string_contains_substring (String.lowercase_ascii message) ~substring:"mismatch"
+  | Error err -> string_contains_substring (String.lowercase_ascii err.message) ~substring:"mismatch"
 
 (* ============================================================
    Backward Compatibility - Non-Annotated Functions Still Work
@@ -706,8 +677,8 @@ let%test "error: annotation mismatch message is clear" =
   Infer.reset_fresh_counter ();
   match check_string "let f = fn() -> string { 42 }; f" with
   | Ok _ -> false
-  | Error { message; _ } ->
-      let lower = String.lowercase_ascii message in
+  | Error err ->
+      let lower = String.lowercase_ascii err.message in
       (* Should mention annotation and mismatch *)
       string_contains_substring lower ~substring:"annotation"
       || string_contains_substring lower ~substring:"mismatch"
@@ -716,11 +687,11 @@ let%test "error: shows both expected and inferred types" =
   Infer.reset_fresh_counter ();
   match check_string "let f = fn() -> bool { \"not bool\" }; f" with
   | Ok _ -> false
-  | Error { message; _ } ->
-      String.length message > 20
+  | Error err ->
+      String.length err.message > 20
       &&
       (* Reasonable error message *)
-      let lower_msg = String.lowercase_ascii message in
+      let lower_msg = String.lowercase_ascii err.message in
       string_contains_substring lower_msg ~substring:"bool"
       || string_contains_substring lower_msg ~substring:"string"
 
