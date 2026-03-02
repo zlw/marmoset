@@ -3,6 +3,7 @@
 open Types
 open Unify
 module AST = Syntax.Ast.AST
+module Diagnostic = Diagnostics.Diagnostic
 
 (* ============================================================
    Type Environment
@@ -543,7 +544,7 @@ let generalize (env : type_env) (mono : mono_type) : poly_type =
 (* The kind of type error (without position info) *)
 type error_kind =
   | UnboundVariable of string
-  | UnificationError of unify_error
+  | UnificationError of Diagnostic.t
   | InvalidOperator of string * mono_type
   | NonFunctionCall of mono_type
   | IfBranchMismatch of mono_type * mono_type
@@ -3066,7 +3067,7 @@ and check_pattern pattern scrutinee_type =
    Used to reconcile recursive placeholders for unannotated functions that
    may later infer as either pure or effectful. *)
 and unify_function_shape_ignoring_effect (left : mono_type) (right : mono_type) :
-    (substitution, unify_error) result =
+    (substitution, Diagnostic.t) result =
   match (left, right) with
   | TFun (arg_l, ret_l, _), TFun (arg_r, ret_r, _) -> (
       match unify arg_l arg_r with

@@ -20,8 +20,7 @@ type error = Diagnostic.t
 let infer_error_code (kind : Infer.error_kind) : string =
   match kind with
   | Infer.UnboundVariable _ -> "type-unbound-var"
-  | Infer.UnificationError (Unify.TypeMismatch _) -> "type-mismatch"
-  | Infer.UnificationError (Unify.OccursCheck _) -> "type-occurs-check"
+  | Infer.UnificationError diag -> diag.code
   | Infer.InvalidOperator _ -> "type-invalid-operator"
   | Infer.NonFunctionCall _ -> "type-non-function"
   | Infer.IfBranchMismatch _ -> "type-if-branch-mismatch"
