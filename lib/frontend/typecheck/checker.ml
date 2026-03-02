@@ -68,9 +68,9 @@ let check_program ?state ?source:(_source) ?(env = Infer.empty_env) (program : S
 (* Type check source code string.
     Parses and type checks in one step.
     Errors include source location information. *)
-let check_string ?state ?(env = Infer.empty_env) ?file_id (source : string) :
+let check_string ?state ?(env = Infer.empty_env) ~file_id (source : string) :
     (typecheck_result, Diagnostic.t) result =
-  match Syntax.Parser.parse ?file_id source with
+  match Syntax.Parser.parse ~file_id source with
   | Error errors -> Error (parser_error_of_diagnostics errors)
   | Ok program -> (
       match infer_program_safe ?state ~env program with
@@ -209,15 +209,15 @@ let check_program_with_annotations ?state ?source:(_source) ?(env = Infer.empty_
 
 (* Type check source code with annotations.
    Parses and type checks in one step, with annotation support. *)
-let check_string_with_annotations ?state ?(env = Infer.empty_env) ?file_id (source : string) :
+let check_string_with_annotations ?state ?(env = Infer.empty_env) ~file_id (source : string) :
     (typecheck_result, Diagnostic.t) result =
-  match Syntax.Parser.parse ?file_id source with
+  match Syntax.Parser.parse ~file_id source with
   | Error errors -> Error (parser_error_of_diagnostics errors)
   | Ok program -> check_program_with_annotations ?state ~source ~env program
 
 (* Get the type of an expression as a string *)
 let type_string (source : string) : string =
-  match check_string source with
+  match check_string ~file_id:"<test>" source with
   | Error e -> "Error: " ^ e.message
   | Ok result -> to_string result.result_type
 
@@ -256,17 +256,17 @@ let env_to_string (env : env) : string =
    ============================================================ *)
 
 let%test "check_string literal" =
-  match check_string "42" with
+  match check_string ~file_id:"<test>" "42" with
   | Ok { result_type = TInt; _ } -> true
   | _ -> false
 
 let%test "check_string function" =
-  match check_string "fn(x) { x + 1 }" with
+  match check_string ~file_id:"<test>" "fn(x) { x + 1 }" with
   | Ok { result_type = TFun (TInt, TInt, _); _ } -> true
   | _ -> false
 
 let%test "check_string let binding adds to env" =
-  match check_string "let x = 5; x" with
+  match check_string ~file_id:"<test>" "let x = 5; x" with
   | Ok { result_type = TInt; environment; _ } -> (
       match lookup "x" environment with
       | Some (Forall ([], TInt)) -> true
@@ -274,7 +274,7 @@ let%test "check_string let binding adds to env" =
   | _ -> false
 
 let%test "check_string polymorphic function in env" =
-  match check_string "let id = fn(x) { x }; id" with
+  match check_string ~file_id:"<test>" "let id = fn(x) { x }; id" with
   | Ok { environment; _ } -> (
       match lookup "id" environment with
       | Some (Forall (vars, TFun (TVar a, TVar b, _))) -> List.length vars = 1 && a = b
@@ -284,7 +284,7 @@ let%test "check_string polymorphic function in env" =
 let%test "type_string helper" = type_string "1 + 2" = "Int" && type_string "true" = "Bool"
 
 let%test "error on type mismatch" =
-  match check_string "1 + true" with
+  match check_string ~file_id:"<test>" "1 + true" with
   | Error _ -> true
   | Ok _ -> false
 
@@ -308,7 +308,7 @@ let%test "prelude has all builtins" =
 (* Helper that uses default_env *)
 let check code =
   Infer.reset_fresh_counter ();
-  check_string ~env:(default_env ()) code
+  check_string ~file_id:"<test>" ~env:(default_env ()) code
 
 let%test "len returns Int" =
   match check "len([1, 2, 3])" with
@@ -376,7 +376,7 @@ let diagnostic_locs (source : string) (err : Diagnostic.t) : Diagnostics.Source_
   | Some Diagnostic.NoSpan | None -> (None, None)
 
 let%test "error includes source location" =
-  match check_string "1 + true" with
+  match check_string ~file_id:"<test>" "1 + true" with
   | Error err -> (
       match diagnostic_locs "1 + true" err with
       | Some loc, Some loc_end -> loc.line = 1 && loc.column > 0 && loc_end.column >= loc.column
@@ -385,7 +385,7 @@ let%test "error includes source location" =
 
 let%test "error location points to problematic expression" =
   (* "true" starts at column 5 (1-indexed) in "1 + true" *)
-  match check_string "1 + true" with
+  match check_string ~file_id:"<test>" "1 + true" with
   | Error err -> (
       match diagnostic_locs "1 + true" err with
       | Some loc, Some loc_end -> loc.column = 5 && loc_end.column = 8
@@ -394,7 +394,7 @@ let%test "error location points to problematic expression" =
 
 let%test "multiline error location" =
   let code = "let x = 5;\nlet y = x + true;" in
-  match check_string code with
+  match check_string ~file_id:"<test>" code with
   | Error err -> (
       match diagnostic_locs code err with
       | Some loc, _ -> loc.line = 2
@@ -402,13 +402,13 @@ let%test "multiline error location" =
   | _ -> false
 
 let%test "format_error includes line:col" =
-  match check_string "1 + true" with
+  match check_string ~file_id:"<test>" "1 + true" with
   | Error err -> string_contains_substring (format_error err) ~substring:":1:5"
   | Ok _ -> false
 
 let%test "format_error_with_context shows source line" =
   let source = "1 + true" in
-  match check_string source with
+  match check_string ~file_id:"<test>" source with
   | Error err ->
       let formatted = format_error_with_context source err in
       string_contains_substring formatted ~substring:":1:5"
@@ -427,7 +427,7 @@ let%test "format_error includes file id when provided" =
 
 let%test "annotation: single int parameter infers correctly" =
   Infer.reset_fresh_counter ();
-  match check_string "let f = fn(x: int) { x + 1 }; f" with
+  match check_string ~file_id:"<test>" "let f = fn(x: int) { x + 1 }; f" with
   | Error _ -> false
   | Ok { environment; _ } -> (
       match lookup "f" environment with
@@ -436,7 +436,7 @@ let%test "annotation: single int parameter infers correctly" =
 
 let%test "annotation: multiple int parameters infer correctly" =
   Infer.reset_fresh_counter ();
-  match check_string "let add = fn(x: int, y: int) { x + y }; add" with
+  match check_string ~file_id:"<test>" "let add = fn(x: int, y: int) { x + y }; add" with
   | Error _ -> false
   | Ok { environment; _ } -> (
       match lookup "add" environment with
@@ -445,7 +445,7 @@ let%test "annotation: multiple int parameters infer correctly" =
 
 let%test "annotation: mixed type parameters infer correctly" =
   Infer.reset_fresh_counter ();
-  match check_string "let f = fn(x: int, y: string) { y }; f" with
+  match check_string ~file_id:"<test>" "let f = fn(x: int, y: string) { y }; f" with
   | Error _ -> false
   | Ok { environment; _ } -> (
       match lookup "f" environment with
@@ -454,7 +454,7 @@ let%test "annotation: mixed type parameters infer correctly" =
 
 let%test "annotation: bool parameter" =
   Infer.reset_fresh_counter ();
-  match check_string "let f = fn(x: bool) { !x }; f" with
+  match check_string ~file_id:"<test>" "let f = fn(x: bool) { !x }; f" with
   | Error _ -> false
   | Ok { environment; _ } -> (
       match lookup "f" environment with
@@ -464,7 +464,7 @@ let%test "annotation: bool parameter" =
 let%test "annotation: array parameter" =
   Infer.reset_fresh_counter ();
   let env = default_env () in
-  match check_string ~env "let f = fn(x: list[int]) { len(x) }; f" with
+  match check_string ~file_id:"<test>" ~env "let f = fn(x: list[int]) { len(x) }; f" with
   | Error _ -> false
   | Ok { environment; _ } -> (
       match lookup "f" environment with
@@ -477,25 +477,25 @@ let%test "annotation: array parameter" =
 
 let%test "annotation: return type int matches" =
   Infer.reset_fresh_counter ();
-  match check_string "let f = fn() -> int { 42 }; f" with
+  match check_string ~file_id:"<test>" "let f = fn() -> int { 42 }; f" with
   | Error _ -> false
   | Ok _ -> true
 
 let%test "annotation: return type string matches" =
   Infer.reset_fresh_counter ();
-  match check_string "let f = fn() -> string { \"hello\" }; f" with
+  match check_string ~file_id:"<test>" "let f = fn() -> string { \"hello\" }; f" with
   | Error _ -> false
   | Ok _ -> true
 
 let%test "annotation: return type bool matches" =
   Infer.reset_fresh_counter ();
-  match check_string "let f = fn() -> bool { true }; f" with
+  match check_string ~file_id:"<test>" "let f = fn() -> bool { true }; f" with
   | Error _ -> false
   | Ok _ -> true
 
 let%test "annotation: return type array[int] matches" =
   Infer.reset_fresh_counter ();
-  match check_string "let f = fn() -> list[int] { [1, 2, 3] }; f" with
+  match check_string ~file_id:"<test>" "let f = fn() -> list[int] { [1, 2, 3] }; f" with
   | Error _ -> false
   | Ok _ -> true
 
@@ -505,7 +505,7 @@ let%test "annotation: return type array[int] matches" =
 
 let%test "annotation: mismatch int vs string is caught" =
   Infer.reset_fresh_counter ();
-  match check_string "let f = fn() -> string { 42 }; f" with
+  match check_string ~file_id:"<test>" "let f = fn() -> string { 42 }; f" with
   | Ok _ -> false (* MUST fail *)
   | Error err ->
       (* Check message contains both types and indicates mismatch *)
@@ -514,7 +514,7 @@ let%test "annotation: mismatch int vs string is caught" =
 
 let%test "annotation: mismatch string vs int is caught" =
   Infer.reset_fresh_counter ();
-  match check_string "let f = fn() -> int { \"hello\" }; f" with
+  match check_string ~file_id:"<test>" "let f = fn() -> int { \"hello\" }; f" with
   | Ok _ -> false
   | Error err ->
       let lower = String.lowercase_ascii err.message in
@@ -522,13 +522,13 @@ let%test "annotation: mismatch string vs int is caught" =
 
 let%test "annotation: mismatch bool vs int is caught" =
   Infer.reset_fresh_counter ();
-  match check_string "let f = fn() -> bool { 42 }; f" with
+  match check_string ~file_id:"<test>" "let f = fn() -> bool { 42 }; f" with
   | Ok _ -> false
   | Error err -> string_contains_substring (String.lowercase_ascii err.message) ~substring:"annotation"
 
 let%test "annotation: mismatch array vs int is caught" =
   Infer.reset_fresh_counter ();
-  match check_string "let f = fn() -> list[int] { 42 }; f" with
+  match check_string ~file_id:"<test>" "let f = fn() -> list[int] { 42 }; f" with
   | Ok _ -> false
   | Error _ -> true
 
@@ -538,7 +538,7 @@ let%test "annotation: mismatch array vs int is caught" =
 
 let%test "annotation: full signature with params and return" =
   Infer.reset_fresh_counter ();
-  match check_string "let f = fn(x: int, y: int) -> int { x + y }; f" with
+  match check_string ~file_id:"<test>" "let f = fn(x: int, y: int) -> int { x + y }; f" with
   | Error _ -> false
   | Ok { environment; _ } -> (
       match lookup "f" environment with
@@ -547,13 +547,13 @@ let%test "annotation: full signature with params and return" =
 
 let%test "annotation: conditional with matching return type" =
   Infer.reset_fresh_counter ();
-  match check_string "let f = fn(x: int) -> int { if (x < 0) { 0 } else { x } }; f" with
+  match check_string ~file_id:"<test>" "let f = fn(x: int) -> int { if (x < 0) { 0 } else { x } }; f" with
   | Error _ -> false
   | Ok _ -> true
 
 let%test "annotation: conditional with mismatched branch types fails" =
   Infer.reset_fresh_counter ();
-  match check_string "let f = fn(x: int) -> string { if (x < 0) { \"neg\" } else { 42 } }; f" with
+  match check_string ~file_id:"<test>" "let f = fn(x: int) -> string { if (x < 0) { \"neg\" } else { 42 } }; f" with
   | Ok _ -> false
   | Error _ -> true
 
@@ -566,7 +566,7 @@ let%test "annotation: recursive fibonacci with correct type" =
   };
   fib|}
   in
-  match check_string code with
+  match check_string ~file_id:"<test>" code with
   | Error _ -> false
   | Ok _ -> true
 
@@ -579,7 +579,7 @@ let%test "annotation: recursive fibonacci with wrong return type FAILS" =
   };
   fib|}
   in
-  match check_string code with
+  match check_string ~file_id:"<test>" code with
   | Ok _ -> false
   | Error err -> string_contains_substring (String.lowercase_ascii err.message) ~substring:"mismatch"
 
@@ -589,13 +589,13 @@ let%test "annotation: recursive fibonacci with wrong return type FAILS" =
 
 let%test "no annotation: unannotated function still works" =
   Infer.reset_fresh_counter ();
-  match check_string "let f = fn(x) { x + 1 }; f" with
+  match check_string ~file_id:"<test>" "let f = fn(x) { x + 1 }; f" with
   | Error _ -> false
   | Ok _ -> true
 
 let%test "no annotation: polymorphic identity function" =
   Infer.reset_fresh_counter ();
-  match check_string "let id = fn(x) { x }; id" with
+  match check_string ~file_id:"<test>" "let id = fn(x) { x }; id" with
   | Error _ -> false
   | Ok { environment; _ } -> (
       match lookup "id" environment with
@@ -604,7 +604,7 @@ let%test "no annotation: polymorphic identity function" =
 
 let%test "no annotation: mixed annotated and unannotated params" =
   Infer.reset_fresh_counter ();
-  match check_string "let f = fn(x: int, y) { x + y }; f" with
+  match check_string ~file_id:"<test>" "let f = fn(x: int, y) { x + y }; f" with
   | Error _ -> false
   | Ok { environment; _ } -> (
       match lookup "f" environment with
@@ -628,7 +628,7 @@ let%test "annotation checker: local let bindings in function body do not require
     printBookName(book)
   |}
   in
-  match check_string_with_annotations ~env code with
+  match check_string_with_annotations ~file_id:"<test>" ~env code with
   | Ok _ -> true
   | Error _ -> false
 
@@ -638,7 +638,7 @@ let%test "annotation checker: local let bindings in function body do not require
 
 let%test "error: annotation mismatch message is clear" =
   Infer.reset_fresh_counter ();
-  match check_string "let f = fn() -> string { 42 }; f" with
+  match check_string ~file_id:"<test>" "let f = fn() -> string { 42 }; f" with
   | Ok _ -> false
   | Error err ->
       let lower = String.lowercase_ascii err.message in
@@ -648,7 +648,7 @@ let%test "error: annotation mismatch message is clear" =
 
 let%test "error: shows both expected and inferred types" =
   Infer.reset_fresh_counter ();
-  match check_string "let f = fn() -> bool { \"not bool\" }; f" with
+  match check_string ~file_id:"<test>" "let f = fn() -> bool { \"not bool\" }; f" with
   | Ok _ -> false
   | Error err ->
       String.length err.message > 20
@@ -728,9 +728,9 @@ let%test "env reuse with shared inference state preserves constrained generic ob
       impl_methods = [ { method_name = "show"; method_params = [ ("x", TInt) ]; method_return_type = TString } ];
     };
   let shared_state = Infer.create_inference_state () in
-  match check_string ~state:shared_state "let check = fn[a: show](x: a) -> string { x.show() }; check" with
+  match check_string ~file_id:"<test>" ~state:shared_state "let check = fn[a: show](x: a) -> string { x.show() }; check" with
   | Error _ -> false
   | Ok first -> (
-      match check_string ~state:shared_state ~env:first.environment "check(fn(y) { y })" with
+      match check_string ~file_id:"<test>" ~state:shared_state ~env:first.environment "check(fn(y) { y })" with
       | Ok _ -> false
       | Error err -> String_utils.contains_substring ~needle:"does not implement trait show" err.message)

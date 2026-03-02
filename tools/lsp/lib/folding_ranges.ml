@@ -108,7 +108,7 @@ let compute ~(source : string) ~(program : Ast.AST.program) : Lsp_t.FoldingRange
 
 (* Helper: parse and compute folding ranges *)
 let get_ranges source =
-  match Marmoset.Lib.Parser.parse source with
+  match Marmoset.Lib.Parser.parse ~file_id:"<test>" source with
   | Error _ -> []
   | Ok program -> compute ~source ~program
 

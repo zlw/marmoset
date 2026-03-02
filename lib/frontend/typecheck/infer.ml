@@ -3408,7 +3408,7 @@ let infer_program ?(env = empty_env) ?state (program : AST.program) :
 module Test = struct
   (* Helper to parse and infer *)
   let infer_string code =
-    match Syntax.Parser.parse code with
+    match Syntax.Parser.parse ~file_id:"<test>" code with
     | Error errs ->
         let msg = String.concat "; " (List.map (fun (d : Diagnostics.Diagnostic.t) -> d.message) errs) in
         Printf.printf "Parse errors: %s\n" msg;
@@ -3683,7 +3683,7 @@ module Test = struct
       TBool
 
   let%test "symbol resolution maps forward top-level function references to declaration symbols" =
-    match Syntax.Parser.parse "let y = add1(41); let add1 = fn(x: int) -> int { x + 1 }; y" with
+    match Syntax.Parser.parse ~file_id:"<test>" "let y = add1(41); let add1 = fn(x: int) -> int { x + 1 }; y" with
     | Error _ -> false
     | Ok program -> (
         let state = create_inference_state () in
@@ -3698,7 +3698,7 @@ module Test = struct
             | _ -> false))
 
   let%test "symbol resolution leaves forward top-level value refs unresolved" =
-    match Syntax.Parser.parse "let a = b; let b = 1; a" with
+    match Syntax.Parser.parse ~file_id:"<test>" "let a = b; let b = 1; a" with
     | Error _ -> false
     | Ok program -> (
         let state = create_inference_state () in
@@ -3712,7 +3712,7 @@ module Test = struct
         | _ -> false)
 
   let%test "symbol resolution maps enum constructor receiver after enum definition" =
-    match Syntax.Parser.parse "enum direction { north }\nlet x = direction.north\nx" with
+    match Syntax.Parser.parse ~file_id:"<test>" "enum direction { north }\nlet x = direction.north\nx" with
     | Error _ -> false
     | Ok program -> (
         let state = create_inference_state () in
@@ -3727,7 +3727,7 @@ module Test = struct
             | _ -> false))
 
   let%test "symbol resolution leaves forward enum receiver refs unresolved" =
-    match Syntax.Parser.parse "let x = direction.north\nenum direction { north }\nx" with
+    match Syntax.Parser.parse ~file_id:"<test>" "let x = direction.north\nenum direction { north }\nx" with
     | Error _ -> false
     | Ok program -> (
         let state = create_inference_state () in
@@ -3744,7 +3744,7 @@ module Test = struct
     | _ -> false
 
   let%test "symbol resolution maps top-level identifiers to top-level symbols" =
-    match Syntax.Parser.parse "let x = 1; let y = x; y" with
+    match Syntax.Parser.parse ~file_id:"<test>" "let x = 1; let y = x; y" with
     | Error _ -> false
     | Ok program -> (
         let state = create_inference_state () in
@@ -3766,7 +3766,7 @@ module Test = struct
             | _ -> false))
 
   let%test "symbol resolution prefers inner parameter over top-level binding when shadowed" =
-    match Syntax.Parser.parse "let x = 1; let f = fn(x: int) -> int { x }; f(2); x" with
+    match Syntax.Parser.parse ~file_id:"<test>" "let x = 1; let f = fn(x: int) -> int { x }; f(2); x" with
     | Error _ -> false
     | Ok program -> (
         let state = create_inference_state () in
@@ -3786,7 +3786,7 @@ module Test = struct
             | _ -> false))
 
   let%test "builtin identifiers are tracked as builtin symbols when resolved from prelude env" =
-    match Syntax.Parser.parse "puts(1)" with
+    match Syntax.Parser.parse ~file_id:"<test>" "puts(1)" with
     | Error _ -> false
     | Ok program -> (
         let state = create_inference_state () in
@@ -3806,7 +3806,7 @@ module Test = struct
             | _ -> false))
 
   let%test "top-level let can shadow prelude builtin in symbol resolution" =
-    match Syntax.Parser.parse "let puts = fn(x: int) -> int { x }; puts(1)" with
+    match Syntax.Parser.parse ~file_id:"<test>" "let puts = fn(x: int) -> int { x }; puts(1)" with
     | Error _ -> false
     | Ok program -> (
         let state = create_inference_state () in
@@ -4364,7 +4364,7 @@ f"
     reset_fresh_counter ();
     add_type_var_constraints "t0" [ "show" ];
     let code = "(fn(x) { x })(fn(y) { y })" in
-    match Syntax.Parser.parse code with
+    match Syntax.Parser.parse ~file_id:"<test>" code with
     | Error _ -> false
     | Ok program -> (
         match infer_program program with
@@ -4373,7 +4373,7 @@ f"
 
   let%test "infer_program captures user generic names in inference state" =
     match
-      Syntax.Parser.parse "trait named { name: string }\nlet get = fn[t: named](x: t) -> string { x.name }; get"
+      Syntax.Parser.parse ~file_id:"<test>" "trait named { name: string }\nlet get = fn[t: named](x: t) -> string { x.name }; get"
     with
     | Error _ -> false
     | Ok program -> (
@@ -4387,14 +4387,14 @@ f"
   let%test "infer_program clears stale user generic-name mappings for shared state" =
     let shared_state = create_inference_state () in
     match
-      Syntax.Parser.parse "trait named { name: string }\nlet get = fn[t: named](x: t) -> string { x.name }; get"
+      Syntax.Parser.parse ~file_id:"<test>" "trait named { name: string }\nlet get = fn[t: named](x: t) -> string { x.name }; get"
     with
     | Error _ -> false
     | Ok first_program -> (
         match infer_program ~state:shared_state first_program with
         | Error _ -> false
         | Ok _ -> (
-            match Syntax.Parser.parse "let x = 1; x" with
+            match Syntax.Parser.parse ~file_id:"<test>" "let x = 1; x" with
             | Error _ -> false
             | Ok second_program -> (
                 match infer_program ~state:shared_state second_program with
@@ -4420,13 +4420,13 @@ f"
         impl_methods = [ { method_name = "show"; method_params = [ ("x", TInt) ]; method_return_type = TString } ];
       };
     let shared_state = create_inference_state () in
-    match Syntax.Parser.parse "let check = fn[a: show](x: a) -> string { x.show() }" with
+    match Syntax.Parser.parse ~file_id:"<test>" "let check = fn[a: show](x: a) -> string { x.show() }" with
     | Error _ -> false
     | Ok first_program -> (
         match infer_program ~state:shared_state first_program with
         | Error _ -> false
         | Ok (env_with_check, _, _) -> (
-            match Syntax.Parser.parse "check(fn(y) { y })" with
+            match Syntax.Parser.parse ~file_id:"<test>" "check(fn(y) { y })" with
             | Error _ -> false
             | Ok second_program -> (
                 match infer_program ~state:shared_state ~env:env_with_check second_program with

@@ -27,7 +27,7 @@ type parser = {
   peek_token : Token.token;
   errors : errors;
   next_id : int;
-  file_id : string option;
+  file_id : string;
 }
 
 and errors = Diagnostic.t list
@@ -42,13 +42,13 @@ let first_some a b =
   | None -> b
 
 let with_expr_end p (e : AST.expression) : AST.expression =
-  { e with end_pos = max e.end_pos (token_end p.curr_token); file_id = first_some e.file_id p.file_id }
+  { e with end_pos = max e.end_pos (token_end p.curr_token); file_id = first_some e.file_id (Some p.file_id) }
 
 let with_stmt_end p (s : AST.statement) : AST.statement =
-  { s with end_pos = max s.end_pos (token_end p.curr_token); file_id = first_some s.file_id p.file_id }
+  { s with end_pos = max s.end_pos (token_end p.curr_token); file_id = first_some s.file_id (Some p.file_id) }
 
 let with_pat_end p (pat : AST.pattern) : AST.pattern =
-  { pat with end_pos = max pat.end_pos (token_end p.curr_token); file_id = first_some pat.file_id p.file_id }
+  { pat with end_pos = max pat.end_pos (token_end p.curr_token); file_id = first_some pat.file_id (Some p.file_id) }
 
 (* Helper to get fresh ID and increment counter *)
 let fresh_id p = (p.next_id, { p with next_id = p.next_id + 1 })
@@ -82,7 +82,7 @@ let next_token (p : parser) : parser =
   let lexer, peek_token = Lexer.next_token p.lexer in
   { p with lexer; curr_token; peek_token }
 
-let init ?file_id (l : Lexer.lexer) : parser =
+let init ~file_id (l : Lexer.lexer) : parser =
   {
     lexer = l;
     curr_token = Token.init Illegal "";
@@ -97,14 +97,9 @@ let init ?file_id (l : Lexer.lexer) : parser =
 let curr_token_is (p : parser) (t : Token.token_type) : bool = p.curr_token.token_type = t
 let peek_token_is (p : parser) (t : Token.token_type) : bool = p.peek_token.token_type = t
 
-let parser_file_id (p : parser) : string =
-  match p.file_id with
-  | Some file_id -> file_id
-  | None -> "<unknown>"
-
 let span_for_token (p : parser) (tok : Token.token) : Diagnostic.span =
   Diagnostic.Span
-    { file_id = parser_file_id p; start_pos = tok.pos; end_pos = Some (max tok.pos (token_end tok)) }
+    { file_id = p.file_id; start_pos = tok.pos; end_pos = Some (max tok.pos (token_end tok)) }
 
 let add_error ?(code = "parse-unexpected-token") ?token (p : parser) (msg : string) : parser =
   let tok =
@@ -1492,8 +1487,8 @@ and parse_pattern_list (p : parser) : (parser * AST.pattern list, parser) result
 
     loop p2 [ first_pat ]
 
-let parse ?file_id (s : string) : (AST.program, errors) result =
-  match s |> Lexer.init |> init ?file_id |> parse_program with
+let parse ~file_id (s : string) : (AST.program, errors) result =
+  match s |> Lexer.init |> init ~file_id |> parse_program with
   | Ok (_, program) -> Ok program
   | Error parser -> Error (List.rev parser.errors)
 
@@ -1517,14 +1512,14 @@ module Test = struct
   let run (tests : test list) : bool =
     tests
     |> List.for_all (fun test ->
-           match test.input |> parse with
+           match parse ~file_id:"<test>" test.input with
            | Ok program -> AST.program_equal program test.output
            | Error _ -> false)
 
   let run_print (tests : test list) : unit =
     tests
     |> List.iter (fun test ->
-           match test.input |> parse with
+           match parse ~file_id:"<test>" test.input with
            | Ok program ->
                Printf.printf "input:\n%s\n" test.input;
                Printf.printf "expected:\n%s\n" (AST.show_program test.output);
@@ -1565,21 +1560,21 @@ module Test = struct
     [ { input = "\"hello world\";"; output = [ s (AST.ExpressionStmt (e (AST.String "hello world"))) ] } ] |> run
 
   let%test "expression span tracks token width" =
-    match parse "123;" with
+    match parse ~file_id:"<test>" "123;" with
     | Ok [ { AST.stmt = AST.ExpressionStmt expr; _ } ] -> expr.pos = 0 && expr.end_pos = 2
     | _ -> false
 
   let%test "string literal span includes quotes" =
-    match parse "\"ab\";" with
+    match parse ~file_id:"<test>" "\"ab\";" with
     | Ok [ { AST.stmt = AST.ExpressionStmt expr; _ } ] -> expr.pos = 0 && expr.end_pos = 3
     | _ -> false
 
   let%test "statement span includes trailing semicolon when present" =
-    match parse "let x = 1;" with
+    match parse ~file_id:"<test>" "let x = 1;" with
     | Ok [ stmt ] -> stmt.pos = 0 && stmt.end_pos = 9
     | _ -> false
 
-  let%test "parser threads optional file_id into nodes" =
+  let%test "parser threads file_id into nodes" =
     match parse ~file_id:"main.mr" "let x = 1;" with
     | Ok [ { AST.stmt = AST.Let { value; _ }; file_id = Some file_id; _ } ] ->
         file_id = "main.mr" && value.file_id = Some "main.mr"
@@ -1599,7 +1594,7 @@ module Test = struct
     | _ -> false
 
   let%test "parser emits parse-invalid-record for mixed record/hash literal" =
-    match parse "let x = { a: 1, \"b\": 2 }" with
+    match parse ~file_id:"<test>" "let x = { a: 1, \"b\": 2 }" with
     | Error [ { Diagnostic.code = "parse-invalid-record"; _ } ] -> true
     | _ -> false
 
@@ -1808,7 +1803,7 @@ module Test = struct
     ]
     |> List.for_all (fun test ->
            let input, output = test in
-           match input |> parse with
+           match parse ~file_id:"<test>" input with
            | Ok program -> AST.to_string program = output
            | Error _ -> false)
 
@@ -1993,37 +1988,37 @@ module Test = struct
 
   let%test "mixed record then hash entry errors deterministically" =
     let input = "let x = { a: 1, \"b\": 2 }" in
-    match parse input with
+    match parse ~file_id:"<test>" input with
     | Ok _ -> false
     | Error errs -> diagnostics_contain_substring errs "cannot mix hash-style entries into record literal"
 
   let%test "mixed hash then spread entry errors deterministically" =
     let input = "let x = { \"a\": 1, ...rest }" in
-    match parse input with
+    match parse ~file_id:"<test>" input with
     | Ok _ -> false
     | Error errs -> diagnostics_contain_substring errs "cannot mix record-style spread into hash literal"
 
   let%test "mixed hash then record field errors deterministically" =
     let input = "let x = { \"a\": 1, b: 2 }" in
-    match parse input with
+    match parse ~file_id:"<test>" input with
     | Ok _ -> false
     | Error errs -> diagnostics_contain_substring errs "cannot mix record-style field into hash literal"
 
   let%test "hash literal missing comma reports deterministic error" =
     let input = "let x = { \"a\": 1 b: 2 }" in
-    match parse input with
+    match parse ~file_id:"<test>" input with
     | Ok _ -> false
     | Error errs -> diagnostics_contain_substring errs "expected ',' or '}' after hash literal entry"
 
   let%test "record literal missing comma reports deterministic error" =
     let input = "let x = { a: 1 b: 2 }" in
-    match parse input with
+    match parse ~file_id:"<test>" input with
     | Ok _ -> false
     | Error errs -> diagnostics_contain_substring errs "expected ',' or '}' after record literal entry"
 
   let%test "record literal duplicate spread reports deterministic error" =
     let input = "let x = { ...a, ...b }" in
-    match parse input with
+    match parse ~file_id:"<test>" input with
     | Ok _ -> false
     | Error errs -> diagnostics_contain_substring errs "multiple spread entries in record literal are not supported yet"
 
@@ -2077,7 +2072,7 @@ module Test = struct
 
   let%test "parser assigns unique expression ids for nested function and record literals" =
     let input = "let outer = fn(x) { let mk = fn(v) { { inner: v } }; mk(x) }; let o = outer(5); puts(o.inner)" in
-    match parse input with
+    match parse ~file_id:"<test>" input with
     | Error _ -> false
     | Ok program ->
         let ids = List.concat_map collect_stmt_ids program in
@@ -2089,7 +2084,7 @@ end
 let%test "parse simple trait definition" =
   let input = "trait show[a] { fn show(x: a) -> string }" in
   let lexer = Lexer.init input in
-  match parse_program (init lexer) with
+  match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
       match program with
       | [ stmt ] -> (
@@ -2107,7 +2102,7 @@ let%test "parse simple trait definition" =
 let%test "parse trait with multiple methods" =
   let input = "trait num[a] { fn add(x: a, y: a) -> a fn sub(x: a, y: a) -> a }" in
   let lexer = Lexer.init input in
-  match parse_program (init lexer) with
+  match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
       match program with
       | [ stmt ] -> (
@@ -2124,7 +2119,7 @@ let%test "parse trait with multiple methods" =
 let%test "parse trait without type parameter" =
   let input = "trait ping { fn ping(x: int) -> int }" in
   let lexer = Lexer.init input in
-  match parse_program (init lexer) with
+  match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
       match program with
       | [ stmt ] -> (
@@ -2142,7 +2137,7 @@ let%test "parse trait without type parameter" =
 let%test "parse trait with supertraits" =
   let input = "trait ord[a]: eq { fn compare(x: a, y: a) -> int }" in
   let lexer = Lexer.init input in
-  match parse_program (init lexer) with
+  match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
       match program with
       | [ stmt ] -> (
@@ -2160,7 +2155,7 @@ let%test "parse trait with supertraits" =
 let%test "parse trait with multiple supertraits" =
   let input = "trait hashable[a]: eq + show { fn hash(x: a) -> int }" in
   let lexer = Lexer.init input in
-  match parse_program (init lexer) with
+  match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
       match program with
       | [ stmt ] -> (
@@ -2178,7 +2173,7 @@ let%test "parse trait with multiple supertraits" =
 let%test "parse non-generic trait with supertraits" =
   let input = "trait named_show: named + show { fn label() -> string }" in
   let lexer = Lexer.init input in
-  match parse_program (init lexer) with
+  match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
       match program with
       | [ stmt ] -> (
@@ -2196,7 +2191,7 @@ let%test "parse non-generic trait with supertraits" =
 let%test "parse field-only trait definition" =
   let input = "trait named { name: string }" in
   let lexer = Lexer.init input in
-  match parse_program (init lexer) with
+  match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
       match program with
       | [ stmt ] -> (
@@ -2214,7 +2209,7 @@ let%test "parse field-only trait definition" =
 let%test "parse mixed trait definition" =
   let input = "trait printable[a] { name: string fn format(x: a) -> string }" in
   let lexer = Lexer.init input in
-  match parse_program (init lexer) with
+  match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
       match program with
       | [ stmt ] -> (
@@ -2233,13 +2228,13 @@ let%test "parse mixed trait definition" =
 let%test "parse impl - just keyword" =
   let input = "impl" in
   let lexer = Lexer.init input in
-  let p = init lexer in
+  let p = init ~file_id:"<test>" lexer in
   curr_token_is p Token.Impl
 
 let%test "parse basic impl block - debug" =
   let input = "impl show for int { fn show(x: int) -> string { x } }" in
   let lexer = Lexer.init input in
-  match parse_program (init lexer) with
+  match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
       match program with
       | [] ->
@@ -2264,7 +2259,7 @@ let%test "parse basic impl block - debug" =
 let%test "parse basic impl block" =
   let input = "impl show for int { fn show(x: int) -> string { x } }" in
   let lexer = Lexer.init input in
-  match parse_program (init lexer) with
+  match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
       match program with
       | [ stmt ] -> (
@@ -2280,7 +2275,7 @@ let%test "parse basic impl block" =
 let%test "parse basic inherent impl block" =
   let input = "impl point { fn sum(p: point) -> int { p.x + p.y } }" in
   let lexer = Lexer.init input in
-  match parse_program (init lexer) with
+  match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
       match program with
       | [ stmt ] -> (
@@ -2296,7 +2291,7 @@ let%test "parse basic inherent impl block" =
 let%test "parse inherent impl with bracketed type target" =
   let input = "impl list[int] { fn size(xs: list[int]) -> int { 0 } }" in
   let lexer = Lexer.init input in
-  match parse_program (init lexer) with
+  match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
       match program with
       | [ stmt ] -> (
@@ -2312,7 +2307,7 @@ let%test "parse inherent impl with bracketed type target" =
 let%test "parse impl with type params" =
   let input = "impl eq[a: eq] for list[a] { fn eq(x: list[a], y: list[a]) -> bool { true } }" in
   let lexer = Lexer.init input in
-  match parse_program (init lexer) with
+  match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
       match program with
       | [ stmt ] -> (
@@ -2342,7 +2337,7 @@ let%test "parse impl with type params" =
 let%test "parse impl with multiple constraints" =
   let input = "impl show[a: eq + ord] for option[a] { fn show(x: option[a]) -> string { \"\" } }" in
   let lexer = Lexer.init input in
-  match parse_program (init lexer) with
+  match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
       match program with
       | [ stmt ] -> (
@@ -2361,7 +2356,7 @@ let%test "parse impl with multiple constraints" =
 let%test "parse impl with multiple methods" =
   let input = "impl num for int { fn add(x: int, y: int) -> int { x } fn sub(x: int, y: int) -> int { y } }" in
   let lexer = Lexer.init input in
-  match parse_program (init lexer) with
+  match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
       match program with
       | [ stmt ] -> (
@@ -2376,7 +2371,7 @@ let%test "parse impl method body with direct record literal" =
     "type vec2 = { x: int }\ntrait num[a] { fn add(x: a, y: a) -> a }\nimpl num for vec2 { fn add(x: vec2, y: vec2) -> vec2 { { x: x.x + y.x } } }"
   in
   let lexer = Lexer.init input in
-  match parse_program (init lexer) with
+  match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
       match program with
       | [ _; _; stmt ] -> (
@@ -2397,7 +2392,7 @@ let%test "parse impl method body with if expression and continue parsing next st
     "trait pick[a] { fn pick(x: a, y: a) -> a }\nimpl pick for int { fn pick(x: int, y: int) -> int { if (true) { x } else { y } } }\n1"
   in
   let lexer = Lexer.init input in
-  match parse_program (init lexer) with
+  match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
       match program with
       | [ _trait; impl_stmt; expr_stmt ] -> (
@@ -2417,13 +2412,13 @@ let%test "parse impl method body with if expression and continue parsing next st
 let%test "parse derive - just keyword" =
   let input = "derive" in
   let lexer = Lexer.init input in
-  let p = init lexer in
+  let p = init ~file_id:"<test>" lexer in
   curr_token_is p Token.Derive
 
 let%test "parse single derive" =
   let input = "derive eq for color" in
   let lexer = Lexer.init input in
-  match parse_program (init lexer) with
+  match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
       match program with
       | [ stmt ] -> (
@@ -2438,7 +2433,7 @@ let%test "parse single derive" =
 let%test "parse multiple derive traits" =
   let input = "derive eq, show, ord for person" in
   let lexer = Lexer.init input in
-  match parse_program (init lexer) with
+  match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
       match program with
       | [ stmt ] -> (
@@ -2453,7 +2448,7 @@ let%test "parse multiple derive traits" =
 let%test "parse derive with generic type" =
   let input = "derive eq for option[int]" in
   let lexer = Lexer.init input in
-  match parse_program (init lexer) with
+  match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
       match program with
       | [ stmt ] -> (
@@ -2472,13 +2467,13 @@ let%test "parse derive with generic type" =
 let%test "parse type - just keyword" =
   let input = "type" in
   let lexer = Lexer.init input in
-  let p = init lexer in
+  let p = init ~file_id:"<test>" lexer in
   curr_token_is p Token.Type
 
 let%test "parse simple type alias" =
   let input = "type point = int" in
   let lexer = Lexer.init input in
-  match parse_program (init lexer) with
+  match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
       match program with
       | [ stmt ] -> (
@@ -2497,7 +2492,7 @@ let%test "parse simple type alias" =
 let%test "parse type alias with function type body" =
   let input = "type endo = fn(int) -> int" in
   let lexer = Lexer.init input in
-  match parse_program (init lexer) with
+  match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
       match program with
       | [ stmt ] -> (
@@ -2513,7 +2508,7 @@ let%test "parse type alias with function type body" =
 let%test "parse function parameter annotation with function type" =
   let input = "let apply = fn(f: fn(int) -> int, x: int) -> int { f(x) }" in
   let lexer = Lexer.init input in
-  match parse_program (init lexer) with
+  match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
       match program with
       | [ stmt ] -> (
@@ -2530,14 +2525,14 @@ let%test "parse function parameter annotation with function type" =
 let%test "parse type alias followed by let without semicolon" =
   let input = "type myint = int\nlet x: myint = 1\nx" in
   let lexer = Lexer.init input in
-  match parse_program (init lexer) with
+  match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> List.length program = 3
   | Error _ -> false
 
 let%test "parse type alias with generic param" =
   let input = "type box[a] = a" in
   let lexer = Lexer.init input in
-  match parse_program (init lexer) with
+  match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
       match program with
       | [ stmt ] -> (
@@ -2556,7 +2551,7 @@ let%test "parse type alias with generic param" =
 let%test "parse type alias with multiple generic params" =
   let input = "type pair[a, b] = int" in
   let lexer = Lexer.init input in
-  match parse_program (init lexer) with
+  match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
       match program with
       | [ stmt ] -> (
@@ -2569,7 +2564,7 @@ let%test "parse type alias with multiple generic params" =
 let%test "parse record type - empty" =
   let input = "type unit = { }" in
   let lexer = Lexer.init input in
-  match parse_program (init lexer) with
+  match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
       match program with
       | [ stmt ] -> (
@@ -2585,7 +2580,7 @@ let%test "parse record type - empty" =
 let%test "parse record type - single field" =
   let input = "type point = { x: int }" in
   let lexer = Lexer.init input in
-  match parse_program (init lexer) with
+  match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
       match program with
       | [ stmt ] -> (
@@ -2607,7 +2602,7 @@ let%test "parse record type - single field" =
 let%test "parse record type - multiple fields" =
   let input = "type point = { x: int, y: int }" in
   let lexer = Lexer.init input in
-  match parse_program (init lexer) with
+  match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
       match program with
       | [ stmt ] -> (
@@ -2626,7 +2621,7 @@ let%test "parse record type - multiple fields" =
 let%test "parse record type - with row variable" =
   let input = "type point[r] = { x: int, ...r }" in
   let lexer = Lexer.init input in
-  match parse_program (init lexer) with
+  match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
       match program with
       | [ stmt ] -> (
@@ -2643,7 +2638,7 @@ let%test "parse record type - with row variable" =
 let%test "parse record type - only row variable" =
   let input = "type any[r] = { ...r }" in
   let lexer = Lexer.init input in
-  match parse_program (init lexer) with
+  match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
       match program with
       | [ stmt ] -> (
@@ -2660,7 +2655,7 @@ let%test "parse record type - only row variable" =
 let%test "parse empty record literal with spread" =
   let input = "let x = { ...base }" in
   let lexer = Lexer.init input in
-  match parse_program (init lexer) with
+  match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
       match program with
       | [ stmt ] -> (
@@ -2676,7 +2671,7 @@ let%test "parse empty record literal with spread" =
 let%test "parse record literal - single field" =
   let input = "let p = { x: 10 }" in
   let lexer = Lexer.init input in
-  match parse_program (init lexer) with
+  match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
       match program with
       | [ stmt ] -> (
@@ -2698,7 +2693,7 @@ let%test "parse record literal - single field" =
 let%test "parse record literal - multiple fields" =
   let input = "let p = { x: 10, y: 20 }" in
   let lexer = Lexer.init input in
-  match parse_program (init lexer) with
+  match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
       match program with
       | [ stmt ] -> (
@@ -2717,7 +2712,7 @@ let%test "parse record literal - multiple fields" =
 let%test "parse record literal - nested record field value" =
   let input = "let p = { a: { x: 2, y: 3 } }" in
   let lexer = Lexer.init input in
-  match parse_program (init lexer) with
+  match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
       match program with
       | [ stmt ] -> (
@@ -2742,14 +2737,14 @@ let%test "parse record literal - nested record field value" =
 let%test "parse let with record literal followed by let" =
   let input = "let p = { x: 1, y: 2 }\nlet q = p.x\nq" in
   let lexer = Lexer.init input in
-  match parse_program (init lexer) with
+  match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> List.length program = 3
   | Error _ -> false
 
 let%test "parse record literal - punning single" =
   let input = "let p = { x: }" in
   let lexer = Lexer.init input in
-  match parse_program (init lexer) with
+  match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
       match program with
       | [ stmt ] -> (
@@ -2771,7 +2766,7 @@ let%test "parse record literal - punning single" =
 let%test "parse record literal - punning multiple" =
   let input = "let p = { x:, y: }" in
   let lexer = Lexer.init input in
-  match parse_program (init lexer) with
+  match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
       match program with
       | [ stmt ] -> (
@@ -2797,7 +2792,7 @@ let%test "parse record literal - punning multiple" =
 let%test "parse record literal - spread only" =
   let input = "let p = { ...base }" in
   let lexer = Lexer.init input in
-  match parse_program (init lexer) with
+  match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
       match program with
       | [ stmt ] -> (
@@ -2813,7 +2808,7 @@ let%test "parse record literal - spread only" =
 let%test "parse record literal - spread with fields after" =
   let input = "let p = { ...base, x: 10 }" in
   let lexer = Lexer.init input in
-  match parse_program (init lexer) with
+  match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
       match program with
       | [ stmt ] -> (
@@ -2829,7 +2824,7 @@ let%test "parse record literal - spread with fields after" =
 let%test "parse record literal - fields with spread in middle" =
   let input = "let p = { x: 10, ...base, y: 20 }" in
   let lexer = Lexer.init input in
-  match parse_program (init lexer) with
+  match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
       match program with
       | [ stmt ] -> (
@@ -2849,7 +2844,7 @@ let%test "parse record literal - fields with spread in middle" =
 let%test "parse hash literal still works" =
   let input = "let h = { \"x\": 10 }" in
   let lexer = Lexer.init input in
-  match parse_program (init lexer) with
+  match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
       match program with
       | [ stmt ] -> (
@@ -2866,7 +2861,7 @@ let%test "parse hash literal still works" =
 let%test "parse field access" =
   let input = "let x = r.field" in
   let lexer = Lexer.init input in
-  match parse_program (init lexer) with
+  match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
       match program with
       | [ stmt ] -> (
@@ -2887,7 +2882,7 @@ let%test "parse field access" =
 let%test "parse field access - chained" =
   let input = "let x = r.a.b.c" in
   let lexer = Lexer.init input in
-  match parse_program (init lexer) with
+  match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
       match program with
       | [ stmt ] -> (
@@ -2912,7 +2907,7 @@ let%test "parse field access - chained" =
 let%test "parse field access vs method call" =
   let input = "let x = r.field; let y = r.method()" in
   let lexer = Lexer.init input in
-  match parse_program (init lexer) with
+  match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
       match program with
       | [ stmt1; stmt2 ] -> (
@@ -2929,7 +2924,7 @@ let%test "parse field access vs method call" =
 let%test "parse record pattern - simple punning" =
   let input = "match p { { x:, y: }: x }" in
   let lexer = Lexer.init input in
-  match parse_program (init lexer) with
+  match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
       match program with
       | [ stmt ] -> (
@@ -2959,7 +2954,7 @@ let%test "parse record pattern - simple punning" =
 let%test "parse record pattern - with nested patterns" =
   let input = "match p { { x: a, y: b }: a }" in
   let lexer = Lexer.init input in
-  match parse_program (init lexer) with
+  match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
       match program with
       | [ stmt ] -> (
@@ -2993,7 +2988,7 @@ let%test "parse record pattern - with nested patterns" =
 let%test "parse record pattern - with rest" =
   let input = "match p { { x:, ...rest }: x }" in
   let lexer = Lexer.init input in
-  match parse_program (init lexer) with
+  match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
       match program with
       | [ stmt ] -> (
@@ -3019,7 +3014,7 @@ let%test "parse record pattern - with rest" =
 let%test "parse record pattern - empty" =
   let input = "match p { { }: 42 }" in
   let lexer = Lexer.init input in
-  match parse_program (init lexer) with
+  match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
       match program with
       | [ stmt ] -> (

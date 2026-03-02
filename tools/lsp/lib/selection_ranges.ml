@@ -176,7 +176,7 @@ let compute ~(source : string) ~(program : Ast.AST.program) ~(positions : Lsp_t.
 
 (* Helper: parse and compute selection ranges *)
 let get_selection source positions =
-  match Marmoset.Lib.Parser.parse source with
+  match Marmoset.Lib.Parser.parse ~file_id:"<test>" source with
   | Error _ -> []
   | Ok program ->
       let lsp_positions = List.map (fun (line, character) -> Lsp_t.Position.create ~line ~character) positions in

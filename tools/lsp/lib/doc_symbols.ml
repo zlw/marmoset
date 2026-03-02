@@ -102,7 +102,7 @@ let document_symbols ~(source : string) ~(program : Ast.AST.program) : Lsp_t.Doc
 
 (* Helper: parse source and extract symbols *)
 let get_symbols source =
-  match Marmoset.Lib.Parser.parse source with
+  match Marmoset.Lib.Parser.parse ~file_id:"<test>" source with
   | Error _ -> []
   | Ok program -> document_symbols ~source ~program
 
