@@ -1,6 +1,5 @@
 # T83: Multi-field trait object hides non-declared fields
-# error: Record field 'active' not found in type
-trait person_like {
+trait person_like {  # error: Record field 'active' not found in type
   name: string
   age: int
 }

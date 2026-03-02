@@ -1,3 +1,2 @@
 # OP68: Parenthesized override: (1 + 2) * 3 = 9
-# output: 9
-puts((1 + 2) * 3)
+puts((1 + 2) * 3)  # output: 9

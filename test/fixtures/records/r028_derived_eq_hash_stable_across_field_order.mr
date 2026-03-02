@@ -1,5 +1,4 @@
 # R028: Derived eq/hash are stable across field order
-# output: ok
 trait eq[a] {
   fn eq(x: a, y: a) -> bool
 }
@@ -15,4 +14,4 @@ let out = if (p1.eq(p2)) {
 } else {
   "eq_bad"
 }
-puts(out)
+puts(out)  # output: ok

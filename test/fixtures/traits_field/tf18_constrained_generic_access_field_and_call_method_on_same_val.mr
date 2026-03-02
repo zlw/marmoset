@@ -1,5 +1,4 @@
 # TF18: Constrained generic: access field and call method on same value
-# output: alice: shown
 type person = { name: string, age: int }
 trait named {
   name: string
@@ -16,4 +15,4 @@ let describe = fn[t: named + shown](v: t) -> string {
   v.name + ": " + v.show()
 };
 let p: person = { name: "alice", age: 30 }
-puts(describe(p))
+puts(describe(p))  # output: alice: shown

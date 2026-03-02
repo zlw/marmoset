@@ -1,8 +1,7 @@
 # XF18: D18: Chained comparison results compared with ==
-# output: true
 let a = 1
 let b = 5
 let c = 10
 let ab = a < b
 let bc = b < c
-puts(ab == bc)
+puts(ab == bc)  # output: true

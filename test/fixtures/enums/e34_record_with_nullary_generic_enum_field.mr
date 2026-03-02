@@ -1,9 +1,8 @@
 # E34: Record with nullary generic enum field infers from match context
-# output: 0
 enum option[a] { some(a) none }
 let r = { value: option.none() }
 let out = match r.value {
   option.some(v): v
   option.none: 0
 }
-puts(out)
+puts(out)  # output: 0

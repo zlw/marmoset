@@ -1,3 +1,2 @@
 # OP39: String less-than lexicographic
-# output: true
-puts("abc" < "abd")
+puts("abc" < "abd")  # output: true

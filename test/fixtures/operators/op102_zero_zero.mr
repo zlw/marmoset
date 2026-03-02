@@ -1,3 +1,2 @@
 # OP102: Zero >= zero
-# output: true
-puts(0 >= 0)
+puts(0 >= 0)  # output: true

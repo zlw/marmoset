@@ -1,4 +1,3 @@
 # R125: Chained field access on nested fn return
-# output: 7
 let outer = fn(n) { { inner: { deep: n } } }
-puts(outer(7).inner.deep)
+puts(outer(7).inner.deep)  # output: 7

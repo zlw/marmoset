@@ -1,5 +1,4 @@
 # E68: Unknown variant is rejected
-# error: Unknown
-enum color { red green blue }
+enum color { red green blue }  # error: Unknown
 let x = color.yellow
 puts(x)

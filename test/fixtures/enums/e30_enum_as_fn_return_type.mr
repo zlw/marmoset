@@ -1,5 +1,4 @@
 # E30: Enum as function return type
-# output: south
 enum direction { north south east west }
 let opposite = fn(d: direction) -> direction {
   match d {
@@ -9,4 +8,4 @@ let opposite = fn(d: direction) -> direction {
     direction.west: direction.east
   }
 }
-puts(opposite(direction.north))
+puts(opposite(direction.north))  # output: south

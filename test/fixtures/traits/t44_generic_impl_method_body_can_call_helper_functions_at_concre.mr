@@ -1,5 +1,4 @@
 # T44: Generic impl method body can call helper functions at concrete use sites
-# output: ok
 trait show[a] {
   fn show(x: a) -> string
 }
@@ -11,4 +10,4 @@ impl show[b: show] for list[b] {
     render_len(len(x))
   }
 }
-puts([1, 2].show())
+puts([1, 2].show())  # output: ok

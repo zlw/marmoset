@@ -1,3 +1,2 @@
 # OP45: String concat chained
-# output: abc
-puts("a" + "b" + "c")
+puts("a" + "b" + "c")  # output: abc

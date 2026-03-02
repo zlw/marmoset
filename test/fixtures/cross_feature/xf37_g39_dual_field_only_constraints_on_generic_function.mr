@@ -1,5 +1,4 @@
 # XF37: G39: Dual field-only constraints on generic function
-# output: alice 42
 trait named {
   name: string
 }
@@ -10,4 +9,4 @@ let describe = fn[t: named + scored](x: t) -> string {
   x.name + " " + x.score.show()
 }
 let p = { name: "alice", score: 42, extra: true }
-puts(describe(p))
+puts(describe(p))  # output: alice 42

@@ -1,4 +1,3 @@
 # R036: 4-level nested record literal and access
-# output: 99
 let r = { w: { x: { y: { z: 99 } } } }
-puts(r.w.x.y.z)
+puts(r.w.x.y.z)  # output: 99

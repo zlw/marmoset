@@ -1,8 +1,7 @@
 # R071: Record match with rest binding
-# output: 10
 let r = { x: 10, y: 20, z: 30 }
 let result = match r {
   { x:, ...rest }: x
   _: 0
 }
-puts(result)
+puts(result)  # output: 10

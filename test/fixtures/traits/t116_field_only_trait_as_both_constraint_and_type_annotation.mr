@@ -1,5 +1,4 @@
 # T116: Field-only trait as both constraint and type annotation
-# output: alice bob
 trait named {
   name: string
 }
@@ -7,4 +6,4 @@ let get_name = fn[t: named](x: t) -> string {
   x.name
 }
 let p: named = { name: "alice", age: 30 }
-puts(p.name + " " + get_name({ name: "bob", role: "admin" }))
+puts(p.name + " " + get_name({ name: "bob", role: "admin" }))  # output: alice bob

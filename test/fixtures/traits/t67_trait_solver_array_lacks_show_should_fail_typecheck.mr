@@ -1,6 +1,5 @@
 # T67: Trait solver: array lacks show (should fail typecheck)
-# error: does not implement trait
-let check = fn[a: show](x: a) -> string {
+let check = fn[a: show](x: a) -> string {  # error: does not implement trait
   x.show()
 }
 let arr = [1, 2, 3]

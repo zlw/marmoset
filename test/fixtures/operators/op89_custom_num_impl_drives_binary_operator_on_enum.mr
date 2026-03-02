@@ -1,5 +1,4 @@
 # OP89: Custom num impl drives - (binary) operator on enum
-# output: 7
 enum boxed { val(int) }
 impl num for boxed {
   fn add(x: boxed, y: boxed) -> boxed { x }
@@ -9,6 +8,6 @@ impl num for boxed {
 }
 let a = boxed.val(7)
 let b = boxed.val(3)
-match (a - b) {
+match (a - b) {  # output: 7
   boxed.val(n): puts(n)
 }

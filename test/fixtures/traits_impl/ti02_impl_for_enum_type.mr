@@ -1,5 +1,4 @@
 # TI02: Impl for enum type
-# output: red
 enum color { red green blue }
 trait show[a] {
   fn show(x: a) -> string
@@ -14,4 +13,4 @@ impl show for color {
   }
 }
 let c = color.red
-puts(c.show())
+puts(c.show())  # output: red

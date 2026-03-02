@@ -1,6 +1,5 @@
 # R103: Spread of if-expression result
-# output: 15
 let flag = true
 let base = if (flag) { { x: 5, y: 10 } } else { { x: 0, y: 0 } }
 let r = { ...base, y: 10 }
-puts(r.x + r.y)
+puts(r.x + r.y)  # output: 15

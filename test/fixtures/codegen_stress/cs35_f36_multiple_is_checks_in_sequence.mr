@@ -1,9 +1,7 @@
 # CS35: F36: multiple is-checks in sequence
-# output: 42
-# output: hello
 let x: int | string = 42
 let y: int | string = "hello"
 let a = if (x is int) { x } else { 0 }
 let b = if (y is string) { y } else { "none" }
-puts(a)
-puts(b)
+puts(a)  # output: 42
+puts(b)  # output: hello

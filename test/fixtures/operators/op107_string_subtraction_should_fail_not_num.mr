@@ -1,3 +1,2 @@
 # OP107: String subtraction should fail (not num)
-# error: missing-impl
-puts("a" - "b")
+puts("a" - "b")  # error: missing-impl

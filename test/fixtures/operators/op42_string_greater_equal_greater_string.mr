@@ -1,3 +1,2 @@
 # OP42: String greater-equal (greater string)
-# output: true
-puts("b" >= "a")
+puts("b" >= "a")  # output: true

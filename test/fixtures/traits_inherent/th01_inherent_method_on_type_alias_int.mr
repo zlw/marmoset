@@ -1,5 +1,4 @@
 # TH01: Inherent method on type alias (int)
-# output: 6
 type myint = int
 impl myint {
   fn triple(x: myint) -> myint {
@@ -7,4 +6,4 @@ impl myint {
   }
 }
 let n: myint = 2
-puts(n.triple())
+puts(n.triple())  # output: 6

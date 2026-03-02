@@ -1,8 +1,7 @@
 # CG68: Deeply nested if (4 levels) in let binding
-# output: 4
 let a = true
 let b = true
 let c = false
 let d = true
 let x = if (a) { if (b) { if (c) { if (d) { 1 } else { 2 } } else { 4 } } else { 5 } } else { 6 }
-puts(x)
+puts(x)  # output: 4

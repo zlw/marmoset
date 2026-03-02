@@ -1,6 +1,5 @@
 # TI31: Two traits same method name, both impls causes ambiguous dispatch
-# error: Ambiguous
-trait alpha_trait[a] {
+trait alpha_trait[a] {  # error: Ambiguous
   fn tag(x: a) -> string
 }
 trait beta_trait[a] {

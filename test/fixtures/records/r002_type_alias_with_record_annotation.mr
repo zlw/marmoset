@@ -1,5 +1,4 @@
 # R002: Type alias with record annotation
-# output: 3
 type point = { x: int, y: int }
 let p: point = { x: 1, y: 2 }
-puts(p.x + p.y)
+puts(p.x + p.y)  # output: 3

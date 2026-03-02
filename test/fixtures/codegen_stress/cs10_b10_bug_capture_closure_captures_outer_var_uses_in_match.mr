@@ -1,5 +1,4 @@
 # CS10: B10: [BUG-CAPTURE] closure captures outer var, uses in match
-# output: 42
 let offset = 40
 let f = fn(x: int) -> int {
   match x {
@@ -8,4 +7,4 @@ let f = fn(x: int) -> int {
     _: offset
   }
 }
-puts(f(2))
+puts(f(2))  # output: 42

@@ -1,6 +1,5 @@
 # TI15: Impl with extra method not in trait is rejected
-# error: does not match trait signature
-trait show[a] {
+trait show[a] {  # error: does not match trait signature
   fn show(x: a) -> string
 }
 impl show for int {

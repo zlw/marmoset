@@ -1,9 +1,8 @@
 # CS13: B13: lambda defined in if-branch, used after
-# output: 7
 let flag = true
 let f = if (flag) {
   fn(x: int) -> int { x + 2 }
 } else {
   fn(x: int) -> int { x + 10 }
 }
-puts(f(5))
+puts(f(5))  # output: 7

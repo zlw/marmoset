@@ -1,9 +1,8 @@
 # U52: Match on inline function call result
-# output: 100
 enum option[a] { some(a) none }
 let make = fn(x: int) -> option[int] { option.some(x) }
 let out = match make(100) {
   option.some(v): v
   option.none: 0
 }
-puts(out)
+puts(out)  # output: 100

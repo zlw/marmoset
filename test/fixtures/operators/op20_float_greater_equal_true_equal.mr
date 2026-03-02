@@ -1,3 +1,2 @@
 # OP20: Float greater-equal true (equal)
-# output: true
-puts(2.71 >= 2.71)
+puts(2.71 >= 2.71)  # output: true

@@ -1,5 +1,4 @@
 # CG71: Enum match in tail position if takes else branch
-# output: 7
 enum option[a] {
   some(a)
   none
@@ -10,4 +9,4 @@ let check = fn(o: option[int]) -> int {
     option.none: 0
   }
 }
-puts(check(option.some(7)))
+puts(check(option.some(7)))  # output: 7

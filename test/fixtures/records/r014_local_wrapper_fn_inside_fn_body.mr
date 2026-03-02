@@ -1,8 +1,7 @@
 # R014: Local wrapper function inside function body
-# output: 5
 let outer = fn(x) {
   let mk = fn(v) { { inner: v } }
   mk(x)
 }
 let o = outer(5)
-puts(o.inner)
+puts(o.inner)  # output: 5

@@ -1,8 +1,7 @@
 # E86: Enum with bool payload
-# output: true
 enum wrapper { w(bool) }
 let x = wrapper.w(true)
 let v = match x {
   wrapper.w(b): b
 }
-puts(v)
+puts(v)  # output: true

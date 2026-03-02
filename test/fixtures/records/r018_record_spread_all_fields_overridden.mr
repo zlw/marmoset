@@ -1,5 +1,4 @@
 # R018: Record spread with all fields overridden
-# output: 10
 let p = { x: 1, X: 2 }
 let q = { ...p, x: 4, X: 6 }
-puts(q.x + q.X)
+puts(q.x + q.X)  # output: 10

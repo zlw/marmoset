@@ -1,4 +1,3 @@
 # OP80: Comparison result stored then printed
-# output: true
 let x = 10 >= 5
-puts(x)
+puts(x)  # output: true

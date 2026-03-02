@@ -1,6 +1,5 @@
 # TI33: Impl method missing param type annotation is rejected
-# error: missing a type annotation
-trait show[a] {
+trait show[a] {  # error: missing a type annotation
   fn show(x: a) -> string
 }
 impl show for int {

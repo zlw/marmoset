@@ -1,3 +1,2 @@
 # OP62: Boolean negation false
-# output: true
-puts(!false)
+puts(!false)  # output: true

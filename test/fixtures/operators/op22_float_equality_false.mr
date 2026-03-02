@@ -1,3 +1,2 @@
 # OP22: Float equality false
-# output: false
-puts(1.0 == 2.0)
+puts(1.0 == 2.0)  # output: false

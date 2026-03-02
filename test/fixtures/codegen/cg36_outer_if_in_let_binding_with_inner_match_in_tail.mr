@@ -1,5 +1,4 @@
 # CG36: Outer if in let binding with inner match in tail
-# output: 30
 let flag = true
 let n = 3
 let x = if (flag) {
@@ -12,4 +11,4 @@ let x = if (flag) {
 } else {
   0
 }
-puts(x)
+puts(x)  # output: 30

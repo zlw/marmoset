@@ -1,5 +1,4 @@
 # TH13: Inherent method body with arithmetic
-# output: 25
 type point = { x: int, y: int }
 impl point {
   fn dist_sq(p: point) -> int {
@@ -7,4 +6,4 @@ impl point {
   }
 }
 let p: point = { x: 3, y: 4 }
-puts(p.dist_sq())
+puts(p.dist_sq())  # output: 25

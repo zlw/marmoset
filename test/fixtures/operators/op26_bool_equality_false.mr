@@ -1,3 +1,2 @@
 # OP26: Bool equality false
-# output: false
-puts(true == false)
+puts(true == false)  # output: false

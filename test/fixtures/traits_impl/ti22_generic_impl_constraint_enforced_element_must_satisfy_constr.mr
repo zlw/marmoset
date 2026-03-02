@@ -1,6 +1,5 @@
 # TI22: Generic impl constraint enforced: element must satisfy constraint
-# error: does not satisfy
-trait named {
+trait named {  # error: does not satisfy
   name: string
 }
 trait show[a] {

@@ -1,6 +1,5 @@
 # XF36: G38: BUG: Inherent method on user-defined enum fails type resolution
-# error: Unknown type constructor: mylist
-enum mylist { cons(int, mylist) nil }
+enum mylist { cons(int, mylist) nil }  # error: Unknown type constructor: mylist
 impl mylist {
   fn sum(xs: mylist) -> int {
     match xs {

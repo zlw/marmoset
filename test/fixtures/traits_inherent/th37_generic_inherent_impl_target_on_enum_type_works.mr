@@ -1,6 +1,4 @@
 # TH37: Generic inherent impl target on enum type works
-# output: true
-# output: false
 enum result[a, b] {
   success(a)
   failure(b)
@@ -15,5 +13,5 @@ impl result[a, b] {
 }
 let ok = if (true) { result.success(1) } else { result.failure("x") }
 let err = if (false) { result.success(1) } else { result.failure("x") }
-puts(ok.is_success())
-puts(err.is_success())
+puts(ok.is_success())  # output: true
+puts(err.is_success())  # output: false

@@ -1,8 +1,7 @@
 # R104: Spread in polymorphic fn loses non-override fields
-# output: 90
 let update = fn(base, new_x) {
   let r = { ...base, x: new_x }
   r.x + r.y
 }
 let b = { x: 0, y: 10 }
-puts(update(b, 10) + update(b, 20) + update(b, 30))
+puts(update(b, 10) + update(b, 20) + update(b, 30))  # output: 90

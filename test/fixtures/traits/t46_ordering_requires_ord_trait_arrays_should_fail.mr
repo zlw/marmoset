@@ -1,6 +1,5 @@
 # T46: Ordering requires ord trait (arrays should fail)
-# error: missing-impl
-let less = fn[a](x: a, y: a) -> bool {
+let less = fn[a](x: a, y: a) -> bool {  # error: missing-impl
   x < y
 };
 less([1], [2])

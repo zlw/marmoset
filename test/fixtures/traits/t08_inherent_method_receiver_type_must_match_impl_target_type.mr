@@ -1,6 +1,5 @@
 # T08: Inherent method receiver type must match impl target type
-# error: does not match impl target type
-type point = { x: int }
+type point = { x: int }  # error: does not match impl target type
 impl point {
   fn bad(x: int) -> int {
     x

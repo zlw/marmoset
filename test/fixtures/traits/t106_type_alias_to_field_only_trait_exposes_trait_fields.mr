@@ -1,8 +1,7 @@
 # T106: Type alias to field-only trait exposes trait fields
-# output: alice
 trait named {
   name: string
 }
 type nameable = named
 let x: nameable = { name: "alice", age: 30 }
-puts(x.name)
+puts(x.name)  # output: alice

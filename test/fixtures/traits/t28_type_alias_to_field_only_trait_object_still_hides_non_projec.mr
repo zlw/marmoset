@@ -1,6 +1,5 @@
 # T28: Type-alias to field-only trait object still hides non-projected fields
-# error: Record field 'age' not found in type
-trait named {
+trait named {  # error: Record field 'age' not found in type
   name: string
 }
 type named_alias = named

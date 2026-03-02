@@ -1,6 +1,4 @@
 # CM19: Custom trait on two types
-# output: INT
-# output: STR
 trait label[a] {
   fn label(x: a) -> string
 }
@@ -10,5 +8,5 @@ impl label for int {
 impl label for string {
   fn label(x: string) -> string { "STR" }
 }
-puts(1.label())
-puts("a".label())
+puts(1.label())  # output: INT
+puts("a".label())  # output: STR

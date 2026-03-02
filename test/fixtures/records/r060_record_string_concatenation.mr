@@ -1,4 +1,3 @@
 # R060: Record with string concatenation via +
-# output: helloworld
 let r = { first: "hello", second: "world" }
-puts(r.first + r.second)
+puts(r.first + r.second)  # output: helloworld

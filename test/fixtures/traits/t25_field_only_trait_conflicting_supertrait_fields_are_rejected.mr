@@ -1,6 +1,5 @@
 # T25: Field-only trait conflicting supertrait fields are rejected
-# error: conflicting types across supertraits
-trait has_int {
+trait has_int {  # error: conflicting types across supertraits
   x: int
 }
 trait has_string {

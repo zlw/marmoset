@@ -1,5 +1,4 @@
 # CG63: if in let binding with let bindings inside branches
-# output: 30
 let flag = true
 let x = if (flag) {
   let a = 10
@@ -9,4 +8,4 @@ let x = if (flag) {
   let c = 5
   c
 }
-puts(x)
+puts(x)  # output: 30

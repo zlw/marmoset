@@ -1,5 +1,4 @@
 # U68: Enum built in if/else, then matched
-# output: positive
 enum option[a] { some(a) none }
 let x = 5
 let opt: option[string] = if (x > 0) { option.some("positive") } else { option.none() }
@@ -7,4 +6,4 @@ let out = match opt {
   option.some(s): s
   option.none: "zero or neg"
 }
-puts(out)
+puts(out)  # output: positive

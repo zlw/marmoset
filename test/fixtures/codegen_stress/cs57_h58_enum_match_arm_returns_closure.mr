@@ -1,9 +1,8 @@
 # CS57: H58: enum match arm returns closure
-# output: 15
 enum option[a] { some(a) none }
 let opt = option.some(10)
 let f = match opt {
   option.some(v): fn(x: int) -> int { v + x }
   option.none: fn(x: int) -> int { x }
 }
-puts(f(5))
+puts(f(5))  # output: 15

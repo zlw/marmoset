@@ -1,9 +1,8 @@
 # XF63: N72: Array of trait-typed heterogeneous records
-# output: bob
 trait named {
   name: string
 }
 let a: named = { name: "alice", role: "admin" }
 let b: named = { name: "bob", age: 30 }
 let xs: list[named] = [a, b]
-puts(xs[1].name)
+puts(xs[1].name)  # output: bob

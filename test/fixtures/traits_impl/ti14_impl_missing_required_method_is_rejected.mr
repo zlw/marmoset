@@ -1,6 +1,5 @@
 # TI14: Impl missing required method is rejected
-# error: does not match trait signature
-trait dialog[a] {
+trait dialog[a] {  # error: does not match trait signature
   fn hello(x: a) -> string
   fn goodbye(x: a) -> string
 }

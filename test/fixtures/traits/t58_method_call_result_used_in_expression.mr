@@ -1,5 +1,4 @@
 # T58: Method call result used in expression
-# output: 42
 trait double[a] {
   fn double(x: a) -> int
 }
@@ -10,4 +9,4 @@ impl double for int {
 }
 let n = 21
 let result = n.double()
-puts(result)
+puts(result)  # output: 42

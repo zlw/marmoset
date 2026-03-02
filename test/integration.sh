@@ -151,6 +151,98 @@ detect_fixture_jobs() {
 
 # --- Fixture parsing and execution ---
 
+trim_ws() {
+    local s="$1"
+    s="${s#"${s%%[![:space:]]*}"}"
+    s="${s%"${s##*[![:space:]]}"}"
+    echo "$s"
+}
+
+is_output_anchor_line() {
+    local line
+    line=$(trim_ws "$1")
+
+    if [ -z "$line" ] || [[ "$line" == \#* ]]; then
+        return 1
+    fi
+
+    if [[ "$line" == puts\(* ]] || [[ "$line" == match\ * ]] || [[ "$line" == if\ * ]] || [[ "$line" == if\(* ]]; then
+        return 0
+    fi
+
+    if [[ "$line" =~ ^[A-Za-z_][A-Za-z0-9_.]*[[:space:]]*\( ]]; then
+        case "$line" in
+            let\ *|type\ *|enum\ *|trait\ *|impl\ *|derive\ *|fn\ *|return\ *|else*|while\ *|for\ *|switch\ *)
+                return 1
+                ;;
+        esac
+        return 0
+    fi
+
+    return 1
+}
+
+validate_annotation_placement() {
+    local file="$1"
+    local -a lines
+    while IFS= read -r line || [ -n "$line" ]; do
+        lines+=("$line")
+    done < "$file"
+
+    local total=${#lines[@]}
+    local lineno
+    for ((lineno = 1; lineno <= total; lineno++)); do
+        local line="${lines[$((lineno - 1))]}"
+        if [[ ! "$line" =~ ^[[:space:]]*#[[:space:]]*(output|error|warning|info):[[:space:]]*(.*)$ ]]; then
+            continue
+        fi
+
+        local ann_type="${BASH_REMATCH[1]}"
+        if [ "$ann_type" != "output" ]; then
+            echo "line $lineno: '$ann_type' annotation must be inline with code" >&2
+            return 1
+        fi
+
+        local probe=$((lineno + 1))
+        local found_anchor=false
+        while [ "$probe" -le "$total" ]; do
+            local next_line="${lines[$((probe - 1))]}"
+            local trimmed
+            trimmed=$(trim_ws "$next_line")
+
+            if [ -z "$trimmed" ]; then
+                probe=$((probe + 1))
+                continue
+            fi
+
+            if [[ "$trimmed" =~ ^#[[:space:]]*(output|error|warning|info):[[:space:]]*(.*)$ ]]; then
+                probe=$((probe + 1))
+                continue
+            fi
+
+            if [[ "$trimmed" == \#* ]]; then
+                echo "line $lineno: output annotation is detached from executable line" >&2
+                return 1
+            fi
+
+            if ! is_output_anchor_line "$trimmed"; then
+                echo "line $lineno: output annotation must target an output anchor (puts/match/if/call)" >&2
+                return 1
+            fi
+
+            found_anchor=true
+            break
+        done
+
+        if ! $found_anchor; then
+            echo "line $lineno: output annotation has no following executable anchor" >&2
+            return 1
+        fi
+    done
+
+    return 0
+}
+
 monkey_fixture_in_sync() {
     local fixture_file="$1"
     local example_file="$REPO_ROOT/examples/monkey.mr"
@@ -413,6 +505,14 @@ run_fixture() {
     local file="$1"
     local rel_path="${file#$FIXTURE_ROOT/}"
     local name="${rel_path%.mr}"
+
+    if ! validate_annotation_placement "$file"; then
+        TOTAL=$((TOTAL + 1))
+        echo -n "TEST [$TOTAL] $name ... "
+        echo "✗ FAIL (annotation placement)"
+        FAIL=$((FAIL + 1))
+        return
+    fi
 
     if [ "$rel_path" = "runtime/monkey_example.mr" ] && ! monkey_fixture_in_sync "$file"; then
         TOTAL=$((TOTAL + 1))

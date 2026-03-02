@@ -1,11 +1,8 @@
 # CM12: [BUG-1] Generic enum box used at int, bool, string
-# output: 42
-# output: true
-# output: hello
 enum box[a] { wrap(a) }
 let a: box[int] = box.wrap(42)
 let b: box[bool] = box.wrap(true)
 let c: box[string] = box.wrap("hello")
-match a { box.wrap(v): puts(v) }
-match b { box.wrap(v): puts(v) }
-match c { box.wrap(v): puts(v) }
+match a { box.wrap(v): puts(v) }  # output: 42
+match b { box.wrap(v): puts(v) }  # output: true
+match c { box.wrap(v): puts(v) }  # output: hello

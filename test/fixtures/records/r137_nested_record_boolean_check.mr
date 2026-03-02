@@ -1,5 +1,4 @@
 # R137: Nested record boolean check
-# output: active
 let data = { settings: { active: true }, label: "hello" }
 let result = if (data.settings.active) { "active" } else { "inactive" }
-puts(result)
+puts(result)  # output: active

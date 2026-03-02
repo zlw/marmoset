@@ -1,9 +1,8 @@
 # E90: Simplest possible enum match
-# output: 1
 enum bit { zero one }
 let b = bit.one
 let v = match b {
   bit.zero: 0
   bit.one: 1
 }
-puts(v)
+puts(v)  # output: 1

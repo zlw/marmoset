@@ -1,5 +1,4 @@
 # CS46: H47: recursive fn with match and if combined
-# output: 55
 let fib = fn(n: int) -> int {
   match n {
     0: 0
@@ -7,4 +6,4 @@ let fib = fn(n: int) -> int {
     _: if (n > 1) { fib(n - 1) + fib(n - 2) } else { 0 }
   }
 }
-puts(fib(10))
+puts(fib(10))  # output: 55

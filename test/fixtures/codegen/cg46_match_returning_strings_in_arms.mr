@@ -1,5 +1,4 @@
 # CG46: Match returning strings in arms
-# output: two
 let n = 2
 let s = match n {
   1: "one"
@@ -7,4 +6,4 @@ let s = match n {
   3: "three"
   _: "other"
 }
-puts(s)
+puts(s)  # output: two

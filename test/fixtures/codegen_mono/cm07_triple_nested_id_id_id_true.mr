@@ -1,4 +1,3 @@
 # CM07: Triple nested id(id(id(true)))
-# output: true
 let id = fn(x) { x }
-puts(id(id(id(true))))
+puts(id(id(id(true))))  # output: true

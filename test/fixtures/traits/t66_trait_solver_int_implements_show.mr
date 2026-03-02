@@ -1,7 +1,6 @@
 # T66: Trait solver: int implements show
-# output: 42
 let check = fn[a: show](x: a) -> string {
   x.show()
 }
 let result = check(42)
-puts(result)
+puts(result)  # output: 42

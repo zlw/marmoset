@@ -1,5 +1,4 @@
 # TF03: Constrained generic: mixed field+method constraint, access field
-# output: alice
 type person = { name: string, age: int }
 trait named {
   name: string
@@ -16,4 +15,4 @@ let get_name = fn[t: named + shown](v: t) -> string {
   v.name
 };
 let p: person = { name: "alice", age: 30 }
-puts(get_name(p))
+puts(get_name(p))  # output: alice

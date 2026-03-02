@@ -1,3 +1,2 @@
 # OP29: Bool less-than: false < true
-# output: true
-puts(false < true)
+puts(false < true)  # output: true

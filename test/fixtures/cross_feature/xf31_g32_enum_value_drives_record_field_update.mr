@@ -1,5 +1,4 @@
 # XF31: G32: Enum value drives record field update
-# output: 100
 enum action { set(int) reset }
 let base = { val: 0, tag: "orig" }
 let n = match action.set(100) {
@@ -7,4 +6,4 @@ let n = match action.set(100) {
   action.reset: 0
 }
 let result = { ...base, val: n }
-puts(result.val)
+puts(result.val)  # output: 100

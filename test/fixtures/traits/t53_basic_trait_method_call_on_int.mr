@@ -1,5 +1,4 @@
 # T53: Basic trait method call on int
-# output: 42
 trait show[a] {
   fn show(x: a) -> string
 }
@@ -9,4 +8,4 @@ impl show for int {
   }
 }
 let x = 42
-puts(x.show())
+puts(x.show())  # output: 42

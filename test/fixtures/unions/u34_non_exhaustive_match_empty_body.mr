@@ -1,6 +1,5 @@
 # U34: Non-exhaustive match on enum with no patterns at all should error
-# error: *
-enum option[a] { some(a) none }
+enum option[a] { some(a) none }  # error: *
 let x = option.some(1)
 match x {
 }

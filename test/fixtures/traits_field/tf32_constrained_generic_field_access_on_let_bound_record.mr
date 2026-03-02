@@ -1,5 +1,4 @@
 # TF32: Constrained generic: field access on let-bound record
-# output: stored
 trait has_data {
   data: string
 }
@@ -8,4 +7,4 @@ let extract = fn[t: has_data](v: t) -> string {
 };
 let record = { data: "stored", meta: 123 }
 let result = extract(record)
-puts(result)
+puts(result)  # output: stored

@@ -1,6 +1,5 @@
 # T103: List of trait objects hides non-projected fields on element access
-# error: Record field 'role' not found in type
-trait named {
+trait named {  # error: Record field 'role' not found in type
   name: string
 }
 let a: named = { name: "alice", role: "admin" }

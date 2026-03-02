@@ -1,4 +1,3 @@
 # R001: Record literal + field access
-# output: 30
 let p = { x: 10, y: 20 }
-puts(p.x + p.y)
+puts(p.x + p.y)  # output: 30

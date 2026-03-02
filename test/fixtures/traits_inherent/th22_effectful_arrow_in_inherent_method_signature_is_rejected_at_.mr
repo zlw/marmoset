@@ -1,6 +1,5 @@
 # TH22: Effectful arrow (=>) in inherent method signature is rejected at parse time
-# error: *
-impl int {
+impl int {  # error: *
   fn greet(x: int) => string { "hello" }
 }
 puts(1)

@@ -1,4 +1,3 @@
 # T65: bool implements show (builtin)
-# output: true
 let b = true
-puts(b.show())
+puts(b.show())  # output: true

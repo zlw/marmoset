@@ -1,5 +1,4 @@
 # U27: Match in tail position of function body
-# output: 10
 enum option[a] { some(a) none }
 let unwrap = fn(x: option[int]) -> int {
   match x {
@@ -7,4 +6,4 @@ let unwrap = fn(x: option[int]) -> int {
     option.none: 0
   }
 }
-puts(unwrap(option.some(10)))
+puts(unwrap(option.some(10)))  # output: 10

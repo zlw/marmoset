@@ -1,5 +1,4 @@
 # R133: Record created inside if-branch
-# output: 10
 let flag = true
 let r = if (flag) { { x: 10, y: 20 } } else { { x: 0, y: 0 } }
-puts(r.x)
+puts(r.x)  # output: 10

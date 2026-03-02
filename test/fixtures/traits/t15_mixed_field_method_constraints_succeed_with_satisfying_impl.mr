@@ -1,5 +1,4 @@
 # T15: Mixed field+method constraints succeed with satisfying impl
-# output: alice
 type person = { name: string, age: int }
 trait named {
   name: string
@@ -16,4 +15,4 @@ let get_name = fn[t: named + shown](x: t) -> string {
   x.name
 };
 let p: person = { name: "alice", age: 42 }
-puts(get_name(p))
+puts(get_name(p))  # output: alice

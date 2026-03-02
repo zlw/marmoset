@@ -1,6 +1,5 @@
 # T43: Generic impl constraints are enforced at use sites
-# error: does not satisfy trait named
-trait named {
+trait named {  # error: does not satisfy trait named
   name: string
 }
 trait show[a] {

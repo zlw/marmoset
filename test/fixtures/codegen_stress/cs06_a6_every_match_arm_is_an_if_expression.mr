@@ -1,5 +1,4 @@
 # CS06: A6: every match arm is an if-expression
-# output: 99
 let f = fn(x: int, flag: bool) -> int {
   match x {
     1: if (flag) { 10 } else { 11 }
@@ -8,4 +7,4 @@ let f = fn(x: int, flag: bool) -> int {
     _: if (flag) { 40 } else { 41 }
   }
 }
-puts(f(3, true))
+puts(f(3, true))  # output: 99

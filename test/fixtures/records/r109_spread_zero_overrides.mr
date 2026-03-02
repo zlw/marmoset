@@ -1,5 +1,4 @@
 # R109: Spread with zero overrides (identity spread)
-# output: 3
 let base = { x: 1, y: 2 }
 let copy = { ...base }
-puts(copy.x + copy.y)
+puts(copy.x + copy.y)  # output: 3

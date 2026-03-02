@@ -1,5 +1,4 @@
 # R108: Override field order: one field, spread copies rest
-# output: 30
 let base = { x: 1, y: 20, z: 3 }
 let updated = { ...base, y: 30 }
-puts(updated.y)
+puts(updated.y)  # output: 30

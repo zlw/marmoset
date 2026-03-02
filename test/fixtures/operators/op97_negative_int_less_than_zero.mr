@@ -1,3 +1,2 @@
 # OP97: Negative int less-than zero
-# output: true
-puts(-5 < 0)
+puts(-5 < 0)  # output: true

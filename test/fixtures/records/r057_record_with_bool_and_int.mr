@@ -1,5 +1,4 @@
 # R057: Record with bool and int fields
-# output: 1
 let r = { flag: true, count: 1 }
 let out = if (r.flag) { r.count } else { 0 }
-puts(out)
+puts(out)  # output: 1

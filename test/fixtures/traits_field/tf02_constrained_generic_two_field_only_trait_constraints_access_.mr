@@ -1,6 +1,4 @@
 # TF02: Constrained generic: two field-only trait constraints, access each field
-# output: hello
-# output: 42
 trait has_name {
   name: string
 }
@@ -14,5 +12,5 @@ let get_age = fn[t: has_name + has_age](v: t) -> int {
   v.age
 };
 let p = { name: "hello", age: 42, active: true }
-puts(describe(p))
-puts(get_age(p))
+puts(describe(p))  # output: hello
+puts(get_age(p))  # output: 42

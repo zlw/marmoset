@@ -1,4 +1,3 @@
 # E69: Unknown enum name gives unbound variable
-# error: Unbound
-let x = nonexistent.foo
+let x = nonexistent.foo  # error: Unbound
 puts(x)

@@ -1,6 +1,5 @@
 # T63: int implements eq (builtin)
-# output: true
 let a = 42
 let b = 42
 let result = a.eq(b)
-puts(result)
+puts(result)  # output: true

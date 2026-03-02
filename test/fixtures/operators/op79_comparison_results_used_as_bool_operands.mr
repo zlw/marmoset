@@ -1,5 +1,4 @@
 # OP79: Comparison results used as bool operands
-# output: true
 let a = 1 < 2
 let b = 3 > 0
-puts(a == b)
+puts(a == b)  # output: true

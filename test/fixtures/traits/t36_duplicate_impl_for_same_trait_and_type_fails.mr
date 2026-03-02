@@ -1,6 +1,5 @@
 # T36: Duplicate impl for same trait and type fails
-# error: Duplicate impl for trait
-trait show[a] {
+trait show[a] {  # error: Duplicate impl for trait
        fn show(x: a) -> string
      }
      impl show for int {

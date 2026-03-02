@@ -1,5 +1,4 @@
 # R131: Deeply nested fn chain field access
-# output: 42
 let a = fn() { { inner: { val: 42 } } }
 let r = a()
-puts(r.inner.val)
+puts(r.inner.val)  # output: 42

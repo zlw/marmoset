@@ -1,8 +1,7 @@
 # T97: Trait object stored in a record field via annotation
-# output: bob
 trait named {
   name: string
 }
 let person: named = { name: "bob", age: 25 }
 let wrapper = { inner: person }
-puts(wrapper.inner.name)
+puts(wrapper.inner.name)  # output: bob

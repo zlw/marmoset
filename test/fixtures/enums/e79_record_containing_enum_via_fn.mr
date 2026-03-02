@@ -1,8 +1,7 @@
 # E79: Record containing enum accessed through function
-# output: 5
 enum option[a] { some(a) none }
 let r = { value: option.some(5), label: "test" }
 let extract = fn(opt: option[int]) -> int {
   match opt { option.some(v): v option.none: 0 }
 }
-puts(extract(r.value))
+puts(extract(r.value))  # output: 5

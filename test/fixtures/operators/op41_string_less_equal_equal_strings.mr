@@ -1,3 +1,2 @@
 # OP41: String less-equal (equal strings)
-# output: true
-puts("hello" <= "hello")
+puts("hello" <= "hello")  # output: true

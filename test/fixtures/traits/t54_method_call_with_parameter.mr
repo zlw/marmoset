@@ -1,5 +1,4 @@
 # T54: Method call with parameter
-# output: true
 trait eq[a] {
   fn eq(x: a, y: a) -> bool
 }
@@ -10,4 +9,4 @@ impl eq for int {
 }
 let a = 42
 let b = 42
-puts(a.eq(b))
+puts(a.eq(b))  # output: true

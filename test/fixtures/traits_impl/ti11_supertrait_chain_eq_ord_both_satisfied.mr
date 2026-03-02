@@ -1,5 +1,4 @@
 # TI11: Supertrait chain: eq -> ord, both satisfied
-# output: 0
 trait eq[a] {
   fn eq(x: a, y: a) -> bool
 }
@@ -14,4 +13,4 @@ impl ord for point {
   fn compare(a: point, b: point) -> int { 0 }
 }
 let p: point = { x: 1 }
-puts(p.compare(p))
+puts(p.compare(p))  # output: 0

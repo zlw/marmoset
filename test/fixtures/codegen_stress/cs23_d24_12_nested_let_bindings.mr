@@ -1,5 +1,4 @@
 # CS23: D24: 12 nested let bindings
-# output: 78
 let a = 1
 let b = a + 2
 let c = b + 3
@@ -12,4 +11,4 @@ let i = h + 9
 let j = i + 10
 let k = j + 11
 let l = k + 12
-puts(l)
+puts(l)  # output: 78

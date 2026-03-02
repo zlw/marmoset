@@ -1,6 +1,4 @@
 # CS47: H48: [BUG-1] two enum matches in function body
-# output: 42
-# output: 99
 enum option[a] { some(a) none }
 let f = fn(a: option[int], b: option[int]) => int {
   let x = match a {
@@ -15,4 +13,6 @@ let f = fn(a: option[int], b: option[int]) => int {
   puts(y)
   x + y
 }
+# output: 42
+# output: 99
 f(option.some(42), option.some(99))

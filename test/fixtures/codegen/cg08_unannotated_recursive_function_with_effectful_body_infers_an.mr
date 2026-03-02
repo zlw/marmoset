@@ -1,7 +1,4 @@
 # CG08: Unannotated recursive function with effectful body infers and runs as effectful
-# output: 2
-# output: 1
-# output: 0
 let loop = fn(n: int) {
   if (n == 0) {
     0
@@ -10,4 +7,7 @@ let loop = fn(n: int) {
     loop(n - 1)
   }
 }
+# output: 2
+# output: 1
+# output: 0
 puts(loop(2))

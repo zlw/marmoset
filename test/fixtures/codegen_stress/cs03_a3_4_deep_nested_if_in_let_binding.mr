@@ -1,8 +1,7 @@
 # CS03: A3: 4-deep nested if in let binding
-# output: deep
 let a = true
 let b = true
 let c = true
 let d = true
 let x = if (a) { if (b) { if (c) { if (d) { "deep" } else { "3" } } else { "2" } } else { "1" } } else { "0" }
-puts(x)
+puts(x)  # output: deep

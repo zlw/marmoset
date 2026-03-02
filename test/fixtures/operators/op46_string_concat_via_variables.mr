@@ -1,5 +1,4 @@
 # OP46: String concat via variables
-# output: foobar
 let a = "foo"
 let b = "bar"
-puts(a + b)
+puts(a + b)  # output: foobar

@@ -1,5 +1,4 @@
 # R136: Record bool field in if condition
-# output: yes
 let config = { enabled: true, name: "test" }
 let out = if (config.enabled) { "yes" } else { "no" }
-puts(out)
+puts(out)  # output: yes

@@ -1,6 +1,4 @@
 # TH28: Two different types each with inherent methods
-# output: 30
-# output: hello
 type point = { x: int, y: int }
 type label = { text: string }
 impl point {
@@ -11,5 +9,5 @@ impl label {
 }
 let p: point = { x: 10, y: 20 }
 let l: label = { text: "hello" }
-puts(p.sum())
-puts(l.get_text())
+puts(p.sum())  # output: 30
+puts(l.get_text())  # output: hello

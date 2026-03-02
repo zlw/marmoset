@@ -1,6 +1,5 @@
 # T111: Diamond supertrait hides non-declared fields
-# error: Record field 'extra' not found in type
-trait named {
+trait named {  # error: Record field 'extra' not found in type
   name: string
 }
 trait worker: named {

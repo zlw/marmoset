@@ -1,9 +1,8 @@
 # TH24: Inherent method result used in arithmetic
-# output: 14
 impl int {
   fn double(x: int) -> int { x + x }
 }
 let n = 3
 let a = n.double()
 let b = a + 8
-puts(b)
+puts(b)  # output: 14

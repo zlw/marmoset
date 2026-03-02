@@ -1,6 +1,5 @@
 # E56: Multi-pattern arm hits codegen limitation
-# error: Multiple patterns
-enum color { red orange yellow green blue purple }
+enum color { red orange yellow green blue purple }  # error: Multiple patterns
 let c = color.orange
 let temp = match c {
   color.red | color.orange | color.yellow: "warm"

@@ -1,6 +1,5 @@
 # CG32: if-expression with function calls in branches
-# output: 11
 let inc = fn(x: int) -> int { x + 1 }
 let dec = fn(x: int) -> int { x - 1 }
 let result = if (true) { inc(10) } else { dec(10) }
-puts(result)
+puts(result)  # output: 11

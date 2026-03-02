@@ -1,5 +1,4 @@
 # U38: Match on result of a prior match (via let)
-# output: found
 enum option[a] { some(a) none }
 let x: option[option[int]] = option.some(option.some(99))
 let inner = match x {
@@ -10,4 +9,4 @@ let out = match inner {
   option.some(_): "found"
   option.none: "empty"
 }
-puts(out)
+puts(out)  # output: found

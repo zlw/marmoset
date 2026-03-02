@@ -1,3 +1,2 @@
 # OP47: Int addition
-# output: 7
-puts(3 + 4)
+puts(3 + 4)  # output: 7

@@ -1,5 +1,4 @@
 # TI09: Impl method returns different type than receiver
-# output: 3
 type pair = { a: int, b: int }
 trait sum[a] {
   fn sum(x: a) -> int
@@ -10,4 +9,4 @@ impl sum for pair {
   }
 }
 let p: pair = { a: 1, b: 2 }
-puts(p.sum())
+puts(p.sum())  # output: 3

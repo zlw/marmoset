@@ -1,5 +1,4 @@
 # U18: 8-variant enum with mixed field counts
-# output: 42
 enum ast {
   num(int)
   str(string)
@@ -21,4 +20,4 @@ let out = match x {
   ast.pair(a, b): a + b
   ast.triple(a, b, c): a + b + c
 }
-puts(out)
+puts(out)  # output: 42

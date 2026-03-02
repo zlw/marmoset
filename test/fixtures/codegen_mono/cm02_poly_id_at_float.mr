@@ -1,4 +1,3 @@
 # CM02: Poly id at float
-# output: 3.14
 let id = fn(x) { x }
-puts(id(3.14))
+puts(id(3.14))  # output: 3.14

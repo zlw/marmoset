@@ -1,7 +1,6 @@
 # CG64: Match variable binding in let binding
-# output: 142
 let x = 42
 let result = match x {
   n: n + 100
 }
-puts(result)
+puts(result)  # output: 142

@@ -1,6 +1,5 @@
 # TI16: Impl for field-only trait is rejected
-# error: field-only and cannot have impl blocks
-trait named {
+trait named {  # error: field-only and cannot have impl blocks
   name: string
 }
 impl named for int {

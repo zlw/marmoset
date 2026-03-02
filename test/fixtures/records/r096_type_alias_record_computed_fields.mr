@@ -1,6 +1,5 @@
 # R096: Type alias record with computed field values
-# output: 40
 type result = { val: int, doubled: int }
 let make_result = fn(n: int) -> result { { val: n, doubled: n * 2 } }
 let r = make_result(10)
-puts(r.val + r.doubled + r.val)
+puts(r.val + r.doubled + r.val)  # output: 40

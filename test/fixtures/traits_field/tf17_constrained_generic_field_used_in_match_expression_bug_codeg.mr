@@ -1,6 +1,5 @@
 # TF17: Constrained generic field used in match expression (BUG: codegen missing return)
-# error: missing return
-trait has_flag {
+trait has_flag {  # error: missing return
   flag: bool
 }
 let check = fn[t: has_flag](v: t) -> string {

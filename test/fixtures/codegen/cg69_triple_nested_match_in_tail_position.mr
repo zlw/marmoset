@@ -1,5 +1,4 @@
 # CG69: Triple-nested match in tail position
-# output: 321
 let f = fn(x: int, y: int, z: int) -> int {
   match x {
     1: match y {
@@ -19,4 +18,4 @@ let f = fn(x: int, y: int, z: int) -> int {
     _: 0
   }
 }
-puts(f(3, 2, 1))
+puts(f(3, 2, 1))  # output: 321

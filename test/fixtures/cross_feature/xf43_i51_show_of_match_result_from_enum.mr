@@ -1,5 +1,4 @@
 # XF43: I51: Show of match result from enum
-# output: 42
 enum option_int { some(int) none }
 let unwrap_show = fn(v: option_int) -> string {
   let n = match v {
@@ -8,4 +7,4 @@ let unwrap_show = fn(v: option_int) -> string {
   }
   n.show()
 }
-puts(unwrap_show(option_int.some(42)))
+puts(unwrap_show(option_int.some(42)))  # output: 42

@@ -1,6 +1,4 @@
 # TH39: Concrete inherent impl target takes precedence over matching generic target
-# output: concrete
-# output: failure
 enum result[a, b] {
   success(a)
   failure(b)
@@ -18,5 +16,5 @@ impl result[int, string] {
 }
 let x = if (true) { result.success(1) } else { result.failure("boom") }
 let y = if (false) { result.success(true) } else { result.failure("boom") }
-puts(x.tag())
-puts(y.tag())
+puts(x.tag())  # output: concrete
+puts(y.tag())  # output: failure

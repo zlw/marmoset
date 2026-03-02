@@ -1,5 +1,4 @@
 # TH02: Inherent method on enum type
-# output: 42
 enum box { val(int) }
 impl box {
   fn unwrap(b: box) -> int {
@@ -9,4 +8,4 @@ impl box {
   }
 }
 let b = box.val(42)
-puts(b.unwrap())
+puts(b.unwrap())  # output: 42

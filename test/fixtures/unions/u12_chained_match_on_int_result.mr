@@ -1,5 +1,4 @@
 # U12: Match on int result of prior enum match (chained)
-# output: yes
 enum option[a] { some(a) none }
 let x: option[int] = option.some(10)
 let y: option[int] = option.some(20)
@@ -10,4 +9,4 @@ let out = match sum {
   30: "yes"
   _: "no"
 }
-puts(out)
+puts(out)  # output: yes

@@ -1,5 +1,4 @@
 # R054: Two records with identical shape share Go type
-# output: 30
 let a = { x: 10, y: 20 }
 let b = { x: 100, y: 200 }
-puts(a.x + a.y)
+puts(a.x + a.y)  # output: 30

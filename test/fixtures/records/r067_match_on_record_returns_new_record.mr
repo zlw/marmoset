@@ -1,8 +1,7 @@
 # R067: Match on record returns new record
-# output: 100
 let input = { x: 10, y: 20 }
 let output = match input {
   { x:, y: }: { val: x * y / 2 }
   _: { val: 0 }
 }
-puts(output.val)
+puts(output.val)  # output: 100

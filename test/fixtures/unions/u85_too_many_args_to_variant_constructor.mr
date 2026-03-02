@@ -1,5 +1,4 @@
 # U85: Too many args to variant constructor
-# error: *
-enum option[a] { some(a) none }
+enum option[a] { some(a) none }  # error: *
 let x = option.some(1, 2)
 x

@@ -1,8 +1,7 @@
 # E54: Variable pattern in enum match allows unused binding
-# output: 42
 enum option[a] { some(a) none }
 let x = option.some(5)
 let v = match x {
   y: 42
 }
-puts(v)
+puts(v)  # output: 42

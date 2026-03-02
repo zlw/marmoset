@@ -1,5 +1,4 @@
 # T04: Method-only trait without type parameter
-# output: 42
 trait ping {
   fn ping(x: int) -> int
 }
@@ -8,4 +7,4 @@ impl ping for int {
     x
   }
 }
-puts(42.ping())
+puts(42.ping())  # output: 42

@@ -1,5 +1,4 @@
 # XF58: M66: Ord constraint accesses eq supertrait method
-# output: true
 type point = { x: int }
 impl eq for point {
   fn eq(a: point, b: point) -> bool {
@@ -16,4 +15,4 @@ let same = fn[a: ord](x: a, y: a) -> bool {
 }
 let p1: point = { x: 42 }
 let p2: point = { x: 42 }
-puts(same(p1, p2))
+puts(same(p1, p2))  # output: true

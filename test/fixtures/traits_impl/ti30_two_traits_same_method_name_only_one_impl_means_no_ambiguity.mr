@@ -1,5 +1,4 @@
 # TI30: Two traits same method name, only one impl means no ambiguity
-# output: alpha
 trait alpha_trait[a] {
   fn tag(x: a) -> string
 }
@@ -9,4 +8,4 @@ trait beta_trait[a] {
 impl alpha_trait for int {
   fn tag(x: int) -> string { "alpha" }
 }
-puts(1.tag())
+puts(1.tag())  # output: alpha

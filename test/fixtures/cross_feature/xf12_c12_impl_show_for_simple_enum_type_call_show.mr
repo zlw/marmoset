@@ -1,5 +1,4 @@
 # XF12: C12: Impl show for simple enum type, call show()
-# output: red
 enum color { red green blue }
 impl show for color {
   fn show(x: color) -> string {
@@ -10,4 +9,4 @@ impl show for color {
     }
   }
 }
-puts(color.red.show())
+puts(color.red.show())  # output: red

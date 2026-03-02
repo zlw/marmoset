@@ -1,9 +1,8 @@
 # TH29: Inherent method that creates and returns a new record
-# output: 99
 type box = { value: int }
 impl int {
   fn boxed(x: int) -> box { { value: x } }
 }
 let n = 99
 let b = n.boxed()
-puts(b.value)
+puts(b.value)  # output: 99

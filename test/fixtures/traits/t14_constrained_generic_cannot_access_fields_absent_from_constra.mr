@@ -1,6 +1,5 @@
 # T14: Constrained generic cannot access fields absent from constraints
-# error: not guaranteed by constraints
-trait named {
+trait named {  # error: not guaranteed by constraints
   name: string
 }
 let get_age = fn[t: named](x: t) -> int {

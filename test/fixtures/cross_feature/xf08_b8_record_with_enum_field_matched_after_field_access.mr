@@ -1,9 +1,8 @@
 # XF08: B8: Record with enum field matched after field access
-# output: found
 enum status { ok fail }
 let rec = { name: "test", status: status.ok }
 let result = match rec.status {
   status.ok: "found"
   status.fail: "missing"
 }
-puts(result)
+puts(result)  # output: found

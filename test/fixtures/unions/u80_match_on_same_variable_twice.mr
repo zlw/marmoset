@@ -1,7 +1,6 @@
 # U80: Match on same variable twice in a row
-# output: 42
 enum option[a] { some(a) none }
 let x = option.some(42)
 let a = match x { option.some(v): v option.none: 0 }
 let b = match x { option.some(_): "some" option.none: "none" }
-puts(a)
+puts(a)  # output: 42

@@ -1,5 +1,4 @@
 # TF20: Constrained generic: return field value from function
-# output: result
 trait has_value {
   value: string
 }
@@ -7,4 +6,4 @@ let extract = fn[t: has_value](v: t) -> string {
   v.value
 };
 let r = { value: "result" }
-puts(extract(r))
+puts(extract(r))  # output: result

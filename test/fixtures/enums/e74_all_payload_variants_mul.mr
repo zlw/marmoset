@@ -1,5 +1,4 @@
 # E74: All-payload variants - mul branch
-# output: 200
 enum expr { lit(int) add(int, int) mul(int, int) }
 let e = expr.mul(10, 20)
 let v = match e {
@@ -7,4 +6,4 @@ let v = match e {
   expr.add(a, b): a + b
   expr.mul(a, b): a * b
 }
-puts(v)
+puts(v)  # output: 200

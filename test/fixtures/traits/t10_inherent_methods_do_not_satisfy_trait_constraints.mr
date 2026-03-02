@@ -1,6 +1,5 @@
 # T10: Inherent methods do not satisfy trait constraints
-# error: does not implement trait show
-type point = { x: int }
+type point = { x: int }  # error: does not implement trait show
 impl point {
   fn show(p: point) -> string {
     "point"

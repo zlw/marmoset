@@ -1,5 +1,4 @@
 # T55: Impl method body can return direct record literal
-# output: 5
 type box = { value: int }
 trait wrap[a] {
   fn wrap(x: a) -> box
@@ -8,4 +7,4 @@ impl wrap for int {
   fn wrap(x: int) -> box { { value: x } }
 }
 let b = 5.wrap()
-puts(b.value)
+puts(b.value)  # output: 5

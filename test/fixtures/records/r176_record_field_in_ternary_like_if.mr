@@ -1,6 +1,5 @@
 # R176: Record field in ternary-like if
-# output: bigger
 let r = { threshold: 10 }
 let val = 15
 let out = if (val > r.threshold) { "bigger" } else { "smaller" }
-puts(out)
+puts(out)  # output: bigger

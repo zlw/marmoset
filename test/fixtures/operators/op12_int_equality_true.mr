@@ -1,3 +1,2 @@
 # OP12: Int equality true
-# output: true
-puts(42 == 42)
+puts(42 == 42)  # output: true

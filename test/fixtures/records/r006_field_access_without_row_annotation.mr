@@ -1,5 +1,4 @@
 # R006: Field access without row annotation works
-# output: 5
 let p = { x: 5, y: 10, z: 20 }
 let get_x = fn(r) { r.x }
-puts(get_x(p))
+puts(get_x(p))  # output: 5

@@ -1,6 +1,4 @@
 # TI03: Multiple impls for same type (different traits)
-# output: 42
-# output: true
 trait show[a] {
   fn show(x: a) -> string
 }
@@ -13,5 +11,5 @@ impl show for int {
 impl double for int {
   fn double(x: int) -> int { x + x }
 }
-puts(1.show())
-puts(3.double() == 6)
+puts(1.show())  # output: 42
+puts(3.double() == 6)  # output: true

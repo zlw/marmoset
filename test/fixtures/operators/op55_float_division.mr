@@ -1,3 +1,2 @@
 # OP55: Float division
-# output: 2.5
-puts(5.0 / 2.0)
+puts(5.0 / 2.0)  # output: 2.5

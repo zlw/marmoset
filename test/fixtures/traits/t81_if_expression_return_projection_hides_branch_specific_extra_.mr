@@ -1,6 +1,5 @@
 # T81: If-expression return projection hides branch-specific extra fields
-# error: Record field 'extra1' not found in type
-trait named {
+trait named {  # error: Record field 'extra1' not found in type
   name: string
 }
 let pick = fn(flag: bool) -> named {

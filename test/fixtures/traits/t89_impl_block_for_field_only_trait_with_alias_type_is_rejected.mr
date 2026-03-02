@@ -1,6 +1,5 @@
 # T89: Impl block for field-only trait with alias type is rejected
-# error: field-only and cannot have impl blocks
-trait named {
+trait named {  # error: field-only and cannot have impl blocks
   name: string
 }
 type person = { name: string, age: int }

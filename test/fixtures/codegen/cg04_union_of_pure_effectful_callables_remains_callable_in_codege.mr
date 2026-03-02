@@ -1,6 +1,4 @@
 # CG04: Union of pure/effectful callables remains callable in codegen
-# output: 1
-# output: 3
 let choose = fn(flag: bool) {
   if (flag) {
     fn(x: int) -> int { x + 1 }
@@ -9,4 +7,6 @@ let choose = fn(flag: bool) {
   }
 }
 let f = choose(false)
+# output: 1
+# output: 3
 puts(f(1))

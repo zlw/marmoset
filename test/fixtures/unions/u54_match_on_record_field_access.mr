@@ -1,8 +1,7 @@
 # U54: Match on record field access
-# output: big
 let r = { x: 100 }
 let out = match r.x {
   0: "zero"
   _: "big"
 }
-puts(out)
+puts(out)  # output: big

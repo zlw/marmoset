@@ -1,5 +1,4 @@
 # T115: Two different trait-typed params in one function
-# output: alice 42
 trait named {
   name: string
 }
@@ -9,4 +8,4 @@ trait scored {
 let describe = fn(n: named, s: scored) -> string {
   n.name + " " + s.score.show()
 }
-puts(describe({ name: "alice", id: 1 }, { score: 42, rank: "A" }))
+puts(describe({ name: "alice", id: 1 }, { score: 42, rank: "A" }))  # output: alice 42

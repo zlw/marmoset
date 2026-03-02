@@ -1,3 +1,2 @@
 # OP10: Int greater-equal true (equal)
-# output: true
-puts(7 >= 7)
+puts(7 >= 7)  # output: true

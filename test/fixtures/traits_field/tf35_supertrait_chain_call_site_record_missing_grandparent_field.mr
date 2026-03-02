@@ -1,6 +1,5 @@
 # TF35: Supertrait chain: call site record missing grandparent field
-# error: missing-field
-trait has_a {
+trait has_a {  # error: missing-field
   a: int
 }
 trait has_b: has_a {

@@ -1,5 +1,4 @@
 # U59: Same variable name in nested match arms
-# output: inner
 enum option[a] { some(a) none }
 let x: option[option[string]] = option.some(option.some("inner"))
 let out = match x {
@@ -9,4 +8,4 @@ let out = match x {
   }
   option.none: "none1"
 }
-puts(out)
+puts(out)  # output: inner

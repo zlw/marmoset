@@ -1,5 +1,4 @@
 # E75: Function with enum match in body
-# output: matched
 enum option[a] { some(a) none }
 let describe = fn(x: option[int]) -> string {
   match x {
@@ -7,4 +6,4 @@ let describe = fn(x: option[int]) -> string {
     option.none: "empty"
   }
 }
-puts(describe(option.some(42)))
+puts(describe(option.some(42)))  # output: matched

@@ -1,5 +1,4 @@
 # TF06: Constrained generic: record with extra fields satisfies constraint
-# output: hi
 trait has_name {
   name: string
 }
@@ -7,4 +6,4 @@ let get_name = fn[t: has_name](v: t) -> string {
   v.name
 };
 let r = { name: "hi", age: 42, active: true, score: 100 }
-puts(get_name(r))
+puts(get_name(r))  # output: hi

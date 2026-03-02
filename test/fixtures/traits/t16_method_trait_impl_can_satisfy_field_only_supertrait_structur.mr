@@ -1,5 +1,4 @@
 # T16: Method trait impl can satisfy field-only supertrait structurally
-# output: alice
 type person = { name: string, age: int }
 trait named {
   name: string
@@ -13,4 +12,4 @@ impl shown for person {
   }
 }
 let p: person = { name: "alice", age: 42 }
-puts(p.show())
+puts(p.show())  # output: alice

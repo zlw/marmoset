@@ -1,3 +1,2 @@
 # OP15: Int not-equal false
-# output: false
-puts(5 != 5)
+puts(5 != 5)  # output: false

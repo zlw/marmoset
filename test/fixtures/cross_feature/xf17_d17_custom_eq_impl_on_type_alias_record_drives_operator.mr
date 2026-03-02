@@ -1,5 +1,4 @@
 # XF17: D17: Custom eq impl on type-alias record drives == operator
-# output: false
 type point = { x: int, y: int }
 impl eq for point {
   fn eq(a: point, b: point) -> bool {
@@ -8,4 +7,4 @@ impl eq for point {
 }
 let p1: point = { x: 1, y: 2 }
 let p2: point = { x: 1, y: 2 }
-puts(p1 == p2)
+puts(p1 == p2)  # output: false

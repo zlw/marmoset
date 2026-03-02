@@ -1,9 +1,8 @@
 # R151: 3-level nested records with spread at each
-# output: 999
 let deep = { val: 1 }
 let deep2 = { ...deep, val: 999 }
 let mid = { inner: deep2, tag: "a" }
 let mid2 = { ...mid, tag: "b" }
 let outer = { data: mid2, id: 1 }
 let outer2 = { ...outer, id: 2 }
-puts(outer2.data.inner.val)
+puts(outer2.data.inner.val)  # output: 999

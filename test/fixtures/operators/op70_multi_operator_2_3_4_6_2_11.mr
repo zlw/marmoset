@@ -1,3 +1,2 @@
 # OP70: Multi-operator: 2 + 3 * 4 - 6 / 2 = 11
-# output: 11
-puts(2 + 3 * 4 - 6 / 2)
+puts(2 + 3 * 4 - 6 / 2)  # output: 11

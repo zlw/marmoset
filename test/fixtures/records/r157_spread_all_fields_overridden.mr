@@ -1,5 +1,4 @@
 # R157: Spread base with all fields overridden
-# output: 30
 let base = { x: 1, y: 2 }
 let full_override = { ...base, x: 10, y: 20 }
-puts(full_override.x + full_override.y)
+puts(full_override.x + full_override.y)  # output: 30

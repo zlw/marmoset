@@ -1,7 +1,6 @@
 # E41: Two matches on same enum type at top level
-# output: 3
 enum color { red green blue }
 let c = color.green
 let a = match c { color.red: 1 color.green: 2 color.blue: 3 }
 let b = match c { color.red: 10 color.green: 1 color.blue: 0 }
-puts(a + b)
+puts(a + b)  # output: 3

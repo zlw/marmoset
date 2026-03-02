@@ -1,5 +1,4 @@
 # E36: List of simple enum values
-# output: 3
 enum color { red green blue }
 let colors = [color.red, color.green, color.blue]
-puts(len(colors))
+puts(len(colors))  # output: 3

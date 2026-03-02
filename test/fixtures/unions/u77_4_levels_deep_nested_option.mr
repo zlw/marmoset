@@ -1,5 +1,4 @@
 # U77: 4 levels deep nested option (all in nested match)
-# output: 7
 enum option[a] { some(a) none }
 let x: option[option[option[option[int]]]] = option.some(option.some(option.some(option.some(7))))
 let d = match x {
@@ -15,4 +14,4 @@ let d = match x {
   }
   option.none: 0
 }
-puts(d)
+puts(d)  # output: 7

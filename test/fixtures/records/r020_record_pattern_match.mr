@@ -1,8 +1,7 @@
 # R020: Record pattern match
-# output: 30
 let p = { x: 10, y: 20 }
 let result = match p {
   { x:, y: }: x + y
   _: 0
 }
-puts(result)
+puts(result)  # output: 30

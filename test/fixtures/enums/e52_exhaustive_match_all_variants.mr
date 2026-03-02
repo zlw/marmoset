@@ -1,5 +1,4 @@
 # E52: Exhaustive match on all variants passes
-# output: 3
 enum direction { north south east west }
 let d = direction.east
 let v = match d {
@@ -8,4 +7,4 @@ let v = match d {
   direction.east: 3
   direction.west: 4
 }
-puts(v)
+puts(v)  # output: 3

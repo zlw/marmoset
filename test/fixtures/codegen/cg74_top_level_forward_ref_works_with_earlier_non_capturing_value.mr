@@ -1,6 +1,5 @@
 # CG74: Top-level forward ref works with earlier non-capturing value binding
-# output: 7
 let seed = 1
 let main_val = add_three(3)
 let add_three = fn(x: int) -> int { x + 3 }
-puts(main_val + seed)
+puts(main_val + seed)  # output: 7

@@ -1,6 +1,5 @@
 # TI10: Trait method on type without impl fails
-# error: No method 'describe' found for type
-trait describe[a] {
+trait describe[a] {  # error: No method 'describe' found for type
   fn describe(x: a) -> string
 }
 impl describe for int {

@@ -1,3 +1,2 @@
 # OP108: String multiplication should fail (not num)
-# error: missing-impl
-puts("a" * "b")
+puts("a" * "b")  # error: missing-impl

@@ -1,8 +1,7 @@
 # TI34: Generic eq impl drives == for list[int]
-# output: true
 impl eq[b: eq] for list[b] {
   fn eq(x: list[b], y: list[b]) -> bool {
     len(x) == len(y)
   }
 }
-puts([1, 2] == [3, 4])
+puts([1, 2] == [3, 4])  # output: true

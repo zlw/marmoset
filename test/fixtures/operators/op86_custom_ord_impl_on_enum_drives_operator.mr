@@ -1,5 +1,4 @@
 # OP86: Custom ord impl on enum drives < operator
-# output: true
 enum rank { low mid high }
 impl eq for rank {
   fn eq(x: rank, y: rank) -> bool { false }
@@ -9,4 +8,4 @@ impl ord for rank {
     ordering.less
   }
 }
-puts(rank.high < rank.low)
+puts(rank.high < rank.low)  # output: true

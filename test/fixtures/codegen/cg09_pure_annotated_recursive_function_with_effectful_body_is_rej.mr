@@ -1,6 +1,5 @@
 # CG09: Pure annotated recursive function with effectful body is rejected
-# error: Pure function (declared with ->) cannot call effectful operations
-let loop = fn(n: int) -> int {
+let loop = fn(n: int) -> int {  # error: Pure function (declared with ->) cannot call effectful operations
   if (n == 0) {
     0
   } else {

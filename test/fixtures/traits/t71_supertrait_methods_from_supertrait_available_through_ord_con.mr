@@ -1,5 +1,4 @@
 # T71: Supertrait: methods from supertrait available through ord constraint
-# output: true
 trait eq[a] {
   fn eq(x: a, y: a) -> bool
 }
@@ -22,4 +21,4 @@ let eq_via_ord = fn[a: ord](x: a, y: a) -> bool {
 }
 let p1: point = { x: 1 }
 let p2: point = { x: 1 }
-puts(eq_via_ord(p1, p2))
+puts(eq_via_ord(p1, p2))  # output: true

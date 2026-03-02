@@ -1,5 +1,4 @@
 # TI27: Impl for bool primitive
-# output: yes
 trait yesno[a] {
   fn yesno(x: a) -> string
 }
@@ -8,4 +7,4 @@ impl yesno for bool {
     if (b) { "yes" } else { "no" }
   }
 }
-puts(true.yesno())
+puts(true.yesno())  # output: yes

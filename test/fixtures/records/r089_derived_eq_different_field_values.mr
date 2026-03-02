@@ -1,5 +1,4 @@
 # R089: Derived eq on records with different field values
-# output: false
 trait eq[a] {
   fn eq(x: a, y: a) -> bool
 }
@@ -7,4 +6,4 @@ type point = { x: int, y: int }
 derive eq for point;
 let p1: point = { x: 1, y: 2 }
 let p2: point = { x: 1, y: 3 }
-puts(p1.eq(p2))
+puts(p1.eq(p2))  # output: false

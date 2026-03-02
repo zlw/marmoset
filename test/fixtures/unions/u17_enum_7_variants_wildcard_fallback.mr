@@ -1,5 +1,4 @@
 # U17: Enum with 7 variants and wildcard fallback
-# output: weekend
 enum day { mon tue wed thu fri sat sun }
 let d = day.sun
 let kind = match d {
@@ -10,4 +9,4 @@ let kind = match d {
   day.fri: "weekday"
   _: "weekend"
 }
-puts(kind)
+puts(kind)  # output: weekend

@@ -1,3 +1,2 @@
 # OP28: Bool not-equal false
-# output: false
-puts(true != true)
+puts(true != true)  # output: false

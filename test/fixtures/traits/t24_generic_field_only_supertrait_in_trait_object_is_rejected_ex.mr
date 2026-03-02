@@ -1,6 +1,5 @@
 # T24: Generic field-only supertrait in trait object is rejected explicitly
-# error: generic field-only supertrait 'tagged' is not supported
-trait tagged[a] {
+trait tagged[a] {  # error: generic field-only supertrait 'tagged' is not supported
   tag: a
 }
 trait tagged_like: tagged {

@@ -1,5 +1,4 @@
 # E46: Enum variant with if-expression as payload
-# output: 100
 enum option[a] { some(a) none }
 let flag = true
 let x = option.some(if (flag) { 100 } else { 0 })
@@ -7,4 +6,4 @@ let result = match x {
   option.some(v): v
   option.none: 0
 }
-puts(result)
+puts(result)  # output: 100

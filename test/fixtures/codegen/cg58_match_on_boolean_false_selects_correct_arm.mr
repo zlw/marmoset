@@ -1,8 +1,7 @@
 # CG58: Match on boolean false selects correct arm
-# output: 0
 let flag = false
 let x = match flag {
   true: 1
   false: 0
 }
-puts(x)
+puts(x)  # output: 0

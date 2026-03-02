@@ -1,5 +1,4 @@
 # XF55: L63: Record field computed from enum match
-# output: 42
 enum option_int { some(int) none }
 let v = option_int.some(42)
 let n = match v {
@@ -7,4 +6,4 @@ let n = match v {
   option_int.none: 0
 }
 let r = { val: n }
-puts(r.val)
+puts(r.val)  # output: 42

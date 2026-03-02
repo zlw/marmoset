@@ -1,6 +1,5 @@
 # TF26: Unconstrained param accessing field on non-record type
-# error: Cannot unify
-trait has_secret {
+trait has_secret {  # error: Cannot unify
   secret: int
 }
 let leak = fn(v) { v.secret };

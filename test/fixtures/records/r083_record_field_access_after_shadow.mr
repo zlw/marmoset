@@ -1,5 +1,4 @@
 # R083: Record field access after name shadow
-# output: 1
 let x = 99
 let r = { x: 1, y: 2 }
-puts(r.x)
+puts(r.x)  # output: 1

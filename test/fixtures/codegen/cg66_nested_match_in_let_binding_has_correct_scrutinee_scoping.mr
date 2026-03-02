@@ -1,5 +1,4 @@
 # CG66: Nested match in let binding has correct __scrutinee scoping
-# output: 230
 let x = 2
 let y = 3
 let result = match x {
@@ -13,4 +12,4 @@ let result = match x {
   }
   _: 0
 }
-puts(result)
+puts(result)  # output: 230

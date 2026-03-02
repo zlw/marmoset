@@ -1,6 +1,5 @@
 # XF11: C11: Generic show-constrained function called with int
-# output: 42
 let render = fn[a: show](x: a) -> string {
   x.show()
 }
-puts(render(42))
+puts(render(42))  # output: 42

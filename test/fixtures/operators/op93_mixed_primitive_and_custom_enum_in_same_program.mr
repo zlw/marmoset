@@ -1,9 +1,7 @@
 # OP93: Mixed: primitive == and custom enum == in same program
-# output: true
-# output: false
 enum color { red green blue }
 impl eq for color {
   fn eq(x: color, y: color) -> bool { false }
 }
-puts(1 == 1)
-puts(color.red == color.green)
+puts(1 == 1)  # output: true
+puts(color.red == color.green)  # output: false

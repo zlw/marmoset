@@ -1,8 +1,6 @@
 # XF41: I49: Generic show function monomorphized at int and string
-# output: 42
-# output: hello
 let render = fn[a: show](x: a) -> string {
   x.show()
 }
-puts(render(42))
-puts(render("hello"))
+puts(render(42))  # output: 42
+puts(render("hello"))  # output: hello

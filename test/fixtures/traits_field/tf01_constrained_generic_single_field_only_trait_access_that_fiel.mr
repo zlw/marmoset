@@ -1,5 +1,4 @@
 # TF01: Constrained generic: single field-only trait, access that field
-# output: 42
 trait has_x {
   x: int
 }
@@ -7,4 +6,4 @@ let get_x = fn[t: has_x](v: t) -> int {
   v.x
 };
 let r = { x: 42, y: 99 }
-puts(get_x(r))
+puts(get_x(r))  # output: 42

@@ -1,5 +1,4 @@
 # CS56: H57: if-match-if combined chain
-# output: 99
 let f = fn(flag: bool, n: int, check: bool) -> int {
   if (flag) {
     match n {
@@ -10,4 +9,4 @@ let f = fn(flag: bool, n: int, check: bool) -> int {
     0
   }
 }
-puts(f(true, 1, true))
+puts(f(true, 1, true))  # output: 99

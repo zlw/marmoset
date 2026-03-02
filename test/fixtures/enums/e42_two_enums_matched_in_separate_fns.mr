@@ -1,5 +1,4 @@
 # E42: Two enums matched in separate functions work
-# output: 3
 enum fruit { apple banana cherry }
 enum veggie { carrot broccoli spinach }
 let count_fruit = fn(f: fruit) -> int {
@@ -8,4 +7,4 @@ let count_fruit = fn(f: fruit) -> int {
 let count_veggie = fn(v: veggie) -> int {
   match v { veggie.spinach: 2 _: 0 }
 }
-puts(count_fruit(fruit.cherry) + count_veggie(veggie.spinach))
+puts(count_fruit(fruit.cherry) + count_veggie(veggie.spinach))  # output: 3

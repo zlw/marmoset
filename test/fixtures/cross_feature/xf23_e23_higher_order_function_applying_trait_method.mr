@@ -1,7 +1,6 @@
 # XF23: E23: Higher-order function applying trait method
-# output: 42
 let apply_show = fn(f, x: int) {
   f(x)
 }
 let shower = fn(n: int) -> string { n.show() }
-puts(apply_show(shower, 42))
+puts(apply_show(shower, 42))  # output: 42

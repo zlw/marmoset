@@ -1,5 +1,4 @@
 # E18: Enum with 10+ variants - middle variant
-# output: 5
 enum planet { mercury venus earth mars jupiter saturn uranus neptune pluto ceres eris }
 let classify = fn(p: planet) -> int {
   match p {
@@ -16,4 +15,4 @@ let classify = fn(p: planet) -> int {
     planet.eris: 11
   }
 }
-puts(classify(planet.jupiter))
+puts(classify(planet.jupiter))  # output: 5

@@ -1,5 +1,4 @@
 # E24: Nested enum - inner nullary case
-# output: 0
 enum inner { a(int) b }
 enum outer { wrap(inner) empty }
 let x = outer.wrap(inner.b)
@@ -10,4 +9,4 @@ let result = match x {
   }
   outer.empty: 0
 }
-puts(result)
+puts(result)  # output: 0

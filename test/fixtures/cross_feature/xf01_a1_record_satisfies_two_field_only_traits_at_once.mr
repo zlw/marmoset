@@ -1,5 +1,4 @@
 # XF01: A1: Record satisfies two field-only traits at once
-# output: alice 30
 trait named {
   name: string
 }
@@ -10,4 +9,4 @@ let describe = fn[t: named + aged](x: t) -> string {
   x.name + " " + x.age.show()
 }
 let p = { name: "alice", age: 30, active: true }
-puts(describe(p))
+puts(describe(p))  # output: alice 30

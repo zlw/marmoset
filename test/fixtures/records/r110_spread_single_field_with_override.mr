@@ -1,5 +1,4 @@
 # R110: Spread of single-field record with override
-# output: 99
 let base = { val: 1 }
 let updated = { ...base, val: 99 }
-puts(updated.val)
+puts(updated.val)  # output: 99

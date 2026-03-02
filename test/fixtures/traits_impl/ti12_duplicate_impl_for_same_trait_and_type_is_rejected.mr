@@ -1,6 +1,5 @@
 # TI12: Duplicate impl for same trait and type is rejected
-# error: Duplicate impl
-trait show[a] {
+trait show[a] {  # error: Duplicate impl
   fn show(x: a) -> string
 }
 impl show for int {

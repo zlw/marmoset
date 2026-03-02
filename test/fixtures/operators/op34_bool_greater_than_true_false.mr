@@ -1,3 +1,2 @@
 # OP34: Bool greater-than: true > false
-# output: true
-puts(true > false)
+puts(true > false)  # output: true

@@ -1,5 +1,4 @@
 # CS04: A4: match inside match arm body
-# output: inner2
 let f = fn(x: int, y: int) -> string {
   match x {
     1: match y {
@@ -10,4 +9,4 @@ let f = fn(x: int, y: int) -> string {
     _: "outer"
   }
 }
-puts(f(1, 2))
+puts(f(1, 2))  # output: inner2

@@ -1,4 +1,3 @@
 # R145: Field name 'func' (Go keyword)
-# output: 7
 let r = { func: 7 }
-puts(r.func)
+puts(r.func)  # output: 7

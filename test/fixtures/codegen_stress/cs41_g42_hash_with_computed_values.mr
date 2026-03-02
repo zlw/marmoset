@@ -1,5 +1,4 @@
 # CS41: G42: hash with computed values
-# output: 30
 let base = 10
 let h = {"a": base + 10, "b": base + 20}
-puts(h["b"])
+puts(h["b"])  # output: 30

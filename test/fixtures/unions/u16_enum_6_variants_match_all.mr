@@ -1,5 +1,4 @@
 # U16: Enum with 6 variants, match all
-# output: 3
 enum weekday { mon tue wed thu fri sat }
 let d = weekday.wed
 let n = match d {
@@ -10,4 +9,4 @@ let n = match d {
   weekday.fri: 5
   weekday.sat: 6
 }
-puts(n)
+puts(n)  # output: 3

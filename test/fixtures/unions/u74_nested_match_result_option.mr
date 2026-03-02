@@ -1,5 +1,4 @@
 # U74: Nested match: outer=result, inner=option
-# output: found:42
 enum option[a] { some(a) none }
 enum result[a, e] { ok(a) err(e) }
 let x: result[option[int], string] = result.ok(option.some(42))
@@ -10,4 +9,4 @@ let out = match x {
   }
   result.err(e): "err:" + e
 }
-puts(out)
+puts(out)  # output: found:42

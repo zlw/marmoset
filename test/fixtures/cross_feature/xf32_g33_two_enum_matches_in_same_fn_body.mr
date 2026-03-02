@@ -1,5 +1,4 @@
 # XF32: G33: Two enum matches in same fn body
-# output: ok:42
 type point = { x: int, y: int }
 enum status { ok fail }
 enum option_int { some(int) none }
@@ -15,4 +14,4 @@ let process = fn(s: status, v: option_int) -> string {
   }
   prefix + suffix
 }
-puts(process(status.ok, option_int.some(42)))
+puts(process(status.ok, option_int.some(42)))  # output: ok:42

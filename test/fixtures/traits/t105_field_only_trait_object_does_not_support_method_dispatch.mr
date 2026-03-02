@@ -1,6 +1,5 @@
 # T105: Field-only trait object does not support method dispatch
-# error: No method 'show' found for type
-trait named {
+trait named {  # error: No method 'show' found for type
   name: string
 }
 let x: named = { name: "alice" }

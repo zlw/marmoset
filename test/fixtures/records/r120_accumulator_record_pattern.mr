@@ -1,8 +1,7 @@
 # R120: Accumulator record pattern (non-recursive)
-# output: 15
 let step1 = fn(acc) { { sum: acc.sum + 1, count: acc.count + 1 } }
 let step2 = fn(acc) { { sum: acc.sum + 4, count: acc.count + 1 } }
 let step3 = fn(acc) { { sum: acc.sum + 10, count: acc.count + 1 } }
 let init = { sum: 0, count: 0 }
 let r = step3(step2(step1(init)))
-puts(r.sum)
+puts(r.sum)  # output: 15

@@ -1,5 +1,4 @@
 # U69: Match with 10 literal arms on int
-# output: seven
 let x = 7
 let out = match x {
   0: "zero"
@@ -14,4 +13,4 @@ let out = match x {
   9: "nine"
   _: "other"
 }
-puts(out)
+puts(out)  # output: seven

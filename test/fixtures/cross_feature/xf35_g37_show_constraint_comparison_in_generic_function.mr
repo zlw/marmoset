@@ -1,5 +1,4 @@
 # XF35: G37: Show constraint + comparison in generic function
-# output: big: 100
 let classify = fn[a: show + eq](x: a, threshold: a) -> string {
   if (x == threshold) {
     "equal: " + x.show()
@@ -7,4 +6,4 @@ let classify = fn[a: show + eq](x: a, threshold: a) -> string {
     "big: " + x.show()
   }
 }
-puts(classify(100, 42))
+puts(classify(100, 42))  # output: big: 100

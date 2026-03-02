@@ -1,9 +1,8 @@
 # E55: Wildcard before specific pattern - Go default semantics
-# output: 1
 enum direction { north south east west }
 let d = direction.north
 let v = match d {
   _: 0
   direction.north: 1
 }
-puts(v)
+puts(v)  # output: 1

@@ -1,3 +1,2 @@
 # OP37: String not-equal true
-# output: true
-puts("a" != "b")
+puts("a" != "b")  # output: true

@@ -1,5 +1,4 @@
 # XF52: K60: Derived eq+show on same type in dual-constrained generic
-# output: true
 type point = { x: int, y: int }
 derive eq, show for point;
 let check = fn[a: show + eq](x: a, y: a) -> string {
@@ -7,4 +6,4 @@ let check = fn[a: show + eq](x: a, y: a) -> string {
 }
 let p1: point = { x: 1, y: 2 }
 let p2: point = { x: 1, y: 2 }
-puts(check(p1, p2))
+puts(check(p1, p2))  # output: true

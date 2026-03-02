@@ -1,6 +1,5 @@
 # CG15: Impl instantiation fingerprint collision surfaces as clear codegen error
-# error: Codegen error: impl instantiation fingerprint collision for 'show.show'
-enum b { v }
+enum b { v }  # error: Codegen error: impl instantiation fingerprint collision for 'show.show'
 enum a[t] { wrap(t) }
 enum a_b { wrap }
 trait show[x] { fn show(x: x) -> string }

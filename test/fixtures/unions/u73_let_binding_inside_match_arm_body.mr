@@ -1,6 +1,5 @@
 # U73: Let binding inside match arm body (parser limitation)
-# error: *
-enum option[a] { some(a) none }
+enum option[a] { some(a) none }  # error: *
 let x = option.some(42)
 let out = match x {
   option.some(v): {

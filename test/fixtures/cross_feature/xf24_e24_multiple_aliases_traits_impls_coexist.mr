@@ -1,5 +1,4 @@
 # XF24: E24: Multiple aliases + traits + impls coexist
-# output: alice 100
 type point = { x: int, y: int }
 type label = { text: string }
 trait named {
@@ -16,4 +15,4 @@ impl show for point {
 let get_name = fn[t: named](x: t) -> string { x.name }
 let get_score = fn[t: scored](x: t) -> int { x.score }
 let person = { name: "alice", score: 100, active: true }
-puts(get_name(person) + " " + get_score(person).show())
+puts(get_name(person) + " " + get_score(person).show())  # output: alice 100

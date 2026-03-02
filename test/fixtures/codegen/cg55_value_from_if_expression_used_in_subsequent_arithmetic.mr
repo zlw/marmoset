@@ -1,5 +1,4 @@
 # CG55: Value from if-expression used in subsequent arithmetic
-# output: 15
 let base = if (true) { 10 } else { 0 }
 let result = base + 5
-puts(result)
+puts(result)  # output: 15

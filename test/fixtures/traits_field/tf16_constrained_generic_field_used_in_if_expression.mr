@@ -1,5 +1,4 @@
 # TF16: Constrained generic field used in if-expression
-# output: big
 trait has_val {
   val: int
 }
@@ -11,4 +10,4 @@ let classify = fn[t: has_val](v: t) -> string {
   }
 };
 let r = { val: 42 }
-puts(classify(r))
+puts(classify(r))  # output: big

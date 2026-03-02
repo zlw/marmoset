@@ -1,5 +1,4 @@
 # TI26: Generic impl with show+eq constraint
-# output: ok
 trait show[a] {
   fn show(x: a) -> string
 }
@@ -12,4 +11,4 @@ trait describe[a] {
 impl describe[b: show + eq] for list[b] {
   fn describe(x: list[b]) -> string { "ok" }
 }
-puts([1, 2].describe())
+puts([1, 2].describe())  # output: ok

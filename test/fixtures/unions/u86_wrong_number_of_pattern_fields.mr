@@ -1,6 +1,5 @@
 # U86: Wrong number of pattern fields
-# error: *
-enum pair { mk(int, int) }
+enum pair { mk(int, int) }  # error: *
 let x = pair.mk(1, 2)
 match x {
   pair.mk(a): a

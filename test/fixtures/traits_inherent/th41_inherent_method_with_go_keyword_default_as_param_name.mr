@@ -1,5 +1,4 @@
 # TH41: Inherent method with Go keyword 'default' as param name
-# output: 1
 enum option_int { some(int) none }
 impl option_int {
   fn unwrap_or(o: option_int, default: int) -> int {
@@ -10,4 +9,4 @@ impl option_int {
   }
 }
 let x = option_int.some(1)
-puts(x.unwrap_or(0))
+puts(x.unwrap_or(0))  # output: 1

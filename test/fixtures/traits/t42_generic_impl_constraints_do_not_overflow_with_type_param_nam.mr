@@ -1,5 +1,4 @@
 # T42: Generic impl constraints do not overflow with type param name a
-# output: ok
 trait show[a] {
   fn show(x: a) -> string
 }
@@ -8,4 +7,4 @@ impl show[a: show] for list[a] {
     "ok"
   }
 }
-puts([1, 2, 3].show())
+puts([1, 2, 3].show())  # output: ok

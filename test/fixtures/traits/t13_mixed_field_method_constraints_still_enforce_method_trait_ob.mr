@@ -1,6 +1,5 @@
 # T13: Mixed field+method constraints still enforce method trait obligations
-# error: does not implement trait shown
-trait named {
+trait named {  # error: does not implement trait shown
   name: string
 }
 trait shown[a] {

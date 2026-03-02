@@ -1,5 +1,4 @@
 # E57: Match then re-match same enum
-# output: 99
 enum option[a] { some(a) none }
 let x = option.some(99)
 let y = match x {
@@ -10,4 +9,4 @@ let result = match y {
   option.some(v): v
   option.none: 0
 }
-puts(result)
+puts(result)  # output: 99

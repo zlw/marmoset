@@ -1,5 +1,4 @@
 # XF05: A5: Three-level supertrait chain with record containing all fields
-# output: alice 30 active
 trait named {
   name: string
 }
@@ -10,4 +9,4 @@ trait profiled: aged {
   status: string
 }
 let p: profiled = { name: "alice", age: 30, status: "active", secret: true }
-puts(p.name + " " + p.age.show() + " " + p.status)
+puts(p.name + " " + p.age.show() + " " + p.status)  # output: alice 30 active

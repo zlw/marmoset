@@ -1,5 +1,4 @@
 # T11: Field-only trait constraint accepts matching record shape
-# output: alice
 trait named {
   name: string
 }
@@ -7,4 +6,4 @@ let get_name = fn[t: named](x: t) -> string {
   x.name
 };
 let person = { name: "alice", age: 42 }
-puts(get_name(person))
+puts(get_name(person))  # output: alice

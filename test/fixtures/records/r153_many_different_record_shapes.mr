@@ -1,6 +1,5 @@
 # R153: Many different record shapes in one scope
-# output: 21
 let r1 = { a: 1 }
 let r2 = { a: 2, b: 3 }
 let r3 = { a: 4, b: 5, c: 6 }
-puts(r1.a + r2.a + r2.b + r3.a + r3.b + r3.c)
+puts(r1.a + r2.a + r2.b + r3.a + r3.b + r3.c)  # output: 21

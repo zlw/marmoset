@@ -1,5 +1,4 @@
 # T51: Custom num impl drives + operator on non-primitive types
-# output: 13
 enum boxed {
   val(int)
 }
@@ -11,6 +10,6 @@ impl num for boxed {
 }
 let a = boxed.val(13)
 let b = boxed.val(2)
-match (a + b) {
+match (a + b) {  # output: 13
   boxed.val(n): puts(n)
 }

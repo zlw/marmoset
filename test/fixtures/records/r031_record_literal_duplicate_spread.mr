@@ -1,3 +1,2 @@
 # R031: Record literal duplicate spread reports clear parse error
-# error: multiple spread entries in record literal are not supported yet
-let x = { ...a, ...b }
+let x = { ...a, ...b }  # error: multiple spread entries in record literal are not supported yet

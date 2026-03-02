@@ -1,6 +1,5 @@
 # T84: Method-only trait as variable type is rejected
-# error: method and mixed trait objects are not supported in this phase
-trait renderable[a] {
+trait renderable[a] {  # error: method and mixed trait objects are not supported in this phase
   fn render(x: a) -> string
 }
 let x: renderable = 42

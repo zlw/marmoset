@@ -1,6 +1,4 @@
 # CM23: Fn with enum match uses fallback param
-# output: 42
-# output: 0
 enum option[a] { some(a) none }
 let unwrap_or = fn(opt: option[int], fallback: int) -> int {
   match opt {
@@ -8,5 +6,5 @@ let unwrap_or = fn(opt: option[int], fallback: int) -> int {
     option.none: fallback
   }
 }
-puts(unwrap_or(option.some(42), 0))
-puts(unwrap_or(option.none(), 0))
+puts(unwrap_or(option.some(42), 0))  # output: 42
+puts(unwrap_or(option.none(), 0))  # output: 0

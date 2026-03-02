@@ -1,3 +1,2 @@
 # OP33: Bool greater-equal: true >= false
-# output: true
-puts(true >= false)
+puts(true >= false)  # output: true

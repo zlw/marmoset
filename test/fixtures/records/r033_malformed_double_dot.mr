@@ -1,3 +1,2 @@
 # R033: Malformed double dot token errors deterministically
-# error: unexpected Token.Illegal found
-..
+..  # error: unexpected Token.Illegal found

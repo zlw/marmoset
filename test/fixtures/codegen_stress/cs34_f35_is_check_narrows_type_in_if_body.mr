@@ -1,5 +1,4 @@
 # CS34: F35: is-check narrows type in if body
-# output: 43
 let x: int | string = 42
 let result = if (x is int) { x + 1 } else { 0 }
-puts(result)
+puts(result)  # output: 43

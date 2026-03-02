@@ -1,5 +1,4 @@
 # E58: Match returns different enum type then re-matched
-# output: 7
 enum color { red green blue }
 enum size { small medium large }
 let c = color.green
@@ -13,4 +12,4 @@ let out = match s {
   size.medium: 7
   size.large: 11
 }
-puts(out)
+puts(out)  # output: 7

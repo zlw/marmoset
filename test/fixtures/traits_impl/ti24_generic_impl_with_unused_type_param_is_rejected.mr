@@ -1,6 +1,5 @@
 # TI24: Generic impl with unused type param is rejected
-# error: not used in impl target type
-trait show[a] {
+trait show[a] {  # error: not used in impl target type
   fn show(x: a) -> string
 }
 impl show[b: show] for int {

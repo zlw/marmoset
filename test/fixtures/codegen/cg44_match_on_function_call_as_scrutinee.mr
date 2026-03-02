@@ -1,9 +1,8 @@
 # CG44: Match on function call as scrutinee
-# output: 20
 let double = fn(x: int) -> int { x * 2 }
 let x = match double(3) {
   4: 10
   6: 20
   _: 0
 }
-puts(x)
+puts(x)  # output: 20

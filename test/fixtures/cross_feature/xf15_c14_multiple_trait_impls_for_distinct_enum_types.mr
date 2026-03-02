@@ -1,6 +1,4 @@
 # XF15: C14: Multiple trait impls for distinct enum types
-# output: red
-# output: ready
 enum color { red green blue }
 enum light { stop ready }
 trait render[a] {
@@ -23,5 +21,5 @@ impl render for light {
     }
   }
 }
-puts(color.red.render())
-puts(light.ready.render())
+puts(color.red.render())  # output: red
+puts(light.ready.render())  # output: ready

@@ -1,9 +1,8 @@
 # TH07: Inherent method with multiple parameters
-# output: 7
 impl int {
   fn clamp(x: int, lo: int, hi: int) -> int {
     if (x < lo) { lo } else { if (x > hi) { hi } else { x } }
   }
 }
 let n = 7
-puts(n.clamp(0, 10))
+puts(n.clamp(0, 10))  # output: 7

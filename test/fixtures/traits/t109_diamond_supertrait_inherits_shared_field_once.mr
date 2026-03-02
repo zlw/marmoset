@@ -1,5 +1,4 @@
 # T109: Diamond supertrait inherits shared field once
-# output: alice
 trait named {
   name: string
 }
@@ -12,4 +11,4 @@ trait resident: named {
 trait citizen: worker + resident {
 }
 let x: citizen = { name: "alice", job: "eng", city: "sf", extra: true }
-puts(x.name)
+puts(x.name)  # output: alice

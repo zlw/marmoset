@@ -1,6 +1,4 @@
 # XF66: P76: Inherent and trait methods coexist on record type
-# output: hello
-# output: 30
 type point = { x: int, y: int }
 trait describable[a] {
   fn describe(x: a) -> string
@@ -12,5 +10,5 @@ impl point {
   fn sum(p: point) -> int { p.x + p.y }
 }
 let p: point = { x: 10, y: 20 }
-puts(p.describe())
-puts(p.sum())
+puts(p.describe())  # output: hello
+puts(p.sum())  # output: 30

@@ -1,6 +1,5 @@
 # T37: Ambiguous method dispatch reports conflicting impl sites
-# error: impl sites:
-trait render_a[a] {
+trait render_a[a] {  # error: impl sites:
   fn render(x: a) -> string
 }
 trait render_b[a] {

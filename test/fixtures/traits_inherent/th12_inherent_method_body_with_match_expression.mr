@@ -1,5 +1,4 @@
 # TH12: Inherent method body with match expression
-# output: one
 enum color { red green blue }
 impl color {
   fn rank(c: color) -> string {
@@ -11,4 +10,4 @@ impl color {
   }
 }
 let c = color.red
-puts(c.rank())
+puts(c.rank())  # output: one

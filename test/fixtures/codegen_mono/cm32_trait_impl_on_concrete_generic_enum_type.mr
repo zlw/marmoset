@@ -1,5 +1,4 @@
 # CM32: Trait impl on concrete generic enum type
-# output: present
 enum option[a] { some(a) none }
 trait describe[a] {
   fn describe(x: a) -> string
@@ -13,4 +12,4 @@ impl describe for option[int] {
   }
 }
 let v: option[int] = option.some(42)
-puts(v.describe())
+puts(v.describe())  # output: present

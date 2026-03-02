@@ -1,3 +1,2 @@
 # OP01: Int less-than true
-# output: true
-puts(1 < 2)
+puts(1 < 2)  # output: true

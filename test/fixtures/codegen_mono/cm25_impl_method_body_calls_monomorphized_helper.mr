@@ -1,5 +1,4 @@
 # CM25: Impl method body calls monomorphized helper
-# output: added:42
 let fmt_val = fn(s: string, n: int) -> string {
   s + ":" + n.show()
 }
@@ -11,4 +10,4 @@ impl describe for int {
     fmt_val("added", x)
   }
 }
-puts(42.describe())
+puts(42.describe())  # output: added:42

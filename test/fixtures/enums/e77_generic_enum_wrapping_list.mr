@@ -1,9 +1,8 @@
 # E77: Generic enum wrapping a list
-# output: 3
 enum option[a] { some(a) none }
 let x = option.some([10, 20, 30])
 let result = match x {
   option.some(lst): len(lst)
   option.none: 0
 }
-puts(result)
+puts(result)  # output: 3

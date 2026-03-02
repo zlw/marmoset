@@ -1,3 +1,2 @@
 # OP13: Int equality false
-# output: false
-puts(42 == 99)
+puts(42 == 99)  # output: false

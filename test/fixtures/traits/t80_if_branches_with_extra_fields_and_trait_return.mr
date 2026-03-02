@@ -1,5 +1,4 @@
 # T80: If branches with extra fields and trait return
-# output: young
 trait named {
   name: string
 }
@@ -11,4 +10,4 @@ let describe = fn(age: int) -> named {
   }
 }
 let x = describe(25)
-puts(x.name)
+puts(x.name)  # output: young

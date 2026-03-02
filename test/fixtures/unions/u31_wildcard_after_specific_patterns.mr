@@ -1,5 +1,4 @@
 # U31: Wildcard after specific variant patterns
-# output: default
 enum color { red green blue yellow }
 let c = color.yellow
 let name = match c {
@@ -7,4 +6,4 @@ let name = match c {
   color.green: "green"
   _: "default"
 }
-puts(name)
+puts(name)  # output: default

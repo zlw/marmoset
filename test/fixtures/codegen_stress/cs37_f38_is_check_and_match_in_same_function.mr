@@ -1,5 +1,4 @@
 # CS37: F38: is-check and match in same function
-# output: 15
 let f = fn(x: int | string, n: int) -> int {
   let base = if (x is int) { x } else { 0 }
   match n {
@@ -8,4 +7,4 @@ let f = fn(x: int | string, n: int) -> int {
     _: base
   }
 }
-puts(f(5, 1))
+puts(f(5, 1))  # output: 15

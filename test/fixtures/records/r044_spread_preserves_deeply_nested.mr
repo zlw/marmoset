@@ -1,5 +1,4 @@
 # R044: Spread preserves deeply nested record
-# output: 42
 let base = { tag: "hello", inner: { deep: { val: 42 } } }
 let updated = { ...base, tag: "world" }
-puts(updated.inner.deep.val)
+puts(updated.inner.deep.val)  # output: 42

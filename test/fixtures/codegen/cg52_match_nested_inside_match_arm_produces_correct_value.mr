@@ -1,5 +1,4 @@
 # CG52: Match nested inside match arm produces correct value
-# output: 99
 let f = fn(x: int, y: int) -> int {
   match x {
     1: match y {
@@ -14,4 +13,4 @@ let f = fn(x: int, y: int) -> int {
     _: 0
   }
 }
-puts(f(2, 3))
+puts(f(2, 3))  # output: 99

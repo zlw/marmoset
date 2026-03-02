@@ -1,5 +1,4 @@
 # CS70: K76: wildcard binding in enum match + show
-# output: 99
 enum option[a] { some(a) none }
 let f = fn(opt: option[int]) -> string {
   match opt {
@@ -7,4 +6,4 @@ let f = fn(opt: option[int]) -> string {
     option.none: "none"
   }
 }
-puts(f(option.some(99)))
+puts(f(option.some(99)))  # output: 99

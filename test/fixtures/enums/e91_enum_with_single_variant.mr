@@ -1,8 +1,7 @@
 # E91: Enum with single variant
-# output: 42
 enum wrapper { wrap(int) }
 let x = wrapper.wrap(42)
 let v = match x {
   wrapper.wrap(n): n
 }
-puts(v)
+puts(v)  # output: 42

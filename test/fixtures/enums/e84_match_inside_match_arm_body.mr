@@ -1,5 +1,4 @@
 # E84: Match inside match arm body
-# output: deep
 enum color { red green blue }
 enum size { small large }
 let c = color.green
@@ -12,4 +11,4 @@ let out = match c {
   }
   color.blue: "blue"
 }
-puts(out)
+puts(out)  # output: deep

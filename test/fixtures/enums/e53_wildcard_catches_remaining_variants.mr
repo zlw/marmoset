@@ -1,9 +1,8 @@
 # E53: Wildcard catches remaining variants
-# output: 0
 enum direction { north south east west }
 let d = direction.west
 let v = match d {
   direction.north: 1
   _: 0
 }
-puts(v)
+puts(v)  # output: 0

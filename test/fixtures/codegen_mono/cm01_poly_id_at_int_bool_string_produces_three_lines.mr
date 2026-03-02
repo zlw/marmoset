@@ -1,8 +1,5 @@
 # CM01: Poly id at int, bool, string produces three lines
-# output: 42
-# output: true
-# output: hello
 let id = fn(x) { x }
-puts(id(42))
-puts(id(true))
-puts(id("hello"))
+puts(id(42))  # output: 42
+puts(id(true))  # output: true
+puts(id("hello"))  # output: hello

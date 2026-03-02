@@ -1,5 +1,4 @@
 # CS52: H53: enum match inside if-branch
-# output: 42
 enum option[a] { some(a) none }
 let f = fn(flag: bool, opt: option[int]) -> int {
   if (flag) {
@@ -11,4 +10,4 @@ let f = fn(flag: bool, opt: option[int]) -> int {
     0
   }
 }
-puts(f(true, option.some(42)))
+puts(f(true, option.some(42)))  # output: 42

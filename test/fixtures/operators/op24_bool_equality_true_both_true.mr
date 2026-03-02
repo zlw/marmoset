@@ -1,3 +1,2 @@
 # OP24: Bool equality true (both true)
-# output: true
-puts(true == true)
+puts(true == true)  # output: true

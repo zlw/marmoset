@@ -1,6 +1,4 @@
 # TH18: Inherent method coexists with trait method (different names)
-# output: hello
-# output: 42
 type point = { x: int, y: int }
 trait describable[a] {
   fn describe(x: a) -> string
@@ -12,5 +10,5 @@ impl point {
   fn sum(p: point) -> int { p.x + p.y }
 }
 let p: point = { x: 20, y: 22 }
-puts(p.describe())
-puts(p.sum())
+puts(p.describe())  # output: hello
+puts(p.sum())  # output: 42

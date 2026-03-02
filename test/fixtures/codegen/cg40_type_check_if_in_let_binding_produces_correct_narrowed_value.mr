@@ -1,5 +1,4 @@
 # CG40: Type-check if in let binding produces correct narrowed value
-# output: 2
 let x: int | string = 1
 let y = if (x is int) { x + 1 } else { 0 }
-puts(y)
+puts(y)  # output: 2

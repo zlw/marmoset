@@ -1,4 +1,3 @@
 # R017: Case-distinct record fields coexist
-# output: 3
 let p = { x: 1, X: 2 }
-puts(p.x + p.X)
+puts(p.x + p.X)  # output: 3

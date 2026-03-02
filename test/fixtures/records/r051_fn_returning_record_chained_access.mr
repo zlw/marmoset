@@ -1,4 +1,3 @@
 # R051: Function returning record, chained field access
-# output: 7
 let make_pair = fn(a, b) { { first: a, second: b } }
-puts(make_pair(3, 7).second)
+puts(make_pair(3, 7).second)  # output: 7

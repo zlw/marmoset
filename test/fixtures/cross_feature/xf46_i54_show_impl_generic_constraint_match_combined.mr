@@ -1,5 +1,4 @@
 # XF46: I54: Show impl + generic constraint + match combined
-# output: left
 enum direction { left right up down }
 impl show for direction {
   fn show(d: direction) -> string {
@@ -12,4 +11,4 @@ impl show for direction {
   }
 }
 let render = fn[a: show](x: a) -> string { x.show() }
-puts(render(direction.left))
+puts(render(direction.left))  # output: left

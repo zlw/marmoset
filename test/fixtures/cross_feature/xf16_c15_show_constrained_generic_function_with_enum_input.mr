@@ -1,5 +1,4 @@
 # XF16: C15: Show-constrained generic function with enum input
-# output: red
 enum color { red green blue }
 impl show for color {
   fn show(x: color) -> string {
@@ -13,4 +12,4 @@ impl show for color {
 let display = fn[a: show](x: a) -> string {
   x.show()
 }
-puts(display(color.red))
+puts(display(color.red))  # output: red

@@ -1,6 +1,5 @@
 # T03: Duplicate trait definition is rejected in one program
-# error: Duplicate trait definition: ping
-trait ping[a] {
+trait ping[a] {  # error: Duplicate trait definition: ping
   fn ping(x: a) -> int
 }
 trait ping[a] {

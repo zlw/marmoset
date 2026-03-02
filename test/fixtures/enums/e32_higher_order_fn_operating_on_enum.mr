@@ -1,5 +1,4 @@
 # E32: Higher-order function operating on enum
-# output: 99
 enum option[a] { some(a) none }
 let map_opt = fn(x: option[int], f: fn(int) -> int) -> option[int] {
   match x {
@@ -13,4 +12,4 @@ let out = match result {
   option.some(v): v + 1
   option.none: 0
 }
-puts(out)
+puts(out)  # output: 99

@@ -1,5 +1,4 @@
 # U55: Three different enums in one program
-# output: ok:north
 enum option[a] { some(a) none }
 enum direction { north south east west }
 enum result[a, e] { ok(a) err(e) }
@@ -13,4 +12,4 @@ let out = match d {
   }
   result.err(_): "err"
 }
-puts(out)
+puts(out)  # output: ok:north

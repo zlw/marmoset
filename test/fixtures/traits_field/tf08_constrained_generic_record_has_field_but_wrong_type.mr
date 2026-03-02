@@ -1,6 +1,5 @@
 # TF08: Constrained generic: record has field but wrong type
-# error: field-type-mismatch
-trait has_name {
+trait has_name {  # error: field-type-mismatch
   name: string
 }
 let get_name = fn[t: has_name](v: t) -> string {

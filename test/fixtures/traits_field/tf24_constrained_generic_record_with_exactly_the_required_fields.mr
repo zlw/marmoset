@@ -1,5 +1,4 @@
 # TF24: Constrained generic: record with exactly the required fields
-# output: exact
 trait has_tag {
   tag: string
 }
@@ -7,4 +6,4 @@ let get_tag = fn[t: has_tag](v: t) -> string {
   v.tag
 };
 let r = { tag: "exact" }
-puts(get_tag(r))
+puts(get_tag(r))  # output: exact

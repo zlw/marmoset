@@ -1,5 +1,4 @@
 # XF25: E25: If branches return match results on enums
-# output: found: 42
 enum option_int { some(int) none }
 let describe = fn(flag: bool, val: option_int) -> string {
   if (flag) {
@@ -11,4 +10,4 @@ let describe = fn(flag: bool, val: option_int) -> string {
     "skipped"
   }
 }
-puts(describe(true, option_int.some(42)))
+puts(describe(true, option_int.some(42)))  # output: found: 42

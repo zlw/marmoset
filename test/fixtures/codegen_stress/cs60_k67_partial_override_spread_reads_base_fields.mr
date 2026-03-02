@@ -1,7 +1,5 @@
 # CS60: K67: partial-override spread reads base fields
-# output: 1
-# output: 20
 let p = { x: 1, y: 2 }
 let q = { ...p, y: 20 }
-puts(q.x)
-puts(q.y)
+puts(q.x)  # output: 1
+puts(q.y)  # output: 20

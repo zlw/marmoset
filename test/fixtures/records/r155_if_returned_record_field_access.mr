@@ -1,5 +1,4 @@
 # R155: If-returned record, immediate field access via let
-# output: 42
 let flag = true
 let r = if (flag) { { val: 42 } } else { { val: 0 } }
-puts(r.val)
+puts(r.val)  # output: 42

@@ -1,5 +1,4 @@
 # CG42: Nested type-check if inside regular if produces correct value
-# output: 10
 let f = fn(flag: bool, x: int | string) -> int {
   if (flag) {
     if (x is int) { x + 9 } else { 0 }
@@ -7,4 +6,4 @@ let f = fn(flag: bool, x: int | string) -> int {
     0
   }
 }
-puts(f(true, 1))
+puts(f(true, 1))  # output: 10

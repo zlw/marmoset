@@ -1,6 +1,5 @@
 # R107: Spread result immediately re-spread
-# output: 103
 let a = { x: 1, y: 2, z: 3 }
 let b = { ...a, x: 100 }
 let c = { ...b, z: 3 }
-puts(c.x + c.z)
+puts(c.x + c.z)  # output: 103

@@ -1,6 +1,5 @@
 # XF39: H46: Mixed constraint fails when method trait not implemented
-# error: does not implement trait shown
-trait named {
+trait named {  # error: does not implement trait shown
   name: string
 }
 trait shown[a] {

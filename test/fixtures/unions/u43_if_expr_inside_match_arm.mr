@@ -1,9 +1,8 @@
 # U43: If expression inside match arm body
-# output: positive
 enum option[a] { some(a) none }
 let x = option.some(42)
 let out = match x {
   option.some(v): if (v > 0) { "positive" } else { "negative" }
   option.none: "nothing"
 }
-puts(out)
+puts(out)  # output: positive

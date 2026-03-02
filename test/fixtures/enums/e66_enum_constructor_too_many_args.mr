@@ -1,5 +1,4 @@
 # E66: Enum constructor with too many args is rejected
-# error: expects
-enum option[a] { some(a) none }
+enum option[a] { some(a) none }  # error: expects
 let x = option.some(1, 2)
 puts(x)

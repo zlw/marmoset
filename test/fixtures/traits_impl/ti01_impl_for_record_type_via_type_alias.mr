@@ -1,5 +1,4 @@
 # TI01: Impl for record type via type alias
-# output: point(1,2)
 type point = { x: int, y: int }
 trait show[a] {
   fn show(x: a) -> string
@@ -10,4 +9,4 @@ impl show for point {
   }
 }
 let p: point = { x: 1, y: 2 }
-puts(p.show())
+puts(p.show())  # output: point(1,2)

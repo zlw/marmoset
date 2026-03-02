@@ -1,6 +1,5 @@
 # T23: Trait with method supertrait is rejected in type position
-# error: method and mixed trait objects are not supported in this phase
-trait named {
+trait named {  # error: method and mixed trait objects are not supported in this phase
   name: string
 }
 trait show[a] {

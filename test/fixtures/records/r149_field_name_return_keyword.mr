@@ -1,4 +1,3 @@
 # R149: Field name 'return' (Marmoset keyword)
-# error: *
-let r = { return: 1 }
+let r = { return: 1 }  # error: *
 puts(r.return)

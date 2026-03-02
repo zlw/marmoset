@@ -1,5 +1,4 @@
 # T56: Method call on string
-# output: hello
 trait show[a] {
   fn show(x: a) -> string
 }
@@ -9,4 +8,4 @@ impl show for string {
   }
 }
 let s = "hello"
-puts(s.show())
+puts(s.show())  # output: hello

@@ -1,8 +1,7 @@
 # E82: All-wildcard field patterns in constructor
-# output: matched
 enum pair { p(int, int) }
 let x = pair.p(1, 2)
 let out = match x {
   pair.p(_, _): "matched"
 }
-puts(out)
+puts(out)  # output: matched

@@ -1,5 +1,4 @@
 # CS28: E29: function body is single match
-# output: 20
 let classify = fn(n: int) -> int {
   match n {
     0: 0
@@ -8,4 +7,4 @@ let classify = fn(n: int) -> int {
     _: 99
   }
 }
-puts(classify(2))
+puts(classify(2))  # output: 20

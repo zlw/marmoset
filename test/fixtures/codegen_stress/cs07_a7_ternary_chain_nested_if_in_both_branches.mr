@@ -1,5 +1,4 @@
 # CS07: A7: ternary chain (nested if in both branches)
-# output: 4
 let f = fn(a: bool, b: bool, c: bool) -> int {
   if (a) {
     if (b) { 1 } else { 2 }
@@ -7,4 +6,4 @@ let f = fn(a: bool, b: bool, c: bool) -> int {
     if (c) { 3 } else { 4 }
   }
 }
-puts(f(false, true, false))
+puts(f(false, true, false))  # output: 4

@@ -1,5 +1,4 @@
 # U39: option wrapping record type
-# output: 3
 enum option[a] { some(a) none }
 let p = { x: 1, y: 2 }
 let wrapped = option.some(p)
@@ -7,4 +6,4 @@ let out = match wrapped {
   option.some(r): r.x + r.y
   option.none: 0
 }
-puts(out)
+puts(out)  # output: 3

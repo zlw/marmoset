@@ -1,9 +1,8 @@
 # E44: Enum variant with inline arithmetic as payload
-# output: 15
 enum option[a] { some(a) none }
 let x = option.some(3 * 5)
 let result = match x {
   option.some(v): v
   option.none: 0
 }
-puts(result)
+puts(result)  # output: 15

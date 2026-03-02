@@ -1,7 +1,6 @@
 # T17: Field-only trait as type projects records to required shape
-# output: alice
 trait named {
   name: string
 }
 let x: named = { name: "alice", age: 42 }
-puts(x.name)
+puts(x.name)  # output: alice

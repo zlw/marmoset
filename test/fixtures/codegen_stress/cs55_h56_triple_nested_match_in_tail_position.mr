@@ -1,5 +1,4 @@
 # CS55: H56: triple-nested match in tail position
-# output: 321
 let classify = fn(a: int, b: int, c: int) -> int {
   match a {
     1: match b {
@@ -13,4 +12,4 @@ let classify = fn(a: int, b: int, c: int) -> int {
     _: 0
   }
 }
-puts(classify(3, 2, 1))
+puts(classify(3, 2, 1))  # output: 321

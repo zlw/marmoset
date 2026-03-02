@@ -1,9 +1,8 @@
 # TH08: Inherent method returning bool from int receiver
-# output: true
 impl int {
   fn is_positive(x: int) -> bool {
     x > 0
   }
 }
 let n = 42
-puts(n.is_positive())
+puts(n.is_positive())  # output: true

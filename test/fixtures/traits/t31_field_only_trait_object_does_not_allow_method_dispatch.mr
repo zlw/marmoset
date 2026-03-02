@@ -1,6 +1,5 @@
 # T31: Field-only trait object does not allow method dispatch
-# error: No method 'show' found for type
-trait named {
+trait named {  # error: No method 'show' found for type
   name: string
 }
 let x: named = { name: "alice", age: 1 }

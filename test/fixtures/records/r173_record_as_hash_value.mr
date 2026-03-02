@@ -1,4 +1,3 @@
 # R173: Record as hash value
-# output: 42
 let data = { "key": { val: 42 } }
-puts(data["key"].val)
+puts(data["key"].val)  # output: 42

@@ -1,6 +1,5 @@
 # TH20: Inherent method does NOT satisfy trait constraints
-# error: does not implement trait
-trait showable[a] {
+trait showable[a] {  # error: does not implement trait
   fn display(x: a) -> string
 }
 type widget = { id: int }

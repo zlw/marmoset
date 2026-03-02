@@ -1,4 +1,3 @@
 # R140: Field names with single-char difference
-# output: 6
 let r = { aa: 1, ab: 2, ac: 3 }
-puts(r.aa + r.ab + r.ac)
+puts(r.aa + r.ab + r.ac)  # output: 6

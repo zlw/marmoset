@@ -1,5 +1,4 @@
 # XF27: F27: Inherent method on enum with match dispatch
-# output: 42
 enum box { val(int) empty }
 impl box {
   fn unwrap_or(b: box, fallback: int) -> int {
@@ -10,4 +9,4 @@ impl box {
   }
 }
 let b = box.val(42)
-puts(b.unwrap_or(0))
+puts(b.unwrap_or(0))  # output: 42

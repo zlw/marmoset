@@ -1,5 +1,4 @@
 # XF47: J55: Effectful function with enum match
-# output: 42
 enum option_int { some(int) none }
 let print_opt = fn(v: option_int) => int {
   let n = match v {
@@ -9,4 +8,4 @@ let print_opt = fn(v: option_int) => int {
   puts(n)
   n
 }
-print_opt(option_int.some(42))
+print_opt(option_int.some(42))  # output: 42

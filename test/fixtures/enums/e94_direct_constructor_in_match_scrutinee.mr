@@ -1,8 +1,7 @@
 # E94: Direct constructor in match scrutinee
-# output: hello
 enum option[a] { some(a) none }
 let v = match option.some("hello") {
   option.some(s): s
   option.none: "empty"
 }
-puts(v)
+puts(v)  # output: hello

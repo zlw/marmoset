@@ -1,5 +1,4 @@
 # TI05: Impl method calls another trait method
-# output: value:42
 type box = { value: int }
 trait describe[a] {
   fn describe(x: a) -> string
@@ -10,4 +9,4 @@ impl describe for box {
   }
 }
 let b: box = { value: 42 }
-puts(b.describe())
+puts(b.describe())  # output: value:42

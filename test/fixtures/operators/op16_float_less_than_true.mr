@@ -1,3 +1,2 @@
 # OP16: Float less-than true
-# output: true
-puts(1.5 < 2.5)
+puts(1.5 < 2.5)  # output: true

@@ -1,5 +1,4 @@
 # XF65: O75: Enum match with wildcard default case
-# output: other
 enum color { red green blue }
 let describe = fn(c: color) -> string {
   match c {
@@ -7,4 +6,4 @@ let describe = fn(c: color) -> string {
     _: "other"
   }
 }
-puts(describe(color.blue))
+puts(describe(color.blue))  # output: other

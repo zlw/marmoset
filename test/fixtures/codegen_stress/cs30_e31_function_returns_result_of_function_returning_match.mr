@@ -1,7 +1,6 @@
 # CS30: E31: function returns result of function returning match
-# output: 300
 let inner = fn(x: int) -> int {
   match x { 1: 100 2: 200 3: 300 _: 0 }
 }
 let outer = fn(x: int) -> int { inner(x) }
-puts(outer(3))
+puts(outer(3))  # output: 300

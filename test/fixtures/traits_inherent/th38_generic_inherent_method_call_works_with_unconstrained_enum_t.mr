@@ -1,5 +1,4 @@
 # TH38: Generic inherent method call works with unconstrained enum type arguments
-# output: true
 enum result[a, b] {
   success(a)
   failure(b)
@@ -13,4 +12,4 @@ impl result[a, b] {
   }
 }
 let ok = result.success(1)
-puts(ok.is_success())
+puts(ok.is_success())  # output: true

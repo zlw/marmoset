@@ -1,5 +1,3 @@
 # CS74: K80: two trait impls called in sequence
-# output: 42
-# output: hello
-puts(42.show())
-puts("hello".show())
+puts(42.show())  # output: 42
+puts("hello".show())  # output: hello

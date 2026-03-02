@@ -1,5 +1,4 @@
 # XF69: P79: Inherent method returning enum variant
-# output: 42
 enum option_int { some(int) none }
 impl int {
   fn to_option(x: int) -> option_int {
@@ -7,7 +6,7 @@ impl int {
   }
 }
 let result = 42.to_option()
-match result {
+match result {  # output: 42
   option_int.some(n): puts(n)
   option_int.none: puts(0)
 }

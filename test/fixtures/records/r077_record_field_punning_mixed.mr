@@ -1,5 +1,4 @@
 # R077: Record field punning mixed with explicit values
-# output: 10
 let x = 3
 let r = { x:, y: 7 }
-puts(r.x + r.y)
+puts(r.x + r.y)  # output: 10

@@ -1,5 +1,4 @@
 # E20: Enum with 10+ variants - wildcard catches the rest
-# output: 0
 enum planet { mercury venus earth mars jupiter saturn uranus neptune pluto ceres eris }
 let is_earth = fn(p: planet) -> int {
   match p {
@@ -7,4 +6,4 @@ let is_earth = fn(p: planet) -> int {
     _: 0
   }
 }
-puts(is_earth(planet.saturn))
+puts(is_earth(planet.saturn))  # output: 0

@@ -1,5 +1,4 @@
 # E47: Enum variant with match-expression as payload
-# output: 7
 enum option[a] { some(a) none }
 enum color { red green blue }
 let c = color.green
@@ -8,4 +7,4 @@ let result = match x {
   option.some(v): v
   option.none: 0
 }
-puts(result)
+puts(result)  # output: 7

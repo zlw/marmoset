@@ -1,6 +1,4 @@
 # XF67: P77: Enum with both inherent and trait methods
-# output: 42
-# output: boxed
 enum box { val(int) empty }
 impl show for box {
   fn show(b: box) -> string {
@@ -16,5 +14,5 @@ impl box {
   }
 }
 let b = box.val(42)
-puts(b.unwrap())
-puts(b.show())
+puts(b.unwrap())  # output: 42
+puts(b.show())  # output: boxed
