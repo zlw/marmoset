@@ -545,7 +545,7 @@ let generalize (env : type_env) (mono : mono_type) : poly_type =
    ============================================================ *)
 
 (* The kind of type error (without position info) *)
-type error_kind =
+type diag_kind =
   | UnboundVariable of string
   | UnificationError of Diagnostic.t
   | InvalidOperator of string * mono_type
@@ -567,7 +567,7 @@ type error_kind =
   | PurityViolation of string (* pure function calls effectful operation *)
 
 (* An error with optional position info *)
-let error_kind_to_string = function
+let diag_kind_to_string = function
   | UnboundVariable name -> "Unbound variable: " ^ name
   | UnificationError err -> Unify.error_to_string err
   | InvalidOperator (op, t) -> "Invalid operator " ^ op ^ " for type " ^ to_string t
@@ -596,7 +596,7 @@ let error_kind_to_string = function
   | MatchError msg -> msg
   | PurityViolation msg -> msg
 
-let error_kind_code = function
+let diag_kind_code = function
   | UnboundVariable _ -> "type-unbound-var"
   | UnificationError diag -> diag.code
   | InvalidOperator _ -> "type-invalid-operator"
@@ -617,9 +617,9 @@ let error_kind_code = function
   | MatchError _ -> "type-match"
   | PurityViolation _ -> "type-purity"
 
-let diagnostic_of_error_kind ?pos ?end_pos ?file_id (kind : error_kind) : Diagnostic.t =
-  let code = error_kind_code kind in
-  let message = error_kind_to_string kind in
+let diagnostic_of_kind ?pos ?end_pos ?file_id (kind : diag_kind) : Diagnostic.t =
+  let code = diag_kind_code kind in
+  let message = diag_kind_to_string kind in
   match pos with
   | Some start_pos ->
       let file_id = Option.value file_id ~default:"<unknown>" in
@@ -627,15 +627,15 @@ let diagnostic_of_error_kind ?pos ?end_pos ?file_id (kind : error_kind) : Diagno
   | None -> Diagnostic.error_no_span ~code ~message
 
 (* Create an error without position *)
-let error kind = diagnostic_of_error_kind kind
+let error kind = diagnostic_of_kind kind
 
 (* Create an error with position from an expression *)
 let error_at kind (expr : AST.expression) =
-  diagnostic_of_error_kind ~pos:expr.pos ~end_pos:expr.end_pos ?file_id:expr.file_id kind
+  diagnostic_of_kind ~pos:expr.pos ~end_pos:expr.end_pos ?file_id:expr.file_id kind
 
 (* Create an error with position from a statement *)
 let error_at_stmt kind (stmt : AST.statement) =
-  diagnostic_of_error_kind ~pos:stmt.pos ~end_pos:stmt.end_pos ?file_id:stmt.file_id kind
+  diagnostic_of_kind ~pos:stmt.pos ~end_pos:stmt.end_pos ?file_id:stmt.file_id kind
 
 let error_to_string (err : Diagnostic.t) : string = err.message
 
