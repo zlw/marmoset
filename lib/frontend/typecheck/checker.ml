@@ -21,27 +21,13 @@ let parser_error_of_diagnostics (errors : Diagnostic.t list) : Diagnostic.t =
   | first :: _ -> first
   | [] -> Diagnostic.error_no_span ~code:"parse-unexpected-token" ~message:"Parse error"
 
-let diagnostic_of_infer_exception_message (msg : string) : Diagnostic.t =
-  let lower = String.lowercase_ascii msg in
-  let code =
-    if String_utils.contains_substring ~needle:"unknown type constructor" lower then
-      "type-constructor"
-    else if String_utils.contains_substring ~needle:"cannot be used as a type" lower then
-      "type-annotation-invalid"
-    else
-      "type-internal"
-  in
-  Diagnostic.error_no_span ~code ~message:msg
-
 let infer_program_safe ?state ~(env : Infer.type_env) (program : Syntax.Ast.AST.program) :
     (Infer.type_env * Infer.type_map * mono_type, Diagnostic.t) result =
   try
     match Infer.infer_program ?state ~env program with
     | Ok result -> Ok result
     | Error e -> Error e
-  with
-  | Failure msg -> Error (diagnostic_of_infer_exception_message msg)
-  | exn -> Error (Diagnostic.error_no_span ~code:"type-internal" ~message:(Printexc.to_string exn))
+  with exn -> Error (Diagnostic.error_no_span ~code:"type-internal" ~message:(Printexc.to_string exn))
 
 let format_error (err : Diagnostic.t) : string = Diagnostic.render_cli ~source_lookup:(fun _ -> None) err
 
