@@ -4915,10 +4915,7 @@ let capture_stderr f =
   let read_fd, write_fd = Unix.pipe () in
   Unix.dup2 write_fd Unix.stderr;
   Unix.close write_fd;
-  let result =
-    try Ok (f ()) with
-    | exn -> Error exn
-  in
+  let result = try Ok (f ()) with exn -> Error exn in
   flush stderr;
   Unix.dup2 original_stderr Unix.stderr;
   Unix.close original_stderr;
@@ -5584,19 +5581,15 @@ let%test "trait impl methods are emitted exactly once" =
 (* --- run_emit_go_not_contains_from_stdin: IIFE avoidance --- *)
 
 let%test "type-check if in let binding avoids IIFE" =
-  match
-    compile_string
-      {|let x: int | string = 1
+  match compile_string {|let x: int | string = 1
 let y = if (x is int) { x + 1 } else { 0 }
-puts(y)|}
-  with
+puts(y)|} with
   | Ok code -> string_not_contains code "func() int64"
   | Error _ -> false
 
 let%test "type-check if in tail position avoids IIFE" =
   match
-    compile_string
-      {|let f = fn(x: int | string) -> int {
+    compile_string {|let f = fn(x: int | string) -> int {
   if (x is int) { x + 1 } else { 0 }
 }
 puts(f(1))|}
@@ -5605,14 +5598,11 @@ puts(f(1))|}
   | Error _ -> false
 
 let%test "match statement avoids IIFE" =
-  match
-    compile_string
-      {|match 1 {
+  match compile_string {|match 1 {
   1: 10
   _: 20
 }
-puts(1)|}
-  with
+puts(1)|} with
   | Ok code -> string_not_contains code "func() int64"
   | Error _ -> false
 
@@ -5635,8 +5625,7 @@ puts(f(true, false))|}
 
 let%test "nested match in tail position avoids IIFE" =
   match
-    compile_string
-      {|let f = fn(x: int) -> int {
+    compile_string {|let f = fn(x: int) -> int {
   match x { 0: match x { 0: 10 _: 20 } _: 30 }
 }
 puts(f(0))|}
@@ -5645,14 +5634,11 @@ puts(f(0))|}
   | Error _ -> false
 
 let%test "match with nested if avoids IIFE" =
-  match
-    compile_string
-      {|match 1 {
+  match compile_string {|match 1 {
   1: if (true) { 10 } else { 20 }
   _: 0
 }
-puts(1)|}
-  with
+puts(1)|} with
   | Ok code -> string_not_contains code "func() int64"
   | Error _ -> false
 
@@ -5723,16 +5709,13 @@ puts(f(true, false, true))|}
   | Error _ -> false
 
 let%test "match on int in let binding avoids IIFE" =
-  match
-    compile_string
-      {|let x = 2
+  match compile_string {|let x = 2
 let y = match x {
   1: 10
   2: 42
   _: 0
 }
-puts(y)|}
-  with
+puts(y)|} with
   | Ok code -> string_not_contains code "func() int64"
   | Error _ -> false
 
@@ -5863,13 +5846,10 @@ puts(x)|}
   | Error _ -> false
 
 let%test "I62: match in tail position avoids IIFE" =
-  match
-    compile_string
-      {|let f = fn(x: int) -> int {
+  match compile_string {|let f = fn(x: int) -> int {
   match x { 1: 10 2: 20 _: 0 }
 }
-puts(f(1))|}
-  with
+puts(f(1))|} with
   | Ok code -> string_not_contains code "func() int64"
   | Error _ -> false
 
@@ -5907,12 +5887,9 @@ puts(result)|}
   | Error _ -> false
 
 let%test "K66: full-override spread avoids __spread" =
-  match
-    compile_string
-      {|let p = { x: 1, y: 2 }
+  match compile_string {|let p = { x: 1, y: 2 }
 let q = { ...p, x: 10, y: 20 }
-puts(q.x)|}
-  with
+puts(q.x)|} with
   | Ok code -> string_not_contains code "__spread"
   | Error _ -> false
 
@@ -5954,8 +5931,7 @@ puts(id(1))|}
 
 let%test "successful build emits no missing-type warning text" =
   let result, stderr_output =
-    capture_stderr (fun () ->
-      compile_string {|let f = fn(x: int) -> int { x + 1 }
+    capture_stderr (fun () -> compile_string {|let f = fn(x: int) -> int { x + 1 }
 puts(f(1))|})
   in
   match result with
@@ -5965,12 +5941,9 @@ puts(f(1))|})
 (* --- test_emit_go_contains --- *)
 
 let%test "enum String default branch panics on invalid tag" =
-  match
-    compile_string
-      {|enum status { ok fail }
+  match compile_string {|enum status { ok fail }
 let x = status.ok
-puts(x)|}
-  with
+puts(x)|} with
   | Ok code -> string_contains code {|panic("unreachable: invalid enum tag")|}
   | Error _ -> false
 
@@ -5982,8 +5955,7 @@ let%test "codegen produces valid Go (int64)" =
 (* --- run_codegen_deterministic_from_stdin --- *)
 
 let%test "codegen deterministic for identical input" =
-  is_deterministic
-    {|let f = fn(x: int) -> int { x + 1 }
+  is_deterministic {|let f = fn(x: int) -> int { x + 1 }
 let g = fn(y: int) -> int { f(y) }
 puts(g(1))|}
 
@@ -6011,8 +5983,7 @@ let c = { p: "hello", q: true }
 puts(a.x + b.y)|}
 
 let%test "deterministic: poly fn at multiple types" =
-  is_deterministic
-    {|let id = fn(x) { x }
+  is_deterministic {|let id = fn(x) { x }
 puts(id(42))
 puts(id(true))
 puts(id("hello"))|}
