@@ -328,6 +328,505 @@ parse_fixture() {
     fi
 }
 
+# --- Diagnostic extraction/matching helpers (Phase 2 dual-mode) ---
+
+PARSED_DIAG_EXTRACTOR=()
+PARSED_DIAG_SEVERITY=()
+PARSED_DIAG_CODE=()
+PARSED_DIAG_MESSAGE=()
+PARSED_DIAG_FILE=()
+PARSED_DIAG_START_LINE=()
+PARSED_DIAG_START_COL=()
+PARSED_DIAG_END_LINE=()
+PARSED_DIAG_END_COL=()
+PARSED_DIAG_MATCH_TEXT=()
+PARSED_DIAG_KEY=()
+DIAG_RECORD_SEP=$'\x1f'
+
+to_lower() {
+    printf "%s" "$1" | tr '[:upper:]' '[:lower:]'
+}
+
+diag_key() {
+    local severity="$1"
+    local code="$2"
+    local message="$3"
+    local file="$4"
+    local start_line="$5"
+    local start_col="$6"
+    local end_line="$7"
+    local end_col="$8"
+
+    printf "%s|%s|%s|%s|%s|%s|%s|%s" \
+        "$(to_lower "$(trim_ws "$severity")")" \
+        "$(to_lower "$(trim_ws "$code")")" \
+        "$(to_lower "$(trim_ws "$message")")" \
+        "$(trim_ws "$file")" \
+        "$(trim_ws "$start_line")" \
+        "$(trim_ws "$start_col")" \
+        "$(trim_ws "$end_line")" \
+        "$(trim_ws "$end_col")"
+}
+
+emit_diag_record() {
+    local extractor="$1"
+    local severity="$2"
+    local code="$3"
+    local message="$4"
+    local file="$5"
+    local start_line="$6"
+    local start_col="$7"
+    local end_line="$8"
+    local end_col="$9"
+    local match_text="${10}"
+
+    # Keep records single-line/sep-safe for transport.
+    local safe_message="${message//$DIAG_RECORD_SEP/ }"
+    local safe_match_text="${match_text//$DIAG_RECORD_SEP/ }"
+    safe_message="${safe_message//$'\n'/ }"
+    safe_match_text="${safe_match_text//$'\n'/ }"
+    local key
+    key=$(diag_key "$severity" "$code" "$safe_message" "$file" "$start_line" "$start_col" "$end_line" "$end_col")
+
+    printf "%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s\n" \
+        "$extractor" "$DIAG_RECORD_SEP" \
+        "$severity" "$DIAG_RECORD_SEP" \
+        "$code" "$DIAG_RECORD_SEP" \
+        "$safe_message" "$DIAG_RECORD_SEP" \
+        "$file" "$DIAG_RECORD_SEP" \
+        "$start_line" "$DIAG_RECORD_SEP" \
+        "$start_col" "$DIAG_RECORD_SEP" \
+        "$end_line" "$DIAG_RECORD_SEP" \
+        "$end_col" "$DIAG_RECORD_SEP" \
+        "$safe_match_text" "$DIAG_RECORD_SEP" \
+        "$key"
+}
+
+try_parse_canonical_header() {
+    local line="$1"
+    CH_MATCHED=0
+    CH_SEVERITY=""
+    CH_CODE=""
+    CH_MESSAGE=""
+    CH_FILE=""
+    CH_START_LINE=""
+    CH_START_COL=""
+    CH_END_LINE=""
+    CH_END_COL=""
+
+    if [[ "$line" =~ ^([^:]+):([0-9]+):([0-9]+)-([0-9]+):([0-9]+):[[:space:]]*([Ee]rror|[Ww]arning|[Ii]nfo)[[:space:]]+([A-Za-z0-9._-]+):[[:space:]]*(.*)$ ]]; then
+        CH_MATCHED=1
+        CH_FILE="${BASH_REMATCH[1]}"
+        CH_START_LINE="${BASH_REMATCH[2]}"
+        CH_START_COL="${BASH_REMATCH[3]}"
+        CH_END_LINE="${BASH_REMATCH[4]}"
+        CH_END_COL="${BASH_REMATCH[5]}"
+        CH_SEVERITY="$(to_lower "${BASH_REMATCH[6]}")"
+        CH_CODE="$(to_lower "${BASH_REMATCH[7]}")"
+        CH_MESSAGE="${BASH_REMATCH[8]}"
+        return 0
+    fi
+
+    if [[ "$line" =~ ^([^:]+):([0-9]+):([0-9]+):[[:space:]]*([Ee]rror|[Ww]arning|[Ii]nfo)[[:space:]]+([A-Za-z0-9._-]+):[[:space:]]*(.*)$ ]]; then
+        CH_MATCHED=1
+        CH_FILE="${BASH_REMATCH[1]}"
+        CH_START_LINE="${BASH_REMATCH[2]}"
+        CH_START_COL="${BASH_REMATCH[3]}"
+        CH_END_LINE=""
+        CH_END_COL=""
+        CH_SEVERITY="$(to_lower "${BASH_REMATCH[4]}")"
+        CH_CODE="$(to_lower "${BASH_REMATCH[5]}")"
+        CH_MESSAGE="${BASH_REMATCH[6]}"
+        return 0
+    fi
+
+    if [[ "$line" =~ ^([Ee]rror|[Ww]arning|[Ii]nfo)[[:space:]]+([A-Za-z0-9._-]+):[[:space:]]*(.*)$ ]]; then
+        CH_MATCHED=1
+        CH_FILE=""
+        CH_START_LINE=""
+        CH_START_COL=""
+        CH_END_LINE=""
+        CH_END_COL=""
+        CH_SEVERITY="$(to_lower "${BASH_REMATCH[1]}")"
+        CH_CODE="$(to_lower "${BASH_REMATCH[2]}")"
+        CH_MESSAGE="${BASH_REMATCH[3]}"
+        return 0
+    fi
+
+    return 1
+}
+
+extract_new_diagnostic_records() {
+    local build_output="$1"
+
+    local active=0
+    local cur_severity=""
+    local cur_code=""
+    local cur_message=""
+    local cur_file=""
+    local cur_start_line=""
+    local cur_start_col=""
+    local cur_end_line=""
+    local cur_end_col=""
+    local cur_match_text=""
+
+    while IFS= read -r line || [ -n "$line" ]; do
+        line="${line%$'\r'}"
+
+        if try_parse_canonical_header "$line"; then
+            if [ "$active" -eq 1 ]; then
+                emit_diag_record "new" "$cur_severity" "$cur_code" "$cur_message" "$cur_file" "$cur_start_line" \
+                    "$cur_start_col" "$cur_end_line" "$cur_end_col" "$cur_match_text"
+            fi
+
+            active=1
+            cur_severity="$CH_SEVERITY"
+            cur_code="$CH_CODE"
+            cur_message="$CH_MESSAGE"
+            cur_file="$CH_FILE"
+            cur_start_line="$CH_START_LINE"
+            cur_start_col="$CH_START_COL"
+            cur_end_line="$CH_END_LINE"
+            cur_end_col="$CH_END_COL"
+            cur_match_text="$line"
+            continue
+        fi
+
+        if [ "$active" -eq 1 ]; then
+            if [[ "$line" =~ ^[[:space:]]+ ]] || [ -z "$line" ]; then
+                local trimmed
+                trimmed=$(trim_ws "$line")
+                if [ -n "$trimmed" ]; then
+                    cur_match_text="$cur_match_text | $trimmed"
+                fi
+            else
+                emit_diag_record "new" "$cur_severity" "$cur_code" "$cur_message" "$cur_file" "$cur_start_line" \
+                    "$cur_start_col" "$cur_end_line" "$cur_end_col" "$cur_match_text"
+                active=0
+            fi
+        fi
+    done <<< "$build_output"
+
+    if [ "$active" -eq 1 ]; then
+        emit_diag_record "new" "$cur_severity" "$cur_code" "$cur_message" "$cur_file" "$cur_start_line" \
+            "$cur_start_col" "$cur_end_line" "$cur_end_col" "$cur_match_text"
+    fi
+}
+
+legacy_decode_message() {
+    local default_severity="$1"
+    local message="$2"
+
+    LD_SEVERITY="$default_severity"
+    LD_CODE="legacy-$default_severity"
+    LD_MESSAGE="$message"
+
+    if [[ "$message" =~ ^([Ee]rror|[Ww]arning|[Ii]nfo)[[:space:]]+([A-Za-z0-9._-]+):[[:space:]]*(.*)$ ]]; then
+        LD_SEVERITY="$(to_lower "${BASH_REMATCH[1]}")"
+        LD_CODE="$(to_lower "${BASH_REMATCH[2]}")"
+        LD_MESSAGE="${BASH_REMATCH[3]}"
+        return 0
+    fi
+
+    if [[ "$message" =~ ^([Ee]rror|[Ww]arning|[Ii]nfo):[[:space:]]*(.*)$ ]]; then
+        LD_SEVERITY="$(to_lower "${BASH_REMATCH[1]}")"
+        LD_CODE="legacy-$LD_SEVERITY"
+        LD_MESSAGE="${BASH_REMATCH[2]}"
+        return 0
+    fi
+
+    return 0
+}
+
+try_parse_legacy_line() {
+    local line="$1"
+
+    LG_MATCHED=0
+    LG_SEVERITY=""
+    LG_CODE=""
+    LG_MESSAGE=""
+    LG_FILE=""
+    LG_START_LINE=""
+    LG_START_COL=""
+    LG_END_LINE=""
+    LG_END_COL=""
+    LG_MATCH_TEXT=""
+
+    # Legacy extractor runs alongside canonical parsing; it may parse the same
+    # header line, which is later deduped against the new extractor.
+    if try_parse_canonical_header "$line"; then
+        LG_MATCHED=1
+        LG_SEVERITY="$CH_SEVERITY"
+        LG_CODE="$CH_CODE"
+        LG_MESSAGE="$CH_MESSAGE"
+        LG_FILE="$CH_FILE"
+        LG_START_LINE="$CH_START_LINE"
+        LG_START_COL="$CH_START_COL"
+        LG_END_LINE="$CH_END_LINE"
+        LG_END_COL="$CH_END_COL"
+        LG_MATCH_TEXT="$line"
+        return 0
+    fi
+
+    if [ "$line" = "Error: Go build failed" ]; then
+        return 1
+    fi
+
+    if [[ "$line" =~ ^([^:]+):([0-9]+):([0-9]+)-([0-9]+):([0-9]+):[[:space:]]*(.*)$ ]]; then
+        legacy_decode_message "error" "${BASH_REMATCH[6]}"
+        LG_MATCHED=1
+        LG_SEVERITY="$LD_SEVERITY"
+        LG_CODE="$LD_CODE"
+        LG_MESSAGE="$LD_MESSAGE"
+        LG_FILE="${BASH_REMATCH[1]}"
+        LG_START_LINE="${BASH_REMATCH[2]}"
+        LG_START_COL="${BASH_REMATCH[3]}"
+        LG_END_LINE="${BASH_REMATCH[4]}"
+        LG_END_COL="${BASH_REMATCH[5]}"
+        LG_MATCH_TEXT="$line"
+        return 0
+    fi
+
+    if [[ "$line" =~ ^([^:]+):([0-9]+):([0-9]+):[[:space:]]*(.*)$ ]]; then
+        legacy_decode_message "error" "${BASH_REMATCH[4]}"
+        LG_MATCHED=1
+        LG_SEVERITY="$LD_SEVERITY"
+        LG_CODE="$LD_CODE"
+        LG_MESSAGE="$LD_MESSAGE"
+        LG_FILE="${BASH_REMATCH[1]}"
+        LG_START_LINE="${BASH_REMATCH[2]}"
+        LG_START_COL="${BASH_REMATCH[3]}"
+        LG_END_LINE=""
+        LG_END_COL=""
+        LG_MATCH_TEXT="$line"
+        return 0
+    fi
+
+    if [[ "$line" =~ ^[Ee]rror:[[:space:]]*(.*)$ ]]; then
+        legacy_decode_message "error" "${BASH_REMATCH[1]}"
+        LG_MATCHED=1
+        LG_SEVERITY="$LD_SEVERITY"
+        LG_CODE="$LD_CODE"
+        LG_MESSAGE="$LD_MESSAGE"
+        LG_MATCH_TEXT="$line"
+        return 0
+    fi
+
+    if [[ "$line" =~ ^[Ww]arning:[[:space:]]*(.*)$ ]]; then
+        legacy_decode_message "warning" "${BASH_REMATCH[1]}"
+        LG_MATCHED=1
+        LG_SEVERITY="$LD_SEVERITY"
+        LG_CODE="$LD_CODE"
+        LG_MESSAGE="$LD_MESSAGE"
+        LG_MATCH_TEXT="$line"
+        return 0
+    fi
+
+    if [[ "$line" =~ ^[Ii]nfo:[[:space:]]*(.*)$ ]]; then
+        legacy_decode_message "info" "${BASH_REMATCH[1]}"
+        LG_MATCHED=1
+        LG_SEVERITY="$LD_SEVERITY"
+        LG_CODE="$LD_CODE"
+        LG_MESSAGE="$LD_MESSAGE"
+        LG_MATCH_TEXT="$line"
+        return 0
+    fi
+
+    # Legacy support for historical "Parse error: ..." / "Type error: ..." lines.
+    if [[ "$line" =~ ^(Parse|Type)[[:space:]]+[Ee]rror:[[:space:]]*(.*)$ ]]; then
+        LG_MATCHED=1
+        LG_SEVERITY="error"
+        LG_CODE="legacy-error"
+        LG_MESSAGE="$line"
+        LG_MATCH_TEXT="$line"
+        return 0
+    fi
+
+    return 1
+}
+
+extract_legacy_diagnostic_records() {
+    local build_output="$1"
+
+    while IFS= read -r line || [ -n "$line" ]; do
+        line="${line%$'\r'}"
+        if try_parse_legacy_line "$line"; then
+            emit_diag_record "legacy" "$LG_SEVERITY" "$LG_CODE" "$LG_MESSAGE" "$LG_FILE" "$LG_START_LINE" \
+                "$LG_START_COL" "$LG_END_LINE" "$LG_END_COL" "$LG_MATCH_TEXT"
+        fi
+    done <<< "$build_output"
+}
+
+clear_parsed_diagnostics() {
+    PARSED_DIAG_EXTRACTOR=()
+    PARSED_DIAG_SEVERITY=()
+    PARSED_DIAG_CODE=()
+    PARSED_DIAG_MESSAGE=()
+    PARSED_DIAG_FILE=()
+    PARSED_DIAG_START_LINE=()
+    PARSED_DIAG_START_COL=()
+    PARSED_DIAG_END_LINE=()
+    PARSED_DIAG_END_COL=()
+    PARSED_DIAG_MATCH_TEXT=()
+    PARSED_DIAG_KEY=()
+}
+
+parse_build_output_diagnostics() {
+    local build_output="$1"
+    clear_parsed_diagnostics
+
+    local -a new_records=()
+    local -a legacy_records=()
+    local -a legacy_canceled=()
+    local -a merged_records=()
+    local i
+
+    local rec
+    while IFS= read -r rec || [ -n "$rec" ]; do
+        new_records+=("$rec")
+    done < <(extract_new_diagnostic_records "$build_output")
+
+    while IFS= read -r rec || [ -n "$rec" ]; do
+        legacy_records+=("$rec")
+    done < <(extract_legacy_diagnostic_records "$build_output")
+
+    for ((i = 0; i < ${#legacy_records[@]}; i++)); do
+        legacy_canceled+=(0)
+    done
+
+    # Pair-cancel dedup across extractors: keep all "new" diagnostics and
+    # cancel at most one matching "legacy" entry per "new" tuple.
+    for i in "${!new_records[@]}"; do
+        local rec="${new_records[$i]}"
+        [ -z "$rec" ] && continue
+        merged_records+=("$rec")
+
+        IFS="$DIAG_RECORD_SEP" read -r _ _ _ _ _ _ _ _ _ _ new_key <<< "$rec"
+        local j
+        for ((j = 0; j < ${#legacy_records[@]}; j++)); do
+            [ "${legacy_canceled[$j]}" -eq 1 ] && continue
+            local legacy_rec="${legacy_records[$j]}"
+            [ -z "$legacy_rec" ] && continue
+            IFS="$DIAG_RECORD_SEP" read -r _ _ _ _ _ _ _ _ _ _ legacy_key <<< "$legacy_rec"
+            if [ "$new_key" = "$legacy_key" ]; then
+                legacy_canceled[$j]=1
+                break
+            fi
+        done
+    done
+
+    for ((i = 0; i < ${#legacy_records[@]}; i++)); do
+        [ "${legacy_canceled[$i]}" -eq 1 ] && continue
+        [ -z "${legacy_records[$i]}" ] && continue
+        merged_records+=("${legacy_records[$i]}")
+    done
+
+    for rec in "${merged_records[@]}"; do
+        [ -z "$rec" ] && continue
+        local extractor severity code message file start_line start_col end_line end_col match_text key
+        IFS="$DIAG_RECORD_SEP" read -r extractor severity code message file start_line start_col end_line end_col match_text key <<< "$rec"
+        PARSED_DIAG_EXTRACTOR+=("$extractor")
+        PARSED_DIAG_SEVERITY+=("$severity")
+        PARSED_DIAG_CODE+=("$code")
+        PARSED_DIAG_MESSAGE+=("$message")
+        PARSED_DIAG_FILE+=("$file")
+        PARSED_DIAG_START_LINE+=("$start_line")
+        PARSED_DIAG_START_COL+=("$start_col")
+        PARSED_DIAG_END_LINE+=("$end_line")
+        PARSED_DIAG_END_COL+=("$end_col")
+        PARSED_DIAG_MATCH_TEXT+=("$match_text")
+        PARSED_DIAG_KEY+=("$key")
+    done
+}
+
+paths_equal_or_normalized() {
+    local left="$1"
+    local right="$2"
+
+    [ "$left" = "$right" ] && return 0
+    [ -z "$left" ] && return 1
+    [ -z "$right" ] && return 1
+
+    local left_norm="$left"
+    local right_norm="$right"
+
+    if [ -f "$left" ]; then
+        left_norm=$(normalize_existing_file "$left")
+    elif [ -f "$REPO_ROOT/$left" ]; then
+        left_norm=$(normalize_existing_file "$REPO_ROOT/$left")
+    fi
+
+    if [ -f "$right" ]; then
+        right_norm=$(normalize_existing_file "$right")
+    elif [ -f "$REPO_ROOT/$right" ]; then
+        right_norm=$(normalize_existing_file "$REPO_ROOT/$right")
+    fi
+
+    [ "$left_norm" = "$right_norm" ]
+}
+
+diag_bound_to_fixture_line() {
+    local idx="$1"
+    local fixture_file="$2"
+    local diag_file="${PARSED_DIAG_FILE[$idx]}"
+    local diag_line="${PARSED_DIAG_START_LINE[$idx]}"
+
+    [ -z "$diag_file" ] && return 1
+    [ -z "$diag_line" ] && return 1
+
+    paths_equal_or_normalized "$diag_file" "$fixture_file"
+}
+
+format_diag_location() {
+    local idx="$1"
+    local file="${PARSED_DIAG_FILE[$idx]}"
+    local start_line="${PARSED_DIAG_START_LINE[$idx]}"
+    local start_col="${PARSED_DIAG_START_COL[$idx]}"
+    local end_line="${PARSED_DIAG_END_LINE[$idx]}"
+    local end_col="${PARSED_DIAG_END_COL[$idx]}"
+
+    if [ -z "$file" ]; then
+        echo "<no-span>"
+        return
+    fi
+
+    if [ -z "$start_line" ]; then
+        echo "$file"
+        return
+    fi
+
+    if [ -z "$end_line" ]; then
+        echo "$file:$start_line:$start_col"
+    else
+        echo "$file:$start_line:$start_col-$end_line:$end_col"
+    fi
+}
+
+print_reject_debug_context() {
+    local file="$1"
+    local build_output="$2"
+
+    echo "  Expectations:"
+    local i
+    for ((i = 0; i < ${#DIAG_VALUES[@]}; i++)); do
+        echo "    - line ${DIAG_LINENOS[$i]}: '${DIAG_TYPES[$i]}: ${DIAG_VALUES[$i]}'"
+    done
+
+    echo "  Parsed diagnostics:"
+    if [ "${#PARSED_DIAG_MESSAGE[@]}" -eq 0 ]; then
+        echo "    - (none)"
+    else
+        for ((i = 0; i < ${#PARSED_DIAG_MESSAGE[@]}; i++)); do
+            local loc
+            loc=$(format_diag_location "$i")
+            echo "    - [${PARSED_DIAG_EXTRACTOR[$i]}] ${PARSED_DIAG_SEVERITY[$i]} ${PARSED_DIAG_CODE[$i]} @ $loc: ${PARSED_DIAG_MESSAGE[$i]}"
+        done
+    fi
+
+    echo "  Output head:"
+    echo "$build_output" | sed -n '1,20p' | sed 's/^/    /'
+}
+
 run_mode() {
     local file="$1"
     local name="$2"
@@ -398,11 +897,13 @@ reject_mode() {
     rm -f "$binpath"
 
     local all_wildcard=true
+    local wildcard_present=false
     local i
     for ((i = 0; i < ${#DIAG_VALUES[@]}; i++)); do
-        if [ "${DIAG_VALUES[$i]}" != "*" ]; then
+        if [ "${DIAG_VALUES[$i]}" = "*" ]; then
+            wildcard_present=true
+        else
             all_wildcard=false
-            break
         fi
     done
 
@@ -412,98 +913,106 @@ reject_mode() {
         return
     fi
 
-    local all_found=true
-    local missing=""
-    for ((i = 0; i < ${#DIAG_VALUES[@]}; i++)); do
-        local val="${DIAG_VALUES[$i]}"
-        if [ "$val" = "*" ]; then
-            continue
-        fi
-        if ! echo "$build_output" | grep -qF "$val"; then
-            all_found=false
-            missing="$missing\n  - line ${DIAG_LINENOS[$i]}: '${DIAG_TYPES[$i]}: $val'"
-        fi
-    done
+    parse_build_output_diagnostics "$build_output"
 
-    if ! $all_found; then
-        echo "✗ FAIL (missing expected diagnostics)"
-        echo -e "  Missing:$missing"
-        echo "  Build output: $(echo "$build_output" | head -10)"
+    if [ "${#PARSED_DIAG_MESSAGE[@]}" -eq 0 ]; then
+        echo "✗ FAIL (diagnostic extractor failure)"
+        print_reject_debug_context "$file" "$build_output"
         FAIL=$((FAIL + 1))
         return
     fi
 
-    local strict_diag_lines
-    strict_diag_lines=$(
-        echo "$build_output" \
-            | grep -iE '^[^:]*:[0-9]+:[0-9]+.*error|^(Type |Parse )?[Ee]rror|^[Ww]arning|^[Ii]nfo' \
-            | grep -vE '^Error:[[:space:]]+Go build failed$' \
-            || true
-    )
+    local -a diag_used=()
+    for ((i = 0; i < ${#PARSED_DIAG_MESSAGE[@]}; i++)); do
+        diag_used+=(0)
+    done
 
+    local missing=""
     local line_mismatch=""
+
+    # One-to-one expectation matching: duplicates in emitted diagnostics require
+    # duplicate fixture expectations (unless wildcard is used).
     for ((i = 0; i < ${#DIAG_VALUES[@]}; i++)); do
         local val="${DIAG_VALUES[$i]}"
-        if [ "$val" = "*" ]; then
-            continue
-        fi
+        [ "$val" = "*" ] && continue
 
         local expected_line="${DIAG_LINENOS[$i]}"
         local has_line_bound=false
         local has_line_bound_match=false
-        while IFS= read -r diag_line; do
-            [ -z "$diag_line" ] && continue
-            if [[ "$diag_line" != *"$val"* ]]; then
+        local preferred_idx=-1
+        local fallback_idx=-1
+        local j
+
+        for ((j = 0; j < ${#PARSED_DIAG_MESSAGE[@]}; j++)); do
+            local diag_text="${PARSED_DIAG_MATCH_TEXT[$j]}"
+            if [[ "$diag_text" != *"$val"* ]]; then
                 continue
             fi
-            if [[ "$diag_line" == *"$file:"* ]]; then
+
+            if [ "${diag_used[$j]}" -eq 0 ] && [ "$fallback_idx" -lt 0 ]; then
+                fallback_idx=$j
+            fi
+
+            if diag_bound_to_fixture_line "$j" "$file"; then
                 has_line_bound=true
-                local suffix="${diag_line#*"$file:"}"
-                local diag_line_no="${suffix%%:*}"
-                if [[ "$diag_line_no" =~ ^[0-9]+$ ]] && [ "$diag_line_no" -eq "$expected_line" ]; then
+                if [ "${PARSED_DIAG_START_LINE[$j]}" = "$expected_line" ]; then
                     has_line_bound_match=true
-                    break
+                    if [ "${diag_used[$j]}" -eq 0 ] && [ "$preferred_idx" -lt 0 ]; then
+                        preferred_idx=$j
+                    fi
                 fi
             fi
-        done <<< "$strict_diag_lines"
+        done
 
         if $has_line_bound && ! $has_line_bound_match; then
             line_mismatch="$line_mismatch\n  - line $expected_line: '${DIAG_TYPES[$i]}: $val' (diagnostic found on a different source line)"
         fi
+
+        local chosen_idx="$preferred_idx"
+        if [ "$chosen_idx" -lt 0 ]; then
+            chosen_idx="$fallback_idx"
+        fi
+
+        if [ "$chosen_idx" -lt 0 ]; then
+            missing="$missing\n  - line ${DIAG_LINENOS[$i]}: '${DIAG_TYPES[$i]}: $val'"
+        else
+            diag_used[$chosen_idx]=1
+        fi
     done
 
-    if [ -n "$line_mismatch" ]; then
-        echo "✗ FAIL (line-mismatched diagnostics)"
-        echo -e "  Mismatch:$line_mismatch"
+    if [ -n "$missing" ]; then
+        echo "✗ FAIL (missing expected diagnostics)"
+        echo -e "  Missing:$missing"
+        print_reject_debug_context "$file" "$build_output"
         FAIL=$((FAIL + 1))
         return
     fi
 
-    local unexpected=""
-    while IFS= read -r diag_line; do
-        [ -z "$diag_line" ] && continue
-        local covered=false
-        for ((i = 0; i < ${#DIAG_VALUES[@]}; i++)); do
-            local val="${DIAG_VALUES[$i]}"
-            if [ "$val" = "*" ]; then
-                covered=true
-                break
-            fi
-            if echo "$diag_line" | grep -qF "$val"; then
-                covered=true
-                break
-            fi
-        done
-        if ! $covered; then
-            unexpected="$unexpected\n  - $diag_line"
-        fi
-    done <<< "$strict_diag_lines"
-
-    if [ -n "$unexpected" ]; then
-        echo "✗ FAIL (unexpected diagnostics)"
-        echo -e "  Unexpected:$unexpected"
+    if [ -n "$line_mismatch" ]; then
+        echo "✗ FAIL (line-mismatched diagnostics)"
+        echo -e "  Mismatch:$line_mismatch"
+        print_reject_debug_context "$file" "$build_output"
         FAIL=$((FAIL + 1))
         return
+    fi
+
+    if ! $wildcard_present; then
+        local unexpected=""
+        for ((i = 0; i < ${#PARSED_DIAG_MESSAGE[@]}; i++)); do
+            if [ "${diag_used[$i]}" -eq 0 ]; then
+                local loc
+                loc=$(format_diag_location "$i")
+                unexpected="$unexpected\n  - ${PARSED_DIAG_SEVERITY[$i]} ${PARSED_DIAG_CODE[$i]} @ $loc: ${PARSED_DIAG_MESSAGE[$i]}"
+            fi
+        done
+
+        if [ -n "$unexpected" ]; then
+            echo "✗ FAIL (unexpected diagnostics)"
+            echo -e "  Unexpected:$unexpected"
+            print_reject_debug_context "$file" "$build_output"
+            FAIL=$((FAIL + 1))
+            return
+        fi
     fi
 
     echo "✓ PASS"
