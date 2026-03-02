@@ -130,4 +130,4 @@ Why this choice:
 - Inherent registry: `lib/frontend/typecheck/inherent_registry.ml`
 - Method-call resolution and collision checks: `lib/frontend/typecheck/infer.ml`, `lib/frontend/typecheck/trait_registry.ml`
 - Inherent helper emission and method-call lowering: `lib/backend/go/emitter.ml`
-- Integration coverage: `test/integration/04_traits.sh`, `test/integration/04_traits_inherent.sh`
+- Integration coverage: `test/fixtures/traits/`, `test/fixtures/traits_inherent/`
