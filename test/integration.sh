@@ -13,6 +13,7 @@ FIXTURE_ROOT="$REPO_ROOT/test/fixtures"
 EXECUTABLE="$REPO_ROOT/_build/default/bin/main.exe"
 BUILD_TARGET="./_build/default/bin/main.exe"
 CLI_SUITE="$INTEGRATION_DIR/08_cli.sh"
+HARNESS_SUITE="$INTEGRATION_DIR/09_harness_canaries.sh"
 
 source "$INTEGRATION_DIR/common.sh"
 
@@ -37,6 +38,7 @@ Usage:
 Selectors:
   all                  # all fixture groups
   cli                  # run 08_cli.sh suite
+  harness              # run 09_harness_canaries.sh suite
   <group>              # exact fixture group (e.g. traits, runtime)
   <group-prefix>       # prefix match (e.g. codegen -> codegen/codegen_*)
   <group>/<file>.mr    # single fixture file under test/fixtures
@@ -98,6 +100,11 @@ resolve_selector() {
 
     if [ "$name" = "cli" ] || [ "$name" = "08_cli" ] || [ "$name" = "08_cli.sh" ]; then
         echo "__CLI__"
+        return 0
+    fi
+
+    if [ "$name" = "harness" ] || [ "$name" = "09_harness" ] || [ "$name" = "09_harness_canaries.sh" ]; then
+        echo "__HARNESS__"
         return 0
     fi
 
@@ -670,6 +677,7 @@ run_fixture_suite() {
 # --- Target selection ---
 
 run_cli=0
+run_harness=0
 selected_groups=()
 selected_fixture_files=()
 if [ "$#" -eq 0 ]; then
@@ -690,6 +698,8 @@ else
         for token in $resolved; do
             if [ "$token" = "__CLI__" ]; then
                 run_cli=1
+            elif [ "$token" = "__HARNESS__" ]; then
+                run_harness=1
             else
                 selected_groups+=("$token")
             fi
@@ -712,7 +722,7 @@ for group in "${selected_groups[@]}"; do
     fi
 done
 
-if [ "${#unique_groups[@]}" -eq 0 ] && [ "${#selected_fixture_files[@]}" -eq 0 ] && [ "$run_cli" -eq 0 ]; then
+if [ "${#unique_groups[@]}" -eq 0 ] && [ "${#selected_fixture_files[@]}" -eq 0 ] && [ "$run_cli" -eq 0 ] && [ "$run_harness" -eq 0 ]; then
     echo "No test targets selected." >&2
     print_usage
     exit 2
@@ -769,6 +779,16 @@ if [ "$run_cli" -eq 1 ]; then
     suite_count=$((suite_count + 1))
     echo ""
     if "$CLI_SUITE"; then
+        suite_pass=$((suite_pass + 1))
+    else
+        suite_fail=$((suite_fail + 1))
+    fi
+fi
+
+if [ "$run_harness" -eq 1 ]; then
+    suite_count=$((suite_count + 1))
+    echo ""
+    if "$HARNESS_SUITE"; then
         suite_pass=$((suite_pass + 1))
     else
         suite_fail=$((suite_fail + 1))
