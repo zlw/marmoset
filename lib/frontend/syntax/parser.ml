@@ -208,13 +208,13 @@ and parse_type_atom (p : parser) : (parser * AST.type_expr, parser) result =
     let* p2, first = parse_type_expr (next_token p) in
     if curr_token_is p2 Token.Comma then
       (* Multiple params: (int, string) -> bool *)
-      let rec collect_params lp params =
+      let rec collect_params lp rev_params =
         let* lp2, param_type = parse_type_expr (next_token lp) in
-        let new_params = params @ [ param_type ] in
+        let rev_params = param_type :: rev_params in
         if curr_token_is lp2 Token.Comma then
-          collect_params lp2 new_params
+          collect_params lp2 rev_params
         else if curr_token_is lp2 Token.RParen then
-          Ok (lp2, new_params)
+          Ok (lp2, List.rev rev_params)
         else
           Error (peek_error lp2 Token.RParen)
       in
@@ -245,13 +245,13 @@ and parse_type_expr (p : parser) : (parser * AST.type_expr, parser) result =
   let* p2, first_type = parse_type_atom p in
   (* Check for union: type | type | type ... *)
   if curr_token_is p2 Token.Pipe then
-    let rec collect_union_members lp members =
+    let rec collect_union_members lp rev_members =
       let* lp2, next_type = parse_type_atom (next_token lp) in
-      let new_members = members @ [ next_type ] in
+      let rev_members = next_type :: rev_members in
       if curr_token_is lp2 Token.Pipe then
-        collect_union_members lp2 new_members
+        collect_union_members lp2 rev_members
       else
-        Ok (lp2, AST.TUnion new_members)
+        Ok (lp2, AST.TUnion (List.rev rev_members))
     in
     collect_union_members p2 [ first_type ]
   else
@@ -264,9 +264,9 @@ and parse_type_expr_list (p : parser) : (parser * AST.type_expr list, parser) re
     let rec loop (lp : parser) (types : AST.type_expr list) =
       let* lp2, te = parse_type_expr lp in
       if curr_token_is lp2 Token.Comma then
-        loop (next_token lp2) ([ te ] @ types)
+        loop (next_token lp2) (te :: types)
       else
-        Ok (lp2, List.rev ([ te ] @ types))
+        Ok (lp2, List.rev (te :: types))
     in
     loop p []
 
@@ -277,9 +277,9 @@ and parse_trait_constraint (p : parser) : (parser * string list, parser) result 
       let trait = lp.curr_token.literal in
       let lp2 = next_token lp in
       if curr_token_is lp2 Token.Plus then
-        loop (next_token lp2) ([ trait ] @ traits)
+        loop (next_token lp2) (trait :: traits)
       else
-        Ok (lp2, List.rev ([ trait ] @ traits))
+        Ok (lp2, List.rev (trait :: traits))
     else
       Error (no_prefix_parse_fn_error lp lp.curr_token.token_type)
   in
@@ -440,18 +440,18 @@ and parse_enum_definition (p : parser) : (parser * AST.statement, parser) result
   Ok (p6, mk_stmt pos (AST.EnumDef { name; type_params; variants }))
 
 and parse_type_param_list (p : parser) : (parser * string list, parser) result =
-  let rec loop lp params =
+  let rec loop lp rev_params =
     if curr_token_is lp Token.Ident then
       let param = lp.curr_token.literal in
       let lp2 = next_token lp in
       if curr_token_is lp2 Token.Comma then
-        loop (next_token lp2) (params @ [ param ])
+        loop (next_token lp2) (param :: rev_params)
       else if curr_token_is lp2 Token.RBracket then
-        Ok (next_token lp2, params @ [ param ])
+        Ok (next_token lp2, List.rev (param :: rev_params))
       else
         Error (peek_error lp2 Token.RBracket)
     else if curr_token_is lp Token.RBracket then
-      Ok (next_token lp, params)
+      Ok (next_token lp, List.rev rev_params)
     else
       Error (no_prefix_parse_fn_error lp lp.curr_token.token_type)
   in
@@ -566,16 +566,16 @@ and parse_trait_definition (p : parser) : (parser * AST.statement, parser) resul
   Ok (p7, mk_stmt pos (AST.TraitDef { name; type_param; supertraits; fields; methods }))
 
 and parse_supertrait_list (p : parser) : (parser * string list, parser) result =
-  let rec loop lp traits =
+  let rec loop lp rev_traits =
     if curr_token_is lp Token.Ident then
       let trait_name = lp.curr_token.literal in
       let lp2 = next_token lp in
       if curr_token_is lp2 Token.Plus then
         (* More supertraits: + trait *)
-        loop (next_token lp2) (traits @ [ trait_name ])
+        loop (next_token lp2) (trait_name :: rev_traits)
       else
         (* End of supertrait list *)
-        Ok (lp2, traits @ [ trait_name ])
+        Ok (lp2, List.rev (trait_name :: rev_traits))
     else
       Error (no_prefix_parse_fn_error lp lp.curr_token.token_type)
   in
@@ -648,18 +648,18 @@ and parse_method_sig (p : parser) : (parser * AST.method_sig, parser) result =
   Ok (p7, AST.{ method_name; method_params = params; method_return_type = return_type; method_default_impl })
 
 and parse_param_list_with_types (p : parser) : (parser * (string * AST.type_expr) list, parser) result =
-  let rec loop lp params =
+  let rec loop lp rev_params =
     if curr_token_is lp Token.Ident then
       let param_name = lp.curr_token.literal in
       let* lp2 = expect_peek lp Token.Colon in
       let* lp3, param_type = parse_type_expr (next_token lp2) in
       let lp4 = lp3 in
       if curr_token_is lp4 Token.Comma then
-        loop (next_token lp4) (params @ [ (param_name, param_type) ])
+        loop (next_token lp4) ((param_name, param_type) :: rev_params)
       else
-        Ok (lp4, params @ [ (param_name, param_type) ])
+        Ok (lp4, List.rev ((param_name, param_type) :: rev_params))
     else if curr_token_is lp Token.RParen then
-      Ok (lp, params)
+      Ok (lp, List.rev rev_params)
     else
       Error (no_prefix_parse_fn_error lp lp.curr_token.token_type)
   in
@@ -727,7 +727,7 @@ and parse_impl_definition (p : parser) : (parser * AST.statement, parser) result
         parse_inherent_impl p2
 
 and parse_generic_param_list (p : parser) : (parser * AST.generic_param list, parser) result =
-  let rec loop lp params =
+  let rec loop lp rev_params =
     if curr_token_is lp Token.Ident then
       let param_name = lp.curr_token.literal in
       let* lp2, constraints =
@@ -740,29 +740,29 @@ and parse_generic_param_list (p : parser) : (parser * AST.generic_param list, pa
       let generic_param = AST.{ name = param_name; constraints } in
       let lp3 = lp2 in
       if curr_token_is lp3 Token.Comma then
-        loop (next_token lp3) (params @ [ generic_param ])
+        loop (next_token lp3) (generic_param :: rev_params)
       else if curr_token_is lp3 Token.RBracket then
-        Ok (next_token lp3, params @ [ generic_param ])
+        Ok (next_token lp3, List.rev (generic_param :: rev_params))
       else
         Error (peek_error lp3 Token.RBracket)
     else if curr_token_is lp Token.RBracket then
-      Ok (next_token lp, params)
+      Ok (next_token lp, List.rev rev_params)
     else
       Error (no_prefix_parse_fn_error lp lp.curr_token.token_type)
   in
   loop p []
 
 and parse_constraint_list (p : parser) : (parser * string list, parser) result =
-  let rec loop lp constraints =
+  let rec loop lp rev_constraints =
     if curr_token_is lp Token.Ident then
       let constraint_name = lp.curr_token.literal in
       let lp2 = next_token lp in
       if curr_token_is lp2 Token.Plus then
         (* More constraints: + trait *)
-        loop (next_token lp2) (constraints @ [ constraint_name ])
+        loop (next_token lp2) (constraint_name :: rev_constraints)
       else
         (* End of constraint list *)
-        Ok (lp2, constraints @ [ constraint_name ])
+        Ok (lp2, List.rev (constraint_name :: rev_constraints))
     else
       Error (no_prefix_parse_fn_error lp lp.curr_token.token_type)
   in
@@ -850,7 +850,7 @@ and parse_derive_definition (p : parser) : (parser * AST.statement, parser) resu
   Ok (p4, mk_stmt pos (AST.DeriveDef { derive_traits; derive_for_type }))
 
 and parse_derive_trait_list (p : parser) : (parser * AST.derive_trait list, parser) result =
-  let rec loop lp traits =
+  let rec loop lp rev_traits =
     if curr_token_is lp Token.Ident then
       let trait_name = lp.curr_token.literal in
       let lp2 = next_token lp in
@@ -867,10 +867,10 @@ and parse_derive_trait_list (p : parser) : (parser * AST.derive_trait list, pars
 
       (* Check for comma (more traits) *)
       if curr_token_is lp3 Token.Comma then
-        loop (next_token lp3) (traits @ [ derive_trait ])
+        loop (next_token lp3) (derive_trait :: rev_traits)
       else
         (* End of trait list *)
-        Ok (lp3, traits @ [ derive_trait ])
+        Ok (lp3, List.rev (derive_trait :: rev_traits))
     else
       Error (no_prefix_parse_fn_error lp lp.curr_token.token_type)
   in
@@ -1102,7 +1102,7 @@ and parse_function_parameters (p : parser) : (parser * (string * AST.type_expr o
   if peek_token_is p Token.RParen then
     Ok (next_token p, [])
   else
-    let rec loop (lp : parser) (params_acc : (string * AST.type_expr option) list) =
+    let rec loop (lp : parser) (rev_params_acc : (string * AST.type_expr option) list) =
       (* Get the parameter name *)
       if not (curr_token_is lp Token.Ident) then
         Error (no_prefix_parse_fn_error lp lp.curr_token.token_type)
@@ -1120,9 +1120,9 @@ and parse_function_parameters (p : parser) : (parser * (string * AST.type_expr o
         in
         let new_param = (param_name, type_annot) in
         if curr_token_is lp_after_annot Token.Comma then
-          loop (next_token lp_after_annot) (params_acc @ [ new_param ])
+          loop (next_token lp_after_annot) (new_param :: rev_params_acc)
         else if curr_token_is lp_after_annot Token.RParen then
-          Ok (lp_after_annot, params_acc @ [ new_param ])
+          Ok (lp_after_annot, List.rev (new_param :: rev_params_acc))
         else
           Error (peek_error lp_after_annot Token.RParen)
     in
@@ -1145,7 +1145,7 @@ and parse_expression_list (p : parser) (end_tt : Token.token_type) : (parser * A
     let rec loop (lp : parser) (args : AST.expression list) =
       if peek_token_is lp Token.Comma then
         let* lp2, arg = parse_expression (next_token (next_token lp)) prec_lowest in
-        loop lp2 ([ arg ] @ args)
+        loop lp2 (arg :: args)
       else
         let* lp2 = expect_peek lp end_tt in
         Ok (lp2, List.rev args)
