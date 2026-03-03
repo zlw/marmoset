@@ -14,8 +14,10 @@ EXECUTABLE="$REPO_ROOT/_build/default/bin/main.exe"
 BUILD_TARGET="./_build/default/bin/main.exe"
 CLI_SUITE="$INTEGRATION_DIR/08_cli.sh"
 HARNESS_SUITE="$INTEGRATION_DIR/09_harness_canaries.sh"
+TEST_BUILD_DIR="$REPO_ROOT/.marmoset/build"
 
 source "$INTEGRATION_DIR/common.sh"
+mkdir -p "$TEST_BUILD_DIR"
 
 ALL_GROUPS=()
 while IFS= read -r d; do
@@ -54,6 +56,10 @@ normalize_existing_file() {
     dir=$(dirname "$path")
     base=$(basename "$path")
     (cd "$dir" 2>/dev/null && printf "%s/%s\n" "$(pwd)" "$base")
+}
+
+worker_binpath() {
+    printf "%s/marmoset_test_bin.%s" "$TEST_BUILD_DIR" "${BASHPID:-$$}"
 }
 
 resolve_fixture_file_selector() {
@@ -653,10 +659,8 @@ run_mode() {
     TOTAL=$((TOTAL + 1))
     echo -n "TEST [$TOTAL] $name ... "
 
-    local test_build_dir="$REPO_ROOT/.marmoset/build"
-    mkdir -p "$test_build_dir"
     local binpath
-    binpath=$(mktemp "$test_build_dir/marmoset_test_bin.XXXXXX")
+    binpath=$(worker_binpath)
     rm -f "$binpath"
 
     local build_output
@@ -702,10 +706,8 @@ reject_mode() {
     TOTAL=$((TOTAL + 1))
     echo -n "TEST [$TOTAL] $name ... "
 
-    local test_build_dir="$REPO_ROOT/.marmoset/build"
-    mkdir -p "$test_build_dir"
     local binpath
-    binpath=$(mktemp "$test_build_dir/marmoset_test_bin.XXXXXX")
+    binpath=$(worker_binpath)
     rm -f "$binpath"
 
     local build_output
@@ -893,10 +895,8 @@ build_only_mode() {
     TOTAL=$((TOTAL + 1))
     echo -n "TEST [$TOTAL] $name ... "
 
-    local test_build_dir="$REPO_ROOT/.marmoset/build"
-    mkdir -p "$test_build_dir"
     local binpath
-    binpath=$(mktemp "$test_build_dir/marmoset_test_bin.XXXXXX")
+    binpath=$(worker_binpath)
     rm -f "$binpath"
 
     local build_output
