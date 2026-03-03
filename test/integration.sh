@@ -648,7 +648,7 @@ run_mode() {
     TOTAL=$((TOTAL + 1))
     echo -n "TEST [$TOTAL] $name ... "
 
-    local binpath="$TEST_BUILD_DIR/marmoset_test_bin.${BASHPID:-$$}"
+    local binpath="$TEST_BUILD_DIR/marmoset_test_bin.$TOTAL"
     rm -f "$binpath"
 
     local build_output
@@ -694,7 +694,7 @@ reject_mode() {
     TOTAL=$((TOTAL + 1))
     echo -n "TEST [$TOTAL] $name ... "
 
-    local binpath="$TEST_BUILD_DIR/marmoset_test_bin.${BASHPID:-$$}"
+    local binpath="$TEST_BUILD_DIR/marmoset_test_bin.$TOTAL"
     rm -f "$binpath"
 
     local build_output
@@ -882,7 +882,7 @@ build_only_mode() {
     TOTAL=$((TOTAL + 1))
     echo -n "TEST [$TOTAL] $name ... "
 
-    local binpath="$TEST_BUILD_DIR/marmoset_test_bin.${BASHPID:-$$}"
+    local binpath="$TEST_BUILD_DIR/marmoset_test_bin.$TOTAL"
     rm -f "$binpath"
 
     local build_output
