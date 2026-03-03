@@ -20,8 +20,7 @@ let dedupe_preserve_order (traits : string list) : string list =
   go StringSet.empty [] traits
 
 let expand_constraints_with_supertraits (constraints : string list) : string list =
-  constraints
-  |> List.fold_left (fun acc trait_name -> acc @ Trait_registry.trait_with_supertraits trait_name) []
+  List.concat_map Trait_registry.trait_with_supertraits constraints
   |> dedupe_preserve_order
 
 let trait_error ~(code : string) (message : string) : (unit, Diagnostic.t) result =
