@@ -231,7 +231,7 @@ and bind_variable (var : string) (mono : mono_type) : (substitution, Diagnostic.
   if occurs_in var mono then
     Error (occurs_check var mono)
   else
-    Ok [ (var, mono) ]
+    Ok (substitution_singleton var mono)
 
 (* Unify two pairs of types and compose the resulting substitutions.
    Used for function types (arg, ret) and hash types (key, value). *)
@@ -278,16 +278,17 @@ and unify_list (list1 : mono_type list) (list2 : mono_type list) : (substitution
    ============================================================ *)
 
 (* Helper to check if unification succeeds and produces expected substitution *)
-let unifies_to type1 type2 expected_subst =
+let unifies_to type1 type2 expected_subst_list =
   match unify type1 type2 with
   | Error _ -> false
   | Ok subst ->
       (* Check that applying the substitution makes both types equal *)
       let t1_applied = apply_substitution subst type1 in
       let t2_applied = apply_substitution subst type2 in
+      let expected = substitution_of_list expected_subst_list in
       t1_applied = t2_applied
-      (* Also check we got the expected substitution (order matters for our tests) *)
-      && subst = expected_subst
+      (* Compare substitutions semantically *)
+      && SubstMap.equal ( = ) subst expected
 
 (* Helper to check if unification fails *)
 let fails_to_unify type1 type2 =

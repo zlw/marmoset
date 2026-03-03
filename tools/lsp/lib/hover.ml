@@ -192,7 +192,7 @@ let normalize_with_user_names ~(type_var_user_names : type_var_user_name_map) (m
               Some (old_name, Types.TVar nice))
       vars
   in
-  let renaming = List.filter_map Fun.id renaming in
+  let renaming = Types.substitution_of_list (List.filter_map Fun.id renaming) in
   Types.apply_substitution renaming mono
 
 (* Format a poly_type in Marmoset syntax: name[t, u]: type *)

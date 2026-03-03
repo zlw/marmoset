@@ -78,7 +78,7 @@ let rec check_trait_methods (typ : Types.mono_type) (trait_name : string) : (uni
       let rec check_generic_constraints = function
         | [] -> Ok ()
         | (p : AST.generic_param) :: rest -> (
-            match List.assoc_opt p.name resolved_impl.specialization_subst with
+            match Types.SubstMap.find_opt p.name resolved_impl.specialization_subst with
             | None ->
                 trait_error ~code:"type-trait-specialization"
                   (Printf.sprintf

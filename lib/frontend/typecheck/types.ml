@@ -127,24 +127,36 @@ let poly_type_to_string (Forall (vars, mono)) =
 let mono_to_poly mono = Forall ([], mono)
 
 (* ============================================================
+   Shared modules for type variable sets and substitution maps
+   ============================================================ *)
+
+module TypeVarSet = Set.Make (String)
+module SubstMap = Map.Make (String)
+
+(* ============================================================
    Substitution: mapping from type variable names to types
    ============================================================ *)
 
-type substitution = (string * mono_type) list
+type substitution = mono_type SubstMap.t
 
-let empty_substitution : substitution = []
+let empty_substitution : substitution = SubstMap.empty
+
+let substitution_of_list (pairs : (string * mono_type) list) : substitution =
+  List.fold_left (fun m (k, v) -> SubstMap.add k v m) SubstMap.empty pairs
+
+let substitution_singleton (k : string) (v : mono_type) : substitution = SubstMap.singleton k v
 
 (* Apply substitution to a type - replace TVars according to the map *)
 let apply_substitution (subst : substitution) (mono : mono_type) : mono_type =
-  let rec go (seen : string list) (ty : mono_type) : mono_type =
+  let rec go (seen : TypeVarSet.t) (ty : mono_type) : mono_type =
     match ty with
     | TInt | TFloat | TBool | TString | TNull -> ty
     | TVar name -> (
-        if List.mem name seen then
+        if TypeVarSet.mem name seen then
           ty
         else
-          match List.assoc_opt name subst with
-          | Some replacement -> go (name :: seen) replacement
+          match SubstMap.find_opt name subst with
+          | Some replacement -> go (TypeVarSet.add name seen) replacement
           | None -> ty)
     | TFun (arg, ret, eff) -> TFun (go seen arg, go seen ret, eff)
     | TArray element -> TArray (go seen element)
@@ -158,35 +170,36 @@ let apply_substitution (subst : substitution) (mono : mono_type) : mono_type =
         let row' = Option.map (go seen) row in
         TRecord (fields', row')
     | TRowVar name -> (
-        if List.mem name seen then
+        if TypeVarSet.mem name seen then
           ty
         else
-          match List.assoc_opt name subst with
-          | Some replacement -> go (name :: seen) replacement
+          match SubstMap.find_opt name subst with
+          | Some replacement -> go (TypeVarSet.add name seen) replacement
           | None -> ty)
     | TUnion types -> TUnion (List.map (go seen) types)
     | TEnum (name, args) -> TEnum (name, List.map (go seen) args)
   in
-  go [] mono
+  go TypeVarSet.empty mono
 
 (* Apply substitution to a poly_type - don't touch quantified variables *)
 let apply_substitution_poly (subst : substitution) (Forall (quantified_vars, mono)) : poly_type =
   (* Remove quantified vars from substitution before applying *)
-  let filtered_subst = List.filter (fun (name, _) -> not (List.mem name quantified_vars)) subst in
+  let filtered_subst =
+    let bound = TypeVarSet.of_list quantified_vars in
+    SubstMap.filter (fun name _ -> not (TypeVarSet.mem name bound)) subst
+  in
   Forall (quantified_vars, apply_substitution filtered_subst mono)
 
 (* Compose two substitutions: apply first_subst first, then second_subst *)
 let compose_substitution (first_subst : substitution) (second_subst : substitution) : substitution =
   let first_with_second_applied =
-    List.map (fun (name, mono) -> (name, apply_substitution second_subst mono)) first_subst
+    SubstMap.map (fun mono -> apply_substitution second_subst mono) first_subst
   in
-  first_with_second_applied @ second_subst
+  SubstMap.union (fun _k v1 _v2 -> Some v1) first_with_second_applied second_subst
 
 (* ============================================================
    Free Type Variables: type variables not bound by a quantifier
    ============================================================ *)
-
-module TypeVarSet = Set.Make (String)
 
 (* Free type variables in a mono_type *)
 let rec free_type_vars (mono : mono_type) : TypeVarSet.t =
@@ -268,16 +281,18 @@ let unique_in_order (lst : string list) : string list =
 (* Normalize a type - rename type variables to a, b, c, ... *)
 let normalize (mono : mono_type) : mono_type =
   let vars = unique_in_order (collect_vars_in_order mono) in
-  let renaming = List.mapi (fun i old_name -> (old_name, TVar (nice_var_name i))) vars in
-  (* Filter out identity mappings (e.g. "a" -> TVar "a") to avoid infinite
-     recursion in apply_substitution, which recursively applies to replacements *)
   let renaming =
-    List.filter
-      (fun (old_name, new_ty) ->
-        match new_ty with
-        | TVar n -> n <> old_name
-        | _ -> true)
-      renaming
+    List.fold_left
+      (fun acc (i, old_name) ->
+        let new_name = nice_var_name i in
+        (* Filter out identity mappings (e.g. "a" -> TVar "a") to avoid infinite
+           recursion in apply_substitution, which recursively applies to replacements *)
+        if new_name = old_name then
+          acc
+        else
+          SubstMap.add old_name (TVar new_name) acc)
+      SubstMap.empty
+      (List.mapi (fun i name -> (i, name)) vars)
   in
   apply_substitution renaming mono
 
@@ -356,47 +371,47 @@ let%test "poly_type_to_string multi var" =
   poly_type_to_string const_type = "∀a b. (a, b) -> a"
 
 let%test "apply_substitution to TVar" =
-  let subst = [ ("a", TInt) ] in
+  let subst = substitution_of_list [ ("a", TInt) ] in
   apply_substitution subst (TVar "a") = TInt
 
 let%test "apply_substitution to unknown TVar" =
-  let subst = [ ("a", TInt) ] in
+  let subst = substitution_of_list [ ("a", TInt) ] in
   apply_substitution subst (TVar "b") = TVar "b"
 
 let%test "apply_substitution to function" =
-  let subst = [ ("a", TInt); ("b", TString) ] in
+  let subst = substitution_of_list [ ("a", TInt); ("b", TString) ] in
   apply_substitution subst (tfun (TVar "a") (TVar "b")) = tfun TInt TString
 
 let%test "apply_substitution to record" =
-  let subst = [ ("a", TInt); ("r", TRecord ([ { name = "y"; typ = TString } ], None)) ] in
+  let subst = substitution_of_list [ ("a", TInt); ("r", TRecord ([ { name = "y"; typ = TString } ], None)) ] in
   let record = TRecord ([ { name = "x"; typ = TVar "a" } ], Some (TRowVar "r")) in
   apply_substitution subst record
   = TRecord ([ { name = "x"; typ = TInt } ], Some (TRecord ([ { name = "y"; typ = TString } ], None)))
 
 let%test "apply_substitution avoids immediate self-cycle" =
-  let subst = [ ("a", TVar "a") ] in
+  let subst = substitution_of_list [ ("a", TVar "a") ] in
   apply_substitution subst (TVar "a") = TVar "a"
 
 let%test "apply_substitution avoids two-node cycle" =
-  let subst = [ ("a", TVar "b"); ("b", TVar "a") ] in
+  let subst = substitution_of_list [ ("a", TVar "b"); ("b", TVar "a") ] in
   apply_substitution subst (TVar "a") = TVar "a"
 
 let%test "apply_substitution avoids var-row cycle" =
-  let subst = [ ("a", TRowVar "a") ] in
+  let subst = substitution_of_list [ ("a", TRowVar "a") ] in
   apply_substitution subst (TVar "a") = TRowVar "a"
 
 let%test "apply_substitution_poly respects quantified vars" =
   (* ∀a. a -> b  with {a -> Int, b -> String}  should give  ∀a. a -> String *)
   (* The 'a' is quantified so it should NOT be replaced *)
-  let subst = [ ("a", TInt); ("b", TString) ] in
+  let subst = substitution_of_list [ ("a", TInt); ("b", TString) ] in
   let poly = Forall ([ "a" ], tfun (TVar "a") (TVar "b")) in
   apply_substitution_poly subst poly = Forall ([ "a" ], tfun (TVar "a") TString)
 
 let%test "compose_substitution" =
   (* first = {a -> b}, second = {b -> Int} *)
   (* compose should give {a -> Int, b -> Int} *)
-  let first = [ ("a", TVar "b") ] in
-  let second = [ ("b", TInt) ] in
+  let first = substitution_of_list [ ("a", TVar "b") ] in
+  let second = substitution_of_list [ ("b", TInt) ] in
   let composed = compose_substitution first second in
   apply_substitution composed (TVar "a") = TInt && apply_substitution composed (TVar "b") = TInt
 
@@ -458,7 +473,7 @@ let%test "normalize_union flattens nested" =
 let%test "normalize_union single element" = normalize_union [ TInt ] = TInt
 
 let%test "apply_substitution to union" =
-  let subst = [ ("a", TInt); ("b", TString) ] in
+  let subst = substitution_of_list [ ("a", TInt); ("b", TString) ] in
   let union = TUnion [ TVar "a"; TVar "b"; TBool ] in
   apply_substitution subst union = TUnion [ TInt; TString; TBool ]
 
@@ -471,7 +486,7 @@ let%test "to_string enum with multiple args" =
   to_string (TEnum ("result", [ TString; TInt ])) = "result[String, Int]"
 
 let%test "apply_substitution to enum" =
-  let subst = [ ("a", TInt); ("b", TString) ] in
+  let subst = substitution_of_list [ ("a", TInt); ("b", TString) ] in
   let enum = TEnum ("result", [ TVar "a"; TVar "b" ]) in
   apply_substitution subst enum = TEnum ("result", [ TInt; TString ])
 

@@ -536,7 +536,7 @@ and analyze_enum_layout
           List.filter_map
             (fun (v : Typecheck.Enum_registry.variant_def) ->
               if pos < List.length v.fields then
-                let subst = List.combine enum_def.type_params type_args in
+                let subst = Types.substitution_of_list (List.combine enum_def.type_params type_args) in
                 Some (Types.apply_substitution subst (List.nth v.fields pos))
               else
                 None)
@@ -573,7 +573,7 @@ and analyze_enum_layout
   let variant_maps =
     List.map
       (fun (v : Typecheck.Enum_registry.variant_def) ->
-        let subst = List.combine enum_def.type_params type_args in
+        let subst = Types.substitution_of_list (List.combine enum_def.type_params type_args) in
         let substituted_fields = List.map (Types.apply_substitution subst) v.fields in
         let mappings =
           List.mapi
@@ -4054,7 +4054,7 @@ let emit_enum_type (state : mono_state) (enum_name : string) (type_args : Types.
                    go_type_name go_type_name v.name
                else
                  (* Constructor with fields - use layout mapping *)
-                 let subst = List.combine enum_def.type_params type_args in
+                 let subst = Types.substitution_of_list (List.combine enum_def.type_params type_args) in
                  let field_types = List.map (Types.apply_substitution subst) v.fields in
                  let params =
                    List.mapi (fun i t -> Printf.sprintf "v%d %s" i (type_to_go state t)) field_types
@@ -4160,14 +4160,15 @@ let emit_inherent_method
     (for_type : Types.mono_type)
     (method_impl : AST.method_impl) : string =
   let substitution : Types.substitution =
-    bindings
-    |> List.filter_map (fun (name, ty) ->
-           match ty with
-           | Types.TVar n when n = name -> None
-           | _ -> Some (name, ty))
+    List.fold_left
+      (fun acc (name, ty) ->
+        match ty with
+        | Types.TVar n when n = name -> acc
+        | _ -> Types.SubstMap.add name ty acc)
+      Types.SubstMap.empty bindings
   in
   let method_type_map : Infer.type_map =
-    if substitution = [] then
+    if Types.SubstMap.is_empty substitution then
       type_map
     else
       let copied = Hashtbl.create (Hashtbl.length type_map) in

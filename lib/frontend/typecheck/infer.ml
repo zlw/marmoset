@@ -365,9 +365,9 @@ let obligations_from_substitution (subst : substitution) : obligation list =
             (fun trait_name -> { trait_name; typ = concrete_type; reason = GenericConstraint var_name })
             constraints
   in
-  List.fold_left
-    (fun acc (var_name, resolved_type) -> List.rev_append (build_for_var var_name resolved_type) acc)
-    [] subst
+  SubstMap.fold
+    (fun var_name resolved_type acc -> List.rev_append (build_for_var var_name resolved_type) acc)
+    subst []
   |> List.rev
 
 let verify_obligation (o : obligation) : (unit, Diagnostic.t) result =
@@ -407,7 +407,7 @@ let apply_substitution_constraints (subst : substitution) (ctx : constraint_ctx)
   ConstraintCtx.fold
     (fun var traits acc ->
       let* acc = acc in
-      match List.assoc_opt var subst with
+      match SubstMap.find_opt var subst with
       | Some (TVar new_var) ->
           Ok (ConstraintCtx.add new_var traits acc)
       | Some concrete_type -> (
@@ -515,24 +515,24 @@ let instantiate (Forall (quantified_vars, mono)) : mono_type =
   let row_vars = row_vars_in_type mono in
   (* Preserve kinding: quantified row vars must instantiate to fresh row vars, not plain type vars. *)
   let subst =
-    List.map
-      (fun var ->
-        if TypeVarSet.mem var row_vars then
-          (var, fresh_row_var ())
-        else
-          (var, fresh_type_var ()))
-      quantified_vars
+    List.fold_left
+      (fun acc var ->
+        let fresh =
+          if TypeVarSet.mem var row_vars then
+            fresh_row_var ()
+          else
+            fresh_type_var ()
+        in
+        (* Copy constraints from old type vars to new ones *)
+        (match fresh with
+        | TVar new_var ->
+            let constraints = lookup_type_var_constraints var in
+            if constraints <> [] then
+              add_type_var_constraints new_var constraints
+        | _ -> ());
+        SubstMap.add var fresh acc)
+      SubstMap.empty quantified_vars
   in
-  (* Copy constraints from old type vars to new ones *)
-  List.iter
-    (fun (old_var, new_type) ->
-      match new_type with
-      | TVar new_var ->
-          let constraints = lookup_type_var_constraints old_var in
-          if constraints <> [] then
-            add_type_var_constraints new_var constraints
-      | _ -> ())
-    subst;
   apply_substitution subst mono
 
 (* ============================================================
@@ -958,7 +958,7 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                   | Some enum_def -> (
                       (* Create fresh type variables for each type parameter *)
                       let fresh_vars = List.map (fun _ -> fresh_type_var ()) enum_def.type_params in
-                      let param_subst = List.combine enum_def.type_params fresh_vars in
+                      let param_subst = substitution_of_list (List.combine enum_def.type_params fresh_vars) in
 
                       (* Substitute type parameters in variant field types *)
                       let expected_types = List.map (apply_substitution param_subst) variant.fields in
@@ -1164,7 +1164,7 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                         Error (error_at ~code:"type-constructor" ~message:(Printf.sprintf "Unknown enum: %s" enum_name) expr)
                     | Some enum_def -> (
                         let fresh_vars = List.map (fun _ -> fresh_type_var ()) enum_def.type_params in
-                        let param_subst = List.combine enum_def.type_params fresh_vars in
+                        let param_subst = substitution_of_list (List.combine enum_def.type_params fresh_vars) in
                         let expected_types = List.map (apply_substitution param_subst) variant.fields in
                         let arg_types' = List.map (apply_substitution subst) arg_types in
                         let rec unify_all subst_acc types1 types2 =
@@ -1313,7 +1313,7 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                             match trait_def.trait_type_param with
                             | None -> method_sig
                             | Some type_param ->
-                                let subst_type_param = [ (type_param, receiver_type') ] in
+                                let subst_type_param = substitution_singleton type_param receiver_type' in
                                 {
                                   Trait_registry.method_name = method_sig.method_name;
                                   method_params =
@@ -2945,7 +2945,7 @@ and check_pattern pattern scrutinee_type =
               else
                 (* Get field types with type args substituted *)
                 let enum_def = Option.get (Enum_registry.lookup enum_name) in
-                let subst = List.combine enum_def.type_params type_args in
+                let subst = substitution_of_list (List.combine enum_def.type_params type_args) in
                 let field_types = List.map (apply_substitution subst) variant.fields in
                 (* Check each field pattern and collect bindings *)
                 let rec check_fields bindings_acc pats types =
@@ -4168,7 +4168,7 @@ f"
   let%test "obligations_from_substitution creates one obligation per trait" =
     clear_constraint_store ();
     add_type_var_constraints "t0" [ "show"; "eq" ];
-    let obligations = obligations_from_substitution [ ("t0", TInt) ] in
+    let obligations = obligations_from_substitution (substitution_of_list [ ("t0", TInt) ]) in
     List.length obligations = 2
     && List.exists (fun (o : obligation) -> o.trait_name = "show" && o.typ = TInt) obligations
     && List.exists (fun (o : obligation) -> o.trait_name = "eq" && o.typ = TInt) obligations
@@ -4177,7 +4177,7 @@ f"
     let contains_substring s sub = String_utils.contains_substring ~needle:sub s in
     clear_constraint_store ();
     add_type_var_constraints "t0" [ "show" ];
-    match verify_constraints_in_substitution [ ("t0", tfun TInt TInt) ] with
+    match verify_constraints_in_substitution (substitution_of_list [ ("t0", tfun TInt TInt) ]) with
     | Ok () -> false
     | Error diag -> contains_substring diag.message "Trait obligation failed" && contains_substring diag.message "type variable 't0'"
 
