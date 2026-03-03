@@ -1073,22 +1073,11 @@ let infer_return_type_from_signature
   | Some (_specialized_params, specialized_return) -> Some specialized_return
   | None -> None
 
-let same_instantiation_identity (a : instantiation) (b : instantiation) : bool =
-  a.module_path = b.module_path
-  && a.func_expr_id = b.func_expr_id
-  && a.func_name = b.func_name
-  && a.func_arity = b.func_arity
-  && a.concrete_only_mode = b.concrete_only_mode
-  && a.type_fingerprint = b.type_fingerprint
-
 let add_instantiation (state : mono_state) (inst : instantiation) : unit =
   if state.concrete_only && List.exists has_type_vars inst.concrete_types then
     ()
   else
-    let existing =
-      InstSet.elements state.instantiations
-      |> List.find_opt (fun candidate -> same_instantiation_identity candidate inst)
-    in
+    let existing = InstSet.find_opt inst state.instantiations in
     match existing with
     | Some existing_inst when existing_inst.concrete_types <> inst.concrete_types ->
         failwith
