@@ -2,6 +2,7 @@
 
 open Types
 module AST = Syntax.Ast.AST
+module String_utils = Diagnostics.String_utils
 
 (* A method signature in a trait *)
 type method_sig = {
@@ -59,9 +60,11 @@ let is_builtin_impl_key (trait_name : string) (for_type : mono_type) : bool =
 
 let canonical_generic_impl_for_type (def : impl_def) : mono_type =
   let rename_subst =
-    List.mapi
-      (fun idx (p : AST.generic_param) -> (p.name, TVar (Printf.sprintf "__impl_param_%d" idx)))
-      def.impl_type_params
+    List.fold_left
+      (fun acc (idx, (p : AST.generic_param)) ->
+        SubstMap.add p.name (TVar (Printf.sprintf "__impl_param_%d" idx)) acc)
+      SubstMap.empty
+      (List.mapi (fun i p -> (i, p)) def.impl_type_params)
   in
   canonical_type (apply_substitution rename_subst def.impl_for_type)
 
@@ -274,10 +277,10 @@ let resolve_generic_impl (trait_name : string) (for_type : mono_type) : (resolve
           | Error _ -> acc
           | Ok subst ->
               let specialization_subst =
-                List.map
-                  (fun (p : AST.generic_param) ->
-                    (p.name, canonical_type (apply_substitution subst (TVar p.name))))
-                  candidate_def.impl_type_params
+                List.fold_left
+                  (fun acc (p : AST.generic_param) ->
+                    SubstMap.add p.name (canonical_type (apply_substitution subst (TVar p.name))) acc)
+                  SubstMap.empty candidate_def.impl_type_params
               in
               let impl = specialized_impl candidate_def for_type' specialization_subst in
               let source_site = format_generic_impl_site trait_name generic_for_type in
@@ -308,7 +311,7 @@ let resolve_impl (trait_name : string) (for_type : mono_type) : (resolved_impl o
         (Some
            {
              impl = concrete_impl;
-             specialization_subst = [];
+             specialization_subst = empty_substitution;
              source_site = format_concrete_impl_site trait_name for_type';
            })
   | None -> resolve_generic_impl trait_name for_type'
@@ -472,7 +475,7 @@ let generate_derived_impl (trait_name : string) (for_type : mono_type) : impl_de
             let substitute_type (t : mono_type) : mono_type =
               match trait_def.trait_type_param with
               | None -> t
-              | Some type_param -> apply_substitution [ (type_param, for_type) ] t
+              | Some type_param -> apply_substitution (substitution_singleton type_param for_type) t
             in
             let params = List.map (fun (name, t) -> (name, substitute_type t)) m.method_params in
             let return_type = substitute_type m.method_return_type in
@@ -544,7 +547,7 @@ let validate_impl_signature (trait_def : trait_def) (def : impl_def) : (unit, st
       let substitute_type (t : mono_type) : mono_type =
         match trait_def.trait_type_param with
         | None -> t (* No type param, use as-is *)
-        | Some type_param -> apply_substitution [ (type_param, def.impl_for_type) ] t
+        | Some type_param -> apply_substitution (substitution_singleton type_param def.impl_for_type) t
       in
 
       (* Check param count *)
@@ -817,19 +820,7 @@ let%test "register_impl rejects duplicate user impl at registration" =
     }
   in
   register_impl show_for_int;
-  let contains_substring s sub =
-    let len_s = String.length s in
-    let len_sub = String.length sub in
-    let rec loop i =
-      if i + len_sub > len_s then
-        false
-      else if String.sub s i len_sub = sub then
-        true
-      else
-        loop (i + 1)
-    in
-    loop 0
-  in
+  let contains_substring s sub = String_utils.contains_substring ~needle:sub s in
   match
     try
       register_impl show_for_int;
@@ -1012,19 +1003,7 @@ let%test "resolve_method reports ambiguity for multiple matching traits" =
       impl_for_type = TInt;
       impl_methods = [ { method_name = "render"; method_params = [ ("x", TInt) ]; method_return_type = TString } ];
     };
-  let contains_substring s sub =
-    let len_s = String.length s in
-    let len_sub = String.length sub in
-    let rec loop i =
-      if i + len_sub > len_s then
-        false
-      else if String.sub s i len_sub = sub then
-        true
-      else
-        loop (i + 1)
-    in
-    loop 0
-  in
+  let contains_substring s sub = String_utils.contains_substring ~needle:sub s in
   match resolve_method TInt "render" with
   | Ok _ -> false
   | Error msg ->

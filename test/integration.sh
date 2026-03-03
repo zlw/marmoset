@@ -13,8 +13,11 @@ FIXTURE_ROOT="$REPO_ROOT/test/fixtures"
 EXECUTABLE="$REPO_ROOT/_build/default/bin/main.exe"
 BUILD_TARGET="./_build/default/bin/main.exe"
 CLI_SUITE="$INTEGRATION_DIR/08_cli.sh"
+HARNESS_SUITE="$INTEGRATION_DIR/09_harness_canaries.sh"
+TEST_BUILD_DIR="$REPO_ROOT/.marmoset/build"
 
 source "$INTEGRATION_DIR/common.sh"
+mkdir -p "$TEST_BUILD_DIR"
 
 ALL_GROUPS=()
 while IFS= read -r d; do
@@ -37,6 +40,7 @@ Usage:
 Selectors:
   all                  # all fixture groups
   cli                  # run 08_cli.sh suite
+  harness              # run 09_harness_canaries.sh suite
   <group>              # exact fixture group (e.g. traits, runtime)
   <group-prefix>       # prefix match (e.g. codegen -> codegen/codegen_*)
   <group>/<file>.mr    # single fixture file under test/fixtures
@@ -101,6 +105,11 @@ resolve_selector() {
         return 0
     fi
 
+    if [ "$name" = "harness" ] || [ "$name" = "09_harness" ] || [ "$name" = "09_harness_canaries.sh" ]; then
+        echo "__HARNESS__"
+        return 0
+    fi
+
     for group in "${ALL_GROUPS[@]}"; do
         if [ "$group" = "$name" ]; then
             echo "$group"
@@ -155,6 +164,34 @@ trim_ws() {
     echo "$s"
 }
 
+record_failed_test() {
+    local name="$1"
+    local reason="$2"
+    FAILED_TEST_NAMES+=("$name")
+    FAILED_TEST_REASONS+=("$reason")
+}
+
+collect_failure_from_log() {
+    local log_file="$1"
+    local line
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^TEST\ \[[0-9]+\]\ (.*)\ \.\.\.\ ✗\ FAIL\ \((.*)\)$ ]]; then
+            record_failed_test "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+            return
+        fi
+    done < "$log_file"
+}
+
+print_failed_tests_summary() {
+    [ "${#FAILED_TEST_NAMES[@]}" -eq 0 ] && return
+
+    echo "Failing tests:"
+    local i
+    for i in "${!FAILED_TEST_NAMES[@]}"; do
+        echo "  - ${FAILED_TEST_NAMES[$i]} (${FAILED_TEST_REASONS[$i]})"
+    done
+}
+
 is_output_anchor_line() {
     local line
     line=$(trim_ws "$1")
@@ -179,18 +216,84 @@ is_output_anchor_line() {
     return 1
 }
 
-validate_annotation_placement() {
+monkey_fixture_in_sync() {
+    local fixture_file="$1"
+    local example_file="$REPO_ROOT/examples/monkey.mr"
+    local normalized_fixture
+    local diff_file
+
+    if [ ! -f "$example_file" ]; then
+        echo "  Missing source file: $example_file"
+        return 1
+    fi
+
+    normalized_fixture=$(mktemp)
+    diff_file=$(mktemp)
+
+    # Keep fixture annotations, but guard that the underlying source stays synced
+    # with examples/monkey.mr.
+    sed -E 's/[[:space:]]*#[[:space:]]*output:[[:space:]].*$//' "$fixture_file" > "$normalized_fixture"
+
+    if diff -u "$example_file" "$normalized_fixture" > "$diff_file"; then
+        rm -f "$normalized_fixture" "$diff_file"
+        return 0
+    fi
+
+    echo "  Fixture/source drift detected against examples/monkey.mr:"
+    sed -n '1,40p' "$diff_file" | sed 's/^/  /'
+    rm -f "$normalized_fixture" "$diff_file"
+    return 1
+}
+
+parse_fixture() {
     local file="$1"
-    local -a lines
+
+    OUTPUT_LINES=()
+    DIAG_TYPES=()
+    DIAG_VALUES=()
+    DIAG_LINENOS=()
+    MODE=""
+
+    local lineno=0
+    local has_diag=false
+    local has_output=false
+    local -a lines=()
+
     while IFS= read -r line || [ -n "$line" ]; do
+        lineno=$((lineno + 1))
         lines+=("$line")
+
+        if [[ "$line" =~ ^[^#]*#[[:space:]]*output:[[:space:]]*(.*) ]]; then
+            OUTPUT_LINES+=("${BASH_REMATCH[1]}")
+            has_output=true
+        fi
+
+        if [[ "$line" =~ ^[^#]*#[[:space:]]*error:[[:space:]]*(.*) ]]; then
+            DIAG_TYPES+=("error")
+            DIAG_VALUES+=("${BASH_REMATCH[1]}")
+            DIAG_LINENOS+=("$lineno")
+            has_diag=true
+        fi
+
+        if [[ "$line" =~ ^[^#]*#[[:space:]]*warning:[[:space:]]*(.*) ]]; then
+            DIAG_TYPES+=("warning")
+            DIAG_VALUES+=("${BASH_REMATCH[1]}")
+            DIAG_LINENOS+=("$lineno")
+            has_diag=true
+        fi
+
+        if [[ "$line" =~ ^[^#]*#[[:space:]]*info:[[:space:]]*(.*) ]]; then
+            DIAG_TYPES+=("info")
+            DIAG_VALUES+=("${BASH_REMATCH[1]}")
+            DIAG_LINENOS+=("$lineno")
+            has_diag=true
+        fi
     done < "$file"
 
     local total=${#lines[@]}
-    local lineno
     for ((lineno = 1; lineno <= total; lineno++)); do
-        local line="${lines[$((lineno - 1))]}"
-        if [[ ! "$line" =~ ^[[:space:]]*#[[:space:]]*(output|error|warning|info):[[:space:]]*(.*)$ ]]; then
+        local ann_line="${lines[$((lineno - 1))]}"
+        if [[ ! "$ann_line" =~ ^[[:space:]]*#[[:space:]]*(output|error|warning|info):[[:space:]]*(.*)$ ]]; then
             continue
         fi
 
@@ -237,81 +340,6 @@ validate_annotation_placement() {
         fi
     done
 
-    return 0
-}
-
-monkey_fixture_in_sync() {
-    local fixture_file="$1"
-    local example_file="$REPO_ROOT/examples/monkey.mr"
-    local normalized_fixture
-    local diff_file
-
-    if [ ! -f "$example_file" ]; then
-        echo "  Missing source file: $example_file"
-        return 1
-    fi
-
-    normalized_fixture=$(mktemp)
-    diff_file=$(mktemp)
-
-    # Keep fixture annotations, but guard that the underlying source stays synced
-    # with examples/monkey.mr.
-    sed -E 's/[[:space:]]*#[[:space:]]*output:[[:space:]].*$//' "$fixture_file" > "$normalized_fixture"
-
-    if diff -u "$example_file" "$normalized_fixture" > "$diff_file"; then
-        rm -f "$normalized_fixture" "$diff_file"
-        return 0
-    fi
-
-    echo "  Fixture/source drift detected against examples/monkey.mr:"
-    sed -n '1,40p' "$diff_file" | sed 's/^/  /'
-    rm -f "$normalized_fixture" "$diff_file"
-    return 1
-}
-
-parse_fixture() {
-    local file="$1"
-
-    OUTPUT_LINES=()
-    DIAG_TYPES=()
-    DIAG_VALUES=()
-    DIAG_LINENOS=()
-    MODE=""
-
-    local lineno=0
-    local has_diag=false
-    local has_output=false
-
-    while IFS= read -r line || [ -n "$line" ]; do
-        lineno=$((lineno + 1))
-
-        if [[ "$line" =~ ^[^#]*#[[:space:]]*output:[[:space:]]*(.*) ]]; then
-            OUTPUT_LINES+=("${BASH_REMATCH[1]}")
-            has_output=true
-        fi
-
-        if [[ "$line" =~ ^[^#]*#[[:space:]]*error:[[:space:]]*(.*) ]]; then
-            DIAG_TYPES+=("error")
-            DIAG_VALUES+=("${BASH_REMATCH[1]}")
-            DIAG_LINENOS+=("$lineno")
-            has_diag=true
-        fi
-
-        if [[ "$line" =~ ^[^#]*#[[:space:]]*warning:[[:space:]]*(.*) ]]; then
-            DIAG_TYPES+=("warning")
-            DIAG_VALUES+=("${BASH_REMATCH[1]}")
-            DIAG_LINENOS+=("$lineno")
-            has_diag=true
-        fi
-
-        if [[ "$line" =~ ^[^#]*#[[:space:]]*info:[[:space:]]*(.*) ]]; then
-            DIAG_TYPES+=("info")
-            DIAG_VALUES+=("${BASH_REMATCH[1]}")
-            DIAG_LINENOS+=("$lineno")
-            has_diag=true
-        fi
-    done < "$file"
-
     if $has_diag; then
         MODE="reject"
     elif $has_output; then
@@ -319,6 +347,298 @@ parse_fixture() {
     else
         MODE="build-only"
     fi
+
+    return 0
+}
+
+# --- Diagnostic extraction/matching helpers (Phase 7 canonical-only) ---
+
+PARSED_DIAG_EXTRACTOR=()
+PARSED_DIAG_SEVERITY=()
+PARSED_DIAG_CODE=()
+PARSED_DIAG_MESSAGE=()
+PARSED_DIAG_FILE=()
+PARSED_DIAG_START_LINE=()
+PARSED_DIAG_START_COL=()
+PARSED_DIAG_END_LINE=()
+PARSED_DIAG_END_COL=()
+PARSED_DIAG_MATCH_TEXT=()
+DIAG_RECORD_SEP=$'\x1f'
+
+to_lower() {
+    printf "%s" "$1" | tr '[:upper:]' '[:lower:]'
+}
+
+emit_diag_record() {
+    local extractor="$1"
+    local severity="$2"
+    local code="$3"
+    local message="$4"
+    local file="$5"
+    local start_line="$6"
+    local start_col="$7"
+    local end_line="$8"
+    local end_col="$9"
+    local match_text="${10}"
+
+    # Keep records single-line/sep-safe for transport.
+    local safe_message="${message//$DIAG_RECORD_SEP/ }"
+    local safe_match_text="${match_text//$DIAG_RECORD_SEP/ }"
+    safe_message="${safe_message//$'\n'/ }"
+    safe_match_text="${safe_match_text//$'\n'/ }"
+
+    printf "%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s\n" \
+        "$extractor" "$DIAG_RECORD_SEP" \
+        "$severity" "$DIAG_RECORD_SEP" \
+        "$code" "$DIAG_RECORD_SEP" \
+        "$safe_message" "$DIAG_RECORD_SEP" \
+        "$file" "$DIAG_RECORD_SEP" \
+        "$start_line" "$DIAG_RECORD_SEP" \
+        "$start_col" "$DIAG_RECORD_SEP" \
+        "$end_line" "$DIAG_RECORD_SEP" \
+        "$end_col" "$DIAG_RECORD_SEP" \
+        "$safe_match_text"
+}
+
+try_parse_canonical_header() {
+    local line="$1"
+    CH_SEVERITY=""
+    CH_CODE=""
+    CH_MESSAGE=""
+    CH_FILE=""
+    CH_START_LINE=""
+    CH_START_COL=""
+    CH_END_LINE=""
+    CH_END_COL=""
+
+    if [[ "$line" =~ ^(.+):([0-9]+):([0-9]+)-([0-9]+):([0-9]+):[[:space:]]*([Ee]rror|[Ww]arning|[Ii]nfo)[[:space:]]+([A-Za-z0-9._-]+):[[:space:]]*(.*)$ ]]; then
+        CH_FILE="${BASH_REMATCH[1]}"
+        CH_START_LINE="${BASH_REMATCH[2]}"
+        CH_START_COL="${BASH_REMATCH[3]}"
+        CH_END_LINE="${BASH_REMATCH[4]}"
+        CH_END_COL="${BASH_REMATCH[5]}"
+        CH_SEVERITY="$(to_lower "${BASH_REMATCH[6]}")"
+        CH_CODE="$(to_lower "${BASH_REMATCH[7]}")"
+        CH_MESSAGE="${BASH_REMATCH[8]}"
+        return 0
+    fi
+
+    if [[ "$line" =~ ^(.+):([0-9]+):([0-9]+):[[:space:]]*([Ee]rror|[Ww]arning|[Ii]nfo)[[:space:]]+([A-Za-z0-9._-]+):[[:space:]]*(.*)$ ]]; then
+        CH_FILE="${BASH_REMATCH[1]}"
+        CH_START_LINE="${BASH_REMATCH[2]}"
+        CH_START_COL="${BASH_REMATCH[3]}"
+        CH_END_LINE=""
+        CH_END_COL=""
+        CH_SEVERITY="$(to_lower "${BASH_REMATCH[4]}")"
+        CH_CODE="$(to_lower "${BASH_REMATCH[5]}")"
+        CH_MESSAGE="${BASH_REMATCH[6]}"
+        return 0
+    fi
+
+    if [[ "$line" =~ ^([Ee]rror|[Ww]arning|[Ii]nfo)[[:space:]]+([A-Za-z0-9._-]+):[[:space:]]*(.*)$ ]]; then
+        CH_FILE=""
+        CH_START_LINE=""
+        CH_START_COL=""
+        CH_END_LINE=""
+        CH_END_COL=""
+        CH_SEVERITY="$(to_lower "${BASH_REMATCH[1]}")"
+        CH_CODE="$(to_lower "${BASH_REMATCH[2]}")"
+        CH_MESSAGE="${BASH_REMATCH[3]}"
+        return 0
+    fi
+
+    return 1
+}
+
+extract_new_diagnostic_records() {
+    local build_output="$1"
+
+    local active=0
+    local cur_severity=""
+    local cur_code=""
+    local cur_message=""
+    local cur_file=""
+    local cur_start_line=""
+    local cur_start_col=""
+    local cur_end_line=""
+    local cur_end_col=""
+    local cur_match_text=""
+    local cont_count=0
+    local cont_active=0
+
+    while IFS= read -r line || [ -n "$line" ]; do
+        line="${line%$'\r'}"
+
+        if try_parse_canonical_header "$line"; then
+            if [ "$active" -eq 1 ]; then
+                emit_diag_record "canonical" "$cur_severity" "$cur_code" "$cur_message" "$cur_file" "$cur_start_line" \
+                    "$cur_start_col" "$cur_end_line" "$cur_end_col" "$cur_match_text"
+            fi
+
+            active=1
+            cont_count=0
+            cont_active=1
+            cur_severity="$CH_SEVERITY"
+            cur_code="$CH_CODE"
+            cur_message="$CH_MESSAGE"
+            cur_file="$CH_FILE"
+            cur_start_line="$CH_START_LINE"
+            cur_start_col="$CH_START_COL"
+            cur_end_line="$CH_END_LINE"
+            cur_end_col="$CH_END_COL"
+            cur_match_text="$line"
+            continue
+        fi
+
+        if [ "$active" -eq 1 ] && [ "$cont_active" -eq 1 ]; then
+            # Keep non-header continuation lines attached to the active diagnostic block.
+            # This preserves matcher visibility for toolchain details that are emitted on
+            # following lines (for example Go compiler messages under build-go-compile).
+            # Stop on blank lines (block boundary) or after 20 continuation lines.
+            local trimmed
+            trimmed=$(trim_ws "$line")
+            if [ -z "$trimmed" ] || [ "$cont_count" -ge 20 ]; then
+                cont_active=0
+            else
+                cur_match_text="$cur_match_text | $trimmed"
+                cont_count=$((cont_count + 1))
+            fi
+        fi
+    done <<< "$build_output"
+
+    if [ "$active" -eq 1 ]; then
+        emit_diag_record "canonical" "$cur_severity" "$cur_code" "$cur_message" "$cur_file" "$cur_start_line" \
+            "$cur_start_col" "$cur_end_line" "$cur_end_col" "$cur_match_text"
+    fi
+}
+
+clear_parsed_diagnostics() {
+    PARSED_DIAG_EXTRACTOR=()
+    PARSED_DIAG_SEVERITY=()
+    PARSED_DIAG_CODE=()
+    PARSED_DIAG_MESSAGE=()
+    PARSED_DIAG_FILE=()
+    PARSED_DIAG_START_LINE=()
+    PARSED_DIAG_START_COL=()
+    PARSED_DIAG_END_LINE=()
+    PARSED_DIAG_END_COL=()
+    PARSED_DIAG_MATCH_TEXT=()
+}
+
+parse_build_output_diagnostics() {
+    local build_output="$1"
+    clear_parsed_diagnostics
+
+    local -a merged_records=()
+
+    local rec
+    while IFS= read -r rec || [ -n "$rec" ]; do
+        merged_records+=("$rec")
+    done < <(extract_new_diagnostic_records "$build_output")
+
+    for rec in "${merged_records[@]}"; do
+        [ -z "$rec" ] && continue
+        local extractor severity code message file start_line start_col end_line end_col match_text
+        IFS="$DIAG_RECORD_SEP" read -r extractor severity code message file start_line start_col end_line end_col match_text <<< "$rec"
+        PARSED_DIAG_EXTRACTOR+=("$extractor")
+        PARSED_DIAG_SEVERITY+=("$severity")
+        PARSED_DIAG_CODE+=("$code")
+        PARSED_DIAG_MESSAGE+=("$message")
+        PARSED_DIAG_FILE+=("$file")
+        PARSED_DIAG_START_LINE+=("$start_line")
+        PARSED_DIAG_START_COL+=("$start_col")
+        PARSED_DIAG_END_LINE+=("$end_line")
+        PARSED_DIAG_END_COL+=("$end_col")
+        PARSED_DIAG_MATCH_TEXT+=("$match_text")
+    done
+}
+
+paths_equal_or_normalized() {
+    local left="$1"
+    local right="$2"
+
+    [ "$left" = "$right" ] && return 0
+    [ -z "$left" ] && return 1
+    [ -z "$right" ] && return 1
+
+    local left_norm="$left"
+    local right_norm="$right"
+
+    if [ -f "$left" ]; then
+        left_norm=$(normalize_existing_file "$left")
+    elif [ -f "$REPO_ROOT/$left" ]; then
+        left_norm=$(normalize_existing_file "$REPO_ROOT/$left")
+    fi
+
+    if [ -f "$right" ]; then
+        right_norm=$(normalize_existing_file "$right")
+    elif [ -f "$REPO_ROOT/$right" ]; then
+        right_norm=$(normalize_existing_file "$REPO_ROOT/$right")
+    fi
+
+    [ "$left_norm" = "$right_norm" ]
+}
+
+diag_bound_to_fixture_line() {
+    local idx="$1"
+    local fixture_file="$2"
+    local diag_file="${PARSED_DIAG_FILE[$idx]}"
+    local diag_line="${PARSED_DIAG_START_LINE[$idx]}"
+
+    [ -z "$diag_file" ] && return 1
+    [ -z "$diag_line" ] && return 1
+
+    paths_equal_or_normalized "$diag_file" "$fixture_file"
+}
+
+format_diag_location() {
+    local idx="$1"
+    local file="${PARSED_DIAG_FILE[$idx]}"
+    local start_line="${PARSED_DIAG_START_LINE[$idx]}"
+    local start_col="${PARSED_DIAG_START_COL[$idx]}"
+    local end_line="${PARSED_DIAG_END_LINE[$idx]}"
+    local end_col="${PARSED_DIAG_END_COL[$idx]}"
+
+    if [ -z "$file" ]; then
+        echo "<no-span>"
+        return
+    fi
+
+    if [ -z "$start_line" ]; then
+        echo "$file"
+        return
+    fi
+
+    if [ -z "$end_line" ]; then
+        echo "$file:$start_line:$start_col"
+    else
+        echo "$file:$start_line:$start_col-$end_line:$end_col"
+    fi
+}
+
+print_reject_debug_context() {
+    local file="$1"
+    local build_output="$2"
+
+    echo "  Expectations:"
+    local i
+    for ((i = 0; i < ${#DIAG_VALUES[@]}; i++)); do
+        echo "    - line ${DIAG_LINENOS[$i]}: '${DIAG_TYPES[$i]}: ${DIAG_VALUES[$i]}'"
+    done
+
+    echo "  Parsed diagnostics:"
+    if [ "${#PARSED_DIAG_MESSAGE[@]}" -eq 0 ]; then
+        echo "    - (none)"
+    else
+        for ((i = 0; i < ${#PARSED_DIAG_MESSAGE[@]}; i++)); do
+            local loc
+            loc=$(format_diag_location "$i")
+            echo "    - [${PARSED_DIAG_EXTRACTOR[$i]}] ${PARSED_DIAG_SEVERITY[$i]} ${PARSED_DIAG_CODE[$i]} @ $loc: ${PARSED_DIAG_MESSAGE[$i]}"
+        done
+    fi
+
+    echo "  Output head:"
+    echo "$build_output" | sed -n '1,20p' | sed 's/^/    /'
 }
 
 run_mode() {
@@ -328,10 +648,7 @@ run_mode() {
     TOTAL=$((TOTAL + 1))
     echo -n "TEST [$TOTAL] $name ... "
 
-    local test_build_dir="$REPO_ROOT/.marmoset/build"
-    mkdir -p "$test_build_dir"
-    local binpath
-    binpath=$(mktemp "$test_build_dir/marmoset_test_bin.XXXXXX")
+    local binpath="$TEST_BUILD_DIR/marmoset_test_bin.$TOTAL"
     rm -f "$binpath"
 
     local build_output
@@ -358,11 +675,13 @@ $line"
             echo "  Expected: $(echo "$expected_output" | head -5)"
             echo "  Got:      $(echo "$actual_output" | head -5)"
             FAIL=$((FAIL + 1))
+            record_failed_test "$name" "output mismatch"
         fi
     else
         echo "✗ FAIL (build or execution failed)"
         echo "  Build output: $build_output"
         FAIL=$((FAIL + 1))
+        record_failed_test "$name" "build or execution failed"
     fi
 
     rm -f "$binpath"
@@ -375,29 +694,39 @@ reject_mode() {
     TOTAL=$((TOTAL + 1))
     echo -n "TEST [$TOTAL] $name ... "
 
-    local test_build_dir="$REPO_ROOT/.marmoset/build"
-    mkdir -p "$test_build_dir"
-    local binpath
-    binpath=$(mktemp "$test_build_dir/marmoset_test_bin.XXXXXX")
+    local binpath="$TEST_BUILD_DIR/marmoset_test_bin.$TOTAL"
     rm -f "$binpath"
 
     local build_output
     if build_output=$($EXECUTABLE build "$file" -o "$binpath" 2>&1); then
         echo "✗ FAIL (expected build failure but build succeeded)"
         FAIL=$((FAIL + 1))
+        record_failed_test "$name" "expected build failure but build succeeded"
         rm -f "$binpath"
         return
     fi
     rm -f "$binpath"
 
     local all_wildcard=true
+    local wildcard_count=0
     local i
     for ((i = 0; i < ${#DIAG_VALUES[@]}; i++)); do
-        if [ "${DIAG_VALUES[$i]}" != "*" ]; then
+        if [ "${DIAG_VALUES[$i]}" = "*" ]; then
+            wildcard_count=$((wildcard_count + 1))
+        else
             all_wildcard=false
-            break
         fi
     done
+
+    parse_build_output_diagnostics "$build_output"
+
+    if [ "${#PARSED_DIAG_MESSAGE[@]}" -eq 0 ]; then
+        echo "✗ FAIL (diagnostic extractor failure)"
+        print_reject_debug_context "$file" "$build_output"
+        FAIL=$((FAIL + 1))
+        record_failed_test "$name" "diagnostic extractor failure"
+        return
+    fi
 
     if $all_wildcard; then
         echo "✓ PASS"
@@ -405,97 +734,140 @@ reject_mode() {
         return
     fi
 
-    local all_found=true
-    local missing=""
-    for ((i = 0; i < ${#DIAG_VALUES[@]}; i++)); do
-        local val="${DIAG_VALUES[$i]}"
-        if [ "$val" = "*" ]; then
-            continue
-        fi
-        if ! echo "$build_output" | grep -qF "$val"; then
-            all_found=false
-            missing="$missing\n  - line ${DIAG_LINENOS[$i]}: '${DIAG_TYPES[$i]}: $val'"
-        fi
+    local -a diag_used=()
+    for ((i = 0; i < ${#PARSED_DIAG_MESSAGE[@]}; i++)); do
+        diag_used+=(0)
     done
 
-    if ! $all_found; then
-        echo "✗ FAIL (missing expected diagnostics)"
-        echo -e "  Missing:$missing"
-        echo "  Build output: $(echo "$build_output" | head -10)"
-        FAIL=$((FAIL + 1))
-        return
-    fi
-
-    local strict_diag_lines
-    strict_diag_lines=$(
-        echo "$build_output" \
-            | grep -iE '^[^:]*:[0-9]+:[0-9]+.*error|^(Type |Parse )?[Ee]rror|^[Ww]arning|^[Ii]nfo' \
-            | grep -vE '^Error:[[:space:]]+Go build failed$' \
-            || true
-    )
-
+    local missing=""
     local line_mismatch=""
+
+    local severity_mismatch=""
+
+    # One-to-one expectation matching: duplicates in emitted diagnostics require
+    # duplicate fixture expectations (unless wildcard is used).
+    # Severity enforcement: annotation kind (error/warning/info) must match
+    # the emitted diagnostic severity.
+    # Line/file strictness: when a line-bound diagnostic exists for a given
+    # expectation, only line-bound matches are accepted (no fallback to
+    # diagnostics from unrelated lines/files).
     for ((i = 0; i < ${#DIAG_VALUES[@]}; i++)); do
         local val="${DIAG_VALUES[$i]}"
-        if [ "$val" = "*" ]; then
-            continue
-        fi
+        [ "$val" = "*" ] && continue
 
         local expected_line="${DIAG_LINENOS[$i]}"
+        local expected_severity="${DIAG_TYPES[$i]}"
         local has_line_bound=false
         local has_line_bound_match=false
-        while IFS= read -r diag_line; do
-            [ -z "$diag_line" ] && continue
-            if [[ "$diag_line" != *"$val"* ]]; then
+        local preferred_idx=-1
+        local fallback_idx=-1
+        local severity_mismatch_idx=-1
+        local j
+
+        for ((j = 0; j < ${#PARSED_DIAG_MESSAGE[@]}; j++)); do
+            local diag_text="${PARSED_DIAG_MATCH_TEXT[$j]}"
+            if [[ "$diag_text" != *"$val"* ]]; then
                 continue
             fi
-            if [[ "$diag_line" == *"$file:"* ]]; then
+
+            # Severity enforcement: text matches but wrong severity → not a match.
+            local diag_sev="${PARSED_DIAG_SEVERITY[$j]}"
+            if [ "$diag_sev" != "$expected_severity" ]; then
+                if [ "${diag_used[$j]}" -eq 0 ] && [ "$severity_mismatch_idx" -lt 0 ]; then
+                    severity_mismatch_idx=$j
+                fi
+                continue
+            fi
+
+            if [ "${diag_used[$j]}" -eq 0 ] && [ "$fallback_idx" -lt 0 ]; then
+                fallback_idx=$j
+            fi
+
+            if diag_bound_to_fixture_line "$j" "$file"; then
                 has_line_bound=true
-                local suffix="${diag_line#*"$file:"}"
-                local diag_line_no="${suffix%%:*}"
-                if [[ "$diag_line_no" =~ ^[0-9]+$ ]] && [ "$diag_line_no" -eq "$expected_line" ]; then
+                if [ "${PARSED_DIAG_START_LINE[$j]}" = "$expected_line" ]; then
                     has_line_bound_match=true
-                    break
+                    if [ "${diag_used[$j]}" -eq 0 ] && [ "$preferred_idx" -lt 0 ]; then
+                        preferred_idx=$j
+                    fi
                 fi
             fi
-        done <<< "$strict_diag_lines"
+        done
 
         if $has_line_bound && ! $has_line_bound_match; then
             line_mismatch="$line_mismatch\n  - line $expected_line: '${DIAG_TYPES[$i]}: $val' (diagnostic found on a different source line)"
         fi
+
+        local chosen_idx="$preferred_idx"
+        # Line/file strictness: when a line-bound diagnostic exists for this
+        # expectation, do NOT fall back to an unrelated match.
+        if [ "$chosen_idx" -lt 0 ] && ! $has_line_bound; then
+            chosen_idx="$fallback_idx"
+        fi
+
+        if [ "$chosen_idx" -lt 0 ]; then
+            # Don't report as "missing" if already tracked as line-mismatch.
+            if $has_line_bound && ! $has_line_bound_match; then
+                : # already recorded in line_mismatch above
+            elif [ "$severity_mismatch_idx" -ge 0 ]; then
+                local sev_found="${PARSED_DIAG_SEVERITY[$severity_mismatch_idx]}"
+                severity_mismatch="$severity_mismatch\n  - line $expected_line: expected '$expected_severity: $val' but diagnostic has severity '$sev_found'"
+            else
+                missing="$missing\n  - line ${DIAG_LINENOS[$i]}: '${DIAG_TYPES[$i]}: $val'"
+            fi
+        else
+            diag_used[$chosen_idx]=1
+        fi
     done
+
+    if [ -n "$missing" ]; then
+        echo "✗ FAIL (missing expected diagnostics)"
+        echo -e "  Missing:$missing"
+        print_reject_debug_context "$file" "$build_output"
+        FAIL=$((FAIL + 1))
+        record_failed_test "$name" "missing expected diagnostics"
+        return
+    fi
 
     if [ -n "$line_mismatch" ]; then
         echo "✗ FAIL (line-mismatched diagnostics)"
         echo -e "  Mismatch:$line_mismatch"
+        print_reject_debug_context "$file" "$build_output"
         FAIL=$((FAIL + 1))
+        record_failed_test "$name" "line-mismatched diagnostics"
         return
     fi
 
+    if [ -n "$severity_mismatch" ]; then
+        echo "✗ FAIL (severity-mismatched diagnostics)"
+        echo -e "  Mismatch:$severity_mismatch"
+        print_reject_debug_context "$file" "$build_output"
+        FAIL=$((FAIL + 1))
+        record_failed_test "$name" "severity-mismatched diagnostics"
+        return
+    fi
+
+    # Wildcard scoping: each wildcard expectation absorbs one unmatched
+    # diagnostic. Remaining unmatched diagnostics are unexpected → FAIL.
+    local unmatched_count=0
     local unexpected=""
-    while IFS= read -r diag_line; do
-        [ -z "$diag_line" ] && continue
-        local covered=false
-        for ((i = 0; i < ${#DIAG_VALUES[@]}; i++)); do
-            local val="${DIAG_VALUES[$i]}"
-            if [ "$val" = "*" ]; then
-                covered=true
-                break
+    for ((i = 0; i < ${#PARSED_DIAG_MESSAGE[@]}; i++)); do
+        if [ "${diag_used[$i]}" -eq 0 ]; then
+            unmatched_count=$((unmatched_count + 1))
+            if [ "$unmatched_count" -gt "$wildcard_count" ]; then
+                local loc
+                loc=$(format_diag_location "$i")
+                unexpected="$unexpected\n  - ${PARSED_DIAG_SEVERITY[$i]} ${PARSED_DIAG_CODE[$i]} @ $loc: ${PARSED_DIAG_MESSAGE[$i]}"
             fi
-            if echo "$diag_line" | grep -qF "$val"; then
-                covered=true
-                break
-            fi
-        done
-        if ! $covered; then
-            unexpected="$unexpected\n  - $diag_line"
         fi
-    done <<< "$strict_diag_lines"
+    done
 
     if [ -n "$unexpected" ]; then
         echo "✗ FAIL (unexpected diagnostics)"
         echo -e "  Unexpected:$unexpected"
+        print_reject_debug_context "$file" "$build_output"
         FAIL=$((FAIL + 1))
+        record_failed_test "$name" "unexpected diagnostics"
         return
     fi
 
@@ -510,10 +882,7 @@ build_only_mode() {
     TOTAL=$((TOTAL + 1))
     echo -n "TEST [$TOTAL] $name ... "
 
-    local test_build_dir="$REPO_ROOT/.marmoset/build"
-    mkdir -p "$test_build_dir"
-    local binpath
-    binpath=$(mktemp "$test_build_dir/marmoset_test_bin.XXXXXX")
+    local binpath="$TEST_BUILD_DIR/marmoset_test_bin.$TOTAL"
     rm -f "$binpath"
 
     local build_output
@@ -524,6 +893,7 @@ build_only_mode() {
         echo "✗ FAIL (build failed)"
         echo "  Output: $build_output"
         FAIL=$((FAIL + 1))
+        record_failed_test "$name" "build failed"
     fi
 
     rm -f "$binpath"
@@ -534,11 +904,12 @@ run_fixture() {
     local rel_path="${file#$FIXTURE_ROOT/}"
     local name="${rel_path%.mr}"
 
-    if ! validate_annotation_placement "$file"; then
+    if ! parse_fixture "$file"; then
         TOTAL=$((TOTAL + 1))
         echo -n "TEST [$TOTAL] $name ... "
         echo "✗ FAIL (annotation placement)"
         FAIL=$((FAIL + 1))
+        record_failed_test "$name" "annotation placement"
         return
     fi
 
@@ -547,10 +918,9 @@ run_fixture() {
         echo -n "TEST [$TOTAL] $name ... "
         echo "✗ FAIL (fixture drift)"
         FAIL=$((FAIL + 1))
+        record_failed_test "$name" "fixture drift"
         return
     fi
-
-    parse_fixture "$file"
 
     case "$MODE" in
         run)
@@ -579,14 +949,17 @@ run_fixture_isolated() {
 
 run_fixture_suite() {
     suite_begin "Fixture Tests"
+    FAILED_TEST_NAMES=()
+    FAILED_TEST_REASONS=()
 
     if [ "${#SELECTED_FIXTURES[@]}" -eq 0 ]; then
         echo "(no fixtures found — skipping)"
         PASS=0
         FAIL=0
         TOTAL=0
-        suite_end
-        return 0
+        local empty_rc=0
+        suite_end || empty_rc=$?
+        return "$empty_rc"
     fi
 
     local fixture_count=${#SELECTED_FIXTURES[@]}
@@ -646,6 +1019,7 @@ run_fixture_suite() {
                         PASS=$((PASS + 1))
                     else
                         FAIL=$((FAIL + 1))
+                        collect_failure_from_log "$log_file"
                     fi
                     TOTAL=$((TOTAL + 1))
                     running=$((running - 1))
@@ -664,12 +1038,18 @@ run_fixture_suite() {
         rm -rf "$log_dir"
     fi
 
-    suite_end
+    local suite_rc=0
+    suite_end || suite_rc=$?
+    if [ "$suite_rc" -ne 0 ]; then
+        print_failed_tests_summary
+    fi
+    return "$suite_rc"
 }
 
 # --- Target selection ---
 
 run_cli=0
+run_harness=0
 selected_groups=()
 selected_fixture_files=()
 if [ "$#" -eq 0 ]; then
@@ -690,6 +1070,8 @@ else
         for token in $resolved; do
             if [ "$token" = "__CLI__" ]; then
                 run_cli=1
+            elif [ "$token" = "__HARNESS__" ]; then
+                run_harness=1
             else
                 selected_groups+=("$token")
             fi
@@ -712,7 +1094,7 @@ for group in "${selected_groups[@]}"; do
     fi
 done
 
-if [ "${#unique_groups[@]}" -eq 0 ] && [ "${#selected_fixture_files[@]}" -eq 0 ] && [ "$run_cli" -eq 0 ]; then
+if [ "${#unique_groups[@]}" -eq 0 ] && [ "${#selected_fixture_files[@]}" -eq 0 ] && [ "$run_cli" -eq 0 ] && [ "$run_harness" -eq 0 ]; then
     echo "No test targets selected." >&2
     print_usage
     exit 2
@@ -769,6 +1151,16 @@ if [ "$run_cli" -eq 1 ]; then
     suite_count=$((suite_count + 1))
     echo ""
     if "$CLI_SUITE"; then
+        suite_pass=$((suite_pass + 1))
+    else
+        suite_fail=$((suite_fail + 1))
+    fi
+fi
+
+if [ "$run_harness" -eq 1 ]; then
+    suite_count=$((suite_count + 1))
+    echo ""
+    if "$HARNESS_SUITE"; then
         suite_pass=$((suite_pass + 1))
     else
         suite_fail=$((suite_fail + 1))

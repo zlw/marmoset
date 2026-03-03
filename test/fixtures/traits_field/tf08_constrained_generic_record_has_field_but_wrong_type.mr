@@ -5,4 +5,4 @@ trait has_name {
 let get_name = fn[t: has_name](v: t) -> string {
   v.name
 };
-get_name({ name: 42 })  # error: field-type-mismatch
+get_name({ name: 42 })  # error: does not satisfy trait has_name because field 'name' has type Int but expected String

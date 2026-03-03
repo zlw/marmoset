@@ -33,7 +33,7 @@ let variant_type (enum_name : string) (variant_name : string) (type_args : mono_
       | None -> None
       | Some variant ->
           (* Create substitution from type params to type args *)
-          let subst = List.combine def.type_params type_args in
+          let subst = substitution_of_list (List.combine def.type_params type_args) in
 
           (* Substitute in variant field types *)
           let result_type = TEnum (enum_name, type_args) in

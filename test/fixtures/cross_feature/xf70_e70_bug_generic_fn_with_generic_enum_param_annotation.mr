@@ -1,0 +1,13 @@
+# XF70: E70: Generic fn with generic enum parameter annotation
+# A function like fn[t](opt: option[t]) should work — the type param `t`
+# inside `option[t]` resolves to the generic's fresh type variable.
+enum option[a] { some(a) none }
+let classify = fn[t](opt: option[t]) -> string {
+  match opt {
+    option.some(v): "some"
+    option.none: "none"
+    _: "other"
+  }
+}
+let r = classify(option.some(42))
+puts(r)  # output: some

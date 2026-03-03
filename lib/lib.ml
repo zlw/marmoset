@@ -10,7 +10,9 @@ module Ast = Syntax.Ast
 module Types = Typecheck.Types
 module Unify = Typecheck.Unify
 module Infer = Typecheck.Infer
-module Source_loc = Typecheck.Source_loc
+module Source_loc = Diagnostics.Source_loc
+module Diagnostic = Diagnostics.Diagnostic
+module String_utils = Diagnostics.String_utils
 module Builtins = Typecheck.Builtins
 module Checker = Typecheck.Checker
 

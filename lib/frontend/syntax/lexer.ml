@@ -123,7 +123,7 @@ let lex (i : string) : Token.token list =
     | { token_type = EOF; literal = ""; _ } :: _ -> List.rev ts
     | _ ->
         let l2, t = next_token l in
-        loop l2 ([ t ] @ ts)
+        loop l2 (t :: ts)
   in
   loop (init i) []
 

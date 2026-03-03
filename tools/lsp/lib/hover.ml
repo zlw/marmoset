@@ -192,7 +192,7 @@ let normalize_with_user_names ~(type_var_user_names : type_var_user_name_map) (m
               Some (old_name, Types.TVar nice))
       vars
   in
-  let renaming = List.filter_map Fun.id renaming in
+  let renaming = Types.substitution_of_list (List.filter_map Fun.id renaming) in
   Types.apply_substitution renaming mono
 
 (* Format a poly_type in Marmoset syntax: name[t, u]: type *)
@@ -268,21 +268,7 @@ let hover_at
    Test helpers — check type text AND highlighted range
    ============================================================ *)
 
-let string_contains haystack needle =
-  let len_h = String.length haystack in
-  let len_n = String.length needle in
-  if len_n > len_h then
-    false
-  else
-    let rec check i =
-      if i + len_n > len_h then
-        false
-      else if String.sub haystack i len_n = needle then
-        true
-      else
-        check (i + 1)
-    in
-    check 0
+let string_contains haystack needle = Diagnostics.String_utils.contains_substring ~needle haystack
 
 (* Full hover result: type text, highlighted source range *)
 type hover_result = {

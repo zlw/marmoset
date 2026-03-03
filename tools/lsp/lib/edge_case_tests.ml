@@ -42,13 +42,13 @@ let count_token_type ty tokens =
 
 (* Folding ranges helper *)
 let get_ranges source =
-  match Marmoset.Lib.Parser.parse source with
+  match Marmoset.Lib.Parser.parse ~file_id:"<test>" source with
   | Error _ -> []
   | Ok program -> Folding_ranges.compute ~source ~program
 
 (* Selection ranges helper *)
 let get_selection source positions =
-  match Marmoset.Lib.Parser.parse source with
+  match Marmoset.Lib.Parser.parse ~file_id:"<test>" source with
   | Error _ -> []
   | Ok program ->
       let lsp_positions = List.map (fun (line, character) -> Lsp_t.Position.create ~line ~character) positions in
@@ -311,7 +311,7 @@ let%test "selection_ranges: cursor on second line" =
 let%test "selection_ranges: BUG infix left operand outside parent span" =
   let source = "let x = 1 + 2;" in
   let program =
-    match Marmoset.Lib.Parser.parse source with
+    match Marmoset.Lib.Parser.parse ~file_id:"<test>" source with
     | Ok p -> p
     | Error _ -> failwith "parse error"
   in

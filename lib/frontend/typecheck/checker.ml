@@ -1,6 +1,8 @@
 (* Typecheck module - main entry point for type checking *)
 
 open Types
+module Diagnostic = Diagnostics.Diagnostic
+module String_utils = Diagnostics.String_utils
 
 (* Re-export commonly used types *)
 type mono = mono_type
@@ -14,79 +16,43 @@ type typecheck_result = {
   type_map : Infer.type_map; (* Map from expression IDs to their inferred types *)
 }
 
-(* Error with source location info *)
-type error = {
-  message : string;
-  loc : Source_loc.loc option; (* line/column if available *)
-  loc_end : Source_loc.loc option; (* end line/column if available *)
-  file_id : string option;
-}
+let infer_program_safe ?state ~(env : Infer.type_env) (program : Syntax.Ast.AST.program) :
+    (Infer.type_env * Infer.type_map * mono_type, Diagnostic.t list) result =
+  try
+    match Infer.infer_program ?state ~env program with
+    | Ok result -> Ok result
+    | Error e -> Error [ e ]
+  with exn -> Error [ Diagnostic.error_no_span ~code:"type-internal" ~message:(Printexc.to_string exn) ]
 
-(* Convert infer error to typecheck error, optionally with source for location *)
-let error_of_infer_error ?(source : string option) (e : Infer.infer_error) : error =
-  let loc, loc_end =
-    match (source, e.pos, e.end_pos) with
-    | Some src, Some pos, Some end_pos ->
-        (Some (Source_loc.offset_to_loc src pos), Some (Source_loc.offset_to_loc src end_pos))
-    | Some src, Some pos, None -> (Some (Source_loc.offset_to_loc src pos), None)
-    | _ -> (None, None)
-  in
-  { message = Infer.error_to_string e; loc; loc_end; file_id = e.file_id }
-
-let format_loc_prefix (err : error) : string option =
-  match (err.file_id, err.loc, err.loc_end) with
-  | None, None, _ -> None
-  | None, Some loc, None -> Some (Source_loc.to_string loc)
-  | None, Some loc, Some loc_end -> Some (Source_loc.to_string_range loc loc_end)
-  | Some file_id, None, _ -> Some file_id
-  | Some file_id, Some loc, None -> Some (Printf.sprintf "%s:%s" file_id (Source_loc.to_string loc))
-  | Some file_id, Some loc, Some loc_end ->
-      Some (Printf.sprintf "%s:%s" file_id (Source_loc.to_string_range loc loc_end))
-
-(* Format error with location prefix *)
-let format_error (err : error) : string =
-  match format_loc_prefix err with
-  | None -> err.message
-  | Some prefix -> Printf.sprintf "%s: %s" prefix err.message
+let format_error (err : Diagnostic.t) : string = Diagnostic.render_cli ~source_lookup:(fun _ -> None) err
 
 (* Format error with source context showing the offending line *)
-let format_error_with_context (source : string) (err : error) : string =
-  match (err.loc, err.loc_end, format_loc_prefix err) with
-  | None, _, None -> err.message
-  | None, _, Some prefix -> Printf.sprintf "%s: %s" prefix err.message
-  | Some loc, None, Some prefix ->
-      let context = Source_loc.format_with_context source loc in
-      Printf.sprintf "%s: %s\n%s" prefix err.message context
-  | Some loc, Some loc_end, Some prefix ->
-      let context = Source_loc.format_with_context_range source loc loc_end in
-      Printf.sprintf "%s: %s\n%s" prefix err.message context
-  | Some _, _, None ->
-      (* Shouldn't happen because loc always yields a prefix; keep a safe fallback. *)
-      err.message
+let format_error_with_context (source : string) (err : Diagnostic.t) : string =
+  let source_lookup _file_id = Some source in
+  Diagnostic.render_cli ~source_lookup err
 
 (* ============================================================
    Main API
    ============================================================ *)
 
 (* Type check a program (list of statements).
-   Returns the type of the last expression and the final environment.
-   Note: Without source, we can't provide location info. Use check_string for that. *)
-let check_program ?state ?source ?(env = Infer.empty_env) (program : Syntax.Ast.AST.program) :
-    (typecheck_result, error) result =
-  match Infer.infer_program ?state ~env program with
-  | Error e -> Error (error_of_infer_error ?source e)
+   Returns the type of the last expression and the final environment. *)
+let check_program ?state ?(env = Infer.empty_env) (program : Syntax.Ast.AST.program) :
+    (typecheck_result, Diagnostic.t list) result =
+  match infer_program_safe ?state ~env program with
+  | Error e -> Error e
   | Ok (final_env, type_map, result_type) -> Ok { result_type; environment = final_env; type_map }
 
 (* Type check source code string.
     Parses and type checks in one step.
     Errors include source location information. *)
-let check_string ?state ?(env = Infer.empty_env) ?file_id (source : string) : (typecheck_result, error) result =
-  match Syntax.Parser.parse ?file_id source with
-  | Error errors ->
-      Error { message = "Parse error: " ^ String.concat ", " errors; loc = None; loc_end = None; file_id = None }
+let check_string ?state ?(env = Infer.empty_env) ~file_id (source : string) :
+    (typecheck_result, Diagnostic.t list) result =
+  match Syntax.Parser.parse ~file_id source with
+  | Error errors -> Error errors
   | Ok program -> (
-      match Infer.infer_program ?state ~env program with
-      | Error e -> Error (error_of_infer_error ~source e)
+      match infer_program_safe ?state ~env program with
+      | Error e -> Error e
       | Ok (final_env, type_map, result_type) -> Ok { result_type; environment = final_env; type_map })
 
 (* ============================================================
@@ -96,90 +62,63 @@ let check_string ?state ?(env = Infer.empty_env) ?file_id (source : string) : (t
 (* Check if a let binding's annotation matches its inferred type *)
 let check_let_annotation
     (name : string) (annotation : Syntax.Ast.AST.type_expr option) (inferred_type : mono_type) :
-    (unit, error) result =
+    (unit, Diagnostic.t) result =
   match annotation with
   | None ->
       (* No annotation, nothing to check *)
       Ok ()
   | Some type_annot -> (
-      (* Convert annotation to mono_type and check match *)
-      try
-        let annotated_type = Annotation.type_expr_to_mono_type type_annot in
-        if Annotation.check_annotation annotated_type inferred_type then
-          Ok ()
-        else
-          Error
-            {
-              message =
-                Printf.sprintf "Type annotation mismatch for '%s': expected %s but inferred %s" name
-                  (Annotation.format_mono_type annotated_type)
-                  (Annotation.format_mono_type inferred_type);
-              loc = None;
-              loc_end = None;
-              file_id = None;
-            }
-      with Failure msg ->
-        Error
-          {
-            message = Printf.sprintf "Invalid type annotation for '%s': %s" name msg;
-            loc = None;
-            loc_end = None;
-            file_id = None;
-          })
+      match Annotation.type_expr_to_mono_type type_annot with
+      | Error d -> Error d
+      | Ok annotated_type ->
+          if Annotation.check_annotation annotated_type inferred_type then
+            Ok ()
+          else
+            Error
+              (Diagnostic.error_no_span ~code:"type-annotation-mismatch"
+                 ~message:
+                   (Printf.sprintf "Type annotation mismatch for '%s': expected %s but inferred %s" name
+                      (Annotation.format_mono_type annotated_type)
+                      (Annotation.format_mono_type inferred_type))))
 
 (* Check if a function expression's return type annotation matches its inferred type *)
 let check_function_annotation (return_annotation : Syntax.Ast.AST.type_expr option) (inferred_type : mono_type) :
-    (unit, error) result =
+    (unit, Diagnostic.t) result =
   match return_annotation with
   | None ->
       (* No annotation, nothing to check *)
       Ok ()
   | Some type_annot -> (
-      (* Extract the return type from the function type *)
-      (* inferred_type should be TFun(...) or possibly a polymorphic function *)
-      (* We need to extract just the return type *)
-      try
-        let annotated_return_type = Annotation.type_expr_to_mono_type type_annot in
-        (* Extract the return type from the function type by recursively unwrapping TFun *)
-        let rec extract_return_type (t : mono_type) : mono_type =
-          match t with
-          | TFun (_, ret, _) -> extract_return_type ret
-          | other -> other
-        in
-        let actual_return = extract_return_type inferred_type in
-        if Annotation.check_annotation annotated_return_type actual_return then
-          Ok ()
-        else
-          Error
-            {
-              message =
-                Printf.sprintf "Function return type annotation mismatch: expected %s but inferred %s"
-                  (Annotation.format_mono_type annotated_return_type)
-                  (Annotation.format_mono_type actual_return);
-              loc = None;
-              loc_end = None;
-              file_id = None;
-            }
-      with Failure msg ->
-        Error
-          {
-            message = Printf.sprintf "Invalid function annotation: %s" msg;
-            loc = None;
-            loc_end = None;
-            file_id = None;
-          })
+      match Annotation.type_expr_to_mono_type type_annot with
+      | Error d -> Error d
+      | Ok annotated_return_type ->
+          let rec extract_return_type (t : mono_type) : mono_type =
+            match t with
+            | TFun (_, ret, _) -> extract_return_type ret
+            | other -> other
+          in
+          let actual_return = extract_return_type inferred_type in
+          if Annotation.check_annotation annotated_return_type actual_return then
+            Ok ()
+          else
+            Error
+              (Diagnostic.error_no_span ~code:"type-annotation-mismatch"
+                 ~message:
+                   (Printf.sprintf "Function return type annotation mismatch: expected %s but inferred %s"
+                      (Annotation.format_mono_type annotated_return_type)
+                      (Annotation.format_mono_type actual_return))))
 
 (* Type check a program with annotation support.
     This checks that all annotations match the inferred types.
     For Phase 2, constraint validation is skipped (Phase 3 work). *)
-let check_program_with_annotations ?state ?source ?(env = Infer.empty_env) (program : Syntax.Ast.AST.program) :
-    (typecheck_result, error) result =
+let check_program_with_annotations ?state ?(env = Infer.empty_env) (program : Syntax.Ast.AST.program) :
+    (typecheck_result, Diagnostic.t list) result =
   (* First, do standard inference *)
-  match Infer.infer_program ?state ~env program with
-  | Error e -> Error (error_of_infer_error ?source e)
+  match infer_program_safe ?state ~env program with
+  | Error e -> Error e
   | Ok (final_env, type_map, result_type) -> (
       (* Phase 2: Validate annotations against inferred types *)
-      let rec check_stmts_with_infer (stmts : Syntax.Ast.AST.statement list) : (unit, error) result =
+      let rec check_stmts_with_infer (stmts : Syntax.Ast.AST.statement list) : (unit, Diagnostic.t) result =
         match stmts with
         | [] -> Ok ()
         | stmt :: rest -> (
@@ -197,14 +136,10 @@ let check_program_with_annotations ?state ?source ?(env = Infer.empty_env) (prog
                 match inferred with
                 | None ->
                     Error
-                      {
-                        message =
-                          Printf.sprintf "Internal error: missing inferred type for let '%s' (expr id %d)"
-                            let_binding.name let_binding.value.id;
-                        loc = None;
-                        loc_end = None;
-                        file_id = None;
-                      }
+                      (Diagnostic.error_no_span ~code:"type-internal"
+                         ~message:
+                           (Printf.sprintf "Internal error: missing inferred type for let '%s' (expr id %d)"
+                              let_binding.name let_binding.value.id))
                 | Some mono_type -> (
                     (* Check let binding annotation *)
                     match check_let_annotation let_binding.name let_binding.type_annotation mono_type with
@@ -222,8 +157,8 @@ let check_program_with_annotations ?state ?source ?(env = Infer.empty_env) (prog
             | _ ->
                 (* Other statements don't have annotations to check *)
                 check_stmts_with_infer rest)
-      and check_expr_annotations (expr : Syntax.Ast.AST.expression) (inferred : mono_type) : (unit, error) result
-          =
+      and check_expr_annotations (expr : Syntax.Ast.AST.expression) (inferred : mono_type) :
+          (unit, Diagnostic.t) result =
         match expr.expr with
         | Syntax.Ast.AST.Function { return_type; params = _; body; generics = _; is_effectful = _ } -> (
             (* Check function return type annotation *)
@@ -235,22 +170,22 @@ let check_program_with_annotations ?state ?source ?(env = Infer.empty_env) (prog
         | _ -> Ok () (* Other expressions don't have annotations to check *)
       in
       match check_stmts_with_infer program with
-      | Error e -> Error e
+      | Error e -> Error [ e ]
       | Ok () -> Ok { result_type; environment = final_env; type_map })
 
 (* Type check source code with annotations.
    Parses and type checks in one step, with annotation support. *)
-let check_string_with_annotations ?state ?(env = Infer.empty_env) ?file_id (source : string) :
-    (typecheck_result, error) result =
-  match Syntax.Parser.parse ?file_id source with
-  | Error errors ->
-      Error { message = "Parse error: " ^ String.concat ", " errors; loc = None; loc_end = None; file_id = None }
-  | Ok program -> check_program_with_annotations ?state ~source ~env program
+let check_string_with_annotations ?state ?(env = Infer.empty_env) ~file_id (source : string) :
+    (typecheck_result, Diagnostic.t list) result =
+  match Syntax.Parser.parse ~file_id source with
+  | Error errors -> Error errors
+  | Ok program -> check_program_with_annotations ?state ~env program
 
 (* Get the type of an expression as a string *)
 let type_string (source : string) : string =
-  match check_string source with
-  | Error e -> "Error: " ^ e.message
+  match check_string ~file_id:"<test>" source with
+  | Error (e :: _) -> "Error: " ^ e.message
+  | Error [] -> "Error"
   | Ok result -> to_string result.result_type
 
 (* ============================================================
@@ -288,17 +223,17 @@ let env_to_string (env : env) : string =
    ============================================================ *)
 
 let%test "check_string literal" =
-  match check_string "42" with
+  match check_string ~file_id:"<test>" "42" with
   | Ok { result_type = TInt; _ } -> true
   | _ -> false
 
 let%test "check_string function" =
-  match check_string "fn(x) { x + 1 }" with
+  match check_string ~file_id:"<test>" "fn(x) { x + 1 }" with
   | Ok { result_type = TFun (TInt, TInt, _); _ } -> true
   | _ -> false
 
 let%test "check_string let binding adds to env" =
-  match check_string "let x = 5; x" with
+  match check_string ~file_id:"<test>" "let x = 5; x" with
   | Ok { result_type = TInt; environment; _ } -> (
       match lookup "x" environment with
       | Some (Forall ([], TInt)) -> true
@@ -306,7 +241,7 @@ let%test "check_string let binding adds to env" =
   | _ -> false
 
 let%test "check_string polymorphic function in env" =
-  match check_string "let id = fn(x) { x }; id" with
+  match check_string ~file_id:"<test>" "let id = fn(x) { x }; id" with
   | Ok { environment; _ } -> (
       match lookup "id" environment with
       | Some (Forall (vars, TFun (TVar a, TVar b, _))) -> List.length vars = 1 && a = b
@@ -316,7 +251,7 @@ let%test "check_string polymorphic function in env" =
 let%test "type_string helper" = type_string "1 + 2" = "Int" && type_string "true" = "Bool"
 
 let%test "error on type mismatch" =
-  match check_string "1 + true" with
+  match check_string ~file_id:"<test>" "1 + true" with
   | Error _ -> true
   | Ok _ -> false
 
@@ -340,7 +275,7 @@ let%test "prelude has all builtins" =
 (* Helper that uses default_env *)
 let check code =
   Infer.reset_fresh_counter ();
-  check_string ~env:(default_env ()) code
+  check_string ~file_id:"<test>" ~env:(default_env ()) code
 
 let%test "len returns Int" =
   match check "len([1, 2, 3])" with
@@ -398,60 +333,61 @@ let%test "push then len" =
    Source Location Tests
    ============================================================ *)
 
+let string_contains_substring haystack ~substring = String_utils.contains_substring ~needle:substring haystack
+
+let diagnostic_locs (source : string) (err : Diagnostic.t) :
+    Diagnostics.Source_loc.loc option * Diagnostics.Source_loc.loc option =
+  match Diagnostic.pick_primary_span err.labels with
+  | Some (Diagnostic.Span { start_pos; end_pos; _ }) ->
+      ( Some (Diagnostics.Source_loc.offset_to_loc source start_pos),
+        Option.map (Diagnostics.Source_loc.offset_to_loc source) end_pos )
+  | Some Diagnostic.NoSpan | None -> (None, None)
+
 let%test "error includes source location" =
-  match check_string "1 + true" with
-  | Error { loc = Some loc; loc_end = Some loc_end; _ } ->
-      loc.line = 1 && loc.column > 0 && loc_end.column >= loc.column
+  match check_string ~file_id:"<test>" "1 + true" with
+  | Error (err :: _) -> (
+      match diagnostic_locs "1 + true" err with
+      | Some loc, Some loc_end -> loc.line = 1 && loc.column > 0 && loc_end.column >= loc.column
+      | _ -> false)
   | _ -> false
 
 let%test "error location points to problematic expression" =
   (* "true" starts at column 5 (1-indexed) in "1 + true" *)
-  match check_string "1 + true" with
-  | Error { loc = Some loc; loc_end = Some loc_end; _ } -> loc.column = 5 && loc_end.column = 8
+  match check_string ~file_id:"<test>" "1 + true" with
+  | Error (err :: _) -> (
+      match diagnostic_locs "1 + true" err with
+      | Some loc, Some loc_end -> loc.column = 5 && loc_end.column = 8
+      | _ -> false)
   | _ -> false
 
 let%test "multiline error location" =
   let code = "let x = 5;\nlet y = x + true;" in
-  match check_string code with
-  | Error { loc = Some loc; _ } -> loc.line = 2
+  match check_string ~file_id:"<test>" code with
+  | Error (err :: _) -> (
+      match diagnostic_locs code err with
+      | Some loc, _ -> loc.line = 2
+      | _ -> false)
   | _ -> false
 
 let%test "format_error includes line:col" =
-  match check_string "1 + true" with
-  | Error err -> String.length (format_error err) >= 3 && String.sub (format_error err) 0 3 = "1:5"
-  | Ok _ -> false
+  match check_string ~file_id:"<test>" "1 + true" with
+  | Error (err :: _) -> string_contains_substring (format_error err) ~substring:":1:5"
+  | Ok _ | Error [] -> false
 
 let%test "format_error_with_context shows source line" =
   let source = "1 + true" in
-  match check_string source with
-  | Error err ->
+  match check_string ~file_id:"<test>" source with
+  | Error (err :: _) ->
       let formatted = format_error_with_context source err in
-      String.length formatted >= 3 && String.sub formatted 0 3 = "1:5"
-  | Ok _ -> false
+      string_contains_substring formatted ~substring:":1:5"
+  | Ok _ | Error [] -> false
 
 let%test "format_error includes file id when provided" =
   match check_string ~file_id:"main.mr" "1 + true" with
-  | Error err ->
+  | Error (err :: _) ->
       let formatted = format_error err in
-      String.length formatted >= 11 && String.sub formatted 0 11 = "main.mr:1:5"
-  | Ok _ -> false
-
-(* Helper for substring testing *)
-let string_contains_substring haystack ~substring =
-  let len_sub = String.length substring in
-  let len_hay = String.length haystack in
-  if len_sub > len_hay then
-    false
-  else
-    let rec check i =
-      if i + len_sub > len_hay then
-        false
-      else if String.sub haystack i len_sub = substring then
-        true
-      else
-        check (i + 1)
-    in
-    check 0
+      string_contains_substring formatted ~substring:"main.mr:1:5"
+  | Ok _ | Error [] -> false
 
 (* ============================================================
    Type Annotation Tests - Parameter Annotations
@@ -459,7 +395,7 @@ let string_contains_substring haystack ~substring =
 
 let%test "annotation: single int parameter infers correctly" =
   Infer.reset_fresh_counter ();
-  match check_string "let f = fn(x: int) { x + 1 }; f" with
+  match check_string ~file_id:"<test>" "let f = fn(x: int) { x + 1 }; f" with
   | Error _ -> false
   | Ok { environment; _ } -> (
       match lookup "f" environment with
@@ -468,7 +404,7 @@ let%test "annotation: single int parameter infers correctly" =
 
 let%test "annotation: multiple int parameters infer correctly" =
   Infer.reset_fresh_counter ();
-  match check_string "let add = fn(x: int, y: int) { x + y }; add" with
+  match check_string ~file_id:"<test>" "let add = fn(x: int, y: int) { x + y }; add" with
   | Error _ -> false
   | Ok { environment; _ } -> (
       match lookup "add" environment with
@@ -477,7 +413,7 @@ let%test "annotation: multiple int parameters infer correctly" =
 
 let%test "annotation: mixed type parameters infer correctly" =
   Infer.reset_fresh_counter ();
-  match check_string "let f = fn(x: int, y: string) { y }; f" with
+  match check_string ~file_id:"<test>" "let f = fn(x: int, y: string) { y }; f" with
   | Error _ -> false
   | Ok { environment; _ } -> (
       match lookup "f" environment with
@@ -486,7 +422,7 @@ let%test "annotation: mixed type parameters infer correctly" =
 
 let%test "annotation: bool parameter" =
   Infer.reset_fresh_counter ();
-  match check_string "let f = fn(x: bool) { !x }; f" with
+  match check_string ~file_id:"<test>" "let f = fn(x: bool) { !x }; f" with
   | Error _ -> false
   | Ok { environment; _ } -> (
       match lookup "f" environment with
@@ -496,7 +432,7 @@ let%test "annotation: bool parameter" =
 let%test "annotation: array parameter" =
   Infer.reset_fresh_counter ();
   let env = default_env () in
-  match check_string ~env "let f = fn(x: list[int]) { len(x) }; f" with
+  match check_string ~file_id:"<test>" ~env "let f = fn(x: list[int]) { len(x) }; f" with
   | Error _ -> false
   | Ok { environment; _ } -> (
       match lookup "f" environment with
@@ -509,25 +445,25 @@ let%test "annotation: array parameter" =
 
 let%test "annotation: return type int matches" =
   Infer.reset_fresh_counter ();
-  match check_string "let f = fn() -> int { 42 }; f" with
+  match check_string ~file_id:"<test>" "let f = fn() -> int { 42 }; f" with
   | Error _ -> false
   | Ok _ -> true
 
 let%test "annotation: return type string matches" =
   Infer.reset_fresh_counter ();
-  match check_string "let f = fn() -> string { \"hello\" }; f" with
+  match check_string ~file_id:"<test>" "let f = fn() -> string { \"hello\" }; f" with
   | Error _ -> false
   | Ok _ -> true
 
 let%test "annotation: return type bool matches" =
   Infer.reset_fresh_counter ();
-  match check_string "let f = fn() -> bool { true }; f" with
+  match check_string ~file_id:"<test>" "let f = fn() -> bool { true }; f" with
   | Error _ -> false
   | Ok _ -> true
 
 let%test "annotation: return type array[int] matches" =
   Infer.reset_fresh_counter ();
-  match check_string "let f = fn() -> list[int] { [1, 2, 3] }; f" with
+  match check_string ~file_id:"<test>" "let f = fn() -> list[int] { [1, 2, 3] }; f" with
   | Error _ -> false
   | Ok _ -> true
 
@@ -537,30 +473,30 @@ let%test "annotation: return type array[int] matches" =
 
 let%test "annotation: mismatch int vs string is caught" =
   Infer.reset_fresh_counter ();
-  match check_string "let f = fn() -> string { 42 }; f" with
-  | Ok _ -> false (* MUST fail *)
-  | Error { message; _ } ->
+  match check_string ~file_id:"<test>" "let f = fn() -> string { 42 }; f" with
+  | Ok _ | Error [] -> false (* MUST fail *)
+  | Error (err :: _) ->
       (* Check message contains both types and indicates mismatch *)
-      let lower = String.lowercase_ascii message in
+      let lower = String.lowercase_ascii err.message in
       String.contains lower 's' && String.contains lower 'i' (* Has string/int *)
 
 let%test "annotation: mismatch string vs int is caught" =
   Infer.reset_fresh_counter ();
-  match check_string "let f = fn() -> int { \"hello\" }; f" with
-  | Ok _ -> false
-  | Error { message; _ } ->
-      let lower = String.lowercase_ascii message in
+  match check_string ~file_id:"<test>" "let f = fn() -> int { \"hello\" }; f" with
+  | Ok _ | Error [] -> false
+  | Error (err :: _) ->
+      let lower = String.lowercase_ascii err.message in
       String.contains lower 's' && String.contains lower 'i'
 
 let%test "annotation: mismatch bool vs int is caught" =
   Infer.reset_fresh_counter ();
-  match check_string "let f = fn() -> bool { 42 }; f" with
-  | Ok _ -> false
-  | Error { message; _ } -> string_contains_substring (String.lowercase_ascii message) ~substring:"annotation"
+  match check_string ~file_id:"<test>" "let f = fn() -> bool { 42 }; f" with
+  | Ok _ | Error [] -> false
+  | Error (err :: _) -> string_contains_substring (String.lowercase_ascii err.message) ~substring:"annotation"
 
 let%test "annotation: mismatch array vs int is caught" =
   Infer.reset_fresh_counter ();
-  match check_string "let f = fn() -> list[int] { 42 }; f" with
+  match check_string ~file_id:"<test>" "let f = fn() -> list[int] { 42 }; f" with
   | Ok _ -> false
   | Error _ -> true
 
@@ -570,7 +506,7 @@ let%test "annotation: mismatch array vs int is caught" =
 
 let%test "annotation: full signature with params and return" =
   Infer.reset_fresh_counter ();
-  match check_string "let f = fn(x: int, y: int) -> int { x + y }; f" with
+  match check_string ~file_id:"<test>" "let f = fn(x: int, y: int) -> int { x + y }; f" with
   | Error _ -> false
   | Ok { environment; _ } -> (
       match lookup "f" environment with
@@ -579,13 +515,15 @@ let%test "annotation: full signature with params and return" =
 
 let%test "annotation: conditional with matching return type" =
   Infer.reset_fresh_counter ();
-  match check_string "let f = fn(x: int) -> int { if (x < 0) { 0 } else { x } }; f" with
+  match check_string ~file_id:"<test>" "let f = fn(x: int) -> int { if (x < 0) { 0 } else { x } }; f" with
   | Error _ -> false
   | Ok _ -> true
 
 let%test "annotation: conditional with mismatched branch types fails" =
   Infer.reset_fresh_counter ();
-  match check_string "let f = fn(x: int) -> string { if (x < 0) { \"neg\" } else { 42 } }; f" with
+  match
+    check_string ~file_id:"<test>" "let f = fn(x: int) -> string { if (x < 0) { \"neg\" } else { 42 } }; f"
+  with
   | Ok _ -> false
   | Error _ -> true
 
@@ -598,7 +536,7 @@ let%test "annotation: recursive fibonacci with correct type" =
   };
   fib|}
   in
-  match check_string code with
+  match check_string ~file_id:"<test>" code with
   | Error _ -> false
   | Ok _ -> true
 
@@ -611,9 +549,9 @@ let%test "annotation: recursive fibonacci with wrong return type FAILS" =
   };
   fib|}
   in
-  match check_string code with
-  | Ok _ -> false
-  | Error { message; _ } -> string_contains_substring (String.lowercase_ascii message) ~substring:"mismatch"
+  match check_string ~file_id:"<test>" code with
+  | Ok _ | Error [] -> false
+  | Error (err :: _) -> string_contains_substring (String.lowercase_ascii err.message) ~substring:"mismatch"
 
 (* ============================================================
    Backward Compatibility - Non-Annotated Functions Still Work
@@ -621,13 +559,13 @@ let%test "annotation: recursive fibonacci with wrong return type FAILS" =
 
 let%test "no annotation: unannotated function still works" =
   Infer.reset_fresh_counter ();
-  match check_string "let f = fn(x) { x + 1 }; f" with
+  match check_string ~file_id:"<test>" "let f = fn(x) { x + 1 }; f" with
   | Error _ -> false
   | Ok _ -> true
 
 let%test "no annotation: polymorphic identity function" =
   Infer.reset_fresh_counter ();
-  match check_string "let id = fn(x) { x }; id" with
+  match check_string ~file_id:"<test>" "let id = fn(x) { x }; id" with
   | Error _ -> false
   | Ok { environment; _ } -> (
       match lookup "id" environment with
@@ -636,7 +574,7 @@ let%test "no annotation: polymorphic identity function" =
 
 let%test "no annotation: mixed annotated and unannotated params" =
   Infer.reset_fresh_counter ();
-  match check_string "let f = fn(x: int, y) { x + y }; f" with
+  match check_string ~file_id:"<test>" "let f = fn(x: int, y) { x + y }; f" with
   | Error _ -> false
   | Ok { environment; _ } -> (
       match lookup "f" environment with
@@ -660,7 +598,7 @@ let%test "annotation checker: local let bindings in function body do not require
     printBookName(book)
   |}
   in
-  match check_string_with_annotations ~env code with
+  match check_string_with_annotations ~file_id:"<test>" ~env code with
   | Ok _ -> true
   | Error _ -> false
 
@@ -670,23 +608,23 @@ let%test "annotation checker: local let bindings in function body do not require
 
 let%test "error: annotation mismatch message is clear" =
   Infer.reset_fresh_counter ();
-  match check_string "let f = fn() -> string { 42 }; f" with
-  | Ok _ -> false
-  | Error { message; _ } ->
-      let lower = String.lowercase_ascii message in
+  match check_string ~file_id:"<test>" "let f = fn() -> string { 42 }; f" with
+  | Ok _ | Error [] -> false
+  | Error (err :: _) ->
+      let lower = String.lowercase_ascii err.message in
       (* Should mention annotation and mismatch *)
       string_contains_substring lower ~substring:"annotation"
       || string_contains_substring lower ~substring:"mismatch"
 
 let%test "error: shows both expected and inferred types" =
   Infer.reset_fresh_counter ();
-  match check_string "let f = fn() -> bool { \"not bool\" }; f" with
-  | Ok _ -> false
-  | Error { message; _ } ->
-      String.length message > 20
+  match check_string ~file_id:"<test>" "let f = fn() -> bool { \"not bool\" }; f" with
+  | Ok _ | Error [] -> false
+  | Error (err :: _) ->
+      String.length err.message > 20
       &&
       (* Reasonable error message *)
-      let lower_msg = String.lowercase_ascii message in
+      let lower_msg = String.lowercase_ascii err.message in
       string_contains_substring lower_msg ~substring:"bool"
       || string_contains_substring lower_msg ~substring:"string"
 
@@ -742,19 +680,6 @@ let%test "record match pattern typechecks" =
   | _ -> false
 
 let%test "env reuse with shared inference state preserves constrained generic obligations" =
-  let contains_substring s sub =
-    let len_s = String.length s in
-    let len_sub = String.length sub in
-    let rec loop i =
-      if i + len_sub > len_s then
-        false
-      else if String.sub s i len_sub = sub then
-        true
-      else
-        loop (i + 1)
-    in
-    loop 0
-  in
   Infer.reset_fresh_counter ();
   Trait_registry.clear ();
   Trait_registry.register_trait
@@ -773,9 +698,12 @@ let%test "env reuse with shared inference state preserves constrained generic ob
       impl_methods = [ { method_name = "show"; method_params = [ ("x", TInt) ]; method_return_type = TString } ];
     };
   let shared_state = Infer.create_inference_state () in
-  match check_string ~state:shared_state "let check = fn[a: show](x: a) -> string { x.show() }; check" with
+  match
+    check_string ~file_id:"<test>" ~state:shared_state
+      "let check = fn[a: show](x: a) -> string { x.show() }; check"
+  with
   | Error _ -> false
   | Ok first -> (
-      match check_string ~state:shared_state ~env:first.environment "check(fn(y) { y })" with
-      | Ok _ -> false
-      | Error err -> contains_substring err.message "does not implement trait show")
+      match check_string ~file_id:"<test>" ~state:shared_state ~env:first.environment "check(fn(y) { y })" with
+      | Ok _ | Error [] -> false
+      | Error (err :: _) -> String_utils.contains_substring ~needle:"does not implement trait show" err.message)

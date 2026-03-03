@@ -243,6 +243,9 @@ Always use `git add <specific files>` — never `git add .` or `git add -A`.
 ### Before Push:
 
 ```bash
+# Run lint/format/doc quality gate (MANDATORY)
+./test/ci/quality.sh
+
 # Run full test suite
 make unit
 

@@ -1,6 +1,6 @@
 (library
  (name typecheck)
- (libraries syntax)
+ (libraries syntax diagnostics)
  (inline_tests
   (flags (-verbose)))
  (preprocess
