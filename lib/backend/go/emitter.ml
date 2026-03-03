@@ -4772,9 +4772,10 @@ let emit_program_with_typed_env (type_map : Infer.type_map) (typed_env : Infer.t
 let emit_program (program : AST.program) : string =
   let env = Typecheck.Builtins.prelude_env () in
   match Typecheck.Checker.check_program_with_annotations ~env program with
-  | Error err ->
+  | Error (err :: _) ->
       failwith
         (Printf.sprintf "Codegen error: cannot emit untyped program: %s" (Typecheck.Checker.format_error err))
+  | Error [] -> failwith "Codegen error: cannot emit untyped program"
   | Ok { environment = typed_env; type_map; _ } -> emit_program_with_typed_env type_map typed_env program
 
 (* ============================================================
@@ -4889,27 +4890,26 @@ let diagnostic_of_codegen_failure_message (msg : string) : Diagnostic.t =
   let normalized_message = normalize_codegen_failure_message msg in
   Diagnostic.error_no_span ~code:(classify_codegen_failure_code normalized_message) ~message:normalized_message
 
-let compile_string ~file_id (source : string) : (string, Diagnostic.t) result =
+let compile_string ~file_id (source : string) : (string, Diagnostic.t list) result =
   match Syntax.Parser.parse ~file_id source with
-  | Error (first :: _) -> Error first
-  | Error [] -> Error (Diagnostic.error_no_span ~code:"parse-unexpected-token" ~message:"Parse error")
+  | Error errors -> Error errors
   | Ok program -> (
       let env = Typecheck.Builtins.prelude_env () in
       match Typecheck.Checker.check_program_with_annotations ~env program with
-      | Error err -> Error err
+      | Error errs -> Error errs
       | Ok { environment = typed_env; type_map; _ } ->
           (try Ok (emit_program_with_typed_env type_map typed_env program) with
-          | Failure msg -> Error (diagnostic_of_codegen_failure_message msg)
+          | Failure msg -> Error [ diagnostic_of_codegen_failure_message msg ]
           | exn ->
               let msg = normalize_codegen_failure_message (Printexc.to_string exn) in
-              Error (Diagnostic.error_no_span ~code:"codegen-internal" ~message:msg)))
+              Error [ Diagnostic.error_no_span ~code:"codegen-internal" ~message:msg ]))
 
 type build_output = {
   main_go : string;
   runtime_go : string;
 }
 
-let compile_to_build ~file_id (source : string) : (build_output, Diagnostic.t) result =
+let compile_to_build ~file_id (source : string) : (build_output, Diagnostic.t list) result =
   match compile_string ~file_id source with
   | Error e -> Error e
   | Ok main_go -> Ok { main_go; runtime_go }
@@ -5543,8 +5543,8 @@ let%test "duplicate top-level function name and arity is rejected" =
     compile_string ~file_id:"<codegen>"
       "let f = fn(x: int) -> int { x + 1 }; let f = fn(x: int) -> int { x + 2 }; let y = f(1); puts(y)"
   with
-  | Ok _ -> false
-  | Error diag ->
+  | Ok _ | Error [] -> false
+  | Error (diag :: _) ->
       string_contains diag.message "ambiguous function reference 'f/1'"
       || string_contains diag.message "Duplicate top-level let definition: f"
 
@@ -5562,12 +5562,14 @@ let%test "codegen diagnostic classifier tags ambiguous-function failures" =
 let%test "compile_string returns structured parser diagnostic on parse failure" =
   match compile_string ~file_id:"<codegen>" "let x = " with
   | Ok _ -> false
-  | Error diag -> string_contains diag.code "parse-"
+  | Error (diag :: _) -> string_contains diag.code "parse-"
+  | Error [] -> false
 
 let%test "compile_string preserves checker diagnostic on type failure" =
   match compile_string ~file_id:"<codegen>" "let x: int = true; x" with
   | Ok _ -> false
-  | Error diag -> string_contains diag.code "type-"
+  | Error (diag :: _) -> string_contains diag.code "type-"
+  | Error [] -> false
 
 let%test "collect_insts registers impl methods in cache" =
   let source =

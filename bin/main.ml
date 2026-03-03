@@ -166,26 +166,23 @@ let run_command_capture_combined_output (cmd : string) : int * string =
   in
   (exit_code, output)
 
-let render_diagnostic ~(file_id : string) ~(source : string) (diag : Diagnostic.t) : string =
+let print_diagnostics ~(file_id : string) ~(source : string) (diags : Diagnostic.t list) : unit =
   let source_lookup candidate_file_id =
     if String.equal candidate_file_id file_id then
       Some source
     else
       None
   in
-  Diagnostic.render_cli ~source_lookup diag
-
-let print_diagnostic ~(file_id : string) ~(source : string) (diag : Diagnostic.t) : unit =
-  Printf.eprintf "%s\n" (render_diagnostic ~file_id ~source diag)
+  Printf.eprintf "%s\n" (Diagnostic.render_many_cli ~source_lookup diags)
 
 let compile_to_binary
     ~(input_file : string)
     ~(source : string)
     ~(output_bin : string)
     ~(emit_go_dir : string option)
-    ~(release : bool) : (unit, Diagnostic.t) result =
+    ~(release : bool) : (unit, Diagnostic.t list) result =
   match Marmoset.Lib.Go_emitter.compile_to_build ~file_id:input_file source with
-  | Error diag -> Error diag
+  | Error diags -> Error diags
   | Ok build_output ->
       let temp_dir = ".marmoset/build/" ^ string_of_int (Unix.getpid ()) in
       ignore (Sys.command ("mkdir -p " ^ temp_dir));
@@ -220,7 +217,7 @@ let compile_to_binary
       if exit_code = 0 then
         Ok ()
       else
-        Error (Marmoset.Lib.Go_emitter.classify_go_build_failure ~exit_code ~output:go_output)
+        Error [ Marmoset.Lib.Go_emitter.classify_go_build_failure ~exit_code ~output:go_output ]
 
 let run_build input output_opt emit_go_opt =
   let source = read_file input in
@@ -237,8 +234,8 @@ let run_build input output_opt emit_go_opt =
       | Some dir -> Printf.printf "Go source written to %s/\n" dir
       | None -> ());
       Printf.printf "Built: %s\n" output
-  | Error diag ->
-      print_diagnostic ~file_id:input ~source diag;
+  | Error diags ->
+      print_diagnostics ~file_id:input ~source diags;
       exit 1
 
 let run_release input output_opt =
@@ -250,8 +247,8 @@ let run_release input output_opt =
   in
   match compile_to_binary ~input_file:input ~source ~output_bin:output ~emit_go_dir:None ~release:true with
   | Ok () -> Printf.printf "Built (release): %s\n" output
-  | Error diag ->
-      print_diagnostic ~file_id:input ~source diag;
+  | Error diags ->
+      print_diagnostics ~file_id:input ~source diags;
       exit 1
 
 let run_file ~(benchmark : bool) ~(filename : string) =
@@ -261,8 +258,8 @@ let run_file ~(benchmark : bool) ~(filename : string) =
 
   let release = benchmark in
   match compile_to_binary ~input_file:filename ~source ~output_bin:tmp_bin ~emit_go_dir:None ~release with
-  | Error diag ->
-      print_diagnostic ~file_id:filename ~source diag;
+  | Error diags ->
+      print_diagnostics ~file_id:filename ~source diags;
       exit 1
   | Ok () ->
       let start = Sys.time () in
@@ -280,8 +277,8 @@ let run_check filename =
   let env = Marmoset.Lib.Builtins.prelude_env () in
   match Marmoset.Lib.Checker.check_string_with_annotations ~env ~file_id:filename source with
   | Ok _ -> Printf.printf "OK\n"
-  | Error err ->
-      print_diagnostic ~file_id:filename ~source err;
+  | Error errs ->
+      print_diagnostics ~file_id:filename ~source errs;
       exit 1
 
 let () =

@@ -16,18 +16,13 @@ type typecheck_result = {
   type_map : Infer.type_map; (* Map from expression IDs to their inferred types *)
 }
 
-let parser_error_of_diagnostics (errors : Diagnostic.t list) : Diagnostic.t =
-  match errors with
-  | first :: _ -> first
-  | [] -> Diagnostic.error_no_span ~code:"parse-unexpected-token" ~message:"Parse error"
-
 let infer_program_safe ?state ~(env : Infer.type_env) (program : Syntax.Ast.AST.program) :
-    (Infer.type_env * Infer.type_map * mono_type, Diagnostic.t) result =
+    (Infer.type_env * Infer.type_map * mono_type, Diagnostic.t list) result =
   try
     match Infer.infer_program ?state ~env program with
     | Ok result -> Ok result
-    | Error e -> Error e
-  with exn -> Error (Diagnostic.error_no_span ~code:"type-internal" ~message:(Printexc.to_string exn))
+    | Error e -> Error [ e ]
+  with exn -> Error [ Diagnostic.error_no_span ~code:"type-internal" ~message:(Printexc.to_string exn) ]
 
 let format_error (err : Diagnostic.t) : string = Diagnostic.render_cli ~source_lookup:(fun _ -> None) err
 
@@ -43,7 +38,7 @@ let format_error_with_context (source : string) (err : Diagnostic.t) : string =
 (* Type check a program (list of statements).
    Returns the type of the last expression and the final environment. *)
 let check_program ?state ?(env = Infer.empty_env) (program : Syntax.Ast.AST.program) :
-    (typecheck_result, Diagnostic.t) result =
+    (typecheck_result, Diagnostic.t list) result =
   match infer_program_safe ?state ~env program with
   | Error e -> Error e
   | Ok (final_env, type_map, result_type) -> Ok { result_type; environment = final_env; type_map }
@@ -52,9 +47,9 @@ let check_program ?state ?(env = Infer.empty_env) (program : Syntax.Ast.AST.prog
     Parses and type checks in one step.
     Errors include source location information. *)
 let check_string ?state ?(env = Infer.empty_env) ~file_id (source : string) :
-    (typecheck_result, Diagnostic.t) result =
+    (typecheck_result, Diagnostic.t list) result =
   match Syntax.Parser.parse ~file_id source with
-  | Error errors -> Error (parser_error_of_diagnostics errors)
+  | Error errors -> Error errors
   | Ok program -> (
       match infer_program_safe ?state ~env program with
       | Error e -> Error e
@@ -117,7 +112,7 @@ let check_function_annotation (return_annotation : Syntax.Ast.AST.type_expr opti
     This checks that all annotations match the inferred types.
     For Phase 2, constraint validation is skipped (Phase 3 work). *)
 let check_program_with_annotations ?state ?(env = Infer.empty_env) (program : Syntax.Ast.AST.program) :
-    (typecheck_result, Diagnostic.t) result =
+    (typecheck_result, Diagnostic.t list) result =
   (* First, do standard inference *)
   match infer_program_safe ?state ~env program with
   | Error e -> Error e
@@ -176,21 +171,22 @@ let check_program_with_annotations ?state ?(env = Infer.empty_env) (program : Sy
         | _ -> Ok () (* Other expressions don't have annotations to check *)
       in
       match check_stmts_with_infer program with
-      | Error e -> Error e
+      | Error e -> Error [ e ]
       | Ok () -> Ok { result_type; environment = final_env; type_map })
 
 (* Type check source code with annotations.
    Parses and type checks in one step, with annotation support. *)
 let check_string_with_annotations ?state ?(env = Infer.empty_env) ~file_id (source : string) :
-    (typecheck_result, Diagnostic.t) result =
+    (typecheck_result, Diagnostic.t list) result =
   match Syntax.Parser.parse ~file_id source with
-  | Error errors -> Error (parser_error_of_diagnostics errors)
+  | Error errors -> Error errors
   | Ok program -> check_program_with_annotations ?state ~env program
 
 (* Get the type of an expression as a string *)
 let type_string (source : string) : string =
   match check_string ~file_id:"<test>" source with
-  | Error e -> "Error: " ^ e.message
+  | Error (e :: _) -> "Error: " ^ e.message
+  | Error [] -> "Error"
   | Ok result -> to_string result.result_type
 
 (* ============================================================
@@ -349,7 +345,7 @@ let diagnostic_locs (source : string) (err : Diagnostic.t) : Diagnostics.Source_
 
 let%test "error includes source location" =
   match check_string ~file_id:"<test>" "1 + true" with
-  | Error err -> (
+  | Error (err :: _) -> (
       match diagnostic_locs "1 + true" err with
       | Some loc, Some loc_end -> loc.line = 1 && loc.column > 0 && loc_end.column >= loc.column
       | _ -> false)
@@ -358,7 +354,7 @@ let%test "error includes source location" =
 let%test "error location points to problematic expression" =
   (* "true" starts at column 5 (1-indexed) in "1 + true" *)
   match check_string ~file_id:"<test>" "1 + true" with
-  | Error err -> (
+  | Error (err :: _) -> (
       match diagnostic_locs "1 + true" err with
       | Some loc, Some loc_end -> loc.column = 5 && loc_end.column = 8
       | _ -> false)
@@ -367,7 +363,7 @@ let%test "error location points to problematic expression" =
 let%test "multiline error location" =
   let code = "let x = 5;\nlet y = x + true;" in
   match check_string ~file_id:"<test>" code with
-  | Error err -> (
+  | Error (err :: _) -> (
       match diagnostic_locs code err with
       | Some loc, _ -> loc.line = 2
       | _ -> false)
@@ -375,23 +371,23 @@ let%test "multiline error location" =
 
 let%test "format_error includes line:col" =
   match check_string ~file_id:"<test>" "1 + true" with
-  | Error err -> string_contains_substring (format_error err) ~substring:":1:5"
-  | Ok _ -> false
+  | Error (err :: _) -> string_contains_substring (format_error err) ~substring:":1:5"
+  | Ok _ | Error [] -> false
 
 let%test "format_error_with_context shows source line" =
   let source = "1 + true" in
   match check_string ~file_id:"<test>" source with
-  | Error err ->
+  | Error (err :: _) ->
       let formatted = format_error_with_context source err in
       string_contains_substring formatted ~substring:":1:5"
-  | Ok _ -> false
+  | Ok _ | Error [] -> false
 
 let%test "format_error includes file id when provided" =
   match check_string ~file_id:"main.mr" "1 + true" with
-  | Error err ->
+  | Error (err :: _) ->
       let formatted = format_error err in
       string_contains_substring formatted ~substring:"main.mr:1:5"
-  | Ok _ -> false
+  | Ok _ | Error [] -> false
 
 (* ============================================================
    Type Annotation Tests - Parameter Annotations
@@ -478,8 +474,8 @@ let%test "annotation: return type array[int] matches" =
 let%test "annotation: mismatch int vs string is caught" =
   Infer.reset_fresh_counter ();
   match check_string ~file_id:"<test>" "let f = fn() -> string { 42 }; f" with
-  | Ok _ -> false (* MUST fail *)
-  | Error err ->
+  | Ok _ | Error [] -> false (* MUST fail *)
+  | Error (err :: _) ->
       (* Check message contains both types and indicates mismatch *)
       let lower = String.lowercase_ascii err.message in
       String.contains lower 's' && String.contains lower 'i' (* Has string/int *)
@@ -487,16 +483,16 @@ let%test "annotation: mismatch int vs string is caught" =
 let%test "annotation: mismatch string vs int is caught" =
   Infer.reset_fresh_counter ();
   match check_string ~file_id:"<test>" "let f = fn() -> int { \"hello\" }; f" with
-  | Ok _ -> false
-  | Error err ->
+  | Ok _ | Error [] -> false
+  | Error (err :: _) ->
       let lower = String.lowercase_ascii err.message in
       String.contains lower 's' && String.contains lower 'i'
 
 let%test "annotation: mismatch bool vs int is caught" =
   Infer.reset_fresh_counter ();
   match check_string ~file_id:"<test>" "let f = fn() -> bool { 42 }; f" with
-  | Ok _ -> false
-  | Error err -> string_contains_substring (String.lowercase_ascii err.message) ~substring:"annotation"
+  | Ok _ | Error [] -> false
+  | Error (err :: _) -> string_contains_substring (String.lowercase_ascii err.message) ~substring:"annotation"
 
 let%test "annotation: mismatch array vs int is caught" =
   Infer.reset_fresh_counter ();
@@ -552,8 +548,8 @@ let%test "annotation: recursive fibonacci with wrong return type FAILS" =
   fib|}
   in
   match check_string ~file_id:"<test>" code with
-  | Ok _ -> false
-  | Error err -> string_contains_substring (String.lowercase_ascii err.message) ~substring:"mismatch"
+  | Ok _ | Error [] -> false
+  | Error (err :: _) -> string_contains_substring (String.lowercase_ascii err.message) ~substring:"mismatch"
 
 (* ============================================================
    Backward Compatibility - Non-Annotated Functions Still Work
@@ -611,8 +607,8 @@ let%test "annotation checker: local let bindings in function body do not require
 let%test "error: annotation mismatch message is clear" =
   Infer.reset_fresh_counter ();
   match check_string ~file_id:"<test>" "let f = fn() -> string { 42 }; f" with
-  | Ok _ -> false
-  | Error err ->
+  | Ok _ | Error [] -> false
+  | Error (err :: _) ->
       let lower = String.lowercase_ascii err.message in
       (* Should mention annotation and mismatch *)
       string_contains_substring lower ~substring:"annotation"
@@ -621,8 +617,8 @@ let%test "error: annotation mismatch message is clear" =
 let%test "error: shows both expected and inferred types" =
   Infer.reset_fresh_counter ();
   match check_string ~file_id:"<test>" "let f = fn() -> bool { \"not bool\" }; f" with
-  | Ok _ -> false
-  | Error err ->
+  | Ok _ | Error [] -> false
+  | Error (err :: _) ->
       String.length err.message > 20
       &&
       (* Reasonable error message *)
@@ -704,5 +700,5 @@ let%test "env reuse with shared inference state preserves constrained generic ob
   | Error _ -> false
   | Ok first -> (
       match check_string ~file_id:"<test>" ~state:shared_state ~env:first.environment "check(fn(y) { y })" with
-      | Ok _ -> false
-      | Error err -> String_utils.contains_substring ~needle:"does not implement trait show" err.message)
+      | Ok _ | Error [] -> false
+      | Error (err :: _) -> String_utils.contains_substring ~needle:"does not implement trait show" err.message)
