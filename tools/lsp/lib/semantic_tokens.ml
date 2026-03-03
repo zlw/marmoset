@@ -420,7 +420,7 @@ and collect_stmt ~source ~type_map ~environment ~params ~tokens (stmt : Ast.AST.
 let encode_tokens ~source (raw : raw_token list) : int array =
   let sorted = List.sort (fun a b -> compare a.pos b.pos) raw in
   let line_index = Lsp_utils.build_line_index ~source in
-  let result = Buffer.create (List.length sorted * 5) in
+  let encoded_rev = ref [] in
   let prev_line = ref 0 in
   let prev_char = ref 0 in
   List.iter
@@ -444,33 +444,15 @@ let encode_tokens ~source (raw : raw_token list) : int array =
           else
             char
         in
-        Buffer.add_string result (string_of_int delta_line);
-        Buffer.add_char result ',';
-        Buffer.add_string result (string_of_int delta_char);
-        Buffer.add_char result ',';
-        Buffer.add_string result (string_of_int length);
-        Buffer.add_char result ',';
-        Buffer.add_string result (string_of_int tok.token_type);
-        Buffer.add_char result ',';
-        Buffer.add_string result (string_of_int tok.modifiers);
-        Buffer.add_char result ';';
+        encoded_rev :=
+          tok.modifiers :: tok.token_type :: length :: delta_char :: delta_line :: !encoded_rev;
         prev_line := line;
         prev_char := char))
     sorted;
-  (* Parse the buffer into an int array *)
-  let s = Buffer.contents result in
-  if s = "" then
+  if !encoded_rev = [] then
     [||]
   else
-    let entries = String.split_on_char ';' s in
-    let entries = List.filter (fun s -> s <> "") entries in
-    let ints = ref [] in
-    List.iter
-      (fun entry ->
-        let parts = String.split_on_char ',' entry in
-        List.iter (fun p -> ints := int_of_string p :: !ints) parts)
-      entries;
-    Array.of_list (List.rev !ints)
+    Array.of_list (List.rev !encoded_rev)
 
 (* Public entry point *)
 let compute
