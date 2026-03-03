@@ -8,6 +8,11 @@ module Unify = Typecheck.Unify
 module Diagnostic = Diagnostics.Diagnostic
 module String_utils = Diagnostics.String_utils
 module StringSet = Set.Make (String)
+module StringPairOrd = struct
+  type t = string * string
+  let compare = compare
+end
+module StringPairSet = Set.Make (StringPairOrd)
 
 (* Unwrap annotation Result — emitter processes type-checked code so annotation
    errors here are internal failures *)
@@ -4340,32 +4345,33 @@ let collect_inherent_call_sites ~(concrete_only : bool) (type_map : Infer.type_m
          else
            compare a.call_receiver_type b.call_receiver_type)
 
-let builtin_impl_keys : (string * string) list =
-  [
-    ("show", "int64");
-    ("show", "bool");
-    ("show", "string");
-    ("show", "float64");
-    ("debug", "int64");
-    ("debug", "bool");
-    ("debug", "string");
-    ("debug", "float64");
-    ("eq", "int64");
-    ("eq", "bool");
-    ("eq", "string");
-    ("eq", "float64");
-    ("ord", "int64");
-    ("ord", "bool");
-    ("ord", "string");
-    ("ord", "float64");
-    ("hash", "int64");
-    ("hash", "bool");
-    ("hash", "string");
-    ("num", "int64");
-    ("num", "float64");
-    ("neg", "int64");
-    ("neg", "float64");
-  ]
+let builtin_impl_keys : StringPairSet.t =
+  StringPairSet.of_list
+    [
+      ("show", "int64");
+      ("show", "bool");
+      ("show", "string");
+      ("show", "float64");
+      ("debug", "int64");
+      ("debug", "bool");
+      ("debug", "string");
+      ("debug", "float64");
+      ("eq", "int64");
+      ("eq", "bool");
+      ("eq", "string");
+      ("eq", "float64");
+      ("ord", "int64");
+      ("ord", "bool");
+      ("ord", "string");
+      ("ord", "float64");
+      ("hash", "int64");
+      ("hash", "bool");
+      ("hash", "string");
+      ("num", "int64");
+      ("num", "float64");
+      ("neg", "int64");
+      ("neg", "float64");
+    ]
 
 let emit_record_derived_impl
     (state : emit_state) (derive_kind : Typecheck.Trait_registry.derive_kind) (record_type : Types.mono_type) :
@@ -4455,12 +4461,12 @@ let emit_registry_derived_impls (state : emit_state) (program : AST.program) : s
         if has_type_vars for_type then
           acc
         else
-          (impl.AST.impl_trait_name, mangle_type for_type) :: acc)
-      [] user_impls
+          StringPairSet.add (impl.AST.impl_trait_name, mangle_type for_type) acc)
+      StringPairSet.empty user_impls
   in
   let should_emit trait_name type_suffix =
-    (not (List.mem (trait_name, type_suffix) user_impl_set))
-    && not (List.mem (trait_name, type_suffix) builtin_impl_keys)
+    (not (StringPairSet.mem (trait_name, type_suffix) user_impl_set))
+    && not (StringPairSet.mem (trait_name, type_suffix) builtin_impl_keys)
   in
   Typecheck.Trait_registry.all_impls ()
   |> List.filter_map (fun (impl : Typecheck.Trait_registry.impl_def) ->
@@ -4568,13 +4574,12 @@ let emit_builtin_impls (program : AST.program) : string =
         if has_type_vars for_type then
           acc
         else
-          let key = (impl.AST.impl_trait_name, mangle_type for_type) in
-          key :: acc)
-      [] user_impls
+          StringPairSet.add (impl.AST.impl_trait_name, mangle_type for_type) acc)
+      StringPairSet.empty user_impls
   in
 
   (* Helper to check if an impl is user-defined *)
-  let is_user_defined trait_name type_name = List.mem (trait_name, type_name) user_impl_set in
+  let is_user_defined trait_name type_name = StringPairSet.mem (trait_name, type_name) user_impl_set in
 
   (* Define all possible builtin impls with their keys *)
   let all_builtins =
