@@ -346,6 +346,37 @@ type obligation = {
 let obligation_reason_to_string = function
   | GenericConstraint type_var_name -> Printf.sprintf "constraint on type variable '%s'" type_var_name
 
+type canonical_inference_var =
+  | CanonicalTypeVar of int
+  | CanonicalRowVar of int
+  | NonCanonicalVar of string
+
+let parse_canonical_inference_var (var_name : string) : canonical_inference_var =
+  let len = String.length var_name in
+  if len < 2 then
+    NonCanonicalVar var_name
+  else
+    let kind = var_name.[0] in
+    let numeric_suffix = String.sub var_name 1 (len - 1) in
+    match int_of_string_opt numeric_suffix with
+    | Some n when kind = 't' -> CanonicalTypeVar n
+    | Some n when kind = 'r' -> CanonicalRowVar n
+    | _ -> NonCanonicalVar var_name
+
+let compare_inference_var_names (left : string) (right : string) : int =
+  match (parse_canonical_inference_var left, parse_canonical_inference_var right) with
+  | CanonicalTypeVar l, CanonicalTypeVar r ->
+      let order = Int.compare l r in
+      if order = 0 then String.compare left right else order
+  | CanonicalRowVar l, CanonicalRowVar r ->
+      let order = Int.compare l r in
+      if order = 0 then String.compare left right else order
+  | CanonicalTypeVar _, CanonicalRowVar _ -> -1
+  | CanonicalRowVar _, CanonicalTypeVar _ -> 1
+  | (CanonicalTypeVar _ | CanonicalRowVar _), NonCanonicalVar _ -> -1
+  | NonCanonicalVar _, (CanonicalTypeVar _ | CanonicalRowVar _) -> 1
+  | NonCanonicalVar l, NonCanonicalVar r -> String.compare l r
+
 let obligations_from_substitution (subst : substitution) : obligation list =
   let build_for_var (var_name : string) (resolved_type : mono_type) : obligation list =
     let constraints = lookup_type_var_constraints var_name in
@@ -365,9 +396,13 @@ let obligations_from_substitution (subst : substitution) : obligation list =
             (fun trait_name -> { trait_name; typ = concrete_type; reason = GenericConstraint var_name })
             constraints
   in
-  SubstMap.fold
-    (fun var_name resolved_type acc -> List.rev_append (build_for_var var_name resolved_type) acc)
-    subst []
+  let ordered_bindings =
+    SubstMap.bindings subst
+    |> List.sort (fun (left_name, _) (right_name, _) -> compare_inference_var_names left_name right_name)
+  in
+  List.fold_left
+    (fun acc (var_name, resolved_type) -> List.rev_append (build_for_var var_name resolved_type) acc)
+    [] ordered_bindings
   |> List.rev
 
 let verify_obligation (o : obligation) : (unit, Diagnostic.t) result =
@@ -4172,6 +4207,57 @@ f"
     List.length obligations = 2
     && List.exists (fun (o : obligation) -> o.trait_name = "show" && o.typ = TInt) obligations
     && List.exists (fun (o : obligation) -> o.trait_name = "eq" && o.typ = TInt) obligations
+
+  let%test "obligations_from_substitution orders canonical numeric variables naturally" =
+    clear_constraint_store ();
+    add_type_var_constraints "t2" [ "show" ];
+    add_type_var_constraints "t10" [ "show" ];
+    let obligations =
+      obligations_from_substitution (substitution_of_list [ ("t10", TInt); ("t2", TString) ])
+    in
+    let vars =
+      List.map
+        (fun (o : obligation) ->
+          match o.reason with
+          | GenericConstraint type_var_name -> type_var_name)
+        obligations
+    in
+    vars = [ "t2"; "t10" ]
+
+  let%test "obligations_from_substitution emits canonical variables before non-canonical names" =
+    clear_constraint_store ();
+    add_type_var_constraints "x" [ "show" ];
+    add_type_var_constraints "r2" [ "show" ];
+    add_type_var_constraints "t1" [ "show" ];
+    let obligations =
+      obligations_from_substitution (substitution_of_list [ ("x", TInt); ("r2", TString); ("t1", TBool) ])
+    in
+    let vars =
+      List.map
+        (fun (o : obligation) ->
+          match o.reason with
+          | GenericConstraint type_var_name -> type_var_name)
+        obligations
+    in
+    vars = [ "t1"; "r2"; "x" ]
+
+  let%test "obligations_from_substitution orders non-canonical names lexicographically" =
+    clear_constraint_store ();
+    add_type_var_constraints "beta" [ "show" ];
+    add_type_var_constraints "alpha" [ "show" ];
+    add_type_var_constraints "zeta" [ "show" ];
+    let obligations =
+      obligations_from_substitution
+        (substitution_of_list [ ("zeta", TInt); ("alpha", TString); ("beta", TBool) ])
+    in
+    let vars =
+      List.map
+        (fun (o : obligation) ->
+          match o.reason with
+          | GenericConstraint type_var_name -> type_var_name)
+        obligations
+    in
+    vars = [ "alpha"; "beta"; "zeta" ]
 
   let%test "verify_constraints_in_substitution includes obligation context in errors" =
     let contains_substring s sub = String_utils.contains_substring ~needle:sub s in
