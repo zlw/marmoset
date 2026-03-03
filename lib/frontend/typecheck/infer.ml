@@ -9,9 +9,13 @@ module String_utils = Diagnostics.String_utils
 let ( let* ) = Result.bind
 
 let map_result f xs =
-  List.fold_left
-    (fun acc x -> match acc with Error _ as e -> e | Ok ys -> match f x with Error _ as e -> e | Ok y -> Ok (ys @ [ y ]))
-    (Ok []) xs
+  let rec loop rev_acc = function
+    | [] -> Ok (List.rev rev_acc)
+    | x :: rest ->
+        let* y = f x in
+        loop (y :: rev_acc) rest
+  in
+  loop [] xs
 
 (* ============================================================
    Type Environment
