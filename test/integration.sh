@@ -58,10 +58,6 @@ normalize_existing_file() {
     (cd "$dir" 2>/dev/null && printf "%s/%s\n" "$(pwd)" "$base")
 }
 
-worker_binpath() {
-    printf "%s/marmoset_test_bin.%s" "$TEST_BUILD_DIR" "${BASHPID:-$$}"
-}
-
 resolve_fixture_file_selector() {
     local selector="$1"
     local candidate=""
@@ -220,18 +216,84 @@ is_output_anchor_line() {
     return 1
 }
 
-validate_annotation_placement() {
+monkey_fixture_in_sync() {
+    local fixture_file="$1"
+    local example_file="$REPO_ROOT/examples/monkey.mr"
+    local normalized_fixture
+    local diff_file
+
+    if [ ! -f "$example_file" ]; then
+        echo "  Missing source file: $example_file"
+        return 1
+    fi
+
+    normalized_fixture=$(mktemp)
+    diff_file=$(mktemp)
+
+    # Keep fixture annotations, but guard that the underlying source stays synced
+    # with examples/monkey.mr.
+    sed -E 's/[[:space:]]*#[[:space:]]*output:[[:space:]].*$//' "$fixture_file" > "$normalized_fixture"
+
+    if diff -u "$example_file" "$normalized_fixture" > "$diff_file"; then
+        rm -f "$normalized_fixture" "$diff_file"
+        return 0
+    fi
+
+    echo "  Fixture/source drift detected against examples/monkey.mr:"
+    sed -n '1,40p' "$diff_file" | sed 's/^/  /'
+    rm -f "$normalized_fixture" "$diff_file"
+    return 1
+}
+
+parse_fixture() {
     local file="$1"
-    local -a lines
+
+    OUTPUT_LINES=()
+    DIAG_TYPES=()
+    DIAG_VALUES=()
+    DIAG_LINENOS=()
+    MODE=""
+
+    local lineno=0
+    local has_diag=false
+    local has_output=false
+    local -a lines=()
+
     while IFS= read -r line || [ -n "$line" ]; do
+        lineno=$((lineno + 1))
         lines+=("$line")
+
+        if [[ "$line" =~ ^[^#]*#[[:space:]]*output:[[:space:]]*(.*) ]]; then
+            OUTPUT_LINES+=("${BASH_REMATCH[1]}")
+            has_output=true
+        fi
+
+        if [[ "$line" =~ ^[^#]*#[[:space:]]*error:[[:space:]]*(.*) ]]; then
+            DIAG_TYPES+=("error")
+            DIAG_VALUES+=("${BASH_REMATCH[1]}")
+            DIAG_LINENOS+=("$lineno")
+            has_diag=true
+        fi
+
+        if [[ "$line" =~ ^[^#]*#[[:space:]]*warning:[[:space:]]*(.*) ]]; then
+            DIAG_TYPES+=("warning")
+            DIAG_VALUES+=("${BASH_REMATCH[1]}")
+            DIAG_LINENOS+=("$lineno")
+            has_diag=true
+        fi
+
+        if [[ "$line" =~ ^[^#]*#[[:space:]]*info:[[:space:]]*(.*) ]]; then
+            DIAG_TYPES+=("info")
+            DIAG_VALUES+=("${BASH_REMATCH[1]}")
+            DIAG_LINENOS+=("$lineno")
+            has_diag=true
+        fi
     done < "$file"
 
     local total=${#lines[@]}
-    local lineno
     for ((lineno = 1; lineno <= total; lineno++)); do
-        local line="${lines[$((lineno - 1))]}"
-        if [[ ! "$line" =~ ^[[:space:]]*#[[:space:]]*(output|error|warning|info):[[:space:]]*(.*)$ ]]; then
+        local ann_line="${lines[$((lineno - 1))]}"
+        if [[ ! "$ann_line" =~ ^[[:space:]]*#[[:space:]]*(output|error|warning|info):[[:space:]]*(.*)$ ]]; then
             continue
         fi
 
@@ -278,81 +340,6 @@ validate_annotation_placement() {
         fi
     done
 
-    return 0
-}
-
-monkey_fixture_in_sync() {
-    local fixture_file="$1"
-    local example_file="$REPO_ROOT/examples/monkey.mr"
-    local normalized_fixture
-    local diff_file
-
-    if [ ! -f "$example_file" ]; then
-        echo "  Missing source file: $example_file"
-        return 1
-    fi
-
-    normalized_fixture=$(mktemp)
-    diff_file=$(mktemp)
-
-    # Keep fixture annotations, but guard that the underlying source stays synced
-    # with examples/monkey.mr.
-    sed -E 's/[[:space:]]*#[[:space:]]*output:[[:space:]].*$//' "$fixture_file" > "$normalized_fixture"
-
-    if diff -u "$example_file" "$normalized_fixture" > "$diff_file"; then
-        rm -f "$normalized_fixture" "$diff_file"
-        return 0
-    fi
-
-    echo "  Fixture/source drift detected against examples/monkey.mr:"
-    sed -n '1,40p' "$diff_file" | sed 's/^/  /'
-    rm -f "$normalized_fixture" "$diff_file"
-    return 1
-}
-
-parse_fixture() {
-    local file="$1"
-
-    OUTPUT_LINES=()
-    DIAG_TYPES=()
-    DIAG_VALUES=()
-    DIAG_LINENOS=()
-    MODE=""
-
-    local lineno=0
-    local has_diag=false
-    local has_output=false
-
-    while IFS= read -r line || [ -n "$line" ]; do
-        lineno=$((lineno + 1))
-
-        if [[ "$line" =~ ^[^#]*#[[:space:]]*output:[[:space:]]*(.*) ]]; then
-            OUTPUT_LINES+=("${BASH_REMATCH[1]}")
-            has_output=true
-        fi
-
-        if [[ "$line" =~ ^[^#]*#[[:space:]]*error:[[:space:]]*(.*) ]]; then
-            DIAG_TYPES+=("error")
-            DIAG_VALUES+=("${BASH_REMATCH[1]}")
-            DIAG_LINENOS+=("$lineno")
-            has_diag=true
-        fi
-
-        if [[ "$line" =~ ^[^#]*#[[:space:]]*warning:[[:space:]]*(.*) ]]; then
-            DIAG_TYPES+=("warning")
-            DIAG_VALUES+=("${BASH_REMATCH[1]}")
-            DIAG_LINENOS+=("$lineno")
-            has_diag=true
-        fi
-
-        if [[ "$line" =~ ^[^#]*#[[:space:]]*info:[[:space:]]*(.*) ]]; then
-            DIAG_TYPES+=("info")
-            DIAG_VALUES+=("${BASH_REMATCH[1]}")
-            DIAG_LINENOS+=("$lineno")
-            has_diag=true
-        fi
-    done < "$file"
-
     if $has_diag; then
         MODE="reject"
     elif $has_output; then
@@ -360,6 +347,8 @@ parse_fixture() {
     else
         MODE="build-only"
     fi
+
+    return 0
 }
 
 # --- Diagnostic extraction/matching helpers (Phase 7 canonical-only) ---
@@ -659,8 +648,7 @@ run_mode() {
     TOTAL=$((TOTAL + 1))
     echo -n "TEST [$TOTAL] $name ... "
 
-    local binpath
-    binpath=$(worker_binpath)
+    local binpath="$TEST_BUILD_DIR/marmoset_test_bin.${BASHPID:-$$}"
     rm -f "$binpath"
 
     local build_output
@@ -706,8 +694,7 @@ reject_mode() {
     TOTAL=$((TOTAL + 1))
     echo -n "TEST [$TOTAL] $name ... "
 
-    local binpath
-    binpath=$(worker_binpath)
+    local binpath="$TEST_BUILD_DIR/marmoset_test_bin.${BASHPID:-$$}"
     rm -f "$binpath"
 
     local build_output
@@ -895,8 +882,7 @@ build_only_mode() {
     TOTAL=$((TOTAL + 1))
     echo -n "TEST [$TOTAL] $name ... "
 
-    local binpath
-    binpath=$(worker_binpath)
+    local binpath="$TEST_BUILD_DIR/marmoset_test_bin.${BASHPID:-$$}"
     rm -f "$binpath"
 
     local build_output
@@ -918,7 +904,7 @@ run_fixture() {
     local rel_path="${file#$FIXTURE_ROOT/}"
     local name="${rel_path%.mr}"
 
-    if ! validate_annotation_placement "$file"; then
+    if ! parse_fixture "$file"; then
         TOTAL=$((TOTAL + 1))
         echo -n "TEST [$TOTAL] $name ... "
         echo "✗ FAIL (annotation placement)"
@@ -935,8 +921,6 @@ run_fixture() {
         record_failed_test "$name" "fixture drift"
         return
     fi
-
-    parse_fixture "$file"
 
     case "$MODE" in
         run)
