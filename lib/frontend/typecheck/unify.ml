@@ -253,8 +253,6 @@ and unify_two_pairs (t1a, t2a) (t1b, t2b) : (substitution, Diagnostic.t) result 
 (* Unify two lists of types element-wise.
    Used for enum type arguments. *)
 and unify_list (list1 : mono_type list) (list2 : mono_type list) : (substitution, Diagnostic.t) result =
-  let len1 = List.length list1 in
-  let len2 = List.length list2 in
   let rec loop subst l1 l2 =
     match (l1, l2) with
     | [], [] -> Ok subst
@@ -269,7 +267,9 @@ and unify_list (list1 : mono_type list) (list2 : mono_type list) : (substitution
     | _, _ ->
         Error
           (Diagnostic.error_no_span ~code:"type-mismatch"
-             ~message:(Printf.sprintf "Type argument list length mismatch: expected %d but got %d" len1 len2))
+             ~message:
+               (Printf.sprintf "Type argument list length mismatch: expected %d but got %d" (List.length list1)
+                  (List.length list2)))
   in
   loop empty_substitution list1 list2
 
