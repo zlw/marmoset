@@ -78,28 +78,28 @@ let rec unify (type1 : mono_type) (type2 : mono_type) : (substitution, Diagnosti
   (* No match - types are incompatible *)
   | _, _ -> Error (type_mismatch type1 type2)
 
-and find_field (field_name : string) (fields : record_field_type list) : record_field_type option =
-  List.find_opt (fun f -> f.name = field_name) fields
-
-and filter_fields_not_in (fields : record_field_type list) (other : record_field_type list) :
-    record_field_type list =
-  List.filter (fun f -> find_field f.name other = None) fields
-
 and unify_records
     (fields1 : record_field_type list)
     (row1 : mono_type option)
     (fields2 : record_field_type list)
     (row2 : mono_type option) : (substitution, Diagnostic.t) result =
+  let table_of_fields (fields : record_field_type list) : (string, record_field_type) Hashtbl.t =
+    let tbl = Hashtbl.create (List.length fields) in
+    List.iter (fun (field : record_field_type) -> Hashtbl.replace tbl field.name field) fields;
+    tbl
+  in
+  let fields1_by_name = table_of_fields fields1 in
+  let fields2_by_name = table_of_fields fields2 in
   let common_pairs =
     List.filter_map
       (fun f1 ->
-        match find_field f1.name fields2 with
+        match Hashtbl.find_opt fields2_by_name f1.name with
         | Some f2 -> Some (f1.typ, f2.typ)
         | None -> None)
       fields1
   in
-  let only1 = filter_fields_not_in fields1 fields2 in
-  let only2 = filter_fields_not_in fields2 fields1 in
+  let only1 = List.filter (fun f -> not (Hashtbl.mem fields2_by_name f.name)) fields1 in
+  let only2 = List.filter (fun f -> not (Hashtbl.mem fields1_by_name f.name)) fields2 in
   let rec unify_common subst = function
     | [] -> Ok subst
     | (t1, t2) :: rest -> (
