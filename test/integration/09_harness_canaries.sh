@@ -49,6 +49,7 @@ canary_continuation="$TMP_FIXTURE_DIR/canary_no_span_continuation.mr"
 canary_annotation="$TMP_FIXTURE_DIR/canary_annotation_placement.mr"
 canary_severity="$TMP_FIXTURE_DIR/canary_severity_mismatch.mr"
 canary_mixed_wc="$TMP_FIXTURE_DIR/canary_mixed_wildcard.mr"
+canary_wc_requires_extractor="$TMP_FIXTURE_DIR/canary_wildcard_requires_extractor.mr"
 canary_colon="$TMP_FIXTURE_DIR/canary_colon_file_id.mr"
 
 cat > "$canary_missing" <<'CANARY'
@@ -79,6 +80,10 @@ CANARY
 cat > "$canary_mixed_wc" <<'CANARY'
 let w = 1  # error: concrete match
 let w2 = 2  # error: *
+CANARY
+
+cat > "$canary_wc_requires_extractor" <<'CANARY'
+let wx = 1  # error: *
 CANARY
 
 cat > "$canary_colon" <<'CANARY'
@@ -115,6 +120,10 @@ case "$file" in
         echo "$file:1:1: error test-concrete: concrete match"
         echo "$file:2:1: error test-extra1: wildcard absorbed extra"
         echo "$file:3:1: error test-extra2: surplus unrelated extra"
+        exit 1
+        ;;
+    *canary_wildcard_requires_extractor.mr)
+        echo "toolchain failure without canonical diagnostics"
         exit 1
         ;;
     *canary_severity_mismatch.mr)
@@ -161,6 +170,7 @@ rel_continuation="${canary_continuation#$FIXTURE_ROOT/}"
 rel_annotation="${canary_annotation#$FIXTURE_ROOT/}"
 rel_severity="${canary_severity#$FIXTURE_ROOT/}"
 rel_mixed_wc="${canary_mixed_wc#$FIXTURE_ROOT/}"
+rel_wc_requires_extractor="${canary_wc_requires_extractor#$FIXTURE_ROOT/}"
 rel_colon="${canary_colon#$FIXTURE_ROOT/}"
 
 TOTAL=$((TOTAL + 1))
@@ -241,6 +251,22 @@ else
         PASS=$((PASS + 1))
     else
         echo "✗ FAIL (wildcard scope failure marker missing)"
+        echo "$output" | sed 's/^/  /' | head -n 40
+        FAIL=$((FAIL + 1))
+    fi
+fi
+
+TOTAL=$((TOTAL + 1))
+echo -n "TEST [$TOTAL] wildcard-only expectations still require extractor success ... "
+if output=$($HARNESS_COPY "$rel_wc_requires_extractor" 2>&1); then
+    echo "✗ FAIL (expected extractor failure)"
+    FAIL=$((FAIL + 1))
+else
+    if echo "$output" | grep -q "✗ FAIL (diagnostic extractor failure)"; then
+        echo "✓ PASS"
+        PASS=$((PASS + 1))
+    else
+        echo "✗ FAIL (wildcard extractor failure marker missing)"
         echo "$output" | sed 's/^/  /' | head -n 40
         FAIL=$((FAIL + 1))
     fi

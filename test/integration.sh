@@ -756,12 +756,6 @@ reject_mode() {
         fi
     done
 
-    if $all_wildcard; then
-        echo "✓ PASS"
-        PASS=$((PASS + 1))
-        return
-    fi
-
     parse_build_output_diagnostics "$build_output"
 
     if [ "${#PARSED_DIAG_MESSAGE[@]}" -eq 0 ]; then
@@ -769,6 +763,12 @@ reject_mode() {
         print_reject_debug_context "$file" "$build_output"
         FAIL=$((FAIL + 1))
         record_failed_test "$name" "diagnostic extractor failure"
+        return
+    fi
+
+    if $all_wildcard; then
+        echo "✓ PASS"
+        PASS=$((PASS + 1))
         return
     fi
 
