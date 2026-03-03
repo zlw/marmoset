@@ -4089,10 +4089,9 @@ let emit_enum_type (state : mono_state) (enum_name : string) (type_args : Types.
           List.map
             (fun (v : Typecheck.Enum_registry.variant_def) ->
               let variant_field_map =
-                if List.mem_assoc v.name layout.variant_maps then
-                  List.assoc v.name layout.variant_maps
-                else
-                  []
+                match List.assoc_opt v.name layout.variant_maps with
+                | Some m -> m
+                | None -> []
               in
               if v.fields = [] then
                 (* Nullary variant - just print name *)
