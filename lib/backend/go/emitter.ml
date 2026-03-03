@@ -162,8 +162,10 @@ let go_keywords =
     "var";
   ]
 
+let go_keywords_set = List.fold_left (fun s k -> StringSet.add k s) StringSet.empty go_keywords
+
 let go_safe_ident (name : string) : string =
-  if List.mem name go_keywords then
+  if StringSet.mem name go_keywords_set then
     name ^ "_"
   else
     name
