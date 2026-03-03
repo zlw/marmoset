@@ -3265,22 +3265,22 @@ and emit_call state type_map env func args =
   in
   (* Check for builtin function calls that need special handling *)
   match func.expr with
-  | AST.Identifier "len" when List.length args = 1 ->
+  | AST.Identifier "len" when (match args with [_] -> true | _ -> false) ->
       let arg_str = emit_expr state type_map env (List.hd args) in
       Printf.sprintf "int64(len(%s))" arg_str
   | AST.Identifier "puts" ->
       let args_str = List.map (emit_expr state type_map env) args |> String.concat ", " in
       Printf.sprintf "puts(%s)" args_str
-  | AST.Identifier "first" when List.length args = 1 ->
+  | AST.Identifier "first" when (match args with [_] -> true | _ -> false) ->
       let arg_str = emit_expr state type_map env (List.hd args) in
       Printf.sprintf "first(%s)" arg_str
-  | AST.Identifier "last" when List.length args = 1 ->
+  | AST.Identifier "last" when (match args with [_] -> true | _ -> false) ->
       let arg_str = emit_expr state type_map env (List.hd args) in
       Printf.sprintf "last(%s)" arg_str
-  | AST.Identifier "rest" when List.length args = 1 ->
+  | AST.Identifier "rest" when (match args with [_] -> true | _ -> false) ->
       let arg_str = emit_expr state type_map env (List.hd args) in
       Printf.sprintf "rest(%s)" arg_str
-  | AST.Identifier "push" when List.length args = 2 ->
+  | AST.Identifier "push" when (match args with [_;_] -> true | _ -> false) ->
       let arr_str = emit_expr state type_map env (List.hd args) in
       let val_str = emit_expr state type_map env (List.nth args 1) in
       Printf.sprintf "push(%s, %s)" arr_str val_str
