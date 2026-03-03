@@ -1,4 +1,7 @@
-type severity = Error | Warning | Info
+type severity =
+  | Error
+  | Warning
+  | Info
 
 type span =
   | NoSpan
@@ -28,10 +31,8 @@ let severity_to_string = function
   | Info -> "info"
 
 let make ~code ~severity ~message ?(labels = []) ?(notes = []) () : t = { code; severity; message; labels; notes }
-
 let primary_label ?message (span : span) : label = { span; message; primary = true }
 let secondary_label ?message (span : span) : label = { span; message; primary = false }
-
 let error_no_span ~code ~message : t = make ~code ~severity:Error ~message ()
 
 let error_with_span ~code ~message ~file_id ~start_pos ?end_pos () : t =
@@ -78,8 +79,8 @@ let header_of_diagnostic ~(source_lookup : string -> string option) (diag : t) :
       let source = source_lookup file_id in
       let start_loc = offset_to_loc_fallback source start_pos in
       let end_loc = offset_to_loc_fallback source end_pos in
-      Printf.sprintf "%s:%d:%d-%d:%d: %s %s: %s" file_id start_loc.line start_loc.column end_loc.line end_loc.column
-        severity diag.code diag.message
+      Printf.sprintf "%s:%d:%d-%d:%d: %s %s: %s" file_id start_loc.line start_loc.column end_loc.line
+        end_loc.column severity diag.code diag.message
 
 let render_label_line ~(source_lookup : string -> string option) (label : label) : string option =
   match label.message with
@@ -120,7 +121,9 @@ module Test = struct
     && diag.notes = []
 
   let%test "error_with_span constructor creates primary label" =
-    let diag = error_with_span ~code:"type-unbound-var" ~message:"x not found" ~file_id:"main.mr" ~start_pos:4 () in
+    let diag =
+      error_with_span ~code:"type-unbound-var" ~message:"x not found" ~file_id:"main.mr" ~start_pos:4 ()
+    in
     match diag.labels with
     | [ { span = Span { file_id; start_pos; end_pos = None }; primary = true; _ } ] ->
         file_id = "main.mr" && start_pos = 4
@@ -136,7 +139,8 @@ module Test = struct
 
   let%test "render range span header" =
     let diag =
-      error_with_span ~code:"type-mismatch" ~message:"cannot unify" ~file_id:"main.mr" ~start_pos:12 ~end_pos:15 ()
+      error_with_span ~code:"type-mismatch" ~message:"cannot unify" ~file_id:"main.mr" ~start_pos:12 ~end_pos:15
+        ()
     in
     render_cli ~source_lookup diag = "main.mr:2:3-2:6: error type-mismatch: cannot unify"
 
@@ -148,7 +152,9 @@ module Test = struct
     once = twice
 
   let%test "render fallback without source lookup" =
-    let diag = error_with_span ~code:"parse-expected-token" ~message:"missing token" ~file_id:"unknown.mr" ~start_pos:9 () in
+    let diag =
+      error_with_span ~code:"parse-expected-token" ~message:"missing token" ~file_id:"unknown.mr" ~start_pos:9 ()
+    in
     render_cli ~source_lookup diag = "unknown.mr:1:10: error parse-expected-token: missing token"
 
   let%test "warning severity renders correctly" =
@@ -161,8 +167,10 @@ module Test = struct
 
   let%test "warning with span renders correctly" =
     let diag =
-      { (error_with_span ~code:"lint-unused" ~message:"unused variable x" ~file_id:"main.mr" ~start_pos:4 ())
-        with severity = Warning }
+      {
+        (error_with_span ~code:"lint-unused" ~message:"unused variable x" ~file_id:"main.mr" ~start_pos:4 ()) with
+        severity = Warning;
+      }
     in
     render_cli ~source_lookup diag = "main.mr:1:5: warning lint-unused: unused variable x"
 
@@ -176,8 +184,10 @@ module Test = struct
     let diag = with_note diag2 "second note" in
     render_cli ~source_lookup diag
     = String.concat "\n"
-        [ "main.mr:1:5: error type-mismatch: headline";
+        [
+          "main.mr:1:5: error type-mismatch: headline";
           "  = main.mr:2:3: secondary hint";
           "  note: first note";
-          "  note: second note" ]
+          "  note: second note";
+        ]
 end

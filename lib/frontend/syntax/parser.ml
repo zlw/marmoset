@@ -48,7 +48,11 @@ let with_stmt_end p (s : AST.statement) : AST.statement =
   { s with end_pos = max s.end_pos (token_end p.curr_token); file_id = first_some s.file_id (Some p.file_id) }
 
 let with_pat_end p (pat : AST.pattern) : AST.pattern =
-  { pat with end_pos = max pat.end_pos (token_end p.curr_token); file_id = first_some pat.file_id (Some p.file_id) }
+  {
+    pat with
+    end_pos = max pat.end_pos (token_end p.curr_token);
+    file_id = first_some pat.file_id (Some p.file_id);
+  }
 
 (* Helper to get fresh ID and increment counter *)
 let fresh_id p = (p.next_id, { p with next_id = p.next_id + 1 })
@@ -98,8 +102,7 @@ let curr_token_is (p : parser) (t : Token.token_type) : bool = p.curr_token.toke
 let peek_token_is (p : parser) (t : Token.token_type) : bool = p.peek_token.token_type = t
 
 let span_for_token (p : parser) (tok : Token.token) : Diagnostic.span =
-  Diagnostic.Span
-    { file_id = p.file_id; start_pos = tok.pos; end_pos = Some (max tok.pos (token_end tok)) }
+  Diagnostic.Span { file_id = p.file_id; start_pos = tok.pos; end_pos = Some (max tok.pos (token_end tok)) }
 
 let add_error ?(code = "parse-unexpected-token") ?token (p : parser) (msg : string) : parser =
   let tok =
@@ -1586,7 +1589,8 @@ module Test = struct
         [
           {
             Diagnostic.code = "parse-expected-token";
-            labels = [ { span = Diagnostic.Span { file_id; start_pos; end_pos = Some end_pos }; primary = true; _ } ];
+            labels =
+              [ { span = Diagnostic.Span { file_id; start_pos; end_pos = Some end_pos }; primary = true; _ } ];
             _;
           };
         ] ->
@@ -2020,7 +2024,8 @@ module Test = struct
     let input = "let x = { ...a, ...b }" in
     match parse ~file_id:"<test>" input with
     | Ok _ -> false
-    | Error errs -> diagnostics_contain_substring errs "multiple spread entries in record literal are not supported yet"
+    | Error errs ->
+        diagnostics_contain_substring errs "multiple spread entries in record literal are not supported yet"
 
   let rec collect_expr_ids (expr : AST.expression) : int list =
     let child_ids =

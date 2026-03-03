@@ -76,9 +76,7 @@ let analyze_with_file_id ~(file_id : string) ~(source : string) : analysis_resul
       match Checker.check_program_with_annotations ~state ~env program with
       | Error diags ->
           let type_var_user_names = Infer.type_var_user_name_bindings_in_state state in
-          let diagnostics =
-            List.map (lsp_diagnostic_of_canonical ~source ~active_file_id:file_id) diags
-          in
+          let diagnostics = List.map (lsp_diagnostic_of_canonical ~source ~active_file_id:file_id) diags in
           {
             source;
             program = Some program;

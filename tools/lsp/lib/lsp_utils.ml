@@ -53,9 +53,7 @@ let offset_range_to_lsp_with_index ~(index : line_index) ~(pos : int) ~(end_pos 
   let end_inclusive = offset_to_position_with_index ~index ~offset:end_pos in
   (* end_pos is inclusive in Marmoset but LSP Range.end is exclusive,
      so add 1 to the character *)
-  let end_ =
-    Lsp_t.Position.create ~line:end_inclusive.line ~character:(end_inclusive.character + 1)
-  in
+  let end_ = Lsp_t.Position.create ~line:end_inclusive.line ~character:(end_inclusive.character + 1) in
   Lsp_t.Range.create ~start ~end_
 
 (* Convert a pos/end_pos byte offset pair to an LSP Range *)

@@ -4,7 +4,8 @@ open Types
 module Diagnostic = Diagnostics.Diagnostic
 
 let type_mismatch (t1 : mono_type) (t2 : mono_type) : Diagnostic.t =
-  Diagnostic.error_no_span ~code:"type-mismatch" ~message:("Cannot unify " ^ to_string t1 ^ " with " ^ to_string t2)
+  Diagnostic.error_no_span ~code:"type-mismatch"
+    ~message:("Cannot unify " ^ to_string t1 ^ " with " ^ to_string t2)
 
 let occurs_check (var : string) (mono : mono_type) : Diagnostic.t =
   Diagnostic.error_no_span ~code:"type-occurs-check"

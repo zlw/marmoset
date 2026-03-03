@@ -444,8 +444,7 @@ let encode_tokens ~source (raw : raw_token list) : int array =
           else
             char
         in
-        encoded_rev :=
-          tok.modifiers :: tok.token_type :: length :: delta_char :: delta_line :: !encoded_rev;
+        encoded_rev := tok.modifiers :: tok.token_type :: length :: delta_char :: delta_line :: !encoded_rev;
         prev_line := line;
         prev_char := char))
     sorted;

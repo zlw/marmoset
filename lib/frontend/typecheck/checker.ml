@@ -158,8 +158,7 @@ let check_program_with_annotations ?state ?(env = Infer.empty_env) (program : Sy
                 (* Other statements don't have annotations to check *)
                 check_stmts_with_infer rest)
       and check_expr_annotations (expr : Syntax.Ast.AST.expression) (inferred : mono_type) :
-          (unit, Diagnostic.t) result
-          =
+          (unit, Diagnostic.t) result =
         match expr.expr with
         | Syntax.Ast.AST.Function { return_type; params = _; body; generics = _; is_effectful = _ } -> (
             (* Check function return type annotation *)
@@ -334,13 +333,14 @@ let%test "push then len" =
    Source Location Tests
    ============================================================ *)
 
-let string_contains_substring haystack ~substring =
-  String_utils.contains_substring ~needle:substring haystack
+let string_contains_substring haystack ~substring = String_utils.contains_substring ~needle:substring haystack
 
-let diagnostic_locs (source : string) (err : Diagnostic.t) : Diagnostics.Source_loc.loc option * Diagnostics.Source_loc.loc option =
+let diagnostic_locs (source : string) (err : Diagnostic.t) :
+    Diagnostics.Source_loc.loc option * Diagnostics.Source_loc.loc option =
   match Diagnostic.pick_primary_span err.labels with
   | Some (Diagnostic.Span { start_pos; end_pos; _ }) ->
-      (Some (Diagnostics.Source_loc.offset_to_loc source start_pos), Option.map (Diagnostics.Source_loc.offset_to_loc source) end_pos)
+      ( Some (Diagnostics.Source_loc.offset_to_loc source start_pos),
+        Option.map (Diagnostics.Source_loc.offset_to_loc source) end_pos )
   | Some Diagnostic.NoSpan | None -> (None, None)
 
 let%test "error includes source location" =
@@ -521,7 +521,9 @@ let%test "annotation: conditional with matching return type" =
 
 let%test "annotation: conditional with mismatched branch types fails" =
   Infer.reset_fresh_counter ();
-  match check_string ~file_id:"<test>" "let f = fn(x: int) -> string { if (x < 0) { \"neg\" } else { 42 } }; f" with
+  match
+    check_string ~file_id:"<test>" "let f = fn(x: int) -> string { if (x < 0) { \"neg\" } else { 42 } }; f"
+  with
   | Ok _ -> false
   | Error _ -> true
 
@@ -696,7 +698,10 @@ let%test "env reuse with shared inference state preserves constrained generic ob
       impl_methods = [ { method_name = "show"; method_params = [ ("x", TInt) ]; method_return_type = TString } ];
     };
   let shared_state = Infer.create_inference_state () in
-  match check_string ~file_id:"<test>" ~state:shared_state "let check = fn[a: show](x: a) -> string { x.show() }; check" with
+  match
+    check_string ~file_id:"<test>" ~state:shared_state
+      "let check = fn[a: show](x: a) -> string { x.show() }; check"
+  with
   | Error _ -> false
   | Ok first -> (
       match check_string ~file_id:"<test>" ~state:shared_state ~env:first.environment "check(fn(y) { y })" with

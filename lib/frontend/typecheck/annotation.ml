@@ -81,7 +81,7 @@ let field_only_trait_object_type (trait_name : string) : (Types.mono_type, Diagn
   in
   let gather_trait_fields (name : string) : (unit, Diagnostic.t) result =
     match Trait_registry.trait_kind name with
-    | Some Trait_registry.FieldOnly ->
+    | Some Trait_registry.FieldOnly -> (
         let* trait_def =
           match Trait_registry.lookup_trait name with
           | Some def -> Ok def
@@ -97,7 +97,7 @@ let field_only_trait_object_type (trait_name : string) : (Types.mono_type, Diagn
                  (Printf.sprintf
                     "Trait '%s' cannot be used as a type: generic field-only supertrait '%s' is not supported in this phase"
                     trait_name name))
-        else (
+        else
           match Trait_registry.lookup_trait_fields name with
           | None -> Ok ()
           | Some fields -> iter_result (merge_field name) fields)
@@ -173,8 +173,7 @@ let rec type_expr_to_mono_type_with
                           let* trait_def =
                             match Trait_registry.lookup_trait other with
                             | Some def -> Ok def
-                            | None ->
-                                ann_error ("Unknown trait in registry: " ^ other)
+                            | None -> ann_error ("Unknown trait in registry: " ^ other)
                           in
                           if trait_def.trait_type_param <> None then
                             ann_error
@@ -186,10 +185,10 @@ let rec type_expr_to_mono_type_with
                       | Some Trait_registry.MethodOnly | Some Trait_registry.Mixed ->
                           ann_error (type_position_error_for_constructor other)
                       | None -> ann_error (type_position_error_for_constructor other))))))
-  | Syntax.Ast.AST.TApp (con_name, type_args) ->
+  | Syntax.Ast.AST.TApp (con_name, type_args) -> (
       let ann_error msg = Error (Diagnostic.error_no_span ~code:"type-annotation-invalid" ~message:msg) in
       let* arg_types = map_result (type_expr_to_mono_type_with type_bindings) type_args in
-      (match con_name with
+      match con_name with
       | "list" -> (
           match arg_types with
           | [ elem_type ] -> Ok (Types.TArray elem_type)
@@ -236,8 +235,8 @@ let rec type_expr_to_mono_type_with
   | Syntax.Ast.AST.TUnion type_exprs ->
       let* mono_types = map_result (type_expr_to_mono_type_with type_bindings) type_exprs in
       Ok (Types.normalize_union mono_types)
-  | Syntax.Ast.AST.TRecord (fields, row_var) ->
-      (match row_var with
+  | Syntax.Ast.AST.TRecord (fields, row_var) -> (
+      match row_var with
       | Some _ ->
           Error
             (Diagnostic.error_no_span ~code:"type-open-row-rejected"

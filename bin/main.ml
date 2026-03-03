@@ -1,4 +1,5 @@
 let version_string = Printf.sprintf "marmoset %s (built %s)" Build_info.git_hash Build_info.build_time
+
 module Diagnostic = Marmoset.Lib.Diagnostic
 
 type command =

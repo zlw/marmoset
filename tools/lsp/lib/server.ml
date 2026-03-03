@@ -63,9 +63,7 @@ class marmoset_server =
           let bt = Printexc.get_backtrace () in
           Printf.eprintf "[marmoset-lsp] internal error: %s\n%s%!" (Printexc.to_string exn) bt;
           let file_id = Lsp_t.DocumentUri.to_string uri in
-          let diag =
-            Diagnostic.error_no_span ~code:"lsp-internal" ~message:"Internal error during analysis"
-          in
+          let diag = Diagnostic.error_no_span ~code:"lsp-internal" ~message:"Internal error during analysis" in
           let lsp_diag = Doc_state.lsp_diagnostic_of_canonical ~source:content ~active_file_id:file_id diag in
           (None, [ lsp_diag ])
       in

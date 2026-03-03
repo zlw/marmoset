@@ -20,8 +20,7 @@ let dedupe_preserve_order (traits : string list) : string list =
   go StringSet.empty [] traits
 
 let expand_constraints_with_supertraits (constraints : string list) : string list =
-  List.concat_map Trait_registry.trait_with_supertraits constraints
-  |> dedupe_preserve_order
+  List.concat_map Trait_registry.trait_with_supertraits constraints |> dedupe_preserve_order
 
 let trait_error ~(code : string) (message : string) : (unit, Diagnostic.t) result =
   Error (Diagnostic.error_no_span ~code ~message)
@@ -41,9 +40,8 @@ let check_trait_fields (typ : Types.mono_type) (trait_name : string) : (unit, Di
                 with
                 | None ->
                     trait_error ~code:"type-trait-missing-field"
-                      (Printf.sprintf
-                         "Type %s does not satisfy trait %s because field '%s' is required"
-                         type_str trait_name required.name)
+                      (Printf.sprintf "Type %s does not satisfy trait %s because field '%s' is required" type_str
+                         trait_name required.name)
                 | Some actual -> (
                     let actual_type = Types.canonicalize_mono_type actual.typ in
                     let required_type = Types.canonicalize_mono_type required.typ in
@@ -59,20 +57,17 @@ let check_trait_fields (typ : Types.mono_type) (trait_name : string) : (unit, Di
           check_required required_fields
       | _ ->
           trait_error ~code:"type-trait-non-record"
-            (Printf.sprintf
-               "Type %s does not satisfy trait %s because field traits require a record receiver"
+            (Printf.sprintf "Type %s does not satisfy trait %s because field traits require a record receiver"
                type_str trait_name))
 
 let rec check_trait_methods (typ : Types.mono_type) (trait_name : string) : (unit, Diagnostic.t) result =
   let typ' = Types.canonicalize_mono_type typ in
   match Trait_registry.resolve_impl trait_name typ' with
   | Error msg ->
-      trait_error ~code:"type-trait-impl-resolution"
-        (Printf.sprintf "Trait impl resolution failed: %s" msg)
+      trait_error ~code:"type-trait-impl-resolution" (Printf.sprintf "Trait impl resolution failed: %s" msg)
   | Ok None ->
       trait_error ~code:"type-trait-missing-impl"
-        (Printf.sprintf "Type %s does not implement trait %s"
-           (Types.to_string typ') trait_name)
+        (Printf.sprintf "Type %s does not implement trait %s" (Types.to_string typ') trait_name)
   | Ok (Some resolved_impl) ->
       let rec check_generic_constraints = function
         | [] -> Ok ()
@@ -80,8 +75,7 @@ let rec check_trait_methods (typ : Types.mono_type) (trait_name : string) : (uni
             match Types.SubstMap.find_opt p.name resolved_impl.specialization_subst with
             | None ->
                 trait_error ~code:"type-trait-specialization"
-                  (Printf.sprintf
-                     "Generic impl for trait %s could not resolve parameter '%s' for type %s"
+                  (Printf.sprintf "Generic impl for trait %s could not resolve parameter '%s' for type %s"
                      trait_name p.name (Types.to_string typ'))
             | Some concrete_param_type -> (
                 let concrete_param_type' = Types.canonicalize_mono_type concrete_param_type in

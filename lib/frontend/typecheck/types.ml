@@ -192,9 +192,7 @@ let apply_substitution_poly (subst : substitution) (Forall (quantified_vars, mon
 
 (* Compose two substitutions: apply first_subst first, then second_subst *)
 let compose_substitution (first_subst : substitution) (second_subst : substitution) : substitution =
-  let first_with_second_applied =
-    SubstMap.map (fun mono -> apply_substitution second_subst mono) first_subst
-  in
+  let first_with_second_applied = SubstMap.map (fun mono -> apply_substitution second_subst mono) first_subst in
   SubstMap.union (fun _k v1 _v2 -> Some v1) first_with_second_applied second_subst
 
 (* ============================================================
