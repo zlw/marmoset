@@ -96,11 +96,11 @@ let render_cli ~(source_lookup : string -> string option) (diag : t) : string =
   List.iter
     (fun label ->
       match render_label_line ~source_lookup label with
-      | Some line -> lines := !lines @ [ line ]
+      | Some line -> lines := line :: !lines
       | None -> ())
     (List.filter (fun l -> not l.primary) diag.labels);
-  List.iter (fun note -> lines := !lines @ [ Printf.sprintf "  note: %s" note ]) diag.notes;
-  String.concat "\n" !lines
+  List.iter (fun note -> lines := Printf.sprintf "  note: %s" note :: !lines) diag.notes;
+  String.concat "\n" (List.rev !lines)
 
 let render_many_cli ~(source_lookup : string -> string option) (diags : t list) : string =
   diags |> List.map (render_cli ~source_lookup) |> String.concat "\n\n"
