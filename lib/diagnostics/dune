@@ -1,6 +1,5 @@
 (library
  (name diagnostics)
- (libraries str)
  (inline_tests
   (flags (-verbose)))
  (preprocess
