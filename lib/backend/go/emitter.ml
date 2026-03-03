@@ -4853,6 +4853,21 @@ func push[T any](arr []T, v T) []T {
     Main Entry Point
     ============================================================ *)
 
+let classify_go_build_failure ~(exit_code : int) ~(output : string) : Diagnostic.t =
+  ignore exit_code;
+  let message = if output = "" then "Go build failed" else output in
+  let lower = String.lowercase_ascii message in
+  let code =
+    if
+      String_utils.contains_substring ~needle:"go: command not found" lower
+      || String_utils.contains_substring ~needle:"go: not found" lower
+      || String_utils.contains_substring ~needle:"'go' is not recognized" lower
+      || String_utils.contains_substring ~needle:"executable file not found" lower
+    then "build-go-missing"
+    else "build-go-compile"
+  in
+  Diagnostic.error_no_span ~code ~message
+
 let normalize_codegen_failure_message (msg : string) : string =
   let prefix = "Codegen error: " in
   let prefix_len = String.length prefix in

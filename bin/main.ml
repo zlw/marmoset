@@ -1,6 +1,5 @@
 let version_string = Printf.sprintf "marmoset %s (built %s)" Build_info.git_hash Build_info.build_time
 module Diagnostic = Marmoset.Lib.Diagnostic
-module String_utils = Marmoset.Lib.String_utils
 
 type command =
   | Run of {
@@ -167,13 +166,6 @@ let run_command_capture_combined_output (cmd : string) : int * string =
   in
   (exit_code, output)
 
-let is_go_missing_output (output : string) : bool =
-  let lower = String.lowercase_ascii output in
-  String_utils.contains_substring ~needle:"go: command not found" lower
-  || String_utils.contains_substring ~needle:"go: not found" lower
-  || String_utils.contains_substring ~needle:"'go' is not recognized" lower
-  || String_utils.contains_substring ~needle:"executable file not found" lower
-
 let render_diagnostic ~(file_id : string) ~(source : string) (diag : Diagnostic.t) : string =
   let source_lookup candidate_file_id =
     if String.equal candidate_file_id file_id then
@@ -228,19 +220,7 @@ let compile_to_binary
       if exit_code = 0 then
         Ok ()
       else
-        let message =
-          if go_output = "" then
-            "Go build failed"
-          else
-            go_output
-        in
-        let code =
-          if is_go_missing_output message then
-            "build-go-missing"
-          else
-            "build-go-compile"
-        in
-        Error (Diagnostic.error_no_span ~code ~message)
+        Error (Marmoset.Lib.Go_emitter.classify_go_build_failure ~exit_code ~output:go_output)
 
 let run_build input output_opt emit_go_opt =
   let source = read_file input in
