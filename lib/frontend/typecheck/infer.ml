@@ -283,14 +283,19 @@ let add_type_var_constraints (type_var_name : string) (traits : string list) : u
   let merged =
     match Hashtbl.find_opt store type_var_name with
     | None -> traits
-    | Some existing ->
-        List.fold_left
-          (fun acc trait_name ->
-            if List.mem trait_name acc then
-              acc
-            else
-              acc @ [ trait_name ])
-          existing traits
+    | Some existing -> (
+        let seen = Hashtbl.create (List.length existing + List.length traits) in
+        List.iter (fun trait_name -> Hashtbl.replace seen trait_name ()) existing;
+        let rec collect_new_unique rev_new = function
+          | [] -> existing @ List.rev rev_new
+          | trait_name :: rest ->
+              if Hashtbl.mem seen trait_name then
+                collect_new_unique rev_new rest
+              else (
+                Hashtbl.replace seen trait_name ();
+                collect_new_unique (trait_name :: rev_new) rest)
+        in
+        collect_new_unique [] traits)
   in
   Hashtbl.replace store type_var_name merged;
   update_type_var_constrained_fields type_var_name merged
@@ -1780,18 +1785,19 @@ and infer_function_with_annotations type_map env generics_opt params return_anno
       (fun acc (_name, annot_opt) ->
         match acc with
         | Error _ -> acc
-        | Ok types -> (
+        | Ok rev_types -> (
             match annot_opt with
-            | None -> Ok (types @ [ fresh_type_var () ])
+            | None -> Ok (fresh_type_var () :: rev_types)
             | Some type_expr -> (
                 match convert_param_annotation type_expr with
                 | Error e -> Error e
-                | Ok t -> Ok (types @ [ t ]))))
+                | Ok t -> Ok (t :: rev_types))))
       (Ok []) param_info
   in
   match param_types_result with
   | Error e -> Error e
-  | Ok param_types ->
+  | Ok rev_param_types ->
+  let param_types = List.rev rev_param_types in
   let param_names = List.map fst param_info in
   (* Extend environment with parameters *)
   let env' =
@@ -2465,11 +2471,11 @@ and infer_statement type_map env stmt =
                       (fun acc (pname, ptype_opt) ->
                         match acc with
                         | Error _ as err -> err
-                        | Ok params -> (
+                        | Ok rev_params -> (
                             match ptype_opt with
                             | Some ptype -> (
                                 match convert_impl_type_expr ptype with
-                                | Ok mono -> Ok (params @ [ (pname, mono) ])
+                                | Ok mono -> Ok ((pname, mono) :: rev_params)
                                 | Error _ as err -> err)
                             | None ->
                                 Error
@@ -2481,7 +2487,8 @@ and infer_statement type_map env stmt =
                   in
                   match param_types_result with
                   | Error e -> Error e
-                  | Ok param_types -> (
+                  | Ok rev_param_types -> (
+                      let param_types = List.rev rev_param_types in
                       match m.impl_method_return_type with
                       | None ->
                           Error
@@ -2627,11 +2634,11 @@ and infer_statement type_map env stmt =
                 (fun acc (pname, ptype_opt) ->
                   match acc with
                   | Error _ as err -> err
-                  | Ok params -> (
+                  | Ok rev_params -> (
                       match ptype_opt with
                       | Some ptype -> (
                           match convert_inherent_type_expr ptype with
-                          | Ok mono -> Ok (params @ [ (pname, mono) ])
+                          | Ok mono -> Ok ((pname, mono) :: rev_params)
                           | Error _ as err -> err)
                       | None ->
                           Error
@@ -2643,7 +2650,8 @@ and infer_statement type_map env stmt =
             in
             match param_types_result with
             | Error e -> Error e
-            | Ok param_types -> (
+            | Ok rev_param_types -> (
+                let param_types = List.rev rev_param_types in
                 if param_types = [] then
                   Error
                     (error ~code:"type-constructor"
@@ -3060,18 +3068,19 @@ and infer_let ?(prefer_existing_self = false) type_map env name expr type_annota
                 (fun acc (_name, annot_opt) ->
                   match acc with
                   | Error _ -> acc
-                  | Ok types -> (
+                  | Ok rev_types -> (
                       match annot_opt with
-                      | None -> Ok (types @ [ fresh_type_var () ])
+                      | None -> Ok (fresh_type_var () :: rev_types)
                       | Some annot -> (
                           match annotation_or_fresh annot with
                           | Error _ as e -> e
-                          | Ok t -> Ok (types @ [ t ]))))
+                          | Ok t -> Ok (t :: rev_types))))
                 (Ok []) f.params
             in
             (match param_types_result with
             | Error _ as e -> e
-            | Ok param_types ->
+            | Ok rev_param_types ->
+                let param_types = List.rev rev_param_types in
                 Ok (List.fold_right (fun param_t acc -> mk_f param_t acc) param_types return_type)))
     | _, Some type_expr -> annotation_or_fresh type_expr
     | _, None -> Ok (fresh_type_var ())
@@ -3228,18 +3237,19 @@ let predeclare_top_level_lets (env : type_env) (program : AST.program) : (type_e
                             (fun acc (_name, annot_opt) ->
                               match acc with
                               | Error _ -> acc
-                              | Ok types -> (
+                              | Ok rev_types -> (
                                   match annot_opt with
-                                  | None -> Ok (types @ [ fresh_type_var () ])
+                                  | None -> Ok (fresh_type_var () :: rev_types)
                                   | Some type_expr -> (
                                       match annotation_or_fresh type_expr with
                                       | Error _ as e -> e
-                                      | Ok t -> Ok (types @ [ t ]))))
+                                      | Ok t -> Ok (t :: rev_types))))
                             (Ok []) f.params
                         in
                         (match param_types_result with
                         | Error e -> Error e
-                        | Ok param_types ->
+                        | Ok rev_param_types ->
+                            let param_types = List.rev rev_param_types in
                             let placeholder =
                               List.fold_right
                                 (fun param_type acc -> TFun (param_type, acc, f.is_effectful))
