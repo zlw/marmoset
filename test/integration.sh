@@ -368,32 +368,10 @@ PARSED_DIAG_START_COL=()
 PARSED_DIAG_END_LINE=()
 PARSED_DIAG_END_COL=()
 PARSED_DIAG_MATCH_TEXT=()
-PARSED_DIAG_KEY=()
 DIAG_RECORD_SEP=$'\x1f'
 
 to_lower() {
     printf "%s" "$1" | tr '[:upper:]' '[:lower:]'
-}
-
-diag_key() {
-    local severity="$1"
-    local code="$2"
-    local message="$3"
-    local file="$4"
-    local start_line="$5"
-    local start_col="$6"
-    local end_line="$7"
-    local end_col="$8"
-
-    printf "%s|%s|%s|%s|%s|%s|%s|%s" \
-        "$(to_lower "$(trim_ws "$severity")")" \
-        "$(to_lower "$(trim_ws "$code")")" \
-        "$(to_lower "$(trim_ws "$message")")" \
-        "$(trim_ws "$file")" \
-        "$(trim_ws "$start_line")" \
-        "$(trim_ws "$start_col")" \
-        "$(trim_ws "$end_line")" \
-        "$(trim_ws "$end_col")"
 }
 
 emit_diag_record() {
@@ -413,10 +391,8 @@ emit_diag_record() {
     local safe_match_text="${match_text//$DIAG_RECORD_SEP/ }"
     safe_message="${safe_message//$'\n'/ }"
     safe_match_text="${safe_match_text//$'\n'/ }"
-    local key
-    key=$(diag_key "$severity" "$code" "$safe_message" "$file" "$start_line" "$start_col" "$end_line" "$end_col")
 
-    printf "%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s\n" \
+    printf "%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s\n" \
         "$extractor" "$DIAG_RECORD_SEP" \
         "$severity" "$DIAG_RECORD_SEP" \
         "$code" "$DIAG_RECORD_SEP" \
@@ -426,8 +402,7 @@ emit_diag_record() {
         "$start_col" "$DIAG_RECORD_SEP" \
         "$end_line" "$DIAG_RECORD_SEP" \
         "$end_col" "$DIAG_RECORD_SEP" \
-        "$safe_match_text" "$DIAG_RECORD_SEP" \
-        "$key"
+        "$safe_match_text"
 }
 
 try_parse_canonical_header() {
@@ -553,7 +528,6 @@ clear_parsed_diagnostics() {
     PARSED_DIAG_END_LINE=()
     PARSED_DIAG_END_COL=()
     PARSED_DIAG_MATCH_TEXT=()
-    PARSED_DIAG_KEY=()
 }
 
 parse_build_output_diagnostics() {
@@ -569,8 +543,8 @@ parse_build_output_diagnostics() {
 
     for rec in "${merged_records[@]}"; do
         [ -z "$rec" ] && continue
-        local extractor severity code message file start_line start_col end_line end_col match_text key
-        IFS="$DIAG_RECORD_SEP" read -r extractor severity code message file start_line start_col end_line end_col match_text key <<< "$rec"
+        local extractor severity code message file start_line start_col end_line end_col match_text
+        IFS="$DIAG_RECORD_SEP" read -r extractor severity code message file start_line start_col end_line end_col match_text <<< "$rec"
         PARSED_DIAG_EXTRACTOR+=("$extractor")
         PARSED_DIAG_SEVERITY+=("$severity")
         PARSED_DIAG_CODE+=("$code")
@@ -581,7 +555,6 @@ parse_build_output_diagnostics() {
         PARSED_DIAG_END_LINE+=("$end_line")
         PARSED_DIAG_END_COL+=("$end_col")
         PARSED_DIAG_MATCH_TEXT+=("$match_text")
-        PARSED_DIAG_KEY+=("$key")
     done
 }
 
