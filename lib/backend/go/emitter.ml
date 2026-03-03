@@ -1626,18 +1626,17 @@ and collect_insts_expr
           in
           (* Revisit args with expected concrete parameter types so function-valued
              arguments can register concrete instantiations. *)
-          List.iteri
-            (fun i arg ->
-              let expected =
-                if i < List.length concrete_param_types then
-                  Some (List.nth concrete_param_types i)
-                else
-                  None
-              in
-              match expected with
-              | Some expected_ty -> collect_insts_expr ~expected_type:(Some expected_ty) state type_map env arg
-              | None -> collect_insts_expr state type_map env arg)
-            args;
+          let rec revisit_with_expected remaining_args remaining_expected =
+            match (remaining_args, remaining_expected) with
+            | [], _ -> ()
+            | arg :: rest_args, expected_ty :: rest_expected ->
+                collect_insts_expr ~expected_type:(Some expected_ty) state type_map env arg;
+                revisit_with_expected rest_args rest_expected
+            | arg :: rest_args, [] ->
+                collect_insts_expr state type_map env arg;
+                revisit_with_expected rest_args []
+          in
+          revisit_with_expected args concrete_param_types;
           let inferred_call_return = get_type type_map expr in
           let return_type =
             match declared_return_type_opt with
@@ -3245,17 +3244,17 @@ and emit_call state type_map env func args =
         | None -> [])
   in
   let emit_args_with_expected_types (expected_types : Types.mono_type list) : string =
-    List.mapi
-      (fun i arg ->
-        let expected =
-          if i < List.length expected_types then
-            Some (List.nth expected_types i)
-          else
-            None
-        in
-        emit_expr ~expected_type:expected state type_map env arg)
-      args
-    |> String.concat ", "
+    let rec emit acc remaining_args remaining_expected =
+      match (remaining_args, remaining_expected) with
+      | [], _ -> String.concat ", " (List.rev acc)
+      | arg :: rest_args, expected :: rest_expected ->
+          emit
+            (emit_expr ~expected_type:(Some expected) state type_map env arg :: acc)
+            rest_args rest_expected
+      | arg :: rest_args, [] ->
+          emit (emit_expr state type_map env arg :: acc) rest_args []
+    in
+    emit [] args expected_types
   in
   (* Check for builtin function calls that need special handling *)
   match func.expr with
