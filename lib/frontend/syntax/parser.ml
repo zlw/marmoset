@@ -2078,6 +2078,26 @@ module Test = struct
         let ids = List.concat_map collect_stmt_ids program in
         let unique_ids = List.sort_uniq Int.compare ids in
         List.length ids = List.length unique_ids
+
+  let%test "parse-invalid-number on malformed integer" =
+    match parse ~file_id:"<test>" "let x = 99999999999999999999" with
+    | Error errs -> List.exists (fun (d : Diagnostic.t) -> d.code = "parse-invalid-number") errs
+    | _ -> false
+
+  let%test "parse-invalid-impl on derive missing 'for' keyword" =
+    match parse ~file_id:"<test>" "derive show string" with
+    | Error errs -> List.exists (fun (d : Diagnostic.t) -> d.code = "parse-invalid-impl") errs
+    | _ -> false
+
+  let%test "parse-invalid-pattern on missing variant name after dot" =
+    match parse ~file_id:"<test>" "match 1 { option. => 3 }" with
+    | Error errs -> List.exists (fun (d : Diagnostic.t) -> d.code = "parse-invalid-pattern") errs
+    | _ -> false
+
+  let%test "parse-unexpected-token on missing brace after if condition" =
+    match parse ~file_id:"<test>" "let x = if (true) 42" with
+    | Error errs -> List.exists (fun (d : Diagnostic.t) -> d.code = "parse-unexpected-token") errs
+    | _ -> false
 end
 
 (* Phase 4.3: Trait definition tests *)

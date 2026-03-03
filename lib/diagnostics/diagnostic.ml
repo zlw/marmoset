@@ -151,6 +151,21 @@ module Test = struct
     let diag = error_with_span ~code:"parse-expected-token" ~message:"missing token" ~file_id:"unknown.mr" ~start_pos:9 () in
     render_cli ~source_lookup diag = "unknown.mr:1:10: error parse-expected-token: missing token"
 
+  let%test "warning severity renders correctly" =
+    let diag = { (error_no_span ~code:"lint-unused" ~message:"unused variable x") with severity = Warning } in
+    render_cli ~source_lookup diag = "warning lint-unused: unused variable x"
+
+  let%test "info severity renders correctly" =
+    let diag = { (error_no_span ~code:"hint-refactor" ~message:"consider extracting") with severity = Info } in
+    render_cli ~source_lookup diag = "info hint-refactor: consider extracting"
+
+  let%test "warning with span renders correctly" =
+    let diag =
+      { (error_with_span ~code:"lint-unused" ~message:"unused variable x" ~file_id:"main.mr" ~start_pos:4 ())
+        with severity = Warning }
+    in
+    render_cli ~source_lookup diag = "main.mr:1:5: warning lint-unused: unused variable x"
+
   let%test "notes and secondary label render in stable order" =
     let diag0 = error_with_span ~code:"type-mismatch" ~message:"headline" ~file_id:"main.mr" ~start_pos:4 () in
     let diag1 =
