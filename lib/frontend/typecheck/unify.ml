@@ -253,25 +253,25 @@ and unify_two_pairs (t1a, t2a) (t1b, t2b) : (substitution, Diagnostic.t) result 
 (* Unify two lists of types element-wise.
    Used for enum type arguments. *)
 and unify_list (list1 : mono_type list) (list2 : mono_type list) : (substitution, Diagnostic.t) result =
-  match (list1, list2) with
-  | [], [] -> Ok empty_substitution
-  | t1 :: rest1, t2 :: rest2 -> (
-      match unify t1 t2 with
-      | Error e -> Error e
-      | Ok subst1 -> (
-          (* Apply substitution to remaining elements *)
-          let rest1' = List.map (apply_substitution subst1) rest1 in
-          let rest2' = List.map (apply_substitution subst1) rest2 in
-          (* Unify remaining elements *)
-          match unify_list rest1' rest2' with
-          | Error e -> Error e
-          | Ok subst2 -> Ok (compose_substitution subst1 subst2)))
-  | _, _ ->
-      Error
-        (Diagnostic.error_no_span ~code:"type-mismatch"
-           ~message:
-             (Printf.sprintf "Type argument list length mismatch: expected %d but got %d" (List.length list1)
-                (List.length list2)))
+  let len1 = List.length list1 in
+  let len2 = List.length list2 in
+  let rec loop subst l1 l2 =
+    match (l1, l2) with
+    | [], [] -> Ok subst
+    | t1 :: rest1, t2 :: rest2 -> (
+        let t1' = apply_substitution subst t1 in
+        let t2' = apply_substitution subst t2 in
+        match unify t1' t2' with
+        | Error e -> Error e
+        | Ok subst_next ->
+            let composed = compose_substitution subst subst_next in
+            loop composed rest1 rest2)
+    | _, _ ->
+        Error
+          (Diagnostic.error_no_span ~code:"type-mismatch"
+             ~message:(Printf.sprintf "Type argument list length mismatch: expected %d but got %d" len1 len2))
+  in
+  loop empty_substitution list1 list2
 
 (* ============================================================
    Tests
