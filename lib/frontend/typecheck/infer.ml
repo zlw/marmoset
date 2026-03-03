@@ -1761,59 +1761,13 @@ and infer_function_with_annotations type_map env generics_opt params return_anno
   (* Extract parameter names and type annotations *)
   let param_info = params in
   (* For each parameter, either use its annotation or create a fresh type variable *)
-  let subst_generic_in_mono mono =
-    List.fold_left
-      (fun ty_acc (gen_name, gen_var) ->
-        let rec subst_generic ty =
-          match ty with
-          | TVar v when v = gen_name -> gen_var
-          | TFun (arg, ret, eff) -> TFun (subst_generic arg, subst_generic ret, eff)
-          | TArray elem -> TArray (subst_generic elem)
-          | THash (k, v) -> THash (subst_generic k, subst_generic v)
-          | TRecord (fields, row) ->
-              let fields' =
-                List.map (fun (f : Types.record_field_type) -> { f with typ = subst_generic f.typ }) fields
-              in
-              let row' = Option.map subst_generic row in
-              TRecord (fields', row')
-          | TRowVar r when r = gen_name -> gen_var
-          | TEnum (name, args) -> TEnum (name, List.map subst_generic args)
-          | TUnion types -> TUnion (List.map subst_generic types)
-          | other -> other
-        in
-        subst_generic ty_acc)
-      mono type_var_map
-  in
   let convert_param_annotation type_expr =
-    match Annotation.type_expr_to_mono_type type_expr with
+    (* Pass type_var_map as type_bindings so generic params like `t` in
+       `option[t]` resolve at any depth inside compound type annotations *)
+    match Annotation.type_expr_to_mono_type_with type_var_map type_expr with
     | Error d when d.Diagnostic.code = "type-open-row-rejected" -> Error d
-    | Error d ->
-        (* If annotation parsing fails (e.g., "Unknown type constructor: a"),
-           check if it's a generic parameter name *)
-        let is_generic_ref =
-          match type_expr with
-          | Syntax.Ast.AST.TCon name -> List.assoc_opt name type_var_map
-          | _ -> None
-        in
-        (match is_generic_ref with
-        | Some gen_var -> Ok gen_var
-        | None ->
-            let msg = d.Diagnostic.message in
-            if
-              String.length msg > 0
-              && String.sub msg 0 (min 23 (String.length msg)) = "Unknown type constructor"
-            then
-              let parts = String.split_on_char ':' msg in
-              if List.length parts > 1 then
-                let name = String.trim (List.nth parts 1) in
-                match List.assoc_opt name type_var_map with
-                | Some gen_var -> Ok gen_var
-                | None -> Error d
-              else
-                Error d
-            else
-              Error d)
-    | Ok mono -> Ok (subst_generic_in_mono mono)
+    | Error d -> Error d
+    | Ok mono -> Ok mono
   in
   let param_types_result =
     List.fold_left
