@@ -242,6 +242,8 @@ let build_label
     ~(param_types : Types.mono_type list)
     ~(ret_type : Types.mono_type)
     ~(fn_display_name : string) : string * (int * int) list =
+  let param_names_arr = Array.of_list param_names in
+  let param_name_count = Array.length param_names_arr in
   let buf = Buffer.create 64 in
   Buffer.add_string buf fn_display_name;
   Buffer.add_char buf '(';
@@ -251,8 +253,8 @@ let build_label
       if i > 0 then
         Buffer.add_string buf ", ";
       let name =
-        if i < List.length param_names then
-          List.nth param_names i
+        if i < param_name_count then
+          param_names_arr.(i)
         else
           Printf.sprintf "arg%d" (i + 1)
       in
