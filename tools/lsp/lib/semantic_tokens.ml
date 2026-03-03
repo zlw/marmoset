@@ -419,13 +419,14 @@ and collect_stmt ~source ~type_map ~environment ~params ~tokens (stmt : Ast.AST.
 (* Sort tokens by position, then delta-encode *)
 let encode_tokens ~source (raw : raw_token list) : int array =
   let sorted = List.sort (fun a b -> compare a.pos b.pos) raw in
+  let line_index = Lsp_utils.build_line_index ~source in
   let result = Buffer.create (List.length sorted * 5) in
   let prev_line = ref 0 in
   let prev_char = ref 0 in
   List.iter
     (fun tok ->
-      let start_pos = Lsp_utils.offset_to_position ~source ~offset:tok.pos in
-      let end_pos = Lsp_utils.offset_to_position ~source ~offset:tok.end_pos in
+      let start_pos = Lsp_utils.offset_to_position_with_index ~index:line_index ~offset:tok.pos in
+      let end_pos = Lsp_utils.offset_to_position_with_index ~index:line_index ~offset:tok.end_pos in
       let line = start_pos.line in
       let char = start_pos.character in
       let length =
