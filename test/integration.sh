@@ -253,15 +253,45 @@ parse_fixture() {
     DIAG_VALUES=()
     DIAG_LINENOS=()
     MODE=""
+    XFAIL_ENABLED=0
+    XFAIL_REASON=""
 
     local lineno=0
     local has_diag=false
     local has_output=false
+    local in_leading_block=true
     local -a lines=()
 
     while IFS= read -r line || [ -n "$line" ]; do
         lineno=$((lineno + 1))
         lines+=("$line")
+
+        # xfail parsing: must appear in leading comment block
+        if $in_leading_block; then
+            local trimmed_xf
+            trimmed_xf=$(trim_ws "$line")
+            if [ -z "$trimmed_xf" ]; then
+                : # blank lines are OK in leading block
+            elif [[ "$trimmed_xf" == \#* ]]; then
+                # Comment line — check for xfail annotation
+                if [[ "$trimmed_xf" =~ ^#[[:space:]]*xfail:[[:space:]]*(.*)$ ]]; then
+                    local reason="${BASH_REMATCH[1]}"
+                    reason=$(trim_ws "$reason")
+                    if [ -z "$reason" ]; then
+                        echo "xfail annotation requires a non-empty reason" >&2
+                        return 1
+                    fi
+                    if [ "$XFAIL_ENABLED" -eq 1 ]; then
+                        echo "duplicate xfail annotation (max one per fixture)" >&2
+                        return 1
+                    fi
+                    XFAIL_ENABLED=1
+                    XFAIL_REASON="$reason"
+                fi
+            else
+                in_leading_block=false
+            fi
+        fi
 
         if [[ "$line" =~ ^[^#]*#[[:space:]]*output:[[:space:]]*(.*) ]]; then
             OUTPUT_LINES+=("${BASH_REMATCH[1]}")
@@ -922,6 +952,9 @@ run_fixture() {
         return
     fi
 
+    local pre_pass=$PASS
+    local pre_fail=$FAIL
+
     case "$MODE" in
         run)
             run_mode "$file" "$name"
@@ -933,6 +966,21 @@ run_fixture() {
             build_only_mode "$file" "$name"
             ;;
     esac
+
+    # xfail reclassification
+    if [ "$XFAIL_ENABLED" -eq 1 ]; then
+        if [ "$PASS" -gt "$pre_pass" ]; then
+            # Test passed but xfail active → XPASS (stale xfail, counts as failure)
+            PASS=$pre_pass
+            XPASS=$((XPASS + 1))
+            echo "  ^ XPASS — test passed but has xfail annotation; remove it"
+        elif [ "$FAIL" -gt "$pre_fail" ]; then
+            # Test failed and xfail active → XFAIL (expected failure)
+            FAIL=$pre_fail
+            XFAIL=$((XFAIL + 1))
+            echo "  ^ XFAIL ($XFAIL_REASON)"
+        fi
+    fi
 }
 
 run_fixture_isolated() {
@@ -942,9 +990,25 @@ run_fixture_isolated() {
     TOTAL=$((index - 1))
     PASS=0
     FAIL=0
+    XFAIL=0
+    XPASS=0
 
     run_fixture "$file"
-    [ "$FAIL" -eq 0 ]
+
+    # Emit result token for parallel aggregator
+    if [ "$XPASS" -gt 0 ]; then
+        echo "__RESULT__:XPASS"
+        return 1
+    elif [ "$XFAIL" -gt 0 ]; then
+        echo "__RESULT__:XFAIL"
+        return 0
+    elif [ "$FAIL" -gt 0 ]; then
+        echo "__RESULT__:FAIL"
+        return 1
+    else
+        echo "__RESULT__:PASS"
+        return 0
+    fi
 }
 
 run_fixture_suite() {
@@ -984,6 +1048,8 @@ run_fixture_suite() {
 
         PASS=0
         FAIL=0
+        XFAIL=0
+        XPASS=0
         TOTAL=0
 
         local next_index=0
@@ -1015,15 +1081,24 @@ run_fixture_suite() {
                 local log_file="${logs[$i]}"
 
                 if ! kill -0 "$pid" 2>/dev/null; then
-                    if wait "$pid"; then
-                        PASS=$((PASS + 1))
-                    else
-                        FAIL=$((FAIL + 1))
-                        collect_failure_from_log "$log_file"
-                    fi
+                    wait "$pid" || true
+
+                    # Parse __RESULT__ token from worker log
+                    local result_token
+                    result_token=$(grep -o '__RESULT__:[A-Z]*' "$log_file" 2>/dev/null | tail -1 | cut -d: -f2)
+                    case "$result_token" in
+                        XFAIL) XFAIL=$((XFAIL + 1)) ;;
+                        XPASS) XPASS=$((XPASS + 1)) ;;
+                        FAIL)
+                            FAIL=$((FAIL + 1))
+                            collect_failure_from_log "$log_file"
+                            ;;
+                        *)     PASS=$((PASS + 1)) ;;
+                    esac
                     TOTAL=$((TOTAL + 1))
                     running=$((running - 1))
-                    cat "$log_file"
+                    # Print worker log but strip the __RESULT__ token line
+                    grep -v '^__RESULT__:' "$log_file" || true
 
                     done[$i]=1
                     progressed=1
