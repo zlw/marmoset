@@ -317,9 +317,18 @@ let clear_constraint_store () : unit =
   Hashtbl.clear (current_constraint_store ());
   Hashtbl.clear (current_constrained_field_store ())
 
+let global_method_def_store : (int, Resolution_artifacts.typed_method_def) Hashtbl.t = Hashtbl.create 64
+
 let clear_method_resolution_store () : unit =
   Hashtbl.clear global_method_resolution_store;
-  Hashtbl.clear global_method_type_args_store
+  Hashtbl.clear global_method_type_args_store;
+  Hashtbl.clear global_method_def_store
+
+let record_method_def (method_id : int) (def : Resolution_artifacts.typed_method_def) : unit =
+  Hashtbl.replace global_method_def_store method_id def
+
+let snapshot_method_def_store () : (int, Resolution_artifacts.typed_method_def) Hashtbl.t =
+  Hashtbl.copy global_method_def_store
 
 let clear_type_var_user_names () : unit = Hashtbl.clear (current_type_var_user_names_store ())
 
@@ -3021,7 +3030,7 @@ and infer_statement type_map env stmt =
                               | Ok (subst, inferred_body_type) ->
                                   let inferred_body_type' = apply_substitution subst inferred_body_type in
                                   let return_type' = apply_substitution subst return_type in
-                                  if Annotation.check_annotation return_type' inferred_body_type' then
+                                  if Annotation.check_annotation return_type' inferred_body_type' then (
                                     let method_generics =
                                       match m.impl_method_generics with
                                       | None -> []
@@ -3033,6 +3042,17 @@ and infer_statement type_map env stmt =
                                       | Some AST.Effectful -> `Effectful
                                       | Some AST.Pure | None -> `Pure
                                     in
+                                    record_method_def m.impl_method_id
+                                      {
+                                        Resolution_artifacts.md_param_names = List.map fst param_types;
+                                        md_param_types = List.map snd param_types;
+                                        md_return_type = return_type;
+                                        md_is_effectful =
+                                          (match m.impl_method_effect with
+                                          | Some AST.Effectful -> true
+                                          | _ -> false);
+                                        md_body_id = m.impl_method_body.id;
+                                      };
                                     Ok
                                       (Some
                                          ( {
@@ -3046,7 +3066,7 @@ and infer_statement type_map env stmt =
                                              method_effect;
                                              method_generic_internal_vars = [];
                                            },
-                                           subst ))
+                                           subst )))
                                   else
                                     Error
                                       (error_at ~code:"type-return-mismatch"
@@ -3251,7 +3271,7 @@ and infer_statement type_map env stmt =
                           | Ok (subst, inferred_body_type) ->
                               let inferred_body_type' = apply_substitution subst inferred_body_type in
                               let return_type' = apply_substitution subst return_type in
-                              if Annotation.check_annotation return_type' inferred_body_type' then
+                              if Annotation.check_annotation return_type' inferred_body_type' then (
                                 let method_generics =
                                   match m.impl_method_generics with
                                   | None -> []
@@ -3275,6 +3295,17 @@ and infer_statement type_map env stmt =
                                       | _ -> None)
                                     method_generics
                                 in
+                                record_method_def m.impl_method_id
+                                  {
+                                    Resolution_artifacts.md_param_names = List.map fst param_types;
+                                    md_param_types = List.map snd param_types;
+                                    md_return_type = return_type;
+                                    md_is_effectful =
+                                      (match m.impl_method_effect with
+                                      | Some AST.Effectful -> true
+                                      | _ -> false);
+                                    md_body_id = m.impl_method_body.id;
+                                  };
                                 Ok
                                   ( {
                                       Trait_registry.method_key =
@@ -3287,7 +3318,7 @@ and infer_statement type_map env stmt =
                                       method_effect;
                                       method_generic_internal_vars;
                                     },
-                                    subst )
+                                    subst ))
                               else
                                 Error
                                   (error_at ~code:"type-return-mismatch"

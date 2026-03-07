@@ -49,7 +49,7 @@ let check_program ?state ?(env = Infer.empty_env) (program : Syntax.Ast.AST.prog
   | Error e -> Error e
   | Ok (final_env, type_map, result_type) ->
       let call_resolution_map = Infer.snapshot_method_resolution_store () in
-      let method_def_map = Hashtbl.create 0 in
+      let method_def_map = Infer.snapshot_method_def_store () in
       let method_type_args_map = Infer.snapshot_method_type_args_store () in
       Ok
         {
@@ -73,7 +73,7 @@ let check_string ?state ?(env = Infer.empty_env) ~file_id (source : string) :
       | Error e -> Error e
       | Ok (final_env, type_map, result_type) ->
           let call_resolution_map = Infer.snapshot_method_resolution_store () in
-          let method_def_map = Hashtbl.create 0 in
+          let method_def_map = Infer.snapshot_method_def_store () in
           let method_type_args_map = Infer.snapshot_method_type_args_store () in
           Ok
             {
@@ -203,7 +203,7 @@ let check_program_with_annotations ?state ?(env = Infer.empty_env) (program : Sy
       | Error e -> Error [ e ]
       | Ok () ->
           let call_resolution_map = Infer.snapshot_method_resolution_store () in
-          let method_def_map = Hashtbl.create 0 in
+          let method_def_map = Infer.snapshot_method_def_store () in
           let method_type_args_map = Infer.snapshot_method_type_args_store () in
           Ok
             {

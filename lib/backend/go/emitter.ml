@@ -331,6 +331,8 @@ type mono_state = {
       (* Phase 5: explicit call-resolution metadata from typechecker *)
   method_type_args_map : (int, Types.mono_type list) Hashtbl.t;
       (* Phase 6.4: resolved method-level type args per call site *)
+  method_def_map : (int, Typecheck.Resolution_artifacts.typed_method_def) Hashtbl.t;
+      (* Phase 6.3: typed method definitions keyed by method id *)
 }
 
 let create_mono_state
@@ -338,6 +340,7 @@ let create_mono_state
     ?(concrete_only = true)
     ?(call_resolution_map = Hashtbl.create 0)
     ?(method_type_args_map = Hashtbl.create 0)
+    ?(method_def_map = Hashtbl.create 0)
     () =
   if module_path <> "main" then
     failwith
@@ -359,6 +362,7 @@ let create_mono_state
     top_level_value_bindings = StringSet.empty;
     call_resolution_map;
     method_type_args_map;
+    method_def_map;
   }
 
 (* ============================================================
@@ -4389,28 +4393,40 @@ let emit_inherent_method
         type_map;
       copied
   in
-  (* Extend bindings with method-generic bindings for annotation resolution *)
-  let all_bindings = bindings @ List.combine method_generic_names method_type_args in
-  let method_param_names, method_param_types =
-    List.split
-      (List.map
-         (fun (param_name, param_type_opt) ->
-           match param_type_opt with
-           | Some param_type ->
-               (param_name, annotation_exn (Annotation.type_expr_to_mono_type_with all_bindings param_type))
-           | None ->
-               failwith
-                 (Printf.sprintf "Codegen error: inherent method %s parameter '%s' is missing a type annotation"
-                    method_impl.impl_method_name param_name))
-         method_impl.impl_method_params)
-  in
-  let return_type =
-    match method_impl.impl_method_return_type with
-    | Some ret_ann -> annotation_exn (Annotation.type_expr_to_mono_type_with all_bindings ret_ann)
+  (* Phase 6.3: Use method_def_map for param/return types when available,
+     falling back to annotation parsing for backwards compatibility *)
+  let method_param_names, method_param_types, return_type =
+    match Hashtbl.find_opt state.mono.method_def_map method_impl.impl_method_id with
+    | Some def ->
+        let param_types = List.map (fun t -> Types.apply_substitution combined_subst t) def.md_param_types in
+        let ret = Types.apply_substitution combined_subst def.md_return_type in
+        (def.md_param_names, param_types, ret)
     | None ->
-        failwith
-          (Printf.sprintf "Codegen error: inherent method %s is missing a return type annotation"
-             method_impl.impl_method_name)
+        (* Fallback to annotation parsing *)
+        let all_bindings = bindings @ List.combine method_generic_names method_type_args in
+        let names, types =
+          List.split
+            (List.map
+               (fun (param_name, param_type_opt) ->
+                 match param_type_opt with
+                 | Some param_type ->
+                     (param_name, annotation_exn (Annotation.type_expr_to_mono_type_with all_bindings param_type))
+                 | None ->
+                     failwith
+                       (Printf.sprintf
+                          "Codegen error: inherent method %s parameter '%s' is missing a type annotation"
+                          method_impl.impl_method_name param_name))
+               method_impl.impl_method_params)
+        in
+        let ret =
+          match method_impl.impl_method_return_type with
+          | Some ret_ann -> annotation_exn (Annotation.type_expr_to_mono_type_with all_bindings ret_ann)
+          | None ->
+              failwith
+                (Printf.sprintf "Codegen error: inherent method %s is missing a return type annotation"
+                   method_impl.impl_method_name)
+        in
+        (names, types, ret)
   in
   if List.length method_param_names <> List.length method_param_types then
     failwith
@@ -4930,10 +4946,11 @@ let emit_builtin_impls (program : AST.program) : string =
 let emit_program_with_typed_env
     ~(call_resolution_map : (int, Infer.method_resolution) Hashtbl.t)
     ~(method_type_args_map : (int, Types.mono_type list) Hashtbl.t)
+    ?(method_def_map = Hashtbl.create 0)
     (type_map : Infer.type_map)
     (typed_env : Infer.type_env)
     (program : AST.program) : string =
-  let mono_state = create_mono_state ~call_resolution_map ~method_type_args_map () in
+  let mono_state = create_mono_state ~call_resolution_map ~method_type_args_map ~method_def_map () in
 
   (* Pass 1: Collect function definitions *)
   List.iter (collect_funcs_stmt ~top_level:true mono_state) program;
@@ -5063,8 +5080,9 @@ let emit_program (program : AST.program) : string =
       failwith
         (Printf.sprintf "Codegen error: cannot emit untyped program: %s" (Typecheck.Checker.format_error err))
   | Error [] -> failwith "Codegen error: cannot emit untyped program"
-  | Ok { environment = typed_env; type_map; call_resolution_map; method_type_args_map; _ } ->
-      emit_program_with_typed_env ~call_resolution_map ~method_type_args_map type_map typed_env program
+  | Ok { environment = typed_env; type_map; call_resolution_map; method_type_args_map; method_def_map; _ } ->
+      emit_program_with_typed_env ~call_resolution_map ~method_type_args_map ~method_def_map type_map typed_env
+        program
 
 (* ============================================================
    Runtime
@@ -5195,9 +5213,12 @@ let compile_string ~file_id (source : string) : (string, Diagnostic.t list) resu
       let env = Typecheck.Builtins.prelude_env () in
       match Typecheck.Checker.check_program_with_annotations ~env program with
       | Error errs -> Error errs
-      | Ok { environment = typed_env; type_map; call_resolution_map; method_type_args_map; _ } -> (
+      | Ok { environment = typed_env; type_map; call_resolution_map; method_type_args_map; method_def_map; _ }
+        -> (
           try
-            Ok (emit_program_with_typed_env ~call_resolution_map ~method_type_args_map type_map typed_env program)
+            Ok
+              (emit_program_with_typed_env ~call_resolution_map ~method_type_args_map ~method_def_map type_map
+                 typed_env program)
           with
           | Failure msg -> Error [ diagnostic_of_codegen_failure_message msg ]
           | exn ->
