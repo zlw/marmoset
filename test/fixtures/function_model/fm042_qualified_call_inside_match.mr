@@ -1,4 +1,3 @@
-# xfail: qualified type calls not implemented
 type flag = { on: bool }
 
 impl flag {

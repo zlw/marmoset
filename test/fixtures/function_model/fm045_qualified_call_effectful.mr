@@ -1,4 +1,3 @@
-# xfail: qualified type calls not implemented
 type logger = { prefix: string }
 
 impl logger {

@@ -1,4 +1,3 @@
-# xfail: qualified trait calls and inherent-first not implemented
 type val = { n: int }
 
 trait fmt_a[a] {

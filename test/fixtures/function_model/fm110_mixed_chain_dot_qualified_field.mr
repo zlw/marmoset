@@ -1,4 +1,3 @@
-# xfail: qualified calls and mixed dispatch not implemented
 type counter = { n: int, fmt: fn(int) -> string }
 
 trait display[a] {

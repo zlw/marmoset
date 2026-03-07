@@ -1,4 +1,3 @@
-# xfail: qualified trait calls not implemented
 type score = { v: int }
 
 trait display[a] {

@@ -1,4 +1,3 @@
-# xfail: inherent-first precedence and qualified calls not implemented
 type item = { v: int }
 
 trait label[a] {

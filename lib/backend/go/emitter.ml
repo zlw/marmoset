@@ -1773,15 +1773,21 @@ and collect_insts_expr
           List.iter (fun arg -> collect_insts_expr state type_map env arg) args
       | _ -> (
           (* Real method call - collect insts in receiver and args *)
-          collect_insts_expr state type_map env receiver;
           List.iter (fun arg -> collect_insts_expr state type_map env arg) args;
-          let receiver_type = Types.canonicalize_mono_type (get_type type_map receiver) in
           let method_resolution = Hashtbl.find_opt state.call_resolution_map expr.id in
           match method_resolution with
+          | Some (Infer.QualifiedTraitMethod trait_name) ->
+              (* Qualified: first arg is receiver *)
+              let for_type = Types.canonicalize_mono_type (get_type type_map (List.hd args)) in
+              register_impl_method_use state type_map env ~trait_name ~method_name ~for_type
           | Some (Infer.TraitMethod trait_name) ->
-              register_impl_method_use state type_map env ~trait_name ~method_name ~for_type:receiver_type
-          | Some Infer.InherentMethod -> ()
+              collect_insts_expr state type_map env receiver;
+              let for_type = Types.canonicalize_mono_type (get_type type_map receiver) in
+              register_impl_method_use state type_map env ~trait_name ~method_name ~for_type
+          | Some Infer.InherentMethod -> collect_insts_expr state type_map env receiver
+          | Some Infer.QualifiedInherentMethod -> ()
           | None -> (
+              collect_insts_expr state type_map env receiver;
               match receiver.expr with
               | AST.Identifier record_name -> (
                   match
@@ -2237,22 +2243,47 @@ let rec emit_expr
               Printf.sprintf "%s(%s)" constructor_name (String.concat ", " arg_strs)
         | _ -> (
             (* Real method call - emit using typechecker-selected method source *)
-            (* Get receiver type *)
-            let receiver_type =
-              normalize_type_for_codegen ~concrete_only:state.mono.concrete_only (get_type type_map receiver)
-            in
-
             (* Use method-resolution metadata from typechecking; codegen must not re-resolve. *)
             let method_resolution = Hashtbl.find_opt state.mono.call_resolution_map expr.id in
             match method_resolution with
-            | Some resolution ->
-                let type_suffix = mangle_type receiver_type in
-                let func_name =
-                  match resolution with
-                  | Infer.TraitMethod trait_name -> Printf.sprintf "%s_%s_%s" trait_name variant_name type_suffix
-                  | Infer.InherentMethod -> Printf.sprintf "inherent_%s_%s" variant_name type_suffix
+            | Some (Infer.QualifiedTraitMethod trait_name) ->
+                (* Qualified call: Trait.method(receiver, args...) — first arg is the receiver *)
+                let first_arg_type =
+                  normalize_type_for_codegen ~concrete_only:state.mono.concrete_only
+                    (get_type type_map (List.hd args))
                 in
-                (* Emit receiver and arguments *)
+                let type_suffix = mangle_type first_arg_type in
+                let func_name = Printf.sprintf "%s_%s_%s" trait_name variant_name type_suffix in
+                let arg_strs = List.map (emit_expr state type_map env) args in
+                Printf.sprintf "%s(%s)" func_name (String.concat ", " arg_strs)
+            | Some Infer.QualifiedInherentMethod ->
+                (* Qualified call: Type.method(receiver, args...) — first arg is the receiver *)
+                let first_arg_type =
+                  normalize_type_for_codegen ~concrete_only:state.mono.concrete_only
+                    (get_type type_map (List.hd args))
+                in
+                let type_suffix = mangle_type first_arg_type in
+                let func_name = Printf.sprintf "inherent_%s_%s" variant_name type_suffix in
+                let arg_strs = List.map (emit_expr state type_map env) args in
+                Printf.sprintf "%s(%s)" func_name (String.concat ", " arg_strs)
+            | Some (Infer.TraitMethod trait_name) ->
+                (* Dot call: receiver.method(args...) — receiver is separate *)
+                let receiver_type =
+                  normalize_type_for_codegen ~concrete_only:state.mono.concrete_only (get_type type_map receiver)
+                in
+                let type_suffix = mangle_type receiver_type in
+                let func_name = Printf.sprintf "%s_%s_%s" trait_name variant_name type_suffix in
+                let receiver_str = emit_expr state type_map env receiver in
+                let arg_strs = List.map (emit_expr state type_map env) args in
+                let all_args = receiver_str :: arg_strs in
+                Printf.sprintf "%s(%s)" func_name (String.concat ", " all_args)
+            | Some Infer.InherentMethod ->
+                (* Dot call: receiver.method(args...) — receiver is separate *)
+                let receiver_type =
+                  normalize_type_for_codegen ~concrete_only:state.mono.concrete_only (get_type type_map receiver)
+                in
+                let type_suffix = mangle_type receiver_type in
+                let func_name = Printf.sprintf "inherent_%s_%s" variant_name type_suffix in
                 let receiver_str = emit_expr state type_map env receiver in
                 let arg_strs = List.map (emit_expr state type_map env) args in
                 let all_args = receiver_str :: arg_strs in
@@ -4347,7 +4378,14 @@ let collect_inherent_call_sites
             in
             add_inherent_call_site_if_new acc''
               { call_method_name = method_name; call_receiver_type = receiver_type }
-        | Some (Infer.TraitMethod _) | None -> acc'')
+        | Some Infer.QualifiedInherentMethod ->
+            let receiver_type =
+              normalize_type_for_codegen ~concrete_only
+                (Types.canonicalize_mono_type (get_type type_map (List.hd args)))
+            in
+            add_inherent_call_site_if_new acc''
+              { call_method_name = method_name; call_receiver_type = receiver_type }
+        | Some (Infer.TraitMethod _) | Some (Infer.QualifiedTraitMethod _) | None -> acc'')
   and collect_stmt (acc : inherent_call_site list) (stmt : AST.statement) : inherent_call_site list =
     match stmt.stmt with
     | AST.Let let_binding -> collect_expr acc let_binding.value

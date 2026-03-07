@@ -1,4 +1,3 @@
-# xfail: qualified trait calls not implemented
 trait stringify[a] {
   fn to_str(x: a) -> string
 }

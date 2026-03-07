@@ -135,6 +135,8 @@ type inference_state = {
 and method_resolution =
   | TraitMethod of string
   | InherentMethod
+  | QualifiedTraitMethod of string (* Trait.method(receiver, args...) *)
+  | QualifiedInherentMethod (* Type.method(receiver, args...) *)
 
 let create_inference_state () : inference_state =
   {
@@ -1470,7 +1472,11 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                 | _ -> Inherent_registry.resolve_method receiver_type' method_name
               in
               match method_lookup_result with
-              | `Error msg -> Error (error_at ~code:"type-constructor" ~message:msg expr)
+              | `Error msg -> (
+                  (* Phase 4.3: Even on ambiguity, inherent method wins if present *)
+                  match inherent_method_result with
+                  | Ok (Some inherent_sig) -> infer_with_method_signature inherent_sig InherentMethod
+                  | _ -> Error (error_at ~code:"type-constructor" ~message:msg expr))
               | `Not_found -> (
                   match inherent_method_result with
                   | Error msg -> Error (error_at ~code:"type-constructor" ~message:msg expr)
@@ -1611,7 +1617,7 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                                 let return_type =
                                   apply_substitution final_subst instantiated_sig.method_return_type
                                 in
-                                record_method_resolution expr (TraitMethod trait_name);
+                                record_method_resolution expr (QualifiedTraitMethod trait_name);
                                 Ok (final_subst, return_type)))))
         in
         let resolve_type_name (name : string) : mono_type option =
@@ -1672,7 +1678,7 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                     | Error e -> Error e
                     | Ok final_subst ->
                         let return_type = apply_substitution final_subst method_sig.method_return_type in
-                        record_method_resolution expr InherentMethod;
+                        record_method_resolution expr QualifiedInherentMethod;
                         Ok (final_subst, return_type)))
         in
         match receiver.expr with
@@ -3040,13 +3046,20 @@ and infer_statement type_map env stmt =
                     let methods' =
                       List.map
                         (fun (m : Trait_registry.method_sig) ->
+                          (* Scope isolation: remove method-level generic param names from subst
+                             so they stay polymorphic in the stored signature (Phase 3 fix). *)
+                          let isolated_subst =
+                            List.fold_left
+                              (fun s (gname, _) -> SubstMap.remove gname s)
+                              method_subst m.method_generics
+                          in
                           {
                             m with
                             method_params =
                               List.map
-                                (fun (name, ty) -> (name, apply_substitution method_subst ty))
+                                (fun (name, ty) -> (name, apply_substitution isolated_subst ty))
                                 m.method_params;
-                            method_return_type = apply_substitution method_subst m.method_return_type;
+                            method_return_type = apply_substitution isolated_subst m.method_return_type;
                           })
                         methods
                     in

@@ -1,2 +1,1 @@
-# xfail: qualified trait calls not implemented
 puts(show.show(42))  # output: 42
