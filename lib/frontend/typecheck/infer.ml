@@ -153,6 +153,7 @@ let create_inference_state () : inference_state =
 
 let active_inference_state : inference_state ref = ref (create_inference_state ())
 let global_method_resolution_store : (int, method_resolution) Hashtbl.t = Hashtbl.create 256
+let global_method_type_args_store : (int, mono_type list) Hashtbl.t = Hashtbl.create 64
 
 let with_inference_state (state : inference_state) (f : unit -> 'a) : 'a =
   let previous = !active_inference_state in
@@ -316,7 +317,10 @@ let clear_constraint_store () : unit =
   Hashtbl.clear (current_constraint_store ());
   Hashtbl.clear (current_constrained_field_store ())
 
-let clear_method_resolution_store () : unit = Hashtbl.clear global_method_resolution_store
+let clear_method_resolution_store () : unit =
+  Hashtbl.clear global_method_resolution_store;
+  Hashtbl.clear global_method_type_args_store
+
 let clear_type_var_user_names () : unit = Hashtbl.clear (current_type_var_user_names_store ())
 
 let record_type_var_user_name ~(fresh_name : string) ~(user_name : string) : unit =
@@ -339,6 +343,20 @@ let lookup_method_resolution (expr_id : int) : method_resolution option =
 
 let snapshot_method_resolution_store () : (int, method_resolution) Hashtbl.t =
   Hashtbl.copy global_method_resolution_store
+
+let record_method_type_args (expr : AST.expression) (type_args : mono_type list) : unit =
+  if type_args <> [] then
+    Hashtbl.replace global_method_type_args_store expr.id type_args
+
+let snapshot_method_type_args_store () : (int, mono_type list) Hashtbl.t =
+  Hashtbl.copy global_method_type_args_store
+
+let apply_substitution_method_type_args_store (subst : substitution) : unit =
+  Hashtbl.iter
+    (fun id args ->
+      let args' = List.map (fun t -> apply_substitution subst t) args in
+      Hashtbl.replace global_method_type_args_store id args')
+    global_method_type_args_store
 
 type obligation_reason = GenericConstraint of string
 
@@ -1423,6 +1441,16 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                                     apply_substitution final_subst instantiated_method.method_return_type
                                   in
                                   record_method_resolution expr resolution;
+                                  (* Phase 6.4: Record resolved method-level type args for emitter *)
+                                  let resolved_method_type_args =
+                                    List.map
+                                      (fun (param_name, _) ->
+                                        apply_substitution method_subst (TVar param_name)
+                                        |> apply_substitution final_subst
+                                        |> canonicalize_mono_type)
+                                      method_generics
+                                  in
+                                  record_method_type_args expr resolved_method_type_args;
                                   Ok (final_subst, return_type))))
               in
               let method_lookup_result =
@@ -2839,6 +2867,7 @@ and infer_statement type_map env stmt =
             method_params = param_types;
             method_return_type = return_type;
             method_effect;
+            method_generic_internal_vars = [];
           }
       in
       let convert_trait_field (f : AST.record_type_field) : (Types.record_field_type, Diagnostic.t) result =
@@ -3015,6 +3044,7 @@ and infer_statement type_map env stmt =
                                              method_params = param_types;
                                              method_return_type = return_type;
                                              method_effect;
+                                             method_generic_internal_vars = [];
                                            },
                                            subst ))
                                   else
@@ -3233,6 +3263,18 @@ and infer_statement type_map env stmt =
                                   | Some AST.Effectful -> `Effectful
                                   | Some AST.Pure | None -> `Pure
                                 in
+                                (* Track which internal TVars correspond to method-level generics.
+                                   Body inference may map e.g. b -> t0; the emitter needs this
+                                   to substitute t0 -> String when specializing for b = String. *)
+                                let method_generic_internal_vars =
+                                  List.filter_map
+                                    (fun (gp_name, _) ->
+                                      match apply_substitution subst (TVar gp_name) with
+                                      | TVar internal_name when internal_name <> gp_name ->
+                                          Some (gp_name, internal_name)
+                                      | _ -> None)
+                                    method_generics
+                                in
                                 Ok
                                   ( {
                                       Trait_registry.method_key =
@@ -3243,6 +3285,7 @@ and infer_statement type_map env stmt =
                                       method_params = param_types;
                                       method_return_type = return_type;
                                       method_effect;
+                                      method_generic_internal_vars;
                                     },
                                     subst )
                               else
@@ -3270,6 +3313,37 @@ and infer_statement type_map env stmt =
                             method_sig.method_params;
                         method_return_type = apply_substitution method_subst method_sig.method_return_type;
                       }
+                    in
+                    (* Restore original generic names in stored signature.
+                       Body inference may replace generic params (e.g. b) with fresh
+                       TVars (e.g. t0) via method_subst. Build a reverse mapping so
+                       the stored signature uses the original names, allowing
+                       instantiate_method_generics to substitute them correctly. *)
+                    let method_sig =
+                      match method_sig.method_generics with
+                      | [] -> method_sig
+                      | generics ->
+                          let reverse_subst =
+                            List.fold_left
+                              (fun acc (param_name, _) ->
+                                let resolved = apply_substitution method_subst (TVar param_name) in
+                                match resolved with
+                                | TVar fresh_name when fresh_name <> param_name ->
+                                    SubstMap.add fresh_name (TVar param_name) acc
+                                | _ -> acc)
+                              SubstMap.empty generics
+                          in
+                          if SubstMap.is_empty reverse_subst then
+                            method_sig
+                          else
+                            {
+                              method_sig with
+                              method_params =
+                                List.map
+                                  (fun (name, ty) -> (name, apply_substitution reverse_subst ty))
+                                  method_sig.method_params;
+                              method_return_type = apply_substitution reverse_subst method_sig.method_return_type;
+                            }
                     in
                     let receiver_type =
                       match method_sig.method_params with
@@ -3916,6 +3990,7 @@ let infer_program ?(env = empty_env) ?state (program : AST.program) :
               | Error e -> Error e
               | Ok (env', final_subst, result_type) ->
                   apply_substitution_type_map final_subst type_map;
+                  apply_substitution_method_type_args_store final_subst;
                   Ok (env', type_map, result_type))))
 
 module Test = struct

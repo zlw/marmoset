@@ -1,4 +1,3 @@
-# xfail: method-level generics not implemented
 enum opt[a] { some(a) none }
 
 impl opt[a] {

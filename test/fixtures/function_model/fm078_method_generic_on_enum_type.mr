@@ -1,4 +1,3 @@
-# xfail: method-level generics not implemented
 enum maybe[a] { just(a) nothing }
 
 impl maybe[a] {

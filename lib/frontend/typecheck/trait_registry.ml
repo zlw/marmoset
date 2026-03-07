@@ -12,6 +12,10 @@ type method_sig = {
   method_params : (string * mono_type) list; (* param name and type *)
   method_return_type : mono_type;
   method_effect : [ `Pure | `Effectful ]; (* -> vs => *)
+  method_generic_internal_vars : (string * string) list;
+      (* Maps method generic name -> internal TVar name from body inference.
+       E.g. [("b", "t0")] means the type_map uses t0 where the generic is b.
+       Used by emitter to build proper type_map substitutions. *)
 }
 
 (* Construct a method_sig with synthetic key and default pure/no-generics.
@@ -24,6 +28,7 @@ let mk_method_sig ?(generics = []) ?(effect = `Pure) ~name ~params ~return_type 
     method_params = params;
     method_return_type = return_type;
     method_effect = effect;
+    method_generic_internal_vars = [];
   }
 
 (* A trait definition *)

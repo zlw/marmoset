@@ -18,6 +18,8 @@ type typecheck_result = {
       (* Phase 5: Explicit call-resolution metadata for emitter *)
   method_def_map : (int, Resolution_artifacts.typed_method_def) Hashtbl.t;
       (* Phase 5.4: Typed method definitions for emitter. Populated during Phase 6. *)
+  method_type_args_map : (int, Types.mono_type list) Hashtbl.t;
+      (* Phase 6.4: Resolved method-level type args per call site for monomorphization *)
 }
 
 let infer_program_safe ?state ~(env : Infer.type_env) (program : Syntax.Ast.AST.program) :
@@ -48,7 +50,16 @@ let check_program ?state ?(env = Infer.empty_env) (program : Syntax.Ast.AST.prog
   | Ok (final_env, type_map, result_type) ->
       let call_resolution_map = Infer.snapshot_method_resolution_store () in
       let method_def_map = Hashtbl.create 0 in
-      Ok { result_type; environment = final_env; type_map; call_resolution_map; method_def_map }
+      let method_type_args_map = Infer.snapshot_method_type_args_store () in
+      Ok
+        {
+          result_type;
+          environment = final_env;
+          type_map;
+          call_resolution_map;
+          method_def_map;
+          method_type_args_map;
+        }
 
 (* Type check source code string.
     Parses and type checks in one step.
@@ -63,7 +74,16 @@ let check_string ?state ?(env = Infer.empty_env) ~file_id (source : string) :
       | Ok (final_env, type_map, result_type) ->
           let call_resolution_map = Infer.snapshot_method_resolution_store () in
           let method_def_map = Hashtbl.create 0 in
-          Ok { result_type; environment = final_env; type_map; call_resolution_map; method_def_map })
+          let method_type_args_map = Infer.snapshot_method_type_args_store () in
+          Ok
+            {
+              result_type;
+              environment = final_env;
+              type_map;
+              call_resolution_map;
+              method_def_map;
+              method_type_args_map;
+            })
 
 (* ============================================================
    Phase 2: Type check with annotations
@@ -184,7 +204,16 @@ let check_program_with_annotations ?state ?(env = Infer.empty_env) (program : Sy
       | Ok () ->
           let call_resolution_map = Infer.snapshot_method_resolution_store () in
           let method_def_map = Hashtbl.create 0 in
-          Ok { result_type; environment = final_env; type_map; call_resolution_map; method_def_map })
+          let method_type_args_map = Infer.snapshot_method_type_args_store () in
+          Ok
+            {
+              result_type;
+              environment = final_env;
+              type_map;
+              call_resolution_map;
+              method_def_map;
+              method_type_args_map;
+            })
 
 (* Type check source code with annotations.
    Parses and type checks in one step, with annotation support. *)

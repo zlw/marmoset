@@ -1,4 +1,3 @@
-# xfail: method-level generics not implemented
 enum result[a, b] { ok(a) err(b) }
 
 impl result[a, b] {

@@ -1,4 +1,3 @@
-# xfail: method-level generics not implemented
 enum wrap[a] { val(a) }
 
 impl wrap[a] {
