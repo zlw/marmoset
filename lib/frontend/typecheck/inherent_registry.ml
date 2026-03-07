@@ -43,11 +43,13 @@ let rec has_type_vars (t : mono_type) : bool =
   | TInt | TFloat | TBool | TString | TNull -> false
 
 let apply_subst_to_method_sig (subst : Types.substitution) (m : method_sig) : method_sig =
+  (* Scope isolation: remove method-level generic names from subst *)
+  let safe_subst = List.fold_left (fun s (name, _) -> Types.SubstMap.remove name s) subst m.method_generics in
   canonicalize_method_sig
     {
       m with
-      method_params = List.map (fun (name, ty) -> (name, apply_substitution subst ty)) m.method_params;
-      method_return_type = apply_substitution subst m.method_return_type;
+      method_params = List.map (fun (name, ty) -> (name, apply_substitution safe_subst ty)) m.method_params;
+      method_return_type = apply_substitution safe_subst m.method_return_type;
     }
 
 let register_method ~(for_type : mono_type) (method_sig : method_sig) : (unit, string) result =

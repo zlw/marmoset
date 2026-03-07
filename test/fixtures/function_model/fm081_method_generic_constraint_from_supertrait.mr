@@ -1,4 +1,3 @@
-# xfail: method-level generics not implemented
 trait base[a] {
   fn name(x: a) -> string
 }

@@ -8,7 +8,7 @@ module String_utils = Diagnostics.String_utils
 type method_sig = {
   method_key : Resolution_artifacts.callable_key;
   method_name : string;
-  method_generics : string list; (* method-level type parameter names *)
+  method_generics : (string * string list) list; (* method-level type parameter names + constraints *)
   method_params : (string * mono_type) list; (* param name and type *)
   method_return_type : mono_type;
   method_effect : [ `Pure | `Effectful ]; (* -> vs => *)
@@ -264,11 +264,14 @@ let specialized_impl (def : impl_def) (for_type : mono_type) (subst : Types.subs
   let methods' =
     List.map
       (fun (m : method_sig) ->
+        (* Scope isolation: remove method-level generic names from impl-level subst
+           to prevent impl-level specialization from clobbering method-level TVars *)
+        let safe_subst = List.fold_left (fun s (name, _) -> SubstMap.remove name s) subst m.method_generics in
         {
           m with
           method_params =
-            List.map (fun (name, ty) -> (name, canonical_type (apply_substitution subst ty))) m.method_params;
-          method_return_type = canonical_type (apply_substitution subst m.method_return_type);
+            List.map (fun (name, ty) -> (name, canonical_type (apply_substitution safe_subst ty))) m.method_params;
+          method_return_type = canonical_type (apply_substitution safe_subst m.method_return_type);
         })
       def.impl_methods
   in
@@ -614,7 +617,25 @@ let validate_impl_signature (trait_def : trait_def) (def : impl_def) : (unit, st
                  (List.length trait_method.method_generics)
                  (List.length impl_method.method_generics))
           else
-            Ok ()
+            (* Check constraint compatibility: impl constraints must match trait constraints *)
+            let constraint_errors =
+              List.map2
+                (fun (tname, tconstraints) (_iname, iconstraints) ->
+                  let tc = List.sort String.compare tconstraints in
+                  let ic = List.sort String.compare iconstraints in
+                  if tc = ic then
+                    None
+                  else
+                    Some
+                      (Printf.sprintf "type param '%s': trait requires constraints [%s], impl has [%s]" tname
+                         (String.concat ", " tc) (String.concat ", " ic)))
+                trait_method.method_generics impl_method.method_generics
+              |> List.filter_map (fun x -> x)
+            in
+            if constraint_errors <> [] then
+              Error (Printf.sprintf "Method '%s': %s" trait_method.method_name (List.hd constraint_errors))
+            else
+              Ok ()
     in
 
     (* Find each trait method in impl methods and validate *)

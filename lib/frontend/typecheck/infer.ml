@@ -394,8 +394,10 @@ let obligations_from_substitution (subst : substitution) : obligation list =
         apply_substitution subst resolved_type
       in
       match concrete_type with
-      | TVar _ ->
-          (* Still unresolved - keep waiting until a concrete type is known. *)
+      | TVar target_var ->
+          (* Still unresolved - propagate constraints to the target variable
+             so they survive subsequent lookups (e.g., method dispatch on TVars). *)
+          add_type_var_constraints target_var constraints;
           []
       | _ ->
           List.map
@@ -1198,7 +1200,7 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                            expr)
                 in
                 field_result))
-    | AST.MethodCall { mc_receiver = receiver; mc_method = method_name; mc_args = args; _ } -> (
+    | AST.MethodCall { mc_receiver = receiver; mc_method = method_name; mc_type_args; mc_args = args } -> (
         let infer_enum_constructor (enum_name : string) : (substitution * mono_type) infer_result =
           match Enum_registry.lookup_variant enum_name method_name with
           | None ->
@@ -1256,38 +1258,167 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
               let infer_with_method_signature
                   (resolved_method : Trait_registry.method_sig) (resolution : method_resolution) :
                   (substitution * mono_type) infer_result =
-                match infer_args type_map env1 subst1 args with
+                (* Phase 3.4: Method generic instantiation at call site *)
+                let method_generics = resolved_method.method_generics in
+                let instantiate_method_generics () :
+                    (Trait_registry.method_sig * substitution, Diagnostics.Diagnostic.t) result =
+                  if method_generics = [] then
+                    (* No method-level generics *)
+                    match mc_type_args with
+                    | Some type_args when type_args <> [] ->
+                        Error
+                          (error_at ~code:"type-constructor"
+                             ~message:
+                               (Printf.sprintf "Method '%s' takes no type parameters, but %d were provided"
+                                  method_name (List.length type_args))
+                             expr)
+                    | _ -> Ok (resolved_method, SubstMap.empty)
+                  else
+                    match mc_type_args with
+                    | Some type_args ->
+                        (* Explicit type args: validate count and convert *)
+                        if List.length type_args <> List.length method_generics then
+                          Error
+                            (error_at ~code:"type-constructor"
+                               ~message:
+                                 (Printf.sprintf "Method '%s' expects %d type argument(s), but %d were provided"
+                                    method_name (List.length method_generics) (List.length type_args))
+                               expr)
+                        else
+                          let rec convert_all acc = function
+                            | [] -> Ok (List.rev acc)
+                            | te :: rest -> (
+                                match Annotation.type_expr_to_mono_type te with
+                                | Error diag -> Error (error_at ~code:diag.code ~message:diag.message expr)
+                                | Ok mono -> convert_all (mono :: acc) rest)
+                          in
+                          let open Result in
+                          let ( let* ) = bind in
+                          let* mono_args = convert_all [] type_args in
+                          let method_subst =
+                            List.fold_left2
+                              (fun acc (param_name, _) mono_arg -> SubstMap.add param_name mono_arg acc)
+                              SubstMap.empty method_generics mono_args
+                          in
+                          Ok
+                            ( {
+                                resolved_method with
+                                method_params =
+                                  List.map
+                                    (fun (name, ty) -> (name, apply_substitution method_subst ty))
+                                    resolved_method.method_params;
+                                method_return_type =
+                                  apply_substitution method_subst resolved_method.method_return_type;
+                              },
+                              method_subst )
+                    | None ->
+                        (* No explicit type args: create fresh TVars with constraint propagation *)
+                        let method_subst =
+                          List.fold_left
+                            (fun acc (param_name, constraints) ->
+                              let fresh = fresh_type_var () in
+                              (match fresh with
+                              | TVar fresh_name ->
+                                  if constraints <> [] then
+                                    add_type_var_constraints fresh_name constraints
+                              | _ -> ());
+                              SubstMap.add param_name fresh acc)
+                            SubstMap.empty method_generics
+                        in
+                        Ok
+                          ( {
+                              resolved_method with
+                              method_params =
+                                List.map
+                                  (fun (name, ty) -> (name, apply_substitution method_subst ty))
+                                  resolved_method.method_params;
+                              method_return_type =
+                                apply_substitution method_subst resolved_method.method_return_type;
+                            },
+                            method_subst )
+                in
+                match instantiate_method_generics () with
                 | Error e -> Error e
-                | Ok (subst2, arg_types) -> (
-                    let all_arg_types = receiver_type' :: arg_types in
-                    let expected_param_types = List.map snd resolved_method.method_params in
-                    if List.length all_arg_types <> List.length expected_param_types then
-                      Error
-                        (error_at ~code:"type-constructor"
-                           ~message:
-                             (Printf.sprintf "Method '%s' expects %d arguments, got %d" method_name
-                                (List.length expected_param_types - 1)
-                                (List.length args))
-                           expr)
-                    else
-                      let rec unify_params subst_acc actual_types expected_types =
-                        match (actual_types, expected_types) with
-                        | [], [] -> Ok subst_acc
-                        | actual :: rest_actual, expected :: rest_expected -> (
-                            let actual' = apply_substitution subst_acc actual in
-                            let expected' = apply_substitution subst_acc expected in
-                            match unify actual' expected' with
-                            | Error e -> Error (error_at ~code:e.code ~message:e.message expr)
-                            | Ok new_subst ->
-                                unify_params (compose_substitution new_subst subst_acc) rest_actual rest_expected)
-                        | _ -> Error (error_at ~code:"type-constructor" ~message:"Argument count mismatch" expr)
-                      in
-                      match unify_params subst2 all_arg_types expected_param_types with
-                      | Error e -> Error e
-                      | Ok final_subst ->
-                          let return_type = apply_substitution final_subst resolved_method.method_return_type in
-                          record_method_resolution expr resolution;
-                          Ok (final_subst, return_type))
+                | Ok (instantiated_method, method_subst) -> (
+                    match infer_args type_map env1 subst1 args with
+                    | Error e -> Error e
+                    | Ok (subst2, arg_types) -> (
+                        let all_arg_types = receiver_type' :: arg_types in
+                        let expected_param_types = List.map snd instantiated_method.method_params in
+                        if List.length all_arg_types <> List.length expected_param_types then
+                          Error
+                            (error_at ~code:"type-constructor"
+                               ~message:
+                                 (Printf.sprintf "Method '%s' expects %d arguments, got %d" method_name
+                                    (List.length expected_param_types - 1)
+                                    (List.length args))
+                               expr)
+                        else
+                          let rec unify_params subst_acc actual_types expected_types =
+                            match (actual_types, expected_types) with
+                            | [], [] -> Ok subst_acc
+                            | actual :: rest_actual, expected :: rest_expected -> (
+                                let actual' = apply_substitution subst_acc actual in
+                                let expected' = apply_substitution subst_acc expected in
+                                match unify actual' expected' with
+                                | Error e -> Error (error_at ~code:e.code ~message:e.message expr)
+                                | Ok new_subst ->
+                                    unify_params
+                                      (compose_substitution new_subst subst_acc)
+                                      rest_actual rest_expected)
+                            | _ ->
+                                Error (error_at ~code:"type-constructor" ~message:"Argument count mismatch" expr)
+                          in
+                          match unify_params subst2 all_arg_types expected_param_types with
+                          | Error e -> Error e
+                          | Ok final_subst -> (
+                              (* Phase 3.4.6: Enforce method-level generic constraints *)
+                              let constraint_check =
+                                List.fold_left
+                                  (fun acc (param_name, constraints) ->
+                                    match acc with
+                                    | Error _ -> acc
+                                    | Ok () ->
+                                        (* Resolve through method_subst (b -> t0) then final_subst (t0 -> int) *)
+                                        let resolved_type =
+                                          apply_substitution method_subst (TVar param_name)
+                                          |> apply_substitution final_subst
+                                          |> canonicalize_mono_type
+                                        in
+                                        List.fold_left
+                                          (fun inner_acc trait_name ->
+                                            match inner_acc with
+                                            | Error _ -> inner_acc
+                                            | Ok () -> (
+                                                match resolved_type with
+                                                | TVar _ ->
+                                                    (* Still a TVar after unification: add constraint for later *)
+                                                    Ok ()
+                                                | _ -> (
+                                                    match
+                                                      Trait_solver.satisfies_trait resolved_type trait_name
+                                                    with
+                                                    | Ok () -> Ok ()
+                                                    | Error diag ->
+                                                        Error
+                                                          (error_at ~code:diag.code
+                                                             ~message:
+                                                               (Printf.sprintf
+                                                                  "Method '%s' type parameter '%s' requires trait '%s', but %s does not satisfy it"
+                                                                  method_name param_name trait_name
+                                                                  (Types.to_string resolved_type))
+                                                             expr))))
+                                          acc constraints)
+                                  (Ok ()) method_generics
+                              in
+                              match constraint_check with
+                              | Error e -> Error e
+                              | Ok () ->
+                                  let return_type =
+                                    apply_substitution final_subst instantiated_method.method_return_type
+                                  in
+                                  record_method_resolution expr resolution;
+                                  Ok (final_subst, return_type))))
               in
               let method_lookup_result =
                 match receiver_type' with
@@ -2492,18 +2623,36 @@ and infer_statement type_map env stmt =
         convert te
       in
       let convert_method_sig (m : AST.method_sig) : (Trait_registry.method_sig, Diagnostic.t) result =
-        let* param_types =
-          map_result
-            (fun (pname, ptype) ->
-              let* t = convert_type_expr ptype in
-              Ok (pname, t))
-            m.method_params
-        in
-        let* return_type = convert_type_expr m.method_return_type in
-        let method_generics =
+        (* Build method-level type variable names for recognition during conversion *)
+        let method_generic_names =
           match m.method_generics with
           | None -> []
           | Some gps -> List.map (fun (gp : AST.generic_param) -> gp.name) gps
+        in
+        let convert_method_type_expr (te : AST.type_expr) : (mono_type, Diagnostic.t) result =
+          if method_generic_names = [] then
+            convert_type_expr te
+          else
+            let method_bindings = List.map (fun n -> (n, TVar n)) method_generic_names in
+            let trait_bindings =
+              match type_param with
+              | Some tp -> [ (tp, TVar tp) ]
+              | None -> []
+            in
+            Annotation.type_expr_to_mono_type_with (method_bindings @ trait_bindings) te
+        in
+        let* param_types =
+          map_result
+            (fun (pname, ptype) ->
+              let* t = convert_method_type_expr ptype in
+              Ok (pname, t))
+            m.method_params
+        in
+        let* return_type = convert_method_type_expr m.method_return_type in
+        let method_generics =
+          match m.method_generics with
+          | None -> []
+          | Some gps -> List.map (fun (gp : AST.generic_param) -> (gp.name, gp.constraints)) gps
         in
         let method_effect =
           match m.method_effect with
@@ -2593,6 +2742,15 @@ and infer_statement type_map env stmt =
                 (* Infer and validate method bodies so codegen can rely on a complete type_map. *)
                 let infer_impl_method_body (m : AST.method_impl) :
                     ((Trait_registry.method_sig * substitution) option, Diagnostic.t) result =
+                  (* Build method-level type bindings from method generics *)
+                  let method_type_bindings =
+                    match m.impl_method_generics with
+                    | None -> []
+                    | Some gps -> List.map (fun (gp : AST.generic_param) -> (gp.name, TVar gp.name)) gps
+                  in
+                  let convert_method_type_expr (te : AST.type_expr) : (mono_type, Diagnostic.t) result =
+                    Annotation.type_expr_to_mono_type_with (method_type_bindings @ impl_type_bindings) te
+                  in
                   let param_types_result =
                     List.fold_left
                       (fun acc (pname, ptype_opt) ->
@@ -2601,7 +2759,7 @@ and infer_statement type_map env stmt =
                         | Ok rev_params -> (
                             match ptype_opt with
                             | Some ptype -> (
-                                match convert_impl_type_expr ptype with
+                                match convert_method_type_expr ptype with
                                 | Ok mono -> Ok ((pname, mono) :: rev_params)
                                 | Error _ as err -> err)
                             | None ->
@@ -2625,7 +2783,7 @@ and infer_statement type_map env stmt =
                                  (Printf.sprintf "Impl method '%s' is missing a return type annotation"
                                     m.impl_method_name))
                       | Some rt -> (
-                          match convert_impl_type_expr rt with
+                          match convert_method_type_expr rt with
                           | Error e -> Error e
                           | Ok return_type -> (
                               let method_env =
@@ -2633,7 +2791,32 @@ and infer_statement type_map env stmt =
                                   (fun env_acc (pname, ptype) -> TypeEnv.add pname (mono_to_poly ptype) env_acc)
                                   env param_types
                               in
-                              match infer_expression type_map method_env m.impl_method_body with
+                              (* Register method-level generic constraints for body inference *)
+                              let constraint_store = current_constraint_store () in
+                              let method_constraint_snapshots =
+                                match m.impl_method_generics with
+                                | None -> []
+                                | Some gps ->
+                                    List.map
+                                      (fun (gp : AST.generic_param) ->
+                                        let old = Hashtbl.find_opt constraint_store gp.name in
+                                        add_type_var_constraints gp.name gp.constraints;
+                                        (gp.name, old))
+                                      gps
+                              in
+                              let restore_method_constraints () =
+                                List.iter
+                                  (fun (name, old_opt) ->
+                                    match old_opt with
+                                    | Some old -> Hashtbl.replace constraint_store name old
+                                    | None -> Hashtbl.remove constraint_store name)
+                                  method_constraint_snapshots
+                              in
+                              let body_result =
+                                Fun.protect ~finally:restore_method_constraints (fun () ->
+                                    infer_expression type_map method_env m.impl_method_body)
+                              in
+                              match body_result with
                               | Error e -> Error e
                               | Ok (subst, inferred_body_type) ->
                                   let inferred_body_type' = apply_substitution subst inferred_body_type in
@@ -2642,7 +2825,8 @@ and infer_statement type_map env stmt =
                                     let method_generics =
                                       match m.impl_method_generics with
                                       | None -> []
-                                      | Some gps -> List.map (fun (gp : AST.generic_param) -> gp.name) gps
+                                      | Some gps ->
+                                          List.map (fun (gp : AST.generic_param) -> (gp.name, gp.constraints)) gps
                                     in
                                     let method_effect =
                                       match m.impl_method_effect with
@@ -2777,6 +2961,15 @@ and infer_statement type_map env stmt =
           let inherent_for_type_mono = canonicalize_mono_type inherent_for_type_mono in
           let infer_inherent_method_body (m : AST.method_impl) :
               (Trait_registry.method_sig * substitution, Diagnostic.t) result =
+            (* Build method-level type bindings from method generics *)
+            let method_type_bindings =
+              match m.impl_method_generics with
+              | None -> []
+              | Some gps -> List.map (fun (gp : AST.generic_param) -> (gp.name, TVar gp.name)) gps
+            in
+            let convert_method_type_expr (te : AST.type_expr) : (mono_type, Diagnostic.t) result =
+              Annotation.type_expr_to_mono_type_with (method_type_bindings @ generic_type_bindings) te
+            in
             let param_types_result =
               List.fold_left
                 (fun acc (pname, ptype_opt) ->
@@ -2785,7 +2978,7 @@ and infer_statement type_map env stmt =
                   | Ok rev_params -> (
                       match ptype_opt with
                       | Some ptype -> (
-                          match convert_inherent_type_expr ptype with
+                          match convert_method_type_expr ptype with
                           | Ok mono -> Ok ((pname, mono) :: rev_params)
                           | Error _ as err -> err)
                       | None ->
@@ -2816,7 +3009,7 @@ and infer_statement type_map env stmt =
                              (Printf.sprintf "Inherent method '%s' is missing a return type annotation"
                                 m.impl_method_name))
                   | Some rt -> (
-                      match convert_inherent_type_expr rt with
+                      match convert_method_type_expr rt with
                       | Error e -> Error e
                       | Ok return_type -> (
                           let method_env =
@@ -2824,7 +3017,32 @@ and infer_statement type_map env stmt =
                               (fun env_acc (pname, ptype) -> TypeEnv.add pname (mono_to_poly ptype) env_acc)
                               env param_types
                           in
-                          match infer_expression type_map method_env m.impl_method_body with
+                          (* Register method-level generic constraints for body inference *)
+                          let constraint_store = current_constraint_store () in
+                          let method_constraint_snapshots =
+                            match m.impl_method_generics with
+                            | None -> []
+                            | Some gps ->
+                                List.map
+                                  (fun (gp : AST.generic_param) ->
+                                    let old = Hashtbl.find_opt constraint_store gp.name in
+                                    add_type_var_constraints gp.name gp.constraints;
+                                    (gp.name, old))
+                                  gps
+                          in
+                          let restore_method_constraints () =
+                            List.iter
+                              (fun (name, old_opt) ->
+                                match old_opt with
+                                | Some old -> Hashtbl.replace constraint_store name old
+                                | None -> Hashtbl.remove constraint_store name)
+                              method_constraint_snapshots
+                          in
+                          let body_result =
+                            Fun.protect ~finally:restore_method_constraints (fun () ->
+                                infer_expression type_map method_env m.impl_method_body)
+                          in
+                          match body_result with
                           | Error e -> Error e
                           | Ok (subst, inferred_body_type) ->
                               let inferred_body_type' = apply_substitution subst inferred_body_type in
@@ -2833,7 +3051,8 @@ and infer_statement type_map env stmt =
                                 let method_generics =
                                   match m.impl_method_generics with
                                   | None -> []
-                                  | Some gps -> List.map (fun (gp : AST.generic_param) -> gp.name) gps
+                                  | Some gps ->
+                                      List.map (fun (gp : AST.generic_param) -> (gp.name, gp.constraints)) gps
                                 in
                                 let method_effect =
                                   match m.impl_method_effect with
