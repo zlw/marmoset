@@ -57,10 +57,10 @@ let rec walk_expr ~source ~ranges (expr : Ast.AST.expression) =
           walk_expr ~source ~ranges v)
         pairs
   | Ast.AST.FieldAccess (e, _) -> walk_expr ~source ~ranges e
-  | Ast.AST.MethodCall (recv, _, args) ->
+  | Ast.AST.MethodCall { mc_receiver; mc_args; _ } ->
       maybe_range ~source ~pos:expr.pos ~end_pos:expr.end_pos ~kind:Lsp_t.FoldingRangeKind.Region ranges;
-      walk_expr ~source ~ranges recv;
-      List.iter (walk_expr ~source ~ranges) args
+      walk_expr ~source ~ranges mc_receiver;
+      List.iter (walk_expr ~source ~ranges) mc_args
   | Ast.AST.EnumConstructor (_, _, args) -> List.iter (walk_expr ~source ~ranges) args
   | Ast.AST.TypeCheck (e, _) -> walk_expr ~source ~ranges e
   | Ast.AST.Identifier _ | Ast.AST.Integer _ | Ast.AST.Float _ | Ast.AST.Boolean _ | Ast.AST.String _ -> ()

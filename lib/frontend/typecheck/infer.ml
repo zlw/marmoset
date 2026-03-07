@@ -830,9 +830,9 @@ let rec resolve_expr_symbols (stack : symbol_scope_stack) (expr : AST.expression
       | Some s -> resolve_expr_symbols stack s
       | None -> ())
   | AST.FieldAccess (receiver, _field_name) -> resolve_expr_symbols stack receiver
-  | AST.MethodCall (receiver, _method_name, args) ->
-      resolve_expr_symbols stack receiver;
-      List.iter (resolve_expr_symbols stack) args
+  | AST.MethodCall { mc_receiver; mc_args; _ } ->
+      resolve_expr_symbols stack mc_receiver;
+      List.iter (resolve_expr_symbols stack) mc_args
 
 and resolve_match_arm_symbols (stack : symbol_scope_stack) (arm : AST.match_arm) : unit =
   let arm_scope =
@@ -1198,7 +1198,7 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                            expr)
                 in
                 field_result))
-    | AST.MethodCall (receiver, method_name, args) -> (
+    | AST.MethodCall { mc_receiver = receiver; mc_method = method_name; mc_args = args; _ } -> (
         let infer_enum_constructor (enum_name : string) : (substitution * mono_type) infer_result =
           match Enum_registry.lookup_variant enum_name method_name with
           | None ->
@@ -1747,8 +1747,8 @@ and expr_has_effectful_call (type_map : type_map) (expr : AST.expression) : bool
       func_is_effectful
       || expr_has_effectful_call type_map func
       || List.exists (expr_has_effectful_call type_map) args
-  | AST.MethodCall (receiver, _, args) ->
-      expr_has_effectful_call type_map receiver || List.exists (expr_has_effectful_call type_map) args
+  | AST.MethodCall { mc_receiver; mc_args; _ } ->
+      expr_has_effectful_call type_map mc_receiver || List.exists (expr_has_effectful_call type_map) mc_args
   | AST.If (cond, then_branch, else_branch) -> (
       expr_has_effectful_call type_map cond
       || body_has_effectful_call type_map then_branch
@@ -3597,8 +3597,9 @@ module Test = struct
         | None -> []
         | Some e -> identifier_occurrences_in_expr name e)
     | AST.FieldAccess (receiver, _) -> identifier_occurrences_in_expr name receiver
-    | AST.MethodCall (receiver, _, args) ->
-        identifier_occurrences_in_expr name receiver @ List.concat_map (identifier_occurrences_in_expr name) args
+    | AST.MethodCall { mc_receiver; mc_args; _ } ->
+        identifier_occurrences_in_expr name mc_receiver
+        @ List.concat_map (identifier_occurrences_in_expr name) mc_args
 
   and identifier_occurrences_in_stmt (name : string) (stmt : AST.statement) : (int * int) list =
     match stmt.stmt with

@@ -257,7 +257,7 @@ and walk_expr ~source ~type_map ~range_start ~range_end ~hints (expr : Ast.AST.e
                    :: !hints
              | None -> ());
         walk_expr ~source ~type_map ~range_start ~range_end ~hints recv
-    | Ast.AST.MethodCall (recv, _, args) ->
+    | Ast.AST.MethodCall { mc_receiver = recv; mc_args = args; _ } ->
         (if is_chain_receiver recv then
            let recv_end = find_recv_actual_end ~source ~dot_pos:expr.pos in
            if has_newline_between ~source ~from_offset:recv_end ~to_offset:expr.pos then

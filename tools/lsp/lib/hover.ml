@@ -17,7 +17,8 @@ let first_some a b =
    the true start by walking into left children recursively. *)
 let rec effective_start_pos (expr : Ast.AST.expression) : int =
   match expr.expr with
-  | Ast.AST.MethodCall (recv, _, _) | Ast.AST.FieldAccess (recv, _) -> min (effective_start_pos recv) expr.pos
+  | Ast.AST.MethodCall { mc_receiver = recv; _ } | Ast.AST.FieldAccess (recv, _) ->
+      min (effective_start_pos recv) expr.pos
   | Ast.AST.Infix (left, _, _) -> min (effective_start_pos left) expr.pos
   | Ast.AST.Call (fn_expr, _) -> min (effective_start_pos fn_expr) expr.pos
   | _ -> expr.pos
@@ -43,8 +44,8 @@ let rec find_expr_at (offset : int) (expr : Ast.AST.expression) : Ast.AST.expres
       | Ast.AST.Hash pairs ->
           List.find_map (fun (k, v) -> first_some (find_expr_at offset k) (find_expr_at offset v)) pairs
       | Ast.AST.FieldAccess (e, _) -> find_expr_at offset e
-      | Ast.AST.MethodCall (recv, _, args) ->
-          first_some (find_expr_at offset recv) (List.find_map (find_expr_at offset) args)
+      | Ast.AST.MethodCall { mc_receiver; mc_args; _ } ->
+          first_some (find_expr_at offset mc_receiver) (List.find_map (find_expr_at offset) mc_args)
       | Ast.AST.Match (scrutinee, arms) ->
           first_some (find_expr_at offset scrutinee)
             (List.find_map (fun (arm : Ast.AST.match_arm) -> find_expr_at offset arm.body) arms)

@@ -671,10 +671,10 @@ let rec captures_top_level_values_expr
         | Some s -> [ captures_top_level_values_expr top_level_values bound s ]
         | None -> [])
   | AST.FieldAccess (receiver, _) -> captures_top_level_values_expr top_level_values bound receiver
-  | AST.MethodCall (receiver, _, args) ->
+  | AST.MethodCall { mc_receiver; mc_args; _ } ->
       merge_sets
-        (captures_top_level_values_expr top_level_values bound receiver
-        :: List.map (captures_top_level_values_expr top_level_values bound) args)
+        (captures_top_level_values_expr top_level_values bound mc_receiver
+        :: List.map (captures_top_level_values_expr top_level_values bound) mc_args)
 
 and captures_top_level_values_stmt (top_level_values : StringSet.t) (bound : StringSet.t) (stmt : AST.statement) :
     StringSet.t =
@@ -785,9 +785,9 @@ and collect_funcs_expr (state : mono_state) (expr : AST.expression) : unit =
       | Some expr -> collect_funcs_expr state expr
       | None -> ())
   | AST.FieldAccess (expr, _field) -> collect_funcs_expr state expr
-  | AST.MethodCall (receiver, _method_name, args) ->
-      collect_funcs_expr state receiver;
-      List.iter (collect_funcs_expr state) args
+  | AST.MethodCall { mc_receiver; mc_args; _ } ->
+      collect_funcs_expr state mc_receiver;
+      List.iter (collect_funcs_expr state) mc_args
 
 (* ============================================================
    Pass 2: Collect instantiations at call sites
@@ -1758,7 +1758,7 @@ and collect_insts_expr
       | _ ->
           (* Real field access - collect insts in receiver *)
           collect_insts_expr state type_map env receiver)
-  | AST.MethodCall (receiver, method_name, args) -> (
+  | AST.MethodCall { mc_receiver = receiver; mc_method = method_name; mc_args = args; _ } -> (
       (* Check if this is an enum constructor and register it *)
       match receiver.expr with
       | AST.Identifier enum_name when Typecheck.Enum_registry.lookup enum_name <> None ->
@@ -1973,9 +1973,9 @@ let rec copy_specialized_expr_types
       Option.iter (copy_specialized_expr_types source_map target_map specialization_subst) spread
   | AST.FieldAccess (receiver, _) ->
       copy_specialized_expr_types source_map target_map specialization_subst receiver
-  | AST.MethodCall (receiver, _, args) ->
-      copy_specialized_expr_types source_map target_map specialization_subst receiver;
-      List.iter (copy_specialized_expr_types source_map target_map specialization_subst) args
+  | AST.MethodCall { mc_receiver; mc_args; _ } ->
+      copy_specialized_expr_types source_map target_map specialization_subst mc_receiver;
+      List.iter (copy_specialized_expr_types source_map target_map specialization_subst) mc_args
 
 and copy_specialized_stmt_types
     (source_map : Infer.type_map)
@@ -2198,7 +2198,7 @@ let rec emit_expr
             (* Real field access *)
             let receiver_str = emit_expr state type_map env receiver in
             Printf.sprintf "(%s).%s" receiver_str (go_record_field_name variant_name))
-    | AST.MethodCall (receiver, variant_name, args) -> (
+    | AST.MethodCall { mc_receiver = receiver; mc_method = variant_name; mc_args = args; _ } -> (
         (* Check if this is an enum constructor *)
         match receiver.expr with
         | AST.Identifier enum_name when Typecheck.Enum_registry.lookup enum_name <> None ->
@@ -2819,8 +2819,18 @@ and make_identifier_substituter old_name new_name =
         let spread' = Option.map subst_expr spread in
         { e with expr = AST.RecordLit (fields', spread') }
     | AST.FieldAccess (recv, field) -> { e with expr = AST.FieldAccess (subst_expr recv, field) }
-    | AST.MethodCall (recv, name, args) ->
-        { e with expr = AST.MethodCall (subst_expr recv, name, List.map subst_expr args) }
+    | AST.MethodCall { mc_receiver; mc_method; mc_type_args; mc_args } ->
+        {
+          e with
+          expr =
+            AST.MethodCall
+              {
+                mc_receiver = subst_expr mc_receiver;
+                mc_method;
+                mc_type_args;
+                mc_args = List.map subst_expr mc_args;
+              };
+        }
     | AST.Match (scrutinee, arms) ->
         let arms' =
           List.map
@@ -3613,9 +3623,9 @@ and collect_local_call_arg_types_expr
         | Some s -> collect_local_call_arg_types_expr name type_map env s
         | None -> [])
     | AST.FieldAccess (receiver, _) -> collect_local_call_arg_types_expr name type_map env receiver
-    | AST.MethodCall (receiver, _, args) ->
-        collect_local_call_arg_types_expr name type_map env receiver
-        @ List.concat_map (collect_local_call_arg_types_expr name type_map env) args
+    | AST.MethodCall { mc_receiver; mc_args; _ } ->
+        collect_local_call_arg_types_expr name type_map env mc_receiver
+        @ List.concat_map (collect_local_call_arg_types_expr name type_map env) mc_args
   in
   match expr.expr with
   | AST.Call ({ expr = AST.Identifier callee_name; _ }, args) when callee_name = name -> (
@@ -4320,7 +4330,7 @@ let collect_inherent_call_sites ~(concrete_only : bool) (type_map : Infer.type_m
         | None -> acc'
         | Some s -> collect_expr acc' s)
     | AST.FieldAccess (receiver, _field_name) -> collect_expr acc receiver
-    | AST.MethodCall (receiver, method_name, args) -> (
+    | AST.MethodCall { mc_receiver = receiver; mc_method = method_name; mc_args = args; _ } -> (
         let acc' = collect_expr acc receiver in
         let acc'' = List.fold_left collect_expr acc' args in
         match Infer.lookup_method_resolution expr.id with

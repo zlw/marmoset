@@ -176,7 +176,7 @@ let rec collect_expr ~source ~type_map ~environment ~params ~tokens (expr : Ast.
             { pos = fstart; end_pos = fstart + field_len - 1; token_type = property_type; modifiers = 0 }
             :: !tokens
       | None -> ())
-  | Ast.AST.MethodCall (recv, method_name, args) ->
+  | Ast.AST.MethodCall { mc_receiver = recv; mc_method = method_name; mc_args = args; _ } ->
       collect_expr ~source ~type_map ~environment ~params ~tokens recv;
       (* Method name token — search from the dot (expr.pos) since inner chain
          expressions may have incorrect end_pos *)

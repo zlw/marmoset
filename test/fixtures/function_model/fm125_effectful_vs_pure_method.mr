@@ -1,4 +1,3 @@
-# xfail: effect marker syntax in impl methods not parsed yet
 type logger = { prefix: string }
 
 impl logger {

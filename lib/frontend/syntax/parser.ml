@@ -622,11 +622,21 @@ and parse_trait_member_list (p : parser) :
 
 and parse_method_sig (p : parser) : (parser * AST.method_sig, parser) result =
   (* Current token is 'fn' *)
+  let method_sig_id, p = fresh_id p in
   let* p2 = expect_peek p Token.Ident in
   let method_name = p2.curr_token.literal in
 
+  (* Parse optional method-level generics [a, b: show] *)
+  let* p3, method_generics = parse_generic_params p2 in
+  let p3 = next_token p3 in
+
   (* Expect opening paren *)
-  let* p3 = expect_peek p2 Token.LParen in
+  let* p3 =
+    if curr_token_is p3 Token.LParen then
+      Ok p3
+    else
+      expect_peek p3 Token.LParen
+  in
 
   (* Parse parameter list (name: type pairs) *)
   let* p4, params = parse_param_list_with_types (next_token p3) in
@@ -639,8 +649,15 @@ and parse_method_sig (p : parser) : (parser * AST.method_sig, parser) result =
       expect_peek p4 Token.RParen
   in
 
-  (* Expect arrow *)
-  let* p6 = expect_peek p5 Token.Arrow in
+  (* Parse effect marker: -> (pure) or => (effectful) *)
+  let* p6, method_effect =
+    if peek_token_is p5 Token.Arrow then
+      Ok (next_token p5, AST.Pure)
+    else if peek_token_is p5 Token.FatArrow then
+      Ok (next_token p5, AST.Effectful)
+    else
+      Result.map (fun p -> (p, AST.Pure)) (expect_peek p5 Token.Arrow)
+  in
 
   (* Parse return type *)
   let* p7, return_type = parse_type_expr (next_token p6) in
@@ -648,7 +665,18 @@ and parse_method_sig (p : parser) : (parser * AST.method_sig, parser) result =
   (* For now, we don't support default implementations *)
   let method_default_impl = None in
 
-  Ok (p7, AST.{ method_name; method_params = params; method_return_type = return_type; method_default_impl })
+  Ok
+    ( p7,
+      AST.
+        {
+          method_sig_id;
+          method_name;
+          method_generics;
+          method_params = params;
+          method_return_type = return_type;
+          method_effect;
+          method_default_impl;
+        } )
 
 and parse_param_list_with_types (p : parser) : (parser * (string * AST.type_expr) list, parser) result =
   let rec loop lp rev_params =
@@ -785,11 +813,21 @@ and parse_method_impl_list (p : parser) : (parser * AST.method_impl list, parser
 
 and parse_method_impl (p : parser) : (parser * AST.method_impl, parser) result =
   (* Current token is 'fn' *)
+  let impl_method_id, p = fresh_id p in
   let* p2 = expect_peek p Token.Ident in
   let impl_method_name = p2.curr_token.literal in
 
+  (* Parse optional method-level generics [a, b: show] *)
+  let* p3, impl_method_generics = parse_generic_params p2 in
+  let p3 = next_token p3 in
+
   (* Expect opening paren *)
-  let* p3 = expect_peek p2 Token.LParen in
+  let* p3 =
+    if curr_token_is p3 Token.LParen then
+      Ok p3
+    else
+      expect_peek p3 Token.LParen
+  in
 
   (* Parse function parameters (can have optional types) *)
   let* p4, params = parse_function_parameters p3 in
@@ -802,13 +840,16 @@ and parse_method_impl (p : parser) : (parser * AST.method_impl, parser) result =
       expect_peek p4 Token.RParen
   in
 
-  (* Parse optional return type *)
-  let* p6, impl_method_return_type =
+  (* Parse optional effect marker + return type: -> T, => T, or neither *)
+  let* p6, impl_method_return_type, impl_method_effect =
     if peek_token_is p5 Token.Arrow then
       let* p6, ret_type = parse_type_expr (next_token (next_token p5)) in
-      Ok (p6, Some ret_type)
+      Ok (p6, Some ret_type, Some AST.Pure)
+    else if peek_token_is p5 Token.FatArrow then
+      let* p6, ret_type = parse_type_expr (next_token (next_token p5)) in
+      Ok (p6, Some ret_type, Some AST.Effectful)
     else
-      Ok (next_token p5, None)
+      Ok (next_token p5, None, None)
   in
 
   (* Expect opening brace for body *)
@@ -828,8 +869,16 @@ and parse_method_impl (p : parser) : (parser * AST.method_impl, parser) result =
 
   Ok
     ( next_token p9,
-      AST.{ impl_method_name; impl_method_params = params; impl_method_return_type; impl_method_body = body_expr }
-    )
+      AST.
+        {
+          impl_method_id;
+          impl_method_name;
+          impl_method_generics;
+          impl_method_params = params;
+          impl_method_return_type;
+          impl_method_effect;
+          impl_method_body = body_expr;
+        } )
 
 (* Phase 4.3: Derive statement parsing *)
 and parse_derive_definition (p : parser) : (parser * AST.statement, parser) result =
@@ -1186,7 +1235,11 @@ and parse_dot_expression (p : parser) (left : AST.expression) : (parser * AST.ex
       let p3 = next_token p2 in
       let* p4, args = parse_expression_list p3 Token.RParen in
       let id, p5 = fresh_id p4 in
-      Ok (p5, mk_expr id pos (AST.MethodCall (left, member_name, args)))
+      Ok
+        ( p5,
+          mk_expr id pos
+            (AST.MethodCall { mc_receiver = left; mc_method = member_name; mc_type_args = None; mc_args = args })
+        )
     else
       (* expr.member -> Field access or nullary enum constructor *)
       let id, p3 = fresh_id p2 in
@@ -2062,7 +2115,8 @@ module Test = struct
           | Some e -> collect_expr_ids e
           | None -> [])
       | AST.FieldAccess (receiver, _) -> collect_expr_ids receiver
-      | AST.MethodCall (receiver, _, args) -> collect_expr_ids receiver @ List.concat_map collect_expr_ids args
+      | AST.MethodCall { mc_receiver; mc_args; _ } ->
+          collect_expr_ids mc_receiver @ List.concat_map collect_expr_ids mc_args
     in
     expr.id :: child_ids
 
@@ -2939,7 +2993,7 @@ let%test "parse field access vs method call" =
           match (stmt1.stmt, stmt2.stmt) with
           | AST.Let { name = "x"; value = v1; _ }, AST.Let { name = "y"; value = v2; _ } -> (
               match (v1.expr, v2.expr) with
-              | AST.FieldAccess (_, "field"), AST.MethodCall (_, "method", []) -> true
+              | AST.FieldAccess (_, "field"), AST.MethodCall { mc_method = "method"; mc_args = []; _ } -> true
               | _ -> false)
           | _ -> false)
       | _ -> false)

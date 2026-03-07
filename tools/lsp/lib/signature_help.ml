@@ -120,7 +120,7 @@ let find_enclosing_call ~(source : string) (offset : int) (program : Ast.AST.pro
             };
         visit_expr fn_expr;
         List.iter visit_expr args
-    | Ast.AST.MethodCall (recv, mname, args) ->
+    | Ast.AST.MethodCall { mc_receiver = recv; mc_method = mname; mc_args = args; _ } ->
         (* For method calls like recv.method(args), find '(' after the dot.
            Use expr.pos (the dot position) as search start since recv.end_pos
            may be wrong for inner chain expressions.

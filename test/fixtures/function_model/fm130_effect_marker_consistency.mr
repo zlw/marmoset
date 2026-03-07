@@ -1,4 +1,3 @@
-# xfail: effect annotation on trait method sigs not implemented
 trait processor[a] {
   fn process(x: a) => string
 }

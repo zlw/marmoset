@@ -295,9 +295,9 @@ and walk_expr ~source ~type_map ~range_start ~range_end ~sites (expr : Ast.AST.e
             walk_expr ~source ~type_map ~range_start ~range_end ~sites v)
           pairs
     | Ast.AST.FieldAccess (e, _) -> walk_expr ~source ~type_map ~range_start ~range_end ~sites e
-    | Ast.AST.MethodCall (recv, _, args) ->
-        walk_expr ~source ~type_map ~range_start ~range_end ~sites recv;
-        List.iter (walk_expr ~source ~type_map ~range_start ~range_end ~sites) args
+    | Ast.AST.MethodCall { mc_receiver; mc_args; _ } ->
+        walk_expr ~source ~type_map ~range_start ~range_end ~sites mc_receiver;
+        List.iter (walk_expr ~source ~type_map ~range_start ~range_end ~sites) mc_args
     | Ast.AST.Match (scrutinee, arms) ->
         walk_expr ~source ~type_map ~range_start ~range_end ~sites scrutinee;
         List.iter
