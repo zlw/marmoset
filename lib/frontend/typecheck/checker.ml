@@ -688,14 +688,14 @@ let%test "env reuse with shared inference state preserves constrained generic ob
       trait_type_param = Some "a";
       trait_supertraits = [];
       trait_methods =
-        [ { method_name = "show"; method_params = [ ("x", TVar "a") ]; method_return_type = TString } ];
+        [ Trait_registry.mk_method_sig ~name:"show" ~params:[ ("x", TVar "a") ] ~return_type:TString () ];
     };
   Trait_registry.register_impl ~builtin:true
     {
       impl_trait_name = "show";
       impl_type_params = [];
       impl_for_type = TInt;
-      impl_methods = [ { method_name = "show"; method_params = [ ("x", TInt) ]; method_return_type = TString } ];
+      impl_methods = [ Trait_registry.mk_method_sig ~name:"show" ~params:[ ("x", TInt) ] ~return_type:TString () ];
     };
   let shared_state = Infer.create_inference_state () in
   match

@@ -6,10 +6,25 @@ module String_utils = Diagnostics.String_utils
 
 (* A method signature in a trait *)
 type method_sig = {
+  method_key : Resolution_artifacts.callable_key;
   method_name : string;
+  method_generics : string list; (* method-level type parameter names *)
   method_params : (string * mono_type) list; (* param name and type *)
   method_return_type : mono_type;
+  method_effect : [ `Pure | `Effectful ]; (* -> vs => *)
 }
+
+(* Construct a method_sig with synthetic key and default pure/no-generics.
+   Used for builtins, derives, and tests. *)
+let mk_method_sig ?(generics = []) ?(effect = `Pure) ~name ~params ~return_type () =
+  {
+    method_key = Resolution_artifacts.SyntheticCallable name;
+    method_name = name;
+    method_generics = generics;
+    method_params = params;
+    method_return_type = return_type;
+    method_effect = effect;
+  }
 
 (* A trait definition *)
 type trait_def = {
@@ -250,7 +265,7 @@ let specialized_impl (def : impl_def) (for_type : mono_type) (subst : Types.subs
     List.map
       (fun (m : method_sig) ->
         {
-          method_name = m.method_name;
+          m with
           method_params =
             List.map (fun (name, ty) -> (name, canonical_type (apply_substitution subst ty))) m.method_params;
           method_return_type = canonical_type (apply_substitution subst m.method_return_type);
@@ -479,7 +494,7 @@ let generate_derived_impl (trait_name : string) (for_type : mono_type) : impl_de
             in
             let params = List.map (fun (name, t) -> (name, substitute_type t)) m.method_params in
             let return_type = substitute_type m.method_return_type in
-            { method_name = m.method_name; method_params = params; method_return_type = return_type })
+            { m with method_params = params; method_return_type = return_type })
           trait_def.trait_methods
       in
       Some
@@ -579,12 +594,27 @@ let validate_impl_signature (trait_def : trait_def) (def : impl_def) : (unit, st
           (* Check return type *)
           let expected_return = canonical_type (substitute_type trait_method.method_return_type) in
           let impl_return = canonical_type impl_method.method_return_type in
-          if expected_return = impl_return then
-            Ok ()
-          else
+          if expected_return <> impl_return then
             Error
               (Printf.sprintf "Method '%s': return type mismatch: expected %s, got %s" trait_method.method_name
                  (to_string expected_return) (to_string impl_return))
+          else if trait_method.method_effect <> impl_method.method_effect then
+            let effect_str = function
+              | `Pure -> "->"
+              | `Effectful -> "=>"
+            in
+            Error
+              (Printf.sprintf "Method '%s': effect mismatch: trait uses %s, impl uses %s" trait_method.method_name
+                 (effect_str trait_method.method_effect)
+                 (effect_str impl_method.method_effect))
+          else if List.length trait_method.method_generics <> List.length impl_method.method_generics then
+            Error
+              (Printf.sprintf "Method '%s': generic arity mismatch: trait has %d type parameters, impl has %d"
+                 trait_method.method_name
+                 (List.length trait_method.method_generics)
+                 (List.length impl_method.method_generics))
+          else
+            Ok ()
     in
 
     (* Find each trait method in impl methods and validate *)
@@ -689,8 +719,7 @@ let%test "register and lookup trait" =
       trait_name = "show";
       trait_type_param = Some "a";
       trait_supertraits = [];
-      trait_methods =
-        [ { method_name = "show"; method_params = [ ("x", TVar "a") ]; method_return_type = TString } ];
+      trait_methods = [ mk_method_sig ~name:"show" ~params:[ ("x", TVar "a") ] ~return_type:TString () ];
     }
   in
   register_trait show_trait;
@@ -713,8 +742,7 @@ let%test "trait_kind includes method supertraits" =
       trait_name = "show";
       trait_type_param = Some "a";
       trait_supertraits = [];
-      trait_methods =
-        [ { method_name = "show"; method_params = [ ("x", TVar "a") ]; method_return_type = TString } ];
+      trait_methods = [ mk_method_sig ~name:"show" ~params:[ ("x", TVar "a") ] ~return_type:TString () ];
     };
   register_trait
     { trait_name = "display"; trait_type_param = None; trait_supertraits = [ "show" ]; trait_methods = [] };
@@ -729,8 +757,7 @@ let%test "trait_kind becomes mixed with field and method supertraits" =
       trait_name = "show";
       trait_type_param = Some "a";
       trait_supertraits = [];
-      trait_methods =
-        [ { method_name = "show"; method_params = [ ("x", TVar "a") ]; method_return_type = TString } ];
+      trait_methods = [ mk_method_sig ~name:"show" ~params:[ ("x", TVar "a") ] ~return_type:TString () ];
     };
   register_trait
     {
@@ -750,8 +777,8 @@ let%test "validate_trait_def - duplicate methods" =
       trait_supertraits = [];
       trait_methods =
         [
-          { method_name = "foo"; method_params = []; method_return_type = TInt };
-          { method_name = "foo"; method_params = []; method_return_type = TString };
+          mk_method_sig ~name:"foo" ~params:[] ~return_type:TInt ();
+          mk_method_sig ~name:"foo" ~params:[] ~return_type:TString ();
         ];
     }
   in
@@ -767,7 +794,7 @@ let%test "validate_trait_def - missing supertrait" =
       trait_type_param = Some "a";
       trait_supertraits = [ "eq" ];
       (* eq not registered *)
-      trait_methods = [ { method_name = "compare"; method_params = []; method_return_type = TInt } ];
+      trait_methods = [ mk_method_sig ~name:"compare" ~params:[] ~return_type:TInt () ];
     }
   in
   match validate_trait_def bad_trait with
@@ -781,8 +808,7 @@ let%test "register and lookup impl" =
       trait_name = "show";
       trait_type_param = Some "a";
       trait_supertraits = [];
-      trait_methods =
-        [ { method_name = "show"; method_params = [ ("x", TVar "a") ]; method_return_type = TString } ];
+      trait_methods = [ mk_method_sig ~name:"show" ~params:[ ("x", TVar "a") ] ~return_type:TString () ];
     }
   in
   register_trait show_trait;
@@ -792,7 +818,7 @@ let%test "register and lookup impl" =
       impl_trait_name = "show";
       impl_type_params = [];
       impl_for_type = TInt;
-      impl_methods = [ { method_name = "show"; method_params = [ ("x", TInt) ]; method_return_type = TString } ];
+      impl_methods = [ mk_method_sig ~name:"show" ~params:[ ("x", TInt) ] ~return_type:TString () ];
     }
   in
   register_impl show_for_int;
@@ -808,15 +834,14 @@ let%test "register_impl rejects duplicate user impl at registration" =
       trait_name = "show";
       trait_type_param = Some "a";
       trait_supertraits = [];
-      trait_methods =
-        [ { method_name = "show"; method_params = [ ("x", TVar "a") ]; method_return_type = TString } ];
+      trait_methods = [ mk_method_sig ~name:"show" ~params:[ ("x", TVar "a") ] ~return_type:TString () ];
     };
   let show_for_int =
     {
       impl_trait_name = "show";
       impl_type_params = [];
       impl_for_type = TInt;
-      impl_methods = [ { method_name = "show"; method_params = [ ("x", TInt) ]; method_return_type = TString } ];
+      impl_methods = [ mk_method_sig ~name:"show" ~params:[ ("x", TInt) ] ~return_type:TString () ];
     }
   in
   register_impl show_for_int;
@@ -837,15 +862,14 @@ let%test "register_impl allows user override of builtin impl key" =
       trait_name = "show";
       trait_type_param = Some "a";
       trait_supertraits = [];
-      trait_methods =
-        [ { method_name = "show"; method_params = [ ("x", TVar "a") ]; method_return_type = TString } ];
+      trait_methods = [ mk_method_sig ~name:"show" ~params:[ ("x", TVar "a") ] ~return_type:TString () ];
     };
   let builtin_show_for_int =
     {
       impl_trait_name = "show";
       impl_type_params = [];
       impl_for_type = TInt;
-      impl_methods = [ { method_name = "show"; method_params = [ ("x", TInt) ]; method_return_type = TString } ];
+      impl_methods = [ mk_method_sig ~name:"show" ~params:[ ("x", TInt) ] ~return_type:TString () ];
     }
   in
   let user_show_for_int =
@@ -853,7 +877,7 @@ let%test "register_impl allows user override of builtin impl key" =
       impl_trait_name = "show";
       impl_type_params = [];
       impl_for_type = TInt;
-      impl_methods = [ { method_name = "show"; method_params = [ ("x", TInt) ]; method_return_type = TString } ];
+      impl_methods = [ mk_method_sig ~name:"show" ~params:[ ("x", TInt) ] ~return_type:TString () ];
     }
   in
   register_impl ~builtin:true builtin_show_for_int;
@@ -869,8 +893,7 @@ let%test "implements_trait checks impl registry" =
       trait_name = "show";
       trait_type_param = Some "a";
       trait_supertraits = [];
-      trait_methods =
-        [ { method_name = "show"; method_params = [ ("x", TVar "a") ]; method_return_type = TString } ];
+      trait_methods = [ mk_method_sig ~name:"show" ~params:[ ("x", TVar "a") ] ~return_type:TString () ];
     }
   in
   register_trait show_trait;
@@ -880,7 +903,7 @@ let%test "implements_trait checks impl registry" =
       impl_trait_name = "show";
       impl_type_params = [];
       impl_for_type = TInt;
-      impl_methods = [ { method_name = "show"; method_params = [ ("x", TInt) ]; method_return_type = TString } ];
+      impl_methods = [ mk_method_sig ~name:"show" ~params:[ ("x", TInt) ] ~return_type:TString () ];
     }
   in
   register_impl show_for_int;
@@ -894,23 +917,21 @@ let%test "implements_trait supports generic impl matching for concrete types" =
       trait_name = "show";
       trait_type_param = Some "a";
       trait_supertraits = [];
-      trait_methods =
-        [ { method_name = "show"; method_params = [ ("x", TVar "a") ]; method_return_type = TString } ];
+      trait_methods = [ mk_method_sig ~name:"show" ~params:[ ("x", TVar "a") ] ~return_type:TString () ];
     };
   register_impl
     {
       impl_trait_name = "show";
       impl_type_params = [];
       impl_for_type = TInt;
-      impl_methods = [ { method_name = "show"; method_params = [ ("x", TInt) ]; method_return_type = TString } ];
+      impl_methods = [ mk_method_sig ~name:"show" ~params:[ ("x", TInt) ] ~return_type:TString () ];
     };
   register_impl
     {
       impl_trait_name = "show";
       impl_type_params = [ { AST.name = "b"; constraints = [ "show" ] } ];
       impl_for_type = TArray (TVar "b");
-      impl_methods =
-        [ { method_name = "show"; method_params = [ ("x", TArray (TVar "b")) ]; method_return_type = TString } ];
+      impl_methods = [ mk_method_sig ~name:"show" ~params:[ ("x", TArray (TVar "b")) ] ~return_type:TString () ];
     };
   implements_trait "show" (TArray TInt)
 
@@ -921,16 +942,14 @@ let%test "lookup_method specializes generic impl method signature for receiver t
       trait_name = "show";
       trait_type_param = Some "a";
       trait_supertraits = [];
-      trait_methods =
-        [ { method_name = "show"; method_params = [ ("x", TVar "a") ]; method_return_type = TString } ];
+      trait_methods = [ mk_method_sig ~name:"show" ~params:[ ("x", TVar "a") ] ~return_type:TString () ];
     };
   register_impl
     {
       impl_trait_name = "show";
       impl_type_params = [ { AST.name = "b"; constraints = [] } ];
       impl_for_type = TArray (TVar "b");
-      impl_methods =
-        [ { method_name = "show"; method_params = [ ("x", TArray (TVar "b")) ]; method_return_type = TString } ];
+      impl_methods = [ mk_method_sig ~name:"show" ~params:[ ("x", TArray (TVar "b")) ] ~return_type:TString () ];
     };
   match lookup_method (TArray TInt) "show" with
   | Some ("show", method_sig) -> (
@@ -946,8 +965,7 @@ let%test "lookup_method canonicalizes reordered record receiver" =
       trait_name = "show";
       trait_type_param = Some "a";
       trait_supertraits = [];
-      trait_methods =
-        [ { method_name = "show"; method_params = [ ("x", TVar "a") ]; method_return_type = TString } ];
+      trait_methods = [ mk_method_sig ~name:"show" ~params:[ ("x", TVar "a") ] ~return_type:TString () ];
     }
   in
   register_trait show_trait;
@@ -958,11 +976,9 @@ let%test "lookup_method canonicalizes reordered record receiver" =
       impl_for_type = TRecord ([ { name = "x"; typ = TInt }; { name = "y"; typ = TInt } ], None);
       impl_methods =
         [
-          {
-            method_name = "show";
-            method_params = [ ("x", TRecord ([ { name = "x"; typ = TInt }; { name = "y"; typ = TInt } ], None)) ];
-            method_return_type = TString;
-          };
+          mk_method_sig ~name:"show"
+            ~params:[ ("x", TRecord ([ { name = "x"; typ = TInt }; { name = "y"; typ = TInt } ], None)) ]
+            ~return_type:TString ();
         ];
     };
   match lookup_method (TRecord ([ { name = "y"; typ = TInt }; { name = "x"; typ = TInt } ], None)) "show" with
@@ -976,16 +992,14 @@ let%test "resolve_method reports ambiguity for multiple matching traits" =
       trait_name = "render_a";
       trait_type_param = Some "a";
       trait_supertraits = [];
-      trait_methods =
-        [ { method_name = "render"; method_params = [ ("x", TVar "a") ]; method_return_type = TString } ];
+      trait_methods = [ mk_method_sig ~name:"render" ~params:[ ("x", TVar "a") ] ~return_type:TString () ];
     };
   register_trait
     {
       trait_name = "render_b";
       trait_type_param = Some "a";
       trait_supertraits = [];
-      trait_methods =
-        [ { method_name = "render"; method_params = [ ("x", TVar "a") ]; method_return_type = TString } ];
+      trait_methods = [ mk_method_sig ~name:"render" ~params:[ ("x", TVar "a") ] ~return_type:TString () ];
     };
   register_impl
     ~source:{ file_id = Some "test.mr"; start_pos = 10; end_pos = 20 }
@@ -993,7 +1007,7 @@ let%test "resolve_method reports ambiguity for multiple matching traits" =
       impl_trait_name = "render_a";
       impl_type_params = [];
       impl_for_type = TInt;
-      impl_methods = [ { method_name = "render"; method_params = [ ("x", TInt) ]; method_return_type = TString } ];
+      impl_methods = [ mk_method_sig ~name:"render" ~params:[ ("x", TInt) ] ~return_type:TString () ];
     };
   register_impl
     ~source:{ file_id = Some "test.mr"; start_pos = 30; end_pos = 40 }
@@ -1001,7 +1015,7 @@ let%test "resolve_method reports ambiguity for multiple matching traits" =
       impl_trait_name = "render_b";
       impl_type_params = [];
       impl_for_type = TInt;
-      impl_methods = [ { method_name = "render"; method_params = [ ("x", TInt) ]; method_return_type = TString } ];
+      impl_methods = [ mk_method_sig ~name:"render" ~params:[ ("x", TInt) ] ~return_type:TString () ];
     };
   let contains_substring s sub = String_utils.contains_substring ~needle:sub s in
   match resolve_method TInt "render" with
@@ -1020,30 +1034,28 @@ let%test "lookup_method no longer picks first candidate on ambiguity" =
       trait_name = "render_a";
       trait_type_param = Some "a";
       trait_supertraits = [];
-      trait_methods =
-        [ { method_name = "render"; method_params = [ ("x", TVar "a") ]; method_return_type = TString } ];
+      trait_methods = [ mk_method_sig ~name:"render" ~params:[ ("x", TVar "a") ] ~return_type:TString () ];
     };
   register_trait
     {
       trait_name = "render_b";
       trait_type_param = Some "a";
       trait_supertraits = [];
-      trait_methods =
-        [ { method_name = "render"; method_params = [ ("x", TVar "a") ]; method_return_type = TString } ];
+      trait_methods = [ mk_method_sig ~name:"render" ~params:[ ("x", TVar "a") ] ~return_type:TString () ];
     };
   register_impl
     {
       impl_trait_name = "render_a";
       impl_type_params = [];
       impl_for_type = TInt;
-      impl_methods = [ { method_name = "render"; method_params = [ ("x", TInt) ]; method_return_type = TString } ];
+      impl_methods = [ mk_method_sig ~name:"render" ~params:[ ("x", TInt) ] ~return_type:TString () ];
     };
   register_impl
     {
       impl_trait_name = "render_b";
       impl_type_params = [];
       impl_for_type = TInt;
-      impl_methods = [ { method_name = "render"; method_params = [ ("x", TInt) ]; method_return_type = TString } ];
+      impl_methods = [ mk_method_sig ~name:"render" ~params:[ ("x", TInt) ] ~return_type:TString () ];
     };
   match lookup_method TInt "render" with
   | None -> true
@@ -1056,8 +1068,7 @@ let%test "validate_impl rejects duplicate trait/type pair" =
       trait_name = "show";
       trait_type_param = Some "a";
       trait_supertraits = [];
-      trait_methods =
-        [ { method_name = "show"; method_params = [ ("x", TVar "a") ]; method_return_type = TString } ];
+      trait_methods = [ mk_method_sig ~name:"show" ~params:[ ("x", TVar "a") ] ~return_type:TString () ];
     }
   in
   register_trait show_trait;
@@ -1066,7 +1077,7 @@ let%test "validate_impl rejects duplicate trait/type pair" =
       impl_trait_name = "show";
       impl_type_params = [];
       impl_for_type = TInt;
-      impl_methods = [ { method_name = "show"; method_params = [ ("x", TInt) ]; method_return_type = TString } ];
+      impl_methods = [ mk_method_sig ~name:"show" ~params:[ ("x", TInt) ] ~return_type:TString () ];
     };
   match
     validate_impl
@@ -1074,7 +1085,7 @@ let%test "validate_impl rejects duplicate trait/type pair" =
         impl_trait_name = "show";
         impl_type_params = [];
         impl_for_type = TInt;
-        impl_methods = [ { method_name = "show"; method_params = [ ("x", TInt) ]; method_return_type = TString } ];
+        impl_methods = [ mk_method_sig ~name:"show" ~params:[ ("x", TInt) ] ~return_type:TString () ];
       }
   with
   | Error msg ->
@@ -1088,8 +1099,7 @@ let%test "validate_impl allows overriding builtin impl once" =
       trait_name = "show";
       trait_type_param = Some "a";
       trait_supertraits = [];
-      trait_methods =
-        [ { method_name = "show"; method_params = [ ("x", TVar "a") ]; method_return_type = TString } ];
+      trait_methods = [ mk_method_sig ~name:"show" ~params:[ ("x", TVar "a") ] ~return_type:TString () ];
     }
   in
   register_trait show_trait;
@@ -1098,7 +1108,7 @@ let%test "validate_impl allows overriding builtin impl once" =
       impl_trait_name = "show";
       impl_type_params = [];
       impl_for_type = TInt;
-      impl_methods = [ { method_name = "show"; method_params = [ ("x", TInt) ]; method_return_type = TString } ];
+      impl_methods = [ mk_method_sig ~name:"show" ~params:[ ("x", TInt) ] ~return_type:TString () ];
     }
   in
   let user_show_for_int =
@@ -1106,7 +1116,7 @@ let%test "validate_impl allows overriding builtin impl once" =
       impl_trait_name = "show";
       impl_type_params = [];
       impl_for_type = TInt;
-      impl_methods = [ { method_name = "show"; method_params = [ ("x", TInt) ]; method_return_type = TString } ];
+      impl_methods = [ mk_method_sig ~name:"show" ~params:[ ("x", TInt) ] ~return_type:TString () ];
     }
   in
   register_impl ~builtin:true builtin_show_for_int;
@@ -1128,7 +1138,7 @@ let%test "validate_impl - undefined trait" =
       impl_trait_name = "undefined";
       impl_type_params = [];
       impl_for_type = TInt;
-      impl_methods = [ { method_name = "foo"; method_params = []; method_return_type = TInt } ];
+      impl_methods = [ mk_method_sig ~name:"foo" ~params:[] ~return_type:TInt () ];
     }
   in
   match validate_impl bad_impl with
@@ -1145,9 +1155,7 @@ let%test "validate_impl - missing method" =
       trait_type_param = Some "a";
       trait_supertraits = [];
       trait_methods =
-        [
-          { method_name = "eq"; method_params = [ ("x", TVar "a"); ("y", TVar "a") ]; method_return_type = TBool };
-        ];
+        [ mk_method_sig ~name:"eq" ~params:[ ("x", TVar "a"); ("y", TVar "a") ] ~return_type:TBool () ];
     }
   in
   register_trait eq_trait;
@@ -1166,8 +1174,7 @@ let%test "validate_impl - extra method" =
       trait_name = "show";
       trait_type_param = Some "a";
       trait_supertraits = [];
-      trait_methods =
-        [ { method_name = "show"; method_params = [ ("x", TVar "a") ]; method_return_type = TString } ];
+      trait_methods = [ mk_method_sig ~name:"show" ~params:[ ("x", TVar "a") ] ~return_type:TString () ];
     }
   in
   register_trait show_trait;
@@ -1179,8 +1186,8 @@ let%test "validate_impl - extra method" =
       impl_for_type = TInt;
       impl_methods =
         [
-          { method_name = "show"; method_params = [ ("x", TInt) ]; method_return_type = TString };
-          { method_name = "extra"; method_params = []; method_return_type = TInt };
+          mk_method_sig ~name:"show" ~params:[ ("x", TInt) ] ~return_type:TString ();
+          mk_method_sig ~name:"extra" ~params:[] ~return_type:TInt ();
           (* Extra method *)
         ];
     }
@@ -1198,12 +1205,8 @@ let%test "validate_impl - wrong param count" =
       trait_supertraits = [];
       trait_methods =
         [
-          {
-            method_name = "eq";
-            method_params = [ ("x", TVar "a"); ("y", TVar "a") ];
-            (* 2 params *)
-            method_return_type = TBool;
-          };
+          mk_method_sig ~name:"eq" ~params:[ ("x", TVar "a"); ("y", TVar "a") ] ~return_type:TBool ();
+          (* 2 params *)
         ];
     }
   in
@@ -1214,7 +1217,7 @@ let%test "validate_impl - wrong param count" =
       impl_trait_name = "eq";
       impl_type_params = [];
       impl_for_type = TInt;
-      impl_methods = [ { method_name = "eq"; method_params = [ ("x", TInt) ]; method_return_type = TBool } ];
+      impl_methods = [ mk_method_sig ~name:"eq" ~params:[ ("x", TInt) ] ~return_type:TBool () ];
       (* Only 1 param! *)
     }
   in
@@ -1229,8 +1232,7 @@ let%test "validate_impl - wrong param type" =
       trait_name = "show";
       trait_type_param = Some "a";
       trait_supertraits = [];
-      trait_methods =
-        [ { method_name = "show"; method_params = [ ("x", TVar "a") ]; method_return_type = TString } ];
+      trait_methods = [ mk_method_sig ~name:"show" ~params:[ ("x", TVar "a") ] ~return_type:TString () ];
     }
   in
   register_trait show_trait;
@@ -1240,8 +1242,7 @@ let%test "validate_impl - wrong param type" =
       impl_trait_name = "show";
       impl_type_params = [];
       impl_for_type = TInt;
-      impl_methods =
-        [ { method_name = "show"; method_params = [ ("x", TString) ]; method_return_type = TString } ];
+      impl_methods = [ mk_method_sig ~name:"show" ~params:[ ("x", TString) ] ~return_type:TString () ];
       (* x should be TInt! *)
     }
   in
@@ -1256,8 +1257,7 @@ let%test "validate_impl - wrong return type" =
       trait_name = "show";
       trait_type_param = Some "a";
       trait_supertraits = [];
-      trait_methods =
-        [ { method_name = "show"; method_params = [ ("x", TVar "a") ]; method_return_type = TString } ];
+      trait_methods = [ mk_method_sig ~name:"show" ~params:[ ("x", TVar "a") ] ~return_type:TString () ];
     }
   in
   register_trait show_trait;
@@ -1267,7 +1267,7 @@ let%test "validate_impl - wrong return type" =
       impl_trait_name = "show";
       impl_type_params = [];
       impl_for_type = TInt;
-      impl_methods = [ { method_name = "show"; method_params = [ ("x", TInt) ]; method_return_type = TInt } ];
+      impl_methods = [ mk_method_sig ~name:"show" ~params:[ ("x", TInt) ] ~return_type:TInt () ];
       (* Should return TString! *)
     }
   in
@@ -1282,8 +1282,7 @@ let%test "validate_impl - correct substitution" =
       trait_name = "show";
       trait_type_param = Some "a";
       trait_supertraits = [];
-      trait_methods =
-        [ { method_name = "show"; method_params = [ ("x", TVar "a") ]; method_return_type = TString } ];
+      trait_methods = [ mk_method_sig ~name:"show" ~params:[ ("x", TVar "a") ] ~return_type:TString () ];
     }
   in
   register_trait show_trait;
@@ -1293,7 +1292,7 @@ let%test "validate_impl - correct substitution" =
       impl_trait_name = "show";
       impl_type_params = [];
       impl_for_type = TInt;
-      impl_methods = [ { method_name = "show"; method_params = [ ("x", TInt) ]; method_return_type = TString } ];
+      impl_methods = [ mk_method_sig ~name:"show" ~params:[ ("x", TInt) ] ~return_type:TString () ];
       (* TVar "a" -> TInt *)
     }
   in
@@ -1310,16 +1309,8 @@ let%test "validate_impl - multiple methods" =
       trait_supertraits = [];
       trait_methods =
         [
-          {
-            method_name = "compare";
-            method_params = [ ("x", TVar "a"); ("y", TVar "a") ];
-            method_return_type = TInt;
-          };
-          {
-            method_name = "less_than";
-            method_params = [ ("x", TVar "a"); ("y", TVar "a") ];
-            method_return_type = TBool;
-          };
+          mk_method_sig ~name:"compare" ~params:[ ("x", TVar "a"); ("y", TVar "a") ] ~return_type:TInt ();
+          mk_method_sig ~name:"less_than" ~params:[ ("x", TVar "a"); ("y", TVar "a") ] ~return_type:TBool ();
         ];
     }
   in
@@ -1332,8 +1323,8 @@ let%test "validate_impl - multiple methods" =
       impl_for_type = TInt;
       impl_methods =
         [
-          { method_name = "compare"; method_params = [ ("x", TInt); ("y", TInt) ]; method_return_type = TInt };
-          { method_name = "less_than"; method_params = [ ("x", TInt); ("y", TInt) ]; method_return_type = TBool };
+          mk_method_sig ~name:"compare" ~params:[ ("x", TInt); ("y", TInt) ] ~return_type:TInt ();
+          mk_method_sig ~name:"less_than" ~params:[ ("x", TInt); ("y", TInt) ] ~return_type:TBool ();
         ];
     }
   in
@@ -1353,8 +1344,7 @@ let%test "derive_kind_for_impl recognizes eq contract" =
       impl_trait_name = "eq";
       impl_type_params = [];
       impl_for_type = TInt;
-      impl_methods =
-        [ { method_name = "eq"; method_params = [ ("x", TInt); ("y", TInt) ]; method_return_type = TBool } ];
+      impl_methods = [ mk_method_sig ~name:"eq" ~params:[ ("x", TInt); ("y", TInt) ] ~return_type:TBool () ];
     }
   in
   match derive_kind_for_impl impl with
@@ -1367,8 +1357,7 @@ let%test "derive_kind_for_impl rejects mismatched method set" =
       impl_trait_name = "eq";
       impl_type_params = [];
       impl_for_type = TInt;
-      impl_methods =
-        [ { method_name = "compare"; method_params = [ ("x", TInt); ("y", TInt) ]; method_return_type = TBool } ];
+      impl_methods = [ mk_method_sig ~name:"compare" ~params:[ ("x", TInt); ("y", TInt) ] ~return_type:TBool () ];
     }
   in
   derive_kind_for_impl impl = None
@@ -1386,8 +1375,7 @@ let%test "can_derive - non-derivable trait" =
       trait_name = "custom";
       trait_type_param = Some "a";
       trait_supertraits = [];
-      trait_methods =
-        [ { method_name = "custom"; method_params = [ ("x", TVar "a") ]; method_return_type = TInt } ];
+      trait_methods = [ mk_method_sig ~name:"custom" ~params:[ ("x", TVar "a") ] ~return_type:TInt () ];
     }
   in
   register_trait custom_trait;
@@ -1403,9 +1391,7 @@ let%test "can_derive - primitive types" =
       trait_type_param = Some "a";
       trait_supertraits = [];
       trait_methods =
-        [
-          { method_name = "eq"; method_params = [ ("x", TVar "a"); ("y", TVar "a") ]; method_return_type = TBool };
-        ];
+        [ mk_method_sig ~name:"eq" ~params:[ ("x", TVar "a"); ("y", TVar "a") ] ~return_type:TBool () ];
     }
   in
   register_trait eq_trait;
@@ -1428,9 +1414,7 @@ let%test "can_derive - function types fail" =
       trait_type_param = Some "a";
       trait_supertraits = [];
       trait_methods =
-        [
-          { method_name = "eq"; method_params = [ ("x", TVar "a"); ("y", TVar "a") ]; method_return_type = TBool };
-        ];
+        [ mk_method_sig ~name:"eq" ~params:[ ("x", TVar "a"); ("y", TVar "a") ] ~return_type:TBool () ];
     }
   in
   register_trait eq_trait;
@@ -1446,9 +1430,7 @@ let%test "generate_derived_impl - eq for int" =
       trait_type_param = Some "a";
       trait_supertraits = [];
       trait_methods =
-        [
-          { method_name = "eq"; method_params = [ ("x", TVar "a"); ("y", TVar "a") ]; method_return_type = TBool };
-        ];
+        [ mk_method_sig ~name:"eq" ~params:[ ("x", TVar "a"); ("y", TVar "a") ] ~return_type:TBool () ];
     }
   in
   register_trait eq_trait;
@@ -1464,8 +1446,7 @@ let%test "generate_derived_impl - show for string" =
       trait_name = "show";
       trait_type_param = Some "a";
       trait_supertraits = [];
-      trait_methods =
-        [ { method_name = "show"; method_params = [ ("x", TVar "a") ]; method_return_type = TString } ];
+      trait_methods = [ mk_method_sig ~name:"show" ~params:[ ("x", TVar "a") ] ~return_type:TString () ];
     }
   in
   register_trait show_trait;
@@ -1485,9 +1466,7 @@ let%test "derive_impl - registers impl" =
       trait_type_param = Some "a";
       trait_supertraits = [];
       trait_methods =
-        [
-          { method_name = "eq"; method_params = [ ("x", TVar "a"); ("y", TVar "a") ]; method_return_type = TBool };
-        ];
+        [ mk_method_sig ~name:"eq" ~params:[ ("x", TVar "a"); ("y", TVar "a") ] ~return_type:TBool () ];
     }
   in
   register_trait eq_trait;
@@ -1506,8 +1485,7 @@ let%test "derive_impl - overriding builtin impl is allowed once" =
       trait_name = "show";
       trait_type_param = Some "a";
       trait_supertraits = [];
-      trait_methods =
-        [ { method_name = "show"; method_params = [ ("x", TVar "a") ]; method_return_type = TString } ];
+      trait_methods = [ mk_method_sig ~name:"show" ~params:[ ("x", TVar "a") ] ~return_type:TString () ];
     }
   in
   register_trait show_trait;
@@ -1516,7 +1494,7 @@ let%test "derive_impl - overriding builtin impl is allowed once" =
       impl_trait_name = "show";
       impl_type_params = [];
       impl_for_type = TInt;
-      impl_methods = [ { method_name = "show"; method_params = [ ("x", TInt) ]; method_return_type = TString } ];
+      impl_methods = [ mk_method_sig ~name:"show" ~params:[ ("x", TInt) ] ~return_type:TString () ];
     };
   match derive_impl "show" TInt with
   | Error _ -> false
@@ -1533,7 +1511,7 @@ let%test "derive_impl - fails for non-derivable" =
       trait_name = "custom";
       trait_type_param = None;
       trait_supertraits = [];
-      trait_methods = [ { method_name = "foo"; method_params = []; method_return_type = TInt } ];
+      trait_methods = [ mk_method_sig ~name:"foo" ~params:[] ~return_type:TInt () ];
     }
   in
   register_trait custom_trait;
@@ -1548,8 +1526,7 @@ let%test "derive_impl - type parameter substitution" =
       trait_name = "show";
       trait_type_param = Some "a";
       trait_supertraits = [];
-      trait_methods =
-        [ { method_name = "show"; method_params = [ ("x", TVar "a") ]; method_return_type = TString } ];
+      trait_methods = [ mk_method_sig ~name:"show" ~params:[ ("x", TVar "a") ] ~return_type:TString () ];
     }
   in
   register_trait show_trait;
@@ -1572,9 +1549,7 @@ let%test "validate_impl rejects missing required supertrait implementation" =
       trait_type_param = Some "a";
       trait_supertraits = [];
       trait_methods =
-        [
-          { method_name = "eq"; method_params = [ ("x", TVar "a"); ("y", TVar "a") ]; method_return_type = TBool };
-        ];
+        [ mk_method_sig ~name:"eq" ~params:[ ("x", TVar "a"); ("y", TVar "a") ] ~return_type:TBool () ];
     };
   register_trait
     {
@@ -1582,13 +1557,7 @@ let%test "validate_impl rejects missing required supertrait implementation" =
       trait_type_param = Some "a";
       trait_supertraits = [ "eq" ];
       trait_methods =
-        [
-          {
-            method_name = "compare";
-            method_params = [ ("x", TVar "a"); ("y", TVar "a") ];
-            method_return_type = TInt;
-          };
-        ];
+        [ mk_method_sig ~name:"compare" ~params:[ ("x", TVar "a"); ("y", TVar "a") ] ~return_type:TInt () ];
     };
   match
     validate_impl
@@ -1597,13 +1566,7 @@ let%test "validate_impl rejects missing required supertrait implementation" =
         impl_type_params = [];
         impl_for_type = TString;
         impl_methods =
-          [
-            {
-              method_name = "compare";
-              method_params = [ ("x", TString); ("y", TString) ];
-              method_return_type = TInt;
-            };
-          ];
+          [ mk_method_sig ~name:"compare" ~params:[ ("x", TString); ("y", TString) ] ~return_type:TInt () ];
       }
   with
   | Ok () -> false
@@ -1618,8 +1581,7 @@ let%test "validate_impl accepts structural field-only supertrait satisfaction" =
       trait_name = "shown";
       trait_type_param = Some "a";
       trait_supertraits = [ "named" ];
-      trait_methods =
-        [ { method_name = "show"; method_params = [ ("x", TVar "a") ]; method_return_type = TString } ];
+      trait_methods = [ mk_method_sig ~name:"show" ~params:[ ("x", TVar "a") ] ~return_type:TString () ];
     };
   match
     validate_impl
@@ -1629,11 +1591,9 @@ let%test "validate_impl accepts structural field-only supertrait satisfaction" =
         impl_for_type = TRecord ([ { name = "name"; typ = TString } ], None);
         impl_methods =
           [
-            {
-              method_name = "show";
-              method_params = [ ("x", TRecord ([ { name = "name"; typ = TString } ], None)) ];
-              method_return_type = TString;
-            };
+            mk_method_sig ~name:"show"
+              ~params:[ ("x", TRecord ([ { name = "name"; typ = TString } ], None)) ]
+              ~return_type:TString ();
           ];
       }
   with
@@ -1649,8 +1609,7 @@ let%test "validate_impl rejects field-only supertrait when structural fields are
       trait_name = "shown";
       trait_type_param = Some "a";
       trait_supertraits = [ "named" ];
-      trait_methods =
-        [ { method_name = "show"; method_params = [ ("x", TVar "a") ]; method_return_type = TString } ];
+      trait_methods = [ mk_method_sig ~name:"show" ~params:[ ("x", TVar "a") ] ~return_type:TString () ];
     };
   match
     validate_impl
@@ -1658,7 +1617,7 @@ let%test "validate_impl rejects field-only supertrait when structural fields are
         impl_trait_name = "shown";
         impl_type_params = [];
         impl_for_type = TInt;
-        impl_methods = [ { method_name = "show"; method_params = [ ("x", TInt) ]; method_return_type = TString } ];
+        impl_methods = [ mk_method_sig ~name:"show" ~params:[ ("x", TInt) ] ~return_type:TString () ];
       }
   with
   | Ok () -> false

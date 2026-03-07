@@ -1380,7 +1380,7 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                             | Some type_param ->
                                 let subst_type_param = substitution_singleton type_param receiver_type' in
                                 {
-                                  Trait_registry.method_name = method_sig.method_name;
+                                  method_sig with
                                   method_params =
                                     List.map
                                       (fun (name, ty) -> (name, apply_substitution subst_type_param ty))
@@ -2500,11 +2500,25 @@ and infer_statement type_map env stmt =
             m.method_params
         in
         let* return_type = convert_type_expr m.method_return_type in
+        let method_generics =
+          match m.method_generics with
+          | None -> []
+          | Some gps -> List.map (fun (gp : AST.generic_param) -> gp.name) gps
+        in
+        let method_effect =
+          match m.method_effect with
+          | AST.Pure -> `Pure
+          | AST.Effectful -> `Effectful
+        in
         Ok
           {
-            Trait_registry.method_name = m.method_name;
+            Trait_registry.method_key =
+              Resolution_artifacts.UserCallable { file_id = None; callable_id = m.method_sig_id };
+            method_name = m.method_name;
+            method_generics;
             method_params = param_types;
             method_return_type = return_type;
+            method_effect;
           }
       in
       let convert_trait_field (f : AST.record_type_field) : (Types.record_field_type, Diagnostic.t) result =
@@ -2625,12 +2639,27 @@ and infer_statement type_map env stmt =
                                   let inferred_body_type' = apply_substitution subst inferred_body_type in
                                   let return_type' = apply_substitution subst return_type in
                                   if Annotation.check_annotation return_type' inferred_body_type' then
+                                    let method_generics =
+                                      match m.impl_method_generics with
+                                      | None -> []
+                                      | Some gps -> List.map (fun (gp : AST.generic_param) -> gp.name) gps
+                                    in
+                                    let method_effect =
+                                      match m.impl_method_effect with
+                                      | Some AST.Effectful -> `Effectful
+                                      | Some AST.Pure | None -> `Pure
+                                    in
                                     Ok
                                       (Some
                                          ( {
-                                             Trait_registry.method_name = m.impl_method_name;
+                                             Trait_registry.method_key =
+                                               Resolution_artifacts.UserCallable
+                                                 { file_id = None; callable_id = m.impl_method_id };
+                                             method_name = m.impl_method_name;
+                                             method_generics;
                                              method_params = param_types;
                                              method_return_type = return_type;
+                                             method_effect;
                                            },
                                            subst ))
                                   else
@@ -2801,11 +2830,26 @@ and infer_statement type_map env stmt =
                               let inferred_body_type' = apply_substitution subst inferred_body_type in
                               let return_type' = apply_substitution subst return_type in
                               if Annotation.check_annotation return_type' inferred_body_type' then
+                                let method_generics =
+                                  match m.impl_method_generics with
+                                  | None -> []
+                                  | Some gps -> List.map (fun (gp : AST.generic_param) -> gp.name) gps
+                                in
+                                let method_effect =
+                                  match m.impl_method_effect with
+                                  | Some AST.Effectful -> `Effectful
+                                  | Some AST.Pure | None -> `Pure
+                                in
                                 Ok
                                   ( {
-                                      Trait_registry.method_name = m.impl_method_name;
+                                      Trait_registry.method_key =
+                                        Resolution_artifacts.UserCallable
+                                          { file_id = None; callable_id = m.impl_method_id };
+                                      method_name = m.impl_method_name;
+                                      method_generics;
                                       method_params = param_types;
                                       method_return_type = return_type;
+                                      method_effect;
                                     },
                                     subst )
                               else
@@ -4440,7 +4484,7 @@ f"
         trait_type_param = Some "a";
         trait_supertraits = [];
         trait_methods =
-          [ { method_name = "render"; method_params = [ ("x", TVar "a") ]; method_return_type = TString } ];
+          [ Trait_registry.mk_method_sig ~name:"render" ~params:[ ("x", TVar "a") ] ~return_type:TString () ];
       };
     Trait_registry.register_trait
       {
@@ -4448,7 +4492,7 @@ f"
         trait_type_param = Some "a";
         trait_supertraits = [];
         trait_methods =
-          [ { method_name = "render"; method_params = [ ("x", TVar "a") ]; method_return_type = TString } ];
+          [ Trait_registry.mk_method_sig ~name:"render" ~params:[ ("x", TVar "a") ] ~return_type:TString () ];
       };
     match infer_string "let f = fn[a: t1 + t2](x: a) -> string { x.render() }; f" with
     | Ok _ -> false
@@ -4562,14 +4606,15 @@ f"
         trait_type_param = Some "a";
         trait_supertraits = [];
         trait_methods =
-          [ { method_name = "show"; method_params = [ ("x", TVar "a") ]; method_return_type = TString } ];
+          [ Trait_registry.mk_method_sig ~name:"show" ~params:[ ("x", TVar "a") ] ~return_type:TString () ];
       };
     Trait_registry.register_impl ~builtin:true
       {
         impl_trait_name = "show";
         impl_type_params = [];
         impl_for_type = TInt;
-        impl_methods = [ { method_name = "show"; method_params = [ ("x", TInt) ]; method_return_type = TString } ];
+        impl_methods =
+          [ Trait_registry.mk_method_sig ~name:"show" ~params:[ ("x", TInt) ] ~return_type:TString () ];
       };
     let shared_state = create_inference_state () in
     match Syntax.Parser.parse ~file_id:"<test>" "let check = fn[a: show](x: a) -> string { x.show() }" with

@@ -214,7 +214,9 @@ let setup_builtins () =
       trait_supertraits = [];
       trait_methods =
         [
-          { method_name = "show"; method_params = [ ("x", Types.TVar "a") ]; method_return_type = Types.TString };
+          Trait_registry.mk_method_sig ~name:"show"
+            ~params:[ ("x", Types.TVar "a") ]
+            ~return_type:Types.TString ();
         ];
     };
   (* Register eq trait *)
@@ -225,11 +227,9 @@ let setup_builtins () =
       trait_supertraits = [];
       trait_methods =
         [
-          {
-            method_name = "eq";
-            method_params = [ ("x", Types.TVar "a"); ("y", Types.TVar "a") ];
-            method_return_type = Types.TBool;
-          };
+          Trait_registry.mk_method_sig ~name:"eq"
+            ~params:[ ("x", Types.TVar "a"); ("y", Types.TVar "a") ]
+            ~return_type:Types.TBool ();
         ];
     };
   (* Register impls for int *)
@@ -239,7 +239,7 @@ let setup_builtins () =
       impl_type_params = [];
       impl_for_type = Types.TInt;
       impl_methods =
-        [ { method_name = "show"; method_params = [ ("x", Types.TInt) ]; method_return_type = Types.TString } ];
+        [ Trait_registry.mk_method_sig ~name:"show" ~params:[ ("x", Types.TInt) ] ~return_type:Types.TString () ];
     };
   Trait_registry.register_impl ~builtin:true
     {
@@ -248,11 +248,9 @@ let setup_builtins () =
       impl_for_type = Types.TInt;
       impl_methods =
         [
-          {
-            method_name = "eq";
-            method_params = [ ("x", Types.TInt); ("y", Types.TInt) ];
-            method_return_type = Types.TBool;
-          };
+          Trait_registry.mk_method_sig ~name:"eq"
+            ~params:[ ("x", Types.TInt); ("y", Types.TInt) ]
+            ~return_type:Types.TBool ();
         ];
     };
   (* Register impl for string *)
@@ -262,7 +260,9 @@ let setup_builtins () =
       impl_type_params = [];
       impl_for_type = Types.TString;
       impl_methods =
-        [ { method_name = "show"; method_params = [ ("x", Types.TString) ]; method_return_type = Types.TString } ];
+        [
+          Trait_registry.mk_method_sig ~name:"show" ~params:[ ("x", Types.TString) ] ~return_type:Types.TString ();
+        ];
     }
 
 let contains_substring s sub = String_utils.contains_substring ~needle:sub s
@@ -330,11 +330,9 @@ let%test "check_constraints enforces supertrait obligations transitively" =
       trait_supertraits = [];
       trait_methods =
         [
-          {
-            method_name = "eq";
-            method_params = [ ("x", Types.TVar "a"); ("y", Types.TVar "a") ];
-            method_return_type = Types.TBool;
-          };
+          Trait_registry.mk_method_sig ~name:"eq"
+            ~params:[ ("x", Types.TVar "a"); ("y", Types.TVar "a") ]
+            ~return_type:Types.TBool ();
         ];
     };
   Trait_registry.register_trait
@@ -344,11 +342,9 @@ let%test "check_constraints enforces supertrait obligations transitively" =
       trait_supertraits = [ "eq" ];
       trait_methods =
         [
-          {
-            method_name = "compare";
-            method_params = [ ("x", Types.TVar "a"); ("y", Types.TVar "a") ];
-            method_return_type = Types.TInt;
-          };
+          Trait_registry.mk_method_sig ~name:"compare"
+            ~params:[ ("x", Types.TVar "a"); ("y", Types.TVar "a") ]
+            ~return_type:Types.TInt ();
         ];
     };
   Trait_registry.register_impl
@@ -358,11 +354,9 @@ let%test "check_constraints enforces supertrait obligations transitively" =
       impl_for_type = Types.TString;
       impl_methods =
         [
-          {
-            method_name = "compare";
-            method_params = [ ("x", Types.TString); ("y", Types.TString) ];
-            method_return_type = Types.TInt;
-          };
+          Trait_registry.mk_method_sig ~name:"compare"
+            ~params:[ ("x", Types.TString); ("y", Types.TString) ]
+            ~return_type:Types.TInt ();
         ];
     };
   match check_constraints Types.TString [ "ord" ] with
@@ -378,11 +372,9 @@ let%test "satisfies_trait enforces supertrait obligations transitively" =
       trait_supertraits = [];
       trait_methods =
         [
-          {
-            method_name = "eq";
-            method_params = [ ("x", Types.TVar "a"); ("y", Types.TVar "a") ];
-            method_return_type = Types.TBool;
-          };
+          Trait_registry.mk_method_sig ~name:"eq"
+            ~params:[ ("x", Types.TVar "a"); ("y", Types.TVar "a") ]
+            ~return_type:Types.TBool ();
         ];
     };
   Trait_registry.register_trait
@@ -392,11 +384,9 @@ let%test "satisfies_trait enforces supertrait obligations transitively" =
       trait_supertraits = [ "eq" ];
       trait_methods =
         [
-          {
-            method_name = "compare";
-            method_params = [ ("x", Types.TVar "a"); ("y", Types.TVar "a") ];
-            method_return_type = Types.TInt;
-          };
+          Trait_registry.mk_method_sig ~name:"compare"
+            ~params:[ ("x", Types.TVar "a"); ("y", Types.TVar "a") ]
+            ~return_type:Types.TInt ();
         ];
     };
   Trait_registry.register_impl
@@ -406,11 +396,9 @@ let%test "satisfies_trait enforces supertrait obligations transitively" =
       impl_for_type = Types.TString;
       impl_methods =
         [
-          {
-            method_name = "compare";
-            method_params = [ ("x", Types.TString); ("y", Types.TString) ];
-            method_return_type = Types.TInt;
-          };
+          Trait_registry.mk_method_sig ~name:"compare"
+            ~params:[ ("x", Types.TString); ("y", Types.TString) ]
+            ~return_type:Types.TInt ();
         ];
     };
   match satisfies_trait Types.TString "ord" with
@@ -453,7 +441,7 @@ let%test "mixed trait requires both structural fields and nominal impl" =
       trait_type_param = None;
       trait_supertraits = [];
       trait_methods =
-        [ { method_name = "show"; method_params = [ ("x", person_type) ]; method_return_type = Types.TString } ];
+        [ Trait_registry.mk_method_sig ~name:"show" ~params:[ ("x", person_type) ] ~return_type:Types.TString () ];
     };
   Trait_registry.set_trait_fields "named_show" [ { Types.name = "name"; typ = Types.TString } ];
   let fails_without_impl =
@@ -467,7 +455,7 @@ let%test "mixed trait requires both structural fields and nominal impl" =
       impl_type_params = [];
       impl_for_type = person_type;
       impl_methods =
-        [ { method_name = "show"; method_params = [ ("x", person_type) ]; method_return_type = Types.TString } ];
+        [ Trait_registry.mk_method_sig ~name:"show" ~params:[ ("x", person_type) ] ~return_type:Types.TString () ];
     };
   let passes_with_impl =
     match satisfies_trait person_type "named_show" with
