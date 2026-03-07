@@ -325,9 +325,12 @@ type mono_state = {
       (* local value alias (e.g. let f = r.compute) -> user function name *)
   mutable top_level_value_bindings : StringSet.t;
       (* top-level non-function let bindings available to later top-level functions *)
+  call_resolution_map : (int, Infer.method_resolution) Hashtbl.t;
+      (* Phase 5: explicit call-resolution metadata from typechecker *)
 }
 
-let create_mono_state ?(module_path = "main") ?(concrete_only = true) () =
+let create_mono_state ?(module_path = "main") ?(concrete_only = true) ?(call_resolution_map = Hashtbl.create 0) ()
+    =
   if module_path <> "main" then
     failwith
       "Module codegen policy: single Go package per build (module_path must be 'main' until module backend ships)";
@@ -346,6 +349,7 @@ let create_mono_state ?(module_path = "main") ?(concrete_only = true) () =
     record_field_func_aliases = Hashtbl.create 32;
     value_func_aliases = Hashtbl.create 32;
     top_level_value_bindings = StringSet.empty;
+    call_resolution_map;
   }
 
 (* ============================================================
@@ -1772,11 +1776,11 @@ and collect_insts_expr
           collect_insts_expr state type_map env receiver;
           List.iter (fun arg -> collect_insts_expr state type_map env arg) args;
           let receiver_type = Types.canonicalize_mono_type (get_type type_map receiver) in
-          let method_resolution = Typecheck.Infer.lookup_method_resolution expr.id in
+          let method_resolution = Hashtbl.find_opt state.call_resolution_map expr.id in
           match method_resolution with
-          | Some (Typecheck.Infer.TraitMethod trait_name) ->
+          | Some (Infer.TraitMethod trait_name) ->
               register_impl_method_use state type_map env ~trait_name ~method_name ~for_type:receiver_type
-          | Some Typecheck.Infer.InherentMethod -> ()
+          | Some Infer.InherentMethod -> ()
           | None -> (
               match receiver.expr with
               | AST.Identifier record_name -> (
@@ -2239,15 +2243,14 @@ let rec emit_expr
             in
 
             (* Use method-resolution metadata from typechecking; codegen must not re-resolve. *)
-            let method_resolution = Typecheck.Infer.lookup_method_resolution expr.id in
+            let method_resolution = Hashtbl.find_opt state.mono.call_resolution_map expr.id in
             match method_resolution with
             | Some resolution ->
                 let type_suffix = mangle_type receiver_type in
                 let func_name =
                   match resolution with
-                  | Typecheck.Infer.TraitMethod trait_name ->
-                      Printf.sprintf "%s_%s_%s" trait_name variant_name type_suffix
-                  | Typecheck.Infer.InherentMethod -> Printf.sprintf "inherent_%s_%s" variant_name type_suffix
+                  | Infer.TraitMethod trait_name -> Printf.sprintf "%s_%s_%s" trait_name variant_name type_suffix
+                  | Infer.InherentMethod -> Printf.sprintf "inherent_%s_%s" variant_name type_suffix
                 in
                 (* Emit receiver and arguments *)
                 let receiver_str = emit_expr state type_map env receiver in
@@ -4287,8 +4290,11 @@ let add_inherent_call_site_if_new (sites : inherent_call_site list) (site : inhe
   else
     site :: sites
 
-let collect_inherent_call_sites ~(concrete_only : bool) (type_map : Infer.type_map) (program : AST.program) :
-    inherent_call_site list =
+let collect_inherent_call_sites
+    ~(concrete_only : bool)
+    (call_resolution_map : (int, Infer.method_resolution) Hashtbl.t)
+    (type_map : Infer.type_map)
+    (program : AST.program) : inherent_call_site list =
   let rec collect_expr (acc : inherent_call_site list) (expr : AST.expression) : inherent_call_site list =
     match expr.expr with
     | AST.Identifier _ | AST.Integer _ | AST.Float _ | AST.Boolean _ | AST.String _ -> acc
@@ -4333,7 +4339,7 @@ let collect_inherent_call_sites ~(concrete_only : bool) (type_map : Infer.type_m
     | AST.MethodCall { mc_receiver = receiver; mc_method = method_name; mc_args = args; _ } -> (
         let acc' = collect_expr acc receiver in
         let acc'' = List.fold_left collect_expr acc' args in
-        match Infer.lookup_method_resolution expr.id with
+        match Hashtbl.find_opt call_resolution_map expr.id with
         | Some Infer.InherentMethod ->
             let receiver_type =
               normalize_type_for_codegen ~concrete_only
@@ -4516,7 +4522,10 @@ let emit_inherent_methods
     (state : emit_state) (type_map : Infer.type_map) (typed_env : Infer.type_env) (program : AST.program) : string
     =
   let inherent_impls = collect_inherent_impl_defs program in
-  let call_sites = collect_inherent_call_sites ~concrete_only:state.mono.concrete_only type_map program in
+  let call_sites =
+    collect_inherent_call_sites ~concrete_only:state.mono.concrete_only state.mono.call_resolution_map type_map
+      program
+  in
 
   let concrete_method_targets : (string * Types.mono_type) list =
     inherent_impls
@@ -4673,9 +4682,12 @@ let emit_builtin_impls (program : AST.program) : string =
     Program Emission
     ============================================================ *)
 
-let emit_program_with_typed_env (type_map : Infer.type_map) (typed_env : Infer.type_env) (program : AST.program) :
-    string =
-  let mono_state = create_mono_state () in
+let emit_program_with_typed_env
+    ~(call_resolution_map : (int, Infer.method_resolution) Hashtbl.t)
+    (type_map : Infer.type_map)
+    (typed_env : Infer.type_env)
+    (program : AST.program) : string =
+  let mono_state = create_mono_state ~call_resolution_map () in
 
   (* Pass 1: Collect function definitions *)
   List.iter (collect_funcs_stmt ~top_level:true mono_state) program;
@@ -4802,7 +4814,8 @@ let emit_program (program : AST.program) : string =
       failwith
         (Printf.sprintf "Codegen error: cannot emit untyped program: %s" (Typecheck.Checker.format_error err))
   | Error [] -> failwith "Codegen error: cannot emit untyped program"
-  | Ok { environment = typed_env; type_map; _ } -> emit_program_with_typed_env type_map typed_env program
+  | Ok { environment = typed_env; type_map; call_resolution_map; _ } ->
+      emit_program_with_typed_env ~call_resolution_map type_map typed_env program
 
 (* ============================================================
    Runtime
@@ -4933,8 +4946,8 @@ let compile_string ~file_id (source : string) : (string, Diagnostic.t list) resu
       let env = Typecheck.Builtins.prelude_env () in
       match Typecheck.Checker.check_program_with_annotations ~env program with
       | Error errs -> Error errs
-      | Ok { environment = typed_env; type_map; _ } -> (
-          try Ok (emit_program_with_typed_env type_map typed_env program) with
+      | Ok { environment = typed_env; type_map; call_resolution_map; _ } -> (
+          try Ok (emit_program_with_typed_env ~call_resolution_map type_map typed_env program) with
           | Failure msg -> Error [ diagnostic_of_codegen_failure_message msg ]
           | exn ->
               let msg = normalize_codegen_failure_message (Printexc.to_string exn) in
@@ -5319,10 +5332,13 @@ v.ping()
       let env = Typecheck.Builtins.prelude_env () in
       match Typecheck.Checker.check_program_with_annotations ~env program with
       | Error _ -> false
-      | Ok { environment = typed_env; type_map; _ } -> (
+      | Ok { environment = typed_env; type_map; call_resolution_map; _ } -> (
           (* If emitter re-resolves methods from the registry, this clear would break codegen. *)
           Typecheck.Trait_registry.clear ();
-          match try Some (emit_program_with_typed_env type_map typed_env program) with _ -> None with
+          match
+            try Some (emit_program_with_typed_env ~call_resolution_map type_map typed_env program)
+            with _ -> None
+          with
           | Some code -> string_contains code "ping_ping_int64"
           | None -> false))
 
@@ -5347,9 +5363,12 @@ v.ping()
   | Ok program -> (
       match Typecheck.Checker.check_program_with_annotations program with
       | Error _ -> false
-      | Ok { environment = typed_env; type_map; _ } -> (
+      | Ok { environment = typed_env; type_map; call_resolution_map; _ } -> (
           Typecheck.Inherent_registry.clear ();
-          match try Some (emit_program_with_typed_env type_map typed_env program) with _ -> None with
+          match
+            try Some (emit_program_with_typed_env ~call_resolution_map type_map typed_env program)
+            with _ -> None
+          with
           | Some code -> string_contains code "inherent_ping_int64"
           | None -> false))
 
@@ -5668,8 +5687,8 @@ puts(1.show())
           let env = Typecheck.Builtins.prelude_env () in
           match Typecheck.Checker.check_program_with_annotations ~env program with
           | Error _ -> false
-          | Ok { environment = typed_env; type_map; _ } ->
-              let mono_state = create_mono_state () in
+          | Ok { environment = typed_env; type_map; call_resolution_map; _ } ->
+              let mono_state = create_mono_state ~call_resolution_map () in
               List.iter (collect_funcs_stmt mono_state) program;
               ignore (List.fold_left (collect_insts_stmt mono_state type_map) typed_env program);
               ImplInstSet.cardinal mono_state.impl_instantiations = 1

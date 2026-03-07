@@ -335,6 +335,9 @@ let record_method_resolution (expr : AST.expression) (resolution : method_resolu
 let lookup_method_resolution (expr_id : int) : method_resolution option =
   Hashtbl.find_opt global_method_resolution_store expr_id
 
+let snapshot_method_resolution_store () : (int, method_resolution) Hashtbl.t =
+  Hashtbl.copy global_method_resolution_store
+
 type obligation_reason = GenericConstraint of string
 
 type obligation = {

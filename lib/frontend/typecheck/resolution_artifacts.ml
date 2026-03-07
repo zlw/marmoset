@@ -15,3 +15,14 @@ type callable_key =
     }
   | SyntheticCallable of string
 [@@deriving show, eq]
+
+(* Phase 5.4: Typed method-definition artifact.
+   Records inferred signatures so the emitter can use them as source-of-truth
+   without re-reading trait/inherent registries. Populated during Phase 6. *)
+type typed_method_def = {
+  md_param_names : string list;
+  md_param_types : Types.mono_type list;
+  md_return_type : Types.mono_type;
+  md_is_effectful : bool;
+  md_body_id : int;
+}
