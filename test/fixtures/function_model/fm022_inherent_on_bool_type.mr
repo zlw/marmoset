@@ -1,0 +1,8 @@
+impl bool {
+  fn to_yn(b: bool) -> string {
+    if (b) { "yes" } else { "no" }
+  }
+}
+
+puts(true.to_yn())  # output: yes
+puts(false.to_yn())  # output: no

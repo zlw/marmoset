@@ -1,0 +1,17 @@
+# xfail: inherent-first precedence not implemented
+enum color { red green blue }
+
+trait describe[a] {
+  fn desc(x: a) -> string
+}
+
+impl describe for color {
+  fn desc(x: color) -> string { "trait" }
+}
+
+impl color {
+  fn desc(c: color) -> string { "inherent" }
+}
+
+let c = color.red
+puts(c.desc())  # output: inherent

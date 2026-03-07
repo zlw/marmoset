@@ -1,0 +1,12 @@
+# xfail: inherent method annotation omission not implemented
+type point = { x: int, y: int }
+
+# Inherent method omits return annotation — infers from body
+impl point {
+  fn sum(p: point) {
+    p.x + p.y
+  }
+}
+
+let p: point = { x: 3, y: 7 }
+puts(p.sum())  # output: 10

@@ -1,0 +1,12 @@
+# xfail: qualified type calls not implemented
+type counter = { n: int }
+
+impl counter {
+  fn bump(c: counter) -> counter {
+    { n: c.n + 1 }
+  }
+}
+
+let c: counter = { n: 0 }
+let c2 = counter.bump(c)
+puts(c2.n)  # output: 1

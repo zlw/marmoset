@@ -1,0 +1,8 @@
+enum empty_enum { a b }
+
+impl empty_enum {
+  fn dummy(e: empty_enum) -> int { 0 }
+}
+
+let e = empty_enum.a
+puts(e.dummy())  # output: 0

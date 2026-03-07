@@ -1,0 +1,12 @@
+# xfail: qualified type calls not implemented
+type score = { v: int }
+
+impl score {
+  fn value(s: score) -> int {
+    s.v
+  }
+}
+
+let s: score = { v: 10 }
+let result = score.value(s) + 5
+puts(result)  # output: 15

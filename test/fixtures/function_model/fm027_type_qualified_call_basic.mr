@@ -1,0 +1,11 @@
+# xfail: qualified type calls not implemented
+type point = { x: int, y: int }
+
+impl point {
+  fn sum(p: point) -> int {
+    p.x + p.y
+  }
+}
+
+let p: point = { x: 3, y: 7 }
+puts(point.sum(p))  # output: 10

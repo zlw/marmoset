@@ -1,0 +1,16 @@
+# xfail: method-level generics not implemented
+enum opt[a] { some(a) none }
+
+impl opt[a] {
+  fn flat_map[b](o: opt[a], f: fn(a) -> opt[b]) -> opt[b] {
+    match o {
+      opt.some(v): f(v)
+      opt.none: opt.none
+    }
+  }
+}
+
+let x = opt.some(5)
+let y = x.flat_map(fn(n: int) -> opt[string] {
+  if (n > 0) { opt.some(n.show()) } else { opt.none }
+})

@@ -1,0 +1,16 @@
+# xfail: recursive method call on reconstructed self type loses alias
+type counter = { n: int }
+
+impl counter {
+  fn count_down(c: counter) -> string {
+    if (c.n <= 0) {
+      "done"
+    } else {
+      let next: counter = { n: c.n - 1 }
+      next.count_down()
+    }
+  }
+}
+
+let c: counter = { n: 3 }
+puts(c.count_down())  # output: done

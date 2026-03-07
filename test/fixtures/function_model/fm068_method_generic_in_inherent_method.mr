@@ -1,0 +1,12 @@
+# xfail: method-level generics not implemented
+type wrapper = { v: int }
+
+impl wrapper {
+  fn transform[b](w: wrapper, f: fn(int) -> b) -> b {
+    f(w.v)
+  }
+}
+
+let w: wrapper = { v: 10 }
+let s = w.transform(fn(n: int) -> string { n.show() })
+puts(s)  # output: 10

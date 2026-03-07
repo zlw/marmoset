@@ -1,0 +1,14 @@
+# xfail: method-level generics not implemented
+enum result[a, b] { ok(a) err(b) }
+
+impl result[a, b] {
+  fn map[c](r: result[a, b], f: fn(a) -> c) -> result[c, b] {
+    match r {
+      result.ok(v): result.ok(f(v))
+      result.err(e): result.err(e)
+    }
+  }
+}
+
+let r = result.ok(42)
+let r2 = r.map(fn(n: int) -> string { n.show() })

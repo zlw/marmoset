@@ -1,0 +1,11 @@
+# xfail: method-level generics not implemented
+type box = { v: int }
+
+impl box {
+  fn apply[b: show](bx: box, f: fn(int) -> b) -> string {
+    f(bx.v).show()
+  }
+}
+
+let b: box = { v: 7 }
+puts(b.apply(fn(n: int) -> int { n * 2 }))  # output: 14

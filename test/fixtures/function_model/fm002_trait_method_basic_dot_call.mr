@@ -1,0 +1,18 @@
+enum color { red green blue }
+
+trait label[a] {
+  fn label(x: a) -> string
+}
+
+impl label for color {
+  fn label(x: color) -> string {
+    match x {
+      color.red: "red"
+      color.green: "green"
+      color.blue: "blue"
+    }
+  }
+}
+
+let c = color.red
+puts(c.label())  # output: red

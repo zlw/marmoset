@@ -1,0 +1,23 @@
+# xfail: supertrait-expanded ambiguity not implemented
+trait base[a] {
+  fn name(x: a) -> string
+}
+
+trait ext[a]: base {
+  fn extra(x: a) -> int
+}
+
+type thing = { v: int }
+
+impl base for thing {
+  fn name(x: thing) -> string { "base" }
+}
+
+impl ext for thing {
+  fn extra(x: thing) -> int { x.v }
+  fn name(x: thing) -> string { "ext" }
+}
+
+let t: thing = { v: 1 }
+# base.name and ext.name both provide `name` → ambiguity
+t.name()  # error: Ambiguous

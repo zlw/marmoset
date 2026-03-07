@@ -1,0 +1,10 @@
+type myint = int
+
+impl myint {
+  fn doubled(x: myint) -> myint {
+    x + x
+  }
+}
+
+let n: myint = 7
+puts(n.doubled())  # output: 14

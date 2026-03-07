@@ -1,0 +1,11 @@
+# xfail: method-level generics not implemented
+type box = { v: int }
+
+impl box {
+  fn render[t: show](b: box, f: fn(int) -> t) -> string {
+    f(b.v).show()
+  }
+}
+
+let b: box = { v: 3 }
+puts(b.render(fn(n: int) -> int { n * 2 }))  # output: 6

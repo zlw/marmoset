@@ -1,0 +1,20 @@
+type val = { v: int }
+
+trait reader[a] {
+  fn read(x: a) -> int
+}
+
+trait sensor[a] {
+  fn read(x: a) -> int
+}
+
+impl reader for val {
+  fn read(x: val) -> int { x.v }
+}
+
+impl sensor for val {
+  fn read(x: val) -> int { x.v + 1 }
+}
+
+let v: val = { v: 5 }
+v.read()  # error: Ambiguous

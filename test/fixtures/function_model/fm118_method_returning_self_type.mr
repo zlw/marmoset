@@ -1,0 +1,13 @@
+type builder = { parts: int }
+
+impl builder {
+  fn add(b: builder) -> builder {
+    { parts: b.parts + 1 }
+  }
+  fn count(b: builder) -> int {
+    b.parts
+  }
+}
+
+let b: builder = { parts: 0 }
+puts(b.add().add().add().count())  # output: 3

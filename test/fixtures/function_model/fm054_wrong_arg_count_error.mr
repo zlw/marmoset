@@ -1,0 +1,10 @@
+type val = { v: int }
+
+impl val {
+  fn get(v: val) -> int {
+    v.v
+  }
+}
+
+let v: val = { v: 1 }
+v.get(1, 2)  # error: *

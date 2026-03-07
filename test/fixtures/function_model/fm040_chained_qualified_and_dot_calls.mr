@@ -1,0 +1,16 @@
+# xfail: qualified type calls not implemented
+type num = { v: int }
+
+impl num {
+  fn inc(n: num) -> num {
+    { v: n.v + 1 }
+  }
+  fn value(n: num) -> int {
+    n.v
+  }
+}
+
+let n: num = { v: 0 }
+# mix qualified and dot forms
+let n2 = num.inc(n)
+puts(n2.value())  # output: 1

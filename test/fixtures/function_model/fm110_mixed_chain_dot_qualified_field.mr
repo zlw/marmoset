@@ -1,0 +1,26 @@
+# xfail: qualified calls and mixed dispatch not implemented
+type counter = { n: int, fmt: fn(int) -> string }
+
+trait display[a] {
+  fn render(x: a) -> string
+}
+
+impl display for counter {
+  fn render(x: counter) -> string { "display:" + x.n.show() }
+}
+
+impl counter {
+  fn value(c: counter) -> int { c.n }
+}
+
+let fmt_fn = fn(n: int) -> string { "n=" + n.show() }
+let c: counter = { n: 5, fmt: fmt_fn }
+
+# dot call (inherent)
+let v = c.value()
+# field-function fallback
+let s = c.fmt(v)
+# qualified trait call
+let d = display.render(c)
+puts(s)  # output: n=5
+puts(d)  # output: display:5

@@ -1,0 +1,11 @@
+# xfail: inherent-first precedence not implemented (collision with builtin show)
+type mynum = int
+
+impl mynum {
+  fn show(x: mynum) -> string {
+    "my:" + x.show()
+  }
+}
+
+let n: mynum = 42
+puts(n.show())  # output: my:42

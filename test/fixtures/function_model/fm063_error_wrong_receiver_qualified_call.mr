@@ -1,0 +1,13 @@
+type alpha = { v: int }
+type beta = { v: int }
+
+trait label[a] {
+  fn tag(x: a) -> string
+}
+
+impl label for alpha {
+  fn tag(x: alpha) -> string { "alpha" }
+}
+
+let b: beta = { v: 1 }
+label.tag(b)  # error: *

@@ -1,0 +1,15 @@
+# xfail: method-level generics not implemented
+type box = { v: int }
+
+impl box {
+  fn as_type[b](bx: box, f: fn(int) -> b) -> b {
+    f(bx.v)
+  }
+}
+
+let b: box = { v: 42 }
+# Two different specializations of the same method generic
+let s = b.as_type(fn(n: int) -> string { n.show() })
+let i = b.as_type(fn(n: int) -> int { n + 1 })
+puts(s)  # output: 42
+puts(i)  # output: 43

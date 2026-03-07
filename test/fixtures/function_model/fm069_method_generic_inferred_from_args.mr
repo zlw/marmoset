@@ -1,0 +1,14 @@
+# xfail: method-level generics not implemented
+enum opt[a] { some(a) none }
+
+impl opt[a] {
+  fn map[b](o: opt[a], f: fn(a) -> b) -> opt[b] {
+    match o {
+      opt.some(v): opt.some(f(v))
+      opt.none: opt.none
+    }
+  }
+}
+
+let x = opt.some(42)
+let y = x.map(fn(n: int) -> string { n.show() })

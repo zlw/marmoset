@@ -1,0 +1,16 @@
+# xfail: method call type args syntax not implemented
+type box = { v: int }
+
+impl box {
+  fn transform[b](bx: box, f: fn(int) -> b) -> b {
+    f(bx.v)
+  }
+}
+
+let b: box = { v: 10 }
+# inferred
+let r1 = b.transform(fn(n: int) -> string { n.show() })
+# explicit
+let r2 = b.transform[int](fn(n: int) -> int { n + 1 })
+puts(r1)  # output: 10
+puts(r2)  # output: 11

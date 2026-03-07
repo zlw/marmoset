@@ -1,0 +1,15 @@
+# xfail: effect annotation on trait method sigs not implemented
+trait processor[a] {
+  fn process(x: a) => string
+}
+
+type data = { v: int }
+
+impl processor for data {
+  fn process(x: data) => string {
+    x.v.show()
+  }
+}
+
+let d: data = { v: 7 }
+puts(d.process())  # output: 7

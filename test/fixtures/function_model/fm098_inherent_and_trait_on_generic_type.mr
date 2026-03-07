@@ -1,0 +1,27 @@
+# xfail: inherent-first precedence not implemented
+enum opt[a] { some(a) none }
+
+trait unwrapper[a] {
+  fn get(x: a) -> int
+}
+
+impl unwrapper for opt[int] {
+  fn get(x: opt[int]) -> int {
+    match x {
+      opt.some(v): v
+      opt.none: 0
+    }
+  }
+}
+
+impl opt[int] {
+  fn get(o: opt[int]) -> int {
+    match o {
+      opt.some(v): v
+      opt.none: -1
+    }
+  }
+}
+
+let x = opt.some(42)
+puts(x.get())  # output: 42

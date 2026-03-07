@@ -1,0 +1,11 @@
+trait fmt[a] {
+  fn render(x: a) -> string
+}
+
+trait debug[a] {
+  fn render(x: a) -> string
+}
+
+let f = fn[t: fmt + debug](x: t) -> string {
+  x.render()  # error: Ambiguous
+}

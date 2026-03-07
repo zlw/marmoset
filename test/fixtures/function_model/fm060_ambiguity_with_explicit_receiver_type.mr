@@ -1,0 +1,20 @@
+type node = { id: int }
+
+trait visitor[a] {
+  fn visit(x: a) -> string
+}
+
+trait walker[a] {
+  fn visit(x: a) -> string
+}
+
+impl visitor for node {
+  fn visit(x: node) -> string { "visitor" }
+}
+
+impl walker for node {
+  fn visit(x: node) -> string { "walker" }
+}
+
+let n: node = { id: 1 }
+n.visit()  # error: Ambiguous

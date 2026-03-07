@@ -1,0 +1,8 @@
+# xfail: qualified type calls not implemented
+impl int {
+  fn clamp(x: int, lo: int, hi: int) -> int {
+    if (x < lo) { lo } else { if (x > hi) { hi } else { x } }
+  }
+}
+
+puts(int.clamp(15, 0, 10))  # output: 10

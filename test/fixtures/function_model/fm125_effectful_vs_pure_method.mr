@@ -1,0 +1,15 @@
+# xfail: effect marker syntax in impl methods not parsed yet
+type logger = { prefix: string }
+
+impl logger {
+  fn format(l: logger, msg: string) -> string {
+    l.prefix + ": " + msg
+  }
+  fn log(l: logger, msg: string) => string {
+    l.prefix + ": " + msg
+  }
+}
+
+let l: logger = { prefix: "INFO" }
+puts(l.format("hello"))  # output: INFO: hello
+puts(l.log("world"))  # output: INFO: world

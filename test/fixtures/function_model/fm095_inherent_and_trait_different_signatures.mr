@@ -1,0 +1,18 @@
+# xfail: inherent-first precedence not implemented
+type data = { v: int }
+
+trait summarize[a] {
+  fn info(x: a) -> string
+}
+
+impl summarize for data {
+  fn info(x: data) -> string { x.v.show() }
+}
+
+impl data {
+  fn info(d: data) -> int { d.v }
+}
+
+let d: data = { v: 42 }
+# inherent returns int, trait returns string — different signatures OK
+puts(d.info())  # output: 42

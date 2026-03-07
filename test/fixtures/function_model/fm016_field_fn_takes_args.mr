@@ -1,0 +1,3 @@
+let add = fn(a: int, b: int) -> int { a + b }
+let obj = { add: add }
+puts(obj.add(3, 4))  # output: 7

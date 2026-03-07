@@ -1,0 +1,16 @@
+# xfail: qualified trait calls not implemented
+type pair = { a: int, b: int }
+
+trait compare[a] {
+  fn greater(x: a, y: a) -> bool
+}
+
+impl compare for pair {
+  fn greater(x: pair, y: pair) -> bool {
+    x.a + x.b > y.a + y.b
+  }
+}
+
+let p1: pair = { a: 3, b: 4 }
+let p2: pair = { a: 1, b: 2 }
+puts(compare.greater(p1, p2))  # output: true

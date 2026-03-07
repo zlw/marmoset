@@ -1,0 +1,12 @@
+# xfail: inherent-first precedence not implemented
+type myint = int
+
+impl myint {
+  fn eq(x: myint, y: myint) -> bool {
+    x == y
+  }
+}
+
+let a: myint = 5
+let b: myint = 5
+puts(a.eq(b))  # output: true

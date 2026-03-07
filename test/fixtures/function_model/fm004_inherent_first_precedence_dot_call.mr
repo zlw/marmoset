@@ -1,0 +1,21 @@
+# xfail: inherent-first precedence not implemented (definition-time collision rejected)
+type widget = { v: int }
+
+trait describe[a] {
+  fn info(x: a) -> string
+}
+
+impl describe for widget {
+  fn info(x: widget) -> string {
+    "trait:" + x.v.show()
+  }
+}
+
+impl widget {
+  fn info(w: widget) -> string {
+    "inherent:" + w.v.show()
+  }
+}
+
+let w: widget = { v: 42 }
+puts(w.info())  # output: inherent:42

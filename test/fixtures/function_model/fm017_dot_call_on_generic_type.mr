@@ -1,0 +1,15 @@
+enum maybe[a] { just(a) nothing }
+
+impl maybe[a] {
+  fn is_just(m: maybe[a]) -> bool {
+    match m {
+      maybe.just(_): true
+      maybe.nothing: false
+    }
+  }
+}
+
+let x = maybe.just(42)
+puts(x.is_just())  # output: true
+let y: maybe[int] = maybe.nothing
+puts(y.is_just())  # output: false

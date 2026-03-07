@@ -1,0 +1,13 @@
+type item = { name: string }
+
+impl item {
+  fn describe(i: item) -> string {
+    "item:" + i.name
+  }
+}
+
+let i: item = { name: "sword" }
+# field access
+puts(i.name)  # output: sword
+# method call
+puts(i.describe())  # output: item:sword

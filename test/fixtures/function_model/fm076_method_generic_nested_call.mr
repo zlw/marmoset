@@ -1,0 +1,12 @@
+# xfail: method-level generics not implemented
+type val = { v: int }
+
+impl val {
+  fn apply[b](x: val, f: fn(int) -> b) -> b {
+    f(x.v)
+  }
+}
+
+let v: val = { v: 5 }
+# nested: apply returns int, then show on it
+puts(v.apply(fn(n: int) -> int { n * 3 }).show())  # output: 15

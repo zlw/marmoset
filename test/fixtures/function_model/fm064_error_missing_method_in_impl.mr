@@ -1,0 +1,10 @@
+trait full[a] {
+  fn method_a(x: a) -> int
+  fn method_b(x: a) -> string
+}
+
+type thing = { v: int }
+
+impl full for thing {  # error: *
+  fn method_a(x: thing) -> int { x.v }
+}

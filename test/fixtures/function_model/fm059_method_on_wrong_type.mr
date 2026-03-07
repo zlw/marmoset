@@ -1,0 +1,11 @@
+type alpha = { v: int }
+type beta = { w: string }
+
+impl alpha {
+  fn only_alpha(a: alpha) -> int {
+    a.v
+  }
+}
+
+let b: beta = { w: "hello" }
+b.only_alpha()  # error: *

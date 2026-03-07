@@ -1,0 +1,20 @@
+type val = { n: int }
+
+trait view_a[a] {
+  fn view(x: a) -> string
+}
+
+trait view_b[a] {
+  fn view(x: a) -> string
+}
+
+impl view_a for val {
+  fn view(x: val) -> string { "a" }
+}
+
+impl view_b for val {
+  fn view(x: val) -> string { "b" }
+}
+
+let v: val = { n: 1 }
+v.view()  # error: Ambiguous

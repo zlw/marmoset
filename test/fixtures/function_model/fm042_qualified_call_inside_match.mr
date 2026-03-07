@@ -1,0 +1,15 @@
+# xfail: qualified type calls not implemented
+type flag = { on: bool }
+
+impl flag {
+  fn is_on(f: flag) -> bool {
+    f.on
+  }
+}
+
+let f: flag = { on: true }
+let msg = match flag.is_on(f) {
+  true: "yes"
+  false: "no"
+}
+puts(msg)  # output: yes

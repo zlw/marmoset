@@ -1,0 +1,15 @@
+enum box { val(int) empty }
+
+impl box {
+  fn is_empty(b: box) -> bool {
+    match b {
+      box.empty: true
+      box.val(_): false
+    }
+  }
+}
+
+let b = box.val(42)
+puts(b.is_empty())  # output: false
+let e = box.empty
+puts(e.is_empty())  # output: true

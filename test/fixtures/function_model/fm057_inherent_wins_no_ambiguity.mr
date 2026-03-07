@@ -1,0 +1,18 @@
+# xfail: inherent-first precedence not implemented
+type data = { v: int }
+
+trait fmt[a] {
+  fn show_val(x: a) -> string
+}
+
+impl fmt for data {
+  fn show_val(x: data) -> string { "trait:" + x.v.show() }
+}
+
+impl data {
+  fn show_val(d: data) -> string { "inherent:" + d.v.show() }
+}
+
+let d: data = { v: 7 }
+# inherent wins, NOT ambiguity
+puts(d.show_val())  # output: inherent:7

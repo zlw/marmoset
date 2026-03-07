@@ -1,0 +1,8 @@
+impl int {
+  fn clamp(x: int, lo: int, hi: int) -> int {
+    if (x < lo) { lo } else { if (x > hi) { hi } else { x } }
+  }
+}
+
+puts(5.clamp(0, 10))  # output: 5
+puts(15.clamp(0, 10))  # output: 10

@@ -1,0 +1,10 @@
+type mytype = { v: int }
+
+impl mytype {
+  fn show(m: mytype) -> string {
+    "custom:" + m.v.show()
+  }
+}
+
+let m: mytype = { v: 99 }
+puts(m.show())  # output: custom:99

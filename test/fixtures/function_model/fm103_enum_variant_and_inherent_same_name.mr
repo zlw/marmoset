@@ -1,0 +1,14 @@
+enum thing { value(int) }
+
+impl thing {
+  fn value(t: thing) -> int {
+    match t {
+      thing.value(n): n
+    }
+  }
+}
+
+# On enum qualifier: variant constructor wins
+let t = thing.value(42)
+# On value dot call: inherent method
+puts(t.value())  # output: 42

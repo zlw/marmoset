@@ -1,0 +1,8 @@
+enum shape { circle(int) square(int) }
+
+let c = shape.circle(5)
+let result = match c {
+  shape.circle(r): "circle:" + r.show()
+  shape.square(s): "square:" + s.show()
+}
+puts(result)  # output: circle:5

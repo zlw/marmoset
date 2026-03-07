@@ -1,0 +1,26 @@
+# xfail: qualified trait calls and inherent-first not implemented
+type item = { v: int }
+
+trait alpha[a] {
+  fn tag(x: a) -> string
+}
+
+trait beta[a] {
+  fn tag(x: a) -> string
+}
+
+impl alpha for item {
+  fn tag(x: item) -> string {
+    "alpha"
+  }
+}
+
+impl beta for item {
+  fn tag(x: item) -> string {
+    "beta"
+  }
+}
+
+let i: item = { v: 1 }
+puts(alpha.tag(i))  # output: alpha
+puts(beta.tag(i))  # output: beta
