@@ -1,4 +1,3 @@
-# xfail: inherent-first precedence not implemented (definition-time collision rejected)
 type widget = { v: int }
 
 trait describe[a] {

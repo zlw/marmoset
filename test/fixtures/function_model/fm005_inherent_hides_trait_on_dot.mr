@@ -1,4 +1,3 @@
-# xfail: inherent-first precedence not implemented (definition-time collision rejected)
 type counter = { n: int }
 
 trait display[a] {

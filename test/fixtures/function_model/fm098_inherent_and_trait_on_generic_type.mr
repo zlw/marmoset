@@ -1,4 +1,3 @@
-# xfail: inherent-first precedence not implemented
 enum opt[a] { some(a) none }
 
 trait unwrapper[a] {

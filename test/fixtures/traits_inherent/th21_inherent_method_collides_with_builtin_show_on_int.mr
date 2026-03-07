@@ -1,5 +1,5 @@
-# TH21: Inherent method collides with builtin show on int
-impl int {  # error: collides with trait method
+# TH21: Inherent method coexists with builtin show on int (inherent wins on dot call)
+impl int {
   fn show(x: int) -> string { "my-show" }
 }
-puts(1)
+puts(1)  # output: 1

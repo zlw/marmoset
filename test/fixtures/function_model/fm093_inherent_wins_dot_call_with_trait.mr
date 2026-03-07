@@ -1,4 +1,3 @@
-# xfail: inherent-first precedence not implemented
 type cell = { v: int }
 
 trait info[a] {
