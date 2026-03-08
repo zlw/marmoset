@@ -509,3 +509,15 @@ let%test "outer function in nested call still works (BUG-27 regression)" =
       let has_f = try String.sub sig0.label 0 1 = "f" with _ -> false in
       has_f
   | None -> false
+
+(* Phase 8 regression: signature help on dot-style method calls *)
+let%test "signature help on dot method call shows method signature" =
+  let source =
+    "trait greet[a] {\n  fn hello(x: a) -> string\n}\nimpl greet for int {\n  fn hello(x: int) -> string { \"hi\" }\n}\n42.hello()"
+  in
+  (* Last line: 42.hello() — cursor inside parens *)
+  let last_line = 6 in
+  let col = 9 in
+  match check_sig source last_line col with
+  | Some sh -> List.length sh.signatures >= 1
+  | None -> false

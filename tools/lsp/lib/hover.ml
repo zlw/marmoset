@@ -499,3 +499,24 @@ let%test "find_expr_at returns expression when offset is inside" =
   match find_expr_at 3 expr with
   | Some e -> e.id = 1
   | None -> false
+
+(* ============================================================
+   Phase 8 regression: hover inside trait impl method body
+   ============================================================ *)
+
+let trait_impl_source =
+  "trait greet[a] {\n  fn hello(x: a) -> string\n}\nimpl greet for int {\n  fn hello(x: int) -> string { \"hi\" }\n}\nputs(greet.hello(42))"
+
+let%test "hover on expression inside trait impl method body" =
+  (* line 4: fn hello(x: int) -> string { "hi" }  — "hi" is a string literal *)
+  match hover_info trait_impl_source 4 32 with
+  | Some h -> string_contains h.type_text "string"
+  | None -> false
+
+let inherent_impl_source = "impl int {\n  fn double(x: int) -> int { x * 2 }\n}\nputs(42.double())"
+
+let%test "hover on expression inside inherent impl method body" =
+  (* line 1: fn double(x: int) -> int { x * 2 } — x * 2 *)
+  match hover_info inherent_impl_source 1 29 with
+  | Some h -> string_contains h.type_text "int"
+  | None -> false
