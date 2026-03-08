@@ -2,7 +2,7 @@
 
 ## Maintenance
 
-- Last verified: 2026-02-28
+- Last verified: 2026-03-07
 - Implementation status: Planning (not started)
 - Update trigger: Any FFI/extern syntax or Go interop change
 
@@ -16,6 +16,10 @@ This is the third milestone in the language evolution. It depends on the module 
 - Module system (import/export, per-module compilation, module signatures) — `docs/plans/module-system.md`
 - Basic stdlib with prelude (`option`, `result`, core traits, migrate builtins to modules) — plan TBD
 - Purity annotations working (`->` pure, `=>` effectful) — extern functions require explicit purity
+- Function-model rework plumbing in place:
+  - shared wrapped artifact keys (`expr_key`, `callable_key`)
+  - central qualified-call classifier
+  - general `call_resolution` artifact family
 
 ### Milestone Ordering
 1. **Modules** → 2. **Basic stdlib + prelude** → 3. **FFI** → 4. **Full stdlib via FFI**
@@ -31,6 +35,8 @@ This is the third milestone in the language evolution. It depends on the module 
 5. **Purity annotation required** on every extern function (`->` or `=>`). Cannot infer purity for external code.
 6. **No artificial type restrictions.** If a Go type has a clear Marmoset equivalent, allow it. Wrapper modules handle semantic translation. Unsupported types (channels, `any`) produce clear errors.
 7. **Generated Go wrappers** handle type conversion (`int64` ↔ `int`, `void` → `struct{}`).
+8. **Extern qualifiers share the same namespace bucket as module qualifiers.** They do not get a separate precedence tier.
+9. **Extern-qualified calls use the shared `call_resolution` artifact family.** FFI extends the central classifier; it does not add a second extern-only fast path.
 
 ---
 
@@ -191,8 +197,9 @@ val used_packages : unit -> string list   (* Go paths of packages actually calle
 **Type checking changes** (`lib/frontend/typecheck/infer.ml`):
 - Handle `ExternBlock` in top-level declaration registration
 - Register each extern function's type in extern_registry
-- Register qualifier as known namespace (not a value)
-- Resolve `MethodCall(Identifier "fmt", "Println", args)` — check extern registry before normal method resolution
+- Register qualifier as a namespace binding (not a value)
+- Extend the central qualified-call classifier so extern qualifiers participate in the existing `Namespace` bucket
+- When classifier resolves `fmt.Println(args)` as an extern-qualified namespace call, produce `NamespaceCall { namespace_kind = Extern; ... }` in the shared `call_resolution` artifact family
 - Type-check args against declared parameter types
 - Track which extern functions are actually called (for import generation)
 
@@ -224,7 +231,7 @@ val used_packages : unit -> string list   (* Go paths of packages actually calle
    ```
    Wrappers handle: `int64` → `int` conversion, `void` → `struct{}` return, etc.
 
-3. **Route extern calls** in `emit_expr`: when emitting a call to an extern function, emit call to the wrapper: `extern__fmt__Println(s)`.
+3. **Route extern calls via `call_resolution` artifacts**: when emitter sees `NamespaceCall { namespace_kind = Extern; ... }`, emit call to the wrapper: `extern__fmt__Println(s)`.
 
 4. **Only emit wrappers for functions actually called** (tracked by usage flag in registry).
 
@@ -246,6 +253,7 @@ val used_packages : unit -> string list   (* Go paths of packages actually calle
 - Wrapper functions exported via `export`
 - Other modules import the wrapper module
 - Extern registry entries scoped per module (like other registries)
+- Extern qualifiers share the namespace bucket with modules; collisions are rejected when building namespace scope
 - Go imports collected across all modules for the single `package main` output
 
 **Tests:**
@@ -260,8 +268,8 @@ val used_packages : unit -> string list   (* Go paths of packages actually calle
 ### Phase F4: Polish and Hardening
 **Goal:** Edge cases, error quality.
 
-- Error messages: unsupported Go types, duplicate extern qualifiers, qualifier shadows module name
-- Extern qualifier collision with module names → clear error
+- Error messages: unsupported Go types, duplicate extern qualifiers, namespace collision with module/import alias
+- Extern/module namespace collision → clear error
 - Documentation and examples
 - Test suite: `test/integration/09_extern_edge_cases.sh`
 
@@ -317,8 +325,10 @@ func main() {
 
 - `extern` is a statement type (like `trait`, `enum`) — can appear in any module
 - Convention: put extern blocks in dedicated wrapper modules
-- Extern qualifier namespace is separate from module namespace — error on collision
+- Extern qualifiers share the same namespace bucket as imported modules/aliases
+- Namespace collisions between extern qualifiers and module bindings are rejected when the scope is built
 - Extern registry follows same per-module scoping as other registries
+- Extern-qualified calls use the same central classifier and `call_resolution` family as module-qualified and method-qualified calls
 - Go imports from all modules collected into single import block (single Go package)
 
 ---
@@ -337,8 +347,8 @@ func main() {
 ## Risks
 
 1. **`int64` vs `int`** — mitigated by generated Go wrapper functions that handle conversion
-2. **Extern qualifier collision with module names** — mitigated by validation in registry, clear error
-3. **`.` disambiguation** — extern qualifiers are priority 6 in the unified dot resolution order defined in `docs/plans/module-system.md` (after value > module > enum > trait > type alias)
+2. **Extern qualifier collision with module names** — mitigated by namespace-scope validation, clear error
+3. **`.` disambiguation** — extern qualifiers live in the same namespace bucket defined in `docs/plans/module-system.md` and the function-model rework (`value > namespace > enum > trait > type alias`)
 4. **Generated Go size** — wrappers only emitted for functions actually called
 5. **Go function signatures evolving** — wrapper modules are user-maintained, updated as needed
 
@@ -351,6 +361,7 @@ func main() {
 | `lib/frontend/syntax/ast.ml` | Add ExternBlock, extern_block_def, extern_fn_sig |
 | `lib/frontend/syntax/token.ml` | Add Extern keyword |
 | `lib/frontend/syntax/parser.ml` | Parse extern blocks |
-| `lib/frontend/typecheck/infer.ml` | Handle ExternBlock, resolve extern-qualified calls |
-| `lib/backend/go/emitter.ml` | Dynamic imports, emit Go wrappers, route extern calls |
+| `lib/frontend/typecheck/resolution_artifacts.ml` | Shared wrapped keys + `call_resolution` family reused for extern-qualified calls |
+| `lib/frontend/typecheck/infer.ml` | Handle ExternBlock, extend namespace classifier, build extern `NamespaceCall` artifacts |
+| `lib/backend/go/emitter.ml` | Dynamic imports, emit Go wrappers, lower extern `NamespaceCall` artifacts |
 | **New:** `lib/frontend/typecheck/extern_registry.ml` | Extern function registry |

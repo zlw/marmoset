@@ -43,11 +43,13 @@ let rec has_type_vars (t : mono_type) : bool =
   | TInt | TFloat | TBool | TString | TNull -> false
 
 let apply_subst_to_method_sig (subst : Types.substitution) (m : method_sig) : method_sig =
+  (* Scope isolation: remove method-level generic names from subst *)
+  let safe_subst = List.fold_left (fun s (name, _) -> Types.SubstMap.remove name s) subst m.method_generics in
   canonicalize_method_sig
     {
-      method_name = m.method_name;
-      method_params = List.map (fun (name, ty) -> (name, apply_substitution subst ty)) m.method_params;
-      method_return_type = apply_substitution subst m.method_return_type;
+      m with
+      method_params = List.map (fun (name, ty) -> (name, apply_substitution safe_subst ty)) m.method_params;
+      method_return_type = apply_substitution safe_subst m.method_return_type;
     }
 
 let register_method ~(for_type : mono_type) (method_sig : method_sig) : (unit, string) result =
@@ -72,6 +74,12 @@ let register_method ~(for_type : mono_type) (method_sig : method_sig) : (unit, s
     | None ->
         Hashtbl.replace concrete_registry key method_sig';
         Ok ()
+
+let remove_method ~(for_type : mono_type) (method_name : string) : unit =
+  let for_type' = canonicalize_mono_type for_type in
+  let key = (for_type', method_name) in
+  Hashtbl.remove concrete_registry key;
+  Hashtbl.remove generic_registry key
 
 let resolve_method (for_type : mono_type) (method_name : string) : (method_sig option, string) result =
   let for_type' = canonicalize_mono_type for_type in
@@ -125,7 +133,7 @@ let all_methods () : (mono_type * method_sig) list =
 let%test "register and lookup inherent method" =
   clear ();
   let method_sig : method_sig =
-    { method_name = "sum"; method_params = [ ("p", TInt) ]; method_return_type = TInt }
+    Trait_registry.mk_method_sig ~name:"sum" ~params:[ ("p", TInt) ] ~return_type:TInt ()
   in
   match register_method ~for_type:TInt method_sig with
   | Error _ -> false
@@ -137,7 +145,7 @@ let%test "register and lookup inherent method" =
 let%test "register_method rejects duplicates for same concrete type and method name" =
   clear ();
   let method_sig : method_sig =
-    { method_name = "sum"; method_params = [ ("p", TInt) ]; method_return_type = TInt }
+    Trait_registry.mk_method_sig ~name:"sum" ~params:[ ("p", TInt) ] ~return_type:TInt ()
   in
   match register_method ~for_type:TInt method_sig with
   | Error _ -> false
@@ -163,7 +171,7 @@ let%test "lookup_method canonicalizes record field ordering" =
   let for_type_registered = TRecord ([ { name = "x"; typ = TInt }; { name = "y"; typ = TInt } ], None) in
   let for_type_query = TRecord ([ { name = "y"; typ = TInt }; { name = "x"; typ = TInt } ], None) in
   let method_sig : method_sig =
-    { method_name = "sum"; method_params = [ ("p", for_type_registered) ]; method_return_type = TInt }
+    Trait_registry.mk_method_sig ~name:"sum" ~params:[ ("p", for_type_registered) ] ~return_type:TInt ()
   in
   match register_method ~for_type:for_type_registered method_sig with
   | Error _ -> false
@@ -173,7 +181,7 @@ let%test "generic inherent method resolves for concrete receiver" =
   clear ();
   let pattern = TEnum ("result", [ TVar "a"; TVar "b" ]) in
   let method_sig : method_sig =
-    { method_name = "is_success"; method_params = [ ("r", pattern) ]; method_return_type = TBool }
+    Trait_registry.mk_method_sig ~name:"is_success" ~params:[ ("r", pattern) ] ~return_type:TBool ()
   in
   match register_method ~for_type:pattern method_sig with
   | Error _ -> false
@@ -187,11 +195,11 @@ let%test "concrete inherent method takes precedence over generic" =
   clear ();
   let generic_pattern = TEnum ("result", [ TVar "a"; TVar "b" ]) in
   let generic_sig : method_sig =
-    { method_name = "tag"; method_params = [ ("r", generic_pattern) ]; method_return_type = TString }
+    Trait_registry.mk_method_sig ~name:"tag" ~params:[ ("r", generic_pattern) ] ~return_type:TString ()
   in
   let concrete_type = TEnum ("result", [ TInt; TString ]) in
   let concrete_sig : method_sig =
-    { method_name = "tag"; method_params = [ ("r", concrete_type) ]; method_return_type = TString }
+    Trait_registry.mk_method_sig ~name:"tag" ~params:[ ("r", concrete_type) ] ~return_type:TString ()
   in
   match register_method ~for_type:generic_pattern generic_sig with
   | Error _ -> false
@@ -209,10 +217,10 @@ let%test "ambiguous generic inherent methods are rejected at resolve-time" =
   let m1_pattern = TEnum ("result", [ TVar "a"; TVar "b" ]) in
   let m2_pattern = TEnum ("result", [ TVar "x"; TVar "y" ]) in
   let m1 : method_sig =
-    { method_name = "name"; method_params = [ ("r", m1_pattern) ]; method_return_type = TString }
+    Trait_registry.mk_method_sig ~name:"name" ~params:[ ("r", m1_pattern) ] ~return_type:TString ()
   in
   let m2 : method_sig =
-    { method_name = "name"; method_params = [ ("r", m2_pattern) ]; method_return_type = TString }
+    Trait_registry.mk_method_sig ~name:"name" ~params:[ ("r", m2_pattern) ] ~return_type:TString ()
   in
   match register_method ~for_type:m1_pattern m1 with
   | Error _ -> false

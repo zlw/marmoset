@@ -1,0 +1,10 @@
+type box = { v: int }
+
+impl box {
+  fn apply[b](bx: box, f: fn(int) -> b) -> b {
+    f(bx.v)
+  }
+}
+
+let b: box = { v: 1 }
+b.apply[int, string](fn(n: int) -> int { n })  # error: *

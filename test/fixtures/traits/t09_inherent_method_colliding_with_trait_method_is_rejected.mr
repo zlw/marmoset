@@ -1,7 +1,7 @@
-# T09: Inherent method colliding with trait method is rejected
-impl int {  # error: collides with trait method
+# T09: Inherent method coexists with trait method (inherent wins on dot call)
+impl int {
   fn show(x: int) -> string {
     "inherent"
   }
 }
-puts(1)
+puts(1)  # output: 1

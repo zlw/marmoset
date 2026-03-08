@@ -1,0 +1,12 @@
+trait empty_trait[a] {
+  fn exists(x: a) -> bool
+}
+
+type thing = { v: int }
+
+impl empty_trait for thing {
+  fn exists(x: thing) -> bool { true }
+}
+
+let t: thing = { v: 0 }
+empty_trait.nonexistent(t)  # error: *

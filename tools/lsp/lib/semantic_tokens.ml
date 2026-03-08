@@ -176,7 +176,7 @@ let rec collect_expr ~source ~type_map ~environment ~params ~tokens (expr : Ast.
             { pos = fstart; end_pos = fstart + field_len - 1; token_type = property_type; modifiers = 0 }
             :: !tokens
       | None -> ())
-  | Ast.AST.MethodCall (recv, method_name, args) ->
+  | Ast.AST.MethodCall { mc_receiver = recv; mc_method = method_name; mc_args = args; _ } ->
       collect_expr ~source ~type_map ~environment ~params ~tokens recv;
       (* Method name token — search from the dot (expr.pos) since inner chain
          expressions may have incorrect end_pos *)
@@ -389,7 +389,7 @@ and collect_stmt ~source ~type_map ~environment ~params ~tokens (stmt : Ast.AST.
                 }
                 :: !tokens
           | None -> ());
-          collect_expr ~source ~type_map ~environment ~params ~tokens m.impl_method_body;
+          collect_stmt ~source ~type_map ~environment ~params ~tokens m.impl_method_body;
           (* Advance search_from past the method body *)
           search_from := m.impl_method_body.end_pos + 1)
         impl_methods
@@ -411,7 +411,7 @@ and collect_stmt ~source ~type_map ~environment ~params ~tokens (stmt : Ast.AST.
                 }
                 :: !tokens
           | None -> ());
-          collect_expr ~source ~type_map ~environment ~params ~tokens m.impl_method_body;
+          collect_stmt ~source ~type_map ~environment ~params ~tokens m.impl_method_body;
           search_from := m.impl_method_body.end_pos + 1)
         inherent_methods
   | Ast.AST.DeriveDef _ | Ast.AST.TypeAlias _ -> ()

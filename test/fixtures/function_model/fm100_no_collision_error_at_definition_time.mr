@@ -1,0 +1,17 @@
+type thing = { v: int }
+
+trait alpha[a] {
+  fn op(x: a) -> int
+}
+
+impl alpha for thing {
+  fn op(x: thing) -> int { x.v }
+}
+
+# This definition should be accepted (no error at definition time)
+impl thing {
+  fn op(t: thing) -> int { t.v + 1 }
+}
+
+let t: thing = { v: 10 }
+puts(t.op())  # output: 11

@@ -1,0 +1,8 @@
+type val = { v: int }
+
+impl val {
+  fn bad(v: val) -> string {
+    puts(v.v)  # error: *
+    v.v.show()
+  }
+}

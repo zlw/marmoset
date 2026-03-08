@@ -516,11 +516,9 @@ let setup_trait_object_annotation_tests () =
       trait_supertraits = [];
       trait_methods =
         [
-          {
-            Trait_registry.method_name = "show";
-            method_params = [ ("x", Types.TVar "a") ];
-            method_return_type = Types.TString;
-          };
+          Trait_registry.mk_method_sig ~name:"show"
+            ~params:[ ("x", Types.TVar "a") ]
+            ~return_type:Types.TString ();
         ];
     }
 

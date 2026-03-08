@@ -1,0 +1,5 @@
+enum color { red green blue }
+
+let color = { red: "my_red" }
+# `color` is now a value (record), not the enum
+puts(color.red)  # output: my_red

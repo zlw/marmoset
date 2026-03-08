@@ -1,0 +1,13 @@
+type val = { v: int }
+
+impl val {
+  fn convert[b](x: val, f: fn(int) -> b) -> b {
+    f(x.v)
+  }
+}
+
+let v: val = { v: 42 }
+let inferred = v.convert(fn(n: int) -> string { n.show() })
+let explicit = v.convert[bool](fn(n: int) -> bool { n > 0 })
+puts(inferred)  # output: 42
+puts(explicit)  # output: true

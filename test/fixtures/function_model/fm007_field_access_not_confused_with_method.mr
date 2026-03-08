@@ -1,0 +1,3 @@
+let r = { name: "alice", age: 30 }
+puts(r.name)  # output: alice
+puts(r.age)  # output: 30

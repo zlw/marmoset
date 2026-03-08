@@ -1,0 +1,11 @@
+type flag = { on: bool }
+
+impl flag {
+  fn toggle(f: flag) -> flag {
+    { on: !(f.on) }
+  }
+}
+
+let f: flag = { on: true }
+let f2 = f.toggle()
+puts(f2.on)  # output: false

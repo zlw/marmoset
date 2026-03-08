@@ -1,0 +1,6 @@
+# xfail: method-level generics and default impls not implemented
+trait mappable[a] {
+  fn identity[b](x: a, f: fn(a) -> b) -> b {
+    f(x)
+  }
+}

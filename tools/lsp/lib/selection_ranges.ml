@@ -16,7 +16,7 @@ let sel_range ~source ~pos ~end_pos ~parent =
 let rec find_in_expr ~source ~offset ~parent (expr : Ast.AST.expression) : Lsp_t.SelectionRange.t option =
   let start_pos =
     match expr.expr with
-    | Ast.AST.MethodCall (recv, _, _) | Ast.AST.FieldAccess (recv, _) -> min recv.pos expr.pos
+    | Ast.AST.MethodCall { mc_receiver = recv; _ } | Ast.AST.FieldAccess (recv, _) -> min recv.pos expr.pos
     | _ -> expr.pos
   in
   if offset < start_pos || offset > expr.end_pos then
@@ -50,9 +50,9 @@ let rec find_in_expr ~source ~offset ~parent (expr : Ast.AST.expression) : Lsp_t
                   find_in_expr ~source ~offset ~parent:current v))
             pairs
       | Ast.AST.FieldAccess (e, _) -> find_in_expr ~source ~offset ~parent:current e
-      | Ast.AST.MethodCall (recv, _, args) ->
-          first_some (find_in_expr ~source ~offset ~parent:current recv) (fun () ->
-              find_first_in_exprs ~source ~offset ~parent:current args)
+      | Ast.AST.MethodCall { mc_receiver; mc_args; _ } ->
+          first_some (find_in_expr ~source ~offset ~parent:current mc_receiver) (fun () ->
+              find_first_in_exprs ~source ~offset ~parent:current mc_args)
       | Ast.AST.Match (scrutinee, arms) ->
           first_some (find_in_expr ~source ~offset ~parent:current scrutinee) (fun () ->
               List.find_map
@@ -88,7 +88,7 @@ and find_in_stmt ~source ~offset ~parent (stmt : Ast.AST.statement) : Lsp_t.Sele
       | Ast.AST.Block stmts -> find_first_in_stmts ~source ~offset ~parent:current stmts
       | Ast.AST.ImplDef { impl_methods; _ } ->
           List.find_map
-            (fun (m : Ast.AST.method_impl) -> find_in_expr ~source ~offset ~parent:current m.impl_method_body)
+            (fun (m : Ast.AST.method_impl) -> find_in_stmt ~source ~offset ~parent:current m.impl_method_body)
             impl_methods
       | Ast.AST.TraitDef { methods; _ } ->
           List.find_map
@@ -97,7 +97,7 @@ and find_in_stmt ~source ~offset ~parent (stmt : Ast.AST.statement) : Lsp_t.Sele
             methods
       | Ast.AST.InherentImplDef { inherent_methods; _ } ->
           List.find_map
-            (fun (m : Ast.AST.method_impl) -> find_in_expr ~source ~offset ~parent:current m.impl_method_body)
+            (fun (m : Ast.AST.method_impl) -> find_in_stmt ~source ~offset ~parent:current m.impl_method_body)
             inherent_methods
       | Ast.AST.EnumDef _ | Ast.AST.DeriveDef _ | Ast.AST.TypeAlias _ -> None
     in

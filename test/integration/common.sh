@@ -9,6 +9,8 @@ BUILD_TARGET="./_build/default/bin/main.exe"
 
 PASS=0
 FAIL=0
+XFAIL=0
+XPASS=0
 TOTAL=0
 
 ensure_built() {
@@ -25,6 +27,8 @@ suite_begin() {
 
     PASS=0
     FAIL=0
+    XFAIL=0
+    XPASS=0
     TOTAL=0
 
     ensure_built
@@ -37,15 +41,23 @@ suite_begin() {
 
 suite_end() {
     echo "=========================================="
-    echo "RESULTS: $PASS passed, $FAIL failed out of $TOTAL tests"
-    echo "=========================================="
-    if [ $FAIL -eq 0 ]; then
-        echo "✓ ALL TESTS PASSED"
-        return 0
+    local summary="RESULTS: $PASS passed, $FAIL failed"
+    if [ "$XFAIL" -gt 0 ] || [ "$XPASS" -gt 0 ]; then
+        summary="$summary, $XFAIL xfail, $XPASS xpass"
     fi
-
-    echo "✗ SOME TESTS FAILED"
-    return 1
+    summary="$summary out of $TOTAL tests"
+    echo "$summary"
+    echo "=========================================="
+    if [ "$FAIL" -gt 0 ] || [ "$XPASS" -gt 0 ]; then
+        if [ "$XPASS" -gt 0 ]; then
+            echo "✗ SUITE FAILED ($XPASS stale xfail markers — remove them)"
+        else
+            echo "✗ SOME TESTS FAILED"
+        fi
+        return 1
+    fi
+    echo "✓ ALL TESTS PASSED"
+    return 0
 }
 
 ########################################

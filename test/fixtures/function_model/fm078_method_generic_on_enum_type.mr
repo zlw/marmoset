@@ -1,0 +1,20 @@
+enum maybe[a] { just(a) nothing }
+
+impl maybe[a] {
+  fn map[b](m: maybe[a], f: fn(a) -> b) -> maybe[b] {
+    match m {
+      maybe.just(v): maybe.just(f(v))
+      maybe.nothing: maybe.nothing
+    }
+  }
+
+  fn unwrap_or(m: maybe[a], default: a) -> a {
+    match m {
+      maybe.just(v): v
+      maybe.nothing: default
+    }
+  }
+}
+
+let x = maybe.just(42)
+let y = x.map(fn(n: int) -> string { n.show() })

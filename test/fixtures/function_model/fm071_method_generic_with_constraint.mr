@@ -1,0 +1,10 @@
+type container = { v: int }
+
+impl container {
+  fn show_as[b: show](c: container, f: fn(int) -> b) -> string {
+    f(c.v).show()
+  }
+}
+
+let c: container = { v: 7 }
+puts(c.show_as(fn(n: int) -> int { n + 1 }))  # output: 8

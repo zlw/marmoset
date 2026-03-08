@@ -1,0 +1,10 @@
+trait cmp[a] {
+  fn eq(x: a, y: a) -> bool
+}
+
+impl cmp for int {
+  fn eq(x: int, y: int) -> bool { x == y }
+}
+
+let n = 42
+n.eq("hello")  # error: *

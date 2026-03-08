@@ -1,0 +1,11 @@
+type meter = { v: int }
+
+impl meter {
+  fn read(m: meter) -> int {
+    m.v
+  }
+}
+
+let m1: meter = { v: 10 }
+let m2: meter = { v: 20 }
+puts(meter.read(m1) + meter.read(m2))  # output: 30

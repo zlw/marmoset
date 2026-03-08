@@ -2,7 +2,7 @@
 
 ## Maintenance
 
-- Last verified: 2026-03-01
+- Last verified: 2026-03-07
 - Implementation status: Planning (not started)
 - Update trigger: Any module/import/export syntax or compilation model change
 
@@ -16,13 +16,14 @@ This plan adds a module system as the first of two milestones (modules, then FFI
 - P0-8 (Symbol/ID model): **NOT STARTED** — critical blocker. No symbol table, no qualified names, global registries need scoping.
 - All other P0 blockers: Done or partially done.
 - `module_path` field exists in `mono_state` but is locked to `"main"` with a guard.
+- Function-model rework now defines the canonical qualifier classifier and wrapped artifact-key direction (`expr_key`, `callable_key`, `call_resolution`). Module work should extend that machinery, not replace it.
 
 ---
 
 ## Locked Decisions
 
 1. **File = module** (implicit). No `module` keyword. `math.mr` defines module `math`. `collections/list.mr` defines module `collections.list`.
-2. **`.` is the universal qualifier** — field access, method calls, enum constructors, AND module access. Parser/resolver disambiguates based on what the left-hand side is.
+2. **`.` is the universal qualifier** — field access, method calls, enum constructors, module access, and later extern-qualified access. Parser stays syntactic; one central checker classifier resolves semantics.
 3. **`import` keyword** with `.`-separated paths. One import per line in v1. Aliasing with `as` supported.
 4. **`export` list at top of file** for visibility. No per-declaration keywords. Everything not exported is private. Export statement is optional (no export = all private).
 5. **No wildcard imports.** Every imported name must be listed explicitly.
@@ -66,19 +67,20 @@ let p: point = { x: 1, y: 2 }  # direct-imported type
 let c = math.color.red          # qualified enum constructor
 ```
 
-**Unified Dot Resolution Order:** `.` is used for field access, method calls, enum constructors, module access, trait-qualified calls, inherent-qualified calls, and extern package access. The resolver uses a single, ordered resolution chain. This is the canonical reference — other plans (`docs/plans/function-model.md`, `docs/plans/ffi.md`) defer to this order.
+**Unified Qualified-Call Classifier:** `.` is used for field access, method calls, enum constructors, module access, trait-qualified calls, inherent-qualified calls, and later extern package access. The checker uses one centralized classifier and one `call_resolution` artifact family. This is the canonical reference — other plans defer to this order.
 
 Given `a.b` or `a.b(args)` where `a` is a bare identifier:
 
 | Priority | Check | Result | Example |
 |----------|-------|--------|---------|
 | 1 | Is `a` a value binding in scope? | Infer type, then field access or method call | `x.show()`, `record.field` |
-| 2 | Is `a` an imported module name? | Module-qualified access | `math.add(1, 2)` |
+| 2 | Is `a` a namespace binding? | Namespace-qualified access | `math.add(1, 2)`, future: `fmt.Println(s)` |
 | 3 | Is `a` an enum name? | Sub-resolve (see below) | `option.some(42)`, `result.map(r, f)` |
 | 4 | Is `a` a trait name? | Trait-qualified call | `show.show(x)` |
 | 5 | Is `a` a type alias name? | Inherent-qualified call | `point.distance(p)` |
-| 6 | Is `a` an extern package qualifier? | FFI call | `fmt.Println(s)` |
-| 7 | None of the above | Error: unknown identifier | |
+| 6 | None of the above | Error: unknown identifier | |
+
+**Namespace bucket:** In this plan, namespace means imported module bindings. In the later FFI plan, extern qualifiers join this same bucket. They do not get a separate later precedence tier.
 
 **Enum sub-resolution (priority 3):** When `a` is an enum name, check `b`:
 - Is `b` a variant of enum `a`? → enum constructor (`option.some(42)`, `option.none`)
@@ -88,7 +90,7 @@ Given `a.b` or `a.b(args)` where `a` is a bare identifier:
 **Key rules:**
 - Value bindings always win (priority 1) — a local variable shadows a module/enum/trait name
 - Enum variants are checked before inherent methods — constructors take priority within the enum namespace
-- This order is stable across all plans and must be implemented as one centralized resolution function
+- This order is stable across all plans and must be implemented as one centralized classifier, not duplicated rewrite-time and typecheck-time resolution paths
 
 **FFI-relevant:** The `import` keyword and `.`-separated paths establish the convention that FFI declarations will also follow.
 
@@ -145,7 +147,7 @@ This is P0-8 Phase 1 from the existing problem doc. Not the full multi-pass arch
   }
 ```
 
-No new expression kinds needed — `.` already parses as `FieldAccess` and `MethodCall`. The resolver (Phase M3) will reinterpret `FieldAccess(Identifier "math", "add")` as a module-qualified access based on import context.
+No new expression kinds needed — `.` already parses as `FieldAccess` and `MethodCall`. The checker classifier introduced by the function-model rework is the semantic source of truth for deciding whether `math.add(...)` is a namespace-qualified call vs another dot form.
 
 **Parser changes** (`lib/frontend/syntax/parser.ml`):
 - Parse `export name1, name2, ...` as `ExportDecl`
@@ -185,7 +187,7 @@ type module_graph = { modules: (string, parsed_module) Hashtbl.t;
 - `import collections.list` → `./collections/list.mr` relative to project root
 - Project root = directory containing entry file
 
-**Expression ID collision fix:** Parser's `next_id` becomes file-scoped with offset ranges. File 0: IDs 0–999,999. File 1: IDs 1,000,000–1,999,999. Passed via `~id_offset` parameter to parser.
+**Expression ID collision fix:** Parser's `next_id` becomes file-scoped with offset ranges. File 0: IDs 0–999,999. File 1: IDs 1,000,000–1,999,999. Passed via `~id_offset` parameter to parser. Wrapped artifact keys continue to include `file_id`, consistent with the function-model rework.
 
 **CLI changes** (`bin/main.ml`): `build`/`run` commands still take single entry .mr file. Loader discovers imports transitively.
 
@@ -242,14 +244,16 @@ Note: trait `impl` blocks are always visible across modules (like Rust's coheren
    - After `infer_program` completes, extract the module's signature from the registry state + type_env
    - Private names are NOT included in the signature → downstream modules can't see them
 
-3. **Import resolution** (new `lib/frontend/import_resolver.ml`):
+3. **Import resolution + namespace environment** (new `lib/frontend/import_resolver.ml`):
    - For each module, resolve `import` declarations against upstream signatures
    - Verify imported names exist and are exported
-   - Build the module's initial `type_env`:
-     - `import math` → bind `"math"` as a module namespace in scope
+   - Build the module's initial scope/environment:
+     - `import math` → bind `"math"` as a namespace binding in scope
      - `import math.add` → bind `"add"` → `math__add` in type_env
      - `import math.point as pt` → bind `"pt"` → `math__point` in type_env
-   - Rewrite AST: `FieldAccess(Identifier "math", "add")` → `Identifier("math__add")` when `math` is a module
+   - Expose namespace metadata to the central checker classifier so `math.add(...)` classifies as a namespace-qualified call/member access
+   - Optional lowering/desugaring after classification may rewrite already-resolved direct imports to internal names
+   - Do **not** use AST rewrite as the semantic source of truth for dotted qualification
    - Rewrite types: bare `point` (if directly imported) → `"math__point"` in type position
 
 4. **Module-qualified registry keys:** Enum, trait, impl, type alias registries use prefixed keys:
@@ -270,8 +274,9 @@ Note: trait `impl` blocks are always visible across modules (like Rust's coheren
 
 **Files modified:**
 - New: `lib/frontend/typecheck/module_sig.ml` — module signature type + extraction
-- New: `lib/frontend/import_resolver.ml` — resolve imports, rewrite AST, build initial env
+- New: `lib/frontend/import_resolver.ml` — resolve imports, build namespace env, optional post-classification lowering
 - New: `lib/frontend/compiler.ml` — project-level orchestrator
+- `lib/frontend/typecheck/resolution_artifacts.ml` — shared wrapped keys + `call_resolution` family reused from function-model rework
 - `lib/frontend/typecheck/infer.ml` — accept external env/registries, don't auto-clear
 - `lib/frontend/typecheck/enum_registry.ml` — per-module population + query
 - `lib/frontend/typecheck/trait_registry.ml` — per-module population + query
@@ -379,7 +384,7 @@ These are flagged but NOT designed here. FFI is a separate plan.
 1. **Expression ID collision across files** — mitigated by per-file ID offset ranges in Phase M2
 2. **`infer_program` refactor scope** — the biggest risk. Currently monolithic with global mutable state. Refactoring to accept external env/registries touches the core of type checking. Mitigated by: keeping the internal inference logic unchanged, only changing how state is initialized and extracted.
 3. **Enum/type name collision across modules** — mitigated by module-prefixed registry keys
-4. **`.` disambiguation** — resolved by the unified dot resolution order defined in the Syntax Design section. Value bindings win first, then modules, then enums (variants before inherent methods), then traits, then type aliases, then extern qualifiers. All plans reference this single order.
+4. **`.` disambiguation** — resolved by the unified classifier defined in the Syntax Design section. Value bindings win first, then namespace bindings, then enums (variants before inherent methods), then traits, then type aliases. Later extern qualifiers join the namespace bucket rather than introducing a second precedence rule.
 5. **Monomorphization across modules** — emitter runs whole-program across all checked modules. `collect_insts_stmt` sees all call sites from all modules.
 6. **Trait impl visibility** — impls must be visible across modules even without explicit import (coherence). The per-module approach must auto-inject upstream impls into each module's registry.
 
@@ -403,6 +408,7 @@ After each phase:
 | `lib/frontend/syntax/token.ml` | Add Import, Export, As tokens |
 | `lib/frontend/syntax/lexer.ml` | Lex new keywords |
 | `lib/frontend/syntax/parser.ml` | Parse import/export/as syntax |
+| `lib/frontend/typecheck/resolution_artifacts.ml` | Shared wrapped keys + `call_resolution` artifact family |
 | `lib/frontend/typecheck/infer.ml` | Symbol table, registry clearing, prefixed env |
 | `lib/frontend/typecheck/enum_registry.ml` | Module-prefixed keys |
 | `lib/frontend/typecheck/trait_registry.ml` | Module-prefixed keys |
@@ -412,6 +418,6 @@ After each phase:
 | `bin/main.ml` | Wire up loader + multi-module pipeline |
 | **New:** `lib/frontend/discovery.ml` | File resolution, dependency discovery |
 | **New:** `lib/frontend/module_context.ml` | Module graph, topo sort, cycle detection |
-| **New:** `lib/frontend/import_resolver.ml` | Resolve imports, rewrite AST, build initial env |
+| **New:** `lib/frontend/import_resolver.ml` | Resolve imports, build namespace env, optional post-classification lowering |
 | **New:** `lib/frontend/typecheck/module_sig.ml` | Module signature type + extraction |
 | **New:** `lib/frontend/compiler.ml` | Project-level orchestrator |

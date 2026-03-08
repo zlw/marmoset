@@ -1,0 +1,17 @@
+type widget = { v: int }
+
+trait display[a] {
+  fn render(x: a) -> string
+}
+
+impl display for widget {
+  fn render(x: widget) -> string { "trait" }
+}
+
+impl widget {
+  fn render(w: widget) -> string { "inherent" }
+}
+
+# Both definitions accepted; dot call picks inherent
+let w: widget = { v: 1 }
+puts(w.render())  # output: inherent

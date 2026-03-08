@@ -1,0 +1,12 @@
+type acc = { total: int }
+
+impl acc {
+  fn add_and_show(a: acc, n: int) -> string {
+    let new_total = a.total + n
+    let result = "total:" + new_total.show()
+    result
+  }
+}
+
+let a: acc = { total: 10 }
+puts(a.add_and_show(5))  # output: total:15

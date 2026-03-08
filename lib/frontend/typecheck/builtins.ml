@@ -75,7 +75,9 @@ let init_builtin_traits () =
       trait_supertraits = [];
       trait_methods =
         [
-          { method_name = "eq"; method_params = [ ("x", TVar "a"); ("y", TVar "a") ]; method_return_type = TBool };
+          Trait_registry.mk_method_sig ~name:"eq"
+            ~params:[ ("x", TVar "a"); ("y", TVar "a") ]
+            ~return_type:TBool ();
         ];
     };
 
@@ -86,7 +88,7 @@ let init_builtin_traits () =
       trait_type_param = Some "a";
       trait_supertraits = [];
       trait_methods =
-        [ { method_name = "show"; method_params = [ ("x", TVar "a") ]; method_return_type = TString } ];
+        [ Trait_registry.mk_method_sig ~name:"show" ~params:[ ("x", TVar "a") ] ~return_type:TString () ];
     };
 
   (* trait debug[a] { fn debug(x: a) -> string } *)
@@ -96,7 +98,7 @@ let init_builtin_traits () =
       trait_type_param = Some "a";
       trait_supertraits = [];
       trait_methods =
-        [ { method_name = "debug"; method_params = [ ("x", TVar "a") ]; method_return_type = TString } ];
+        [ Trait_registry.mk_method_sig ~name:"debug" ~params:[ ("x", TVar "a") ] ~return_type:TString () ];
     };
 
   (* trait ord[a]: eq { fn compare(x: a, y: a) -> ordering } *)
@@ -107,11 +109,10 @@ let init_builtin_traits () =
       trait_supertraits = [ "eq" ];
       trait_methods =
         [
-          {
-            method_name = "compare";
-            method_params = [ ("x", TVar "a"); ("y", TVar "a") ];
-            method_return_type = TEnum ("ordering", []);
-          };
+          Trait_registry.mk_method_sig ~name:"compare"
+            ~params:[ ("x", TVar "a"); ("y", TVar "a") ]
+            ~return_type:(TEnum ("ordering", []))
+            ();
         ];
     };
 
@@ -121,7 +122,8 @@ let init_builtin_traits () =
       trait_name = "hash";
       trait_type_param = Some "a";
       trait_supertraits = [];
-      trait_methods = [ { method_name = "hash"; method_params = [ ("x", TVar "a") ]; method_return_type = TInt } ];
+      trait_methods =
+        [ Trait_registry.mk_method_sig ~name:"hash" ~params:[ ("x", TVar "a") ] ~return_type:TInt () ];
     };
 
   (* trait num[a] { fn add, sub, mul, div } *)
@@ -132,26 +134,18 @@ let init_builtin_traits () =
       trait_supertraits = [];
       trait_methods =
         [
-          {
-            method_name = "add";
-            method_params = [ ("x", TVar "a"); ("y", TVar "a") ];
-            method_return_type = TVar "a";
-          };
-          {
-            method_name = "sub";
-            method_params = [ ("x", TVar "a"); ("y", TVar "a") ];
-            method_return_type = TVar "a";
-          };
-          {
-            method_name = "mul";
-            method_params = [ ("x", TVar "a"); ("y", TVar "a") ];
-            method_return_type = TVar "a";
-          };
-          {
-            method_name = "div";
-            method_params = [ ("x", TVar "a"); ("y", TVar "a") ];
-            method_return_type = TVar "a";
-          };
+          Trait_registry.mk_method_sig ~name:"add"
+            ~params:[ ("x", TVar "a"); ("y", TVar "a") ]
+            ~return_type:(TVar "a") ();
+          Trait_registry.mk_method_sig ~name:"sub"
+            ~params:[ ("x", TVar "a"); ("y", TVar "a") ]
+            ~return_type:(TVar "a") ();
+          Trait_registry.mk_method_sig ~name:"mul"
+            ~params:[ ("x", TVar "a"); ("y", TVar "a") ]
+            ~return_type:(TVar "a") ();
+          Trait_registry.mk_method_sig ~name:"div"
+            ~params:[ ("x", TVar "a"); ("y", TVar "a") ]
+            ~return_type:(TVar "a") ();
         ];
     };
 
@@ -162,7 +156,7 @@ let init_builtin_traits () =
       trait_type_param = Some "a";
       trait_supertraits = [];
       trait_methods =
-        [ { method_name = "neg"; method_params = [ ("x", TVar "a") ]; method_return_type = TVar "a" } ];
+        [ Trait_registry.mk_method_sig ~name:"neg" ~params:[ ("x", TVar "a") ] ~return_type:(TVar "a") () ];
     }
 
 (* ============================================================
@@ -179,7 +173,7 @@ let init_builtin_impls () =
       impl_trait_name = "show";
       impl_type_params = [];
       impl_for_type = TInt;
-      impl_methods = [ { method_name = "show"; method_params = [ ("x", TInt) ]; method_return_type = TString } ];
+      impl_methods = [ Trait_registry.mk_method_sig ~name:"show" ~params:[ ("x", TInt) ] ~return_type:TString () ];
     };
 
   (* impl eq for int *)
@@ -189,7 +183,7 @@ let init_builtin_impls () =
       impl_type_params = [];
       impl_for_type = TInt;
       impl_methods =
-        [ { method_name = "eq"; method_params = [ ("x", TInt); ("y", TInt) ]; method_return_type = TBool } ];
+        [ Trait_registry.mk_method_sig ~name:"eq" ~params:[ ("x", TInt); ("y", TInt) ] ~return_type:TBool () ];
     };
 
   (* impl debug for int *)
@@ -198,7 +192,8 @@ let init_builtin_impls () =
       impl_trait_name = "debug";
       impl_type_params = [];
       impl_for_type = TInt;
-      impl_methods = [ { method_name = "debug"; method_params = [ ("x", TInt) ]; method_return_type = TString } ];
+      impl_methods =
+        [ Trait_registry.mk_method_sig ~name:"debug" ~params:[ ("x", TInt) ] ~return_type:TString () ];
     };
 
   (* impl ord for int *)
@@ -209,11 +204,10 @@ let init_builtin_impls () =
       impl_for_type = TInt;
       impl_methods =
         [
-          {
-            method_name = "compare";
-            method_params = [ ("x", TInt); ("y", TInt) ];
-            method_return_type = TEnum ("ordering", []);
-          };
+          Trait_registry.mk_method_sig ~name:"compare"
+            ~params:[ ("x", TInt); ("y", TInt) ]
+            ~return_type:(TEnum ("ordering", []))
+            ();
         ];
     };
 
@@ -223,7 +217,7 @@ let init_builtin_impls () =
       impl_trait_name = "hash";
       impl_type_params = [];
       impl_for_type = TInt;
-      impl_methods = [ { method_name = "hash"; method_params = [ ("x", TInt) ]; method_return_type = TInt } ];
+      impl_methods = [ Trait_registry.mk_method_sig ~name:"hash" ~params:[ ("x", TInt) ] ~return_type:TInt () ];
     };
 
   (* impl num for int *)
@@ -234,10 +228,10 @@ let init_builtin_impls () =
       impl_for_type = TInt;
       impl_methods =
         [
-          { method_name = "add"; method_params = [ ("x", TInt); ("y", TInt) ]; method_return_type = TInt };
-          { method_name = "sub"; method_params = [ ("x", TInt); ("y", TInt) ]; method_return_type = TInt };
-          { method_name = "mul"; method_params = [ ("x", TInt); ("y", TInt) ]; method_return_type = TInt };
-          { method_name = "div"; method_params = [ ("x", TInt); ("y", TInt) ]; method_return_type = TInt };
+          Trait_registry.mk_method_sig ~name:"add" ~params:[ ("x", TInt); ("y", TInt) ] ~return_type:TInt ();
+          Trait_registry.mk_method_sig ~name:"sub" ~params:[ ("x", TInt); ("y", TInt) ] ~return_type:TInt ();
+          Trait_registry.mk_method_sig ~name:"mul" ~params:[ ("x", TInt); ("y", TInt) ] ~return_type:TInt ();
+          Trait_registry.mk_method_sig ~name:"div" ~params:[ ("x", TInt); ("y", TInt) ] ~return_type:TInt ();
         ];
     };
 
@@ -247,7 +241,7 @@ let init_builtin_impls () =
       impl_trait_name = "neg";
       impl_type_params = [];
       impl_for_type = TInt;
-      impl_methods = [ { method_name = "neg"; method_params = [ ("x", TInt) ]; method_return_type = TInt } ];
+      impl_methods = [ Trait_registry.mk_method_sig ~name:"neg" ~params:[ ("x", TInt) ] ~return_type:TInt () ];
     };
 
   (* bool: show, eq, debug, ord, hash *)
@@ -258,7 +252,8 @@ let init_builtin_impls () =
       impl_trait_name = "show";
       impl_type_params = [];
       impl_for_type = TBool;
-      impl_methods = [ { method_name = "show"; method_params = [ ("x", TBool) ]; method_return_type = TString } ];
+      impl_methods =
+        [ Trait_registry.mk_method_sig ~name:"show" ~params:[ ("x", TBool) ] ~return_type:TString () ];
     };
 
   (* impl eq for bool *)
@@ -268,7 +263,7 @@ let init_builtin_impls () =
       impl_type_params = [];
       impl_for_type = TBool;
       impl_methods =
-        [ { method_name = "eq"; method_params = [ ("x", TBool); ("y", TBool) ]; method_return_type = TBool } ];
+        [ Trait_registry.mk_method_sig ~name:"eq" ~params:[ ("x", TBool); ("y", TBool) ] ~return_type:TBool () ];
     };
 
   (* impl debug for bool *)
@@ -277,7 +272,8 @@ let init_builtin_impls () =
       impl_trait_name = "debug";
       impl_type_params = [];
       impl_for_type = TBool;
-      impl_methods = [ { method_name = "debug"; method_params = [ ("x", TBool) ]; method_return_type = TString } ];
+      impl_methods =
+        [ Trait_registry.mk_method_sig ~name:"debug" ~params:[ ("x", TBool) ] ~return_type:TString () ];
     };
 
   (* impl ord for bool *)
@@ -288,11 +284,10 @@ let init_builtin_impls () =
       impl_for_type = TBool;
       impl_methods =
         [
-          {
-            method_name = "compare";
-            method_params = [ ("x", TBool); ("y", TBool) ];
-            method_return_type = TEnum ("ordering", []);
-          };
+          Trait_registry.mk_method_sig ~name:"compare"
+            ~params:[ ("x", TBool); ("y", TBool) ]
+            ~return_type:(TEnum ("ordering", []))
+            ();
         ];
     };
 
@@ -302,7 +297,7 @@ let init_builtin_impls () =
       impl_trait_name = "hash";
       impl_type_params = [];
       impl_for_type = TBool;
-      impl_methods = [ { method_name = "hash"; method_params = [ ("x", TBool) ]; method_return_type = TInt } ];
+      impl_methods = [ Trait_registry.mk_method_sig ~name:"hash" ~params:[ ("x", TBool) ] ~return_type:TInt () ];
     };
 
   (* string: show, eq, debug, ord, hash *)
@@ -314,7 +309,7 @@ let init_builtin_impls () =
       impl_type_params = [];
       impl_for_type = TString;
       impl_methods =
-        [ { method_name = "show"; method_params = [ ("x", TString) ]; method_return_type = TString } ];
+        [ Trait_registry.mk_method_sig ~name:"show" ~params:[ ("x", TString) ] ~return_type:TString () ];
     };
 
   (* impl eq for string *)
@@ -324,7 +319,9 @@ let init_builtin_impls () =
       impl_type_params = [];
       impl_for_type = TString;
       impl_methods =
-        [ { method_name = "eq"; method_params = [ ("x", TString); ("y", TString) ]; method_return_type = TBool } ];
+        [
+          Trait_registry.mk_method_sig ~name:"eq" ~params:[ ("x", TString); ("y", TString) ] ~return_type:TBool ();
+        ];
     };
 
   (* impl debug for string *)
@@ -334,7 +331,7 @@ let init_builtin_impls () =
       impl_type_params = [];
       impl_for_type = TString;
       impl_methods =
-        [ { method_name = "debug"; method_params = [ ("x", TString) ]; method_return_type = TString } ];
+        [ Trait_registry.mk_method_sig ~name:"debug" ~params:[ ("x", TString) ] ~return_type:TString () ];
     };
 
   (* impl ord for string *)
@@ -345,11 +342,10 @@ let init_builtin_impls () =
       impl_for_type = TString;
       impl_methods =
         [
-          {
-            method_name = "compare";
-            method_params = [ ("x", TString); ("y", TString) ];
-            method_return_type = TEnum ("ordering", []);
-          };
+          Trait_registry.mk_method_sig ~name:"compare"
+            ~params:[ ("x", TString); ("y", TString) ]
+            ~return_type:(TEnum ("ordering", []))
+            ();
         ];
     };
 
@@ -359,7 +355,7 @@ let init_builtin_impls () =
       impl_trait_name = "hash";
       impl_type_params = [];
       impl_for_type = TString;
-      impl_methods = [ { method_name = "hash"; method_params = [ ("x", TString) ]; method_return_type = TInt } ];
+      impl_methods = [ Trait_registry.mk_method_sig ~name:"hash" ~params:[ ("x", TString) ] ~return_type:TInt () ];
     };
 
   (* float: show, eq, debug, ord, num, neg (NO hash) *)
@@ -370,7 +366,8 @@ let init_builtin_impls () =
       impl_trait_name = "show";
       impl_type_params = [];
       impl_for_type = TFloat;
-      impl_methods = [ { method_name = "show"; method_params = [ ("x", TFloat) ]; method_return_type = TString } ];
+      impl_methods =
+        [ Trait_registry.mk_method_sig ~name:"show" ~params:[ ("x", TFloat) ] ~return_type:TString () ];
     };
 
   (* impl eq for float *)
@@ -380,7 +377,7 @@ let init_builtin_impls () =
       impl_type_params = [];
       impl_for_type = TFloat;
       impl_methods =
-        [ { method_name = "eq"; method_params = [ ("x", TFloat); ("y", TFloat) ]; method_return_type = TBool } ];
+        [ Trait_registry.mk_method_sig ~name:"eq" ~params:[ ("x", TFloat); ("y", TFloat) ] ~return_type:TBool () ];
     };
 
   (* impl debug for float *)
@@ -390,7 +387,7 @@ let init_builtin_impls () =
       impl_type_params = [];
       impl_for_type = TFloat;
       impl_methods =
-        [ { method_name = "debug"; method_params = [ ("x", TFloat) ]; method_return_type = TString } ];
+        [ Trait_registry.mk_method_sig ~name:"debug" ~params:[ ("x", TFloat) ] ~return_type:TString () ];
     };
 
   (* impl ord for float *)
@@ -401,11 +398,10 @@ let init_builtin_impls () =
       impl_for_type = TFloat;
       impl_methods =
         [
-          {
-            method_name = "compare";
-            method_params = [ ("x", TFloat); ("y", TFloat) ];
-            method_return_type = TEnum ("ordering", []);
-          };
+          Trait_registry.mk_method_sig ~name:"compare"
+            ~params:[ ("x", TFloat); ("y", TFloat) ]
+            ~return_type:(TEnum ("ordering", []))
+            ();
         ];
     };
 
@@ -417,10 +413,10 @@ let init_builtin_impls () =
       impl_for_type = TFloat;
       impl_methods =
         [
-          { method_name = "add"; method_params = [ ("x", TFloat); ("y", TFloat) ]; method_return_type = TFloat };
-          { method_name = "sub"; method_params = [ ("x", TFloat); ("y", TFloat) ]; method_return_type = TFloat };
-          { method_name = "mul"; method_params = [ ("x", TFloat); ("y", TFloat) ]; method_return_type = TFloat };
-          { method_name = "div"; method_params = [ ("x", TFloat); ("y", TFloat) ]; method_return_type = TFloat };
+          Trait_registry.mk_method_sig ~name:"add" ~params:[ ("x", TFloat); ("y", TFloat) ] ~return_type:TFloat ();
+          Trait_registry.mk_method_sig ~name:"sub" ~params:[ ("x", TFloat); ("y", TFloat) ] ~return_type:TFloat ();
+          Trait_registry.mk_method_sig ~name:"mul" ~params:[ ("x", TFloat); ("y", TFloat) ] ~return_type:TFloat ();
+          Trait_registry.mk_method_sig ~name:"div" ~params:[ ("x", TFloat); ("y", TFloat) ] ~return_type:TFloat ();
         ];
     };
 
@@ -430,7 +426,7 @@ let init_builtin_impls () =
       impl_trait_name = "neg";
       impl_type_params = [];
       impl_for_type = TFloat;
-      impl_methods = [ { method_name = "neg"; method_params = [ ("x", TFloat) ]; method_return_type = TFloat } ];
+      impl_methods = [ Trait_registry.mk_method_sig ~name:"neg" ~params:[ ("x", TFloat) ] ~return_type:TFloat () ];
     }
 
 (* Create a type environment with all builtins *)

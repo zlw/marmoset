@@ -1,0 +1,14 @@
+type pair = { a: int, b: int }
+
+impl pair {
+  fn total(p: pair) -> int {
+    p.a + p.b
+  }
+}
+
+let p: pair = { a: 10, b: 20 }
+# These two forms should produce identical results
+let via_dot = p.total()
+let via_qual = pair.total(p)
+puts(via_dot)  # output: 30
+puts(via_qual)  # output: 30

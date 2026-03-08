@@ -1,0 +1,15 @@
+type box = { v: int }
+
+trait mapper[a] {
+  fn map[b](x: a, f: fn(int) -> b) -> b
+}
+
+impl mapper for box {
+  fn map[b](x: box, f: fn(int) -> b) -> b {
+    f(x.v)
+  }
+}
+
+let b: box = { v: 42 }
+let s = b.map(fn(n: int) -> string { n.show() })
+puts(s)  # output: 42

@@ -14,6 +14,12 @@ type typecheck_result = {
   result_type : mono_type; (* Type of the final expression *)
   environment : Infer.type_env; (* Final type environment with all bindings *)
   type_map : Infer.type_map; (* Map from expression IDs to their inferred types *)
+  call_resolution_map : (int, Infer.method_resolution) Hashtbl.t;
+      (* Phase 5: Explicit call-resolution metadata for emitter *)
+  method_def_map : (int, Resolution_artifacts.typed_method_def) Hashtbl.t;
+      (* Phase 5.4: Typed method definitions for emitter. Populated during Phase 6. *)
+  method_type_args_map : (int, Types.mono_type list) Hashtbl.t;
+      (* Phase 6.4: Resolved method-level type args per call site for monomorphization *)
 }
 
 let infer_program_safe ?state ~(env : Infer.type_env) (program : Syntax.Ast.AST.program) :
@@ -41,7 +47,19 @@ let check_program ?state ?(env = Infer.empty_env) (program : Syntax.Ast.AST.prog
     (typecheck_result, Diagnostic.t list) result =
   match infer_program_safe ?state ~env program with
   | Error e -> Error e
-  | Ok (final_env, type_map, result_type) -> Ok { result_type; environment = final_env; type_map }
+  | Ok (final_env, type_map, result_type) ->
+      let call_resolution_map = Infer.snapshot_method_resolution_store () in
+      let method_def_map = Infer.snapshot_method_def_store () in
+      let method_type_args_map = Infer.snapshot_method_type_args_store () in
+      Ok
+        {
+          result_type;
+          environment = final_env;
+          type_map;
+          call_resolution_map;
+          method_def_map;
+          method_type_args_map;
+        }
 
 (* Type check source code string.
     Parses and type checks in one step.
@@ -53,7 +71,19 @@ let check_string ?state ?(env = Infer.empty_env) ~file_id (source : string) :
   | Ok program -> (
       match infer_program_safe ?state ~env program with
       | Error e -> Error e
-      | Ok (final_env, type_map, result_type) -> Ok { result_type; environment = final_env; type_map })
+      | Ok (final_env, type_map, result_type) ->
+          let call_resolution_map = Infer.snapshot_method_resolution_store () in
+          let method_def_map = Infer.snapshot_method_def_store () in
+          let method_type_args_map = Infer.snapshot_method_type_args_store () in
+          Ok
+            {
+              result_type;
+              environment = final_env;
+              type_map;
+              call_resolution_map;
+              method_def_map;
+              method_type_args_map;
+            })
 
 (* ============================================================
    Phase 2: Type check with annotations
@@ -171,7 +201,19 @@ let check_program_with_annotations ?state ?(env = Infer.empty_env) (program : Sy
       in
       match check_stmts_with_infer program with
       | Error e -> Error [ e ]
-      | Ok () -> Ok { result_type; environment = final_env; type_map })
+      | Ok () ->
+          let call_resolution_map = Infer.snapshot_method_resolution_store () in
+          let method_def_map = Infer.snapshot_method_def_store () in
+          let method_type_args_map = Infer.snapshot_method_type_args_store () in
+          Ok
+            {
+              result_type;
+              environment = final_env;
+              type_map;
+              call_resolution_map;
+              method_def_map;
+              method_type_args_map;
+            })
 
 (* Type check source code with annotations.
    Parses and type checks in one step, with annotation support. *)
@@ -688,14 +730,14 @@ let%test "env reuse with shared inference state preserves constrained generic ob
       trait_type_param = Some "a";
       trait_supertraits = [];
       trait_methods =
-        [ { method_name = "show"; method_params = [ ("x", TVar "a") ]; method_return_type = TString } ];
+        [ Trait_registry.mk_method_sig ~name:"show" ~params:[ ("x", TVar "a") ] ~return_type:TString () ];
     };
   Trait_registry.register_impl ~builtin:true
     {
       impl_trait_name = "show";
       impl_type_params = [];
       impl_for_type = TInt;
-      impl_methods = [ { method_name = "show"; method_params = [ ("x", TInt) ]; method_return_type = TString } ];
+      impl_methods = [ Trait_registry.mk_method_sig ~name:"show" ~params:[ ("x", TInt) ] ~return_type:TString () ];
     };
   let shared_state = Infer.create_inference_state () in
   match

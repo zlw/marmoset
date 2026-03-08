@@ -1,0 +1,11 @@
+type data = { v: int }
+
+impl data {
+  fn process[b](d: data, f: fn(int) -> b) -> b {
+    f(d.v)
+  }
+}
+
+let d: data = { v: 5 }
+let double = fn(n: int) -> int { n * 2 }
+puts(d.process(double))  # output: 10

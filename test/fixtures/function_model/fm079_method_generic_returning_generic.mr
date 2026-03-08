@@ -1,0 +1,13 @@
+enum opt[a] { some(a) none }
+
+impl opt[a] {
+  fn and_then[b](o: opt[a], f: fn(a) -> opt[b]) -> opt[b] {
+    match o {
+      opt.some(v): f(v)
+      opt.none: opt.none
+    }
+  }
+}
+
+let x = opt.some(42)
+let y = x.and_then(fn(n: int) -> opt[string] { opt.some(n.show()) })

@@ -1,0 +1,13 @@
+trait cmp[a] {
+  fn gt(x: a, y: a) -> bool
+}
+
+impl cmp for int {
+  fn gt(x: int, y: int) -> bool {
+    x > y
+  }
+}
+
+let a = 10
+puts(a.gt(5))  # output: true
+puts(a.gt(20))  # output: false

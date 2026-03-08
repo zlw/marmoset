@@ -1,0 +1,3 @@
+let square = fn(n: int) -> int { n * n }
+let r = { compute: square, val: 5 }
+puts(r.compute(r.val))  # output: 25

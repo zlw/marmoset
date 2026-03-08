@@ -1,5 +1,5 @@
-# TH33: Inherent method missing parameter type annotation is rejected
-impl int {  # error: missing a type annotation
+# TH33: Inherent method parameter type annotation is optional (inferred from body)
+impl int {
   fn oops(x) -> int { x }
 }
-puts(1)
+puts(1)  # output: 1

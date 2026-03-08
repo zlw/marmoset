@@ -1,0 +1,4 @@
+type empty = { v: int }
+
+let e: empty = { v: 0 }
+e.missing()  # error: *

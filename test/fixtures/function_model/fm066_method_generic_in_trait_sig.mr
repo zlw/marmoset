@@ -1,0 +1,3 @@
+trait container[a] {
+  fn map[b](x: a, f: fn(a) -> b) -> b
+}

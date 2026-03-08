@@ -139,6 +139,14 @@ case "$file" in
         echo "./main.go:50:1: missing return"
         exit 1
         ;;
+    *canary_xfail_expected_fail.mr)
+        echo "$file:1:1: error test-xfail: expected failure for xfail test"
+        exit 1
+        ;;
+    *canary_xpass_stale.mr)
+        echo "Built: stub"
+        exit 0
+        ;;
     *)
         echo "Built: stub"
         exit 0
@@ -312,5 +320,151 @@ fi
 cp "$MONKEY_BACKUP" "$MONKEY_FIXTURE"
 rm -f "$MONKEY_BACKUP"
 MONKEY_BACKUP=""
+
+# --- xfail / XPASS canaries ---
+
+canary_xfail_pass="$TMP_FIXTURE_DIR/canary_xfail_expected_fail.mr"
+canary_xpass="$TMP_FIXTURE_DIR/canary_xpass_stale.mr"
+canary_xfail_no_reason="$TMP_FIXTURE_DIR/canary_xfail_no_reason.mr"
+canary_xfail_duplicate="$TMP_FIXTURE_DIR/canary_xfail_duplicate.mr"
+canary_xfail_late="$TMP_FIXTURE_DIR/canary_xfail_late.mr"
+
+# xfail fixture that should fail → XFAIL (non-failing)
+cat > "$canary_xfail_pass" <<'CANARY'
+# xfail: method generics not implemented yet
+let x = 1  # error: expected failure for xfail test
+CANARY
+
+# xfail fixture that actually passes → XPASS (should fail suite)
+cat > "$canary_xpass" <<'CANARY'
+# xfail: stale marker — this test passes now
+let x = 1
+CANARY
+
+# xfail with empty reason → parse error
+cat > "$canary_xfail_no_reason" <<'CANARY'
+# xfail:
+let x = 1
+CANARY
+
+# Duplicate xfail → parse error
+cat > "$canary_xfail_duplicate" <<'CANARY'
+# xfail: first reason
+# xfail: second reason
+let x = 1
+CANARY
+
+# xfail after code → not in leading block, treated as regular comment
+cat > "$canary_xfail_late" <<'CANARY'
+let x = 1
+# xfail: too late, not in leading block
+CANARY
+
+rel_xfail_pass="${canary_xfail_pass#$FIXTURE_ROOT/}"
+rel_xpass="${canary_xpass#$FIXTURE_ROOT/}"
+rel_xfail_no_reason="${canary_xfail_no_reason#$FIXTURE_ROOT/}"
+rel_xfail_duplicate="${canary_xfail_duplicate#$FIXTURE_ROOT/}"
+rel_xfail_late="${canary_xfail_late#$FIXTURE_ROOT/}"
+
+TOTAL=$((TOTAL + 1))
+echo -n "TEST [$TOTAL] xfail: expected failure reclassified as XFAIL ... "
+if output=$($HARNESS_COPY "$rel_xfail_pass" 2>&1); then
+    if echo "$output" | grep -q "XFAIL" && echo "$output" | grep -q "xfail"; then
+        echo "✓ PASS"
+        PASS=$((PASS + 1))
+    else
+        echo "✗ FAIL (XFAIL marker not found in output)"
+        echo "$output" | sed 's/^/  /' | head -n 20
+        FAIL=$((FAIL + 1))
+    fi
+else
+    echo "✗ FAIL (suite unexpectedly failed for XFAIL fixture)"
+    echo "$output" | sed 's/^/  /' | head -n 20
+    FAIL=$((FAIL + 1))
+fi
+
+TOTAL=$((TOTAL + 1))
+echo -n "TEST [$TOTAL] xfail: stale xfail causes XPASS suite failure ... "
+if output=$($HARNESS_COPY "$rel_xpass" 2>&1); then
+    echo "✗ FAIL (expected suite failure for XPASS)"
+    FAIL=$((FAIL + 1))
+else
+    if echo "$output" | grep -q "XPASS" && echo "$output" | grep -q "stale xfail"; then
+        echo "✓ PASS"
+        PASS=$((PASS + 1))
+    else
+        echo "✗ FAIL (XPASS failure marker not found)"
+        echo "$output" | sed 's/^/  /' | head -n 20
+        FAIL=$((FAIL + 1))
+    fi
+fi
+
+TOTAL=$((TOTAL + 1))
+echo -n "TEST [$TOTAL] xfail: empty reason is rejected ... "
+if output=$($HARNESS "$rel_xfail_no_reason" 2>&1); then
+    echo "✗ FAIL (expected parse failure for empty xfail reason)"
+    FAIL=$((FAIL + 1))
+else
+    if echo "$output" | grep -q "FAIL"; then
+        echo "✓ PASS"
+        PASS=$((PASS + 1))
+    else
+        echo "✗ FAIL (parse failure marker missing)"
+        echo "$output" | sed 's/^/  /' | head -n 20
+        FAIL=$((FAIL + 1))
+    fi
+fi
+
+TOTAL=$((TOTAL + 1))
+echo -n "TEST [$TOTAL] xfail: duplicate xfail is rejected ... "
+if output=$($HARNESS "$rel_xfail_duplicate" 2>&1); then
+    echo "✗ FAIL (expected parse failure for duplicate xfail)"
+    FAIL=$((FAIL + 1))
+else
+    if echo "$output" | grep -q "FAIL"; then
+        echo "✓ PASS"
+        PASS=$((PASS + 1))
+    else
+        echo "✗ FAIL (parse failure marker missing)"
+        echo "$output" | sed 's/^/  /' | head -n 20
+        FAIL=$((FAIL + 1))
+    fi
+fi
+
+TOTAL=$((TOTAL + 1))
+echo -n "TEST [$TOTAL] xfail: annotation after code is ignored (not xfail) ... "
+if output=$($HARNESS_COPY "$rel_xfail_late" 2>&1); then
+    # The fixture has no diag/output annotations → build-only mode
+    # The stub will succeed → PASS (no xfail in effect)
+    if echo "$output" | grep -q "✓ PASS"; then
+        echo "✓ PASS"
+        PASS=$((PASS + 1))
+    else
+        echo "✗ FAIL (late xfail should be ignored, test should pass)"
+        echo "$output" | sed 's/^/  /' | head -n 20
+        FAIL=$((FAIL + 1))
+    fi
+else
+    echo "✗ FAIL (late xfail annotation should be ignored)"
+    echo "$output" | sed 's/^/  /' | head -n 20
+    FAIL=$((FAIL + 1))
+fi
+
+TOTAL=$((TOTAL + 1))
+echo -n "TEST [$TOTAL] xfail: summary includes xfail/xpass counters ... "
+if output=$($HARNESS_COPY "$rel_xfail_pass" 2>&1); then
+    if echo "$output" | grep -q "xfail"; then
+        echo "✓ PASS"
+        PASS=$((PASS + 1))
+    else
+        echo "✗ FAIL (xfail counter missing from summary)"
+        echo "$output" | sed 's/^/  /' | head -n 20
+        FAIL=$((FAIL + 1))
+    fi
+else
+    echo "✗ FAIL (suite failed unexpectedly)"
+    echo "$output" | sed 's/^/  /' | head -n 20
+    FAIL=$((FAIL + 1))
+fi
 
 suite_end

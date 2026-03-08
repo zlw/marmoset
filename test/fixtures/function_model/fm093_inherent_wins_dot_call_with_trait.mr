@@ -1,0 +1,16 @@
+type cell = { v: int }
+
+trait info[a] {
+  fn detail(x: a) -> string
+}
+
+impl info for cell {
+  fn detail(x: cell) -> string { "trait:" + x.v.show() }
+}
+
+impl cell {
+  fn detail(c: cell) -> string { "inherent:" + c.v.show() }
+}
+
+let c: cell = { v: 5 }
+puts(c.detail())  # output: inherent:5

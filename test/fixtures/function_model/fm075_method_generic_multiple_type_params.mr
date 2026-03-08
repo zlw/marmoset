@@ -1,0 +1,7 @@
+type pair = { a: int, b: int }
+
+impl pair {
+  fn bimap[c, d](p: pair, f: fn(int) -> c, g: fn(int) -> d) -> { a: c, b: d } {
+    { a: f(p.a), b: g(p.b) }
+  }
+}

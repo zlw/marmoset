@@ -1,0 +1,14 @@
+enum opt[a] { some(a) none }
+
+impl opt[a] {
+  fn has(o: opt[a]) -> bool {
+    match o {
+      opt.some(_): true
+      opt.none: false
+    }
+  }
+}
+
+let x = opt.some(1)
+let msg = if (x.has()) { "yes" } else { "no" }
+puts(msg)  # output: yes

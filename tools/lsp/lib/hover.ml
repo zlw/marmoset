@@ -17,7 +17,8 @@ let first_some a b =
    the true start by walking into left children recursively. *)
 let rec effective_start_pos (expr : Ast.AST.expression) : int =
   match expr.expr with
-  | Ast.AST.MethodCall (recv, _, _) | Ast.AST.FieldAccess (recv, _) -> min (effective_start_pos recv) expr.pos
+  | Ast.AST.MethodCall { mc_receiver = recv; _ } | Ast.AST.FieldAccess (recv, _) ->
+      min (effective_start_pos recv) expr.pos
   | Ast.AST.Infix (left, _, _) -> min (effective_start_pos left) expr.pos
   | Ast.AST.Call (fn_expr, _) -> min (effective_start_pos fn_expr) expr.pos
   | _ -> expr.pos
@@ -43,8 +44,8 @@ let rec find_expr_at (offset : int) (expr : Ast.AST.expression) : Ast.AST.expres
       | Ast.AST.Hash pairs ->
           List.find_map (fun (k, v) -> first_some (find_expr_at offset k) (find_expr_at offset v)) pairs
       | Ast.AST.FieldAccess (e, _) -> find_expr_at offset e
-      | Ast.AST.MethodCall (recv, _, args) ->
-          first_some (find_expr_at offset recv) (List.find_map (find_expr_at offset) args)
+      | Ast.AST.MethodCall { mc_receiver; mc_args; _ } ->
+          first_some (find_expr_at offset mc_receiver) (List.find_map (find_expr_at offset) mc_args)
       | Ast.AST.Match (scrutinee, arms) ->
           first_some (find_expr_at offset scrutinee)
             (List.find_map (fun (arm : Ast.AST.match_arm) -> find_expr_at offset arm.body) arms)
@@ -86,9 +87,11 @@ and find_expr_in_stmt (offset : int) (stmt : Ast.AST.statement) : Ast.AST.expres
             None)
   | Ast.AST.Block stmts -> List.find_map (find_expr_in_stmt offset) stmts
   | Ast.AST.ImplDef { impl_methods; _ } ->
-      List.find_map (fun (m : Ast.AST.method_impl) -> find_expr_at offset m.impl_method_body) impl_methods
+      List.find_map (fun (m : Ast.AST.method_impl) -> find_expr_in_stmt offset m.impl_method_body) impl_methods
   | Ast.AST.InherentImplDef { inherent_methods; _ } ->
-      List.find_map (fun (m : Ast.AST.method_impl) -> find_expr_at offset m.impl_method_body) inherent_methods
+      List.find_map
+        (fun (m : Ast.AST.method_impl) -> find_expr_in_stmt offset m.impl_method_body)
+        inherent_methods
   | Ast.AST.TraitDef { methods; _ } ->
       List.find_map
         (fun (m : Ast.AST.method_sig) -> Option.bind m.method_default_impl (find_expr_at offset))
@@ -497,4 +500,25 @@ let%test "find_expr_at returns expression when offset is inside" =
   let expr = Ast.AST.mk_expr ~id:1 ~pos:0 ~end_pos:5 (Ast.AST.Identifier "hello") in
   match find_expr_at 3 expr with
   | Some e -> e.id = 1
+  | None -> false
+
+(* ============================================================
+   Phase 8 regression: hover inside trait impl method body
+   ============================================================ *)
+
+let trait_impl_source =
+  "trait greet[a] {\n  fn hello(x: a) -> string\n}\nimpl greet for int {\n  fn hello(x: int) -> string { \"hi\" }\n}\nputs(greet.hello(42))"
+
+let%test "hover on expression inside trait impl method body" =
+  (* line 4: fn hello(x: int) -> string { "hi" }  — "hi" is a string literal *)
+  match hover_info trait_impl_source 4 32 with
+  | Some h -> string_contains h.type_text "string"
+  | None -> false
+
+let inherent_impl_source = "impl int {\n  fn double(x: int) -> int { x * 2 }\n}\nputs(42.double())"
+
+let%test "hover on expression inside inherent impl method body" =
+  (* line 1: fn double(x: int) -> int { x * 2 } — x * 2 *)
+  match hover_info inherent_impl_source 1 29 with
+  | Some h -> string_contains h.type_text "int"
   | None -> false

@@ -1,0 +1,14 @@
+enum result[a, b] { ok(a) err(b) }
+
+impl result[a, b] {
+  fn map_ok[c](r: result[a, b], f: fn(a) -> c) -> result[c, b] {
+    match r {
+      result.ok(v): result.ok(f(v))
+      result.err(e): result.err(e)
+    }
+  }
+}
+
+# impl generics: a=int, b=string; method generic: c=bool
+let r: result[int, string] = result.ok(42)
+let r2 = r.map_ok(fn(n: int) -> bool { n > 0 })

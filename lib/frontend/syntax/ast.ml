@@ -41,10 +41,18 @@ module AST = struct
     methods : method_sig list;
   }
 
+  and effect_annotation =
+    | Pure
+    | Effectful
+  [@@deriving show]
+
   and method_sig = {
+    method_sig_id : int;
     method_name : string;
+    method_generics : generic_param list option;
     method_params : (string * type_expr) list;
     method_return_type : type_expr;
+    method_effect : effect_annotation;
     method_default_impl : expression option;
   }
 
@@ -63,10 +71,13 @@ module AST = struct
   }
 
   and method_impl = {
+    impl_method_id : int;
     impl_method_name : string;
+    impl_method_generics : generic_param list option;
     impl_method_params : (string * type_expr option) list;
     impl_method_return_type : type_expr option;
-    impl_method_body : expression;
+    impl_method_effect : effect_annotation option;
+    impl_method_body : statement;
   }
 
   (* Phase 4.3: Derive statements *)
@@ -152,7 +163,12 @@ module AST = struct
     | Match of expression * match_arm list (* match scrutinee { arm1, arm2, ... } *)
     | RecordLit of record_field list * expression option (* { x: 1, y: 2, ...base } - fields + optional spread *)
     | FieldAccess of expression * string (* expr.field_name *)
-    | MethodCall of expression * string * expression list (* receiver.method(args) *)
+    | MethodCall of {
+        mc_receiver : expression;
+        mc_method : string;
+        mc_type_args : type_expr list option;
+        mc_args : expression list;
+      }
   [@@deriving show]
 
   (* Phase 4.4: Record field in record literal *)
@@ -360,8 +376,14 @@ module AST = struct
           in
           Printf.sprintf "{ %s%s }" fields_str spread_str
       | FieldAccess (expr, field) -> Printf.sprintf "%s.%s" (expression_to_string expr) field
-      | MethodCall (receiver, method_name, args) ->
-          Printf.sprintf "%s.%s(%s)" (expression_to_string receiver) method_name (args_to_string args)
+      | MethodCall { mc_receiver; mc_method; mc_type_args; mc_args } ->
+          let ta_str =
+            match mc_type_args with
+            | None -> ""
+            | Some tas -> "[" ^ (List.map show_type_expr tas |> String.concat ", ") ^ "]"
+          in
+          Printf.sprintf "%s.%s%s(%s)" (expression_to_string mc_receiver) mc_method ta_str
+            (args_to_string mc_args)
     and block_to_string (block : statement) : string = statement_to_string block
     and function_to_string (params : (string * type_expr option) list) (body : statement) : string =
       let param_str = List.map (fun (name, _annot) -> name) params |> String.concat ", " in

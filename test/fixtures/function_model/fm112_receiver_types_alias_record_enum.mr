@@ -1,0 +1,26 @@
+type mystr = string
+type point = { x: int, y: int }
+enum flag { on off }
+
+impl mystr {
+  fn loud(s: mystr) -> mystr {
+    s + "!"
+  }
+}
+
+impl point {
+  fn sum(p: point) -> int { p.x + p.y }
+}
+
+impl flag {
+  fn is_on(f: flag) -> bool {
+    match f { flag.on: true flag.off: false }
+  }
+}
+
+let s: mystr = "hi"
+puts(s.loud())  # output: hi!
+let p: point = { x: 1, y: 2 }
+puts(p.sum())  # output: 3
+let f = flag.on
+puts(f.is_on())  # output: true

@@ -1,0 +1,5 @@
+impl int {
+  fn triple(x: int) -> int { x + x + x }
+}
+
+puts(7.triple())  # output: 21

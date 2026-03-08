@@ -1,0 +1,7 @@
+trait base[a] {
+  fn name(x: a) -> string
+}
+
+trait ext[a]: base {
+  fn describe[b: show](x: a, extra: b) -> string
+}

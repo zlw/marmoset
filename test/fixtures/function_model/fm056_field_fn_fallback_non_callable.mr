@@ -1,0 +1,2 @@
+let obj = { f: 42 }
+obj.f()  # error: *

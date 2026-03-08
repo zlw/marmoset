@@ -1,0 +1,11 @@
+type box = { v: int }
+
+impl box {
+  fn cast[b](bx: box, f: fn(int) -> b) -> b {
+    f(bx.v)
+  }
+}
+
+let b: box = { v: 5 }
+let s = b.cast[string](fn(n: int) -> string { n.show() })
+puts(s)  # output: 5

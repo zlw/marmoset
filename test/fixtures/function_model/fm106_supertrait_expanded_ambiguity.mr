@@ -1,0 +1,28 @@
+# xfail: supertrait-expanded ambiguity not implemented
+trait base[a] {
+  fn op(x: a) -> int
+}
+
+trait child_a[a]: base {
+  fn extra_a(x: a) -> string
+}
+
+trait child_b[a]: base {
+  fn extra_b(x: a) -> string
+}
+
+type thing = { v: int }
+
+impl child_a for thing {
+  fn extra_a(x: thing) -> string { "a" }
+  fn op(x: thing) -> int { 1 }
+}
+
+impl child_b for thing {
+  fn extra_b(x: thing) -> string { "b" }
+  fn op(x: thing) -> int { 2 }
+}
+
+let t: thing = { v: 0 }
+# op is provided by both child_a and child_b via base → ambiguity
+t.op()  # error: Ambiguous
