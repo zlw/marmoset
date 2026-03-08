@@ -155,6 +155,10 @@ let active_inference_state : inference_state ref = ref (create_inference_state (
 let global_method_resolution_store : (int, method_resolution) Hashtbl.t = Hashtbl.create 256
 let global_method_type_args_store : (int, mono_type list) Hashtbl.t = Hashtbl.create 64
 
+(* Track method names being defined in the current inherent impl, so recursive calls
+   can find them while body inference is in progress. Pairs: (for_type, method_name). *)
+let current_inherent_impl_methods : (mono_type * string) list ref = ref []
+
 let with_inference_state (state : inference_state) (f : unit -> 'a) : 'a =
   let previous = !active_inference_state in
   active_inference_state := state;
@@ -878,7 +882,7 @@ and resolve_match_arm_symbols (stack : symbol_scope_stack) (arm : AST.match_arm)
 
 and resolve_impl_method_symbols (stack : symbol_scope_stack) (m : AST.method_impl) : unit =
   let method_scope = resolve_impl_method_params (push_scope stack) m in
-  resolve_expr_symbols method_scope m.impl_method_body
+  ignore (resolve_stmt_symbols method_scope ~is_top_level:false m.impl_method_body)
 
 and resolve_stmt_symbols (stack : symbol_scope_stack) ~(is_top_level : bool) (stmt : AST.statement) :
     symbol_scope_stack =
@@ -1084,11 +1088,9 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
     | AST.RecordLit (fields, spread) -> infer_record_literal type_map env fields spread expr
     | AST.FieldAccess (receiver, variant_name) -> (
         (* Phase 4.3/4.4: Could be field access or nullary enum constructor *)
-        (* Check if this is actually a nullary enum constructor (receiver is enum type identifier) *)
         match receiver.expr with
-        | AST.Identifier enum_name when Enum_registry.lookup enum_name <> None -> (
-            (* This is a nullary enum constructor like option.none or direction.north *)
-            (* Redirect to enum constructor logic with empty args *)
+        | AST.Identifier enum_name when classify_dotted_receiver env enum_name variant_name = `EnumVariant -> (
+            (* Nullary enum constructor like option.none or direction.north *)
             match Enum_registry.lookup_variant enum_name variant_name with
             | None ->
                 Error
@@ -1537,12 +1539,20 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                                     (Types.to_string receiver_type'))
                                expr)))
               | `Found (trait_name, method_sig) -> (
+                  let is_self_defining =
+                    let recv_canon = canonicalize_mono_type receiver_type' in
+                    List.exists
+                      (fun (for_type, mname) ->
+                        mname = method_name && canonicalize_mono_type for_type = recv_canon)
+                      !current_inherent_impl_methods
+                  in
                   match inherent_method_result with
                   | Error msg -> Error (error_at ~code:"type-constructor" ~message:msg expr)
-                  | Ok (Some inherent_sig) ->
-                      (* Phase 4.3: Inherent method takes precedence over trait on dot calls *)
+                  | Ok (Some inherent_sig) when not is_self_defining ->
+                      (* Phase 4.3: Inherent method takes precedence over trait on dot calls,
+                         unless the inherent method is currently being defined (avoid infinite recursion) *)
                       infer_with_method_signature inherent_sig InherentMethod
-                  | Ok None -> (
+                  | Ok (Some _) | Ok None -> (
                       let instantiated_method_sig =
                         match Trait_registry.lookup_trait trait_name with
                         | None -> method_sig
@@ -1720,32 +1730,17 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
         in
         match receiver.expr with
         | AST.Identifier name -> (
-            (* Phase 4.4: Qualified call resolution order:
-               1. Enum variant constructors (thing.some(42))
-               2. Bound variables (let render = ...; render.draw(42))
-               3. Type-qualified inherent (point.sum(p))
-               4. Enum inherent method (thing.describe(t))
-               5. Trait-qualified (display.render(s))
-               6. Regular method call (fallback) *)
-            let is_enum = Enum_registry.lookup name <> None in
-            let is_enum_variant = is_enum && Enum_registry.lookup_variant name method_name <> None in
-            let is_bound_var = TypeEnv.mem name env in
-            if is_enum_variant then
-              infer_enum_constructor name
-            else if is_bound_var then
-              infer_real_method_call ()
-            else if is_enum then
-              (* Enum inherent method: thing.describe(t) *)
-              match resolve_type_name name with
-              | Some for_type -> infer_qualified_type_call for_type
-              | None -> infer_enum_constructor name
-            else
-              match resolve_type_name name with
-              | Some for_type -> infer_qualified_type_call for_type
-              | None -> (
-                  match Trait_registry.lookup_trait name with
-                  | Some _ -> infer_qualified_trait_call name
-                  | None -> infer_real_method_call ()))
+            (* Use shared classifier for consistent priority across FieldAccess and MethodCall *)
+            match classify_dotted_receiver env name method_name with
+            | `BoundVar -> infer_real_method_call ()
+            | `EnumVariant -> infer_enum_constructor name
+            | `EnumType -> (
+                match resolve_type_name name with
+                | Some for_type -> infer_qualified_type_call for_type
+                | None -> infer_enum_constructor name)
+            | `TypeName for_type -> infer_qualified_type_call for_type
+            | `TraitName -> infer_qualified_trait_call name
+            | `Unknown -> infer_real_method_call ())
         | _ -> infer_real_method_call ())
   in
   (* Record the type in the type map before returning *)
@@ -2495,6 +2490,42 @@ and infer_hash_pairs type_map env subst key_type val_type pairs =
    Records
    ============================================================ *)
 
+(* Shared receiver classifier for FieldAccess and MethodCall handlers.
+   Determines what kind of entity a dotted-access receiver identifier refers to,
+   using a unified priority: bound variable > enum > type alias > trait > unknown. *)
+and classify_dotted_receiver (env : type_env) (name : string) (member_name : string) :
+    [ `BoundVar | `EnumVariant | `EnumType | `TypeName of mono_type | `TraitName | `Unknown ] =
+  if TypeEnv.mem name env then
+    `BoundVar
+  else
+    let is_enum = Enum_registry.lookup name <> None in
+    let is_enum_variant = is_enum && Enum_registry.lookup_variant name member_name <> None in
+    if is_enum_variant then
+      `EnumVariant
+    else if is_enum then
+      `EnumType
+    else
+      match name with
+      | "int" -> `TypeName TInt
+      | "float" -> `TypeName TFloat
+      | "bool" -> `TypeName TBool
+      | "string" -> `TypeName TString
+      | _ -> (
+          match Annotation.lookup_type_alias name with
+          | Some alias_info when alias_info.alias_type_params = [] -> (
+              match Annotation.type_expr_to_mono_type alias_info.alias_body with
+              | Ok mono -> `TypeName mono
+              | Error _ -> `Unknown)
+          | _ -> (
+              match Enum_registry.lookup name with
+              | Some enum_def ->
+                  let fresh_args = List.map (fun _ -> fresh_type_var ()) enum_def.type_params in
+                  `TypeName (TEnum (name, fresh_args))
+              | None -> (
+                  match Trait_registry.lookup_trait name with
+                  | Some _ -> `TraitName
+                  | None -> `Unknown)))
+
 and infer_record_literal type_map env fields spread expr =
   let rec infer_record_fields env_acc subst_acc typed_fields = function
     | [] -> Ok (env_acc, subst_acc, List.rev typed_fields)
@@ -2986,12 +3017,12 @@ and infer_statement type_map env stmt =
                     | Some tm -> Some (apply_substitution for_type_subst tm.method_return_type)
                   in
 
-                  (* Map effect annotation *)
+                  (* Map effect annotation — None means Unspecified (infer from body) *)
                   let effect_annot =
                     match m.impl_method_effect with
                     | Some AST.Effectful -> `Effectful
                     | Some AST.Pure -> `Pure
-                    | None -> `Pure
+                    | None -> `Unspecified
                   in
 
                   (* Set up method-level generic constraints *)
@@ -3021,8 +3052,7 @@ and infer_statement type_map env stmt =
                     Fun.protect ~finally:restore_method_constraints (fun () ->
                         type_callable type_map env ~type_bindings:all_type_bindings ~known_param_types
                           ~params:m.impl_method_params ~return_annot:m.impl_method_return_type ~known_return
-                          ~effect_annot ~strict_return_check:true
-                          ~body:(wrap_expr_as_stmt m.impl_method_body))
+                          ~effect_annot ~strict_return_check:true ~body:m.impl_method_body)
                   in
                   match body_result with
                   | Error e -> Error e
@@ -3044,7 +3074,7 @@ and infer_statement type_map env stmt =
                           md_param_types = param_types;
                           md_return_type = return_type;
                           md_is_effectful = is_effectful;
-                          md_body_id = m.impl_method_body.id;
+                          md_body_id = m.impl_method_id;
                         };
                       Ok
                         (Some
@@ -3165,7 +3195,7 @@ and infer_statement type_map env stmt =
       in
       match convert_inherent_type_expr inherent_for_type with
       | Error e -> Error e
-      | Ok inherent_for_type_mono ->
+      | Ok inherent_for_type_mono -> (
           let inherent_for_type_mono = canonicalize_mono_type inherent_for_type_mono in
           (* Phase 7: Inherent impl method adapter — routes through type_callable.
              Provides receiver type as known param, computes method_generic_internal_vars. *)
@@ -3189,12 +3219,12 @@ and infer_statement type_map env stmt =
               (* Known receiver type from impl target *)
               let known_param_types = [ (0, inherent_for_type_mono) ] in
 
-              (* Map effect annotation *)
+              (* Map effect annotation — None means Unspecified (infer from body) *)
               let effect_annot =
                 match m.impl_method_effect with
                 | Some AST.Effectful -> `Effectful
                 | Some AST.Pure -> `Pure
-                | None -> `Pure
+                | None -> `Unspecified
               in
 
               (* Set up method-level generic constraints *)
@@ -3224,8 +3254,7 @@ and infer_statement type_map env stmt =
                 Fun.protect ~finally:restore_method_constraints (fun () ->
                     type_callable type_map env ~type_bindings:all_type_bindings ~known_param_types
                       ~params:m.impl_method_params ~return_annot:m.impl_method_return_type ~known_return:None
-                      ~effect_annot ~strict_return_check:true
-                      ~body:(wrap_expr_as_stmt m.impl_method_body))
+                      ~effect_annot ~strict_return_check:true ~body:m.impl_method_body)
               in
               match body_result with
               | Error e -> Error e
@@ -3258,7 +3287,7 @@ and infer_statement type_map env stmt =
                       md_param_types = param_types;
                       md_return_type = return_type;
                       md_is_effectful = is_effectful;
-                      md_body_id = m.impl_method_body.id;
+                      md_body_id = m.impl_method_id;
                     };
                   Ok
                     ( {
@@ -3273,84 +3302,167 @@ and infer_statement type_map env stmt =
                       },
                       subst )
           in
-          let rec register_methods subst_acc = function
-            | [] -> Ok (subst_acc, TNull)
-            | m :: rest -> (
-                match infer_inherent_method_body m with
-                | Error e -> Error e
-                | Ok (method_sig, method_subst) -> (
-                    let method_sig =
+          (* Pre-register inherent methods with annotation-based stubs so recursive
+             calls within method bodies can resolve them. The stubs are replaced with
+             final signatures after body inference completes. *)
+          let target_type_for_preregister = canonicalize_mono_type inherent_for_type_mono in
+          let preregister_result =
+            List.fold_left
+              (fun acc (m : AST.method_impl) ->
+                match acc with
+                | Error _ -> acc
+                | Ok () -> (
+                    let all_type_bindings =
+                      let method_type_bindings =
+                        match m.impl_method_generics with
+                        | None -> []
+                        | Some gps -> List.map (fun (gp : AST.generic_param) -> (gp.name, TVar gp.name)) gps
+                      in
+                      method_type_bindings @ generic_type_bindings
+                    in
+                    let convert te = Annotation.type_expr_to_mono_type_with all_type_bindings te in
+                    let param_types =
+                      List.mapi
+                        (fun i ((_name, annot) : string * AST.type_expr option) ->
+                          if i = 0 then
+                            target_type_for_preregister
+                          else
+                            match annot with
+                            | Some te -> (
+                                match convert te with
+                                | Ok t -> t
+                                | Error _ -> fresh_type_var ())
+                            | None -> fresh_type_var ())
+                        m.impl_method_params
+                    in
+                    let return_type =
+                      match m.impl_method_return_type with
+                      | Some te -> (
+                          match convert te with
+                          | Ok t -> t
+                          | Error _ -> fresh_type_var ())
+                      | None -> fresh_type_var ()
+                    in
+                    let param_names = List.map fst m.impl_method_params in
+                    let method_generics =
+                      match m.impl_method_generics with
+                      | None -> []
+                      | Some gps -> List.map (fun (gp : AST.generic_param) -> (gp.name, gp.constraints)) gps
+                    in
+                    let stub_sig : Trait_registry.method_sig =
                       {
-                        method_sig with
-                        method_params =
-                          List.map
-                            (fun (name, ty) -> (name, apply_substitution method_subst ty))
-                            method_sig.method_params;
-                        method_return_type = apply_substitution method_subst method_sig.method_return_type;
+                        method_key =
+                          Resolution_artifacts.UserCallable { file_id = None; callable_id = m.impl_method_id };
+                        method_name = m.impl_method_name;
+                        method_generics;
+                        method_params = List.combine param_names param_types;
+                        method_return_type = return_type;
+                        method_effect = `Pure;
+                        method_generic_internal_vars = [];
                       }
                     in
-                    (* Restore original generic names in stored signature.
+                    match Inherent_registry.register_method ~for_type:target_type_for_preregister stub_sig with
+                    | Ok () -> Ok ()
+                    | Error msg -> Error (error ~code:"type-constructor" ~message:msg)))
+              (Ok ()) inherent_methods
+          in
+          match preregister_result with
+          | Error e -> Error e
+          | Ok () ->
+              (* Track which methods are being defined so resolution can avoid
+             self-shadowing: when both inherent and trait provide the same name,
+             prefer the trait method inside the body (avoids infinite recursion). *)
+              let impl_method_names =
+                List.map
+                  (fun (m : AST.method_impl) -> (target_type_for_preregister, m.impl_method_name))
+                  inherent_methods
+              in
+              let prev_inherent_impl_methods = !current_inherent_impl_methods in
+              current_inherent_impl_methods := impl_method_names @ prev_inherent_impl_methods;
+              let rec register_methods subst_acc = function
+                | [] -> Ok (subst_acc, TNull)
+                | m :: rest -> (
+                    match infer_inherent_method_body m with
+                    | Error e -> Error e
+                    | Ok (method_sig, method_subst) -> (
+                        let method_sig =
+                          {
+                            method_sig with
+                            method_params =
+                              List.map
+                                (fun (name, ty) -> (name, apply_substitution method_subst ty))
+                                method_sig.method_params;
+                            method_return_type = apply_substitution method_subst method_sig.method_return_type;
+                          }
+                        in
+                        (* Restore original generic names in stored signature.
                        Body inference may replace generic params (e.g. b) with fresh
                        TVars (e.g. t0) via method_subst. Build a reverse mapping so
                        the stored signature uses the original names, allowing
                        instantiate_method_generics to substitute them correctly. *)
-                    let method_sig =
-                      match method_sig.method_generics with
-                      | [] -> method_sig
-                      | generics ->
-                          let reverse_subst =
-                            List.fold_left
-                              (fun acc (param_name, _) ->
-                                let resolved = apply_substitution method_subst (TVar param_name) in
-                                match resolved with
-                                | TVar fresh_name when fresh_name <> param_name ->
-                                    SubstMap.add fresh_name (TVar param_name) acc
-                                | _ -> acc)
-                              SubstMap.empty generics
-                          in
-                          if SubstMap.is_empty reverse_subst then
-                            method_sig
-                          else
-                            {
-                              method_sig with
-                              method_params =
-                                List.map
-                                  (fun (name, ty) -> (name, apply_substitution reverse_subst ty))
-                                  method_sig.method_params;
-                              method_return_type = apply_substitution reverse_subst method_sig.method_return_type;
-                            }
-                    in
-                    let receiver_type =
-                      match method_sig.method_params with
-                      | [] ->
-                          failwith
-                            "impossible: inherent method parameter list unexpectedly empty after validation"
-                      | (_, first_param_type) :: _ -> canonicalize_mono_type first_param_type
-                    in
-                    let target_type = canonicalize_mono_type inherent_for_type_mono in
-                    let register_current_method () =
-                      match Inherent_registry.register_method ~for_type:target_type method_sig with
-                      | Error msg -> Error (error ~code:"type-constructor" ~message:msg)
-                      | Ok () ->
-                          let subst' = compose_substitution subst_acc method_subst in
-                          register_methods subst' rest
-                    in
-                    match Unify.unify receiver_type target_type with
-                    | Error _ ->
-                        Error
-                          (error ~code:"type-constructor"
-                             ~message:
-                               (Printf.sprintf
-                                  "Inherent method '%s' receiver type %s does not match impl target type %s"
-                                  method_sig.method_name (Types.to_string receiver_type)
-                                  (Types.to_string target_type)))
-                    | Ok _ ->
-                        (* Phase 4.6: Allow inherent methods even when a trait provides the same name.
+                        let method_sig =
+                          match method_sig.method_generics with
+                          | [] -> method_sig
+                          | generics ->
+                              let reverse_subst =
+                                List.fold_left
+                                  (fun acc (param_name, _) ->
+                                    let resolved = apply_substitution method_subst (TVar param_name) in
+                                    match resolved with
+                                    | TVar fresh_name when fresh_name <> param_name ->
+                                        SubstMap.add fresh_name (TVar param_name) acc
+                                    | _ -> acc)
+                                  SubstMap.empty generics
+                              in
+                              if SubstMap.is_empty reverse_subst then
+                                method_sig
+                              else
+                                {
+                                  method_sig with
+                                  method_params =
+                                    List.map
+                                      (fun (name, ty) -> (name, apply_substitution reverse_subst ty))
+                                      method_sig.method_params;
+                                  method_return_type =
+                                    apply_substitution reverse_subst method_sig.method_return_type;
+                                }
+                        in
+                        let receiver_type =
+                          match method_sig.method_params with
+                          | [] ->
+                              failwith
+                                "impossible: inherent method parameter list unexpectedly empty after validation"
+                          | (_, first_param_type) :: _ -> canonicalize_mono_type first_param_type
+                        in
+                        let target_type = canonicalize_mono_type inherent_for_type_mono in
+                        let register_current_method () =
+                          (* Remove pre-registered stub, then register final inferred signature.
+                         Using remove+register preserves cross-impl duplicate detection. *)
+                          Inherent_registry.remove_method ~for_type:target_type method_sig.method_name;
+                          match Inherent_registry.register_method ~for_type:target_type method_sig with
+                          | Error msg -> Error (error ~code:"type-constructor" ~message:msg)
+                          | Ok () ->
+                              let subst' = compose_substitution subst_acc method_subst in
+                              register_methods subst' rest
+                        in
+                        match Unify.unify receiver_type target_type with
+                        | Error _ ->
+                            Error
+                              (error ~code:"type-constructor"
+                                 ~message:
+                                   (Printf.sprintf
+                                      "Inherent method '%s' receiver type %s does not match impl target type %s"
+                                      method_sig.method_name (Types.to_string receiver_type)
+                                      (Types.to_string target_type)))
+                        | Ok _ ->
+                            (* Phase 4.6: Allow inherent methods even when a trait provides the same name.
                            Collision is resolved at call sites: inherent wins on dot calls,
                            qualified calls can explicitly select the trait. *)
-                        register_current_method ()))
-          in
-          register_methods empty_substitution inherent_methods)
+                            register_current_method ()))
+              in
+              let result = register_methods empty_substitution inherent_methods in
+              current_inherent_impl_methods := prev_inherent_impl_methods;
+              result))
   | AST.DeriveDef { derive_traits; derive_for_type } -> (
       (* Auto-generate implementations for derived traits *)
       match Annotation.type_expr_to_mono_type derive_for_type with
@@ -4061,11 +4173,11 @@ module Test = struct
     | AST.Let let_binding -> identifier_occurrences_in_expr name let_binding.value
     | AST.ImplDef impl_def ->
         List.concat_map
-          (fun (m : AST.method_impl) -> identifier_occurrences_in_expr name m.impl_method_body)
+          (fun (m : AST.method_impl) -> identifier_occurrences_in_stmt name m.impl_method_body)
           impl_def.impl_methods
     | AST.InherentImplDef impl_def ->
         List.concat_map
-          (fun (m : AST.method_impl) -> identifier_occurrences_in_expr name m.impl_method_body)
+          (fun (m : AST.method_impl) -> identifier_occurrences_in_stmt name m.impl_method_body)
           impl_def.inherent_methods
     | AST.EnumDef _ | AST.TraitDef _ | AST.DeriveDef _ | AST.TypeAlias _ -> []
 

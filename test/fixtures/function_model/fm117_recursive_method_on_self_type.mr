@@ -1,4 +1,3 @@
-# xfail: recursive method call on reconstructed self type loses alias
 type counter = { n: int }
 
 impl counter {

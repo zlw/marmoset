@@ -860,12 +860,14 @@ and parse_method_impl (p : parser) : (parser * AST.method_impl, parser) result =
       expect_peek p6 Token.LBrace
   in
 
-  (* Parse method body as an expression *)
-  let* p8, body_expr = parse_expression (next_token p7) prec_lowest in
-
-  (* Method body is expression-only. Its final token may itself be '}' (e.g. record/if/match),
-     so we must always consume the method-closing brace from peek_token. *)
-  let* p9 = expect_peek p8 Token.RBrace in
+  (* Parse method body as a block statement (supports let bindings and multiple statements) *)
+  let* p8, body_stmt = parse_block_statement p7 in
+  let* p9 =
+    if curr_token_is p8 Token.RBrace then
+      Ok p8
+    else
+      expect_peek p8 Token.RBrace
+  in
 
   Ok
     ( next_token p9,
@@ -877,7 +879,7 @@ and parse_method_impl (p : parser) : (parser * AST.method_impl, parser) result =
           impl_method_params = params;
           impl_method_return_type;
           impl_method_effect;
-          impl_method_body = body_expr;
+          impl_method_body = body_stmt;
         } )
 
 (* Phase 4.3: Derive statement parsing *)
@@ -1240,6 +1242,30 @@ and parse_dot_expression (p : parser) (left : AST.expression) : (parser * AST.ex
           mk_expr id pos
             (AST.MethodCall { mc_receiver = left; mc_method = member_name; mc_type_args = None; mc_args = args })
         )
+    else if peek_token_is p2 Token.LBracket then
+      (* expr.member[...] -> could be method type args or index; try type args first *)
+      let p_bracket = next_token (next_token p2) in
+      (* advance past member and [ *)
+      match parse_type_expr_list p_bracket with
+      | Ok (p_after_types, type_args)
+        when curr_token_is p_after_types Token.RBracket
+             && peek_token_is p_after_types Token.LParen
+             && type_args <> [] ->
+          (* [type_args](args) -> method call with explicit type args *)
+          let p_after_bracket = next_token p_after_types in
+          (* consume ], now at ( *)
+          let* p_after_args, args = parse_expression_list p_after_bracket Token.RParen in
+          let id, p_final = fresh_id p_after_args in
+          Ok
+            ( p_final,
+              mk_expr id pos
+                (AST.MethodCall
+                   { mc_receiver = left; mc_method = member_name; mc_type_args = Some type_args; mc_args = args })
+            )
+      | _ ->
+          (* Not type args — fall back to field access (infix [ will handle indexing) *)
+          let id, p3 = fresh_id p2 in
+          Ok (p3, mk_expr id pos (AST.FieldAccess (left, member_name)))
     else
       (* expr.member -> Field access or nullary enum constructor *)
       let id, p3 = fresh_id p2 in
@@ -2458,8 +2484,8 @@ let%test "parse impl method body with direct record literal" =
           | AST.ImplDef impl_def -> (
               match impl_def.impl_methods with
               | [ method_impl ] -> (
-                  match method_impl.impl_method_body.expr with
-                  | AST.RecordLit _ -> true
+                  match method_impl.impl_method_body.stmt with
+                  | AST.Block [ { stmt = AST.ExpressionStmt { expr = AST.RecordLit _; _ }; _ } ] -> true
                   | _ -> false)
               | _ -> false)
           | _ -> false)
@@ -2479,8 +2505,8 @@ let%test "parse impl method body with if expression and continue parsing next st
           | AST.ImplDef impl_def, AST.ExpressionStmt expr -> (
               match impl_def.impl_methods with
               | [ method_impl ] -> (
-                  match (method_impl.impl_method_body.expr, expr.expr) with
-                  | AST.If _, AST.Integer 1L -> true
+                  match (method_impl.impl_method_body.stmt, expr.expr) with
+                  | AST.Block [ { stmt = AST.ExpressionStmt { expr = AST.If _; _ }; _ } ], AST.Integer 1L -> true
                   | _ -> false)
               | _ -> false)
           | _ -> false)

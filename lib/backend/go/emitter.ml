@@ -259,7 +259,7 @@ type impl_inst_payload = {
   param_names : string list;
   param_types : Types.mono_type list;
   return_type : Types.mono_type;
-  body_expr : AST.expression;
+  body_stmt : AST.statement;
 }
 
 type impl_template_method = {
@@ -267,7 +267,7 @@ type impl_template_method = {
   param_names : string list;
   param_types : Types.mono_type list;
   return_type : Types.mono_type;
-  body_expr : AST.expression;
+  body_stmt : AST.statement;
   method_generic_names : string list; (* Phase 6.4: names of method-level type params *)
 }
 
@@ -1072,7 +1072,7 @@ let register_impl_template (state : mono_state) (impl : AST.impl_def) : impl_tem
           param_names;
           param_types;
           return_type;
-          body_expr = m.impl_method_body;
+          body_stmt = m.impl_method_body;
           method_generic_names;
         })
       impl.impl_methods
@@ -1427,12 +1427,12 @@ let rec collect_insts_stmt
                    param_names = method_param_names;
                    param_types = method_param_types;
                    return_type;
-                   body_expr = m.impl_method_body;
+                   body_stmt = m.impl_method_body;
                  }
                in
                add_impl_instantiation state impl_inst payload;
                let method_env = add_param_bindings env method_param_names method_param_types in
-               collect_insts_expr state type_map method_env m.impl_method_body))
+               ignore (collect_insts_stmt state type_map method_env m.impl_method_body)))
            impl.impl_methods);
       env
   | AST.InherentImplDef impl ->
@@ -1468,7 +1468,7 @@ let rec collect_insts_stmt
                        m.impl_method_params)
             in
             let method_env = add_param_bindings env method_param_names method_param_types in
-            collect_insts_expr state type_map method_env m.impl_method_body)
+            ignore (collect_insts_stmt state type_map method_env m.impl_method_body))
         impl.inherent_methods;
       env
 
@@ -1528,12 +1528,12 @@ and register_impl_method_use
               param_names = template_method.param_names;
               param_types;
               return_type;
-              body_expr = template_method.body_expr;
+              body_stmt = template_method.body_stmt;
             }
           in
           add_impl_instantiation state impl_inst payload;
           let method_env = add_param_bindings env payload.param_names payload.param_types in
-          collect_insts_expr state type_map method_env payload.body_expr
+          ignore (collect_insts_stmt state type_map method_env payload.body_stmt)
 
 and collect_insts_expr
     ?(expected_type : Types.mono_type option = None)
@@ -2257,9 +2257,10 @@ let rec emit_expr
               Printf.sprintf "(func() %s { _ = %s; return %s{%s} })()" struct_type base_str struct_type
                 (String.concat ", " assignments))
     | AST.FieldAccess (receiver, variant_name) -> (
-        (* Check if this is a nullary enum constructor *)
+        (* Check if this is a nullary enum constructor — bound variables shadow enum names *)
         match receiver.expr with
-        | AST.Identifier enum_name when Typecheck.Enum_registry.lookup enum_name <> None ->
+        | AST.Identifier enum_name
+          when Typecheck.Enum_registry.lookup enum_name <> None && Infer.TypeEnv.find_opt enum_name env = None ->
             (* This is a nullary enum constructor - emit like EnumConstructor with no args *)
             let enum_type =
               match expected_type with
@@ -2288,9 +2289,10 @@ let rec emit_expr
             let receiver_str = emit_expr state type_map env receiver in
             Printf.sprintf "(%s).%s" receiver_str (go_record_field_name variant_name))
     | AST.MethodCall { mc_receiver = receiver; mc_method = variant_name; mc_args = args; _ } -> (
-        (* Check if this is an enum constructor *)
+        (* Check if this is an enum constructor — bound variables shadow enum names *)
         match receiver.expr with
-        | AST.Identifier enum_name when Typecheck.Enum_registry.lookup enum_name <> None ->
+        | AST.Identifier enum_name
+          when Typecheck.Enum_registry.lookup enum_name <> None && Infer.TypeEnv.find_opt enum_name env = None ->
             (* This is an enum constructor - emit like EnumConstructor *)
             (* Use expected_type when available, otherwise fall back to inferred constructor type. *)
             let enum_type =
@@ -3767,11 +3769,11 @@ and collect_local_call_arg_types_stmt
   | AST.Block stmts -> List.concat_map (collect_local_call_arg_types_stmt name type_map env) stmts
   | AST.ImplDef impl ->
       List.concat_map
-        (fun (m : AST.method_impl) -> collect_local_call_arg_types_expr name type_map env m.impl_method_body)
+        (fun (m : AST.method_impl) -> collect_local_call_arg_types_stmt name type_map env m.impl_method_body)
         impl.impl_methods
   | AST.InherentImplDef impl ->
       List.concat_map
-        (fun (m : AST.method_impl) -> collect_local_call_arg_types_expr name type_map env m.impl_method_body)
+        (fun (m : AST.method_impl) -> collect_local_call_arg_types_stmt name type_map env m.impl_method_body)
         impl.inherent_methods
   | AST.EnumDef _ | AST.TraitDef _ | AST.DeriveDef _ | AST.TypeAlias _ -> []
 
@@ -4323,16 +4325,8 @@ let emit_cached_impl_method
         type_map;
       copied
   in
-  let inferred_body_type = get_type effective_type_map payload.body_expr in
-  (* Skip annotation check for method-generic specializations: the typechecker already
-     validated the body, and the type_map has erased TVars that won't match. *)
-  if impl_inst.method_type_args = [] then
-    if not (Annotation.check_annotation payload.return_type inferred_body_type) then
-      failwith
-        (Printf.sprintf "Codegen error: impl %s.%s return type mismatch: expected %s, got %s" impl_inst.trait_name
-           impl_inst.method_name (Types.to_string payload.return_type) (Types.to_string inferred_body_type));
-  let body_str = emit_expr state effective_type_map method_env payload.body_expr in
-  Printf.sprintf "func %s(%s) %s {\n\treturn %s\n}\n" func_name params_str return_type_str body_str
+  let body_str = emit_func_body state effective_type_map method_env payload.body_stmt in
+  Printf.sprintf "func %s(%s) %s {\n%s}\n" func_name params_str return_type_str body_str
 
 let emit_inherent_method
     (state : emit_state)
@@ -4460,14 +4454,6 @@ let emit_inherent_method
   in
   let return_type_str = type_to_go state.mono return_type in
   let method_env = add_param_bindings typed_env method_param_names method_param_types in
-  let inferred_body_type = get_type method_type_map method_impl.impl_method_body in
-  (* Skip annotation check for method-generic specializations: the typechecker already
-     validated the body, and internal TVars have been erased. *)
-  if method_type_args = [] then
-    if not (Annotation.check_annotation return_type inferred_body_type) then
-      failwith
-        (Printf.sprintf "Codegen error: inherent method %s return type mismatch: expected %s, got %s"
-           method_impl.impl_method_name (Types.to_string return_type) (Types.to_string inferred_body_type));
   (* For method-generic specializations, register any new enum instantiations
      discovered in the specialized type_map (e.g. opt[String] from opt[b]) *)
   if method_type_args <> [] then (
@@ -4476,8 +4462,8 @@ let emit_inherent_method
       (fun (_name, pty) -> track_enum_inst state.mono pty)
       (List.combine method_param_names method_param_types);
     Hashtbl.iter (fun _id ty -> track_enum_inst state.mono ty) method_type_map);
-  let body_str = emit_expr state method_type_map method_env method_impl.impl_method_body in
-  Printf.sprintf "func %s(%s) %s {\n\treturn %s\n}\n" func_name params_str return_type_str body_str
+  let body_str = emit_func_body state method_type_map method_env method_impl.impl_method_body in
+  Printf.sprintf "func %s(%s) %s {\n%s}\n" func_name params_str return_type_str body_str
 
 (* Extract all ImplDef statements from a program *)
 let collect_impl_defs (program : AST.program) : AST.impl_def list =
@@ -4607,11 +4593,11 @@ let collect_inherent_call_sites
           acc trait_def.methods
     | AST.ImplDef impl ->
         List.fold_left
-          (fun acc' (m : AST.method_impl) -> collect_expr acc' m.impl_method_body)
+          (fun acc' (m : AST.method_impl) -> collect_stmt acc' m.impl_method_body)
           acc impl.impl_methods
     | AST.InherentImplDef impl ->
         List.fold_left
-          (fun acc' (m : AST.method_impl) -> collect_expr acc' m.impl_method_body)
+          (fun acc' (m : AST.method_impl) -> collect_stmt acc' m.impl_method_body)
           acc impl.inherent_methods
   in
   List.fold_left collect_stmt [] program
@@ -5907,7 +5893,7 @@ let%test "add_impl_instantiation rejects fingerprint collision with different fo
         param_names = [ "x" ];
         param_types = [ Types.TInt ];
         return_type = Types.TString;
-        body_expr = AST.mk_expr (AST.String "x");
+        body_stmt = AST.mk_stmt (AST.ExpressionStmt (AST.mk_expr (AST.String "x")));
       }
     in
     add_impl_instantiation state (mk_inst t1) payload;

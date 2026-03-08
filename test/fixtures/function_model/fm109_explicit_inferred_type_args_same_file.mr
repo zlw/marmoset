@@ -1,4 +1,3 @@
-# xfail: method call type args syntax not implemented
 type val = { v: int }
 
 impl val {

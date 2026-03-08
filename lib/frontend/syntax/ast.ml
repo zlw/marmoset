@@ -77,7 +77,7 @@ module AST = struct
     impl_method_params : (string * type_expr option) list;
     impl_method_return_type : type_expr option;
     impl_method_effect : effect_annotation option;
-    impl_method_body : expression;
+    impl_method_body : statement;
   }
 
   (* Phase 4.3: Derive statements *)

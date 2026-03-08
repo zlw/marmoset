@@ -1,4 +1,3 @@
-# xfail: method bodies as statement blocks not implemented
 type acc = { total: int }
 
 impl acc {

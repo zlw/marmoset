@@ -389,7 +389,7 @@ and collect_stmt ~source ~type_map ~environment ~params ~tokens (stmt : Ast.AST.
                 }
                 :: !tokens
           | None -> ());
-          collect_expr ~source ~type_map ~environment ~params ~tokens m.impl_method_body;
+          collect_stmt ~source ~type_map ~environment ~params ~tokens m.impl_method_body;
           (* Advance search_from past the method body *)
           search_from := m.impl_method_body.end_pos + 1)
         impl_methods
@@ -411,7 +411,7 @@ and collect_stmt ~source ~type_map ~environment ~params ~tokens (stmt : Ast.AST.
                 }
                 :: !tokens
           | None -> ());
-          collect_expr ~source ~type_map ~environment ~params ~tokens m.impl_method_body;
+          collect_stmt ~source ~type_map ~environment ~params ~tokens m.impl_method_body;
           search_from := m.impl_method_body.end_pos + 1)
         inherent_methods
   | Ast.AST.DeriveDef _ | Ast.AST.TypeAlias _ -> ()

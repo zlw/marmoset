@@ -75,6 +75,12 @@ let register_method ~(for_type : mono_type) (method_sig : method_sig) : (unit, s
         Hashtbl.replace concrete_registry key method_sig';
         Ok ()
 
+let remove_method ~(for_type : mono_type) (method_name : string) : unit =
+  let for_type' = canonicalize_mono_type for_type in
+  let key = (for_type', method_name) in
+  Hashtbl.remove concrete_registry key;
+  Hashtbl.remove generic_registry key
+
 let resolve_method (for_type : mono_type) (method_name : string) : (method_sig option, string) result =
   let for_type' = canonicalize_mono_type for_type in
   let concrete_key = (for_type', method_name) in

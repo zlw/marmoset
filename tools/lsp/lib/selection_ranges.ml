@@ -88,7 +88,7 @@ and find_in_stmt ~source ~offset ~parent (stmt : Ast.AST.statement) : Lsp_t.Sele
       | Ast.AST.Block stmts -> find_first_in_stmts ~source ~offset ~parent:current stmts
       | Ast.AST.ImplDef { impl_methods; _ } ->
           List.find_map
-            (fun (m : Ast.AST.method_impl) -> find_in_expr ~source ~offset ~parent:current m.impl_method_body)
+            (fun (m : Ast.AST.method_impl) -> find_in_stmt ~source ~offset ~parent:current m.impl_method_body)
             impl_methods
       | Ast.AST.TraitDef { methods; _ } ->
           List.find_map
@@ -97,7 +97,7 @@ and find_in_stmt ~source ~offset ~parent (stmt : Ast.AST.statement) : Lsp_t.Sele
             methods
       | Ast.AST.InherentImplDef { inherent_methods; _ } ->
           List.find_map
-            (fun (m : Ast.AST.method_impl) -> find_in_expr ~source ~offset ~parent:current m.impl_method_body)
+            (fun (m : Ast.AST.method_impl) -> find_in_stmt ~source ~offset ~parent:current m.impl_method_body)
             inherent_methods
       | Ast.AST.EnumDef _ | Ast.AST.DeriveDef _ | Ast.AST.TypeAlias _ -> None
     in

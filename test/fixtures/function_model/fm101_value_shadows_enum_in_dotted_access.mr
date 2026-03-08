@@ -1,4 +1,3 @@
-# xfail: value-shadows-enum classification not implemented
 enum color { red green blue }
 
 let color = { red: "my_red" }
