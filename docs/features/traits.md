@@ -2,7 +2,7 @@
 
 ## Maintenance
 
-- Last verified: 2026-03-07
+- Last verified: 2026-03-08
 - Implementation status: Canonical (actively maintained)
 - Merge note: This document now includes the former `docs/features/trait-satisfaction.md` content.
 - Update trigger: Any parser/typechecker/codegen/test change affecting trait declaration, satisfaction, resolution, or lowering
@@ -80,6 +80,58 @@ impl show for int {
 ```marmoset
 impl show[a: show] for list[a] {
   fn show(xs: list[a]) -> string { "list" }
+}
+```
+
+### Method generics
+
+Trait methods can declare method-level generic parameters separate from the trait type parameter:
+
+```marmoset
+trait mappable[a] {
+  fn map[b](x: a, f: fn(a) -> b) -> b
+}
+```
+
+### Effect markers
+
+Trait method signatures use `->` for pure methods and `=>` for effectful methods:
+
+```marmoset
+trait processor[a] {
+  fn process(x: a) => string
+}
+```
+
+Impl methods can omit the effect marker entirely to infer effectfulness from the body:
+
+```marmoset
+impl processor for data {
+  fn process(x) { x.v.show() }
+}
+```
+
+### Explicit type arguments at call site
+
+When a trait method has method-level generics, type arguments can be provided explicitly at the call site using bracket syntax:
+
+```marmoset
+let result = x.map[string](fn(n: int) -> string { n.show() })
+```
+
+If the user intends runtime index-then-call, they must parenthesize: `(x.name[i])(arg)`.
+
+### Multi-statement method bodies
+
+Impl method bodies support multiple statements including let bindings. The last expression is the return value:
+
+```marmoset
+impl show for point {
+  fn show(p: point) -> string {
+    let x_str = p.x.show()
+    let y_str = p.y.show()
+    "(" + x_str + ", " + y_str + ")"
+  }
 }
 ```
 
@@ -182,12 +234,13 @@ Multiple constraints (`[a: show + eq]`) are conjunctive.
 ## Method Resolution Rules
 
 Method-call resolution for `receiver.method(args...)`:
-1. If `receiver` is an enum type identifier, parse as enum constructor call.
-2. If receiver is a bound variable name, resolve as value-dot method call.
-3. If receiver is a type name, resolve as qualified inherent call (e.g. `Type.method(x)`).
-4. If receiver is a trait name, resolve as qualified trait call (e.g. `Trait.method(x)`).
-5. If receiver type is a constrained type variable, search methods from the expanded constraint set (including supertraits).
-6. Otherwise resolve via inherent-first priority: inherent method wins over trait method for dot calls on concrete receiver types. If no inherent method is found, resolve via trait impl registry.
+1. If `receiver` is a bound variable name, resolve as value-dot method call with inherent-first priority.
+2. If `receiver` is an enum type identifier and `method` is a known variant, resolve as enum constructor call.
+3. If `receiver` is an enum type identifier but `method` is not a variant, resolve as qualified inherent call on the enum type (or produce an unknown-variant diagnostic).
+4. If receiver is a type name (primitive, alias, or enum), resolve as qualified inherent call (e.g. `Type.method(x)`).
+5. If receiver is a trait name, resolve as qualified trait call (e.g. `Trait.method(x)`).
+6. If receiver type is a constrained type variable, search methods from the expanded constraint set (including supertraits).
+7. Otherwise resolve via inherent-first priority: inherent method wins over trait method for dot calls on concrete receiver types. If no inherent method is found, resolve via trait impl registry.
 
 Resolution guarantees:
 - no structural method lookup,
@@ -341,4 +394,4 @@ The current model keeps method behavior explicit and coherent while preserving s
 - Method-call typing and operator obligations: `lib/frontend/typecheck/infer.ml`
 - Builtin trait definitions/impls: `lib/frontend/typecheck/builtins.ml`
 - Static dispatch + projection lowering: `lib/backend/go/emitter.ml`
-- Integration coverage: `test/fixtures/traits/`, `test/fixtures/traits_field/`, `test/fixtures/traits_impl/`, `test/fixtures/operators/`
+- Integration coverage: `test/fixtures/traits/`, `test/fixtures/traits_field/`, `test/fixtures/traits_impl/`, `test/fixtures/operators/`, `test/fixtures/function_model/`

@@ -2,7 +2,7 @@
 
 ## Maintenance
 
-- Last verified: 2026-03-07
+- Last verified: 2026-03-08
 - Implementation status: Canonical (actively maintained)
 - Update trigger: Any parser/typechecker/codegen/test change affecting inherent impl parsing, method resolution, or lowering
 
@@ -35,6 +35,66 @@ impl point {
 
 let p: point = { x: 1, y: 2 }
 puts(p.sum())
+```
+
+### Method generics
+
+Inherent methods can declare method-level generic parameters:
+
+```marmoset
+type box = { v: int }
+
+impl box {
+  fn cast[b](bx: box, f: fn(int) -> b) -> b {
+    f(bx.v)
+  }
+}
+
+let b: box = { v: 5 }
+let s = b.cast[string](fn(n: int) -> string { n.show() })
+```
+
+### Effect markers
+
+Inherent methods use `->` for pure and `=>` for effectful:
+
+```marmoset
+impl logger {
+  fn format(l: logger, msg: string) -> string { l.prefix + ": " + msg }
+  fn log(l: logger, msg: string) => string { l.prefix + ": " + msg }
+}
+```
+
+Omitting the effect marker infers effectfulness from the body.
+
+### Multi-statement method bodies
+
+Method bodies support let bindings and multiple statements. The last expression is the return value:
+
+```marmoset
+impl acc {
+  fn add_and_show(a: acc, n: int) -> string {
+    let new_total = a.total + n
+    let result = "total:" + new_total.show()
+    result
+  }
+}
+```
+
+### Recursive inherent methods
+
+Inherent methods can call themselves on other instances of the same type:
+
+```marmoset
+impl counter {
+  fn count_down(c: counter) -> string {
+    if (c.n <= 0) { "done" }
+    else {
+      let next: counter = { n: c.n - 1 }
+      next.count_down()
+    }
+  }
+}
 ```
 
 Trait impl syntax remains separate:
@@ -85,13 +145,15 @@ let use = fn[t: renderable](x: t) -> string { x.render() }
 ## Method Resolution Rules
 
 For `receiver.method(args...)`:
-1. If receiver is an enum type identifier, parse as enum constructor call.
-2. If receiver is a bound variable, resolve as value-dot method call with inherent-first priority.
-3. If receiver is a type name, resolve as qualified inherent call (`Type.method(x)`).
-4. If receiver type is a constrained type variable, resolve from trait constraints only.
-5. Otherwise resolve inherent methods first, then trait methods for concrete receiver type.
+1. If receiver is a bound variable, resolve as value-dot method call with inherent-first priority.
+2. If receiver is an enum type identifier and method is a known variant, resolve as enum constructor call.
+3. If receiver is an enum type identifier but method is not a variant, resolve as qualified inherent call on the enum type (or produce unknown-variant diagnostic).
+4. If receiver is a type name (primitive, alias, or enum), resolve as qualified inherent call (`Type.method(x)`).
+5. If receiver is a trait name, resolve as qualified trait call (`Trait.method(x)`).
+6. If receiver type is a constrained type variable, resolve from trait constraints only (inherent methods do not participate).
+7. Otherwise resolve inherent methods first, then trait methods for concrete receiver type.
 
-Inherent methods take precedence over trait methods on dot calls. Qualified trait calls (`Trait.method(x)`) bypass this precedence and select the named trait directly.
+Bound variables take precedence over enum type names in dotted access. This means a local `let color = { red: "x" }` shadows the enum `color` for `color.red`. Inherent methods take precedence over trait methods on dot calls. Qualified trait calls (`Trait.method(x)`) bypass this precedence and select the named trait directly.
 
 ## Codegen: Detailed Design
 
@@ -109,7 +171,6 @@ Why this choice:
 
 ## Current Limitations
 
-- Inherent method signatures support both `->` (pure) and `=>` (effectful) arrow syntax.
 - Generic inherent impl targets are supported when type parameters appear in the impl target (for example `impl result[a, b] { ... }`).
 - Inherent generic targets currently do not have explicit per-impl constraint syntax (unlike trait generic impls).
 - Generic inherent method call sites still require receiver type arguments to be concretely determined by program context before codegen specialization.
@@ -131,4 +192,4 @@ Why this choice:
 - Inherent registry: `lib/frontend/typecheck/inherent_registry.ml`
 - Method-call resolution and collision checks: `lib/frontend/typecheck/infer.ml`, `lib/frontend/typecheck/trait_registry.ml`
 - Inherent helper emission and method-call lowering: `lib/backend/go/emitter.ml`
-- Integration coverage: `test/fixtures/traits/`, `test/fixtures/traits_inherent/`
+- Integration coverage: `test/fixtures/traits/`, `test/fixtures/traits_inherent/`, `test/fixtures/function_model/`
