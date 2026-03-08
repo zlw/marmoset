@@ -2,7 +2,7 @@
 
 ## Maintenance
 
-- Last verified: 2026-02-28
+- Last verified: 2026-03-07
 - Implementation status: Canonical (actively maintained)
 - Merge note: This document now includes the former `docs/features/trait-satisfaction.md` content.
 - Update trigger: Any parser/typechecker/codegen/test change affecting trait declaration, satisfaction, resolution, or lowering
@@ -64,6 +64,14 @@ impl show for int {
   fn show(x: int) -> string {
     "int"
   }
+}
+```
+
+Impl method annotations are optional when inferable from the trait signature:
+
+```marmoset
+impl show for int {
+  fn show(x) { "int" }
 }
 ```
 
@@ -175,17 +183,25 @@ Multiple constraints (`[a: show + eq]`) are conjunctive.
 
 Method-call resolution for `receiver.method(args...)`:
 1. If `receiver` is an enum type identifier, parse as enum constructor call.
-2. If receiver type is a constrained type variable, search methods from the expanded constraint set (including supertraits).
-3. Otherwise resolve via trait impl registry for the concrete receiver type.
-4. If no trait method is found, inherent lookup is attempted for the concrete receiver type.
+2. If receiver is a bound variable name, resolve as value-dot method call.
+3. If receiver is a type name, resolve as qualified inherent call (e.g. `Type.method(x)`).
+4. If receiver is a trait name, resolve as qualified trait call (e.g. `Trait.method(x)`).
+5. If receiver type is a constrained type variable, search methods from the expanded constraint set (including supertraits).
+6. Otherwise resolve via inherent-first priority: inherent method wins over trait method for dot calls on concrete receiver types. If no inherent method is found, resolve via trait impl registry.
 
 Resolution guarantees:
 - no structural method lookup,
 - deterministic ambiguity errors,
 - field access (`x.name`) is separate from method resolution (`x.show()`).
 
+Qualified call syntax:
+- `Trait.method(x)` explicitly selects a trait method implementation,
+- `Type.method(x)` explicitly selects an inherent method on a type,
+- qualified calls bypass inherent-first precedence and select the named source directly.
+
 Inherent-method interaction:
-- if a trait method and an inherent method exist for the same `(type, method_name)`, this is a hard ambiguity error,
+- for dot calls, inherent methods take precedence over trait methods for the same `(type, method_name)`,
+- qualified calls (`Trait.method(x)`) disambiguate when both exist,
 - constrained type-variable method resolution uses trait constraints only (inherent methods do not participate).
 
 ## Trait-as-Type Policy (v1)
@@ -278,7 +294,7 @@ Status:
 
 - Method/mixed trait objects are intentionally unsupported in this phase.
 - Generic field-only trait objects are intentionally unsupported in this phase.
-- Qualified trait-call syntax is not implemented.
+- Qualified trait-call syntax is supported (`Trait.method(x)`).
 
 ## Deferred: Method/Mixed Trait Objects and Existentials
 
