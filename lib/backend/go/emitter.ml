@@ -1038,26 +1038,34 @@ let register_impl_template (state : mono_state) (impl : AST.impl_def) : impl_tem
         let all_type_params =
           impl.impl_type_params @ (method_generic_names |> List.map (fun name -> { AST.name; constraints = [] }))
         in
-        let param_names, param_types =
-          List.split
-            (List.map
-               (fun (param_name, param_type_opt) ->
-                 match param_type_opt with
-                 | Some param_type ->
-                     (param_name, type_expr_to_mono_type_with_impl_bindings all_type_params param_type)
-                 | None ->
-                     failwith
-                       (Printf.sprintf "Codegen error: impl %s.%s parameter '%s' is missing a type annotation"
-                          impl.impl_trait_name m.impl_method_name param_name))
-               m.impl_method_params)
-        in
-        let return_type =
-          match m.impl_method_return_type with
-          | Some ret_ann -> type_expr_to_mono_type_with_impl_bindings all_type_params ret_ann
+        let param_names, param_types, return_type =
+          match Hashtbl.find_opt state.method_def_map m.impl_method_id with
+          | Some def -> (def.md_param_names, def.md_param_types, def.md_return_type)
           | None ->
-              failwith
-                (Printf.sprintf "Codegen error: impl %s.%s is missing a return type annotation"
-                   impl.impl_trait_name m.impl_method_name)
+              (* Fallback to annotation parsing *)
+              let pn, pt =
+                List.split
+                  (List.map
+                     (fun (param_name, param_type_opt) ->
+                       match param_type_opt with
+                       | Some param_type ->
+                           (param_name, type_expr_to_mono_type_with_impl_bindings all_type_params param_type)
+                       | None ->
+                           failwith
+                             (Printf.sprintf
+                                "Codegen error: impl %s.%s parameter '%s' is missing a type annotation"
+                                impl.impl_trait_name m.impl_method_name param_name))
+                     m.impl_method_params)
+              in
+              let rt =
+                match m.impl_method_return_type with
+                | Some ret_ann -> type_expr_to_mono_type_with_impl_bindings all_type_params ret_ann
+                | None ->
+                    failwith
+                      (Printf.sprintf "Codegen error: impl %s.%s is missing a return type annotation"
+                         impl.impl_trait_name m.impl_method_name)
+              in
+              (pn, pt, rt)
         in
         {
           method_name = m.impl_method_name;
@@ -1374,27 +1382,34 @@ let rec collect_insts_stmt
                | _ -> false
              in
              if not has_method_generics then (
-               let method_param_names, method_param_types =
-                 List.split
-                   (List.map
-                      (fun (param_name, param_type_opt) ->
-                        match param_type_opt with
-                        | Some param_type ->
-                            (param_name, annotation_exn (Annotation.type_expr_to_mono_type param_type))
-                        | None ->
-                            failwith
-                              (Printf.sprintf
-                                 "Codegen error: impl %s.%s parameter '%s' is missing a type annotation"
-                                 impl.impl_trait_name m.impl_method_name param_name))
-                      m.impl_method_params)
-               in
-               let return_type =
-                 match m.impl_method_return_type with
-                 | Some ret_ann -> annotation_exn (Annotation.type_expr_to_mono_type ret_ann)
+               let method_param_names, method_param_types, return_type =
+                 match Hashtbl.find_opt state.method_def_map m.impl_method_id with
+                 | Some def -> (def.md_param_names, def.md_param_types, def.md_return_type)
                  | None ->
-                     failwith
-                       (Printf.sprintf "Codegen error: impl %s.%s is missing a return type annotation"
-                          impl.impl_trait_name m.impl_method_name)
+                     (* Fallback to annotation parsing *)
+                     let pn, pt =
+                       List.split
+                         (List.map
+                            (fun (param_name, param_type_opt) ->
+                              match param_type_opt with
+                              | Some param_type ->
+                                  (param_name, annotation_exn (Annotation.type_expr_to_mono_type param_type))
+                              | None ->
+                                  failwith
+                                    (Printf.sprintf
+                                       "Codegen error: impl %s.%s parameter '%s' is missing a type annotation"
+                                       impl.impl_trait_name m.impl_method_name param_name))
+                            m.impl_method_params)
+                     in
+                     let rt =
+                       match m.impl_method_return_type with
+                       | Some ret_ann -> annotation_exn (Annotation.type_expr_to_mono_type ret_ann)
+                       | None ->
+                           failwith
+                             (Printf.sprintf "Codegen error: impl %s.%s is missing a return type annotation"
+                                impl.impl_trait_name m.impl_method_name)
+                     in
+                     (pn, pt, rt)
                in
                let impl_inst =
                  {
@@ -1434,26 +1449,23 @@ let rec collect_insts_stmt
           in
           if not has_method_generics then
             let method_param_names, method_param_types =
-              List.split
-                (List.map
-                   (fun (param_name, param_type_opt) ->
-                     match param_type_opt with
-                     | Some param_type ->
-                         (param_name, annotation_exn (Annotation.type_expr_to_mono_type_with bindings param_type))
-                     | None ->
-                         failwith
-                           (Printf.sprintf
-                              "Codegen error: inherent method %s parameter '%s' is missing a type annotation"
-                              m.impl_method_name param_name))
-                   m.impl_method_params)
-            in
-            let _return_type =
-              match m.impl_method_return_type with
-              | Some ret_ann -> annotation_exn (Annotation.type_expr_to_mono_type_with bindings ret_ann)
+              match Hashtbl.find_opt state.method_def_map m.impl_method_id with
+              | Some def -> (def.md_param_names, def.md_param_types)
               | None ->
-                  failwith
-                    (Printf.sprintf "Codegen error: inherent method %s is missing a return type annotation"
-                       m.impl_method_name)
+                  (* Fallback to annotation parsing *)
+                  List.split
+                    (List.map
+                       (fun (param_name, param_type_opt) ->
+                         match param_type_opt with
+                         | Some param_type ->
+                             ( param_name,
+                               annotation_exn (Annotation.type_expr_to_mono_type_with bindings param_type) )
+                         | None ->
+                             failwith
+                               (Printf.sprintf
+                                  "Codegen error: inherent method %s parameter '%s' is missing a type annotation"
+                                  m.impl_method_name param_name))
+                       m.impl_method_params)
             in
             let method_env = add_param_bindings env method_param_names method_param_types in
             collect_insts_expr state type_map method_env m.impl_method_body)

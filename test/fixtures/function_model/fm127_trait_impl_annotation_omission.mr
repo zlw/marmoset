@@ -1,4 +1,3 @@
-# xfail: trait impl annotation omission not implemented
 trait display[a] {
   fn render(x: a) -> string
 }

@@ -1,4 +1,3 @@
-# xfail: inherent method annotation omission not implemented
 type point = { x: int, y: int }
 
 # Inherent method omits return annotation — infers from body
