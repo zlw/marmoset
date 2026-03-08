@@ -1089,8 +1089,11 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
     | AST.FieldAccess (receiver, variant_name) -> (
         (* Phase 4.3/4.4: Could be field access or nullary enum constructor *)
         match receiver.expr with
-        | AST.Identifier enum_name when classify_dotted_receiver env enum_name variant_name = `EnumVariant -> (
-            (* Nullary enum constructor like option.none or direction.north *)
+        | AST.Identifier enum_name
+          when let c = classify_dotted_receiver env enum_name variant_name in
+               c = `EnumVariant || c = `EnumType -> (
+            (* Nullary enum constructor like option.none or direction.north,
+               or unknown variant on an enum type (produces error) *)
             match Enum_registry.lookup_variant enum_name variant_name with
             | None ->
                 Error
