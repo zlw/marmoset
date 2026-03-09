@@ -749,3 +749,58 @@ let%test "env reuse with shared inference state preserves constrained generic ob
       match check_string ~file_id:"<test>" ~state:shared_state ~env:first.environment "check(fn(y) { y })" with
       | Ok _ | Error [] -> false
       | Error (err :: _) -> String_utils.contains_substring ~needle:"does not implement trait show" err.message)
+
+(* Phase 3: vNext canonical function declarations work end-to-end *)
+let%test "Phase3: vNext fn decl compiles and typechecks" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  match check_string ~file_id:"<test>" "fn add(x: int, y: int) -> int = x + y\nadd(1, 2)" with
+  | Ok result -> result.result_type = Types.TInt
+  | Error _ -> false
+
+let%test "Phase3: vNext fn decl with block body typechecks" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  match check_string ~file_id:"<test>" "fn double(x: int) -> int = { x + x }\ndouble(5)" with
+  | Ok result -> result.result_type = Types.TInt
+  | Error _ -> false
+
+let%test "Phase3: trait default method - impl without method succeeds if default exists" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  (* Register a trait with a default impl (simulating what the parser+lowerer would produce) *)
+  let default_body =
+    Syntax.Ast.AST.mk_expr
+      (Syntax.Ast.AST.String "default")
+  in
+  Trait_registry.register_trait
+    {
+      Trait_registry.trait_name = "greetable";
+      trait_type_param = None;
+      trait_supertraits = [];
+      trait_methods =
+        [
+          {
+            Trait_registry.method_key = Resolution_artifacts.SyntheticCallable "greet";
+            method_name = "greet";
+            method_generics = [];
+            method_params = [ ("self", Types.TInt) ];
+            method_return_type = Types.TString;
+            method_effect = `Pure;
+            method_generic_internal_vars = [];
+            method_default_impl = Some default_body;
+          };
+        ];
+    };
+  (* Register an impl that does NOT provide the method (uses default) *)
+  Trait_registry.register_impl ~builtin:true
+    {
+      impl_trait_name = "greetable";
+      impl_type_params = [];
+      impl_for_type = Types.TInt;
+      impl_methods = [];
+    };
+  (* Should be able to call greet on int *)
+  match check_string ~file_id:"<test>" "1.greet()" with
+  | Ok result -> result.result_type = Types.TString
+  | Error _ -> false

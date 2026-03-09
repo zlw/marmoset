@@ -228,10 +228,16 @@ let rec type_expr_to_mono_type_with
                          con_name)
                   else
                     ann_error (type_position_error_for_constructor con_name))))
-  | Syntax.Ast.AST.TArrow (param_types, return_type, _) ->
+  | Syntax.Ast.AST.TArrow (param_types, return_type, is_effectful) ->
       let* param_mono = map_result (type_expr_to_mono_type_with type_bindings) param_types in
       let* return_mono = type_expr_to_mono_type_with type_bindings return_type in
-      Ok (List.fold_right (fun param_type ret_type -> Types.tfun param_type ret_type) param_mono return_mono)
+      let mk_fun arg ret =
+        if is_effectful then
+          Types.tfun_eff arg ret
+        else
+          Types.tfun arg ret
+      in
+      Ok (List.fold_right mk_fun param_mono return_mono)
   | Syntax.Ast.AST.TUnion type_exprs ->
       let* mono_types = map_result (type_expr_to_mono_type_with type_bindings) type_exprs in
       Ok (Types.normalize_union mono_types)
@@ -551,3 +557,14 @@ let%test "is_subtype_of: TVar only matches same TVar name" =
 
 let%test "is_subtype_of: concrete does not subtype unresolved TVar" =
   not (is_subtype_of Types.TInt (Types.TVar "a"))
+
+(* Phase 3: effectful function type annotation *)
+let%test "Phase3: TArrow pure converts to TFun false" =
+  match type_expr_to_mono_type (Syntax.Ast.AST.TArrow ([ Syntax.Ast.AST.TCon "int" ], Syntax.Ast.AST.TCon "int", false)) with
+  | Ok (Types.TFun (Types.TInt, Types.TInt, false)) -> true
+  | _ -> false
+
+let%test "Phase3: TArrow effectful converts to TFun true" =
+  match type_expr_to_mono_type (Syntax.Ast.AST.TArrow ([ Syntax.Ast.AST.TCon "int" ], Syntax.Ast.AST.TCon "int", true)) with
+  | Ok (Types.TFun (Types.TInt, Types.TInt, true)) -> true
+  | _ -> false

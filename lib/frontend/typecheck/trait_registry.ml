@@ -16,6 +16,9 @@ type method_sig = {
       (* Maps method generic name -> internal TVar name from body inference.
        E.g. [("b", "t0")] means the type_map uses t0 where the generic is b.
        Used by emitter to build proper type_map substitutions. *)
+  method_default_impl : AST.expression option;
+      (* Default implementation body, if the trait provides one.
+         None = method is required in every impl. *)
 }
 
 (* Construct a method_sig with synthetic key and default pure/no-generics.
@@ -29,6 +32,7 @@ let mk_method_sig ?(generics = []) ?(effect = `Pure) ~name ~params ~return_type 
     method_return_type = return_type;
     method_effect = effect;
     method_generic_internal_vars = [];
+    method_default_impl = None;
   }
 
 (* A trait definition *)
@@ -386,8 +390,20 @@ let resolve_method (for_type : mono_type) (method_name : string) : (string * met
         | Ok None -> (cands_acc, errs_acc)
         | Ok (Some resolved) -> (
             match List.find_opt (fun m -> m.method_name = method_name) resolved.impl.impl_methods with
-            | None -> (cands_acc, errs_acc)
-            | Some method_sig -> ((trait_name, method_sig, resolved.source_site) :: cands_acc, errs_acc)))
+            | Some method_sig -> ((trait_name, method_sig, resolved.source_site) :: cands_acc, errs_acc)
+            | None -> (
+                (* Method not explicitly implemented; check if the trait has a default *)
+                match Hashtbl.find_opt trait_registry trait_name with
+                | Some trait_def -> (
+                    match
+                      List.find_opt
+                        (fun m -> m.method_name = method_name && m.method_default_impl <> None)
+                        trait_def.trait_methods
+                    with
+                    | Some default_method_sig ->
+                        ((trait_name, default_method_sig, resolved.source_site) :: cands_acc, errs_acc)
+                    | None -> (cands_acc, errs_acc))
+                | None -> (cands_acc, errs_acc))))
       ([], []) trait_names
   in
   if resolution_errors <> [] then
@@ -551,13 +567,40 @@ let validate_trait_def (def : trait_def) : (unit, string) result =
       Ok ()
 
 let validate_impl_signature (trait_def : trait_def) (def : impl_def) : (unit, string) result =
-  (* Check that all trait methods are implemented *)
+  (* Check that all required trait methods (no default) are implemented,
+     and that impl doesn't declare extra methods not in trait *)
+  let required_method_names =
+    trait_def.trait_methods
+    |> List.filter (fun m -> m.method_default_impl = None)
+    |> List.map (fun m -> m.method_name)
+    |> List.sort String.compare
+  in
   let trait_method_names =
     List.map (fun m -> m.method_name) trait_def.trait_methods |> List.sort String.compare
   in
   let impl_method_names = List.map (fun m -> m.method_name) def.impl_methods |> List.sort String.compare in
-
-  if trait_method_names <> impl_method_names then
+  (* All required methods must be provided *)
+  let missing_required =
+    List.filter (fun name -> not (List.mem name impl_method_names)) required_method_names
+  in
+  (* No extra methods beyond what the trait declares *)
+  let extra_methods =
+    List.filter (fun name -> not (List.mem name trait_method_names)) impl_method_names
+  in
+  if missing_required <> [] then
+    Error
+      (Printf.sprintf "Impl for trait '%s' is missing required methods: %s"
+         def.impl_trait_name
+         (String.concat ", " missing_required))
+  else if extra_methods <> [] then
+    Error
+      (Printf.sprintf "Impl for trait '%s' provides methods not in trait: %s"
+         def.impl_trait_name
+         (String.concat ", " extra_methods))
+  else if
+    (* If no defaults: use exact match check (backward compat) *)
+    required_method_names = trait_method_names && trait_method_names <> impl_method_names
+  then
     Error
       (Printf.sprintf "Impl for trait '%s' does not match trait signature (expected methods: %s, got: %s)"
          def.impl_trait_name
@@ -648,7 +691,12 @@ let validate_impl_signature (trait_def : trait_def) (def : impl_def) : (unit, st
       List.filter_map
         (fun trait_method ->
           match List.find_opt (fun im -> im.method_name = trait_method.method_name) def.impl_methods with
-          | None -> Some (Printf.sprintf "Method '%s' not implemented" trait_method.method_name)
+          | None ->
+              (* Missing method: OK if trait has a default impl *)
+              if trait_method.method_default_impl <> None then
+                None
+              else
+                Some (Printf.sprintf "Method '%s' not implemented" trait_method.method_name)
           | Some impl_method -> (
               match check_method_sig trait_method impl_method with
               | Ok () -> None

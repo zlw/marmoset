@@ -2392,8 +2392,30 @@ let rec emit_expr
                 let arg_strs = List.map (emit_expr state type_map env) args in
                 Printf.sprintf "((%s).%s)(%s)" receiver_str (go_record_field_name variant_name)
                   (String.concat ", " arg_strs)))
-    | AST.BlockExpr _ ->
-        failwith "Codegen for BlockExpr not yet implemented - Phase 3"
+    | AST.BlockExpr stmts -> (
+        (* Emit as immediately-invoked closure: func() T { stmts; return last }() *)
+        let result_type = get_type type_map expr in
+        let go_type = type_to_go state.mono result_type in
+        match List.rev stmts with
+        | [] -> Printf.sprintf "(func() %s { return struct{}{} })()" go_type
+        | last :: rest ->
+            let body_str =
+              with_indent_delta state 2 (fun () ->
+                  let stmts_str, env' = emit_stmts state type_map env (List.rev rest) in
+                  let last_str =
+                    match last.stmt with
+                    | AST.ExpressionStmt e ->
+                        let inner_ind = indent_str state in
+                        inner_ind ^ "return " ^ emit_expr state type_map env' e ^ "\n"
+                    | AST.Return e ->
+                        let inner_ind = indent_str state in
+                        inner_ind ^ "return " ^ emit_expr state type_map env' e ^ "\n"
+                    | _ -> fst (emit_stmt state type_map env' last)
+                  in
+                  stmts_str ^ last_str)
+            in
+            let ind = indent_str state in
+            Printf.sprintf "(func() %s {\n%s%s})()" go_type body_str ind)
   in
   maybe_project_to_expected_record_type state type_map env expr expected_type emitted
 
@@ -3305,6 +3327,20 @@ and emit_expr_to_target state type_map env expr target =
       with_indent_delta state 1 (fun () -> emit_if_to_target state type_map env expr cond cons alt target)
   | AST.Match (scrutinee, arms) ->
       with_indent_delta state 1 (fun () -> emit_match ~target state type_map env expr scrutinee arms)
+  | AST.BlockExpr stmts -> (
+      (* Emit each statement except the last, then emit the last expression to target *)
+      match List.rev stmts with
+      | [] -> ind ^ target_prefix target ^ "struct{}{}\n"
+      | last :: rest ->
+          let stmts_prefix, env' = emit_stmts state type_map env (List.rev rest) in
+          let last_str =
+            match last.stmt with
+            | AST.ExpressionStmt e ->
+                with_indent_delta state 1 (fun () -> emit_expr_to_target state type_map env' e target)
+            | AST.Return e -> ind ^ "    return " ^ emit_expr state type_map env' e ^ "\n"
+            | _ -> fst (emit_stmt state type_map env' last)
+          in
+          stmts_prefix ^ last_str)
   | _ -> ind ^ target_prefix target ^ emit_expr state type_map env expr ^ "\n"
 
 and emit_if_to_target state type_map env if_expr (cond : AST.expression) cons alt target =

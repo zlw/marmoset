@@ -1747,9 +1747,8 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
             | `TraitName -> infer_qualified_trait_call name
             | `Unknown -> infer_real_method_call ())
         | _ -> infer_real_method_call ())
-    | AST.BlockExpr _ ->
-        (* Phase 3 will add full block-expression inference. *)
-        Error (error_at ~code:"type-block-expr" ~message:"Block expressions in this position are not yet supported" expr)
+    | AST.BlockExpr stmts ->
+        infer_block type_map env stmts
   in
   (* Record the type in the type map before returning *)
   match result with
@@ -2910,6 +2909,7 @@ and infer_statement type_map env stmt =
             method_return_type = return_type;
             method_effect;
             method_generic_internal_vars = [];
+            method_default_impl = m.method_default_impl;
           }
       in
       let convert_trait_field (f : AST.record_type_field) : (Types.record_field_type, Diagnostic.t) result =
@@ -3097,6 +3097,7 @@ and infer_statement type_map env stmt =
                                method_return_type = return_type;
                                method_effect;
                                method_generic_internal_vars = [];
+                               method_default_impl = None;
                              },
                              subst ))
                 in
@@ -3308,6 +3309,7 @@ and infer_statement type_map env stmt =
                         method_return_type = return_type;
                         method_effect;
                         method_generic_internal_vars;
+                        method_default_impl = None;
                       },
                       subst )
           in
@@ -3368,6 +3370,7 @@ and infer_statement type_map env stmt =
                         method_return_type = return_type;
                         method_effect = `Pure;
                         method_generic_internal_vars = [];
+                        method_default_impl = None;
                       }
                     in
                     match Inherent_registry.register_method ~for_type:target_type_for_preregister stub_sig with
