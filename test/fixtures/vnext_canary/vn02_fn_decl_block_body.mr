@@ -1,0 +1,6 @@
+# VN02: vNext top-level fn declaration with block body
+fn double(x: int) -> int = {
+  let y = x + x
+  y
+}
+puts(double(5))  # output: 10

@@ -167,6 +167,10 @@ let rec parse_surface_program (p : parser) : (parser * Surface.surface_program, 
               next_token lp2
             else
               lp2
+        | Surface.SEnumDef { derive = _ :: _; _ } ->
+            (* postfix derive: parse_derive_trait_list leaves parser one past the
+               last trait name, matching the STypeDef convention — no extra advance *)
+            lp2
         | _ -> next_token lp2
       in
       let end_pos = max start_pos (token_end lp2.curr_token) in
@@ -998,12 +1002,16 @@ and parse_method_impl_list (p : parser) : (parser * Surface.surface_method_impl 
   loop p []
 
 and is_block_body_start (p : parser) : bool =
-  (* p.curr_token = { — heuristic to tell block from record/hash literal *)
+  (* p.curr_token = { — heuristic to tell block from record/hash/block literal *)
   let _, peek2 = Lexer.next_token p.lexer in
   match p.peek_token.token_type with
-  | Token.Let | Token.Return | Token.If | Token.Match | Token.Function | Token.RBrace -> true
+  | Token.Let | Token.Return | Token.If | Token.Match | Token.Function -> true
+  | Token.RBrace -> false  (* {} = empty hash, for backwards compatibility *)
   | Token.Spread -> false  (* { ...spread } is record *)
   | Token.Ident -> peek2.token_type <> Token.Colon  (* { x: ... } is record *)
+  | Token.String | Token.Int | Token.Float ->
+      (* { "key": val } or { 10: val } is hash literal *)
+      peek2.token_type <> Token.Colon
   | _ -> true
 
 and parse_method_impl (p : parser) : (parser * Surface.surface_method_impl, parser) result =
@@ -1164,7 +1172,9 @@ and prefixFn (p : parser) : (parser * Surface.surface_expr, parser) result =
   | Token.Match -> parse_match_expression p
   | Token.Function -> parse_function_literal p
   | Token.LBracket -> parse_array_literal p
-  | Token.LBrace -> parse_record_or_hash_literal p
+  | Token.LBrace ->
+      if is_block_body_start p then parse_block_expr p
+      else parse_record_or_hash_literal p
   | _ -> Error (no_prefix_parse_fn_error p tt)
 
 and infixFn (p : parser) (left_expr : Surface.surface_expr) (prec : precedence) :
@@ -1571,6 +1581,18 @@ and parse_dot_expression (p : parser) (left : Surface.surface_expr) : (parser * 
       (* expr.member -> Field access or nullary enum constructor *)
       let id = fresh_id p2 in
       Ok (p2, mk_surface_expr id pos (Surface.SEFieldAccess (left, member_name)))
+
+(* Parse { stmts } in expression position as a block expression (SEBlockExpr) *)
+and parse_block_expr (p : parser) : (parser * Surface.surface_expr, parser) result =
+  (* p.curr_token = LBrace, and is_block_body_start is true *)
+  let pos = p.curr_token.pos in
+  let* p2, block = parse_block_statement p in
+  let* p3 =
+    if curr_token_is p2 Token.RBrace then Ok p2
+    else expect_peek p2 Token.RBrace
+  in
+  let id = fresh_id p3 in
+  Ok (p3, mk_surface_expr id pos (Surface.SEBlockExpr block))
 
 (* Phase 4.6: Distinguish record literal from hash literal using one mode-locked loop *)
 and parse_record_or_hash_literal (p : parser) : (parser * Surface.surface_expr, parser) result =

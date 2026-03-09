@@ -190,9 +190,16 @@ let check_program_with_annotations ?state ?(env = Infer.empty_env) (program : Sy
       and check_expr_annotations (expr : Syntax.Ast.AST.expression) (inferred : mono_type) :
           (unit, Diagnostic.t) result =
         match expr.expr with
-        | Syntax.Ast.AST.Function { return_type; params = _; body; generics = _; is_effectful = _ } -> (
-            (* Check function return type annotation *)
-            match check_function_annotation return_type inferred with
+        | Syntax.Ast.AST.Function { return_type; params = _; body; generics; is_effectful = _ } -> (
+            (* For generic functions, skip the return annotation check: type_callable already
+               validated it during inference with proper type variable bindings.
+               The second-pass check here can't reproduce the fresh-var mapping. *)
+            let has_generics = match generics with Some (_ :: _) -> true | _ -> false in
+            let annot_check =
+              if has_generics then Ok ()
+              else check_function_annotation return_type inferred
+            in
+            match annot_check with
             | Error e -> Error e
             | Ok () ->
                 (* Also recursively check body statements *)

@@ -1,0 +1,10 @@
+# VN10: Postfix derive on enum definition
+enum color {
+  red,
+  green,
+  blue
+} derive eq, show
+let c = color.red
+puts(c.show())    # output: red
+puts(c.eq(color.red))   # output: true
+puts(c.eq(color.blue))  # output: false

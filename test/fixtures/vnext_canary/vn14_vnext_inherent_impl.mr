@@ -1,0 +1,5 @@
+# VN14: vNext inherent impl syntax
+impl int = {
+  fn triple(x: int) -> int { x * 3 }
+}
+puts(4.triple())  # output: 12

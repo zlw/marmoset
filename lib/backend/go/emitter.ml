@@ -1029,7 +1029,7 @@ let inherent_type_bindings (inherent_for_type : AST.type_expr) : (string * Types
 
 let register_impl_template (state : mono_state) (impl : AST.impl_def) : impl_template =
   let for_type = type_expr_to_mono_type_with_impl_bindings impl.impl_type_params impl.impl_for_type in
-  let methods =
+  let explicit_methods =
     List.map
       (fun (m : AST.method_impl) ->
         let method_generic_names =
@@ -1080,6 +1080,51 @@ let register_impl_template (state : mono_state) (impl : AST.impl_def) : impl_tem
         })
       impl.impl_methods
   in
+  (* Also include trait default methods not explicitly provided in this impl *)
+  let default_methods =
+    match Typecheck.Trait_registry.lookup_trait impl.impl_trait_name with
+    | None -> []
+    | Some trait_def ->
+        let explicit_names = List.map (fun (m : AST.method_impl) -> m.impl_method_name) impl.impl_methods in
+        let concrete_for_type = Types.canonicalize_mono_type for_type in
+        let substitute =
+          match trait_def.trait_type_param with
+          | None -> fun t -> t
+          | Some tp ->
+              let subst = Types.substitution_singleton tp concrete_for_type in
+              fun t -> Types.apply_substitution subst t
+        in
+        List.filter_map
+          (fun (m : Typecheck.Trait_registry.method_sig) ->
+            match m.method_default_impl with
+            | None -> None
+            | Some default_expr ->
+                if List.mem m.method_name explicit_names then
+                  None
+                else
+                  let param_names = List.map fst m.method_params in
+                  let param_types = List.map (fun (_, t) -> substitute t) m.method_params in
+                  let return_type = substitute m.method_return_type in
+                  let body_stmt =
+                    AST.mk_stmt ~pos:default_expr.pos ~end_pos:default_expr.end_pos ~file_id:default_expr.file_id
+                      (AST.Block
+                         [
+                           AST.mk_stmt ~pos:default_expr.pos ~end_pos:default_expr.end_pos
+                             ~file_id:default_expr.file_id (AST.ExpressionStmt default_expr);
+                         ])
+                  in
+                  Some
+                    {
+                      method_name = m.method_name;
+                      param_names;
+                      param_types;
+                      return_type;
+                      body_stmt;
+                      method_generic_names = [];
+                    })
+          trait_def.trait_methods
+  in
+  let methods = explicit_methods @ default_methods in
   let template =
     {
       trait_name = impl.impl_trait_name;
@@ -1375,6 +1420,7 @@ let rec collect_insts_stmt
       (if impl.impl_type_params = [] then
          let for_type = annotation_exn (Annotation.type_expr_to_mono_type impl.impl_for_type) in
          let for_type_fingerprint = fingerprint_types [ for_type ] in
+         let explicit_method_names = List.map (fun (m : AST.method_impl) -> m.impl_method_name) impl.impl_methods in
          List.iter
            (fun (m : AST.method_impl) ->
              (* Skip eager instantiation for methods with method-level generics;
@@ -1436,7 +1482,52 @@ let rec collect_insts_stmt
                add_impl_instantiation state impl_inst payload;
                let method_env = add_param_bindings env method_param_names method_param_types in
                ignore (collect_insts_stmt state type_map method_env m.impl_method_body)))
-           impl.impl_methods);
+           impl.impl_methods;
+         (* Also instantiate trait default methods not explicitly provided in this impl *)
+         (match Typecheck.Trait_registry.lookup_trait impl.impl_trait_name with
+         | None -> ()
+         | Some trait_def ->
+             let substitute =
+               match trait_def.trait_type_param with
+               | None -> fun t -> t
+               | Some tp ->
+                   let subst = Types.substitution_singleton tp for_type in
+                   fun t -> Types.apply_substitution subst t
+             in
+             List.iter
+               (fun (m : Typecheck.Trait_registry.method_sig) ->
+                 match m.method_default_impl with
+                 | None -> () (* No default, skip *)
+                 | Some default_expr ->
+                     if List.mem m.method_name explicit_method_names then
+                       () (* Explicitly provided, skip *)
+                     else
+                       let param_names = List.map fst m.method_params in
+                       let param_types = List.map (fun (_, t) -> substitute t) m.method_params in
+                       let return_type = substitute m.method_return_type in
+                       let body_stmt =
+                         AST.mk_stmt ~pos:default_expr.pos ~end_pos:default_expr.end_pos
+                           ~file_id:default_expr.file_id
+                           (AST.Block
+                              [
+                                AST.mk_stmt ~pos:default_expr.pos ~end_pos:default_expr.end_pos
+                                  ~file_id:default_expr.file_id (AST.ExpressionStmt default_expr);
+                              ])
+                       in
+                       let impl_inst =
+                         {
+                           trait_name = impl.impl_trait_name;
+                           method_name = m.method_name;
+                           module_path = state.module_path;
+                           concrete_only_mode = state.concrete_only;
+                           for_type;
+                           method_type_args = [];
+                           type_fingerprint = for_type_fingerprint;
+                         }
+                       in
+                       let payload = { param_names; param_types; return_type; body_stmt } in
+                       add_impl_instantiation state impl_inst payload)
+               trait_def.trait_methods));
       env
   | AST.InherentImplDef impl ->
       let bindings = inherent_type_bindings impl.inherent_for_type in
@@ -4762,6 +4853,28 @@ let emit_record_derived_impl
         (Printf.sprintf "func hash_hash_%s(x %s) int64 {\n\th := int64(17)\n%s\treturn h\n}\n" type_suffix
            type_str hash_steps)
 
+let emit_enum_derived_impl (derive_kind : Typecheck.Trait_registry.derive_kind) (enum_type : Types.mono_type) :
+    string option =
+  let type_suffix = mangle_type enum_type in
+  let type_str = match enum_type with
+    | Types.TEnum (name, []) -> name
+    | _ -> type_suffix
+  in
+  match derive_kind with
+  | Typecheck.Trait_registry.DeriveEq ->
+      Some (Printf.sprintf "func eq_eq_%s(x, y %s) bool {\n\treturn x.Tag == y.Tag\n}\n" type_suffix type_str)
+  | Typecheck.Trait_registry.DeriveShow ->
+      Some (Printf.sprintf "func show_show_%s(x %s) string {\n\treturn x.String()\n}\n" type_suffix type_str)
+  | Typecheck.Trait_registry.DeriveDebug ->
+      Some (Printf.sprintf "func debug_debug_%s(x %s) string {\n\treturn x.String()\n}\n" type_suffix type_str)
+  | Typecheck.Trait_registry.DeriveOrd ->
+      Some
+        (Printf.sprintf
+           "func ord_compare_%s(x, y %s) ordering {\n\tif x.Tag < y.Tag { return ordering_less() }\n\tif x.Tag > y.Tag { return ordering_greater() }\n\treturn ordering_equal()\n}\n"
+           type_suffix type_str)
+  | Typecheck.Trait_registry.DeriveHash ->
+      Some (Printf.sprintf "func hash_hash_%s(x %s) int64 {\n\treturn int64(x.Tag)\n}\n" type_suffix type_str)
+
 let emit_registry_derived_impls (state : emit_state) (program : AST.program) : string =
   let user_impls = collect_impl_defs program in
   let user_impl_set =
@@ -4789,6 +4902,7 @@ let emit_registry_derived_impls (state : emit_state) (program : AST.program) : s
              | Some derive_kind -> (
                  match impl.impl_for_type with
                  | Types.TRecord _ -> emit_record_derived_impl state derive_kind impl.impl_for_type
+                 | Types.TEnum _ -> emit_enum_derived_impl derive_kind impl.impl_for_type
                  | _ -> None)
              | None -> None
            else

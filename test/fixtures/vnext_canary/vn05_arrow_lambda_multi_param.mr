@@ -1,0 +1,3 @@
+# VN05: Multi-parameter arrow lambda
+let add = (x, y) -> x + y
+puts(add(3, 4))  # output: 7

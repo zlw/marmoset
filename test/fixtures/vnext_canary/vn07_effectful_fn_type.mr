@@ -1,0 +1,6 @@
+# VN07: Effectful function type annotation (int) => string
+let apply_effectful = fn(f: (int) => string, x: int) => string {
+  f(x)
+}
+let to_str = fn(n: int) => string { n.show() }
+puts(apply_effectful(to_str, 42))  # output: 42

@@ -220,7 +220,7 @@ let lower_top_decl (id_supply : Id_supply.Id_supply.t) (ts : Surface.surface_top
   | Surface.SFnDecl { name; generics; params; return_type; is_effectful; body } ->
       let fn_body = lower_expr_or_block_to_stmt id_supply body in
       let fn_expr =
-        AST.mk_expr
+        AST.mk_expr ~id:(Id_supply.Id_supply.fresh id_supply) ~pos ~end_pos ~file_id
           (AST.Function
              {
                generics;
