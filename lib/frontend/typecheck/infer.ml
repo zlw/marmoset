@@ -2771,7 +2771,7 @@ and infer_statement type_map env stmt =
                         Ok (THash (kt, vt))
                     | _ -> enum_err "map expects 2 arguments")
                 | _ -> enum_err (Printf.sprintf "Unknown type constructor in enum: %s" con_name))
-          | AST.TArrow (params, ret) ->
+          | AST.TArrow (params, ret, _) ->
               let* param_types = map_result convert params in
               let* ret_type = convert ret in
               Ok (List.fold_right (fun p r -> tfun p r) param_types ret_type)
@@ -2831,7 +2831,7 @@ and infer_statement type_map env stmt =
                         Ok (THash (kt, vt))
                     | _ -> trait_err "map expects 2 arguments")
                 | _ -> Annotation.type_expr_to_mono_type (AST.TApp (con_name, args)))
-          | AST.TArrow (params, ret) ->
+          | AST.TArrow (params, ret, _) ->
               let* param_types = map_result convert params in
               let* ret_type = convert ret in
               Ok (List.fold_right (fun p r -> tfun p r) param_types ret_type)
@@ -3173,7 +3173,7 @@ and infer_statement type_map env stmt =
               StringSet.add name acc
         | AST.TApp (_con_name, args) ->
             List.fold_left (fun acc' arg -> collect_target_generic_names ~in_head:false arg acc') acc args
-        | AST.TArrow (params, ret) ->
+        | AST.TArrow (params, ret, _) ->
             let acc' =
               List.fold_left (fun acc' param -> collect_target_generic_names ~in_head:false param acc') acc params
             in

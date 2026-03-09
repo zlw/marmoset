@@ -294,9 +294,15 @@ and parse_type_atom (p : parser) : (parser * Surface.surface_type_expr, parser) 
       else
         expect_peek p3 Token.RParen
     in
-    let* p5 = expect_peek p4 Token.Arrow in
+    let* p5 =
+      if peek_token_is p4 Token.Arrow then
+        Ok (next_token p4)
+      else
+        expect_peek p4 Token.FatArrow
+    in
+    let is_effectful = curr_token_is p5 Token.FatArrow in
     let* p6, return_type = parse_type_expr (next_token p5) in
-    Ok (p6, Surface.STArrow (param_types, return_type, false))
+    Ok (p6, Surface.STArrow (param_types, return_type, is_effectful))
   else if curr_token_is p Token.LParen then
     (* Parenthesized type or function type: (int | string) or (int, string) -> bool *)
     let* p2, first = parse_type_expr (next_token p) in
@@ -313,16 +319,20 @@ and parse_type_atom (p : parser) : (parser * Surface.surface_type_expr, parser) 
           Error (peek_error lp2 Token.RParen)
       in
       let* p3, params = collect_params p2 [ first ] in
-      let* p4 = expect_peek p3 Token.Arrow in
-      let* p5, return_type = parse_type_expr (next_token p4) in
-      Ok (p5, Surface.STArrow (params, return_type, false))
+      let p4 = next_token p3 in
+      let is_effectful = curr_token_is p4 Token.FatArrow in
+      if curr_token_is p4 Token.Arrow || is_effectful then
+        let* p5, return_type = parse_type_expr (next_token p4) in
+        Ok (p5, Surface.STArrow (params, return_type, is_effectful))
+      else
+        Error (peek_error p3 Token.Arrow)
     else if curr_token_is p2 Token.RParen then
       (* Single type in parens: (int) or (int | string) *)
       let p3 = next_token p2 in
-      if curr_token_is p3 Token.Arrow then
-        (* Single-param function: (int) -> bool *)
+      if curr_token_is p3 Token.Arrow || curr_token_is p3 Token.FatArrow then
+        let is_effectful = curr_token_is p3 Token.FatArrow in
         let* p5, return_type = parse_type_expr (next_token p3) in
-        Ok (p5, Surface.STArrow ([ first ], return_type, false))
+        Ok (p5, Surface.STArrow ([ first ], return_type, is_effectful))
       else
         (* Just grouping: (int) or (int | string) *)
         Ok (p3, first)
@@ -365,12 +375,12 @@ and parse_type_expr_list (p : parser) : (parser * Surface.surface_type_expr list
     loop p []
 
 and parse_trait_constraint (p : parser) : (parser * string list, parser) result =
-  (* Parse trait constraints: show, eq, show + eq, etc. *)
+  (* Parse trait constraints: show, eq, show + eq, show & eq, etc. *)
   let rec loop (lp : parser) (traits : string list) =
     if curr_token_is lp Token.Ident then
       let trait = lp.curr_token.literal in
       let lp2 = next_token lp in
-      if curr_token_is lp2 Token.Plus then
+      if curr_token_is lp2 Token.Plus || curr_token_is lp2 Token.Ampersand then
         loop (next_token lp2) (trait :: traits)
       else
         Ok (lp2, List.rev (trait :: traits))
@@ -960,8 +970,8 @@ and parse_constraint_list (p : parser) : (parser * string list, parser) result =
     if curr_token_is lp Token.Ident then
       let constraint_name = lp.curr_token.literal in
       let lp2 = next_token lp in
-      if curr_token_is lp2 Token.Plus then
-        (* More constraints: + trait *)
+      if curr_token_is lp2 Token.Plus || curr_token_is lp2 Token.Ampersand then
+        (* More constraints: + trait or & trait *)
         loop (next_token lp2) (constraint_name :: rev_constraints)
       else
         (* End of constraint list *)
@@ -3175,7 +3185,7 @@ let%test "parse type alias with function type body" =
           match stmt.stmt with
           | AST.TypeAlias alias_def -> (
               match alias_def.alias_body with
-              | AST.TArrow ([ AST.TCon "int" ], AST.TCon "int") -> true
+              | AST.TArrow ([ AST.TCon "int" ], AST.TCon "int", false) -> true
               | _ -> false)
           | _ -> false)
       | _ -> false)
@@ -3191,7 +3201,7 @@ let%test "parse function parameter annotation with function type" =
           match stmt.stmt with
           | AST.Let { value = { expr = AST.Function fn; _ }; _ } -> (
               match fn.params with
-              | [ ("f", Some (AST.TArrow ([ AST.TCon "int" ], AST.TCon "int"))); ("x", Some (AST.TCon "int")) ] ->
+              | [ ("f", Some (AST.TArrow ([ AST.TCon "int" ], AST.TCon "int", false))); ("x", Some (AST.TCon "int")) ] ->
                   true
               | _ -> false)
           | _ -> false)

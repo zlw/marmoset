@@ -10,9 +10,10 @@ let rec type_expr_to_string (te : Ast.AST.type_expr) : string =
   | Ast.AST.TCon name -> name
   | Ast.AST.TApp (name, args) ->
       Printf.sprintf "%s[%s]" name (String.concat ", " (List.map type_expr_to_string args))
-  | Ast.AST.TArrow (params, ret) ->
-      Printf.sprintf "(%s) -> %s"
+  | Ast.AST.TArrow (params, ret, effectful) ->
+      Printf.sprintf "(%s) %s %s"
         (String.concat ", " (List.map type_expr_to_string params))
+        (if effectful then "=>" else "->")
         (type_expr_to_string ret)
   | Ast.AST.TUnion types -> String.concat " | " (List.map type_expr_to_string types)
   | Ast.AST.TRecord (fields, row) ->

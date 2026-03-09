@@ -17,10 +17,8 @@ let rec lower_type_expr (st : Surface.surface_type_expr) : AST.type_expr =
   | Surface.STVar s -> AST.TVar s
   | Surface.STCon s -> AST.TCon s
   | Surface.STApp (name, args) -> AST.TApp (name, List.map lower_type_expr args)
-  | Surface.STArrow (params, ret, _effectful) ->
-      (* In Phase 0.5 the effect bit is stored but TArrow doesn't carry it yet.
-         Phase 1 / 1g will add the effect bit to AST.TArrow. *)
-      AST.TArrow (List.map lower_type_expr params, lower_type_expr ret)
+  | Surface.STArrow (params, ret, effectful) ->
+      AST.TArrow (List.map lower_type_expr params, lower_type_expr ret, effectful)
   | Surface.STUnion members -> AST.TUnion (List.map lower_type_expr members)
   | Surface.STRecord (fields, row) ->
       let lower_field f =

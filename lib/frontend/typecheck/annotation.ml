@@ -228,7 +228,7 @@ let rec type_expr_to_mono_type_with
                          con_name)
                   else
                     ann_error (type_position_error_for_constructor con_name))))
-  | Syntax.Ast.AST.TArrow (param_types, return_type) ->
+  | Syntax.Ast.AST.TArrow (param_types, return_type, _) ->
       let* param_mono = map_result (type_expr_to_mono_type_with type_bindings) param_types in
       let* return_mono = type_expr_to_mono_type_with type_bindings return_type in
       Ok (List.fold_right (fun param_type ret_type -> Types.tfun param_type ret_type) param_mono return_mono)
