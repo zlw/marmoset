@@ -180,6 +180,7 @@ and parse_top_decl (p : parser) : (parser * Surface.top_decl, parser) result =
   | Token.Impl -> parse_impl_definition p
   | Token.Derive -> parse_derive_definition p
   | Token.Type -> parse_type_alias p
+  | Token.Function when peek_token_is p Token.Ident -> parse_fn_decl_top p
   | _ -> parse_expression_top p
 
 and parse_let_top (p : parser) : (parser * Surface.top_decl, parser) result =
@@ -199,6 +200,58 @@ and parse_expression_top (p : parser) : (parser * Surface.top_decl, parser) resu
   let* p2, expr = parse_expression p prec_lowest in
   let p3 = skip p2 Token.Semicolon in
   Ok (p3, Surface.SExpressionStmt expr)
+
+(* Phase 1b: vNext top-level fn declaration: fn name[generics](params) -> T = expr_or_block *)
+and parse_fn_decl_top (p : parser) : (parser * Surface.top_decl, parser) result =
+  (* curr_token = 'fn', peek = Ident *)
+  let* p2 = expect_peek p Token.Ident in
+  let name = p2.curr_token.literal in
+
+  (* Optional generics: [a: Show, b] *)
+  let* p3, generics = parse_generic_params p2 in
+  let* p4 = expect_peek p3 Token.LParen in
+
+  (* Parameters with optional type annotations *)
+  let* p5, params = parse_function_parameters p4 in
+
+  (* Optional return type: -> T (pure) or => T (effectful) *)
+  let* p6, return_type, is_effectful =
+    if peek_token_is p5 Token.Arrow then
+      let p6 = next_token p5 in
+      let* p7, te = parse_type_expr (next_token p6) in
+      Ok (p7, Some te, false)
+    else if peek_token_is p5 Token.FatArrow then
+      let p6 = next_token p5 in
+      let* p7, te = parse_type_expr (next_token p6) in
+      Ok (p7, Some te, true)
+    else
+      Ok (p5, None, false)
+  in
+
+  (* Expect = *)
+  let* p7 =
+    if curr_token_is p6 Token.Assign then Ok p6
+    else if peek_token_is p6 Token.Assign then Ok (next_token p6)
+    else expect_peek p6 Token.Assign
+  in
+
+  (* Parse body: { ... } -> block, anything else -> expression *)
+  let p_body = next_token p7 in
+  let* p8, body =
+    if curr_token_is p_body Token.LBrace then
+      let* p8, block = parse_block_statement p_body in
+      let* p9 =
+        if curr_token_is p8 Token.RBrace then Ok p8
+        else expect_peek p8 Token.RBrace
+      in
+      Ok (p9, Surface.SEOBBlock block)
+    else
+      let* p8, expr = parse_expression p_body prec_lowest in
+      let p9 = skip p8 Token.Semicolon in
+      Ok (p9, Surface.SEOBExpr expr)
+  in
+
+  Ok (p8, Surface.SFnDecl { name; generics; params; return_type; is_effectful; body })
 
 and parse_block_stmt (p : parser) : (parser * Surface.surface_stmt, parser) result =
   let finalize = function
@@ -2195,6 +2248,84 @@ module Test = struct
     match parse ~file_id:"<test>" "let x = if (true) 42" with
     | Error errs -> List.exists (fun (d : Diagnostic.t) -> d.code = "parse-unexpected-token") errs
     | _ -> false
+
+  (* Phase 1b: Top-level fn declarations *)
+  let%test "fn decl simple expression body" =
+    match parse ~file_id:"<test>" "fn identity(x) = x" with
+    | Ok [ { AST.stmt = AST.Let { name = "identity"; value = { AST.expr = AST.Function { params = [ ("x", None) ]; _ }; _ }; _ }; _ } ] ->
+        true
+    | _ -> false
+
+  let%test "fn decl with typed param and return type" =
+    match parse ~file_id:"<test>" "fn double(x: Int) -> Int = x" with
+    | Ok
+        [
+          {
+            AST.stmt =
+              AST.Let
+                {
+                  name = "double";
+                  value =
+                    {
+                      AST.expr =
+                        AST.Function
+                          {
+                            params = [ ("x", Some (AST.TCon "Int")) ];
+                            return_type = Some (AST.TCon "Int");
+                            is_effectful = false;
+                            _;
+                          };
+                      _;
+                    };
+                  _;
+                };
+            _;
+          };
+        ] ->
+        true
+    | _ -> false
+
+  let%test "fn decl with block body" =
+    match parse ~file_id:"<test>" "fn add(x: Int, y: Int) -> Int = { x + y }" with
+    | Ok [ { AST.stmt = AST.Let { name = "add"; value = { AST.expr = AST.Function { body = { AST.stmt = AST.Block _; _ }; _ }; _ }; _ }; _ } ] ->
+        true
+    | _ -> false
+
+  let%test "fn decl effectful with fat arrow" =
+    match parse ~file_id:"<test>" "fn greet(name: Str) => Str = puts(name)" with
+    | Ok [ { AST.stmt = AST.Let { name = "greet"; value = { AST.expr = AST.Function { is_effectful = true; _ }; _ }; _ }; _ } ] ->
+        true
+    | _ -> false
+
+  let%test "fn decl with generics" =
+    match parse ~file_id:"<test>" "fn identity[a](x: a) -> a = x" with
+    | Ok
+        [
+          {
+            AST.stmt =
+              AST.Let
+                {
+                  name = "identity";
+                  value = { AST.expr = AST.Function { generics = Some [ { AST.name = "a"; _ } ]; _ }; _ };
+                  _;
+                };
+            _;
+          };
+        ] ->
+        true
+    | _ -> false
+
+  let%test "fn decl with bang suffix name" =
+    match parse ~file_id:"<test>" "fn panic!() = 42" with
+    | Ok [ { AST.stmt = AST.Let { name = "panic!"; _ }; _ } ] -> true
+    | _ -> false
+
+  let%test "anonymous fn still works after fn decl change" =
+    (* legacy fn(...) { } in expression position should still work *)
+    [
+      { input = "let f = fn(x) { x }"; output = [ s (let_stmt "f" (e (fn_expr [ ("x", None) ] (s (AST.Block [ s (AST.ExpressionStmt (e (AST.Identifier "x"))) ]))))) ] };
+    ]
+    |> run
 end
 
 (* Phase 4.3: Trait definition tests *)
@@ -3152,3 +3283,4 @@ let%test "parse record pattern - empty" =
           | _ -> false)
       | _ -> false)
   | Error _ -> false
+
