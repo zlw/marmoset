@@ -75,7 +75,7 @@ trait JungleDweller[a]: Show & Eq = {
   fn territory(a) -> Str                     # required method
   fn forage(a, Str) => Result[Fruit, Str]    # effectful required method
 
-  override fn introduce(self: a) -> Str = self.name   # default method
+  fn introduce(self: a) -> Str = self.name   # default method
 }
 
 # ─── Functions: Generics & Constraints ──────────────────────────
@@ -280,11 +280,11 @@ fn judge_monkey(m: Monkey) -> Str = {
   let status = check_status(m)
 
   match status {
-    Mood.Happy  : "approved"
-    Mood.Hangry : {
+    case Mood.Happy: "approved"
+    case Mood.Hangry: {
       let remedy = "give banana immediately"
       remedy
     }
-    Mood.Philosophical : "ask again later"
+    case Mood.Philosophical: "ask again later"
   }
 }

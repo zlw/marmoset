@@ -534,3 +534,12 @@ Errors:
 - Bare trait in parameter type position currently means constrained-param shorthand, not trait-object existential type.
 - General intersection types are intentionally unspecified in this version. `&` is only normative in constraint positions.
 - User-trait derive semantics beyond parse/desugar reservation are intentionally deferred.
+
+### 13.12 Migration Policy (Non-Normative)
+This section describes the temporary migration architecture during the transition from legacy syntax to vNext.
+
+- **Legacy syntax remains accepted** during the migration period. The compiler will continue to parse legacy forms (`let name = fn(...) { ... }`, `impl Trait for Type { ... }`, `derive trait for Type`, `pattern: expr` match arms) while vNext forms are being introduced.
+- **Dual syntax exists only above lowering.** The surface parser and lowering pipeline are the only places that know about legacy versus vNext distinctions. The resolver, typechecker, emitter, and LSP semantic analysis consume only canonical lowered syntax.
+- **Semicolons are optional** during migration. Canonical vNext style omits semicolons. This policy does not depend on a formatter being present.
+- **Legacy syntax removal happens in the final cleanup phase** (Phase 7 of the migration plan in `docs/plans/syntax-rework.md`), after the full fixture corpus and tooling have been migrated.
+- **Migration architecture** is fully specified in `docs/plans/syntax-rework.md`.
