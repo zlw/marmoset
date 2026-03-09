@@ -69,6 +69,7 @@ let rec find_in_expr ~source ~offset ~parent (expr : Ast.AST.expression) : Lsp_t
             (fun () -> Option.bind spread (find_in_expr ~source ~offset ~parent:current))
       | Ast.AST.EnumConstructor (_, _, args) -> find_first_in_exprs ~source ~offset ~parent:current args
       | Ast.AST.TypeCheck (e, _) -> find_in_expr ~source ~offset ~parent:current e
+      | Ast.AST.BlockExpr stmts -> find_first_in_stmts ~source ~offset ~parent:current stmts
       | Ast.AST.Identifier _ | Ast.AST.Integer _ | Ast.AST.Float _ | Ast.AST.Boolean _ | Ast.AST.String _ -> None
     in
     match child with

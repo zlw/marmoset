@@ -228,6 +228,7 @@ let rec collect_expr ~source ~type_map ~environment ~params ~tokens (expr : Ast.
       | None -> ());
       List.iter (collect_expr ~source ~type_map ~environment ~params ~tokens) args
   | Ast.AST.TypeCheck (e, _te) -> collect_expr ~source ~type_map ~environment ~params ~tokens e
+  | Ast.AST.BlockExpr stmts -> List.iter (collect_stmt ~source ~type_map ~environment ~params ~tokens) stmts
 
 (* Note: type annotations (type_expr) lack byte-position info in the AST,
    so we cannot emit semantic tokens for them. Tree-sitter handles type highlighting. *)

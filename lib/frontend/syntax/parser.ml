@@ -2450,6 +2450,7 @@ module Test = struct
       | AST.FieldAccess (receiver, _) -> collect_expr_ids receiver
       | AST.MethodCall { mc_receiver; mc_args; _ } ->
           collect_expr_ids mc_receiver @ List.concat_map collect_expr_ids mc_args
+      | AST.BlockExpr stmts -> List.concat_map collect_stmt_ids stmts
     in
     expr.id :: child_ids
 

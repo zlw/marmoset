@@ -312,6 +312,7 @@ and walk_expr ~source ~type_map ~range_start ~range_end ~sites (expr : Ast.AST.e
     | Ast.AST.EnumConstructor (_, _, args) ->
         List.iter (walk_expr ~source ~type_map ~range_start ~range_end ~sites) args
     | Ast.AST.TypeCheck (e, _) -> walk_expr ~source ~type_map ~range_start ~range_end ~sites e
+    | Ast.AST.BlockExpr stmts -> List.iter (walk_stmt ~source ~type_map ~range_start ~range_end ~sites) stmts
     | Ast.AST.Identifier _ | Ast.AST.Integer _ | Ast.AST.Float _ | Ast.AST.Boolean _ | Ast.AST.String _ -> ()
 
 (* ============================================================

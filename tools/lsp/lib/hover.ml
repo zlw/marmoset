@@ -57,6 +57,7 @@ let rec find_expr_at (offset : int) (expr : Ast.AST.expression) : Ast.AST.expres
             (Option.bind spread (find_expr_at offset))
       | Ast.AST.EnumConstructor (_, _, args) -> List.find_map (find_expr_at offset) args
       | Ast.AST.TypeCheck (e, _) -> find_expr_at offset e
+      | Ast.AST.BlockExpr stmts -> List.find_map (find_expr_in_stmt offset) stmts
       | Ast.AST.Identifier _ | Ast.AST.Integer _ | Ast.AST.Float _ | Ast.AST.Boolean _ | Ast.AST.String _ -> None
     in
     match child with

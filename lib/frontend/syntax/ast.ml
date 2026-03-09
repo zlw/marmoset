@@ -77,6 +77,7 @@ module AST = struct
     impl_method_params : (string * type_expr option) list;
     impl_method_return_type : type_expr option;
     impl_method_effect : effect_annotation option;
+    impl_method_override : bool; (* true when the override keyword was present *)
     impl_method_body : statement;
   }
 
@@ -169,6 +170,8 @@ module AST = struct
         mc_type_args : type_expr list option;
         mc_args : expression list;
       }
+    | BlockExpr of statement list
+      (* { stmt; ...; expr } in expression position (match arm bodies, lambda bodies *)
   [@@deriving show]
 
   (* Phase 4.4: Record field in record literal *)
@@ -255,6 +258,8 @@ module AST = struct
     | Function f1, Function f2 -> List.length f1.params = List.length f2.params && stmt_equal f1.body f2.body
     | Call (f1, a1), Call (f2, a2) ->
         expr_equal f1 f2 && List.length a1 = List.length a2 && List.for_all2 expr_equal a1 a2
+    | BlockExpr ss1, BlockExpr ss2 ->
+        List.length ss1 = List.length ss2 && List.for_all2 stmt_equal ss1 ss2
     | _ -> false
 
   and stmt_equal (s1 : statement) (s2 : statement) : bool =
@@ -289,6 +294,7 @@ module AST = struct
     | RecordLit _ -> "RecordLit"
     | FieldAccess _ -> "FieldAccess"
     | MethodCall _ -> "MethodCall"
+    | BlockExpr _ -> "BlockExpr"
 
   let to_string (program : program) : string =
     let rec statement_to_string (s : statement) : string =
@@ -384,6 +390,8 @@ module AST = struct
           in
           Printf.sprintf "%s.%s%s(%s)" (expression_to_string mc_receiver) mc_method ta_str
             (args_to_string mc_args)
+      | BlockExpr stmts ->
+          Printf.sprintf "{ %s }" (List.map statement_to_string stmts |> String.concat " ")
     and block_to_string (block : statement) : string = statement_to_string block
     and function_to_string (params : (string * type_expr option) list) (body : statement) : string =
       let param_str = List.map (fun (name, _annot) -> name) params |> String.concat ", " in

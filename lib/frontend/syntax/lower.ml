@@ -102,9 +102,21 @@ let rec lower_expr (id_supply : Id_supply.Id_supply.t) (se : Surface.surface_exp
             is_effectful = se_is_effectful;
             body = lower_stmt id_supply se_body;
           }
-    | Surface.SEArrowLambda _ -> failwith_unimplemented "SEArrowLambda"
-    | Surface.SEPlaceholder -> failwith_unimplemented "SEPlaceholder"
-    | Surface.SEBlockExpr _ -> failwith_unimplemented "SEBlockExpr"
+    | Surface.SEArrowLambda { se_lambda_params; se_lambda_is_effectful; se_lambda_body } ->
+        (* Lower arrow lambda to canonical Function form *)
+        let fn_body = lower_expr_or_block_to_stmt id_supply se_lambda_body in
+        AST.Function
+          {
+            generics = None;
+            params = List.map (fun (n, t) -> (n, Option.map lower_type_expr t)) se_lambda_params;
+            return_type = None;
+            is_effectful = se_lambda_is_effectful;
+            body = fn_body;
+          }
+    | Surface.SEPlaceholder ->
+        failwith "Lower: _ placeholder in expression position is not valid here; use an explicit lambda"
+    | Surface.SEBlockExpr block ->
+        AST.BlockExpr (List.map (lower_stmt id_supply) block.sb_stmts)
   in
   AST.{ id; expr; pos; end_pos; file_id }
 
@@ -141,9 +153,9 @@ and lower_expr_or_block_to_expr (id_supply : Id_supply.Id_supply.t) (eob : Surfa
     AST.expression =
   match eob with
   | Surface.SEOBExpr e -> lower_expr id_supply e
-  | Surface.SEOBBlock _b ->
-      (* Phase 0.5: block arm bodies not yet parsed; this branch should not be reached *)
-      failwith_unimplemented "SEOBBlock in expression context"
+  | Surface.SEOBBlock block ->
+      AST.mk_expr ~pos:block.sb_pos ~end_pos:block.sb_end_pos ~file_id:block.sb_file_id
+        (AST.BlockExpr (List.map (lower_stmt id_supply) block.sb_stmts))
 
 (* lower_expr_or_block_to_stmt:
    Used for function bodies, impl method bodies.
@@ -162,7 +174,7 @@ and lower_expr_or_block_to_stmt (id_supply : Id_supply.Id_supply.t) (eob : Surfa
 
 (* ── Top-level declarations ── *)
 
-let lower_method_sig (sm : Surface.surface_method_sig) : AST.method_sig =
+let lower_method_sig (id_supply : Id_supply.Id_supply.t) (sm : Surface.surface_method_sig) : AST.method_sig =
   AST.
     {
       method_sig_id = sm.sm_id;
@@ -171,8 +183,7 @@ let lower_method_sig (sm : Surface.surface_method_sig) : AST.method_sig =
       method_params = List.map (fun (n, t) -> (n, lower_type_expr t)) sm.sm_params;
       method_return_type = lower_type_expr sm.sm_return_type;
       method_effect = sm.sm_effect;
-      method_default_impl = None;
-      (* Phase 0.5: default impls not yet parsed; always None *)
+      method_default_impl = Option.map (lower_expr_or_block_to_expr id_supply) sm.sm_default_impl;
     }
 
 let lower_method_impl (id_supply : Id_supply.Id_supply.t) (smi : Surface.surface_method_impl) : AST.method_impl =
@@ -184,6 +195,7 @@ let lower_method_impl (id_supply : Id_supply.Id_supply.t) (smi : Surface.surface
       impl_method_params = List.map (fun (n, t) -> (n, Option.map lower_type_expr t)) smi.smi_params;
       impl_method_return_type = Option.map lower_type_expr smi.smi_return_type;
       impl_method_effect = smi.smi_effect;
+      impl_method_override = smi.smi_override;
       impl_method_body = lower_expr_or_block_to_stmt id_supply smi.smi_body;
     }
 
@@ -219,12 +231,58 @@ let lower_top_decl (id_supply : Id_supply.Id_supply.t) (ts : Surface.surface_top
              })
       in
       [ AST.mk_stmt ~pos ~end_pos ~file_id (AST.Let { name; value = fn_expr; type_annotation = None }) ]
-  | Surface.SEnumDef { name; type_params; variants; derive = _ } ->
-      (* Postfix derive on enums is Phase 1/1e; ignored in Phase 0.5 *)
-      [ AST.mk_stmt ~pos ~end_pos ~file_id (AST.EnumDef { name; type_params; variants = List.map lower_variant variants }) ]
-  | Surface.STypeDef { alias_name; alias_type_params; alias_body; derive = _ } ->
-      (* Postfix derive on types is Phase 1/1e; ignored in Phase 0.5 *)
-      [ AST.mk_stmt ~pos ~end_pos ~file_id (AST.TypeAlias { alias_name; alias_type_params; alias_body = lower_type_expr alias_body }) ]
+  | Surface.SEnumDef { name; type_params; variants; derive } ->
+      let enum_stmt =
+        AST.mk_stmt ~pos ~end_pos ~file_id
+          (AST.EnumDef { name; type_params; variants = List.map lower_variant variants })
+      in
+      let derive_stmts =
+        if derive = [] then
+          []
+        else
+          let for_type =
+            if type_params = [] then
+              AST.TCon name
+            else
+              AST.TApp (name, List.map (fun p -> AST.TVar p) type_params)
+          in
+          [
+            AST.mk_stmt ~pos ~end_pos ~file_id
+              (AST.DeriveDef
+                 {
+                   derive_traits =
+                     List.map (fun t -> AST.{ derive_trait_name = t; derive_trait_constraints = [] }) derive;
+                   derive_for_type = for_type;
+                 });
+          ]
+      in
+      enum_stmt :: derive_stmts
+  | Surface.STypeDef { alias_name; alias_type_params; alias_body; derive } ->
+      let alias_stmt =
+        AST.mk_stmt ~pos ~end_pos ~file_id
+          (AST.TypeAlias { alias_name; alias_type_params; alias_body = lower_type_expr alias_body })
+      in
+      let derive_stmts =
+        if derive = [] then
+          []
+        else
+          let for_type =
+            if alias_type_params = [] then
+              AST.TCon alias_name
+            else
+              AST.TApp (alias_name, List.map (fun p -> AST.TVar p) alias_type_params)
+          in
+          [
+            AST.mk_stmt ~pos ~end_pos ~file_id
+              (AST.DeriveDef
+                 {
+                   derive_traits =
+                     List.map (fun t -> AST.{ derive_trait_name = t; derive_trait_constraints = [] }) derive;
+                   derive_for_type = for_type;
+                 });
+          ]
+      in
+      alias_stmt :: derive_stmts
   | Surface.STraitDef { name; type_param; supertraits; fields; methods } ->
       let lower_field f = AST.{ field_name = f.Surface.sf_name; field_type = lower_type_expr f.Surface.sf_type } in
       let td =
@@ -234,7 +292,7 @@ let lower_top_decl (id_supply : Id_supply.Id_supply.t) (ts : Surface.surface_top
             type_param;
             supertraits;
             fields = List.map lower_field fields;
-            methods = List.map lower_method_sig methods;
+            methods = List.map (lower_method_sig id_supply) methods;
           }
       in
       [ AST.mk_stmt ~pos ~end_pos ~file_id (AST.TraitDef td) ]
@@ -393,4 +451,141 @@ let%test "lower match arm body (legacy expression arm)" =
   let result = lower_match_arm id_supply arm in
   match result.body.expr with
   | AST.String "yes" -> true
+  | _ -> false
+
+(* ── Phase 2 tests ── *)
+
+let%test "Phase2: lower SEArrowLambda to canonical Function" =
+  let id_supply = Id_supply.Id_supply.create 0 in
+  let body_expr = Surface.mk_surface_expr ~id:1 ~pos:5 (Surface.SEInteger 42L) in
+  let lambda =
+    Surface.mk_surface_expr ~id:2 ~pos:0
+      (Surface.SEArrowLambda
+         {
+           se_lambda_params = [ ("x", None) ];
+           se_lambda_is_effectful = false;
+           se_lambda_body = Surface.SEOBExpr body_expr;
+         })
+  in
+  match (lower_expr id_supply lambda).expr with
+  | AST.Function { params = [ ("x", None) ]; is_effectful = false; body = { stmt = AST.Block [ _ ]; _ }; _ } -> true
+  | _ -> false
+
+let%test "Phase2: lower SEBlockExpr to AST.BlockExpr" =
+  let id_supply = Id_supply.Id_supply.create 0 in
+  let e = Surface.mk_surface_expr ~id:1 ~pos:0 (Surface.SEInteger 7L) in
+  let block =
+    Surface.{ sb_stmts = [ Surface.mk_surface_stmt ~pos:0 (Surface.SSExpressionStmt e) ]; sb_pos = 0; sb_end_pos = 5; sb_file_id = None }
+  in
+  let se = Surface.mk_surface_expr ~id:2 ~pos:0 (Surface.SEBlockExpr block) in
+  match (lower_expr id_supply se).expr with
+  | AST.BlockExpr [ { stmt = AST.ExpressionStmt { expr = AST.Integer 7L; _ }; _ } ] -> true
+  | _ -> false
+
+let%test "Phase2: lower SEOBBlock in match arm -> AST.BlockExpr" =
+  let id_supply = Id_supply.Id_supply.create 0 in
+  let e = Surface.mk_surface_expr ~id:1 ~pos:0 (Surface.SEString "block") in
+  let block =
+    Surface.{ sb_stmts = [ Surface.mk_surface_stmt ~pos:0 (Surface.SSExpressionStmt e) ]; sb_pos = 0; sb_end_pos = 5; sb_file_id = None }
+  in
+  let arm =
+    Surface.
+      {
+        se_patterns = [ Surface.mk_surface_pat ~pos:0 (Surface.SPWildcard) ];
+        se_arm_body = Surface.SEOBBlock block;
+      }
+  in
+  let result = lower_match_arm id_supply arm in
+  match result.body.expr with
+  | AST.BlockExpr [ { stmt = AST.ExpressionStmt { expr = AST.String "block"; _ }; _ } ] -> true
+  | _ -> false
+
+let%test "Phase2: SEnumDef with postfix derive generates DeriveDef" =
+  let id_supply = Id_supply.Id_supply.create 0 in
+  let decl = Surface.SEnumDef { name = "Color"; type_params = []; variants = []; derive = [ "Eq"; "Show" ] } in
+  let result = lower_top_decl id_supply (mk_test_ts decl) in
+  match result with
+  | [
+      { AST.stmt = AST.EnumDef { name = "Color"; _ }; _ };
+      {
+        AST.stmt =
+          AST.DeriveDef
+            {
+              derive_traits = [ { derive_trait_name = "Eq"; _ }; { derive_trait_name = "Show"; _ } ];
+              derive_for_type = AST.TCon "Color";
+            };
+        _;
+      };
+    ] ->
+      true
+  | _ -> false
+
+let%test "Phase2: STypeDef with postfix derive generates DeriveDef" =
+  let id_supply = Id_supply.Id_supply.create 0 in
+  let decl =
+    Surface.STypeDef { alias_name = "MyInt"; alias_type_params = []; alias_body = Surface.STCon "Int"; derive = [ "Eq" ] }
+  in
+  let result = lower_top_decl id_supply (mk_test_ts decl) in
+  match result with
+  | [
+      { AST.stmt = AST.TypeAlias { alias_name = "MyInt"; _ }; _ };
+      { AST.stmt = AST.DeriveDef { derive_traits = [ { derive_trait_name = "Eq"; _ } ]; derive_for_type = AST.TCon "MyInt" }; _ };
+    ] ->
+      true
+  | _ -> false
+
+let%test "Phase2: lower_method_impl carries override flag" =
+  let id_supply = Id_supply.Id_supply.create 0 in
+  let body_expr = Surface.mk_surface_expr ~id:1 ~pos:0 (Surface.SEInteger 1L) in
+  let smi =
+    Surface.
+      {
+        smi_id = 1;
+        smi_name = "foo";
+        smi_generics = None;
+        smi_params = [];
+        smi_return_type = None;
+        smi_effect = None;
+        smi_override = true;
+        smi_body = SEOBExpr body_expr;
+      }
+  in
+  let result = lower_method_impl id_supply smi in
+  result.AST.impl_method_override = true
+
+let%test "Phase2: SFnDecl with expr body -> Block[ExpressionStmt]" =
+  let id_supply = Id_supply.Id_supply.create 0 in
+  let body_expr = Surface.mk_surface_expr ~id:1 ~pos:5 (Surface.SEInteger 99L) in
+  let decl =
+    Surface.SFnDecl
+      {
+        name = "answer";
+        generics = None;
+        params = [];
+        return_type = None;
+        is_effectful = false;
+        body = Surface.SEOBExpr body_expr;
+      }
+  in
+  let result = lower_top_decl id_supply (mk_test_ts decl) in
+  match result with
+  | [
+      {
+        AST.stmt =
+          AST.Let
+            {
+              name = "answer";
+              value =
+                {
+                  AST.expr =
+                    AST.Function
+                      { body = { stmt = AST.Block [ { stmt = AST.ExpressionStmt { expr = AST.Integer 99L; _ }; _ } ]; _ }; _ };
+                  _;
+                };
+              _;
+            };
+        _;
+      };
+    ] ->
+      true
   | _ -> false

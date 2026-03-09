@@ -692,6 +692,8 @@ let rec captures_top_level_values_expr
       merge_sets
         (captures_top_level_values_expr top_level_values bound mc_receiver
         :: List.map (captures_top_level_values_expr top_level_values bound) mc_args)
+  | AST.BlockExpr stmts ->
+      merge_sets (List.map (captures_top_level_values_stmt top_level_values bound) stmts)
 
 and captures_top_level_values_stmt (top_level_values : StringSet.t) (bound : StringSet.t) (stmt : AST.statement) :
     StringSet.t =
@@ -805,6 +807,7 @@ and collect_funcs_expr (state : mono_state) (expr : AST.expression) : unit =
   | AST.MethodCall { mc_receiver; mc_args; _ } ->
       collect_funcs_expr state mc_receiver;
       List.iter (collect_funcs_expr state) mc_args
+  | AST.BlockExpr stmts -> List.iter (collect_funcs_stmt state) stmts
 
 (* ============================================================
    Pass 2: Collect instantiations at call sites
@@ -1895,6 +1898,7 @@ and collect_insts_expr
                       (AST.Call (field_expr, args))
                   in
                   collect_insts_expr state type_map env synthetic_call)))
+  | AST.BlockExpr stmts -> ignore (List.fold_left (fun e stmt -> collect_insts_stmt state type_map e stmt) env stmts)
 
 (* ============================================================
    Code Generation State
@@ -2065,6 +2069,8 @@ let rec copy_specialized_expr_types
   | AST.MethodCall { mc_receiver; mc_args; _ } ->
       copy_specialized_expr_types source_map target_map specialization_subst mc_receiver;
       List.iter (copy_specialized_expr_types source_map target_map specialization_subst) mc_args
+  | AST.BlockExpr stmts ->
+      List.iter (copy_specialized_stmt_types source_map target_map specialization_subst) stmts
 
 and copy_specialized_stmt_types
     (source_map : Infer.type_map)
@@ -2386,6 +2392,8 @@ let rec emit_expr
                 let arg_strs = List.map (emit_expr state type_map env) args in
                 Printf.sprintf "((%s).%s)(%s)" receiver_str (go_record_field_name variant_name)
                   (String.concat ", " arg_strs)))
+    | AST.BlockExpr _ ->
+        failwith "Codegen for BlockExpr not yet implemented - Phase 3"
   in
   maybe_project_to_expected_record_type state type_map env expr expected_type emitted
 
@@ -3752,6 +3760,8 @@ and collect_local_call_arg_types_expr
     | AST.MethodCall { mc_receiver; mc_args; _ } ->
         collect_local_call_arg_types_expr name type_map env mc_receiver
         @ List.concat_map (collect_local_call_arg_types_expr name type_map env) mc_args
+    | AST.BlockExpr stmts ->
+        List.concat_map (collect_local_call_arg_types_stmt name type_map env) stmts
   in
   match expr.expr with
   | AST.Call ({ expr = AST.Identifier callee_name; _ }, args) when callee_name = name -> (
@@ -4578,6 +4588,7 @@ let collect_inherent_call_sites
             add_inherent_call_site_if_new acc''
               { call_method_name = method_name; call_receiver_type = receiver_type; call_method_type_args = mta }
         | Some (Infer.TraitMethod _) | Some (Infer.QualifiedTraitMethod _) | None -> acc'')
+    | AST.BlockExpr stmts -> List.fold_left collect_stmt acc stmts
   and collect_stmt (acc : inherent_call_site list) (stmt : AST.statement) : inherent_call_site list =
     match stmt.stmt with
     | AST.Let let_binding -> collect_expr acc let_binding.value

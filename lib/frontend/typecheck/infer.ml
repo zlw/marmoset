@@ -871,6 +871,8 @@ let rec resolve_expr_symbols (stack : symbol_scope_stack) (expr : AST.expression
   | AST.MethodCall { mc_receiver; mc_args; _ } ->
       resolve_expr_symbols stack mc_receiver;
       List.iter (resolve_expr_symbols stack) mc_args
+  | AST.BlockExpr stmts ->
+      ignore (List.fold_left (fun acc stmt -> resolve_stmt_symbols acc ~is_top_level:false stmt) stack stmts)
 
 and resolve_match_arm_symbols (stack : symbol_scope_stack) (arm : AST.match_arm) : unit =
   let arm_scope =
@@ -1745,6 +1747,9 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
             | `TraitName -> infer_qualified_trait_call name
             | `Unknown -> infer_real_method_call ())
         | _ -> infer_real_method_call ())
+    | AST.BlockExpr _ ->
+        (* Phase 3 will add full block-expression inference. *)
+        Error (error_at ~code:"type-block-expr" ~message:"Block expressions in this position are not yet supported" expr)
   in
   (* Record the type in the type map before returning *)
   match result with
@@ -2081,6 +2086,7 @@ and expr_has_effectful_call (type_map : type_map) (expr : AST.expression) : bool
   | AST.TypeCheck (e, _) -> expr_has_effectful_call type_map e
   | AST.EnumConstructor (_, _, args) -> List.exists (expr_has_effectful_call type_map) args
   | AST.Identifier _ | AST.Integer _ | AST.Float _ | AST.Boolean _ | AST.String _ -> false
+  | AST.BlockExpr stmts -> List.exists (body_has_effectful_call type_map) stmts
 
 (* Phase 7: Wrap an expression body in a synthetic statement for type_callable. *)
 and wrap_expr_as_stmt (expr : AST.expression) : AST.statement =
@@ -4168,6 +4174,8 @@ module Test = struct
     | AST.MethodCall { mc_receiver; mc_args; _ } ->
         identifier_occurrences_in_expr name mc_receiver
         @ List.concat_map (identifier_occurrences_in_expr name) mc_args
+    | AST.BlockExpr stmts ->
+        List.concat_map (identifier_occurrences_in_stmt name) stmts
 
   and identifier_occurrences_in_stmt (name : string) (stmt : AST.statement) : (int * int) list =
     match stmt.stmt with
