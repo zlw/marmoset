@@ -60,7 +60,17 @@ let rec next_token (l : lexer) : lexer * Token.token =
   | '[' -> (read_char l, Token.init ~pos LBracket "[")
   | ']' -> (read_char l, Token.init ~pos RBracket "]")
   | ',' -> (read_char l, Token.init ~pos Comma ",")
-  | '|' -> (read_char l, Token.init ~pos Pipe "|")
+  | '|' ->
+      if peek_char l = '|' then
+        (read_char (read_char l), Token.init ~pos PipePipe "||")
+      else
+        (read_char l, Token.init ~pos Pipe "|")
+  | '&' ->
+      if peek_char l = '&' then
+        (read_char (read_char l), Token.init ~pos AmpAmp "&&")
+      else
+        (read_char l, Token.init ~pos Ampersand "&")
+  | '%' -> (read_char l, Token.init ~pos Percent "%")
   | '.' ->
       (* Check for ... (spread operator) *)
       if peek_char l = '.' then
@@ -85,8 +95,17 @@ let rec next_token (l : lexer) : lexer * Token.token =
   | _ ->
       if is_letter l.ch then
         let l2, lit = read_identifier l in
+        (* allow trailing ? or ! as identifier suffix (e.g. hungry?, panic!) *)
+        let l3, lit =
+          if l2.ch = '?' then
+            (read_char l2, lit ^ "?")
+          else if l2.ch = '!' && peek_char l2 <> '=' then
+            (read_char l2, lit ^ "!")
+          else
+            (l2, lit)
+        in
         let tt = Token.lookup_ident lit in
-        (l2, Token.init ~pos tt lit)
+        (l3, Token.init ~pos tt lit)
       else if is_digit l.ch then
         let l2, lit = read_number l in
         if is_float l2 then
@@ -356,3 +375,64 @@ let%test "generic illegal character advances lexer" =
   let l0 = init "@" in
   let l1, tok = next_token l0 in
   tok.Token.token_type = Token.Illegal && tok.Token.literal = "@" && l1.position > l0.position
+
+(* Phase 1a: New vNext tokens *)
+let%test "ampersand token" =
+  let tokens = lex "Show & Eq" in
+  List.exists (fun t -> t.Token.token_type = Token.Ampersand && t.Token.literal = "&") tokens
+
+let%test "ampamp token" =
+  let tokens = lex "x && y" in
+  List.exists (fun t -> t.Token.token_type = Token.AmpAmp && t.Token.literal = "&&") tokens
+
+let%test "pipepipe token" =
+  let tokens = lex "x || y" in
+  List.exists (fun t -> t.Token.token_type = Token.PipePipe && t.Token.literal = "||") tokens
+
+let%test "percent token" =
+  let tokens = lex "x % 3" in
+  List.exists (fun t -> t.Token.token_type = Token.Percent && t.Token.literal = "%") tokens
+
+let%test "override keyword" =
+  let tokens = lex "override fn foo()" in
+  List.exists (fun t -> t.Token.token_type = Token.Override && t.Token.literal = "override") tokens
+
+let%test "case keyword" =
+  let tokens = lex "case Foo.Bar:" in
+  List.exists (fun t -> t.Token.token_type = Token.Case && t.Token.literal = "case") tokens
+
+let%test "identifier with question mark suffix" =
+  let tokens = lex "hungry?" in
+  match tokens with
+  | [ { token_type = Token.Ident; literal = "hungry?"; _ }; { token_type = Token.EOF; _ } ] -> true
+  | _ -> false
+
+let%test "identifier with bang suffix" =
+  let tokens = lex "panic!" in
+  match tokens with
+  | [ { token_type = Token.Ident; literal = "panic!"; _ }; { token_type = Token.EOF; _ } ] -> true
+  | _ -> false
+
+let%test "bang suffix does not absorb not-equal" =
+  (* foo!= should lex as Ident "foo", NotEq "!=" *)
+  let tokens = lex "foo!=" in
+  match tokens with
+  | [ { token_type = Token.Ident; literal = "foo"; _ };
+      { token_type = Token.NotEq; literal = "!="; _ };
+      { token_type = Token.EOF; _ } ] -> true
+  | _ -> false
+
+let%test "pipe vs pipepipe distinction" =
+  let tokens_single = lex "a | b" in
+  let tokens_double = lex "a || b" in
+  let has_pipe = List.exists (fun t -> t.Token.token_type = Token.Pipe) tokens_single in
+  let has_pipepipe = List.exists (fun t -> t.Token.token_type = Token.PipePipe) tokens_double in
+  let no_pipepipe_in_single = not (List.exists (fun t -> t.Token.token_type = Token.PipePipe) tokens_single) in
+  has_pipe && has_pipepipe && no_pipepipe_in_single
+
+let%test "amp vs ampamp distinction" =
+  let tokens_single = lex "a & b" in
+  let tokens_double = lex "a && b" in
+  let has_amp = List.exists (fun t -> t.Token.token_type = Token.Ampersand) tokens_single in
+  let has_ampamp = List.exists (fun t -> t.Token.token_type = Token.AmpAmp) tokens_double in
+  has_amp && has_ampamp
