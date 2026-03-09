@@ -1,0 +1,290 @@
+# Marmoset vNext Syntax — Complete Showcase
+#
+# Every vNext surface feature appears at least once below.
+# Theme: monkeys, jungles, bananas, and questionable life choices.
+
+# ─── Type Aliases ───────────────────────────────────────────────
+type MonkeyID = Int
+type BananaCount = Int
+type JungleThing = Int | Str | Bool          # union type
+type Reducer[a] = (a, a) -> a               # pure function type
+type SideEffector[a] = (a, a) => a          # effectful function type
+
+# ─── Enums ──────────────────────────────────────────────────────
+enum Option[a] = {
+  Some(a),
+  None,
+}
+
+enum Result[a, e] = {
+  Success(a),
+  Failure(e),
+}
+
+enum Fruit = {
+  Banana,
+  Mango,
+  Coconut,
+} derive Eq, Show
+
+enum Mood = {
+  Happy,
+  Hangry,
+  Philosophical,
+} derive Eq, Show
+
+# ─── Record Types ───────────────────────────────────────────────
+type Monkey = {
+  id:             MonkeyID,
+  name:           Str,
+  age:            Int,
+  favorite_fruit: Fruit,
+  bananas_eaten:  BananaCount,
+  is_alpha:       Bool,
+} derive Eq, Show, Debug
+
+type Jungle = {
+  name: Str,
+  danger_level: Int,
+  has_bananas: Bool,
+}
+
+type MonkeyOrSadness = Result[Monkey, Str]
+
+# ─── Traits ─────────────────────────────────────────────────────
+trait Show[a] = {
+  fn show(a) -> Str                          # positional typed param (signature-only)
+}
+
+trait Eq[a] = {
+  fn eq(a, a) -> Bool
+}
+
+trait Noisy[a] = {
+  fn volume(a) -> Int
+  fn make_noise(a) => Str                    # effectful required method
+
+  fn scream(self: a) => Str = self.make_noise()  # default method
+}
+
+# supertrait constraint composition with &
+trait JungleDweller[a]: Show & Eq = {
+  name: Str,                                 # trait field (comma-separated)
+  favorite_fruit: Fruit,                     # another trait field
+
+  fn territory(a) -> Str                     # required method
+  fn forage(a, Str) => Result[Fruit, Str]    # effectful required method
+
+  override fn introduce(self: a) -> Str = self.name   # default method
+}
+
+# ─── Functions: Generics & Constraints ──────────────────────────
+
+# unconstrained generic
+fn identity[a](x: a) -> a = x
+
+# explicit generic constraint
+fn describe_dweller[a: JungleDweller](x: a) -> Str = x.introduce()
+
+# constrained-param shorthand
+fn who_dis(x: JungleDweller) -> Str = x.introduce()
+# desugars to:
+# fn who_dis[t0: JungleDweller](x: t0) -> Str = x.introduce()
+
+# multiple shorthand params are independent (different types)
+fn same_species(x: Eq, y: Eq) -> Bool = true
+# desugars to:
+# fn same_species[t0: Eq, t1: Eq](x: t0, y: t1) -> Bool = true
+
+# same-type tie requires explicit generic
+fn are_equal[t: Eq](x: t, y: t) -> Bool = x.eq(y)
+
+# multi-trait constraint in generic params
+fn noisy_dweller[t: JungleDweller & Noisy](x: t) -> Str = x.introduce()
+
+# effectful top-level fn
+fn yell_name(m: Monkey) => Str = puts(m.name)
+
+# ─── Let Bindings & Expressions ────────────────────────────────
+
+# let with type annotation (function type)
+let add_bananas: (Int, Int) -> Int = (x: Int, y: Int) -> x + y
+
+# let without type annotation (inferred)
+let meaning_of_life = 42
+
+# union type + is operator + if/else expression
+fn classify_thing(v: Int | Str | Bool) -> Str = {
+  if (v is Int) {
+    "a number (probably bananas)"
+  } else {
+    if (v is Str) {
+      "a word (probably 'banana')"
+    } else {
+      "a boolean (is there a banana? yes/no)"
+    }
+  }
+}
+
+# ─── Collections & Indexing ─────────────────────────────────────
+
+let banana_counts: List[Int] = [5, 12, 3, 42, 0]
+let jungle_ratings: Map[Str, Int] = { "Amazon": 10, "Borneo": 9, "Bob's Backyard": 2, }
+
+let first_count = banana_counts[0]
+let amazon_rating = jungle_ratings["Amazon"]
+
+# ─── Record Literals, Spread, Field Punning ─────────────────────
+
+let george = { id: 1, name: "George", age: 7, favorite_fruit: Fruit.Banana, bananas_eaten: 9001, is_alpha: false, }
+let name = "Curious George"
+let promoted_george = { ...george, name:, is_alpha: true, }
+
+# ─── Lambdas & Placeholder Shorthand ───────────────────────────
+
+# placeholder lambda: single-arg pure
+let doubled = banana_counts.map(_ * 2)
+let names = [george, promoted_george].map(_.name)
+
+# nested placeholder (wraps whole chain)
+let trimmed = ["  banana  ", " mango "].map(trim(strip(_)))
+
+# explicit lambda: multi-arg pure
+let total = banana_counts.reduce((acc, n) -> acc + n)
+
+# explicit lambda: effectful
+[george, promoted_george].foreach((m) => puts(m.name))
+
+# ─── Operators ──────────────────────────────────────────────────
+
+# arithmetic: + - * / %
+fn banana_economics(price: Int, quantity: Int) -> Int = {
+  let subtotal = price * quantity
+  let tax = subtotal / 10
+  let discount = subtotal % 3
+  subtotal + tax - discount
+}
+
+# comparison: < <= > >= is
+fn is_banana_hoarder(m: Monkey) -> Bool = m.bananas_eaten >= 100
+
+fn needs_more_bananas(m: Monkey) -> Bool = m.bananas_eaten < 5
+
+# equality: == !=
+fn is_fancy_monkey(m: Monkey) -> Bool = m.favorite_fruit != Fruit.Banana
+
+# logical: && ||
+fn should_panic(m: Monkey) -> Bool = m.bananas_eaten == 0 && m.is_alpha
+
+fn is_chill(m: Monkey) -> Bool = m.bananas_eaten > 10 || !m.is_alpha
+
+# unary: ! -
+fn is_not_alpha(m: Monkey) -> Bool = !m.is_alpha
+
+fn debt(bananas_owed: Int) -> Int = -bananas_owed
+
+# ─── Impl: Trait ────────────────────────────────────────────────
+
+impl JungleDweller[Monkey] = {
+  fn territory(self: Monkey) -> Str = "the big tree"
+
+  fn forage(self: Monkey, location: Str) => Result[Fruit, Str] = {
+    if (location == "banana grove") {
+      Result.Success(Fruit.Banana)
+    } else {
+      Result.Failure("no bananas here, only existential dread")
+    }
+  }
+
+  # override replaces default method
+  override fn introduce(self: Monkey) -> Str = self.name
+}
+
+# impl with inferred binders (free type vars lifted automatically)
+impl Show[List[a]] = {
+  fn show(self: List[a]) -> Str = "a list of mysterious things"
+}
+
+# impl with explicit constrained binders
+impl[a: Show] Show[Option[a]] = {
+  fn show(self: Option[a]) -> Str = match self {
+    case Option.Some(x): "option with " + x.show() + " inside"
+    case Option.None: "nothing (like my banana supply)"
+  }
+}
+
+# ─── Impl: Inherent ────────────────────────────────────────────
+
+impl Monkey = {
+  fn hungry?(self: Monkey) -> Bool = self.bananas_eaten < 3
+  fn alpha!(self: Monkey) -> Monkey = { ...self, is_alpha: true, }
+  fn with_fruit(self: Monkey, f: Fruit) -> Monkey = { ...self, favorite_fruit: f, }
+}
+
+# ─── Match: All Pattern Forms ───────────────────────────────────
+
+# constructor patterns + expression body
+fn fruit_emoji(f: Fruit) -> Str = match f {
+  case Fruit.Banana: "long yellow thing"
+  case Fruit.Mango: "orange blob"
+  case Fruit.Coconut: "hairy bowling ball"
+}
+
+# constructor patterns with block body
+fn describe_mood(m: Mood) -> Str = match m {
+  case Mood.Happy: "life is good"
+  case Mood.Hangry: {
+    let warning = "stand back"
+    warning
+  }
+  case Mood.Philosophical: {
+    let thought = "if a banana falls in the jungle"
+    let question = " does it make a sound?"
+    thought
+  }
+}
+
+# option unwrap with constructor patterns
+fn unwrap_banana(v: Option[Fruit], fallback: Fruit) -> Fruit = match v {
+  case Option.Some(f): f
+  case Option.None: fallback
+}
+
+# record pattern with punning + rest spread
+fn greet_by_name(m: Monkey, fallback: Str) -> Str = match m {
+  case { name:, ...rest }: name
+}
+
+# wildcard pattern
+fn fruit_is_banana(f: Fruit) -> Bool = match f {
+  case Fruit.Banana: true
+  case _: false
+}
+
+# or-patterns
+fn is_tropical(f: Fruit) -> Bool = match f {
+  case Fruit.Banana | Fruit.Mango: true
+  case Fruit.Coconut: false
+}
+
+# literal patterns
+fn rate_banana_count(n: Int) -> Str = match n {
+  case 0: "tragic"
+  case 1: "barely surviving"
+  case 42: "the answer"
+  case _: "acceptable"
+}
+
+# match inside a block body
+fn judge_monkey(m: Monkey) -> Str = {
+  let status = check_status(m)
+
+  match status {
+    Mood.Happy  : "approved"
+    Mood.Hangry : {
+      let remedy = "give banana immediately"
+      remedy
+    }
+    Mood.Philosophical : "ask again later"
+  }
+}
