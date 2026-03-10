@@ -1,8 +1,8 @@
 # XF04: A4: Field-only trait constraint accepts record with many extra fields
-trait named {
-  name: string
+trait Named = {
+  name: Str
 }
-let get_name = fn[t: named](x: t) -> string {
+fn get_name[t: Named](x: t) -> Str = {
   x.name
 }
 let p = { name: "alice", age: 30, active: true, role: "admin", score: 100 }

@@ -1,11 +1,11 @@
 # XF37: G39: Dual field-only constraints on generic function
-trait named {
-  name: string
+trait Named = {
+  name: Str
 }
-trait scored {
-  score: int
+trait Scored = {
+  score: Int
 }
-let describe = fn[t: named + scored](x: t) -> string {
+fn describe[t: Named & Scored](x: t) -> Str = {
   x.name + " " + x.score.show()
 }
 let p = { name: "alice", score: 42, extra: true }
