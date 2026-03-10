@@ -173,10 +173,27 @@ let go_keywords =
 let go_keywords_set = List.fold_left (fun s k -> StringSet.add k s) StringSet.empty go_keywords
 
 let go_safe_ident (name : string) : string =
-  if StringSet.mem name go_keywords_set then
-    name ^ "_"
+  let buffer = Buffer.create (String.length name + 8) in
+  String.iter
+    (function
+      | ('a' .. 'z' | 'A' .. 'Z' | '0' .. '9' | '_') as c -> Buffer.add_char buffer c
+      | '?' -> Buffer.add_string buffer "_q"
+      | '!' -> Buffer.add_string buffer "_bang"
+      | c -> Buffer.add_string buffer (Printf.sprintf "_u%04x" (Char.code c)))
+    name;
+  let sanitized = Buffer.contents buffer in
+  let sanitized =
+    if sanitized = "" then
+      "_"
+    else
+      match sanitized.[0] with
+      | '0' .. '9' -> "_" ^ sanitized
+      | _ -> sanitized
+  in
+  if StringSet.mem sanitized go_keywords_set then
+    sanitized ^ "_"
   else
-    name
+    sanitized
 
 (* Generate mangled function name: name_type1_type2_... *)
 let mangle_func_name name (param_types : Types.mono_type list) : string =
@@ -191,6 +208,12 @@ let fingerprint_types (types : Types.mono_type list) : string =
     "unit"
   else
     String.concat "__" (List.map mangle_type types)
+
+let trait_method_func_name (trait_name : string) (method_name : string) (type_suffix : string) : string =
+  Printf.sprintf "%s_%s_%s" (go_safe_ident trait_name) (go_safe_ident method_name) type_suffix
+
+let inherent_method_func_name (method_name : string) (type_suffix : string) : string =
+  Printf.sprintf "inherent_%s_%s" (go_safe_ident method_name) type_suffix
 
 (* ============================================================
    Function Registry - track function definitions and instantiations
@@ -2015,10 +2038,11 @@ and collect_insts_expr
 
 type emit_state = {
   mutable indent : int;
+  mutable current_return_type : Types.mono_type option;
   mono : mono_state;
 }
 
-let create_emit_state mono = { indent = 1; mono }
+let create_emit_state mono = { indent = 1; current_return_type = None; mono }
 let indent_str state = String.make (state.indent * 4) ' '
 
 let fresh_temp_name (state : emit_state) (prefix : string) : string =
@@ -2029,6 +2053,11 @@ let fresh_temp_name (state : emit_state) (prefix : string) : string =
 let with_indent_delta (state : emit_state) (delta : int) (f : unit -> 'a) : 'a =
   state.indent <- state.indent + delta;
   Fun.protect ~finally:(fun () -> state.indent <- state.indent - delta) f
+
+let with_return_type (state : emit_state) (return_type : Types.mono_type) (f : unit -> 'a) : 'a =
+  let previous = state.current_return_type in
+  state.current_return_type <- Some return_type;
+  Fun.protect ~finally:(fun () -> state.current_return_type <- previous) f
 
 type emit_target =
   | ReturnTarget
@@ -2461,7 +2490,7 @@ let rec emit_expr
                     (get_type type_map (List.hd args))
                 in
                 let type_suffix = type_suffix_with_mta first_arg_type in
-                let func_name = Printf.sprintf "%s_%s_%s" trait_name variant_name type_suffix in
+                let func_name = trait_method_func_name trait_name variant_name type_suffix in
                 let arg_strs = List.map (emit_expr state type_map env) args in
                 Printf.sprintf "%s(%s)" func_name (String.concat ", " arg_strs)
             | Some Infer.QualifiedInherentMethod ->
@@ -2471,7 +2500,7 @@ let rec emit_expr
                     (get_type type_map (List.hd args))
                 in
                 let type_suffix = type_suffix_with_mta first_arg_type in
-                let func_name = Printf.sprintf "inherent_%s_%s" variant_name type_suffix in
+                let func_name = inherent_method_func_name variant_name type_suffix in
                 let arg_strs = List.map (emit_expr state type_map env) args in
                 Printf.sprintf "%s(%s)" func_name (String.concat ", " arg_strs)
             | Some (Infer.TraitMethod trait_name) ->
@@ -2480,7 +2509,7 @@ let rec emit_expr
                   normalize_type_for_codegen ~concrete_only:state.mono.concrete_only (get_type type_map receiver)
                 in
                 let type_suffix = type_suffix_with_mta receiver_type in
-                let func_name = Printf.sprintf "%s_%s_%s" trait_name variant_name type_suffix in
+                let func_name = trait_method_func_name trait_name variant_name type_suffix in
                 let receiver_str = emit_expr state type_map env receiver in
                 let arg_strs = List.map (emit_expr state type_map env) args in
                 let all_args = receiver_str :: arg_strs in
@@ -2491,7 +2520,7 @@ let rec emit_expr
                   normalize_type_for_codegen ~concrete_only:state.mono.concrete_only (get_type type_map receiver)
                 in
                 let type_suffix = type_suffix_with_mta receiver_type in
-                let func_name = Printf.sprintf "inherent_%s_%s" variant_name type_suffix in
+                let func_name = inherent_method_func_name variant_name type_suffix in
                 let receiver_str = emit_expr state type_map env receiver in
                 let arg_strs = List.map (emit_expr state type_map env) args in
                 let all_args = receiver_str :: arg_strs in
@@ -2516,10 +2545,10 @@ let rec emit_expr
                     match last.stmt with
                     | AST.ExpressionStmt e ->
                         let inner_ind = indent_str state in
-                        inner_ind ^ "return " ^ emit_expr state type_map env' e ^ "\n"
+                        inner_ind ^ "return " ^ emit_expr_for_expected_type state type_map env' result_type e ^ "\n"
                     | AST.Return e ->
                         let inner_ind = indent_str state in
-                        inner_ind ^ "return " ^ emit_expr state type_map env' e ^ "\n"
+                        inner_ind ^ "return " ^ emit_expr_for_expected_type state type_map env' result_type e ^ "\n"
                     | _ -> fst (emit_stmt state type_map env' last)
                   in
                   stmts_str ^ last_str)
@@ -2528,6 +2557,23 @@ let rec emit_expr
             Printf.sprintf "(func() %s {\n%s%s})()" go_type body_str ind)
   in
   maybe_project_to_expected_record_type state type_map env expr expected_type emitted
+
+and emit_expr_for_expected_type
+    (state : emit_state)
+    (type_map : Infer.type_map)
+    (env : Infer.type_env)
+    (expected_type : Types.mono_type)
+    (expr : AST.expression) : string =
+  emit_expr ~expected_type:(Some expected_type) state type_map env expr
+
+and emit_expr_for_current_return
+    (state : emit_state)
+    (type_map : Infer.type_map)
+    (env : Infer.type_env)
+    (expr : AST.expression) : string =
+  match state.current_return_type with
+  | Some expected_type -> emit_expr_for_expected_type state type_map env expected_type expr
+  | None -> emit_expr state type_map env expr
 
 (* ============================================================
      Match Expression Codegen
@@ -2572,7 +2618,7 @@ and emit_match_record ?target state type_map env scrutinee arms match_result_typ
       match target with
       | Some t -> with_indent_delta state 2 (fun () -> emit_expr_to_target state type_map env body t)
       | None ->
-          let body_str = emit_expr state type_map env body in
+          let body_str = emit_expr_for_expected_type state type_map env match_result_type body in
           "\t\t" ^ result_prefix ^ body_str ^ "\n"
     in
     let branch_prefix_if =
@@ -2749,8 +2795,8 @@ and emit_match_enum ?target state type_map env scrutinee scrutinee_type enum_nam
             (fun (arm : AST.match_arm) ->
               match arm.patterns with
               | [ pattern ] ->
-                  emit_match_arm_enum ~result_prefix ~scrutinee_var state type_map env go_type_name enum_def
-                    type_args pattern arm.body
+                  emit_match_arm_enum ~result_prefix ~scrutinee_var ~expected_type:match_result_type state
+                    type_map env go_type_name enum_def type_args pattern arm.body
               | [] -> failwith "Match arm must have at least one pattern"
               | _ -> failwith "Multiple patterns per arm not yet supported in codegen")
             arms
@@ -2820,8 +2866,8 @@ and emit_match_primitive ?target state type_map env scrutinee scrutinee_type arm
             (fun (arm : AST.match_arm) ->
               match arm.patterns with
               | [ pattern ] ->
-                  emit_match_arm_primitive ~result_prefix ~scrutinee_var state type_map env scrutinee_type pattern
-                    arm.body
+                  emit_match_arm_primitive ~result_prefix ~scrutinee_var ~expected_type:match_result_type state
+                    type_map env scrutinee_type pattern arm.body
               | [] -> failwith "Match arm must have at least one pattern"
               | _ -> failwith "Multiple patterns per arm not yet supported in codegen")
             arms
@@ -2832,15 +2878,23 @@ and emit_match_primitive ?target state type_map env scrutinee scrutinee_type arm
         scrutinee_str scrutinee_var match_body
 
 and emit_match_arm_primitive
-    ?(result_prefix = "return ") ?(scrutinee_var = "__scrutinee") state type_map env _scrutinee_type pattern body
+    ?(result_prefix = "return ")
+    ?(scrutinee_var = "__scrutinee")
+    ~expected_type
+    state
+    type_map
+    env
+    _scrutinee_type
+    pattern
+    body
     =
   match pattern.AST.pat with
   | AST.PWildcard ->
-      let body_str = emit_expr state type_map env body in
+      let body_str = emit_expr_for_expected_type state type_map env expected_type body in
       Printf.sprintf "\tdefault:\n\t\t%s%s" result_prefix body_str
   | AST.PVariable var_name ->
       (* Variable pattern binds the scrutinee *)
-      let body_str = emit_expr state type_map env body in
+      let body_str = emit_expr_for_expected_type state type_map env expected_type body in
       let go_var_name = go_safe_ident var_name in
       Printf.sprintf "\tdefault:\n\t\t%s := %s\n\t\t_ = %s\n\t\t%s%s" go_var_name scrutinee_var go_var_name
         result_prefix body_str
@@ -2856,7 +2910,7 @@ and emit_match_arm_primitive
             else
               "false"
       in
-      let body_str = emit_expr state type_map env body in
+      let body_str = emit_expr_for_expected_type state type_map env expected_type body in
       Printf.sprintf "\tcase %s:\n\t\t%s%s" lit_str result_prefix body_str
   | AST.PConstructor _ -> failwith "Constructor patterns not valid for primitive match"
   | AST.PRecord _ -> failwith "Record patterns not valid for primitive match"
@@ -2864,6 +2918,7 @@ and emit_match_arm_primitive
 and emit_match_arm_enum
     ?(result_prefix = "return ")
     ?(scrutinee_var = "__scrutinee")
+    ~expected_type
     state
     type_map
     env
@@ -2875,7 +2930,7 @@ and emit_match_arm_enum
   match pattern.AST.pat with
   | AST.PWildcard ->
       (* Wildcard matches everything - use default case *)
-      let body_str = emit_expr state type_map env body in
+      let body_str = emit_expr_for_expected_type state type_map env expected_type body in
       Printf.sprintf "\tdefault:\n\t\t%s%s" result_prefix body_str
   | AST.PLiteral _lit ->
       (* Literal patterns - not for enums, shouldn't happen *)
@@ -2883,7 +2938,7 @@ and emit_match_arm_enum
   | AST.PVariable _var_name ->
       (* Variable pattern - binds the entire enum value *)
       (* For now, treat as wildcard since we don't track variable bindings in Go codegen *)
-      let body_str = emit_expr state type_map env body in
+      let body_str = emit_expr_for_expected_type state type_map env expected_type body in
       Printf.sprintf "\tdefault:\n\t\t%s%s" result_prefix body_str
   | AST.PConstructor (enum_name_pat, variant_name, field_patterns) ->
       (* Constructor pattern - match specific variant and extract fields *)
@@ -2924,7 +2979,7 @@ and emit_match_arm_enum
       in
 
       (* Emit body with bindings *)
-      let body_str = emit_expr state type_map env body in
+      let body_str = emit_expr_for_expected_type state type_map env expected_type body in
 
       Printf.sprintf "\tcase %s:\n%s\t\t%s%s" tag_constant bindings_code result_prefix body_str
   | AST.PRecord _ -> failwith "Record patterns not yet implemented in enum match"
@@ -3156,12 +3211,12 @@ and emit_type_switch state type_map env _if_expr var_name narrow_type complement
     if result_type = Types.TNull then
       inner_ind
       ^ "        _ = "
-      ^ emit_expr state type_map branch_env e
+      ^ emit_expr_for_expected_type state type_map branch_env result_type e
       ^ "\n"
       ^ inner_ind
       ^ "        return struct{}{}\n"
     else
-      inner_ind ^ "        return " ^ emit_expr state type_map branch_env e ^ "\n"
+      inner_ind ^ "        return " ^ emit_expr_for_expected_type state type_map branch_env result_type e ^ "\n"
   in
 
   (* Emit branch with variable substitution *)
@@ -3297,13 +3352,13 @@ and emit_type_switch_to_target
               match last.stmt with
               | AST.ExpressionStmt e ->
                   with_indent_delta state 1 (fun () -> emit_expr_to_target state type_map env' e value_target)
-              | AST.Return e -> inner_ind ^ "    return " ^ emit_expr state type_map env' e ^ "\n"
+              | AST.Return e -> inner_ind ^ "    return " ^ emit_expr_for_current_return state type_map env' e ^ "\n"
               | _ -> fst (emit_stmt state type_map env' last)
             in
             stmts_prefix ^ last_str)
     | AST.ExpressionStmt e ->
         with_indent_delta state 1 (fun () -> emit_expr_to_target state type_map branch_env e value_target)
-    | AST.Return e -> inner_ind ^ "    return " ^ emit_expr state type_map branch_env e ^ "\n"
+    | AST.Return e -> inner_ind ^ "    return " ^ emit_expr_for_current_return state type_map branch_env e ^ "\n"
     | _ -> fst (emit_stmt state type_map branch_env stmt)
   in
   let cons_stmt = substitute_identifier_in_stmt var_name narrowed_var cons in
@@ -3382,12 +3437,12 @@ and emit_if state type_map env if_expr cond cons alt =
         if result_type = Types.TNull then
           inner_ind
           ^ "    _ = "
-          ^ emit_expr state type_map branch_env e
+          ^ emit_expr_for_expected_type state type_map branch_env result_type e
           ^ "\n"
           ^ inner_ind
           ^ "    return struct{}{}\n"
         else
-          inner_ind ^ "    return " ^ emit_expr state type_map branch_env e ^ "\n"
+          inner_ind ^ "    return " ^ emit_expr_for_expected_type state type_map branch_env result_type e ^ "\n"
       in
 
       let emit_branch stmt =
@@ -3447,11 +3502,21 @@ and emit_expr_to_target state type_map env expr target =
             match last.stmt with
             | AST.ExpressionStmt e ->
                 with_indent_delta state 1 (fun () -> emit_expr_to_target state type_map env' e target)
-            | AST.Return e -> ind ^ "    return " ^ emit_expr state type_map env' e ^ "\n"
+            | AST.Return e -> ind ^ "    return " ^ emit_expr_for_current_return state type_map env' e ^ "\n"
             | _ -> fst (emit_stmt state type_map env' last)
           in
           stmts_prefix ^ last_str)
-  | _ -> ind ^ target_prefix target ^ emit_expr state type_map env expr ^ "\n"
+  | _ ->
+      let expr_str =
+        match target with
+        | ReturnTarget -> emit_expr_for_current_return state type_map env expr
+        | AssignTarget _ -> (
+            match Hashtbl.find_opt type_map expr.id with
+            | Some expected_type -> emit_expr_for_expected_type state type_map env expected_type expr
+            | None -> emit_expr state type_map env expr)
+        | DiscardTarget -> emit_expr state type_map env expr
+      in
+      ind ^ target_prefix target ^ expr_str ^ "\n"
 
 and emit_if_to_target state type_map env if_expr (cond : AST.expression) cons alt target =
   let result_type = get_type type_map if_expr in
@@ -3495,13 +3560,13 @@ and emit_if_to_target state type_map env if_expr (cond : AST.expression) cons al
                   match last.stmt with
                   | AST.ExpressionStmt e ->
                       with_indent_delta state 1 (fun () -> emit_expr_to_target state type_map env' e value_target)
-                  | AST.Return e -> inner_ind ^ "    return " ^ emit_expr state type_map env' e ^ "\n"
+                  | AST.Return e -> inner_ind ^ "    return " ^ emit_expr_for_current_return state type_map env' e ^ "\n"
                   | _ -> fst (emit_stmt state type_map env' last)
                 in
                 stmts_prefix ^ last_str)
         | AST.ExpressionStmt e ->
             with_indent_delta state 1 (fun () -> emit_expr_to_target state type_map env e value_target)
-        | AST.Return e -> inner_ind ^ "    return " ^ emit_expr state type_map env e ^ "\n"
+        | AST.Return e -> inner_ind ^ "    return " ^ emit_expr_for_current_return state type_map env e ^ "\n"
         | _ -> fst (emit_stmt state type_map env stmt)
       in
       let cons_str = emit_branch cons in
@@ -3760,7 +3825,7 @@ and emit_function_expr ?func_type_override state type_map env func_expr params b
     | Error _ -> type_map
   in
 
-  let body_str = emit_func_body state body_type_map body_env body in
+  let body_str = with_return_type state return_type (fun () -> emit_func_body state body_type_map body_env body) in
 
   Printf.sprintf "func(%s) %s {\n%s%s}" params_str return_type_str body_str (indent_str state)
 
@@ -3780,7 +3845,7 @@ and emit_func_body state type_map env stmt =
         let r = emit_match ~target:ReturnTarget state type_map env' e scrutinee arms in
         state.indent <- state.indent - 1;
         r
-    | _ -> inner_ind ^ "return " ^ emit_expr state type_map env' e ^ "\n"
+    | _ -> inner_ind ^ "return " ^ emit_expr_for_current_return state type_map env' e ^ "\n"
   in
   match stmt.AST.stmt with
   | AST.Block stmts -> (
@@ -4119,7 +4184,7 @@ and emit_stmt
             let env' = Infer.TypeEnv.add let_binding.name (Types.Forall ([], expr_type)) env in
             (binding_code, env'))
   | AST.Return expr ->
-      let expr_str = emit_expr state type_map env expr in
+      let expr_str = emit_expr_for_current_return state type_map env expr in
       (Printf.sprintf "%sreturn %s\n" ind expr_str, env)
   | AST.ExpressionStmt expr -> (
       match expr.expr with
@@ -4313,7 +4378,10 @@ let emit_specialized_func
   (* Save and reset indent for top-level function *)
   let saved_indent = state.indent in
   state.indent <- 0;
-  let body_str = emit_func_body state specialized_type_map body_env func_def.body in
+  let body_str =
+    with_return_type state effective_return_type (fun () ->
+        emit_func_body state specialized_type_map body_env func_def.body)
+  in
   state.indent <- saved_indent;
 
   Printf.sprintf "func %s(%s) %s {\n%s}\n" mangled_name params_str return_type_str body_str
@@ -4455,7 +4523,7 @@ let emit_cached_impl_method
     else
       impl_inst.type_fingerprint
   in
-  let func_name = Printf.sprintf "%s_%s_%s" impl_inst.trait_name impl_inst.method_name type_suffix in
+  let func_name = trait_method_func_name impl_inst.trait_name impl_inst.method_name type_suffix in
   let params_str =
     List.map2
       (fun name typ -> Printf.sprintf "%s %s" (go_safe_ident name) (type_to_go state.mono typ))
@@ -4481,7 +4549,10 @@ let emit_cached_impl_method
         type_map;
       copied
   in
-  let body_str = emit_func_body state effective_type_map method_env payload.body_stmt in
+  let body_str =
+    with_return_type state payload.return_type (fun () ->
+        emit_func_body state effective_type_map method_env payload.body_stmt)
+  in
   Printf.sprintf "func %s(%s) %s {\n%s}\n" func_name params_str return_type_str body_str
 
 let emit_inherent_method
@@ -4601,7 +4672,7 @@ let emit_inherent_method
     else
       fingerprint_types (for_type :: method_type_args)
   in
-  let func_name = Printf.sprintf "inherent_%s_%s" method_impl.impl_method_name type_suffix in
+  let func_name = inherent_method_func_name method_impl.impl_method_name type_suffix in
   let params_str =
     List.map2
       (fun name typ -> Printf.sprintf "%s %s" (go_safe_ident name) (type_to_go state.mono typ))
@@ -4618,7 +4689,10 @@ let emit_inherent_method
       (fun (_name, pty) -> track_enum_inst state.mono pty)
       (List.combine method_param_names method_param_types);
     Hashtbl.iter (fun _id ty -> track_enum_inst state.mono ty) method_type_map);
-  let body_str = emit_func_body state method_type_map method_env method_impl.impl_method_body in
+  let body_str =
+    with_return_type state return_type (fun () ->
+        emit_func_body state method_type_map method_env method_impl.impl_method_body)
+  in
   Printf.sprintf "func %s(%s) %s {\n%s}\n" func_name params_str return_type_str body_str
 
 (* Extract all ImplDef statements from a program *)
@@ -5551,6 +5625,44 @@ let%test "placeholder shorthand callback compiles through codegen" =
        result"
   with
   | Ok (_, _) -> true
+  | Error _ -> false
+
+let%test "identifier suffix methods compile through codegen" =
+  Typecheck.Trait_registry.clear ();
+  Typecheck.Enum_registry.clear ();
+  Typecheck.Inherent_registry.clear ();
+  match
+    compile_string ~file_id:"<codegen>"
+      "type Monkey = { bananas_eaten: Int, is_alpha: Bool }\n\
+       impl Monkey = {\n\
+         fn hungry?(self: Monkey) -> Bool = self.bananas_eaten < 3\n\
+         fn alpha!(self: Monkey) -> Monkey = { ...self, is_alpha: true }\n\
+       }\n\
+       let m: Monkey = { bananas_eaten: 1, is_alpha: false }\n\
+       puts(m.hungry?())\n\
+       puts(m.alpha!().is_alpha)"
+  with
+  | Ok (code, _) ->
+      string_contains code "func inherent_hungry_q_record_bananas_eaten_int64_is_alpha_bool_closed("
+      && string_contains code "func inherent_alpha_bang_record_bananas_eaten_int64_is_alpha_bool_closed("
+      && string_contains code "inherent_hungry_q_record_bananas_eaten_int64_is_alpha_bool_closed(m)"
+      && string_contains code "inherent_alpha_bang_record_bananas_eaten_int64_is_alpha_bool_closed(m)"
+  | Error _ -> false
+
+let%test "generic empty array return uses function return type during build" =
+  Typecheck.Trait_registry.clear ();
+  Typecheck.Enum_registry.clear ();
+  Typecheck.Inherent_registry.clear ();
+  match
+    compile_to_build ~file_id:"<codegen>"
+      "fn wrap_empty[a, b](x: a, sample: b) -> List[b] = []\n\
+       let ints = wrap_empty(true, 1)\n\
+       let strs = wrap_empty(true, \"banana\")\n\
+       puts(len(ints))\n\
+       puts(len(strs))"
+  with
+  | Ok out ->
+      string_contains out.main_go "return []int64{}" && string_contains out.main_go "return []string{}"
   | Error _ -> false
 
 let%test "polymorphic function multiple instantiations" =
