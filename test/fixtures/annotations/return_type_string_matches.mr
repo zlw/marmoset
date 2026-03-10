@@ -1,1 +1,2 @@
-let f = fn() -> string { "hello" }; f()
+fn f() -> Str = "hello"
+f()

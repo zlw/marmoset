@@ -1,1 +1,2 @@
-let f = fn(x: int) -> int { if (x < 0) { 0 } else { x } }; f(-5)
+fn f(x: Int) -> Int = if (x < 0) { 0 } else { x }
+f(-5)

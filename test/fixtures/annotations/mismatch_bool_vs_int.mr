@@ -1,1 +1,2 @@
-let f = fn() -> bool { 42 }; f()  # error: annotation mismatch
+fn f() -> Bool = 42  # error: annotation mismatch
+f()

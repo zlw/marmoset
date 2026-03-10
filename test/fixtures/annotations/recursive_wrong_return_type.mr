@@ -1,1 +1,5 @@
-let fib = fn(n: int) -> string { if (n < 2) { return n } return fib(n - 1) + fib(n - 2); }; fib(10)  # error: annotation mismatch
+fn fib(n: Int) -> Str = {
+  if (n < 2) { return n }  # error: annotation mismatch
+  return fib(n - 1) + fib(n - 2)
+}
+fib(10)

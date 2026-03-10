@@ -1,3 +1,3 @@
-let apply = fn(f: fn(int) -> int, x: int) -> int { f(x) }
-let inc = fn(n: int) -> int { n + 1 }
+fn apply(f: (Int) -> Int, x: Int) -> Int = f(x)
+fn inc(n: Int) -> Int = n + 1
 puts(apply(inc, 1))  # output: 2
