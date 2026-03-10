@@ -76,8 +76,10 @@ ExprOrBlock    ::= Expr | Block
   - Effectful: `(a, b) => c`
 - Top-level `fn` declarations and impl methods may omit the purity/return suffix. When omitted, the compiler infers both from the body.
 - Union types use `|`: `Int | Str`.
+- Intersection types use `&`: `A & B`.
+- `&` binds tighter than `|` in type expressions.
+- In parameter position, an unparenthesized bare trait-name chain such as `Named & Aged` still means constrained-param shorthand, not a general intersection. Parenthesize to force a real intersection there.
 - Built-in collection type constructors follow the same casing convention: `List[Int]`, `Map[Str, Int]`.
-- Full intersection types are not part of vNext. `&` is reserved for constraint composition only in this spec.
 - Record type fields are comma-separated, trailing comma allowed.
 - Enum variants are comma-separated, trailing comma allowed.
 - Derive is postfix on `type`/`enum` declarations only.
@@ -378,7 +380,8 @@ PurityArrow          ::= "->" | "=>"
 ExprOrBlock          ::= Expr | Block
 
 TypeExpr             ::= TypeUnion
-TypeUnion            ::= TypePrimary { "|" TypePrimary }
+TypeUnion            ::= TypeIntersection { "|" TypeIntersection }
+TypeIntersection     ::= TypePrimary { "&" TypePrimary }
 TypePrimary          ::= TypeName
                        | TypeName "[" TypeExprList "]"
                        | "Dyn" "[" ConstraintExpr "]"
@@ -577,5 +580,19 @@ Errors:
 - Arm result types must unify.
 - Exhaustiveness checking is required for closed enums and should warn/error for non-exhaustive matches per project policy.
 
-### 13.12 Reserved For Future
-- General intersection types are intentionally unspecified in this version. `&` is only normative in constraint positions.
+### 13.12 Intersection Validation Rules
+- `TypeExpr & TypeExpr` is a compile-time-only type form. It does not introduce a runtime wrapper.
+- Canonical normalization flattens nested intersections, sorts members deterministically, and removes duplicates.
+- If an intersection contains multiple `Dyn[...]` members, they merge into one `Dyn[...]` whose trait set is the union of those members.
+- `Dyn[...]` members may not be mixed with non-`Dyn[...]` members inside the same intersection in v1.
+- Subtyping follows meet-style rules:
+  - `X <: A & B` iff `X <: A` and `X <: B`.
+  - `A & B <: X` iff the intersection is usable anywhere one of its members is usable.
+- Field access on an intersection-typed value is valid only when every member guarantees that field.
+- General callable intersections are rejected in v1 unless normalization leaves a single callable type.
+- Constraint grammar does not change:
+  - generic constraints,
+  - trait supertraits,
+  - constrained-param shorthand,
+  - `Dyn[...]`
+  still use `ConstraintExpr`, not general type intersections.

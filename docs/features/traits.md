@@ -393,6 +393,20 @@ treating raw Go interfaces as the language ABI.
 - Field access is never allowed on `Dyn[...]`, even when the trait set is mixed.
 - Raw Go interface internals are not part of the language ABI; the compiler emits its own `marmosetDyn` wrapper.
 
+## Intersection Types
+
+General intersection types use `A & B` in type positions. This is separate from
+trait-constraint composition.
+
+Rules:
+- unparenthesized bare trait-name chains in parameter position still mean constrained-param shorthand,
+- parenthesize to force a real intersection in parameter position,
+- intersections are compile-time-only and do not add a runtime wrapper,
+- `Dyn[Show] & Dyn[Eq]` normalizes to one trait object with both traits,
+- intersections that mix `Dyn[...]` with non-`Dyn[...]` members are rejected in v1,
+- field access on an intersection is allowed only when every member guarantees the field,
+- general callable intersections are rejected in v1.
+
 ## Why This Design
 
 The current model keeps method behavior explicit and coherent while preserving structural ergonomics for records. It also keeps codegen simple and performant by using static dispatch and projection-based field trait typing.
