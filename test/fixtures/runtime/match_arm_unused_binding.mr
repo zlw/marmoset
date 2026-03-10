@@ -1,10 +1,7 @@
-enum option[a] {
-  some(a)
-  none
-}
+enum Option[a] = { Some(a), None }
 
-let x = option.some(1)
+let x = Option.Some(1)
 match x {
-  option.some(n): puts("got one")  # output: got one
-  option.none(): puts("got none")
+  case Option.Some(n): puts("got one")  # output: got one
+  case Option.None: puts("got none")
 }

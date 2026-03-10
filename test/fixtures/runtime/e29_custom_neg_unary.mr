@@ -1,8 +1,8 @@
-enum wrapper { val(int) }
-impl neg for wrapper {
-  fn neg(x: wrapper) -> wrapper { x }
+enum Wrapper = { Val(Int) }
+impl Neg[Wrapper] = {
+  fn neg(x: Wrapper) -> Wrapper = x
 }
-let a = wrapper.val(77)
+let a = Wrapper.Val(77)
 match (-a) {
-  wrapper.val(n): puts(n)  # output: 77
+  case Wrapper.Val(n): puts(n)  # output: 77
 }

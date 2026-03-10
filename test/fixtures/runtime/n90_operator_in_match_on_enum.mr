@@ -1,10 +1,7 @@
-enum option[a] {
-  some(a)
-  none
-}
-let x = option.some(10)
-let r = match (x) {
-  option.some(n): n + 1
-  option.none(): 0
+enum Option[a] = { Some(a), None }
+let x = Option.Some(10)
+let r = match x {
+  case Option.Some(n): n + 1
+  case Option.None: 0
 }
 puts(r)  # output: 11
