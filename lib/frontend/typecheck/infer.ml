@@ -155,6 +155,10 @@ let active_inference_state : inference_state ref = ref (create_inference_state (
 let global_method_resolution_store : (int, method_resolution) Hashtbl.t = Hashtbl.create 256
 let global_method_type_args_store : (int, mono_type list) Hashtbl.t = Hashtbl.create 64
 type placeholder_rewrite_map = (int, AST.expression) Hashtbl.t
+type placeholder_callback_expectation =
+  | PlaceholderCallbackNotCallable
+  | PlaceholderCallbackPureAllowed
+  | PlaceholderCallbackEffectfulOnly
 
 let global_placeholder_rewrite_store : placeholder_rewrite_map = Hashtbl.create 64
 let global_synthetic_expr_id_counter : int ref = ref (-1)
@@ -2539,11 +2543,27 @@ and replace_placeholder_identifier_stmt (param_name : string) (stmt : AST.statem
   in
   { stmt with stmt = rewritten }
 
-and type_can_accept_placeholder_callback (typ : mono_type) : bool =
+and placeholder_callback_expectation (typ : mono_type) : placeholder_callback_expectation =
   match canonicalize_mono_type typ with
-  | TFun _ -> true
-  | TUnion members -> List.exists type_can_accept_placeholder_callback members
-  | _ -> false
+  | TFun (_, _, is_effectful) ->
+      if is_effectful then
+        PlaceholderCallbackEffectfulOnly
+      else
+        PlaceholderCallbackPureAllowed
+  | TUnion members ->
+      List.fold_left
+        (fun acc member ->
+          match (acc, placeholder_callback_expectation member) with
+          | PlaceholderCallbackPureAllowed, _ | _, PlaceholderCallbackPureAllowed ->
+              PlaceholderCallbackPureAllowed
+          | PlaceholderCallbackEffectfulOnly, PlaceholderCallbackEffectfulOnly ->
+              PlaceholderCallbackEffectfulOnly
+          | PlaceholderCallbackNotCallable, PlaceholderCallbackEffectfulOnly
+          | PlaceholderCallbackEffectfulOnly, PlaceholderCallbackNotCallable ->
+              PlaceholderCallbackEffectfulOnly
+          | PlaceholderCallbackNotCallable, PlaceholderCallbackNotCallable -> PlaceholderCallbackNotCallable)
+        PlaceholderCallbackNotCallable members
+  | _ -> PlaceholderCallbackNotCallable
 
 and placeholder_lambda_expr (expr : AST.expression) : AST.expression =
   let param_name = fresh_placeholder_param_name expr in
@@ -2570,6 +2590,7 @@ and infer_arg_against_expected type_map env subst (arg : AST.expression) (expect
     (substitution * mono_type) infer_result =
   let expected_type' = apply_substitution subst expected_type in
   let placeholder_count = placeholder_identifier_count_expr arg in
+  let placeholder_expectation = placeholder_callback_expectation expected_type' in
   if placeholder_count > 1 then
     Error
       (error_at ~code:"type-invalid-placeholder"
@@ -2578,27 +2599,34 @@ and infer_arg_against_expected type_map env subst (arg : AST.expression) (expect
               placeholder_count)
          arg)
   else
-    let inferred_arg =
-      if placeholder_count = 1 && type_can_accept_placeholder_callback expected_type' then
-        let rewritten_arg = placeholder_lambda_expr arg in
-        record_placeholder_rewrite arg rewritten_arg;
-        rewritten_arg
-      else
-        arg
-    in
-    let env' = apply_substitution_env subst env in
-    match infer_expression type_map env' inferred_arg with
-    | Error e -> Error e
-    | Ok (subst1, arg_type) -> (
-        let subst' = compose_substitution subst subst1 in
-        let expected_type'' = apply_substitution subst' expected_type in
-        let arg_type' = apply_substitution subst' arg_type in
-        match unify arg_type' expected_type'' with
-        | Error e -> Error (error_at ~code:e.code ~message:e.message arg)
-        | Ok subst2 ->
-            let final_subst = compose_substitution subst' subst2 in
-            let final_type = apply_substitution final_subst arg_type in
-            Ok (final_subst, final_type))
+    match (placeholder_count, placeholder_expectation) with
+    | 1, PlaceholderCallbackEffectfulOnly ->
+        Error
+          (error_at ~code:"type-invalid-placeholder"
+             ~message:"Placeholder shorthand is pure-only; effectful callbacks require explicit '=>' lambda"
+             arg)
+    | _ ->
+        let inferred_arg =
+          match (placeholder_count, placeholder_expectation) with
+          | 1, PlaceholderCallbackPureAllowed ->
+              let rewritten_arg = placeholder_lambda_expr arg in
+              record_placeholder_rewrite arg rewritten_arg;
+              rewritten_arg
+          | _ -> arg
+        in
+        let env' = apply_substitution_env subst env in
+        match infer_expression type_map env' inferred_arg with
+        | Error e -> Error e
+        | Ok (subst1, arg_type) -> (
+            let subst' = compose_substitution subst subst1 in
+            let expected_type'' = apply_substitution subst' expected_type in
+            let arg_type' = apply_substitution subst' arg_type in
+            match unify arg_type' expected_type'' with
+            | Error e -> Error (error_at ~code:e.code ~message:e.message arg)
+            | Ok subst2 ->
+                let final_subst = compose_substitution subst' subst2 in
+                let final_type = apply_substitution final_subst arg_type in
+                Ok (final_subst, final_type))
 
 and infer_args_against_expected type_map env subst args expected_types =
   match (args, expected_types) with

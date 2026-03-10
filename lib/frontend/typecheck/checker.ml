@@ -1001,3 +1001,19 @@ let%test "Phase6 prep: placeholder shorthand rejects multiple placeholders in on
           && String_utils.contains_substring ~needle:"exactly one '_'" d.message)
         diags
   | Ok _ -> false
+
+let%test "Phase6 prep: placeholder shorthand rejects effectful callback slots" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  match
+    check_string ~env:(Builtins.prelude_env ()) ~file_id:"<test>"
+      "fn foreach_list[a](items: List[a], f: (a) => Unit) => Unit = puts(\"x\")\n\
+       foreach_list([1, 2], puts(_))"
+  with
+  | Error diags ->
+      List.exists
+        (fun (d : Diagnostic.t) ->
+          d.code = "type-invalid-placeholder"
+          && String_utils.contains_substring ~needle:"effectful callbacks require explicit '=>'" d.message)
+        diags
+  | Ok _ -> false
