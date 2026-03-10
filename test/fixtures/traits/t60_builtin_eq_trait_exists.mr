@@ -1,7 +1,5 @@
-# T60: Builtin eq trait exists
-impl eq for int {
-  fn eq(x: int, y: int) -> bool {
-    true
-  }
+# T60: Builtin Eq trait exists
+impl Eq[Int] = {
+  fn eq(x: Int, y: Int) -> Bool = true
 }
 42

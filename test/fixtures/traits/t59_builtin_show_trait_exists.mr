@@ -1,7 +1,5 @@
-# T59: Builtin show trait exists
-impl show for int {
-  fn show(x: int) -> string {
-    "test"
-  }
+# T59: Builtin Show trait exists
+impl Show[Int] = {
+  fn show(x: Int) -> Str = "test"
 }
 42

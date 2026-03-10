@@ -1,8 +1,5 @@
-# T61: Builtin ord trait exists
-enum ordering { less equal greater }
-impl ord for int {
-  fn compare(x: int, y: int) -> ordering {
-    ordering.equal
-  }
+# T61: Builtin Ord trait exists
+impl Ord[Int] = {
+  fn compare(x: Int, y: Int) -> Ordering = ordering.equal
 }
 42
