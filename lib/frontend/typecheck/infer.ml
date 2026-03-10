@@ -1681,22 +1681,19 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                                 Ok (final_subst, return_type)))))
         in
         let resolve_type_name (name : string) : mono_type option =
-          match name with
-          | "int" -> Some TInt
-          | "float" -> Some TFloat
-          | "bool" -> Some TBool
-          | "string" -> Some TString
-          | _ -> (
+          match Annotation.builtin_primitive_type name with
+          | Some primitive -> Some primitive
+          | None -> (
               match Annotation.lookup_type_alias name with
               | Some alias_info when alias_info.alias_type_params = [] -> (
                   match Annotation.type_expr_to_mono_type alias_info.alias_body with
                   | Ok mono -> Some mono
                   | Error _ -> None)
               | _ -> (
-                  match Enum_registry.lookup name with
+                  match Annotation.lookup_enum_by_source_name name with
                   | Some enum_def ->
                       let fresh_args = List.map (fun _ -> fresh_type_var ()) enum_def.type_params in
-                      Some (TEnum (name, fresh_args))
+                      Some (TEnum (enum_def.name, fresh_args))
                   | None -> None))
         in
         let infer_qualified_type_call (for_type : mono_type) : (substitution * mono_type) infer_result =
@@ -2513,29 +2510,31 @@ and classify_dotted_receiver (env : type_env) (name : string) (member_name : str
   if TypeEnv.mem name env then
     `BoundVar
   else
-    let is_enum = Enum_registry.lookup name <> None in
-    let is_enum_variant = is_enum && Enum_registry.lookup_variant name member_name <> None in
+    let enum_def_opt = Annotation.lookup_enum_by_source_name name in
+    let is_enum = Option.is_some enum_def_opt in
+    let is_enum_variant =
+      match enum_def_opt with
+      | Some enum_def -> Enum_registry.lookup_variant enum_def.name member_name <> None
+      | None -> false
+    in
     if is_enum_variant then
       `EnumVariant
     else if is_enum then
       `EnumType
     else
-      match name with
-      | "int" -> `TypeName TInt
-      | "float" -> `TypeName TFloat
-      | "bool" -> `TypeName TBool
-      | "string" -> `TypeName TString
-      | _ -> (
+      match Annotation.builtin_primitive_type name with
+      | Some primitive -> `TypeName primitive
+      | None -> (
           match Annotation.lookup_type_alias name with
           | Some alias_info when alias_info.alias_type_params = [] -> (
               match Annotation.type_expr_to_mono_type alias_info.alias_body with
               | Ok mono -> `TypeName mono
               | Error _ -> `Unknown)
           | _ -> (
-              match Enum_registry.lookup name with
+              match Annotation.lookup_enum_by_source_name name with
               | Some enum_def ->
                   let fresh_args = List.map (fun _ -> fresh_type_var ()) enum_def.type_params in
-                  `TypeName (TEnum (name, fresh_args))
+                  `TypeName (TEnum (enum_def.name, fresh_args))
               | None -> (
                   match Trait_registry.lookup_trait name with
                   | Some _ -> `TraitName
@@ -3204,12 +3203,11 @@ and infer_statement type_map env stmt =
                             Ok (method_subst, TNull)))))
   | AST.InherentImplDef { inherent_for_type; inherent_methods } -> (
       let is_known_type_name (name : string) : bool =
-        match name with
-        | "int" | "float" | "bool" | "string" | "unit" -> true
-        | _ ->
-            Enum_registry.lookup name <> None
-            || Annotation.lookup_type_alias name <> None
-            || Trait_registry.lookup_trait name <> None
+        Option.is_some (Annotation.builtin_primitive_type name)
+        || Option.is_some (Annotation.builtin_type_constructor_name name)
+        || Annotation.lookup_enum_by_source_name name <> None
+        || Annotation.lookup_type_alias name <> None
+        || Trait_registry.lookup_trait name <> None
       in
       let rec collect_target_generic_names ~(in_head : bool) (te : AST.type_expr) (acc : StringSet.t) :
           StringSet.t =

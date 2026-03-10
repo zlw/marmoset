@@ -813,6 +813,16 @@ let%test "Phase3: vNext fn decl with block body typechecks" =
   | Ok result -> result.result_type = Types.TInt
   | Error _ -> false
 
+let%test "Phase6 prep: canonical builtin type names typecheck end-to-end" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  match
+    check_string ~file_id:"<test>"
+      "type UserId = Int\nfn greet(name: Str) -> Str = name\nlet xs: List[Int] = [1, 2]\nlet counts: Map[Str, Int] = { \"hi\": 2 }\ngreet(\"ok\"); xs[0]"
+  with
+  | Ok result -> result.result_type = Types.TInt
+  | Error _ -> false
+
 let%test "Phase3: trait default method - impl without method succeeds if default exists" =
   Infer.reset_fresh_counter ();
   Trait_registry.clear ();
