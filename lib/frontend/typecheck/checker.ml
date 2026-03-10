@@ -887,3 +887,18 @@ let%test "Phase6 prep: canonical builtin trait names work in impl headers" =
   with
   | Ok result -> result.result_type = Types.TString
   | Error _ -> false
+
+let%test "Phase6 prep: constrained-param shorthand works end-to-end for top-level fn decls" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  match
+    check_string ~file_id:"<test>"
+      "trait JungleDweller[a] = { fn introduce(a) -> Str }\n\
+       type Monkey = { name: Str }\n\
+       impl JungleDweller[Monkey] = { fn introduce(self: Monkey) -> Str = self.name }\n\
+       fn who_dis(x: JungleDweller) -> Str = x.introduce()\n\
+       let george: Monkey = { name: \"George\" }\n\
+       who_dis(george)"
+  with
+  | Ok result -> result.result_type = Types.TString
+  | Error _ -> false

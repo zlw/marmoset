@@ -1,5 +1,6 @@
 open Ast
 open Surface_ast
+module StringSet = Set.Make (String)
 
 (* Lower — converts Surface_ast to Core_ast (Ast.AST).
    In Phase 0.5 this is a near-identity transform: every legacy Surface.*
@@ -9,6 +10,46 @@ open Surface_ast
 
 let failwith_unimplemented variant =
   failwith (Printf.sprintf "Lower: vNext-only surface form '%s' is not yet parsed in Phase 0.5" variant)
+
+type lower_context = {
+  trait_names : StringSet.t;
+  type_names : StringSet.t;
+}
+
+let builtin_trait_names =
+  [ "Eq"; "Show"; "Debug"; "Ord"; "Hash"; "Num"; "Neg"; "eq"; "show"; "debug"; "ord"; "hash"; "num"; "neg" ]
+
+let empty_lower_context =
+  {
+    trait_names = List.fold_left (fun acc name -> StringSet.add name acc) StringSet.empty builtin_trait_names;
+    type_names = StringSet.empty;
+  }
+
+let lower_context_of_program (prog : Surface.surface_program) : lower_context =
+  List.fold_left
+    (fun ({ trait_names; type_names } as acc) (ts : Surface.surface_top_stmt) ->
+      match ts.std_decl with
+      | Surface.STraitDef { name; _ } -> { acc with trait_names = StringSet.add name trait_names }
+      | Surface.SEnumDef { name; _ } | Surface.STypeDef { alias_name = name; _ } ->
+          { acc with type_names = StringSet.add name type_names }
+      | _ -> acc)
+    empty_lower_context prog
+
+let trait_shorthand_constraint (ctx : lower_context) (st : Surface.surface_type_expr) : string list option =
+  match st with
+  | Surface.STCon name when StringSet.mem name ctx.trait_names && not (StringSet.mem name ctx.type_names) ->
+      Some [ name ]
+  | _ -> None
+
+let fresh_shorthand_generic_name (used : StringSet.t) : string =
+  let rec loop n =
+    let candidate = Printf.sprintf "t%d" n in
+    if StringSet.mem candidate used then
+      loop (n + 1)
+    else
+      candidate
+  in
+  loop 0
 
 (* ── Type expressions ── *)
 
@@ -25,6 +66,41 @@ let rec lower_type_expr (st : Surface.surface_type_expr) : AST.type_expr =
         AST.{ field_name = f.Surface.sf_name; field_type = lower_type_expr f.Surface.sf_type }
       in
       AST.TRecord (List.map lower_field fields, Option.map lower_type_expr row)
+
+let lower_fn_decl_signature
+    (ctx : lower_context)
+    (generics : AST.generic_param list option)
+    (params : (string * Surface.surface_type_expr option) list) :
+    AST.generic_param list option * (string * AST.type_expr option) list =
+  let used_generic_names =
+    match generics with
+    | None -> StringSet.empty
+    | Some gs ->
+        List.fold_left (fun acc (g : AST.generic_param) -> StringSet.add g.name acc) StringSet.empty gs
+  in
+  let rec lower_params used rev_generics rev_params = function
+    | [] ->
+        let shorthand_generics = List.rev rev_generics in
+        let lowered_params = List.rev rev_params in
+        let all_generics =
+          match (generics, shorthand_generics) with
+          | None, [] -> None
+          | None, _ -> Some shorthand_generics
+          | Some existing, [] -> Some existing
+          | Some existing, _ -> Some (existing @ shorthand_generics)
+        in
+        (all_generics, lowered_params)
+    | (name, None) :: rest -> lower_params used rev_generics ((name, None) :: rev_params) rest
+    | (name, Some annot) :: rest -> (
+        match trait_shorthand_constraint ctx annot with
+        | Some constraints ->
+            let generic_name = fresh_shorthand_generic_name used in
+            let generic = AST.{ name = generic_name; constraints } in
+            lower_params (StringSet.add generic_name used) (generic :: rev_generics)
+              ((name, Some (AST.TVar generic_name)) :: rev_params) rest
+        | None -> lower_params used rev_generics ((name, Some (lower_type_expr annot)) :: rev_params) rest)
+  in
+  lower_params used_generic_names [] [] params
 
 (* ── Patterns ── *)
 
@@ -202,7 +278,10 @@ let lower_method_impl (id_supply : Id_supply.Id_supply.t) (smi : Surface.surface
 let lower_variant (sv : Surface.surface_variant_def) : AST.variant_def =
   AST.{ variant_name = sv.sv_name; variant_fields = List.map lower_type_expr sv.sv_fields }
 
-let lower_top_decl (id_supply : Id_supply.Id_supply.t) (ts : Surface.surface_top_stmt) : AST.statement list =
+let lower_top_decl_with_ctx
+    (ctx : lower_context)
+    (id_supply : Id_supply.Id_supply.t)
+    (ts : Surface.surface_top_stmt) : AST.statement list =
   let pos = ts.Surface.std_pos and end_pos = ts.Surface.std_end_pos and file_id = ts.Surface.std_file_id in
   match ts.Surface.std_decl with
   | Surface.SLet { name; value; type_annotation } ->
@@ -216,13 +295,14 @@ let lower_top_decl (id_supply : Id_supply.Id_supply.t) (ts : Surface.surface_top
              });
       ]
   | Surface.SFnDecl { name; generics; params; return_type; is_effectful; body } ->
+      let generics, params = lower_fn_decl_signature ctx generics params in
       let fn_body = lower_expr_or_block_to_stmt id_supply body in
       let fn_expr =
         AST.mk_expr ~id:(Id_supply.Id_supply.fresh id_supply) ~pos ~end_pos ~file_id
           (AST.Function
              {
                generics;
-               params = List.map (fun (n, t) -> (n, Option.map lower_type_expr t)) params;
+               params;
                return_type = Option.map lower_type_expr return_type;
                is_effectful;
                body = fn_body;
@@ -327,8 +407,12 @@ let lower_top_decl (id_supply : Id_supply.Id_supply.t) (ts : Surface.surface_top
   | Surface.SBlock block ->
       [ AST.mk_stmt ~pos ~end_pos ~file_id (AST.Block (List.map (lower_stmt id_supply) block.sb_stmts)) ]
 
+let lower_top_decl (id_supply : Id_supply.Id_supply.t) (ts : Surface.surface_top_stmt) : AST.statement list =
+  lower_top_decl_with_ctx empty_lower_context id_supply ts
+
 let lower_program (id_supply : Id_supply.Id_supply.t) (prog : Surface.surface_program) : AST.program =
-  List.concat_map (lower_top_decl id_supply) prog
+  let ctx = lower_context_of_program prog in
+  List.concat_map (lower_top_decl_with_ctx ctx id_supply) prog
 
 (* ── Tests ── *)
 
@@ -605,6 +689,102 @@ let%test "Phase2: SFnDecl with expr body -> Block[ExpressionStmt]" =
                    {
                      body =
                        { stmt = AST.Block [ { stmt = AST.ExpressionStmt { expr = AST.Integer 99L; _ }; _ } ]; _ };
+                     _;
+                   };
+               _;
+             };
+           _;
+         };
+     _;
+   };
+  ] ->
+      true
+  | _ -> false
+
+let%test "Phase2: bare trait param shorthand lowers to fresh constrained generic" =
+  let id_supply = Id_supply.Id_supply.create 0 in
+  let body_expr = Surface.mk_surface_expr ~id:1 ~pos:5 (Surface.SEIdentifier "x") in
+  let decl =
+    Surface.SFnDecl
+      {
+        name = "who_dis";
+        generics = None;
+        params = [ ("x", Some (Surface.STCon "JungleDweller")) ];
+        return_type = Some (Surface.STCon "Str");
+        is_effectful = false;
+        body = Surface.SEOBExpr body_expr;
+      }
+  in
+  let prog =
+    lower_program id_supply
+      [
+        mk_test_ts
+          (Surface.STraitDef
+             { name = "JungleDweller"; type_param = Some "a"; supertraits = []; fields = []; methods = [] });
+        mk_test_ts decl;
+      ]
+  in
+  match prog with
+  | [
+   { AST.stmt = AST.TraitDef _; _ };
+   {
+     AST.stmt =
+       AST.Let
+         {
+           name = "who_dis";
+           value =
+             {
+               AST.expr =
+                 AST.Function
+                   {
+                     generics = Some [ { AST.name = "t0"; constraints = [ "JungleDweller" ] } ];
+                     params = [ ("x", Some (AST.TVar "t0")) ];
+                     return_type = Some (AST.TCon "Str");
+                     _;
+                   };
+               _;
+             };
+           _;
+         };
+     _;
+   };
+  ] ->
+      true
+  | _ -> false
+
+let%test "Phase2: multiple shorthand params lower to independent generics" =
+  let id_supply = Id_supply.Id_supply.create 0 in
+  let body_expr = Surface.mk_surface_expr ~id:1 ~pos:5 (Surface.SEBoolean true) in
+  let decl =
+    Surface.SFnDecl
+      {
+        name = "same_species";
+        generics = None;
+        params = [ ("x", Some (Surface.STCon "Eq")); ("y", Some (Surface.STCon "Eq")) ];
+        return_type = Some (Surface.STCon "Bool");
+        is_effectful = false;
+        body = Surface.SEOBExpr body_expr;
+      }
+  in
+  let prog = lower_program id_supply [ mk_test_ts decl ] in
+  match prog with
+  | [
+   {
+     AST.stmt =
+       AST.Let
+         {
+           value =
+             {
+               AST.expr =
+                 AST.Function
+                   {
+                     generics =
+                       Some
+                         [
+                           { AST.name = "t0"; constraints = [ "Eq" ] };
+                           { AST.name = "t1"; constraints = [ "Eq" ] };
+                         ];
+                     params = [ ("x", Some (AST.TVar "t0")); ("y", Some (AST.TVar "t1")) ];
                      _;
                    };
                _;
