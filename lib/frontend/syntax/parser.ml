@@ -72,6 +72,19 @@ let with_surface_pat_end p (pat : Surface.surface_pattern) : Surface.surface_pat
       sp_file_id = first_some pat.sp_file_id (Some p.file_id);
     }
 
+let tokens_are_on_different_lines (p : parser) : bool =
+  let start_pos = token_end p.curr_token + 1 in
+  let end_pos = p.peek_token.pos - 1 in
+  let rec loop i =
+    if i > end_pos then
+      false
+    else
+      match String.get p.lexer.input i with
+      | '\n' | '\r' -> true
+      | _ -> loop (i + 1)
+  in
+  start_pos <= end_pos && loop start_pos
+
 (* Helper to get fresh ID using the mutable id_supply *)
 let fresh_id (p : parser) : int = Id_supply.Id_supply.fresh p.id_supply
 
@@ -1218,7 +1231,13 @@ and infixFn (p : parser) (left_expr : Surface.surface_expr) (prec : precedence) 
   let rec loop (lp : parser) (left : Surface.surface_expr) : (parser * Surface.surface_expr, parser) result =
     let peek_is_semicolon = peek_token_is lp Token.Semicolon in
     let lower_precedence = prec < peek_precedence lp in
-    if (not peek_is_semicolon) && lower_precedence then
+    let peek_is_postfix =
+      match lp.peek_token.token_type with
+      | Token.LParen | Token.LBracket | Token.Dot -> true
+      | _ -> false
+    in
+    let blocked_by_line_break = peek_is_postfix && tokens_are_on_different_lines lp in
+    if (not peek_is_semicolon) && lower_precedence && not blocked_by_line_break then
       let* lp2, left2 =
         match lp.peek_token.token_type with
         | Token.Plus | Token.Minus | Token.Slash | Token.Asterisk | Token.Eq | Token.NotEq | Token.Lt | Token.Gt
@@ -2142,6 +2161,46 @@ module Test = struct
       };
     ]
     |> run
+
+  let%test "array literal with identifier elements parses" =
+    match parse ~file_id:"<test>" "let george = 1\nlet promoted_george = 2\n[george, promoted_george]" with
+    | Ok
+        [
+          _;
+          _;
+          {
+            AST.stmt =
+              AST.ExpressionStmt
+                {
+                  AST.expr =
+                    AST.Array [ { expr = AST.Identifier "george"; _ }; { expr = AST.Identifier "promoted_george"; _ } ];
+                  _;
+                };
+            _;
+          };
+        ] ->
+        true
+    | _ -> false
+
+  let%test "array literal receiver with lambda call parses" =
+    match
+      parse_surface ~file_id:"<test>"
+        "let george = { name: \"g\" }\nlet promoted_george = { name: \"p\" }\n[george, promoted_george].foreach((m) => puts(m.name))"
+    with
+    | Ok result -> (
+        match result.program with
+        | [ _; _; { Surface.std_decl = Surface.SExpressionStmt expr; _ } ] -> (
+            match expr.se_expr with
+            | Surface.SEMethodCall
+                {
+                  se_receiver = { se_expr = Surface.SEArray [ _; _ ]; _ };
+                  se_method = "foreach";
+                  _;
+                } ->
+                true
+            | _ -> false)
+        | _ -> false)
+    | Error _ -> false
 
   let%test "test_index_expressions" =
     [
