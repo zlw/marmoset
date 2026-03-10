@@ -284,6 +284,18 @@ fn rate_banana_count(n: Int) -> Str = match n {
   case _: "acceptable"
 }
 
+fn check_status(m: Monkey) -> Mood = {
+  if (m.bananas_eaten == 0) {
+    Mood.Hangry
+  } else {
+    if (m.is_alpha) {
+      Mood.Philosophical
+    } else {
+      Mood.Happy
+    }
+  }
+}
+
 # match inside a block body
 fn judge_monkey(m: Monkey) -> Str = {
   let status = check_status(m)
