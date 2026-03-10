@@ -725,13 +725,15 @@ type 'a infer_result = ('a, Diagnostic.t) result
    but falling back to fresh_type_var for other annotation errors *)
 let annotation_or_fresh te =
   match Annotation.type_expr_to_mono_type te with
-  | Error d when d.Diagnostic.code = "type-open-row-rejected" -> Error d
+  | Error d when d.Diagnostic.code = "type-open-row-rejected" || d.Diagnostic.code = "type-intersection-invalid" ->
+      Error d
   | Error _ -> Ok (fresh_type_var ())
   | Ok t -> Ok t
 
 let annotation_with_bindings_or_fresh (type_bindings : (string * mono_type) list) te =
   match Annotation.type_expr_to_mono_type_with type_bindings te with
-  | Error d when d.Diagnostic.code = "type-open-row-rejected" -> Error d
+  | Error d when d.Diagnostic.code = "type-open-row-rejected" || d.Diagnostic.code = "type-intersection-invalid" ->
+      Error d
   | Error _ -> Ok (fresh_type_var ())
   | Ok t -> Ok t
 
@@ -1452,10 +1454,37 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
             match infer_expression type_map env receiver with
             | Error e -> Error e
             | Ok (subst1, receiver_type) ->
-                let receiver_type' = apply_substitution subst1 receiver_type in
+                let receiver_type' = canonicalize_mono_type (apply_substitution subst1 receiver_type) in
                 (* Exact record access *)
                 let lookup_field fields =
                   List.find_opt (fun (f : Types.record_field_type) -> f.name = variant_name) fields
+                in
+                let resolve_consistent_field_type
+                    ~(diagnostic_code : string)
+                    ~(conflict_message : string)
+                    (candidates : Types.mono_type list) : (Types.mono_type, Diagnostic.t) result =
+                  match candidates with
+                  | [] ->
+                      Error
+                        (error_at ~code:diagnostic_code
+                           ~message:
+                             (Printf.sprintf "Field '%s' is not guaranteed by every member of intersection %s"
+                                variant_name (Types.to_string receiver_type'))
+                           expr)
+                  | first_type :: rest ->
+                      let rec unify_candidates current_type subst_acc = function
+                        | [] -> Ok (apply_substitution subst_acc current_type |> canonicalize_mono_type)
+                        | candidate_type :: tail -> (
+                            let lhs = apply_substitution subst_acc current_type in
+                            let rhs = apply_substitution subst_acc candidate_type in
+                            match unify lhs rhs with
+                            | Ok subst' ->
+                                let composed = compose_substitution subst_acc subst' in
+                                let next = apply_substitution composed current_type in
+                                unify_candidates next composed tail
+                            | Error _ -> Error (error_at ~code:diagnostic_code ~message:conflict_message expr))
+                      in
+                      unify_candidates first_type empty_substitution rest
                 in
                 let field_result =
                   match receiver_type' with
@@ -1464,7 +1493,7 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                         (error_at ~code:"type-trait-object-field-access"
                            ~message:
                              (Printf.sprintf
-                                "Field access is not supported on %s; Dyn[...] only exposes trait methods"
+                             "Field access is not supported on %s; Dyn[...] only exposes trait methods"
                                 (Types.to_string receiver_type'))
                            expr)
                   | TRecord (fields, row) -> (
@@ -1498,6 +1527,39 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                                      (Printf.sprintf "Record field '%s' not found in type %s" variant_name
                                         (Types.to_string receiver_type'))
                                    expr)))
+                  | TIntersection members -> (
+                      let member_field_types =
+                        List.fold_left
+                          (fun acc member ->
+                            match (acc, member) with
+                            | Error _ as err, _ -> err
+                            | Ok collected, TRecord (fields, _row) -> (
+                                match lookup_field fields with
+                                | Some field -> Ok (field.typ :: collected)
+                                | None -> Ok [])
+                            | Ok _, _ -> Ok [])
+                          (Ok []) members
+                      in
+                      match member_field_types with
+                      | Error diag -> Error diag
+                      | Ok field_types ->
+                          let field_types = List.rev field_types in
+                          if List.length field_types <> List.length members then
+                            Error
+                              (error_at ~code:"type-intersection-field-access"
+                                 ~message:
+                                   (Printf.sprintf
+                                      "Field '%s' is not guaranteed by every member of intersection %s"
+                                      variant_name (Types.to_string receiver_type'))
+                                 expr)
+                          else
+                            resolve_consistent_field_type ~diagnostic_code:"type-intersection-field-access"
+                              ~conflict_message:
+                                (Printf.sprintf
+                                   "Field '%s' has conflicting types across members of intersection %s"
+                                   variant_name (Types.to_string receiver_type'))
+                              field_types
+                            |> Result.map (fun field_type -> (subst1, field_type)))
                   | TVar _ -> (
                       match receiver_type' with
                       | TVar type_var_name -> (
@@ -3459,7 +3521,7 @@ and infer_statement type_map env stmt =
               Ok (normalize_union converted)
           | AST.TIntersection types ->
               let* converted = map_result convert types in
-              Ok (normalize_intersection converted)
+              Annotation.validate_intersection_type converted
           | AST.TRecord (_fields, _row) -> enum_err "Record types not yet implemented in enum definition"
         in
         convert te
@@ -3524,7 +3586,7 @@ and infer_statement type_map env stmt =
               Ok (normalize_union converted)
           | AST.TIntersection types ->
               let* converted = map_result convert types in
-              Ok (normalize_intersection converted)
+              Annotation.validate_intersection_type converted
           | AST.TRecord (fields, row) ->
               let* field_types =
                 map_result
@@ -4366,8 +4428,13 @@ and infer_statement type_map env stmt =
           else
             Ok (empty_substitution, TNull))
   | AST.TypeAlias _ ->
-      (* Type aliases are registered for annotation/type conversion *)
-      (* Runtime value is unit-like *)
+      let alias_def =
+        match stmt.stmt with
+        | AST.TypeAlias alias_def -> alias_def
+        | _ -> failwith "impossible"
+      in
+      let type_bindings = List.map (fun name -> (name, TVar name)) alias_def.alias_type_params in
+      let* _validated = Annotation.type_expr_to_mono_type_with type_bindings alias_def.alias_body in
       Ok (empty_substitution, TNull)
 
 (* Record metadata-only trait-object packaging sites for explicit returns and
@@ -4813,10 +4880,18 @@ and infer_block type_map env stmts =
                 if let_binding.name = "_" then
                   env_subst
                 else
+                  let binding_type =
+                    match let_binding.type_annotation with
+                    | None -> stmt_type
+                    | Some type_expr -> (
+                        match Annotation.type_expr_to_mono_type type_expr with
+                        | Ok annotated_type -> annotated_type
+                        | Error _ -> stmt_type)
+                  in
                   let poly =
                     match let_binding.value.expr with
-                    | AST.RecordLit _ | AST.FieldAccess _ -> mono_to_poly stmt_type
-                    | _ -> generalize env_subst stmt_type
+                    | AST.RecordLit _ | AST.FieldAccess _ -> mono_to_poly binding_type
+                    | _ -> generalize env_subst binding_type
                   in
                   TypeEnv.add let_binding.name poly env_subst
             | _ -> apply_substitution_env subst1 env
@@ -4967,11 +5042,19 @@ let infer_program ?(env = empty_env) ?state (program : AST.program) :
                 if let_binding.name = "_" then
                   env
                 else
+                  let binding_type =
+                    match let_binding.type_annotation with
+                    | None -> stmt_type
+                    | Some type_expr -> (
+                        match Annotation.type_expr_to_mono_type type_expr with
+                        | Ok annotated_type -> annotated_type
+                        | Error _ -> stmt_type)
+                  in
                   let env_for_generalize = TypeEnv.remove let_binding.name env in
                   let poly =
                     match let_binding.value.expr with
-                    | AST.RecordLit _ | AST.FieldAccess _ -> mono_to_poly stmt_type
-                    | _ -> generalize env_for_generalize stmt_type
+                    | AST.RecordLit _ | AST.FieldAccess _ -> mono_to_poly binding_type
+                    | _ -> generalize env_for_generalize binding_type
                   in
                   TypeEnv.add let_binding.name poly env
             | _ -> env

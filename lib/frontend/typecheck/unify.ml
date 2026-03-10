@@ -30,6 +30,8 @@ let fresh_row_var () =
    4. Otherwise, the types don't match - return error
 *)
 let rec unify (type1 : mono_type) (type2 : mono_type) : (substitution, Diagnostic.t) result =
+  let type1 = canonicalize_mono_type type1 in
+  let type2 = canonicalize_mono_type type2 in
   match (type1, type2) with
   (* Identical types - nothing to do *)
   | TInt, TInt -> Ok empty_substitution
@@ -65,6 +67,9 @@ let rec unify (type1 : mono_type) (type2 : mono_type) : (substitution, Diagnosti
         Ok empty_substitution
       else
         Error (type_mismatch type1 type2)
+  | TIntersection members1, TIntersection members2 -> unify_intersection_with_intersection members1 members2
+  | concrete, TIntersection members -> unify_concrete_with_intersection concrete members
+  | TIntersection members, concrete -> unify_concrete_with_intersection concrete members
   (* Enum types - unify name and all type arguments *)
   | TEnum (name1, args1), TEnum (name2, args2) ->
       if name1 <> name2 then
@@ -229,6 +234,54 @@ and unify_union_with_union (members1 : mono_type list) (members2 : mono_type lis
     unify_all empty_substitution members1 members2
   else
     Error (type_mismatch (TUnion members1) (TUnion members2))
+
+and unify_concrete_with_intersection (concrete : mono_type) (members : mono_type list) :
+    (substitution, Diagnostic.t) result =
+  let unify_record_with_required_fields
+      (actual_fields : record_field_type list)
+      (expected_fields : record_field_type list) : (substitution, Diagnostic.t) result =
+    let field_lookup fields name = List.find_opt (fun (f : record_field_type) -> f.name = name) fields in
+    let rec loop subst = function
+      | [] -> Ok subst
+      | expected_field :: rest -> (
+          match field_lookup actual_fields expected_field.name with
+          | None -> Error (type_mismatch concrete (TIntersection members))
+          | Some actual_field ->
+              let actual_type = apply_substitution subst actual_field.typ in
+              let expected_type = apply_substitution subst expected_field.typ in
+              match unify actual_type expected_type with
+              | Error _ -> Error (type_mismatch concrete (TIntersection members))
+              | Ok subst' ->
+                  let composed = compose_substitution subst subst' in
+                  loop composed rest)
+    in
+    loop empty_substitution expected_fields
+  in
+  let rec unify_all subst = function
+    | [] -> Ok subst
+    | member :: rest -> (
+        let concrete' = apply_substitution subst concrete in
+        let member' = apply_substitution subst member in
+        let member_subst_result =
+          match (concrete', member') with
+          | TRecord (actual_fields, _), TRecord (expected_fields, _) ->
+              unify_record_with_required_fields actual_fields expected_fields
+          | _ -> unify concrete' member'
+        in
+        match member_subst_result with
+        | Error _ -> Error (type_mismatch concrete (TIntersection members))
+        | Ok subst' ->
+            let composed = compose_substitution subst subst' in
+            unify_all composed rest)
+  in
+  unify_all empty_substitution members
+
+and unify_intersection_with_intersection (members1 : mono_type list) (members2 : mono_type list) :
+    (substitution, Diagnostic.t) result =
+  if List.length members1 <> List.length members2 then
+    Error (type_mismatch (TIntersection members1) (TIntersection members2))
+  else
+    unify_list members1 members2
 
 (* Bind a type variable to a type.
    Performs the occurs check to prevent infinite types. *)
@@ -454,4 +507,34 @@ let%test "unify union with type variable" =
   (* 'a unifies with int | string, binding 'a to union *)
   match unify (TVar "a") (TUnion [ TInt; TString ]) with
   | Ok subst -> apply_substitution subst (TVar "a") = TUnion [ TInt; TString ]
+  | Error _ -> false
+
+let%test "unify concrete record with record intersection" =
+  let concrete =
+    TRecord ([ { name = "x"; typ = TInt }; { name = "y"; typ = TString } ], None)
+  in
+  let intersection =
+    TIntersection
+      [
+        TRecord ([ { name = "x"; typ = TInt } ], None);
+        TRecord ([ { name = "x"; typ = TInt }; { name = "y"; typ = TString } ], None);
+      ]
+  in
+  match unify concrete intersection with
+  | Ok _ -> true
+  | Error _ -> false
+
+let%test "unify record intersection with concrete record" =
+  let concrete =
+    TRecord ([ { name = "x"; typ = TInt }; { name = "y"; typ = TString } ], None)
+  in
+  let intersection =
+    TIntersection
+      [
+        TRecord ([ { name = "x"; typ = TInt } ], None);
+        TRecord ([ { name = "x"; typ = TInt }; { name = "y"; typ = TString } ], None);
+      ]
+  in
+  match unify intersection concrete with
+  | Ok _ -> true
   | Error _ -> false

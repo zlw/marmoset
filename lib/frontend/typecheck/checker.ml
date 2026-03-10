@@ -1366,3 +1366,71 @@ let%test "followup B3: Dyn rejects method-generic dispatch" =
   match check_string ~env:(Builtins.prelude_env ()) ~file_id:"main.mr" code with
   | Ok _ -> false
   | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-trait-object-object-unsafe") diags
+
+let%test "followup C2: record intersections allow field access guaranteed by every member" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  let code =
+    {|
+      let value: ({ x: Int, y: Str } & { x: Int }) = { x: 1, y: "ok" }
+      value.x
+    |}
+  in
+  match check_string ~file_id:"main.mr" code with
+  | Ok result -> result.result_type = Types.TInt
+  | Error _ -> false
+
+let%test "followup C2: record intersections reject field access not guaranteed by every member" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  let code =
+    {|
+      let value: ({ x: Int, y: Str } & { x: Int }) = { x: 1, y: "ok" }
+      value.y
+    |}
+  in
+  match check_string ~file_id:"main.mr" code with
+  | Ok _ -> false
+  | Error diags ->
+      List.exists
+        (fun (diag : Diagnostic.t) ->
+          diag.code = "type-intersection-field-access"
+          && String_utils.contains_substring ~needle:"every member" diag.message)
+        diags
+
+let%test "followup C2: intersections reject mixed Dyn and non-Dyn members" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  let code =
+    {|
+      let value: Dyn[Show] & Int = 42
+      value
+    |}
+  in
+  match check_string ~env:(Builtins.prelude_env ()) ~file_id:"main.mr" code with
+  | Ok _ -> false
+  | Error diags ->
+      List.exists
+        (fun (diag : Diagnostic.t) ->
+          diag.code = "type-annotation-invalid"
+          && String_utils.contains_substring ~needle:"Dyn[...]" diag.message
+          && String_utils.contains_substring ~needle:"non-Dyn" diag.message)
+        diags
+
+let%test "followup C2: intersections reject multi-member callable types" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  let code =
+    {|
+      let f: ((Int) -> Int) & Bool = (x: Int) -> x
+      f
+    |}
+  in
+  match check_string ~file_id:"main.mr" code with
+  | Ok _ -> false
+  | Error diags ->
+      List.exists
+        (fun (diag : Diagnostic.t) ->
+          diag.code = "type-annotation-invalid"
+          && String_utils.contains_substring ~needle:"callable intersections" diag.message)
+        diags

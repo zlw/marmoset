@@ -85,6 +85,157 @@ let type_position_error_for_constructor (name : string) : string =
   else
     "Unknown type constructor: " ^ name
 
+let trait_object_traits_allowed (traits : string list) : bool =
+  traits <> []
+  &&
+  List.for_all
+    (fun trait_name ->
+      match Trait_registry.trait_kind trait_name with
+      | Some Trait_registry.MethodOnly | Some Trait_registry.Mixed -> true
+      | Some Trait_registry.FieldOnly | None -> false)
+    traits
+
+let normalized_trait_object_membership (traits : string list) : string list =
+  traits
+  |> List.concat_map Trait_registry.trait_with_supertraits
+  |> List.map Trait_registry.canonical_trait_name
+  |> List.sort_uniq String.compare
+
+let intersection_has_mixed_dyn_members (members : Types.mono_type list) : bool =
+  let has_dyn = List.exists (function Types.TTraitObject _ -> true | _ -> false) members in
+  let has_non_dyn = List.exists (function Types.TTraitObject _ -> false | _ -> true) members in
+  has_dyn && has_non_dyn
+
+let is_callable_type = function
+  | Types.TFun _ -> true
+  | _ -> false
+
+let rec member_is_subtype_of (actual : Types.mono_type) (expected : Types.mono_type) : bool =
+  match (actual, expected) with
+  | Types.TVar a, Types.TVar b -> a = b
+  | Types.TRowVar a, Types.TRowVar b -> a = b
+  | Types.TTraitObject actual_traits, Types.TTraitObject expected_traits ->
+      let actual_members = normalized_trait_object_membership actual_traits in
+      let expected_members = normalized_trait_object_membership expected_traits in
+      trait_object_traits_allowed actual_traits
+      && trait_object_traits_allowed expected_traits
+      && List.for_all
+           (fun trait_name -> List.mem (Trait_registry.canonical_trait_name trait_name) actual_members)
+           expected_members
+  | concrete, Types.TTraitObject expected_traits ->
+      trait_object_traits_allowed expected_traits
+      &&
+      List.for_all
+        (fun trait_name -> Trait_solver.satisfies_trait_bool concrete trait_name)
+        (Types.normalize_trait_object_traits expected_traits)
+  | Types.TInt, Types.TInt -> true
+  | Types.TFloat, Types.TFloat -> true
+  | Types.TBool, Types.TBool -> true
+  | Types.TString, Types.TString -> true
+  | Types.TNull, Types.TNull -> true
+  | Types.TArray elem1, Types.TArray elem2 -> member_is_subtype_of elem1 elem2
+  | Types.THash (k1, v1), Types.THash (k2, v2) -> member_is_subtype_of k1 k2 && member_is_subtype_of v1 v2
+  | Types.TRecord (fields1, row1), Types.TRecord (fields2, row2) -> (
+      let field_lookup fields name = List.find_opt (fun (f : Types.record_field_type) -> f.name = name) fields in
+      let fields_ok =
+        List.for_all
+          (fun (expected_f : Types.record_field_type) ->
+            match field_lookup fields1 expected_f.name with
+            | None -> false
+            | Some actual_f -> member_is_subtype_of actual_f.typ expected_f.typ)
+          fields2
+      in
+      if not fields_ok then
+        false
+      else
+        let has_extra_fields =
+          List.exists (fun (f : Types.record_field_type) -> field_lookup fields2 f.name = None) fields1
+        in
+        match row2 with
+        | Some _ -> true
+        | None ->
+            if has_extra_fields then
+              match row1 with
+              | Some _ -> false
+              | None -> false
+            else
+              true)
+  | Types.TFun (p1, r1, eff1), Types.TFun (p2, r2, eff2) ->
+      eff1 = eff2 && member_is_subtype_of p2 p1 && member_is_subtype_of r1 r2
+  | Types.TEnum (name1, args1), Types.TEnum (name2, args2) ->
+      name1 = name2 && List.length args1 = List.length args2 && List.for_all2 member_is_subtype_of args1 args2
+  | Types.TUnion members1, Types.TUnion members2 ->
+      List.for_all (fun m1 -> List.exists (member_is_subtype_of m1) members2) members1
+  | concrete, Types.TUnion members -> List.exists (member_is_subtype_of concrete) members
+  | Types.TUnion members, concrete -> List.for_all (fun member -> member_is_subtype_of member concrete) members
+  | _ -> false
+
+let validate_record_intersection_members (members : Types.mono_type list) : (unit, Diagnostic.t) result =
+  let intersection_error message = Error (Diagnostic.error_no_span ~code:"type-annotation-invalid" ~message) in
+  let merged_fields : (string, Types.mono_type) Hashtbl.t = Hashtbl.create 8 in
+  let choose_field_type field_name existing incoming =
+    if member_is_subtype_of existing incoming then
+      Ok existing
+    else if member_is_subtype_of incoming existing then
+      Ok incoming
+    else
+      intersection_error
+        (Printf.sprintf "Record intersection field '%s' has incompatible types %s and %s" field_name
+           (Types.to_string existing) (Types.to_string incoming))
+  in
+  let rec add_fields = function
+    | [] -> Ok ()
+    | Types.TRecord (fields, None) :: rest ->
+        let rec add_record_fields = function
+          | [] -> add_fields rest
+          | (field : Types.record_field_type) :: field_rest -> (
+              match Hashtbl.find_opt merged_fields field.name with
+              | None ->
+                  Hashtbl.replace merged_fields field.name field.typ;
+                  add_record_fields field_rest
+              | Some existing -> (
+                  match choose_field_type field.name existing field.typ with
+                  | Error _ as err -> err
+                  | Ok merged ->
+                      Hashtbl.replace merged_fields field.name merged;
+                      add_record_fields field_rest))
+        in
+        add_record_fields fields
+    | Types.TRecord (_, Some _) :: _ ->
+        intersection_error "Open-record intersections are not supported in v1"
+    | _ -> intersection_error "Internal error: expected only record members in record intersection merge"
+  in
+  add_fields members
+
+let validate_intersection_type (members : Types.mono_type list) : (Types.mono_type, Diagnostic.t) result =
+  let normalized = Types.normalize_intersection members in
+  match normalized with
+  | Types.TIntersection normalized_members ->
+      if intersection_has_mixed_dyn_members normalized_members then
+        Error
+          (Diagnostic.error_no_span ~code:"type-annotation-invalid"
+             ~message:
+               "Intersection types may not mix Dyn[...] members with non-Dyn members in v1. Split the annotation or use a single Dyn[...] trait set.")
+      else
+        (match normalized_members with
+        | many when List.for_all (function Types.TRecord _ -> true | _ -> false) many ->
+            let* () = validate_record_intersection_members many in
+            Ok (Types.TIntersection many)
+        | many when List.exists is_callable_type many ->
+            Error
+              (Diagnostic.error_no_span ~code:"type-annotation-invalid"
+                 ~message:
+                   "General callable intersections are not supported in v1 unless normalization leaves a single callable type.")
+        | many ->
+            Error
+              (Diagnostic.error_no_span ~code:"type-annotation-invalid"
+                 ~message:
+                   (Printf.sprintf
+                      "Unsupported intersection in v1: %s. v1 supports compatible record meets, Dyn[...] trait-set merging, and intersections that simplify to a single member."
+                      (Types.to_string (Types.TIntersection many)))))
+  | Types.TFun _ as callable -> Ok callable
+  | other -> Ok other
+
 let rec type_expr_to_mono_type_with
     (type_bindings : (string * Types.mono_type) list) (te : Syntax.Ast.AST.type_expr) :
     (Types.mono_type, Diagnostic.t) result =
@@ -176,7 +327,7 @@ let rec type_expr_to_mono_type_with
       Ok (Types.normalize_union mono_types)
   | Syntax.Ast.AST.TIntersection type_exprs ->
       let* mono_types = map_result (type_expr_to_mono_type_with type_bindings) type_exprs in
-      Ok (Types.normalize_intersection mono_types)
+      validate_intersection_type mono_types
   | Syntax.Ast.AST.TRecord (fields, row_var) -> (
       match row_var with
       | Some _ ->
@@ -224,27 +375,15 @@ let rec mono_types_equal (t1 : Types.mono_type) (t2 : Types.mono_type) : bool =
       | _ -> false)
   | Types.TRowVar r1, Types.TRowVar r2 -> r1 = r2
   | Types.TFun (p1, r1, _), Types.TFun (p2, r2, _) -> mono_types_equal p1 p2 && mono_types_equal r1 r2
+  | Types.TTraitObject traits1, Types.TTraitObject traits2 ->
+      Types.normalize_trait_object_traits traits1 = Types.normalize_trait_object_traits traits2
   | Types.TUnion t1s, Types.TUnion t2s ->
+      List.length t1s = List.length t2s && List.for_all2 mono_types_equal t1s t2s
+  | Types.TIntersection t1s, Types.TIntersection t2s ->
       List.length t1s = List.length t2s && List.for_all2 mono_types_equal t1s t2s
   | Types.TEnum (name1, args1), Types.TEnum (name2, args2) ->
       name1 = name2 && List.length args1 = List.length args2 && List.for_all2 mono_types_equal args1 args2
   | _ -> false
-
-let trait_object_traits_allowed (traits : string list) : bool =
-  traits <> []
-  &&
-  List.for_all
-    (fun trait_name ->
-      match Trait_registry.trait_kind trait_name with
-      | Some Trait_registry.MethodOnly | Some Trait_registry.Mixed -> true
-      | Some Trait_registry.FieldOnly | None -> false)
-    traits
-
-let normalized_trait_object_membership (traits : string list) : string list =
-  traits
-  |> List.concat_map Trait_registry.trait_with_supertraits
-  |> List.map Trait_registry.canonical_trait_name
-  |> List.sort_uniq String.compare
 
 (* Check if actual_type is a subtype of expected_type.
    This is used for return type checking where we need to ensure the actual
@@ -263,6 +402,14 @@ let rec is_subtype_of (actual : Types.mono_type) (expected : Types.mono_type) : 
      explicit unification when appropriate. *)
   | Types.TVar a, Types.TVar b -> a = b
   | Types.TRowVar a, Types.TRowVar b -> a = b
+  | Types.TRecord (actual_fields, _), Types.TIntersection members ->
+      List.for_all
+        (function
+          | Types.TRecord (expected_fields, _) -> record_satisfies_required_fields actual_fields expected_fields
+          | member -> member_is_subtype_of actual member)
+        members
+  | actual, Types.TIntersection members -> List.for_all (fun member -> member_is_subtype_of actual member) members
+  | Types.TIntersection members, expected -> List.exists (fun member -> member_is_subtype_of member expected) members
   | Types.TTraitObject actual_traits, Types.TTraitObject expected_traits ->
       let actual_members = normalized_trait_object_membership actual_traits in
       let expected_members = normalized_trait_object_membership expected_traits in
@@ -329,6 +476,17 @@ let rec is_subtype_of (actual : Types.mono_type) (expected : Types.mono_type) : 
   | Types.TUnion members, concrete -> List.for_all (fun m -> is_subtype_of m concrete) members
   (* Different concrete types *)
   | _ -> false
+
+and record_satisfies_required_fields
+    (actual_fields : Types.record_field_type list)
+    (expected_fields : Types.record_field_type list) : bool =
+  let field_lookup fields name = List.find_opt (fun (f : Types.record_field_type) -> f.name = name) fields in
+  List.for_all
+    (fun (expected_f : Types.record_field_type) ->
+      match field_lookup actual_fields expected_f.name with
+      | None -> false
+      | Some actual_f -> member_is_subtype_of actual_f.typ expected_f.typ)
+    expected_fields
 
 (* Check if annotation matches inferred type *)
 let check_annotation (annot_type : Types.mono_type) (inferred_type : Types.mono_type) : bool =
@@ -544,6 +702,82 @@ let%test "is_subtype_of: TVar only matches same TVar name" =
 
 let%test "is_subtype_of: concrete does not subtype unresolved TVar" =
   not (is_subtype_of Types.TInt (Types.TVar "a"))
+
+let%test "intersection annotation rejects mixed Dyn and non-Dyn members" =
+  match
+    type_expr_to_mono_type
+      (Syntax.Ast.AST.TIntersection [ Syntax.Ast.AST.TTraitObject [ "Show" ]; Syntax.Ast.AST.TCon "Int" ])
+  with
+  | Error d ->
+      d.code = "type-annotation-invalid"
+      && Diagnostics.String_utils.contains_substring ~needle:"Dyn[...]" d.message
+      && Diagnostics.String_utils.contains_substring ~needle:"non-Dyn" d.message
+  | Ok _ -> false
+
+let%test "intersection annotation rejects general callable intersections" =
+  match
+    type_expr_to_mono_type
+      (Syntax.Ast.AST.TIntersection
+         [
+           Syntax.Ast.AST.TArrow ([ Syntax.Ast.AST.TCon "Int" ], Syntax.Ast.AST.TCon "Int", false);
+           Syntax.Ast.AST.TCon "Bool";
+         ])
+  with
+  | Error d ->
+      d.code = "type-annotation-invalid"
+      && Diagnostics.String_utils.contains_substring ~needle:"callable intersections" d.message
+  | Ok _ -> false
+
+let%test "intersection annotation preserves compatible record members" =
+  match
+    type_expr_to_mono_type
+      (Syntax.Ast.AST.TIntersection
+         [
+           Syntax.Ast.AST.TRecord ([ { field_name = "x"; field_type = Syntax.Ast.AST.TCon "Int" } ], None);
+           Syntax.Ast.AST.TRecord ([ { field_name = "y"; field_type = Syntax.Ast.AST.TCon "Str" } ], None);
+         ])
+  with
+  | Ok
+      (Types.TIntersection
+        [ Types.TRecord ([ { Types.name = "x"; typ = Types.TInt } ], None);
+          Types.TRecord ([ { Types.name = "y"; typ = Types.TString } ], None) ]) ->
+      true
+  | _ -> false
+
+let%test "intersection annotation rejects unsupported non-record intersections" =
+  match
+    type_expr_to_mono_type
+      (Syntax.Ast.AST.TIntersection [ Syntax.Ast.AST.TCon "Int"; Syntax.Ast.AST.TUnion [ Syntax.Ast.AST.TCon "Int"; Syntax.Ast.AST.TCon "Str" ] ])
+  with
+  | Error d ->
+      d.code = "type-annotation-invalid"
+      && Diagnostics.String_utils.contains_substring ~needle:"Unsupported intersection" d.message
+  | _ -> false
+
+let%test "is_subtype_of: concrete record satisfies record intersection" =
+  let actual =
+    Types.TRecord
+      ([ { Types.name = "x"; typ = Types.TInt }; { Types.name = "y"; typ = Types.TString } ], None)
+  in
+  let expected =
+    Types.TIntersection
+      [
+        Types.TRecord ([ { Types.name = "x"; typ = Types.TInt } ], None);
+        Types.TRecord ([ { Types.name = "y"; typ = Types.TString } ], None);
+      ]
+  in
+  is_subtype_of actual expected
+
+let%test "is_subtype_of: intersection is subtype of one guaranteed member" =
+  let actual =
+    Types.TIntersection
+      [
+        Types.TRecord ([ { Types.name = "x"; typ = Types.TInt } ], None);
+        Types.TRecord ([ { Types.name = "y"; typ = Types.TString } ], None);
+      ]
+  in
+  let expected = Types.TRecord ([ { Types.name = "x"; typ = Types.TInt } ], None) in
+  is_subtype_of actual expected
 
 (* Phase 3: effectful function type annotation *)
 let%test "Phase3: TArrow pure converts to TFun false" =
