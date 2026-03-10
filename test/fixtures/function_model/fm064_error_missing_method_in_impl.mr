@@ -1,10 +1,10 @@
-trait full[a] {
-  fn method_a(x: a) -> int
-  fn method_b(x: a) -> string
+trait Full[a] = {
+  fn method_a(x: a) -> Int
+  fn method_b(x: a) -> Str
 }
 
-type thing = { v: int }
+type Thing = { v: Int }
 
-impl full for thing {  # error: *
-  fn method_a(x: thing) -> int { x.v }
+impl Full[Thing] = {  # error: *
+  fn method_a(x: Thing) -> Int = { x.v }
 }

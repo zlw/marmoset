@@ -1,12 +1,12 @@
-trait empty_trait[a] {
-  fn exists(x: a) -> bool
+trait EmptyTrait[a] = {
+  fn exists(x: a) -> Bool
 }
 
-type thing = { v: int }
+type Thing = { v: Int }
 
-impl empty_trait for thing {
-  fn exists(x: thing) -> bool { true }
+impl EmptyTrait[Thing] = {
+  fn exists(x: Thing) -> Bool = { true }
 }
 
-let t: thing = { v: 0 }
-empty_trait.nonexistent(t)  # error: *
+let t: Thing = { v: 0 }
+EmptyTrait.nonexistent(t)  # error: *

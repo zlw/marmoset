@@ -1,10 +1,10 @@
-type config = { value: int }
+type Config = { value: Int }
 
-impl config {
-  fn map_value[b](c: config, f: fn(int) -> b) -> b {
+impl Config = {
+  fn map_value[b](c: Config, f: (Int) -> b) -> b = {
     f(c.value)
   }
 }
 
-let cfg: config = { value: 99 }
-puts(cfg.map_value(fn(n: int) -> string { n.show() }))  # output: 99
+let cfg: Config = { value: 99 }
+puts(cfg.map_value((n: Int) -> n.show()))  # output: 99

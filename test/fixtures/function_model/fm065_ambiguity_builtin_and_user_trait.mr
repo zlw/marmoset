@@ -1,5 +1,5 @@
-impl int {
-  fn show(x: int) -> string {
+impl Int = {
+  fn show(x: Int) -> Str = {
     "custom:" + x.show()
   }
 }

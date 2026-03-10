@@ -1,13 +1,11 @@
-enum opt[a] { some(a) none }
+enum Opt[a] = { Some(a), None }
 
-impl opt[a] {
-  fn and_then[b](o: opt[a], f: fn(a) -> opt[b]) -> opt[b] {
-    match o {
-      opt.some(v): f(v)
-      opt.none: opt.none
-    }
+impl[a] Opt[a] = {
+  fn and_then[b](o: Opt[a], f: (a) -> Opt[b]) -> Opt[b] = match o {
+    case Opt.Some(v): f(v)
+    case Opt.None: Opt.None
   }
 }
 
-let x = opt.some(42)
-let y = x.and_then(fn(n: int) -> opt[string] { opt.some(n.show()) })
+let x = Opt.Some(42)
+let y = x.and_then((n: Int) -> Opt.Some(n.show()))

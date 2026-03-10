@@ -1,15 +1,15 @@
-type box = { v: int }
+type Box = { v: Int }
 
-impl box {
-  fn transform[b](bx: box, f: fn(int) -> b) -> b {
+impl Box = {
+  fn transform[b](bx: Box, f: (Int) -> b) -> b = {
     f(bx.v)
   }
 }
 
-let b: box = { v: 10 }
+let b: Box = { v: 10 }
 # inferred
-let r1 = b.transform(fn(n: int) -> string { n.show() })
+let r1 = b.transform((n: Int) -> n.show())
 # explicit
-let r2 = b.transform[int](fn(n: int) -> int { n + 1 })
+let r2 = b.transform[Int]((n: Int) -> n + 1)
 puts(r1)  # output: 10
 puts(r2)  # output: 11

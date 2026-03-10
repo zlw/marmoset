@@ -1,11 +1,11 @@
-type wrapper = { v: int }
+type Wrapper = { v: Int }
 
-impl wrapper {
-  fn transform[b](w: wrapper, f: fn(int) -> b) -> b {
+impl Wrapper = {
+  fn transform[b](w: Wrapper, f: (Int) -> b) -> b = {
     f(w.v)
   }
 }
 
-let w: wrapper = { v: 10 }
-let s = w.transform(fn(n: int) -> string { n.show() })
+let w: Wrapper = { v: 10 }
+let s = w.transform((n: Int) -> n.show())
 puts(s)  # output: 10

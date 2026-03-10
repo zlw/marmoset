@@ -1,13 +1,11 @@
-enum result[a, b] { ok(a) err(b) }
+enum Result[a, b] = { Ok(a), Err(b) }
 
-impl result[a, b] {
-  fn map[c](r: result[a, b], f: fn(a) -> c) -> result[c, b] {
-    match r {
-      result.ok(v): result.ok(f(v))
-      result.err(e): result.err(e)
-    }
+impl[a, b] Result[a, b] = {
+  fn map[c](r: Result[a, b], f: (a) -> c) -> Result[c, b] = match r {
+    case Result.Ok(v): Result.Ok(f(v))
+    case Result.Err(e): Result.Err(e)
   }
 }
 
-let r = result.ok(42)
-let r2 = r.map(fn(n: int) -> string { n.show() })
+let r = Result.Ok(42)
+let r2 = r.map((n: Int) -> n.show())

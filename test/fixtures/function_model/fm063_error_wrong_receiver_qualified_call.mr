@@ -1,16 +1,16 @@
 # FM63: Qualified trait call with structural type equivalence
-# In structural type systems alpha and beta are the same type ({v: int}),
+# In structural type systems Alpha and Beta are the same type ({v: Int}),
 # so label impl for alpha applies to beta too.
-type alpha = { v: int }
-type beta = { v: int }
+type Alpha = { v: Int }
+type Beta = { v: Int }
 
-trait label[a] {
-  fn tag(x: a) -> string
+trait Label[a] = {
+  fn tag(x: a) -> Str
 }
 
-impl label for alpha {
-  fn tag(x: alpha) -> string { "alpha" }
+impl Label[Alpha] = {
+  fn tag(x: Alpha) -> Str = { "alpha" }
 }
 
-let b: beta = { v: 1 }
-puts(label.tag(b))  # output: alpha
+let b: Beta = { v: 1 }
+puts(Label.tag(b))  # output: alpha
