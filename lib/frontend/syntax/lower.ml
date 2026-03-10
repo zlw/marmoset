@@ -579,11 +579,6 @@ let lower_top_decl_with_ctx
       | _ -> lower_inherent_impl_decl impl_head_type impl_methods)
   | Surface.SInherentImplDef { inherent_for_type; inherent_methods } ->
       lower_inherent_impl_decl inherent_for_type inherent_methods
-  | Surface.SDeriveDef { derive_traits; derive_for_type } ->
-      [
-        AST.mk_stmt ~pos ~end_pos ~file_id
-          (AST.DeriveDef { derive_traits; derive_for_type = lower_type_expr derive_for_type });
-      ]
   | Surface.SExpressionStmt e ->
       [ AST.mk_stmt ~pos ~end_pos ~file_id (AST.ExpressionStmt (lower_expr id_supply e)) ]
   | Surface.SReturn e -> [ AST.mk_stmt ~pos ~end_pos ~file_id (AST.Return (lower_expr id_supply e)) ]
@@ -686,28 +681,6 @@ let%test "Phase2: alias type params lower lowercase names to TVars in alias bodi
            alias_type_params = [ "a" ];
            alias_body = AST.TArrow ([ AST.TVar "a"; AST.TVar "a" ], AST.TVar "a", false);
          };
-     _;
-   };
-  ] ->
-      true
-  | _ -> false
-
-let%test "lower SDeriveDef" =
-  let id_supply = Id_supply.Id_supply.create 0 in
-  let decl =
-    Surface.SDeriveDef
-      {
-        derive_traits = [ AST.{ derive_trait_name = "Eq"; derive_trait_constraints = [] } ];
-        derive_for_type = Surface.STCon "Point";
-      }
-  in
-  let result = lower_top_decl id_supply (mk_test_ts decl) in
-  match result with
-  | [
-   {
-     AST.stmt =
-       AST.DeriveDef
-         { derive_traits = [ { AST.derive_trait_name = "Eq"; _ } ]; derive_for_type = AST.TCon "Point" };
      _;
    };
   ] ->

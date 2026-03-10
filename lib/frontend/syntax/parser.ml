@@ -212,7 +212,6 @@ and parse_top_decl (p : parser) : (parser * Surface.top_decl, parser) result =
   | Token.Enum -> parse_enum_definition p
   | Token.Trait -> parse_trait_definition p
   | Token.Impl -> parse_impl_definition p
-  | Token.Derive -> parse_derive_definition p
   | Token.Type -> parse_type_alias p
   | Token.Function when peek_token_is p Token.Ident -> parse_fn_decl_top p
   | _ -> parse_expression_top p
@@ -1137,26 +1136,6 @@ and parse_method_impl (p : parser) : (parser * Surface.surface_method_impl, pars
           smi_override = false;
           smi_body;
         } )
-
-(* Phase 4.3: Derive statement parsing *)
-and parse_derive_definition (p : parser) : (parser * Surface.top_decl, parser) result =
-  (* Current token is 'derive' *)
-
-  (* Parse trait list: eq, show, ord *)
-  let* p2, derive_traits = parse_derive_trait_list (next_token p) in
-
-  (* Expect 'for' keyword (treated as identifier, not reserved) *)
-  let* p3 =
-    if curr_token_is p2 Token.Ident && p2.curr_token.literal = "for" then
-      Ok (next_token p2)
-    else
-      Error (add_error ~code:"parse-invalid-impl" p2 "expected 'for' keyword in derive statement")
-  in
-
-  (* Parse the type being derived for *)
-  let* p4, derive_for_type = parse_type_expr p3 in
-
-  Ok (p4, Surface.SDeriveDef { derive_traits; derive_for_type })
 
 and parse_derive_trait_list (p : parser) : (parser * AST.derive_trait list, parser) result =
   let rec loop lp rev_traits =
@@ -2654,11 +2633,6 @@ module Test = struct
     | Error errs -> List.exists (fun (d : Diagnostic.t) -> d.code = "parse-invalid-number") errs
     | _ -> false
 
-  let%test "parse-invalid-impl on derive missing 'for' keyword" =
-    match parse ~file_id:"<test>" "derive show string" with
-    | Error errs -> List.exists (fun (d : Diagnostic.t) -> d.code = "parse-invalid-impl") errs
-    | _ -> false
-
   let%test "parse-invalid-pattern on missing variant name after dot" =
     match parse ~file_id:"<test>" "match 1 { option. => 3 }" with
     | Error errs -> List.exists (fun (d : Diagnostic.t) -> d.code = "parse-invalid-pattern") errs
@@ -3345,60 +3319,12 @@ let%test "parse impl method body with if expression and continue parsing next st
       | _ -> false)
   | Error _ -> false
 
-(* Phase 4.3: Derive statement tests *)
-let%test "parse derive - just keyword" =
-  let input = "derive" in
-  let lexer = Lexer.init input in
-  let p = init ~file_id:"<test>" lexer in
-  curr_token_is p Token.Derive
-
-let%test "parse single derive" =
-  let input = "derive eq for color" in
+let%test "standalone derive statement is rejected" =
+  let input = "derive Eq for Color" in
   let lexer = Lexer.init input in
   match parse_program (init ~file_id:"<test>" lexer) with
-  | Ok (_p, program) -> (
-      match program with
-      | [ stmt ] -> (
-          match stmt.stmt with
-          | AST.DeriveDef derive_def ->
-              List.length derive_def.derive_traits = 1
-              && (List.hd derive_def.derive_traits).derive_trait_name = "eq"
-          | _ -> false)
-      | _ -> false)
-  | Error _ -> false
-
-let%test "parse multiple derive traits" =
-  let input = "derive eq, show, ord for person" in
-  let lexer = Lexer.init input in
-  match parse_program (init ~file_id:"<test>" lexer) with
-  | Ok (_p, program) -> (
-      match program with
-      | [ stmt ] -> (
-          match stmt.stmt with
-          | AST.DeriveDef derive_def ->
-              let trait_names = List.map (fun t -> t.AST.derive_trait_name) derive_def.derive_traits in
-              List.length trait_names = 3 && trait_names = [ "eq"; "show"; "ord" ]
-          | _ -> false)
-      | _ -> false)
-  | Error _ -> false
-
-let%test "parse derive with generic type" =
-  let input = "derive eq for option[int]" in
-  let lexer = Lexer.init input in
-  match parse_program (init ~file_id:"<test>" lexer) with
-  | Ok (_p, program) -> (
-      match program with
-      | [ stmt ] -> (
-          match stmt.stmt with
-          | AST.DeriveDef derive_def -> (
-              List.length derive_def.derive_traits = 1
-              &&
-              match derive_def.derive_for_type with
-              | AST.TApp ("option", [ AST.TCon "int" ]) -> true
-              | _ -> false)
-          | _ -> false)
-      | _ -> false)
-  | Error _ -> false
+  | Ok _ -> false
+  | Error _ -> true
 
 (* Phase 4.4: Type alias tests *)
 let%test "parse type - just keyword" =

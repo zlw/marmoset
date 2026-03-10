@@ -213,10 +213,6 @@ module Surface = struct
         inherent_for_type : surface_type_expr;
         inherent_methods : surface_method_impl list;
       }
-    | SDeriveDef of {
-        derive_traits : AST.derive_trait list; (* shared leaf *)
-        derive_for_type : surface_type_expr;
-      }
     | SExpressionStmt of surface_expr
     | SReturn of surface_expr
     | SBlock of surface_block
