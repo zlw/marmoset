@@ -108,7 +108,7 @@ impl[a: Show] Show[List[a]] = {
     target: (generic_type
       name: (identifier)
       arg: (generic_type
-        name: (identifier)
+        name: (type_identifier)
         arg: (type_variable
           (identifier))))
     (method_definition
@@ -116,7 +116,7 @@ impl[a: Show] Show[List[a]] = {
       (parameter
         name: (identifier)
         type: (generic_type
-          name: (identifier)
+          name: (type_identifier)
           arg: (type_variable
             (identifier))))
       return_type: (type_identifier)

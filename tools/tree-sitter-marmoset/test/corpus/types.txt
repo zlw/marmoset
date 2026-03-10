@@ -2,7 +2,7 @@
 Simple type annotation
 ================================================================================
 
-let x: int = 5
+let x: Int = 5
 
 --------------------------------------------------------------------------------
 
@@ -16,7 +16,7 @@ let x: int = 5
 Union type annotation
 ================================================================================
 
-let x: int | string = 5
+let x: Int | Str = 5
 
 --------------------------------------------------------------------------------
 
@@ -32,29 +32,28 @@ let x: int | string = 5
 Three-member union type
 ================================================================================
 
-let f = fn(x: int | string | bool) { x }
+let f = (x: Int | Str | Bool) -> x
 
 --------------------------------------------------------------------------------
 
 (source_file
   (let_statement
     name: (identifier)
-    value: (function_literal
-      (parameter
+    value: (lambda_expression
+      (lambda_parameter
         name: (identifier)
         type: (union_type
           (type_identifier)
           (type_identifier)
           (type_identifier)))
-      body: (block
-        (expression_statement
-          (identifier))))))
+      body: (expr_or_block
+        (identifier)))))
 
 ================================================================================
 Generic type
 ================================================================================
 
-let x: list[int] = [1, 2, 3]
+let x: List[Int] = [1, 2, 3]
 
 --------------------------------------------------------------------------------
 
@@ -62,7 +61,7 @@ let x: list[int] = [1, 2, 3]
   (let_statement
     name: (identifier)
     type: (generic_type
-      name: (identifier)
+      name: (type_identifier)
       arg: (type_identifier))
     value: (array_literal
       (integer_literal)
@@ -73,7 +72,7 @@ let x: list[int] = [1, 2, 3]
 Nested generic type
 ================================================================================
 
-let x: option[list[int]] = option.some([1, 2, 3])
+let x: Option[List[Int]] = Option.Some([1, 2, 3])
 
 --------------------------------------------------------------------------------
 
@@ -83,7 +82,7 @@ let x: option[list[int]] = option.some([1, 2, 3])
     type: (generic_type
       name: (identifier)
       arg: (generic_type
-        name: (identifier)
+        name: (type_identifier)
         arg: (type_identifier)))
     value: (call_expression
       function: (field_access
@@ -98,7 +97,7 @@ let x: option[list[int]] = option.some([1, 2, 3])
 Record type
 ================================================================================
 
-type point = { x: int, y: int }
+type Point = { x: Int, y: Int }
 
 --------------------------------------------------------------------------------
 
@@ -117,15 +116,15 @@ type point = { x: int, y: int }
 Record type with row variable
 ================================================================================
 
-let f = fn(r: { x: int, ...row }) -> int { r.x }
+let f = (r: { x: Int, ...row }) -> r.x
 
 --------------------------------------------------------------------------------
 
 (source_file
   (let_statement
     name: (identifier)
-    value: (function_literal
-      (parameter
+    value: (lambda_expression
+      (lambda_parameter
         name: (identifier)
         type: (record_type
           (record_type_field
@@ -133,56 +132,50 @@ let f = fn(r: { x: int, ...row }) -> int { r.x }
             type: (type_identifier))
           (row_variable
             (identifier))))
-      return_type: (type_identifier)
-      body: (block
-        (expression_statement
-          (field_access
-            object: (identifier)
-            field: (identifier)))))))
+      body: (expr_or_block
+        (field_access
+          object: (identifier)
+          field: (identifier))))))
 
 ================================================================================
 Function type with return annotation
 ================================================================================
 
-let f = fn(x: int, y: int) -> int { x + y }
+fn add(x: Int, y: Int) -> Int = x + y
 
 --------------------------------------------------------------------------------
 
 (source_file
-  (let_statement
+  (fn_declaration
     name: (identifier)
-    value: (function_literal
-      (parameter
-        name: (identifier)
-        type: (type_identifier))
-      (parameter
-        name: (identifier)
-        type: (type_identifier))
-      return_type: (type_identifier)
-      body: (block
-        (expression_statement
-          (infix_expression
-            left: (identifier)
-            right: (identifier)))))))
+    (parameter
+      name: (identifier)
+      type: (type_identifier))
+    (parameter
+      name: (identifier)
+      type: (type_identifier))
+    return_type: (type_identifier)
+    body: (expr_or_block
+      (infix_expression
+        left: (identifier)
+        right: (identifier)))))
 
 ================================================================================
 Union return type
 ================================================================================
 
-let f = fn(x: int) -> int | string { x }
+fn pick(x: Int) -> Int | Str = x
 
 --------------------------------------------------------------------------------
 
 (source_file
-  (let_statement
+  (fn_declaration
     name: (identifier)
-    value: (function_literal
-      (parameter
-        name: (identifier)
-        type: (type_identifier))
-      return_type: (union_type
-        (type_identifier)
-        (type_identifier))
-      body: (block
-        (expression_statement
-          (identifier))))))
+    (parameter
+      name: (identifier)
+      type: (type_identifier))
+    return_type: (union_type
+      (type_identifier)
+      (type_identifier))
+    body: (expr_or_block
+      (identifier))))

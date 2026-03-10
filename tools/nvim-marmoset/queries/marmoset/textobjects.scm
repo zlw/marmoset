@@ -12,11 +12,6 @@
   body: (expr_or_block
     (block) @function.inner))
 
-(function_literal) @function.outer
-
-(function_literal
-  body: (block) @function.inner)
-
 (lambda_expression) @function.outer
 
 (lambda_expression

@@ -44,9 +44,6 @@
   alternative: (expr_or_block
     (block) @fold))
 
-; Function literals
-(function_literal) @fold
-
 ; Lambda expressions with block bodies
 (lambda_expression
   body: (block) @fold)

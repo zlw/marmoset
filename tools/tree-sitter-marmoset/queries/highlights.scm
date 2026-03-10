@@ -12,7 +12,6 @@
 "derive" @keyword.type
 "override" @keyword.modifier
 "type" @keyword.type
-"for" @keyword
 "is" @keyword.operator
 
 ; Literals
@@ -68,15 +67,14 @@
 (generic_type
   name: (identifier) @type)
 
+(generic_type
+  name: (type_identifier) @type.builtin)
+
 ; Function definitions
 (fn_declaration
   name: (identifier) @function)
 
 (fn_declaration
-  (parameter
-    name: (identifier) @variable.parameter))
-
-(function_literal
   (parameter
     name: (identifier) @variable.parameter))
 
@@ -132,17 +130,18 @@
 
 ; Impl block
 (impl_block
-  trait: (identifier) @type)
-
-(impl_block
   target: (generic_type
     name: (identifier) @type))
 
+(impl_block
+  target: (generic_type
+    name: (type_identifier) @type.builtin))
+
+(impl_block
+  target: (type_identifier) @type.builtin)
+
 ; Derive
 (derive_clause
-  trait: (identifier) @type)
-
-(derive_statement
   trait: (identifier) @type)
 
 ; Type alias
