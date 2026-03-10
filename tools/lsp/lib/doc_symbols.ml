@@ -95,7 +95,7 @@ let%test "let binding produces Variable symbol" =
   | _ -> false
 
 let%test "function binding produces Function symbol" =
-  let symbols = get_symbols "let f = fn(x) { x + 1 };" in
+  let symbols = get_symbols "let f = (x) -> x + 1;" in
   match symbols with
   | [ s ] -> s.name = "f" && s.kind = Lsp_t.SymbolKind.Function
   | _ -> false
@@ -125,7 +125,7 @@ let%test "type alias produces TypeParameter symbol" =
   | _ -> false
 
 let%test "multiple definitions produce multiple symbols" =
-  let symbols = get_symbols "let x = 1; let f = fn(y) { y }; let z = \"hello\";" in
+  let symbols = get_symbols "let x = 1; let f = (y) -> y; let z = \"hello\";" in
   List.length symbols = 3
 
 let%test "expression statements are filtered out" =

@@ -1118,12 +1118,14 @@ and infixFn (p : parser) (left_expr : Surface.surface_expr) (prec : precedence) 
   let rec loop (lp : parser) (left : Surface.surface_expr) : (parser * Surface.surface_expr, parser) result =
     let peek_is_semicolon = peek_token_is lp Token.Semicolon in
     let lower_precedence = prec < peek_precedence lp in
-    let peek_is_postfix =
+    let blocked_by_line_break =
+      tokens_are_on_different_lines lp
+      &&
       match lp.peek_token.token_type with
-      | Token.LParen | Token.LBracket | Token.Dot -> true
+      | Token.LParen | Token.LBracket -> true
+      | Token.Dot -> false
       | _ -> false
     in
-    let blocked_by_line_break = peek_is_postfix && tokens_are_on_different_lines lp in
     if (not peek_is_semicolon) && lower_precedence && not blocked_by_line_break then
       let* lp2, left2 =
         match lp.peek_token.token_type with
@@ -3677,6 +3679,28 @@ let%test "parse field access - chained" =
       | _ -> false)
   | Error _ -> false
 
+let%test "parse field access - chained across newline before dot" =
+  let input = "let x = r.a\n  .b" in
+  let lexer = Lexer.init input in
+  match parse_program (init ~file_id:"<test>" lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ stmt ] -> (
+          match stmt.stmt with
+          | AST.Let { value; _ } -> (
+              match value.expr with
+              | AST.FieldAccess (inner, "b") -> (
+                  match inner.expr with
+                  | AST.FieldAccess (receiver, "a") -> (
+                      match receiver.expr with
+                      | AST.Identifier "r" -> true
+                      | _ -> false)
+                  | _ -> false)
+              | _ -> false)
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
 let%test "parse field access vs method call" =
   let input = "let x = r.field; let y = r.method()" in
   let lexer = Lexer.init input in
@@ -3688,6 +3712,28 @@ let%test "parse field access vs method call" =
           | AST.Let { name = "x"; value = v1; _ }, AST.Let { name = "y"; value = v2; _ } -> (
               match (v1.expr, v2.expr) with
               | AST.FieldAccess (_, "field"), AST.MethodCall { mc_method = "method"; mc_args = []; _ } -> true
+              | _ -> false)
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
+let%test "parse method chain across newline before dot" =
+  let input = "let x = 42.show()\n  .show()" in
+  let lexer = Lexer.init input in
+  match parse_program (init ~file_id:"<test>" lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ stmt ] -> (
+          match stmt.stmt with
+          | AST.Let { value; _ } -> (
+              match value.expr with
+              | AST.MethodCall { mc_receiver; mc_method = "show"; mc_args = []; _ } -> (
+                  match mc_receiver.expr with
+                  | AST.MethodCall { mc_receiver = inner_recv; mc_method = "show"; mc_args = []; _ } -> (
+                      match inner_recv.expr with
+                      | AST.Integer 42L -> true
+                      | _ -> false)
+                  | _ -> false)
               | _ -> false)
           | _ -> false)
       | _ -> false)

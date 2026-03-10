@@ -370,29 +370,29 @@ let%test "let binding gets add type annotation action" =
   List.exists (fun t -> starts_with t "Add type annotation:") titles
 
 let%test "function param gets annotation action" =
-  let actions = get_actions "let f = fn(x) { x + 1 };" in
+  let actions = get_actions "let f = (x) -> x + 1;" in
   let titles = action_titles actions in
   List.exists (fun t -> starts_with t "Add type annotation:") titles
   && List.exists (fun t -> starts_with t "Add return type annotation") titles
 
 let%test "function with annotated param gets no param action but gets return type" =
-  let actions = get_actions "let f = fn(x: int) { x + 1 };" in
+  let actions = get_actions "let f = (x: Int) -> x + 1;" in
   let titles = action_titles actions in
   (not (List.exists (fun t -> starts_with t "Add type annotation: x:") titles))
   && List.exists (fun t -> starts_with t "Add return type annotation") titles
 
 let%test "top-level fn declaration gets no binding annotation action" =
-  let actions = get_actions "fn greet(name: string) -> name" in
+  let actions = get_actions "fn greet(name: Str) = name" in
   let titles = action_titles actions in
   not (List.exists (fun t -> starts_with t "Add type annotation: greet:") titles)
 
 let%test "effectful top-level fn return action keeps =>" =
-  let actions = get_actions "fn greet(name: string) = puts(name)" in
+  let actions = get_actions "fn greet(name: Str) = puts(name)" in
   let titles = action_titles actions in
   List.exists (fun t -> starts_with t "Add return type annotation: =>") titles
 
 let%test "fully annotated function gets no param or return actions" =
-  let actions = get_actions "let f: int -> int = fn(x: int) -> int { x + 1 };" in
+  let actions = get_actions "fn f(x: Int) -> Int = x + 1" in
   let titles = action_titles actions in
   (not (List.exists (fun t -> starts_with t "Add type annotation:") titles))
   && not (List.exists (fun t -> starts_with t "Add return type annotation") titles)
@@ -403,7 +403,7 @@ let%test "multiple sites produces annotate-all action" =
   List.exists (fun t -> t = "Add all type annotations") titles
 
 let%test "single site does not produce annotate-all action" =
-  let actions = get_actions "let x: int = 1; let y = true;" in
+  let actions = get_actions "let x: Int = 1; let y = true;" in
   let titles = action_titles actions in
   (* Only y needs annotation — single site, no "annotate all" *)
   not (List.exists (fun t -> t = "Add all type annotations") titles)

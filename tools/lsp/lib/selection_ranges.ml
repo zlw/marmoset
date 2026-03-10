@@ -216,7 +216,7 @@ let%test "cursor outside any expression returns program-level range" =
   | _ -> false
 
 let%test "cursor in function body has deep chain" =
-  let ranges = get_selection "let f = fn(x) { x + 1 }" [ (0, 16) ] in
+  let ranges = get_selection "let f = (x) -> { x + 1 }" [ (0, 17) ] in
   match ranges with
   | [ sr ] ->
       (* x → x+1 → body → fn → let → program — deep chain *)

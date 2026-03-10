@@ -114,20 +114,20 @@ let get_ranges source =
   | Ok program -> compute ~source ~program
 
 let%test "multi-line function body produces folding range" =
-  let ranges = get_ranges "let f = fn(x) {\n  x + 1\n}" in
+  let ranges = get_ranges "let f = (x) -> {\n  x + 1\n}" in
   (* Exactly 1 range for the function, no duplicate from the inner block *)
   List.length ranges = 1
 
 let%test "single-line function produces no folding range" =
-  let ranges = get_ranges "let f = fn(x) { x }" in
+  let ranges = get_ranges "let f = (x) -> { x }" in
   List.length ranges = 0
 
 let%test "multi-line enum produces folding range" =
-  let ranges = get_ranges "enum color {\n  red\n  green\n  blue\n}" in
+  let ranges = get_ranges "enum Color = {\n  Red\n  Green\n  Blue\n}" in
   List.length ranges >= 1
 
 let%test "multi-line if/else produces ranges for each branch" =
-  let src = "let f = fn(x) {\n  if (x == 0) {\n    x\n  } else {\n    0\n  }\n}" in
+  let src = "let f = (x) -> {\n  if (x == 0) {\n    x\n  } else {\n    0\n  }\n}" in
   let ranges = get_ranges src in
   (* Function (1) + then block (1) + else block (1) = 3, no duplicates *)
   List.length ranges = 3
@@ -137,12 +137,12 @@ let%test "single-line constructs produce no ranges" =
   List.length ranges = 0
 
 let%test "folding range startLine < endLine" =
-  let ranges = get_ranges "let f = fn(x) {\n  x + 1\n}" in
+  let ranges = get_ranges "let f = (x) -> {\n  x + 1\n}" in
   List.for_all (fun (r : Lsp_t.FoldingRange.t) -> r.startLine < r.endLine) ranges
 
 let%test "match expression produces folding range" =
   let src =
-    "enum opt[a] {\n  some(a)\n  none\n}\nlet f = fn(x: opt[int]) {\n  match x {\n    opt.some(v): v\n    opt.none: 0\n  }\n}"
+    "enum Opt[a] = {\n  Some(a)\n  None\n}\nlet f = (x: Opt[Int]) -> {\n  match x {\n    case Opt.Some(v): v\n    case Opt.None: 0\n  }\n}"
   in
   let ranges = get_ranges src in
   (* enum (1) + function (1) + match (1) = 3, no duplicates *)

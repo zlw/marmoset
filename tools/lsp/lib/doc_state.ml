@@ -141,7 +141,7 @@ let%test "analyze type error has non-zero range when location available" =
   | _ -> false
 
 let%test "analyze successful code stores type_map and environment" =
-  let result = analyze ~source:"let f = fn(x) { x + 1 }; f" in
+  let result = analyze ~source:"let f = (x) -> x + 1; f" in
   result.diagnostics = [] && result.type_map <> None && result.environment <> None
 
 let%test "analyze with builtins works" =
@@ -153,11 +153,11 @@ let%test "analyze successful code surfaces warning diagnostics" =
     analyze
       ~source:
         {|
-          trait greeter[a] {
-            fn greet(x: a) -> string
+          trait Greeter[a] = {
+            fn greet(x: a) -> Str
           }
-          impl greeter[int] = {
-            override fn greet(x: int) -> string = "hi"
+          impl Greeter[Int] = {
+            override fn greet(x: Int) -> Str = "hi"
           }
         |}
   in
@@ -172,13 +172,13 @@ let%test "analyze successful code surfaces warning diagnostics" =
 
 let%test "analyze captures user generic names for hover formatting" =
   let result =
-    analyze ~source:"trait named { name: string }\nlet get = fn[t: named](x: t) -> string { x.name }; get"
+    analyze ~source:"trait Named = { name: Str }\nfn get[t: Named](x: t) -> Str = x.name\nget"
   in
   result.diagnostics = [] && List.exists (fun (_fresh, user_name) -> user_name = "t") result.type_var_user_names
 
 let%test "analyze does not leak generic-name mappings across documents" =
   let _ =
-    analyze ~source:"trait named { name: string }\nlet get = fn[t: named](x: t) -> string { x.name }; get"
+    analyze ~source:"trait Named = { name: Str }\nfn get[t: Named](x: t) -> Str = x.name\nget"
   in
   let result = analyze ~source:"let x = 1; x" in
   result.type_var_user_names = []
