@@ -4,6 +4,6 @@ fn helper(x: Int | Str) -> Str = {
 }
 trait Show[a] = { fn show(x: a) -> Str }
 impl Show[Int] = {
-  fn show(x: Int) -> Str { helper(x) }
+  fn show(x: Int) -> Str = helper(x)
 }
 puts(1.show())  # output: int

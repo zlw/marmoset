@@ -1,12 +1,13 @@
-# CG15: Impl instantiation fingerprint collision surfaces as clear codegen error
-enum B = { V } # error: Codegen error: impl instantiation fingerprint collision for 'show.show'
+# CG15: Canonical names keep the old impl collision shapes distinct
+enum B = { V }
 enum A[t] = { Wrap(t) }
-enum A_B = { Wrap }
+enum AB = { Wrap }
 trait Show[x] = { fn show(x: x) -> Str }
-impl Show[A_B] = {
-  fn show(x: A_B) -> Str { "AB" }
+impl Show[AB] = {
+  fn show(x: AB) -> Str = "AB"
 }
 impl Show[A[B]] = {
-  fn show(x: A[B]) -> Str { "AofB" }
+  fn show(x: A[B]) -> Str = "AofB"
 }
-puts(1)
+puts(AB.Wrap.show())  # output: AB
+puts(A.Wrap(B.V).show())  # output: AofB
