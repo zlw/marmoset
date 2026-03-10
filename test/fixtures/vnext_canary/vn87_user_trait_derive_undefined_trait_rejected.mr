@@ -1,0 +1,2 @@
+# VN87: Deriving an undefined user trait is rejected
+type Point = { x: Int } derive Fancy  # error: Cannot derive undefined trait

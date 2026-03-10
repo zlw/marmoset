@@ -404,6 +404,24 @@ let expand_one_derive
     ~(planned_impls : ((string * string), unit) Hashtbl.t)
     ~(supply : Synthetic_ids.t)
     (stmt : AST.statement) (derive_def : AST.derive_def) : (AST.statement list, Diagnostic.t) result =
+  let target_display = render_type_expr derive_def.derive_for_type in
+  let seen_traits : (string, unit) Hashtbl.t = Hashtbl.create 8 in
+  let rec reject_duplicate = function
+    | [] -> Ok ()
+    | (trait_ref : AST.derive_trait) :: rest ->
+        let canonical_name = Trait_registry.canonical_trait_name trait_ref.derive_trait_name in
+        if Hashtbl.mem seen_traits canonical_name then
+          Error
+            (error_at_stmt ~code:"derive-duplicate-impl"
+               ~message:
+                 (Printf.sprintf "Trait '%s' already has an explicit or derived impl for %s"
+                    trait_ref.derive_trait_name target_display)
+               stmt)
+        else (
+          Hashtbl.replace seen_traits canonical_name ();
+          reject_duplicate rest)
+  in
+  let* () = reject_duplicate derive_def.derive_traits in
   let builtin_traits, user_traits =
     List.partition
       (fun (trait_ref : AST.derive_trait) -> Trait_registry.derive_kind_of_trait_name trait_ref.derive_trait_name <> None)
@@ -413,7 +431,6 @@ let expand_one_derive
     Ok [ stmt ]
   else
     let target_key = type_expr_key derive_def.derive_for_type in
-    let target_display = render_type_expr derive_def.derive_for_type in
     let requested_user_trait_names =
       user_traits |> List.map (fun (trait_ref : AST.derive_trait) -> Trait_registry.canonical_trait_name trait_ref.derive_trait_name)
       |> StringSet.of_list
@@ -743,3 +760,43 @@ let%test "expand_user_derives orders supertraits before dependent user traits" =
       ] ->
       true
   | _ -> false
+
+let%test "expand_user_derives rejects duplicate traits in one derive clause" =
+  clear_default_derived_impl_store ();
+  let trait_stmt =
+    AST.mk_stmt
+      (AST.TraitDef
+         {
+           name = "Printable";
+           type_param = Some "a";
+           supertraits = [];
+           fields = [];
+           methods =
+             [
+               {
+                 method_sig_id = 15;
+                 method_name = "render";
+                 method_generics = None;
+                 method_params = [ ("self", AST.TVar "a") ];
+                 method_return_type = AST.TCon "Str";
+                 method_effect = AST.Pure;
+                 method_default_impl = Some (AST.mk_expr ~id:32 (AST.String "ok"));
+               };
+             ];
+         })
+  in
+  let derive_stmt =
+    AST.mk_stmt
+      (AST.DeriveDef
+         {
+           derive_traits =
+             [
+               AST.{ derive_trait_name = "Printable"; derive_trait_constraints = [] };
+               AST.{ derive_trait_name = "Printable"; derive_trait_constraints = [] };
+             ];
+           derive_for_type = AST.TCon "Point";
+         })
+  in
+  match expand_user_derives [ trait_stmt; derive_stmt ] with
+  | Error diag -> diag.code = "derive-duplicate-impl"
+  | Ok _ -> false

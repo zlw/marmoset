@@ -1,0 +1,10 @@
+# VN89: User-trait derive conflicts with an explicit impl for the same type
+trait Fancy[a] = {
+  fn fancy(self: a) -> Str = "trait"
+}
+
+type Point = { x: Int } derive Fancy  # error: already has an explicit or derived impl
+
+impl Fancy[Point] = {
+  fn fancy(self: Point) -> Str = "impl"
+}

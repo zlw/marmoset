@@ -1,0 +1,6 @@
+# VN86: Repeating one trait in the same derive clause is rejected
+trait Fancy[a] = {
+  fn fancy(self: a) -> Str = "fancy"
+}
+
+type Point = { x: Int } derive Fancy, Fancy  # error: already has an explicit or derived impl
