@@ -988,6 +988,45 @@ let%test "Phase6 prep: constrained-param shorthand works end-to-end for top-leve
   | Ok result -> result.result_type = Types.TString
   | Error _ -> false
 
+let%test "Phase6 prep: constrained-param shorthand works in typed arrow-lambda params" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  match
+    check_string ~file_id:"<test>"
+      "trait Named = { name: Str }\n\
+       let get_name = (x: Named) -> x.name\n\
+       get_name({ name: \"Ada\" })"
+  with
+  | Ok result -> result.result_type = Types.TString
+  | Error _ -> false
+
+let%test "Phase6 prep: constrained-param shorthand works in inherent method params" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  match
+    check_string ~file_id:"<test>"
+      "trait Named = { name: Str }\n\
+       type User = { name: Str }\n\
+       impl User = {\n\
+      \  fn label(user: Named) -> Str = user.name\n\
+       }\n\
+       { name: \"Ada\" }.label()"
+  with
+  | Ok result -> result.result_type = Types.TString
+  | Error _ -> false
+
+let%test "Phase6 prep: override is rejected in inherent impls" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  match
+    check_string ~file_id:"<test>"
+      "impl Int = {\n\
+      \  override fn twice(x: Int) -> Int = x * 2\n\
+       }"
+  with
+  | Error diags -> List.exists (fun (d : Diagnostic.t) -> d.code = "override-invalid") diags
+  | Ok _ -> false
+
 let%test "Phase6 prep: placeholder shorthand works in call arguments" =
   Infer.reset_fresh_counter ();
   Trait_registry.clear ();
@@ -1086,3 +1125,50 @@ let%test "Phase6 prep: placeholder shorthand rejects effectful callback slots" =
           && String_utils.contains_substring ~needle:"effectful callbacks require explicit '=>'" d.message)
         diags
   | Ok _ -> false
+
+let%test "Phase6 prep: placeholder shorthand rejects multiple placeholders across block bodies" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  match
+    check_string ~file_id:"<test>"
+      "fn apply[a, b](x: a, f: (a) -> b) -> b = f(x)\n\
+       apply(21, {\n\
+      \  let left = _\n\
+      \  left + _\n\
+       })"
+  with
+  | Error diags ->
+      List.exists
+        (fun (d : Diagnostic.t) ->
+          d.code = "type-invalid-placeholder"
+          && String_utils.contains_substring ~needle:"exactly one '_' placeholder" d.message)
+        diags
+  | Ok _ -> false
+
+let%test "Phase6 prep: placeholder shorthand survives nested conditional callback bodies" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  match
+    check_string ~file_id:"<test>"
+      "fn apply[a, b](x: a, f: (a) -> b) -> b = f(x)\n\
+       let result = apply(21, if (_ > 20) { \"big\" } else { \"small\" })\n\
+       result"
+  with
+  | Ok result -> result.result_type = Types.TString
+  | Error _ -> false
+
+let%test "Phase6 prep: placeholder shorthand survives field access inside nested calls" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  match
+    check_string ~env:(Builtins.prelude_env ()) ~file_id:"<test>"
+      "type User = { id: Int }\n\
+       fn apply[a, b](x: a, f: (a) -> b) -> b = f(x)\n\
+       fn plus_one(n: Int) -> Int = n + 1\n\
+       fn render(n: Int) -> Str = \"#\" + n.show()\n\
+       let user: User = { id: 7 }\n\
+       let result = apply(user, render(plus_one(_.id)))\n\
+       result"
+  with
+  | Ok result -> result.result_type = Types.TString
+  | Error _ -> false

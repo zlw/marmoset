@@ -1,0 +1,7 @@
+# VN78: Placeholder shorthand rejects multiple placeholders spread across block callback bodies
+fn apply[a, b](x: a, f: (a) -> b) -> b = f(x)
+
+apply(21, {  # error: exactly one '_' placeholder
+  let left = _
+  left + _
+})

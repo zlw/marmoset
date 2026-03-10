@@ -1,0 +1,9 @@
+# VN81: Placeholder shorthand traverses field access and nested call chains
+type User = { id: Int }
+
+fn apply[a, b](x: a, f: (a) -> b) -> b = f(x)
+fn plus_one(n: Int) -> Int = n + 1
+fn render(n: Int) -> Str = "#" + n.show()
+
+let user: User = { id: 7 }
+puts(apply(user, render(plus_one(_.id))))  # output: #8
