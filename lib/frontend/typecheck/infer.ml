@@ -288,6 +288,7 @@ let update_type_var_constrained_fields (type_var_name : string) (traits : string
 
 let add_type_var_constraints (type_var_name : string) (traits : string list) : unit =
   let store = current_constraint_store () in
+  let traits = List.map Trait_registry.canonical_trait_name traits in
   let merged =
     match Hashtbl.find_opt store type_var_name with
     | None -> traits
@@ -478,7 +479,7 @@ type constraint_ctx = string list ConstraintCtx.t
 let empty_constraints : constraint_ctx = ConstraintCtx.empty
 
 let add_constraint (ctx : constraint_ctx) (type_var : string) (traits : string list) : constraint_ctx =
-  ConstraintCtx.add type_var traits ctx
+  ConstraintCtx.add type_var (List.map Trait_registry.canonical_trait_name traits) ctx
 
 let lookup_constraints (ctx : constraint_ctx) (type_var : string) : string list =
   match ConstraintCtx.find_opt type_var ctx with

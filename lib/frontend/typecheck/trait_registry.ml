@@ -79,8 +79,36 @@ let builtin_generic_impl_keys : (string * mono_type, unit) Hashtbl.t = Hashtbl.c
 let trait_field_registry : (string, record_field_type list) Hashtbl.t = Hashtbl.create 16
 let canonical_type (t : mono_type) : mono_type = canonicalize_mono_type t
 
+let builtin_trait_internal_name (name : string) : string option =
+  match name with
+  | "eq" | "Eq" -> Some "eq"
+  | "show" | "Show" -> Some "show"
+  | "debug" | "Debug" -> Some "debug"
+  | "ord" | "Ord" -> Some "ord"
+  | "hash" | "Hash" -> Some "hash"
+  | "num" | "Num" -> Some "num"
+  | "neg" | "Neg" -> Some "neg"
+  | _ -> None
+
+let canonical_trait_name (name : string) : string =
+  match builtin_trait_internal_name name with
+  | Some builtin_name -> builtin_name
+  | None -> name
+
+let canonicalize_method_constraints (m : method_sig) : method_sig =
+  {
+    m with
+    method_generics =
+      List.map
+        (fun (name, constraints) -> (name, List.map canonical_trait_name constraints))
+        m.method_generics;
+  }
+
+let canonicalize_impl_type_param_constraints (p : AST.generic_param) : AST.generic_param =
+  { p with constraints = List.map canonical_trait_name p.constraints }
+
 let is_builtin_impl_key (trait_name : string) (for_type : mono_type) : bool =
-  Hashtbl.mem builtin_impl_keys (trait_name, canonical_type for_type)
+  Hashtbl.mem builtin_impl_keys (canonical_trait_name trait_name, canonical_type for_type)
 
 let canonical_generic_impl_for_type (def : impl_def) : mono_type =
   let rename_subst =
@@ -96,7 +124,7 @@ let generic_impl_key (def : impl_def) : string * mono_type =
   (def.impl_trait_name, canonical_generic_impl_for_type def)
 
 let is_builtin_generic_impl_key (trait_name : string) (generic_for_type : mono_type) : bool =
-  Hashtbl.mem builtin_generic_impl_keys (trait_name, canonical_type generic_for_type)
+  Hashtbl.mem builtin_generic_impl_keys (canonical_trait_name trait_name, canonical_type generic_for_type)
 
 let clear () =
   Hashtbl.clear trait_registry;
@@ -109,9 +137,19 @@ let clear () =
   Hashtbl.clear trait_field_registry
 
 (* Register a trait definition *)
-let register_trait (def : trait_def) : unit = Hashtbl.replace trait_registry def.trait_name def
+let register_trait (def : trait_def) : unit =
+  let def' =
+    {
+      trait_name = canonical_trait_name def.trait_name;
+      trait_type_param = def.trait_type_param;
+      trait_supertraits = List.map canonical_trait_name def.trait_supertraits;
+      trait_methods = List.map canonicalize_method_constraints def.trait_methods;
+    }
+  in
+  Hashtbl.replace trait_registry def'.trait_name def'
 
 let set_trait_fields (trait_name : string) (fields : record_field_type list) : unit =
+  let trait_name = canonical_trait_name trait_name in
   let canonical_fields =
     fields
     |> List.map (fun (f : record_field_type) -> { f with typ = canonical_type f.typ })
@@ -123,9 +161,10 @@ let set_trait_fields (trait_name : string) (fields : record_field_type list) : u
     Hashtbl.replace trait_field_registry trait_name canonical_fields
 
 let lookup_trait_fields (trait_name : string) : record_field_type list option =
-  Hashtbl.find_opt trait_field_registry trait_name
+  Hashtbl.find_opt trait_field_registry (canonical_trait_name trait_name)
 
 let trait_kind (trait_name : string) : trait_kind option =
+  let trait_name = canonical_trait_name trait_name in
   match Hashtbl.find_opt trait_registry trait_name with
   | None -> None
   | Some _ ->
@@ -169,7 +208,14 @@ let validate_trait_fields (trait_name : string) (fields : record_field_type list
 (* Register an impl block *)
 let register_impl ?(builtin = false) ?source (def : impl_def) : unit =
   let canonical_for_type = canonical_type def.impl_for_type in
-  let def' = { def with impl_for_type = canonical_for_type } in
+  let def' =
+    {
+      impl_trait_name = canonical_trait_name def.impl_trait_name;
+      impl_type_params = List.map canonicalize_impl_type_param_constraints def.impl_type_params;
+      impl_for_type = canonical_for_type;
+      impl_methods = List.map canonicalize_method_constraints def.impl_methods;
+    }
+  in
   if def'.impl_type_params = [] then (
     let key = (def'.impl_trait_name, def'.impl_for_type) in
     let existing = Hashtbl.find_opt impl_registry key in
@@ -227,12 +273,15 @@ let register_impl ?(builtin = false) ?source (def : impl_def) : unit =
           Hashtbl.replace generic_impl_registry key def'
 
 (* Lookup a trait by name *)
-let lookup_trait (name : string) : trait_def option = Hashtbl.find_opt trait_registry name
+let lookup_trait (name : string) : trait_def option =
+  Hashtbl.find_opt trait_registry (canonical_trait_name name)
 
 (* Expand a trait into itself plus all transitive supertraits (deterministic order). *)
 let trait_with_supertraits (trait_name : string) : string list =
+  let trait_name = canonical_trait_name trait_name in
   let visited : (string, unit) Hashtbl.t = Hashtbl.create 16 in
   let rec visit acc name =
+    let name = canonical_trait_name name in
     if Hashtbl.mem visited name then
       acc
     else (
@@ -261,10 +310,12 @@ let format_impl_site_from_source (trait_name : string) (source_opt : impl_source
   | None -> Printf.sprintf "%s@<builtin-or-unknown>" trait_name
 
 let format_concrete_impl_site (trait_name : string) (for_type : mono_type) : string =
+  let trait_name = canonical_trait_name trait_name in
   format_impl_site_from_source trait_name
     (Hashtbl.find_opt impl_source_registry (trait_name, canonical_type for_type))
 
 let format_generic_impl_site (trait_name : string) (generic_for_type : mono_type) : string =
+  let trait_name = canonical_trait_name trait_name in
   format_impl_site_from_source trait_name
     (Hashtbl.find_opt generic_impl_source_registry (trait_name, canonical_type generic_for_type))
 
@@ -292,6 +343,7 @@ let specialized_impl (def : impl_def) (for_type : mono_type) (subst : Types.subs
   }
 
 let resolve_generic_impl (trait_name : string) (for_type : mono_type) : (resolved_impl option, string) result =
+  let trait_name = canonical_trait_name trait_name in
   let for_type' = canonical_type for_type in
   let matches =
     Hashtbl.fold
@@ -331,6 +383,7 @@ let resolve_generic_impl (trait_name : string) (for_type : mono_type) : (resolve
 (* Resolve an impl for a specific trait and concrete type.
    Concrete impls have precedence over generic impls. *)
 let resolve_impl (trait_name : string) (for_type : mono_type) : (resolved_impl option, string) result =
+  let trait_name = canonical_trait_name trait_name in
   let for_type' = canonical_type for_type in
   match Hashtbl.find_opt impl_registry (trait_name, for_type') with
   | Some concrete_impl ->
@@ -442,7 +495,7 @@ type derive_kind =
   | DeriveHash
 
 let derive_kind_of_trait_name (trait_name : string) : derive_kind option =
-  match trait_name with
+  match canonical_trait_name trait_name with
   | "eq" -> Some DeriveEq
   | "show" -> Some DeriveShow
   | "debug" -> Some DeriveDebug
@@ -500,6 +553,7 @@ let can_derive (trait_name : string) (for_type : mono_type) : (unit, string) res
 
 (* Auto-generate an impl for a derived trait *)
 let generate_derived_impl (trait_name : string) (for_type : mono_type) : impl_def option =
+  let trait_name = canonical_trait_name trait_name in
   (* Look up the trait definition *)
   match lookup_trait trait_name with
   | None -> None
@@ -531,6 +585,7 @@ let generate_derived_impl (trait_name : string) (for_type : mono_type) : impl_de
 
 (* Validate and register a derived implementation *)
 let derive_impl (trait_name : string) (for_type : mono_type) : (unit, string) result =
+  let trait_name = canonical_trait_name trait_name in
   let for_type' = canonical_type for_type in
   let generate () =
     match can_derive trait_name for_type' with
@@ -663,8 +718,8 @@ let validate_impl_signature (trait_def : trait_def) (def : impl_def) : (unit, st
             let constraint_errors =
               List.map2
                 (fun (tname, tconstraints) (_iname, iconstraints) ->
-                  let tc = List.sort String.compare tconstraints in
-                  let ic = List.sort String.compare iconstraints in
+                  let tc = List.sort String.compare (List.map canonical_trait_name tconstraints) in
+                  let ic = List.sort String.compare (List.map canonical_trait_name iconstraints) in
                   if tc = ic then
                     None
                   else
@@ -706,7 +761,14 @@ let validate_impl_signature (trait_def : trait_def) (def : impl_def) : (unit, st
 (* Validate that an impl matches its trait signature *)
 let validate_impl (def : impl_def) : (unit, string) result =
   let for_type' = canonical_type def.impl_for_type in
-  let def' = { def with impl_for_type = for_type' } in
+  let def' =
+    {
+      impl_trait_name = canonical_trait_name def.impl_trait_name;
+      impl_type_params = List.map canonicalize_impl_type_param_constraints def.impl_type_params;
+      impl_for_type = for_type';
+      impl_methods = List.map canonicalize_method_constraints def.impl_methods;
+    }
+  in
   let duplicate_error =
     if def'.impl_type_params = [] then
       match Hashtbl.find_opt impl_registry (def'.impl_trait_name, for_type') with

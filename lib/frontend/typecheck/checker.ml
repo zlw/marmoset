@@ -854,3 +854,36 @@ let%test "Phase3: trait default method - impl without method succeeds if default
   match check_string ~file_id:"<test>" "1.greet()" with
   | Ok result -> result.result_type = Types.TString
   | Error _ -> false
+
+let%test "Phase6 prep: canonical builtin trait names work in derives" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  let env = default_env () in
+  match
+    check_string ~env ~file_id:"<test>"
+      "type Point = { x: Int } derive Eq\nlet p: Point = { x: 1 }\np.eq(p)"
+  with
+  | Ok result -> result.result_type = Types.TBool
+  | Error _ -> false
+
+let%test "Phase6 prep: canonical builtin trait names work in generic constraints" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  let env = default_env () in
+  match
+    check_string ~env ~file_id:"<test>"
+      "fn same[a: Eq](x: a, y: a) -> Bool = x.eq(y)\nsame(1, 2)"
+  with
+  | Ok result -> result.result_type = Types.TBool
+  | Error _ -> false
+
+let%test "Phase6 prep: canonical builtin trait names work in impl headers" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  let env = default_env () in
+  match
+    check_string ~env ~file_id:"<test>"
+      "impl Show[Int] = { fn show(self: Int) -> Str = \"int\" }\n1.show()"
+  with
+  | Ok result -> result.result_type = Types.TString
+  | Error _ -> false
