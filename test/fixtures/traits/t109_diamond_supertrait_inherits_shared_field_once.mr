@@ -1,14 +1,13 @@
 # T109: Diamond supertrait inherits shared field once
-trait named {
-  name: string
+trait Named = {
+  name: Str
 }
-trait worker: named {
-  job: string
+trait Worker: Named = {
+  job: Str
 }
-trait resident: named {
-  city: string
+trait Resident: Named = {
+  city: Str
 }
-trait citizen: worker + resident {
-}
-let x: citizen = { name: "alice", job: "eng", city: "sf", extra: true }
+trait Citizen: Worker & Resident = {}
+let x: Citizen = { name: "alice", job: "eng", city: "sf", extra: true }
 puts(x.name)  # output: alice
