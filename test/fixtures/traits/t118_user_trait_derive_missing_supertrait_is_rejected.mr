@@ -1,0 +1,10 @@
+# T118: User-trait derive rejects missing supertrait closure
+trait Base[a] = {
+  fn base(self: a) -> Str = "base"
+}
+
+trait Child[a]: Base = {
+  fn child(self: a) -> Str = self.base()
+}
+
+type Score = Int derive Child  # error: required supertrait 'Base'

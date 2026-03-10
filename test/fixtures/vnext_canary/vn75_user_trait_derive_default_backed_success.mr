@@ -1,0 +1,7 @@
+# VN75: Default-backed user-trait derive synthesizes an impl
+trait Fancy[a] = {
+  fn fancy(self: a) -> Str = "fancy"
+}
+
+type Point = { x: Int } derive Fancy
+puts({ x: 1 }.fancy())

@@ -1,6 +1,0 @@
-# VN75: User-trait derive syntax parses but remains semantically rejected
-trait Fancy[a] = {
-  fn fancy(x: a) -> Str
-}
-
-type Point = { x: Int } derive Fancy  # error: cannot be auto-derived

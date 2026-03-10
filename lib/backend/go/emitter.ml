@@ -5167,6 +5167,14 @@ let emit_program_with_typed_env
     (type_map : Infer.type_map)
     (typed_env : Infer.type_env)
     (program : AST.program) : string =
+  let program =
+    match Typecheck.Derive_expand.expand_user_derives program with
+    | Ok expanded_program -> expanded_program
+    | Error diag ->
+        failwith
+          (Printf.sprintf "Codegen error: cannot expand derives before emission: %s"
+             (Diagnostic.render_cli ~source_lookup:(fun _ -> None) diag))
+  in
   let mono_state =
     create_mono_state ~call_resolution_map ~method_type_args_map ~method_def_map ~placeholder_rewrite_map ()
   in

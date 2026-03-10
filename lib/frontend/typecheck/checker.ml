@@ -928,6 +928,32 @@ let%test "Phase3: trait default method - impl without method succeeds if default
   | Ok result -> result.result_type = Types.TString
   | Error _ -> false
 
+let%test "followup A2: user default-backed derive expands into a callable impl" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  match
+    check_string ~file_id:"<test>"
+      "trait Greeter[a] = { fn greet(self: a) -> Str = \"hello\" }\n\
+       type Score = Int derive Greeter\n\
+       let s: Score = 1\n\
+       s.greet()"
+  with
+  | Ok result -> result.result_type = Types.TString
+  | Error _ -> false
+
+let%test "followup A2: user default-backed derive registers default-derived provenance" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  match
+    check_string ~file_id:"<test>"
+      "trait Greeter[a] = { fn greet(self: a) -> Str = \"hello\" }\n\
+       type Score = Int derive Greeter\n\
+       let s: Score = 1\n\
+       s.greet()"
+  with
+  | Error _ -> false
+  | Ok _ -> Trait_registry.lookup_impl_origin "Greeter" Types.TInt = Some Trait_registry.DefaultDerivedImpl
+
 let%test "Phase6 prep: canonical builtin trait names work in derives" =
   Infer.reset_fresh_counter ();
   Trait_registry.clear ();

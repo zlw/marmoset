@@ -1,0 +1,6 @@
+# VN85: User-trait derive rejects traits with required methods
+trait Needful[a] = {
+  fn need(self: a) -> Str
+}
+
+type Point = { x: Int } derive Needful  # error: no default body

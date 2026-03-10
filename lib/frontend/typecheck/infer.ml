@@ -3321,23 +3321,46 @@ and infer_statement type_map env stmt =
                      ])
               in
               let constraint_store = current_constraint_store () in
+              let constrained_field_store = current_constrained_field_store () in
+              let trait_constraint_snapshot =
+                match type_param with
+                | Some tp ->
+                    let old_constraints = Hashtbl.find_opt constraint_store tp in
+                    let old_fields = Hashtbl.find_opt constrained_field_store tp in
+                    add_type_var_constraints tp supertraits;
+                    Some (tp, old_constraints, old_fields)
+                | None -> None
+              in
               let method_constraint_snapshots =
                 match m.method_generics with
                 | None -> []
                 | Some gps ->
                     List.map
                       (fun (gp : AST.generic_param) ->
-                        let old = Hashtbl.find_opt constraint_store gp.name in
+                        let old_constraints = Hashtbl.find_opt constraint_store gp.name in
+                        let old_fields = Hashtbl.find_opt constrained_field_store gp.name in
                         add_type_var_constraints gp.name gp.constraints;
-                        (gp.name, old))
+                        (gp.name, old_constraints, old_fields))
                       gps
               in
               let restore_method_constraints () =
+                (match trait_constraint_snapshot with
+                | None -> ()
+                | Some (name, old_constraints_opt, old_fields_opt) ->
+                    (match old_constraints_opt with
+                    | Some old_constraints -> Hashtbl.replace constraint_store name old_constraints
+                    | None -> Hashtbl.remove constraint_store name);
+                    (match old_fields_opt with
+                    | Some old_fields -> Hashtbl.replace constrained_field_store name old_fields
+                    | None -> Hashtbl.remove constrained_field_store name));
                 List.iter
-                  (fun (name, old_opt) ->
-                    match old_opt with
-                    | Some old -> Hashtbl.replace constraint_store name old
-                    | None -> Hashtbl.remove constraint_store name)
+                  (fun (name, old_constraints_opt, old_fields_opt) ->
+                    (match old_constraints_opt with
+                    | Some old_constraints -> Hashtbl.replace constraint_store name old_constraints
+                    | None -> Hashtbl.remove constraint_store name);
+                    match old_fields_opt with
+                    | Some old_fields -> Hashtbl.replace constrained_field_store name old_fields
+                    | None -> Hashtbl.remove constrained_field_store name)
                   method_constraint_snapshots
               in
               let infer_default_body =
@@ -3411,6 +3434,12 @@ and infer_statement type_map env stmt =
   | AST.ImplDef { impl_trait_name; impl_type_params; impl_for_type; impl_methods } ->
       let type_param_names = List.map (fun (p : AST.generic_param) -> p.name) impl_type_params in
       let unique_param_names = List.sort_uniq String.compare type_param_names in
+      let impl_origin =
+        if Derive_expand.is_default_derived_impl ~trait_name:impl_trait_name ~for_type:impl_for_type then
+          Trait_registry.DefaultDerivedImpl
+        else
+          Trait_registry.ExplicitImpl
+      in
       if List.length unique_param_names <> List.length type_param_names then
         Error
           (error ~code:"type-constructor"
@@ -3508,23 +3537,28 @@ and infer_statement type_map env stmt =
 
                   (* Set up method-level generic constraints *)
                   let constraint_store = current_constraint_store () in
+                  let constrained_field_store = current_constrained_field_store () in
                   let method_constraint_snapshots =
                     match m.impl_method_generics with
                     | None -> []
                     | Some gps ->
                         List.map
                           (fun (gp : AST.generic_param) ->
-                            let old = Hashtbl.find_opt constraint_store gp.name in
+                            let old_constraints = Hashtbl.find_opt constraint_store gp.name in
+                            let old_fields = Hashtbl.find_opt constrained_field_store gp.name in
                             add_type_var_constraints gp.name gp.constraints;
-                            (gp.name, old))
+                            (gp.name, old_constraints, old_fields))
                           gps
                   in
                   let restore_method_constraints () =
                     List.iter
-                      (fun (name, old_opt) ->
-                        match old_opt with
-                        | Some old -> Hashtbl.replace constraint_store name old
-                        | None -> Hashtbl.remove constraint_store name)
+                      (fun (name, old_constraints_opt, old_fields_opt) ->
+                        (match old_constraints_opt with
+                        | Some old_constraints -> Hashtbl.replace constraint_store name old_constraints
+                        | None -> Hashtbl.remove constraint_store name);
+                        match old_fields_opt with
+                        | Some old_fields -> Hashtbl.replace constrained_field_store name old_fields
+                        | None -> Hashtbl.remove constrained_field_store name)
                       method_constraint_snapshots
                   in
 
@@ -3621,6 +3655,9 @@ and infer_statement type_map env stmt =
 
                     (* Validate override annotations against trait defaults *)
                     let override_check =
+                      match impl_origin with
+                      | Trait_registry.DefaultDerivedImpl -> Ok ()
+                      | _ -> (
                       match Trait_registry.lookup_trait impl_trait_name with
                       | None -> Ok ()
                       | Some trait_def ->
@@ -3653,7 +3690,7 @@ and infer_statement type_map env stmt =
                                          m.impl_method_body);
                                   check rest)
                           in
-                          check impl_methods
+                          check impl_methods)
                     in
                     match override_check with
                     | Error e -> Error e
@@ -3665,7 +3702,7 @@ and infer_statement type_map env stmt =
                             let impl_source : Trait_registry.impl_source =
                               { file_id = stmt.file_id; start_pos = stmt.pos; end_pos = stmt.end_pos }
                             in
-                            Trait_registry.register_impl ~source:impl_source impl_def;
+                            Trait_registry.register_impl ~source:impl_source ~origin:impl_origin impl_def;
                             Ok (method_subst, TNull)))))
   | AST.InherentImplDef { inherent_for_type; inherent_methods } -> (
       let reject_invalid_override =
@@ -3769,23 +3806,28 @@ and infer_statement type_map env stmt =
 
               (* Set up method-level generic constraints *)
               let constraint_store = current_constraint_store () in
+              let constrained_field_store = current_constrained_field_store () in
               let method_constraint_snapshots =
                 match m.impl_method_generics with
                 | None -> []
                 | Some gps ->
                     List.map
                       (fun (gp : AST.generic_param) ->
-                        let old = Hashtbl.find_opt constraint_store gp.name in
+                        let old_constraints = Hashtbl.find_opt constraint_store gp.name in
+                        let old_fields = Hashtbl.find_opt constrained_field_store gp.name in
                         add_type_var_constraints gp.name gp.constraints;
-                        (gp.name, old))
+                        (gp.name, old_constraints, old_fields))
                       gps
               in
               let restore_method_constraints () =
                 List.iter
-                  (fun (name, old_opt) ->
-                    match old_opt with
-                    | Some old -> Hashtbl.replace constraint_store name old
-                    | None -> Hashtbl.remove constraint_store name)
+                  (fun (name, old_constraints_opt, old_fields_opt) ->
+                    (match old_constraints_opt with
+                    | Some old_constraints -> Hashtbl.replace constraint_store name old_constraints
+                    | None -> Hashtbl.remove constraint_store name);
+                    match old_fields_opt with
+                    | Some old_fields -> Hashtbl.replace constrained_field_store name old_fields
+                    | None -> Hashtbl.remove constrained_field_store name)
                   method_constraint_snapshots
               in
 
