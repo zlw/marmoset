@@ -1,0 +1,18 @@
+# VN39: Omitted inherent impl binders are inferred from the generic impl target
+enum Result[a, b] = {
+  Ok(a),
+  Err(b),
+}
+
+impl Result[a, b] = {
+  fn fold_to_str(r: Result[a, b], on_ok: (a) -> Str, on_err: (b) -> Str) -> Str = match r {
+    case Result.Ok(v): on_ok(v)
+    case Result.Err(e): on_err(e)
+  }
+}
+
+let ok = if (true) { Result.Ok(42) } else { Result.Err("boom") }
+let err = if (false) { Result.Ok(42) } else { Result.Err("boom") }
+
+puts(ok.fold_to_str((n: Int) -> n.show(), (s: Str) -> s))   # output: 42
+puts(err.fold_to_str((n: Int) -> n.show(), (s: Str) -> s))  # output: boom

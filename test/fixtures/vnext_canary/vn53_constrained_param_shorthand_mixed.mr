@@ -1,0 +1,9 @@
+# VN53: Constrained-param shorthand coexists with explicit generic binders
+trait Named = { name: Str }
+
+fn pair[a: Named](left: a, right: Named) -> Str = left.name + ":" + right.name
+
+let left = { name: "alpha", id: 1 }
+let right = { name: "beta", bananas: 3 }
+
+puts(pair(left, right))  # output: alpha:beta

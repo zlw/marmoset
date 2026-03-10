@@ -50,13 +50,14 @@ let lower_context_of_program (prog : Surface.surface_program) : lower_context =
 
 let trait_shorthand_constraint (ctx : lower_context) (st : Surface.surface_type_expr) : string list option =
   match st with
+  | Surface.STConstraintShorthand traits -> Some traits
   | Surface.STCon name when StringSet.mem name ctx.trait_names && not (StringSet.mem name ctx.type_names) ->
       Some [ name ]
   | _ -> None
 
 let fresh_shorthand_generic_name (used : StringSet.t) : string =
   let rec loop n =
-    let candidate = Printf.sprintf "t%d" n in
+    let candidate = Printf.sprintf "g%d" n in
     if StringSet.mem candidate used then
       loop (n + 1)
     else
@@ -95,6 +96,7 @@ let infer_impl_type_params (ctx : lower_context) (impl_for_type : Surface.surfac
           (seen, rev_names)
         else
           (StringSet.add name seen, name :: rev_names)
+    | Surface.STConstraintShorthand _ -> (seen, rev_names)
     | Surface.STApp (_name, args) ->
         List.fold_left (fun (seen_acc, names_acc) arg -> collect seen_acc names_acc arg) (seen, rev_names) args
     | Surface.STArrow (params, ret, _) ->
@@ -126,6 +128,8 @@ let rec lower_type_expr_with_bound_vars (bound_type_vars : StringSet.t) (st : Su
   | Surface.STVar s -> AST.TVar s
   | Surface.STCon s when StringSet.mem s bound_type_vars -> AST.TVar s
   | Surface.STCon s -> AST.TCon s
+  | Surface.STConstraintShorthand _ ->
+      failwith "Lower: constrained-param shorthand escaped parameter lowering"
   | Surface.STApp (name, args) -> AST.TApp (name, List.map (lower_type_expr_with_bound_vars bound_type_vars) args)
   | Surface.STArrow (params, ret, effectful) ->
       AST.TArrow
@@ -890,8 +894,8 @@ let%test "bare trait param shorthand lowers to fresh constrained generic" =
                AST.expr =
                  AST.Function
                    {
-                     generics = Some [ { AST.name = "t0"; constraints = [ "JungleDweller" ] } ];
-                     params = [ ("x", Some (AST.TVar "t0")) ];
+                     generics = Some [ { AST.name = "g0"; constraints = [ "JungleDweller" ] } ];
+                     params = [ ("x", Some (AST.TVar "g0")) ];
                      return_type = Some (AST.TCon "Str");
                      _;
                    };
@@ -934,10 +938,99 @@ let%test "multiple shorthand params lower to independent generics" =
                      generics =
                        Some
                          [
-                           { AST.name = "t0"; constraints = [ "Eq" ] };
-                           { AST.name = "t1"; constraints = [ "Eq" ] };
+                           { AST.name = "g0"; constraints = [ "Eq" ] };
+                           { AST.name = "g1"; constraints = [ "Eq" ] };
                          ];
-                     params = [ ("x", Some (AST.TVar "t0")); ("y", Some (AST.TVar "t1")) ];
+                     params = [ ("x", Some (AST.TVar "g0")); ("y", Some (AST.TVar "g1")) ];
+                     _;
+                   };
+               _;
+             };
+           _;
+         };
+     _;
+   };
+  ] ->
+      true
+  | _ -> false
+
+let%test "ampersand shorthand param lowers to one constrained generic with multiple traits" =
+  let id_supply = Id_supply.Id_supply.create 0 in
+  let body_expr = Surface.mk_surface_expr ~id:1 ~pos:5 (Surface.SEIdentifier "x") in
+  let decl =
+    Surface.SFnDecl
+      {
+        name = "describe";
+        generics = None;
+        params = [ ("x", Some (Surface.STConstraintShorthand [ "Named"; "Aged" ])) ];
+        return_type = Some (Surface.STCon "Str");
+        is_effectful = false;
+        body = Surface.SEOBExpr body_expr;
+      }
+  in
+  let prog = lower_program id_supply [ mk_test_ts decl ] in
+  match prog with
+  | [
+   {
+     AST.stmt =
+       AST.Let
+         {
+           value =
+             {
+               AST.expr =
+                 AST.Function
+                   {
+                     generics = Some [ { AST.name = "g0"; constraints = [ "Named"; "Aged" ] } ];
+                     params = [ ("x", Some (AST.TVar "g0")) ];
+                     _;
+                   };
+               _;
+             };
+           _;
+         };
+     _;
+   };
+  ] ->
+      true
+  | _ -> false
+
+let%test "explicit generics and shorthand params stay independent" =
+  let id_supply = Id_supply.Id_supply.create 0 in
+  let body_expr = Surface.mk_surface_expr ~id:1 ~pos:5 (Surface.SEString "") in
+  let decl =
+    Surface.SFnDecl
+      {
+        name = "pair";
+        generics = Some [ AST.{ name = "a"; constraints = [ "Named" ] } ];
+        params = [ ("left", Some (Surface.STCon "a")); ("right", Some (Surface.STCon "Named")) ];
+        return_type = Some (Surface.STCon "Str");
+        is_effectful = false;
+        body = Surface.SEOBExpr body_expr;
+      }
+  in
+  let prog =
+    lower_program id_supply
+      [ mk_test_ts (Surface.STraitDef { name = "Named"; type_param = None; supertraits = []; fields = []; methods = [] }); mk_test_ts decl ]
+  in
+  match prog with
+  | [
+   { AST.stmt = AST.TraitDef _; _ };
+   {
+     AST.stmt =
+       AST.Let
+         {
+           value =
+             {
+               AST.expr =
+                 AST.Function
+                   {
+                     generics =
+                       Some
+                         [
+                           { AST.name = "a"; constraints = [ "Named" ] };
+                           { AST.name = "g0"; constraints = [ "Named" ] };
+                         ];
+                     params = [ ("left", Some (AST.TVar "a")); ("right", Some (AST.TVar "g0")) ];
                      _;
                    };
                _;

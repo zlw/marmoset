@@ -694,6 +694,61 @@ let annotation_or_fresh te =
   | Error _ -> Ok (fresh_type_var ())
   | Ok t -> Ok t
 
+let annotation_with_bindings_or_fresh (type_bindings : (string * mono_type) list) te =
+  match Annotation.type_expr_to_mono_type_with type_bindings te with
+  | Error d when d.Diagnostic.code = "type-open-row-rejected" -> Error d
+  | Error _ -> Ok (fresh_type_var ())
+  | Ok t -> Ok t
+
+let provisional_function_type
+    (generics_opt : AST.generic_param list option)
+    (params : (string * AST.type_expr option) list)
+    (return_annot : AST.type_expr option)
+    (is_effectful : bool) : (mono_type, Diagnostic.t) result =
+  let type_var_map =
+    match generics_opt with
+    | None -> []
+    | Some generics ->
+        List.map
+          (fun (generic : AST.generic_param) ->
+            let fresh_var = fresh_type_var () in
+            (match fresh_var with
+            | TVar n ->
+                add_type_var_constraints n generic.constraints;
+                record_type_var_user_name ~fresh_name:n ~user_name:generic.name
+            | _ -> ());
+            (generic.name, fresh_var))
+          generics
+  in
+  let convert_annot_or_fresh = annotation_with_bindings_or_fresh type_var_map in
+  let return_type_result =
+    match return_annot with
+    | Some type_expr -> convert_annot_or_fresh type_expr
+    | None -> Ok (fresh_type_var ())
+  in
+  match return_type_result with
+  | Error _ as e -> e
+  | Ok return_type -> (
+      let param_types_result =
+        List.fold_left
+          (fun acc (_name, annot_opt) ->
+            match acc with
+            | Error _ -> acc
+            | Ok rev_types -> (
+                match annot_opt with
+                | None -> Ok (fresh_type_var () :: rev_types)
+                | Some type_expr -> (
+                    match convert_annot_or_fresh type_expr with
+                    | Error _ as e -> e
+                    | Ok t -> Ok (t :: rev_types))))
+          (Ok []) params
+      in
+      match param_types_result with
+      | Error _ as e -> e
+      | Ok rev_param_types ->
+          let param_types = List.rev rev_param_types in
+          Ok (List.fold_right (fun param_type acc -> TFun (param_type, acc, is_effectful)) param_types return_type))
+
 type symbol_scope = symbol_id NameMap.t
 type symbol_scope_stack = symbol_scope list
 
@@ -3246,6 +3301,76 @@ and infer_statement type_map env stmt =
           | AST.Pure -> `Pure
           | AST.Effectful -> `Effectful
         in
+        let* method_generic_internal_vars =
+          match m.method_default_impl with
+          | None -> Ok []
+          | Some default_expr ->
+              let trait_bindings =
+                match type_param with
+                | Some tp -> [ (tp, TVar tp) ]
+                | None -> []
+              in
+              let method_bindings = List.map (fun n -> (n, TVar n)) method_generic_names in
+              let known_param_types = List.mapi (fun i (_name, ty) -> (i, ty)) param_types in
+              let body_stmt =
+                AST.mk_stmt ~pos:default_expr.pos ~end_pos:default_expr.end_pos ~file_id:default_expr.file_id
+                  (AST.Block
+                     [
+                       AST.mk_stmt ~pos:default_expr.pos ~end_pos:default_expr.end_pos
+                         ~file_id:default_expr.file_id (AST.ExpressionStmt default_expr);
+                     ])
+              in
+              let constraint_store = current_constraint_store () in
+              let method_constraint_snapshots =
+                match m.method_generics with
+                | None -> []
+                | Some gps ->
+                    List.map
+                      (fun (gp : AST.generic_param) ->
+                        let old = Hashtbl.find_opt constraint_store gp.name in
+                        add_type_var_constraints gp.name gp.constraints;
+                        (gp.name, old))
+                      gps
+              in
+              let restore_method_constraints () =
+                List.iter
+                  (fun (name, old_opt) ->
+                    match old_opt with
+                    | Some old -> Hashtbl.replace constraint_store name old
+                    | None -> Hashtbl.remove constraint_store name)
+                  method_constraint_snapshots
+              in
+              let infer_default_body =
+                Fun.protect ~finally:restore_method_constraints (fun () ->
+                    type_callable type_map env ~type_bindings:(method_bindings @ trait_bindings)
+                      ~known_param_types
+                      ~params:(List.map (fun (name, ty) -> (name, Some ty)) m.method_params)
+                      ~return_annot:(Some m.method_return_type) ~known_return:(Some return_type)
+                      ~effect_annot:
+                        (match m.method_effect with
+                        | AST.Pure -> `Pure
+                        | AST.Effectful -> `Effectful)
+                      ~strict_return_check:true ~body:body_stmt)
+              in
+              (match infer_default_body with
+              | Error e -> Error e
+              | Ok (param_names, inferred_param_types, inferred_return_type, is_effectful, subst) ->
+                  record_method_def m.method_sig_id
+                    {
+                      Resolution_artifacts.md_param_names = param_names;
+                      md_param_types = inferred_param_types;
+                      md_return_type = inferred_return_type;
+                      md_is_effectful = is_effectful;
+                      md_body_id = m.method_sig_id;
+                    };
+                  Ok
+                    (List.filter_map
+                       (fun generic_name ->
+                         match apply_substitution subst (TVar generic_name) with
+                         | TVar internal_name when internal_name <> generic_name -> Some (generic_name, internal_name)
+                         | _ -> None)
+                       method_generic_names))
+        in
         Ok
           {
             Trait_registry.method_key =
@@ -3255,7 +3380,7 @@ and infer_statement type_map env stmt =
             method_params = param_types;
             method_return_type = return_type;
             method_effect;
-            method_generic_internal_vars = [];
+            method_generic_internal_vars;
             method_default_impl = m.method_default_impl;
           }
       in
@@ -3798,18 +3923,21 @@ and infer_statement type_map env stmt =
                        the stored signature uses the original names, allowing
                        instantiate_method_generics to substitute them correctly. *)
                         let method_sig =
-                          match method_sig.method_generics with
+                          let generic_names_to_restore =
+                            (List.map fst generic_type_bindings) @ List.map fst method_sig.method_generics
+                          in
+                          match generic_names_to_restore with
                           | [] -> method_sig
-                          | generics ->
+                          | _ ->
                               let reverse_subst =
                                 List.fold_left
-                                  (fun acc (param_name, _) ->
+                                  (fun acc param_name ->
                                     let resolved = apply_substitution method_subst (TVar param_name) in
                                     match resolved with
                                     | TVar fresh_name when fresh_name <> param_name ->
                                         SubstMap.add fresh_name (TVar param_name) acc
                                     | _ -> acc)
-                                  SubstMap.empty generics
+                                  SubstMap.empty generic_names_to_restore
                               in
                               if SubstMap.is_empty reverse_subst then
                                 method_sig
@@ -3824,6 +3952,17 @@ and infer_statement type_map env stmt =
                                     apply_substitution reverse_subst method_sig.method_return_type;
                                 }
                         in
+                        record_method_def m.impl_method_id
+                          {
+                            Resolution_artifacts.md_param_names = List.map fst method_sig.method_params;
+                            md_param_types = List.map snd method_sig.method_params;
+                            md_return_type = method_sig.method_return_type;
+                            md_is_effectful =
+                              (match method_sig.method_effect with
+                              | `Effectful -> true
+                              | `Pure -> false);
+                            md_body_id = m.impl_method_id;
+                          };
                         let receiver_type =
                           match method_sig.method_params with
                           | [] ->
@@ -4157,35 +4296,7 @@ and infer_let ?(prefer_existing_self = false) type_map env name expr type_annota
   (* If so, create a partially constrained type for recursion *)
   let inferred_self_type_result =
     match (expr.expr, type_annotation) with
-    | AST.Function f, _ -> (
-        let return_type_result =
-          match f.return_type with
-          | Some type_expr -> annotation_or_fresh type_expr
-          | None -> Ok (fresh_type_var ())
-        in
-        match return_type_result with
-        | Error _ as e -> e
-        | Ok return_type -> (
-            let mk_f a b = TFun (a, b, f.is_effectful) in
-            let param_types_result =
-              List.fold_left
-                (fun acc (_name, annot_opt) ->
-                  match acc with
-                  | Error _ -> acc
-                  | Ok rev_types -> (
-                      match annot_opt with
-                      | None -> Ok (fresh_type_var () :: rev_types)
-                      | Some annot -> (
-                          match annotation_or_fresh annot with
-                          | Error _ as e -> e
-                          | Ok t -> Ok (t :: rev_types))))
-                (Ok []) f.params
-            in
-            match param_types_result with
-            | Error _ as e -> e
-            | Ok rev_param_types ->
-                let param_types = List.rev rev_param_types in
-                Ok (List.fold_right (fun param_t acc -> mk_f param_t acc) param_types return_type)))
+    | AST.Function f, _ -> provisional_function_type f.generics f.params f.return_type f.is_effectful
     | _, Some type_expr -> annotation_or_fresh type_expr
     | _, None -> Ok (fresh_type_var ())
   in
@@ -4335,39 +4446,11 @@ let predeclare_top_level_lets (env : type_env) (program : AST.program) : (type_e
               else
                 match let_binding.value.expr with
                 | AST.Function f -> (
-                    let return_type_result =
-                      match f.return_type with
-                      | Some type_expr -> annotation_or_fresh type_expr
-                      | None -> Ok (fresh_type_var ())
-                    in
-                    match return_type_result with
+                    match provisional_function_type f.generics f.params f.return_type f.is_effectful with
                     | Error e -> Error e
-                    | Ok return_type -> (
-                        let param_types_result =
-                          List.fold_left
-                            (fun acc (_name, annot_opt) ->
-                              match acc with
-                              | Error _ -> acc
-                              | Ok rev_types -> (
-                                  match annot_opt with
-                                  | None -> Ok (fresh_type_var () :: rev_types)
-                                  | Some type_expr -> (
-                                      match annotation_or_fresh type_expr with
-                                      | Error _ as e -> e
-                                      | Ok t -> Ok (t :: rev_types))))
-                            (Ok []) f.params
-                        in
-                        match param_types_result with
-                        | Error e -> Error e
-                        | Ok rev_param_types ->
-                            let param_types = List.rev rev_param_types in
-                            let placeholder =
-                              List.fold_right
-                                (fun param_type acc -> TFun (param_type, acc, f.is_effectful))
-                                param_types return_type
-                            in
-                            set_top_level_placeholder let_binding.name placeholder;
-                            go seen' (TypeEnv.add let_binding.name (mono_to_poly placeholder) env_acc) rest))
+                    | Ok placeholder ->
+                        set_top_level_placeholder let_binding.name placeholder;
+                        go seen' (TypeEnv.add let_binding.name (mono_to_poly placeholder) env_acc) rest)
                 | _ ->
                     (* Keep value bindings strict-order for now; only function
                        declarations participate in top-level forward references. *)
@@ -4678,6 +4761,24 @@ module Test = struct
     (* fn f(x) = x + 1; f(5) should be Int *)
     infers_to "fn f(x) = x + 1\nf(5)" TInt
 
+  let%test "mixed explicit generic and shorthand params stay independent" =
+    infers_to
+      "trait Named = { name: Str }\n\
+       fn pair[a: Named](left: a, right: Named) -> Str = left.name + \":\" + right.name\n\
+       let left = { name: \"alpha\", id: 1 }\n\
+       let right = { name: \"beta\", bananas: 3 }\n\
+       pair(left, right)"
+      TString
+
+  let%test "explicit generic name t0 does not alias shorthand-generated binders" =
+    infers_to
+      "trait Named = { name: Str }\n\
+       fn pair[t0: Named](left: t0, right: Named) -> Str = left.name + \":\" + right.name\n\
+       let left = { name: \"alpha\", id: 1 }\n\
+       let right = { name: \"beta\", bananas: 3 }\n\
+       pair(left, right)"
+      TString
+
   let%test "infer array literal" =
     (* [1, 2, 3] should be [Int] *)
     infers_to "[1, 2, 3]" (TArray TInt)
@@ -4982,6 +5083,11 @@ module Test = struct
   let%test "constrained field access works when all constraints are satisfied" =
     infers_to
       "type Person = { name: Str, age: Int }\ntrait Named = { name: Str }\ntrait Shown[a] = { fn show(x: a) -> Str }\nimpl Shown[Person] = {\n  fn show(x: Person) -> Str = x.name\n}\nfn get_name[t: Named & Shown](x: t) -> Str = x.name\nlet p: Person = { name: \"alice\", age: 42 }\nget_name(p)"
+      TString
+
+  let%test "explicit generics and shorthand params stay independent at call sites" =
+    infers_to
+      "trait Named = { name: Str }\nfn pair[a: Named](left: a, right: Named) -> Str = left.name + \":\" + right.name\nlet left = { name: \"alpha\", id: 1 }\nlet right = { name: \"beta\", bananas: 3 }\npair(left, right)"
       TString
 
   let%test "generic impl cannot specialize generic return type from body literals" =

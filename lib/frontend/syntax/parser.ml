@@ -393,6 +393,23 @@ and parse_type_expr_list (p : parser) : (parser * Surface.surface_type_expr list
     in
     loop p []
 
+and parse_param_type_expr (p : parser) : (parser * Surface.surface_type_expr, parser) result =
+  let* p2, first = parse_type_expr p in
+  if curr_token_is p2 Token.Ampersand then
+    match first with
+    | Surface.STCon trait_name ->
+        let* p3, rest = parse_constraint_list (next_token p2) in
+        Ok (p3, Surface.STConstraintShorthand (trait_name :: rest))
+    | Surface.STConstraintShorthand traits ->
+        let* p3, rest = parse_constraint_list (next_token p2) in
+        Ok (p3, Surface.STConstraintShorthand (traits @ rest))
+    | _ ->
+        Error
+          (add_error ~code:"parse-invalid-constraint-shorthand" p2
+             "Parameter constraint shorthand requires bare trait names joined by '&'")
+  else
+    Ok (p2, first)
+
 and parse_trait_constraint (p : parser) : (parser * string list, parser) result =
   (* Parse trait constraints: Eq, Show, Eq & Show, etc. *)
   let rec loop (lp : parser) (traits : string list) =
@@ -845,14 +862,14 @@ and parse_param_list_with_types (p : parser) : (parser * (string * Surface.surfa
       let param_name = lp.curr_token.literal in
       let lp2 = next_token lp in
       (* now at : *)
-      let* lp3, param_type = parse_type_expr (next_token lp2) in
+      let* lp3, param_type = parse_param_type_expr (next_token lp2) in
       if curr_token_is lp3 Token.Comma then
         loop (next_token lp3) (pos_idx + 1) ((param_name, param_type) :: rev_params)
       else
         Ok (lp3, List.rev ((param_name, param_type) :: rev_params))
     else if curr_token_is lp Token.Ident then
       (* Positional param: just a type expression (no colon) *)
-      let* lp2, param_type = parse_type_expr lp in
+      let* lp2, param_type = parse_param_type_expr lp in
       let param_name = Printf.sprintf "$%d" pos_idx in
       if curr_token_is lp2 Token.Comma then
         loop (next_token lp2) (pos_idx + 1) ((param_name, param_type) :: rev_params)
@@ -1439,7 +1456,7 @@ and parse_function_parameters (p : parser) :
         (* Phase 2: Parse type annotation if present *)
         let* lp_after_annot, type_annot =
           if curr_token_is lp_after_name Token.Colon then
-            let* lp_parse, te = parse_type_expr (next_token lp_after_name) in
+            let* lp_parse, te = parse_param_type_expr (next_token lp_after_name) in
             Ok (lp_parse, Some te)
           else
             Ok (lp_after_name, None)
@@ -3030,6 +3047,15 @@ let%test "parse field-only trait definition" =
           | _ -> false)
       | _ -> false)
   | Error _ -> false
+
+let%test "parse parameter constraint shorthand with ampersand" =
+  match parse_surface ~file_id:"<test>" "fn describe(x: Named & Aged) -> Str = x.name" with
+  | Error _ -> false
+  | Ok result -> (
+      match result.program with
+      | [ { Surface.std_decl = Surface.SFnDecl { params = [ ("x", Some (Surface.STConstraintShorthand [ "Named"; "Aged" ])) ]; _ }; _ } ] ->
+          true
+      | _ -> false)
 
 let%test "parse mixed trait definition" =
   let input = "trait Printable[a] = { name: Str fn format(x: a) -> Str }" in

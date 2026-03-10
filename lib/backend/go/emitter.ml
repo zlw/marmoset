@@ -287,6 +287,7 @@ type impl_inst_payload = {
   param_types : Types.mono_type list;
   return_type : Types.mono_type;
   body_stmt : AST.statement;
+  specialization_subst : Types.substitution;
 }
 
 type impl_template_method = {
@@ -1471,12 +1472,13 @@ let rec collect_insts_stmt
                   type_fingerprint = for_type_fingerprint;
                 }
               in
-              let payload =
+              let payload : impl_inst_payload =
                 {
                   param_names = method_param_names;
                   param_types = method_param_types;
                   return_type;
                   body_stmt = m.impl_method_body;
+                  specialization_subst = Types.empty_substitution;
                 }
               in
               add_impl_instantiation state impl_inst payload;
@@ -1529,7 +1531,14 @@ let rec collect_insts_stmt
                           type_fingerprint = for_type_fingerprint;
                         }
                       in
-                      let payload = { param_names; param_types; return_type; body_stmt } in
+                      let specialization_subst =
+                        match trait_def.trait_type_param with
+                        | None -> Types.empty_substitution
+                        | Some tp -> Types.substitution_singleton tp for_type
+                      in
+                      let payload : impl_inst_payload =
+                        { param_names; param_types; return_type; body_stmt; specialization_subst }
+                      in
                       add_impl_instantiation state impl_inst payload)
               trait_def.trait_methods);
       env
@@ -1609,12 +1618,13 @@ and register_impl_method_use
         if ImplInstSet.mem impl_inst state.impl_instantiations then
           ()
         else
-          let payload =
+          let payload : impl_inst_payload =
             {
               param_names = template_method.param_names;
               param_types;
               return_type;
               body_stmt = template_method.body_stmt;
+              specialization_subst = combined_subst;
             }
           in
           add_impl_instantiation state impl_inst payload;
@@ -4486,22 +4496,39 @@ let emit_cached_impl_method
   in
   let return_type_str = type_to_go state.mono payload.return_type in
   let method_env = add_param_bindings typed_env payload.param_names payload.param_types in
-  (* For method-generic instantiations, the type_map has internal TVars (e.g. t0 for b) that
-     don't match the substituted types. Apply the combined substitution to build a specialized
-     type_map where those TVars are resolved to concrete types. *)
-  (* For method-generic instantiations, the type_map has internal TVars from body inference
-     that don't match the call-site resolved types. Build a specialized type_map by erasing
-     those TVars to interface{} (TUnion []). The function signature has correct concrete types
-     from the payload; the body emission only needs types for sub-expression codegen. *)
-  let effective_type_map =
-    if impl_inst.method_type_args = [] then
+  let copied_specialized_type_map () =
+    if Types.SubstMap.is_empty payload.specialization_subst then
       type_map
     else
       let copied = Hashtbl.create (Hashtbl.length type_map) in
       Hashtbl.iter
-        (fun expr_id mono -> Hashtbl.replace copied expr_id (erase_unresolved_type_vars_for_codegen mono))
+        (fun expr_id mono ->
+          let substituted = Types.apply_substitution payload.specialization_subst mono in
+          let final =
+            if impl_inst.method_type_args = [] then
+              substituted
+            else
+              erase_unresolved_type_vars_for_codegen substituted
+          in
+          Hashtbl.replace copied expr_id final)
         type_map;
       copied
+  in
+  (* Generic impl-method specializations can leave fresh inference vars in the
+     global type_map. Re-infer the concrete body when possible so nested block
+     expressions and calls recover precise concrete types. *)
+  let effective_type_map =
+    if impl_inst.method_type_args = [] then
+      copied_specialized_type_map ()
+    else
+      let inferred_map = Infer.create_type_map () in
+      let infer_state = Infer.create_inference_state () in
+      match Infer.with_inference_state infer_state (fun () -> Infer.infer_statement inferred_map method_env payload.body_stmt) with
+      | Ok (subst, _body_type) ->
+          Infer.apply_substitution_type_map subst inferred_map;
+          inferred_map
+      | Error _ ->
+          copied_specialized_type_map ()
   in
   let body_str =
     with_return_type state payload.return_type (fun () ->
@@ -4560,26 +4587,6 @@ let emit_inherent_method
       (Types.SubstMap.union (fun _k _a b -> Some b) impl_substitution method_generic_subst)
       internal_var_subst
   in
-  let method_type_map : Infer.type_map =
-    if Types.SubstMap.is_empty combined_subst then
-      type_map
-    else
-      let copied = Hashtbl.create (Hashtbl.length type_map) in
-      Hashtbl.iter
-        (fun expr_id mono ->
-          let substituted = Types.apply_substitution combined_subst mono in
-          (* For method-generic specializations, erase any remaining internal TVars
-             from body inference that aren't covered by the named substitution *)
-          let final =
-            if method_type_args <> [] then
-              erase_unresolved_type_vars_for_codegen substituted
-            else
-              substituted
-          in
-          Hashtbl.replace copied expr_id final)
-        type_map;
-      copied
-  in
   let def =
     lookup_method_def_exn state.mono.method_def_map ~method_id:method_impl.impl_method_id
       ~owner:(Types.to_string for_type) ~method_name:method_impl.impl_method_name
@@ -4607,6 +4614,34 @@ let emit_inherent_method
   in
   let return_type_str = type_to_go state.mono return_type in
   let method_env = add_param_bindings typed_env method_param_names method_param_types in
+  let method_type_map : Infer.type_map =
+    if Types.SubstMap.is_empty combined_subst then
+      type_map
+    else
+      let inferred_map = Infer.create_type_map () in
+      let infer_state = Infer.create_inference_state () in
+      match
+        Infer.with_inference_state infer_state (fun () ->
+            Infer.infer_statement inferred_map method_env method_impl.impl_method_body)
+      with
+      | Ok (subst, _body_type) ->
+          Infer.apply_substitution_type_map subst inferred_map;
+          inferred_map
+      | Error _ ->
+          let copied = Hashtbl.create (Hashtbl.length type_map) in
+          Hashtbl.iter
+            (fun expr_id mono ->
+              let substituted = Types.apply_substitution combined_subst mono in
+              let final =
+                if method_type_args <> [] then
+                  erase_unresolved_type_vars_for_codegen substituted
+                else
+                  substituted
+              in
+              Hashtbl.replace copied expr_id final)
+            type_map;
+          copied
+  in
   (* For method-generic specializations, register any new enum instantiations
      discovered in the specialized type_map (e.g. opt[String] from opt[b]) *)
   if method_type_args <> [] then (
@@ -6184,12 +6219,13 @@ let%test "add_impl_instantiation rejects fingerprint collision with different fo
         type_fingerprint = fingerprint_types [ for_type ];
       }
     in
-    let payload =
+    let payload : impl_inst_payload =
       {
         param_names = [ "x" ];
         param_types = [ Types.TInt ];
         return_type = Types.TString;
         body_stmt = AST.mk_stmt (AST.ExpressionStmt (AST.mk_expr (AST.String "x")));
+        specialization_subst = Types.empty_substitution;
       }
     in
     add_impl_instantiation state (mk_inst t1) payload;

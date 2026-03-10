@@ -1,0 +1,9 @@
+# VN46: Generic default trait methods specialize and codegen through calls
+trait Mappable[a] = {
+  fn map[b](x: a, f: (a) -> b) -> b = f(x)
+}
+
+impl Mappable[Int] = {}
+
+puts(1.map((n: Int) -> n.show()))  # output: 1
+puts(1.map((n: Int) -> n + 41))    # output: 42
