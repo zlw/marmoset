@@ -1,11 +1,7 @@
 # T94: Trait object passed through two function layers
-trait named {
-  name: string
+trait Named = {
+  name: Str
 }
-let inner = fn(x: named) -> string {
-  x.name
-}
-let outer = fn(x: named) -> string {
-  inner(x)
-}
+fn inner(x: Named) -> Str = x.name
+fn outer(x: Named) -> Str = inner(x)
 puts(outer({ name: "alice", age: 30 }))  # output: alice

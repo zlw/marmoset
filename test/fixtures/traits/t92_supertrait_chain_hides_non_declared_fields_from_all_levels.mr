@@ -1,9 +1,9 @@
 # T92: Supertrait chain hides non-declared fields from all levels
-trait named {
-  name: string
+trait Named = {
+  name: Str
 }
-trait described: named {
-  description: string
+trait Described: Named = {
+  description: Str
 }
-let x: described = { name: "alice", description: "a person", hobby: "chess" }
+let x: Described = { name: "alice", description: "a person", hobby: "chess" }
 puts(x.hobby)  # error: Record field 'hobby' not found in type

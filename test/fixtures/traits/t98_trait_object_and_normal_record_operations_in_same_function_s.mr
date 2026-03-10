@@ -1,8 +1,8 @@
 # T98: Trait object and normal record operations in same function scope
-trait named {
-  name: string
+trait Named = {
+  name: Str
 }
-let process = fn(x: named, extra: int) -> string {
+fn process(x: Named, extra: Int) -> Str = {
   let n = x.name
   let plain = { value: extra }
   n + " " + plain.value.show()

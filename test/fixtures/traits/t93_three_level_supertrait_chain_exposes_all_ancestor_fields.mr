@@ -1,12 +1,12 @@
 # T93: Three-level supertrait chain exposes all ancestor fields
-trait named {
-  name: string
+trait Named = {
+  name: Str
 }
-trait aged: named {
-  age: int
+trait Aged: Named = {
+  age: Int
 }
-trait profiled: aged {
-  status: string
+trait Profiled: Aged = {
+  status: Str
 }
-let x: profiled = { name: "alice", age: 30, status: "active", secret: true }
+let x: Profiled = { name: "alice", age: 30, status: "active", secret: true }
 puts(x.name + " " + x.age.show() + " " + x.status)  # output: alice 30 active
