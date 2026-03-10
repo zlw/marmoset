@@ -420,6 +420,15 @@ let%test "trait object coercion store snapshots and clears" =
   clear_method_resolution_store ();
   before_clear && Hashtbl.length (snapshot_trait_object_coercion_store ()) = 0
 
+let%test "dynamic trait method resolution snapshots and clears" =
+  clear_method_resolution_store ();
+  let expr = AST.mk_expr ~id:91 (AST.Integer 1L) in
+  record_method_resolution expr (DynamicTraitMethod "Show");
+  let snapshot = snapshot_method_resolution_store () in
+  let before_clear = Hashtbl.find_opt snapshot expr.id = Some (DynamicTraitMethod "Show") in
+  clear_method_resolution_store ();
+  before_clear && Hashtbl.length (snapshot_method_resolution_store ()) = 0
+
 type obligation_reason = GenericConstraint of string
 
 type obligation = {

@@ -373,11 +373,18 @@ Rules:
 - method dispatch on `Dyn[...]` values is dynamic,
 - field-only traits remain compile-time structural constraints outside `Dyn[...]`.
 
-### Representation options considered
+### Runtime layout
 
-1. Interface-only runtime values (Go interface-based dispatch)
-2. Dictionary passing (explicit witness records)
-3. Tagged existential package (`type_id`, payload, witness)
+`Dyn[...]` values use an explicit witness-carrying package in the Go backend. The
+runtime shape is:
+
+1. `type_id`: a stable specialization key for the concrete payload type
+2. `payload`: the concrete value, stored opaquely
+3. `witness`: a table of method wrappers for the enclosed trait set
+
+Dynamic dot-calls dispatch through the witness table chosen by typechecking.
+This keeps dynamic method calls explicit in compiler metadata and avoids
+treating raw Go interfaces as the language ABI.
 
 ### Guardrails
 
@@ -386,12 +393,11 @@ Rules:
 - Do not expose raw Go interface internals as stable module/FFI ABI.
 - Lock operation semantics (`eq`, `ord`, `hash`, `show`) for existential values before enabling them.
 
-### Preconditions before implementation
+### Implementation preconditions
 
 1. Add typed IR/AST support for existential values and dynamic trait dispatch.
 2. Thread resolution/coherence metadata from typechecker to codegen without re-resolution.
-3. Freeze module/FFI ABI representation for existential payloads/witnesses.
-4. Add deterministic tests for dispatch behavior and capability limits.
+3. Add deterministic tests for dispatch behavior and capability limits.
 
 ## Why This Design
 
