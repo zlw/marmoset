@@ -401,6 +401,18 @@ let placeholder_rewritten_expr (rewrite_map : Infer.placeholder_rewrite_map) (ex
   | Some rewritten -> rewritten
   | None -> expr
 
+let lookup_method_def_exn
+    (method_def_map : (int, Typecheck.Resolution_artifacts.typed_method_def) Hashtbl.t)
+    ~(method_id : int)
+    ~(owner : string)
+    ~(method_name : string) : Typecheck.Resolution_artifacts.typed_method_def =
+  match Hashtbl.find_opt method_def_map method_id with
+  | Some def -> def
+  | None ->
+      failwith
+        (Printf.sprintf "Codegen error: missing typed method metadata for %s.%s (method id %d)" owner
+           method_name method_id)
+
 (* ============================================================
    Enum Layout Types (Phase 4.4: Multi-field support)
    ============================================================ *)
@@ -1071,39 +1083,11 @@ let register_impl_template (state : mono_state) (impl : AST.impl_def) : impl_tem
           | None -> []
           | Some gps -> List.map (fun (gp : AST.generic_param) -> gp.name) gps
         in
-        (* Include method-level generics in bindings so annotation parsing recognizes them as TVars *)
-        let all_type_params =
-          impl.impl_type_params @ (method_generic_names |> List.map (fun name -> { AST.name; constraints = [] }))
+        let def =
+          lookup_method_def_exn state.method_def_map ~method_id:m.impl_method_id ~owner:impl.impl_trait_name
+            ~method_name:m.impl_method_name
         in
-        let param_names, param_types, return_type =
-          match Hashtbl.find_opt state.method_def_map m.impl_method_id with
-          | Some def -> (def.md_param_names, def.md_param_types, def.md_return_type)
-          | None ->
-              (* Fallback to annotation parsing *)
-              let pn, pt =
-                List.split
-                  (List.map
-                     (fun (param_name, param_type_opt) ->
-                       match param_type_opt with
-                       | Some param_type ->
-                           (param_name, type_expr_to_mono_type_with_impl_bindings all_type_params param_type)
-                       | None ->
-                           failwith
-                             (Printf.sprintf
-                                "Codegen error: impl %s.%s parameter '%s' is missing a type annotation"
-                                impl.impl_trait_name m.impl_method_name param_name))
-                     m.impl_method_params)
-              in
-              let rt =
-                match m.impl_method_return_type with
-                | Some ret_ann -> type_expr_to_mono_type_with_impl_bindings all_type_params ret_ann
-                | None ->
-                    failwith
-                      (Printf.sprintf "Codegen error: impl %s.%s is missing a return type annotation"
-                         impl.impl_trait_name m.impl_method_name)
-              in
-              (pn, pt, rt)
-        in
+        let param_names, param_types, return_type = (def.md_param_names, def.md_param_types, def.md_return_type) in
         {
           method_name = m.impl_method_name;
           param_names;
@@ -1469,34 +1453,12 @@ let rec collect_insts_stmt
               | _ -> false
             in
             if not has_method_generics then (
+              let def =
+                lookup_method_def_exn state.method_def_map ~method_id:m.impl_method_id ~owner:impl.impl_trait_name
+                  ~method_name:m.impl_method_name
+              in
               let method_param_names, method_param_types, return_type =
-                match Hashtbl.find_opt state.method_def_map m.impl_method_id with
-                | Some def -> (def.md_param_names, def.md_param_types, def.md_return_type)
-                | None ->
-                    (* Fallback to annotation parsing *)
-                    let pn, pt =
-                      List.split
-                        (List.map
-                           (fun (param_name, param_type_opt) ->
-                             match param_type_opt with
-                             | Some param_type ->
-                                 (param_name, annotation_exn (Annotation.type_expr_to_mono_type param_type))
-                             | None ->
-                                 failwith
-                                   (Printf.sprintf
-                                      "Codegen error: impl %s.%s parameter '%s' is missing a type annotation"
-                                      impl.impl_trait_name m.impl_method_name param_name))
-                           m.impl_method_params)
-                    in
-                    let rt =
-                      match m.impl_method_return_type with
-                      | Some ret_ann -> annotation_exn (Annotation.type_expr_to_mono_type ret_ann)
-                      | None ->
-                          failwith
-                            (Printf.sprintf "Codegen error: impl %s.%s is missing a return type annotation"
-                               impl.impl_trait_name m.impl_method_name)
-                    in
-                    (pn, pt, rt)
+                (def.md_param_names, def.md_param_types, def.md_return_type)
               in
               let impl_inst =
                 {
@@ -1584,25 +1546,12 @@ let rec collect_insts_stmt
             | _ -> false
           in
           if not has_method_generics then
-            let method_param_names, method_param_types =
-              match Hashtbl.find_opt state.method_def_map m.impl_method_id with
-              | Some def -> (def.md_param_names, def.md_param_types)
-              | None ->
-                  (* Fallback to annotation parsing *)
-                  List.split
-                    (List.map
-                       (fun (param_name, param_type_opt) ->
-                         match param_type_opt with
-                         | Some param_type ->
-                             ( param_name,
-                               annotation_exn (Annotation.type_expr_to_mono_type_with bindings param_type) )
-                         | None ->
-                             failwith
-                               (Printf.sprintf
-                                  "Codegen error: inherent method %s parameter '%s' is missing a type annotation"
-                                  m.impl_method_name param_name))
-                       m.impl_method_params)
+            let def =
+              lookup_method_def_exn state.method_def_map ~method_id:m.impl_method_id
+                ~owner:(Types.to_string (annotation_exn (Annotation.type_expr_to_mono_type_with bindings impl.inherent_for_type)))
+                ~method_name:m.impl_method_name
             in
+            let method_param_names, method_param_types = (def.md_param_names, def.md_param_types) in
             let method_env = add_param_bindings env method_param_names method_param_types in
             ignore (collect_insts_stmt state type_map method_env m.impl_method_body))
         impl.inherent_methods;
@@ -4631,41 +4580,13 @@ let emit_inherent_method
         type_map;
       copied
   in
-  (* Phase 6.3: Use method_def_map for param/return types when available,
-     falling back to annotation parsing for backwards compatibility *)
-  let method_param_names, method_param_types, return_type =
-    match Hashtbl.find_opt state.mono.method_def_map method_impl.impl_method_id with
-    | Some def ->
-        let param_types = List.map (fun t -> Types.apply_substitution combined_subst t) def.md_param_types in
-        let ret = Types.apply_substitution combined_subst def.md_return_type in
-        (def.md_param_names, param_types, ret)
-    | None ->
-        (* Fallback to annotation parsing *)
-        let all_bindings = bindings @ List.combine method_generic_names method_type_args in
-        let names, types =
-          List.split
-            (List.map
-               (fun (param_name, param_type_opt) ->
-                 match param_type_opt with
-                 | Some param_type ->
-                     (param_name, annotation_exn (Annotation.type_expr_to_mono_type_with all_bindings param_type))
-                 | None ->
-                     failwith
-                       (Printf.sprintf
-                          "Codegen error: inherent method %s parameter '%s' is missing a type annotation"
-                          method_impl.impl_method_name param_name))
-               method_impl.impl_method_params)
-        in
-        let ret =
-          match method_impl.impl_method_return_type with
-          | Some ret_ann -> annotation_exn (Annotation.type_expr_to_mono_type_with all_bindings ret_ann)
-          | None ->
-              failwith
-                (Printf.sprintf "Codegen error: inherent method %s is missing a return type annotation"
-                   method_impl.impl_method_name)
-        in
-        (names, types, ret)
+  let def =
+    lookup_method_def_exn state.mono.method_def_map ~method_id:method_impl.impl_method_id
+      ~owner:(Types.to_string for_type) ~method_name:method_impl.impl_method_name
   in
+  let method_param_names = def.md_param_names in
+  let method_param_types = List.map (fun t -> Types.apply_substitution combined_subst t) def.md_param_types in
+  let return_type = Types.apply_substitution combined_subst def.md_return_type in
   if List.length method_param_names <> List.length method_param_types then
     failwith
       (Printf.sprintf "Codegen error: inherent method %s has %d params but %d param types"
@@ -5206,7 +5127,7 @@ let emit_builtin_impls (program : AST.program) : string =
 let emit_program_with_typed_env
     ~(call_resolution_map : (int, Infer.method_resolution) Hashtbl.t)
     ~(method_type_args_map : (int, Types.mono_type list) Hashtbl.t)
-    ?(method_def_map = Hashtbl.create 0)
+    ~(method_def_map : (int, Typecheck.Resolution_artifacts.typed_method_def) Hashtbl.t)
     ?(placeholder_rewrite_map = Hashtbl.create 0)
     (type_map : Infer.type_map)
     (typed_env : Infer.type_env)
@@ -5604,13 +5525,13 @@ let%test "emit bool ordering via ord helper" =
 let%test "emit non-primitive equality via eq helper" =
   match
     compile_string ~file_id:"<codegen>"
-      "type point = { x: int }\nimpl eq for point {\n  fn eq(x: point, y: point) -> bool { false }\n}\nlet a: point = { x: 1 }\nlet b: point = { x: 1 }\na == b"
+      "type Point = { x: Int }\nimpl Eq[Point] = {\n  fn eq(x: Point, y: Point) -> Bool = false\n}\nlet a: Point = { x: 1 }\nlet b: Point = { x: 1 }\na == b"
   with
-  | Ok (code, _) -> string_contains code "func eq_eq_record_x_int64_closed" && string_contains code "return false"
+  | Ok (code, _) -> string_contains code "func eq_eq_" && string_contains code "return false"
   | Error _ -> false
 
 let%test "monomorphized function" =
-  match compile_string ~file_id:"<codegen>" "let double = fn(x) { x * 2 }; double(5)" with
+  match compile_string ~file_id:"<codegen>" "fn double(x: Int) -> Int = x * 2\ndouble(5)" with
   | Ok (code, _) ->
       (* Should have top-level func double_int64 *)
       string_contains code "func double_int64(x int64) int64"
@@ -5671,7 +5592,7 @@ let%test "generic empty array return uses function return type during build" =
   | Error _ -> false
 
 let%test "polymorphic function multiple instantiations" =
-  match compile_string ~file_id:"<codegen>" "let id = fn(x) { x }; id(5); id(true)" with
+  match compile_string ~file_id:"<codegen>" "fn id[a](x: a) -> a = x\nid(5)\nid(true)" with
   | Ok (code, _) ->
       string_contains code "func id_int64(x int64) int64"
       && string_contains code "func id_bool(x bool) bool"
@@ -5716,14 +5637,15 @@ let%test "emit array index with variable" =
   | Error _ -> false
 
 let%test "emit if inside function body" =
-  match compile_string ~file_id:"<codegen>" "let abs = fn(x) { if (x < 0) { -x } else { x } }; abs(5)" with
+  match compile_string ~file_id:"<codegen>" "fn abs(x: Int) -> Int = { if (x < 0) { -x } else { x } }\nabs(5)" with
   | Ok (code, _) ->
       string_contains code "func abs_int64(x int64) int64" && string_contains code "if (x < int64(0))"
   | Error _ -> false
 
 let%test "emit recursive function" =
   match
-    compile_string ~file_id:"<codegen>" "let fact = fn(n) { if (n < 2) { 1 } else { n * fact(n - 1) } }; fact(5)"
+    compile_string ~file_id:"<codegen>"
+      "fn fact(n: Int) -> Int = { if (n < 2) { 1 } else { n * fact(n - 1) } }\nfact(5)"
   with
   | Ok (code, _) ->
       string_contains code "func fact_int64(n int64) int64" && string_contains code "fact_int64((n - int64(1)))"
@@ -5732,11 +5654,11 @@ let%test "emit recursive function" =
 let%test "emit closure (function returning function)" =
   match
     compile_string ~file_id:"<codegen>"
-      "let make_adder = fn(x) { fn(y) { x + y } }; let add5 = make_adder(5); add5(10)"
+      "fn make_adder(n: Int) = (x: Int) -> n + x\nlet add10 = make_adder(10)\nadd10(5)"
   with
   | Ok (code, _) ->
-      string_contains code "func make_adder_int64(x int64) func(int64) int64"
-      && string_contains code "return func(y int64) int64"
+      string_contains code "func make_adder_int64(n int64) func(int64) int64"
+      && string_contains code "return func("
   | Error _ -> false
 
 let%test "emit string indexing returns string" =
@@ -5755,13 +5677,13 @@ let%test "emit negative string index" =
   | Error _ -> false
 
 let%test "underscore let binding emits discard assignment" =
-  match compile_string ~file_id:"<codegen>" "let f = fn(x: int) -> int { let _ = x; x }; f(1)" with
+  match compile_string ~file_id:"<codegen>" "fn f(x: Int) -> Int = { let _ = x; x }\nf(1)" with
   | Ok (code, _) -> string_contains code "_ = x" && not (string_contains code "_ := x")
   | Error _ -> false
 
 let%test "if statement without else in function followed by return" =
   match
-    compile_string ~file_id:"<codegen>" "let fib = fn(n) { if (n < 2) { return n }; return n + 1 }; fib(5)"
+    compile_string ~file_id:"<codegen>" "fn fib(n: Int) -> Int = { if (n < 2) { return n }; return n + 1 }\nfib(5)"
   with
   | Ok (code, _) ->
       (* Should emit as regular if statement, not wrapped in function *)
@@ -5773,7 +5695,7 @@ let%test "if statement without else in function followed by return" =
 let%test "if statement with else in function followed by return" =
   match
     compile_string ~file_id:"<codegen>"
-      "let test = fn(x) { if (x > 0) { return 1 } else { return -1 }; return 0 }; test(5)"
+      "fn test(x: Int) -> Int = { if (x > 0) { return 1 } else { return -1 }; return 0 }\ntest(5)"
   with
   | Ok (code, _) ->
       (* Should compile without nil errors *)
@@ -5783,7 +5705,7 @@ let%test "if statement with else in function followed by return" =
 let%test "fibonacci with if statement and subsequent return" =
   match
     compile_string ~file_id:"<codegen>"
-      "let fib = fn(n) { if (n < 2) { return n }; return fib(n - 1) + fib(n - 2) }; fib(10)"
+      "fn fib(n: Int) -> Int = { if (n < 2) { return n }; return fib(n - 1) + fib(n - 2) }\nfib(10)"
   with
   | Ok (code, _) ->
       string_contains code "func fib_int64(n int64) int64"
@@ -5841,7 +5763,7 @@ let%test "record field ordering is canonical in shape name" =
   | Error _ -> false
 
 let%test "function returning wrapped scalar record compiles" =
-  match compile_string ~file_id:"<codegen>" "let mk = fn(i) { { inner: i } }; let o = mk(1); o.inner" with
+  match compile_string ~file_id:"<codegen>" "fn mk(i: Int) -> { inner: Int } = { inner: i }\nlet o = mk(1)\no.inner" with
   | Ok (code, _) ->
       string_contains code "func mk_int64(i int64)" && string_contains code "type Record_inner_int64 struct"
   | Error _ -> false
@@ -5849,7 +5771,7 @@ let%test "function returning wrapped scalar record compiles" =
 let%test "function returning wrapped record compiles" =
   match
     compile_string ~file_id:"<codegen>"
-      "let mk = fn(i: { x: int }) { { inner: i } }; let i = { x: 1 }; let o = mk(i); o.inner.x"
+      "fn mk(i: { x: Int }) -> { inner: { x: Int } } = { inner: i }\nlet i = { x: 1 }\nlet o = mk(i)\no.inner.x"
   with
   | Ok (code, _) ->
       string_contains code "type Record_x_int64 struct"
@@ -5860,7 +5782,7 @@ let%test "function returning wrapped record compiles" =
 let%test "function wrapping inline record literal argument compiles" =
   match
     compile_string ~file_id:"<codegen>"
-      "let mk = fn(r: { x: int }) { { inner: r } }; let o = mk({ x: 3 }); o.inner.x"
+      "fn mk(r: { x: Int }) -> { inner: { x: Int } } = { inner: r }\nlet o = mk({ x: 3 })\no.inner.x"
   with
   | Ok (code, _) ->
       string_contains code "func mk_record_x_int64_closed(" && string_contains code "type Record_inner_"
@@ -5882,7 +5804,10 @@ let%test "record spread with full field override avoids unused temp" =
   | Error _ -> false
 
 let%test "emit record match pattern" =
-  match compile_string ~file_id:"<codegen>" "let p = { x: 10, y: 20 }; match p { { x:, y: }: x + y _: 0 }" with
+  match
+    compile_string ~file_id:"<codegen>"
+      "let p = { x: 10, y: 20 }\nmatch p {\n  case { x:, y: }: x + y\n  case _: 0\n}"
+  with
   | Ok (code, _) ->
       string_contains code "__scrutinee_0 :="
       && string_contains code "if true"
@@ -5891,7 +5816,7 @@ let%test "emit record match pattern" =
 
 let%test "type alias emits named Go type" =
   match
-    compile_string ~file_id:"<codegen>" "type point = { x: int, y: int }; let p: point = { x: 1, y: 2 }; p.x"
+    compile_string ~file_id:"<codegen>" "type Point = { x: Int, y: Int }\nlet p: Point = { x: 1, y: 2 }\np.x"
   with
   | Ok (code, _) ->
       (* Should emit "type Point struct{...}" using alias name, not Record_... *)
@@ -5900,7 +5825,7 @@ let%test "type alias emits named Go type" =
 
 let%test "type alias used in record literal" =
   match
-    compile_string ~file_id:"<codegen>" "type point = { x: int, y: int }; let p: point = { x: 1, y: 2 }; p.x"
+    compile_string ~file_id:"<codegen>" "type Point = { x: Int, y: Int }\nlet p: Point = { x: 1, y: 2 }\np.x"
   with
   | Ok (code, _) ->
       (* Record literal should use alias name *)
@@ -5914,7 +5839,7 @@ let%test "case-distinct record fields compile to distinct Go fields" =
 
 let%test "type alias replaces generated shape name" =
   match
-    compile_string ~file_id:"<codegen>" "type point = { x: int, y: int }; let p: point = { x: 1, y: 2 }; p.x"
+    compile_string ~file_id:"<codegen>" "type Point = { x: Int, y: Int }\nlet p: Point = { x: 1, y: 2 }\np.x"
   with
   | Ok (code, _) ->
       (* Should NOT emit Record_x_int64_y_int64 when alias exists *)
@@ -5924,11 +5849,11 @@ let%test "type alias replaces generated shape name" =
 let%test "emitter method calls use typechecker resolution metadata" =
   let source =
     {|
-trait ping {
-  fn ping(x: int) -> int
+trait Ping[a] = {
+  fn ping(x: a) -> Int
 }
-impl ping for int {
-  fn ping(x: int) -> int { x }
+impl Ping[Int] = {
+  fn ping(x: Int) -> Int = x
 }
 let v = 1
 v.ping()
@@ -5938,23 +5863,24 @@ v.ping()
   | Error _ -> false
   | Ok program -> (
       let env = Typecheck.Builtins.prelude_env () in
-      match Typecheck.Checker.check_program_with_annotations ~env program with
-      | Error _ -> false
-      | Ok { environment = typed_env; type_map; call_resolution_map; method_type_args_map; _ } -> (
-          (* If emitter re-resolves methods from the registry, this clear would break codegen. *)
-          Typecheck.Trait_registry.clear ();
-          match
-            try
-              Some
-                (emit_program_with_typed_env ~call_resolution_map ~method_type_args_map type_map typed_env program)
-            with _ -> None
-          with
-          | Some code -> string_contains code "ping_ping_int64"
+          match Typecheck.Checker.check_program_with_annotations ~env program with
+          | Error _ -> false
+          | Ok { environment = typed_env; type_map; call_resolution_map; method_type_args_map; method_def_map; _ } -> (
+              (* If emitter re-resolves methods from the registry, this clear would break codegen. *)
+              Typecheck.Trait_registry.clear ();
+              match
+                try
+                  Some
+                    (emit_program_with_typed_env ~call_resolution_map ~method_type_args_map ~method_def_map type_map
+                       typed_env program)
+                with _ -> None
+              with
+              | Some code -> string_contains code "func Ping_ping_int64("
           | None -> false))
 
 let%test "emitter lowers inherent methods to inherent_* helpers" =
   match
-    compile_string ~file_id:"<codegen>" "impl int { fn double(x: int) -> int { x + x } }\nlet v = 2\nv.double()"
+    compile_string ~file_id:"<codegen>" "impl Int = { fn double(x: Int) -> Int = x + x }\nlet v = 2\nv.double()"
   with
   | Ok (code, _) ->
       string_contains code "func inherent_double_int64(" && string_contains code "inherent_double_int64(v)"
@@ -5962,8 +5888,8 @@ let%test "emitter lowers inherent methods to inherent_* helpers" =
 
 let%test "emitter inherent method calls use typechecker resolution metadata" =
   let source = {|
-impl int {
-  fn ping(x: int) -> int { x }
+impl Int = {
+  fn ping(x: Int) -> Int = x
 }
 let v = 1
 v.ping()
@@ -5973,12 +5899,13 @@ v.ping()
   | Ok program -> (
       match Typecheck.Checker.check_program_with_annotations program with
       | Error _ -> false
-      | Ok { environment = typed_env; type_map; call_resolution_map; method_type_args_map; _ } -> (
+      | Ok { environment = typed_env; type_map; call_resolution_map; method_type_args_map; method_def_map; _ } -> (
           Typecheck.Inherent_registry.clear ();
           match
             try
               Some
-                (emit_program_with_typed_env ~call_resolution_map ~method_type_args_map type_map typed_env program)
+                (emit_program_with_typed_env ~call_resolution_map ~method_type_args_map ~method_def_map type_map
+                   typed_env program)
             with _ -> None
           with
           | Some code -> string_contains code "inherent_ping_int64"
@@ -6026,7 +5953,7 @@ let%test "if-expression in let binding emits without IIFE" =
   | Error _ -> false
 
 let%test "if-expression in tail position emits without IIFE" =
-  match compile_string ~file_id:"<codegen>" "let f = fn(x) { if (x > 0) { x } else { -x } }; f(5)" with
+  match compile_string ~file_id:"<codegen>" "fn f(x: Int) -> Int = { if (x > 0) { x } else { -x } }\nf(5)" with
   | Ok (code, _) ->
       (* Inside the function body, should NOT wrap in func() *)
       (* Should have direct if with return *)
@@ -6034,14 +5961,14 @@ let%test "if-expression in tail position emits without IIFE" =
   | Error _ -> false
 
 let%test "match in let binding emits without IIFE" =
-  match compile_string ~file_id:"<codegen>" "let x = 5; let y = match x { 1: 10 _: 20 }; y" with
+  match compile_string ~file_id:"<codegen>" "let x = 5\nlet y = match x { case 1: 10 case _: 20 }\ny" with
   | Ok (code, _) ->
       (* Should NOT contain func() for the match *)
       (not (string_contains code "func()")) && string_contains code "switch"
   | Error _ -> false
 
 let%test "match in tail position emits without IIFE" =
-  match compile_string ~file_id:"<codegen>" "let f = fn(x) { match x { 1: 10 2: 20 _: 30 } }; f(5)" with
+  match compile_string ~file_id:"<codegen>" "fn f(x: Int) -> Int = { match x { case 1: 10 case 2: 20 case _: 30 } }\nf(5)" with
   | Ok (code, _) -> (not (string_contains code "func() int64")) && string_contains code "switch"
   | Error _ -> false
 
@@ -6054,7 +5981,7 @@ let%test "if-expression in function argument still uses IIFE" =
 
 let%test "type-check if in let binding emits without IIFE" =
   match
-    compile_string ~file_id:"<codegen>" "let x: int | string = 1; let y = if (x is int) { x + 1 } else { 0 }; y"
+    compile_string ~file_id:"<codegen>" "let x: Int | Str = 1\nlet y = if (x is Int) { x + 1 } else { 0 }\ny"
   with
   | Ok (code, _) ->
       (not (string_contains code "func() int64")) && string_contains code "switch x_typed := x.(type)"
@@ -6063,19 +5990,19 @@ let%test "type-check if in let binding emits without IIFE" =
 let%test "type-check if in tail position emits without IIFE" =
   match
     compile_string ~file_id:"<codegen>"
-      "let f = fn(x: int | string) -> int { if (x is int) { x + 1 } else { 0 } }; f(1)"
+      "fn f(x: Int | Str) -> Int = { if (x is Int) { x + 1 } else { 0 } }\nf(1)"
   with
   | Ok (code, _) ->
       (not (string_contains code "func() int64")) && string_contains code "switch x_typed := x.(type)"
   | Error _ -> false
 
 let%test "type-check if in function argument still uses IIFE" =
-  match compile_string ~file_id:"<codegen>" "let x: int | string = 1; puts(if (x is int) { x } else { 0 })" with
+  match compile_string ~file_id:"<codegen>" "let x: Int | Str = 1\nputs(if (x is Int) { x } else { 0 })" with
   | Ok (code, _) -> string_contains code "func()" && string_contains code "switch x_typed := x.(type)"
   | Error _ -> false
 
 let%test "if without else in tail position emits unit return without IIFE" =
-  match compile_string ~file_id:"<codegen>" "let f = fn(x: bool) { if (x) { 1 } }; f(true)" with
+  match compile_string ~file_id:"<codegen>" "fn f(x: Bool) -> Unit = { if (x) { 1 } }\nf(true)" with
   | Ok (code, _) ->
       (not (string_contains code "func() struct{}"))
       && string_contains code "if x"
@@ -6083,7 +6010,7 @@ let%test "if without else in tail position emits unit return without IIFE" =
   | Error _ -> false
 
 let%test "type-check if without else in let binding emits unit assignment" =
-  match compile_string ~file_id:"<codegen>" "let x: int | string = 1; let y = if (x is int) { x + 1 }; y" with
+  match compile_string ~file_id:"<codegen>" "let x: Int | Str = 1\nlet y = if (x is Int) { x + 1 }\ny" with
   | Ok (code, _) ->
       (not (string_contains code "func()"))
       && string_contains code "switch x_typed := x.(type)"
@@ -6093,7 +6020,7 @@ let%test "type-check if without else in let binding emits unit assignment" =
 let%test "type-check statement if preserves explicit return without IIFE" =
   match
     compile_string ~file_id:"<codegen>"
-      "let f = fn(x: int | string) -> int { if (x is int) { return 1 }; return 0 }; f(1)"
+      "fn f(x: Int | Str) -> Int = { if (x is Int) { return 1 }; return 0 }\nf(1)"
   with
   | Ok (code, _) ->
       (not (string_contains code "func() int64"))
@@ -6102,14 +6029,14 @@ let%test "type-check statement if preserves explicit return without IIFE" =
   | Error _ -> false
 
 let%test "match expression statement emits without IIFE" =
-  match compile_string ~file_id:"<codegen>" "match 1 { 1: 10 _: 20 }" with
+  match compile_string ~file_id:"<codegen>" "match 1 { case 1: 10 case _: 20 }" with
   | Ok (code, _) -> (not (string_contains code "func() int64")) && string_contains code "switch __scrutinee"
   | Error _ -> false
 
 let%test "nested if in tail position emits without IIFE" =
   match
     compile_string ~file_id:"<codegen>"
-      "let f = fn(a: bool, b: bool) -> int { if (a) { if (b) { 1 } else { 2 } } else { 3 } }; f(true, false)"
+      "fn f(a: Bool, b: Bool) -> Int = { if (a) { if (b) { 1 } else { 2 } } else { 3 } }\nf(true, false)"
   with
   | Ok (code, _) -> not (string_contains code "func() int64")
   | Error _ -> false
@@ -6117,20 +6044,21 @@ let%test "nested if in tail position emits without IIFE" =
 let%test "nested match in tail position emits without IIFE" =
   match
     compile_string ~file_id:"<codegen>"
-      "let f = fn(x: int) -> int { match x { 0: match x { 0: 10 _: 20 } _: 30 } }; f(0)"
+      "fn f(x: Int) -> Int = { match x { case 0: match x { case 0: 10 case _: 20 } case _: 30 } }\nf(0)"
   with
   | Ok (code, _) -> not (string_contains code "func() int64")
   | Error _ -> false
 
 let%test "if branch containing match in let binding emits without IIFE" =
   match
-    compile_string ~file_id:"<codegen>" "let x = 1; let y = if (x == 1) { match x { 1: 10 _: 20 } } else { 0 }; y"
+    compile_string ~file_id:"<codegen>"
+      "let x = 1\nlet y = if (x == 1) { match x { case 1: 10 case _: 20 } } else { 0 }\ny"
   with
   | Ok (code, _) -> not (string_contains code "func() int64")
   | Error _ -> false
 
 let%test "match statement with nested if emits without IIFE" =
-  match compile_string ~file_id:"<codegen>" "match 1 { 1: if (true) { 10 } else { 20 } _: 0 }" with
+  match compile_string ~file_id:"<codegen>" "match 1 { case 1: if (true) { 10 } else { 20 } case _: 0 }" with
   | Ok (code, _) -> not (string_contains code "func() int64")
   | Error _ -> false
 
@@ -6277,7 +6205,7 @@ let%test "add_impl_instantiation rejects fingerprint collision with different fo
 let%test "duplicate top-level function name and arity is rejected" =
   match
     compile_string ~file_id:"<codegen>"
-      "let f = fn(x: int) -> int { x + 1 }; let f = fn(x: int) -> int { x + 2 }; let y = f(1); puts(y)"
+      "fn f(x: Int) -> Int = x + 1\nfn f(x: Int) -> Int = x + 2\nlet y = f(1)\nputs(y)"
   with
   | Ok _ | Error [] -> false
   | Error (diag :: _) ->
@@ -6302,7 +6230,7 @@ let%test "compile_string returns structured parser diagnostic on parse failure" 
   | Error [] -> false
 
 let%test "compile_string preserves checker diagnostic on type failure" =
-  match compile_string ~file_id:"<codegen>" "let x: int = true; x" with
+  match compile_string ~file_id:"<codegen>" "let x: Int = true\nx" with
   | Ok _ -> false
   | Error (diag :: _) -> string_contains diag.code "type-"
   | Error [] -> false
@@ -6310,11 +6238,8 @@ let%test "compile_string preserves checker diagnostic on type failure" =
 let%test "collect_insts registers impl methods in cache" =
   let source =
     {|
-trait show[a] {
-  fn show(x: a) -> string
-}
-impl show for int {
-  fn show(x: int) -> string { "int!" }
+impl Show[Int] = {
+  fn show(self: Int) -> Str = "int!"
 }
 puts(1.show())
 |}
@@ -6330,8 +6255,8 @@ puts(1.show())
           let env = Typecheck.Builtins.prelude_env () in
           match Typecheck.Checker.check_program_with_annotations ~env program with
           | Error _ -> false
-          | Ok { environment = typed_env; type_map; call_resolution_map; method_type_args_map; _ } ->
-              let mono_state = create_mono_state ~call_resolution_map ~method_type_args_map () in
+          | Ok { environment = typed_env; type_map; call_resolution_map; method_type_args_map; method_def_map; _ } ->
+              let mono_state = create_mono_state ~call_resolution_map ~method_type_args_map ~method_def_map () in
               List.iter (collect_funcs_stmt mono_state) program;
               ignore (List.fold_left (collect_insts_stmt mono_state type_map) typed_env program);
               ImplInstSet.cardinal mono_state.impl_instantiations = 1
@@ -6402,8 +6327,8 @@ let%test "trait impl methods are emitted exactly once" =
 let%test "type-check if in let binding avoids IIFE" =
   match
     compile_string ~file_id:"<codegen>"
-      {|let x: int | string = 1
-let y = if (x is int) { x + 1 } else { 0 }
+      {|let x: Int | Str = 1
+let y = if (x is Int) { x + 1 } else { 0 }
 puts(y)|}
   with
   | Ok (code, _) -> string_not_contains code "func() int64"
@@ -6412,8 +6337,8 @@ puts(y)|}
 let%test "type-check if in tail position avoids IIFE" =
   match
     compile_string ~file_id:"<codegen>"
-      {|let f = fn(x: int | string) -> int {
-  if (x is int) { x + 1 } else { 0 }
+      {|fn f(x: Int | Str) -> Int = {
+  if (x is Int) { x + 1 } else { 0 }
 }
 puts(f(1))|}
   with
@@ -6422,15 +6347,15 @@ puts(f(1))|}
 
 let%test "match statement avoids IIFE" =
   match compile_string ~file_id:"<codegen>" {|match 1 {
-  1: 10
-  _: 20
+  case 1: 10
+  case _: 20
 }
 puts(1)|} with
   | Ok (code, _) -> string_not_contains code "func() int64"
   | Error _ -> false
 
 let%test "tail if without else avoids IIFE" =
-  match compile_string ~file_id:"<codegen>" {|let f = fn(x: bool) { if (x) { 1 } }
+  match compile_string ~file_id:"<codegen>" {|fn f(x: Bool) -> Unit = { if (x) { 1 } }
 puts(f(true))|} with
   | Ok (code, _) -> string_not_contains code "func() struct{}"
   | Error _ -> false
@@ -6438,7 +6363,7 @@ puts(f(true))|} with
 let%test "nested if in tail position avoids IIFE" =
   match
     compile_string ~file_id:"<codegen>"
-      {|let f = fn(a: bool, b: bool) -> int {
+      {|fn f(a: Bool, b: Bool) -> Int = {
   if (a) { if (b) { 1 } else { 2 } } else { 3 }
 }
 puts(f(true, false))|}
@@ -6449,8 +6374,8 @@ puts(f(true, false))|}
 let%test "nested match in tail position avoids IIFE" =
   match
     compile_string ~file_id:"<codegen>"
-      {|let f = fn(x: int) -> int {
-  match x { 0: match x { 0: 10 _: 20 } _: 30 }
+      {|fn f(x: Int) -> Int = {
+  match x { case 0: match x { case 0: 10 case _: 20 } case _: 30 }
 }
 puts(f(0))|}
   with
@@ -6459,8 +6384,8 @@ puts(f(0))|}
 
 let%test "match with nested if avoids IIFE" =
   match compile_string ~file_id:"<codegen>" {|match 1 {
-  1: if (true) { 10 } else { 20 }
-  _: 0
+  case 1: if (true) { 10 } else { 20 }
+  case _: 0
 }
 puts(1)|} with
   | Ok (code, _) -> string_not_contains code "func() int64"
@@ -6469,9 +6394,9 @@ puts(1)|} with
 let%test "type-check if branch with nested match avoids IIFE" =
   match
     compile_string ~file_id:"<codegen>"
-      {|let x: int | string = 1
-let y = if (x is int) {
-  match x { 1: 10 _: 20 }
+      {|let x: Int | Str = 1
+let y = if (x is Int) {
+  match x { case 1: 10 case _: 20 }
 } else {
   0
 }
@@ -6483,9 +6408,9 @@ puts(y)|}
 let%test "nested if containing type-check if avoids IIFE" =
   match
     compile_string ~file_id:"<codegen>"
-      {|let f = fn(x: int | string, y: bool) -> int {
+      {|fn f(x: Int | Str, y: Bool) -> Int = {
   if (y) {
-    if (x is int) { x } else { 0 }
+    if (x is Int) { x } else { 0 }
   } else {
     0
   }
@@ -6498,11 +6423,11 @@ puts(f(1, true))|}
 let%test "match in let binding with type-check if arm avoids IIFE" =
   match
     compile_string ~file_id:"<codegen>"
-      {|let x: int | string = 1
+      {|let x: Int | Str = 1
 let tag = 1
 let y = match tag {
-  1: if (x is int) { x + 1 } else { 0 }
-  _: 0
+  case 1: if (x is Int) { x + 1 } else { 0 }
+  case _: 0
 }
 puts(y)|}
   with
@@ -6524,7 +6449,7 @@ puts(x)|}
 let%test "deeply nested if (3 levels) in tail position avoids IIFE" =
   match
     compile_string ~file_id:"<codegen>"
-      {|let f = fn(a: bool, b: bool, c: bool) -> int {
+      {|fn f(a: Bool, b: Bool, c: Bool) -> Int = {
   if (a) { if (b) { if (c) { 1 } else { 2 } } else { 3 } } else { 4 }
 }
 puts(f(true, false, true))|}
@@ -6535,9 +6460,9 @@ puts(f(true, false, true))|}
 let%test "match on int in let binding avoids IIFE" =
   match compile_string ~file_id:"<codegen>" {|let x = 2
 let y = match x {
-  1: 10
-  2: 42
-  _: 0
+  case 1: 10
+  case 2: 42
+  case _: 0
 }
 puts(y)|} with
   | Ok (code, _) -> string_not_contains code "func() int64"
@@ -6546,11 +6471,11 @@ puts(y)|} with
 let%test "match on int in tail position avoids IIFE" =
   match
     compile_string ~file_id:"<codegen>"
-      {|let choose = fn(x: int) -> int {
+      {|fn choose(x: Int) -> Int = {
   match x {
-    1: 10
-    2: 42
-    _: 0
+    case 1: 10
+    case 2: 42
+    case _: 0
   }
 }
 puts(choose(2))|}
@@ -6561,12 +6486,12 @@ puts(choose(2))|}
 let%test "match nested inside if-then branch avoids IIFE" =
   match
     compile_string ~file_id:"<codegen>"
-      {|let f = fn(flag: bool, x: int) -> int {
+      {|fn f(flag: Bool, x: Int) -> Int = {
   if (flag) {
     match x {
-      1: 10
-      2: 20
-      _: 30
+      case 1: 10
+      case 2: 20
+      case _: 30
     }
   } else {
     0
@@ -6580,10 +6505,10 @@ puts(f(true, 2))|}
 let%test "if inside match arm body avoids IIFE" =
   match
     compile_string ~file_id:"<codegen>"
-      {|let f = fn(x: int, flag: bool) -> int {
+      {|fn f(x: Int, flag: Bool) -> Int = {
   match x {
-    1: if (flag) { 99 } else { 0 }
-    _: 50
+    case 1: if (flag) { 99 } else { 0 }
+    case _: 50
   }
 }
 puts(f(1, true))|}
@@ -6605,14 +6530,14 @@ puts(c)|}
 let%test "enum match in let binding avoids IIFE" =
   match
     compile_string ~file_id:"<codegen>"
-      {|enum option[a] {
-  some(a)
-  none
+      {|enum Option[a] = {
+  Some(a),
+  None,
 }
-let val = option.some(42)
-let result = match val {
-  option.some(v): v
-  option.none: 0
+let value = Option.Some(42)
+let result = match value {
+  case Option.Some(v): v
+  case Option.None: 0
 }
 puts(result)|}
   with
@@ -6622,18 +6547,18 @@ puts(result)|}
 let%test "match nested inside match arm avoids IIFE" =
   match
     compile_string ~file_id:"<codegen>"
-      {|let f = fn(x: int, y: int) -> int {
+      {|fn f(x: Int, y: Int) -> Int = {
   match x {
-    1: match y {
-      1: 11
-      2: 12
-      _: 19
+    case 1: match y {
+      case 1: 11
+      case 2: 12
+      case _: 19
     }
-    2: match y {
-      1: 21
-      _: 99
+    case 2: match y {
+      case 1: 21
+      case _: 99
     }
-    _: 0
+    case _: 0
   }
 }
 puts(f(2, 3))|}
@@ -6672,8 +6597,8 @@ puts(x)|}
 let%test "I62: match in tail position avoids IIFE" =
   match
     compile_string ~file_id:"<codegen>"
-      {|let f = fn(x: int) -> int {
-  match x { 1: 10 2: 20 _: 0 }
+      {|fn f(x: Int) -> Int = {
+  match x { case 1: 10 case 2: 20 case _: 0 }
 }
 puts(f(1))|}
   with
@@ -6683,11 +6608,11 @@ puts(f(1))|}
 let%test "I63: if-match-if chain in tail avoids IIFE" =
   match
     compile_string ~file_id:"<codegen>"
-      {|let f = fn(flag: bool, n: int, check: bool) -> int {
+      {|fn f(flag: Bool, n: Int, check: Bool) -> Int = {
   if (flag) {
     match n {
-      1: if (check) { 99 } else { 0 }
-      _: 50
+      case 1: if (check) { 99 } else { 0 }
+      case _: 50
     }
   } else {
     0
@@ -6704,9 +6629,9 @@ let%test "I64: nested match in let binding avoids IIFE" =
       {|let x = 2
 let y = 3
 let result = match x {
-  1: match y { 10: 110 _: 100 }
-  2: match y { 3: 230 _: 200 }
-  _: 0
+  case 1: match y { case 10: 110 case _: 100 }
+  case 2: match y { case 3: 230 case _: 200 }
+  case _: 0
 }
 puts(result)|}
   with
@@ -6734,17 +6659,14 @@ puts(updated.x + updated.y)|}
 
 let%test "constrained generic method call does not emit any-mangled specialization" =
   let source =
-    {|trait show[a] {
-  fn show(x: a) -> string
-}
-impl show for int {
-  fn show(x: int) -> string {
+    {|impl Show[Int] = {
+  fn show(self: Int) -> Str = {
     "int"
   }
 }
-let id = fn[t: show](x: t) -> string {
+fn id[t: Show](x: t) -> Str = {
   x.show()
-};
+}
 puts(id(1))|}
   in
   Fun.protect
@@ -6761,7 +6683,7 @@ puts(id(1))|}
 let%test "successful build emits no missing-type warning text" =
   let result, stderr_output =
     capture_stderr (fun () ->
-        compile_string ~file_id:"<codegen>" {|let f = fn(x: int) -> int { x + 1 }
+        compile_string ~file_id:"<codegen>" {|fn f(x: Int) -> Int = x + 1
 puts(f(1))|})
   in
   match result with
@@ -6771,8 +6693,8 @@ puts(f(1))|})
 (* --- test_emit_go_contains --- *)
 
 let%test "enum String default branch panics on invalid tag" =
-  match compile_string ~file_id:"<codegen>" {|enum status { ok fail }
-let x = status.ok
+  match compile_string ~file_id:"<codegen>" {|enum Status = { Ok, Fail }
+let x = Status.Ok
 puts(x)|} with
   | Ok (code, _) -> string_contains code {|panic("unreachable: invalid enum tag")|}
   | Error _ -> false
@@ -6785,24 +6707,24 @@ let%test "codegen produces valid Go (int64)" =
 (* --- run_codegen_deterministic_from_stdin --- *)
 
 let%test "codegen deterministic for identical input" =
-  is_deterministic {|let f = fn(x: int) -> int { x + 1 }
-let g = fn(y: int) -> int { f(y) }
+  is_deterministic {|fn f(x: Int) -> Int = x + 1
+fn g(y: Int) -> Int = f(y)
 puts(g(1))|}
 
 let%test "J65: complex program deterministic across builds" =
   is_deterministic
-    {|enum option[a] { some(a) none }
-let id = fn(x) { x }
-let f = fn(n: int) -> int { match n { 1: 10 2: 20 _: 0 } }
-let g = fn(flag: bool) -> int { if (flag) { 1 } else { 0 } }
+    {|enum Option[a] = { Some(a), None }
+fn id[a](x: a) -> a = x
+fn f(n: Int) -> Int = { match n { case 1: 10 case 2: 20 case _: 0 } }
+fn g(flag: Bool) -> Int = { if (flag) { 1 } else { 0 } }
 puts(id(42))
 puts(id("hello"))
 puts(f(2))
 puts(g(true))
-let opt = option.some(42)
+let opt = Option.Some(42)
 match opt {
-  option.some(v): puts(v)
-  option.none: puts(0)
+  case Option.Some(v): puts(v)
+  case Option.None: puts(0)
 }|}
 
 let%test "record shape codegen is deterministic" =
@@ -6813,24 +6735,24 @@ let c = { p: "hello", q: true }
 puts(a.x + b.y)|}
 
 let%test "deterministic: poly fn at multiple types" =
-  is_deterministic {|let id = fn(x) { x }
+  is_deterministic {|fn id[a](x: a) -> a = x
 puts(id(42))
 puts(id(true))
 puts(id("hello"))|}
 
 let%test "deterministic: trait impls on multiple types" =
   is_deterministic
-    {|trait label[a] {
-  fn label(x: a) -> string
+    {|trait Label[a] = {
+  fn label(x: a) -> Str
 }
-impl label for int {
-  fn label(x: int) -> string { "INT" }
+impl Label[Int] = {
+  fn label(x: Int) -> Str = "INT"
 }
-impl label for string {
-  fn label(x: string) -> string { "STR" }
+impl Label[Str] = {
+  fn label(x: Str) -> Str = "STR"
 }
-impl label for bool {
-  fn label(x: bool) -> string { "BOOL" }
+impl Label[Bool] = {
+  fn label(x: Bool) -> Str = "BOOL"
 }
 puts(1.label())
 puts("a".label())
@@ -6838,20 +6760,20 @@ puts(true.label())|}
 
 let%test "Q81: codegen deterministic for records + enums + traits" =
   is_deterministic
-    {|type point = { x: int, y: int }
-enum status { ok fail }
-trait named { name: string }
-let get_name = fn[t: named](x: t) -> string { x.name }
+    {|type Point = { x: Int, y: Int }
+enum Status = { Ok, Fail }
+trait Named = { name: Str }
+fn get_name[t: Named](x: t) -> Str = x.name
 let p = { name: "alice", score: 42 }
-let s = status.ok
+let s = Status.Ok
 puts(get_name(p))|}
 
 let%test "Q82: codegen deterministic for inherent methods + operators" =
   is_deterministic
-    {|type point = { x: int, y: int }
-impl point {
-  fn sum(p: point) -> int { p.x + p.y }
+    {|type Point = { x: Int, y: Int }
+impl Point = {
+  fn sum(p: Point) -> Int = p.x + p.y
 }
-let p: point = { x: 3, y: 4 }
+let p: Point = { x: 3, y: 4 }
 let result = p.sum() + 10
 puts(result)|}
