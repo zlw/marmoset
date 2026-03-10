@@ -1,3 +1,7 @@
+(fn_declaration
+  "fn" @context
+  name: (identifier) @name) @item
+
 (let_statement
   "let" @context
   name: (identifier) @name) @item
@@ -12,7 +16,7 @@
 
 (impl_block
   "impl" @context
-  trait: (identifier) @name) @item
+  target: (_) @name) @item
 
 (method_definition
   "fn" @context
