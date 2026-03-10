@@ -369,13 +369,29 @@ and parse_type_atom (p : parser) : (parser * Surface.surface_type_expr, parser) 
   else
     Error (no_prefix_parse_fn_error p p.curr_token.token_type)
 
+(* Parse a type intersection, including A & B & C *)
+and parse_type_intersection (p : parser) : (parser * Surface.surface_type_expr, parser) result =
+  let* p2, first_type = parse_type_atom p in
+  if curr_token_is p2 Token.Ampersand then
+    let rec collect_intersection_members lp rev_members =
+      let* lp2, next_type = parse_type_atom (next_token lp) in
+      let rev_members = next_type :: rev_members in
+      if curr_token_is lp2 Token.Ampersand then
+        collect_intersection_members lp2 rev_members
+      else
+        Ok (lp2, Surface.STIntersection (List.rev rev_members))
+    in
+    collect_intersection_members p2 [ first_type ]
+  else
+    Ok (p2, first_type)
+
 (* Parse a type expression, including unions: Int | Str | Bool *)
 and parse_type_expr (p : parser) : (parser * Surface.surface_type_expr, parser) result =
-  let* p2, first_type = parse_type_atom p in
+  let* p2, first_type = parse_type_intersection p in
   (* Check for union: type | type | type ... *)
   if curr_token_is p2 Token.Pipe then
     let rec collect_union_members lp rev_members =
-      let* lp2, next_type = parse_type_atom (next_token lp) in
+      let* lp2, next_type = parse_type_intersection (next_token lp) in
       let rev_members = next_type :: rev_members in
       if curr_token_is lp2 Token.Pipe then
         collect_union_members lp2 rev_members
@@ -400,21 +416,27 @@ and parse_type_expr_list (p : parser) : (parser * Surface.surface_type_expr list
     loop p []
 
 and parse_param_type_expr (p : parser) : (parser * Surface.surface_type_expr, parser) result =
-  let* p2, first = parse_type_expr p in
-  if curr_token_is p2 Token.Ampersand then
-    match first with
-    | Surface.STCon trait_name ->
-        let* p3, rest = parse_constraint_list (next_token p2) in
-        Ok (p3, Surface.STConstraintShorthand (trait_name :: rest))
-    | Surface.STConstraintShorthand traits ->
-        let* p3, rest = parse_constraint_list (next_token p2) in
-        Ok (p3, Surface.STConstraintShorthand (traits @ rest))
-    | _ ->
-        Error
-          (add_error ~code:"parse-invalid-constraint-shorthand" p2
-             "Parameter constraint shorthand requires bare trait names joined by '&'")
-  else
-    Ok (p2, first)
+  let rec try_constraint_chain (lp : parser) (rev_traits : string list) :
+      (parser * Surface.surface_type_expr, parser) result option =
+    if curr_token_is lp Token.Ident then
+      let trait_name = lp.curr_token.literal in
+      let lp2 = next_token lp in
+      if curr_token_is lp2 Token.Ampersand then
+        match try_constraint_chain (next_token lp2) (trait_name :: rev_traits) with
+        | Some result -> Some result
+        | None -> None
+      else if curr_token_is lp2 Token.Comma || curr_token_is lp2 Token.RParen then
+        match rev_traits with
+        | [] -> None
+        | _ -> Some (Ok (lp2, Surface.STConstraintShorthand (List.rev (trait_name :: rev_traits))))
+      else
+        None
+    else
+      None
+  in
+  match try_constraint_chain p [] with
+  | Some result -> result
+  | None -> parse_type_expr p
 
 and parse_trait_constraint (p : parser) : (parser * string list, parser) result =
   (* Parse trait constraints: Eq, Show, Eq & Show, etc. *)
@@ -3080,6 +3102,21 @@ let%test "parse parameter constraint shorthand with ampersand" =
           true
       | _ -> false)
 
+let%test "parse parenthesized parameter intersection does not become shorthand" =
+  match parse_surface ~file_id:"<test>" "fn keep(x: (Foo & Bar)) -> Foo = x" with
+  | Error _ -> false
+  | Ok result -> (
+      match result.program with
+      | [
+       {
+         Surface.std_decl =
+           Surface.SFnDecl { params = [ ("x", Some (Surface.STIntersection [ Surface.STCon "Foo"; Surface.STCon "Bar" ])) ]; _ };
+         _;
+       };
+      ] ->
+          true
+      | _ -> false)
+
 let%test "parse mixed trait definition" =
   let input = "trait Printable[a] = { name: Str fn format(x: a) -> Str }" in
   let lexer = Lexer.init input in
@@ -3382,6 +3419,54 @@ let%test "parse Dyn rejects empty trait set" =
   match parse ~file_id:"<test>" "type Empty = Dyn[]" with
   | Ok _ -> false
   | Error _ -> true
+
+let%test "parse type alias with intersection body" =
+  let input = "type NamedAge = { name: Str } & { age: Int }" in
+  let lexer = Lexer.init input in
+  match parse_program (init ~file_id:"<test>" lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ stmt ] -> (
+          match stmt.stmt with
+          | AST.TypeAlias alias_def -> (
+              match alias_def.alias_body with
+              | AST.TIntersection [ AST.TRecord _; AST.TRecord _ ] -> true
+              | _ -> false)
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
+let%test "parse type intersection binds tighter than union" =
+  let input = "type Example = Int | Str & Bool" in
+  let lexer = Lexer.init input in
+  match parse_program (init ~file_id:"<test>" lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ stmt ] -> (
+          match stmt.stmt with
+          | AST.TypeAlias alias_def -> (
+              match alias_def.alias_body with
+              | AST.TUnion [ AST.TCon "Int"; AST.TIntersection [ AST.TCon "Str"; AST.TCon "Bool" ] ] -> true
+              | _ -> false)
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
+let%test "parse type intersection parenthesizes function members" =
+  let input = "type Example = ((Int) -> Str) & Bool" in
+  let lexer = Lexer.init input in
+  match parse_program (init ~file_id:"<test>" lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ stmt ] -> (
+          match stmt.stmt with
+          | AST.TypeAlias alias_def -> (
+              match alias_def.alias_body with
+              | AST.TIntersection [ AST.TArrow ([ AST.TCon "Int" ], AST.TCon "Str", false); AST.TCon "Bool" ] -> true
+              | _ -> false)
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
 
 let%test "parse function parameter annotation with function type" =
   let input = "fn apply(f: (Int) -> Int, x: Int) -> Int = f(x)" in

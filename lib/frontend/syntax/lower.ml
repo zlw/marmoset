@@ -762,6 +762,27 @@ let%test "lower trait object type alias" =
   | [ { AST.stmt = AST.TypeAlias { alias_body = AST.TTraitObject [ "Show"; "Eq" ]; _ }; _ } ] -> true
   | _ -> false
 
+let%test "lower intersection type alias" =
+  let id_supply = Id_supply.Id_supply.create 0 in
+  let decl =
+    Surface.STypeDef
+      {
+        alias_name = "NamedAge";
+        alias_type_params = [];
+        alias_body =
+          Surface.STIntersection
+            [
+              Surface.STRecord ([ Surface.{ sf_name = "name"; sf_type = Surface.STCon "Str" } ], None);
+              Surface.STRecord ([ Surface.{ sf_name = "age"; sf_type = Surface.STCon "Int" } ], None);
+            ];
+        derive = [];
+      }
+  in
+  let result = lower_top_decl id_supply (mk_test_ts decl) in
+  match result with
+  | [ { AST.stmt = AST.TypeAlias { alias_body = AST.TIntersection [ AST.TRecord _; AST.TRecord _ ]; _ }; _ } ] -> true
+  | _ -> false
+
 let%test "lower_expr_or_block_to_stmt wraps SEOBExpr in Block[ExpressionStmt]" =
   let id_supply = Id_supply.Id_supply.create 0 in
   let e = Surface.mk_surface_expr ~id:1 ~pos:0 (Surface.SEInteger 5L) in
