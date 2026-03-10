@@ -8,7 +8,6 @@
     { "include": "#enum-definition" },
     { "include": "#trait-definition" },
     { "include": "#impl-block" },
-    { "include": "#derive-statement" },
     { "include": "#derive-clause" },
     { "include": "#type-alias" },
     { "include": "#let-statement" },
@@ -16,7 +15,6 @@
     { "include": "#match-expression" },
     { "include": "#if-expression" },
     { "include": "#lambda-expression" },
-    { "include": "#function-literal" },
     { "include": "#expression" }
   ],
   "repository": {
@@ -76,10 +74,6 @@
           "match": "\\bfn\\b"
         },
         {
-          "name": "keyword.other.for.marmoset",
-          "match": "\\bfor\\b"
-        },
-        {
           "name": "keyword.operator.is.marmoset",
           "match": "\\bis\\b"
         },
@@ -112,7 +106,7 @@
 
     "builtin-types": {
       "name": "support.type.builtin.marmoset",
-      "match": "\\b(int|Int|string|Str|bool|Bool|float|Float|unit|Unit|null|Null|list|List|map|Map)\\b"
+      "match": "\\b(Int|Str|Bool|Float|Unit|List|Map)\\b"
     },
 
     "builtin-functions": {
@@ -200,7 +194,7 @@
     },
 
     "generic-type": {
-      "comment": "Generic types like list[int], option[string]",
+      "comment": "Generic types like List[Int], Option[Str]",
       "begin": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*(\\[)",
       "beginCaptures": {
         "1": { "name": "entity.name.type.marmoset" },
@@ -217,11 +211,10 @@
     },
 
     "function-type": {
-      "comment": "Function types: fn(Int, Str) -> Bool or (Int, Str) => Bool",
-      "begin": "(?:(fn)\\s*)?(\\()",
+      "comment": "Function types: (Int, Str) -> Bool or (Int, Str) => Bool",
+      "begin": "(?<![A-Za-z_])\\(",
       "beginCaptures": {
-        "1": { "name": "keyword.other.fn.marmoset" },
-        "2": { "name": "punctuation.bracket.round.begin.marmoset" }
+        "0": { "name": "punctuation.bracket.round.begin.marmoset" }
       },
       "end": "(?<=\\))\\s*(->|=>)\\s*",
       "endCaptures": {
@@ -242,7 +235,7 @@
     },
 
     "union-type": {
-      "comment": "Union types: int | string",
+      "comment": "Union types: Int | Str",
       "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*(\\|)\\s*([a-zA-Z_][a-zA-Z0-9_]*)\\b",
       "captures": {
         "1": { "name": "entity.name.type.marmoset" },
@@ -252,7 +245,7 @@
     },
 
     "record-type": {
-      "comment": "Record types: { x: int, y: int }",
+      "comment": "Record types: { x: Int, y: Int }",
       "begin": "\\{",
       "beginCaptures": {
         "0": { "name": "punctuation.bracket.curly.begin.marmoset" }
@@ -294,7 +287,7 @@
       "patterns": [
         {
           "comment": "Constrained type parameter: a: Show & Eq",
-          "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*(:)\\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\\s*[+&]\\s*[a-zA-Z_][a-zA-Z0-9_]*)*)",
+          "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*(:)\\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\\s*&\\s*[a-zA-Z_][a-zA-Z0-9_]*)*)",
           "captures": {
             "1": { "name": "entity.name.type.parameter.marmoset" },
             "2": { "name": "punctuation.separator.colon.marmoset" },
@@ -306,7 +299,7 @@
                 },
                 {
                   "name": "keyword.operator.constraint.marmoset",
-                  "match": "[+&]"
+                  "match": "&"
                 }
               ]
             }
@@ -335,7 +328,7 @@
       "patterns": [
         { "include": "#type-parameter-list" },
         {
-          "begin": "(=\\s*)?\\{",
+          "begin": "(=\\s*)\\{",
           "beginCaptures": {
             "1": { "name": "keyword.operator.assignment.marmoset" },
             "0": { "name": "punctuation.bracket.curly.begin.marmoset" }
@@ -430,11 +423,11 @@
         { "include": "#type-parameter-list" },
         {
           "comment": "Supertrait list: : Eq & Show",
-          "begin": "(:)\\s*(?!\\s*(?:=\\s*)?\\{)",
+          "begin": "(:)\\s*(?!\\s*=\\s*\\{)",
           "beginCaptures": {
             "1": { "name": "punctuation.separator.colon.marmoset" }
           },
-          "end": "(?=\\s*(?:=\\s*)?\\{)",
+          "end": "(?=\\s*=\\s*\\{)",
           "patterns": [
             {
               "name": "entity.name.type.supertrait.marmoset",
@@ -442,13 +435,13 @@
             },
             {
               "name": "keyword.operator.constraint.marmoset",
-              "match": "[+&]"
+              "match": "&"
             }
           ]
         },
         {
           "comment": "Trait body",
-          "begin": "(=\\s*)?\\{",
+          "begin": "(=\\s*)\\{",
           "beginCaptures": {
             "1": { "name": "keyword.operator.assignment.marmoset" },
             "0": { "name": "punctuation.bracket.curly.begin.marmoset" }
@@ -490,7 +483,7 @@
     },
 
     "trait-field": {
-      "comment": "name: string (field in trait body)",
+      "comment": "name: Str (field in trait body)",
       "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*(:)\\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\\[[^\\]]*\\])?)",
       "captures": {
         "1": { "name": "variable.other.property.marmoset" },
@@ -504,7 +497,7 @@
     },
 
     "impl-block": {
-      "comment": "impl[a: Show] Show[List[a]] = { ... } or impl Show for Int { ... }",
+      "comment": "impl[a: Show] Show[List[a]] = { ... } or impl Result[a, e] = { ... }",
       "begin": "\\b(impl)\\b",
       "beginCaptures": {
         "1": { "name": "keyword.other.impl.marmoset" }
@@ -516,19 +509,6 @@
       "patterns": [
         { "include": "#type-parameter-list" },
         {
-          "comment": "for <type>",
-          "match": "\\b(for)\\s+([a-zA-Z_][a-zA-Z0-9_]*(?:\\[[^\\]]*\\])?)",
-          "captures": {
-            "1": { "name": "keyword.other.for.marmoset" },
-            "2": {
-              "patterns": [
-                { "include": "#builtin-types" },
-                { "include": "#type-identifier" }
-              ]
-            }
-          }
-        },
-        {
           "comment": "vNext impl header and target types",
           "patterns": [
             { "include": "#generic-type" },
@@ -538,7 +518,7 @@
         },
         {
           "comment": "Impl body",
-          "begin": "(=\\s*)?\\{",
+          "begin": "(=\\s*)\\{",
           "beginCaptures": {
             "1": { "name": "keyword.operator.assignment.marmoset" },
             "0": { "name": "punctuation.bracket.curly.begin.marmoset" }
@@ -577,36 +557,9 @@
           "match": "=",
           "name": "keyword.operator.assignment.marmoset"
         },
-        { "include": "#block" }
+        { "include": "#block" },
+        { "include": "#expression" }
       ]
-    },
-
-    "derive-statement": {
-      "comment": "derive eq, show for int;",
-      "match": "\\b(derive)\\s+((?:[a-zA-Z_][a-zA-Z0-9_]*\\s*,\\s*)*[a-zA-Z_][a-zA-Z0-9_]*)\\s+(for)\\s+([a-zA-Z_][a-zA-Z0-9_]*(?:\\[[^\\]]*\\])?)\\s*(;)",
-      "captures": {
-        "1": { "name": "keyword.other.derive.marmoset" },
-        "2": {
-          "patterns": [
-            {
-              "name": "entity.name.type.trait.marmoset",
-              "match": "\\b[a-zA-Z_][a-zA-Z0-9_]*\\b"
-            },
-            {
-              "name": "punctuation.separator.comma.marmoset",
-              "match": ","
-            }
-          ]
-        },
-        "3": { "name": "keyword.other.for.marmoset" },
-        "4": {
-          "patterns": [
-            { "include": "#builtin-types" },
-            { "include": "#type-identifier" }
-          ]
-        },
-        "5": { "name": "punctuation.terminator.semicolon.marmoset" }
-      }
     },
 
     "derive-clause": {
@@ -630,7 +583,7 @@
     },
 
     "type-alias": {
-      "comment": "type point = { x: int, y: int }",
+      "comment": "type Point = { x: Int, y: Int }",
       "begin": "\\b(type)\\s+([a-zA-Z_][a-zA-Z0-9_]*)\\s*(=)",
       "beginCaptures": {
         "1": { "name": "keyword.other.type.marmoset" },
@@ -738,14 +691,14 @@
         },
         {
           "comment": "Wildcard pattern",
-          "match": "(?:\\bcase\\b\\s+)?\\b(_)\\s*(:)",
+          "match": "\\bcase\\b\\s+(_)\\s*(:)",
           "captures": {
             "1": { "name": "variable.language.wildcard.marmoset" },
             "2": { "name": "punctuation.separator.colon.marmoset" }
           }
         },
         {
-          "comment": "Constructor pattern: option.some(v) or option.none",
+          "comment": "Constructor pattern: Option.Some(v) or Option.None",
           "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*(\\.)\\s*([a-zA-Z_][a-zA-Z0-9_]*)",
           "captures": {
             "1": { "name": "entity.name.type.marmoset" },
@@ -791,79 +744,11 @@
       ]
     },
 
-    "function-literal": {
-      "comment": "fn(x: Int, y: Int) -> Int { ... } or fn[a](x: a) -> a { ... }",
-      "begin": "\\b(fn)\\s*(?:(\\[)|(?=\\())",
-      "beginCaptures": {
-        "1": { "name": "storage.type.function.marmoset" },
-        "2": { "name": "punctuation.bracket.square.begin.marmoset" }
-      },
-      "end": "(?<=\\})",
-      "patterns": [
-        {
-          "comment": "Type parameter list in fn[a: show]",
-          "begin": "(?<=\\[)",
-          "end": "\\]",
-          "endCaptures": {
-            "0": { "name": "punctuation.bracket.square.end.marmoset" }
-          },
-          "patterns": [
-            {
-              "comment": "Constrained type parameter: a: Show & Eq",
-              "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*(:)\\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\\s*[+&]\\s*[a-zA-Z_][a-zA-Z0-9_]*)*)",
-              "captures": {
-                "1": { "name": "entity.name.type.parameter.marmoset" },
-                "2": { "name": "punctuation.separator.colon.marmoset" },
-                "3": {
-                  "patterns": [
-                    {
-                      "name": "entity.name.type.constraint.marmoset",
-                      "match": "\\b[a-zA-Z_][a-zA-Z0-9_]*\\b"
-                    },
-                    {
-                      "name": "keyword.operator.constraint.marmoset",
-                      "match": "[+&]"
-                    }
-                  ]
-                }
-              }
-            },
-            {
-              "name": "entity.name.type.parameter.marmoset",
-              "match": "\\b[a-zA-Z_][a-zA-Z0-9_]*\\b"
-            },
-            { "include": "#punctuation" }
-          ]
-        },
-        {
-          "comment": "Parameter list",
-          "begin": "\\(",
-          "beginCaptures": {
-            "0": { "name": "punctuation.bracket.round.begin.marmoset" }
-          },
-          "end": "\\)",
-          "endCaptures": {
-            "0": { "name": "punctuation.bracket.round.end.marmoset" }
-          },
-          "patterns": [
-            { "include": "#parameter-list-inner" }
-          ]
-        },
-        {
-          "comment": "Return type arrow",
-          "match": "->|=>",
-          "name": "keyword.operator.arrow.marmoset"
-        },
-        { "include": "#type-annotation" },
-        { "include": "#block" }
-      ]
-    },
-
     "parameter-list-inner": {
       "comment": "Contents of parameter list: name: type, ...",
       "patterns": [
         {
-          "comment": "Parameter with type annotation: x: int",
+          "comment": "Parameter with type annotation: x: Int",
           "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*(:)\\s*",
           "captures": {
             "1": { "name": "variable.parameter.marmoset" },
@@ -899,7 +784,6 @@
         { "include": "#match-expression" },
         { "include": "#if-expression" },
         { "include": "#lambda-expression" },
-        { "include": "#function-literal" },
         { "include": "#expression" }
       ]
     },
@@ -926,7 +810,7 @@
     },
 
     "field-access": {
-      "comment": "Field access: p.x, enum constructor: option.some",
+      "comment": "Field access: p.x, enum constructor: Option.Some",
       "match": "(\\.)\\s*([a-zA-Z_][a-zA-Z0-9_]*)\\b(?!\\s*\\()",
       "captures": {
         "1": { "name": "punctuation.accessor.dot.marmoset" },
@@ -1013,7 +897,6 @@
         { "include": "#builtin-types" },
         { "include": "#builtin-functions" },
         { "include": "#lambda-expression" },
-        { "include": "#function-literal" },
         { "include": "#function-call" },
         { "include": "#field-access" },
         { "include": "#array-literal" },

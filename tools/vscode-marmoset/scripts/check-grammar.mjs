@@ -25,6 +25,11 @@ function assertRegexMatches(entry, field, sample, label) {
   assert(regex.test(sample), `${label} does not match ${JSON.stringify(sample)}`);
 }
 
+function assertRegexDoesNotMatch(entry, field, sample, label) {
+  const regex = regexFor(entry, field, label);
+  assert(!regex.test(sample), `${label} unexpectedly matches ${JSON.stringify(sample)}`);
+}
+
 function assertAnyMatch(entries, sample, label) {
   assert(Array.isArray(entries), `${label} is not a pattern list`);
   const matches = entries.some((entry) => {
@@ -34,6 +39,17 @@ function assertAnyMatch(entries, sample, label) {
     return new RegExp(entry.match).test(sample);
   });
   assert(matches, `${label} does not match ${JSON.stringify(sample)}`);
+}
+
+function assertNoMatch(entries, sample, label) {
+  assert(Array.isArray(entries), `${label} is not a pattern list`);
+  const matches = entries.some((entry) => {
+    if (typeof entry?.match !== "string") {
+      return false;
+    }
+    return new RegExp(entry.match).test(sample);
+  });
+  assert(!matches, `${label} unexpectedly matches ${JSON.stringify(sample)}`);
 }
 
 function findByName(entries, name) {
@@ -47,10 +63,12 @@ const repo = grammar.repository;
 assertAnyMatch(repo.keywords.patterns, "case", "keyword patterns");
 assertAnyMatch(repo.keywords.patterns, "override", "keyword patterns");
 assertAnyMatch(repo.keywords.patterns, "fn", "keyword patterns");
+assertNoMatch(repo.keywords.patterns, "for", "keyword patterns");
 
 assertRegexMatches(repo["builtin-types"], "match", "Int", "builtin type pattern");
 assertRegexMatches(repo["builtin-types"], "match", "Str", "builtin type pattern");
 assertRegexMatches(repo["builtin-types"], "match", "Unit", "builtin type pattern");
+assertRegexDoesNotMatch(repo["builtin-types"], "match", "int", "builtin type pattern");
 
 assertAnyMatch(repo.operators.patterns, "=>", "operator patterns");
 assertAnyMatch(repo.operators.patterns, "&&", "operator patterns");
@@ -73,10 +91,30 @@ assertRegexMatches(
 
 assertRegexMatches(repo["function-type"], "begin", "(Int, Int) => Int", "function-type begin");
 assertRegexMatches(repo["function-type"], "end", ") => Int", "function-type end");
+assertRegexDoesNotMatch(
+  repo["function-type"],
+  "begin",
+  "fn(Int, Int) -> Int",
+  "function-type begin",
+);
 
 assertRegexMatches(repo["impl-block"], "begin", "impl[a: Show] Show[List[a]] = {", "impl-block begin");
+assert(
+  !JSON.stringify(repo["impl-block"]).includes("\\\\b(for)"),
+  "impl-block should not advertise legacy for-syntax",
+);
 assert(repo["derive-clause"], "derive-clause repository entry is missing");
 assertRegexMatches(repo["derive-clause"], "match", "derive Eq, Show", "derive-clause match");
+assert(!repo["derive-statement"], "derive-statement repository entry should be removed");
+assert(!repo["function-literal"], "function-literal repository entry should be removed");
+assert(
+  !grammar.patterns.some((entry) => entry?.include === "#derive-statement"),
+  "top-level patterns should not include derive-statement",
+);
+assert(
+  !grammar.patterns.some((entry) => entry?.include === "#function-literal"),
+  "top-level patterns should not include function-literal",
+);
 
 assertRegexMatches(
   repo["type-parameter-list"].patterns[0].captures["3"].patterns[1],
@@ -84,11 +122,27 @@ assertRegexMatches(
   "&",
   "constraint separator",
 );
+assertRegexDoesNotMatch(
+  repo["type-parameter-list"].patterns[0].captures["3"].patterns[1],
+  "match",
+  "+",
+  "constraint separator",
+);
 assertRegexMatches(
   repo["trait-definition"].patterns[1],
   "begin",
   ": Show & Eq = {",
   "trait supertrait begin",
+);
+assertRegexDoesNotMatch(
+  repo["trait-definition"].patterns[1].patterns[1],
+  "match",
+  "+",
+  "trait supertrait separator",
+);
+assert(
+  repo["method-definition"].patterns.some((entry) => entry?.include === "#expression"),
+  "method-definition should highlight expression bodies",
 );
 
 assert(
