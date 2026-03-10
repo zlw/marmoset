@@ -1,0 +1,10 @@
+# VN72: Identifier suffix methods compose with defaults and override
+trait Alarm[a] = {
+  fn ring!(x: a) -> Str = "default"
+}
+
+impl Alarm[Int] = {
+  override fn ring!(x) = "ring:" + x.show()
+}
+
+puts(1.ring!())  # output: ring:1

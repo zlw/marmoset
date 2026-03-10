@@ -1,0 +1,8 @@
+# VN76: Zero-arg effectful arrow lambdas work in expression position
+let make = () => {
+  puts("seen")
+  "ok"
+}
+
+# output: seen
+puts(make())  # output: ok

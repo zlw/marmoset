@@ -1,0 +1,2 @@
+# VN69: Legacy fn(...) -> ... type syntax is rejected in vNext
+type Formatter = fn(Int) -> Str  # error: unexpected Token.Function found

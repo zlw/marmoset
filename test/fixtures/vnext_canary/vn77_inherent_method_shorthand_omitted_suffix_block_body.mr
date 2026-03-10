@@ -1,0 +1,15 @@
+# VN77: Inherent methods compose shorthand params, omitted suffixes, and block bodies
+trait Named = { name: Str }
+
+type Formatter = { prefix: Str }
+
+impl Formatter = {
+  fn label(self: Formatter, other: Named) = {
+    let joined = self.prefix + other.name
+    joined
+  }
+}
+
+let fmt: Formatter = { prefix: "hi " }
+let monkey = { name: "mia", id: 7 }
+puts(fmt.label(monkey))  # output: hi mia

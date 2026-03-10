@@ -1,0 +1,4 @@
+# VN70: Match arms require the case keyword in vNext
+match 1 {
+  1: "one"  # error: expected 'case' at start of match arm
+}
