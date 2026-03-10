@@ -1,7 +1,7 @@
-impl int {
-  fn clamp(x: int, lo: int, hi: int) -> int {
+impl Int = {
+  fn clamp(x: Int, lo: Int, hi: Int) -> Int = {
     if (x < lo) { lo } else { if (x > hi) { hi } else { x } }
   }
 }
 
-puts(int.clamp(15, 0, 10))  # output: 10
+puts(Int.clamp(15, 0, 10))  # output: 10

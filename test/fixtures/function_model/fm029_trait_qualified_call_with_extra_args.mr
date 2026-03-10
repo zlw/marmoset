@@ -1,15 +1,15 @@
-type pair = { a: int, b: int }
+type Pair = { a: Int, b: Int }
 
-trait compare[a] {
-  fn greater(x: a, y: a) -> bool
+trait Compare[a] = {
+  fn greater(x: a, y: a) -> Bool
 }
 
-impl compare for pair {
-  fn greater(x: pair, y: pair) -> bool {
+impl Compare[Pair] = {
+  fn greater(x: Pair, y: Pair) -> Bool = {
     x.a + x.b > y.a + y.b
   }
 }
 
-let p1: pair = { a: 3, b: 4 }
-let p2: pair = { a: 1, b: 2 }
-puts(compare.greater(p1, p2))  # output: true
+let p1: Pair = { a: 3, b: 4 }
+let p2: Pair = { a: 1, b: 2 }
+puts(Compare.greater(p1, p2))  # output: true

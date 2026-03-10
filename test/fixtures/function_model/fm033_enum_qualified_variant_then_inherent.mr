@@ -1,16 +1,14 @@
 # xfail: enum qualified inherent method not implemented
-enum box { val(int) empty }
+enum Box = { Val(Int), Empty }
 
-impl box {
-  fn describe(b: box) -> string {
-    match b {
-      box.val(n): "val:" + n.show()
-      box.empty: "empty"
-    }
+impl Box = {
+  fn describe(b: Box) -> Str = match b {
+    case Box.Val(n): "val:" + n.show()
+    case Box.Empty: "empty"
   }
 }
 
 # variant constructor path
-let b = box.val(42)
+let b = Box.Val(42)
 # inherent method via type qualification
-puts(box.describe(b))  # output: val:42
+puts(Box.describe(b))  # output: val:42

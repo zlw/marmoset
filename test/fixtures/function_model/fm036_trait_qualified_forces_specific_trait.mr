@@ -1,22 +1,22 @@
-type val = { n: int }
+type Val = { n: Int }
 
-trait fmt_a[a] {
-  fn fmt(x: a) -> string
+trait FmtA[a] = {
+  fn fmt(x: a) -> Str
 }
 
-trait fmt_b[a] {
-  fn fmt(x: a) -> string
+trait FmtB[a] = {
+  fn fmt(x: a) -> Str
 }
 
-impl fmt_a for val {
-  fn fmt(x: val) -> string { "a:" + x.n.show() }
+impl FmtA[Val] = {
+  fn fmt(x: Val) -> Str = { "a:" + x.n.show() }
 }
 
-impl fmt_b for val {
-  fn fmt(x: val) -> string { "b:" + x.n.show() }
+impl FmtB[Val] = {
+  fn fmt(x: Val) -> Str = { "b:" + x.n.show() }
 }
 
-let v: val = { n: 5 }
+let v: Val = { n: 5 }
 # These qualified forms should select the specific trait
-puts(fmt_a.fmt(v))  # output: a:5
-puts(fmt_b.fmt(v))  # output: b:5
+puts(FmtA.fmt(v))  # output: a:5
+puts(FmtB.fmt(v))  # output: b:5

@@ -1,10 +1,10 @@
-type point = { x: int, y: int }
+type Point = { x: Int, y: Int }
 
-impl point {
-  fn sum(p: point) -> int {
+impl Point = {
+  fn sum(p: Point) -> Int = {
     p.x + p.y
   }
 }
 
-let p: point = { x: 3, y: 7 }
-puts(point.sum(p))  # output: 10
+let p: Point = { x: 3, y: 7 }
+puts(Point.sum(p))  # output: 10

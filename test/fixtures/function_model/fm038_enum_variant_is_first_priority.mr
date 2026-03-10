@@ -1,8 +1,8 @@
-enum shape { circle(int) square(int) }
+enum Shape = { Circle(Int), Square(Int) }
 
-let c = shape.circle(5)
+let c = Shape.Circle(5)
 let result = match c {
-  shape.circle(r): "circle:" + r.show()
-  shape.square(s): "square:" + s.show()
+  case Shape.Circle(r): "circle:" + r.show()
+  case Shape.Square(s): "square:" + s.show()
 }
 puts(result)  # output: circle:5
