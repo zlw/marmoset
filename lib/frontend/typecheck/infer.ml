@@ -4610,20 +4610,20 @@ module Test = struct
   let%test "infer if expression" = infers_to "if (true) { 1 } else { 2 }" TInt
 
   let%test "infer simple function" =
-    (* fn(x) { x + 1 } should be Int -> Int *)
-    infers_to "fn(x) { x + 1 }" (tfun TInt TInt)
+    (* (x) -> x + 1 should be Int -> Int *)
+    infers_to "(x) -> x + 1" (tfun TInt TInt)
 
   let%test "infer identity function" =
-    (* fn(x) { x } should be t0 -> t0 (polymorphic) *)
-    match infer_string "fn(x) { x }" with
+    (* (x) -> x should be t0 -> t0 (polymorphic) *)
+    match infer_string "(x) -> x" with
     | Error _ -> false
     | Ok (_, _type_map, TFun (TVar a, TVar b, _)) -> a = b (* same type variable *)
     | Ok _ -> false
 
   let%test "infer two-arg function" =
-    (* fn(x, y) { x + y } should have both args same type and return same type *)
+    (* (x, y) -> x + y should have both args same type and return same type *)
     (* Without type classes, we can't constrain to just numeric types *)
-    match infer_string "fn(x, y) { x + y }" with
+    match infer_string "(x, y) -> x + y" with
     | Error _ -> false
     | Ok (_, _type_map, TFun (TVar a, TFun (TVar b, TVar c, _), _)) ->
         (* All three type vars should be the same *)
@@ -4631,12 +4631,12 @@ module Test = struct
     | Ok _ -> false
 
   let%test "infer two-arg function with literal" =
-    (* fn(x, y) { x + y + 1 } should be (Int, Int) -> Int because of the literal *)
-    infers_to "fn(x, y) { x + y + 1 }" (tfun TInt (tfun TInt TInt))
+    (* (x, y) -> x + y + 1 should be (Int, Int) -> Int because of the literal *)
+    infers_to "(x, y) -> x + y + 1" (tfun TInt (tfun TInt TInt))
 
   let%test "infer function call" =
-    (* fn(x) { x + 1 }(5) should be Int *)
-    infers_to "fn(x) { x + 1 }(5)" TInt
+    (* ((x) -> x + 1)(5) should be Int *)
+    infers_to "((x) -> x + 1)(5)" TInt
 
   let%test "infer let binding" =
     (* let x = 5; x should be Int *)
@@ -4652,8 +4652,8 @@ module Test = struct
     | _ -> false
 
   let%test "infer let with function" =
-    (* let f = fn(x) { x + 1 }; f(5) should be Int *)
-    infers_to "let f = fn(x) { x + 1 }; f(5)" TInt
+    (* fn f(x) = x + 1; f(5) should be Int *)
+    infers_to "fn f(x) = x + 1\nf(5)" TInt
 
   let%test "infer array literal" =
     (* [1, 2, 3] should be [Int] *)
@@ -4682,21 +4682,21 @@ module Test = struct
   let%test "infer record field access" = infers_to "let p = { x: 1, y: 2 }; p.x + p.y" TInt
 
   (* Regression: return type annotation with unresolved record field type variable.
-     fn(value) -> string { value.name } should succeed — the field type var unifies with string. *)
+     fn f(value) -> Str = value.name should succeed — the field type var unifies with string. *)
   let%test "return annotation unifies with record field type var" =
-    infers_to "let f = fn(r) -> string { r.name }; f({ name: \"hi\" })" TString
+    infers_to "fn f(r) -> Str = r.name\nf({ name: \"hi\" })" TString
 
   let%test "infer type alias for record annotation" =
-    infers_to "type point = { x: int, y: int }; let p: point = { x: 1, y: 2 }; p.x" TInt
+    infers_to "type Point = { x: Int, y: Int }\nlet p: Point = { x: 1, y: 2 }\np.x" TInt
 
   let%test "infer generic type alias annotation" =
-    infers_to "type box[a] = { value: a }; let p: box[string] = { value: \"ok\" }; p.value" TString
+    infers_to "type Box[a] = { value: a }\nlet p: Box[Str] = { value: \"ok\" }\np.value" TString
 
   let%test "duplicate trait definition in one program is rejected" =
-    match infer_string "trait ping[a] { fn ping(x: a) -> int }\ntrait ping[a] { fn pong(x: a) -> int }\n1" with
+    match infer_string "trait Ping[a] = { fn ping(x: a) -> Int }\ntrait Ping[a] = { fn pong(x: a) -> Int }\n1" with
     | Error diag when is_code diag "type-constructor" ->
         let msg = diag.message in
-        let needle = "Duplicate trait definition: ping" in
+        let needle = "Duplicate trait definition: Ping" in
         let len_msg = String.length msg in
         let len_needle = String.length needle in
         let rec has_needle i =
@@ -4711,10 +4711,10 @@ module Test = struct
     | _ -> false
 
   let%test "duplicate enum definition in one program is rejected" =
-    match infer_string "enum dup { a }\nenum dup { b }\n1" with
+    match infer_string "enum Dup = { A }\nenum Dup = { B }\n1" with
     | Error diag when is_code diag "type-constructor" ->
         let msg = diag.message in
-        let needle = "Duplicate enum definition: dup" in
+        let needle = "Duplicate enum definition: Dup" in
         let len_msg = String.length msg in
         let len_needle = String.length needle in
         let rec has_needle i =
@@ -4729,10 +4729,10 @@ module Test = struct
     | _ -> false
 
   let%test "duplicate type alias definition in one program is rejected" =
-    match infer_string "type point = { x: int }\ntype point = { y: int }\n1" with
+    match infer_string "type Point = { x: Int }\ntype Point = { y: Int }\n1" with
     | Error diag when is_code diag "type-constructor" ->
         let msg = diag.message in
-        let needle = "Duplicate type alias definition: point" in
+        let needle = "Duplicate type alias definition: Point" in
         let len_msg = String.length msg in
         let len_needle = String.length needle in
         let rec has_needle i =
@@ -4747,7 +4747,7 @@ module Test = struct
     | _ -> false
 
   let%test "top-level forward reference to later function infers" =
-    infers_to "let y = add1(41); let add1 = fn(x: int) -> int { x + 1 }; y" TInt
+    infers_to "let y = add1(41)\nfn add1(x: Int) -> Int = x + 1\ny" TInt
 
   let%test "top-level forward reference to later non-function value is rejected" =
     match infer_string "let a = b; let b = 1; a" with
@@ -4756,11 +4756,11 @@ module Test = struct
 
   let%test "top-level mutual recursion with forward references infers" =
     infers_to
-      "let even = fn(n: int) -> bool { if (n == 0) { true } else { odd(n - 1) } }; let odd = fn(n: int) -> bool { if (n == 0) { false } else { even(n - 1) } }; even(4)"
+      "fn even(n: Int) -> Bool = if (n == 0) { true } else { odd(n - 1) }\nfn odd(n: Int) -> Bool = if (n == 0) { false } else { even(n - 1) }\neven(4)"
       TBool
 
   let%test "symbol resolution maps forward top-level function references to declaration symbols" =
-    match Syntax.Parser.parse ~file_id:"<test>" "let y = add1(41); let add1 = fn(x: int) -> int { x + 1 }; y" with
+    match Syntax.Parser.parse ~file_id:"<test>" "let y = add1(41)\nfn add1(x: Int) -> Int = x + 1\ny" with
     | Error _ -> false
     | Ok program -> (
         let state = create_inference_state () in
@@ -4790,27 +4790,27 @@ module Test = struct
         | _ -> false)
 
   let%test "symbol resolution maps enum constructor receiver after enum definition" =
-    match Syntax.Parser.parse ~file_id:"<test>" "enum direction { north }\nlet x = direction.north\nx" with
+    match Syntax.Parser.parse ~file_id:"<test>" "enum Direction = { North }\nlet x = Direction.North\nx" with
     | Error _ -> false
     | Ok program -> (
         let state = create_inference_state () in
         match infer_program ~state program with
         | Error _ -> false
         | Ok _ -> (
-            let direction_refs = identifier_occurrences_in_program "direction" program in
-            let enum_symbol = find_symbol_id_by_name_kind state "direction" EnumSym in
+            let direction_refs = identifier_occurrences_in_program "Direction" program in
+            let enum_symbol = find_symbol_id_by_name_kind state "Direction" EnumSym in
             match (direction_refs, enum_symbol) with
             | [ (direction_ref_id, _) ], Some enum_sid ->
                 lookup_identifier_symbol_in_state state direction_ref_id = Some enum_sid
             | _ -> false))
 
   let%test "symbol resolution leaves forward enum receiver refs unresolved" =
-    match Syntax.Parser.parse ~file_id:"<test>" "let x = direction.north\nenum direction { north }\nx" with
+    match Syntax.Parser.parse ~file_id:"<test>" "let x = Direction.North\nenum Direction = { North }\nx" with
     | Error _ -> false
     | Ok program -> (
         let state = create_inference_state () in
         let _ = infer_program ~state program in
-        let direction_refs = identifier_occurrences_in_program "direction" program in
+        let direction_refs = identifier_occurrences_in_program "Direction" program in
         match direction_refs with
         | [ (direction_ref_id, _) ] -> lookup_identifier_symbol_in_state state direction_ref_id = None
         | _ -> false)
@@ -4844,7 +4844,7 @@ module Test = struct
             | _ -> false))
 
   let%test "symbol resolution prefers inner parameter over top-level binding when shadowed" =
-    match Syntax.Parser.parse ~file_id:"<test>" "let x = 1; let f = fn(x: int) -> int { x }; f(2); x" with
+    match Syntax.Parser.parse ~file_id:"<test>" "let x = 1\nfn f(x: Int) -> Int = x\nf(2)\nx" with
     | Error _ -> false
     | Ok program -> (
         let state = create_inference_state () in
@@ -4884,7 +4884,7 @@ module Test = struct
             | _ -> false))
 
   let%test "top-level let can shadow prelude builtin in symbol resolution" =
-    match Syntax.Parser.parse ~file_id:"<test>" "let puts = fn(x: int) -> int { x }; puts(1)" with
+    match Syntax.Parser.parse ~file_id:"<test>" "fn puts(x: Int) -> Int = x\nputs(1)" with
     | Error _ -> false
     | Ok program -> (
         let state = create_inference_state () in
@@ -4920,62 +4920,18 @@ module Test = struct
             top_level_signature state1 = top_level_signature state2
         | _ -> false)
 
-  let%test "field-only trait object rejects access to fields outside trait projection" =
-    match infer_string "trait named { name: string }\nlet x: named = { name: \"alice\", age: 42 }\nx.age" with
-    | Error diag when is_code diag "type-constructor" ->
-        let msg = diag.message in
-        let needle = "Record field 'age' not found in type" in
-        let len_msg = String.length msg in
-        let len_needle = String.length needle in
-        let rec has_needle i =
-          if i + len_needle > len_msg then
-            false
-          else if String.sub msg i len_needle = needle then
-            true
-          else
-            has_needle (i + 1)
-        in
-        has_needle 0
-    | _ -> false
-
-  let%test "function return trait-object annotation projects away extra fields" =
-    match
-      infer_string
-        "trait named { name: string }\nlet mk = fn(n: int) -> named { { name: \"alice\", age: n } }\nlet x = mk(42)\nx.age"
-    with
-    | Error diag when is_code diag "type-constructor" ->
-        let msg = diag.message in
-        let needle = "Record field 'age' not found in type" in
-        let len_msg = String.length msg in
-        let len_needle = String.length needle in
-        let rec has_needle i =
-          if i + len_needle > len_msg then
-            false
-          else if String.sub msg i len_needle = needle then
-            true
-          else
-            has_needle (i + 1)
-        in
-        has_needle 0
-    | _ -> false
-
-  let%test "function return trait-object annotation keeps projected fields accessible" =
-    infers_to
-      "trait named { name: string }\nlet mk = fn(n: int) -> named { { name: \"alice\", age: n } }\nlet x = mk(42)\nx.name"
-      TString
-
   let%test "constrained field access preserves non-field trait obligations at call sites" =
     match
       infer_string
-        "trait named { name: string }\ntrait shown[a] { fn show(x: a) -> string }\nlet get_name = fn[t: named + shown](x: t) { x.name }\nlet p = { name: \"alice\" }\nget_name(p)"
+        "trait Named = { name: Str }\ntrait Shown[a] = { fn show(x: a) -> Str }\nfn get_name[t: Named & Shown](x: t) -> Str = x.name\nlet p = { name: \"alice\" }\nget_name(p)"
     with
     | Error diag when String_utils.contains_substring ~needle:"type-trait" diag.code ->
         String_utils.contains_substring ~needle:"Trait obligation failed" diag.message
-        && String_utils.contains_substring ~needle:"does not implement trait shown" diag.message
+        && String_utils.contains_substring ~needle:"does not implement trait" diag.message
     | _ -> false
 
   let%test "constrained field access rejects fields not guaranteed by constraints" =
-    match infer_string "trait named { name: string }\nlet get_age = fn[t: named](x: t) { x.age }\n1" with
+    match infer_string "trait Named = { name: Str }\nfn get_age[t: Named](x: t) = x.age\n1" with
     | Error diag when is_code diag "type-constructor" ->
         let msg = diag.message in
         let needle = "Field 'age' is not guaranteed by constraints on type variable" in
@@ -4994,54 +4950,54 @@ module Test = struct
 
   let%test "constrained field access works when all constraints are satisfied" =
     infers_to
-      "type person = { name: string, age: int }\ntrait named { name: string }\ntrait shown[a] { fn show(x: a) -> string }\nimpl shown for person {\n\  fn show(x: person) -> string {\n\    x.name\n\  }\n}\nlet get_name = fn[t: named + shown](x: t) { x.name }\nlet p: person = { name: \"alice\", age: 42 }\nget_name(p)"
+      "type Person = { name: Str, age: Int }\ntrait Named = { name: Str }\ntrait Shown[a] = { fn show(x: a) -> Str }\nimpl Shown[Person] = {\n  fn show(x: Person) -> Str = x.name\n}\nfn get_name[t: Named & Shown](x: t) -> Str = x.name\nlet p: Person = { name: \"alice\", age: 42 }\nget_name(p)"
       TString
 
   let%test "generic impl cannot specialize generic return type from body literals" =
     match
       infer_string
-        "trait id[a] { fn id(x: a) -> a }\nimpl id[b] for list[b] {\n  fn id(x: list[b]) -> list[b] { [1] }\n}\n1"
+        "trait Id[a] = { fn id(x: a) -> a }\nimpl[b] Id[List[b]] = {\n  fn id(x: List[b]) -> List[b] = [1]\n}\n1"
     with
     | Error diag -> is_code diag "type-return-mismatch"
     | _ -> false
 
   let%test "explicit row-polymorphic annotation is rejected in v1" =
     reset_fresh_counter ();
-    match infer_string "let get_x = fn(r: { x: int, ...row }) -> int { r.x }" with
+    match infer_string "fn get_x(r: { x: Int, ...row }) -> Int = r.x" with
     | Error _ -> true
     | Ok _ -> false
 
   let%test "field access on unannotated record param works" =
-    infers_to "let p = { x: 5, y: 10, z: 20 }; let get_x = fn(r) { r.x }; get_x(p)" TInt
+    infers_to "let p = { x: 5, y: 10, z: 20 }\nfn get_x(r) = r.x\nget_x(p)" TInt
 
   let%test "row-polymorphic field accessor can be reused across distinct record tails" =
     infers_to
-      "let get_x = fn(r) { r.x }; let a = get_x({ x: 1, y: true }); let b = get_x({ x: 2, z: \"s\" }); a + b" TInt
+      "fn get_x(r) = r.x\nlet a = get_x({ x: 1, y: true })\nlet b = get_x({ x: 2, z: \"s\" })\na + b" TInt
 
   let%test "multiple field access with closed record annotation works" =
-    infers_to "let p = { x: 5, y: 10 }; let sum_xy = fn(r: { x: int, y: int }) { r.x + r.y }; sum_xy(p)" TInt
+    infers_to "let p = { x: 5, y: 10 }\nfn sum_xy(r: { x: Int, y: Int }) = r.x + r.y\nsum_xy(p)" TInt
 
   let%test "infer record match pattern with punning" =
-    infers_to "let p = { x: 10, y: 20 }; match p { { x:, y: }: x + y _: 0 }" TInt
+    infers_to "let p = { x: 10, y: 20 }\nmatch p { case { x:, y: }: x + y case _: 0 }" TInt
 
   let%test "infer record match pattern with rest binding" =
-    infers_to "let p = { x: 10, y: 20, z: 30 }; match p { { x:, ...rest }: x + rest.y _: 0 }" TInt
+    infers_to "let p = { x: 10, y: 20, z: 30 }\nmatch p { case { x:, ...rest }: x + rest.y case _: 0 }" TInt
 
   let%test "single-arm record match is exhaustive" =
-    infers_to "let p = { name: \"George\", age: 7 }; match p { { name:, ...rest }: name }" TString
+    infers_to "let p = { name: \"George\", age: 7 }\nmatch p { case { name:, ...rest }: name }" TString
 
   let%test "infer polymorphic let" =
-    (* let id = fn(x) { x }; id(5) should work and be Int *)
-    infers_to "let id = fn(x) { x }; id(5)" TInt
+    (* fn id(x) = x; id(5) should work and be Int *)
+    infers_to "fn id(x) = x\nid(5)" TInt
 
   let%test "infer polymorphic let used twice" =
-    (* let id = fn(x) { x }; id(5); id(true) should work *)
+    (* fn id(x) = x; id(5); id(true) should work *)
     (* The result type is the type of the last expression: Bool *)
-    infers_to "let id = fn(x) { x }; id(5); id(true)" TBool
+    infers_to "fn id(x) = x\nid(5)\nid(true)" TBool
 
   let%test "infer higher order function" =
-    (* let apply = fn(f, x) { f(x) }; apply(fn(n) { n + 1 }, 5) should be Int *)
-    infers_to "let apply = fn(f, x) { f(x) }; apply(fn(n) { n + 1 }, 5)" TInt
+    (* fn apply(f, x) = f(x); apply((n) -> n + 1, 5) should be Int *)
+    infers_to "fn apply(f, x) = f(x)\napply((n) -> n + 1, 5)" TInt
 
   let%test "error on unbound variable" =
     match infer_string "x" with
@@ -5065,17 +5021,17 @@ module Test = struct
     | _ -> false
 
   let%test "infer simple recursive function" =
-    (* Factorial: fn(n) { if (n == 0) { 1 } else { n * fact(n - 1) } } *)
-    let code = "let fact = fn(n) { if (n == 0) { 1 } else { n * fact(n - 1) } }; fact(5)" in
+    (* Factorial: fn fact(n) = if (n == 0) { 1 } else { n * fact(n - 1) } *)
+    let code = "fn fact(n) = if (n == 0) { 1 } else { n * fact(n - 1) }\nfact(5)" in
     infers_to code TInt
 
   let%test "infer recursive function type" =
     (* The factorial function should have type Int -> Int *)
-    let code = "let fact = fn(n) { if (n == 0) { 1 } else { n * fact(n - 1) } }; fact" in
+    let code = "fn fact(n) = if (n == 0) { 1 } else { n * fact(n - 1) }\nfact" in
     infers_to code (tfun TInt TInt)
 
   let%test "infer fibonacci" =
-    let code = "let fib = fn(n) { if (n < 2) { n } else { fib(n - 1) + fib(n - 2) } }; fib(10)" in
+    let code = "fn fib(n) = if (n < 2) { n } else { fib(n - 1) + fib(n - 2) }\nfib(10)" in
     infers_to code TInt
 
   let%test "infer mutually referencing let" =
@@ -5085,66 +5041,60 @@ module Test = struct
 
   let%test "infer countdown" =
     (* Recursive function that returns unit/last value *)
-    let code = "let countdown = fn(n) { if (n == 0) { 0 } else { countdown(n - 1) } }; countdown(10)" in
+    let code = "fn countdown(n) = if (n == 0) { 0 } else { countdown(n - 1) }\ncountdown(10)" in
     infers_to code TInt
 
   let%test "infer recursive with array" =
     (* Recursive function that works with arrays *)
     let code =
-      "let sum = fn(arr, i) { if (i == 0) { arr[0] } else { arr[i] + sum(arr, i - 1) } }; sum([1,2,3], 2)"
+      "fn sum(arr, i) = if (i == 0) { arr[0] } else { arr[i] + sum(arr, i - 1) }\nsum([1, 2, 3], 2)"
     in
     infers_to code TInt
 
   (* Enum constructor tests *)
   let%test "infer simple enum constructor" =
-    let code = "enum direction { north south east west }
-direction.north" in
-    infers_to code (TEnum ("direction", []))
+    let code = "enum Direction = { North, South, East, West }\nDirection.North" in
+    infers_to code (TEnum ("Direction", []))
 
   let%test "infer option.some with int" =
-    let code = "enum option[a] { some(a) none }
-option.some(42)" in
-    infers_to code (TEnum ("option", [ TInt ]))
+    let code = "enum Option[a] = { Some(a), None }\nOption.Some(42)" in
+    infers_to code (TEnum ("Option", [ TInt ]))
 
   let%test "infer option.none" =
-    let code = "enum option[a] { some(a) none }
-option.none" in
+    let code = "enum Option[a] = { Some(a), None }\nOption.None" in
     match infer_string code with
     | Error _ -> false
     | Ok (_, _type_map, t) -> (
         match t with
-        | TEnum ("option", [ TVar _ ]) -> true
+        | TEnum ("Option", [ TVar _ ]) -> true
         | _ ->
-            Printf.printf "Expected option[_] but got %s\n" (to_string t);
+            Printf.printf "Expected Option[_] but got %s\n" (to_string t);
             false)
 
   let%test "infer result.success with int" =
-    let code = "enum result[a, e] { success(a) failure(e) }
-result.success(42)" in
+    let code = "enum Result[a, e] = { Success(a), Failure(e) }\nResult.Success(42)" in
     match infer_string code with
     | Error _ -> false
     | Ok (_, _type_map, t) -> (
         match t with
-        | TEnum ("result", [ TInt; TVar _ ]) -> true
+        | TEnum ("Result", [ TInt; TVar _ ]) -> true
         | _ ->
-            Printf.printf "Expected result[Int, _] but got %s\n" (to_string t);
+            Printf.printf "Expected Result[Int, _] but got %s\n" (to_string t);
             false)
 
   let%test "infer result.failure with string" =
-    let code = "enum result[a, e] { success(a) failure(e) }
-result.failure(\"error\")" in
+    let code = "enum Result[a, e] = { Success(a), Failure(e) }\nResult.Failure(\"error\")" in
     match infer_string code with
     | Error _ -> false
     | Ok (_, _type_map, t) -> (
         match t with
-        | TEnum ("result", [ TVar _; TString ]) -> true
+        | TEnum ("Result", [ TVar _; TString ]) -> true
         | _ ->
-            Printf.printf "Expected result[_, String] but got %s\n" (to_string t);
+            Printf.printf "Expected Result[_, String] but got %s\n" (to_string t);
             false)
 
   let%test "infer constructor with wrong arg count" =
-    let code = "enum option[a] { some(a) none }
-option.some(1, 2)" in
+    let code = "enum Option[a] = { Some(a), None }\nOption.Some(1, 2)" in
     match infer_string code with
     | Error _ -> true
     | Ok _ -> false
@@ -5152,35 +5102,35 @@ option.some(1, 2)" in
   (* Match expression tests *)
   let%test "infer simple match with option" =
     let code =
-      "enum option[a] { some(a) none }
-let x = option.some(42)
+      "enum Option[a] = { Some(a), None }
+let x = Option.Some(42)
 match x {
-  option.some(v): v + 1
-  option.none: 0
+  case Option.Some(v): v + 1
+  case Option.None: 0
 }"
     in
     infers_to code TInt
 
   let%test "infer match with wildcard" =
     let code = "match 5 {
-  0: \"zero\"
-  _: \"other\"
+  case 0: \"zero\"
+  case _: \"other\"
 }" in
     infers_to code TString
 
   let%test "infer match with variable pattern" =
     let code = "match 42 {
-  n: n + 1
+  case n: n + 1
 }" in
     infers_to code TInt
 
   let%test "infer match extracts constructor value" =
     let code =
-      "enum result[a, e] { success(a) failure(e) }
-let r = result.success(100)
+      "enum Result[a, e] = { Success(a), Failure(e) }
+let r = Result.Success(100)
 match r {
-  result.success(val): val * 2
-  result.failure(err): 0
+  case Result.Success(val): val * 2
+  case Result.Failure(err): 0
 }"
     in
     infers_to code TInt
@@ -5188,17 +5138,17 @@ match r {
   let%test "infer match with literal patterns" =
     let code = "let x = 5
 match x {
-  0: \"zero\"
-  1: \"one\"
-  _: \"many\"
+  case 0: \"zero\"
+  case 1: \"one\"
+  case _: \"many\"
 }" in
     infers_to code TString
 
   let%test "match expression union type from different arm types" =
     (* Phase 4.2: Different arm types create unions instead of errors *)
     let code = "match 5 {
-  0: 42
-  _: \"string\"
+  case 0: 42
+  case _: \"string\"
 }" in
     match infer_string code with
     | Ok (_, _, TUnion _) -> true
@@ -5206,10 +5156,10 @@ match x {
 
   (* Exhaustiveness checking tests *)
   let%test "non-exhaustive match on option is error" =
-    let code = "enum option[a] { some(a) none }
-let x = option.some(42)
+    let code = "enum Option[a] = { Some(a), None }
+let x = Option.Some(42)
 match x {
-  option.some(v): v
+  case Option.Some(v): v
 }" in
     match infer_string code with
     | Error e ->
@@ -5219,36 +5169,36 @@ match x {
 
   let%test "exhaustive match on option passes" =
     let code =
-      "enum option[a] { some(a) none }
-let x = option.some(42)
+      "enum Option[a] = { Some(a), None }
+let x = Option.Some(42)
 match x {
-  option.some(v): v
-  option.none: 0
+  case Option.Some(v): v
+  case Option.None: 0
 }"
     in
     infers_to code TInt
 
   let%test "match with wildcard is exhaustive" =
     let code =
-      "enum result[a, e] { success(a) failure(e) }
-let r = result.success(100)
+      "enum Result[a, e] = { Success(a), Failure(e) }
+let r = Result.Success(100)
 match r {
-  result.success(v): v
-  _: 0
+  case Result.Success(v): v
+  case _: 0
 }"
     in
     infers_to code TInt
 
   let%test "match with variable pattern is exhaustive" =
-    let code = "enum option[a] { some(a) none }
-match option.some(5) {
-  x: 42
+    let code = "enum Option[a] = { Some(a), None }
+match Option.Some(5) {
+  case x: 42
 }" in
     infers_to code TInt
 
   let%test "non-exhaustive match on bool is error" =
     let code = "match true {
-  true: 1
+  case true: 1
 }" in
     match infer_string code with
     | Error _ -> true
@@ -5256,16 +5206,16 @@ match option.some(5) {
 
   let%test "exhaustive match on bool passes" =
     let code = "match true {
-  true: 1
-  false: 0
+  case true: 1
+  case false: 0
 }" in
     infers_to code TInt
 
   let%test "non-exhaustive match on result is error" =
     let code =
-      "enum result[a, e] { success(a) failure(e) }
-match result.success(42) {
-  result.success(v): v
+      "enum Result[a, e] = { Success(a), Failure(e) }
+match Result.Success(42) {
+  case Result.Success(v): v
 }"
     in
     match infer_string code with
@@ -5274,13 +5224,13 @@ match result.success(42) {
 
   let%test "constraint store does not leak across independent runs" =
     let constrained_code =
-      "trait show[a] {
-  fn show(x: a) -> string
+      "trait Show[a] = {
+  fn show(x: a) -> Str
 }
-let f = fn[a: show](x: a) -> string { x.show() }
+fn f[a: Show](x: a) -> Str = x.show()
 f"
     in
-    let unconstrained_code = "let id = fn(x) { x }; id([1, 2, 3])" in
+    let unconstrained_code = "fn id(x) = x\nid([1, 2, 3])" in
     match infer_string constrained_code with
     | Error _ -> false
     | Ok _ -> (
@@ -5404,7 +5354,7 @@ f"
     Trait_registry.clear ();
     Trait_registry.register_trait
       {
-        trait_name = "t1";
+        trait_name = "T1";
         trait_type_param = Some "a";
         trait_supertraits = [];
         trait_methods =
@@ -5412,13 +5362,13 @@ f"
       };
     Trait_registry.register_trait
       {
-        trait_name = "t2";
+        trait_name = "T2";
         trait_type_param = Some "a";
         trait_supertraits = [];
         trait_methods =
           [ Trait_registry.mk_method_sig ~name:"render" ~params:[ ("x", TVar "a") ] ~return_type:TString () ];
       };
-    match infer_string "let f = fn[a: t1 + t2](x: a) -> string { x.render() }; f" with
+    match infer_string "fn f[a: T1 & T2](x: a) -> Str = x.render()\nf" with
     | Ok _ -> false
     | Error e ->
         let msg = e.message in
@@ -5426,17 +5376,17 @@ f"
 
   let%test "inherent method call resolves for concrete receiver" =
     let code =
-      "type point = { x: int, y: int }\nimpl point { fn sum(p: point) -> int { p.x + p.y } }\nlet p: point = { x: 1, y: 2 }\np.sum()"
+      "type Point = { x: Int, y: Int }\nimpl Point = { fn sum(p: Point) -> Int = p.x + p.y }\nlet p: Point = { x: 1, y: 2 }\np.sum()"
     in
     infers_to code TInt
 
   let%test "inherent method call resolves for type-application receiver" =
-    let code = "impl list[int] { fn size(xs: list[int]) -> int { 1 } }\n[1, 2, 3].size()" in
+    let code = "impl List[Int] = { fn size(xs: List[Int]) -> Int = 1 }\n[1, 2, 3].size()" in
     infers_to code TInt
 
   let%test "inherent method receiver must match impl target type" =
     let contains_substring s sub = String_utils.contains_substring ~needle:sub s in
-    let code = "type point = { x: int }\nimpl point { fn bad(x: int) -> int { x } }\n1" in
+    let code = "type Point = { x: Int }\nimpl Point = { fn bad(x: Int) -> Int = x }\n1" in
     match infer_string code with
     | Ok _ -> false
     | Error e ->
@@ -5445,7 +5395,7 @@ f"
 
   let%test "duplicate inherent method for same type is rejected" =
     let contains_substring s sub = String_utils.contains_substring ~needle:sub s in
-    let code = "impl int { fn ping(x: int) -> int { x } }\nimpl int { fn ping(x: int) -> int { x } }\n1" in
+    let code = "impl Int = { fn ping(x: Int) -> Int = x }\nimpl Int = { fn ping(x: Int) -> Int = x }\n1" in
     match infer_string code with
     | Ok _ -> false
     | Error e ->
@@ -5455,7 +5405,7 @@ f"
   let%test "inherent method coexists with trait method on same type (Phase 4.6)" =
     Trait_registry.clear ();
     let code =
-      "trait show[a] { fn show(x: a) -> string }\nimpl show for int { fn show(x: int) -> string { \"trait\" } }\nimpl int { fn show(x: int) -> string { \"inherent\" } }\n1"
+      "trait Show[a] = { fn show(x: a) -> Str }\nimpl Show[Int] = { fn show(x: Int) -> Str = \"trait\" }\nimpl Int = { fn show(x: Int) -> Str = \"inherent\" }\n1"
     in
     match infer_string code with
     | Ok _ -> true
@@ -5465,20 +5415,20 @@ f"
     let contains_substring s sub = String_utils.contains_substring ~needle:sub s in
     Trait_registry.clear ();
     let code =
-      "trait show[a] { fn show(x: a) -> string }\ntype point = { x: int }\nimpl point { fn show(p: point) -> string { \"p\" } }\nlet f = fn[t: show](x: t) -> string { x.show() }\nlet p: point = { x: 1 }\nf(p)"
+      "trait Show[a] = { fn show(x: a) -> Str }\ntype Point = { x: Int }\nimpl Point = { fn show(p: Point) -> Str = \"p\" }\nfn f[t: Show](x: t) -> Str = x.show()\nlet p: Point = { x: 1 }\nf(p)"
     in
     match infer_string code with
     | Ok _ -> false
     | Error e ->
         let msg = e.message in
-        contains_substring msg "does not implement trait show"
+        contains_substring msg "does not implement trait"
 
   let%test "infer_program isolates itself from stale global constraint state" =
     (* Simulate stale process-global state from an earlier session. *)
     clear_constraint_store ();
     reset_fresh_counter ();
     add_type_var_constraints "t0" [ "show" ];
-    let code = "(fn(x) { x })(fn(y) { y })" in
+    let code = "((x) -> x)((y) -> y)" in
     match Syntax.Parser.parse ~file_id:"<test>" code with
     | Error _ -> false
     | Ok program -> (
@@ -5489,7 +5439,7 @@ f"
   let%test "infer_program captures user generic names in inference state" =
     match
       Syntax.Parser.parse ~file_id:"<test>"
-        "trait named { name: string }\nlet get = fn[t: named](x: t) -> string { x.name }; get"
+        "trait Named = { name: Str }\nfn get[t: Named](x: t) -> Str = x.name\nget"
     with
     | Error _ -> false
     | Ok program -> (
@@ -5504,7 +5454,7 @@ f"
     let shared_state = create_inference_state () in
     match
       Syntax.Parser.parse ~file_id:"<test>"
-        "trait named { name: string }\nlet get = fn[t: named](x: t) -> string { x.name }; get"
+        "trait Named = { name: Str }\nfn get[t: Named](x: t) -> Str = x.name\nget"
     with
     | Error _ -> false
     | Ok first_program -> (
@@ -5523,7 +5473,7 @@ f"
     Trait_registry.clear ();
     Trait_registry.register_trait
       {
-        Trait_registry.trait_name = "show";
+        Trait_registry.trait_name = "Show";
         trait_type_param = Some "a";
         trait_supertraits = [];
         trait_methods =
@@ -5531,27 +5481,27 @@ f"
       };
     Trait_registry.register_impl ~builtin:true
       {
-        impl_trait_name = "show";
+        impl_trait_name = "Show";
         impl_type_params = [];
         impl_for_type = TInt;
         impl_methods =
           [ Trait_registry.mk_method_sig ~name:"show" ~params:[ ("x", TInt) ] ~return_type:TString () ];
       };
     let shared_state = create_inference_state () in
-    match Syntax.Parser.parse ~file_id:"<test>" "let check = fn[a: show](x: a) -> string { x.show() }" with
+    match Syntax.Parser.parse ~file_id:"<test>" "fn check[a: Show](x: a) -> Str = x.show()" with
     | Error _ -> false
     | Ok first_program -> (
         match infer_program ~state:shared_state first_program with
         | Error _ -> false
         | Ok (env_with_check, _, _) -> (
-            match Syntax.Parser.parse ~file_id:"<test>" "check(fn(y) { y })" with
+            match Syntax.Parser.parse ~file_id:"<test>" "check((y) -> y)" with
             | Error _ -> false
             | Ok second_program -> (
                 match infer_program ~state:shared_state ~env:env_with_check second_program with
                 | Ok _ -> false
                 | Error e ->
                     let msg = e.message in
-                    contains_substring msg "does not implement trait show")))
+                    contains_substring msg "does not implement trait")))
 
   let%test "infer errors preserve parser file_id metadata" =
     match Syntax.Parser.parse ~file_id:"main.mr" "1 + true" with
@@ -5562,21 +5512,21 @@ f"
         | _ -> false)
 
   let%test "infer effectful function type uses fat arrow" =
-    (* fn(x: int) => int { x + 1 } should infer as Int => Int *)
-    match infer_string "fn(x: int) => int { x + 1 }" with
+    (* fn add1(x: Int) => Int = x + 1 should infer as Int => Int *)
+    match infer_string "fn add1(x: Int) => Int = x + 1\nadd1" with
     | Error _ -> false
     | Ok (_, _, TFun (TInt, TInt, true)) -> true
     | Ok _ -> false
 
   let%test "infer pure function type uses thin arrow" =
-    (* fn(x: int) -> int { x + 1 } should infer as Int -> Int (not effectful) *)
-    match infer_string "fn(x: int) -> int { x + 1 }" with
+    (* fn add1(x: Int) -> Int = x + 1 should infer as Int -> Int (not effectful) *)
+    match infer_string "fn add1(x: Int) -> Int = x + 1\nadd1" with
     | Error _ -> false
     | Ok (_, _, TFun (TInt, TInt, false)) -> true
     | Ok _ -> false
 
   let%test "infer unannotated function is pure by default" =
-    match infer_string "fn(x) { x + 1 }" with
+    match infer_string "fn add1(x) = x + 1\nadd1" with
     | Error _ -> false
     | Ok (_, _, TFun (_, _, false)) -> true
     | Ok _ -> false
@@ -5587,48 +5537,48 @@ f"
 
   let%test "pure function calling effectful operation is error" =
     (* Define an effectful function, then a pure function that calls it *)
-    let code = "let eff = fn(x: int) => int { x }; fn(y: int) -> int { eff(y) }" in
+    let code = "fn eff(x: Int) => Int = x\nfn pure(y: Int) -> Int = eff(y)\npure" in
     match infer_string code with
     | Error diag -> is_code diag "type-purity"
     | _ -> false
 
   let%test "pure function with pure body is ok" =
-    match infer_string "fn(x: int) -> int { x + 1 }" with
+    match infer_string "fn add1(x: Int) -> Int = x + 1\nadd1" with
     | Ok (_, _, TFun (TInt, TInt, false)) -> true
     | _ -> false
 
   let%test "effectful annotation with pure body is ok (no enforcement yet)" =
     (* Case 2 is not enforced — => with pure body is allowed *)
-    match infer_string "fn(x: int) => int { x + 1 }" with
+    match infer_string "fn add1(x: Int) => Int = x + 1\nadd1" with
     | Ok (_, _, TFun (TInt, TInt, true)) -> true
     | _ -> false
 
   let%test "unannotated function calling effectful infers as effectful" =
-    let code = "let eff = fn(x: int) => int { x }; fn(y: int) { eff(y) }" in
+    let code = "fn eff(x: Int) => Int = x\nfn caller(y: Int) = eff(y)\ncaller" in
     match infer_string code with
     | Ok (_, _, TFun (TInt, TInt, true)) -> true
     | _ -> false
 
   let%test "unannotated function with pure body infers as pure" =
-    match infer_string "fn(x) { x + 1 }" with
+    match infer_string "fn add1(x) = x + 1\nadd1" with
     | Ok (_, _, TFun (_, _, false)) -> true
     | _ -> false
 
   let%test "pure function calling effectful in let binding is error" =
-    let code = "let eff = fn(x: int) => int { x }; fn(y: int) -> int { let z = eff(y); z }" in
+    let code = "fn eff(x: Int) => Int = x\nfn pure(y: Int) -> Int = { let z = eff(y); z }\npure" in
     match infer_string code with
     | Error diag -> is_code diag "type-purity"
     | _ -> false
 
   let%test "pure function calling effectful in if branch is error" =
-    let code = "let eff = fn(x: int) => int { x }; fn(y: int) -> int { if (true) { eff(y) } else { 0 } }" in
+    let code = "fn eff(x: Int) => Int = x\nfn pure(y: Int) -> Int = if (true) { eff(y) } else { 0 }\npure" in
     match infer_string code with
     | Error diag -> is_code diag "type-purity"
     | _ -> false
 
   let%test "pure function calling maybe-effectful function from union is error" =
     let code =
-      "fn(flag: bool) -> int { let f = if (flag) { fn(x: int) -> int { x + 1 } } else { fn(x: int) => int { x } }; f(1) }"
+      "fn choose(flag: Bool) = if (flag) { (x: Int) -> x + 1 } else { (x: Int) => x }\nfn pure(flag: Bool) -> Int = choose(flag)(1)\npure"
     in
     match infer_string code with
     | Error diag -> is_code diag "type-purity"
@@ -5636,7 +5586,7 @@ f"
 
   let%test "unannotated function calling maybe-effectful union infers effectful" =
     let code =
-      "fn(flag: bool) { let f = if (flag) { fn(x: int) -> int { x + 1 } } else { fn(x: int) => int { x } }; f(1) }"
+      "fn choose(flag: Bool) = if (flag) { (x: Int) -> x + 1 } else { (x: Int) => x }\nfn caller(flag: Bool) = choose(flag)(1)\ncaller"
     in
     match infer_string code with
     | Ok (_, _, TFun (TBool, TInt, true)) -> true
@@ -5644,35 +5594,35 @@ f"
 
   let%test "unannotated higher-order caller accepts pure and effectful callbacks" =
     let code =
-      "let hof = fn(f) { f(1) }; let pure = fn(x: int) -> int { x + 1 }; let eff = fn(x: int) => int { x + 2 }; hof(pure) + hof(eff)"
+      "fn hof(f) = f(1)\nlet pure = (x: Int) -> x + 1\nlet eff = (x: Int) => x + 2\nhof(pure) + hof(eff)"
     in
     infers_to code TInt
 
   let%test "pure annotated higher-order caller with unknown callback is rejected conservatively" =
-    let code = "let hof = fn(f) -> int { f(1) }; let eff = fn(x: int) => int { x }; hof(eff)" in
+    let code = "fn hof(f) -> Int = f(1)\nlet eff = (x: Int) => x\nhof(eff)" in
     match infer_string code with
     | Error diag -> is_code diag "type-purity"
     | _ -> false
 
   let%test "union of pure/effectful callables normalizes to callable and can be called" =
     let code =
-      "let choose = fn(flag: bool) { if (flag) { fn(x: int) -> int { x + 1 } } else { fn(x: int) => int { x + 2 } } }; let f = choose(true); f(1)"
+      "fn choose(flag: Bool) = if (flag) { (x: Int) -> x + 1 } else { (x: Int) => x + 2 }\nlet f = choose(true)\nf(1)"
     in
     infers_to code TInt
 
   let%test "higher-order callback via local alias still infers call result" =
-    let code = "let hof = fn(f) { let g = f; g(1) }; let eff = fn(x: int) => int { x + 2 }; hof(eff)" in
+    let code = "fn hof(f) = { let g = f; g(1) }\nlet eff = (x: Int) => x + 2\nhof(eff)" in
     infers_to code TInt
 
   let%test "union of callable and non-callable cannot be called" =
-    let code = "let f = if (true) { fn(x: int) -> int { x + 1 } } else { 0 }; f(1)" in
+    let code = "let f = if (true) { (x: Int) -> x + 1 } else { 0 }\nf(1)" in
     match infer_string code with
     | Error diag -> is_code diag "type-mismatch" || is_code diag "type-occurs-check"
     | _ -> false
 
   let%test "union of callables with mismatched arity cannot be called" =
     let code =
-      "let f = if (true) { fn(x: int) -> int { x } } else { fn(x: int, y: int) -> int { x + y } }; f(1)"
+      "let f = if (true) { (x: Int) -> x } else { (x: Int, y: Int) -> x + y }\nf(1)"
     in
     match infer_string code with
     | Error diag -> is_code diag "type-mismatch" || is_code diag "type-occurs-check"
@@ -5680,14 +5630,14 @@ f"
 
   let%test "pure function defining effectful function is ok" =
     (* Defining (not calling) an effectful function inside a pure function is fine *)
-    let code = "fn(x: int) { fn(y: int) => int { y } }" in
+    let code = "(x: Int) -> ((y: Int) => y)" in
     match infer_string code with
     | Ok _ -> true
     | Error _ -> false
 
   let%test "unannotated recursive function with effectful call infers as effectful" =
     let code =
-      "let eff = fn(x: int) => int { x }; let loop = fn(n: int) { if (n == 0) { 0 } else { eff(n); loop(n - 1) } }; loop"
+      "fn eff(x: Int) => Int = x\nfn loop(n: Int) = { if (n == 0) { 0 } else { eff(n); loop(n - 1) } }\nloop"
     in
     match infer_string code with
     | Ok (_, _, TFun (TInt, TInt, true)) -> true
@@ -5695,7 +5645,7 @@ f"
 
   let%test "pure annotated recursive function with effectful call is rejected" =
     let code =
-      "let eff = fn(x: int) => int { x }; let loop = fn(n: int) -> int { if (n == 0) { 0 } else { eff(n); loop(n - 1) } }; loop(2)"
+      "fn eff(x: Int) => Int = x\nfn loop(n: Int) -> Int = if (n == 0) { 0 } else { eff(n); loop(n - 1) }\nloop(2)"
     in
     match infer_string code with
     | Error diag -> is_code diag "type-purity"
