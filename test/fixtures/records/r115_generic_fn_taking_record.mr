@@ -1,3 +1,3 @@
 # R115: Generic fn taking record with generic field
-let get_val = fn(r) { r.val }
+fn get_val(r) = { r.val }
 puts(get_val({ val: 10 }))  # output: 10

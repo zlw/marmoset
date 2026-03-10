@@ -1,4 +1,4 @@
 # R078: Spread from function return value
-let make_base = fn() { { x: 5, y: 10 } }
+fn make_base() = { { x: 5, y: 10 } }
 let r = { ...make_base(), x: 15 }
 puts(r.x)  # output: 15

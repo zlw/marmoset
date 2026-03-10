@@ -1,5 +1,5 @@
 # R116: Generic fn taking record at different types
-let get_val = fn(r) { r.val }
+fn get_val(r) = { r.val }
 let a = get_val({ val: 10 })
 let b = get_val({ val: "hello" })
 puts(a)  # output: 10
