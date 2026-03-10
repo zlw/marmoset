@@ -1,4 +1,4 @@
 # CG22: Nested if as function argument compiles and runs
-let id = fn(x: int) -> int { x }
+fn id(x: Int) -> Int = x
 let result = id(if (true) { if (false) { 1 } else { 2 } } else { 3 })
 puts(result)  # output: 2

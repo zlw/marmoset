@@ -1,8 +1,8 @@
 # CG31: Match returning records in arms
 let n = 2
 let p = match n {
-  1: { x: 10, y: 20 }
-  2: { x: 99, y: 88 }
-  _: { x: 0, y: 0 }
+  case 1: { x: 10, y: 20 }
+  case 2: { x: 99, y: 88 }
+  case _: { x: 0, y: 0 }
 }
 puts(p.x)  # output: 99

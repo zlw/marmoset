@@ -1,11 +1,8 @@
 # CG34: Enum match with nested if in constructor arm
-enum option[a] {
-  some(a)
-  none
-}
-let val = option.some(42)
+enum Option[a] = { Some(a), None }
+let val = Option.Some(42)
 let result = match val {
-  option.some(v): if (v > 10) { 100 } else { 0 }
-  option.none: 0
+  case Option.Some(v): if (v > 10) { 100 } else { 0 }
+  case Option.None: 0
 }
 puts(result)  # output: 100

@@ -1,5 +1,5 @@
 # CG35: Inner if in tail position, outer if in let binding
-let f = fn(a: bool, b: bool) -> int {
+fn f(a: Bool, b: Bool) -> Int = {
   if (a) { if (b) { 5 } else { 10 } } else { 0 }
 }
 let x = f(true, true)

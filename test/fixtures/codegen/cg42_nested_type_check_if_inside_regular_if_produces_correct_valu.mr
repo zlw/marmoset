@@ -1,7 +1,7 @@
 # CG42: Nested type-check if inside regular if produces correct value
-let f = fn(flag: bool, x: int | string) -> int {
+fn f(flag: Bool, x: Int | Str) -> Int = {
   if (flag) {
-    if (x is int) { x + 9 } else { 0 }
+    if (x is Int) { x + 9 } else { 0 }
   } else {
     0
   }
