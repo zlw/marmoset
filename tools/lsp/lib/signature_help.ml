@@ -300,7 +300,8 @@ let signature_help
                     | Some (_trait_name, method_sig) ->
                         let param_types = List.map snd method_sig.method_params in
                         let param_names = List.map fst method_sig.method_params in
-                        Some (`Method (param_types, method_sig.method_return_type, param_names)))))
+                        let is_effectful = method_sig.method_effect = `Effectful in
+                        Some (`Method (param_types, method_sig.method_return_type, param_names, is_effectful)))))
         | None -> (
             match Hashtbl.find_opt type_map call.fn_id with
             | Some fn_type -> Some (`FnType fn_type)
@@ -321,11 +322,8 @@ let signature_help
                 let norm = Types.normalize fn_type in
                 let params, ret, eff = collect_params false norm in
                 (params, ret, eff, None)
-            | `Method (ptypes, ret, pnames) ->
-                let dummy_fn = List.fold_right (fun p acc -> Types.tfun p acc) ptypes ret in
-                let norm = Types.normalize dummy_fn in
-                let params, ret_n, eff = collect_params false norm in
-                (params, ret_n, eff, Some pnames)
+            | `Method (ptypes, ret, pnames, is_effectful) ->
+                (ptypes, Types.normalize ret, is_effectful, Some pnames)
           in
           match param_types with
           | [] -> None
@@ -525,6 +523,22 @@ let%test "signature help on dot method call shows method signature" =
 let%test "effectful function keeps => in signature label" =
   let source = "let f = fn(x: int) => int { puts(x); x }; f(1)" in
   match check_sig source 0 44 with
+  | Some sh ->
+      let sig0 = List.hd sh.signatures in
+      string_contains sig0.label "=>"
+  | None -> false
+
+let%test "effectful method keeps => in signature label" =
+  let source =
+    "trait greet[a] {\n\
+    \  fn hello(x: a) => string\n\
+    }\n\
+    impl greet for int {\n\
+    \  fn hello(x: int) => string { puts(x); \"hi\" }\n\
+    }\n\
+    42.hello()"
+  in
+  match check_sig source 6 9 with
   | Some sh ->
       let sig0 = List.hd sh.signatures in
       string_contains sig0.label "=>"
