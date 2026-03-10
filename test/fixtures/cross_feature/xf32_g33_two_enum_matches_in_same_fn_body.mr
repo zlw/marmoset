@@ -1,17 +1,17 @@
 # XF32: G33: Two enum matches in same fn body
-type point = { x: int, y: int }
-enum status { ok fail }
-enum option_int { some(int) none }
-trait named { name: string }
-let process = fn(s: status, v: option_int) -> string {
+type Point = { x: Int, y: Int }
+enum Status = { Ok, Fail }
+enum OptionInt = { Some(Int), None }
+trait Named = { name: Str }
+fn process(s: Status, v: OptionInt) -> Str = {
   let prefix = match s {
-    status.ok: "ok"
-    status.fail: "err"
+    case Status.Ok: "ok"
+    case Status.Fail: "err"
   }
   let suffix = match v {
-    option_int.some(n): ":" + n.show()
-    option_int.none: ":none"
+    case OptionInt.Some(n): ":" + n.show()
+    case OptionInt.None: ":none"
   }
   prefix + suffix
 }
-puts(process(status.ok, option_int.some(42)))  # output: ok:42
+puts(process(Status.Ok, OptionInt.Some(42)))  # output: ok:42

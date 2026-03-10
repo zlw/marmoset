@@ -1,12 +1,10 @@
 # XF69: P79: Inherent method returning enum variant
-enum option_int { some(int) none }
-impl int {
-  fn to_option(x: int) -> option_int {
-    option_int.some(x)
-  }
+enum OptionInt = { Some(Int), None }
+impl Int = {
+  fn to_option(x: Int) -> OptionInt = OptionInt.Some(x)
 }
 let result = 42.to_option()
 match result {  # output: 42
-  option_int.some(n): puts(n)
-  option_int.none: puts(0)
+  case OptionInt.Some(n): puts(n)
+  case OptionInt.None: puts(0)
 }

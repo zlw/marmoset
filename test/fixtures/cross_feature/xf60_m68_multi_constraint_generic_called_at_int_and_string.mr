@@ -1,5 +1,5 @@
-# XF60: M68: Multi-constraint generic called at int and string
-let check = fn[a: show + eq](x: a, y: a) -> string {
+# XF60: M68: Multi-constraint generic called at Int and Str
+fn check[a: Show & Eq](x: a, y: a) -> Str = {
   if (x.eq(y)) { "same" } else { "diff" }
 }
 puts(check(1, 1))  # output: same

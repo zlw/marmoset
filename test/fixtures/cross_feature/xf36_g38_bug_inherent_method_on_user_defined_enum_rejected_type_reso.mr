@@ -1,12 +1,12 @@
 # XF36: G38: BUG: Inherent method on user-defined enum fails type resolution
-enum mylist { cons(int, mylist) nil }  # error: Unknown type constructor: mylist
-impl mylist {
-  fn sum(xs: mylist) -> int {
+enum MyList = { Cons(Int, MyList), Nil }  # error: Unknown type constructor: MyList
+impl MyList = {
+  fn sum(xs: MyList) -> Int = {
     match xs {
-      mylist.cons(h, t): h + t.sum()
-      mylist.nil: 0
+      case MyList.Cons(h, t): h + t.sum()
+      case MyList.Nil: 0
     }
   }
 }
-let xs = mylist.cons(1, mylist.cons(2, mylist.cons(3, mylist.nil)))
+let xs = MyList.Cons(1, MyList.Cons(2, MyList.Cons(3, MyList.Nil)))
 puts(xs.sum())

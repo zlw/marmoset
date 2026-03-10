@@ -1,5 +1,5 @@
 # XF21: E21: Generic show fn + enum + operator interaction
-let classify = fn(n: int) -> string {
+fn classify(n: Int) -> Str = {
   if (n > 10) {
     n.show() + " is big"
   } else {

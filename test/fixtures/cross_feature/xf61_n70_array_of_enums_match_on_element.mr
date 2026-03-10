@@ -1,7 +1,7 @@
 # XF61: N70: Array of enums, match on element
-enum option_int { some(int) none }
-let arr = [option_int.some(42), option_int.none]
+enum OptionInt = { Some(Int), None }
+let arr = [OptionInt.Some(42), OptionInt.None]
 match arr[0] {  # output: 42
-  option_int.some(n): puts(n)
-  option_int.none: puts(0)
+  case OptionInt.Some(n): puts(n)
+  case OptionInt.None: puts(0)
 }

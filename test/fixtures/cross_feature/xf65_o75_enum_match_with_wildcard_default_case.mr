@@ -1,9 +1,9 @@
 # XF65: O75: Enum match with wildcard default case
-enum color { red green blue }
-let describe = fn(c: color) -> string {
+enum Color = { Red, Green, Blue }
+fn describe(c: Color) -> Str = {
   match c {
-    color.red: "red"
-    _: "other"
+    case Color.Red: "red"
+    case _: "other"
   }
 }
-puts(describe(color.blue))  # output: other
+puts(describe(Color.Blue))  # output: other

@@ -1,18 +1,16 @@
 # XF67: P77: Enum with both inherent and trait methods
-enum box { val(int) empty }
-impl show for box {
-  fn show(b: box) -> string {
-    "boxed"
-  }
+enum Box = { Val(Int), Empty }
+impl Show[Box] = {
+  fn show(b: Box) -> Str = "boxed"
 }
-impl box {
-  fn unwrap(b: box) -> int {
+impl Box = {
+  fn unwrap(b: Box) -> Int = {
     match b {
-      box.val(n): n
-      box.empty: 0
+      case Box.Val(n): n
+      case Box.Empty: 0
     }
   }
 }
-let b = box.val(42)
+let b = Box.Val(42)
 puts(b.unwrap())  # output: 42
 puts(b.show())  # output: boxed

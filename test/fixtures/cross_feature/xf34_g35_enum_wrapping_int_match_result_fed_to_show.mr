@@ -1,7 +1,7 @@
 # XF34: G35: Enum wrapping int, match result fed to show
-enum wrapper { val(int) }
-let w = wrapper.val(100)
+enum Wrapper = { Val(Int) }
+let w = Wrapper.Val(100)
 let n = match w {
-  wrapper.val(x): x
+  case Wrapper.Val(x): x
 }
 puts(n.show())  # output: 100
