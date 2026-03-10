@@ -1,20 +1,20 @@
 # xfail: codegen issue with nested type alias record fields
-type inner = { v: int }
-type outer = { i: inner }
+type Inner = { v: Int }
+type Outer = { i: Inner }
 
-impl inner {
-  fn val(x: inner) -> int {
+impl Inner = {
+  fn val(x: Inner) -> Int = {
     x.v
   }
 }
 
-impl outer {
-  fn get_inner(o: outer) -> inner {
+impl Outer = {
+  fn get_inner(o: Outer) -> Inner = {
     o.i
   }
 }
 
-let i: inner = { v: 77 }
-let o: outer = { i: i }
+let i: Inner = { v: 77 }
+let o: Outer = { i: i }
 let got = o.get_inner()
 puts(got.val())  # output: 77

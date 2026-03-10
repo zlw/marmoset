@@ -1,5 +1,5 @@
-impl bool {
-  fn to_yn(b: bool) -> string {
+impl Bool = {
+  fn to_yn(b: Bool) -> Str = {
     if (b) { "yes" } else { "no" }
   }
 }

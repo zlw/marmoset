@@ -1,9 +1,7 @@
-trait cmp[a] {
-  fn gt(x: a, y: a) -> bool
-}
+trait Cmp[a] = { fn gt(x: a, y: a) -> Bool }
 
-impl cmp for int {
-  fn gt(x: int, y: int) -> bool {
+impl Cmp[Int] = {
+  fn gt(x: Int, y: Int) -> Bool = {
     x > y
   }
 }

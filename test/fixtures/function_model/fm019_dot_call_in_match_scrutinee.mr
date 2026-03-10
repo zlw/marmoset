@@ -1,15 +1,15 @@
-type tagged = { tag: int }
+type Tagged = { tag: Int }
 
-impl tagged {
-  fn get_tag(t: tagged) -> int {
+impl Tagged = {
+  fn get_tag(t: Tagged) -> Int = {
     t.tag
   }
 }
 
-let t: tagged = { tag: 2 }
+let t: Tagged = { tag: 2 }
 let result = match t.get_tag() {
-  1: "one"
-  2: "two"
-  _: "other"
+  case 1: "one"
+  case 2: "two"
+  case _: "other"
 }
 puts(result)  # output: two
