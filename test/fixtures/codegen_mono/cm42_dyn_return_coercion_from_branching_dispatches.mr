@@ -1,0 +1,4 @@
+# CM42: Dyn return position can package different concrete Show values across branches
+fn box(flag: Bool) -> Dyn[Show] = if (flag) { 42 } else { "no" }
+puts(box(true).show())  # output: 42
+puts(box(false).show())  # output: no

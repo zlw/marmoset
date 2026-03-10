@@ -268,6 +268,9 @@ let rec is_subtype_of (actual : Types.mono_type) (expected : Types.mono_type) : 
       && List.for_all
            (fun trait_name -> List.mem (Trait_registry.canonical_trait_name trait_name) actual_members)
            expected_members
+  | Types.TUnion members, Types.TTraitObject expected_traits ->
+      trait_object_traits_allowed expected_traits
+      && List.for_all (fun member -> is_subtype_of member (Types.TTraitObject expected_traits)) members
   | concrete, Types.TTraitObject expected_traits ->
       trait_object_traits_allowed expected_traits
       &&

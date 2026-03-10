@@ -1,0 +1,10 @@
+# CM44: Dyn with builtin and custom method traits dispatches both methods
+trait Render[a] = {
+  fn render(x: a) -> Str
+}
+impl Render[Int] = {
+  fn render(x: Int) -> Str = "render:" + x.show()
+}
+let x: Dyn[Show & Render] = 42
+puts(x.show())  # output: 42
+puts(x.render())  # output: render:42
