@@ -1,8 +1,8 @@
 # CS50: H51: if-expression returning closures
 let flag = true
 let f = if (flag) {
-  fn(x: int) -> int { x * 3 }
+  (x: Int) -> x * 3
 } else {
-  fn(x: int) -> int { x * 2 }
+  (x: Int) -> x * 2
 }
 puts(f(4))  # output: 12

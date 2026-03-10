@@ -1,9 +1,9 @@
 # CS70: K76: wildcard binding in enum match + show
-enum option[a] { some(a) none }
-let f = fn(opt: option[int]) -> string {
+enum Option[a] = { Some(a), None }
+fn f(opt: Option[Int]) -> Str = {
   match opt {
-    option.some(v): v.show()
-    option.none: "none"
+    case Option.Some(v): v.show()
+    case Option.None: "none"
   }
 }
-puts(f(option.some(99)))  # output: 99
+puts(f(Option.Some(99)))  # output: 99

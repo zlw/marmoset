@@ -1,8 +1,8 @@
 # CS61: K68: effectful fn with if+match+puts
-let f = fn(flag: bool, n: int) => int {
+fn f(flag: Bool, n: Int) => Int = {
   if (flag) {
     puts("branch_a")
-    match n { 1: 99 _: 0 }
+    match n { case 1: 99 case _: 0 }
   } else {
     puts("branch_b")
     0

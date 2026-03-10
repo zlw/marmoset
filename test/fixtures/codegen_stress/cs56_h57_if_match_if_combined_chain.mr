@@ -1,9 +1,9 @@
 # CS56: H57: if-match-if combined chain
-let f = fn(flag: bool, n: int, check: bool) -> int {
+fn f(flag: Bool, n: Int, check: Bool) -> Int = {
   if (flag) {
     match n {
-      1: if (check) { 99 } else { 0 }
-      _: 50
+      case 1: if (check) { 99 } else { 0 }
+      case _: 50
     }
   } else {
     0

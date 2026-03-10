@@ -1,5 +1,5 @@
 # CS66: K72: recursive accumulator pattern
-let sum_to = fn(n: int, acc: int) -> int {
+fn sum_to(n: Int, acc: Int) -> Int = {
   if (n == 0) { acc } else { sum_to(n - 1, acc + n) }
 }
 puts(sum_to(100, 0))  # output: 5050
