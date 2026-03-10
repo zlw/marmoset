@@ -1,4 +1,4 @@
 # CS17: C17: generic fn called with result of another generic fn
-let id = fn(x) { x }
-let wrap = fn(x) { x }
+fn id(x) = { x }
+fn wrap(x) = { x }
 puts(wrap(id(42)))  # output: 42

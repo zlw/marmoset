@@ -1,5 +1,5 @@
 # CS02: A2: match-expression as function call argument
-let id = fn(x: int) -> int { x }
+fn id(x: Int) -> Int = { x }
 let v = 2
-let result = id(match v { 1: 10 2: 20 _: 0 })
+let result = id(match v { case 1: 10 case 2: 20 case _: 0 })
 puts(result)  # output: 20

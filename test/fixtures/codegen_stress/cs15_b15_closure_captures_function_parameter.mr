@@ -1,6 +1,4 @@
 # CS15: B15: closure captures function parameter
-let make_multiplier = fn(factor: int) {
-  fn(x: int) -> int { factor * x }
-}
+fn make_multiplier(factor: Int) = (x: Int) -> factor * x
 let triple = make_multiplier(3)
 puts(triple(10))  # output: 30

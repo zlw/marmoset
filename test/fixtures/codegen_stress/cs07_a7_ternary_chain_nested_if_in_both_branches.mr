@@ -1,5 +1,5 @@
 # CS07: A7: ternary chain (nested if in both branches)
-let f = fn(a: bool, b: bool, c: bool) -> int {
+fn f(a: Bool, b: Bool, c: Bool) -> Int = {
   if (a) {
     if (b) { 1 } else { 2 }
   } else {

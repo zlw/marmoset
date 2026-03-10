@@ -1,12 +1,12 @@
 # CS04: A4: match inside match arm body
-let f = fn(x: int, y: int) -> string {
+fn f(x: Int, y: Int) -> Str = {
   match x {
-    1: match y {
-      1: "inner1"
-      2: "inner2"
-      _: "inner_other"
+    case 1: match y {
+      case 1: "inner1"
+      case 2: "inner2"
+      case _: "inner_other"
     }
-    _: "outer"
+    case _: "outer"
   }
 }
 puts(f(1, 2))  # output: inner2

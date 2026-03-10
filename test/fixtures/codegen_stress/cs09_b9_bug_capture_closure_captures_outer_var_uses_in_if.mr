@@ -1,6 +1,6 @@
 # CS09: B9: [BUG-CAPTURE] closure captures outer var, uses in if
 let base = 10
-let f = fn(x: int) -> int {
+fn f(x: Int) -> Int = {
   if (x > 0) { base + x } else { base }
 }
 puts(f(5))  # output: 15
