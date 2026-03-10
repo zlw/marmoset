@@ -417,9 +417,12 @@ let%test "bang suffix does not absorb not-equal" =
   (* foo!= should lex as Ident "foo", NotEq "!=" *)
   let tokens = lex "foo!=" in
   match tokens with
-  | [ { token_type = Token.Ident; literal = "foo"; _ };
-      { token_type = Token.NotEq; literal = "!="; _ };
-      { token_type = Token.EOF; _ } ] -> true
+  | [
+   { token_type = Token.Ident; literal = "foo"; _ };
+   { token_type = Token.NotEq; literal = "!="; _ };
+   { token_type = Token.EOF; _ };
+  ] ->
+      true
   | _ -> false
 
 let%test "pipe vs pipepipe distinction" =

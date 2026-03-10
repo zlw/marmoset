@@ -560,11 +560,17 @@ let%test "is_subtype_of: concrete does not subtype unresolved TVar" =
 
 (* Phase 3: effectful function type annotation *)
 let%test "Phase3: TArrow pure converts to TFun false" =
-  match type_expr_to_mono_type (Syntax.Ast.AST.TArrow ([ Syntax.Ast.AST.TCon "int" ], Syntax.Ast.AST.TCon "int", false)) with
+  match
+    type_expr_to_mono_type
+      (Syntax.Ast.AST.TArrow ([ Syntax.Ast.AST.TCon "int" ], Syntax.Ast.AST.TCon "int", false))
+  with
   | Ok (Types.TFun (Types.TInt, Types.TInt, false)) -> true
   | _ -> false
 
 let%test "Phase3: TArrow effectful converts to TFun true" =
-  match type_expr_to_mono_type (Syntax.Ast.AST.TArrow ([ Syntax.Ast.AST.TCon "int" ], Syntax.Ast.AST.TCon "int", true)) with
+  match
+    type_expr_to_mono_type
+      (Syntax.Ast.AST.TArrow ([ Syntax.Ast.AST.TCon "int" ], Syntax.Ast.AST.TCon "int", true))
+  with
   | Ok (Types.TFun (Types.TInt, Types.TInt, true)) -> true
   | _ -> false

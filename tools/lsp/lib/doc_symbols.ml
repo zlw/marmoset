@@ -13,7 +13,10 @@ let rec type_expr_to_string (te : Ast.AST.type_expr) : string =
   | Ast.AST.TArrow (params, ret, effectful) ->
       Printf.sprintf "(%s) %s %s"
         (String.concat ", " (List.map type_expr_to_string params))
-        (if effectful then "=>" else "->")
+        (if effectful then
+           "=>"
+         else
+           "->")
         (type_expr_to_string ret)
   | Ast.AST.TUnion types -> String.concat " | " (List.map type_expr_to_string types)
   | Ast.AST.TRecord (fields, row) ->

@@ -6,14 +6,13 @@ open Ast
    type family; they consume only canonical Core_ast (Ast.AST). *)
 
 module Surface = struct
-
   (* ── Surface type expressions ── *)
   type surface_type_expr =
     | STVar of string
     | STCon of string
     | STApp of string * surface_type_expr list
     | STArrow of surface_type_expr list * surface_type_expr * bool
-        (* bool = is_effectful; covers both (a) -> b and (a) => b *)
+      (* bool = is_effectful; covers both (a) -> b and (a) => b *)
     | STUnion of surface_type_expr list
     | STRecord of surface_record_type_field list * surface_type_expr option
 
@@ -31,7 +30,7 @@ module Surface = struct
   type surface_pattern_kind =
     | SPWildcard
     | SPVariable of string
-    | SPLiteral of AST.literal_value  (* shared leaf *)
+    | SPLiteral of AST.literal_value (* shared leaf *)
     | SPConstructor of string * string * surface_pattern list
     | SPRecord of surface_record_pat_field list * string option
 
@@ -75,7 +74,7 @@ module Surface = struct
       }
     (* — Legacy function expression (fn(...) { ... }) — *)
     | SEFunction of {
-        se_generics : AST.generic_param list option;  (* shared leaf *)
+        se_generics : AST.generic_param list option; (* shared leaf *)
         se_params : (string * surface_type_expr option) list;
         se_return_type : surface_type_expr option;
         se_is_effectful : bool;
@@ -87,11 +86,10 @@ module Surface = struct
         se_lambda_is_effectful : bool;
         se_lambda_body : surface_expr_or_block;
       }
-        (* (x) -> expr  or  (x, y) => expr *)
-    | SEPlaceholder
-        (* _ in expression position; rewritten to SEArrowLambda or rejected in lowering *)
+      (* (x) -> expr  or  (x, y) => expr *)
+    | SEPlaceholder (* _ in expression position; rewritten to SEArrowLambda or rejected in lowering *)
     | SEBlockExpr of surface_block
-        (* { let x = 1; x + 2 } in expression position;
+  (* { let x = 1; x + 2 } in expression position;
            parser has already decided this is a block, not a record/hash *)
 
   and surface_expr = {
@@ -115,7 +113,7 @@ module Surface = struct
 
   and surface_record_field = {
     se_field_name : string;
-    se_field_value : surface_expr option;  (* None = punning *)
+    se_field_value : surface_expr option; (* None = punning *)
   }
 
   and surface_match_arm = {
@@ -144,7 +142,7 @@ module Surface = struct
   }
 
   (* ── Surface top-level declarations ── *)
-  type surface_generic_param = AST.generic_param  (* shared leaf *)
+  type surface_generic_param = AST.generic_param (* shared leaf *)
 
   type surface_method_sig = {
     sm_id : int;
@@ -152,7 +150,7 @@ module Surface = struct
     sm_generics : surface_generic_param list option;
     sm_params : (string * surface_type_expr) list;
     sm_return_type : surface_type_expr;
-    sm_effect : AST.effect_annotation;  (* shared leaf *)
+    sm_effect : AST.effect_annotation; (* shared leaf *)
     sm_default_impl : surface_expr_or_block option;
   }
 
@@ -211,7 +209,7 @@ module Surface = struct
         inherent_methods : surface_method_impl list;
       }
     | SDeriveDef of {
-        derive_traits : AST.derive_trait list;  (* shared leaf *)
+        derive_traits : AST.derive_trait list; (* shared leaf *)
         derive_for_type : surface_type_expr;
       }
     | SExpressionStmt of surface_expr
@@ -241,5 +239,4 @@ module Surface = struct
   let mk_surface_pat ?(pos = 0) ?end_pos ?(file_id = None) pat =
     let end_pos = Option.value end_pos ~default:pos in
     { sp_pat = pat; sp_pos = pos; sp_end_pos = end_pos; sp_file_id = file_id }
-
 end

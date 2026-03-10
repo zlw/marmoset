@@ -580,22 +580,16 @@ let validate_impl_signature (trait_def : trait_def) (def : impl_def) : (unit, st
   in
   let impl_method_names = List.map (fun m -> m.method_name) def.impl_methods |> List.sort String.compare in
   (* All required methods must be provided *)
-  let missing_required =
-    List.filter (fun name -> not (List.mem name impl_method_names)) required_method_names
-  in
+  let missing_required = List.filter (fun name -> not (List.mem name impl_method_names)) required_method_names in
   (* No extra methods beyond what the trait declares *)
-  let extra_methods =
-    List.filter (fun name -> not (List.mem name trait_method_names)) impl_method_names
-  in
+  let extra_methods = List.filter (fun name -> not (List.mem name trait_method_names)) impl_method_names in
   if missing_required <> [] then
     Error
-      (Printf.sprintf "Impl for trait '%s' is missing required methods: %s"
-         def.impl_trait_name
+      (Printf.sprintf "Impl for trait '%s' is missing required methods: %s" def.impl_trait_name
          (String.concat ", " missing_required))
   else if extra_methods <> [] then
     Error
-      (Printf.sprintf "Impl for trait '%s' provides methods not in trait: %s"
-         def.impl_trait_name
+      (Printf.sprintf "Impl for trait '%s' provides methods not in trait: %s" def.impl_trait_name
          (String.concat ", " extra_methods))
   else if
     (* If no defaults: use exact match check (backward compat) *)
