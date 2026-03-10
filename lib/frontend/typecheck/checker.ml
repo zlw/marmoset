@@ -20,6 +20,7 @@ type typecheck_result = {
       (* Phase 5.4: Typed method definitions for emitter. Populated during Phase 6. *)
   method_type_args_map : (int, Types.mono_type list) Hashtbl.t;
       (* Phase 6.4: Resolved method-level type args per call site for monomorphization *)
+  warnings : Diagnostic.t list; (* Non-fatal diagnostics collected during inference *)
 }
 
 let infer_program_safe ?state ~(env : Infer.type_env) (program : Syntax.Ast.AST.program) :
@@ -51,6 +52,7 @@ let check_program ?state ?(env = Infer.empty_env) (program : Syntax.Ast.AST.prog
       let call_resolution_map = Infer.snapshot_method_resolution_store () in
       let method_def_map = Infer.snapshot_method_def_store () in
       let method_type_args_map = Infer.snapshot_method_type_args_store () in
+      let warnings = Infer.snapshot_warnings () in
       Ok
         {
           result_type;
@@ -59,6 +61,7 @@ let check_program ?state ?(env = Infer.empty_env) (program : Syntax.Ast.AST.prog
           call_resolution_map;
           method_def_map;
           method_type_args_map;
+          warnings;
         }
 
 (* Type check source code string.
@@ -75,6 +78,7 @@ let check_string ?state ?(env = Infer.empty_env) ~file_id (source : string) :
           let call_resolution_map = Infer.snapshot_method_resolution_store () in
           let method_def_map = Infer.snapshot_method_def_store () in
           let method_type_args_map = Infer.snapshot_method_type_args_store () in
+          let warnings = Infer.snapshot_warnings () in
           Ok
             {
               result_type;
@@ -83,6 +87,7 @@ let check_string ?state ?(env = Infer.empty_env) ~file_id (source : string) :
               call_resolution_map;
               method_def_map;
               method_type_args_map;
+              warnings;
             })
 
 (* ============================================================
@@ -218,6 +223,7 @@ let check_program_with_annotations ?state ?(env = Infer.empty_env) (program : Sy
           let call_resolution_map = Infer.snapshot_method_resolution_store () in
           let method_def_map = Infer.snapshot_method_def_store () in
           let method_type_args_map = Infer.snapshot_method_type_args_store () in
+          let warnings = Infer.snapshot_warnings () in
           Ok
             {
               result_type;
@@ -226,6 +232,7 @@ let check_program_with_annotations ?state ?(env = Infer.empty_env) (program : Sy
               call_resolution_map;
               method_def_map;
               method_type_args_map;
+              warnings;
             })
 
 (* Type check source code with annotations.

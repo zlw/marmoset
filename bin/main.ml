@@ -181,10 +181,11 @@ let compile_to_binary
     ~(source : string)
     ~(output_bin : string)
     ~(emit_go_dir : string option)
-    ~(release : bool) : (unit, Diagnostic.t list) result =
+    ~(release : bool) : (Diagnostic.t list, Diagnostic.t list) result =
   match Marmoset.Lib.Go_emitter.compile_to_build ~file_id:input_file source with
   | Error diags -> Error diags
   | Ok build_output ->
+      let warnings = build_output.warnings in
       let temp_dir = ".marmoset/build/" ^ string_of_int (Unix.getpid ()) in
       ignore (Sys.command ("mkdir -p " ^ temp_dir));
 
@@ -216,7 +217,7 @@ let compile_to_binary
       (try ignore (Sys.command ("rm -rf " ^ temp_dir)) with _ -> ());
 
       if exit_code = 0 then
-        Ok ()
+        Ok warnings
       else
         Error [ Marmoset.Lib.Go_emitter.classify_go_build_failure ~exit_code ~output:go_output ]
 
@@ -230,7 +231,9 @@ let run_build input output_opt emit_go_opt =
   match
     compile_to_binary ~input_file:input ~source ~output_bin:output ~emit_go_dir:emit_go_opt ~release:false
   with
-  | Ok () ->
+  | Ok warnings ->
+      if warnings <> [] then
+        print_diagnostics ~file_id:input ~source warnings;
       (match emit_go_opt with
       | Some dir -> Printf.printf "Go source written to %s/\n" dir
       | None -> ());
@@ -247,7 +250,10 @@ let run_release input output_opt =
     | None -> Filename.basename (Filename.remove_extension input)
   in
   match compile_to_binary ~input_file:input ~source ~output_bin:output ~emit_go_dir:None ~release:true with
-  | Ok () -> Printf.printf "Built (release): %s\n" output
+  | Ok warnings ->
+      if warnings <> [] then
+        print_diagnostics ~file_id:input ~source warnings;
+      Printf.printf "Built (release): %s\n" output
   | Error diags ->
       print_diagnostics ~file_id:input ~source diags;
       exit 1
@@ -262,7 +268,9 @@ let run_file ~(benchmark : bool) ~(filename : string) =
   | Error diags ->
       print_diagnostics ~file_id:filename ~source diags;
       exit 1
-  | Ok () ->
+  | Ok warnings ->
+      if warnings <> [] then
+        print_diagnostics ~file_id:filename ~source warnings;
       let start = Sys.time () in
       let exit_code = Sys.command tmp_bin in
       let stop = Sys.time () in
@@ -277,7 +285,10 @@ let run_check filename =
   Marmoset_lsp.Doc_state.reset_globals ();
   let env = Marmoset.Lib.Builtins.prelude_env () in
   match Marmoset.Lib.Checker.check_string_with_annotations ~env ~file_id:filename source with
-  | Ok _ -> Printf.printf "OK\n"
+  | Ok result ->
+      if result.warnings <> [] then
+        print_diagnostics ~file_id:filename ~source result.warnings;
+      Printf.printf "OK\n"
   | Error errs ->
       print_diagnostics ~file_id:filename ~source errs;
       exit 1

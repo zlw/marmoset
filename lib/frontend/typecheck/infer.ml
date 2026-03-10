@@ -154,6 +154,7 @@ let create_inference_state () : inference_state =
 let active_inference_state : inference_state ref = ref (create_inference_state ())
 let global_method_resolution_store : (int, method_resolution) Hashtbl.t = Hashtbl.create 256
 let global_method_type_args_store : (int, mono_type list) Hashtbl.t = Hashtbl.create 64
+let global_warnings : Diagnostic.t list ref = ref []
 
 (* Track method names being defined in the current inherent impl, so recursive calls
    can find them while body inference is in progress. Pairs: (for_type, method_name). *)
@@ -326,7 +327,11 @@ let global_method_def_store : (int, Resolution_artifacts.typed_method_def) Hasht
 let clear_method_resolution_store () : unit =
   Hashtbl.clear global_method_resolution_store;
   Hashtbl.clear global_method_type_args_store;
-  Hashtbl.clear global_method_def_store
+  Hashtbl.clear global_method_def_store;
+  global_warnings := []
+
+let emit_warning (diag : Diagnostic.t) : unit = global_warnings := diag :: !global_warnings
+let snapshot_warnings () : Diagnostic.t list = List.rev !global_warnings
 
 let record_method_def (method_id : int) (def : Resolution_artifacts.typed_method_def) : unit =
   Hashtbl.replace global_method_def_store method_id def
@@ -3169,15 +3174,19 @@ and infer_statement type_map env stmt =
                                          (Printf.sprintf
                                             "Method '%s' in impl '%s' replaces a trait default; add 'override' keyword"
                                             m.impl_method_name impl_trait_name))
-                                else if is_override && not replaces_default then
-                                  Error
-                                    (error ~code:"override-invalid"
-                                       ~message:
-                                         (Printf.sprintf
-                                            "Method '%s' in impl '%s' is marked 'override' but trait has no default for it"
-                                            m.impl_method_name impl_trait_name))
-                                else
-                                  check rest
+                                else (
+                                  if is_override && not replaces_default then
+                                    emit_warning
+                                      {
+                                        (error ~code:"override-unnecessary"
+                                           ~message:
+                                             (Printf.sprintf
+                                                "Method '%s' in impl '%s' is marked 'override' but trait has no default for it"
+                                                m.impl_method_name impl_trait_name))
+                                        with
+                                        severity = Diagnostic.Warning;
+                                      };
+                                  check rest)
                           in
                           check impl_methods
                     in
