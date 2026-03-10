@@ -1286,3 +1286,64 @@ let%test "followup B3: Dyn rejects mixed trait sets containing a field-only trai
   match check_string ~env:(Builtins.prelude_env ()) ~file_id:"main.mr" code with
   | Ok _ -> false
   | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-trait-object-field-only") diags
+
+let%test "followup B3: Dyn method calls use dynamic trait resolution metadata" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  match
+    check_string ~env:(Builtins.prelude_env ()) ~file_id:"<test>" "let x: Dyn[Show] = 42\nx.show()"
+  with
+  | Ok result ->
+      result.result_type = Types.TString
+      &&
+      Hashtbl.fold
+        (fun _id (resolution : Infer.method_resolution) acc ->
+          acc || resolution = Infer.DynamicTraitMethod "show")
+        result.call_resolution_map false
+  | Error _ -> false
+
+let%test "followup B3: Dyn field access is rejected explicitly" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  let code =
+    {|
+      type Person = { name: Str }
+      trait NamedShow[a] = {
+        name: Str
+        fn show(x: a) -> Str
+      }
+      impl NamedShow[Person] = {
+        fn show(x: Person) -> Str = x.name
+      }
+      let x: Dyn[NamedShow] = { name: "alice" }
+      x.name
+    |}
+  in
+  match check_string ~env:(Builtins.prelude_env ()) ~file_id:"main.mr" code with
+  | Ok _ -> false
+  | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-trait-object-field-access") diags
+
+let%test "followup B3: Dyn coercion reports missing impl diagnostics" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  let code =
+    {|
+      trait Printable[a] = {
+        fn print(x: a) -> Str
+      }
+      let x: Dyn[Printable] = 42
+      x
+    |}
+  in
+  match check_string ~env:(Builtins.prelude_env ()) ~file_id:"main.mr" code with
+  | Ok _ -> false
+  | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-trait-missing-impl") diags
+
+let%test "followup B3: Dyn rejects non-object-safe method calls" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  match
+    check_string ~env:(Builtins.prelude_env ()) ~file_id:"<test>" "let x: Dyn[Eq] = 1\nx.eq(x)"
+  with
+  | Ok _ -> false
+  | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-trait-object-object-unsafe") diags

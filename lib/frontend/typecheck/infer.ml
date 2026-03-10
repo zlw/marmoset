@@ -829,6 +829,79 @@ let classify_trait_object_compatibility
       in
       check_traits normalized_traits
 
+let trait_object_method_candidates
+    (trait_names : string list) (method_name : string) :
+    (string * Trait_registry.trait_def * Trait_registry.method_sig) list =
+  normalized_trait_object_membership trait_names
+  |> List.filter_map (fun trait_name ->
+         match Trait_registry.lookup_trait trait_name with
+         | None -> None
+         | Some trait_def -> (
+             match
+               List.find_opt
+                 (fun (method_sig : Trait_registry.method_sig) -> method_sig.method_name = method_name)
+                 trait_def.trait_methods
+             with
+             | None -> None
+             | Some method_sig -> Some (trait_name, trait_def, method_sig)))
+
+let instantiate_dynamic_trait_method
+    ~(mk_error : code:string -> message:string -> Diagnostic.t)
+    (receiver_type : mono_type)
+    (method_name : string) : ((string * Trait_registry.method_sig), Diagnostic.t) result =
+  match canonicalize_mono_type receiver_type with
+  | TTraitObject trait_names ->
+      let dyn_type = Types.to_string (TTraitObject trait_names) in
+      let candidates = trait_object_method_candidates trait_names method_name in
+      let ambiguous_message matches =
+        let trait_names = matches |> List.map (fun (trait_name, _, _) -> trait_name) |> List.sort_uniq String.compare in
+        Printf.sprintf "Ambiguous dynamic method '%s' for %s (provided by traits: %s)" method_name dyn_type
+          (String.concat ", " trait_names)
+      in
+      let instantiate_for_trait (trait_name, trait_def, method_sig) =
+        match trait_def.Trait_registry.trait_type_param with
+        | None -> Ok (trait_name, method_sig)
+        | Some type_param ->
+            let mentions_self ty = TypeVarSet.mem type_param (free_type_vars ty) in
+            let additional_params =
+              match method_sig.Trait_registry.method_params with
+              | [] -> []
+              | _receiver :: rest -> rest
+            in
+            let self_in_additional_params = List.exists (fun (_, ty) -> mentions_self ty) additional_params in
+            let self_in_return = mentions_self method_sig.Trait_registry.method_return_type in
+            if self_in_additional_params || self_in_return then
+              Error
+                (mk_error ~code:"type-trait-object-object-unsafe"
+                   ~message:
+                     (Printf.sprintf
+                        "Method '%s' from trait '%s' is not callable through %s because it mentions the hidden concrete type outside the receiver"
+                        method_name trait_name dyn_type))
+            else
+              let subst = substitution_singleton type_param receiver_type in
+              Ok
+                ( trait_name,
+                  {
+                    method_sig with
+                    method_params =
+                      List.map (fun (name, ty) -> (name, apply_substitution subst ty)) method_sig.method_params;
+                    method_return_type = apply_substitution subst method_sig.method_return_type;
+                  } )
+      in
+      (match candidates with
+      | [] ->
+          Error
+            (mk_error ~code:"type-constructor"
+               ~message:(Printf.sprintf "No method '%s' found for type %s" method_name dyn_type))
+      | [ candidate ] -> instantiate_for_trait candidate
+      | many -> Error (mk_error ~code:"type-constructor" ~message:(ambiguous_message many)))
+  | _ ->
+      Error
+        (mk_error ~code:"type-internal"
+           ~message:
+             (Printf.sprintf "Expected Dyn receiver while resolving dynamic method '%s', got %s" method_name
+                (Types.to_string receiver_type)))
+
 let maybe_record_trait_object_coercion
     ~(mk_error : code:string -> message:string -> Diagnostic.t)
     (expr : AST.expression)
@@ -1373,6 +1446,14 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                 in
                 let field_result =
                   match receiver_type' with
+                  | TTraitObject _ ->
+                      Error
+                        (error_at ~code:"type-trait-object-field-access"
+                           ~message:
+                             (Printf.sprintf
+                                "Field access is not supported on %s; Dyn[...] only exposes trait methods"
+                                (Types.to_string receiver_type'))
+                           expr)
                   | TRecord (fields, row) -> (
                       match lookup_field fields with
                       | Some field -> Ok (subst1, field.typ)
@@ -1528,7 +1609,7 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
         let infer_real_method_call () : (substitution * mono_type) infer_result =
           match infer_expression type_map env receiver with
           | Error e -> Error e
-          | Ok (subst1, receiver_type) -> (
+          | Ok (subst1, receiver_type) ->
               let env1 = apply_substitution_env subst1 env in
               let receiver_type' = apply_substitution subst1 receiver_type in
               let infer_with_method_signature
@@ -1708,96 +1789,100 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                                   in
                                   record_method_type_args expr resolved_method_type_args;
                                   Ok (final_subst, return_type))))
-              in
-              let method_lookup_result =
-                match receiver_type' with
-                | TVar type_var_name -> (
-                    let constraints = lookup_type_var_constraints type_var_name in
-                    if constraints = [] then
-                      `Not_found
-                    else
-                      let candidates =
-                        Trait_solver.available_methods constraints
-                        |> List.filter_map (fun (trait_name, trait_def) ->
-                               match
-                                 List.find_opt
-                                   (fun (m : Trait_registry.method_sig) -> m.method_name = method_name)
-                                   trait_def.Trait_registry.trait_methods
-                               with
-                               | None -> None
-                               | Some method_sig -> Some (trait_name, method_sig))
-                        |> List.sort (fun (a, _) (b, _) -> String.compare a b)
-                      in
-                      match candidates with
-                      | [] -> `Not_found
-                      | [ candidate ] -> `Found candidate
-                      | many ->
-                          let trait_names = many |> List.map fst |> List.sort_uniq String.compare in
-                          `Error
-                            (Printf.sprintf
-                               "Ambiguous method '%s' for constrained type variable '%s' (provided by traits: %s)"
-                               method_name type_var_name (String.concat ", " trait_names)))
-                | _ -> (
-                    match Trait_registry.resolve_method receiver_type' method_name with
-                    | Ok method_info -> `Found method_info
-                    | Error msg ->
-                        let no_method_prefix = "No method '" in
-                        if
-                          String.length msg >= String.length no_method_prefix
-                          && String.sub msg 0 (String.length no_method_prefix) = no_method_prefix
-                        then
+                in
+              match canonicalize_mono_type receiver_type' with
+              | TTraitObject _ -> (
+                  match
+                    instantiate_dynamic_trait_method
+                      ~mk_error:(fun ~code ~message -> error_at ~code ~message expr)
+                      receiver_type' method_name
+                  with
+                  | Error e -> Error e
+                  | Ok (trait_name, method_sig) ->
+                      infer_with_method_signature method_sig (DynamicTraitMethod trait_name))
+              | _ ->
+                  let method_lookup_result =
+                    match receiver_type' with
+                    | TVar type_var_name -> (
+                        let constraints = lookup_type_var_constraints type_var_name in
+                        if constraints = [] then
                           `Not_found
                         else
-                          `Error msg)
-              in
-              let inherent_method_result =
-                match receiver_type' with
-                | TVar _ -> Ok None
-                | _ -> Inherent_registry.resolve_method receiver_type' method_name
-              in
-              match method_lookup_result with
-              | `Error msg -> (
-                  (* Phase 4.3: Even on ambiguity, inherent method wins if present *)
-                  match inherent_method_result with
-                  | Ok (Some inherent_sig) -> infer_with_method_signature inherent_sig InherentMethod
-                  | _ -> Error (error_at ~code:"type-constructor" ~message:msg expr))
-              | `Not_found -> (
-                  match inherent_method_result with
-                  | Error msg -> Error (error_at ~code:"type-constructor" ~message:msg expr)
-                  | Ok (Some inherent_sig) -> infer_with_method_signature inherent_sig InherentMethod
-                  | Ok None -> (
-                      let field_expr =
-                        AST.mk_expr ~pos:expr.pos ~end_pos:expr.end_pos ~file_id:expr.file_id
-                          (AST.FieldAccess (receiver, method_name))
-                      in
-                      let call_expr =
-                        AST.mk_expr ~pos:expr.pos ~end_pos:expr.end_pos ~file_id:expr.file_id
-                          (AST.Call (field_expr, args))
-                      in
-                      match infer_expression type_map env call_expr with
-                      | Ok (subst_field_call, field_call_type) -> Ok (subst_field_call, field_call_type)
-                      | Error _ ->
-                          Error
-                            (error_at ~code:"type-constructor"
-                               ~message:
-                                 (Printf.sprintf "No method '%s' found for type %s" method_name
-                                    (Types.to_string receiver_type'))
-                               expr)))
-              | `Found (trait_name, method_sig) -> (
-                  let is_self_defining =
-                    let recv_canon = canonicalize_mono_type receiver_type' in
-                    List.exists
-                      (fun (for_type, mname) ->
-                        mname = method_name && canonicalize_mono_type for_type = recv_canon)
-                      !current_inherent_impl_methods
+                          let candidates =
+                            Trait_solver.available_methods constraints
+                            |> List.filter_map (fun (trait_name, trait_def) ->
+                                   match
+                                     List.find_opt
+                                       (fun (m : Trait_registry.method_sig) -> m.method_name = method_name)
+                                       trait_def.Trait_registry.trait_methods
+                                   with
+                                   | None -> None
+                                   | Some method_sig -> Some (trait_name, method_sig))
+                            |> List.sort (fun (a, _) (b, _) -> String.compare a b)
+                          in
+                          match candidates with
+                          | [] -> `Not_found
+                          | [ candidate ] -> `Found candidate
+                          | many ->
+                              let trait_names = many |> List.map fst |> List.sort_uniq String.compare in
+                              `Error
+                                (Printf.sprintf
+                                   "Ambiguous method '%s' for constrained type variable '%s' (provided by traits: %s)"
+                                   method_name type_var_name (String.concat ", " trait_names)))
+                    | _ -> (
+                        match Trait_registry.resolve_method receiver_type' method_name with
+                        | Ok method_info -> `Found method_info
+                        | Error msg ->
+                            let no_method_prefix = "No method '" in
+                            if
+                              String.length msg >= String.length no_method_prefix
+                              && String.sub msg 0 (String.length no_method_prefix) = no_method_prefix
+                            then
+                              `Not_found
+                            else
+                              `Error msg)
                   in
-                  match inherent_method_result with
-                  | Error msg -> Error (error_at ~code:"type-constructor" ~message:msg expr)
-                  | Ok (Some inherent_sig) when not is_self_defining ->
-                      (* Phase 4.3: Inherent method takes precedence over trait on dot calls,
-                         unless the inherent method is currently being defined (avoid infinite recursion) *)
-                      infer_with_method_signature inherent_sig InherentMethod
-                  | Ok (Some _) | Ok None -> (
+                  let inherent_method_result =
+                    match receiver_type' with
+                    | TVar _ -> Ok None
+                    | _ -> Inherent_registry.resolve_method receiver_type' method_name
+                  in
+                  match method_lookup_result with
+                  | `Error msg -> (
+                      (* Phase 4.3: Even on ambiguity, inherent method wins if present *)
+                      match inherent_method_result with
+                      | Ok (Some inherent_sig) -> infer_with_method_signature inherent_sig InherentMethod
+                      | _ -> Error (error_at ~code:"type-constructor" ~message:msg expr))
+                  | `Not_found -> (
+                      match inherent_method_result with
+                      | Error msg -> Error (error_at ~code:"type-constructor" ~message:msg expr)
+                      | Ok (Some inherent_sig) -> infer_with_method_signature inherent_sig InherentMethod
+                      | Ok None -> (
+                          let field_expr =
+                            AST.mk_expr ~pos:expr.pos ~end_pos:expr.end_pos ~file_id:expr.file_id
+                              (AST.FieldAccess (receiver, method_name))
+                          in
+                          let call_expr =
+                            AST.mk_expr ~pos:expr.pos ~end_pos:expr.end_pos ~file_id:expr.file_id
+                              (AST.Call (field_expr, args))
+                          in
+                          match infer_expression type_map env call_expr with
+                          | Ok (subst_field_call, field_call_type) -> Ok (subst_field_call, field_call_type)
+                          | Error _ ->
+                              Error
+                                (error_at ~code:"type-constructor"
+                                   ~message:
+                                     (Printf.sprintf "No method '%s' found for type %s" method_name
+                                        (Types.to_string receiver_type'))
+                                   expr)))
+                  | `Found (trait_name, method_sig) ->
+                      let is_self_defining =
+                        let recv_canon = canonicalize_mono_type receiver_type' in
+                        List.exists
+                          (fun (for_type, mname) ->
+                            mname = method_name && canonicalize_mono_type for_type = recv_canon)
+                          !current_inherent_impl_methods
+                      in
                       let instantiated_method_sig =
                         match Trait_registry.lookup_trait trait_name with
                         | None -> method_sig
@@ -1824,9 +1909,17 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                             | Ok () -> Ok ()
                             | Error diag -> Error diag)
                       in
-                      match trait_requirement_result with
-                      | Error diag -> Error (error_at ~code:diag.code ~message:diag.message expr)
-                      | Ok () -> infer_with_method_signature instantiated_method_sig (TraitMethod trait_name))))
+                      match inherent_method_result with
+                      | Error msg -> Error (error_at ~code:"type-constructor" ~message:msg expr)
+                      | Ok (Some inherent_sig) when not is_self_defining ->
+                          (* Phase 4.3: Inherent method takes precedence over trait on dot calls,
+                             unless the inherent method is currently being defined (avoid infinite recursion) *)
+                          infer_with_method_signature inherent_sig InherentMethod
+                      | Ok (Some _) | Ok None -> (
+                          match trait_requirement_result with
+                          | Error diag -> Error (error_at ~code:diag.code ~message:diag.message expr)
+                          | Ok () ->
+                              infer_with_method_signature instantiated_method_sig (TraitMethod trait_name))
         in
         (* Phase 4.4: Qualified call resolution *)
         let infer_qualified_trait_call (trait_name : string) : (substitution * mono_type) infer_result =
