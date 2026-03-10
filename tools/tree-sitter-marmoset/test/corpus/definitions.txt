@@ -98,7 +98,7 @@ trait show[a] {
       (identifier))
     (trait_method_signature
       name: (identifier)
-      (parameter
+      (trait_named_param
         name: (identifier)
         type: (type_variable
           (identifier)))
@@ -122,22 +122,22 @@ trait eq[a] {
       (identifier))
     (trait_method_signature
       name: (identifier)
-      (parameter
+      (trait_named_param
         name: (identifier)
         type: (type_variable
           (identifier)))
-      (parameter
+      (trait_named_param
         name: (identifier)
         type: (type_variable
           (identifier)))
       return_type: (type_identifier))
     (trait_method_signature
       name: (identifier)
-      (parameter
+      (trait_named_param
         name: (identifier)
         type: (type_variable
           (identifier)))
-      (parameter
+      (trait_named_param
         name: (identifier)
         type: (type_variable
           (identifier)))
@@ -162,11 +162,11 @@ trait ord[a]: eq {
       (identifier))
     (trait_method_signature
       name: (identifier)
-      (parameter
+      (trait_named_param
         name: (identifier)
         type: (type_variable
           (identifier)))
-      (parameter
+      (trait_named_param
         name: (identifier)
         type: (type_variable
           (identifier)))

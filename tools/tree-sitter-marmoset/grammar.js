@@ -24,6 +24,8 @@ module.exports = grammar({
 
   word: ($) => $.identifier,
 
+  inline: ($) => [$.trait_sig_param],
+
   conflicts: ($) => [
     [$._expression, $.lambda_parameter],
     [$._impl_type_param, $.type_variable],
@@ -119,10 +121,19 @@ module.exports = grammar({
         field("name", $.identifier),
         optional(field("type_params", $.type_parameter_list)),
         "(",
-        commaSep($.parameter),
+        commaSep($.trait_sig_param),
         ")",
         optional(seq(choice("->", "=>"), field("return_type", $._type))),
         optional(seq("=", field("body", $.expr_or_block))),
+      ),
+
+    trait_sig_param: ($) => choice($.trait_named_param, $._type),
+
+    trait_named_param: ($) =>
+      seq(
+        field("name", $.identifier),
+        ":",
+        field("type", $._type),
       ),
 
     trait_field: ($) =>
@@ -435,7 +446,7 @@ module.exports = grammar({
         PREC.CALL,
         seq(
           field("function", $._expression),
-          "(",
+          token.immediate("("),
           commaSep($._expression),
           ")",
         ),
@@ -444,7 +455,7 @@ module.exports = grammar({
     field_access: ($) =>
       prec.left(
         PREC.DOT,
-        seq(field("object", $._expression), ".", field("field", $.identifier)),
+        seq(field("object", $._expression), token.immediate("."), field("field", $.identifier)),
       ),
 
     index_expression: ($) =>
@@ -452,7 +463,7 @@ module.exports = grammar({
         PREC.INDEX,
         seq(
           field("object", $._expression),
-          "[",
+          token.immediate("["),
           field("index", $._expression),
           "]",
         ),

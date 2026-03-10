@@ -115,9 +115,8 @@
 (trait_method_signature
   name: (identifier) @function.method)
 
-(trait_method_signature
-  (parameter
-    name: (identifier) @variable.parameter))
+(trait_named_param
+  name: (identifier) @variable.parameter)
 
 ; ── Function calls ────────────────────────────────────────────────
 

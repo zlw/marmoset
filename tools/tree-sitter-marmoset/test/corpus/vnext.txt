@@ -45,7 +45,7 @@ trait Named[a]: Show & Eq = {
       type: (type_identifier))
     (trait_method_signature
       name: (identifier)
-      (parameter
+      (trait_named_param
         name: (identifier)
         type: (type_variable
           (identifier)))
@@ -54,6 +54,39 @@ trait Named[a]: Show & Eq = {
         (field_access
           object: (identifier)
           field: (identifier))))))
+
+================================================================================
+Trait signature with positional typed params
+================================================================================
+
+trait Eq[a] = {
+  fn eq(a, a) -> Bool
+  fn compare(a, Str) => Result[Int, Str]
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (trait_definition
+    name: (identifier)
+    type_params: (type_parameter_list
+      (identifier))
+    (trait_method_signature
+      name: (identifier)
+      (type_variable
+        (identifier))
+      (type_variable
+        (identifier))
+      return_type: (type_identifier))
+    (trait_method_signature
+      name: (identifier)
+      (type_variable
+        (identifier))
+      (type_identifier)
+      return_type: (generic_type
+        name: (identifier)
+        arg: (type_identifier)
+        arg: (type_identifier)))))
 
 ================================================================================
 vNext trait impl with override
@@ -92,6 +125,38 @@ impl[a: Show] Show[List[a]] = {
           (string_content))))))
 
 ================================================================================
+vNext inherent impl with inferred binders
+================================================================================
+
+impl Result[a, e] = {
+  fn is_ok(self: Result[a, e]) -> Bool = true
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (impl_block
+    target: (generic_type
+      name: (identifier)
+      arg: (type_variable
+        (identifier))
+      arg: (type_variable
+        (identifier)))
+    (method_definition
+      name: (identifier)
+      (parameter
+        name: (identifier)
+        type: (generic_type
+          name: (identifier)
+          arg: (type_variable
+            (identifier))
+          arg: (type_variable
+            (identifier))))
+      return_type: (type_identifier)
+      body: (expr_or_block
+        (boolean_literal)))))
+
+================================================================================
 Enum with postfix derive clause
 ================================================================================
 
@@ -121,6 +186,22 @@ enum Result[a, e] = {
       trait: (identifier))))
 
 ================================================================================
+Type alias with postfix derive clause
+================================================================================
+
+type UserId = Int derive Eq, Show
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (type_alias
+    name: (identifier)
+    type: (type_identifier)
+    derive: (derive_clause
+      trait: (identifier)
+      trait: (identifier))))
+
+================================================================================
 Explicit lambda expression
 ================================================================================
 
@@ -138,6 +219,25 @@ Explicit lambda expression
         (infix_expression
           left: (identifier)
           right: (integer_literal))))))
+
+================================================================================
+Effectful lambda expression
+================================================================================
+
+(item: Int) => puts(item)
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (expression_statement
+    (lambda_expression
+      (lambda_parameter
+        name: (identifier)
+        type: (type_identifier))
+      body: (expr_or_block
+        (call_expression
+          function: (identifier)
+          (identifier))))))
 
 ================================================================================
 Match expression with case arms and block body
@@ -174,7 +274,67 @@ match role {
             (string_content)))))))
 
 ================================================================================
-vNext function type
+Semicolonless statement before bracket-led call expression
+================================================================================
+
+let total = banana_counts.reduce((acc, n) -> acc + n)
+
+[george, promoted_george].foreach((m) => puts(m.name))
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (let_statement
+    name: (identifier)
+    value: (call_expression
+      function: (field_access
+        object: (identifier)
+        field: (identifier))
+      (lambda_expression
+        (lambda_parameter
+          name: (identifier))
+        (lambda_parameter
+          name: (identifier))
+        body: (expr_or_block
+          (infix_expression
+            left: (identifier)
+            right: (identifier))))))
+  (expression_statement
+    (call_expression
+      function: (field_access
+        object: (array_literal
+          (identifier)
+          (identifier))
+        field: (identifier))
+      (lambda_expression
+        (lambda_parameter
+          name: (identifier))
+        body: (expr_or_block
+          (call_expression
+            function: (identifier)
+            (field_access
+              object: (identifier)
+              field: (identifier))))))))
+
+================================================================================
+Pure vNext function type
+================================================================================
+
+let reducer: (Int, Int) -> Int = handler
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (let_statement
+    name: (identifier)
+    type: (function_type
+      (type_identifier)
+      (type_identifier)
+      return_type: (type_identifier))
+    value: (identifier)))
+
+================================================================================
+Effectful vNext function type
 ================================================================================
 
 let reducer: (Int, Int) => Int = handler
