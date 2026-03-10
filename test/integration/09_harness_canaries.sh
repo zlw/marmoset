@@ -48,6 +48,7 @@ canary_unexpected="$TMP_FIXTURE_DIR/canary_unexpected.mr"
 canary_continuation="$TMP_FIXTURE_DIR/canary_no_span_continuation.mr"
 canary_annotation="$TMP_FIXTURE_DIR/canary_annotation_placement.mr"
 canary_severity="$TMP_FIXTURE_DIR/canary_severity_mismatch.mr"
+canary_warning_success="$TMP_FIXTURE_DIR/canary_warning_success.mr"
 canary_mixed_wc="$TMP_FIXTURE_DIR/canary_mixed_wildcard.mr"
 canary_wc_requires_extractor="$TMP_FIXTURE_DIR/canary_wildcard_requires_extractor.mr"
 canary_colon="$TMP_FIXTURE_DIR/canary_colon_file_id.mr"
@@ -75,6 +76,10 @@ CANARY
 
 cat > "$canary_severity" <<'CANARY'
 let s = 1  # warning: severity test marker
+CANARY
+
+cat > "$canary_warning_success" <<'CANARY'
+let ok = 1  # warning: success path warning marker
 CANARY
 
 cat > "$canary_mixed_wc" <<'CANARY'
@@ -128,7 +133,13 @@ case "$file" in
         ;;
     *canary_severity_mismatch.mr)
         echo "$file:1:1: error test-severity: severity test marker"
-        exit 1
+        echo "Built: stub"
+        exit 0
+        ;;
+    *canary_warning_success.mr)
+        echo "$file:1:1: warning test-warning: success path warning marker"
+        echo "Built: stub"
+        exit 0
         ;;
     *canary_colon_file_id.mr)
         echo "C:\\test\\file.mr:1:1: error test-colon: colon path diagnostic"
@@ -177,6 +188,7 @@ rel_unexpected="${canary_unexpected#$FIXTURE_ROOT/}"
 rel_continuation="${canary_continuation#$FIXTURE_ROOT/}"
 rel_annotation="${canary_annotation#$FIXTURE_ROOT/}"
 rel_severity="${canary_severity#$FIXTURE_ROOT/}"
+rel_warning_success="${canary_warning_success#$FIXTURE_ROOT/}"
 rel_mixed_wc="${canary_mixed_wc#$FIXTURE_ROOT/}"
 rel_wc_requires_extractor="${canary_wc_requires_extractor#$FIXTURE_ROOT/}"
 rel_colon="${canary_colon#$FIXTURE_ROOT/}"
@@ -246,6 +258,23 @@ else
         echo "$output" | sed 's/^/  /' | head -n 40
         FAIL=$((FAIL + 1))
     fi
+fi
+
+TOTAL=$((TOTAL + 1))
+echo -n "TEST [$TOTAL] success-path warning annotation passes ... "
+if output=$($HARNESS_COPY "$rel_warning_success" 2>&1); then
+    if echo "$output" | grep -q "✓ PASS"; then
+        echo "✓ PASS"
+        PASS=$((PASS + 1))
+    else
+        echo "✗ FAIL (warning success pass marker missing)"
+        echo "$output" | sed 's/^/  /' | head -n 40
+        FAIL=$((FAIL + 1))
+    fi
+else
+    echo "✗ FAIL (expected warning success to pass)"
+    echo "$output" | sed 's/^/  /' | head -n 40
+    FAIL=$((FAIL + 1))
 fi
 
 TOTAL=$((TOTAL + 1))

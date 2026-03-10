@@ -258,6 +258,7 @@ parse_fixture() {
 
     local lineno=0
     local has_diag=false
+    local has_error_diag=false
     local has_output=false
     local in_leading_block=true
     local -a lines=()
@@ -303,6 +304,7 @@ parse_fixture() {
             DIAG_VALUES+=("${BASH_REMATCH[1]}")
             DIAG_LINENOS+=("$lineno")
             has_diag=true
+            has_error_diag=true
         fi
 
         if [[ "$line" =~ ^[^#]*#[[:space:]]*warning:[[:space:]]*(.*) ]]; then
@@ -370,8 +372,12 @@ parse_fixture() {
         fi
     done
 
-    if $has_diag; then
+    if $has_error_diag; then
         MODE="reject"
+    elif $has_diag && $has_output; then
+        MODE="run-diagnostics"
+    elif $has_diag; then
+        MODE="build-diagnostics"
     elif $has_output; then
         MODE="run"
     else
@@ -737,6 +743,19 @@ reject_mode() {
     fi
     rm -f "$binpath"
 
+    if validate_expected_diagnostics "$file" "$build_output"; then
+        echo "✓ PASS"
+        PASS=$((PASS + 1))
+    else
+        FAIL=$((FAIL + 1))
+        record_failed_test "$name" "diagnostic mismatch"
+    fi
+}
+
+validate_expected_diagnostics() {
+    local file="$1"
+    local build_output="$2"
+
     local all_wildcard=true
     local wildcard_count=0
     local i
@@ -753,15 +772,11 @@ reject_mode() {
     if [ "${#PARSED_DIAG_MESSAGE[@]}" -eq 0 ]; then
         echo "✗ FAIL (diagnostic extractor failure)"
         print_reject_debug_context "$file" "$build_output"
-        FAIL=$((FAIL + 1))
-        record_failed_test "$name" "diagnostic extractor failure"
-        return
+        return 1
     fi
 
     if $all_wildcard; then
-        echo "✓ PASS"
-        PASS=$((PASS + 1))
-        return
+        return 0
     fi
 
     local -a diag_used=()
@@ -854,27 +869,21 @@ reject_mode() {
         echo "✗ FAIL (missing expected diagnostics)"
         echo -e "  Missing:$missing"
         print_reject_debug_context "$file" "$build_output"
-        FAIL=$((FAIL + 1))
-        record_failed_test "$name" "missing expected diagnostics"
-        return
+        return 1
     fi
 
     if [ -n "$line_mismatch" ]; then
         echo "✗ FAIL (line-mismatched diagnostics)"
         echo -e "  Mismatch:$line_mismatch"
         print_reject_debug_context "$file" "$build_output"
-        FAIL=$((FAIL + 1))
-        record_failed_test "$name" "line-mismatched diagnostics"
-        return
+        return 1
     fi
 
     if [ -n "$severity_mismatch" ]; then
         echo "✗ FAIL (severity-mismatched diagnostics)"
         echo -e "  Mismatch:$severity_mismatch"
         print_reject_debug_context "$file" "$build_output"
-        FAIL=$((FAIL + 1))
-        record_failed_test "$name" "severity-mismatched diagnostics"
-        return
+        return 1
     fi
 
     # Wildcard scoping: each wildcard expectation absorbs one unmatched
@@ -896,13 +905,98 @@ reject_mode() {
         echo "✗ FAIL (unexpected diagnostics)"
         echo -e "  Unexpected:$unexpected"
         print_reject_debug_context "$file" "$build_output"
-        FAIL=$((FAIL + 1))
-        record_failed_test "$name" "unexpected diagnostics"
-        return
+        return 1
     fi
 
-    echo "✓ PASS"
-    PASS=$((PASS + 1))
+    return 0
+}
+
+build_diagnostics_mode() {
+    local file="$1"
+    local name="$2"
+
+    TOTAL=$((TOTAL + 1))
+    echo -n "TEST [$TOTAL] $name ... "
+
+    local binpath="$TEST_BUILD_DIR/marmoset_test_bin.$TOTAL"
+    rm -f "$binpath"
+
+    local build_output
+    if build_output=$($EXECUTABLE build "$file" -o "$binpath" 2>&1); then
+        if validate_expected_diagnostics "$file" "$build_output"; then
+            echo "✓ PASS"
+            PASS=$((PASS + 1))
+        else
+            FAIL=$((FAIL + 1))
+            record_failed_test "$name" "diagnostic mismatch"
+        fi
+    else
+        echo "✗ FAIL (build failed)"
+        echo "  Output: $build_output"
+        FAIL=$((FAIL + 1))
+        record_failed_test "$name" "build failed"
+    fi
+
+    rm -f "$binpath"
+}
+
+run_diagnostics_mode() {
+    local file="$1"
+    local name="$2"
+
+    TOTAL=$((TOTAL + 1))
+    echo -n "TEST [$TOTAL] $name ... "
+
+    local binpath="$TEST_BUILD_DIR/marmoset_test_bin.$TOTAL"
+    rm -f "$binpath"
+
+    local build_output
+    local actual_output
+    if build_output=$($EXECUTABLE build "$file" -o "$binpath" 2>&1); then
+        if ! validate_expected_diagnostics "$file" "$build_output"; then
+            FAIL=$((FAIL + 1))
+            record_failed_test "$name" "diagnostic mismatch"
+            rm -f "$binpath"
+            return
+        fi
+
+        if actual_output=$("$binpath" 2>&1); then
+            local expected_output=""
+            local first=true
+            local line
+            for line in "${OUTPUT_LINES[@]}"; do
+                if $first; then
+                    expected_output="$line"
+                    first=false
+                else
+                    expected_output="$expected_output
+$line"
+                fi
+            done
+
+            if [ "$actual_output" = "$expected_output" ]; then
+                echo "✓ PASS"
+                PASS=$((PASS + 1))
+            else
+                echo "✗ FAIL (output mismatch)"
+                echo "  Expected: $(echo "$expected_output" | head -5)"
+                echo "  Got:      $(echo "$actual_output" | head -5)"
+                FAIL=$((FAIL + 1))
+                record_failed_test "$name" "output mismatch"
+            fi
+        else
+            echo "✗ FAIL (execution failed)"
+            FAIL=$((FAIL + 1))
+            record_failed_test "$name" "execution failed"
+        fi
+    else
+        echo "✗ FAIL (build failed)"
+        echo "  Output: $build_output"
+        FAIL=$((FAIL + 1))
+        record_failed_test "$name" "build failed"
+    fi
+
+    rm -f "$binpath"
 }
 
 build_only_mode() {
@@ -959,8 +1053,14 @@ run_fixture() {
         run)
             run_mode "$file" "$name"
             ;;
+        run-diagnostics)
+            run_diagnostics_mode "$file" "$name"
+            ;;
         reject)
             reject_mode "$file" "$name"
+            ;;
+        build-diagnostics)
+            build_diagnostics_mode "$file" "$name"
             ;;
         build-only)
             build_only_mode "$file" "$name"

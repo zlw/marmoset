@@ -3,6 +3,6 @@ trait greeter[a] {
   fn greet(x: a) -> string
 }
 impl greeter[int] = {
-  override fn greet(x: int) -> string = "hi"
+  override fn greet(x: int) -> string = "hi"  # warning: override-unnecessary
 }
 puts(1.greet())  # output: hi
