@@ -2,7 +2,7 @@
 
 ## Maintenance
 
-- Last verified: 2026-03-08
+- Last verified: 2026-03-10
 - Implementation status: Canonical (actively maintained)
 - Merge note: This document now includes the former `docs/features/trait-satisfaction.md` content.
 - Update trigger: Any parser/typechecker/codegen/test change affecting trait declaration, satisfaction, resolution, or lowering
@@ -266,17 +266,19 @@ Inherent-method interaction:
 
 - Bare trait names in function parameter position as constrained-param shorthand.
 - Explicit generic constraints such as `fn f[t: Named](x: t) -> Str = x.name`.
+- Explicit trait-object types using `Dyn[...]`, for example `Dyn[Show]` and `Dyn[Show & Eq]`.
 
 ### Rejected
 
 - Bare trait names in general type position.
-- Method-only trait objects.
-- Mixed trait objects.
-- Generic trait objects.
+- `Dyn[...]` containing any field-only trait.
+- `Dyn[...]` as a spelling for structural field projection.
 
 ### Internal lowering
 
 Bare trait-name shorthand lowers to a fresh constrained generic binder before typechecking.
+
+`Dyn[...]` is a separate trait-object surface form. It does not reuse bare trait names.
 
 ## Operator Requirements via Traits
 
@@ -305,7 +307,13 @@ Field-only traits remain compile-time structural constraints. They do not introd
 
 ### Derive integration
 
-Derive surface supports selected traits (`Eq`, `Show`, `Debug`, `Ord`, `Hash`) with registry validation and emitter-side body generation for supported shapes.
+Built-in derive remains specialized for `Eq`, `Show`, `Debug`, `Ord`, and `Hash`.
+
+User-trait derive v1 is default-backed only:
+- every trait method must have a default body after substitution,
+- traits with required methods are not derivable unless they are builtin derivable traits,
+- field-only traits are not derivable,
+- supertraits must already be implemented for the target type or appear in the same derive clause.
 
 ## Design Alternatives Considered
 
@@ -330,27 +338,40 @@ Pros:
 Cons:
 - two satisfaction modes (field vs method) increase conceptual surface.
 
-### Alternative C: Full method trait objects in v1
+### Alternative C: Bare trait objects in v1
 
 Pros:
 - dynamic dispatch flexibility.
 
 Cons:
-- early ABI/runtime commitment,
+- overloading bare trait names would collide with constrained-param shorthand,
 - higher complexity before module/FFI design is stable.
 
 Status:
-- deferred.
+- rejected in favor of explicit `Dyn[...]`.
 
 ## Current Limitations
 
-- Trait-object syntax is intentionally unsupported in this phase.
 - Bare trait names outside constrained-param shorthand are rejected.
+- `Dyn[...]` rejects field-only trait sets.
 - Qualified trait-call syntax is supported (`Trait.method(x)`).
 
-## Deferred: Method/Mixed Trait Objects and Existentials
+## Explicit Trait Objects (`Dyn[...]`)
 
-This is intentionally deferred work, but the design constraints are locked to avoid future ABI drift.
+Trait objects use explicit `Dyn[ConstraintExpr]` syntax:
+
+```marmoset
+let value: Dyn[Show] = 42
+let values: List[Dyn[Show]] = [42, "hello", true]
+```
+
+Rules:
+- bare trait names remain constrained-param shorthand only,
+- `Dyn[...]` accepts method-only and mixed traits,
+- field-only traits are rejected inside `Dyn[...]`,
+- concrete values coerce to `Dyn[...]` only at assignment, argument, and return sites,
+- method dispatch on `Dyn[...]` values is dynamic,
+- field-only traits remain compile-time structural constraints outside `Dyn[...]`.
 
 ### Representation options considered
 
@@ -360,7 +381,7 @@ This is intentionally deferred work, but the design constraints are locked to av
 
 ### Guardrails
 
-- Do not expose method/mixed trait-object syntax until a first-class internal representation exists (typed AST/IR), with explicit witness-carrying semantics.
+- Implement trait objects only with a first-class internal representation (typed AST/IR), with explicit witness-carrying semantics.
 - Do not treat ad-hoc emitter-only lowering as acceptable for dynamic trait values.
 - Do not expose raw Go interface internals as stable module/FFI ABI.
 - Lock operation semantics (`eq`, `ord`, `hash`, `show`) for existential values before enabling them.

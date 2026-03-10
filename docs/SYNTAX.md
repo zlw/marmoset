@@ -117,9 +117,20 @@ enum Result[a, e] = {
 
 ## 6. Derive Semantics
 - Built-in derivable traits include `Eq`, `Show`, `Debug`, `Ord`, `Hash` (project policy may expand).
-- Built-in derive is part of the vNext surface syntax.
-- Validation rules for built-in derive are normative in Part B.
-- Surface syntax reserves `derive Trait` for user traits, but user-trait derive semantics are deferred to follow-up design and implementation work.
+- Built-in derive remains part of the vNext surface syntax and uses specialized builtin synthesis.
+- User-trait derive v1 is default-backed only:
+  - every trait method must have a default body after type substitution,
+  - traits with any required method are not derivable in this version unless they are one of the builtin derivable traits above,
+  - field-only traits are not derivable.
+- Supertraits are not auto-derived implicitly from trait definitions alone. A derive request succeeds only if every supertrait is already implemented for the target type or appears in the same derive clause.
+- Derive failure cases are deterministic:
+  - undefined trait,
+  - trait not derivable,
+  - field-only trait derive is redundant/unsupported,
+  - missing supertrait implementation or derive closure,
+  - required method without default body,
+  - duplicate explicit or duplicate derived impl,
+  - default body typecheck failure after substitution.
 
 ## 7. Function Parameters And Constraint Shorthand
 ### 7.1 Explicit Generic Constraint
@@ -154,6 +165,22 @@ fn same_eq[t: Eq](x: t, y: t) -> Bool = x.eq(y)
 - In function parameter position, bare trait names are constrained-param shorthand.
 - Bare trait names are not general type expressions in vNext.
 - The previous field-only trait-as-type feature is not part of vNext.
+- Use `Dyn[...]` for trait-object types. Bare trait names never mean trait-object types.
+
+### 7.6 Explicit Trait Objects
+```mr
+let value: Dyn[Show] = 42
+let items: List[Dyn[Show]] = [42, "hello", true]
+```
+
+- `Dyn[ConstraintExpr]` is the explicit trait-object type form.
+- `Dyn[...]` accepts method-only and mixed traits. Field-only traits are rejected inside `Dyn[...]`.
+- Concrete values coerce to `Dyn[...]` only at type-directed sites:
+  - assignment,
+  - argument passing,
+  - return position.
+- Method dispatch on `Dyn[...]` values is dynamic and requires no manual wrapping or unwrapping.
+- `Dyn[...]` does not replace structural field projection; field-only traits remain compile-time structural constraints outside trait objects.
 
 ## 8. Expressions And Blocks
 - Blocks are braced: `{ ... }`.
@@ -354,6 +381,7 @@ TypeExpr             ::= TypeUnion
 TypeUnion            ::= TypePrimary { "|" TypePrimary }
 TypePrimary          ::= TypeName
                        | TypeName "[" TypeExprList "]"
+                       | "Dyn" "[" ConstraintExpr "]"
                        | LowerIdent
                        | RecordType
                        | "(" [TypeExprList] ")" PurityArrow TypeExpr
@@ -523,19 +551,31 @@ Errors:
 - Unconstrained impl binders may be inferred from free type variables in the impl target.
 - If impl method replaces a trait default method, `override` is mandatory.
 - If `override` is used on required/non-default method, emit warning.
-- Built-in `derive`:
-  - synthesizes built-in trait behavior per project policy,
-  - rejects unsupported derives with a dedicated diagnostic.
-- User-trait derive surface syntax is reserved, but its semantics are deferred and not specified here.
+- Built-in `derive` synthesizes builtin trait behavior per project policy.
+- User-trait derive v1 is default-backed only:
+  - every trait method must have a default body after substitution,
+  - field-only traits are rejected,
+  - duplicate explicit/derived impls are rejected,
+  - supertraits must already be implemented for the target type or appear in the same derive clause,
+  - derive planning is graph-driven rather than source-order-sensitive.
 
-### 13.10 Match Validation Rules
+### 13.10 Trait-Object Validation Rules
+- `Dyn[ConstraintExpr]` is the explicit trait-object type form.
+- The enclosed `ConstraintExpr` uses the same trait-bound grammar as generic constraints.
+- Every trait inside `Dyn[...]` must be `MethodOnly` or `Mixed`.
+- `Dyn[FieldOnlyTrait]` is an error.
+- `Dyn[Show & FieldOnlyTrait]` is also an error.
+- Coercion from a concrete value to `Dyn[...]` happens only at type-directed sites:
+  - assignment,
+  - argument passing,
+  - return position.
+- Method dispatch on `Dyn[...]` values is dynamic.
+
+### 13.11 Match Validation Rules
 - `match` is always an expression.
 - Each arm is `case <pattern>: <expr-or-block>`.
 - Arm result types must unify.
 - Exhaustiveness checking is required for closed enums and should warn/error for non-exhaustive matches per project policy.
 
-### 13.11 Reserved For Future
-- Explicit trait-object / trait-as-type syntax is intentionally unspecified in this version.
-- Bare trait in parameter type position currently means constrained-param shorthand, not trait-object existential type.
+### 13.12 Reserved For Future
 - General intersection types are intentionally unspecified in this version. `&` is only normative in constraint positions.
-- User-trait derive semantics beyond parse/desugar reservation are intentionally deferred.
