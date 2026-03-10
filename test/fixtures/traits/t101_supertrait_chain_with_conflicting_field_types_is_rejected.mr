@@ -1,10 +1,9 @@
 # T101: Supertrait chain with conflicting field types is rejected
-trait has_x_int {  # error: conflicting types across supertraits
-  x: int
+trait HasXInt = {  # error: conflicting types across supertraits
+  x: Int
 }
-trait has_x_string {
-  x: string
+trait HasXString = {
+  x: Str
 }
-trait bad_combo: has_x_int + has_x_string {
-}
-let x: bad_combo = { x: 1 }
+trait BadCombo: HasXInt & HasXString = {}
+let x: BadCombo = { x: 1 }
