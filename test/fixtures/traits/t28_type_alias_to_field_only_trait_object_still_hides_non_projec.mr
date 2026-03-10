@@ -1,7 +1,7 @@
 # T28: Type-alias to field-only trait object still hides non-projected fields
-trait named {
-  name: string
+trait Named = {
+  name: Str
 }
-type named_alias = named
-let x: named_alias = { name: "alice", age: 1 }
+type NameAlias = Named
+let x: NameAlias = { name: "alice", age: 1 }
 puts(x.age)  # error: Record field 'age' not found in type
