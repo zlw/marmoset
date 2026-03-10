@@ -1,3 +1,4 @@
+# xfail: bare trait-as-type semantics are deferred to syntax-rework-followup Dyn syntax
 # T78: Return type projection hides non-trait fields at typecheck
 trait Named = {
   name: Str

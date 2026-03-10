@@ -1,3 +1,4 @@
+# xfail: bare trait-as-type semantics are deferred to syntax-rework-followup Dyn syntax
 # T80: If branches with extra fields and trait return
 trait Named = {
   name: Str

@@ -1,3 +1,4 @@
+# xfail: bare trait-as-type semantics are deferred to syntax-rework-followup Dyn syntax
 # T104: Field-only trait with method supertrait is rejected as type
 trait Show[a] = {  # error: method and mixed trait objects are not supported in this phase
   fn show(x: a) -> Str

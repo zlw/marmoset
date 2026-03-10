@@ -1,3 +1,4 @@
+# xfail: bare trait-as-type semantics are deferred to syntax-rework-followup Dyn syntax
 # T101: Supertrait chain with conflicting field types is rejected
 trait HasXInt = {  # error: conflicting types across supertraits
   x: Int

@@ -1,3 +1,4 @@
+# xfail: bare trait-as-type semantics are deferred to syntax-rework-followup Dyn syntax
 # T81: If-expression return projection hides branch-specific extra fields
 trait Named = {
   name: Str

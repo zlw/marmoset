@@ -1,3 +1,4 @@
+# xfail: bare trait-as-type semantics are deferred to syntax-rework-followup Dyn syntax
 # T93: Three-level supertrait chain exposes all ancestor fields
 trait Named = {
   name: Str

@@ -1,3 +1,4 @@
+# xfail: bare trait-as-type semantics are deferred to syntax-rework-followup Dyn syntax
 # T27: Field-only trait object rejects access to non-projected field
 trait Named = {
   name: Str

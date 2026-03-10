@@ -1,3 +1,4 @@
+# xfail: bare trait-as-type semantics are deferred to syntax-rework-followup Dyn syntax
 # T106: Type alias to field-only trait exposes trait fields
 trait Named = {
   name: Str

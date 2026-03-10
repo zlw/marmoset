@@ -1,3 +1,4 @@
+# xfail: bare trait-as-type semantics are deferred to syntax-rework-followup Dyn syntax
 # T24: Generic field-only supertrait in trait object is rejected explicitly
 trait Tagged[a] = {  # error: generic field-only supertrait
   tag: a

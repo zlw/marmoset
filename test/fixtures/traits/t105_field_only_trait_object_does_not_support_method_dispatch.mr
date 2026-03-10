@@ -1,3 +1,4 @@
+# xfail: bare trait-as-type semantics are deferred to syntax-rework-followup Dyn syntax
 # T105: Field-only trait object does not support method dispatch
 trait Named = {
   name: Str

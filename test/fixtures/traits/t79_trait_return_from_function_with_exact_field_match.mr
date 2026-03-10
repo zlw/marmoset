@@ -1,3 +1,4 @@
+# xfail: bare trait-as-type semantics are deferred to syntax-rework-followup Dyn syntax
 # T79: Trait return from function with exact field match
 trait Named = {
   name: Str

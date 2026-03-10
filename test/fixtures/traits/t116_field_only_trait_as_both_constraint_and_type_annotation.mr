@@ -1,3 +1,4 @@
+# xfail: bare trait-as-type semantics are deferred to syntax-rework-followup Dyn syntax
 # T116: Field-only trait as both constraint and type annotation
 trait Named = {
   name: Str

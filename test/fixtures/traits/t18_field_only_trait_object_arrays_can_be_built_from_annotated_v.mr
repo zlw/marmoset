@@ -1,3 +1,4 @@
+# xfail: bare trait-as-type semantics are deferred to syntax-rework-followup Dyn syntax
 # T18: Field-only trait object arrays can be built from annotated values
 trait Named = {
   name: Str

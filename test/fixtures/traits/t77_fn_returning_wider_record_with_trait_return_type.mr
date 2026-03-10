@@ -1,3 +1,4 @@
+# xfail: bare trait-as-type semantics are deferred to syntax-rework-followup Dyn syntax
 # T77: Fn returning wider record with trait return type
 trait Named = {
   name: Str

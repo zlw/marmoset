@@ -1,3 +1,4 @@
+# xfail: bare trait-as-type semantics are deferred to syntax-rework-followup Dyn syntax
 # T108: Non-generic trait with generic field-only supertrait is rejected
 trait Boxed[a] = {  # error: generic field-only supertrait
   value: a

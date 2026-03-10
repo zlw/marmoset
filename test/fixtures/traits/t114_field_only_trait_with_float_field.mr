@@ -1,3 +1,4 @@
+# xfail: bare trait-as-type semantics are deferred to syntax-rework-followup Dyn syntax
 # T114: Field-only trait with Float field
 trait Measured = {
   value: Float

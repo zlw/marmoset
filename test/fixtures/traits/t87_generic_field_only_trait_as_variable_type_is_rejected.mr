@@ -1,3 +1,4 @@
+# xfail: bare trait-as-type semantics are deferred to syntax-rework-followup Dyn syntax
 # T87: Generic field-only trait as variable type is rejected
 trait Container[a] = {  # error: generic field-only trait objects are not supported in this phase
   value: a

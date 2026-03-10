@@ -1,3 +1,4 @@
+# xfail: bare trait-as-type semantics are deferred to syntax-rework-followup Dyn syntax
 # TF29: Trait object hides extra fields while constrained generic allows access to declared fields
 trait HasName = {
   name: Str

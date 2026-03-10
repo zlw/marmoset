@@ -1,3 +1,4 @@
+# xfail: bare trait-as-type semantics are deferred to syntax-rework-followup Dyn syntax
 # T91: Supertrait chain: access child's own fields
 trait Named = {
   name: Str

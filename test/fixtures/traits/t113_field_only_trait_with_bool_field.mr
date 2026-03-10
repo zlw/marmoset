@@ -1,3 +1,4 @@
+# xfail: bare trait-as-type semantics are deferred to syntax-rework-followup Dyn syntax
 # T113: Field-only trait with Bool field
 trait Togglable = {
   active: Bool

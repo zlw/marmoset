@@ -1,3 +1,4 @@
+# xfail: bare trait-as-type semantics are deferred to syntax-rework-followup Dyn syntax
 # T100: Two traits with same field name (same type) used separately
 trait Named = {
   name: Str

@@ -1,3 +1,4 @@
+# xfail: bare trait-as-type semantics are deferred to syntax-rework-followup Dyn syntax
 # T109: Diamond supertrait inherits shared field once
 trait Named = {
   name: Str

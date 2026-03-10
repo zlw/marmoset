@@ -1,3 +1,4 @@
+# xfail: bare trait-as-type semantics are deferred to syntax-rework-followup Dyn syntax
 # T17: Field-only trait as type projects records to required shape
 trait Named = {
   name: Str

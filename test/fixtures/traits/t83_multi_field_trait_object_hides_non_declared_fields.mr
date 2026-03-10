@@ -1,3 +1,4 @@
+# xfail: bare trait-as-type semantics are deferred to syntax-rework-followup Dyn syntax
 # T83: Multi-field trait object hides non-declared fields
 trait PersonLike = {
   name: Str

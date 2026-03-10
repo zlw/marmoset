@@ -1,3 +1,4 @@
+# xfail: bare trait-as-type semantics are deferred to syntax-rework-followup Dyn syntax
 # T19: Field-only trait object includes inherited fields from supertraits
 trait Named = {
   name: Str
