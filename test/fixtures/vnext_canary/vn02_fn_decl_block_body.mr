@@ -1,5 +1,5 @@
 # VN02: vNext top-level fn declaration with block body
-fn double(x: int) -> int = {
+fn double(x: Int) -> Int = {
   let y = x + x
   y
 }

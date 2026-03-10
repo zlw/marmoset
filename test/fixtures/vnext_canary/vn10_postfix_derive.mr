@@ -1,10 +1,10 @@
 # VN10: Postfix derive on enum definition
-enum color {
-  red,
-  green,
-  blue
-} derive eq, show
-let c = color.red
-puts(c.show())    # output: red
-puts(c.eq(color.red))   # output: true
-puts(c.eq(color.blue))  # output: false
+enum Color = {
+  Red,
+  Green,
+  Blue,
+} derive Eq, Show
+let c = Color.Red
+puts(c.show())    # output: Red
+puts(c.eq(Color.Red))   # output: true
+puts(c.eq(Color.Blue))  # output: false

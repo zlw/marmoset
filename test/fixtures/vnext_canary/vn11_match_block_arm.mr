@@ -1,10 +1,10 @@
 # VN11: Match arm with block body using case keyword
-enum direction { north, south, east, west }
-fn describe(d: direction) -> string = match d {
-  case direction.north: { "going north" }
-  case direction.south: { "going south" }
-  case direction.east: { "going east" }
-  case direction.west: { "going west" }
+enum Direction = { North, South, East, West }
+fn describe(d: Direction) -> Str = match d {
+  case Direction.North: { "going north" }
+  case Direction.South: { "going south" }
+  case Direction.East: { "going east" }
+  case Direction.West: { "going west" }
 }
-puts(describe(direction.north))  # output: going north
-puts(describe(direction.west))   # output: going west
+puts(describe(Direction.North))  # output: going north
+puts(describe(Direction.West))   # output: going west

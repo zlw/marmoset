@@ -1,6 +1,6 @@
 # VN12: Trait with default method implementation
-trait greetable[a] {
-  fn greet(x: a) -> string = "hello"
+trait Greetable[a] = {
+  fn greet(x: a) -> Str = "hello"
 }
-impl greetable[int] = {}
+impl Greetable[Int] = {}
 puts(1.greet())  # output: hello

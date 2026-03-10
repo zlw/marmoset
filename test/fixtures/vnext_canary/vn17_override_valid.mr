@@ -1,8 +1,8 @@
 # VN17: Override keyword correctly replaces a trait default method
-trait greeter[a] {
-  fn greet(x: a) -> string = "hello"
+trait Greeter[a] = {
+  fn greet(x: a) -> Str = "hello"
 }
-impl greeter[int] = {
-  override fn greet(x: int) -> string = "hi"
+impl Greeter[Int] = {
+  override fn greet(x: Int) -> Str = "hi"
 }
 puts(1.greet())  # output: hi

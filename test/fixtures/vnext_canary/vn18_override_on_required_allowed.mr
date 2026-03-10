@@ -1,8 +1,8 @@
 # VN18: override on a required (non-default) method is allowed
-trait greeter[a] {
-  fn greet(x: a) -> string
+trait Greeter[a] = {
+  fn greet(x: a) -> Str
 }
-impl greeter[int] = {
-  override fn greet(x: int) -> string = "hi"  # warning: override-unnecessary
+impl Greeter[Int] = {
+  override fn greet(x: Int) -> Str = "hi"  # warning: override-unnecessary
 }
 puts(1.greet())  # output: hi

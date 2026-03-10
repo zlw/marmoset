@@ -1,8 +1,8 @@
 # VN09: vNext impl syntax with = { ... }
-trait greet[a] {
-  fn greet(x: a) -> string
+trait Greet[a] = {
+  fn greet(x: a) -> Str
 }
-impl greet[int] = {
-  fn greet(x: int) -> string { "hello int" }
+impl Greet[Int] = {
+  fn greet(x: Int) -> Str = "hello int"
 }
 puts(1.greet())  # output: hello int
