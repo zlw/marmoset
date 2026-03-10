@@ -1,20 +1,20 @@
-type node = { id: int }
+type Node = { id: Int }
 
-trait visitor[a] {
-  fn visit(x: a) -> string
+trait Visitor[a] = {
+  fn visit(x: a) -> Str
 }
 
-trait walker[a] {
-  fn visit(x: a) -> string
+trait Walker[a] = {
+  fn visit(x: a) -> Str
 }
 
-impl visitor for node {
-  fn visit(x: node) -> string { "visitor" }
+impl Visitor[Node] = {
+  fn visit(x: Node) -> Str = { "visitor" }
 }
 
-impl walker for node {
-  fn visit(x: node) -> string { "walker" }
+impl Walker[Node] = {
+  fn visit(x: Node) -> Str = { "walker" }
 }
 
-let n: node = { id: 1 }
+let n: Node = { id: 1 }
 n.visit()  # error: Ambiguous

@@ -1,17 +1,17 @@
-type cell = { v: int }
+type Cell = { v: Int }
 
-trait render[a] {
-  fn draw(x: a) -> string
+trait Render[a] = {
+  fn draw(x: a) -> Str
 }
 
-impl render for cell {
-  fn draw(x: cell) -> string { "trait" }
+impl Render[Cell] = {
+  fn draw(x: Cell) -> Str = { "trait" }
 }
 
-impl cell {
-  fn draw(c: cell) -> string { "inherent" }
+impl Cell = {
+  fn draw(c: Cell) -> Str = { "inherent" }
 }
 
-let c: cell = { v: 1 }
+let c: Cell = { v: 1 }
 # inherent wins, no ambiguity
 puts(c.draw())  # output: inherent

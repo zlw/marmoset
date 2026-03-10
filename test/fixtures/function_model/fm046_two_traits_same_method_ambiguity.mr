@@ -1,20 +1,20 @@
-type item = { v: int }
+type Item = { v: Int }
 
-trait alpha[a] {
-  fn tag(x: a) -> string
+trait Alpha[a] = {
+  fn tag(x: a) -> Str
 }
 
-trait beta[a] {
-  fn tag(x: a) -> string
+trait Beta[a] = {
+  fn tag(x: a) -> Str
 }
 
-impl alpha for item {
-  fn tag(x: item) -> string { "a" }
+impl Alpha[Item] = {
+  fn tag(x: Item) -> Str = { "a" }
 }
 
-impl beta for item {
-  fn tag(x: item) -> string { "b" }
+impl Beta[Item] = {
+  fn tag(x: Item) -> Str = { "b" }
 }
 
-let i: item = { v: 1 }
+let i: Item = { v: 1 }
 i.tag()  # error: Ambiguous

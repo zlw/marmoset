@@ -1,11 +1,11 @@
-type score = { v: int }
+type Score = { v: Int }
 
-impl score {
-  fn value(s: score) -> int {
+impl Score = {
+  fn value(s: Score) -> Int = {
     s.v
   }
 }
 
-let s: score = { v: 10 }
-let result = score.value(s) + 5
+let s: Score = { v: 10 }
+let result = Score.value(s) + 5
 puts(result)  # output: 15

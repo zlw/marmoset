@@ -1,9 +1,9 @@
-trait cmp[a] {
-  fn eq(x: a, y: a) -> bool
+trait Cmp[a] = {
+  fn eq(x: a, y: a) -> Bool
 }
 
-impl cmp for int {
-  fn eq(x: int, y: int) -> bool { x == y }
+impl Cmp[Int] = {
+  fn eq(x: Int, y: Int) -> Bool = { x == y }
 }
 
 let n = 42
