@@ -1,8 +1,6 @@
 # T73: Field-only trait as parameter type annotation
-trait named {
-  name: string
+trait Named = {
+  name: Str
 }
-let greet = fn(x: named) -> string {
-  x.name
-}
+fn greet(x: Named) -> Str = x.name
 puts(greet({ name: "alice", age: 30 }))  # output: alice

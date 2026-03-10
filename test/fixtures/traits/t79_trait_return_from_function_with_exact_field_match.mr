@@ -1,9 +1,7 @@
 # T79: Trait return from function with exact field match
-trait named {
-  name: string
+trait Named = {
+  name: Str
 }
-let mk = fn() -> named {
-  { name: "alice" }
-}
+fn mk() -> Named = { name: "alice" }
 let x = mk()
 puts(x.name)  # output: alice

@@ -1,8 +1,8 @@
 # T81: If-expression return projection hides branch-specific extra fields
-trait named {
-  name: string
+trait Named = {
+  name: Str
 }
-let pick = fn(flag: bool) -> named {
+fn pick(flag: Bool) -> Named = {
   if (flag) {
     { name: "branch_a", extra1: 1 }
   } else {
