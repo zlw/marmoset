@@ -43,6 +43,14 @@ let rec take_param_types n mono =
     | Types.TFun (param, rest, _) -> param :: take_param_types (n - 1) rest
     | _ -> []
 
+let rec function_is_effectful n mono =
+  if n <= 0 then
+    false
+  else
+    match mono with
+    | Types.TFun (_, rest, is_effectful) -> is_effectful || function_is_effectful (n - 1) rest
+    | _ -> false
+
 (* Extract the return type of a function with n parameters *)
 let rec get_return_type n mono =
   if n <= 0 then
@@ -136,12 +144,13 @@ let sites_for_function ~source ~type_map ~range_start ~range_end ~sites (fn_expr
                   let body_start = body.pos in
                   match find_close_paren ~source ~start:fn_expr.pos ~limit:body_start with
                   | Some paren_end ->
+                      let arrow = if function_is_effectful n_params norm_fn_type then " => " else " -> " in
                       let type_str = type_to_source ret_type in
                       sites :=
                         {
                           insert_offset = paren_end;
-                          insert_text = " -> " ^ type_str;
-                          title = "Add return type annotation: -> " ^ type_str;
+                          insert_text = arrow ^ type_str;
+                          title = "Add return type annotation:" ^ arrow ^ type_str;
                         }
                         :: !sites
                   | None -> ())
@@ -371,6 +380,16 @@ let%test "function with annotated param gets no param action but gets return typ
   let titles = action_titles actions in
   (not (List.exists (fun t -> starts_with t "Add type annotation: x:") titles))
   && List.exists (fun t -> starts_with t "Add return type annotation") titles
+
+let%test "top-level fn declaration gets no binding annotation action" =
+  let actions = get_actions "fn greet(name: string) -> name" in
+  let titles = action_titles actions in
+  not (List.exists (fun t -> starts_with t "Add type annotation: greet:") titles)
+
+let%test "effectful top-level fn return action keeps =>" =
+  let actions = get_actions "fn greet(name: string) = puts(name)" in
+  let titles = action_titles actions in
+  List.exists (fun t -> starts_with t "Add return type annotation: =>") titles
 
 let%test "fully annotated function gets no param or return actions" =
   let actions = get_actions "let f: int -> int = fn(x: int) -> int { x + 1 };" in
