@@ -1,7 +1,7 @@
-# E15: Heterogeneous result type
-enum result[a, b] { ok(a) error(b) }
-let x: result[int, string] = result.ok(42)
+# E15: Heterogeneous Result type
+enum Result[a, b] = { Ok(a), Error(b) }
+let x: Result[Int, Str] = Result.Ok(42)
 match x {
-  result.ok(v): v + 1
-  result.error(_): 0
+  case Result.Ok(v): v + 1
+  case Result.Error(_): 0
 }

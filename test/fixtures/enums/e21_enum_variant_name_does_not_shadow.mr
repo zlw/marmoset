@@ -1,4 +1,4 @@
 # E21: Enum variant name same as let binding does not shadow
 let x = "hello"
-enum myenum { x y z }
+enum Myenum = { X, Y, Z }
 puts(x)  # output: hello

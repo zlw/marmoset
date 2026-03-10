@@ -1,10 +1,10 @@
 # E47: Enum variant with match-expression as payload
-enum option[a] { some(a) none }
-enum color { red green blue }
-let c = color.green
-let x = option.some(match c { color.red: 5 color.green: 7 color.blue: 9 })
+enum Option[a] = { Some(a), None }
+enum Color = { Red, Green, Blue }
+let c = Color.Green
+let x = Option.Some(match c { case Color.Red: 5 case Color.Green: 7 case Color.Blue: 9 })
 let result = match x {
-  option.some(v): v
-  option.none: 0
+  case Option.Some(v): v
+  case Option.None: 0
 }
 puts(result)  # output: 7

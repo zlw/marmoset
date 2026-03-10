@@ -1,10 +1,10 @@
 # E93: All match arms return same constant type
-enum choice { left right up down }
-let c = choice.up
+enum Choice = { Left, Right, Up, Down }
+let c = Choice.Up
 let v = match c {
-  choice.left: 10
-  choice.right: 20
-  choice.up: 42
-  choice.down: 50
+  case Choice.Left: 10
+  case Choice.Right: 20
+  case Choice.Up: 42
+  case Choice.Down: 50
 }
 puts(v)  # output: 42

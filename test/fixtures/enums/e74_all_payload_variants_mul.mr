@@ -1,9 +1,9 @@
-# E74: All-payload variants - mul branch
-enum expr { lit(int) add(int, int) mul(int, int) }
-let e = expr.mul(10, 20)
+# E74: All-payload variants - Mul branch
+enum Expr = { Lit(Int), Add(Int, Int), Mul(Int, Int) }
+let e = Expr.Mul(10, 20)
 let v = match e {
-  expr.lit(n): n
-  expr.add(a, b): a + b
-  expr.mul(a, b): a * b
+  case Expr.Lit(n): n
+  case Expr.Add(a, b): a + b
+  case Expr.Mul(a, b): a * b
 }
 puts(v)  # output: 200

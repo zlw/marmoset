@@ -1,15 +1,15 @@
 # E58: Match returns different enum type then re-matched
-enum color { red green blue }
-enum size { small medium large }
-let c = color.green
+enum Color = { Red, Green, Blue }
+enum Size = { Small, Medium, Large }
+let c = Color.Green
 let s = match c {
-  color.red: size.small
-  color.green: size.medium
-  color.blue: size.large
+  case Color.Red: Size.Small
+  case Color.Green: Size.Medium
+  case Color.Blue: Size.Large
 }
 let out = match s {
-  size.small: 3
-  size.medium: 7
-  size.large: 11
+  case Size.Small: 3
+  case Size.Medium: 7
+  case Size.Large: 11
 }
 puts(out)  # output: 7

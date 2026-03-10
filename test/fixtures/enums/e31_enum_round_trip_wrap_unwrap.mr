@@ -1,7 +1,7 @@
 # E31: Enum round-trip through wrap/unwrap
-enum option[a] { some(a) none }
-let wrap = fn(x: int) -> option[int] { option.some(x) }
-let unwrap = fn(x: option[int]) -> int {
-  match x { option.some(v): v option.none: 0 }
+enum Option[a] = { Some(a), None }
+fn wrap(x: Int) -> Option[Int] = Option.Some(x)
+fn unwrap(x: Option[Int]) -> Int = {
+  match x { case Option.Some(v): v case Option.None: 0 }
 }
 puts(unwrap(wrap(42)))  # output: 42

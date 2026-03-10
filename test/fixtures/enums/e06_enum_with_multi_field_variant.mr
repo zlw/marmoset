@@ -1,4 +1,4 @@
 # E06: Enum with multi-field variant
-enum http_response { ok(int, string) error(int, string) }
-let x = http_response.ok(200, "OK")
+enum HttpResponse = { Ok(Int, Str), Error(Int, Str) }
+let x = HttpResponse.Ok(200, "OK")
 x

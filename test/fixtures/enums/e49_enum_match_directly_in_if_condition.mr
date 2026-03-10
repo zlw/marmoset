@@ -1,7 +1,7 @@
 # E49: Enum match directly in if condition
-enum option[a] { some(a) none }
-let x = option.some(1)
-let out = if (match x { option.some(_): true option.none: false }) {
+enum Option[a] = { Some(a), None }
+let x = Option.Some(1)
+let out = if (match x { case Option.Some(_): true case Option.None: false }) {
   "present"
 } else {
   "absent"

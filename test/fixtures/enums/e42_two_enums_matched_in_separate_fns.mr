@@ -1,10 +1,10 @@
 # E42: Two enums matched in separate functions work
-enum fruit { apple banana cherry }
-enum veggie { carrot broccoli spinach }
-let count_fruit = fn(f: fruit) -> int {
-  match f { fruit.cherry: 1 _: 0 }
+enum Fruit = { Apple, Banana, Cherry }
+enum Veggie = { Carrot, Broccoli, Spinach }
+fn count_fruit(f: Fruit) -> Int = {
+  match f { case Fruit.Cherry: 1 case _: 0 }
 }
-let count_veggie = fn(v: veggie) -> int {
-  match v { veggie.spinach: 2 _: 0 }
+fn count_veggie(v: Veggie) -> Int = {
+  match v { case Veggie.Spinach: 2 case _: 0 }
 }
-puts(count_fruit(fruit.cherry) + count_veggie(veggie.spinach))  # output: 3
+puts(count_fruit(Fruit.Cherry) + count_veggie(Veggie.Spinach))  # output: 3

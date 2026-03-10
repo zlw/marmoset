@@ -1,8 +1,8 @@
 # E64: Mixed-type multi-field variant
-enum tagged { item(int, string, bool) nothing }
-let x = tagged.item(42, "hello", true)
+enum Tagged = { Item(Int, Str, Bool), Nothing }
+let x = Tagged.Item(42, "hello", true)
 let out = match x {
-  tagged.item(_, s, _): s
-  tagged.nothing: "nothing"
+  case Tagged.Item(_, s, _): s
+  case Tagged.Nothing: "Nothing"
 }
 puts(out)  # output: hello

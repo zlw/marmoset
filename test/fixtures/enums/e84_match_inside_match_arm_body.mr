@@ -1,14 +1,14 @@
 # E84: Match inside match arm body
-enum color { red green blue }
-enum size { small large }
-let c = color.green
-let s = size.small
+enum Color = { Red, Green, Blue }
+enum Size = { Small, Large }
+let c = Color.Green
+let s = Size.Small
 let out = match c {
-  color.red: "red"
-  color.green: match s {
-    size.small: "deep"
-    size.large: "wide"
+  case Color.Red: "Red"
+  case Color.Green: match s {
+    case Size.Small: "deep"
+    case Size.Large: "wide"
   }
-  color.blue: "blue"
+  case Color.Blue: "Blue"
 }
 puts(out)  # output: deep

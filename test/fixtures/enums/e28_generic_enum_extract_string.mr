@@ -1,6 +1,6 @@
-# E28: Generic enum - extract string value
-enum box[a] { full(a) empty }
-let unwrap_str = fn(x: box[string]) -> string {
-  match x { box.full(v): v box.empty: "" }
+# E28: Generic enum - extract Str value
+enum Box[a] = { Full(a), Empty }
+fn unwrap_str(x: Box[Str]) -> Str = {
+  match x { case Box.Full(v): v case Box.Empty: "" }
 }
-puts(unwrap_str(box.full("hello")))  # output: hello
+puts(unwrap_str(Box.Full("hello")))  # output: hello

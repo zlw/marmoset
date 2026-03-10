@@ -1,4 +1,4 @@
 # E35: Record with simple enum field
-enum direction { north south east west }
-let r = { name: "compass", dir: direction.east }
-puts(r.dir)  # output: east
+enum Direction = { North, South, East, West }
+let r = { name: "compass", dir: Direction.East }
+puts(r.dir)  # output: East

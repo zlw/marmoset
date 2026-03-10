@@ -1,7 +1,7 @@
 # E91: Enum with single variant
-enum wrapper { wrap(int) }
-let x = wrapper.wrap(42)
+enum Wrapper = { Wrap(Int) }
+let x = Wrapper.Wrap(42)
 let v = match x {
-  wrapper.wrap(n): n
+  case Wrapper.Wrap(n): n
 }
 puts(v)  # output: 42

@@ -1,8 +1,8 @@
 # E56: Multi-pattern arm hits codegen limitation
-enum color { red orange yellow green blue purple }  # error: Multiple patterns
-let c = color.orange
+enum Color = { Red, Orange, Yellow, Green, Blue, Purple }
+let c = Color.Orange
 let temp = match c {
-  color.red | color.orange | color.yellow: "warm"
-  color.green | color.blue | color.purple: "cool"
+  case Color.Red | Color.Orange | Color.Yellow: "warm"  # error: Multiple patterns
+  case Color.Green | Color.Blue | Color.Purple: "cool"
 }
 puts(temp)

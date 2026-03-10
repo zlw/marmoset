@@ -1,7 +1,7 @@
 # E83: Match arm with effectful body (puts)
-enum option[a] { some(a) none }
-let x = option.some("hello")
+enum Option[a] = { Some(a), None }
+let x = Option.Some("hello")
 match x {  # output: hello
-  option.some(v): puts(v)
-  option.none: puts("nothing")
+  case Option.Some(v): puts(v)
+  case Option.None: puts("nothing")
 }

@@ -1,8 +1,8 @@
 # E85: Enum value passed through chain of functions
-enum option[a] { some(a) none }
-let id = fn(x: option[int]) -> option[int] { x }
-let wrap = fn(n: int) -> option[int] { option.some(n) }
-let unwrap = fn(x: option[int]) -> int {
-  match x { option.some(v): v option.none: 0 }
+enum Option[a] = { Some(a), None }
+fn id(x: Option[Int]) -> Option[Int] = x
+fn wrap(n: Int) -> Option[Int] = Option.Some(n)
+fn unwrap(x: Option[Int]) -> Int = {
+  match x { case Option.Some(v): v case Option.None: 0 }
 }
 puts(unwrap(id(wrap(42))))  # output: 42

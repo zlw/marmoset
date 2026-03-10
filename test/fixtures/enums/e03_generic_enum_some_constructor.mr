@@ -1,4 +1,4 @@
-# E03: Generic enum option[a] with some constructor
-enum option[a] { some(a) none }
-let x = option.some(42)
+# E03: Generic enum Option[a] with Some constructor
+enum Option[a] = { Some(a), None }
+let x = Option.Some(42)
 x

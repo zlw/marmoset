@@ -1,8 +1,8 @@
-# E87: Enum with string payload
-enum option[a] { some(a) none }
-let x = option.some("hello world")
+# E87: Enum with Str payload
+enum Option[a] = { Some(a), None }
+let x = Option.Some("hello world")
 let v = match x {
-  option.some(s): s
-  option.none: ""
+  case Option.Some(s): s
+  case Option.None: ""
 }
 puts(v)  # output: hello world

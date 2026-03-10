@@ -1,12 +1,12 @@
 # E59: Match-then-rematch works when isolated in functions
-enum option[a] { some(a) none }
-let identity = fn(x: option[int]) -> option[int] {
+enum Option[a] = { Some(a), None }
+fn identity(x: Option[Int]) -> Option[Int] = {
   match x {
-    option.some(v): option.some(v)
-    option.none: option.none()
+    case Option.Some(v): Option.Some(v)
+    case Option.None: Option.None
   }
 }
-let unwrap = fn(x: option[int]) -> int {
-  match x { option.some(v): v option.none: 0 }
+fn unwrap(x: Option[Int]) -> Int = {
+  match x { case Option.Some(v): v case Option.None: 0 }
 }
-puts(unwrap(identity(option.some(99))))  # output: 99
+puts(unwrap(identity(Option.Some(99))))  # output: 99

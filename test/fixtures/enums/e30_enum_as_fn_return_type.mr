@@ -1,11 +1,11 @@
 # E30: Enum as function return type
-enum direction { north south east west }
-let opposite = fn(d: direction) -> direction {
+enum Direction = { North, South, East, West }
+fn opposite(d: Direction) -> Direction = {
   match d {
-    direction.north: direction.south
-    direction.south: direction.north
-    direction.east: direction.west
-    direction.west: direction.east
+    case Direction.North: Direction.South
+    case Direction.South: Direction.North
+    case Direction.East: Direction.West
+    case Direction.West: Direction.East
   }
 }
-puts(opposite(direction.north))  # output: south
+puts(opposite(Direction.North))  # output: South

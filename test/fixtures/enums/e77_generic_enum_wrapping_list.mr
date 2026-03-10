@@ -1,8 +1,8 @@
-# E77: Generic enum wrapping a list
-enum option[a] { some(a) none }
-let x = option.some([10, 20, 30])
+# E77: Generic enum wrapping a List
+enum Option[a] = { Some(a), None }
+let x = Option.Some([10, 20, 30])
 let result = match x {
-  option.some(lst): len(lst)
-  option.none: 0
+  case Option.Some(lst): len(lst)
+  case Option.None: 0
 }
 puts(result)  # output: 3

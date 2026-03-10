@@ -1,6 +1,6 @@
 # E16: Three-field variant
-enum triple { t(int, string, bool) }
-let x = triple.t(1, "two", true)
+enum Triple = { T(Int, Str, Bool) }
+let x = Triple.T(1, "two", true)
 match x {
-  triple.t(a, _, _): a
+  case Triple.T(a, _, _): a
 }

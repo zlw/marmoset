@@ -1,9 +1,9 @@
 # E43: Enum variant with precomputed arithmetic payload
-enum option[a] { some(a) none }
+enum Option[a] = { Some(a), None }
 let val = 3 * 5
-let x = option.some(val)
+let x = Option.Some(val)
 let result = match x {
-  option.some(v): v
-  option.none: 0
+  case Option.Some(v): v
+  case Option.None: 0
 }
 puts(result)  # output: 15

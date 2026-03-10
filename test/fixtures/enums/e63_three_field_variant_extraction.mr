@@ -1,8 +1,8 @@
 # E63: Three-field variant extraction
-enum data { triple(int, int, int) empty }
-let x = data.triple(1, 2, 3)
+enum Data = { Triple(Int, Int, Int), Empty }
+let x = Data.Triple(1, 2, 3)
 let sum = match x {
-  data.triple(a, b, c): a + b + c
-  data.empty: 0
+  case Data.Triple(a, b, c): a + b + c
+  case Data.Empty: 0
 }
 puts(sum)  # output: 6

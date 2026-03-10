@@ -1,7 +1,7 @@
 # E96: Constructor pattern allows partially unused bindings
-enum pair { p(int, int) }
-let x = pair.p(1, 2)
+enum Pair = { P(Int, Int) }
+let x = Pair.P(1, 2)
 let out = match x {
-  pair.p(a, b): a
+  case Pair.P(a, b): a
 }
 puts(out)  # output: 1
