@@ -1,0 +1,2 @@
+# VN27: Empty braces in expression position are an empty block expression
+puts({})  # output: {}

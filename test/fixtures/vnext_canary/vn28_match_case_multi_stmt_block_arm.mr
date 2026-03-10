@@ -1,0 +1,16 @@
+# VN28: case arms may use multi-statement block bodies
+enum Switch = { On, Off }
+
+fn describe(s: Switch) -> Str = match s {
+  case Switch.On: {
+    let prefix = "power"
+    prefix + " on"
+  }
+  case Switch.Off: {
+    let prefix = "power"
+    prefix + " off"
+  }
+}
+
+puts(describe(Switch.On))   # output: power on
+puts(describe(Switch.Off))  # output: power off
