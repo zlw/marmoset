@@ -103,7 +103,10 @@ fn are_equal[t: Eq](x: t, y: t) -> Bool = x.eq(y)
 fn noisy_dweller[t: JungleDweller & Noisy](x: t) -> Str = x.introduce()
 
 # effectful top-level fn
-fn yell_name(m: Monkey) => Str = puts(m.name)
+fn yell_name(m: Monkey) => Str = {
+  puts(m.name)
+  m.name
+}
 
 # ─── Let Bindings & Expressions ────────────────────────────────
 
@@ -142,18 +145,24 @@ let promoted_george = { ...george, name:, is_alpha: true, }
 
 # ─── Lambdas & Placeholder Shorthand ───────────────────────────
 
+fn map_list[a, b](items: List[a], f: (a) -> b) -> List[b] = []
+fn reduce_list[a](items: List[a], initial: a, step: (a, a) -> a) -> a = initial
+fn foreach_list[a](items: List[a], f: (a) => Unit) => Unit = puts("foreach")
+fn trim(s: Str) -> Str = s
+fn strip(s: Str) -> Str = s
+
 # placeholder lambda: single-arg pure
-let doubled = banana_counts.map(_ * 2)
-let names = [george, promoted_george].map(_.name)
+let doubled = map_list(banana_counts, _ * 2)
+let names = map_list([george, promoted_george], _.name)
 
 # nested placeholder (wraps whole chain)
-let trimmed = ["  banana  ", " mango "].map(trim(strip(_)))
+let trimmed = map_list(["  banana  ", " mango "], trim(strip(_)))
 
 # explicit lambda: multi-arg pure
-let total = banana_counts.reduce((acc, n) -> acc + n)
+let total = reduce_list(banana_counts, 0, (acc, n) -> acc + n)
 
 # explicit lambda: effectful
-[george, promoted_george].foreach((m) => puts(m.name))
+foreach_list([george, promoted_george], (m) => puts(m.name))
 
 # ─── Operators ──────────────────────────────────────────────────
 

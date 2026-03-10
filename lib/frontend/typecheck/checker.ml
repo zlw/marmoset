@@ -902,3 +902,45 @@ let%test "Phase6 prep: constrained-param shorthand works end-to-end for top-leve
   with
   | Ok result -> result.result_type = Types.TString
   | Error _ -> false
+
+let%test "Phase6 prep: placeholder shorthand works in call arguments" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  match
+    check_string ~file_id:"<test>"
+      "fn map_list[a, b](items: List[a], f: (a) -> b) -> List[b] = []\n\
+       let doubled = map_list([1, 2], _ * 2)\n\
+       doubled"
+  with
+  | Ok result -> result.result_type = Types.TArray Types.TInt
+  | Error _ -> false
+
+let%test "Phase6 prep: nested placeholder shorthand works in call arguments" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  match
+    check_string ~file_id:"<test>"
+      "fn map_list[a, b](items: List[a], f: (a) -> b) -> List[b] = []\n\
+       fn trim(s: Str) -> Str = s\n\
+       fn strip(s: Str) -> Str = s\n\
+       let cleaned = map_list([\" a \", \" b \"], trim(strip(_)))\n\
+       cleaned"
+  with
+  | Ok result -> result.result_type = Types.TArray Types.TString
+  | Error _ -> false
+
+let%test "Phase6 prep: placeholder shorthand rejects multiple placeholders in one callback argument" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  match
+    check_string ~file_id:"<test>"
+      "fn map_list[a, b](items: List[a], f: (a) -> b) -> List[b] = []\n\
+       map_list([1, 2], _ + _)"
+  with
+  | Error diags ->
+      List.exists
+        (fun (d : Diagnostic.t) ->
+          d.code = "type-invalid-placeholder"
+          && String_utils.contains_substring ~needle:"exactly one '_'" d.message)
+        diags
+  | Ok _ -> false

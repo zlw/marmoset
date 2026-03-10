@@ -1388,7 +1388,10 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                 match instantiate_method_generics () with
                 | Error e -> Error e
                 | Ok (instantiated_method, method_subst) -> (
-                    match infer_args type_map env1 subst1 args with
+                    let expected_arg_types =
+                      instantiated_method.method_params |> List.tl |> List.map snd
+                    in
+                    match infer_args_against_expected type_map env1 subst1 args expected_arg_types with
                     | Error e -> Error e
                     | Ok (subst2, arg_types) -> (
                         let all_arg_types = receiver_type' :: arg_types in
@@ -1631,10 +1634,10 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                         }
                   in
                   (* All args are explicit (first arg is receiver) *)
-                  match infer_args type_map env empty_substitution args with
+                  let param_types = List.map snd instantiated_sig.method_params in
+                  match infer_args_against_expected type_map env empty_substitution args param_types with
                   | Error e -> Error e
                   | Ok (subst1, arg_types) -> (
-                      let param_types = List.map snd instantiated_sig.method_params in
                       if List.length arg_types <> List.length param_types then
                         Error
                           (error_at ~code:"type-constructor"
@@ -1709,10 +1712,10 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                    expr)
           | Ok (Some method_sig) -> (
               (* All args are explicit (first arg is receiver) *)
-              match infer_args type_map env empty_substitution args with
+              let param_types = List.map snd method_sig.method_params in
+              match infer_args_against_expected type_map env empty_substitution args param_types with
               | Error e -> Error e
               | Ok (subst1, arg_types) -> (
-                  let param_types = List.map snd method_sig.method_params in
                   if List.length arg_types <> List.length param_types then
                     Error
                       (error_at ~code:"type-constructor"
@@ -2302,6 +2305,286 @@ and infer_function_with_annotations type_map env generics_opt params return_anno
       let func_type = List.fold_right mk_fun param_types' ret_type in
       Ok (subst, func_type)
 
+and placeholder_identifier_count_expr (expr : AST.expression) : int =
+  match expr.expr with
+  | AST.Identifier "_" -> 1
+  | AST.Identifier _ | AST.Integer _ | AST.Float _ | AST.Boolean _ | AST.String _ -> 0
+  | AST.Prefix (_, inner) | AST.TypeCheck (inner, _) | AST.FieldAccess (inner, _) ->
+      placeholder_identifier_count_expr inner
+  | AST.Infix (left, _, right) -> placeholder_identifier_count_expr left + placeholder_identifier_count_expr right
+  | AST.If (cond, cons, alt) ->
+      placeholder_identifier_count_expr cond
+      + placeholder_identifier_count_stmt cons
+      +
+      (match alt with
+      | Some stmt -> placeholder_identifier_count_stmt stmt
+      | None -> 0)
+  | AST.Function _ -> 0
+  | AST.Call (fn_expr, args) ->
+      placeholder_identifier_count_expr fn_expr
+      + List.fold_left (fun acc arg -> acc + placeholder_identifier_count_expr arg) 0 args
+  | AST.Array elements -> List.fold_left (fun acc arg -> acc + placeholder_identifier_count_expr arg) 0 elements
+  | AST.Hash pairs ->
+      List.fold_left
+        (fun acc (key, value) ->
+          acc + placeholder_identifier_count_expr key + placeholder_identifier_count_expr value)
+        0 pairs
+  | AST.Index (container, index) ->
+      placeholder_identifier_count_expr container + placeholder_identifier_count_expr index
+  | AST.EnumConstructor (_, _, args) ->
+      List.fold_left (fun acc arg -> acc + placeholder_identifier_count_expr arg) 0 args
+  | AST.Match (scrutinee, arms) ->
+      placeholder_identifier_count_expr scrutinee
+      + List.fold_left (fun acc arm -> acc + placeholder_identifier_count_expr arm.AST.body) 0 arms
+  | AST.RecordLit (fields, spread) ->
+      let fields_count =
+        List.fold_left
+          (fun acc (field : AST.record_field) ->
+            acc
+            +
+            (match field.field_value with
+            | Some value -> placeholder_identifier_count_expr value
+            | None -> 0))
+          0 fields
+      in
+      fields_count
+      +
+      (match spread with
+      | Some spread_expr -> placeholder_identifier_count_expr spread_expr
+      | None -> 0)
+  | AST.MethodCall { mc_receiver; mc_args; _ } ->
+      placeholder_identifier_count_expr mc_receiver
+      + List.fold_left (fun acc arg -> acc + placeholder_identifier_count_expr arg) 0 mc_args
+  | AST.BlockExpr stmts -> placeholder_identifier_count_stmts stmts
+
+and placeholder_identifier_count_stmt (stmt : AST.statement) : int =
+  match stmt.stmt with
+  | AST.Let { value; _ } -> placeholder_identifier_count_expr value
+  | AST.Return expr | AST.ExpressionStmt expr -> placeholder_identifier_count_expr expr
+  | AST.Block stmts -> placeholder_identifier_count_stmts stmts
+  | AST.EnumDef _ | AST.TraitDef _ | AST.ImplDef _ | AST.InherentImplDef _ | AST.DeriveDef _ | AST.TypeAlias _ ->
+      0
+
+and placeholder_identifier_count_stmts (stmts : AST.statement list) : int =
+  List.fold_left (fun acc stmt -> acc + placeholder_identifier_count_stmt stmt) 0 stmts
+
+and collect_used_names_expr (used : StringSet.t) (expr : AST.expression) : StringSet.t =
+  match expr.expr with
+  | AST.Identifier name -> StringSet.add name used
+  | AST.Integer _ | AST.Float _ | AST.Boolean _ | AST.String _ -> used
+  | AST.Prefix (_, inner) | AST.TypeCheck (inner, _) | AST.FieldAccess (inner, _) ->
+      collect_used_names_expr used inner
+  | AST.Infix (left, _, right) -> collect_used_names_expr (collect_used_names_expr used left) right
+  | AST.If (cond, cons, alt) ->
+      let used = collect_used_names_expr used cond in
+      let used = collect_used_names_stmt used cons in
+      (match alt with
+      | Some stmt -> collect_used_names_stmt used stmt
+      | None -> used)
+  | AST.Function { params; _ } ->
+      List.fold_left (fun acc (name, _) -> StringSet.add name acc) used params
+  | AST.Call (fn_expr, args) ->
+      List.fold_left collect_used_names_expr (collect_used_names_expr used fn_expr) args
+  | AST.Array elements -> List.fold_left collect_used_names_expr used elements
+  | AST.Hash pairs ->
+      List.fold_left
+        (fun acc (key, value) -> collect_used_names_expr (collect_used_names_expr acc key) value)
+        used pairs
+  | AST.Index (container, index) -> collect_used_names_expr (collect_used_names_expr used container) index
+  | AST.EnumConstructor (_, _, args) -> List.fold_left collect_used_names_expr used args
+  | AST.Match (scrutinee, arms) ->
+      List.fold_left
+        (fun acc arm -> collect_used_names_expr acc arm.AST.body)
+        (collect_used_names_expr used scrutinee) arms
+  | AST.RecordLit (fields, spread) ->
+      let used =
+        List.fold_left
+          (fun acc (field : AST.record_field) ->
+            match field.field_value with
+            | Some value -> collect_used_names_expr acc value
+            | None -> acc)
+          used fields
+      in
+      (match spread with
+      | Some spread_expr -> collect_used_names_expr used spread_expr
+      | None -> used)
+  | AST.MethodCall { mc_receiver; mc_args; _ } ->
+      List.fold_left collect_used_names_expr (collect_used_names_expr used mc_receiver) mc_args
+  | AST.BlockExpr stmts -> collect_used_names_stmts used stmts
+
+and collect_used_names_stmt (used : StringSet.t) (stmt : AST.statement) : StringSet.t =
+  match stmt.stmt with
+  | AST.Let { name; value; _ } -> collect_used_names_expr (StringSet.add name used) value
+  | AST.Return expr | AST.ExpressionStmt expr -> collect_used_names_expr used expr
+  | AST.Block stmts -> collect_used_names_stmts used stmts
+  | AST.EnumDef _ | AST.TraitDef _ | AST.ImplDef _ | AST.InherentImplDef _ | AST.DeriveDef _ | AST.TypeAlias _ ->
+      used
+
+and collect_used_names_stmts (used : StringSet.t) (stmts : AST.statement list) : StringSet.t =
+  List.fold_left collect_used_names_stmt used stmts
+
+and fresh_placeholder_param_name (expr : AST.expression) : string =
+  let used = collect_used_names_expr StringSet.empty expr in
+  let rec loop n =
+    let candidate = if n = 0 then "it" else Printf.sprintf "it%d" n in
+    if StringSet.mem candidate used then
+      loop (n + 1)
+    else
+      candidate
+  in
+  loop 0
+
+and replace_placeholder_identifier_expr (param_name : string) (expr : AST.expression) : AST.expression =
+  let rewritten =
+    match expr.expr with
+    | AST.Identifier "_" -> AST.Identifier param_name
+    | AST.Identifier _ | AST.Integer _ | AST.Float _ | AST.Boolean _ | AST.String _ -> expr.expr
+    | AST.Prefix (op, inner) -> AST.Prefix (op, replace_placeholder_identifier_expr param_name inner)
+    | AST.Infix (left, op, right) ->
+        AST.Infix
+          ( replace_placeholder_identifier_expr param_name left,
+            op,
+            replace_placeholder_identifier_expr param_name right )
+    | AST.TypeCheck (inner, typ) -> AST.TypeCheck (replace_placeholder_identifier_expr param_name inner, typ)
+    | AST.If (cond, cons, alt) ->
+        AST.If
+          ( replace_placeholder_identifier_expr param_name cond,
+            replace_placeholder_identifier_stmt param_name cons,
+            Option.map (replace_placeholder_identifier_stmt param_name) alt )
+    | AST.Function _ -> expr.expr
+    | AST.Call (fn_expr, args) ->
+        AST.Call
+          ( replace_placeholder_identifier_expr param_name fn_expr,
+            List.map (replace_placeholder_identifier_expr param_name) args )
+    | AST.Array elements -> AST.Array (List.map (replace_placeholder_identifier_expr param_name) elements)
+    | AST.Hash pairs ->
+        AST.Hash
+          (List.map
+             (fun (key, value) ->
+               (replace_placeholder_identifier_expr param_name key, replace_placeholder_identifier_expr param_name value))
+             pairs)
+    | AST.Index (container, index) ->
+        AST.Index
+          ( replace_placeholder_identifier_expr param_name container,
+            replace_placeholder_identifier_expr param_name index )
+    | AST.EnumConstructor (enum_name, variant_name, args) ->
+        AST.EnumConstructor
+          (enum_name, variant_name, List.map (replace_placeholder_identifier_expr param_name) args)
+    | AST.Match (scrutinee, arms) ->
+        AST.Match
+          ( replace_placeholder_identifier_expr param_name scrutinee,
+            List.map
+              (fun (arm : AST.match_arm) ->
+                { arm with body = replace_placeholder_identifier_expr param_name arm.body })
+              arms )
+    | AST.RecordLit (fields, spread) ->
+        AST.RecordLit
+          ( List.map
+              (fun (field : AST.record_field) ->
+                {
+                  field with
+                  field_value = Option.map (replace_placeholder_identifier_expr param_name) field.field_value;
+                })
+              fields,
+            Option.map (replace_placeholder_identifier_expr param_name) spread )
+    | AST.FieldAccess (receiver, field_name) ->
+        AST.FieldAccess (replace_placeholder_identifier_expr param_name receiver, field_name)
+    | AST.MethodCall { mc_receiver; mc_method; mc_type_args; mc_args } ->
+        AST.MethodCall
+          {
+            mc_receiver = replace_placeholder_identifier_expr param_name mc_receiver;
+            mc_method;
+            mc_type_args;
+            mc_args = List.map (replace_placeholder_identifier_expr param_name) mc_args;
+          }
+    | AST.BlockExpr stmts -> AST.BlockExpr (List.map (replace_placeholder_identifier_stmt param_name) stmts)
+  in
+  { expr with expr = rewritten }
+
+and replace_placeholder_identifier_stmt (param_name : string) (stmt : AST.statement) : AST.statement =
+  let rewritten =
+    match stmt.stmt with
+    | AST.Let ({ value; _ } as let_binding) ->
+        AST.Let { let_binding with value = replace_placeholder_identifier_expr param_name value }
+    | AST.Return expr -> AST.Return (replace_placeholder_identifier_expr param_name expr)
+    | AST.ExpressionStmt expr -> AST.ExpressionStmt (replace_placeholder_identifier_expr param_name expr)
+    | AST.Block stmts -> AST.Block (List.map (replace_placeholder_identifier_stmt param_name) stmts)
+    | AST.EnumDef _ | AST.TraitDef _ | AST.ImplDef _ | AST.InherentImplDef _ | AST.DeriveDef _ | AST.TypeAlias _ ->
+        stmt.stmt
+  in
+  { stmt with stmt = rewritten }
+
+and type_can_accept_placeholder_callback (typ : mono_type) : bool =
+  match canonicalize_mono_type typ with
+  | TVar _ | TFun _ -> true
+  | TUnion members -> List.exists type_can_accept_placeholder_callback members
+  | _ -> false
+
+and placeholder_lambda_expr (expr : AST.expression) : AST.expression =
+  let param_name = fresh_placeholder_param_name expr in
+  let body_expr = replace_placeholder_identifier_expr param_name expr in
+  let body_stmt =
+    AST.mk_stmt ~pos:body_expr.pos ~end_pos:body_expr.end_pos ~file_id:body_expr.file_id
+      (AST.Block
+         [
+           AST.mk_stmt ~pos:body_expr.pos ~end_pos:body_expr.end_pos ~file_id:body_expr.file_id
+             (AST.ExpressionStmt body_expr);
+         ])
+  in
+  AST.mk_expr ~id:(-expr.id - 1) ~pos:expr.pos ~end_pos:expr.end_pos ~file_id:expr.file_id
+    (AST.Function
+       {
+         generics = None;
+         params = [ (param_name, None) ];
+         return_type = None;
+         is_effectful = false;
+         body = body_stmt;
+       })
+
+and infer_arg_against_expected type_map env subst (arg : AST.expression) (expected_type : mono_type) :
+    (substitution * mono_type) infer_result =
+  let expected_type' = apply_substitution subst expected_type in
+  let placeholder_count = placeholder_identifier_count_expr arg in
+  if placeholder_count > 1 then
+    Error
+      (error_at ~code:"type-invalid-placeholder"
+         ~message:
+           (Printf.sprintf "Placeholder shorthand requires exactly one '_' placeholder, found %d"
+              placeholder_count)
+         arg)
+  else
+    let inferred_arg =
+      if placeholder_count = 1 && type_can_accept_placeholder_callback expected_type' then
+        placeholder_lambda_expr arg
+      else
+        arg
+    in
+    let env' = apply_substitution_env subst env in
+    match infer_expression type_map env' inferred_arg with
+    | Error e -> Error e
+    | Ok (subst1, arg_type) -> (
+        let subst' = compose_substitution subst subst1 in
+        let expected_type'' = apply_substitution subst' expected_type in
+        let arg_type' = apply_substitution subst' arg_type in
+        match unify arg_type' expected_type'' with
+        | Error e -> Error (error_at ~code:e.code ~message:e.message arg)
+        | Ok subst2 ->
+            let final_subst = compose_substitution subst' subst2 in
+            let final_type = apply_substitution final_subst arg_type in
+            Ok (final_subst, final_type))
+
+and infer_args_against_expected type_map env subst args expected_types =
+  match (args, expected_types) with
+  | [], [] -> Ok (subst, [])
+  | arg :: rest_args, expected :: rest_expected -> (
+      match infer_arg_against_expected type_map env subst arg expected with
+      | Error e -> Error e
+      | Ok (subst', arg_type) -> (
+          match infer_args_against_expected type_map env subst' rest_args rest_expected with
+          | Error e -> Error e
+          | Ok (subst'', rest_types) -> Ok (subst'', arg_type :: rest_types)))
+  | _ -> Error (error ~code:"type-constructor" ~message:"Argument count mismatch")
+
 (* ============================================================
    Function Calls
    ============================================================ *)
@@ -2311,68 +2594,68 @@ and infer_call type_map env (call_expr : AST.expression) func args =
   match infer_expression type_map env func with
   | Error e -> Error e
   | Ok (subst1, func_type) -> (
-      (* Infer argument types *)
-      match infer_args type_map (apply_substitution_env subst1 env) subst1 args with
-      | Error e -> Error e
-      | Ok (subst2, arg_types) -> (
-          let func_type' = apply_substitution subst2 func_type in
-          (* Create expected function type: arg1 -> arg2 -> ... -> result.
-             For unknown/union callees, first try an effect-polymorphic callable
-             (pure | effectful) so higher-order callbacks remain flexible.
-             Fall back to legacy pure-then-effectful probing. *)
-          let fresh_result_type () = fresh_type_var () in
-          let expected_func_type_for is_effectful result_type =
-            List.fold_right (fun arg_t acc -> TFun (arg_t, acc, is_effectful)) arg_types result_type
-          in
-          let try_effect_polymorphic_callable () =
+      let func_type' = apply_substitution subst1 func_type in
+      let expected_param_types = List.map (fun _ -> fresh_type_var ()) args in
+      (* Create expected function type: arg1 -> arg2 -> ... -> result.
+         For unknown/union callees, first try an effect-polymorphic callable
+         (pure | effectful) so higher-order callbacks remain flexible.
+         Fall back to legacy pure-then-effectful probing. *)
+      let fresh_result_type () = fresh_type_var () in
+      let expected_func_type_for is_effectful result_type =
+        List.fold_right (fun arg_t acc -> TFun (arg_t, acc, is_effectful)) expected_param_types result_type
+      in
+      let try_effect_polymorphic_callable () =
+        let result_type = fresh_result_type () in
+        let expected_pure = expected_func_type_for false result_type in
+        let expected_effectful = expected_func_type_for true result_type in
+        let expected_union = Types.normalize_union [ expected_pure; expected_effectful ] in
+        match unify func_type' expected_union with
+        | Ok subst2 -> Ok (subst2, result_type)
+        | Error e -> Error e
+      in
+      let try_legacy_pure_then_effectful () =
+        let result_type_pure = fresh_result_type () in
+        let expected_pure = expected_func_type_for false result_type_pure in
+        match unify func_type' expected_pure with
+        | Ok subst2 -> Ok (subst2, result_type_pure)
+        | Error pure_err -> (
+            let result_type_eff = fresh_result_type () in
+            let expected_eff = expected_func_type_for true result_type_eff in
+            match unify func_type' expected_eff with
+            | Ok subst2 -> Ok (subst2, result_type_eff)
+            | Error _ -> Error pure_err)
+      in
+      let call_result =
+        match func_type' with
+        | TVar _ -> (
+            match try_effect_polymorphic_callable () with
+            | Ok _ as ok -> ok
+            | Error _ -> try_legacy_pure_then_effectful ())
+        | TUnion members -> (
             let result_type = fresh_result_type () in
             let expected_pure = expected_func_type_for false result_type in
             let expected_effectful = expected_func_type_for true result_type in
             let expected_union = Types.normalize_union [ expected_pure; expected_effectful ] in
-            match unify func_type' expected_union with
-            | Ok subst3 -> Ok (subst3, result_type)
-            | Error e -> Error e
-          in
-          let try_legacy_pure_then_effectful () =
-            let result_type_pure = fresh_result_type () in
-            let expected_pure = expected_func_type_for false result_type_pure in
-            match unify func_type' expected_pure with
-            | Ok subst3 -> Ok (subst3, result_type_pure)
-            | Error pure_err -> (
-                let result_type_eff = fresh_result_type () in
-                let expected_eff = expected_func_type_for true result_type_eff in
-                match unify func_type' expected_eff with
-                | Ok subst3 -> Ok (subst3, result_type_eff)
-                | Error _ -> Error pure_err)
-          in
-          let call_result =
-            match func_type' with
-            | TVar _ -> (
-                match try_effect_polymorphic_callable () with
-                | Ok _ as ok -> ok
-                | Error _ -> try_legacy_pure_then_effectful ())
-            | TUnion members -> (
-                let result_type = fresh_result_type () in
-                let expected_pure = expected_func_type_for false result_type in
-                let expected_effectful = expected_func_type_for true result_type in
-                let expected_union = Types.normalize_union [ expected_pure; expected_effectful ] in
-                match Unify.unify_union_all_with_concrete members expected_union with
-                | Ok subst3 -> Ok (subst3, result_type)
-                | Error e -> Error e)
-            | _ -> try_legacy_pure_then_effectful ()
-          in
-          match call_result with
-          | Error e -> Error (error_at ~code:e.code ~message:e.message call_expr)
-          | Ok (subst3, result_type) -> (
-              let final_subst = compose_substitution subst2 subst3 in
+            match Unify.unify_union_all_with_concrete members expected_union with
+            | Ok subst2 -> Ok (subst2, result_type)
+            | Error e -> Error e)
+        | _ -> try_legacy_pure_then_effectful ()
+      in
+      match call_result with
+      | Error e -> Error (error_at ~code:e.code ~message:e.message call_expr)
+      | Ok (subst2, result_type) ->
+          let subst' = compose_substitution subst1 subst2 in
+          match infer_args_against_expected type_map env subst' args expected_param_types with
+          | Error e -> Error e
+          | Ok (final_subst, _arg_types) -> (
               (* Phase 4.3+: Verify trait constraints are satisfied.
                  When calling a constrained generic function like fn[a: show](x: a),
                  we need to check that the actual argument type implements the required traits. *)
               match verify_constraints_in_substitution final_subst with
               | Error diag -> Error (error_at ~code:diag.code ~message:diag.message call_expr)
               | Ok () ->
-                  let final_result = apply_substitution subst3 result_type in
-                  Ok (final_subst, final_result))))
+                  let final_result = apply_substitution final_subst result_type in
+                  Ok (final_subst, final_result)))
 
 (* Helper to infer types of a list of arguments *)
 and infer_args type_map env subst args =

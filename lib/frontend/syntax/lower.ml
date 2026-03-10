@@ -187,8 +187,7 @@ let rec lower_expr (id_supply : Id_supply.Id_supply.t) (se : Surface.surface_exp
             is_effectful = se_lambda_is_effectful;
             body = fn_body;
           }
-    | Surface.SEPlaceholder ->
-        failwith "Lower: _ placeholder in expression position is not valid here; use an explicit lambda"
+    | Surface.SEPlaceholder -> failwith_unimplemented "SEPlaceholder"
     | Surface.SEBlockExpr block -> AST.BlockExpr (List.map (lower_stmt id_supply) block.sb_stmts)
   in
   AST.{ id; expr; pos; end_pos; file_id }
