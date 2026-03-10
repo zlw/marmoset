@@ -14,6 +14,7 @@ type mono_type =
   | TRecord of record_field_type list * mono_type option
     (* Record: {x: Int, y: String} or open record {x: Int, ...r} *)
   | TRowVar of string (* Row type variable *)
+  | TTraitObject of string list (* Trait object: Dyn[Eq & Show] *)
   | TUnion of mono_type list (* Union: Int | String | Bool *)
   | TEnum of string * mono_type list (* Enum: option[Int], result[String, Int] *)
 
@@ -38,6 +39,12 @@ let normalize_record_fields (fields : record_field_type list) : record_field_typ
          | Some typ -> { name; typ }
          | None -> failwith "normalize_record_fields: impossible missing key")
 
+let normalize_trait_object_traits (traits : string list) : string list =
+  let normalized = traits |> List.sort_uniq String.compare in
+  match normalized with
+  | [] -> invalid_arg "normalize_trait_object_traits: empty trait object"
+  | _ -> normalized
+
 let rec canonicalize_mono_type (mono : mono_type) : mono_type =
   match mono with
   | TInt | TFloat | TBool | TString | TNull | TVar _ | TRowVar _ -> mono
@@ -52,6 +59,7 @@ let rec canonicalize_mono_type (mono : mono_type) : mono_type =
       in
       let canonical_row = Option.map canonicalize_mono_type row in
       TRecord (canonical_fields, canonical_row)
+  | TTraitObject traits -> TTraitObject (normalize_trait_object_traits traits)
   | TUnion types -> TUnion (List.map canonicalize_mono_type types)
   | TEnum (name, args) -> TEnum (name, List.map canonicalize_mono_type args)
 
@@ -113,6 +121,7 @@ and to_string = function
       in
       "{ " ^ String.concat ", " field_strs ^ row_str ^ " }"
   | TRowVar name -> name
+  | TTraitObject traits -> "Dyn[" ^ String.concat " & " (normalize_trait_object_traits traits) ^ "]"
   | TUnion types -> String.concat " | " (List.map to_string types)
   | TEnum (name, []) -> name
   | TEnum (name, args) -> name ^ "[" ^ String.concat ", " (List.map to_string args) ^ "]"
@@ -176,6 +185,7 @@ let apply_substitution (subst : substitution) (mono : mono_type) : mono_type =
           match SubstMap.find_opt name subst with
           | Some replacement -> go (TypeVarSet.add name seen) replacement
           | None -> ty)
+    | TTraitObject traits -> TTraitObject (normalize_trait_object_traits traits)
     | TUnion types -> TUnion (List.map (go seen) types)
     | TEnum (name, args) -> TEnum (name, List.map (go seen) args)
   in
@@ -218,6 +228,7 @@ let rec free_type_vars (mono : mono_type) : TypeVarSet.t =
       in
       TypeVarSet.union field_vars row_vars
   | TRowVar name -> TypeVarSet.singleton name
+  | TTraitObject _ -> TypeVarSet.empty
   | TUnion types -> List.fold_left (fun acc t -> TypeVarSet.union acc (free_type_vars t)) TypeVarSet.empty types
   | TEnum (_, args) -> List.fold_left (fun acc t -> TypeVarSet.union acc (free_type_vars t)) TypeVarSet.empty args
 
@@ -261,6 +272,7 @@ let rec collect_vars_in_order (mono : mono_type) : string list =
       in
       field_vars @ row_vars
   | TRowVar name -> [ name ]
+  | TTraitObject _ -> []
   | TUnion types -> List.concat_map collect_vars_in_order types
   | TEnum (_, args) -> List.concat_map collect_vars_in_order args
 
@@ -354,6 +366,8 @@ let%test "to_string closed record" =
 let%test "to_string open record" =
   to_string (TRecord ([ { name = "x"; typ = TInt } ], Some (TRowVar "r"))) = "{ x: Int, ...r }"
 
+let%test "to_string trait object" = to_string (TTraitObject [ "Show"; "Eq" ]) = "Dyn[Eq & Show]"
+
 let%test "poly_type_to_string monomorphic" =
   (* No quantifiers - just the type *)
   poly_type_to_string (mono_to_poly TInt) = "Int"
@@ -385,6 +399,10 @@ let%test "apply_substitution to record" =
   let record = TRecord ([ { name = "x"; typ = TVar "a" } ], Some (TRowVar "r")) in
   apply_substitution subst record
   = TRecord ([ { name = "x"; typ = TInt } ], Some (TRecord ([ { name = "y"; typ = TString } ], None)))
+
+let%test "apply_substitution preserves trait object traits" =
+  let subst = substitution_of_list [ ("a", TInt) ] in
+  apply_substitution subst (TTraitObject [ "Show"; "Eq" ]) = TTraitObject [ "Eq"; "Show" ]
 
 let%test "apply_substitution avoids immediate self-cycle" =
   let subst = substitution_of_list [ ("a", TVar "a") ] in
@@ -426,6 +444,8 @@ let%test "free_type_vars function" =
 let%test "free_type_vars record" =
   let free = free_type_vars (TRecord ([ { name = "x"; typ = TVar "a" } ], Some (TRowVar "r"))) in
   TypeVarSet.equal free (TypeVarSet.of_list [ "a"; "r" ])
+
+let%test "free_type_vars trait object" = TypeVarSet.is_empty (free_type_vars (TTraitObject [ "Show"; "Eq" ]))
 
 let%test "free_type_vars_poly quantified" =
   (* ∀a. a -> b  has free vars {b} only (a is bound) *)
@@ -470,6 +490,14 @@ let%test "normalize_union flattens nested" =
 
 let%test "normalize_union single element" = normalize_union [ TInt ] = TInt
 
+let%test "canonicalize trait object sorts and dedupes" =
+  canonicalize_mono_type (TTraitObject [ "Show"; "Eq"; "Show" ]) = TTraitObject [ "Eq"; "Show" ]
+
+let%test "canonicalize trait object rejects empty set" =
+  match canonicalize_mono_type (TTraitObject []) with
+  | _ -> false
+  | exception Invalid_argument _ -> true
+
 let%test "apply_substitution to union" =
   let subst = substitution_of_list [ ("a", TInt); ("b", TString) ] in
   let union = TUnion [ TVar "a"; TVar "b"; TBool ] in
@@ -511,3 +539,5 @@ let%test "free_type_vars in enum" =
 let%test "collect_vars_in_order with enum" =
   let enum = TEnum ("result", [ TVar "a"; TVar "b" ]) in
   collect_vars_in_order enum = [ "a"; "b" ]
+
+let%test "collect_vars_in_order ignores trait object members" = collect_vars_in_order (TTraitObject [ "Show"; "Eq" ]) = []

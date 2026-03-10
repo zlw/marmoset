@@ -39,6 +39,7 @@ let rec has_type_vars (t : mono_type) : bool =
       match row with
       | None -> false
       | Some r -> has_type_vars r)
+  | TTraitObject _ -> false
   | TEnum (_, args) | TUnion args -> List.exists has_type_vars args
   | TInt | TFloat | TBool | TString | TNull -> false
 

@@ -341,6 +341,7 @@ let rec format_mono_type (t : Types.mono_type) : string =
           " -> "
       in
       Printf.sprintf "%s%s%s" (format_mono_type param_type) arrow (format_mono_type return_type)
+  | Types.TTraitObject traits -> Printf.sprintf "Dyn[%s]" (String.concat " & " traits)
   | Types.TUnion types -> String.concat " | " (List.map format_mono_type types)
   | Types.TEnum (name, []) -> name
   | Types.TEnum (name, args) -> Printf.sprintf "%s[%s]" name (String.concat ", " (List.map format_mono_type args))

@@ -586,6 +586,7 @@ let rec row_vars_in_type (mono : mono_type) : TypeVarSet.t =
       in
       TypeVarSet.union field_rows row_rows
   | TRowVar name -> TypeVarSet.singleton name
+  | TTraitObject _ -> TypeVarSet.empty
   | TUnion members ->
       List.fold_left (fun acc t -> TypeVarSet.union acc (row_vars_in_type t)) TypeVarSet.empty members
   | TEnum (_, args) ->
@@ -2315,6 +2316,7 @@ and type_callable
                                 match row with
                                 | None -> false
                                 | Some r -> has_unresolved_var r)
+                            | TTraitObject _ -> false
                             | TEnum (_, args) | TUnion args -> List.exists has_unresolved_var args
                             | TInt | TFloat | TBool | TString | TNull -> false
                           in
@@ -3099,7 +3101,8 @@ and infer_index type_map env container index_expr =
                       let final_subst = compose_substitution subst subst3 in
                       let elem_type' = apply_substitution subst3 elem_type in
                       Ok (final_subst, elem_type'))
-              | TString | TFloat | TBool | TNull | TArray _ | THash _ | TRecord _ | TRowVar _ | TFun _ | TUnion _
+              | TString | TFloat | TBool | TNull | TArray _ | THash _ | TRecord _ | TRowVar _ | TTraitObject _
+              | TFun _ | TUnion _
               | TEnum _ -> (
                   (* Non-int index -> assume hash *)
                   let val_type = fresh_type_var () in
