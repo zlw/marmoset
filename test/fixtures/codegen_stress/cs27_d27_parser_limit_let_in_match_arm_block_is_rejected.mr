@@ -1,12 +1,12 @@
-# CS27: D27: [PARSER-LIMIT] let in match arm block is rejected
-let f = fn(x: int) => int {
+# CS27: D27: former parser limit, let in match arm block now supported
+fn f(x: Int) => Int = {
   match x {
-    1: {
-      let v = 100  # error: parse-unexpected-token
-      puts(v)
+    case 1: {
+      let v = 100
+      puts(v)  # output: 100
       v
     }
-    _: 0
+    case _: 0
   }
 }
 f(1)

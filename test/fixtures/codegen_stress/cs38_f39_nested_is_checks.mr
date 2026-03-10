@@ -1,7 +1,7 @@
 # CS38: F39: nested is-checks
-let f = fn(x: int | string, y: int | bool) -> int {
-  if (x is int) {
-    if (y is int) { x + y } else { x }
+fn f(x: Int | Str, y: Int | Bool) -> Int = {
+  if (x is Int) {
+    if (y is Int) { x + y } else { x }
   } else {
     0
   }

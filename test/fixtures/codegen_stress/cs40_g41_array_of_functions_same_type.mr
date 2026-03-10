@@ -1,5 +1,5 @@
 # CS40: G41: array of functions (same type)
-let f = fn(x: int) -> int { x + 1 }
-let g = fn(x: int) -> int { x * 2 }
+fn f(x: Int) -> Int = { x + 1 }
+fn g(x: Int) -> Int = { x * 2 }
 let arr = [f, g]
 puts(arr[1](5))  # output: 10

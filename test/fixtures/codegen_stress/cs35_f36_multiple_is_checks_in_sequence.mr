@@ -1,7 +1,7 @@
 # CS35: F36: multiple is-checks in sequence
-let x: int | string = 42
-let y: int | string = "hello"
-let a = if (x is int) { x } else { 0 }
-let b = if (y is string) { y } else { "none" }
+let x: Int | Str = 42
+let y: Int | Str = "hello"
+let a = if (x is Int) { x } else { 0 }
+let b = if (y is Str) { y } else { "none" }
 puts(a)  # output: 42
 puts(b)  # output: hello

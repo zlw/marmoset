@@ -1,4 +1,4 @@
 # CS43: G44: array through generic function
-let id = fn(x) { x }
+fn id(x) = { x }
 let arr = id([1, 2, 3])
 puts(len(arr))  # output: 3
