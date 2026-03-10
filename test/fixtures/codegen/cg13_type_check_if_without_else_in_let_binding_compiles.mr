@@ -1,4 +1,4 @@
 # CG13: Type-check if without else in let binding compiles
-let x: int | string = 1
-let y = if (x is int) { x + 1 }
+let x: Int | Str = 1
+let y = if (x is Int) { x + 1 }
 puts(y)

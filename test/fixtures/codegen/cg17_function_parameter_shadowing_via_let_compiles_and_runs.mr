@@ -1,6 +1,6 @@
 # CG17: Function-parameter shadowing via let compiles and runs
 let x = 1
-let f = fn(x: int) -> int {
+fn f(x: Int) -> Int = {
   let x = x + 1
   x + 1
 }

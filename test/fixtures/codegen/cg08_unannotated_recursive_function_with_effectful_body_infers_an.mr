@@ -1,5 +1,5 @@
 # CG08: Unannotated recursive function with effectful body infers and runs as effectful
-let loop = fn(n: int) {
+fn loop(n: Int) = {
   if (n == 0) {
     0
   } else {

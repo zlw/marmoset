@@ -1,3 +1,3 @@
-# CG12: Tail if without else (unit) compiles
-let f = fn(x: bool) { if (x) { 1 } }
+# CG12: Tail if without else (Unit) compiles
+fn f(x: Bool) = if (x) { 1 }
 puts(f(true))
