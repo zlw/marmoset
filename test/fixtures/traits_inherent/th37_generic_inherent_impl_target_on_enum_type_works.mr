@@ -1,17 +1,17 @@
 # TH37: Generic inherent impl target on enum type works
-enum result[a, b] {
-  success(a)
-  failure(b)
+enum Result[a, b] = {
+  Success(a),
+  Failure(b),
 }
-impl result[a, b] {
-  fn is_success(r: result[a, b]) -> bool {
+impl Result[a, b] = {
+  fn is_success(r: Result[a, b]) -> Bool = {
     match r {
-      result.success(_): true
-      result.failure(_): false
+      case Result.Success(_): true
+      case Result.Failure(_): false
     }
   }
 }
-let ok = if (true) { result.success(1) } else { result.failure("x") }
-let err = if (false) { result.success(1) } else { result.failure("x") }
+let ok = if (true) { Result.Success(1) } else { Result.Failure("x") }
+let err = if (false) { Result.Success(1) } else { Result.Failure("x") }
 puts(ok.is_success())  # output: true
 puts(err.is_success())  # output: false

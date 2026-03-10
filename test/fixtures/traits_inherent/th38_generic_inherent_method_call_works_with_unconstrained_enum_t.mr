@@ -1,15 +1,15 @@
 # TH38: Generic inherent method call works with unconstrained enum type arguments
-enum result[a, b] {
-  success(a)
-  failure(b)
+enum Result[a, b] = {
+  Success(a),
+  Failure(b),
 }
-impl result[a, b] {
-  fn is_success(r: result[a, b]) -> bool {
+impl Result[a, b] = {
+  fn is_success(r: Result[a, b]) -> Bool = {
     match r {
-      result.success(_): true
-      result.failure(_): false
+      case Result.Success(_): true
+      case Result.Failure(_): false
     }
   }
 }
-let ok = result.success(1)
+let ok = Result.Success(1)
 puts(ok.is_success())  # output: true

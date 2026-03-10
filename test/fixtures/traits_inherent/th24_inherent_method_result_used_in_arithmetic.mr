@@ -1,6 +1,6 @@
 # TH24: Inherent method result used in arithmetic
-impl int {
-  fn double(x: int) -> int { x + x }
+impl Int = {
+  fn double(x: Int) -> Int = x + x
 }
 let n = 3
 let a = n.double()

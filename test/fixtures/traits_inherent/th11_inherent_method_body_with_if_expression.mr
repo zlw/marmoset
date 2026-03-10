@@ -1,6 +1,6 @@
 # TH11: Inherent method body with if expression
-impl int {
-  fn classify(x: int) -> string {
+impl Int = {
+  fn classify(x: Int) -> Str = {
     if (x > 100) { "big" } else { "small" }
   }
 }

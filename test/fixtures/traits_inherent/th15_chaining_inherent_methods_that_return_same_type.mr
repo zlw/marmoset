@@ -1,6 +1,6 @@
 # TH15: Chaining inherent methods that return same type
-impl int {
-  fn double(x: int) -> int { x + x }
+impl Int = {
+  fn double(x: Int) -> Int = x + x
 }
 let n = 2
 puts(n.double().double().double())  # output: 16

@@ -1,11 +1,11 @@
 # TH19: Inherent method same name as trait method coexists (inherent wins on dot call)
-trait describable[a] {
-  fn describe(x: a) -> string
+trait Describable[a] = {
+  fn describe(x: a) -> Str
 }
-impl describable for int {
-  fn describe(x: int) -> string { "trait" }
+impl Describable[Int] = {
+  fn describe(x: Int) -> Str = "trait"
 }
-impl int {
-  fn describe(x: int) -> string { "inherent" }
+impl Int = {
+  fn describe(x: Int) -> Str = "inherent"
 }
 puts(1)  # output: 1

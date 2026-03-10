@@ -1,6 +1,6 @@
 # TH23: Inherent method result used in let binding
-impl int {
-  fn double(x: int) -> int { x + x }
+impl Int = {
+  fn double(x: Int) -> Int = x + x
 }
 let n = 5
 let result = n.double()

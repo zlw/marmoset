@@ -1,5 +1,5 @@
 # TH17: Int literal dot-method via parenthesized literal workaround
-impl int {
-  fn double(x: int) -> int { x + x }
+impl Int = {
+  fn double(x: Int) -> Int = x + x
 }
 puts((5).double())  # output: 10

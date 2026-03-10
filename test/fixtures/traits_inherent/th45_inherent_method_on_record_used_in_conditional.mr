@@ -1,9 +1,9 @@
 # TH45: Inherent method on record used in conditional
-type point = { x: int, y: int }
-impl point {
-  fn sum(p: point) -> int { p.x + p.y }
+type Point = { x: Int, y: Int }
+impl Point = {
+  fn sum(p: Point) -> Int = p.x + p.y
 }
-let p: point = { x: 5, y: 3 }
+let p: Point = { x: 5, y: 3 }
 if (p.sum() > 0) {  # output: positive
   puts("positive")
 } else {

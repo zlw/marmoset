@@ -1,9 +1,9 @@
 # TH46: Multiple inherent methods called on separate instances
-type point = { x: int, y: int }
-impl point {
-  fn sum(p: point) -> int { p.x + p.y }
+type Point = { x: Int, y: Int }
+impl Point = {
+  fn sum(p: Point) -> Int = p.x + p.y
 }
-let a: point = { x: 1, y: 5 }
-let b: point = { x: 7, y: 8 }
+let a: Point = { x: 1, y: 5 }
+let b: Point = { x: 7, y: 8 }
 puts(a.sum())  # output: 6
 puts(b.sum())  # output: 15

@@ -1,6 +1,6 @@
 # TH10: Inherent method returning the receiver type
-impl int {
-  fn double(x: int) -> int {
+impl Int = {
+  fn double(x: Int) -> Int = {
     x + x
   }
 }

@@ -1,13 +1,13 @@
 # TH20: Inherent method does NOT satisfy trait constraints
-trait showable[a] {
-  fn display(x: a) -> string
+trait Showable[a] = {
+  fn display(x: a) -> Str
 }
-type widget = { id: int }
-impl widget {
-  fn display(w: widget) -> string { "widget" }
+type Widget = { id: Int }
+impl Widget = {
+  fn display(w: Widget) -> Str = "widget"
 }
-let render = fn[t: showable](x: t) -> string {
+fn render[t: Showable](x: t) -> Str = {
   x.display()
 }
-let w: widget = { id: 1 }
+let w: Widget = { id: 1 }
 puts(render(w))  # error: does not implement trait
