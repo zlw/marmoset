@@ -51,10 +51,7 @@ let rec lower_pattern (sp : Surface.surface_pattern) : AST.pattern =
 (* ── Expressions ── *)
 
 let rec lower_expr (id_supply : Id_supply.Id_supply.t) (se : Surface.surface_expr) : AST.expression =
-  let pos = se.se_pos
-  and end_pos = se.se_end_pos
-  and file_id = se.se_file_id
-  and id = se.se_id in
+  let pos = se.se_pos and end_pos = se.se_end_pos and file_id = se.se_file_id and id = se.se_id in
   let expr =
     match se.se_expr with
     | Surface.SEIdentifier s -> AST.Identifier s
@@ -70,10 +67,7 @@ let rec lower_expr (id_supply : Id_supply.Id_supply.t) (se : Surface.surface_exp
     | Surface.SEInfix (l, op, r) -> AST.Infix (lower_expr id_supply l, op, lower_expr id_supply r)
     | Surface.SETypeCheck (e, t) -> AST.TypeCheck (lower_expr id_supply e, lower_type_expr t)
     | Surface.SEIf (cond, cons, alt) ->
-        AST.If
-          ( lower_expr id_supply cond,
-            lower_stmt id_supply cons,
-            Option.map (lower_stmt id_supply) alt )
+        AST.If (lower_expr id_supply cond, lower_stmt id_supply cons, Option.map (lower_stmt id_supply) alt)
     | Surface.SECall (f, args) -> AST.Call (lower_expr id_supply f, List.map (lower_expr id_supply) args)
     | Surface.SEEnumConstructor (enum_name, variant_name, args) ->
         AST.EnumConstructor (enum_name, variant_name, List.map (lower_expr id_supply) args)
@@ -81,7 +75,11 @@ let rec lower_expr (id_supply : Id_supply.Id_supply.t) (se : Surface.surface_exp
         AST.Match (lower_expr id_supply scrutinee, List.map (lower_match_arm id_supply) arms)
     | Surface.SERecordLit (fields, spread) ->
         let lower_field f =
-          AST.{ field_name = f.Surface.se_field_name; field_value = Option.map (lower_expr id_supply) f.Surface.se_field_value }
+          AST.
+            {
+              field_name = f.Surface.se_field_name;
+              field_value = Option.map (lower_expr id_supply) f.Surface.se_field_value;
+            }
         in
         AST.RecordLit (List.map lower_field fields, Option.map (lower_expr id_supply) spread)
     | Surface.SEFieldAccess (receiver, field) -> AST.FieldAccess (lower_expr id_supply receiver, field)
@@ -115,16 +113,13 @@ let rec lower_expr (id_supply : Id_supply.Id_supply.t) (se : Surface.surface_exp
           }
     | Surface.SEPlaceholder ->
         failwith "Lower: _ placeholder in expression position is not valid here; use an explicit lambda"
-    | Surface.SEBlockExpr block ->
-        AST.BlockExpr (List.map (lower_stmt id_supply) block.sb_stmts)
+    | Surface.SEBlockExpr block -> AST.BlockExpr (List.map (lower_stmt id_supply) block.sb_stmts)
   in
   AST.{ id; expr; pos; end_pos; file_id }
 
 (* lower_stmt converts a block-level surface_stmt to AST.statement *)
 and lower_stmt (id_supply : Id_supply.Id_supply.t) (ss : Surface.surface_stmt) : AST.statement =
-  let pos = ss.ss_pos
-  and end_pos = ss.ss_end_pos
-  and file_id = ss.ss_file_id in
+  let pos = ss.ss_pos and end_pos = ss.ss_end_pos and file_id = ss.ss_file_id in
   let stmt =
     match ss.ss_stmt with
     | Surface.SSLet { ss_name; ss_value; ss_type_annotation } ->
@@ -154,7 +149,8 @@ and lower_expr_or_block_to_expr (id_supply : Id_supply.Id_supply.t) (eob : Surfa
   match eob with
   | Surface.SEOBExpr e -> lower_expr id_supply e
   | Surface.SEOBBlock block ->
-      AST.mk_expr ~pos:block.sb_pos ~end_pos:block.sb_end_pos ~file_id:block.sb_file_id
+      AST.mk_expr ~id:(Id_supply.Id_supply.fresh id_supply) ~pos:block.sb_pos ~end_pos:block.sb_end_pos
+        ~file_id:block.sb_file_id
         (AST.BlockExpr (List.map (lower_stmt id_supply) block.sb_stmts))
 
 (* lower_expr_or_block_to_stmt:
@@ -167,7 +163,11 @@ and lower_expr_or_block_to_stmt (id_supply : Id_supply.Id_supply.t) (eob : Surfa
   | Surface.SEOBExpr e ->
       let lowered = lower_expr id_supply e in
       AST.mk_stmt ~pos:lowered.pos ~end_pos:lowered.end_pos ~file_id:lowered.file_id
-        (AST.Block [ AST.mk_stmt ~pos:lowered.pos ~end_pos:lowered.end_pos ~file_id:lowered.file_id (AST.ExpressionStmt lowered) ])
+        (AST.Block
+           [
+             AST.mk_stmt ~pos:lowered.pos ~end_pos:lowered.end_pos ~file_id:lowered.file_id
+               (AST.ExpressionStmt lowered);
+           ])
   | Surface.SEOBBlock b ->
       AST.mk_stmt ~pos:b.sb_pos ~end_pos:b.sb_end_pos ~file_id:b.sb_file_id
         (AST.Block (List.map (lower_stmt id_supply) b.sb_stmts))
@@ -203,9 +203,7 @@ let lower_variant (sv : Surface.surface_variant_def) : AST.variant_def =
   AST.{ variant_name = sv.sv_name; variant_fields = List.map lower_type_expr sv.sv_fields }
 
 let lower_top_decl (id_supply : Id_supply.Id_supply.t) (ts : Surface.surface_top_stmt) : AST.statement list =
-  let pos = ts.Surface.std_pos
-  and end_pos = ts.Surface.std_end_pos
-  and file_id = ts.Surface.std_file_id in
+  let pos = ts.Surface.std_pos and end_pos = ts.Surface.std_end_pos and file_id = ts.Surface.std_file_id in
   match ts.Surface.std_decl with
   | Surface.SLet { name; value; type_annotation } ->
       [
@@ -284,7 +282,9 @@ let lower_top_decl (id_supply : Id_supply.Id_supply.t) (ts : Surface.surface_top
       in
       alias_stmt :: derive_stmts
   | Surface.STraitDef { name; type_param; supertraits; fields; methods } ->
-      let lower_field f = AST.{ field_name = f.Surface.sf_name; field_type = lower_type_expr f.Surface.sf_type } in
+      let lower_field f =
+        AST.{ field_name = f.Surface.sf_name; field_type = lower_type_expr f.Surface.sf_type }
+      in
       let td =
         AST.
           {
@@ -317,14 +317,15 @@ let lower_top_decl (id_supply : Id_supply.Id_supply.t) (ts : Surface.surface_top
       in
       [ AST.mk_stmt ~pos ~end_pos ~file_id (AST.InherentImplDef iid) ]
   | Surface.SDeriveDef { derive_traits; derive_for_type } ->
-      [ AST.mk_stmt ~pos ~end_pos ~file_id (AST.DeriveDef { derive_traits; derive_for_type = lower_type_expr derive_for_type }) ]
+      [
+        AST.mk_stmt ~pos ~end_pos ~file_id
+          (AST.DeriveDef { derive_traits; derive_for_type = lower_type_expr derive_for_type });
+      ]
   | Surface.SExpressionStmt e ->
       [ AST.mk_stmt ~pos ~end_pos ~file_id (AST.ExpressionStmt (lower_expr id_supply e)) ]
-  | Surface.SReturn e ->
-      [ AST.mk_stmt ~pos ~end_pos ~file_id (AST.Return (lower_expr id_supply e)) ]
+  | Surface.SReturn e -> [ AST.mk_stmt ~pos ~end_pos ~file_id (AST.Return (lower_expr id_supply e)) ]
   | Surface.SBlock block ->
-      [ AST.mk_stmt ~pos ~end_pos ~file_id
-          (AST.Block (List.map (lower_stmt id_supply) block.sb_stmts)) ]
+      [ AST.mk_stmt ~pos ~end_pos ~file_id (AST.Block (List.map (lower_stmt id_supply) block.sb_stmts)) ]
 
 let lower_program (id_supply : Id_supply.Id_supply.t) (prog : Surface.surface_program) : AST.program =
   List.concat_map (lower_top_decl id_supply) prog
@@ -332,8 +333,7 @@ let lower_program (id_supply : Id_supply.Id_supply.t) (prog : Surface.surface_pr
 (* ── Tests ── *)
 
 (* Helper: wrap a top_decl in a surface_top_stmt with default positions for tests *)
-let mk_test_ts decl =
-  Surface.{ std_decl = decl; std_pos = 0; std_end_pos = 0; std_file_id = None }
+let mk_test_ts decl = Surface.{ std_decl = decl; std_pos = 0; std_end_pos = 0; std_file_id = None }
 
 let%test "lower SLet integer" =
   let id_supply = Id_supply.Id_supply.create 0 in
@@ -363,26 +363,36 @@ let%test "lower SEnumDef" =
   let result = lower_top_decl id_supply (mk_test_ts decl) in
   match result with
   | [
-      {
-        AST.stmt =
-          AST.EnumDef
-            {
-              name = "Color";
-              type_params = [];
-              variants = [ { AST.variant_name = "Red"; _ }; { AST.variant_name = "Green"; _ }; { AST.variant_name = "Blue"; _ } ];
-            };
-        _;
-      };
-    ] ->
+   {
+     AST.stmt =
+       AST.EnumDef
+         {
+           name = "Color";
+           type_params = [];
+           variants =
+             [
+               { AST.variant_name = "Red"; _ };
+               { AST.variant_name = "Green"; _ };
+               { AST.variant_name = "Blue"; _ };
+             ];
+         };
+     _;
+   };
+  ] ->
       true
   | _ -> false
 
 let%test "lower STypeDef" =
   let id_supply = Id_supply.Id_supply.create 0 in
-  let decl = Surface.STypeDef { alias_name = "Point"; alias_type_params = []; alias_body = Surface.STCon "Int"; derive = [] } in
+  let decl =
+    Surface.STypeDef
+      { alias_name = "Point"; alias_type_params = []; alias_body = Surface.STCon "Int"; derive = [] }
+  in
   let result = lower_top_decl id_supply (mk_test_ts decl) in
   match result with
-  | [ { AST.stmt = AST.TypeAlias { alias_name = "Point"; alias_type_params = []; alias_body = AST.TCon "Int" }; _ } ] ->
+  | [
+   { AST.stmt = AST.TypeAlias { alias_name = "Point"; alias_type_params = []; alias_body = AST.TCon "Int" }; _ };
+  ] ->
       true
   | _ -> false
 
@@ -398,16 +408,13 @@ let%test "lower SDeriveDef" =
   let result = lower_top_decl id_supply (mk_test_ts decl) in
   match result with
   | [
-      {
-        AST.stmt =
-          AST.DeriveDef
-            {
-              derive_traits = [ { AST.derive_trait_name = "Eq"; _ } ];
-              derive_for_type = AST.TCon "Point";
-            };
-        _;
-      };
-    ] ->
+   {
+     AST.stmt =
+       AST.DeriveDef
+         { derive_traits = [ { AST.derive_trait_name = "Eq"; _ } ]; derive_for_type = AST.TCon "Point" };
+     _;
+   };
+  ] ->
       true
   | _ -> false
 
@@ -425,8 +432,7 @@ let%test "lower_expr_or_block_to_stmt preserves SEOBBlock" =
   let block =
     Surface.
       {
-        sb_stmts =
-          [ Surface.mk_surface_stmt ~pos:0 (Surface.SSExpressionStmt e) ];
+        sb_stmts = [ Surface.mk_surface_stmt ~pos:0 (Surface.SSExpressionStmt e) ];
         sb_pos = 0;
         sb_end_pos = 5;
         sb_file_id = None;
@@ -443,8 +449,7 @@ let%test "lower match arm body (legacy expression arm)" =
   let arm =
     Surface.
       {
-        se_patterns =
-          [ Surface.mk_surface_pat ~pos:0 (Surface.SPLiteral (AST.LBool true)) ];
+        se_patterns = [ Surface.mk_surface_pat ~pos:0 (Surface.SPLiteral (AST.LBool true)) ];
         se_arm_body = SEOBExpr e;
       }
   in
@@ -468,14 +473,21 @@ let%test "Phase2: lower SEArrowLambda to canonical Function" =
          })
   in
   match (lower_expr id_supply lambda).expr with
-  | AST.Function { params = [ ("x", None) ]; is_effectful = false; body = { stmt = AST.Block [ _ ]; _ }; _ } -> true
+  | AST.Function { params = [ ("x", None) ]; is_effectful = false; body = { stmt = AST.Block [ _ ]; _ }; _ } ->
+      true
   | _ -> false
 
 let%test "Phase2: lower SEBlockExpr to AST.BlockExpr" =
   let id_supply = Id_supply.Id_supply.create 0 in
   let e = Surface.mk_surface_expr ~id:1 ~pos:0 (Surface.SEInteger 7L) in
   let block =
-    Surface.{ sb_stmts = [ Surface.mk_surface_stmt ~pos:0 (Surface.SSExpressionStmt e) ]; sb_pos = 0; sb_end_pos = 5; sb_file_id = None }
+    Surface.
+      {
+        sb_stmts = [ Surface.mk_surface_stmt ~pos:0 (Surface.SSExpressionStmt e) ];
+        sb_pos = 0;
+        sb_end_pos = 5;
+        sb_file_id = None;
+      }
   in
   let se = Surface.mk_surface_expr ~id:2 ~pos:0 (Surface.SEBlockExpr block) in
   match (lower_expr id_supply se).expr with
@@ -486,12 +498,18 @@ let%test "Phase2: lower SEOBBlock in match arm -> AST.BlockExpr" =
   let id_supply = Id_supply.Id_supply.create 0 in
   let e = Surface.mk_surface_expr ~id:1 ~pos:0 (Surface.SEString "block") in
   let block =
-    Surface.{ sb_stmts = [ Surface.mk_surface_stmt ~pos:0 (Surface.SSExpressionStmt e) ]; sb_pos = 0; sb_end_pos = 5; sb_file_id = None }
+    Surface.
+      {
+        sb_stmts = [ Surface.mk_surface_stmt ~pos:0 (Surface.SSExpressionStmt e) ];
+        sb_pos = 0;
+        sb_end_pos = 5;
+        sb_file_id = None;
+      }
   in
   let arm =
     Surface.
       {
-        se_patterns = [ Surface.mk_surface_pat ~pos:0 (Surface.SPWildcard) ];
+        se_patterns = [ Surface.mk_surface_pat ~pos:0 Surface.SPWildcard ];
         se_arm_body = Surface.SEOBBlock block;
       }
   in
@@ -506,31 +524,36 @@ let%test "Phase2: SEnumDef with postfix derive generates DeriveDef" =
   let result = lower_top_decl id_supply (mk_test_ts decl) in
   match result with
   | [
-      { AST.stmt = AST.EnumDef { name = "Color"; _ }; _ };
-      {
-        AST.stmt =
-          AST.DeriveDef
-            {
-              derive_traits = [ { derive_trait_name = "Eq"; _ }; { derive_trait_name = "Show"; _ } ];
-              derive_for_type = AST.TCon "Color";
-            };
-        _;
-      };
-    ] ->
+   { AST.stmt = AST.EnumDef { name = "Color"; _ }; _ };
+   {
+     AST.stmt =
+       AST.DeriveDef
+         {
+           derive_traits = [ { derive_trait_name = "Eq"; _ }; { derive_trait_name = "Show"; _ } ];
+           derive_for_type = AST.TCon "Color";
+         };
+     _;
+   };
+  ] ->
       true
   | _ -> false
 
 let%test "Phase2: STypeDef with postfix derive generates DeriveDef" =
   let id_supply = Id_supply.Id_supply.create 0 in
   let decl =
-    Surface.STypeDef { alias_name = "MyInt"; alias_type_params = []; alias_body = Surface.STCon "Int"; derive = [ "Eq" ] }
+    Surface.STypeDef
+      { alias_name = "MyInt"; alias_type_params = []; alias_body = Surface.STCon "Int"; derive = [ "Eq" ] }
   in
   let result = lower_top_decl id_supply (mk_test_ts decl) in
   match result with
   | [
-      { AST.stmt = AST.TypeAlias { alias_name = "MyInt"; _ }; _ };
-      { AST.stmt = AST.DeriveDef { derive_traits = [ { derive_trait_name = "Eq"; _ } ]; derive_for_type = AST.TCon "MyInt" }; _ };
-    ] ->
+   { AST.stmt = AST.TypeAlias { alias_name = "MyInt"; _ }; _ };
+   {
+     AST.stmt =
+       AST.DeriveDef { derive_traits = [ { derive_trait_name = "Eq"; _ } ]; derive_for_type = AST.TCon "MyInt" };
+     _;
+   };
+  ] ->
       true
   | _ -> false
 
@@ -570,22 +593,26 @@ let%test "Phase2: SFnDecl with expr body -> Block[ExpressionStmt]" =
   let result = lower_top_decl id_supply (mk_test_ts decl) in
   match result with
   | [
-      {
-        AST.stmt =
-          AST.Let
-            {
-              name = "answer";
-              value =
-                {
-                  AST.expr =
-                    AST.Function
-                      { body = { stmt = AST.Block [ { stmt = AST.ExpressionStmt { expr = AST.Integer 99L; _ }; _ } ]; _ }; _ };
-                  _;
-                };
-              _;
-            };
-        _;
-      };
-    ] ->
+   {
+     AST.stmt =
+       AST.Let
+         {
+           name = "answer";
+           value =
+             {
+               AST.expr =
+                 AST.Function
+                   {
+                     body =
+                       { stmt = AST.Block [ { stmt = AST.ExpressionStmt { expr = AST.Integer 99L; _ }; _ } ]; _ };
+                     _;
+                   };
+               _;
+             };
+           _;
+         };
+     _;
+   };
+  ] ->
       true
   | _ -> false
