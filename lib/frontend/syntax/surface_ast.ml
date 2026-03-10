@@ -176,13 +176,13 @@ module Surface = struct
         name : string;
         type_params : string list;
         variants : surface_variant_def list;
-        derive : string list;
+        derive : AST.derive_trait list;
       }
     | STypeDef of {
         alias_name : string;
         alias_type_params : string list;
         alias_body : surface_type_expr;
-        derive : string list;
+        derive : AST.derive_trait list;
       }
     | STraitDef of {
         name : string;

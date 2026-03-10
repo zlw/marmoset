@@ -578,7 +578,7 @@ and parse_enum_definition (p : parser) : (parser * Surface.top_decl, parser) res
       (* advance to 'derive' *)
       let* p9, traits = parse_derive_trait_list (next_token p8) in
       let* p10 = reject_legacy_derive_tail p9 in
-      Ok (p10, List.map (fun dt -> dt.AST.derive_trait_name) traits)
+      Ok (p10, traits)
     else
       Ok (p7, [])
   in
@@ -668,12 +668,12 @@ and parse_type_alias (p : parser) : (parser * Surface.top_decl, parser) result =
     if curr_token_is p5 Token.Derive then
       let* p6, traits = parse_derive_trait_list (next_token p5) in
       let* p7 = reject_legacy_derive_tail p6 in
-      Ok (p7, List.map (fun dt -> dt.AST.derive_trait_name) traits)
+      Ok (p7, traits)
     else if peek_token_is p5 Token.Derive then
       let p5a = next_token p5 in
       let* p6, traits = parse_derive_trait_list (next_token p5a) in
       let* p7 = reject_legacy_derive_tail p6 in
-      Ok (p7, List.map (fun dt -> dt.AST.derive_trait_name) traits)
+      Ok (p7, traits)
     else
       Ok (p5, [])
   in
@@ -2743,7 +2743,12 @@ module Test = struct
     | Error _ -> false
     | Ok result -> (
         match result.program with
-        | [ { Surface.std_decl = Surface.SEnumDef { derive; _ }; _ } ] -> derive = [ "Eq"; "Show" ]
+        | [ { Surface.std_decl = Surface.SEnumDef { derive; _ }; _ } ] ->
+            derive
+            = [
+                AST.{ derive_trait_name = "Eq"; derive_trait_constraints = [] };
+                AST.{ derive_trait_name = "Show"; derive_trait_constraints = [] };
+              ]
         | _ -> false)
 
   let%test "parse enum rejects missing equals" =
@@ -2758,7 +2763,19 @@ module Test = struct
     | Error _ -> false
     | Ok result -> (
         match result.program with
-        | [ { Surface.std_decl = Surface.STypeDef { derive; _ }; _ } ] -> derive = [ "Eq" ]
+        | [ { Surface.std_decl = Surface.STypeDef { derive; _ }; _ } ] ->
+            derive = [ AST.{ derive_trait_name = "Eq"; derive_trait_constraints = [] } ]
+        | _ -> false)
+
+  let%test "parse type alias preserves postfix derive target params" =
+    let input = "type Box[t] = { value: t } derive Forwarder[u]" in
+    match parse_surface ~file_id:"<test>" input with
+    | Error _ -> false
+    | Ok result -> (
+        match result.program with
+        | [ { Surface.std_decl = Surface.STypeDef { derive = [ derive_trait ]; _ }; _ } ] ->
+            derive_trait.derive_trait_name = "Forwarder"
+            && derive_trait.derive_trait_constraints = [ AST.{ name = "u"; constraints = [] } ]
         | _ -> false)
 
   (* Phase 1d: vNext impl syntax *)

@@ -1,0 +1,6 @@
+# VN93: User-trait derive rejects mismatched target parameter binders
+trait Forwarder[a] = {
+  fn pass[b](self: a, value: b) -> b = value
+}
+
+type Box[t] = { value: t } derive Forwarder[u]  # error: target type uses [t]

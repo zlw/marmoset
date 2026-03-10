@@ -542,8 +542,7 @@ let lower_top_decl_with_ctx
             AST.mk_stmt ~pos ~end_pos ~file_id
               (AST.DeriveDef
                  {
-                   derive_traits =
-                     List.map (fun t -> AST.{ derive_trait_name = t; derive_trait_constraints = [] }) derive;
+                   derive_traits = derive;
                    derive_for_type = for_type;
                  });
           ]
@@ -574,8 +573,7 @@ let lower_top_decl_with_ctx
             AST.mk_stmt ~pos ~end_pos ~file_id
               (AST.DeriveDef
                  {
-                   derive_traits =
-                     List.map (fun t -> AST.{ derive_trait_name = t; derive_trait_constraints = [] }) derive;
+                   derive_traits = derive;
                    derive_for_type = for_type;
                  });
           ]
@@ -880,7 +878,19 @@ let%test "lower SEOBBlock in match arm -> AST.BlockExpr" =
 
 let%test "SEnumDef with postfix derive generates DeriveDef" =
   let id_supply = Id_supply.Id_supply.create 0 in
-  let decl = Surface.SEnumDef { name = "Color"; type_params = []; variants = []; derive = [ "Eq"; "Show" ] } in
+  let decl =
+    Surface.SEnumDef
+      {
+        name = "Color";
+        type_params = [];
+        variants = [];
+        derive =
+          [
+            AST.{ derive_trait_name = "Eq"; derive_trait_constraints = [] };
+            AST.{ derive_trait_name = "Show"; derive_trait_constraints = [] };
+          ];
+      }
+  in
   let result = lower_top_decl id_supply (mk_test_ts decl) in
   match result with
   | [
@@ -902,7 +912,12 @@ let%test "STypeDef with postfix derive generates DeriveDef" =
   let id_supply = Id_supply.Id_supply.create 0 in
   let decl =
     Surface.STypeDef
-      { alias_name = "MyInt"; alias_type_params = []; alias_body = Surface.STCon "Int"; derive = [ "Eq" ] }
+      {
+        alias_name = "MyInt";
+        alias_type_params = [];
+        alias_body = Surface.STCon "Int";
+        derive = [ AST.{ derive_trait_name = "Eq"; derive_trait_constraints = [] } ];
+      }
   in
   let result = lower_top_decl id_supply (mk_test_ts decl) in
   match result with
@@ -911,6 +926,34 @@ let%test "STypeDef with postfix derive generates DeriveDef" =
    {
      AST.stmt =
        AST.DeriveDef { derive_traits = [ { derive_trait_name = "Eq"; _ } ]; derive_for_type = AST.TCon "MyInt" };
+     _;
+   };
+  ] ->
+      true
+  | _ -> false
+
+let%test "STypeDef lowering preserves derive target params" =
+  let id_supply = Id_supply.Id_supply.create 0 in
+  let decl =
+    Surface.STypeDef
+      {
+        alias_name = "Box";
+        alias_type_params = [ "t" ];
+        alias_body = Surface.STRecord ([ Surface.{ sf_name = "value"; sf_type = Surface.STVar "t" } ], None);
+        derive = [ AST.{ derive_trait_name = "Forwarder"; derive_trait_constraints = [ AST.{ name = "u"; constraints = [] } ] } ];
+      }
+  in
+  let result = lower_top_decl id_supply (mk_test_ts decl) in
+  match result with
+  | [
+   { AST.stmt = AST.TypeAlias { alias_name = "Box"; _ }; _ };
+   {
+     AST.stmt =
+       AST.DeriveDef
+         {
+           derive_traits = [ { derive_trait_name = "Forwarder"; derive_trait_constraints = [ { name = "u"; _ } ] } ];
+           derive_for_type = AST.TApp ("Box", [ AST.TVar "t" ]);
+         };
      _;
    };
   ] ->
