@@ -5110,6 +5110,11 @@ module Test = struct
       "trait Named = { name: Str }\nfn pair[a: Named](left: a, right: Named) -> Str = left.name + \":\" + right.name\nlet left = { name: \"alpha\", id: 1 }\nlet right = { name: \"beta\", bananas: 3 }\npair(left, right)"
       TString
 
+  let%test "typed arrow-lambda params accept constrained-param shorthand" =
+    infers_to
+      "trait Named = { name: Str }\nfn apply[a, b](x: a, f: (a) -> b) -> b = f(x)\nlet user = { name: \"mia\", id: 7 }\napply(user, (x: Named) -> x.name)"
+      TString
+
   let%test "generic impl cannot specialize generic return type from body literals" =
     match
       infer_string

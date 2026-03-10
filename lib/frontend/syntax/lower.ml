@@ -806,6 +806,37 @@ let%test "lower SEArrowLambda to canonical Function" =
       true
   | _ -> false
 
+let%test "arrow lambda shorthand param lowers with program trait context" =
+  let id_supply = Id_supply.Id_supply.create 0 in
+  let trait_decl =
+    mk_test_ts
+      (Surface.STraitDef
+         {
+           name = "Named";
+           type_param = None;
+           supertraits = [];
+           fields = [];
+           methods = [];
+         })
+  in
+  let body_expr = Surface.mk_surface_expr ~id:1 ~pos:0 (Surface.SEIdentifier "x") in
+  let lambda_expr =
+    Surface.mk_surface_expr ~id:2 ~pos:0
+      (Surface.SEArrowLambda
+         {
+           se_lambda_params = [ ("x", Some (Surface.STCon "Named")) ];
+           se_lambda_is_effectful = false;
+           se_lambda_body = Surface.SEOBExpr body_expr;
+         })
+  in
+  let program = lower_program id_supply [ trait_decl; mk_test_ts (Surface.SExpressionStmt lambda_expr) ] in
+  match List.rev program with
+  | { AST.stmt = AST.ExpressionStmt { AST.expr = AST.Function fn; _ }; _ } :: _ -> (
+      match (fn.generics, fn.params) with
+      | Some [ { AST.name = "g0"; constraints = [ "Named" ] } ], [ ("x", Some (AST.TVar "g0")) ] -> true
+      | _ -> false)
+  | _ -> false
+
 let%test "lower SEBlockExpr to AST.BlockExpr" =
   let id_supply = Id_supply.Id_supply.create 0 in
   let e = Surface.mk_surface_expr ~id:1 ~pos:0 (Surface.SEInteger 7L) in
