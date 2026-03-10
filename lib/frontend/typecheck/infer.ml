@@ -1807,7 +1807,7 @@ and infer_infix type_map env left op right =
           let left_type' = apply_substitution subst2 left_type in
           match op with
           (* Arithmetic operators: both operands same numeric type, result same type *)
-          | "+" | "-" | "*" | "/" -> (
+          | "+" | "-" | "*" | "/" | "%" -> (
               (* First unify left and right *)
               match unify left_type' right_type with
               | Error e -> Error (error_at ~code:e.code ~message:e.message right)
@@ -4541,6 +4541,8 @@ module Test = struct
 
   let%test "infer arithmetic" =
     infers_to "1 + 2" TInt && infers_to "1 - 2" TInt && infers_to "2 * 3" TInt && infers_to "4 / 2" TInt
+
+  let%test "infer modulo arithmetic" = infers_to "10 % 3" TInt
 
   let%test "infer float arithmetic" = infers_to "1.0 + 2.0" TFloat && infers_to "3.14 * 2.0" TFloat
 
