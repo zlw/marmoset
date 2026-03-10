@@ -1842,6 +1842,15 @@ and infer_infix type_map env left op right =
                   match enforce_trait_requirement_on_type operand_type "eq" with
                   | Ok () -> Ok (subst', TBool)
                   | Error diag -> Error (error_at ~code:diag.code ~message:diag.message right)))
+          | "&&" | "||" -> (
+              match unify left_type' TBool with
+              | Error e -> Error (error_at ~code:e.code ~message:e.message left)
+              | Ok subst3 -> (
+                  let subst' = compose_substitution subst subst3 in
+                  let right_type' = apply_substitution subst3 right_type in
+                  match unify right_type' TBool with
+                  | Error e -> Error (error_at ~code:e.code ~message:e.message right)
+                  | Ok subst4 -> Ok (compose_substitution subst' subst4, TBool)))
           | _ ->
               Error
                 (error_at ~code:"type-invalid-operator"
@@ -4548,6 +4557,8 @@ module Test = struct
 
   let%test "infer comparison" =
     infers_to "1 < 2" TBool && infers_to "1 > 2" TBool && infers_to "1 == 2" TBool && infers_to "1 != 2" TBool
+
+  let%test "infer logical operators" = infers_to "true && false" TBool && infers_to "true || false" TBool
 
   let%test "infer prefix operators" = infers_to "!true" TBool && infers_to "-5" TInt && infers_to "-3.14" TFloat
   let%test "infer if expression" = infers_to "if (true) { 1 } else { 2 }" TInt
