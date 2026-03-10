@@ -12,8 +12,9 @@ let check_exhaustive (scrutinee_type : mono_type) (arms : AST.match_arm list) : 
   let has_catchall =
     List.exists
       (fun (p : AST.pattern) ->
-        match p.pat with
-        | AST.PWildcard | AST.PVariable _ -> true
+        match (p.pat, scrutinee_type) with
+        | AST.PWildcard, _ | AST.PVariable _, _ -> true
+        | AST.PRecord _, TRecord _ -> true
         | _ -> false)
       all_patterns
   in
@@ -111,4 +112,19 @@ module Test = struct
     match check_exhaustive TInt arms with
     | Error _ -> true
     | Ok () -> false
+
+  let%test "record pattern is exhaustive for record types" =
+    let arms =
+      [
+        mk_arm
+          [
+            mk_pat
+              (AST.PRecord
+                 ([ AST.{ pat_field_name = "name"; pat_field_pattern = Some (mk_pat (AST.PVariable "name")) } ], None));
+          ];
+      ]
+    in
+    match check_exhaustive (TRecord ([ { name = "name"; typ = TString } ], None)) arms with
+    | Ok () -> true
+    | Error _ -> false
 end
