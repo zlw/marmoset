@@ -3216,6 +3216,7 @@ and infer_statement type_map env stmt =
               let* ret_type = convert ret in
               let mk_fun arg ret = TFun (arg, ret, is_effectful) in
               Ok (List.fold_right mk_fun param_types ret_type)
+          | AST.TTraitObject traits -> Ok (canonicalize_mono_type (TTraitObject traits))
           | AST.TUnion types ->
               let* converted = map_result convert types in
               Ok (normalize_union converted)
@@ -3277,6 +3278,7 @@ and infer_statement type_map env stmt =
               let* ret_type = convert ret in
               let mk_fun arg ret = TFun (arg, ret, is_effectful) in
               Ok (List.fold_right mk_fun param_types ret_type)
+          | AST.TTraitObject traits -> Ok (canonicalize_mono_type (TTraitObject traits))
           | AST.TUnion types ->
               let* converted = map_result convert types in
               Ok (normalize_union converted)
@@ -3780,6 +3782,7 @@ and infer_statement type_map env stmt =
               acc
             else
               StringSet.add name acc
+        | AST.TTraitObject _ -> acc
         | AST.TApp (_con_name, args) ->
             List.fold_left (fun acc' arg -> collect_target_generic_names ~in_head:false arg acc') acc args
         | AST.TArrow (params, ret, _) ->

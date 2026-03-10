@@ -6,6 +6,7 @@ module AST = struct
     | TVar of string (* 'a', 'b' *)
     | TCon of string (* 'Int', 'Str', 'List', 'Map', 'Option' *)
     | TApp of string * type_expr list (* List[Int], Map[Str, Int], Option[a] *)
+    | TTraitObject of string list (* Dyn[Show], Dyn[Show & Eq] *)
     | TArrow of type_expr list * type_expr * bool (* (Int, Str) -> Bool; bool = is_effectful *)
     | TUnion of type_expr list (* Int | Str | Bool *)
     | TRecord of record_type_field list * type_expr option

@@ -1065,6 +1065,7 @@ let rec collect_inherent_target_generic_names ~(in_head : bool) (te : AST.type_e
         acc
       else
         StringSet.add name acc
+  | AST.TTraitObject _ -> acc
   | AST.TApp (_con_name, args) ->
       List.fold_left (fun acc' arg -> collect_inherent_target_generic_names ~in_head:false arg acc') acc args
   | AST.TArrow (params, ret, _) ->

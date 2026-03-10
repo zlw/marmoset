@@ -313,8 +313,14 @@ and parse_type_atom (p : parser) : (parser * Surface.surface_type_expr, parser) 
   if curr_token_is p Token.Ident then
     let ident = p.curr_token.literal in
     let p2 = next_token p in
+    if ident = "Dyn" && curr_token_is p2 Token.LBracket then
+      let* p3, traits = parse_constraint_list (next_token p2) in
+      if curr_token_is p3 Token.RBracket then
+        Ok (next_token p3, Surface.STTraitObject traits)
+      else
+        Error (peek_error p3 Token.RBracket)
     (* Check for generic application: List[Int], Map[Str, Int], etc. *)
-    if curr_token_is p2 Token.LBracket then
+    else if curr_token_is p2 Token.LBracket then
       let* p3, type_args = parse_type_expr_list (next_token p2) in
       if curr_token_is p3 Token.RBracket then
         Ok (next_token p3, Surface.STApp (ident, type_args))
@@ -3339,6 +3345,43 @@ let%test "parse type alias with function type body" =
           | _ -> false)
       | _ -> false)
   | Error _ -> false
+
+let%test "parse Dyn trait object type alias" =
+  let input = "type Printer = Dyn[Show]" in
+  let lexer = Lexer.init input in
+  match parse_program (init ~file_id:"<test>" lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ stmt ] -> (
+          match stmt.stmt with
+          | AST.TypeAlias alias_def -> (
+              match alias_def.alias_body with
+              | AST.TTraitObject [ "Show" ] -> true
+              | _ -> false)
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
+let%test "parse Dyn multi-trait function parameter annotation" =
+  let input = "fn show(x: Dyn[Show & Eq]) -> Str = x.show()" in
+  let lexer = Lexer.init input in
+  match parse_program (init ~file_id:"<test>" lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ stmt ] -> (
+          match stmt.stmt with
+          | AST.Let { value = { expr = AST.Function fn; _ }; _ } -> (
+              match fn.params with
+              | [ ("x", Some (AST.TTraitObject [ "Show"; "Eq" ])) ] -> true
+              | _ -> false)
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
+let%test "parse Dyn rejects empty trait set" =
+  match parse ~file_id:"<test>" "type Empty = Dyn[]" with
+  | Ok _ -> false
+  | Error _ -> true
 
 let%test "parse function parameter annotation with function type" =
   let input = "fn apply(f: (Int) -> Int, x: Int) -> Int = f(x)" in

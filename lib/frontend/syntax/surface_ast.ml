@@ -13,6 +13,8 @@ module Surface = struct
     | STApp of string * surface_type_expr list
     | STConstraintShorthand of string list
       (* Bare trait names in parameter position, e.g. Named & Aged *)
+    | STTraitObject of string list
+      (* Dyn[Show] or Dyn[Show & Eq] *)
     | STArrow of surface_type_expr list * surface_type_expr * bool
       (* bool = is_effectful; covers both (a) -> b and (a) => b *)
     | STUnion of surface_type_expr list

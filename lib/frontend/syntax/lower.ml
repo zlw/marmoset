@@ -97,6 +97,7 @@ let infer_impl_type_params (ctx : lower_context) (impl_for_type : Surface.surfac
         else
           (StringSet.add name seen, name :: rev_names)
     | Surface.STConstraintShorthand _ -> (seen, rev_names)
+    | Surface.STTraitObject _ -> (seen, rev_names)
     | Surface.STApp (_name, args) ->
         List.fold_left (fun (seen_acc, names_acc) arg -> collect seen_acc names_acc arg) (seen, rev_names) args
     | Surface.STArrow (params, ret, _) ->
@@ -130,6 +131,7 @@ let rec lower_type_expr_with_bound_vars (bound_type_vars : StringSet.t) (st : Su
   | Surface.STCon s -> AST.TCon s
   | Surface.STConstraintShorthand _ ->
       failwith "Lower: constrained-param shorthand escaped parameter lowering"
+  | Surface.STTraitObject traits -> AST.TTraitObject traits
   | Surface.STApp (name, args) -> AST.TApp (name, List.map (lower_type_expr_with_bound_vars bound_type_vars) args)
   | Surface.STArrow (params, ret, effectful) ->
       AST.TArrow
@@ -743,6 +745,17 @@ let%test "alias type params lower lowercase names to TVars in alias bodies" =
    };
   ] ->
       true
+  | _ -> false
+
+let%test "lower trait object type alias" =
+  let id_supply = Id_supply.Id_supply.create 0 in
+  let decl =
+    Surface.STypeDef
+      { alias_name = "Printer"; alias_type_params = []; alias_body = Surface.STTraitObject [ "Show"; "Eq" ]; derive = [] }
+  in
+  let result = lower_top_decl id_supply (mk_test_ts decl) in
+  match result with
+  | [ { AST.stmt = AST.TypeAlias { alias_body = AST.TTraitObject [ "Show"; "Eq" ]; _ }; _ } ] -> true
   | _ -> false
 
 let%test "lower_expr_or_block_to_stmt wraps SEOBExpr in Block[ExpressionStmt]" =

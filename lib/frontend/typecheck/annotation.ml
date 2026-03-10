@@ -170,6 +170,7 @@ let rec type_expr_to_mono_type_with
           Types.tfun arg ret
       in
       Ok (List.fold_right mk_fun param_mono return_mono)
+  | Syntax.Ast.AST.TTraitObject traits -> Ok (Types.canonicalize_mono_type (Types.TTraitObject traits))
   | Syntax.Ast.AST.TUnion type_exprs ->
       let* mono_types = map_result (type_expr_to_mono_type_with type_bindings) type_exprs in
       Ok (Types.normalize_union mono_types)
@@ -393,6 +394,9 @@ let%test "canonical primitive annotation Str" =
 let%test "canonical List annotation" =
   let te = Syntax.Ast.AST.TApp ("List", [ Syntax.Ast.AST.TCon "Int" ]) in
   type_expr_to_mono_type te = Ok (Types.TArray Types.TInt)
+
+let%test "Dyn trait object annotation converts to TTraitObject" =
+  type_expr_to_mono_type (Syntax.Ast.AST.TTraitObject [ "Show"; "Eq" ]) = Ok (Types.TTraitObject [ "Eq"; "Show" ])
 
 let%test "canonical Map annotation" =
   let te = Syntax.Ast.AST.TApp ("Map", [ Syntax.Ast.AST.TCon "Str"; Syntax.Ast.AST.TCon "Int" ]) in

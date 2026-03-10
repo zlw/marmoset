@@ -30,7 +30,7 @@ let collect_free_type_vars_in_order (type_expr : AST.type_expr) : string list =
         else (
           Hashtbl.replace seen name ();
           acc @ [ name ])
-    | AST.TCon _ -> acc
+    | AST.TCon _ | AST.TTraitObject _ -> acc
     | AST.TApp (_, args) | AST.TUnion args -> List.fold_left go acc args
     | AST.TArrow (params, ret, _) -> go (List.fold_left go acc params) ret
     | AST.TRecord (fields, row_var) ->
@@ -59,6 +59,7 @@ let type_expr_key_with_binders (binder_names : string list) (type_expr : AST.typ
             Hashtbl.replace bound_names name canonical_name;
             "Var(" ^ canonical_name ^ ")")
     | AST.TCon name -> "Con(" ^ name ^ ")"
+    | AST.TTraitObject traits -> "Dyn(" ^ String.concat "&" (List.sort_uniq String.compare traits) ^ ")"
     | AST.TApp (name, args) ->
         "App(" ^ name ^ "[" ^ String.concat "," (List.map go args) ^ "])"
     | AST.TArrow (params, ret, is_effectful) ->
@@ -91,6 +92,7 @@ let render_type_expr (type_expr : AST.type_expr) : string =
   and render = function
     | AST.TVar name -> name
     | AST.TCon name -> name
+    | AST.TTraitObject traits -> "Dyn[" ^ String.concat " & " traits ^ "]"
     | AST.TApp (name, args) -> name ^ "[" ^ String.concat ", " (List.map render args) ^ "]"
     | AST.TArrow (params, ret, is_effectful) ->
         let arrow = if is_effectful then " => " else " -> " in
@@ -218,6 +220,7 @@ let substitute_type_expr ~(trait_subst_name : string option) ~(target_type : AST
         | Some subst_name when name = subst_name && not (StringSet.mem name bound) -> target_type
         | _ -> AST.TVar name)
     | AST.TCon _ as type_expr -> type_expr
+    | AST.TTraitObject _ as type_expr -> type_expr
     | AST.TApp (name, args) -> AST.TApp (name, List.map (go bound) args)
     | AST.TArrow (params, ret, is_effectful) -> AST.TArrow (List.map (go bound) params, go bound ret, is_effectful)
     | AST.TUnion members -> AST.TUnion (List.map (go bound) members)
