@@ -1,11 +1,11 @@
-# T52: Custom neg impl drives unary - operator on non-primitive types
-enum boxed {
-  val(int)
+# T52: Custom Neg impl drives unary - operator on non-primitive types
+enum Boxed = {
+  Val(Int),
 }
-impl neg for boxed {
-  fn neg(x: boxed) -> boxed { x }
+impl Neg[Boxed] = {
+  fn neg(x: Boxed) -> Boxed = x
 }
-let a = boxed.val(5)
+let a = Boxed.Val(5)
 match (-a) {  # output: 5
-  boxed.val(n): puts(n)
+  case Boxed.Val(n): puts(n)
 }

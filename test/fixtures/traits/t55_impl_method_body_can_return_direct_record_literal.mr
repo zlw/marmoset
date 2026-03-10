@@ -1,10 +1,10 @@
 # T55: Impl method body can return direct record literal
-type box = { value: int }
-trait wrap[a] {
-  fn wrap(x: a) -> box
+type Box = { value: Int }
+trait Wrap[a] = {
+  fn wrap(x: a) -> Box
 }
-impl wrap for int {
-  fn wrap(x: int) -> box { { value: x } }
+impl Wrap[Int] = {
+  fn wrap(x: Int) -> Box = { value: x }
 }
 let b = 5.wrap()
 puts(b.value)  # output: 5
