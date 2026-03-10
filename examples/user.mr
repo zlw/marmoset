@@ -1,10 +1,8 @@
-trait named {
-  name: string
+trait Named = {
+  name: Str
 }
 
-let get_name = fn[t: named](value: t) -> string {
-  value.name
-}
+fn get_name[t: Named](value: t) -> Str = value.name
 
 let user = { name: "alice", age: 42 }
 puts(get_name(user))

@@ -1,8 +1,8 @@
-let describe = fn(value: int | string | bool) -> string {
-  if (value is int) {
+fn describe(value: Int | Str | Bool) -> Str = {
+  if (value is Int) {
     "int"
   } else {
-    if (value is string) {
+    if (value is Str) {
       "string"
     } else {
       "bool"

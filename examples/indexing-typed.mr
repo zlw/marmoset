@@ -1,5 +1,5 @@
-let text: string = "hello"
-let chars: list[string] = ["h", "e", "l", "l", "o"]
+let text: Str = "hello"
+let chars: List[Str] = ["h", "e", "l", "l", "o"]
 
 puts(text[-1] == chars[-1])
 puts(text[1] == chars[1])
