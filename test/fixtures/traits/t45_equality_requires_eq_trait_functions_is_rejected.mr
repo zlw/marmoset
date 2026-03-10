@@ -1,7 +1,5 @@
-# T45: Equality requires eq trait (functions should fail)
-let same = fn[a](x: a, y: a) -> bool {
-  x == y
-};
-let id1 = fn(n: int) -> int { n };
-let id2 = fn(n: int) -> int { n + 1 };
+# T45: Equality requires Eq trait (functions should fail)
+fn same[a](x: a, y: a) -> Bool = x == y
+fn id1(n: Int) -> Int = n
+fn id2(n: Int) -> Int = n + 1
 same(id1, id2)  # error: missing-impl

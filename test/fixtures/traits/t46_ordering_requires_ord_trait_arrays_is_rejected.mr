@@ -1,5 +1,3 @@
-# T46: Ordering requires ord trait (arrays should fail)
-let less = fn[a](x: a, y: a) -> bool {
-  x < y
-};
+# T46: Ordering requires Ord trait (arrays should fail)
+fn less[a](x: a, y: a) -> Bool = x < y
 less([1], [2])  # error: missing-impl
