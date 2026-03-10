@@ -1,4 +1,4 @@
-# xfail: bare trait-as-type semantics are deferred to syntax-rework-followup Dyn syntax
+# xfail: legacy bare trait-as-type syntax was removed by syntax-rework; method trait objects move to follow-up Dyn syntax
 # T107: Type alias to field-only trait hides non-trait fields
 trait Named = {
   name: Str

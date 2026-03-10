@@ -1,4 +1,4 @@
-# xfail: bare trait-as-type semantics are deferred to syntax-rework-followup Dyn syntax
+# xfail: legacy bare trait-as-type syntax was removed by syntax-rework; method trait objects move to follow-up Dyn syntax
 # T78: Return type projection hides non-trait fields at typecheck
 trait Named = {
   name: Str

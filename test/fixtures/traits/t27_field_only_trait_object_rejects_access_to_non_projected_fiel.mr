@@ -1,4 +1,4 @@
-# xfail: bare trait-as-type semantics are deferred to syntax-rework-followup Dyn syntax
+# xfail: legacy bare trait-as-type syntax was removed by syntax-rework; method trait objects move to follow-up Dyn syntax
 # T27: Field-only trait object rejects access to non-projected field
 trait Named = {
   name: Str

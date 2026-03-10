@@ -1,4 +1,4 @@
-# xfail: bare trait-as-type semantics are deferred to syntax-rework-followup Dyn syntax
+# xfail: legacy bare trait-as-type syntax was removed by syntax-rework; method trait objects move to follow-up Dyn syntax
 # T25: Field-only trait conflicting supertrait fields are rejected
 trait HasInt = {  # error: conflicting types across supertraits
   x: Int
