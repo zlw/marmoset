@@ -1,12 +1,10 @@
 # TF09: Supertrait field access: access parent trait field through child constraint
-trait has_name {
-  name: string
+trait HasName = {
+  name: Str
 }
-trait person: has_name {
-  age: int
+trait Person: HasName = {
+  age: Int
 }
-let get_name = fn[t: person](v: t) -> string {
-  v.name
-};
+fn get_name[t: Person](v: t) -> Str = v.name
 let p = { name: "hello", age: 30 }
 puts(get_name(p))  # output: hello

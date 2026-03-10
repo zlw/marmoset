@@ -1,9 +1,7 @@
 # TF06: Constrained generic: record with extra fields satisfies constraint
-trait has_name {
-  name: string
+trait HasName = {
+  name: Str
 }
-let get_name = fn[t: has_name](v: t) -> string {
-  v.name
-};
+fn get_name[t: HasName](v: t) -> Str = v.name
 let r = { name: "hi", age: 42, active: true, score: 100 }
 puts(get_name(r))  # output: hi
