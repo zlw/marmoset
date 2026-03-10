@@ -1,0 +1,9 @@
+# VN83: Top-level fn combines shorthand params, omitted suffix, and block bodies
+trait Named = { name: Str }
+
+fn greet(x: Named) = {
+  let prefix = "hi "
+  prefix + x.name
+}
+
+puts(greet({ name: "Ada" }))  # output: hi Ada
