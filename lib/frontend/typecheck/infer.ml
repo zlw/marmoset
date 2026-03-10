@@ -2654,7 +2654,7 @@ and infer_call type_map env (call_expr : AST.expression) func args =
       (* Create expected function type: arg1 -> arg2 -> ... -> result.
          For unknown/union callees, first try an effect-polymorphic callable
          (pure | effectful) so higher-order callbacks remain flexible.
-         Fall back to legacy pure-then-effectful probing. *)
+         Fall back to a directional pure-then-effectful probe. *)
       let fresh_result_type () = fresh_type_var () in
       let expected_func_type_for is_effectful result_type =
         List.fold_right (fun arg_t acc -> TFun (arg_t, acc, is_effectful)) expected_param_types result_type
@@ -2668,7 +2668,7 @@ and infer_call type_map env (call_expr : AST.expression) func args =
         | Ok subst2 -> Ok (subst2, result_type)
         | Error e -> Error e
       in
-      let try_legacy_pure_then_effectful () =
+      let try_directional_purity_probe () =
         let result_type_pure = fresh_result_type () in
         let expected_pure = expected_func_type_for false result_type_pure in
         match unify func_type' expected_pure with
@@ -2685,7 +2685,7 @@ and infer_call type_map env (call_expr : AST.expression) func args =
         | TVar _ -> (
             match try_effect_polymorphic_callable () with
             | Ok _ as ok -> ok
-            | Error _ -> try_legacy_pure_then_effectful ())
+            | Error _ -> try_directional_purity_probe ())
         | TUnion members -> (
             let result_type = fresh_result_type () in
             let expected_pure = expected_func_type_for false result_type in
@@ -2694,7 +2694,7 @@ and infer_call type_map env (call_expr : AST.expression) func args =
             match Unify.unify_union_all_with_concrete members expected_union with
             | Ok subst2 -> Ok (subst2, result_type)
             | Error e -> Error e)
-        | _ -> try_legacy_pure_then_effectful ()
+        | _ -> try_directional_purity_probe ()
       in
       match call_result with
       | Error e -> Error (error_at ~code:e.code ~message:e.message call_expr)

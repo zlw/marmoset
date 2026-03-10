@@ -2,22 +2,19 @@ open Ast
 open Surface_ast
 module StringSet = Set.Make (String)
 
-(* Lower — converts Surface_ast to Core_ast (Ast.AST).
-   In Phase 0.5 this is a near-identity transform: every legacy Surface.*
-   variant maps directly to its AST.* counterpart.  vNext-only Surface
-   variants (SEArrowLambda, SEPlaceholder, SEBlockExpr, SFnDecl, etc.)
-   raise an internal error if reached, because they are not yet parsed. *)
+(* Lower — converts Surface_ast to the canonical Ast.AST tree consumed
+   downstream. Surface-only forms such as arrow lambdas, placeholders,
+   block expressions, and vNext declarations must disappear here. *)
 
 let failwith_unimplemented variant =
-  failwith (Printf.sprintf "Lower: vNext-only surface form '%s' is not yet parsed in Phase 0.5" variant)
+  failwith (Printf.sprintf "Lower: unexpected surface-only form '%s' after parsing" variant)
 
 type lower_context = {
   trait_names : StringSet.t;
   type_names : StringSet.t;
 }
 
-let builtin_trait_names =
-  [ "Eq"; "Show"; "Debug"; "Ord"; "Hash"; "Num"; "Neg"; "eq"; "show"; "debug"; "ord"; "hash"; "num"; "neg" ]
+let builtin_trait_names = [ "Eq"; "Show"; "Debug"; "Ord"; "Hash"; "Num"; "Neg" ]
 
 let builtin_type_names =
   [
@@ -33,18 +30,6 @@ let builtin_type_names =
     "Option";
     "Result";
     "Ordering";
-    "int";
-    "float";
-    "bool";
-    "string";
-    "str";
-    "unit";
-    "null";
-    "list";
-    "map";
-    "option";
-    "result";
-    "ordering";
   ]
 
 let empty_lower_context =
@@ -304,8 +289,7 @@ and lower_match_arm (id_supply : Id_supply.Id_supply.t) (arm : Surface.surface_m
 (* lower_expr_or_block_to_expr:
    Used for match-arm bodies and trait default method bodies.
    - SEOBExpr e  -> lower_expr e
-   - SEOBBlock b -> fresh AST.BlockExpr (not yet in AST; use ExpressionStmt trick for now)
-     In Phase 0.5 all match arm bodies are expressions; block arm bodies are Phase 1 / 1f. *)
+   - SEOBBlock b -> fresh AST.BlockExpr *)
 and lower_expr_or_block_to_expr (id_supply : Id_supply.Id_supply.t) (eob : Surface.surface_expr_or_block) :
     AST.expression =
   match eob with
@@ -643,7 +627,7 @@ let%test "lower STypeDef" =
       true
   | _ -> false
 
-let%test "Phase2: alias type params lower lowercase names to TVars in alias bodies" =
+let%test "alias type params lower lowercase names to TVars in alias bodies" =
   let id_supply = Id_supply.Id_supply.create 0 in
   let decl =
     Surface.STypeDef
@@ -697,7 +681,7 @@ let%test "lower_expr_or_block_to_stmt preserves SEOBBlock" =
   | AST.Block [ { AST.stmt = AST.ExpressionStmt { AST.expr = AST.Integer 7L; _ }; _ } ] -> true
   | _ -> false
 
-let%test "lower match arm body (legacy expression arm)" =
+let%test "lower match arm body (expression arm)" =
   let id_supply = Id_supply.Id_supply.create 0 in
   let e = Surface.mk_surface_expr ~id:1 ~pos:0 (Surface.SEString "yes") in
   let arm =
@@ -712,9 +696,9 @@ let%test "lower match arm body (legacy expression arm)" =
   | AST.String "yes" -> true
   | _ -> false
 
-(* ── Phase 2 tests ── *)
+(* ── Surface lowering tests ── *)
 
-let%test "Phase2: lower SEArrowLambda to canonical Function" =
+let%test "lower SEArrowLambda to canonical Function" =
   let id_supply = Id_supply.Id_supply.create 0 in
   let body_expr = Surface.mk_surface_expr ~id:1 ~pos:5 (Surface.SEInteger 42L) in
   let lambda =
@@ -731,7 +715,7 @@ let%test "Phase2: lower SEArrowLambda to canonical Function" =
       true
   | _ -> false
 
-let%test "Phase2: lower SEBlockExpr to AST.BlockExpr" =
+let%test "lower SEBlockExpr to AST.BlockExpr" =
   let id_supply = Id_supply.Id_supply.create 0 in
   let e = Surface.mk_surface_expr ~id:1 ~pos:0 (Surface.SEInteger 7L) in
   let block =
@@ -748,7 +732,7 @@ let%test "Phase2: lower SEBlockExpr to AST.BlockExpr" =
   | AST.BlockExpr [ { stmt = AST.ExpressionStmt { expr = AST.Integer 7L; _ }; _ } ] -> true
   | _ -> false
 
-let%test "Phase2: lower SEOBBlock in match arm -> AST.BlockExpr" =
+let%test "lower SEOBBlock in match arm -> AST.BlockExpr" =
   let id_supply = Id_supply.Id_supply.create 0 in
   let e = Surface.mk_surface_expr ~id:1 ~pos:0 (Surface.SEString "block") in
   let block =
@@ -772,7 +756,7 @@ let%test "Phase2: lower SEOBBlock in match arm -> AST.BlockExpr" =
   | AST.BlockExpr [ { stmt = AST.ExpressionStmt { expr = AST.String "block"; _ }; _ } ] -> true
   | _ -> false
 
-let%test "Phase2: SEnumDef with postfix derive generates DeriveDef" =
+let%test "SEnumDef with postfix derive generates DeriveDef" =
   let id_supply = Id_supply.Id_supply.create 0 in
   let decl = Surface.SEnumDef { name = "Color"; type_params = []; variants = []; derive = [ "Eq"; "Show" ] } in
   let result = lower_top_decl id_supply (mk_test_ts decl) in
@@ -792,7 +776,7 @@ let%test "Phase2: SEnumDef with postfix derive generates DeriveDef" =
       true
   | _ -> false
 
-let%test "Phase2: STypeDef with postfix derive generates DeriveDef" =
+let%test "STypeDef with postfix derive generates DeriveDef" =
   let id_supply = Id_supply.Id_supply.create 0 in
   let decl =
     Surface.STypeDef
@@ -811,7 +795,7 @@ let%test "Phase2: STypeDef with postfix derive generates DeriveDef" =
       true
   | _ -> false
 
-let%test "Phase2: lower_method_impl carries override flag" =
+let%test "lower_method_impl carries override flag" =
   let id_supply = Id_supply.Id_supply.create 0 in
   let body_expr = Surface.mk_surface_expr ~id:1 ~pos:0 (Surface.SEInteger 1L) in
   let smi =
@@ -830,7 +814,7 @@ let%test "Phase2: lower_method_impl carries override flag" =
   let result = lower_method_impl id_supply smi in
   result.AST.impl_method_override = true
 
-let%test "Phase2: SFnDecl with expr body -> Block[ExpressionStmt]" =
+let%test "SFnDecl with expr body -> Block[ExpressionStmt]" =
   let id_supply = Id_supply.Id_supply.create 0 in
   let body_expr = Surface.mk_surface_expr ~id:1 ~pos:5 (Surface.SEInteger 99L) in
   let decl =
@@ -871,7 +855,7 @@ let%test "Phase2: SFnDecl with expr body -> Block[ExpressionStmt]" =
       true
   | _ -> false
 
-let%test "Phase2: bare trait param shorthand lowers to fresh constrained generic" =
+let%test "bare trait param shorthand lowers to fresh constrained generic" =
   let id_supply = Id_supply.Id_supply.create 0 in
   let body_expr = Surface.mk_surface_expr ~id:1 ~pos:5 (Surface.SEIdentifier "x") in
   let decl =
@@ -922,7 +906,7 @@ let%test "Phase2: bare trait param shorthand lowers to fresh constrained generic
       true
   | _ -> false
 
-let%test "Phase2: multiple shorthand params lower to independent generics" =
+let%test "multiple shorthand params lower to independent generics" =
   let id_supply = Id_supply.Id_supply.create 0 in
   let body_expr = Surface.mk_surface_expr ~id:1 ~pos:5 (Surface.SEBoolean true) in
   let decl =
@@ -967,7 +951,7 @@ let%test "Phase2: multiple shorthand params lower to independent generics" =
       true
   | _ -> false
 
-let%test "Phase2: explicit impl binders lower lowercase names in impl target and method signature" =
+let%test "explicit impl binders lower lowercase names in impl target and method signature" =
   let id_supply = Id_supply.Id_supply.create 0 in
   let method_body = Surface.mk_surface_expr ~id:1 ~pos:0 (Surface.SEString "") in
   let decl =
@@ -1016,7 +1000,7 @@ let%test "Phase2: explicit impl binders lower lowercase names in impl target and
       true
   | _ -> false
 
-let%test "Phase2: omitted impl binders are inferred from free vars in impl target" =
+let%test "omitted impl binders are inferred from free vars in impl target" =
   let id_supply = Id_supply.Id_supply.create 0 in
   let method_body = Surface.mk_surface_expr ~id:1 ~pos:0 (Surface.SEString "") in
   let decl =
@@ -1065,7 +1049,7 @@ let%test "Phase2: omitted impl binders are inferred from free vars in impl targe
       true
   | _ -> false
 
-let%test "Phase2: ambiguous vNext impl head lowers to inherent impl when head names a type" =
+let%test "ambiguous vNext impl head lowers to inherent impl when head names a type" =
   let id_supply = Id_supply.Id_supply.create 0 in
   let ctx = { empty_lower_context with type_names = StringSet.add "Result" empty_lower_context.type_names } in
   let decl =
@@ -1089,7 +1073,7 @@ let%test "Phase2: ambiguous vNext impl head lowers to inherent impl when head na
       true
   | _ -> false
 
-let%test "Phase2: ambiguous vNext impl head lowers to trait impl when head names a trait" =
+let%test "ambiguous vNext impl head lowers to trait impl when head names a trait" =
   let id_supply = Id_supply.Id_supply.create 0 in
   let ctx = { empty_lower_context with trait_names = StringSet.add "Show" empty_lower_context.trait_names } in
   let decl =

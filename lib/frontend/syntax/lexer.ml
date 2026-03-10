@@ -152,9 +152,9 @@ let%test "test_lexer" =
     let five = 5;
     let ten = 10;
 
-    let add = fn(x, y) {
+    fn add(x, y) = {
         x + y;
-    };
+    }
 
     # this is a comment
 
@@ -191,22 +191,20 @@ let%test "test_lexer" =
       Token.init Assign "=";
       Token.init Int "10";
       Token.init Semicolon ";";
-      Token.init Let "let";
-      Token.init Ident "add";
-      Token.init Assign "=";
       Token.init Function "fn";
+      Token.init Ident "add";
       Token.init LParen "(";
       Token.init Ident "x";
       Token.init Comma ",";
       Token.init Ident "y";
       Token.init RParen ")";
+      Token.init Assign "=";
       Token.init LBrace "{";
       Token.init Ident "x";
       Token.init Plus "+";
       Token.init Ident "y";
       Token.init Semicolon ";";
       Token.init RBrace "}";
-      Token.init Semicolon ";";
       Token.init Let "let";
       Token.init Ident "result";
       Token.init Assign "=";
@@ -291,12 +289,12 @@ let%test "identifiers with digits" =
   && (List.nth idents 2).literal = "foo5"
 
 let%test "arrow token" =
-  let input = "fn(x: int) -> int" in
+  let input = "(x: Int) -> Int" in
   let tokens = lex input in
   List.exists (fun t -> t.Token.token_type = Token.Arrow) tokens
 
 let%test "fat arrow token" =
-  let input = "fn(...) => result" in
+  let input = "() => value" in
   let tokens = lex input in
   List.exists (fun t -> t.Token.token_type = Token.FatArrow) tokens
 
@@ -311,27 +309,27 @@ let%test "greater-equal token" =
   List.exists (fun t -> t.Token.token_type = Token.Ge && t.Token.literal = ">=") tokens
 
 let%test "pipe token for union types" =
-  let input = "fn(x: int | string) -> bool" in
+  let input = "(x: Int | Str) -> Bool" in
   let tokens = lex input in
   List.exists (fun t -> t.Token.token_type = Token.Pipe) tokens
 
 let%test "trait keyword" =
-  let input = "trait show { fn show(x: a) -> string }" in
+  let input = "trait Show[a] = { fn show(x: a) -> Str }" in
   let tokens = lex input in
   List.exists (fun t -> t.Token.token_type = Token.Trait && t.Token.literal = "trait") tokens
 
 let%test "impl keyword" =
-  let input = "impl show for color { }" in
+  let input = "impl Show[Int] = { }" in
   let tokens = lex input in
   List.exists (fun t -> t.Token.token_type = Token.Impl && t.Token.literal = "impl") tokens
 
 let%test "derive keyword" =
-  let input = "derive eq, show for color" in
+  let input = "enum Color = { Red } derive Eq, Show" in
   let tokens = lex input in
   List.exists (fun t -> t.Token.token_type = Token.Derive && t.Token.literal = "derive") tokens
 
 let%test "all trait keywords together" =
-  let input = "trait eq[a] { fn eq(x: a, y: a) -> bool } impl eq for int { } derive show for color" in
+  let input = "trait Eq[a] = { fn eq(x: a, y: a) -> Bool } impl Eq[Int] = { } enum Color = { Red } derive Show" in
   let tokens = lex input in
   let has_trait = List.exists (fun t -> t.Token.token_type = Token.Trait) tokens in
   let has_impl = List.exists (fun t -> t.Token.token_type = Token.Impl) tokens in
@@ -345,7 +343,7 @@ let%test "spread token - three dots" =
   List.exists (fun t -> t.Token.token_type = Token.Spread && t.Token.literal = "...") tokens
 
 let%test "type keyword" =
-  let input = "type point = { x: int, y: int }" in
+  let input = "type Point = { x: Int, y: Int }" in
   let tokens = lex input in
   List.exists (fun t -> t.Token.token_type = Token.Type && t.Token.literal = "type") tokens
 
