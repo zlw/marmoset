@@ -1747,8 +1747,7 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
             | `TraitName -> infer_qualified_trait_call name
             | `Unknown -> infer_real_method_call ())
         | _ -> infer_real_method_call ())
-    | AST.BlockExpr stmts ->
-        infer_block type_map env stmts
+    | AST.BlockExpr stmts -> infer_block type_map env stmts
   in
   (* Record the type in the type map before returning *)
   match result with
@@ -3147,15 +3146,53 @@ and infer_statement type_map env stmt =
                       }
                     in
 
-                    (* Validate and register impl *)
-                    match Trait_registry.validate_impl impl_def with
-                    | Error msg -> Error (error ~code:"type-constructor" ~message:msg)
-                    | Ok () ->
-                        let impl_source : Trait_registry.impl_source =
-                          { file_id = stmt.file_id; start_pos = stmt.pos; end_pos = stmt.end_pos }
-                        in
-                        Trait_registry.register_impl ~source:impl_source impl_def;
-                        Ok (method_subst, TNull))))
+                    (* Validate override annotations against trait defaults *)
+                    let override_check =
+                      match Trait_registry.lookup_trait impl_trait_name with
+                      | None -> Ok ()
+                      | Some trait_def ->
+                          let has_default method_name =
+                            List.exists
+                              (fun (m : Trait_registry.method_sig) ->
+                                m.method_name = method_name && m.method_default_impl <> None)
+                              trait_def.trait_methods
+                          in
+                          let rec check = function
+                            | [] -> Ok ()
+                            | (m : AST.method_impl) :: rest ->
+                                let is_override = m.impl_method_override in
+                                let replaces_default = has_default m.impl_method_name in
+                                if replaces_default && not is_override then
+                                  Error
+                                    (error ~code:"override-required"
+                                       ~message:
+                                         (Printf.sprintf
+                                            "Method '%s' in impl '%s' replaces a trait default; add 'override' keyword"
+                                            m.impl_method_name impl_trait_name))
+                                else if is_override && not replaces_default then
+                                  Error
+                                    (error ~code:"override-invalid"
+                                       ~message:
+                                         (Printf.sprintf
+                                            "Method '%s' in impl '%s' is marked 'override' but trait has no default for it"
+                                            m.impl_method_name impl_trait_name))
+                                else
+                                  check rest
+                          in
+                          check impl_methods
+                    in
+                    match override_check with
+                    | Error e -> Error e
+                    | Ok () -> (
+                        (* Validate and register impl *)
+                        match Trait_registry.validate_impl impl_def with
+                        | Error msg -> Error (error ~code:"type-constructor" ~message:msg)
+                        | Ok () ->
+                            let impl_source : Trait_registry.impl_source =
+                              { file_id = stmt.file_id; start_pos = stmt.pos; end_pos = stmt.end_pos }
+                            in
+                            Trait_registry.register_impl ~source:impl_source impl_def;
+                            Ok (method_subst, TNull)))))
   | AST.InherentImplDef { inherent_for_type; inherent_methods } -> (
       let is_known_type_name (name : string) : bool =
         match name with
@@ -4177,8 +4214,7 @@ module Test = struct
     | AST.MethodCall { mc_receiver; mc_args; _ } ->
         identifier_occurrences_in_expr name mc_receiver
         @ List.concat_map (identifier_occurrences_in_expr name) mc_args
-    | AST.BlockExpr stmts ->
-        List.concat_map (identifier_occurrences_in_stmt name) stmts
+    | AST.BlockExpr stmts -> List.concat_map (identifier_occurrences_in_stmt name) stmts
 
   and identifier_occurrences_in_stmt (name : string) (stmt : AST.statement) : (int * int) list =
     match stmt.stmt with

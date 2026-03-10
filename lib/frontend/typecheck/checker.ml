@@ -194,10 +194,16 @@ let check_program_with_annotations ?state ?(env = Infer.empty_env) (program : Sy
             (* For generic functions, skip the return annotation check: type_callable already
                validated it during inference with proper type variable bindings.
                The second-pass check here can't reproduce the fresh-var mapping. *)
-            let has_generics = match generics with Some (_ :: _) -> true | _ -> false in
+            let has_generics =
+              match generics with
+              | Some (_ :: _) -> true
+              | _ -> false
+            in
             let annot_check =
-              if has_generics then Ok ()
-              else check_function_annotation return_type inferred
+              if has_generics then
+                Ok ()
+              else
+                check_function_annotation return_type inferred
             in
             match annot_check with
             | Error e -> Error e
@@ -776,10 +782,7 @@ let%test "Phase3: trait default method - impl without method succeeds if default
   Infer.reset_fresh_counter ();
   Trait_registry.clear ();
   (* Register a trait with a default impl (simulating what the parser+lowerer would produce) *)
-  let default_body =
-    Syntax.Ast.AST.mk_expr
-      (Syntax.Ast.AST.String "default")
-  in
+  let default_body = Syntax.Ast.AST.mk_expr (Syntax.Ast.AST.String "default") in
   Trait_registry.register_trait
     {
       Trait_registry.trait_name = "greetable";
@@ -801,12 +804,7 @@ let%test "Phase3: trait default method - impl without method succeeds if default
     };
   (* Register an impl that does NOT provide the method (uses default) *)
   Trait_registry.register_impl ~builtin:true
-    {
-      impl_trait_name = "greetable";
-      impl_type_params = [];
-      impl_for_type = Types.TInt;
-      impl_methods = [];
-    };
+    { impl_trait_name = "greetable"; impl_type_params = []; impl_for_type = Types.TInt; impl_methods = [] };
   (* Should be able to call greet on int *)
   match check_string ~file_id:"<test>" "1.greet()" with
   | Ok result -> result.result_type = Types.TString
