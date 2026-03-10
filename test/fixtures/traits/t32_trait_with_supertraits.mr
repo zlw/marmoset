@@ -1,8 +1,8 @@
 # T32: Trait with supertraits
-trait eq[a] {
-       fn eq(x: a, y: a) -> bool
-     }
-     trait ord[a]: eq {
-       fn compare(x: a, y: a) -> int
-     }
-     42
+trait Eq[a] = {
+  fn eq(x: a, y: a) -> Bool
+}
+trait Ord[a]: Eq = {
+  fn compare(x: a, y: a) -> Int
+}
+42

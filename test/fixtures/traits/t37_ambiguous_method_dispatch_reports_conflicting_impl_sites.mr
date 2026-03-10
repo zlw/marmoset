@@ -1,15 +1,15 @@
 # T37: Ambiguous method dispatch reports conflicting impl sites
-trait render_a[a] {
-  fn render(x: a) -> string
+trait RenderA[a] = {
+  fn render(x: a) -> Str
 }
-trait render_b[a] {
-  fn render(x: a) -> string
+trait RenderB[a] = {
+  fn render(x: a) -> Str
 }
-impl render_a for int {
-  fn render(x: int) -> string { "a" }
+impl RenderA[Int] = {
+  fn render(x: Int) -> Str = "a"
 }
-impl render_b for int {
-  fn render(x: int) -> string { "b" }
+impl RenderB[Int] = {
+  fn render(x: Int) -> Str = "b"
 }
 let x = 1
 puts(x.render())  # error: impl sites:
