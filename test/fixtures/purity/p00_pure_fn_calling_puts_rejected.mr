@@ -1,5 +1,5 @@
 # P0: Pure function (->) calling puts directly should be rejected
-let greet = fn(x: int) -> int {  # error: effectful
+fn greet(x: Int) -> Int = {  # error: effectful
   puts(x)
   x
 }

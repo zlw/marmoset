@@ -1,5 +1,8 @@
-# P24: BUG - let-binding pure annotation silently accepts effectful fn
+# P24: BUG - let-bound pure function type annotation still accepts an effectful lambda
 # EXPECTED (ideal): Should reject
-# ACTUAL: Builds successfully (effect bit not compared in annotation path)
-let f: fn(int) -> int = fn(x: int) => int { puts(x); x }
+# ACTUAL: Builds successfully under vNext syntax too
+let f: (Int) -> Int = (x: Int) => {
+  puts(x)
+  x
+}
 f(1)

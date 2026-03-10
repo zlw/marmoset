@@ -1,6 +1,6 @@
 # P10: Unannotated outer returns effectful inner compiles
-let make_printer = fn(x: int) {
-  fn(y: int) => int {
+fn make_printer(x: Int) = {
+  (y: Int) => {
     puts(y)
     y
   }

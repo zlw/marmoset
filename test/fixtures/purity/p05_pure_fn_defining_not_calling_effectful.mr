@@ -1,6 +1,6 @@
 # P5: Pure fn defining (not calling) effectful inner fn is OK
-let outer = fn(x: int) -> int {
-  let inner = fn(y: int) => int {
+fn outer(x: Int) -> Int = {
+  let inner = (y: Int) => {
     puts(y)
     y
   }

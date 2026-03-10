@@ -1,6 +1,6 @@
 # P6: Pure fn defining AND calling effectful inner fn is rejected
-let outer = fn(x: int) -> int {  # error: effectful
-  let inner = fn(y: int) => int {
+fn outer(x: Int) -> Int = {  # error: effectful
+  let inner = (y: Int) => {
     puts(y)
     y
   }
