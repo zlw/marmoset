@@ -1,18 +1,14 @@
 # T15: Mixed field+method constraints succeed with satisfying impl
-type person = { name: string, age: int }
-trait named {
-  name: string
+type Person = { name: Str, age: Int }
+trait Named = {
+  name: Str
 }
-trait shown[a] {
-  fn show(x: a) -> string
+trait Shown[a] = {
+  fn show(x: a) -> Str
 }
-impl shown for person {
-  fn show(x: person) -> string {
-    x.name
-  }
+impl Shown[Person] = {
+  fn show(x: Person) -> Str = x.name
 }
-let get_name = fn[t: named + shown](x: t) -> string {
-  x.name
-};
-let p: person = { name: "alice", age: 42 }
+fn get_name[t: Named & Shown](x: t) -> Str = x.name
+let p: Person = { name: "alice", age: 42 }
 puts(get_name(p))  # output: alice

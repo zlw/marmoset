@@ -1,8 +1,8 @@
 # T18: Field-only trait object arrays can be built from annotated values
-trait named {
-  name: string
+trait Named = {
+  name: Str
 }
-let person: named = { name: "alice", age: 42 }
-let company: named = { name: "acme", employees: 10 }
-let xs: list[named] = [person, company]
+let person: Named = { name: "alice", age: 42 }
+let company: Named = { name: "acme", employees: 10 }
+let xs: List[Named] = [person, company]
 puts(xs[1].name)  # output: acme

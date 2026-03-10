@@ -1,8 +1,6 @@
 # T12: Field-only trait constraint rejects missing required field
-trait named {
-  name: string
+trait Named = {
+  name: Str
 }
-let get_name = fn[t: named](x: t) -> string {
-  "ok"
-};
+fn get_name[t: Named](x: t) -> Str = "ok"
 get_name({ age: 42 })  # error: missing-field
