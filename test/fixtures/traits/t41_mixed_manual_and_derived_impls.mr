@@ -1,11 +1,6 @@
 # T41: Mixed manual and derived impls
-trait show[a] {
-       fn show(x: a) -> string
-     }
-     impl show for int {
-       fn show(x: int) -> string {
-         "manual"
-       }
-     }
-     derive show for bool;
-     42
+impl Show[Int] = {
+  fn show(x: Int) -> Str = "manual"
+}
+type Flag = { value: Bool } derive Show
+42

@@ -1,8 +1,5 @@
-# T40: Derive for multiple types
-trait show[a] {
-       fn show(x: a) -> string
-     }
-     derive show for int;
-     derive show for bool;
-     derive show for string;
-     42
+# T40: Derive for multiple types smoke
+type First = { value: Int } derive Show
+type Second = { value: Bool } derive Show
+type Third = { value: Str } derive Show
+42
