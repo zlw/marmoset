@@ -1,7 +1,6 @@
 # T24: Generic field-only supertrait in trait object is rejected explicitly
-trait tagged[a] {  # error: generic field-only supertrait 'tagged' is not supported
+trait Tagged[a] = {  # error: generic field-only supertrait
   tag: a
 }
-trait tagged_like: tagged {
-}
-let x: tagged_like = { tag: 1 }
+trait TaggedLike: Tagged = {}
+let x: TaggedLike = { tag: 1 }

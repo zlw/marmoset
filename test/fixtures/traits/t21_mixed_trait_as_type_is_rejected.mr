@@ -1,6 +1,6 @@
 # T21: Mixed trait as type is rejected
-trait named_show[a] {  # error: method and mixed trait objects are not supported in this phase
-  name: string
-  fn show(x: a) -> string
+trait NamedShow[a] = {  # error: method and mixed trait objects are not supported in this phase
+  name: Str
+  fn show(x: a) -> Str
 }
-let x: named_show = { name: "alice" }
+let x: NamedShow = { name: "alice" }
