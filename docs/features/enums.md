@@ -19,23 +19,23 @@ Capabilities:
 ## Syntax
 
 ```marmoset
-enum option[a] {
-  some(a)
-  none
+enum Option[a] = {
+  Some(a),
+  None,
 }
 
-enum result[a, e] {
-  success(a)
-  failure(e)
+enum Result[a, e] = {
+  Success(a),
+  Failure(e),
 }
 
-enum http_response {
-  ok(int, string)
-  error(int, string)
+enum HttpResponse = {
+  Ok(Int, Str),
+  Error(Int, Str),
 }
 
-let x = option.some(42)
-let n = option.none
+let x = Option.Some(42)
+let n = Option.None
 ```
 
 Constructor calls are namespaced by enum name.
@@ -55,7 +55,7 @@ Enum typing model:
 - match checking uses constructor domain information for exhaustiveness.
 
 Namespacing model:
-- constructors are qualified (`option.some`, `result.success`) to avoid cross-enum collisions.
+- constructors are qualified (`Option.Some`, `Result.Success`) to avoid cross-enum collisions.
 
 ## Design Alternatives Considered
 
@@ -116,13 +116,14 @@ Representative lowering:
 
 Marmoset:
 ```marmoset
-enum option[a] { some(a) none }
+enum Option[a] = {
+  Some(a),
+  None,
+}
 
-let to_int = fn(x: option[int]) -> int {
-  match x {
-    option.some(v): v
-    option.none: 0
-  }
+fn to_int(x: Option[Int]) -> Int = match x {
+  case Option.Some(v): v
+  case Option.None: 0
 }
 ```
 

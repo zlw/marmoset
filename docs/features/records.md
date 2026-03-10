@@ -22,8 +22,8 @@ Capabilities:
 ### Record types and aliases
 
 ```marmoset
-type point = { x: int, y: int }
-type box[a] = { value: a }
+type Point = { x: Int, y: Int }
+type Box[a] = { value: a }
 ```
 
 ### Literals and access
@@ -51,8 +51,8 @@ with multiple call sites.
 
 ```marmoset
 // v1: use closed annotations or omit annotations for field access
-let get_x = fn(r: { x: int }) -> int { r.x }
-let get_x = fn(r) { r.x }  // inference handles the row internally
+fn get_x(r: { x: Int }) -> Int = r.x
+fn infer_x(r) -> Int = r.x  // inference handles the row internally
 ```
 
 ## Sub-Features and Use Cases
@@ -139,9 +139,9 @@ Representative lowering:
 
 Marmoset:
 ```marmoset
-type point = { x: int, y: int }
+type Point = { x: Int, y: Int }
 
-let p: point = { x: 1, y: 2 }
+let p: Point = { x: 1, y: 2 }
 let p2 = { ...p, x: 10 }
 let s = p2.x + p2.y
 ```

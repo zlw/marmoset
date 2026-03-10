@@ -11,8 +11,8 @@
 Union types model ad-hoc sum types where a value can be one of several alternatives.
 
 Examples:
-- `int | string`
-- `point | null`
+- `Int | Str`
+- `Point | Unit`
 
 Primary capabilities:
 - union annotations in parameters/lets/returns,
@@ -22,10 +22,10 @@ Primary capabilities:
 ## Syntax
 
 ```marmoset
-let x: int | string = 5
+let x: Int | Str = 5
 
-let parse = fn(v: int | string) -> int {
-  if (v is int) { v } else { len(v) }
+fn parse(v: Int | Str) -> Int = {
+  if (v is Int) { v } else { len(v) }
 }
 ```
 
@@ -102,8 +102,8 @@ Representative lowering:
 
 Marmoset:
 ```marmoset
-let f = fn(v: int | string) -> int {
-  if (v is int) { v + 1 } else { len(v) }
+fn f(v: Int | Str) -> Int = {
+  if (v is Int) { v + 1 } else { len(v) }
 }
 ```
 

@@ -23,63 +23,61 @@ Traits provide:
 ### Method-only trait
 
 ```marmoset
-trait show[a] {
-  fn show(x: a) -> string
+trait Show[a] = {
+  fn show(a) -> Str
 }
 ```
 
 ### Field-only trait
 
 ```marmoset
-trait named {
-  name: string
+trait Named = {
+  name: Str
 }
 ```
 
 ### Mixed trait
 
 ```marmoset
-trait named_show {
-  name: string
-  fn show(x: { name: string }) -> string
+trait NamedShow[a] = {
+  name: Str
+  fn show(a) -> Str
 }
 ```
 
 ### Supertraits
 
 ```marmoset
-trait eq[a] {
-  fn eq(x: a, y: a) -> bool
+trait Eq[a] = {
+  fn eq(a, a) -> Bool
 }
 
-trait ord[a]: eq {
-  fn compare(x: a, y: a) -> ordering
+trait Ord[a]: Eq = {
+  fn compare(a, a) -> Ordering
 }
 ```
 
 ### Impl
 
 ```marmoset
-impl show for int {
-  fn show(x: int) -> string {
-    "int"
-  }
+impl Show[Int] = {
+  fn show(x: Int) -> Str = "int"
 }
 ```
 
 Impl method annotations are optional when inferable from the trait signature:
 
 ```marmoset
-impl show for int {
-  fn show(x) { "int" }
+impl Show[Int] = {
+  fn show(x) = "int"
 }
 ```
 
 ### Generic impl
 
 ```marmoset
-impl show[a: show] for list[a] {
-  fn show(xs: list[a]) -> string { "list" }
+impl[a: Show] Show[List[a]] = {
+  fn show(xs: List[a]) -> Str = "list"
 }
 ```
 
@@ -88,8 +86,8 @@ impl show[a: show] for list[a] {
 Trait methods can declare method-level generic parameters separate from the trait type parameter:
 
 ```marmoset
-trait mappable[a] {
-  fn map[b](x: a, f: fn(a) -> b) -> b
+trait Mappable[a] = {
+  fn map[b](a, (a) -> b) -> b
 }
 ```
 
@@ -98,16 +96,19 @@ trait mappable[a] {
 Trait method signatures use `->` for pure methods and `=>` for effectful methods:
 
 ```marmoset
-trait processor[a] {
-  fn process(x: a) => string
+trait Processor[a] = {
+  fn process(a) => Str
 }
 ```
 
 Impl methods can omit the effect marker entirely to infer effectfulness from the body:
 
 ```marmoset
-impl processor for data {
-  fn process(x) { x.v.show() }
+impl Processor[Data] = {
+  fn process(x) = {
+    puts(x.v.show())
+    x.v.show()
+  }
 }
 ```
 
@@ -116,7 +117,7 @@ impl processor for data {
 When a trait method has method-level generics, type arguments can be provided explicitly at the call site using bracket syntax:
 
 ```marmoset
-let result = x.map[string](fn(n: int) -> string { n.show() })
+let result = x.map[Str]((n: Int) -> n.show())
 ```
 
 If the user intends runtime index-then-call, they must parenthesize: `(x.name[i])(arg)`.
@@ -126,8 +127,8 @@ If the user intends runtime index-then-call, they must parenthesize: `(x.name[i]
 Impl method bodies support multiple statements including let bindings. The last expression is the return value:
 
 ```marmoset
-impl show for point {
-  fn show(p: point) -> string {
+impl Show[Point] = {
+  fn show(p: Point) -> Str = {
     let x_str = p.x.show()
     let y_str = p.y.show()
     "(" + x_str + ", " + y_str + ")"
@@ -138,19 +139,17 @@ impl show for point {
 ### Constraint and method call
 
 ```marmoset
-let show_it = fn[t: show](x: t) -> string {
-  x.show()
-}
+fn show_it[t: Show](x: t) -> Str = x.show()
 ```
 
 ### Field-only trait in type position
 
 ```marmoset
-trait named {
-  name: string
+trait Named = {
+  name: Str
 }
 
-let p: named = { name: "alice", age: 42 }
+let p: Named = { name: "alice", age: 42 }
 puts(p.name)
 ```
 
@@ -191,16 +190,16 @@ Structural method probing is forbidden. Having a field/method with the same name
 
 ### Supertraits
 
-For `trait child: parent1 + parent2`, satisfying `child` requires satisfying all supertraits recursively.
+For `trait Child[a]: Parent1 & Parent2 = { ... }`, satisfying `Child` requires satisfying all supertraits recursively.
 This applies to:
 - impl validation,
 - generic constraint checking,
-- constrained method availability (`[a: ord]` exposes `eq` methods if `ord: eq`).
+- constrained method availability (`[a: Ord]` exposes `eq` methods if `Ord: Eq`).
 
 ### Generic impl behavior
 
 Generic impl blocks are supported:
-- impl type params may declare constraints (`impl show[a: show] for list[a]`),
+- impl type params may declare constraints (`impl[a: Show] Show[List[a]] = { ... }`),
 - impl type params must be unique,
 - every impl type param must appear in the impl target type,
 - concrete impls take precedence over matching generic impls,
@@ -229,7 +228,7 @@ Constraint checking is enforced at call/instantiation time:
 - each obligation runs through `Trait_solver.satisfies_trait`,
 - first failing obligation aborts with an explicit trait-satisfaction reason.
 
-Multiple constraints (`[a: show + eq]`) are conjunctive.
+Multiple constraints (`[a: Show & Eq]`) are conjunctive.
 
 ## Method Resolution Rules
 
