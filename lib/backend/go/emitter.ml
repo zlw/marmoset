@@ -692,8 +692,7 @@ let rec captures_top_level_values_expr
       merge_sets
         (captures_top_level_values_expr top_level_values bound mc_receiver
         :: List.map (captures_top_level_values_expr top_level_values bound) mc_args)
-  | AST.BlockExpr stmts ->
-      merge_sets (List.map (captures_top_level_values_stmt top_level_values bound) stmts)
+  | AST.BlockExpr stmts -> merge_sets (List.map (captures_top_level_values_stmt top_level_values bound) stmts)
 
 and captures_top_level_values_stmt (top_level_values : StringSet.t) (bound : StringSet.t) (stmt : AST.statement) :
     StringSet.t =
@@ -1120,7 +1119,7 @@ let register_impl_template (state : mono_state) (impl : AST.impl_def) : impl_tem
                       param_types;
                       return_type;
                       body_stmt;
-                      method_generic_names = [];
+                      method_generic_names = List.map fst m.method_generics;
                     })
           trait_def.trait_methods
   in
@@ -1417,117 +1416,123 @@ let rec collect_insts_stmt
   | AST.TraitDef _ | AST.DeriveDef _ | AST.TypeAlias _ -> env
   | AST.ImplDef impl ->
       ignore (register_impl_template state impl);
-      (if impl.impl_type_params = [] then
-         let for_type = annotation_exn (Annotation.type_expr_to_mono_type impl.impl_for_type) in
-         let for_type_fingerprint = fingerprint_types [ for_type ] in
-         let explicit_method_names = List.map (fun (m : AST.method_impl) -> m.impl_method_name) impl.impl_methods in
-         List.iter
-           (fun (m : AST.method_impl) ->
-             (* Skip eager instantiation for methods with method-level generics;
+      if impl.impl_type_params = [] then (
+        let for_type = annotation_exn (Annotation.type_expr_to_mono_type impl.impl_for_type) in
+        let for_type_fingerprint = fingerprint_types [ for_type ] in
+        let explicit_method_names =
+          List.map (fun (m : AST.method_impl) -> m.impl_method_name) impl.impl_methods
+        in
+        List.iter
+          (fun (m : AST.method_impl) ->
+            (* Skip eager instantiation for methods with method-level generics;
                 they'll be instantiated on-demand via register_impl_method_use per call site *)
-             let has_method_generics =
-               match m.impl_method_generics with
-               | Some (_ :: _) -> true
-               | _ -> false
-             in
-             if not has_method_generics then (
-               let method_param_names, method_param_types, return_type =
-                 match Hashtbl.find_opt state.method_def_map m.impl_method_id with
-                 | Some def -> (def.md_param_names, def.md_param_types, def.md_return_type)
-                 | None ->
-                     (* Fallback to annotation parsing *)
-                     let pn, pt =
-                       List.split
-                         (List.map
-                            (fun (param_name, param_type_opt) ->
-                              match param_type_opt with
-                              | Some param_type ->
-                                  (param_name, annotation_exn (Annotation.type_expr_to_mono_type param_type))
-                              | None ->
-                                  failwith
-                                    (Printf.sprintf
-                                       "Codegen error: impl %s.%s parameter '%s' is missing a type annotation"
-                                       impl.impl_trait_name m.impl_method_name param_name))
-                            m.impl_method_params)
-                     in
-                     let rt =
-                       match m.impl_method_return_type with
-                       | Some ret_ann -> annotation_exn (Annotation.type_expr_to_mono_type ret_ann)
-                       | None ->
-                           failwith
-                             (Printf.sprintf "Codegen error: impl %s.%s is missing a return type annotation"
-                                impl.impl_trait_name m.impl_method_name)
-                     in
-                     (pn, pt, rt)
-               in
-               let impl_inst =
-                 {
-                   trait_name = impl.impl_trait_name;
-                   method_name = m.impl_method_name;
-                   module_path = state.module_path;
-                   concrete_only_mode = state.concrete_only;
-                   for_type;
-                   method_type_args = [];
-                   type_fingerprint = for_type_fingerprint;
-                 }
-               in
-               let payload =
-                 {
-                   param_names = method_param_names;
-                   param_types = method_param_types;
-                   return_type;
-                   body_stmt = m.impl_method_body;
-                 }
-               in
-               add_impl_instantiation state impl_inst payload;
-               let method_env = add_param_bindings env method_param_names method_param_types in
-               ignore (collect_insts_stmt state type_map method_env m.impl_method_body)))
-           impl.impl_methods;
-         (* Also instantiate trait default methods not explicitly provided in this impl *)
-         (match Typecheck.Trait_registry.lookup_trait impl.impl_trait_name with
-         | None -> ()
-         | Some trait_def ->
-             let substitute =
-               match trait_def.trait_type_param with
-               | None -> fun t -> t
-               | Some tp ->
-                   let subst = Types.substitution_singleton tp for_type in
-                   fun t -> Types.apply_substitution subst t
-             in
-             List.iter
-               (fun (m : Typecheck.Trait_registry.method_sig) ->
-                 match m.method_default_impl with
-                 | None -> () (* No default, skip *)
-                 | Some default_expr ->
-                     if List.mem m.method_name explicit_method_names then
-                       () (* Explicitly provided, skip *)
-                     else
-                       let param_names = List.map fst m.method_params in
-                       let param_types = List.map (fun (_, t) -> substitute t) m.method_params in
-                       let return_type = substitute m.method_return_type in
-                       let body_stmt =
-                         AST.mk_stmt ~pos:default_expr.pos ~end_pos:default_expr.end_pos
-                           ~file_id:default_expr.file_id
-                           (AST.Block
-                              [
-                                AST.mk_stmt ~pos:default_expr.pos ~end_pos:default_expr.end_pos
-                                  ~file_id:default_expr.file_id (AST.ExpressionStmt default_expr);
-                              ])
-                       in
-                       let impl_inst =
-                         {
-                           trait_name = impl.impl_trait_name;
-                           method_name = m.method_name;
-                           module_path = state.module_path;
-                           concrete_only_mode = state.concrete_only;
-                           for_type;
-                           method_type_args = [];
-                           type_fingerprint = for_type_fingerprint;
-                         }
-                       in
-                       let payload = { param_names; param_types; return_type; body_stmt } in
-                       add_impl_instantiation state impl_inst payload)
-               trait_def.trait_methods));
+            let has_method_generics =
+              match m.impl_method_generics with
+              | Some (_ :: _) -> true
+              | _ -> false
+            in
+            if not has_method_generics then (
+              let method_param_names, method_param_types, return_type =
+                match Hashtbl.find_opt state.method_def_map m.impl_method_id with
+                | Some def -> (def.md_param_names, def.md_param_types, def.md_return_type)
+                | None ->
+                    (* Fallback to annotation parsing *)
+                    let pn, pt =
+                      List.split
+                        (List.map
+                           (fun (param_name, param_type_opt) ->
+                             match param_type_opt with
+                             | Some param_type ->
+                                 (param_name, annotation_exn (Annotation.type_expr_to_mono_type param_type))
+                             | None ->
+                                 failwith
+                                   (Printf.sprintf
+                                      "Codegen error: impl %s.%s parameter '%s' is missing a type annotation"
+                                      impl.impl_trait_name m.impl_method_name param_name))
+                           m.impl_method_params)
+                    in
+                    let rt =
+                      match m.impl_method_return_type with
+                      | Some ret_ann -> annotation_exn (Annotation.type_expr_to_mono_type ret_ann)
+                      | None ->
+                          failwith
+                            (Printf.sprintf "Codegen error: impl %s.%s is missing a return type annotation"
+                               impl.impl_trait_name m.impl_method_name)
+                    in
+                    (pn, pt, rt)
+              in
+              let impl_inst =
+                {
+                  trait_name = impl.impl_trait_name;
+                  method_name = m.impl_method_name;
+                  module_path = state.module_path;
+                  concrete_only_mode = state.concrete_only;
+                  for_type;
+                  method_type_args = [];
+                  type_fingerprint = for_type_fingerprint;
+                }
+              in
+              let payload =
+                {
+                  param_names = method_param_names;
+                  param_types = method_param_types;
+                  return_type;
+                  body_stmt = m.impl_method_body;
+                }
+              in
+              add_impl_instantiation state impl_inst payload;
+              let method_env = add_param_bindings env method_param_names method_param_types in
+              ignore (collect_insts_stmt state type_map method_env m.impl_method_body)))
+          impl.impl_methods;
+        (* Also instantiate trait default methods not explicitly provided in this impl *)
+        match Typecheck.Trait_registry.lookup_trait impl.impl_trait_name with
+        | None -> ()
+        | Some trait_def ->
+            let substitute =
+              match trait_def.trait_type_param with
+              | None -> fun t -> t
+              | Some tp ->
+                  let subst = Types.substitution_singleton tp for_type in
+                  fun t -> Types.apply_substitution subst t
+            in
+            List.iter
+              (fun (m : Typecheck.Trait_registry.method_sig) ->
+                match m.method_default_impl with
+                | None -> () (* No default, skip *)
+                | Some default_expr ->
+                    if List.mem m.method_name explicit_method_names then
+                      ()
+                      (* Explicitly provided, skip *)
+                    else if m.method_generics <> [] then
+                      ()
+                      (* Method-level generics: specialized per call site, not eagerly *)
+                    else
+                      let param_names = List.map fst m.method_params in
+                      let param_types = List.map (fun (_, t) -> substitute t) m.method_params in
+                      let return_type = substitute m.method_return_type in
+                      let body_stmt =
+                        AST.mk_stmt ~pos:default_expr.pos ~end_pos:default_expr.end_pos
+                          ~file_id:default_expr.file_id
+                          (AST.Block
+                             [
+                               AST.mk_stmt ~pos:default_expr.pos ~end_pos:default_expr.end_pos
+                                 ~file_id:default_expr.file_id (AST.ExpressionStmt default_expr);
+                             ])
+                      in
+                      let impl_inst =
+                        {
+                          trait_name = impl.impl_trait_name;
+                          method_name = m.method_name;
+                          module_path = state.module_path;
+                          concrete_only_mode = state.concrete_only;
+                          for_type;
+                          method_type_args = [];
+                          type_fingerprint = for_type_fingerprint;
+                        }
+                      in
+                      let payload = { param_names; param_types; return_type; body_stmt } in
+                      add_impl_instantiation state impl_inst payload)
+              trait_def.trait_methods);
       env
   | AST.InherentImplDef impl ->
       let bindings = inherent_type_bindings impl.inherent_for_type in
@@ -1989,7 +1994,8 @@ and collect_insts_expr
                       (AST.Call (field_expr, args))
                   in
                   collect_insts_expr state type_map env synthetic_call)))
-  | AST.BlockExpr stmts -> ignore (List.fold_left (fun e stmt -> collect_insts_stmt state type_map e stmt) env stmts)
+  | AST.BlockExpr stmts ->
+      ignore (List.fold_left (fun e stmt -> collect_insts_stmt state type_map e stmt) env stmts)
 
 (* ============================================================
    Code Generation State
@@ -3887,8 +3893,7 @@ and collect_local_call_arg_types_expr
     | AST.MethodCall { mc_receiver; mc_args; _ } ->
         collect_local_call_arg_types_expr name type_map env mc_receiver
         @ List.concat_map (collect_local_call_arg_types_expr name type_map env) mc_args
-    | AST.BlockExpr stmts ->
-        List.concat_map (collect_local_call_arg_types_stmt name type_map env) stmts
+    | AST.BlockExpr stmts -> List.concat_map (collect_local_call_arg_types_stmt name type_map env) stmts
   in
   match expr.expr with
   | AST.Call ({ expr = AST.Identifier callee_name; _ }, args) when callee_name = name -> (
@@ -4856,7 +4861,8 @@ let emit_record_derived_impl
 let emit_enum_derived_impl (derive_kind : Typecheck.Trait_registry.derive_kind) (enum_type : Types.mono_type) :
     string option =
   let type_suffix = mangle_type enum_type in
-  let type_str = match enum_type with
+  let type_str =
+    match enum_type with
     | Types.TEnum (name, []) -> name
     | _ -> type_suffix
   in
