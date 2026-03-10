@@ -15,8 +15,7 @@ Traits provide:
 - hybrid constraints via mixed traits,
 - supertrait closure,
 - constrained generics,
-- method-call syntax (`x.foo(...)`) lowering,
-- field-only trait use in type position.
+- method-call syntax (`x.foo(...)`) lowering.
 
 ## Syntax
 
@@ -142,15 +141,20 @@ impl Show[Point] = {
 fn show_it[t: Show](x: t) -> Str = x.show()
 ```
 
-### Field-only trait in type position
+### Constrained-param shorthand
 
 ```marmoset
 trait Named = {
   name: Str
 }
 
-let p: Named = { name: "alice", age: 42 }
-puts(p.name)
+fn display_name(x: Named) -> Str = x.name
+```
+
+This is shorthand for:
+
+```marmoset
+fn display_name[t: Named](x: t) -> Str = x.name
 ```
 
 ## Trait Kinds
@@ -260,27 +264,27 @@ Inherent-method interaction:
 
 ### Allowed
 
-- Field-only traits in type position, if non-generic.
-- Field-only trait supertraits composed from field-only chains.
+- Bare trait names in function parameter position as constrained-param shorthand.
+- Explicit generic constraints such as `fn f[t: Named](x: t) -> Str = x.name`.
 
 ### Rejected
 
-- Method-only traits in type position.
-- Mixed traits in type position.
-- Field-only traits that are generic.
-- Field-only traits whose supertrait closure includes method/mixed traits.
+- Bare trait names in general type position.
+- Method-only trait objects.
+- Mixed trait objects.
+- Generic trait objects.
 
 ### Internal lowering
 
-Field-only trait types lower to open record requirements assembled from trait fields plus supertrait field closure, with deterministic field merging.
+Bare trait-name shorthand lowers to a fresh constrained generic binder before typechecking.
 
 ## Operator Requirements via Traits
 
 Operator typing enforces trait obligations:
-- unary `-` requires `neg`
-- `+ - * /` require `num` (except string concatenation special-case for `+`)
-- `< > <= >=` require `ord`
-- `== !=` require `eq`
+- unary `-` requires `Neg`
+- `+ - * /` require `Num` (except `Str` concatenation special-case for `+`)
+- `< > <= >=` require `Ord`
+- `== !=` require `Eq`
 
 Codegen lowering:
 - primitives lower to direct Go operators,
@@ -295,17 +299,13 @@ Trait method calls lower to static helper function calls:
 
 The emitter uses method-resolution metadata recorded by the typechecker (`expr.id -> trait_name`) and does not re-infer resolution decisions.
 
-### Field-only trait values
+### Field-only trait constraints
 
-v1 uses structural record projection, not runtime trait-object dispatch:
-- when expression actual type has a superset of fields and expected type is a narrower record shape (from field-only trait typing), emitter inserts a projection wrapper,
-- emitted value is a concrete Go struct literal with required fields copied.
-
-This enables heterogeneous containers through shared projected shape while avoiding trait-object/vtable ABI commitments.
+Field-only traits remain compile-time structural constraints. They do not introduce a runtime trait-object representation.
 
 ### Derive integration
 
-Derive surface supports selected traits (`eq`, `show`, `debug`, `ord`, `hash`) with registry validation and emitter-side body generation for supported shapes.
+Derive surface supports selected traits (`Eq`, `Show`, `Debug`, `Ord`, `Hash`) with registry validation and emitter-side body generation for supported shapes.
 
 ## Design Alternatives Considered
 
@@ -344,8 +344,8 @@ Status:
 
 ## Current Limitations
 
-- Method/mixed trait objects are intentionally unsupported in this phase.
-- Generic field-only trait objects are intentionally unsupported in this phase.
+- Trait-object syntax is intentionally unsupported in this phase.
+- Bare trait names outside constrained-param shorthand are rejected.
 - Qualified trait-call syntax is supported (`Trait.method(x)`).
 
 ## Deferred: Method/Mixed Trait Objects and Existentials

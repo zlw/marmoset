@@ -32,7 +32,7 @@ fn parse(v: Int | Str) -> Int = {
 ## Sub-Features and Use Cases
 
 - APIs that accept multiple scalar/domain alternatives.
-- Null-safety style modeling (`T | null`) without unsafe unchecked access.
+- absence-style modeling (`T | Unit`) without unsafe unchecked access.
 - Progressive migration from loosely typed values toward nominal enums.
 - Branch-local logic where each arm can use fully narrowed operations.
 

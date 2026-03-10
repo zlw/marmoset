@@ -1,4 +1,4 @@
-# Arrays and Maps (Hashes)
+# Arrays and Maps
 
 ## Maintenance
 
@@ -10,8 +10,8 @@
 
 This doc covers collection features:
 
-- homogeneous arrays: `list[T]` / literals `[ ... ]`
-- key-value maps (hashes): `hash[K, V]` / literals `{ "k": v }`
+- homogeneous arrays: `List[T]` / literals `[ ... ]`
+- key-value maps: `Map[K, V]` / literals `{ "k": v }`
 
 ## Syntax
 
@@ -23,7 +23,7 @@ let first = xs[0]
 let last = xs[-1]
 ```
 
-### Maps / Hashes
+### Maps
 
 ```marmoset
 let h = { "x": 10, "y": 20 }
@@ -32,7 +32,7 @@ let x = h["x"]
 
 ### Distinction from records
 
-- string/expression keys -> map/hash
+- string/expression keys -> map literal
 - identifier keys -> record
 
 ## Sub-Features and Use Cases
@@ -49,7 +49,7 @@ Maps:
 ## Type-System Semantics
 
 - arrays infer one element type (`TArray elem`).
-- maps infer key/value type (`THash (k, v)`).
+- maps infer key/value type (`THash (k, v)` internally).
 - mixed element/key/value types are type errors.
 
 Design decision:

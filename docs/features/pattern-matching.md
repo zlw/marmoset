@@ -26,18 +26,18 @@ Pattern forms include:
 
 ```marmoset
 let y = match x {
-  0: "zero"
-  n: "other"
+  case 0: "zero"
+  case n: "other"
 }
 
 let v = match opt {
-  option.some(x): x
-  option.none: 0
+  case Option.Some(x): x
+  case Option.None: 0
 }
 
 let r = match p {
-  { x:, y: }: x + y
-  _: 0
+  case { x:, y: }: x + y
+  case _: 0
 }
 ```
 
@@ -111,8 +111,8 @@ Representative lowering:
 Marmoset:
 ```marmoset
 let v = match opt {
-  option.some(x): x
-  option.none: 0
+  case Option.Some(x): x
+  case Option.None: 0
 }
 ```
 

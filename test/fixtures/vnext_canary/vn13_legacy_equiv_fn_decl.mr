@@ -1,5 +1,4 @@
 # VN13: Legacy/vNext equivalence - fn declaration (same as legacy let = fn)
-# vNext form: fn square(x: Int) -> Int = x * x
-# Legacy equivalent: let square = fn(x: Int) -> Int { x * x }
+# VN13: top-level fn declaration stays canonical
 fn square(x: Int) -> Int = x * x
 puts(square(7))  # output: 49

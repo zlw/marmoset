@@ -122,7 +122,7 @@ Chosen now:
 
 Current style:
 - emit top-level named struct type definitions for each unique record shape,
-- type aliases (e.g., `type point = { x: int, y: int }`) produce Go types with the alias name (e.g., `type Point struct{...}`),
+- type aliases (e.g., `type Point = { x: Int, y: Int }`) produce Go types with the alias name (e.g., `type Point struct{...}`),
 - anonymous record shapes get canonical names (e.g., `Record_x_int64_y_int64`),
 - identical shapes are deduplicated (only one type definition per canonical shape),
 - field access as Go field access,

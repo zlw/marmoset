@@ -11,7 +11,7 @@
 Inherent methods attach behavior directly to a target type without defining a trait.
 
 Capabilities:
-- inherent impl blocks (`impl <type> { ... }`),
+- inherent impl blocks (`impl Type = { ... }`),
 - method-call syntax (`x.m(...)`) with static dispatch,
 - support for aliases, primitives, records, enums, and concrete type applications,
 - coexistence with trait methods under explicit collision rules.
@@ -153,7 +153,7 @@ For `receiver.method(args...)`:
 6. If receiver type is a constrained type variable, resolve from trait constraints only (inherent methods do not participate).
 7. Otherwise resolve inherent methods first, then trait methods for concrete receiver type.
 
-Bound variables take precedence over enum type names in dotted access. This means a local `let color = { red: "x" }` shadows the enum `color` for `color.red`. Inherent methods take precedence over trait methods on dot calls. Qualified trait calls (`Trait.method(x)`) bypass this precedence and select the named trait directly.
+Value-space bindings are considered before type-space names in dotted access. Inherent methods take precedence over trait methods on dot calls. Qualified trait calls (`Trait.method(x)`) bypass this precedence and select the named trait directly.
 
 ## Codegen: Detailed Design
 
@@ -171,7 +171,7 @@ Why this choice:
 
 ## Current Limitations
 
-- Generic inherent impl targets are supported when type parameters appear in the impl target (for example `impl result[a, b] { ... }`).
+- Generic inherent impl targets are supported when type parameters appear in the impl target (for example `impl Result[a, b] = { ... }`).
 - Inherent generic targets currently do not have explicit per-impl constraint syntax (unlike trait generic impls).
 - Generic inherent method call sites still require receiver type arguments to be concretely determined by program context before codegen specialization.
 - Receiver shorthand (`self`) is not a dedicated syntax form; receiver is an explicit first parameter.
