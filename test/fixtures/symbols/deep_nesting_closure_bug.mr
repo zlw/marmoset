@@ -1,8 +1,8 @@
 # BUG: Deep nesting closure capture fails codegen
 let a = 1  # error: *
-let f = fn() -> int {
+let f = () -> {
   let b = 2
-  let g = fn() -> int {
+  let g = () -> {
     let c = 3
     a + b + c
   }

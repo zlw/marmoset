@@ -1,6 +1,6 @@
 let x = 10
-let f = fn(x: int) -> int {
-  let g = fn(y: int) -> int { x + y }
+fn f(x: Int) -> Int = {
+  let g = (y: Int) -> x + y
   g(x)
 }
 puts(f(15))  # output: 30

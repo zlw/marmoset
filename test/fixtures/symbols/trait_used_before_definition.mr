@@ -1,5 +1,5 @@
-let f = fn[t: mything](x: t) -> string { x.name }  # error: *
-trait mything {
-  name: string
+fn f[t: Mything](x: t) -> Str = x.name  # error: *
+trait Mything = {
+  name: Str
 }
 puts(f({ name: "hi" }))

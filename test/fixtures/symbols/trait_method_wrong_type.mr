@@ -1,6 +1,6 @@
-trait greetable[a] {
-  fn greet(x: a) -> string
+trait Greetable[a] = {
+  fn greet(x: a) -> Str
 }
 let x = 42
-let f = fn[t: greetable](x: t) -> string { x.greet() }
+fn f[t: Greetable](x: t) -> Str = x.greet()
 puts(f(x))  # error: does not implement trait
