@@ -1,8 +1,9 @@
-# T85: BUG-PARAM-TYPE-TRAIT-KIND: method-only trait as param type should fail
-trait renderable[a] {  # error: method and mixed trait objects are not supported in this phase
-  fn render(x: a) -> string
+# T85: BUG-PARAM-TYPE-TRAIT-KIND: method-only trait param uses shorthand constraint
+trait Renderable[a] = {
+  fn render(x: a) -> Str
 }
-let f = fn(x: renderable) -> string {
-  "nope"
+impl Renderable[Int] = {
+  fn render(x: Int) -> Str = "ok"
 }
-puts(f(42))
+fn f(x: Renderable) -> Str = x.render()
+puts(f(42))  # output: ok

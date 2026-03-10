@@ -1,6 +1,6 @@
 # T86: Mixed trait (fields + methods) as type is rejected
-trait displayable[a] {  # error: method and mixed trait objects are not supported in this phase
-  name: string
-  fn display(x: a) -> string
+trait Displayable[a] = {  # error: method and mixed trait objects are not supported in this phase
+  name: Str
+  fn display(x: a) -> Str
 }
-let x: displayable = { name: "alice" }
+let x: Displayable = { name: "alice" }

@@ -1,5 +1,5 @@
 # T87: Generic field-only trait as variable type is rejected
-trait container[a] {  # error: generic field-only trait objects are not supported in this phase
+trait Container[a] = {  # error: generic field-only trait objects are not supported in this phase
   value: a
 }
-let x: container = { value: 42 }
+let x: Container = { value: 42 }
