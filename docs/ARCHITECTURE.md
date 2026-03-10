@@ -2,7 +2,7 @@
 
 ## Maintenance
 
-- Last verified: 2026-02-28
+- Last verified: 2026-03-10
 - Implementation status: Canonical (actively maintained)
 - Update trigger: Any language behavior, typechecker, or codegen change affecting this topic
 
@@ -11,19 +11,20 @@ This document describes the current high-level architecture and the design choic
 ## 1. End-to-End Flow
 
 1. Source text -> Lexer (`lib/frontend/syntax/lexer.ml`)
-2. Tokens -> Parser (`lib/frontend/syntax/parser.ml`)
-3. AST -> Type annotation conversion + inference + checking (`lib/frontend/typecheck/**`)
-4. Typed AST + type map -> Go emitter (`lib/backend/go/emitter.ml`)
-5. Generated Go -> `go build` -> native binary
+2. Tokens -> Surface parser (`lib/frontend/syntax/parser.ml`, `parse_surface`) -> `Surface_ast`
+3. `Surface_ast` -> Lowering/canonicalization (`lib/frontend/syntax/lower.ml`) -> canonical `AST.program`
+4. Canonical AST -> Type annotation conversion + inference + checking (`lib/frontend/typecheck/**`)
+5. Typed canonical AST + type map -> Go emitter (`lib/backend/go/emitter.ml`)
+6. Generated Go -> `go build` -> native binary
 
-The architecture is intentionally split into a pure frontend (syntax + typing) and a backend code generator.
+The architecture is intentionally split into a surface frontend, a canonical typed core, and a backend code generator. The typechecker, emitter, and LSP typed analysis consume only the canonical AST; surface-only syntax is erased at the lowering boundary.
 
 ## 2. Frontend Architecture
 
 ### 2.1 Lexer
 
 Responsibilities:
-- Tokenize keywords/operators/literals (`fn`, `enum`, `trait`, `impl`, `derive`, `type`, `...`, `.`, `|`, `is`, etc).
+- Tokenize the canonical vNext keywords/operators/literals (`fn`, `case`, `override`, `enum`, `trait`, `impl`, `derive`, `type`, `...`, `.`, `|`, `&`, `is`, `=>`, etc).
 - Preserve source offsets for diagnostics.
 
 Alternatives considered:
@@ -40,31 +41,55 @@ Pros:
 Cons:
 - More lexer maintenance as syntax evolves.
 
-### 2.2 Parser
+### 2.2 Surface Parser
 
 Responsibilities:
-- Build AST for expressions/statements/types.
-- Parse advanced constructs:
-  - generic params and constraints (`fn[a: show + eq](...)`)
-  - type aliases (`type point = { x: int }`)
-  - unions (`int | string`)
-  - enums/constructors/match patterns
-  - records, spread, row-variable type forms (`{ x: int, ...r }`)
-  - traits/impl/derive declarations
+- Build `Surface_ast`, not the canonical downstream AST.
+- Parse vNext constructs including:
+  - generic params and constraints (`fn[a: Show & Eq](...)`)
+  - type aliases (`type Point = { x: Int }`)
+  - unions (`Int | Str`)
+  - enums/constructors/match patterns with `case`
+  - records, spread, row-variable type forms (`{ x: Int, ...r }`)
+  - trait/impl/derive declarations, top-level `fn`, explicit lambdas, placeholder shorthand, and expression-position blocks
+- Own brace disambiguation for record vs map vs block at parse time.
 
 Alternatives considered:
 - Pratt parser for expressions only + separate recursive parser for all type forms.
 - Fully recursive-descent with precedence table.
 
 Chosen:
-- Recursive-descent with expression precedence table.
+- Recursive-descent with expression precedence table plus a dedicated `Surface_ast`.
 
 Pros:
-- Easy to evolve for language-specific syntax.
+- Keeps syntax migration/desugaring concerns out of the typechecker and emitter.
 - Better control over recovery and domain-specific errors.
 
 Cons:
 - Parser state threading can be tedious for new constructs.
+- Surface and canonical trees must stay intentionally distinct.
+
+### 2.3 Lowering / Canonicalization
+
+Responsibilities:
+- Convert `Surface_ast` into the canonical `Syntax.Ast.AST` representation that downstream stages consume.
+- Desugar surface-only forms such as:
+  - top-level `fn` declarations into canonical `Let(Function)`,
+  - postfix derive clauses into canonical derive nodes,
+  - placeholder shorthand into explicit lambdas,
+  - expression-position blocks into canonical `BlockExpr`,
+  - impl headers and constrained-param shorthand into canonical typechecker-facing forms.
+- Preserve stable source spans and expression IDs so diagnostics and type maps still point back to the original source.
+
+Chosen:
+- Keep lowering as the only frontend normalization boundary instead of teaching the rest of the compiler about surface syntax.
+
+Pros:
+- Resolver, typechecker, emitter, and LSP analysis all see one canonical language.
+- Syntax work remains localized to the frontend.
+
+Cons:
+- Lowering owns several context-sensitive rewrites and therefore needs strong tests.
 
 ## 3. Typechecker Architecture
 
@@ -182,7 +207,7 @@ Until module and extern features are fully designed:
 - No trait-object ABI is exposed across boundaries.
 
 Initial extern ABI mapping constraints (when extern is enabled):
-- Allowed first-wave value types: `int`, `float`, `bool`, `string`, `unit`.
+- Allowed first-wave value types: `Int`, `Float`, `Bool`, `Str`, `Unit`.
 - Deferred until representation freeze: records, enums, unions, trait objects, and unconstrained polymorphic values.
 - Deferred until ownership rules are explicit: arrays/maps with mutation/aliasing semantics across boundary.
 
