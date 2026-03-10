@@ -97,6 +97,9 @@ assertRegexDoesNotMatch(
   "fn(Int, Int) -> Int",
   "function-type begin",
 );
+assert(repo["trait-object-type"], "trait-object-type repository entry is missing");
+assertRegexMatches(repo["trait-object-type"], "begin", "Dyn[Show & Eq]", "trait-object-type begin");
+assertRegexMatches(repo["trait-object-type"], "end", "]", "trait-object-type end");
 
 assertRegexMatches(repo["impl-block"], "begin", "impl[a: Show] Show[List[a]] = {", "impl-block begin");
 assert(

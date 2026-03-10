@@ -192,6 +192,7 @@ module.exports = grammar({
 
     _non_union_type: ($) =>
       choice(
+        $.trait_object_type,
         $.generic_type,
         $._simple_type,
         $.function_type,
@@ -213,6 +214,14 @@ module.exports = grammar({
         commaSep1(field("arg", $._type)),
         "]",
       )),
+
+    trait_object_type: ($) =>
+      seq(
+        "Dyn",
+        "[",
+        field("constraints", $.supertrait_list),
+        "]",
+      ),
 
     function_type: ($) =>
       seq("(", commaSep($._type), ")", choice("->", "=>"), field("return_type", $._type)),

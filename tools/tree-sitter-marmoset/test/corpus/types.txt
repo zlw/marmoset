@@ -69,6 +69,46 @@ let x: List[Int] = [1, 2, 3]
       (integer_literal))))
 
 ================================================================================
+Dyn trait object type
+================================================================================
+
+let x: Dyn[Show] = value
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (let_statement
+    name: (identifier)
+    type: (trait_object_type
+      constraints: (supertrait_list
+        (identifier)))
+    value: (identifier)))
+
+================================================================================
+Dyn multi-trait object type
+================================================================================
+
+fn show(x: Dyn[Show & Eq]) -> Str = x.show()
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (fn_declaration
+    name: (identifier)
+    (parameter
+      name: (identifier)
+      type: (trait_object_type
+        constraints: (supertrait_list
+          (identifier)
+          (identifier))))
+    return_type: (type_identifier)
+    body: (expr_or_block
+      (call_expression
+        function: (field_access
+          object: (identifier)
+          field: (identifier))))))
+
+================================================================================
 Nested generic type
 ================================================================================
 

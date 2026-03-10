@@ -182,6 +182,7 @@
         { "include": "#union-type" },
         { "include": "#function-type" },
         { "include": "#record-type" },
+        { "include": "#trait-object-type" },
         { "include": "#generic-type" },
         { "include": "#builtin-types" },
         { "include": "#type-identifier" }
@@ -206,6 +207,24 @@
       },
       "patterns": [
         { "include": "#type-annotation" },
+        { "include": "#punctuation" }
+      ]
+    },
+
+    "trait-object-type": {
+      "comment": "Trait object types: Dyn[Show], Dyn[Show & Eq]",
+      "begin": "\\b(Dyn)\\s*(\\[)",
+      "beginCaptures": {
+        "1": { "name": "storage.type.marmoset" },
+        "2": { "name": "punctuation.bracket.square.begin.marmoset" }
+      },
+      "end": "\\]",
+      "endCaptures": {
+        "0": { "name": "punctuation.bracket.square.end.marmoset" }
+      },
+      "patterns": [
+        { "include": "#type-identifier" },
+        { "include": "#operators" },
         { "include": "#punctuation" }
       ]
     },
