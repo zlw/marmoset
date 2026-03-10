@@ -4507,10 +4507,13 @@ let infer_program ?(env = empty_env) ?state (program : AST.program) :
       clear_method_resolution_store ();
       clear_type_var_user_names ();
       clear_top_level_placeholders ();
-      match resolve_program_symbols env program with
+      match Derive_expand.expand_user_derives program with
+      | Error e -> Error e
+      | Ok expanded_program -> (
+      match resolve_program_symbols env expanded_program with
       | Error e -> Error e
       | Ok () -> (
-          match predeclare_top_level_type_aliases program with
+          match predeclare_top_level_type_aliases expanded_program with
           | Error e -> Error e
           | Ok () -> (
           let type_map = create_type_map () in
@@ -4588,18 +4591,18 @@ let infer_program ?(env = empty_env) ?state (program : AST.program) :
                         let env'' = add_let_binding env' stmt stmt_type in
                         go env'' subst' seen_traits' seen_enums' seen_aliases' rest))
           in
-          match predeclare_top_level_lets env program with
+          match predeclare_top_level_lets env expanded_program with
           | Error e -> Error e
           | Ok env_with_placeholders -> (
               match
                 go env_with_placeholders empty_substitution StringSet.empty StringSet.empty StringSet.empty
-                  program
+                  expanded_program
               with
               | Error e -> Error e
               | Ok (env', final_subst, result_type) ->
                   apply_substitution_type_map final_subst type_map;
                   apply_substitution_method_type_args_store final_subst;
-                  Ok (env', type_map, result_type)))))
+                  Ok (env', type_map, result_type))))))
 
 module Test = struct
   (* Helper to parse and infer *)

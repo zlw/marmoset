@@ -48,6 +48,12 @@ type trait_kind =
   | MethodOnly
   | Mixed
 
+type impl_origin =
+  | ExplicitImpl
+  | BuiltinDerivedImpl
+  | DefaultDerivedImpl
+[@@deriving show, eq]
+
 type impl_source = {
   file_id : string option;
   start_pos : int;
@@ -64,6 +70,7 @@ type impl_def = {
 
 type resolved_impl = {
   impl : impl_def;
+  origin : impl_origin;
   specialization_subst : Types.substitution;
   source_site : string;
 }
@@ -72,6 +79,8 @@ type resolved_impl = {
 let trait_registry : (string, trait_def) Hashtbl.t = Hashtbl.create 16
 let impl_registry : (string * mono_type, impl_def) Hashtbl.t = Hashtbl.create 32 (* key: (trait_name, for_type) *)
 let generic_impl_registry : (string * mono_type, impl_def) Hashtbl.t = Hashtbl.create 32
+let impl_origin_registry : (string * mono_type, impl_origin) Hashtbl.t = Hashtbl.create 32
+let generic_impl_origin_registry : (string * mono_type, impl_origin) Hashtbl.t = Hashtbl.create 32
 let impl_source_registry : (string * mono_type, impl_source) Hashtbl.t = Hashtbl.create 32
 let builtin_impl_keys : (string * mono_type, unit) Hashtbl.t = Hashtbl.create 32
 let generic_impl_source_registry : (string * mono_type, impl_source) Hashtbl.t = Hashtbl.create 32
@@ -130,6 +139,8 @@ let clear () =
   Hashtbl.clear trait_registry;
   Hashtbl.clear impl_registry;
   Hashtbl.clear generic_impl_registry;
+  Hashtbl.clear impl_origin_registry;
+  Hashtbl.clear generic_impl_origin_registry;
   Hashtbl.clear impl_source_registry;
   Hashtbl.clear generic_impl_source_registry;
   Hashtbl.clear builtin_impl_keys;
@@ -206,7 +217,7 @@ let validate_trait_fields (trait_name : string) (fields : record_field_type list
     Ok ()
 
 (* Register an impl block *)
-let register_impl ?(builtin = false) ?source (def : impl_def) : unit =
+let register_impl ?(builtin = false) ?source ?(origin = ExplicitImpl) (def : impl_def) : unit =
   let canonical_for_type = canonical_type def.impl_for_type in
   let def' =
     {
@@ -228,6 +239,7 @@ let register_impl ?(builtin = false) ?source (def : impl_def) : unit =
                def'.impl_trait_name (to_string def'.impl_for_type))
       | _ ->
           Hashtbl.replace builtin_impl_keys key ();
+          Hashtbl.replace impl_origin_registry key origin;
           Hashtbl.remove impl_source_registry key;
           Hashtbl.replace impl_registry key def')
     else
@@ -239,6 +251,7 @@ let register_impl ?(builtin = false) ?source (def : impl_def) : unit =
       | _ ->
           (* User impl replaces builtin marker for this key (allowed exactly once). *)
           Hashtbl.remove builtin_impl_keys key;
+          Hashtbl.replace impl_origin_registry key origin;
           (match source with
           | Some src -> Hashtbl.replace impl_source_registry key src
           | None -> Hashtbl.remove impl_source_registry key);
@@ -256,6 +269,7 @@ let register_impl ?(builtin = false) ?source (def : impl_def) : unit =
                (to_string (snd key)))
       | _ ->
           Hashtbl.replace builtin_generic_impl_keys key ();
+          Hashtbl.replace generic_impl_origin_registry key origin;
           Hashtbl.remove generic_impl_source_registry key;
           Hashtbl.replace generic_impl_registry key def')
     else
@@ -267,6 +281,7 @@ let register_impl ?(builtin = false) ?source (def : impl_def) : unit =
                (to_string (snd key)))
       | _ ->
           Hashtbl.remove builtin_generic_impl_keys key;
+          Hashtbl.replace generic_impl_origin_registry key origin;
           (match source with
           | Some src -> Hashtbl.replace generic_impl_source_registry key src
           | None -> Hashtbl.remove generic_impl_source_registry key);
@@ -363,7 +378,12 @@ let resolve_generic_impl (trait_name : string) (for_type : mono_type) : (resolve
               in
               let impl = specialized_impl candidate_def for_type' specialization_subst in
               let source_site = format_generic_impl_site trait_name generic_for_type in
-              { impl; specialization_subst; source_site } :: acc)
+              let origin =
+                Option.value
+                  (Hashtbl.find_opt generic_impl_origin_registry (candidate_trait_name, generic_for_type))
+                  ~default:ExplicitImpl
+              in
+              { impl; origin; specialization_subst; source_site } :: acc)
       generic_impl_registry []
   in
   match matches with
@@ -391,6 +411,8 @@ let resolve_impl (trait_name : string) (for_type : mono_type) : (resolved_impl o
         (Some
            {
              impl = concrete_impl;
+             origin =
+               Option.value (Hashtbl.find_opt impl_origin_registry (trait_name, for_type')) ~default:ExplicitImpl;
              specialization_subst = empty_substitution;
              source_site = format_concrete_impl_site trait_name for_type';
            })
@@ -400,6 +422,11 @@ let resolve_impl (trait_name : string) (for_type : mono_type) : (resolved_impl o
 let lookup_impl (trait_name : string) (for_type : mono_type) : impl_def option =
   match resolve_impl trait_name for_type with
   | Ok (Some resolved) -> Some resolved.impl
+  | Ok None | Error _ -> None
+
+let lookup_impl_origin (trait_name : string) (for_type : mono_type) : impl_origin option =
+  match resolve_impl trait_name for_type with
+  | Ok (Some resolved) -> Some resolved.origin
   | Ok None | Error _ -> None
 
 (* Return all registered impls (manual and derived). *)
@@ -594,7 +621,7 @@ let derive_impl (trait_name : string) (for_type : mono_type) : (unit, string) re
         match generate_derived_impl trait_name for_type' with
         | None -> Error (Printf.sprintf "Failed to generate impl for trait '%s'" trait_name)
         | Some impl_def ->
-            register_impl impl_def;
+            register_impl ~origin:BuiltinDerivedImpl impl_def;
             Ok ())
   in
   match Hashtbl.find_opt impl_registry (trait_name, for_type') with
@@ -956,6 +983,77 @@ let%test "register and lookup impl" =
   match lookup_impl "show" TInt with
   | None -> false
   | Some def -> def.impl_trait_name = "show" && def.impl_for_type = TInt
+
+let%test "register_impl records explicit provenance" =
+  clear ();
+  register_trait
+    {
+      trait_name = "show";
+      trait_type_param = Some "a";
+      trait_supertraits = [];
+      trait_methods = [ mk_method_sig ~name:"show" ~params:[ ("x", TVar "a") ] ~return_type:TString () ];
+    };
+  register_impl
+    {
+      impl_trait_name = "show";
+      impl_type_params = [];
+      impl_for_type = TInt;
+      impl_methods = [ mk_method_sig ~name:"show" ~params:[ ("x", TInt) ] ~return_type:TString () ];
+    };
+  lookup_impl_origin "show" TInt = Some ExplicitImpl
+
+let%test "trait registration preserves default bodies" =
+  clear ();
+  let default_impl = AST.mk_expr ~id:41 (AST.String "fallback") in
+  register_trait
+    {
+      trait_name = "greetable";
+      trait_type_param = Some "a";
+      trait_supertraits = [];
+      trait_methods =
+        [
+          {
+            (mk_method_sig ~name:"greet" ~params:[ ("x", TVar "a") ] ~return_type:TString ()) with
+            method_default_impl = Some default_impl;
+          };
+        ];
+    };
+  match lookup_trait "greetable" with
+  | None -> false
+  | Some trait_def -> (
+      match trait_def.trait_methods with
+      | [ method_sig ] -> (
+          match method_sig.method_default_impl with
+          | Some preserved -> AST.expr_equal preserved default_impl
+          | None -> false)
+      | _ -> false)
+
+let%test "validate_impl allows omitting methods backed by defaults" =
+  clear ();
+  register_trait
+    {
+      trait_name = "greetable";
+      trait_type_param = Some "a";
+      trait_supertraits = [];
+      trait_methods =
+        [
+          {
+            (mk_method_sig ~name:"greet" ~params:[ ("x", TVar "a") ] ~return_type:TString ()) with
+            method_default_impl = Some (AST.mk_expr ~id:42 (AST.String "hello"));
+          };
+        ];
+    };
+  match
+    validate_impl
+      {
+        impl_trait_name = "greetable";
+        impl_type_params = [];
+        impl_for_type = TInt;
+        impl_methods = [];
+      }
+  with
+  | Ok () -> true
+  | Error _ -> false
 
 let%test "register_impl rejects duplicate user impl at registration" =
   clear ();
@@ -1607,6 +1705,22 @@ let%test "derive_impl - registers impl" =
       match lookup_impl "eq" TInt with
       | None -> false
       | Some _ -> implements_trait "eq" TInt)
+
+let%test "derive_impl - records builtin-derived provenance" =
+  clear ();
+  let eq_trait =
+    {
+      trait_name = "eq";
+      trait_type_param = Some "a";
+      trait_supertraits = [];
+      trait_methods =
+        [ mk_method_sig ~name:"eq" ~params:[ ("x", TVar "a"); ("y", TVar "a") ] ~return_type:TBool () ];
+    }
+  in
+  register_trait eq_trait;
+  match derive_impl "eq" TInt with
+  | Error _ -> false
+  | Ok () -> lookup_impl_origin "eq" TInt = Some BuiltinDerivedImpl
 
 let%test "derive_impl - overriding builtin impl is allowed once" =
   clear ();
