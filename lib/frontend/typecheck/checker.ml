@@ -20,6 +20,8 @@ type typecheck_result = {
       (* Phase 5.4: Typed method definitions for emitter. Populated during Phase 6. *)
   method_type_args_map : (int, Types.mono_type list) Hashtbl.t;
       (* Phase 6.4: Resolved method-level type args per call site for monomorphization *)
+  placeholder_rewrite_map : Infer.placeholder_rewrite_map;
+      (* Placeholder shorthand rewrites keyed by original expression id *)
   diagnostics : Diagnostic.t list; (* Diagnostics emitted during a successful check *)
 }
 
@@ -52,6 +54,7 @@ let make_typecheck_result
   let call_resolution_map = Infer.snapshot_method_resolution_store () in
   let method_def_map = Infer.snapshot_method_def_store () in
   let method_type_args_map = Infer.snapshot_method_type_args_store () in
+  let placeholder_rewrite_map = Infer.snapshot_placeholder_rewrite_store () in
   let diagnostics = snapshot_diagnostics () in
   {
     result_type;
@@ -60,6 +63,7 @@ let make_typecheck_result
     call_resolution_map;
     method_def_map;
     method_type_args_map;
+    placeholder_rewrite_map;
     diagnostics;
   }
 
@@ -888,6 +892,18 @@ let%test "Phase6 prep: canonical builtin trait names work in impl headers" =
   | Ok result -> result.result_type = Types.TString
   | Error _ -> false
 
+let%test "Phase6 prep: omitted impl binders are inferred from impl targets" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  let env = default_env () in
+  match
+    check_string ~env ~file_id:"<test>"
+      "trait Show[a] = { fn show(a) -> Str }\n\
+       impl Show[List[a]] = { fn show(self: List[a]) -> Str = \"\" }"
+  with
+  | Ok _ -> true
+  | Error _ -> false
+
 let%test "Phase6 prep: constrained-param shorthand works end-to-end for top-level fn decls" =
   Infer.reset_fresh_counter ();
   Trait_registry.clear ();
@@ -914,6 +930,47 @@ let%test "Phase6 prep: placeholder shorthand works in call arguments" =
   with
   | Ok result -> result.result_type = Types.TArray Types.TInt
   | Error _ -> false
+
+let%test "Phase6 prep: placeholder shorthand works when callback is invoked in the callee" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  match
+    check_string ~file_id:"<test>"
+      "fn apply[a, b](x: a, f: (a) -> b) -> b = f(x)\n\
+       let result = apply(21, _ * 2)\n\
+       result"
+  with
+  | Ok result -> result.result_type = Types.TInt
+  | Error _ -> false
+
+let%test "Phase6 prep: placeholder shorthand works through annotation checking" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  match
+    Syntax.Parser.parse ~file_id:"<test>"
+      "fn apply[a, b](x: a, f: (a) -> b) -> b = f(x)\n\
+       let result = apply(21, _ * 2)\n\
+       result"
+  with
+  | Error _ -> false
+  | Ok program -> (
+      match check_program_with_annotations ~env:(Builtins.prelude_env ()) program with
+      | Ok result -> result.result_type = Types.TInt
+      | Error _ -> false)
+
+let%test "Phase6 prep: outer non-callback calls do not steal placeholder rewrites" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  match
+    Syntax.Parser.parse ~file_id:"<test>"
+      "fn apply[a, b](x: a, f: (a) -> b) -> b = f(x)\n\
+       puts(apply(21, _ * 2))"
+  with
+  | Error _ -> false
+  | Ok program -> (
+      match check_program_with_annotations ~env:(Builtins.prelude_env ()) program with
+      | Ok result -> result.result_type = Types.TNull
+      | Error _ -> false)
 
 let%test "Phase6 prep: nested placeholder shorthand works in call arguments" =
   Infer.reset_fresh_counter ();

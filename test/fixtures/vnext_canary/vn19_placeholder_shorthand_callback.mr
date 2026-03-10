@@ -1,0 +1,8 @@
+# VN19: Placeholder shorthand rewrites with later-stage call context
+fn apply[a, b](x: a, f: (a) -> b) -> b = f(x)
+
+fn trim(s: Str) -> Str = s
+fn strip(s: Str) -> Str = s
+
+puts(apply(21, _ * 2))            # output: 42
+puts(apply("banana", trim(strip(_))))  # output: banana

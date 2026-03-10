@@ -154,6 +154,10 @@ let create_inference_state () : inference_state =
 let active_inference_state : inference_state ref = ref (create_inference_state ())
 let global_method_resolution_store : (int, method_resolution) Hashtbl.t = Hashtbl.create 256
 let global_method_type_args_store : (int, mono_type list) Hashtbl.t = Hashtbl.create 64
+type placeholder_rewrite_map = (int, AST.expression) Hashtbl.t
+
+let global_placeholder_rewrite_store : placeholder_rewrite_map = Hashtbl.create 64
+let global_synthetic_expr_id_counter : int ref = ref (-1)
 let global_diagnostics : Diagnostic.t list ref = ref []
 
 (* Track method names being defined in the current inherent impl, so recursive calls
@@ -328,7 +332,9 @@ let global_method_def_store : (int, Resolution_artifacts.typed_method_def) Hasht
 let clear_method_resolution_store () : unit =
   Hashtbl.clear global_method_resolution_store;
   Hashtbl.clear global_method_type_args_store;
+  Hashtbl.clear global_placeholder_rewrite_store;
   Hashtbl.clear global_method_def_store;
+  global_synthetic_expr_id_counter := -1;
   global_diagnostics := []
 
 let emit_diagnostic (diag : Diagnostic.t) : unit = global_diagnostics := diag :: !global_diagnostics
@@ -339,6 +345,16 @@ let record_method_def (method_id : int) (def : Resolution_artifacts.typed_method
 
 let snapshot_method_def_store () : (int, Resolution_artifacts.typed_method_def) Hashtbl.t =
   Hashtbl.copy global_method_def_store
+
+let record_placeholder_rewrite (original_expr : AST.expression) (rewritten_expr : AST.expression) : unit =
+  Hashtbl.replace global_placeholder_rewrite_store original_expr.id rewritten_expr
+
+let snapshot_placeholder_rewrite_store () : placeholder_rewrite_map = Hashtbl.copy global_placeholder_rewrite_store
+
+let fresh_synthetic_expr_id () : int =
+  let id = !global_synthetic_expr_id_counter in
+  decr global_synthetic_expr_id_counter;
+  id
 
 let clear_type_var_user_names () : unit = Hashtbl.clear (current_type_var_user_names_store ())
 
@@ -2508,7 +2524,7 @@ and replace_placeholder_identifier_expr (param_name : string) (expr : AST.expres
           }
     | AST.BlockExpr stmts -> AST.BlockExpr (List.map (replace_placeholder_identifier_stmt param_name) stmts)
   in
-  { expr with expr = rewritten }
+  { expr with id = fresh_synthetic_expr_id (); expr = rewritten }
 
 and replace_placeholder_identifier_stmt (param_name : string) (stmt : AST.statement) : AST.statement =
   let rewritten =
@@ -2525,7 +2541,7 @@ and replace_placeholder_identifier_stmt (param_name : string) (stmt : AST.statem
 
 and type_can_accept_placeholder_callback (typ : mono_type) : bool =
   match canonicalize_mono_type typ with
-  | TVar _ | TFun _ -> true
+  | TFun _ -> true
   | TUnion members -> List.exists type_can_accept_placeholder_callback members
   | _ -> false
 
@@ -2540,7 +2556,7 @@ and placeholder_lambda_expr (expr : AST.expression) : AST.expression =
              (AST.ExpressionStmt body_expr);
          ])
   in
-  AST.mk_expr ~id:(-expr.id - 1) ~pos:expr.pos ~end_pos:expr.end_pos ~file_id:expr.file_id
+  AST.mk_expr ~id:(fresh_synthetic_expr_id ()) ~pos:expr.pos ~end_pos:expr.end_pos ~file_id:expr.file_id
     (AST.Function
        {
          generics = None;
@@ -2564,7 +2580,9 @@ and infer_arg_against_expected type_map env subst (arg : AST.expression) (expect
   else
     let inferred_arg =
       if placeholder_count = 1 && type_can_accept_placeholder_callback expected_type' then
-        placeholder_lambda_expr arg
+        let rewritten_arg = placeholder_lambda_expr arg in
+        record_placeholder_rewrite arg rewritten_arg;
+        rewritten_arg
       else
         arg
     in
@@ -4980,6 +4998,9 @@ module Test = struct
 
   let%test "infer record match pattern with rest binding" =
     infers_to "let p = { x: 10, y: 20, z: 30 }; match p { { x:, ...rest }: x + rest.y _: 0 }" TInt
+
+  let%test "single-arm record match is exhaustive" =
+    infers_to "let p = { name: \"George\", age: 7 }; match p { { name:, ...rest }: name }" TString
 
   let%test "infer polymorphic let" =
     (* let id = fn(x) { x }; id(5) should work and be Int *)

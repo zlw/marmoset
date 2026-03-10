@@ -333,6 +333,8 @@ type mono_state = {
       (* Phase 6.4: resolved method-level type args per call site *)
   method_def_map : (int, Typecheck.Resolution_artifacts.typed_method_def) Hashtbl.t;
       (* Phase 6.3: typed method definitions keyed by method id *)
+  placeholder_rewrite_map : Infer.placeholder_rewrite_map;
+      (* Placeholder shorthand rewrites keyed by original expression id *)
 }
 
 let create_mono_state
@@ -341,6 +343,7 @@ let create_mono_state
     ?(call_resolution_map = Hashtbl.create 0)
     ?(method_type_args_map = Hashtbl.create 0)
     ?(method_def_map = Hashtbl.create 0)
+    ?(placeholder_rewrite_map = Hashtbl.create 0)
     () =
   if module_path <> "main" then
     failwith
@@ -363,7 +366,13 @@ let create_mono_state
     call_resolution_map;
     method_type_args_map;
     method_def_map;
+    placeholder_rewrite_map;
   }
+
+let placeholder_rewritten_expr (rewrite_map : Infer.placeholder_rewrite_map) (expr : AST.expression) : AST.expression =
+  match Hashtbl.find_opt rewrite_map expr.id with
+  | Some rewritten -> rewritten
+  | None -> expr
 
 (* ============================================================
    Enum Layout Types (Phase 4.4: Multi-field support)
@@ -1232,6 +1241,7 @@ let register_user_func_call_instantiation
     ~(target_name : string)
     ~(args : AST.expression list)
     ~(call_expr : AST.expression) : unit =
+  let args = List.map (placeholder_rewritten_expr state.placeholder_rewrite_map) args in
   let arity = List.length args in
   let func_def_opt = lookup_func_def_for_call state target_name arity in
   let arg_types = List.map (get_type type_map) args in
@@ -1640,6 +1650,7 @@ and collect_insts_expr
     (type_map : Infer.type_map)
     (env : Infer.type_env)
     (expr : AST.expression) : unit =
+  let expr = placeholder_rewritten_expr state.placeholder_rewrite_map expr in
   match expr.expr with
   | AST.Integer _ | AST.Float _ | AST.Boolean _ | AST.String _ -> ()
   | AST.Identifier name when is_user_func state name -> (
@@ -1756,6 +1767,7 @@ and collect_insts_expr
       ignore (collect_insts_stmt state type_map env cons);
       Option.iter (fun s -> ignore (collect_insts_stmt state type_map env s)) alt
   | AST.Call (func, args) -> (
+      let args = List.map (placeholder_rewritten_expr state.placeholder_rewrite_map) args in
       (* Collect from subexpressions first *)
       collect_insts_expr state type_map env func;
       List.iter (collect_insts_expr state type_map env) args;
@@ -2193,6 +2205,7 @@ let rec emit_expr
     (type_map : Infer.type_map)
     (env : Infer.type_env)
     (expr : AST.expression) : string =
+  let expr = placeholder_rewritten_expr state.mono.placeholder_rewrite_map expr in
   let emitted =
     match expr.expr with
     | AST.Integer i -> Printf.sprintf "int64(%Ld)" i
@@ -3511,6 +3524,7 @@ and emit_if_to_target state type_map env if_expr (cond : AST.expression) cons al
       if_code ^ unit_tail
 
 and emit_call state type_map env func args =
+  let args = List.map (placeholder_rewritten_expr state.mono.placeholder_rewrite_map) args in
   let callee_type_opt =
     match func.expr with
     | AST.Identifier name -> (
@@ -4648,9 +4662,11 @@ let collect_inherent_call_sites
     ~(concrete_only : bool)
     (call_resolution_map : (int, Infer.method_resolution) Hashtbl.t)
     (method_type_args_map : (int, Types.mono_type list) Hashtbl.t)
+    (placeholder_rewrite_map : Infer.placeholder_rewrite_map)
     (type_map : Infer.type_map)
     (program : AST.program) : inherent_call_site list =
   let rec collect_expr (acc : inherent_call_site list) (expr : AST.expression) : inherent_call_site list =
+    let expr = placeholder_rewritten_expr placeholder_rewrite_map expr in
     match expr.expr with
     | AST.Identifier _ | AST.Integer _ | AST.Float _ | AST.Boolean _ | AST.String _ -> acc
     | AST.Array elems -> List.fold_left collect_expr acc elems
@@ -4921,7 +4937,7 @@ let emit_inherent_methods
   let inherent_impls = collect_inherent_impl_defs program in
   let call_sites =
     collect_inherent_call_sites ~concrete_only:state.mono.concrete_only state.mono.call_resolution_map
-      state.mono.method_type_args_map type_map program
+      state.mono.method_type_args_map state.mono.placeholder_rewrite_map type_map program
   in
 
   let concrete_method_targets : (string * Types.mono_type) list =
@@ -5112,10 +5128,13 @@ let emit_program_with_typed_env
     ~(call_resolution_map : (int, Infer.method_resolution) Hashtbl.t)
     ~(method_type_args_map : (int, Types.mono_type list) Hashtbl.t)
     ?(method_def_map = Hashtbl.create 0)
+    ?(placeholder_rewrite_map = Hashtbl.create 0)
     (type_map : Infer.type_map)
     (typed_env : Infer.type_env)
     (program : AST.program) : string =
-  let mono_state = create_mono_state ~call_resolution_map ~method_type_args_map ~method_def_map () in
+  let mono_state =
+    create_mono_state ~call_resolution_map ~method_type_args_map ~method_def_map ~placeholder_rewrite_map ()
+  in
 
   (* Pass 1: Collect function definitions *)
   List.iter (collect_funcs_stmt ~top_level:true mono_state) program;
@@ -5245,9 +5264,18 @@ let emit_program (program : AST.program) : string =
       failwith
         (Printf.sprintf "Codegen error: cannot emit untyped program: %s" (Typecheck.Checker.format_error err))
   | Error [] -> failwith "Codegen error: cannot emit untyped program"
-  | Ok { environment = typed_env; type_map; call_resolution_map; method_type_args_map; method_def_map; _ } ->
-      emit_program_with_typed_env ~call_resolution_map ~method_type_args_map ~method_def_map type_map typed_env
-        program
+  | Ok
+      {
+        environment = typed_env;
+        type_map;
+        call_resolution_map;
+        method_type_args_map;
+        method_def_map;
+        placeholder_rewrite_map;
+        _;
+      } ->
+      emit_program_with_typed_env ~call_resolution_map ~method_type_args_map ~method_def_map
+        ~placeholder_rewrite_map type_map typed_env program
 
 (* ============================================================
    Runtime
@@ -5385,13 +5413,14 @@ let compile_string ~file_id (source : string) : (string * Diagnostic.t list, Dia
             call_resolution_map;
             method_type_args_map;
             method_def_map;
+            placeholder_rewrite_map;
             diagnostics;
             _;
           } -> (
           try
             Ok
-              ( emit_program_with_typed_env ~call_resolution_map ~method_type_args_map ~method_def_map type_map
-                  typed_env program,
+              ( emit_program_with_typed_env ~call_resolution_map ~method_type_args_map ~method_def_map
+                  ~placeholder_rewrite_map type_map typed_env program,
                 diagnostics )
           with
           | Failure msg -> Error [ diagnostic_of_codegen_failure_message msg ]
@@ -5509,6 +5538,19 @@ let%test "monomorphized function" =
       &&
       (* Call should use mangled name *)
       string_contains code "double_int64(int64(5))"
+  | Error _ -> false
+
+let%test "placeholder shorthand callback compiles through codegen" =
+  Typecheck.Trait_registry.clear ();
+  Typecheck.Enum_registry.clear ();
+  Typecheck.Inherent_registry.clear ();
+  match
+    compile_string ~file_id:"<codegen>"
+      "fn apply[a, b](x: a, f: (a) -> b) -> b = f(x)\n\
+       let result = apply(21, _ * 2)\n\
+       result"
+  with
+  | Ok (_, _) -> true
   | Error _ -> false
 
 let%test "polymorphic function multiple instantiations" =
