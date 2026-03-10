@@ -6,13 +6,12 @@ module Infer = Marmoset.Lib.Infer
 module Types = Marmoset.Lib.Types
 module Trait_registry = Typecheck.Trait_registry
 
-(* Decompose a curried TFun into a flat param list and return type.
-   TFun(a, TFun(b, c)) → ([a; b], c) *)
-let rec collect_params = function
-  | Types.TFun (arg, rest, _) ->
-      let params, ret = collect_params rest in
-      (arg :: params, ret)
-  | t -> ([], t)
+(* Decompose a curried TFun into a flat param list, return type, and overall purity. *)
+let rec collect_params eff = function
+  | Types.TFun (arg, rest, is_eff) ->
+      let params, ret, eff' = collect_params (eff || is_eff) rest in
+      (arg :: params, ret, eff')
+  | t -> ([], t, eff)
 
 (* Info about an enclosing call site found by AST walking *)
 type call_info = {
@@ -242,6 +241,7 @@ let build_label
     ~(param_names : string list)
     ~(param_types : Types.mono_type list)
     ~(ret_type : Types.mono_type)
+    ~(is_effectful : bool)
     ~(fn_display_name : string) : string * (int * int) list =
   let param_names_arr = Array.of_list param_names in
   let param_name_count = Array.length param_names_arr in
@@ -262,12 +262,16 @@ let build_label
       let start = Buffer.length buf in
       Buffer.add_string buf name;
       Buffer.add_string buf ": ";
-      Buffer.add_string buf (Types.to_string typ);
+      Buffer.add_string buf (Source_syntax.mono_type_to_source typ);
       let stop = Buffer.length buf in
       offsets := (start, stop) :: !offsets)
     param_types;
-  Buffer.add_string buf ") -> ";
-  Buffer.add_string buf (Types.to_string ret_type);
+  Buffer.add_string buf
+    (if is_effectful then
+       ") => "
+     else
+       ") -> ");
+  Buffer.add_string buf (Source_syntax.mono_type_to_source ret_type);
   (Buffer.contents buf, List.rev !offsets)
 
 (* Provide signature help at a given cursor position *)
@@ -281,12 +285,10 @@ let signature_help
   let offset = Lsp_utils.position_to_offset ~source ~line ~character in
   match find_enclosing_call ~source offset program with
   | None -> None
-  | Some call -> (
-      (* Determine the function type *)
+  | Some call ->
       let fn_type_opt =
         match call.method_name with
         | Some mname -> (
-            (* Method call: look up receiver type, then resolve method *)
             match call.recv_id with
             | None -> None
             | Some recv_id -> (
@@ -296,16 +298,13 @@ let signature_help
                     match Trait_registry.lookup_method recv_type mname with
                     | None -> None
                     | Some (_trait_name, method_sig) ->
-                        (* Reconstruct a function type from method_sig params → return *)
                         let param_types = List.map snd method_sig.method_params in
                         let param_names = List.map fst method_sig.method_params in
                         Some (`Method (param_types, method_sig.method_return_type, param_names)))))
         | None -> (
-            (* Regular call: look up fn_expr type *)
             match Hashtbl.find_opt type_map call.fn_id with
             | Some fn_type -> Some (`FnType fn_type)
             | None -> (
-                (* Try environment for polymorphic functions *)
                 match call.fn_name with
                 | Some name -> (
                     match Infer.TypeEnv.find_opt name environment with
@@ -315,23 +314,21 @@ let signature_help
       in
       match fn_type_opt with
       | None -> None
-      | Some info -> (
-          let param_types, ret_type, method_param_names =
+      | Some info ->
+          let param_types, ret_type, is_effectful, method_param_names =
             match info with
             | `FnType fn_type ->
-                (* Normalize the full function type once to preserve type variable identity *)
                 let norm = Types.normalize fn_type in
-                let params, ret = collect_params norm in
-                (params, ret, None)
+                let params, ret, eff = collect_params false norm in
+                (params, ret, eff, None)
             | `Method (ptypes, ret, pnames) ->
-                (* Method types come from trait registry — normalize together *)
                 let dummy_fn = List.fold_right (fun p acc -> Types.tfun p acc) ptypes ret in
                 let norm = Types.normalize dummy_fn in
-                let params, ret_n = collect_params norm in
-                (params, ret_n, Some pnames)
+                let params, ret_n, eff = collect_params false norm in
+                (params, ret_n, eff, Some pnames)
           in
           match param_types with
-          | [] -> None (* Not a function type — e.g. 42() *)
+          | [] -> None
           | _ ->
               let fn_display_name =
                 match call.method_name with
@@ -352,7 +349,9 @@ let signature_help
                         | None -> [])
                     | None -> [])
               in
-              let label, offsets = build_label ~param_names ~param_types ~ret_type ~fn_display_name in
+              let label, offsets =
+                build_label ~param_names ~param_types ~ret_type ~is_effectful ~fn_display_name
+              in
               let parameters =
                 List.map
                   (fun (start, stop) -> Lsp_t.ParameterInformation.create ~label:(`Offset (start, stop)) ())
@@ -367,7 +366,7 @@ let signature_help
               in
               Some
                 (Lsp_t.SignatureHelp.create ~signatures:[ sig_info ] ~activeSignature:0
-                   ~activeParameter:(Some active_param) ())))
+                   ~activeParameter:(Some active_param) ())
 
 (* ============================================================
    Tests
@@ -467,7 +466,7 @@ let%test "parameter names come from function definition" =
   match check_sig source 0 47 with
   | Some sh ->
       let sig0 = List.hd sh.signatures in
-      string_contains sig0.label "name"
+      string_contains sig0.label "name" && string_contains sig0.label "Str"
   | None -> false
 
 let%test "parameter offsets use Offset label" =
@@ -521,4 +520,12 @@ let%test "signature help on dot method call shows method signature" =
   let col = 9 in
   match check_sig source last_line col with
   | Some sh -> List.length sh.signatures >= 1
+  | None -> false
+
+let%test "effectful function keeps => in signature label" =
+  let source = "let f = fn(x: int) => int { puts(x); x }; f(1)" in
+  match check_sig source 0 44 with
+  | Some sh ->
+      let sig0 = List.hd sh.signatures in
+      string_contains sig0.label "=>"
   | None -> false

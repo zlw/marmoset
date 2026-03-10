@@ -4,37 +4,7 @@ module Lsp_t = Linol_lsp.Types
 module Ast = Marmoset.Lib.Ast
 
 (* Convert a type_expr to a human-readable string for display *)
-let rec type_expr_to_string (te : Ast.AST.type_expr) : string =
-  match te with
-  | Ast.AST.TVar name -> name
-  | Ast.AST.TCon name -> name
-  | Ast.AST.TApp (name, args) ->
-      Printf.sprintf "%s[%s]" name (String.concat ", " (List.map type_expr_to_string args))
-  | Ast.AST.TArrow (params, ret, effectful) ->
-      Printf.sprintf "(%s) %s %s"
-        (String.concat ", " (List.map type_expr_to_string params))
-        (if effectful then
-           "=>"
-         else
-           "->")
-        (type_expr_to_string ret)
-  | Ast.AST.TUnion types -> String.concat " | " (List.map type_expr_to_string types)
-  | Ast.AST.TRecord (fields, row) ->
-      let field_strs =
-        List.map
-          (fun (f : Ast.AST.record_type_field) -> f.field_name ^ ": " ^ type_expr_to_string f.field_type)
-          fields
-      in
-      let row_str =
-        match row with
-        | None -> ""
-        | Some r ->
-            if field_strs = [] then
-              "..." ^ type_expr_to_string r
-            else
-              ", ..." ^ type_expr_to_string r
-      in
-      "{ " ^ String.concat ", " field_strs ^ row_str ^ " }"
+let type_expr_to_string = Source_syntax.type_expr_to_source
 
 (* Extract document symbols from a program's top-level statements *)
 let document_symbols ~(source : string) ~(program : Ast.AST.program) : Lsp_t.DocumentSymbol.t list =
@@ -85,7 +55,7 @@ let document_symbols ~(source : string) ~(program : Ast.AST.program) : Lsp_t.Doc
           Some (symbol ~name ~kind:Lsp_t.SymbolKind.Interface ~range:(range_of_stmt stmt) ~children ())
       | Ast.AST.ImplDef { impl_trait_name; impl_for_type; impl_methods; _ } ->
           let type_name = type_expr_to_string impl_for_type in
-          let name = Printf.sprintf "impl %s for %s" impl_trait_name type_name in
+          let name = Printf.sprintf "impl %s[%s]" impl_trait_name type_name in
           let children =
             List.map
               (fun (m : Ast.AST.method_impl) ->
@@ -93,10 +63,18 @@ let document_symbols ~(source : string) ~(program : Ast.AST.program) : Lsp_t.Doc
               impl_methods
           in
           Some (symbol ~name ~kind:Lsp_t.SymbolKind.Class ~range:(range_of_stmt stmt) ~children ())
+      | Ast.AST.InherentImplDef { inherent_for_type; inherent_methods } ->
+          let name = Printf.sprintf "impl %s" (type_expr_to_string inherent_for_type) in
+          let children =
+            List.map
+              (fun (m : Ast.AST.method_impl) ->
+                symbol ~name:m.impl_method_name ~kind:Lsp_t.SymbolKind.Method ~range:(range_of_stmt stmt) ())
+              inherent_methods
+          in
+          Some (symbol ~name ~kind:Lsp_t.SymbolKind.Class ~range:(range_of_stmt stmt) ~children ())
       | Ast.AST.TypeAlias { alias_name; _ } ->
           Some (symbol ~name:alias_name ~kind:Lsp_t.SymbolKind.TypeParameter ~range:(range_of_stmt stmt) ())
-      | Ast.AST.InherentImplDef _ | Ast.AST.DeriveDef _ | Ast.AST.ExpressionStmt _ | Ast.AST.Return _
-      | Ast.AST.Block _ ->
+      | Ast.AST.DeriveDef _ | Ast.AST.ExpressionStmt _ | Ast.AST.Return _ | Ast.AST.Block _ ->
           None)
     program
 
@@ -153,3 +131,15 @@ let%test "multiple definitions produce multiple symbols" =
 let%test "expression statements are filtered out" =
   let symbols = get_symbols "42; let x = 1;" in
   List.length symbols = 1 && (List.hd symbols).name = "x"
+
+let%test "trait impl uses vNext symbol label" =
+  let symbols = get_symbols "impl Show[Int] = { fn show(x: Int) -> Str = \"int\" }" in
+  match symbols with
+  | [ s ] -> s.name = "impl Show[Int]"
+  | _ -> false
+
+let%test "inherent impl is included in document symbols" =
+  let symbols = get_symbols "impl Int = { fn double(x: Int) -> Int = x * 2 }" in
+  match symbols with
+  | [ s ] -> s.name = "impl Int" && s.kind = Lsp_t.SymbolKind.Class
+  | _ -> false

@@ -5,7 +5,7 @@ module Ast = Marmoset.Lib.Ast
 module Infer = Marmoset.Lib.Infer
 module Types = Marmoset.Lib.Types
 
-type type_var_user_name_map = (string * string) list
+type type_var_user_name_map = Source_syntax.type_var_user_name_map
 
 let first_some a b =
   match a with
@@ -103,118 +103,9 @@ and find_expr_in_stmt (offset : int) (stmt : Ast.AST.statement) : Ast.AST.expres
 let find_in_program (offset : int) (program : Ast.AST.program) : Ast.AST.expression option =
   List.find_map (find_expr_in_stmt offset) program
 
-(* ============================================================
-   Source-syntax type formatting for hover display
-   ============================================================
-
-   Uses lowercase primitives (string, int), source arrows (-> / =>),
-   and resolves fresh type variable names to user-defined names
-   from generic parameters (e.g., t0 -> t). *)
-
-let resolve_var_name ~(type_var_user_names : type_var_user_name_map) (name : string) : string =
-  match List.assoc_opt name type_var_user_names with
-  | Some user_name -> user_name
-  | None -> name
-
-let rec type_to_source ~(type_var_user_names : type_var_user_name_map) (mono : Types.mono_type) : string =
-  match mono with
-  | Types.TInt -> "int"
-  | Types.TFloat -> "float"
-  | Types.TBool -> "bool"
-  | Types.TString -> "string"
-  | Types.TNull -> "unit"
-  | Types.TVar name -> resolve_var_name ~type_var_user_names name
-  | Types.TRowVar name -> resolve_var_name ~type_var_user_names name
-  | Types.TArray element -> "list[" ^ type_to_source ~type_var_user_names element ^ "]"
-  | Types.THash (key, value) ->
-      "map[" ^ type_to_source ~type_var_user_names key ^ ", " ^ type_to_source ~type_var_user_names value ^ "]"
-  | Types.TFun _ ->
-      let rec collect_args eff = function
-        | Types.TFun (arg, rest, e) ->
-            let args, ret, eff' = collect_args (eff || e) rest in
-            (arg :: args, ret, eff')
-        | t -> ([], t, eff)
-      in
-      let args, ret, is_eff = collect_args false mono in
-      let args_str =
-        match args with
-        | [ single ] -> "(" ^ type_to_source_parens ~type_var_user_names single ^ ")"
-        | _ -> "(" ^ String.concat ", " (List.map (type_to_source ~type_var_user_names) args) ^ ")"
-      in
-      let arrow =
-        if is_eff then
-          " => "
-        else
-          " -> "
-      in
-      args_str ^ arrow ^ type_to_source ~type_var_user_names ret
-  | Types.TRecord (fields, row) ->
-      let field_strs =
-        List.map
-          (fun (f : Types.record_field_type) -> f.name ^ ": " ^ type_to_source ~type_var_user_names f.typ)
-          fields
-      in
-      let row_str =
-        match row with
-        | None -> ""
-        | Some r ->
-            if field_strs = [] then
-              "..." ^ type_to_source ~type_var_user_names r
-            else
-              ", ..." ^ type_to_source ~type_var_user_names r
-      in
-      "{ " ^ String.concat ", " field_strs ^ row_str ^ " }"
-  | Types.TUnion types -> String.concat " | " (List.map (type_to_source ~type_var_user_names) types)
-  | Types.TEnum (name, []) -> name
-  | Types.TEnum (name, args) ->
-      name ^ "[" ^ String.concat ", " (List.map (type_to_source ~type_var_user_names) args) ^ "]"
-
-and type_to_source_parens ~(type_var_user_names : type_var_user_name_map) = function
-  | Types.TFun _ as t -> "(" ^ type_to_source ~type_var_user_names t ^ ")"
-  | t -> type_to_source ~type_var_user_names t
-
-(* Normalize type variables to nice names, preserving user-defined names *)
-let normalize_with_user_names ~(type_var_user_names : type_var_user_name_map) (mono : Types.mono_type) :
-    Types.mono_type =
-  let vars = Types.unique_in_order (Types.collect_vars_in_order mono) in
-  let renaming =
-    List.mapi
-      (fun i old_name ->
-        match List.assoc_opt old_name type_var_user_names with
-        | Some user_name ->
-            (* Preserve user's name *)
-            if user_name = old_name then
-              None
-            else
-              Some (old_name, Types.TVar user_name)
-        | None ->
-            (* Auto-generated var: normalize to a, b, c, ... *)
-            let nice = Types.nice_var_name i in
-            if nice = old_name then
-              None
-            else
-              Some (old_name, Types.TVar nice))
-      vars
-  in
-  let renaming = Types.substitution_of_list (List.filter_map Fun.id renaming) in
-  Types.apply_substitution renaming mono
-
-(* Format a poly_type in Marmoset syntax: name[t, u]: type *)
-let format_poly ~(type_var_user_names : type_var_user_name_map) ~(name : string) (Types.Forall (vars, mono)) :
-    string =
-  let norm_mono = normalize_with_user_names ~type_var_user_names mono in
-  let type_str = type_to_source ~type_var_user_names norm_mono in
-  let display_vars =
-    List.map
-      (fun v ->
-        match List.assoc_opt v type_var_user_names with
-        | Some user_name -> user_name
-        | None -> v)
-      vars
-  in
-  match display_vars with
-  | [] -> Printf.sprintf "%s: %s" name type_str
-  | _ -> Printf.sprintf "%s[%s]: %s" name (String.concat ", " display_vars) type_str
+let type_to_source = Source_syntax.mono_type_to_source
+let normalize_with_user_names = Source_syntax.normalize_mono_type_with_user_names
+let format_poly = Source_syntax.format_poly_binding
 
 (* Format a type for hover display *)
 let format_hover_type
@@ -324,19 +215,19 @@ let hover_info source line character : hover_result option =
    Tests: literals
    ============================================================ *)
 
-let%test "hover on integer literal: type=int, highlights '42'" =
+let%test "hover on integer literal: type=Int, highlights '42'" =
   match hover_info "42" 0 0 with
-  | Some h -> string_contains h.type_text "int" && h.highlighted = "42"
+  | Some h -> string_contains h.type_text "Int" && h.highlighted = "42"
   | None -> false
 
-let%test "hover on string literal: type=string, highlights the string" =
+let%test "hover on string literal: type=Str, highlights the string" =
   match hover_info {|"hello"|} 0 0 with
-  | Some h -> string_contains h.type_text "string" && h.highlighted = {|"hello"|}
+  | Some h -> string_contains h.type_text "Str" && h.highlighted = {|"hello"|}
   | None -> false
 
-let%test "hover on boolean literal: type=bool, highlights 'true'" =
+let%test "hover on boolean literal: type=Bool, highlights 'true'" =
   match hover_info "true" 0 0 with
-  | Some h -> string_contains h.type_text "bool" && h.highlighted = "true"
+  | Some h -> string_contains h.type_text "Bool" && h.highlighted = "true"
   | None -> false
 
 (* ============================================================
@@ -349,7 +240,7 @@ let%test "hover on boolean literal: type=bool, highlights 'true'" =
     x at col 12 *)
 let%test "hover on identifier: type=int, highlights 'x'" =
   match hover_info "let x = 42; x" 0 12 with
-  | Some h -> string_contains h.type_text "x" && string_contains h.type_text "int" && h.highlighted = "x"
+  | Some h -> string_contains h.type_text "x" && string_contains h.type_text "Int" && h.highlighted = "x"
   | None -> false
 
 (*  let f = fn(x) { x + 1 }; f
@@ -368,7 +259,7 @@ let%test "hover on polymorphic function uses bracket syntax" =
 
 let%test "hover on let binding name: shows value type" =
   match hover_info "let x = 42;" 0 4 with
-  | Some h -> string_contains h.type_text "int"
+  | Some h -> string_contains h.type_text "Int"
   | None -> false
 
 (* ============================================================
@@ -386,7 +277,7 @@ let%test "hover on call-site function name: arrow type, highlights 'f'" =
 
 let%test "hover on call argument: type=int, highlights '1'" =
   match hover_info "let f = fn(x) { x + 1 }; f(1)" 0 27 with
-  | Some h -> string_contains h.type_text "int" && h.highlighted = "1"
+  | Some h -> string_contains h.type_text "Int" && h.highlighted = "1"
   | None -> false
 
 (* ============================================================
@@ -398,17 +289,17 @@ let%test "hover on call argument: type=int, highlights '1'" =
     1 at col 0, + at col 2, 2 at col 4 *)
 let%test "hover on left of infix: type=int, highlights '1'" =
   match hover_info "1 + 2" 0 0 with
-  | Some h -> string_contains h.type_text "int" && h.highlighted = "1"
+  | Some h -> string_contains h.type_text "Int" && h.highlighted = "1"
   | None -> false
 
 let%test "hover on right of infix: type=int, highlights '2'" =
   match hover_info "1 + 2" 0 4 with
-  | Some h -> string_contains h.type_text "int" && h.highlighted = "2"
+  | Some h -> string_contains h.type_text "Int" && h.highlighted = "2"
   | None -> false
 
 let%test "hover on infix operator: type=int, highlights whole expression" =
   match hover_info "1 + 2" 0 2 with
-  | Some h -> string_contains h.type_text "int" && h.highlighted = "1 + 2"
+  | Some h -> string_contains h.type_text "Int" && h.highlighted = "1 + 2"
   | None -> false
 
 (* ============================================================
@@ -440,14 +331,14 @@ let%test "hover on n inside fib body" =
      match a parent expression instead of the exact identifier. Correct type
      is still returned — just a wider highlight. Will be fixed in parser rework. *)
   match hover_info fib_source 2 13 with
-  | Some h -> string_contains h.type_text "int"
+  | Some h -> string_contains h.type_text "Int"
   | None -> false
 
 (* Sanity: what does hover find on the simple return line? *)
 let%test "hover on literal 2 inside fib body" =
   (* line 2: "  return fib(n - 2) + fib(n - 1);"  col 17 = '2' *)
   match hover_info fib_source 2 17 with
-  | Some h -> string_contains h.type_text "int"
+  | Some h -> string_contains h.type_text "Int"
   | None -> false
 
 let%test "hover on + operator inside fib body" =
@@ -458,7 +349,7 @@ let%test "hover on + operator inside fib body" =
 
 let%test "hover on return keyword: shows return expr type" =
   match hover_info fib_source 2 3 with
-  | Some h -> string_contains h.type_text "int"
+  | Some h -> string_contains h.type_text "Int"
   | None -> false
 
 let%test "hover on return keyword: highlights full return expression" =
@@ -476,19 +367,19 @@ let full_fib_source =
 let%test "hover on first return keyword shows int, not unit" =
   (* line 1: "  if (n < 2) { return n }"  col 15 = 'r' in 'return' *)
   match hover_info full_fib_source 1 15 with
-  | Some h -> string_contains h.type_text "int"
+  | Some h -> string_contains h.type_text "Int"
   | None -> false
 
 let%test "hover on second return keyword shows int" =
   (* line 2: "  return fib(n - 2) + fib(n - 1);"  col 2 = 'r' in 'return' *)
   match hover_info full_fib_source 2 2 with
-  | Some h -> string_contains h.type_text "int"
+  | Some h -> string_contains h.type_text "Int"
   | None -> false
 
 let%test "hover on n param inside first return" =
   (* line 1: col 22 = 'n' after return *)
   match hover_info full_fib_source 1 22 with
-  | Some h -> string_contains h.type_text "int" && h.highlighted = "n"
+  | Some h -> string_contains h.type_text "Int" && h.highlighted = "n"
   | None -> false
 
 let%test "hover on whitespace/out of range returns None" = check_hover "42" 5 0 = None
@@ -513,7 +404,7 @@ let trait_impl_source =
 let%test "hover on expression inside trait impl method body" =
   (* line 4: fn hello(x: int) -> string { "hi" }  — "hi" is a string literal *)
   match hover_info trait_impl_source 4 32 with
-  | Some h -> string_contains h.type_text "string"
+  | Some h -> string_contains h.type_text "Str"
   | None -> false
 
 let inherent_impl_source = "impl int {\n  fn double(x: int) -> int { x * 2 }\n}\nputs(42.double())"
@@ -521,5 +412,5 @@ let inherent_impl_source = "impl int {\n  fn double(x: int) -> int { x * 2 }\n}\
 let%test "hover on expression inside inherent impl method body" =
   (* line 1: fn double(x: int) -> int { x * 2 } — x * 2 *)
   match hover_info inherent_impl_source 1 29 with
-  | Some h -> string_contains h.type_text "int"
+  | Some h -> string_contains h.type_text "Int"
   | None -> false
