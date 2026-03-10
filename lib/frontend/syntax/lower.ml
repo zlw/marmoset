@@ -556,8 +556,6 @@ let lower_top_decl_with_ctx
           }
       in
       [ AST.mk_stmt ~pos ~end_pos ~file_id (AST.TraitDef td) ]
-  | Surface.SImplDef { impl_type_params; impl_trait_name; impl_for_type; impl_methods } ->
-      lower_trait_impl_decl impl_type_params impl_trait_name impl_for_type impl_methods
   | Surface.SAmbiguousImplDef { impl_type_params; impl_head_type; impl_methods } -> (
       match impl_head_type with
       | Surface.STApp (head_name, [ impl_for_type ])
@@ -973,11 +971,10 @@ let%test "Phase2: explicit impl binders lower lowercase names in impl target and
   let id_supply = Id_supply.Id_supply.create 0 in
   let method_body = Surface.mk_surface_expr ~id:1 ~pos:0 (Surface.SEString "") in
   let decl =
-    Surface.SImplDef
+    Surface.SAmbiguousImplDef
       {
         impl_type_params = [ AST.{ name = "a"; constraints = [] } ];
-        impl_trait_name = "Show";
-        impl_for_type = Surface.STApp ("Option", [ Surface.STCon "a" ]);
+        impl_head_type = Surface.STApp ("Show", [ Surface.STApp ("Option", [ Surface.STCon "a" ]) ]);
         impl_methods =
           [
             Surface.
@@ -1023,11 +1020,10 @@ let%test "Phase2: omitted impl binders are inferred from free vars in impl targe
   let id_supply = Id_supply.Id_supply.create 0 in
   let method_body = Surface.mk_surface_expr ~id:1 ~pos:0 (Surface.SEString "") in
   let decl =
-    Surface.SImplDef
+    Surface.SAmbiguousImplDef
       {
         impl_type_params = [];
-        impl_trait_name = "Show";
-        impl_for_type = Surface.STApp ("List", [ Surface.STCon "a" ]);
+        impl_head_type = Surface.STApp ("Show", [ Surface.STApp ("List", [ Surface.STCon "a" ]) ]);
         impl_methods =
           [
             Surface.

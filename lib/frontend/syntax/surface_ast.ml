@@ -189,12 +189,6 @@ module Surface = struct
         fields : surface_record_type_field list;
         methods : surface_method_sig list;
       }
-    | SImplDef of {
-        impl_type_params : surface_generic_param list;
-        impl_trait_name : string;
-        impl_for_type : surface_type_expr;
-        impl_methods : surface_method_impl list;
-      }
     | SAmbiguousImplDef of {
         impl_type_params : surface_generic_param list;
         impl_head_type : surface_type_expr;
