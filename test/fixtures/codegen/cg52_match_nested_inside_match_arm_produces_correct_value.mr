@@ -1,16 +1,16 @@
 # CG52: Match nested inside match arm produces correct value
-let f = fn(x: int, y: int) -> int {
+fn f(x: Int, y: Int) -> Int = {
   match x {
-    1: match y {
-      1: 11
-      2: 12
-      _: 19
+    case 1: match y {
+      case 1: 11
+      case 2: 12
+      case _: 19
     }
-    2: match y {
-      1: 21
-      _: 99
+    case 2: match y {
+      case 1: 21
+      case _: 99
     }
-    _: 0
+    case _: 0
   }
 }
 puts(f(2, 3))  # output: 99

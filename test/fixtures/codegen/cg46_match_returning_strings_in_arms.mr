@@ -1,9 +1,9 @@
 # CG46: Match returning strings in arms
 let n = 2
 let s = match n {
-  1: "one"
-  2: "two"
-  3: "three"
-  _: "other"
+  case 1: "one"
+  case 2: "two"
+  case 3: "three"
+  case _: "other"
 }
 puts(s)  # output: two

@@ -1,8 +1,8 @@
 # CG73: Match on string scrutinee selects correct arm
 let s = "hello"
 let result = match s {
-  "hello": "found_hello"
-  "world": "found_world"
-  _: "unknown"
+  case "hello": "found_hello"
+  case "world": "found_world"
+  case _: "unknown"
 }
 puts(result)  # output: found_hello

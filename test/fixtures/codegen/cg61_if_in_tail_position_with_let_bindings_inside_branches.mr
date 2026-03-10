@@ -1,5 +1,5 @@
 # CG61: if in tail position with let bindings inside branches
-let f = fn(flag: bool) -> int {
+fn f(flag: Bool) -> Int = {
   if (flag) {
     let a = 10
     let b = 20
