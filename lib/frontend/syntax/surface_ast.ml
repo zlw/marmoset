@@ -72,14 +72,6 @@ module Surface = struct
         se_type_args : surface_type_expr list option;
         se_args : surface_expr list;
       }
-    (* — Legacy function expression (fn(...) { ... }) — *)
-    | SEFunction of {
-        se_generics : AST.generic_param list option; (* shared leaf *)
-        se_params : (string * surface_type_expr option) list;
-        se_return_type : surface_type_expr option;
-        se_is_effectful : bool;
-        se_body : surface_stmt;
-      }
     (* — vNext surface-only forms — *)
     | SEArrowLambda of {
         se_lambda_params : (string * surface_type_expr option) list;
@@ -119,8 +111,7 @@ module Surface = struct
   and surface_match_arm = {
     se_patterns : surface_pattern list;
     se_arm_body : surface_expr_or_block;
-        (* vNext arms use case keyword and allow block bodies;
-           legacy arms allow expression only *)
+        (* vNext arms use case and allow block or expression bodies *)
   }
 
   (* ── Surface statements (block-level only) ── *)

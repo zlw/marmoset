@@ -263,19 +263,6 @@ let rec lower_expr (id_supply : Id_supply.Id_supply.t) (se : Surface.surface_exp
             mc_type_args = Option.map (List.map lower_type_expr) se_type_args;
             mc_args = List.map (lower_expr id_supply) se_args;
           }
-    | Surface.SEFunction { se_generics; se_params; se_return_type; se_is_effectful; se_body } ->
-        let bound_type_vars = bound_type_vars_of_generics se_generics in
-        AST.Function
-          {
-            generics = se_generics;
-            params =
-              List.map
-                (fun (n, t) -> (n, Option.map (lower_type_expr_with_bound_vars bound_type_vars) t))
-                se_params;
-            return_type = Option.map (lower_type_expr_with_bound_vars bound_type_vars) se_return_type;
-            is_effectful = se_is_effectful;
-            body = lower_stmt id_supply se_body;
-          }
     | Surface.SEArrowLambda { se_lambda_params; se_lambda_is_effectful; se_lambda_body } ->
         (* Lower arrow lambda to canonical Function form *)
         let fn_body = lower_expr_or_block_to_stmt id_supply se_lambda_body in
