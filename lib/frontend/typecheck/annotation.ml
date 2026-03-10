@@ -227,6 +227,22 @@ let rec mono_types_equal (t1 : Types.mono_type) (t2 : Types.mono_type) : bool =
       name1 = name2 && List.length args1 = List.length args2 && List.for_all2 mono_types_equal args1 args2
   | _ -> false
 
+let trait_object_traits_allowed (traits : string list) : bool =
+  traits <> []
+  &&
+  List.for_all
+    (fun trait_name ->
+      match Trait_registry.trait_kind trait_name with
+      | Some Trait_registry.MethodOnly | Some Trait_registry.Mixed -> true
+      | Some Trait_registry.FieldOnly | None -> false)
+    traits
+
+let normalized_trait_object_membership (traits : string list) : string list =
+  traits
+  |> List.concat_map Trait_registry.trait_with_supertraits
+  |> List.map Trait_registry.canonical_trait_name
+  |> List.sort_uniq String.compare
+
 (* Check if actual_type is a subtype of expected_type.
    This is used for return type checking where we need to ensure the actual
    return value can safely be used where the expected type is expected.
@@ -244,6 +260,20 @@ let rec is_subtype_of (actual : Types.mono_type) (expected : Types.mono_type) : 
      explicit unification when appropriate. *)
   | Types.TVar a, Types.TVar b -> a = b
   | Types.TRowVar a, Types.TRowVar b -> a = b
+  | Types.TTraitObject actual_traits, Types.TTraitObject expected_traits ->
+      let actual_members = normalized_trait_object_membership actual_traits in
+      let expected_members = normalized_trait_object_membership expected_traits in
+      trait_object_traits_allowed actual_traits
+      && trait_object_traits_allowed expected_traits
+      && List.for_all
+           (fun trait_name -> List.mem (Trait_registry.canonical_trait_name trait_name) actual_members)
+           expected_members
+  | concrete, Types.TTraitObject expected_traits ->
+      trait_object_traits_allowed expected_traits
+      &&
+      List.for_all
+        (fun trait_name -> Trait_solver.satisfies_trait_bool concrete trait_name)
+        (Types.normalize_trait_object_traits expected_traits)
   (* Same primitive types *)
   | Types.TInt, Types.TInt -> true
   | Types.TFloat, Types.TFloat -> true

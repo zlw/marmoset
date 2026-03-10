@@ -733,6 +733,126 @@ let annotation_with_bindings_or_fresh (type_bindings : (string * mono_type) list
   | Error _ -> Ok (fresh_type_var ())
   | Ok t -> Ok t
 
+type trait_object_compatibility =
+  | TraitObjectAlreadyCompatible
+  | TraitObjectNeedsPackaging of mono_type
+
+let normalized_trait_object_membership (traits : string list) : string list =
+  traits
+  |> List.concat_map Trait_registry.trait_with_supertraits
+  |> List.map Trait_registry.canonical_trait_name
+  |> List.sort_uniq String.compare
+
+let validate_trait_object_traits
+    ~(mk_error : code:string -> message:string -> Diagnostic.t) (traits : string list) :
+    (string list, Diagnostic.t) result =
+  let normalized = Types.normalize_trait_object_traits traits in
+  let dyn_type = Types.to_string (TTraitObject normalized) in
+  let rec loop = function
+    | [] -> Ok normalized
+    | trait_name :: rest -> (
+        match Trait_registry.trait_kind trait_name with
+        | None ->
+            Error
+              (mk_error ~code:"type-trait-object-unknown"
+                 ~message:(Printf.sprintf "Unknown trait '%s' in %s" trait_name dyn_type))
+        | Some Trait_registry.FieldOnly ->
+            Error
+              (mk_error ~code:"type-trait-object-field-only"
+                 ~message:
+                   (Printf.sprintf
+                      "Trait object type %s cannot include field-only trait '%s'; field-only traits remain structural-only outside Dyn[...]"
+                      dyn_type trait_name))
+        | Some Trait_registry.MethodOnly | Some Trait_registry.Mixed -> loop rest)
+  in
+  loop normalized
+
+let classify_trait_object_compatibility
+    ~(mk_error : code:string -> message:string -> Diagnostic.t)
+    (actual_type : mono_type)
+    (target_traits : string list) : (trait_object_compatibility, Diagnostic.t) result =
+  let* normalized_traits = validate_trait_object_traits ~mk_error target_traits in
+  let target_members = normalized_trait_object_membership normalized_traits in
+  let target_dyn = TTraitObject normalized_traits in
+  let actual_type' = canonicalize_mono_type actual_type in
+  match actual_type' with
+  | TTraitObject source_traits ->
+      let source_members = normalized_trait_object_membership source_traits in
+      if
+        List.for_all
+          (fun trait_name -> List.mem (Trait_registry.canonical_trait_name trait_name) source_members)
+          target_members
+      then
+        Ok TraitObjectAlreadyCompatible
+      else
+        Error
+          (mk_error ~code:"type-trait-object-mismatch"
+             ~message:
+               (Printf.sprintf "Cannot use %s where %s is expected" (Types.to_string actual_type')
+                  (Types.to_string target_dyn)))
+  | TVar type_var_name ->
+      let available_constraints =
+        (match Hashtbl.find_opt (current_constraint_store ()) type_var_name with
+        | Some traits -> traits
+        | None -> [])
+        |> Trait_solver.expand_constraints_with_supertraits
+        |> List.map Trait_registry.canonical_trait_name
+        |> List.sort_uniq String.compare
+      in
+      if
+        List.for_all
+          (fun trait_name -> List.mem (Trait_registry.canonical_trait_name trait_name) available_constraints)
+          target_members
+      then
+        Ok (TraitObjectNeedsPackaging actual_type')
+      else
+        let rendered_name =
+          Option.value (Hashtbl.find_opt (current_type_var_user_names_store ()) type_var_name) ~default:type_var_name
+        in
+        Error
+          (mk_error ~code:"type-trait-object-missing-constraint"
+             ~message:
+               (Printf.sprintf "Type variable '%s' is not known to satisfy %s" rendered_name
+                  (Types.to_string target_dyn)))
+  | concrete_type ->
+      let rec check_traits = function
+        | [] -> Ok (TraitObjectNeedsPackaging concrete_type)
+        | trait_name :: rest -> (
+            match Trait_solver.satisfies_trait concrete_type trait_name with
+            | Ok () -> check_traits rest
+            | Error diag ->
+                Error
+                  (mk_error ~code:diag.code
+                     ~message:
+                       (Printf.sprintf "Cannot coerce %s to %s because %s" (Types.to_string concrete_type)
+                          (Types.to_string target_dyn) diag.message)))
+      in
+      check_traits normalized_traits
+
+let maybe_record_trait_object_coercion
+    ~(mk_error : code:string -> message:string -> Diagnostic.t)
+    (expr : AST.expression)
+    (actual_type : mono_type)
+    (expected_type : mono_type) : (unit, Diagnostic.t) result =
+  match canonicalize_mono_type expected_type with
+  | TTraitObject target_traits -> (
+      match classify_trait_object_compatibility ~mk_error actual_type target_traits with
+      | Error _ as err -> err
+      | Ok TraitObjectAlreadyCompatible -> Ok ()
+      | Ok (TraitObjectNeedsPackaging source_type) ->
+          record_trait_object_coercion expr
+            Resolution_artifacts.{ target_traits; source_type = canonicalize_mono_type source_type };
+          Ok ())
+  | _ -> Ok ()
+
+let expression_type_or_lookup (type_map : type_map) (expr : AST.expression) : (mono_type, Diagnostic.t) result =
+  match Hashtbl.find_opt type_map expr.id with
+  | Some ty -> Ok ty
+  | None ->
+      Error
+        (Diagnostic.error_no_span ~code:"type-internal"
+           ~message:(Printf.sprintf "Missing inferred type for expression id %d at Dyn coercion site" expr.id))
+
 let provisional_function_type
     (generics_opt : AST.generic_param list option)
     (params : (string * AST.type_expr option) list)
@@ -2313,69 +2433,57 @@ and type_callable
                     | Error e -> Error e
                     | Ok (subst', unified_ret_type) ->
                         Ok (param_names, param_types, unified_ret_type, actual_effectful, subst'))
-                | Some expected_ret -> (
-                    (* Validate explicit return statements match expected type *)
-                    match validate_return_statements type_map env' expected_ret body with
-                    | Error e -> Error e
-                    | Ok () ->
-                        if strict_return_check then
-                          (* Strict mode (methods): subtype check only, no unification fallback.
-                             Method generic type vars use original names and must remain polymorphic. *)
-                          let expected_ret' = apply_substitution subst expected_ret in
-                          if Annotation.check_annotation expected_ret' body_type' then
-                            Ok (param_names, param_types, expected_ret, actual_effectful, subst)
-                          else
-                            Error
-                              (error_at_stmt ~code:"type-return-mismatch"
-                                 ~message:
-                                   ("Function return type annotation mismatch: expected "
-                                   ^ to_string expected_ret'
-                                   ^ " but inferred "
-                                   ^ to_string body_type')
-                                 body)
-                        else
-                          (* Permissive mode (top-level functions): subtype + unification fallback.
-                             Top-level generic type vars use fresh names that can be specialized. *)
-                          let rec has_unresolved_var (t : mono_type) : bool =
-                            match t with
-                            | TVar _ | TRowVar _ -> true
-                            | TFun (arg, ret, _) -> has_unresolved_var arg || has_unresolved_var ret
-                            | TArray elem -> has_unresolved_var elem
-                            | THash (k, v) -> has_unresolved_var k || has_unresolved_var v
-                            | TRecord (fields, row) -> (
-                                List.exists (fun (f : record_field_type) -> has_unresolved_var f.typ) fields
-                                ||
-                                match row with
-                                | None -> false
-                                | Some r -> has_unresolved_var r)
-                            | TTraitObject _ -> false
-                            | TEnum (_, args) | TUnion args -> List.exists has_unresolved_var args
-                            | TInt | TFloat | TBool | TString | TNull -> false
-                          in
-                          let subtype_ok = Annotation.is_subtype_of body_type' expected_ret in
-                          let unify_compatible =
-                            (has_unresolved_var body_type' || has_unresolved_var expected_ret)
-                            &&
-                            match unify body_type' expected_ret with
-                            | Ok _ -> true
-                            | Error _ -> false
-                          in
-                          if subtype_ok || unify_compatible then
-                            match unify body_type' expected_ret with
-                            | Error _e ->
-                                Error
-                                  (error_at_stmt ~code:"type-return-mismatch"
-                                     ~message:
-                                       ("Function return type annotation mismatch: expected "
-                                       ^ to_string expected_ret
-                                       ^ " but inferred "
-                                       ^ to_string body_type')
-                                     body)
-                            | Ok subst2 ->
-                                let final_subst = compose_substitution subst subst2 in
-                                let final_return_type = expected_ret in
-                                Ok (param_names, param_types, final_return_type, actual_effectful, final_subst)
-                          else
+                | Some expected_ret ->
+                    let* () = validate_return_statements type_map env' expected_ret body in
+                    let* () = record_explicit_return_trait_object_coercions type_map expected_ret body in
+                    let* () = record_tail_trait_object_coercions type_map expected_ret body in
+                    if strict_return_check then
+                      (* Strict mode (methods): subtype check only, no unification fallback.
+                         Method generic type vars use original names and must remain polymorphic. *)
+                      let expected_ret' = apply_substitution subst expected_ret in
+                      if Annotation.check_annotation expected_ret' body_type' then
+                        Ok (param_names, param_types, expected_ret, actual_effectful, subst)
+                      else
+                        Error
+                          (error_at_stmt ~code:"type-return-mismatch"
+                             ~message:
+                               ("Function return type annotation mismatch: expected "
+                               ^ to_string expected_ret'
+                               ^ " but inferred "
+                               ^ to_string body_type')
+                             body)
+                    else
+                      (* Permissive mode (top-level functions): subtype + unification fallback.
+                         Top-level generic type vars use fresh names that can be specialized. *)
+                      let rec has_unresolved_var (t : mono_type) : bool =
+                        match t with
+                        | TVar _ | TRowVar _ -> true
+                        | TFun (arg, ret, _) -> has_unresolved_var arg || has_unresolved_var ret
+                        | TArray elem -> has_unresolved_var elem
+                        | THash (k, v) -> has_unresolved_var k || has_unresolved_var v
+                        | TRecord (fields, row) -> (
+                            List.exists (fun (f : record_field_type) -> has_unresolved_var f.typ) fields
+                            ||
+                            match row with
+                            | None -> false
+                            | Some r -> has_unresolved_var r)
+                        | TTraitObject _ -> false
+                        | TEnum (_, args) | TUnion args -> List.exists has_unresolved_var args
+                        | TInt | TFloat | TBool | TString | TNull -> false
+                      in
+                      let subtype_ok = Annotation.is_subtype_of body_type' expected_ret in
+                      let unify_compatible =
+                        (has_unresolved_var body_type' || has_unresolved_var expected_ret)
+                        &&
+                        match unify body_type' expected_ret with
+                        | Ok _ -> true
+                        | Error _ -> false
+                      in
+                      if subtype_ok then
+                        Ok (param_names, param_types, expected_ret, actual_effectful, subst)
+                      else if unify_compatible then
+                        match unify body_type' expected_ret with
+                        | Error _e ->
                             Error
                               (error_at_stmt ~code:"type-return-mismatch"
                                  ~message:
@@ -2383,7 +2491,20 @@ and type_callable
                                    ^ to_string expected_ret
                                    ^ " but inferred "
                                    ^ to_string body_type')
-                                 body)))))
+                                 body)
+                        | Ok subst2 ->
+                            let final_subst = compose_substitution subst subst2 in
+                            let final_return_type = expected_ret in
+                            Ok (param_names, param_types, final_return_type, actual_effectful, final_subst)
+                      else
+                        Error
+                          (error_at_stmt ~code:"type-return-mismatch"
+                             ~message:
+                               ("Function return type annotation mismatch: expected "
+                               ^ to_string expected_ret
+                               ^ " but inferred "
+                               ^ to_string body_type')
+                             body))))
 
 (* Top-level function adapter: processes generics, maps effect annotation, builds TFun type *)
 and infer_function_with_annotations type_map env generics_opt params return_annot is_effectful body =
@@ -2710,12 +2831,22 @@ and infer_arg_against_expected type_map env subst (arg : AST.expression) (expect
             let subst' = compose_substitution subst subst1 in
             let expected_type'' = apply_substitution subst' expected_type in
             let arg_type' = apply_substitution subst' arg_type in
-            match unify arg_type' expected_type'' with
-            | Error e -> Error (error_at ~code:e.code ~message:e.message arg)
-            | Ok subst2 ->
-                let final_subst = compose_substitution subst' subst2 in
-                let final_type = apply_substitution final_subst arg_type in
-                Ok (final_subst, final_type))
+            match canonicalize_mono_type expected_type'' with
+            | TTraitObject _ -> (
+                match
+                  maybe_record_trait_object_coercion
+                    ~mk_error:(fun ~code ~message -> error_at ~code ~message arg)
+                    arg arg_type' expected_type''
+                with
+                | Error e -> Error e
+                | Ok () -> Ok (subst' (* coercion is metadata-only *), expected_type''))
+            | _ -> (
+                match unify arg_type' expected_type'' with
+                | Error e -> Error (error_at ~code:e.code ~message:e.message arg)
+                | Ok subst2 ->
+                    let final_subst = compose_substitution subst' subst2 in
+                    let final_type = apply_substitution final_subst arg_type in
+                    Ok (final_subst, final_type)))
 
 and infer_args_against_expected type_map env subst args expected_types =
   match (args, expected_types) with
@@ -4123,6 +4254,73 @@ and infer_statement type_map env stmt =
       (* Runtime value is unit-like *)
       Ok (empty_substitution, TNull)
 
+(* Record metadata-only trait-object packaging sites for explicit returns and
+   implicit tail expressions in function bodies. *)
+and record_tail_trait_object_coercions
+    (type_map : type_map)
+    (expected_type : mono_type)
+    (stmt : AST.statement) : (unit, Diagnostic.t) result =
+  let record_expr expr =
+    let* actual_type = expression_type_or_lookup type_map expr in
+    maybe_record_trait_object_coercion
+      ~mk_error:(fun ~code ~message -> error_at ~code ~message expr)
+      expr actual_type expected_type
+  in
+  let record_expr_tail (expr : AST.expression) : (unit, Diagnostic.t) result =
+    match expr.expr with
+    | AST.If (_cond, cons, alt) -> (
+        match record_tail_trait_object_coercions type_map expected_type cons with
+        | Error _ as err -> err
+        | Ok () -> (
+            match alt with
+            | None -> Ok ()
+            | Some alt_stmt -> record_tail_trait_object_coercions type_map expected_type alt_stmt))
+    | _ -> record_expr expr
+  in
+  match stmt.stmt with
+  | AST.Return _ -> Ok ()
+  | AST.ExpressionStmt expr -> record_expr_tail expr
+  | AST.Block [] -> Ok ()
+  | AST.Block stmts -> record_tail_trait_object_coercions type_map expected_type (List.hd (List.rev stmts))
+  | AST.Let _ | AST.EnumDef _ | AST.TraitDef _ | AST.ImplDef _ | AST.InherentImplDef _ | AST.DeriveDef _
+  | AST.TypeAlias _ ->
+      Ok ()
+
+and record_explicit_return_trait_object_coercions
+    (type_map : type_map)
+    (expected_type : mono_type)
+    (stmt : AST.statement) : (unit, Diagnostic.t) result =
+  let record_expr expr =
+    let* actual_type = expression_type_or_lookup type_map expr in
+    maybe_record_trait_object_coercion
+      ~mk_error:(fun ~code ~message -> error_at ~code ~message expr)
+      expr actual_type expected_type
+  in
+  match stmt.stmt with
+  | AST.Return expr -> record_expr expr
+  | AST.Block stmts ->
+      let rec loop = function
+        | [] -> Ok ()
+        | s :: rest -> (
+            match record_explicit_return_trait_object_coercions type_map expected_type s with
+            | Error _ as err -> err
+            | Ok () -> loop rest)
+      in
+      loop stmts
+  | AST.ExpressionStmt expr -> (
+      match expr.expr with
+      | AST.If (_cond, cons, alt) -> (
+          match record_explicit_return_trait_object_coercions type_map expected_type cons with
+          | Error _ as err -> err
+          | Ok () -> (
+              match alt with
+              | None -> Ok ()
+              | Some alt_stmt -> record_explicit_return_trait_object_coercions type_map expected_type alt_stmt))
+      | _ -> Ok ())
+  | AST.Let _ | AST.EnumDef _ | AST.TraitDef _ | AST.ImplDef _ | AST.InherentImplDef _ | AST.DeriveDef _
+  | AST.TypeAlias _ ->
+      Ok ()
+
 (* Simple validation: check that all explicit return statements match expected type *)
 and validate_return_statements
     (type_map : type_map) (env : type_env) (expected_type : mono_type) (stmt : AST.statement) :
@@ -4425,15 +4623,25 @@ and infer_let ?(prefer_existing_self = false) type_map env name expr type_annota
           (* Unify the inferred type with our placeholder *)
           let self_type' = apply_substitution subst1 self_type in
           let unify_result =
-            match unify self_type' expr_type with
-            | Ok subst2 -> Ok subst2
-            | Error e -> (
-                match expr.expr with
-                | AST.Function _ -> (
-                    match unify_function_shape_ignoring_effect self_type' expr_type with
-                    | Ok subst2 -> Ok subst2
-                    | Error _ -> Error e)
-                | _ -> Error e)
+            match canonicalize_mono_type self_type' with
+            | TTraitObject _ -> (
+                match
+                  maybe_record_trait_object_coercion
+                    ~mk_error:(fun ~code ~message -> error_at ~code ~message expr)
+                    expr expr_type self_type'
+                with
+                | Ok () -> Ok empty_substitution
+                | Error e -> Error e)
+            | _ -> (
+                match unify self_type' expr_type with
+                | Ok subst2 -> Ok subst2
+                | Error e -> (
+                    match expr.expr with
+                    | AST.Function _ -> (
+                        match unify_function_shape_ignoring_effect self_type' expr_type with
+                        | Ok subst2 -> Ok subst2
+                        | Error _ -> Error e)
+                    | _ -> Error e))
           in
           match unify_result with
           | Error e -> Error (error_at ~code:e.code ~message:e.message expr)
@@ -4451,7 +4659,15 @@ and infer_let ?(prefer_existing_self = false) type_map env name expr type_annota
               in
               match final_type_result with
               | Error e -> Error e
-              | Ok final_type ->
+              | Ok final_type -> (
+                  let actual_expr_type = apply_substitution final_subst expr_type in
+                  match
+                    maybe_record_trait_object_coercion
+                      ~mk_error:(fun ~code ~message -> error_at ~code ~message expr)
+                      expr actual_expr_type final_type
+                  with
+                  | Error e -> Error e
+                  | Ok () ->
                   (* For top-level forward-reference placeholders, avoid self-leak in Γ:
              otherwise the placeholder binding can block intended generalization. *)
                   let env_for_generalize =
@@ -4463,7 +4679,7 @@ and infer_let ?(prefer_existing_self = false) type_map env name expr type_annota
                   let env' = apply_substitution_env final_subst env_for_generalize in
                   let poly_type = generalize env' final_type in
                   let _ = poly_type in
-                  Ok (final_subst, final_type))))
+                  Ok (final_subst, final_type)))))
 
 and infer_block type_map env stmts =
   match stmts with

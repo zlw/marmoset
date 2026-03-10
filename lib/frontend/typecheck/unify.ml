@@ -60,6 +60,11 @@ let rec unify (type1 : mono_type) (type2 : mono_type) : (substitution, Diagnosti
   | THash (key1, val1), THash (key2, val2) -> unify_two_pairs (key1, key2) (val1, val2)
   (* Record types - unify fields and row tails *)
   | TRecord (fields1, row1), TRecord (fields2, row2) -> unify_records fields1 row1 fields2 row2
+  | TTraitObject traits1, TTraitObject traits2 ->
+      if normalize_trait_object_traits traits1 = normalize_trait_object_traits traits2 then
+        Ok empty_substitution
+      else
+        Error (type_mismatch type1 type2)
   (* Enum types - unify name and all type arguments *)
   | TEnum (name1, args1), TEnum (name2, args2) ->
       if name1 <> name2 then

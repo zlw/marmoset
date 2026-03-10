@@ -1209,3 +1209,80 @@ let%test "followup B1: successful checks expose an empty trait object coercion m
   match check_string ~file_id:"<test>" "let x = 1\nx" with
   | Ok result -> Hashtbl.length result.trait_object_coercion_map = 0
   | Error _ -> false
+
+let%test "followup B3: let annotation to Dyn records one coercion site" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  match check_string ~env:(Builtins.prelude_env ()) ~file_id:"<test>" "let x: Dyn[Show] = 42\nx" with
+  | Ok result ->
+      result.result_type = Types.TTraitObject [ "Show" ]
+      &&
+      Hashtbl.fold
+        (fun _id (coercion : Resolution_artifacts.trait_object_coercion) acc ->
+          acc || (coercion.target_traits = [ "Show" ] && coercion.source_type = Types.TInt))
+        result.trait_object_coercion_map false
+  | Error _ -> false
+
+let%test "followup B3: Dyn argument position records a coercion site" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  match
+    check_string ~env:(Builtins.prelude_env ()) ~file_id:"<test>"
+      "fn keep(x: Dyn[Show]) -> Dyn[Show] = x\nlet y = keep(42)\ny"
+  with
+  | Ok result ->
+      result.result_type = Types.TTraitObject [ "Show" ]
+      &&
+      Hashtbl.fold
+        (fun _id (coercion : Resolution_artifacts.trait_object_coercion) acc ->
+          acc || (coercion.target_traits = [ "Show" ] && coercion.source_type = Types.TInt))
+        result.trait_object_coercion_map false
+  | Error _ -> false
+
+let%test "followup B3: Dyn return position records a coercion site" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  match
+    check_string ~env:(Builtins.prelude_env ()) ~file_id:"<test>"
+      "fn box() -> Dyn[Show] = 42\nlet y = box()\ny"
+  with
+  | Ok result ->
+      result.result_type = Types.TTraitObject [ "Show" ]
+      &&
+      Hashtbl.fold
+        (fun _id (coercion : Resolution_artifacts.trait_object_coercion) acc ->
+          acc || (coercion.target_traits = [ "Show" ] && coercion.source_type = Types.TInt))
+        result.trait_object_coercion_map false
+  | Error _ -> false
+
+let%test "followup B3: Dyn rejects field-only traits in annotations" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  let code =
+    {|
+      trait Named = {
+        name: Str
+      }
+      let x: Dyn[Named] = { name: "alice" }
+      x
+    |}
+  in
+  match check_string ~env:(Builtins.prelude_env ()) ~file_id:"main.mr" code with
+  | Ok _ -> false
+  | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-trait-object-field-only") diags
+
+let%test "followup B3: Dyn rejects mixed trait sets containing a field-only trait" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  let code =
+    {|
+      trait Named = {
+        name: Str
+      }
+      let x: Dyn[Show & Named] = 42
+      x
+    |}
+  in
+  match check_string ~env:(Builtins.prelude_env ()) ~file_id:"main.mr" code with
+  | Ok _ -> false
+  | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-trait-object-field-only") diags
