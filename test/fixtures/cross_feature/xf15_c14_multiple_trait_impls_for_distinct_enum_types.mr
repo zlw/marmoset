@@ -1,25 +1,25 @@
 # XF15: C14: Multiple trait impls for distinct enum types
-enum color { red green blue }
-enum light { stop ready }
-trait render[a] {
-  fn render(x: a) -> string
+enum Color = { Red, Green, Blue }
+enum Light = { Stop, Ready }
+trait Render[a] = {
+  fn render(x: a) -> Str
 }
-impl render for color {
-  fn render(x: color) -> string {
+impl Render[Color] = {
+  fn render(x: Color) -> Str = {
     match x {
-      color.red: "red"
-      color.green: "green"
-      color.blue: "blue"
+      case Color.Red: "red"
+      case Color.Green: "green"
+      case Color.Blue: "blue"
     }
   }
 }
-impl render for light {
-  fn render(x: light) -> string {
+impl Render[Light] = {
+  fn render(x: Light) -> Str = {
     match x {
-      light.stop: "stop"
-      light.ready: "ready"
+      case Light.Stop: "stop"
+      case Light.Ready: "ready"
     }
   }
 }
-puts(color.red.render())  # output: red
-puts(light.ready.render())  # output: ready
+puts(Color.Red.render())  # output: red
+puts(Light.Ready.render())  # output: ready

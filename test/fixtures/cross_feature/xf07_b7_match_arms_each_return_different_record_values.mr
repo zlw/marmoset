@@ -1,8 +1,8 @@
 # XF07: B7: Match arms each return different record values
-enum direction { left right }
-let d = direction.left
+enum Direction = { Left, Right }
+let d = Direction.Left
 let r = match d {
-  direction.left: { val: 100 }
-  direction.right: { val: 200 }
+  case Direction.Left: { val: 100 }
+  case Direction.Right: { val: 200 }
 }
 puts(r.val)  # output: 100

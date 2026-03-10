@@ -1,6 +1,6 @@
 # XF40: H47: Match pattern with wrong number of variant fields
-enum pair { val(int, string) }  # error: *
-let p = pair.val(1, "a")
+enum Pair = { Val(Int, Str) }  # error: *
+let p = Pair.Val(1, "a")
 match p {
-  pair.val(x): puts(x)
+  case Pair.Val(x): puts(x)
 }

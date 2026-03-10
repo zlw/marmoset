@@ -1,14 +1,14 @@
 # XF46: I54: Show impl + generic constraint + match combined
-enum direction { left right up down }
-impl show for direction {
-  fn show(d: direction) -> string {
+enum Direction = { Left, Right, Up, Down }
+impl Show[Direction] = {
+  fn show(d: Direction) -> Str = {
     match d {
-      direction.left: "left"
-      direction.right: "right"
-      direction.up: "up"
-      direction.down: "down"
+      case Direction.Left: "left"
+      case Direction.Right: "right"
+      case Direction.Up: "up"
+      case Direction.Down: "down"
     }
   }
 }
-let render = fn[a: show](x: a) -> string { x.show() }
-puts(render(direction.left))  # output: left
+fn render[a: Show](x: a) -> Str = x.show()
+puts(render(Direction.Left))  # output: left

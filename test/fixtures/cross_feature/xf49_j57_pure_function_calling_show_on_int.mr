@@ -1,5 +1,5 @@
 # XF49: J57: Pure function calling show on int
-let to_string = fn(x: int) -> string {
+fn to_string(x: Int) -> Str = {
   x.show()
 }
 puts(to_string(42))  # output: 42
