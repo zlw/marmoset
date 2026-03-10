@@ -1,5 +1,5 @@
 # R130: Generic fn accesses field from different shapes
-let get_val = fn(r) { r.val }
+fn get_val(r) = { r.val }
 let a = get_val({ val: 10, extra: 1 })
 let b = get_val({ val: 20, extra: "x" })
 puts(a + b)  # output: 30
