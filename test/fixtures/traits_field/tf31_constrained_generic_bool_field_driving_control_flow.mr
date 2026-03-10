@@ -1,9 +1,7 @@
-# TF31: Constrained generic: bool field driving control flow
-trait has_active {
-  active: bool
+# TF31: Constrained generic: Bool field driving control flow
+trait HasActive = {
+  active: Bool
 }
-let status = fn[t: has_active](v: t) -> string {
-  if (v.active) { "active" } else { "inactive" }
-};
+fn status[t: HasActive](v: t) -> Str = if (v.active) { "active" } else { "inactive" }
 let r = { active: true, name: "test" }
 puts(status(r))  # output: active
