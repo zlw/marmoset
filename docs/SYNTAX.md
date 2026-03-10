@@ -16,7 +16,7 @@ This document has two layers:
 This is the language-level syntax and static-semantics spec for Marmoset vNext.
 
 It specifies the target vNext language surface only.
-Temporary compiler acceptance of legacy syntax during migration is non-normative and out of scope for this document. Migration architecture and rollout are specified in `docs/plans/syntax-rework.md`.
+Legacy migration syntax is no longer accepted by the compiler. Migration architecture and rollout history are recorded in `docs/plans/syntax-rework.md`.
 
 It defines:
 - Surface syntax.
@@ -51,7 +51,7 @@ TypeDecl       ::= "type" TypeName [TypeParams] "=" (RecordType | TypeExpr) [Der
 EnumDecl       ::= "enum" TypeName [TypeParams] "=" "{" [EnumVariants] "}" [DeriveClause]
 TraitDecl      ::= "trait" TraitName "[" TypeParam "]" [":" ConstraintExpr] "=" "{" {TraitMember} "}"
 ImplDecl       ::= "impl" [GenericParams] (TraitName "[" TypeExpr "]" | TypeExpr) "=" "{" {ImplMember} "}"
-FnDecl         ::= "fn" Ident [GenericParams] "(" [FnParams] ")" PurityArrow TypeExpr "=" ExprOrBlock
+FnDecl         ::= "fn" Ident [GenericParams] "(" [FnParams] ")" [FnSigSuffix] "=" ExprOrBlock
 LetDecl        ::= "let" Ident [":" TypeExpr] "=" Expr
 
 TypeParams     ::= "[" TypeParam {"," TypeParam} "]"
@@ -60,6 +60,7 @@ GenericParams  ::= "[" GenericParam {"," GenericParam} "]"
 GenericParam   ::= LowerIdent [":" ConstraintExpr]
 
 DeriveClause   ::= "derive" TraitName {"," TraitName}
+FnSigSuffix    ::= PurityArrow TypeExpr
 
 ConstraintExpr ::= TraitRef {"&" TraitRef}
 TraitRef       ::= TraitName
@@ -73,6 +74,7 @@ ExprOrBlock    ::= Expr | Block
 - Function types use shorthand:
   - Pure: `(a, b) -> c`
   - Effectful: `(a, b) => c`
+- Top-level `fn` declarations and impl methods may omit the purity/return suffix. When omitted, the compiler infers both from the body.
 - Union types use `|`: `Int | Str`.
 - Built-in collection type constructors follow the same casing convention: `List[Int]`, `Map[Str, Int]`.
 - Full intersection types are not part of vNext. `&` is reserved for constraint composition only in this spec.
@@ -317,9 +319,9 @@ TraitDefaultMethod   ::= "fn" Ident "(" [FnParamList] ")" PurityArrow TypeExpr "
 
 ImplDecl             ::= "impl" [GenericParams] ImplTarget "=" "{" { ImplMember } "}"
 ImplTarget           ::= TraitName "[" TypeExpr "]" | TypeExpr
-ImplMember           ::= [ "override" ] "fn" Ident "(" [FnParamList] ")" PurityArrow TypeExpr "=" ExprOrBlock
+ImplMember           ::= [ "override" ] "fn" Ident "(" [FnParamList] ")" [FnSigSuffix] "=" ExprOrBlock
 
-FnDecl               ::= "fn" Ident [GenericParams] "(" [FnParamList] ")" PurityArrow TypeExpr "=" ExprOrBlock
+FnDecl               ::= "fn" Ident [GenericParams] "(" [FnParamList] ")" [FnSigSuffix] "=" ExprOrBlock
 LetDecl              ::= "let" Ident [ ":" TypeExpr ] "=" Expr
 
 DeriveClause         ::= "derive" TraitName { "," TraitName }
@@ -328,6 +330,7 @@ TypeParams           ::= "[" TypeParam { "," TypeParam } "]"
 TypeParam            ::= LowerIdent
 GenericParams        ::= "[" GenericParam { "," GenericParam } "]"
 GenericParam         ::= LowerIdent [ ":" ConstraintExpr ]
+FnSigSuffix          ::= PurityArrow TypeExpr
 
 FnParamList          ::= FnParam { "," FnParam }
 FnParam              ::= Ident ":" TypeExpr
@@ -395,7 +398,7 @@ PrimaryExpr          ::= Literal
                        | Block
 
 ArrayExpr            ::= "[" [ExprList] "]"
-MapOrRecordExpr      ::= "{" [MapOrRecordItems] [","] "}"
+MapOrRecordExpr      ::= "{" MapOrRecordItems [","] "}"
 MapOrRecordItems     ::= MapOrRecordItem { "," MapOrRecordItem }
 MapOrRecordItem      ::= "..." Expr
                        | Ident ":"
@@ -425,6 +428,7 @@ RecordPatternItem    ::= Ident ":"
 - Record/map literal split uses key form:
   - `{"k": v}`, `{1: v}`, `{true: v}`, and `{false: v}` are map-like.
   - `{name: expr}` or `{name:}` or `{...base}` is record-like.
+- Empty braces in expression position parse as an empty block, not as a map/record literal.
 - `_` in expression position is parsed as a placeholder-lambda candidate. Validation occurs in desugaring.
 
 ### 13.4 Operator Precedence And Associativity

@@ -99,7 +99,7 @@ Deferred post-rollout work remains in `docs/plans/syntax-rework-followup.md`.
   - trait declaration methods remain separate because signatures, defaults, and `override`-related validation have different semantics.
 
 ### 4. Canonical Lowering Target
-- Top-level `fn name[...] (...) -> T = expr_or_block` lowers to the same canonical top-level function form as legacy `let name = fn(...) { ... }`.
+- Top-level `fn name[...] (...) [-> T | => T] = expr_or_block` lowers to the same canonical top-level function form as legacy `let name = fn(...) { ... }`.
 - Legacy and vNext impl syntax both lower to one canonical impl representation.
 - Postfix derive lowers to one canonical derive representation before typechecking.
 - Explicit lambdas and placeholder lambdas both lower to canonical function expressions.
@@ -676,7 +676,7 @@ Tasks:
 
 **1b. Top-level `fn` declaration** (`parser.ml`):
 - In `parse_statement`, when `curr_token` is `Token.Function` and `peek_token` is `Token.Ident`, parse as `SFnDecl`:
-  - consume `fn`, identifier (name), optional `[generics]`, `(params)`, `->` or `=>`, return type, `=`, body (expression or block).
+  - consume `fn`, identifier (name), optional `[generics]`, `(params)`, optional `->`/`=>` plus return type, `=`, body (expression or block).
   - Parse the right-hand side into `surface_expr_or_block`:
     - `= expr` -> `SEOBExpr expr`
     - `= { ... }` -> `SEOBBlock block`
@@ -699,7 +699,7 @@ Tasks:
   - `= {` replaces bare `{`.
 - Parse impl members as:
   - optional leading `override`,
-  - `fn` name, params, purity arrow, return type,
+  - `fn` name, params, optional purity arrow plus return type,
   - `= expr_or_block` parsed into `surface_expr_or_block`,
   - stored in `surface_method_impl` with `smi_override` and `smi_body`.
 - Distinguish trait impl (`impl ... TraitName[Type] = { ... }`) from inherent impl (`impl ... Type = { ... }`) by checking whether the target has `TraitName[...]` shape.

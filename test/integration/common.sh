@@ -149,7 +149,7 @@ expect_reject() {
 }
 
 ########################################
-# Legacy helpers (kept during migration)
+# Compatibility helpers for older fixture shells
 #
 # 1) expect_runtime_output
 # 2) expect_build

@@ -973,7 +973,7 @@ and is_block_body_start (p : parser) : bool =
   let _, peek2 = Lexer.next_token p.lexer in
   match p.peek_token.token_type with
   | Token.Let | Token.Return | Token.If | Token.Match | Token.Function -> true
-  | Token.RBrace -> false (* {} = empty hash, for backwards compatibility *)
+  | Token.RBrace -> true (* {} is an empty block expression in vNext *)
   | Token.Spread -> false (* { ...spread } is record *)
   | Token.Ident -> peek2.token_type <> Token.Colon (* { x: ... } is record *)
   | Token.String | Token.Int | Token.Float | Token.True | Token.False ->
@@ -1585,9 +1585,9 @@ and parse_record_or_hash_literal (p : parser) : (parser * Surface.surface_expr, 
       match mode with
       | Some mode' -> finish mode' fields spread pairs lp
       | None ->
-          (* "{}" is treated as empty hash for backwards compatibility. *)
-          let id = fresh_id lp in
-          Ok (lp, mk_surface_expr id pos (Surface.SEHash []))
+          Error
+            (add_error ~code:"parse-invalid-record" lp
+               "empty '{}' literal is not supported as a map/record literal in vNext")
     else
       match mode with
       | Some RecordMode -> (
@@ -2388,7 +2388,6 @@ module Test = struct
 
   let%test "test_hash_literal" =
     [
-      { input = "{}"; output = [ s (AST.ExpressionStmt (e (AST.Hash []))) ] };
       {
         input = "{\"one\": 1, \"two\": 2, \"three\": 3}";
         output =
@@ -2421,6 +2420,11 @@ module Test = struct
       };
     ]
     |> run
+
+  let%test "empty braces in expression position parse as an empty block expression" =
+    match parse ~file_id:"<test>" "{}" with
+    | Ok [ { AST.stmt = AST.ExpressionStmt { AST.expr = AST.BlockExpr []; _ }; _ } ] -> true
+    | _ -> false
 
   let contains_substring s sub = String_utils.contains_substring ~needle:sub s
 
