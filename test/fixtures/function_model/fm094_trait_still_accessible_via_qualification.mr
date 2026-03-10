@@ -1,19 +1,19 @@
-type item = { v: int }
+type Item = { v: Int }
 
-trait label[a] {
-  fn name(x: a) -> string
+trait Label[a] = {
+  fn name(x: a) -> Str
 }
 
-impl label for item {
-  fn name(x: item) -> string { "trait:" + x.v.show() }
+impl Label[Item] = {
+  fn name(x: Item) -> Str = { "trait:" + x.v.show() }
 }
 
-impl item {
-  fn name(i: item) -> string { "inherent:" + i.v.show() }
+impl Item = {
+  fn name(i: Item) -> Str = { "inherent:" + i.v.show() }
 }
 
-let i: item = { v: 3 }
+let i: Item = { v: 3 }
 # dot call → inherent
 puts(i.name())  # output: inherent:3
 # qualified call → specific trait
-puts(label.name(i))  # output: trait:3
+puts(Label.name(i))  # output: trait:3

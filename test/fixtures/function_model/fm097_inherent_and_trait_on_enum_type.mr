@@ -1,16 +1,16 @@
-enum color { red green blue }
+enum Color = { Red, Green, Blue }
 
-trait describe[a] {
-  fn desc(x: a) -> string
+trait Describe[a] = {
+  fn desc(x: a) -> Str
 }
 
-impl describe for color {
-  fn desc(x: color) -> string { "trait" }
+impl Describe[Color] = {
+  fn desc(x: Color) -> Str = { "trait" }
 }
 
-impl color {
-  fn desc(c: color) -> string { "inherent" }
+impl Color = {
+  fn desc(c: Color) -> Str = { "inherent" }
 }
 
-let c = color.red
+let c = Color.Red
 puts(c.desc())  # output: inherent

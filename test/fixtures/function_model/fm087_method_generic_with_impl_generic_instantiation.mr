@@ -1,14 +1,12 @@
-enum result[a, b] { ok(a) err(b) }
+enum Result[a, b] = { Ok(a), Err(b) }
 
-impl result[a, b] {
-  fn map_ok[c](r: result[a, b], f: fn(a) -> c) -> result[c, b] {
-    match r {
-      result.ok(v): result.ok(f(v))
-      result.err(e): result.err(e)
-    }
+impl[a, b] Result[a, b] = {
+  fn map_ok[c](r: Result[a, b], f: (a) -> c) -> Result[c, b] = match r {
+    case Result.Ok(v): Result.Ok(f(v))
+    case Result.Err(e): Result.Err(e)
   }
 }
 
-# impl generics: a=int, b=string; method generic: c=bool
-let r: result[int, string] = result.ok(42)
-let r2 = r.map_ok(fn(n: int) -> bool { n > 0 })
+# impl generics: a=Int, b=Str; method generic: c=Bool
+let r: Result[Int, Str] = Result.Ok(42)
+let r2 = r.map_ok((n: Int) -> n > 0)

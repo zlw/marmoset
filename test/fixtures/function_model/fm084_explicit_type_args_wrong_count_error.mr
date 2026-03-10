@@ -1,11 +1,11 @@
-type box = { v: int }
+type Box = { v: Int }
 
-impl box {
-  fn cast[b](bx: box, f: fn(int) -> b) -> b {
+impl Box = {
+  fn cast[b](bx: Box, f: (Int) -> b) -> b = {
     f(bx.v)
   }
 }
 
-let b: box = { v: 1 }
+let b: Box = { v: 1 }
 # cast has 1 type param, providing 2
-b.cast[int, string](fn(n: int) -> int { n })  # error: *
+b.cast[Int, Str]((n: Int) -> n)  # error: *
