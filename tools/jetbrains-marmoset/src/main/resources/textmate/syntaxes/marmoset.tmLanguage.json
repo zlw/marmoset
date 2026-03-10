@@ -179,6 +179,7 @@
     "type-annotation": {
       "comment": "Type annotation after colon in parameters, let bindings, trait fields",
       "patterns": [
+        { "include": "#intersection-type" },
         { "include": "#union-type" },
         { "include": "#function-type" },
         { "include": "#record-type" },
@@ -251,6 +252,16 @@
         { "include": "#type-annotation" },
         { "include": "#punctuation" }
       ]
+    },
+
+    "intersection-type": {
+      "comment": "Intersection types: Named & Aged, List[Int] & Named",
+      "match": "(?<![\\w\\[])(Dyn\\[[^\\]]+\\]|[a-zA-Z_][a-zA-Z0-9_]*(?:\\[[^\\]]+\\])?|\\{[^{}]*\\}|\\([^()]+\\)\\s*(?:->|=>)\\s*(?:Dyn\\[[^\\]]+\\]|[a-zA-Z_][a-zA-Z0-9_]*(?:\\[[^\\]]+\\])?|\\{[^{}]*\\}))\\s*(&)\\s*(Dyn\\[[^\\]]+\\]|[a-zA-Z_][a-zA-Z0-9_]*(?:\\[[^\\]]+\\])?|\\{[^{}]*\\}|\\([^()]+\\)\\s*(?:->|=>)\\s*(?:Dyn\\[[^\\]]+\\]|[a-zA-Z_][a-zA-Z0-9_]*(?:\\[[^\\]]+\\])?|\\{[^{}]*\\}))(?!\\w)",
+      "captures": {
+        "1": { "name": "entity.name.type.marmoset" },
+        "2": { "name": "keyword.operator.constraint.marmoset" },
+        "3": { "name": "entity.name.type.marmoset" }
+      }
     },
 
     "union-type": {

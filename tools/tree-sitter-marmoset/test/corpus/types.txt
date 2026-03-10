@@ -219,3 +219,59 @@ fn pick(x: Int) -> Int | Str = x
       (type_identifier))
     body: (expr_or_block
       (identifier))))
+
+================================================================================
+General intersection type
+================================================================================
+
+type NamedAge = { name: Str } & { age: Int }
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (type_alias
+    name: (identifier)
+    type: (intersection_type
+      (record_type
+        (record_type_field
+          name: (identifier)
+          type: (type_identifier)))
+      (record_type
+        (record_type_field
+          name: (identifier)
+          type: (type_identifier))))))
+
+================================================================================
+Intersection binds tighter than union
+================================================================================
+
+type Example = Int | Str & Bool
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (type_alias
+    name: (identifier)
+    type: (union_type
+      (type_identifier)
+      (intersection_type
+        (type_identifier)
+        (type_identifier)))))
+
+================================================================================
+Parenthesized function member intersection
+================================================================================
+
+type Handler = ((Int) -> Str) & Bool
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (type_alias
+    name: (identifier)
+    type: (intersection_type
+      (parenthesized_type
+        (function_type
+          (type_identifier)
+          return_type: (type_identifier)))
+      (type_identifier))))

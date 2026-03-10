@@ -100,6 +100,10 @@ assertRegexDoesNotMatch(
 assert(repo["trait-object-type"], "trait-object-type repository entry is missing");
 assertRegexMatches(repo["trait-object-type"], "begin", "Dyn[Show & Eq]", "trait-object-type begin");
 assertRegexMatches(repo["trait-object-type"], "end", "]", "trait-object-type end");
+assert(repo["intersection-type"], "intersection-type repository entry is missing");
+assertRegexMatches(repo["intersection-type"], "match", "Named & Aged", "intersection-type match");
+assertRegexMatches(repo["intersection-type"], "match", "List[Int] & Named", "intersection-type match");
+assertRegexDoesNotMatch(repo["intersection-type"], "match", "Dyn[Show & Eq]", "intersection-type match");
 
 assertRegexMatches(repo["impl-block"], "begin", "impl[a: Show] Show[List[a]] = {", "impl-block begin");
 assert(

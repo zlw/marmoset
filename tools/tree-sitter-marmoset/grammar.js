@@ -4,17 +4,18 @@
 const PREC = {
   OR_PATTERN: 1,
   UNION_TYPE: 2,
-  LOGICAL_OR: 3,
-  LOGICAL_AND: 4,
-  EQUALS: 5,
-  LESS_GREATER: 6,
-  SUM: 7,
-  PRODUCT: 8,
-  IS: 9,
-  PREFIX: 10,
-  CALL: 11,
-  INDEX: 12,
-  DOT: 13,
+  INTERSECTION_TYPE: 3,
+  LOGICAL_OR: 4,
+  LOGICAL_AND: 5,
+  EQUALS: 6,
+  LESS_GREATER: 7,
+  SUM: 8,
+  PRODUCT: 9,
+  IS: 10,
+  PREFIX: 11,
+  CALL: 12,
+  INDEX: 13,
+  DOT: 14,
 };
 
 module.exports = grammar({
@@ -188,7 +189,7 @@ module.exports = grammar({
 
     // ── Types ───────────────────────────────────────────────────
 
-    _type: ($) => choice($.union_type, $._non_union_type),
+    _type: ($) => choice($.union_type, $.intersection_type, $._non_union_type),
 
     _non_union_type: ($) =>
       choice(
@@ -231,7 +232,13 @@ module.exports = grammar({
     union_type: ($) =>
       prec.left(
         PREC.UNION_TYPE,
-        seq($._non_union_type, repeat1(seq("|", $._non_union_type))),
+        seq(choice($.intersection_type, $._non_union_type), repeat1(seq("|", choice($.intersection_type, $._non_union_type)))),
+      ),
+
+    intersection_type: ($) =>
+      prec.left(
+        PREC.INTERSECTION_TYPE,
+        seq($._non_union_type, repeat1(seq("&", $._non_union_type))),
       ),
 
     record_type: ($) =>
