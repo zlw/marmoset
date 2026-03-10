@@ -1,11 +1,11 @@
 # TI12: Duplicate impl for same trait and type is rejected
-trait show[a] {  # error: Duplicate impl
-  fn show(x: a) -> string
+trait Show[a] = {  # error: Duplicate impl
+  fn show(x: a) -> Str
 }
-impl show for int {
-  fn show(x: int) -> string { "first" }
+impl Show[Int] = {
+  fn show(x: Int) -> Str = "first"
 }
-impl show for int {
-  fn show(x: int) -> string { "second" }
+impl Show[Int] = {
+  fn show(x: Int) -> Str = "second"
 }
 puts(1)

@@ -1,8 +1,8 @@
 # TI33: Impl method param type annotation is optional (inferred from trait sig)
-trait show[a] {
-  fn show(x: a) -> string
+trait Show[a] = {
+  fn show(x: a) -> Str
 }
-impl show for int {
-  fn show(x) -> string { "int" }
+impl Show[Int] = {
+  fn show(x) -> Str = "int"
 }
 puts(1)  # output: 1

@@ -1,8 +1,8 @@
 # TI16: Impl for field-only trait is rejected
-trait named {  # error: field-only and cannot have impl blocks
-  name: string
+trait Named = {  # error: field-only and cannot have impl blocks
+  name: Str
 }
-impl named for int {
-  fn fake(x: int) -> string { "nope" }
+impl Named[Int] = {
+  fn fake(x: Int) -> Str = "nope"
 }
 puts(1)

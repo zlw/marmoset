@@ -1,8 +1,8 @@
 # TI25: Generic impl body calls helper function
-trait size[a] {
-  fn size(x: a) -> int
+trait Size[a] = {
+  fn size(x: a) -> Int
 }
-impl size[b: show] for list[b] {
-  fn size(x: list[b]) -> int { len(x) }
+impl[b: Show] Size[List[b]] = {
+  fn size(x: List[b]) -> Int = len(x)
 }
 puts([10, 20].size())  # output: 2

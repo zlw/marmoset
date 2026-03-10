@@ -1,9 +1,9 @@
 # TI14: Impl missing required method is rejected
-trait dialog[a] {  # error: does not match trait signature
-  fn hello(x: a) -> string
-  fn goodbye(x: a) -> string
+trait Dialog[a] = {  # error: missing required methods: goodbye
+  fn hello(x: a) -> Str
+  fn goodbye(x: a) -> Str
 }
-impl dialog for int {
-  fn hello(x: int) -> string { "hi" }
+impl Dialog[Int] = {
+  fn hello(x: Int) -> Str = "hi"
 }
 puts(1)

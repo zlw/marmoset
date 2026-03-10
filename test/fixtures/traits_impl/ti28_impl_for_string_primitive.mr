@@ -1,8 +1,8 @@
-# TI28: Impl for string primitive
-trait length[a] {
-  fn length(x: a) -> int
+# TI28: Impl for Str primitive
+trait Length[a] = {
+  fn length(x: a) -> Int
 }
-impl length for string {
-  fn length(s: string) -> int { len(s) }
+impl Length[Str] = {
+  fn length(s: Str) -> Int = len(s)
 }
 puts("hello".length())  # output: 5

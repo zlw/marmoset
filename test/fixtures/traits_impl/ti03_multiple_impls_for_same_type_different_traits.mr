@@ -1,15 +1,15 @@
 # TI03: Multiple impls for same type (different traits)
-trait show[a] {
-  fn show(x: a) -> string
+trait Show[a] = {
+  fn show(x: a) -> Str
 }
-trait double[a] {
-  fn double(x: a) -> int
+trait Double[a] = {
+  fn double(x: a) -> Int
 }
-impl show for int {
-  fn show(x: int) -> string { "42" }
+impl Show[Int] = {
+  fn show(x: Int) -> Str = "42"
 }
-impl double for int {
-  fn double(x: int) -> int { x + x }
+impl Double[Int] = {
+  fn double(x: Int) -> Int = x + x
 }
 puts(1.show())  # output: 42
 puts(3.double() == 6)  # output: true

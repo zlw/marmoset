@@ -1,16 +1,18 @@
 # TI02: Impl for enum type
-enum color { red green blue }
-trait show[a] {
-  fn show(x: a) -> string
+enum Color = {
+  Red,
+  Green,
+  Blue,
 }
-impl show for color {
-  fn show(c: color) -> string {
-    match c {
-      color.red: "red"
-      color.green: "green"
-      color.blue: "blue"
-    }
+trait Show[a] = {
+  fn show(x: a) -> Str
+}
+impl Show[Color] = {
+  fn show(c: Color) -> Str = match c {
+    case Color.Red: "red"
+    case Color.Green: "green"
+    case Color.Blue: "blue"
   }
 }
-let c = color.red
+let c = Color.Red
 puts(c.show())  # output: red

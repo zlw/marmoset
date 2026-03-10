@@ -1,10 +1,8 @@
-# TI27: Impl for bool primitive
-trait yesno[a] {
-  fn yesno(x: a) -> string
+# TI27: Impl for Bool primitive
+trait YesNo[a] = {
+  fn yesno(x: a) -> Str
 }
-impl yesno for bool {
-  fn yesno(b: bool) -> string {
-    if (b) { "yes" } else { "no" }
-  }
+impl YesNo[Bool] = {
+  fn yesno(b: Bool) -> Str = if (b) { "yes" } else { "no" }
 }
 puts(true.yesno())  # output: yes

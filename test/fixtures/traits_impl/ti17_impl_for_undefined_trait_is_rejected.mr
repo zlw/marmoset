@@ -1,5 +1,5 @@
 # TI17: Impl for undefined trait is rejected
-impl nonexistent_trait for int {  # error: Cannot implement undefined trait
-  fn do_thing(x: int) -> int { x }
+impl NonexistentTrait[Int] = {  # error: Cannot implement undefined trait
+  fn do_thing(x: Int) -> Int = x
 }
 puts(1)

@@ -1,16 +1,16 @@
-# TI11: Supertrait chain: eq -> ord, both satisfied
-trait eq[a] {
-  fn eq(x: a, y: a) -> bool
+# TI11: Supertrait chain: Eq -> Ord, both satisfied
+trait Eq[a] = {
+  fn eq(x: a, y: a) -> Bool
 }
-trait ord[a]: eq {
-  fn compare(x: a, y: a) -> int
+trait Ord[a]: Eq = {
+  fn compare(x: a, y: a) -> Int
 }
-type point = { x: int }
-impl eq for point {
-  fn eq(a: point, b: point) -> bool { a.x == b.x }
+type Point = { x: Int }
+impl Eq[Point] = {
+  fn eq(a: Point, b: Point) -> Bool = a.x == b.x
 }
-impl ord for point {
-  fn compare(a: point, b: point) -> int { 0 }
+impl Ord[Point] = {
+  fn compare(a: Point, b: Point) -> Int = 0
 }
-let p: point = { x: 1 }
+let p: Point = { x: 1 }
 puts(p.compare(p))  # output: 0

@@ -1,11 +1,11 @@
 # TI21: Concrete impl takes priority over generic impl
-trait label[a] {
-  fn label(x: a) -> string
+trait Label[a] = {
+  fn label(x: a) -> Str
 }
-impl label[b: show] for list[b] {
-  fn label(x: list[b]) -> string { "generic" }
+impl[b: Show] Label[List[b]] = {
+  fn label(x: List[b]) -> Str = "generic"
 }
-impl label for list[int] {
-  fn label(x: list[int]) -> string { "concrete" }
+impl Label[List[Int]] = {
+  fn label(x: List[Int]) -> Str = "concrete"
 }
 puts([1, 2, 3].label())  # output: concrete
