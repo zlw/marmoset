@@ -1,0 +1,7 @@
+# VN68: Placeholder shorthand survives match-expression callback bodies
+fn apply[a, b](x: a, f: (a) -> b) -> b = f(x)
+
+puts(apply(true, match _ {
+  case true: "yes"
+  case _: "no"
+}))  # output: yes

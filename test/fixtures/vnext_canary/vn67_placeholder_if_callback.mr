@@ -1,0 +1,4 @@
+# VN67: Placeholder shorthand survives nested if-expression callback bodies
+fn apply[a, b](x: a, f: (a) -> b) -> b = f(x)
+
+puts(apply(42, if (_ > 10) { "big" } else { "small" }))  # output: big

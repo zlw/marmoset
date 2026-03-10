@@ -1,0 +1,4 @@
+# VN64: Placeholder inside an explicit lambda stays an ordinary identifier
+fn apply[a, b](x: a, f: (a) -> b) -> b = f(x)
+
+apply(21, (x: Int) -> _ + x)  # error: Unbound variable: _

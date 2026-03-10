@@ -1,0 +1,4 @@
+# VN65: Placeholder shorthand may appear under type-check expressions in callback bodies
+fn apply[a, b](x: a, f: (a) -> b) -> b = f(x)
+
+puts(apply(42, _ is Int))  # output: true
