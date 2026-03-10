@@ -1,2 +1,2 @@
-let equals = fn[t: eq](a: t, b: t) -> bool { a == b }
+fn equals[t: Eq](a: t, b: t) -> Bool = a == b
 puts(equals(42, 42))  # output: true
