@@ -1,8 +1,4 @@
 # R024: Derive hash for record
-trait hash[a] {
-  fn hash(x: a) -> int
-}
-type point = { x: int, y: int }
-derive hash for point;
-let p: point = { x: 1, y: 2 }
+type Point = { x: Int, y: Int } derive Hash
+let p: Point = { x: 1, y: 2 }
 puts(p.hash())  # output: 16370

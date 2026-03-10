@@ -1,14 +1,7 @@
 # R028: Derived eq/hash are stable across field order
-trait eq[a] {
-  fn eq(x: a, y: a) -> bool
-}
-trait hash[a] {
-  fn hash(x: a) -> int
-}
-type point = { x: int, y: int }
-derive eq, hash for point;
-let p1: point = { x: 1, y: 2 }
-let p2: point = { y: 2, x: 1 }
+type Point = { x: Int, y: Int } derive Eq, Hash
+let p1: Point = { x: 1, y: 2 }
+let p2: Point = { y: 2, x: 1 }
 let out = if (p1.eq(p2)) {
   if (p1.hash() == p2.hash()) { "ok" } else { "hash_bad" }
 } else {
