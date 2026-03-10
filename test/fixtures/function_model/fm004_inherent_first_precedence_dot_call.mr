@@ -1,20 +1,18 @@
-type widget = { v: int }
+type Widget = { v: Int }
 
-trait describe[a] {
-  fn info(x: a) -> string
-}
+trait Describe[a] = { fn info(x: a) -> Str }
 
-impl describe for widget {
-  fn info(x: widget) -> string {
+impl Describe[Widget] = {
+  fn info(x: Widget) -> Str = {
     "trait:" + x.v.show()
   }
 }
 
-impl widget {
-  fn info(w: widget) -> string {
+impl Widget = {
+  fn info(w: Widget) -> Str = {
     "inherent:" + w.v.show()
   }
 }
 
-let w: widget = { v: 42 }
+let w: Widget = { v: 42 }
 puts(w.info())  # output: inherent:42

@@ -1,14 +1,14 @@
-type vec2 = { x: int, y: int }
+type Vec2 = { x: Int, y: Int }
 
-impl vec2 {
-  fn mag_sq(v: vec2) -> int {
+impl Vec2 = {
+  fn mag_sq(v: Vec2) -> Int = {
     v.x * v.x + v.y * v.y
   }
-  fn sum(v: vec2) -> int {
+  fn sum(v: Vec2) -> Int = {
     v.x + v.y
   }
 }
 
-let v: vec2 = { x: 3, y: 4 }
+let v: Vec2 = { x: 3, y: 4 }
 puts(v.mag_sq())  # output: 25
 puts(v.sum())  # output: 7

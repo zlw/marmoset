@@ -1,10 +1,10 @@
-type rect = { w: int, h: int }
+type Rect = { w: Int, h: Int }
 
-impl rect {
-  fn area(r: rect) -> int {
+impl Rect = {
+  fn area(r: Rect) -> Int = {
     r.w * r.h
   }
 }
 
-let r: rect = { w: 4, h: 5 }
+let r: Rect = { w: 4, h: 5 }
 puts(r.area())  # output: 20

@@ -1,18 +1,14 @@
-enum color { red green blue }
+enum Color = { Red, Green, Blue }
 
-trait label[a] {
-  fn label(x: a) -> string
-}
+trait Label[a] = { fn label(x: a) -> Str }
 
-impl label for color {
-  fn label(x: color) -> string {
-    match x {
-      color.red: "red"
-      color.green: "green"
-      color.blue: "blue"
-    }
+impl Label[Color] = {
+  fn label(x: Color) -> Str = match x {
+    case Color.Red: "red"
+    case Color.Green: "green"
+    case Color.Blue: "blue"
   }
 }
 
-let c = color.red
+let c = Color.Red
 puts(c.label())  # output: red
