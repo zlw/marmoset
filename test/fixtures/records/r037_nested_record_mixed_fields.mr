@@ -1,4 +1,4 @@
-# R037: Nested record with mixed int and string fields
+# R037: Nested record with mixed Int and Str fields
 let r = { name: "hello", data: { count: 7, flag: true } }
 let out = if (r.data.flag) {
   r.name

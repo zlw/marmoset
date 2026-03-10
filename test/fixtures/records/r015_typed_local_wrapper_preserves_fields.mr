@@ -1,6 +1,6 @@
 # R015: Typed local wrapper preserves wrapped record fields
-let outer = fn(r: { x: int }) {
-  let mk = fn(v: { x: int }) { { inner: v } }
+fn outer(r: { x: Int }) = {
+  let mk = (v: { x: Int }) -> { inner: v }
   mk(r)
 }
 let o = outer({ x: 7 })

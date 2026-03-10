@@ -1,4 +1,4 @@
 # R012: Record function field called with dot syntax
-let square = fn(n) { n * n }
+fn square(n) = n * n
 let r = { compute: square, base: 5 }
 puts(r.compute(r.base))  # output: 25
