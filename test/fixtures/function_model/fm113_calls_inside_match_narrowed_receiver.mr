@@ -1,17 +1,15 @@
-enum shape { circle(int) rect(int, int) }
+enum Shape = { Circle(Int), Rect(Int, Int) }
 
-impl shape {
-  fn area(s: shape) -> int {
-    match s {
-      shape.circle(r): r * r * 3
-      shape.rect(w, h): w * h
-    }
+impl Shape = {
+  fn area(s: Shape) -> Int = match s {
+    case Shape.Circle(r): r * r * 3
+    case Shape.Rect(w, h): w * h
   }
 }
 
-let s = shape.rect(4, 5)
+let s = Shape.Rect(4, 5)
 let a = match s {
-  shape.circle(_): s.area()
-  shape.rect(_, _): s.area()
+  case Shape.Circle(_): s.area()
+  case Shape.Rect(_, _): s.area()
 }
 puts(a)  # output: 20

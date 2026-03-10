@@ -1,15 +1,13 @@
-enum either[a, b] { left(a) right(b) }
+enum Either[a, b] = { Left(a), Right(b) }
 
-impl either[a, b] {
-  fn is_left(e: either[a, b]) -> bool {
-    match e {
-      either.left(_): true
-      either.right(_): false
-    }
+impl[a, b] Either[a, b] = {
+  fn is_left(e: Either[a, b]) -> Bool = match e {
+    case Either.Left(_): true
+    case Either.Right(_): false
   }
 }
 
-let x = either.left(42)
+let x = Either.Left(42)
 puts(x.is_left())  # output: true
-let y: either[int, string] = either.right("hi")
+let y: Either[Int, Str] = Either.Right("hi")
 puts(y.is_left())  # output: false

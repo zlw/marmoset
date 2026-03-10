@@ -1,12 +1,12 @@
-type box = { v: int }
+type Box = { v: Int }
 
-impl box {
-  fn cast[b](bx: box, f: fn(int) -> b) -> b {
+impl Box = {
+  fn cast[b](bx: Box, f: (Int) -> b) -> b = {
     f(bx.v)
   }
 }
 
-let b: box = { v: 5 }
-# method type args: .cast[string](...) → method call with type arg
-let s = b.cast[string](fn(n: int) -> string { n.show() })
+let b: Box = { v: 5 }
+# method type args: .cast[Str](...) → method call with type arg
+let s = b.cast[Str]((n: Int) -> n.show())
 puts(s)  # output: 5

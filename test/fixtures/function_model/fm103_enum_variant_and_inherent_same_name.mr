@@ -1,14 +1,12 @@
-enum thing { value(int) }
+enum Thing = { Value(Int) }
 
-impl thing {
-  fn value(t: thing) -> int {
-    match t {
-      thing.value(n): n
-    }
+impl Thing = {
+  fn value(t: Thing) -> Int = match t {
+    case Thing.Value(n): n
   }
 }
 
 # On enum qualifier: variant constructor wins
-let t = thing.value(42)
+let t = Thing.Value(42)
 # On value dot call: inherent method
 puts(t.value())  # output: 42

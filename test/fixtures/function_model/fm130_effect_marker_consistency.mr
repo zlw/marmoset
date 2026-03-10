@@ -1,14 +1,14 @@
-trait processor[a] {
-  fn process(x: a) => string
+trait Processor[a] = {
+  fn process(x: a) => Str
 }
 
-type data = { v: int }
+type Data = { v: Int }
 
-impl processor for data {
-  fn process(x: data) => string {
+impl Processor[Data] = {
+  fn process(x: Data) => Str = {
     x.v.show()
   }
 }
 
-let d: data = { v: 7 }
+let d: Data = { v: 7 }
 puts(d.process())  # output: 7

@@ -1,11 +1,11 @@
-trait render[a] {
-  fn draw(x: a) -> string
+trait Render[a] = {
+  fn draw(x: a) -> Str
 }
 
-impl render for int {
-  fn draw(x: int) -> string { x.show() }
+impl Render[Int] = {
+  fn draw(x: Int) -> Str = { x.show() }
 }
 
-let render = { draw: fn(x: int) -> string { "custom:" + x.show() } }
+let render = { draw: (x: Int) -> "custom:" + x.show() }
 # `render` is now a value → field-function path, not trait qualifier
 puts(render.draw(42))  # output: custom:42

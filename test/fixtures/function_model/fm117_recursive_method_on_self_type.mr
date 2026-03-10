@@ -1,15 +1,15 @@
-type counter = { n: int }
+type Counter = { n: Int }
 
-impl counter {
-  fn count_down(c: counter) -> string {
+impl Counter = {
+  fn count_down(c: Counter) -> Str = {
     if (c.n <= 0) {
       "done"
     } else {
-      let next: counter = { n: c.n - 1 }
+      let next: Counter = { n: c.n - 1 }
       next.count_down()
     }
   }
 }
 
-let c: counter = { n: 3 }
+let c: Counter = { n: 3 }
 puts(c.count_down())  # output: done

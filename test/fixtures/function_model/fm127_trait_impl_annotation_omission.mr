@@ -1,15 +1,15 @@
-trait display[a] {
-  fn render(x: a) -> string
+trait Display[a] = {
+  fn render(x: a) -> Str
 }
 
-type thing = { v: int }
+type Thing = { v: Int }
 
 # Impl omits parameter/return annotations — infers from trait sig
-impl display for thing {
-  fn render(x) {
+impl Display[Thing] = {
+  fn render(x) = {
     "thing:" + x.v.show()
   }
 }
 
-let t: thing = { v: 42 }
+let t: Thing = { v: 42 }
 puts(t.render())  # output: thing:42

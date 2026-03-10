@@ -1,11 +1,11 @@
-trait alpha[a] {
-  fn go(x: a) -> string
+trait Alpha[a] = {
+  fn go(x: a) -> Str
 }
 
-trait beta[a] {
-  fn go(x: a) -> string
+trait Beta[a] = {
+  fn go(x: a) -> Str
 }
 
-let f = fn[t: alpha + beta](x: t) -> string {
+fn f[t: Alpha & Beta](x: t) -> Str = {
   x.go()  # error: Ambiguous
 }

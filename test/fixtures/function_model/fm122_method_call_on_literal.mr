@@ -1,5 +1,5 @@
-impl int {
-  fn triple(x: int) -> int { x + x + x }
+impl Int = {
+  fn triple(x: Int) -> Int = { x + x + x }
 }
 
 puts(7.triple())  # output: 21

@@ -1,15 +1,15 @@
-trait greet[a] {
-  fn hello(x: a) -> string
-  fn goodbye(x: a) -> string
+trait Greet[a] = {
+  fn hello(x: a) -> Str
+  fn goodbye(x: a) -> Str
 }
 
-type person = { name: string }
+type Person = { name: Str }
 
-impl greet for person {
-  fn hello(x: person) -> string { "hi " + x.name }
-  fn goodbye(x: person) -> string { "bye " + x.name }
+impl Greet[Person] = {
+  fn hello(x: Person) -> Str = { "hi " + x.name }
+  fn goodbye(x: Person) -> Str = { "bye " + x.name }
 }
 
-let p: person = { name: "alice" }
+let p: Person = { name: "alice" }
 puts(p.hello())  # output: hi alice
 puts(p.goodbye())  # output: bye alice

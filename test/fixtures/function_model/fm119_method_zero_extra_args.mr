@@ -1,11 +1,11 @@
-type flag = { on: bool }
+type Flag = { on: Bool }
 
-impl flag {
-  fn toggle(f: flag) -> flag {
+impl Flag = {
+  fn toggle(f: Flag) -> Flag = {
     { on: !(f.on) }
   }
 }
 
-let f: flag = { on: true }
+let f: Flag = { on: true }
 let f2 = f.toggle()
 puts(f2.on)  # output: false
