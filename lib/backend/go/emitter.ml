@@ -1018,12 +1018,11 @@ let type_expr_to_mono_type_with_impl_bindings
   annotation_exn (Annotation.type_expr_to_mono_type_with bindings type_expr)
 
 let is_known_inherent_type_name (name : string) : bool =
-  match name with
-  | "int" | "float" | "bool" | "string" | "unit" -> true
-  | _ ->
-      Typecheck.Enum_registry.lookup name <> None
-      || Annotation.lookup_type_alias name <> None
-      || Typecheck.Trait_registry.lookup_trait name <> None
+  Annotation.builtin_primitive_type name <> None
+  || Annotation.builtin_type_constructor_name name <> None
+  || Annotation.lookup_enum_by_source_name name <> None
+  || Annotation.lookup_type_alias name <> None
+  || Typecheck.Trait_registry.lookup_trait name <> None
 
 let rec collect_inherent_target_generic_names ~(in_head : bool) (te : AST.type_expr) (acc : StringSet.t) :
     StringSet.t =
@@ -5984,6 +5983,34 @@ v.ping()
           with
           | Some code -> string_contains code "inherent_ping_int64"
           | None -> false))
+
+let%test "canonical builtin names in concrete inherent targets do not get treated as generic binders" =
+  let source =
+    {|
+enum Result[a, b] = {
+  Success(a),
+  Failure(b),
+}
+impl Result[a, b] = {
+  fn tag(r: Result[a, b]) -> Str = {
+    match r {
+      case Result.Success(_): "success"
+      case Result.Failure(_): "failure"
+    }
+  }
+}
+impl Result[Int, Str] = {
+  fn tag(r: Result[Int, Str]) -> Str = "concrete"
+}
+let x: Result[Int, Str] = Result.Success(1)
+x.tag()
+|}
+  in
+  match compile_string ~file_id:"<codegen>" source with
+  | Ok (code, _) ->
+      string_contains code "func inherent_tag_Result_int64_string("
+      && string_contains code "return \"concrete\""
+  | Error _ -> false
 
 (* ============================================================
    Phase 2: IIFE Removal Tests
