@@ -1,4 +1,4 @@
 # CM21: Poly fn accessing record field
-let get_x = fn(r) { r.x }
+fn get_x(r) = r.x
 let p = { x: 10, y: 20 }
 puts(get_x(p))  # output: 10

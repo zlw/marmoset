@@ -1,5 +1,5 @@
 # CM31: Recursive factorial
-let fact = fn(n: int) -> int {
+fn fact(n: Int) -> Int = {
   if (n <= 1) {
     1
   } else {

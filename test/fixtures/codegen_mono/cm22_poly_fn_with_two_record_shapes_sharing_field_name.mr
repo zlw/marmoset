@@ -1,5 +1,5 @@
 # CM22: Poly fn with two record shapes sharing field name
-let get_val = fn(r) { r.val }
+fn get_val(r) = r.val
 let a = { val: 1 }
 let b = { val: "hello" }
 puts(get_val(a))  # output: 1

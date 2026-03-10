@@ -1,10 +1,10 @@
 # CM23: Fn with enum match uses fallback param
-enum option[a] { some(a) none }
-let unwrap_or = fn(opt: option[int], fallback: int) -> int {
+enum Option[a] = { Some(a), None }
+fn unwrap_or(opt: Option[Int], fallback: Int) -> Int = {
   match opt {
-    option.some(v): v
-    option.none: fallback
+    case Option.Some(v): v
+    case Option.None: fallback
   }
 }
-puts(unwrap_or(option.some(42), 0))  # output: 42
-puts(unwrap_or(option.none(), 0))  # output: 0
+puts(unwrap_or(Option.Some(42), 0))  # output: 42
+puts(unwrap_or(Option.None(), 0))  # output: 0

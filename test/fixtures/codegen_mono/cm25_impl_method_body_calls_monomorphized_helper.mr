@@ -1,13 +1,11 @@
 # CM25: Impl method body calls monomorphized helper
-let fmt_val = fn(s: string, n: int) -> string {
+fn fmt_val(s: Str, n: Int) -> Str = {
   s + ":" + n.show()
 }
-trait describe[a] {
-  fn describe(x: a) -> string
+trait Describe[a] = {
+  fn describe(x: a) -> Str
 }
-impl describe for int {
-  fn describe(x: int) -> string {
-    fmt_val("added", x)
-  }
+impl Describe[Int] = {
+  fn describe(x: Int) -> Str = fmt_val("added", x)
 }
 puts(42.describe())  # output: added:42

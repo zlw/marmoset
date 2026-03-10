@@ -1,15 +1,15 @@
 # CM32: Trait impl on concrete generic enum type
-enum option[a] { some(a) none }
-trait describe[a] {
-  fn describe(x: a) -> string
+enum Option[a] = { Some(a), None }
+trait Describe[a] = {
+  fn describe(x: a) -> Str
 }
-impl describe for option[int] {
-  fn describe(x: option[int]) -> string {
+impl Describe[Option[Int]] = {
+  fn describe(x: Option[Int]) -> Str = {
     match x {
-      option.some(_): "present"
-      option.none: "absent"
+      case Option.Some(_): "present"
+      case Option.None: "absent"
     }
   }
 }
-let v: option[int] = option.some(42)
+let v: Option[Int] = Option.Some(42)
 puts(v.describe())  # output: present

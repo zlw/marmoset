@@ -1,5 +1,5 @@
 # CM16: Poly fn at top-level and inside function body
-let id = fn(x) { x }
+fn id(x) = x
 puts(id(42))  # output: 42
-let use_id = fn() { puts(id("hello")) }
+fn use_id() = puts(id("hello"))
 use_id()  # output: hello

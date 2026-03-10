@@ -1,9 +1,9 @@
 # CM38: Multiple typed fns at multiple call sites
-let double_int = fn(x: int) -> int { x * 2 }
-let half_float = fn(x: float) -> float { x / 2.0 }
-let negate_bool = fn(x: bool) -> bool { if (x) { false } else { true } }
-let upper_str = fn(x: string) -> string { "HELLO" }
-let add_ints = fn(x: int, y: int) -> int { x + y }
+fn double_int(x: Int) -> Int = x * 2
+fn half_float(x: Float) -> Float = x / 2.0
+fn negate_bool(x: Bool) -> Bool = if (x) { false } else { true }
+fn upper_str(x: Str) -> Str = "HELLO"
+fn add_ints(x: Int, y: Int) -> Int = x + y
 puts(double_int(1))  # output: 2
 puts(half_float(1.0))  # output: 0.5
 puts(negate_bool(true))  # output: false

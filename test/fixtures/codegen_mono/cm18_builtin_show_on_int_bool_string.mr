@@ -1,4 +1,4 @@
-# CM18: Builtin show on int, bool, string
+# CM18: Builtin show on Int, Bool, Str
 puts(42.show())  # output: 42
 puts(true.show())  # output: true
 puts("hello".show())  # output: hello

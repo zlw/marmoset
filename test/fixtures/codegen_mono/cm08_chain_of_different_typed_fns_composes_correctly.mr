@@ -1,5 +1,5 @@
 # CM08: Chain of different typed fns composes correctly
-let add1 = fn(x: int) -> int { x + 1 }
-let double = fn(x: int) -> int { x * 2 }
-let negate = fn(x: int) -> int { 0 - x }
+fn add1(x: Int) -> Int = x + 1
+fn double(x: Int) -> Int = x * 2
+fn negate(x: Int) -> Int = 0 - x
 puts(negate(negate(add1(double(20)))))  # output: 41

@@ -1,13 +1,13 @@
-# CM11: [BUG-1] Poly fn wrapping enum at int AND string in same program
-enum option[a] { some(a) none }
-let wrap = fn(x) { option.some(x) }
+# CM11: [BUG-1] Poly fn wrapping enum at Int AND Str in same program
+enum Option[a] = { Some(a), None }
+fn wrap(x) = Option.Some(x)
 let v1 = wrap(42)
 let v2 = wrap("hello")
 match v1 {  # output: 42
-  option.some(n): puts(n)
-  option.none: puts(0)
+  case Option.Some(n): puts(n)
+  case Option.None: puts(0)
 }
 match v2 {  # output: hello
-  option.some(s): puts(s)
-  option.none: puts("none")
+  case Option.Some(s): puts(s)
+  case Option.None: puts("none")
 }
