@@ -1,0 +1,6 @@
+# T118: Dyn rejects mixed trait sets that include a field-only trait
+trait Named = {
+  name: Str
+}
+let x: Dyn[Show & Named] = 42  # error: field-only trait
+x

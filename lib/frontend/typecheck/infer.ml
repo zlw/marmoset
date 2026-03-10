@@ -859,34 +859,42 @@ let instantiate_dynamic_trait_method
           (String.concat ", " trait_names)
       in
       let instantiate_for_trait (trait_name, trait_def, method_sig) =
-        match trait_def.Trait_registry.trait_type_param with
-        | None -> Ok (trait_name, method_sig)
-        | Some type_param ->
-            let mentions_self ty = TypeVarSet.mem type_param (free_type_vars ty) in
-            let additional_params =
-              match method_sig.Trait_registry.method_params with
-              | [] -> []
-              | _receiver :: rest -> rest
-            in
-            let self_in_additional_params = List.exists (fun (_, ty) -> mentions_self ty) additional_params in
-            let self_in_return = mentions_self method_sig.Trait_registry.method_return_type in
-            if self_in_additional_params || self_in_return then
-              Error
-                (mk_error ~code:"type-trait-object-object-unsafe"
-                   ~message:
-                     (Printf.sprintf
-                        "Method '%s' from trait '%s' is not callable through %s because it mentions the hidden concrete type outside the receiver"
-                        method_name trait_name dyn_type))
-            else
-              let subst = substitution_singleton type_param receiver_type in
-              Ok
-                ( trait_name,
-                  {
-                    method_sig with
-                    method_params =
-                      List.map (fun (name, ty) -> (name, apply_substitution subst ty)) method_sig.method_params;
-                    method_return_type = apply_substitution subst method_sig.method_return_type;
-                  } )
+        if method_sig.Trait_registry.method_generics <> [] then
+          Error
+            (mk_error ~code:"type-trait-object-object-unsafe"
+               ~message:
+                 (Printf.sprintf
+                    "Method '%s' from trait '%s' is not callable through %s because Dyn[...] does not support method-generic dispatch"
+                    method_name trait_name dyn_type))
+        else
+          match trait_def.Trait_registry.trait_type_param with
+          | None -> Ok (trait_name, method_sig)
+          | Some type_param ->
+              let mentions_self ty = TypeVarSet.mem type_param (free_type_vars ty) in
+              let additional_params =
+                match method_sig.Trait_registry.method_params with
+                | [] -> []
+                | _receiver :: rest -> rest
+              in
+              let self_in_additional_params = List.exists (fun (_, ty) -> mentions_self ty) additional_params in
+              let self_in_return = mentions_self method_sig.Trait_registry.method_return_type in
+              if self_in_additional_params || self_in_return then
+                Error
+                  (mk_error ~code:"type-trait-object-object-unsafe"
+                     ~message:
+                       (Printf.sprintf
+                          "Method '%s' from trait '%s' is not callable through %s because it mentions the hidden concrete type outside the receiver"
+                          method_name trait_name dyn_type))
+              else
+                let subst = substitution_singleton type_param receiver_type in
+                Ok
+                  ( trait_name,
+                    {
+                      method_sig with
+                      method_params =
+                        List.map (fun (name, ty) -> (name, apply_substitution subst ty)) method_sig.method_params;
+                      method_return_type = apply_substitution subst method_sig.method_return_type;
+                    } )
       in
       (match candidates with
       | [] ->

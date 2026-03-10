@@ -1347,3 +1347,22 @@ let%test "followup B3: Dyn rejects non-object-safe method calls" =
   with
   | Ok _ -> false
   | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-trait-object-object-unsafe") diags
+
+let%test "followup B3: Dyn rejects method-generic dispatch" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  let code =
+    {|
+      trait Caster[a] = {
+        fn cast[b](x: a, f: (a) -> b) -> b
+      }
+      impl Caster[Int] = {
+        fn cast[b](x: Int, f: (Int) -> b) -> b = f(x)
+      }
+      let x: Dyn[Caster] = 1
+      x.cast[Str]((n: Int) -> n.show())
+    |}
+  in
+  match check_string ~env:(Builtins.prelude_env ()) ~file_id:"main.mr" code with
+  | Ok _ -> false
+  | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-trait-object-object-unsafe") diags
