@@ -3121,10 +3121,11 @@ and infer_statement type_map env stmt =
                         Ok (THash (kt, vt))
                     | _ -> enum_err "map expects 2 arguments")
                 | _ -> enum_err (Printf.sprintf "Unknown type constructor in enum: %s" con_name))
-          | AST.TArrow (params, ret, _) ->
+          | AST.TArrow (params, ret, is_effectful) ->
               let* param_types = map_result convert params in
               let* ret_type = convert ret in
-              Ok (List.fold_right (fun p r -> tfun p r) param_types ret_type)
+              let mk_fun arg ret = TFun (arg, ret, is_effectful) in
+              Ok (List.fold_right mk_fun param_types ret_type)
           | AST.TUnion types ->
               let* converted = map_result convert types in
               Ok (normalize_union converted)
@@ -3181,10 +3182,11 @@ and infer_statement type_map env stmt =
                         Ok (THash (kt, vt))
                     | _ -> trait_err "map expects 2 arguments")
                 | _ -> Annotation.type_expr_to_mono_type (AST.TApp (con_name, args)))
-          | AST.TArrow (params, ret, _) ->
+          | AST.TArrow (params, ret, is_effectful) ->
               let* param_types = map_result convert params in
               let* ret_type = convert ret in
-              Ok (List.fold_right (fun p r -> tfun p r) param_types ret_type)
+              let mk_fun arg ret = TFun (arg, ret, is_effectful) in
+              Ok (List.fold_right mk_fun param_types ret_type)
           | AST.TUnion types ->
               let* converted = map_result convert types in
               Ok (normalize_union converted)
@@ -4233,7 +4235,7 @@ and infer_let ?(prefer_existing_self = false) type_map env name expr type_annota
                 | Some type_expr -> (
                     match Annotation.type_expr_to_mono_type type_expr with
                     | Error d when d.Diagnostic.code = "type-open-row-rejected" -> Error d
-                    | Error _ -> Ok inferred_final_type
+                    | Error d -> Error d
                     | Ok t -> Ok t)
               in
               match final_type_result with

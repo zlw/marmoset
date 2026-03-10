@@ -542,8 +542,7 @@ let lower_top_decl_with_ctx
       [ AST.mk_stmt ~pos ~end_pos ~file_id (AST.TraitDef td) ]
   | Surface.SAmbiguousImplDef { impl_type_params; impl_head_type; impl_methods } -> (
       match impl_head_type with
-      | Surface.STApp (head_name, [ impl_for_type ])
-        when StringSet.mem head_name ctx.trait_names && not (StringSet.mem head_name ctx.type_names) ->
+      | Surface.STApp (head_name, [ impl_for_type ]) when not (StringSet.mem head_name ctx.type_names) ->
           lower_trait_impl_decl impl_type_params head_name impl_for_type impl_methods
       | _ -> lower_inherent_impl_decl impl_head_type impl_methods)
   | Surface.SInherentImplDef { inherent_for_type; inherent_methods } ->
@@ -1099,5 +1098,21 @@ let%test "ambiguous vNext impl head lowers to trait impl when head names a trait
      _;
    };
   ] ->
+      true
+  | _ -> false
+
+let%test "ambiguous vNext impl head defaults unknown app head to trait impl" =
+  let id_supply = Id_supply.Id_supply.create 0 in
+  let decl =
+    Surface.SAmbiguousImplDef
+      {
+        impl_type_params = [];
+        impl_head_type = Surface.STApp ("NonexistentTrait", [ Surface.STCon "Int" ]);
+        impl_methods = [];
+      }
+  in
+  let result = lower_top_decl_with_ctx empty_lower_context id_supply (mk_test_ts decl) in
+  match result with
+  | [ { AST.stmt = AST.ImplDef { impl_trait_name = "NonexistentTrait"; impl_for_type = AST.TCon "Int"; _ }; _ } ] ->
       true
   | _ -> false

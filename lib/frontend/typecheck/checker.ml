@@ -720,6 +720,77 @@ let%test "override warning survives alongside later hard errors in the same diag
       &&
       List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-mismatch" && diag.severity = Diagnostic.Error) diags
 
+let%test "invalid bare trait let annotation is not masked by later body errors" =
+  Infer.reset_fresh_counter ();
+  let state = Infer.create_inference_state () in
+  let code =
+    {|
+      trait Named = {
+        name: Str
+      }
+      let x: Named = { name: "alice" }
+      x.show()
+    |}
+  in
+  match check_string ~state ~file_id:"main.mr" code with
+  | Ok _ -> false
+  | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-annotation-invalid") diags
+
+let%test "undefined trait impl reports undefined trait instead of unknown type constructor" =
+  Infer.reset_fresh_counter ();
+  let state = Infer.create_inference_state () in
+  let code =
+    {|
+      impl NonexistentTrait[Int] = {
+        fn do_thing(x: Int) -> Int = x
+      }
+      1
+    |}
+  in
+  match check_string ~state ~file_id:"main.mr" code with
+  | Ok _ -> false
+  | Error diags ->
+      List.exists
+        (fun (diag : Diagnostic.t) ->
+          String_utils.contains_substring ~needle:"Cannot implement undefined trait" diag.message)
+        diags
+
+let%test "effectful function types in enum payloads preserve their effect bit" =
+  Infer.reset_fresh_counter ();
+  let state = Infer.create_inference_state () in
+  let code =
+    {|
+      enum Runner = {
+        Run((Int) => Int)
+      }
+      fn invoke(r: Runner) => Int = match r {
+        case Runner.Run(f): f(1)
+      }
+      let runner = Runner.Run((n: Int) => n)
+      invoke(runner)
+    |}
+  in
+  match check_string ~state ~file_id:"main.mr" code with
+  | Ok _ -> true
+  | Error _ -> false
+
+let%test "effectful function types in structural trait fields preserve their effect bit" =
+  Infer.reset_fresh_counter ();
+  let state = Infer.create_inference_state () in
+  let code =
+    {|
+      trait Processor = {
+        run: (Int) => Int
+      }
+      fn invoke(x: Processor) => Int = x.run(1)
+      let runner = { run: (n: Int) => n }
+      invoke(runner)
+    |}
+  in
+  match check_string ~state ~file_id:"main.mr" code with
+  | Ok _ -> true
+  | Error _ -> false
+
 (* ============================================================
    Phase 4.4: Record Typechecking Tests
    ============================================================ *)

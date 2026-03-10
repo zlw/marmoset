@@ -214,6 +214,10 @@ and parse_top_decl (p : parser) : (parser * Surface.top_decl, parser) result =
   | Token.Impl -> parse_impl_definition p
   | Token.Type -> parse_type_alias p
   | Token.Function when peek_token_is p Token.Ident -> parse_fn_decl_top p
+  | Token.Derive ->
+      Error
+        (add_error ~code:"parse-unexpected-token" p
+           "standalone derive is not supported; attach 'derive' to the preceding type or enum definition")
   | _ -> parse_expression_top p
 
 and parse_let_top (p : parser) : (parser * Surface.top_decl, parser) result =
@@ -556,7 +560,8 @@ and parse_enum_definition (p : parser) : (parser * Surface.top_decl, parser) res
       let p8 = next_token p7 in
       (* advance to 'derive' *)
       let* p9, traits = parse_derive_trait_list (next_token p8) in
-      Ok (p9, List.map (fun dt -> dt.AST.derive_trait_name) traits)
+      let* p10 = reject_legacy_derive_tail p9 in
+      Ok (p10, List.map (fun dt -> dt.AST.derive_trait_name) traits)
     else
       Ok (p7, [])
   in
@@ -645,11 +650,13 @@ and parse_type_alias (p : parser) : (parser * Surface.top_decl, parser) result =
   let* p6, derive =
     if curr_token_is p5 Token.Derive then
       let* p6, traits = parse_derive_trait_list (next_token p5) in
-      Ok (p6, List.map (fun dt -> dt.AST.derive_trait_name) traits)
+      let* p7 = reject_legacy_derive_tail p6 in
+      Ok (p7, List.map (fun dt -> dt.AST.derive_trait_name) traits)
     else if peek_token_is p5 Token.Derive then
       let p5a = next_token p5 in
       let* p6, traits = parse_derive_trait_list (next_token p5a) in
-      Ok (p6, List.map (fun dt -> dt.AST.derive_trait_name) traits)
+      let* p7 = reject_legacy_derive_tail p6 in
+      Ok (p7, List.map (fun dt -> dt.AST.derive_trait_name) traits)
     else
       Ok (p5, [])
   in
@@ -1081,6 +1088,14 @@ and parse_derive_trait_list (p : parser) : (parser * AST.derive_trait list, pars
       Error (no_prefix_parse_fn_error lp lp.curr_token.token_type)
   in
   loop p []
+
+and reject_legacy_derive_tail (p : parser) : (parser, parser) result =
+  if curr_token_is p Token.Ident && String.equal p.curr_token.literal "for" then
+    Error
+      (add_error ~code:"parse-unexpected-token" p
+         "standalone derive is not supported; attach 'derive' to the preceding type or enum definition")
+  else
+    Ok p
 
 and parse_expression_stmt (p : parser) : (parser * Surface.surface_stmt, parser) result =
   let pos = p.curr_token.pos in
@@ -3230,6 +3245,11 @@ let%test "standalone derive statement is rejected" =
   match parse_program (init ~file_id:"<test>" lexer) with
   | Ok _ -> false
   | Error _ -> true
+
+let%test "standalone derive after type alias is rejected directly by the parser" =
+  match parse ~file_id:"<test>" "type Point = { x: Int }\nderive Eq for Point" with
+  | Ok _ -> false
+  | Error errs -> List.exists (fun (d : Diagnostic.t) -> d.code = "parse-unexpected-token") errs
 
 (* Phase 4.4: Type alias tests *)
 let%test "parse type - just keyword" =
