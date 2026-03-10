@@ -1,0 +1,11 @@
+# VN34: Ampersand constraints compose multiple trait requirements
+fn show_if_equal[a: Show & Eq](x: a, y: a) -> Str = {
+  if (x.eq(y)) {
+    x.show()
+  } else {
+    "different"
+  }
+}
+
+puts(show_if_equal(42, 42))  # output: 42
+puts(show_if_equal(1, 2))    # output: different

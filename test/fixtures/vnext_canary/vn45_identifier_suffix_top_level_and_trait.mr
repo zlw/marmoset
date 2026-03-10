@@ -1,0 +1,13 @@
+# VN45: Identifier suffixes work on top-level functions and trait methods
+fn ready?(n: Int) -> Bool = n > 0
+
+trait Alarm[a] = {
+  fn ring!(x: a) -> Str
+}
+
+impl Alarm[Int] = {
+  fn ring!(x: Int) -> Str = "alarm:" + x.show()
+}
+
+puts(ready?(3))  # output: true
+puts(3.ring!())  # output: alarm:3

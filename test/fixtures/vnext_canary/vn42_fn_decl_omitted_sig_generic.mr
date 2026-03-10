@@ -1,0 +1,5 @@
+# VN42: Top-level fn declaration may omit the signature suffix and remain generic
+fn bounce[a](x: a) = x
+
+puts(bounce(7))      # output: 7
+puts(bounce("ok"))   # output: ok

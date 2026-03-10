@@ -1,0 +1,10 @@
+# VN49: Placeholder shorthand rewrites through block-expression callback bodies
+type Monkey = { name: Str, bananas: Int }
+
+fn apply[a, b](x: a, f: (a) -> b) -> b = f(x)
+
+let george: Monkey = { name: "George", bananas: 3 }
+puts(apply(george, {
+  let m = _
+  m.name + "!"
+}))  # output: George!

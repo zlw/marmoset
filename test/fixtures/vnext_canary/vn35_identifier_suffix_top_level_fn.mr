@@ -1,0 +1,6 @@
+# VN35: Top-level function identifiers may use ? and ! suffixes
+fn hungry?(bananas: Int) -> Bool = bananas < 3
+fn alpha!(bananas: Int) -> Int = bananas + 1
+
+puts(hungry?(1))   # output: true
+puts(alpha!(41))   # output: 42

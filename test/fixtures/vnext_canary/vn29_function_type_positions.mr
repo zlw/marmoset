@@ -1,0 +1,24 @@
+# VN29: Function type arrows work in aliases, record fields, and enum payloads
+type HandlerBox = { pure: (Int) -> Int, eff: (Int) => Str }
+enum Job = {
+  UsePure((Int) -> Int),
+  UseEff((Int) => Str),
+}
+
+let handlers: HandlerBox = {
+  pure: (n: Int) -> n + 1,
+  eff: (n: Int) => n.show(),
+}
+
+let pure_job = Job.UsePure(handlers.pure)
+let eff_job = Job.UseEff(handlers.eff)
+
+match pure_job {
+  case Job.UsePure(f): puts(f(4))  # output: 5
+  case Job.UseEff(_): puts("bad")
+}
+
+match eff_job {
+  case Job.UsePure(_): puts("bad")
+  case Job.UseEff(f): puts(f(5))   # output: 5
+}
