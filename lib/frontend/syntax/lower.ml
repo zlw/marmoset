@@ -107,6 +107,8 @@ let infer_impl_type_params (ctx : lower_context) (impl_for_type : Surface.surfac
         collect seen rev_names ret
     | Surface.STUnion members ->
         List.fold_left (fun (seen_acc, names_acc) member -> collect seen_acc names_acc member) (seen, rev_names) members
+    | Surface.STIntersection members ->
+        List.fold_left (fun (seen_acc, names_acc) member -> collect seen_acc names_acc member) (seen, rev_names) members
     | Surface.STRecord (fields, row) ->
         let seen, rev_names =
           List.fold_left
@@ -139,6 +141,8 @@ let rec lower_type_expr_with_bound_vars (bound_type_vars : StringSet.t) (st : Su
           lower_type_expr_with_bound_vars bound_type_vars ret,
           effectful )
   | Surface.STUnion members -> AST.TUnion (List.map (lower_type_expr_with_bound_vars bound_type_vars) members)
+  | Surface.STIntersection members ->
+      AST.TIntersection (List.map (lower_type_expr_with_bound_vars bound_type_vars) members)
   | Surface.STRecord (fields, row) ->
       let lower_field f =
         AST.

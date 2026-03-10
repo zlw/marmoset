@@ -621,6 +621,8 @@ let rec row_vars_in_type (mono : mono_type) : TypeVarSet.t =
   | TTraitObject _ -> TypeVarSet.empty
   | TUnion members ->
       List.fold_left (fun acc t -> TypeVarSet.union acc (row_vars_in_type t)) TypeVarSet.empty members
+  | TIntersection members ->
+      List.fold_left (fun acc t -> TypeVarSet.union acc (row_vars_in_type t)) TypeVarSet.empty members
   | TEnum (_, args) ->
       List.fold_left (fun acc t -> TypeVarSet.union acc (row_vars_in_type t)) TypeVarSet.empty args
 
@@ -2572,7 +2574,7 @@ and type_callable
                             | None -> false
                             | Some r -> has_unresolved_var r)
                         | TTraitObject _ -> false
-                        | TEnum (_, args) | TUnion args -> List.exists has_unresolved_var args
+                        | TEnum (_, args) | TUnion args | TIntersection args -> List.exists has_unresolved_var args
                         | TInt | TFloat | TBool | TString | TNull -> false
                       in
                       let subtype_ok = Annotation.is_subtype_of body_type' expected_ret in
@@ -3369,7 +3371,7 @@ and infer_index type_map env container index_expr =
                       let elem_type' = apply_substitution subst3 elem_type in
                       Ok (final_subst, elem_type'))
               | TString | TFloat | TBool | TNull | TArray _ | THash _ | TRecord _ | TRowVar _ | TTraitObject _
-              | TFun _ | TUnion _
+              | TFun _ | TUnion _ | TIntersection _
               | TEnum _ -> (
                   (* Non-int index -> assume hash *)
                   let val_type = fresh_type_var () in
@@ -3455,6 +3457,9 @@ and infer_statement type_map env stmt =
           | AST.TUnion types ->
               let* converted = map_result convert types in
               Ok (normalize_union converted)
+          | AST.TIntersection types ->
+              let* converted = map_result convert types in
+              Ok (normalize_intersection converted)
           | AST.TRecord (_fields, _row) -> enum_err "Record types not yet implemented in enum definition"
         in
         convert te
@@ -3517,6 +3522,9 @@ and infer_statement type_map env stmt =
           | AST.TUnion types ->
               let* converted = map_result convert types in
               Ok (normalize_union converted)
+          | AST.TIntersection types ->
+              let* converted = map_result convert types in
+              Ok (normalize_intersection converted)
           | AST.TRecord (fields, row) ->
               let* field_types =
                 map_result
@@ -4026,6 +4034,10 @@ and infer_statement type_map env stmt =
             in
             collect_target_generic_names ~in_head:false ret acc'
         | AST.TUnion members ->
+            List.fold_left
+              (fun acc' member -> collect_target_generic_names ~in_head:false member acc')
+              acc members
+        | AST.TIntersection members ->
             List.fold_left
               (fun acc' member -> collect_target_generic_names ~in_head:false member acc')
               acc members

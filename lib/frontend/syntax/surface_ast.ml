@@ -18,6 +18,7 @@ module Surface = struct
     | STArrow of surface_type_expr list * surface_type_expr * bool
       (* bool = is_effectful; covers both (a) -> b and (a) => b *)
     | STUnion of surface_type_expr list
+    | STIntersection of surface_type_expr list
     | STRecord of surface_record_type_field list * surface_type_expr option
 
   and surface_record_type_field = {

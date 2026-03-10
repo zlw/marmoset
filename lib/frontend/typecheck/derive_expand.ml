@@ -31,7 +31,7 @@ let collect_free_type_vars_in_order (type_expr : AST.type_expr) : string list =
           Hashtbl.replace seen name ();
           acc @ [ name ])
     | AST.TCon _ | AST.TTraitObject _ -> acc
-    | AST.TApp (_, args) | AST.TUnion args -> List.fold_left go acc args
+    | AST.TApp (_, args) | AST.TUnion args | AST.TIntersection args -> List.fold_left go acc args
     | AST.TArrow (params, ret, _) -> go (List.fold_left go acc params) ret
     | AST.TRecord (fields, row_var) ->
         let acc' = List.fold_left (fun inner_acc (field : AST.record_type_field) -> go inner_acc field.field_type) acc fields in
@@ -67,6 +67,8 @@ let type_expr_key_with_binders (binder_names : string list) (type_expr : AST.typ
         "Arrow(" ^ String.concat "," (List.map go params) ^ arrow ^ go ret ^ ")"
     | AST.TUnion members ->
         "Union(" ^ String.concat "," (List.sort_uniq String.compare (List.map go members)) ^ ")"
+    | AST.TIntersection members ->
+        "Intersection(" ^ String.concat "," (List.sort_uniq String.compare (List.map go members)) ^ ")"
     | AST.TRecord (fields, row_var) ->
         let field_keys =
           fields
@@ -87,7 +89,7 @@ let type_expr_key (type_expr : AST.type_expr) : string =
 
 let render_type_expr (type_expr : AST.type_expr) : string =
   let rec render_parens = function
-    | AST.TArrow _ as type_expr -> "(" ^ render type_expr ^ ")"
+    | (AST.TArrow _ | AST.TUnion _) as type_expr -> "(" ^ render type_expr ^ ")"
     | type_expr -> render type_expr
   and render = function
     | AST.TVar name -> name
@@ -103,6 +105,7 @@ let render_type_expr (type_expr : AST.type_expr) : string =
         in
         params ^ arrow ^ render ret
     | AST.TUnion members -> String.concat " | " (List.map render members)
+    | AST.TIntersection members -> String.concat " & " (List.map render_parens members)
     | AST.TRecord (fields, row_var) ->
         let field_parts =
           List.map (fun (field : AST.record_type_field) -> field.field_name ^ ": " ^ render field.field_type) fields
@@ -224,6 +227,7 @@ let substitute_type_expr ~(trait_subst_name : string option) ~(target_type : AST
     | AST.TApp (name, args) -> AST.TApp (name, List.map (go bound) args)
     | AST.TArrow (params, ret, is_effectful) -> AST.TArrow (List.map (go bound) params, go bound ret, is_effectful)
     | AST.TUnion members -> AST.TUnion (List.map (go bound) members)
+    | AST.TIntersection members -> AST.TIntersection (List.map (go bound) members)
     | AST.TRecord (fields, row_var) ->
         AST.TRecord
           ( List.map

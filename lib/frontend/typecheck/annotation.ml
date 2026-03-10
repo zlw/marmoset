@@ -174,6 +174,9 @@ let rec type_expr_to_mono_type_with
   | Syntax.Ast.AST.TUnion type_exprs ->
       let* mono_types = map_result (type_expr_to_mono_type_with type_bindings) type_exprs in
       Ok (Types.normalize_union mono_types)
+  | Syntax.Ast.AST.TIntersection type_exprs ->
+      let* mono_types = map_result (type_expr_to_mono_type_with type_bindings) type_exprs in
+      Ok (Types.normalize_intersection mono_types)
   | Syntax.Ast.AST.TRecord (fields, row_var) -> (
       match row_var with
       | Some _ ->
@@ -377,6 +380,7 @@ let rec format_mono_type (t : Types.mono_type) : string =
       Printf.sprintf "%s%s%s" (format_mono_type param_type) arrow (format_mono_type return_type)
   | Types.TTraitObject traits -> Printf.sprintf "Dyn[%s]" (String.concat " & " traits)
   | Types.TUnion types -> String.concat " | " (List.map format_mono_type types)
+  | Types.TIntersection types -> String.concat " & " (List.map format_mono_type types)
   | Types.TEnum (name, []) -> name
   | Types.TEnum (name, args) -> Printf.sprintf "%s[%s]" name (String.concat ", " (List.map format_mono_type args))
 

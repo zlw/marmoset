@@ -9,6 +9,7 @@ module AST = struct
     | TTraitObject of string list (* Dyn[Show], Dyn[Show & Eq] *)
     | TArrow of type_expr list * type_expr * bool (* (Int, Str) -> Bool; bool = is_effectful *)
     | TUnion of type_expr list (* Int | Str | Bool *)
+    | TIntersection of type_expr list (* Int & Named; Dyn[Show] & Dyn[Eq] *)
     | TRecord of record_type_field list * type_expr option
       (* { x: Int, y: Str } or { x: Int, ...r } - fields + optional row variable *)
   [@@deriving show]

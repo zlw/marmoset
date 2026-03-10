@@ -97,6 +97,8 @@ let rec mono_type_to_source ?(type_var_user_names = []) (mono : Types.mono_type)
       match collapse_purity_union types with
       | [ single ] -> mono_type_to_source ~type_var_user_names single
       | many -> String.concat " | " (List.map (mono_type_to_source ~type_var_user_names) many))
+  | Types.TIntersection types ->
+      String.concat " & " (List.map (mono_type_to_source_intersection_member ~type_var_user_names) types)
   | Types.TTraitObject traits ->
       "Dyn[" ^ String.concat " & " (Types.normalize_trait_object_traits traits) ^ "]"
   | Types.TEnum (name, []) -> canonical_type_name name
@@ -106,7 +108,12 @@ let rec mono_type_to_source ?(type_var_user_names = []) (mono : Types.mono_type)
       ^ "]"
 
 and mono_type_to_source_parens ?(type_var_user_names = []) = function
-  | Types.TFun _ as t -> "(" ^ mono_type_to_source ~type_var_user_names t ^ ")"
+  | (Types.TFun _ | Types.TUnion _ | Types.TIntersection _) as t ->
+      "(" ^ mono_type_to_source ~type_var_user_names t ^ ")"
+  | t -> mono_type_to_source ~type_var_user_names t
+
+and mono_type_to_source_intersection_member ?(type_var_user_names = []) = function
+  | (Types.TFun _ | Types.TUnion _) as t -> "(" ^ mono_type_to_source ~type_var_user_names t ^ ")"
   | t -> mono_type_to_source ~type_var_user_names t
 
 let normalize_mono_type_with_user_names ~(type_var_user_names : type_var_user_name_map) (mono : Types.mono_type) :
@@ -174,6 +181,7 @@ let rec type_expr_to_source (te : Ast.AST.type_expr) : string =
            "->")
         (type_expr_to_source ret)
   | Ast.AST.TUnion types -> String.concat " | " (List.map type_expr_to_source types)
+  | Ast.AST.TIntersection types -> String.concat " & " (List.map type_expr_to_source_intersection_member types)
   | Ast.AST.TTraitObject traits -> "Dyn[" ^ String.concat " & " traits ^ "]"
   | Ast.AST.TRecord (fields, row) ->
       let field_strs =
@@ -192,8 +200,21 @@ let rec type_expr_to_source (te : Ast.AST.type_expr) : string =
       in
       "{ " ^ String.concat ", " field_strs ^ row_str ^ " }"
 
+and type_expr_to_source_intersection_member = function
+  | (Ast.AST.TArrow _ | Ast.AST.TUnion _) as t -> "(" ^ type_expr_to_source t ^ ")"
+  | t -> type_expr_to_source t
+
 let%test "mono_type_to_source renders Dyn" =
   mono_type_to_source (Types.TTraitObject [ "Show"; "Eq" ]) = "Dyn[Eq & Show]"
 
 let%test "type_expr_to_source renders Dyn" =
   type_expr_to_source (Ast.AST.TTraitObject [ "Show"; "Render" ]) = "Dyn[Show & Render]"
+
+let%test "mono_type_to_source renders intersections with precedence" =
+  mono_type_to_source (Types.TIntersection [ Types.TUnion [ Types.TInt; Types.TString ]; Types.TBool ])
+  = "(Int | Str) & Bool"
+
+let%test "type_expr_to_source renders intersections with precedence" =
+  type_expr_to_source
+    (Ast.AST.TIntersection [ Ast.AST.TArrow ([ Ast.AST.TCon "Int" ], Ast.AST.TCon "Str", false); Ast.AST.TCon "Bool" ])
+  = "((Int) -> Str) & Bool"

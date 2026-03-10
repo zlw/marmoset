@@ -83,6 +83,10 @@ let rec mangle_type (t : Types.mono_type) : string =
   | Types.TRowVar name -> "row_" ^ name
   | Types.TTraitObject traits -> "dyn_" ^ String.concat "_" (Types.normalize_trait_object_traits traits)
   | Types.TUnion _ -> "union" (* Phase 4.1: unions will be interface{} *)
+  | Types.TIntersection members -> (
+      match Types.normalize_intersection members with
+      | Types.TIntersection _ -> "intersection"
+      | single -> mangle_type single)
   | Types.TEnum (name, []) -> name
   | Types.TEnum (name, args) -> name ^ "_" ^ String.concat "_" (List.map mangle_type args)
 
@@ -112,6 +116,10 @@ let rec mangle_type_for_shape (t : Types.mono_type) : string =
       "record_" ^ field_bits ^ "_" ^ row_bit
   | Types.TTraitObject _ -> "marmoset_dyn"
   | Types.TUnion _ -> "union"
+  | Types.TIntersection members -> (
+      match Types.normalize_intersection members with
+      | Types.TIntersection _ -> "intersection"
+      | single -> mangle_type_for_shape single)
   | Types.TEnum (name, []) -> name
   | Types.TEnum (name, args) -> name ^ "_" ^ String.concat "_" (List.map mangle_type_for_shape args)
 
@@ -134,6 +142,8 @@ let rec erase_unresolved_type_vars_for_codegen (t : Types.mono_type) : Types.mon
       Types.TRecord (fields', row')
   | Types.TTraitObject traits -> Types.TTraitObject (Types.normalize_trait_object_traits traits)
   | Types.TUnion members -> Types.TUnion (List.map erase_unresolved_type_vars_for_codegen members)
+  | Types.TIntersection members ->
+      Types.normalize_intersection (List.map erase_unresolved_type_vars_for_codegen members)
   | Types.TEnum (name, args) -> Types.TEnum (name, List.map erase_unresolved_type_vars_for_codegen args)
   | Types.TInt | Types.TFloat | Types.TBool | Types.TString | Types.TNull -> t
 
@@ -521,6 +531,7 @@ let type_size (t : Types.mono_type) : int =
   | Types.TFun _ -> 8 (* Function pointer *)
   | Types.TTraitObject _ -> 16
   | Types.TUnion _ -> 8 (* Interface *)
+  | Types.TIntersection _ -> 8
 
 (* ============================================================
    Record Shape Interning
@@ -566,6 +577,10 @@ let rec mangle_type_to_go (t : Types.mono_type) : string =
   | Types.TRowVar _ -> "interface{}"
   | Types.TTraitObject _ -> "marmosetDyn"
   | Types.TUnion _ -> "interface{}"
+  | Types.TIntersection members -> (
+      match Types.normalize_intersection members with
+      | Types.TIntersection _ -> "interface{}"
+      | single -> mangle_type_to_go single)
   | Types.TEnum _ -> mangle_type_for_shape t
 
 let go_record_field_name (name : string) : string = go_safe_ident name
@@ -659,6 +674,10 @@ let rec type_to_go (state : mono_state) (t : Types.mono_type) : string =
   | Types.TRowVar _ -> "interface{}"
   | Types.TTraitObject _ -> "marmosetDyn"
   | Types.TUnion _ -> "interface{}" (* Phase 4.1: unions compile to interface{} *)
+  | Types.TIntersection members -> (
+      match Types.normalize_intersection members with
+      | Types.TIntersection _ -> "interface{}"
+      | single -> type_to_go state single)
   | Types.TEnum (name, args) -> mangle_type (Types.TEnum (name, args))
 
 and emit_func_type state arg ret =
@@ -694,6 +713,7 @@ and emit_trait_object_type_defs (state : mono_state) (type_map : Infer.type_map)
         List.iter (fun (field : Types.record_field_type) -> collect_type field.typ) fields;
         Option.iter collect_type row
     | Types.TUnion members -> List.iter collect_type members
+    | Types.TIntersection members -> List.iter collect_type members
     | Types.TEnum (_, args) -> List.iter collect_type args
     | Types.TInt | Types.TFloat | Types.TBool | Types.TString | Types.TNull | Types.TVar _ | Types.TRowVar _ -> ()
   in
@@ -1206,6 +1226,10 @@ let rec collect_inherent_target_generic_names ~(in_head : bool) (te : AST.type_e
       in
       collect_inherent_target_generic_names ~in_head:false ret acc'
   | AST.TUnion members ->
+      List.fold_left
+        (fun acc' member -> collect_inherent_target_generic_names ~in_head:false member acc')
+        acc members
+  | AST.TIntersection members ->
       List.fold_left
         (fun acc' member -> collect_inherent_target_generic_names ~in_head:false member acc')
         acc members

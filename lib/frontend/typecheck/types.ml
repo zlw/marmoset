@@ -16,6 +16,7 @@ type mono_type =
   | TRowVar of string (* Row type variable *)
   | TTraitObject of string list (* Trait object: Dyn[Eq & Show] *)
   | TUnion of mono_type list (* Union: Int | String | Bool *)
+  | TIntersection of mono_type list (* Intersection: A & B *)
   | TEnum of string * mono_type list (* Enum: option[Int], result[String, Int] *)
 
 and record_field_type = {
@@ -61,7 +62,33 @@ let rec canonicalize_mono_type (mono : mono_type) : mono_type =
       TRecord (canonical_fields, canonical_row)
   | TTraitObject traits -> TTraitObject (normalize_trait_object_traits traits)
   | TUnion types -> TUnion (List.map canonicalize_mono_type types)
+  | TIntersection types -> normalize_intersection (List.map canonicalize_mono_type types)
   | TEnum (name, args) -> TEnum (name, List.map canonicalize_mono_type args)
+
+and normalize_intersection (types : mono_type list) : mono_type =
+  let rec flatten acc_dyn rev_members = function
+    | [] -> (acc_dyn, rev_members)
+    | TIntersection inner :: rest -> flatten acc_dyn rev_members (inner @ rest)
+    | TTraitObject traits :: rest -> flatten (traits @ acc_dyn) rev_members rest
+    | member :: rest -> flatten acc_dyn (member :: rev_members) rest
+  in
+  let dyn_traits, rev_members = flatten [] [] types in
+  let members =
+    match dyn_traits with
+    | [] -> List.rev rev_members
+    | _ -> TTraitObject (normalize_trait_object_traits dyn_traits) :: List.rev rev_members
+  in
+  let sorted = List.sort compare members in
+  let rec dedup = function
+    | [] -> []
+    | [ x ] -> [ x ]
+    | x :: y :: rest when x = y -> dedup (y :: rest)
+    | x :: rest -> x :: dedup rest
+  in
+  match dedup sorted with
+  | [] -> failwith "Empty intersection type"
+  | [ single ] -> single
+  | multiple -> TIntersection multiple
 
 (* A polytype (type scheme) - a type with "forall" quantifiers.
    Example: ∀a. a -> a  is  Forall(["a"], TFun(TVar "a", TVar "a"))
@@ -76,7 +103,11 @@ type poly_type = Forall of string list * mono_type
 
 (* Helper to wrap function types in parens when needed *)
 let rec to_string_parens = function
-  | TFun _ as t -> "(" ^ to_string t ^ ")"
+  | (TFun _ | TUnion _ | TIntersection _) as t -> "(" ^ to_string t ^ ")"
+  | t -> to_string t
+
+and to_string_intersection_member = function
+  | (TFun _ | TUnion _) as t -> "(" ^ to_string t ^ ")"
   | t -> to_string t
 
 and to_string = function
@@ -123,6 +154,7 @@ and to_string = function
   | TRowVar name -> name
   | TTraitObject traits -> "Dyn[" ^ String.concat " & " (normalize_trait_object_traits traits) ^ "]"
   | TUnion types -> String.concat " | " (List.map to_string types)
+  | TIntersection types -> String.concat " & " (List.map to_string_intersection_member types)
   | TEnum (name, []) -> name
   | TEnum (name, args) -> name ^ "[" ^ String.concat ", " (List.map to_string args) ^ "]"
 
@@ -187,6 +219,7 @@ let apply_substitution (subst : substitution) (mono : mono_type) : mono_type =
           | None -> ty)
     | TTraitObject traits -> TTraitObject (normalize_trait_object_traits traits)
     | TUnion types -> TUnion (List.map (go seen) types)
+    | TIntersection types -> normalize_intersection (List.map (go seen) types)
     | TEnum (name, args) -> TEnum (name, List.map (go seen) args)
   in
   go TypeVarSet.empty mono
@@ -230,6 +263,8 @@ let rec free_type_vars (mono : mono_type) : TypeVarSet.t =
   | TRowVar name -> TypeVarSet.singleton name
   | TTraitObject _ -> TypeVarSet.empty
   | TUnion types -> List.fold_left (fun acc t -> TypeVarSet.union acc (free_type_vars t)) TypeVarSet.empty types
+  | TIntersection types ->
+      List.fold_left (fun acc t -> TypeVarSet.union acc (free_type_vars t)) TypeVarSet.empty types
   | TEnum (_, args) -> List.fold_left (fun acc t -> TypeVarSet.union acc (free_type_vars t)) TypeVarSet.empty args
 
 (* Free type variables in a poly_type - quantified vars are NOT free *)
@@ -274,6 +309,7 @@ let rec collect_vars_in_order (mono : mono_type) : string list =
   | TRowVar name -> [ name ]
   | TTraitObject _ -> []
   | TUnion types -> List.concat_map collect_vars_in_order types
+  | TIntersection types -> List.concat_map collect_vars_in_order types
   | TEnum (_, args) -> List.concat_map collect_vars_in_order args
 
 (* Remove duplicates while preserving order *)
@@ -481,6 +517,14 @@ let%test "to_string effectful function" =
 
 let%test "to_string union" = to_string (TUnion [ TInt; TString ]) = "Int | String"
 let%test "to_string multi-member union" = to_string (TUnion [ TInt; TString; TBool ]) = "Int | String | Bool"
+let%test "to_string intersection" = to_string (TIntersection [ TInt; TString ]) = "Int & String"
+
+let%test "to_string intersection parenthesizes union members" =
+  to_string (TIntersection [ TUnion [ TInt; TString ]; TBool ]) = "(Int | String) & Bool"
+
+let%test "to_string intersection parenthesizes function members" =
+  to_string (TIntersection [ tfun TInt TInt; TString ]) = "(Int -> Int) & String"
+
 let%test "normalize_union dedupes" = normalize_union [ TInt; TString; TInt ] = TUnion [ TInt; TString ]
 
 let%test "normalize_union flattens nested" =
@@ -489,6 +533,18 @@ let%test "normalize_union flattens nested" =
   normalize_union [ nested; TFloat ] = TUnion [ TInt; TFloat; TBool; TString ]
 
 let%test "normalize_union single element" = normalize_union [ TInt ] = TInt
+
+let%test "normalize_intersection dedupes" =
+  normalize_intersection [ TInt; TString; TInt ] = TIntersection [ TInt; TString ]
+
+let%test "normalize_intersection flattens nested" =
+  let nested = TIntersection [ TInt; TIntersection [ TString; TBool ] ] in
+  normalize_intersection [ nested; TFloat ] = TIntersection [ TInt; TFloat; TBool; TString ]
+
+let%test "normalize_intersection merges Dyn members" =
+  normalize_intersection [ TTraitObject [ "Show" ]; TTraitObject [ "Eq" ] ] = TTraitObject [ "Eq"; "Show" ]
+
+let%test "normalize_intersection single element" = normalize_intersection [ TInt ] = TInt
 
 let%test "canonicalize trait object sorts and dedupes" =
   canonicalize_mono_type (TTraitObject [ "Show"; "Eq"; "Show" ]) = TTraitObject [ "Eq"; "Show" ]
@@ -502,6 +558,11 @@ let%test "apply_substitution to union" =
   let subst = substitution_of_list [ ("a", TInt); ("b", TString) ] in
   let union = TUnion [ TVar "a"; TVar "b"; TBool ] in
   apply_substitution subst union = TUnion [ TInt; TString; TBool ]
+
+let%test "apply_substitution to intersection" =
+  let subst = substitution_of_list [ ("a", TInt); ("b", TString) ] in
+  let intersection = TIntersection [ TVar "a"; TVar "b"; TBool ] in
+  apply_substitution subst intersection = TIntersection [ TInt; TBool; TString ]
 
 (* Enum type tests *)
 
@@ -541,3 +602,7 @@ let%test "collect_vars_in_order with enum" =
   collect_vars_in_order enum = [ "a"; "b" ]
 
 let%test "collect_vars_in_order ignores trait object members" = collect_vars_in_order (TTraitObject [ "Show"; "Eq" ]) = []
+
+let%test "free_type_vars in intersection" =
+  TypeVarSet.equal (free_type_vars (TIntersection [ TVar "a"; TInt; TVar "b" ]))
+    (TypeVarSet.of_list [ "a"; "b" ])
