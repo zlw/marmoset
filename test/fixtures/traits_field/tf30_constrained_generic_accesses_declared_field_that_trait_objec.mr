@@ -1,9 +1,7 @@
 # TF30: Constrained generic accesses declared field that trait object would also expose
-trait has_name {
-  name: string
+trait HasName = {
+  name: Str
 }
-let get_name = fn[t: has_name](v: t) -> string {
-  v.name
-};
+fn get_name[t: HasName](v: t) -> Str = v.name
 let r = { name: "test", extra: 1 }
 puts(get_name(r))  # output: test
