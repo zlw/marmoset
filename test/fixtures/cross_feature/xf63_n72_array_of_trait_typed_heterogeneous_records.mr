@@ -2,12 +2,13 @@
 trait Named = {
   name: Str
 }
+type NameOnly = { name: Str }
+
 fn keep_named[t: Named](x: t) -> { name: Str } = {
   { name: x.name }
 }
 
-let xs: List[{ name: Str }] = [
-  keep_named({ name: "alice", role: "admin" }),
-  keep_named({ name: "bob", age: 30 }),
-]
+let first: NameOnly = keep_named({ name: "alice", role: "admin" })
+let second: NameOnly = keep_named({ name: "bob", age: 30 })
+let xs: List[NameOnly] = [first, second]
 puts(xs[1].name)  # output: bob
