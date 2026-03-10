@@ -1,0 +1,16 @@
+# VN58: Bare trait shorthand composes with trait-impl method lowering
+trait Named = { name: Str }
+
+trait Pairing[a] = {
+  fn pair(self: a, other: Named) -> Str
+}
+
+type User = { name: Str, id: Int }
+
+impl Pairing[User] = {
+  fn pair(self: User, other: Named) -> Str = self.name + ":" + other.name
+}
+
+let user: User = { name: "mia", id: 7 }
+let other = { name: "zoe", age: 4 }
+puts(user.pair(other))  # output: mia:zoe

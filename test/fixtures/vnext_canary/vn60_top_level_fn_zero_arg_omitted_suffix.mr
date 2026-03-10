@@ -1,0 +1,4 @@
+# VN60: Zero-arg top-level fn may omit its purity and return suffix
+fn answer() = 42
+
+puts(answer())  # output: 42

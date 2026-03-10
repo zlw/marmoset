@@ -150,16 +150,17 @@ let rec lower_type_expr_with_bound_vars (bound_type_vars : StringSet.t) (st : Su
 let lower_type_expr (st : Surface.surface_type_expr) : AST.type_expr =
   lower_type_expr_with_bound_vars StringSet.empty st
 
-let lower_fn_decl_signature
+let lower_callable_signature
     (ctx : lower_context)
+    ?(extra_bound_names = StringSet.empty)
     (generics : AST.generic_param list option)
     (params : (string * Surface.surface_type_expr option) list) :
     AST.generic_param list option * (string * AST.type_expr option) list =
   let used_generic_names =
     match generics with
-    | None -> StringSet.empty
+    | None -> extra_bound_names
     | Some gs ->
-        List.fold_left (fun acc (g : AST.generic_param) -> StringSet.add g.name acc) StringSet.empty gs
+        List.fold_left (fun acc (g : AST.generic_param) -> StringSet.add g.name acc) extra_bound_names gs
   in
   let rec lower_params used rev_generics rev_params = function
     | [] ->
@@ -211,7 +212,10 @@ let rec lower_pattern (sp : Surface.surface_pattern) : AST.pattern =
 
 (* ── Expressions ── *)
 
-let rec lower_expr (id_supply : Id_supply.Id_supply.t) (se : Surface.surface_expr) : AST.expression =
+let rec lower_expr_with_ctx
+    (ctx : lower_context)
+    (id_supply : Id_supply.Id_supply.t)
+    (se : Surface.surface_expr) : AST.expression =
   let pos = se.se_pos and end_pos = se.se_end_pos and file_id = se.se_file_id and id = se.se_id in
   let expr =
     match se.se_expr with
@@ -220,56 +224,72 @@ let rec lower_expr (id_supply : Id_supply.Id_supply.t) (se : Surface.surface_exp
     | Surface.SEFloat f -> AST.Float f
     | Surface.SEBoolean b -> AST.Boolean b
     | Surface.SEString s -> AST.String s
-    | Surface.SEArray elems -> AST.Array (List.map (lower_expr id_supply) elems)
-    | Surface.SEIndex (container, idx) -> AST.Index (lower_expr id_supply container, lower_expr id_supply idx)
+    | Surface.SEArray elems -> AST.Array (List.map (lower_expr_with_ctx ctx id_supply) elems)
+    | Surface.SEIndex (container, idx) ->
+        AST.Index (lower_expr_with_ctx ctx id_supply container, lower_expr_with_ctx ctx id_supply idx)
     | Surface.SEHash pairs ->
-        AST.Hash (List.map (fun (k, v) -> (lower_expr id_supply k, lower_expr id_supply v)) pairs)
-    | Surface.SEPrefix (op, e) -> AST.Prefix (op, lower_expr id_supply e)
-    | Surface.SEInfix (l, op, r) -> AST.Infix (lower_expr id_supply l, op, lower_expr id_supply r)
-    | Surface.SETypeCheck (e, t) -> AST.TypeCheck (lower_expr id_supply e, lower_type_expr t)
+        AST.Hash
+          (List.map
+             (fun (k, v) -> (lower_expr_with_ctx ctx id_supply k, lower_expr_with_ctx ctx id_supply v))
+             pairs)
+    | Surface.SEPrefix (op, e) -> AST.Prefix (op, lower_expr_with_ctx ctx id_supply e)
+    | Surface.SEInfix (l, op, r) ->
+        AST.Infix (lower_expr_with_ctx ctx id_supply l, op, lower_expr_with_ctx ctx id_supply r)
+    | Surface.SETypeCheck (e, t) -> AST.TypeCheck (lower_expr_with_ctx ctx id_supply e, lower_type_expr t)
     | Surface.SEIf (cond, cons, alt) ->
-        AST.If (lower_expr id_supply cond, lower_stmt id_supply cons, Option.map (lower_stmt id_supply) alt)
-    | Surface.SECall (f, args) -> AST.Call (lower_expr id_supply f, List.map (lower_expr id_supply) args)
+        AST.If
+          ( lower_expr_with_ctx ctx id_supply cond,
+            lower_stmt_with_ctx ctx id_supply cons,
+            Option.map (lower_stmt_with_ctx ctx id_supply) alt )
+    | Surface.SECall (f, args) ->
+        AST.Call (lower_expr_with_ctx ctx id_supply f, List.map (lower_expr_with_ctx ctx id_supply) args)
     | Surface.SEEnumConstructor (enum_name, variant_name, args) ->
-        AST.EnumConstructor (enum_name, variant_name, List.map (lower_expr id_supply) args)
+        AST.EnumConstructor (enum_name, variant_name, List.map (lower_expr_with_ctx ctx id_supply) args)
     | Surface.SEMatch (scrutinee, arms) ->
-        AST.Match (lower_expr id_supply scrutinee, List.map (lower_match_arm id_supply) arms)
+        AST.Match
+          ( lower_expr_with_ctx ctx id_supply scrutinee,
+            List.map (lower_match_arm_with_ctx ctx id_supply) arms )
     | Surface.SERecordLit (fields, spread) ->
         let lower_field f =
           AST.
             {
               field_name = f.Surface.se_field_name;
-              field_value = Option.map (lower_expr id_supply) f.Surface.se_field_value;
+              field_value = Option.map (lower_expr_with_ctx ctx id_supply) f.Surface.se_field_value;
             }
         in
-        AST.RecordLit (List.map lower_field fields, Option.map (lower_expr id_supply) spread)
-    | Surface.SEFieldAccess (receiver, field) -> AST.FieldAccess (lower_expr id_supply receiver, field)
+        AST.RecordLit (List.map lower_field fields, Option.map (lower_expr_with_ctx ctx id_supply) spread)
+    | Surface.SEFieldAccess (receiver, field) ->
+        AST.FieldAccess (lower_expr_with_ctx ctx id_supply receiver, field)
     | Surface.SEMethodCall { se_receiver; se_method; se_type_args; se_args } ->
         AST.MethodCall
           {
-            mc_receiver = lower_expr id_supply se_receiver;
+            mc_receiver = lower_expr_with_ctx ctx id_supply se_receiver;
             mc_method = se_method;
             mc_type_args = Option.map (List.map lower_type_expr) se_type_args;
-            mc_args = List.map (lower_expr id_supply) se_args;
+            mc_args = List.map (lower_expr_with_ctx ctx id_supply) se_args;
           }
     | Surface.SEArrowLambda { se_lambda_params; se_lambda_is_effectful; se_lambda_body } ->
         (* Lower arrow lambda to canonical Function form *)
-        let fn_body = lower_expr_or_block_to_stmt id_supply se_lambda_body in
+        let generics, params = lower_callable_signature ctx None se_lambda_params in
+        let fn_body = lower_expr_or_block_to_stmt_with_ctx ctx id_supply se_lambda_body in
         AST.Function
           {
-            generics = None;
-            params = List.map (fun (n, t) -> (n, Option.map lower_type_expr t)) se_lambda_params;
+            generics;
+            params;
             return_type = None;
             is_effectful = se_lambda_is_effectful;
             body = fn_body;
           }
     | Surface.SEPlaceholder -> failwith_unimplemented "SEPlaceholder"
-    | Surface.SEBlockExpr block -> AST.BlockExpr (List.map (lower_stmt id_supply) block.sb_stmts)
+    | Surface.SEBlockExpr block -> AST.BlockExpr (List.map (lower_stmt_with_ctx ctx id_supply) block.sb_stmts)
   in
   AST.{ id; expr; pos; end_pos; file_id }
 
 (* lower_stmt converts a block-level surface_stmt to AST.statement *)
-and lower_stmt (id_supply : Id_supply.Id_supply.t) (ss : Surface.surface_stmt) : AST.statement =
+and lower_stmt_with_ctx
+    (ctx : lower_context)
+    (id_supply : Id_supply.Id_supply.t)
+    (ss : Surface.surface_stmt) : AST.statement =
   let pos = ss.ss_pos and end_pos = ss.ss_end_pos and file_id = ss.ss_file_id in
   let stmt =
     match ss.ss_stmt with
@@ -277,41 +297,50 @@ and lower_stmt (id_supply : Id_supply.Id_supply.t) (ss : Surface.surface_stmt) :
         AST.Let
           {
             name = ss_name;
-            value = lower_expr id_supply ss_value;
+            value = lower_expr_with_ctx ctx id_supply ss_value;
             type_annotation = Option.map lower_type_expr ss_type_annotation;
           }
-    | Surface.SSReturn e -> AST.Return (lower_expr id_supply e)
-    | Surface.SSExpressionStmt e -> AST.ExpressionStmt (lower_expr id_supply e)
-    | Surface.SSBlock block -> AST.Block (List.map (lower_stmt id_supply) block.sb_stmts)
+    | Surface.SSReturn e -> AST.Return (lower_expr_with_ctx ctx id_supply e)
+    | Surface.SSExpressionStmt e -> AST.ExpressionStmt (lower_expr_with_ctx ctx id_supply e)
+    | Surface.SSBlock block -> AST.Block (List.map (lower_stmt_with_ctx ctx id_supply) block.sb_stmts)
   in
   AST.{ stmt; pos; end_pos; file_id }
 
-and lower_match_arm (id_supply : Id_supply.Id_supply.t) (arm : Surface.surface_match_arm) : AST.match_arm =
-  let body = lower_expr_or_block_to_expr id_supply arm.se_arm_body in
+and lower_match_arm_with_ctx
+    (ctx : lower_context)
+    (id_supply : Id_supply.Id_supply.t)
+    (arm : Surface.surface_match_arm) : AST.match_arm =
+  let body = lower_expr_or_block_to_expr_with_ctx ctx id_supply arm.se_arm_body in
   AST.{ patterns = List.map lower_pattern arm.se_patterns; body }
 
 (* lower_expr_or_block_to_expr:
    Used for match-arm bodies and trait default method bodies.
    - SEOBExpr e  -> lower_expr e
    - SEOBBlock b -> fresh AST.BlockExpr *)
-and lower_expr_or_block_to_expr (id_supply : Id_supply.Id_supply.t) (eob : Surface.surface_expr_or_block) :
+and lower_expr_or_block_to_expr_with_ctx
+    (ctx : lower_context)
+    (id_supply : Id_supply.Id_supply.t)
+    (eob : Surface.surface_expr_or_block) :
     AST.expression =
   match eob with
-  | Surface.SEOBExpr e -> lower_expr id_supply e
+  | Surface.SEOBExpr e -> lower_expr_with_ctx ctx id_supply e
   | Surface.SEOBBlock block ->
       AST.mk_expr ~id:(Id_supply.Id_supply.fresh id_supply) ~pos:block.sb_pos ~end_pos:block.sb_end_pos
         ~file_id:block.sb_file_id
-        (AST.BlockExpr (List.map (lower_stmt id_supply) block.sb_stmts))
+        (AST.BlockExpr (List.map (lower_stmt_with_ctx ctx id_supply) block.sb_stmts))
 
 (* lower_expr_or_block_to_stmt:
    Used for function bodies, impl method bodies.
    - SEOBExpr e  -> AST.Block [AST.ExpressionStmt (lower_expr e)]
    - SEOBBlock b -> AST.Block (List.map lower_stmt b.sb_stmts) *)
-and lower_expr_or_block_to_stmt (id_supply : Id_supply.Id_supply.t) (eob : Surface.surface_expr_or_block) :
+and lower_expr_or_block_to_stmt_with_ctx
+    (ctx : lower_context)
+    (id_supply : Id_supply.Id_supply.t)
+    (eob : Surface.surface_expr_or_block) :
     AST.statement =
   match eob with
   | Surface.SEOBExpr e ->
-      let lowered = lower_expr id_supply e in
+      let lowered = lower_expr_with_ctx ctx id_supply e in
       AST.mk_stmt ~pos:lowered.pos ~end_pos:lowered.end_pos ~file_id:lowered.file_id
         (AST.Block
            [
@@ -320,35 +349,63 @@ and lower_expr_or_block_to_stmt (id_supply : Id_supply.Id_supply.t) (eob : Surfa
            ])
   | Surface.SEOBBlock b ->
       AST.mk_stmt ~pos:b.sb_pos ~end_pos:b.sb_end_pos ~file_id:b.sb_file_id
-        (AST.Block (List.map (lower_stmt id_supply) b.sb_stmts))
+        (AST.Block (List.map (lower_stmt_with_ctx ctx id_supply) b.sb_stmts))
+
+let lower_expr (id_supply : Id_supply.Id_supply.t) (se : Surface.surface_expr) : AST.expression =
+  lower_expr_with_ctx empty_lower_context id_supply se
+
+let lower_stmt (id_supply : Id_supply.Id_supply.t) (ss : Surface.surface_stmt) : AST.statement =
+  lower_stmt_with_ctx empty_lower_context id_supply ss
+
+let lower_match_arm (id_supply : Id_supply.Id_supply.t) (arm : Surface.surface_match_arm) : AST.match_arm =
+  lower_match_arm_with_ctx empty_lower_context id_supply arm
+
+let lower_expr_or_block_to_expr
+    (id_supply : Id_supply.Id_supply.t)
+    (eob : Surface.surface_expr_or_block) : AST.expression =
+  lower_expr_or_block_to_expr_with_ctx empty_lower_context id_supply eob
+
+let lower_expr_or_block_to_stmt
+    (id_supply : Id_supply.Id_supply.t)
+    (eob : Surface.surface_expr_or_block) : AST.statement =
+  lower_expr_or_block_to_stmt_with_ctx empty_lower_context id_supply eob
 
 (* ── Top-level declarations ── *)
 
 let lower_method_sig (id_supply : Id_supply.Id_supply.t) (sm : Surface.surface_method_sig) : AST.method_sig =
-  let bound_type_vars = bound_type_vars_of_generics sm.sm_generics in
+  let method_generics, method_params =
+    lower_callable_signature empty_lower_context sm.sm_generics
+      (List.map (fun (name, typ) -> (name, Some typ)) sm.sm_params)
+  in
+  let bound_type_vars = bound_type_vars_of_generics method_generics in
   AST.
     {
       method_sig_id = sm.sm_id;
       method_name = sm.sm_name;
-      method_generics = sm.sm_generics;
+      method_generics = method_generics;
       method_params =
-        List.map (fun (n, t) -> (n, lower_type_expr_with_bound_vars bound_type_vars t)) sm.sm_params;
+        List.map
+          (fun (name, typ_opt) ->
+            match typ_opt with
+            | Some typ -> (name, typ)
+            | None -> failwith "Lower: trait method parameter unexpectedly lost its annotation")
+          method_params;
       method_return_type = lower_type_expr_with_bound_vars bound_type_vars sm.sm_return_type;
       method_effect = sm.sm_effect;
       method_default_impl = Option.map (lower_expr_or_block_to_expr id_supply) sm.sm_default_impl;
     }
 
 let lower_method_impl (id_supply : Id_supply.Id_supply.t) (smi : Surface.surface_method_impl) : AST.method_impl =
-  let bound_type_vars = bound_type_vars_of_generics smi.smi_generics in
+  let method_generics, method_params =
+    lower_callable_signature empty_lower_context smi.smi_generics smi.smi_params
+  in
+  let bound_type_vars = bound_type_vars_of_generics method_generics in
   AST.
     {
       impl_method_id = smi.smi_id;
       impl_method_name = smi.smi_name;
-      impl_method_generics = smi.smi_generics;
-      impl_method_params =
-        List.map
-          (fun (n, t) -> (n, Option.map (lower_type_expr_with_bound_vars bound_type_vars) t))
-          smi.smi_params;
+      impl_method_generics = method_generics;
+      impl_method_params = method_params;
       impl_method_return_type = Option.map (lower_type_expr_with_bound_vars bound_type_vars) smi.smi_return_type;
       impl_method_effect = smi.smi_effect;
       impl_method_override = smi.smi_override;
@@ -379,21 +436,23 @@ let lower_top_decl_with_ctx
       List.fold_left (fun acc (p : AST.generic_param) -> StringSet.add p.name acc) StringSet.empty impl_type_params
     in
     let lower_method_impl_with_impl_bindings (smi : Surface.surface_method_impl) =
-      let method_bound_type_vars = StringSet.union impl_bound_type_vars (bound_type_vars_of_generics smi.smi_generics) in
+      let method_generics, method_params =
+        lower_callable_signature ctx ~extra_bound_names:impl_bound_type_vars smi.smi_generics smi.smi_params
+      in
+      let method_bound_type_vars =
+        StringSet.union impl_bound_type_vars (bound_type_vars_of_generics method_generics)
+      in
       AST.
         {
           impl_method_id = smi.smi_id;
           impl_method_name = smi.smi_name;
-          impl_method_generics = smi.smi_generics;
-          impl_method_params =
-            List.map
-              (fun (n, t) -> (n, Option.map (lower_type_expr_with_bound_vars method_bound_type_vars) t))
-              smi.smi_params;
+          impl_method_generics = method_generics;
+          impl_method_params = method_params;
           impl_method_return_type =
             Option.map (lower_type_expr_with_bound_vars method_bound_type_vars) smi.smi_return_type;
           impl_method_effect = smi.smi_effect;
           impl_method_override = smi.smi_override;
-          impl_method_body = lower_expr_or_block_to_stmt id_supply smi.smi_body;
+          impl_method_body = lower_expr_or_block_to_stmt_with_ctx ctx id_supply smi.smi_body;
         }
     in
     let idef =
@@ -409,11 +468,29 @@ let lower_top_decl_with_ctx
   in
   let lower_inherent_impl_decl (inherent_for_type : Surface.surface_type_expr)
       (inherent_methods : Surface.surface_method_impl list) =
+    let lower_inherent_method_with_ctx (smi : Surface.surface_method_impl) =
+      let method_generics, method_params =
+        lower_callable_signature ctx smi.smi_generics smi.smi_params
+      in
+      let method_bound_type_vars = bound_type_vars_of_generics method_generics in
+      AST.
+        {
+          impl_method_id = smi.smi_id;
+          impl_method_name = smi.smi_name;
+          impl_method_generics = method_generics;
+          impl_method_params = method_params;
+          impl_method_return_type =
+            Option.map (lower_type_expr_with_bound_vars method_bound_type_vars) smi.smi_return_type;
+          impl_method_effect = smi.smi_effect;
+          impl_method_override = smi.smi_override;
+          impl_method_body = lower_expr_or_block_to_stmt_with_ctx ctx id_supply smi.smi_body;
+        }
+    in
     let iid =
       AST.
         {
           inherent_for_type = lower_type_expr inherent_for_type;
-          inherent_methods = List.map (lower_method_impl id_supply) inherent_methods;
+          inherent_methods = List.map lower_inherent_method_with_ctx inherent_methods;
         }
     in
     [ AST.mk_stmt ~pos ~end_pos ~file_id (AST.InherentImplDef iid) ]
@@ -425,14 +502,14 @@ let lower_top_decl_with_ctx
           (AST.Let
              {
                name;
-               value = lower_expr id_supply value;
+               value = lower_expr_with_ctx ctx id_supply value;
                type_annotation = Option.map lower_type_expr type_annotation;
              });
       ]
   | Surface.SFnDecl { name; generics; params; return_type; is_effectful; body } ->
-      let generics, params = lower_fn_decl_signature ctx generics params in
+      let generics, params = lower_callable_signature ctx generics params in
       let bound_type_vars = bound_type_vars_of_generics generics in
-      let fn_body = lower_expr_or_block_to_stmt id_supply body in
+      let fn_body = lower_expr_or_block_to_stmt_with_ctx ctx id_supply body in
       let fn_expr =
         AST.mk_expr ~id:(Id_supply.Id_supply.fresh id_supply) ~pos ~end_pos ~file_id
           (AST.Function
@@ -518,19 +595,29 @@ let lower_top_decl_with_ctx
           }
       in
       let lower_method_sig_with_trait_bindings (sm : Surface.surface_method_sig) =
-        let method_bound_type_vars = StringSet.union trait_bound_type_vars (bound_type_vars_of_generics sm.sm_generics) in
+        let method_generics, method_params =
+          lower_callable_signature ctx ~extra_bound_names:trait_bound_type_vars sm.sm_generics
+            (List.map (fun (name, typ) -> (name, Some typ)) sm.sm_params)
+        in
+        let method_bound_type_vars =
+          StringSet.union trait_bound_type_vars (bound_type_vars_of_generics method_generics)
+        in
         AST.
           {
             method_sig_id = sm.sm_id;
             method_name = sm.sm_name;
-            method_generics = sm.sm_generics;
+            method_generics = method_generics;
             method_params =
               List.map
-                (fun (n, t) -> (n, lower_type_expr_with_bound_vars method_bound_type_vars t))
-                sm.sm_params;
+                (fun (name, typ_opt) ->
+                  match typ_opt with
+                  | Some typ -> (name, typ)
+                  | None -> failwith "Lower: trait method parameter unexpectedly lost its annotation")
+                method_params;
             method_return_type = lower_type_expr_with_bound_vars method_bound_type_vars sm.sm_return_type;
             method_effect = sm.sm_effect;
-            method_default_impl = Option.map (lower_expr_or_block_to_expr id_supply) sm.sm_default_impl;
+            method_default_impl =
+              Option.map (lower_expr_or_block_to_expr_with_ctx ctx id_supply) sm.sm_default_impl;
           }
       in
       let td =
@@ -552,10 +639,11 @@ let lower_top_decl_with_ctx
   | Surface.SInherentImplDef { inherent_for_type; inherent_methods } ->
       lower_inherent_impl_decl inherent_for_type inherent_methods
   | Surface.SExpressionStmt e ->
-      [ AST.mk_stmt ~pos ~end_pos ~file_id (AST.ExpressionStmt (lower_expr id_supply e)) ]
-  | Surface.SReturn e -> [ AST.mk_stmt ~pos ~end_pos ~file_id (AST.Return (lower_expr id_supply e)) ]
+      [ AST.mk_stmt ~pos ~end_pos ~file_id (AST.ExpressionStmt (lower_expr_with_ctx ctx id_supply e)) ]
+  | Surface.SReturn e -> [ AST.mk_stmt ~pos ~end_pos ~file_id (AST.Return (lower_expr_with_ctx ctx id_supply e)) ]
   | Surface.SBlock block ->
-      [ AST.mk_stmt ~pos ~end_pos ~file_id (AST.Block (List.map (lower_stmt id_supply) block.sb_stmts)) ]
+      [ AST.mk_stmt ~pos ~end_pos ~file_id (AST.Block (List.map (lower_stmt_with_ctx ctx id_supply) block.sb_stmts))
+      ]
 
 let lower_top_decl (id_supply : Id_supply.Id_supply.t) (ts : Surface.surface_top_stmt) : AST.statement list =
   lower_top_decl_with_ctx empty_lower_context id_supply ts

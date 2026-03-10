@@ -3668,6 +3668,26 @@ and infer_statement type_map env stmt =
                             Trait_registry.register_impl ~source:impl_source impl_def;
                             Ok (method_subst, TNull)))))
   | AST.InherentImplDef { inherent_for_type; inherent_methods } -> (
+      let reject_invalid_override =
+        let rec loop = function
+          | [] -> Ok ()
+          | (m : AST.method_impl) :: rest ->
+              if m.impl_method_override then
+                Error
+                  (error_at_stmt ~code:"override-invalid"
+                     ~message:
+                       (Printf.sprintf
+                          "Method '%s' uses 'override' in an inherent impl; 'override' is only valid in trait impls"
+                          m.impl_method_name)
+                     m.impl_method_body)
+              else
+                loop rest
+        in
+        loop inherent_methods
+      in
+      match reject_invalid_override with
+      | Error e -> Error e
+      | Ok () -> (
       let is_known_type_name (name : string) : bool =
         Option.is_some (Annotation.builtin_primitive_type name)
         || Option.is_some (Annotation.builtin_type_constructor_name name)
@@ -3998,7 +4018,7 @@ and infer_statement type_map env stmt =
               in
               let result = register_methods empty_substitution inherent_methods in
               current_inherent_impl_methods := prev_inherent_impl_methods;
-              result))
+              result)))
   | AST.DeriveDef { derive_traits; derive_for_type } -> (
       (* Auto-generate implementations for derived traits *)
       match Annotation.type_expr_to_mono_type derive_for_type with

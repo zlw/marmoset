@@ -1,0 +1,10 @@
+# VN56: Overriding a default method still works when the impl omits its suffix
+trait Greeter[a] = {
+  fn greet(x: a) -> Str = "hello"
+}
+
+impl Greeter[Int] = {
+  override fn greet(x) = "hi"
+}
+
+puts(1.greet())  # output: hi

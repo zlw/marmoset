@@ -1334,7 +1334,7 @@ and parse_lambda_param_list (p : parser) :
       let lp2 = next_token lp in
       let* lp3, type_annot =
         if curr_token_is lp2 Token.Colon then
-          let* lp3, te = parse_type_expr (next_token lp2) in
+          let* lp3, te = parse_param_type_expr (next_token lp2) in
           Ok (lp3, Some te)
         else
           Ok (lp2, None)
