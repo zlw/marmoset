@@ -10,7 +10,7 @@
 <br/>
 
 ```marmoset
-let fib = fn(n) {
+fn fib(n) = {
   if (n < 2) { return n }
   fib(n - 2) + fib(n - 1)
 }
@@ -33,34 +33,30 @@ This isn't gradual typing. There's no `any`, no untyped escape hatch. You get th
 
 **No annotations — the compiler infers everything:**
 ```marmoset
-let reduce = fn(values, initial, step) {
-  let iter = fn(remaining, acc) {
+fn reduce(values, initial, step) = {
+  let iter = (remaining, acc) -> {
     if (len(remaining) == 0) { return acc }
     iter(rest(remaining), step(acc, first(remaining)))
   }
   iter(values, initial)
 }
 
-let sum = fn(values) {
-  reduce(values, 0, fn(acc, v) { acc + v })
-}
+fn sum(values) = reduce(values, 0, (acc, v) -> acc + v)
 
 puts(sum([1, 2, 3, 4, 5]))  # 15
 ```
 
-**Fully annotated — for when you want to be explicit:**
+**Type-annotated — for when you want to be explicit:**
 ```marmoset
-let reduce = fn(values: list[int], initial: int, step: fn(int, int) -> int) -> int {
-  let iter = fn(remaining: list[int], acc: int) -> int {
-    if (len(remaining) == 0) { return acc }
-    iter(rest(remaining), step(acc, first(remaining)))
+fn reduce(values: List[Int], initial: Int, step: (Int, Int) -> Int) -> Int = {
+  let iter = (remaining: List[Int], acc: Int) -> {
+      if (len(remaining) == 0) { return acc }
+      iter(rest(remaining), step(acc, first(remaining)))
   }
   iter(values, initial)
 }
 
-let sum = fn(values: list[int]) -> int {
-  reduce(values, 0, fn(acc: int, v: int) -> int { acc + v })
-}
+fn sum(values: List[Int]) -> Int = reduce(values, 0, (acc: Int, v: Int) -> acc + v)
 
 puts(sum([1, 2, 3, 4, 5]))  # 15
 ```
@@ -76,9 +72,7 @@ Both compile to the exact same binary. You choose the style.
 First-class functions with lexical closures:
 
 ```marmoset
-let apply_discount = fn(rate) {
-  fn(price) { price - price * rate / 100 }
-}
+fn apply_discount(rate) = (price) -> price - price * rate / 100
 
 let black_friday = apply_discount(25)
 puts(black_friday(200))  # 150
@@ -88,13 +82,13 @@ puts(black_friday(80))   # 60
 Generics with trait constraints:
 
 ```marmoset
-let deduplicate = fn[a: eq + show](items: list[a]) -> list[a] {
-  let iter = fn(remaining: list[a], seen: list[a]) -> list[a] {
-    if (len(remaining) == 0) { return seen }
-    
-    let head = first(remaining)
-    let tail = rest(remaining)
-    iter(tail, push(seen, head))
+fn deduplicate[a: Eq & Show](items: List[a]) -> List[a] = {
+  let iter = (remaining: List[a], seen: List[a]) -> {
+      if (len(remaining) == 0) { return seen }
+
+      let head = first(remaining)
+      let tail = rest(remaining)
+      iter(tail, push(seen, head))
   }
   iter(items, [])
 }
@@ -105,9 +99,9 @@ let deduplicate = fn[a: eq + show](items: list[a]) -> list[a] {
 Structural typing with type aliases and spread updates:
 
 ```marmoset
-type user = { name: string, email: string, age: int }
+type User = { name: Str, email: Str, age: Int }
 
-let alice: user = { name: "alice", email: "alice@example.com", age: 30 }
+let alice: User = { name: "alice", email: "alice@example.com", age: 30 }
 let updated = { ...alice, email: "new@example.com" }
 
 puts(updated.name)   # alice
@@ -119,42 +113,31 @@ puts(updated.email)  # new@example.com
 Algebraic data types with exhaustive pattern matching:
 
 ```marmoset
-enum shape {
-  circle(int)
-  rect(int, int)
+enum Shape = { Circle(Int) Rect(Int, Int) }
+
+fn area(s: Shape) -> Int = match s {
+  case Shape.Circle(r): r * r * 3
+  case Shape.Rect(w, h): w * h
 }
 
-let area = fn(s: shape) -> int {
-  match s {
-    shape.circle(r): r * r * 3
-    shape.rect(w, h): w * h
-  }
-}
-
-puts(area(shape.circle(5)))    # 75
-puts(area(shape.rect(4, 6)))   # 24
+puts(area(Shape.Circle(5)))    # 75
+puts(area(Shape.Rect(4, 6)))   # 24
 ```
 
 Generic enums with methods — model your domain:
 
 ```marmoset
-enum task[a] {
-  pending(a)
-  done(a)
-  cancelled
-}
+enum Task[a] = { Pending(a) Done(a) Cancelled }
 
-impl task[a] {
-  fn is_active(t: task[a]) -> bool {
-    match t {
-      task.pending(_): true
-      task.done(_): false
-      task.cancelled: false
-    }
+impl Task[a] = {
+  fn is_active(self: Task[a]) -> Bool = match self {
+    case Task.Pending(_): true
+    case Task.Done(_): false
+    case Task.Cancelled: false
   }
 }
 
-let job = task.pending("deploy v2.1")
+let job = Task.Pending("deploy v2.1")
 puts(job.is_active())  # true
 ```
 
@@ -163,15 +146,11 @@ puts(job.is_active())  # true
 **Field traits** — satisfied structurally, just by having the right shape:
 
 ```marmoset
-trait named {
-  name: string
-}
+trait Named = { name: Str }
 
-let greet = fn[t: named](x: t) -> string {
-  "hello, " + x.name
-}
+fn greet[a: Named](x: a) -> Str = "hello, " + x.name
 
-# Any record with a `name: string` field works
+# Any record with a `name: Str` field works
 let person = { name: "alice", age: 30 }
 let company = { name: "acme", employees: 10 }
 
@@ -182,35 +161,29 @@ puts(greet(company))  # hello, acme
 **Method traits** — require explicit impls:
 
 ```marmoset
-enum severity { info warning error }
+enum Severity = { Info Warning Error }
 
-trait show[a] {
-  fn show(x: a) -> string
+trait Show[a] = {
+  fn show(x: a) -> Str
 }
 
-impl show for severity {
-  fn show(s: severity) -> string {
-    match s {
-      severity.info: "INFO"
-      severity.warning: "WARN"
-      severity.error: "ERROR"
-    }
+impl Show[Severity] = {
+  fn show(s: Severity) -> Str = match s {
+    case Severity.Info: "INFO"
+    case Severity.Warning: "WARN"
+    case Severity.Error: "ERROR"
   }
 }
 
-puts(severity.warning.show())  # WARN
+puts(Severity.Warning.show())  # WARN
 ```
 
 **Supertraits** compose — `ord` implies `eq`:
 
 ```marmoset
-trait eq[a] {
-  fn eq(x: a, y: a) -> bool
-}
+trait Eq[a] = { fn eq(x: a, y: a) -> Bool }
 
-trait ord[a]: eq {
-  fn compare(x: a, y: a) -> int
-}
+trait Ord[a]: Eq = { fn compare(x: a, y: a) -> Int }
 ```
 
 ### 🛠️ Inherent methods
@@ -218,19 +191,15 @@ trait ord[a]: eq {
 Attach methods directly to any type — no trait ceremony:
 
 ```marmoset
-type cart = { items: list[int] }
+type Cart = { items: List[Int] }
 
-impl cart {
-  fn total(c: cart) -> int {
-    reduce(c.items, 0, fn(acc, price) { acc + price })
-  }
+impl Cart = {
+  fn total(c: Cart) -> Int = reduce(c.items, 0, (acc, price) -> acc + price)
 
-  fn with_item(c: cart, price: int) -> cart {
-    { items: push(c.items, price) }
-  }
+  fn with_item(c: Cart, price: Int) -> Cart = { items: push(c.items, price) }
 }
 
-let c = cart.with_item({ items: [] }, 25)
+let c = Cart.with_item({ items: [] }, 25)
 let c = c.with_item(50)
 puts(c.total())  # 75
 ```
@@ -238,21 +207,17 @@ puts(c.total())  # 75
 Method-level generics — type args are inferred from usage, but you can be explicit when you want:
 
 ```marmoset
-type box = { v: int }
+type Box = { v: Int }
 
-impl box {
-  fn transform[b](bx: box, f: fn(int) -> b) -> b {
-    f(bx.v)
-  }
-}
+impl Box = { fn transform[b](bx: Box, f: (Int) -> b) -> b = f(bx.v) }
 
-let b: box = { v: 42 }
+let b: Box = { v: 42 }
 
 # Type argument inferred from the callback's return type
-let label = b.transform(fn(n: int) -> string { "item-" + n.show() })
+let label = b.transform((n: Int) -> "item-" + n.show())
 
 # Or specify it explicitly
-let label = b.transform[string](fn(n: int) -> string { "item-" + n.show() })
+let label = b.transform[Str]((n: Int) -> "item-" + n.show())
 
 puts(label)  # item-42
 ```
@@ -262,8 +227,8 @@ puts(label)  # item-42
 Type-safe unions with compile-time narrowing:
 
 ```marmoset
-let parse_port = fn(input: int | string) -> int {
-  if (input is int) {
+fn parse_port(input: Int | Str) -> Int = {
+  if (input is Int) {
     input
   } else {
     8080
@@ -280,19 +245,17 @@ Pure functions (`->`) can't call effectful ones (`=>`). The compiler enforces th
 
 ```marmoset
 # This function does I/O — must be marked effectful
-let log = fn(msg: string) => string {
+fn log(msg: Str) => Str = {
   puts(msg)
   msg
 }
 
 # Pure function — just computes a value
-let greet = fn(name: string) -> string {
-  "hello, " + name
-}
+fn greet(name: Str) -> Str = "hello, " + name
 
 # This would be a compile error:
-# let bad = fn(name: string) -> string { puts(name); name }
-#                               ^^ pure function can't call puts
+# fn bad(name: Str) -> Str = { puts(name); name }
+#                         ^^ pure function can't call puts
 ```
 
 Omit the arrow entirely and the compiler infers it from the body.
@@ -354,10 +317,10 @@ Marmoset ships with an LSP server and plugins for:
 
 | Editor | Path |
 |--------|------|
-| VS Code | `editors/vscode/` |
-| Zed | `editors/zed/` |
-| Neovim | `editors/nvim/` |
-| JetBrains | `editors/jetbrains/` |
+| VS Code | `tools/vscode-marmoset/` |
+| Zed | `tools/zed-marmoset/` |
+| Neovim | `tools/nvim-marmoset/` |
+| JetBrains | `tools/jetbrains-marmoset/` |
 
 Features: diagnostics, hover, signature help, semantic tokens, inlay hints, folding ranges, selection ranges.
 
