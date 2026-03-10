@@ -1,12 +1,8 @@
 # TF19: Constrained generic passed through multiple function layers
-trait has_name {
-  name: string
+trait HasName = {
+  name: Str
 }
-let inner = fn[t: has_name](v: t) -> string {
-  "inner:" + v.name
-};
-let outer = fn[t: has_name](v: t) -> string {
-  inner(v)
-};
+fn inner[t: HasName](v: t) -> Str = "inner:" + v.name
+fn outer[t: HasName](v: t) -> Str = inner(v)
 let r = { name: "bob", extra: 1 }
 puts(outer(r))  # output: inner:bob

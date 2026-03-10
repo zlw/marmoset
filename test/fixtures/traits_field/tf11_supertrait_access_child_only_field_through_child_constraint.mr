@@ -1,12 +1,10 @@
 # TF11: Supertrait: access child-only field through child constraint
-trait has_name {
-  name: string
+trait HasName = {
+  name: Str
 }
-trait person: has_name {
-  age: int
+trait Person: HasName = {
+  age: Int
 }
-let get_age = fn[t: person](v: t) -> int {
-  v.age
-};
+fn get_age[t: Person](v: t) -> Int = v.age
 let p = { name: "hello", age: 99 }
 puts(get_age(p))  # output: 99

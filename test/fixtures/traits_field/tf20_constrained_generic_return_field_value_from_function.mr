@@ -1,9 +1,7 @@
 # TF20: Constrained generic: return field value from function
-trait has_value {
-  value: string
+trait HasValue = {
+  value: Str
 }
-let extract = fn[t: has_value](v: t) -> string {
-  v.value
-};
+fn extract[t: HasValue](v: t) -> Str = v.value
 let r = { value: "result" }
 puts(extract(r))  # output: result

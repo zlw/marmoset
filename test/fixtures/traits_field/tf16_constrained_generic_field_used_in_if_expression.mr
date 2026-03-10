@@ -1,13 +1,13 @@
 # TF16: Constrained generic field used in if-expression
-trait has_val {
-  val: int
+trait HasVal = {
+  val: Int
 }
-let classify = fn[t: has_val](v: t) -> string {
+fn classify[t: HasVal](v: t) -> Str = {
   if (v.val > 10) {
     "big"
   } else {
     "small"
   }
-};
+}
 let r = { val: 42 }
 puts(classify(r))  # output: big
