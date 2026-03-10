@@ -22,6 +22,8 @@ jobs:
     outputs:
       compiler: ${{ steps.filter.outputs.compiler }}
       lsp: ${{ steps.filter.outputs.lsp }}
+      treesitter: ${{ steps.filter.outputs.treesitter }}
+      grammar_sync: ${{ steps.filter.outputs.grammar_sync }}
       zed: ${{ steps.filter.outputs.zed }}
       vscode: ${{ steps.filter.outputs.vscode }}
       nvim: ${{ steps.filter.outputs.nvim }}
@@ -58,6 +60,18 @@ jobs:
               - '.github/workflows/pr-ci.yml'
               - '.github/actions/setup-ocaml/action.yml'
               - '.github/actions/setup-ocaml-go/action.yml'
+            treesitter:
+              - 'tools/tree-sitter-marmoset/**'
+              - 'test/ci/tree-sitter.sh'
+              - 'Makefile'
+              - '.github/workflows/pr-ci.yml'
+            grammar_sync:
+              - 'tools/scripts/sync_textmate_grammars.sh'
+              - 'tools/vscode-marmoset/syntaxes/marmoset.tmLanguage.json'
+              - 'tools/jetbrains-marmoset/src/main/resources/textmate/syntaxes/marmoset.tmLanguage.json'
+              - 'test/ci/grammar-sync.sh'
+              - 'Makefile'
+              - '.github/workflows/pr-ci.yml'
             zed:
               - 'tools/zed-marmoset/**'
               - 'test/ci/editor-zed.sh'
@@ -160,6 +174,35 @@ jobs:
       - name: Run quality checks
         run: opam exec -- make ci-quality-lint-fmt-doc
 
+  tree-sitter:
+    name: tree-sitter
+    needs: changes
+    if: needs.changes.outputs.treesitter == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout tree
+        uses: actions/checkout@v4
+
+      - name: Set-up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Run tree-sitter checks
+        run: make ci-tree-sitter
+
+  grammar-sync:
+    name: grammar-sync
+    needs: changes
+    if: needs.changes.outputs.grammar_sync == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout tree
+        uses: actions/checkout@v4
+
+      - name: Run grammar sync checks
+        run: make ci-grammar-sync
+
   editor-zed:
     name: editor-zed
     needs: changes
@@ -231,6 +274,8 @@ jobs:
       - lsp-unit
       - lsp-integration
       - quality-lint-fmt-doc
+      - tree-sitter
+      - grammar-sync
       - editor-zed
       - editor-vscode
       - editor-nvim
@@ -243,6 +288,8 @@ jobs:
           echo "Detected change domains:"
           echo "  compiler=${{ needs.changes.outputs.compiler }}"
           echo "  lsp=${{ needs.changes.outputs.lsp }}"
+          echo "  treesitter=${{ needs.changes.outputs.treesitter }}"
+          echo "  grammar_sync=${{ needs.changes.outputs.grammar_sync }}"
           echo "  zed=${{ needs.changes.outputs.zed }}"
           echo "  vscode=${{ needs.changes.outputs.vscode }}"
           echo "  nvim=${{ needs.changes.outputs.nvim }}"
@@ -254,6 +301,8 @@ jobs:
           echo "  lsp-unit=${{ needs.lsp-unit.result }}"
           echo "  lsp-integration=${{ needs.lsp-integration.result }}"
           echo "  quality-lint-fmt-doc=${{ needs.quality-lint-fmt-doc.result }}"
+          echo "  tree-sitter=${{ needs.tree-sitter.result }}"
+          echo "  grammar-sync=${{ needs.grammar-sync.result }}"
           echo "  editor-zed=${{ needs.editor-zed.result }}"
           echo "  editor-vscode=${{ needs.editor-vscode.result }}"
           echo "  editor-nvim=${{ needs.editor-nvim.result }}"
