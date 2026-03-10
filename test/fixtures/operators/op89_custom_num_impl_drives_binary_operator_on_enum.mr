@@ -1,13 +1,13 @@
 # OP89: Custom num impl drives - (binary) operator on enum
-enum boxed { val(int) }
-impl num for boxed {
-  fn add(x: boxed, y: boxed) -> boxed { x }
-  fn sub(x: boxed, y: boxed) -> boxed { x }
-  fn mul(x: boxed, y: boxed) -> boxed { x }
-  fn div(x: boxed, y: boxed) -> boxed { x }
+enum Boxed = { Val(Int) }
+impl Num[Boxed] = {
+  fn add(x: Boxed, y: Boxed) -> Boxed = x
+  fn sub(x: Boxed, y: Boxed) -> Boxed = x
+  fn mul(x: Boxed, y: Boxed) -> Boxed = x
+  fn div(x: Boxed, y: Boxed) -> Boxed = x
 }
-let a = boxed.val(7)
-let b = boxed.val(3)
+let a = Boxed.Val(7)
+let b = Boxed.Val(3)
 match (a - b) {  # output: 7
-  boxed.val(n): puts(n)
+  case Boxed.Val(n): puts(n)
 }

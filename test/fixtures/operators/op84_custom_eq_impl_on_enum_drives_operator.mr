@@ -1,8 +1,8 @@
 # OP84: Custom eq impl on enum drives == operator
-enum color { red green blue }
-impl eq for color {
-  fn eq(x: color, y: color) -> bool {
+enum Color = { Red, Green, Blue }
+impl Eq[Color] = {
+  fn eq(x: Color, y: Color) -> Bool = {
     true
   }
 }
-puts(color.red == color.blue)  # output: true
+puts(Color.Red == Color.Blue)  # output: true
