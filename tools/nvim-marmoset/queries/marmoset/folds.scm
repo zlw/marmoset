@@ -3,6 +3,9 @@
 ; Blocks (general)
 (block) @fold
 
+; Top-level fn declarations
+(fn_declaration) @fold
+
 ; Enum definitions
 (enum_definition) @fold
 
@@ -27,6 +30,10 @@
 
 ; Function literals
 (function_literal) @fold
+
+; Lambda expressions with block bodies
+(lambda_expression
+  body: (block) @fold)
 
 ; Array literals (multi-line)
 (array_literal) @fold

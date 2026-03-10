@@ -1,0 +1,191 @@
+================================================================================
+Top-level fn declaration
+================================================================================
+
+fn add(x: Int, y: Int) -> Int = x + y
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (fn_declaration
+    name: (identifier)
+    (parameter
+      name: (identifier)
+      type: (type_identifier))
+    (parameter
+      name: (identifier)
+      type: (type_identifier))
+    return_type: (type_identifier)
+    body: (expr_or_block
+      (infix_expression
+        left: (identifier)
+        right: (identifier)))))
+
+================================================================================
+Trait with default method and ampersand supertraits
+================================================================================
+
+trait Named[a]: Show & Eq = {
+  name: Str,
+  fn full_name(self: a) -> Str = self.name
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (trait_definition
+    name: (identifier)
+    type_params: (type_parameter_list
+      (identifier))
+    supertraits: (supertrait_list
+      (identifier)
+      (identifier))
+    (trait_field
+      name: (identifier)
+      type: (type_identifier))
+    (trait_method_signature
+      name: (identifier)
+      (parameter
+        name: (identifier)
+        type: (type_variable
+          (identifier)))
+      return_type: (type_identifier)
+      body: (expr_or_block
+        (field_access
+          object: (identifier)
+          field: (identifier))))))
+
+================================================================================
+vNext trait impl with override
+================================================================================
+
+impl[a: Show] Show[List[a]] = {
+  override fn show(self: List[a]) -> Str = "ok"
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (impl_block
+    type_params: (impl_type_parameter_list
+      (constrained_type_param
+        name: (identifier)
+        constraints: (constraint_list
+          (identifier))))
+    target: (generic_type
+      name: (identifier)
+      arg: (generic_type
+        name: (identifier)
+        arg: (type_variable
+          (identifier))))
+    (method_definition
+      name: (identifier)
+      (parameter
+        name: (identifier)
+        type: (generic_type
+          name: (identifier)
+          arg: (type_variable
+            (identifier))))
+      return_type: (type_identifier)
+      body: (expr_or_block
+        (string_literal
+          (string_content))))))
+
+================================================================================
+Enum with postfix derive clause
+================================================================================
+
+enum Result[a, e] = {
+  Ok(a),
+  Err(e),
+} derive Eq, Show
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (enum_definition
+    name: (identifier)
+    type_params: (type_parameter_list
+      (identifier)
+      (identifier))
+    (enum_variant
+      name: (identifier)
+      (type_variable
+        (identifier)))
+    (enum_variant
+      name: (identifier)
+      (type_variable
+        (identifier)))
+    derive: (derive_clause
+      trait: (identifier)
+      trait: (identifier))))
+
+================================================================================
+Explicit lambda expression
+================================================================================
+
+(x: Int) -> x + 1
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (expression_statement
+    (lambda_expression
+      (lambda_parameter
+        name: (identifier)
+        type: (type_identifier))
+      body: (expr_or_block
+        (infix_expression
+          left: (identifier)
+          right: (integer_literal))))))
+
+================================================================================
+Match expression with case arms and block body
+================================================================================
+
+match role {
+  case Role.Admin: {
+    "admin"
+  }
+  case Role.User: "user"
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (expression_statement
+    (match_expression
+      value: (identifier)
+      (match_arm
+        pattern: (constructor_pattern
+          enum: (identifier)
+          variant: (identifier))
+        body: (expr_or_block
+          (block
+            (expression_statement
+              (string_literal
+                (string_content))))))
+      (match_arm
+        pattern: (constructor_pattern
+          enum: (identifier)
+          variant: (identifier))
+        body: (expr_or_block
+          (string_literal
+            (string_content)))))))
+
+================================================================================
+vNext function type
+================================================================================
+
+let reducer: (Int, Int) => Int = handler
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (let_statement
+    name: (identifier)
+    type: (function_type
+      (type_identifier)
+      (type_identifier)
+      return_type: (type_identifier))
+    value: (identifier)))
