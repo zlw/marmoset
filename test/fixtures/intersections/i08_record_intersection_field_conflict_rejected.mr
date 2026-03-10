@@ -1,0 +1,2 @@
+# I08: Record intersections reject incompatible field meets
+let bad: { x: Int } & { x: Str } = { x: 1 }  # error: field 'x'

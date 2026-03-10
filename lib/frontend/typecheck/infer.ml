@@ -721,21 +721,79 @@ let warning_at_stmt ~code ~message (stmt : AST.statement) =
 (* Result type for inference *)
 type 'a infer_result = ('a, Diagnostic.t) result
 
-(* Annotation helper: convert type expression, propagating open-row-rejected errors
-   but falling back to fresh_type_var for other annotation errors *)
+let rec type_expr_contains_intersection (te : AST.type_expr) : bool =
+  match te with
+  | AST.TIntersection _ -> true
+  | AST.TApp (_, args) | AST.TUnion args -> List.exists type_expr_contains_intersection args
+  | AST.TArrow (params, ret, _) ->
+      List.exists type_expr_contains_intersection params || type_expr_contains_intersection ret
+  | AST.TRecord (fields, _row_var) ->
+      List.exists
+        (fun (field : AST.record_type_field) -> type_expr_contains_intersection field.field_type)
+        fields
+  | AST.TCon _ | AST.TVar _ | AST.TTraitObject _ -> false
+
+let should_preserve_annotation_error (te : AST.type_expr) (diag : Diagnostic.t) : bool =
+  diag.code = "type-open-row-rejected"
+  || diag.code = "type-intersection-invalid"
+  || (diag.code = "type-annotation-invalid" && type_expr_contains_intersection te)
+
+(* Annotation helper: convert type expression, preserving hard annotation errors
+   while still falling back to a fresh variable for non-fatal future cases. *)
 let annotation_or_fresh te =
   match Annotation.type_expr_to_mono_type te with
-  | Error d when d.Diagnostic.code = "type-open-row-rejected" || d.Diagnostic.code = "type-intersection-invalid" ->
+  | Error d when should_preserve_annotation_error te d ->
       Error d
   | Error _ -> Ok (fresh_type_var ())
   | Ok t -> Ok t
 
 let annotation_with_bindings_or_fresh (type_bindings : (string * mono_type) list) te =
   match Annotation.type_expr_to_mono_type_with type_bindings te with
-  | Error d when d.Diagnostic.code = "type-open-row-rejected" || d.Diagnostic.code = "type-intersection-invalid" ->
+  | Error d when should_preserve_annotation_error te d ->
       Error d
   | Error _ -> Ok (fresh_type_var ())
   | Ok t -> Ok t
+
+let rec has_unresolved_var (t : mono_type) : bool =
+  match t with
+  | TVar _ | TRowVar _ -> true
+  | TFun (arg, ret, _) -> has_unresolved_var arg || has_unresolved_var ret
+  | TArray elem -> has_unresolved_var elem
+  | THash (k, v) -> has_unresolved_var k || has_unresolved_var v
+  | TRecord (fields, row) ->
+      List.exists (fun (f : record_field_type) -> has_unresolved_var f.typ) fields
+      ||
+      (match row with
+      | None -> false
+      | Some r -> has_unresolved_var r)
+  | TTraitObject _ -> false
+  | TEnum (_, args) | TUnion args | TIntersection args -> List.exists has_unresolved_var args
+  | TInt | TFloat | TBool | TString | TNull -> false
+
+let compatible_with_expected_type (actual : mono_type) (expected : mono_type) :
+    (substitution, Diagnostic.t) result =
+  if Annotation.is_subtype_of actual expected then
+    Ok empty_substitution
+  else if has_unresolved_var actual || has_unresolved_var expected then
+    unify actual expected
+  else
+    Error (type_mismatch actual expected)
+
+let%test "annotation_or_fresh preserves invalid intersection diagnostics" =
+  match
+    annotation_or_fresh
+      (AST.TIntersection [ AST.TCon "Int"; AST.TUnion [ AST.TCon "Int"; AST.TCon "Str" ] ])
+  with
+  | Error d -> d.Diagnostic.code = "type-annotation-invalid"
+  | Ok _ -> false
+
+let%test "annotation_with_bindings_or_fresh preserves invalid intersection diagnostics" =
+  match
+    annotation_with_bindings_or_fresh []
+      (AST.TIntersection [ AST.TCon "Int"; AST.TUnion [ AST.TCon "Int"; AST.TCon "Str" ] ])
+  with
+  | Error d -> d.Diagnostic.code = "type-annotation-invalid"
+  | Ok _ -> false
 
 type trait_object_compatibility =
   | TraitObjectAlreadyCompatible
@@ -2564,7 +2622,7 @@ and type_callable
         match return_annot with
         | Some te -> (
             match Annotation.type_expr_to_mono_type_with type_bindings te with
-            | Error d when d.Diagnostic.code = "type-open-row-rejected" -> Error d
+            | Error d when should_preserve_annotation_error te d -> Error d
             | Error _ -> Ok None
             | Ok t -> Ok (Some t))
         | None -> Ok known_return
@@ -3009,7 +3067,7 @@ and infer_arg_against_expected type_map env subst (arg : AST.expression) (expect
                 | Error e -> Error e
                 | Ok () -> Ok (subst' (* coercion is metadata-only *), expected_type''))
             | _ -> (
-                match unify arg_type' expected_type'' with
+                match compatible_with_expected_type arg_type' expected_type'' with
                 | Error e -> Error (error_at ~code:e.code ~message:e.message arg)
                 | Ok subst2 ->
                     let final_subst = compose_substitution subst' subst2 in
@@ -4816,7 +4874,7 @@ and infer_let ?(prefer_existing_self = false) type_map env name expr type_annota
                 | Ok () -> Ok empty_substitution
                 | Error e -> Error e)
             | _ -> (
-                match unify self_type' expr_type with
+                match compatible_with_expected_type expr_type self_type' with
                 | Ok subst2 -> Ok subst2
                 | Error e -> (
                     match expr.expr with

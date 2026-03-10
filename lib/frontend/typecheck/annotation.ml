@@ -170,7 +170,8 @@ let rec member_is_subtype_of (actual : Types.mono_type) (expected : Types.mono_t
   | Types.TUnion members, concrete -> List.for_all (fun member -> member_is_subtype_of member concrete) members
   | _ -> false
 
-let validate_record_intersection_members (members : Types.mono_type list) : (unit, Diagnostic.t) result =
+let merged_record_intersection_type (members : Types.mono_type list) :
+    (Types.mono_type, Diagnostic.t) result =
   let intersection_error message = Error (Diagnostic.error_no_span ~code:"type-annotation-invalid" ~message) in
   let merged_fields : (string, Types.mono_type) Hashtbl.t = Hashtbl.create 8 in
   let choose_field_type field_name existing incoming =
@@ -205,7 +206,21 @@ let validate_record_intersection_members (members : Types.mono_type list) : (uni
         intersection_error "Open-record intersections are not supported in v1"
     | _ -> intersection_error "Internal error: expected only record members in record intersection merge"
   in
-  add_fields members
+  let* () = add_fields members in
+  let merged_fields =
+    Hashtbl.to_seq_keys merged_fields
+    |> List.of_seq
+    |> List.sort String.compare
+    |> List.map (fun name ->
+           match Hashtbl.find_opt merged_fields name with
+           | Some typ -> { Types.name; typ }
+           | None -> failwith "merged_record_intersection_type: impossible missing field")
+  in
+  Ok (Types.TRecord (Types.normalize_record_fields merged_fields, None))
+
+let validate_record_intersection_members (members : Types.mono_type list) : (unit, Diagnostic.t) result =
+  let* _ = merged_record_intersection_type members in
+  Ok ()
 
 let validate_intersection_type (members : Types.mono_type list) : (Types.mono_type, Diagnostic.t) result =
   let normalized = Types.normalize_intersection members in
@@ -402,14 +417,15 @@ let rec is_subtype_of (actual : Types.mono_type) (expected : Types.mono_type) : 
      explicit unification when appropriate. *)
   | Types.TVar a, Types.TVar b -> a = b
   | Types.TRowVar a, Types.TRowVar b -> a = b
+  | Types.TIntersection _, Types.TIntersection members -> List.for_all (fun member -> is_subtype_of actual member) members
   | Types.TRecord (actual_fields, _), Types.TIntersection members ->
       List.for_all
         (function
           | Types.TRecord (expected_fields, _) -> record_satisfies_required_fields actual_fields expected_fields
-          | member -> member_is_subtype_of actual member)
+          | member -> is_subtype_of actual member)
         members
-  | actual, Types.TIntersection members -> List.for_all (fun member -> member_is_subtype_of actual member) members
-  | Types.TIntersection members, expected -> List.exists (fun member -> member_is_subtype_of member expected) members
+  | actual, Types.TIntersection members -> List.for_all (fun member -> is_subtype_of actual member) members
+  | Types.TIntersection members, expected -> List.exists (fun member -> is_subtype_of member expected) members
   | Types.TTraitObject actual_traits, Types.TTraitObject expected_traits ->
       let actual_members = normalized_trait_object_membership actual_traits in
       let expected_members = normalized_trait_object_membership expected_traits in
@@ -778,6 +794,16 @@ let%test "is_subtype_of: intersection is subtype of one guaranteed member" =
   in
   let expected = Types.TRecord ([ { Types.name = "x"; typ = Types.TInt } ], None) in
   is_subtype_of actual expected
+
+let%test "is_subtype_of: identical intersections are compatible" =
+  let intersection =
+    Types.TIntersection
+      [
+        Types.TRecord ([ { Types.name = "x"; typ = Types.TInt } ], None);
+        Types.TRecord ([ { Types.name = "x"; typ = Types.TInt }; { Types.name = "y"; typ = Types.TString } ], None);
+      ]
+  in
+  is_subtype_of intersection intersection
 
 (* Phase 3: effectful function type annotation *)
 let%test "Phase3: TArrow pure converts to TFun false" =

@@ -1,0 +1,2 @@
+# I06: Dyn intersections cannot mix runtime objects with non-Dyn members in v1
+let value: Dyn[Show] & { shown: Str } = 42  # error: non-Dyn members

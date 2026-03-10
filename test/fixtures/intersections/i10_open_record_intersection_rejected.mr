@@ -1,0 +1,2 @@
+# I10: Open row variables are rejected before record-intersection validation
+fn read_x(value: ({ x: Int, ...row } & { x: Int })) -> Int = value.x  # error: Open row variables

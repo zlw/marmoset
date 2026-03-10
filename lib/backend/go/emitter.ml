@@ -24,6 +24,21 @@ let annotation_exn r =
   | Ok t -> t
   | Error (d : Diagnostic.t) -> failwith d.message
 
+let is_closed_record_type = function
+  | Types.TRecord (_, None) -> true
+  | _ -> false
+
+let collapse_intersection_for_codegen_exn (members : Types.mono_type list) : Types.mono_type =
+  match Types.normalize_intersection members with
+  | Types.TIntersection normalized_members ->
+      if List.for_all is_closed_record_type normalized_members then
+        annotation_exn (Annotation.merged_record_intersection_type normalized_members)
+      else
+        failwith
+          (Printf.sprintf "Codegen error: unsupported intersection reached backend: %s"
+             (Types.to_string (Types.TIntersection normalized_members)))
+  | single -> single
+
 let merge_record_fields_for_row
     (base_fields : Types.record_field_type list) (extra_fields : Types.record_field_type list) :
     Types.record_field_type list =
@@ -83,10 +98,7 @@ let rec mangle_type (t : Types.mono_type) : string =
   | Types.TRowVar name -> "row_" ^ name
   | Types.TTraitObject traits -> "dyn_" ^ String.concat "_" (Types.normalize_trait_object_traits traits)
   | Types.TUnion _ -> "union" (* Phase 4.1: unions will be interface{} *)
-  | Types.TIntersection members -> (
-      match Types.normalize_intersection members with
-      | Types.TIntersection _ -> "intersection"
-      | single -> mangle_type single)
+  | Types.TIntersection members -> mangle_type (collapse_intersection_for_codegen_exn members)
   | Types.TEnum (name, []) -> name
   | Types.TEnum (name, args) -> name ^ "_" ^ String.concat "_" (List.map mangle_type args)
 
@@ -116,10 +128,7 @@ let rec mangle_type_for_shape (t : Types.mono_type) : string =
       "record_" ^ field_bits ^ "_" ^ row_bit
   | Types.TTraitObject _ -> "marmoset_dyn"
   | Types.TUnion _ -> "union"
-  | Types.TIntersection members -> (
-      match Types.normalize_intersection members with
-      | Types.TIntersection _ -> "intersection"
-      | single -> mangle_type_for_shape single)
+  | Types.TIntersection members -> mangle_type_for_shape (collapse_intersection_for_codegen_exn members)
   | Types.TEnum (name, []) -> name
   | Types.TEnum (name, args) -> name ^ "_" ^ String.concat "_" (List.map mangle_type_for_shape args)
 
@@ -143,16 +152,21 @@ let rec erase_unresolved_type_vars_for_codegen (t : Types.mono_type) : Types.mon
   | Types.TTraitObject traits -> Types.TTraitObject (Types.normalize_trait_object_traits traits)
   | Types.TUnion members -> Types.TUnion (List.map erase_unresolved_type_vars_for_codegen members)
   | Types.TIntersection members ->
-      Types.normalize_intersection (List.map erase_unresolved_type_vars_for_codegen members)
+      collapse_intersection_for_codegen_exn (List.map erase_unresolved_type_vars_for_codegen members)
   | Types.TEnum (name, args) -> Types.TEnum (name, List.map erase_unresolved_type_vars_for_codegen args)
   | Types.TInt | Types.TFloat | Types.TBool | Types.TString | Types.TNull -> t
 
 let normalize_type_for_codegen ~(concrete_only : bool) (t : Types.mono_type) : Types.mono_type =
   let t = Types.canonicalize_mono_type t in
-  if concrete_only then
-    Types.canonicalize_mono_type (erase_unresolved_type_vars_for_codegen t)
-  else
-    t
+  let t =
+    if concrete_only then
+      Types.canonicalize_mono_type (erase_unresolved_type_vars_for_codegen t)
+    else
+      t
+  in
+  match t with
+  | Types.TIntersection members -> collapse_intersection_for_codegen_exn members
+  | _ -> t
 
 let go_keywords =
   [
@@ -577,10 +591,7 @@ let rec mangle_type_to_go (t : Types.mono_type) : string =
   | Types.TRowVar _ -> "interface{}"
   | Types.TTraitObject _ -> "marmosetDyn"
   | Types.TUnion _ -> "interface{}"
-  | Types.TIntersection members -> (
-      match Types.normalize_intersection members with
-      | Types.TIntersection _ -> "interface{}"
-      | single -> mangle_type_to_go single)
+  | Types.TIntersection members -> mangle_type_to_go (collapse_intersection_for_codegen_exn members)
   | Types.TEnum _ -> mangle_type_for_shape t
 
 let go_record_field_name (name : string) : string = go_safe_ident name
@@ -674,10 +685,7 @@ let rec type_to_go (state : mono_state) (t : Types.mono_type) : string =
   | Types.TRowVar _ -> "interface{}"
   | Types.TTraitObject _ -> "marmosetDyn"
   | Types.TUnion _ -> "interface{}" (* Phase 4.1: unions compile to interface{} *)
-  | Types.TIntersection members -> (
-      match Types.normalize_intersection members with
-      | Types.TIntersection _ -> "interface{}"
-      | single -> type_to_go state single)
+  | Types.TIntersection members -> type_to_go state (collapse_intersection_for_codegen_exn members)
   | Types.TEnum (name, args) -> mangle_type (Types.TEnum (name, args))
 
 and emit_func_type state arg ret =
@@ -2165,42 +2173,49 @@ let maybe_project_to_expected_record_type
   in
   match expected_type with
   | None -> expr_str
-  | Some (Types.TRecord (expected_fields, expected_row)) -> (
-      let expected_fields, _ = normalize_record_row_type expected_fields expected_row in
-      let actual_type_opt =
-        match expr.expr with
-        | AST.Call ({ expr = AST.Identifier func_name; _ }, args) -> (
-            match (Infer.TypeEnv.find_opt func_name env, all_some (List.map type_from_env_or_map args)) with
-            | Some (Types.Forall (_, func_type)), Some arg_types -> (
-                match extract_param_types_exact (List.length args) func_type with
-                | Some (declared_params, declared_ret) -> (
-                    match infer_return_type_from_signature declared_params declared_ret arg_types with
-                    | Some inferred_ret -> Some inferred_ret
-                    | None -> type_from_env_or_map expr)
-                | None -> type_from_env_or_map expr)
-            | _ -> type_from_env_or_map expr)
-        | _ -> type_from_env_or_map expr
-      in
-      match actual_type_opt with
-      | Some (Types.TRecord (actual_fields, actual_row)) ->
-          let actual_fields, actual_row = normalize_record_row_type actual_fields actual_row in
-          if expected_fields = actual_fields then
-            expr_str
-          else
-            let expected_struct_type = emit_record_struct_type state expected_fields in
-            let actual_type = Types.TRecord (actual_fields, actual_row) in
-            let actual_go_type = type_to_go state.mono actual_type in
-            let assignments =
-              expected_fields
-              |> List.map (fun (f : Types.record_field_type) ->
-                     let go_name = go_record_field_name f.name in
-                     Printf.sprintf "%s: __src.%s" go_name go_name)
-              |> String.concat ", "
+  | Some expected_type -> (
+      match normalize_type_for_codegen ~concrete_only:state.mono.concrete_only expected_type with
+      | Types.TRecord (expected_fields, expected_row) ->
+          let expected_fields, _ = normalize_record_row_type expected_fields expected_row in
+          let actual_type_opt =
+            let raw_actual_type_opt =
+              match expr.expr with
+              | AST.Call ({ expr = AST.Identifier func_name; _ }, args) -> (
+                  match (Infer.TypeEnv.find_opt func_name env, all_some (List.map type_from_env_or_map args)) with
+                  | Some (Types.Forall (_, func_type)), Some arg_types -> (
+                      match extract_param_types_exact (List.length args) func_type with
+                      | Some (declared_params, declared_ret) -> (
+                          match infer_return_type_from_signature declared_params declared_ret arg_types with
+                          | Some inferred_ret -> Some inferred_ret
+                          | None -> type_from_env_or_map expr)
+                      | None -> type_from_env_or_map expr)
+                  | _ -> type_from_env_or_map expr)
+              | _ -> type_from_env_or_map expr
             in
-            Printf.sprintf "(func(__src %s) %s { return %s{%s} })(%s)" actual_go_type expected_struct_type
-              expected_struct_type assignments expr_str
+            Option.map
+              (normalize_type_for_codegen ~concrete_only:state.mono.concrete_only)
+              raw_actual_type_opt
+          in
+          (match actual_type_opt with
+          | Some (Types.TRecord (actual_fields, actual_row)) ->
+              let actual_fields, actual_row = normalize_record_row_type actual_fields actual_row in
+              if expected_fields = actual_fields then
+                expr_str
+              else
+                let expected_struct_type = emit_record_struct_type state expected_fields in
+                let actual_type = Types.TRecord (actual_fields, actual_row) in
+                let actual_go_type = type_to_go state.mono actual_type in
+                let assignments =
+                  expected_fields
+                  |> List.map (fun (f : Types.record_field_type) ->
+                         let go_name = go_record_field_name f.name in
+                         Printf.sprintf "%s: __src.%s" go_name go_name)
+                  |> String.concat ", "
+                in
+                Printf.sprintf "(func(__src %s) %s { return %s{%s} })(%s)" actual_go_type expected_struct_type
+                  expected_struct_type assignments expr_str
+          | _ -> expr_str)
       | _ -> expr_str)
-  | Some _ -> expr_str
 
 let rec find_last_record_field_expr (field_name : string) (fields : AST.record_field list) : AST.expression option
     =
@@ -6396,6 +6411,33 @@ let%test "Dyn codegen emits runtime wrapper and witness for Show" =
       && string_contains code "__witness.show(__dyn.payload)"
   | Error _ -> false
 
+let%test "record intersections erase local bindings to merged record shapes" =
+  let source =
+    {|
+let value: ({ x: Int, y: Str } & { x: Int }) = { x: 1, y: "ok" }
+value.x
+|}
+  in
+  match compile_string ~file_id:"<codegen>" source with
+  | Ok (code, _) ->
+      string_contains code "type Record_x_int64_y_string struct"
+      && string_contains code "var value Record_x_int64_y_string = Record_x_int64_y_string"
+      && not (string_contains code "var value interface{}")
+  | Error _ -> false
+
+let%test "record intersections erase function parameters to merged record shapes" =
+  let source =
+    {|
+fn read_x(v: ({ x: Int, y: Str } & { x: Int })) -> Int = v.x
+read_x({ x: 1, y: "ok" })
+|}
+  in
+  match compile_string ~file_id:"<codegen>" source with
+  | Ok (code, _) ->
+      string_contains code "func read_x_record_x_int64_y_string_closed(v Record_x_int64_y_string) int64"
+      && not (string_contains code "func read_x_record_x_int64_y_string_closed(v interface{})")
+  | Error _ -> false
+
 let%test "Dyn codegen emits witness fields for multi-trait dispatch" =
   let source =
     {|
@@ -6414,6 +6456,20 @@ puts(x.render())
       string_contains code "type marmosetDynWitness_Render_show struct"
       && string_contains code "render func(any) string"
       && string_contains code "__witness.render(__dyn.payload)"
+  | Error _ -> false
+
+let%test "Track C: codegen erases compatible record intersections in return position" =
+  let source =
+    {|
+fn keep_point() -> ({ x: Int, y: Str } & { x: Int }) = { x: 2, y: "ok" }
+let value = keep_point()
+puts(value.x)
+|}
+  in
+  match compile_string ~file_id:"<codegen>" source with
+  | Ok (code, _) ->
+      string_contains code "func keep_point() Record_x_int64_y_string"
+      && not (string_contains code "func keep_point() interface{}")
   | Error _ -> false
 
 let%test "has_type_vars detects TVar in record fields" =

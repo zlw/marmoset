@@ -25,12 +25,21 @@ let expand_constraints_with_supertraits (constraints : string list) : string lis
 let trait_error ~(code : string) (message : string) : (unit, Diagnostic.t) result =
   Error (Diagnostic.error_no_span ~code ~message)
 
-let check_trait_fields (typ : Types.mono_type) (trait_name : string) : (unit, Diagnostic.t) result =
+let rec check_trait_fields (typ : Types.mono_type) (trait_name : string) : (unit, Diagnostic.t) result =
   match Trait_registry.lookup_trait_fields trait_name with
   | None | Some [] -> Ok ()
   | Some required_fields -> (
       let type_str = Types.to_string typ in
       match typ with
+      | Types.TIntersection members ->
+          let rec check_all = function
+            | [] -> Ok ()
+            | member :: rest -> (
+                match check_trait_fields member trait_name with
+                | Ok () -> check_all rest
+                | Error _ as err -> err)
+          in
+          check_all members
       | Types.TRecord (actual_fields, _row) ->
           let rec check_required = function
             | [] -> Ok ()
@@ -463,3 +472,19 @@ let%test "mixed trait requires both structural fields and nominal impl" =
     | Error _ -> false
   in
   fails_without_impl && passes_with_impl
+
+let%test "field-only trait accepts compatible record intersections" =
+  Trait_registry.clear ();
+  Trait_registry.register_trait
+    { trait_name = "named"; trait_type_param = None; trait_supertraits = []; trait_methods = [] };
+  Trait_registry.set_trait_fields "named" [ { Types.name = "name"; typ = Types.TString } ];
+  let intersection =
+    Types.TIntersection
+      [
+        Types.TRecord ([ { Types.name = "name"; typ = Types.TString } ], None);
+        Types.TRecord ([ { Types.name = "age"; typ = Types.TInt }; { Types.name = "name"; typ = Types.TString } ], None);
+      ]
+  in
+  match satisfies_trait intersection "named" with
+  | Ok () -> true
+  | Error _ -> false

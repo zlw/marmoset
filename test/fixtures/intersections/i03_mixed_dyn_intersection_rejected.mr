@@ -1,0 +1,11 @@
+# I03: Dyn-only intersections normalize through the general intersection surface
+trait Render[a] = {
+  fn render(x: a) -> Str
+}
+impl Render[Int] = {
+  fn render(x: Int) -> Str = "render:" + x.show()
+}
+
+let value: Dyn[Show] & Dyn[Render] = 42
+puts(value.show())  # output: 42
+puts(value.render())  # output: render:42

@@ -1434,3 +1434,109 @@ let%test "followup C2: intersections reject multi-member callable types" =
           diag.code = "type-annotation-invalid"
           && String_utils.contains_substring ~needle:"callable intersections" diag.message)
         diags
+
+let%test "followup C2: invalid let intersection annotation survives initializer failures" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  let code =
+    {|
+      let value: Dyn[Show] & Int = 1 + true
+      value
+    |}
+  in
+  match check_string ~env:(Builtins.prelude_env ()) ~file_id:"main.mr" code with
+  | Ok _ -> false
+  | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-annotation-invalid") diags
+
+let%test "followup C2: intersection values flow to compatible record annotations" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  let code =
+    {|
+      let value: ({ x: Int, y: Str } & { x: Int }) = { x: 1, y: "ok" }
+      let projected: { x: Int } = value
+      projected.x
+    |}
+  in
+  match check_string ~file_id:"main.mr" code with
+  | Ok result -> result.result_type = Types.TInt
+  | Error _ -> false
+
+let%test "followup C2: field-only constraints accept compatible record intersections" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  let code =
+    {|
+      trait Named = { name: Str }
+      fn get_name[t: Named](x: t) -> Str = x.name
+      let value: ({ name: Str, age: Int } & { name: Str }) = { name: "alice", age: 1 }
+      get_name(value)
+    |}
+  in
+  match check_string ~file_id:"main.mr" code with
+  | Ok result -> result.result_type = Types.TString
+  | Error _ -> false
+
+let%test "followup C2: intersection return annotations accept identical meets" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  let code =
+    {|
+      fn keep(x: ({ x: Int } & { y: Int })) -> ({ x: Int } & { y: Int }) = x
+      keep({ x: 1, y: 2 })
+    |}
+  in
+  match check_string ~file_id:"main.mr" code with
+  | Ok result ->
+      result.result_type
+      =
+      Types.TIntersection
+        [
+          Types.TRecord ([ { Types.name = "x"; typ = Types.TInt } ], None);
+          Types.TRecord ([ { Types.name = "y"; typ = Types.TInt } ], None);
+        ]
+  | Error _ -> false
+
+let%test "followup C2: invalid function return intersection annotations are rejected" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  let code =
+    {|
+      fn bad() -> Dyn[Show] & Int = 42
+      bad()
+    |}
+  in
+  match check_string ~env:(Builtins.prelude_env ()) ~file_id:"main.mr" code with
+  | Ok _ -> false
+  | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-annotation-invalid") diags
+
+let%test "followup C2: record intersections satisfy field-only constraints" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  let code =
+    {|
+      trait Named = {
+        name: Str
+      }
+      fn get_name[t: Named](x: t) -> Str = x.name
+      let value: ({ name: Str, age: Int } & { name: Str }) = { name: "alice", age: 1 }
+      get_name(value)
+    |}
+  in
+  match check_string ~file_id:"main.mr" code with
+  | Ok result -> result.result_type = Types.TString
+  | Error _ -> false
+
+let%test "followup C2: intersections can flow to compatible member record annotations" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  let code =
+    {|
+      let value: ({ x: Int, y: Str } & { x: Int }) = { x: 1, y: "ok" }
+      let projected: { x: Int } = value
+      projected.x
+    |}
+  in
+  match check_string ~file_id:"main.mr" code with
+  | Ok result -> result.result_type = Types.TInt
+  | Error _ -> false

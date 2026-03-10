@@ -1,0 +1,2 @@
+# I07: Callable intersections with multiple distinct members are rejected in v1
+type Handler = ((Int) -> Int) & ((Str) -> Int)  # error: callable intersections

@@ -1,0 +1,4 @@
+# I01: Record intersections allow access to fields guaranteed by every member
+fn project_x(p: ({ x: Int, y: Str } & { x: Int })) -> Int = p.x
+
+puts(project_x({ x: 2, y: "ok" }))  # output: 2

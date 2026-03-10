@@ -1,0 +1,4 @@
+# I11: Callable intersections are allowed when normalization leaves one callable member
+let f: ((Int) -> Int) & ((Int) -> Int) = (x: Int) -> x + 1
+
+puts(f(4))  # output: 5
