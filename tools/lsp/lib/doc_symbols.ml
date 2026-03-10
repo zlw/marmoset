@@ -55,7 +55,7 @@ let document_symbols ~(source : string) ~(program : Ast.AST.program) : Lsp_t.Doc
           Some (symbol ~name ~kind:Lsp_t.SymbolKind.Interface ~range:(range_of_stmt stmt) ~children ())
       | Ast.AST.ImplDef { impl_trait_name; impl_for_type; impl_methods; _ } ->
           let type_name = type_expr_to_string impl_for_type in
-          let name = Printf.sprintf "impl %s[%s]" impl_trait_name type_name in
+          let name = Printf.sprintf "impl %s[%s]" (Source_syntax.canonical_type_name impl_trait_name) type_name in
           let children =
             List.map
               (fun (m : Ast.AST.method_impl) ->
@@ -101,10 +101,10 @@ let%test "function binding produces Function symbol" =
   | _ -> false
 
 let%test "enum produces Enum symbol with variant children" =
-  let symbols = get_symbols "enum option[a] {\n  some(a)\n  none\n}" in
+  let symbols = get_symbols "enum Option[a] = {\n  Some(a)\n  None\n}" in
   match symbols with
   | [ s ] -> (
-      s.name = "option"
+      s.name = "Option"
       && s.kind = Lsp_t.SymbolKind.Enum
       &&
       match s.children with
@@ -113,15 +113,15 @@ let%test "enum produces Enum symbol with variant children" =
   | _ -> false
 
 let%test "trait produces Interface symbol" =
-  let symbols = get_symbols "trait show[a] { fn show(x: a) -> string }" in
+  let symbols = get_symbols "trait Show[a] = { fn show(x: a) -> Str }" in
   match symbols with
-  | [ s ] -> s.name = "show" && s.kind = Lsp_t.SymbolKind.Interface
+  | [ s ] -> s.name = "Show" && s.kind = Lsp_t.SymbolKind.Interface
   | _ -> false
 
 let%test "type alias produces TypeParameter symbol" =
-  let symbols = get_symbols "type point = { x: int, y: int }" in
+  let symbols = get_symbols "type Point = { x: Int, y: Int }" in
   match symbols with
-  | [ s ] -> s.name = "point" && s.kind = Lsp_t.SymbolKind.TypeParameter
+  | [ s ] -> s.name = "Point" && s.kind = Lsp_t.SymbolKind.TypeParameter
   | _ -> false
 
 let%test "multiple definitions produce multiple symbols" =

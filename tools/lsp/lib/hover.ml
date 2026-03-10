@@ -238,7 +238,7 @@ let%test "hover on boolean literal: type=Bool, highlights 'true'" =
     0         1
     0123456789012345
     x at col 12 *)
-let%test "hover on identifier: type=int, highlights 'x'" =
+let%test "hover on identifier: type=Int, highlights 'x'" =
   match hover_info "let x = 42; x" 0 12 with
   | Some h -> string_contains h.type_text "x" && string_contains h.type_text "Int" && h.highlighted = "x"
   | None -> false
@@ -275,7 +275,7 @@ let%test "hover on call-site function name: arrow type, highlights 'f'" =
   | Some h -> string_contains h.type_text "->" && h.highlighted = "f"
   | None -> false
 
-let%test "hover on call argument: type=int, highlights '1'" =
+let%test "hover on call argument: type=Int, highlights '1'" =
   match hover_info "let f = fn(x) { x + 1 }; f(1)" 0 27 with
   | Some h -> string_contains h.type_text "Int" && h.highlighted = "1"
   | None -> false
@@ -287,17 +287,17 @@ let%test "hover on call argument: type=int, highlights '1'" =
 (*  1 + 2
     01234
     1 at col 0, + at col 2, 2 at col 4 *)
-let%test "hover on left of infix: type=int, highlights '1'" =
+let%test "hover on left of infix: type=Int, highlights '1'" =
   match hover_info "1 + 2" 0 0 with
   | Some h -> string_contains h.type_text "Int" && h.highlighted = "1"
   | None -> false
 
-let%test "hover on right of infix: type=int, highlights '2'" =
+let%test "hover on right of infix: type=Int, highlights '2'" =
   match hover_info "1 + 2" 0 4 with
   | Some h -> string_contains h.type_text "Int" && h.highlighted = "2"
   | None -> false
 
-let%test "hover on infix operator: type=int, highlights whole expression" =
+let%test "hover on infix operator: type=Int, highlights whole expression" =
   match hover_info "1 + 2" 0 2 with
   | Some h -> string_contains h.type_text "Int" && h.highlighted = "1 + 2"
   | None -> false
@@ -413,4 +413,9 @@ let%test "hover on expression inside inherent impl method body" =
   (* line 1: fn double(x: int) -> int { x * 2 } — x * 2 *)
   match hover_info inherent_impl_source 1 29 with
   | Some h -> string_contains h.type_text "Int"
+  | None -> false
+
+let%test "hover formats list types with vnext casing" =
+  match hover_info "let xs = [1, 2, 3]; xs" 0 20 with
+  | Some h -> string_contains h.type_text "List[Int]"
   | None -> false

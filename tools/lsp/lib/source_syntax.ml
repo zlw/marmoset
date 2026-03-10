@@ -3,7 +3,15 @@ module Types = Marmoset.Lib.Types
 
 type type_var_user_name_map = (string * string) list
 
-let canonical_type_name = function
+let canonical_type_name name =
+  let capitalize_segment segment =
+    if segment = "" then
+      ""
+    else
+      String.uppercase_ascii (String.sub segment 0 1)
+      ^ String.sub segment 1 (String.length segment - 1)
+  in
+  match name with
   | "int" | "Int" -> "Int"
   | "float" | "Float" -> "Float"
   | "bool" | "Bool" -> "Bool"
@@ -11,7 +19,11 @@ let canonical_type_name = function
   | "unit" | "Unit" | "null" | "Null" -> "Unit"
   | "list" | "List" -> "List"
   | "map" | "Map" -> "Map"
-  | name -> name
+  | "option" | "Option" -> "Option"
+  | "result" | "Result" -> "Result"
+  | _ when name = "" -> name
+  | _ when Char.uppercase_ascii name.[0] = name.[0] -> name
+  | _ -> String.concat "" (List.map capitalize_segment (String.split_on_char '_' name))
 
 let resolve_var_name ~(type_var_user_names : type_var_user_name_map) (name : string) : string =
   match List.assoc_opt name type_var_user_names with
@@ -85,9 +97,11 @@ let rec mono_type_to_source ?(type_var_user_names = []) (mono : Types.mono_type)
       match collapse_purity_union types with
       | [ single ] -> mono_type_to_source ~type_var_user_names single
       | many -> String.concat " | " (List.map (mono_type_to_source ~type_var_user_names) many))
-  | Types.TEnum (name, []) -> name
+  | Types.TEnum (name, []) -> canonical_type_name name
   | Types.TEnum (name, args) ->
-      name ^ "[" ^ String.concat ", " (List.map (mono_type_to_source ~type_var_user_names) args) ^ "]"
+      canonical_type_name name ^ "["
+      ^ String.concat ", " (List.map (mono_type_to_source ~type_var_user_names) args)
+      ^ "]"
 
 and mono_type_to_source_parens ?(type_var_user_names = []) = function
   | Types.TFun _ as t -> "(" ^ mono_type_to_source ~type_var_user_names t ^ ")"

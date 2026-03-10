@@ -332,11 +332,11 @@ let%test "type_to_source record" =
   = "{ x: Int, y: Str }"
 
 let%test "type_to_source union" = type_to_source (Types.TUnion [ Types.TInt; Types.TString ]) = "Int | Str"
-let%test "type_to_source enum no args" = type_to_source (Types.TEnum ("direction", [])) = "direction"
-let%test "type_to_source enum with args" = type_to_source (Types.TEnum ("option", [ Types.TInt ])) = "option[Int]"
+let%test "type_to_source enum no args" = type_to_source (Types.TEnum ("direction", [])) = "Direction"
+let%test "type_to_source enum with args" = type_to_source (Types.TEnum ("option", [ Types.TInt ])) = "Option[Int]"
 
 let%test "type_to_source enum multi args" =
-  type_to_source (Types.TEnum ("result", [ Types.TString; Types.TInt ])) = "result[Str, Int]"
+  type_to_source (Types.TEnum ("result", [ Types.TString; Types.TInt ])) = "Result[Str, Int]"
 
 let%test "type_to_source effectful function" =
   type_to_source (Types.tfun_eff Types.TInt Types.TBool) = "(Int) => Bool"
