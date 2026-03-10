@@ -783,7 +783,10 @@ let classify_trait_object_compatibility
           (fun trait_name -> List.mem (Trait_registry.canonical_trait_name trait_name) source_members)
           target_members
       then
-        Ok TraitObjectAlreadyCompatible
+        if Types.normalize_trait_object_traits source_traits = normalized_traits then
+          Ok TraitObjectAlreadyCompatible
+        else
+          Ok (TraitObjectNeedsPackaging actual_type')
       else
         Error
           (mk_error ~code:"type-trait-object-mismatch"

@@ -386,18 +386,12 @@ Dynamic dot-calls dispatch through the witness table chosen by typechecking.
 This keeps dynamic method calls explicit in compiler metadata and avoids
 treating raw Go interfaces as the language ABI.
 
-### Guardrails
+### Current implementation limits
 
-- Implement trait objects only with a first-class internal representation (typed AST/IR), with explicit witness-carrying semantics.
-- Do not treat ad-hoc emitter-only lowering as acceptable for dynamic trait values.
-- Do not expose raw Go interface internals as stable module/FFI ABI.
-- Lock operation semantics (`eq`, `ord`, `hash`, `show`) for existential values before enabling them.
-
-### Implementation preconditions
-
-1. Add typed IR/AST support for existential values and dynamic trait dispatch.
-2. Thread resolution/coherence metadata from typechecker to codegen without re-resolution.
-3. Add deterministic tests for dispatch behavior and capability limits.
+- `Dyn[...]` is implemented as a typed compiler feature with explicit witness-carrying runtime values in the Go backend.
+- Dynamic dispatch is limited to object-safe, non-method-generic trait methods.
+- Field access is never allowed on `Dyn[...]`, even when the trait set is mixed.
+- Raw Go interface internals are not part of the language ABI; the compiler emits its own `marmosetDyn` wrapper.
 
 ## Why This Design
 

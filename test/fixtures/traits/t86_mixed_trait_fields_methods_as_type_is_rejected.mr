@@ -1,7 +1,6 @@
-# xfail: legacy bare trait-as-type syntax was removed by syntax-rework; method trait objects move to follow-up Dyn syntax
 # T86: Mixed trait (fields + methods) as type is rejected
-trait Displayable[a] = {  # error: method and mixed trait objects are not supported in this phase
+trait Displayable[a] = {
   name: Str
   fn display(x: a) -> Str
 }
-let x: Displayable = { name: "alice" }
+let x: Displayable = { name: "alice" }  # error: cannot be used as a type in vNext

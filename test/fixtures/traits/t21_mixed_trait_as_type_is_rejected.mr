@@ -1,7 +1,6 @@
-# xfail: legacy bare trait-as-type syntax was removed by syntax-rework; method trait objects move to follow-up Dyn syntax
 # T21: Mixed trait as type is rejected
-trait NamedShow[a] = {  # error: method and mixed trait objects are not supported in this phase
+trait NamedShow[a] = {
   name: Str
   fn show(x: a) -> Str
 }
-let x: NamedShow = { name: "alice" }
+let x: NamedShow = { name: "alice" }  # error: cannot be used as a type in vNext

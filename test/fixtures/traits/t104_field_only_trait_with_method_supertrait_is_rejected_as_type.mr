@@ -1,9 +1,8 @@
-# xfail: legacy bare trait-as-type syntax was removed by syntax-rework; method trait objects move to follow-up Dyn syntax
 # T104: Field-only trait with method supertrait is rejected as type
-trait Show[a] = {  # error: method and mixed trait objects are not supported in this phase
+trait Show[a] = {
   fn show(x: a) -> Str
 }
 trait Describable: Show = {
   label: Str
 }
-let x: Describable = { label: "hi" }
+let x: Describable = { label: "hi" }  # error: cannot be used as a type in vNext

@@ -1,6 +1,5 @@
-# xfail: legacy bare trait-as-type syntax was removed by syntax-rework; method trait objects move to follow-up Dyn syntax
 # T84: Method-only trait as variable type is rejected
-trait Renderable[a] = {  # error: method and mixed trait objects are not supported in this phase
+trait Renderable[a] = {
   fn render(x: a) -> Str
 }
-let x: Renderable = 42
+let x: Renderable = 42  # error: cannot be used as a type in vNext

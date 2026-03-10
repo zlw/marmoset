@@ -1,0 +1,4 @@
+# CM46: Dyn values can flow to a subset trait object type
+let x: Dyn[Show & Eq] = 42
+let y: Dyn[Show] = x
+puts(y.show())  # output: 42

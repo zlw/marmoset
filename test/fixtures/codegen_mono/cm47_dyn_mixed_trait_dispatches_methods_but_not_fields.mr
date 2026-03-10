@@ -1,0 +1,11 @@
+# CM47: Mixed Dyn trait objects allow method dispatch while still hiding fields
+type Person = { name: Str }
+trait NamedShow[a] = {
+  name: Str
+  fn show(x: a) -> Str
+}
+impl NamedShow[Person] = {
+  fn show(x: Person) -> Str = x.name
+}
+let x: Dyn[NamedShow] = { name: "alice" }
+puts(x.show())  # output: alice

@@ -1,0 +1,4 @@
+# T123: Dyn values cannot flow to a larger trait set without evidence
+let x: Dyn[Show] = 42
+let y: Dyn[Show & Eq] = x  # error: Cannot use Dyn[Show] where Dyn[Eq & Show] is expected
+y

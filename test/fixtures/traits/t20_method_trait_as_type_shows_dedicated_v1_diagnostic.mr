@@ -1,6 +1,5 @@
-# xfail: legacy bare trait-as-type syntax was removed by syntax-rework; method trait objects move to follow-up Dyn syntax
 # T20: Method trait as type shows dedicated v1 diagnostic
-trait Show[a] = {  # error: method and mixed trait objects are not supported in this phase
+trait Show[a] = {
   fn show(x: a) -> Str
 }
-let x: Show = 1
+let x: Show = 1  # error: cannot be used as a type in vNext

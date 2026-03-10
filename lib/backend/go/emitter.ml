@@ -2659,46 +2659,67 @@ and emit_trait_object_package_expr
   let source_type =
     normalize_type_for_codegen ~concrete_only:state.mono.concrete_only coercion.source_type
   in
-  let source_go_type = type_to_go state.mono source_type in
   let normalized_traits = normalized_trait_object_traits_for_codegen coercion.target_traits in
   let witness_type_name = trait_object_witness_type_name normalized_traits in
-  let witness_fields =
-    dynamic_trait_methods_for normalized_traits
-    |> List.map (fun (method_info : dyn_callable_method) ->
-           let method_sig = method_info.dyn_method_sig in
-           let arg_fields =
-             method_sig.method_params
-             |> List.tl
-             |> List.map (fun (name, typ) -> Printf.sprintf "%s %s" (go_safe_ident name) (type_to_go state.mono typ))
-           in
-           let arg_names =
-             method_sig.method_params |> List.tl |> List.map (fun (name, _) -> go_safe_ident name)
-           in
-           let closure_params = String.concat ", " ("__receiver any" :: arg_fields) in
-           let type_suffix = fingerprint_types [ source_type ] in
-           let impl_func_name =
-             trait_method_func_name method_info.dyn_trait_name method_sig.method_name type_suffix
-           in
-           let closure_args =
-             ("__receiver.(" ^ source_go_type ^ ")") :: arg_names |> String.concat ", "
-           in
-           Printf.sprintf "%s: func(%s) %s { return %s(%s) }"
-             (trait_object_method_field_name method_sig.method_name)
-             closure_params
-             (type_to_go state.mono method_sig.method_return_type)
-             impl_func_name
-             closure_args)
-    |> String.concat ", "
-  in
-  let witness_expr =
-    if witness_fields = "" then
-      witness_type_name ^ "{}"
-    else
-      witness_type_name ^ "{" ^ witness_fields ^ "}"
-  in
-  Printf.sprintf
-    "(func() marmosetDyn { __payload := %s; return marmosetDyn{typeID: %S, payload: __payload, witness: %s} })()"
-    expr_str (Types.to_string source_type) witness_expr
+  match source_type with
+  | Types.TTraitObject source_traits ->
+      let source_witness_type_name = trait_object_witness_type_name source_traits in
+      let witness_fields =
+        dynamic_trait_methods_for normalized_traits
+        |> List.map (fun (method_info : dyn_callable_method) ->
+               let field_name = trait_object_method_field_name method_info.dyn_method_sig.method_name in
+               Printf.sprintf "%s: __sourceWitness.%s" field_name field_name)
+        |> String.concat ", "
+      in
+      let witness_expr =
+        if witness_fields = "" then
+          witness_type_name ^ "{}"
+        else
+          witness_type_name ^ "{" ^ witness_fields ^ "}"
+      in
+      Printf.sprintf
+        "(func() marmosetDyn { __source := %s; __sourceWitness := __source.witness.(%s); return marmosetDyn{typeID: __source.typeID, payload: __source.payload, witness: %s} })()"
+        expr_str source_witness_type_name witness_expr
+  | _ ->
+      let source_go_type = type_to_go state.mono source_type in
+      let witness_fields =
+        dynamic_trait_methods_for normalized_traits
+        |> List.map (fun (method_info : dyn_callable_method) ->
+               let method_sig = method_info.dyn_method_sig in
+               let arg_fields =
+                 method_sig.method_params
+                 |> List.tl
+                 |> List.map (fun (name, typ) ->
+                        Printf.sprintf "%s %s" (go_safe_ident name) (type_to_go state.mono typ))
+               in
+               let arg_names =
+                 method_sig.method_params |> List.tl |> List.map (fun (name, _) -> go_safe_ident name)
+               in
+               let closure_params = String.concat ", " ("__receiver any" :: arg_fields) in
+               let type_suffix = fingerprint_types [ source_type ] in
+               let impl_func_name =
+                 trait_method_func_name method_info.dyn_trait_name method_sig.method_name type_suffix
+               in
+               let closure_args =
+                 ("__receiver.(" ^ source_go_type ^ ")") :: arg_names |> String.concat ", "
+               in
+               Printf.sprintf "%s: func(%s) %s { return %s(%s) }"
+                 (trait_object_method_field_name method_sig.method_name)
+                 closure_params
+                 (type_to_go state.mono method_sig.method_return_type)
+                 impl_func_name
+                 closure_args)
+        |> String.concat ", "
+      in
+      let witness_expr =
+        if witness_fields = "" then
+          witness_type_name ^ "{}"
+        else
+          witness_type_name ^ "{" ^ witness_fields ^ "}"
+      in
+      Printf.sprintf
+        "(func() marmosetDyn { __payload := %s; return marmosetDyn{typeID: %S, payload: __payload, witness: %s} })()"
+        expr_str (Types.to_string source_type) witness_expr
 
 and maybe_package_trait_object_expr
     (state : emit_state)
