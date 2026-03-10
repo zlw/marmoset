@@ -154,7 +154,7 @@ let create_inference_state () : inference_state =
 let active_inference_state : inference_state ref = ref (create_inference_state ())
 let global_method_resolution_store : (int, method_resolution) Hashtbl.t = Hashtbl.create 256
 let global_method_type_args_store : (int, mono_type list) Hashtbl.t = Hashtbl.create 64
-let global_warnings : Diagnostic.t list ref = ref []
+let global_diagnostics : Diagnostic.t list ref = ref []
 
 (* Track method names being defined in the current inherent impl, so recursive calls
    can find them while body inference is in progress. Pairs: (for_type, method_name). *)
@@ -328,10 +328,10 @@ let clear_method_resolution_store () : unit =
   Hashtbl.clear global_method_resolution_store;
   Hashtbl.clear global_method_type_args_store;
   Hashtbl.clear global_method_def_store;
-  global_warnings := []
+  global_diagnostics := []
 
-let emit_warning (diag : Diagnostic.t) : unit = global_warnings := diag :: !global_warnings
-let snapshot_warnings () : Diagnostic.t list = List.rev !global_warnings
+let emit_diagnostic (diag : Diagnostic.t) : unit = global_diagnostics := diag :: !global_diagnostics
+let snapshot_diagnostics () : Diagnostic.t list = List.rev !global_diagnostics
 
 let record_method_def (method_id : int) (def : Resolution_artifacts.typed_method_def) : unit =
   Hashtbl.replace global_method_def_store method_id def
@@ -658,6 +658,9 @@ let error_at ~code ~message (expr : AST.expression) =
 let error_at_stmt ~code ~message (stmt : AST.statement) =
   let file_id = Option.value stmt.file_id ~default:"<unknown>" in
   Diagnostic.error_with_span ~code ~message ~file_id ~start_pos:stmt.pos ~end_pos:stmt.end_pos ()
+
+let warning_at_stmt ~code ~message (stmt : AST.statement) =
+  { (error_at_stmt ~code ~message stmt) with severity = Diagnostic.Warning }
 
 (* Result type for inference *)
 type 'a infer_result = ('a, Diagnostic.t) result
@@ -3176,16 +3179,13 @@ and infer_statement type_map env stmt =
                                             m.impl_method_name impl_trait_name))
                                 else (
                                   if is_override && not replaces_default then
-                                    emit_warning
-                                      {
-                                        (error ~code:"override-unnecessary"
-                                           ~message:
-                                             (Printf.sprintf
-                                                "Method '%s' in impl '%s' is marked 'override' but trait has no default for it"
-                                                m.impl_method_name impl_trait_name))
-                                        with
-                                        severity = Diagnostic.Warning;
-                                      };
+                                    emit_diagnostic
+                                      (warning_at_stmt ~code:"override-unnecessary"
+                                         ~message:
+                                           (Printf.sprintf
+                                              "Method '%s' in impl '%s' is marked 'override' but trait has no default for it"
+                                              m.impl_method_name impl_trait_name)
+                                         m.impl_method_body);
                                   check rest)
                           in
                           check impl_methods

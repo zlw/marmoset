@@ -20,7 +20,7 @@ type typecheck_result = {
       (* Phase 5.4: Typed method definitions for emitter. Populated during Phase 6. *)
   method_type_args_map : (int, Types.mono_type list) Hashtbl.t;
       (* Phase 6.4: Resolved method-level type args per call site for monomorphization *)
-  warnings : Diagnostic.t list; (* Non-fatal diagnostics collected during inference *)
+  diagnostics : Diagnostic.t list; (* Diagnostics emitted during a successful check *)
 }
 
 let infer_program_safe ?state ~(env : Infer.type_env) (program : Syntax.Ast.AST.program) :
@@ -38,6 +38,31 @@ let format_error_with_context (source : string) (err : Diagnostic.t) : string =
   let source_lookup _file_id = Some source in
   Diagnostic.render_cli ~source_lookup err
 
+let snapshot_diagnostics () : Diagnostic.t list = Infer.snapshot_diagnostics ()
+
+let merge_diagnostics (fatal_diags : Diagnostic.t list) : Diagnostic.t list =
+  match snapshot_diagnostics () with
+  | [] -> fatal_diags
+  | diagnostics -> diagnostics @ fatal_diags
+
+let make_typecheck_result
+    ~(result_type : mono_type)
+    ~(environment : Infer.type_env)
+    ~(type_map : Infer.type_map) : typecheck_result =
+  let call_resolution_map = Infer.snapshot_method_resolution_store () in
+  let method_def_map = Infer.snapshot_method_def_store () in
+  let method_type_args_map = Infer.snapshot_method_type_args_store () in
+  let diagnostics = snapshot_diagnostics () in
+  {
+    result_type;
+    environment;
+    type_map;
+    call_resolution_map;
+    method_def_map;
+    method_type_args_map;
+    diagnostics;
+  }
+
 (* ============================================================
    Main API
    ============================================================ *)
@@ -47,22 +72,9 @@ let format_error_with_context (source : string) (err : Diagnostic.t) : string =
 let check_program ?state ?(env = Infer.empty_env) (program : Syntax.Ast.AST.program) :
     (typecheck_result, Diagnostic.t list) result =
   match infer_program_safe ?state ~env program with
-  | Error e -> Error e
+  | Error e -> Error (merge_diagnostics e)
   | Ok (final_env, type_map, result_type) ->
-      let call_resolution_map = Infer.snapshot_method_resolution_store () in
-      let method_def_map = Infer.snapshot_method_def_store () in
-      let method_type_args_map = Infer.snapshot_method_type_args_store () in
-      let warnings = Infer.snapshot_warnings () in
-      Ok
-        {
-          result_type;
-          environment = final_env;
-          type_map;
-          call_resolution_map;
-          method_def_map;
-          method_type_args_map;
-          warnings;
-        }
+      Ok (make_typecheck_result ~result_type ~environment:final_env ~type_map)
 
 (* Type check source code string.
     Parses and type checks in one step.
@@ -73,22 +85,9 @@ let check_string ?state ?(env = Infer.empty_env) ~file_id (source : string) :
   | Error errors -> Error errors
   | Ok program -> (
       match infer_program_safe ?state ~env program with
-      | Error e -> Error e
+      | Error e -> Error (merge_diagnostics e)
       | Ok (final_env, type_map, result_type) ->
-          let call_resolution_map = Infer.snapshot_method_resolution_store () in
-          let method_def_map = Infer.snapshot_method_def_store () in
-          let method_type_args_map = Infer.snapshot_method_type_args_store () in
-          let warnings = Infer.snapshot_warnings () in
-          Ok
-            {
-              result_type;
-              environment = final_env;
-              type_map;
-              call_resolution_map;
-              method_def_map;
-              method_type_args_map;
-              warnings;
-            })
+          Ok (make_typecheck_result ~result_type ~environment:final_env ~type_map))
 
 (* ============================================================
    Phase 2: Type check with annotations
@@ -150,7 +149,7 @@ let check_program_with_annotations ?state ?(env = Infer.empty_env) (program : Sy
     (typecheck_result, Diagnostic.t list) result =
   (* First, do standard inference *)
   match infer_program_safe ?state ~env program with
-  | Error e -> Error e
+  | Error e -> Error (merge_diagnostics e)
   | Ok (final_env, type_map, result_type) -> (
       (* Phase 2: Validate annotations against inferred types *)
       let rec check_stmts_with_infer (stmts : Syntax.Ast.AST.statement list) : (unit, Diagnostic.t) result =
@@ -218,22 +217,9 @@ let check_program_with_annotations ?state ?(env = Infer.empty_env) (program : Sy
         | _ -> Ok () (* Other expressions don't have annotations to check *)
       in
       match check_stmts_with_infer program with
-      | Error e -> Error [ e ]
+      | Error e -> Error (merge_diagnostics [ e ])
       | Ok () ->
-          let call_resolution_map = Infer.snapshot_method_resolution_store () in
-          let method_def_map = Infer.snapshot_method_def_store () in
-          let method_type_args_map = Infer.snapshot_method_type_args_store () in
-          let warnings = Infer.snapshot_warnings () in
-          Ok
-            {
-              result_type;
-              environment = final_env;
-              type_map;
-              call_resolution_map;
-              method_def_map;
-              method_type_args_map;
-              warnings;
-            })
+          Ok (make_typecheck_result ~result_type ~environment:final_env ~type_map))
 
 (* Type check source code with annotations.
    Parses and type checks in one step, with annotation support. *)
@@ -689,6 +675,48 @@ let%test "error: shows both expected and inferred types" =
       let lower_msg = String.lowercase_ascii err.message in
       string_contains_substring lower_msg ~substring:"bool"
       || string_contains_substring lower_msg ~substring:"string"
+
+let%test "override warning is surfaced on successful check as a diagnostic with span" =
+  Infer.reset_fresh_counter ();
+  let code =
+    {|
+      trait override_warn_success[a] {
+        fn greet(x: a) -> string
+      }
+      impl override_warn_success[int] = {
+        override fn greet(x: int) -> string = "hi"
+      }
+    |}
+  in
+  match check_string ~file_id:"main.mr" code with
+  | Error _ -> false
+  | Ok result -> (
+      match List.find_opt (fun (diag : Diagnostic.t) -> diag.code = "override-unnecessary") result.diagnostics with
+      | None -> false
+      | Some diag ->
+          diag.severity = Diagnostic.Warning && Diagnostic.pick_primary_span diag.labels <> None)
+
+let%test "override warning survives alongside later hard errors in the same diagnostics stream" =
+  Infer.reset_fresh_counter ();
+  let code =
+    {|
+      trait override_warn_error[a] {
+        fn greet(x: a) -> string
+      }
+      impl override_warn_error[int] = {
+        override fn greet(x: int) -> string = "hi"
+      }
+      1 + true
+    |}
+  in
+  match check_string ~file_id:"main.mr" code with
+  | Ok _ -> false
+  | Error diags ->
+      List.exists
+        (fun (diag : Diagnostic.t) -> diag.code = "override-unnecessary" && diag.severity = Diagnostic.Warning)
+        diags
+      &&
+      List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-mismatch" && diag.severity = Diagnostic.Error) diags
 
 (* ============================================================
    Phase 4.4: Record Typechecking Tests

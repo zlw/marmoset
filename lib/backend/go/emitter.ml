@@ -5385,14 +5385,14 @@ let compile_string ~file_id (source : string) : (string * Diagnostic.t list, Dia
             call_resolution_map;
             method_type_args_map;
             method_def_map;
-            warnings;
+            diagnostics;
             _;
           } -> (
           try
             Ok
               ( emit_program_with_typed_env ~call_resolution_map ~method_type_args_map ~method_def_map type_map
                   typed_env program,
-                warnings )
+                diagnostics )
           with
           | Failure msg -> Error [ diagnostic_of_codegen_failure_message msg ]
           | exn ->
@@ -5402,13 +5402,13 @@ let compile_string ~file_id (source : string) : (string * Diagnostic.t list, Dia
 type build_output = {
   main_go : string;
   runtime_go : string;
-  warnings : Diagnostic.t list;
+  diagnostics : Diagnostic.t list;
 }
 
 let compile_to_build ~file_id (source : string) : (build_output, Diagnostic.t list) result =
   match compile_string ~file_id source with
   | Error e -> Error e
-  | Ok (main_go, warnings) -> Ok { main_go; runtime_go; warnings }
+  | Ok (main_go, diagnostics) -> Ok { main_go; runtime_go; diagnostics }
 
 let get_runtime () = runtime_go
 

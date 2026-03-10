@@ -87,13 +87,16 @@ let analyze_with_file_id ~(file_id : string) ~(source : string) : analysis_resul
           }
       | Ok result ->
           let type_var_user_names = Infer.type_var_user_name_bindings_in_state state in
+          let diagnostics =
+            List.map (lsp_diagnostic_of_canonical ~source ~active_file_id:file_id) result.diagnostics
+          in
           {
             source;
             program = Some program;
             type_map = Some result.type_map;
             environment = Some result.environment;
             type_var_user_names;
-            diagnostics = [];
+            diagnostics;
           })
 
 let analyze ~(source : string) : analysis_result = analyze_with_file_id ~file_id:"<lsp>" ~source
@@ -144,6 +147,28 @@ let%test "analyze successful code stores type_map and environment" =
 let%test "analyze with builtins works" =
   let result = analyze ~source:"len([1, 2, 3])" in
   result.diagnostics = [] && result.type_map <> None
+
+let%test "analyze successful code surfaces warning diagnostics" =
+  let result =
+    analyze
+      ~source:
+        {|
+          trait greeter[a] {
+            fn greet(x: a) -> string
+          }
+          impl greeter[int] = {
+            override fn greet(x: int) -> string = "hi"
+          }
+        |}
+  in
+  match result.diagnostics with
+  | [ diag ] ->
+      diag.severity = Some Lsp_t.DiagnosticSeverity.Warning
+      &&
+      (match diag.code with
+      | Some (`String "override-unnecessary") -> true
+      | _ -> false)
+  | _ -> false
 
 let%test "analyze captures user generic names for hover formatting" =
   let result =
