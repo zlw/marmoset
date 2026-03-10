@@ -195,6 +195,9 @@ let go_safe_ident (name : string) : string =
   else
     sanitized
 
+let canonical_codegen_trait_name (trait_name : string) : string =
+  Typecheck.Trait_registry.canonical_trait_name trait_name
+
 (* Generate mangled function name: name_type1_type2_... *)
 let mangle_func_name name (param_types : Types.mono_type list) : string =
   let go_name = go_safe_ident name in
@@ -210,6 +213,7 @@ let fingerprint_types (types : Types.mono_type list) : string =
     String.concat "__" (List.map mangle_type types)
 
 let trait_method_func_name (trait_name : string) (method_name : string) (type_suffix : string) : string =
+  let trait_name = canonical_codegen_trait_name trait_name in
   Printf.sprintf "%s_%s_%s" (go_safe_ident trait_name) (go_safe_ident method_name) type_suffix
 
 let inherent_method_func_name (method_name : string) (type_suffix : string) : string =
@@ -1158,7 +1162,7 @@ let register_impl_template (state : mono_state) (impl : AST.impl_def) : impl_tem
   let methods = explicit_methods @ default_methods in
   let template =
     {
-      trait_name = impl.impl_trait_name;
+      trait_name = canonical_codegen_trait_name impl.impl_trait_name;
       impl_type_params = impl.impl_type_params;
       for_type = Types.canonicalize_mono_type for_type;
       methods;
@@ -1349,6 +1353,7 @@ let register_user_func_call_instantiation
 let select_impl_template_for_type
     (state : mono_state) (trait_name : string) (method_name : string) (for_type : Types.mono_type) :
     (impl_template_method * Types.substitution) option =
+  let trait_name = canonical_codegen_trait_name trait_name in
   let for_type' = Types.canonicalize_mono_type for_type in
   let templates =
     List.filter
@@ -1496,7 +1501,7 @@ let rec collect_insts_stmt
               in
               let impl_inst =
                 {
-                  trait_name = impl.impl_trait_name;
+                  trait_name = canonical_codegen_trait_name impl.impl_trait_name;
                   method_name = m.impl_method_name;
                   module_path = state.module_path;
                   concrete_only_mode = state.concrete_only;
@@ -1554,7 +1559,7 @@ let rec collect_insts_stmt
                       in
                       let impl_inst =
                         {
-                          trait_name = impl.impl_trait_name;
+                          trait_name = canonical_codegen_trait_name impl.impl_trait_name;
                           method_name = m.method_name;
                           module_path = state.module_path;
                           concrete_only_mode = state.concrete_only;
@@ -1612,6 +1617,7 @@ and register_impl_method_use
     ~(method_name : string)
     ~(for_type : Types.mono_type)
     ~(method_type_args : Types.mono_type list) : unit =
+  let trait_name = canonical_codegen_trait_name trait_name in
   let for_type' = Types.canonicalize_mono_type for_type in
   if state.concrete_only && has_type_vars for_type' then
     ()
@@ -4980,7 +4986,7 @@ let emit_registry_derived_impls (state : emit_state) (program : AST.program) : s
         if has_type_vars for_type then
           acc
         else
-          StringPairSet.add (impl.AST.impl_trait_name, mangle_type for_type) acc)
+          StringPairSet.add (canonical_codegen_trait_name impl.AST.impl_trait_name, mangle_type for_type) acc)
       StringPairSet.empty user_impls
   in
   let should_emit trait_name type_suffix =
@@ -5129,7 +5135,7 @@ let emit_builtin_impls (program : AST.program) : string =
         if has_type_vars for_type then
           acc
         else
-          StringPairSet.add (impl.AST.impl_trait_name, mangle_type for_type) acc)
+          StringPairSet.add (canonical_codegen_trait_name impl.AST.impl_trait_name, mangle_type for_type) acc)
       StringPairSet.empty user_impls
   in
 
@@ -6303,6 +6309,41 @@ puts(1.show())
               ignore (List.fold_left (collect_insts_stmt mono_state type_map) typed_env program);
               ImplInstSet.cardinal mono_state.impl_instantiations = 1
               && Hashtbl.length mono_state.impl_inst_payloads = 1))
+
+let%test "canonical builtin trait impl header emits canonical helper name" =
+  let source =
+    {|impl Show[Int] = { fn show(self: Int) -> Str = "int!" }
+puts(1.show())|}
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      Typecheck.Trait_registry.clear ();
+      Typecheck.Builtins.init_builtin_impls ())
+    (fun () ->
+      Typecheck.Trait_registry.clear ();
+      match compile_string ~file_id:"<codegen>" source with
+      | Ok (code, _) ->
+          string_contains code "func show_show_int64("
+          && string_contains code {|return "int!"|}
+          && string_not_contains code "func Show_show_int64("
+      | Error _ -> false)
+
+let%test "canonical generic builtin impl emits specialized helper name" =
+  let source =
+    {|impl[a: Show] Show[List[a]] = { fn show(self: List[a]) -> Str = "list" }
+puts([1, 2].show())|}
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      Typecheck.Trait_registry.clear ();
+      Typecheck.Builtins.init_builtin_impls ())
+    (fun () ->
+      Typecheck.Trait_registry.clear ();
+      match compile_string ~file_id:"<codegen>" source with
+      | Ok (code, _) ->
+          string_contains code "func show_show_arr_int64("
+          && string_not_contains code "func Show_show_arr_int64("
+      | Error _ -> false)
 
 let%test "trait impl methods are emitted exactly once" =
   (* Builtin show_show_int64 should appear exactly once as a function definition *)
