@@ -81,6 +81,8 @@ let rec mangle_type (t : Types.mono_type) : string =
       in
       "record_" ^ field_bits ^ "_" ^ row_bit
   | Types.TRowVar name -> "row_" ^ name
+  | Types.TTraitObject _ ->
+      failwith "Codegen error: trait objects are not available before Track B runtime support"
   | Types.TUnion _ -> "union" (* Phase 4.1: unions will be interface{} *)
   | Types.TEnum (name, []) -> name
   | Types.TEnum (name, args) -> name ^ "_" ^ String.concat "_" (List.map mangle_type args)
@@ -109,6 +111,7 @@ let rec mangle_type_for_shape (t : Types.mono_type) : string =
         | Some _ -> "open"
       in
       "record_" ^ field_bits ^ "_" ^ row_bit
+  | Types.TTraitObject _ -> "trait_object"
   | Types.TUnion _ -> "union"
   | Types.TEnum (name, []) -> name
   | Types.TEnum (name, args) -> name ^ "_" ^ String.concat "_" (List.map mangle_type_for_shape args)
@@ -130,6 +133,7 @@ let rec erase_unresolved_type_vars_for_codegen (t : Types.mono_type) : Types.mon
       in
       let row' = Option.map erase_unresolved_type_vars_for_codegen row in
       Types.TRecord (fields', row')
+  | Types.TTraitObject traits -> Types.TTraitObject (Types.normalize_trait_object_traits traits)
   | Types.TUnion members -> Types.TUnion (List.map erase_unresolved_type_vars_for_codegen members)
   | Types.TEnum (name, args) -> Types.TEnum (name, List.map erase_unresolved_type_vars_for_codegen args)
   | Types.TInt | Types.TFloat | Types.TBool | Types.TString | Types.TNull -> t
@@ -361,6 +365,8 @@ type mono_state = {
       (* Phase 6.4: resolved method-level type args per call site *)
   method_def_map : (int, Typecheck.Resolution_artifacts.typed_method_def) Hashtbl.t;
       (* Phase 6.3: typed method definitions keyed by method id *)
+  trait_object_coercion_map : (int, Typecheck.Resolution_artifacts.trait_object_coercion) Hashtbl.t;
+      (* Track B B1: packaging sites for future Dyn[...] emission *)
   placeholder_rewrite_map : Infer.placeholder_rewrite_map;
       (* Placeholder shorthand rewrites keyed by original expression id *)
 }
@@ -371,6 +377,7 @@ let create_mono_state
     ?(call_resolution_map = Hashtbl.create 0)
     ?(method_type_args_map = Hashtbl.create 0)
     ?(method_def_map = Hashtbl.create 0)
+    ?(trait_object_coercion_map = Hashtbl.create 0)
     ?(placeholder_rewrite_map = Hashtbl.create 0)
     () =
   if module_path <> "main" then
@@ -394,6 +401,7 @@ let create_mono_state
     call_resolution_map;
     method_type_args_map;
     method_def_map;
+    trait_object_coercion_map;
     placeholder_rewrite_map;
   }
 
@@ -443,6 +451,7 @@ let type_size (t : Types.mono_type) : int =
   | Types.TRecord _ -> 8 (* Lowered as pointer/interface for now *)
   | Types.TRowVar _ -> 8
   | Types.TFun _ -> 8 (* Function pointer *)
+  | Types.TTraitObject _ -> 16
   | Types.TUnion _ -> 8 (* Interface *)
 
 (* ============================================================
@@ -487,6 +496,8 @@ let rec mangle_type_to_go (t : Types.mono_type) : string =
       let fields, _ = normalize_record_row_type fields _row in
       record_shape_name fields
   | Types.TRowVar _ -> "interface{}"
+  | Types.TTraitObject _ ->
+      failwith "Codegen error: trait objects are not available before Track B runtime support"
   | Types.TUnion _ -> "interface{}"
   | Types.TEnum _ -> mangle_type_for_shape t
 
@@ -579,6 +590,8 @@ let rec type_to_go (state : mono_state) (t : Types.mono_type) : string =
       let fields, _ = normalize_record_row_type fields row in
       intern_record_shape state fields
   | Types.TRowVar _ -> "interface{}"
+  | Types.TTraitObject _ ->
+      failwith "Codegen error: trait objects are not available before Track B runtime support"
   | Types.TUnion _ -> "interface{}" (* Phase 4.1: unions compile to interface{} *)
   | Types.TEnum (name, args) -> mangle_type (Types.TEnum (name, args))
 
@@ -887,6 +900,7 @@ let rec has_type_vars (t : Types.mono_type) : bool =
       | Some r -> has_type_vars r
       | None -> false)
   | Types.TRowVar _ -> true
+  | Types.TTraitObject _ -> false
   | _ -> false
 
 let rec has_open_record_rows (t : Types.mono_type) : bool =
@@ -899,6 +913,7 @@ let rec has_open_record_rows (t : Types.mono_type) : bool =
   | Types.TArray elem -> has_open_record_rows elem
   | Types.THash (k, v) -> has_open_record_rows k || has_open_record_rows v
   | Types.TEnum (_, args) | Types.TUnion args -> List.exists has_open_record_rows args
+  | Types.TTraitObject _ -> false
   | _ -> false
 
 let has_unresolved_codegen_type (t : Types.mono_type) : bool = has_type_vars t || has_open_record_rows t
@@ -1961,6 +1976,8 @@ and collect_insts_expr
                 | None -> []
               in
               register_impl_method_use state type_map env ~trait_name ~method_name ~for_type ~method_type_args
+          | Some (Infer.DynamicTraitMethod _) ->
+              failwith "Codegen error: dynamic trait dispatch metadata reached instantiation collection before Track B runtime support"
           | Some Infer.InherentMethod -> collect_insts_expr state type_map env receiver
           | Some Infer.QualifiedInherentMethod -> ()
           | None -> (
@@ -2457,6 +2474,8 @@ let rec emit_expr
                 let func_name = trait_method_func_name trait_name variant_name type_suffix in
                 let arg_strs = List.map (emit_expr state type_map env) args in
                 Printf.sprintf "%s(%s)" func_name (String.concat ", " arg_strs)
+            | Some (Infer.DynamicTraitMethod _) ->
+                failwith "Codegen error: dynamic trait method emission is not available before Track B runtime support"
             | Some Infer.QualifiedInherentMethod ->
                 (* Qualified call: Type.method(receiver, args...) — first arg is the receiver *)
                 let first_arg_type =
@@ -4770,7 +4789,8 @@ let collect_inherent_call_sites
             in
             add_inherent_call_site_if_new acc''
               { call_method_name = method_name; call_receiver_type = receiver_type; call_method_type_args = mta }
-        | Some (Infer.TraitMethod _) | Some (Infer.QualifiedTraitMethod _) | None -> acc'')
+        | Some (Infer.TraitMethod _) | Some (Infer.DynamicTraitMethod _) | Some (Infer.QualifiedTraitMethod _) | None ->
+            acc'')
     | AST.BlockExpr stmts -> List.fold_left collect_stmt acc stmts
   and collect_stmt (acc : inherent_call_site list) (stmt : AST.statement) : inherent_call_site list =
     match stmt.stmt with
@@ -5163,6 +5183,7 @@ let emit_program_with_typed_env
     ~(call_resolution_map : (int, Infer.method_resolution) Hashtbl.t)
     ~(method_type_args_map : (int, Types.mono_type list) Hashtbl.t)
     ~(method_def_map : (int, Typecheck.Resolution_artifacts.typed_method_def) Hashtbl.t)
+    ~(trait_object_coercion_map : (int, Typecheck.Resolution_artifacts.trait_object_coercion) Hashtbl.t)
     ?(placeholder_rewrite_map = Hashtbl.create 0)
     (type_map : Infer.type_map)
     (typed_env : Infer.type_env)
@@ -5176,7 +5197,8 @@ let emit_program_with_typed_env
              (Diagnostic.render_cli ~source_lookup:(fun _ -> None) diag))
   in
   let mono_state =
-    create_mono_state ~call_resolution_map ~method_type_args_map ~method_def_map ~placeholder_rewrite_map ()
+    create_mono_state ~call_resolution_map ~method_type_args_map ~method_def_map ~trait_object_coercion_map
+      ~placeholder_rewrite_map ()
   in
 
   (* Pass 1: Collect function definitions *)
@@ -5314,10 +5336,12 @@ let emit_program (program : AST.program) : string =
         call_resolution_map;
         method_type_args_map;
         method_def_map;
+        trait_object_coercion_map;
         placeholder_rewrite_map;
         _;
       } ->
       emit_program_with_typed_env ~call_resolution_map ~method_type_args_map ~method_def_map
+        ~trait_object_coercion_map
         ~placeholder_rewrite_map type_map typed_env program
 
 (* ============================================================
@@ -5456,6 +5480,7 @@ let compile_string ~file_id (source : string) : (string * Diagnostic.t list, Dia
             call_resolution_map;
             method_type_args_map;
             method_def_map;
+            trait_object_coercion_map;
             placeholder_rewrite_map;
             diagnostics;
             _;
@@ -5463,6 +5488,7 @@ let compile_string ~file_id (source : string) : (string * Diagnostic.t list, Dia
           try
             Ok
               ( emit_program_with_typed_env ~call_resolution_map ~method_type_args_map ~method_def_map
+                  ~trait_object_coercion_map
                   ~placeholder_rewrite_map type_map typed_env program,
                 diagnostics )
           with
@@ -5908,14 +5934,23 @@ v.ping()
       let env = Typecheck.Builtins.prelude_env () in
           match Typecheck.Checker.check_program_with_annotations ~env program with
           | Error _ -> false
-          | Ok { environment = typed_env; type_map; call_resolution_map; method_type_args_map; method_def_map; _ } -> (
+          | Ok
+              {
+                environment = typed_env;
+                type_map;
+                call_resolution_map;
+                method_type_args_map;
+                method_def_map;
+                trait_object_coercion_map;
+                _;
+              } -> (
               (* If emitter re-resolves methods from the registry, this clear would break codegen. *)
               Typecheck.Trait_registry.clear ();
               match
                 try
                   Some
-                    (emit_program_with_typed_env ~call_resolution_map ~method_type_args_map ~method_def_map type_map
-                       typed_env program)
+                    (emit_program_with_typed_env ~call_resolution_map ~method_type_args_map ~method_def_map
+                       ~trait_object_coercion_map type_map typed_env program)
                 with _ -> None
               with
               | Some code -> string_contains code "func Ping_ping_int64("
@@ -5942,13 +5977,22 @@ v.ping()
   | Ok program -> (
       match Typecheck.Checker.check_program_with_annotations program with
       | Error _ -> false
-      | Ok { environment = typed_env; type_map; call_resolution_map; method_type_args_map; method_def_map; _ } -> (
+      | Ok
+          {
+            environment = typed_env;
+            type_map;
+            call_resolution_map;
+            method_type_args_map;
+            method_def_map;
+            trait_object_coercion_map;
+            _;
+          } -> (
           Typecheck.Inherent_registry.clear ();
           match
             try
               Some
-                (emit_program_with_typed_env ~call_resolution_map ~method_type_args_map ~method_def_map type_map
-                   typed_env program)
+                (emit_program_with_typed_env ~call_resolution_map ~method_type_args_map ~method_def_map
+                   ~trait_object_coercion_map type_map typed_env program)
             with _ -> None
           with
           | Some code -> string_contains code "inherent_ping_int64"
@@ -6115,6 +6159,17 @@ let%test "record spread emits without IIFE" =
 (* ============================================================
    Problem 3: Monomorphization Cache Hardening Tests
    ============================================================ *)
+
+let%test "create_mono_state defaults trait object coercion map to empty" =
+  let state = create_mono_state () in
+  Hashtbl.length state.trait_object_coercion_map = 0
+
+let%test "create_mono_state preserves supplied trait object coercion map" =
+  let coercions = Hashtbl.create 1 in
+  Hashtbl.replace coercions 9 Typecheck.Resolution_artifacts.{ target_traits = [ "Eq"; "Show" ]; source_type = Types.TInt };
+  let state = create_mono_state ~trait_object_coercion_map:coercions () in
+  Hashtbl.find_opt state.trait_object_coercion_map 9
+  = Some Typecheck.Resolution_artifacts.{ target_traits = [ "Eq"; "Show" ]; source_type = Types.TInt }
 
 let%test "has_type_vars detects TVar in record fields" =
   has_type_vars (Types.TRecord ([ { Types.name = "x"; typ = Types.TVar "a" } ], None))
@@ -6299,8 +6354,20 @@ puts(1.show())
           let env = Typecheck.Builtins.prelude_env () in
           match Typecheck.Checker.check_program_with_annotations ~env program with
           | Error _ -> false
-          | Ok { environment = typed_env; type_map; call_resolution_map; method_type_args_map; method_def_map; _ } ->
-              let mono_state = create_mono_state ~call_resolution_map ~method_type_args_map ~method_def_map () in
+          | Ok
+              {
+                environment = typed_env;
+                type_map;
+                call_resolution_map;
+                method_type_args_map;
+                method_def_map;
+                trait_object_coercion_map;
+                _;
+              } ->
+              let mono_state =
+                create_mono_state ~call_resolution_map ~method_type_args_map ~method_def_map
+                  ~trait_object_coercion_map ()
+              in
               List.iter (collect_funcs_stmt mono_state) program;
               ignore (List.fold_left (collect_insts_stmt mono_state type_map) typed_env program);
               ImplInstSet.cardinal mono_state.impl_instantiations = 1

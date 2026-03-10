@@ -20,6 +20,8 @@ type typecheck_result = {
       (* Phase 5.4: Typed method definitions for emitter. Populated during Phase 6. *)
   method_type_args_map : (int, Types.mono_type list) Hashtbl.t;
       (* Phase 6.4: Resolved method-level type args per call site for monomorphization *)
+  trait_object_coercion_map : (int, Resolution_artifacts.trait_object_coercion) Hashtbl.t;
+      (* Track B B1: recorded trait-object packaging sites keyed by source expression id *)
   placeholder_rewrite_map : Infer.placeholder_rewrite_map;
       (* Placeholder shorthand rewrites keyed by original expression id *)
   diagnostics : Diagnostic.t list; (* Diagnostics emitted during a successful check *)
@@ -54,6 +56,7 @@ let make_typecheck_result
   let call_resolution_map = Infer.snapshot_method_resolution_store () in
   let method_def_map = Infer.snapshot_method_def_store () in
   let method_type_args_map = Infer.snapshot_method_type_args_store () in
+  let trait_object_coercion_map = Infer.snapshot_trait_object_coercion_store () in
   let placeholder_rewrite_map = Infer.snapshot_placeholder_rewrite_store () in
   let diagnostics = snapshot_diagnostics () in
   {
@@ -63,6 +66,7 @@ let make_typecheck_result
     call_resolution_map;
     method_def_map;
     method_type_args_map;
+    trait_object_coercion_map;
     placeholder_rewrite_map;
     diagnostics;
   }
@@ -1197,4 +1201,11 @@ let%test "Phase6 prep: placeholder shorthand survives field access inside nested
        result"
   with
   | Ok result -> result.result_type = Types.TString
+  | Error _ -> false
+
+let%test "followup B1: successful checks expose an empty trait object coercion map by default" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  match check_string ~file_id:"<test>" "let x = 1\nx" with
+  | Ok result -> Hashtbl.length result.trait_object_coercion_map = 0
   | Error _ -> false

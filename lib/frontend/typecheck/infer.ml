@@ -134,6 +134,7 @@ type inference_state = {
 
 and method_resolution =
   | TraitMethod of string
+  | DynamicTraitMethod of string
   | InherentMethod
   | QualifiedTraitMethod of string (* Trait.method(receiver, args...) *)
   | QualifiedInherentMethod (* Type.method(receiver, args...) *)
@@ -154,6 +155,7 @@ let create_inference_state () : inference_state =
 let active_inference_state : inference_state ref = ref (create_inference_state ())
 let global_method_resolution_store : (int, method_resolution) Hashtbl.t = Hashtbl.create 256
 let global_method_type_args_store : (int, mono_type list) Hashtbl.t = Hashtbl.create 64
+let global_trait_object_coercion_store : (int, Resolution_artifacts.trait_object_coercion) Hashtbl.t = Hashtbl.create 64
 type placeholder_rewrite_map = (int, AST.expression) Hashtbl.t
 type placeholder_callback_expectation =
   | PlaceholderCallbackNotCallable
@@ -336,6 +338,7 @@ let global_method_def_store : (int, Resolution_artifacts.typed_method_def) Hasht
 let clear_method_resolution_store () : unit =
   Hashtbl.clear global_method_resolution_store;
   Hashtbl.clear global_method_type_args_store;
+  Hashtbl.clear global_trait_object_coercion_store;
   Hashtbl.clear global_placeholder_rewrite_store;
   Hashtbl.clear global_method_def_store;
   global_synthetic_expr_id_counter := -1;
@@ -383,6 +386,13 @@ let lookup_method_resolution (expr_id : int) : method_resolution option =
 let snapshot_method_resolution_store () : (int, method_resolution) Hashtbl.t =
   Hashtbl.copy global_method_resolution_store
 
+let record_trait_object_coercion (expr : AST.expression) (coercion : Resolution_artifacts.trait_object_coercion) : unit =
+  Hashtbl.replace global_trait_object_coercion_store expr.id
+    { coercion with target_traits = Types.normalize_trait_object_traits coercion.target_traits }
+
+let snapshot_trait_object_coercion_store () : (int, Resolution_artifacts.trait_object_coercion) Hashtbl.t =
+  Hashtbl.copy global_trait_object_coercion_store
+
 let record_method_type_args (expr : AST.expression) (type_args : mono_type list) : unit =
   if type_args <> [] then
     Hashtbl.replace global_method_type_args_store expr.id type_args
@@ -396,6 +406,19 @@ let apply_substitution_method_type_args_store (subst : substitution) : unit =
       let args' = List.map (fun t -> apply_substitution subst t) args in
       Hashtbl.replace global_method_type_args_store id args')
     global_method_type_args_store
+
+let%test "trait object coercion store snapshots and clears" =
+  clear_method_resolution_store ();
+  let expr = AST.mk_expr ~id:77 (AST.Integer 1L) in
+  record_trait_object_coercion expr
+    Resolution_artifacts.{ target_traits = [ "Show"; "Eq" ]; source_type = TInt };
+  let snapshot = snapshot_trait_object_coercion_store () in
+  let before_clear =
+    Hashtbl.find_opt snapshot expr.id
+    = Some Resolution_artifacts.{ target_traits = [ "Eq"; "Show" ]; source_type = TInt }
+  in
+  clear_method_resolution_store ();
+  before_clear && Hashtbl.length (snapshot_trait_object_coercion_store ()) = 0
 
 type obligation_reason = GenericConstraint of string
 

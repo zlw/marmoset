@@ -16,6 +16,11 @@ type callable_key =
   | SyntheticCallable of string
 [@@deriving show, eq]
 
+type trait_object_coercion = {
+  target_traits : string list;
+  source_type : Types.mono_type;
+}
+
 (* Phase 5.4: Typed method-definition artifact.
    Records inferred signatures so the emitter can use them as source-of-truth
    without re-reading trait/inherent registries. Populated during Phase 6. *)
