@@ -4376,6 +4376,25 @@ let predeclare_top_level_lets (env : type_env) (program : AST.program) : (type_e
   in
   go StringSet.empty env program
 
+let predeclare_top_level_type_aliases (program : AST.program) : (unit, Diagnostic.t) result =
+  let rec go (seen : StringSet.t) (stmts : AST.statement list) =
+    match stmts with
+    | [] -> Ok ()
+    | stmt :: rest -> (
+        match stmt.stmt with
+        | AST.TypeAlias alias_def ->
+            if StringSet.mem alias_def.alias_name seen then
+              Error
+                (error_at_stmt ~code:"type-constructor"
+                   ~message:(Printf.sprintf "Duplicate type alias definition: %s" alias_def.alias_name)
+                   stmt)
+            else (
+              Annotation.register_type_alias alias_def;
+              go (StringSet.add alias_def.alias_name seen) rest)
+        | _ -> go seen rest)
+  in
+  go StringSet.empty program
+
 let infer_program ?(env = empty_env) ?state (program : AST.program) :
     (type_env * type_map * mono_type) infer_result =
   let state = Option.value state ~default:(create_inference_state ()) in
@@ -4388,6 +4407,9 @@ let infer_program ?(env = empty_env) ?state (program : AST.program) :
       match resolve_program_symbols env program with
       | Error e -> Error e
       | Ok () -> (
+          match predeclare_top_level_type_aliases program with
+          | Error e -> Error e
+          | Ok () -> (
           let type_map = create_type_map () in
           let register_top_level_declaration seen_traits seen_enums seen_aliases (stmt : AST.statement) =
             match stmt.stmt with
@@ -4396,9 +4418,8 @@ let infer_program ?(env = empty_env) ?state (program : AST.program) :
                   Error
                     (error ~code:"type-constructor"
                        ~message:(Printf.sprintf "Duplicate type alias definition: %s" alias_def.alias_name))
-                else (
-                  Annotation.register_type_alias alias_def;
-                  Ok (seen_traits, seen_enums, StringSet.add alias_def.alias_name seen_aliases))
+                else
+                  Ok (seen_traits, seen_enums, StringSet.add alias_def.alias_name seen_aliases)
             | AST.TraitDef trait_def ->
                 if StringSet.mem trait_def.name seen_traits then
                   Error
@@ -4475,7 +4496,7 @@ let infer_program ?(env = empty_env) ?state (program : AST.program) :
               | Ok (env', final_subst, result_type) ->
                   apply_substitution_type_map final_subst type_map;
                   apply_substitution_method_type_args_store final_subst;
-                  Ok (env', type_map, result_type))))
+                  Ok (env', type_map, result_type)))))
 
 module Test = struct
   (* Helper to parse and infer *)
@@ -4690,6 +4711,14 @@ module Test = struct
 
   let%test "infer type alias for record annotation" =
     infers_to "type Point = { x: Int, y: Int }\nlet p: Point = { x: 1, y: 2 }\np.x" TInt
+
+  let%test "top-level let annotation can forward-reference a later type alias" =
+    infers_to "let p: Point = { x: 1, y: 2 }\ntype Point = { x: Int, y: Int }\np.x" TInt
+
+  let%test "top-level fn signature can forward-reference a later type alias" =
+    infers_to
+      "fn get_x(p: Point) -> Int = p.x\ntype Point = { x: Int, y: Int }\nget_x({ x: 1, y: 2 })"
+      TInt
 
   let%test "infer generic type alias annotation" =
     infers_to "type Box[a] = { value: a }\nlet p: Box[Str] = { value: \"ok\" }\np.value" TString
