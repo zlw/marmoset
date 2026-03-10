@@ -204,6 +204,11 @@ module Surface = struct
         impl_for_type : surface_type_expr;
         impl_methods : surface_method_impl list;
       }
+    | SAmbiguousImplDef of {
+        impl_type_params : surface_generic_param list;
+        impl_head_type : surface_type_expr;
+        impl_methods : surface_method_impl list;
+      }
     | SInherentImplDef of {
         inherent_for_type : surface_type_expr;
         inherent_methods : surface_method_impl list;

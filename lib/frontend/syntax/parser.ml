@@ -937,23 +937,14 @@ and parse_impl_definition (p : parser) : (parser * Surface.top_decl, parser) res
           let after_eq lp =
             let p_body = next_token lp in
             let* p_end, methods = parse_methods_block p_body in
-            match head_type with
-            | Surface.STApp (trait_name, [ for_type ]) ->
-                Ok
-                  ( p_end,
-                    Surface.SImplDef
-                      {
-                        impl_type_params = explicit_type_params;
-                        impl_trait_name = trait_name;
-                        impl_for_type = for_type;
-                        impl_methods = methods;
-                      } )
-            | Surface.STCon type_name ->
-                Ok
-                  ( p_end,
-                    Surface.SInherentImplDef
-                      { inherent_for_type = Surface.STCon type_name; inherent_methods = methods } )
-            | _ -> Error (add_error ~code:"parse-invalid-impl" lp "invalid impl head type in vNext impl syntax")
+            Ok
+              ( p_end,
+                Surface.SAmbiguousImplDef
+                  {
+                    impl_type_params = explicit_type_params;
+                    impl_head_type = head_type;
+                    impl_methods = methods;
+                  } )
           in
           if curr_token_is p3 Token.Assign then
             after_eq p3
@@ -2762,7 +2753,18 @@ module Test = struct
               AST.Let
                 {
                   name = "identity";
-                  value = { AST.expr = AST.Function { generics = Some [ { AST.name = "a"; _ } ]; _ }; _ };
+                  value =
+                    {
+                      AST.expr =
+                        AST.Function
+                          {
+                            generics = Some [ { AST.name = "a"; _ } ];
+                            params = [ ("x", Some (AST.TVar "a")) ];
+                            return_type = Some (AST.TVar "a");
+                            _;
+                          };
+                      _;
+                    };
                   _;
                 };
             _;
@@ -2871,14 +2873,24 @@ module Test = struct
 
   (* Phase 1d: vNext impl syntax *)
   let%test "parse vNext impl with type application head" =
-    let input = "impl Show[Option[a]] = { fn show(x: Option[a]) -> string { \"\" } }" in
-    match parse_surface ~file_id:"<test>" input with
-    | Error _ -> false
-    | Ok result -> (
-        match result.program with
-        | [ { Surface.std_decl = Surface.SImplDef { impl_trait_name; impl_methods; _ }; _ } ] ->
-            impl_trait_name = "Show" && List.length impl_methods = 1
-        | _ -> false)
+    let input = "impl[a] Show[Option[a]] = { fn show(x: Option[a]) -> string { \"\" } }" in
+    match parse ~file_id:"<test>" input with
+    | Ok
+        [
+          {
+            AST.stmt =
+              AST.ImplDef
+                {
+                  impl_trait_name = "Show";
+                  impl_type_params = [ { AST.name = "a"; constraints = [] } ];
+                  impl_for_type = AST.TApp ("Option", [ AST.TVar "a" ]);
+                  impl_methods;
+                };
+            _;
+          };
+        ] ->
+        List.length impl_methods = 1
+    | _ -> false
 
   let%test "parse vNext inherent impl with = syntax" =
     let input = "impl Monkey = { fn greet() -> string { \"hello\" } }" in
@@ -2889,6 +2901,24 @@ module Test = struct
         | [ { Surface.std_decl = Surface.SInherentImplDef { inherent_for_type; inherent_methods }; _ } ] ->
             inherent_for_type = Surface.STCon "Monkey" && List.length inherent_methods = 1
         | _ -> false)
+
+  let%test "parse vNext generic inherent impl with inferred binders" =
+    let input = "impl Result[a, b] = { fn ok(r: Result[a, b]) -> bool { true } }" in
+    match parse ~file_id:"<test>" input with
+    | Ok
+        [
+          {
+            AST.stmt =
+              AST.InherentImplDef
+                {
+                  inherent_for_type = AST.TApp ("Result", [ AST.TCon "a"; AST.TCon "b" ]);
+                  inherent_methods;
+                };
+            _;
+          };
+        ] ->
+        List.length inherent_methods = 1
+    | _ -> false
 
   (* Phase 1d: override keyword *)
   let%test "parse impl method with override keyword" =
@@ -3451,7 +3481,7 @@ let%test "parse type alias with generic param" =
               && alias_def.alias_type_params = [ "a" ]
               &&
               match alias_def.alias_body with
-              | AST.TCon "a" -> true
+              | AST.TVar "a" -> true
               | _ -> false)
           | _ -> false)
       | _ -> false)
@@ -3537,7 +3567,7 @@ let%test "parse record type - with row variable" =
           match stmt.stmt with
           | AST.TypeAlias alias_def -> (
               match alias_def.alias_body with
-              | AST.TRecord (fields, Some (AST.TCon "r")) ->
+              | AST.TRecord (fields, Some (AST.TVar "r")) ->
                   List.length fields = 1 && (List.hd fields).field_name = "x"
               | _ -> false)
           | _ -> false)
@@ -3554,7 +3584,7 @@ let%test "parse record type - only row variable" =
           match stmt.stmt with
           | AST.TypeAlias alias_def -> (
               match alias_def.alias_body with
-              | AST.TRecord ([], Some (AST.TCon "r")) -> true
+              | AST.TRecord ([], Some (AST.TVar "r")) -> true
               | _ -> false)
           | _ -> false)
       | _ -> false)
