@@ -1,8 +1,8 @@
 # R102: Spread of match result
 let x = 2
 let base = match x {
-  1: { a: 10, b: 20 }
-  _: { a: 100, b: 200 }
+  case 1: { a: 10, b: 20 }
+  case _: { a: 100, b: 200 }
 }
 let r = { ...base, b: 10 }
 puts(r.a + r.b)  # output: 110

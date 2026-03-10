@@ -1,7 +1,7 @@
 # R069: Record pattern match extracts all fields
 let p = { x: 10, y: 20 }
 let sum = match p {
-  { x:, y: }: x + y
-  _: 0
+  case { x:, y: }: x + y
+  case _: 0
 }
 puts(sum)  # output: 30

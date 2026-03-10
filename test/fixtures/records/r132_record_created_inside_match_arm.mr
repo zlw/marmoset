@@ -1,8 +1,8 @@
 # R132: Record created inside match arm
 let x = 2
 let r = match x {
-  1: { val: 10 }
-  2: { val: 42 }
-  _: { val: 0 }
+  case 1: { val: 10 }
+  case 2: { val: 42 }
+  case _: { val: 0 }
 }
 puts(r.val)  # output: 42

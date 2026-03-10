@@ -1,8 +1,8 @@
 # R134: Record match with field literal, unused binding
 let r = { tag: 1, data: 42 }
 let out = match r {
-  { tag: 1, data: }: "first"
-  { tag: 2, data: }: "second"
-  _: "other"
+  case { tag: 1, data: }: "first"
+  case { tag: 2, data: }: "second"
+  case _: "other"
 }
 puts(out)  # output: first

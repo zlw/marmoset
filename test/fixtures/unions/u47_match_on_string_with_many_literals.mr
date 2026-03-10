@@ -1,9 +1,9 @@
 # U47: Match on Str with many literals and wildcard
 let x = "c"
 let out = match x {
-  "a": "found a"
-  "b": "found b"
-  "c": "found c"
+  case "a": "found a"
+  case "b": "found b"
+  case "c": "found c"
   case _: "other"
 }
 puts(out)  # output: found c

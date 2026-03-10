@@ -2,7 +2,7 @@
 enum Color = { Red, Green, Blue, Yellow }  # error: *
 let c = Color.Red
 let kind = match c {
-  Color.Red | case Color.Blue: "primary"
+  case Color.Red | Color.Blue: "primary"
   case _: "other"
 }
 puts(kind)
