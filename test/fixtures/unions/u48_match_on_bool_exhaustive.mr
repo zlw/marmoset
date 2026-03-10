@@ -1,7 +1,7 @@
-# U48: Match on bool true/false exhaustive
+# U48: Match on Bool true/false exhaustive
 let x = true
 let out = match x {
-  true: "yes"
-  false: "no"
+  case true: "yes"
+  case false: "no"
 }
 puts(out)  # output: yes

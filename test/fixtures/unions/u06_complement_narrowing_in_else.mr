@@ -1,7 +1,7 @@
 # U06: Complement narrowing in else branch
-let f = fn(x: int | string) -> string {
-   if (x is int) {
-       "was int"
+fn f(x: Int | Str) -> Str = {
+   if (x is Int) {
+       "was Int"
    } else {
        x
    }

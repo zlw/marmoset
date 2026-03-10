@@ -1,7 +1,7 @@
 # U78: Two matches on same enum type in top-level scope
-enum option[a] { some(a) none }
-let x = option.some(10)
-let y = option.some(20)
-let a = match x { option.some(v): v option.none: 0 }
-let b = match y { option.some(v): v option.none: 0 }
+enum Option[a] = { Some(a), None }
+let x = Option.Some(10)
+let y = Option.Some(20)
+let a = match x { case Option.Some(v): v case Option.None: 0 }
+let b = match y { case Option.Some(v): v case Option.None: 0 }
 puts(a + b)  # output: 30

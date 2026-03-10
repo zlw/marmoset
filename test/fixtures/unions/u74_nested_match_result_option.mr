@@ -1,12 +1,12 @@
-# U74: Nested match: outer=result, inner=option
-enum option[a] { some(a) none }
-enum result[a, e] { ok(a) err(e) }
-let x: result[option[int], string] = result.ok(option.some(42))
+# U74: Nested match: outer=Result, inner=Option
+enum Option[a] = { Some(a), None }
+enum Result[a, e] = { Ok(a), Err(e) }
+let x: Result[Option[Int], Str] = Result.Ok(Option.Some(42))
 let out = match x {
-  result.ok(inner): match inner {
-    option.some(v): "found:" + v.show()
-    option.none: "found:none"
+  case Result.Ok(inner): match inner {
+    case Option.Some(v): "found:" + v.show()
+    case Option.None: "found:None"
   }
-  result.err(e): "err:" + e
+  case Result.Err(e): "Err:" + e
 }
 puts(out)  # output: found:42

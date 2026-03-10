@@ -1,7 +1,7 @@
 # U65: Single-variant enum
-enum box[a] { wrap(a) }
-let x = box.wrap(42)
+enum Box[a] = { Wrap(a) }
+let x = Box.Wrap(42)
 let out = match x {
-  box.wrap(v): v
+  case Box.Wrap(v): v
 }
 puts(out)  # output: 42

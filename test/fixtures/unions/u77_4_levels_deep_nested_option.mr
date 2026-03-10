@@ -1,17 +1,17 @@
-# U77: 4 levels deep nested option (all in nested match)
-enum option[a] { some(a) none }
-let x: option[option[option[option[int]]]] = option.some(option.some(option.some(option.some(7))))
+# U77: 4 levels deep nested Option (all in nested match)
+enum Option[a] = { Some(a), None }
+let x: Option[Option[Option[Option[Int]]]] = Option.Some(Option.Some(Option.Some(Option.Some(7))))
 let d = match x {
-  option.some(a): match a {
-    option.some(b): match b {
-      option.some(c): match c {
-        option.some(v): v
-        option.none: 0
+  case Option.Some(a): match a {
+    case Option.Some(b): match b {
+      case Option.Some(c): match c {
+        case Option.Some(v): v
+        case Option.None: 0
       }
-      option.none: 0
+      case Option.None: 0
     }
-    option.none: 0
+    case Option.None: 0
   }
-  option.none: 0
+  case Option.None: 0
 }
 puts(d)  # output: 7

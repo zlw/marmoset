@@ -1,3 +1,3 @@
 # U03: Parse multi-member union
-let f = fn(x: int | string | bool) { x }
+fn f(x: Int | Str | Bool) = x
 f(true)

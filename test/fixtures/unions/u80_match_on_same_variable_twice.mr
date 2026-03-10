@@ -1,6 +1,6 @@
 # U80: Match on same variable twice in a row
-enum option[a] { some(a) none }
-let x = option.some(42)
-let a = match x { option.some(v): v option.none: 0 }
-let b = match x { option.some(_): "some" option.none: "none" }
+enum Option[a] = { Some(a), None }
+let x = Option.Some(42)
+let a = match x { case Option.Some(v): v case Option.None: 0 }
+let b = match x { case Option.Some(_): "Some" case Option.None: "None" }
 puts(a)  # output: 42

@@ -1,8 +1,8 @@
-# U49: Match on int with specific values and wildcard
+# U49: Match on Int with specific values and wildcard
 let x = 999
 let out = match x {
-  0: "zero"
-  1: "one"
-  _: "big"
+  case 0: "zero"
+  case 1: "one"
+  case _: "big"
 }
 puts(out)  # output: big

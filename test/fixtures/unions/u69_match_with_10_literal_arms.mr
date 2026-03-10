@@ -1,16 +1,16 @@
-# U69: Match with 10 literal arms on int
+# U69: Match with 10 literal arms on Int
 let x = 7
 let out = match x {
-  0: "zero"
-  1: "one"
-  2: "two"
-  3: "three"
-  4: "four"
-  5: "five"
-  6: "six"
-  7: "seven"
-  8: "eight"
-  9: "nine"
-  _: "other"
+  case 0: "zero"
+  case 1: "one"
+  case 2: "two"
+  case 3: "three"
+  case 4: "four"
+  case 5: "five"
+  case 6: "six"
+  case 7: "seven"
+  case 8: "eight"
+  case 9: "nine"
+  case _: "other"
 }
 puts(out)  # output: seven

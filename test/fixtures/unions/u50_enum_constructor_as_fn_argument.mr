@@ -1,6 +1,6 @@
 # U50: Enum constructor as direct function argument
-enum option[a] { some(a) none }
-let unwrap = fn(x: option[int]) -> int {
-  match x { option.some(v): v option.none: 0 }
+enum Option[a] = { Some(a), None }
+fn unwrap(x: Option[Int]) -> Int = {
+  match x { case Option.Some(v): v case Option.None: 0 }
 }
-puts(unwrap(option.some(42)))  # output: 42
+puts(unwrap(Option.Some(42)))  # output: 42

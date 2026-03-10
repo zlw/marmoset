@@ -1,8 +1,8 @@
 # U89: Pattern uses wrong enum name for scrutinee
-enum option[a] { some(a) none }  # error: *
-enum result[a, e] { ok(a) err(e) }
-let x = option.some(1)
+enum Option[a] = { Some(a), None }  # error: *
+enum Result[a, e] = { Ok(a), Err(e) }
+let x = Option.Some(1)
 match x {
-  result.ok(v): v
-  result.err(_): 0
+  case Result.Ok(v): v
+  case Result.Err(_): 0
 }

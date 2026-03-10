@@ -1,15 +1,15 @@
 # U55: Three different enums in one program
-enum option[a] { some(a) none }
-enum direction { north south east west }
-enum result[a, e] { ok(a) err(e) }
-let d: result[direction, string] = result.ok(direction.north)
+enum Option[a] = { Some(a), None }
+enum Direction = { North, South, East, West }
+enum Result[a, e] = { Ok(a), Err(e) }
+let d: Result[Direction, Str] = Result.Ok(Direction.North)
 let out = match d {
-  result.ok(dir): "ok:" + match dir {
-    direction.north: "north"
-    direction.south: "south"
-    direction.east: "east"
-    direction.west: "west"
+  case Result.Ok(dir): "Ok:" + match dir {
+    case Direction.North: "North"
+    case Direction.South: "South"
+    case Direction.East: "East"
+    case Direction.West: "West"
   }
-  result.err(_): "err"
+  case Result.Err(_): "Err"
 }
-puts(out)  # output: ok:north
+puts(out)  # output: Ok:North

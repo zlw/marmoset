@@ -1,9 +1,9 @@
 # U75: Enum stored in and retrieved from hash
-enum option[a] { some(a) none }
-let m = {"key": option.some(42)}
+enum Option[a] = { Some(a), None }
+let m = {"key": Option.Some(42)}
 let val = m["key"]
 let out = match val {
-  option.some(v): v
-  option.none: 0
+  case Option.Some(v): v
+  case Option.None: 0
 }
 puts(out)  # output: 42

@@ -1,11 +1,11 @@
-# U73: Let binding inside match arm body (parser limitation)
-enum option[a] { some(a) none }  # error: *
-let x = option.some(42)
+# U73: Let binding inside match arm body
+enum Option[a] = { Some(a), None }
+let x = Option.Some(42)
 let out = match x {
-  option.some(v): {
+  case Option.Some(v): {
     let incremented = v + 1
     incremented
   }
-  option.none: 0
+  case Option.None: 0
 }
-puts(out)
+puts(out)  # output: 43

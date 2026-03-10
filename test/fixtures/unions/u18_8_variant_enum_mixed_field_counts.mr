@@ -1,23 +1,14 @@
 # U18: 8-variant enum with mixed field counts
-enum ast {
-  num(int)
-  str(string)
-  add(int, int)
-  neg(int)
-  cond(bool, int, int)
-  nil
-  pair(int, int)
-  triple(int, int, int)
-}
-let x = ast.cond(true, 42, 0)
+enum Ast = { Num(Int), Str(Str), Add(Int, Int), Neg(Int), Cond(Bool, Int, Int), Nil, Pair(Int, Int), Triple(Int, Int, Int) }
+let x = Ast.Cond(true, 42, 0)
 let out = match x {
-  ast.num(n): n
-  ast.str(_): 0
-  ast.add(a, b): a + b
-  ast.neg(n): 0 - n
-  ast.cond(c, t, f): if (c) { t } else { f }
-  ast.nil: 0
-  ast.pair(a, b): a + b
-  ast.triple(a, b, c): a + b + c
+  case Ast.Num(n): n
+  case Ast.Str(_): 0
+  case Ast.Add(a, b): a + b
+  case Ast.Neg(n): 0 - n
+  case Ast.Cond(c, t, f): if (c) { t } else { f }
+  case Ast.Nil: 0
+  case Ast.Pair(a, b): a + b
+  case Ast.Triple(a, b, c): a + b + c
 }
 puts(out)  # output: 42

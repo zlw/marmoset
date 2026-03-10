@@ -1,13 +1,13 @@
 # U57: Match arm returns different enum type than scrutinee
-enum option[a] { some(a) none }
-enum result[a, e] { ok(a) err(e) }
-let x = option.some(42)
-let r: result[int, string] = match x {
-  option.some(v): result.ok(v)
-  option.none: result.err("missing")
+enum Option[a] = { Some(a), None }
+enum Result[a, e] = { Ok(a), Err(e) }
+let x = Option.Some(42)
+let r: Result[Int, Str] = match x {
+  case Option.Some(v): Result.Ok(v)
+  case Option.None: Result.Err("missing")
 }
 let out = match r {
-  result.ok(_): "success"
-  result.err(e): e
+  case Result.Ok(_): "success"
+  case Result.Err(e): e
 }
 puts(out)  # output: success

@@ -1,5 +1,5 @@
 # U76: Sequential enum definitions interleaved with usage
-enum wrapper[a] { wrap(a) }
-let x = wrapper.wrap(10)
-let a = match x { wrapper.wrap(v): v }
+enum Wrapper[a] = { Wrap(a) }
+let x = Wrapper.Wrap(10)
+let a = match x { case Wrapper.Wrap(v): v }
 puts(a)  # output: 10

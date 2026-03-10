@@ -1,8 +1,8 @@
 # U42: Function call in match arm body
-enum option[a] { some(a) none }
-let x = option.some([1, 2, 3, 4, 5])
+enum Option[a] = { Some(a), None }
+let x = Option.Some([1, 2, 3, 4, 5])
 let out = match x {
-  option.some(arr): len(arr)
-  option.none: 0
+  case Option.Some(arr): len(arr)
+  case Option.None: 0
 }
 puts(out)  # output: 5

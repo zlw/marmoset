@@ -1,6 +1,6 @@
-# U09: Type narrowing with string operations
-let f = fn(x: int | string) -> int {
-   if (x is string) {
+# U09: Type narrowing with Str operations
+fn f(x: Int | Str) -> Int = {
+   if (x is Str) {
        len(x)
    } else {
        x

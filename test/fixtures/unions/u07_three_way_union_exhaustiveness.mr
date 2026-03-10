@@ -1,12 +1,12 @@
 # U07: Three-way union exhaustiveness
-let f = fn(x: int | string | bool) -> string {
-   if (x is int) {
-       "int"
+fn f(x: Int | Str | Bool) -> Str = {
+   if (x is Int) {
+       "Int"
    } else {
-       if (x is string) {
+       if (x is Str) {
            x
        } else {
-           "bool"
+           "Bool"
        }
    }
  }

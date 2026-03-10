@@ -1,6 +1,6 @@
-# U05: Type narrowing allows int operations
-let f = fn(x: int | string) -> int | string {
-   if (x is int) {
+# U05: Type narrowing allows Int operations
+fn f(x: Int | Str) -> Int | Str = {
+   if (x is Int) {
        x + 1
    } else {
        x

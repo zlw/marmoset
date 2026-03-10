@@ -1,11 +1,11 @@
 # U59: Same variable name in nested match arms
-enum option[a] { some(a) none }
-let x: option[option[string]] = option.some(option.some("inner"))
+enum Option[a] = { Some(a), None }
+let x: Option[Option[Str]] = Option.Some(Option.Some("inner"))
 let out = match x {
-  option.some(v): match v {
-    option.some(v): v
-    option.none: "none2"
+  case Option.Some(v): match v {
+    case Option.Some(v): v
+    case Option.None: "none2"
   }
-  option.none: "none1"
+  case Option.None: "none1"
 }
 puts(out)  # output: inner

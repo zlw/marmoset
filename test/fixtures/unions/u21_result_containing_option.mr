@@ -1,12 +1,12 @@
-# U21: result containing option: ok(some(5))
-enum option[a] { some(a) none }
-enum result[a, e] { ok(a) err(e) }
-let x: result[option[int], string] = result.ok(option.some(5))
+# U21: Result containing Option: Ok(Some(5))
+enum Option[a] = { Some(a), None }
+enum Result[a, e] = { Ok(a), Err(e) }
+let x: Result[Option[Int], Str] = Result.Ok(Option.Some(5))
 let out = match x {
-  result.ok(inner): match inner {
-    option.some(v): v
-    option.none: 0
+  case Result.Ok(inner): match inner {
+    case Option.Some(v): v
+    case Option.None: 0
   }
-  result.err(_): 0
+  case Result.Err(_): 0
 }
 puts(out)  # output: 5

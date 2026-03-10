@@ -1,8 +1,8 @@
 # U45: Enum variant with record field, extract and access
-enum option[a] { some(a) none }
-let x = option.some({name: "alice", age: 30})
+enum Option[a] = { Some(a), None }
+let x = Option.Some({name: "alice", age: 30})
 let out = match x {
-  option.some(person): person.name
-  option.none: "nobody"
+  case Option.Some(person): person.name
+  case Option.None: "nobody"
 }
 puts(out)  # output: alice
