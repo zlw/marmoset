@@ -300,6 +300,7 @@ TopDecl              ::= TypeDecl
                        | ImplDecl
                        | FnDecl
                        | LetDecl
+                       | ExprStmt
 
 TypeDecl             ::= "type" TypeName [TypeParams] "=" TypeDeclRhs [DeriveClause]
 TypeDeclRhs          ::= RecordType | TypeExpr
@@ -350,6 +351,7 @@ TypeExpr             ::= TypeUnion
 TypeUnion            ::= TypePrimary { "|" TypePrimary }
 TypePrimary          ::= TypeName
                        | TypeName "[" TypeExprList "]"
+                       | LowerIdent
                        | RecordType
                        | "(" [TypeExprList] ")" PurityArrow TypeExpr
                        | "(" TypeExpr ")"
@@ -415,14 +417,13 @@ RecordPatternItem    ::= Ident ":"
                        | "..." Ident
 ```
 
-### 13.3 Parse-Time Disambiguation Rules
-- `x: Named` in function parameter position is shorthand only if `Named` resolves to a trait symbol.
-- `x: User` is a normal concrete type annotation when `User` resolves to a type symbol.
-- `x: Show & Eq` is always a constrained-param shorthand.
+### 13.3 Disambiguation Rules
+- `x: Named` in function parameter position is parsed as a type annotation. Whether `Named` refers to a trait (constraint shorthand) or a concrete type is resolved during lowering/typechecking, not at parse time. The parser remains syntax-only.
+- `x: Show & Eq` is always a constrained-param shorthand (the `&` operator is unambiguous).
 - Bare trait names are not valid general type expressions in vNext.
 - Field-only trait-as-type forms from previous syntax are not part of vNext.
 - Record/map literal split uses key form:
-  - `{"k": v}`, `{1: v}`, and `{some_expr: v}` are map-like.
+  - `{"k": v}`, `{1: v}`, `{true: v}`, and `{false: v}` are map-like.
   - `{name: expr}` or `{name:}` or `{...base}` is record-like.
 - `_` in expression position is parsed as a placeholder-lambda candidate. Validation occurs in desugaring.
 
