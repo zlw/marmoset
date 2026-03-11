@@ -5329,6 +5329,11 @@ let emit_inherent_methods
       annotation_exn (Annotation.type_expr_to_mono_type_with bindings impl.inherent_for_type)
       |> Types.canonicalize_mono_type
     in
+    let relevant_call_sites =
+      call_sites
+      |> List.filter (fun site ->
+             List.exists (fun (m : AST.method_impl) -> m.impl_method_name = site.call_method_name) impl.inherent_methods)
+    in
     if not (has_type_vars for_type_pattern) then
       impl.inherent_methods
       |> List.concat_map (fun (m : AST.method_impl) ->
@@ -5351,8 +5356,13 @@ let emit_inherent_methods
     else
       impl.inherent_methods
       |> List.concat_map (fun (m : AST.method_impl) ->
-             call_sites
-             |> List.filter (fun site -> site.call_method_name = m.impl_method_name)
+             let sites_for_method =
+               if m.impl_method_generics <> None && m.impl_method_generics <> Some [] then
+                 List.filter (fun site -> site.call_method_name = m.impl_method_name) relevant_call_sites
+               else
+                 relevant_call_sites
+             in
+             sites_for_method
              |> List.filter_map (fun site ->
                     if has_concrete_target m.impl_method_name site.call_receiver_type then
                       None

@@ -1,0 +1,18 @@
+enum Opt[a] = { Some(a), None }
+
+impl[a] Opt[a] = {
+  fn is_some(o: Opt[a]) -> Bool = match o {
+    case Opt.Some(_): true
+    case Opt.None: false
+  }
+
+  fn label(o: Opt[a]) -> Str = {
+    if (Opt.is_some(o)) { "some" } else { "none" }
+  }
+}
+
+let some_i = Opt.Some(42)
+let none_s: Opt[Str] = Opt.None
+
+puts(Opt.label(some_i))  # output: some
+puts(Opt.label(none_s))  # output: none
