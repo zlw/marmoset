@@ -1,0 +1,14 @@
+# TI37: Field-only supertrait mismatch in impl target is rejected
+trait Named = {
+  name: Str
+}
+
+trait Shown[a]: Named = {
+  fn show(x: a) -> Str
+}
+
+impl Shown[Int] = {  # error: required supertrait
+  fn show(x: Int) -> Str = x.show()
+}
+
+puts(1)

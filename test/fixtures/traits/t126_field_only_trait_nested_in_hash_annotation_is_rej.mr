@@ -1,0 +1,7 @@
+# T126: Field-only trait nested in a hash annotation is rejected
+trait Named = {
+  name: Str
+}
+
+let by_name: Hash[Str, Named] = {}  # error: cannot be used as a type in vNext
+by_name

@@ -1,0 +1,7 @@
+# T125: Method trait nested in a container annotation is rejected
+trait Renderable[a] = {
+  fn render(x: a) -> Str
+}
+
+let xs: List[Renderable] = []  # error: cannot be used as a type in vNext
+xs
