@@ -2087,22 +2087,17 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
           | None ->
               Error
                 (error_at ~code:"type-constructor" ~message:(Printf.sprintf "Unknown trait '%s'" trait_name) expr)
-          | Some trait_def -> (
-              let method_opt =
-                List.find_opt
-                  (fun (m : Trait_registry.method_sig) -> m.method_name = method_name)
-                  trait_def.trait_methods
-              in
-              match method_opt with
+          | Some _trait_def -> (
+              match Trait_registry.lookup_trait_method_with_supertraits trait_name method_name with
               | None ->
                   Error
                     (error_at ~code:"type-constructor"
                        ~message:(Printf.sprintf "Trait '%s' has no method '%s'" trait_name method_name)
                        expr)
-              | Some method_sig -> (
+              | Some (source_trait_def, method_sig) -> (
                   (* Instantiate trait type param with fresh TVar *)
                   let instantiated_sig =
-                    match trait_def.trait_type_param with
+                    match source_trait_def.Trait_registry.trait_type_param with
                     | None -> method_sig
                     | Some type_param ->
                         let fresh = fresh_type_var () in
@@ -3854,10 +3849,13 @@ and infer_statement type_map env stmt =
       | Ok () -> (
           match Trait_registry.validate_trait_fields name trait_fields with
           | Error msg -> Error (error ~code:"type-constructor" ~message:msg)
-          | Ok () ->
-              Trait_registry.register_trait trait_def;
-              Trait_registry.set_trait_fields name trait_fields;
-              Ok (empty_substitution, TNull)))
+          | Ok () -> (
+              match Trait_registry.validate_trait_supertrait_fields trait_def trait_fields with
+              | Error msg -> Error (error ~code:"type-constructor" ~message:msg)
+              | Ok () ->
+                  Trait_registry.register_trait trait_def;
+                  Trait_registry.set_trait_fields name trait_fields;
+                  Ok (empty_substitution, TNull))))
   | AST.ImplDef { impl_trait_name; impl_type_params; impl_for_type; impl_methods } ->
       let type_param_names = List.map (fun (p : AST.generic_param) -> p.name) impl_type_params in
       let unique_param_names = List.sort_uniq String.compare type_param_names in
@@ -3911,21 +3909,8 @@ and infer_statement type_map env stmt =
             | Ok for_type_mono -> (
                 (* Phase 7: Trait impl method adapter — routes through type_callable.
                    Looks up trait signature for known types so annotations are optional. *)
-                let for_type_subst =
-                  match Trait_registry.lookup_trait impl_trait_name with
-                  | None -> SubstMap.empty
-                  | Some td -> (
-                      match td.trait_type_param with
-                      | None -> SubstMap.empty
-                      | Some tp -> SubstMap.singleton tp for_type_mono)
-                in
                 let find_trait_method_sig method_name =
-                  match Trait_registry.lookup_trait impl_trait_name with
-                  | None -> None
-                  | Some td ->
-                      List.find_opt
-                        (fun (ms : Trait_registry.method_sig) -> ms.method_name = method_name)
-                        td.trait_methods
+                  Trait_registry.lookup_trait_method_with_supertraits impl_trait_name method_name
                 in
 
                 let infer_impl_method_body (m : AST.method_impl) :
@@ -3943,15 +3928,26 @@ and infer_statement type_map env stmt =
                   let known_param_types =
                     match trait_method_opt with
                     | None -> []
-                    | Some tm ->
+                    | Some (source_trait_def, tm) ->
+                        let source_trait_subst =
+                          match source_trait_def.Trait_registry.trait_type_param with
+                          | None -> SubstMap.empty
+                          | Some tp -> SubstMap.singleton tp for_type_mono
+                        in
                         List.mapi
-                          (fun i (_name, ty) -> (i, apply_substitution for_type_subst ty))
+                          (fun i (_name, ty) -> (i, apply_substitution source_trait_subst ty))
                           tm.method_params
                   in
                   let known_return =
                     match trait_method_opt with
                     | None -> None
-                    | Some tm -> Some (apply_substitution for_type_subst tm.method_return_type)
+                    | Some (source_trait_def, tm) ->
+                        let source_trait_subst =
+                          match source_trait_def.Trait_registry.trait_type_param with
+                          | None -> SubstMap.empty
+                          | Some tp -> SubstMap.singleton tp for_type_mono
+                        in
+                        Some (apply_substitution source_trait_subst tm.method_return_type)
                   in
 
                   (* Map effect annotation — None means Unspecified (infer from body) *)
@@ -4087,12 +4083,11 @@ and infer_statement type_map env stmt =
                       | _ -> (
                       match Trait_registry.lookup_trait impl_trait_name with
                       | None -> Ok ()
-                      | Some trait_def ->
+                      | Some _trait_def ->
                           let has_default method_name =
-                            List.exists
-                              (fun (m : Trait_registry.method_sig) ->
-                                m.method_name = method_name && m.method_default_impl <> None)
-                              trait_def.trait_methods
+                            match Trait_registry.lookup_trait_method_with_supertraits impl_trait_name method_name with
+                            | Some (_source_trait_def, m) -> m.method_default_impl <> None
+                            | None -> false
                           in
                           let rec check = function
                             | [] -> Ok ()

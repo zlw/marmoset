@@ -1,4 +1,3 @@
-# xfail: supertrait-expanded ambiguity not implemented
 trait Base[a] = {
   fn op(x: a) -> Int
 }
@@ -13,6 +12,10 @@ trait ChildB[a]: Base = {
 
 type Thing = { v: Int }
 
+impl Base[Thing] = {
+  fn op(x: Thing) -> Int = { 0 }
+}
+
 impl ChildA[Thing] = {
   fn extra_a(x: Thing) -> Str = { "a" }
   fn op(x: Thing) -> Int = { 1 }
@@ -24,5 +27,5 @@ impl ChildB[Thing] = {
 }
 
 let t: Thing = { v: 0 }
-# op is provided by both ChildA and ChildB via Base → ambiguity
+# op is provided by Base, ChildA, and ChildB -> ambiguity
 t.op()  # error: Ambiguous

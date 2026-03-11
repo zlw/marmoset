@@ -1,10 +1,8 @@
-# xfail: legacy bare trait-as-type syntax was removed by syntax-rework; method trait objects move to follow-up Dyn syntax
 # T25: Field-only trait conflicting supertrait fields are rejected
-trait HasInt = {  # error: conflicting types across supertraits
+trait HasInt = {
   x: Int
 }
 trait HasString = {
   x: Str
 }
-trait Bad: HasInt & HasString = {}
-let x: Bad = { x: 1 }
+trait Bad: HasInt & HasString = {}  # error: conflicting types across supertraits

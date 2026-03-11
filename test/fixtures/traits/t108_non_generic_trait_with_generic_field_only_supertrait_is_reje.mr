@@ -1,9 +1,7 @@
-# xfail: legacy bare trait-as-type syntax was removed by syntax-rework; method trait objects move to follow-up Dyn syntax
 # T108: Non-generic trait with generic field-only supertrait is rejected
-trait Boxed[a] = {  # error: generic field-only supertrait
+trait Boxed[a] = {
   value: a
 }
-trait LabeledBox: Boxed = {
+trait LabeledBox: Boxed = {  # error: generic field-only supertrait
   label: Str
 }
-let x: LabeledBox = { value: 42, label: "box" }

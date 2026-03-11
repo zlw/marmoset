@@ -1,7 +1,5 @@
-# xfail: legacy bare trait-as-type syntax was removed by syntax-rework; method trait objects move to follow-up Dyn syntax
 # T24: Generic field-only supertrait in trait object is rejected explicitly
-trait Tagged[a] = {  # error: generic field-only supertrait
+trait Tagged[a] = {
   tag: a
 }
-trait TaggedLike: Tagged = {}
-let x: TaggedLike = { tag: 1 }
+trait TaggedLike: Tagged = {}  # error: generic field-only supertrait

@@ -203,10 +203,10 @@ let trait_kind (trait_name : string) : trait_kind option =
       let has_fields, has_methods = accumulate trait_name (false, false) in
       if has_fields && has_methods then
         Some Mixed
-      else if has_fields then
-        Some FieldOnly
-      else
+      else if has_methods then
         Some MethodOnly
+      else
+        Some FieldOnly
 
 let validate_trait_fields (trait_name : string) (fields : record_field_type list) : (unit, string) result =
   let field_names = List.map (fun (f : record_field_type) -> f.name) fields in
@@ -312,6 +312,30 @@ let supertraits_of_trait (trait_name : string) : string list =
   match trait_with_supertraits trait_name with
   | [] -> []
   | _self :: rest -> rest
+
+let trait_methods_with_supertraits (trait_name : string) : (trait_def * method_sig) list =
+  let seen : (string, unit) Hashtbl.t = Hashtbl.create 16 in
+  trait_with_supertraits trait_name
+  |> List.fold_left
+       (fun acc expanded_trait_name ->
+         match lookup_trait expanded_trait_name with
+         | None -> acc
+         | Some expanded_trait_def ->
+             List.fold_left
+               (fun inner_acc (method_sig : method_sig) ->
+                 if Hashtbl.mem seen method_sig.method_name then
+                   inner_acc
+                 else (
+                   Hashtbl.replace seen method_sig.method_name ();
+                   (expanded_trait_def, method_sig) :: inner_acc))
+               acc expanded_trait_def.trait_methods)
+       []
+  |> List.rev
+
+let lookup_trait_method_with_supertraits (trait_name : string) (method_name : string) :
+    (trait_def * method_sig) option =
+  trait_methods_with_supertraits trait_name
+  |> List.find_opt (fun (_trait_def, method_sig) -> method_sig.method_name = method_name)
 
 let format_impl_site_from_source (trait_name : string) (source_opt : impl_source option) : string =
   match source_opt with
@@ -648,9 +672,84 @@ let validate_trait_def (def : trait_def) : (unit, string) result =
     else
       Ok ()
 
+let validate_trait_supertrait_fields (def : trait_def) (own_fields : record_field_type list) :
+    (unit, string) result =
+  let seen_fields : (string, mono_type) Hashtbl.t = Hashtbl.create 16 in
+  let merge_field_requirement (field_owner : string) (field : record_field_type) : (unit, string) result =
+    let field_type = canonical_type field.typ in
+    match Hashtbl.find_opt seen_fields field.name with
+    | None ->
+        Hashtbl.replace seen_fields field.name field_type;
+        Ok ()
+    | Some existing_type -> (
+        match Unify.unify existing_type field_type with
+        | Ok _ -> Ok ()
+        | Error _ ->
+            Error
+              (Printf.sprintf "Trait '%s' has conflicting types across supertraits for field '%s' (via %s)"
+                 def.trait_name field.name field_owner))
+  in
+  let merge_registered_fields (trait_name : string) : (unit, string) result =
+    match lookup_trait_fields trait_name with
+    | None -> Ok ()
+    | Some fields ->
+        let rec go = function
+          | [] -> Ok ()
+          | field :: rest -> (
+              match merge_field_requirement trait_name field with
+              | Error _ as err -> err
+              | Ok () -> go rest)
+        in
+        go fields
+  in
+  let rec validate_direct_supertraits = function
+    | [] -> Ok ()
+    | supertrait_name :: rest -> (
+        match lookup_trait supertrait_name with
+        | None -> Ok ()
+        | Some supertrait_def -> (
+            match (supertrait_def.trait_type_param, trait_kind supertrait_name) with
+            | Some _, Some FieldOnly ->
+                Error
+                  (Printf.sprintf "Trait '%s' cannot inherit generic field-only supertrait '%s'" def.trait_name
+                     supertrait_name)
+            | _ -> validate_direct_supertraits rest))
+  in
+  let rec merge_supertrait_fields = function
+    | [] -> Ok ()
+    | supertrait_name :: rest ->
+        let rec merge_expanded = function
+          | [] -> Ok ()
+          | expanded_name :: tail -> (
+              match merge_registered_fields expanded_name with
+              | Error _ as err -> err
+              | Ok () -> merge_expanded tail)
+        in
+        let expanded = trait_with_supertraits supertrait_name in
+        (match merge_expanded expanded with
+        | Error _ as err -> err
+        | Ok () -> merge_supertrait_fields rest)
+  in
+  let rec merge_own_fields = function
+    | [] -> Ok ()
+    | field :: rest -> (
+        match merge_field_requirement def.trait_name field with
+        | Error _ as err -> err
+        | Ok () -> merge_own_fields rest)
+  in
+  match validate_direct_supertraits def.trait_supertraits with
+  | Error _ as err -> err
+  | Ok () -> (
+      match merge_supertrait_fields def.trait_supertraits with
+      | Error _ as err -> err
+      | Ok () -> merge_own_fields own_fields)
+
 let validate_impl_signature (trait_def : trait_def) (def : impl_def) : (unit, string) result =
-  (* Check that all required trait methods (no default) are implemented,
-     and that impl doesn't declare extra methods not in trait *)
+  (* Check that all required direct trait methods (no default) are implemented,
+     and that impl doesn't declare extra methods beyond the trait or its supertraits.
+     Inherited methods are allowed in a child impl, but they stay optional because
+     separate supertrait impls can satisfy them. *)
+  let expanded_trait_methods = trait_methods_with_supertraits trait_def.trait_name in
   let required_method_names =
     trait_def.trait_methods
     |> List.filter (fun m -> m.method_default_impl = None)
@@ -658,7 +757,7 @@ let validate_impl_signature (trait_def : trait_def) (def : impl_def) : (unit, st
     |> List.sort String.compare
   in
   let trait_method_names =
-    List.map (fun m -> m.method_name) trait_def.trait_methods |> List.sort String.compare
+    expanded_trait_methods |> List.map (fun (_trait_def, m) -> m.method_name) |> List.sort String.compare
   in
   let impl_method_names = List.map (fun m -> m.method_name) def.impl_methods |> List.sort String.compare in
   (* All required methods must be provided *)
@@ -673,21 +772,13 @@ let validate_impl_signature (trait_def : trait_def) (def : impl_def) : (unit, st
     Error
       (Printf.sprintf "Impl for trait '%s' provides methods not in trait: %s" def.impl_trait_name
          (String.concat ", " extra_methods))
-  else if
-    (* If no defaults: use exact match check (backward compat) *)
-    required_method_names = trait_method_names && trait_method_names <> impl_method_names
-  then
-    Error
-      (Printf.sprintf "Impl for trait '%s' does not match trait signature (expected methods: %s, got: %s)"
-         def.impl_trait_name
-         (String.concat ", " trait_method_names)
-         (String.concat ", " impl_method_names))
   else
     (* Check each method signature matches *)
-    let check_method_sig (trait_method : method_sig) (impl_method : method_sig) : (unit, string) result =
+    let check_method_sig (source_trait_def : trait_def) (trait_method : method_sig) (impl_method : method_sig) :
+        (unit, string) result =
       (* Substitute trait type parameter with impl_for_type *)
       let substitute_type (t : mono_type) : mono_type =
-        match trait_def.trait_type_param with
+        match source_trait_def.trait_type_param with
         | None -> t (* No type param, use as-is *)
         | Some type_param -> apply_substitution (substitution_singleton type_param def.impl_for_type) t
       in
@@ -762,22 +853,17 @@ let validate_impl_signature (trait_def : trait_def) (def : impl_def) : (unit, st
               Ok ()
     in
 
-    (* Find each trait method in impl methods and validate *)
+    (* Validate each impl method against the expanded trait surface. *)
     let errors =
       List.filter_map
-        (fun trait_method ->
-          match List.find_opt (fun im -> im.method_name = trait_method.method_name) def.impl_methods with
-          | None ->
-              (* Missing method: OK if trait has a default impl *)
-              if trait_method.method_default_impl <> None then
-                None
-              else
-                Some (Printf.sprintf "Method '%s' not implemented" trait_method.method_name)
-          | Some impl_method -> (
-              match check_method_sig trait_method impl_method with
+        (fun impl_method ->
+          match List.find_opt (fun (_source_trait_def, m) -> m.method_name = impl_method.method_name) expanded_trait_methods with
+          | None -> Some (Printf.sprintf "Method '%s' not implemented" impl_method.method_name)
+          | Some (source_trait_def, trait_method) -> (
+              match check_method_sig source_trait_def trait_method impl_method with
               | Ok () -> None
               | Error msg -> Some msg))
-        trait_def.trait_methods
+        def.impl_methods
     in
 
     if errors <> [] then
@@ -905,6 +991,11 @@ let%test "trait_kind includes method supertraits" =
     { trait_name = "display"; trait_type_param = None; trait_supertraits = [ "show" ]; trait_methods = [] };
   trait_kind "display" = Some MethodOnly
 
+let%test "trait_kind treats empty trait as field-only" =
+  clear ();
+  register_trait { trait_name = "marker"; trait_type_param = None; trait_supertraits = []; trait_methods = [] };
+  trait_kind "marker" = Some FieldOnly
+
 let%test "trait_kind becomes mixed with field and method supertraits" =
   clear ();
   register_trait { trait_name = "named"; trait_type_param = None; trait_supertraits = []; trait_methods = [] };
@@ -957,6 +1048,55 @@ let%test "validate_trait_def - missing supertrait" =
   match validate_trait_def bad_trait with
   | Ok () -> false
   | Error _ -> true
+
+let%test "validate_trait_supertrait_fields rejects generic field-only supertraits" =
+  clear ();
+  register_trait { trait_name = "boxed"; trait_type_param = Some "a"; trait_supertraits = []; trait_methods = [] };
+  set_trait_fields "boxed" [ { name = "value"; typ = TVar "a" } ];
+  let bad_trait =
+    {
+      trait_name = "labeled_box";
+      trait_type_param = None;
+      trait_supertraits = [ "boxed" ];
+      trait_methods = [];
+    }
+  in
+  match validate_trait_supertrait_fields bad_trait [ { name = "label"; typ = TString } ] with
+  | Ok () -> false
+  | Error msg -> String_utils.contains_substring ~needle:"generic field-only supertrait" msg
+
+let%test "validate_trait_supertrait_fields rejects conflicting inherited field types" =
+  clear ();
+  register_trait { trait_name = "has_int"; trait_type_param = None; trait_supertraits = []; trait_methods = [] };
+  set_trait_fields "has_int" [ { name = "x"; typ = TInt } ];
+  register_trait
+    { trait_name = "has_string"; trait_type_param = None; trait_supertraits = []; trait_methods = [] };
+  set_trait_fields "has_string" [ { name = "x"; typ = TString } ];
+  let bad_trait =
+    {
+      trait_name = "bad";
+      trait_type_param = None;
+      trait_supertraits = [ "has_int"; "has_string" ];
+      trait_methods = [];
+    }
+  in
+  match validate_trait_supertrait_fields bad_trait [] with
+  | Ok () -> false
+  | Error msg -> String_utils.contains_substring ~needle:"conflicting types across supertraits" msg
+
+let%test "lookup_trait_method_with_supertraits sees inherited methods" =
+  clear ();
+  register_trait
+    {
+      trait_name = "base";
+      trait_type_param = Some "a";
+      trait_supertraits = [];
+      trait_methods = [ mk_method_sig ~name:"name" ~params:[ ("x", TVar "a") ] ~return_type:TString () ];
+    };
+  register_trait { trait_name = "ext"; trait_type_param = Some "a"; trait_supertraits = [ "base" ]; trait_methods = [] };
+  match lookup_trait_method_with_supertraits "ext" "name" with
+  | Some (source_trait, method_sig) -> source_trait.trait_name = "base" && method_sig.method_name = "name"
+  | None -> false
 
 let%test "register and lookup impl" =
   clear ();
@@ -1423,6 +1563,80 @@ let%test "validate_impl - extra method" =
   match validate_impl bad_impl with
   | Ok () -> false
   | Error msg -> String.length msg > 0
+
+let%test "validate_impl accepts inherited supertrait methods in child impls" =
+  clear ();
+  register_trait
+    {
+      trait_name = "base";
+      trait_type_param = Some "a";
+      trait_supertraits = [];
+      trait_methods = [ mk_method_sig ~name:"name" ~params:[ ("x", TVar "a") ] ~return_type:TString () ];
+    };
+  register_trait
+    {
+      trait_name = "ext";
+      trait_type_param = Some "a";
+      trait_supertraits = [ "base" ];
+      trait_methods = [ mk_method_sig ~name:"extra" ~params:[ ("x", TVar "a") ] ~return_type:TInt () ];
+    };
+  register_impl
+    {
+      impl_trait_name = "base";
+      impl_type_params = [];
+      impl_for_type = TInt;
+      impl_methods = [ mk_method_sig ~name:"name" ~params:[ ("x", TInt) ] ~return_type:TString () ];
+    };
+  match
+    validate_impl
+      {
+        impl_trait_name = "ext";
+        impl_type_params = [];
+        impl_for_type = TInt;
+        impl_methods =
+          [
+            mk_method_sig ~name:"name" ~params:[ ("x", TInt) ] ~return_type:TString ();
+            mk_method_sig ~name:"extra" ~params:[ ("x", TInt) ] ~return_type:TInt ();
+          ];
+      }
+  with
+  | Ok () -> true
+  | Error _ -> false
+
+let%test "validate_impl accepts child impl without inherited supertrait methods" =
+  clear ();
+  register_trait
+    {
+      trait_name = "base";
+      trait_type_param = Some "a";
+      trait_supertraits = [];
+      trait_methods = [ mk_method_sig ~name:"name" ~params:[ ("x", TVar "a") ] ~return_type:TString () ];
+    };
+  register_trait
+    {
+      trait_name = "ext";
+      trait_type_param = Some "a";
+      trait_supertraits = [ "base" ];
+      trait_methods = [ mk_method_sig ~name:"extra" ~params:[ ("x", TVar "a") ] ~return_type:TInt () ];
+    };
+  register_impl
+    {
+      impl_trait_name = "base";
+      impl_type_params = [];
+      impl_for_type = TInt;
+      impl_methods = [ mk_method_sig ~name:"name" ~params:[ ("x", TInt) ] ~return_type:TString () ];
+    };
+  match
+    validate_impl
+      {
+        impl_trait_name = "ext";
+        impl_type_params = [];
+        impl_for_type = TInt;
+        impl_methods = [ mk_method_sig ~name:"extra" ~params:[ ("x", TInt) ] ~return_type:TInt () ];
+      }
+  with
+  | Ok () -> true
+  | Error _ -> false
 
 let%test "validate_impl - wrong param count" =
   clear ();
