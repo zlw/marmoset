@@ -1525,6 +1525,44 @@ let register_user_func_call_instantiation
         in
         add_instantiation state inst
 
+let resolved_user_func_call_target (state : mono_state) (func : AST.expression) : string option =
+  match func.expr with
+  | AST.Identifier name when is_user_func state name -> Some name
+  | AST.Identifier alias_name -> (
+      match Hashtbl.find_opt state.value_func_aliases alias_name with
+      | Some target_name when is_user_func state target_name -> Some target_name
+      | _ -> None)
+  | _ -> None
+
+let specialized_user_call_param_types
+    (state : mono_state)
+    (type_map : Infer.type_map)
+    (env : Infer.type_env)
+    ~(target_name : string)
+    ~(args : AST.expression list) : Types.mono_type list option =
+  let arity = List.length args in
+  match Infer.TypeEnv.find_opt target_name env with
+  | Some (Types.Forall (_, func_type)) -> (
+      match extract_param_types_exact arity func_type with
+      | Some (declared_param_types, declared_return_type) ->
+          let raw_arg_types = List.map (get_type type_map) args in
+          let arg_types =
+            List.map2
+              (fun (arg_expr : AST.expression) (arg_type, declared_param_type) ->
+                match Hashtbl.find_opt state.trait_object_coercion_map arg_expr.id with
+                | Some (coercion : Typecheck.Resolution_artifacts.trait_object_coercion) -> (
+                    match Types.canonicalize_mono_type declared_param_type with
+                    | Types.TTraitObject expected_traits
+                      when Types.normalize_trait_object_traits expected_traits = coercion.target_traits ->
+                        declared_param_type
+                    | _ -> arg_type)
+                | None -> arg_type)
+              args (List.combine raw_arg_types declared_param_types)
+          in
+          Option.map fst (specialize_signature declared_param_types declared_return_type arg_types)
+      | None -> None)
+  | None -> None
+
 let select_impl_template_for_type
     (state : mono_state) (trait_name : string) (method_name : string) (for_type : Types.mono_type) :
     (impl_template_method * Types.substitution) option =
@@ -1851,17 +1889,26 @@ and collect_insts_expr
   | AST.Integer _ | AST.Float _ | AST.Boolean _ | AST.String _ -> ()
   | AST.Identifier name when is_user_func state name -> (
       let inferred_func_type =
-        match Infer.TypeEnv.find_opt name env with
-        | Some (Types.Forall (_, t)) -> t
-        | None -> get_type type_map expr
+        match Hashtbl.find_opt type_map expr.id with
+        | Some t -> t
+        | None -> (
+            match Infer.TypeEnv.find_opt name env with
+            | Some (Types.Forall (_, t)) -> t
+            | None -> get_type type_map expr)
       in
       let inferred_params, inferred_ret = extract_all_param_types inferred_func_type in
       let selected_params, selected_ret =
         match expected_type with
         | Some expected_func_type -> (
             let expected_params, expected_ret = extract_all_param_types expected_func_type in
-            if expected_params <> [] then
-              (expected_params, expected_ret)
+            if expected_params <> [] && not (List.exists has_type_vars expected_params) then
+              let selected_ret =
+                if has_type_vars expected_ret then
+                  inferred_ret
+                else
+                  expected_ret
+              in
+              (expected_params, selected_ret)
             else
               let inferred_arity = List.length inferred_params in
               match callable_signature_exact inferred_arity expected_func_type with
@@ -1964,9 +2011,48 @@ and collect_insts_expr
       Option.iter (fun s -> ignore (collect_insts_stmt state type_map env s)) alt
   | AST.Call (func, args) -> (
       let args = List.map (placeholder_rewritten_expr state.placeholder_rewrite_map) args in
+      let user_call_target = resolved_user_func_call_target state func in
+      let callee_type_opt =
+        match func.expr with
+        | AST.Identifier name -> (
+            match Infer.TypeEnv.find_opt name env with
+            | Some (Types.Forall (_, t)) -> Some t
+            | None -> Hashtbl.find_opt type_map func.id)
+        | _ -> Hashtbl.find_opt type_map func.id
+      in
+      let call_param_types =
+        match user_call_target with
+        | Some target_name -> (
+            match specialized_user_call_param_types state type_map env ~target_name ~args with
+            | Some specialized_params -> specialized_params
+            | None -> (
+                match callee_type_opt with
+                | Some callee_type -> (
+                    match callable_signature_exact (List.length args) callee_type with
+                    | Some (params, _ret) -> params
+                    | None -> fst (extract_param_types (List.length args) callee_type))
+                | None -> []))
+        | None -> (
+            match callee_type_opt with
+            | Some callee_type -> (
+                match callable_signature_exact (List.length args) callee_type with
+                | Some (params, _ret) -> params
+                | None -> fst (extract_param_types (List.length args) callee_type))
+            | None -> [])
+      in
       (* Collect from subexpressions first *)
       collect_insts_expr state type_map env func;
-      List.iter (collect_insts_expr state type_map env) args;
+      let rec collect_args_with_expected remaining_args remaining_expected =
+        match (remaining_args, remaining_expected) with
+        | arg :: rest_args, expected_type :: rest_expected ->
+            collect_insts_expr ~expected_type:(Some expected_type) state type_map env arg;
+            collect_args_with_expected rest_args rest_expected
+        | arg :: rest_args, [] ->
+            collect_insts_expr state type_map env arg;
+            collect_args_with_expected rest_args []
+        | [], _ -> ()
+      in
+      collect_args_with_expected args call_param_types;
       (* Check if this is a call to a user-defined function *)
       match func.expr with
       | AST.Identifier name when is_user_func state name ->
@@ -2328,18 +2414,18 @@ let rec emit_expr
     | AST.Identifier name ->
         if is_user_func state.mono name then
           let inferred_param_types =
-            match Infer.TypeEnv.find_opt name env with
-            | Some (Types.Forall (_, inferred_func_type)) -> fst (extract_all_param_types inferred_func_type)
+            match Hashtbl.find_opt type_map expr.id with
+            | Some inferred_func_type -> fst (extract_all_param_types inferred_func_type)
             | None -> (
-                match Hashtbl.find_opt type_map expr.id with
-                | Some inferred_func_type -> fst (extract_all_param_types inferred_func_type)
+                match Infer.TypeEnv.find_opt name env with
+                | Some (Types.Forall (_, inferred_func_type)) -> fst (extract_all_param_types inferred_func_type)
                 | None -> [])
           in
           let param_types =
             match expected_type with
             | Some expected_func_type ->
                 let expected_param_types, _ = extract_all_param_types expected_func_type in
-                if expected_param_types <> [] then
+                if expected_param_types <> [] && not (List.exists has_type_vars expected_param_types) then
                   expected_param_types
                 else
                   inferred_param_types
@@ -3793,18 +3879,31 @@ and emit_call state type_map env func args =
         | None -> Hashtbl.find_opt type_map func.id)
     | _ -> Hashtbl.find_opt type_map func.id
   in
+  let user_call_target = resolved_user_func_call_target state.mono func in
   let call_signature_opt =
     match callee_type_opt with
     | Some callee_type -> callable_signature_exact (List.length args) callee_type
     | None -> None
   in
   let call_param_types =
-    match call_signature_opt with
-    | Some (params, _ret) -> params
+    match user_call_target with
+    | Some target_name -> (
+        match specialized_user_call_param_types state.mono type_map env ~target_name ~args with
+        | Some specialized_params -> specialized_params
+        | None -> (
+            match call_signature_opt with
+            | Some (params, _ret) -> params
+            | None -> (
+                match callee_type_opt with
+                | Some callee_type -> fst (extract_param_types (List.length args) callee_type)
+                | None -> [])))
     | None -> (
-        match callee_type_opt with
-        | Some callee_type -> fst (extract_param_types (List.length args) callee_type)
-        | None -> [])
+        match call_signature_opt with
+        | Some (params, _ret) -> params
+        | None -> (
+            match callee_type_opt with
+            | Some callee_type -> fst (extract_param_types (List.length args) callee_type)
+            | None -> []))
   in
   let emit_args_with_expected_types (expected_types : Types.mono_type list) : string =
     let rec emit acc remaining_args remaining_expected =
@@ -3853,47 +3952,14 @@ and emit_call state type_map env func args =
       let val_str = emit_expr state type_map env (List.nth args 1) in
       Printf.sprintf "push(%s, %s)" arr_str val_str
   | AST.Identifier name when is_user_func state.mono name ->
-      let raw_arg_types = List.map (get_type type_map) args in
-      (* User-defined function - look up declared parameter types to check for unions *)
-      let func_param_types =
-        match Infer.TypeEnv.find_opt name env with
-        | Some (Types.Forall (_, func_type)) ->
-            let num_args = List.length args in
-            let declared_param_types, _ = extract_param_types num_args func_type in
-            declared_param_types
-        | None -> raw_arg_types
-      in
-      let arg_types =
-        List.map2
-          (fun (arg_expr : AST.expression) (arg_type, declared_param_type) ->
-            match Hashtbl.find_opt state.mono.trait_object_coercion_map arg_expr.id with
-            | Some (coercion : Typecheck.Resolution_artifacts.trait_object_coercion) -> (
-                match Types.canonicalize_mono_type declared_param_type with
-                | Types.TTraitObject expected_traits
-                  when Types.normalize_trait_object_traits expected_traits = coercion.target_traits ->
-                    declared_param_type
-                | _ -> arg_type)
-            | None -> arg_type)
-          args (List.combine raw_arg_types func_param_types)
-      in
-      (* Check if any declared param is a union type *)
-      let has_union_param =
-        List.exists
-          (function
-            | Types.TUnion _ -> true
-            | _ -> false)
-          func_param_types
-      in
-      (* If function has union params, use declared types for name mangling; otherwise use argument types *)
       let param_types =
-        if has_union_param then
-          func_param_types
-        else
-          arg_types
+        match user_call_target with
+        | Some target_name when String.equal target_name name -> call_param_types
+        | _ -> call_param_types
       in
       let mangled_name =
         if List.exists has_type_vars param_types then
-          match instantiated_func_name_for_args state.mono name arg_types with
+          match instantiated_func_name_for_args state.mono name param_types with
           | Some resolved_name -> resolved_name
           | None -> (
               match unique_instantiated_func_name state.mono name with
@@ -6436,6 +6502,20 @@ read_x({ x: 1, y: "ok" })
   | Ok (code, _) ->
       string_contains code "func read_x_record_x_int64_y_string_closed(v Record_x_int64_y_string) int64"
       && not (string_contains code "func read_x_record_x_int64_y_string_closed(v interface{})")
+  | Error _ -> false
+
+let%test "higher-order calls emit specialized top-level function values" =
+  let source =
+    {|
+fn apply(f, r) = f(r)
+fn get_x(r) = r.x
+puts(apply(get_x, { x: 42, y: 0 }))
+|}
+  in
+  match compile_string ~file_id:"<codegen>" source with
+  | Ok (code, _) ->
+      string_contains code "get_x_record_x_int64_y_int64_closed"
+      && not (string_contains code "apply(get_x,")
   | Error _ -> false
 
 let%test "Dyn codegen emits witness fields for multi-trait dispatch" =
