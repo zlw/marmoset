@@ -1,0 +1,26 @@
+enum Opt[a] = { Some(a), None }
+
+trait Label[a] = {
+  fn tag(x: a) -> Str
+}
+
+impl[a] Label[Opt[a]] = {
+  fn tag(x: Opt[a]) -> Str = match x {
+    case Opt.Some(_): "trait:some"
+    case Opt.None: "trait:none"
+  }
+}
+
+impl[a] Opt[a] = {
+  fn tag(o: Opt[a]) -> Str = match o {
+    case Opt.Some(_): "inherent:some"
+    case Opt.None: "inherent:none"
+  }
+}
+
+let some = Opt.Some(7)
+let none: Opt[Int] = Opt.None
+
+puts(some.tag())       # output: inherent:some
+puts(Label.tag(some))  # output: trait:some
+puts(Opt.tag(none))    # output: inherent:none
