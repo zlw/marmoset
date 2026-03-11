@@ -560,6 +560,16 @@ let verify_constraints_in_substitution (subst : substitution) : (unit, Diagnosti
   let obligations = obligations_from_substitution subst in
   verify_obligations obligations
 
+let propagate_type_var_constraints_through_substitution (subst : substitution) : unit =
+  SubstMap.iter
+    (fun type_var_name resolved_type ->
+      let constraints = lookup_type_var_constraints type_var_name in
+      if constraints <> [] then
+        match apply_substitution subst resolved_type with
+        | TVar target_var_name -> add_type_var_constraints target_var_name constraints
+        | _ -> ())
+    subst
+
 let enforce_trait_requirement_on_type (typ : mono_type) (trait_name : string) : (unit, Diagnostic.t) result =
   if Trait_registry.lookup_trait trait_name = None then
     Ok ()
@@ -772,12 +782,29 @@ let rec has_unresolved_var (t : mono_type) : bool =
 
 let compatible_with_expected_type (actual : mono_type) (expected : mono_type) :
     (substitution, Diagnostic.t) result =
-  if Annotation.is_subtype_of actual expected then
+  if has_unresolved_var actual || has_unresolved_var expected then
+    match unify actual expected with
+    | Ok subst -> Ok subst
+    | Error _ when Annotation.is_subtype_of actual expected -> Ok empty_substitution
+    | Error e -> Error e
+  else if Annotation.is_subtype_of actual expected then
     Ok empty_substitution
-  else if has_unresolved_var actual || has_unresolved_var expected then
-    unify actual expected
   else
     Error (type_mismatch actual expected)
+
+let binding_type_for_env
+    ~(value_expr : AST.expression)
+    ~(type_annotation : AST.type_expr option)
+    (stmt_type : mono_type) : mono_type =
+  match value_expr.expr with
+  | AST.Function _ -> stmt_type
+  | _ -> (
+      match type_annotation with
+      | None -> stmt_type
+      | Some type_expr -> (
+          match Annotation.type_expr_to_mono_type type_expr with
+          | Ok annotated_type -> annotated_type
+          | Error _ -> stmt_type))
 
 let%test "annotation_or_fresh preserves invalid intersection diagnostics" =
   match
@@ -4888,15 +4915,19 @@ and infer_let ?(prefer_existing_self = false) type_map env name expr type_annota
           | Error e -> Error (error_at ~code:e.code ~message:e.message expr)
           | Ok subst2 -> (
               let final_subst = compose_substitution subst1 subst2 in
+              propagate_type_var_constraints_through_substitution final_subst;
               let inferred_final_type = apply_substitution subst2 expr_type in
               let final_type_result =
-                match type_annotation with
-                | None -> Ok inferred_final_type
-                | Some type_expr -> (
-                    match Annotation.type_expr_to_mono_type type_expr with
-                    | Error d when d.Diagnostic.code = "type-open-row-rejected" -> Error d
-                    | Error d -> Error d
-                    | Ok t -> Ok t)
+                match expr.expr with
+                | AST.Function _ -> Ok inferred_final_type
+                | _ -> (
+                    match type_annotation with
+                    | None -> Ok inferred_final_type
+                    | Some type_expr -> (
+                        match Annotation.type_expr_to_mono_type type_expr with
+                        | Error d when d.Diagnostic.code = "type-open-row-rejected" -> Error d
+                        | Error d -> Error d
+                        | Ok t -> Ok t))
               in
               match final_type_result with
               | Error e -> Error e
@@ -4939,12 +4970,8 @@ and infer_block type_map env stmts =
                   env_subst
                 else
                   let binding_type =
-                    match let_binding.type_annotation with
-                    | None -> stmt_type
-                    | Some type_expr -> (
-                        match Annotation.type_expr_to_mono_type type_expr with
-                        | Ok annotated_type -> annotated_type
-                        | Error _ -> stmt_type)
+                    binding_type_for_env ~value_expr:let_binding.value
+                      ~type_annotation:let_binding.type_annotation stmt_type
                   in
                   let poly =
                     match let_binding.value.expr with
@@ -5101,12 +5128,8 @@ let infer_program ?(env = empty_env) ?state (program : AST.program) :
                   env
                 else
                   let binding_type =
-                    match let_binding.type_annotation with
-                    | None -> stmt_type
-                    | Some type_expr -> (
-                        match Annotation.type_expr_to_mono_type type_expr with
-                        | Ok annotated_type -> annotated_type
-                        | Error _ -> stmt_type)
+                    binding_type_for_env ~value_expr:let_binding.value
+                      ~type_annotation:let_binding.type_annotation stmt_type
                   in
                   let env_for_generalize = TypeEnv.remove let_binding.name env in
                   let poly =

@@ -1510,6 +1510,62 @@ let%test "followup C2: invalid function return intersection annotations are reje
   | Ok _ -> false
   | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-annotation-invalid") diags
 
+let%test "generic equality operator rejects function specialization without Eq" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  let code =
+    {|
+      fn same[a](x: a, y: a) -> Bool = x == y
+      fn id1(n: Int) -> Int = n
+      fn id2(n: Int) -> Int = n + 1
+      same(id1, id2)
+    |}
+  in
+  match check_string ~env:(Builtins.prelude_env ()) ~file_id:"main.mr" code with
+  | Ok _ -> false
+  | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-trait-missing-impl") diags
+
+let%test "generic ordering operator rejects array specialization without Ord" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  let code =
+    {|
+      fn less[a](x: a, y: a) -> Bool = x < y
+      less([1], [2])
+    |}
+  in
+  match check_string ~env:(Builtins.prelude_env ()) ~file_id:"main.mr" code with
+  | Ok _ -> false
+  | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-trait-missing-impl") diags
+
+let%test "generic arithmetic operator rejects bool specialization without Num" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  let code =
+    {|
+      fn add[a](x: a, y: a) = x + y
+      add(true, false)
+    |}
+  in
+  match check_string ~env:(Builtins.prelude_env ()) ~file_id:"main.mr" code with
+  | Ok _ -> false
+  | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-trait-missing-impl") diags
+
+let%test "spread-returning polymorphic function preserves wide record fields" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  let code =
+    {|
+      fn update_x(r, new_x) = { ...r, x: new_x }
+      let base = { x: 1, y: 20 }
+      let result = update_x(base, 5)
+      result.y
+    |}
+  in
+  match check_string ~file_id:"main.mr" code with
+  | Ok result -> result.result_type = Types.TInt
+  | Error _ -> false
+
 let%test "followup C2: record intersections satisfy field-only constraints" =
   Infer.reset_fresh_counter ();
   Trait_registry.clear ();
