@@ -1,0 +1,12 @@
+# R184: Spread-copied function field alias stays reusable across distinct wide shapes
+fn apply(f, r) = f(r)
+fn get_x(r) = r.x
+
+let base = { f: get_x, label: "base" }
+let copied = { ...base, extra: 1 }
+let alias = copied.f
+
+let left = apply(alias, { x: 10, y: 2 })
+let right = apply(alias, { x: 20, z: 3 })
+
+puts(left + right)  # output: 30

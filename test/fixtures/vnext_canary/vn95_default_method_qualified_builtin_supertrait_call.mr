@@ -1,0 +1,8 @@
+# VN95: Default methods can qualify a builtin supertrait call
+trait Describe[a]: Show = {
+  fn describe(x: a) -> Str = Show.show(x)
+}
+
+impl Describe[Int] = {}
+
+puts(7.describe())  # output: 7

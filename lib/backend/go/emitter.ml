@@ -168,6 +168,34 @@ let normalize_type_for_codegen ~(concrete_only : bool) (t : Types.mono_type) : T
   | Types.TIntersection members -> collapse_intersection_for_codegen_exn members
   | _ -> t
 
+let rec normalize_instantiation_type ~(concrete_only : bool) (t : Types.mono_type) : Types.mono_type =
+  match normalize_type_for_codegen ~concrete_only t with
+  | Types.TFun (arg, ret, eff) ->
+      Types.TFun
+        ( normalize_instantiation_type ~concrete_only arg,
+          normalize_instantiation_type ~concrete_only ret,
+          eff )
+  | Types.TArray elem -> Types.TArray (normalize_instantiation_type ~concrete_only elem)
+  | Types.THash (key, value) ->
+      Types.THash
+        (normalize_instantiation_type ~concrete_only key, normalize_instantiation_type ~concrete_only value)
+  | Types.TRecord (fields, row) ->
+      let normalized_fields =
+        List.map
+          (fun (field : Types.record_field_type) ->
+            { field with typ = normalize_instantiation_type ~concrete_only field.typ })
+          fields
+      in
+      let normalized_row = Option.map (normalize_instantiation_type ~concrete_only) row in
+      let normalized_fields, normalized_row = normalize_record_row_type normalized_fields normalized_row in
+      Types.TRecord (normalized_fields, normalized_row)
+  | Types.TUnion members -> Types.TUnion (List.map (normalize_instantiation_type ~concrete_only) members)
+  | Types.TIntersection members ->
+      Types.TIntersection (List.map (normalize_instantiation_type ~concrete_only) members)
+  | Types.TEnum (name, args) ->
+      Types.TEnum (name, List.map (normalize_instantiation_type ~concrete_only) args)
+  | t -> t
+
 let go_keywords =
   [
     "break";
@@ -1149,7 +1177,13 @@ let unique_instantiated_func_name (state : mono_state) (name : string) : string 
 
 let matches_instantiated_param (param_type : Types.mono_type) (arg_type : Types.mono_type) : bool =
   match param_type with
-  | Types.TUnion members -> List.exists (fun member -> member = arg_type) members
+  | Types.TUnion members ->
+      List.exists
+        (fun member ->
+          match Unify.unify (Types.canonicalize_mono_type member) (Types.canonicalize_mono_type arg_type) with
+          | Ok _ -> true
+          | Error _ -> false)
+        members
   | _ -> (
       match Unify.unify (Types.canonicalize_mono_type param_type) (Types.canonicalize_mono_type arg_type) with
       | Ok _ -> true
@@ -1166,6 +1200,21 @@ let instantiated_func_name_for_args (state : mono_state) (name : string) (arg_ty
   in
   match candidates with
   | [ inst ] -> Some (mangle_func_name name inst.concrete_types)
+  | _ -> None
+
+let instantiated_func_for_args
+    (state : mono_state)
+    (name : string)
+    (arg_types : Types.mono_type list) : instantiation option =
+  let candidates =
+    InstSet.elements state.instantiations
+    |> List.filter (fun (inst : instantiation) ->
+           inst.func_name = name
+           && List.length inst.concrete_types = List.length arg_types
+           && List.for_all2 matches_instantiated_param inst.concrete_types arg_types)
+  in
+  match candidates with
+  | [ inst ] -> Some inst
   | _ -> None
 
 let lookup_func_def_for_call (state : mono_state) (name : string) (arity : int) : func_def option =
@@ -1375,6 +1424,23 @@ let specialize_signature
     (declared_param_types : Types.mono_type list)
     (declared_return_type : Types.mono_type)
     (actual_param_types : Types.mono_type list) : (Types.mono_type list * Types.mono_type) option =
+  let rec is_callable_like (t : Types.mono_type) =
+    match Types.canonicalize_mono_type t with
+    | Types.TFun _ -> true
+    | Types.TUnion members -> List.exists is_callable_like members
+    | Types.TIntersection members -> List.exists is_callable_like members
+    | Types.TArray elem -> is_callable_like elem
+    | Types.THash (key, value) -> is_callable_like key || is_callable_like value
+    | Types.TRecord (fields, row) ->
+        List.exists (fun (field : Types.record_field_type) -> is_callable_like field.typ) fields
+        ||
+        (match row with
+        | Some row_type -> is_callable_like row_type
+        | None -> false)
+    | Types.TEnum (_, args) -> List.exists is_callable_like args
+    | Types.TInt | Types.TFloat | Types.TBool | Types.TString | Types.TNull | Types.TVar _ | Types.TRowVar _
+    | Types.TTraitObject _ -> false
+  in
   let rec unify_params subst actual_types expected_types =
     match (actual_types, expected_types) with
     | [], [] -> Some subst
@@ -1386,7 +1452,13 @@ let specialize_signature
         | Error _ -> None)
     | _ -> None
   in
-  match unify_params Types.empty_substitution declared_param_types actual_param_types with
+  let prioritized_pairs =
+    List.combine declared_param_types actual_param_types
+    |> List.sort (fun (_decl_a, actual_a) (_decl_b, actual_b) ->
+           compare (is_callable_like actual_a) (is_callable_like actual_b))
+  in
+  let declared_param_types', actual_param_types' = List.split prioritized_pairs in
+  match unify_params Types.empty_substitution declared_param_types' actual_param_types' with
   | None -> None
   | Some subst ->
       let specialized_params = List.map (Types.apply_substitution subst) declared_param_types in
@@ -1402,6 +1474,13 @@ let infer_return_type_from_signature
   | None -> None
 
 let add_instantiation (state : mono_state) (inst : instantiation) : unit =
+  let concrete_types =
+    List.map (normalize_instantiation_type ~concrete_only:state.concrete_only) inst.concrete_types
+  in
+  let return_type = normalize_instantiation_type ~concrete_only:state.concrete_only inst.return_type in
+  let inst =
+    { inst with concrete_types; return_type; type_fingerprint = fingerprint_types concrete_types }
+  in
   if state.concrete_only && List.exists has_type_vars inst.concrete_types then
     ()
   else
@@ -1461,6 +1540,25 @@ let add_impl_instantiation (state : mono_state) (inst : impl_instantiation) (pay
 
 let field_alias_key (record_name : string) (field_name : string) : string = record_name ^ "." ^ field_name
 
+let target_name_for_value_alias (state : mono_state) (value_expr : AST.expression) : string option =
+  match value_expr.expr with
+  | AST.Identifier target_name when is_user_func state target_name -> Some target_name
+  | AST.Identifier alias_name -> Hashtbl.find_opt state.value_func_aliases alias_name
+  | AST.FieldAccess ({ expr = AST.Identifier record_name; _ }, field_name) ->
+      Hashtbl.find_opt state.record_field_func_aliases (field_alias_key record_name field_name)
+  | _ -> None
+
+let value_alias_type
+    (state : mono_state)
+    (env : Infer.type_env)
+    (value_expr : AST.expression) : Types.mono_type option =
+  match target_name_for_value_alias state value_expr with
+  | Some target_name -> (
+      match Infer.TypeEnv.find_opt target_name env with
+      | Some (Types.Forall (_, t)) -> Some t
+      | None -> None)
+  | None -> None
+
 let rec contains_callable_union (t : Types.mono_type) : bool =
   match Types.canonicalize_mono_type t with
   | Types.TUnion members ->
@@ -1519,6 +1617,12 @@ let rec type_imprecision_score (t : Types.mono_type) : int =
       List.fold_left (fun acc arg -> acc + type_imprecision_score arg) 0 args
   | Types.TTraitObject _ | Types.TInt | Types.TFloat | Types.TBool | Types.TString | Types.TNull -> 0
 
+let prefer_more_precise_param_type (left : Types.mono_type) (right : Types.mono_type) : Types.mono_type =
+  if type_imprecision_score left <= type_imprecision_score right then
+    left
+  else
+    right
+
 let expr_type_from_env_or_map (env : Infer.type_env) (type_map : Infer.type_map) (expr : AST.expression) :
     Types.mono_type =
   match expr.expr with
@@ -1540,6 +1644,126 @@ let expr_type_from_env_or_map (env : Infer.type_env) (type_map : Infer.type_map)
       | None, None -> get_type type_map expr)
   | _ -> get_type type_map expr
 
+let arg_type_for_specialization
+    (state : mono_state)
+    (env : Infer.type_env)
+    (type_map : Infer.type_map)
+    (expr : AST.expression) : Types.mono_type =
+  match expr.expr with
+  | AST.Identifier alias_name -> (
+      match Hashtbl.find_opt state.value_func_aliases alias_name with
+      | Some target_name -> (
+          match Infer.TypeEnv.find_opt target_name env with
+          | Some (Types.Forall (_, func_type)) -> func_type
+          | None -> expr_type_from_env_or_map env type_map expr)
+      | None -> expr_type_from_env_or_map env type_map expr)
+  | _ -> expr_type_from_env_or_map env type_map expr
+
+let rec is_callable_like_type (t : Types.mono_type) =
+  match Types.canonicalize_mono_type t with
+  | Types.TFun _ -> true
+  | Types.TUnion members -> List.exists is_callable_like_type members
+  | Types.TIntersection members -> List.exists is_callable_like_type members
+  | Types.TArray elem -> is_callable_like_type elem
+  | Types.THash (key, value) -> is_callable_like_type key || is_callable_like_type value
+  | Types.TRecord (fields, row) ->
+      List.exists (fun (field : Types.record_field_type) -> is_callable_like_type field.typ) fields
+      ||
+      (match row with
+      | Some row_type -> is_callable_like_type row_type
+      | None -> false)
+  | Types.TEnum (_, args) -> List.exists is_callable_like_type args
+  | Types.TInt | Types.TFloat | Types.TBool | Types.TString | Types.TNull | Types.TVar _ | Types.TRowVar _
+  | Types.TTraitObject _ -> false
+
+let partially_specialize_declared_params_from_noncallable_args
+    (declared_param_types : Types.mono_type list)
+    (actual_param_types : Types.mono_type list) : Types.mono_type list =
+  let rec unify_pairs subst pairs =
+    match pairs with
+    | [] -> Some subst
+    | (declared_param_type, actual_param_type) :: rest -> (
+        let declared_param_type' = Types.apply_substitution subst declared_param_type in
+        let actual_param_type' = Types.apply_substitution subst actual_param_type in
+        match Unify.unify declared_param_type' actual_param_type' with
+        | Ok new_subst -> unify_pairs (Types.compose_substitution new_subst subst) rest
+        | Error _ -> None)
+  in
+  let noncallable_pairs =
+    List.combine declared_param_types actual_param_types
+    |> List.filter (fun (_declared_param_type, actual_param_type) ->
+           not (is_callable_like_type actual_param_type))
+  in
+  match unify_pairs Types.empty_substitution noncallable_pairs with
+  | Some subst -> List.map (Types.apply_substitution subst) declared_param_types
+  | None -> declared_param_types
+
+let refine_callable_param_types_from_user_args
+    (state : mono_state)
+    (env : Infer.type_env)
+    (type_map : Infer.type_map)
+    ~(args : AST.expression list)
+    (param_types : Types.mono_type list) : Types.mono_type list =
+  let rebuild_callable_type
+      (target_func_type : Types.mono_type)
+      (params : Types.mono_type list)
+      (return_type : Types.mono_type) : Types.mono_type =
+    let mk_fun =
+      match target_func_type with
+      | Types.TFun (_, _, true) -> Types.tfun_eff
+      | _ -> Types.tfun
+    in
+    List.fold_right (fun param acc -> mk_fun param acc) params return_type
+  in
+  let lookup_target_func_type (target_name : string) (arity : int) : Types.mono_type option =
+    let env_type_opt =
+      match Infer.TypeEnv.find_opt target_name env with
+      | Some (Types.Forall (_, target_func_type))
+        when Option.is_some (extract_param_types_exact arity target_func_type) -> Some target_func_type
+      | _ -> None
+    in
+    match env_type_opt with
+    | Some target_func_type -> Some target_func_type
+    | None -> (
+        match
+          List.find_opt
+            (fun (fd : func_def) -> fd.name = target_name && List.length fd.params = arity)
+            state.func_defs
+        with
+        | Some func_def -> Hashtbl.find_opt type_map func_def.func_expr_id
+        | None -> None)
+  in
+  List.map2
+    (fun (arg_expr : AST.expression) (param_type : Types.mono_type) ->
+      let target_name_opt =
+        match arg_expr.expr with
+        | AST.Identifier name when is_user_func state name -> Some name
+        | AST.Identifier alias_name -> (
+            match Hashtbl.find_opt state.value_func_aliases alias_name with
+            | Some target_name when is_user_func state target_name -> Some target_name
+            | _ -> None)
+        | _ -> None
+      in
+      match target_name_opt with
+      | Some target_name -> (
+          let arity = List.length (fst (extract_all_param_types param_type)) in
+          match callable_signature_exact arity param_type with
+          | Some (hint_params, _hint_ret) when hint_params <> [] && not (List.exists has_type_vars hint_params) -> (
+              match lookup_target_func_type target_name arity with
+              | Some target_func_type -> (
+                  match extract_param_types_exact arity target_func_type with
+                  | Some (target_params, target_ret) -> (
+                      match specialize_signature target_params target_ret hint_params with
+                      | Some (specialized_params, specialized_ret)
+                        when not (List.exists has_type_vars (specialized_ret :: specialized_params)) ->
+                          rebuild_callable_type target_func_type specialized_params specialized_ret
+                      | _ -> param_type)
+                  | None -> param_type)
+              | None -> param_type)
+          | _ -> param_type)
+      | None -> param_type)
+    args param_types
+
 let register_user_func_call_instantiation
     (state : mono_state)
     (type_map : Infer.type_map)
@@ -1550,7 +1774,7 @@ let register_user_func_call_instantiation
   let args = List.map (placeholder_rewritten_expr state.placeholder_rewrite_map) args in
   let arity = List.length args in
   let func_def_opt = lookup_func_def_for_call state target_name arity in
-  let raw_arg_types = List.map (expr_type_from_env_or_map env type_map) args in
+  let raw_arg_types = List.map (arg_type_for_specialization state env type_map) args in
   let declared_signature_opt =
     match Infer.TypeEnv.find_opt target_name env with
     | Some (Types.Forall (_, func_type)) -> extract_param_types_exact arity func_type
@@ -1580,31 +1804,33 @@ let register_user_func_call_instantiation
         specialize_signature declared_param_types declared_return arg_types
     | _ -> None
   in
-  let has_union_param =
-    List.exists
-      (function
-        | Types.TUnion _ -> true
-        | _ -> false)
-      declared_param_types
+  let inferred_call_return = get_type type_map call_expr in
+  let partially_specialized_params =
+    let partial =
+      partially_specialize_declared_params_from_noncallable_args declared_param_types arg_types
+    in
+    match declared_return_type_opt with
+    | Some declared_return -> (
+        match Unify.unify declared_return inferred_call_return with
+        | Ok return_subst -> List.map (Types.apply_substitution return_subst) partial
+        | Error _ -> partial)
+    | None -> partial
   in
   let concrete_param_types =
-    match specialized_declared_signature with
-    | Some (specialized_params, _specialized_return) when not (List.exists has_type_vars specialized_params) ->
-        List.map2
-          (fun actual specialized -> prefer_actual_codegen_param_type ~actual ~specialized)
-          arg_types specialized_params
-    | None ->
-        if has_union_param then
-          declared_param_types
-        else
-          arg_types
-    | Some _ ->
-        if has_union_param then
-          declared_param_types
-        else
-          arg_types
+    let base_param_types =
+      match specialized_declared_signature with
+      | Some (specialized_params, _specialized_return) when not (List.exists has_type_vars specialized_params) ->
+          List.map2
+            (fun actual specialized -> prefer_actual_codegen_param_type ~actual ~specialized)
+            arg_types specialized_params
+      | None -> arg_types
+      | Some _ -> arg_types
+    in
+    let refined_callable_hint_params =
+      refine_callable_param_types_from_user_args state env type_map ~args partially_specialized_params
+    in
+    List.map2 prefer_more_precise_param_type base_param_types refined_callable_hint_params
   in
-  let inferred_call_return = get_type type_map call_expr in
   let return_type =
     match declared_return_type_opt with
     | Some declared_return_type ->
@@ -1671,7 +1897,7 @@ let specialized_user_call_param_types
   | Some (Types.Forall (_, func_type)) -> (
       match extract_param_types_exact arity func_type with
       | Some (declared_param_types, declared_return_type) ->
-          let raw_arg_types = List.map (expr_type_from_env_or_map env type_map) args in
+          let raw_arg_types = List.map (arg_type_for_specialization state env type_map) args in
           let arg_types =
             List.map2
               (fun (arg_expr : AST.expression) (arg_type, declared_param_type) ->
@@ -1685,13 +1911,25 @@ let specialized_user_call_param_types
                 | None -> arg_type)
               args (List.combine raw_arg_types declared_param_types)
           in
-          Option.map
-            (fun (specialized_params, _specialized_return) ->
-              List.map2
-                (fun actual specialized ->
-                  prefer_actual_codegen_param_type ~actual ~specialized)
-                arg_types specialized_params)
-            (specialize_signature declared_param_types declared_return_type arg_types)
+          let partially_specialized_params =
+            partially_specialize_declared_params_from_noncallable_args declared_param_types arg_types
+          in
+          let selected_param_types =
+            let base_param_types =
+              match specialize_signature declared_param_types declared_return_type arg_types with
+              | Some (specialized_params, _specialized_return) ->
+                  List.map2
+                    (fun actual specialized ->
+                      prefer_actual_codegen_param_type ~actual ~specialized)
+                    arg_types specialized_params
+              | None -> arg_types
+            in
+            let refined_callable_hint_params =
+              refine_callable_param_types_from_user_args state env type_map ~args partially_specialized_params
+            in
+            List.map2 prefer_more_precise_param_type base_param_types refined_callable_hint_params
+          in
+          Some selected_param_types
       | None -> None)
   | None -> None
 
@@ -1761,9 +1999,12 @@ let rec collect_insts_stmt
       (* Use the type from the environment if it exists (from type checking),
          otherwise get from type_map *)
       let expr_type =
-        match Infer.TypeEnv.find_opt let_binding.name env with
-        | Some (Types.Forall (_, t)) -> t
-        | None -> get_type type_map let_binding.value
+        match value_alias_type state env let_binding.value with
+        | Some alias_type -> alias_type
+        | None -> (
+            match Infer.TypeEnv.find_opt let_binding.name env with
+            | Some (Types.Forall (_, t)) -> t
+            | None -> get_type type_map let_binding.value)
       in
       let env_with_binding = Infer.TypeEnv.add let_binding.name (Types.Forall ([], expr_type)) env in
       (* Pass the expected type to collect_insts_expr so it can use it for EnumConstructors *)
@@ -1779,7 +2020,8 @@ let rec collect_insts_stmt
           match Hashtbl.find_opt state.record_field_func_aliases (field_alias_key record_name field_name) with
           | Some target_name -> Hashtbl.replace state.value_func_aliases let_binding.name target_name
           | None -> Hashtbl.remove state.value_func_aliases let_binding.name)
-      | AST.RecordLit (fields, _) ->
+      | AST.RecordLit (fields, spread) ->
+          let explicit_field_names = List.map (fun (field : AST.record_field) -> field.field_name) fields in
           List.iter
             (fun (field : AST.record_field) ->
               match field.field_value with
@@ -1796,6 +2038,23 @@ let rec collect_insts_stmt
                   | _ -> ())
               | _ -> ())
             fields;
+          (match spread with
+          | Some { expr = AST.Identifier base_name; _ } ->
+              Hashtbl.iter
+                (fun key target_name ->
+                  let prefix = base_name ^ "." in
+                  if String.length key > String.length prefix
+                     && String.sub key 0 (String.length prefix) = prefix
+                  then
+                    let field_name =
+                      String.sub key (String.length prefix) (String.length key - String.length prefix)
+                    in
+                    if not (List.mem field_name explicit_field_names) then
+                      Hashtbl.replace state.record_field_func_aliases
+                        (field_alias_key let_binding.name field_name)
+                        target_name)
+                state.record_field_func_aliases
+          | _ -> ());
           Hashtbl.remove state.value_func_aliases let_binding.name
       | _ -> Hashtbl.remove state.value_func_aliases let_binding.name);
       env_with_binding
@@ -4193,21 +4452,20 @@ and emit_call state type_map env func args =
       let val_str = emit_expr state type_map env (List.nth args 1) in
       Printf.sprintf "push(%s, %s)" arr_str val_str
   | AST.Identifier name when is_user_func state.mono name ->
-      let param_types =
-        match user_call_target with
-        | Some target_name when String.equal target_name name -> call_param_types
-        | _ -> call_param_types
-      in
-      let mangled_name =
-        if List.exists has_type_vars param_types then
-          match instantiated_func_name_for_args state.mono name param_types with
-          | Some resolved_name -> resolved_name
+      let actual_arg_types = List.map (arg_type_for_specialization state.mono env type_map) args in
+      let param_types, mangled_name =
+        if List.exists has_type_vars call_param_types then
+          match instantiated_func_for_args state.mono name actual_arg_types with
+          | Some inst -> (inst.concrete_types, mangle_func_name name inst.concrete_types)
           | None -> (
-              match unique_instantiated_func_name state.mono name with
-              | Some resolved_name -> resolved_name
-              | None -> go_safe_ident name)
+              match instantiated_func_name_for_args state.mono name call_param_types with
+              | Some resolved_name -> (call_param_types, resolved_name)
+              | None -> (
+                  match unique_instantiated_func_name state.mono name with
+                  | Some resolved_name -> (call_param_types, resolved_name)
+                  | None -> (call_param_types, go_safe_ident name)))
         else
-          mangle_func_name name param_types
+          (call_param_types, mangle_func_name name call_param_types)
       in
       let args_str = emit_args_with_expected_types param_types in
       Printf.sprintf "%s(%s)" mangled_name args_str
@@ -4584,9 +4842,12 @@ and emit_stmt
         (* Use the type from the environment if it exists, otherwise get from type_map *)
         let go_binding_name = go_safe_ident let_binding.name in
         let expr_type =
-          match Infer.TypeEnv.find_opt let_binding.name env with
-          | Some (Types.Forall (_, t)) -> t
-          | None -> get_type type_map let_binding.value
+          match value_alias_type state.mono env let_binding.value with
+          | Some alias_type -> alias_type
+          | None -> (
+              match Infer.TypeEnv.find_opt let_binding.name env with
+              | Some (Types.Forall (_, t)) -> t
+              | None -> get_type type_map let_binding.value)
         in
         let expr_type =
           match let_binding.value.expr with
@@ -5072,7 +5333,7 @@ let emit_cached_impl_method
      global type_map. Re-infer the concrete body when possible so nested block
      expressions and calls recover precise concrete types. *)
   let effective_type_map =
-    if impl_inst.method_type_args = [] then
+    if Types.SubstMap.is_empty payload.specialization_subst && impl_inst.method_type_args = [] then
       copied_specialized_type_map ()
     else
       let inferred_map = Infer.create_type_map () in
@@ -5084,6 +5345,7 @@ let emit_cached_impl_method
       | Error _ ->
           copied_specialized_type_map ()
   in
+  ignore (collect_insts_stmt state.mono effective_type_map method_env payload.body_stmt);
   let body_str =
     with_return_type state payload.return_type (fun () ->
         emit_func_body state effective_type_map method_env payload.body_stmt)
@@ -5776,9 +6038,20 @@ let emit_program_with_typed_env
      can register any missing instantiations on demand. *)
   let main_body, _ = emit_stmts emit_state type_map typed_env program in
 
-  (* Generate specialized functions (enum types are generated AFTER all function
-     body emissions so that method-generic specializations can register new
-     enum instantiations like opt[String] via track_enum_inst) *)
+  (* Generate builtin trait impl functions *)
+  let builtin_impl_funcs = emit_builtin_impls program in
+
+  (* Generate trait impl functions *)
+  let impl_funcs =
+    ImplInstSet.elements mono_state.impl_instantiations
+    |> List.map (emit_cached_impl_method emit_state type_map typed_env)
+    |> String.concat "\n"
+  in
+  let inherent_funcs = emit_inherent_methods emit_state type_map typed_env program in
+  let derived_impl_funcs = emit_registry_derived_impls emit_state program in
+
+  (* Specialized functions are emitted after impl/inherent/default bodies so
+     those bodies can register any additional monomorphizations they reference. *)
   let specialized_funcs =
     let rec emit_pending (emitted : InstSet.t) (acc : string list) =
       let pending =
@@ -5798,18 +6071,6 @@ let emit_program_with_typed_env
     in
     emit_pending InstSet.empty []
   in
-
-  (* Generate builtin trait impl functions *)
-  let builtin_impl_funcs = emit_builtin_impls program in
-
-  (* Generate trait impl functions *)
-  let impl_funcs =
-    ImplInstSet.elements mono_state.impl_instantiations
-    |> List.map (emit_cached_impl_method emit_state type_map typed_env)
-    |> String.concat "\n"
-  in
-  let inherent_funcs = emit_inherent_methods emit_state type_map typed_env program in
-  let derived_impl_funcs = emit_registry_derived_impls emit_state program in
 
   (* Generate enum types AFTER all function body emissions so that
      method-generic specializations can register new enum instantiations *)

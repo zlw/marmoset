@@ -1,0 +1,13 @@
+# P105: Local polymorphic helper used as a callback survives two concrete HOF uses
+fn apply2(f, a, b) = f(a, b)
+
+fn run() => Str = {
+  let same = (x, y) -> x == y
+  if (apply2(same, 1, 1)) {
+    if (apply2(same, "ok", "ok")) { "ok" } else { "bad-str" }
+  } else {
+    "bad-int"
+  }
+}
+
+puts(run())  # output: ok
