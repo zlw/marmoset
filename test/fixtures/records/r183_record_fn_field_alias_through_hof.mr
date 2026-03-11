@@ -1,0 +1,6 @@
+# R183: Record function field alias stays callable through a HOF
+fn apply(box, r) = box.f(r)
+fn get_x(r) = r.x
+
+let box = { f: get_x }
+puts(apply(box, { x: 9, y: 1 }))  # output: 9
