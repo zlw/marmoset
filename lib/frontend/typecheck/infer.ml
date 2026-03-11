@@ -3686,7 +3686,12 @@ and infer_statement type_map env stmt =
         in
         convert te
       in
-      let convert_method_sig (m : AST.method_sig) : (Trait_registry.method_sig, Diagnostic.t) result =
+      let convert_method_header
+          (m : AST.method_sig) :
+          ((string list * (string * mono_type) list * mono_type * (string * string list) list
+           * [ `Pure | `Effectful ]),
+           Diagnostic.t)
+          result =
         (* Build method-level type variable names for recognition during conversion *)
         let method_generic_names =
           match m.method_generics with
@@ -3723,6 +3728,12 @@ and infer_statement type_map env stmt =
           | AST.Pure -> `Pure
           | AST.Effectful -> `Effectful
         in
+        Ok (method_generic_names, param_types, return_type, method_generics, method_effect)
+      in
+      let convert_method_sig (m : AST.method_sig) : (Trait_registry.method_sig, Diagnostic.t) result =
+        let* (method_generic_names, param_types, return_type, method_generics, method_effect) =
+          convert_method_header m
+        in
         let* method_generic_internal_vars =
           match m.method_default_impl with
           | None -> Ok []
@@ -3749,7 +3760,7 @@ and infer_statement type_map env stmt =
                 | Some tp ->
                     let old_constraints = Hashtbl.find_opt constraint_store tp in
                     let old_fields = Hashtbl.find_opt constrained_field_store tp in
-                    add_type_var_constraints tp supertraits;
+                    add_type_var_constraints tp (name :: supertraits);
                     Some (tp, old_constraints, old_fields)
                 | None -> None
               in
@@ -3833,6 +3844,33 @@ and infer_statement type_map env stmt =
         let* typ = convert_type_expr f.field_type in
         Ok { Types.name = f.field_name; typ }
       in
+      let* provisional_method_sigs =
+        map_result
+          (fun (m : AST.method_sig) ->
+            let* (_generic_names, param_types, return_type, method_generics, method_effect) =
+              convert_method_header m
+            in
+            Ok
+              {
+                Trait_registry.method_key =
+                  Resolution_artifacts.UserCallable { file_id = None; callable_id = m.method_sig_id };
+                method_name = m.method_name;
+                method_generics;
+                method_params = param_types;
+                method_return_type = return_type;
+                method_effect;
+                method_generic_internal_vars = [];
+                method_default_impl = m.method_default_impl;
+              })
+          methods
+      in
+      Trait_registry.register_trait
+        {
+          Trait_registry.trait_name = name;
+          trait_type_param = type_param;
+          trait_supertraits = supertraits;
+          trait_methods = provisional_method_sigs;
+        };
       let* method_sigs = map_result convert_method_sig methods in
       let* trait_fields = map_result convert_trait_field fields in
       let trait_def =
