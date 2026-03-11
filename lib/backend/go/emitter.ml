@@ -562,38 +562,6 @@ let record_shape_name (fields : Types.record_field_type list) : string =
   in
   "Record_" ^ field_bits
 
-(* Convert mono_type to Go type string for shape registration.
-   Needs to be defined before intern_record_shape since it's called during registration.
-   Mirrors type_to_go but without mono_state dependency for shape body generation. *)
-let rec mangle_type_to_go (t : Types.mono_type) : string =
-  match t with
-  | Types.TInt -> "int64"
-  | Types.TFloat -> "float64"
-  | Types.TBool -> "bool"
-  | Types.TString -> "string"
-  | Types.TNull -> "struct{}"
-  | Types.TVar _ -> "interface{}"
-  | Types.TFun _ as t ->
-      let rec collect_args = function
-        | Types.TFun (a, r, _) ->
-            let args, final_ret = collect_args r in
-            (a :: args, final_ret)
-        | ret -> ([], ret)
-      in
-      let args, final_ret = collect_args t in
-      let args_str = List.map mangle_type_to_go args |> String.concat ", " in
-      Printf.sprintf "func(%s) %s" args_str (mangle_type_to_go final_ret)
-  | Types.TArray elem -> "[]" ^ mangle_type_to_go elem
-  | Types.THash (key, value) -> "map[" ^ mangle_type_to_go key ^ "]" ^ mangle_type_to_go value
-  | Types.TRecord (fields, _row) ->
-      let fields, _ = normalize_record_row_type fields _row in
-      record_shape_name fields
-  | Types.TRowVar _ -> "interface{}"
-  | Types.TTraitObject _ -> "marmosetDyn"
-  | Types.TUnion _ -> "interface{}"
-  | Types.TIntersection members -> mangle_type_to_go (collapse_intersection_for_codegen_exn members)
-  | Types.TEnum _ -> mangle_type_for_shape t
-
 let go_record_field_name (name : string) : string = go_safe_ident name
 
 let merge_record_fields
@@ -612,10 +580,39 @@ let merge_record_fields
          | Some field -> field
          | None -> failwith "merge_record_fields: impossible missing field")
 
+let rec shape_field_type_to_go (state : mono_state) (t : Types.mono_type) : string =
+  match t with
+  | Types.TInt -> "int64"
+  | Types.TFloat -> "float64"
+  | Types.TBool -> "bool"
+  | Types.TString -> "string"
+  | Types.TNull -> "struct{}"
+  | Types.TVar _ -> "interface{}"
+  | Types.TFun _ as t ->
+      let rec collect_args = function
+        | Types.TFun (a, r, _) ->
+            let args, final_ret = collect_args r in
+            (a :: args, final_ret)
+        | ret -> ([], ret)
+      in
+      let args, final_ret = collect_args t in
+      let args_str = List.map (shape_field_type_to_go state) args |> String.concat ", " in
+      Printf.sprintf "func(%s) %s" args_str (shape_field_type_to_go state final_ret)
+  | Types.TArray elem -> "[]" ^ shape_field_type_to_go state elem
+  | Types.THash (key, value) -> "map[" ^ shape_field_type_to_go state key ^ "]" ^ shape_field_type_to_go state value
+  | Types.TRecord (fields, row) ->
+      let fields, _ = normalize_record_row_type fields row in
+      intern_record_shape state fields
+  | Types.TRowVar _ -> "interface{}"
+  | Types.TTraitObject _ -> "marmosetDyn"
+  | Types.TUnion _ -> "interface{}"
+  | Types.TIntersection members -> shape_field_type_to_go state (collapse_intersection_for_codegen_exn members)
+  | Types.TEnum _ -> mangle_type_for_shape t
+
 (* Register a record shape and return its display name.
    If a type alias is registered for this shape, uses the alias name.
    If already registered, returns existing name (dedup). *)
-let intern_record_shape (state : mono_state) (fields : Types.record_field_type list) : string =
+and intern_record_shape (state : mono_state) (fields : Types.record_field_type list) : string =
   let fields = Types.normalize_record_fields fields in
   let canonical_name = record_shape_name fields in
   (* Determine display name: alias name if registered, otherwise canonical *)
@@ -629,7 +626,7 @@ let intern_record_shape (state : mono_state) (fields : Types.record_field_type l
        List.map
          (fun (f : Types.record_field_type) ->
            let go_name = go_record_field_name f.name in
-           Printf.sprintf "%s %s" go_name (mangle_type_to_go f.typ))
+           Printf.sprintf "%s %s" go_name (shape_field_type_to_go state f.typ))
          fields
      in
      Hashtbl.replace state.record_shapes display_name (String.concat "; " go_fields));
@@ -2127,9 +2124,10 @@ and collect_insts_expr
           (* Real field access - collect insts in receiver *)
           collect_insts_expr state type_map env receiver)
   | AST.MethodCall { mc_receiver = receiver; mc_method = method_name; mc_args = args; _ } -> (
+      let method_resolution = Hashtbl.find_opt state.call_resolution_map expr.id in
       (* Check if this is an enum constructor and register it *)
-      match receiver.expr with
-      | AST.Identifier enum_name when Typecheck.Enum_registry.lookup enum_name <> None ->
+      match (receiver.expr, method_resolution) with
+      | AST.Identifier enum_name, None when Typecheck.Enum_registry.lookup enum_name <> None ->
           (* This is an enum constructor - track it like EnumConstructor *)
           let enum_type = get_type type_map expr in
           track_enum_inst state enum_type;
@@ -2138,7 +2136,6 @@ and collect_insts_expr
       | _ -> (
           (* Real method call - collect insts in receiver and args *)
           List.iter (fun arg -> collect_insts_expr state type_map env arg) args;
-          let method_resolution = Hashtbl.find_opt state.call_resolution_map expr.id in
           match method_resolution with
           | Some (Infer.QualifiedTraitMethod trait_name) ->
               (* Qualified: first arg is receiver *)
@@ -2603,9 +2600,10 @@ let rec emit_expr
             let receiver_str = emit_expr state type_map env receiver in
             Printf.sprintf "(%s).%s" receiver_str (go_record_field_name variant_name))
     | AST.MethodCall { mc_receiver = receiver; mc_method = variant_name; mc_args = args; _ } -> (
+        let method_resolution = Hashtbl.find_opt state.mono.call_resolution_map expr.id in
         (* Check if this is an enum constructor — bound variables shadow enum names *)
-        match receiver.expr with
-        | AST.Identifier enum_name
+        match (receiver.expr, method_resolution) with
+        | AST.Identifier enum_name, None
           when Typecheck.Enum_registry.lookup enum_name <> None && Infer.TypeEnv.find_opt enum_name env = None ->
             (* This is an enum constructor - emit like EnumConstructor *)
             (* Use expected_type when available, otherwise fall back to inferred constructor type. *)
@@ -2639,7 +2637,6 @@ let rec emit_expr
         | _ -> (
             (* Real method call - emit using typechecker-selected method source *)
             (* Use method-resolution metadata from typechecking; codegen must not re-resolve. *)
-            let method_resolution = Hashtbl.find_opt state.mono.call_resolution_map expr.id in
             let method_type_args =
               match Hashtbl.find_opt state.mono.method_type_args_map expr.id with
               | Some args -> args
@@ -6213,6 +6210,14 @@ let%test "type alias replaces generated shape name" =
       not (string_contains code "Record_x_int64_y_int64")
   | Error _ -> false
 
+let%test "nested record aliases use alias names inside enclosing shapes" =
+  match
+    compile_string ~file_id:"<codegen>"
+      "type Inner = { v: Int }\ntype Outer = { i: Inner }\nlet i: Inner = { v: 1 }\nlet o: Outer = { i: i }\no.i.v"
+  with
+  | Ok (code, _) -> string_contains code "type Outer struct{i Inner}"
+  | Error _ -> false
+
 let%test "emitter method calls use typechecker resolution metadata" =
   let source =
     {|
@@ -6295,6 +6300,29 @@ v.ping()
           with
           | Some code -> string_contains code "inherent_ping_int64"
           | None -> false))
+
+let%test "qualified inherent calls on enum types bypass constructor emission" =
+  let source =
+    {|
+enum Box = {
+  Val(Int),
+  Empty,
+}
+impl Box = {
+  fn describe(b: Box) -> Str = {
+    match b {
+      case Box.Val(n): "val:" + n.show()
+      case Box.Empty: "empty"
+    }
+  }
+}
+let b = Box.Val(42)
+puts(Box.describe(b))
+|}
+  in
+  match compile_string ~file_id:"<codegen>" source with
+  | Ok (code, _) -> string_contains code "puts(inherent_describe_Box(b))"
+  | Error _ -> false
 
 let%test "canonical builtin names in concrete inherent targets do not get treated as generic binders" =
   let source =

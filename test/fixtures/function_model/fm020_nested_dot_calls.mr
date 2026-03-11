@@ -1,4 +1,3 @@
-# xfail: codegen issue with nested type alias record fields
 type Inner = { v: Int }
 type Outer = { i: Inner }
 

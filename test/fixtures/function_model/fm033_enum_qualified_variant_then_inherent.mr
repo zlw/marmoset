@@ -1,4 +1,3 @@
-# xfail: enum qualified inherent method not implemented
 enum Box = { Val(Int), Empty }
 
 impl Box = {

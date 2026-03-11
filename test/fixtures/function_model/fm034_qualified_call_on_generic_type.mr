@@ -1,4 +1,3 @@
-# xfail: qualified type calls not implemented
 enum Opt[a] = { Some(a), None }
 
 impl[a] Opt[a] = {
