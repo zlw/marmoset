@@ -1,4 +1,3 @@
-# xfail: legacy bare trait-as-type syntax was removed by syntax-rework; method trait objects move to follow-up Dyn syntax
 # T109: Diamond supertrait inherits shared field once
 trait Named = {
   name: Str
@@ -10,5 +9,5 @@ trait Resident: Named = {
   city: Str
 }
 trait Citizen: Worker & Resident = {}
-let x: Citizen = { name: "alice", job: "eng", city: "sf", extra: true }
+let x: Citizen = { name: "alice", job: "eng", city: "sf", extra: true }  # error: cannot be used as a type in vNext
 puts(x.name)  # output: alice

@@ -1,7 +1,6 @@
-# xfail: legacy bare trait-as-type syntax was removed by syntax-rework; method trait objects move to follow-up Dyn syntax
 # TF29: Trait object hides extra fields while constrained generic allows access to declared fields
 trait HasName = {
   name: Str
 }
-let x: HasName = { name: "test", extra: 1 }
-puts(x.extra)  # error: Record field 'extra' not found
+let x: HasName = { name: "test", extra: 1 }  # error: cannot be used as a type in vNext
+puts(x.extra)

@@ -1,8 +1,7 @@
-# xfail: legacy bare trait-as-type syntax was removed by syntax-rework; method trait objects move to follow-up Dyn syntax
 # T30: Field-only trait object returned from annotated function still hides non-projected fields
 trait Named = {
   name: Str
 }
-fn mk(age: Int) -> Named = { name: "alice", age: age }
+fn mk(age: Int) -> Named = { name: "alice", age: age }  # error: cannot be used as a type in vNext
 let x = mk(1)
-puts(x.age)  # error: Record field 'age' not found in type
+puts(x.age)

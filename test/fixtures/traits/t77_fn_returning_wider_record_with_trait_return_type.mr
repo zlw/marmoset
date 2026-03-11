@@ -1,8 +1,7 @@
-# xfail: legacy bare trait-as-type syntax was removed by syntax-rework; method trait objects move to follow-up Dyn syntax
 # T77: Fn returning wider record with trait return type
 trait Named = {
   name: Str
 }
-fn mk_named(n: Str, a: Int) -> Named = { name: n, age: a }
+fn mk_named(n: Str, a: Int) -> Named = { name: n, age: a }  # error: cannot be used as a type in vNext
 let x = mk_named("alice", 30)
 puts(x.name)  # output: alice

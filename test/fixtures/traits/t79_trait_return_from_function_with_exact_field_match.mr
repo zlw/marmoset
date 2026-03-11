@@ -1,8 +1,7 @@
-# xfail: legacy bare trait-as-type syntax was removed by syntax-rework; method trait objects move to follow-up Dyn syntax
 # T79: Trait return from function with exact field match
 trait Named = {
   name: Str
 }
-fn mk() -> Named = { name: "alice" }
+fn mk() -> Named = { name: "alice" }  # error: cannot be used as a type in vNext
 let x = mk()
 puts(x.name)  # output: alice

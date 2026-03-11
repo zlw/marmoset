@@ -1,8 +1,7 @@
-# xfail: legacy bare trait-as-type syntax was removed by syntax-rework; method trait objects move to follow-up Dyn syntax
 # T83: Multi-field trait object hides non-declared fields
 trait PersonLike = {
   name: Str
   age: Int
 }
-let x: PersonLike = { name: "alice", age: 30, active: true }
-puts(x.active)  # error: Record field 'active' not found in type
+let x: PersonLike = { name: "alice", age: 30, active: true }  # error: cannot be used as a type in vNext
+puts(x.active)

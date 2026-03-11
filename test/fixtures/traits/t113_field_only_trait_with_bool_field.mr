@@ -1,7 +1,6 @@
-# xfail: legacy bare trait-as-type syntax was removed by syntax-rework; method trait objects move to follow-up Dyn syntax
 # T113: Field-only trait with Bool field
 trait Togglable = {
   active: Bool
 }
-let x: Togglable = { active: true, name: "switch" }
+let x: Togglable = { active: true, name: "switch" }  # error: cannot be used as a type in vNext
 puts(x.active)  # output: true

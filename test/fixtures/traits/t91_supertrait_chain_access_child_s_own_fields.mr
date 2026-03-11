@@ -1,4 +1,3 @@
-# xfail: legacy bare trait-as-type syntax was removed by syntax-rework; method trait objects move to follow-up Dyn syntax
 # T91: Supertrait chain: access child's own fields
 trait Named = {
   name: Str
@@ -6,5 +5,5 @@ trait Named = {
 trait Described: Named = {
   description: Str
 }
-let x: Described = { name: "alice", description: "a person", hobby: "chess" }
+let x: Described = { name: "alice", description: "a person", hobby: "chess" }  # error: cannot be used as a type in vNext
 puts(x.description)  # output: a person

@@ -1,4 +1,3 @@
-# xfail: legacy bare trait-as-type syntax was removed by syntax-rework; method trait objects move to follow-up Dyn syntax
 # T93: Three-level supertrait chain exposes all ancestor fields
 trait Named = {
   name: Str
@@ -9,5 +8,5 @@ trait Aged: Named = {
 trait Profiled: Aged = {
   status: Str
 }
-let x: Profiled = { name: "alice", age: 30, status: "active", secret: true }
+let x: Profiled = { name: "alice", age: 30, status: "active", secret: true }  # error: cannot be used as a type in vNext
 puts(x.name + " " + x.age.show() + " " + x.status)  # output: alice 30 active

@@ -1,7 +1,6 @@
-# xfail: legacy bare trait-as-type syntax was removed by syntax-rework; method trait objects move to follow-up Dyn syntax
 # T114: Field-only trait with Float field
 trait Measured = {
   value: Float
 }
-let x: Measured = { value: 3.14, unit: "m" }
+let x: Measured = { value: 3.14, unit: "m" }  # error: cannot be used as a type in vNext
 puts(x.value)  # output: 3.14

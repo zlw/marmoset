@@ -1,7 +1,6 @@
-# xfail: legacy bare trait-as-type syntax was removed by syntax-rework; method trait objects move to follow-up Dyn syntax
 # T31: Field-only trait object does not allow method dispatch
 trait Named = {
   name: Str
 }
-let x: Named = { name: "alice", age: 1 }
-puts(x.show())  # error: No method 'show' found for type
+let x: Named = { name: "alice", age: 1 }  # error: cannot be used as a type in vNext
+puts(x.show())

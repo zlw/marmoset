@@ -1,4 +1,3 @@
-# xfail: legacy bare trait-as-type syntax was removed by syntax-rework; method trait objects move to follow-up Dyn syntax
 # T100: Two traits with same field name (same type) used separately
 trait Named = {
   name: Str
@@ -6,6 +5,6 @@ trait Named = {
 trait Labeled = {
   name: Str
 }
-let a: Named = { name: "alice", x: 1 }
+let a: Named = { name: "alice", x: 1 }  # error: cannot be used as a type in vNext
 let b: Labeled = { name: "bob", y: 2 }
 puts(a.name + " " + b.name)  # output: alice bob

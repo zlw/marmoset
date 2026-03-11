@@ -1,8 +1,7 @@
-# xfail: legacy bare trait-as-type syntax was removed by syntax-rework; method trait objects move to follow-up Dyn syntax
 # T28: Type-alias to field-only trait object still hides non-projected fields
 trait Named = {
   name: Str
 }
-type NameAlias = Named
+type NameAlias = Named  # error: cannot be used as a type in vNext
 let x: NameAlias = { name: "alice", age: 1 }
-puts(x.age)  # error: Record field 'age' not found in type
+puts(x.age)

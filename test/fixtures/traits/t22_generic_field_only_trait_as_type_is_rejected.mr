@@ -1,6 +1,5 @@
-# xfail: legacy bare trait-as-type syntax was removed by syntax-rework; method trait objects move to follow-up Dyn syntax
 # T22: Generic field-only trait as type is rejected
-trait Tagged[a] = {  # error: generic field-only trait objects are not supported in this phase
+trait Tagged[a] = {
   tag: a
 }
-let x: Tagged = { tag: 1 }
+let x: Tagged = { tag: 1 }  # error: cannot be used as a type in vNext

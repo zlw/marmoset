@@ -1,4 +1,3 @@
-# xfail: legacy bare trait-as-type syntax was removed by syntax-rework; method trait objects move to follow-up Dyn syntax
 # T92: Supertrait chain hides non-declared fields from all levels
 trait Named = {
   name: Str
@@ -6,5 +5,5 @@ trait Named = {
 trait Described: Named = {
   description: Str
 }
-let x: Described = { name: "alice", description: "a person", hobby: "chess" }
-puts(x.hobby)  # error: Record field 'hobby' not found in type
+let x: Described = { name: "alice", description: "a person", hobby: "chess" }  # error: cannot be used as a type in vNext
+puts(x.hobby)

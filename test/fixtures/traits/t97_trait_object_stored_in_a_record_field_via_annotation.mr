@@ -1,8 +1,7 @@
-# xfail: legacy bare trait-as-type syntax was removed by syntax-rework; method trait objects move to follow-up Dyn syntax
 # T97: Trait object stored in a record field via annotation
 trait Named = {
   name: Str
 }
-let person: Named = { name: "bob", age: 25 }
+let person: Named = { name: "bob", age: 25 }  # error: cannot be used as a type in vNext
 let wrapper = { inner: person }
 puts(wrapper.inner.name)  # output: bob

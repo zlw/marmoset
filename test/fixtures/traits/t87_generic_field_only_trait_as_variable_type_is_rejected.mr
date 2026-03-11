@@ -1,6 +1,5 @@
-# xfail: legacy bare trait-as-type syntax was removed by syntax-rework; method trait objects move to follow-up Dyn syntax
 # T87: Generic field-only trait as variable type is rejected
-trait Container[a] = {  # error: generic field-only trait objects are not supported in this phase
+trait Container[a] = {
   value: a
 }
-let x: Container = { value: 42 }
+let x: Container = { value: 42 }  # error: cannot be used as a type in vNext

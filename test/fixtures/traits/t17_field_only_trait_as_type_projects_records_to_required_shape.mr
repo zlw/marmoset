@@ -1,7 +1,6 @@
-# xfail: legacy bare trait-as-type syntax was removed by syntax-rework; method trait objects move to follow-up Dyn syntax
 # T17: Field-only trait as type projects records to required shape
 trait Named = {
   name: Str
 }
-let x: Named = { name: "alice", age: 42 }
+let x: Named = { name: "alice", age: 42 }  # error: cannot be used as a type in vNext
 puts(x.name)  # output: alice

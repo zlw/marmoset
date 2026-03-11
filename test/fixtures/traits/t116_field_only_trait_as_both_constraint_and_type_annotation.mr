@@ -1,8 +1,7 @@
-# xfail: legacy bare trait-as-type syntax was removed by syntax-rework; method trait objects move to follow-up Dyn syntax
 # T116: Field-only trait as both constraint and type annotation
 trait Named = {
   name: Str
 }
 fn get_name[t: Named](x: t) -> Str = x.name
-let p: Named = { name: "alice", age: 30 }
+let p: Named = { name: "alice", age: 30 }  # error: cannot be used as a type in vNext
 puts(p.name + " " + get_name({ name: "bob", role: "admin" }))  # output: alice bob

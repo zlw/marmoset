@@ -1,9 +1,8 @@
-# xfail: legacy bare trait-as-type syntax was removed by syntax-rework; method trait objects move to follow-up Dyn syntax
 # T80: If branches with extra fields and trait return
 trait Named = {
   name: Str
 }
-fn describe(age: Int) -> Named = {
+fn describe(age: Int) -> Named = {  # error: cannot be used as a type in vNext
   if (age < 30) {
     { name: "young", category: "a" }
   } else {

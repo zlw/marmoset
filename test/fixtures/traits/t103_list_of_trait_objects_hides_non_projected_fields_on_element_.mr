@@ -1,8 +1,7 @@
-# xfail: legacy bare trait-as-type syntax was removed by syntax-rework; method trait objects move to follow-up Dyn syntax
 # T103: List of trait objects hides non-projected fields on element access
 trait Named = {
   name: Str
 }
-let a: Named = { name: "alice", role: "admin" }
+let a: Named = { name: "alice", role: "admin" }  # error: cannot be used as a type in vNext
 let xs: List[Named] = [a]
-puts(xs[0].role)  # error: Record field 'role' not found in type
+puts(xs[0].role)

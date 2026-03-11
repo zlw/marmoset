@@ -1,9 +1,8 @@
-# xfail: legacy bare trait-as-type syntax was removed by syntax-rework; method trait objects move to follow-up Dyn syntax
 # T18: Field-only trait object arrays can be built from annotated values
 trait Named = {
   name: Str
 }
-let person: Named = { name: "alice", age: 42 }
+let person: Named = { name: "alice", age: 42 }  # error: cannot be used as a type in vNext
 let company: Named = { name: "acme", employees: 10 }
 let xs: List[Named] = [person, company]
 puts(xs[1].name)  # output: acme
