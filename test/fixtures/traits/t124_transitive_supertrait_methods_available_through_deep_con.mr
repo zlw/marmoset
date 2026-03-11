@@ -1,0 +1,36 @@
+# T124: Transitive supertrait methods are available through a deeper constraint
+trait Eq[a] = {
+  fn eq(x: a, y: a) -> Bool
+}
+
+trait Ord[a]: Eq = {
+  fn compare(x: a, y: a) -> Int
+}
+
+trait Ranked[a]: Ord = {
+  fn bucket(x: a) -> Str
+}
+
+type Score = { value: Int }
+
+impl Eq[Score] = {
+  fn eq(x: Score, y: Score) -> Bool = x.value == y.value
+}
+
+impl Ord[Score] = {
+  fn compare(x: Score, y: Score) -> Int = x.value - y.value
+}
+
+impl Ranked[Score] = {
+  fn bucket(x: Score) -> Str = {
+    if (x.value < 10) { "low" } else { "high" }
+  }
+}
+
+fn describe[a: Ranked](x: a, y: a) -> Str = {
+  if (x.eq(y)) { "same:" + x.bucket() } else { x.compare(y).show() + ":" + y.bucket() }
+}
+
+let left: Score = { value: 2 }
+let right: Score = { value: 2 }
+puts(describe(left, right))  # output: same:low

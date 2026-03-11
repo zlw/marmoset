@@ -1638,6 +1638,41 @@ let%test "validate_impl accepts child impl without inherited supertrait methods"
   | Ok () -> true
   | Error _ -> false
 
+let%test "validate_impl does not require inherited supertrait methods in child impls" =
+  clear ();
+  register_trait
+    {
+      trait_name = "base";
+      trait_type_param = Some "a";
+      trait_supertraits = [];
+      trait_methods = [ mk_method_sig ~name:"name" ~params:[ ("x", TVar "a") ] ~return_type:TString () ];
+    };
+  register_trait
+    {
+      trait_name = "ext";
+      trait_type_param = Some "a";
+      trait_supertraits = [ "base" ];
+      trait_methods = [ mk_method_sig ~name:"extra" ~params:[ ("x", TVar "a") ] ~return_type:TInt () ];
+    };
+  register_impl
+    {
+      impl_trait_name = "base";
+      impl_type_params = [];
+      impl_for_type = TInt;
+      impl_methods = [ mk_method_sig ~name:"name" ~params:[ ("x", TInt) ] ~return_type:TString () ];
+    };
+  match
+    validate_impl
+      {
+        impl_trait_name = "ext";
+        impl_type_params = [];
+        impl_for_type = TInt;
+        impl_methods = [ mk_method_sig ~name:"extra" ~params:[ ("x", TInt) ] ~return_type:TInt () ];
+      }
+  with
+  | Ok () -> true
+  | Error _ -> false
+
 let%test "validate_impl - wrong param count" =
   clear ();
   let eq_trait =

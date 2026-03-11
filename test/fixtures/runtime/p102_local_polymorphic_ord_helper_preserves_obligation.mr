@@ -1,0 +1,8 @@
+# P102: Local polymorphic ordering helper preserves Ord obligation
+fn classify[t: Ord](a: t, b: t) -> Str = {
+  let less = (x, y) -> x < y
+  if (less(a, b)) { "lt" } else { if (less(b, a)) { "gt" } else { "eq" } }
+}
+
+puts(classify(1, 2))  # output: lt
+puts(classify(4, 4))  # output: eq

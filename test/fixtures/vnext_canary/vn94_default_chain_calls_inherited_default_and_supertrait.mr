@@ -1,0 +1,17 @@
+# VN94: Default method chains can call inherited defaults and supertrait methods
+trait Describe[a]: Show = {
+  fn describe(x: a) -> Str = {
+    "value:" + x.show()
+  }
+}
+
+trait Loud[a]: Describe = {
+  fn loud(x: a) -> Str = {
+    x.describe() + "!"
+  }
+}
+
+impl Describe[Int] = {}
+impl Loud[Int] = {}
+
+puts(7.loud())  # output: value:7!

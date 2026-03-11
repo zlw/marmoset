@@ -1,0 +1,8 @@
+# P101: Local polymorphic equality helper preserves Eq obligation
+fn describe_same[t: Eq & Show](a: t, b: t) -> Str = {
+  let same = (x, y) -> x == y
+  if (same(a, b)) { "same:" + a.show() } else { "diff:" + b.show() }
+}
+
+puts(describe_same("hi", "hi"))  # output: same:hi
+puts(describe_same(1, 2))        # output: diff:2
