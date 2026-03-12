@@ -5228,22 +5228,34 @@ and infer_let ?(prefer_existing_self = false) type_map env name expr type_annota
               let final_subst = compose_substitution subst1 subst2 in
               propagate_type_var_constraints_through_substitution final_subst;
               let inferred_final_type = apply_substitution subst2 expr_type in
+              let actual_expr_type = apply_substitution final_subst expr_type in
               let final_type_result =
-                match expr.expr with
-                | AST.Function _ -> Ok inferred_final_type
-                | _ -> (
-                    match type_annotation with
-                    | None -> Ok inferred_final_type
-                    | Some type_expr -> (
-                        match Annotation.type_expr_to_mono_type type_expr with
-                        | Error d when d.Diagnostic.code = "type-open-row-rejected" -> Error d
-                        | Error d -> Error d
-                        | Ok t -> Ok t))
+                match type_annotation with
+                | None -> Ok inferred_final_type
+                | Some type_expr -> (
+                    match Annotation.type_expr_to_mono_type type_expr with
+                    | Error d -> Error d
+                    | Ok annotated_type ->
+                        if
+                          Annotation.check_annotation annotated_type actual_expr_type
+                          || intersection_annotation_compatible actual_expr_type annotated_type
+                        then
+                          (match expr.expr with
+                          | AST.Function _ -> Ok inferred_final_type
+                          | _ -> Ok annotated_type)
+                        else
+                          Error
+                            (error_at ~code:"type-annotation-mismatch"
+                               ~message:
+                                 (Printf.sprintf "Type annotation mismatch for '%s': expected %s but inferred %s"
+                                    name
+                                    (Annotation.format_mono_type annotated_type)
+                                    (Annotation.format_mono_type actual_expr_type))
+                               expr))
               in
               match final_type_result with
               | Error e -> Error e
               | Ok final_type -> (
-                  let actual_expr_type = apply_substitution final_subst expr_type in
                   match
                     maybe_record_trait_object_coercion
                       ~mk_error:(fun ~code ~message -> error_at ~code ~message expr)
