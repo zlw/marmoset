@@ -62,7 +62,7 @@ Chosen:
 - Recursive-descent with expression precedence table plus a dedicated `Surface_ast`.
 
 Pros:
-- Keeps syntax migration/desugaring concerns out of the typechecker and emitter.
+- Keeps surface-syntax/desugaring concerns out of the typechecker and emitter.
 - Better control over recovery and domain-specific errors.
 
 Cons:

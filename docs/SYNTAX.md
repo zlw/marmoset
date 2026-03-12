@@ -16,7 +16,7 @@ This document has two layers:
 This is the language-level syntax and static-semantics spec for Marmoset vNext.
 
 It specifies the target vNext language surface only.
-Legacy migration syntax is no longer accepted by the compiler. Migration architecture and rollout history are recorded in `docs/plans/syntax-rework.md`.
+The compiler accepts only the syntax described here. Historical rollout notes live in `docs/plans/syntax-rework.md`.
 
 It defines:
 - Surface syntax.

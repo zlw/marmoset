@@ -108,7 +108,7 @@ assertRegexDoesNotMatch(repo["intersection-type"], "match", "Dyn[Show & Eq]", "i
 assertRegexMatches(repo["impl-block"], "begin", "impl[a: Show] Show[List[a]] = {", "impl-block begin");
 assert(
   !JSON.stringify(repo["impl-block"]).includes("\\\\b(for)"),
-  "impl-block should not advertise legacy for-syntax",
+  "impl-block should not advertise for-syntax",
 );
 assert(repo["derive-clause"], "derive-clause repository entry is missing");
 assertRegexMatches(repo["derive-clause"], "match", "derive Eq, Show", "derive-clause match");

@@ -26,7 +26,7 @@ let map_result f xs =
    We use poly_types (not mono_types) because let-bound variables
    can be polymorphic. For example:
    
-     let id = fn(x) { x };
+     fn id(x) = x
      id(5);      // id used at Int -> Int
      id(true);   // id used at Bool -> Bool
    

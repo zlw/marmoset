@@ -235,7 +235,7 @@ let find_param_names ~(program : Ast.AST.program) ~(name : string) : string list
   in
   search_stmts program
 
-(* Build a signature label string like "fn(x: Int, y: String) -> Bool"
+(* Build a signature label string like "show(x: Int, y: String) -> Bool"
    and return the byte offset ranges for each parameter within the label. *)
 let build_label
     ~(param_names : string list)

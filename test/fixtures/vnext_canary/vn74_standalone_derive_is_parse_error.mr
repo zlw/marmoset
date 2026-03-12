@@ -1,0 +1,7 @@
+# VN74: Standalone derive is a parse error
+enum Color = {
+  Red,
+  Blue,
+}
+
+derive Eq for Color  # error: unexpected Token.Derive found
