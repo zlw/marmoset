@@ -85,6 +85,18 @@ let tokens_are_on_different_lines (p : parser) : bool =
   in
   start_pos <= end_pos && loop start_pos
 
+let token_starts_line (p : parser) (t : Token.token) : bool =
+  let rec loop i =
+    if i < 0 then
+      true
+    else
+      match String.get p.lexer.input i with
+      | ' ' | '\t' -> loop (i - 1)
+      | '\n' | '\r' -> true
+      | _ -> false
+  in
+  loop (t.pos - 1)
+
 (* Helper to get fresh ID using the mutable id_supply *)
 let fresh_id (p : parser) : int = Id_supply.Id_supply.fresh p.id_supply
 
@@ -214,10 +226,6 @@ and parse_top_decl (p : parser) : (parser * Surface.top_decl, parser) result =
   | Token.Impl -> parse_impl_definition p
   | Token.Type -> parse_type_alias p
   | Token.Function when peek_token_is p Token.Ident -> parse_fn_decl_top p
-  | Token.Derive ->
-      Error
-        (add_error ~code:"parse-unexpected-token" p
-           "standalone derive is not supported; attach 'derive' to the preceding type or enum definition")
   | _ -> parse_expression_top p
 
 and parse_let_top (p : parser) : (parser * Surface.top_decl, parser) result =
@@ -601,12 +609,11 @@ and parse_enum_definition (p : parser) : (parser * Surface.top_decl, parser) res
 
   (* Check for postfix derive: } derive Eq, Show *)
   let* p8, derive =
-    if peek_token_is p7 Token.Derive then
+    if peek_token_is p7 Token.Derive && not (token_starts_line p7 p7.peek_token) then
       let p8 = next_token p7 in
       (* advance to 'derive' *)
       let* p9, traits = parse_derive_trait_list (next_token p8) in
-      let* p10 = reject_legacy_derive_tail p9 in
-      Ok (p10, traits)
+      Ok (p9, traits)
     else
       Ok (p7, [])
   in
@@ -693,15 +700,13 @@ and parse_type_alias (p : parser) : (parser * Surface.top_decl, parser) result =
 
   (* Check for postfix derive *)
   let* p6, derive =
-    if curr_token_is p5 Token.Derive then
+    if curr_token_is p5 Token.Derive && not (token_starts_line p5 p5.curr_token) then
       let* p6, traits = parse_derive_trait_list (next_token p5) in
-      let* p7 = reject_legacy_derive_tail p6 in
-      Ok (p7, traits)
-    else if peek_token_is p5 Token.Derive then
+      Ok (p6, traits)
+    else if peek_token_is p5 Token.Derive && not (token_starts_line p5 p5.peek_token) then
       let p5a = next_token p5 in
       let* p6, traits = parse_derive_trait_list (next_token p5a) in
-      let* p7 = reject_legacy_derive_tail p6 in
-      Ok (p7, traits)
+      Ok (p6, traits)
     else
       Ok (p5, [])
   in
@@ -1133,14 +1138,6 @@ and parse_derive_trait_list (p : parser) : (parser * AST.derive_trait list, pars
       Error (no_prefix_parse_fn_error lp lp.curr_token.token_type)
   in
   loop p []
-
-and reject_legacy_derive_tail (p : parser) : (parser, parser) result =
-  if curr_token_is p Token.Ident && String.equal p.curr_token.literal "for" then
-    Error
-      (add_error ~code:"parse-unexpected-token" p
-         "standalone derive is not supported; attach 'derive' to the preceding type or enum definition")
-  else
-    Ok p
 
 and parse_expression_stmt (p : parser) : (parser * Surface.surface_stmt, parser) result =
   let pos = p.curr_token.pos in
@@ -2696,7 +2693,7 @@ module Test = struct
     | Ok [ { AST.stmt = AST.Let { name = "panic!"; _ }; _ } ] -> true
     | _ -> false
 
-  let%test "anonymous fn literal is rejected after phase 7 cleanup" =
+  let%test "block-style function literal is rejected" =
     match parse ~file_id:"<test>" "let f = fn(x) { x }" with
     | Ok _ -> false
     | Error _ -> true
@@ -2827,7 +2824,7 @@ module Test = struct
         List.length impl_methods = 1
     | _ -> false
 
-  let%test "parse impl rejects legacy for syntax" =
+  let%test "parse impl requires bracket application syntax" =
     match parse ~file_id:"<test>" "impl Show for Int { fn show(x: Int) -> Str = { x } }" with
     | Ok _ -> false
     | Error _ -> true
@@ -3329,17 +3326,17 @@ let%test "parse impl method rejects missing equals before body" =
   | Ok _ -> false
   | Error _ -> true
 
-let%test "standalone derive statement is rejected" =
+let%test "standalone derive statement is a parse error" =
   let input = "derive Eq for Color" in
   let lexer = Lexer.init input in
   match parse_program (init ~file_id:"<test>" lexer) with
   | Ok _ -> false
   | Error _ -> true
 
-let%test "standalone derive after type alias is rejected directly by the parser" =
+let%test "standalone derive after type alias is a parse error" =
   match parse ~file_id:"<test>" "type Point = { x: Int }\nderive Eq for Point" with
   | Ok _ -> false
-  | Error errs -> List.exists (fun (d : Diagnostic.t) -> d.code = "parse-unexpected-token") errs
+  | Error _ -> true
 
 (* Phase 4.4: Type alias tests *)
 let%test "parse type - just keyword" =
@@ -3487,7 +3484,7 @@ let%test "parse function parameter annotation with function type" =
       | _ -> false)
   | Error _ -> false
 
-let%test "parse function type rejects legacy fn syntax" =
+let%test "parse function type requires parenthesized arrow syntax" =
   match parse ~file_id:"<test>" "type Endo = fn(Int) -> Int" with
   | Ok _ -> false
   | Error _ -> true
