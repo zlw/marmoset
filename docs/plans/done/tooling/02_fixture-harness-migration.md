@@ -1,5 +1,11 @@
 # Test Harness Rework (Detailed)
 
+## Maintenance
+
+- Last verified: 2026-03-12
+- Implementation status: Implemented
+- Type: Historical implementation plan
+
 ## Context
 
 The current integration harness has good coverage but too much mechanical variance:
@@ -27,7 +33,7 @@ Current measured helper usage in shell suites (excluding `common.sh` definitions
 | `test_emit_go_contains` | 2 |
 | `run_build_ok_not_contains_from_stdin` | 1 |
 
-The diagnostics rework (`docs/plans/diagnostics-rework.md`) will change formatting and introduce stable codes (e.g. `E-TYPE-MISMATCH`), so the next harness should be resilient to both current and future diagnostic output.
+The diagnostics rework (`docs/plans/done/tooling/01_diagnostics-rework.md`) will change formatting and introduce stable codes (e.g. `E-TYPE-MISMATCH`), so the next harness should be resilient to both current and future diagnostic output.
 
 ## Primary Goals
 

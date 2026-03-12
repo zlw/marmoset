@@ -1,11 +1,17 @@
 # Syntax Rework Plan
 
+## Maintenance
+
+- Last verified: 2026-03-12
+- Implementation status: Implemented
+- Type: Historical implementation plan
+
 ## Summary
 Rework Marmoset's surface syntax to the vNext style described in `docs/SYNTAX.md`, while keeping the compiler, fixtures, docs, LSP, and editor tooling aligned during migration.
 
 This revision turns the plan into an implementation document, not just a policy document. It defines the migration architecture, the lowering boundary, the staged rollout, and the verification gates required to land the work without letting parser changes sprawl into the rest of the compiler.
 
-Deferred post-rollout work remains in `docs/plans/syntax-rework-followup.md`.
+Deferred post-rollout work remains in `docs/plans/done/language/03_syntax-rework-followup.md`.
 
 ## Goals
 - Adopt the vNext declaration, type, trait, impl, derive, match, and lambda syntax in `docs/SYNTAX.md`.
@@ -16,7 +22,7 @@ Deferred post-rollout work remains in `docs/plans/syntax-rework-followup.md`.
 
 ## Non-Goals
 - Changing the runtime model or backend strategy.
-- Designing modules/imports beyond what is already locked in `docs/plans/module-system.md`.
+- Designing modules/imports beyond what is already locked in `docs/plans/todo/language/03_module-system.md`.
 - Adding a general optimization IR.
 - Depending on a formatter to make rollout possible.
 
@@ -53,14 +59,14 @@ Deferred post-rollout work remains in `docs/plans/syntax-rework-followup.md`.
 - Existing editor CI scripts do not yet prove grammar parity strongly enough for a syntax migration.
 
 ## Inputs Already Locked Elsewhere
-- `docs/plans/function-model.md`
+- `docs/plans/done/language/01_function-model.md`
   - keeps `.` as the universal qualifier,
   - keeps `->` vs `=>`,
   - locks method generics and method call type-arg syntax.
-- `docs/plans/module-system.md`
+- `docs/plans/todo/language/03_module-system.md`
   - depends on `.` as the unified qualifier,
   - will later add import/export syntax to the same parser family.
-- `docs/plans/diagnostics-rework.md`
+- `docs/plans/done/tooling/01_diagnostics-rework.md`
   - already treats harness adaptation as a first-class migration concern,
   - should shape migration diagnostics and staged verification.
 
@@ -121,7 +127,7 @@ Deferred post-rollout work remains in `docs/plans/syntax-rework-followup.md`.
 
 ### 6. Derive Scope For First Rollout
 - Syntax rework only needs parser/lowering support for user-trait derive syntax.
-- Full user-trait derive semantics remain follow-up work in `docs/plans/syntax-rework-followup.md`.
+- Full user-trait derive semantics remain follow-up work in `docs/plans/done/language/03_syntax-rework-followup.md`.
 
 ## Immediate Architecture Choice
 The central implementation choice for this plan is:
@@ -571,7 +577,7 @@ Tasks:
 
 Likely files:
 - `docs/SYNTAX.md`
-- `docs/plans/syntax-rework.md`
+- `docs/plans/done/language/02_syntax-rework.md`
 - `examples/new-syntax*.mr`
 
 Exit criteria:

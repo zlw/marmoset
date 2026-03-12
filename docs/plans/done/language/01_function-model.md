@@ -3,7 +3,8 @@
 ## Maintenance
 
 - Last verified against codebase: 2026-03-07
-- Status: Final executable plan (revised for module/FFI compatibility hooks)
+- Implementation status: Implemented
+- Type: Historical implementation plan
 - Owner areas:
   - frontend syntax + AST
   - frontend typecheck + registries
@@ -909,7 +910,7 @@ Finish rollout, remove temporary expectations, and sync docs.
 - `docs/features/traits.md`
 - `docs/features/inherent-methods.md`
 - `docs/ARCHITECTURE.md`
-- `docs/plans/function-model.md` (mark superseded)
+- this plan (keep as historical record)
 
 ### Steps
 

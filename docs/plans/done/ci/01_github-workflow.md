@@ -2,7 +2,8 @@
 
 ## Maintenance
 - Last verified: 2026-03-01
-- Implementation status: Planning (not started)
+- Implementation status: Implemented
+- Type: Historical implementation plan
 - Owner: DevOps / repository admins
 
 ## Goal

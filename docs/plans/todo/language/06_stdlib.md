@@ -5,7 +5,7 @@
 - Last verified: 2026-02-28
 - Implementation status: Planning (not started)
 - Update trigger: Any stdlib, FFI, or prelude change
-- Prerequisites: Module system, prelude (`docs/plans/prelude.md`), FFI (`docs/plans/ffi.md`)
+- Prerequisites: Module system, prelude (`docs/plans/todo/language/04_prelude.md`), FFI (`docs/plans/todo/language/05_ffi.md`)
 
 ## Context
 

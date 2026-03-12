@@ -5,7 +5,7 @@
 - Last verified: 2026-03-01
 - Implementation status: Planning (not started)
 - Update trigger: Any prelude/stdlib, builtin, or module system change
-- Prerequisites: Module system (docs/plans/module-system.md) must be implemented first
+- Prerequisites: Module system (docs/plans/todo/language/03_module-system.md) must be implemented first
 
 ## Context
 
@@ -100,7 +100,7 @@ trait Neg[a] = {
 }
 ```
 
-Core declarations ~30 lines. Inherent methods for option/result added in Phase S2 (requires method-level generics from `docs/plans/function-model.md`).
+Core declarations ~30 lines. Inherent methods for option/result added in Phase S2 (requires method-level generics from `docs/plans/done/language/01_function-model.md`).
 
 ---
 
@@ -170,7 +170,7 @@ Core declarations ~30 lines. Inherent methods for option/result added in Phase S
 
 **Prereqs:**
 - Generic inherent impls (being implemented separately by Codex).
-- Method-level generics `fn name[b](...)` syntax (`docs/plans/function-model.md` Phase F1).
+- Method-level generics `fn name[b](...)` syntax (`docs/plans/done/language/01_function-model.md` Phase F1).
 
 **Goal:** Add utility methods to prelude.mr.
 

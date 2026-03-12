@@ -1,9 +1,15 @@
 # Syntax Rework Follow-up Plan
 
+## Maintenance
+
+- Last verified: 2026-03-12
+- Implementation status: Implemented
+- Type: Historical implementation plan
+
 ## Summary
 Track language work intentionally deferred out of the core vNext syntax rework.
 
-This document assumes `docs/plans/syntax-rework.md` has completed through Phase 7 and that `docs/SYNTAX.md` is the stable vNext surface spec.
+This document assumes `docs/plans/done/language/02_syntax-rework.md` has completed through Phase 7 and that `docs/SYNTAX.md` is the stable vNext surface spec.
 
 All work in this document happens on the post-migration frontend/compiler pipeline:
 
@@ -18,13 +24,13 @@ This is follow-up language work, not another syntax migration. Do not reintroduc
 - Keep `docs/SYNTAX.md`, compiler behavior, tests, LSP output, tree-sitter grammar, and editor grammars synchronized.
 
 ## Non-Goals
-- Reopening the vNext syntax decisions already locked in `docs/plans/syntax-rework.md`.
+- Reopening the vNext syntax decisions already locked in `docs/plans/done/language/02_syntax-rework.md`.
 - Restoring the previous bare field-only trait-as-type surface syntax.
 - Mixing follow-up feature work into the legacy-syntax migration path.
 - Shipping new parser syntax without matching tests, docs, tree-sitter, and editor-grammar updates.
 
 ## Preconditions
-- `docs/plans/syntax-rework.md` Phase 7 exit criteria are met.
+- `docs/plans/done/language/02_syntax-rework.md` Phase 7 exit criteria are met.
 - Legacy syntax support has been removed from parser and lowering.
 - `docs/SYNTAX.md` is the only normative surface-syntax snapshot.
 - `UpperCamel` casing is already enforced for vNext type-space names.
