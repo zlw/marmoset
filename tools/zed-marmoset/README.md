@@ -10,10 +10,10 @@ Syntax highlighting, bracket matching, auto-indentation, and code outline for [M
 2. Run **zed: install dev extension**
 3. Select the `tools/zed-marmoset/` directory
 
-The dev extension reads the grammar from the local monorepo checkout:
-`repository = "file://../.."`, `path = "tools/tree-sitter-marmoset"`, and
-`rev = "HEAD"`. That keeps the extension pointed at the current repository
-instead of a separately pushed grammar revision.
+The checked-in manifest fetches the grammar from the main Marmoset repository at
+a pinned revision, with `path = "tools/tree-sitter-marmoset"`. That keeps dev
+installs portable instead of depending on a machine-specific local `file://`
+repository path.
 
 If a previous failed install left a stale grammar checkout under
 `tools/zed-marmoset/grammars/`, remove that directory and reinstall the dev
@@ -21,8 +21,9 @@ extension so Zed can clone the grammar again from a clean state.
 
 ### From source (after pushing)
 
-The extension manifest expects to be built from the monorepo checkout so the
-grammar is available at `tools/tree-sitter-marmoset/`.
+Update the pinned grammar `rev` in `extension.toml` when the tree-sitter
+grammar changes and you want the checked-in dev extension manifest to follow the
+new revision.
 
 ## Features
 
@@ -33,4 +34,4 @@ grammar is available at `tools/tree-sitter-marmoset/`.
 
 ## Requirements
 
-Depends on the `tree-sitter-marmoset` grammar in the local monorepo checkout.
+Depends on the `tree-sitter-marmoset` grammar in the main Marmoset repository.

@@ -7,9 +7,9 @@ description = "Marmoset language support for Zed — syntax highlighting, bracke
 repository = "https://github.com/zlw/marmoset"
 
 [grammars.marmoset]
-repository = "file://../.."
+repository = "https://github.com/zlw/marmoset"
 path = "tools/tree-sitter-marmoset"
-rev = "HEAD"
+rev = "2981e887633187b2e656f6a15a30f4e2a7cc7e24"
 
 [language_servers.marmoset-lsp]
 name = "marmoset-lsp"

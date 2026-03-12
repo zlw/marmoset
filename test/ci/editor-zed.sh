@@ -11,14 +11,15 @@ cargo check --locked
 
 python3 - <<'PY'
 import pathlib
+import re
 import tomllib
 
 data = tomllib.loads(pathlib.Path("extension.toml").read_text())
 grammar = data["grammars"]["marmoset"]
 
-assert grammar["repository"] == "file://../..", grammar
+assert grammar["repository"] == "https://github.com/zlw/marmoset", grammar
 assert grammar["path"] == "tools/tree-sitter-marmoset", grammar
-assert grammar["rev"] == "HEAD", grammar
+assert re.fullmatch(r"[0-9a-f]{40}", grammar["rev"]), grammar
 assert "commit" not in grammar, grammar
 PY
 
@@ -32,9 +33,9 @@ search_fixed() {
   fi
 }
 
-search_fixed 'rev = "HEAD"' extension.toml
+search_fixed 'repository = "https://github.com/zlw/marmoset"' extension.toml
 search_fixed 'path = "tools/tree-sitter-marmoset"' extension.toml
-search_fixed 'repository = "file://../.."' extension.toml
+search_fixed 'portable instead of depending on a machine-specific local `file://`' README.md
 search_fixed 'remove that directory and reinstall the dev' README.md
 search_fixed '"case" @keyword.conditional' languages/marmoset/highlights.scm
 search_fixed '"override" @keyword.modifier' languages/marmoset/highlights.scm
