@@ -9,7 +9,18 @@ ZED_DIR="$REPO_ROOT/tools/zed-marmoset"
 cd "$ZED_DIR"
 cargo check --locked
 
-EXPECTED_GRAMMAR_COMMIT="d7e2341c352f8099b5768310bbe24875c9f90c7e"
+python3 - <<'PY'
+import pathlib
+import tomllib
+
+data = tomllib.loads(pathlib.Path("extension.toml").read_text())
+grammar = data["grammars"]["marmoset"]
+
+assert grammar["repository"] == "file://../..", grammar
+assert grammar["path"] == "tools/tree-sitter-marmoset", grammar
+assert grammar["rev"] == "HEAD", grammar
+assert "commit" not in grammar, grammar
+PY
 
 search_fixed() {
   local needle="$1"
@@ -21,8 +32,10 @@ search_fixed() {
   fi
 }
 
-search_fixed "commit = \"$EXPECTED_GRAMMAR_COMMIT\"" extension.toml
-search_fixed 'correct `commit`' README.md
+search_fixed 'rev = "HEAD"' extension.toml
+search_fixed 'path = "tools/tree-sitter-marmoset"' extension.toml
+search_fixed 'repository = "file://../.."' extension.toml
+search_fixed 'remove that directory and reinstall the dev' README.md
 search_fixed '"case" @keyword.conditional' languages/marmoset/highlights.scm
 search_fixed '"override" @keyword.modifier' languages/marmoset/highlights.scm
 search_fixed '"=>" @operator' languages/marmoset/highlights.scm
