@@ -22,9 +22,11 @@ assert grammar["repository"] == "https://github.com/zlw/marmoset", grammar
 assert grammar["path"] == "tools/tree-sitter-marmoset", grammar
 assert re.fullmatch(r"[0-9a-f]{40}", grammar["rev"]), grammar
 assert "commit" not in grammar, grammar
+assert data["languages"] == ["languages/marmoset"], data
+assert data["lib"] == {"kind": "Rust", "version": "0.7.0"}, data
 
 node_types = {
-    item["type"]
+    item["type"]: item.get("fields", {})
     for item in json.loads(pathlib.Path("../tree-sitter-marmoset/src/node-types.json").read_text())
     if item.get("named")
 }
@@ -58,6 +60,23 @@ for query_path in pathlib.Path("languages/marmoset").glob("*.scm"):
     if unknown_nodes:
         raise AssertionError(f"{query_path}: unknown query nodes {unknown_nodes}")
 
+    stack = []
+    for line in text.splitlines():
+        field_match = re.match(r"^\s+([A-Za-z_][A-Za-z0-9_]*):", line)
+        if field_match and stack:
+            field = field_match.group(1)
+            node = stack[-1]
+            if field not in node_types[node]:
+                raise AssertionError(f"{query_path}: field {field!r} is invalid for node {node!r}")
+        for match in re.finditer(r"\(([A-Za-z_][A-Za-z0-9_!?\-]*)", line):
+            node = match.group(1)
+            if node in node_types:
+                stack.append(node)
+        closes = line.count(")")
+        while closes > 0 and stack:
+            stack.pop()
+            closes -= 1
+
     unknown_tokens = sorted(
         {
             m.group(1)
@@ -81,6 +100,8 @@ search_fixed() {
 
 search_fixed 'repository = "https://github.com/zlw/marmoset"' extension.toml
 search_fixed 'path = "tools/tree-sitter-marmoset"' extension.toml
+search_fixed 'languages = ["languages/marmoset"]' extension.toml
+search_fixed 'kind = "Rust"' extension.toml
 search_fixed 'portable instead of depending on a machine-specific local `file://`' README.md
 search_fixed 'remove that directory and reinstall the dev' README.md
 search_fixed '"case" @keyword.conditional' languages/marmoset/highlights.scm
@@ -93,3 +114,4 @@ search_fixed '(lambda_expression' languages/marmoset/highlights.scm
 search_fixed '(derive_clause' languages/marmoset/highlights.scm
 search_fixed '(fn_declaration' languages/marmoset/outline.scm
 search_fixed 'target:' languages/marmoset/outline.scm
+search_fixed 'expr_or_block' languages/marmoset/indents.scm

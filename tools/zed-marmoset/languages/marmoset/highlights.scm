@@ -125,13 +125,12 @@
 (trait_field
   name: (identifier) @property)
 
-; Impl block
-(impl_block
-  trait: (identifier) @type)
-
 (impl_block
   target: (generic_type
     name: (identifier) @type))
+
+(impl_block
+  target: (type_identifier) @type)
 
 ; Derive
 (derive_clause

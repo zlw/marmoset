@@ -5,5 +5,5 @@
 (trait_definition "{" @indent "}" @end)
 (impl_block "{" @indent "}" @end)
 (match_expression "{" @indent "}" @end)
-(if_expression consequence: (block "{" @indent "}" @end))
-(if_expression alternative: (block "{" @indent "}" @end))
+(if_expression consequence: (expr_or_block (block "{" @indent "}" @end)))
+(if_expression alternative: (expr_or_block (block "{" @indent "}" @end)))

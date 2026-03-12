@@ -5,6 +5,11 @@ schema_version = 1
 authors = ["Marmoset Contributors"]
 description = "Marmoset language support for Zed — syntax highlighting, brackets, indentation, and code outline."
 repository = "https://github.com/zlw/marmoset"
+languages = ["languages/marmoset"]
+
+[lib]
+kind = "Rust"
+version = "0.7.0"
 
 [grammars.marmoset]
 repository = "https://github.com/zlw/marmoset"
@@ -12,5 +17,4 @@ path = "tools/tree-sitter-marmoset"
 rev = "2981e887633187b2e656f6a15a30f4e2a7cc7e24"
 
 [language_servers.marmoset-lsp]
-name = "marmoset-lsp"
 languages = ["Marmoset"]
