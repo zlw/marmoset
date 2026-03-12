@@ -1,0 +1,7 @@
+# VN125: Top-level fn declarations accept Map[Str, Str] params and => Unit returns
+fn print_book_name(book: Map[Str, Str]) => Unit = {
+  puts(book["name"])
+}
+
+let book: Map[Str, Str] = { "name": "banana tales" }
+print_book_name(book)  # output: banana tales

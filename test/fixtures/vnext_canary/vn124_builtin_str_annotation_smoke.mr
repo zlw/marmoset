@@ -1,0 +1,3 @@
+# VN124: Builtin Str annotations remain valid in vNext syntax
+let text: Str = "hello jungle"
+puts(text)  # output: hello jungle

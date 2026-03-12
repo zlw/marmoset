@@ -1,0 +1,13 @@
+# VN123: Enum variant lists allow trailing commas
+enum Option[a] = {
+  Some(a),
+  None,
+}
+
+fn render(opt: Option[Int]) -> Str = match opt {
+  case Option.Some(v): "some:" + v.show()
+  case Option.None: "none"
+}
+
+puts(render(Option.Some(4)))  # output: some:4
+puts(render(Option.None))     # output: none
