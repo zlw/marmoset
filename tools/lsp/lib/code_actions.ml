@@ -144,7 +144,12 @@ let sites_for_function ~source ~type_map ~range_start ~range_end ~sites (fn_expr
                   let body_start = body.pos in
                   match find_close_paren ~source ~start:fn_expr.pos ~limit:body_start with
                   | Some paren_end ->
-                      let arrow = if function_is_effectful n_params norm_fn_type then " => " else " -> " in
+                      let arrow =
+                        if function_is_effectful n_params norm_fn_type then
+                          " => "
+                        else
+                          " -> "
+                      in
                       let type_str = type_to_source ret_type in
                       sites :=
                         {

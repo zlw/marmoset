@@ -601,8 +601,8 @@ let%test "collect_vars_in_order with enum" =
   let enum = TEnum ("result", [ TVar "a"; TVar "b" ]) in
   collect_vars_in_order enum = [ "a"; "b" ]
 
-let%test "collect_vars_in_order ignores trait object members" = collect_vars_in_order (TTraitObject [ "Show"; "Eq" ]) = []
+let%test "collect_vars_in_order ignores trait object members" =
+  collect_vars_in_order (TTraitObject [ "Show"; "Eq" ]) = []
 
 let%test "free_type_vars in intersection" =
-  TypeVarSet.equal (free_type_vars (TIntersection [ TVar "a"; TInt; TVar "b" ]))
-    (TypeVarSet.of_list [ "a"; "b" ])
+  TypeVarSet.equal (free_type_vars (TIntersection [ TVar "a"; TInt; TVar "b" ])) (TypeVarSet.of_list [ "a"; "b" ])

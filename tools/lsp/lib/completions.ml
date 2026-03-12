@@ -79,7 +79,10 @@ let%test "completions include keywords" =
   let env = env_with [] in
   let items = completions ~environment:env in
   let labels = List.map (fun (i : Lsp_t.CompletionItem.t) -> i.label) items in
-  List.mem "let" labels && List.mem "fn" labels && List.mem "match" labels && List.mem "case" labels
+  List.mem "let" labels
+  && List.mem "fn" labels
+  && List.mem "match" labels
+  && List.mem "case" labels
   && List.mem "override" labels
 
 let%test "function gets Function kind" =

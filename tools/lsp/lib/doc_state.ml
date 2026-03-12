@@ -162,23 +162,19 @@ let%test "analyze successful code surfaces warning diagnostics" =
         |}
   in
   match result.diagnostics with
-  | [ diag ] ->
+  | [ diag ] -> (
       diag.severity = Some Lsp_t.DiagnosticSeverity.Warning
       &&
-      (match diag.code with
+      match diag.code with
       | Some (`String "override-unnecessary") -> true
       | _ -> false)
   | _ -> false
 
 let%test "analyze captures user generic names for hover formatting" =
-  let result =
-    analyze ~source:"trait Named = { name: Str }\nfn get[t: Named](x: t) -> Str = x.name\nget"
-  in
+  let result = analyze ~source:"trait Named = { name: Str }\nfn get[t: Named](x: t) -> Str = x.name\nget" in
   result.diagnostics = [] && List.exists (fun (_fresh, user_name) -> user_name = "t") result.type_var_user_names
 
 let%test "analyze does not leak generic-name mappings across documents" =
-  let _ =
-    analyze ~source:"trait Named = { name: Str }\nfn get[t: Named](x: t) -> Str = x.name\nget"
-  in
+  let _ = analyze ~source:"trait Named = { name: Str }\nfn get[t: Named](x: t) -> Str = x.name\nget" in
   let result = analyze ~source:"let x = 1; x" in
   result.type_var_user_names = []

@@ -236,12 +236,10 @@ and unify_union_with_union (members1 : mono_type list) (members2 : mono_type lis
     Error (type_mismatch (TUnion members1) (TUnion members2))
 
 and merge_record_intersection_type_for_unify
-    (mismatch_left : mono_type)
-    (mismatch_right : mono_type)
-    (members : mono_type list) : (mono_type, Diagnostic.t) result =
+    (mismatch_left : mono_type) (mismatch_right : mono_type) (members : mono_type list) :
+    (mono_type, Diagnostic.t) result =
   let merged_fields : (string, mono_type) Hashtbl.t = Hashtbl.create 8 in
-  let merge_field_types (existing : mono_type) (incoming : mono_type) :
-      (mono_type, Diagnostic.t) result =
+  let merge_field_types (existing : mono_type) (incoming : mono_type) : (mono_type, Diagnostic.t) result =
     let existing' = canonicalize_mono_type existing in
     let incoming' = canonicalize_mono_type incoming in
     match (existing', incoming') with
@@ -305,10 +303,8 @@ and unify_intersection_members_against_expected
   unify_all empty_substitution members
 
 and unify_actual_against_expected
-    (mismatch_left : mono_type)
-    (mismatch_right : mono_type)
-    (actual_type : mono_type)
-    (expected_type : mono_type) : (substitution, Diagnostic.t) result =
+    (mismatch_left : mono_type) (mismatch_right : mono_type) (actual_type : mono_type) (expected_type : mono_type)
+    : (substitution, Diagnostic.t) result =
   let actual_type = canonicalize_mono_type actual_type in
   let expected_type = canonicalize_mono_type expected_type in
   match (actual_type, expected_type) with
@@ -332,14 +328,14 @@ and unify_record_with_required_fields
     | expected_field :: rest -> (
         match field_lookup actual_fields expected_field.name with
         | None -> Error (type_mismatch mismatch_left mismatch_right)
-        | Some actual_field ->
+        | Some actual_field -> (
             let actual_type = apply_substitution subst actual_field.typ in
             let expected_type = apply_substitution subst expected_field.typ in
             match unify_actual_against_expected mismatch_left mismatch_right actual_type expected_type with
             | Error _ -> Error (type_mismatch mismatch_left mismatch_right)
             | Ok subst' ->
                 let composed = compose_substitution subst subst' in
-                loop composed rest)
+                loop composed rest))
   in
   loop empty_substitution expected_fields
 
@@ -602,9 +598,7 @@ let%test "unify union with type variable" =
   | Error _ -> false
 
 let%test "unify concrete record with record intersection" =
-  let concrete =
-    TRecord ([ { name = "x"; typ = TInt }; { name = "y"; typ = TString } ], None)
-  in
+  let concrete = TRecord ([ { name = "x"; typ = TInt }; { name = "y"; typ = TString } ], None) in
   let intersection =
     TIntersection
       [
@@ -617,9 +611,7 @@ let%test "unify concrete record with record intersection" =
   | Error _ -> false
 
 let%test "unify record intersection with concrete record" =
-  let concrete =
-    TRecord ([ { name = "x"; typ = TInt }; { name = "y"; typ = TString } ], None)
-  in
+  let concrete = TRecord ([ { name = "x"; typ = TInt }; { name = "y"; typ = TString } ], None) in
   let intersection =
     TIntersection
       [

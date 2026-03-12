@@ -120,7 +120,8 @@ module Test = struct
           [
             mk_pat
               (AST.PRecord
-                 ([ AST.{ pat_field_name = "name"; pat_field_pattern = Some (mk_pat (AST.PVariable "name")) } ], None));
+                 ( [ AST.{ pat_field_name = "name"; pat_field_pattern = Some (mk_pat (AST.PVariable "name")) } ],
+                   None ));
           ];
       ]
     in

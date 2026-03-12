@@ -285,7 +285,7 @@ let signature_help
   let offset = Lsp_utils.position_to_offset ~source ~line ~character in
   match find_enclosing_call ~source offset program with
   | None -> None
-  | Some call ->
+  | Some call -> (
       let fn_type_opt =
         match call.method_name with
         | Some mname -> (
@@ -315,7 +315,7 @@ let signature_help
       in
       match fn_type_opt with
       | None -> None
-      | Some info ->
+      | Some info -> (
           let param_types, ret_type, is_effectful, method_param_names =
             match info with
             | `FnType fn_type ->
@@ -364,7 +364,7 @@ let signature_help
               in
               Some
                 (Lsp_t.SignatureHelp.create ~signatures:[ sig_info ] ~activeSignature:0
-                   ~activeParameter:(Some active_param) ())
+                   ~activeParameter:(Some active_param) ())))
 
 (* ============================================================
    Tests

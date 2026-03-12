@@ -11,10 +11,8 @@ module Surface = struct
     | STVar of string
     | STCon of string
     | STApp of string * surface_type_expr list
-    | STConstraintShorthand of string list
-      (* Bare trait names in parameter position, e.g. Named & Aged *)
-    | STTraitObject of string list
-      (* Dyn[Show] or Dyn[Show & Eq] *)
+    | STConstraintShorthand of string list (* Bare trait names in parameter position, e.g. Named & Aged *)
+    | STTraitObject of string list (* Dyn[Show] or Dyn[Show & Eq] *)
     | STArrow of surface_type_expr list * surface_type_expr * bool
       (* bool = is_effectful; covers both (a) -> b and (a) => b *)
     | STUnion of surface_type_expr list
@@ -115,8 +113,7 @@ module Surface = struct
 
   and surface_match_arm = {
     se_patterns : surface_pattern list;
-    se_arm_body : surface_expr_or_block;
-        (* vNext arms use case and allow block or expression bodies *)
+    se_arm_body : surface_expr_or_block; (* vNext arms use case and allow block or expression bodies *)
   }
 
   (* ── Surface statements (block-level only) ── *)

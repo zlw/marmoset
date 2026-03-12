@@ -327,7 +327,7 @@ and parse_type_atom (p : parser) : (parser * Surface.surface_type_expr, parser) 
         Ok (next_token p3, Surface.STTraitObject traits)
       else
         Error (peek_error p3 Token.RBracket)
-    (* Check for generic application: List[Int], Map[Str, Int], etc. *)
+      (* Check for generic application: List[Int], Map[Str, Int], etc. *)
     else if curr_token_is p2 Token.LBracket then
       let* p3, type_args = parse_type_expr_list (next_token p2) in
       if curr_token_is p3 Token.RBracket then
@@ -957,8 +957,7 @@ and parse_impl_definition (p : parser) : (parser * Surface.top_decl, parser) res
   | _ ->
       Ok
         ( p_end,
-          Surface.SAmbiguousImplDef
-            { impl_type_params = explicit_type_params; impl_head_type; impl_methods } )
+          Surface.SAmbiguousImplDef { impl_type_params = explicit_type_params; impl_head_type; impl_methods } )
 
 and parse_generic_param_list (p : parser) : (parser * AST.generic_param list, parser) result =
   let rec loop lp rev_params =
@@ -2074,7 +2073,8 @@ module Test = struct
               AST.ExpressionStmt
                 {
                   AST.expr =
-                    AST.Array [ { expr = AST.Identifier "george"; _ }; { expr = AST.Identifier "promoted_george"; _ } ];
+                    AST.Array
+                      [ { expr = AST.Identifier "george"; _ }; { expr = AST.Identifier "promoted_george"; _ } ];
                   _;
                 };
             _;
@@ -2093,11 +2093,7 @@ module Test = struct
         | [ _; _; { Surface.std_decl = Surface.SExpressionStmt expr; _ } ] -> (
             match expr.se_expr with
             | Surface.SEMethodCall
-                {
-                  se_receiver = { se_expr = Surface.SEArray [ _; _ ]; _ };
-                  se_method = "foreach";
-                  _;
-                } ->
+                { se_receiver = { se_expr = Surface.SEArray [ _; _ ]; _ }; se_method = "foreach"; _ } ->
                 true
             | _ -> false)
         | _ -> false)
@@ -2344,7 +2340,12 @@ module Test = struct
       };
       {
         input = "() -> 42";
-        output = [ s (AST.ExpressionStmt (e (fn_expr [] (s (AST.Block [ s (AST.ExpressionStmt (e (AST.Integer 42L))) ]))))) ];
+        output =
+          [
+            s
+              (AST.ExpressionStmt
+                 (e (fn_expr [] (s (AST.Block [ s (AST.ExpressionStmt (e (AST.Integer 42L))) ])))));
+          ];
       };
       {
         input = "(foo, bar, baz) -> foo";
@@ -2847,10 +2848,7 @@ module Test = struct
           {
             AST.stmt =
               AST.InherentImplDef
-                {
-                  inherent_for_type = AST.TApp ("Result", [ AST.TCon "a"; AST.TCon "b" ]);
-                  inherent_methods;
-                };
+                { inherent_for_type = AST.TApp ("Result", [ AST.TCon "a"; AST.TCon "b" ]); inherent_methods };
             _;
           };
         ] ->
@@ -3095,7 +3093,13 @@ let%test "parse parameter constraint shorthand with ampersand" =
   | Error _ -> false
   | Ok result -> (
       match result.program with
-      | [ { Surface.std_decl = Surface.SFnDecl { params = [ ("x", Some (Surface.STConstraintShorthand [ "Named"; "Aged" ])) ]; _ }; _ } ] ->
+      | [
+       {
+         Surface.std_decl =
+           Surface.SFnDecl { params = [ ("x", Some (Surface.STConstraintShorthand [ "Named"; "Aged" ])) ]; _ };
+         _;
+       };
+      ] ->
           true
       | _ -> false)
 
@@ -3107,7 +3111,8 @@ let%test "parse parenthesized parameter intersection does not become shorthand" 
       | [
        {
          Surface.std_decl =
-           Surface.SFnDecl { params = [ ("x", Some (Surface.STIntersection [ Surface.STCon "Foo"; Surface.STCon "Bar" ])) ]; _ };
+           Surface.SFnDecl
+             { params = [ ("x", Some (Surface.STIntersection [ Surface.STCon "Foo"; Surface.STCon "Bar" ])) ]; _ };
          _;
        };
       ] ->
@@ -3459,7 +3464,8 @@ let%test "parse type intersection parenthesizes function members" =
           match stmt.stmt with
           | AST.TypeAlias alias_def -> (
               match alias_def.alias_body with
-              | AST.TIntersection [ AST.TArrow ([ AST.TCon "Int" ], AST.TCon "Str", false); AST.TCon "Bool" ] -> true
+              | AST.TIntersection [ AST.TArrow ([ AST.TCon "Int" ], AST.TCon "Str", false); AST.TCon "Bool" ] ->
+                  true
               | _ -> false)
           | _ -> false)
       | _ -> false)

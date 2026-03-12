@@ -360,20 +360,30 @@ let%test "hover on return keyword: highlights full return expression" =
    Tests: edge cases
    ============================================================ *)
 
-let full_fib_source = "fn fib(n) = {\n  if (n < 2) { return n }\n  return fib(n - 2) + fib(n - 1)\n}\n\nputs(fib(35) == 9227465)\n"
+let full_fib_source =
+  "fn fib(n) = {\n  if (n < 2) { return n }\n  return fib(n - 2) + fib(n - 1)\n}\n\nputs(fib(35) == 9227465)\n"
 
 let%test "hover on first return keyword shows int, not unit" =
-  match hover_marked "fn fib(n) = {\n  if (n < 2) { |return n }\n  return fib(n - 2) + fib(n - 1)\n}\n\nputs(fib(35) == 9227465)\n" with
+  match
+    hover_marked
+      "fn fib(n) = {\n  if (n < 2) { |return n }\n  return fib(n - 2) + fib(n - 1)\n}\n\nputs(fib(35) == 9227465)\n"
+  with
   | _, Some h -> string_contains h.type_text "Int"
   | _ -> false
 
 let%test "hover on second return keyword shows int" =
-  match hover_marked "fn fib(n) = {\n  if (n < 2) { return n }\n  |return fib(n - 2) + fib(n - 1)\n}\n\nputs(fib(35) == 9227465)\n" with
+  match
+    hover_marked
+      "fn fib(n) = {\n  if (n < 2) { return n }\n  |return fib(n - 2) + fib(n - 1)\n}\n\nputs(fib(35) == 9227465)\n"
+  with
   | _, Some h -> string_contains h.type_text "Int"
   | _ -> false
 
 let%test "hover on n param inside first return" =
-  match hover_marked "fn fib(n) = {\n  if (n < 2) { return |n }\n  return fib(n - 2) + fib(n - 1)\n}\n\nputs(fib(35) == 9227465)\n" with
+  match
+    hover_marked
+      "fn fib(n) = {\n  if (n < 2) { return |n }\n  return fib(n - 2) + fib(n - 1)\n}\n\nputs(fib(35) == 9227465)\n"
+  with
   | _, Some h -> string_contains h.type_text "Int" && h.highlighted = "n"
   | _ -> false
 
@@ -397,7 +407,10 @@ let trait_impl_source =
   "trait Greet[a] = {\n  fn hello(x: a) -> Str\n}\nimpl Greet[Int] = {\n  fn hello(x: Int) -> Str = \"hi\"\n}\nputs(Greet.hello(42))"
 
 let%test "hover on expression inside trait impl method body" =
-  match hover_marked "trait Greet[a] = {\n  fn hello(x: a) -> Str\n}\nimpl Greet[Int] = {\n  fn hello(x: Int) -> Str = |\"hi\"\n}\nputs(Greet.hello(42))" with
+  match
+    hover_marked
+      "trait Greet[a] = {\n  fn hello(x: a) -> Str\n}\nimpl Greet[Int] = {\n  fn hello(x: Int) -> Str = |\"hi\"\n}\nputs(Greet.hello(42))"
+  with
   | _, Some h -> string_contains h.type_text "Str"
   | _ -> false
 

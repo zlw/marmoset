@@ -482,7 +482,8 @@ let%test "field-only trait accepts compatible record intersections" =
     Types.TIntersection
       [
         Types.TRecord ([ { Types.name = "name"; typ = Types.TString } ], None);
-        Types.TRecord ([ { Types.name = "age"; typ = Types.TInt }; { Types.name = "name"; typ = Types.TString } ], None);
+        Types.TRecord
+          ([ { Types.name = "age"; typ = Types.TInt }; { Types.name = "name"; typ = Types.TString } ], None);
       ]
   in
   match satisfies_trait intersection "named" with

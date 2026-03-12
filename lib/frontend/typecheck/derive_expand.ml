@@ -1,6 +1,7 @@
 module AST = Syntax.Ast.AST
 module Diagnostic = Diagnostics.Diagnostic
 module StringSet = Set.Make (String)
+
 let ( let* ) = Result.bind
 
 type trait_summary = {
@@ -11,8 +12,7 @@ type trait_summary = {
   methods : AST.method_sig list;
 }
 
-let default_derived_impl_store : ((string * string), unit) Hashtbl.t = Hashtbl.create 32
-
+let default_derived_impl_store : (string * string, unit) Hashtbl.t = Hashtbl.create 32
 let clear_default_derived_impl_store () : unit = Hashtbl.clear default_derived_impl_store
 
 let error_at_stmt ~code ~message (stmt : AST.statement) : Diagnostic.t =
@@ -33,9 +33,13 @@ let collect_free_type_vars_in_order (type_expr : AST.type_expr) : string list =
     | AST.TCon _ | AST.TTraitObject _ -> acc
     | AST.TApp (_, args) | AST.TUnion args | AST.TIntersection args -> List.fold_left go acc args
     | AST.TArrow (params, ret, _) -> go (List.fold_left go acc params) ret
-    | AST.TRecord (fields, row_var) ->
-        let acc' = List.fold_left (fun inner_acc (field : AST.record_type_field) -> go inner_acc field.field_type) acc fields in
-        (match row_var with
+    | AST.TRecord (fields, row_var) -> (
+        let acc' =
+          List.fold_left
+            (fun inner_acc (field : AST.record_type_field) -> go inner_acc field.field_type)
+            acc fields
+        in
+        match row_var with
         | None -> acc'
         | Some row -> go acc' row)
   in
@@ -60,10 +64,14 @@ let type_expr_key_with_binders (binder_names : string list) (type_expr : AST.typ
             "Var(" ^ canonical_name ^ ")")
     | AST.TCon name -> "Con(" ^ name ^ ")"
     | AST.TTraitObject traits -> "Dyn(" ^ String.concat "&" (List.sort_uniq String.compare traits) ^ ")"
-    | AST.TApp (name, args) ->
-        "App(" ^ name ^ "[" ^ String.concat "," (List.map go args) ^ "])"
+    | AST.TApp (name, args) -> "App(" ^ name ^ "[" ^ String.concat "," (List.map go args) ^ "])"
     | AST.TArrow (params, ret, is_effectful) ->
-        let arrow = if is_effectful then "=>" else "->" in
+        let arrow =
+          if is_effectful then
+            "=>"
+          else
+            "->"
+        in
         "Arrow(" ^ String.concat "," (List.map go params) ^ arrow ^ go ret ^ ")"
     | AST.TUnion members ->
         "Union(" ^ String.concat "," (List.sort_uniq String.compare (List.map go members)) ^ ")"
@@ -97,7 +105,12 @@ let render_type_expr (type_expr : AST.type_expr) : string =
     | AST.TTraitObject traits -> "Dyn[" ^ String.concat " & " traits ^ "]"
     | AST.TApp (name, args) -> name ^ "[" ^ String.concat ", " (List.map render args) ^ "]"
     | AST.TArrow (params, ret, is_effectful) ->
-        let arrow = if is_effectful then " => " else " -> " in
+        let arrow =
+          if is_effectful then
+            " => "
+          else
+            " -> "
+        in
         let params =
           match params with
           | [ single ] -> render_parens single
@@ -108,7 +121,9 @@ let render_type_expr (type_expr : AST.type_expr) : string =
     | AST.TIntersection members -> String.concat " & " (List.map render_parens members)
     | AST.TRecord (fields, row_var) ->
         let field_parts =
-          List.map (fun (field : AST.record_type_field) -> field.field_name ^ ": " ^ render field.field_type) fields
+          List.map
+            (fun (field : AST.record_type_field) -> field.field_name ^ ": " ^ render field.field_type)
+            fields
         in
         let row_part =
           match row_var with
@@ -145,10 +160,10 @@ let impl_key_of_explicit_impl (impl_def : AST.impl_def) : string * string =
   ( Trait_registry.canonical_trait_name impl_def.impl_trait_name,
     type_expr_key_with_binders binder_names impl_def.impl_for_type )
 
-let pre_scan_program
-    (program : AST.program) : (string, trait_summary) Hashtbl.t * ((string * string), unit) Hashtbl.t =
+let pre_scan_program (program : AST.program) :
+    (string, trait_summary) Hashtbl.t * (string * string, unit) Hashtbl.t =
   let traits : (string, trait_summary) Hashtbl.t = Hashtbl.create 32 in
-  let explicit_impls : ((string * string), unit) Hashtbl.t = Hashtbl.create 32 in
+  let explicit_impls : (string * string, unit) Hashtbl.t = Hashtbl.create 32 in
   List.iter
     (fun (stmt : AST.statement) ->
       match stmt.stmt with
@@ -158,7 +173,8 @@ let pre_scan_program
     program;
   (traits, explicit_impls)
 
-let local_trait_kind (traits : (string, trait_summary) Hashtbl.t) (trait_name : string) : Trait_registry.trait_kind option =
+let local_trait_kind (traits : (string, trait_summary) Hashtbl.t) (trait_name : string) :
+    Trait_registry.trait_kind option =
   let rec accumulate visited name (has_fields, has_methods) =
     if StringSet.mem name visited then
       (has_fields, has_methods)
@@ -168,8 +184,9 @@ let local_trait_kind (traits : (string, trait_summary) Hashtbl.t) (trait_name : 
       | Some summary ->
           let has_fields' = has_fields || summary.fields <> [] in
           let has_methods' = has_methods || summary.methods <> [] in
-          List.fold_left (fun acc super_name -> accumulate visited' super_name acc) (has_fields', has_methods')
-            summary.supertraits
+          List.fold_left
+            (fun acc super_name -> accumulate visited' super_name acc)
+            (has_fields', has_methods') summary.supertraits
       | None -> (
           match Trait_registry.trait_kind name with
           | Some Trait_registry.FieldOnly -> (true, has_methods)
@@ -193,12 +210,10 @@ let global_impl_exists (trait_name : string) (for_type : AST.type_expr) : bool =
   | Error _ -> false
 
 let validate_target_type_params
-    ~(stmt : AST.statement)
-    ~(derive_trait : AST.derive_trait)
-    ~(free_type_vars : string list) : (AST.generic_param list, Diagnostic.t) result =
+    ~(stmt : AST.statement) ~(derive_trait : AST.derive_trait) ~(free_type_vars : string list) :
+    (AST.generic_param list, Diagnostic.t) result =
   match derive_trait.derive_trait_constraints with
-  | [] ->
-      Ok (List.map (fun name -> AST.{ name; constraints = [] }) free_type_vars)
+  | [] -> Ok (List.map (fun name -> AST.{ name; constraints = [] }) free_type_vars)
   | constraints ->
       let expected = List.sort String.compare free_type_vars in
       let actual = constraints |> List.map (fun (p : AST.generic_param) -> p.name) |> List.sort String.compare in
@@ -208,14 +223,14 @@ let validate_target_type_params
         Error
           (error_at_stmt ~code:"derive-invalid-target-params"
              ~message:
-               (Printf.sprintf
-                  "Derive for %s specifies generic parameters [%s], but target type uses [%s]"
-                  derive_trait.derive_trait_name
-                  (String.concat ", " actual)
-                  (String.concat ", " expected))
+               (Printf.sprintf "Derive for %s specifies generic parameters [%s], but target type uses [%s]"
+                  derive_trait.derive_trait_name (String.concat ", " actual) (String.concat ", " expected))
              stmt)
 
-let substitute_type_expr ~(trait_subst_name : string option) ~(target_type : AST.type_expr) ~(bound_names : StringSet.t)
+let substitute_type_expr
+    ~(trait_subst_name : string option)
+    ~(target_type : AST.type_expr)
+    ~(bound_names : StringSet.t)
     (type_expr : AST.type_expr) : AST.type_expr =
   let rec go bound = function
     | AST.TVar name -> (
@@ -237,8 +252,12 @@ let substitute_type_expr ~(trait_subst_name : string option) ~(target_type : AST
   in
   go bound_names type_expr
 
-let clone_default_body ~(trait_subst_name : string option) ~(target_type : AST.type_expr) ~(method_generics : AST.generic_param list)
-    (supply : Synthetic_ids.t) (default_expr : AST.expression) : AST.statement =
+let clone_default_body
+    ~(trait_subst_name : string option)
+    ~(target_type : AST.type_expr)
+    ~(method_generics : AST.generic_param list)
+    (supply : Synthetic_ids.t)
+    (default_expr : AST.expression) : AST.statement =
   let method_bound_names =
     method_generics |> List.map (fun (gp : AST.generic_param) -> gp.name) |> StringSet.of_list
   in
@@ -247,7 +266,7 @@ let clone_default_body ~(trait_subst_name : string option) ~(target_type : AST.t
     let clone_expr = clone_expr bound_names in
     let expr_kind =
       match expr.expr with
-      | AST.Identifier _ | AST.Integer _ | AST.Float _ | AST.Boolean _ | AST.String _ as literal -> literal
+      | (AST.Identifier _ | AST.Integer _ | AST.Float _ | AST.Boolean _ | AST.String _) as literal -> literal
       | AST.Array items -> AST.Array (List.map clone_expr items)
       | AST.Index (container, index) -> AST.Index (clone_expr container, clone_expr index)
       | AST.Hash pairs -> AST.Hash (List.map (fun (key, value) -> (clone_expr key, clone_expr value)) pairs)
@@ -255,7 +274,10 @@ let clone_default_body ~(trait_subst_name : string option) ~(target_type : AST.t
       | AST.Infix (left, op, right) -> AST.Infix (clone_expr left, op, clone_expr right)
       | AST.TypeCheck (subject, type_expr) -> AST.TypeCheck (clone_expr subject, substitute_type type_expr)
       | AST.If (condition, consequence, alternative) ->
-          AST.If (clone_expr condition, clone_stmt bound_names consequence, Option.map (clone_stmt bound_names) alternative)
+          AST.If
+            ( clone_expr condition,
+              clone_stmt bound_names consequence,
+              Option.map (clone_stmt bound_names) alternative )
       | AST.Function { generics; params; return_type; is_effectful; body } ->
           let generic_names =
             match generics with
@@ -266,8 +288,18 @@ let clone_default_body ~(trait_subst_name : string option) ~(target_type : AST.t
           AST.Function
             {
               generics;
-              params = List.map (fun (name, typ) -> (name, Option.map (substitute_type_expr ~trait_subst_name ~target_type ~bound_names:bound_names') typ)) params;
-              return_type = Option.map (substitute_type_expr ~trait_subst_name ~target_type ~bound_names:bound_names') return_type;
+              params =
+                List.map
+                  (fun (name, typ) ->
+                    ( name,
+                      Option.map
+                        (substitute_type_expr ~trait_subst_name ~target_type ~bound_names:bound_names')
+                        typ ))
+                  params;
+              return_type =
+                Option.map
+                  (substitute_type_expr ~trait_subst_name ~target_type ~bound_names:bound_names')
+                  return_type;
               is_effectful;
               body = clone_stmt bound_names' body;
             }
@@ -277,14 +309,12 @@ let clone_default_body ~(trait_subst_name : string option) ~(target_type : AST.t
       | AST.Match (scrutinee, arms) ->
           AST.Match
             ( clone_expr scrutinee,
-              List.map
-                (fun (arm : AST.match_arm) ->
-                  AST.{ arm with body = clone_expr arm.body })
-                arms )
+              List.map (fun (arm : AST.match_arm) -> AST.{ arm with body = clone_expr arm.body }) arms )
       | AST.RecordLit (fields, spread) ->
           AST.RecordLit
             ( List.map
-                (fun (field : AST.record_field) -> AST.{ field with field_value = Option.map clone_expr field.field_value })
+                (fun (field : AST.record_field) ->
+                  AST.{ field with field_value = Option.map clone_expr field.field_value })
                 fields,
               Option.map clone_expr spread )
       | AST.FieldAccess (receiver, field_name) -> AST.FieldAccess (clone_expr receiver, field_name)
@@ -298,7 +328,8 @@ let clone_default_body ~(trait_subst_name : string option) ~(target_type : AST.t
             }
       | AST.BlockExpr stmts -> AST.BlockExpr (List.map (clone_stmt bound_names) stmts)
     in
-    AST.mk_expr ~id:(Synthetic_ids.fresh_expr_id supply) ~pos:expr.pos ~end_pos:expr.end_pos ~file_id:expr.file_id expr_kind
+    AST.mk_expr ~id:(Synthetic_ids.fresh_expr_id supply) ~pos:expr.pos ~end_pos:expr.end_pos ~file_id:expr.file_id
+      expr_kind
   and clone_stmt bound_names (stmt : AST.statement) : AST.statement =
     let stmt_kind =
       match stmt.stmt with
@@ -312,17 +343,24 @@ let clone_default_body ~(trait_subst_name : string option) ~(target_type : AST.t
       | AST.Return expr -> AST.Return (clone_expr bound_names expr)
       | AST.ExpressionStmt expr -> AST.ExpressionStmt (clone_expr bound_names expr)
       | AST.Block stmts -> AST.Block (List.map (clone_stmt bound_names) stmts)
-      | AST.EnumDef _ | AST.TraitDef _ | AST.ImplDef _ | AST.InherentImplDef _ | AST.DeriveDef _ | AST.TypeAlias _ ->
+      | AST.EnumDef _ | AST.TraitDef _ | AST.ImplDef _ | AST.InherentImplDef _ | AST.DeriveDef _ | AST.TypeAlias _
+        ->
           stmt.stmt
     in
     AST.mk_stmt ~pos:stmt.pos ~end_pos:stmt.end_pos ~file_id:stmt.file_id stmt_kind
   in
   let cloned_expr = clone_expr method_bound_names default_expr in
   match cloned_expr.expr with
-  | AST.BlockExpr stmts -> AST.mk_stmt ~pos:default_expr.pos ~end_pos:default_expr.end_pos ~file_id:default_expr.file_id (AST.Block stmts)
+  | AST.BlockExpr stmts ->
+      AST.mk_stmt ~pos:default_expr.pos ~end_pos:default_expr.end_pos ~file_id:default_expr.file_id
+        (AST.Block stmts)
   | _ ->
       AST.mk_stmt ~pos:default_expr.pos ~end_pos:default_expr.end_pos ~file_id:default_expr.file_id
-        (AST.Block [ AST.mk_stmt ~pos:cloned_expr.pos ~end_pos:cloned_expr.end_pos ~file_id:cloned_expr.file_id (AST.ExpressionStmt cloned_expr) ])
+        (AST.Block
+           [
+             AST.mk_stmt ~pos:cloned_expr.pos ~end_pos:cloned_expr.end_pos ~file_id:cloned_expr.file_id
+               (AST.ExpressionStmt cloned_expr);
+           ])
 
 let synthesize_user_impl
     ~(stmt : AST.statement)
@@ -340,7 +378,8 @@ let synthesize_user_impl
           method_generics |> List.map (fun (gp : AST.generic_param) -> gp.name) |> StringSet.of_list
         in
         let substitute_type =
-          substitute_type_expr ~trait_subst_name:trait_summary.type_param ~target_type:for_type ~bound_names:method_bound_names
+          substitute_type_expr ~trait_subst_name:trait_summary.type_param ~target_type:for_type
+            ~bound_names:method_bound_names
         in
         let default_expr =
           match method_sig.method_default_impl with
@@ -351,13 +390,14 @@ let synthesize_user_impl
           AST.impl_method_id = Synthetic_ids.fresh_method_id supply;
           impl_method_name = method_sig.method_name;
           impl_method_generics = method_sig.method_generics;
-          impl_method_params = List.map (fun (name, typ) -> (name, Some (substitute_type typ))) method_sig.method_params;
+          impl_method_params =
+            List.map (fun (name, typ) -> (name, Some (substitute_type typ))) method_sig.method_params;
           impl_method_return_type = Some (substitute_type method_sig.method_return_type);
           impl_method_effect = Some method_sig.method_effect;
           impl_method_override = false;
           impl_method_body =
-            clone_default_body ~trait_subst_name:trait_summary.type_param ~target_type:for_type ~method_generics supply
-              default_expr;
+            clone_default_body ~trait_subst_name:trait_summary.type_param ~target_type:for_type ~method_generics
+              supply default_expr;
         })
       trait_summary.methods
   in
@@ -373,9 +413,8 @@ let synthesize_user_impl
           }))
 
 let ensure_user_trait_derivable
-    ~(traits : (string, trait_summary) Hashtbl.t)
-    ~(stmt : AST.statement)
-    ~(trait_name : string) : (trait_summary, Diagnostic.t) result =
+    ~(traits : (string, trait_summary) Hashtbl.t) ~(stmt : AST.statement) ~(trait_name : string) :
+    (trait_summary, Diagnostic.t) result =
   let canonical_name = Trait_registry.canonical_trait_name trait_name in
   match Hashtbl.find_opt traits canonical_name with
   | None ->
@@ -388,14 +427,20 @@ let ensure_user_trait_derivable
       | Some Trait_registry.FieldOnly ->
           Error
             (error_at_stmt ~code:"derive-field-only-trait"
-               ~message:(Printf.sprintf "Trait '%s' is field-only; derive is redundant and unsupported" summary.name)
+               ~message:
+                 (Printf.sprintf "Trait '%s' is field-only; derive is redundant and unsupported" summary.name)
                stmt)
       | _ ->
           let required_methods =
-            summary.methods |> List.filter (fun (method_sig : AST.method_sig) -> method_sig.method_default_impl = None)
+            summary.methods
+            |> List.filter (fun (method_sig : AST.method_sig) -> method_sig.method_default_impl = None)
           in
           if required_methods <> [] then
-            let method_names = required_methods |> List.map (fun (method_sig : AST.method_sig) -> method_sig.method_name) |> String.concat ", " in
+            let method_names =
+              required_methods
+              |> List.map (fun (method_sig : AST.method_sig) -> method_sig.method_name)
+              |> String.concat ", "
+            in
             Error
               (error_at_stmt ~code:"derive-required-method"
                  ~message:
@@ -407,10 +452,11 @@ let ensure_user_trait_derivable
 
 let expand_one_derive
     ~(traits : (string, trait_summary) Hashtbl.t)
-    ~(explicit_impls : ((string * string), unit) Hashtbl.t)
-    ~(planned_impls : ((string * string), unit) Hashtbl.t)
+    ~(explicit_impls : (string * string, unit) Hashtbl.t)
+    ~(planned_impls : (string * string, unit) Hashtbl.t)
     ~(supply : Synthetic_ids.t)
-    (stmt : AST.statement) (derive_def : AST.derive_def) : (AST.statement list, Diagnostic.t) result =
+    (stmt : AST.statement)
+    (derive_def : AST.derive_def) : (AST.statement list, Diagnostic.t) result =
   let target_display = render_type_expr derive_def.derive_for_type in
   let seen_traits : (string, unit) Hashtbl.t = Hashtbl.create 8 in
   let rec reject_duplicate = function
@@ -431,7 +477,8 @@ let expand_one_derive
   let* () = reject_duplicate derive_def.derive_traits in
   let builtin_traits, user_traits =
     List.partition
-      (fun (trait_ref : AST.derive_trait) -> Trait_registry.derive_kind_of_trait_name trait_ref.derive_trait_name <> None)
+      (fun (trait_ref : AST.derive_trait) ->
+        Trait_registry.derive_kind_of_trait_name trait_ref.derive_trait_name <> None)
       derive_def.derive_traits
   in
   if user_traits = [] then
@@ -439,22 +486,29 @@ let expand_one_derive
   else
     let target_key = type_expr_key derive_def.derive_for_type in
     let requested_user_trait_names =
-      user_traits |> List.map (fun (trait_ref : AST.derive_trait) -> Trait_registry.canonical_trait_name trait_ref.derive_trait_name)
+      user_traits
+      |> List.map (fun (trait_ref : AST.derive_trait) ->
+             Trait_registry.canonical_trait_name trait_ref.derive_trait_name)
       |> StringSet.of_list
     in
     let requested_builtin_trait_names =
       builtin_traits
-      |> List.map (fun (trait_ref : AST.derive_trait) -> Trait_registry.canonical_trait_name trait_ref.derive_trait_name)
+      |> List.map (fun (trait_ref : AST.derive_trait) ->
+             Trait_registry.canonical_trait_name trait_ref.derive_trait_name)
       |> StringSet.of_list
     in
     let requested_user_traits : (string, AST.derive_trait) Hashtbl.t = Hashtbl.create 8 in
     List.iter
       (fun (trait_ref : AST.derive_trait) ->
-        Hashtbl.replace requested_user_traits (Trait_registry.canonical_trait_name trait_ref.derive_trait_name) trait_ref)
+        Hashtbl.replace requested_user_traits
+          (Trait_registry.canonical_trait_name trait_ref.derive_trait_name)
+          trait_ref)
       user_traits;
     let impl_exists trait_name =
       let key = (Trait_registry.canonical_trait_name trait_name, target_key) in
-      Hashtbl.mem explicit_impls key || Hashtbl.mem planned_impls key || global_impl_exists trait_name derive_def.derive_for_type
+      Hashtbl.mem explicit_impls key
+      || Hashtbl.mem planned_impls key
+      || global_impl_exists trait_name derive_def.derive_for_type
     in
     let rec visit ordered visiting visited trait_name =
       if StringSet.mem trait_name visited then
@@ -496,7 +550,8 @@ let expand_one_derive
         (fun trait_name acc ->
           let* ordered, visited = acc in
           visit ordered StringSet.empty visited trait_name)
-        requested_user_trait_names (Ok ([], StringSet.empty))
+        requested_user_trait_names
+        (Ok ([], StringSet.empty))
     in
     let ordered_user_trait_names = List.rev ordered_user_trait_names in
     let* generated_impls =
@@ -539,7 +594,7 @@ let expand_one_derive
 let expand_user_derives (program : AST.program) : (AST.program, Diagnostic.t) result =
   clear_default_derived_impl_store ();
   let traits, explicit_impls = pre_scan_program program in
-  let planned_impls : ((string * string), unit) Hashtbl.t = Hashtbl.create 32 in
+  let planned_impls : (string * string, unit) Hashtbl.t = Hashtbl.create 32 in
   let supply = Synthetic_ids.create_from_program program in
   let rec go rev_stmts = function
     | [] -> Ok (List.rev rev_stmts)
@@ -557,7 +612,11 @@ let%test "expand_user_derives preserves builtin-only derive" =
   clear_default_derived_impl_store ();
   let stmt =
     AST.mk_stmt
-      (AST.DeriveDef { derive_traits = [ AST.{ derive_trait_name = "Show"; derive_trait_constraints = [] } ]; derive_for_type = AST.TCon "Point" })
+      (AST.DeriveDef
+         {
+           derive_traits = [ AST.{ derive_trait_name = "Show"; derive_trait_constraints = [] } ];
+           derive_for_type = AST.TCon "Point";
+         })
   in
   match expand_user_derives [ stmt ] with
   | Ok [ { AST.stmt = AST.DeriveDef _; _ } ] -> true
@@ -590,7 +649,10 @@ let%test "expand_user_derives rewrites user derive into synthetic impl" =
   let derive_stmt =
     AST.mk_stmt
       (AST.DeriveDef
-         { derive_traits = [ AST.{ derive_trait_name = "Printable"; derive_trait_constraints = [] } ]; derive_for_type = AST.TCon "Point" })
+         {
+           derive_traits = [ AST.{ derive_trait_name = "Printable"; derive_trait_constraints = [] } ];
+           derive_for_type = AST.TCon "Point";
+         })
   in
   match expand_user_derives [ trait_stmt; derive_stmt ] with
   | Ok
@@ -644,7 +706,13 @@ let%test "expand_user_derives keeps builtin residual before synthetic impl" =
          })
   in
   match expand_user_derives [ trait_stmt; derive_stmt ] with
-  | Ok [ _; { AST.stmt = AST.DeriveDef { derive_traits = [ { derive_trait_name = "Show"; _ } ]; _ }; _ }; { AST.stmt = AST.ImplDef _; _ } ] -> true
+  | Ok
+      [
+        _;
+        { AST.stmt = AST.DeriveDef { derive_traits = [ { derive_trait_name = "Show"; _ } ]; _ }; _ };
+        { AST.stmt = AST.ImplDef _; _ };
+      ] ->
+      true
   | _ -> false
 
 let%test "expand_user_derives rejects required-method traits" =
@@ -674,7 +742,10 @@ let%test "expand_user_derives rejects required-method traits" =
   let derive_stmt =
     AST.mk_stmt
       (AST.DeriveDef
-         { derive_traits = [ AST.{ derive_trait_name = "Needful"; derive_trait_constraints = [] } ]; derive_for_type = AST.TCon "Point" })
+         {
+           derive_traits = [ AST.{ derive_trait_name = "Needful"; derive_trait_constraints = [] } ];
+           derive_for_type = AST.TCon "Point";
+         })
   in
   match expand_user_derives [ trait_stmt; derive_stmt ] with
   | Error diag -> diag.code = "derive-required-method"
@@ -695,7 +766,11 @@ let%test "expand_user_derives rejects field-only traits" =
   in
   let derive_stmt =
     AST.mk_stmt
-      (AST.DeriveDef { derive_traits = [ AST.{ derive_trait_name = "Named"; derive_trait_constraints = [] } ]; derive_for_type = AST.TCon "Point" })
+      (AST.DeriveDef
+         {
+           derive_traits = [ AST.{ derive_trait_name = "Named"; derive_trait_constraints = [] } ];
+           derive_for_type = AST.TCon "Point";
+         })
   in
   match expand_user_derives [ trait_stmt; derive_stmt ] with
   | Error diag -> diag.code = "derive-field-only-trait"

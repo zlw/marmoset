@@ -109,9 +109,7 @@ let canonicalize_method_constraints (m : method_sig) : method_sig =
   {
     m with
     method_generics =
-      List.map
-        (fun (name, constraints) -> (name, List.map canonical_trait_name constraints))
-        m.method_generics;
+      List.map (fun (name, constraints) -> (name, List.map canonical_trait_name constraints)) m.method_generics;
   }
 
 let canonicalize_impl_type_param_constraints (p : AST.generic_param) : AST.generic_param =
@@ -305,8 +303,7 @@ let predeclare_impl_header (def : impl_def) : unit =
     Hashtbl.replace predeclared_impl_registry key def'
 
 (* Lookup a trait by name *)
-let lookup_trait (name : string) : trait_def option =
-  Hashtbl.find_opt trait_registry (canonical_trait_name name)
+let lookup_trait (name : string) : trait_def option = Hashtbl.find_opt trait_registry (canonical_trait_name name)
 
 (* Expand a trait into itself plus all transitive supertraits (deterministic order). *)
 let trait_with_supertraits (trait_name : string) : string list =
@@ -398,14 +395,13 @@ let specialized_impl (def : impl_def) (for_type : mono_type) (subst : Types.subs
     impl_methods = methods';
   }
 
-let resolved_concrete_impl_record
-    (trait_name : string)
-    (_for_type : mono_type)
-    (concrete_impl : impl_def) : resolved_impl =
+let resolved_concrete_impl_record (trait_name : string) (_for_type : mono_type) (concrete_impl : impl_def) :
+    resolved_impl =
   let candidate_for_type = canonical_type concrete_impl.impl_for_type in
   {
     impl = concrete_impl;
-    origin = Option.value (Hashtbl.find_opt impl_origin_registry (trait_name, candidate_for_type)) ~default:ExplicitImpl;
+    origin =
+      Option.value (Hashtbl.find_opt impl_origin_registry (trait_name, candidate_for_type)) ~default:ExplicitImpl;
     specialization_subst = empty_substitution;
     source_site = format_concrete_impl_site trait_name candidate_for_type;
   }
@@ -426,9 +422,8 @@ let rec concrete_receiver_matches_impl_target (actual_type : mono_type) (impl_ta
       | Ok _ -> true
       | Error _ -> false)
 
-let resolve_structural_concrete_impl
-    (trait_name : string)
-    (for_type : mono_type) : (resolved_impl option, string) result =
+let resolve_structural_concrete_impl (trait_name : string) (for_type : mono_type) :
+    (resolved_impl option, string) result =
   let trait_name = canonical_trait_name trait_name in
   let for_type' = canonical_type for_type in
   let matches =
@@ -437,7 +432,7 @@ let resolve_structural_concrete_impl
         if candidate_trait_name <> trait_name then
           acc
         else if concrete_receiver_matches_impl_target for_type' candidate_for_type then
-          (resolved_concrete_impl_record trait_name candidate_for_type candidate_def) :: acc
+          resolved_concrete_impl_record trait_name candidate_for_type candidate_def :: acc
         else
           acc)
       impl_registry []
@@ -453,8 +448,7 @@ let resolve_structural_concrete_impl
         |> String.concat ", "
       in
       Error
-        (Printf.sprintf
-           "Ambiguous concrete impl selection for trait '%s' and type %s (matching impl sites: %s)"
+        (Printf.sprintf "Ambiguous concrete impl selection for trait '%s' and type %s (matching impl sites: %s)"
            trait_name (to_string for_type') sites)
 
 let resolve_generic_impl (trait_name : string) (for_type : mono_type) : (resolved_impl option, string) result =
@@ -466,10 +460,10 @@ let resolve_generic_impl (trait_name : string) (for_type : mono_type) : (resolve
     | TFun (arg, ret, _) -> has_type_vars arg || has_type_vars ret
     | TArray elem -> has_type_vars elem
     | THash (key, value) -> has_type_vars key || has_type_vars value
-    | TRecord (fields, row) ->
+    | TRecord (fields, row) -> (
         List.exists (fun (field : record_field_type) -> has_type_vars field.typ) fields
         ||
-        (match row with
+        match row with
         | Some row_type -> has_type_vars row_type
         | None -> false)
     | TEnum (_, args) | TUnion args | TIntersection args -> List.exists has_type_vars args
@@ -732,7 +726,9 @@ let generate_derived_impl (trait_name : string) (for_type : mono_type) : impl_de
     | TArray elem -> collect_type_vars elem
     | THash (key, value) -> collect_type_vars key @ collect_type_vars value
     | TRecord (fields, row) ->
-        let field_vars = List.concat_map (fun (field : record_field_type) -> collect_type_vars field.typ) fields in
+        let field_vars =
+          List.concat_map (fun (field : record_field_type) -> collect_type_vars field.typ) fields
+        in
         let row_vars =
           match row with
           | Some row_type -> collect_type_vars row_type
@@ -743,9 +739,7 @@ let generate_derived_impl (trait_name : string) (for_type : mono_type) : impl_de
     | TRowVar _ | TTraitObject _ | TInt | TFloat | TBool | TString | TNull -> []
   in
   let impl_type_params =
-    collect_type_vars for_type
-    |> Types.unique_in_order
-    |> List.map (fun name -> AST.{ name; constraints = [] })
+    collect_type_vars for_type |> Types.unique_in_order |> List.map (fun name -> AST.{ name; constraints = [] })
   in
   (* Look up the trait definition *)
   match lookup_trait trait_name with
@@ -859,7 +853,7 @@ let validate_trait_supertrait_fields (def : trait_def) (own_fields : record_fiel
   in
   let rec merge_supertrait_fields = function
     | [] -> Ok ()
-    | supertrait_name :: rest ->
+    | supertrait_name :: rest -> (
         let rec merge_expanded = function
           | [] -> Ok ()
           | expanded_name :: tail -> (
@@ -868,7 +862,7 @@ let validate_trait_supertrait_fields (def : trait_def) (own_fields : record_fiel
               | Ok () -> merge_expanded tail)
         in
         let expanded = trait_with_supertraits supertrait_name in
-        (match merge_expanded expanded with
+        match merge_expanded expanded with
         | Error _ as err -> err
         | Ok () -> merge_supertrait_fields rest)
   in
@@ -999,7 +993,11 @@ let validate_impl_signature (trait_def : trait_def) (def : impl_def) : (unit, st
     let errors =
       List.filter_map
         (fun impl_method ->
-          match List.find_opt (fun (_source_trait_def, m) -> m.method_name = impl_method.method_name) expanded_trait_methods with
+          match
+            List.find_opt
+              (fun (_source_trait_def, m) -> m.method_name = impl_method.method_name)
+              expanded_trait_methods
+          with
           | None -> Some (Printf.sprintf "Method '%s' not implemented" impl_method.method_name)
           | Some (source_trait_def, trait_method) -> (
               match check_method_sig source_trait_def trait_method impl_method with
@@ -1196,12 +1194,7 @@ let%test "validate_trait_supertrait_fields rejects generic field-only supertrait
   register_trait { trait_name = "boxed"; trait_type_param = Some "a"; trait_supertraits = []; trait_methods = [] };
   set_trait_fields "boxed" [ { name = "value"; typ = TVar "a" } ];
   let bad_trait =
-    {
-      trait_name = "labeled_box";
-      trait_type_param = None;
-      trait_supertraits = [ "boxed" ];
-      trait_methods = [];
-    }
+    { trait_name = "labeled_box"; trait_type_param = None; trait_supertraits = [ "boxed" ]; trait_methods = [] }
   in
   match validate_trait_supertrait_fields bad_trait [ { name = "label"; typ = TString } ] with
   | Ok () -> false
@@ -1235,7 +1228,8 @@ let%test "lookup_trait_method_with_supertraits sees inherited methods" =
       trait_supertraits = [];
       trait_methods = [ mk_method_sig ~name:"name" ~params:[ ("x", TVar "a") ] ~return_type:TString () ];
     };
-  register_trait { trait_name = "ext"; trait_type_param = Some "a"; trait_supertraits = [ "base" ]; trait_methods = [] };
+  register_trait
+    { trait_name = "ext"; trait_type_param = Some "a"; trait_supertraits = [ "base" ]; trait_methods = [] };
   match lookup_trait_method_with_supertraits "ext" "name" with
   | Some (source_trait, method_sig) -> source_trait.trait_name = "base" && method_sig.method_name = "name"
   | None -> false
@@ -1327,12 +1321,7 @@ let%test "validate_impl allows omitting methods backed by defaults" =
     };
   match
     validate_impl
-      {
-        impl_trait_name = "greetable";
-        impl_type_params = [];
-        impl_for_type = TInt;
-        impl_methods = [];
-      }
+      { impl_trait_name = "greetable"; impl_type_params = []; impl_for_type = TInt; impl_methods = [] }
   with
   | Ok () -> true
   | Error _ -> false

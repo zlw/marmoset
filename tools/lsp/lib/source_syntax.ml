@@ -8,8 +8,7 @@ let canonical_type_name name =
     if segment = "" then
       ""
     else
-      String.uppercase_ascii (String.sub segment 0 1)
-      ^ String.sub segment 1 (String.length segment - 1)
+      String.uppercase_ascii (String.sub segment 0 1) ^ String.sub segment 1 (String.length segment - 1)
   in
   match name with
   | "int" | "Int" -> "Int"
@@ -55,7 +54,10 @@ let rec mono_type_to_source ?(type_var_user_names = []) (mono : Types.mono_type)
   | Types.TRowVar name -> resolve_var_name ~type_var_user_names name
   | Types.TArray element -> "List[" ^ mono_type_to_source ~type_var_user_names element ^ "]"
   | Types.THash (key, value) ->
-      "Map[" ^ mono_type_to_source ~type_var_user_names key ^ ", " ^ mono_type_to_source ~type_var_user_names value
+      "Map["
+      ^ mono_type_to_source ~type_var_user_names key
+      ^ ", "
+      ^ mono_type_to_source ~type_var_user_names value
       ^ "]"
   | Types.TFun _ ->
       let rec collect_args eff = function
@@ -99,11 +101,11 @@ let rec mono_type_to_source ?(type_var_user_names = []) (mono : Types.mono_type)
       | many -> String.concat " | " (List.map (mono_type_to_source ~type_var_user_names) many))
   | Types.TIntersection types ->
       String.concat " & " (List.map (mono_type_to_source_intersection_member ~type_var_user_names) types)
-  | Types.TTraitObject traits ->
-      "Dyn[" ^ String.concat " & " (Types.normalize_trait_object_traits traits) ^ "]"
+  | Types.TTraitObject traits -> "Dyn[" ^ String.concat " & " (Types.normalize_trait_object_traits traits) ^ "]"
   | Types.TEnum (name, []) -> canonical_type_name name
   | Types.TEnum (name, args) ->
-      canonical_type_name name ^ "["
+      canonical_type_name name
+      ^ "["
       ^ String.concat ", " (List.map (mono_type_to_source ~type_var_user_names) args)
       ^ "]"
 
@@ -140,9 +142,7 @@ let normalize_mono_type_with_user_names ~(type_var_user_names : type_var_user_na
   Types.apply_substitution renaming mono
 
 let format_poly_binding
-    ~(type_var_user_names : type_var_user_name_map)
-    ~(name : string)
-    (Types.Forall (vars, mono)) : string =
+    ~(type_var_user_names : type_var_user_name_map) ~(name : string) (Types.Forall (vars, mono)) : string =
   let norm_mono = normalize_mono_type_with_user_names ~type_var_user_names mono in
   let type_str = mono_type_to_source ~type_var_user_names norm_mono in
   let display_vars =
@@ -216,5 +216,6 @@ let%test "mono_type_to_source renders intersections with precedence" =
 
 let%test "type_expr_to_source renders intersections with precedence" =
   type_expr_to_source
-    (Ast.AST.TIntersection [ Ast.AST.TArrow ([ Ast.AST.TCon "Int" ], Ast.AST.TCon "Str", false); Ast.AST.TCon "Bool" ])
+    (Ast.AST.TIntersection
+       [ Ast.AST.TArrow ([ Ast.AST.TCon "Int" ], Ast.AST.TCon "Str", false); Ast.AST.TCon "Bool" ])
   = "((Int) -> Str) & Bool"

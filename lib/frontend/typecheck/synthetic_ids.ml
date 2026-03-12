@@ -40,9 +40,7 @@ let create_from_program (program : AST.program) : t =
         visit_expr scrutinee;
         List.iter (fun (arm : AST.match_arm) -> visit_expr arm.body) arms
     | AST.RecordLit (fields, spread) ->
-        List.iter
-          (fun (field : AST.record_field) -> Option.iter visit_expr field.field_value)
-          fields;
+        List.iter (fun (field : AST.record_field) -> Option.iter visit_expr field.field_value) fields;
         Option.iter visit_expr spread
     | AST.FieldAccess (receiver, _) -> visit_expr receiver
     | AST.MethodCall { mc_receiver; mc_args; _ } ->
@@ -118,8 +116,7 @@ let%test "create_from_program seeds expr and method ids independently" =
                    impl_method_return_type = Some (AST.TCon "Str");
                    impl_method_effect = Some AST.Pure;
                    impl_method_override = false;
-                   impl_method_body =
-                     AST.mk_stmt (AST.ExpressionStmt (AST.mk_expr ~id:9 (AST.String "ok")));
+                   impl_method_body = AST.mk_stmt (AST.ExpressionStmt (AST.mk_expr ~id:9 (AST.String "ok")));
                  };
                ];
            });
@@ -130,7 +127,4 @@ let%test "create_from_program seeds expr and method ids independently" =
 
 let%test "fresh ids remain monotonic" =
   let supply = { next_expr_id = 3; next_method_id = 5 } in
-  fresh_expr_id supply = 3
-  && fresh_expr_id supply = 4
-  && fresh_method_id supply = 5
-  && fresh_method_id supply = 6
+  fresh_expr_id supply = 3 && fresh_expr_id supply = 4 && fresh_method_id supply = 5 && fresh_method_id supply = 6

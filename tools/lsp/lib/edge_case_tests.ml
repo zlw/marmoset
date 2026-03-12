@@ -236,9 +236,7 @@ let%test "folding_ranges: whitespace-only source" =
 
 (* 7. Multiple top-level multi-line constructs *)
 let%test "folding_ranges: multiple top-level multi-line blocks" =
-  let src =
-    "let f = (x) -> {\n  x + 1\n};\nlet g = (y) -> {\n  y + 2\n};\nenum Color = {\n  Red\n  Green\n}"
-  in
+  let src = "let f = (x) -> {\n  x + 1\n};\nlet g = (y) -> {\n  y + 2\n};\nenum Color = {\n  Red\n  Green\n}" in
   let ranges = get_ranges src in
   List.length ranges >= 3
 
