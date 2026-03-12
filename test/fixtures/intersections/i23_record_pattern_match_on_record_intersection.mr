@@ -1,0 +1,9 @@
+# I23: Record pattern matching works on merged record intersections
+let value: ({ x: Int, y: Int } & { x: Int }) = { x: 1, y: 2 }
+
+let result = match value {
+  case { x:, y: }: x + y
+  case _: 0
+}
+
+puts(result)  # output: 3
