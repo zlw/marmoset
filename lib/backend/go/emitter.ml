@@ -1147,6 +1147,24 @@ let get_type (type_map : Infer.type_map) (expr : AST.expression) : Types.mono_ty
            "Codegen error: missing type for expression id %d (%s). Type map should be complete before emission."
            expr.id (AST.type_of expr))
 
+let enum_constructor_codegen_type
+    (type_map : Infer.type_map)
+    (expr : AST.expression)
+    (expected_type : Types.mono_type option)
+    (enum_name : string) : Types.mono_type =
+  let candidate_type =
+    match expected_type with
+    | Some (Types.TEnum (_, _) as t) -> t
+    | Some t -> (
+        match Types.canonicalize_mono_type t with
+        | Types.TEnum (_, _) as t' -> t'
+        | _ -> get_type type_map expr)
+    | None -> get_type type_map expr
+  in
+  match candidate_type with
+  | Types.TEnum (_, type_args) -> Types.TEnum (enum_name, type_args)
+  | _ -> Types.TEnum (enum_name, [])
+
 let expected_trait_object_coercion
     ~(trait_object_coercion_map :
        (int, Typecheck.Resolution_artifacts.trait_object_coercion) Hashtbl.t)
@@ -1206,7 +1224,23 @@ let rec has_open_record_rows (t : Types.mono_type) : bool =
   | Types.TTraitObject _ -> false
   | _ -> false
 
-let has_unresolved_codegen_type (t : Types.mono_type) : bool = has_type_vars t || has_open_record_rows t
+let rec has_unresolved_codegen_type (t : Types.mono_type) : bool =
+  match t with
+  | Types.TVar _ | Types.TRowVar _ -> true
+  | Types.TUnion [] -> true
+  | Types.TFun (arg, ret, _) -> has_unresolved_codegen_type arg || has_unresolved_codegen_type ret
+  | Types.TArray elem -> has_unresolved_codegen_type elem
+  | Types.THash (k, v) -> has_unresolved_codegen_type k || has_unresolved_codegen_type v
+  | Types.TRecord (fields, row) ->
+      List.exists (fun (f : Types.record_field_type) -> has_unresolved_codegen_type f.typ) fields
+      ||
+      (match row with
+      | Some r -> has_unresolved_codegen_type r
+      | None -> false)
+  | Types.TEnum (_, args) | Types.TUnion args | Types.TIntersection args ->
+      List.exists has_unresolved_codegen_type args
+  | Types.TTraitObject _ -> false
+  | _ -> has_open_record_rows t
 
 let enum_allows_unresolved_erasure (enum_name : string) : bool =
   Typecheck.Inherent_registry.all_methods ()
@@ -2745,14 +2779,10 @@ and collect_insts_expr
       in
       let body_env = add_param_bindings env param_names param_types in
       ignore (collect_insts_stmt state type_map body_env f.body)
-  | AST.EnumConstructor (_, _, args) ->
+  | AST.EnumConstructor (enum_name, _, args) ->
       List.iter (collect_insts_expr state type_map env) args;
       (* Use expected_type if available (from let binding context), otherwise get from type_map *)
-      let enum_type =
-        match expected_type with
-        | Some t -> t
-        | None -> get_type type_map expr
-      in
+      let enum_type = enum_constructor_codegen_type type_map expr expected_type enum_name in
       track_enum_inst state enum_type
   | AST.Match (scrutinee, arms) ->
       collect_insts_expr state type_map env scrutinee;
@@ -2979,6 +3009,76 @@ let emit_trait_object_package_value
         "(func() marmosetDyn { __payload := %s; return marmosetDyn{typeID: %S, payload: __payload, witness: %s} })()"
         expr_str (Types.to_string source_type) witness_expr
 
+let rec project_value_to_expected_type
+    (state : emit_state)
+    (type_map : Infer.type_map)
+    (env : Infer.type_env)
+    (actual_type : Types.mono_type)
+    (expected_type : Types.mono_type)
+    (source_expr : string) : string =
+  let actual_type =
+    normalize_type_for_codegen ~concrete_only:state.mono.concrete_only (Types.canonicalize_mono_type actual_type)
+  in
+  let expected_type =
+    normalize_type_for_codegen ~concrete_only:state.mono.concrete_only (Types.canonicalize_mono_type expected_type)
+  in
+  match expected_type with
+  | Types.TTraitObject target_traits -> (
+      match
+        Infer.classify_trait_object_compatibility
+          ~mk_error:(fun ~code ~message -> Diagnostic.error_no_span ~code ~message)
+          actual_type target_traits
+      with
+      | Ok Infer.TraitObjectAlreadyCompatible -> source_expr
+      | Ok (Infer.TraitObjectNeedsPackaging source_type) ->
+          emit_trait_object_package_value state ~source_type:(Types.canonicalize_mono_type source_type)
+            ~target_traits source_expr
+      | Error _ -> source_expr)
+  | Types.TRecord (expected_fields, expected_row) -> (
+      match actual_type with
+      | Types.TRecord (actual_fields, actual_row) ->
+          let expected_fields, expected_row = normalize_record_row_type expected_fields expected_row in
+          let actual_fields, actual_row = normalize_record_row_type actual_fields actual_row in
+          let direct_field_value (field_name : string) =
+            Printf.sprintf "__src.%s" (go_record_field_name field_name)
+          in
+          let projected_fields =
+            expected_fields
+            |> List.map (fun (field : Types.record_field_type) ->
+                   let direct_value = direct_field_value field.name in
+                   let value_expr =
+                     match List.find_opt (fun (candidate : Types.record_field_type) -> candidate.name = field.name) actual_fields with
+                     | Some actual_field ->
+                         project_value_to_expected_type state type_map env actual_field.typ field.typ direct_value
+                     | None -> direct_value
+                   in
+                   (field, value_expr))
+          in
+          let needs_projection =
+            actual_fields <> expected_fields
+            || actual_row <> expected_row
+            ||
+            List.exists
+              (fun ((field : Types.record_field_type), value_expr) -> value_expr <> direct_field_value field.name)
+              projected_fields
+          in
+          if not needs_projection then
+            source_expr
+          else
+            let expected_struct_type = emit_record_struct_type state expected_fields in
+            let actual_record_type = Types.TRecord (actual_fields, actual_row) in
+            let actual_go_type = type_to_go state.mono actual_record_type in
+            let assignments =
+              projected_fields
+              |> List.map (fun ((field : Types.record_field_type), value_expr) ->
+                     Printf.sprintf "%s: %s" (go_record_field_name field.name) value_expr)
+              |> String.concat ", "
+            in
+            Printf.sprintf "(func(__src %s) %s { return %s{%s} })(%s)" actual_go_type expected_struct_type
+              expected_struct_type assignments source_expr
+      | _ -> source_expr)
+  | _ -> source_expr
+
 let maybe_project_to_expected_record_type
     (state : emit_state)
     (type_map : Infer.type_map)
@@ -3028,42 +3128,8 @@ let maybe_project_to_expected_record_type
           in
           (match actual_type_opt with
           | Some (Types.TRecord (actual_fields, actual_row)) ->
-              let actual_fields, actual_row = normalize_record_row_type actual_fields actual_row in
-              if expected_fields = actual_fields then
-                expr_str
-              else
-                let expected_struct_type = emit_record_struct_type state expected_fields in
-                let actual_type = Types.TRecord (actual_fields, actual_row) in
-                let actual_go_type = type_to_go state.mono actual_type in
-                let assignments =
-                  expected_fields
-                  |> List.map (fun (f : Types.record_field_type) ->
-                         let go_name = go_record_field_name f.name in
-                         let source_expr = Printf.sprintf "__src.%s" go_name in
-                         let value_expr =
-                           match List.find_opt (fun (field : Types.record_field_type) -> field.name = f.name) actual_fields with
-                           | Some actual_field -> (
-                               match Types.canonicalize_mono_type f.typ with
-                               | Types.TTraitObject target_traits -> (
-                                   match
-                                     Infer.classify_trait_object_compatibility
-                                       ~mk_error:(fun ~code ~message -> Diagnostic.error_no_span ~code ~message)
-                                       actual_field.typ target_traits
-                                   with
-                                   | Ok Infer.TraitObjectAlreadyCompatible -> source_expr
-                                   | Ok (Infer.TraitObjectNeedsPackaging source_type) ->
-                                       emit_trait_object_package_value state
-                                         ~source_type:(Types.canonicalize_mono_type source_type)
-                                         ~target_traits source_expr
-                                   | Error _ -> source_expr)
-                               | _ -> source_expr)
-                           | None -> source_expr
-                         in
-                         Printf.sprintf "%s: %s" go_name value_expr)
-                  |> String.concat ", "
-                in
-                Printf.sprintf "(func(__src %s) %s { return %s{%s} })(%s)" actual_go_type expected_struct_type
-                  expected_struct_type assignments expr_str
+              project_value_to_expected_type state type_map env (Types.TRecord (actual_fields, actual_row))
+                (Types.TRecord (expected_fields, None)) expr_str
           | _ -> expr_str)
       | _ -> expr_str)
 
@@ -3273,17 +3339,8 @@ let rec emit_expr
         in
         emit_function_expr ~func_type_override:selected_func_type state type_map env expr param_exprs f.body
     | AST.EnumConstructor (enum_name, variant_name, args) ->
-        (* Use expected_type if available (from let binding context), otherwise get from type_map *)
-        let enum_type =
-          match expected_type with
-          | Some t -> t
-          | None -> get_type type_map expr
-        in
-        let enum_type =
-          match enum_type with
-          | Types.TEnum (_, type_args) -> Types.TEnum (enum_name, type_args)
-          | _ -> Types.TEnum (enum_name, [])
-        in
+        (* Only enum-shaped expected types may refine constructor specialization. *)
+        let enum_type = enum_constructor_codegen_type type_map expr expected_type enum_name in
         let enum_type = Types.canonicalize_mono_type enum_type in
         let enum_type =
           if state.mono.concrete_only && has_type_vars enum_type && enum_allows_unresolved_erasure enum_name then
@@ -3370,16 +3427,7 @@ let rec emit_expr
         | AST.Identifier enum_name
           when Typecheck.Enum_registry.lookup enum_name <> None && Infer.TypeEnv.find_opt enum_name env = None ->
             (* This is a nullary enum constructor - emit like EnumConstructor with no args *)
-            let enum_type =
-              match expected_type with
-              | Some t -> t
-              | None -> get_type type_map expr
-            in
-            let enum_type =
-              match enum_type with
-              | Types.TEnum (_, type_args) -> Types.TEnum (enum_name, type_args)
-              | _ -> Types.TEnum (enum_name, [])
-            in
+            let enum_type = enum_constructor_codegen_type type_map expr expected_type enum_name in
             let enum_type = Types.canonicalize_mono_type enum_type in
             let enum_type =
               if state.mono.concrete_only && has_type_vars enum_type && enum_allows_unresolved_erasure enum_name
@@ -3403,17 +3451,8 @@ let rec emit_expr
         | AST.Identifier enum_name, None
           when Typecheck.Enum_registry.lookup enum_name <> None && Infer.TypeEnv.find_opt enum_name env = None ->
             (* This is an enum constructor - emit like EnumConstructor *)
-            (* Use expected_type when available, otherwise fall back to inferred constructor type. *)
-            let enum_type =
-              match expected_type with
-              | Some t -> t
-              | None -> get_type type_map expr
-            in
-            let enum_type =
-              match enum_type with
-              | Types.TEnum (_, type_args) -> Types.TEnum (enum_name, type_args)
-              | _ -> Types.TEnum (enum_name, [])
-            in
+            (* Only enum-shaped expected types may refine constructor specialization. *)
+            let enum_type = enum_constructor_codegen_type type_map expr expected_type enum_name in
             let enum_type = Types.canonicalize_mono_type enum_type in
             let enum_type =
               if state.mono.concrete_only && has_type_vars enum_type && enum_allows_unresolved_erasure enum_name
@@ -3570,7 +3609,7 @@ and emit_expr_for_expected_type
     expected_trait_object_coercion ~trait_object_coercion_map:state.mono.trait_object_coercion_map type_map expr
       (Some expected_type)
   with
-  | Some coercion -> emit_trait_object_package_expr state type_map env coercion emitted
+  | Some coercion -> emit_trait_object_package_expr state type_map env expr coercion emitted
   | None -> emitted
 
 and emit_expr_for_current_return
@@ -3610,14 +3649,37 @@ and emit_dynamic_trait_call
         (Printf.sprintf "Codegen error: expected Dyn receiver for dynamic method '%s', got %s" method_name
            (Types.to_string receiver_type))
 
+and coercion_source_type_for_codegen
+    (state : emit_state)
+    (type_map : Infer.type_map)
+    (expr : AST.expression)
+    (coercion : Typecheck.Resolution_artifacts.trait_object_coercion) : Types.mono_type =
+  let fallback_source_type =
+    normalize_type_for_codegen ~concrete_only:state.mono.concrete_only coercion.source_type
+  in
+  let actual_type =
+    normalize_type_for_codegen ~concrete_only:state.mono.concrete_only (get_type type_map expr)
+  in
+  match
+    Infer.classify_trait_object_compatibility
+      ~mk_error:(fun ~code ~message -> Diagnostic.error_no_span ~code ~message)
+      actual_type coercion.target_traits
+  with
+  | Ok Infer.TraitObjectAlreadyCompatible -> actual_type
+  | Ok (Infer.TraitObjectNeedsPackaging source_type) ->
+      normalize_type_for_codegen ~concrete_only:state.mono.concrete_only source_type
+  | Error _ -> fallback_source_type
+
 and emit_trait_object_package_expr
     (state : emit_state)
-    (_type_map : Infer.type_map)
+    (type_map : Infer.type_map)
     (_env : Infer.type_env)
+    (expr : AST.expression)
     (coercion : Typecheck.Resolution_artifacts.trait_object_coercion)
     (expr_str : string) : string =
-  emit_trait_object_package_value state ~source_type:coercion.source_type ~target_traits:coercion.target_traits
-    expr_str
+  emit_trait_object_package_value state
+    ~source_type:(coercion_source_type_for_codegen state type_map expr coercion)
+    ~target_traits:coercion.target_traits expr_str
 
 and maybe_package_trait_object_expr
     (state : emit_state)
@@ -3626,7 +3688,7 @@ and maybe_package_trait_object_expr
     (expr : AST.expression)
     (expr_str : string) : string =
   match Hashtbl.find_opt state.mono.trait_object_coercion_map expr.id with
-  | Some coercion -> emit_trait_object_package_expr state type_map env coercion expr_str
+  | Some coercion -> emit_trait_object_package_expr state type_map env expr coercion expr_str
   | None -> expr_str
 
 (* ============================================================
@@ -3635,7 +3697,9 @@ and maybe_package_trait_object_expr
 
 and emit_match ?target state type_map env match_expr scrutinee arms =
   (* Get the type of the scrutinee *)
-  let scrutinee_type = get_type type_map scrutinee in
+  let scrutinee_type =
+    normalize_type_for_codegen ~concrete_only:state.mono.concrete_only (get_type type_map scrutinee)
+  in
 
   (* Get the type of the entire match expression from the type_map *)
   let match_result_type = get_type type_map match_expr in
@@ -6133,7 +6197,7 @@ let emit_registry_derived_impls (state : emit_state) (program : AST.program) : s
   in
   Typecheck.Trait_registry.all_impls ()
   |> List.filter_map (fun (impl : Typecheck.Trait_registry.impl_def) ->
-         if has_type_vars impl.impl_for_type then
+         if has_unresolved_codegen_type impl.impl_for_type then
            None
          else
            let type_suffix = mangle_type impl.impl_for_type in

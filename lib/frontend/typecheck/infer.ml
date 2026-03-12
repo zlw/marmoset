@@ -5017,6 +5017,18 @@ and check_patterns patterns scrutinee_type =
 
 (* Check a single pattern against the scrutinee type, return variable bindings *)
 and check_pattern pattern scrutinee_type =
+  let scrutinee_type =
+    let canonical = canonicalize_mono_type scrutinee_type in
+    match pattern.AST.pat with
+    | AST.PRecord (_, _) -> (
+        match canonical with
+        | TIntersection members -> (
+            match Annotation.merged_record_intersection_type members with
+            | Ok merged -> merged
+            | Error _ -> canonical)
+        | _ -> canonical)
+    | _ -> canonical
+  in
   match pattern.AST.pat with
   | AST.PWildcard -> Ok []
   | AST.PVariable name -> Ok [ (name, scrutinee_type) ]
