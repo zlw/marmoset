@@ -780,22 +780,42 @@ let rec has_unresolved_var (t : mono_type) : bool =
   | TEnum (_, args) | TUnion args | TIntersection args -> List.exists has_unresolved_var args
   | TInt | TFloat | TBool | TString | TNull -> false
 
+let rec mono_type_contains_intersection (t : mono_type) : bool =
+  match t with
+  | TIntersection _ -> true
+  | TFun (arg, ret, _) -> mono_type_contains_intersection arg || mono_type_contains_intersection ret
+  | TArray elem -> mono_type_contains_intersection elem
+  | THash (k, v) -> mono_type_contains_intersection k || mono_type_contains_intersection v
+  | TRecord (fields, row) ->
+      List.exists (fun (f : record_field_type) -> mono_type_contains_intersection f.typ) fields
+      ||
+      (match row with
+      | None -> false
+      | Some r -> mono_type_contains_intersection r)
+  | TEnum (_, args) | TUnion args -> List.exists mono_type_contains_intersection args
+  | TVar _ | TRowVar _ | TTraitObject _ | TInt | TFloat | TBool | TString | TNull -> false
+
+let intersection_annotation_compatible (actual : mono_type) (expected : mono_type) : bool =
+  not (has_unresolved_var actual || has_unresolved_var expected)
+  &&
+  (mono_type_contains_intersection actual || mono_type_contains_intersection expected)
+  &&
+  match unify actual expected with
+  | Ok _ -> true
+  | Error _ -> false
+
 let compatible_with_expected_type (actual : mono_type) (expected : mono_type) :
     (substitution, Diagnostic.t) result =
   if has_unresolved_var actual || has_unresolved_var expected then
     match unify actual expected with
     | Ok subst -> Ok subst
-    | Error _ when Annotation.is_subtype_of actual expected -> Ok empty_substitution
+    | Error _ when Annotation.is_subtype_of actual expected || intersection_annotation_compatible actual expected ->
+        Ok empty_substitution
     | Error e -> Error e
-  else if Annotation.is_subtype_of actual expected then
+  else if Annotation.is_subtype_of actual expected || intersection_annotation_compatible actual expected then
     Ok empty_substitution
   else
-    match (canonicalize_mono_type actual, canonicalize_mono_type expected) with
-    | TIntersection _, _ | _, TIntersection _ -> (
-        match unify actual expected with
-        | Ok subst -> Ok subst
-        | Error e -> Error e)
-    | _ -> Error (type_mismatch actual expected)
+    Error (type_mismatch actual expected)
 
 let binding_type_for_env
     ~(value_expr : AST.expression)
@@ -929,18 +949,15 @@ let classify_trait_object_compatibility
 let trait_object_method_candidates
     (trait_names : string list) (method_name : string) :
     (string * Trait_registry.trait_def * Trait_registry.method_sig) list =
-  normalized_trait_object_membership trait_names
+  Types.normalize_trait_object_traits trait_names
+  |> List.map Trait_registry.canonical_trait_name
   |> List.filter_map (fun trait_name ->
          match Trait_registry.lookup_trait trait_name with
          | None -> None
          | Some trait_def -> (
-             match
-               List.find_opt
-                 (fun (method_sig : Trait_registry.method_sig) -> method_sig.method_name = method_name)
-                 trait_def.trait_methods
-             with
+             match Trait_registry.lookup_trait_method_with_supertraits trait_name method_name with
              | None -> None
-             | Some method_sig -> Some (trait_name, trait_def, method_sig)))
+             | Some (_origin_trait_def, method_sig) -> Some (trait_name, trait_def, method_sig)))
 
 let instantiate_dynamic_trait_method
     ~(mk_error : code:string -> message:string -> Diagnostic.t)
@@ -2831,6 +2848,8 @@ and type_callable
                       let strict_return_ok =
                         if Annotation.check_annotation expected_ret' body_type' then
                           true
+                        else if intersection_annotation_compatible body_type' expected_ret' then
+                          true
                         else
                           match canonicalize_mono_type expected_ret' with
                           | TTraitObject target_traits -> (
@@ -2874,7 +2893,10 @@ and type_callable
                         | TEnum (_, args) | TUnion args | TIntersection args -> List.exists has_unresolved_var args
                         | TInt | TFloat | TBool | TString | TNull -> false
                       in
-                      let subtype_ok = Annotation.is_subtype_of body_type' expected_ret in
+                      let subtype_ok =
+                        Annotation.is_subtype_of body_type' expected_ret
+                        || intersection_annotation_compatible body_type' expected_ret
+                      in
                       let unify_compatible =
                         (has_unresolved_var body_type' || has_unresolved_var expected_ret)
                         &&
@@ -4874,7 +4896,9 @@ and validate_return_statements
       | Error e -> Error e
       | Ok (_subst, inferred_type) ->
           (* Use subtyping check: inferred must be subtype of expected *)
-          if Annotation.is_subtype_of inferred_type expected_type then
+          if Annotation.is_subtype_of inferred_type expected_type
+             || intersection_annotation_compatible inferred_type expected_type
+          then
             Ok ()
           else
             Error

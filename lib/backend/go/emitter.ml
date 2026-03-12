@@ -276,6 +276,7 @@ let inherent_method_func_name (method_name : string) (type_suffix : string) : st
 
 type dyn_callable_method = {
   dyn_trait_name : string;
+  dyn_source_trait_name : string;
   dyn_method_sig : Typecheck.Trait_registry.method_sig;
 }
 
@@ -312,12 +313,27 @@ let dynamic_trait_method_supported
 let trait_object_method_candidates
     (traits : string list) : (string * Typecheck.Trait_registry.trait_def * Typecheck.Trait_registry.method_sig) list
     =
+  let seen : (string, unit) Hashtbl.t = Hashtbl.create 16 in
   normalized_trait_object_traits_for_codegen traits
   |> List.concat_map (fun trait_name ->
          match Typecheck.Trait_registry.lookup_trait trait_name with
          | None -> []
          | Some trait_def ->
-             List.map (fun method_sig -> (trait_name, trait_def, method_sig)) trait_def.trait_methods)
+             Typecheck.Trait_registry.trait_methods_with_supertraits trait_name
+             |> List.filter_map
+                  (fun
+                    ((origin_trait_def : Typecheck.Trait_registry.trait_def),
+                     (method_sig : Typecheck.Trait_registry.method_sig)) ->
+                    let owner_trait_name = canonical_codegen_trait_name trait_name in
+                    let key = owner_trait_name ^ ":" ^ method_sig.method_name in
+                    if Hashtbl.mem seen key then
+                      None
+                    else (
+                      Hashtbl.replace seen key ();
+                      Some
+                        ( owner_trait_name ^ "|" ^ canonical_codegen_trait_name origin_trait_def.trait_name,
+                          trait_def,
+                          method_sig ))))
 
 let dynamic_trait_methods_for (traits : string list) : dyn_callable_method list =
   let by_method_name :
@@ -337,11 +353,33 @@ let dynamic_trait_methods_for (traits : string list) : dyn_callable_method list 
   Hashtbl.fold
     (fun _method_name candidates acc ->
       match candidates with
-      | [ (trait_name, trait_def, method_sig) ] when dynamic_trait_method_supported trait_def method_sig ->
-          { dyn_trait_name = trait_name; dyn_method_sig = method_sig } :: acc
+      | [ (trait_names, trait_def, method_sig) ] when dynamic_trait_method_supported trait_def method_sig ->
+          let dyn_trait_name, dyn_source_trait_name =
+            match String.split_on_char '|' trait_names with
+            | [ owner; source ] -> (owner, source)
+            | _ -> (trait_names, trait_names)
+          in
+          { dyn_trait_name; dyn_source_trait_name; dyn_method_sig = method_sig } :: acc
       | _ -> acc)
     by_method_name []
   |> List.sort (fun a b -> String.compare a.dyn_method_sig.method_name b.dyn_method_sig.method_name)
+
+let dyn_dispatch_trait_name (source_type : Types.mono_type) (method_info : dyn_callable_method) : string =
+  let concrete_type = Types.canonicalize_mono_type source_type in
+  let owner_trait_name = method_info.dyn_trait_name in
+  let method_name = method_info.dyn_method_sig.method_name in
+  let owner_has_explicit_method =
+    match Typecheck.Trait_registry.lookup_impl owner_trait_name concrete_type with
+    | Some impl ->
+        List.exists
+          (fun (method_sig : Typecheck.Trait_registry.method_sig) -> method_sig.method_name = method_name)
+          impl.impl_methods
+    | None -> false
+  in
+  if owner_has_explicit_method || Option.is_some method_info.dyn_method_sig.method_default_impl then
+    owner_trait_name
+  else
+    method_info.dyn_source_trait_name
 
 (* ============================================================
    Function Registry - track function definitions and instantiations
@@ -1108,6 +1146,33 @@ let get_type (type_map : Infer.type_map) (expr : AST.expression) : Types.mono_ty
         (Printf.sprintf
            "Codegen error: missing type for expression id %d (%s). Type map should be complete before emission."
            expr.id (AST.type_of expr))
+
+let expected_trait_object_coercion
+    ~(trait_object_coercion_map :
+       (int, Typecheck.Resolution_artifacts.trait_object_coercion) Hashtbl.t)
+    (type_map : Infer.type_map)
+    (expr : AST.expression)
+    (expected_type : Types.mono_type option) : Typecheck.Resolution_artifacts.trait_object_coercion option =
+  if Hashtbl.mem trait_object_coercion_map expr.id then
+    None
+  else
+    match expected_type with
+    | None -> None
+    | Some expected_type -> (
+        match Types.canonicalize_mono_type expected_type with
+        | Types.TTraitObject target_traits -> (
+            match
+              Infer.classify_trait_object_compatibility
+                ~mk_error:(fun ~code ~message -> Diagnostic.error_no_span ~code ~message)
+                (get_type type_map expr) target_traits
+            with
+            | Ok Infer.TraitObjectAlreadyCompatible -> None
+            | Ok (Infer.TraitObjectNeedsPackaging source_type) ->
+                Some
+                  Typecheck.Resolution_artifacts.
+                    { target_traits; source_type = Types.canonicalize_mono_type source_type }
+            | Error _ -> None)
+        | _ -> None)
 
 (* Check if a type contains unresolved type variables *)
 let rec has_type_vars (t : Types.mono_type) : bool =
@@ -2416,7 +2481,7 @@ and register_trait_object_support_use
   in
   dynamic_trait_methods_for target_traits
   |> List.iter (fun (method_info : dyn_callable_method) ->
-         register_impl_method_use state type_map env ~trait_name:method_info.dyn_trait_name
+         register_impl_method_use state type_map env ~trait_name:(dyn_dispatch_trait_name source_type method_info)
            ~method_name:method_info.dyn_method_sig.method_name ~for_type:source_type ~method_type_args:[])
 
 and collect_insts_expr
@@ -2429,7 +2494,16 @@ and collect_insts_expr
   (match Hashtbl.find_opt state.trait_object_coercion_map expr.id with
   | Some (coercion : Typecheck.Resolution_artifacts.trait_object_coercion) ->
       register_trait_object_support_use state type_map env ~source_expr:expr ~target_traits:coercion.target_traits
-  | None -> ());
+  | None -> (
+      match
+        expected_trait_object_coercion ~trait_object_coercion_map:state.trait_object_coercion_map type_map expr
+          expected_type
+      with
+      | Some coercion ->
+          register_trait_object_support_use state type_map env ~source_expr:expr
+            ~target_traits:coercion.target_traits
+      | None -> ())
+  );
   match expr.expr with
   | AST.Integer _ | AST.Float _ | AST.Boolean _ | AST.String _ -> ()
   | AST.Identifier name -> (
@@ -2687,10 +2761,29 @@ and collect_insts_expr
       track_enum_inst state scrutinee_type;
       List.iter (fun arm -> collect_insts_expr state type_map env arm.AST.body) arms
   | AST.RecordLit (fields, spread) -> (
+      let record_type =
+        match expected_type with
+        | Some t -> t
+        | None -> get_type type_map expr
+      in
+      let result_fields =
+        match record_type with
+        | Types.TRecord (fields, row) ->
+            let normalized_fields, _ = normalize_record_row_type fields row in
+            normalized_fields
+        | _ -> []
+      in
+      let expected_field_type field_name =
+        List.find_opt (fun (field : Types.record_field_type) -> field.name = field_name) result_fields
+        |> Option.map (fun (field : Types.record_field_type) -> field.typ)
+      in
       List.iter
         (fun field ->
           match field.AST.field_value with
-          | Some expr -> collect_insts_expr state type_map env expr
+          | Some expr -> (
+              match expected_field_type field.AST.field_name with
+              | Some field_type -> collect_insts_expr ~expected_type:(Some field_type) state type_map env expr
+              | None -> collect_insts_expr state type_map env expr)
           | None -> ())
         fields;
       match spread with
@@ -2815,6 +2908,77 @@ let emit_record_struct_type (state : emit_state) (fields : Types.record_field_ty
   let fields = Types.normalize_record_fields fields in
   intern_record_shape state.mono fields
 
+let emit_trait_object_package_value
+    (state : emit_state)
+    ~(source_type : Types.mono_type)
+    ~(target_traits : string list)
+    (expr_str : string) : string =
+  let source_type =
+    normalize_type_for_codegen ~concrete_only:state.mono.concrete_only (Types.canonicalize_mono_type source_type)
+  in
+  let normalized_traits = normalized_trait_object_traits_for_codegen target_traits in
+  let witness_type_name = trait_object_witness_type_name normalized_traits in
+  match source_type with
+  | Types.TTraitObject source_traits ->
+      let source_witness_type_name = trait_object_witness_type_name source_traits in
+      let witness_fields =
+        dynamic_trait_methods_for normalized_traits
+        |> List.map (fun (method_info : dyn_callable_method) ->
+               let field_name = trait_object_method_field_name method_info.dyn_method_sig.method_name in
+               Printf.sprintf "%s: __sourceWitness.%s" field_name field_name)
+        |> String.concat ", "
+      in
+      let witness_expr =
+        if witness_fields = "" then
+          witness_type_name ^ "{}"
+        else
+          witness_type_name ^ "{" ^ witness_fields ^ "}"
+      in
+      Printf.sprintf
+        "(func() marmosetDyn { __source := %s; __sourceWitness := __source.witness.(%s); return marmosetDyn{typeID: __source.typeID, payload: __source.payload, witness: %s} })()"
+        expr_str source_witness_type_name witness_expr
+  | _ ->
+      let source_go_type = type_to_go state.mono source_type in
+      let witness_fields =
+        dynamic_trait_methods_for normalized_traits
+        |> List.map (fun (method_info : dyn_callable_method) ->
+               let method_sig = method_info.dyn_method_sig in
+               let arg_fields =
+                 method_sig.method_params
+                 |> List.tl
+                 |> List.map (fun (name, typ) ->
+                        Printf.sprintf "%s %s" (go_safe_ident name) (type_to_go state.mono typ))
+               in
+               let arg_names =
+                 method_sig.method_params |> List.tl |> List.map (fun (name, _) -> go_safe_ident name)
+               in
+               let closure_params = String.concat ", " ("__receiver any" :: arg_fields) in
+               let type_suffix = fingerprint_types [ source_type ] in
+               let dispatch_trait_name = dyn_dispatch_trait_name source_type method_info in
+               let impl_func_name =
+                 trait_method_func_name dispatch_trait_name method_sig.method_name type_suffix
+               in
+               let closure_args =
+                 ("__receiver.(" ^ source_go_type ^ ")") :: arg_names |> String.concat ", "
+               in
+               Printf.sprintf "%s: func(%s) %s { return %s(%s) }"
+                 (trait_object_method_field_name method_sig.method_name)
+                 closure_params
+                 (type_to_go state.mono method_sig.method_return_type)
+                 impl_func_name
+                 closure_args)
+        |> String.concat ", "
+      in
+      let witness_expr =
+        if witness_fields = "" then
+          witness_type_name ^ "{}"
+        else
+          witness_type_name ^ "{" ^ witness_fields ^ "}"
+      in
+      Printf.sprintf
+        "(func() marmosetDyn { __payload := %s; return marmosetDyn{typeID: %S, payload: __payload, witness: %s} })()"
+        expr_str (Types.to_string source_type) witness_expr
+
 let maybe_project_to_expected_record_type
     (state : emit_state)
     (type_map : Infer.type_map)
@@ -2875,7 +3039,27 @@ let maybe_project_to_expected_record_type
                   expected_fields
                   |> List.map (fun (f : Types.record_field_type) ->
                          let go_name = go_record_field_name f.name in
-                         Printf.sprintf "%s: __src.%s" go_name go_name)
+                         let source_expr = Printf.sprintf "__src.%s" go_name in
+                         let value_expr =
+                           match List.find_opt (fun (field : Types.record_field_type) -> field.name = f.name) actual_fields with
+                           | Some actual_field -> (
+                               match Types.canonicalize_mono_type f.typ with
+                               | Types.TTraitObject target_traits -> (
+                                   match
+                                     Infer.classify_trait_object_compatibility
+                                       ~mk_error:(fun ~code ~message -> Diagnostic.error_no_span ~code ~message)
+                                       actual_field.typ target_traits
+                                   with
+                                   | Ok Infer.TraitObjectAlreadyCompatible -> source_expr
+                                   | Ok (Infer.TraitObjectNeedsPackaging source_type) ->
+                                       emit_trait_object_package_value state
+                                         ~source_type:(Types.canonicalize_mono_type source_type)
+                                         ~target_traits source_expr
+                                   | Error _ -> source_expr)
+                               | _ -> source_expr)
+                           | None -> source_expr
+                         in
+                         Printf.sprintf "%s: %s" go_name value_expr)
                   |> String.concat ", "
                 in
                 Printf.sprintf "(func(__src %s) %s { return %s{%s} })(%s)" actual_go_type expected_struct_type
@@ -3141,7 +3325,7 @@ let rec emit_expr
           let go_name = go_record_field_name field.Types.name in
           match find_last_record_field_expr field.Types.name fields with
           | Some field_expr ->
-              let field_str = emit_expr state type_map env field_expr in
+              let field_str = emit_expr_for_expected_type state type_map env field.Types.typ field_expr in
               Printf.sprintf "%s: %s" go_name field_str
           | None -> (
               match base_var_opt with
@@ -3381,7 +3565,13 @@ and emit_expr_for_expected_type
     (env : Infer.type_env)
     (expected_type : Types.mono_type)
     (expr : AST.expression) : string =
-  emit_expr ~expected_type:(Some expected_type) state type_map env expr
+  let emitted = emit_expr ~expected_type:(Some expected_type) state type_map env expr in
+  match
+    expected_trait_object_coercion ~trait_object_coercion_map:state.mono.trait_object_coercion_map type_map expr
+      (Some expected_type)
+  with
+  | Some coercion -> emit_trait_object_package_expr state type_map env coercion emitted
+  | None -> emitted
 
 and emit_expr_for_current_return
     (state : emit_state)
@@ -3426,70 +3616,8 @@ and emit_trait_object_package_expr
     (_env : Infer.type_env)
     (coercion : Typecheck.Resolution_artifacts.trait_object_coercion)
     (expr_str : string) : string =
-  let source_type =
-    normalize_type_for_codegen ~concrete_only:state.mono.concrete_only coercion.source_type
-  in
-  let normalized_traits = normalized_trait_object_traits_for_codegen coercion.target_traits in
-  let witness_type_name = trait_object_witness_type_name normalized_traits in
-  match source_type with
-  | Types.TTraitObject source_traits ->
-      let source_witness_type_name = trait_object_witness_type_name source_traits in
-      let witness_fields =
-        dynamic_trait_methods_for normalized_traits
-        |> List.map (fun (method_info : dyn_callable_method) ->
-               let field_name = trait_object_method_field_name method_info.dyn_method_sig.method_name in
-               Printf.sprintf "%s: __sourceWitness.%s" field_name field_name)
-        |> String.concat ", "
-      in
-      let witness_expr =
-        if witness_fields = "" then
-          witness_type_name ^ "{}"
-        else
-          witness_type_name ^ "{" ^ witness_fields ^ "}"
-      in
-      Printf.sprintf
-        "(func() marmosetDyn { __source := %s; __sourceWitness := __source.witness.(%s); return marmosetDyn{typeID: __source.typeID, payload: __source.payload, witness: %s} })()"
-        expr_str source_witness_type_name witness_expr
-  | _ ->
-      let source_go_type = type_to_go state.mono source_type in
-      let witness_fields =
-        dynamic_trait_methods_for normalized_traits
-        |> List.map (fun (method_info : dyn_callable_method) ->
-               let method_sig = method_info.dyn_method_sig in
-               let arg_fields =
-                 method_sig.method_params
-                 |> List.tl
-                 |> List.map (fun (name, typ) ->
-                        Printf.sprintf "%s %s" (go_safe_ident name) (type_to_go state.mono typ))
-               in
-               let arg_names =
-                 method_sig.method_params |> List.tl |> List.map (fun (name, _) -> go_safe_ident name)
-               in
-               let closure_params = String.concat ", " ("__receiver any" :: arg_fields) in
-               let type_suffix = fingerprint_types [ source_type ] in
-               let impl_func_name =
-                 trait_method_func_name method_info.dyn_trait_name method_sig.method_name type_suffix
-               in
-               let closure_args =
-                 ("__receiver.(" ^ source_go_type ^ ")") :: arg_names |> String.concat ", "
-               in
-               Printf.sprintf "%s: func(%s) %s { return %s(%s) }"
-                 (trait_object_method_field_name method_sig.method_name)
-                 closure_params
-                 (type_to_go state.mono method_sig.method_return_type)
-                 impl_func_name
-                 closure_args)
-        |> String.concat ", "
-      in
-      let witness_expr =
-        if witness_fields = "" then
-          witness_type_name ^ "{}"
-        else
-          witness_type_name ^ "{" ^ witness_fields ^ "}"
-      in
-      Printf.sprintf
-        "(func() marmosetDyn { __payload := %s; return marmosetDyn{typeID: %S, payload: __payload, witness: %s} })()"
-        expr_str (Types.to_string source_type) witness_expr
+  emit_trait_object_package_value state ~source_type:coercion.source_type ~target_traits:coercion.target_traits
+    expr_str
 
 and maybe_package_trait_object_expr
     (state : emit_state)
@@ -7330,6 +7458,34 @@ puts(x.render())
       string_contains code "type marmosetDynWitness_Render_show struct"
       && string_contains code "render func(any) string"
       && string_contains code "__witness.render(__dyn.payload)"
+  | Error _ -> false
+
+let%test "Dyn codegen includes inherited supertrait methods in child witnesses" =
+  let source =
+    {|
+trait Base[a] = {
+  fn base(self: a) -> Str = "base"
+}
+
+trait Child[a]: Base = {
+  fn child(self: a) -> Str = self.base() + ":child"
+}
+
+impl Base[Int] = {}
+impl Child[Int] = {}
+
+let value: Dyn[Child] = 1
+puts(value.base())
+puts(value.child())
+|}
+  in
+  match compile_string ~file_id:"<codegen>" source with
+  | Ok (code, _) ->
+      string_contains code "type marmosetDynWitness_Child struct"
+      && string_contains code "base func(any) string"
+      && string_contains code "child func(any) string"
+      && string_contains code "__witness.base(__dyn.payload)"
+      && string_contains code "__witness.child(__dyn.payload)"
   | Error _ -> false
 
 let%test "Track C: codegen erases compatible record intersections in return position" =

@@ -104,13 +104,12 @@ let check_string ?state ?(env = Infer.empty_env) ~file_id (source : string) :
 let annotation_matches_inferred_type (annotated_type : mono_type) (inferred_type : mono_type) : bool =
   if Annotation.check_annotation annotated_type inferred_type then
     true
+  else if Infer.mono_type_contains_intersection annotated_type || Infer.mono_type_contains_intersection inferred_type then
+    match Unify.unify inferred_type annotated_type with
+    | Ok _ -> true
+    | Error _ -> false
   else
-    match (canonicalize_mono_type annotated_type, canonicalize_mono_type inferred_type) with
-    | TIntersection _, _ | _, TIntersection _ -> (
-        match Unify.unify inferred_type annotated_type with
-        | Ok _ -> true
-        | Error _ -> false)
-    | _ -> false
+    false
 
 (* Check if a let binding's annotation matches its inferred type *)
 let check_let_annotation
