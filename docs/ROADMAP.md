@@ -1,156 +1,111 @@
-# Marmoset Roadmap (Deferred / Future Work)
+# Marmoset Roadmap
 
 ## Maintenance
 
-- Last verified: 2026-02-27
+- Last verified: 2026-03-12
 - Implementation status: Canonical (actively maintained)
-- Update trigger: Any language behavior, typechecker, or codegen change affecting this topic
+- Update trigger: Any change to milestone status, plan ordering, or deferred-ideas ownership
 
-This roadmap tracks deferred decisions and future improvements from current canonical docs and implementation constraints.
+## How To Use This File
 
-## 1. Language and Type-System Enhancements
+- `docs/plans/done/**` contains completed milestones and historical implementation records.
+- `docs/plans/todo/**` contains concrete planned work.
+- This file is the high-level overview and ordering document.
+- Only genuinely unplanned or "cool to have later" ideas should remain here as deferred bullets.
+- When a deferred idea becomes concrete, give it a plan under `docs/plans/todo/**` and replace the loose roadmap bullet with a link.
 
-### 1.1 Records and Rows
+## Completed Milestones
 
-- Optional field syntax (`?`) for records (currently `option[T]` workaround).
-- Canonical field-order policy for hashing/derives/debug printing.
-- Nominal wrapper/newtype capability over structural records.
-- Let-destructuring syntax (current recommendation is `match` destructuring).
-- Stronger recursive row-polymorphism diagnostics and edge-case handling.
-- Spread/update optimization model beyond simple copy semantics.
+### Language
 
-### 1.2 Traits
+1. [Function model rework](docs/plans/done/language/01_function-model.md)
+2. [Syntax rework](docs/plans/done/language/02_syntax-rework.md)
+3. [Syntax rework follow-up](docs/plans/done/language/03_syntax-rework-followup.md)
 
-- Inherent methods (`impl <type> { ... }`) without trait boilerplate.
-- Associated types.
-- Default methods and richer override semantics.
-- More complete conditional impl resolution and overlap diagnostics.
-- Dynamic dispatch mode (explicit trait objects / existentials), if needed.
-- First-class existential representation design (`type_id` + payload + witness), before any method/mixed trait-object surface feature.
-- Lock capability semantics for existential values (`eq`/`ord`/`hash`/`show`) before enabling dynamic dispatch.
-- Better coherence/orphan policy and warnings.
-- Potential polymorphic literal behavior policy (`1 + 1.0` style concerns).
-- Higher-kinded type design exploration for advanced abstractions.
+### Tooling
 
-### 1.3 Enums and Pattern Matching
+1. [Diagnostics rework](docs/plans/done/tooling/01_diagnostics-rework.md)
+2. [Fixture harness migration](docs/plans/done/tooling/02_fixture-harness-migration.md)
 
-- Pattern guards.
-- Multi-pattern arm sugar improvements.
-- Tuple patterns (if tuples are added).
-- More exhaustive-check depth for complex nested unions/records.
-- Array/list patterns (explicitly deferred in phase docs).
-- Constructor ergonomics polish and nested pattern diagnostics.
+### CI
 
-### 1.4 Unions
+1. [GitHub workflow migration](docs/plans/done/ci/01_github-workflow.md)
 
-- Optimize representation beyond `interface{}` where possible.
-- Improve narrowing precision in deeply nested control flow.
-- Potential tagged representation for selected unions.
-- Variance-aware union compatibility for function positions.
-- Better branch-complement narrowing in complex boolean flow.
-- Optional specialized codegen when concrete union alternative is statically known.
+## Ordered Active Roadmap
 
-### 1.5 Functions / Polymorphism
+### Main Language Track
 
-- Implement lambda-lifted closure lowering with explicit environment structs.
-- Complete polymorphic function-value support under rank-1 HM.
-- Ensure function identifiers used as values lower to specialized symbols deterministically.
-- Implement typed empty collection literal emission in all expected-type codegen paths.
-- Potential selective use of Go generics as backend strategy toggles.
-- Specialization deduping and explosion-control heuristics.
-- True rank-N polymorphism (`forall` in function-typed positions) is deferred.
-- Function trait policy extension beyond v1 (`eq`/`ord`/`hash` for functions) is deferred.
+1. [Pre-modules semantics foundation](docs/plans/todo/language/01_pre-modules-semantics-foundation.md)
+2. [Pre-modules parity and hardening](docs/plans/todo/language/02_pre-modules-parity-and-hardening.md)
+3. [Module system](docs/plans/todo/language/03_module-system.md)
+4. [Prelude](docs/plans/todo/language/04_prelude.md)
+5. [FFI](docs/plans/todo/language/05_ffi.md)
+6. [Stdlib](docs/plans/todo/language/06_stdlib.md)
+7. [Post-modules type-system expansion](docs/plans/todo/language/07_post-modules-type-system-expansion.md)
 
-### 1.6 Effects / Error model
+### Parallel Tooling Track
 
-- Effect annotation semantics (`=>`) beyond parsing-level ideas.
-- Error propagation ergonomics once effect model is formalized.
+- [OCaml test harness rewrite](docs/plans/todo/tooling/01_ocaml-test-harness.md)
 
-## 2. Backend and Performance Roadmap
+### Parallel CI Track
 
-### 2.1 Record performance
+- [Single OCaml setup in CI via prebuilt runner image](docs/plans/todo/ci/01_single-ocaml-setup-in-ci.md)
 
-- Spread/update optimization (copy elision / uniqueness-style analysis).
-- Escape analysis-guided lowering to reduce allocations.
-- Shape canonicalization strategy for repeated structural records.
+## What Is Already Planned
 
-### 2.2 Enum performance
+These areas already have a concrete plan and should not also live here as loose deferred bullets:
 
-- Layout tuning and cross-variant packing improvements.
-- Constructor/match codegen micro-optimizations.
-- Evaluate memory overhead trade-offs for heterogeneous multi-field variants.
+- traits vs rows policy, wrappers/newtypes, effect freeze, and union semantic freeze:
+  [Pre-modules semantics foundation](docs/plans/todo/language/01_pre-modules-semantics-foundation.md)
+- feature/codegen parity, checker-to-emitter contract hardening, docs validation, generated-Go snapshots, and regression gates:
+  [Pre-modules parity and hardening](docs/plans/todo/language/02_pre-modules-parity-and-hardening.md)
+- imports, exports, per-module checking, and multi-file compilation:
+  [Module system](docs/plans/todo/language/03_module-system.md)
+- core language/library platform milestones:
+  [Prelude](docs/plans/todo/language/04_prelude.md),
+  [FFI](docs/plans/todo/language/05_ffi.md),
+  [Stdlib](docs/plans/todo/language/06_stdlib.md)
+- associated types, open rows, post-module coherence work, and later lowering expansion:
+  [Post-modules type-system expansion](docs/plans/todo/language/07_post-modules-type-system-expansion.md)
+- current planned tooling / CI work:
+  [OCaml test harness rewrite](docs/plans/todo/tooling/01_ocaml-test-harness.md),
+  [Single OCaml setup in CI](docs/plans/todo/ci/01_single-ocaml-setup-in-ci.md)
 
-### 2.3 Trait call performance
+## Deferred Ideas Without A Concrete Plan
 
-- Improve call-site inlining opportunities in generated Go.
-- Avoid unnecessary helper indirection for simple builtins.
-- Explicit static-vs-dynamic dispatch selection model (if trait objects land).
-- Benchmark dynamic dispatch representation options (interface-only vs dictionary vs tagged existential package) before locking backend strategy.
+### Language Ergonomics And Syntax
 
-### 2.4 Union performance
+- optional record field syntax (`?`)
+- let-destructuring syntax
+- pattern guards
+- tuple patterns, if tuples are added
+- array/list patterns
+- extra match ergonomics and constructor-polish work
+- postponed syntax sugar or future operators that are still too vague for a dedicated plan
 
-- Reduce boxing/alloc costs in hot paths.
-- Optimize narrowing/type-switch patterns.
-- Optional generated wrapper representation for selected hot unions.
+### Type-System And Semantics
 
-### 2.5 Monomorphization strategy
+- canonical field-order policy for hashing, derives, and debug output
+- polymorphic literal policy (`1 + 1.0` style questions)
+- function-trait policy beyond v1 (`eq` / `ord` / `hash` for functions)
+- rank-N polymorphism, HKTs, and dependent-type exploration
 
-- Better specialization for HOF patterns.
-- Deduplicate equivalent specializations more aggressively.
-- Optional instrumentation to analyze specialization explosion.
-- Revisit type-map plumbing hardening where backend type facts are incomplete.
+### Backend And Performance
 
-### 2.6 Backend architecture evolution
+- spread/update optimization beyond copy semantics
+- escape-analysis-guided lowering and structural-shape canonicalization
+- enum layout tuning and constructor/match micro-optimizations
+- optimized union representations and narrowing codegen
+- closure lowering with explicit environment structs
+- specialization deduping and explosion-analysis tooling
+- selective Go-generics backend experiments
+- mid-level IR work only if workload pressure justifies it
 
-- Add mid-level IR only when optimization pressure justifies added complexity.
-- Keep Go source emission as baseline until IR-backed transforms show clear benefit.
-- Preserve generated-source readability as a non-functional requirement.
+### Tooling And Process
 
-## 3. Architecture Improvements
+- stress/performance benchmark suite with reproducible baselines
+- any future documentation/process requirements beyond the currently planned validation gates
 
-- Introduce explicit mid-level IR only when optimization requirements justify complexity.
-- Keep stage boundaries strict (parser/typechecker/codegen) to improve maintainability.
-- Formalize backend capability matrix (what each construct guarantees at codegen time).
-- Continue moving backend decisions from ad-hoc emitter logic to typed metadata contracts.
-- Evaluate whole-program assumptions and future module-aware compilation boundaries.
+### Long-Range Explorations
 
-### 3.1 Locked near-term modules/FFI policy
-
-These guardrails are intentionally locked until a dedicated modules+extern design pass lands:
-- Backend remains one Go package per build.
-- Extern ABI starts with primitives/unit only.
-- Records/enums/unions/trait objects stay out of ABI until representation and ownership rules are frozen.
-- Trait-object representation is treated as deferred design work, not a soft-inferred backend feature.
-- Any future trait-object ABI must use an explicit stable representation; raw Go interface internals are not the public contract.
-
-## 4. Tooling and Testing
-
-- Expand system/e2e test coverage beyond current integration shell suites.
-- Add stress/performance benchmark suite with reproducible baselines.
-- Add docs validation checks (staleness markers, link checks, canonical-source checks).
-- Add regression suites for trait solver overlap and record/row unification edge cases.
-- Add generated-Go snapshot tests for representative feature combinations.
-- Consolidate repetitive shell test setup helpers and keep one canonical integration harness.
-
-## 5. Documentation Process Improvements
-
-- Every canonical doc should include:
-  - `Last verified` date,
-  - `Implementation status`,
-  - explicit `Chosen vs Alternatives` sections.
-- Keep docs focused on current behavior and near-term design decisions.
-- Require roadmap entry when a design decision is explicitly deferred.
-
-## 6. Syntax and Surface-Language Follow-ups
-
-- Keep explicit decision records for any syntax-level change proposals.
-- Revisit postponed syntax sugar only after core type/codegen stability:
-  - postfix return syntax variants,
-  - extra match ergonomics,
-  - optional future operators that were deferred.
-- Keep editor/highlighting support aligned with final syntax choices.
-
-## 7. Out-of-Scope but Preserved Explorations
-
-- Concurrency model exploration (channels/goroutines vs effect-based model) is intentionally not in active implementation scope.
-- Modules-system exploratory work should be reintroduced only with a dedicated design pass.
+- concurrency model exploration (channels/goroutines vs effect-based model)
