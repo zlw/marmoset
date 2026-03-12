@@ -790,7 +790,12 @@ let compatible_with_expected_type (actual : mono_type) (expected : mono_type) :
   else if Annotation.is_subtype_of actual expected then
     Ok empty_substitution
   else
-    Error (type_mismatch actual expected)
+    match (canonicalize_mono_type actual, canonicalize_mono_type expected) with
+    | TIntersection _, _ | _, TIntersection _ -> (
+        match unify actual expected with
+        | Ok subst -> Ok subst
+        | Error e -> Error e)
+    | _ -> Error (type_mismatch actual expected)
 
 let binding_type_for_env
     ~(value_expr : AST.expression)
@@ -1548,6 +1553,13 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                     ~(diagnostic_code : string)
                     ~(conflict_message : string)
                     (candidates : Types.mono_type list) : (Types.mono_type, Diagnostic.t) result =
+                  let all_closed_records =
+                    List.for_all
+                      (function
+                        | Types.TRecord (_, None) -> true
+                        | _ -> false)
+                      candidates
+                  in
                   match candidates with
                   | [] ->
                       Error
@@ -1567,6 +1579,9 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                                 let composed = compose_substitution subst_acc subst' in
                                 let next = apply_substitution composed current_type in
                                 unify_candidates next composed tail
+                            | Error _ when all_closed_records ->
+                                Annotation.merged_record_intersection_type candidates
+                                |> Result.map Types.canonicalize_mono_type
                             | Error _ -> Error (error_at ~code:diagnostic_code ~message:conflict_message expr))
                       in
                       unify_candidates first_type empty_substitution rest
@@ -2096,7 +2111,7 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                        expr)
               | Some (source_trait_def, method_sig) -> (
                   (* Instantiate trait type param with fresh TVar *)
-                  let instantiated_sig =
+                  let trait_instantiated_sig =
                     match source_trait_def.Trait_registry.trait_type_param with
                     | None -> method_sig
                     | Some type_param ->
@@ -2109,56 +2124,180 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                           method_return_type = apply_substitution s method_sig.method_return_type;
                         }
                   in
-                  (* All args are explicit (first arg is receiver) *)
-                  let param_types = List.map snd instantiated_sig.method_params in
-                  match infer_args_against_expected type_map env empty_substitution args param_types with
+                  let method_generics = trait_instantiated_sig.method_generics in
+                  let instantiate_method_generics () :
+                      (Trait_registry.method_sig * substitution, Diagnostic.t) result =
+                    if method_generics = [] then
+                      match mc_type_args with
+                      | Some type_args when type_args <> [] ->
+                          Error
+                            (error_at ~code:"type-constructor"
+                               ~message:
+                                 (Printf.sprintf "Method '%s' takes no type parameters, but %d were provided"
+                                    method_name (List.length type_args))
+                               expr)
+                      | _ -> Ok (trait_instantiated_sig, SubstMap.empty)
+                    else
+                      match mc_type_args with
+                      | Some type_args ->
+                          if List.length type_args <> List.length method_generics then
+                            Error
+                              (error_at ~code:"type-constructor"
+                                 ~message:
+                                   (Printf.sprintf "Method '%s' expects %d type argument(s), but %d were provided"
+                                      method_name (List.length method_generics) (List.length type_args))
+                                 expr)
+                          else
+                            let rec convert_all acc = function
+                              | [] -> Ok (List.rev acc)
+                              | te :: rest -> (
+                                  match Annotation.type_expr_to_mono_type te with
+                                  | Error diag -> Error (error_at ~code:diag.code ~message:diag.message expr)
+                                  | Ok mono -> convert_all (mono :: acc) rest)
+                            in
+                            let open Result in
+                            let ( let* ) = bind in
+                            let* mono_args = convert_all [] type_args in
+                            let method_subst =
+                              List.fold_left2
+                                (fun acc (param_name, _) mono_arg -> SubstMap.add param_name mono_arg acc)
+                                SubstMap.empty method_generics mono_args
+                            in
+                            Ok
+                              ( {
+                                  trait_instantiated_sig with
+                                  method_params =
+                                    List.map
+                                      (fun (name, ty) -> (name, apply_substitution method_subst ty))
+                                      trait_instantiated_sig.method_params;
+                                  method_return_type =
+                                    apply_substitution method_subst trait_instantiated_sig.method_return_type;
+                                },
+                                method_subst )
+                      | None ->
+                          let method_subst =
+                            List.fold_left
+                              (fun acc (param_name, constraints) ->
+                                let fresh = fresh_type_var () in
+                                (match fresh with
+                                | TVar fresh_name ->
+                                    if constraints <> [] then
+                                      add_type_var_constraints fresh_name constraints
+                                | _ -> ());
+                                SubstMap.add param_name fresh acc)
+                              SubstMap.empty method_generics
+                          in
+                          Ok
+                            ( {
+                                trait_instantiated_sig with
+                                method_params =
+                                  List.map
+                                    (fun (name, ty) -> (name, apply_substitution method_subst ty))
+                                    trait_instantiated_sig.method_params;
+                                method_return_type =
+                                  apply_substitution method_subst trait_instantiated_sig.method_return_type;
+                              },
+                              method_subst )
+                  in
+                  match instantiate_method_generics () with
                   | Error e -> Error e
-                  | Ok (subst1, arg_types) -> (
-                      if List.length arg_types <> List.length param_types then
-                        Error
-                          (error_at ~code:"type-constructor"
-                             ~message:
-                               (Printf.sprintf "Qualified call '%s.%s' expects %d argument(s), got %d" trait_name
-                                  method_name (List.length param_types) (List.length args))
-                             expr)
-                      else
-                        let rec unify_params subst_acc actual_types expected_types =
-                          match (actual_types, expected_types) with
-                          | [], [] -> Ok subst_acc
-                          | actual :: rest_a, expected :: rest_e -> (
-                              let actual' = apply_substitution subst_acc actual in
-                              let expected' = apply_substitution subst_acc expected in
-                              match unify actual' expected' with
-                              | Error e -> Error (error_at ~code:e.code ~message:e.message expr)
-                              | Ok new_subst ->
-                                  unify_params (compose_substitution new_subst subst_acc) rest_a rest_e)
-                          | _ -> Error (error_at ~code:"type-constructor" ~message:"Argument count mismatch" expr)
-                        in
-                        match unify_params subst1 arg_types param_types with
-                        | Error e -> Error e
-                        | Ok final_subst -> (
-                            (* Verify trait constraint on receiver type *)
-                            let receiver_type =
-                              match param_types with
-                              | first :: _ -> apply_substitution final_subst first |> canonicalize_mono_type
-                              | [] -> TNull
+                  | Ok (instantiated_sig, method_subst) -> (
+                      (* All args are explicit (first arg is receiver) *)
+                      let param_types = List.map snd instantiated_sig.method_params in
+                      match infer_args_against_expected type_map env empty_substitution args param_types with
+                      | Error e -> Error e
+                      | Ok (subst1, arg_types) -> (
+                          if List.length arg_types <> List.length param_types then
+                            Error
+                              (error_at ~code:"type-constructor"
+                                 ~message:
+                                   (Printf.sprintf "Qualified call '%s.%s' expects %d argument(s), got %d" trait_name
+                                      method_name (List.length param_types) (List.length args))
+                                 expr)
+                          else
+                            let rec unify_params subst_acc actual_types expected_types =
+                              match (actual_types, expected_types) with
+                              | [], [] -> Ok subst_acc
+                              | actual :: rest_a, expected :: rest_e -> (
+                                  let actual' = apply_substitution subst_acc actual in
+                                  let expected' = apply_substitution subst_acc expected in
+                                  match unify actual' expected' with
+                                  | Error e -> Error (error_at ~code:e.code ~message:e.message expr)
+                                  | Ok new_subst ->
+                                      unify_params (compose_substitution new_subst subst_acc) rest_a rest_e)
+                              | _ -> Error (error_at ~code:"type-constructor" ~message:"Argument count mismatch" expr)
                             in
-                            let trait_check =
-                              match receiver_type with
-                              | TVar _ -> Ok ()
-                              | _ -> (
-                                  match Trait_solver.satisfies_trait receiver_type trait_name with
-                                  | Ok () -> Ok ()
-                                  | Error diag -> Error (error_at ~code:diag.code ~message:diag.message expr))
-                            in
-                            match trait_check with
+                            match unify_params subst1 arg_types param_types with
                             | Error e -> Error e
-                            | Ok () ->
-                                let return_type =
-                                  apply_substitution final_subst instantiated_sig.method_return_type
+                            | Ok final_subst -> (
+                                let constraint_check =
+                                  List.fold_left
+                                    (fun acc (param_name, constraints) ->
+                                      match acc with
+                                      | Error _ -> acc
+                                      | Ok () ->
+                                          let resolved_type =
+                                            apply_substitution method_subst (TVar param_name)
+                                            |> apply_substitution final_subst
+                                            |> canonicalize_mono_type
+                                          in
+                                          List.fold_left
+                                            (fun inner_acc trait_name ->
+                                              match inner_acc with
+                                              | Error _ -> inner_acc
+                                              | Ok () -> (
+                                                  match resolved_type with
+                                                  | TVar _ -> Ok ()
+                                                  | _ -> (
+                                                      match Trait_solver.satisfies_trait resolved_type trait_name with
+                                                      | Ok () -> Ok ()
+                                                      | Error diag ->
+                                                          Error
+                                                            (error_at ~code:diag.code
+                                                               ~message:
+                                                                 (Printf.sprintf
+                                                                    "Method '%s' type parameter '%s' requires trait '%s', but %s does not satisfy it"
+                                                                    method_name param_name trait_name
+                                                                    (Types.to_string resolved_type))
+                                                               expr))))
+                                            acc constraints)
+                                    (Ok ()) method_generics
                                 in
-                                record_method_resolution expr (QualifiedTraitMethod trait_name);
-                                Ok (final_subst, return_type)))))
+                                match constraint_check with
+                                | Error e -> Error e
+                                | Ok () ->
+                                    (* Verify trait constraint on receiver type *)
+                                    let receiver_type =
+                                      match param_types with
+                                      | first :: _ -> apply_substitution final_subst first |> canonicalize_mono_type
+                                      | [] -> TNull
+                                    in
+                                    let trait_check =
+                                      match receiver_type with
+                                      | TVar _ -> Ok ()
+                                      | _ -> (
+                                          match Trait_solver.satisfies_trait receiver_type trait_name with
+                                          | Ok () -> Ok ()
+                                          | Error diag ->
+                                              Error (error_at ~code:diag.code ~message:diag.message expr))
+                                    in
+                                    match trait_check with
+                                    | Error e -> Error e
+                                    | Ok () ->
+                                        let return_type =
+                                          apply_substitution final_subst instantiated_sig.method_return_type
+                                        in
+                                        let resolved_method_type_args =
+                                          List.map
+                                            (fun (param_name, _) ->
+                                              apply_substitution method_subst (TVar param_name)
+                                              |> apply_substitution final_subst
+                                              |> canonicalize_mono_type)
+                                            method_generics
+                                        in
+                                        record_method_resolution expr (QualifiedTraitMethod trait_name);
+                                        record_method_type_args expr resolved_method_type_args;
+                                        Ok (final_subst, return_type))))))
         in
         let resolve_type_name (name : string) : mono_type option =
           match Annotation.builtin_primitive_type name with
@@ -2689,7 +2828,23 @@ and type_callable
                       (* Strict mode (methods): subtype check only, no unification fallback.
                          Method generic type vars use original names and must remain polymorphic. *)
                       let expected_ret' = apply_substitution subst expected_ret in
-                      if Annotation.check_annotation expected_ret' body_type' then
+                      let strict_return_ok =
+                        if Annotation.check_annotation expected_ret' body_type' then
+                          true
+                        else
+                          match canonicalize_mono_type expected_ret' with
+                          | TTraitObject target_traits -> (
+                              match
+                                classify_trait_object_compatibility
+                                  ~mk_error:(fun ~code:_ ~message:_ ->
+                                    Diagnostic.error_no_span ~code:"type-return-mismatch" ~message:"")
+                                  body_type' target_traits
+                              with
+                              | Ok _ -> true
+                              | Error _ -> false)
+                          | _ -> false
+                      in
+                      if strict_return_ok then
                         Ok (param_names, param_types, expected_ret, actual_effectful, subst)
                       else
                         Error
@@ -3490,6 +3645,25 @@ and infer_record_literal type_map env fields spread expr =
                   let override_names = List.map (fun (f : Types.record_field_type) -> f.name) field_types in
                   let pruned_row = remove_override_names_from_row override_names base_row in
                   Ok (subst, Types.canonicalize_mono_type (TRecord (merged, pruned_row)))
+              | TIntersection members
+                when List.for_all
+                       (function
+                         | TRecord (_, None) -> true
+                         | _ -> false)
+                       members -> (
+                  match Annotation.merged_record_intersection_type members with
+                  | Error diag -> Error (error_at ~code:diag.code ~message:diag.message spread_expr)
+                  | Ok (TRecord (base_fields, base_row)) ->
+                      let merged = merge_fields base_fields field_types in
+                      let override_names = List.map (fun (f : Types.record_field_type) -> f.name) field_types in
+                      let pruned_row = remove_override_names_from_row override_names base_row in
+                      Ok (subst, Types.canonicalize_mono_type (TRecord (merged, pruned_row)))
+                  | Ok other ->
+                      Error
+                        (error_at ~code:"type-constructor"
+                           ~message:
+                             (Printf.sprintf "Record spread expects a record, got %s" (to_string other))
+                           spread_expr))
               | TVar _ -> (
                   let row_var = fresh_row_var () in
                   let expected_base = TRecord ([], Some row_var) in
@@ -5189,6 +5363,25 @@ let infer_program ?(env = empty_env) ?state (program : AST.program) :
           match predeclare_top_level_type_aliases expanded_program with
           | Error e -> Error e
           | Ok () -> (
+          let predeclare_top_level_impl_headers (program : AST.program) : unit =
+            List.iter
+              (fun (stmt : AST.statement) ->
+                match stmt.stmt with
+                | AST.ImplDef impl_def when impl_def.impl_type_params = [] -> (
+                    match Annotation.type_expr_to_mono_type impl_def.impl_for_type with
+                    | Ok for_type ->
+                        Trait_registry.predeclare_impl_header
+                          {
+                            Trait_registry.impl_trait_name = impl_def.impl_trait_name;
+                            impl_type_params = [];
+                            impl_for_type = for_type;
+                            impl_methods = [];
+                          }
+                    | Error _ -> ())
+                | _ -> ())
+              program
+          in
+          predeclare_top_level_impl_headers expanded_program;
           let type_map = create_type_map () in
           let register_top_level_declaration seen_traits seen_enums seen_aliases (stmt : AST.statement) =
             match stmt.stmt with

@@ -170,7 +170,7 @@ let rec member_is_subtype_of (actual : Types.mono_type) (expected : Types.mono_t
   | Types.TUnion members, concrete -> List.for_all (fun member -> member_is_subtype_of member concrete) members
   | _ -> false
 
-let merged_record_intersection_type (members : Types.mono_type list) :
+let rec merged_record_intersection_type (members : Types.mono_type list) :
     (Types.mono_type, Diagnostic.t) result =
   let intersection_error message = Error (Diagnostic.error_no_span ~code:"type-annotation-invalid" ~message) in
   let merged_fields : (string, Types.mono_type) Hashtbl.t = Hashtbl.create 8 in
@@ -180,9 +180,12 @@ let merged_record_intersection_type (members : Types.mono_type list) :
     else if member_is_subtype_of incoming existing then
       Ok incoming
     else
-      intersection_error
-        (Printf.sprintf "Record intersection field '%s' has incompatible types %s and %s" field_name
-           (Types.to_string existing) (Types.to_string incoming))
+      match (Types.canonicalize_mono_type existing, Types.canonicalize_mono_type incoming) with
+      | Types.TRecord (_, None), Types.TRecord (_, None) -> merged_record_intersection_type [ existing; incoming ]
+      | _ ->
+          intersection_error
+            (Printf.sprintf "Record intersection field '%s' has incompatible types %s and %s" field_name
+               (Types.to_string existing) (Types.to_string incoming))
   in
   let rec add_fields = function
     | [] -> Ok ()
@@ -501,7 +504,7 @@ and record_satisfies_required_fields
     (fun (expected_f : Types.record_field_type) ->
       match field_lookup actual_fields expected_f.name with
       | None -> false
-      | Some actual_f -> member_is_subtype_of actual_f.typ expected_f.typ)
+      | Some actual_f -> is_subtype_of actual_f.typ expected_f.typ)
     expected_fields
 
 (* Check if annotation matches inferred type *)

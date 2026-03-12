@@ -79,6 +79,7 @@ type resolved_impl = {
 let trait_registry : (string, trait_def) Hashtbl.t = Hashtbl.create 16
 let impl_registry : (string * mono_type, impl_def) Hashtbl.t = Hashtbl.create 32 (* key: (trait_name, for_type) *)
 let generic_impl_registry : (string * mono_type, impl_def) Hashtbl.t = Hashtbl.create 32
+let predeclared_impl_registry : (string * mono_type, impl_def) Hashtbl.t = Hashtbl.create 32
 let impl_origin_registry : (string * mono_type, impl_origin) Hashtbl.t = Hashtbl.create 32
 let generic_impl_origin_registry : (string * mono_type, impl_origin) Hashtbl.t = Hashtbl.create 32
 let impl_source_registry : (string * mono_type, impl_source) Hashtbl.t = Hashtbl.create 32
@@ -139,6 +140,7 @@ let clear () =
   Hashtbl.clear trait_registry;
   Hashtbl.clear impl_registry;
   Hashtbl.clear generic_impl_registry;
+  Hashtbl.clear predeclared_impl_registry;
   Hashtbl.clear impl_origin_registry;
   Hashtbl.clear generic_impl_origin_registry;
   Hashtbl.clear impl_source_registry;
@@ -251,6 +253,7 @@ let register_impl ?(builtin = false) ?source ?(origin = ExplicitImpl) (def : imp
       | _ ->
           (* User impl replaces builtin marker for this key (allowed exactly once). *)
           Hashtbl.remove builtin_impl_keys key;
+          Hashtbl.remove predeclared_impl_registry key;
           Hashtbl.replace impl_origin_registry key origin;
           (match source with
           | Some src -> Hashtbl.replace impl_source_registry key src
@@ -286,6 +289,20 @@ let register_impl ?(builtin = false) ?source ?(origin = ExplicitImpl) (def : imp
           | Some src -> Hashtbl.replace generic_impl_source_registry key src
           | None -> Hashtbl.remove generic_impl_source_registry key);
           Hashtbl.replace generic_impl_registry key def'
+
+let predeclare_impl_header (def : impl_def) : unit =
+  let canonical_for_type = canonical_type def.impl_for_type in
+  let def' =
+    {
+      impl_trait_name = canonical_trait_name def.impl_trait_name;
+      impl_type_params = [];
+      impl_for_type = canonical_for_type;
+      impl_methods = [];
+    }
+  in
+  let key = (def'.impl_trait_name, def'.impl_for_type) in
+  if not (Hashtbl.mem impl_registry key) then
+    Hashtbl.replace predeclared_impl_registry key def'
 
 (* Lookup a trait by name *)
 let lookup_trait (name : string) : trait_def option =
@@ -381,6 +398,65 @@ let specialized_impl (def : impl_def) (for_type : mono_type) (subst : Types.subs
     impl_methods = methods';
   }
 
+let resolved_concrete_impl_record
+    (trait_name : string)
+    (_for_type : mono_type)
+    (concrete_impl : impl_def) : resolved_impl =
+  let candidate_for_type = canonical_type concrete_impl.impl_for_type in
+  {
+    impl = concrete_impl;
+    origin = Option.value (Hashtbl.find_opt impl_origin_registry (trait_name, candidate_for_type)) ~default:ExplicitImpl;
+    specialization_subst = empty_substitution;
+    source_site = format_concrete_impl_site trait_name candidate_for_type;
+  }
+
+let rec concrete_receiver_matches_impl_target (actual_type : mono_type) (impl_target_type : mono_type) : bool =
+  let actual_type = canonical_type actual_type in
+  let impl_target_type = canonical_type impl_target_type in
+  match (actual_type, impl_target_type) with
+  | TRecord (actual_fields, _), TRecord (expected_fields, _) ->
+      List.for_all
+        (fun (expected_field : record_field_type) ->
+          match List.find_opt (fun (f : record_field_type) -> f.name = expected_field.name) actual_fields with
+          | None -> false
+          | Some actual_field -> concrete_receiver_matches_impl_target actual_field.typ expected_field.typ)
+        expected_fields
+  | _ -> (
+      match Unify.unify actual_type impl_target_type with
+      | Ok _ -> true
+      | Error _ -> false)
+
+let resolve_structural_concrete_impl
+    (trait_name : string)
+    (for_type : mono_type) : (resolved_impl option, string) result =
+  let trait_name = canonical_trait_name trait_name in
+  let for_type' = canonical_type for_type in
+  let matches =
+    Hashtbl.fold
+      (fun (candidate_trait_name, candidate_for_type) candidate_def acc ->
+        if candidate_trait_name <> trait_name then
+          acc
+        else if concrete_receiver_matches_impl_target for_type' candidate_for_type then
+          (resolved_concrete_impl_record trait_name candidate_for_type candidate_def) :: acc
+        else
+          acc)
+      impl_registry []
+  in
+  match matches with
+  | [] -> Ok None
+  | [ resolved ] -> Ok (Some resolved)
+  | many ->
+      let sites =
+        many
+        |> List.map (fun (r : resolved_impl) -> r.source_site)
+        |> List.sort_uniq String.compare
+        |> String.concat ", "
+      in
+      Error
+        (Printf.sprintf
+           "Ambiguous concrete impl selection for trait '%s' and type %s (matching impl sites: %s)"
+           trait_name (to_string for_type') sites)
+
 let resolve_generic_impl (trait_name : string) (for_type : mono_type) : (resolved_impl option, string) result =
   let trait_name = canonical_trait_name trait_name in
   let for_type' = canonical_type for_type in
@@ -406,7 +482,7 @@ let resolve_generic_impl (trait_name : string) (for_type : mono_type) : (resolve
           acc
         else
           let pattern_type = canonical_type candidate_def.impl_for_type in
-          match Unify.unify pattern_type for_type' with
+          match Unify.unify for_type' pattern_type with
           | Error _ -> acc
           | Ok subst ->
               let specialization_subst =
@@ -449,6 +525,19 @@ let resolve_generic_impl (trait_name : string) (for_type : mono_type) : (resolve
 let resolve_impl (trait_name : string) (for_type : mono_type) : (resolved_impl option, string) result =
   let trait_name = canonical_trait_name trait_name in
   let for_type' = canonical_type for_type in
+  let resolve_predeclared () =
+    match Hashtbl.find_opt predeclared_impl_registry (trait_name, for_type') with
+    | Some predeclared ->
+        Ok
+          (Some
+             {
+               impl = predeclared;
+               origin = ExplicitImpl;
+               specialization_subst = empty_substitution;
+               source_site = format_concrete_impl_site trait_name for_type';
+             })
+    | None -> Ok None
+  in
   match Hashtbl.find_opt impl_registry (trait_name, for_type') with
   | Some concrete_impl ->
       Ok
@@ -460,7 +549,18 @@ let resolve_impl (trait_name : string) (for_type : mono_type) : (resolved_impl o
              specialization_subst = empty_substitution;
              source_site = format_concrete_impl_site trait_name for_type';
            })
-  | None -> resolve_generic_impl trait_name for_type'
+  | None -> (
+      match resolve_generic_impl trait_name for_type' with
+      | Ok (Some _ as resolved) -> Ok resolved
+      | Error _ as err -> err
+      | Ok None -> (
+          match for_type' with
+          | TIntersection _ | TRecord (_, None) -> (
+              match resolve_structural_concrete_impl trait_name for_type' with
+              | Ok (Some _ as resolved) -> Ok resolved
+              | Error _ as err -> err
+              | Ok None -> resolve_predeclared ())
+          | _ -> resolve_predeclared ()))
 
 (* Lookup an impl for a specific trait and type *)
 let lookup_impl (trait_name : string) (for_type : mono_type) : impl_def option =

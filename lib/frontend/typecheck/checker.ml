@@ -101,6 +101,17 @@ let check_string ?state ?(env = Infer.empty_env) ~file_id (source : string) :
    Phase 2: Type check with annotations
    ============================================================ *)
 
+let annotation_matches_inferred_type (annotated_type : mono_type) (inferred_type : mono_type) : bool =
+  if Annotation.check_annotation annotated_type inferred_type then
+    true
+  else
+    match (canonicalize_mono_type annotated_type, canonicalize_mono_type inferred_type) with
+    | TIntersection _, _ | _, TIntersection _ -> (
+        match Unify.unify inferred_type annotated_type with
+        | Ok _ -> true
+        | Error _ -> false)
+    | _ -> false
+
 (* Check if a let binding's annotation matches its inferred type *)
 let check_let_annotation
     (name : string) (annotation : Syntax.Ast.AST.type_expr option) (inferred_type : mono_type) :
@@ -113,7 +124,7 @@ let check_let_annotation
       match Annotation.type_expr_to_mono_type type_annot with
       | Error d -> Error d
       | Ok annotated_type ->
-          if Annotation.check_annotation annotated_type inferred_type then
+          if annotation_matches_inferred_type annotated_type inferred_type then
             Ok ()
           else
             Error
@@ -140,7 +151,7 @@ let check_function_annotation (return_annotation : Syntax.Ast.AST.type_expr opti
             | other -> other
           in
           let actual_return = extract_return_type inferred_type in
-          if Annotation.check_annotation annotated_return_type actual_return then
+          if annotation_matches_inferred_type annotated_return_type actual_return then
             Ok ()
           else
             Error

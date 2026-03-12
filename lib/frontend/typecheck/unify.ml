@@ -68,8 +68,8 @@ let rec unify (type1 : mono_type) (type2 : mono_type) : (substitution, Diagnosti
       else
         Error (type_mismatch type1 type2)
   | TIntersection members1, TIntersection members2 -> unify_intersection_with_intersection members1 members2
-  | concrete, TIntersection members -> unify_concrete_with_intersection concrete members
-  | TIntersection members, concrete -> unify_concrete_with_intersection concrete members
+  | concrete, TIntersection members -> unify_concrete_against_intersection concrete members
+  | TIntersection members, concrete -> unify_intersection_against_concrete members concrete
   (* Enum types - unify name and all type arguments *)
   | TEnum (name1, args1), TEnum (name2, args2) ->
       if name1 <> name2 then
@@ -235,28 +235,116 @@ and unify_union_with_union (members1 : mono_type list) (members2 : mono_type lis
   else
     Error (type_mismatch (TUnion members1) (TUnion members2))
 
-and unify_concrete_with_intersection (concrete : mono_type) (members : mono_type list) :
-    (substitution, Diagnostic.t) result =
-  let unify_record_with_required_fields
-      (actual_fields : record_field_type list)
-      (expected_fields : record_field_type list) : (substitution, Diagnostic.t) result =
-    let field_lookup fields name = List.find_opt (fun (f : record_field_type) -> f.name = name) fields in
-    let rec loop subst = function
-      | [] -> Ok subst
-      | expected_field :: rest -> (
-          match field_lookup actual_fields expected_field.name with
-          | None -> Error (type_mismatch concrete (TIntersection members))
-          | Some actual_field ->
-              let actual_type = apply_substitution subst actual_field.typ in
-              let expected_type = apply_substitution subst expected_field.typ in
-              match unify actual_type expected_type with
-              | Error _ -> Error (type_mismatch concrete (TIntersection members))
-              | Ok subst' ->
-                  let composed = compose_substitution subst subst' in
-                  loop composed rest)
-    in
-    loop empty_substitution expected_fields
+and merge_record_intersection_type_for_unify
+    (mismatch_left : mono_type)
+    (mismatch_right : mono_type)
+    (members : mono_type list) : (mono_type, Diagnostic.t) result =
+  let merged_fields : (string, mono_type) Hashtbl.t = Hashtbl.create 8 in
+  let merge_field_types (existing : mono_type) (incoming : mono_type) :
+      (mono_type, Diagnostic.t) result =
+    let existing' = canonicalize_mono_type existing in
+    let incoming' = canonicalize_mono_type incoming in
+    match (existing', incoming') with
+    | TRecord (_, None), TRecord (_, None) ->
+        merge_record_intersection_type_for_unify mismatch_left mismatch_right [ existing'; incoming' ]
+    | _ -> (
+        match unify existing' incoming' with
+        | Ok subst -> Ok (canonicalize_mono_type (apply_substitution subst existing'))
+        | Error _ -> Error (type_mismatch mismatch_left mismatch_right))
   in
+  let rec add_member_fields = function
+    | [] -> Ok ()
+    | TRecord (fields, None) :: rest ->
+        let rec add_fields = function
+          | [] -> add_member_fields rest
+          | (field : record_field_type) :: field_rest -> (
+              match Hashtbl.find_opt merged_fields field.name with
+              | None ->
+                  Hashtbl.replace merged_fields field.name field.typ;
+                  add_fields field_rest
+              | Some existing -> (
+                  match merge_field_types existing field.typ with
+                  | Error _ as err -> err
+                  | Ok merged ->
+                      Hashtbl.replace merged_fields field.name merged;
+                      add_fields field_rest))
+        in
+        add_fields fields
+    | _ -> Error (type_mismatch mismatch_left mismatch_right)
+  in
+  match add_member_fields members with
+  | Error _ as err -> err
+  | Ok () ->
+      let merged_fields =
+        Hashtbl.to_seq_keys merged_fields
+        |> List.of_seq
+        |> List.sort String.compare
+        |> List.map (fun name ->
+               match Hashtbl.find_opt merged_fields name with
+               | Some typ -> { name; typ }
+               | None -> failwith "merge_record_intersection_type_for_unify: impossible missing field")
+      in
+      Ok (TRecord (normalize_record_fields merged_fields, None))
+
+and unify_intersection_members_against_expected
+    (mismatch_left : mono_type)
+    (mismatch_right : mono_type)
+    (members : mono_type list)
+    (expected_type : mono_type) : (substitution, Diagnostic.t) result =
+  let rec unify_all subst = function
+    | [] -> Ok subst
+    | member :: rest -> (
+        let member' = apply_substitution subst member in
+        let expected' = apply_substitution subst expected_type in
+        match unify_actual_against_expected mismatch_left mismatch_right member' expected' with
+        | Error _ -> Error (type_mismatch mismatch_left mismatch_right)
+        | Ok subst' ->
+            let composed = compose_substitution subst subst' in
+            unify_all composed rest)
+  in
+  unify_all empty_substitution members
+
+and unify_actual_against_expected
+    (mismatch_left : mono_type)
+    (mismatch_right : mono_type)
+    (actual_type : mono_type)
+    (expected_type : mono_type) : (substitution, Diagnostic.t) result =
+  let actual_type = canonicalize_mono_type actual_type in
+  let expected_type = canonicalize_mono_type expected_type in
+  match (actual_type, expected_type) with
+  | TRecord (actual_fields, _), TRecord (expected_fields, _) ->
+      unify_record_with_required_fields mismatch_left mismatch_right actual_fields expected_fields
+  | TRecord _, TIntersection members -> unify_concrete_against_intersection actual_type members
+  | TIntersection members, _ -> (
+      match merge_record_intersection_type_for_unify mismatch_left mismatch_right members with
+      | Ok merged -> unify_actual_against_expected mismatch_left mismatch_right merged expected_type
+      | Error _ -> unify_intersection_members_against_expected mismatch_left mismatch_right members expected_type)
+  | _, _ -> unify actual_type expected_type
+
+and unify_record_with_required_fields
+    (mismatch_left : mono_type)
+    (mismatch_right : mono_type)
+    (actual_fields : record_field_type list)
+    (expected_fields : record_field_type list) : (substitution, Diagnostic.t) result =
+  let field_lookup fields name = List.find_opt (fun (f : record_field_type) -> f.name = name) fields in
+  let rec loop subst = function
+    | [] -> Ok subst
+    | expected_field :: rest -> (
+        match field_lookup actual_fields expected_field.name with
+        | None -> Error (type_mismatch mismatch_left mismatch_right)
+        | Some actual_field ->
+            let actual_type = apply_substitution subst actual_field.typ in
+            let expected_type = apply_substitution subst expected_field.typ in
+            match unify_actual_against_expected mismatch_left mismatch_right actual_type expected_type with
+            | Error _ -> Error (type_mismatch mismatch_left mismatch_right)
+            | Ok subst' ->
+                let composed = compose_substitution subst subst' in
+                loop composed rest)
+  in
+  loop empty_substitution expected_fields
+
+and unify_concrete_against_intersection (concrete : mono_type) (members : mono_type list) :
+    (substitution, Diagnostic.t) result =
   let rec unify_all subst = function
     | [] -> Ok subst
     | member :: rest -> (
@@ -265,7 +353,7 @@ and unify_concrete_with_intersection (concrete : mono_type) (members : mono_type
         let member_subst_result =
           match (concrete', member') with
           | TRecord (actual_fields, _), TRecord (expected_fields, _) ->
-              unify_record_with_required_fields actual_fields expected_fields
+              unify_record_with_required_fields concrete (TIntersection members) actual_fields expected_fields
           | _ -> unify concrete' member'
         in
         match member_subst_result with
@@ -275,6 +363,10 @@ and unify_concrete_with_intersection (concrete : mono_type) (members : mono_type
             unify_all composed rest)
   in
   unify_all empty_substitution members
+
+and unify_intersection_against_concrete (members : mono_type list) (concrete : mono_type) :
+    (substitution, Diagnostic.t) result =
+  unify_actual_against_expected (TIntersection members) concrete (TIntersection members) concrete
 
 and unify_intersection_with_intersection (members1 : mono_type list) (members2 : mono_type list) :
     (substitution, Diagnostic.t) result =
