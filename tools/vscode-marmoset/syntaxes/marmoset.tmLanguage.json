@@ -687,7 +687,7 @@
     },
 
     "match-expression": {
-      "comment": "match expr { pattern: body ... }",
+      "comment": "match expr { case pattern: body ... }",
       "begin": "\\b(match)\\b",
       "beginCaptures": {
         "1": { "name": "keyword.control.match.marmoset" }

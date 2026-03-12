@@ -94,7 +94,7 @@ assertRegexMatches(repo["function-type"], "end", ") => Int", "function-type end"
 assertRegexDoesNotMatch(
   repo["function-type"],
   "begin",
-  "fn(Int, Int) -> Int",
+  "Int -> Int",
   "function-type begin",
 );
 assert(repo["trait-object-type"], "trait-object-type repository entry is missing");
@@ -108,19 +108,19 @@ assertRegexDoesNotMatch(repo["intersection-type"], "match", "Dyn[Show & Eq]", "i
 assertRegexMatches(repo["impl-block"], "begin", "impl[a: Show] Show[List[a]] = {", "impl-block begin");
 assert(
   !JSON.stringify(repo["impl-block"]).includes("\\\\b(for)"),
-  "impl-block should not advertise for-syntax",
+  "impl-block should not advertise removed header spellings",
 );
 assert(repo["derive-clause"], "derive-clause repository entry is missing");
 assertRegexMatches(repo["derive-clause"], "match", "derive Eq, Show", "derive-clause match");
-assert(!repo["derive-statement"], "derive-statement repository entry should be removed");
-assert(!repo["function-literal"], "function-literal repository entry should be removed");
+assert(!repo["derive-statement"], "removed detached-derive entry should stay absent");
+assert(!repo["function-literal"], "removed block-lambda entry should stay absent");
 assert(
   !grammar.patterns.some((entry) => entry?.include === "#derive-statement"),
-  "top-level patterns should not include derive-statement",
+  "top-level patterns should not include the removed detached-derive entry",
 );
 assert(
   !grammar.patterns.some((entry) => entry?.include === "#function-literal"),
-  "top-level patterns should not include function-literal",
+  "top-level patterns should not include the removed block-lambda entry",
 );
 
 assertRegexMatches(

@@ -98,7 +98,7 @@ This is follow-up language work, not another syntax migration. Do not reintroduc
   - a user trait is derivable only when every trait method has a default body after type substitution,
   - traits with any required method remain non-derivable in this rollout unless they are one of the builtin derivable traits above.
 - Field-only traits are not derivable in Track A. They are already satisfied structurally; `derive FieldOnlyTrait` is a deterministic error, not a no-op.
-- Supertraits are not auto-derived implicitly from trait definitions alone. A derive request succeeds only if every supertrait is already implemented for the target type or appears in the same derive statement/list.
+- Supertraits are not auto-derived implicitly from trait definitions alone. A derive request succeeds only if every supertrait is already implemented for the target type or appears in the same derive clause.
 - When the same `derive` statement requests multiple traits, processing order is graph-driven, not source-order-sensitive. The implementation must topologically sort the requested traits with respect to their supertrait closure.
 - Derived impls must be recorded with provenance:
   - `ExplicitImpl`
@@ -225,7 +225,7 @@ Tasks:
   - leave builtin derives as residual `AST.DeriveDef` entries so the existing builtin derive/emitter path can keep working during Track A,
   - tag the generated impl registration as `DefaultDerivedImpl`.
 - Make residual-program rewriting explicit:
-  - source `derive Show, Printable for Point` where `Show` is builtin and `Printable` is default-backed user trait becomes
+  - source `type Point = { x: Int } derive Show, Printable` where `Show` is builtin and `Printable` is default-backed user trait becomes
     - `AST.DeriveDef { derive_traits = [Show]; ... }`
     - followed immediately by one synthetic `AST.ImplDef` for `Printable[Point]`.
 - Ensure the derive planner is idempotent for one program:

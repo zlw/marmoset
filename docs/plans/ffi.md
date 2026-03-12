@@ -50,15 +50,15 @@ This is the third milestone in the language evolution. It depends on the module 
 export println, sprintf
 
 extern "fmt" {
-  fn Println(s: string) => unit
-  fn Sprintf(format: string, arg: string) -> string
+  fn Println(s: Str) => Unit
+  fn Sprintf(format: Str, arg: Str) -> Str
 }
 
-let println = fn(s: string) => unit {
+fn println(s: Str) => Unit = {
   fmt.Println(s)
 }
 
-let sprintf = fn(format: string, arg: string) -> string {
+fn sprintf(format: Str, arg: Str) -> Str = {
   fmt.Sprintf(format, arg)
 }
 ```
@@ -82,13 +82,13 @@ lib.fmt.println("hello")
 export parse_int
 
 extern "strconv" {
-  fn Atoi(s: string) => int           # simplified v1 signature
+  fn Atoi(s: Str) => Int           # simplified v1 signature
 }
 
-let parse_int = fn(s: string) -> result[int, string] {
-  # v2: translate Go's (int, error) → result[int, string]
+fn parse_int(s: Str) -> Result[Int, Str] = {
+  # v2: translate Go's (int, error) -> Result[Int, Str]
   # v1: simplified, just forward
-  result.ok(strconv.Atoi(s))
+  Result.Ok(strconv.Atoi(s))
 }
 ```
 
@@ -96,7 +96,7 @@ let parse_int = fn(s: string) -> result[int, string] {
 
 ```
 extern "encoding/json" as json {
-  fn Marshal(v: string) => string
+  fn Marshal(v: Str) -> Str
 }
 
 json.Marshal("test")
@@ -110,18 +110,18 @@ No artificial restrictions. If a type maps, it maps:
 
 | Go | Marmoset | Notes |
 |---|---|---|
-| `int`, `int64` | `int` | Wrapper handles int64 ↔ int conversion |
-| `float64` | `float` | Direct |
-| `string` | `string` | Direct |
-| `bool` | `bool` | Direct |
-| `void` (no return) | `unit` | Wrapper returns `struct{}{}` |
-| `[]T` | `list[T]` | Go slice ↔ Marmoset array |
-| `map[K]V` | `hash[K, V]` | Direct |
+| `int`, `int64` | `Int` | Wrapper handles int64 ↔ int conversion |
+| `float64` | `Float` | Direct |
+| `string` | `Str` | Direct |
+| `bool` | `Bool` | Direct |
+| `void` (no return) | `Unit` | Wrapper returns `struct{}{}` |
+| `[]T` | `List[T]` | Go slice ↔ Marmoset array |
+| `map[K]V` | `Map[K, V]` | Direct |
 | `struct{fields}` | `{ field: type, ... }` | Record mapping |
-| `interface{methods}` | trait | Trait mapping |
-| `(T, error)` | `result[T, string]` | Wrapper translates |
-| `(T, bool)` | `option[T]` | Wrapper translates |
-| `nil` | `option.none` | Wrapper translates |
+| `interface{methods}` | `Dyn[Trait]` | Trait mapping |
+| `(T, error)` | `Result[T, Str]` | Wrapper translates |
+| `(T, bool)` | `Option[T]` | Wrapper translates |
+| `nil` | `Option.None` | Wrapper translates |
 | `chan T` | **unsupported** | Clear error |
 | `any` / `interface{}` | **unsupported** | Clear error (no universal type) |
 
@@ -165,7 +165,7 @@ and extern_fn_sig = {
 
 **Tests:**
 - Unit: lex `extern`
-- Unit: parse `extern "fmt" { fn Println(s: string) => unit }`
+- Unit: parse `extern "fmt" { fn Println(s: Str) => Unit }`
 - Unit: parse multiple functions in one block
 - Unit: parse `extern "encoding/json" as json { ... }`
 - Unit: error for missing type annotations
@@ -206,7 +206,7 @@ val used_packages : unit -> string list   (* Go paths of packages actually calle
 **Tests:**
 - Unit: extern function types registered correctly
 - Unit: `fmt.Println("hello")` type-checks with effectful flag
-- Unit: `strings.Contains("hello", "ell")` type-checks to `bool`
+- Unit: `strings.Contains("hello", "ell")` type-checks to `Bool`
 - Unit: type error for wrong argument type
 - Unit: error for unknown extern function name
 - Unit: error for using extern qualifier as a value
@@ -236,8 +236,8 @@ val used_packages : unit -> string list   (* Go paths of packages actually calle
 4. **Only emit wrappers for functions actually called** (tracked by usage flag in registry).
 
 **Tests:**
-- Integration: `extern "fmt" { fn Println(s: string) => unit }` + wrapper → compiles, runs, prints
-- Integration: `extern "strings" { fn ToUpper(s: string) -> string }` → "HELLO"
+- Integration: `extern "fmt" { fn Println(s: Str) => Unit }` + wrapper -> compiles, runs, prints
+- Integration: `extern "strings" { fn ToUpper(s: Str) -> Str }` -> "HELLO"
 - Integration: multiple extern blocks in one file
 - Integration: extern function called inside user-defined function
 - Integration: generated Go compiles with `go build`
@@ -282,10 +282,10 @@ val used_packages : unit -> string list   (* Go paths of packages actually calle
 export println
 
 extern "fmt" {
-  fn Println(s: string) => unit
+  fn Println(s: Str) => Unit
 }
 
-let println = fn(s: string) => unit {
+fn println(s: Str) => Unit = {
   fmt.Println(s)
 }
 ```
@@ -335,11 +335,11 @@ func main() {
 
 ## Future Extensions (v2+)
 
-1. **Multiple return values:** `fn Atoi(s: string) => (int, error)` with automatic result type mapping
-2. **Go methods:** `extern "strings" type Builder { fn WriteString(self, s: string) -> int }`
+1. **Multiple return values:** `fn Atoi(s: Str) => (Int, Error)` with automatic result type mapping
+2. **Go methods:** `extern "strings" type Builder { fn WriteString(self, s: Str) -> Int }`
 3. **Go interfaces → traits:** automatic mapping
 4. **Auto-discovery:** `marmoset gen-extern "fmt"` CLI tool generates wrapper stubs from `go doc`
-5. **Variadic functions:** `fn Sprintf(format: string, args: ...string) -> string`
+5. **Variadic functions:** `fn Sprintf(format: Str, args: ...Str) -> Str`
 6. **Opaque types:** Go types with no Marmoset equivalent wrapped as opaque handles
 
 ---

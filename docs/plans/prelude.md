@@ -9,7 +9,7 @@
 
 ## Context
 
-Users must redefine `enum option[a] { some(a) none }` and `enum result[a, e] { success(a) failure(e) }` in every file. There is no prelude. This plan creates `std/prelude.mr` with core enums and traits, auto-imported into every module.
+Users must redefine `enum Option[a] = { Some(a), None }` and `enum Result[a, e] = { Success(a), Failure(e) }` in every file. There is no prelude. This plan creates `std/prelude.mr` with core enums and traits, auto-imported into every module.
 
 **Modules → Basic stdlib + prelude → FFI → Full stdlib via FFI**
 
@@ -19,9 +19,9 @@ Users must redefine `enum option[a] { some(a) none }` and `enum result[a, e] { s
 
 1. **Real .mr file.** The prelude is `std/prelude.mr`, written in Marmoset. The compiler auto-imports it.
 2. **Auto-import.** Prelude exports are available in every module without explicit `import`.
-3. **Primitive impls stay in OCaml.** `builtins.ml` continues to register `impl eq for int` etc. with `~builtin:true`. The emitter's hardcoded Go strings are unchanged. No stub bodies, no migration. Post-FFI these could move to prelude.mr using `extern` blocks.
-4. **Builtin functions stay in OCaml.** `puts`, `len`, `first`, `last`, `rest`, `push` — types registered in `builtins.ml`, Go implementations emitted as `runtime.go`. They move to stdlib modules after FFI.
-5. **Methods on types.** Option/result utility methods (`unwrap_or`, `map`, `bind`, `map_fail`, etc.) as inherent methods. Generic inherent impls (prereq) being implemented separately by Codex.
+3. **Primitive impls stay in OCaml.** `builtins.ml` continues to register builtin primitive impls (`Eq[Int]`, `Show[Str]`, etc.) with `~builtin:true`. The emitter's hardcoded Go strings are unchanged. No stub bodies, no migration. Post-FFI these could move to `std/prelude.mr` using `extern` blocks.
+4. **Builtin functions stay in OCaml.** `puts`, `len`, `first`, `last`, `rest`, `push` keep their registrations in `builtins.ml` and their Go implementations in `runtime.go`. They move to stdlib modules after FFI.
+5. **Methods on types.** `Option` / `Result` utility methods (`unwrap_or`, `map`, `bind`, `map_fail`, etc.) live as inherent methods. Generic inherent impls are a prerequisite.
 
 ---
 
@@ -29,16 +29,16 @@ Users must redefine `enum option[a] { some(a) none }` and `enum result[a, e] { s
 
 | Item | Currently in | Why move |
 |------|-------------|----------|
-| `enum ordering` | `builtins.ml` | Users shouldn't need to define this |
-| `enum option[a]` | `enum_registry.ml` | Users redefine in every file today |
-| `enum result[a, e]` | `enum_registry.ml` | Users redefine in every file today |
-| `trait eq[a]` | `builtins.ml` | Completeness — prelude is the source of truth |
-| `trait show[a]` | `builtins.ml` | Same |
-| `trait debug[a]` | `builtins.ml` | Same |
-| `trait ord[a]: eq` | `builtins.ml` | Same |
-| `trait hash[a]` | `builtins.ml` | Same |
-| `trait num[a]` | `builtins.ml` | Same |
-| `trait neg[a]` | `builtins.ml` | Same |
+| `enum Ordering` | `builtins.ml` | Users shouldn't need to define this |
+| `enum Option[a]` | `enum_registry.ml` | Users redefine in every file today |
+| `enum Result[a, e]` | `enum_registry.ml` | Users redefine in every file today |
+| `trait Eq[a]` | `builtins.ml` | Completeness — prelude is the source of truth |
+| `trait Show[a]` | `builtins.ml` | Same |
+| `trait Debug[a]` | `builtins.ml` | Same |
+| `trait Ord[a]: Eq` | `builtins.ml` | Same |
+| `trait Hash[a]` | `builtins.ml` | Same |
+| `trait Num[a]` | `builtins.ml` | Same |
+| `trait Neg[a]` | `builtins.ml` | Same |
 
 ## What Stays in OCaml (for now)
 
@@ -57,45 +57,45 @@ None of this is "magic" — it's all emitted as normal Go source. The Go code ju
 ### `std/prelude.mr`
 
 ```marmoset
-export ordering, option, result
-export eq, show, debug, ord, hash, num, neg
+export Ordering, Option, Result
+export Eq, Show, Debug, Ord, Hash, Num, Neg
 
 # --- Core enums ---
 
-enum ordering { less equal greater }
-enum option[a] { some(a) none }
-enum result[a, e] { success(a) failure(e) }
+enum Ordering = { Less, Equal, Greater }
+enum Option[a] = { Some(a), None }
+enum Result[a, e] = { Success(a), Failure(e) }
 
 # --- Core traits ---
 
-trait eq[a] {
-  fn eq(x: a, y: a) -> bool
+trait Eq[a] = {
+  fn eq(x: a, y: a) -> Bool
 }
 
-trait show[a] {
-  fn show(x: a) -> string
+trait Show[a] = {
+  fn show(x: a) -> Str
 }
 
-trait debug[a] {
-  fn debug(x: a) -> string
+trait Debug[a] = {
+  fn debug(x: a) -> Str
 }
 
-trait ord[a]: eq {
-  fn compare(x: a, y: a) -> ordering
+trait Ord[a]: Eq = {
+  fn compare(x: a, y: a) -> Ordering
 }
 
-trait hash[a] {
-  fn hash(x: a) -> int
+trait Hash[a] = {
+  fn hash(x: a) -> Int
 }
 
-trait num[a] {
+trait Num[a] = {
   fn add(x: a, y: a) -> a
   fn sub(x: a, y: a) -> a
   fn mul(x: a, y: a) -> a
   fn div(x: a, y: a) -> a
 }
 
-trait neg[a] {
+trait Neg[a] = {
   fn neg(x: a) -> a
 }
 ```
@@ -136,17 +136,17 @@ Core declarations ~30 lines. Inherent methods for option/result added in Phase S
 4. User module compiled with combined env
 ```
 
-**Backwards compat:** Existing test files that define `enum option[a] { some(a) none }` still work — `Enum_registry.register` does `Hashtbl.replace`, silently overwrites with identical definition.
+**Backwards compat:** Existing test files that define `enum Option[a] = { Some(a), None }` still work — `Enum_registry.register` does `Hashtbl.replace`, silently overwrites with identical definition.
 
 **Write `std/prelude.mr`** with the content shown above.
 
 **Tests:**
-- `option.some(42)` works without user enum definition
-- `result.success("ok")` works without user enum definition
+- `Option.Some(42)` works without user enum definition
+- `Result.Success("ok")` works without user enum definition
 - Match on option/result works
 - All 7 traits available without user trait definition
 - Operators still work (`42 == 42`, `1 + 2`, `x.show()`)
-- Existing tests with local `enum option[a] { some(a) none }` still pass
+- Existing tests with local `enum Option[a] = { Some(a), None }` still pass
 - Missing `std/prelude.mr` falls back to builtin behavior
 
 **Gate:** `make unit && make integration` green.
@@ -174,104 +174,82 @@ Core declarations ~30 lines. Inherent methods for option/result added in Phase S
 
 **Goal:** Add utility methods to prelude.mr.
 
-Methods that introduce new type variables (like `map`, `bind`, `map_fail`) use explicit method-level generics with `fn name[b](...)` syntax — generics attach to the method name, consistent with `trait show[a]`, `enum option[a]`, etc. Methods that only use the impl-level type variables (like `unwrap_or`, `is_some`) don't need method-level generics.
+Methods that introduce new type variables (like `map`, `bind`, `map_fail`) use explicit method-level generics with `fn name[b](...)` syntax. Methods that only use the impl-level type variables (like `unwrap_or`, `is_some`) don't need method-level generics.
 
 Add to `std/prelude.mr`:
 ```marmoset
-impl option[a] {
-  fn unwrap_or(self: option[a], fallback: a) -> a {
-    match self {
-      option.some(v): v
-      option.none: fallback
-    }
+impl[a] Option[a] = {
+  fn unwrap_or(self: Option[a], fallback: a) -> a = match self {
+    case Option.Some(v): v
+    case Option.None: fallback
   }
 
-  fn map[b](self: option[a], f: fn(a) -> b) -> option[b] {
-    match self {
-      option.some(v): option.some(f(v))
-      option.none: option.none
-    }
+  fn map[b](self: Option[a], f: (a) -> b) -> Option[b] = match self {
+    case Option.Some(v): Option.Some(f(v))
+    case Option.None: Option.None
   }
 
-  fn bind[b](self: option[a], f: fn(a) -> option[b]) -> option[b] {
-    match self {
-      option.some(v): f(v)
-      option.none: option.none
-    }
+  fn bind[b](self: Option[a], f: (a) -> Option[b]) -> Option[b] = match self {
+    case Option.Some(v): f(v)
+    case Option.None: Option.None
   }
 
-  fn is_some(self: option[a]) -> bool {
-    match self {
-      option.some(_): true
-      option.none: false
-    }
+  fn is_some(self: Option[a]) -> Bool = match self {
+    case Option.Some(_): true
+    case Option.None: false
   }
 
-  fn is_none(self: option[a]) -> bool {
-    match self {
-      option.some(_): false
-      option.none: true
-    }
+  fn is_none(self: Option[a]) -> Bool = match self {
+    case Option.Some(_): false
+    case Option.None: true
   }
 }
 
-impl result[a, e] {
-  fn unwrap_or(self: result[a, e], fallback: a) -> a {
-    match self {
-      result.success(v): v
-      result.failure(_): fallback
-    }
+impl[a, e] Result[a, e] = {
+  fn unwrap_or(self: Result[a, e], fallback: a) -> a = match self {
+    case Result.Success(v): v
+    case Result.Failure(_): fallback
   }
 
-  fn map[b](self: result[a, e], f: fn(a) -> b) -> result[b, e] {
-    match self {
-      result.success(v): result.success(f(v))
-      result.failure(err): result.failure(err)
-    }
+  fn map[b](self: Result[a, e], f: (a) -> b) -> Result[b, e] = match self {
+    case Result.Success(v): Result.Success(f(v))
+    case Result.Failure(err): Result.Failure(err)
   }
 
-  fn map_fail[f](self: result[a, e], g: fn(e) -> f) -> result[a, f] {
-    match self {
-      result.success(v): result.success(v)
-      result.failure(err): result.failure(g(err))
-    }
+  fn map_fail[f](self: Result[a, e], g: (e) -> f) -> Result[a, f] = match self {
+    case Result.Success(v): Result.Success(v)
+    case Result.Failure(err): Result.Failure(g(err))
   }
 
-  fn bind[b](self: result[a, e], f: fn(a) -> result[b, e]) -> result[b, e] {
-    match self {
-      result.success(v): f(v)
-      result.failure(err): result.failure(err)
-    }
+  fn bind[b](self: Result[a, e], f: (a) -> Result[b, e]) -> Result[b, e] = match self {
+    case Result.Success(v): f(v)
+    case Result.Failure(err): Result.Failure(err)
   }
 
-  fn is_ok(self: result[a, e]) -> bool {
-    match self {
-      result.success(_): true
-      result.failure(_): false
-    }
+  fn is_ok(self: Result[a, e]) -> Bool = match self {
+    case Result.Success(_): true
+    case Result.Failure(_): false
   }
 
-  fn is_err(self: result[a, e]) -> bool {
-    match self {
-      result.success(_): false
-      result.failure(_): true
-    }
+  fn is_err(self: Result[a, e]) -> Bool = match self {
+    case Result.Success(_): false
+    case Result.Failure(_): true
   }
 }
 ```
 
-All real Marmoset — just `match`. Method-level generics (`map[b]`, `map_fail[f]`) are inferred at each call site, same as any polymorphic function. The explicit declaration attaches to the method name, consistent with `trait show[a]`, `enum option[a]`, etc.
+All real Marmoset — just `match`. Method-level generics (`map[b]`, `map_fail[f]`) are inferred at each call site, same as any polymorphic function. The explicit declaration attaches to the method name, consistent with `trait Show[a]`, `enum Option[a]`, etc.
 
 **Tests:**
-- `option.some(42).unwrap_or(0)` → 42
-- `option.none().unwrap_or(7)` → 7
-- `option.some(42).map(fn(x) -> string { x.show() })` → `option.some("42")`
-- `option.some(42).bind(fn(x) -> option[int] { option.some(x + 1) })` → `option.some(43)`
-- `option.none().map(fn(x: int) -> int { x + 1 })` → `option.none`
-- `result.success(42).map(fn(x) { x.show() })` → `result.success("42")`
-- `result.failure("err").map_fail(fn(e) { e + "!" })` → `result.failure("err!")`
-- `result.success(42).bind(fn(x) { result.success(x + 1) })` → `result.success(43)`
-- `result.failure("err").unwrap_or(0)` → 0
+- `Option.Some(42).unwrap_or(0)` → 42
+- `Option.None.unwrap_or(7)` → 7
+- `Option.Some(42).map((x) -> x.show())` → `Option.Some("42")`
+- `Option.Some(42).bind((x) -> Option.Some(x + 1))` → `Option.Some(43)`
+- `Option.None.map((x: Int) -> x + 1)` → `Option.None`
+- `Result.Success(42).map((x) -> x.show())` → `Result.Success("42")`
+- `Result.Failure("err").map_fail((e) -> e + "!")` → `Result.Failure("err!")`
+- `Result.Success(42).bind((x) -> Result.Success(x + 1))` → `Result.Success(43)`
+- `Result.Failure("err").unwrap_or(0)` → 0
 
 **Gate:** `make unit && make integration` green.
 
@@ -279,7 +257,7 @@ All real Marmoset — just `match`. Method-level generics (`map[b]`, `map_fail[f
 
 ## Future Work (separate from this plan)
 
-1. **Migrate primitive impls to .mr** — Could move `impl eq for int` etc. to prelude.mr using `extern` blocks post-FFI. Zero user benefit since they already work. Only do if there's a concrete reason.
+1. **Migrate primitive impls to .mr** — Could move builtin primitive impls (`Eq[Int]`, `Ord[Int]`, etc.) to `std/prelude.mr` using `extern` blocks post-FFI. Zero user benefit since they already work. Only do if there's a concrete reason.
 2. **Stdlib modules** (post-FFI) — `std.list`, `std.string`, `std.math`, `std.io`, `std.fmt`.
 
 ---

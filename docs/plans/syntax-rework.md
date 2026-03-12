@@ -23,12 +23,12 @@ Deferred post-rollout work remains in `docs/plans/syntax-rework-followup.md`.
 ## Current State
 
 ### Compiler Surface Today
-- Top-level functions are mostly written as `let name = fn(...) { ... }`, not `fn name(...) = ...`.
+- Top-level functions are written as `fn name(...) = ...`.
 - Traits and constraint lists use `+`, not `&`.
-- Trait impls use `impl Trait for Type { ... }`.
-- Derive is a standalone statement: `derive eq, show for point;`.
-- Match arms are `pattern: expr`, without `case`.
-- Function types use `fn(int) -> string`, not `(int) -> string`.
+- Trait impls use `impl Trait[Type] = { ... }`.
+- Derive uses a postfix clause: `type Point = { ... } derive Eq, Show`.
+- Match arms use `case pattern: expr`.
+- Function types use `(Int) -> Str`.
 - Field-only trait-as-type behavior still exists in annotation conversion.
 
 ### Frontend Constraints
@@ -44,7 +44,7 @@ Deferred post-rollout work remains in `docs/plans/syntax-rework-followup.md`.
 ### Downstream Coupling
 - Symbol predeclaration and top-level forward references are keyed off `AST.Let` containing `AST.Function`.
 - The typechecker and emitter consume the parser AST directly today.
-- Derive lowering and built-in derive behavior currently expect standalone derive declarations.
+- Derive lowering and built-in derive behavior currently expect detached derive declarations.
 - Annotation conversion still hardcodes lowercase primitive/type spellings and legacy trait-as-type behavior.
 
 ### Tooling Blast Radius
@@ -99,8 +99,8 @@ Deferred post-rollout work remains in `docs/plans/syntax-rework-followup.md`.
   - trait declaration methods remain separate because signatures, defaults, and `override`-related validation have different semantics.
 
 ### 4. Canonical Lowering Target
-- Top-level `fn name[...] (...) [-> T | => T] = expr_or_block` lowers to the same canonical top-level function form as legacy `let name = fn(...) { ... }`.
-- Legacy and vNext impl syntax both lower to one canonical impl representation.
+- Top-level `fn name[...] (...) [-> T | => T] = expr_or_block` lowers to one canonical top-level function form.
+- Surface impl syntax lowers to one canonical impl representation.
 - Postfix derive lowers to one canonical derive representation before typechecking.
 - Explicit lambdas and placeholder lambdas both lower to canonical function expressions.
 - `case`-based match syntax lowers to one canonical match-arm representation.
@@ -129,9 +129,9 @@ The central implementation choice for this plan is:
 `source -> lexer -> parser -> Surface_ast -> lower/canonicalize -> Core_ast -> resolve/typecheck -> codegen`
 
 This boundary exists to prevent the rest of the compiler from learning about:
-- `fn name(...) = ...` vs `let name = fn(...) { ... }`,
-- postfix derive vs standalone derive,
-- `case` vs legacy match arms,
+- canonical top-level declarations vs lower-level function expressions,
+- postfix derive placement,
+- `case`-based match arms,
 - placeholder shorthand vs explicit lambdas,
 - legacy-only trait-as-type vs vNext constrained-param shorthand,
 - temporary migration-only syntax.
@@ -512,11 +512,11 @@ The lowering pass must make the following transformations explicit and tested.
 
 ### Top-Level Functions
 - vNext `fn name[...] (params) -> T = expr_or_block` lowers to `AST.Let { name; value = AST.Function { generics; params; return_type; is_effectful; body } }`.
-- Legacy `let name = fn[...] (params) -> T { ... }` lowers to the same `AST.Let(Function)` form.
+- Transitional top-level function spellings lower to the same `AST.Let(Function)` form.
 - Canonical body rule for function-like statement-bodied forms:
   - `SEOBExpr e` lowers to `AST.Block [ AST.ExpressionStmt (lower_expr e) ]`
   - `SEOBBlock b` lowers to `AST.Block (List.map lower_stmt b.sb_stmts)`
-  - This rule is binding for top-level functions, legacy `fn(...) { ... }` literals, trait impl methods, and inherent impl methods.
+  - This rule is binding for top-level functions, transitional function literals, trait impl methods, and inherent impl methods.
 - This is a binding constraint: `predeclare_top_level_lets` in `infer.ml` depends on scanning for `Let(Function)` to enable forward references. No new top-level function AST node may be introduced.
 
 ### Lambdas
@@ -526,10 +526,10 @@ The lowering pass must make the following transformations explicit and tested.
 
 ### Derive
 - Postfix derive on `type` and `enum` lowers to the canonical derive representation expected by downstream code.
-- Legacy standalone derive lowers to the same canonical representation during migration.
+- Detached derive forms lower to the same canonical representation during the migration window.
 
 ### Traits And Impls
-- Legacy `impl Trait for Type { ... }` and vNext `impl[...] Trait[Type] = { ... }` lower to one canonical impl shape.
+- Transitional and canonical impl headers lower to one canonical impl shape.
 - Trait default methods survive lowering on trait declarations as:
   - `None` for required methods,
   - `Some (lower_expr_or_block_to_expr ...)` for defaulted methods.
@@ -634,15 +634,15 @@ Tasks:
    - `parse : file_id:string -> string -> (AST.program, Diagnostic.t list) result` — existing public API, implemented as `let* r = parse_surface ... in Ok (Lower.lower_program r.id_supply r.program)`.
 6. **Audit current direct `Parser.parse` callers** (`checker`, `infer` tests/helpers, `emitter`, `doc_state`, `doc_symbols`, `folding_ranges`, `selection_ranges`, `edge_case_tests`) and confirm they stay on `Parser.parse`. No caller should need `parse_surface` in this phase.
 7. If any module truly needs both layers, add one shared helper inside the syntax frontend rather than open-coding `parse_surface |> Lower.lower_program` at each callsite.
-8. **Add unit tests in `lower.ml`** showing legacy syntax round-trips through Surface → Lower → AST identically. Test at minimum:
+8. **Add unit tests in `lower.ml`** showing surface syntax round-trips through Surface → Lower → AST identically. Test at minimum:
    - `let x = 42` → `AST.Let`
-   - `let f = fn(x: int) -> int { x + 1 }` → `AST.Let(Function)`
-   - `enum color { red, green, blue }` → `AST.EnumDef`
-   - `type point = { x: int, y: int }` → `AST.TypeAlias`
-   - `trait show[a] { fn show(x: a) -> string }` → `AST.TraitDef`
-   - `impl show for int { fn show(x: int) -> string { ... } }` → `AST.ImplDef`
-   - `impl point { fn sum(p: point) -> int { ... } }` → `AST.InherentImplDef`
-   - `derive eq, show for color` → `AST.DeriveDef`
+   - `fn f(x: Int) -> Int = x + 1` → `AST.Let(Function)`
+   - `enum Color = { Red, Green, Blue }` → `AST.EnumDef`
+   - `type Point = { x: Int, y: Int }` → `AST.TypeAlias`
+   - `trait Show[a] = { fn show(x: a) -> Str }` → `AST.TraitDef`
+   - `impl Show[Int] = { fn show(x: Int) -> Str = { ... } }` → `AST.ImplDef`
+   - `impl Point = { fn sum(p: Point) -> Int = { ... } }` → `AST.InherentImplDef`
+   - `type Color = Int derive Eq, Show` → `AST.DeriveDef`
    - Match expressions, if expressions, record literals, hash literals, method calls.
 9. **Update `dune` files** to include `surface_ast`, `id_supply`, and `lower` modules.
 
@@ -691,7 +691,7 @@ Tasks:
   - Required methods keep `sm_default_impl = None`.
   - Defaulted methods parse the body as `surface_expr_or_block` and store `sm_default_impl = Some ...`.
 - Do not introduce `override` on trait signatures; `override` is an impl-member-only concept.
-- Keep legacy `trait name[a]: c + c { ... }` parseable during migration.
+- Keep transitional trait constraint forms parseable during migration.
 
 **1d. Impl grammar rewrite** (`parser.ml`):
 - Parse vNext impl headers: `impl[a: Show] Show[List[a]] = { ... }` and `impl List[a] = { ... }`.
@@ -703,11 +703,11 @@ Tasks:
   - `= expr_or_block` parsed into `surface_expr_or_block`,
   - stored in `surface_method_impl` with `smi_override` and `smi_body`.
 - Distinguish trait impl (`impl ... TraitName[Type] = { ... }`) from inherent impl (`impl ... Type = { ... }`) by checking whether the target has `TraitName[...]` shape.
-- Keep legacy `impl Trait for Type { ... }` parseable during migration.
+- Keep impl parsing focused on the canonical bracketed forms.
 
 **1e. Type/enum/postfix-derive** (`parser.ml`, `surface_ast.ml`):
 - After parsing `enum Name = { ... }` or `type Name = ...`, check for trailing `derive Trait1, Trait2` and store in `SEnumDef.derive` / `STypeDef.derive`.
-- Keep legacy standalone `derive trait1, trait2 for Type` parseable.
+- Treat detached `derive` as an ordinary parse error.
 
 **1f. Lambda, block-expression, and match** (`parser.ml`, `ast.ml`):
 - Parse explicit lambda: `(params) -> expr` or `(params) => expr` in expression position. This is disambiguated from parenthesized expressions by checking for `->` / `=>` after the closing `)` and emitted as a surface lambda node.
@@ -721,13 +721,13 @@ Tasks:
   - surface map/hash literal,
   - surface block expression.
 - Surface block expressions lower to canonical `AST.BlockExpr`. Lowering never revisits the brace decision.
-- Keep legacy match arms (without `case`) and legacy `fn(...)` lambdas parseable.
+- Keep transitional match arms and lambda forms parseable during the migration window.
 
 **1g. Type expression changes** (`parser.ml`, `ast.ml`):
-- Parse `(int, string) -> bool` as a function type (replaces legacy `fn(int, string) -> bool`).
-- Parse `(int) => bool` as an effectful function type.
+- Parse `(Int, Str) -> Bool` as a function type.
+- Parse `(Int) => Bool` as an effectful function type.
 - Add effect bit to `AST.TArrow`: change `TArrow of type_expr list * type_expr` to `TArrow of type_expr list * type_expr * bool` where the bool is `true` for effectful.
-- Keep legacy `fn(int) -> bool` type syntax parseable during migration.
+- Keep transitional function-type spellings parseable during migration.
 - Parse `&` in constraint positions (generic param bounds, supertrait lists).
 
 Files changed:
@@ -750,8 +750,8 @@ Purpose:
 Tasks:
 - Lower legacy and vNext top-level functions to one canonical top-level function form.
 - Lower explicit lambdas and placeholder shorthand to canonical function expressions.
-- Lower postfix derive and legacy standalone derive to one canonical derive form.
-- Lower legacy and vNext impl syntax to one canonical impl form.
+- Lower postfix derive and detached derive forms to one canonical derive form.
+- Lower transitional and canonical impl syntax to one canonical impl form.
 - Lower `case` arms and surface block bodies to canonical match/block-expression forms.
 - Respect parser-owned brace disambiguation; lowering must not re-decide record vs map vs block.
 - Lower constrained-param shorthand to explicit generic binders.
