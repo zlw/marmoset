@@ -1,0 +1,9 @@
+# VN110: Derived default methods may return Dyn[...] directly from constrained self
+trait Boxed[a]: Show = {
+  fn box(self: a) -> Dyn[Show] = self
+}
+
+type Point = { x: Int } derive Boxed, Show
+
+let value = { x: 1 }.box()
+puts(value.show())  # output: { x: 1 }

@@ -1,0 +1,14 @@
+# VN112: Qualified child-trait generic calls use override implementations
+trait Base[a] = {
+  fn cast[b](x: a, f: (a) -> b) -> b = f(x)
+}
+
+trait Child[a]: Base = {}
+
+impl Base[Int] = {}
+
+impl Child[Int] = {
+  override fn cast[b](x: Int, f: (Int) -> b) -> b = f(x)
+}
+
+puts(Child.cast(1, _ + 41))  # output: 42

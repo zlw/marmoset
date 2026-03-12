@@ -1,0 +1,14 @@
+# VN109: User-trait derives can rely on later explicit supertrait impls
+trait Base[a] = {
+  fn base(self: a) -> Str = "base"
+}
+
+trait Child[a]: Base = {
+  fn child(self: a) -> Str = self.base() + ":child"
+}
+
+type Score = Int derive Child
+
+impl Base[Score] = {}
+
+puts(1.child())  # output: base:child

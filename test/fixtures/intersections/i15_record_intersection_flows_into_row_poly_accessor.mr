@@ -1,0 +1,5 @@
+# I15: Record intersections flow into row-polymorphic accessors
+fn get_x(r) = r.x
+
+let value: ({ x: Int, y: Int } & { x: Int }) = { x: 1, y: 2 }
+puts(get_x(value))  # output: 1

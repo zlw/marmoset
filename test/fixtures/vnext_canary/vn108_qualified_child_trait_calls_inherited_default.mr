@@ -1,0 +1,11 @@
+# VN108: Qualified child-trait calls reuse inherited default implementations
+trait Base[a] = {
+  fn greet(x: a) -> Str = "base"
+}
+
+trait Child[a]: Base = {}
+
+impl Base[Int] = {}
+impl Child[Int] = {}
+
+puts(Child.greet(1))  # output: base

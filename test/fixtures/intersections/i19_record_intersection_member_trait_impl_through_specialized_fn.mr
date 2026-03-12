@@ -1,0 +1,13 @@
+# I19: Record intersections specialize closed-record functions through member-trait impls
+trait Greeter[a] = {
+  fn greet(x: a) -> Str
+}
+
+impl Greeter[{ x: Int }] = {
+  fn greet(x: { x: Int }) -> Str = x.x.show()
+}
+
+fn call_greet(x: { x: Int }) -> Str = x.greet()
+
+let value: ({ x: Int, y: Str } & { x: Int }) = { x: 1, y: "ok" }
+puts(call_greet(value))  # output: 1

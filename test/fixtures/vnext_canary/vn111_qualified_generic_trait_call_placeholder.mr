@@ -1,0 +1,10 @@
+# VN111: Qualified generic trait calls instantiate method-level generics
+trait Mapper[a] = {
+  fn cast[b](x: a, f: (a) -> b) -> b
+}
+
+impl Mapper[Int] = {
+  fn cast[b](x: Int, f: (Int) -> b) -> b = f(x)
+}
+
+puts(Mapper.cast(1, _ + 41))  # output: 42
