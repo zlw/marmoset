@@ -1,0 +1,19 @@
+# T129: Overlapping Dyn method names are rejected as ambiguous
+trait A[a] = {
+  fn ping(x: a) -> Str
+}
+
+trait B[a] = {
+  fn ping(x: a) -> Str
+}
+
+impl A[Int] = {
+  fn ping(x: Int) -> Str = "a"
+}
+
+impl B[Int] = {
+  fn ping(x: Int) -> Str = "b"
+}
+
+let value: Dyn[A & B] = 42
+value.ping()  # error: Ambiguous dynamic method 'ping'

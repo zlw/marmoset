@@ -1,0 +1,10 @@
+# T128: Returning a Dyn subset from a wider Dyn local keeps callable witnesses
+fn shrink(flag: Bool) -> Dyn[Show] = if (flag) {
+  let wide: Dyn[Show & Eq] = 42
+  wide
+} else {
+  "no"
+}
+
+puts(shrink(true).show())   # output: 42
+puts(shrink(false).show())  # output: no

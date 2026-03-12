@@ -1,0 +1,10 @@
+# VN107: Override methods inherit method-level generic binders from the trait signature
+trait Mapper[a] = {
+  fn cast[b](x: a, f: (a) -> b) -> b = f(x)
+}
+
+impl Mapper[Int] = {
+  override fn cast(x: Int, f) = f(x)
+}
+
+puts(1.cast((n: Int) -> n + 41))  # output: 42

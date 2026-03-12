@@ -2755,7 +2755,32 @@ and type_callable
                              body))))
 
 (* Top-level function adapter: processes generics, maps effect annotation, builds TFun type *)
-and infer_function_with_annotations type_map env generics_opt params return_annot is_effectful body =
+and contextual_callable_signature (typ : mono_type) : (mono_type list * mono_type) option =
+  let rec flatten rev_params = function
+    | TFun (arg, ret, _) -> flatten (arg :: rev_params) ret
+    | ret -> (List.rev rev_params, ret)
+  in
+  let signatures =
+    match canonicalize_mono_type typ with
+    | TFun _ as fn -> [ flatten [] fn ]
+    | TUnion members ->
+        List.filter_map
+          (fun member ->
+            match canonicalize_mono_type member with
+            | TFun _ as fn -> Some (flatten [] fn)
+            | _ -> None)
+          members
+    | _ -> []
+  in
+  match signatures with
+  | [] -> None
+  | signature :: rest when List.for_all (( = ) signature) rest -> Some signature
+  | _ -> None
+
+and infer_function_with_annotations
+    ?(known_param_types = [])
+    ?known_return
+    type_map env generics_opt params return_annot is_effectful body =
   (* Process generic parameters and their constraints *)
   let type_var_map =
     match generics_opt with
@@ -2782,8 +2807,8 @@ and infer_function_with_annotations type_map env generics_opt params return_anno
       `Unspecified
   in
   match
-    type_callable type_map env ~type_bindings:type_var_map ~known_param_types:[] ~params ~return_annot
-      ~known_return:None ~effect_annot ~strict_return_check:false ~body
+    type_callable type_map env ~type_bindings:type_var_map ~known_param_types ~params ~return_annot
+      ~known_return ~effect_annot ~strict_return_check:false ~body
   with
   | Error e -> Error e
   | Ok (_param_names, param_types, ret_type, actual_effectful, subst) ->
@@ -2921,6 +2946,10 @@ and fresh_placeholder_param_name (expr : AST.expression) : string =
   in
   loop 0
 
+and placeholder_shadow_expr_id (expr_id : int) : int = -((expr_id * 2) + 1)
+
+and placeholder_wrapper_expr_id (expr_id : int) : int = -((expr_id * 2) + 2)
+
 and replace_placeholder_identifier_expr (param_name : string) (expr : AST.expression) : AST.expression =
   let rewritten =
     match expr.expr with
@@ -2986,7 +3015,7 @@ and replace_placeholder_identifier_expr (param_name : string) (expr : AST.expres
           }
     | AST.BlockExpr stmts -> AST.BlockExpr (List.map (replace_placeholder_identifier_stmt param_name) stmts)
   in
-  { expr with id = fresh_synthetic_expr_id (); expr = rewritten }
+  { expr with id = placeholder_shadow_expr_id expr.id; expr = rewritten }
 
 and replace_placeholder_identifier_stmt (param_name : string) (stmt : AST.statement) : AST.statement =
   let rewritten =
@@ -3026,6 +3055,7 @@ and placeholder_callback_expectation (typ : mono_type) : placeholder_callback_ex
 and placeholder_lambda_expr (expr : AST.expression) : AST.expression =
   let param_name = fresh_placeholder_param_name expr in
   let body_expr = replace_placeholder_identifier_expr param_name expr in
+  let wrapper_id = placeholder_wrapper_expr_id expr.id in
   let body_stmt =
     AST.mk_stmt ~pos:body_expr.pos ~end_pos:body_expr.end_pos ~file_id:body_expr.file_id
       (AST.Block
@@ -3034,7 +3064,7 @@ and placeholder_lambda_expr (expr : AST.expression) : AST.expression =
              (AST.ExpressionStmt body_expr);
          ])
   in
-  AST.mk_expr ~id:(fresh_synthetic_expr_id ()) ~pos:expr.pos ~end_pos:expr.end_pos ~file_id:expr.file_id
+  AST.mk_expr ~id:wrapper_id ~pos:expr.pos ~end_pos:expr.end_pos ~file_id:expr.file_id
     (AST.Function
        {
          generics = None;
@@ -3073,7 +3103,32 @@ and infer_arg_against_expected type_map env subst (arg : AST.expression) (expect
           | _ -> arg
         in
         let env' = apply_substitution_env subst env in
-        match infer_expression type_map env' inferred_arg with
+        let infer_arg_expr () =
+          match inferred_arg.expr with
+          | AST.Function f -> (
+              match contextual_callable_signature expected_type' with
+              | Some (param_types, return_type) ->
+                  let known_param_types = List.mapi (fun i ty -> (i, ty)) param_types in
+                  (match
+                     infer_function_with_annotations ~known_param_types ~known_return:return_type type_map env'
+                       f.generics f.params f.return_type f.is_effectful f.body
+                   with
+                  | Ok (subst_fn, func_type) ->
+                      record_type type_map inferred_arg (apply_substitution subst_fn func_type);
+                      Ok (subst_fn, func_type)
+                  | Error _ as err -> err)
+              | None ->
+                  (match
+                     infer_function_with_annotations type_map env' f.generics f.params f.return_type
+                       f.is_effectful f.body
+                   with
+                  | Ok (subst_fn, func_type) ->
+                      record_type type_map inferred_arg (apply_substitution subst_fn func_type);
+                      Ok (subst_fn, func_type)
+                  | Error _ as err -> err))
+          | _ -> infer_expression type_map env' inferred_arg
+        in
+        match infer_arg_expr () with
         | Error e -> Error e
         | Ok (subst1, arg_type) -> (
             let subst' = compose_substitution subst subst1 in
@@ -3087,13 +3142,16 @@ and infer_arg_against_expected type_map env subst (arg : AST.expression) (expect
                     arg arg_type' expected_type''
                 with
                 | Error e -> Error e
-                | Ok () -> Ok (subst' (* coercion is metadata-only *), expected_type''))
+                | Ok () ->
+                    propagate_type_var_constraints_through_substitution subst';
+                    Ok (subst' (* coercion is metadata-only *), expected_type''))
             | _ -> (
                 match compatible_with_expected_type arg_type' expected_type'' with
                 | Error e -> Error (error_at ~code:e.code ~message:e.message arg)
                 | Ok subst2 ->
                     let final_subst = compose_substitution subst' subst2 in
                     let final_type = apply_substitution final_subst arg_type in
+                    propagate_type_var_constraints_through_substitution final_subst;
                     Ok (final_subst, final_type)))
 
 and infer_args_against_expected type_map env subst args expected_types =
@@ -3953,16 +4011,23 @@ and infer_statement type_map env stmt =
 
                 let infer_impl_method_body (m : AST.method_impl) :
                     ((Trait_registry.method_sig * substitution) option, Diagnostic.t) result =
+                  (* Known types from trait signature *)
+                  let trait_method_opt = find_trait_method_sig m.impl_method_name in
+                  let effective_method_generics =
+                    match (m.impl_method_generics, trait_method_opt) with
+                    | Some gps, _ -> gps
+                    | None, Some (_source_trait_def, tm) ->
+                        List.map
+                          (fun (name, constraints) -> AST.{ name; constraints })
+                          tm.Trait_registry.method_generics
+                    | None, None -> []
+                  in
                   (* Build type bindings: method generics @ impl type params *)
                   let method_type_bindings =
-                    match m.impl_method_generics with
-                    | None -> []
-                    | Some gps -> List.map (fun (gp : AST.generic_param) -> (gp.name, TVar gp.name)) gps
+                    List.map (fun (gp : AST.generic_param) -> (gp.name, TVar gp.name)) effective_method_generics
                   in
                   let all_type_bindings = method_type_bindings @ impl_type_bindings in
 
-                  (* Known types from trait signature *)
-                  let trait_method_opt = find_trait_method_sig m.impl_method_name in
                   let known_param_types =
                     match trait_method_opt with
                     | None -> []
@@ -4000,16 +4065,13 @@ and infer_statement type_map env stmt =
                   let constraint_store = current_constraint_store () in
                   let constrained_field_store = current_constrained_field_store () in
                   let method_constraint_snapshots =
-                    match m.impl_method_generics with
-                    | None -> []
-                    | Some gps ->
-                        List.map
-                          (fun (gp : AST.generic_param) ->
-                            let old_constraints = Hashtbl.find_opt constraint_store gp.name in
-                            let old_fields = Hashtbl.find_opt constrained_field_store gp.name in
-                            add_type_var_constraints gp.name gp.constraints;
-                            (gp.name, old_constraints, old_fields))
-                          gps
+                    List.map
+                      (fun (gp : AST.generic_param) ->
+                        let old_constraints = Hashtbl.find_opt constraint_store gp.name in
+                        let old_fields = Hashtbl.find_opt constrained_field_store gp.name in
+                        add_type_var_constraints gp.name gp.constraints;
+                        (gp.name, old_constraints, old_fields))
+                      effective_method_generics
                   in
                   let restore_method_constraints () =
                     List.iter
@@ -4034,15 +4096,21 @@ and infer_statement type_map env stmt =
                   | Error e -> Error e
                   | Ok (param_names, param_types, return_type, is_effectful, subst) ->
                       let method_generics =
-                        match m.impl_method_generics with
-                        | None -> []
-                        | Some gps -> List.map (fun (gp : AST.generic_param) -> (gp.name, gp.constraints)) gps
+                        List.map (fun (gp : AST.generic_param) -> (gp.name, gp.constraints)) effective_method_generics
                       in
                       let method_effect =
                         if is_effectful then
                           `Effectful
                         else
                           `Pure
+                      in
+                      let method_generic_internal_vars =
+                        List.filter_map
+                          (fun (gp_name, _) ->
+                            match apply_substitution subst (TVar gp_name) with
+                            | TVar internal_name when internal_name <> gp_name -> Some (gp_name, internal_name)
+                            | _ -> None)
+                          method_generics
                       in
                       record_method_def m.impl_method_id
                         {
@@ -4063,7 +4131,7 @@ and infer_statement type_map env stmt =
                                method_params = List.combine param_names param_types;
                                method_return_type = return_type;
                                method_effect;
-                               method_generic_internal_vars = [];
+                               method_generic_internal_vars;
                                method_default_impl = None;
                              },
                              subst ))

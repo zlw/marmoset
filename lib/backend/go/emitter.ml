@@ -421,6 +421,7 @@ type impl_template_method = {
   return_type : Types.mono_type;
   body_stmt : AST.statement;
   method_generic_names : string list; (* Phase 6.4: names of method-level type params *)
+  method_generic_internal_vars : (string * string) list;
 }
 
 type impl_template = {
@@ -1341,13 +1342,40 @@ let inherent_type_bindings (inherent_for_type : AST.type_expr) : (string * Types
 
 let register_impl_template (state : mono_state) (impl : AST.impl_def) : impl_template =
   let for_type = type_expr_to_mono_type_with_impl_bindings impl.impl_type_params impl.impl_for_type in
+  let registered_impl_opt = Typecheck.Trait_registry.lookup_impl impl.impl_trait_name for_type in
   let explicit_methods =
     List.map
       (fun (m : AST.method_impl) ->
+        let registered_method_opt =
+          match registered_impl_opt with
+          | Some registered_impl ->
+              List.find_opt (fun (method_sig : Typecheck.Trait_registry.method_sig) -> method_sig.method_name = m.impl_method_name)
+                registered_impl.impl_methods
+          | None -> None
+        in
         let method_generic_names =
           match m.impl_method_generics with
           | None -> []
           | Some gps -> List.map (fun (gp : AST.generic_param) -> gp.name) gps
+        in
+        let method_generic_names =
+          if method_generic_names <> [] then
+            method_generic_names
+          else
+            match registered_method_opt with
+            | Some method_sig when method_sig.method_generics <> [] -> List.map fst method_sig.method_generics
+            | _ ->
+                (match
+                   Typecheck.Trait_registry.lookup_trait_method_with_supertraits impl.impl_trait_name
+                     m.impl_method_name
+                 with
+                | Some (_source_trait_def, trait_method) -> List.map fst trait_method.method_generics
+                | None -> [])
+        in
+        let method_generic_internal_vars =
+          match registered_method_opt with
+          | Some method_sig -> method_sig.method_generic_internal_vars
+          | None -> []
         in
         let def =
           lookup_method_def_exn state.method_def_map ~method_id:m.impl_method_id ~owner:impl.impl_trait_name
@@ -1361,6 +1389,7 @@ let register_impl_template (state : mono_state) (impl : AST.impl_def) : impl_tem
           return_type;
           body_stmt = m.impl_method_body;
           method_generic_names;
+          method_generic_internal_vars;
         })
       impl.impl_methods
   in
@@ -1405,6 +1434,7 @@ let register_impl_template (state : mono_state) (impl : AST.impl_def) : impl_tem
                       return_type;
                       body_stmt;
                       method_generic_names = List.map fst m.method_generics;
+                      method_generic_internal_vars = m.method_generic_internal_vars;
                     })
           trait_def.trait_methods
   in
@@ -1558,6 +1588,9 @@ let value_alias_type
       | Some (Types.Forall (_, t)) -> Some t
       | None -> None)
   | None -> None
+
+let explicit_binding_annotation_type (type_annotation : AST.type_expr option) : Types.mono_type option =
+  Option.map (fun type_ann -> annotation_exn (Annotation.type_expr_to_mono_type type_ann)) type_annotation
 
 let rec contains_callable_union (t : Types.mono_type) : bool =
   match Types.canonicalize_mono_type t with
@@ -1996,15 +2029,18 @@ let rec collect_insts_stmt
     Infer.type_env =
   match stmt.stmt with
   | AST.Let let_binding ->
-      (* Use the type from the environment if it exists (from type checking),
-         otherwise get from type_map *)
+      (* Prefer the explicit local binding annotation so Dyn/intersection lets
+         keep the intended runtime representation. *)
       let expr_type =
-        match value_alias_type state env let_binding.value with
-        | Some alias_type -> alias_type
+        match explicit_binding_annotation_type let_binding.type_annotation with
+        | Some annotated_type -> annotated_type
         | None -> (
-            match Infer.TypeEnv.find_opt let_binding.name env with
-            | Some (Types.Forall (_, t)) -> t
-            | None -> get_type type_map let_binding.value)
+            match value_alias_type state env let_binding.value with
+            | Some alias_type -> alias_type
+            | None -> (
+                match Infer.TypeEnv.find_opt let_binding.name env with
+                | Some (Types.Forall (_, t)) -> t
+                | None -> get_type type_map let_binding.value))
       in
       let env_with_binding = Infer.TypeEnv.add let_binding.name (Types.Forall ([], expr_type)) env in
       (* Pass the expected type to collect_insts_expr so it can use it for EnumConstructors *)
@@ -2075,14 +2111,28 @@ let rec collect_insts_stmt
         let explicit_method_names =
           List.map (fun (m : AST.method_impl) -> m.impl_method_name) impl.impl_methods
         in
+        let registered_impl_opt = Typecheck.Trait_registry.lookup_impl impl.impl_trait_name for_type in
         List.iter
           (fun (m : AST.method_impl) ->
             (* Skip eager instantiation for methods with method-level generics;
                 they'll be instantiated on-demand via register_impl_method_use per call site *)
             let has_method_generics =
-              match m.impl_method_generics with
-              | Some (_ :: _) -> true
-              | _ -> false
+              match registered_impl_opt with
+              | Some registered_impl -> (
+                  match
+                    List.find_opt
+                      (fun (method_sig : Typecheck.Trait_registry.method_sig) -> method_sig.method_name = m.impl_method_name)
+                      registered_impl.impl_methods
+                  with
+                  | Some method_sig -> method_sig.method_generics <> []
+                  | None -> (
+                      match m.impl_method_generics with
+                      | Some (_ :: _) -> true
+                      | _ -> false))
+              | None -> (
+                  match m.impl_method_generics with
+                  | Some (_ :: _) -> true
+                  | _ -> false)
             in
             if not has_method_generics then (
               let def =
@@ -2222,7 +2272,23 @@ and register_impl_method_use
               (fun acc name concrete -> Types.SubstMap.add name concrete acc)
               Types.SubstMap.empty template_method.method_generic_names method_type_args
         in
-        let combined_subst = Types.SubstMap.union (fun _k _a b -> Some b) impl_subst method_generic_subst in
+        let internal_var_subst =
+          if template_method.method_generic_internal_vars = [] || method_type_args = [] then
+            Types.SubstMap.empty
+          else
+            List.fold_left
+              (fun acc (generic_name, internal_name) ->
+                match List.assoc_opt generic_name (List.combine template_method.method_generic_names method_type_args) with
+                | Some concrete -> Types.SubstMap.add internal_name concrete acc
+                | None -> acc)
+              Types.SubstMap.empty template_method.method_generic_internal_vars
+        in
+        let combined_subst =
+          Types.SubstMap.union
+            (fun _k _a b -> Some b)
+            (Types.SubstMap.union (fun _k _a b -> Some b) impl_subst method_generic_subst)
+            internal_var_subst
+        in
         let param_types =
           List.map
             (fun t -> Types.canonicalize_mono_type (Types.apply_substitution combined_subst t))
@@ -2910,7 +2976,7 @@ let rec emit_expr
     | AST.Infix (left, op, right) -> emit_infix state type_map env left op right
     | AST.TypeCheck (expr, type_ann) -> emit_type_check state type_map env expr type_ann
     | AST.If (cond, cons, alt) -> emit_if state type_map env expr cond cons alt
-    | AST.Call (func, args) -> emit_call state type_map env func args
+    | AST.Call (func, args) -> emit_call state type_map env expr func args
     | AST.Array elements ->
         let expected_elem_type =
           match expected_type with
@@ -3180,7 +3246,7 @@ let rec emit_expr
                   | _ -> None
                 in
                 (match field_type_opt with
-                | Some (Types.TFun _) -> emit_call state type_map env field_expr args
+                | Some (Types.TFun _) -> emit_call state type_map env expr field_expr args
                 | Some _ | None ->
                     let field_str = emit_expr state type_map env field_expr in
                     let callable_type =
@@ -4369,7 +4435,7 @@ and emit_if_to_target state type_map env if_expr (cond : AST.expression) cons al
       in
       if_code ^ unit_tail
 
-and emit_call state type_map env func args =
+and emit_call state type_map env call_expr func args =
   let args = List.map (placeholder_rewritten_expr state.mono.placeholder_rewrite_map) args in
   let callee_type_opt =
     match func.expr with
@@ -4402,8 +4468,17 @@ and emit_call state type_map env func args =
         | Some (params, _ret) -> params
         | None -> (
             match callee_type_opt with
-            | Some callee_type -> fst (extract_param_types (List.length args) callee_type)
-            | None -> []))
+        | Some callee_type -> fst (extract_param_types (List.length args) callee_type)
+        | None -> []))
+  in
+  let call_param_types =
+    let call_result_type = get_type type_map call_expr in
+    match call_signature_opt with
+    | Some (_declared_params, declared_return) when List.exists has_type_vars call_param_types -> (
+        match Unify.unify declared_return call_result_type with
+        | Ok return_subst -> List.map (Types.apply_substitution return_subst) call_param_types
+        | Error _ -> call_param_types)
+    | _ -> call_param_types
   in
   let emit_args_with_expected_types (expected_types : Types.mono_type list) : string =
     let rec emit acc remaining_args remaining_expected =
@@ -4466,6 +4541,23 @@ and emit_call state type_map env func args =
                   | None -> (call_param_types, go_safe_ident name)))
         else
           (call_param_types, mangle_func_name name call_param_types)
+      in
+      let () =
+        if not (List.exists has_type_vars param_types) then
+          match lookup_func_def_for_call state.mono name (List.length args) with
+          | Some func_def ->
+              add_instantiation state.mono
+                {
+                  func_name = name;
+                  module_path = state.mono.module_path;
+                  func_expr_id = func_def.func_expr_id;
+                  func_arity = List.length args;
+                  concrete_only_mode = state.mono.concrete_only;
+                  concrete_types = param_types;
+                  type_fingerprint = fingerprint_types param_types;
+                  return_type = get_type type_map call_expr;
+                }
+          | None -> ()
       in
       let args_str = emit_args_with_expected_types param_types in
       Printf.sprintf "%s(%s)" mangled_name args_str
@@ -4839,15 +4931,17 @@ and emit_stmt
             let expr_str = emit_expr ~expected_type:(Some expr_type) state type_map env let_binding.value in
             (Printf.sprintf "%s_ = %s\n" ind expr_str, env)
       else
-        (* Use the type from the environment if it exists, otherwise get from type_map *)
         let go_binding_name = go_safe_ident let_binding.name in
         let expr_type =
-          match value_alias_type state.mono env let_binding.value with
-          | Some alias_type -> alias_type
+          match explicit_binding_annotation_type let_binding.type_annotation with
+          | Some annotated_type -> annotated_type
           | None -> (
-              match Infer.TypeEnv.find_opt let_binding.name env with
-              | Some (Types.Forall (_, t)) -> t
-              | None -> get_type type_map let_binding.value)
+              match value_alias_type state.mono env let_binding.value with
+              | Some alias_type -> alias_type
+              | None -> (
+                  match Infer.TypeEnv.find_opt let_binding.name env with
+                  | Some (Types.Forall (_, t)) -> t
+                  | None -> get_type type_map let_binding.value))
         in
         let expr_type =
           match let_binding.value.expr with
