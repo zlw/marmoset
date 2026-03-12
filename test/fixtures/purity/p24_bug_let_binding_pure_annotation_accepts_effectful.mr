@@ -1,7 +1,5 @@
-# P24: BUG - let-bound pure function type annotation still accepts an effectful lambda
-# EXPECTED (ideal): Should reject
-# ACTUAL: Builds successfully under vNext syntax too
-let f: (Int) -> Int = (x: Int) => {
+# P24: let-bound pure function type annotation rejects an effectful lambda
+let f: (Int) -> Int = (x: Int) => { # error: Type annotation mismatch
   puts(x)
   x
 }
