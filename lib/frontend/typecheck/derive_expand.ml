@@ -474,6 +474,8 @@ let expand_one_derive
               let supertrait = Trait_registry.canonical_trait_name supertrait in
               if StringSet.mem supertrait requested_user_trait_names then
                 visit ordered_acc visiting' visited_acc supertrait
+              else if local_trait_kind traits supertrait = Some Trait_registry.FieldOnly then
+                Ok (ordered_acc, visited_acc)
               else if StringSet.mem supertrait requested_builtin_trait_names || impl_exists supertrait then
                 Ok (ordered_acc, visited_acc)
               else

@@ -1,0 +1,9 @@
+# VN104: User-trait derive should accept structural field-only supertraits on the target shape
+trait Named = { name: Str }
+
+trait Greeter[a]: Named = {
+  fn greet(self: a) -> Str = self.name
+}
+
+type User = { name: Str } derive Greeter
+puts({ name: "left" }.greet())  # output: left

@@ -384,6 +384,21 @@ let specialized_impl (def : impl_def) (for_type : mono_type) (subst : Types.subs
 let resolve_generic_impl (trait_name : string) (for_type : mono_type) : (resolved_impl option, string) result =
   let trait_name = canonical_trait_name trait_name in
   let for_type' = canonical_type for_type in
+  let rec has_type_vars (typ : mono_type) =
+    match canonical_type typ with
+    | TVar _ | TRowVar _ -> true
+    | TFun (arg, ret, _) -> has_type_vars arg || has_type_vars ret
+    | TArray elem -> has_type_vars elem
+    | THash (key, value) -> has_type_vars key || has_type_vars value
+    | TRecord (fields, row) ->
+        List.exists (fun (field : record_field_type) -> has_type_vars field.typ) fields
+        ||
+        (match row with
+        | Some row_type -> has_type_vars row_type
+        | None -> false)
+    | TEnum (_, args) | TUnion args | TIntersection args -> List.exists has_type_vars args
+    | TTraitObject _ | TInt | TFloat | TBool | TString | TNull -> false
+  in
   let matches =
     Hashtbl.fold
       (fun (candidate_trait_name, generic_for_type) candidate_def acc ->
@@ -412,7 +427,12 @@ let resolve_generic_impl (trait_name : string) (for_type : mono_type) : (resolve
   in
   match matches with
   | [] -> Ok None
-  | [ resolved ] -> Ok (Some resolved)
+  | [ resolved ] ->
+      if resolved.origin = BuiltinDerivedImpl && not (has_type_vars for_type') then (
+        let cached_impl = { resolved.impl with impl_type_params = [] } in
+        Hashtbl.replace impl_registry (trait_name, for_type') cached_impl;
+        Hashtbl.replace impl_origin_registry (trait_name, for_type') BuiltinDerivedImpl);
+      Ok (Some resolved)
   | many ->
       let sites =
         many
@@ -605,6 +625,28 @@ let can_derive (trait_name : string) (for_type : mono_type) : (unit, string) res
 (* Auto-generate an impl for a derived trait *)
 let generate_derived_impl (trait_name : string) (for_type : mono_type) : impl_def option =
   let trait_name = canonical_trait_name trait_name in
+  let rec collect_type_vars (typ : mono_type) : string list =
+    match canonical_type typ with
+    | TVar name -> [ name ]
+    | TFun (arg, ret, _) -> collect_type_vars arg @ collect_type_vars ret
+    | TArray elem -> collect_type_vars elem
+    | THash (key, value) -> collect_type_vars key @ collect_type_vars value
+    | TRecord (fields, row) ->
+        let field_vars = List.concat_map (fun (field : record_field_type) -> collect_type_vars field.typ) fields in
+        let row_vars =
+          match row with
+          | Some row_type -> collect_type_vars row_type
+          | None -> []
+        in
+        field_vars @ row_vars
+    | TEnum (_, args) | TUnion args | TIntersection args -> List.concat_map collect_type_vars args
+    | TRowVar _ | TTraitObject _ | TInt | TFloat | TBool | TString | TNull -> []
+  in
+  let impl_type_params =
+    collect_type_vars for_type
+    |> Types.unique_in_order
+    |> List.map (fun name -> AST.{ name; constraints = [] })
+  in
   (* Look up the trait definition *)
   match lookup_trait trait_name with
   | None -> None
@@ -629,7 +671,7 @@ let generate_derived_impl (trait_name : string) (for_type : mono_type) : impl_de
       Some
         {
           impl_trait_name = trait_name;
-          impl_type_params = [];
+          impl_type_params;
           impl_for_type = for_type;
           impl_methods = generated_methods;
         }
