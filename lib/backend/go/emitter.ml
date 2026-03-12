@@ -1843,6 +1843,12 @@ let rec expr_type_from_env_or_map (env : Infer.type_env) (type_map : Infer.type_
           | None -> get_type type_map expr))
   | _ -> get_type type_map expr
 
+let method_dispatch_type (env : Infer.type_env) (type_map : Infer.type_map) (expr : AST.expression) :
+    Types.mono_type =
+  match Hashtbl.find_opt type_map expr.id with
+  | Some typ -> typ
+  | None -> expr_type_from_env_or_map env type_map expr
+
 let arg_type_for_specialization
     (state : mono_state) (env : Infer.type_env) (type_map : Infer.type_map) (expr : AST.expression) :
     Types.mono_type =
@@ -2864,9 +2870,7 @@ and collect_insts_expr
           match method_resolution with
           | Some (Infer.QualifiedTraitMethod trait_name) ->
               (* Qualified: first arg is receiver *)
-              let for_type =
-                Types.canonicalize_mono_type (expr_type_from_env_or_map env type_map (List.hd args))
-              in
+              let for_type = Types.canonicalize_mono_type (method_dispatch_type env type_map (List.hd args)) in
               let method_type_args =
                 match Hashtbl.find_opt state.method_type_args_map expr.id with
                 | Some args -> args
@@ -2875,7 +2879,7 @@ and collect_insts_expr
               register_impl_method_use state type_map env ~trait_name ~method_name ~for_type ~method_type_args
           | Some (Infer.TraitMethod trait_name) ->
               collect_insts_expr state type_map env receiver;
-              let for_type = Types.canonicalize_mono_type (expr_type_from_env_or_map env type_map receiver) in
+              let for_type = Types.canonicalize_mono_type (method_dispatch_type env type_map receiver) in
               let method_type_args =
                 match Hashtbl.find_opt state.method_type_args_map expr.id with
                 | Some args -> args
@@ -3101,7 +3105,7 @@ let rec project_value_to_expected_type
       | _ -> source_expr)
   | _ -> source_expr
 
-let maybe_project_to_expected_record_type
+and maybe_project_to_expected_record_type
     (state : emit_state)
     (type_map : Infer.type_map)
     (env : Infer.type_env)
@@ -3511,11 +3515,17 @@ let rec emit_expr
                 (* Qualified call: Trait.method(receiver, args...) — first arg is the receiver *)
                 let first_arg_type =
                   normalize_type_for_codegen ~concrete_only:state.mono.concrete_only
-                    (expr_type_from_env_or_map env type_map (List.hd args))
+                    (method_dispatch_type env type_map (List.hd args))
                 in
                 let type_suffix = type_suffix_with_mta first_arg_type in
                 let func_name = trait_method_func_name trait_name variant_name type_suffix in
-                let arg_strs = List.map (emit_expr state type_map env) args in
+                let arg_strs =
+                  match args with
+                  | [] -> []
+                  | receiver_arg :: rest ->
+                      emit_expr_for_expected_type state type_map env first_arg_type receiver_arg
+                      :: List.map (emit_expr state type_map env) rest
+                in
                 Printf.sprintf "%s(%s)" func_name (String.concat ", " arg_strs)
             | Some (Infer.DynamicTraitMethod _) ->
                 emit_dynamic_trait_call state type_map env expr receiver variant_name args
@@ -3523,21 +3533,27 @@ let rec emit_expr
                 (* Qualified call: Type.method(receiver, args...) — first arg is the receiver *)
                 let first_arg_type =
                   normalize_type_for_codegen ~concrete_only:state.mono.concrete_only
-                    (expr_type_from_env_or_map env type_map (List.hd args))
+                    (method_dispatch_type env type_map (List.hd args))
                 in
                 let type_suffix = type_suffix_with_mta first_arg_type in
                 let func_name = inherent_method_func_name variant_name type_suffix in
-                let arg_strs = List.map (emit_expr state type_map env) args in
+                let arg_strs =
+                  match args with
+                  | [] -> []
+                  | receiver_arg :: rest ->
+                      emit_expr_for_expected_type state type_map env first_arg_type receiver_arg
+                      :: List.map (emit_expr state type_map env) rest
+                in
                 Printf.sprintf "%s(%s)" func_name (String.concat ", " arg_strs)
             | Some (Infer.TraitMethod trait_name) ->
                 (* Dot call: receiver.method(args...) — receiver is separate *)
                 let receiver_type =
                   normalize_type_for_codegen ~concrete_only:state.mono.concrete_only
-                    (expr_type_from_env_or_map env type_map receiver)
+                    (method_dispatch_type env type_map receiver)
                 in
                 let type_suffix = type_suffix_with_mta receiver_type in
                 let func_name = trait_method_func_name trait_name variant_name type_suffix in
-                let receiver_str = emit_expr state type_map env receiver in
+                let receiver_str = emit_expr_for_expected_type state type_map env receiver_type receiver in
                 let arg_strs = List.map (emit_expr state type_map env) args in
                 let all_args = receiver_str :: arg_strs in
                 Printf.sprintf "%s(%s)" func_name (String.concat ", " all_args)
@@ -3545,11 +3561,11 @@ let rec emit_expr
                 (* Dot call: receiver.method(args...) — receiver is separate *)
                 let receiver_type =
                   normalize_type_for_codegen ~concrete_only:state.mono.concrete_only
-                    (expr_type_from_env_or_map env type_map receiver)
+                    (method_dispatch_type env type_map receiver)
                 in
                 let type_suffix = type_suffix_with_mta receiver_type in
                 let func_name = inherent_method_func_name variant_name type_suffix in
-                let receiver_str = emit_expr state type_map env receiver in
+                let receiver_str = emit_expr_for_expected_type state type_map env receiver_type receiver in
                 let arg_strs = List.map (emit_expr state type_map env) args in
                 let all_args = receiver_str :: arg_strs in
                 Printf.sprintf "%s(%s)" func_name (String.concat ", " all_args)
