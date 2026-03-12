@@ -7,7 +7,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 ZED_DIR="$REPO_ROOT/tools/zed-marmoset"
 
 cd "$ZED_DIR"
-cargo check --locked
+cargo test --locked
 
 python3 - <<'PY'
 import json
