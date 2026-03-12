@@ -3,6 +3,13 @@
 ; Blocks (general)
 (block) @fold
 
+; Top-level fn declarations
+(fn_declaration) @fold
+
+(fn_declaration
+  body: (expr_or_block
+    (block) @fold))
+
 ; Enum definitions
 (enum_definition) @fold
 
@@ -15,6 +22,10 @@
 ; Method definitions
 (method_definition) @fold
 
+(method_definition
+  body: (expr_or_block
+    (block) @fold))
+
 ; Match expressions
 (match_expression) @fold
 
@@ -25,8 +36,26 @@
 (if_expression
   alternative: (block) @fold)
 
-; Function literals
-(function_literal) @fold
+(if_expression
+  consequence: (expr_or_block
+    (block) @fold))
+
+(if_expression
+  alternative: (expr_or_block
+    (block) @fold))
+
+; Lambda expressions with block bodies
+(lambda_expression
+  body: (block) @fold)
+
+(lambda_expression
+  body: (expr_or_block
+    (block) @fold))
+
+; Trait default methods
+(trait_method_signature
+  body: (expr_or_block
+    (block) @fold))
 
 ; Array literals (multi-line)
 (array_literal) @fold

@@ -1,11 +1,11 @@
-type val = { v: int }
+type Val = { v: Int }
 
-impl val {
-  fn apply[b](x: val, f: fn(int) -> b) -> b {
+impl Val = {
+  fn apply[b](x: Val, f: (Int) -> b) -> b = {
     f(x.v)
   }
 }
 
-let v: val = { v: 5 }
+let v: Val = { v: 5 }
 # nested: apply returns int, then show on it
-puts(v.apply(fn(n: int) -> int { n * 3 }).show())  # output: 15
+puts(v.apply((n: Int) -> n * 3).show())  # output: 15

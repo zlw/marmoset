@@ -1,0 +1,8 @@
+# R180: HOF reuses one accessor across distinct wide record shapes
+fn apply(f, r) = f(r)
+fn get_x(r) = r.x
+
+let left = apply(get_x, { x: 10, y: 1 })
+let right = apply(get_x, { x: 20, z: 2 })
+
+puts(left + right)  # output: 30

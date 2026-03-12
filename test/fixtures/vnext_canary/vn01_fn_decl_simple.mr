@@ -1,0 +1,3 @@
+# VN01: vNext top-level fn declaration with expression body
+fn add(x: Int, y: Int) -> Int = x + y
+puts(add(3, 4))  # output: 7

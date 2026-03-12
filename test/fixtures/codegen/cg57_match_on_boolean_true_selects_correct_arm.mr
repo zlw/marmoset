@@ -1,7 +1,7 @@
 # CG57: Match on boolean true selects correct arm
 let flag = true
 let x = match flag {
-  true: 1
-  false: 0
+  case true: 1
+  case false: 0
 }
 puts(x)  # output: 1

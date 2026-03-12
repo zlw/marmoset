@@ -1,0 +1,7 @@
+# R181: HOF over a spread result preserves untouched tail fields
+fn apply(f, r) = f(r)
+fn bump_x(r) = { ...r, x: r.x + 1 }
+fn get_y(r) = r.y
+
+let updated = bump_x({ x: 1, y: 20, z: 3 })
+puts(apply(get_y, updated) + updated.x)  # output: 22

@@ -1,1 +1,2 @@
-let f = fn(x: int, y: string) { y }; f(5, "hi")
+fn f(x: Int, y: Str) = y
+f(5, "hi")

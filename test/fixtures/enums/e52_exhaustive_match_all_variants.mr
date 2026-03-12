@@ -1,10 +1,10 @@
 # E52: Exhaustive match on all variants passes
-enum direction { north south east west }
-let d = direction.east
+enum Direction = { North, South, East, West }
+let d = Direction.East
 let v = match d {
-  direction.north: 1
-  direction.south: 2
-  direction.east: 3
-  direction.west: 4
+  case Direction.North: 1
+  case Direction.South: 2
+  case Direction.East: 3
+  case Direction.West: 4
 }
 puts(v)  # output: 3

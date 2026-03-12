@@ -12,7 +12,7 @@ Syntax highlighting, bracket matching, auto-indentation, and code outline for [M
 
 ### From source (after pushing)
 
-Update `extension.toml` with the correct `rev` for your grammar commit, then install as a dev extension.
+Update `extension.toml` with the correct `commit` for your grammar revision, then install as a dev extension.
 
 ## Features
 

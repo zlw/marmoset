@@ -1,5 +1,5 @@
 # XF48: J56: Pure function creating and returning record
-let make_point = fn(x: int, y: int) -> int {
+fn make_point(x: Int, y: Int) -> Int = {
   let p = { x: x, y: y }
   p.x
 }

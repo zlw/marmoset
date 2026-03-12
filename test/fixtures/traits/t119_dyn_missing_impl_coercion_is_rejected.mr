@@ -1,0 +1,6 @@
+# T119: Dyn packaging fails when the concrete type does not implement the requested trait
+trait Printable[a] = {
+  fn print(x: a) -> Str
+}
+let x: Dyn[Printable] = 42  # error: Cannot coerce Int to Dyn[Printable]
+x

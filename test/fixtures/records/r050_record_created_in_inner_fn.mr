@@ -1,6 +1,6 @@
 # R050: Record created in inner function, accessed in outer
-let make = fn(v) { { x: v, y: v } }
-let use = fn(v) {
+fn make(v) = { { x: v, y: v } }
+fn use(v) = {
   let r = make(v)
   r.x
 }

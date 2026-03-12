@@ -1,6 +1,6 @@
-# TI34: Generic eq impl drives == for list[int]
-impl eq[b: eq] for list[b] {
-  fn eq(x: list[b], y: list[b]) -> bool {
+# TI34: Generic Eq impl drives == for List[Int]
+impl[b: Eq] Eq[List[b]] = {
+  fn eq(x: List[b], y: List[b]) -> Bool = {
     len(x) == len(y)
   }
 }

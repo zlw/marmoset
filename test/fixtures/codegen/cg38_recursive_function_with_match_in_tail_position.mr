@@ -1,8 +1,8 @@
 # CG38: Recursive function with match in tail position
-let fib_helper = fn(n: int, a: int, b: int) -> int {
+fn fib_helper(n: Int, a: Int, b: Int) -> Int = {
   match n {
-    0: a
-    _: fib_helper(n - 1, b, a + b)
+    case 0: a
+    case _: fib_helper(n - 1, b, a + b)
   }
 }
 puts(fib_helper(10, 0, 1))  # output: 55

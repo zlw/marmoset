@@ -1,8 +1,8 @@
 # XF02: A2: Spread of trait-typed param into new record
-trait named {
-  name: string
+trait Named = {
+  name: Str
 }
-let wrap = fn(x: named) -> named {
+fn wrap[t: Named](x: t) -> { name: Str } = {
   { name: x.name }
 }
 let result = wrap({ name: "alice", age: 30 })

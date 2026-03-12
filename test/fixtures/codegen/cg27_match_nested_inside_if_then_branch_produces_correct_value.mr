@@ -1,10 +1,10 @@
 # CG27: Match nested inside if-then branch produces correct value
-let f = fn(flag: bool, x: int) -> int {
+fn f(flag: Bool, x: Int) -> Int = {
   if (flag) {
     match x {
-      1: 10
-      2: 20
-      _: 30
+      case 1: 10
+      case 2: 20
+      case _: 30
     }
   } else {
     0

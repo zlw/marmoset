@@ -1,0 +1,9 @@
+# VN08: & in constraint composition (generic param bounds)
+trait Display[a] = {
+  fn display(x: a) -> Str
+}
+fn show_it[a: Display](x: a) -> Str = x.display()
+impl Display[Int] = {
+  fn display(x: Int) -> Str = x.show()
+}
+puts(show_it(42))  # output: 42

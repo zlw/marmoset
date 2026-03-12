@@ -1,5 +1,5 @@
-# U14: Two result instantiations used sequentially
-enum result[a, e] { ok(a) err(e) }
-let r1: result[int, string] = result.ok(42)
-let v1 = match r1 { result.ok(v): v result.err(_): 0 }
+# U14: Two Result instantiations used sequentially
+enum Result[a, e] = { Ok(a), Err(e) }
+let r1: Result[Int, Str] = Result.Ok(42)
+let v1 = match r1 { case Result.Ok(v): v case Result.Err(_): 0 }
 puts(v1)  # output: 42

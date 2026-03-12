@@ -87,13 +87,16 @@ let analyze_with_file_id ~(file_id : string) ~(source : string) : analysis_resul
           }
       | Ok result ->
           let type_var_user_names = Infer.type_var_user_name_bindings_in_state state in
+          let diagnostics =
+            List.map (lsp_diagnostic_of_canonical ~source ~active_file_id:file_id) result.diagnostics
+          in
           {
             source;
             program = Some program;
             type_map = Some result.type_map;
             environment = Some result.environment;
             type_var_user_names;
-            diagnostics = [];
+            diagnostics;
           })
 
 let analyze ~(source : string) : analysis_result = analyze_with_file_id ~file_id:"<lsp>" ~source
@@ -138,22 +141,40 @@ let%test "analyze type error has non-zero range when location available" =
   | _ -> false
 
 let%test "analyze successful code stores type_map and environment" =
-  let result = analyze ~source:"let f = fn(x) { x + 1 }; f" in
+  let result = analyze ~source:"let f = (x) -> x + 1; f" in
   result.diagnostics = [] && result.type_map <> None && result.environment <> None
 
 let%test "analyze with builtins works" =
   let result = analyze ~source:"len([1, 2, 3])" in
   result.diagnostics = [] && result.type_map <> None
 
-let%test "analyze captures user generic names for hover formatting" =
+let%test "analyze successful code surfaces warning diagnostics" =
   let result =
-    analyze ~source:"trait named { name: string }\nlet get = fn[t: named](x: t) -> string { x.name }; get"
+    analyze
+      ~source:
+        {|
+          trait Greeter[a] = {
+            fn greet(x: a) -> Str
+          }
+          impl Greeter[Int] = {
+            override fn greet(x: Int) -> Str = "hi"
+          }
+        |}
   in
+  match result.diagnostics with
+  | [ diag ] -> (
+      diag.severity = Some Lsp_t.DiagnosticSeverity.Warning
+      &&
+      match diag.code with
+      | Some (`String "override-unnecessary") -> true
+      | _ -> false)
+  | _ -> false
+
+let%test "analyze captures user generic names for hover formatting" =
+  let result = analyze ~source:"trait Named = { name: Str }\nfn get[t: Named](x: t) -> Str = x.name\nget" in
   result.diagnostics = [] && List.exists (fun (_fresh, user_name) -> user_name = "t") result.type_var_user_names
 
 let%test "analyze does not leak generic-name mappings across documents" =
-  let _ =
-    analyze ~source:"trait named { name: string }\nlet get = fn[t: named](x: t) -> string { x.name }; get"
-  in
+  let _ = analyze ~source:"trait Named = { name: Str }\nfn get[t: Named](x: t) -> Str = x.name\nget" in
   let result = analyze ~source:"let x = 1; x" in
   result.type_var_user_names = []

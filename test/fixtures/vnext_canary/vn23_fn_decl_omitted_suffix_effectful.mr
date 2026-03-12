@@ -1,0 +1,8 @@
+# VN23: Top-level fn may omit purity/return suffix for an effectful body
+fn loud(n: Int) = {
+  puts("seen")
+  n.show()
+}
+
+# output: seen
+puts(loud(7))  # output: 7

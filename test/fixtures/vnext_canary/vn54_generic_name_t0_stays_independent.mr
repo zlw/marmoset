@@ -1,0 +1,9 @@
+# VN54: Generated shorthand binders stay independent from explicit generic names like t0
+trait Named = { name: Str }
+
+fn pair[t0: Named](left: t0, right: Named) -> Str = left.name + ":" + right.name
+
+let left = { name: "alpha", id: 1 }
+let right = { name: "beta", bananas: 3 }
+
+puts(pair(left, right))  # output: alpha:beta

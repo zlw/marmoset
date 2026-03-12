@@ -1,7 +1,7 @@
 # T82: Multi-field trait object exposes all declared fields
-trait person_like {
-  name: string
-  age: int
+trait PersonLike = {
+  name: Str
+  age: Int
 }
-let x: person_like = { name: "alice", age: 30, active: true }
+let x: PersonLike = { name: "alice", age: 30, active: true }  # error: cannot be used as a type in vNext
 puts(x.name + " " + x.age.show())  # output: alice 30

@@ -1,0 +1,4 @@
+# VN29: Placeholder shorthand rejects multiple placeholders in one callback argument
+fn apply[a, b](x: a, f: (a) -> b) -> b = f(x)
+
+apply(21, _ + _)  # error: exactly one '_' placeholder

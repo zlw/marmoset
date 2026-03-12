@@ -1,6 +1,6 @@
-enum tag { a b }
-impl eq for tag {
-  fn eq(x: tag, y: tag) -> bool { true }
+enum Tag = { A, B }
+impl Eq[Tag] = {
+  fn eq(x: Tag, y: Tag) -> Bool = true
 }
 puts(1 < 2)  # output: true
-puts(tag.a == tag.b)  # output: true
+puts(Tag.A == Tag.B)  # output: true

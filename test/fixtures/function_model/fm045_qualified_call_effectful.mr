@@ -1,10 +1,10 @@
-type logger = { prefix: string }
+type Logger = { prefix: Str }
 
-impl logger {
-  fn log(l: logger, msg: string) => string {
+impl Logger = {
+  fn log(l: Logger, msg: Str) => Str = {
     l.prefix + ": " + msg
   }
 }
 
-let l: logger = { prefix: "INFO" }
-puts(logger.log(l, "hello"))  # output: INFO: hello
+let l: Logger = { prefix: "INFO" }
+puts(Logger.log(l, "hello"))  # output: INFO: hello

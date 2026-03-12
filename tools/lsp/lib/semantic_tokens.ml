@@ -228,6 +228,7 @@ let rec collect_expr ~source ~type_map ~environment ~params ~tokens (expr : Ast.
       | None -> ());
       List.iter (collect_expr ~source ~type_map ~environment ~params ~tokens) args
   | Ast.AST.TypeCheck (e, _te) -> collect_expr ~source ~type_map ~environment ~params ~tokens e
+  | Ast.AST.BlockExpr stmts -> List.iter (collect_stmt ~source ~type_map ~environment ~params ~tokens) stmts
 
 (* Note: type annotations (type_expr) lack byte-position info in the AST,
    so we cannot emit semantic tokens for them. Tree-sitter handles type highlighting. *)
@@ -519,7 +520,7 @@ let%test "let binding produces variable token with declaration" =
   | None -> false
 
 let%test "function binding produces function token" =
-  let tokens = get_tokens "let f = fn(x) { x + 1 };" in
+  let tokens = get_tokens "let f = (x) -> x + 1;" in
   match tokens with
   | Some st ->
       let decoded = decode_tokens st.data in
@@ -527,11 +528,11 @@ let%test "function binding produces function token" =
   | None -> false
 
 let%test "function params produce parameter tokens" =
-  let tokens = get_tokens "let f = fn(x) { x + 1 };" in
+  let tokens = get_tokens "let f = (x) -> x + 1;" in
   has_token_type parameter_type tokens
 
 let%test "identifier referring to function gets function type" =
-  let tokens = get_tokens "let f = fn(x) { x + 1 }; f(5)" in
+  let tokens = get_tokens "let f = (x) -> x + 1; f(5)" in
   (* f in f(5) should be function_type *)
   count_token_type function_type tokens >= 2
 
@@ -540,11 +541,11 @@ let%test "record field access produces property token" =
   has_token_type property_type tokens
 
 let%test "enum def produces enum and enumMember tokens" =
-  let tokens = get_tokens "enum color { red green blue }" in
+  let tokens = get_tokens "enum Color = { Red Green Blue }" in
   has_token_type enum_type tokens && has_token_type enum_member_type tokens
 
 let%test "enum def has 3 enum member tokens" =
-  let tokens = get_tokens "enum color { red green blue }" in
+  let tokens = get_tokens "enum Color = { Red Green Blue }" in
   count_token_type enum_member_type tokens = 3
 
 let%test "infix operator produces operator token" =
@@ -558,7 +559,7 @@ let%test "no tokens for empty/failing source" =
 let%test "method call produces method token" =
   (* Use a trait impl so method call typechecks *)
   let src =
-    "trait greet[a] {\n  fn hello(self: a) -> string\n}\nimpl greet for int {\n  fn hello(self: int) -> string { \"hi\" }\n}\nlet x = 1; x.hello()"
+    "trait Greet[a] = {\n  fn hello(self: a) -> Str\n}\nimpl Greet[Int] = {\n  fn hello(self: Int) -> Str = \"hi\"\n}\nlet x = 1; x.hello()"
   in
   let tokens = get_tokens src in
   has_token_type method_type tokens

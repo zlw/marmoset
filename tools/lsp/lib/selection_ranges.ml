@@ -69,6 +69,7 @@ let rec find_in_expr ~source ~offset ~parent (expr : Ast.AST.expression) : Lsp_t
             (fun () -> Option.bind spread (find_in_expr ~source ~offset ~parent:current))
       | Ast.AST.EnumConstructor (_, _, args) -> find_first_in_exprs ~source ~offset ~parent:current args
       | Ast.AST.TypeCheck (e, _) -> find_in_expr ~source ~offset ~parent:current e
+      | Ast.AST.BlockExpr stmts -> find_first_in_stmts ~source ~offset ~parent:current stmts
       | Ast.AST.Identifier _ | Ast.AST.Integer _ | Ast.AST.Float _ | Ast.AST.Boolean _ | Ast.AST.String _ -> None
     in
     match child with
@@ -215,7 +216,7 @@ let%test "cursor outside any expression returns program-level range" =
   | _ -> false
 
 let%test "cursor in function body has deep chain" =
-  let ranges = get_selection "let f = fn(x) { x + 1 }" [ (0, 16) ] in
+  let ranges = get_selection "let f = (x) -> { x + 1 }" [ (0, 17) ] in
   match ranges with
   | [ sr ] ->
       (* x → x+1 → body → fn → let → program — deep chain *)

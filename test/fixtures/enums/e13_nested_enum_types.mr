@@ -1,9 +1,9 @@
-# E13: Nested enum types option[list[int]]
-enum option[a] { some(a) none }
-let f = fn(x: option[list[int]]) -> int {
+# E13: Nested enum types Option[List[Int]]
+enum Option[a] = { Some(a), None }
+fn f(x: Option[List[Int]]) -> Int = {
   match x {
-    option.some(lst): len(lst)
-    option.none: 0
+    case Option.Some(lst): len(lst)
+    case Option.None: 0
   }
 }
-f(option.some([1, 2, 3]))
+f(Option.Some([1, 2, 3]))

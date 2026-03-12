@@ -1,11 +1,9 @@
-type point = { x: int, y: int }
+type Point = { x: Int, y: Int }
 
-let point: point = { x: 1, y: 2 }
+let point: Point = { x: 1, y: 2 }
 let moved = { ...point, x: 10 }
 
-let get_x = fn(value: point) -> int {
-  value.x
-}
+fn get_x(value: Point) -> Int = value.x
 
 puts(get_x(moved))
 puts(moved.x + moved.y)

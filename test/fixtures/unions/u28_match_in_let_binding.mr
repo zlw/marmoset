@@ -1,8 +1,8 @@
 # U28: Match in let-binding position
-enum option[a] { some(a) none }
-let x = option.some(20)
+enum Option[a] = { Some(a), None }
+let x = Option.Some(20)
 let y = match x {
-  option.some(v): v
-  option.none: 0
+  case Option.Some(v): v
+  case Option.None: 0
 }
 puts(y)  # output: 20

@@ -1,6 +1,6 @@
 # U71: Two enums with same variant name (used separately)
-enum result1[a] { ok(a) fail }
-enum result2[a] { ok(a) fail }
-let r1 = result1.ok(1)
-let a = match r1 { result1.ok(v): v result1.fail: 0 }
+enum Result1[a] = { Ok(a), Fail }
+enum Result2[a] = { Ok(a), Fail }
+let r1 = Result1.Ok(1)
+let a = match r1 { case Result1.Ok(v): v case Result1.Fail: 0 }
 puts(a)  # output: 1

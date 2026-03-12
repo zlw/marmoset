@@ -1,0 +1,6 @@
+# I13: Functions can return the same record intersection type they receive
+fn keep(x: ({ x: Int } & { y: Int })) -> ({ x: Int } & { y: Int }) = x
+
+let value = keep({ x: 1, y: 2 })
+
+puts("ok")  # output: ok

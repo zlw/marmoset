@@ -1,6 +1,6 @@
 # CG18: Closure capture before shadowing keeps outer binding
-let f = fn(x: int) -> int {
-  let g = fn(y: int) -> int { x + y }
+fn f(x: Int) -> Int = {
+  let g = (y: Int) -> x + y
   let x = x + 1
   g(0) + x
 }

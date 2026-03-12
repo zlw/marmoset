@@ -1,0 +1,10 @@
+# VN59: Ampersand shorthand composes three trait constraints
+trait Named = { name: Str }
+trait Aged = { age: Int }
+trait Tagged = { tag: Str }
+
+fn describe(x: Named & Aged & Tagged) -> Str =
+  x.name + ":" + x.age.show() + ":" + x.tag
+
+let monkey = { name: "George", age: 7, tag: "alpha", bananas: 3 }
+puts(describe(monkey))  # output: George:7:alpha

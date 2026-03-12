@@ -1,6 +1,6 @@
 # CS08: A8: [BUG-1] chained let bindings with if/match dependencies
 let a = if (true) { 5 } else { 0 }
-let b = match a { 5: 10 _: 0 }
+let b = match a { case 5: 10 case _: 0 }
 let c = if (b == 10) { 20 } else { 0 }
-let d = match c { 20: 30 _: 0 }
+let d = match c { case 20: 30 case _: 0 }
 puts(d)  # output: 30

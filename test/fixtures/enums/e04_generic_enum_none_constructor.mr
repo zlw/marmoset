@@ -1,8 +1,8 @@
-# E04: Generic enum option[a] with none constructor
-enum option[a] { some(a) none }
-let x = option.some(42)
+# E04: Generic enum Option[a] with None constructor
+enum Option[a] = { Some(a), None }
+let x = Option.Some(42)
 let y = match x {
-  option.some(v): v
-  option.none: 0
+  case Option.Some(v): v
+  case Option.None: 0
 }
 y

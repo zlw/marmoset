@@ -1,7 +1,7 @@
 # U87: Unknown variant in match pattern
-enum option[a] { some(a) none }  # error: *
-let x = option.some(1)
+enum Option[a] = { Some(a), None }  # error: *
+let x = Option.Some(1)
 match x {
-  option.some(v): v
-  option.bogus: 0
+  case Option.Some(v): v
+  case Option.bogus: 0
 }

@@ -1,5 +1,5 @@
 # CS65: K71: multiple statements in if-branch body
-let f = fn(flag: bool) -> int {
+fn f(flag: Bool) -> Int = {
   if (flag) {
     let a = 10
     let b = 20

@@ -1,7 +1,7 @@
 # TH25: Inherent method result used as function argument
-impl int {
-  fn double(x: int) -> int { x + x }
+impl Int = {
+  fn double(x: Int) -> Int = x + x
 }
-let show_num = fn(n: int) -> int { n }
+fn show_num(n: Int) -> Int = n
 let n = 10
 puts(show_num(n.double()))  # output: 20

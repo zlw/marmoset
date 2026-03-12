@@ -1,0 +1,14 @@
+# VN114: Derived Dyn child trait objects expose inherited lambda-backed supertrait methods
+fn apply[a, b](x: a, f: (a) -> b) -> b = f(x)
+
+trait Label[a]: Show = {
+  fn label(self: a) -> Str = apply(self, (x) -> x.show())
+}
+
+trait Pack[a]: Label = {}
+
+type Point = { x: Int } derive Show, Label, Pack
+
+let value: Dyn[Pack] = { x: 1 }
+puts(value.show())   # output: { x: 1 }
+puts(value.label())  # output: { x: 1 }

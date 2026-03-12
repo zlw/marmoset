@@ -1,0 +1,8 @@
+# I21: Nested record intersections survive return annotations through placeholder callbacks
+fn apply[a, b](x: a, f: (a) -> b) -> b = f(x)
+
+fn make() -> ({ inner: { x: Int, y: Int } } & { inner: { x: Int } }) = {
+  { inner: { x: 1, y: 2 } }
+}
+
+puts(apply(make(), _.inner.x))  # output: 1

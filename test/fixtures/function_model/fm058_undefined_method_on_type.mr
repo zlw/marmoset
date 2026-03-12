@@ -1,4 +1,4 @@
-type empty = { v: int }
+type Empty = { v: Int }
 
-let e: empty = { v: 0 }
+let e: Empty = { v: 0 }
 e.missing()  # error: *

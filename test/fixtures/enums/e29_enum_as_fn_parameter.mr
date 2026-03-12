@@ -1,9 +1,9 @@
 # E29: Enum as function parameter
-enum direction { north south east west }
-let is_north = fn(d: direction) -> int {
+enum Direction = { North, South, East, West }
+fn is_north(d: Direction) -> Int = {
   match d {
-    direction.north: 1
-    _: 0
+    case Direction.North: 1
+    case _: 0
   }
 }
-puts(is_north(direction.north))  # output: 1
+puts(is_north(Direction.North))  # output: 1

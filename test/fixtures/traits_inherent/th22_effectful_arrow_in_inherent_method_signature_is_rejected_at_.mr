@@ -1,5 +1,5 @@
 # TH22: Effectful arrow (=>) in inherent method signature is accepted (effectful methods supported)
-impl int {
-  fn greet(x: int) => string { "hello" }
+impl Int = {
+  fn greet(x: Int) => Str = "hello"
 }
 puts(1)  # output: 1

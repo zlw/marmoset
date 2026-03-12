@@ -1,14 +1,14 @@
 # XF14: C13b: Trait impl match binding may be unused in arm body
-enum option_int { some(int) none }
-trait render[a] {
-  fn render(x: a) -> string
+enum OptionInt = { Some(Int), None }
+trait Render[a] = {
+  fn render(x: a) -> Str
 }
-impl render for option_int {
-  fn render(x: option_int) -> string {
+impl Render[OptionInt] = {
+  fn render(x: OptionInt) -> Str = {
     match x {
-      option_int.some(n): "found"
-      option_int.none: "empty"
+      case OptionInt.Some(n): "found"
+      case OptionInt.None: "empty"
     }
   }
 }
-puts(option_int.some(42).render())  # output: found
+puts(OptionInt.Some(42).render())  # output: found

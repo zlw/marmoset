@@ -4,16 +4,17 @@
   "scopeName": "source.marmoset",
   "patterns": [
     { "include": "#comment" },
+    { "include": "#fn-declaration" },
     { "include": "#enum-definition" },
     { "include": "#trait-definition" },
     { "include": "#impl-block" },
-    { "include": "#derive-statement" },
+    { "include": "#derive-clause" },
     { "include": "#type-alias" },
     { "include": "#let-statement" },
     { "include": "#return-statement" },
     { "include": "#match-expression" },
     { "include": "#if-expression" },
-    { "include": "#function-literal" },
+    { "include": "#lambda-expression" },
     { "include": "#expression" }
   ],
   "repository": {
@@ -62,15 +63,15 @@
       "patterns": [
         {
           "name": "keyword.control.marmoset",
-          "match": "\\b(if|else|match|return)\\b"
+          "match": "\\b(if|else|match|case|return)\\b"
         },
         {
           "name": "keyword.other.let.marmoset",
           "match": "\\blet\\b"
         },
         {
-          "name": "keyword.other.for.marmoset",
-          "match": "\\bfor\\b"
+          "name": "keyword.other.fn.marmoset",
+          "match": "\\bfn\\b"
         },
         {
           "name": "keyword.operator.is.marmoset",
@@ -89,6 +90,10 @@
           "match": "\\bimpl\\b"
         },
         {
+          "name": "keyword.other.override.marmoset",
+          "match": "\\boverride\\b"
+        },
+        {
           "name": "keyword.other.derive.marmoset",
           "match": "\\bderive\\b"
         },
@@ -101,7 +106,7 @@
 
     "builtin-types": {
       "name": "support.type.builtin.marmoset",
-      "match": "\\b(int|string|bool|float)\\b"
+      "match": "\\b(Int|Str|Bool|Float|Unit|List|Map)\\b"
     },
 
     "builtin-functions": {
@@ -113,7 +118,7 @@
       "patterns": [
         {
           "name": "keyword.operator.arrow.marmoset",
-          "match": "->"
+          "match": "->|=>"
         },
         {
           "name": "keyword.operator.spread.marmoset",
@@ -125,15 +130,15 @@
         },
         {
           "name": "keyword.operator.relational.marmoset",
-          "match": "<|>"
+          "match": "<=|>=|<|>"
         },
         {
           "name": "keyword.operator.arithmetic.marmoset",
-          "match": "\\+|-|\\*|/"
+          "match": "\\+|-|\\*|/|%"
         },
         {
           "name": "keyword.operator.logical.marmoset",
-          "match": "!"
+          "match": "!|&&|\\|\\|"
         },
         {
           "name": "keyword.operator.assignment.marmoset",
@@ -142,6 +147,10 @@
         {
           "name": "keyword.operator.union.marmoset",
           "match": "\\|"
+        },
+        {
+          "name": "keyword.operator.constraint.marmoset",
+          "match": "&"
         }
       ]
     },
@@ -170,9 +179,11 @@
     "type-annotation": {
       "comment": "Type annotation after colon in parameters, let bindings, trait fields",
       "patterns": [
+        { "include": "#intersection-type" },
         { "include": "#union-type" },
         { "include": "#function-type" },
         { "include": "#record-type" },
+        { "include": "#trait-object-type" },
         { "include": "#generic-type" },
         { "include": "#builtin-types" },
         { "include": "#type-identifier" }
@@ -185,7 +196,7 @@
     },
 
     "generic-type": {
-      "comment": "Generic types like list[int], option[string]",
+      "comment": "Generic types like List[Int], Option[Str]",
       "begin": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*(\\[)",
       "beginCaptures": {
         "1": { "name": "entity.name.type.marmoset" },
@@ -201,14 +212,31 @@
       ]
     },
 
-    "function-type": {
-      "comment": "Function types: fn(int, string) -> bool",
-      "begin": "\\b(fn)\\s*(\\()",
+    "trait-object-type": {
+      "comment": "Trait object types: Dyn[Show], Dyn[Show & Eq]",
+      "begin": "\\b(Dyn)\\s*(\\[)",
       "beginCaptures": {
-        "1": { "name": "keyword.other.fn.marmoset" },
-        "2": { "name": "punctuation.bracket.round.begin.marmoset" }
+        "1": { "name": "storage.type.marmoset" },
+        "2": { "name": "punctuation.bracket.square.begin.marmoset" }
       },
-      "end": "(?<=\\))\\s*(->)\\s*",
+      "end": "\\]",
+      "endCaptures": {
+        "0": { "name": "punctuation.bracket.square.end.marmoset" }
+      },
+      "patterns": [
+        { "include": "#type-identifier" },
+        { "include": "#operators" },
+        { "include": "#punctuation" }
+      ]
+    },
+
+    "function-type": {
+      "comment": "Function types: (Int, Str) -> Bool or (Int, Str) => Bool",
+      "begin": "(?<![A-Za-z_])\\(",
+      "beginCaptures": {
+        "0": { "name": "punctuation.bracket.round.begin.marmoset" }
+      },
+      "end": "(?<=\\))\\s*(->|=>)\\s*",
       "endCaptures": {
         "1": { "name": "keyword.operator.arrow.marmoset" }
       },
@@ -226,8 +254,18 @@
       ]
     },
 
+    "intersection-type": {
+      "comment": "Intersection types: Named & Aged, List[Int] & Named",
+      "match": "(?<![\\w\\[])(Dyn\\[[^\\]]+\\]|[a-zA-Z_][a-zA-Z0-9_]*(?:\\[[^\\]]+\\])?|\\{[^{}]*\\}|\\([^()]+\\)\\s*(?:->|=>)\\s*(?:Dyn\\[[^\\]]+\\]|[a-zA-Z_][a-zA-Z0-9_]*(?:\\[[^\\]]+\\])?|\\{[^{}]*\\}))\\s*(&)\\s*(Dyn\\[[^\\]]+\\]|[a-zA-Z_][a-zA-Z0-9_]*(?:\\[[^\\]]+\\])?|\\{[^{}]*\\}|\\([^()]+\\)\\s*(?:->|=>)\\s*(?:Dyn\\[[^\\]]+\\]|[a-zA-Z_][a-zA-Z0-9_]*(?:\\[[^\\]]+\\])?|\\{[^{}]*\\}))(?!\\w)",
+      "captures": {
+        "1": { "name": "entity.name.type.marmoset" },
+        "2": { "name": "keyword.operator.constraint.marmoset" },
+        "3": { "name": "entity.name.type.marmoset" }
+      }
+    },
+
     "union-type": {
-      "comment": "Union types: int | string",
+      "comment": "Union types: Int | Str",
       "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*(\\|)\\s*([a-zA-Z_][a-zA-Z0-9_]*)\\b",
       "captures": {
         "1": { "name": "entity.name.type.marmoset" },
@@ -237,7 +275,7 @@
     },
 
     "record-type": {
-      "comment": "Record types: { x: int, y: int }",
+      "comment": "Record types: { x: Int, y: Int }",
       "begin": "\\{",
       "beginCaptures": {
         "0": { "name": "punctuation.bracket.curly.begin.marmoset" }
@@ -267,7 +305,7 @@
     },
 
     "type-parameter-list": {
-      "comment": "Type parameters: [a], [a, b], [a: show], [a: show + eq]",
+      "comment": "Type parameters: [a], [a, b], [a: Show], [a: Show & Eq]",
       "begin": "\\[",
       "beginCaptures": {
         "0": { "name": "punctuation.bracket.square.begin.marmoset" }
@@ -278,8 +316,8 @@
       },
       "patterns": [
         {
-          "comment": "Constrained type parameter: a: show + eq",
-          "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*(:)\\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\\s*\\+\\s*[a-zA-Z_][a-zA-Z0-9_]*)*)",
+          "comment": "Constrained type parameter: a: Show & Eq",
+          "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*(:)\\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\\s*&\\s*[a-zA-Z_][a-zA-Z0-9_]*)*)",
           "captures": {
             "1": { "name": "entity.name.type.parameter.marmoset" },
             "2": { "name": "punctuation.separator.colon.marmoset" },
@@ -291,7 +329,7 @@
                 },
                 {
                   "name": "keyword.operator.constraint.marmoset",
-                  "match": "\\+"
+                  "match": "&"
                 }
               ]
             }
@@ -307,7 +345,7 @@
     },
 
     "enum-definition": {
-      "comment": "enum option[a] { some(a) none }",
+      "comment": "enum Result[a] = { Ok(a) Err(a) }",
       "begin": "\\b(enum)\\s+([a-zA-Z_][a-zA-Z0-9_]*)",
       "beginCaptures": {
         "1": { "name": "keyword.other.enum.marmoset" },
@@ -320,8 +358,9 @@
       "patterns": [
         { "include": "#type-parameter-list" },
         {
-          "begin": "\\{",
+          "begin": "(=\\s*)\\{",
           "beginCaptures": {
+            "1": { "name": "keyword.operator.assignment.marmoset" },
             "0": { "name": "punctuation.bracket.curly.begin.marmoset" }
           },
           "end": "(?=\\})",
@@ -360,8 +399,47 @@
       ]
     },
 
+    "fn-declaration": {
+      "comment": "fn add(x: Int, y: Int) -> Int = x + y",
+      "begin": "\\b(fn)\\s+([a-zA-Z_][a-zA-Z0-9_]*[!?]?)",
+      "beginCaptures": {
+        "1": { "name": "storage.type.function.marmoset" },
+        "2": { "name": "entity.name.function.marmoset" }
+      },
+      "end": "(?<=\\})|$",
+      "patterns": [
+        { "include": "#type-parameter-list" },
+        {
+          "comment": "Parameter list",
+          "begin": "\\(",
+          "beginCaptures": {
+            "0": { "name": "punctuation.bracket.round.begin.marmoset" }
+          },
+          "end": "\\)",
+          "endCaptures": {
+            "0": { "name": "punctuation.bracket.round.end.marmoset" }
+          },
+          "patterns": [
+            { "include": "#parameter-list-inner" }
+          ]
+        },
+        {
+          "comment": "Return type arrow",
+          "match": "->|=>",
+          "name": "keyword.operator.arrow.marmoset"
+        },
+        { "include": "#type-annotation" },
+        {
+          "match": "=",
+          "name": "keyword.operator.assignment.marmoset"
+        },
+        { "include": "#block" },
+        { "include": "#expression" }
+      ]
+    },
+
     "trait-definition": {
-      "comment": "trait show[a] { ... } or trait ord[a]: eq { ... }",
+      "comment": "trait Show[a]: Eq & Ord = { ... }",
       "begin": "\\b(trait)\\s+([a-zA-Z_][a-zA-Z0-9_]*)",
       "beginCaptures": {
         "1": { "name": "keyword.other.trait.marmoset" },
@@ -374,12 +452,12 @@
       "patterns": [
         { "include": "#type-parameter-list" },
         {
-          "comment": "Supertrait list: : eq + show",
-          "begin": "(:)\\s*(?!\\s*\\{)",
+          "comment": "Supertrait list: : Eq & Show",
+          "begin": "(:)\\s*(?!\\s*=\\s*\\{)",
           "beginCaptures": {
             "1": { "name": "punctuation.separator.colon.marmoset" }
           },
-          "end": "(?=\\{)",
+          "end": "(?=\\s*=\\s*\\{)",
           "patterns": [
             {
               "name": "entity.name.type.supertrait.marmoset",
@@ -387,14 +465,15 @@
             },
             {
               "name": "keyword.operator.constraint.marmoset",
-              "match": "\\+"
+              "match": "&"
             }
           ]
         },
         {
           "comment": "Trait body",
-          "begin": "\\{",
+          "begin": "(=\\s*)\\{",
           "beginCaptures": {
+            "1": { "name": "keyword.operator.assignment.marmoset" },
             "0": { "name": "punctuation.bracket.curly.begin.marmoset" }
           },
           "end": "(?=\\})",
@@ -408,29 +487,33 @@
     },
 
     "trait-method-signature": {
-      "comment": "fn show(x: a) -> string",
+      "comment": "fn show(x: a) -> Str = x.show()",
       "begin": "\\b(fn)\\s+([a-zA-Z_][a-zA-Z0-9_]*)\\s*(\\()",
       "beginCaptures": {
         "1": { "name": "storage.type.function.marmoset" },
         "2": { "name": "entity.name.function.method.marmoset" },
         "3": { "name": "punctuation.bracket.round.begin.marmoset" }
       },
-      "end": "(?<=\\))(?:\\s*(->)\\s*(.+?))?\\s*$",
-      "endCaptures": {
-        "1": { "name": "keyword.operator.arrow.marmoset" },
-        "2": {
-          "patterns": [
-            { "include": "#type-annotation" }
-          ]
-        }
-      },
+      "end": "(?<=\\})|$",
       "patterns": [
-        { "include": "#parameter-list-inner" }
+        { "include": "#parameter-list-inner" },
+        {
+          "comment": "Return type arrow",
+          "match": "->|=>",
+          "name": "keyword.operator.arrow.marmoset"
+        },
+        { "include": "#type-annotation" },
+        {
+          "match": "=",
+          "name": "keyword.operator.assignment.marmoset"
+        },
+        { "include": "#block" },
+        { "include": "#expression" }
       ]
     },
 
     "trait-field": {
-      "comment": "name: string (field in trait body)",
+      "comment": "name: Str (field in trait body)",
       "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*(:)\\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\\[[^\\]]*\\])?)",
       "captures": {
         "1": { "name": "variable.other.property.marmoset" },
@@ -444,11 +527,10 @@
     },
 
     "impl-block": {
-      "comment": "impl show for int { ... }",
-      "begin": "\\b(impl)\\s+([a-zA-Z_][a-zA-Z0-9_]*)",
+      "comment": "impl[a: Show] Show[List[a]] = { ... } or impl Result[a, e] = { ... }",
+      "begin": "\\b(impl)\\b",
       "beginCaptures": {
-        "1": { "name": "keyword.other.impl.marmoset" },
-        "2": { "name": "entity.name.type.trait.marmoset" }
+        "1": { "name": "keyword.other.impl.marmoset" }
       },
       "end": "\\}",
       "endCaptures": {
@@ -457,22 +539,18 @@
       "patterns": [
         { "include": "#type-parameter-list" },
         {
-          "comment": "for <type>",
-          "match": "\\b(for)\\s+([a-zA-Z_][a-zA-Z0-9_]*(?:\\[[^\\]]*\\])?)",
-          "captures": {
-            "1": { "name": "keyword.other.for.marmoset" },
-            "2": {
-              "patterns": [
-                { "include": "#builtin-types" },
-                { "include": "#type-identifier" }
-              ]
-            }
-          }
+          "comment": "vNext impl header and target types",
+          "patterns": [
+            { "include": "#generic-type" },
+            { "include": "#builtin-types" },
+            { "include": "#type-identifier" }
+          ]
         },
         {
           "comment": "Impl body",
-          "begin": "\\{",
+          "begin": "(=\\s*)\\{",
           "beginCaptures": {
+            "1": { "name": "keyword.operator.assignment.marmoset" },
             "0": { "name": "punctuation.bracket.curly.begin.marmoset" }
           },
           "end": "(?=\\})",
@@ -485,32 +563,38 @@
     },
 
     "method-definition": {
-      "comment": "fn show(x: int) -> string { ... }",
-      "begin": "\\b(fn)\\s+([a-zA-Z_][a-zA-Z0-9_]*)\\s*(\\()",
+      "comment": "override fn show(x: Int) -> Str = { ... }",
+      "begin": "\\b(?:(override)\\s+)?(fn)\\s+([a-zA-Z_][a-zA-Z0-9_]*[!?]?)\\s*(\\()",
       "beginCaptures": {
-        "1": { "name": "storage.type.function.marmoset" },
-        "2": { "name": "entity.name.function.method.marmoset" },
-        "3": { "name": "punctuation.bracket.round.begin.marmoset" }
+        "1": { "name": "keyword.other.override.marmoset" },
+        "2": { "name": "storage.type.function.marmoset" },
+        "3": { "name": "entity.name.function.method.marmoset" },
+        "4": { "name": "punctuation.bracket.round.begin.marmoset" }
       },
-      "end": "(?<=\\})",
+      "end": "(?<=\\})|$",
       "patterns": [
         { "include": "#parameter-list-inner" },
         {
           "comment": "Return type after )",
-          "match": "(\\))\\s*(->)",
+          "match": "(\\))\\s*(->|=>)",
           "captures": {
             "1": { "name": "punctuation.bracket.round.end.marmoset" },
             "2": { "name": "keyword.operator.arrow.marmoset" }
           }
         },
         { "include": "#type-annotation" },
-        { "include": "#block" }
+        {
+          "match": "=",
+          "name": "keyword.operator.assignment.marmoset"
+        },
+        { "include": "#block" },
+        { "include": "#expression" }
       ]
     },
 
-    "derive-statement": {
-      "comment": "derive eq, show for int;",
-      "match": "\\b(derive)\\s+((?:[a-zA-Z_][a-zA-Z0-9_]*\\s*,\\s*)*[a-zA-Z_][a-zA-Z0-9_]*)\\s+(for)\\s+([a-zA-Z_][a-zA-Z0-9_]*(?:\\[[^\\]]*\\])?)\\s*(;)",
+    "derive-clause": {
+      "comment": "derive Eq, Show",
+      "match": "\\b(derive)\\s+((?:[a-zA-Z_][a-zA-Z0-9_]*\\s*,\\s*)*[a-zA-Z_][a-zA-Z0-9_]*)",
       "captures": {
         "1": { "name": "keyword.other.derive.marmoset" },
         "2": {
@@ -524,20 +608,12 @@
               "match": ","
             }
           ]
-        },
-        "3": { "name": "keyword.other.for.marmoset" },
-        "4": {
-          "patterns": [
-            { "include": "#builtin-types" },
-            { "include": "#type-identifier" }
-          ]
-        },
-        "5": { "name": "punctuation.terminator.semicolon.marmoset" }
+        }
       }
     },
 
     "type-alias": {
-      "comment": "type point = { x: int, y: int }",
+      "comment": "type Point = { x: Int, y: Int }",
       "begin": "\\b(type)\\s+([a-zA-Z_][a-zA-Z0-9_]*)\\s*(=)",
       "beginCaptures": {
         "1": { "name": "keyword.other.type.marmoset" },
@@ -611,7 +687,7 @@
     },
 
     "match-expression": {
-      "comment": "match expr { pattern: body ... }",
+      "comment": "match expr { case pattern: body ... }",
       "begin": "\\b(match)\\b",
       "beginCaptures": {
         "1": { "name": "keyword.control.match.marmoset" }
@@ -636,19 +712,23 @@
     },
 
     "match-arm": {
-      "comment": "pattern: body expression in match",
+      "comment": "case pattern: body expression in match",
       "patterns": [
         { "include": "#comment" },
         {
+          "name": "keyword.control.case.marmoset",
+          "match": "\\bcase\\b"
+        },
+        {
           "comment": "Wildcard pattern",
-          "match": "\\b(_)\\s*(:)",
+          "match": "\\bcase\\b\\s+(_)\\s*(:)",
           "captures": {
             "1": { "name": "variable.language.wildcard.marmoset" },
             "2": { "name": "punctuation.separator.colon.marmoset" }
           }
         },
         {
-          "comment": "Constructor pattern: option.some(v) or option.none",
+          "comment": "Constructor pattern: Option.Some(v) or Option.None",
           "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*(\\.)\\s*([a-zA-Z_][a-zA-Z0-9_]*)",
           "captures": {
             "1": { "name": "entity.name.type.marmoset" },
@@ -665,50 +745,11 @@
       ]
     },
 
-    "function-literal": {
-      "comment": "fn(x: int, y: int) -> int { ... } or fn[a](x: a) -> a { ... }",
-      "begin": "\\b(fn)\\s*(?:(\\[)|(?=\\())",
-      "beginCaptures": {
-        "1": { "name": "storage.type.function.marmoset" },
-        "2": { "name": "punctuation.bracket.square.begin.marmoset" }
-      },
-      "end": "(?<=\\})",
+    "lambda-expression": {
+      "comment": "(x: Int) -> x + 1 or (x: Int) => { x + 1 }",
+      "begin": "(?=\\([^\\n]*\\)\\s*(?:->|=>))",
+      "end": "(?<=\\})|$",
       "patterns": [
-        {
-          "comment": "Type parameter list in fn[a: show]",
-          "begin": "(?<=\\[)",
-          "end": "\\]",
-          "endCaptures": {
-            "0": { "name": "punctuation.bracket.square.end.marmoset" }
-          },
-          "patterns": [
-            {
-              "comment": "Constrained type parameter: a: show + eq",
-              "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*(:)\\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\\s*\\+\\s*[a-zA-Z_][a-zA-Z0-9_]*)*)",
-              "captures": {
-                "1": { "name": "entity.name.type.parameter.marmoset" },
-                "2": { "name": "punctuation.separator.colon.marmoset" },
-                "3": {
-                  "patterns": [
-                    {
-                      "name": "entity.name.type.constraint.marmoset",
-                      "match": "\\b[a-zA-Z_][a-zA-Z0-9_]*\\b"
-                    },
-                    {
-                      "name": "keyword.operator.constraint.marmoset",
-                      "match": "\\+"
-                    }
-                  ]
-                }
-              }
-            },
-            {
-              "name": "entity.name.type.parameter.marmoset",
-              "match": "\\b[a-zA-Z_][a-zA-Z0-9_]*\\b"
-            },
-            { "include": "#punctuation" }
-          ]
-        },
         {
           "comment": "Parameter list",
           "begin": "\\(",
@@ -724,12 +765,12 @@
           ]
         },
         {
-          "comment": "Return type arrow",
-          "match": "->",
+          "comment": "Lambda arrow",
+          "match": "->|=>",
           "name": "keyword.operator.arrow.marmoset"
         },
-        { "include": "#type-annotation" },
-        { "include": "#block" }
+        { "include": "#block" },
+        { "include": "#expression" }
       ]
     },
 
@@ -737,7 +778,7 @@
       "comment": "Contents of parameter list: name: type, ...",
       "patterns": [
         {
-          "comment": "Parameter with type annotation: x: int",
+          "comment": "Parameter with type annotation: x: Int",
           "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*(:)\\s*",
           "captures": {
             "1": { "name": "variable.parameter.marmoset" },
@@ -746,7 +787,7 @@
         },
         {
           "comment": "Parameter without type annotation",
-          "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*(?=[,)])",
+          "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*[!?]?)\\s*(?=[,)])",
           "captures": {
             "1": { "name": "variable.parameter.marmoset" }
           }
@@ -772,7 +813,7 @@
         { "include": "#return-statement" },
         { "include": "#match-expression" },
         { "include": "#if-expression" },
-        { "include": "#function-literal" },
+        { "include": "#lambda-expression" },
         { "include": "#expression" }
       ]
     },
@@ -782,7 +823,7 @@
       "patterns": [
         {
           "comment": "Method call: expr.method(args)",
-          "match": "(\\.)\\s*([a-zA-Z_][a-zA-Z0-9_]*)\\s*(?=\\()",
+          "match": "(\\.)\\s*([a-zA-Z_][a-zA-Z0-9_]*[!?]?)\\s*(?=\\()",
           "captures": {
             "1": { "name": "punctuation.accessor.dot.marmoset" },
             "2": { "name": "entity.name.function.method.call.marmoset" }
@@ -790,7 +831,7 @@
         },
         {
           "comment": "Regular function call: name(args)",
-          "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*(?=\\()",
+          "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*[!?]?)\\s*(?=\\()",
           "captures": {
             "1": { "name": "entity.name.function.call.marmoset" }
           }
@@ -799,7 +840,7 @@
     },
 
     "field-access": {
-      "comment": "Field access: p.x, enum constructor: option.some",
+      "comment": "Field access: p.x, enum constructor: Option.Some",
       "match": "(\\.)\\s*([a-zA-Z_][a-zA-Z0-9_]*)\\b(?!\\s*\\()",
       "captures": {
         "1": { "name": "punctuation.accessor.dot.marmoset" },
@@ -872,7 +913,7 @@
 
     "identifier": {
       "name": "variable.other.marmoset",
-      "match": "\\b[a-zA-Z_][a-zA-Z0-9_]*\\b"
+      "match": "\\b[a-zA-Z_][a-zA-Z0-9_]*[!?]?\\b"
     },
 
     "expression": {
@@ -885,7 +926,7 @@
         { "include": "#keywords" },
         { "include": "#builtin-types" },
         { "include": "#builtin-functions" },
-        { "include": "#function-literal" },
+        { "include": "#lambda-expression" },
         { "include": "#function-call" },
         { "include": "#field-access" },
         { "include": "#array-literal" },

@@ -1,8 +1,8 @@
 # CS54: H55: match returning records then field access
 let n = 2
 let p = match n {
-  1: { x: 10, y: 20 }
-  2: { x: 42, y: 84 }
-  _: { x: 0, y: 0 }
+  case 1: { x: 10, y: 20 }
+  case 2: { x: 42, y: 84 }
+  case _: { x: 0, y: 0 }
 }
 puts(p.x)  # output: 42

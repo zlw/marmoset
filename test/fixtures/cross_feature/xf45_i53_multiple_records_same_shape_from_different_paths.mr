@@ -1,9 +1,9 @@
 # XF45: I53: Multiple records same shape from different paths
-let make1 = fn(v: int) -> int {
+fn make1(v: Int) -> Int = {
   let r = { x: v, y: v + 1 }
   r.x
 }
-let make2 = fn(v: int) -> int {
+fn make2(v: Int) -> Int = {
   let r = { x: v * 2, y: v * 3 }
   r.x
 }

@@ -42,29 +42,29 @@ This plan adds a module system as the first of two milestones (modules, then FFI
 
 export add, pi, point, color, drawable
 
-let add = fn(x: int, y: int) -> int { x + y }
+fn add(x: Int, y: Int) -> Int = x + y
 let pi = 3.14159
-let helper = fn(x: int) -> int { x * 2 }    # private (not in export list)
+fn helper(x: Int) -> Int = x * 2    # private (not in export list)
 
-type point = { x: int, y: int }
-enum color { red, green, blue }
-trait drawable[a] { fn draw(x: a) -> string }
+type Point = { x: Int, y: Int }
+enum Color = { Red, Green, Blue }
+trait Drawable[a] = { fn draw(x: a) -> Str }
 ```
 
 ```
 # main.mr
 
-import math                     # namespace: math.add(1, 2), math.point, math.color.red
+import math                     # namespace: math.add(1, 2), math.Point, math.Color.Red
 import math.add                 # direct: add(1, 2)
-import math.point               # direct: point available as type name
-import math.point as pt         # aliased: pt instead of point
+import math.Point               # direct: Point available as type name
+import math.Point as Pt         # aliased: Pt instead of Point
 import collections.list         # nested module: collections.list.map(...)
 import collections.list as l    # aliased namespace: l.map(...)
 
 math.add(1, 2)                  # qualified call
 add(1, 2)                       # unqualified (if directly imported)
-let p: point = { x: 1, y: 2 }  # direct-imported type
-let c = math.color.red          # qualified enum constructor
+let p: Point = { x: 1, y: 2 }   # direct-imported type
+let c = math.Color.Red          # qualified enum constructor
 ```
 
 **Unified Qualified-Call Classifier:** `.` is used for field access, method calls, enum constructors, module access, trait-qualified calls, inherent-qualified calls, and later extern package access. The checker uses one centralized classifier and one `call_resolution` artifact family. This is the canonical reference — other plans defer to this order.
@@ -75,16 +75,16 @@ Given `a.b` or `a.b(args)` where `a` is a bare identifier:
 |----------|-------|--------|---------|
 | 1 | Is `a` a value binding in scope? | Infer type, then field access or method call | `x.show()`, `record.field` |
 | 2 | Is `a` a namespace binding? | Namespace-qualified access | `math.add(1, 2)`, future: `fmt.Println(s)` |
-| 3 | Is `a` an enum name? | Sub-resolve (see below) | `option.some(42)`, `result.map(r, f)` |
-| 4 | Is `a` a trait name? | Trait-qualified call | `show.show(x)` |
-| 5 | Is `a` a type alias name? | Inherent-qualified call | `point.distance(p)` |
+| 3 | Is `a` an enum name? | Sub-resolve (see below) | `Option.Some(42)`, `Result.map(r, f)` |
+| 4 | Is `a` a trait name? | Trait-qualified call | `Show.show(x)` |
+| 5 | Is `a` a type alias name? | Inherent-qualified call | `Point.distance(p)` |
 | 6 | None of the above | Error: unknown identifier | |
 
 **Namespace bucket:** In this plan, namespace means imported module bindings. In the later FFI plan, extern qualifiers join this same bucket. They do not get a separate later precedence tier.
 
 **Enum sub-resolution (priority 3):** When `a` is an enum name, check `b`:
-- Is `b` a variant of enum `a`? → enum constructor (`option.some(42)`, `option.none`)
-- Is `b` an inherent method on type `a`? → inherent-qualified call (`result.map(r, f)`)
+- Is `b` a variant of enum `a`? → enum constructor (`Option.Some(42)`, `Option.None`)
+- Is `b` an inherent method on type `a`? → inherent-qualified call (`Result.map(r, f)`)
 - Neither → error: unknown variant or method
 
 **Key rules:**
@@ -337,8 +337,8 @@ Note: trait `impl` blocks are always visible across modules (like Rust's coheren
 ```
 export add, identity
 
-let add = fn(x: int, y: int) -> int { x + y }
-let identity = fn[a](x: a) -> a { x }
+fn add(x: Int, y: Int) -> Int = x + y
+fn identity[a](x: a) -> a = x
 ```
 
 **main.mr:**

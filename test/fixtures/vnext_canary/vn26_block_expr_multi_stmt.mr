@@ -1,0 +1,8 @@
+# VN26: Expression-position block may contain multiple statements and return a value
+let total = {
+  let left = 20
+  let right = 22
+  left + right
+}
+
+puts(total)  # output: 42

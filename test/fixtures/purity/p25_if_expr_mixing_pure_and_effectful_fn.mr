@@ -1,7 +1,10 @@
 # P25: if-expr mixing pure and effectful fn compiles
 let f = if (true) {
-  fn(x: int) -> int { x + 1 }
+  (x: Int) -> x + 1
 } else {
-  fn(x: int) => int { puts(x); x }
+  (x: Int) => {
+    puts(x)
+    x
+  }
 }
 puts(f(1))

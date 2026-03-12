@@ -4,12 +4,14 @@ module AST = struct
   (* Phase 2: Type expressions for annotations *)
   and type_expr =
     | TVar of string (* 'a', 'b' *)
-    | TCon of string (* 'int', 'string', 'list', 'map', 'option' *)
-    | TApp of string * type_expr list (* list[int], map[string, int], option[a] *)
-    | TArrow of type_expr list * type_expr (* fn(int, string) -> bool *)
-    | TUnion of type_expr list (* int | string | bool *)
+    | TCon of string (* 'Int', 'Str', 'List', 'Map', 'Option' *)
+    | TApp of string * type_expr list (* List[Int], Map[Str, Int], Option[a] *)
+    | TTraitObject of string list (* Dyn[Show], Dyn[Show & Eq] *)
+    | TArrow of type_expr list * type_expr * bool (* (Int, Str) -> Bool; bool = is_effectful *)
+    | TUnion of type_expr list (* Int | Str | Bool *)
+    | TIntersection of type_expr list (* Int & Named; Dyn[Show] & Dyn[Eq] *)
     | TRecord of record_type_field list * type_expr option
-      (* { x: int, y: string } or { x: int, ...r } - fields + optional row variable *)
+      (* { x: Int, y: Str } or { x: Int, ...r } - fields + optional row variable *)
   [@@deriving show]
 
   (* Phase 4.4: Record type field *)
@@ -28,15 +30,15 @@ module AST = struct
 
   and generic_param = {
     name : string;
-    constraints : string list; (* trait names like "show", "eq" *)
+    constraints : string list; (* trait names like "Show", "Eq" *)
   }
   [@@deriving show]
 
   (* Phase 4.3: Trait definitions *)
   and trait_def = {
     name : string;
-    type_param : string option; (* The 'a' in trait eq[a], or None for non-generic traits *)
-    supertraits : string list; (* trait ord[a]: eq + hash *)
+    type_param : string option; (* The 'a' in trait Show[a], or None for non-generic traits *)
+    supertraits : string list; (* trait Ord[a]: Eq & Hash *)
     fields : record_type_field list; (* field-only/mixed trait members *)
     methods : method_sig list;
   }
@@ -58,7 +60,7 @@ module AST = struct
 
   (* Phase 4.3: Trait implementations *)
   and impl_def = {
-    impl_type_params : generic_param list; (* impl eq[a: eq] for list[a] *)
+    impl_type_params : generic_param list; (* impl[a: Eq] Show[List[a]] = { ... } *)
     impl_trait_name : string;
     impl_for_type : type_expr;
     impl_methods : method_impl list;
@@ -66,7 +68,7 @@ module AST = struct
 
   (* Phase 4.5: Inherent implementations *)
   and inherent_impl_def = {
-    inherent_for_type : type_expr; (* impl point { ... } *)
+    inherent_for_type : type_expr; (* impl Point = { ... } *)
     inherent_methods : method_impl list;
   }
 
@@ -77,6 +79,7 @@ module AST = struct
     impl_method_params : (string * type_expr option) list;
     impl_method_return_type : type_expr option;
     impl_method_effect : effect_annotation option;
+    impl_method_override : bool; (* true when the override keyword was present *)
     impl_method_body : statement;
   }
 
@@ -88,7 +91,7 @@ module AST = struct
 
   and derive_trait = {
     derive_trait_name : string;
-    derive_trait_constraints : generic_param list; (* derive eq[a: eq] for option[a] *)
+    derive_trait_constraints : generic_param list; (* derive Eq[a: Eq] on Option[a] *)
   }
   [@@deriving show]
 
@@ -113,11 +116,11 @@ module AST = struct
         type_params : string list;
         variants : variant_def list;
       }
-    | TraitDef of trait_def (* Phase 4.3: trait show[a] { ... } *)
-    | ImplDef of impl_def (* Phase 4.3: impl show for int { ... } *)
-    | InherentImplDef of inherent_impl_def (* Phase 4.5: impl point { ... } *)
-    | DeriveDef of derive_def (* Phase 4.3: derive eq, show for color *)
-    | TypeAlias of type_alias_def (* Phase 4.4: type point = { x: int, y: int } *)
+    | TraitDef of trait_def (* Phase 4.3: trait Show[a] = { ... } *)
+    | ImplDef of impl_def (* Phase 4.3: impl Show[Int] = { ... } *)
+    | InherentImplDef of inherent_impl_def (* Phase 4.5: impl Point = { ... } *)
+    | DeriveDef of derive_def (* canonical internal derive form *)
+    | TypeAlias of type_alias_def (* Phase 4.4: type Point = { x: Int, y: Int } *)
   [@@deriving show]
 
   (* Phase 4.4: Type alias definition *)
@@ -147,7 +150,7 @@ module AST = struct
     | Hash of (expression * expression) list
     | Prefix of string * expression
     | Infix of expression * string * expression
-    | TypeCheck of expression * type_expr (* x is int *)
+    | TypeCheck of expression * type_expr (* x is Int *)
     | If of expression * statement * statement option
     | Function of {
         generics : generic_param list option; (* [a], [a: show], etc. *)
@@ -158,8 +161,7 @@ module AST = struct
       }
     | Call of expression * expression list
     | EnumConstructor of string * string * expression list
-    (* enum_name, variant_name, arguments *)
-    (* e.g., option.some(42) -> ("option", "some", [Integer 42]) *)
+    (* enum_name, variant_name, arguments; e.g., Option.Some(42) *)
     | Match of expression * match_arm list (* match scrutinee { arm1, arm2, ... } *)
     | RecordLit of record_field list * expression option (* { x: 1, y: 2, ...base } - fields + optional spread *)
     | FieldAccess of expression * string (* expr.field_name *)
@@ -169,6 +171,8 @@ module AST = struct
         mc_type_args : type_expr list option;
         mc_args : expression list;
       }
+    | BlockExpr of statement list
+      (* { stmt; ...; expr } in expression position (match arm bodies, lambda bodies *)
   [@@deriving show]
 
   (* Phase 4.4: Record field in record literal *)
@@ -255,6 +259,7 @@ module AST = struct
     | Function f1, Function f2 -> List.length f1.params = List.length f2.params && stmt_equal f1.body f2.body
     | Call (f1, a1), Call (f2, a2) ->
         expr_equal f1 f2 && List.length a1 = List.length a2 && List.for_all2 expr_equal a1 a2
+    | BlockExpr ss1, BlockExpr ss2 -> List.length ss1 = List.length ss2 && List.for_all2 stmt_equal ss1 ss2
     | _ -> false
 
   and stmt_equal (s1 : statement) (s2 : statement) : bool =
@@ -289,6 +294,7 @@ module AST = struct
     | RecordLit _ -> "RecordLit"
     | FieldAccess _ -> "FieldAccess"
     | MethodCall _ -> "MethodCall"
+    | BlockExpr _ -> "BlockExpr"
 
   let to_string (program : program) : string =
     let rec statement_to_string (s : statement) : string =
@@ -313,12 +319,12 @@ module AST = struct
           in
           Printf.sprintf "trait %s%s { ... }" name params
       | ImplDef { impl_trait_name; impl_for_type; _ } ->
-          Printf.sprintf "impl %s for %s { ... }" impl_trait_name (show_type_expr impl_for_type)
+          Printf.sprintf "impl %s[%s] = { ... }" impl_trait_name (show_type_expr impl_for_type)
       | InherentImplDef { inherent_for_type; _ } ->
-          Printf.sprintf "impl %s { ... }" (show_type_expr inherent_for_type)
+          Printf.sprintf "impl %s = { ... }" (show_type_expr inherent_for_type)
       | DeriveDef { derive_traits; derive_for_type } ->
           let traits_str = List.map (fun t -> t.derive_trait_name) derive_traits |> String.concat ", " in
-          Printf.sprintf "derive %s for %s" traits_str (show_type_expr derive_for_type)
+          Printf.sprintf "derive(%s on %s)" traits_str (show_type_expr derive_for_type)
       | TypeAlias { alias_name; alias_type_params; alias_body } ->
           let params_str =
             if alias_type_params = [] then
@@ -355,7 +361,7 @@ module AST = struct
             (match alt with
             | Some a -> Printf.sprintf " else %s" (block_to_string a)
             | None -> "")
-      | Function f -> function_to_string f.params f.body
+      | Function f -> function_to_string f.params f.is_effectful f.body
       | Call (expr, args) -> Printf.sprintf "%s(%s)" (expression_to_string expr) (args_to_string args)
       | EnumConstructor (enum_name, variant_name, args) ->
           Printf.sprintf "%s.%s(%s)" enum_name variant_name (args_to_string args)
@@ -384,10 +390,18 @@ module AST = struct
           in
           Printf.sprintf "%s.%s%s(%s)" (expression_to_string mc_receiver) mc_method ta_str
             (args_to_string mc_args)
+      | BlockExpr stmts -> Printf.sprintf "{ %s }" (List.map statement_to_string stmts |> String.concat " ")
     and block_to_string (block : statement) : string = statement_to_string block
-    and function_to_string (params : (string * type_expr option) list) (body : statement) : string =
+    and function_to_string (params : (string * type_expr option) list) (is_effectful : bool) (body : statement) :
+        string =
       let param_str = List.map (fun (name, _annot) -> name) params |> String.concat ", " in
-      Printf.sprintf "fn (%s) %s" param_str (block_to_string body)
+      let arrow =
+        if is_effectful then
+          "=>"
+        else
+          "->"
+      in
+      Printf.sprintf "(%s) %s %s" param_str arrow (block_to_string body)
     and args_to_string (args : expression list) : string =
       List.map expression_to_string args |> String.concat ", "
     in

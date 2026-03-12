@@ -1,12 +1,12 @@
 # E92: Enum match function called multiple times
-enum option[a] { some(a) none }
-let unwrap = fn(x: option[int], fallback: int) -> int {
+enum Option[a] = { Some(a), None }
+fn unwrap(x: Option[Int], fallback: Int) -> Int = {
   match x {
-    option.some(v): v
-    option.none: fallback
+    case Option.Some(v): v
+    case Option.None: fallback
   }
 }
-let a = unwrap(option.some(1), 0)
-let b = unwrap(option.some(2), 0)
-let c = unwrap(option.none(), 99)
+let a = unwrap(Option.Some(1), 0)
+let b = unwrap(Option.Some(2), 0)
+let c = unwrap(Option.None, 99)
 puts(a + b + c - 99)  # output: 3

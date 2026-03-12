@@ -1,13 +1,13 @@
-type level = { n: int }
+type Level = { n: Int }
 
-impl level {
-  fn next(l: level) -> level {
+impl Level = {
+  fn next(l: Level) -> Level = {
     { n: l.n + 1 }
   }
-  fn value(l: level) -> int {
+  fn value(l: Level) -> Int = {
     l.n
   }
 }
 
-let l: level = { n: 0 }
+let l: Level = { n: 0 }
 puts(l.next().next().next().value())  # output: 3

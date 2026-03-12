@@ -10,22 +10,23 @@
 
 Primitive scalar types are the smallest value categories in Marmoset:
 
-- `int`
-- `float`
-- `bool`
-- `string`
-- `null`
+- `Int`
+- `Float`
+- `Bool`
+- `Str`
+- `Unit`
 
 These are the base of inference, operator typing, trait impls, and codegen mappings.
 
 ## Syntax
 
 ```marmoset
-let i: int = 42
-let f: float = 3.14
-let b: bool = true
-let s: string = "hello"
-let n = null
+let i: Int = 42
+let f: Float = 3.14
+let b: Bool = true
+let s: Str = "hello"
+
+fn log(msg: Str) => Unit = puts(msg)
 ```
 
 ## Sub-Features and Use Cases
@@ -33,13 +34,13 @@ let n = null
 - Arithmetic over numeric primitives.
 - Comparisons and equality.
 - String values with indexing support.
-- `null` as unit-like no-value result in expression contexts.
+- `Unit` as a no-value result type in expression contexts.
 
 Use cases:
 - numeric compute,
 - boolean branch control,
 - string processing,
-- side-effect-style expression results via `null`.
+- side-effect-style expression results via `Unit`.
 
 ## Type-System Semantics
 
@@ -63,7 +64,7 @@ Cons:
 - weaker static guarantees.
 - backend ambiguity and coercion complexity.
 
-### Alternative B: Distinct `int` + `float` (Chosen)
+### Alternative B: Distinct `Int` + `Float` (Chosen)
 
 Pros:
 - explicit semantics.
@@ -72,9 +73,9 @@ Pros:
 Cons:
 - mixed arithmetic requires explicit handling rules.
 
-### Alternative C: No explicit `null`
+### Alternative C: No explicit `Unit`
 
-Use option/result everywhere.
+Use only enums/unions for absence-like flows.
 
 Pros:
 - stronger explicitness.
@@ -83,7 +84,7 @@ Cons:
 - burdens simple expression/statement bridging.
 
 Chosen:
-- keep `null` as a primitive result form, while still supporting richer sum types elsewhere.
+- keep `Unit` as a primitive result form, while still supporting richer sum types elsewhere.
 
 ## Codegen: Detailed Design
 
@@ -105,11 +106,11 @@ Cons:
 ### Approach 2 (Chosen)
 
 Mappings:
-- `int` -> `int64`
-- `float` -> `float64`
-- `bool` -> `bool`
-- `string` -> `string`
-- `null` -> `struct{}`-style unit representation
+- `Int` -> `int64`
+- `Float` -> `float64`
+- `Bool` -> `bool`
+- `Str` -> `string`
+- `Unit` -> `struct{}`-style unit representation
 
 Pros:
 - fast native ops.
@@ -158,7 +159,7 @@ Pros:
 
 Cons:
 - conversion boundaries needed for dynamic features,
-- `null` semantics still require discipline in API design.
+- `Unit`-returning APIs still require discipline in API design.
 
 ## Related Docs
 

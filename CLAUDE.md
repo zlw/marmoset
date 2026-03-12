@@ -26,7 +26,7 @@ This document establishes rules and best practices for Claude Code when working 
 - ✅ Tests exist for the feature
 - ✅ All tests pass (100%, no skipping)
 - ✅ Tests cover normal cases, edge cases, AND error cases
-- ✅ Integration tests verify end-to-end flow
+- ✅ Integration tests verify end-to-end flow (never run full suite, ask user to do final verification after whole plan is implemented)
 - ✅ Error messages are clear and helpful
 - ✅ No regressions in existing tests
 
@@ -191,11 +191,12 @@ make unit
 # Focused integration run (preferred during development)
 make integration <subset>
 # Examples:
-make integration traits
 make integration 04_traits_inherent.sh
+make integration 04_traits_inherent.sh 05_traits_generic.sh
+make integration traits
 make integration codegen
 
-# Full integration run (required before final handoff)
+# Full integration run (do not run unless asked specifically, run focused files, or sub-suites, not whole suite)
 make integration
 
 # Both unit + integration

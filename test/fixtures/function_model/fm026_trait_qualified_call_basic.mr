@@ -1,14 +1,14 @@
-type score = { v: int }
+type Score = { v: Int }
 
-trait display[a] {
-  fn render(x: a) -> string
+trait Display[a] = {
+  fn render(x: a) -> Str
 }
 
-impl display for score {
-  fn render(x: score) -> string {
+impl Display[Score] = {
+  fn render(x: Score) -> Str = {
     "score:" + x.v.show()
   }
 }
 
-let s: score = { v: 100 }
-puts(display.render(s))  # output: score:100
+let s: Score = { v: 100 }
+puts(Display.render(s))  # output: score:100

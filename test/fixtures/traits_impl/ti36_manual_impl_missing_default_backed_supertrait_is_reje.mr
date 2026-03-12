@@ -1,0 +1,16 @@
+# TI36: Manual impl still requires a default-backed supertrait impl
+trait Base[a] = {
+  fn base(x: a) -> Str = "base"
+}
+
+trait Child[a]: Base = {
+  fn child(x: a) -> Str
+}
+
+type Score = Int
+
+impl Child[Score] = {  # error: required supertrait
+  fn child(x: Score) -> Str = "child"
+}
+
+puts(1)

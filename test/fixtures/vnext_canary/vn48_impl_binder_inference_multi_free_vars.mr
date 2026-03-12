@@ -1,0 +1,22 @@
+# VN48: Omitted impl binders are inferred from all free vars in trait and inherent impl targets
+enum PairBox[a, b] = { Wrap(a, b) }
+
+trait Label[a] = {
+  fn label(x: a) -> Str
+}
+
+impl Label[PairBox[a, b]] = {
+  fn label(x: PairBox[a, b]) -> Str = match x {
+    case PairBox.Wrap(_, _): "pair"
+  }
+}
+
+impl PairBox[a, b] = {
+  fn first(box: PairBox[a, b]) -> a = match box {
+    case PairBox.Wrap(x, _): x
+  }
+}
+
+let box = PairBox.Wrap(42, "ok")
+puts(box.label())  # output: pair
+puts(box.first())  # output: 42

@@ -1,12 +1,15 @@
 # TH43: Inherent method on enum with non-keyword param (workaround)
-enum option_int { some(int) none }
-impl option_int {
-  fn unwrap_or(o: option_int, fallback: int) -> int {
+enum OptionInt = {
+  Some(Int),
+  None,
+}
+impl OptionInt = {
+  fn unwrap_or(o: OptionInt, fallback: Int) -> Int = {
     match o {
-      option_int.some(v): v
-      option_int.none: fallback
+      case OptionInt.Some(v): v
+      case OptionInt.None: fallback
     }
   }
 }
-let x = option_int.some(1)
+let x = OptionInt.Some(1)
 puts(x.unwrap_or(0))  # output: 1

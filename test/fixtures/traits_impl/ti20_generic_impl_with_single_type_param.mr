@@ -1,8 +1,8 @@
 # TI20: Generic impl with single type param
-trait show[a] {
-  fn show(x: a) -> string
+trait Show[a] = {
+  fn show(x: a) -> Str
 }
-impl show[b: show] for list[b] {
-  fn show(x: list[b]) -> string { "list" }
+impl[b: Show] Show[List[b]] = {
+  fn show(x: List[b]) -> Str = "list"
 }
 puts([1, 2, 3].show())  # output: list

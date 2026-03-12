@@ -1,5 +1,4 @@
 # T99: BUG-EMPTY-TRAIT-KIND: empty trait rejected as MethodOnly (should be FieldOnly)
-trait marker {  # error: method and mixed trait objects are not supported
+trait Marker = {
 }
-let x: marker = { anything: 1, goes: "here" }
-puts("ok")
+let x: Dyn[Marker] = 1  # error: field-only trait

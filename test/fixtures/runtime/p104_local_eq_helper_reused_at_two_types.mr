@@ -1,0 +1,15 @@
+# P104: Local polymorphic equality helper can be reused at two concrete types
+fn run() -> Str = {
+  let same = (x, y) -> x == y
+  if (same(1, 1)) {
+    if (same("hi", "hi")) {
+      "ok"
+    } else {
+      "bad-str"
+    }
+  } else {
+    "bad-int"
+  }
+}
+
+puts(run())  # output: ok

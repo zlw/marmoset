@@ -1,9 +1,8 @@
 # XF52: K60: Derived eq+show on same type in dual-constrained generic
-type point = { x: int, y: int }
-derive eq, show for point;
-let check = fn[a: show + eq](x: a, y: a) -> string {
+type Point = { x: Int, y: Int } derive Eq, Show
+fn check[a: Show & Eq](x: a, y: a) -> Str = {
   if (x == y) { "true" } else { "false" }
 }
-let p1: point = { x: 1, y: 2 }
-let p2: point = { x: 1, y: 2 }
+let p1: Point = { x: 1, y: 2 }
+let p2: Point = { x: 1, y: 2 }
 puts(check(p1, p2))  # output: true

@@ -1,0 +1,4 @@
+# VN22: Top-level fn may omit purity/return suffix for a pure body
+fn twice(x: Int) = x * 2
+
+puts(twice(21))  # output: 42

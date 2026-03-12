@@ -1,12 +1,10 @@
 # T13: Mixed field+method constraints still enforce method trait obligations
-trait named {
-  name: string
+trait Named = {
+  name: Str
 }
-trait shown[a] {
-  fn show(x: a) -> string
+trait Shown[a] = {
+  fn show(x: a) -> Str
 }
-let get_name = fn[t: named + shown](x: t) -> string {
-  x.name
-};
+fn get_name[t: Named & Shown](x: t) -> Str = x.name
 let p = { name: "alice" }
-puts(get_name(p))  # error: does not implement trait shown
+puts(get_name(p))  # error: does not implement trait

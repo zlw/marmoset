@@ -1,0 +1,4 @@
+# VN15: vNext fn declaration with generic type parameters
+fn identity[a](x: a) -> a = x
+puts(identity(42))       # output: 42
+puts(identity("hello"))  # output: hello

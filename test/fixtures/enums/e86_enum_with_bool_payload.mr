@@ -1,7 +1,7 @@
-# E86: Enum with bool payload
-enum wrapper { w(bool) }
-let x = wrapper.w(true)
+# E86: Enum with Bool payload
+enum Wrapper = { W(Bool) }
+let x = Wrapper.W(true)
 let v = match x {
-  wrapper.w(b): b
+  case Wrapper.W(b): b
 }
 puts(v)  # output: true

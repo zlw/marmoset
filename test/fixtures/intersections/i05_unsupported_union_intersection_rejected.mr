@@ -1,0 +1,2 @@
+# I05: Unsupported non-record intersections are rejected in v1
+let value: Int & (Int | Str) = 42  # error: Unsupported intersection

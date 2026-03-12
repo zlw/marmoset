@@ -1,0 +1,9 @@
+# VN32: Placeholder shorthand stays pure-only in method-call callback slots
+type Counter = { value: Int }
+
+impl Counter = {
+  fn each(counter: Counter, f: (Int) => Unit) => Unit = f(counter.value)
+}
+
+let counter: Counter = { value: 1 }
+counter.each(puts(_))  # error: explicit '=>'

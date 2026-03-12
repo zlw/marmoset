@@ -1,0 +1,12 @@
+# VN33: Generic default methods codegen correctly without an explicit impl method body
+trait Mapper[a] = {
+  fn cast[b](x: a, f: (a) -> b) -> b = {
+    let out = f(x)
+    out
+  }
+}
+
+impl Mapper[Int] = {}
+
+puts(1.cast((n: Int) -> n.show()))  # output: 1
+puts(1.cast((n: Int) -> n + 1))     # output: 2

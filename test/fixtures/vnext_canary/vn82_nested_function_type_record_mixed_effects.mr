@@ -1,0 +1,13 @@
+# VN82: Nested function types keep mixed effect bits in record fields
+type MixedHandlers = {
+  pure_outer: ((Int) => Str) -> Str,
+  eff_outer: ((Int) -> Str) => Str,
+}
+
+let handlers: MixedHandlers = {
+  pure_outer: (f: (Int) => Str) -> "kept",
+  eff_outer: (f: (Int) -> Str) => f(21),
+}
+
+puts(handlers.pure_outer((n: Int) => n.show()))  # output: kept
+puts(handlers.eff_outer((n: Int) -> n.show()))   # output: 21

@@ -3,10 +3,10 @@ let flag = true
 let n = 3
 let x = if (flag) {
   match n {
-    1: 10
-    2: 20
-    3: 30
-    _: 0
+    case 1: 10
+    case 2: 20
+    case 3: 30
+    case _: 0
   }
 } else {
   0

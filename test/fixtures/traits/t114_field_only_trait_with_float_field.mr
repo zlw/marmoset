@@ -1,6 +1,6 @@
-# T114: Field-only trait with float field
-trait measured {
-  value: float
+# T114: Field-only trait with Float field
+trait Measured = {
+  value: Float
 }
-let x: measured = { value: 3.14, unit: "m" }
+let x: Measured = { value: 3.14, unit: "m" }  # error: cannot be used as a type in vNext
 puts(x.value)  # output: 3.14

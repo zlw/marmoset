@@ -3,10 +3,23 @@
 ; ── Functions ─────────────────────────────────────────────────────
 
 ; Function literal: outer is the whole fn expression, inner is the body block
-(function_literal) @function.outer
+(fn_declaration) @function.outer
 
-(function_literal
+(fn_declaration
   body: (block) @function.inner)
+
+(fn_declaration
+  body: (expr_or_block
+    (block) @function.inner))
+
+(lambda_expression) @function.outer
+
+(lambda_expression
+  body: (block) @function.inner)
+
+(lambda_expression
+  body: (expr_or_block
+    (block) @function.inner))
 
 ; Method definitions in impl blocks
 (method_definition) @function.outer
@@ -14,8 +27,19 @@
 (method_definition
   body: (block) @function.inner)
 
-; Trait method signatures (no body, so outer only)
+(method_definition
+  body: (expr_or_block
+    (block) @function.inner))
+
+; Trait method signatures and default methods
 (trait_method_signature) @function.outer
+
+(trait_method_signature
+  body: (block) @function.inner)
+
+(trait_method_signature
+  body: (expr_or_block
+    (block) @function.inner))
 
 ; ── Blocks ────────────────────────────────────────────────────────
 

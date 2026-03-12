@@ -1,4 +1,4 @@
 # R013: Inline record argument to wrapper function
-let mk = fn(r: { x: int }) { { inner: r } }
+fn mk(r: { x: Int }) = { inner: r }
 let o = mk({ x: 3 })
 puts(o.inner.x)  # output: 3

@@ -1,3 +1,3 @@
-enum color { red green blue }
-enum color { cyan magenta yellow }  # error: Duplicate enum definition: color
+enum Color = { Red, Green, Blue }
+enum Color = { Cyan, Magenta, Yellow }  # error: Duplicate enum definition: Color
 puts(1)

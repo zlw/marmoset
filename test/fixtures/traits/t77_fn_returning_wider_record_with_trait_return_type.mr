@@ -1,9 +1,7 @@
 # T77: Fn returning wider record with trait return type
-trait named {
-  name: string
+trait Named = {
+  name: Str
 }
-let mk_named = fn(n: string, a: int) -> named {
-  { name: n, age: a }
-}
+fn mk_named(n: Str, a: Int) -> Named = { name: n, age: a }  # error: cannot be used as a type in vNext
 let x = mk_named("alice", 30)
 puts(x.name)  # output: alice

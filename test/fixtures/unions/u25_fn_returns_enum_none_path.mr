@@ -1,11 +1,11 @@
-# U25: Function returns enum none path, caller matches
-enum option[a] { some(a) none }
-let make = fn(x: int) -> option[int] {
-  if (x > 0) { option.some(x) } else { option.none() }
+# U25: Function returns enum None path, caller matches
+enum Option[a] = { Some(a), None }
+fn make(x: Int) -> Option[Int] = {
+  if (x > 0) { Option.Some(x) } else { Option.None() }
 }
 let r = make(-1)
 let out = match r {
-  option.some(v): v
-  option.none: 0
+  case Option.Some(v): v
+  case Option.None: 0
 }
 puts(out)  # output: 0

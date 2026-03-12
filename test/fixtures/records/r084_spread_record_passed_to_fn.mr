@@ -1,4 +1,4 @@
 # R084: Spread record passed directly to function
 let base = { x: 1, y: 2 }
-let get_sum = fn(r) { r.x + r.y }
+fn get_sum(r) = { r.x + r.y }
 puts(get_sum({ ...base, x: 10 }))  # output: 12

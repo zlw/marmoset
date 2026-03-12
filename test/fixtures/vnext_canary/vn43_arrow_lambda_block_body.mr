@@ -1,0 +1,7 @@
+# VN43: Block-bodied arrow lambdas can bind locals before returning
+let render = (n: Int) -> {
+  let doubled = n * 2
+  "n=" + doubled.show()
+}
+
+puts(render(21))  # output: n=42

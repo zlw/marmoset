@@ -1,25 +1,25 @@
-type item = { v: int }
+type Item = { v: Int }
 
-trait alpha[a] {
-  fn tag(x: a) -> string
+trait Alpha[a] = {
+  fn tag(x: a) -> Str
 }
 
-trait beta[a] {
-  fn tag(x: a) -> string
+trait Beta[a] = {
+  fn tag(x: a) -> Str
 }
 
-impl alpha for item {
-  fn tag(x: item) -> string {
+impl Alpha[Item] = {
+  fn tag(x: Item) -> Str = {
     "alpha"
   }
 }
 
-impl beta for item {
-  fn tag(x: item) -> string {
+impl Beta[Item] = {
+  fn tag(x: Item) -> Str = {
     "beta"
   }
 }
 
-let i: item = { v: 1 }
-puts(alpha.tag(i))  # output: alpha
-puts(beta.tag(i))  # output: beta
+let i: Item = { v: 1 }
+puts(Alpha.tag(i))  # output: alpha
+puts(Beta.tag(i))  # output: beta

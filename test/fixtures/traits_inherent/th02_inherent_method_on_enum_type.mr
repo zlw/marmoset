@@ -1,11 +1,11 @@
 # TH02: Inherent method on enum type
-enum box { val(int) }
-impl box {
-  fn unwrap(b: box) -> int {
-    match b {
-      box.val(n): n
-    }
+enum Box = {
+  Val(Int),
+}
+impl Box = {
+  fn unwrap(b: Box) -> Int = match b {
+    case Box.Val(n): n
   }
 }
-let b = box.val(42)
+let b = Box.Val(42)
 puts(b.unwrap())  # output: 42

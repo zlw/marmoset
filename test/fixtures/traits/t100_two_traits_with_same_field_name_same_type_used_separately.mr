@@ -1,10 +1,10 @@
 # T100: Two traits with same field name (same type) used separately
-trait named {
-  name: string
+trait Named = {
+  name: Str
 }
-trait labeled {
-  name: string
+trait Labeled = {
+  name: Str
 }
-let a: named = { name: "alice", x: 1 }
-let b: labeled = { name: "bob", y: 2 }
+let a: Named = { name: "alice", x: 1 }  # error: cannot be used as a type in vNext
+let b: Labeled = { name: "bob", y: 2 }
 puts(a.name + " " + b.name)  # output: alice bob

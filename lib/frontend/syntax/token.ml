@@ -29,6 +29,10 @@ and token_type =
   | Arrow (* -> for return type annotations *)
   | FatArrow (* => for effect markers *)
   | Pipe (* | for union types *)
+  | Ampersand (* & for trait constraints *)
+  | AmpAmp (* && for logical and *)
+  | PipePipe (* || for logical or *)
+  | Percent (* % for modulo *)
   (* Delimiters *)
   | Comma
   | Semicolon
@@ -56,6 +60,8 @@ and token_type =
   | Impl (* impl keyword for trait implementations *)
   | Derive (* derive keyword for automatic trait derivation *)
   | Type (* type keyword for type aliases *)
+  | Override (* override keyword for impl methods *)
+  | Case (* case keyword for match arms *)
 [@@deriving show]
 
 let init ?(pos = 0) t l = { token_type = t; literal = l; pos }
@@ -79,4 +85,6 @@ let lookup_ident s =
   | "impl" -> Impl
   | "derive" -> Derive
   | "type" -> Type
+  | "override" -> Override
+  | "case" -> Case
   | _ -> Ident

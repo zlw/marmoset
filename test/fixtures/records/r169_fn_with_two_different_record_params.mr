@@ -1,3 +1,3 @@
 # R169: Function with two different record params
-let combine = fn(a, b) { a.x + b.y }
+fn combine(a, b) = { a.x + b.y }
 puts(combine({ x: 10, z: 0 }, { y: 100, w: 0 }))  # output: 110

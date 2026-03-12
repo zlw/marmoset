@@ -8,13 +8,14 @@
 "if" @keyword.conditional
 "else" @keyword.conditional
 "match" @keyword.conditional
+"case" @keyword.conditional
 "fn" @keyword.function
 "enum" @keyword.type
 "trait" @keyword.type
 "impl" @keyword.type
 "derive" @keyword.type
+"override" @keyword.modifier
 "type" @keyword.type
-"for" @keyword
 "is" @keyword.operator
 
 ; ── Literals ──────────────────────────────────────────────────────
@@ -39,9 +40,16 @@
 
 "=" @operator
 "->" @operator
+"=>" @operator
 "|" @operator
+"&" @operator
 "." @punctuation.delimiter
 "..." @operator
+"%" @operator
+"&&" @operator
+"||" @operator
+"<=" @operator
+">=" @operator
 
 ; ── Punctuation ───────────────────────────────────────────────────
 
@@ -68,6 +76,9 @@
 (generic_type
   name: (identifier) @type)
 
+(generic_type
+  name: (type_identifier) @type.builtin)
+
 ; Record type field names
 (record_type_field
   name: (identifier) @property)
@@ -79,8 +90,15 @@
 ; ── Function definitions ──────────────────────────────────────────
 
 ; Parameters in function literals
-(function_literal
+(fn_declaration
+  name: (identifier) @function)
+
+(fn_declaration
   (parameter
+    name: (identifier) @variable.parameter))
+
+(lambda_expression
+  (lambda_parameter
     name: (identifier) @variable.parameter))
 
 ; Parameters in method definitions
@@ -95,9 +113,8 @@
 (trait_method_signature
   name: (identifier) @function.method)
 
-(trait_method_signature
-  (parameter
-    name: (identifier) @variable.parameter))
+(trait_named_param
+  name: (identifier) @variable.parameter)
 
 ; ── Function calls ────────────────────────────────────────────────
 
@@ -148,11 +165,19 @@
 ; ── Impl block ────────────────────────────────────────────────────
 
 (impl_block
-  trait: (identifier) @type)
+  target: (generic_type
+    name: (identifier) @type))
+
+(impl_block
+  target: (generic_type
+    name: (type_identifier) @type.builtin))
+
+(impl_block
+  target: (type_identifier) @type.builtin)
 
 ; ── Derive statement ──────────────────────────────────────────────
 
-(derive_statement
+(derive_clause
   trait: (identifier) @type)
 
 ; ── Type alias ────────────────────────────────────────────────────
@@ -175,6 +200,8 @@
   (identifier) @type)
 
 ; ── Pattern matching ──────────────────────────────────────────────
+
+(placeholder) @variable.builtin
 
 (wildcard_pattern) @variable.builtin
 

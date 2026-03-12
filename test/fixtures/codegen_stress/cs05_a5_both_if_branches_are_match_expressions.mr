@@ -1,9 +1,9 @@
 # CS05: A5: both if-branches are match expressions
-let f = fn(flag: bool, n: int) -> int {
+fn f(flag: Bool, n: Int) -> Int = {
   if (flag) {
-    match n { 1: 100 2: 200 _: 0 }
+    match n { case 1: 100 case 2: 200 case _: 0 }
   } else {
-    match n { 1: 1000 2: 2000 _: 0 }
+    match n { case 1: 1000 case 2: 2000 case _: 0 }
   }
 }
 puts(f(true, 2))  # output: 200

@@ -1,4 +1,4 @@
 # U35: Array of enum values
-enum option[a] { some(a) none }
-let arr = [option.some(1), option.some(2), option.none()]
+enum Option[a] = { Some(a), None }
+let arr = [Option.Some(1), Option.Some(2), Option.None()]
 puts(len(arr))  # output: 3

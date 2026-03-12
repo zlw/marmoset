@@ -1,10 +1,10 @@
-type box = { v: int }
+type Box = { v: Int }
 
-impl box {
-  fn apply[b: show](bx: box, f: fn(int) -> b) -> string {
+impl Box = {
+  fn apply[b: Show](bx: Box, f: (Int) -> b) -> Str = {
     f(bx.v).show()
   }
 }
 
-let b: box = { v: 7 }
-puts(b.apply(fn(n: int) -> int { n * 2 }))  # output: 14
+let b: Box = { v: 7 }
+puts(b.apply((n: Int) -> n * 2))  # output: 14

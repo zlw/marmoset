@@ -1,10 +1,10 @@
 # CS28: E29: function body is single match
-let classify = fn(n: int) -> int {
+fn classify(n: Int) -> Int = {
   match n {
-    0: 0
-    1: 10
-    2: 20
-    _: 99
+    case 0: 0
+    case 1: 10
+    case 2: 20
+    case _: 99
   }
 }
 puts(classify(2))  # output: 20

@@ -1,0 +1,12 @@
+# VN31: Nested placeholder shorthand survives method-call callback rewriting
+type Word = { value: Str }
+
+impl Word = {
+  fn map[b](word: Word, f: (Str) -> b) -> b = f(word.value)
+}
+
+fn trim(s: Str) -> Str = s
+fn strip(s: Str) -> Str = s
+
+let word: Word = { value: "banana" }
+puts(word.map(trim(strip(_))))  # output: banana

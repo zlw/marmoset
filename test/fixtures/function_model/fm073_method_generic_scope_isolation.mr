@@ -1,13 +1,11 @@
-enum wrap[a] { val(a) }
+enum Wrap[a] = { Val(a) }
 
-impl wrap[a] {
-  fn convert[b](w: wrap[a], f: fn(a) -> b) -> wrap[b] {
-    match w {
-      wrap.val(v): wrap.val(f(v))
-    }
+impl[a] Wrap[a] = {
+  fn convert[b](w: Wrap[a], f: (a) -> b) -> Wrap[b] = match w {
+    case Wrap.Val(v): Wrap.Val(f(v))
   }
 }
 
 # a and b must be separate scopes — no leakage
-let w = wrap.val(42)
-let w2 = w.convert(fn(n: int) -> string { n.show() })
+let w = Wrap.Val(42)
+let w2 = w.convert((n: Int) -> n.show())

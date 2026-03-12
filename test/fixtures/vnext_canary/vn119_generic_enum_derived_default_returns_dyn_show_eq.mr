@@ -1,0 +1,12 @@
+# VN119: Generic enum derives may return Dyn intersections from default methods
+trait Pack[a]: Show & Eq = {
+  fn pack(self: a) -> Dyn[Show] & Dyn[Eq] = self
+}
+
+enum Option[t] = {
+  Some(t)
+  None
+} derive Show, Eq, Pack
+
+let value = Option.Some(1).pack()
+puts(value.show())  # output: Some(1)

@@ -1,5 +1,5 @@
 # R011: Record function field extracted then called
-let square = fn(n) { n * n }
+fn square(n) = n * n
 let r = { compute: square, base: 5 }
 let f = r.compute
 puts(f(r.base))  # output: 25

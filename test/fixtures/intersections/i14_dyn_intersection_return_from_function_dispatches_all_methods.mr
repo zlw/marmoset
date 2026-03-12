@@ -1,0 +1,13 @@
+# I14: Dyn-only intersections returned from functions package once and dispatch all methods
+trait Render[a] = {
+  fn render(x: a) -> Str
+}
+
+impl Render[Int] = {
+  fn render(x: Int) -> Str = "render:" + x.show()
+}
+
+fn box() -> Dyn[Show] & Dyn[Render] = 42
+let value = box()
+puts(value.show())    # output: 42
+puts(value.render())  # output: render:42

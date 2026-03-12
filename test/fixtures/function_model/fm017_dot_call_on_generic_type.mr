@@ -1,15 +1,13 @@
-enum maybe[a] { just(a) nothing }
+enum Maybe[a] = { Just(a), Nothing }
 
-impl maybe[a] {
-  fn is_just(m: maybe[a]) -> bool {
-    match m {
-      maybe.just(_): true
-      maybe.nothing: false
-    }
+impl[a] Maybe[a] = {
+  fn is_just(m: Maybe[a]) -> Bool = match m {
+    case Maybe.Just(_): true
+    case Maybe.Nothing: false
   }
 }
 
-let x = maybe.just(42)
+let x = Maybe.Just(42)
 puts(x.is_just())  # output: true
-let y: maybe[int] = maybe.nothing
+let y: Maybe[Int] = Maybe.Nothing
 puts(y.is_just())  # output: false

@@ -1,5 +1,4 @@
 # CM34: Record type alias with derived show
-type point = { x: int, y: int }
-derive show for point;
-let p: point = { x: 5, y: 10 }
+type Point = { x: Int, y: Int } derive Show
+let p: Point = { x: 5, y: 10 }
 puts(p.show())  # output: { x: 5, y: 10 }

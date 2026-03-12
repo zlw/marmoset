@@ -1,0 +1,15 @@
+# VN115: Dyn child trait objects dispatch override-backed inherited supertrait methods
+trait Base[a] = {
+  fn greet(x: a) -> Str = "base"
+}
+
+trait Child[a]: Base = {}
+
+impl Base[Int] = {}
+
+impl Child[Int] = {
+  override fn greet(x) = "child"
+}
+
+let value: Dyn[Child] = 1
+puts(value.greet())  # output: child

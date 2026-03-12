@@ -1,9 +1,7 @@
 # T14: Constrained generic cannot access fields absent from constraints
-trait named {
-  name: string
+trait Named = {
+  name: Str
 }
-let get_age = fn[t: named](x: t) -> int {
-  x.age  # error: not guaranteed by constraints
-};
+fn get_age[t: Named](x: t) -> Int = x.age  # error: not guaranteed by constraints
 let p = { name: "alice", age: 42 }
 puts(get_age(p))

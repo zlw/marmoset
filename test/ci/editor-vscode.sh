@@ -9,3 +9,4 @@ VSCODE_DIR="$REPO_ROOT/tools/vscode-marmoset"
 cd "$VSCODE_DIR"
 npm install --no-package-lock
 npm run compile
+npm run check-grammar

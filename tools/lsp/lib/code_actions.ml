@@ -5,88 +5,7 @@ module Ast = Marmoset.Lib.Ast
 module Infer = Marmoset.Lib.Infer
 module Types = Marmoset.Lib.Types
 
-(* ============================================================
-   type_to_source: convert inferred mono_type to Marmoset source syntax
-   ============================================================
-
-   Internal Types.to_string produces "Int", "String", "[Int]", etc.
-   Source syntax uses "int", "string", "list[int]", etc.
-*)
-
-(* Collapse unions of pure/effectful function types that differ only in purity.
-   e.g., (a, b) -> c | (a, b) => c  becomes  (a, b) => c *)
-let collapse_purity_union (types : Types.mono_type list) : Types.mono_type list =
-  let dominated = Hashtbl.create 8 in
-  (* For each pair, if one is pure and other is effectful with same args/ret, mark pure as dominated *)
-  List.iter
-    (fun a ->
-      List.iter
-        (fun b ->
-          match (a, b) with
-          | Types.TFun (arg1, ret1, false), Types.TFun (arg2, ret2, true) when arg1 = arg2 && ret1 = ret2 ->
-              (* Pure 'a' is dominated by effectful 'b' — keep only the effectful one *)
-              Hashtbl.replace dominated (Types.to_string a) true
-          | _ -> ())
-        types)
-    types;
-  List.filter (fun t -> not (Hashtbl.mem dominated (Types.to_string t))) types
-
-let rec type_to_source (mono : Types.mono_type) : string =
-  match mono with
-  | Types.TInt -> "int"
-  | Types.TFloat -> "float"
-  | Types.TBool -> "bool"
-  | Types.TString -> "string"
-  | Types.TNull -> "null"
-  | Types.TVar name -> name
-  | Types.TRowVar name -> name
-  | Types.TArray element -> "list[" ^ type_to_source element ^ "]"
-  | Types.THash (key, value) -> "map[" ^ type_to_source key ^ ", " ^ type_to_source value ^ "]"
-  | Types.TFun _ ->
-      let rec collect_args eff = function
-        | Types.TFun (arg, rest, e) ->
-            let args, ret, eff' = collect_args (eff || e) rest in
-            (arg :: args, ret, eff')
-        | t -> ([], t, eff)
-      in
-      let args, ret, is_eff = collect_args false mono in
-      let args_str =
-        match args with
-        | [ single ] -> "(" ^ type_to_source_parens single ^ ")"
-        | _ -> "(" ^ String.concat ", " (List.map type_to_source args) ^ ")"
-      in
-      let arrow =
-        if is_eff then
-          " => "
-        else
-          " -> "
-      in
-      args_str ^ arrow ^ type_to_source ret
-  | Types.TRecord (fields, row) ->
-      let field_strs =
-        List.map (fun (f : Types.record_field_type) -> f.name ^ ": " ^ type_to_source f.typ) fields
-      in
-      let row_str =
-        match row with
-        | None -> ""
-        | Some r ->
-            if field_strs = [] then
-              "..." ^ type_to_source r
-            else
-              ", ..." ^ type_to_source r
-      in
-      "{ " ^ String.concat ", " field_strs ^ row_str ^ " }"
-  | Types.TUnion types -> (
-      let collapsed = collapse_purity_union types in
-      match collapsed with
-      | [ single ] -> type_to_source single
-      | _ -> String.concat " | " (List.map type_to_source collapsed))
-  | Types.TEnum (name, []) -> name
-  | Types.TEnum (name, args) -> name ^ "[" ^ String.concat ", " (List.map type_to_source args) ^ "]"
-
-and type_to_source_parens = function
-  | Types.TFun _ as t -> "(" ^ type_to_source t ^ ")"
-  | t -> type_to_source t
+let type_to_source = Source_syntax.mono_type_to_source
 
 (* ============================================================
    Position helpers (duplicated from inlay_hints.ml for independence)
@@ -123,6 +42,14 @@ let rec take_param_types n mono =
     match mono with
     | Types.TFun (param, rest, _) -> param :: take_param_types (n - 1) rest
     | _ -> []
+
+let rec function_is_effectful n mono =
+  if n <= 0 then
+    false
+  else
+    match mono with
+    | Types.TFun (_, rest, is_effectful) -> is_effectful || function_is_effectful (n - 1) rest
+    | _ -> false
 
 (* Extract the return type of a function with n parameters *)
 let rec get_return_type n mono =
@@ -217,12 +144,18 @@ let sites_for_function ~source ~type_map ~range_start ~range_end ~sites (fn_expr
                   let body_start = body.pos in
                   match find_close_paren ~source ~start:fn_expr.pos ~limit:body_start with
                   | Some paren_end ->
+                      let arrow =
+                        if function_is_effectful n_params norm_fn_type then
+                          " => "
+                        else
+                          " -> "
+                      in
                       let type_str = type_to_source ret_type in
                       sites :=
                         {
                           insert_offset = paren_end;
-                          insert_text = " -> " ^ type_str;
-                          title = "Add return type annotation: -> " ^ type_str;
+                          insert_text = arrow ^ type_str;
+                          title = "Add return type annotation:" ^ arrow ^ type_str;
                         }
                         :: !sites
                   | None -> ())
@@ -312,6 +245,7 @@ and walk_expr ~source ~type_map ~range_start ~range_end ~sites (expr : Ast.AST.e
     | Ast.AST.EnumConstructor (_, _, args) ->
         List.iter (walk_expr ~source ~type_map ~range_start ~range_end ~sites) args
     | Ast.AST.TypeCheck (e, _) -> walk_expr ~source ~type_map ~range_start ~range_end ~sites e
+    | Ast.AST.BlockExpr stmts -> List.iter (walk_stmt ~source ~type_map ~range_start ~range_end ~sites) stmts
     | Ast.AST.Identifier _ | Ast.AST.Integer _ | Ast.AST.Float _ | Ast.AST.Boolean _ | Ast.AST.String _ -> ()
 
 (* ============================================================
@@ -388,50 +322,50 @@ let starts_with s prefix =
 
 (* type_to_source unit tests *)
 
-let%test "type_to_source int" = type_to_source Types.TInt = "int"
-let%test "type_to_source float" = type_to_source Types.TFloat = "float"
-let%test "type_to_source bool" = type_to_source Types.TBool = "bool"
-let%test "type_to_source string" = type_to_source Types.TString = "string"
-let%test "type_to_source null" = type_to_source Types.TNull = "null"
+let%test "type_to_source int" = type_to_source Types.TInt = "Int"
+let%test "type_to_source float" = type_to_source Types.TFloat = "Float"
+let%test "type_to_source bool" = type_to_source Types.TBool = "Bool"
+let%test "type_to_source string" = type_to_source Types.TString = "Str"
+let%test "type_to_source null" = type_to_source Types.TNull = "Unit"
 let%test "type_to_source var" = type_to_source (Types.TVar "a") = "a"
-let%test "type_to_source array" = type_to_source (Types.TArray Types.TInt) = "list[int]"
+let%test "type_to_source array" = type_to_source (Types.TArray Types.TInt) = "List[Int]"
 
 let%test "type_to_source nested array" =
-  type_to_source (Types.TArray (Types.TArray Types.TString)) = "list[list[string]]"
+  type_to_source (Types.TArray (Types.TArray Types.TString)) = "List[List[Str]]"
 
-let%test "type_to_source hash" = type_to_source (Types.THash (Types.TString, Types.TInt)) = "map[string, int]"
+let%test "type_to_source hash" = type_to_source (Types.THash (Types.TString, Types.TInt)) = "Map[Str, Int]"
 
 let%test "type_to_source single-arg function" =
-  type_to_source (Types.tfun Types.TInt Types.TBool) = "(int) -> bool"
+  type_to_source (Types.tfun Types.TInt Types.TBool) = "(Int) -> Bool"
 
 let%test "type_to_source multi-arg function" =
-  type_to_source (Types.tfun Types.TInt (Types.tfun Types.TString Types.TBool)) = "(int, string) -> bool"
+  type_to_source (Types.tfun Types.TInt (Types.tfun Types.TString Types.TBool)) = "(Int, Str) -> Bool"
 
 let%test "type_to_source record" =
   type_to_source (Types.TRecord ([ { name = "x"; typ = Types.TInt }; { name = "y"; typ = Types.TString } ], None))
-  = "{ x: int, y: string }"
+  = "{ x: Int, y: Str }"
 
-let%test "type_to_source union" = type_to_source (Types.TUnion [ Types.TInt; Types.TString ]) = "int | string"
-let%test "type_to_source enum no args" = type_to_source (Types.TEnum ("direction", [])) = "direction"
-let%test "type_to_source enum with args" = type_to_source (Types.TEnum ("option", [ Types.TInt ])) = "option[int]"
+let%test "type_to_source union" = type_to_source (Types.TUnion [ Types.TInt; Types.TString ]) = "Int | Str"
+let%test "type_to_source enum no args" = type_to_source (Types.TEnum ("direction", [])) = "Direction"
+let%test "type_to_source enum with args" = type_to_source (Types.TEnum ("option", [ Types.TInt ])) = "Option[Int]"
 
 let%test "type_to_source enum multi args" =
-  type_to_source (Types.TEnum ("result", [ Types.TString; Types.TInt ])) = "result[string, int]"
+  type_to_source (Types.TEnum ("result", [ Types.TString; Types.TInt ])) = "Result[Str, Int]"
 
 let%test "type_to_source effectful function" =
-  type_to_source (Types.tfun_eff Types.TInt Types.TBool) = "(int) => bool"
+  type_to_source (Types.tfun_eff Types.TInt Types.TBool) = "(Int) => Bool"
 
 let%test "type_to_source mixed purity multi-arg" =
   type_to_source (Types.TFun (Types.TInt, Types.TFun (Types.TString, Types.TBool, true), false))
-  = "(int, string) => bool"
+  = "(Int, Str) => Bool"
 
 let%test "type_to_source union of pure/effectful collapses to effectful" =
   let pure = Types.tfun Types.TInt Types.TBool in
   let eff = Types.tfun_eff Types.TInt Types.TBool in
-  type_to_source (Types.TUnion [ pure; eff ]) = "(int) => bool"
+  type_to_source (Types.TUnion [ pure; eff ]) = "(Int) => Bool"
 
 let%test "type_to_source union of unrelated types stays as union" =
-  type_to_source (Types.TUnion [ Types.TInt; Types.TString ]) = "int | string"
+  type_to_source (Types.TUnion [ Types.TInt; Types.TString ]) = "Int | Str"
 
 (* Code action integration tests *)
 
@@ -441,19 +375,29 @@ let%test "let binding gets add type annotation action" =
   List.exists (fun t -> starts_with t "Add type annotation:") titles
 
 let%test "function param gets annotation action" =
-  let actions = get_actions "let f = fn(x) { x + 1 };" in
+  let actions = get_actions "let f = (x) -> x + 1;" in
   let titles = action_titles actions in
   List.exists (fun t -> starts_with t "Add type annotation:") titles
   && List.exists (fun t -> starts_with t "Add return type annotation") titles
 
 let%test "function with annotated param gets no param action but gets return type" =
-  let actions = get_actions "let f = fn(x: int) { x + 1 };" in
+  let actions = get_actions "let f = (x: Int) -> x + 1;" in
   let titles = action_titles actions in
   (not (List.exists (fun t -> starts_with t "Add type annotation: x:") titles))
   && List.exists (fun t -> starts_with t "Add return type annotation") titles
 
+let%test "top-level fn declaration gets no binding annotation action" =
+  let actions = get_actions "fn greet(name: Str) = name" in
+  let titles = action_titles actions in
+  not (List.exists (fun t -> starts_with t "Add type annotation: greet:") titles)
+
+let%test "effectful top-level fn return action keeps =>" =
+  let actions = get_actions "fn greet(name: Str) = puts(name)" in
+  let titles = action_titles actions in
+  List.exists (fun t -> starts_with t "Add return type annotation: =>") titles
+
 let%test "fully annotated function gets no param or return actions" =
-  let actions = get_actions "let f: int -> int = fn(x: int) -> int { x + 1 };" in
+  let actions = get_actions "fn f(x: Int) -> Int = x + 1" in
   let titles = action_titles actions in
   (not (List.exists (fun t -> starts_with t "Add type annotation:") titles))
   && not (List.exists (fun t -> starts_with t "Add return type annotation") titles)
@@ -464,7 +408,7 @@ let%test "multiple sites produces annotate-all action" =
   List.exists (fun t -> t = "Add all type annotations") titles
 
 let%test "single site does not produce annotate-all action" =
-  let actions = get_actions "let x: int = 1; let y = true;" in
+  let actions = get_actions "let x: Int = 1; let y = true;" in
   let titles = action_titles actions in
   (* Only y needs annotation — single site, no "annotate all" *)
   not (List.exists (fun t -> t = "Add all type annotations") titles)

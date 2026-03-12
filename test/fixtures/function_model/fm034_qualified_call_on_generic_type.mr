@@ -1,14 +1,11 @@
-# xfail: qualified type calls not implemented
-enum opt[a] { some(a) none }
+enum Opt[a] = { Some(a), None }
 
-impl opt[a] {
-  fn is_some(o: opt[a]) -> bool {
-    match o {
-      opt.some(_): true
-      opt.none: false
-    }
+impl[a] Opt[a] = {
+  fn is_some(o: Opt[a]) -> Bool = match o {
+    case Opt.Some(_): true
+    case Opt.None: false
   }
 }
 
-let x = opt.some(42)
-puts(opt.is_some(x))  # output: true
+let x = Opt.Some(42)
+puts(Opt.is_some(x))  # output: true

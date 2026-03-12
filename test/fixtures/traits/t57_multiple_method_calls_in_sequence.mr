@@ -1,11 +1,9 @@
 # T57: Multiple method calls in sequence
-trait show[a] {
-  fn show(x: a) -> string
+trait Show[a] = {
+  fn show(x: a) -> Str
 }
-impl show for int {
-  fn show(x: int) -> string {
-    "number"
-  }
+impl Show[Int] = {
+  fn show(x: Int) -> Str = "number"
 }
 let x = 1
 let y = 2

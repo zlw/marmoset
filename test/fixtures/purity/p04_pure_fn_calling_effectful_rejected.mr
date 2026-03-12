@@ -1,9 +1,9 @@
 # P4: Pure function calling an effectful function should be caught
-let side_effect = fn(x: int) => int {
+fn side_effect(x: Int) => Int = {
   puts(x)
   x
 }
-let pure_caller = fn(y: int) -> int {  # error: effectful
+fn pure_caller(y: Int) -> Int = {  # error: effectful
   side_effect(y)
 }
 pure_caller(1)

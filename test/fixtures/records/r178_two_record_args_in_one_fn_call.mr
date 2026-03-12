@@ -1,3 +1,3 @@
 # R178: Two record args in one function call
-let add_fields = fn(a, b) { a.x + b.y }
+fn add_fields(a, b) = { a.x + b.y }
 puts(add_fields({ x: 10 }, { y: 20 }))  # output: 30

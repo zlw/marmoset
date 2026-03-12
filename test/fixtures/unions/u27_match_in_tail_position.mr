@@ -1,9 +1,9 @@
 # U27: Match in tail position of function body
-enum option[a] { some(a) none }
-let unwrap = fn(x: option[int]) -> int {
+enum Option[a] = { Some(a), None }
+fn unwrap(x: Option[Int]) -> Int = {
   match x {
-    option.some(v): v
-    option.none: 0
+    case Option.Some(v): v
+    case Option.None: 0
   }
 }
-puts(unwrap(option.some(10)))  # output: 10
+puts(unwrap(Option.Some(10)))  # output: 10

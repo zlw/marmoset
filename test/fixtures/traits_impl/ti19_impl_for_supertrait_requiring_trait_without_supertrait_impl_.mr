@@ -1,12 +1,12 @@
 # TI19: Impl for supertrait-requiring trait without supertrait impl is rejected
-trait eq[a] {  # error: supertrait
-  fn eq(x: a, y: a) -> bool
+trait Eq[a] = {  # error: supertrait
+  fn eq(x: a, y: a) -> Bool
 }
-trait ord[a]: eq {
-  fn compare(x: a, y: a) -> int
+trait Ord[a]: Eq = {
+  fn compare(x: a, y: a) -> Int
 }
-type foo = { x: int }
-impl ord for foo {
-  fn compare(a: foo, b: foo) -> int { 0 }
+type Foo = { x: Int }
+impl Ord[Foo] = {
+  fn compare(a: Foo, b: Foo) -> Int = 0
 }
 puts(1)

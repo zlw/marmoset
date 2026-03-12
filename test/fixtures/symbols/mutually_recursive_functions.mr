@@ -1,7 +1,7 @@
-let is_even = fn(n: int) -> bool {
+fn is_even(n: Int) -> Bool = {
   if (n == 0) { true } else { is_odd(n - 1) }
 }
-let is_odd = fn(n: int) -> bool {
+fn is_odd(n: Int) -> Bool = {
   if (n == 0) { false } else { is_even(n - 1) }
 }
 puts(is_even(10))  # output: true

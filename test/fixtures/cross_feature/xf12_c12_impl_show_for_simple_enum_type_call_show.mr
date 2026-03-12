@@ -1,12 +1,12 @@
 # XF12: C12: Impl show for simple enum type, call show()
-enum color { red green blue }
-impl show for color {
-  fn show(x: color) -> string {
+enum Color = { Red, Green, Blue }
+impl Show[Color] = {
+  fn show(x: Color) -> Str = {
     match x {
-      color.red: "red"
-      color.green: "green"
-      color.blue: "blue"
+      case Color.Red: "red"
+      case Color.Green: "green"
+      case Color.Blue: "blue"
     }
   }
 }
-puts(color.red.show())  # output: red
+puts(Color.Red.show())  # output: red

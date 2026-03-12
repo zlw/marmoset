@@ -1,12 +1,10 @@
 # TF17: Constrained generic field used in match expression (BUG: codegen missing return)
-trait has_flag {  # error: missing return
-  flag: bool
+trait HasFlag = {  # error: missing return
+  flag: Bool
 }
-let check = fn[t: has_flag](v: t) -> string {
-  match v.flag {
-    true: "yes"
-    false: "no"
-  }
-};
+fn check[t: HasFlag](v: t) -> Str = match v.flag {
+  case true: "yes"
+  case false: "no"
+}
 let r = { flag: true }
 puts(check(r))

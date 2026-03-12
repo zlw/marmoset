@@ -1,15 +1,15 @@
-type box = { v: int }
+type Box = { v: Int }
 
-trait special[a] {
-  fn special_op(x: a) -> int
+trait Special[a] = {
+  fn special_op(x: a) -> Int
 }
 
-impl box {
-  fn needs_special[t: special](b: box, f: fn(int) -> t) -> int {
+impl Box = {
+  fn needs_special[t: Special](b: Box, f: (Int) -> t) -> Int = {
     f(b.v).special_op()
   }
 }
 
-# int doesn't implement special → error
-let b: box = { v: 1 }
-b.needs_special(fn(n: int) -> int { n })  # error: *
+# Int doesn't implement Special → error
+let b: Box = { v: 1 }
+b.needs_special((n: Int) -> n)  # error: *

@@ -1,8 +1,8 @@
-enum color { red green blue }
-impl eq for color {
-  fn eq(x: color, y: color) -> bool { true }
+enum Color = { Red, Green, Blue }
+impl Eq[Color] = {
+  fn eq(x: Color, y: Color) -> Bool = true
 }
-let are_equal = fn[t: eq](a: t, b: t) -> bool {
+fn are_equal[t: Eq](a: t, b: t) -> Bool = {
   a == b
 }
-puts(are_equal(color.red, color.blue))  # output: true
+puts(are_equal(Color.Red, Color.Blue))  # output: true

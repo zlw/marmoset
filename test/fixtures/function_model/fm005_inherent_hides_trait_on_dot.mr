@@ -1,21 +1,19 @@
-type counter = { n: int }
+type Counter = { n: Int }
 
-trait display[a] {
-  fn render(x: a) -> string
-}
+trait Display[a] = { fn render(x: a) -> Str }
 
-impl display for counter {
-  fn render(x: counter) -> string {
+impl Display[Counter] = {
+  fn render(x: Counter) -> Str = {
     "display:" + x.n.show()
   }
 }
 
-impl counter {
-  fn render(c: counter) -> string {
+impl Counter = {
+  fn render(c: Counter) -> Str = {
     "counter:" + c.n.show()
   }
 }
 
-let c: counter = { n: 5 }
+let c: Counter = { n: 5 }
 # inherent wins on dot call
 puts(c.render())  # output: counter:5

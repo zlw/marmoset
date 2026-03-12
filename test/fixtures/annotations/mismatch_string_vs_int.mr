@@ -1,1 +1,2 @@
-let f = fn() -> int { "hello" }; f()  # error: annotation mismatch
+fn f() -> Int = "hello"  # error: annotation mismatch
+f()

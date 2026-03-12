@@ -1,0 +1,15 @@
+# T130: Dyn child trait objects expose inherited supertrait methods
+trait Base[a] = {
+  fn base(self: a) -> Str = "base"
+}
+
+trait Child[a]: Base = {
+  fn child(self: a) -> Str = self.base() + ":child"
+}
+
+impl Base[Int] = {}
+impl Child[Int] = {}
+
+let value: Dyn[Child] = 1
+puts(value.base())   # output: base
+puts(value.child())  # output: base:child

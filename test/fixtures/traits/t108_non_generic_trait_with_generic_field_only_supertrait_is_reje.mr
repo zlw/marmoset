@@ -1,8 +1,7 @@
 # T108: Non-generic trait with generic field-only supertrait is rejected
-trait boxed[a] {  # error: generic field-only supertrait
+trait Boxed[a] = {
   value: a
 }
-trait labeled_box: boxed {
-  label: string
+trait LabeledBox: Boxed = {  # error: generic field-only supertrait
+  label: Str
 }
-let x: labeled_box = { value: 42, label: "box" }

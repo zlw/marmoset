@@ -1,14 +1,14 @@
-# U20: Triple-nested option: some(some(some(1)))
-enum option[a] { some(a) none }
-let x: option[option[option[int]]] = option.some(option.some(option.some(1)))
+# U20: Triple-nested Option: Some(Some(Some(1)))
+enum Option[a] = { Some(a), None }
+let x: Option[Option[Option[Int]]] = Option.Some(Option.Some(Option.Some(1)))
 let out = match x {
-  option.some(a): match a {
-    option.some(b): match b {
-      option.some(c): c
-      option.none: 0
+  case Option.Some(a): match a {
+    case Option.Some(b): match b {
+      case Option.Some(c): c
+      case Option.None: 0
     }
-    option.none: 0
+    case Option.None: 0
   }
-  option.none: 0
+  case Option.None: 0
 }
 puts(out)  # output: 1

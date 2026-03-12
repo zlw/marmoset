@@ -1,0 +1,10 @@
+# VN62: Placeholder rewrite picks a fresh binder name and avoids capture
+fn apply[a, b](x: a, f: (a) -> b) -> b = f(x)
+
+let it = "outer"
+let answer = apply(41, {
+  let it = 1
+  _ + it
+})
+puts(answer)  # output: 42
+puts(it)  # output: outer

@@ -1,10 +1,10 @@
-type mynum = int
+type Mynum = Int
 
-impl mynum {
-  fn show(x: mynum) -> string {
+impl Mynum = {
+  fn show(x: Mynum) -> Str = {
     "my:" + x.show()
   }
 }
 
-let n: mynum = 42
+let n: Mynum = 42
 puts(n.show())  # output: my:42

@@ -1,11 +1,11 @@
-type counter = { n: int }
+type Counter = { n: Int }
 
-impl counter {
-  fn bump(c: counter) -> counter {
+impl Counter = {
+  fn bump(c: Counter) -> Counter = {
     { n: c.n + 1 }
   }
 }
 
-let c: counter = { n: 0 }
-let c2 = counter.bump(c)
+let c: Counter = { n: 0 }
+let c2 = Counter.bump(c)
 puts(c2.n)  # output: 1

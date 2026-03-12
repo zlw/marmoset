@@ -1,4 +1,4 @@
 # OP94: Addition of record fields
-type point = { x: int, y: int }
-let p: point = { x: 10, y: 20 }
+type Point = { x: Int, y: Int }
+let p: Point = { x: 10, y: 20 }
 puts(p.x + p.y)  # output: 30

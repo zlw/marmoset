@@ -1,9 +1,9 @@
 # CS46: H47: recursive fn with match and if combined
-let fib = fn(n: int) -> int {
+fn fib(n: Int) -> Int = {
   match n {
-    0: 0
-    1: 1
-    _: if (n > 1) { fib(n - 1) + fib(n - 2) } else { 0 }
+    case 0: 0
+    case 1: 1
+    case _: if (n > 1) { fib(n - 1) + fib(n - 2) } else { 0 }
   }
 }
 puts(fib(10))  # output: 55

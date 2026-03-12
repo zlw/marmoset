@@ -1,11 +1,9 @@
-# T56: Method call on string
-trait show[a] {
-  fn show(x: a) -> string
+# T56: Method call on Str
+trait Show[a] = {
+  fn show(x: a) -> Str
 }
-impl show for string {
-  fn show(x: string) -> string {
-    x
-  }
+impl Show[Str] = {
+  fn show(x: Str) -> Str = x
 }
 let s = "hello"
 puts(s.show())  # output: hello

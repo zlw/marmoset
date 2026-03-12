@@ -1,5 +1,5 @@
 # TH32: Inherent method return type annotation is optional (inferred from body)
-impl int {
-  fn oops(x: int) { x }
+impl Int = {
+  fn oops(x: Int) = x
 }
 puts(1)  # output: 1

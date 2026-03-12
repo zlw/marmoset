@@ -1,10 +1,10 @@
-# CG24: Match on int in tail position selects correct arm
-let choose = fn(x: int) -> int {
+# CG24: Match on Int in tail position selects correct arm
+fn choose(x: Int) -> Int = {
   match x {
-    1: 10
-    2: 42
-    3: 99
-    _: 0
+    case 1: 10
+    case 2: 42
+    case 3: 99
+    case _: 0
   }
 }
 puts(choose(2))  # output: 42

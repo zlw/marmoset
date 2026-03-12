@@ -1,9 +1,9 @@
 # XF57: L65: Function return + enum match + arithmetic combined
-enum option_int { some(int) none }
-let mk = fn() { { val: option_int.some(40) } }
+enum OptionInt = { Some(Int), None }
+fn mk() = { val: OptionInt.Some(40) }
 let r = mk()
 let n = match r.val {
-  option_int.some(x): x + 2
-  option_int.none: 0
+  case OptionInt.Some(x): x + 2
+  case OptionInt.None: 0
 }
 puts(n)  # output: 42

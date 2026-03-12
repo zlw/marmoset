@@ -1,4 +1,4 @@
 # XF42: I50: Identity function on record
-let id = fn(x) { x }
+fn id(x) = x
 let r = id({ val: 42 })
 puts(r.val)  # output: 42

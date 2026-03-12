@@ -1,11 +1,11 @@
-# U19: Nested option: some(some(42))
-enum option[a] { some(a) none }
-let x: option[option[int]] = option.some(option.some(42))
+# U19: Nested Option: Some(Some(42))
+enum Option[a] = { Some(a), None }
+let x: Option[Option[Int]] = Option.Some(Option.Some(42))
 let out = match x {
-  option.some(inner): match inner {
-    option.some(v): v
-    option.none: 0
+  case Option.Some(inner): match inner {
+    case Option.Some(v): v
+    case Option.None: 0
   }
-  option.none: 0
+  case Option.None: 0
 }
 puts(out)  # output: 42

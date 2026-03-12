@@ -1,11 +1,11 @@
-type toggle = { active: bool }
+type Toggle = { active: Bool }
 
-impl toggle {
-  fn check(t: toggle) -> bool {
+impl Toggle = {
+  fn check(t: Toggle) -> Bool = {
     t.active
   }
 }
 
-let t: toggle = { active: false }
-let result = if (toggle.check(t)) { "on" } else { "off" }
+let t: Toggle = { active: false }
+let result = if (Toggle.check(t)) { "on" } else { "off" }
 puts(result)  # output: off

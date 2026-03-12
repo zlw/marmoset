@@ -1,7 +1,11 @@
-# XF03: A3: Trait-typed value stored in record field and accessed
-trait named {
-  name: string
+# XF03: A3: Field-only constrained value stored in record field and accessed
+trait Named = {
+  name: Str
 }
-let n: named = { name: "bob", extra: 99 }
+fn keep_named[t: Named](x: t) -> { name: Str } = {
+  { name: x.name }
+}
+
+let n = keep_named({ name: "bob", extra: 99 })
 let wrapper = { inner: n }
 puts(wrapper.inner.name)  # output: bob

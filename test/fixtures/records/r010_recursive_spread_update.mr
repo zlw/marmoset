@@ -1,5 +1,5 @@
 # R010: Recursive spread update keeps row fields stable
-let countdown = fn(r) {
+fn countdown(r) = {
   if (r.n == 0) {
     r.acc
   } else {

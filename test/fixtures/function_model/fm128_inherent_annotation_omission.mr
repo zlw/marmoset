@@ -1,11 +1,11 @@
-type point = { x: int, y: int }
+type Point = { x: Int, y: Int }
 
 # Inherent method omits return annotation — infers from body
-impl point {
-  fn sum(p: point) {
+impl Point = {
+  fn sum(p: Point) = {
     p.x + p.y
   }
 }
 
-let p: point = { x: 3, y: 7 }
+let p: Point = { x: 3, y: 7 }
 puts(p.sum())  # output: 10

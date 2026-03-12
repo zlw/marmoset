@@ -1,2 +1,2 @@
-enum color { red green blue }
-puts(color.red)  # output: red
+enum Color = { Red, Green, Blue }
+puts(Color.Red)  # output: Red

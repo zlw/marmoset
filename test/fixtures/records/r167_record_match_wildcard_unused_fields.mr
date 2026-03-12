@@ -1,7 +1,7 @@
 # R167: Record match with wildcard for unused fields
 let r = { x: 10, y: 20, z: 30 }
 let result = match r {
-  { x:, y: _, z: _ }: x
-  _: 0
+  case { x:, y: _, z: _ }: x
+  case _: 0
 }
 puts(result)  # output: 10

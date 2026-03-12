@@ -1,9 +1,7 @@
 # T79: Trait return from function with exact field match
-trait named {
-  name: string
+trait Named = {
+  name: Str
 }
-let mk = fn() -> named {
-  { name: "alice" }
-}
+fn mk() -> Named = { name: "alice" }  # error: cannot be used as a type in vNext
 let x = mk()
 puts(x.name)  # output: alice

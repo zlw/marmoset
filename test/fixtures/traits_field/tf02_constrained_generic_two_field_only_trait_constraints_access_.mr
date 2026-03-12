@@ -1,16 +1,12 @@
 # TF02: Constrained generic: two field-only trait constraints, access each field
-trait has_name {
-  name: string
+trait HasName = {
+  name: Str
 }
-trait has_age {
-  age: int
+trait HasAge = {
+  age: Int
 }
-let describe = fn[t: has_name + has_age](v: t) -> string {
-  v.name
-};
-let get_age = fn[t: has_name + has_age](v: t) -> int {
-  v.age
-};
+fn describe[t: HasName & HasAge](v: t) -> Str = v.name
+fn get_age[t: HasName & HasAge](v: t) -> Int = v.age
 let p = { name: "hello", age: 42, active: true }
 puts(describe(p))  # output: hello
 puts(get_age(p))  # output: 42

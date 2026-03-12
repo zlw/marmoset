@@ -1,9 +1,9 @@
 # U36: Array of enum, index and match
-enum option[a] { some(a) none }
-let arr = [option.some(10), option.some(20), option.none()]
+enum Option[a] = { Some(a), None }
+let arr = [Option.Some(10), Option.Some(20), Option.None()]
 let first = arr[0]
 let out = match first {
-  option.some(v): v
-  option.none: 0
+  case Option.Some(v): v
+  case Option.None: 0
 }
 puts(out)  # output: 10

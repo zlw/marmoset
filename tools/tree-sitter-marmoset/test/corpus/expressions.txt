@@ -265,12 +265,14 @@ if (x < y) { x } else { y }
       condition: (infix_expression
         left: (identifier)
         right: (identifier))
-      consequence: (block
-        (expression_statement
-          (identifier)))
-      alternative: (block
-        (expression_statement
-          (identifier))))))
+      consequence: (expr_or_block
+        (block
+          (expression_statement
+            (identifier))))
+      alternative: (expr_or_block
+        (block
+          (expression_statement
+            (identifier)))))))
 
 ================================================================================
 If without else
@@ -286,15 +288,16 @@ if (x < y) { x }
       condition: (infix_expression
         left: (identifier)
         right: (identifier))
-      consequence: (block
-        (expression_statement
-          (identifier))))))
+      consequence: (expr_or_block
+        (block
+          (expression_statement
+            (identifier)))))))
 
 ================================================================================
 Is expression
 ================================================================================
 
-x is int
+x is Int
 
 --------------------------------------------------------------------------------
 
@@ -308,83 +311,83 @@ x is int
 Function literal
 ================================================================================
 
-fn(x, y) { x + y }
+(x, y) -> { x + y }
 
 --------------------------------------------------------------------------------
 
 (source_file
   (expression_statement
-    (function_literal
-      (parameter
+    (lambda_expression
+      (lambda_parameter
         name: (identifier))
-      (parameter
+      (lambda_parameter
         name: (identifier))
-      body: (block
-        (expression_statement
-          (infix_expression
-            left: (identifier)
-            right: (identifier)))))))
+      body: (expr_or_block
+        (block
+          (expression_statement
+            (infix_expression
+              left: (identifier)
+              right: (identifier))))))))
 
 ================================================================================
 Function literal with types
 ================================================================================
 
-fn(x: int, y: int) -> int { x + y }
+(x: Int, y: Int) -> { x + y }
 
 --------------------------------------------------------------------------------
 
 (source_file
   (expression_statement
-    (function_literal
-      (parameter
+    (lambda_expression
+      (lambda_parameter
         name: (identifier)
         type: (type_identifier))
-      (parameter
+      (lambda_parameter
         name: (identifier)
         type: (type_identifier))
-      return_type: (type_identifier)
-      body: (block
-        (expression_statement
-          (infix_expression
-            left: (identifier)
-            right: (identifier)))))))
+      body: (expr_or_block
+        (block
+          (expression_statement
+            (infix_expression
+              left: (identifier)
+              right: (identifier))))))))
 
 ================================================================================
 Function literal with generic constraints
 ================================================================================
 
-fn[a: show + eq](x: a) -> string { x.show() }
+fn show_it[a: Show & Eq](x: a) -> Str = x.show()
 
 --------------------------------------------------------------------------------
 
 (source_file
-  (expression_statement
-    (function_literal
-      type_params: (type_parameter_list
-        (constrained_type_param
-          name: (identifier)
-          constraints: (constraint_list
-            (identifier)
-            (identifier))))
-      (parameter
+  (fn_declaration
+    name: (identifier)
+    type_params: (type_parameter_list
+      (constrained_type_param
         name: (identifier)
-        type: (type_variable
-          (identifier)))
-      return_type: (type_identifier)
-      body: (block
-        (expression_statement
-          (call_expression
-            function: (field_access
-              object: (identifier)
-              field: (identifier))))))))
+        constraints: (constraint_list
+          (identifier)
+          (identifier))))
+    (parameter
+      name: (identifier)
+      type: (type_variable
+        (identifier)))
+    return_type: (type_identifier)
+    body: (expr_or_block
+      (call_expression
+        function: (field_access
+          object: (identifier)
+          field: (identifier))))))
 
 ================================================================================
 Match expression on enum
 ================================================================================
 
 match x {
-  option.some(v): v
-  option.none: 0
+  case Option.Some(v): v
+  case Option.None: 0
 }
 
 --------------------------------------------------------------------------------
@@ -399,21 +402,23 @@ match x {
           variant: (identifier)
           (variable_pattern
             (identifier)))
-        body: (identifier))
+        body: (expr_or_block
+          (identifier)))
       (match_arm
         pattern: (constructor_pattern
           enum: (identifier)
           variant: (identifier))
-        body: (integer_literal)))))
+        body: (expr_or_block
+          (integer_literal))))))
 
 ================================================================================
 Match expression on literals
 ================================================================================
 
 match x {
-  0: "zero"
-  1: "one"
-  _: "other"
+  case 0: "zero"
+  case 1: "one"
+  case _: "other"
 }
 
 --------------------------------------------------------------------------------
@@ -425,23 +430,26 @@ match x {
       (match_arm
         pattern: (literal_pattern
           (integer_literal))
-        body: (string_literal
-          (string_content)))
+        body: (expr_or_block
+          (string_literal
+            (string_content))))
       (match_arm
         pattern: (literal_pattern
           (integer_literal))
-        body: (string_literal
-          (string_content)))
+        body: (expr_or_block
+          (string_literal
+            (string_content))))
       (match_arm
         pattern: (wildcard_pattern)
-        body: (string_literal
-          (string_content))))))
+        body: (expr_or_block
+          (string_literal
+            (string_content)))))))
 
 ================================================================================
 Enum constructor call
 ================================================================================
 
-option.some(42)
+Option.Some(42)
 
 --------------------------------------------------------------------------------
 

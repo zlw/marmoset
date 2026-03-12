@@ -1,9 +1,9 @@
 # U53: Match on integer from array index
 let arr = [10, 20, 30]
 let out = match arr[1] {
-  10: "first"
-  20: "second"
-  30: "third"
-  _: "other"
+  case 10: "first"
+  case 20: "second"
+  case 30: "third"
+  case _: "other"
 }
 puts(out)  # output: second

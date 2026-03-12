@@ -1,8 +1,8 @@
-# CM09: Poly fn wrapping int in generic enum
-enum option[a] { some(a) none }
-let wrap = fn(x) { option.some(x) }
+# CM09: Poly fn wrapping Int in generic enum
+enum Option[a] = { Some(a), None }
+fn wrap(x) = Option.Some(x)
 let v = wrap(42)
 match v {  # output: 42
-  option.some(n): puts(n)
-  option.none: puts(0)
+  case Option.Some(n): puts(n)
+  case Option.None: puts(0)
 }

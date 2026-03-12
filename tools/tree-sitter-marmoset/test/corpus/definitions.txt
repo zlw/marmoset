@@ -2,7 +2,7 @@
 Simple enum definition
 ================================================================================
 
-enum direction { north south east west }
+enum Direction = { North South East West }
 
 --------------------------------------------------------------------------------
 
@@ -22,7 +22,7 @@ enum direction { north south east west }
 Generic enum with variants
 ================================================================================
 
-enum option[a] { some(a) none }
+enum Option[a] = { Some(a) None }
 
 --------------------------------------------------------------------------------
 
@@ -42,7 +42,7 @@ enum option[a] { some(a) none }
 Enum with multi-type-param and multi-field variants
 ================================================================================
 
-enum result[a, b] { ok(a) error(b) }
+enum Result[a, e] = { Ok(a) Err(e) }
 
 --------------------------------------------------------------------------------
 
@@ -65,7 +65,7 @@ enum result[a, b] { ok(a) error(b) }
 Enum with multiple field variant
 ================================================================================
 
-enum http_response { ok(int, string) error(int, string) }
+enum HttpResponse = { Ok(Int, Str) Error(Int, Str) }
 
 --------------------------------------------------------------------------------
 
@@ -85,8 +85,8 @@ enum http_response { ok(int, string) error(int, string) }
 Trait definition
 ================================================================================
 
-trait show[a] {
-  fn show(x: a) -> string
+trait Show[a] = {
+  fn show(x: a) -> Str
 }
 
 --------------------------------------------------------------------------------
@@ -98,7 +98,7 @@ trait show[a] {
       (identifier))
     (trait_method_signature
       name: (identifier)
-      (parameter
+      (trait_named_param
         name: (identifier)
         type: (type_variable
           (identifier)))
@@ -108,9 +108,9 @@ trait show[a] {
 Trait with multiple methods
 ================================================================================
 
-trait eq[a] {
-  fn eq(x: a, y: a) -> bool
-  fn ne(x: a, y: a) -> bool
+trait Eq[a] = {
+  fn eq(x: a, y: a) -> Bool
+  fn ne(x: a, y: a) -> Bool
 }
 
 --------------------------------------------------------------------------------
@@ -122,22 +122,22 @@ trait eq[a] {
       (identifier))
     (trait_method_signature
       name: (identifier)
-      (parameter
+      (trait_named_param
         name: (identifier)
         type: (type_variable
           (identifier)))
-      (parameter
+      (trait_named_param
         name: (identifier)
         type: (type_variable
           (identifier)))
       return_type: (type_identifier))
     (trait_method_signature
       name: (identifier)
-      (parameter
+      (trait_named_param
         name: (identifier)
         type: (type_variable
           (identifier)))
-      (parameter
+      (trait_named_param
         name: (identifier)
         type: (type_variable
           (identifier)))
@@ -147,8 +147,8 @@ trait eq[a] {
 Trait with supertraits
 ================================================================================
 
-trait ord[a]: eq {
-  fn compare(x: a, y: a) -> int
+trait Ord[a]: Eq = {
+  fn compare(x: a, y: a) -> Int
 }
 
 --------------------------------------------------------------------------------
@@ -162,11 +162,11 @@ trait ord[a]: eq {
       (identifier))
     (trait_method_signature
       name: (identifier)
-      (parameter
+      (trait_named_param
         name: (identifier)
         type: (type_variable
           (identifier)))
-      (parameter
+      (trait_named_param
         name: (identifier)
         type: (type_variable
           (identifier)))
@@ -176,8 +176,8 @@ trait ord[a]: eq {
 Trait with field
 ================================================================================
 
-trait named {
-  name: string
+trait Named = {
+  name: Str
 }
 
 --------------------------------------------------------------------------------
@@ -193,8 +193,8 @@ trait named {
 Impl block
 ================================================================================
 
-impl show for int {
-  fn show(x: int) -> string {
+impl Show[Int] = {
+  fn show(x: Int) -> Str = {
     "int"
   }
 }
@@ -203,25 +203,27 @@ impl show for int {
 
 (source_file
   (impl_block
-    trait: (identifier)
-    type: (type_identifier)
+    target: (generic_type
+      name: (identifier)
+      arg: (type_identifier))
     (method_definition
       name: (identifier)
       (parameter
         name: (identifier)
         type: (type_identifier))
       return_type: (type_identifier)
-      body: (block
-        (expression_statement
-          (string_literal
-            (string_content)))))))
+      body: (expr_or_block
+        (block
+          (expression_statement
+            (string_literal
+              (string_content))))))))
 
 ================================================================================
 Generic impl block
 ================================================================================
 
-impl show[b: show] for list[b] {
-  fn show(x: list[b]) -> string {
+impl[b: Show] Show[List[b]] = {
+  fn show(x: List[b]) -> Str = {
     "ok"
   }
 }
@@ -230,62 +232,68 @@ impl show[b: show] for list[b] {
 
 (source_file
   (impl_block
-    trait: (identifier)
     type_params: (impl_type_parameter_list
       (constrained_type_param
         name: (identifier)
         constraints: (constraint_list
           (identifier))))
-    type: (generic_type
+    target: (generic_type
       name: (identifier)
-      arg: (type_variable
-        (identifier)))
+      arg: (generic_type
+        name: (type_identifier)
+        arg: (type_variable
+          (identifier))))
     (method_definition
       name: (identifier)
       (parameter
         name: (identifier)
         type: (generic_type
-          name: (identifier)
+          name: (type_identifier)
           arg: (type_variable
             (identifier))))
       return_type: (type_identifier)
-      body: (block
-        (expression_statement
-          (string_literal
-            (string_content)))))))
+      body: (expr_or_block
+        (block
+          (expression_statement
+            (string_literal
+              (string_content))))))))
 
 ================================================================================
 Derive single trait
 ================================================================================
 
-derive eq for int;
+type Score = Int derive Eq
 
 --------------------------------------------------------------------------------
 
 (source_file
-  (derive_statement
-    trait: (identifier)
-    type: (type_identifier)))
+  (type_alias
+    name: (identifier)
+    type: (type_identifier)
+    derive: (derive_clause
+      trait: (identifier))))
 
 ================================================================================
 Derive multiple traits
 ================================================================================
 
-derive eq, show for int;
+type ScoreList = Int derive Eq, Show
 
 --------------------------------------------------------------------------------
 
 (source_file
-  (derive_statement
-    trait: (identifier)
-    trait: (identifier)
-    type: (type_identifier)))
+  (type_alias
+    name: (identifier)
+    type: (type_identifier)
+    derive: (derive_clause
+      trait: (identifier)
+      trait: (identifier))))
 
 ================================================================================
 Type alias
 ================================================================================
 
-type point = { x: int, y: int }
+type Point = { x: Int, y: Int }
 
 --------------------------------------------------------------------------------
 

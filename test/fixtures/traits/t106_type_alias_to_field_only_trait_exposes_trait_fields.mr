@@ -1,7 +1,7 @@
 # T106: Type alias to field-only trait exposes trait fields
-trait named {
-  name: string
+trait Named = {
+  name: Str
 }
-type nameable = named
-let x: nameable = { name: "alice", age: 30 }
+type Nameable = Named  # error: cannot be used as a type in vNext
+let x: Nameable = { name: "alice", age: 30 }
 puts(x.name)  # output: alice

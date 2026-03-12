@@ -1,7 +1,7 @@
 # E95: Two top-level matches with same generic enum
-enum option[a] { some(a) none }
-let base = option.some(100)
-let bonus = option.some(50)
-let b = match base { option.some(v): v option.none: 0 }
-let n = match bonus { option.some(v): v option.none: 0 }
+enum Option[a] = { Some(a), None }
+let base = Option.Some(100)
+let bonus = Option.Some(50)
+let b = match base { case Option.Some(v): v case Option.None: 0 }
+let n = match bonus { case Option.Some(v): v case Option.None: 0 }
 puts(b + n)  # output: 150

@@ -1,9 +1,9 @@
 # TI15: Impl with extra method not in trait is rejected
-trait show[a] {  # error: does not match trait signature
-  fn show(x: a) -> string
+trait Show[a] = {  # error: provides methods not in trait: extra
+  fn show(x: a) -> Str
 }
-impl show for int {
-  fn show(x: int) -> string { "int" }
-  fn extra(x: int) -> string { "bonus" }
+impl Show[Int] = {
+  fn show(x: Int) -> Str = "int"
+  fn extra(x: Int) -> Str = "bonus"
 }
 puts(1)

@@ -1,9 +1,9 @@
 # XF55: L63: Record field computed from enum match
-enum option_int { some(int) none }
-let v = option_int.some(42)
+enum OptionInt = { Some(Int), None }
+let v = OptionInt.Some(42)
 let n = match v {
-  option_int.some(x): x
-  option_int.none: 0
+  case OptionInt.Some(x): x
+  case OptionInt.None: 0
 }
 let r = { val: n }
 puts(r.val)  # output: 42

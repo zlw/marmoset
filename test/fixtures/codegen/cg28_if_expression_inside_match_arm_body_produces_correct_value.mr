@@ -1,8 +1,8 @@
 # CG28: if-expression inside match arm body produces correct value
-let f = fn(x: int, flag: bool) -> int {
+fn f(x: Int, flag: Bool) -> Int = {
   match x {
-    1: if (flag) { 99 } else { 0 }
-    _: 50
+    case 1: if (flag) { 99 } else { 0 }
+    case _: 50
   }
 }
 puts(f(1, true))  # output: 99

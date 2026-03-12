@@ -1,0 +1,11 @@
+# T117: User-trait derive can satisfy supertraits from the same derive clause
+trait Base[a] = {
+  fn base(self: a) -> Str = "base"
+}
+
+trait Child[a]: Base = {
+  fn child(self: a) -> Str = self.base()
+}
+
+type Score = Int derive Child, Base
+puts(1.child())

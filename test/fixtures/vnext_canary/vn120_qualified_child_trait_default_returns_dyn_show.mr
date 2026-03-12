@@ -1,0 +1,11 @@
+# VN120: Qualified child trait calls keep concrete Dyn packaging through inherited defaults
+trait Boxed[a]: Show = {
+  fn box(self: a) -> Dyn[Show] = self
+}
+
+trait Pack[a]: Boxed = {}
+
+type Point = { x: Int } derive Show, Boxed, Pack
+
+let value = Pack.box({ x: 1 })
+puts(value.show())  # output: { x: 1 }

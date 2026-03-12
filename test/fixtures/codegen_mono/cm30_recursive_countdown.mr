@@ -1,5 +1,5 @@
 # CM30: Recursive countdown
-let countdown = fn(n: int) -> int {
+fn countdown(n: Int) -> Int = {
   if (n == 0) {
     0
   } else {

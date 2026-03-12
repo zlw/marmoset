@@ -9,7 +9,7 @@ repository = "https://github.com/zlw/marmoset"
 [grammars.marmoset]
 repository = "https://github.com/zlw/marmoset"
 path = "tools/tree-sitter-marmoset"
-commit = "b6489f4efe2aa2a34a22ec12ca2f14bc50e4c60f"
+commit = "d7e2341c352f8099b5768310bbe24875c9f90c7e"
 
 [language_servers.marmoset-lsp]
 name = "marmoset-lsp"

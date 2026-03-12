@@ -1,0 +1,6 @@
+# R182: Spread-returning polymorphic function flows through a HOF
+fn apply_update(f, base, new_x) = f(base, new_x)
+fn update(base, new_x) = { ...base, x: new_x }
+
+let result = apply_update(update, { x: 1, y: 20, z: 3 }, 5)
+puts(result.x + result.y + result.z)  # output: 28

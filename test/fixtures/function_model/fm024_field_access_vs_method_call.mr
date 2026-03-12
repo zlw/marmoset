@@ -1,12 +1,12 @@
-type item = { name: string }
+type Item = { name: Str }
 
-impl item {
-  fn describe(i: item) -> string {
+impl Item = {
+  fn describe(i: Item) -> Str = {
     "item:" + i.name
   }
 }
 
-let i: item = { name: "sword" }
+let i: Item = { name: "sword" }
 # field access
 puts(i.name)  # output: sword
 # method call

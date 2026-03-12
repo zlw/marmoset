@@ -1,11 +1,11 @@
-type alpha = { v: int }
-type beta = { w: string }
+type Alpha = { v: Int }
+type Beta = { w: Str }
 
-impl alpha {
-  fn only_alpha(a: alpha) -> int {
+impl Alpha = {
+  fn only_alpha(a: Alpha) -> Int = {
     a.v
   }
 }
 
-let b: beta = { w: "hello" }
+let b: Beta = { w: "hello" }
 b.only_alpha()  # error: *

@@ -1,0 +1,7 @@
+# P103: Local polymorphic arithmetic helper preserves Num obligation
+fn add_twice[t: Num](a: t, b: t) = {
+  let add = (x, y) -> x + y
+  add(add(a, b), b)
+}
+
+puts(add_twice(1, 2))  # output: 5

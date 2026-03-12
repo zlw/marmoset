@@ -1,10 +1,10 @@
 # CS06: A6: every match arm is an if-expression
-let f = fn(x: int, flag: bool) -> int {
+fn f(x: Int, flag: Bool) -> Int = {
   match x {
-    1: if (flag) { 10 } else { 11 }
-    2: if (flag) { 20 } else { 21 }
-    3: if (flag) { 99 } else { 31 }
-    _: if (flag) { 40 } else { 41 }
+    case 1: if (flag) { 10 } else { 11 }
+    case 2: if (flag) { 20 } else { 21 }
+    case 3: if (flag) { 99 } else { 31 }
+    case _: if (flag) { 40 } else { 41 }
   }
 }
 puts(f(3, true))  # output: 99

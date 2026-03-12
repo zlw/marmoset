@@ -1,4 +1,4 @@
 # OP78: Comparison of function call results
-let f = fn(x: int) -> int { x * 10 }
-let g = fn(x: int) -> int { x + 1 }
+fn f(x: Int) -> Int = x * 10
+fn g(x: Int) -> Int = x + 1
 puts(f(1) > g(1))  # output: true

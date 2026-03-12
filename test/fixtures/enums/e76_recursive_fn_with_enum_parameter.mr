@@ -1,12 +1,12 @@
 # E76: Recursive function with enum parameter
-enum option[a] { some(a) none }
-let fact = fn(n: int) -> int {
+enum Option[a] = { Some(a), None }
+fn fact(n: Int) -> Int = {
   if (n <= 1) { 1 } else { n * fact(n - 1) }
 }
-let safe_fact = fn(x: option[int]) -> int {
+fn safe_fact(x: Option[Int]) -> Int = {
   match x {
-    option.some(n): fact(n)
-    option.none: 0
+    case Option.Some(n): fact(n)
+    case Option.None: 0
   }
 }
-puts(safe_fact(option.some(5)))  # output: 120
+puts(safe_fact(Option.Some(5)))  # output: 120

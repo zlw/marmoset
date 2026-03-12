@@ -50,6 +50,7 @@
     "typescript": "^5.0.0"
   },
   "scripts": {
+    "check-grammar": "node ./scripts/check-grammar.mjs",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./"
   }

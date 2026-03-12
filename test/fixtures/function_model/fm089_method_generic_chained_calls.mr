@@ -1,12 +1,12 @@
-type val = { v: int }
+type Val = { v: Int }
 
-impl val {
-  fn then[b](x: val, f: fn(int) -> b) -> b {
+impl Val = {
+  fn then[b](x: Val, f: (Int) -> b) -> b = {
     f(x.v)
   }
 }
 
-let v: val = { v: 3 }
+let v: Val = { v: 3 }
 # chain: then returns int, then show
-let result = v.then(fn(n: int) -> int { n * 10 }).show()
+let result = v.then((n: Int) -> n * 10).show()
 puts(result)  # output: 30

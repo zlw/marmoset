@@ -1,15 +1,15 @@
-type num = { v: int }
+type Num = { v: Int }
 
-impl num {
-  fn inc(n: num) -> num {
+impl Num = {
+  fn inc(n: Num) -> Num = {
     { v: n.v + 1 }
   }
-  fn value(n: num) -> int {
+  fn value(n: Num) -> Int = {
     n.v
   }
 }
 
-let n: num = { v: 0 }
+let n: Num = { v: 0 }
 # mix qualified and dot forms
-let n2 = num.inc(n)
+let n2 = Num.inc(n)
 puts(n2.value())  # output: 1

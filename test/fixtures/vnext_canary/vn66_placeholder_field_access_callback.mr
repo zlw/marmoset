@@ -1,0 +1,4 @@
+# VN66: Placeholder shorthand may project fields from callback inputs
+fn apply[a, b](x: a, f: (a) -> b) -> b = f(x)
+
+puts(apply({ name: "Ada" }, _.name))  # output: Ada

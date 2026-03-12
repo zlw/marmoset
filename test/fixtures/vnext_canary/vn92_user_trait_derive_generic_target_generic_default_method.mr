@@ -1,0 +1,13 @@
+# VN92: User-trait derive preserves generic targets, method generics, and block-bodied defaults
+trait Forwarder[a] = {
+  fn pass[b](self: a, value: b) -> b = {
+    let out = value
+    out
+  }
+}
+
+type Box[t] = { value: t } derive Forwarder
+
+let box: Box[Int] = { value: 1 }
+puts(box.pass("ok"))       # output: ok
+puts(box.pass(41).show())  # output: 41

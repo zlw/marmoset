@@ -1,7 +1,7 @@
-type val = { v: int }
+type Val = { v: Int }
 
-impl val {
-  fn bad(v: val) -> string {
+impl Val = {
+  fn bad(v: Val) -> Str = {
     puts(v.v)  # error: *
     v.v.show()
   }

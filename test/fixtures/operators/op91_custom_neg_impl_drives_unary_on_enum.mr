@@ -1,9 +1,9 @@
 # OP91: Custom neg impl drives unary - on enum
-enum wrapper { val(int) }
-impl neg for wrapper {
-  fn neg(x: wrapper) -> wrapper { x }
+enum Wrapper = { Val(Int) }
+impl Neg[Wrapper] = {
+  fn neg(x: Wrapper) -> Wrapper = x
 }
-let a = wrapper.val(99)
+let a = Wrapper.Val(99)
 match (-a) {  # output: 99
-  wrapper.val(n): puts(n)
+  case Wrapper.Val(n): puts(n)
 }

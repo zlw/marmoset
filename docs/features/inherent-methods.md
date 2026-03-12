@@ -11,7 +11,7 @@
 Inherent methods attach behavior directly to a target type without defining a trait.
 
 Capabilities:
-- inherent impl blocks (`impl <type> { ... }`),
+- inherent impl blocks (`impl Type = { ... }`),
 - method-call syntax (`x.m(...)`) with static dispatch,
 - support for aliases, primitives, records, enums, and concrete type applications,
 - coexistence with trait methods under explicit collision rules.
@@ -24,16 +24,16 @@ Non-goals in v1:
 ## Syntax
 
 ```marmoset
-type point = { x: int, y: int }
+type Point = { x: Int, y: Int }
 
-impl point {
-  fn sum(p: point) -> int { p.x + p.y }
-  fn translate(p: point, dx: int, dy: int) -> point {
+impl Point = {
+  fn sum(p: Point) -> Int = p.x + p.y
+  fn translate(p: Point, dx: Int, dy: Int) -> Point = {
     { x: p.x + dx, y: p.y + dy }
   }
 }
 
-let p: point = { x: 1, y: 2 }
+let p: Point = { x: 1, y: 2 }
 puts(p.sum())
 ```
 
@@ -42,16 +42,16 @@ puts(p.sum())
 Inherent methods can declare method-level generic parameters:
 
 ```marmoset
-type box = { v: int }
+type Box = { v: Int }
 
-impl box {
-  fn cast[b](bx: box, f: fn(int) -> b) -> b {
+impl Box = {
+  fn cast[b](bx: Box, f: (Int) -> b) -> b = {
     f(bx.v)
   }
 }
 
-let b: box = { v: 5 }
-let s = b.cast[string](fn(n: int) -> string { n.show() })
+let b: Box = { v: 5 }
+let s = b.cast[Str]((n: Int) -> n.show())
 ```
 
 ### Effect markers
@@ -59,9 +59,9 @@ let s = b.cast[string](fn(n: int) -> string { n.show() })
 Inherent methods use `->` for pure and `=>` for effectful:
 
 ```marmoset
-impl logger {
-  fn format(l: logger, msg: string) -> string { l.prefix + ": " + msg }
-  fn log(l: logger, msg: string) => string { l.prefix + ": " + msg }
+impl Logger = {
+  fn format(l: Logger, msg: Str) -> Str = l.prefix + ": " + msg
+  fn log(l: Logger, msg: Str) => Str = l.prefix + ": " + msg
 }
 ```
 
@@ -72,8 +72,8 @@ Omitting the effect marker infers effectfulness from the body.
 Method bodies support let bindings and multiple statements. The last expression is the return value:
 
 ```marmoset
-impl acc {
-  fn add_and_show(a: acc, n: int) -> string {
+impl Acc = {
+  fn add_and_show(a: Acc, n: Int) -> Str = {
     let new_total = a.total + n
     let result = "total:" + new_total.show()
     result
@@ -86,11 +86,11 @@ impl acc {
 Inherent methods can call themselves on other instances of the same type:
 
 ```marmoset
-impl counter {
-  fn count_down(c: counter) -> string {
+impl Counter = {
+  fn count_down(c: Counter) -> Str = {
     if (c.n <= 0) { "done" }
     else {
-      let next: counter = { n: c.n - 1 }
+      let next: Counter = { n: c.n - 1 }
       next.count_down()
     }
   }
@@ -100,8 +100,8 @@ impl counter {
 Trait impl syntax remains separate:
 
 ```marmoset
-impl show for point {
-  fn show(p: point) -> string { "..." }
+impl Show[Point] = {
+  fn show(p: Point) -> Str = "..."
 }
 ```
 
@@ -134,12 +134,12 @@ Hard rule:
 So this fails unless an explicit trait impl exists:
 
 ```marmoset
-trait renderable[a] { fn render(x: a) -> string }
+trait Renderable[a] = { fn render(a) -> Str }
 
-type widget = { id: int }
-impl widget { fn render(w: widget) -> string { "widget" } }
+type Widget = { id: Int }
+impl Widget = { fn render(w: Widget) -> Str = "widget" }
 
-let use = fn[t: renderable](x: t) -> string { x.render() }
+fn use[t: Renderable](x: t) -> Str = x.render()
 ```
 
 ## Method Resolution Rules
@@ -153,7 +153,7 @@ For `receiver.method(args...)`:
 6. If receiver type is a constrained type variable, resolve from trait constraints only (inherent methods do not participate).
 7. Otherwise resolve inherent methods first, then trait methods for concrete receiver type.
 
-Bound variables take precedence over enum type names in dotted access. This means a local `let color = { red: "x" }` shadows the enum `color` for `color.red`. Inherent methods take precedence over trait methods on dot calls. Qualified trait calls (`Trait.method(x)`) bypass this precedence and select the named trait directly.
+Value-space bindings are considered before type-space names in dotted access. Inherent methods take precedence over trait methods on dot calls. Qualified trait calls (`Trait.method(x)`) bypass this precedence and select the named trait directly.
 
 ## Codegen: Detailed Design
 
@@ -171,7 +171,7 @@ Why this choice:
 
 ## Current Limitations
 
-- Generic inherent impl targets are supported when type parameters appear in the impl target (for example `impl result[a, b] { ... }`).
+- Generic inherent impl targets are supported when type parameters appear in the impl target (for example `impl Result[a, b] = { ... }`).
 - Inherent generic targets currently do not have explicit per-impl constraint syntax (unlike trait generic impls).
 - Generic inherent method call sites still require receiver type arguments to be concretely determined by program context before codegen specialization.
 - Receiver shorthand (`self`) is not a dedicated syntax form; receiver is an explicit first parameter.

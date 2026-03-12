@@ -1,7 +1,5 @@
-# T09: Inherent method coexists with trait method (inherent wins on dot call)
-impl int {
-  fn show(x: int) -> string {
-    "inherent"
-  }
+# T09: Inherent method coexists with trait method name
+impl Int = {
+  fn show(x: Int) -> Str = "inherent"
 }
 puts(1)  # output: 1

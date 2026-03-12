@@ -1,8 +1,8 @@
 # TI32: Impl method return type annotation is optional (inferred from trait sig)
-trait show[a] {
-  fn show(x: a) -> string
+trait Show[a] = {
+  fn show(x: a) -> Str
 }
-impl show for int {
-  fn show(x: int) { "int" }
+impl Show[Int] = {
+  fn show(x: Int) = "int"
 }
 puts(1)  # output: 1

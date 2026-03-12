@@ -1,5 +1,5 @@
-let reduce = fn(values: list[int], initial: int, step: fn(int, int) -> int) -> int {
-  let iter = fn(remaining: list[int], acc: int) -> int {
+fn reduce(values: List[Int], initial: Int, step: (Int, Int) -> Int) -> Int = {
+  let iter = (remaining: List[Int], acc: Int) -> {
     if (len(remaining) == 0) {
       acc
     } else {
@@ -9,8 +9,6 @@ let reduce = fn(values: list[int], initial: int, step: fn(int, int) -> int) -> i
   iter(values, initial)
 }
 
-let sum = fn(values: list[int]) -> int {
-  reduce(values, 0, fn(acc: int, value: int) -> int { acc + value })
-}
+fn sum(values: List[Int]) -> Int = reduce(values, 0, (acc: Int, value: Int) -> acc + value)
 
 puts(sum([1, 2, 3, 4, 5]))

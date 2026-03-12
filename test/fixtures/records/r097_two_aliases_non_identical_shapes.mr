@@ -1,6 +1,6 @@
 # R097: Two aliases with overlapping but non-identical shapes
-type small = { x: int }
-type big = { x: int, y: int, z: int }
-let s: small = { x: 1 }
-let b: big = { x: 4, y: 5, z: 4 }
+type Small = { x: Int }
+type Big = { x: Int, y: Int, z: Int }
+let s: Small = { x: 1 }
+let b: Big = { x: 4, y: 5, z: 4 }
 puts(s.x + b.x + b.y + b.z)  # output: 14

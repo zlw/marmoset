@@ -1,6 +1,6 @@
 # CM15: Same typed fn called inside different wrapper fns
-let inc = fn(x: int) -> int { x + 1 }
-let f = fn(n: int) -> int { inc(n) }
-let g = fn(n: int) -> int { inc(n * 2) }
+fn inc(x: Int) -> Int = x + 1
+fn f(n: Int) -> Int = inc(n)
+fn g(n: Int) -> Int = inc(n * 2)
 puts(f(10))  # output: 11
 puts(g(10))  # output: 21

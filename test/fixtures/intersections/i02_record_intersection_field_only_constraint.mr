@@ -1,0 +1,8 @@
+# I02: Record intersections satisfy field-only constraints when every member guarantees the field
+trait Named = { name: Str }
+
+fn get_name[t: Named](x: t) -> Str = x.name
+
+let value: ({ name: Str, age: Int } & { name: Str }) = { name: "alice", age: 1 }
+
+puts(get_name(value))  # output: alice

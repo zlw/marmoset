@@ -1,0 +1,11 @@
+# T120: Dyn field access is rejected even for mixed traits
+type Person = { name: Str }
+trait NamedShow[a] = {
+  name: Str
+  fn show(x: a) -> Str
+}
+impl NamedShow[Person] = {
+  fn show(x: Person) -> Str = x.name
+}
+let x: Dyn[NamedShow] = { name: "alice" }
+x.name  # error: Dyn[...] only exposes trait methods

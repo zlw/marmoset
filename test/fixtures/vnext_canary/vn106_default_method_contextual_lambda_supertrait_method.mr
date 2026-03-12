@@ -1,0 +1,9 @@
+# VN106: Default methods resolve supertrait methods inside explicit callback lambdas
+fn apply[a, b](x: a, f: (a) -> b) -> b = f(x)
+
+trait Fancy[a]: Show = {
+  fn fancy(self: a) -> Str = apply(self, (x) -> x.show())
+}
+
+impl Fancy[Int] = {}
+puts(1.fancy())  # output: 1

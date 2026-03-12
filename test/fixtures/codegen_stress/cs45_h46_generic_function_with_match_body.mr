@@ -1,8 +1,8 @@
 # CS45: H46: generic function with match body
-let choose = fn(x, n: int) {
+fn choose(x, n: Int) = {
   match n {
-    1: x
-    _: x
+    case 1: x
+    case _: x
   }
 }
 puts(choose(42, 1))  # output: 42

@@ -1,7 +1,7 @@
-trait base[a] {
-  fn name(x: a) -> string
+trait Base[a] = {
+  fn name(x: a) -> Str
 }
 
-trait ext[a]: base {
-  fn describe[b: show](x: a, extra: b) -> string
+trait Ext[a]: Base = {
+  fn describe[b: Show](x: a, extra: b) -> Str
 }

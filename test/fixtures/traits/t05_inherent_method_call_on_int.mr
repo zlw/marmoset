@@ -1,7 +1,5 @@
-# T05: Inherent method call on int
-impl int {
-  fn twice(x: int) -> int {
-    x + x
-  }
+# T05: Inherent method call on Int
+impl Int = {
+  fn twice(x: Int) -> Int = x + x
 }
 puts(2.twice())  # output: 4

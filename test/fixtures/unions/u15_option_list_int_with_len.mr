@@ -1,5 +1,5 @@
-# U15: option[list[int]] with len in match arm
-enum option[a] { some(a) none }
-let a = option.some([1, 2, 3])
-let la = match a { option.some(v): len(v) option.none: 0 }
+# U15: Option[List[Int]] with len in match arm
+enum Option[a] = { Some(a), None }
+let a = Option.Some([1, 2, 3])
+let la = match a { case Option.Some(v): len(v) case Option.None: 0 }
 puts(la)  # output: 3

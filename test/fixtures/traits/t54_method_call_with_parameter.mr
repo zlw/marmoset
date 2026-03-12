@@ -1,11 +1,9 @@
 # T54: Method call with parameter
-trait eq[a] {
-  fn eq(x: a, y: a) -> bool
+trait Eq[a] = {
+  fn eq(x: a, y: a) -> Bool
 }
-impl eq for int {
-  fn eq(x: int, y: int) -> bool {
-    x == y
-  }
+impl Eq[Int] = {
+  fn eq(x: Int, y: Int) -> Bool = x == y
 }
 let a = 42
 let b = 42

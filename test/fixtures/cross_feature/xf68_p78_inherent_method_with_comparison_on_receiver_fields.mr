@@ -1,7 +1,7 @@
 # XF68: P78: Inherent method with comparison on receiver fields
-type point = { x: int, y: int }
-impl point {
-  fn is_first_quadrant(p: point) -> bool {
+type Point = { x: Int, y: Int }
+impl Point = {
+  fn is_first_quadrant(p: Point) -> Bool = {
     if (p.x > 0) {
       p.y > 0
     } else {
@@ -9,5 +9,5 @@ impl point {
     }
   }
 }
-let p: point = { x: 5, y: 3 }
+let p: Point = { x: 5, y: 3 }
 puts(p.is_first_quadrant())  # output: true

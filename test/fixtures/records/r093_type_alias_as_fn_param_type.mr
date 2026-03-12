@@ -1,5 +1,5 @@
 # R093: Type alias as function param type
-type point = { x: int, y: int }
-let sum_point = fn(p: point) -> int { p.x + p.y }
-let p: point = { x: 10, y: 20 }
+type Point = { x: Int, y: Int }
+fn sum_point(p: Point) -> Int = { p.x + p.y }
+let p: Point = { x: 10, y: 20 }
 puts(sum_point(p))  # output: 30

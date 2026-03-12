@@ -1,5 +1,5 @@
 # U10: Union return from both branches
-let f = fn(b: bool, x: int | string) -> int | string {
+fn f(b: Bool, x: Int | Str) -> Int | Str = {
    if (b) { x } else { x }
  }
 f(true, 5)

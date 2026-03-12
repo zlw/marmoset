@@ -1,14 +1,14 @@
-type flag = { on: bool }
+type Flag = { on: Bool }
 
-impl flag {
-  fn is_on(f: flag) -> bool {
+impl Flag = {
+  fn is_on(f: Flag) -> Bool = {
     f.on
   }
 }
 
-let f: flag = { on: true }
-let msg = match flag.is_on(f) {
-  true: "yes"
-  false: "no"
+let f: Flag = { on: true }
+let msg = match Flag.is_on(f) {
+  case true: "yes"
+  case false: "no"
 }
 puts(msg)  # output: yes

@@ -1,9 +1,9 @@
-# E11: Function parameter with enum type option[int]
-enum option[a] { some(a) none }
-let unwrap = fn(x: option[int]) -> int {
+# E11: Function parameter with enum type Option[Int]
+enum Option[a] = { Some(a), None }
+fn unwrap(x: Option[Int]) -> Int = {
   match x {
-    option.some(v): v
-    option.none: 0
+    case Option.Some(v): v
+    case Option.None: 0
   }
 }
-unwrap(option.some(42))
+unwrap(Option.Some(42))

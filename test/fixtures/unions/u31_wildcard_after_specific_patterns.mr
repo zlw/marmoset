@@ -1,9 +1,9 @@
 # U31: Wildcard after specific variant patterns
-enum color { red green blue yellow }
-let c = color.yellow
+enum Color = { Red, Green, Blue, Yellow }
+let c = Color.Yellow
 let name = match c {
-  color.red: "red"
-  color.green: "green"
-  _: "default"
+  case Color.Red: "Red"
+  case Color.Green: "Green"
+  case _: "default"
 }
 puts(name)  # output: default

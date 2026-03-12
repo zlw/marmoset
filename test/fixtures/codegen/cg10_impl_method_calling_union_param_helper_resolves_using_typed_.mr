@@ -1,9 +1,9 @@
 # CG10: Impl method calling union-param helper resolves using typed env
-let helper = fn(x: int | string) -> string {
-  if (x is int) { "int" } else { "string" }
+fn helper(x: Int | Str) -> Str = {
+  if (x is Int) { "int" } else { "string" }
 }
-trait show[a] { fn show(x: a) -> string }
-impl show for int {
-  fn show(x: int) -> string { helper(x) }
+trait Show[a] = { fn show(x: a) -> Str }
+impl Show[Int] = {
+  fn show(x: Int) -> Str = helper(x)
 }
 puts(1.show())  # output: int

@@ -1,6 +1,6 @@
 # T17: Field-only trait as type projects records to required shape
-trait named {
-  name: string
+trait Named = {
+  name: Str
 }
-let x: named = { name: "alice", age: 42 }
+let x: Named = { name: "alice", age: 42 }  # error: cannot be used as a type in vNext
 puts(x.name)  # output: alice

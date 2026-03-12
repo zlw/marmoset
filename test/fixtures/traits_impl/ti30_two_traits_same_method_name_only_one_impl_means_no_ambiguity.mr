@@ -1,11 +1,11 @@
 # TI30: Two traits same method name, only one impl means no ambiguity
-trait alpha_trait[a] {
-  fn tag(x: a) -> string
+trait AlphaTrait[a] = {
+  fn tag(x: a) -> Str
 }
-trait beta_trait[a] {
-  fn tag(x: a) -> string
+trait BetaTrait[a] = {
+  fn tag(x: a) -> Str
 }
-impl alpha_trait for int {
-  fn tag(x: int) -> string { "alpha" }
+impl AlphaTrait[Int] = {
+  fn tag(x: Int) -> Str = "alpha"
 }
 puts(1.tag())  # output: alpha

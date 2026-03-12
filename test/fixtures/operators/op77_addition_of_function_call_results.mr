@@ -1,4 +1,4 @@
 # OP77: Addition of function call results
-let f = fn(x: int) -> int { x + 1 }
-let g = fn(x: int) -> int { x * 2 }
+fn f(x: Int) -> Int = x + 1
+fn g(x: Int) -> Int = x * 2
 puts(f(2) + g(2))  # output: 7

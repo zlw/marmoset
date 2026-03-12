@@ -1,6 +1,6 @@
 # U86: Wrong number of pattern fields
-enum pair { mk(int, int) }  # error: *
-let x = pair.mk(1, 2)
+enum Pair = { Mk(Int, Int) }  # error: *
+let x = Pair.Mk(1, 2)
 match x {
-  pair.mk(a): a
+  case Pair.Mk(a): a
 }

@@ -28,7 +28,7 @@ let x = 5
 Let with type annotation
 ================================================================================
 
-let x: int = 5
+let x: Int = 5
 
 --------------------------------------------------------------------------------
 
@@ -42,7 +42,7 @@ let x: int = 5
 Let with union type annotation
 ================================================================================
 
-let x: int | string = 5
+let x: Int | Str = 5
 
 --------------------------------------------------------------------------------
 
@@ -58,7 +58,7 @@ let x: int | string = 5
 Let with generic type annotation
 ================================================================================
 
-let x: option[int] = option.some(42)
+let x: Option[Int] = Option.Some(42)
 
 --------------------------------------------------------------------------------
 
@@ -116,7 +116,7 @@ puts(42);
 Block with multiple statements
 ================================================================================
 
-let add = fn(x, y) {
+let add = (x, y) -> {
   let sum = x + y;
   return sum;
 }
@@ -126,25 +126,26 @@ let add = fn(x, y) {
 (source_file
   (let_statement
     name: (identifier)
-    value: (function_literal
-      (parameter
+    value: (lambda_expression
+      (lambda_parameter
         name: (identifier))
-      (parameter
+      (lambda_parameter
         name: (identifier))
-      body: (block
-        (let_statement
-          name: (identifier)
-          value: (infix_expression
-            left: (identifier)
-            right: (identifier)))
-        (return_statement
-          value: (identifier))))))
+      body: (expr_or_block
+        (block
+          (let_statement
+            name: (identifier)
+            value: (infix_expression
+              left: (identifier)
+              right: (identifier)))
+          (return_statement
+            value: (identifier)))))))
 
 ================================================================================
 Early return syntax
 ================================================================================
 
-let abs = fn(x: int) -> int {
+let abs = (x: Int) -> {
   if (x < 0) return -x else return x;
 }
 
@@ -153,19 +154,19 @@ let abs = fn(x: int) -> int {
 (source_file
   (let_statement
     name: (identifier)
-    value: (function_literal
-      (parameter
+    value: (lambda_expression
+      (lambda_parameter
         name: (identifier)
         type: (type_identifier))
-      return_type: (type_identifier)
-      body: (block
-        (expression_statement
-          (if_expression
-            condition: (infix_expression
-              left: (identifier)
-              right: (integer_literal))
-            consequence: (return_shorthand
-              (prefix_expression
-                operand: (identifier)))
-            alternative: (return_shorthand
-              (identifier))))))))
+      body: (expr_or_block
+        (block
+          (expression_statement
+            (if_expression
+              condition: (infix_expression
+                left: (identifier)
+                right: (integer_literal))
+              consequence: (return_shorthand
+                (prefix_expression
+                  operand: (identifier)))
+              alternative: (return_shorthand
+                (identifier)))))))))

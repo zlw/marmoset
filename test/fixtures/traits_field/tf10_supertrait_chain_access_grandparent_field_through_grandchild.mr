@@ -1,15 +1,13 @@
 # TF10: Supertrait chain: access grandparent field through grandchild constraint
-trait level_a {
-  a_field: string
+trait LevelA = {
+  a_field: Str
 }
-trait level_b: level_a {
-  b_field: int
+trait LevelB: LevelA = {
+  b_field: Int
 }
-trait level_c: level_b {
-  c_field: int
+trait LevelC: LevelB = {
+  c_field: Int
 }
-let get_a = fn[t: level_c](v: t) -> string {
-  v.a_field
-};
+fn get_a[t: LevelC](v: t) -> Str = v.a_field
 let r = { a_field: "deep", b_field: 1, c_field: 2 }
 puts(get_a(r))  # output: deep

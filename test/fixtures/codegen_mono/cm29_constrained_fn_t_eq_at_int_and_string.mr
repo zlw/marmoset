@@ -1,6 +1,6 @@
-# CM29: Constrained fn[t: eq] at int and string
-let same = fn[t: eq](a: t, b: t) -> bool {
+# CM29: Constrained fn[t: Eq] at Int and Str
+fn same[t: Eq](a: t, b: t) -> Bool = {
   a == b
-};
+}
 puts(same(1, 1))  # output: true
 puts(same("a", "b"))  # output: false

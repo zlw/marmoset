@@ -1,6 +1,3 @@
-enum option[a] {
-  some(a)
-  none
-}
-let x = option.some(42)
-puts(x)  # output: some(42)
+enum Option[a] = { Some(a), None }
+let x = Option.Some(42)
+puts(x)  # output: Some(42)

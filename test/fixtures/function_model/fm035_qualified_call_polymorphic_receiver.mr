@@ -1,18 +1,18 @@
-trait stringify[a] {
-  fn to_str(x: a) -> string
+trait Stringify[a] = {
+  fn to_str(x: a) -> Str
 }
 
-impl stringify for int {
-  fn to_str(x: int) -> string {
+impl Stringify[Int] = {
+  fn to_str(x: Int) -> Str = {
     x.show()
   }
 }
 
-impl stringify for bool {
-  fn to_str(x: bool) -> string {
+impl Stringify[Bool] = {
+  fn to_str(x: Bool) -> Str = {
     if (x) { "T" } else { "F" }
   }
 }
 
-puts(stringify.to_str(42))  # output: 42
-puts(stringify.to_str(true))  # output: T
+puts(Stringify.to_str(42))  # output: 42
+puts(Stringify.to_str(true))  # output: T

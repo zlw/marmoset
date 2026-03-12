@@ -1,0 +1,6 @@
+# VN63: Nested function types preserve mixed pure/effectful arrows
+type Runner = ((Int) -> Str) -> ((Int) => Str)
+
+let wrap: Runner = (f: (Int) -> Str) -> (n: Int) => f(n)
+
+puts(wrap((n: Int) -> n.show())(42))  # output: 42

@@ -1,6 +1,6 @@
 # R179: Spread in tail position of fn body
-type point = { x: int, y: int }
-let set_x = fn(p: point, v: int) -> point { { ...p, x: v } }
-let p: point = { x: 1, y: 2 }
+type Point = { x: Int, y: Int }
+fn set_x(p: Point, v: Int) -> Point = { { ...p, x: v } }
+let p: Point = { x: 1, y: 2 }
 let q = set_x(p, 10)
 puts(q.x + q.y)  # output: 12

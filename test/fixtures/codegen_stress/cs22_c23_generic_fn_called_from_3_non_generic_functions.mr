@@ -1,8 +1,8 @@
 # CS22: C23: generic fn called from 3 non-generic functions
-let id = fn(x) { x }
-let f = fn(n: int) -> int { id(n * 2) }
-let g = fn(n: int) -> int { id(n * 2) }
-let h = fn(n: int) -> int { id(n * 2) }
+fn id(x) = { x }
+fn f(n: Int) -> Int = { id(n * 2) }
+fn g(n: Int) -> Int = { id(n * 2) }
+fn h(n: Int) -> Int = { id(n * 2) }
 puts(f(1))  # output: 2
 puts(g(2))  # output: 4
 puts(h(3))  # output: 6

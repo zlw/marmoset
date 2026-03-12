@@ -77,6 +77,12 @@ ci-lsp-integration:
 ci-quality-lint-fmt-doc:
 	@./test/ci/quality.sh
 
+ci-tree-sitter:
+	@./test/ci/tree-sitter.sh
+
+ci-grammar-sync:
+	@./test/ci/grammar-sync.sh
+
 ci-editor-zed:
 	@./test/ci/editor-zed.sh
 

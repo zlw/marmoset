@@ -1,1 +1,2 @@
-let f = fn() -> bool { true }; f()
+fn f() -> Bool = true
+f()

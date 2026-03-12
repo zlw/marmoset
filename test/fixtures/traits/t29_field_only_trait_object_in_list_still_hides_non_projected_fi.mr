@@ -1,8 +1,8 @@
 # T29: Field-only trait object in list still hides non-projected fields
-trait named {
-  name: string
+trait Named = {
+  name: Str
 }
-let a: named = { name: "alice", age: 1 }
-let b: named = { name: "bob", age: 2 }
-let xs: list[named] = [a, b]
-puts(xs[0].age)  # error: Record field 'age' not found in type
+let a: Named = { name: "alice", age: 1 }  # error: cannot be used as a type in vNext
+let b: Named = { name: "bob", age: 2 }
+let xs: List[Named] = [a, b]
+puts(xs[0].age)

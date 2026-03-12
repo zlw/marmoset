@@ -1,0 +1,17 @@
+# VN121: Qualified child trait override calls keep concrete Dyn packaging
+trait Base[a]: Show = {
+  fn box(self: a) -> Dyn[Show] = self
+}
+
+trait Child[a]: Base = {}
+
+type Point = { x: Int } derive Show
+
+impl Base[Point] = {}
+
+impl Child[Point] = {
+  override fn box(self) = self
+}
+
+let value = Child.box({ x: 1 })
+puts(value.show())  # output: { x: 1 }

@@ -1,6 +1,6 @@
-# TH08: Inherent method returning bool from int receiver
-impl int {
-  fn is_positive(x: int) -> bool {
+# TH08: Inherent method returning Bool from Int receiver
+impl Int = {
+  fn is_positive(x: Int) -> Bool = {
     x > 0
   }
 }

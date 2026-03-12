@@ -1,8 +1,8 @@
-# E61: result[a, b] with two type params - error case
-enum result[a, b] { ok(a) err(b) }
-let x: result[int, string] = result.err("oops")
+# E61: Result[a, b] with two type params - error case
+enum Result[a, b] = { Ok(a), Err(b) }
+let x: Result[Int, Str] = Result.Err("oops")
 let v = match x {
-  result.ok(n): n
-  result.err(_): 0
+  case Result.Ok(n): n
+  case Result.Err(_): 0
 }
 puts(v)  # output: 0

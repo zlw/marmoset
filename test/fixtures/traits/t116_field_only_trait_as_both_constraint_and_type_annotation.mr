@@ -1,9 +1,7 @@
 # T116: Field-only trait as both constraint and type annotation
-trait named {
-  name: string
+trait Named = {
+  name: Str
 }
-let get_name = fn[t: named](x: t) -> string {
-  x.name
-}
-let p: named = { name: "alice", age: 30 }
+fn get_name[t: Named](x: t) -> Str = x.name
+let p: Named = { name: "alice", age: 30 }  # error: cannot be used as a type in vNext
 puts(p.name + " " + get_name({ name: "bob", role: "admin" }))  # output: alice bob

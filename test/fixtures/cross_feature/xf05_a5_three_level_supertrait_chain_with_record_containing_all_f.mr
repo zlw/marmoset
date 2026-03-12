@@ -1,12 +1,17 @@
 # XF05: A5: Three-level supertrait chain with record containing all fields
-trait named {
-  name: string
+trait Named = {
+  name: Str
 }
-trait aged: named {
-  age: int
+trait Aged: Named = {
+  age: Int
 }
-trait profiled: aged {
-  status: string
+trait Profiled: Aged = {
+  status: Str
 }
-let p: profiled = { name: "alice", age: 30, status: "active", secret: true }
-puts(p.name + " " + p.age.show() + " " + p.status)  # output: alice 30 active
+
+fn summarize[t: Profiled](p: t) -> Str = {
+  p.name + " " + p.age.show() + " " + p.status
+}
+
+let p = { name: "alice", age: 30, status: "active", secret: true }
+puts(summarize(p))  # output: alice 30 active

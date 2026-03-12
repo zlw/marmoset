@@ -1,9 +1,9 @@
 # TH04: Multiple inherent methods on same type
-type point = { x: int, y: int }
-impl point {
-  fn get_x(p: point) -> int { p.x }
-  fn get_y(p: point) -> int { p.y }
-  fn sum(p: point) -> int { p.x + p.y }
+type Point = { x: Int, y: Int }
+impl Point = {
+  fn get_x(p: Point) -> Int = p.x
+  fn get_y(p: Point) -> Int = p.y
+  fn sum(p: Point) -> Int = p.x + p.y
 }
-let p: point = { x: 7, y: 8 }
+let p: Point = { x: 7, y: 8 }
 puts(p.sum())  # output: 15

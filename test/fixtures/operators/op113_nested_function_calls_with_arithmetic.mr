@@ -1,4 +1,4 @@
 # OP113: Nested function calls with arithmetic
-let double = fn(x: int) -> int { x * 2 }
-let inc = fn(x: int) -> int { x + 1 }
+fn double(x: Int) -> Int = x * 2
+fn inc(x: Int) -> Int = x + 1
 puts(double(inc(10)))  # output: 22

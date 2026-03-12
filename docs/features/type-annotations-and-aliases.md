@@ -18,18 +18,18 @@ This doc covers:
 ## Syntax
 
 ```marmoset
-let x: int = 5
+let x: Int = 5
 
-let add = fn(a: int, b: int) -> int { a + b }
+fn add(a: Int, b: Int) -> Int = a + b
 
-let id = fn[a](x: a) -> a { x }
-let show_eq = fn[a: show + eq](x: a) -> string { x.show() }
+fn id[a](x: a) -> a = x
+fn show_eq[a: Show & Eq](x: a) -> Str = x.show()
 
-type point = { x: int, y: int }
-type box[a] = { value: a }
+type Point = { x: Int, y: Int }
+type Box[a] = { value: a }
 
-let p: point = { x: 1, y: 2 }
-let s: box[string] = { value: "ok" }
+let p: Point = { x: 1, y: 2 }
+let s: Box[Str] = { value: "ok" }
 ```
 
 ## Sub-Features and Use Cases

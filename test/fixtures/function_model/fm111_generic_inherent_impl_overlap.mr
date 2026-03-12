@@ -1,16 +1,16 @@
-enum wrap[a] { val(a) }
+enum Wrap[a] = { Val(a) }
 
-impl wrap[int] {
-  fn get(w: wrap[int]) -> int {
-    match w { wrap.val(n): n }
+impl Wrap[Int] = {
+  fn get(w: Wrap[Int]) -> Int = match w {
+    case Wrap.Val(n): n
   }
 }
 
-impl wrap[a] {
-  fn get(w: wrap[a]) -> a {
-    match w { wrap.val(v): v }
+impl[a] Wrap[a] = {
+  fn get(w: Wrap[a]) -> a = match w {
+    case Wrap.Val(v): v
   }
 }
 
-let w = wrap.val(42)
+let w = Wrap.Val(42)
 puts(w.get())  # output: 42

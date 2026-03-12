@@ -1,13 +1,13 @@
 # TI07: Impl method with multiple parameters
-trait eq[a] {
-  fn eq(x: a, y: a) -> bool
+trait Eq[a] = {
+  fn eq(x: a, y: a) -> Bool
 }
-type point = { x: int, y: int }
-impl eq for point {
-  fn eq(a: point, b: point) -> bool {
+type Point = { x: Int, y: Int }
+impl Eq[Point] = {
+  fn eq(a: Point, b: Point) -> Bool = {
     a.x == b.x
   }
 }
-let p1: point = { x: 1, y: 2 }
-let p2: point = { x: 1, y: 99 }
+let p1: Point = { x: 1, y: 2 }
+let p2: Point = { x: 1, y: 99 }
 puts(p1.eq(p2))  # output: true

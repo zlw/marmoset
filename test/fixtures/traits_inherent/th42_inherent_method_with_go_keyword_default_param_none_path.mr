@@ -1,12 +1,15 @@
 # TH42: Inherent method with Go keyword 'default' param (none path)
-enum option_int { some(int) none }
-impl option_int {
-  fn unwrap_or(o: option_int, default: int) -> int {
+enum OptionInt = {
+  Some(Int),
+  None,
+}
+impl OptionInt = {
+  fn unwrap_or(o: OptionInt, default: Int) -> Int = {
     match o {
-      option_int.some(v): v
-      option_int.none: default
+      case OptionInt.Some(v): v
+      case OptionInt.None: default
     }
   }
 }
-let x = option_int.none
+let x = OptionInt.None
 puts(x.unwrap_or(99))  # output: 99

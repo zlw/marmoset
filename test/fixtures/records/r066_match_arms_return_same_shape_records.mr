@@ -1,8 +1,8 @@
 # R066: Match arms return records with same shape
 let x = 2
 let r = match x {
-  1: { val: 100 }
-  2: { val: 200 }
-  _: { val: 0 }
+  case 1: { val: 100 }
+  case 2: { val: 200 }
+  case _: { val: 0 }
 }
 puts(r.val)  # output: 200

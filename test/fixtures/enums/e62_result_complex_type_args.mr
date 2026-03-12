@@ -1,8 +1,8 @@
-# E62: result[a, b] with complex type args
-enum result[a, b] { ok(a) err(b) }
-let x: result[string, int] = result.ok("hello")
+# E62: Result[a, b] with complex type args
+enum Result[a, b] = { Ok(a), Err(b) }
+let x: Result[Str, Int] = Result.Ok("hello")
 let v = match x {
-  result.ok(s): s
-  result.err(_): "error"
+  case Result.Ok(s): s
+  case Result.Err(_): "error"
 }
 puts(v)  # output: hello

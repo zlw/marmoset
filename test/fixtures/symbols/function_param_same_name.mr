@@ -1,2 +1,2 @@
-let f = fn(f: int) -> int { f }
+fn f(f: Int) -> Int = f
 puts(f(99))  # output: 99

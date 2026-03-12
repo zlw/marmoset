@@ -1,14 +1,14 @@
 # U72: Transform enum via match, return new enum
-enum option[a] { some(a) none }
-let double_opt = fn(x: option[int]) -> option[int] {
+enum Option[a] = { Some(a), None }
+fn double_opt(x: Option[Int]) -> Option[Int] = {
   match x {
-    option.some(v): option.some(v * 2)
-    option.none: option.none()
+    case Option.Some(v): Option.Some(v * 2)
+    case Option.None: Option.None()
   }
 }
-let r = double_opt(option.some(42))
+let r = double_opt(Option.Some(42))
 let out = match r {
-  option.some(v): v
-  option.none: 0
+  case Option.Some(v): v
+  case Option.None: 0
 }
 puts(out)  # output: 84

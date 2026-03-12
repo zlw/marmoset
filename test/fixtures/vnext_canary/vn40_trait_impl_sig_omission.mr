@@ -1,0 +1,13 @@
+# VN40: Trait impl methods may omit their signature suffix and inherit the trait signature
+trait Display[a] = {
+  fn render(x: a) -> Str
+}
+
+type Thing = { v: Int }
+
+impl Display[Thing] = {
+  fn render(x) = "thing:" + x.v.show()
+}
+
+let thing: Thing = { v: 42 }
+puts(thing.render())  # output: thing:42

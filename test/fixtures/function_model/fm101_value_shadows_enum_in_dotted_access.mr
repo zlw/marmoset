@@ -1,4 +1,4 @@
-enum color { red green blue }
+enum Color = { Red, Green, Blue }
 
 let color = { red: "my_red" }
 # `color` is now a value (record), not the enum

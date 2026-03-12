@@ -1,13 +1,13 @@
 # CS52: H53: enum match inside if-branch
-enum option[a] { some(a) none }
-let f = fn(flag: bool, opt: option[int]) -> int {
+enum Option[a] = { Some(a), None }
+fn f(flag: Bool, opt: Option[Int]) -> Int = {
   if (flag) {
     match opt {
-      option.some(v): v
-      option.none: 0
+      case Option.Some(v): v
+      case Option.None: 0
     }
   } else {
     0
   }
 }
-puts(f(true, option.some(42)))  # output: 42
+puts(f(true, Option.Some(42)))  # output: 42

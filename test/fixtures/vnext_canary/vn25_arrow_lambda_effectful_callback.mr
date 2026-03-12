@@ -1,0 +1,10 @@
+# VN25: Explicit effectful arrow lambda works in an effectful callback slot
+fn run_effectful(f: (Int) => Int, x: Int) => Int = f(x)
+
+let bump = (n: Int) => {
+  puts(n)
+  n + 1
+}
+
+# output: 41
+puts(run_effectful(bump, 41))  # output: 42

@@ -1,9 +1,9 @@
 # E71: All-nullary enum match
-enum traffic { red yellow green }
-let t = traffic.yellow
+enum Traffic = { Red, Yellow, Green }
+let t = Traffic.Yellow
 let v = match t {
-  traffic.red: 1
-  traffic.yellow: 2
-  traffic.green: 3
+  case Traffic.Red: 1
+  case Traffic.Yellow: 2
+  case Traffic.Green: 3
 }
 puts(v)  # output: 2

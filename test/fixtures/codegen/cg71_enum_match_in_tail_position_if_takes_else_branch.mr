@@ -1,12 +1,9 @@
 # CG71: Enum match in tail position if takes else branch
-enum option[a] {
-  some(a)
-  none
-}
-let check = fn(o: option[int]) -> int {
+enum Option[a] = { Some(a), None }
+fn check(o: Option[Int]) -> Int = {
   match o {
-    option.some(v): if (v > 10) { 100 } else { v }
-    option.none: 0
+    case Option.Some(v): if (v > 10) { 100 } else { v }
+    case Option.None: 0
   }
 }
-puts(check(option.some(7)))  # output: 7
+puts(check(Option.Some(7)))  # output: 7

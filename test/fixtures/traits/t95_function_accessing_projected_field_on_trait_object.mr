@@ -1,8 +1,6 @@
 # T95: Function accessing projected field on trait object
-trait greetable {
-  greeting: string
+trait Greetable = {
+  greeting: Str
 }
-let get_greeting = fn(g: greetable) -> string {
-  g.greeting
-}
+fn get_greeting(g: Greetable) -> Str = g.greeting
 puts(get_greeting({ greeting: "hello", id: 1 }))  # output: hello

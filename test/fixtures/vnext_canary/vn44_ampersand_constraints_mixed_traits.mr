@@ -1,0 +1,16 @@
+# VN44: Ampersand constraints compose multiple trait bounds
+trait Named = { name: Str }
+trait Tagged[a] = {
+  fn tag(x: a) -> Str
+}
+
+type User = { name: Str, id: Int }
+
+impl Tagged[User] = {
+  fn tag(x: User) -> Str = "#" + x.id.show()
+}
+
+fn describe[t: Named & Tagged](x: t) -> Str = x.name + x.tag()
+
+let user: User = { name: "mia", id: 7 }
+puts(describe(user))  # output: mia#7

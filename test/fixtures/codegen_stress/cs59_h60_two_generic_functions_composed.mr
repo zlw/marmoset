@@ -1,4 +1,4 @@
 # CS59: H60: two generic functions composed
-let wrap_a = fn(x) { x }
-let wrap_b = fn(x) { x }
+fn wrap_a(x) = { x }
+fn wrap_b(x) = { x }
 puts(wrap_a(wrap_b(42)))  # output: 42

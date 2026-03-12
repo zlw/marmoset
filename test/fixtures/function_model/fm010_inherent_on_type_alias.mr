@@ -1,10 +1,10 @@
-type myint = int
+type MyInt = Int
 
-impl myint {
-  fn doubled(x: myint) -> myint {
+impl MyInt = {
+  fn doubled(x: MyInt) -> MyInt = {
     x + x
   }
 }
 
-let n: myint = 7
+let n: MyInt = 7
 puts(n.doubled())  # output: 14

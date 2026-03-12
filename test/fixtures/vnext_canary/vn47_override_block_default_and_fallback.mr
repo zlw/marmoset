@@ -1,0 +1,20 @@
+# VN47: Block-bodied default methods work both overridden and inherited
+trait Greeter[a]: Show = {
+  fn greet(x: a) -> Str = {
+    let prefix = "hello "
+    let _ = x
+    prefix + "fallback"
+  }
+}
+
+impl Greeter[Int] = {
+  override fn greet(x: Int) -> Str = {
+    let prefix = "override "
+    prefix + x.show()
+  }
+}
+
+impl Greeter[Bool] = {}
+
+puts(1.greet())     # output: override 1
+puts(true.greet())  # output: hello fallback

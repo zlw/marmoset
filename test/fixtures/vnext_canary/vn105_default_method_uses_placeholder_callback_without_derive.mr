@@ -1,0 +1,9 @@
+# VN105: Trait default methods still run placeholder shorthand rewrites without derive expansion
+fn apply[a, b](x: a, f: (a) -> b) -> b = f(x)
+
+trait Fancy[a]: Show = {
+  fn fancy(self: a) -> Str = apply(self, _.show())
+}
+
+impl Fancy[Int] = {}
+puts(1.fancy())  # output: 1

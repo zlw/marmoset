@@ -1,13 +1,11 @@
-enum opt[a] { some(a) none }
+enum Opt[a] = { Some(a), None }
 
-impl opt[a] {
-  fn map[b](o: opt[a], f: fn(a) -> b) -> opt[b] {
-    match o {
-      opt.some(v): opt.some(f(v))
-      opt.none: opt.none
-    }
+impl[a] Opt[a] = {
+  fn map[b](o: Opt[a], f: (a) -> b) -> Opt[b] = match o {
+    case Opt.Some(v): Opt.Some(f(v))
+    case Opt.None: Opt.None
   }
 }
 
-let x = opt.some(42)
-let y = x.map(fn(n: int) -> string { n.show() })
+let x = Opt.Some(42)
+let y = x.map((n: Int) -> n.show())

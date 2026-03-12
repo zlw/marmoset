@@ -1,6 +1,6 @@
-# CS64: K70b: [PARSER-LIMIT] block body in match arm rejected
-enum pair { make(int, string) }
-let p = pair.make(42, "hello")
+# CS64: K70b: former parser limit, block body in match arm now supported
+enum Pair = { Make(Int, Str) }
+let p = Pair.Make(42, "hello")
 match p {
-  pair.make(n, s): { puts(n) }  # error: parse-expected-token
+  case Pair.Make(n, s): { puts(n) }  # output: 42
 }

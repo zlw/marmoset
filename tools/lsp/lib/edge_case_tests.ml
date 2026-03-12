@@ -87,7 +87,7 @@ let%test "semantic_tokens: deeply nested infix expression" =
 
 (* 3. Variable shadowing a function *)
 let%test "semantic_tokens: variable and function with different names" =
-  let tokens = get_tokens "let f = fn(x) { x }; let g = 42; g" in
+  let tokens = get_tokens "let f = (x) -> x; let g = 42; g" in
   match tokens with
   | Some _st ->
       (* Should succeed without crash *)
@@ -98,7 +98,7 @@ let%test "semantic_tokens: variable and function with different names" =
 
 (* 4. Same-name parameter and outer variable *)
 let%test "semantic_tokens: parameter shadows outer variable" =
-  let tokens = get_tokens "let x = 1; let f = fn(x) { x }; x" in
+  let tokens = get_tokens "let x = 1; let f = (x) -> x; x" in
   match tokens with
   | Some _st ->
       let param_count = count_token_type Semantic_tokens.parameter_type tokens in
@@ -187,7 +187,7 @@ let%test "semantic_tokens: delta_line values are non-negative" =
 
 (* 15. All lengths are positive *)
 let%test "semantic_tokens: all token lengths are positive" =
-  let tokens = get_tokens "let f = fn(x) { x + 1 }; f(42)" in
+  let tokens = get_tokens "let f = (x) -> x + 1; f(42)" in
   match tokens with
   | Some st ->
       let decoded = decode_tokens st.data in
@@ -200,13 +200,15 @@ let%test "semantic_tokens: all token lengths are positive" =
 
 (* 1. Deeply nested functions *)
 let%test "folding_ranges: deeply nested functions" =
-  let src = "let f = fn(x) {\n  fn(y) {\n    fn(z) {\n      x + y + z\n    }\n  }\n}" in
+  let src =
+    "let f = (x) -> {\n  let g = (y) -> {\n    let h = (z) -> {\n      x + y + z\n    };\n    h\n  };\n  g\n}"
+  in
   let ranges = get_ranges src in
   List.length ranges >= 3
 
 (* 2. Single-line everything -- should produce 0 ranges *)
 let%test "folding_ranges: single-line source produces 0 ranges" =
-  let src = "let x = 42; let y = fn(a) { a + 1 }; y(x)" in
+  let src = "let x = 42; let y = (a) -> a + 1; y(x)" in
   let ranges = get_ranges src in
   List.length ranges = 0
 
@@ -234,13 +236,13 @@ let%test "folding_ranges: whitespace-only source" =
 
 (* 7. Multiple top-level multi-line constructs *)
 let%test "folding_ranges: multiple top-level multi-line blocks" =
-  let src = "let f = fn(x) {\n  x + 1\n};\nlet g = fn(y) {\n  y + 2\n};\nenum color {\n  red\n  green\n}" in
+  let src = "let f = (x) -> {\n  x + 1\n};\nlet g = (y) -> {\n  y + 2\n};\nenum Color = {\n  Red\n  Green\n}" in
   let ranges = get_ranges src in
   List.length ranges >= 3
 
 (* 8. Range startLine is always less than endLine *)
 let%test "folding_ranges: all ranges have startLine < endLine" =
-  let src = "let f = fn(x) {\n  if (true) {\n    x\n  } else {\n    0\n  }\n}" in
+  let src = "let f = (x) -> {\n  if (true) {\n    x\n  } else {\n    0\n  }\n}" in
   let ranges = get_ranges src in
   List.length ranges > 0 && List.for_all (fun (r : Lsp_t.FoldingRange.t) -> r.startLine < r.endLine) ranges
 
@@ -390,7 +392,7 @@ let%test "doc_state: type error returns diagnostics" =
 (* 5. Valid source with enum + match *)
 let%test "doc_state: complex valid source with enum and match" =
   let src =
-    "enum shape {\n  circle(float)\n  rect(float, float)\n}\nlet area = fn(s: shape) -> float {\n  match s {\n    shape.circle(r): r\n    shape.rect(w, h): w\n  }\n}"
+    "enum Shape = {\n  Circle(Float)\n  Rect(Float, Float)\n}\nlet area = (s: Shape) -> {\n  match s {\n    case Shape.Circle(r): r\n    case Shape.Rect(w, h): w\n  }\n}"
   in
   let result = Doc_state.analyze ~source:src in
   result.diagnostics = [] && result.program <> None && result.type_map <> None
@@ -414,13 +416,13 @@ let%test "doc_state: unicode in identifier position does not crash" =
 
 (* 9. Parser limitation: fn type in annotation causes parse error *)
 let%test "doc_state: fn type annotation in param now parses successfully" =
-  let src = "let apply = fn(f: fn(int) -> int, x: int) -> int { f(x) };" in
+  let src = "let apply = (f: (Int) -> Int, x: Int) -> f(x);" in
   let result = Doc_state.analyze ~source:src in
   result.diagnostics = [] && result.program <> None
 
 (* 10. Repeated analysis resets global state *)
 let%test "doc_state: repeated analysis does not leak state" =
-  let _ = Doc_state.analyze ~source:"enum color { red green blue }" in
+  let _ = Doc_state.analyze ~source:"enum Color = { Red Green Blue }" in
   let result2 = Doc_state.analyze ~source:"let x = 42;" in
   result2.diagnostics = [] && result2.program <> None
 
@@ -482,15 +484,15 @@ let%test "lsp_utils: round-trip offset for every byte in multi-line source" =
 
 (* Semantic tokens + selection ranges on same source *)
 let%test "cross-module: semantic tokens and selection ranges on same source" =
-  let source = "let f = fn(x) { x + 1 }; f(42)" in
+  let source = "let f = (x) -> x + 1; f(42)" in
   let tokens = get_tokens source in
-  let selections = get_selection source [ (0, 0); (0, 16); (0, 26) ] in
+  let selections = get_selection source [ (0, 0); (0, 12); (0, 25) ] in
   tokens <> None && List.length selections = 3
 
 (* All modules handle a simpler complex source (avoiding fn type annotation parser limitation) *)
 let%test "cross-module: all modules handle enum + match source" =
   let source =
-    "enum opt[a] {\n  some(a)\n  none\n}\nlet map = fn(o: opt[int]) -> opt[int] {\n  match o {\n    opt.some(v): opt.some(v)\n    opt.none: opt.none\n  }\n};\nmap(opt.some(42))"
+    "enum Opt[a] = {\n  Some(a)\n  None\n}\nlet map = (o: Opt[Int]) -> {\n  match o {\n    case Opt.Some(v): Opt.Some(v)\n    case Opt.None: Opt.None\n  }\n};\nmap(Opt.Some(42))"
   in
   let result = Doc_state.analyze ~source in
   let _tokens =
@@ -514,7 +516,7 @@ let%test "cross-module: all modules handle enum + match source" =
 
 (* Folding + semantic tokens agree on which lines have content *)
 let%test "cross-module: folding ranges only on lines with tokens" =
-  let source = "let f = fn(x) {\n  x + 1\n};\nlet g = fn(y) {\n  y * 2\n};" in
+  let source = "let f = (x) -> {\n  x + 1\n};\nlet g = (y) -> {\n  y * 2\n};" in
   let result = Doc_state.analyze ~source in
   match (result.program, result.type_map, result.environment) with
   | Some prog, Some tm, Some env ->

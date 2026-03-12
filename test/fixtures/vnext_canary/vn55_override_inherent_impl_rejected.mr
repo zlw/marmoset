@@ -1,0 +1,4 @@
+# VN55: override is invalid in inherent impls
+impl Int = {
+  override fn triple(x: Int) -> Int = x * 3  # error: override-invalid
+}

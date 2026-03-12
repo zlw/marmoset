@@ -1,7 +1,7 @@
 # U51: Nullary constructor passed to function
-enum option[a] { some(a) none }
-let n: option[int] = option.none()
-let unwrap = fn(x: option[int]) -> int {
-  match x { option.some(v): v option.none: 0 }
+enum Option[a] = { Some(a), None }
+let n: Option[Int] = Option.None()
+fn unwrap(x: Option[Int]) -> Int = {
+  match x { case Option.Some(v): v case Option.None: 0 }
 }
 puts(unwrap(n))  # output: 0

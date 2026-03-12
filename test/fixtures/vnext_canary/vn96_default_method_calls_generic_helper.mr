@@ -1,0 +1,21 @@
+# VN96: Default methods can call a generic helper that is specialized from the impl receiver
+trait Named[a] = {
+  fn name(x: a) -> Str
+}
+
+fn name_via_helper[a: Named](x: a) -> Str = x.name()
+
+trait LoudNamed[a]: Named = {
+  fn shout(x: a) -> Str = name_via_helper(x) + "!"
+}
+
+type Person = { name: Str }
+
+impl Named[Person] = {
+  fn name(x: Person) -> Str = x.name
+}
+
+impl LoudNamed[Person] = {}
+
+let p: Person = { name: "alice" }
+puts(p.shout())  # output: alice!

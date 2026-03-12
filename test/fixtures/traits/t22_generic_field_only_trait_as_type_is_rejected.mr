@@ -1,5 +1,5 @@
 # T22: Generic field-only trait as type is rejected
-trait tagged[a] {  # error: generic field-only trait objects are not supported in this phase
+trait Tagged[a] = {
   tag: a
 }
-let x: tagged = { tag: 1 }
+let x: Tagged = { tag: 1 }  # error: cannot be used as a type in vNext

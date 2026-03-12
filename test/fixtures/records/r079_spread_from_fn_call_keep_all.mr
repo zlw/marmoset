@@ -1,4 +1,4 @@
 # R079: Spread from function call, keep all base fields
-let make_base = fn() { { x: 5, y: 10 } }
+fn make_base() = { { x: 5, y: 10 } }
 let r = { ...make_base(), z: 0 }
 puts(r.x + r.y)  # output: 15

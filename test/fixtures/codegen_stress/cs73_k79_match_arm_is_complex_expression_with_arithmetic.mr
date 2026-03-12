@@ -1,9 +1,9 @@
 # CS73: K79: match arm is complex expression with arithmetic
 let n = 3
 let result = match n {
-  1: 10 * 5
-  2: 20 * 5
-  3: 30 * 5
-  _: 0
+  case 1: 10 * 5
+  case 2: 20 * 5
+  case 3: 30 * 5
+  case _: 0
 }
 puts(result)  # output: 150

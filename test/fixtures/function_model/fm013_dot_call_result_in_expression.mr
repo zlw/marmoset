@@ -1,11 +1,11 @@
-type pair = { a: int, b: int }
+type Pair = { a: Int, b: Int }
 
-impl pair {
-  fn total(p: pair) -> int {
+impl Pair = {
+  fn total(p: Pair) -> Int = {
     p.a + p.b
   }
 }
 
-let p: pair = { a: 10, b: 20 }
+let p: Pair = { a: 10, b: 20 }
 let result = p.total() + 5
 puts(result)  # output: 35

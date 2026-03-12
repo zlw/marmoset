@@ -1,8 +1,8 @@
-# U40: result with record ok value
-enum result[a, e] { ok(a) err(e) }
-let r: result[{name: string}, int] = result.ok({name: "alice"})
+# U40: Result with record Ok value
+enum Result[a, e] = { Ok(a), Err(e) }
+let r: Result[{name: Str}, Int] = Result.Ok({name: "alice"})
 let out = match r {
-  result.ok(v): v.name
-  result.err(_): "error"
+  case Result.Ok(v): v.name
+  case Result.Err(_): "error"
 }
 puts(out)  # output: alice

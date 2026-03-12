@@ -1,9 +1,9 @@
 # U68: Enum built in if/else, then matched
-enum option[a] { some(a) none }
+enum Option[a] = { Some(a), None }
 let x = 5
-let opt: option[string] = if (x > 0) { option.some("positive") } else { option.none() }
+let opt: Option[Str] = if (x > 0) { Option.Some("positive") } else { Option.None() }
 let out = match opt {
-  option.some(s): s
-  option.none: "zero or neg"
+  case Option.Some(s): s
+  case Option.None: "zero or neg"
 }
 puts(out)  # output: positive

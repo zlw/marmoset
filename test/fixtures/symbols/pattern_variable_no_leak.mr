@@ -1,7 +1,7 @@
-enum option[a] { some(a) none }
-let x = option.some(7)
+enum Option[a] = { Some(a), None }
+let x = Option.Some(7)
 let result = match x {
-  option.some(v): v
-  option.none: 0
+  case Option.Some(v): v
+  case Option.None: 0
 }
 puts(v)  # error: Unbound variable

@@ -1,1 +1,2 @@
-let f = fn() -> list[int] { 42 }; f()  # error: annotation mismatch
+fn f() -> List[Int] = 42  # error: annotation mismatch
+f()

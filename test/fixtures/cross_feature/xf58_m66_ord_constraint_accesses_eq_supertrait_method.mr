@@ -1,18 +1,18 @@
-# XF58: M66: Ord constraint accesses eq supertrait method
-type point = { x: int }
-impl eq for point {
-  fn eq(a: point, b: point) -> bool {
+# XF58: M66: Ord constraint accesses Eq supertrait method
+type Point = { x: Int }
+impl Eq[Point] = {
+  fn eq(a: Point, b: Point) -> Bool = {
     a.x == b.x
   }
 }
-impl ord for point {
-  fn compare(a: point, b: point) -> ordering {
+impl Ord[Point] = {
+  fn compare(a: Point, b: Point) -> Ordering = {
     if (a.x < b.x) { ordering.less } else { if (a.x == b.x) { ordering.equal } else { ordering.greater } }
   }
 }
-let same = fn[a: ord](x: a, y: a) -> bool {
+fn same[a: Ord](x: a, y: a) -> Bool = {
   x.eq(y)
 }
-let p1: point = { x: 42 }
-let p2: point = { x: 42 }
+let p1: Point = { x: 42 }
+let p2: Point = { x: 42 }
 puts(same(p1, p2))  # output: true

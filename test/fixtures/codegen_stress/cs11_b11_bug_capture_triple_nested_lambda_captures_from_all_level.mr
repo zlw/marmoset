@@ -1,9 +1,7 @@
 # CS11: B11: [BUG-CAPTURE] triple-nested lambda captures from all levels
 let a = 1
-let f = fn(b: int) -> int {
-  let g = fn(c: int) -> int {
-    a + b + c
-  }
+fn f(b: Int) -> Int = {
+  let g = (c: Int) -> a + b + c
   g(3)
 }
 puts(f(2))  # output: 6

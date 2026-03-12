@@ -1,3 +1,3 @@
 # TF15: Unconstrained generic: record missing accessed field
-let get_x = fn(r) { r.x };
+fn get_x(r) = r.x
 get_x({ y: 10 })  # error: Cannot unify

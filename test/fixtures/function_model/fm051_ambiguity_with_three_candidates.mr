@@ -1,12 +1,12 @@
-type thing = { v: int }
+type Thing = { v: Int }
 
-trait p1[a] { fn go(x: a) -> string }
-trait p2[a] { fn go(x: a) -> string }
-trait p3[a] { fn go(x: a) -> string }
+trait P1[a] = { fn go(x: a) -> Str }
+trait P2[a] = { fn go(x: a) -> Str }
+trait P3[a] = { fn go(x: a) -> Str }
 
-impl p1 for thing { fn go(x: thing) -> string { "1" } }
-impl p2 for thing { fn go(x: thing) -> string { "2" } }
-impl p3 for thing { fn go(x: thing) -> string { "3" } }
+impl P1[Thing] = { fn go(x: Thing) -> Str = { "1" } }
+impl P2[Thing] = { fn go(x: Thing) -> Str = { "2" } }
+impl P3[Thing] = { fn go(x: Thing) -> Str = { "3" } }
 
-let t: thing = { v: 0 }
+let t: Thing = { v: 0 }
 t.go()  # error: Ambiguous

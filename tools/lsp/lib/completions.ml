@@ -13,10 +13,12 @@ let keywords =
     ("else", "Else branch");
     ("return", "Return from function");
     ("match", "Pattern matching");
+    ("case", "Match arm");
     ("enum", "Algebraic data type");
     ("trait", "Trait (interface) definition");
     ("impl", "Trait implementation");
     ("derive", "Automatic trait derivation");
+    ("override", "Trait default replacement");
     ("type", "Type alias");
     ("true", "Boolean literal");
     ("false", "Boolean literal");
@@ -33,14 +35,7 @@ let kind_of_type (mono : Types.mono_type) : Lsp_t.CompletionItemKind.t =
 
 (* Format a poly_type for completion detail in Marmoset syntax.
    Normalizes the mono_type first so var names in the bracket match the type. *)
-let detail_of_poly (Types.Forall (vars, mono)) : string =
-  match vars with
-  | [] -> Types.to_string_pretty mono
-  | _ ->
-      let norm = Types.normalize mono in
-      let norm_str = Types.to_string norm in
-      let norm_vars = List.mapi (fun i _ -> Types.nice_var_name i) vars in
-      Printf.sprintf "[%s]: %s" (String.concat ", " norm_vars) norm_str
+let detail_of_poly poly : string = Source_syntax.poly_type_detail poly
 
 (* Build completion items from the type environment *)
 let completions_from_env (env : Infer.type_env) : Lsp_t.CompletionItem.t list =
@@ -84,7 +79,11 @@ let%test "completions include keywords" =
   let env = env_with [] in
   let items = completions ~environment:env in
   let labels = List.map (fun (i : Lsp_t.CompletionItem.t) -> i.label) items in
-  List.mem "let" labels && List.mem "fn" labels && List.mem "match" labels
+  List.mem "let" labels
+  && List.mem "fn" labels
+  && List.mem "match" labels
+  && List.mem "case" labels
+  && List.mem "override" labels
 
 let%test "function gets Function kind" =
   let env = env_with [ ("f", Types.Forall ([], Types.tfun Types.TInt Types.TBool)) ] in
@@ -140,4 +139,11 @@ let%test "detail shows type for monomorphic binding" =
   let items = completions ~environment:env in
   match List.find_opt (fun (i : Lsp_t.CompletionItem.t) -> i.label = "x") items with
   | Some item -> item.detail = Some "Int"
+  | None -> false
+
+let%test "detail uses vNext collection syntax" =
+  let env = env_with [ ("xs", Types.Forall ([], Types.TArray Types.TInt)) ] in
+  let items = completions ~environment:env in
+  match List.find_opt (fun (i : Lsp_t.CompletionItem.t) -> i.label = "xs") items with
+  | Some item -> item.detail = Some "List[Int]"
   | None -> false

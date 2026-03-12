@@ -1,12 +1,10 @@
 # TF05: Constrained generic: access field from first constraint when second is present
-trait has_x {
-  x: int
+trait HasX = {
+  x: Int
 }
-trait has_y {
-  y: int
+trait HasY = {
+  y: Int
 }
-let get_x_only = fn[t: has_x + has_y](v: t) -> int {
-  v.x
-};
+fn get_x_only[t: HasX & HasY](v: t) -> Int = v.x
 let r = { x: 10, y: 20 }
 puts(get_x_only(r))  # output: 10

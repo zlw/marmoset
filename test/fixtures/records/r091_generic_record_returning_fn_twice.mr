@@ -1,5 +1,5 @@
 # R091: Generic record-returning function called twice
-let wrap = fn(v) { { val: v } }
+fn wrap(v) = { { val: v } }
 let a = wrap(5)
 let b = wrap(10)
 puts(a.val + b.val)  # output: 15

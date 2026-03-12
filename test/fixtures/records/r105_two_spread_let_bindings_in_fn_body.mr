@@ -1,6 +1,5 @@
 # R105: Two spread let-bindings in same fn body
-let transform = fn(r) {
-  let r2 = { ...r, x: 10 }
+fn transform(r) = {  let r2 = { ...r, x: 10 }
   let r3 = { ...r2, y: 20 }
   r3.x + r3.y + r3.z
 }

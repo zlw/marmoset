@@ -1,0 +1,4 @@
+# VN50: Placeholder stays an ordinary identifier outside callback positions
+fn echo(s: Str) -> Str = s
+
+echo(_)  # error: Unbound variable: _

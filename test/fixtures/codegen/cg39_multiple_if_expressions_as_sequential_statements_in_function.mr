@@ -1,5 +1,5 @@
 # CG39: Multiple if-expressions as sequential statements in function body
-let f = fn(a: bool, b: bool) => int {
+fn f(a: Bool, b: Bool) => Int = {
   let x = if (a) { 1 } else { 0 }
   let y = if (b) { 2 } else { 0 }
   x + y

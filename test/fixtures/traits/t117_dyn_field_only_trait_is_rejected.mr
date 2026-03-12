@@ -1,0 +1,6 @@
+# T117: Dyn rejects field-only traits
+trait Named = {
+  name: Str
+}
+let x: Dyn[Named] = { name: "alice" }  # error: field-only trait
+x

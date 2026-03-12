@@ -1,7 +1,6 @@
 # T26: Impl block for field-only trait is rejected
-trait named {  # error: field-only and cannot have impl blocks
-  name: string
+trait Named = {  # error: field-only and cannot have impl blocks
+  name: Str
 }
-impl named for int {
-}
+impl Named[Int] = {}
 puts(1)

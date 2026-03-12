@@ -1,26 +1,27 @@
-type mystr = string
-type point = { x: int, y: int }
-enum flag { on off }
+type Mystr = Str
+type Point = { x: Int, y: Int }
+enum Flag = { On, Off }
 
-impl mystr {
-  fn loud(s: mystr) -> mystr {
+impl Mystr = {
+  fn loud(s: Mystr) -> Mystr = {
     s + "!"
   }
 }
 
-impl point {
-  fn sum(p: point) -> int { p.x + p.y }
+impl Point = {
+  fn sum(p: Point) -> Int = { p.x + p.y }
 }
 
-impl flag {
-  fn is_on(f: flag) -> bool {
-    match f { flag.on: true flag.off: false }
+impl Flag = {
+  fn is_on(f: Flag) -> Bool = match f {
+    case Flag.On: true
+    case Flag.Off: false
   }
 }
 
-let s: mystr = "hi"
+let s: Mystr = "hi"
 puts(s.loud())  # output: hi!
-let p: point = { x: 1, y: 2 }
+let p: Point = { x: 1, y: 2 }
 puts(p.sum())  # output: 3
-let f = flag.on
+let f = Flag.On
 puts(f.is_on())  # output: true

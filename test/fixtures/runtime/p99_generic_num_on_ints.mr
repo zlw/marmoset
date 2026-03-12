@@ -1,2 +1,2 @@
-let add = fn[t: num](a: t, b: t) { a + b }
+fn add[t: Num](a: t, b: t) = a + b
 puts(add(3, 4))  # output: 7

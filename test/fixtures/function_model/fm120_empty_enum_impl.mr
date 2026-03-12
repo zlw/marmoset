@@ -1,8 +1,8 @@
-enum empty_enum { a b }
+enum EmptyEnum = { A, B }
 
-impl empty_enum {
-  fn dummy(e: empty_enum) -> int { 0 }
+impl EmptyEnum = {
+  fn dummy(e: EmptyEnum) -> Int = { 0 }
 }
 
-let e = empty_enum.a
+let e = EmptyEnum.A
 puts(e.dummy())  # output: 0

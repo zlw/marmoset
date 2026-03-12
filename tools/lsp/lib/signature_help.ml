@@ -6,13 +6,12 @@ module Infer = Marmoset.Lib.Infer
 module Types = Marmoset.Lib.Types
 module Trait_registry = Typecheck.Trait_registry
 
-(* Decompose a curried TFun into a flat param list and return type.
-   TFun(a, TFun(b, c)) → ([a; b], c) *)
-let rec collect_params = function
-  | Types.TFun (arg, rest, _) ->
-      let params, ret = collect_params rest in
-      (arg :: params, ret)
-  | t -> ([], t)
+(* Decompose a curried TFun into a flat param list, return type, and overall purity. *)
+let rec collect_params eff = function
+  | Types.TFun (arg, rest, is_eff) ->
+      let params, ret, eff' = collect_params (eff || is_eff) rest in
+      (arg :: params, ret, eff')
+  | t -> ([], t, eff)
 
 (* Info about an enclosing call site found by AST walking *)
 type call_info = {
@@ -178,6 +177,7 @@ let find_enclosing_call ~(source : string) (offset : int) (program : Ast.AST.pro
         Option.iter visit_expr spread
     | Ast.AST.EnumConstructor (_, _, args) -> List.iter visit_expr args
     | Ast.AST.TypeCheck (e, _) -> visit_expr e
+    | Ast.AST.BlockExpr stmts -> List.iter visit_stmt stmts
     | Ast.AST.Identifier _ | Ast.AST.Integer _ | Ast.AST.Float _ | Ast.AST.Boolean _ | Ast.AST.String _ -> ()
   and visit_stmt (stmt : Ast.AST.statement) =
     match stmt.stmt with
@@ -235,12 +235,13 @@ let find_param_names ~(program : Ast.AST.program) ~(name : string) : string list
   in
   search_stmts program
 
-(* Build a signature label string like "fn(x: Int, y: String) -> Bool"
+(* Build a signature label string like "show(x: Int, y: String) -> Bool"
    and return the byte offset ranges for each parameter within the label. *)
 let build_label
     ~(param_names : string list)
     ~(param_types : Types.mono_type list)
     ~(ret_type : Types.mono_type)
+    ~(is_effectful : bool)
     ~(fn_display_name : string) : string * (int * int) list =
   let param_names_arr = Array.of_list param_names in
   let param_name_count = Array.length param_names_arr in
@@ -261,12 +262,16 @@ let build_label
       let start = Buffer.length buf in
       Buffer.add_string buf name;
       Buffer.add_string buf ": ";
-      Buffer.add_string buf (Types.to_string typ);
+      Buffer.add_string buf (Source_syntax.mono_type_to_source typ);
       let stop = Buffer.length buf in
       offsets := (start, stop) :: !offsets)
     param_types;
-  Buffer.add_string buf ") -> ";
-  Buffer.add_string buf (Types.to_string ret_type);
+  Buffer.add_string buf
+    (if is_effectful then
+       ") => "
+     else
+       ") -> ");
+  Buffer.add_string buf (Source_syntax.mono_type_to_source ret_type);
   (Buffer.contents buf, List.rev !offsets)
 
 (* Provide signature help at a given cursor position *)
@@ -281,11 +286,9 @@ let signature_help
   match find_enclosing_call ~source offset program with
   | None -> None
   | Some call -> (
-      (* Determine the function type *)
       let fn_type_opt =
         match call.method_name with
         | Some mname -> (
-            (* Method call: look up receiver type, then resolve method *)
             match call.recv_id with
             | None -> None
             | Some recv_id -> (
@@ -295,16 +298,14 @@ let signature_help
                     match Trait_registry.lookup_method recv_type mname with
                     | None -> None
                     | Some (_trait_name, method_sig) ->
-                        (* Reconstruct a function type from method_sig params → return *)
                         let param_types = List.map snd method_sig.method_params in
                         let param_names = List.map fst method_sig.method_params in
-                        Some (`Method (param_types, method_sig.method_return_type, param_names)))))
+                        let is_effectful = method_sig.method_effect = `Effectful in
+                        Some (`Method (param_types, method_sig.method_return_type, param_names, is_effectful)))))
         | None -> (
-            (* Regular call: look up fn_expr type *)
             match Hashtbl.find_opt type_map call.fn_id with
             | Some fn_type -> Some (`FnType fn_type)
             | None -> (
-                (* Try environment for polymorphic functions *)
                 match call.fn_name with
                 | Some name -> (
                     match Infer.TypeEnv.find_opt name environment with
@@ -315,22 +316,17 @@ let signature_help
       match fn_type_opt with
       | None -> None
       | Some info -> (
-          let param_types, ret_type, method_param_names =
+          let param_types, ret_type, is_effectful, method_param_names =
             match info with
             | `FnType fn_type ->
-                (* Normalize the full function type once to preserve type variable identity *)
                 let norm = Types.normalize fn_type in
-                let params, ret = collect_params norm in
-                (params, ret, None)
-            | `Method (ptypes, ret, pnames) ->
-                (* Method types come from trait registry — normalize together *)
-                let dummy_fn = List.fold_right (fun p acc -> Types.tfun p acc) ptypes ret in
-                let norm = Types.normalize dummy_fn in
-                let params, ret_n = collect_params norm in
-                (params, ret_n, Some pnames)
+                let params, ret, eff = collect_params false norm in
+                (params, ret, eff, None)
+            | `Method (ptypes, ret, pnames, is_effectful) ->
+                (ptypes, Types.normalize ret, is_effectful, Some pnames)
           in
           match param_types with
-          | [] -> None (* Not a function type — e.g. 42() *)
+          | [] -> None
           | _ ->
               let fn_display_name =
                 match call.method_name with
@@ -351,7 +347,9 @@ let signature_help
                         | None -> [])
                     | None -> [])
               in
-              let label, offsets = build_label ~param_names ~param_types ~ret_type ~fn_display_name in
+              let label, offsets =
+                build_label ~param_names ~param_types ~ret_type ~is_effectful ~fn_display_name
+              in
               let parameters =
                 List.map
                   (fun (start, stop) -> Lsp_t.ParameterInformation.create ~label:(`Offset (start, stop)) ())
@@ -380,11 +378,20 @@ let check_sig source line character =
       signature_help ~source ~program:prog ~type_map:tm ~environment:env ~line ~character
   | _ -> None
 
+let source_with_cursor annotated =
+  let cursor = String.index annotated '|' in
+  let source =
+    String.sub annotated 0 cursor ^ String.sub annotated (cursor + 1) (String.length annotated - cursor - 1)
+  in
+  let pos = Lsp_utils.offset_to_position ~source ~offset:cursor in
+  (source, pos.line, pos.character)
+
+let check_sig_marked annotated =
+  let source, line, character = source_with_cursor annotated in
+  check_sig source line character
+
 let%test "single param function — cursor inside parens shows signature" =
-  (* "let f = fn(x: int) { x }; f(1)" *)
-  (* cursor at the '1' inside f(1) *)
-  let source = "let f = fn(x: int) { x }; f(1)" in
-  match check_sig source 0 29 with
+  match check_sig_marked "let f = (x: Int) -> x; f(|1)" with
   | Some sh -> (
       List.length sh.signatures = 1
       &&
@@ -397,9 +404,7 @@ let%test "single param function — cursor inside parens shows signature" =
   | None -> false
 
 let%test "two param function — cursor after comma shows activeParam=1" =
-  let source = "let f = fn(x, y) { x + y }; f(1, 2)" in
-  (* cursor at '2' which is at index 33 *)
-  match check_sig source 0 33 with
+  match check_sig_marked "let f = (x, y) -> x + y; f(1, |2)" with
   | Some sh -> (
       match sh.activeParameter with
       | Some (Some n) -> n = 1
@@ -407,9 +412,7 @@ let%test "two param function — cursor after comma shows activeParam=1" =
   | None -> false
 
 let%test "nested call — innermost wins" =
-  let source = "let f = fn(x) { x }; let g = fn(y) { y }; f(g(1))" in
-  (* cursor at '1' inside g(1), which is at index 46 *)
-  match check_sig source 0 46 with
+  match check_sig_marked "let f = (x) -> x; let g = (y) -> y; f(g(|1))" with
   | Some sh ->
       let sig0 = List.hd sh.signatures in
       (* Should show g's signature, not f's *)
@@ -418,9 +421,8 @@ let%test "nested call — innermost wins" =
   | None -> false
 
 let%test "cursor outside parens returns None" =
-  let source = "let f = fn(x) { x }; f(1)" in
-  (* cursor at 'f' before the call *)
-  let result = check_sig source 0 21 in
+  let source, line, character = source_with_cursor "let f = (x) -> x; |f(1)" in
+  let result = check_sig source line character in
   result = None
 
 let%test "non-function call returns None" =
@@ -429,9 +431,7 @@ let%test "non-function call returns None" =
   result = None
 
 let%test "polymorphic function shows type variables" =
-  let source = "let id = fn(x) { x }; id(1)" in
-  (* cursor at '1' inside id(1) *)
-  match check_sig source 0 26 with
+  match check_sig_marked "fn id[a](x: a) -> a = x\nid(|1)" with
   | Some sh ->
       let sig0 = List.hd sh.signatures in
       (* Should have a signature label *)
@@ -439,9 +439,7 @@ let%test "polymorphic function shows type variables" =
   | None -> false
 
 let%test "activeParam=0 for first arg" =
-  let source = "let f = fn(x, y) { x + y }; f(1, 2)" in
-  (* cursor at '1', before the comma *)
-  match check_sig source 0 31 with
+  match check_sig_marked "let f = (x, y) -> x + y; f(|1, 2)" with
   | Some sh -> (
       match sh.activeParameter with
       | Some (Some n) -> n = 0
@@ -449,9 +447,7 @@ let%test "activeParam=0 for first arg" =
   | None -> false
 
 let%test "empty args shows signature with activeParam=0" =
-  let source = "let f = fn(x: int) { x }; f()" in
-  (* cursor on ')' at index 28, which is inside the call *)
-  match check_sig source 0 28 with
+  match check_sig_marked "let f = (x: Int) -> x; f(|)" with
   | Some sh -> (
       match sh.activeParameter with
       | Some (Some n) -> n = 0
@@ -461,17 +457,14 @@ let%test "empty args shows signature with activeParam=0" =
 let string_contains haystack needle = Diagnostics.String_utils.contains_substring ~needle haystack
 
 let%test "parameter names come from function definition" =
-  let source = "let greet = fn(name: string) { name }; greet(\"hi\")" in
-  (* cursor inside greet("hi") *)
-  match check_sig source 0 47 with
+  match check_sig_marked "let greet = (name: Str) -> name; greet(|\"hi\")" with
   | Some sh ->
       let sig0 = List.hd sh.signatures in
-      string_contains sig0.label "name"
+      string_contains sig0.label "name" && string_contains sig0.label "Str"
   | None -> false
 
 let%test "parameter offsets use Offset label" =
-  let source = "let f = fn(x: int, y: string) { x }; f(1, \"hi\")" in
-  match check_sig source 0 41 with
+  match check_sig_marked "let f = (x: Int, y: Str) -> x; f(|1, \"hi\")" with
   | Some sh -> (
       let sig0 = List.hd sh.signatures in
       match sig0.parameters with
@@ -486,10 +479,7 @@ let%test "parameter offsets use Offset label" =
   | None -> false
 
 let%test "inner function in nested call gets signature help (BUG-27)" =
-  (* f(g(1)) — cursor on '1' inside g(1) should show g's signature *)
-  let source = "let g = fn(x: int) { x }; let f = fn(y: int) { y }; f(g(1))" in
-  (* Positions: f(52) ((53) g(54) ((55) 1(56) )(57) )(58) *)
-  match check_sig source 0 56 with
+  match check_sig_marked "let g = (x: Int) -> x; let f = (y: Int) -> y; f(g(|1))" with
   | Some sh ->
       let sig0 = List.hd sh.signatures in
       (* Should show g's signature, not f's *)
@@ -498,12 +488,7 @@ let%test "inner function in nested call gets signature help (BUG-27)" =
   | None -> false
 
 let%test "outer function in nested call still works (BUG-27 regression)" =
-  (* f(g(1), 2) — cursor on '2' should show f's signature *)
-  let source = "let g = fn(x: int) { x }; let f = fn(y: int, z: int) { y + z }; f(g(1), 2)" in
-  (* f(...) args: g(1) then , then 2 — cursor on '2' should be in f but not g *)
-  let pos = String.length source - 2 in
-  (* position of '2' *)
-  match check_sig source 0 pos with
+  match check_sig_marked "let g = (x: Int) -> x; let f = (y: Int, z: Int) -> y + z; f(g(1), |2)" with
   | Some sh ->
       let sig0 = List.hd sh.signatures in
       let has_f = try String.sub sig0.label 0 1 = "f" with _ -> false in
@@ -512,12 +497,26 @@ let%test "outer function in nested call still works (BUG-27 regression)" =
 
 (* Phase 8 regression: signature help on dot-style method calls *)
 let%test "signature help on dot method call shows method signature" =
-  let source =
-    "trait greet[a] {\n  fn hello(x: a) -> string\n}\nimpl greet for int {\n  fn hello(x: int) -> string { \"hi\" }\n}\n42.hello()"
-  in
-  (* Last line: 42.hello() — cursor inside parens *)
-  let last_line = 6 in
-  let col = 9 in
-  match check_sig source last_line col with
+  match
+    check_sig_marked
+      "trait Greet[a] = {\n  fn hello(x: a) -> Str\n}\nimpl Greet[Int] = {\n  fn hello(x: Int) -> Str = \"hi\"\n}\n42.hello(|)"
+  with
   | Some sh -> List.length sh.signatures >= 1
+  | None -> false
+
+let%test "effectful function keeps => in signature label" =
+  match check_sig_marked "let f = (x: Int) => { puts(x); x }; f(|1)" with
+  | Some sh ->
+      let sig0 = List.hd sh.signatures in
+      string_contains sig0.label "=>"
+  | None -> false
+
+let%test "effectful method keeps => in signature label" =
+  match
+    check_sig_marked
+      "trait Greet[a] = {\n  fn hello(x: a) => Str\n}\nimpl Greet[Int] = {\n  fn hello(x: Int) => Str = { puts(x); \"hi\" }\n}\n42.hello(|)"
+  with
+  | Some sh ->
+      let sig0 = List.hd sh.signatures in
+      string_contains sig0.label "=>"
   | None -> false

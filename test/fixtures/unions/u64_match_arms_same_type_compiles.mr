@@ -1,8 +1,8 @@
 # U64: Match arms with same type should compile
-enum option[a] { some(a) none }
-let x = option.some(42)
+enum Option[a] = { Some(a), None }
+let x = Option.Some(42)
 let out = match x {
-  option.some(v): v
-  option.none: 0
+  case Option.Some(v): v
+  case Option.None: 0
 }
 out

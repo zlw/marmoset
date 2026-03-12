@@ -1,0 +1,16 @@
+# VN37: Effectful function types survive inside enum payload annotations
+enum Runner = {
+  Run((Int) => Str),
+}
+
+let runner = Runner.Run((n: Int) => {
+  puts("run")
+  n.show()
+})
+
+let result = match runner {
+  case Runner.Run(f): f(8)
+}
+
+# output: run
+puts(result)  # output: 8

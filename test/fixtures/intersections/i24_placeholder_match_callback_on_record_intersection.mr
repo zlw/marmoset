@@ -1,0 +1,9 @@
+# I24: Placeholder match callbacks accept record-intersection scrutinees
+fn apply[a, b](x: a, f: (a) -> b) -> b = f(x)
+
+let value: ({ x: Int, y: Int } & { x: Int }) = { x: 1, y: 2 }
+
+puts(apply(value, match _ {
+  case { x:, y: }: x + y
+  case _: 0
+}))  # output: 3

@@ -1,0 +1,6 @@
+# VN88: Deriving a field-only trait is rejected
+trait Named = {
+  name: Str
+}
+
+type Person = { name: Str } derive Named  # error: field-only

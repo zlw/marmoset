@@ -1,0 +1,12 @@
+# VN57: Bare trait shorthand also works in inherent method parameters
+trait Named = { name: Str }
+
+type User = { name: Str, id: Int }
+
+impl User = {
+  fn label(self: User, other: Named) -> Str = self.name + ":" + other.name
+}
+
+let self: User = { name: "mia", id: 7 }
+let other = { name: "zoe", bananas: 3 }
+puts(self.label(other))  # output: mia:zoe

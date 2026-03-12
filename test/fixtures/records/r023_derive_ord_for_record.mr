@@ -1,9 +1,5 @@
 # R023: Derive ord for record
-trait ord[a] {
-  fn compare(x: a, y: a) -> int
-}
-type point = { x: int, y: int }
-derive ord for point;
-let p1: point = { x: 1, y: 2 }
-let p2: point = { x: 1, y: 3 }
+type Point = { x: Int, y: Int } derive Eq, Ord
+let p1: Point = { x: 1, y: 2 }
+let p2: Point = { x: 1, y: 3 }
 puts(p1.compare(p2))  # output: less

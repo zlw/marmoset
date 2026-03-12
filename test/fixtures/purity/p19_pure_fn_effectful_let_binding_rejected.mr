@@ -1,6 +1,9 @@
 # P19: Pure fn with effectful let-binding is rejected
-let side = fn(x: int) => int { puts(x); x }
-let wrapper = fn(x: int) -> int {  # error: effectful
+fn side(x: Int) => Int = {
+  puts(x)
+  x
+}
+fn wrapper(x: Int) -> Int = {  # error: effectful
   let y = side(x)
   y + 1
 }

@@ -287,6 +287,7 @@ and walk_expr ~source ~type_map ~range_start ~range_end ~hints (expr : Ast.AST.e
     | Ast.AST.EnumConstructor (_, _, args) ->
         List.iter (walk_expr ~source ~type_map ~range_start ~range_end ~hints) args
     | Ast.AST.TypeCheck (e, _) -> walk_expr ~source ~type_map ~range_start ~range_end ~hints e
+    | Ast.AST.BlockExpr stmts -> List.iter (walk_stmt ~source ~type_map ~range_start ~range_end ~hints) stmts
     | Ast.AST.Identifier _ | Ast.AST.Integer _ | Ast.AST.Float _ | Ast.AST.Boolean _ | Ast.AST.String _ -> ()
 
 (* Public entry point: generate inlay hints for a document *)
@@ -332,23 +333,23 @@ let%test "let binding without annotation gets type hint" =
   List.exists (fun l -> l = ": Int") labels
 
 let%test "let binding with annotation gets no extra type hint" =
-  let hints = get_hints "let x: int = 42;" in
+  let hints = get_hints "let x: Int = 42;" in
   (* Should have no ": Int" hint for the let name since it's annotated *)
   let labels = hint_labels hints in
   not (List.exists (fun l -> l = ": Int") labels)
 
 let%test "function params without annotations get type hints" =
-  let hints = get_hints "let f = fn(x) { x + 1 };" in
+  let hints = get_hints "let f = (x) -> x + 1;" in
   let labels = hint_labels hints in
   List.exists (fun l -> l = ": Int") labels
 
 let%test "function return type hint shown" =
-  let hints = get_hints "let f = fn(x) { x + 1 };" in
+  let hints = get_hints "let f = (x) -> x + 1;" in
   let labels = hint_labels hints in
   List.exists (fun l -> l = " -> Int") labels
 
 let%test "function with annotated params gets no param hints" =
-  let hints = get_hints "let f = fn(x: int) { x + 1 };" in
+  let hints = get_hints "let f = (x: Int) -> x + 1;" in
   (* Should have let binding hint and return type hint, but NOT a ": Int" param hint *)
   let param_hints =
     List.filter
@@ -362,7 +363,7 @@ let%test "function with annotated params gets no param hints" =
   List.length param_hints <= 1
 
 let%test "nested let gets type hint" =
-  let hints = get_hints "let f = fn(x) { let y = x + 1; y };" in
+  let hints = get_hints "let f = (x) -> { let y = x + 1; y };" in
   let labels = hint_labels hints in
   (* Should have hints for f, x, y, and return type *)
   List.length labels >= 3

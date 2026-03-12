@@ -1,0 +1,14 @@
+# VN116: Generic enum user derives package concrete constructors into Dyn objects
+fn apply[a, b](x: a, f: (a) -> b) -> b = f(x)
+
+trait Label[a]: Show = {
+  fn label(self: a) -> Str = apply(self, _.show())
+}
+
+enum Box[t] = {
+  Wrap(t),
+} derive Show, Label
+
+let value: Dyn[Label] = Box.Wrap(42)
+puts(value.show())   # output: Wrap(42)
+puts(value.label())  # output: Wrap(42)

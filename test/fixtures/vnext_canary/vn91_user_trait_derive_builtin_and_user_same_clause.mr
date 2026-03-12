@@ -1,0 +1,10 @@
+# VN91: Builtin and user derives can share one clause
+trait Fancy[a] = {
+  fn fancy(self: a) -> Str = "fancy"
+}
+
+type Point = { x: Int } derive Show, Fancy
+
+let p = { x: 1 }
+puts(p.fancy())  # output: fancy
+puts(p.show())   # output: { x: 1 }

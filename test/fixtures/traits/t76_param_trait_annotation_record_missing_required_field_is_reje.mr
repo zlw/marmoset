@@ -1,8 +1,6 @@
 # T76: Param trait annotation: record missing required field is rejected
-trait named {  # error: *
-  name: string
+trait Named = {  # error: *
+  name: Str
 }
-let greet = fn(x: named) -> string {
-  x.name
-}
+fn greet(x: Named) -> Str = x.name
 puts(greet({ age: 30 }))

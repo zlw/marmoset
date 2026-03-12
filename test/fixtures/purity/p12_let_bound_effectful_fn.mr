@@ -1,5 +1,5 @@
 # P12: Let-bound effectful fn compiles
-let say = fn(msg: string) => string {
+fn say(msg: Str) => Str = {
   puts(msg)
   msg
 }

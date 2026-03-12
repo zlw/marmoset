@@ -1,5 +1,5 @@
 # T20: Method trait as type shows dedicated v1 diagnostic
-trait show[a] {  # error: method and mixed trait objects are not supported in this phase
-  fn show(x: a) -> string
+trait Show[a] = {
+  fn show(x: a) -> Str
 }
-let x: show = 1
+let x: Show = 1  # error: cannot be used as a type in vNext

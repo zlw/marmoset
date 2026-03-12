@@ -1,0 +1,12 @@
+# VN118: Generic enum derives may return Dyn[...] from default methods
+trait Boxed[a]: Show = {
+  fn box(self: a) -> Dyn[Show] = self
+}
+
+enum Option[t] = {
+  Some(t)
+  None
+} derive Show, Boxed
+
+let value = Option.Some(1).box()
+puts(value.show())  # output: Some(1)

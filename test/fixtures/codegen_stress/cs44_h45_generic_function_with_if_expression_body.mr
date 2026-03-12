@@ -1,5 +1,5 @@
 # CS44: H45: generic function with if-expression body
-let process = fn(x, flag: bool) {
+fn process(x, flag: Bool) = {
   if (flag) { x } else { x }
 }
 puts(process(10, true))  # output: 10

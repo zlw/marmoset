@@ -1,0 +1,4 @@
+# VN03: vNext fn declarations support forward references
+fn outer() -> Int = inner()
+fn inner() -> Int = 42
+puts(outer())  # output: 42

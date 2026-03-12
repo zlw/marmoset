@@ -1,15 +1,15 @@
 # E32: Higher-order function operating on enum
-enum option[a] { some(a) none }
-let map_opt = fn(x: option[int], f: fn(int) -> int) -> option[int] {
+enum Option[a] = { Some(a), None }
+fn map_opt(x: Option[Int], f: (Int) -> Int) -> Option[Int] = {
   match x {
-    option.some(v): option.some(f(v))
-    option.none: option.none()
+    case Option.Some(v): Option.Some(f(v))
+    case Option.None: Option.None
   }
 }
-let double = fn(n: int) -> int { n * 2 }
-let result = map_opt(option.some(49), double)
+fn double(n: Int) -> Int = n * 2
+let result = map_opt(Option.Some(49), double)
 let out = match result {
-  option.some(v): v + 1
-  option.none: 0
+  case Option.Some(v): v + 1
+  case Option.None: 0
 }
 puts(out)  # output: 99

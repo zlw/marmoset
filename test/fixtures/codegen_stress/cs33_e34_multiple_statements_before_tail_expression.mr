@@ -1,5 +1,5 @@
 # CS33: E34: multiple statements before tail expression
-let compute = fn(a: int, b: int) -> int {
+fn compute(a: Int, b: Int) -> Int = {
   let sum = a + b
   let doubled = sum * 2
   let halved = doubled / 2

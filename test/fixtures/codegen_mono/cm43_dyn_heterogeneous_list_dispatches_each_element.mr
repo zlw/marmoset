@@ -1,0 +1,8 @@
+# CM43: Heterogeneous List[Dyn[Show]] elements dispatch dynamically after indexing
+let a: Dyn[Show] = 1
+let b: Dyn[Show] = "hi"
+let c: Dyn[Show] = false
+let xs = [a, b, c]
+puts(xs[0].show())  # output: 1
+puts(xs[1].show())  # output: hi
+puts(xs[2].show())  # output: false

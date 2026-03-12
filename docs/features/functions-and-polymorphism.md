@@ -20,11 +20,11 @@ This doc covers:
 ## Syntax
 
 ```marmoset
-let inc = fn(x: int) -> int { x + 1 }
+fn inc(x: Int) -> Int = x + 1
 
-let id = fn[a](x: a) -> a { x }
+fn id[a](x: a) -> a = x
 
-let show_if_equal = fn[a: show + eq](x: a, y: a) -> string {
+fn show_if_equal[a: Show & Eq](x: a, y: a) -> Str = {
   if (x.eq(y)) { x.show() } else { "different" }
 }
 ```

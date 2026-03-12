@@ -1,1 +1,2 @@
-let f = fn() -> int { 42 }; f()
+fn f() -> Int = 42
+f()

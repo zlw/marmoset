@@ -1,11 +1,11 @@
 # OP87: Custom ord impl on enum drives >= operator
-enum rank { low mid high }
-impl eq for rank {
-  fn eq(x: rank, y: rank) -> bool { false }
+enum Rank = { Low, Mid, High }
+impl Eq[Rank] = {
+  fn eq(x: Rank, y: Rank) -> Bool = false
 }
-impl ord for rank {
-  fn compare(x: rank, y: rank) -> ordering {
+impl Ord[Rank] = {
+  fn compare(x: Rank, y: Rank) -> Ordering = {
     ordering.less
   }
 }
-puts(rank.high >= rank.low)  # output: false
+puts(Rank.High >= Rank.Low)  # output: false

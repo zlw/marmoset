@@ -1,20 +1,20 @@
-type val = { n: int }
+type Val = { n: Int }
 
-trait view_a[a] {
-  fn view(x: a) -> string
+trait ViewA[a] = {
+  fn view(x: a) -> Str
 }
 
-trait view_b[a] {
-  fn view(x: a) -> string
+trait ViewB[a] = {
+  fn view(x: a) -> Str
 }
 
-impl view_a for val {
-  fn view(x: val) -> string { "a" }
+impl ViewA[Val] = {
+  fn view(x: Val) -> Str = { "a" }
 }
 
-impl view_b for val {
-  fn view(x: val) -> string { "b" }
+impl ViewB[Val] = {
+  fn view(x: Val) -> Str = { "b" }
 }
 
-let v: val = { n: 1 }
+let v: Val = { n: 1 }
 v.view()  # error: Ambiguous

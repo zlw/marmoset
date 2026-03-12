@@ -1,6 +1,7 @@
 (library
  (name syntax)
  (libraries diagnostics)
+ (modules ast token lexer id_supply surface_ast lower parser)
  (inline_tests
   (flags (-verbose)))
  (preprocess

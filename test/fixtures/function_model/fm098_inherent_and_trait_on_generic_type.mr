@@ -1,26 +1,22 @@
-enum opt[a] { some(a) none }
+enum Opt[a] = { Some(a), None }
 
-trait unwrapper[a] {
-  fn get(x: a) -> int
+trait Unwrapper[a] = {
+  fn get(x: a) -> Int
 }
 
-impl unwrapper for opt[int] {
-  fn get(x: opt[int]) -> int {
-    match x {
-      opt.some(v): v
-      opt.none: 0
-    }
+impl Unwrapper[Opt[Int]] = {
+  fn get(x: Opt[Int]) -> Int = match x {
+    case Opt.Some(v): v
+    case Opt.None: 0
   }
 }
 
-impl opt[int] {
-  fn get(o: opt[int]) -> int {
-    match o {
-      opt.some(v): v
-      opt.none: -1
-    }
+impl Opt[Int] = {
+  fn get(o: Opt[Int]) -> Int = match o {
+    case Opt.Some(v): v
+    case Opt.None: -1
   }
 }
 
-let x = opt.some(42)
+let x = Opt.Some(42)
 puts(x.get())  # output: 42

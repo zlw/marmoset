@@ -1,0 +1,4 @@
+# I09: Field access requires every intersection member to guarantee the field
+let value: ({ x: Int } & { y: Int }) = { x: 1, y: 2 }
+
+value.x  # error: every member

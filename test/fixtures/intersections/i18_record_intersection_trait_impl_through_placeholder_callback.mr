@@ -1,0 +1,13 @@
+# I18: Record intersections dispatch trait methods through placeholder callbacks
+fn apply[a, b](x: a, f: (a) -> b) -> b = f(x)
+
+trait Greeter[a] = {
+  fn greet(x: a) -> Str
+}
+
+impl Greeter[{ x: Int }] = {
+  fn greet(x: { x: Int }) -> Str = x.x.show()
+}
+
+let value: ({ x: Int, y: Str } & { x: Int }) = { x: 1, y: "ok" }
+puts(apply(value, _.greet()))  # output: 1

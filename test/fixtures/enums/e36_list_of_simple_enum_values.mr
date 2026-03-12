@@ -1,4 +1,4 @@
 # E36: List of simple enum values
-enum color { red green blue }
-let colors = [color.red, color.green, color.blue]
+enum Color = { Red, Green, Blue }
+let colors = [Color.Red, Color.Green, Color.Blue]
 puts(len(colors))  # output: 3

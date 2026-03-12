@@ -2,7 +2,7 @@
 
 ## Maintenance
 
-- Last verified: 2026-03-08
+- Last verified: 2026-03-10
 - Implementation status: Canonical (actively maintained)
 - Merge note: This document now includes the former `docs/features/trait-satisfaction.md` content.
 - Update trigger: Any parser/typechecker/codegen/test change affecting trait declaration, satisfaction, resolution, or lowering
@@ -15,71 +15,68 @@ Traits provide:
 - hybrid constraints via mixed traits,
 - supertrait closure,
 - constrained generics,
-- method-call syntax (`x.foo(...)`) lowering,
-- field-only trait use in type position.
+- method-call syntax (`x.foo(...)`) lowering.
 
 ## Syntax
 
 ### Method-only trait
 
 ```marmoset
-trait show[a] {
-  fn show(x: a) -> string
+trait Show[a] = {
+  fn show(a) -> Str
 }
 ```
 
 ### Field-only trait
 
 ```marmoset
-trait named {
-  name: string
+trait Named = {
+  name: Str
 }
 ```
 
 ### Mixed trait
 
 ```marmoset
-trait named_show {
-  name: string
-  fn show(x: { name: string }) -> string
+trait NamedShow[a] = {
+  name: Str
+  fn show(a) -> Str
 }
 ```
 
 ### Supertraits
 
 ```marmoset
-trait eq[a] {
-  fn eq(x: a, y: a) -> bool
+trait Eq[a] = {
+  fn eq(a, a) -> Bool
 }
 
-trait ord[a]: eq {
-  fn compare(x: a, y: a) -> ordering
+trait Ord[a]: Eq = {
+  fn compare(a, a) -> Ordering
 }
 ```
 
 ### Impl
 
 ```marmoset
-impl show for int {
-  fn show(x: int) -> string {
-    "int"
-  }
+impl Show[Int] = {
+  fn show(x: Int) -> Str = "int"
 }
 ```
 
 Impl method annotations are optional when inferable from the trait signature:
 
 ```marmoset
-impl show for int {
-  fn show(x) { "int" }
+impl Show[Int] = {
+  fn show(x) = "int"
 }
 ```
 
 ### Generic impl
 
 ```marmoset
-impl show[a: show] for list[a] {
-  fn show(xs: list[a]) -> string { "list" }
+impl[a: Show] Show[List[a]] = {
+  fn show(xs: List[a]) -> Str = "list"
 }
 ```
 
@@ -88,8 +85,8 @@ impl show[a: show] for list[a] {
 Trait methods can declare method-level generic parameters separate from the trait type parameter:
 
 ```marmoset
-trait mappable[a] {
-  fn map[b](x: a, f: fn(a) -> b) -> b
+trait Mappable[a] = {
+  fn map[b](a, (a) -> b) -> b
 }
 ```
 
@@ -98,16 +95,19 @@ trait mappable[a] {
 Trait method signatures use `->` for pure methods and `=>` for effectful methods:
 
 ```marmoset
-trait processor[a] {
-  fn process(x: a) => string
+trait Processor[a] = {
+  fn process(a) => Str
 }
 ```
 
 Impl methods can omit the effect marker entirely to infer effectfulness from the body:
 
 ```marmoset
-impl processor for data {
-  fn process(x) { x.v.show() }
+impl Processor[Data] = {
+  fn process(x) = {
+    puts(x.v.show())
+    x.v.show()
+  }
 }
 ```
 
@@ -116,7 +116,7 @@ impl processor for data {
 When a trait method has method-level generics, type arguments can be provided explicitly at the call site using bracket syntax:
 
 ```marmoset
-let result = x.map[string](fn(n: int) -> string { n.show() })
+let result = x.map[Str]((n: Int) -> n.show())
 ```
 
 If the user intends runtime index-then-call, they must parenthesize: `(x.name[i])(arg)`.
@@ -126,8 +126,8 @@ If the user intends runtime index-then-call, they must parenthesize: `(x.name[i]
 Impl method bodies support multiple statements including let bindings. The last expression is the return value:
 
 ```marmoset
-impl show for point {
-  fn show(p: point) -> string {
+impl Show[Point] = {
+  fn show(p: Point) -> Str = {
     let x_str = p.x.show()
     let y_str = p.y.show()
     "(" + x_str + ", " + y_str + ")"
@@ -138,20 +138,23 @@ impl show for point {
 ### Constraint and method call
 
 ```marmoset
-let show_it = fn[t: show](x: t) -> string {
-  x.show()
-}
+fn show_it[t: Show](x: t) -> Str = x.show()
 ```
 
-### Field-only trait in type position
+### Constrained-param shorthand
 
 ```marmoset
-trait named {
-  name: string
+trait Named = {
+  name: Str
 }
 
-let p: named = { name: "alice", age: 42 }
-puts(p.name)
+fn display_name(x: Named) -> Str = x.name
+```
+
+This is shorthand for:
+
+```marmoset
+fn display_name[t: Named](x: t) -> Str = x.name
 ```
 
 ## Trait Kinds
@@ -191,16 +194,16 @@ Structural method probing is forbidden. Having a field/method with the same name
 
 ### Supertraits
 
-For `trait child: parent1 + parent2`, satisfying `child` requires satisfying all supertraits recursively.
+For `trait Child[a]: Parent1 & Parent2 = { ... }`, satisfying `Child` requires satisfying all supertraits recursively.
 This applies to:
 - impl validation,
 - generic constraint checking,
-- constrained method availability (`[a: ord]` exposes `eq` methods if `ord: eq`).
+- constrained method availability (`[a: Ord]` exposes `eq` methods if `Ord: Eq`).
 
 ### Generic impl behavior
 
 Generic impl blocks are supported:
-- impl type params may declare constraints (`impl show[a: show] for list[a]`),
+- impl type params may declare constraints (`impl[a: Show] Show[List[a]] = { ... }`),
 - impl type params must be unique,
 - every impl type param must appear in the impl target type,
 - concrete impls take precedence over matching generic impls,
@@ -229,7 +232,7 @@ Constraint checking is enforced at call/instantiation time:
 - each obligation runs through `Trait_solver.satisfies_trait`,
 - first failing obligation aborts with an explicit trait-satisfaction reason.
 
-Multiple constraints (`[a: show + eq]`) are conjunctive.
+Multiple constraints (`[a: Show & Eq]`) are conjunctive.
 
 ## Method Resolution Rules
 
@@ -261,27 +264,29 @@ Inherent-method interaction:
 
 ### Allowed
 
-- Field-only traits in type position, if non-generic.
-- Field-only trait supertraits composed from field-only chains.
+- Bare trait names in function parameter position as constrained-param shorthand.
+- Explicit generic constraints such as `fn f[t: Named](x: t) -> Str = x.name`.
+- Explicit trait-object types using `Dyn[...]`, for example `Dyn[Show]` and `Dyn[Show & Eq]`.
 
 ### Rejected
 
-- Method-only traits in type position.
-- Mixed traits in type position.
-- Field-only traits that are generic.
-- Field-only traits whose supertrait closure includes method/mixed traits.
+- Bare trait names in general type position.
+- `Dyn[...]` containing any field-only trait.
+- `Dyn[...]` as a spelling for structural field projection.
 
 ### Internal lowering
 
-Field-only trait types lower to open record requirements assembled from trait fields plus supertrait field closure, with deterministic field merging.
+Bare trait-name shorthand lowers to a fresh constrained generic binder before typechecking.
+
+`Dyn[...]` is a separate trait-object surface form. It does not reuse bare trait names.
 
 ## Operator Requirements via Traits
 
 Operator typing enforces trait obligations:
-- unary `-` requires `neg`
-- `+ - * /` require `num` (except string concatenation special-case for `+`)
-- `< > <= >=` require `ord`
-- `== !=` require `eq`
+- unary `-` requires `Neg`
+- `+ - * /` require `Num` (except `Str` concatenation special-case for `+`)
+- `< > <= >=` require `Ord`
+- `== !=` require `Eq`
 
 Codegen lowering:
 - primitives lower to direct Go operators,
@@ -296,17 +301,19 @@ Trait method calls lower to static helper function calls:
 
 The emitter uses method-resolution metadata recorded by the typechecker (`expr.id -> trait_name`) and does not re-infer resolution decisions.
 
-### Field-only trait values
+### Field-only trait constraints
 
-v1 uses structural record projection, not runtime trait-object dispatch:
-- when expression actual type has a superset of fields and expected type is a narrower record shape (from field-only trait typing), emitter inserts a projection wrapper,
-- emitted value is a concrete Go struct literal with required fields copied.
-
-This enables heterogeneous containers through shared projected shape while avoiding trait-object/vtable ABI commitments.
+Field-only traits remain compile-time structural constraints. They do not introduce a runtime trait-object representation.
 
 ### Derive integration
 
-Derive surface supports selected traits (`eq`, `show`, `debug`, `ord`, `hash`) with registry validation and emitter-side body generation for supported shapes.
+Built-in derive remains specialized for `Eq`, `Show`, `Debug`, `Ord`, and `Hash`.
+
+User-trait derive v1 is default-backed only:
+- every trait method must have a default body after substitution,
+- traits with required methods are not derivable unless they are builtin derivable traits,
+- field-only traits are not derivable,
+- supertraits must already be implemented for the target type or appear in the same derive clause.
 
 ## Design Alternatives Considered
 
@@ -331,47 +338,74 @@ Pros:
 Cons:
 - two satisfaction modes (field vs method) increase conceptual surface.
 
-### Alternative C: Full method trait objects in v1
+### Alternative C: Bare trait objects in v1
 
 Pros:
 - dynamic dispatch flexibility.
 
 Cons:
-- early ABI/runtime commitment,
+- overloading bare trait names would collide with constrained-param shorthand,
 - higher complexity before module/FFI design is stable.
 
 Status:
-- deferred.
+- rejected in favor of explicit `Dyn[...]`.
 
 ## Current Limitations
 
-- Method/mixed trait objects are intentionally unsupported in this phase.
-- Generic field-only trait objects are intentionally unsupported in this phase.
+- Bare trait names outside constrained-param shorthand are rejected.
+- `Dyn[...]` rejects field-only trait sets.
 - Qualified trait-call syntax is supported (`Trait.method(x)`).
 
-## Deferred: Method/Mixed Trait Objects and Existentials
+## Explicit Trait Objects (`Dyn[...]`)
 
-This is intentionally deferred work, but the design constraints are locked to avoid future ABI drift.
+Trait objects use explicit `Dyn[ConstraintExpr]` syntax:
 
-### Representation options considered
+```marmoset
+let value: Dyn[Show] = 42
+let values: List[Dyn[Show]] = [42, "hello", true]
+```
 
-1. Interface-only runtime values (Go interface-based dispatch)
-2. Dictionary passing (explicit witness records)
-3. Tagged existential package (`type_id`, payload, witness)
+Rules:
+- bare trait names remain constrained-param shorthand only,
+- `Dyn[...]` accepts method-only and mixed traits,
+- field-only traits are rejected inside `Dyn[...]`,
+- concrete values coerce to `Dyn[...]` only at assignment, argument, and return sites,
+- method dispatch on `Dyn[...]` values is dynamic,
+- field-only traits remain compile-time structural constraints outside `Dyn[...]`.
 
-### Guardrails
+### Runtime layout
 
-- Do not expose method/mixed trait-object syntax until a first-class internal representation exists (typed AST/IR), with explicit witness-carrying semantics.
-- Do not treat ad-hoc emitter-only lowering as acceptable for dynamic trait values.
-- Do not expose raw Go interface internals as stable module/FFI ABI.
-- Lock operation semantics (`eq`, `ord`, `hash`, `show`) for existential values before enabling them.
+`Dyn[...]` values use an explicit witness-carrying package in the Go backend. The
+runtime shape is:
 
-### Preconditions before implementation
+1. `type_id`: a stable specialization key for the concrete payload type
+2. `payload`: the concrete value, stored opaquely
+3. `witness`: a table of method wrappers for the enclosed trait set
 
-1. Add typed IR/AST support for existential values and dynamic trait dispatch.
-2. Thread resolution/coherence metadata from typechecker to codegen without re-resolution.
-3. Freeze module/FFI ABI representation for existential payloads/witnesses.
-4. Add deterministic tests for dispatch behavior and capability limits.
+Dynamic dot-calls dispatch through the witness table chosen by typechecking.
+This keeps dynamic method calls explicit in compiler metadata and avoids
+treating raw Go interfaces as the language ABI.
+
+### Current implementation limits
+
+- `Dyn[...]` is implemented as a typed compiler feature with explicit witness-carrying runtime values in the Go backend.
+- Dynamic dispatch is limited to object-safe, non-method-generic trait methods.
+- Field access is never allowed on `Dyn[...]`, even when the trait set is mixed.
+- Raw Go interface internals are not part of the language ABI; the compiler emits its own `marmosetDyn` wrapper.
+
+## Intersection Types
+
+General intersection types use `A & B` in type positions. This is separate from
+trait-constraint composition.
+
+Rules:
+- unparenthesized bare trait-name chains in parameter position still mean constrained-param shorthand,
+- parenthesize to force a real intersection in parameter position,
+- intersections are compile-time-only and do not add a runtime wrapper,
+- `Dyn[Show] & Dyn[Eq]` normalizes to one trait object with both traits,
+- intersections that mix `Dyn[...]` with non-`Dyn[...]` members are rejected in v1,
+- field access on an intersection is allowed only when every member guarantees the field,
+- general callable intersections are rejected in v1.
 
 ## Why This Design
 

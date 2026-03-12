@@ -1,13 +1,13 @@
 # CS47: H48: [BUG-1] two enum matches in function body
-enum option[a] { some(a) none }
-let f = fn(a: option[int], b: option[int]) => int {
+enum Option[a] = { Some(a), None }
+fn f(a: Option[Int], b: Option[Int]) => Int = {
   let x = match a {
-    option.some(v): v
-    option.none: 0
+    case Option.Some(v): v
+    case Option.None: 0
   }
   let y = match b {
-    option.some(v): v
-    option.none: 0
+    case Option.Some(v): v
+    case Option.None: 0
   }
   puts(x)
   puts(y)
@@ -15,4 +15,4 @@ let f = fn(a: option[int], b: option[int]) => int {
 }
 # output: 42
 # output: 99
-f(option.some(42), option.some(99))
+f(Option.Some(42), Option.Some(99))

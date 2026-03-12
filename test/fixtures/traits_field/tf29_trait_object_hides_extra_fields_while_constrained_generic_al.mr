@@ -1,6 +1,6 @@
 # TF29: Trait object hides extra fields while constrained generic allows access to declared fields
-trait has_name {
-  name: string
+trait HasName = {
+  name: Str
 }
-let x: has_name = { name: "test", extra: 1 }
-puts(x.extra)  # error: Record field 'extra' not found
+let x: HasName = { name: "test", extra: 1 }  # error: cannot be used as a type in vNext
+puts(x.extra)

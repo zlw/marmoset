@@ -1,6 +1,6 @@
 # U26: Polymorphic fn returning generic enum, matched at one type
-enum option[a] { some(a) none }
-let wrap = fn(x) { option.some(x) }
+enum Option[a] = { Some(a), None }
+fn wrap(x) = Option.Some(x)
 let b = wrap("hello")
-let vb = match b { option.some(v): v option.none: "?" }
+let vb = match b { case Option.Some(v): v case Option.None: "?" }
 puts(vb)  # output: hello

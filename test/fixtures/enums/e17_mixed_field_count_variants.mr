@@ -1,9 +1,9 @@
 # E17: Mixed field count variants
-enum mixed { none zero(int) pair(int, int) triple(int, int, int) }
-let x = mixed.pair(1, 2)
+enum Mixed = { None, Zero(Int), Pair(Int, Int), Triple(Int, Int, Int) }
+let x = Mixed.Pair(1, 2)
 match x {
-  mixed.none: 0
-  mixed.zero(a): a
-  mixed.pair(a, _): a
-  mixed.triple(a, _, _): a
+  case Mixed.None: 0
+  case Mixed.Zero(a): a
+  case Mixed.Pair(a, _): a
+  case Mixed.Triple(a, _, _): a
 }

@@ -1,7 +1,6 @@
 # P14: Pure recursive fn calling puts is rejected
-let countdown = fn(n: int) -> int {  # error: effectful
+fn countdown(n: Int) -> Int = {  # error: effectful
   puts(n)
-  if (n == 0) { return 0 }
-  return countdown(n - 1);
+  if (n == 0) { 0 } else { countdown(n - 1) }
 }
 countdown(5)

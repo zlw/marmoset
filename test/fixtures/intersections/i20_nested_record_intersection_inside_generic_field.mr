@@ -1,0 +1,11 @@
+# I20: Nested record intersections survive generic record fields and placeholder callbacks
+type Box[a] = { value: a }
+
+impl[a] Box[a] = {
+  fn map[b](box: Box[a], f: (a) -> b) -> b = f(box.value)
+}
+
+let box: Box[({ inner: { x: Int, y: Int } } & { inner: { x: Int } })] = {
+  value: { inner: { x: 1, y: 2 } }
+}
+puts(box.map(_.inner.x))  # output: 1

@@ -1,0 +1,9 @@
+# VN117: Generic record derives may return Dyn[...] from default methods
+trait Boxed[a]: Show = {
+  fn box(self: a) -> Dyn[Show] = self
+}
+
+type Box[t] = { value: t } derive Boxed, Show
+
+let value = { value: 1 }.box()
+puts(value.show())  # output: { value: 1 }

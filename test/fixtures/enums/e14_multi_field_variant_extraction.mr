@@ -1,7 +1,7 @@
 # E14: Multi-field variant extraction
-enum http_response { ok(int, string) error(int, string) }
-let x = http_response.ok(200, "OK")
+enum HttpResponse = { Ok(Int, Str), Error(Int, Str) }
+let x = HttpResponse.Ok(200, "OK")
 match x {
-  http_response.ok(code, _): code
-  http_response.error(code, _): code
+  case HttpResponse.Ok(code, _): code
+  case HttpResponse.Error(code, _): code
 }

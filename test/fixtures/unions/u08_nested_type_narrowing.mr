@@ -1,9 +1,7 @@
 # U08: Nested type narrowing
-let outer = fn(x: int | string) -> int {
-   if (x is int) {
-       let inner = fn(y: int | bool) -> int {
-           if (y is int) { y } else { 0 }
-       };
+fn outer(x: Int | Str) -> Int = {
+   if (x is Int) {
+       let inner = (y: Int | Bool) -> if (y is Int) { y } else { 0 };
        inner(x)
    } else {
        0

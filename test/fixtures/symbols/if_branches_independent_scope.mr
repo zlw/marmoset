@@ -1,3 +1,9 @@
 let x = 10
-let result = if (true) { let y = 20; x } else { let y = 30; x }
+let result = if (true) {
+  let y = 20
+  x
+} else {
+  let y = 30
+  x
+}
 puts(result)  # output: 10

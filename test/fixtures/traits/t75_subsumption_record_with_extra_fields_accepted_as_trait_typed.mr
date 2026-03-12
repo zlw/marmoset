@@ -1,8 +1,6 @@
 # T75: Subsumption: record with extra fields accepted as trait-typed param
-trait greeter {
-  greeting: string
+trait Greeter = {
+  greeting: Str
 }
-let say = fn(g: greeter) -> string {
-  g.greeting
-}
+fn say(g: Greeter) -> Str = g.greeting
 puts(say({ greeting: "world", volume: 11, language: "en" }))  # output: world

@@ -1,5 +1,5 @@
 # P15: Unannotated recursive fn calling puts compiles
-let countdown = fn(n: int) {
+fn countdown(n: Int) = {
   puts(n)
   if (n > 0) {
     countdown(n - 1)

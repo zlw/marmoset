@@ -1,11 +1,11 @@
 # XF47: J55: Effectful function with enum match
-enum option_int { some(int) none }
-let print_opt = fn(v: option_int) => int {
+enum OptionInt = { Some(Int), None }
+fn print_opt(v: OptionInt) => Int = {
   let n = match v {
-    option_int.some(x): x
-    option_int.none: 0
+    case OptionInt.Some(x): x
+    case OptionInt.None: 0
   }
   puts(n)
   n
 }
-print_opt(option_int.some(42))  # output: 42
+print_opt(OptionInt.Some(42))  # output: 42

@@ -1,10 +1,10 @@
 # U82: Nullary enum via dot access (no parens)
-enum direction { north south east west }
-let d = direction.north
+enum Direction = { North, South, East, West }
+let d = Direction.North
 let out = match d {
-  direction.north: "north"
-  direction.south: "south"
-  direction.east: "east"
-  direction.west: "west"
+  case Direction.North: "North"
+  case Direction.South: "South"
+  case Direction.East: "East"
+  case Direction.West: "West"
 }
-puts(out)  # output: north
+puts(out)  # output: North

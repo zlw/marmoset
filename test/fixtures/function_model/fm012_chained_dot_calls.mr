@@ -1,10 +1,10 @@
-type wrapper = { v: int }
+type Wrapper = { v: Int }
 
-impl wrapper {
-  fn get(w: wrapper) -> int {
+impl Wrapper = {
+  fn get(w: Wrapper) -> Int = {
     w.v
   }
 }
 
-let w: wrapper = { v: 99 }
+let w: Wrapper = { v: 99 }
 puts(w.get().show())  # output: 99

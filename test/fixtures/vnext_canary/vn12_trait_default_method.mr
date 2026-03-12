@@ -1,0 +1,6 @@
+# VN12: Trait with default method implementation
+trait Greetable[a] = {
+  fn greet(x: a) -> Str = "hello"
+}
+impl Greetable[Int] = {}
+puts(1.greet())  # output: hello

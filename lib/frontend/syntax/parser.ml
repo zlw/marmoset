@@ -1,12 +1,19 @@
 open Ast
+open Surface_ast
 module Diagnostic = Diagnostics.Diagnostic
 module String_utils = Diagnostics.String_utils
 
 let ( let* ) res f = Result.bind res f
 
-(* Helpers to create AST nodes with position and ID from parser *)
-let mk_expr id pos kind = AST.{ id; expr = kind; pos; end_pos = pos; file_id = None }
-let mk_stmt pos kind = AST.{ stmt = kind; pos; end_pos = pos; file_id = None }
+(* Surface AST node constructors *)
+let mk_surface_expr id pos kind : Surface.surface_expr =
+  Surface.{ se_id = id; se_expr = kind; se_pos = pos; se_end_pos = pos; se_file_id = None }
+
+let mk_surface_stmt pos kind : Surface.surface_stmt =
+  Surface.{ ss_stmt = kind; ss_pos = pos; ss_end_pos = pos; ss_file_id = None }
+
+let mk_surface_pat pos kind : Surface.surface_pattern =
+  Surface.{ sp_pat = kind; sp_pos = pos; sp_end_pos = pos; sp_file_id = None }
 
 let token_end (t : Token.token) : int =
   let len = String.length t.literal in
@@ -26,7 +33,7 @@ type parser = {
   curr_token : Token.token;
   peek_token : Token.token;
   errors : errors;
-  next_id : int;
+  id_supply : Id_supply.Id_supply.t;
   file_id : string;
 }
 
@@ -41,38 +48,78 @@ let first_some a b =
   | Some _ -> a
   | None -> b
 
-let with_expr_end p (e : AST.expression) : AST.expression =
-  { e with end_pos = max e.end_pos (token_end p.curr_token); file_id = first_some e.file_id (Some p.file_id) }
+let with_surface_expr_end p (e : Surface.surface_expr) : Surface.surface_expr =
+  Surface.
+    {
+      e with
+      se_end_pos = max e.se_end_pos (token_end p.curr_token);
+      se_file_id = first_some e.se_file_id (Some p.file_id);
+    }
 
-let with_stmt_end p (s : AST.statement) : AST.statement =
-  { s with end_pos = max s.end_pos (token_end p.curr_token); file_id = first_some s.file_id (Some p.file_id) }
+let with_surface_stmt_end p (s : Surface.surface_stmt) : Surface.surface_stmt =
+  Surface.
+    {
+      s with
+      ss_end_pos = max s.ss_end_pos (token_end p.curr_token);
+      ss_file_id = first_some s.ss_file_id (Some p.file_id);
+    }
 
-let with_pat_end p (pat : AST.pattern) : AST.pattern =
-  {
-    pat with
-    end_pos = max pat.end_pos (token_end p.curr_token);
-    file_id = first_some pat.file_id (Some p.file_id);
-  }
+let with_surface_pat_end p (pat : Surface.surface_pattern) : Surface.surface_pattern =
+  Surface.
+    {
+      pat with
+      sp_end_pos = max pat.sp_end_pos (token_end p.curr_token);
+      sp_file_id = first_some pat.sp_file_id (Some p.file_id);
+    }
 
-(* Helper to get fresh ID and increment counter *)
-let fresh_id p = (p.next_id, { p with next_id = p.next_id + 1 })
+let tokens_are_on_different_lines (p : parser) : bool =
+  let start_pos = token_end p.curr_token + 1 in
+  let end_pos = p.peek_token.pos - 1 in
+  let rec loop i =
+    if i > end_pos then
+      false
+    else
+      match String.get p.lexer.input i with
+      | '\n' | '\r' -> true
+      | _ -> loop (i + 1)
+  in
+  start_pos <= end_pos && loop start_pos
+
+let token_starts_line (p : parser) (t : Token.token) : bool =
+  let rec loop i =
+    if i < 0 then
+      true
+    else
+      match String.get p.lexer.input i with
+      | ' ' | '\t' -> loop (i - 1)
+      | '\n' | '\r' -> true
+      | _ -> false
+  in
+  loop (t.pos - 1)
+
+(* Helper to get fresh ID using the mutable id_supply *)
+let fresh_id (p : parser) : int = Id_supply.Id_supply.fresh p.id_supply
 
 type precedence = int
 
 let prec_lowest = 1
-let prec_equals = 2
-let prec_less_greater = 3
-let prec_sum = 4
-let prec_product = 5
-let prec_prefix = 6
-let prec_call = 7
-let prec_index = 8
+let prec_or = 2 (* || *)
+let prec_and = 3 (* && *)
+let prec_equals = 4 (* == != is *)
+let prec_less_greater = 5 (* < > <= >= *)
+let prec_sum = 6 (* + - *)
+let prec_product = 7 (* * / % *)
+let prec_prefix = 8 (* ! - (prefix) *)
+let prec_call = 9 (* f(args) *)
+let prec_index = 10 (* a[i] a.b *)
 
 let precedences = function
+  | Token.PipePipe -> prec_or
+  | Token.AmpAmp -> prec_and
   | Token.Eq | Token.NotEq | Token.Is -> prec_equals
   | Token.Lt | Token.Gt | Token.Le | Token.Ge -> prec_less_greater
   | Token.Plus | Token.Minus -> prec_sum
-  | Token.Asterisk | Token.Slash -> prec_product
+  | Token.Asterisk | Token.Slash | Token.Percent -> prec_product
   | Token.LParen -> prec_call
   | Token.LBracket -> prec_index
   | Token.Dot -> prec_index (* Same precedence as indexing *)
@@ -92,7 +139,7 @@ let init ~file_id (l : Lexer.lexer) : parser =
     curr_token = Token.init Illegal "";
     peek_token = Token.init Illegal "";
     errors = [];
-    next_id = 0;
+    id_supply = Id_supply.Id_supply.create 0;
     file_id;
   }
   |> next_token
@@ -140,77 +187,160 @@ let no_prefix_parse_fn_error (p : parser) (t : Token.token_type) : parser =
   let msg = Printf.sprintf "syntax error, unexpected %s found" (Token.show_token_type t) in
   add_error ~code:"parse-unexpected-token" p msg
 
-let rec parse_program (p : parser) : (parser * AST.program, parser) result =
-  let rec loop (lp : parser) (prog : AST.program) =
+let rec parse_surface_program (p : parser) : (parser * Surface.surface_program, parser) result =
+  let rec loop (lp : parser) (prog : Surface.surface_program) =
     if curr_token_is lp Token.EOF then
       Ok (lp, List.rev prog)
     else
-      let* lp2, prog2 = parse_statement lp in
+      let start_pos = lp.curr_token.pos in
+      let start_file_id = Some lp.file_id in
+      let* lp2, decl = parse_top_decl lp in
       let lp3 =
-        match prog2.stmt with
-        | AST.TypeAlias _ ->
+        match decl with
+        | Surface.STypeDef _ ->
             (* parse_type_expr leaves us at the token after the alias body *)
             if curr_token_is lp2 Token.Semicolon then
               next_token lp2
             else
               lp2
+        | Surface.SEnumDef { derive = _ :: _; _ } ->
+            (* postfix derive: parse_derive_trait_list leaves parser one past the
+               last trait name, matching the STypeDef convention — no extra advance *)
+            lp2
         | _ -> next_token lp2
       in
-      loop lp3 ([ prog2 ] @ prog)
+      let end_pos = max start_pos (token_end lp2.curr_token) in
+      let ts =
+        Surface.{ std_decl = decl; std_pos = start_pos; std_end_pos = end_pos; std_file_id = start_file_id }
+      in
+      loop lp3 (ts :: prog)
   in
-
   loop p []
 
-and parse_statement (p : parser) : (parser * AST.statement, parser) result =
+and parse_top_decl (p : parser) : (parser * Surface.top_decl, parser) result =
+  match p.curr_token.token_type with
+  | Token.Let -> parse_let_top p
+  | Token.Return -> parse_return_top p
+  | Token.Enum -> parse_enum_definition p
+  | Token.Trait -> parse_trait_definition p
+  | Token.Impl -> parse_impl_definition p
+  | Token.Type -> parse_type_alias p
+  | Token.Function when peek_token_is p Token.Ident -> parse_fn_decl_top p
+  | _ -> parse_expression_top p
+
+and parse_let_top (p : parser) : (parser * Surface.top_decl, parser) result =
+  let* p2, ss = parse_let_statement p in
+  match ss.Surface.ss_stmt with
+  | Surface.SSLet { ss_name = name; ss_value = value; ss_type_annotation = type_annotation } ->
+      Ok (p2, Surface.SLet { name; value; type_annotation })
+  | _ -> assert false
+
+and parse_return_top (p : parser) : (parser * Surface.top_decl, parser) result =
+  let* p2, ss = parse_return_statement p in
+  match ss.Surface.ss_stmt with
+  | Surface.SSReturn e -> Ok (p2, Surface.SReturn e)
+  | _ -> assert false
+
+and parse_expression_top (p : parser) : (parser * Surface.top_decl, parser) result =
+  let* p2, expr = parse_expression p prec_lowest in
+  let p3 = skip p2 Token.Semicolon in
+  Ok (p3, Surface.SExpressionStmt expr)
+
+(* Phase 1b: vNext top-level fn declaration: fn name[generics](params) -> T = expr_or_block *)
+and parse_fn_decl_top (p : parser) : (parser * Surface.top_decl, parser) result =
+  (* curr_token = 'fn', peek = Ident *)
+  let* p2 = expect_peek p Token.Ident in
+  let name = p2.curr_token.literal in
+
+  (* Optional generics: [a: Show, b] *)
+  let* p3, generics = parse_generic_params p2 in
+  let* p4 = expect_peek p3 Token.LParen in
+
+  (* Parameters with optional type annotations *)
+  let* p5, params = parse_function_parameters p4 in
+
+  (* Optional return type: -> T (pure) or => T (effectful) *)
+  let* p6, return_type, is_effectful =
+    if peek_token_is p5 Token.Arrow then
+      let p6 = next_token p5 in
+      let* p7, te = parse_type_expr (next_token p6) in
+      Ok (p7, Some te, false)
+    else if peek_token_is p5 Token.FatArrow then
+      let p6 = next_token p5 in
+      let* p7, te = parse_type_expr (next_token p6) in
+      Ok (p7, Some te, true)
+    else
+      Ok (p5, None, false)
+  in
+
+  (* Expect = *)
+  let* p7 =
+    if curr_token_is p6 Token.Assign then
+      Ok p6
+    else if peek_token_is p6 Token.Assign then
+      Ok (next_token p6)
+    else
+      expect_peek p6 Token.Assign
+  in
+
+  (* Parse body: { block } or expression *)
+  let p_body = next_token p7 in
+  let* p8, body =
+    if curr_token_is p_body Token.LBrace && is_block_body_start p_body then
+      let* p8, block = parse_block_statement p_body in
+      let* p9 =
+        if curr_token_is p8 Token.RBrace then
+          Ok p8
+        else
+          expect_peek p8 Token.RBrace
+      in
+      Ok (p9, Surface.SEOBBlock block)
+    else
+      let* p8, expr = parse_expression p_body prec_lowest in
+      let p9 = skip p8 Token.Semicolon in
+      Ok (p9, Surface.SEOBExpr expr)
+  in
+
+  Ok (p8, Surface.SFnDecl { name; generics; params; return_type; is_effectful; body })
+
+and parse_block_stmt (p : parser) : (parser * Surface.surface_stmt, parser) result =
   let finalize = function
-    | Ok (lp, stmt) -> Ok (lp, with_stmt_end lp stmt)
+    | Ok (lp, stmt) -> Ok (lp, with_surface_stmt_end lp stmt)
     | Error _ as err -> err
   in
   (match p.curr_token.token_type with
   | Token.Let -> parse_let_statement p
   | Token.Return -> parse_return_statement p
-  | Token.Enum -> parse_enum_definition p
-  | Token.Trait -> parse_trait_definition p
-  | Token.Impl -> parse_impl_definition p
-  | Token.Derive -> parse_derive_definition p
-  | Token.Type -> parse_type_alias p
-  | _ -> parse_expression_statement p)
+  | _ -> parse_expression_stmt p)
   |> finalize
 
 (* Phase 2: Type expression parsing *)
 
 (* Parse a single type atom (not union) *)
-and parse_type_atom (p : parser) : (parser * AST.type_expr, parser) result =
+and parse_type_atom (p : parser) : (parser * Surface.surface_type_expr, parser) result =
   if curr_token_is p Token.Ident then
     let ident = p.curr_token.literal in
     let p2 = next_token p in
-    (* Check for generic application: list[int], map[string, int], etc. *)
-    if curr_token_is p2 Token.LBracket then
+    if ident = "Dyn" && curr_token_is p2 Token.LBracket then
+      let* p3, traits = parse_constraint_list (next_token p2) in
+      if curr_token_is p3 Token.RBracket then
+        Ok (next_token p3, Surface.STTraitObject traits)
+      else
+        Error (peek_error p3 Token.RBracket)
+      (* Check for generic application: List[Int], Map[Str, Int], etc. *)
+    else if curr_token_is p2 Token.LBracket then
       let* p3, type_args = parse_type_expr_list (next_token p2) in
       if curr_token_is p3 Token.RBracket then
-        Ok (next_token p3, AST.TApp (ident, type_args))
+        Ok (next_token p3, Surface.STApp (ident, type_args))
       else
         Error (peek_error p3 Token.RBracket)
     else
-      Ok (p2, AST.TCon ident)
-  else if curr_token_is p Token.Function then
-    (* Function type: fn(int, string) -> bool *)
-    let* p2 = expect_peek p Token.LParen in
-    let* p3, param_types = parse_type_expr_list (next_token p2) in
-    let* p4 =
-      if curr_token_is p3 Token.RParen then
-        Ok p3
-      else
-        expect_peek p3 Token.RParen
-    in
-    let* p5 = expect_peek p4 Token.Arrow in
-    let* p6, return_type = parse_type_expr (next_token p5) in
-    Ok (p6, AST.TArrow (param_types, return_type))
+      Ok (p2, Surface.STCon ident)
   else if curr_token_is p Token.LParen then
-    (* Parenthesized type or function type: (int | string) or (int, string) -> bool *)
+    (* Parenthesized type or function type: (Int | Str) or (Int, Str) -> Bool *)
     let* p2, first = parse_type_expr (next_token p) in
     if curr_token_is p2 Token.Comma then
-      (* Multiple params: (int, string) -> bool *)
+      (* Multiple params: (Int, Str) -> Bool *)
       let rec collect_params lp rev_params =
         let* lp2, param_type = parse_type_expr (next_token lp) in
         let rev_params = param_type :: rev_params in
@@ -222,49 +352,69 @@ and parse_type_atom (p : parser) : (parser * AST.type_expr, parser) result =
           Error (peek_error lp2 Token.RParen)
       in
       let* p3, params = collect_params p2 [ first ] in
-      let* p4 = expect_peek p3 Token.Arrow in
-      let* p5, return_type = parse_type_expr (next_token p4) in
-      Ok (p5, AST.TArrow (params, return_type))
-    else if curr_token_is p2 Token.RParen then
-      (* Single type in parens: (int) or (int | string) *)
-      let p3 = next_token p2 in
-      if curr_token_is p3 Token.Arrow then
-        (* Single-param function: (int) -> bool *)
-        let* p5, return_type = parse_type_expr (next_token p3) in
-        Ok (p5, AST.TArrow ([ first ], return_type))
+      let p4 = next_token p3 in
+      let is_effectful = curr_token_is p4 Token.FatArrow in
+      if curr_token_is p4 Token.Arrow || is_effectful then
+        let* p5, return_type = parse_type_expr (next_token p4) in
+        Ok (p5, Surface.STArrow (params, return_type, is_effectful))
       else
-        (* Just grouping: (int) or (int | string) *)
+        Error (peek_error p3 Token.Arrow)
+    else if curr_token_is p2 Token.RParen then
+      (* Single type in parens: (Int) or (Int | Str) *)
+      let p3 = next_token p2 in
+      if curr_token_is p3 Token.Arrow || curr_token_is p3 Token.FatArrow then
+        let is_effectful = curr_token_is p3 Token.FatArrow in
+        let* p5, return_type = parse_type_expr (next_token p3) in
+        Ok (p5, Surface.STArrow ([ first ], return_type, is_effectful))
+      else
+        (* Just grouping: (Int) or (Int | Str) *)
         Ok (p3, first)
     else
       Error (peek_error p2 Token.RParen)
   else if curr_token_is p Token.LBrace then
-    (* Record type: { x: int, y: string } or { x: int, ...r } *)
+    (* Record type: { x: Int, y: Str } or { x: Int, ...r } *)
     parse_record_type p
   else
     Error (no_prefix_parse_fn_error p p.curr_token.token_type)
 
-(* Parse a type expression, including unions: int | string | bool *)
-and parse_type_expr (p : parser) : (parser * AST.type_expr, parser) result =
+(* Parse a type intersection, including A & B & C *)
+and parse_type_intersection (p : parser) : (parser * Surface.surface_type_expr, parser) result =
   let* p2, first_type = parse_type_atom p in
+  if curr_token_is p2 Token.Ampersand then
+    let rec collect_intersection_members lp rev_members =
+      let* lp2, next_type = parse_type_atom (next_token lp) in
+      let rev_members = next_type :: rev_members in
+      if curr_token_is lp2 Token.Ampersand then
+        collect_intersection_members lp2 rev_members
+      else
+        Ok (lp2, Surface.STIntersection (List.rev rev_members))
+    in
+    collect_intersection_members p2 [ first_type ]
+  else
+    Ok (p2, first_type)
+
+(* Parse a type expression, including unions: Int | Str | Bool *)
+and parse_type_expr (p : parser) : (parser * Surface.surface_type_expr, parser) result =
+  let* p2, first_type = parse_type_intersection p in
   (* Check for union: type | type | type ... *)
   if curr_token_is p2 Token.Pipe then
     let rec collect_union_members lp rev_members =
-      let* lp2, next_type = parse_type_atom (next_token lp) in
+      let* lp2, next_type = parse_type_intersection (next_token lp) in
       let rev_members = next_type :: rev_members in
       if curr_token_is lp2 Token.Pipe then
         collect_union_members lp2 rev_members
       else
-        Ok (lp2, AST.TUnion (List.rev rev_members))
+        Ok (lp2, Surface.STUnion (List.rev rev_members))
     in
     collect_union_members p2 [ first_type ]
   else
     Ok (p2, first_type)
 
-and parse_type_expr_list (p : parser) : (parser * AST.type_expr list, parser) result =
+and parse_type_expr_list (p : parser) : (parser * Surface.surface_type_expr list, parser) result =
   if curr_token_is p Token.RParen || curr_token_is p Token.RBracket then
     Ok (p, [])
   else
-    let rec loop (lp : parser) (types : AST.type_expr list) =
+    let rec loop (lp : parser) (types : Surface.surface_type_expr list) =
       let* lp2, te = parse_type_expr lp in
       if curr_token_is lp2 Token.Comma then
         loop (next_token lp2) (te :: types)
@@ -273,13 +423,36 @@ and parse_type_expr_list (p : parser) : (parser * AST.type_expr list, parser) re
     in
     loop p []
 
+and parse_param_type_expr (p : parser) : (parser * Surface.surface_type_expr, parser) result =
+  let rec try_constraint_chain (lp : parser) (rev_traits : string list) :
+      (parser * Surface.surface_type_expr, parser) result option =
+    if curr_token_is lp Token.Ident then
+      let trait_name = lp.curr_token.literal in
+      let lp2 = next_token lp in
+      if curr_token_is lp2 Token.Ampersand then
+        match try_constraint_chain (next_token lp2) (trait_name :: rev_traits) with
+        | Some result -> Some result
+        | None -> None
+      else if curr_token_is lp2 Token.Comma || curr_token_is lp2 Token.RParen then
+        match rev_traits with
+        | [] -> None
+        | _ -> Some (Ok (lp2, Surface.STConstraintShorthand (List.rev (trait_name :: rev_traits))))
+      else
+        None
+    else
+      None
+  in
+  match try_constraint_chain p [] with
+  | Some result -> result
+  | None -> parse_type_expr p
+
 and parse_trait_constraint (p : parser) : (parser * string list, parser) result =
-  (* Parse trait constraints: show, eq, show + eq, etc. *)
+  (* Parse trait constraints: Eq, Show, Eq & Show, etc. *)
   let rec loop (lp : parser) (traits : string list) =
     if curr_token_is lp Token.Ident then
       let trait = lp.curr_token.literal in
       let lp2 = next_token lp in
-      if curr_token_is lp2 Token.Plus then
+      if curr_token_is lp2 Token.Ampersand then
         loop (next_token lp2) (trait :: traits)
       else
         Ok (lp2, List.rev (trait :: traits))
@@ -289,7 +462,7 @@ and parse_trait_constraint (p : parser) : (parser * string list, parser) result 
   loop p []
 
 and parse_generic_params (p : parser) : (parser * AST.generic_param list option, parser) result =
-  (* Parse generic parameters: [a], [a: show], [a: show + eq, b: eq], etc. *)
+  (* Parse generic parameters: [a], [a: Show], [a: Show & Eq, b: Eq], etc. *)
   (* Check if the NEXT token is [ (generics start after fn keyword) *)
   if peek_token_is p Token.LBracket then
     let p_bracket = next_token p in
@@ -319,8 +492,8 @@ and parse_generic_params (p : parser) : (parser * AST.generic_param list option,
   else
     Ok (p, None)
 
-(* Phase 4.5: Parse record type: { x: int, y: string, ...r } *)
-and parse_record_type (p : parser) : (parser * AST.type_expr, parser) result =
+(* Phase 4.5: Parse record type: { x: Int, y: Str, ...r } *)
+and parse_record_type (p : parser) : (parser * Surface.surface_type_expr, parser) result =
   (* Current token is { *)
   let p2 = next_token p in
 
@@ -328,7 +501,7 @@ and parse_record_type (p : parser) : (parser * AST.type_expr, parser) result =
   let rec parse_fields lp fields =
     if curr_token_is lp Token.RBrace then
       (* Empty record or end of fields: { } *)
-      Ok (next_token lp, AST.TRecord (List.rev fields, None))
+      Ok (next_token lp, Surface.STRecord (List.rev fields, None))
     else if curr_token_is lp Token.Spread then
       (* Row variable: ...r *)
       let lp2 = next_token lp in
@@ -339,14 +512,14 @@ and parse_record_type (p : parser) : (parser * AST.type_expr, parser) result =
         else
           expect_peek lp3 Token.RBrace
       in
-      Ok (next_token lp4, AST.TRecord (List.rev fields, Some row_var))
+      Ok (next_token lp4, Surface.STRecord (List.rev fields, Some row_var))
     else if curr_token_is lp Token.Ident then
       (* Field: field_name: type *)
-      let field_name = lp.curr_token.literal in
+      let sf_name = lp.curr_token.literal in
       let* lp2 = expect_peek lp Token.Colon in
       let lp2 = next_token lp2 in
-      let* lp3, field_type = parse_type_expr lp2 in
-      let field = AST.{ field_name; field_type } in
+      let* lp3, sf_type = parse_type_expr lp2 in
+      let field = Surface.{ sf_name; sf_type } in
       if curr_token_is lp3 Token.Comma then
         (* More fields *)
         parse_fields (next_token lp3) (field :: fields)
@@ -358,58 +531,46 @@ and parse_record_type (p : parser) : (parser * AST.type_expr, parser) result =
   in
   parse_fields p2 []
 
-and parse_let_statement (p : parser) : (parser * AST.statement, parser) result =
+and parse_let_statement (p : parser) : (parser * Surface.surface_stmt, parser) result =
   let pos = p.curr_token.pos in
   let* p2 = expect_peek p Token.Ident in
-  let name = p2.curr_token.literal in
+  let ss_name = p2.curr_token.literal in
   (* Phase 2: Parse optional type annotation *)
-  let* p3, type_annotation =
+  let* p3, ss_type_annotation =
     if peek_token_is p2 Token.Colon then
       let p_colon = next_token p2 in
       (* Move to : *)
       let p_type_start = next_token p_colon in
       (* Move to type identifier *)
       let* p_type_end, te = parse_type_expr p_type_start in
-      (* parse_type_expr returns parser positioned one past the type expression *)
-      (* For `int`, it's positioned at = *)
       Ok (p_type_end, Some te)
     else
-      (* No colon, so p2 is still at the identifier *)
-      (* We want to leave p2 as-is so that expect_peek can find = *)
       Ok (p2, None)
   in
-  (* p3 is positioned appropriately for the next step *)
-  (* For annotated: p3 is at the token after the type (should be =) *)
-  (* For non-annotated: p3 is at the identifier, so expect_peek will find = *)
   let* p4 =
-    match type_annotation with
+    match ss_type_annotation with
     | Some _ ->
-        (* After type parsing, we're positioned at/past the type *)
         if curr_token_is p3 Token.Assign then
-          Ok p3 (* Already at = *)
+          Ok p3
         else if peek_token_is p3 Token.Assign then
           Ok (next_token p3)
-          (* Move to = *)
         else
           Error (peek_error p3 Token.Assign)
-    | None ->
-        (* No annotation, so expect_peek to find = *)
-        expect_peek p3 Token.Assign
+    | None -> expect_peek p3 Token.Assign
   in
-  let* p5, expr = parse_expression (next_token p4) prec_lowest in
+  let* p5, ss_value = parse_expression (next_token p4) prec_lowest in
   let p6 = skip p5 Token.Semicolon in
-  Ok (p6, mk_stmt pos (AST.Let { name; value = expr; type_annotation }))
+  Ok (p6, mk_surface_stmt pos (Surface.SSLet { ss_name; ss_value; ss_type_annotation }))
 
-and parse_return_statement (p : parser) : (parser * AST.statement, parser) result =
+and parse_return_statement (p : parser) : (parser * Surface.surface_stmt, parser) result =
   let pos = p.curr_token.pos in
   let* p2, expr = parse_expression (next_token p) prec_lowest in
   let p3 = skip p2 Token.Semicolon in
-  Ok (p3, mk_stmt pos (AST.Return expr))
+  Ok (p3, mk_surface_stmt pos (Surface.SSReturn expr))
 
 (* Phase 4.2: Parse enum definition *)
-and parse_enum_definition (p : parser) : (parser * AST.statement, parser) result =
+and parse_enum_definition (p : parser) : (parser * Surface.top_decl, parser) result =
   (* Current token is 'enum' *)
-  let pos = p.curr_token.pos in
   let* p2 = expect_peek p Token.Ident in
   let name = p2.curr_token.literal in
 
@@ -421,26 +582,43 @@ and parse_enum_definition (p : parser) : (parser * AST.statement, parser) result
       Ok (next_token p2, [])
   in
 
-  (* Expect opening brace *)
+  (* Expect: = { *)
   let* p4 =
-    if curr_token_is p3 Token.LBrace then
+    if curr_token_is p3 Token.Assign then
       Ok p3
     else
-      expect_peek p3 Token.LBrace
+      expect_peek p3 Token.Assign
+  in
+  let* p5 =
+    if peek_token_is p4 Token.LBrace then
+      Ok (next_token p4)
+    else
+      expect_peek p4 Token.LBrace
   in
 
   (* Parse variants *)
-  let* p5, variants = parse_variant_list (next_token p4) in
+  let* p6, variants = parse_variant_list (next_token p5) in
 
   (* Expect closing brace *)
-  let* p6 =
-    if curr_token_is p5 Token.RBrace then
-      Ok p5
+  let* p7 =
+    if curr_token_is p6 Token.RBrace then
+      Ok p6
     else
-      expect_peek p5 Token.RBrace
+      expect_peek p6 Token.RBrace
   in
 
-  Ok (p6, mk_stmt pos (AST.EnumDef { name; type_params; variants }))
+  (* Check for postfix derive: } derive Eq, Show *)
+  let* p8, derive =
+    if peek_token_is p7 Token.Derive && not (token_starts_line p7 p7.peek_token) then
+      let p8 = next_token p7 in
+      (* advance to 'derive' *)
+      let* p9, traits = parse_derive_trait_list (next_token p8) in
+      Ok (p9, traits)
+    else
+      Ok (p7, [])
+  in
+
+  Ok (p8, Surface.SEnumDef { name; type_params; variants; derive })
 
 and parse_type_param_list (p : parser) : (parser * string list, parser) result =
   let rec loop lp rev_params =
@@ -460,15 +638,15 @@ and parse_type_param_list (p : parser) : (parser * string list, parser) result =
   in
   loop p []
 
-and parse_variant_list (p : parser) : (parser * AST.variant_def list, parser) result =
+and parse_variant_list (p : parser) : (parser * Surface.surface_variant_def list, parser) result =
   let rec loop lp variants =
     if curr_token_is lp Token.RBrace then
       Ok (lp, List.rev variants)
     else if curr_token_is lp Token.Ident then
-      let variant_name = lp.curr_token.literal in
+      let sv_name = lp.curr_token.literal in
       let lp2 = next_token lp in
       (* Check for variant data: some(a) *)
-      let* lp3, variant_fields =
+      let* lp3, sv_fields =
         if curr_token_is lp2 Token.LParen then
           let* lp3, fields = parse_type_expr_list (next_token lp2) in
           let* lp4 =
@@ -481,17 +659,23 @@ and parse_variant_list (p : parser) : (parser * AST.variant_def list, parser) re
         else
           Ok (lp2, [])
       in
-      let variant = AST.{ variant_name; variant_fields } in
-      loop lp3 (variant :: variants)
+      let variant = Surface.{ sv_name; sv_fields } in
+      (* Skip optional comma between variants *)
+      let lp4 =
+        if curr_token_is lp3 Token.Comma then
+          next_token lp3
+        else
+          lp3
+      in
+      loop lp4 (variant :: variants)
     else
       Error (no_prefix_parse_fn_error lp lp.curr_token.token_type)
   in
   loop p []
 
 (* Phase 4.4: Type alias parsing *)
-and parse_type_alias (p : parser) : (parser * AST.statement, parser) result =
+and parse_type_alias (p : parser) : (parser * Surface.top_decl, parser) result =
   (* Current token is 'type' *)
-  let pos = p.curr_token.pos in
   let* p2 = expect_peek p Token.Ident in
   let alias_name = p2.curr_token.literal in
 
@@ -514,12 +698,24 @@ and parse_type_alias (p : parser) : (parser * AST.statement, parser) result =
   (* Parse type expression *)
   let* p5, alias_body = parse_type_expr (next_token p4) in
 
-  Ok (p5, mk_stmt pos (AST.TypeAlias { alias_name; alias_type_params; alias_body }))
+  (* Check for postfix derive *)
+  let* p6, derive =
+    if curr_token_is p5 Token.Derive && not (token_starts_line p5 p5.curr_token) then
+      let* p6, traits = parse_derive_trait_list (next_token p5) in
+      Ok (p6, traits)
+    else if peek_token_is p5 Token.Derive && not (token_starts_line p5 p5.peek_token) then
+      let p5a = next_token p5 in
+      let* p6, traits = parse_derive_trait_list (next_token p5a) in
+      Ok (p6, traits)
+    else
+      Ok (p5, [])
+  in
+
+  Ok (p6, Surface.STypeDef { alias_name; alias_type_params; alias_body; derive })
 
 (* Phase 4.3: Trait definition parsing *)
-and parse_trait_definition (p : parser) : (parser * AST.statement, parser) result =
+and parse_trait_definition (p : parser) : (parser * Surface.top_decl, parser) result =
   (* Current token is 'trait' *)
-  let pos = p.curr_token.pos in
   let* p2 = expect_peek p Token.Ident in
   let name = p2.curr_token.literal in
 
@@ -535,46 +731,50 @@ and parse_trait_definition (p : parser) : (parser * AST.statement, parser) resul
       Ok (next_token p2, None)
   in
 
-  (* Parse optional supertraits: : eq or : eq + show *)
+  (* Parse optional supertraits: : Eq or : Eq & Show *)
   let* p4, supertraits =
     if curr_token_is p3 Token.Colon then
       parse_supertrait_list (next_token p3)
     else if peek_token_is p3 Token.Colon then
       parse_supertrait_list (next_token (next_token p3))
-    else if curr_token_is p3 Token.LBrace then
-      Ok (p3, [])
     else
-      Ok (next_token p3, [])
+      Ok (p3, [])
   in
 
-  (* Expect opening brace *)
+  (* Expect: = { *)
   let* p5 =
-    if curr_token_is p4 Token.LBrace then
+    if curr_token_is p4 Token.Assign then
       Ok p4
     else
-      expect_peek p4 Token.LBrace
+      expect_peek p4 Token.Assign
+  in
+  let* p6 =
+    if peek_token_is p5 Token.LBrace then
+      Ok (next_token p5)
+    else
+      expect_peek p5 Token.LBrace
   in
 
   (* Parse trait members: fields and method signatures *)
-  let* p6, fields, methods = parse_trait_member_list (next_token p5) in
+  let* p7, fields, methods = parse_trait_member_list (next_token p6) in
 
   (* Expect closing brace *)
-  let* p7 =
-    if curr_token_is p6 Token.RBrace then
-      Ok p6
+  let* p8 =
+    if curr_token_is p7 Token.RBrace then
+      Ok p7
     else
-      expect_peek p6 Token.RBrace
+      expect_peek p7 Token.RBrace
   in
 
-  Ok (p7, mk_stmt pos (AST.TraitDef { name; type_param; supertraits; fields; methods }))
+  Ok (p8, Surface.STraitDef { name; type_param; supertraits; fields; methods })
 
 and parse_supertrait_list (p : parser) : (parser * string list, parser) result =
   let rec loop lp rev_traits =
     if curr_token_is lp Token.Ident then
       let trait_name = lp.curr_token.literal in
       let lp2 = next_token lp in
-      if curr_token_is lp2 Token.Plus then
-        (* More supertraits: + trait *)
+      if curr_token_is lp2 Token.Ampersand then
+        (* More supertraits: & trait *)
         loop (next_token lp2) (trait_name :: rev_traits)
       else
         (* End of supertrait list *)
@@ -584,7 +784,7 @@ and parse_supertrait_list (p : parser) : (parser * string list, parser) result =
   in
   loop p []
 
-and parse_method_sig_list (p : parser) : (parser * AST.method_sig list, parser) result =
+and parse_method_sig_list (p : parser) : (parser * Surface.surface_method_sig list, parser) result =
   let rec loop lp methods =
     if curr_token_is lp Token.RBrace then
       Ok (lp, List.rev methods)
@@ -597,7 +797,7 @@ and parse_method_sig_list (p : parser) : (parser * AST.method_sig list, parser) 
   loop p []
 
 and parse_trait_member_list (p : parser) :
-    (parser * AST.record_type_field list * AST.method_sig list, parser) result =
+    (parser * Surface.surface_record_type_field list * Surface.surface_method_sig list, parser) result =
   let rec loop lp fields methods =
     if curr_token_is lp Token.RBrace then
       Ok (lp, List.rev fields, List.rev methods)
@@ -605,29 +805,29 @@ and parse_trait_member_list (p : parser) :
       let* lp2, method_sig = parse_method_sig lp in
       loop lp2 fields (method_sig :: methods)
     else if curr_token_is lp Token.Ident then
-      let field_name = lp.curr_token.literal in
+      let sf_name = lp.curr_token.literal in
       let* lp2 = expect_peek lp Token.Colon in
-      let* lp3, field_type = parse_type_expr (next_token lp2) in
+      let* lp3, sf_type = parse_type_expr (next_token lp2) in
       let next_lp =
         if curr_token_is lp3 Token.Comma then
           next_token lp3
         else
           lp3
       in
-      loop next_lp (AST.{ field_name; field_type } :: fields) methods
+      loop next_lp (Surface.{ sf_name; sf_type } :: fields) methods
     else
       Error (no_prefix_parse_fn_error lp lp.curr_token.token_type)
   in
   loop p [] []
 
-and parse_method_sig (p : parser) : (parser * AST.method_sig, parser) result =
+and parse_method_sig (p : parser) : (parser * Surface.surface_method_sig, parser) result =
   (* Current token is 'fn' *)
-  let method_sig_id, p = fresh_id p in
+  let sm_id = fresh_id p in
   let* p2 = expect_peek p Token.Ident in
-  let method_name = p2.curr_token.literal in
+  let sm_name = p2.curr_token.literal in
 
   (* Parse optional method-level generics [a, b: show] *)
-  let* p3, method_generics = parse_generic_params p2 in
+  let* p3, sm_generics = parse_generic_params p2 in
   let p3 = next_token p3 in
 
   (* Expect opening paren *)
@@ -650,7 +850,7 @@ and parse_method_sig (p : parser) : (parser * AST.method_sig, parser) result =
   in
 
   (* Parse effect marker: -> (pure) or => (effectful) *)
-  let* p6, method_effect =
+  let* p6, sm_effect =
     if peek_token_is p5 Token.Arrow then
       Ok (next_token p5, AST.Pure)
     else if peek_token_is p5 Token.FatArrow then
@@ -660,48 +860,63 @@ and parse_method_sig (p : parser) : (parser * AST.method_sig, parser) result =
   in
 
   (* Parse return type *)
-  let* p7, return_type = parse_type_expr (next_token p6) in
+  let* p7, sm_return_type = parse_type_expr (next_token p6) in
 
-  (* For now, we don't support default implementations *)
-  let method_default_impl = None in
-
-  Ok
-    ( p7,
-      AST.
-        {
-          method_sig_id;
-          method_name;
-          method_generics;
-          method_params = params;
-          method_return_type = return_type;
-          method_effect;
-          method_default_impl;
-        } )
-
-and parse_param_list_with_types (p : parser) : (parser * (string * AST.type_expr) list, parser) result =
-  let rec loop lp rev_params =
-    if curr_token_is lp Token.Ident then
-      let param_name = lp.curr_token.literal in
-      let* lp2 = expect_peek lp Token.Colon in
-      let* lp3, param_type = parse_type_expr (next_token lp2) in
-      let lp4 = lp3 in
-      if curr_token_is lp4 Token.Comma then
-        loop (next_token lp4) ((param_name, param_type) :: rev_params)
+  (* Parse optional default body: = expr_or_block *)
+  let* p8, sm_default_impl =
+    if curr_token_is p7 Token.Assign then
+      let p_body = next_token p7 in
+      if curr_token_is p_body Token.LBrace && is_block_body_start p_body then
+        let* p9, block = parse_block_statement p_body in
+        let* p10 =
+          if curr_token_is p9 Token.RBrace then
+            Ok p9
+          else
+            expect_peek p9 Token.RBrace
+        in
+        Ok (next_token p10, Some (Surface.SEOBBlock block))
       else
-        Ok (lp4, List.rev ((param_name, param_type) :: rev_params))
-    else if curr_token_is lp Token.RParen then
+        let* p9, expr = parse_expression p_body prec_lowest in
+        let p10 = skip p9 Token.Semicolon in
+        Ok (next_token p10, Some (Surface.SEOBExpr expr))
+    else
+      Ok (p7, None)
+  in
+
+  Ok (p8, Surface.{ sm_id; sm_name; sm_generics; sm_params = params; sm_return_type; sm_effect; sm_default_impl })
+
+and parse_param_list_with_types (p : parser) : (parser * (string * Surface.surface_type_expr) list, parser) result
+    =
+  let rec loop lp pos_idx rev_params =
+    if curr_token_is lp Token.RParen then
       Ok (lp, List.rev rev_params)
+    else if curr_token_is lp Token.Ident && peek_token_is lp Token.Colon then
+      (* Named param: name: type *)
+      let param_name = lp.curr_token.literal in
+      let lp2 = next_token lp in
+      (* now at : *)
+      let* lp3, param_type = parse_param_type_expr (next_token lp2) in
+      if curr_token_is lp3 Token.Comma then
+        loop (next_token lp3) (pos_idx + 1) ((param_name, param_type) :: rev_params)
+      else
+        Ok (lp3, List.rev ((param_name, param_type) :: rev_params))
+    else if curr_token_is lp Token.Ident then
+      (* Positional param: just a type expression (no colon) *)
+      let* lp2, param_type = parse_param_type_expr lp in
+      let param_name = Printf.sprintf "$%d" pos_idx in
+      if curr_token_is lp2 Token.Comma then
+        loop (next_token lp2) (pos_idx + 1) ((param_name, param_type) :: rev_params)
+      else
+        Ok (lp2, List.rev ((param_name, param_type) :: rev_params))
     else
       Error (no_prefix_parse_fn_error lp lp.curr_token.token_type)
   in
-  loop p []
+  loop p 0 []
 
 (* Phase 4.3: Impl definition parsing *)
-and parse_impl_definition (p : parser) : (parser * AST.statement, parser) result =
+and parse_impl_definition (p : parser) : (parser * Surface.top_decl, parser) result =
   (* Current token is 'impl' *)
-  let pos = p.curr_token.pos in
-
-  let parse_methods_block (lp : parser) : (parser * AST.method_impl list, parser) result =
+  let parse_methods_block (lp : parser) : (parser * Surface.surface_method_impl list, parser) result =
     let* lp2 =
       if curr_token_is lp Token.LBrace then
         Ok lp
@@ -717,45 +932,32 @@ and parse_impl_definition (p : parser) : (parser * AST.statement, parser) result
     in
     Ok (lp4, methods)
   in
-  let parse_trait_impl (lp : parser) (impl_trait_name : string) (impl_type_params : AST.generic_param list) :
-      (parser * AST.statement, parser) result =
-    let* p_for_type =
-      if curr_token_is lp Token.Ident && lp.curr_token.literal = "for" then
-        Ok (next_token lp)
-      else
-        Error (add_error ~code:"parse-invalid-impl" lp "expected 'for' keyword in impl definition")
-    in
-    let* p_after_type, impl_for_type = parse_type_expr p_for_type in
-    let* p_end, impl_methods = parse_methods_block p_after_type in
-    Ok (p_end, mk_stmt pos (AST.ImplDef { impl_type_params; impl_trait_name; impl_for_type; impl_methods }))
-  in
-  let parse_inherent_impl (lp : parser) : (parser * AST.statement, parser) result =
-    let* p_after_type, inherent_for_type = parse_type_expr lp in
-    let* p_end, inherent_methods = parse_methods_block p_after_type in
-    Ok (p_end, mk_stmt pos (AST.InherentImplDef { inherent_for_type; inherent_methods }))
-  in
 
-  (* First token after 'impl' may be either trait name (trait impl) or target type (inherent impl). *)
-  let* p2 = expect_peek p Token.Ident in
-  let trait_candidate = p2.curr_token.literal in
-  let trait_with_type_params =
-    if peek_token_is p2 Token.LBracket then
-      match parse_generic_param_list (next_token (next_token p2)) with
-      | Ok (p_after_params, impl_type_params)
-        when curr_token_is p_after_params Token.Ident && p_after_params.curr_token.literal = "for" ->
-          Some (p_after_params, impl_type_params)
-      | _ -> None
+  (* Check for explicit type params at impl level: impl[a: Show] ... *)
+  let* p_after_explicit, explicit_type_params =
+    if peek_token_is p Token.LBracket then
+      let p_bracket = next_token (next_token p) in
+      (* at first token inside [ *)
+      let* p_after, params = parse_generic_param_list p_bracket in
+      Ok (p_after, params)
     else
-      None
+      Ok (next_token p, [])
   in
-  match trait_with_type_params with
-  | Some (p_for, impl_type_params) -> parse_trait_impl p_for trait_candidate impl_type_params
-  | None ->
-      let p3 = next_token p2 in
-      if curr_token_is p3 Token.Ident && p3.curr_token.literal = "for" then
-        parse_trait_impl p3 trait_candidate []
-      else
-        parse_inherent_impl p2
+  let* p_head_end, impl_head_type = parse_type_expr p_after_explicit in
+  let* p_assign =
+    if curr_token_is p_head_end Token.Assign then
+      Ok p_head_end
+    else
+      expect_peek p_head_end Token.Assign
+  in
+  let* p_end, impl_methods = parse_methods_block p_assign in
+  match (explicit_type_params, impl_head_type) with
+  | [], Surface.STCon _ ->
+      Ok (p_end, Surface.SInherentImplDef { inherent_for_type = impl_head_type; inherent_methods = impl_methods })
+  | _ ->
+      Ok
+        ( p_end,
+          Surface.SAmbiguousImplDef { impl_type_params = explicit_type_params; impl_head_type; impl_methods } )
 
 and parse_generic_param_list (p : parser) : (parser * AST.generic_param list, parser) result =
   let rec loop lp rev_params =
@@ -763,7 +965,7 @@ and parse_generic_param_list (p : parser) : (parser * AST.generic_param list, pa
       let param_name = lp.curr_token.literal in
       let* lp2, constraints =
         if peek_token_is lp Token.Colon then
-          (* Parse constraints: a: eq + ord *)
+          (* Parse constraints: a: Eq & Ord *)
           parse_constraint_list (next_token (next_token lp))
         else
           Ok (next_token lp, [])
@@ -788,8 +990,8 @@ and parse_constraint_list (p : parser) : (parser * string list, parser) result =
     if curr_token_is lp Token.Ident then
       let constraint_name = lp.curr_token.literal in
       let lp2 = next_token lp in
-      if curr_token_is lp2 Token.Plus then
-        (* More constraints: + trait *)
+      if curr_token_is lp2 Token.Ampersand then
+        (* More constraints: & trait *)
         loop (next_token lp2) (constraint_name :: rev_constraints)
       else
         (* End of constraint list *)
@@ -799,26 +1001,43 @@ and parse_constraint_list (p : parser) : (parser * string list, parser) result =
   in
   loop p []
 
-and parse_method_impl_list (p : parser) : (parser * AST.method_impl list, parser) result =
+and parse_method_impl_list (p : parser) : (parser * Surface.surface_method_impl list, parser) result =
   let rec loop lp methods =
     if curr_token_is lp Token.RBrace then
       Ok (lp, List.rev methods)
     else if curr_token_is lp Token.Function then
       let* lp2, method_impl = parse_method_impl lp in
       loop lp2 (method_impl :: methods)
+    else if curr_token_is lp Token.Override then
+      let* p_fn = expect_peek lp Token.Function in
+      let* lp2, method_impl = parse_method_impl p_fn in
+      loop lp2 ({ method_impl with Surface.smi_override = true } :: methods)
     else
       Error (no_prefix_parse_fn_error lp lp.curr_token.token_type)
   in
   loop p []
 
-and parse_method_impl (p : parser) : (parser * AST.method_impl, parser) result =
+and is_block_body_start (p : parser) : bool =
+  (* p.curr_token = { — heuristic to tell block from record/hash/block literal *)
+  let _, peek2 = Lexer.next_token p.lexer in
+  match p.peek_token.token_type with
+  | Token.Let | Token.Return | Token.If | Token.Match | Token.Function -> true
+  | Token.RBrace -> true (* {} is an empty block expression in vNext *)
+  | Token.Spread -> false (* { ...spread } is record *)
+  | Token.Ident -> peek2.token_type <> Token.Colon (* { x: ... } is record *)
+  | Token.String | Token.Int | Token.Float | Token.True | Token.False ->
+      (* { "key": val } or { 10: val } or { true: val } is hash literal *)
+      peek2.token_type <> Token.Colon
+  | _ -> true
+
+and parse_method_impl (p : parser) : (parser * Surface.surface_method_impl, parser) result =
   (* Current token is 'fn' *)
-  let impl_method_id, p = fresh_id p in
+  let smi_id = fresh_id p in
   let* p2 = expect_peek p Token.Ident in
-  let impl_method_name = p2.curr_token.literal in
+  let smi_name = p2.curr_token.literal in
 
   (* Parse optional method-level generics [a, b: show] *)
-  let* p3, impl_method_generics = parse_generic_params p2 in
+  let* p3, smi_generics = parse_generic_params p2 in
   let p3 = next_token p3 in
 
   (* Expect opening paren *)
@@ -841,7 +1060,7 @@ and parse_method_impl (p : parser) : (parser * AST.method_impl, parser) result =
   in
 
   (* Parse optional effect marker + return type: -> T, => T, or neither *)
-  let* p6, impl_method_return_type, impl_method_effect =
+  let* p6, smi_return_type, smi_effect =
     if peek_token_is p5 Token.Arrow then
       let* p6, ret_type = parse_type_expr (next_token (next_token p5)) in
       Ok (p6, Some ret_type, Some AST.Pure)
@@ -852,56 +1071,45 @@ and parse_method_impl (p : parser) : (parser * AST.method_impl, parser) result =
       Ok (next_token p5, None, None)
   in
 
-  (* Expect opening brace for body *)
+  (* Parse body: = expr_or_block *)
   let* p7 =
-    if curr_token_is p6 Token.LBrace then
+    if curr_token_is p6 Token.Assign then
       Ok p6
     else
-      expect_peek p6 Token.LBrace
+      expect_peek p6 Token.Assign
   in
-
-  (* Parse method body as a block statement (supports let bindings and multiple statements) *)
-  let* p8, body_stmt = parse_block_statement p7 in
-  let* p9 =
-    if curr_token_is p8 Token.RBrace then
-      Ok p8
+  let p_body = next_token p7 in
+  let* p8, smi_body =
+    if curr_token_is p_body Token.LBrace && is_block_body_start p_body then
+      (* block body: = { stmts } *)
+      let* p8, block = parse_block_statement p_body in
+      let* p9 =
+        if curr_token_is p8 Token.RBrace then
+          Ok p8
+        else
+          expect_peek p8 Token.RBrace
+      in
+      Ok (next_token p9, Surface.SEOBBlock block)
     else
-      expect_peek p8 Token.RBrace
+      (* expression body: = expr *)
+      let* p8, expr = parse_expression p_body prec_lowest in
+      let p9 = skip p8 Token.Semicolon in
+      Ok (next_token p9, Surface.SEOBExpr expr)
   in
 
   Ok
-    ( next_token p9,
-      AST.
+    ( p8,
+      Surface.
         {
-          impl_method_id;
-          impl_method_name;
-          impl_method_generics;
-          impl_method_params = params;
-          impl_method_return_type;
-          impl_method_effect;
-          impl_method_body = body_stmt;
+          smi_id;
+          smi_name;
+          smi_generics;
+          smi_params = params;
+          smi_return_type;
+          smi_effect;
+          smi_override = false;
+          smi_body;
         } )
-
-(* Phase 4.3: Derive statement parsing *)
-and parse_derive_definition (p : parser) : (parser * AST.statement, parser) result =
-  (* Current token is 'derive' *)
-  let pos = p.curr_token.pos in
-
-  (* Parse trait list: eq, show, ord *)
-  let* p2, derive_traits = parse_derive_trait_list (next_token p) in
-
-  (* Expect 'for' keyword (treated as identifier, not reserved) *)
-  let* p3 =
-    if curr_token_is p2 Token.Ident && p2.curr_token.literal = "for" then
-      Ok (next_token p2)
-    else
-      Error (add_error ~code:"parse-invalid-impl" p2 "expected 'for' keyword in derive statement")
-  in
-
-  (* Parse the type being derived for *)
-  let* p4, derive_for_type = parse_type_expr p3 in
-
-  Ok (p4, mk_stmt pos (AST.DeriveDef { derive_traits; derive_for_type }))
 
 and parse_derive_trait_list (p : parser) : (parser * AST.derive_trait list, parser) result =
   let rec loop lp rev_traits =
@@ -930,18 +1138,18 @@ and parse_derive_trait_list (p : parser) : (parser * AST.derive_trait list, pars
   in
   loop p []
 
-and parse_expression_statement (p : parser) : (parser * AST.statement, parser) result =
+and parse_expression_stmt (p : parser) : (parser * Surface.surface_stmt, parser) result =
   let pos = p.curr_token.pos in
   let* p2, expr = parse_expression p prec_lowest in
   let p3 = skip p2 Token.Semicolon in
-  Ok (p3, mk_stmt pos (AST.ExpressionStmt expr))
+  Ok (p3, mk_surface_stmt pos (Surface.SSExpressionStmt expr))
 
-and parse_expression (p : parser) (prec : precedence) : (parser * AST.expression, parser) result =
+and parse_expression (p : parser) (prec : precedence) : (parser * Surface.surface_expr, parser) result =
   let* p2, left_expr = prefixFn p in
   let* p3, left = infixFn p2 left_expr prec in
-  Ok (p3, with_expr_end p3 left)
+  Ok (p3, with_surface_expr_end p3 left)
 
-and prefixFn (p : parser) : (parser * AST.expression, parser) result =
+and prefixFn (p : parser) : (parser * Surface.surface_expr, parser) result =
   let tt = p.curr_token.token_type in
   match tt with
   | Token.Ident -> parse_identifier p
@@ -950,24 +1158,35 @@ and prefixFn (p : parser) : (parser * AST.expression, parser) result =
   | Token.String -> parse_string_literal p
   | Token.Bang | Token.Minus -> parse_prefix_expression p
   | Token.True | Token.False -> parse_boolean p
-  | Token.LParen -> parse_grouped_expression p
+  | Token.LParen -> parse_lambda_or_grouped p
   | Token.If -> parse_if_expression p
   | Token.Match -> parse_match_expression p
-  | Token.Function -> parse_function_literal p
   | Token.LBracket -> parse_array_literal p
-  | Token.LBrace -> parse_record_or_hash_literal p
+  | Token.LBrace ->
+      if is_block_body_start p then
+        parse_block_expr p
+      else
+        parse_record_or_hash_literal p
   | _ -> Error (no_prefix_parse_fn_error p tt)
 
-and infixFn (p : parser) (left_expr : AST.expression) (prec : precedence) :
-    (parser * AST.expression, parser) result =
-  let rec loop (lp : parser) (left : AST.expression) : (parser * AST.expression, parser) result =
+and infixFn (p : parser) (left_expr : Surface.surface_expr) (prec : precedence) :
+    (parser * Surface.surface_expr, parser) result =
+  let rec loop (lp : parser) (left : Surface.surface_expr) : (parser * Surface.surface_expr, parser) result =
     let peek_is_semicolon = peek_token_is lp Token.Semicolon in
     let lower_precedence = prec < peek_precedence lp in
-    if (not peek_is_semicolon) && lower_precedence then
+    let blocked_by_line_break =
+      tokens_are_on_different_lines lp
+      &&
+      match lp.peek_token.token_type with
+      | Token.LParen | Token.LBracket -> true
+      | Token.Dot -> false
+      | _ -> false
+    in
+    if (not peek_is_semicolon) && lower_precedence && not blocked_by_line_break then
       let* lp2, left2 =
         match lp.peek_token.token_type with
         | Token.Plus | Token.Minus | Token.Slash | Token.Asterisk | Token.Eq | Token.NotEq | Token.Lt | Token.Gt
-        | Token.Le | Token.Ge | Token.Is ->
+        | Token.Le | Token.Ge | Token.Is | Token.PipePipe | Token.AmpAmp | Token.Percent ->
             parse_infix_expression (next_token lp) left
         | LParen -> parse_call_expression (next_token lp) left
         | LBracket -> parse_index_expression (next_token lp) left
@@ -980,81 +1199,180 @@ and infixFn (p : parser) (left_expr : AST.expression) (prec : precedence) :
   in
   loop p left_expr
 
-and parse_identifier (p : parser) : (parser * AST.expression, parser) result =
+and parse_identifier (p : parser) : (parser * Surface.surface_expr, parser) result =
   let pos = p.curr_token.pos in
   let name = p.curr_token.literal in
-  (* Just parse as identifier - let postfix dot parser handle member access *)
-  let id, p1 = fresh_id p in
-  Ok (p1, mk_expr id pos (AST.Identifier name))
+  let id = fresh_id p in
+  Ok (p, mk_surface_expr id pos (Surface.SEIdentifier name))
 
-and parse_integer_literal (p : parser) : (parser * AST.expression, parser) result =
+and parse_integer_literal (p : parser) : (parser * Surface.surface_expr, parser) result =
   let pos = p.curr_token.pos in
   match Int64.of_string_opt p.curr_token.literal with
-  | Some int ->
-      let id, p1 = fresh_id p in
-      Ok (p1, mk_expr id pos (AST.Integer int))
+  | Some i ->
+      let id = fresh_id p in
+      Ok (p, mk_surface_expr id pos (Surface.SEInteger i))
   | None ->
       let msg = Printf.sprintf "can't parse number from %s" p.curr_token.literal in
       Error (add_error ~code:"parse-invalid-number" p msg)
 
-and parse_float_literal (p : parser) : (parser * AST.expression, parser) result =
+and parse_float_literal (p : parser) : (parser * Surface.surface_expr, parser) result =
   let pos = p.curr_token.pos in
   match float_of_string_opt p.curr_token.literal with
-  | Some float ->
-      let id, p1 = fresh_id p in
-      Ok (p1, mk_expr id pos (AST.Float float))
+  | Some f ->
+      let id = fresh_id p in
+      Ok (p, mk_surface_expr id pos (Surface.SEFloat f))
   | None ->
       let msg = Printf.sprintf "can't parse number from %s" p.curr_token.literal in
       Error (add_error ~code:"parse-invalid-number" p msg)
 
-and parse_string_literal (p : parser) : (parser * AST.expression, parser) result =
+and parse_string_literal (p : parser) : (parser * Surface.surface_expr, parser) result =
   let pos = p.curr_token.pos in
-  let id, p1 = fresh_id p in
-  Ok (p1, mk_expr id pos (AST.String p.curr_token.literal))
+  let id = fresh_id p in
+  Ok (p, mk_surface_expr id pos (Surface.SEString p.curr_token.literal))
 
-and parse_prefix_expression (p : parser) : (parser * AST.expression, parser) result =
+and parse_prefix_expression (p : parser) : (parser * Surface.surface_expr, parser) result =
   let pos = p.curr_token.pos in
   let op = p.curr_token.literal in
   let p2 = next_token p in
   let* p3, right = parse_expression p2 prec_prefix in
-  let id, p4 = fresh_id p3 in
-  Ok (p4, mk_expr id pos (AST.Prefix (op, right)))
+  let id = fresh_id p3 in
+  Ok (p3, mk_surface_expr id pos (Surface.SEPrefix (op, right)))
 
-and parse_infix_expression (p : parser) (left : AST.expression) : (parser * AST.expression, parser) result =
+and parse_infix_expression (p : parser) (left : Surface.surface_expr) :
+    (parser * Surface.surface_expr, parser) result =
   let pos = p.curr_token.pos in
   match p.curr_token.token_type with
   | Token.Is ->
-      (* x is int - for now, only support simple type identifiers *)
-      (* Advance to the type name *)
       let p2 = next_token p in
       if not (curr_token_is p2 Token.Ident) then
         Error (add_error ~code:"parse-unexpected-token" p2 "Expected type name after 'is'")
       else
         let type_name = p2.curr_token.literal in
-        let type_expr = AST.TCon type_name in
-        (* Don't advance further - stay at the type identifier *)
-        (* This matches the convention of other infix operators *)
-        let id, p3 = fresh_id p2 in
-        Ok (p3, mk_expr id pos (AST.TypeCheck (left, type_expr)))
+        let type_expr = Surface.STCon type_name in
+        let id = fresh_id p2 in
+        Ok (p2, mk_surface_expr id pos (Surface.SETypeCheck (left, type_expr)))
   | _ ->
       let op = p.curr_token.literal in
       let prec = curr_precedence p in
       let p2 = next_token p in
       let* p3, right = parse_expression p2 prec in
-      let id, p4 = fresh_id p3 in
-      Ok (p4, mk_expr id pos (AST.Infix (left, op, right)))
+      let id = fresh_id p3 in
+      Ok (p3, mk_surface_expr id pos (Surface.SEInfix (left, op, right)))
 
-and parse_boolean (p : parser) : (parser * AST.expression, parser) result =
+and parse_boolean (p : parser) : (parser * Surface.surface_expr, parser) result =
   let pos = p.curr_token.pos in
-  let id, p1 = fresh_id p in
-  Ok (p1, mk_expr id pos (AST.Boolean (p.curr_token.token_type = Token.True)))
+  let id = fresh_id p in
+  Ok (p, mk_surface_expr id pos (Surface.SEBoolean (p.curr_token.token_type = Token.True)))
 
-and parse_grouped_expression (p : parser) : (parser * AST.expression, parser) result =
+and parse_grouped_expression (p : parser) : (parser * Surface.surface_expr, parser) result =
   let* p2, expr = parse_expression (next_token p) prec_lowest in
   let* p3 = expect_peek p2 Token.RParen in
   Ok (p3, expr)
 
-and parse_if_expression (p : parser) : (parser * AST.expression, parser) result =
+and parse_lambda_or_grouped (p : parser) : (parser * Surface.surface_expr, parser) result =
+  let pos = p.curr_token.pos in
+  (* p.curr_token = LParen *)
+  (* Use Lexer.next_token to peek at the token after p.peek_token without advancing *)
+  let _, peek2_tok = Lexer.next_token p.lexer in
+  (* Check for empty lambda: () -> expr or () => expr *)
+  let is_empty_lambda =
+    peek_token_is p Token.RParen && (peek2_tok.token_type = Token.Arrow || peek2_tok.token_type = Token.FatArrow)
+  in
+  (* Check for multi-param or typed-param lambda: (a, b) -> or (a: T) -> *)
+  let is_multi_or_typed =
+    peek_token_is p Token.Ident && (peek2_tok.token_type = Token.Comma || peek2_tok.token_type = Token.Colon)
+  in
+  if is_empty_lambda then
+    (* () -> expr or () => expr *)
+    let p2 = next_token p in
+    (* at ) *)
+    let p3 = next_token p2 in
+    (* at -> or => *)
+    let is_effectful = curr_token_is p3 Token.FatArrow in
+    let* p4, body_expr = parse_expression (next_token p3) prec_lowest in
+    let id = fresh_id p4 in
+    Ok
+      ( p4,
+        mk_surface_expr id pos
+          (Surface.SEArrowLambda
+             {
+               se_lambda_params = [];
+               se_lambda_is_effectful = is_effectful;
+               se_lambda_body = Surface.SEOBExpr body_expr;
+             }) )
+  else if is_multi_or_typed then
+    (* Parse as explicit lambda params *)
+    let* p2, lparams = parse_lambda_param_list (next_token p) in
+    (* p2 should be at ) after params *)
+    let p3 = next_token p2 in
+    (* past ) -> at -> or => *)
+    let is_effectful = curr_token_is p3 Token.FatArrow in
+    if not (curr_token_is p3 Token.Arrow || curr_token_is p3 Token.FatArrow) then
+      Error (add_error ~code:"parse-unexpected-token" p3 "expected '->' or '=>' after lambda params")
+    else
+      let* p4, body_expr = parse_expression (next_token p3) prec_lowest in
+      let id = fresh_id p4 in
+      Ok
+        ( p4,
+          mk_surface_expr id pos
+            (Surface.SEArrowLambda
+               {
+                 se_lambda_params = lparams;
+                 se_lambda_is_effectful = is_effectful;
+                 se_lambda_body = Surface.SEOBExpr body_expr;
+               }) )
+  else
+    (* Grouped expression or single-param lambda: (x) -> expr *)
+    let* p2, expr = parse_expression (next_token p) prec_lowest in
+    let* p3 = expect_peek p2 Token.RParen in
+    (* Check for single-ident lambda: (x) -> expr *)
+    if peek_token_is p3 Token.Arrow || peek_token_is p3 Token.FatArrow then
+      match expr.Surface.se_expr with
+      | Surface.SEIdentifier name ->
+          let p4 = next_token p3 in
+          (* at -> or => *)
+          let is_effectful = curr_token_is p4 Token.FatArrow in
+          let* p5, body_expr = parse_expression (next_token p4) prec_lowest in
+          let id = fresh_id p5 in
+          Ok
+            ( p5,
+              mk_surface_expr id pos
+                (Surface.SEArrowLambda
+                   {
+                     se_lambda_params = [ (name, None) ];
+                     se_lambda_is_effectful = is_effectful;
+                     se_lambda_body = Surface.SEOBExpr body_expr;
+                   }) )
+      | _ -> Ok (p3, expr)
+    else
+      Ok (p3, expr)
+
+and parse_lambda_param_list (p : parser) :
+    (parser * (string * Surface.surface_type_expr option) list, parser) result =
+  (* p.curr_token = first token of params, inside ( *)
+  let rec loop lp rev_params =
+    if curr_token_is lp Token.RParen then
+      Ok (lp, List.rev rev_params)
+    else if curr_token_is lp Token.Ident then
+      let name = lp.curr_token.literal in
+      let lp2 = next_token lp in
+      let* lp3, type_annot =
+        if curr_token_is lp2 Token.Colon then
+          let* lp3, te = parse_param_type_expr (next_token lp2) in
+          Ok (lp3, Some te)
+        else
+          Ok (lp2, None)
+      in
+      if curr_token_is lp3 Token.Comma then
+        loop (next_token lp3) ((name, type_annot) :: rev_params)
+      else
+        Ok (lp3, List.rev ((name, type_annot) :: rev_params))
+    else
+      Error (no_prefix_parse_fn_error lp lp.curr_token.token_type)
+  in
+  loop p []
+
+and parse_if_expression (p : parser) : (parser * Surface.surface_expr, parser) result =
   let pos = p.curr_token.pos in
   let* p2 = expect_peek p Token.LParen in
   let* p3, cond = parse_expression (next_token p2) prec_lowest in
@@ -1065,24 +1383,36 @@ and parse_if_expression (p : parser) : (parser * AST.expression, parser) result 
     if peek_token_is p4 Token.LBrace then
       (* Normal: { ... } *)
       let* p5 = expect_peek p4 Token.LBrace in
-      let* p6, cons = parse_block_statement p5 in
+      let* p6, block = parse_block_statement p5 in
+      let cons =
+        Surface.
+          {
+            ss_stmt = SSBlock block;
+            ss_pos = block.sb_pos;
+            ss_end_pos = block.sb_end_pos;
+            ss_file_id = block.sb_file_id;
+          }
+      in
       Ok (p6, cons)
     else if peek_token_is p4 Token.Return then
       (* New: return expr without braces *)
       let p5 = next_token p4 in
-      (* Now at 'return' token *)
       let pos_ret = p5.curr_token.pos in
       let* p6, expr = parse_expression (next_token p5) prec_lowest in
       let p7 = skip p6 Token.Semicolon in
-      let ret_stmt = with_stmt_end p7 (mk_stmt pos_ret (AST.Return expr)) in
-      Ok (p7, with_stmt_end p7 (mk_stmt pos_ret (AST.Block [ ret_stmt ])))
+      let ret_stmt = with_surface_stmt_end p7 (mk_surface_stmt pos_ret (Surface.SSReturn expr)) in
+      let block =
+        Surface.{ sb_stmts = [ ret_stmt ]; sb_pos = pos_ret; sb_end_pos = pos_ret; sb_file_id = None }
+      in
+      let block_stmt = with_surface_stmt_end p7 (mk_surface_stmt pos_ret (Surface.SSBlock block)) in
+      Ok (p7, block_stmt)
     else
       Error (add_error ~code:"parse-unexpected-token" p4 "Expected '{' or 'return' after if condition")
   in
 
   if not (peek_token_is p5 Token.Else) then
-    let id, p6 = fresh_id p5 in
-    Ok (p6, mk_expr id pos (AST.If (cond, cons, None)))
+    let id = fresh_id p5 in
+    Ok (p5, mk_surface_expr id pos (Surface.SEIf (cond, cons, None)))
   else
     let p6 = next_token p5 in
     (* Now at 'else' token *)
@@ -1090,73 +1420,57 @@ and parse_if_expression (p : parser) : (parser * AST.expression, parser) result 
       if peek_token_is p6 Token.LBrace then
         (* Normal: else { ... } *)
         let* p7 = expect_peek p6 Token.LBrace in
-        let* p8, alt = parse_block_statement p7 in
+        let* p8, block = parse_block_statement p7 in
+        let alt =
+          Surface.
+            {
+              ss_stmt = SSBlock block;
+              ss_pos = block.sb_pos;
+              ss_end_pos = block.sb_end_pos;
+              ss_file_id = block.sb_file_id;
+            }
+        in
         Ok (p8, alt)
       else if peek_token_is p6 Token.Return then
         (* New: else return expr without braces *)
         let p7 = next_token p6 in
-        (* Now at 'return' token *)
         let pos_ret = p7.curr_token.pos in
         let* p8, expr = parse_expression (next_token p7) prec_lowest in
         let p9 = skip p8 Token.Semicolon in
-        let ret_stmt = with_stmt_end p9 (mk_stmt pos_ret (AST.Return expr)) in
-        Ok (p9, with_stmt_end p9 (mk_stmt pos_ret (AST.Block [ ret_stmt ])))
+        let ret_stmt = with_surface_stmt_end p9 (mk_surface_stmt pos_ret (Surface.SSReturn expr)) in
+        let block =
+          Surface.{ sb_stmts = [ ret_stmt ]; sb_pos = pos_ret; sb_end_pos = pos_ret; sb_file_id = None }
+        in
+        let block_stmt = with_surface_stmt_end p9 (mk_surface_stmt pos_ret (Surface.SSBlock block)) in
+        Ok (p9, block_stmt)
       else
         (* Error: else without block or return *)
         Error (add_error ~code:"parse-unexpected-token" p6 "Expected '{' or 'return' after 'else'")
     in
-    let id, p8 = fresh_id p7 in
-    Ok (p8, mk_expr id pos (AST.If (cond, cons, Some alt)))
+    let id = fresh_id p7 in
+    Ok (p7, mk_surface_expr id pos (Surface.SEIf (cond, cons, Some alt)))
 
-and parse_block_statement (p : parser) : (parser * AST.statement, parser) result =
+and parse_block_statement (p : parser) : (parser * Surface.surface_block, parser) result =
   let pos = p.curr_token.pos in
-  let rec loop (lp : parser) (stmts : AST.statement list) : (parser * AST.statement, parser) result =
+  let rec loop (lp : parser) (stmts : Surface.surface_stmt list) : (parser * Surface.surface_block, parser) result
+      =
     if curr_token_is lp Token.RBrace || curr_token_is lp Token.EOF then
-      Ok (lp, with_stmt_end lp (mk_stmt pos (AST.Block (List.rev stmts))))
+      let end_pos = max pos (token_end lp.curr_token) in
+      let file_id = Some lp.file_id in
+      Ok (lp, Surface.{ sb_stmts = List.rev stmts; sb_pos = pos; sb_end_pos = end_pos; sb_file_id = file_id })
     else
-      let* lp2, new_block = parse_statement lp in
-      loop (next_token lp2) ([ new_block ] @ stmts)
+      let* lp2, new_stmt = parse_block_stmt lp in
+      loop (next_token lp2) (new_stmt :: stmts)
   in
 
   loop (next_token p) []
 
-and parse_function_literal (p : parser) : (parser * AST.expression, parser) result =
-  let pos = p.curr_token.pos in
-  (* Phase 2: Parse generic parameters if present *)
-  let* p2, generics = parse_generic_params p in
-  let* p3 = expect_peek p2 Token.LParen in
-  let* p4, params = parse_function_parameters p3 in
-  (* Phase 2: Parse return type annotation if present *)
-  let* p5, return_type, is_effectful =
-    if peek_token_is p4 Token.Arrow then
-      let p5 = next_token p4 in
-      let* p6, te = parse_type_expr (next_token p5) in
-      Ok (p6, Some te, false)
-    else if peek_token_is p4 Token.FatArrow then
-      let p5 = next_token p4 in
-      let* p6, te = parse_type_expr (next_token p5) in
-      Ok (p6, Some te, true)
-    else
-      Ok (p4, None, false)
-  in
-  (* After parsing return type or parameters, check for { *)
-  let* p6 =
-    if curr_token_is p5 Token.LBrace then
-      Ok p5
-    else if peek_token_is p5 Token.LBrace then
-      Ok (next_token p5)
-    else
-      Error (peek_error p5 Token.LBrace)
-  in
-  let* p7, body = parse_block_statement p6 in
-  let id, p8 = fresh_id p7 in
-  Ok (p8, mk_expr id pos (AST.Function { generics; params; return_type; is_effectful; body }))
-
-and parse_function_parameters (p : parser) : (parser * (string * AST.type_expr option) list, parser) result =
+and parse_function_parameters (p : parser) :
+    (parser * (string * Surface.surface_type_expr option) list, parser) result =
   if peek_token_is p Token.RParen then
     Ok (next_token p, [])
   else
-    let rec loop (lp : parser) (rev_params_acc : (string * AST.type_expr option) list) =
+    let rec loop (lp : parser) (rev_params_acc : (string * Surface.surface_type_expr option) list) =
       (* Get the parameter name *)
       if not (curr_token_is lp Token.Ident) then
         Error (no_prefix_parse_fn_error lp lp.curr_token.token_type)
@@ -1166,8 +1480,7 @@ and parse_function_parameters (p : parser) : (parser * (string * AST.type_expr o
         (* Phase 2: Parse type annotation if present *)
         let* lp_after_annot, type_annot =
           if curr_token_is lp_after_name Token.Colon then
-            (* Parse the type expression *)
-            let* lp_parse, te = parse_type_expr (next_token lp_after_name) in
+            let* lp_parse, te = parse_param_type_expr (next_token lp_after_name) in
             Ok (lp_parse, Some te)
           else
             Ok (lp_after_name, None)
@@ -1183,20 +1496,21 @@ and parse_function_parameters (p : parser) : (parser * (string * AST.type_expr o
     let p2 = next_token p in
     loop p2 []
 
-and parse_call_expression (p : parser) (c : AST.expression) : (parser * AST.expression, parser) result =
+and parse_call_expression (p : parser) (c : Surface.surface_expr) : (parser * Surface.surface_expr, parser) result
+    =
   let pos = p.curr_token.pos in
   let* p2, arguments = parse_expression_list p Token.RParen in
-  let id, p3 = fresh_id p2 in
-  Ok (p3, mk_expr id pos (AST.Call (c, arguments)))
+  let id = fresh_id p2 in
+  Ok (p2, mk_surface_expr id pos (Surface.SECall (c, arguments)))
 
-and parse_expression_list (p : parser) (end_tt : Token.token_type) : (parser * AST.expression list, parser) result
-    =
+and parse_expression_list (p : parser) (end_tt : Token.token_type) :
+    (parser * Surface.surface_expr list, parser) result =
   if peek_token_is p end_tt then
     Ok (next_token p, [])
   else
     let* p2, arg = parse_expression (next_token p) prec_lowest in
 
-    let rec loop (lp : parser) (args : AST.expression list) =
+    let rec loop (lp : parser) (args : Surface.surface_expr list) =
       if peek_token_is lp Token.Comma then
         let* lp2, arg = parse_expression (next_token (next_token lp)) prec_lowest in
         loop lp2 (arg :: args)
@@ -1207,23 +1521,25 @@ and parse_expression_list (p : parser) (end_tt : Token.token_type) : (parser * A
 
     loop p2 [ arg ]
 
-and parse_array_literal (p : parser) : (parser * AST.expression, parser) result =
+and parse_array_literal (p : parser) : (parser * Surface.surface_expr, parser) result =
   let pos = p.curr_token.pos in
   let* p2, exprs = parse_expression_list p Token.RBracket in
-  let id, p3 = fresh_id p2 in
-  Ok (p3, mk_expr id pos (AST.Array exprs))
+  let id = fresh_id p2 in
+  Ok (p2, mk_surface_expr id pos (Surface.SEArray exprs))
 
-and parse_index_expression (p : parser) (left : AST.expression) : (parser * AST.expression, parser) result =
+and parse_index_expression (p : parser) (left : Surface.surface_expr) :
+    (parser * Surface.surface_expr, parser) result =
   let pos = p.curr_token.pos in
   let p2 = next_token p in
   let* p3, index = parse_expression p2 prec_lowest in
   let* p4 = expect_peek p3 Token.RBracket in
-  let id, p5 = fresh_id p4 in
-  Ok (p5, mk_expr id pos (AST.Index (left, index)))
+  let id = fresh_id p4 in
+  Ok (p4, mk_surface_expr id pos (Surface.SEIndex (left, index)))
 
 (* Phase 4.3: Dot expression parsing - handles method calls and field access *)
 (* Note: enum constructors are also parsed as MethodCall here, type checker will distinguish *)
-and parse_dot_expression (p : parser) (left : AST.expression) : (parser * AST.expression, parser) result =
+and parse_dot_expression (p : parser) (left : Surface.surface_expr) :
+    (parser * Surface.surface_expr, parser) result =
   let pos = p.curr_token.pos in
   (* p.curr_token is Dot, advance to the identifier *)
   let p2 = next_token p in
@@ -1236,12 +1552,12 @@ and parse_dot_expression (p : parser) (left : AST.expression) : (parser * AST.ex
       (* expr.member(args) -> Method call or enum constructor *)
       let p3 = next_token p2 in
       let* p4, args = parse_expression_list p3 Token.RParen in
-      let id, p5 = fresh_id p4 in
+      let id = fresh_id p4 in
       Ok
-        ( p5,
-          mk_expr id pos
-            (AST.MethodCall { mc_receiver = left; mc_method = member_name; mc_type_args = None; mc_args = args })
-        )
+        ( p4,
+          mk_surface_expr id pos
+            (Surface.SEMethodCall
+               { se_receiver = left; se_method = member_name; se_type_args = None; se_args = args }) )
     else if peek_token_is p2 Token.LBracket then
       (* expr.member[...] -> could be method type args or index; try type args first *)
       let p_bracket = next_token (next_token p2) in
@@ -1255,44 +1571,64 @@ and parse_dot_expression (p : parser) (left : AST.expression) : (parser * AST.ex
           let p_after_bracket = next_token p_after_types in
           (* consume ], now at ( *)
           let* p_after_args, args = parse_expression_list p_after_bracket Token.RParen in
-          let id, p_final = fresh_id p_after_args in
+          let id = fresh_id p_after_args in
           Ok
-            ( p_final,
-              mk_expr id pos
-                (AST.MethodCall
-                   { mc_receiver = left; mc_method = member_name; mc_type_args = Some type_args; mc_args = args })
+            ( p_after_args,
+              mk_surface_expr id pos
+                (Surface.SEMethodCall
+                   { se_receiver = left; se_method = member_name; se_type_args = Some type_args; se_args = args })
             )
       | _ ->
           (* Not type args — fall back to field access (infix [ will handle indexing) *)
-          let id, p3 = fresh_id p2 in
-          Ok (p3, mk_expr id pos (AST.FieldAccess (left, member_name)))
+          let id = fresh_id p2 in
+          Ok (p2, mk_surface_expr id pos (Surface.SEFieldAccess (left, member_name)))
     else
       (* expr.member -> Field access or nullary enum constructor *)
-      let id, p3 = fresh_id p2 in
-      Ok (p3, mk_expr id pos (AST.FieldAccess (left, member_name)))
+      let id = fresh_id p2 in
+      Ok (p2, mk_surface_expr id pos (Surface.SEFieldAccess (left, member_name)))
+
+(* Parse { stmts } in expression position as a block expression (SEBlockExpr) *)
+and parse_block_expr (p : parser) : (parser * Surface.surface_expr, parser) result =
+  (* p.curr_token = LBrace, and is_block_body_start is true *)
+  let pos = p.curr_token.pos in
+  let* p2, block = parse_block_statement p in
+  let* p3 =
+    if curr_token_is p2 Token.RBrace then
+      Ok p2
+    else
+      expect_peek p2 Token.RBrace
+  in
+  let id = fresh_id p3 in
+  Ok (p3, mk_surface_expr id pos (Surface.SEBlockExpr block))
 
 (* Phase 4.6: Distinguish record literal from hash literal using one mode-locked loop *)
-and parse_record_or_hash_literal (p : parser) : (parser * AST.expression, parser) result =
+and parse_record_or_hash_literal (p : parser) : (parser * Surface.surface_expr, parser) result =
   let pos = p.curr_token.pos in
-  let finish mode (fields : AST.record_field list) spread (pairs : (AST.expression * AST.expression) list) lp =
-    let id, lp' = fresh_id lp in
+  let finish
+      mode
+      (fields : Surface.surface_record_field list)
+      spread
+      (pairs : (Surface.surface_expr * Surface.surface_expr) list)
+      lp =
+    let id = fresh_id lp in
     match mode with
-    | RecordMode -> Ok (lp', mk_expr id pos (AST.RecordLit (List.rev fields, spread)))
-    | HashMode -> Ok (lp', mk_expr id pos (AST.Hash (List.rev pairs)))
+    | RecordMode -> Ok (lp, mk_surface_expr id pos (Surface.SERecordLit (List.rev fields, spread)))
+    | HashMode -> Ok (lp, mk_surface_expr id pos (Surface.SEHash (List.rev pairs)))
   in
   let rec loop
       (lp : parser)
       (mode : brace_literal_mode option)
-      (fields : AST.record_field list)
-      (spread : AST.expression option)
-      (pairs : (AST.expression * AST.expression) list) : (parser * AST.expression, parser) result =
+      (fields : Surface.surface_record_field list)
+      (spread : Surface.surface_expr option)
+      (pairs : (Surface.surface_expr * Surface.surface_expr) list) :
+      (parser * Surface.surface_expr, parser) result =
     if curr_token_is lp Token.RBrace then
       match mode with
       | Some mode' -> finish mode' fields spread pairs lp
       | None ->
-          (* "{}" is treated as empty hash for backwards compatibility. *)
-          let id, lp' = fresh_id lp in
-          Ok (lp', mk_expr id pos (AST.Hash []))
+          Error
+            (add_error ~code:"parse-invalid-record" lp
+               "empty '{}' literal is not supported as a map/record literal in vNext")
     else
       match mode with
       | Some RecordMode -> (
@@ -1328,26 +1664,26 @@ and parse_record_or_hash_literal (p : parser) : (parser * AST.expression, parser
   loop (next_token p) None [] None []
 
 and parse_record_entry (p : parser) :
-    (parser * [ `Field of AST.record_field | `Spread of AST.expression ], parser) result =
+    (parser * [ `Field of Surface.surface_record_field | `Spread of Surface.surface_expr ], parser) result =
   if curr_token_is p Token.Spread then
     let p2 = next_token p in
     let* p3, spread_expr = parse_expression p2 prec_lowest in
     Ok (p3, `Spread spread_expr)
   else if curr_token_is p Token.Ident && peek_token_is p Token.Colon then
-    let field_name = p.curr_token.literal in
+    let se_field_name = p.curr_token.literal in
     let* p2 = expect_peek p Token.Colon in
-    let* p3, field_value =
+    let* p3, se_field_value =
       if peek_token_is p2 Token.Comma || peek_token_is p2 Token.RBrace then
         Ok (next_token p2, None)
       else
         let* p3, value = parse_expression (next_token p2) prec_lowest in
         Ok (p3, Some value)
     in
-    Ok (p3, `Field AST.{ field_name; field_value })
+    Ok (p3, `Field Surface.{ se_field_name; se_field_value })
   else
     Error (add_error ~code:"parse-invalid-record" p "cannot mix hash-style entries into record literal")
 
-and parse_hash_entry (p : parser) : (parser * (AST.expression * AST.expression), parser) result =
+and parse_hash_entry (p : parser) : (parser * (Surface.surface_expr * Surface.surface_expr), parser) result =
   if curr_token_is p Token.Spread then
     Error (add_error ~code:"parse-invalid-record" p "cannot mix record-style spread into hash literal")
   else if curr_token_is p Token.Ident && peek_token_is p Token.Colon then
@@ -1376,7 +1712,7 @@ and consume_brace_entry_separator (p : parser) (err_msg : string) : (parser, par
     Error (add_error ~code:"parse-invalid-record" p err_msg)
 
 (* Phase 4.2: Match expression parsing *)
-and parse_match_expression (p : parser) : (parser * AST.expression, parser) result =
+and parse_match_expression (p : parser) : (parser * Surface.surface_expr, parser) result =
   (* Current token is 'match' *)
   let pos = p.curr_token.pos in
 
@@ -1397,30 +1733,51 @@ and parse_match_expression (p : parser) : (parser * AST.expression, parser) resu
       expect_peek p4 Token.RBrace
   in
 
-  let id, p6 = fresh_id p5 in
-  Ok (p6, mk_expr id pos (AST.Match (scrutinee, arms)))
+  let id = fresh_id p5 in
+  Ok (p5, mk_surface_expr id pos (Surface.SEMatch (scrutinee, arms)))
 
-and parse_match_arms (p : parser) : (parser * AST.match_arm list, parser) result =
+and parse_match_arms (p : parser) : (parser * Surface.surface_match_arm list, parser) result =
   let rec loop lp arms =
     if curr_token_is lp Token.RBrace then
       Ok (lp, List.rev arms)
     else
+      let* lp =
+        if curr_token_is lp Token.Case then
+          Ok (next_token lp)
+        else
+          Error (add_error ~code:"parse-unexpected-token" lp "expected 'case' at start of match arm")
+      in
       (* Parse patterns (may be multiple with | separator) *)
-      let* lp2, patterns = parse_patterns lp in
+      let* lp2, se_patterns = parse_patterns lp in
 
       (* Expect colon *)
       let* lp3 = expect_peek lp2 Token.Colon in
 
-      (* Parse arm body *)
-      let* lp4, body = parse_expression (next_token lp3) prec_lowest in
+      let lp4 = next_token lp3 in
 
-      let arm = AST.{ patterns; body } in
+      (* Parse body: block or expression *)
+      let* lp5, body =
+        if curr_token_is lp4 Token.LBrace && is_block_body_start lp4 then
+          let* lp5, block = parse_block_statement lp4 in
+          let* lp6 =
+            if curr_token_is lp5 Token.RBrace then
+              Ok lp5
+            else
+              expect_peek lp5 Token.RBrace
+          in
+          Ok (lp6, Surface.SEOBBlock block)
+        else
+          let* lp5, expr = parse_expression lp4 prec_lowest in
+          Ok (lp5, Surface.SEOBExpr expr)
+      in
+
+      let arm = Surface.{ se_patterns; se_arm_body = body } in
       (* Advance past the body expression before continuing *)
-      loop (next_token lp4) (arm :: arms)
+      loop (next_token lp5) (arm :: arms)
   in
   loop p []
 
-and parse_patterns (p : parser) : (parser * AST.pattern list, parser) result =
+and parse_patterns (p : parser) : (parser * Surface.surface_pattern list, parser) result =
   let* p2, first_pattern = parse_pattern p in
 
   let rec loop lp patterns =
@@ -1433,108 +1790,86 @@ and parse_patterns (p : parser) : (parser * AST.pattern list, parser) result =
 
   loop p2 [ first_pattern ]
 
-and parse_pattern (p : parser) : (parser * AST.pattern, parser) result =
+and parse_pattern (p : parser) : (parser * Surface.surface_pattern, parser) result =
   let finalize = function
-    | Ok (lp, pat) -> Ok (lp, with_pat_end lp pat)
+    | Ok (lp, pat) -> Ok (lp, with_surface_pat_end lp pat)
     | Error _ as err -> err
   in
   (match p.curr_token.token_type with
   | Token.Ident ->
-      (* Check for wildcard first *)
       if p.curr_token.literal = "_" then
-        Ok (p, AST.mk_pat ~pos:p.curr_token.pos AST.PWildcard)
-        (* Could be: variable binding, or enum.variant(patterns) *)
+        Ok (p, mk_surface_pat p.curr_token.pos Surface.SPWildcard)
       else if peek_token_is p Token.Dot then
         (* Enum constructor pattern: enum.variant or enum.variant(patterns) *)
         let enum_name = p.curr_token.literal in
         let p2 = next_token (next_token p) in
-        (* skip enum and dot *)
         if curr_token_is p2 Token.Ident then
           let variant_name = p2.curr_token.literal in
-          (* Check for nested patterns *)
           if peek_token_is p2 Token.LParen then
             let p3 = next_token p2 in
-            (* move to LParen *)
             let* p4, nested_patterns = parse_pattern_list p3 in
-            Ok (p4, AST.mk_pat ~pos:p.curr_token.pos (AST.PConstructor (enum_name, variant_name, nested_patterns)))
+            Ok
+              ( p4,
+                mk_surface_pat p.curr_token.pos (Surface.SPConstructor (enum_name, variant_name, nested_patterns))
+              )
           else
-            (* Nullary constructor *)
-            Ok (p2, AST.mk_pat ~pos:p.curr_token.pos (AST.PConstructor (enum_name, variant_name, [])))
+            Ok (p2, mk_surface_pat p.curr_token.pos (Surface.SPConstructor (enum_name, variant_name, [])))
         else
           Error (add_error ~code:"parse-invalid-pattern" p2 "expected variant name after '.'")
       else
-        (* Variable binding *)
-        Ok (p, AST.mk_pat ~pos:p.curr_token.pos (AST.PVariable p.curr_token.literal))
+        Ok (p, mk_surface_pat p.curr_token.pos (Surface.SPVariable p.curr_token.literal))
   | Token.Int -> (
       match Int64.of_string_opt p.curr_token.literal with
-      | Some i -> Ok (p, AST.mk_pat ~pos:p.curr_token.pos (AST.PLiteral (AST.LInt i)))
+      | Some i -> Ok (p, mk_surface_pat p.curr_token.pos (Surface.SPLiteral (AST.LInt i)))
       | None -> Error (add_error ~code:"parse-invalid-number" p "invalid integer literal in pattern"))
-  | Token.String -> Ok (p, AST.mk_pat ~pos:p.curr_token.pos (AST.PLiteral (AST.LString p.curr_token.literal)))
-  | Token.True -> Ok (p, AST.mk_pat ~pos:p.curr_token.pos (AST.PLiteral (AST.LBool true)))
-  | Token.False -> Ok (p, AST.mk_pat ~pos:p.curr_token.pos (AST.PLiteral (AST.LBool false)))
+  | Token.String -> Ok (p, mk_surface_pat p.curr_token.pos (Surface.SPLiteral (AST.LString p.curr_token.literal)))
+  | Token.True -> Ok (p, mk_surface_pat p.curr_token.pos (Surface.SPLiteral (AST.LBool true)))
+  | Token.False -> Ok (p, mk_surface_pat p.curr_token.pos (Surface.SPLiteral (AST.LBool false)))
   | Token.LBrace -> parse_record_pattern p
-  | Token.Minus ->
-      (* Underscore is not a token, but we use it for wildcard *)
-      (* Actually, wildcard should be an identifier "_" *)
-      Ok (p, AST.mk_pat ~pos:p.curr_token.pos AST.PWildcard)
+  | Token.Minus -> Ok (p, mk_surface_pat p.curr_token.pos Surface.SPWildcard)
   | _ ->
-      (* Check if it's underscore identifier *)
       if p.curr_token.token_type = Token.Ident && p.curr_token.literal = "_" then
-        Ok (p, AST.mk_pat ~pos:p.curr_token.pos AST.PWildcard)
+        Ok (p, mk_surface_pat p.curr_token.pos Surface.SPWildcard)
       else
         Error (add_error ~code:"parse-invalid-pattern" p "invalid pattern"))
   |> finalize
 
 (* Phase 4.8: Parse record pattern: { x:, y: z, ...rest } *)
-and parse_record_pattern (p : parser) : (parser * AST.pattern, parser) result =
+and parse_record_pattern (p : parser) : (parser * Surface.surface_pattern, parser) result =
   (* Current token is { *)
   let pos = p.curr_token.pos in
   let p2 = next_token p in
 
   let rec loop lp fields rest =
     if curr_token_is lp Token.RBrace then
-      (* End of record pattern *)
-      Ok (lp, AST.mk_pat ~pos (AST.PRecord (List.rev fields, rest)))
+      Ok (lp, mk_surface_pat pos (Surface.SPRecord (List.rev fields, rest)))
     else if curr_token_is lp Token.Spread then
-      (* Rest pattern: { x:, ...rest } *)
       let lp2 = next_token lp in
       if curr_token_is lp2 Token.Ident then
         let rest_name = lp2.curr_token.literal in
         let* lp3 = expect_peek lp2 Token.RBrace in
-        Ok (lp3, AST.mk_pat ~pos (AST.PRecord (List.rev fields, Some rest_name)))
+        Ok (lp3, mk_surface_pat pos (Surface.SPRecord (List.rev fields, Some rest_name)))
       else
         Error (add_error ~code:"parse-invalid-pattern" lp2 "expected identifier after '...' in record pattern")
     else if curr_token_is lp Token.Ident then
-      (* Field pattern: x: or x: pat *)
-      let field_name = lp.curr_token.literal in
+      let sp_field_name = lp.curr_token.literal in
       let* lp2 = expect_peek lp Token.Colon in
 
-      (* Check for punning: { x:, y: } *)
-      let* lp3, field_pattern =
+      let* lp3, sp_field_pattern =
         if peek_token_is lp2 Token.Comma || peek_token_is lp2 Token.RBrace then
-          (* Punning: bind to variable with same name *)
           Ok (next_token lp2, None)
         else
-          (* Parse nested pattern *)
           let* lp3, pat = parse_pattern (next_token lp2) in
           Ok (lp3, Some pat)
       in
 
-      let field = AST.{ pat_field_name = field_name; pat_field_pattern = field_pattern } in
+      let field = Surface.{ sp_field_name; sp_field_pattern } in
 
-      (* Handle comma or end *)
-      (* For punning, lp3 is at comma or rbrace; for non-punning, lp3 is at pattern token *)
       if curr_token_is lp3 Token.Comma then
-        (* Punning case: already at comma, advance to next field *)
         loop (next_token lp3) (field :: fields) rest
       else if peek_token_is lp3 Token.Comma then
-        (* Non-punning case: at pattern token, peek is comma *)
         loop (next_token (next_token lp3)) (field :: fields) rest
-      else if
-        (* No comma: either at rbrace (punning) or pattern with no comma after (non-punning) *)
-        (* Either way, continue loop to check for rbrace *)
-        curr_token_is lp3 Token.RBrace || peek_token_is lp3 Token.RBrace
-      then
+      else if curr_token_is lp3 Token.RBrace || peek_token_is lp3 Token.RBrace then
         loop
           (if curr_token_is lp3 Token.RBrace then
              lp3
@@ -1551,7 +1886,7 @@ and parse_record_pattern (p : parser) : (parser * AST.pattern, parser) result =
 
   loop p2 [] None
 
-and parse_pattern_list (p : parser) : (parser * AST.pattern list, parser) result =
+and parse_pattern_list (p : parser) : (parser * Surface.surface_pattern list, parser) result =
   (* p is at LParen *)
   if peek_token_is p Token.RParen then
     Ok (next_token p, [])
@@ -1569,9 +1904,27 @@ and parse_pattern_list (p : parser) : (parser * AST.pattern list, parser) result
 
     loop p2 [ first_pat ]
 
+let parse_program (p : parser) : (parser * AST.program, parser) result =
+  let id_supply = p.id_supply in
+  match parse_surface_program p with
+  | Ok (p2, surface_prog) -> Ok (p2, Lower.lower_program id_supply surface_prog)
+  | Error p_err -> Error p_err
+
 let parse ~file_id (s : string) : (AST.program, errors) result =
   match s |> Lexer.init |> init ~file_id |> parse_program with
   | Ok (_, program) -> Ok program
+  | Error parser -> Error (List.rev parser.errors)
+
+type parse_surface_result = {
+  program : Surface_ast.Surface.surface_program;
+  id_supply : Id_supply.Id_supply.t;
+}
+
+let parse_surface ~file_id (s : string) : (parse_surface_result, errors) result =
+  let p = s |> Lexer.init |> init ~file_id in
+  let id_supply = p.id_supply in
+  match parse_surface_program p with
+  | Ok (_, surface_prog) -> Ok { program = surface_prog; id_supply }
   | Error parser -> Error (List.rev parser.errors)
 
 module Test = struct
@@ -1708,6 +2061,43 @@ module Test = struct
       };
     ]
     |> run
+
+  let%test "array literal with identifier elements parses" =
+    match parse ~file_id:"<test>" "let george = 1\nlet promoted_george = 2\n[george, promoted_george]" with
+    | Ok
+        [
+          _;
+          _;
+          {
+            AST.stmt =
+              AST.ExpressionStmt
+                {
+                  AST.expr =
+                    AST.Array
+                      [ { expr = AST.Identifier "george"; _ }; { expr = AST.Identifier "promoted_george"; _ } ];
+                  _;
+                };
+            _;
+          };
+        ] ->
+        true
+    | _ -> false
+
+  let%test "array literal receiver with lambda call parses" =
+    match
+      parse_surface ~file_id:"<test>"
+        "let george = { name: \"g\" }\nlet promoted_george = { name: \"p\" }\n[george, promoted_george].foreach((m) => puts(m.name))"
+    with
+    | Ok result -> (
+        match result.program with
+        | [ _; _; { Surface.std_decl = Surface.SExpressionStmt expr; _ } ] -> (
+            match expr.se_expr with
+            | Surface.SEMethodCall
+                { se_receiver = { se_expr = Surface.SEArray [ _; _ ]; _ }; se_method = "foreach"; _ } ->
+                true
+            | _ -> false)
+        | _ -> false)
+    | Error _ -> false
 
   let%test "test_index_expressions" =
     [
@@ -1928,10 +2318,10 @@ module Test = struct
     ]
     |> run
 
-  let%test "test_function_expression" =
+  let%test "test_lambda_expression" =
     [
       {
-        input = "fn(x, y) { x + y; }";
+        input = "(x, y) -> x + y";
         output =
           [
             s
@@ -1948,14 +2338,25 @@ module Test = struct
                              ])))));
           ];
       };
-      { input = "fn() {}"; output = [ s (AST.ExpressionStmt (e (fn_expr [] (s (AST.Block []))))) ] };
-      { input = "fn(x) {}"; output = [ s (AST.ExpressionStmt (e (fn_expr [ ("x", None) ] (s (AST.Block []))))) ] };
       {
-        input = "fn(foo, bar, baz) {};";
+        input = "() -> 42";
         output =
           [
             s
-              (AST.ExpressionStmt (e (fn_expr [ ("foo", None); ("bar", None); ("baz", None) ] (s (AST.Block [])))));
+              (AST.ExpressionStmt
+                 (e (fn_expr [] (s (AST.Block [ s (AST.ExpressionStmt (e (AST.Integer 42L))) ])))));
+          ];
+      };
+      {
+        input = "(foo, bar, baz) -> foo";
+        output =
+          [
+            s
+              (AST.ExpressionStmt
+                 (e
+                    (fn_expr
+                       [ ("foo", None); ("bar", None); ("baz", None) ]
+                       (s (AST.Block [ s (AST.ExpressionStmt (e (AST.Identifier "foo"))) ])))));
           ];
       };
     ]
@@ -1980,7 +2381,7 @@ module Test = struct
           ];
       };
       {
-        input = "fn(x, y) { x + y; }(2, 3)";
+        input = "((x, y) -> x + y)(2, 3)";
         output =
           [
             s
@@ -2001,7 +2402,7 @@ module Test = struct
           ];
       };
       {
-        input = "callsFunction(2, 3, fn(x, y) { x + y; });";
+        input = "callsFunction(2, 3, (x, y) -> x + y);";
         output =
           [
             s
@@ -2030,7 +2431,6 @@ module Test = struct
 
   let%test "test_hash_literal" =
     [
-      { input = "{}"; output = [ s (AST.ExpressionStmt (e (AST.Hash []))) ] };
       {
         input = "{\"one\": 1, \"two\": 2, \"three\": 3}";
         output =
@@ -2063,6 +2463,11 @@ module Test = struct
       };
     ]
     |> run
+
+  let%test "empty braces in expression position parse as an empty block expression" =
+    match parse ~file_id:"<test>" "{}" with
+    | Ok [ { AST.stmt = AST.ExpressionStmt { AST.expr = AST.BlockExpr []; _ }; _ } ] -> true
+    | _ -> false
 
   let contains_substring s sub = String_utils.contains_substring ~needle:sub s
 
@@ -2143,6 +2548,7 @@ module Test = struct
       | AST.FieldAccess (receiver, _) -> collect_expr_ids receiver
       | AST.MethodCall { mc_receiver; mc_args; _ } ->
           collect_expr_ids mc_receiver @ List.concat_map collect_expr_ids mc_args
+      | AST.BlockExpr stmts -> List.concat_map collect_stmt_ids stmts
     in
     expr.id :: child_ids
 
@@ -2156,7 +2562,7 @@ module Test = struct
         []
 
   let%test "parser assigns unique expression ids for nested function and record literals" =
-    let input = "let outer = fn(x) { let mk = fn(v) { { inner: v } }; mk(x) }; let o = outer(5); puts(o.inner)" in
+    let input = "fn outer(x) = { let mk = (v) -> { inner: v }; mk(x) }\nlet o = outer(5)\nputs(o.inner)" in
     match parse ~file_id:"<test>" input with
     | Error _ -> false
     | Ok program ->
@@ -2169,13 +2575,8 @@ module Test = struct
     | Error errs -> List.exists (fun (d : Diagnostic.t) -> d.code = "parse-invalid-number") errs
     | _ -> false
 
-  let%test "parse-invalid-impl on derive missing 'for' keyword" =
-    match parse ~file_id:"<test>" "derive show string" with
-    | Error errs -> List.exists (fun (d : Diagnostic.t) -> d.code = "parse-invalid-impl") errs
-    | _ -> false
-
   let%test "parse-invalid-pattern on missing variant name after dot" =
-    match parse ~file_id:"<test>" "match 1 { option. => 3 }" with
+    match parse ~file_id:"<test>" "match 1 { case option.: 3 }" with
     | Error errs -> List.exists (fun (d : Diagnostic.t) -> d.code = "parse-invalid-pattern") errs
     | _ -> false
 
@@ -2183,11 +2584,387 @@ module Test = struct
     match parse ~file_id:"<test>" "let x = if (true) 42" with
     | Error errs -> List.exists (fun (d : Diagnostic.t) -> d.code = "parse-unexpected-token") errs
     | _ -> false
+
+  (* Phase 1b: Top-level fn declarations *)
+  let%test "fn decl simple expression body" =
+    match parse ~file_id:"<test>" "fn identity(x) = x" with
+    | Ok
+        [
+          {
+            AST.stmt =
+              AST.Let
+                { name = "identity"; value = { AST.expr = AST.Function { params = [ ("x", None) ]; _ }; _ }; _ };
+            _;
+          };
+        ] ->
+        true
+    | _ -> false
+
+  let%test "fn decl with typed param and return type" =
+    match parse ~file_id:"<test>" "fn double(x: Int) -> Int = x" with
+    | Ok
+        [
+          {
+            AST.stmt =
+              AST.Let
+                {
+                  name = "double";
+                  value =
+                    {
+                      AST.expr =
+                        AST.Function
+                          {
+                            params = [ ("x", Some (AST.TCon "Int")) ];
+                            return_type = Some (AST.TCon "Int");
+                            is_effectful = false;
+                            _;
+                          };
+                      _;
+                    };
+                  _;
+                };
+            _;
+          };
+        ] ->
+        true
+    | _ -> false
+
+  let%test "fn decl with block body" =
+    match parse ~file_id:"<test>" "fn add(x: Int, y: Int) -> Int = { x + y }" with
+    | Ok
+        [
+          {
+            AST.stmt =
+              AST.Let
+                {
+                  name = "add";
+                  value = { AST.expr = AST.Function { body = { AST.stmt = AST.Block _; _ }; _ }; _ };
+                  _;
+                };
+            _;
+          };
+        ] ->
+        true
+    | _ -> false
+
+  let%test "fn decl effectful with fat arrow" =
+    match parse ~file_id:"<test>" "fn greet(name: Str) => Str = puts(name)" with
+    | Ok
+        [
+          {
+            AST.stmt =
+              AST.Let { name = "greet"; value = { AST.expr = AST.Function { is_effectful = true; _ }; _ }; _ };
+            _;
+          };
+        ] ->
+        true
+    | _ -> false
+
+  let%test "fn decl with generics" =
+    match parse ~file_id:"<test>" "fn identity[a](x: a) -> a = x" with
+    | Ok
+        [
+          {
+            AST.stmt =
+              AST.Let
+                {
+                  name = "identity";
+                  value =
+                    {
+                      AST.expr =
+                        AST.Function
+                          {
+                            generics = Some [ { AST.name = "a"; _ } ];
+                            params = [ ("x", Some (AST.TVar "a")) ];
+                            return_type = Some (AST.TVar "a");
+                            _;
+                          };
+                      _;
+                    };
+                  _;
+                };
+            _;
+          };
+        ] ->
+        true
+    | _ -> false
+
+  let%test "fn decl with bang suffix name" =
+    match parse ~file_id:"<test>" "fn panic!() = 42" with
+    | Ok [ { AST.stmt = AST.Let { name = "panic!"; _ }; _ } ] -> true
+    | _ -> false
+
+  let%test "block-style function literal is rejected" =
+    match parse ~file_id:"<test>" "let f = fn(x) { x }" with
+    | Ok _ -> false
+    | Error _ -> true
+
+  (* Phase 1c: Operator precedences *)
+  let%test "logical or has lower precedence than equality" =
+    (* a || b == c should be a || (b == c) *)
+    match parse ~file_id:"<test>" "a || b == c" with
+    | Ok [ { AST.stmt = AST.ExpressionStmt { AST.expr = AST.Infix (_, "||", _); _ }; _ } ] -> true
+    | _ -> false
+
+  let%test "logical and has lower precedence than equality" =
+    (* a && b == c should be a && (b == c) *)
+    match parse ~file_id:"<test>" "a && b == c" with
+    | Ok [ { AST.stmt = AST.ExpressionStmt { AST.expr = AST.Infix (_, "&&", _); _ }; _ } ] -> true
+    | _ -> false
+
+  let%test "percent operator parses as infix" =
+    match parse ~file_id:"<test>" "10 % 3" with
+    | Ok [ { AST.stmt = AST.ExpressionStmt { AST.expr = AST.Infix (_, "%", _); _ }; _ } ] -> true
+    | _ -> false
+
+  (* Phase 1c: Supertrait with & separator *)
+  let%test "supertrait accepts ampersand separator" =
+    let input = "trait NamedShow: Named & Show = { fn label() -> Str }" in
+    let lexer = Lexer.init input in
+    match parse_program (init ~file_id:"<test>" lexer) with
+    | Ok (_p, [ { AST.stmt = AST.TraitDef { supertraits; _ }; _ } ]) -> supertraits = [ "Named"; "Show" ]
+    | _ -> false
+
+  let%test "supertrait rejects plus separator" =
+    match parse ~file_id:"<test>" "trait NamedShow: Named + Show = { fn label() -> Str }" with
+    | Ok _ -> false
+    | Error _ -> true
+
+  (* Phase 1c: Positional params in method sig *)
+  let%test "parse method sig with positional type params" =
+    let input = "trait Show[a] = { fn show(a) -> Str }" in
+    let lexer = Lexer.init input in
+    match parse_program (init ~file_id:"<test>" lexer) with
+    | Ok (_p, [ { AST.stmt = AST.TraitDef { methods; _ }; _ } ]) -> (
+        match methods with
+        | [ m ] -> List.length m.method_params = 1
+        | _ -> false)
+    | _ -> false
+
+  (* Phase 1c: Default method impl *)
+  let%test "parse method sig with default impl expression" =
+    let input = "trait Foo[a] = { fn hello(a) -> Str = \"hello\" }" in
+    match parse_surface ~file_id:"<test>" input with
+    | Error _ -> false
+    | Ok result -> (
+        match result.program with
+        | [ { Surface.std_decl = Surface.STraitDef { methods; _ }; _ } ] -> (
+            match methods with
+            | [ m ] -> Option.is_some m.sm_default_impl
+            | _ -> false)
+        | _ -> false)
+
+  (* Phase 1d: Variant list with commas *)
+  let%test "parse enum with comma-separated variants" =
+    let input = "enum Color = { Red, Green, Blue }" in
+    let lexer = Lexer.init input in
+    match parse_program (init ~file_id:"<test>" lexer) with
+    | Ok (_p, [ { AST.stmt = AST.EnumDef { variants; _ }; _ } ]) -> List.length variants = 3
+    | _ -> false
+
+  (* Phase 1d: Enum postfix derive *)
+  let%test "parse enum with postfix derive" =
+    let input = "enum Color = { Red, Green } derive Eq, Show" in
+    match parse_surface ~file_id:"<test>" input with
+    | Error _ -> false
+    | Ok result -> (
+        match result.program with
+        | [ { Surface.std_decl = Surface.SEnumDef { derive; _ }; _ } ] ->
+            derive
+            = [
+                AST.{ derive_trait_name = "Eq"; derive_trait_constraints = [] };
+                AST.{ derive_trait_name = "Show"; derive_trait_constraints = [] };
+              ]
+        | _ -> false)
+
+  let%test "parse enum rejects missing equals" =
+    match parse ~file_id:"<test>" "enum Color { Red, Green }" with
+    | Ok _ -> false
+    | Error _ -> true
+
+  (* Phase 1d: Type alias postfix derive *)
+  let%test "parse type alias with postfix derive" =
+    let input = "type MyInt = Int derive Eq" in
+    match parse_surface ~file_id:"<test>" input with
+    | Error _ -> false
+    | Ok result -> (
+        match result.program with
+        | [ { Surface.std_decl = Surface.STypeDef { derive; _ }; _ } ] ->
+            derive = [ AST.{ derive_trait_name = "Eq"; derive_trait_constraints = [] } ]
+        | _ -> false)
+
+  let%test "parse type alias preserves postfix derive target params" =
+    let input = "type Box[t] = { value: t } derive Forwarder[u]" in
+    match parse_surface ~file_id:"<test>" input with
+    | Error _ -> false
+    | Ok result -> (
+        match result.program with
+        | [ { Surface.std_decl = Surface.STypeDef { derive = [ derive_trait ]; _ }; _ } ] ->
+            derive_trait.derive_trait_name = "Forwarder"
+            && derive_trait.derive_trait_constraints = [ AST.{ name = "u"; constraints = [] } ]
+        | _ -> false)
+
+  (* Phase 1d: vNext impl syntax *)
+  let%test "parse vNext impl with type application head" =
+    let input = "impl[a] Show[Option[a]] = { fn show(x: Option[a]) -> Str = { \"\" } }" in
+    match parse ~file_id:"<test>" input with
+    | Ok
+        [
+          {
+            AST.stmt =
+              AST.ImplDef
+                {
+                  impl_trait_name = "Show";
+                  impl_type_params = [ { AST.name = "a"; constraints = [] } ];
+                  impl_for_type = AST.TApp ("Option", [ AST.TVar "a" ]);
+                  impl_methods;
+                };
+            _;
+          };
+        ] ->
+        List.length impl_methods = 1
+    | _ -> false
+
+  let%test "parse impl requires bracket application syntax" =
+    match parse ~file_id:"<test>" "impl Show for Int { fn show(x: Int) -> Str = { x } }" with
+    | Ok _ -> false
+    | Error _ -> true
+
+  let%test "parse vNext inherent impl with = syntax" =
+    let input = "impl Monkey = { fn greet() -> Str = { \"hello\" } }" in
+    match parse_surface ~file_id:"<test>" input with
+    | Error _ -> false
+    | Ok result -> (
+        match result.program with
+        | [ { Surface.std_decl = Surface.SInherentImplDef { inherent_for_type; inherent_methods }; _ } ] ->
+            inherent_for_type = Surface.STCon "Monkey" && List.length inherent_methods = 1
+        | _ -> false)
+
+  let%test "parse vNext generic inherent impl with inferred binders" =
+    let input = "impl Result[a, b] = { fn ok(r: Result[a, b]) -> Bool = { true } }" in
+    match parse ~file_id:"<test>" input with
+    | Ok
+        [
+          {
+            AST.stmt =
+              AST.InherentImplDef
+                { inherent_for_type = AST.TApp ("Result", [ AST.TCon "a"; AST.TCon "b" ]); inherent_methods };
+            _;
+          };
+        ] ->
+        List.length inherent_methods = 1
+    | _ -> false
+
+  (* Phase 1d: override keyword *)
+  let%test "parse impl method with override keyword" =
+    let input = "impl Foo = { override fn bar() -> Int = { 1 } }" in
+    match parse_surface ~file_id:"<test>" input with
+    | Error _ -> false
+    | Ok result -> (
+        match result.program with
+        | [ { Surface.std_decl = Surface.SInherentImplDef { inherent_methods; _ }; _ } ] -> (
+            match inherent_methods with
+            | [ m ] -> m.smi_override = true
+            | _ -> false)
+        | _ -> false)
+
+  (* Phase 1d: method impl with = expr syntax *)
+  let%test "parse method impl with expression body" =
+    let input = "impl Foo = { fn bar() -> Int = 42 }" in
+    match parse_surface ~file_id:"<test>" input with
+    | Error _ -> false
+    | Ok result -> (
+        match result.program with
+        | [ { Surface.std_decl = Surface.SInherentImplDef { inherent_methods; _ }; _ } ] -> (
+            match inherent_methods with
+            | [ m ] -> (
+                match m.smi_body with
+                | Surface.SEOBExpr _ -> true
+                | _ -> false)
+            | _ -> false)
+        | _ -> false)
+
+  let%test "parse impl method rejects brace-only body" =
+    match parse ~file_id:"<test>" "impl Foo = { fn bar() -> Int { 1 } }" with
+    | Ok _ -> false
+    | Error _ -> true
+
+  (* Phase 1e: Lambda parsing *)
+  let%test "parse empty lambda" =
+    let input = "() -> 42" in
+    match parse_surface ~file_id:"<test>" input with
+    | Error _ -> false
+    | Ok result -> (
+        match result.program with
+        | [ { Surface.std_decl = Surface.SExpressionStmt e; _ } ] -> (
+            match e.se_expr with
+            | Surface.SEArrowLambda { se_lambda_params = []; _ } -> true
+            | _ -> false)
+        | _ -> false)
+
+  let%test "parse single-param lambda" =
+    let input = "(x) -> x" in
+    match parse_surface ~file_id:"<test>" input with
+    | Error _ -> false
+    | Ok result -> (
+        match result.program with
+        | [ { Surface.std_decl = Surface.SExpressionStmt e; _ } ] -> (
+            match e.se_expr with
+            | Surface.SEArrowLambda { se_lambda_params = [ ("x", None) ]; _ } -> true
+            | _ -> false)
+        | _ -> false)
+
+  let%test "parse multi-param lambda" =
+    let input = "(x, y) -> x + y" in
+    match parse_surface ~file_id:"<test>" input with
+    | Error _ -> false
+    | Ok result -> (
+        match result.program with
+        | [ { Surface.std_decl = Surface.SExpressionStmt e; _ } ] -> (
+            match e.se_expr with
+            | Surface.SEArrowLambda { se_lambda_params = [ ("x", None); ("y", None) ]; _ } -> true
+            | _ -> false)
+        | _ -> false)
+
+  let%test "parse effectful lambda with fat arrow" =
+    let input = "(x) => puts(x)" in
+    match parse_surface ~file_id:"<test>" input with
+    | Error _ -> false
+    | Ok result -> (
+        match result.program with
+        | [ { Surface.std_decl = Surface.SExpressionStmt e; _ } ] -> (
+            match e.se_expr with
+            | Surface.SEArrowLambda { se_lambda_is_effectful = true; _ } -> true
+            | _ -> false)
+        | _ -> false)
+
+  let%test "grouped expression still works" =
+    match parse ~file_id:"<test>" "(1 + 2) * 3" with
+    | Ok [ { AST.stmt = AST.ExpressionStmt { AST.expr = AST.Infix (_, "*", _); _ }; _ } ] -> true
+    | _ -> false
+
+  (* Phase 1e: case keyword is mandatory on match arms *)
+  let%test "parse match arm with case keyword" =
+    let input = "match x { case option.some(v): v case option.none: 0 }" in
+    match parse_surface ~file_id:"<test>" input with
+    | Error _ -> false
+    | Ok result -> (
+        match result.program with
+        | [ { Surface.std_decl = Surface.SExpressionStmt e; _ } ] -> (
+            match e.se_expr with
+            | Surface.SEMatch (_, arms) -> List.length arms = 2
+            | _ -> false)
+        | _ -> false)
+
+  let%test "parse match arm rejects missing case keyword" =
+    match parse ~file_id:"<test>" "match x { option.some(v): v }" with
+    | Ok _ -> false
+    | Error _ -> true
 end
 
 (* Phase 4.3: Trait definition tests *)
 let%test "parse simple trait definition" =
-  let input = "trait show[a] { fn show(x: a) -> string }" in
+  let input = "trait Show[a] = { fn show(x: a) -> Str }" in
   let lexer = Lexer.init input in
   match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
@@ -2195,7 +2972,7 @@ let%test "parse simple trait definition" =
       | [ stmt ] -> (
           match stmt.stmt with
           | AST.TraitDef trait_def ->
-              trait_def.name = "show"
+              trait_def.name = "Show"
               && trait_def.type_param = Some "a"
               && trait_def.supertraits = []
               && trait_def.fields = []
@@ -2205,7 +2982,7 @@ let%test "parse simple trait definition" =
   | Error _ -> false
 
 let%test "parse trait with multiple methods" =
-  let input = "trait num[a] { fn add(x: a, y: a) -> a fn sub(x: a, y: a) -> a }" in
+  let input = "trait Num[a] = { fn add(x: a, y: a) -> a fn sub(x: a, y: a) -> a }" in
   let lexer = Lexer.init input in
   match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
@@ -2213,7 +2990,7 @@ let%test "parse trait with multiple methods" =
       | [ stmt ] -> (
           match stmt.stmt with
           | AST.TraitDef trait_def ->
-              trait_def.name = "num"
+              trait_def.name = "Num"
               && trait_def.type_param = Some "a"
               && trait_def.fields = []
               && List.length trait_def.methods = 2
@@ -2222,7 +2999,7 @@ let%test "parse trait with multiple methods" =
   | Error _ -> false
 
 let%test "parse trait without type parameter" =
-  let input = "trait ping { fn ping(x: int) -> int }" in
+  let input = "trait Ping = { fn ping(x: Int) -> Int }" in
   let lexer = Lexer.init input in
   match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
@@ -2230,7 +3007,7 @@ let%test "parse trait without type parameter" =
       | [ stmt ] -> (
           match stmt.stmt with
           | AST.TraitDef trait_def ->
-              trait_def.name = "ping"
+              trait_def.name = "Ping"
               && trait_def.type_param = None
               && trait_def.supertraits = []
               && trait_def.fields = []
@@ -2240,7 +3017,7 @@ let%test "parse trait without type parameter" =
   | Error _ -> false
 
 let%test "parse trait with supertraits" =
-  let input = "trait ord[a]: eq { fn compare(x: a, y: a) -> int }" in
+  let input = "trait Ord[a]: Eq = { fn compare(x: a, y: a) -> Int }" in
   let lexer = Lexer.init input in
   match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
@@ -2248,9 +3025,9 @@ let%test "parse trait with supertraits" =
       | [ stmt ] -> (
           match stmt.stmt with
           | AST.TraitDef trait_def ->
-              trait_def.name = "ord"
+              trait_def.name = "Ord"
               && trait_def.type_param = Some "a"
-              && trait_def.supertraits = [ "eq" ]
+              && trait_def.supertraits = [ "Eq" ]
               && trait_def.fields = []
               && List.length trait_def.methods = 1
           | _ -> false)
@@ -2258,7 +3035,7 @@ let%test "parse trait with supertraits" =
   | Error _ -> false
 
 let%test "parse trait with multiple supertraits" =
-  let input = "trait hashable[a]: eq + show { fn hash(x: a) -> int }" in
+  let input = "trait Hashable[a]: Eq & Show = { fn hash(x: a) -> Int }" in
   let lexer = Lexer.init input in
   match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
@@ -2266,9 +3043,9 @@ let%test "parse trait with multiple supertraits" =
       | [ stmt ] -> (
           match stmt.stmt with
           | AST.TraitDef trait_def ->
-              trait_def.name = "hashable"
+              trait_def.name = "Hashable"
               && trait_def.type_param = Some "a"
-              && trait_def.supertraits = [ "eq"; "show" ]
+              && trait_def.supertraits = [ "Eq"; "Show" ]
               && trait_def.fields = []
               && List.length trait_def.methods = 1
           | _ -> false)
@@ -2276,7 +3053,7 @@ let%test "parse trait with multiple supertraits" =
   | Error _ -> false
 
 let%test "parse non-generic trait with supertraits" =
-  let input = "trait named_show: named + show { fn label() -> string }" in
+  let input = "trait NamedShow: Named & Show = { fn label() -> Str }" in
   let lexer = Lexer.init input in
   match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
@@ -2284,9 +3061,9 @@ let%test "parse non-generic trait with supertraits" =
       | [ stmt ] -> (
           match stmt.stmt with
           | AST.TraitDef trait_def ->
-              trait_def.name = "named_show"
+              trait_def.name = "NamedShow"
               && trait_def.type_param = None
-              && trait_def.supertraits = [ "named"; "show" ]
+              && trait_def.supertraits = [ "Named"; "Show" ]
               && trait_def.fields = []
               && List.length trait_def.methods = 1
           | _ -> false)
@@ -2294,7 +3071,7 @@ let%test "parse non-generic trait with supertraits" =
   | Error _ -> false
 
 let%test "parse field-only trait definition" =
-  let input = "trait named { name: string }" in
+  let input = "trait Named = { name: Str }" in
   let lexer = Lexer.init input in
   match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
@@ -2302,7 +3079,7 @@ let%test "parse field-only trait definition" =
       | [ stmt ] -> (
           match stmt.stmt with
           | AST.TraitDef trait_def ->
-              trait_def.name = "named"
+              trait_def.name = "Named"
               && trait_def.type_param = None
               && trait_def.supertraits = []
               && List.length trait_def.fields = 1
@@ -2311,8 +3088,39 @@ let%test "parse field-only trait definition" =
       | _ -> false)
   | Error _ -> false
 
+let%test "parse parameter constraint shorthand with ampersand" =
+  match parse_surface ~file_id:"<test>" "fn describe(x: Named & Aged) -> Str = x.name" with
+  | Error _ -> false
+  | Ok result -> (
+      match result.program with
+      | [
+       {
+         Surface.std_decl =
+           Surface.SFnDecl { params = [ ("x", Some (Surface.STConstraintShorthand [ "Named"; "Aged" ])) ]; _ };
+         _;
+       };
+      ] ->
+          true
+      | _ -> false)
+
+let%test "parse parenthesized parameter intersection does not become shorthand" =
+  match parse_surface ~file_id:"<test>" "fn keep(x: (Foo & Bar)) -> Foo = x" with
+  | Error _ -> false
+  | Ok result -> (
+      match result.program with
+      | [
+       {
+         Surface.std_decl =
+           Surface.SFnDecl
+             { params = [ ("x", Some (Surface.STIntersection [ Surface.STCon "Foo"; Surface.STCon "Bar" ])) ]; _ };
+         _;
+       };
+      ] ->
+          true
+      | _ -> false)
+
 let%test "parse mixed trait definition" =
-  let input = "trait printable[a] { name: string fn format(x: a) -> string }" in
+  let input = "trait Printable[a] = { name: Str fn format(x: a) -> Str }" in
   let lexer = Lexer.init input in
   match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
@@ -2320,7 +3128,7 @@ let%test "parse mixed trait definition" =
       | [ stmt ] -> (
           match stmt.stmt with
           | AST.TraitDef trait_def ->
-              trait_def.name = "printable"
+              trait_def.name = "Printable"
               && trait_def.type_param = Some "a"
               && trait_def.supertraits = []
               && List.length trait_def.fields = 1
@@ -2328,6 +3136,11 @@ let%test "parse mixed trait definition" =
           | _ -> false)
       | _ -> false)
   | Error _ -> false
+
+let%test "parse trait rejects missing equals" =
+  match parse ~file_id:"<test>" "trait Show[a] { fn show(x: a) -> Str }" with
+  | Ok _ -> false
+  | Error _ -> true
 
 (* Phase 4.3: Impl block tests *)
 let%test "parse impl - just keyword" =
@@ -2337,7 +3150,7 @@ let%test "parse impl - just keyword" =
   curr_token_is p Token.Impl
 
 let%test "parse basic impl block - debug" =
-  let input = "impl show for int { fn show(x: int) -> string { x } }" in
+  let input = "impl Show[Int] = { fn show(x: Int) -> Str = { x } }" in
   let lexer = Lexer.init input in
   match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
@@ -2362,7 +3175,7 @@ let%test "parse basic impl block - debug" =
       false
 
 let%test "parse basic impl block" =
-  let input = "impl show for int { fn show(x: int) -> string { x } }" in
+  let input = "impl Show[Int] = { fn show(x: Int) -> Str = { x } }" in
   let lexer = Lexer.init input in
   match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
@@ -2370,7 +3183,7 @@ let%test "parse basic impl block" =
       | [ stmt ] -> (
           match stmt.stmt with
           | AST.ImplDef impl_def ->
-              impl_def.impl_trait_name = "show"
+              impl_def.impl_trait_name = "Show"
               && impl_def.impl_type_params = []
               && List.length impl_def.impl_methods = 1
           | _ -> false)
@@ -2378,7 +3191,7 @@ let%test "parse basic impl block" =
   | Error _ -> false
 
 let%test "parse basic inherent impl block" =
-  let input = "impl point { fn sum(p: point) -> int { p.x + p.y } }" in
+  let input = "impl Point = { fn sum(p: Point) -> Int = { p.x + p.y } }" in
   let lexer = Lexer.init input in
   match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
@@ -2387,14 +3200,14 @@ let%test "parse basic inherent impl block" =
           match stmt.stmt with
           | AST.InherentImplDef inherent_def -> (
               match inherent_def.inherent_for_type with
-              | AST.TCon "point" -> List.length inherent_def.inherent_methods = 1
+              | AST.TCon "Point" -> List.length inherent_def.inherent_methods = 1
               | _ -> false)
           | _ -> false)
       | _ -> false)
   | Error _ -> false
 
 let%test "parse inherent impl with bracketed type target" =
-  let input = "impl list[int] { fn size(xs: list[int]) -> int { 0 } }" in
+  let input = "impl List[Int] = { fn size(xs: List[Int]) -> Int = { 0 } }" in
   let lexer = Lexer.init input in
   match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
@@ -2403,14 +3216,14 @@ let%test "parse inherent impl with bracketed type target" =
           match stmt.stmt with
           | AST.InherentImplDef inherent_def -> (
               match inherent_def.inherent_for_type with
-              | AST.TApp ("list", [ AST.TCon "int" ]) -> List.length inherent_def.inherent_methods = 1
+              | AST.TApp ("List", [ AST.TCon "Int" ]) -> List.length inherent_def.inherent_methods = 1
               | _ -> false)
           | _ -> false)
       | _ -> false)
   | Error _ -> false
 
 let%test "parse impl with type params" =
-  let input = "impl eq[a: eq] for list[a] { fn eq(x: list[a], y: list[a]) -> bool { true } }" in
+  let input = "impl[a: Eq] Eq[List[a]] = { fn eq(x: List[a], y: List[a]) -> Bool = { true } }" in
   let lexer = Lexer.init input in
   match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
@@ -2418,7 +3231,7 @@ let%test "parse impl with type params" =
       | [ stmt ] -> (
           match stmt.stmt with
           | AST.ImplDef impl_def ->
-              let ok1 = impl_def.impl_trait_name = "eq" in
+              let ok1 = impl_def.impl_trait_name = "Eq" in
               let ok2 = List.length impl_def.impl_type_params = 1 in
               let ok3 = List.length impl_def.impl_methods = 1 in
               if not ok1 then
@@ -2440,7 +3253,7 @@ let%test "parse impl with type params" =
       false
 
 let%test "parse impl with multiple constraints" =
-  let input = "impl show[a: eq + ord] for option[a] { fn show(x: option[a]) -> string { \"\" } }" in
+  let input = "impl[a: Eq & Ord] Show[Option[a]] = { fn show(x: Option[a]) -> Str = { \"\" } }" in
   let lexer = Lexer.init input in
   match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
@@ -2448,32 +3261,32 @@ let%test "parse impl with multiple constraints" =
       | [ stmt ] -> (
           match stmt.stmt with
           | AST.ImplDef impl_def -> (
-              impl_def.impl_trait_name = "show"
+              impl_def.impl_trait_name = "Show"
               && List.length impl_def.impl_type_params = 1
               &&
               match List.hd impl_def.impl_type_params with
-              | { name = "a"; constraints = [ "eq"; "ord" ] } -> true
+              | { name = "a"; constraints = [ "Eq"; "Ord" ] } -> true
               | _ -> false)
           | _ -> false)
       | _ -> false)
   | Error _ -> false
 
 let%test "parse impl with multiple methods" =
-  let input = "impl num for int { fn add(x: int, y: int) -> int { x } fn sub(x: int, y: int) -> int { y } }" in
+  let input = "impl Num[Int] = { fn add(x: Int, y: Int) -> Int = { x } fn sub(x: Int, y: Int) -> Int = { y } }" in
   let lexer = Lexer.init input in
   match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
       match program with
       | [ stmt ] -> (
           match stmt.stmt with
-          | AST.ImplDef impl_def -> impl_def.impl_trait_name = "num" && List.length impl_def.impl_methods = 2
+          | AST.ImplDef impl_def -> impl_def.impl_trait_name = "Num" && List.length impl_def.impl_methods = 2
           | _ -> false)
       | _ -> false)
   | Error _ -> false
 
 let%test "parse impl method body with direct record literal" =
   let input =
-    "type vec2 = { x: int }\ntrait num[a] { fn add(x: a, y: a) -> a }\nimpl num for vec2 { fn add(x: vec2, y: vec2) -> vec2 { { x: x.x + y.x } } }"
+    "type Vec2 = { x: Int }\ntrait Num[a] = { fn add(x: a, y: a) -> a }\nimpl Num[Vec2] = { fn add(x: Vec2, y: Vec2) -> Vec2 = { { x: x.x + y.x } } }"
   in
   let lexer = Lexer.init input in
   match parse_program (init ~file_id:"<test>" lexer) with
@@ -2494,7 +3307,7 @@ let%test "parse impl method body with direct record literal" =
 
 let%test "parse impl method body with if expression and continue parsing next statement" =
   let input =
-    "trait pick[a] { fn pick(x: a, y: a) -> a }\nimpl pick for int { fn pick(x: int, y: int) -> int { if (true) { x } else { y } } }\n1"
+    "trait Pick[a] = { fn pick(x: a, y: a) -> a }\nimpl Pick[Int] = { fn pick(x: Int, y: Int) -> Int = { if (true) { x } else { y } } }\n1"
   in
   let lexer = Lexer.init input in
   match parse_program (init ~file_id:"<test>" lexer) with
@@ -2513,60 +3326,22 @@ let%test "parse impl method body with if expression and continue parsing next st
       | _ -> false)
   | Error _ -> false
 
-(* Phase 4.3: Derive statement tests *)
-let%test "parse derive - just keyword" =
-  let input = "derive" in
-  let lexer = Lexer.init input in
-  let p = init ~file_id:"<test>" lexer in
-  curr_token_is p Token.Derive
+let%test "parse impl method rejects missing equals before body" =
+  match parse ~file_id:"<test>" "impl Int = { fn show(x: Int) -> Str { x } }" with
+  | Ok _ -> false
+  | Error _ -> true
 
-let%test "parse single derive" =
-  let input = "derive eq for color" in
+let%test "standalone derive statement is a parse error" =
+  let input = "derive Eq for Color" in
   let lexer = Lexer.init input in
   match parse_program (init ~file_id:"<test>" lexer) with
-  | Ok (_p, program) -> (
-      match program with
-      | [ stmt ] -> (
-          match stmt.stmt with
-          | AST.DeriveDef derive_def ->
-              List.length derive_def.derive_traits = 1
-              && (List.hd derive_def.derive_traits).derive_trait_name = "eq"
-          | _ -> false)
-      | _ -> false)
-  | Error _ -> false
+  | Ok _ -> false
+  | Error _ -> true
 
-let%test "parse multiple derive traits" =
-  let input = "derive eq, show, ord for person" in
-  let lexer = Lexer.init input in
-  match parse_program (init ~file_id:"<test>" lexer) with
-  | Ok (_p, program) -> (
-      match program with
-      | [ stmt ] -> (
-          match stmt.stmt with
-          | AST.DeriveDef derive_def ->
-              let trait_names = List.map (fun t -> t.AST.derive_trait_name) derive_def.derive_traits in
-              List.length trait_names = 3 && trait_names = [ "eq"; "show"; "ord" ]
-          | _ -> false)
-      | _ -> false)
-  | Error _ -> false
-
-let%test "parse derive with generic type" =
-  let input = "derive eq for option[int]" in
-  let lexer = Lexer.init input in
-  match parse_program (init ~file_id:"<test>" lexer) with
-  | Ok (_p, program) -> (
-      match program with
-      | [ stmt ] -> (
-          match stmt.stmt with
-          | AST.DeriveDef derive_def -> (
-              List.length derive_def.derive_traits = 1
-              &&
-              match derive_def.derive_for_type with
-              | AST.TApp ("option", [ AST.TCon "int" ]) -> true
-              | _ -> false)
-          | _ -> false)
-      | _ -> false)
-  | Error _ -> false
+let%test "standalone derive after type alias is a parse error" =
+  match parse ~file_id:"<test>" "type Point = { x: Int }\nderive Eq for Point" with
+  | Ok _ -> false
+  | Error _ -> true
 
 (* Phase 4.4: Type alias tests *)
 let%test "parse type - just keyword" =
@@ -2576,7 +3351,7 @@ let%test "parse type - just keyword" =
   curr_token_is p Token.Type
 
 let%test "parse simple type alias" =
-  let input = "type point = int" in
+  let input = "type Point = Int" in
   let lexer = Lexer.init input in
   match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
@@ -2584,18 +3359,18 @@ let%test "parse simple type alias" =
       | [ stmt ] -> (
           match stmt.stmt with
           | AST.TypeAlias alias_def -> (
-              alias_def.alias_name = "point"
+              alias_def.alias_name = "Point"
               && alias_def.alias_type_params = []
               &&
               match alias_def.alias_body with
-              | AST.TCon "int" -> true
+              | AST.TCon "Int" -> true
               | _ -> false)
           | _ -> false)
       | _ -> false)
   | Error _ -> false
 
 let%test "parse type alias with function type body" =
-  let input = "type endo = fn(int) -> int" in
+  let input = "type Endo = (Int) -> Int" in
   let lexer = Lexer.init input in
   match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
@@ -2604,14 +3379,30 @@ let%test "parse type alias with function type body" =
           match stmt.stmt with
           | AST.TypeAlias alias_def -> (
               match alias_def.alias_body with
-              | AST.TArrow ([ AST.TCon "int" ], AST.TCon "int") -> true
+              | AST.TArrow ([ AST.TCon "Int" ], AST.TCon "Int", false) -> true
               | _ -> false)
           | _ -> false)
       | _ -> false)
   | Error _ -> false
 
-let%test "parse function parameter annotation with function type" =
-  let input = "let apply = fn(f: fn(int) -> int, x: int) -> int { f(x) }" in
+let%test "parse Dyn trait object type alias" =
+  let input = "type Printer = Dyn[Show]" in
+  let lexer = Lexer.init input in
+  match parse_program (init ~file_id:"<test>" lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ stmt ] -> (
+          match stmt.stmt with
+          | AST.TypeAlias alias_def -> (
+              match alias_def.alias_body with
+              | AST.TTraitObject [ "Show" ] -> true
+              | _ -> false)
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
+let%test "parse Dyn multi-trait function parameter annotation" =
+  let input = "fn show(x: Dyn[Show & Eq]) -> Str = x.show()" in
   let lexer = Lexer.init input in
   match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
@@ -2620,22 +3411,19 @@ let%test "parse function parameter annotation with function type" =
           match stmt.stmt with
           | AST.Let { value = { expr = AST.Function fn; _ }; _ } -> (
               match fn.params with
-              | [ ("f", Some (AST.TArrow ([ AST.TCon "int" ], AST.TCon "int"))); ("x", Some (AST.TCon "int")) ] ->
-                  true
+              | [ ("x", Some (AST.TTraitObject [ "Show"; "Eq" ])) ] -> true
               | _ -> false)
           | _ -> false)
       | _ -> false)
   | Error _ -> false
 
-let%test "parse type alias followed by let without semicolon" =
-  let input = "type myint = int\nlet x: myint = 1\nx" in
-  let lexer = Lexer.init input in
-  match parse_program (init ~file_id:"<test>" lexer) with
-  | Ok (_p, program) -> List.length program = 3
-  | Error _ -> false
+let%test "parse Dyn rejects empty trait set" =
+  match parse ~file_id:"<test>" "type Empty = Dyn[]" with
+  | Ok _ -> false
+  | Error _ -> true
 
-let%test "parse type alias with generic param" =
-  let input = "type box[a] = a" in
+let%test "parse type alias with intersection body" =
+  let input = "type NamedAge = { name: Str } & { age: Int }" in
   let lexer = Lexer.init input in
   match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
@@ -2643,31 +3431,111 @@ let%test "parse type alias with generic param" =
       | [ stmt ] -> (
           match stmt.stmt with
           | AST.TypeAlias alias_def -> (
-              alias_def.alias_name = "box"
-              && alias_def.alias_type_params = [ "a" ]
-              &&
               match alias_def.alias_body with
-              | AST.TCon "a" -> true
+              | AST.TIntersection [ AST.TRecord _; AST.TRecord _ ] -> true
               | _ -> false)
           | _ -> false)
       | _ -> false)
   | Error _ -> false
 
-let%test "parse type alias with multiple generic params" =
-  let input = "type pair[a, b] = int" in
+let%test "parse type intersection binds tighter than union" =
+  let input = "type Example = Int | Str & Bool" in
   let lexer = Lexer.init input in
   match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
       match program with
       | [ stmt ] -> (
           match stmt.stmt with
-          | AST.TypeAlias alias_def -> alias_def.alias_name = "pair" && alias_def.alias_type_params = [ "a"; "b" ]
+          | AST.TypeAlias alias_def -> (
+              match alias_def.alias_body with
+              | AST.TUnion [ AST.TCon "Int"; AST.TIntersection [ AST.TCon "Str"; AST.TCon "Bool" ] ] -> true
+              | _ -> false)
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
+let%test "parse type intersection parenthesizes function members" =
+  let input = "type Example = ((Int) -> Str) & Bool" in
+  let lexer = Lexer.init input in
+  match parse_program (init ~file_id:"<test>" lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ stmt ] -> (
+          match stmt.stmt with
+          | AST.TypeAlias alias_def -> (
+              match alias_def.alias_body with
+              | AST.TIntersection [ AST.TArrow ([ AST.TCon "Int" ], AST.TCon "Str", false); AST.TCon "Bool" ] ->
+                  true
+              | _ -> false)
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
+let%test "parse function parameter annotation with function type" =
+  let input = "fn apply(f: (Int) -> Int, x: Int) -> Int = f(x)" in
+  let lexer = Lexer.init input in
+  match parse_program (init ~file_id:"<test>" lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ stmt ] -> (
+          match stmt.stmt with
+          | AST.Let { value = { expr = AST.Function fn; _ }; _ } -> (
+              match fn.params with
+              | [
+               ("f", Some (AST.TArrow ([ AST.TCon "Int" ], AST.TCon "Int", false))); ("x", Some (AST.TCon "Int"));
+              ] ->
+                  true
+              | _ -> false)
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
+let%test "parse function type requires parenthesized arrow syntax" =
+  match parse ~file_id:"<test>" "type Endo = fn(Int) -> Int" with
+  | Ok _ -> false
+  | Error _ -> true
+
+let%test "parse type alias followed by let without semicolon" =
+  let input = "type MyInt = Int\nlet x: MyInt = 1\nx" in
+  let lexer = Lexer.init input in
+  match parse_program (init ~file_id:"<test>" lexer) with
+  | Ok (_p, program) -> List.length program = 3
+  | Error _ -> false
+
+let%test "parse type alias with generic param" =
+  let input = "type Box[a] = a" in
+  let lexer = Lexer.init input in
+  match parse_program (init ~file_id:"<test>" lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ stmt ] -> (
+          match stmt.stmt with
+          | AST.TypeAlias alias_def -> (
+              alias_def.alias_name = "Box"
+              && alias_def.alias_type_params = [ "a" ]
+              &&
+              match alias_def.alias_body with
+              | AST.TVar "a" -> true
+              | _ -> false)
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
+let%test "parse type alias with multiple generic params" =
+  let input = "type Pair[a, b] = Int" in
+  let lexer = Lexer.init input in
+  match parse_program (init ~file_id:"<test>" lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ stmt ] -> (
+          match stmt.stmt with
+          | AST.TypeAlias alias_def -> alias_def.alias_name = "Pair" && alias_def.alias_type_params = [ "a"; "b" ]
           | _ -> false)
       | _ -> false)
   | Error _ -> false
 
 let%test "parse record type - empty" =
-  let input = "type unit = { }" in
+  let input = "type UnitLike = { }" in
   let lexer = Lexer.init input in
   match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
@@ -2683,7 +3551,7 @@ let%test "parse record type - empty" =
   | Error _ -> false
 
 let%test "parse record type - single field" =
-  let input = "type point = { x: int }" in
+  let input = "type Point = { x: Int }" in
   let lexer = Lexer.init input in
   match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
@@ -2697,7 +3565,7 @@ let%test "parse record type - single field" =
                   && (List.hd fields).field_name = "x"
                   &&
                   match (List.hd fields).field_type with
-                  | AST.TCon "int" -> true
+                  | AST.TCon "Int" -> true
                   | _ -> false)
               | _ -> false)
           | _ -> false)
@@ -2705,7 +3573,7 @@ let%test "parse record type - single field" =
   | Error _ -> false
 
 let%test "parse record type - multiple fields" =
-  let input = "type point = { x: int, y: int }" in
+  let input = "type Point = { x: Int, y: Int }" in
   let lexer = Lexer.init input in
   match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
@@ -2724,7 +3592,7 @@ let%test "parse record type - multiple fields" =
   | Error _ -> false
 
 let%test "parse record type - with row variable" =
-  let input = "type point[r] = { x: int, ...r }" in
+  let input = "type PointRow[r] = { x: Int, ...r }" in
   let lexer = Lexer.init input in
   match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
@@ -2733,7 +3601,7 @@ let%test "parse record type - with row variable" =
           match stmt.stmt with
           | AST.TypeAlias alias_def -> (
               match alias_def.alias_body with
-              | AST.TRecord (fields, Some (AST.TCon "r")) ->
+              | AST.TRecord (fields, Some (AST.TVar "r")) ->
                   List.length fields = 1 && (List.hd fields).field_name = "x"
               | _ -> false)
           | _ -> false)
@@ -2741,7 +3609,7 @@ let%test "parse record type - with row variable" =
   | Error _ -> false
 
 let%test "parse record type - only row variable" =
-  let input = "type any[r] = { ...r }" in
+  let input = "type Any[r] = { ...r }" in
   let lexer = Lexer.init input in
   match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
@@ -2750,7 +3618,7 @@ let%test "parse record type - only row variable" =
           match stmt.stmt with
           | AST.TypeAlias alias_def -> (
               match alias_def.alias_body with
-              | AST.TRecord ([], Some (AST.TCon "r")) -> true
+              | AST.TRecord ([], Some (AST.TVar "r")) -> true
               | _ -> false)
           | _ -> false)
       | _ -> false)
@@ -3009,6 +3877,28 @@ let%test "parse field access - chained" =
       | _ -> false)
   | Error _ -> false
 
+let%test "parse field access - chained across newline before dot" =
+  let input = "let x = r.a\n  .b" in
+  let lexer = Lexer.init input in
+  match parse_program (init ~file_id:"<test>" lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ stmt ] -> (
+          match stmt.stmt with
+          | AST.Let { value; _ } -> (
+              match value.expr with
+              | AST.FieldAccess (inner, "b") -> (
+                  match inner.expr with
+                  | AST.FieldAccess (receiver, "a") -> (
+                      match receiver.expr with
+                      | AST.Identifier "r" -> true
+                      | _ -> false)
+                  | _ -> false)
+              | _ -> false)
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
 let%test "parse field access vs method call" =
   let input = "let x = r.field; let y = r.method()" in
   let lexer = Lexer.init input in
@@ -3025,9 +3915,31 @@ let%test "parse field access vs method call" =
       | _ -> false)
   | Error _ -> false
 
+let%test "parse method chain across newline before dot" =
+  let input = "let x = 42.show()\n  .show()" in
+  let lexer = Lexer.init input in
+  match parse_program (init ~file_id:"<test>" lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ stmt ] -> (
+          match stmt.stmt with
+          | AST.Let { value; _ } -> (
+              match value.expr with
+              | AST.MethodCall { mc_receiver; mc_method = "show"; mc_args = []; _ } -> (
+                  match mc_receiver.expr with
+                  | AST.MethodCall { mc_receiver = inner_recv; mc_method = "show"; mc_args = []; _ } -> (
+                      match inner_recv.expr with
+                      | AST.Integer 42L -> true
+                      | _ -> false)
+                  | _ -> false)
+              | _ -> false)
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
 (* Phase 4.8: Record pattern tests *)
 let%test "parse record pattern - simple punning" =
-  let input = "match p { { x:, y: }: x }" in
+  let input = "match p { case { x:, y: }: x }" in
   let lexer = Lexer.init input in
   match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
@@ -3057,7 +3969,7 @@ let%test "parse record pattern - simple punning" =
   | Error _ -> false
 
 let%test "parse record pattern - with nested patterns" =
-  let input = "match p { { x: a, y: b }: a }" in
+  let input = "match p { case { x: a, y: b }: a }" in
   let lexer = Lexer.init input in
   match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
@@ -3091,7 +4003,7 @@ let%test "parse record pattern - with nested patterns" =
   | Error _ -> false
 
 let%test "parse record pattern - with rest" =
-  let input = "match p { { x:, ...rest }: x }" in
+  let input = "match p { case { x:, ...rest }: x }" in
   let lexer = Lexer.init input in
   match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
@@ -3117,7 +4029,7 @@ let%test "parse record pattern - with rest" =
   | Error _ -> false
 
 let%test "parse record pattern - empty" =
-  let input = "match p { { }: 42 }" in
+  let input = "match p { case { }: 42 }" in
   let lexer = Lexer.init input in
   match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (

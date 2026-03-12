@@ -1,0 +1,2 @@
+# VN69: Function types use parenthesized arrow syntax
+type Formatter = fn(Int) -> Str  # error: unexpected Token.Function found

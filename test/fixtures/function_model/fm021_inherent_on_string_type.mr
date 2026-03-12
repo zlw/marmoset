@@ -1,5 +1,5 @@
-impl string {
-  fn exclaim(s: string) -> string {
+impl Str = {
+  fn exclaim(s: Str) -> Str = {
     s + "!"
   }
 }

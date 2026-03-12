@@ -4,13 +4,14 @@
 "if" @keyword.conditional
 "else" @keyword.conditional
 "match" @keyword.conditional
+"case" @keyword.conditional
 "fn" @keyword.function
 "enum" @keyword.type
 "trait" @keyword.type
 "impl" @keyword.type
 "derive" @keyword.type
+"override" @keyword.modifier
 "type" @keyword.type
-"for" @keyword
 "is" @keyword.operator
 
 ; Literals
@@ -30,12 +31,19 @@
 "!=" @operator
 "<" @operator
 ">" @operator
+"<=" @operator
+">=" @operator
+"&&" @operator
+"||" @operator
 "!" @operator
 "=" @operator
 "->" @operator
+"=>" @operator
 "|" @operator
+"&" @operator
 "." @operator
 "..." @operator
+"%" @operator
 
 ; Punctuation
 "(" @punctuation.bracket
@@ -59,9 +67,19 @@
 (generic_type
   name: (identifier) @type)
 
+(generic_type
+  name: (type_identifier) @type.builtin)
+
 ; Function definitions
-(function_literal
+(fn_declaration
+  name: (identifier) @function)
+
+(fn_declaration
   (parameter
+    name: (identifier) @variable.parameter))
+
+(lambda_expression
+  (lambda_parameter
     name: (identifier) @variable.parameter))
 
 ; Method definitions
@@ -76,9 +94,8 @@
 (trait_method_signature
   name: (identifier) @function.method)
 
-(trait_method_signature
-  (parameter
-    name: (identifier) @variable.parameter))
+(trait_named_param
+  name: (identifier) @variable.parameter)
 
 ; Function calls
 (call_expression
@@ -113,10 +130,18 @@
 
 ; Impl block
 (impl_block
-  trait: (identifier) @type)
+  target: (generic_type
+    name: (identifier) @type))
+
+(impl_block
+  target: (generic_type
+    name: (type_identifier) @type.builtin))
+
+(impl_block
+  target: (type_identifier) @type.builtin)
 
 ; Derive
-(derive_statement
+(derive_clause
   trait: (identifier) @type)
 
 ; Type alias
@@ -138,6 +163,8 @@
   (identifier) @type)
 
 ; Pattern matching
+(placeholder) @variable.builtin
+
 (wildcard_pattern) @variable.builtin
 
 (constructor_pattern

@@ -1,8 +1,8 @@
 # T102: Heterogeneous records in trait-typed list
-trait named {
-  name: string
+trait Named = {
+  name: Str
 }
-let a: named = { name: "alice", role: "admin" }
-let b: named = { name: "bob", age: 30 }
-let xs: list[named] = [a, b]
+let a: Named = { name: "alice", role: "admin" }  # error: cannot be used as a type in vNext
+let b: Named = { name: "bob", age: 30 }
+let xs: List[Named] = [a, b]
 puts(xs[0].name + " " + xs[1].name)  # output: alice bob

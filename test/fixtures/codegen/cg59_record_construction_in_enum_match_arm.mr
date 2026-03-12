@@ -1,11 +1,8 @@
 # CG59: Record construction in enum match arm
-enum option[a] {
-  some(a)
-  none
-}
-let val = option.some(42)
+enum Option[a] = { Some(a), None }
+let val = Option.Some(42)
 let p = match val {
-  option.some(v): { x: v, y: 0 }
-  option.none: { x: 0, y: 0 }
+  case Option.Some(v): { x: v, y: 0 }
+  case Option.None: { x: 0, y: 0 }
 }
 puts(p.x)  # output: 42

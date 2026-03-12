@@ -1,8 +1,8 @@
 # XF06: B6: Enum variant wrapping a record, field access after match
-type point = { x: int, y: int }
-enum shape { pt(point) }
-let p: point = { x: 10, y: 20 }
-let s = shape.pt(p)
+type Point = { x: Int, y: Int }
+enum Shape = { Pt(Point) }
+let p: Point = { x: 10, y: 20 }
+let s = Shape.Pt(p)
 match s {  # output: 10
-  shape.pt(q): puts(q.x)
+  case Shape.Pt(q): puts(q.x)
 }

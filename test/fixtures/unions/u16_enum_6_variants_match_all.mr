@@ -1,12 +1,12 @@
 # U16: Enum with 6 variants, match all
-enum weekday { mon tue wed thu fri sat }
-let d = weekday.wed
+enum Weekday = { Mon, Tue, Wed, Thu, Fri, Sat }
+let d = Weekday.Wed
 let n = match d {
-  weekday.mon: 1
-  weekday.tue: 2
-  weekday.wed: 3
-  weekday.thu: 4
-  weekday.fri: 5
-  weekday.sat: 6
+  case Weekday.Mon: 1
+  case Weekday.Tue: 2
+  case Weekday.Wed: 3
+  case Weekday.Thu: 4
+  case Weekday.Fri: 5
+  case Weekday.Sat: 6
 }
 puts(n)  # output: 3

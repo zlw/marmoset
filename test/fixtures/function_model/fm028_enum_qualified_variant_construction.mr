@@ -1,9 +1,9 @@
-enum color { red green blue }
+enum Color = { Red, Green, Blue }
 
-let c = color.red
+let c = Color.Red
 let r = match c {
-  color.red: "r"
-  color.green: "g"
-  color.blue: "b"
+  case Color.Red: "r"
+  case Color.Green: "g"
+  case Color.Blue: "b"
 }
 puts(r)  # output: r

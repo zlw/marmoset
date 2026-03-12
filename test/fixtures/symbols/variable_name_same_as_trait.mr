@@ -1,5 +1,5 @@
-trait myval[a] {
-  fn myval(x: a) -> int
+trait Myval[a] = {
+  fn myval(x: a) -> Int
 }
 let myval = 42
 puts(myval)  # output: 42

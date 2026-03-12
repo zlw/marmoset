@@ -3,7 +3,7 @@ Wildcard pattern
 ================================================================================
 
 match x {
-  _: 0
+  case _: 0
 }
 
 --------------------------------------------------------------------------------
@@ -14,14 +14,15 @@ match x {
       value: (identifier)
       (match_arm
         pattern: (wildcard_pattern)
-        body: (integer_literal)))))
+        body: (expr_or_block
+          (integer_literal))))))
 
 ================================================================================
 Variable pattern
 ================================================================================
 
 match x {
-  n: n + 1
+  case n: n + 1
 }
 
 --------------------------------------------------------------------------------
@@ -33,18 +34,19 @@ match x {
       (match_arm
         pattern: (variable_pattern
           (identifier))
-        body: (infix_expression
-          left: (identifier)
-          right: (integer_literal))))))
+        body: (expr_or_block
+          (infix_expression
+            left: (identifier)
+            right: (integer_literal)))))))
 
 ================================================================================
 Literal patterns
 ================================================================================
 
 match x {
-  0: "zero"
-  1: "one"
-  _: "other"
+  case 0: "zero"
+  case 1: "one"
+  case _: "other"
 }
 
 --------------------------------------------------------------------------------
@@ -56,25 +58,28 @@ match x {
       (match_arm
         pattern: (literal_pattern
           (integer_literal))
-        body: (string_literal
-          (string_content)))
+        body: (expr_or_block
+          (string_literal
+            (string_content))))
       (match_arm
         pattern: (literal_pattern
           (integer_literal))
-        body: (string_literal
-          (string_content)))
+        body: (expr_or_block
+          (string_literal
+            (string_content))))
       (match_arm
         pattern: (wildcard_pattern)
-        body: (string_literal
-          (string_content))))))
+        body: (expr_or_block
+          (string_literal
+            (string_content)))))))
 
 ================================================================================
 Constructor pattern with field
 ================================================================================
 
 match x {
-  option.some(v): v
-  option.none: 0
+  case Option.Some(v): v
+  case Option.None: 0
 }
 
 --------------------------------------------------------------------------------
@@ -89,20 +94,22 @@ match x {
           variant: (identifier)
           (variable_pattern
             (identifier)))
-        body: (identifier))
+        body: (expr_or_block
+          (identifier)))
       (match_arm
         pattern: (constructor_pattern
           enum: (identifier)
           variant: (identifier))
-        body: (integer_literal)))))
+        body: (expr_or_block
+          (integer_literal))))))
 
 ================================================================================
 Constructor pattern with multiple fields
 ================================================================================
 
 match x {
-  http_response.ok(code, msg): code
-  http_response.error(code, _): code
+  case HttpResponse.Ok(code, msg): code
+  case HttpResponse.Error(code, _): code
 }
 
 --------------------------------------------------------------------------------
@@ -119,7 +126,8 @@ match x {
             (identifier))
           (variable_pattern
             (identifier)))
-        body: (identifier))
+        body: (expr_or_block
+          (identifier)))
       (match_arm
         pattern: (constructor_pattern
           enum: (identifier)
@@ -127,15 +135,16 @@ match x {
           (variable_pattern
             (identifier))
           (wildcard_pattern))
-        body: (identifier)))))
+        body: (expr_or_block
+          (identifier))))))
 
 ================================================================================
 Record pattern with punning
 ================================================================================
 
 match p {
-  { x:, y: }: x + y
-  _: 0
+  case { x:, y: }: x + y
+  case _: 0
 }
 
 --------------------------------------------------------------------------------
@@ -150,20 +159,22 @@ match p {
             name: (identifier))
           (record_pattern_punned
             name: (identifier)))
-        body: (infix_expression
-          left: (identifier)
-          right: (identifier)))
+        body: (expr_or_block
+          (infix_expression
+            left: (identifier)
+            right: (identifier))))
       (match_arm
         pattern: (wildcard_pattern)
-        body: (integer_literal)))))
+        body: (expr_or_block
+          (integer_literal))))))
 
 ================================================================================
 Alternative pattern
 ================================================================================
 
 match x {
-  1 | 2: "small"
-  _: "big"
+  case 1 | 2: "small"
+  case _: "big"
 }
 
 --------------------------------------------------------------------------------
@@ -178,9 +189,11 @@ match x {
             (integer_literal))
           (literal_pattern
             (integer_literal)))
-        body: (string_literal
-          (string_content)))
+        body: (expr_or_block
+          (string_literal
+            (string_content))))
       (match_arm
         pattern: (wildcard_pattern)
-        body: (string_literal
-          (string_content))))))
+        body: (expr_or_block
+          (string_literal
+            (string_content)))))))

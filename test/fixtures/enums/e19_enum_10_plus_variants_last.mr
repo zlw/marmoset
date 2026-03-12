@@ -1,18 +1,18 @@
 # E19: Enum with 10+ variants - last variant matches
-enum planet { mercury venus earth mars jupiter saturn uranus neptune pluto ceres eris }
-let classify = fn(p: planet) -> int {
+enum Planet = { Mercury, Venus, Earth, Mars, Jupiter, Saturn, Uranus, Neptune, Pluto, Ceres, Eris }
+fn classify(p: Planet) -> Int = {
   match p {
-    planet.mercury: 1
-    planet.venus: 2
-    planet.earth: 3
-    planet.mars: 4
-    planet.jupiter: 5
-    planet.saturn: 6
-    planet.uranus: 7
-    planet.neptune: 8
-    planet.pluto: 9
-    planet.ceres: 10
-    planet.eris: 11
+    case Planet.Mercury: 1
+    case Planet.Venus: 2
+    case Planet.Earth: 3
+    case Planet.Mars: 4
+    case Planet.Jupiter: 5
+    case Planet.Saturn: 6
+    case Planet.Uranus: 7
+    case Planet.Neptune: 8
+    case Planet.Pluto: 9
+    case Planet.Ceres: 10
+    case Planet.Eris: 11
   }
 }
-puts(classify(planet.eris))  # output: 11
+puts(classify(Planet.Eris))  # output: 11

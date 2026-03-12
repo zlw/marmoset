@@ -1,0 +1,5 @@
+# I12: Intersection values can flow to annotations satisfied by one member
+let value: ({ x: Int, y: Str } & { x: Int }) = { x: 1, y: "ok" }
+let projected: { x: Int } = value
+
+puts(projected.x.show())  # output: 1

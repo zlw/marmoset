@@ -1,5 +1,5 @@
 # P7: Unannotated HOF with pure callback compiles
-let apply = fn(f, x: int) { f(x) }
-let pure_fn = fn(x: int) -> int { x + 1 }
+fn apply(f, x: Int) = f(x)
+fn pure_fn(x: Int) -> Int = x + 1
 let result = apply(pure_fn, 5)
 puts(result)

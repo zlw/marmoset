@@ -1,6 +1,6 @@
-enum color { red green blue }
-impl eq for color {
-  fn eq(x: color, y: color) -> bool { false }
+enum Color = { Red, Green, Blue }
+impl Eq[Color] = {
+  fn eq(x: Color, y: Color) -> Bool = false
 }
 puts(42 == 42)  # output: true
-puts(color.red == color.red)  # output: false
+puts(Color.Red == Color.Red)  # output: false

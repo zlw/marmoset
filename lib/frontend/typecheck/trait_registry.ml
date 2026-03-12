@@ -16,6 +16,9 @@ type method_sig = {
       (* Maps method generic name -> internal TVar name from body inference.
        E.g. [("b", "t0")] means the type_map uses t0 where the generic is b.
        Used by emitter to build proper type_map substitutions. *)
+  method_default_impl : AST.expression option;
+      (* Default implementation body, if the trait provides one.
+         None = method is required in every impl. *)
 }
 
 (* Construct a method_sig with synthetic key and default pure/no-generics.
@@ -29,6 +32,7 @@ let mk_method_sig ?(generics = []) ?(effect = `Pure) ~name ~params ~return_type 
     method_return_type = return_type;
     method_effect = effect;
     method_generic_internal_vars = [];
+    method_default_impl = None;
   }
 
 (* A trait definition *)
@@ -43,6 +47,12 @@ type trait_kind =
   | FieldOnly
   | MethodOnly
   | Mixed
+
+type impl_origin =
+  | ExplicitImpl
+  | BuiltinDerivedImpl
+  | DefaultDerivedImpl
+[@@deriving show, eq]
 
 type impl_source = {
   file_id : string option;
@@ -60,6 +70,7 @@ type impl_def = {
 
 type resolved_impl = {
   impl : impl_def;
+  origin : impl_origin;
   specialization_subst : Types.substitution;
   source_site : string;
 }
@@ -68,6 +79,9 @@ type resolved_impl = {
 let trait_registry : (string, trait_def) Hashtbl.t = Hashtbl.create 16
 let impl_registry : (string * mono_type, impl_def) Hashtbl.t = Hashtbl.create 32 (* key: (trait_name, for_type) *)
 let generic_impl_registry : (string * mono_type, impl_def) Hashtbl.t = Hashtbl.create 32
+let predeclared_impl_registry : (string * mono_type, impl_def) Hashtbl.t = Hashtbl.create 32
+let impl_origin_registry : (string * mono_type, impl_origin) Hashtbl.t = Hashtbl.create 32
+let generic_impl_origin_registry : (string * mono_type, impl_origin) Hashtbl.t = Hashtbl.create 32
 let impl_source_registry : (string * mono_type, impl_source) Hashtbl.t = Hashtbl.create 32
 let builtin_impl_keys : (string * mono_type, unit) Hashtbl.t = Hashtbl.create 32
 let generic_impl_source_registry : (string * mono_type, impl_source) Hashtbl.t = Hashtbl.create 32
@@ -75,8 +89,34 @@ let builtin_generic_impl_keys : (string * mono_type, unit) Hashtbl.t = Hashtbl.c
 let trait_field_registry : (string, record_field_type list) Hashtbl.t = Hashtbl.create 16
 let canonical_type (t : mono_type) : mono_type = canonicalize_mono_type t
 
+let builtin_trait_internal_name (name : string) : string option =
+  match name with
+  | "eq" | "Eq" -> Some "eq"
+  | "show" | "Show" -> Some "show"
+  | "debug" | "Debug" -> Some "debug"
+  | "ord" | "Ord" -> Some "ord"
+  | "hash" | "Hash" -> Some "hash"
+  | "num" | "Num" -> Some "num"
+  | "neg" | "Neg" -> Some "neg"
+  | _ -> None
+
+let canonical_trait_name (name : string) : string =
+  match builtin_trait_internal_name name with
+  | Some builtin_name -> builtin_name
+  | None -> name
+
+let canonicalize_method_constraints (m : method_sig) : method_sig =
+  {
+    m with
+    method_generics =
+      List.map (fun (name, constraints) -> (name, List.map canonical_trait_name constraints)) m.method_generics;
+  }
+
+let canonicalize_impl_type_param_constraints (p : AST.generic_param) : AST.generic_param =
+  { p with constraints = List.map canonical_trait_name p.constraints }
+
 let is_builtin_impl_key (trait_name : string) (for_type : mono_type) : bool =
-  Hashtbl.mem builtin_impl_keys (trait_name, canonical_type for_type)
+  Hashtbl.mem builtin_impl_keys (canonical_trait_name trait_name, canonical_type for_type)
 
 let canonical_generic_impl_for_type (def : impl_def) : mono_type =
   let rename_subst =
@@ -92,12 +132,15 @@ let generic_impl_key (def : impl_def) : string * mono_type =
   (def.impl_trait_name, canonical_generic_impl_for_type def)
 
 let is_builtin_generic_impl_key (trait_name : string) (generic_for_type : mono_type) : bool =
-  Hashtbl.mem builtin_generic_impl_keys (trait_name, canonical_type generic_for_type)
+  Hashtbl.mem builtin_generic_impl_keys (canonical_trait_name trait_name, canonical_type generic_for_type)
 
 let clear () =
   Hashtbl.clear trait_registry;
   Hashtbl.clear impl_registry;
   Hashtbl.clear generic_impl_registry;
+  Hashtbl.clear predeclared_impl_registry;
+  Hashtbl.clear impl_origin_registry;
+  Hashtbl.clear generic_impl_origin_registry;
   Hashtbl.clear impl_source_registry;
   Hashtbl.clear generic_impl_source_registry;
   Hashtbl.clear builtin_impl_keys;
@@ -105,9 +148,19 @@ let clear () =
   Hashtbl.clear trait_field_registry
 
 (* Register a trait definition *)
-let register_trait (def : trait_def) : unit = Hashtbl.replace trait_registry def.trait_name def
+let register_trait (def : trait_def) : unit =
+  let def' =
+    {
+      trait_name = canonical_trait_name def.trait_name;
+      trait_type_param = def.trait_type_param;
+      trait_supertraits = List.map canonical_trait_name def.trait_supertraits;
+      trait_methods = List.map canonicalize_method_constraints def.trait_methods;
+    }
+  in
+  Hashtbl.replace trait_registry def'.trait_name def'
 
 let set_trait_fields (trait_name : string) (fields : record_field_type list) : unit =
+  let trait_name = canonical_trait_name trait_name in
   let canonical_fields =
     fields
     |> List.map (fun (f : record_field_type) -> { f with typ = canonical_type f.typ })
@@ -119,9 +172,10 @@ let set_trait_fields (trait_name : string) (fields : record_field_type list) : u
     Hashtbl.replace trait_field_registry trait_name canonical_fields
 
 let lookup_trait_fields (trait_name : string) : record_field_type list option =
-  Hashtbl.find_opt trait_field_registry trait_name
+  Hashtbl.find_opt trait_field_registry (canonical_trait_name trait_name)
 
 let trait_kind (trait_name : string) : trait_kind option =
+  let trait_name = canonical_trait_name trait_name in
   match Hashtbl.find_opt trait_registry trait_name with
   | None -> None
   | Some _ ->
@@ -149,10 +203,10 @@ let trait_kind (trait_name : string) : trait_kind option =
       let has_fields, has_methods = accumulate trait_name (false, false) in
       if has_fields && has_methods then
         Some Mixed
-      else if has_fields then
-        Some FieldOnly
-      else
+      else if has_methods then
         Some MethodOnly
+      else
+        Some FieldOnly
 
 let validate_trait_fields (trait_name : string) (fields : record_field_type list) : (unit, string) result =
   let field_names = List.map (fun (f : record_field_type) -> f.name) fields in
@@ -163,9 +217,16 @@ let validate_trait_fields (trait_name : string) (fields : record_field_type list
     Ok ()
 
 (* Register an impl block *)
-let register_impl ?(builtin = false) ?source (def : impl_def) : unit =
+let register_impl ?(builtin = false) ?source ?(origin = ExplicitImpl) (def : impl_def) : unit =
   let canonical_for_type = canonical_type def.impl_for_type in
-  let def' = { def with impl_for_type = canonical_for_type } in
+  let def' =
+    {
+      impl_trait_name = canonical_trait_name def.impl_trait_name;
+      impl_type_params = List.map canonicalize_impl_type_param_constraints def.impl_type_params;
+      impl_for_type = canonical_for_type;
+      impl_methods = List.map canonicalize_method_constraints def.impl_methods;
+    }
+  in
   if def'.impl_type_params = [] then (
     let key = (def'.impl_trait_name, def'.impl_for_type) in
     let existing = Hashtbl.find_opt impl_registry key in
@@ -178,6 +239,7 @@ let register_impl ?(builtin = false) ?source (def : impl_def) : unit =
                def'.impl_trait_name (to_string def'.impl_for_type))
       | _ ->
           Hashtbl.replace builtin_impl_keys key ();
+          Hashtbl.replace impl_origin_registry key origin;
           Hashtbl.remove impl_source_registry key;
           Hashtbl.replace impl_registry key def')
     else
@@ -189,6 +251,8 @@ let register_impl ?(builtin = false) ?source (def : impl_def) : unit =
       | _ ->
           (* User impl replaces builtin marker for this key (allowed exactly once). *)
           Hashtbl.remove builtin_impl_keys key;
+          Hashtbl.remove predeclared_impl_registry key;
+          Hashtbl.replace impl_origin_registry key origin;
           (match source with
           | Some src -> Hashtbl.replace impl_source_registry key src
           | None -> Hashtbl.remove impl_source_registry key);
@@ -206,6 +270,7 @@ let register_impl ?(builtin = false) ?source (def : impl_def) : unit =
                (to_string (snd key)))
       | _ ->
           Hashtbl.replace builtin_generic_impl_keys key ();
+          Hashtbl.replace generic_impl_origin_registry key origin;
           Hashtbl.remove generic_impl_source_registry key;
           Hashtbl.replace generic_impl_registry key def')
     else
@@ -217,18 +282,35 @@ let register_impl ?(builtin = false) ?source (def : impl_def) : unit =
                (to_string (snd key)))
       | _ ->
           Hashtbl.remove builtin_generic_impl_keys key;
+          Hashtbl.replace generic_impl_origin_registry key origin;
           (match source with
           | Some src -> Hashtbl.replace generic_impl_source_registry key src
           | None -> Hashtbl.remove generic_impl_source_registry key);
           Hashtbl.replace generic_impl_registry key def'
 
+let predeclare_impl_header (def : impl_def) : unit =
+  let canonical_for_type = canonical_type def.impl_for_type in
+  let def' =
+    {
+      impl_trait_name = canonical_trait_name def.impl_trait_name;
+      impl_type_params = [];
+      impl_for_type = canonical_for_type;
+      impl_methods = [];
+    }
+  in
+  let key = (def'.impl_trait_name, def'.impl_for_type) in
+  if not (Hashtbl.mem impl_registry key) then
+    Hashtbl.replace predeclared_impl_registry key def'
+
 (* Lookup a trait by name *)
-let lookup_trait (name : string) : trait_def option = Hashtbl.find_opt trait_registry name
+let lookup_trait (name : string) : trait_def option = Hashtbl.find_opt trait_registry (canonical_trait_name name)
 
 (* Expand a trait into itself plus all transitive supertraits (deterministic order). *)
 let trait_with_supertraits (trait_name : string) : string list =
+  let trait_name = canonical_trait_name trait_name in
   let visited : (string, unit) Hashtbl.t = Hashtbl.create 16 in
   let rec visit acc name =
+    let name = canonical_trait_name name in
     if Hashtbl.mem visited name then
       acc
     else (
@@ -245,6 +327,30 @@ let supertraits_of_trait (trait_name : string) : string list =
   | [] -> []
   | _self :: rest -> rest
 
+let trait_methods_with_supertraits (trait_name : string) : (trait_def * method_sig) list =
+  let seen : (string, unit) Hashtbl.t = Hashtbl.create 16 in
+  trait_with_supertraits trait_name
+  |> List.fold_left
+       (fun acc expanded_trait_name ->
+         match lookup_trait expanded_trait_name with
+         | None -> acc
+         | Some expanded_trait_def ->
+             List.fold_left
+               (fun inner_acc (method_sig : method_sig) ->
+                 if Hashtbl.mem seen method_sig.method_name then
+                   inner_acc
+                 else (
+                   Hashtbl.replace seen method_sig.method_name ();
+                   (expanded_trait_def, method_sig) :: inner_acc))
+               acc expanded_trait_def.trait_methods)
+       []
+  |> List.rev
+
+let lookup_trait_method_with_supertraits (trait_name : string) (method_name : string) :
+    (trait_def * method_sig) option =
+  trait_methods_with_supertraits trait_name
+  |> List.find_opt (fun (_trait_def, method_sig) -> method_sig.method_name = method_name)
+
 let format_impl_site_from_source (trait_name : string) (source_opt : impl_source option) : string =
   match source_opt with
   | Some src ->
@@ -257,10 +363,12 @@ let format_impl_site_from_source (trait_name : string) (source_opt : impl_source
   | None -> Printf.sprintf "%s@<builtin-or-unknown>" trait_name
 
 let format_concrete_impl_site (trait_name : string) (for_type : mono_type) : string =
+  let trait_name = canonical_trait_name trait_name in
   format_impl_site_from_source trait_name
     (Hashtbl.find_opt impl_source_registry (trait_name, canonical_type for_type))
 
 let format_generic_impl_site (trait_name : string) (generic_for_type : mono_type) : string =
+  let trait_name = canonical_trait_name trait_name in
   format_impl_site_from_source trait_name
     (Hashtbl.find_opt generic_impl_source_registry (trait_name, canonical_type generic_for_type))
 
@@ -287,8 +395,80 @@ let specialized_impl (def : impl_def) (for_type : mono_type) (subst : Types.subs
     impl_methods = methods';
   }
 
-let resolve_generic_impl (trait_name : string) (for_type : mono_type) : (resolved_impl option, string) result =
+let resolved_concrete_impl_record (trait_name : string) (_for_type : mono_type) (concrete_impl : impl_def) :
+    resolved_impl =
+  let candidate_for_type = canonical_type concrete_impl.impl_for_type in
+  {
+    impl = concrete_impl;
+    origin =
+      Option.value (Hashtbl.find_opt impl_origin_registry (trait_name, candidate_for_type)) ~default:ExplicitImpl;
+    specialization_subst = empty_substitution;
+    source_site = format_concrete_impl_site trait_name candidate_for_type;
+  }
+
+let rec concrete_receiver_matches_impl_target (actual_type : mono_type) (impl_target_type : mono_type) : bool =
+  let actual_type = canonical_type actual_type in
+  let impl_target_type = canonical_type impl_target_type in
+  match (actual_type, impl_target_type) with
+  | TRecord (actual_fields, _), TRecord (expected_fields, _) ->
+      List.for_all
+        (fun (expected_field : record_field_type) ->
+          match List.find_opt (fun (f : record_field_type) -> f.name = expected_field.name) actual_fields with
+          | None -> false
+          | Some actual_field -> concrete_receiver_matches_impl_target actual_field.typ expected_field.typ)
+        expected_fields
+  | _ -> (
+      match Unify.unify actual_type impl_target_type with
+      | Ok _ -> true
+      | Error _ -> false)
+
+let resolve_structural_concrete_impl (trait_name : string) (for_type : mono_type) :
+    (resolved_impl option, string) result =
+  let trait_name = canonical_trait_name trait_name in
   let for_type' = canonical_type for_type in
+  let matches =
+    Hashtbl.fold
+      (fun (candidate_trait_name, candidate_for_type) candidate_def acc ->
+        if candidate_trait_name <> trait_name then
+          acc
+        else if concrete_receiver_matches_impl_target for_type' candidate_for_type then
+          resolved_concrete_impl_record trait_name candidate_for_type candidate_def :: acc
+        else
+          acc)
+      impl_registry []
+  in
+  match matches with
+  | [] -> Ok None
+  | [ resolved ] -> Ok (Some resolved)
+  | many ->
+      let sites =
+        many
+        |> List.map (fun (r : resolved_impl) -> r.source_site)
+        |> List.sort_uniq String.compare
+        |> String.concat ", "
+      in
+      Error
+        (Printf.sprintf "Ambiguous concrete impl selection for trait '%s' and type %s (matching impl sites: %s)"
+           trait_name (to_string for_type') sites)
+
+let resolve_generic_impl (trait_name : string) (for_type : mono_type) : (resolved_impl option, string) result =
+  let trait_name = canonical_trait_name trait_name in
+  let for_type' = canonical_type for_type in
+  let rec has_type_vars (typ : mono_type) =
+    match canonical_type typ with
+    | TVar _ | TRowVar _ -> true
+    | TFun (arg, ret, _) -> has_type_vars arg || has_type_vars ret
+    | TArray elem -> has_type_vars elem
+    | THash (key, value) -> has_type_vars key || has_type_vars value
+    | TRecord (fields, row) -> (
+        List.exists (fun (field : record_field_type) -> has_type_vars field.typ) fields
+        ||
+        match row with
+        | Some row_type -> has_type_vars row_type
+        | None -> false)
+    | TEnum (_, args) | TUnion args | TIntersection args -> List.exists has_type_vars args
+    | TTraitObject _ | TInt | TFloat | TBool | TString | TNull -> false
+  in
   let matches =
     Hashtbl.fold
       (fun (candidate_trait_name, generic_for_type) candidate_def acc ->
@@ -296,7 +476,7 @@ let resolve_generic_impl (trait_name : string) (for_type : mono_type) : (resolve
           acc
         else
           let pattern_type = canonical_type candidate_def.impl_for_type in
-          match Unify.unify pattern_type for_type' with
+          match Unify.unify for_type' pattern_type with
           | Error _ -> acc
           | Ok subst ->
               let specialization_subst =
@@ -307,12 +487,22 @@ let resolve_generic_impl (trait_name : string) (for_type : mono_type) : (resolve
               in
               let impl = specialized_impl candidate_def for_type' specialization_subst in
               let source_site = format_generic_impl_site trait_name generic_for_type in
-              { impl; specialization_subst; source_site } :: acc)
+              let origin =
+                Option.value
+                  (Hashtbl.find_opt generic_impl_origin_registry (candidate_trait_name, generic_for_type))
+                  ~default:ExplicitImpl
+              in
+              { impl; origin; specialization_subst; source_site } :: acc)
       generic_impl_registry []
   in
   match matches with
   | [] -> Ok None
-  | [ resolved ] -> Ok (Some resolved)
+  | [ resolved ] ->
+      if resolved.origin = BuiltinDerivedImpl && not (has_type_vars for_type') then (
+        let cached_impl = { resolved.impl with impl_type_params = [] } in
+        Hashtbl.replace impl_registry (trait_name, for_type') cached_impl;
+        Hashtbl.replace impl_origin_registry (trait_name, for_type') BuiltinDerivedImpl);
+      Ok (Some resolved)
   | many ->
       let sites =
         many
@@ -327,22 +517,54 @@ let resolve_generic_impl (trait_name : string) (for_type : mono_type) : (resolve
 (* Resolve an impl for a specific trait and concrete type.
    Concrete impls have precedence over generic impls. *)
 let resolve_impl (trait_name : string) (for_type : mono_type) : (resolved_impl option, string) result =
+  let trait_name = canonical_trait_name trait_name in
   let for_type' = canonical_type for_type in
+  let resolve_predeclared () =
+    match Hashtbl.find_opt predeclared_impl_registry (trait_name, for_type') with
+    | Some predeclared ->
+        Ok
+          (Some
+             {
+               impl = predeclared;
+               origin = ExplicitImpl;
+               specialization_subst = empty_substitution;
+               source_site = format_concrete_impl_site trait_name for_type';
+             })
+    | None -> Ok None
+  in
   match Hashtbl.find_opt impl_registry (trait_name, for_type') with
   | Some concrete_impl ->
       Ok
         (Some
            {
              impl = concrete_impl;
+             origin =
+               Option.value (Hashtbl.find_opt impl_origin_registry (trait_name, for_type')) ~default:ExplicitImpl;
              specialization_subst = empty_substitution;
              source_site = format_concrete_impl_site trait_name for_type';
            })
-  | None -> resolve_generic_impl trait_name for_type'
+  | None -> (
+      match resolve_generic_impl trait_name for_type' with
+      | Ok (Some _ as resolved) -> Ok resolved
+      | Error _ as err -> err
+      | Ok None -> (
+          match for_type' with
+          | TIntersection _ | TRecord (_, None) -> (
+              match resolve_structural_concrete_impl trait_name for_type' with
+              | Ok (Some _ as resolved) -> Ok resolved
+              | Error _ as err -> err
+              | Ok None -> resolve_predeclared ())
+          | _ -> resolve_predeclared ()))
 
 (* Lookup an impl for a specific trait and type *)
 let lookup_impl (trait_name : string) (for_type : mono_type) : impl_def option =
   match resolve_impl trait_name for_type with
   | Ok (Some resolved) -> Some resolved.impl
+  | Ok None | Error _ -> None
+
+let lookup_impl_origin (trait_name : string) (for_type : mono_type) : impl_origin option =
+  match resolve_impl trait_name for_type with
+  | Ok (Some resolved) -> Some resolved.origin
   | Ok None | Error _ -> None
 
 (* Return all registered impls (manual and derived). *)
@@ -386,8 +608,20 @@ let resolve_method (for_type : mono_type) (method_name : string) : (string * met
         | Ok None -> (cands_acc, errs_acc)
         | Ok (Some resolved) -> (
             match List.find_opt (fun m -> m.method_name = method_name) resolved.impl.impl_methods with
-            | None -> (cands_acc, errs_acc)
-            | Some method_sig -> ((trait_name, method_sig, resolved.source_site) :: cands_acc, errs_acc)))
+            | Some method_sig -> ((trait_name, method_sig, resolved.source_site) :: cands_acc, errs_acc)
+            | None -> (
+                (* Method not explicitly implemented; check if the trait has a default *)
+                match Hashtbl.find_opt trait_registry trait_name with
+                | Some trait_def -> (
+                    match
+                      List.find_opt
+                        (fun m -> m.method_name = method_name && m.method_default_impl <> None)
+                        trait_def.trait_methods
+                    with
+                    | Some default_method_sig ->
+                        ((trait_name, default_method_sig, resolved.source_site) :: cands_acc, errs_acc)
+                    | None -> (cands_acc, errs_acc))
+                | None -> (cands_acc, errs_acc))))
       ([], []) trait_names
   in
   if resolution_errors <> [] then
@@ -426,7 +660,7 @@ type derive_kind =
   | DeriveHash
 
 let derive_kind_of_trait_name (trait_name : string) : derive_kind option =
-  match trait_name with
+  match canonical_trait_name trait_name with
   | "eq" -> Some DeriveEq
   | "show" -> Some DeriveShow
   | "debug" -> Some DeriveDebug
@@ -484,6 +718,29 @@ let can_derive (trait_name : string) (for_type : mono_type) : (unit, string) res
 
 (* Auto-generate an impl for a derived trait *)
 let generate_derived_impl (trait_name : string) (for_type : mono_type) : impl_def option =
+  let trait_name = canonical_trait_name trait_name in
+  let rec collect_type_vars (typ : mono_type) : string list =
+    match canonical_type typ with
+    | TVar name -> [ name ]
+    | TFun (arg, ret, _) -> collect_type_vars arg @ collect_type_vars ret
+    | TArray elem -> collect_type_vars elem
+    | THash (key, value) -> collect_type_vars key @ collect_type_vars value
+    | TRecord (fields, row) ->
+        let field_vars =
+          List.concat_map (fun (field : record_field_type) -> collect_type_vars field.typ) fields
+        in
+        let row_vars =
+          match row with
+          | Some row_type -> collect_type_vars row_type
+          | None -> []
+        in
+        field_vars @ row_vars
+    | TEnum (_, args) | TUnion args | TIntersection args -> List.concat_map collect_type_vars args
+    | TRowVar _ | TTraitObject _ | TInt | TFloat | TBool | TString | TNull -> []
+  in
+  let impl_type_params =
+    collect_type_vars for_type |> Types.unique_in_order |> List.map (fun name -> AST.{ name; constraints = [] })
+  in
   (* Look up the trait definition *)
   match lookup_trait trait_name with
   | None -> None
@@ -508,13 +765,14 @@ let generate_derived_impl (trait_name : string) (for_type : mono_type) : impl_de
       Some
         {
           impl_trait_name = trait_name;
-          impl_type_params = [];
+          impl_type_params;
           impl_for_type = for_type;
           impl_methods = generated_methods;
         }
 
 (* Validate and register a derived implementation *)
 let derive_impl (trait_name : string) (for_type : mono_type) : (unit, string) result =
+  let trait_name = canonical_trait_name trait_name in
   let for_type' = canonical_type for_type in
   let generate () =
     match can_derive trait_name for_type' with
@@ -523,7 +781,7 @@ let derive_impl (trait_name : string) (for_type : mono_type) : (unit, string) re
         match generate_derived_impl trait_name for_type' with
         | None -> Error (Printf.sprintf "Failed to generate impl for trait '%s'" trait_name)
         | Some impl_def ->
-            register_impl impl_def;
+            register_impl ~origin:BuiltinDerivedImpl impl_def;
             Ok ())
   in
   match Hashtbl.find_opt impl_registry (trait_name, for_type') with
@@ -550,25 +808,113 @@ let validate_trait_def (def : trait_def) : (unit, string) result =
     else
       Ok ()
 
+let validate_trait_supertrait_fields (def : trait_def) (own_fields : record_field_type list) :
+    (unit, string) result =
+  let seen_fields : (string, mono_type) Hashtbl.t = Hashtbl.create 16 in
+  let merge_field_requirement (field_owner : string) (field : record_field_type) : (unit, string) result =
+    let field_type = canonical_type field.typ in
+    match Hashtbl.find_opt seen_fields field.name with
+    | None ->
+        Hashtbl.replace seen_fields field.name field_type;
+        Ok ()
+    | Some existing_type -> (
+        match Unify.unify existing_type field_type with
+        | Ok _ -> Ok ()
+        | Error _ ->
+            Error
+              (Printf.sprintf "Trait '%s' has conflicting types across supertraits for field '%s' (via %s)"
+                 def.trait_name field.name field_owner))
+  in
+  let merge_registered_fields (trait_name : string) : (unit, string) result =
+    match lookup_trait_fields trait_name with
+    | None -> Ok ()
+    | Some fields ->
+        let rec go = function
+          | [] -> Ok ()
+          | field :: rest -> (
+              match merge_field_requirement trait_name field with
+              | Error _ as err -> err
+              | Ok () -> go rest)
+        in
+        go fields
+  in
+  let rec validate_direct_supertraits = function
+    | [] -> Ok ()
+    | supertrait_name :: rest -> (
+        match lookup_trait supertrait_name with
+        | None -> Ok ()
+        | Some supertrait_def -> (
+            match (supertrait_def.trait_type_param, trait_kind supertrait_name) with
+            | Some _, Some FieldOnly ->
+                Error
+                  (Printf.sprintf "Trait '%s' cannot inherit generic field-only supertrait '%s'" def.trait_name
+                     supertrait_name)
+            | _ -> validate_direct_supertraits rest))
+  in
+  let rec merge_supertrait_fields = function
+    | [] -> Ok ()
+    | supertrait_name :: rest -> (
+        let rec merge_expanded = function
+          | [] -> Ok ()
+          | expanded_name :: tail -> (
+              match merge_registered_fields expanded_name with
+              | Error _ as err -> err
+              | Ok () -> merge_expanded tail)
+        in
+        let expanded = trait_with_supertraits supertrait_name in
+        match merge_expanded expanded with
+        | Error _ as err -> err
+        | Ok () -> merge_supertrait_fields rest)
+  in
+  let rec merge_own_fields = function
+    | [] -> Ok ()
+    | field :: rest -> (
+        match merge_field_requirement def.trait_name field with
+        | Error _ as err -> err
+        | Ok () -> merge_own_fields rest)
+  in
+  match validate_direct_supertraits def.trait_supertraits with
+  | Error _ as err -> err
+  | Ok () -> (
+      match merge_supertrait_fields def.trait_supertraits with
+      | Error _ as err -> err
+      | Ok () -> merge_own_fields own_fields)
+
 let validate_impl_signature (trait_def : trait_def) (def : impl_def) : (unit, string) result =
-  (* Check that all trait methods are implemented *)
+  (* Check that all required direct trait methods (no default) are implemented,
+     and that impl doesn't declare extra methods beyond the trait or its supertraits.
+     Inherited methods are allowed in a child impl, but they stay optional because
+     separate supertrait impls can satisfy them. *)
+  let expanded_trait_methods = trait_methods_with_supertraits trait_def.trait_name in
+  let required_method_names =
+    trait_def.trait_methods
+    |> List.filter (fun m -> m.method_default_impl = None)
+    |> List.map (fun m -> m.method_name)
+    |> List.sort String.compare
+  in
   let trait_method_names =
-    List.map (fun m -> m.method_name) trait_def.trait_methods |> List.sort String.compare
+    expanded_trait_methods |> List.map (fun (_trait_def, m) -> m.method_name) |> List.sort String.compare
   in
   let impl_method_names = List.map (fun m -> m.method_name) def.impl_methods |> List.sort String.compare in
-
-  if trait_method_names <> impl_method_names then
+  (* All required methods must be provided *)
+  let missing_required = List.filter (fun name -> not (List.mem name impl_method_names)) required_method_names in
+  (* No extra methods beyond what the trait declares *)
+  let extra_methods = List.filter (fun name -> not (List.mem name trait_method_names)) impl_method_names in
+  if missing_required <> [] then
     Error
-      (Printf.sprintf "Impl for trait '%s' does not match trait signature (expected methods: %s, got: %s)"
-         def.impl_trait_name
-         (String.concat ", " trait_method_names)
-         (String.concat ", " impl_method_names))
+      (Printf.sprintf "Impl for trait '%s' is missing required methods: %s" def.impl_trait_name
+         (String.concat ", " missing_required))
+  else if extra_methods <> [] then
+    Error
+      (Printf.sprintf "Impl for trait '%s' provides methods not in trait: %s" def.impl_trait_name
+         (String.concat ", " extra_methods))
   else
     (* Check each method signature matches *)
-    let check_method_sig (trait_method : method_sig) (impl_method : method_sig) : (unit, string) result =
+    let check_method_sig (source_trait_def : trait_def) (trait_method : method_sig) (impl_method : method_sig) :
+        (unit, string) result =
       (* Substitute trait type parameter with impl_for_type *)
       let substitute_type (t : mono_type) : mono_type =
-        match trait_def.trait_type_param with
+        match source_trait_def.trait_type_param with
         | None -> t (* No type param, use as-is *)
         | Some type_param -> apply_substitution (substitution_singleton type_param def.impl_for_type) t
       in
@@ -626,8 +972,8 @@ let validate_impl_signature (trait_def : trait_def) (def : impl_def) : (unit, st
             let constraint_errors =
               List.map2
                 (fun (tname, tconstraints) (_iname, iconstraints) ->
-                  let tc = List.sort String.compare tconstraints in
-                  let ic = List.sort String.compare iconstraints in
+                  let tc = List.sort String.compare (List.map canonical_trait_name tconstraints) in
+                  let ic = List.sort String.compare (List.map canonical_trait_name iconstraints) in
                   if tc = ic then
                     None
                   else
@@ -643,17 +989,21 @@ let validate_impl_signature (trait_def : trait_def) (def : impl_def) : (unit, st
               Ok ()
     in
 
-    (* Find each trait method in impl methods and validate *)
+    (* Validate each impl method against the expanded trait surface. *)
     let errors =
       List.filter_map
-        (fun trait_method ->
-          match List.find_opt (fun im -> im.method_name = trait_method.method_name) def.impl_methods with
-          | None -> Some (Printf.sprintf "Method '%s' not implemented" trait_method.method_name)
-          | Some impl_method -> (
-              match check_method_sig trait_method impl_method with
+        (fun impl_method ->
+          match
+            List.find_opt
+              (fun (_source_trait_def, m) -> m.method_name = impl_method.method_name)
+              expanded_trait_methods
+          with
+          | None -> Some (Printf.sprintf "Method '%s' not implemented" impl_method.method_name)
+          | Some (source_trait_def, trait_method) -> (
+              match check_method_sig source_trait_def trait_method impl_method with
               | Ok () -> None
               | Error msg -> Some msg))
-        trait_def.trait_methods
+        def.impl_methods
     in
 
     if errors <> [] then
@@ -664,7 +1014,14 @@ let validate_impl_signature (trait_def : trait_def) (def : impl_def) : (unit, st
 (* Validate that an impl matches its trait signature *)
 let validate_impl (def : impl_def) : (unit, string) result =
   let for_type' = canonical_type def.impl_for_type in
-  let def' = { def with impl_for_type = for_type' } in
+  let def' =
+    {
+      impl_trait_name = canonical_trait_name def.impl_trait_name;
+      impl_type_params = List.map canonicalize_impl_type_param_constraints def.impl_type_params;
+      impl_for_type = for_type';
+      impl_methods = List.map canonicalize_method_constraints def.impl_methods;
+    }
+  in
   let duplicate_error =
     if def'.impl_type_params = [] then
       match Hashtbl.find_opt impl_registry (def'.impl_trait_name, for_type') with
@@ -774,6 +1131,11 @@ let%test "trait_kind includes method supertraits" =
     { trait_name = "display"; trait_type_param = None; trait_supertraits = [ "show" ]; trait_methods = [] };
   trait_kind "display" = Some MethodOnly
 
+let%test "trait_kind treats empty trait as field-only" =
+  clear ();
+  register_trait { trait_name = "marker"; trait_type_param = None; trait_supertraits = []; trait_methods = [] };
+  trait_kind "marker" = Some FieldOnly
+
 let%test "trait_kind becomes mixed with field and method supertraits" =
   clear ();
   register_trait { trait_name = "named"; trait_type_param = None; trait_supertraits = []; trait_methods = [] };
@@ -827,6 +1189,51 @@ let%test "validate_trait_def - missing supertrait" =
   | Ok () -> false
   | Error _ -> true
 
+let%test "validate_trait_supertrait_fields rejects generic field-only supertraits" =
+  clear ();
+  register_trait { trait_name = "boxed"; trait_type_param = Some "a"; trait_supertraits = []; trait_methods = [] };
+  set_trait_fields "boxed" [ { name = "value"; typ = TVar "a" } ];
+  let bad_trait =
+    { trait_name = "labeled_box"; trait_type_param = None; trait_supertraits = [ "boxed" ]; trait_methods = [] }
+  in
+  match validate_trait_supertrait_fields bad_trait [ { name = "label"; typ = TString } ] with
+  | Ok () -> false
+  | Error msg -> String_utils.contains_substring ~needle:"generic field-only supertrait" msg
+
+let%test "validate_trait_supertrait_fields rejects conflicting inherited field types" =
+  clear ();
+  register_trait { trait_name = "has_int"; trait_type_param = None; trait_supertraits = []; trait_methods = [] };
+  set_trait_fields "has_int" [ { name = "x"; typ = TInt } ];
+  register_trait
+    { trait_name = "has_string"; trait_type_param = None; trait_supertraits = []; trait_methods = [] };
+  set_trait_fields "has_string" [ { name = "x"; typ = TString } ];
+  let bad_trait =
+    {
+      trait_name = "bad";
+      trait_type_param = None;
+      trait_supertraits = [ "has_int"; "has_string" ];
+      trait_methods = [];
+    }
+  in
+  match validate_trait_supertrait_fields bad_trait [] with
+  | Ok () -> false
+  | Error msg -> String_utils.contains_substring ~needle:"conflicting types across supertraits" msg
+
+let%test "lookup_trait_method_with_supertraits sees inherited methods" =
+  clear ();
+  register_trait
+    {
+      trait_name = "base";
+      trait_type_param = Some "a";
+      trait_supertraits = [];
+      trait_methods = [ mk_method_sig ~name:"name" ~params:[ ("x", TVar "a") ] ~return_type:TString () ];
+    };
+  register_trait
+    { trait_name = "ext"; trait_type_param = Some "a"; trait_supertraits = [ "base" ]; trait_methods = [] };
+  match lookup_trait_method_with_supertraits "ext" "name" with
+  | Some (source_trait, method_sig) -> source_trait.trait_name = "base" && method_sig.method_name = "name"
+  | None -> false
+
 let%test "register and lookup impl" =
   clear ();
   let show_trait =
@@ -852,6 +1259,72 @@ let%test "register and lookup impl" =
   match lookup_impl "show" TInt with
   | None -> false
   | Some def -> def.impl_trait_name = "show" && def.impl_for_type = TInt
+
+let%test "register_impl records explicit provenance" =
+  clear ();
+  register_trait
+    {
+      trait_name = "show";
+      trait_type_param = Some "a";
+      trait_supertraits = [];
+      trait_methods = [ mk_method_sig ~name:"show" ~params:[ ("x", TVar "a") ] ~return_type:TString () ];
+    };
+  register_impl
+    {
+      impl_trait_name = "show";
+      impl_type_params = [];
+      impl_for_type = TInt;
+      impl_methods = [ mk_method_sig ~name:"show" ~params:[ ("x", TInt) ] ~return_type:TString () ];
+    };
+  lookup_impl_origin "show" TInt = Some ExplicitImpl
+
+let%test "trait registration preserves default bodies" =
+  clear ();
+  let default_impl = AST.mk_expr ~id:41 (AST.String "fallback") in
+  register_trait
+    {
+      trait_name = "greetable";
+      trait_type_param = Some "a";
+      trait_supertraits = [];
+      trait_methods =
+        [
+          {
+            (mk_method_sig ~name:"greet" ~params:[ ("x", TVar "a") ] ~return_type:TString ()) with
+            method_default_impl = Some default_impl;
+          };
+        ];
+    };
+  match lookup_trait "greetable" with
+  | None -> false
+  | Some trait_def -> (
+      match trait_def.trait_methods with
+      | [ method_sig ] -> (
+          match method_sig.method_default_impl with
+          | Some preserved -> AST.expr_equal preserved default_impl
+          | None -> false)
+      | _ -> false)
+
+let%test "validate_impl allows omitting methods backed by defaults" =
+  clear ();
+  register_trait
+    {
+      trait_name = "greetable";
+      trait_type_param = Some "a";
+      trait_supertraits = [];
+      trait_methods =
+        [
+          {
+            (mk_method_sig ~name:"greet" ~params:[ ("x", TVar "a") ] ~return_type:TString ()) with
+            method_default_impl = Some (AST.mk_expr ~id:42 (AST.String "hello"));
+          };
+        ];
+    };
+  match
+    validate_impl
+      { impl_trait_name = "greetable"; impl_type_params = []; impl_for_type = TInt; impl_methods = [] }
+  with
+  | Ok () -> true
+  | Error _ -> false
 
 let%test "register_impl rejects duplicate user impl at registration" =
   clear ();
@@ -1222,6 +1695,115 @@ let%test "validate_impl - extra method" =
   | Ok () -> false
   | Error msg -> String.length msg > 0
 
+let%test "validate_impl accepts inherited supertrait methods in child impls" =
+  clear ();
+  register_trait
+    {
+      trait_name = "base";
+      trait_type_param = Some "a";
+      trait_supertraits = [];
+      trait_methods = [ mk_method_sig ~name:"name" ~params:[ ("x", TVar "a") ] ~return_type:TString () ];
+    };
+  register_trait
+    {
+      trait_name = "ext";
+      trait_type_param = Some "a";
+      trait_supertraits = [ "base" ];
+      trait_methods = [ mk_method_sig ~name:"extra" ~params:[ ("x", TVar "a") ] ~return_type:TInt () ];
+    };
+  register_impl
+    {
+      impl_trait_name = "base";
+      impl_type_params = [];
+      impl_for_type = TInt;
+      impl_methods = [ mk_method_sig ~name:"name" ~params:[ ("x", TInt) ] ~return_type:TString () ];
+    };
+  match
+    validate_impl
+      {
+        impl_trait_name = "ext";
+        impl_type_params = [];
+        impl_for_type = TInt;
+        impl_methods =
+          [
+            mk_method_sig ~name:"name" ~params:[ ("x", TInt) ] ~return_type:TString ();
+            mk_method_sig ~name:"extra" ~params:[ ("x", TInt) ] ~return_type:TInt ();
+          ];
+      }
+  with
+  | Ok () -> true
+  | Error _ -> false
+
+let%test "validate_impl accepts child impl without inherited supertrait methods" =
+  clear ();
+  register_trait
+    {
+      trait_name = "base";
+      trait_type_param = Some "a";
+      trait_supertraits = [];
+      trait_methods = [ mk_method_sig ~name:"name" ~params:[ ("x", TVar "a") ] ~return_type:TString () ];
+    };
+  register_trait
+    {
+      trait_name = "ext";
+      trait_type_param = Some "a";
+      trait_supertraits = [ "base" ];
+      trait_methods = [ mk_method_sig ~name:"extra" ~params:[ ("x", TVar "a") ] ~return_type:TInt () ];
+    };
+  register_impl
+    {
+      impl_trait_name = "base";
+      impl_type_params = [];
+      impl_for_type = TInt;
+      impl_methods = [ mk_method_sig ~name:"name" ~params:[ ("x", TInt) ] ~return_type:TString () ];
+    };
+  match
+    validate_impl
+      {
+        impl_trait_name = "ext";
+        impl_type_params = [];
+        impl_for_type = TInt;
+        impl_methods = [ mk_method_sig ~name:"extra" ~params:[ ("x", TInt) ] ~return_type:TInt () ];
+      }
+  with
+  | Ok () -> true
+  | Error _ -> false
+
+let%test "validate_impl does not require inherited supertrait methods in child impls" =
+  clear ();
+  register_trait
+    {
+      trait_name = "base";
+      trait_type_param = Some "a";
+      trait_supertraits = [];
+      trait_methods = [ mk_method_sig ~name:"name" ~params:[ ("x", TVar "a") ] ~return_type:TString () ];
+    };
+  register_trait
+    {
+      trait_name = "ext";
+      trait_type_param = Some "a";
+      trait_supertraits = [ "base" ];
+      trait_methods = [ mk_method_sig ~name:"extra" ~params:[ ("x", TVar "a") ] ~return_type:TInt () ];
+    };
+  register_impl
+    {
+      impl_trait_name = "base";
+      impl_type_params = [];
+      impl_for_type = TInt;
+      impl_methods = [ mk_method_sig ~name:"name" ~params:[ ("x", TInt) ] ~return_type:TString () ];
+    };
+  match
+    validate_impl
+      {
+        impl_trait_name = "ext";
+        impl_type_params = [];
+        impl_for_type = TInt;
+        impl_methods = [ mk_method_sig ~name:"extra" ~params:[ ("x", TInt) ] ~return_type:TInt () ];
+      }
+  with
+  | Ok () -> true
+  | Error _ -> false
+
 let%test "validate_impl - wrong param count" =
   clear ();
   let eq_trait =
@@ -1503,6 +2085,22 @@ let%test "derive_impl - registers impl" =
       match lookup_impl "eq" TInt with
       | None -> false
       | Some _ -> implements_trait "eq" TInt)
+
+let%test "derive_impl - records builtin-derived provenance" =
+  clear ();
+  let eq_trait =
+    {
+      trait_name = "eq";
+      trait_type_param = Some "a";
+      trait_supertraits = [];
+      trait_methods =
+        [ mk_method_sig ~name:"eq" ~params:[ ("x", TVar "a"); ("y", TVar "a") ] ~return_type:TBool () ];
+    }
+  in
+  register_trait eq_trait;
+  match derive_impl "eq" TInt with
+  | Error _ -> false
+  | Ok () -> lookup_impl_origin "eq" TInt = Some BuiltinDerivedImpl
 
 let%test "derive_impl - overriding builtin impl is allowed once" =
   clear ();

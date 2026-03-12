@@ -1,8 +1,8 @@
 # U32: Variable pattern as catch-all on enum
-enum color { red green blue }
-let c = color.blue
+enum Color = { Red, Green, Blue }
+let c = Color.Blue
 let out = match c {
-  color.red: "red"
-  _: "caught"
+  case Color.Red: "Red"
+  case _: "caught"
 }
 puts(out)  # output: caught

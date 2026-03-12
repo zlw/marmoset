@@ -1,0 +1,8 @@
+# VN24: Zero-arg arrow lambda may use a block body with local lets
+let answer = () -> {
+  let base = 40
+  let delta = 2
+  base + delta
+}
+
+puts(answer())  # output: 42

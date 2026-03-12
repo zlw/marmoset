@@ -1,6 +1,6 @@
 # T31: Field-only trait object does not allow method dispatch
-trait named {
-  name: string
+trait Named = {
+  name: Str
 }
-let x: named = { name: "alice", age: 1 }
-puts(x.show())  # error: No method 'show' found for type
+let x: Named = { name: "alice", age: 1 }  # error: cannot be used as a type in vNext
+puts(x.show())

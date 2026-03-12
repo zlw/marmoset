@@ -7,7 +7,7 @@ Syntax highlighting for [Marmoset](https://github.com/zlw/marmoset) `.mr` files 
 ### From VSIX (local)
 
 ```bash
-cd vscode-marmoset
+cd tools/vscode-marmoset
 npm install -g @vscode/vsce
 vsce package
 code --install-extension marmoset-0.1.0.vsix
@@ -29,4 +29,4 @@ code --install-extension marmoset-0.1.0.vsix
 
 ## What's highlighted
 
-Keywords (`let`, `fn`, `if`, `match`, `enum`, `trait`, `impl`, `derive`, `type`, `return`, `for`, `is`), builtin types (`int`, `string`, `bool`, `float`), builtin functions (`puts`, `len`, `first`, `rest`, `push`), literals (integers, floats, strings, booleans), operators, enum variants, type parameters, generic constraints, and more.
+Keywords (`let`, `fn`, `if`, `match`, `case`, `enum`, `trait`, `impl`, `derive`, `type`, `return`, `override`, `is`), canonical builtin types (`Int`, `Str`, `Bool`, `Float`, `Unit`, `List`, `Map`), builtin functions (`puts`, `len`, `first`, `rest`, `push`), literals, operators, enum variants, type parameters, generic constraints, and more.

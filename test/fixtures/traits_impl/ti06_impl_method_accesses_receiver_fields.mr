@@ -1,12 +1,12 @@
 # TI06: Impl method accesses receiver fields
-type point = { x: int, y: int }
-trait sum_fields[a] {
-  fn sum_fields(x: a) -> int
+type Point = { x: Int, y: Int }
+trait SumFields[a] = {
+  fn sum_fields(x: a) -> Int
 }
-impl sum_fields for point {
-  fn sum_fields(p: point) -> int {
+impl SumFields[Point] = {
+  fn sum_fields(p: Point) -> Int = {
     p.x + p.y
   }
 }
-let p: point = { x: 1, y: 2 }
+let p: Point = { x: 1, y: 2 }
 puts(p.sum_fields())  # output: 3

@@ -1,0 +1,8 @@
+# VN16: Override required when replacing a trait default method
+trait Greeter[a] = {
+  fn greet(x: a) -> Str = "hello"
+}
+impl Greeter[Int] = {
+  fn greet(x: Int) -> Str = "hi"  # error: override-required
+}
+puts(1.greet())

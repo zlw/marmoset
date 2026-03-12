@@ -1,9 +1,9 @@
 # T90: Supertrait chain inherits parent fields
-trait named {
-  name: string
+trait Named = {
+  name: Str
 }
-trait described: named {
-  description: string
+trait Described: Named = {
+  description: Str
 }
-let x: described = { name: "alice", description: "a person", hobby: "chess" }
+let x: Described = { name: "alice", description: "a person", hobby: "chess" }  # error: cannot be used as a type in vNext
 puts(x.name)  # output: alice

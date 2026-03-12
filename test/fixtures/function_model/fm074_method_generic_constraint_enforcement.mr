@@ -1,10 +1,10 @@
-type box = { v: int }
+type Box = { v: Int }
 
-impl box {
-  fn render[t: show](b: box, f: fn(int) -> t) -> string {
+impl Box = {
+  fn render[t: Show](b: Box, f: (Int) -> t) -> Str = {
     f(b.v).show()
   }
 }
 
-let b: box = { v: 3 }
-puts(b.render(fn(n: int) -> int { n * 2 }))  # output: 6
+let b: Box = { v: 3 }
+puts(b.render((n: Int) -> n * 2))  # output: 6

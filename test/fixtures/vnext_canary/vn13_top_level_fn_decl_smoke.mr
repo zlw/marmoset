@@ -1,0 +1,3 @@
+# VN13: top-level fn declaration stays canonical
+fn square(x: Int) -> Int = x * x
+puts(square(7))  # output: 49

@@ -1,8 +1,14 @@
-# XF63: N72: Array of trait-typed heterogeneous records
-trait named {
-  name: string
+# XF63: N72: Array of projected records from heterogeneous Named inputs
+trait Named = {
+  name: Str
 }
-let a: named = { name: "alice", role: "admin" }
-let b: named = { name: "bob", age: 30 }
-let xs: list[named] = [a, b]
+type NameOnly = { name: Str }
+
+fn keep_named[t: Named](x: t) -> { name: Str } = {
+  { name: x.name }
+}
+
+let first: NameOnly = keep_named({ name: "alice", role: "admin" })
+let second: NameOnly = keep_named({ name: "bob", age: 30 })
+let xs: List[NameOnly] = [first, second]
 puts(xs[1].name)  # output: bob

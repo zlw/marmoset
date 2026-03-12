@@ -1,0 +1,4 @@
+# P106: Callback lambdas use the expected parameter type for method lookup
+fn apply[a, b](x: a, f: (a) -> b) -> b = f(x)
+
+puts(apply(21, (x) -> x.show()))  # output: 21

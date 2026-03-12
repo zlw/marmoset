@@ -1,14 +1,10 @@
 # T34: Impl with multiple methods compiles (smoke)
-trait eq[a] {
-       fn eq(x: a, y: a) -> bool
-       fn ne(x: a, y: a) -> bool
-     }
-     impl eq for int {
-       fn eq(x: int, y: int) -> bool {
-         true
-       }
-       fn ne(x: int, y: int) -> bool {
-         false
-       }
-     }
-     42
+trait Eq[a] = {
+  fn eq(x: a, y: a) -> Bool
+  fn ne(x: a, y: a) -> Bool
+}
+impl Eq[Int] = {
+  fn eq(x: Int, y: Int) -> Bool = true
+  fn ne(x: Int, y: Int) -> Bool = false
+}
+42
