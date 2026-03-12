@@ -10,20 +10,22 @@
 <br/>
 
 ```marmoset
-enum Fruit = { Banana, Mango, Coconut }
+type Monkey = { name: Str, bananas: Int } derive Show
 
-fn snack_name(fruit: Fruit) -> Str = match fruit {
-  case Fruit.Banana: "banana"
-  case Fruit.Mango: "mango"
-  case Fruit.Coconut: "coconut"
+trait Alarm[a]: Show = {
+  fn ring!(x: a) -> Str = x.show()
 }
 
-puts(snack_name(Fruit.Mango))
+impl Alarm[Monkey] = {
+  override fn ring!(x) = x.name + " spotted " + x.bananas.show() + " bananas"
+}
+
+puts({ name: "milo", bananas: 3 }.ring!())
 ```
 
 ```sh
 $ marmoset run snack.mr
-mango
+milo spotted 3 bananas
 ```
 
 ---
@@ -64,6 +66,15 @@ fn add_bananas(extra) = (pile) -> pile + extra
 let breakfast = add_bananas(3)
 puts(breakfast(5))  # 8
 puts(breakfast(1))  # 4
+```
+
+One-arg callbacks can use `_` shorthand when the callee provides the parameter type:
+
+```marmoset
+fn call_twice(n: Int, f: (Int) -> Int) -> Int = f(f(n))
+
+puts(call_twice(3, _ + 1))             # 5
+puts(call_twice(3, (n: Int) -> n * 2)) # 12
 ```
 
 Generics with trait constraints:
@@ -148,21 +159,15 @@ puts(greet(parrot))  # hello, kiwi
 **Method traits** — require explicit impls:
 
 ```marmoset
-enum Mood = { Calm, Hungry, Excited }
-
-trait Show[a] = {
-  fn show(x: a) -> Str
+trait Alarm[a] = {
+  fn ring!(x: a) -> Str = "soft rustle"
 }
 
-impl Show[Mood] = {
-  fn show(mood: Mood) -> Str = match mood {
-    case Mood.Calm: "calm"
-    case Mood.Hungry: "hungry"
-    case Mood.Excited: "excited"
-  }
+impl Alarm[Int] = {
+  override fn ring!(x) = "jungle alarm " + x.show()
 }
 
-puts(Mood.Hungry.show())  # hungry
+puts(3.ring!())  # jungle alarm 3
 ```
 
 **Supertraits** compose — `Ord` implies `Eq`:
@@ -171,6 +176,23 @@ puts(Mood.Hungry.show())  # hungry
 trait Eq[a] = { fn eq(x: a, y: a) -> Bool }
 
 trait Ord[a]: Eq = { fn compare(x: a, y: a) -> Int }
+```
+
+**Built-in derives, user derives, and `Dyn[...]` trait objects** work together:
+
+```marmoset
+trait Drum[a] = {
+  fn drum(self: a) -> Str = "boom"
+}
+
+type Relic = { animal: Str, leaves: Int } derive Show, Drum
+
+fn announce(x: Dyn[Show]) -> Str = "found " + x.show()
+
+let relic: Relic = { animal: "jaguar", leaves: 3 }
+puts(relic.drum())        # boom
+puts(announce(relic))     # found { animal: jaguar, leaves: 3 }
+puts(announce("banana"))  # found banana
 ```
 
 ### 🛠️ Inherent methods
@@ -189,25 +211,20 @@ let pile = BananaPile.add({ bananas: 2 }, 3)
 puts(pile.total())  # 5
 ```
 
-Method-level generics — type args are inferred from usage, but you can be explicit when you want:
+Methods can be generic, and shorthand trait constraints work inside them too:
 
 ```marmoset
-type BananaCrate = { bananas: Int }
+type VineTag = { prefix: Str }
 
-impl BananaCrate = {
-  fn label[a](crate: BananaCrate, f: (Int) -> a) -> a = f(crate.bananas)
+impl VineTag = {
+  fn render[a](tag: VineTag, item: a, draw: (a) -> Str) -> Str = tag.prefix + draw(item)
+  fn cheer(tag: VineTag, item: Show) -> Str = tag.prefix + item.show()
 }
 
-let crate: BananaCrate = { bananas: 42 }
+let tag = { prefix: "seen: " }
 
-# Type argument inferred from the callback's return type
-let summary = crate.label((n: Int) -> "bananas: " + n.show())
-
-# Or specify it explicitly
-let summary2 = crate.label[Str]((n: Int) -> "crate has " + n.show())
-
-puts(summary)   # bananas: 42
-puts(summary2)  # crate has 42
+puts(tag.render(3, _.show()))  # seen: 3
+puts(tag.cheer("banana"))      # seen: banana
 ```
 
 ### 🔀 Union types
@@ -225,6 +242,21 @@ fn banana_count(input: Int | Str) -> Int = {
 
 puts(banana_count(7))         # 7
 puts(banana_count("unknown")) # 0
+```
+
+### 🧩 Intersection types
+
+One value can satisfy multiple structural views at once:
+
+```marmoset
+fn name_tag(r) = r.name
+
+let scout: ({ name: Str, bananas: Int } & { name: Str }) = {
+  name: "milo",
+  bananas: 3,
+}
+
+puts(name_tag(scout))  # milo
 ```
 
 ### ✨ Effect tracking
