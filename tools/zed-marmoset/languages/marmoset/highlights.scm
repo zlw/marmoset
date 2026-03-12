@@ -12,7 +12,6 @@
 "derive" @keyword.type
 "override" @keyword.modifier
 "type" @keyword.type
-"for" @keyword
 "is" @keyword.operator
 
 ; Literals
@@ -76,10 +75,6 @@
   (parameter
     name: (identifier) @variable.parameter))
 
-(function_literal
-  (parameter
-    name: (identifier) @variable.parameter))
-
 (lambda_expression
   (lambda_parameter
     name: (identifier) @variable.parameter))
@@ -140,9 +135,6 @@
 
 ; Derive
 (derive_clause
-  trait: (identifier) @type)
-
-(derive_statement
   trait: (identifier) @type)
 
 ; Type alias

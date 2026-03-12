@@ -10,6 +10,7 @@ cd "$ZED_DIR"
 cargo check --locked
 
 python3 - <<'PY'
+import json
 import pathlib
 import re
 import tomllib
@@ -21,6 +22,51 @@ assert grammar["repository"] == "https://github.com/zlw/marmoset", grammar
 assert grammar["path"] == "tools/tree-sitter-marmoset", grammar
 assert re.fullmatch(r"[0-9a-f]{40}", grammar["rev"]), grammar
 assert "commit" not in grammar, grammar
+
+node_types = {
+    item["type"]
+    for item in json.loads(pathlib.Path("../tree-sitter-marmoset/src/node-types.json").read_text())
+    if item.get("named")
+}
+
+grammar_json = json.loads(pathlib.Path("../tree-sitter-marmoset/src/grammar.json").read_text())
+tokens = set()
+
+def walk(value):
+    if isinstance(value, dict):
+        if value.get("type") == "STRING" and "value" in value:
+            tokens.add(value["value"])
+        for nested in value.values():
+            walk(nested)
+    elif isinstance(value, list):
+        for nested in value:
+            walk(nested)
+
+walk(grammar_json)
+
+ignored_query_nodes = {"_", "match", "eq", "not-eq", "any-of", "set!", "is?", "is-not?"}
+
+for query_path in pathlib.Path("languages/marmoset").glob("*.scm"):
+    text = re.sub(r";.*$", "", query_path.read_text(), flags=re.MULTILINE)
+    unknown_nodes = sorted(
+        {
+            m.group(1)
+            for m in re.finditer(r"\(([A-Za-z_][A-Za-z0-9_!?\-]*)", text)
+            if m.group(1) not in ignored_query_nodes and m.group(1) not in node_types
+        }
+    )
+    if unknown_nodes:
+        raise AssertionError(f"{query_path}: unknown query nodes {unknown_nodes}")
+
+    unknown_tokens = sorted(
+        {
+            m.group(1)
+            for m in re.finditer(r'^\s*"([^"\\\\]+)"\s+@', text, flags=re.MULTILINE)
+            if m.group(1) not in tokens
+        }
+    )
+    if unknown_tokens:
+        raise AssertionError(f"{query_path}: unknown query tokens {unknown_tokens}")
 PY
 
 search_fixed() {
