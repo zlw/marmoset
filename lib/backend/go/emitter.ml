@@ -1397,24 +1397,24 @@ let register_impl_template (state : mono_state) (impl : AST.impl_def) : impl_tem
   let default_methods =
     match Typecheck.Trait_registry.lookup_trait impl.impl_trait_name with
     | None -> []
-    | Some trait_def ->
+    | Some _trait_def ->
         let explicit_names = List.map (fun (m : AST.method_impl) -> m.impl_method_name) impl.impl_methods in
         let concrete_for_type = Types.canonicalize_mono_type for_type in
-        let substitute =
-          match trait_def.trait_type_param with
-          | None -> fun t -> t
-          | Some tp ->
-              let subst = Types.substitution_singleton tp concrete_for_type in
-              fun t -> Types.apply_substitution subst t
-        in
         List.filter_map
-          (fun (m : Typecheck.Trait_registry.method_sig) ->
+          (fun ((source_trait_def, m) : Typecheck.Trait_registry.trait_def * Typecheck.Trait_registry.method_sig) ->
             match m.method_default_impl with
             | None -> None
             | Some default_expr ->
                 if List.mem m.method_name explicit_names then
                   None
                 else
+                  let substitute =
+                    match source_trait_def.Typecheck.Trait_registry.trait_type_param with
+                    | None -> fun t -> t
+                    | Some tp ->
+                        let subst = Types.substitution_singleton tp concrete_for_type in
+                        fun t -> Types.apply_substitution subst t
+                  in
                   let param_names = List.map fst m.method_params in
                   let param_types = List.map (fun (_, t) -> substitute t) m.method_params in
                   let return_type = substitute m.method_return_type in
@@ -1436,7 +1436,7 @@ let register_impl_template (state : mono_state) (impl : AST.impl_def) : impl_tem
                       method_generic_names = List.map fst m.method_generics;
                       method_generic_internal_vars = m.method_generic_internal_vars;
                     })
-          trait_def.trait_methods
+          (Typecheck.Trait_registry.trait_methods_with_supertraits impl.impl_trait_name)
   in
   let methods = explicit_methods @ default_methods in
   let template =
@@ -1449,6 +1449,45 @@ let register_impl_template (state : mono_state) (impl : AST.impl_def) : impl_tem
   in
   state.impl_templates <- template :: state.impl_templates;
   template
+
+let rec codegen_compatible_type
+    (actual_type : Types.mono_type)
+    (expected_type : Types.mono_type) : (Types.substitution, Diagnostic.t) result =
+  let actual_type =
+    match Types.canonicalize_mono_type actual_type with
+    | Types.TIntersection members -> collapse_intersection_for_codegen_exn members
+    | other -> other
+  in
+  let expected_type =
+    match Types.canonicalize_mono_type expected_type with
+    | Types.TIntersection members -> collapse_intersection_for_codegen_exn members
+    | other -> other
+  in
+  match (actual_type, expected_type) with
+  | Types.TRecord (actual_fields, _), Types.TRecord (expected_fields, _) ->
+      let rec unify_required_fields subst = function
+        | [] -> Ok subst
+        | (expected_field : Types.record_field_type) :: rest -> (
+            match List.find_opt (fun (f : Types.record_field_type) -> f.name = expected_field.name) actual_fields with
+            | None ->
+                Error
+                  (Diagnostic.error_no_span ~code:"type-mismatch"
+                     ~message:(Printf.sprintf "Cannot unify %s with %s" (Types.to_string actual_type) (Types.to_string expected_type)))
+            | Some actual_field ->
+                let actual_field_type = Types.apply_substitution subst actual_field.typ in
+                let expected_field_type = Types.apply_substitution subst expected_field.typ in
+                match codegen_compatible_type actual_field_type expected_field_type with
+                | Error _ as err -> err
+                | Ok subst' ->
+                    let composed = Types.compose_substitution subst' subst in
+                    unify_required_fields composed rest)
+      in
+      unify_required_fields Types.empty_substitution expected_fields
+  | _ -> (
+      match Unify.unify actual_type expected_type with
+      | Ok subst -> Ok subst
+      | Error _ when Annotation.is_subtype_of actual_type expected_type -> Ok Types.empty_substitution
+      | Error err -> Error err)
 
 let specialize_signature
     (declared_param_types : Types.mono_type list)
@@ -1477,7 +1516,7 @@ let specialize_signature
     | actual :: rest_actual, expected :: rest_expected -> (
         let actual' = Types.apply_substitution subst actual in
         let expected' = Types.apply_substitution subst expected in
-        match Unify.unify actual' expected' with
+        match codegen_compatible_type actual' expected' with
         | Ok new_subst -> unify_params (Types.compose_substitution new_subst subst) rest_actual rest_expected
         | Error _ -> None)
     | _ -> None
@@ -1656,7 +1695,7 @@ let prefer_more_precise_param_type (left : Types.mono_type) (right : Types.mono_
   else
     right
 
-let expr_type_from_env_or_map (env : Infer.type_env) (type_map : Infer.type_map) (expr : AST.expression) :
+let rec expr_type_from_env_or_map (env : Infer.type_env) (type_map : Infer.type_map) (expr : AST.expression) :
     Types.mono_type =
   match expr.expr with
   | AST.Identifier name -> (
@@ -1667,14 +1706,29 @@ let expr_type_from_env_or_map (env : Infer.type_env) (type_map : Infer.type_map)
         | None -> None
       in
       match (map_type_opt, env_type_opt) with
-      | Some map_type, Some env_type ->
-          if type_imprecision_score map_type <= type_imprecision_score env_type then
-            map_type
-          else
-            env_type
+      | Some _map_type, Some env_type -> env_type
       | Some map_type, None -> map_type
       | None, Some env_type -> env_type
       | None, None -> get_type type_map expr)
+  | AST.FieldAccess (receiver, field_name) -> (
+      match Hashtbl.find_opt type_map expr.id with
+      | Some field_type -> field_type
+      | None ->
+          let rec lookup_field_type receiver_type =
+            match Types.canonicalize_mono_type receiver_type with
+            | Types.TRecord (fields, _) -> (
+                match List.find_opt (fun (f : Types.record_field_type) -> f.name = field_name) fields with
+                | Some field -> Some field.typ
+                | None -> None)
+            | Types.TIntersection members -> (
+                match Annotation.merged_record_intersection_type members with
+                | Ok merged -> lookup_field_type merged
+                | Error _ -> None)
+            | _ -> None
+          in
+          (match lookup_field_type (expr_type_from_env_or_map env type_map receiver) with
+          | Some field_type -> field_type
+          | None -> get_type type_map expr))
   | _ -> get_type type_map expr
 
 let arg_type_for_specialization
@@ -1970,7 +2024,7 @@ let select_impl_template_for_type
     (state : mono_state) (trait_name : string) (method_name : string) (for_type : Types.mono_type) :
     (impl_template_method * Types.substitution) option =
   let trait_name = canonical_codegen_trait_name trait_name in
-  let for_type' = Types.canonicalize_mono_type for_type in
+  let for_type' = normalize_type_for_codegen ~concrete_only:state.concrete_only for_type in
   let templates =
     List.filter
       (fun (template : impl_template) ->
@@ -1998,31 +2052,49 @@ let select_impl_template_for_type
         (Printf.sprintf "Codegen error: ambiguous concrete impl templates for trait '%s', method '%s', type %s"
            trait_name method_name (Types.to_string for_type'))
   | [] -> (
-      let generic_matches =
-        List.filter_map
+      let structural_concrete_matches =
+        List.filter
           (fun (template : impl_template) ->
-            if template.impl_type_params = [] then
-              None
-            else
-              match Unify.unify (Types.canonicalize_mono_type template.for_type) for_type' with
-              | Error _ -> None
-              | Ok subst -> Some (template, subst))
+            template.impl_type_params = []
+            &&
+            match codegen_compatible_type for_type' (Types.canonicalize_mono_type template.for_type) with
+            | Ok _ -> true
+            | Error _ -> false)
           templates
       in
-      match generic_matches with
-      | [] -> None
-      | [ (template, subst) ] -> Some (method_from_template template, subst)
-      | many ->
-          let patterns =
-            many
-            |> List.map (fun (template, _subst) -> Types.to_string template.for_type)
-            |> List.sort_uniq String.compare
-            |> String.concat ", "
-          in
+      match structural_concrete_matches with
+      | [ template ] -> Some (method_from_template template, Types.empty_substitution)
+      | _ :: _ :: _ ->
           failwith
             (Printf.sprintf
-               "Codegen error: ambiguous generic impl templates for trait '%s', method '%s', type %s (matching patterns: %s)"
-               trait_name method_name (Types.to_string for_type') patterns))
+               "Codegen error: ambiguous structural concrete impl templates for trait '%s', method '%s', type %s"
+               trait_name method_name (Types.to_string for_type'))
+      | [] ->
+          let generic_matches =
+            List.filter_map
+              (fun (template : impl_template) ->
+                if template.impl_type_params = [] then
+                  None
+                else
+                  match Unify.unify for_type' (Types.canonicalize_mono_type template.for_type) with
+                  | Error _ -> None
+                  | Ok subst -> Some (template, subst))
+              templates
+          in
+          match generic_matches with
+          | [] -> None
+          | [ (template, subst) ] -> Some (method_from_template template, subst)
+          | many ->
+              let patterns =
+                many
+                |> List.map (fun (template, _subst) -> Types.to_string template.for_type)
+                |> List.sort_uniq String.compare
+                |> String.concat ", "
+              in
+              failwith
+                (Printf.sprintf
+                   "Codegen error: ambiguous generic impl templates for trait '%s', method '%s', type %s (matching patterns: %s)"
+                   trait_name method_name (Types.to_string for_type') patterns))
 
 let rec collect_insts_stmt
     (state : mono_state) (type_map : Infer.type_map) (env : Infer.type_env) (stmt : AST.statement) :
@@ -2169,16 +2241,9 @@ let rec collect_insts_stmt
         (* Also instantiate trait default methods not explicitly provided in this impl *)
         match Typecheck.Trait_registry.lookup_trait impl.impl_trait_name with
         | None -> ()
-        | Some trait_def ->
-            let substitute =
-              match trait_def.trait_type_param with
-              | None -> fun t -> t
-              | Some tp ->
-                  let subst = Types.substitution_singleton tp for_type in
-                  fun t -> Types.apply_substitution subst t
-            in
+        | Some _trait_def ->
             List.iter
-              (fun (m : Typecheck.Trait_registry.method_sig) ->
+              (fun ((source_trait_def, m) : Typecheck.Trait_registry.trait_def * Typecheck.Trait_registry.method_sig) ->
                 match m.method_default_impl with
                 | None -> () (* No default, skip *)
                 | Some default_expr ->
@@ -2189,6 +2254,13 @@ let rec collect_insts_stmt
                       ()
                       (* Method-level generics: specialized per call site, not eagerly *)
                     else
+                      let substitute =
+                        match source_trait_def.Typecheck.Trait_registry.trait_type_param with
+                        | None -> fun t -> t
+                        | Some tp ->
+                            let subst = Types.substitution_singleton tp for_type in
+                            fun t -> Types.apply_substitution subst t
+                      in
                       let param_names = List.map fst m.method_params in
                       let param_types = List.map (fun (_, t) -> substitute t) m.method_params in
                       let return_type = substitute m.method_return_type in
@@ -2213,7 +2285,7 @@ let rec collect_insts_stmt
                         }
                       in
                       let specialization_subst =
-                        match trait_def.trait_type_param with
+                        match source_trait_def.Typecheck.Trait_registry.trait_type_param with
                         | None -> Types.empty_substitution
                         | Some tp -> Types.substitution_singleton tp for_type
                       in
@@ -2221,7 +2293,7 @@ let rec collect_insts_stmt
                         { param_names; param_types; return_type; body_stmt; specialization_subst }
                       in
                       add_impl_instantiation state impl_inst payload)
-              trait_def.trait_methods);
+              (Typecheck.Trait_registry.trait_methods_with_supertraits impl.impl_trait_name));
       env
   | AST.InherentImplDef impl ->
       let bindings = inherent_type_bindings impl.inherent_for_type in
@@ -2256,7 +2328,7 @@ and register_impl_method_use
     ~(for_type : Types.mono_type)
     ~(method_type_args : Types.mono_type list) : unit =
   let trait_name = canonical_codegen_trait_name trait_name in
-  let for_type' = Types.canonicalize_mono_type for_type in
+  let for_type' = normalize_type_for_codegen ~concrete_only:state.concrete_only for_type in
   if state.concrete_only && has_type_vars for_type' then
     ()
   else
@@ -2293,6 +2365,11 @@ and register_impl_method_use
           List.map
             (fun t -> Types.canonicalize_mono_type (Types.apply_substitution combined_subst t))
             template_method.param_types
+        in
+        let param_types =
+          match param_types with
+          | _receiver :: rest -> for_type' :: rest
+          | [] -> []
         in
         let return_type =
           Types.canonicalize_mono_type (Types.apply_substitution combined_subst template_method.return_type)
@@ -2645,7 +2722,7 @@ and collect_insts_expr
           match method_resolution with
           | Some (Infer.QualifiedTraitMethod trait_name) ->
               (* Qualified: first arg is receiver *)
-              let for_type = Types.canonicalize_mono_type (get_type type_map (List.hd args)) in
+              let for_type = Types.canonicalize_mono_type (expr_type_from_env_or_map env type_map (List.hd args)) in
               let method_type_args =
                 match Hashtbl.find_opt state.method_type_args_map expr.id with
                 | Some args -> args
@@ -2654,7 +2731,7 @@ and collect_insts_expr
               register_impl_method_use state type_map env ~trait_name ~method_name ~for_type ~method_type_args
           | Some (Infer.TraitMethod trait_name) ->
               collect_insts_expr state type_map env receiver;
-              let for_type = Types.canonicalize_mono_type (get_type type_map receiver) in
+              let for_type = Types.canonicalize_mono_type (expr_type_from_env_or_map env type_map receiver) in
               let method_type_args =
                 match Hashtbl.find_opt state.method_type_args_map expr.id with
                 | Some args -> args
@@ -3189,7 +3266,7 @@ let rec emit_expr
                 (* Qualified call: Trait.method(receiver, args...) — first arg is the receiver *)
                 let first_arg_type =
                   normalize_type_for_codegen ~concrete_only:state.mono.concrete_only
-                    (get_type type_map (List.hd args))
+                    (expr_type_from_env_or_map env type_map (List.hd args))
                 in
                 let type_suffix = type_suffix_with_mta first_arg_type in
                 let func_name = trait_method_func_name trait_name variant_name type_suffix in
@@ -3201,7 +3278,7 @@ let rec emit_expr
                 (* Qualified call: Type.method(receiver, args...) — first arg is the receiver *)
                 let first_arg_type =
                   normalize_type_for_codegen ~concrete_only:state.mono.concrete_only
-                    (get_type type_map (List.hd args))
+                    (expr_type_from_env_or_map env type_map (List.hd args))
                 in
                 let type_suffix = type_suffix_with_mta first_arg_type in
                 let func_name = inherent_method_func_name variant_name type_suffix in
@@ -3210,7 +3287,8 @@ let rec emit_expr
             | Some (Infer.TraitMethod trait_name) ->
                 (* Dot call: receiver.method(args...) — receiver is separate *)
                 let receiver_type =
-                  normalize_type_for_codegen ~concrete_only:state.mono.concrete_only (get_type type_map receiver)
+                  normalize_type_for_codegen ~concrete_only:state.mono.concrete_only
+                    (expr_type_from_env_or_map env type_map receiver)
                 in
                 let type_suffix = type_suffix_with_mta receiver_type in
                 let func_name = trait_method_func_name trait_name variant_name type_suffix in
@@ -3221,7 +3299,8 @@ let rec emit_expr
             | Some Infer.InherentMethod ->
                 (* Dot call: receiver.method(args...) — receiver is separate *)
                 let receiver_type =
-                  normalize_type_for_codegen ~concrete_only:state.mono.concrete_only (get_type type_map receiver)
+                  normalize_type_for_codegen ~concrete_only:state.mono.concrete_only
+                    (expr_type_from_env_or_map env type_map receiver)
                 in
                 let type_suffix = type_suffix_with_mta receiver_type in
                 let func_name = inherent_method_func_name variant_name type_suffix in
@@ -5185,12 +5264,42 @@ let emit_specialized_func
   in
 
   let specialization_subst =
-    match Unify.unify generic_func_type concrete_func_type with
-    | Ok subst -> subst
-    | Error err ->
-        failwith
-          (Printf.sprintf "Codegen error: failed to specialize function '%s' to concrete type %s: %s"
-             inst.func_name (Types.to_string concrete_func_type) err.message)
+    let rec specialize_params subst actual_params declared_params =
+      match (actual_params, declared_params) with
+      | [], [] -> Ok subst
+      | actual :: actual_rest, declared :: declared_rest -> (
+          let actual' = Types.apply_substitution subst actual in
+          let declared' = Types.apply_substitution subst declared in
+          match codegen_compatible_type actual' declared' with
+          | Error err -> Error err
+          | Ok subst' ->
+              let composed = Types.compose_substitution subst' subst in
+              specialize_params composed actual_rest declared_rest)
+      | _ ->
+          Error
+            (Diagnostic.error_no_span ~code:"codegen-internal"
+               ~message:(Printf.sprintf "Arity mismatch while specializing '%s'" inst.func_name))
+    in
+    match extract_param_types_exact inst.func_arity generic_func_type with
+    | Some (declared_param_types, declared_return_type) -> (
+        match specialize_params Types.empty_substitution inst.concrete_types declared_param_types with
+        | Error err ->
+            failwith
+              (Printf.sprintf "Codegen error: failed to specialize function '%s' to concrete type %s: %s"
+                 inst.func_name (Types.to_string concrete_func_type) err.message)
+        | Ok subst -> (
+            let actual_return = Types.apply_substitution subst inst.return_type in
+            let declared_return = Types.apply_substitution subst declared_return_type in
+            match codegen_compatible_type actual_return declared_return with
+            | Ok return_subst -> Types.compose_substitution return_subst subst
+            | Error _ -> subst))
+    | None -> (
+        match Unify.unify concrete_func_type generic_func_type with
+        | Ok subst -> subst
+        | Error err ->
+            failwith
+              (Printf.sprintf "Codegen error: failed to specialize function '%s' to concrete type %s: %s"
+                 inst.func_name (Types.to_string concrete_func_type) err.message))
   in
 
   let copied_specialized_type_map = Infer.create_type_map () in
@@ -5427,17 +5536,14 @@ let emit_cached_impl_method
      global type_map. Re-infer the concrete body when possible so nested block
      expressions and calls recover precise concrete types. *)
   let effective_type_map =
-    if Types.SubstMap.is_empty payload.specialization_subst && impl_inst.method_type_args = [] then
-      copied_specialized_type_map ()
-    else
-      let inferred_map = Infer.create_type_map () in
-      let infer_state = Infer.create_inference_state () in
-      match Infer.with_inference_state infer_state (fun () -> Infer.infer_statement inferred_map method_env payload.body_stmt) with
-      | Ok (subst, _body_type) ->
-          Infer.apply_substitution_type_map subst inferred_map;
-          inferred_map
-      | Error _ ->
-          copied_specialized_type_map ()
+    let inferred_map = Infer.create_type_map () in
+    let infer_state = Infer.create_inference_state () in
+    match Infer.with_inference_state infer_state (fun () -> Infer.infer_statement inferred_map method_env payload.body_stmt) with
+    | Ok (subst, _body_type) ->
+        Infer.apply_substitution_type_map subst inferred_map;
+        inferred_map
+    | Error _ ->
+        copied_specialized_type_map ()
   in
   ignore (collect_insts_stmt state.mono effective_type_map method_env payload.body_stmt);
   let body_str =
@@ -5445,6 +5551,44 @@ let emit_cached_impl_method
         emit_func_body state effective_type_map method_env payload.body_stmt)
   in
   Printf.sprintf "func %s(%s) %s {\n%s}\n" func_name params_str return_type_str body_str
+
+let collect_cached_impl_method_deps
+    (state : emit_state) (type_map : Infer.type_map) (typed_env : Infer.type_env) (impl_inst : impl_instantiation)
+    : unit =
+  let payload_key = impl_inst_payload_key impl_inst in
+  match Hashtbl.find_opt state.mono.impl_inst_payloads payload_key with
+  | None -> ()
+  | Some payload ->
+      let method_env = add_param_bindings typed_env payload.param_names payload.param_types in
+      let copied_specialized_type_map () =
+        if Types.SubstMap.is_empty payload.specialization_subst then
+          type_map
+        else
+          let copied = Hashtbl.create (Hashtbl.length type_map) in
+          Hashtbl.iter
+            (fun expr_id mono ->
+              let substituted = Types.apply_substitution payload.specialization_subst mono in
+              let final =
+                if impl_inst.method_type_args = [] then
+                  substituted
+                else
+                  erase_unresolved_type_vars_for_codegen substituted
+              in
+              Hashtbl.replace copied expr_id final)
+            type_map;
+          copied
+      in
+      let effective_type_map =
+        let inferred_map = Infer.create_type_map () in
+        let infer_state = Infer.create_inference_state () in
+        match Infer.with_inference_state infer_state (fun () -> Infer.infer_statement inferred_map method_env payload.body_stmt) with
+        | Ok (subst, _body_type) ->
+            Infer.apply_substitution_type_map subst inferred_map;
+            inferred_map
+        | Error _ ->
+            copied_specialized_type_map ()
+      in
+      ignore (collect_insts_stmt state.mono effective_type_map method_env payload.body_stmt)
 
 let emit_inherent_method
     (state : emit_state)
@@ -6132,20 +6276,14 @@ let emit_program_with_typed_env
      can register any missing instantiations on demand. *)
   let main_body, _ = emit_stmts emit_state type_map typed_env program in
 
-  (* Generate builtin trait impl functions *)
-  let builtin_impl_funcs = emit_builtin_impls program in
+  (* Seed generic helper instantiations reachable only from cached impl wrappers
+     before we freeze the specialized-function set. *)
+  ImplInstSet.elements mono_state.impl_instantiations
+  |> List.iter (collect_cached_impl_method_deps emit_state type_map typed_env);
 
-  (* Generate trait impl functions *)
-  let impl_funcs =
-    ImplInstSet.elements mono_state.impl_instantiations
-    |> List.map (emit_cached_impl_method emit_state type_map typed_env)
-    |> String.concat "\n"
-  in
-  let inherent_funcs = emit_inherent_methods emit_state type_map typed_env program in
-  let derived_impl_funcs = emit_registry_derived_impls emit_state program in
-
-  (* Specialized functions are emitted after impl/inherent/default bodies so
-     those bodies can register any additional monomorphizations they reference. *)
+  (* Specialized functions are emitted before cached impl wrappers so
+     specialized bodies can register any additional trait-method wrappers
+     they need on concrete receiver types. *)
   let specialized_funcs =
     let rec emit_pending (emitted : InstSet.t) (acc : string list) =
       let pending =
@@ -6165,6 +6303,18 @@ let emit_program_with_typed_env
     in
     emit_pending InstSet.empty []
   in
+
+  (* Generate builtin trait impl functions *)
+  let builtin_impl_funcs = emit_builtin_impls program in
+
+  (* Generate trait impl functions *)
+  let impl_funcs =
+    ImplInstSet.elements mono_state.impl_instantiations
+    |> List.map (emit_cached_impl_method emit_state type_map typed_env)
+    |> String.concat "\n"
+  in
+  let inherent_funcs = emit_inherent_methods emit_state type_map typed_env program in
+  let derived_impl_funcs = emit_registry_derived_impls emit_state program in
 
   (* Generate enum types AFTER all function body emissions so that
      method-generic specializations can register new enum instantiations *)
