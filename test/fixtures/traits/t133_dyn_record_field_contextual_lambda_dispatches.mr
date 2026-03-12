@@ -1,0 +1,9 @@
+# T133: Dyn trait-object fields package through contextual-lambda record construction
+type Box[a] = { value: a }
+
+fn apply[a, b](x: a, f: (a) -> b) -> b = f(x)
+
+let box: Box[Dyn[Show & Eq]] = apply(42, (n) -> {
+  { value: n }
+})
+puts(box.value.show())  # output: 42
