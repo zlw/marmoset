@@ -2,14 +2,14 @@
 
 ## Maintenance
 
-- Last verified: 2026-03-01
+- Last verified: 2026-03-28
 - Implementation status: Planning (not started)
 - Update trigger: Any prelude/stdlib, builtin, or module system change
 - Prerequisites: Module system (docs/plans/todo/language/03_module-system.md) must be implemented first
 
 ## Context
 
-Users must redefine `enum Option[a] = { Some(a), None }` and `enum Result[a, e] = { Success(a), Failure(e) }` in every file. There is no prelude. This plan creates `std/prelude.mr` with core enums and traits, auto-imported into every module.
+Users must redefine `enum Option[a] = { Some(a), None }` and `enum Result[a, e] = { Success(a), Failure(e) }` in every file. There is no prelude. This plan creates `std/prelude.mr` with core named types and traits, auto-imported into every module. Under the accepted pre-modules semantics, those `enum` declarations remain valid surface syntax but lower to the same canonical named-sum `type` form.
 
 **Modules → Basic stdlib + prelude → FFI → Full stdlib via FFI**
 
@@ -29,9 +29,9 @@ Users must redefine `enum Option[a] = { Some(a), None }` and `enum Result[a, e] 
 
 | Item | Currently in | Why move |
 |------|-------------|----------|
-| `enum Ordering` | `builtins.ml` | Users shouldn't need to define this |
-| `enum Option[a]` | `enum_registry.ml` | Users redefine in every file today |
-| `enum Result[a, e]` | `enum_registry.ml` | Users redefine in every file today |
+| `Ordering` named sum (surfaced as `enum`) | `builtins.ml` | Users shouldn't need to define this |
+| `Option[a]` named sum (surfaced as `enum`) | `enum_registry.ml` | Users redefine in every file today |
+| `Result[a, e]` named sum (surfaced as `enum`) | `enum_registry.ml` | Users redefine in every file today |
 | `trait Eq[a]` | `builtins.ml` | Completeness — prelude is the source of truth |
 | `trait Show[a]` | `builtins.ml` | Same |
 | `trait Debug[a]` | `builtins.ml` | Same |
@@ -60,7 +60,7 @@ None of this is "magic" — it's all emitted as normal Go source. The Go code ju
 export Ordering, Option, Result
 export Eq, Show, Debug, Ord, Hash, Num, Neg
 
-# --- Core enums ---
+# --- Core named sums (written with `enum` sugar) ---
 
 enum Ordering = { Less, Equal, Greater }
 enum Option[a] = { Some(a), None }
@@ -108,7 +108,7 @@ Core declarations ~30 lines. Inherent methods for option/result added in Phase S
 
 ### Phase S0: Prelude Infrastructure + Content
 
-**Goal:** Compiler auto-loads `std/prelude.mr`, making option/result/traits available in all modules.
+**Goal:** Compiler auto-loads `std/prelude.mr`, making option/result named types and traits available in all modules.
 
 **Stdlib path resolution:**
 - Compiler looks for `std/prelude.mr` relative to the source root
@@ -116,8 +116,8 @@ Core declarations ~30 lines. Inherent methods for option/result added in Phase S
 - If it doesn't exist, compiler falls back to current `Builtins.prelude_env()` behavior
 
 **Auto-import mechanism:**
-1. Compiler compiles `std/prelude.mr` → enums and traits are registered in registries
-2. Extracts module signature (exported types, traits, enums)
+1. Compiler compiles `std/prelude.mr` → named types and traits are registered in registries
+2. Extracts module signature (exported values, named types, aliases/shapes if any, traits)
 3. For every other module: injects prelude signature into initial type_env
 4. `builtins.ml` then registers primitive impls (references traits now in registry from prelude)
 5. User code compiled with prelude env + builtin impls + builtin functions
@@ -126,27 +126,27 @@ Core declarations ~30 lines. Inherent methods for option/result added in Phase S
 - `lib/frontend/compiler.ml` (module orchestrator): detect and compile prelude first
 - Module signature extraction: reuse from module system
 - Inject prelude env into each module's compilation context
-- `builtins.ml`: remove `init_builtin_enums()` and `init_builtin_traits()` — enums/traits come from prelude.mr. Keep `init_builtin_impls()` and `builtin_types` (functions).
+- `builtins.ml`: remove `init_builtin_enums()` and `init_builtin_traits()` — prelude named types/traits come from `std/prelude.mr`. Keep `init_builtin_impls()` and `builtin_types` (functions).
 
 **Ordering matters:**
 ```
-1. Parse + typecheck std/prelude.mr → enums (option, result, ordering) and traits (eq, show, ...) registered
+1. Parse + typecheck `std/prelude.mr` → named types (`Ordering`, `Option`, `Result`) and traits (`Eq`, `Show`, ...) registered
 2. builtins.ml registers primitive impls → these reference traits already registered from step 1
 3. builtins.ml registers builtin function types (puts, len, etc.) in type_env
 4. User module compiled with combined env
 ```
 
-**Backwards compat:** Existing test files that define `enum Option[a] = { Some(a), None }` still work — `Enum_registry.register` does `Hashtbl.replace`, silently overwrites with identical definition.
+**Backwards compat / surface policy:** Existing test files that define `enum Option[a] = { Some(a), None }` still work. `enum` remains accepted surface sugar for named sums even though the canonical ownership model now lives under `type`.
 
 **Write `std/prelude.mr`** with the content shown above.
 
 **Tests:**
-- `Option.Some(42)` works without user enum definition
-- `Result.Success("ok")` works without user enum definition
+- `Option.Some(42)` works without a user-defined prelude sum
+- `Result.Success("ok")` works without a user-defined prelude sum
 - Match on option/result works
 - All 7 traits available without user trait definition
 - Operators still work (`42 == 42`, `1 + 2`, `x.show()`)
-- Existing tests with local `enum Option[a] = { Some(a), None }` still pass
+- Existing tests with local `enum Option[a] = { Some(a), None }` still pass until the fixture migration prefers canonical `type` examples
 - Missing `std/prelude.mr` falls back to builtin behavior
 
 **Gate:** `make unit && make integration` green.
@@ -238,7 +238,7 @@ impl[a, e] Result[a, e] = {
 }
 ```
 
-All real Marmoset — just `match`. Method-level generics (`map[b]`, `map_fail[f]`) are inferred at each call site, same as any polymorphic function. The explicit declaration attaches to the method name, consistent with `trait Show[a]`, `enum Option[a]`, etc.
+All real Marmoset — just `match`. Method-level generics (`map[b]`, `map_fail[f]`) are inferred at each call site, same as any polymorphic function. The explicit declaration attaches to the method name, consistent with `trait Show[a]` and the pre-modules semantics split where `Option` / `Result` are named types (surfaced here with `enum` sugar).
 
 **Tests:**
 - `Option.Some(42).unwrap_or(0)` → 42

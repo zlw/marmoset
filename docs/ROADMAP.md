@@ -2,7 +2,7 @@
 
 ## Maintenance
 
-- Last verified: 2026-03-12
+- Last verified: 2026-03-28
 - Implementation status: Canonical (actively maintained)
 - Update trigger: Any change to milestone status, plan ordering, or deferred-ideas ownership
 
@@ -55,7 +55,7 @@
 
 These areas already have a concrete plan and should not also live here as loose deferred bullets:
 
-- traits vs rows policy, wrappers/newtypes, effect freeze, and union semantic freeze:
+- declaration-role split (`type` / `alias` / `shape` / `trait`), named-type identity/construction, effect freeze, and unions vs named sums:
   [Pre-modules semantics foundation](docs/plans/todo/language/01_pre-modules-semantics-foundation.md)
 - feature/codegen parity, checker-to-emitter contract hardening, docs validation, generated-Go snapshots, and regression gates:
   [Pre-modules parity and hardening](docs/plans/todo/language/02_pre-modules-parity-and-hardening.md)

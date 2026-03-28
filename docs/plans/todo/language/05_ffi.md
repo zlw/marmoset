@@ -2,7 +2,7 @@
 
 ## Maintenance
 
-- Last verified: 2026-03-07
+- Last verified: 2026-03-28
 - Implementation status: Planning (not started)
 - Update trigger: Any FFI/extern syntax or Go interop change
 
@@ -88,7 +88,7 @@ extern "strconv" {
 fn parse_int(s: Str) -> Result[Int, Str] = {
   # v2: translate Go's (int, error) -> Result[Int, Str]
   # v1: simplified, just forward
-  Result.Ok(strconv.Atoi(s))
+  Result.Success(strconv.Atoi(s))
 }
 ```
 
@@ -323,7 +323,7 @@ func main() {
 
 ## Relationship to Module System
 
-- `extern` is a statement type (like `trait`, `enum`) — can appear in any module
+- `extern` is a statement type (like `type`, `alias`, `shape`, or `trait`) — can appear in any module
 - Convention: put extern blocks in dedicated wrapper modules
 - Extern qualifiers share the same namespace bucket as imported modules/aliases
 - Namespace collisions between extern qualifiers and module bindings are rejected when the scope is built
@@ -340,7 +340,7 @@ func main() {
 3. **Go interfaces → traits:** automatic mapping
 4. **Auto-discovery:** `marmoset gen-extern "fmt"` CLI tool generates wrapper stubs from `go doc`
 5. **Variadic functions:** `fn Sprintf(format: Str, args: ...Str) -> Str`
-6. **Opaque types:** Go types with no Marmoset equivalent wrapped as opaque handles
+6. **Distinct handle types:** Go types with no Marmoset equivalent wrapped as distinct named `type` handles
 
 ---
 
@@ -348,7 +348,7 @@ func main() {
 
 1. **`int64` vs `int`** — mitigated by generated Go wrapper functions that handle conversion
 2. **Extern qualifier collision with module names** — mitigated by namespace-scope validation, clear error
-3. **`.` disambiguation** — extern qualifiers live in the same namespace bucket defined in `docs/plans/todo/language/03_module-system.md` and the function-model rework (`value > namespace > enum > trait > type alias`)
+3. **`.` disambiguation** — extern qualifiers live in the same namespace bucket defined in `docs/plans/todo/language/03_module-system.md` and the function-model rework (`value > namespace > named sum > trait > named type`)
 4. **Generated Go size** — wrappers only emitted for functions actually called
 5. **Go function signatures evolving** — wrapper modules are user-maintained, updated as needed
 
