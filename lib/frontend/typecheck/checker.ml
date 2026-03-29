@@ -877,6 +877,25 @@ let%test "type alias cannot own inherent impl behavior" =
           && String_utils.contains_substring ~needle:"transparent alias" diag.message)
         diags
 
+let%test "field-path union narrowing supports direct projection checks" =
+  Infer.reset_fresh_counter ();
+  let code =
+    {|
+      type Box = { value: Int | Str }
+      fn render(box: Box) -> Str = {
+        if (box.value is Int) {
+          box.value.show()
+        } else {
+          box.value
+        }
+      }
+      render(Box(value: 1))
+    |}
+  in
+  match check code with
+  | Ok { result_type = Types.TString; _ } -> true
+  | _ -> false
+
 let%test "explicit row-polymorphic annotation is rejected in v1" =
   Infer.reset_fresh_counter ();
   let code = "fn get_x(r: { x: Int, ...row }) -> Int = r.x" in

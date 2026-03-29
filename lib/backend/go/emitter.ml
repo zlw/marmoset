@@ -4,6 +4,7 @@ module AST = Syntax.Ast.AST
 module Types = Typecheck.Types
 module Infer = Typecheck.Infer
 module Annotation = Typecheck.Annotation
+module Type_narrowing = Typecheck.Type_narrowing
 module Unify = Typecheck.Unify
 module Type_registry = Typecheck.Type_registry
 module Structural = Typecheck.Structural
@@ -3346,6 +3347,46 @@ and copy_specialized_stmt_types
   | AST.DeriveDef _ | AST.TypeAlias _ ->
       ()
 
+type type_check_info = {
+  path : Type_narrowing.path;
+  checked_expr : AST.expression;
+  current_type : Types.mono_type;
+  narrow_type : Types.mono_type;
+}
+
+let type_check_info_of_expr (type_map : Infer.type_map) (expr : AST.expression) : type_check_info option =
+  match expr.expr with
+  | AST.TypeCheck (checked_expr, type_ann) -> (
+      match Type_narrowing.path_of_expr checked_expr with
+      | None -> None
+      | Some path ->
+          Some
+            {
+              path;
+              checked_expr;
+              current_type = get_type type_map checked_expr;
+              narrow_type = annotation_exn (Annotation.type_expr_to_mono_type type_ann);
+            })
+  | _ -> None
+
+let substitute_path_in_expr (path : Type_narrowing.path) (replacement_name : string) (expr : AST.expression) :
+    AST.expression =
+  Type_narrowing.substitute_path_in_expr path
+    ~replace:(Type_narrowing.replacement_identifier replacement_name)
+    expr
+
+let substitute_path_in_stmt (path : Type_narrowing.path) (replacement_name : string) (stmt : AST.statement) :
+    AST.statement =
+  Type_narrowing.substitute_path_in_stmt path
+    ~replace:(Type_narrowing.replacement_identifier replacement_name)
+    stmt
+
+let type_check_static_outcome
+    (current_type_opt : Types.mono_type option)
+    (narrow_type : Types.mono_type) :
+    [ `Always_true | `Always_false | `Runtime_check of Types.mono_type option ] =
+  Type_narrowing.static_outcome current_type_opt narrow_type
+
 (* ============================================================
    Expression Emission
    ============================================================ *)
@@ -4455,118 +4496,31 @@ and emit_type_check state type_map env expr type_ann =
   in
   Printf.sprintf "typeIs(%s, \"%s\")" expr_str go_type_name
 
-(* Helper: Substitute identifier references in expressions/statements. *)
-and make_identifier_substituter old_name new_name =
-  let rec subst_expr e =
-    match e.AST.expr with
-    | AST.Identifier id when id = old_name -> { e with expr = AST.Identifier new_name }
-    | AST.Prefix (op, operand) -> { e with expr = AST.Prefix (op, subst_expr operand) }
-    | AST.Infix (left, op, right) -> { e with expr = AST.Infix (subst_expr left, op, subst_expr right) }
-    | AST.TypeCheck (expr, type_ann) -> { e with expr = AST.TypeCheck (subst_expr expr, type_ann) }
-    | AST.If (cond, cons, alt) ->
-        { e with expr = AST.If (subst_expr cond, subst_stmt cons, Option.map subst_stmt alt) }
-    | AST.Call (func, args) -> { e with expr = AST.Call (subst_expr func, List.map subst_expr args) }
-    | AST.Array elements -> { e with expr = AST.Array (List.map subst_expr elements) }
-    | AST.Hash pairs -> { e with expr = AST.Hash (List.map (fun (k, v) -> (subst_expr k, subst_expr v)) pairs) }
-    | AST.Index (container, index) -> { e with expr = AST.Index (subst_expr container, subst_expr index) }
-    | AST.RecordLit (fields, spread) ->
-        let fields' =
-          List.map
-            (fun (f : AST.record_field) ->
-              {
-                f with
-                field_value =
-                  (match f.field_value with
-                  | Some v -> Some (subst_expr v)
-                  | None -> None);
-              })
-            fields
-        in
-        let spread' = Option.map subst_expr spread in
-        { e with expr = AST.RecordLit (fields', spread') }
-    | AST.FieldAccess (recv, field) -> { e with expr = AST.FieldAccess (subst_expr recv, field) }
-    | AST.MethodCall { mc_receiver; mc_method; mc_type_args; mc_args } ->
-        {
-          e with
-          expr =
-            AST.MethodCall
-              {
-                mc_receiver = subst_expr mc_receiver;
-                mc_method;
-                mc_type_args;
-                mc_args = List.map subst_expr mc_args;
-              };
-        }
-    | AST.Match (scrutinee, arms) ->
-        let arms' =
-          List.map
-            (fun (arm : AST.match_arm) ->
-              (* Keep patterns unchanged; substitute only in arm body. *)
-              { arm with body = subst_expr arm.body })
-            arms
-        in
-        { e with expr = AST.Match (subst_expr scrutinee, arms') }
-    | AST.Function _ ->
-        (* Don't substitute inside function bodies - would need scope tracking. *)
-        e
-    | _ -> e
-  and subst_stmt s =
-    match s.AST.stmt with
-    | AST.Let let_binding -> { s with stmt = AST.Let { let_binding with value = subst_expr let_binding.value } }
-    | AST.Return e -> { s with stmt = AST.Return (subst_expr e) }
-    | AST.ExpressionStmt e -> { s with stmt = AST.ExpressionStmt (subst_expr e) }
-    | AST.Block stmts -> { s with stmt = AST.Block (List.map subst_stmt stmts) }
-    | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ -> s
-    | AST.TraitDef _ | AST.ImplDef _ | AST.InherentImplDef _ | AST.DeriveDef _ | AST.TypeAlias _ -> s
-  in
-  (subst_expr, subst_stmt)
-
-and substitute_identifier_in_expr old_name new_name expr =
-  let subst_expr, _ = make_identifier_substituter old_name new_name in
-  subst_expr expr
-
-and substitute_identifier_in_stmt old_name new_name stmt =
-  let _, subst_stmt = make_identifier_substituter old_name new_name in
-  subst_stmt stmt
-
-(* Helper: Compute complement type (all union members except narrow_type) *)
-and compute_complement_type (current_type : Types.mono_type) (narrow_type : Types.mono_type) :
-    Types.mono_type option =
-  match current_type with
-  | Types.TUnion members -> (
-      let remaining = List.filter (fun t -> t <> narrow_type) members in
-      match remaining with
-      | [] -> None (* No members left *)
-      | [ single ] -> Some single (* Single type remains *)
-      | multiple -> Some (Types.TUnion multiple)
-      (* Multiple types remain *))
-  | _ when current_type = narrow_type -> None (* Narrowing to same type, no complement *)
-  | _ -> Some current_type (* Not a union, complement is the whole type *)
-
-and type_check_static_outcome (env : Infer.type_env) (var_name : string) (narrow_type : Types.mono_type) :
-    [ `Always_true | `Always_false | `Runtime_check of Types.mono_type option ] =
-  match Infer.TypeEnv.find_opt var_name env with
-  | Some (Types.Forall ([], original_type)) -> (
-      let original_type = Types.canonicalize_mono_type original_type in
-      let narrow_type = Types.canonicalize_mono_type narrow_type in
-      if Annotation.is_subtype_of original_type narrow_type then
-        `Always_true
-      else
-        let complement_type_opt = compute_complement_type original_type narrow_type in
-        match complement_type_opt with
-        | Some complement_type when Types.canonicalize_mono_type complement_type = original_type -> `Always_false
-        | _ -> `Runtime_check complement_type_opt)
-  | _ -> `Runtime_check None
-
 (* Emit a Go type switch for type narrowing *)
-and emit_type_switch state type_map env _if_expr var_name narrow_type complement_type_opt cons alt result_type =
+and emit_type_switch
+    state type_map env _if_expr checked_expr path narrow_type complement_type_opt cons alt result_type =
   let result_type_str = type_to_go state.mono result_type in
   let narrow_type_str = type_to_go state.mono narrow_type in
   let ind = indent_str state in
   let inner_ind = ind ^ "    " in
+  let checked_expr_str = emit_expr state type_map env checked_expr in
+  let use_subject_temp = not (Type_narrowing.is_identifier_path path) in
+  let subject_var = Type_narrowing.temp_name path "subject" in
+  let subject_expr =
+    if use_subject_temp then
+      subject_var
+    else
+      checked_expr_str
+  in
+  let subject_binding_prefix =
+    if use_subject_temp then
+      ind ^ "    " ^ subject_var ^ " := " ^ checked_expr_str ^ "\n"
+    else
+      ""
+  in
 
   (* Create narrowed variable name *)
-  let narrowed_var = var_name ^ "_typed" in
+  let narrowed_var = Type_narrowing.temp_name path "typed" in
   let emit_return_expr branch_env e =
     if result_type = Types.TNull then
       inner_ind
@@ -4581,6 +4535,7 @@ and emit_type_switch state type_map env _if_expr var_name narrow_type complement
 
   (* Emit branch with variable substitution *)
   let emit_branch_with_var var_to_use narrow_env stmt =
+    let stmt = substitute_path_in_stmt path var_to_use stmt in
     (* Always add unused variable marker to avoid Go compiler warnings *)
     let var_marker = inner_ind ^ "        _ = " ^ var_to_use ^ "\n" in
     match stmt.AST.stmt with
@@ -4597,30 +4552,23 @@ and emit_type_switch state type_map env _if_expr var_name narrow_type complement
             let prefix, env' = emit_stmts state type_map narrow_env (List.rev rest) in
             let last_str =
               match last.stmt with
-              | AST.ExpressionStmt e ->
-                  (* Substitute variable references in expression before emitting *)
-                  let e_subst = substitute_identifier_in_expr var_name var_to_use e in
-                  emit_return_expr env' e_subst
-              | AST.Return e ->
-                  let e_subst = substitute_identifier_in_expr var_name var_to_use e in
-                  emit_return_expr env' e_subst
+              | AST.ExpressionStmt e -> emit_return_expr env' e
+              | AST.Return e -> emit_return_expr env' e
               | _ -> fst (emit_stmt state type_map env' last)
             in
             var_marker ^ prefix ^ last_str)
-    | AST.ExpressionStmt e ->
-        let e_subst = substitute_identifier_in_expr var_name var_to_use e in
-        var_marker ^ emit_return_expr narrow_env e_subst
+    | AST.ExpressionStmt e -> var_marker ^ emit_return_expr narrow_env e
     | _ -> var_marker ^ fst (emit_stmt state type_map narrow_env stmt)
   in
 
   (* Emit branch with complement type assertion if needed *)
-  let emit_branch_with_complement var_to_use original_var complement_type_opt narrow_env stmt =
+  let emit_branch_with_complement var_to_use complement_type_opt narrow_env stmt =
     (* If we have a complement type, we need to emit type assertion in default case *)
     let type_assertion_prefix =
       match complement_type_opt with
       | Some complement_type when complement_type <> Types.TUnion [] ->
           let complement_type_str = type_to_go state.mono complement_type in
-          inner_ind ^ "        " ^ var_to_use ^ " := " ^ original_var ^ ".(" ^ complement_type_str ^ ")\n"
+          inner_ind ^ "        " ^ var_to_use ^ " := " ^ subject_expr ^ ".(" ^ complement_type_str ^ ")\n"
       | _ -> ""
     in
     (* Always add unused variable marker if we declared it *)
@@ -4629,6 +4577,11 @@ and emit_type_switch state type_map env _if_expr var_name narrow_type complement
       | Some _ when complement_type_opt <> Some (Types.TUnion []) ->
           inner_ind ^ "        _ = " ^ var_to_use ^ "\n"
       | _ -> ""
+    in
+    let stmt =
+      match complement_type_opt with
+      | Some _ when complement_type_opt <> Some (Types.TUnion []) -> substitute_path_in_stmt path var_to_use stmt
+      | _ -> stmt
     in
     match stmt.AST.stmt with
     | AST.Block stmts -> (
@@ -4644,19 +4597,12 @@ and emit_type_switch state type_map env _if_expr var_name narrow_type complement
             let prefix, env' = emit_stmts state type_map narrow_env (List.rev rest) in
             let last_str =
               match last.stmt with
-              | AST.ExpressionStmt e ->
-                  (* Substitute variable references in expression before emitting *)
-                  let e_subst = substitute_identifier_in_expr original_var var_to_use e in
-                  emit_return_expr env' e_subst
-              | AST.Return e ->
-                  let e_subst = substitute_identifier_in_expr original_var var_to_use e in
-                  emit_return_expr env' e_subst
+              | AST.ExpressionStmt e -> emit_return_expr env' e
+              | AST.Return e -> emit_return_expr env' e
               | _ -> fst (emit_stmt state type_map env' last)
             in
             type_assertion_prefix ^ var_marker ^ prefix ^ last_str)
-    | AST.ExpressionStmt e ->
-        let e_subst = substitute_identifier_in_expr original_var var_to_use e in
-        type_assertion_prefix ^ var_marker ^ emit_return_expr narrow_env e_subst
+    | AST.ExpressionStmt e -> type_assertion_prefix ^ var_marker ^ emit_return_expr narrow_env e
     | _ -> type_assertion_prefix ^ var_marker ^ fst (emit_stmt state type_map narrow_env stmt)
   in
 
@@ -4669,13 +4615,13 @@ and emit_type_switch state type_map env _if_expr var_name narrow_type complement
     match alt with
     | Some alt_stmt ->
         (* Create complement variable name and environment if we have a complement type *)
-        let complement_var = var_name ^ "_complement" in
+        let complement_var = Type_narrowing.temp_name path "complement" in
         let complement_env =
           match complement_type_opt with
           | Some complement_type -> Infer.TypeEnv.add complement_var (Types.Forall ([], complement_type)) env
           | None -> env
         in
-        emit_branch_with_complement complement_var var_name complement_type_opt complement_env alt_stmt
+        emit_branch_with_complement complement_var complement_type_opt complement_env alt_stmt
     | None ->
         inner_ind ^ "        return "
         ^ (if result_type = Types.TNull then
@@ -4686,11 +4632,12 @@ and emit_type_switch state type_map env _if_expr var_name narrow_type complement
   in
 
   (* Generate type switch *)
-  Printf.sprintf "func() %s {\n%s    switch %s := %s.(type) {\n%s    case %s:\n%s%s    default:\n%s%s    }\n%s}()"
-    result_type_str ind narrowed_var var_name ind narrow_type_str cons_str ind alt_str ind ind
+  Printf.sprintf "func() %s {\n%s%s    switch %s := %s.(type) {\n%s    case %s:\n%s%s    default:\n%s%s    }\n%s}()"
+    result_type_str ind subject_binding_prefix narrowed_var subject_expr ind narrow_type_str cons_str ind
+    alt_str ind ind
 
 and emit_type_switch_to_target
-    state type_map env var_name narrow_type complement_type_opt result_type cons alt target =
+    state type_map env checked_expr path narrow_type complement_type_opt result_type cons alt target =
   let ind = indent_str state in
   let inner_ind = ind ^ "    " in
   let value_target =
@@ -4700,7 +4647,22 @@ and emit_type_switch_to_target
       target
   in
   let narrow_type_str = type_to_go state.mono narrow_type in
-  let narrowed_var = var_name ^ "_typed" in
+  let checked_expr_str = emit_expr state type_map env checked_expr in
+  let use_subject_temp = not (Type_narrowing.is_identifier_path path) in
+  let subject_var = Type_narrowing.temp_name path "subject" in
+  let subject_expr =
+    if use_subject_temp then
+      subject_var
+    else
+      checked_expr_str
+  in
+  let subject_binding_prefix =
+    if use_subject_temp then
+      ind ^ subject_var ^ " := " ^ checked_expr_str ^ "\n"
+    else
+      ""
+  in
+  let narrowed_var = Type_narrowing.temp_name path "typed" in
   let emit_branch_to_target branch_env stmt =
     match stmt.AST.stmt with
     | AST.Block stmts -> (
@@ -4720,9 +4682,9 @@ and emit_type_switch_to_target
     | AST.ExpressionStmt e ->
         with_indent_delta state 1 (fun () -> emit_expr_to_target state type_map branch_env e value_target)
     | AST.Return e -> inner_ind ^ "    return " ^ emit_expr_for_current_return state type_map branch_env e ^ "\n"
-    | _ -> fst (emit_stmt state type_map branch_env stmt)
+        | _ -> fst (emit_stmt state type_map branch_env stmt)
   in
-  let cons_stmt = substitute_identifier_in_stmt var_name narrowed_var cons in
+  let cons_stmt = substitute_path_in_stmt path narrowed_var cons in
   let narrowed_env = Infer.TypeEnv.add narrowed_var (Types.Forall ([], narrow_type)) env in
   let cons_str =
     let marker = inner_ind ^ "        _ = " ^ narrowed_var ^ "\n" in
@@ -4734,12 +4696,12 @@ and emit_type_switch_to_target
     | Some alt_stmt -> (
         match complement_type_opt with
         | Some complement_type when complement_type <> Types.TUnion [] ->
-            let complement_var = var_name ^ "_complement" in
+            let complement_var = Type_narrowing.temp_name path "complement" in
             let complement_type_str = type_to_go state.mono complement_type in
-            let alt_stmt' = substitute_identifier_in_stmt var_name complement_var alt_stmt in
+            let alt_stmt' = substitute_path_in_stmt path complement_var alt_stmt in
             let complement_env = Infer.TypeEnv.add complement_var (Types.Forall ([], complement_type)) env in
             let assertion =
-              inner_ind ^ "        " ^ complement_var ^ " := " ^ var_name ^ ".(" ^ complement_type_str ^ ")\n"
+              inner_ind ^ "        " ^ complement_var ^ " := " ^ subject_expr ^ ".(" ^ complement_type_str ^ ")\n"
             in
             let marker = inner_ind ^ "        _ = " ^ complement_var ^ "\n" in
             let body = emit_branch_to_target complement_env alt_stmt' in
@@ -4749,8 +4711,8 @@ and emit_type_switch_to_target
             ind ^ "    default:\n" ^ body)
   in
   let switch_code =
-    Printf.sprintf "%sswitch %s := %s.(type) {\n%scase %s:\n%s%s%s}\n" ind narrowed_var var_name ind
-      narrow_type_str cons_str default_branch ind
+    Printf.sprintf "%s%sswitch %s := %s.(type) {\n%scase %s:\n%s%s%s}\n" subject_binding_prefix ind narrowed_var
+      subject_expr ind narrow_type_str cons_str default_branch ind
   in
   let unit_tail =
     if result_type <> Types.TNull then
@@ -4770,19 +4732,10 @@ and emit_if state type_map env if_expr cond cons alt =
   let inner_ind = ind ^ "    " in
 
   (* Check if condition is a type check (x is T) *)
-  let type_check_info =
-    match cond.expr with
-    | AST.TypeCheck (var_expr, type_ann) -> (
-        match var_expr.expr with
-        | AST.Identifier var_name ->
-            let narrow_type = annotation_exn (Annotation.type_expr_to_mono_type type_ann) in
-            Some (var_name, narrow_type)
-        | _ -> None)
-    | _ -> None
-  in
+  let type_check_info = type_check_info_of_expr type_map cond in
 
   match type_check_info with
-  | Some (var_name, narrow_type) -> (
+  | Some info -> (
       let emit_single_branch branch_env stmt =
         let emit_return_expr branch_env e =
           if result_type = Types.TNull then
@@ -4820,10 +4773,8 @@ and emit_if state type_map env if_expr cond cons alt =
         in
         Printf.sprintf "func() %s {\n%s%s}()" result_type_str ind branch_str
       in
-      match type_check_static_outcome env var_name narrow_type with
-      | `Always_true ->
-          let narrowed_env = Infer.TypeEnv.add var_name (Types.Forall ([], narrow_type)) env in
-          emit_single_branch narrowed_env cons
+      match type_check_static_outcome (Some info.current_type) info.narrow_type with
+      | `Always_true -> emit_single_branch env cons
       | `Always_false -> (
           match alt with
           | Some alt_stmt -> emit_single_branch env alt_stmt
@@ -4835,8 +4786,8 @@ and emit_if state type_map env if_expr cond cons alt =
                    "nil")
                 ind)
       | `Runtime_check complement_type_opt ->
-          emit_type_switch state type_map env if_expr var_name narrow_type complement_type_opt cons alt
-            result_type)
+          emit_type_switch state type_map env if_expr info.checked_expr info.path info.narrow_type
+            complement_type_opt cons alt result_type)
   | None ->
       (* Normal if-expression *)
       let cond_str = emit_expr state type_map env cond in
@@ -4935,18 +4886,9 @@ and emit_if_to_target state type_map env if_expr (cond : AST.expression) cons al
     else
       target
   in
-  let type_check_info =
-    match cond.expr with
-    | AST.TypeCheck (var_expr, type_ann) -> (
-        match var_expr.expr with
-        | AST.Identifier var_name ->
-            let narrow_type = annotation_exn (Annotation.type_expr_to_mono_type type_ann) in
-            Some (var_name, narrow_type)
-        | _ -> None)
-    | _ -> None
-  in
+  let type_check_info = type_check_info_of_expr type_map cond in
   match type_check_info with
-  | Some (var_name, narrow_type) -> (
+  | Some info -> (
       let emit_branch_to_target branch_env stmt =
         match stmt.AST.stmt with
         | AST.Block stmts -> (
@@ -4969,10 +4911,8 @@ and emit_if_to_target state type_map env if_expr (cond : AST.expression) cons al
             inner_ind ^ "    return " ^ emit_expr_for_current_return state type_map branch_env e ^ "\n"
         | _ -> fst (emit_stmt state type_map branch_env stmt)
       in
-      match type_check_static_outcome env var_name narrow_type with
-      | `Always_true ->
-          let narrowed_env = Infer.TypeEnv.add var_name (Types.Forall ([], narrow_type)) env in
-          emit_branch_to_target narrowed_env cons
+      match type_check_static_outcome (Some info.current_type) info.narrow_type with
+      | `Always_true -> emit_branch_to_target env cons
       | `Always_false -> (
           match alt with
           | Some alt_stmt -> emit_branch_to_target env alt_stmt
@@ -4985,8 +4925,8 @@ and emit_if_to_target state type_map env if_expr (cond : AST.expression) cons al
                 | AssignTarget name -> indent_str state ^ name ^ " = struct{}{}\n"
                 | DiscardTarget -> ""))
       | `Runtime_check complement_type_opt ->
-          emit_type_switch_to_target state type_map env var_name narrow_type complement_type_opt result_type cons
-            alt target)
+          emit_type_switch_to_target state type_map env info.checked_expr info.path info.narrow_type
+            complement_type_opt result_type cons alt target)
   | None ->
       let cond_str = emit_expr state type_map env cond in
       let emit_branch stmt =
@@ -8045,16 +7985,35 @@ let%test "create_mono_state preserves supplied trait object coercion map" =
   = Some Typecheck.Resolution_artifacts.{ target_traits = [ "Eq"; "Show" ]; source_type = Types.TInt }
 
 let%test "type_check_static_outcome recognizes already narrowed concrete types" =
-  let env = Infer.TypeEnv.singleton "x" (Types.Forall ([], Types.TInt)) in
-  match type_check_static_outcome env "x" Types.TInt with
+  match type_check_static_outcome (Some Types.TInt) Types.TInt with
   | `Always_true -> true
   | _ -> false
 
 let%test "type_check_static_outcome recognizes impossible concrete checks" =
-  let env = Infer.TypeEnv.singleton "x" (Types.Forall ([], Types.TString)) in
-  match type_check_static_outcome env "x" Types.TInt with
+  match type_check_static_outcome (Some Types.TString) Types.TInt with
   | `Always_false -> true
   | _ -> false
+
+let%test "field-path type-check if emits a runtime type switch" =
+  let code =
+    {|
+      type Box = { value: Int | Str }
+      fn render(box: Box) -> Str = {
+        if (box.value is Int) {
+          box.value.show()
+        } else {
+          box.value
+        }
+      }
+      puts(render(Box(value: 1)))
+    |}
+  in
+  match compile_string ~file_id:"<codegen>" code with
+  | Ok (go_code, _) ->
+      string_contains go_code "box_value_subject :="
+      && string_contains go_code "switch box_value_typed := box_value_subject.(type)"
+      && string_contains go_code "box_value_complement := box_value_subject.(string)"
+  | Error _ -> false
 
 let%test "Dyn codegen emits runtime wrapper and witness for Show" =
   match compile_string ~file_id:"<codegen>" "let x: Dyn[Show] = 42\nputs(x.show())" with

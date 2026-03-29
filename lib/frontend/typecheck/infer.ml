@@ -2654,58 +2654,44 @@ and infer_infix type_map env left op right =
    If Expressions
    ============================================================ *)
 
-(* Helper: Detect type narrowing pattern: x is int *)
-and detect_is_narrowing (expr : AST.expression) : (string * mono_type) option =
+(* Helper: Detect type narrowing pattern on identifiers and field paths. *)
+and detect_is_narrowing (type_map : type_map) (expr : AST.expression) :
+    (Type_narrowing.path * mono_type * mono_type) option =
   match expr.expr with
-  | AST.TypeCheck (var_expr, type_ann) -> (
-      match var_expr.expr with
-      | AST.Identifier var_name -> (
-          match Annotation.type_expr_to_mono_type type_ann with
-          | Ok narrow_type -> Some (var_name, narrow_type)
-          | Error _ -> None)
-      | _ -> None)
+  | AST.TypeCheck (target_expr, type_ann) -> (
+      match Type_narrowing.path_of_expr target_expr with
+      | None -> None
+      | Some path -> (
+          match (expression_type_or_lookup type_map target_expr, Annotation.type_expr_to_mono_type type_ann) with
+          | Ok current_type, Ok narrow_type -> Some (path, current_type, narrow_type)
+          | _ -> None))
   | _ -> None
 
-(* Helper: Narrow a variable's type in the environment *)
-and narrow_type_in_env (env : type_env) (var_name : string) (narrow_type : mono_type) : type_env =
-  match TypeEnv.find_opt var_name env with
-  | Some (Forall ([], current_type)) -> (
-      (* Check if current type is a union containing the narrow type *)
-      match current_type with
-      | TUnion members when List.mem narrow_type members ->
-          (* Replace var's type with narrowed type *)
-          TypeEnv.add var_name (Forall ([], narrow_type)) env
-      | _ when current_type = narrow_type ->
-          (* Already the right type, no change needed *)
-          env
-      | _ ->
-          (* Not a union or doesn't contain the narrow type - don't narrow *)
-          env)
-  | _ -> env
+and substitute_narrowed_path_in_stmt
+    (path : Type_narrowing.path)
+    (replacement_name : string)
+    (stmt : AST.statement) : AST.statement =
+  Type_narrowing.substitute_path_in_stmt path
+    ~replace:(Type_narrowing.replacement_identifier replacement_name)
+    stmt
 
-(* Helper: Compute complement type (all members except narrow_type) *)
-and compute_complement_type (current_type : mono_type) (narrow_type : mono_type) : mono_type option =
-  match current_type with
-  | TUnion members -> (
-      let remaining = List.filter (fun t -> t <> narrow_type) members in
-      match remaining with
-      | [] -> None (* No members left *)
-      | [ single ] -> Some single (* Single type remains *)
-      | multiple -> Some (TUnion multiple)
-      (* Multiple types remain *))
-  | _ when current_type = narrow_type -> None (* Narrowing to same type, no complement *)
-  | _ -> Some current_type (* Not a union, complement is the whole type *)
+and narrow_identifier_in_env
+    (env : type_env)
+    (var_name : string)
+    (current_type : mono_type)
+    (narrow_type : mono_type) : type_env =
+  match Type_narrowing.compute_narrowed_type current_type narrow_type with
+  | Some narrowed -> TypeEnv.add var_name (Forall ([], narrowed)) env
+  | None -> env
 
-(* Helper: Narrow to complement type in else branch *)
-and narrow_to_complement (env : type_env) (var_name : string) (narrow_type : mono_type) : type_env =
-  match TypeEnv.find_opt var_name env with
-  | Some (Forall ([], current_type)) -> (
-      match compute_complement_type current_type narrow_type with
-      | Some complement -> TypeEnv.add var_name (Forall ([], complement)) env
-      | None ->
-          (* No complement (all cases exhausted), keep current env *)
-          env)
-  | _ -> env
+and narrow_identifier_to_complement
+    (env : type_env)
+    (var_name : string)
+    (current_type : mono_type)
+    (narrow_type : mono_type) : type_env =
+  match Type_narrowing.compute_complement_type current_type narrow_type with
+  | Some complement -> TypeEnv.add var_name (Forall ([], complement)) env
+  | None -> env
 
 and infer_if type_map env condition consequence alternative =
   (* Infer condition type *)
@@ -2724,17 +2710,31 @@ and infer_if type_map env condition consequence alternative =
           let env' = apply_substitution_env subst env in
 
           (* Check if condition is an 'is' narrowing pattern *)
-          let narrowing = detect_is_narrowing condition in
+          let narrowing =
+            detect_is_narrowing type_map condition
+            |> Option.map (fun (path, current_type, narrow_type) ->
+                   (path, apply_substitution subst current_type, apply_substitution subst narrow_type))
+          in
 
           (* Create narrowed environment for consequence branch *)
-          let env_cons =
+          let env_cons, consequence_stmt =
             match narrowing with
-            | Some (var_name, narrow_type) -> narrow_type_in_env env' var_name narrow_type
-            | None -> env'
+            | Some (path, current_type, narrow_type) when Type_narrowing.is_identifier_path path ->
+                (narrow_identifier_in_env env' path.root current_type narrow_type, consequence)
+            | Some (path, current_type, narrow_type) ->
+                let narrowed_type =
+                  match Type_narrowing.compute_narrowed_type current_type narrow_type with
+                  | Some narrowed -> narrowed
+                  | None -> narrow_type
+                in
+                let narrowed_name = Type_narrowing.temp_name path "typed" in
+                ( TypeEnv.add narrowed_name (Forall ([], narrowed_type)) env',
+                  substitute_narrowed_path_in_stmt path narrowed_name consequence )
+            | None -> (env', consequence)
           in
 
           (* Infer consequence type with narrowed environment *)
-          match infer_statement type_map env_cons consequence with
+          match infer_statement type_map env_cons consequence_stmt with
           | Error e -> Error e
           | Ok (subst3, cons_type) -> (
               let subst' = compose_substitution subst subst3 in
@@ -2745,12 +2745,27 @@ and infer_if type_map env condition consequence alternative =
               | Some alt -> (
                   let env'' = apply_substitution_env subst' env' in
                   (* For alternative branch, narrow to complement type *)
-                  let env_alt =
+                  let env_alt, alternative_stmt =
                     match narrowing with
-                    | Some (var_name, narrow_type) -> narrow_to_complement env'' var_name narrow_type
-                    | None -> env''
+                    | Some (path, current_type, narrow_type) when Type_narrowing.is_identifier_path path ->
+                        ( narrow_identifier_to_complement env'' path.root
+                            (apply_substitution subst' current_type)
+                            (apply_substitution subst' narrow_type),
+                          alt )
+                    | Some (path, current_type, narrow_type) -> (
+                        match
+                          Type_narrowing.compute_complement_type
+                            (apply_substitution subst' current_type)
+                            (apply_substitution subst' narrow_type)
+                        with
+                        | Some complement_type ->
+                            let complement_name = Type_narrowing.temp_name path "complement" in
+                            ( TypeEnv.add complement_name (Forall ([], complement_type)) env'',
+                              substitute_narrowed_path_in_stmt path complement_name alt )
+                        | None -> (env'', alt))
+                    | None -> (env'', alt)
                   in
-                  match infer_statement type_map env_alt alt with
+                  match infer_statement type_map env_alt alternative_stmt with
                   | Error e -> Error e
                   | Ok (subst4, alt_type) -> (
                       let subst'' = compose_substitution subst' subst4 in
