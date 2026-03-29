@@ -1072,6 +1072,42 @@ let expression_type_or_lookup (type_map : type_map) (expr : AST.expression) : (m
         (Diagnostic.error_no_span ~code:"type-internal"
            ~message:(Printf.sprintf "Missing inferred type for expression id %d at Dyn coercion site" expr.id))
 
+type behavior_owner_target_kind =
+  | TraitImplTarget
+  | InherentImplTarget
+  | DeriveTarget
+
+let type_expr_head_name (type_expr : AST.type_expr) : string option =
+  match type_expr with
+  | AST.TCon name | AST.TApp (name, _) -> Some name
+  | _ -> None
+
+let alias_behavior_target_name (type_expr : AST.type_expr) : string option =
+  match type_expr_head_name type_expr with
+  | Some name when Annotation.lookup_type_alias name <> None -> Some name
+  | _ -> None
+
+let reject_alias_behavior_target
+    ~(kind : behavior_owner_target_kind)
+    ~(mk_error : code:string -> message:string -> Diagnostic.t)
+    (type_expr : AST.type_expr) : (unit, Diagnostic.t) result =
+  match alias_behavior_target_name type_expr with
+  | None -> Ok ()
+  | Some alias_name ->
+      let message =
+        match kind with
+        | TraitImplTarget ->
+            Printf.sprintf "Trait impl target '%s' cannot be a transparent alias; aliases do not own behavior"
+              alias_name
+        | InherentImplTarget ->
+            Printf.sprintf "Inherent impl target '%s' cannot be a transparent alias; aliases do not own behavior"
+              alias_name
+        | DeriveTarget ->
+            Printf.sprintf "Derive target '%s' cannot be a transparent alias; derives are only allowed on 'type'"
+              alias_name
+      in
+      Error (mk_error ~code:"type-constructor" ~message)
+
 let provisional_function_type
     (generics_opt : AST.generic_param list option)
     (params : (string * AST.type_expr option) list)
@@ -4396,6 +4432,11 @@ and infer_statement type_map env stmt =
           Trait_registry.register_trait trait_def;
           Ok (empty_substitution, TNull))
   | AST.ImplDef { impl_trait_name; impl_type_params; impl_for_type; impl_methods } ->
+      let* () =
+        reject_alias_behavior_target ~kind:TraitImplTarget
+          ~mk_error:(fun ~code ~message -> error_at_stmt ~code ~message stmt)
+          impl_for_type
+      in
       let type_param_names = List.map (fun (p : AST.generic_param) -> p.name) impl_type_params in
       let unique_param_names = List.sort_uniq String.compare type_param_names in
       let impl_origin =
@@ -4680,6 +4721,11 @@ and infer_statement type_map env stmt =
                             Trait_registry.register_impl ~source:impl_source ~origin:impl_origin impl_def;
                             Ok (method_subst, TNull)))))
   | AST.InherentImplDef { inherent_for_type; inherent_methods } -> (
+      let* () =
+        reject_alias_behavior_target ~kind:InherentImplTarget
+          ~mk_error:(fun ~code ~message -> error_at_stmt ~code ~message stmt)
+          inherent_for_type
+      in
       let reject_invalid_override =
         let rec loop = function
           | [] -> Ok ()
@@ -4704,7 +4750,6 @@ and infer_statement type_map env stmt =
             Option.is_some (Annotation.builtin_primitive_type name)
             || Option.is_some (Annotation.builtin_type_constructor_name name)
             || Annotation.lookup_enum_by_source_name name <> None
-            || Annotation.lookup_type_alias name <> None
             || Trait_registry.lookup_trait name <> None
           in
           let rec collect_target_generic_names ~(in_head : bool) (te : AST.type_expr) (acc : StringSet.t) :
@@ -5047,6 +5092,11 @@ and infer_statement type_map env stmt =
                   current_inherent_impl_methods := prev_inherent_impl_methods;
                   result)))
   | AST.DeriveDef { derive_traits; derive_for_type } -> (
+      let* () =
+        reject_alias_behavior_target ~kind:DeriveTarget
+          ~mk_error:(fun ~code ~message -> error_at_stmt ~code ~message stmt)
+          derive_for_type
+      in
       (* Auto-generate implementations for derived traits *)
       match Annotation.type_expr_to_mono_type derive_for_type with
       | Error e -> Error e
@@ -5736,7 +5786,9 @@ let infer_program ?(env = empty_env) ?state (program : AST.program) :
                     List.iter
                       (fun (stmt : AST.statement) ->
                         match stmt.stmt with
-                        | AST.ImplDef impl_def when impl_def.impl_type_params = [] -> (
+                        | AST.ImplDef impl_def
+                          when impl_def.impl_type_params = []
+                               && alias_behavior_target_name impl_def.impl_for_type = None -> (
                             match Annotation.type_expr_to_mono_type impl_def.impl_for_type with
                             | Ok for_type ->
                                 Trait_registry.predeclare_impl_header

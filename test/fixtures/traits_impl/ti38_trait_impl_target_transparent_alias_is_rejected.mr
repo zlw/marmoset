@@ -1,0 +1,12 @@
+# TI38: Trait impl target cannot be a transparent alias
+alias Point = { x: Int, y: Int }
+
+trait Show[a] = {
+  fn show(x: a) -> Str
+}
+
+impl Show[Point] = {  # error: transparent alias
+  fn show(p: Point) -> Str = "point"
+}
+
+puts(1)

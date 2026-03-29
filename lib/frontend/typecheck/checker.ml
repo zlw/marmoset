@@ -836,6 +836,47 @@ let%test "generic type alias for record typechecks" =
   | Ok { result_type = TInt; _ } -> true
   | _ -> false
 
+let%test "type alias cannot own trait impl behavior" =
+  Infer.reset_fresh_counter ();
+  let code =
+    {|
+      alias Point = { x: Int, y: Int }
+      trait Show[a] = {
+        fn show(x: a) -> Str
+      }
+      impl Show[Point] = {
+        fn show(p: Point) -> Str = "point"
+      }
+    |}
+  in
+  match check code with
+  | Ok _ -> false
+  | Error diags ->
+      List.exists
+        (fun (diag : Diagnostic.t) ->
+          diag.code = "type-constructor"
+          && String_utils.contains_substring ~needle:"transparent alias" diag.message)
+        diags
+
+let%test "type alias cannot own inherent impl behavior" =
+  Infer.reset_fresh_counter ();
+  let code =
+    {|
+      alias Point = { x: Int, y: Int }
+      impl Point = {
+        fn sum(p: Point) -> Int = p.x + p.y
+      }
+    |}
+  in
+  match check code with
+  | Ok _ -> false
+  | Error diags ->
+      List.exists
+        (fun (diag : Diagnostic.t) ->
+          diag.code = "type-constructor"
+          && String_utils.contains_substring ~needle:"transparent alias" diag.message)
+        diags
+
 let%test "explicit row-polymorphic annotation is rejected in v1" =
   Infer.reset_fresh_counter ();
   let code = "fn get_x(r: { x: Int, ...row }) -> Int = r.x" in
