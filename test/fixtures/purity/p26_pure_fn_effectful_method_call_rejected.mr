@@ -1,0 +1,15 @@
+# P26: Pure fn with effectful method call is rejected
+type Logger = { prefix: Str }
+
+impl Logger = {
+  fn log(l: Logger, msg: Str) => Str = {
+    puts(msg)
+    msg
+  }
+}
+
+fn bad(l: Logger) -> Str = {  # error: effectful
+  l.log("x")
+}
+
+bad(Logger(prefix: "p"))

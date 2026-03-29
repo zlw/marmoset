@@ -161,6 +161,7 @@ let create_inference_state () : inference_state =
 let active_inference_state : inference_state ref = ref (create_inference_state ())
 let global_method_resolution_store : (int, method_resolution) Hashtbl.t = Hashtbl.create 256
 let global_method_type_args_store : (int, mono_type list) Hashtbl.t = Hashtbl.create 64
+let global_effectful_method_call_store : (int, bool) Hashtbl.t = Hashtbl.create 128
 
 let global_trait_object_coercion_store : (int, Resolution_artifacts.trait_object_coercion) Hashtbl.t =
   Hashtbl.create 64
@@ -355,6 +356,7 @@ let global_method_def_store : (int, Resolution_artifacts.typed_method_def) Hasht
 let clear_method_resolution_store () : unit =
   Hashtbl.clear global_method_resolution_store;
   Hashtbl.clear global_method_type_args_store;
+  Hashtbl.clear global_effectful_method_call_store;
   Hashtbl.clear global_trait_object_coercion_store;
   Hashtbl.clear global_placeholder_rewrite_store;
   Hashtbl.clear global_method_def_store;
@@ -400,6 +402,14 @@ let record_method_resolution (expr : AST.expression) (resolution : method_resolu
 
 let lookup_method_resolution (expr_id : int) : method_resolution option =
   Hashtbl.find_opt global_method_resolution_store expr_id
+
+let record_effectful_method_call (expr : AST.expression) (is_effectful : bool) : unit =
+  Hashtbl.replace global_effectful_method_call_store expr.id is_effectful
+
+let lookup_effectful_method_call (expr_id : int) : bool =
+  match Hashtbl.find_opt global_effectful_method_call_store expr_id with
+  | Some is_effectful -> is_effectful
+  | None -> false
 
 let snapshot_method_resolution_store () : (int, method_resolution) Hashtbl.t =
   Hashtbl.copy global_method_resolution_store
@@ -2055,6 +2065,8 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                                     apply_substitution final_subst instantiated_method.method_return_type
                                   in
                                   record_method_resolution expr resolution;
+                                  record_effectful_method_call expr
+                                    (resolved_method.method_effect = `Effectful);
                                   (* Phase 6.4: Record resolved method-level type args for emitter *)
                                   let resolved_method_type_args =
                                     List.map
@@ -2155,8 +2167,12 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                               in
                               match infer_expression type_map env_field args_expr with
                               | Ok (subst_field_call, field_call_type) ->
-                                  ignore (apply_substitution subst_field_call field_callee_type);
+                                  let field_callee_type' =
+                                    apply_substitution subst_field_call field_callee_type
+                                  in
                                   record_method_resolution expr FieldFunctionCall;
+                                  record_effectful_method_call expr
+                                    (type_may_be_effectful_callable field_callee_type');
                                   Ok (compose_substitution subst_field_call subst_field, field_call_type)
                               | Error _ ->
                                   Error
@@ -2480,6 +2496,7 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                     | Ok final_subst ->
                         let return_type = apply_substitution final_subst method_sig.method_return_type in
                         record_method_resolution expr QualifiedInherentMethod;
+                        record_effectful_method_call expr (method_sig.method_effect = `Effectful);
                         Ok (final_subst, return_type)))
         in
         match receiver.expr with
@@ -2810,7 +2827,9 @@ and expr_has_effectful_call (type_map : type_map) (expr : AST.expression) : bool
       || expr_has_effectful_call type_map func
       || List.exists (expr_has_effectful_call type_map) args
   | AST.MethodCall { mc_receiver; mc_args; _ } ->
-      expr_has_effectful_call type_map mc_receiver || List.exists (expr_has_effectful_call type_map) mc_args
+      lookup_effectful_method_call expr.id
+      || expr_has_effectful_call type_map mc_receiver
+      || List.exists (expr_has_effectful_call type_map) mc_args
   | AST.If (cond, then_branch, else_branch) -> (
       expr_has_effectful_call type_map cond
       || body_has_effectful_call type_map then_branch
@@ -7036,6 +7055,14 @@ f" in
 
   let%test "pure function calling effectful in if branch is error" =
     let code = "fn eff(x: Int) => Int = x\nfn pure(y: Int) -> Int = if (true) { eff(y) } else { 0 }\npure" in
+    match infer_string code with
+    | Error diag -> is_code diag "type-purity"
+    | _ -> false
+
+  let%test "pure function calling effectful method is error" =
+    let code =
+      "type Logger = { prefix: Str }\nimpl Logger = {\n  fn log(l: Logger, msg: Str) => Str = { msg }\n}\nfn bad(l: Logger) -> Str = l.log(\"x\")\nbad"
+    in
     match infer_string code with
     | Error diag -> is_code diag "type-purity"
     | _ -> false
