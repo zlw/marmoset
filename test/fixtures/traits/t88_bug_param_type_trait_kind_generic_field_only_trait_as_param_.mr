@@ -1,6 +1,6 @@
-# T88: BUG-PARAM-TYPE-TRAIT-KIND: generic field-only trait param uses shorthand constraint
+# T88: Legacy generic field-style trait syntax is rejected before shorthand-constraint checking
 trait Container[a] = {
-  value: a
+  value: a  # error: Trait bodies are method-only; move structural fields to a shape declaration
 }
 fn f(x: Container) -> Int = x.value
 puts(f({ value: 42 }))  # output: 42

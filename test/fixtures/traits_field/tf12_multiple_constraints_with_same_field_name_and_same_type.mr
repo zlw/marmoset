@@ -1,8 +1,8 @@
-# TF12: Multiple constraints with same field name and same type
-trait TagA = {
+# TF12: Multiple shape constraints with same field name and same type
+shape TagA = {
   label: Str
 }
-trait TagB = {
+shape TagB = {
   label: Str
 }
 fn get_label[t: TagA & TagB](v: t) -> Str = v.label

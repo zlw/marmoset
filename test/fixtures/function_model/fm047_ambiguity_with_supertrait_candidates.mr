@@ -17,6 +17,7 @@ impl Ext[Thing] = {
   fn name(x: Thing) -> Str = { "ext" }
 }
 
-let t: Thing = { v: 1 }
+let t = Thing(v: 1)
+
 # base.name and ext.name both provide `name` → ambiguity
 t.name()  # error: Ambiguous

@@ -43,9 +43,11 @@ module.exports = grammar({
         $.let_statement,
         $.return_statement,
         $.enum_definition,
+        $.type_definition,
+        $.alias_definition,
+        $.shape_definition,
         $.trait_definition,
         $.impl_block,
-        $.type_alias,
         $.expression_statement,
       ),
 
@@ -110,7 +112,7 @@ module.exports = grammar({
         optional(seq(":", field("supertraits", $.supertrait_list))),
         "=",
         "{",
-        repeat(choice($.trait_method_signature, $.trait_field)),
+        repeat($.trait_method_signature),
         "}",
       ),
 
@@ -135,7 +137,18 @@ module.exports = grammar({
         field("type", $._type),
       ),
 
-    trait_field: ($) =>
+    shape_definition: ($) =>
+      seq(
+        "shape",
+        field("name", $.identifier),
+        optional(field("type_params", $.type_parameter_list)),
+        "=",
+        "{",
+        repeat($.shape_field),
+        "}",
+      ),
+
+    shape_field: ($) =>
       seq(field("name", $.identifier), ":", field("type", $._type), optional(",")),
 
     supertrait_list: ($) => seq($.identifier, repeat(seq("&", $.identifier))),
@@ -177,7 +190,7 @@ module.exports = grammar({
         commaSep1(field("trait", $.identifier)),
       )),
 
-    type_alias: ($) =>
+    type_definition: ($) =>
       prec.right(seq(
         "type",
         field("name", $.identifier),
@@ -186,6 +199,15 @@ module.exports = grammar({
         field("type", $._type),
         optional(field("derive", $.derive_clause)),
       )),
+
+    alias_definition: ($) =>
+      seq(
+        "alias",
+        field("name", $.identifier),
+        optional(field("type_params", $.type_parameter_list)),
+        "=",
+        field("type", $._type),
+      ),
 
     // ── Types ───────────────────────────────────────────────────
 
@@ -419,13 +441,26 @@ module.exports = grammar({
         optional(seq(":", field("type", $._type))),
       ),
 
+    constructor_argument_entry: ($) =>
+      choice(
+        seq(field("key", $.identifier), ":", field("value", $._expression)),
+        $.spread_entry,
+      ),
+
+    constructor_argument_list: ($) =>
+      seq(
+        choice($.constructor_argument_entry),
+        repeat(seq(",", $.constructor_argument_entry)),
+        optional(","),
+      ),
+
     call_expression: ($) =>
       prec(
         PREC.CALL,
         seq(
           field("function", $._expression),
           token.immediate("("),
-          commaSep($._expression),
+          optional(choice($.constructor_argument_list, commaSep($._expression))),
           ")",
         ),
       ),

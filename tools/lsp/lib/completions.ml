@@ -15,11 +15,13 @@ let keywords =
     ("match", "Pattern matching");
     ("case", "Match arm");
     ("enum", "Algebraic data type");
+    ("type", "Named type definition");
+    ("alias", "Transparent type alias");
+    ("shape", "Structural shape definition");
     ("trait", "Trait (interface) definition");
     ("impl", "Trait implementation");
     ("derive", "Automatic trait derivation");
     ("override", "Trait default replacement");
-    ("type", "Type alias");
     ("true", "Boolean literal");
     ("false", "Boolean literal");
     ("is", "Type check operator");
@@ -30,7 +32,7 @@ let kind_of_type (mono : Types.mono_type) : Lsp_t.CompletionItemKind.t =
   match mono with
   | Types.TFun _ -> Lsp_t.CompletionItemKind.Function
   | Types.TEnum _ -> Lsp_t.CompletionItemKind.Enum
-  | Types.TRecord _ -> Lsp_t.CompletionItemKind.Struct
+  | Types.TNamed _ | Types.TRecord _ -> Lsp_t.CompletionItemKind.Struct
   | _ -> Lsp_t.CompletionItemKind.Variable
 
 (* Format a poly_type for completion detail in Marmoset syntax.

@@ -1,8 +1,8 @@
 # T80: If branches with extra fields and trait return
 trait Named = {
-  name: Str
+  name: Str  # error: Trait bodies are method-only; move structural fields to a shape declaration
 }
-fn describe(age: Int) -> Named = {  # error: cannot be used as a type in vNext
+fn describe(age: Int) -> Named = {
   if (age < 30) {
     { name: "young", category: "a" }
   } else {

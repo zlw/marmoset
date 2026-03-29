@@ -1,5 +1,5 @@
-# XF39: H46: Mixed constraint fails when method trait not implemented
-trait Named = {
+# XF39: H46: Mixed shape+trait constraint fails when method trait is missing
+shape Named = {
   name: Str
 }
 trait Shown[a] = {

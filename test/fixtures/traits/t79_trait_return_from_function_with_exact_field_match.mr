@@ -1,7 +1,7 @@
 # T79: Trait return from function with exact field match
 trait Named = {
-  name: Str
+  name: Str  # error: Trait bodies are method-only; move structural fields to a shape declaration
 }
-fn mk() -> Named = { name: "alice" }  # error: cannot be used as a type in vNext
+fn mk() -> Named = { name: "alice" }
 let x = mk()
 puts(x.name)  # output: alice

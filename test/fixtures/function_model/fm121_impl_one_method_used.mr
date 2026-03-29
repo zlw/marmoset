@@ -6,6 +6,7 @@ impl Big = {
   fn last(b: Big) -> Int = { b.c }
 }
 
-let x: Big = { a: 1, b: 2, c: 3 }
+let x = Big(a: 1, b: 2, c: 3)
+
 # only use one method
 puts(x.total())  # output: 6

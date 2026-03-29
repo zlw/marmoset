@@ -1,8 +1,8 @@
-# T25: Field-only trait conflicting supertrait fields are rejected
+# T25: Legacy field-style supertrait syntax is rejected before conflict checking
 trait HasInt = {
-  x: Int
+  x: Int  # error: Trait bodies are method-only; move structural fields to a shape declaration
 }
 trait HasString = {
   x: Str
 }
-trait Bad: HasInt & HasString = {}  # error: conflicting types across supertraits
+trait Bad: HasInt & HasString = {}

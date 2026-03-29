@@ -34,12 +34,30 @@ module AST = struct
   }
   [@@deriving show]
 
+  and named_type_body =
+    | NamedTypeProduct of record_type_field list
+    | NamedTypeWrapper of type_expr
+  [@@deriving show]
+
+  and named_type_def = {
+    type_name : string;
+    type_type_params : string list;
+    type_body : named_type_body;
+  }
+  [@@deriving show]
+
+  and shape_def = {
+    shape_name : string;
+    shape_type_params : string list;
+    shape_fields : record_type_field list;
+  }
+  [@@deriving show]
+
   (* Phase 4.3: Trait definitions *)
   and trait_def = {
     name : string;
     type_param : string option; (* The 'a' in trait Show[a], or None for non-generic traits *)
     supertraits : string list; (* trait Ord[a]: Eq & Hash *)
-    fields : record_type_field list; (* field-only/mixed trait members *)
     methods : method_sig list;
   }
 
@@ -116,11 +134,13 @@ module AST = struct
         type_params : string list;
         variants : variant_def list;
       }
+    | TypeDef of named_type_def
+    | ShapeDef of shape_def
     | TraitDef of trait_def (* Phase 4.3: trait Show[a] = { ... } *)
     | ImplDef of impl_def (* Phase 4.3: impl Show[Int] = { ... } *)
     | InherentImplDef of inherent_impl_def (* Phase 4.5: impl Point = { ... } *)
     | DeriveDef of derive_def (* canonical internal derive form *)
-    | TypeAlias of type_alias_def (* Phase 4.4: type Point = { x: Int, y: Int } *)
+    | TypeAlias of type_alias_def (* transparent alias declaration *)
   [@@deriving show]
 
   (* Phase 4.4: Type alias definition *)
@@ -311,6 +331,27 @@ module AST = struct
               "[" ^ String.concat ", " type_params ^ "]"
           in
           Printf.sprintf "enum %s%s { ... }" name params_str
+      | TypeDef { type_name; type_type_params; type_body } ->
+          let params_str =
+            if type_type_params = [] then
+              ""
+            else
+              "[" ^ String.concat ", " type_type_params ^ "]"
+          in
+          let body_str =
+            match type_body with
+            | NamedTypeProduct _ -> "{ ... }"
+            | NamedTypeWrapper inner -> show_type_expr inner
+          in
+          Printf.sprintf "type %s%s = %s" type_name params_str body_str
+      | ShapeDef { shape_name; shape_type_params; _ } ->
+          let params_str =
+            if shape_type_params = [] then
+              ""
+            else
+              "[" ^ String.concat ", " shape_type_params ^ "]"
+          in
+          Printf.sprintf "shape %s%s = { ... }" shape_name params_str
       | TraitDef { name; type_param; _ } ->
           let params =
             match type_param with
@@ -332,7 +373,7 @@ module AST = struct
             else
               "[" ^ String.concat ", " alias_type_params ^ "]"
           in
-          Printf.sprintf "type %s%s = %s" alias_name params_str (show_type_expr alias_body)
+          Printf.sprintf "alias %s%s = %s" alias_name params_str (show_type_expr alias_body)
     and expression_to_string (e : expression) : string =
       match e.expr with
       | Identifier ident -> ident

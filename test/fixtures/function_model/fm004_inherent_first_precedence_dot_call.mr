@@ -14,5 +14,6 @@ impl Widget = {
   }
 }
 
-let w: Widget = { v: 42 }
+let w = Widget(v: 42)
+
 puts(w.info())  # output: inherent:42

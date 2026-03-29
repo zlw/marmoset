@@ -1,6 +1,6 @@
 # T43: Generic impl constraints are enforced at use sites
 trait Named = {
-  name: Str
+  name: Str  # error: Trait bodies are method-only; move structural fields to a shape declaration
 }
 trait Show[a] = {
   fn show(x: a) -> Str
@@ -8,4 +8,4 @@ trait Show[a] = {
 impl[b: Named] Show[List[b]] = {
   fn show(x: List[b]) -> Str = "ok"
 }
-puts([1, 2].show())  # error: does not satisfy trait
+puts([1, 2].show())

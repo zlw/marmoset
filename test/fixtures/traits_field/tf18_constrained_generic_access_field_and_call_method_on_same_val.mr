@@ -1,6 +1,6 @@
-# TF18: Constrained generic: access field and call method on same value
+# TF18: Constrained generic: access shape field and call trait method on same value
 type Person = { name: Str, age: Int }
-trait Named = {
+shape Named = {
   name: Str
 }
 trait Shown[a] = {
@@ -10,5 +10,5 @@ impl Shown[Person] = {
   fn show(x: Person) -> Str = "shown"
 }
 fn describe[t: Named & Shown](v: t) -> Str = v.name + ": " + v.show()
-let p: Person = { name: "alice", age: 30 }
+let p = Person(name: "alice", age: 30)
 puts(describe(p))  # output: alice: shown

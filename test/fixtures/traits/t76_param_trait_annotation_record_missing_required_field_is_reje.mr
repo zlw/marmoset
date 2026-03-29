@@ -1,6 +1,6 @@
 # T76: Param trait annotation: record missing required field is rejected
-trait Named = {  # error: *
-  name: Str
+trait Named = {
+  name: Str  # error: Trait bodies are method-only; move structural fields to a shape declaration
 }
 fn greet(x: Named) -> Str = x.name
 puts(greet({ age: 30 }))

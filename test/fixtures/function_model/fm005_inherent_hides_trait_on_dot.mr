@@ -14,6 +14,7 @@ impl Counter = {
   }
 }
 
-let c: Counter = { n: 5 }
+let c = Counter(n: 5)
+
 # inherent wins on dot call
 puts(c.render())  # output: counter:5

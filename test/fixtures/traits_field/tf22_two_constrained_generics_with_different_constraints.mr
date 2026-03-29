@@ -1,8 +1,8 @@
-# TF22: Two constrained generics with different constraints
-trait HasName = {
+# TF22: Two constrained generics with different shape constraints
+shape HasName = {
   name: Str
 }
-trait HasAge = {
+shape HasAge = {
   age: Int
 }
 fn combine[a: HasName, b: HasAge](x: a, y: b) -> Str = x.name + y.age.show()

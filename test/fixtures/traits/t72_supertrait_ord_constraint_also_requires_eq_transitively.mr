@@ -1,12 +1,12 @@
 # T72: Supertrait: Ord constraint also requires Eq transitively
-trait Eq[a] = {  # error: supertrait
+trait Eq[a] = {
   fn eq(x: a, y: a) -> Bool
 }
 trait Ord[a]: Eq = {
   fn compare(x: a, y: a) -> Int
 }
 type Point = { x: Int }
-impl Ord[Point] = {
+impl Ord[Point] = {  # error: missing required supertrait 'eq'
   fn compare(x: Point, y: Point) -> Int = 0
 }
 fn compare_self[a: Ord](x: a) -> Int = x.compare(x)

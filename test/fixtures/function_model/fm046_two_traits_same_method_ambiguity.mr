@@ -16,5 +16,6 @@ impl Beta[Item] = {
   fn tag(x: Item) -> Str = { "b" }
 }
 
-let i: Item = { v: 1 }
+let i = Item(v: 1)
+
 i.tag()  # error: Ambiguous

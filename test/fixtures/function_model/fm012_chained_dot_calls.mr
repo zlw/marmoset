@@ -6,5 +6,6 @@ impl Wrapper = {
   }
 }
 
-let w: Wrapper = { v: 99 }
+let w = Wrapper(v: 99)
+
 puts(w.get().show())  # output: 99

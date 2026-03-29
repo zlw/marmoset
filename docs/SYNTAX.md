@@ -45,9 +45,11 @@ It does not fully define:
 ```ebnf
 Program        ::= { Decl }
 
-Decl           ::= TypeDecl | EnumDecl | TraitDecl | ImplDecl | FnDecl | LetDecl
+Decl           ::= TypeDecl | AliasDecl | ShapeDecl | EnumDecl | TraitDecl | ImplDecl | FnDecl | LetDecl
 
-TypeDecl       ::= "type" TypeName [TypeParams] "=" (RecordType | TypeExpr) [DeriveClause]
+TypeDecl       ::= "type" TypeName [TypeParams] "=" TypeExpr [DeriveClause]
+AliasDecl      ::= "alias" TypeName [TypeParams] "=" TypeExpr
+ShapeDecl      ::= "shape" TypeName [TypeParams] "=" "{" {RecordTypeField} "}"
 EnumDecl       ::= "enum" TypeName [TypeParams] "=" "{" [EnumVariants] "}" [DeriveClause]
 TraitDecl      ::= "trait" TraitName "[" TypeParam "]" [":" ConstraintExpr] "=" "{" {TraitMember} "}"
 ImplDecl       ::= "impl" [GenericParams] (TraitName "[" TypeExpr "]" | TypeExpr) "=" "{" {ImplMember} "}"
@@ -62,8 +64,8 @@ GenericParam   ::= LowerIdent [":" ConstraintExpr]
 DeriveClause   ::= "derive" TraitName {"," TraitName}
 FnSigSuffix    ::= PurityArrow TypeExpr
 
-ConstraintExpr ::= TraitRef {"&" TraitRef}
-TraitRef       ::= TraitName
+ConstraintExpr ::= ConstraintRef {"&" ConstraintRef}
+ConstraintRef  ::= TraitName | TypeName
 
 PurityArrow    ::= "->" | "=>"
 ExprOrBlock    ::= Expr | Block
@@ -75,6 +77,9 @@ ExprOrBlock    ::= Expr | Block
   - Pure: `(a, b) -> c`
   - Effectful: `(a, b) => c`
 - Top-level `fn` declarations and impl methods may omit the purity/return suffix. When omitted, the compiler infers both from the body.
+- `alias` is transparent and behaviorless.
+- `type` is nominal and requires explicit construction for products and wrappers.
+- `shape` introduces structural field constraints.
 - Union types use `|`: `Int | Str`.
 - Intersection types use `&`: `A & B`.
 - `&` binds tighter than `|` in type expressions.
@@ -86,8 +91,9 @@ ExprOrBlock    ::= Expr | Block
 
 Examples:
 ```mr
-type UserId = Int
-type Reducer[a] = (a, a) -> a
+alias UserId = Int
+alias Reducer[a] = (a, a) -> a
+shape Named = { name: Str }
 
 enum Result[a, e] = {
   Success(a),
@@ -97,8 +103,9 @@ enum Result[a, e] = {
 
 ## 5. Traits, Constraints, And Impl
 ### 5.1 Trait Declarations
-- Trait constraints compose with `&`: `trait Named[a]: Show & Eq = { ... }`.
-- Trait fields are data requirements and are comma-separated.
+- Trait constraints compose with `&`: `trait Greeter[a]: Show & Named = { ... }`.
+- Trait bodies are method-only.
+- Structural field requirements belong in `shape` declarations.
 - Required methods have signatures only.
 - Default methods include a body.
 - In signature-only trait methods, positional typed params are allowed (for example `fn eq(a, a) -> Bool`).
@@ -123,12 +130,12 @@ enum Result[a, e] = {
 - User-trait derive v1 is default-backed only:
   - every trait method must have a default body after type substitution,
   - traits with any required method are not derivable in this version unless they are one of the builtin derivable traits above,
-  - field-only traits are not derivable.
+  - shapes are not derivable.
 - Supertraits are not auto-derived implicitly from trait definitions alone. A derive request succeeds only if every supertrait is already implemented for the target type or appears in the same derive clause.
 - Derive failure cases are deterministic:
   - undefined trait,
   - trait not derivable,
-  - field-only trait derive is redundant/unsupported,
+  - shape derive is redundant/unsupported,
   - missing supertrait implementation or derive closure,
   - required method without default body,
   - duplicate explicit or duplicate derived impl,
@@ -137,16 +144,18 @@ enum Result[a, e] = {
 ## 7. Function Parameters And Constraint Shorthand
 ### 7.1 Explicit Generic Constraint
 ```mr
-fn display_name[a: Named](x: a) -> Str = x.full_name()
+shape Named = { name: Str }
+
+fn display_name[a: Named](x: a) -> Str = x.name
 ```
 
 ### 7.2 Constrained-Param Shorthand
 ```mr
-fn display_name2(x: Named) -> Str = x.full_name()
+fn display_name2(x: Named) -> Str = x.name
 ```
 desugars to:
 ```mr
-fn display_name2[t0: Named](x: t0) -> Str = x.full_name()
+fn display_name2[t0: Named](x: t0) -> Str = x.name
 ```
 
 ### 7.3 Multiple Shorthand Params Are Independent
@@ -163,11 +172,10 @@ fn always_true[t0: Eq, t1: Eq](x: t0, y: t1) -> Bool = true
 fn same_eq[t: Eq](x: t, y: t) -> Bool = x.eq(y)
 ```
 
-### 7.5 Bare Trait Names
-- In function parameter position, bare trait names are constrained-param shorthand.
-- Bare trait names are not general type expressions in vNext.
-- The previous field-only trait-as-type feature is not part of vNext.
-- Use `Dyn[...]` for trait-object types. Bare trait names never mean trait-object types.
+### 7.5 Bare Constraint Names
+- In function parameter position, bare trait or shape names are constrained-param shorthand.
+- Bare constraint names are not general type expressions in vNext.
+- Use `Dyn[...]` for trait-object types. Bare constraint names never mean trait-object types.
 
 ### 7.6 Explicit Trait Objects
 ```mr
@@ -176,13 +184,13 @@ let items: List[Dyn[Show]] = [42, "hello", true]
 ```
 
 - `Dyn[ConstraintExpr]` is the explicit trait-object type form.
-- `Dyn[...]` accepts method-only and mixed traits. Field-only traits are rejected inside `Dyn[...]`.
+- `Dyn[...]` accepts trait constraints only. Shapes are rejected inside `Dyn[...]`.
 - Concrete values coerce to `Dyn[...]` only at type-directed sites:
   - assignment,
   - argument passing,
   - return position.
 - Method dispatch on `Dyn[...]` values is dynamic and requires no manual wrapping or unwrapping.
-- `Dyn[...]` does not replace structural field projection; field-only traits remain compile-time structural constraints outside trait objects.
+- `Dyn[...]` does not replace structural field projection; shapes remain compile-time structural constraints outside trait objects.
 
 ## 8. Expressions And Blocks
 - Blocks are braced: `{ ... }`.
@@ -257,8 +265,8 @@ Restrictions:
 
 ## 12. Canonical Example (Condensed)
 ```mr
-type UserId = Int
-type Reducer[a] = (a, a) -> a
+alias UserId = Int
+alias Reducer[a] = (a, a) -> a
 
 enum Role = {
   User,
@@ -274,8 +282,11 @@ trait Eq[a] = {
   fn eq(a, a) -> Bool
 }
 
-trait Named[a]: Eq = {
+shape Named = {
   name: Str,
+}
+
+trait Account[a]: Eq & Named = {
   fn id(a) -> UserId
   fn full_name(self: a) -> Str = self.name
 }
@@ -286,12 +297,12 @@ type User = {
   admin: Bool,
 } derive Eq
 
-impl Named[User] = {
+impl Account[User] = {
   fn id(self: User) -> UserId = self.id
   override fn full_name(self: User) -> Str = self.name
 }
 
-fn label_user(x: Named) -> Str = x.full_name()
+fn label_user(x: Account) -> Str = x.full_name()
 
 fn role_to_string(r: Role) -> Str = match r {
   case Role.User: "user"
@@ -326,6 +337,8 @@ Lexical token classes from 13.1 appear as terminals in the EBNF below.
 Program              ::= { TopDecl }
 
 TopDecl              ::= TypeDecl
+                       | AliasDecl
+                       | ShapeDecl
                        | EnumDecl
                        | TraitDecl
                        | ImplDecl
@@ -333,16 +346,16 @@ TopDecl              ::= TypeDecl
                        | LetDecl
                        | ExprStmt
 
-TypeDecl             ::= "type" TypeName [TypeParams] "=" TypeDeclRhs [DeriveClause]
-TypeDeclRhs          ::= RecordType | TypeExpr
+TypeDecl             ::= "type" TypeName [TypeParams] "=" TypeExpr [DeriveClause]
+AliasDecl            ::= "alias" TypeName [TypeParams] "=" TypeExpr
+ShapeDecl            ::= "shape" TypeName [TypeParams] "=" "{" [RecordTypeFieldList] "}"
 
 EnumDecl             ::= "enum" TypeName [TypeParams] "=" "{" [EnumVariantList] "}" [DeriveClause]
 EnumVariantList      ::= EnumVariant { "," EnumVariant } [","]
 EnumVariant          ::= CtorName [ "(" [TypeExprList] ")" ]
 
 TraitDecl            ::= "trait" TraitName "[" TypeParam "]" [":" ConstraintExpr] "=" "{" { TraitMember } "}"
-TraitMember          ::= TraitField | TraitReqMethod | TraitDefaultMethod
-TraitField           ::= Ident ":" TypeExpr ","
+TraitMember          ::= TraitReqMethod | TraitDefaultMethod
 TraitReqMethod       ::= "fn" Ident "(" [TraitSigParamList] ")" PurityArrow TypeExpr
 TraitDefaultMethod   ::= "fn" Ident "(" [FnParamList] ")" PurityArrow TypeExpr "=" ExprOrBlock
 
@@ -390,8 +403,8 @@ TypePrimary          ::= TypeName
                        | "(" [TypeExprList] ")" PurityArrow TypeExpr
                        | "(" TypeExpr ")"
 
-ConstraintExpr       ::= TraitRef { "&" TraitRef }
-TraitRef             ::= TraitName
+ConstraintExpr       ::= ConstraintRef { "&" ConstraintRef }
+ConstraintRef        ::= TraitName | TypeName
 
 Block                ::= "{" { Stmt } [Expr] "}"
 Stmt                 ::= LetDecl
@@ -557,7 +570,7 @@ Errors:
 - Built-in `derive` synthesizes builtin trait behavior per project policy.
 - User-trait derive v1 is default-backed only:
   - every trait method must have a default body after substitution,
-  - field-only traits are rejected,
+  - shapes are rejected,
   - duplicate explicit/derived impls are rejected,
   - supertraits must already be implemented for the target type or appear in the same derive clause,
   - derive planning is graph-driven rather than source-order-sensitive.
@@ -565,9 +578,9 @@ Errors:
 ### 13.10 Trait-Object Validation Rules
 - `Dyn[ConstraintExpr]` is the explicit trait-object type form.
 - The enclosed `ConstraintExpr` uses the same trait-bound grammar as generic constraints.
-- Every trait inside `Dyn[...]` must be `MethodOnly` or `Mixed`.
-- `Dyn[FieldOnlyTrait]` is an error.
-- `Dyn[Show & FieldOnlyTrait]` is also an error.
+- Every member inside `Dyn[...]` must be a trait.
+- `Dyn[Named]` where `Named` is a shape is an error.
+- `Dyn[Show & Named]` is also an error.
 - Coercion from a concrete value to `Dyn[...]` happens only at type-directed sites:
   - assignment,
   - argument passing,

@@ -1,6 +1,6 @@
-# T11: Field-only trait constraint accepts matching record shape
+# T11: Legacy field-style trait syntax is rejected; use a shape constraint
 trait Named = {
-  name: Str
+  name: Str  # error: Trait bodies are method-only; move structural fields to a shape declaration
 }
 fn get_name[t: Named](x: t) -> Str = x.name
 let person = { name: "alice", age: 42 }

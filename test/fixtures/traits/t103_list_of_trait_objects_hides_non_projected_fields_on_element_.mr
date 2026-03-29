@@ -1,7 +1,7 @@
 # T103: List of trait objects hides non-projected fields on element access
 trait Named = {
-  name: Str
+  name: Str  # error: Trait bodies are method-only; move structural fields to a shape declaration
 }
-let a: Named = { name: "alice", role: "admin" }  # error: cannot be used as a type in vNext
+let a: Named = { name: "alice", role: "admin" }
 let xs: List[Named] = [a]
 puts(xs[0].role)

@@ -11,5 +11,6 @@ impl Box = {
 }
 
 # Int doesn't implement Special → error
-let b: Box = { v: 1 }
+let b = Box(v: 1)
+
 b.needs_special((n: Int) -> n)  # error: *

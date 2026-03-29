@@ -10,5 +10,6 @@ impl Greet[Person] = {
   fn name(x: Person) -> Str = x.name
 }
 
-let p: Person = { name: "alice" }
+let p = Person(name: "alice")
+
 puts(p.greet())  # output: hi alice

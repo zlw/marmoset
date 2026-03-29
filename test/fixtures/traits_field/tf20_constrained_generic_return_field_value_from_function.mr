@@ -1,5 +1,5 @@
-# TF20: Constrained generic: return field value from function
-trait HasValue = {
+# TF20: Constrained generic: return shape field value from function
+shape HasValue = {
   value: Str
 }
 fn extract[t: HasValue](v: t) -> Str = v.value

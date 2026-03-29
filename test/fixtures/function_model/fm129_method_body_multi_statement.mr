@@ -8,5 +8,6 @@ impl Acc = {
   }
 }
 
-let a: Acc = { total: 10 }
+let a = Acc(total: 10)
+
 puts(a.add_and_show(5))  # output: total:15

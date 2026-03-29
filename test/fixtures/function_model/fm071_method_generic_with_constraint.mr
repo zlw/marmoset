@@ -6,5 +6,6 @@ impl Container = {
   }
 }
 
-let c: Container = { v: 7 }
+let c = Container(v: 7)
+
 puts(c.show_as((n: Int) -> n + 1))  # output: 8

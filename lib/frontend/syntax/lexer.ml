@@ -278,6 +278,18 @@ let%test "test_lexer" =
   let actual = lex input in
   List.length actual = List.length expected && List.for_all2 Token.equal_ignoring_pos actual expected
 
+let%test "alias and shape lex as dedicated keywords" =
+  match lex "alias Name = Int\nshape HasName = { name: Str }\n" with
+  | { token_type = Alias; _ }
+    :: { token_type = Ident; literal = "Name"; _ }
+    :: { token_type = Assign; _ }
+    :: { token_type = Ident; literal = "Int"; _ }
+    :: { token_type = Shape; _ }
+    :: { token_type = Ident; literal = "HasName"; _ }
+    :: _ ->
+      true
+  | _ -> false
+
 let%test "identifiers with digits" =
   let input = "let foo5 = 5; let x2y = foo5" in
   let tokens = lex input in

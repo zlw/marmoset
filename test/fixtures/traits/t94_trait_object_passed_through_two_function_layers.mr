@@ -1,6 +1,6 @@
 # T94: Trait object passed through two function layers
 trait Named = {
-  name: Str
+  name: Str  # error: Trait bodies are method-only; move structural fields to a shape declaration
 }
 fn inner(x: Named) -> Str = x.name
 fn outer(x: Named) -> Str = inner(x)

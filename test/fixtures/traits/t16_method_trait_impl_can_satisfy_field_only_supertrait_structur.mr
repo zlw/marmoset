@@ -1,7 +1,7 @@
-# T16: Method trait impl can satisfy field-only supertrait structurally
+# T16: Legacy field-style supertrait syntax is rejected
 type Person = { name: Str, age: Int }
 trait Named = {
-  name: Str
+  name: Str  # error: Trait bodies are method-only; move structural fields to a shape declaration
 }
 trait Shown[a]: Named = {
   fn show(x: a) -> Str

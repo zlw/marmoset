@@ -6,6 +6,7 @@ impl Toggle = {
   }
 }
 
-let t: Toggle = { active: false }
+let t = Toggle(active: false)
+
 let result = if (Toggle.check(t)) { "on" } else { "off" }
 puts(result)  # output: off

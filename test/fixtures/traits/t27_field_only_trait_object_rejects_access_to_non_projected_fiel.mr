@@ -1,6 +1,6 @@
-# T27: Field-only trait object rejects access to non-projected field
+# T27: Legacy field-style trait syntax is rejected before projection rules apply
 trait Named = {
-  name: Str
+  name: Str  # error: Trait bodies are method-only; move structural fields to a shape declaration
 }
-let x: Named = { name: "alice", age: 1 }  # error: cannot be used as a type in vNext
+let x: Named = { name: "alice", age: 1 }
 puts(x.age)

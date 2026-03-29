@@ -1,5 +1,5 @@
 # R099: Alias param fn, chained calls
-type Box = { val: Int }
+alias Box = { val: Int }
 fn double_box(b: Box) -> Box = { { val: b.val * 2 } }
 let b1: Box = { val: 25 }
 let b2 = double_box(double_box(b1))

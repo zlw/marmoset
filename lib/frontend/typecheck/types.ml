@@ -18,6 +18,7 @@ type mono_type =
   | TUnion of mono_type list (* Union: Int | String | Bool *)
   | TIntersection of mono_type list (* Intersection: A & B *)
   | TEnum of string * mono_type list (* Enum: option[Int], result[String, Int] *)
+  | TNamed of string * mono_type list (* Named nominal type: User, UserId, Box[Int] *)
 
 and record_field_type = {
   name : string;
@@ -64,6 +65,7 @@ let rec canonicalize_mono_type (mono : mono_type) : mono_type =
   | TUnion types -> TUnion (List.map canonicalize_mono_type types)
   | TIntersection types -> normalize_intersection (List.map canonicalize_mono_type types)
   | TEnum (name, args) -> TEnum (name, List.map canonicalize_mono_type args)
+  | TNamed (name, args) -> TNamed (name, List.map canonicalize_mono_type args)
 
 and normalize_intersection (types : mono_type list) : mono_type =
   let rec flatten acc_dyn rev_members = function
@@ -157,6 +159,8 @@ and to_string = function
   | TIntersection types -> String.concat " & " (List.map to_string_intersection_member types)
   | TEnum (name, []) -> name
   | TEnum (name, args) -> name ^ "[" ^ String.concat ", " (List.map to_string args) ^ "]"
+  | TNamed (name, []) -> name
+  | TNamed (name, args) -> name ^ "[" ^ String.concat ", " (List.map to_string args) ^ "]"
 
 (* Convert poly_type to string *)
 let poly_type_to_string (Forall (vars, mono)) =
@@ -221,6 +225,7 @@ let apply_substitution (subst : substitution) (mono : mono_type) : mono_type =
     | TUnion types -> TUnion (List.map (go seen) types)
     | TIntersection types -> normalize_intersection (List.map (go seen) types)
     | TEnum (name, args) -> TEnum (name, List.map (go seen) args)
+    | TNamed (name, args) -> TNamed (name, List.map (go seen) args)
   in
   go TypeVarSet.empty mono
 
@@ -266,6 +271,7 @@ let rec free_type_vars (mono : mono_type) : TypeVarSet.t =
   | TIntersection types ->
       List.fold_left (fun acc t -> TypeVarSet.union acc (free_type_vars t)) TypeVarSet.empty types
   | TEnum (_, args) -> List.fold_left (fun acc t -> TypeVarSet.union acc (free_type_vars t)) TypeVarSet.empty args
+  | TNamed (_, args) -> List.fold_left (fun acc t -> TypeVarSet.union acc (free_type_vars t)) TypeVarSet.empty args
 
 (* Free type variables in a poly_type - quantified vars are NOT free *)
 let free_type_vars_poly (Forall (quantified_vars, mono)) : TypeVarSet.t =
@@ -311,6 +317,7 @@ let rec collect_vars_in_order (mono : mono_type) : string list =
   | TUnion types -> List.concat_map collect_vars_in_order types
   | TIntersection types -> List.concat_map collect_vars_in_order types
   | TEnum (_, args) -> List.concat_map collect_vars_in_order args
+  | TNamed (_, args) -> List.concat_map collect_vars_in_order args
 
 (* Remove duplicates while preserving order *)
 let unique_in_order (lst : string list) : string list =

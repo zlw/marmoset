@@ -1,11 +1,11 @@
 # T36: Duplicate impl for same trait and type fails
-trait Show[a] = {  # error: Duplicate impl for trait
+trait Show[a] = {
   fn show(x: a) -> Str
 }
 impl Show[Int] = {
   fn show(x: Int) -> Str = "first"
 }
-impl Show[Int] = {
+impl Show[Int] = {  # error: Duplicate impl for trait 'show' and type Int
   fn show(x: Int) -> Str = "second"
 }
 42

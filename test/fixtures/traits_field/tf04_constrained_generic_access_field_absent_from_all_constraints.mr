@@ -1,5 +1,5 @@
 # TF04: Constrained generic: access field absent from all constraints
-trait HasName = {
+shape HasName = {
   name: Str
 }
 fn get_missing[t: HasName](v: t) -> Int = v.missing_field  # error: not guaranteed by constraints

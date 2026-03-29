@@ -142,7 +142,7 @@ type Point = { x: Int, y: Int }
 --------------------------------------------------------------------------------
 
 (source_file
-  (type_alias
+  (type_definition
     name: (identifier)
     type: (record_type
       (record_type_field
@@ -229,7 +229,7 @@ type NamedAge = { name: Str } & { age: Int }
 --------------------------------------------------------------------------------
 
 (source_file
-  (type_alias
+  (type_definition
     name: (identifier)
     type: (intersection_type
       (record_type
@@ -250,7 +250,7 @@ type Example = Int | Str & Bool
 --------------------------------------------------------------------------------
 
 (source_file
-  (type_alias
+  (type_definition
     name: (identifier)
     type: (union_type
       (type_identifier)
@@ -267,7 +267,7 @@ type Handler = ((Int) -> Str) & Bool
 --------------------------------------------------------------------------------
 
 (source_file
-  (type_alias
+  (type_definition
     name: (identifier)
     type: (intersection_type
       (parenthesized_type

@@ -1,9 +1,9 @@
 # T90: Supertrait chain inherits parent fields
 trait Named = {
-  name: Str
+  name: Str  # error: Trait bodies are method-only; move structural fields to a shape declaration
 }
 trait Described: Named = {
   description: Str
 }
-let x: Described = { name: "alice", description: "a person", hobby: "chess" }  # error: cannot be used as a type in vNext
+let x: Described = { name: "alice", description: "a person", hobby: "chess" }
 puts(x.name)  # output: alice

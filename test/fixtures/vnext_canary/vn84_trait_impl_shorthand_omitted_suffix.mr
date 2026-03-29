@@ -1,5 +1,5 @@
 # VN84: Trait impl methods combine shorthand params with omitted signature suffixes
-trait Named = { name: Str }
+shape Named = { name: Str }
 trait Mixer[a] = {
   fn mix(x: a, y: Named) -> Str
 }
@@ -10,4 +10,4 @@ impl Mixer[User] = {
   fn mix(x: User, y: Named) = x.name + ":" + y.name
 }
 
-puts({ name: "left" }.mix({ name: "right" }))  # output: left:right
+puts(User(name: "left").mix({ name: "right" }))  # output: left:right

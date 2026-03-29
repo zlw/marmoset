@@ -26,8 +26,7 @@ Trait with default method and ampersand supertraits
 ================================================================================
 
 trait Named[a]: Show & Eq = {
-  name: Str,
-  fn full_name(self: a) -> Str = self.name
+  fn full_name(self: a) -> Str = Show.show(self)
 }
 
 --------------------------------------------------------------------------------
@@ -40,9 +39,6 @@ trait Named[a]: Show & Eq = {
     supertraits: (supertrait_list
       (identifier)
       (identifier))
-    (trait_field
-      name: (identifier)
-      type: (type_identifier))
     (trait_method_signature
       name: (identifier)
       (trait_named_param
@@ -51,9 +47,11 @@ trait Named[a]: Show & Eq = {
           (identifier)))
       return_type: (type_identifier)
       body: (expr_or_block
-        (field_access
-          object: (identifier)
-          field: (identifier))))))
+        (call_expression
+          function: (field_access
+            object: (identifier)
+            field: (identifier))
+          (identifier))))))
 
 ================================================================================
 Trait signature with positional typed params
@@ -186,7 +184,7 @@ enum Result[a, e] = {
       trait: (identifier))))
 
 ================================================================================
-Type alias with postfix derive clause
+Type definition with postfix derive clause
 ================================================================================
 
 type UserId = Int derive Eq, Show
@@ -194,7 +192,7 @@ type UserId = Int derive Eq, Show
 --------------------------------------------------------------------------------
 
 (source_file
-  (type_alias
+  (type_definition
     name: (identifier)
     type: (type_identifier)
     derive: (derive_clause

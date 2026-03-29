@@ -40,7 +40,7 @@ let rec has_type_vars (t : mono_type) : bool =
       | None -> false
       | Some r -> has_type_vars r)
   | TTraitObject _ -> false
-  | TEnum (_, args) | TUnion args | TIntersection args -> List.exists has_type_vars args
+  | TEnum (_, args) | TNamed (_, args) | TUnion args | TIntersection args -> List.exists has_type_vars args
   | TInt | TFloat | TBool | TString | TNull -> false
 
 let apply_subst_to_method_sig (subst : Types.substitution) (m : method_sig) : method_sig =

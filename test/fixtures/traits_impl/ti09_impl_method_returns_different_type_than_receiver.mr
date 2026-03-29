@@ -8,5 +8,5 @@ impl Sum[Pair] = {
     p.a + p.b
   }
 }
-let p: Pair = { a: 1, b: 2 }
+let p: Pair = Pair(a: 1, b: 2)
 puts(p.sum())  # output: 3

@@ -1,5 +1,5 @@
 # VN82: Nested function types keep mixed effect bits in record fields
-type MixedHandlers = {
+alias MixedHandlers = {
   pure_outer: ((Int) => Str) -> Str,
   eff_outer: ((Int) -> Str) => Str,
 }

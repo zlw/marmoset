@@ -1,7 +1,7 @@
-# T126: Field-only trait nested in a hash annotation is rejected
+# T126: Legacy field-style trait syntax is rejected in hash annotations
 trait Named = {
-  name: Str
+  name: Str  # error: Trait bodies are method-only; move structural fields to a shape declaration
 }
 
-let by_name: Hash[Str, Named] = {}  # error: cannot be used as a type in vNext
+let by_name: Hash[Str, Named] = {}
 by_name

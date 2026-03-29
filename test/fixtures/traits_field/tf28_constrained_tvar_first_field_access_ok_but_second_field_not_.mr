@@ -1,5 +1,5 @@
-# TF28: Constrained TVar: first field access ok but second field not in constraints
-trait HasName = {
+# TF28: Constrained TVar: first shape field access ok but second field not in constraints
+shape HasName = {
   name: Str
 }
 fn bad[t: HasName](v: t) -> Str = v.name + v.extra  # error: not guaranteed by constraints

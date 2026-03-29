@@ -1,5 +1,5 @@
 # VN29: Function type arrows work in aliases, record fields, and enum payloads
-type HandlerBox = { pure: (Int) -> Int, eff: (Int) => Str }
+alias HandlerBox = { pure: (Int) -> Int, eff: (Int) => Str }
 enum Job = {
   UsePure((Int) -> Int),
   UseEff((Int) => Str),

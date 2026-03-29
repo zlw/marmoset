@@ -185,8 +185,8 @@ let find_enclosing_call ~(source : string) (offset : int) (program : Ast.AST.pro
     | Ast.AST.Let { value; _ } -> visit_expr value
     | Ast.AST.Return e -> visit_expr e
     | Ast.AST.Block stmts -> List.iter visit_stmt stmts
-    | Ast.AST.EnumDef _ | Ast.AST.TraitDef _ | Ast.AST.ImplDef _ | Ast.AST.InherentImplDef _ | Ast.AST.DeriveDef _
-    | Ast.AST.TypeAlias _ ->
+    | Ast.AST.EnumDef _ | Ast.AST.TypeDef _ | Ast.AST.ShapeDef _ | Ast.AST.TraitDef _ | Ast.AST.ImplDef _
+    | Ast.AST.InherentImplDef _ | Ast.AST.DeriveDef _ | Ast.AST.TypeAlias _ ->
         ()
   in
   List.iter visit_stmt program;

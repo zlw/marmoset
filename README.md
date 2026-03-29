@@ -20,7 +20,7 @@ impl Alarm[Monkey] = {
   override fn ring!(x) = x.name + " spotted " + x.bananas.show() + " bananas"
 }
 
-puts({ name: "milo", bananas: 3 }.ring!())
+puts(Monkey(name: "milo", bananas: 3).ring!())
 ```
 
 ```sh
@@ -92,18 +92,42 @@ puts(compare_snacks("banana", "banana"))  # same snack: banana
 puts(compare_snacks(3, 5))                # different snacks
 ```
 
-### 📦 Records
+### 🧾 Transparent aliases
 
-Structural typing with type aliases and spread updates:
+Transparent aliases name existing type expressions without creating a new nominal type:
 
 ```marmoset
-type Monkey = { name: Str, bananas: Int }
+alias Point = { x: Int, y: Int }
 
-let koko: Monkey = { name: "koko", bananas: 4 }
-let hungrier_koko = { ...koko, bananas: 6 }
+let start: Point = { x: 1, y: 2 }
+fn shift_x(p: Point, dx: Int) -> Point = { ...p, x: p.x + dx }
 
-puts(hungrier_koko.name)     # koko
-puts(hungrier_koko.bananas)  # 6
+puts(shift_x(start, 3).x)  # 4
+puts(start.y)              # 2
+```
+
+### 📦 Records
+
+Structural records support field access and spread updates:
+
+```marmoset
+let start = { x: 1, y: 2 }
+let moved = { ...start, x: 10 }
+
+puts(moved.x)  # 10
+puts(moved.y)  # 2
+```
+
+Named product records support the same field access and record-pattern behavior, and they can be rebuilt explicitly with constructor spread:
+
+```marmoset
+type Waypoint = { x: Int, y: Int }
+
+let start = Waypoint(x: 1, y: 2)
+let moved = Waypoint(...start, x: 10)
+
+puts(moved.x)  # 10
+puts(moved.y)  # 2
 ```
 
 ### 🎯 Enums & pattern matching
@@ -139,12 +163,12 @@ let vine = Vine.Holding("banana")
 puts(vine.occupied())  # true
 ```
 
-### 🤝 Traits
+### 🧱 Shapes
 
-**Field traits** — satisfied structurally, just by having the right shape:
+Shapes capture structural field constraints:
 
 ```marmoset
-trait Named = { name: Str }
+shape Named = { name: Str }
 
 fn greet[a: Named](x: a) -> Str = "hello, " + x.name
 
@@ -156,7 +180,9 @@ puts(greet(monkey))  # hello, milo
 puts(greet(parrot))  # hello, kiwi
 ```
 
-**Method traits** — require explicit impls:
+### 🤝 Traits
+
+Method traits require explicit impls:
 
 ```marmoset
 trait Alarm[a] = {
@@ -170,15 +196,17 @@ impl Alarm[Int] = {
 puts(3.ring!())  # jungle alarm 3
 ```
 
-**Supertraits** compose — `Ord` implies `Eq`:
+Shapes and traits compose through superconstraints:
 
 ```marmoset
-trait Eq[a] = { fn eq(x: a, y: a) -> Bool }
+shape Named = { name: Str }
 
-trait Ord[a]: Eq = { fn compare(x: a, y: a) -> Int }
+trait Parade[a]: Show & Named = {
+  fn banner(self: a) -> Str = self.name + " ready"
+}
 ```
 
-**Built-in derives, user derives, and `Dyn[...]` trait objects** work together:
+Built-in derives, user derives, and `Dyn[...]` trait objects work together too:
 
 ```marmoset
 trait Drum[a] = {
@@ -189,7 +217,7 @@ type Relic = { animal: Str, leaves: Int } derive Show, Drum
 
 fn announce(x: Dyn[Show]) -> Str = "found " + x.show()
 
-let relic: Relic = { animal: "jaguar", leaves: 3 }
+let relic = Relic(animal: "jaguar", leaves: 3)
 puts(relic.drum())        # boom
 puts(announce(relic))     # found { animal: jaguar, leaves: 3 }
 puts(announce("banana"))  # found banana
@@ -197,19 +225,21 @@ puts(announce("banana"))  # found banana
 
 ### 🛠️ Inherent methods
 
-Attach methods directly to any type — no trait ceremony:
+Attach methods directly to types that own behavior — no trait ceremony:
 
 ```marmoset
 type BananaPile = { bananas: Int }
 
 impl BananaPile = {
-  fn add(pile: BananaPile, amount: Int) -> BananaPile = { bananas: pile.bananas + amount }
+  fn add(pile: BananaPile, amount: Int) -> BananaPile = BananaPile(bananas: pile.bananas + amount)
   fn total(pile: BananaPile) -> Int = pile.bananas
 }
 
-let pile = BananaPile.add({ bananas: 2 }, 3)
+let pile = BananaPile.add(BananaPile(bananas: 2), 3)
 puts(pile.total())  # 5
 ```
+
+This uses `type` rather than `alias` because `BananaPile` owns nominal behavior and explicit constructor syntax.
 
 Methods can be generic, and shorthand trait constraints work inside them too:
 
@@ -221,7 +251,7 @@ impl VineTag = {
   fn cheer(tag: VineTag, item: Show) -> Str = tag.prefix + item.show()
 }
 
-let tag = { prefix: "seen: " }
+let tag = VineTag(prefix: "seen: ")
 
 puts(tag.render(3, _.show()))  # seen: 3
 puts(tag.cheer("banana"))      # seen: banana

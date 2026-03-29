@@ -1,11 +1,11 @@
-# CM47: Mixed Dyn trait objects allow method dispatch while still hiding fields
+# CM47: Dyn trait objects support method dispatch when a method-only trait depends on a shape
+shape Named = { name: Str }
 type Person = { name: Str }
-trait NamedShow[a] = {
-  name: Str
+trait NamedShow[a]: Named = {
   fn show(x: a) -> Str
 }
 impl NamedShow[Person] = {
   fn show(x: Person) -> Str = x.name
 }
-let x: Dyn[NamedShow] = { name: "alice" }
+let x: Dyn[NamedShow] = Person(name: "alice")
 puts(x.show())  # output: alice

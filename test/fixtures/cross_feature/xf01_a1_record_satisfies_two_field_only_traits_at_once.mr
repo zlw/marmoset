@@ -1,8 +1,8 @@
-# XF01: A1: Record satisfies two field-only traits at once
-trait Named = {
+# XF01: A1: Record satisfies two structural shapes at once
+shape Named = {
   name: Str
 }
-trait Aged = {
+shape Aged = {
   age: Int
 }
 fn describe[t: Named & Aged](x: t) -> Str = {

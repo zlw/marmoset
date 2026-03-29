@@ -1,5 +1,5 @@
 # VN54: Generated shorthand binders stay independent from explicit generic names like t0
-trait Named = { name: Str }
+shape Named = { name: Str }
 
 fn pair[t0: Named](left: t0, right: Named) -> Str = left.name + ":" + right.name
 

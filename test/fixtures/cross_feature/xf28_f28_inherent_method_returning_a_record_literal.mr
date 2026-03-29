@@ -2,7 +2,7 @@
 type Box = { value: Int }
 impl Int = {
   fn boxed(x: Int) -> Box = {
-    { value: x }
+    Box(value: x)
   }
 }
 let b = 99.boxed()

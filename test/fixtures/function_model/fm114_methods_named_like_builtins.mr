@@ -6,5 +6,6 @@ impl Mytype = {
   }
 }
 
-let m: Mytype = { v: 99 }
+let m = Mytype(v: 99)
+
 puts(m.show())  # output: custom:99

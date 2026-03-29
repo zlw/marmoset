@@ -4,6 +4,7 @@ type Box[a] = { value: a }
 fn apply[a, b](x: a, f: (a) -> b) -> b = f(x)
 
 let box: Box[Dyn[Show & Eq]] = apply(42, (n) -> {
-  { value: n }
+  let value: Dyn[Show & Eq] = n
+  Box(value: value)
 })
 puts(box.value.show())  # output: 42

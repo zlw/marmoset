@@ -47,7 +47,7 @@ Responsibilities:
 - Build `Surface_ast`, not the canonical downstream AST.
 - Parse vNext constructs including:
   - generic params and constraints (`fn[a: Show & Eq](...)`)
-  - type aliases (`type Point = { x: Int }`)
+  - named types, aliases, and shapes (`type User = { ... }`, `alias Point = { x: Int }`, `shape Named = { name: Str }`)
   - unions (`Int | Str`)
   - enums/constructors/match patterns with `case`
   - records, spread, row-variable type forms (`{ x: Int, ...r }`)

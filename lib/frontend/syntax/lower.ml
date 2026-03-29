@@ -10,7 +10,7 @@ let failwith_unimplemented variant =
   failwith (Printf.sprintf "Lower: unexpected surface-only form '%s' after parsing" variant)
 
 type lower_context = {
-  trait_names : StringSet.t;
+  constraint_names : StringSet.t;
   type_names : StringSet.t;
 }
 
@@ -21,16 +21,19 @@ let builtin_type_names =
 
 let empty_lower_context =
   {
-    trait_names = List.fold_left (fun acc name -> StringSet.add name acc) StringSet.empty builtin_trait_names;
+    constraint_names = List.fold_left (fun acc name -> StringSet.add name acc) StringSet.empty builtin_trait_names;
     type_names = List.fold_left (fun acc name -> StringSet.add name acc) StringSet.empty builtin_type_names;
   }
 
 let lower_context_of_program (prog : Surface.surface_program) : lower_context =
   List.fold_left
-    (fun ({ trait_names; type_names } as acc) (ts : Surface.surface_top_stmt) ->
+    (fun ({ constraint_names; type_names } as acc) (ts : Surface.surface_top_stmt) ->
       match ts.std_decl with
-      | Surface.STraitDef { name; _ } -> { acc with trait_names = StringSet.add name trait_names }
-      | Surface.SEnumDef { name; _ } | Surface.STypeDef { alias_name = name; _ } ->
+      | Surface.STraitDef { name; _ } | Surface.SShapeDef { shape_name = name; _ } ->
+          { acc with constraint_names = StringSet.add name constraint_names }
+      | Surface.SEnumDef { name; _ }
+      | Surface.STypeDef { type_name = name; _ }
+      | Surface.SAliasDef { alias_name = name; _ } ->
           { acc with type_names = StringSet.add name type_names }
       | _ -> acc)
     empty_lower_context prog
@@ -38,7 +41,7 @@ let lower_context_of_program (prog : Surface.surface_program) : lower_context =
 let trait_shorthand_constraint (ctx : lower_context) (st : Surface.surface_type_expr) : string list option =
   match st with
   | Surface.STConstraintShorthand traits -> Some traits
-  | Surface.STCon name when StringSet.mem name ctx.trait_names && not (StringSet.mem name ctx.type_names) ->
+  | Surface.STCon name when StringSet.mem name ctx.constraint_names && not (StringSet.mem name ctx.type_names) ->
       Some [ name ]
   | _ -> None
 
@@ -68,7 +71,7 @@ let is_lower_ident (name : string) : bool =
   | _ -> false
 
 let known_type_name (ctx : lower_context) (name : string) : bool =
-  StringSet.mem name ctx.type_names || StringSet.mem name ctx.trait_names
+  StringSet.mem name ctx.type_names || StringSet.mem name ctx.constraint_names
 
 let infer_impl_type_params (ctx : lower_context) (impl_for_type : Surface.surface_type_expr) :
     AST.generic_param list =
@@ -400,6 +403,14 @@ let lower_variant_with_bound_vars (bound_type_vars : StringSet.t) (sv : Surface.
       variant_fields = List.map (lower_type_expr_with_bound_vars bound_type_vars) sv.sv_fields;
     }
 
+let lower_record_type_field_with_bound_vars (bound_type_vars : StringSet.t) (f : Surface.surface_record_type_field) :
+    AST.record_type_field =
+  AST.
+    {
+      field_name = f.Surface.sf_name;
+      field_type = lower_type_expr_with_bound_vars bound_type_vars f.Surface.sf_type;
+    }
+
 let lower_top_decl_with_ctx
     (ctx : lower_context) (id_supply : Id_supply.Id_supply.t) (ts : Surface.surface_top_stmt) : AST.statement list
     =
@@ -527,7 +538,40 @@ let lower_top_decl_with_ctx
           ]
       in
       enum_stmt :: derive_stmts
-  | Surface.STypeDef { alias_name; alias_type_params; alias_body; derive } ->
+  | Surface.STypeDef { type_name; type_type_params; type_body; derive } ->
+      let bound_type_vars = bound_type_vars_of_names type_type_params in
+      let type_stmt =
+        AST.mk_stmt ~pos ~end_pos ~file_id
+          (AST.TypeDef
+             {
+               type_name;
+               type_type_params;
+               type_body =
+                 (match type_body with
+                 | Surface.STNamedProduct fields ->
+                     AST.NamedTypeProduct
+                       (List.map (lower_record_type_field_with_bound_vars bound_type_vars) fields)
+                 | Surface.STNamedWrapper wrapper_body ->
+                     AST.NamedTypeWrapper (lower_type_expr_with_bound_vars bound_type_vars wrapper_body));
+             })
+      in
+      let derive_stmts =
+        if derive = [] then
+          []
+        else
+          let for_type =
+            if type_type_params = [] then
+              AST.TCon type_name
+            else
+              AST.TApp (type_name, List.map (fun p -> AST.TVar p) type_type_params)
+          in
+          [
+            AST.mk_stmt ~pos ~end_pos ~file_id
+              (AST.DeriveDef { derive_traits = derive; derive_for_type = for_type });
+          ]
+      in
+      type_stmt :: derive_stmts
+  | Surface.SAliasDef { alias_name; alias_type_params; alias_body } ->
       let bound_type_vars = bound_type_vars_of_names alias_type_params in
       let alias_stmt =
         AST.mk_stmt ~pos ~end_pos ~file_id
@@ -538,34 +582,25 @@ let lower_top_decl_with_ctx
                alias_body = lower_type_expr_with_bound_vars bound_type_vars alias_body;
              })
       in
-      let derive_stmts =
-        if derive = [] then
-          []
-        else
-          let for_type =
-            if alias_type_params = [] then
-              AST.TCon alias_name
-            else
-              AST.TApp (alias_name, List.map (fun p -> AST.TVar p) alias_type_params)
-          in
-          [
-            AST.mk_stmt ~pos ~end_pos ~file_id
-              (AST.DeriveDef { derive_traits = derive; derive_for_type = for_type });
-          ]
+      [ alias_stmt ]
+  | Surface.SShapeDef { shape_name; shape_type_params; shape_fields } ->
+      let bound_type_vars = bound_type_vars_of_names shape_type_params in
+      let shape_stmt =
+        AST.mk_stmt ~pos ~end_pos ~file_id
+          (AST.ShapeDef
+             {
+               shape_name;
+               shape_type_params;
+               shape_fields =
+                 List.map (lower_record_type_field_with_bound_vars bound_type_vars) shape_fields;
+             })
       in
-      alias_stmt :: derive_stmts
-  | Surface.STraitDef { name; type_param; supertraits; fields; methods } ->
+      [ shape_stmt ]
+  | Surface.STraitDef { name; type_param; supertraits; methods } ->
       let trait_bound_type_vars =
         match type_param with
         | None -> StringSet.empty
         | Some param -> StringSet.singleton param
-      in
-      let lower_field f =
-        AST.
-          {
-            field_name = f.Surface.sf_name;
-            field_type = lower_type_expr_with_bound_vars trait_bound_type_vars f.Surface.sf_type;
-          }
       in
       let lower_method_sig_with_trait_bindings (sm : Surface.surface_method_sig) =
         let method_generics, method_params =
@@ -599,7 +634,6 @@ let lower_top_decl_with_ctx
             name;
             type_param;
             supertraits;
-            fields = List.map lower_field fields;
             methods = List.map lower_method_sig_with_trait_bindings methods;
           }
       in
@@ -679,11 +713,10 @@ let%test "lower SEnumDef" =
       true
   | _ -> false
 
-let%test "lower STypeDef" =
+let%test "lower SAliasDef" =
   let id_supply = Id_supply.Id_supply.create 0 in
   let decl =
-    Surface.STypeDef
-      { alias_name = "Point"; alias_type_params = []; alias_body = Surface.STCon "Int"; derive = [] }
+    Surface.SAliasDef { alias_name = "Point"; alias_type_params = []; alias_body = Surface.STCon "Int" }
   in
   let result = lower_top_decl id_supply (mk_test_ts decl) in
   match result with
@@ -696,12 +729,11 @@ let%test "lower STypeDef" =
 let%test "alias type params lower lowercase names to TVars in alias bodies" =
   let id_supply = Id_supply.Id_supply.create 0 in
   let decl =
-    Surface.STypeDef
+    Surface.SAliasDef
       {
         alias_name = "Reducer";
         alias_type_params = [ "a" ];
         alias_body = Surface.STArrow ([ Surface.STCon "a"; Surface.STCon "a" ], Surface.STCon "a", false);
-        derive = [];
       }
   in
   let result = lower_top_decl id_supply (mk_test_ts decl) in
@@ -724,12 +756,11 @@ let%test "alias type params lower lowercase names to TVars in alias bodies" =
 let%test "lower trait object type alias" =
   let id_supply = Id_supply.Id_supply.create 0 in
   let decl =
-    Surface.STypeDef
+    Surface.SAliasDef
       {
         alias_name = "Printer";
         alias_type_params = [];
         alias_body = Surface.STTraitObject [ "Show"; "Eq" ];
-        derive = [];
       }
   in
   let result = lower_top_decl id_supply (mk_test_ts decl) in
@@ -740,7 +771,7 @@ let%test "lower trait object type alias" =
 let%test "lower intersection type alias" =
   let id_supply = Id_supply.Id_supply.create 0 in
   let decl =
-    Surface.STypeDef
+    Surface.SAliasDef
       {
         alias_name = "NamedAge";
         alias_type_params = [];
@@ -750,7 +781,6 @@ let%test "lower intersection type alias" =
               Surface.STRecord ([ Surface.{ sf_name = "name"; sf_type = Surface.STCon "Str" } ], None);
               Surface.STRecord ([ Surface.{ sf_name = "age"; sf_type = Surface.STCon "Int" } ], None);
             ];
-        derive = [];
       }
   in
   let result = lower_top_decl id_supply (mk_test_ts decl) in
@@ -822,7 +852,7 @@ let%test "arrow lambda shorthand param lowers with program trait context" =
   let id_supply = Id_supply.Id_supply.create 0 in
   let trait_decl =
     mk_test_ts
-      (Surface.STraitDef { name = "Named"; type_param = None; supertraits = []; fields = []; methods = [] })
+      (Surface.STraitDef { name = "Named"; type_param = None; supertraits = []; methods = [] })
   in
   let body_expr = Surface.mk_surface_expr ~id:1 ~pos:0 (Surface.SEIdentifier "x") in
   let lambda_expr =
@@ -920,16 +950,16 @@ let%test "STypeDef with postfix derive generates DeriveDef" =
   let decl =
     Surface.STypeDef
       {
-        alias_name = "MyInt";
-        alias_type_params = [];
-        alias_body = Surface.STCon "Int";
+        type_name = "MyInt";
+        type_type_params = [];
+        type_body = Surface.STNamedWrapper (Surface.STCon "Int");
         derive = [ AST.{ derive_trait_name = "Eq"; derive_trait_constraints = [] } ];
       }
   in
   let result = lower_top_decl id_supply (mk_test_ts decl) in
   match result with
   | [
-   { AST.stmt = AST.TypeAlias { alias_name = "MyInt"; _ }; _ };
+   { AST.stmt = AST.TypeDef { type_name = "MyInt"; _ }; _ };
    {
      AST.stmt =
        AST.DeriveDef { derive_traits = [ { derive_trait_name = "Eq"; _ } ]; derive_for_type = AST.TCon "MyInt" };
@@ -944,9 +974,9 @@ let%test "STypeDef lowering preserves derive target params" =
   let decl =
     Surface.STypeDef
       {
-        alias_name = "Box";
-        alias_type_params = [ "t" ];
-        alias_body = Surface.STRecord ([ Surface.{ sf_name = "value"; sf_type = Surface.STVar "t" } ], None);
+        type_name = "Box";
+        type_type_params = [ "t" ];
+        type_body = Surface.STNamedProduct [ Surface.{ sf_name = "value"; sf_type = Surface.STVar "t" } ];
         derive =
           [
             AST.
@@ -960,7 +990,7 @@ let%test "STypeDef lowering preserves derive target params" =
   let result = lower_top_decl id_supply (mk_test_ts decl) in
   match result with
   | [
-   { AST.stmt = AST.TypeAlias { alias_name = "Box"; _ }; _ };
+   { AST.stmt = AST.TypeDef { type_name = "Box"; _ }; _ };
    {
      AST.stmt =
        AST.DeriveDef
@@ -1054,7 +1084,7 @@ let%test "bare trait param shorthand lowers to fresh constrained generic" =
       [
         mk_test_ts
           (Surface.STraitDef
-             { name = "JungleDweller"; type_param = Some "a"; supertraits = []; fields = []; methods = [] });
+             { name = "JungleDweller"; type_param = Some "a"; supertraits = []; methods = [] });
         mk_test_ts decl;
       ]
   in
@@ -1189,7 +1219,7 @@ let%test "explicit generics and shorthand params stay independent" =
     lower_program id_supply
       [
         mk_test_ts
-          (Surface.STraitDef { name = "Named"; type_param = None; supertraits = []; fields = []; methods = [] });
+          (Surface.STraitDef { name = "Named"; type_param = None; supertraits = []; methods = [] });
         mk_test_ts decl;
       ]
   in
@@ -1348,7 +1378,9 @@ let%test "ambiguous vNext impl head lowers to inherent impl when head names a ty
 
 let%test "ambiguous vNext impl head lowers to trait impl when head names a trait" =
   let id_supply = Id_supply.Id_supply.create 0 in
-  let ctx = { empty_lower_context with trait_names = StringSet.add "Show" empty_lower_context.trait_names } in
+  let ctx =
+    { empty_lower_context with constraint_names = StringSet.add "Show" empty_lower_context.constraint_names }
+  in
   let decl =
     Surface.SAmbiguousImplDef
       {

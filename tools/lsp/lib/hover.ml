@@ -97,7 +97,8 @@ and find_expr_in_stmt (offset : int) (stmt : Ast.AST.statement) : Ast.AST.expres
       List.find_map
         (fun (m : Ast.AST.method_sig) -> Option.bind m.method_default_impl (find_expr_at offset))
         methods
-  | Ast.AST.EnumDef _ | Ast.AST.DeriveDef _ | Ast.AST.TypeAlias _ -> None
+  | Ast.AST.EnumDef _ | Ast.AST.TypeDef _ | Ast.AST.ShapeDef _ | Ast.AST.DeriveDef _ | Ast.AST.TypeAlias _ ->
+      None
 
 (* Find an expression at a given offset across the entire program *)
 let find_in_program (offset : int) (program : Ast.AST.program) : Ast.AST.expression option =

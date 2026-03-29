@@ -763,3 +763,70 @@ Exit criteria:
 - `docs/plans/done/language/03_syntax-rework-followup.md` owns the already-landed `Dyn[...]`, intersections, and derive follow-up work that this plan now treats as background constraints
 - `docs/plans/todo/language/02_pre-modules-parity-and-hardening.md` hardens the semantics frozen here
 - `docs/plans/todo/language/03_module-system.md` should build on this declaration-role split instead of defining its own workaround semantics
+
+## PROGRESS
+
+### Status
+
+- Complete
+
+### Completed
+
+- Read `CLAUDE.md` commit/testing rules before implementation
+- Read and executed the full plan across parser, lowering, checker, emitter, docs, tooling, and fixture layers
+- Landed the declaration-role split:
+  - `alias` is transparent and behaviorless
+  - `type` owns nominal named products, wrappers, and sums
+  - `shape` owns structural field expectations
+  - `trait` is method-only
+- Added explicit constructor handling for named products and wrappers through parsing, lowering, inference, and Go emission
+- Added nominal type representation in the typechecker via `Types.TNamed` plus named-type registry support
+- Moved structural superconstraint satisfaction to shapes instead of field-only / mixed traits
+- Removed field members from trait definitions and updated derive expansion, impl validation, constrained field access, and method resolution to reflect the new model
+- Preserved canonical named sums through `enum` while documenting `type` as the canonical nominal declaration story
+- Migrated focused fixtures from the retired field-only / mixed-trait model to `shape` / nominal-type semantics
+- Updated first-party docs and examples to teach:
+  - explicit named-type construction
+  - `shape` for structural constraints
+  - method-only `trait`
+  - transparent `alias`
+- Updated LSP/editor and tree-sitter grammar/token classification for the declaration-role split
+- Added / updated focused checker coverage for:
+  - enum references inside named-product and shape fields
+  - derive expansion over shape superconstraints satisfied by named products
+- Reworked `examples/new-syntax-upcase.mr` so every showcased construct compiles under the final semantics
+
+### Findings
+
+- The existing `enum` machinery was strong enough to preserve accepted sum-type behavior while moving the rest of the language onto canonical nominal `type` semantics
+- Named products and wrappers needed materially more work than named sums because nominal identity had to be carried through annotation conversion, constraint solving, method lookup, and Go codegen
+- Top-level registration order matters:
+  - enums must register before named products / shapes whose field annotations mention them
+- Derive expansion needs a fallback path that works both before full registration and in partially registered test setups
+- Record patterns remain structural:
+  - they do not destructure nominal `type` values directly
+  - the showcase example had to use a closed structural record annotation for the pattern demo
+- Field-function fallback codegen needed an additional named-product lookup path for `TNamed` receivers in mixed dot / qualified-call chains
+
+### Caveats
+
+- `enum` remains accepted for named sums; docs now treat `type` as the canonical nominal surface while preserving `enum` compatibility
+- Derive expansion still carries a source-level fallback for shapes / named products before the full registration pass; that is intentional and covered by focused tests
+- The final semantics intentionally keep structural record-pattern behavior separate from nominal named-type behavior
+
+### Verification
+
+- `dune runtest --root /Users/zlw/src/marmoset/marmoset lib/frontend/typecheck --force`
+- `dune runtest --root /Users/zlw/src/marmoset/marmoset lib/backend/go --force`
+- `dune build --root /Users/zlw/src/marmoset/marmoset bin/main.exe`
+- `./test/integration.sh traits_field`
+- `./test/integration.sh traits`
+- `./test/integration.sh cross_feature`
+- `./test/integration.sh traits_impl symbols codegen_mono vnext_canary`
+- `./test/integration.sh function_model records operators runtime traits_inherent`
+- `cd /Users/zlw/src/marmoset/marmoset/tools/tree-sitter-marmoset && npm run generate`
+- `cd /Users/zlw/src/marmoset/marmoset/tools/tree-sitter-marmoset && npm test`
+- `./_build/default/bin/main.exe /Users/zlw/src/marmoset/marmoset/examples/records-typed.mr`
+- `./_build/default/bin/main.exe /Users/zlw/src/marmoset/marmoset/examples/traits-typed.mr`
+- `./_build/default/bin/main.exe /Users/zlw/src/marmoset/marmoset/examples/user.mr`
+- `./_build/default/bin/main.exe /Users/zlw/src/marmoset/marmoset/examples/new-syntax-upcase.mr`

@@ -1,6 +1,6 @@
 # T93: Three-level supertrait chain exposes all ancestor fields
 trait Named = {
-  name: Str
+  name: Str  # error: Trait bodies are method-only; move structural fields to a shape declaration
 }
 trait Aged: Named = {
   age: Int
@@ -8,5 +8,5 @@ trait Aged: Named = {
 trait Profiled: Aged = {
   status: Str
 }
-let x: Profiled = { name: "alice", age: 30, status: "active", secret: true }  # error: cannot be used as a type in vNext
+let x: Profiled = { name: "alice", age: 30, status: "active", secret: true }
 puts(x.name + " " + x.age.show() + " " + x.status)  # output: alice 30 active

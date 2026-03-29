@@ -1,5 +1,5 @@
-# T87: Generic field-only trait as variable type is rejected
+# T87: Legacy generic field-style trait syntax is rejected in variable annotations
 trait Container[a] = {
-  value: a
+  value: a  # error: Trait bodies are method-only; move structural fields to a shape declaration
 }
-let x: Container = { value: 42 }  # error: cannot be used as a type in vNext
+let x: Container = { value: 42 }

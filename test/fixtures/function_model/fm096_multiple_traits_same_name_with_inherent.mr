@@ -15,6 +15,7 @@ impl Val = {
   fn fmt(v: Val) -> Str = { "inherent" }
 }
 
-let v: Val = { n: 1 }
+let v = Val(n: 1)
+
 # inherent wins on dot, no ambiguity
 puts(v.fmt())  # output: inherent

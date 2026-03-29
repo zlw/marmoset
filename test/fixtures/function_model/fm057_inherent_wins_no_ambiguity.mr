@@ -12,6 +12,7 @@ impl Data = {
   fn show_val(d: Data) -> Str = { "inherent:" + d.v.show() }
 }
 
-let d: Data = { v: 7 }
+let d = Data(v: 7)
+
 # inherent wins, NOT ambiguity
 puts(d.show_val())  # output: inherent:7

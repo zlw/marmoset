@@ -1,5 +1,5 @@
-# VN102: Generic record aliases may still derive builtin Show directly
+# VN102: Generic named product types may still derive builtin Show directly
 type Box[t] = { value: t } derive Show
 
-let box: Box[Int] = { value: 1 }
+let box: Box[Int] = Box(value: 1)
 puts(box.show())  # output: { value: 1 }

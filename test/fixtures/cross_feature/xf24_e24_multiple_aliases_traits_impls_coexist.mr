@@ -1,10 +1,10 @@
 # XF24: E24: Multiple aliases + traits + impls coexist
 type Point = { x: Int, y: Int }
 type Label = { text: Str }
-trait Named = {
+shape Named = {
   name: Str
 }
-trait Scored = {
+shape Scored = {
   score: Int
 }
 impl Show[Point] = {

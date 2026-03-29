@@ -6,7 +6,8 @@ impl Val = {
   }
 }
 
-let v: Val = { v: 3 }
+let v = Val(v: 3)
+
 # chain: then returns int, then show
 let result = v.then((n: Int) -> n * 10).show()
 puts(result)  # output: 30

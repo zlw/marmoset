@@ -5,5 +5,5 @@ trait Boxed[a]: Show = {
 
 type Point = { x: Int } derive Boxed, Show
 
-let value = { x: 1 }.box()
+let value = Point(x: 1).box()
 puts(value.show())  # output: { x: 1 }

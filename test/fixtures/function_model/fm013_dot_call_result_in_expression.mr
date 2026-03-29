@@ -6,6 +6,7 @@ impl Pair = {
   }
 }
 
-let p: Pair = { a: 10, b: 20 }
+let p = Pair(a: 10, b: 20)
+
 let result = p.total() + 5
 puts(result)  # output: 35

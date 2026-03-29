@@ -3,5 +3,5 @@ type Point = { x: Int, y: Int }
 impl Point = {
   fn is_origin(p: Point) -> Bool = p.x == 0
 }
-let p: Point = { x: 0, y: 5 }
+let p = Point(x: 0, y: 5)
 puts(p.is_origin())  # output: true

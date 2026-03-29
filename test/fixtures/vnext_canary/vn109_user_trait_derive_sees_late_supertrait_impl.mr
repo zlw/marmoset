@@ -11,4 +11,4 @@ type Score = Int derive Child
 
 impl Base[Score] = {}
 
-puts(1.child())  # output: base:child
+puts(Score(1).child())  # output: base:child

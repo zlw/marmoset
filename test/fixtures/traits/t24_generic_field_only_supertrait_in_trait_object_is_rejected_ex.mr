@@ -1,5 +1,5 @@
-# T24: Generic field-only supertrait in trait object is rejected explicitly
+# T24: Legacy generic field-style supertrait syntax is rejected
 trait Tagged[a] = {
-  tag: a
+  tag: a  # error: Trait bodies are method-only; move structural fields to a shape declaration
 }
-trait TaggedLike: Tagged = {}  # error: generic field-only supertrait
+trait TaggedLike: Tagged = {}

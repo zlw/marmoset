@@ -1,6 +1,3 @@
 # TF26: Unconstrained param accessing field on non-record type
-trait HasSecret = {
-  secret: Int
-}
 fn leak(v) = v.secret
 leak(42)  # error: Cannot unify

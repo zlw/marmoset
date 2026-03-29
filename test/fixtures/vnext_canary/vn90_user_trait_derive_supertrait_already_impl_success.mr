@@ -10,4 +10,4 @@ trait Child[a]: Base = {
 impl Base[Score] = {}
 
 type Score = Int derive Child
-puts(1.child())  # output: base:child
+puts(Score(1).child())  # output: base:child

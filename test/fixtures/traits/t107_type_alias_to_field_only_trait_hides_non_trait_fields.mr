@@ -1,7 +1,7 @@
-# T107: Type alias to field-only trait hides non-trait fields
+# T107: Legacy field-style trait syntax is rejected in aliased type position
 trait Named = {
-  name: Str
+  name: Str  # error: Trait bodies are method-only; move structural fields to a shape declaration
 }
-type Nameable = Named  # error: cannot be used as a type in vNext
+type Nameable = Named
 let x: Nameable = { name: "alice", age: 30 }
 puts(x.age)

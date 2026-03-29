@@ -1,6 +1,6 @@
 # VN51: Bare trait names in parameter position lower to constrained-param shorthand
-trait Named = { name: Str }
-trait Aged = { age: Int }
+shape Named = { name: Str }
+shape Aged = { age: Int }
 
 fn describe(x: Named & Aged) -> Str = x.name + ":" + x.age.show()
 

@@ -1,7 +1,7 @@
 # XF10: B10: Enum containing record, unwrap and access fields
 type Point = { x: Int, y: Int }
 enum Container = { PointVal(Point) }
-let p: Point = { x: 10, y: 20 }
+let p = Point(x: 10, y: 20)
 let c = Container.PointVal(p)
 let sum = match c {
   case Container.PointVal(q): q.x + q.y

@@ -1,5 +1,5 @@
-# TF34: Constrained generic called with different records
-trait HasLabel = {
+# TF34: Constrained generic called with different records satisfying one shape
+shape HasLabel = {
   label: Str
 }
 fn get_label[t: HasLabel](v: t) -> Str = v.label

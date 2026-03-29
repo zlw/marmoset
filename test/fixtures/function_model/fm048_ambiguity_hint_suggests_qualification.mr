@@ -16,5 +16,6 @@ impl ViewB[Val] = {
   fn view(x: Val) -> Str = { "b" }
 }
 
-let v: Val = { n: 1 }
+let v = Val(n: 1)
+
 v.view()  # error: Ambiguous

@@ -1,4 +1,4 @@
-trait Named = {
+shape Named = {
   name: Str
 }
 

@@ -1,5 +1,5 @@
-# TF08: Constrained generic: record has field but wrong type
-trait HasName = {
+# TF08: Constrained generic: record has shape field with wrong type
+shape HasName = {
   name: Str
 }
 fn get_name[t: HasName](v: t) -> Str = v.name

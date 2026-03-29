@@ -1,7 +1,7 @@
-# T116: Field-only trait as both constraint and type annotation
+# T116: Legacy field-style trait syntax is rejected in both constraint and type positions
 trait Named = {
-  name: Str
+  name: Str  # error: Trait bodies are method-only; move structural fields to a shape declaration
 }
 fn get_name[t: Named](x: t) -> Str = x.name
-let p: Named = { name: "alice", age: 30 }  # error: cannot be used as a type in vNext
+let p: Named = { name: "alice", age: 30 }
 puts(p.name + " " + get_name({ name: "bob", role: "admin" }))  # output: alice bob

@@ -9,6 +9,6 @@ trait Child[a]: Base = {
 
 type Score = Int derive Child, Base
 
-let value: Dyn[Child] = 1
+let value: Dyn[Child] = Score(1)
 puts(value.base())   # output: base
 puts(value.child())  # output: base:child

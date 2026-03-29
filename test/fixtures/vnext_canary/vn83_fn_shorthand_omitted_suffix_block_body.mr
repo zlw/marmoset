@@ -1,5 +1,5 @@
 # VN83: Top-level fn combines shorthand params, omitted suffix, and block bodies
-trait Named = { name: Str }
+shape Named = { name: Str }
 
 fn greet(x: Named) = {
   let prefix = "hi "

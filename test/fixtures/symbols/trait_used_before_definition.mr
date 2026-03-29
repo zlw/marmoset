@@ -1,5 +1,3 @@
-fn f[t: Mything](x: t) -> Str = x.name  # error: *
-trait Mything = {
-  name: Str
-}
-puts(f({ name: "hi" }))
+fn f[t: Mything](x: t) -> Str = x.name
+shape Mything = { name: Str }
+puts(f({ name: "hi" }))  # output: hi

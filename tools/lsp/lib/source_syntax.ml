@@ -108,6 +108,12 @@ let rec mono_type_to_source ?(type_var_user_names = []) (mono : Types.mono_type)
       ^ "["
       ^ String.concat ", " (List.map (mono_type_to_source ~type_var_user_names) args)
       ^ "]"
+  | Types.TNamed (name, []) -> canonical_type_name name
+  | Types.TNamed (name, args) ->
+      canonical_type_name name
+      ^ "["
+      ^ String.concat ", " (List.map (mono_type_to_source ~type_var_user_names) args)
+      ^ "]"
 
 and mono_type_to_source_parens ?(type_var_user_names = []) = function
   | (Types.TFun _ | Types.TUnion _ | Types.TIntersection _) as t ->

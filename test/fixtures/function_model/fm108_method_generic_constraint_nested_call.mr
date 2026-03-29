@@ -6,5 +6,6 @@ impl Box = {
   }
 }
 
-let b: Box = { v: 7 }
+let b = Box(v: 7)
+
 puts(b.apply((n: Int) -> n * 2))  # output: 14

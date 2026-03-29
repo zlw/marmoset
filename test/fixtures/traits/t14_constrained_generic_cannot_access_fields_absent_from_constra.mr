@@ -1,7 +1,7 @@
 # T14: Constrained generic cannot access fields absent from constraints
 trait Named = {
-  name: Str
+  name: Str  # error: Trait bodies are method-only; move structural fields to a shape declaration
 }
-fn get_age[t: Named](x: t) -> Int = x.age  # error: not guaranteed by constraints
+fn get_age[t: Named](x: t) -> Int = x.age
 let p = { name: "alice", age: 42 }
 puts(get_age(p))

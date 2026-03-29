@@ -4,11 +4,11 @@
 # Theme: monkeys, jungles, bananas, and questionable life choices.
 
 # ─── Type Aliases ───────────────────────────────────────────────
-type MonkeyID = Int
-type BananaCount = Int
-type JungleThing = Int | Str | Bool          # union type
-type Reducer[a] = (a, a) -> a               # pure function type
-type SideEffector[a] = (a, a) => a          # effectful function type
+alias MonkeyID = Int
+alias BananaCount = Int
+alias JungleThing = Int | Str | Bool        # union type alias
+alias Reducer[a] = (a, a) -> a              # pure function type
+alias SideEffector[a] = (a, a) => a         # effectful function type
 
 # ─── Enums ──────────────────────────────────────────────────────
 enum Option[a] = {
@@ -49,15 +49,11 @@ type Jungle = {
   has_bananas: Bool,
 }
 
-type MonkeyOrSadness = Result[Monkey, Str]
+alias MonkeyOrSadness = Result[Monkey, Str]
 
-# ─── Traits ─────────────────────────────────────────────────────
-trait Show[a] = {
-  fn show(a) -> Str                          # positional typed param (signature-only)
-}
-
-trait Eq[a] = {
-  fn eq(a, a) -> Bool
+# ─── Shapes & Traits ────────────────────────────────────────────
+shape NamedDweller = {
+  name: Str,
 }
 
 trait Noisy[a] = {
@@ -68,10 +64,7 @@ trait Noisy[a] = {
 }
 
 # supertrait constraint composition with &
-trait JungleDweller[a]: Show & Eq = {
-  name: Str,                                 # trait field (comma-separated)
-  favorite_fruit: Fruit,                     # another trait field
-
+trait JungleDweller[a]: Show & Eq & NamedDweller = {
   fn territory(a) -> Str                     # required method
   fn forage(a, Str) => Result[Fruit, Str]    # effectful required method
 
@@ -226,8 +219,24 @@ impl[a: Show] Show[Option[a]] = {
 
 impl Monkey = {
   fn hungry?(self: Monkey) -> Bool = self.bananas_eaten < 3
-  fn alpha!(self: Monkey) -> Monkey = { ...self, is_alpha: true, }
-  fn with_fruit(self: Monkey, f: Fruit) -> Monkey = { ...self, favorite_fruit: f, }
+  fn alpha!(self: Monkey) -> Monkey =
+    Monkey(
+      id: self.id,
+      name: self.name,
+      age: self.age,
+      favorite_fruit: self.favorite_fruit,
+      bananas_eaten: self.bananas_eaten,
+      is_alpha: true,
+    )
+  fn with_fruit(self: Monkey, f: Fruit) -> Monkey =
+    Monkey(
+      id: self.id,
+      name: self.name,
+      age: self.age,
+      favorite_fruit: f,
+      bananas_eaten: self.bananas_eaten,
+      is_alpha: self.is_alpha,
+    )
 }
 
 # ─── Match: All Pattern Forms ───────────────────────────────────
@@ -260,7 +269,7 @@ fn unwrap_banana(v: Option[Fruit], fallback: Fruit) -> Fruit = match v {
 }
 
 # record pattern with punning + rest spread
-fn greet_by_name(m: Monkey, fallback: Str) -> Str = match m {
+fn greet_by_name(m: { name: Str, bananas_eaten: Int }) -> Str = match m {
   case { name:, ...rest }: name
 }
 

@@ -2,7 +2,6 @@
 type Point = { x: Int, y: Int }
 enum Status = { Ok, Fail }
 enum OptionInt = { Some(Int), None }
-trait Named = { name: Str }
 fn process(s: Status, v: OptionInt) -> Str = {
   let prefix = match s {
     case Status.Ok: "ok"

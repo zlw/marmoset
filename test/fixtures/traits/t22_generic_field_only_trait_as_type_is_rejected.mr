@@ -1,5 +1,5 @@
-# T22: Generic field-only trait as type is rejected
+# T22: Legacy generic field-style trait syntax is rejected in type position
 trait Tagged[a] = {
-  tag: a
+  tag: a  # error: Trait bodies are method-only; move structural fields to a shape declaration
 }
-let x: Tagged = { tag: 1 }  # error: cannot be used as a type in vNext
+let x: Tagged = { tag: 1 }

@@ -1,8 +1,10 @@
-# TF33: Empty child trait inherits parent fields
-trait Base = {
+# TF33: A wider shape can preserve the required parent field
+shape Base = {
   value: Str
 }
-trait Child: Base = {}
+shape Child = {
+  value: Str
+}
 fn get_value[t: Child](v: t) -> Str = v.value
 let r = { value: "inherited" }
 puts(get_value(r))  # output: inherited

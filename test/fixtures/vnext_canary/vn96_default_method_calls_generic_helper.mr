@@ -17,5 +17,5 @@ impl Named[Person] = {
 
 impl LoudNamed[Person] = {}
 
-let p: Person = { name: "alice" }
+let p: Person = Person(name: "alice")
 puts(p.shout())  # output: alice!

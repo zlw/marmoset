@@ -1,5 +1,5 @@
 # VN61: Typed arrow-lambda params accept constrained-param shorthand
-trait Named = { name: Str }
+shape Named = { name: Str }
 
 fn apply[a, b](x: a, f: (a) -> b) -> b = f(x)
 

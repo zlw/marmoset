@@ -4,4 +4,4 @@ trait Fancy[a] = {
 }
 
 type Point = { x: Int } derive Fancy
-puts({ x: 1 }.fancy())
+puts(Point(x: 1).fancy())

@@ -1,4 +1,4 @@
 # R025: Reordered record literal still resolves derived show
 type Point = { x: Int, y: Int } derive Show
-let p: Point = { y: 2, x: 1 }
+let p: Point = Point(y: 2, x: 1)
 puts(p.show())  # output: { x: 1, y: 2 }

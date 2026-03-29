@@ -7,7 +7,7 @@ impl Point = {
 impl Rect = {
   fn total(r: Rect) -> Int = r.w + r.h
 }
-let p: Point = { x: 1, y: 2 }
-let r: Rect = { w: 3, h: 4 }
+let p = Point(x: 1, y: 2)
+let r = Rect(w: 3, h: 4)
 puts(p.total())  # output: 3
 puts(r.total())  # output: 7

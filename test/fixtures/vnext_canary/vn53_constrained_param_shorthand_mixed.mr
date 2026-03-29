@@ -1,5 +1,5 @@
 # VN53: Constrained-param shorthand coexists with explicit generic binders
-trait Named = { name: Str }
+shape Named = { name: Str }
 
 fn pair[a: Named](left: a, right: Named) -> Str = left.name + ":" + right.name
 

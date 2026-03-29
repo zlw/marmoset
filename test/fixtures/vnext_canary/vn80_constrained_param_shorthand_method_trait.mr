@@ -1,6 +1,6 @@
-# VN80: Shorthand constraints may mix field-only and method traits
-trait Named = { name: Str }
-trait Aged = { age: Int }
+# VN80: Shorthand constraints may mix shapes and method traits
+shape Named = { name: Str }
+shape Aged = { age: Int }
 trait Tagged[a] = {
   fn tag(x: a) -> Str
 }
@@ -13,4 +13,4 @@ impl Tagged[User] = {
 
 fn describe(x: Named & Aged & Tagged) -> Str = x.name + ":" + x.age.show() + ":" + x.tag()
 
-puts(describe({ name: "Ada", age: 42, id: 7 }))  # output: Ada:42:#7
+puts(describe(User(name: "Ada", age: 42, id: 7)))  # output: Ada:42:#7

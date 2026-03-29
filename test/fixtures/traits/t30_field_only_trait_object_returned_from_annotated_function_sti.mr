@@ -1,7 +1,7 @@
-# T30: Field-only trait object returned from annotated function still hides non-projected fields
+# T30: Legacy field-style trait syntax is rejected before return projection rules apply
 trait Named = {
-  name: Str
+  name: Str  # error: Trait bodies are method-only; move structural fields to a shape declaration
 }
-fn mk(age: Int) -> Named = { name: "alice", age: age }  # error: cannot be used as a type in vNext
+fn mk(age: Int) -> Named = { name: "alice", age: age }
 let x = mk(1)
 puts(x.age)

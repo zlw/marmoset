@@ -6,7 +6,8 @@ impl Pair = {
   }
 }
 
-let p: Pair = { a: 10, b: 20 }
+let p = Pair(a: 10, b: 20)
+
 # These two forms should produce identical results
 let via_dot = p.total()
 let via_qual = Pair.total(p)

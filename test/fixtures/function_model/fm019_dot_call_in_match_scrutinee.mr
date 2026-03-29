@@ -6,7 +6,8 @@ impl Tagged = {
   }
 }
 
-let t: Tagged = { tag: 2 }
+let t = Tagged(tag: 2)
+
 let result = match t.get_tag() {
   case 1: "one"
   case 2: "two"

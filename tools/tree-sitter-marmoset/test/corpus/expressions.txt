@@ -193,6 +193,26 @@ puts(fib(10))
         (integer_literal)))))
 
 ================================================================================
+Named product constructor call with labeled fields and spread
+================================================================================
+
+Point(...p, x: 10)
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (expression_statement
+    (call_expression
+      function: (identifier)
+      (constructor_argument_list
+        (constructor_argument_entry
+          (spread_entry
+            (identifier)))
+        (constructor_argument_entry
+          key: (identifier)
+          value: (integer_literal))))))
+
+================================================================================
 Index expression
 ================================================================================
 

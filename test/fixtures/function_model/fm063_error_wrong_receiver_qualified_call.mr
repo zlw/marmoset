@@ -1,6 +1,5 @@
-# FM63: Qualified trait call with structural type equivalence
-# In structural type systems Alpha and Beta are the same type ({v: Int}),
-# so label impl for alpha applies to beta too.
+# FM63: Qualified trait call rejects wrong nominal receiver
+# Under nominal named-type semantics Alpha and Beta are distinct types.
 type Alpha = { v: Int }
 type Beta = { v: Int }
 
@@ -12,5 +11,6 @@ impl Label[Alpha] = {
   fn tag(x: Alpha) -> Str = { "alpha" }
 }
 
-let b: Beta = { v: 1 }
-puts(Label.tag(b))  # output: alpha
+let b = Beta(v: 1)
+
+puts(Label.tag(b))  # error: does not implement trait

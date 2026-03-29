@@ -1,5 +1,5 @@
-# TF21: Constrained generic: return Int field and use in arithmetic
-trait HasN = {
+# TF21: Constrained generic: return Int shape field and use in arithmetic
+shape HasN = {
   n: Int
 }
 fn doubled[t: HasN](v: t) -> Int = v.n + v.n

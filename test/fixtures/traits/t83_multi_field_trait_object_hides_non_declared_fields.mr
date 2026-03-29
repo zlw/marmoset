@@ -1,7 +1,7 @@
 # T83: Multi-field trait object hides non-declared fields
 trait PersonLike = {
-  name: Str
+  name: Str  # error: Trait bodies are method-only; move structural fields to a shape declaration
   age: Int
 }
-let x: PersonLike = { name: "alice", age: 30, active: true }  # error: cannot be used as a type in vNext
+let x: PersonLike = { name: "alice", age: 30, active: true }
 puts(x.active)

@@ -5,5 +5,5 @@ impl Box = {
   fn map[b](box: Box, f: (Int) -> b) -> b = f(box.value)
 }
 
-let box: Box = { value: 21 }
+let box: Box = Box(value: 21)
 puts(box.map(_ * 2))  # output: 42

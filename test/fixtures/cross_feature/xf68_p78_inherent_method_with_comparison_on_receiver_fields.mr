@@ -9,5 +9,5 @@ impl Point = {
     }
   }
 }
-let p: Point = { x: 5, y: 3 }
+let p = Point(x: 5, y: 3)
 puts(p.is_first_quadrant())  # output: true

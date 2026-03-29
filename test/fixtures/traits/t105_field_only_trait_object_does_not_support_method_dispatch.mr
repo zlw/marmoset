@@ -1,6 +1,6 @@
-# T105: Field-only trait object does not support method dispatch
+# T105: Legacy field-style trait syntax is rejected before Dyn method-dispatch rules apply
 trait Named = {
-  name: Str
+  name: Str  # error: Trait bodies are method-only; move structural fields to a shape declaration
 }
-let x: Named = { name: "alice" }  # error: cannot be used as a type in vNext
+let x: Named = { name: "alice" }
 puts(x.show())

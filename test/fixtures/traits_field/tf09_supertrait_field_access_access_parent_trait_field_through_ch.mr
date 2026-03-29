@@ -1,8 +1,9 @@
-# TF09: Supertrait field access: access parent trait field through child constraint
-trait HasName = {
+# TF09: Wider shape constraint exposes the shared field
+shape HasName = {
   name: Str
 }
-trait Person: HasName = {
+shape Person = {
+  name: Str
   age: Int
 }
 fn get_name[t: Person](v: t) -> Str = v.name

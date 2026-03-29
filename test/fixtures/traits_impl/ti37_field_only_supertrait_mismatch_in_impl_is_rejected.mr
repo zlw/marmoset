@@ -1,7 +1,5 @@
-# TI37: Field-only supertrait mismatch in impl target is rejected
-trait Named = {
-  name: Str
-}
+# TI37: Shape superconstraints are enforced for trait impl targets
+shape Named = { name: Str }
 
 trait Shown[a]: Named = {
   fn show(x: a) -> Str

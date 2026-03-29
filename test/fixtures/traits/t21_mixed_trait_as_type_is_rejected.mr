@@ -1,6 +1,6 @@
-# T21: Mixed trait as type is rejected
+# T21: Legacy mixed field+method trait syntax is rejected in type position
 trait NamedShow[a] = {
-  name: Str
+  name: Str  # error: Trait bodies are method-only; move structural fields to a shape declaration
   fn show(x: a) -> Str
 }
-let x: NamedShow = { name: "alice" }  # error: cannot be used as a type in vNext
+let x: NamedShow = { name: "alice" }

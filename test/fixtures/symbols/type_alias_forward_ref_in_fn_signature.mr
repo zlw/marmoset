@@ -1,4 +1,4 @@
 # Top-level fn signature can forward-reference a later type alias
 fn get_x(p: Point) -> Int = p.x
-type Point = { x: Int, y: Int }
+alias Point = { x: Int, y: Int }
 puts(get_x({ x: 1, y: 2 }))  # output: 1

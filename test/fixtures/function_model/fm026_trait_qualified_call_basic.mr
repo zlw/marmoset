@@ -10,5 +10,6 @@ impl Display[Score] = {
   }
 }
 
-let s: Score = { v: 100 }
+let s = Score(v: 100)
+
 puts(Display.render(s))  # output: score:100

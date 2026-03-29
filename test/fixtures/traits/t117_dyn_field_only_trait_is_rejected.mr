@@ -1,6 +1,6 @@
-# T117: Dyn rejects field-only traits
+# T117: Dyn rejects legacy field-style trait syntax
 trait Named = {
-  name: Str
+  name: Str  # error: Trait bodies are method-only; move structural fields to a shape declaration
 }
-let x: Dyn[Named] = { name: "alice" }  # error: field-only trait
+let x: Dyn[Named] = { name: "alice" }
 x

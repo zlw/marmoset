@@ -125,7 +125,10 @@
 (trait_definition
   name: (identifier) @type)
 
-(trait_field
+(shape_definition
+  name: (identifier) @type)
+
+(shape_field
   name: (identifier) @property)
 
 ; Impl block
@@ -144,8 +147,11 @@
 (derive_clause
   trait: (identifier) @type)
 
-; Type alias
-(type_alias
+; Type and alias definitions
+(type_definition
+  name: (identifier) @type)
+
+(alias_definition
   name: (identifier) @type)
 
 ; Type parameters

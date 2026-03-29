@@ -1,5 +1,8 @@
 module AST = Syntax.Ast.AST
+module Constraints = Constraints
 module Diagnostic = Diagnostics.Diagnostic
+module Type_registry = Type_registry
+module Trait_solver = Trait_solver
 module StringSet = Set.Make (String)
 
 let ( let* ) = Result.bind
@@ -7,8 +10,7 @@ let ( let* ) = Result.bind
 type trait_summary = {
   name : string;
   type_param : string option;
-  supertraits : string list;
-  fields : AST.record_type_field list;
+  supertraits : Constraints.t list;
   methods : AST.method_sig list;
 }
 
@@ -150,8 +152,7 @@ let register_program_trait (traits : (string, trait_summary) Hashtbl.t) (trait_d
     {
       name = trait_def.name;
       type_param = trait_def.type_param;
-      supertraits = List.map Trait_registry.canonical_trait_name trait_def.supertraits;
-      fields = trait_def.fields;
+      supertraits = Constraints.of_names trait_def.supertraits;
       methods = trait_def.methods;
     }
 
@@ -168,46 +169,116 @@ let pre_scan_program (program : AST.program) :
     (fun (stmt : AST.statement) ->
       match stmt.stmt with
       | AST.TraitDef trait_def -> register_program_trait traits trait_def
+      | AST.TypeDef type_def -> Type_registry.predeclare_named_type type_def
+      | AST.ShapeDef shape_def -> Type_registry.predeclare_shape shape_def
       | AST.ImplDef impl_def -> Hashtbl.replace explicit_impls (impl_key_of_explicit_impl impl_def) ()
       | _ -> ())
     program;
   (traits, explicit_impls)
 
-let local_trait_kind (traits : (string, trait_summary) Hashtbl.t) (trait_name : string) :
-    Trait_registry.trait_kind option =
-  let rec accumulate visited name (has_fields, has_methods) =
-    if StringSet.mem name visited then
-      (has_fields, has_methods)
-    else
-      let visited' = StringSet.add name visited in
-      match Hashtbl.find_opt traits name with
-      | Some summary ->
-          let has_fields' = has_fields || summary.fields <> [] in
-          let has_methods' = has_methods || summary.methods <> [] in
-          List.fold_left
-            (fun acc super_name -> accumulate visited' super_name acc)
-            (has_fields', has_methods') summary.supertraits
-      | None -> (
-          match Trait_registry.trait_kind name with
-          | Some Trait_registry.FieldOnly -> (true, has_methods)
-          | Some Trait_registry.MethodOnly -> (has_fields, true)
-          | Some Trait_registry.Mixed -> (true, true)
-          | None -> (has_fields, has_methods))
-  in
-  let has_fields, has_methods = accumulate StringSet.empty trait_name (false, false) in
-  if has_fields && has_methods then
-    Some Trait_registry.Mixed
-  else if has_fields then
-    Some Trait_registry.FieldOnly
-  else if has_methods then
-    Some Trait_registry.MethodOnly
-  else
-    None
-
 let global_impl_exists (trait_name : string) (for_type : AST.type_expr) : bool =
   match Annotation.type_expr_to_mono_type for_type with
   | Ok mono_type -> Trait_registry.implements_trait trait_name mono_type
   | Error _ -> false
+
+let rec substitute_type_expr_vars (subst : (string * AST.type_expr) list) (type_expr : AST.type_expr) :
+    AST.type_expr =
+  match type_expr with
+  | AST.TVar name -> (
+      match List.assoc_opt name subst with
+      | Some replacement -> replacement
+      | None -> type_expr)
+  | AST.TCon _ | AST.TTraitObject _ -> type_expr
+  | AST.TApp (name, args) -> AST.TApp (name, List.map (substitute_type_expr_vars subst) args)
+  | AST.TArrow (params, ret, is_effectful) ->
+      AST.TArrow
+        (List.map (substitute_type_expr_vars subst) params, substitute_type_expr_vars subst ret, is_effectful)
+  | AST.TUnion members -> AST.TUnion (List.map (substitute_type_expr_vars subst) members)
+  | AST.TIntersection members -> AST.TIntersection (List.map (substitute_type_expr_vars subst) members)
+  | AST.TRecord (fields, row_var) ->
+      AST.TRecord
+        ( List.map
+            (fun (field : AST.record_type_field) ->
+              { field with field_type = substitute_type_expr_vars subst field.field_type })
+            fields,
+          Option.map (substitute_type_expr_vars subst) row_var )
+
+let source_record_fields (type_expr : AST.type_expr) : AST.record_type_field list option =
+  let product_fields_of_named_type (type_def : AST.named_type_def) (args : AST.type_expr list) :
+      AST.record_type_field list option =
+    match type_def.type_body with
+    | AST.NamedTypeWrapper _ -> None
+    | AST.NamedTypeProduct fields ->
+        if List.length type_def.type_type_params <> List.length args then
+          None
+        else
+          let subst = List.combine type_def.type_type_params args in
+          Some
+            (List.map
+               (fun (field : AST.record_type_field) ->
+                 { field with field_type = substitute_type_expr_vars subst field.field_type })
+               fields)
+  in
+  match type_expr with
+  | AST.TRecord (fields, _row_var) -> Some fields
+  | AST.TCon name -> (
+      match Type_registry.lookup_named_type_source name with
+      | Some type_def -> product_fields_of_named_type type_def []
+      | None -> None)
+  | AST.TApp (name, args) -> (
+      match Type_registry.lookup_named_type_source name with
+      | Some type_def -> product_fields_of_named_type type_def args
+      | None -> None)
+  | _ -> None
+
+let ast_fields_to_mono (fields : AST.record_type_field list) : Types.record_field_type list option =
+  let rec go acc = function
+    | [] -> Some (List.rev acc)
+    | (field : AST.record_type_field) :: rest -> (
+        match Annotation.type_expr_to_mono_type field.field_type with
+        | Error _ -> None
+        | Ok typ -> go ({ Types.name = field.field_name; typ } :: acc) rest)
+  in
+  go [] fields
+
+let fallback_shape_fields (shape_name : string) : Types.record_field_type list option =
+  match Type_registry.lookup_shape_source shape_name with
+  | Some shape_def when shape_def.shape_type_params = [] -> ast_fields_to_mono shape_def.shape_fields
+  | Some _ -> None
+  | None -> (
+      match Type_registry.lookup_shape shape_name with
+      | Some shape_def when shape_def.shape_type_params = [] -> Some shape_def.shape_fields
+      | Some _ -> None
+      | None -> None)
+
+let fallback_actual_fields (for_type : AST.type_expr) : Types.record_field_type list option =
+  match source_record_fields for_type with
+  | Some actual_fields -> ast_fields_to_mono actual_fields
+  | None -> (
+      match Annotation.type_expr_to_mono_type for_type with
+      | Ok mono_type -> Structural.fields_of_type mono_type
+      | Error _ -> None)
+
+let source_level_shape_satisfied (shape_name : string) (for_type : AST.type_expr) : bool =
+  match (fallback_shape_fields shape_name, fallback_actual_fields for_type) with
+  | Some required_fields, Some actual_fields ->
+      List.for_all
+        (fun (required : Types.record_field_type) ->
+          match List.find_opt (fun (field : Types.record_field_type) -> field.name = required.name) actual_fields with
+          | None -> false
+          | Some actual -> Structural.field_types_compatible actual.typ required.typ)
+        required_fields
+  | _ -> false
+
+let superconstraint_satisfied (constraint_ref : Constraints.t) (for_type : AST.type_expr) : bool =
+  match Annotation.type_expr_to_mono_type for_type with
+  | Error _ -> false
+  | Ok mono_type -> (
+      match constraint_ref with
+      | Constraints.ShapeConstraint shape_name ->
+          Result.is_ok (Trait_solver.check_constraint_ref mono_type constraint_ref)
+          || source_level_shape_satisfied shape_name for_type
+      | Constraints.TraitConstraint trait_name -> Trait_registry.implements_trait trait_name mono_type)
 
 let validate_target_type_params
     ~(stmt : AST.statement) ~(derive_trait : AST.derive_trait) ~(free_type_vars : string list) :
@@ -343,7 +414,8 @@ let clone_default_body
       | AST.Return expr -> AST.Return (clone_expr bound_names expr)
       | AST.ExpressionStmt expr -> AST.ExpressionStmt (clone_expr bound_names expr)
       | AST.Block stmts -> AST.Block (List.map (clone_stmt bound_names) stmts)
-      | AST.EnumDef _ | AST.TraitDef _ | AST.ImplDef _ | AST.InherentImplDef _ | AST.DeriveDef _ | AST.TypeAlias _
+      | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ | AST.TraitDef _ | AST.ImplDef _ | AST.InherentImplDef _
+      | AST.DeriveDef _ | AST.TypeAlias _
         ->
           stmt.stmt
     in
@@ -422,33 +494,25 @@ let ensure_user_trait_derivable
         (error_at_stmt ~code:"derive-undefined-trait"
            ~message:(Printf.sprintf "Cannot derive undefined trait: %s" trait_name)
            stmt)
-  | Some summary -> (
-      match local_trait_kind traits canonical_name with
-      | Some Trait_registry.FieldOnly ->
-          Error
-            (error_at_stmt ~code:"derive-field-only-trait"
-               ~message:
-                 (Printf.sprintf "Trait '%s' is field-only; derive is redundant and unsupported" summary.name)
-               stmt)
-      | _ ->
-          let required_methods =
-            summary.methods
-            |> List.filter (fun (method_sig : AST.method_sig) -> method_sig.method_default_impl = None)
-          in
-          if required_methods <> [] then
-            let method_names =
-              required_methods
-              |> List.map (fun (method_sig : AST.method_sig) -> method_sig.method_name)
-              |> String.concat ", "
-            in
-            Error
-              (error_at_stmt ~code:"derive-required-method"
-                 ~message:
-                   (Printf.sprintf "Trait '%s' cannot be derived because these methods have no default body: %s"
-                      summary.name method_names)
-                 stmt)
-          else
-            Ok summary)
+  | Some summary ->
+      let required_methods =
+        summary.methods
+        |> List.filter (fun (method_sig : AST.method_sig) -> method_sig.method_default_impl = None)
+      in
+      if required_methods <> [] then
+        let method_names =
+          required_methods
+          |> List.map (fun (method_sig : AST.method_sig) -> method_sig.method_name)
+          |> String.concat ", "
+        in
+        Error
+          (error_at_stmt ~code:"derive-required-method"
+             ~message:
+               (Printf.sprintf "Trait '%s' cannot be derived because these methods have no default body: %s"
+                  summary.name method_names)
+             stmt)
+      else
+        Ok summary
 
 let expand_one_derive
     ~(traits : (string, trait_summary) Hashtbl.t)
@@ -523,23 +587,33 @@ let expand_one_derive
         let visiting' = StringSet.add trait_name visiting in
         let* ordered', visited' =
           List.fold_left
-            (fun acc supertrait ->
+            (fun acc superconstraint ->
               let* ordered_acc, visited_acc = acc in
-              let supertrait = Trait_registry.canonical_trait_name supertrait in
-              if StringSet.mem supertrait requested_user_trait_names then
-                visit ordered_acc visiting' visited_acc supertrait
-              else if local_trait_kind traits supertrait = Some Trait_registry.FieldOnly then
-                Ok (ordered_acc, visited_acc)
-              else if StringSet.mem supertrait requested_builtin_trait_names || impl_exists supertrait then
-                Ok (ordered_acc, visited_acc)
-              else
-                Error
-                  (error_at_stmt ~code:"derive-missing-supertrait"
-                     ~message:
-                       (Printf.sprintf
-                          "Trait '%s' cannot be derived for %s because required supertrait '%s' is not implemented and is not requested in the same derive clause"
-                          summary.name target_display supertrait)
-                     stmt))
+              match superconstraint with
+              | Constraints.TraitConstraint supertrait ->
+                  if StringSet.mem supertrait requested_user_trait_names then
+                    visit ordered_acc visiting' visited_acc supertrait
+                  else if StringSet.mem supertrait requested_builtin_trait_names || impl_exists supertrait then
+                    Ok (ordered_acc, visited_acc)
+                  else
+                    Error
+                      (error_at_stmt ~code:"derive-missing-supertrait"
+                         ~message:
+                           (Printf.sprintf
+                              "Trait '%s' cannot be derived for %s because required supertrait '%s' is not implemented and is not requested in the same derive clause"
+                              summary.name target_display supertrait)
+                         stmt)
+              | Constraints.ShapeConstraint shape_name ->
+                  if superconstraint_satisfied superconstraint derive_def.derive_for_type then
+                    Ok (ordered_acc, visited_acc)
+                  else
+                    Error
+                      (error_at_stmt ~code:"derive-missing-supertrait"
+                         ~message:
+                           (Printf.sprintf
+                              "Trait '%s' cannot be derived for %s because required shape superconstraint '%s' is not satisfied by the target type"
+                              summary.name target_display shape_name)
+                         stmt))
             (Ok (ordered, visited))
             summary.supertraits
         in
@@ -631,7 +705,6 @@ let%test "expand_user_derives rewrites user derive into synthetic impl" =
            name = "Printable";
            type_param = Some "a";
            supertraits = [];
-           fields = [];
            methods =
              [
                {
@@ -678,7 +751,6 @@ let%test "expand_user_derives keeps builtin residual before synthetic impl" =
            name = "Printable";
            type_param = Some "a";
            supertraits = [];
-           fields = [];
            methods =
              [
                {
@@ -724,7 +796,6 @@ let%test "expand_user_derives rejects required-method traits" =
            name = "Needful";
            type_param = Some "a";
            supertraits = [];
-           fields = [];
            methods =
              [
                {
@@ -751,31 +822,6 @@ let%test "expand_user_derives rejects required-method traits" =
   | Error diag -> diag.code = "derive-required-method"
   | Ok _ -> false
 
-let%test "expand_user_derives rejects field-only traits" =
-  clear_default_derived_impl_store ();
-  let trait_stmt =
-    AST.mk_stmt
-      (AST.TraitDef
-         {
-           name = "Named";
-           type_param = None;
-           supertraits = [];
-           fields = [ AST.{ field_name = "name"; field_type = AST.TCon "Str" } ];
-           methods = [];
-         })
-  in
-  let derive_stmt =
-    AST.mk_stmt
-      (AST.DeriveDef
-         {
-           derive_traits = [ AST.{ derive_trait_name = "Named"; derive_trait_constraints = [] } ];
-           derive_for_type = AST.TCon "Point";
-         })
-  in
-  match expand_user_derives [ trait_stmt; derive_stmt ] with
-  | Error diag -> diag.code = "derive-field-only-trait"
-  | Ok _ -> false
-
 let%test "expand_user_derives orders supertraits before dependent user traits" =
   clear_default_derived_impl_store ();
   let base_trait =
@@ -785,7 +831,6 @@ let%test "expand_user_derives orders supertraits before dependent user traits" =
            name = "Base";
            type_param = Some "a";
            supertraits = [];
-           fields = [];
            methods =
              [
                {
@@ -807,7 +852,6 @@ let%test "expand_user_derives orders supertraits before dependent user traits" =
            name = "Child";
            type_param = Some "a";
            supertraits = [ "Base" ];
-           fields = [];
            methods =
              [
                {
@@ -854,7 +898,6 @@ let%test "expand_user_derives rejects duplicate traits in one derive clause" =
            name = "Printable";
            type_param = Some "a";
            supertraits = [];
-           fields = [];
            methods =
              [
                {
@@ -884,3 +927,57 @@ let%test "expand_user_derives rejects duplicate traits in one derive clause" =
   match expand_user_derives [ trait_stmt; derive_stmt ] with
   | Error diag -> diag.code = "derive-duplicate-impl"
   | Ok _ -> false
+
+let%test "expand_user_derives accepts shape superconstraints satisfied by named product targets" =
+  clear_default_derived_impl_store ();
+  Type_registry.clear ();
+  Type_registry.register_shape
+    {
+      Type_registry.shape_name = "Named";
+      shape_type_params = [];
+      shape_fields = [ { Types.name = "name"; typ = Types.TString } ];
+    };
+  let trait_stmt =
+    AST.mk_stmt
+      (AST.TraitDef
+         {
+           name = "Greeter";
+           type_param = Some "a";
+           supertraits = [ "Named" ];
+           methods =
+             [
+               {
+                 method_sig_id = 16;
+                 method_name = "greet";
+                 method_generics = None;
+                 method_params = [ ("self", AST.TVar "a") ];
+                 method_return_type = AST.TCon "Str";
+                 method_effect = AST.Pure;
+                 method_default_impl =
+                   Some
+                     (AST.mk_expr ~id:33
+                        (AST.FieldAccess (AST.mk_expr ~id:34 (AST.Identifier "self"), "name")));
+               };
+             ];
+         })
+  in
+  let type_stmt =
+    AST.mk_stmt
+      (AST.TypeDef
+         {
+           type_name = "User";
+           type_type_params = [];
+           type_body = AST.NamedTypeProduct [ { field_name = "name"; field_type = AST.TCon "Str" } ];
+         })
+  in
+  let derive_stmt =
+    AST.mk_stmt
+      (AST.DeriveDef
+         {
+           derive_traits = [ AST.{ derive_trait_name = "Greeter"; derive_trait_constraints = [] } ];
+           derive_for_type = AST.TCon "User";
+         })
+  in
+  match expand_user_derives [ trait_stmt; type_stmt; derive_stmt ] with
+  | Ok [ _; _; { AST.stmt = AST.ImplDef { impl_trait_name = "Greeter"; _ }; _ } ] -> true
+  | _ -> false

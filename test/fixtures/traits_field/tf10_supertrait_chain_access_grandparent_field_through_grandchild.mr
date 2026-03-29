@@ -1,11 +1,14 @@
-# TF10: Supertrait chain: access grandparent field through grandchild constraint
-trait LevelA = {
+# TF10: Nested shape fields remain available through the widest shape
+shape LevelA = {
   a_field: Str
 }
-trait LevelB: LevelA = {
+shape LevelB = {
+  a_field: Str
   b_field: Int
 }
-trait LevelC: LevelB = {
+shape LevelC = {
+  a_field: Str
+  b_field: Int
   c_field: Int
 }
 fn get_a[t: LevelC](v: t) -> Str = v.a_field

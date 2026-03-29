@@ -9,5 +9,5 @@ impl Display[Thing] = {
   fn render(x) = "thing:" + x.v.show()
 }
 
-let thing: Thing = { v: 42 }
+let thing: Thing = Thing(v: 42)
 puts(thing.render())  # output: thing:42

@@ -1,8 +1,8 @@
-# TF13: Multiple constraints with same field name but different types
-trait HasXInt = {
+# TF13: Multiple shape constraints with same field name but different types
+shape HasXInt = {
   x: Int
 }
-trait HasXString = {
+shape HasXString = {
   x: Str
 }
 fn get_x[t: HasXInt & HasXString](v: t) -> Int = v.x  # error: Conflicting field type

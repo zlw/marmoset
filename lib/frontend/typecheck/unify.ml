@@ -79,6 +79,13 @@ let rec unify (type1 : mono_type) (type2 : mono_type) : (substitution, Diagnosti
       else
         (* Unify all type arguments *)
         unify_list args1 args2
+  | TNamed (name1, args1), TNamed (name2, args2) ->
+      if name1 <> name2 then
+        Error (type_mismatch type1 type2)
+      else if List.length args1 <> List.length args2 then
+        Error (type_mismatch type1 type2)
+      else
+        unify_list args1 args2
   (* Both unions - check equality (must come before single-sided union cases) *)
   | TUnion members1, TUnion members2 -> unify_union_with_union members1 members2
   (* Union on right - concrete type must match at least one member (widening) *)

@@ -1,7 +1,7 @@
 # R172: Type alias with derived eq used in function
 type Point = { x: Int, y: Int } derive Eq
 fn check_eq(a: Point, b: Point) -> Bool = a.eq(b)
-let p1: Point = { x: 1, y: 2 }
-let p2: Point = { x: 1, y: 2 }
+let p1: Point = Point(x: 1, y: 2)
+let p2: Point = Point(x: 1, y: 2)
 let out = if (check_eq(p1, p2)) { "true" } else { "false" }
 puts(out)  # output: true

@@ -1,11 +1,7 @@
-# XF05: A5: Three-level supertrait chain with record containing all fields
-trait Named = {
+# XF05: A5: Wider shape with multiple required fields
+shape Profiled = {
   name: Str
-}
-trait Aged: Named = {
   age: Int
-}
-trait Profiled: Aged = {
   status: Str
 }
 

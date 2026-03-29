@@ -8,5 +8,5 @@ impl SumFields[Point] = {
     p.x + p.y
   }
 }
-let p: Point = { x: 1, y: 2 }
+let p: Point = Point(x: 1, y: 2)
 puts(p.sum_fields())  # output: 3

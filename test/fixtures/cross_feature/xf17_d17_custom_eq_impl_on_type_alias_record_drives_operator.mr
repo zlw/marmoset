@@ -5,6 +5,6 @@ impl Eq[Point] = {
     false
   }
 }
-let p1: Point = { x: 1, y: 2 }
-let p2: Point = { x: 1, y: 2 }
+let p1 = Point(x: 1, y: 2)
+let p2 = Point(x: 1, y: 2)
 puts(p1 == p2)  # output: false

@@ -210,7 +210,8 @@ let rec walk_stmt ~source ~type_map ~range_start ~range_end ~hints (stmt : Ast.A
           (fun (m : Ast.AST.method_sig) ->
             Option.iter (walk_expr ~source ~type_map ~range_start ~range_end ~hints) m.method_default_impl)
           methods
-    | Ast.AST.EnumDef _ | Ast.AST.DeriveDef _ | Ast.AST.TypeAlias _ -> ()
+    | Ast.AST.EnumDef _ | Ast.AST.TypeDef _ | Ast.AST.ShapeDef _ | Ast.AST.DeriveDef _ | Ast.AST.TypeAlias _ ->
+        ()
 
 (* Walk expressions to find nested functions *)
 and walk_expr ~source ~type_map ~range_start ~range_end ~hints (expr : Ast.AST.expression) =

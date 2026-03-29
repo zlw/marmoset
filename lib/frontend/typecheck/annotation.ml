@@ -11,6 +11,7 @@
 *)
 
 module Diagnostic = Diagnostics.Diagnostic
+module Constraints = Constraints
 
 let ( let* ) = Result.bind
 
@@ -48,6 +49,13 @@ let register_type_alias (alias_def : Syntax.Ast.AST.type_alias_def) : unit =
 
 let clear_type_aliases () : unit = Hashtbl.clear type_alias_registry
 let lookup_type_alias (name : string) : type_alias_info option = Hashtbl.find_opt type_alias_registry name
+
+let fresh_shape_row_counter = ref 0
+
+let fresh_shape_row_var () : Types.mono_type =
+  let n = !fresh_shape_row_counter in
+  fresh_shape_row_counter := n + 1;
+  Types.TRowVar ("shape_row" ^ string_of_int n)
 
 let builtin_primitive_type (name : string) : Types.mono_type option =
   match name with
@@ -88,9 +96,9 @@ let trait_object_traits_allowed (traits : string list) : bool =
   traits <> []
   && List.for_all
        (fun trait_name ->
-         match Trait_registry.trait_kind trait_name with
-         | Some Trait_registry.MethodOnly | Some Trait_registry.Mixed -> true
-         | Some Trait_registry.FieldOnly | None -> false)
+         match Constraints.of_name trait_name with
+         | Constraints.ShapeConstraint _ -> false
+         | Constraints.TraitConstraint canonical_name -> Trait_registry.lookup_trait canonical_name <> None)
        traits
 
 let normalized_trait_object_membership (traits : string list) : string list =
@@ -120,6 +128,33 @@ let is_callable_type = function
   | Types.TFun _ -> true
   | _ -> false
 
+let open_record_of_shape_fields (fields : Types.record_field_type list) : Types.mono_type =
+  Types.TRecord (Types.normalize_record_fields fields, Some (fresh_shape_row_var ()))
+
+let record_fields_satisfied_with
+    (subtype : Types.mono_type -> Types.mono_type -> bool)
+    (actual_fields : Types.record_field_type list)
+    (expected_fields : Types.record_field_type list) : bool =
+  let field_lookup fields name = List.find_opt (fun (f : Types.record_field_type) -> f.name = name) fields in
+  List.for_all
+    (fun (expected_f : Types.record_field_type) ->
+      match field_lookup actual_fields expected_f.name with
+      | None -> false
+      | Some actual_f -> subtype actual_f.typ expected_f.typ)
+    expected_fields
+
+let rec type_satisfies_required_fields_with
+    (subtype : Types.mono_type -> Types.mono_type -> bool)
+    (typ : Types.mono_type)
+    (required_fields : Types.record_field_type list) : bool =
+  match Types.canonicalize_mono_type typ with
+  | Types.TIntersection members ->
+      List.for_all (fun member -> type_satisfies_required_fields_with subtype member required_fields) members
+  | concrete -> (
+      match Structural.fields_of_type concrete with
+      | Some actual_fields -> record_fields_satisfied_with subtype actual_fields required_fields
+      | None -> false)
+
 let rec member_is_subtype_of (actual : Types.mono_type) (expected : Types.mono_type) : bool =
   match (actual, expected) with
   | Types.TVar a, Types.TVar b -> a = b
@@ -142,8 +177,13 @@ let rec member_is_subtype_of (actual : Types.mono_type) (expected : Types.mono_t
   | Types.TBool, Types.TBool -> true
   | Types.TString, Types.TString -> true
   | Types.TNull, Types.TNull -> true
+  | Types.TNamed (name1, args1), Types.TNamed (name2, args2) ->
+      name1 = name2 && List.length args1 = List.length args2 && List.for_all2 member_is_subtype_of args1 args2
   | Types.TArray elem1, Types.TArray elem2 -> member_is_subtype_of elem1 elem2
   | Types.THash (k1, v1), Types.THash (k2, v2) -> member_is_subtype_of k1 k2 && member_is_subtype_of v1 v2
+  | Types.TNamed _, Types.TRecord (_expected_fields, None) -> false
+  | actual_named, Types.TRecord (expected_fields, Some _row) ->
+      type_satisfies_required_fields_with member_is_subtype_of actual_named expected_fields
   | Types.TRecord (fields1, row1), Types.TRecord (fields2, row2) -> (
       let field_lookup fields name = List.find_opt (fun (f : Types.record_field_type) -> f.name = name) fields in
       let fields_ok =
@@ -270,6 +310,30 @@ let validate_intersection_type (members : Types.mono_type list) : (Types.mono_ty
 let rec type_expr_to_mono_type_with
     (type_bindings : (string * Types.mono_type) list) (te : Syntax.Ast.AST.type_expr) :
     (Types.mono_type, Diagnostic.t) result =
+  let convert_shape_fields_with
+      (shape_bindings : (string * Types.mono_type) list)
+      (shape_fields : Syntax.Ast.AST.record_type_field list) : (Types.record_field_type list, Diagnostic.t) result =
+    map_result
+      (fun (f : Syntax.Ast.AST.record_type_field) ->
+        let* typ = type_expr_to_mono_type_with shape_bindings f.field_type in
+        Ok { Types.name = f.field_name; typ })
+      shape_fields
+  in
+  let shape_type_to_mono_type_with
+      (shape_name : string)
+      (shape_type_params : string list)
+      (shape_fields : Syntax.Ast.AST.record_type_field list)
+      (arg_types : Types.mono_type list) : (Types.mono_type, Diagnostic.t) result =
+    let ann_error msg = Error (Diagnostic.error_no_span ~code:"type-annotation-invalid" ~message:msg) in
+    if List.length shape_type_params <> List.length arg_types then
+      ann_error
+        (Printf.sprintf "Shape %s expects %d type argument(s), got %d" shape_name
+           (List.length shape_type_params) (List.length arg_types))
+    else
+      let shape_bindings = List.combine shape_type_params arg_types in
+      let* fields = convert_shape_fields_with (shape_bindings @ type_bindings) shape_fields in
+      Ok (open_record_of_shape_fields fields)
+  in
   let ann_error msg = Error (Diagnostic.error_no_span ~code:"type-annotation-invalid" ~message:msg) in
   match te with
   | Syntax.Ast.AST.TVar name -> (
@@ -288,6 +352,19 @@ let rec type_expr_to_mono_type_with
           match builtin_primitive_type name with
           | Some primitive -> Ok primitive
           | None -> (
+              match Type_registry.named_type_arity name with
+              | Some 0 -> Ok (Types.TNamed (name, []))
+              | Some expected_arity ->
+                  ann_error (Printf.sprintf "Named type %s expects %d type argument(s)" name expected_arity)
+              | None -> (
+                  match Type_registry.lookup_shape_source name with
+                  | Some shape_def when shape_def.shape_type_params = [] ->
+                      shape_type_to_mono_type_with name shape_def.shape_type_params shape_def.shape_fields []
+                  | Some shape_def ->
+                      ann_error
+                        (Printf.sprintf "Shape %s expects %d type argument(s)" name
+                           (List.length shape_def.shape_type_params))
+                  | None -> (
               match lookup_enum_by_source_name name with
               | Some enum_def ->
                   if enum_def.type_params = [] then
@@ -305,7 +382,7 @@ let rec type_expr_to_mono_type_with
                       if Trait_registry.lookup_trait name <> None then
                         ann_error (trait_type_position_error name)
                       else
-                        ann_error (type_position_error_for_constructor name)))))
+                        ann_error (type_position_error_for_constructor name)))))))
   | Syntax.Ast.AST.TApp (con_name, type_args) -> (
       let ann_error msg = Error (Diagnostic.error_no_span ~code:"type-annotation-invalid" ~message:msg) in
       let* arg_types = map_result (type_expr_to_mono_type_with type_bindings) type_args in
@@ -319,6 +396,21 @@ let rec type_expr_to_mono_type_with
           | [ key_type; value_type ] -> Ok (Types.THash (key_type, value_type))
           | _ -> ann_error ("Map type expects 2 arguments, got " ^ string_of_int (List.length arg_types)))
       | _ -> (
+          match Type_registry.named_type_arity con_name with
+          | Some expected_arity ->
+              let actual_arity = List.length arg_types in
+              if expected_arity <> actual_arity then
+                ann_error
+                  (Printf.sprintf "Named type %s expects %d type argument(s), got %d" con_name expected_arity
+                     actual_arity)
+              else
+                Ok (Types.TNamed (con_name, arg_types))
+          | None -> (
+              match Type_registry.lookup_shape_source con_name with
+              | Some shape_def ->
+                  shape_type_to_mono_type_with con_name shape_def.shape_type_params shape_def.shape_fields
+                    arg_types
+              | None -> (
           match lookup_enum_by_source_name con_name with
           | Some enum_def ->
               let expected_arity = List.length enum_def.type_params in
@@ -341,7 +433,7 @@ let rec type_expr_to_mono_type_with
                   else
                     let alias_bindings = List.combine alias_info.alias_type_params arg_types in
                     type_expr_to_mono_type_with (alias_bindings @ type_bindings) alias_info.alias_body
-              | None -> ann_error (type_position_error_for_constructor con_name))))
+              | None -> ann_error (type_position_error_for_constructor con_name))))))
   | Syntax.Ast.AST.TArrow (param_types, return_type, is_effectful) ->
       let* param_mono = map_result (type_expr_to_mono_type_with type_bindings) param_types in
       let* return_mono = type_expr_to_mono_type_with type_bindings return_type in
@@ -415,6 +507,8 @@ let rec mono_types_equal (t1 : Types.mono_type) (t2 : Types.mono_type) : bool =
       List.length t1s = List.length t2s && List.for_all2 mono_types_equal t1s t2s
   | Types.TEnum (name1, args1), Types.TEnum (name2, args2) ->
       name1 = name2 && List.length args1 = List.length args2 && List.for_all2 mono_types_equal args1 args2
+  | Types.TNamed (name1, args1), Types.TNamed (name2, args2) ->
+      name1 = name2 && List.length args1 = List.length args2 && List.for_all2 mono_types_equal args1 args2
   | _ -> false
 
 (* Check if actual_type is a subtype of expected_type.
@@ -439,7 +533,8 @@ let rec is_subtype_of (actual : Types.mono_type) (expected : Types.mono_type) : 
   | Types.TRecord (actual_fields, _), Types.TIntersection members ->
       List.for_all
         (function
-          | Types.TRecord (expected_fields, _) -> record_satisfies_required_fields actual_fields expected_fields
+          | Types.TRecord (expected_fields, _) ->
+              record_fields_satisfied_with is_subtype_of actual_fields expected_fields
           | member -> is_subtype_of actual member)
         members
   | actual, Types.TIntersection members -> List.for_all (fun member -> is_subtype_of actual member) members
@@ -466,6 +561,11 @@ let rec is_subtype_of (actual : Types.mono_type) (expected : Types.mono_type) : 
   | Types.TBool, Types.TBool -> true
   | Types.TString, Types.TString -> true
   | Types.TNull, Types.TNull -> true
+  | Types.TNamed (name1, args1), Types.TNamed (name2, args2) ->
+      name1 = name2 && List.length args1 = List.length args2 && List.for_all2 is_subtype_of args1 args2
+  | actual_named, Types.TRecord (expected_fields, Some _row) ->
+      type_satisfies_required_fields_with is_subtype_of actual_named expected_fields
+  | Types.TNamed _, Types.TRecord (_, None) -> false
   (* Arrays: covariant in element type *)
   | Types.TArray elem1, Types.TArray elem2 -> is_subtype_of elem1 elem2
   (* Hashes: covariant in key and value types *)
@@ -510,16 +610,6 @@ let rec is_subtype_of (actual : Types.mono_type) (expected : Types.mono_type) : 
   | Types.TUnion members, concrete -> List.for_all (fun m -> is_subtype_of m concrete) members
   (* Different concrete types *)
   | _ -> false
-
-and record_satisfies_required_fields
-    (actual_fields : Types.record_field_type list) (expected_fields : Types.record_field_type list) : bool =
-  let field_lookup fields name = List.find_opt (fun (f : Types.record_field_type) -> f.name = name) fields in
-  List.for_all
-    (fun (expected_f : Types.record_field_type) ->
-      match field_lookup actual_fields expected_f.name with
-      | None -> false
-      | Some actual_f -> is_subtype_of actual_f.typ expected_f.typ)
-    expected_fields
 
 (* Check if annotation matches inferred type *)
 let check_annotation (annot_type : Types.mono_type) (inferred_type : Types.mono_type) : bool =
@@ -574,6 +664,8 @@ let rec format_mono_type (t : Types.mono_type) : string =
   | Types.TIntersection types -> String.concat " & " (List.map format_mono_type types)
   | Types.TEnum (name, []) -> name
   | Types.TEnum (name, args) -> Printf.sprintf "%s[%s]" name (String.concat ", " (List.map format_mono_type args))
+  | Types.TNamed (name, []) -> name
+  | Types.TNamed (name, args) -> Printf.sprintf "%s[%s]" name (String.concat ", " (List.map format_mono_type args))
 
 (* ============================================================
    Phase 4.3: Tests for Enum Type Annotations
@@ -697,7 +789,6 @@ let setup_trait_annotation_tests () =
   Trait_registry.clear ();
   Trait_registry.register_trait
     { trait_name = "Named"; trait_type_param = None; trait_supertraits = []; trait_methods = [] };
-  Trait_registry.set_trait_fields "Named" [ { Types.name = "name"; typ = Types.TString } ];
   Trait_registry.register_trait
     {
       trait_name = "Show";
@@ -711,7 +802,7 @@ let setup_trait_annotation_tests () =
         ];
     }
 
-let%test "field-only trait annotation is rejected in type position" =
+let%test "trait annotation is rejected in type position" =
   setup_trait_annotation_tests ();
   match type_expr_to_mono_type (Syntax.Ast.AST.TCon "Named") with
   | Error d -> Diagnostics.String_utils.contains_substring ~needle:"use constrained function parameters" d.message

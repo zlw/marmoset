@@ -31,6 +31,6 @@ fn describe[a: Ranked](x: a, y: a) -> Str = {
   if (x.eq(y)) { "same:" + x.bucket() } else { x.compare(y).show() + ":" + y.bucket() }
 }
 
-let left: Score = { value: 2 }
-let right: Score = { value: 2 }
+let left = Score(value: 2)
+let right = Score(value: 2)
 puts(describe(left, right))  # output: same:low

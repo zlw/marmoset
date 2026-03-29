@@ -1,6 +1,6 @@
 # T115: Two different trait-typed params in one function
 trait Named = {
-  name: Str
+  name: Str  # error: Trait bodies are method-only; move structural fields to a shape declaration
 }
 trait Scored = {
   score: Int

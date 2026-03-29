@@ -95,6 +95,8 @@ and walk_stmt ~source ~ranges (stmt : Ast.AST.statement) =
   | Ast.AST.InherentImplDef { inherent_methods; _ } ->
       maybe_range ~source ~pos:stmt.pos ~end_pos:stmt.end_pos ~kind:Lsp_t.FoldingRangeKind.Region ranges;
       List.iter (fun (m : Ast.AST.method_impl) -> walk_stmt ~source ~ranges m.impl_method_body) inherent_methods
+  | Ast.AST.TypeDef _ | Ast.AST.ShapeDef _ ->
+      maybe_range ~source ~pos:stmt.pos ~end_pos:stmt.end_pos ~kind:Lsp_t.FoldingRangeKind.Region ranges
   | Ast.AST.DeriveDef _ | Ast.AST.TypeAlias _ -> ()
 
 (* Public entry point *)

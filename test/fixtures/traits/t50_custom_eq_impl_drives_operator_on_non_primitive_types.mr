@@ -3,6 +3,6 @@ type Point = { x: Int }
 impl Eq[Point] = {
   fn eq(x: Point, y: Point) -> Bool = false
 }
-let p1: Point = { x: 1 }
-let p2: Point = { x: 1 }
+let p1 = Point(x: 1)
+let p2 = Point(x: 1)
 puts(p1 == p2)  # output: false

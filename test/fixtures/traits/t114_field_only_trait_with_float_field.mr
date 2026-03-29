@@ -1,6 +1,6 @@
-# T114: Field-only trait with Float field
+# T114: Legacy field-style trait syntax with Float fields is rejected
 trait Measured = {
-  value: Float
+  value: Float  # error: Trait bodies are method-only; move structural fields to a shape declaration
 }
-let x: Measured = { value: 3.14, unit: "m" }  # error: cannot be used as a type in vNext
+let x: Measured = { value: 3.14, unit: "m" }
 puts(x.value)  # output: 3.14

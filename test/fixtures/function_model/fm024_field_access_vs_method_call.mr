@@ -6,7 +6,8 @@ impl Item = {
   }
 }
 
-let i: Item = { name: "sword" }
+let i = Item(name: "sword")
+
 # field access
 puts(i.name)  # output: sword
 # method call

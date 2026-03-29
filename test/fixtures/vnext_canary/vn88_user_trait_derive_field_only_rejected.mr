@@ -1,6 +1,6 @@
-# VN88: Deriving a field-only trait is rejected
+# VN88: Legacy field-style trait syntax is rejected before derive validation
 trait Named = {
-  name: Str
+  name: Str  # error: Trait bodies are method-only; move structural fields to a shape declaration
 }
 
-type Person = { name: Str } derive Named  # error: field-only
+type Person = { name: Str } derive Named

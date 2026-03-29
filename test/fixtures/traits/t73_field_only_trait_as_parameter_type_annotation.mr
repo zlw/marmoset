@@ -1,6 +1,6 @@
-# T73: Field-only trait as parameter type annotation
+# T73: Legacy field-style trait syntax is rejected in parameter annotations
 trait Named = {
-  name: Str
+  name: Str  # error: Trait bodies are method-only; move structural fields to a shape declaration
 }
 fn greet(x: Named) -> Str = x.name
 puts(greet({ name: "alice", age: 30 }))  # output: alice
