@@ -11,7 +11,7 @@
 Pattern matching is expression-oriented branching over structured values.
 
 Supported scrutinee classes include:
-- enums,
+- constructor-bearing wrappers and sums,
 - selected primitive patterns,
 - records.
 
@@ -21,6 +21,13 @@ Pattern forms include:
 - literals,
 - constructors,
 - record patterns (including rest binding forms where supported by semantics).
+
+## Status Note
+
+The data-first rework makes constructor patterns the primary unwrap/destructuring
+surface for nominal wrappers and sums. Structural projection such as
+`{ ...wrapper }` remains available, but docs and examples should prefer `match`
+with constructor patterns whenever code is reading or destructuring nominal payloads.
 
 ## Syntax
 
@@ -33,6 +40,10 @@ let y = match x {
 let v = match opt {
   case Option.Some(x): x
   case Option.None: 0
+}
+
+let name = match user {
+  case User(name:, ...rest): name
 }
 
 let r = match p {
@@ -54,7 +65,7 @@ let r = match p {
 - exhaustiveness checks applied for supported domains.
 
 Checker responsibilities:
-- constructor patterns validated against enum constructor signatures,
+- constructor patterns validated against wrapper/sum constructor signatures,
 - literal patterns validated against scrutinee compatibility,
 - record patterns validate required fields and bind names in arm scope.
 

@@ -11,30 +11,42 @@
 Records provide:
 
 - anonymous structural record literals,
-- transparent structural aliases via `alias`,
-- nominal named product types via `type`,
+- transparent exact-record naming via plain `type Name = { ... }`,
+- explicit nominal wrappers and sums only when constructors are present,
 - field access,
 - spread/update,
 - record pattern matching.
 
+## Status Note
+
+The canonical behavior in this file is being migrated to the data-first plan in
+`docs/plans/todo/language/data-first-semantics-rework.md`.
+
+During that migration, treat these rules as the target direction:
+
+- exact product records are structural again, even when named with `type`,
+- constructor-bearing wrappers and sums remain the nominal boundary,
+- wrapper payload destructuring should prefer `match` with constructor patterns,
+- bare structural projection like `{ ...wrapper }` is secondary and mainly for reshaping or updating payload data.
+
 ## Syntax
 
-### Anonymous and aliased structural records
+### Anonymous and named structural records
 
 ```marmoset
-alias Point = { x: Int, y: Int }
-alias Box[a] = { value: a }
+type Point = { x: Int, y: Int }
+type Box[a] = { value: a }
 
 let p: Point = { x: 10, y: 20 }
 let b: Box[Str] = { value: "ok" }
 ```
 
-### Nominal named products
+### Nominal wrappers
 
 ```marmoset
-type Waypoint = { x: Int, y: Int }
+type Waypoint = Waypoint({ x: Int, y: Int })
 
-let p = Waypoint(x: 10, y: 20)
+let p = Waypoint({ x: 10, y: 20 })
 let p2 = Waypoint(...p, x: 11)
 ```
 
@@ -51,24 +63,23 @@ let v = p2.x
 ## Semantics
 
 - Anonymous records are structural.
-- `alias` names a structural record shape transparently.
-- `type` creates a nominal product type with explicit constructor syntax.
-- Spread/update works on structural record literals, including named-product values used as spread bases.
-- `Type(...base, field: value)` rebuilds a nominal named product while preserving the explicit constructor boundary.
-- Field access works on structural records and named products.
-- Record pattern matching operates on record values regardless of whether the shape is anonymous, aliased, or named.
+- `type Name = { ... }` names an exact structural record transparently.
+- Constructor-bearing forms such as `type User = User({ ... })` remain nominal.
+- Spread/update works on structural record literals and on explicit structural projections of wrapper payloads.
+- `Wrapper(...base, field: value)` rebuilds a nominal wrapper while preserving the constructor boundary.
+- Record pattern matching remains structural; nominal wrappers should prefer constructor-pattern matching when unwrapping payloads.
 
 ## Design Notes
 
-- Use `alias` when you want structural compatibility across sites.
-- Use `type` when you want nominal identity, derives, or attached behavior.
+- Use `type Name = { ... }` when you want an exact structural record name.
+- Use constructor-bearing `type` forms when you want nominal identity at the constructor boundary.
 - Open row variables are still an internal inference feature; user-written `...row` annotations remain restricted in v1.
 
 ## Codegen
 
 - Anonymous structural record shapes are interned into stable Go struct types.
-- `alias` reuses the structural representation and remains transparent.
-- `type Name = { ... }` emits a distinct Go named type plus explicit constructor lowering.
+- Transparent exact-record names reuse the same structural representation.
+- Constructor-bearing wrappers/sums keep explicit nominal lowering.
 - Spread/update lowers to copy-style reconstruction that preserves last-write-wins semantics.
 
 ## Related Docs

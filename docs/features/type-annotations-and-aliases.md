@@ -1,10 +1,10 @@
-# Type Annotations, Aliases, And Named Types
+# Type Annotations And Named Types
 
 ## Maintenance
 
 - Last verified: 2026-03-28
 - Implementation status: Canonical (actively maintained)
-- Update trigger: Any parser, typechecker, or codegen change affecting annotations, `alias`, or `type`
+- Update trigger: Any parser, typechecker, or codegen change affecting annotations or `type`
 
 ## Scope
 
@@ -12,8 +12,17 @@ This doc covers:
 
 - optional annotations on lets, params, and returns,
 - generic parameters and constraint syntax,
-- transparent aliases via `alias`,
-- nominal named types via `type`.
+- transparent naming via plain `type`,
+- constructor-bearing nominal wrappers and sums.
+
+## Status Note
+
+The language is being migrated away from the separate `alias` keyword.
+The target surface is:
+
+- `type Name = TypeExpr` for transparent names,
+- `type Name = Name(Payload)` for nominal wrappers,
+- constructor-bearing `type` forms for sums.
 
 ## Syntax
 
@@ -25,33 +34,31 @@ fn add(a: Int, b: Int) -> Int = a + b
 fn id[a](x: a) -> a = x
 fn show_eq[a: Show & Eq](x: a) -> Str = x.show()
 
-alias Point = { x: Int, y: Int }
-alias Reducer[a] = (a, a) -> a
+type Point = { x: Int, y: Int }
+type Reducer[a] = (a, a) -> a
 
-type UserId = Int
-type Box[a] = { value: a }
+type UserId = UserId(Int)
 
 let p: Point = { x: 1, y: 2 }
 let id = UserId(42)
-let s = Box(value: "ok")
 ```
 
 ## Semantics
 
 - Annotations are checked against inferred types.
-- `alias` is transparent and behaviorless.
-- `type` introduces nominal identity.
-- Named product and wrapper values require explicit construction.
-- Trait impls, inherent impls, and derives attach to `type`, not `alias`.
+- Plain `type Name = TypeExpr` is transparent.
+- Constructor-bearing `type` forms introduce nominal identity.
+- Exact structural record names do not create a distinct product identity by themselves.
+- Trait impls, inherent impls, and derives for exact records attach to the exact structural type named by `type`.
 
 ## When To Use Which
 
-Use `alias` when you want:
+Use plain `type Name = TypeExpr` when you want:
 - a reusable structural record name,
 - a shorthand for a function type,
 - a transparent name for an existing type expression.
 
-Use `type` when you want:
+Use constructor-bearing `type` forms when you want:
 - nominal identity,
 - derives,
 - inherent methods,
@@ -59,16 +66,14 @@ Use `type` when you want:
 - explicit construction at the call site.
 
 Style convention:
-- Prefer `alias` for transparent helper names such as `Point`, `Reducer`, or other purely structural views.
-- Prefer `type` for domain entities and opaque values that own behavior or nominal meaning, such as `User`, `Monkey`, `UserId`, or `BananaPile`.
+- Prefer plain `type` for transparent helper names such as `Point`, `Reducer`, or other purely structural views.
+- Prefer constructor-bearing `type` forms for domain entities and opaque values that need nominal meaning, such as `User`, `Monkey`, `UserId`, or `BananaPile`.
 
 ## Codegen
 
 - Annotations are compile-time only.
-- `alias` does not create a distinct runtime type.
-- `type` emits a distinct runtime representation:
-  - named products become distinct Go structs plus constructor calls,
-  - named wrappers become distinct Go named types plus wrapper constructors.
+- Transparent `type` names do not create a distinct runtime type.
+- Constructor-bearing wrappers and sums emit nominal runtime representations.
 
 ## Related Docs
 

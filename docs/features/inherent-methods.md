@@ -13,12 +13,18 @@ Inherent methods attach behavior directly to a target type without defining a tr
 Supported targets:
 
 - primitives,
-- nominal named types declared with `type`,
+- exact structural types named with `type`,
+- constructor-bearing nominal wrappers,
 - enums,
 - concrete type applications.
 
-Aliases are behaviorless and do not carry inherent methods.
-If a record exists mainly to own methods or nominal meaning, model it with `type`, not `alias`.
+## Status Note
+
+The data-first rework changes the ownership model for inherent methods:
+
+- `impl Type = { ... }` on an exact structural record is UFCS-style extension registration for that exact type,
+- constructor-bearing wrappers remain nominal and may still carry their own wrapper-side impls,
+- wrapper payload access should prefer constructor-pattern matching; structural projection remains explicit and secondary.
 
 ## Syntax
 
@@ -28,10 +34,10 @@ type Point = { x: Int, y: Int }
 impl Point = {
   fn sum(p: Point) -> Int = p.x + p.y
   fn translate(p: Point, dx: Int, dy: Int) -> Point =
-    Point(...p, x: p.x + dx, y: p.y + dy)
+    { ...p, x: p.x + dx, y: p.y + dy }
 }
 
-let p = Point(x: 1, y: 2)
+let p: Point = { x: 1, y: 2 }
 puts(p.sum())
 ```
 
@@ -44,7 +50,7 @@ impl Box = {
   fn cast[b](bx: Box, f: (Int) -> b) -> b = f(bx.v)
 }
 
-let b = Box(v: 5)
+let b: Box = { v: 5 }
 let s = b.cast[Str]((n: Int) -> n.show())
 ```
 
@@ -58,7 +64,7 @@ impl Counter = {
     if (c.n <= 0) {
       "done"
     } else {
-      let next = Counter(n: c.n - 1)
+      let next: Counter = { n: c.n - 1 }
       next.count_down()
     }
   }
@@ -70,9 +76,9 @@ impl Counter = {
 - The first parameter is the receiver.
 - The receiver type must match the impl target.
 - Method annotations may be omitted when inferable.
-- Named product and wrapper return values must use explicit constructors.
-- Named product records may be rebuilt from an existing value with constructor spread, e.g. `Point(...p, x: 1)`.
-- Inherent methods register on `(receiver_type, method_name)`.
+- Exact structural record returns use plain record syntax.
+- Constructor-bearing wrappers use explicit constructors and constructor-aware rebuilds.
+- Inherent methods register on `(exact_receiver_type, method_name)`.
 
 ## Trait Interaction
 
@@ -106,7 +112,7 @@ Examples:
 - `x.sum()` -> `inherent_sum_<type_suffix>(x)`
 - `Point.translate(p, 1, 2)` -> the same inherent helper with explicit qualification
 
-Field-function fallback remains separate from inherent dispatch and continues to work on named products when the selected member is a function-valued field.
+Field-function fallback remains separate from inherent dispatch and continues to work on structural records when the selected member is a function-valued field.
 
 ## Related Docs
 

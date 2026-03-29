@@ -522,22 +522,25 @@ Relationship notes:
 - this plan revisits and supersedes the product-record-nominality portion of `01_pre-modules-semantics-foundation.md`
 - `03_module-system.md` should depend on the semantics chosen here, not the other way around
 
-## Progress
+## PROGRESS
 
-### Status
+### Progress
 
-- Plan written, not implemented.
-- Motivation captured: the current branch solved real checker/runtime cleanup problems but over-rotated product records toward nominality.
-- Intended execution model: implement this plan on a separate branch off the current pre-modules semantics work, then compare outcomes before deciding what reaches `main`.
+- 2026-03-30: Read `CLAUDE.md`, confirmed worktree/branch state, and mapped the parser, lowering, type registry, inference, and codegen paths that currently enforce the `alias` versus nominal-`type` split.
+- 2026-03-30: Started the plan's migration sequence with docs alignment. Updating the plan and feature notes before checker work so the target surface is visible in-repo while implementation lands.
+- 2026-03-30: Completed the docs-alignment pass and verified the compiler unit suite still passes before the first commit.
 
-### Current Working Hypothesis
+### Findings
 
-- keep the shape/trait split,
-- restore structural exact product records,
-- keep constructor-based wrappers and sums nominal,
-- keep APIs qualified and function-first,
-- use UFCS-style dot sugar instead of inheriting a Rust-like method-ownership model.
+- The current parser/lowering pipeline still treats `type Name = { ... }` as a nominal named product and `alias Name = ...` as the only transparent naming surface.
+- Trait and inherent registries already canonicalize impl targets by resolved type, so once transparent `type` forms resolve to exact structural records, behavior slots can naturally key off exact structural types.
+- Wrapper boundaries are only partially enforced today: named-product field access/spread/pattern matching are structural by special case, while wrapper projection and constructor-pattern sugar are still missing.
 
-### Open Decisions
+### Caveats
 
-- none at the semantic-model level; remaining choices are implementation sequencing and surface-polish decisions during the branch spike
+- The branch still documents and tests nominal named products in many places; those clusters will flip incrementally rather than all at once.
+- `enum` syntax currently coexists with `type`-based constructor syntax. The semantic rework is targeting the plan's `type`-first surface while preserving compatibility until the migration is complete.
+
+### Verification
+
+- `make unit compiler`
