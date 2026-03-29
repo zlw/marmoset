@@ -1,5 +1,5 @@
 # R021: Derive eq for record
 type Point = { x: Int, y: Int } derive Eq
-let p1: Point = Point(x: 1, y: 2)
-let p2: Point = Point(x: 1, y: 2)
+let p1: Point = {x: 1, y: 2}
+let p2: Point = {x: 1, y: 2}
 puts(p1.eq(p2))  # output: true

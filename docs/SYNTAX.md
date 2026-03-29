@@ -45,10 +45,9 @@ It does not fully define:
 ```ebnf
 Program        ::= { Decl }
 
-Decl           ::= TypeDecl | AliasDecl | ShapeDecl | EnumDecl | TraitDecl | ImplDecl | FnDecl | LetDecl
+Decl           ::= TypeDecl | ShapeDecl | EnumDecl | TraitDecl | ImplDecl | FnDecl | LetDecl
 
 TypeDecl       ::= "type" TypeName [TypeParams] "=" TypeExpr [DeriveClause]
-AliasDecl      ::= "alias" TypeName [TypeParams] "=" TypeExpr
 ShapeDecl      ::= "shape" TypeName [TypeParams] "=" "{" {RecordTypeField} "}"
 EnumDecl       ::= "enum" TypeName [TypeParams] "=" "{" [EnumVariants] "}" [DeriveClause]
 TraitDecl      ::= "trait" TraitName "[" TypeParam "]" [":" ConstraintExpr] "=" "{" {TraitMember} "}"
@@ -77,8 +76,8 @@ ExprOrBlock    ::= Expr | Block
   - Pure: `(a, b) -> c`
   - Effectful: `(a, b) => c`
 - Top-level `fn` declarations and impl methods may omit the purity/return suffix. When omitted, the compiler infers both from the body.
-- `alias` is transparent and behaviorless.
-- `type` is nominal and requires explicit construction for products and wrappers.
+- Plain `type` expressions with no constructors are transparent exact type names.
+- Constructor-bearing `type` forms are nominal and require explicit construction/patterns.
 - `shape` introduces structural field constraints.
 - Union types use `|`: `Int | Str`.
 - Intersection types use `&`: `A & B`.
@@ -91,8 +90,8 @@ ExprOrBlock    ::= Expr | Block
 
 Examples:
 ```mr
-alias UserId = Int
-alias Reducer[a] = (a, a) -> a
+type UserId = Int
+type Reducer[a] = (a, a) -> a
 shape Named = { name: Str }
 
 enum Result[a, e] = {
@@ -265,8 +264,8 @@ Restrictions:
 
 ## 12. Canonical Example (Condensed)
 ```mr
-alias UserId = Int
-alias Reducer[a] = (a, a) -> a
+type UserId = Int
+type Reducer[a] = (a, a) -> a
 
 enum Role = {
   User,
@@ -337,7 +336,6 @@ Lexical token classes from 13.1 appear as terminals in the EBNF below.
 Program              ::= { TopDecl }
 
 TopDecl              ::= TypeDecl
-                       | AliasDecl
                        | ShapeDecl
                        | EnumDecl
                        | TraitDecl
@@ -347,7 +345,6 @@ TopDecl              ::= TypeDecl
                        | ExprStmt
 
 TypeDecl             ::= "type" TypeName [TypeParams] "=" TypeExpr [DeriveClause]
-AliasDecl            ::= "alias" TypeName [TypeParams] "=" TypeExpr
 ShapeDecl            ::= "shape" TypeName [TypeParams] "=" "{" [RecordTypeFieldList] "}"
 
 EnumDecl             ::= "enum" TypeName [TypeParams] "=" "{" [EnumVariantList] "}" [DeriveClause]

@@ -6,7 +6,7 @@ impl Val = {
   }
 }
 
-let v = Val(v: 2)
+let v = {v: 2}
 
 # Deeply nested: apply(apply(apply(...)))
 let r = v.apply((n: Int) -> n * 10)

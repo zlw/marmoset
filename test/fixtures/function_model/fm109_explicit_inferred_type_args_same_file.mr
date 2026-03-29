@@ -6,7 +6,7 @@ impl Val = {
   }
 }
 
-let v = Val(v: 42)
+let v = {v: 42}
 
 let inferred = v.convert((n: Int) -> n.show())
 let explicit = v.convert[Bool]((n: Int) -> n > 0)

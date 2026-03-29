@@ -12,7 +12,7 @@ impl Cell = {
   fn draw(c: Cell) -> Str = { "inherent" }
 }
 
-let c = Cell(v: 1)
+let c = {v: 1}
 
 # inherent wins, no ambiguity
 puts(c.draw())  # output: inherent

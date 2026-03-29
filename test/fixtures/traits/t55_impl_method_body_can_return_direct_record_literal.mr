@@ -4,7 +4,7 @@ trait Wrap[a] = {
   fn wrap(x: a) -> Box
 }
 impl Wrap[Int] = {
-  fn wrap(x: Int) -> Box = Box(value: x)
+  fn wrap(x: Int) -> Box = {value: x}
 }
 let b = 5.wrap()
 puts(b.value)  # output: 5

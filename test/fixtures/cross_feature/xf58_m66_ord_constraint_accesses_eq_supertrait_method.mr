@@ -13,6 +13,6 @@ impl Ord[Point] = {
 fn same[a: Ord](x: a, y: a) -> Bool = {
   x.eq(y)
 }
-let p1 = Point(x: 42)
-let p2 = Point(x: 42)
+let p1 = {x: 42}
+let p2 = {x: 42}
 puts(same(p1, p2))  # output: true

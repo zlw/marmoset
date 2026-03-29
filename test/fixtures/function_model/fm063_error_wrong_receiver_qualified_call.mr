@@ -1,7 +1,6 @@
-# FM63: Qualified trait call rejects wrong nominal receiver
-# Under nominal named-type semantics Alpha and Beta are distinct types.
-type Alpha = { v: Int }
-type Beta = { v: Int }
+# FM63: Qualified trait call rejects wrong wrapper receiver
+type Alpha = Alpha({ v: Int })
+type Beta = Beta({ v: Int })
 
 trait Label[a] = {
   fn tag(x: a) -> Str
@@ -11,6 +10,6 @@ impl Label[Alpha] = {
   fn tag(x: Alpha) -> Str = { "alpha" }
 }
 
-let b = Beta(v: 1)
+let b = Beta({v: 1})
 
 puts(Label.tag(b))  # error: does not implement trait

@@ -12,4 +12,4 @@ fn bad(l: Logger) -> Str = {  # error: effectful
   l.log("x")
 }
 
-bad(Logger(prefix: "p"))
+bad({prefix: "p"})

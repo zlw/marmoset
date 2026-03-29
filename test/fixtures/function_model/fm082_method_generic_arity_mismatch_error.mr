@@ -6,6 +6,6 @@ impl Box = {
   }
 }
 
-let b = Box(v: 1)
+let b = {v: 1}
 
 b.apply[Int, Str]((n: Int) -> n)  # error: *

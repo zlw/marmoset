@@ -12,6 +12,6 @@ impl Cell = {
   fn detail(c: Cell) -> Str = { "inherent:" + c.v.show() }
 }
 
-let c = Cell(v: 5)
+let c = {v: 5}
 
 puts(c.detail())  # output: inherent:5

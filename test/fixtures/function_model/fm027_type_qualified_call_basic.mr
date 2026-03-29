@@ -6,6 +6,6 @@ impl Point = {
   }
 }
 
-let p = Point(x: 3, y: 7)
+let p = {x: 3, y: 7}
 
 puts(Point.sum(p))  # output: 10

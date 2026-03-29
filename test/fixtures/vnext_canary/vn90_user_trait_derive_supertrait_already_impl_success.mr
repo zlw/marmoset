@@ -10,4 +10,5 @@ trait Child[a]: Base = {
 impl Base[Score] = {}
 
 type Score = Int derive Child
-puts(Score(1).child())  # output: base:child
+let score: Score = 1
+puts(score.child())  # output: base:child

@@ -5,5 +5,5 @@ impl Counter = {
   fn each(counter: Counter, f: (Int) => Unit) => Unit = f(counter.value)
 }
 
-let counter: Counter = Counter(value: 1)
+let counter: Counter = {value: 1}
 counter.each(puts(_))  # error: explicit '=>'

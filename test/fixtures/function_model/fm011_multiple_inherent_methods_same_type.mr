@@ -9,7 +9,7 @@ impl Vec2 = {
   }
 }
 
-let v = Vec2(x: 3, y: 4)
+let v = {x: 3, y: 4}
 
 puts(v.mag_sq())  # output: 25
 puts(v.sum())  # output: 7

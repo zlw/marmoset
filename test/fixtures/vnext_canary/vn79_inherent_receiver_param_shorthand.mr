@@ -5,4 +5,4 @@ impl User = {
   fn label(user: User) -> Str = user.name
 }
 
-puts(User(name: "Ada", id: 1).label())  # output: Ada
+puts({name: "Ada", id: 1}.label())  # output: Ada

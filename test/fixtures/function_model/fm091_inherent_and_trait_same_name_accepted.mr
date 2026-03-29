@@ -13,6 +13,6 @@ impl Widget = {
 }
 
 # Both definitions accepted; dot call picks inherent
-let w = Widget(v: 1)
+let w = {v: 1}
 
 puts(w.render())  # output: inherent

@@ -3,7 +3,7 @@ type Monkey = { name: Str, bananas: Int }
 
 fn apply[a, b](x: a, f: (a) -> b) -> b = f(x)
 
-let george: Monkey = Monkey(name: "George", bananas: 3)
+let george: Monkey = {name: "George", bananas: 3}
 puts(apply(george, {
   let m = _
   m.name + "!"

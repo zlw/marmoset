@@ -533,6 +533,10 @@ Relationship notes:
 - 2026-03-30: Added focused parser tests for transparent `type`, postfix `derive` on transparent aliases, explicit wrapper syntax, and the new constructor-pattern forms before moving on to tree-sitter/LSP and checker work.
 - 2026-03-30: Reworked checker/inference so transparent `type` declarations participate in trait impls, inherent impls, and derives by exact resolved type instead of being rejected as non-owning aliases; updated the affected typecheck suites from nominal constructor usage to structural record usage.
 - 2026-03-30: Updated Go emitter expectations for transparent structural records versus explicit wrappers and fixed a backend test-isolation issue caused by user registries persisting across repeated compile/test runs.
+- 2026-03-30: Completed the tooling pass: tree-sitter now parses transparent `type` forms, explicit wrappers, constructor-bearing `type` bodies, and unqualified constructor patterns; LSP symbols/completions now describe transparent `type` declarations as the primary surface rather than `alias`.
+- 2026-03-30: Bulk-migrated the remaining structural-record fixtures from nominal constructor syntax to structural literals/spreads, then fixed the residual integration failures by rewriting the last stale wrapper/derive fixtures and updating active docs/examples to the data-first `type` surface.
+- 2026-03-30: Fixed derive expansion so user-trait derives can see transparent `type` aliases during shape-superconstraint checks before the main typechecker predeclaration pass runs.
+- 2026-03-30: Re-ran repo-level validation after the derive/doc/fixture cleanup. The compiler/unit target and the full integration suite are both green again.
 
 ### Findings
 
@@ -540,12 +544,15 @@ Relationship notes:
 - Trait and inherent registries already canonicalize impl targets by resolved type, so once transparent `type` forms resolve to exact structural records, behavior slots can naturally key off exact structural types.
 - Wrapper boundaries are only partially enforced today: named-product field access/spread/pattern matching are structural by special case, while wrapper projection and constructor-pattern sugar are still missing.
 - Backend test state is not fully self-isolating: repeated compiler setup through the builtin prelude path can leave trait/enum/inherent registry entries behind unless the relevant test clears them explicitly first.
+- User-trait derive expansion still depended on predeclared type information before the main inference pipeline had registered transparent `type` aliases. That gap broke derives whose superconstraints should be satisfied structurally by transparent record aliases.
+- After the bulk fixture rewrite, the remaining integration failures collapsed to one real compiler bug in derive expansion plus stale tests/examples that still treated transparent `type` names as constructor-bearing nominal wrappers.
 
 ### Caveats
 
 - The branch still documents and tests nominal named products in many places; those clusters will flip incrementally rather than all at once.
 - `enum` syntax currently coexists with `type`-based constructor syntax. The semantic rework is targeting the plan's `type`-first surface while preserving compatibility until the migration is complete.
 - `alias` syntax is still accepted at this stage. The parser/lowering work establishes the new `type` meaning first; removal of the old spelling will happen in a later migration step once the rest of the compiler and fixtures are aligned.
+- Some fixture filenames still reflect the older nominal/alias terminology even when their contents now exercise the new transparent-`type` behavior; the semantic coverage is updated first, and path cleanup can happen separately if desired.
 
 ### Verification
 
@@ -553,3 +560,8 @@ Relationship notes:
 - `dune runtest --root /Users/zlw/src/marmoset/marmoset lib/frontend/syntax/ --force`
 - `dune runtest --root /Users/zlw/src/marmoset/marmoset lib/frontend/typecheck/ --force`
 - `dune runtest --root /Users/zlw/src/marmoset/marmoset lib/backend/go/ --force`
+- `npm test` (in `/Users/zlw/src/marmoset/marmoset/tools/tree-sitter-marmoset`)
+- `dune runtest --root /Users/zlw/src/marmoset/marmoset tools/lsp/lib/ --force`
+- `make integration function_model/fm063_error_wrong_receiver_qualified_call.mr traits/t117_user_trait_derive_same_clause_satisfies_supertrait.mr traits_inherent/th01_inherent_method_on_type_alias_int.mr traits_impl/ti38_trait_impl_target_transparent_alias_is_rejected.mr traits_inherent/th49_inherent_impl_target_transparent_alias_is_rejected.mr vnext_canary/vn104_user_trait_derive_structural_field_supertrait_missing.mr vnext_canary/vn109_user_trait_derive_sees_late_supertrait_impl.mr vnext_canary/vn113_user_trait_derive_dyn_child_exposes_supertrait_method.mr vnext_canary/vn90_user_trait_derive_supertrait_already_impl_success.mr`
+- `make unit compiler`
+- `make integration`

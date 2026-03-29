@@ -10,6 +10,6 @@ impl Formatter = {
   }
 }
 
-let fmt: Formatter = Formatter(prefix: "hi ")
+let fmt: Formatter = {prefix: "hi "}
 let monkey = { name: "mia", id: 7 }
 puts(fmt.label(monkey))  # output: hi mia

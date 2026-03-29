@@ -2,7 +2,7 @@ type Num = { v: Int }
 
 impl Num = {
   fn inc(n: Num) -> Num = {
-    Num(v: n.v + 1)
+    {v: n.v + 1}
 
   }
   fn value(n: Num) -> Int = {
@@ -10,7 +10,7 @@ impl Num = {
   }
 }
 
-let n = Num(v: 0)
+let n = {v: 0}
 
 # mix qualified and dot forms
 let n2 = Num.inc(n)

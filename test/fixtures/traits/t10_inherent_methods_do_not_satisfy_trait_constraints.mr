@@ -4,5 +4,5 @@ impl Point = {
   fn show(p: Point) -> Str = "point"
 }
 fn f[t: Show](x: t) -> Str = x.show()
-let p = Point(x: 1)
+let p = {x: 1}
 puts(f(p))  # error: does not implement trait show

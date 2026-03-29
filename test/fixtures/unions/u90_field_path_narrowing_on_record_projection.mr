@@ -9,4 +9,4 @@ fn render(box: Box) -> Str = {
   }
 }
 
-puts(render(Box(value: 1)))  # output: 1
+puts(render({value: 1}))  # output: 1

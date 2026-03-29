@@ -47,7 +47,7 @@ Responsibilities:
 - Build `Surface_ast`, not the canonical downstream AST.
 - Parse vNext constructs including:
   - generic params and constraints (`fn[a: Show & Eq](...)`)
-  - named types, aliases, and shapes (`type User = { ... }`, `alias Point = { x: Int }`, `shape Named = { name: Str }`)
+  - transparent types, wrappers, and shapes (`type User = { ... }`, `type UserId = UserId(Int)`, `shape Named = { name: Str }`)
   - unions (`Int | Str`)
   - enums/constructors/match patterns with `case`
   - records, spread, row-variable type forms (`{ x: Int, ...r }`)
@@ -96,7 +96,7 @@ Cons:
 Main modules:
 - `types.ml`: type representation + substitution + normalization.
 - `unify.ml`: unification and compatibility rules.
-- `annotation.ml`: AST type-expression -> internal mono type conversion + alias resolution.
+- `annotation.ml`: AST type-expression -> internal mono type conversion + transparent-type resolution.
 - `infer.ml`: inference/checking (Algorithm W style with extensions).
 - `checker.ml`: entry points and formatted diagnostics.
 - `trait_registry.ml`, `trait_solver.ml`, `inherent_registry.ml`, `enum_registry.ml`, `exhaustiveness.ml`: feature-specific systems.
@@ -196,7 +196,7 @@ Locked function/closure policy (2026-02-27):
 - Maps/hashes -> typed maps.
 - Unions -> `interface{}` + type assertions/switches.
 - Enums -> tagged struct forms with generated constructors and match dispatch.
-- Records -> named struct types via shape interning, with type alias support.
+- Records -> named struct types via shape interning, with transparent `type` support.
 - Trait methods -> static free functions with mangled names.
 
 ### 4.4 Modules/FFI guardrail policy (current, binding)

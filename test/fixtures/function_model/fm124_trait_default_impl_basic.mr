@@ -10,7 +10,7 @@ impl Greet[Person] = {
   fn goodbye(x: Person) -> Str = { "bye " + x.name }
 }
 
-let p = Person(name: "alice")
+let p = {name: "alice"}
 
 puts(p.hello())  # output: hi alice
 puts(p.goodbye())  # output: bye alice

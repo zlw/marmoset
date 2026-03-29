@@ -12,5 +12,5 @@ impl Tagged[User] = {
 
 fn describe[t: Named & Tagged](x: t) -> Str = x.name + x.tag()
 
-let user: User = User(name: "mia", id: 7)
+let user: User = {name: "mia", id: 7}
 puts(describe(user))  # output: mia#7

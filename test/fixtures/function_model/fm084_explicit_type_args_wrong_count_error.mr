@@ -6,7 +6,7 @@ impl Box = {
   }
 }
 
-let b = Box(v: 1)
+let b = {v: 1}
 
 # cast has 1 type param, providing 2
 b.cast[Int, Str]((n: Int) -> n)  # error: *

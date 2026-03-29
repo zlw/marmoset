@@ -16,6 +16,6 @@ impl Walker[Node] = {
   fn visit(x: Node) -> Str = { "walker" }
 }
 
-let n = Node(id: 1)
+let n = {id: 1}
 
 n.visit()  # error: Ambiguous

@@ -13,6 +13,6 @@ impl Thing = {
   fn op(t: Thing) -> Int = { t.v + 1 }
 }
 
-let t = Thing(v: 10)
+let t = {v: 10}
 
 puts(t.op())  # output: 11

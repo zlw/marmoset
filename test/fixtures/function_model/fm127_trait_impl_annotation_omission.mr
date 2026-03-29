@@ -11,6 +11,6 @@ impl Display[Thing] = {
   }
 }
 
-let t = Thing(v: 42)
+let t = {v: 42}
 
 puts(t.render())  # output: thing:42

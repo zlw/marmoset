@@ -2,7 +2,7 @@ type Level = { n: Int }
 
 impl Level = {
   fn next(l: Level) -> Level = {
-    Level(n: l.n + 1)
+    {n: l.n + 1}
 
   }
   fn value(l: Level) -> Int = {
@@ -10,6 +10,6 @@ impl Level = {
   }
 }
 
-let l = Level(n: 0)
+let l = {n: 0}
 
 puts(l.next().next().next().value())  # output: 3

@@ -8,5 +8,5 @@ impl Describe[Box] = {
     "value:" + b.value.show()
   }
 }
-let b: Box = Box(value: 42)
+let b: Box = {value: 42}
 puts(b.describe())  # output: value:42

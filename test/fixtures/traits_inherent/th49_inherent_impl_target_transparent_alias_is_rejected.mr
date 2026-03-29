@@ -1,8 +1,9 @@
-# TH49: Inherent impl target cannot be a transparent alias
-alias Point = { x: Int, y: Int }
+# TH49: Inherent impl target can be a transparent type definition
+type Total = Int
 
-impl Point = {  # error: transparent alias
-  fn sum(p: Point) -> Int = p.x + p.y
+impl Total = {
+  fn plus_one(total: Total) -> Int = total + 1
 }
 
-puts(1)
+let total: Total = 41
+puts(total.plus_one())  # output: 42

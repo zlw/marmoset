@@ -6,7 +6,7 @@ impl Box = {
   }
 }
 
-let b = Box(v: 10)
+let b = {v: 10}
 
 # inferred
 let r1 = b.transform((n: Int) -> n.show())

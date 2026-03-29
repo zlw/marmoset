@@ -170,6 +170,7 @@ let pre_scan_program (program : AST.program) :
       match stmt.stmt with
       | AST.TraitDef trait_def -> register_program_trait traits trait_def
       | AST.TypeDef type_def -> Type_registry.predeclare_named_type type_def
+      | AST.TypeAlias alias_def -> Annotation.register_type_alias alias_def
       | AST.ShapeDef shape_def -> Type_registry.predeclare_shape shape_def
       | AST.ImplDef impl_def -> Hashtbl.replace explicit_impls (impl_key_of_explicit_impl impl_def) ()
       | _ -> ())
@@ -928,15 +929,19 @@ let%test "expand_user_derives rejects duplicate traits in one derive clause" =
   | Error diag -> diag.code = "derive-duplicate-impl"
   | Ok _ -> false
 
-let%test "expand_user_derives accepts shape superconstraints satisfied by named product targets" =
+let%test "expand_user_derives accepts shape superconstraints satisfied by transparent type targets" =
   clear_default_derived_impl_store ();
+  Annotation.clear_type_aliases ();
   Type_registry.clear ();
-  Type_registry.register_shape
-    {
-      Type_registry.shape_name = "Named";
-      shape_type_params = [];
-      shape_fields = [ { Types.name = "name"; typ = Types.TString } ];
-    };
+  let shape_stmt =
+    AST.mk_stmt
+      (AST.ShapeDef
+         {
+           shape_name = "Named";
+           shape_type_params = [];
+           shape_fields = [ { AST.field_name = "name"; field_type = AST.TCon "Str" } ];
+         })
+  in
   let trait_stmt =
     AST.mk_stmt
       (AST.TraitDef
@@ -963,11 +968,11 @@ let%test "expand_user_derives accepts shape superconstraints satisfied by named 
   in
   let type_stmt =
     AST.mk_stmt
-      (AST.TypeDef
+      (AST.TypeAlias
          {
-           type_name = "User";
-           type_type_params = [];
-           type_body = AST.NamedTypeProduct [ { field_name = "name"; field_type = AST.TCon "Str" } ];
+           alias_name = "User";
+           alias_type_params = [];
+           alias_body = AST.TRecord ([ { field_name = "name"; field_type = AST.TCon "Str" } ], None);
          })
   in
   let derive_stmt =
@@ -978,6 +983,6 @@ let%test "expand_user_derives accepts shape superconstraints satisfied by named 
            derive_for_type = AST.TCon "User";
          })
   in
-  match expand_user_derives [ trait_stmt; type_stmt; derive_stmt ] with
-  | Ok [ _; _; { AST.stmt = AST.ImplDef { impl_trait_name = "Greeter"; _ }; _ } ] -> true
+  match expand_user_derives [ shape_stmt; trait_stmt; type_stmt; derive_stmt ] with
+  | Ok [ _; _; _; { AST.stmt = AST.ImplDef { impl_trait_name = "Greeter"; _ }; _ } ] -> true
   | _ -> false

@@ -6,4 +6,4 @@ trait Greeter[a]: Named = {
 }
 
 type User = { name: Str } derive Greeter
-puts(User(name: "left").greet())  # output: left
+puts({name: "left"}.greet())  # output: left

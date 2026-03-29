@@ -5,5 +5,5 @@ impl Rect = {
     r.w * r.h
   }
 }
-let r = Rect(w: 10, h: 11)
+let r = {w: 10, h: 11}
 puts(r.area())  # output: 110

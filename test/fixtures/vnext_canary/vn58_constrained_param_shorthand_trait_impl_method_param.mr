@@ -11,6 +11,6 @@ impl Pairing[User] = {
   fn pair(self: User, other: Named) -> Str = self.name + ":" + other.name
 }
 
-let user: User = User(name: "mia", id: 7)
+let user: User = {name: "mia", id: 7}
 let other = { name: "zoe", age: 4 }
 puts(user.pair(other))  # output: mia:zoe

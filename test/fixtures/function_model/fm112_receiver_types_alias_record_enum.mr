@@ -20,7 +20,7 @@ impl Flag = {
 
 let s = "hi"
 puts(s.loud())  # output: hi!
-let p = Point(x: 1, y: 2)
+let p = {x: 1, y: 2}
 
 puts(p.sum())  # output: 3
 let f = Flag.On

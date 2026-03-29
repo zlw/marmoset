@@ -3,12 +3,12 @@
 # Every vNext surface feature appears at least once below.
 # Theme: monkeys, jungles, bananas, and questionable life choices.
 
-# ─── Type Aliases ───────────────────────────────────────────────
-alias MonkeyID = Int
-alias BananaCount = Int
-alias JungleThing = Int | Str | Bool        # union type alias
-alias Reducer[a] = (a, a) -> a              # pure function type
-alias SideEffector[a] = (a, a) => a         # effectful function type
+# ─── Transparent Types ──────────────────────────────────────────
+type MonkeyID = Int
+type BananaCount = Int
+type JungleThing = Int | Str | Bool         # transparent union type
+type Reducer[a] = (a, a) -> a               # pure function type
+type SideEffector[a] = (a, a) => a          # effectful function type
 
 # ─── Enums ──────────────────────────────────────────────────────
 enum Option[a] = {
@@ -49,7 +49,7 @@ type Jungle = {
   has_bananas: Bool,
 }
 
-alias MonkeyOrSadness = Result[Monkey, Str]
+type MonkeyOrSadness = Result[Monkey, Str]
 
 # ─── Shapes & Traits ────────────────────────────────────────────
 shape NamedDweller = {

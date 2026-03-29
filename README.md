@@ -92,12 +92,12 @@ puts(compare_snacks("banana", "banana"))  # same snack: banana
 puts(compare_snacks(3, 5))                # different snacks
 ```
 
-### 🧾 Transparent aliases
+### 🧾 Transparent types
 
-Transparent aliases name existing type expressions without creating a new nominal type:
+Transparent `type` declarations name existing exact type expressions without creating a new nominal type:
 
 ```marmoset
-alias Perch = { bananas: Int, vines: Int }
+type Perch = { bananas: Int, vines: Int }
 
 let start: Perch = { bananas: 1, vines: 2 }
 fn gather_more(p: Perch, extra: Int) -> Perch = { ...p, bananas: p.bananas + extra }
@@ -118,13 +118,13 @@ puts(moved.x)  # 10
 puts(moved.y)  # 2
 ```
 
-Named product records support the same field access and record-pattern behavior, and they can be rebuilt explicitly with constructor spread:
+Named exact records use the same structural field access and spread updates:
 
 ```marmoset
 type JungleStop = { bananas: Int, vines: Int }
 
-let start = JungleStop(bananas: 1, vines: 2)
-let moved = JungleStop(...start, bananas: 10)
+let start: JungleStop = { bananas: 1, vines: 2 }
+let moved = { ...start, bananas: 10 }
 
 puts(moved.bananas)  # 10
 puts(moved.vines)    # 2
@@ -231,15 +231,16 @@ Attach methods directly to types that own behavior — no trait ceremony:
 type Stash = { bananas: Int }
 
 impl Stash = {
-  fn add(stash: Stash, amount: Int) -> Stash = Stash(...stash, bananas: stash.bananas + amount)
+  fn add(stash: Stash, amount: Int) -> Stash = { ...stash, bananas: stash.bananas + amount }
   fn total(stash: Stash) -> Int = stash.bananas
 }
 
-let stash = Stash.add(Stash(bananas: 2), 3)
-puts(stash.total())  # 5
+let stash: Stash = { bananas: 2 }
+let grown = Stash.add(stash, 3)
+puts(grown.total())  # 5
 ```
 
-This uses `type` rather than `alias` because `Stash` owns nominal behavior and explicit constructor syntax. If you want an opaque quantity rather than a record-shaped value, the same nominal form also covers wrappers such as `type BananaPile = Int`.
+This uses transparent `type` because exact types can own behavior by their underlying type. If you want an opaque quantity rather than a record-shaped value, use an explicit wrapper such as `type BananaPile = BananaPile(Int)`.
 
 Methods can be generic, and shorthand trait constraints work inside them too:
 

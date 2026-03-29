@@ -12,7 +12,7 @@ impl Data = {
   fn info(d: Data) -> Int = { d.v }
 }
 
-let d = Data(v: 42)
+let d = {v: 42}
 
 # inherent returns int, trait returns string — different signatures OK
 puts(d.info())  # output: 42

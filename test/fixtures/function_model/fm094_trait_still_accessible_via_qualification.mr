@@ -12,7 +12,7 @@ impl Item = {
   fn name(i: Item) -> Str = { "inherent:" + i.v.show() }
 }
 
-let i = Item(v: 3)
+let i = {v: 3}
 
 # dot call → inherent
 puts(i.name())  # output: inherent:3

@@ -10,6 +10,6 @@ impl Processor[Data] = {
   }
 }
 
-let d = Data(v: 7)
+let d = {v: 7}
 
 puts(d.process())  # output: 7

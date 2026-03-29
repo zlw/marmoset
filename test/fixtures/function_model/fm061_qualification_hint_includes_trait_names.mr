@@ -16,6 +16,6 @@ impl Sensor[Val] = {
   fn read(x: Val) -> Int = { x.v + 1 }
 }
 
-let v = Val(v: 5)
+let v = {v: 5}
 
 v.read()  # error: Ambiguous

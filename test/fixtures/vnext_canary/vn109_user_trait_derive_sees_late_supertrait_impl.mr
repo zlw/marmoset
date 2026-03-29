@@ -11,4 +11,5 @@ type Score = Int derive Child
 
 impl Base[Score] = {}
 
-puts(Score(1).child())  # output: base:child
+let score: Score = 1
+puts(score.child())  # output: base:child

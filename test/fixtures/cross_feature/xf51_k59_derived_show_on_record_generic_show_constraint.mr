@@ -1,5 +1,5 @@
 # XF51: K59: Derived show on record + generic show constraint
 type Point = { x: Int, y: Int } derive Show
 fn render[a: Show](x: a) -> Str = x.show()
-let p = Point(x: 1, y: 2)
+let p = {x: 1, y: 2}
 puts(render(p))  # output: { x: 1, y: 2 }

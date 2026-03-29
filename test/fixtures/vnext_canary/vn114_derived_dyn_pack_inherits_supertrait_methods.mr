@@ -9,6 +9,6 @@ trait Pack[a]: Label = {}
 
 type Point = { x: Int } derive Show, Label, Pack
 
-let value: Dyn[Pack] = Point(x: 1)
+let value: Dyn[Pack] = {x: 1}
 puts(value.show())   # output: { x: 1 }
 puts(value.label())  # output: { x: 1 }

@@ -1,4 +1,4 @@
-alias Point = { x: Int, y: Int }
+type Point = { x: Int, y: Int }
 
 let point: Point = { x: 1, y: 2 }
 let moved = { ...point, x: 10 }

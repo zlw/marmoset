@@ -10,7 +10,7 @@ impl Mapper[Box] = {
   }
 }
 
-let b = Box(v: 42)
+let b = {v: 42}
 
 let s = b.map((n: Int) -> n.show())
 puts(s)  # output: 42

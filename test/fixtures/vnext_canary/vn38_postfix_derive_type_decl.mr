@@ -1,7 +1,7 @@
 # VN38: Postfix derive also works on type declarations
 type Point = { x: Int, y: Int } derive Eq, Show
 
-let p: Point = Point(x: 1, y: 2)
+let p: Point = {x: 1, y: 2}
 puts(p.show())                   # output: { x: 1, y: 2 }
-puts(p.eq(Point(x: 1, y: 2)))    # output: true
-puts(p.eq(Point(x: 2, y: 1)))    # output: false
+puts(p.eq({x: 1, y: 2}))    # output: true
+puts(p.eq({x: 2, y: 1}))    # output: false

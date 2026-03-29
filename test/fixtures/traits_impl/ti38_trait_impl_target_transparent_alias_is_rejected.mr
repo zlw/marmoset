@@ -1,12 +1,13 @@
-# TI38: Trait impl target cannot be a transparent alias
-alias Point = { x: Int, y: Int }
+# TI38: Trait impl target can be a transparent type definition
+type Count = Int
 
-trait Show[a] = {
-  fn show(x: a) -> Str
+trait Double[a] = {
+  fn double(x: a) -> Int
 }
 
-impl Show[Point] = {  # error: transparent alias
-  fn show(p: Point) -> Str = "point"
+impl Double[Count] = {
+  fn double(x: Count) -> Int = x + x
 }
 
-puts(1)
+let count: Count = 21
+puts(count.double())  # output: 42

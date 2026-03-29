@@ -13,5 +13,5 @@ impl Child[Point] = {
   override fn box(self) = self
 }
 
-let value = Child.box(Point(x: 1))
+let value = Child.box({x: 1})
 puts(value.show())  # output: { x: 1 }

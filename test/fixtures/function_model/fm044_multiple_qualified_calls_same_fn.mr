@@ -6,8 +6,8 @@ impl Meter = {
   }
 }
 
-let m1 = Meter(v: 10)
+let m1 = {v: 10}
 
-let m2 = Meter(v: 20)
+let m2 = {v: 20}
 
 puts(Meter.read(m1) + Meter.read(m2))  # output: 30

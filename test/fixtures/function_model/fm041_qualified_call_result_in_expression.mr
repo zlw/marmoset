@@ -6,7 +6,7 @@ impl Score = {
   }
 }
 
-let s = Score(v: 10)
+let s = {v: 10}
 
 let result = Score.value(s) + 5
 puts(result)  # output: 15

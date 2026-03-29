@@ -1,5 +1,5 @@
 type Empty = { v: Int }
 
-let e = Empty(v: 0)
+let e = {v: 0}
 
 e.missing()  # error: *

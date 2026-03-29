@@ -1,7 +1,7 @@
 # R028: Derived eq/hash are stable across field order
 type Point = { x: Int, y: Int } derive Eq, Hash
-let p1: Point = Point(x: 1, y: 2)
-let p2: Point = Point(y: 2, x: 1)
+let p1: Point = {x: 1, y: 2}
+let p2: Point = {y: 2, x: 1}
 let out = if (p1.eq(p2)) {
   if (p1.hash() == p2.hash()) { "ok" } else { "hash_bad" }
 } else {

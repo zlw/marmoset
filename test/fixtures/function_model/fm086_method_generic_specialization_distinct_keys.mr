@@ -6,7 +6,7 @@ impl Box = {
   }
 }
 
-let b = Box(v: 42)
+let b = {v: 42}
 
 # Two different specializations of the same method generic
 let s = b.as_type((n: Int) -> n.show())

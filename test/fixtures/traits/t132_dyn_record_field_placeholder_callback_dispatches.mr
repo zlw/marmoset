@@ -6,5 +6,5 @@ impl[a] Box[a] = {
 }
 
 let value: Dyn[Show & Eq] = 42
-let box = Box(value: value)
+let box = {value: value}
 puts(box.map(_.show()))  # output: 42

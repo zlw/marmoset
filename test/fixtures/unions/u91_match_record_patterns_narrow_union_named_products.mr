@@ -10,5 +10,5 @@ fn read(v: Left | Right) -> Int = {
   }
 }
 
-puts(read(Left(x: 1)))   # output: 1
-puts(read(Right(y: 2)))  # output: 2
+puts(read({x: 1}))   # output: 1
+puts(read({y: 2}))  # output: 2

@@ -12,5 +12,5 @@ impl Eq[Point] = {
 impl Ord[Point] = {
   fn compare(a: Point, b: Point) -> Int = 0
 }
-let p: Point = Point(x: 1)
+let p: Point = {x: 1}
 puts(p.compare(p))  # output: 0

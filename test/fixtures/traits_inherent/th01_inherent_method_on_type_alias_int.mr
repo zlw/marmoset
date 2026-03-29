@@ -1,5 +1,5 @@
-# TH01: Inherent method on named wrapper (Int)
-type MyInt = Int
+# TH01: Inherent method on explicit wrapper (Int)
+type MyInt = MyInt(Int)
 impl MyInt = {
   fn label(x: MyInt) -> Str = "wrapped"
 }

@@ -2,7 +2,7 @@ type Builder = { parts: Int }
 
 impl Builder = {
   fn add(b: Builder) -> Builder = {
-    Builder(parts: b.parts + 1)
+    {parts: b.parts + 1}
 
   }
   fn count(b: Builder) -> Int = {
@@ -10,6 +10,6 @@ impl Builder = {
   }
 }
 
-let b = Builder(parts: 0)
+let b = {parts: 0}
 
 puts(b.add().add().add().count())  # output: 3
