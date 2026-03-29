@@ -97,6 +97,13 @@ let token_starts_line (p : parser) (t : Token.token) : bool =
   in
   loop (t.pos - 1)
 
+let is_upper_ident (name : string) : bool =
+  String.length name > 0
+  &&
+  match String.get name 0 with
+  | 'A' .. 'Z' -> true
+  | _ -> false
+
 (* Helper to get fresh ID using the mutable id_supply *)
 let fresh_id (p : parser) : int = Id_supply.Id_supply.fresh p.id_supply
 
@@ -773,25 +780,47 @@ and parse_type_definition (p : parser) : (parser * Surface.top_decl, parser) res
       expect_peek p3 Token.Assign
   in
   let p_body = next_token p4 in
-  if curr_token_is p_body Token.LBrace then (
+  if curr_token_is p_body Token.Ident && p_body.curr_token.literal = type_name && peek_token_is p_body Token.LParen then (
+    let p_open = next_token p_body in
+    let* p_payload_end, payload_types = parse_type_expr_list (next_token p_open) in
+    let* p_after_paren =
+      if curr_token_is p_payload_end Token.RParen then
+        Ok (next_token p_payload_end)
+      else
+        expect_peek p_payload_end Token.RParen
+    in
+    match payload_types with
+    | [ wrapper_body ] ->
+        let* p6, derive = parse_postfix_derive p_after_paren in
+        Ok
+          ( p6,
+            Surface.STypeDef
+              {
+                type_name;
+                type_type_params;
+                type_body = Surface.STNamedWrapper wrapper_body;
+                derive;
+              } )
+    | _ ->
+        Error
+          (add_error ~code:"parse-invalid-type-definition" p_body
+             (Printf.sprintf "Wrapper type '%s' expects exactly one payload type" type_name)))
+  else if curr_token_is p_body Token.LBrace then (
     let p_members = next_token p_body in
-    if curr_token_is p_members Token.RBrace || (curr_token_is p_members Token.Ident && peek_token_is p_members Token.Colon)
+    if
+      curr_token_is p_members Token.RBrace
+      || curr_token_is p_members Token.Spread
+      || (curr_token_is p_members Token.Ident && peek_token_is p_members Token.Colon)
     then (
-      let* p5, fields = parse_named_product_field_list p_members in
-      let* p6 =
-        if curr_token_is p5 Token.RBrace then
-          Ok (next_token p5)
-        else
-          expect_peek p5 Token.RBrace
-      in
-      let* p7, derive = parse_postfix_derive p6 in
+      let* p5, record_body = parse_record_type p_body in
+      let* p6, derive = parse_postfix_derive p5 in
       Ok
-        ( p7,
+        ( p6,
           Surface.STypeDef
             {
               type_name;
               type_type_params;
-              type_body = Surface.STNamedProduct fields;
+              type_body = Surface.STTransparent record_body;
               derive;
             } ))
     else (
@@ -799,7 +828,7 @@ and parse_type_definition (p : parser) : (parser * Surface.top_decl, parser) res
       let* p6, derive = parse_postfix_derive p5 in
       Ok (p6, Surface.SEnumDef { name = type_name; type_params = type_type_params; variants; derive })))
   else (
-    let* p5, wrapper_body = parse_type_expr p_body in
+    let* p5, transparent_body = parse_type_expr p_body in
     let* p6, derive = parse_postfix_derive p5 in
     Ok
       ( p6,
@@ -807,7 +836,7 @@ and parse_type_definition (p : parser) : (parser * Surface.top_decl, parser) res
           {
             type_name;
             type_type_params;
-            type_body = Surface.STNamedWrapper wrapper_body;
+            type_body = Surface.STTransparent transparent_body;
             derive;
           } ))
 
@@ -1922,6 +1951,59 @@ and parse_patterns (p : parser) : (parser * Surface.surface_pattern list, parser
 
   loop p2 [ first_pattern ]
 
+and parse_constructor_payload_patterns
+    ~(constructor_pos : int)
+    (p : parser) : (parser * Surface.surface_pattern list, parser) result =
+  let parse_flattened_record_payload (lp : parser) : (parser * Surface.surface_pattern list, parser) result =
+    let rec loop current fields rest =
+      if curr_token_is current Token.RParen then
+        Ok (current, [ mk_surface_pat constructor_pos (Surface.SPRecord (List.rev fields, rest)) ])
+      else if curr_token_is current Token.Spread then
+        let current2 = next_token current in
+        if curr_token_is current2 Token.Ident then
+          let rest_name = current2.curr_token.literal in
+          let* current3 =
+            if peek_token_is current2 Token.RParen then
+              Ok (next_token current2)
+            else
+              Error
+                (add_error ~code:"parse-invalid-pattern" current2
+                   "expected ')' after flattened record rest pattern")
+          in
+          Ok (current3, [ mk_surface_pat constructor_pos (Surface.SPRecord (List.rev fields, Some rest_name)) ])
+        else
+          Error
+            (add_error ~code:"parse-invalid-pattern" current2
+               "expected identifier after '...' in constructor payload pattern")
+      else if curr_token_is current Token.Ident && peek_token_is current Token.Colon then
+        let field_name = current.curr_token.literal in
+        let current2 = next_token current in
+        let* current3, field_pattern =
+          if peek_token_is current2 Token.Comma || peek_token_is current2 Token.RParen then
+            Ok (next_token current2, None)
+          else
+            let* current3, pat = parse_pattern (next_token current2) in
+            Ok (current3, Some pat)
+        in
+        let field = Surface.{ sp_field_name = field_name; sp_field_pattern = field_pattern } in
+        if curr_token_is current3 Token.Comma then
+          loop (next_token current3) (field :: fields) rest
+        else
+          loop current3 (field :: fields) rest
+      else
+        Error (add_error ~code:"parse-invalid-pattern" current "invalid constructor payload pattern")
+    in
+    loop lp [] None
+  in
+  let p_payload = next_token p in
+  if
+    curr_token_is p_payload Token.Spread
+    || (curr_token_is p_payload Token.Ident && peek_token_is p_payload Token.Colon)
+  then
+    parse_flattened_record_payload p_payload
+  else
+    parse_pattern_list p
+
 and parse_pattern (p : parser) : (parser * Surface.surface_pattern, parser) result =
   let finalize = function
     | Ok (lp, pat) -> Ok (lp, with_surface_pat_end lp pat)
@@ -1931,6 +2013,14 @@ and parse_pattern (p : parser) : (parser * Surface.surface_pattern, parser) resu
   | Token.Ident ->
       if p.curr_token.literal = "_" then
         Ok (p, mk_surface_pat p.curr_token.pos Surface.SPWildcard)
+      else if peek_token_is p Token.LParen then
+        let constructor_name = p.curr_token.literal in
+        let p2 = next_token p in
+        let* p3, nested_patterns = parse_constructor_payload_patterns ~constructor_pos:p.curr_token.pos p2 in
+        Ok
+          ( p3,
+            mk_surface_pat p.curr_token.pos
+              (Surface.SPConstructor (constructor_name, constructor_name, nested_patterns)) )
       else if peek_token_is p Token.Dot then
         (* Enum constructor pattern: enum.variant or enum.variant(patterns) *)
         let enum_name = p.curr_token.literal in
@@ -1939,7 +2029,7 @@ and parse_pattern (p : parser) : (parser * Surface.surface_pattern, parser) resu
           let variant_name = p2.curr_token.literal in
           if peek_token_is p2 Token.LParen then
             let p3 = next_token p2 in
-            let* p4, nested_patterns = parse_pattern_list p3 in
+            let* p4, nested_patterns = parse_constructor_payload_patterns ~constructor_pos:p.curr_token.pos p3 in
             Ok
               ( p4,
                 mk_surface_pat p.curr_token.pos (Surface.SPConstructor (enum_name, variant_name, nested_patterns))
@@ -1948,6 +2038,11 @@ and parse_pattern (p : parser) : (parser * Surface.surface_pattern, parser) resu
             Ok (p2, mk_surface_pat p.curr_token.pos (Surface.SPConstructor (enum_name, variant_name, [])))
         else
           Error (add_error ~code:"parse-invalid-pattern" p2 "expected variant name after '.'")
+      else if is_upper_ident p.curr_token.literal then
+        Ok
+          ( p,
+            mk_surface_pat p.curr_token.pos
+              (Surface.SPConstructor (p.curr_token.literal, p.curr_token.literal, [])) )
       else
         Ok (p, mk_surface_pat p.curr_token.pos (Surface.SPVariable p.curr_token.literal))
   | Token.Int -> (
@@ -2925,6 +3020,57 @@ module Test = struct
         | [ { Surface.std_decl = Surface.STypeDef { derive; type_name = "MyInt"; _ }; _ } ] ->
             derive = [ AST.{ derive_trait_name = "Eq"; derive_trait_constraints = [] } ]
         | _ -> false)
+
+  let%test "parse structural type declaration lowers to transparent type alias" =
+    let input = "type Point = { x: Int, y: Int }" in
+    match parse ~file_id:"<test>" input with
+    | Ok [ { AST.stmt = AST.TypeAlias alias_def; _ } ] -> (
+        alias_def.alias_name = "Point"
+        &&
+        match alias_def.alias_body with
+        | AST.TRecord (fields, None) ->
+            List.length fields = 2
+            && List.exists (fun (field : AST.record_type_field) -> field.field_name = "x") fields
+            && List.exists (fun (field : AST.record_type_field) -> field.field_name = "y") fields
+        | _ -> false)
+    | _ -> false
+
+  let%test "parse transparent type with postfix derive lowers to alias plus derive" =
+    let input = "type Box[t] = { value: t } derive Show" in
+    match parse ~file_id:"<test>" input with
+    | Ok
+        [
+          { AST.stmt = AST.TypeAlias alias_def; _ };
+          {
+            AST.stmt =
+              AST.DeriveDef
+                { derive_traits = [ derive_trait ]; derive_for_type = AST.TApp ("Box", [ AST.TVar "t" ]) };
+            _;
+          };
+        ] ->
+        alias_def.alias_name = "Box"
+        && alias_def.alias_type_params = [ "t" ]
+        && derive_trait.derive_trait_name = "Show"
+    | _ -> false
+
+  let%test "parse explicit wrapper type syntax" =
+    let input = "type UserId = UserId(Int)" in
+    match parse ~file_id:"<test>" input with
+    | Ok
+        [
+          {
+            AST.stmt =
+              AST.TypeDef
+                {
+                  type_name = "UserId";
+                  type_type_params = [];
+                  type_body = AST.NamedTypeWrapper (AST.TCon "Int");
+                };
+            _;
+          };
+        ] ->
+        true
+    | _ -> false
 
   let%test "parse type definition preserves postfix derive target params" =
     let input = "type Box[t] = { value: t } derive Forwarder[u]" in
@@ -4185,3 +4331,72 @@ let%test "parse record pattern - empty" =
           | _ -> false)
       | _ -> false)
   | Error _ -> false
+
+let%test "parse unqualified wrapper constructor pattern with flattened record payload sugar" =
+  let input = "match user { case User(name:, ...rest): name }" in
+  match parse ~file_id:"<test>" input with
+  | Ok
+      [
+        {
+          AST.stmt =
+            AST.ExpressionStmt
+              {
+                AST.expr =
+                  AST.Match
+                    ( _,
+                      [
+                        {
+                          AST.patterns =
+                            [
+                              {
+                                AST.pat =
+                                  AST.PConstructor
+                                    ( "User",
+                                      "User",
+                                      [
+                                        {
+                                          AST.pat =
+                                            AST.PRecord
+                                              ([ { AST.pat_field_name = "name"; pat_field_pattern = None } ], Some "rest");
+                                          _;
+                                        };
+                                      ] );
+                                _;
+                              };
+                            ];
+                          _;
+                        };
+                      ] );
+                _;
+              };
+          _;
+        };
+      ] ->
+      true
+  | _ -> false
+
+let%test "parse unqualified nullary constructor pattern" =
+  let input = "match evt { case Quit: 0 }" in
+  match parse ~file_id:"<test>" input with
+  | Ok
+      [
+        {
+          AST.stmt =
+            AST.ExpressionStmt
+              {
+                AST.expr =
+                  AST.Match
+                    ( _,
+                      [
+                        {
+                          AST.patterns = [ { AST.pat = AST.PConstructor ("Quit", "Quit", []); _ } ];
+                          _;
+                        };
+                      ] );
+                _;
+              };
+          _;
+        };
+      ] ->
+      true
+  | _ -> false

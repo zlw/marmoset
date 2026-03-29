@@ -822,60 +822,56 @@ let%test "record literal with punning typechecks" =
   | Ok { result_type = TInt; _ } -> true
   | _ -> false
 
-let%test "type alias for record typechecks" =
+let%test "transparent type for record typechecks" =
   Infer.reset_fresh_counter ();
-  let code = "alias Point = { x: Int, y: Int }\nlet p: Point = { x: 1, y: 2 }\np.x + p.y" in
+  let code = "type Point = { x: Int, y: Int }\nlet p: Point = { x: 1, y: 2 }\np.x + p.y" in
   match check code with
   | Ok { result_type = TInt; _ } -> true
   | _ -> false
 
-let%test "generic type alias for record typechecks" =
+let%test "generic transparent type for record typechecks" =
   Infer.reset_fresh_counter ();
-  let code = "alias Box[a] = { value: a }\nlet p: Box[Int] = { value: 42 }\np.value" in
+  let code = "type Box[a] = { value: a }\nlet p: Box[Int] = { value: 42 }\np.value" in
   match check code with
   | Ok { result_type = TInt; _ } -> true
   | _ -> false
 
-let%test "type alias cannot own trait impl behavior" =
+let%test "transparent type may own trait impl behavior via exact type resolution" =
   Infer.reset_fresh_counter ();
   let code =
     {|
-      alias Point = { x: Int, y: Int }
+      type Point = { x: Int, y: Int }
       trait Show[a] = {
         fn show(x: a) -> Str
       }
       impl Show[Point] = {
         fn show(p: Point) -> Str = "point"
       }
+      let p: Point = { x: 1, y: 2 }
+      p.show()
     |}
   in
   match check code with
+  | Ok { result_type = TString; _ } -> true
   | Ok _ -> false
-  | Error diags ->
-      List.exists
-        (fun (diag : Diagnostic.t) ->
-          diag.code = "type-constructor"
-          && String_utils.contains_substring ~needle:"transparent alias" diag.message)
-        diags
+  | Error _ -> false
 
-let%test "type alias cannot own inherent impl behavior" =
+let%test "transparent type may own inherent impl behavior via exact type resolution" =
   Infer.reset_fresh_counter ();
   let code =
     {|
-      alias Point = { x: Int, y: Int }
+      type Point = { x: Int, y: Int }
       impl Point = {
-        fn sum(p: Point) -> Int = p.x + p.y
+        fn sum(self: Point) -> Int = self.x + self.y
       }
+      let p: Point = { x: 1, y: 2 }
+      p.sum()
     |}
   in
   match check code with
+  | Ok { result_type = TInt; _ } -> true
   | Ok _ -> false
-  | Error diags ->
-      List.exists
-        (fun (diag : Diagnostic.t) ->
-          diag.code = "type-constructor"
-          && String_utils.contains_substring ~needle:"transparent alias" diag.message)
-        diags
+  | Error _ -> false
 
 let%test "field-path union narrowing supports direct projection checks" =
   Infer.reset_fresh_counter ();
@@ -889,7 +885,7 @@ let%test "field-path union narrowing supports direct projection checks" =
           box.value
         }
       }
-      render(Box(value: 1))
+      render({ value: 1 })
     |}
   in
   match check code with
@@ -909,7 +905,7 @@ let%test "match record patterns narrow union scrutinees in arm bodies" =
           case _: 0
         }
       }
-      read(Left(x: 1))
+      read({ x: 1 })
     |}
   in
   match check code with
@@ -1025,7 +1021,7 @@ let%test "followup A2: user default-backed derive expands into a callable impl" 
   Trait_registry.clear ();
   match
     check_string ~file_id:"<test>"
-      "trait Greeter[a] = { fn greet(self: a) -> Str = \"hello\" }\ntype Score = Int derive Greeter\nlet s = Score(1)\ns.greet()"
+      "trait Greeter[a] = { fn greet(self: a) -> Str = \"hello\" }\ntype Score = Int derive Greeter\nlet s: Score = 1\ns.greet()"
   with
   | Ok result -> result.result_type = Types.TString
   | Error _ -> false
@@ -1035,19 +1031,17 @@ let%test "followup A2: user default-backed derive registers default-derived prov
   Trait_registry.clear ();
   match
     check_string ~file_id:"<test>"
-      "trait Greeter[a] = { fn greet(self: a) -> Str = \"hello\" }\ntype Score = Int derive Greeter\nlet s = Score(1)\ns.greet()"
+      "trait Greeter[a] = { fn greet(self: a) -> Str = \"hello\" }\ntype Score = Int derive Greeter\nlet s: Score = 1\ns.greet()"
   with
   | Error _ -> false
-  | Ok _ ->
-      Trait_registry.lookup_impl_origin "Greeter" (Types.TNamed ("Score", []))
-      = Some Trait_registry.DefaultDerivedImpl
+  | Ok _ -> Trait_registry.lookup_impl_origin "Greeter" Types.TInt = Some Trait_registry.DefaultDerivedImpl
 
 let%test "Phase6 prep: canonical builtin trait names work in derives" =
   Infer.reset_fresh_counter ();
   Trait_registry.clear ();
   let env = default_env () in
   match
-    check_string ~env ~file_id:"<test>" "type Point = { x: Int } derive Eq\nlet p = Point(x: 1)\np.eq(p)"
+    check_string ~env ~file_id:"<test>" "type Point = { x: Int } derive Eq\nlet p: Point = { x: 1 }\np.eq(p)"
   with
   | Ok result -> result.result_type = Types.TBool
   | Error _ -> false
@@ -1070,13 +1064,13 @@ let%test "Phase6 prep: canonical builtin trait names work in impl headers" =
   | Ok result -> result.result_type = Types.TString
   | Error _ -> false
 
-let%test "Phase6 prep: named product fields may reference enum types" =
+let%test "Phase6 prep: transparent record fields may reference enum types" =
   Infer.reset_fresh_counter ();
   Trait_registry.clear ();
   let env = default_env () in
   match
     check_string ~env ~file_id:"<test>"
-      "enum Fruit = { Banana, Mango }\ntype Monkey = { favorite_fruit: Fruit }\nlet m = Monkey(favorite_fruit: Fruit.Banana)\nm.favorite_fruit"
+      "enum Fruit = { Banana, Mango }\ntype Monkey = { favorite_fruit: Fruit }\nlet m: Monkey = { favorite_fruit: Fruit.Banana }\nm.favorite_fruit"
   with
   | Ok result -> result.result_type = Types.TEnum ("Fruit", [])
   | Error _ -> false
@@ -1108,7 +1102,7 @@ let%test "Phase6 prep: constrained-param shorthand works end-to-end for top-leve
   Trait_registry.clear ();
   match
     check_string ~file_id:"<test>"
-      "trait JungleDweller[a] = { fn introduce(a) -> Str }\ntype Monkey = { name: Str }\nimpl JungleDweller[Monkey] = { fn introduce(self: Monkey) -> Str = self.name }\nfn who_dis(x: JungleDweller) -> Str = x.introduce()\nlet george = Monkey(name: \"George\")\nwho_dis(george)"
+      "trait JungleDweller[a] = { fn introduce(a) -> Str }\ntype Monkey = { name: Str }\nimpl JungleDweller[Monkey] = { fn introduce(self: Monkey) -> Str = self.name }\nfn who_dis(x: JungleDweller) -> Str = x.introduce()\nlet george: Monkey = { name: \"George\" }\nwho_dis(george)"
   with
   | Ok result -> result.result_type = Types.TString
   | Error _ -> false
@@ -1128,7 +1122,7 @@ let%test "Phase6 prep: constrained-param shorthand works in inherent method para
   Trait_registry.clear ();
   match
     check_string ~file_id:"<test>"
-      "shape Named = { name: Str }\ntype User = { name: Str }\nimpl User = {\n\  fn label(self: User, other: Named) -> Str = other.name\n}\nUser(name: \"Ada\").label({ name: \"Ada\" })"
+      "shape Named = { name: Str }\ntype User = { name: Str }\nimpl User = {\n\  fn label(self: User, other: Named) -> Str = other.name\n}\nlet user: User = { name: \"Ada\" }\nuser.label({ name: \"Ada\" })"
   with
   | Ok result -> result.result_type = Types.TString
   | Error _ -> false
@@ -1364,7 +1358,8 @@ let%test "followup B3: Dyn field access is rejected explicitly" =
       impl NamedShow[Person] = {
         fn show(x: Person) -> Str = x.name
       }
-      let x: Dyn[NamedShow] = Person(name: "alice")
+      let person: Person = { name: "alice" }
+      let x: Dyn[NamedShow] = person
       x.name
     |}
   in

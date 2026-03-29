@@ -541,19 +541,33 @@ let lower_top_decl_with_ctx
   | Surface.STypeDef { type_name; type_type_params; type_body; derive } ->
       let bound_type_vars = bound_type_vars_of_names type_type_params in
       let type_stmt =
-        AST.mk_stmt ~pos ~end_pos ~file_id
-          (AST.TypeDef
-             {
-               type_name;
-               type_type_params;
-               type_body =
-                 (match type_body with
-                 | Surface.STNamedProduct fields ->
+        match type_body with
+        | Surface.STTransparent transparent_body ->
+            AST.mk_stmt ~pos ~end_pos ~file_id
+              (AST.TypeAlias
+                 {
+                   alias_name = type_name;
+                   alias_type_params = type_type_params;
+                   alias_body = lower_type_expr_with_bound_vars bound_type_vars transparent_body;
+                 })
+        | Surface.STNamedProduct fields ->
+            AST.mk_stmt ~pos ~end_pos ~file_id
+              (AST.TypeDef
+                 {
+                   type_name;
+                   type_type_params;
+                   type_body =
                      AST.NamedTypeProduct
-                       (List.map (lower_record_type_field_with_bound_vars bound_type_vars) fields)
-                 | Surface.STNamedWrapper wrapper_body ->
-                     AST.NamedTypeWrapper (lower_type_expr_with_bound_vars bound_type_vars wrapper_body));
-             })
+                       (List.map (lower_record_type_field_with_bound_vars bound_type_vars) fields);
+                 })
+        | Surface.STNamedWrapper wrapper_body ->
+            AST.mk_stmt ~pos ~end_pos ~file_id
+              (AST.TypeDef
+                 {
+                   type_name;
+                   type_type_params;
+                   type_body = AST.NamedTypeWrapper (lower_type_expr_with_bound_vars bound_type_vars wrapper_body);
+                 })
       in
       let derive_stmts =
         if derive = [] then

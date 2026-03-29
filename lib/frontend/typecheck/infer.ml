@@ -1072,42 +1072,6 @@ let expression_type_or_lookup (type_map : type_map) (expr : AST.expression) : (m
         (Diagnostic.error_no_span ~code:"type-internal"
            ~message:(Printf.sprintf "Missing inferred type for expression id %d at Dyn coercion site" expr.id))
 
-type behavior_owner_target_kind =
-  | TraitImplTarget
-  | InherentImplTarget
-  | DeriveTarget
-
-let type_expr_head_name (type_expr : AST.type_expr) : string option =
-  match type_expr with
-  | AST.TCon name | AST.TApp (name, _) -> Some name
-  | _ -> None
-
-let alias_behavior_target_name (type_expr : AST.type_expr) : string option =
-  match type_expr_head_name type_expr with
-  | Some name when Annotation.lookup_type_alias name <> None -> Some name
-  | _ -> None
-
-let reject_alias_behavior_target
-    ~(kind : behavior_owner_target_kind)
-    ~(mk_error : code:string -> message:string -> Diagnostic.t)
-    (type_expr : AST.type_expr) : (unit, Diagnostic.t) result =
-  match alias_behavior_target_name type_expr with
-  | None -> Ok ()
-  | Some alias_name ->
-      let message =
-        match kind with
-        | TraitImplTarget ->
-            Printf.sprintf "Trait impl target '%s' cannot be a transparent alias; aliases do not own behavior"
-              alias_name
-        | InherentImplTarget ->
-            Printf.sprintf "Inherent impl target '%s' cannot be a transparent alias; aliases do not own behavior"
-              alias_name
-        | DeriveTarget ->
-            Printf.sprintf "Derive target '%s' cannot be a transparent alias; derives are only allowed on 'type'"
-              alias_name
-      in
-      Error (mk_error ~code:"type-constructor" ~message)
-
 let provisional_function_type
     (generics_opt : AST.generic_param list option)
     (params : (string * AST.type_expr option) list)
@@ -4447,11 +4411,6 @@ and infer_statement type_map env stmt =
           Trait_registry.register_trait trait_def;
           Ok (empty_substitution, TNull))
   | AST.ImplDef { impl_trait_name; impl_type_params; impl_for_type; impl_methods } ->
-      let* () =
-        reject_alias_behavior_target ~kind:TraitImplTarget
-          ~mk_error:(fun ~code ~message -> error_at_stmt ~code ~message stmt)
-          impl_for_type
-      in
       let type_param_names = List.map (fun (p : AST.generic_param) -> p.name) impl_type_params in
       let unique_param_names = List.sort_uniq String.compare type_param_names in
       let impl_origin =
@@ -4736,11 +4695,6 @@ and infer_statement type_map env stmt =
                             Trait_registry.register_impl ~source:impl_source ~origin:impl_origin impl_def;
                             Ok (method_subst, TNull)))))
   | AST.InherentImplDef { inherent_for_type; inherent_methods } -> (
-      let* () =
-        reject_alias_behavior_target ~kind:InherentImplTarget
-          ~mk_error:(fun ~code ~message -> error_at_stmt ~code ~message stmt)
-          inherent_for_type
-      in
       let reject_invalid_override =
         let rec loop = function
           | [] -> Ok ()
@@ -5107,11 +5061,6 @@ and infer_statement type_map env stmt =
                   current_inherent_impl_methods := prev_inherent_impl_methods;
                   result)))
   | AST.DeriveDef { derive_traits; derive_for_type } -> (
-      let* () =
-        reject_alias_behavior_target ~kind:DeriveTarget
-          ~mk_error:(fun ~code ~message -> error_at_stmt ~code ~message stmt)
-          derive_for_type
-      in
       (* Auto-generate implementations for derived traits *)
       match Annotation.type_expr_to_mono_type derive_for_type with
       | Error e -> Error e
@@ -5870,9 +5819,7 @@ let infer_program ?(env = empty_env) ?state (program : AST.program) :
                     List.iter
                       (fun (stmt : AST.statement) ->
                         match stmt.stmt with
-                        | AST.ImplDef impl_def
-                          when impl_def.impl_type_params = []
-                               && alias_behavior_target_name impl_def.impl_for_type = None -> (
+                        | AST.ImplDef impl_def when impl_def.impl_type_params = [] -> (
                             match Annotation.type_expr_to_mono_type impl_def.impl_for_type with
                             | Ok for_type ->
                                 Trait_registry.predeclare_impl_header
@@ -6519,7 +6466,7 @@ module Test = struct
 
   let%test "constrained field access works when all constraints are satisfied" =
     infers_to
-      "type Person = { name: Str, age: Int }\nshape Named = { name: Str }\ntrait Shown[a] = { fn show(x: a) -> Str }\nimpl Shown[Person] = {\n  fn show(x: Person) -> Str = x.name\n}\nfn get_name[t: Named & Shown](x: t) -> Str = x.name\nlet p = Person(name: \"alice\", age: 42)\nget_name(p)"
+      "type Person = { name: Str, age: Int }\nshape Named = { name: Str }\ntrait Shown[a] = { fn show(x: a) -> Str }\nimpl Shown[Person] = {\n  fn show(x: Person) -> Str = x.name\n}\nfn get_name[t: Named & Shown](x: t) -> Str = x.name\nlet p: Person = { name: \"alice\", age: 42 }\nget_name(p)"
       TString
 
   let%test "explicit generics and shorthand params stay independent at call sites" =
@@ -6561,21 +6508,21 @@ module Test = struct
   let%test "infer record match pattern with rest binding" =
     infers_to "let p = { x: 10, y: 20, z: 30 }\nmatch p { case { x:, ...rest }: x + rest.y case _: 0 }" TInt
 
-  let%test "record spread accepts named product base" =
-    infers_to "type Point = { x: Int, y: Int }\nlet p = Point(x: 1, y: 2)\nlet q = { ...p, x: 10 }\nq.x + q.y" TInt
+  let%test "record spread accepts transparent record base" =
+    infers_to "type Point = { x: Int, y: Int }\nlet p: Point = { x: 1, y: 2 }\nlet q = { ...p, x: 10 }\nq.x + q.y" TInt
 
-  let%test "named product constructor accepts spread update" =
+  let%test "transparent record annotation accepts spread update" =
     infers_to
-      "type Point = { x: Int, y: Int }\nlet p = Point(x: 1, y: 2)\nlet q: Point = Point(...p, x: 10)\nq.x + q.y"
+      "type Point = { x: Int, y: Int }\nlet p: Point = { x: 1, y: 2 }\nlet q: Point = { ...p, x: 10 }\nq.x + q.y"
       TInt
 
-  let%test "record pattern matches named product scrutinee" =
-    infers_to "type Point = { x: Int, y: Int }\nlet p = Point(x: 10, y: 20)\nmatch p { case { x:, y: }: x + y case _: 0 }"
+  let%test "record pattern matches transparent record scrutinee" =
+    infers_to "type Point = { x: Int, y: Int }\nlet p: Point = { x: 10, y: 20 }\nmatch p { case { x:, y: }: x + y case _: 0 }"
       TInt
 
-  let%test "record pattern rest binding on named product is structural remainder" =
+  let%test "record pattern rest binding on transparent record is structural remainder" =
     infers_to
-      "type Point = { x: Int, y: Int, z: Int }\nfn sum_rest(rest: { y: Int, z: Int }) -> Int = rest.y + rest.z\nlet p = Point(x: 1, y: 2, z: 3)\nmatch p { case { x:, ...rest }: x + sum_rest(rest) case _: 0 }"
+      "type Point = { x: Int, y: Int, z: Int }\nfn sum_rest(rest: { y: Int, z: Int }) -> Int = rest.y + rest.z\nlet p: Point = { x: 1, y: 2, z: 3 }\nmatch p { case { x:, ...rest }: x + sum_rest(rest) case _: 0 }"
       TInt
 
   let%test "single-arm record match is exhaustive" =
@@ -6995,7 +6942,7 @@ f" in
 
   let%test "inherent method call resolves for concrete receiver" =
     let code =
-      "type Point = { x: Int, y: Int }\nimpl Point = { fn sum(p: Point) -> Int = p.x + p.y }\nlet p = Point(x: 1, y: 2)\np.sum()"
+      "type Point = { x: Int, y: Int }\nimpl Point = { fn sum(p: Point) -> Int = p.x + p.y }\nlet p: Point = { x: 1, y: 2 }\np.sum()"
     in
     infers_to code TInt
 
@@ -7034,7 +6981,7 @@ f" in
     let contains_substring s sub = String_utils.contains_substring ~needle:sub s in
     Trait_registry.clear ();
     let code =
-      "trait Show[a] = { fn show(x: a) -> Str }\ntype Point = { x: Int }\nimpl Point = { fn show(p: Point) -> Str = \"p\" }\nfn f[t: Show](x: t) -> Str = x.show()\nlet p = Point(x: 1)\nf(p)"
+      "trait Show[a] = { fn show(x: a) -> Str }\ntype Point = { x: Int }\nimpl Point = { fn show(p: Point) -> Str = \"p\" }\nfn f[t: Show](x: t) -> Str = x.show()\nlet p: Point = { x: 1 }\nf(p)"
     in
     match infer_string code with
     | Ok _ -> false

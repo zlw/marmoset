@@ -30,6 +30,7 @@ module Surface = struct
   }
 
   and surface_type_def_kind =
+    | STTransparent of surface_type_expr
     | STNamedProduct of surface_record_type_field list
     | STNamedWrapper of surface_type_expr
 

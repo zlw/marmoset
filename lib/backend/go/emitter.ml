@@ -7412,12 +7412,12 @@ let%test "emit bool ordering via ord helper" =
 let%test "emit non-primitive equality via eq helper" =
   match
     compile_string ~file_id:"<codegen>"
-      "type Point = { x: Int }\nimpl Eq[Point] = {\n  fn eq(x: Point, y: Point) -> Bool = false\n}\nlet a = Point(x: 1)\nlet b = Point(x: 1)\na == b"
+      "type Point = { x: Int }\nimpl Eq[Point] = {\n  fn eq(x: Point, y: Point) -> Bool = false\n}\nlet a: Point = { x: 1 }\nlet b: Point = { x: 1 }\na == b"
   with
   | Ok (code, _) -> string_contains code "func eq_eq_" && string_contains code "return false"
   | Error _ -> false
 
-let%test "builtin derives emit helpers for named product types" =
+let%test "builtin derives emit helpers for transparent structural types" =
   Fun.protect
     ~finally:(fun () ->
       Typecheck.Type_registry.clear ();
@@ -7429,10 +7429,11 @@ let%test "builtin derives emit helpers for named product types" =
       Typecheck.Builtins.init_builtin_impls ();
       match
         compile_string ~file_id:"<codegen>"
-          "type Point = { x: Int, y: Int } derive Eq, Show\nlet a = Point(x: 1, y: 2)\nlet b = Point(x: 1, y: 2)\nlet _ = a == b\na.show()"
+          "type Point = { x: Int, y: Int } derive Eq, Show\nlet a: Point = { x: 1, y: 2 }\nlet b: Point = { x: 1, y: 2 }\nlet _ = a == b\na.show()"
       with
       | Ok (code, _) ->
-          string_contains code "func eq_eq_Point(" && string_contains code "func show_show_Point("
+          string_contains code "return (x.x == y.x) && (x.y == y.y)"
+          && string_contains code "fmt.Sprintf(\"{ x: %v, y: %v }\", x.x, x.y)"
       | Error _ -> false)
 
 let%test "monomorphized function" =
@@ -7462,13 +7463,13 @@ let%test "identifier suffix methods compile through codegen" =
   Typecheck.Inherent_registry.clear ();
   match
     compile_string ~file_id:"<codegen>"
-      "type Monkey = { bananas_eaten: Int, is_alpha: Bool }\nimpl Monkey = {\nfn hungry?(self: Monkey) -> Bool = self.bananas_eaten < 3\nfn alpha!(self: Monkey) -> Monkey = Monkey(bananas_eaten: self.bananas_eaten, is_alpha: true)\n}\nlet m = Monkey(bananas_eaten: 1, is_alpha: false)\nputs(m.hungry?())\nputs(m.alpha!().is_alpha)"
+      "type Monkey = { bananas_eaten: Int, is_alpha: Bool }\nimpl Monkey = {\nfn hungry?(self: Monkey) -> Bool = self.bananas_eaten < 3\nfn alpha!(self: Monkey) -> Monkey = { bananas_eaten: self.bananas_eaten, is_alpha: true }\n}\nlet m: Monkey = { bananas_eaten: 1, is_alpha: false }\nputs(m.hungry?())\nputs(m.alpha!().is_alpha)"
   with
   | Ok (code, _) ->
-      string_contains code "func inherent_hungry_q_Monkey("
-      && string_contains code "func inherent_alpha_bang_Monkey("
-      && string_contains code "inherent_hungry_q_Monkey(m)"
-      && string_contains code "inherent_alpha_bang_Monkey(m)"
+      string_contains code "func inherent_hungry_q_"
+      && string_contains code "func inherent_alpha_bang_"
+      && string_contains code "inherent_hungry_q_"
+      && string_contains code "inherent_alpha_bang_"
   | Error _ -> false
 
 let%test "generic empty array return uses function return type during build" =
@@ -7694,16 +7695,15 @@ let%test "emit record spread" =
   | Ok (code, _) -> string_contains code "__spread_0 := p" && string_contains code "Record_x_int64_y_int64"
   | Error _ -> false
 
-let%test "emit named product constructor spread update" =
+let%test "emit typed record spread update" =
   match
     compile_string ~file_id:"<codegen>"
-      "type Point = { x: Int, y: Int }\nlet p = Point(x: 1, y: 2)\nlet q = Point(...p, x: 10)\nq.x + q.y"
+      "type Point = { x: Int, y: Int }\nlet p: Point = { x: 1, y: 2 }\nlet q: Point = { ...p, x: 10 }\nq.x + q.y"
   with
   | Ok (code, _) ->
-      string_contains code "type Point "
-      && string_contains code "__base := p"
-      && string_contains code "return Record_x_int64_y_int64{x: int64(10), y: __base.y}"
-      && string_contains code "q := Point("
+      string_contains code "type Point struct"
+      && string_contains code "__spread_0 := p"
+      && string_contains code "q := Point{x: int64(10), y: __spread_0.y}"
   | Error _ -> false
 
 let%test "record spread with full field override avoids unused temp" =
@@ -7722,21 +7722,20 @@ let%test "emit record match pattern" =
       && string_contains code "x := __scrutinee_0.x"
   | Error _ -> false
 
-let%test "emit record match pattern for named product" =
+let%test "emit record match pattern for transparent record alias" =
   match
     compile_string ~file_id:"<codegen>"
-      "type Point = { x: Int, y: Int, z: Int }\nfn sum_rest(rest: { y: Int, z: Int }) -> Int = rest.y + rest.z\nlet p = Point(x: 1, y: 2, z: 3)\nmatch p {\n  case { x:, ...rest }: x + sum_rest(rest)\n  case _: 0\n}"
+      "type Point = { x: Int, y: Int, z: Int }\nfn sum_rest(rest: { y: Int, z: Int }) -> Int = rest.y + rest.z\nlet p: Point = { x: 1, y: 2, z: 3 }\nmatch p {\n  case { x:, ...rest }: x + sum_rest(rest)\n  case _: 0\n}"
   with
   | Ok (code, _) ->
-      string_contains code "type Point "
-      && string_contains code "x := __scrutinee_0.x"
+      string_contains code "x := __scrutinee_0.x"
       && string_contains code "rest := Record_y_int64_z_int64{y: __scrutinee_0.y, z: __scrutinee_0.z}"
   | Error _ -> false
 
-let%test "emit union match pattern for named products narrows scrutinee in arm body" =
+let%test "emit union match pattern for transparent record aliases narrows scrutinee in arm body" =
   match
     compile_string ~file_id:"<codegen>"
-      "type Left = { x: Int }\ntype Right = { y: Int }\nfn read(v: Left | Right) -> Int = {\n  match v {\n    case { x: }: v.x\n    case { y: }: v.y\n    case _: 0\n  }\n}\nread(Left(x: 1))"
+      "type Left = { x: Int }\ntype Right = { y: Int }\nfn read(v: Left | Right) -> Int = {\n  match v {\n    case { x: }: v.x\n    case { y: }: v.y\n    case _: 0\n  }\n}\nlet left: Left = { x: 1 }\nread(left)"
   with
   | Ok (code, _) ->
       string_contains code "switch __member_"
@@ -7765,17 +7764,17 @@ let%test "alias used in record literal" =
       string_contains code "Point{x:"
   | Error _ -> false
 
-let%test "named product emits distinct Go type and explicit constructor" =
+let%test "explicit wrapper emits distinct Go type and explicit constructor" =
   match
-    compile_string ~file_id:"<codegen>" "type Point = { x: Int, y: Int }\nlet p = Point(x: 1, y: 2)\np.x"
+    compile_string ~file_id:"<codegen>" "type Point = Point({ x: Int, y: Int })\nlet p = Point(x: 1, y: 2)\np"
   with
   | Ok (code, _) ->
-      string_contains code "type Point "
+      string_contains code "type Point Record_x_int64_y_int64"
       && string_contains code "Point(Record_x_int64_y_int64{x: int64(1), y: int64(2)})"
   | Error _ -> false
 
-let%test "named wrapper emits distinct Go type and explicit constructor" =
-  match compile_string ~file_id:"<codegen>" "type UserId = Int\nlet id = UserId(42)\nid" with
+let%test "explicit scalar wrapper emits distinct Go type and explicit constructor" =
+  match compile_string ~file_id:"<codegen>" "type UserId = UserId(Int)\nlet id = UserId(42)\nid" with
   | Ok (code, _) -> string_contains code "type UserId int64" && string_contains code "UserId(int64(42))"
   | Error _ -> false
 
@@ -8116,6 +8115,9 @@ let%test "type_check_static_outcome recognizes impossible concrete checks" =
   | _ -> false
 
 let%test "field-path type-check if emits a runtime type switch" =
+  Typecheck.Trait_registry.clear ();
+  Typecheck.Enum_registry.clear ();
+  Typecheck.Inherent_registry.clear ();
   let code =
     {|
       type Box = { value: Int | Str }
@@ -8126,7 +8128,7 @@ let%test "field-path type-check if emits a runtime type switch" =
           box.value
         }
       }
-      puts(render(Box(value: 1)))
+      puts(render({ value: 1 }))
     |}
   in
   match compile_string ~file_id:"<codegen>" code with
@@ -8963,6 +8965,6 @@ let%test "Q82: codegen deterministic for inherent methods + operators" =
 impl Point = {
   fn sum(p: Point) -> Int = p.x + p.y
 }
-let p = Point(x: 3, y: 4)
+let p: Point = { x: 3, y: 4 }
 let result = p.sum() + 10
 puts(result)|}

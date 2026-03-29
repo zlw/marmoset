@@ -529,18 +529,27 @@ Relationship notes:
 - 2026-03-30: Read `CLAUDE.md`, confirmed worktree/branch state, and mapped the parser, lowering, type registry, inference, and codegen paths that currently enforce the `alias` versus nominal-`type` split.
 - 2026-03-30: Started the plan's migration sequence with docs alignment. Updating the plan and feature notes before checker work so the target surface is visible in-repo while implementation lands.
 - 2026-03-30: Completed the docs-alignment pass and verified the compiler unit suite still passes before the first commit.
+- 2026-03-30: Reworked surface parsing/lowering so transparent `type` declarations now lower as `TypeAlias`, explicit wrappers use `type Name = Name(Payload)`, and constructor patterns accept the planned unqualified wrapper/nullary forms plus flattened record-payload sugar.
+- 2026-03-30: Added focused parser tests for transparent `type`, postfix `derive` on transparent aliases, explicit wrapper syntax, and the new constructor-pattern forms before moving on to tree-sitter/LSP and checker work.
+- 2026-03-30: Reworked checker/inference so transparent `type` declarations participate in trait impls, inherent impls, and derives by exact resolved type instead of being rejected as non-owning aliases; updated the affected typecheck suites from nominal constructor usage to structural record usage.
+- 2026-03-30: Updated Go emitter expectations for transparent structural records versus explicit wrappers and fixed a backend test-isolation issue caused by user registries persisting across repeated compile/test runs.
 
 ### Findings
 
 - The current parser/lowering pipeline still treats `type Name = { ... }` as a nominal named product and `alias Name = ...` as the only transparent naming surface.
 - Trait and inherent registries already canonicalize impl targets by resolved type, so once transparent `type` forms resolve to exact structural records, behavior slots can naturally key off exact structural types.
 - Wrapper boundaries are only partially enforced today: named-product field access/spread/pattern matching are structural by special case, while wrapper projection and constructor-pattern sugar are still missing.
+- Backend test state is not fully self-isolating: repeated compiler setup through the builtin prelude path can leave trait/enum/inherent registry entries behind unless the relevant test clears them explicitly first.
 
 ### Caveats
 
 - The branch still documents and tests nominal named products in many places; those clusters will flip incrementally rather than all at once.
 - `enum` syntax currently coexists with `type`-based constructor syntax. The semantic rework is targeting the plan's `type`-first surface while preserving compatibility until the migration is complete.
+- `alias` syntax is still accepted at this stage. The parser/lowering work establishes the new `type` meaning first; removal of the old spelling will happen in a later migration step once the rest of the compiler and fixtures are aligned.
 
 ### Verification
 
 - `make unit compiler`
+- `dune runtest --root /Users/zlw/src/marmoset/marmoset lib/frontend/syntax/ --force`
+- `dune runtest --root /Users/zlw/src/marmoset/marmoset lib/frontend/typecheck/ --force`
+- `dune runtest --root /Users/zlw/src/marmoset/marmoset lib/backend/go/ --force`
