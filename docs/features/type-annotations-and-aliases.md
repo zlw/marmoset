@@ -60,7 +60,7 @@ Use `type` when you want:
 
 Style convention:
 - Prefer `alias` for transparent helper names such as `Point`, `Reducer`, or other purely structural views.
-- Prefer `type` for domain entities and values that own behavior or nominal meaning, such as `User`, `Monkey`, or `BananaPile`.
+- Prefer `type` for domain entities and opaque values that own behavior or nominal meaning, such as `User`, `Monkey`, `UserId`, or `BananaPile`.
 
 ## Codegen
 

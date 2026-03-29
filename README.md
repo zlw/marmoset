@@ -97,13 +97,13 @@ puts(compare_snacks(3, 5))                # different snacks
 Transparent aliases name existing type expressions without creating a new nominal type:
 
 ```marmoset
-alias Point = { x: Int, y: Int }
+alias Perch = { bananas: Int, vines: Int }
 
-let start: Point = { x: 1, y: 2 }
-fn shift_x(p: Point, dx: Int) -> Point = { ...p, x: p.x + dx }
+let start: Perch = { bananas: 1, vines: 2 }
+fn gather_more(p: Perch, extra: Int) -> Perch = { ...p, bananas: p.bananas + extra }
 
-puts(shift_x(start, 3).x)  # 4
-puts(start.y)              # 2
+puts(gather_more(start, 3).bananas)  # 4
+puts(start.vines)                    # 2
 ```
 
 ### 📦 Records
@@ -121,13 +121,13 @@ puts(moved.y)  # 2
 Named product records support the same field access and record-pattern behavior, and they can be rebuilt explicitly with constructor spread:
 
 ```marmoset
-type Waypoint = { x: Int, y: Int }
+type JungleStop = { bananas: Int, vines: Int }
 
-let start = Waypoint(x: 1, y: 2)
-let moved = Waypoint(...start, x: 10)
+let start = JungleStop(bananas: 1, vines: 2)
+let moved = JungleStop(...start, bananas: 10)
 
-puts(moved.x)  # 10
-puts(moved.y)  # 2
+puts(moved.bananas)  # 10
+puts(moved.vines)    # 2
 ```
 
 ### 🎯 Enums & pattern matching
@@ -228,18 +228,18 @@ puts(announce("banana"))  # found banana
 Attach methods directly to types that own behavior — no trait ceremony:
 
 ```marmoset
-type BananaPile = { bananas: Int }
+type Stash = { bananas: Int }
 
-impl BananaPile = {
-  fn add(pile: BananaPile, amount: Int) -> BananaPile = BananaPile(bananas: pile.bananas + amount)
-  fn total(pile: BananaPile) -> Int = pile.bananas
+impl Stash = {
+  fn add(stash: Stash, amount: Int) -> Stash = Stash(...stash, bananas: stash.bananas + amount)
+  fn total(stash: Stash) -> Int = stash.bananas
 }
 
-let pile = BananaPile.add(BananaPile(bananas: 2), 3)
-puts(pile.total())  # 5
+let stash = Stash.add(Stash(bananas: 2), 3)
+puts(stash.total())  # 5
 ```
 
-This uses `type` rather than `alias` because `BananaPile` owns nominal behavior and explicit constructor syntax.
+This uses `type` rather than `alias` because `Stash` owns nominal behavior and explicit constructor syntax. If you want an opaque quantity rather than a record-shaped value, the same nominal form also covers wrappers such as `type BananaPile = Int`.
 
 Methods can be generic, and shorthand trait constraints work inside them too:
 
