@@ -100,7 +100,7 @@ module.exports = grammar({
 
     enum_variant: ($) =>
       seq(
-        field("name", $.identifier),
+        field("name", alias($.constructor_name, $.identifier)),
         optional(seq("(", commaSep1($._type), ")")),
       ),
 
@@ -196,9 +196,24 @@ module.exports = grammar({
         field("name", $.identifier),
         optional(field("type_params", $.type_parameter_list)),
         "=",
-        field("type", $._type),
+        field("type", choice($.wrapper_type, $.constructor_type_body, $._type)),
         optional(field("derive", $.derive_clause)),
       )),
+
+    wrapper_type: ($) =>
+      seq(
+        field("constructor", alias($.constructor_name, $.identifier)),
+        "(",
+        field("payload", $._type),
+        ")",
+      ),
+
+    constructor_type_body: ($) =>
+      seq(
+        "{",
+        repeat(choice($.enum_variant, ",")),
+        "}",
+      ),
 
     alias_definition: ($) =>
       seq(
@@ -514,19 +529,36 @@ module.exports = grammar({
 
     constructor_pattern: ($) =>
       seq(
-        field("enum", $.identifier),
-        ".",
-        field("variant", $.identifier),
-        optional(seq("(", commaSep1($._pattern), ")")),
+        choice(
+          seq(
+            field("enum", alias($.constructor_name, $.identifier)),
+            ".",
+            field("variant", alias($.constructor_name, $.identifier)),
+          ),
+          field("variant", alias($.constructor_name, $.identifier)),
+        ),
+        optional(seq(
+          "(",
+          choice(
+            commaSep1($._pattern),
+            alias($.flattened_record_pattern, $.record_pattern),
+          ),
+          ")",
+        )),
       ),
 
     record_pattern: ($) =>
       seq(
         "{",
-        commaSep1(
-          choice($.record_pattern_field, $.record_pattern_punned, $.spread_pattern),
-        ),
+        $._record_pattern_members,
         "}",
+      ),
+
+    flattened_record_pattern: ($) => $._record_pattern_members,
+
+    _record_pattern_members: ($) =>
+      commaSep1(
+        choice($.record_pattern_field, $.record_pattern_punned, $.spread_pattern),
       ),
 
     record_pattern_field: ($) =>
@@ -540,6 +572,8 @@ module.exports = grammar({
     // ── Atoms ───────────────────────────────────────────────────
 
     placeholder: ($) => "_",
+
+    constructor_name: ($) => token(prec(1, /[A-Z][a-zA-Z0-9_]*[!?]?/)),
 
     identifier: ($) => /[a-zA-Z_][a-zA-Z0-9_]*[!?]?/,
 

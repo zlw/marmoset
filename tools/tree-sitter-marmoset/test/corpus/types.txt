@@ -153,6 +153,45 @@ type Point = { x: Int, y: Int }
         type: (type_identifier)))))
 
 ================================================================================
+Wrapper type
+================================================================================
+
+type UserId = UserId(Int)
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (type_definition
+    name: (identifier)
+    type: (wrapper_type
+      constructor: (identifier)
+      payload: (type_identifier))))
+
+================================================================================
+Constructor-bearing sum type
+================================================================================
+
+type Event = { Click({ x: Int, y: Int }), Quit }
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (type_definition
+    name: (identifier)
+    type: (constructor_type_body
+      (enum_variant
+        name: (identifier)
+        (record_type
+          (record_type_field
+            name: (identifier)
+            type: (type_identifier))
+          (record_type_field
+            name: (identifier)
+            type: (type_identifier))))
+      (enum_variant
+        name: (identifier)))))
+
+================================================================================
 Record type with row variable
 ================================================================================
 

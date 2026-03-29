@@ -77,7 +77,7 @@ let document_symbols ~(source : string) ~(program : Ast.AST.program) : Lsp_t.Doc
           in
           Some (symbol ~name ~kind:Lsp_t.SymbolKind.Class ~range:(range_of_stmt stmt) ~children ())
       | Ast.AST.TypeAlias { alias_name; _ } ->
-          Some (symbol ~name:alias_name ~kind:Lsp_t.SymbolKind.TypeParameter ~range:(range_of_stmt stmt) ())
+          Some (symbol ~name:alias_name ~kind:Lsp_t.SymbolKind.Struct ~range:(range_of_stmt stmt) ())
       | Ast.AST.DeriveDef _ | Ast.AST.ExpressionStmt _ | Ast.AST.Return _ | Ast.AST.Block _ -> None)
     program
 
@@ -133,10 +133,16 @@ let%test "shape produces Interface symbol" =
   | [ s ] -> s.name = "HasName" && s.kind = Lsp_t.SymbolKind.Interface
   | _ -> false
 
-let%test "type alias produces TypeParameter symbol" =
+let%test "transparent type produces Struct symbol" =
+  let symbols = get_symbols "type Point = { x: Int, y: Int }" in
+  match symbols with
+  | [ s ] -> s.name = "Point" && s.kind = Lsp_t.SymbolKind.Struct
+  | _ -> false
+
+let%test "legacy alias is surfaced as Struct symbol" =
   let symbols = get_symbols "alias Point = { x: Int, y: Int }" in
   match symbols with
-  | [ s ] -> s.name = "Point" && s.kind = Lsp_t.SymbolKind.TypeParameter
+  | [ s ] -> s.name = "Point" && s.kind = Lsp_t.SymbolKind.Struct
   | _ -> false
 
 let%test "multiple definitions produce multiple symbols" =

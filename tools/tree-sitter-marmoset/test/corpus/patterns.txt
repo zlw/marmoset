@@ -169,6 +169,51 @@ match p {
           (integer_literal))))))
 
 ================================================================================
+Unqualified constructor pattern with flattened record payload sugar
+================================================================================
+
+match user {
+  case User(name:, ...rest): name
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (expression_statement
+    (match_expression
+      value: (identifier)
+      (match_arm
+        pattern: (constructor_pattern
+          variant: (identifier)
+          (record_pattern
+            (record_pattern_punned
+              name: (identifier))
+            (spread_pattern
+              (identifier))))
+        body: (expr_or_block
+          (identifier))))))
+
+================================================================================
+Unqualified nullary constructor pattern
+================================================================================
+
+match evt {
+  case Quit: 0
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (expression_statement
+    (match_expression
+      value: (identifier)
+      (match_arm
+        pattern: (constructor_pattern
+          variant: (identifier))
+        body: (expr_or_block
+          (integer_literal))))))
+
+================================================================================
 Alternative pattern
 ================================================================================
 

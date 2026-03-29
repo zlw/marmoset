@@ -15,8 +15,7 @@ let keywords =
     ("match", "Pattern matching");
     ("case", "Match arm");
     ("enum", "Algebraic data type");
-    ("type", "Named type definition");
-    ("alias", "Transparent type alias");
+    ("type", "Type definition");
     ("shape", "Structural shape definition");
     ("trait", "Trait (interface) definition");
     ("impl", "Trait implementation");
@@ -135,6 +134,11 @@ let%test "keywords sort after env names" =
 let%test "empty env still returns keywords" =
   let items = completions ~environment:Infer.empty_env in
   List.length items = List.length keywords
+
+let%test "completions do not suggest legacy alias keyword" =
+  let items = completions ~environment:Infer.empty_env in
+  let labels = List.map (fun (i : Lsp_t.CompletionItem.t) -> i.label) items in
+  not (List.mem "alias" labels)
 
 let%test "detail shows type for monomorphic binding" =
   let env = env_with [ ("x", Types.Forall ([], Types.TInt)) ] in

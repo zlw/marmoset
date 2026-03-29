@@ -121,6 +121,9 @@
 (enum_variant
   name: (identifier) @constructor)
 
+(wrapper_type
+  constructor: (identifier) @constructor)
+
 ; Trait definition
 (trait_definition
   name: (identifier) @type)
@@ -147,7 +150,7 @@
 (derive_clause
   trait: (identifier) @type)
 
-; Type and alias definitions
+; Type definitions and legacy aliases
 (type_definition
   name: (identifier) @type)
 
@@ -175,6 +178,9 @@
 
 (constructor_pattern
   enum: (identifier) @type
+  variant: (identifier) @constructor)
+
+(constructor_pattern
   variant: (identifier) @constructor)
 
 (record_pattern_field

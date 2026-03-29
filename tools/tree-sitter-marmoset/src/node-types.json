@@ -569,7 +569,7 @@
     "fields": {
       "enum": {
         "multiple": false,
-        "required": true,
+        "required": false,
         "types": [
           {
             "type": "identifier",
@@ -614,6 +614,21 @@
         },
         {
           "type": "wildcard_pattern",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "constructor_type_body",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "enum_variant",
           "named": true
         }
       ]
@@ -3825,6 +3840,10 @@
         "required": true,
         "types": [
           {
+            "type": "constructor_type_body",
+            "named": true
+          },
+          {
             "type": "function_type",
             "named": true
           },
@@ -3858,6 +3877,10 @@
           },
           {
             "type": "union_type",
+            "named": true
+          },
+          {
+            "type": "wrapper_type",
             "named": true
           }
         ]
@@ -3970,6 +3993,64 @@
     "type": "wildcard_pattern",
     "named": true,
     "fields": {}
+  },
+  {
+    "type": "wrapper_type",
+    "named": true,
+    "fields": {
+      "constructor": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "payload": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "function_type",
+            "named": true
+          },
+          {
+            "type": "generic_type",
+            "named": true
+          },
+          {
+            "type": "intersection_type",
+            "named": true
+          },
+          {
+            "type": "parenthesized_type",
+            "named": true
+          },
+          {
+            "type": "record_type",
+            "named": true
+          },
+          {
+            "type": "trait_object_type",
+            "named": true
+          },
+          {
+            "type": "type_identifier",
+            "named": true
+          },
+          {
+            "type": "type_variable",
+            "named": true
+          },
+          {
+            "type": "union_type",
+            "named": true
+          }
+        ]
+      }
+    }
   },
   {
     "type": "!",
