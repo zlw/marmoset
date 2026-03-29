@@ -1602,7 +1602,7 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
             | Error msg -> Error (error_at ~code:"type-match" ~message:msg expr)
             | Ok () ->
                 (* Check each arm and collect body types *)
-                infer_match_arms type_map env' scrutinee_type arms subst expr))
+                infer_match_arms type_map env' scrutinee scrutinee_type arms subst expr))
     | AST.RecordLit (fields, spread) -> infer_record_literal type_map env fields spread expr
     | AST.FieldAccess (receiver, variant_name) -> (
         (* Phase 4.3/4.4: Could be field access or nullary enum constructor *)
@@ -5259,8 +5259,58 @@ and validate_return_statements
    Pattern Matching Helpers
    ============================================================ *)
 
+and normalize_pattern_scrutinee (pattern : AST.pattern) (scrutinee_type : mono_type) : mono_type =
+  let canonical = canonicalize_mono_type scrutinee_type in
+  let canonical =
+    match pattern.AST.pat with
+    | AST.PRecord (_, _) -> (
+        match canonical with
+        | TIntersection members -> (
+            match Annotation.merged_record_intersection_type members with
+            | Ok merged -> merged
+            | Error _ -> canonical)
+        | _ -> canonical)
+    | _ -> canonical
+  in
+  match (pattern.AST.pat, canonical) with
+  | AST.PRecord (_, _), TNamed (name, type_args) -> (
+      match Type_registry.instantiate_named_product_fields name type_args with
+      | Some (Ok fields) -> TRecord (fields, None)
+      | Some (Error _) | None -> canonical)
+  | _ -> canonical
+
+and merge_binding_type (left : mono_type) (right : mono_type) : mono_type =
+  Types.normalize_union [ canonicalize_mono_type left; canonicalize_mono_type right ]
+
+and merge_pattern_bindings (binding_sets : (string * mono_type) list list) : (string * mono_type) list =
+  let rec upsert acc (name, typ) =
+    match acc with
+    | [] -> [ (name, typ) ]
+    | (existing_name, existing_typ) :: rest when existing_name = name ->
+        (existing_name, merge_binding_type existing_typ typ) :: rest
+    | binding :: rest -> binding :: upsert rest (name, typ)
+  in
+  List.fold_left (fun acc bindings -> List.fold_left upsert acc bindings) [] binding_sets
+
+and combine_pattern_results (results : ((string * mono_type) list * mono_type) list) :
+    (string * mono_type) list * mono_type =
+  let narrowed_members =
+    List.concat_map
+      (fun (_bindings, narrowed_type) ->
+        match canonicalize_mono_type narrowed_type with
+        | TUnion members -> members
+        | member -> [ member ])
+      results
+  in
+  let narrowed_type =
+    match Types.normalize_union narrowed_members with
+    | TUnion [ single ] -> single
+    | normalized -> normalized
+  in
+  (merge_pattern_bindings (List.map fst results), narrowed_type)
+
 (* Check all arms of a match expression and collect their body types *)
-and infer_match_arms type_map env scrutinee_type arms subst match_expr =
+and infer_match_arms type_map env scrutinee scrutinee_type arms subst match_expr =
   let rec loop acc_subst arm_types = function
     | [] -> (
         (* All arms processed, unify all arm body types or create union *)
@@ -5296,7 +5346,7 @@ and infer_match_arms type_map env scrutinee_type arms subst match_expr =
                 | multiple -> Ok (final_subst, Types.normalize_union (List.rev multiple)))
             | Error e -> Error e))
     | arm :: rest_arms -> (
-        match infer_match_arm type_map env scrutinee_type arm with
+        match infer_match_arm type_map env scrutinee scrutinee_type arm with
         | Error e -> Error e
         | Ok (arm_subst, body_type) ->
             let new_subst = compose_substitution acc_subst arm_subst in
@@ -5305,15 +5355,28 @@ and infer_match_arms type_map env scrutinee_type arms subst match_expr =
   loop subst [] arms
 
 (* Infer the type of a single match arm *)
-and infer_match_arm type_map env scrutinee_type arm =
-  (* Check patterns and get bindings *)
+and infer_match_arm type_map env scrutinee scrutinee_type arm =
+  let scrutinee_path_opt = Type_narrowing.path_of_expr scrutinee in
   match check_patterns arm.AST.patterns scrutinee_type with
   | Error e -> Error e
-  | Ok bindings ->
-      (* Extend environment with pattern bindings *)
-      let env' = List.fold_left (fun e (name, ty) -> TypeEnv.add name (mono_to_poly ty) e) env bindings in
-      (* Infer body type *)
-      infer_expression type_map env' arm.AST.body
+  | Ok (bindings, narrowed_type) ->
+      let narrowed_scrutinee =
+        canonicalize_mono_type narrowed_type <> canonicalize_mono_type scrutinee_type
+      in
+      let env', body =
+        match (scrutinee_path_opt, narrowed_scrutinee) with
+        | Some path, true when Type_narrowing.is_identifier_path path ->
+            (TypeEnv.add path.root (mono_to_poly narrowed_type) env, arm.AST.body)
+        | Some path, true ->
+            let narrowed_name = Type_narrowing.temp_name path "typed" in
+            ( TypeEnv.add narrowed_name (mono_to_poly narrowed_type) env,
+              Type_narrowing.substitute_path_in_expr path
+                ~replace:(Type_narrowing.replacement_identifier narrowed_name)
+                arm.AST.body )
+        | _ -> (env, arm.AST.body)
+      in
+      let env' = List.fold_left (fun e (name, ty) -> TypeEnv.add name (mono_to_poly ty) e) env' bindings in
+      infer_expression type_map env' body
 
 (* Check a list of patterns (for | syntax) against the scrutinee type *)
 and check_patterns patterns scrutinee_type =
@@ -5322,42 +5385,45 @@ and check_patterns patterns scrutinee_type =
   | first :: rest -> (
       match check_pattern first scrutinee_type with
       | Error e -> Error e
-      | Ok bindings ->
-          (* Verify rest match same type - TODO: they might bind different vars *)
+      | Ok first_result ->
           let rec check_rest = function
-            | [] -> Ok bindings
+            | [] -> Ok [ first_result ]
             | pat :: rest_pats -> (
                 match check_pattern pat scrutinee_type with
                 | Error e -> Error e
-                | Ok _ -> check_rest rest_pats)
+                | Ok result -> (
+                    match check_rest rest_pats with
+                    | Error e -> Error e
+                    | Ok rest_results -> Ok (result :: rest_results)))
           in
-          check_rest rest)
+          match check_rest rest with
+          | Error e -> Error e
+          | Ok results -> Ok (combine_pattern_results results))
 
 (* Check a single pattern against the scrutinee type, return variable bindings *)
 and check_pattern pattern scrutinee_type =
-  let scrutinee_type =
-    let canonical = canonicalize_mono_type scrutinee_type in
-    let canonical =
-      match pattern.AST.pat with
-      | AST.PRecord (_, _) -> (
-          match canonical with
-          | TIntersection members -> (
-              match Annotation.merged_record_intersection_type members with
-              | Ok merged -> merged
-              | Error _ -> canonical)
-          | _ -> canonical)
-      | _ -> canonical
-    in
-    match (pattern.AST.pat, canonical) with
-    | AST.PRecord (_, _), TNamed (name, type_args) -> (
-        match Type_registry.instantiate_named_product_fields name type_args with
-        | Some (Ok fields) -> TRecord (fields, None)
-        | Some (Error _) | None -> canonical)
-    | _ -> canonical
-  in
+  let scrutinee_type = normalize_pattern_scrutinee pattern scrutinee_type in
+  match (pattern.AST.pat, scrutinee_type) with
+  | AST.PRecord (_, _), TUnion members -> (
+      let matching_members =
+        List.filter_map
+          (fun member ->
+            match check_pattern pattern member with
+            | Ok result -> Some result
+            | Error _ -> None)
+          members
+      in
+      match matching_members with
+      | [] ->
+          Error
+            (error ~code:"type-pattern"
+               ~message:
+                 (Printf.sprintf "Record pattern doesn't match scrutinee type %s" (to_string scrutinee_type)))
+      | results -> Ok (combine_pattern_results results))
+  | _ ->
   match pattern.AST.pat with
-  | AST.PWildcard -> Ok []
-  | AST.PVariable name -> Ok [ (name, scrutinee_type) ]
+  | AST.PWildcard -> Ok ([], scrutinee_type)
+  | AST.PVariable name -> Ok ([ (name, scrutinee_type) ], scrutinee_type)
   | AST.PLiteral lit -> (
       let lit_type =
         match lit with
@@ -5367,7 +5433,7 @@ and check_pattern pattern scrutinee_type =
       in
       match Unify.unify lit_type scrutinee_type with
       | Error e -> Error (error ~code:e.code ~message:e.message)
-      | Ok _ -> Ok [])
+      | Ok _ -> Ok ([], lit_type))
   | AST.PConstructor (enum_name, variant_name, field_patterns) -> (
       (* Check scrutinee is the right enum type *)
       match scrutinee_type with
@@ -5397,10 +5463,13 @@ and check_pattern pattern scrutinee_type =
                   | pat :: rest_pats, ty :: rest_types -> (
                       match check_pattern pat ty with
                       | Error e -> Error e
-                      | Ok new_bindings -> check_fields (bindings_acc @ new_bindings) rest_pats rest_types)
+                      | Ok (field_bindings, _field_type) ->
+                          check_fields (bindings_acc @ field_bindings) rest_pats rest_types)
                   | _ -> Error (error ~code:"type-pattern" ~message:"Field pattern count mismatch")
                 in
-                check_fields [] field_patterns field_types)
+                match check_fields [] field_patterns field_types with
+                | Error e -> Error e
+                | Ok bindings -> Ok (bindings, scrutinee_type))
       | _ ->
           Error
             (error ~code:"type-pattern"
@@ -5423,7 +5492,7 @@ and check_pattern pattern scrutinee_type =
                       in
                       [ (rest_name, TRecord (remaining_fields, scrutinee_row)) ]
                 in
-                Ok (bindings @ rest_bindings)
+                Ok (bindings @ rest_bindings, scrutinee_type)
             | (field : AST.record_pattern_field) :: rest_fields -> (
                 let field_name = field.pat_field_name in
                 match
@@ -5450,7 +5519,7 @@ and check_pattern pattern scrutinee_type =
                     in
                     match check_pattern effective_pat scrutinee_field.typ with
                     | Error e -> Error e
-                    | Ok field_bindings ->
+                    | Ok (field_bindings, _field_type) ->
                         check_fields (field_name :: seen_names) (bindings @ field_bindings) rest_fields))
           in
           check_fields [] [] fields

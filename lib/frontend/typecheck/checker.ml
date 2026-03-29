@@ -896,6 +896,26 @@ let%test "field-path union narrowing supports direct projection checks" =
   | Ok { result_type = Types.TString; _ } -> true
   | _ -> false
 
+let%test "match record patterns narrow union scrutinees in arm bodies" =
+  Infer.reset_fresh_counter ();
+  let code =
+    {|
+      type Left = { x: Int }
+      type Right = { y: Int }
+      fn read(v: Left | Right) -> Int = {
+        match v {
+          case { x: }: v.x
+          case { y: }: v.y
+          case _: 0
+        }
+      }
+      read(Left(x: 1))
+    |}
+  in
+  match check code with
+  | Ok { result_type = Types.TInt; _ } -> true
+  | _ -> false
+
 let%test "explicit row-polymorphic annotation is rejected in v1" =
   Infer.reset_fresh_counter ();
   let code = "fn get_x(r: { x: Int, ...row }) -> Int = r.x" in

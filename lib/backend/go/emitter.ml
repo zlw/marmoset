@@ -3918,6 +3918,8 @@ and emit_match ?target state type_map env match_expr scrutinee arms =
   let match_result_type = get_type type_map match_expr in
 
   match scrutinee_type with
+  | Types.TUnion members ->
+      emit_match_union_record ?target state type_map env scrutinee scrutinee_type members arms match_result_type
   | Types.TEnum (enum_name, type_args) ->
       emit_match_enum ?target state type_map env scrutinee scrutinee_type enum_name type_args arms
         match_result_type
@@ -3928,16 +3930,19 @@ and emit_match ?target state type_map env match_expr scrutinee arms =
       emit_match_record ?target state type_map env scrutinee scrutinee_type arms match_result_type
   | _ -> failwith (Printf.sprintf "Match on type %s not yet supported" (Types.to_string scrutinee_type))
 
-and emit_match_record ?target state type_map env scrutinee scrutinee_type arms match_result_type =
-  let scrutinee_str = emit_expr state type_map env scrutinee in
-  let scrutinee_var = fresh_temp_name state "__scrutinee" in
-  let match_result_go_type = type_to_go state.mono match_result_type in
-  let scrutinee_fields =
-    match Structural.fields_of_type scrutinee_type with
-    | Some fields -> fields
-    | None ->
-        failwith (Printf.sprintf "Record match expects record-like scrutinee, got %s" (Types.to_string scrutinee_type))
-  in
+and emit_record_match_arm
+    ?(pre_body_lines = [])
+    ?(body_transform = Fun.id)
+    ?target
+    state
+    type_map
+    env
+    match_result_type
+    scrutinee_var
+    scrutinee_fields
+    pattern
+    body
+    is_first =
   let result_prefix =
     match target with
     | Some t -> target_prefix t
@@ -3952,94 +3957,111 @@ and emit_match_record ?target state type_map env scrutinee scrutinee_type arms m
         else
           "false"
   in
-  let emit_record_arm pattern body is_first =
-    let body_code =
-      match target with
-      | Some t -> with_indent_delta state 2 (fun () -> emit_expr_to_target state type_map env body t)
-      | None ->
-          let body_str = emit_expr_for_expected_type state type_map env match_result_type body in
-          "\t\t" ^ result_prefix ^ body_str ^ "\n"
-    in
-    let branch_prefix_if =
-      if is_first then
-        "\tif"
-      else
-        " else if"
-    in
-    let branch_prefix_else =
-      if is_first then
-        "\tif true"
-      else
-        " else"
-    in
-    match pattern.AST.pat with
-    | AST.PWildcard -> Printf.sprintf "%s {\n%s\t}" branch_prefix_else body_code
-    | AST.PVariable name ->
-        let go_name = go_safe_ident name in
-        Printf.sprintf "%s {\n\t\t%s := %s\n\t\t_ = %s\n%s\t}" branch_prefix_else go_name scrutinee_var go_name
-          body_code
-    | AST.PRecord (fields, rest) ->
-        let cond_parts, bind_lines =
-          List.fold_left
-            (fun (conds, binds) (f : AST.record_pattern_field) ->
-              let access = Printf.sprintf "%s.%s" scrutinee_var (go_record_field_name f.pat_field_name) in
-              match f.pat_field_pattern with
-              | None -> (conds, Printf.sprintf "%s := %s" (go_safe_ident f.pat_field_name) access :: binds)
-              | Some p -> (
-                  match p.AST.pat with
-                  | AST.PWildcard -> (conds, binds)
-                  | AST.PVariable name -> (conds, Printf.sprintf "%s := %s" (go_safe_ident name) access :: binds)
-                  | AST.PLiteral lit -> (Printf.sprintf "(%s == %s)" access (emit_lit lit) :: conds, binds)
-                  | _ -> failwith "Complex record patterns in codegen are not yet supported"))
-            ([], []) fields
-        in
-        let bind_lines =
-          match rest with
-          | None -> bind_lines
-          | Some rest_name ->
-              let matched_names = List.map (fun (field : AST.record_pattern_field) -> field.pat_field_name) fields in
-              let remaining_fields =
-                List.filter
-                  (fun (field : Types.record_field_type) -> not (List.mem field.name matched_names))
-                  scrutinee_fields
-              in
-              let rest_binding =
-                match remaining_fields with
-                | [] -> Printf.sprintf "%s := struct{}{}" (go_safe_ident rest_name)
-                | _ ->
-                    let rest_struct_type = emit_record_struct_type state remaining_fields in
-                    let rest_assignments =
-                      List.map
-                        (fun (field : Types.record_field_type) ->
-                          let go_name = go_record_field_name field.name in
-                          Printf.sprintf "%s: %s.%s" go_name scrutinee_var go_name)
-                        remaining_fields
-                    in
-                    Printf.sprintf "%s := %s{%s}" (go_safe_ident rest_name) rest_struct_type
-                      (String.concat ", " rest_assignments)
-              in
-              rest_binding :: bind_lines
-        in
-        let cond_str =
-          match List.rev cond_parts with
-          | [] -> "true"
-          | cs -> String.concat " && " cs
-        in
-        let binds_block =
-          let lines = List.rev bind_lines in
-          let markers = List.map (fun line -> "\t\t_ = " ^ String.sub line 0 (String.index line ' ')) lines in
-          match lines with
-          | [] -> ""
-          | _ -> String.concat "\n" (List.map (fun l -> "\t\t" ^ l) lines @ markers) ^ "\n"
-        in
-        Printf.sprintf "%s %s {\n%s%s\t}" branch_prefix_if cond_str binds_block body_code
-    | _ -> failwith "Only record, wildcard, or variable patterns are supported for record match codegen"
+  let body = body_transform body in
+  let pre_body_code =
+    match pre_body_lines with
+    | [] -> ""
+    | lines -> String.concat "" (List.map (fun line -> "\t\t" ^ line ^ "\n") lines)
+  in
+  let body_code =
+    match target with
+    | Some t -> pre_body_code ^ with_indent_delta state 2 (fun () -> emit_expr_to_target state type_map env body t)
+    | None ->
+        let body_str = emit_expr_for_expected_type state type_map env match_result_type body in
+        pre_body_code ^ "\t\t" ^ result_prefix ^ body_str ^ "\n"
+  in
+  let branch_prefix_if =
+    if is_first then
+      "\tif"
+    else
+      " else if"
+  in
+  let branch_prefix_else =
+    if is_first then
+      "\tif true"
+    else
+      " else"
+  in
+  match pattern.AST.pat with
+  | AST.PWildcard -> Printf.sprintf "%s {\n%s\t}" branch_prefix_else body_code
+  | AST.PVariable name ->
+      let go_name = go_safe_ident name in
+      Printf.sprintf "%s {\n\t\t%s := %s\n\t\t_ = %s\n%s\t}" branch_prefix_else go_name scrutinee_var go_name
+        body_code
+  | AST.PRecord (fields, rest) ->
+      let cond_parts, bind_lines =
+        List.fold_left
+          (fun (conds, binds) (field : AST.record_pattern_field) ->
+            let access = Printf.sprintf "%s.%s" scrutinee_var (go_record_field_name field.pat_field_name) in
+            match field.pat_field_pattern with
+            | None -> (conds, Printf.sprintf "%s := %s" (go_safe_ident field.pat_field_name) access :: binds)
+            | Some p -> (
+                match p.AST.pat with
+                | AST.PWildcard -> (conds, binds)
+                | AST.PVariable name -> (conds, Printf.sprintf "%s := %s" (go_safe_ident name) access :: binds)
+                | AST.PLiteral lit -> (Printf.sprintf "(%s == %s)" access (emit_lit lit) :: conds, binds)
+                | _ -> failwith "Complex record patterns in codegen are not yet supported"))
+          ([], []) fields
+      in
+      let bind_lines =
+        match rest with
+        | None -> bind_lines
+        | Some rest_name ->
+            let matched_names = List.map (fun (field : AST.record_pattern_field) -> field.pat_field_name) fields in
+            let remaining_fields =
+              List.filter
+                (fun (field : Types.record_field_type) -> not (List.mem field.name matched_names))
+                scrutinee_fields
+            in
+            let rest_binding =
+              match remaining_fields with
+              | [] -> Printf.sprintf "%s := struct{}{}" (go_safe_ident rest_name)
+              | _ ->
+                  let rest_struct_type = emit_record_struct_type state remaining_fields in
+                  let rest_assignments =
+                    List.map
+                      (fun (field : Types.record_field_type) ->
+                        let go_name = go_record_field_name field.name in
+                        Printf.sprintf "%s: %s.%s" go_name scrutinee_var go_name)
+                      remaining_fields
+                  in
+                  Printf.sprintf "%s := %s{%s}" (go_safe_ident rest_name) rest_struct_type
+                    (String.concat ", " rest_assignments)
+            in
+            rest_binding :: bind_lines
+      in
+      let cond_str =
+        match List.rev cond_parts with
+        | [] -> "true"
+        | cs -> String.concat " && " cs
+      in
+      let binds_block =
+        let lines = List.rev bind_lines in
+        let markers = List.map (fun line -> "\t\t_ = " ^ String.sub line 0 (String.index line ' ')) lines in
+        match lines with
+        | [] -> ""
+        | _ -> String.concat "\n" (List.map (fun line -> "\t\t" ^ line) lines @ markers) ^ "\n"
+      in
+      Printf.sprintf "%s %s {\n%s%s\t}" branch_prefix_if cond_str binds_block body_code
+  | _ -> failwith "Only record, wildcard, or variable patterns are supported for record match codegen"
+
+and emit_match_record ?target state type_map env scrutinee scrutinee_type arms match_result_type =
+  let scrutinee_str = emit_expr state type_map env scrutinee in
+  let scrutinee_var = fresh_temp_name state "__scrutinee" in
+  let match_result_go_type = type_to_go state.mono match_result_type in
+  let scrutinee_fields =
+    match Structural.fields_of_type scrutinee_type with
+    | Some fields -> fields
+    | None ->
+        failwith (Printf.sprintf "Record match expects record-like scrutinee, got %s" (Types.to_string scrutinee_type))
   in
   let arm_blocks =
     List.mapi
       (fun idx (arm : AST.match_arm) ->
         match arm.patterns with
-        | [ pattern ] -> emit_record_arm pattern arm.body (idx = 0)
+        | [ pattern ] ->
+            emit_record_match_arm ?target state type_map env match_result_type scrutinee_var scrutinee_fields pattern
+              arm.body (idx = 0)
         | [] -> failwith "Match arm must have at least one pattern"
         | _ -> failwith "Multiple patterns per arm not yet supported in codegen")
       arms
@@ -4057,6 +4079,91 @@ and emit_match_record ?target state type_map env scrutinee scrutinee_type arms m
   | None ->
       Printf.sprintf "(func() %s {\n\t%s := %s\n%s\n\tpanic(\"non-exhaustive record match\")\n})()"
         match_result_go_type scrutinee_var scrutinee_str (String.concat "" arm_blocks)
+
+and emit_match_union_record ?target state type_map env scrutinee _scrutinee_type members arms match_result_type =
+  let scrutinee_str = emit_expr state type_map env scrutinee in
+  let scrutinee_var = fresh_temp_name state "__scrutinee" in
+  let member_var = fresh_temp_name state "__member" in
+  let match_result_go_type = type_to_go state.mono match_result_type in
+  let scrutinee_path_opt = Type_narrowing.path_of_expr scrutinee in
+  let fallback_arm_opt =
+    List.find_opt
+      (fun (arm : AST.match_arm) ->
+        match arm.patterns with
+        | [ { AST.pat = (AST.PWildcard | AST.PVariable _); _ } ] -> true
+        | _ -> false)
+      arms
+  in
+  let emit_fallback_arm (arm : AST.match_arm) =
+    match arm.patterns with
+    | [ pattern ] -> (
+        match pattern.AST.pat with
+        | AST.PWildcard ->
+            emit_record_match_arm ?target state type_map env match_result_type member_var [] pattern arm.body true
+        | AST.PVariable _ ->
+            emit_record_match_arm ?target state type_map env match_result_type member_var [] pattern arm.body true
+        | _ -> failwith "Expected wildcard or variable fallback arm")
+    | _ -> failwith "Multiple patterns per arm not yet supported in codegen"
+  in
+  let emit_member_case (member_type : Types.mono_type) =
+    let go_member_type = type_to_go state.mono member_type in
+    let matching_arms =
+      List.filter
+        (fun (arm : AST.match_arm) ->
+          match Infer.check_patterns arm.patterns member_type with
+          | Ok _ -> true
+          | Error _ -> false)
+        arms
+    in
+    let case_body =
+      match Structural.fields_of_type member_type with
+      | Some member_fields ->
+          let arm_blocks =
+            List.mapi
+              (fun idx (arm : AST.match_arm) ->
+                match arm.patterns with
+                | [ pattern ] ->
+                    let pre_body_lines, body_transform =
+                      match (pattern.AST.pat, scrutinee_path_opt) with
+                      | AST.PRecord _, Some path when Type_narrowing.is_identifier_path path ->
+                          let go_name = go_safe_ident path.root in
+                          ([ Printf.sprintf "%s := %s" go_name member_var; Printf.sprintf "_ = %s" go_name ], Fun.id)
+                      | AST.PRecord _, Some path ->
+                          let narrowed_name = Type_narrowing.temp_name path "typed" in
+                          let go_name = go_safe_ident narrowed_name in
+                          ( [ Printf.sprintf "%s := %s" go_name member_var; Printf.sprintf "_ = %s" go_name ],
+                            Type_narrowing.substitute_path_in_expr path
+                              ~replace:(Type_narrowing.replacement_identifier narrowed_name) )
+                      | _ -> ([], Fun.id)
+                    in
+                    emit_record_match_arm ~pre_body_lines ~body_transform ?target state type_map env
+                      match_result_type member_var member_fields pattern arm.body (idx = 0)
+                | [] -> failwith "Match arm must have at least one pattern"
+                | _ -> failwith "Multiple patterns per arm not yet supported in codegen")
+              matching_arms
+          in
+          String.concat "" arm_blocks ^ "\n\t\tpanic(\"non-exhaustive union match\")\n"
+      | None -> (
+          match List.find_opt (fun arm -> List.memq arm matching_arms) arms with
+          | Some arm -> emit_fallback_arm arm
+          | None -> (
+              match fallback_arm_opt with
+          | Some arm -> emit_fallback_arm arm
+              | None -> "\t\tpanic(\"non-exhaustive union match\")\n"))
+    in
+    Printf.sprintf "\tcase %s:\n%s" go_member_type case_body
+  in
+  let match_body = String.concat "" (List.map emit_member_case members) in
+  match target with
+  | Some _ ->
+      let ind = indent_str state in
+      Printf.sprintf
+        "%s%s := %s\n%sswitch %s := %s.(type) {\n%s%sdefault:\n%s\tpanic(\"unreachable union match member\")\n%s}\n"
+        ind scrutinee_var scrutinee_str ind member_var scrutinee_var match_body ind ind ind
+  | None ->
+      Printf.sprintf
+        "(func() %s {\n\t%s := %s\n\tswitch %s := %s.(type) {\n%s\tdefault:\n\t\tpanic(\"unreachable union match member\")\n\t}\n})()"
+        match_result_go_type scrutinee_var scrutinee_str member_var scrutinee_var match_body
 
 and emit_match_enum ?target state type_map env scrutinee scrutinee_type enum_name type_args arms match_result_type
     =
@@ -7624,6 +7731,20 @@ let%test "emit record match pattern for named product" =
       string_contains code "type Point "
       && string_contains code "x := __scrutinee_0.x"
       && string_contains code "rest := Record_y_int64_z_int64{y: __scrutinee_0.y, z: __scrutinee_0.z}"
+  | Error _ -> false
+
+let%test "emit union match pattern for named products narrows scrutinee in arm body" =
+  match
+    compile_string ~file_id:"<codegen>"
+      "type Left = { x: Int }\ntype Right = { y: Int }\nfn read(v: Left | Right) -> Int = {\n  match v {\n    case { x: }: v.x\n    case { y: }: v.y\n    case _: 0\n  }\n}\nread(Left(x: 1))"
+  with
+  | Ok (code, _) ->
+      string_contains code "switch __member_"
+      && string_contains code "case Left:"
+      && string_contains code "case Right:"
+      && string_contains code "v := __member_"
+      && string_contains code "return (v).x"
+      && string_contains code "return (v).y"
   | Error _ -> false
 
 let%test "alias emits named Go type" =
