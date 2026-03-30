@@ -1,0 +1,10 @@
+type OptionInt = { Some(Int), None }
+
+let some = OptionInt.Some
+
+let out = match some(5) {
+  case OptionInt.Some(x): x
+  case OptionInt.None: 0
+}
+
+puts(out)  # output: 5

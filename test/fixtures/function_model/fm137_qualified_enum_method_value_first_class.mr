@@ -1,0 +1,11 @@
+type Box = { Val(Int), Empty }
+
+impl Box = {
+  fn is_empty(b: Box) -> Bool = match b {
+    case Box.Empty: true
+    case Box.Val(_): false
+  }
+}
+
+let is_empty = Box.is_empty
+puts(is_empty(Box.Empty))  # output: true

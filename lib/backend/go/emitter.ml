@@ -1261,6 +1261,15 @@ let enum_constructor_codegen_type
     (expr : AST.expression)
     (expected_type : Types.mono_type option)
     (enum_name : string) : Types.mono_type =
+  let rec extract_enum_type = function
+    | Types.TEnum (_, _) as t -> Some t
+    | Types.TFun (_, ret, _) -> extract_enum_type ret
+    | t -> (
+        match Types.canonicalize_mono_type t with
+        | Types.TEnum (_, _) as enum_t -> Some enum_t
+        | Types.TFun (_, ret, _) -> extract_enum_type ret
+        | _ -> None)
+  in
   let candidate_type =
     match expected_type with
     | Some (Types.TEnum (_, _) as t) -> t
@@ -1270,8 +1279,8 @@ let enum_constructor_codegen_type
         | _ -> get_type type_map expr)
     | None -> get_type type_map expr
   in
-  match candidate_type with
-  | Types.TEnum (_, type_args) -> Types.TEnum (enum_name, type_args)
+  match extract_enum_type candidate_type with
+  | Some (Types.TEnum (_, type_args)) -> Types.TEnum (enum_name, type_args)
   | _ -> Types.TEnum (enum_name, [])
 
 let expected_trait_object_coercion
@@ -1974,6 +1983,106 @@ let arg_type_for_specialization
       | None -> expr_type_from_env_or_map env type_map expr)
   | _ -> expr_type_from_env_or_map env type_map expr
 
+type field_access_callable_resolution =
+  | NotQualifiedCallable
+  | EnumConstructorValue of {
+      enum_name : string;
+      variant_name : string;
+      result_type : Types.mono_type;
+      constructor_arity : int;
+    }
+  | QualifiedTraitValue of {
+      trait_name : string;
+      method_name : string;
+      receiver_type : Types.mono_type;
+      method_type_args : Types.mono_type list;
+    }
+  | QualifiedInherentValue of {
+      method_name : string;
+      receiver_type : Types.mono_type;
+      method_type_args : Types.mono_type list;
+    }
+
+let refined_expr_type_for_expected
+    (type_map : Infer.type_map)
+    (expr : AST.expression)
+    (expected_type : Types.mono_type option) : Types.mono_type * Types.substitution =
+  let base_type = get_type type_map expr in
+  match expected_type with
+  | Some expected -> (
+      match Unify.unify base_type expected with
+      | Ok subst -> (Types.apply_substitution subst base_type, subst)
+      | Error _ -> (base_type, Types.empty_substitution))
+  | None -> (base_type, Types.empty_substitution)
+
+let resolved_method_type_args_for_expr
+    (method_type_args_map : (int, Types.mono_type list) Hashtbl.t)
+    (subst : Types.substitution)
+    (expr : AST.expression) : Types.mono_type list =
+  match Hashtbl.find_opt method_type_args_map expr.id with
+  | Some method_type_args ->
+      List.map
+        (fun typ -> Types.apply_substitution subst typ |> Types.canonicalize_mono_type)
+        method_type_args
+  | None -> []
+
+let resolve_field_access_callable
+    ~(call_resolution_map : (int, Infer.method_resolution) Hashtbl.t)
+    ~(method_type_args_map : (int, Types.mono_type list) Hashtbl.t)
+    (type_map : Infer.type_map)
+    (env : Infer.type_env)
+    ?(expected_type : Types.mono_type option = None)
+    (expr : AST.expression)
+    (receiver : AST.expression)
+    (field_name : string) : field_access_callable_resolution =
+  match Hashtbl.find_opt call_resolution_map expr.id with
+  | Some (Infer.QualifiedTraitMethod trait_name) -> (
+      let resolved_expr_type, subst = refined_expr_type_for_expected type_map expr expected_type in
+      let resolved_expr_type = Types.canonicalize_mono_type resolved_expr_type in
+      let param_types, _return_type = extract_all_param_types resolved_expr_type in
+      let resolved_method_type_args = resolved_method_type_args_for_expr method_type_args_map subst expr in
+      match param_types with
+      | receiver_type :: _ ->
+          QualifiedTraitValue
+            {
+              trait_name;
+              method_name = field_name;
+              receiver_type = Types.canonicalize_mono_type receiver_type;
+              method_type_args = resolved_method_type_args;
+            }
+      | [] -> NotQualifiedCallable)
+  | Some Infer.QualifiedInherentMethod -> (
+      let resolved_expr_type, subst = refined_expr_type_for_expected type_map expr expected_type in
+      let resolved_expr_type = Types.canonicalize_mono_type resolved_expr_type in
+      let param_types, _return_type = extract_all_param_types resolved_expr_type in
+      let resolved_method_type_args = resolved_method_type_args_for_expr method_type_args_map subst expr in
+      match param_types with
+      | receiver_type :: _ ->
+          QualifiedInherentValue
+            {
+              method_name = field_name;
+              receiver_type = Types.canonicalize_mono_type receiver_type;
+              method_type_args = resolved_method_type_args;
+            }
+      | [] -> NotQualifiedCallable)
+  | _ -> (
+      match receiver.expr with
+      | AST.Identifier enum_name when Infer.classify_dotted_receiver env enum_name field_name = `EnumVariant -> (
+          let resolved_expr_type, _subst = refined_expr_type_for_expected type_map expr expected_type in
+          let resolved_expr_type = Types.canonicalize_mono_type resolved_expr_type in
+          let _param_types, return_type = extract_all_param_types resolved_expr_type in
+          match Typecheck.Enum_registry.lookup_variant enum_name field_name with
+          | Some variant ->
+              EnumConstructorValue
+                {
+                  enum_name;
+                  variant_name = field_name;
+                  result_type = Types.canonicalize_mono_type return_type;
+                  constructor_arity = List.length variant.fields;
+                }
+          | None -> NotQualifiedCallable)
+      | _ -> NotQualifiedCallable)
+
 let rec is_callable_like_type (t : Types.mono_type) =
   match Types.canonicalize_mono_type t with
   | Types.TFun _ -> true
@@ -2326,9 +2435,160 @@ let select_impl_template_for_type
                    "Codegen error: ambiguous generic impl templates for trait '%s', method '%s', type %s (matching patterns: %s)"
                    trait_name method_name (Types.to_string for_type') patterns)))
 
+let type_from_env_or_map_for_collect
+    (env : Infer.type_env)
+    (type_map : Infer.type_map)
+    (expr : AST.expression) : Types.mono_type option =
+  match expr.expr with
+  | AST.Identifier id -> (
+      match Infer.TypeEnv.find_opt id env with
+      | Some (Types.Forall (_, t)) -> Some t
+      | None -> Hashtbl.find_opt type_map expr.id)
+  | _ -> Hashtbl.find_opt type_map expr.id
+
+let rec collect_forward_call_arg_types_expr
+    (name : string)
+    (type_map : Infer.type_map)
+    (env : Infer.type_env)
+    (expr : AST.expression) : Types.mono_type list list =
+  let all_some (xs : 'a option list) : 'a list option =
+    let rec go acc = function
+      | [] -> Some (List.rev acc)
+      | None :: _ -> None
+      | Some x :: rest -> go (x :: acc) rest
+    in
+    go [] xs
+  in
+  let nested =
+    match expr.expr with
+    | AST.Integer _ | AST.Float _ | AST.Boolean _ | AST.String _ | AST.Identifier _ -> []
+    | AST.Prefix (_, e) -> collect_forward_call_arg_types_expr name type_map env e
+    | AST.Infix (l, _, r) ->
+        collect_forward_call_arg_types_expr name type_map env l
+        @ collect_forward_call_arg_types_expr name type_map env r
+    | AST.TypeCheck (e, _) -> collect_forward_call_arg_types_expr name type_map env e
+    | AST.If (cond, cons, alt) -> (
+        collect_forward_call_arg_types_expr name type_map env cond
+        @ collect_forward_call_arg_types_stmt name type_map env cons
+        @
+        match alt with
+        | Some s -> collect_forward_call_arg_types_stmt name type_map env s
+        | None -> [])
+    | AST.Call (callee, args) ->
+        collect_forward_call_arg_types_expr name type_map env callee
+        @ List.concat_map (collect_forward_call_arg_types_expr name type_map env) args
+    | AST.Array elements -> List.concat_map (collect_forward_call_arg_types_expr name type_map env) elements
+    | AST.Hash pairs ->
+        List.concat_map
+          (fun (k, v) ->
+            collect_forward_call_arg_types_expr name type_map env k
+            @ collect_forward_call_arg_types_expr name type_map env v)
+          pairs
+    | AST.Index (container, index) ->
+        collect_forward_call_arg_types_expr name type_map env container
+        @ collect_forward_call_arg_types_expr name type_map env index
+    | AST.Function _ -> []
+    | AST.EnumConstructor (_, _, args) ->
+        List.concat_map (collect_forward_call_arg_types_expr name type_map env) args
+    | AST.Match (scrutinee, arms) ->
+        collect_forward_call_arg_types_expr name type_map env scrutinee
+        @ List.concat_map
+            (fun (arm : AST.match_arm) -> collect_forward_call_arg_types_expr name type_map env arm.body)
+            arms
+    | AST.RecordLit (fields, spread) -> (
+        List.concat_map
+          (fun (field : AST.record_field) ->
+            match field.field_value with
+            | Some v -> collect_forward_call_arg_types_expr name type_map env v
+            | None -> [])
+          fields
+        @
+        match spread with
+        | Some s -> collect_forward_call_arg_types_expr name type_map env s
+        | None -> [])
+    | AST.FieldAccess (receiver, _) -> collect_forward_call_arg_types_expr name type_map env receiver
+    | AST.MethodCall { mc_receiver; mc_args; _ } ->
+        collect_forward_call_arg_types_expr name type_map env mc_receiver
+        @ List.concat_map (collect_forward_call_arg_types_expr name type_map env) mc_args
+    | AST.BlockExpr stmts -> List.concat_map (collect_forward_call_arg_types_stmt name type_map env) stmts
+  in
+  match expr.expr with
+  | AST.Call ({ expr = AST.Identifier callee_name; _ }, args) when callee_name = name -> (
+      match List.map (type_from_env_or_map_for_collect env type_map) args |> all_some with
+      | Some arg_types -> arg_types :: nested
+      | None -> nested)
+  | _ -> nested
+
+and collect_forward_call_arg_types_stmt
+    (name : string)
+    (type_map : Infer.type_map)
+    (env : Infer.type_env)
+    (stmt : AST.statement) : Types.mono_type list list =
+  match stmt.stmt with
+  | AST.Let { value; _ } -> collect_forward_call_arg_types_expr name type_map env value
+  | AST.Return e | AST.ExpressionStmt e -> collect_forward_call_arg_types_expr name type_map env e
+  | AST.Block stmts -> List.concat_map (collect_forward_call_arg_types_stmt name type_map env) stmts
+  | AST.ImplDef impl ->
+      List.concat_map
+        (fun (m : AST.method_impl) -> collect_forward_call_arg_types_stmt name type_map env m.impl_method_body)
+        impl.impl_methods
+  | AST.InherentImplDef impl ->
+      List.concat_map
+        (fun (m : AST.method_impl) -> collect_forward_call_arg_types_stmt name type_map env m.impl_method_body)
+        impl.inherent_methods
+  | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ | AST.TraitDef _ | AST.DeriveDef _ | AST.TypeAlias _ -> []
+
+let resolve_local_function_type_from_calls_for_collect
+    (name : string)
+    (declared_type : Types.mono_type)
+    (type_map : Infer.type_map)
+    (env : Infer.type_env)
+    (following_stmts : AST.statement list) : Types.mono_type option =
+  let declared_params, _ = extract_all_param_types declared_type in
+  let declared_arity = List.length declared_params in
+  if declared_arity = 0 then
+    None
+  else
+    let call_arg_types =
+      List.concat_map (collect_forward_call_arg_types_stmt name type_map env) following_stmts
+      |> List.filter (fun arg_types -> List.length arg_types = declared_arity)
+    in
+    let unify_param_lists subst arg_types =
+      let rec go subst_acc params args =
+        match (params, args) with
+        | [], [] -> Some subst_acc
+        | param :: params_tail, arg :: args_tail -> (
+            let param' = Types.apply_substitution subst_acc param in
+            let arg' = Types.apply_substitution subst_acc arg in
+            match Unify.unify param' arg' with
+            | Ok new_subst -> go (Types.compose_substitution new_subst subst_acc) params_tail args_tail
+            | Error _ -> None)
+        | _ -> None
+      in
+      go subst declared_params arg_types
+    in
+    let rec refine subst = function
+      | [] -> Some subst
+      | arg_types :: rest -> (
+          match unify_param_lists subst arg_types with
+          | Some subst' -> refine subst' rest
+          | None -> None)
+    in
+    match refine Types.empty_substitution call_arg_types with
+    | Some subst ->
+        let resolved = Types.apply_substitution subst declared_type in
+        if has_type_vars resolved then
+          None
+        else
+          Some resolved
+    | None -> None
+
 let rec collect_insts_stmt
-    (state : mono_state) (type_map : Infer.type_map) (env : Infer.type_env) (stmt : AST.statement) :
-    Infer.type_env =
+    ?(following_stmts : AST.statement list = [])
+    (state : mono_state)
+    (type_map : Infer.type_map)
+    (env : Infer.type_env)
+    (stmt : AST.statement) : Infer.type_env =
   match stmt.stmt with
   | AST.Let let_binding ->
       (* Prefer the explicit local binding annotation so Dyn/intersection lets
@@ -2343,6 +2603,14 @@ let rec collect_insts_stmt
                 match Infer.TypeEnv.find_opt let_binding.name env with
                 | Some (Types.Forall (_, t)) -> t
                 | None -> get_type type_map let_binding.value))
+      in
+      let expr_type =
+        if has_type_vars expr_type && fst (extract_all_param_types expr_type) <> [] then
+          match resolve_local_function_type_from_calls_for_collect let_binding.name expr_type type_map env following_stmts with
+          | Some resolved -> resolved
+          | None -> expr_type
+        else
+          expr_type
       in
       let env_with_binding = Infer.TypeEnv.add let_binding.name (Types.Forall ([], expr_type)) env in
       (* Pass the expected type to collect_insts_expr so it can use it for EnumConstructors *)
@@ -2401,7 +2669,7 @@ let rec collect_insts_stmt
   | AST.ExpressionStmt e ->
       collect_insts_expr state type_map env e;
       env
-  | AST.Block stmts -> List.fold_left (collect_insts_stmt state type_map) env stmts
+  | AST.Block stmts -> collect_insts_stmt_list state type_map env stmts
   | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ -> env (* Compile-time only *)
   | AST.TraitDef _ | AST.DeriveDef _ | AST.TypeAlias _ -> env
   | AST.ImplDef impl ->
@@ -2551,6 +2819,19 @@ let rec collect_insts_stmt
             ignore (collect_insts_stmt state type_map method_env m.impl_method_body))
         impl.inherent_methods;
       env
+
+and collect_insts_stmt_list
+    (state : mono_state)
+    (type_map : Infer.type_map)
+    (env : Infer.type_env)
+    (stmts : AST.statement list) : Infer.type_env =
+  let rec go env_acc = function
+    | [] -> env_acc
+    | stmt :: rest ->
+        let env' = collect_insts_stmt ~following_stmts:rest state type_map env_acc stmt in
+        go env' rest
+  in
+  go env stmts
 
 and register_impl_method_use
     (state : mono_state)
@@ -2957,16 +3238,18 @@ and collect_insts_expr
       match spread with
       | Some expr -> collect_insts_expr state type_map env expr
       | None -> ())
-  | AST.FieldAccess (receiver, _field) -> (
-      (* Check if this is a nullary enum constructor *)
-      match receiver.expr with
-      | AST.Identifier enum_name when Typecheck.Enum_registry.lookup enum_name <> None ->
-          (* This is a nullary enum constructor - track it *)
-          let enum_type = get_type type_map expr in
-          track_enum_inst state enum_type
-      | _ ->
-          (* Real field access - collect insts in receiver *)
-          collect_insts_expr state type_map env receiver)
+  | AST.FieldAccess (receiver, field_name) -> (
+      match
+        resolve_field_access_callable ~call_resolution_map:state.call_resolution_map
+          ~method_type_args_map:state.method_type_args_map type_map env ~expected_type expr receiver
+          field_name
+      with
+      | EnumConstructorValue { result_type; _ } -> track_enum_inst state result_type
+      | QualifiedTraitValue { trait_name; method_name; receiver_type; method_type_args } ->
+          register_impl_method_use state type_map env ~trait_name ~method_name ~for_type:receiver_type
+            ~method_type_args
+      | QualifiedInherentValue _ -> ()
+      | NotQualifiedCallable -> collect_insts_expr state type_map env receiver)
   | AST.MethodCall { mc_receiver = receiver; mc_method = method_name; mc_args = args; _ } -> (
       let method_resolution = Hashtbl.find_opt state.call_resolution_map expr.id in
       (* Check if this is an enum constructor and register it *)
@@ -3021,7 +3304,7 @@ and collect_insts_expr
                         receiver :: args )))
           | None -> collect_insts_expr state type_map env receiver))
   | AST.BlockExpr stmts ->
-      ignore (List.fold_left (fun e stmt -> collect_insts_stmt state type_map e stmt) env stmts)
+      ignore (collect_insts_stmt_list state type_map env stmts)
 
 (* ============================================================
    Code Generation State
@@ -3629,26 +3912,48 @@ let rec emit_expr
               Printf.sprintf "(func() %s { _ = %s; return %s{%s} })()" struct_type base_str struct_type
                 (String.concat ", " assignments))
     | AST.FieldAccess (receiver, variant_name) -> (
-        (* Check if this is a nullary enum constructor — bound variables shadow enum names *)
-        match receiver.expr with
-        | AST.Identifier enum_name
-          when Typecheck.Enum_registry.lookup enum_name <> None && Infer.TypeEnv.find_opt enum_name env = None ->
-            (* This is a nullary enum constructor - emit like EnumConstructor with no args *)
-            let enum_type = enum_constructor_codegen_type type_map expr expected_type enum_name in
-            let enum_type = Types.canonicalize_mono_type enum_type in
+        match
+          resolve_field_access_callable ~call_resolution_map:state.mono.call_resolution_map
+            ~method_type_args_map:state.mono.method_type_args_map type_map env ~expected_type expr receiver
+            variant_name
+        with
+        | EnumConstructorValue { enum_name; result_type; constructor_arity; _ } ->
             let enum_type =
-              if state.mono.concrete_only && has_type_vars enum_type && enum_allows_unresolved_erasure enum_name
+              if state.mono.concrete_only && has_type_vars result_type && enum_allows_unresolved_erasure enum_name
               then
-                normalize_type_for_codegen ~concrete_only:state.mono.concrete_only enum_type
+                normalize_type_for_codegen ~concrete_only:state.mono.concrete_only result_type
               else
-                enum_type
+                result_type
             in
-            (* Generate the mangled constructor name *)
             let go_type_name = mangle_type enum_type in
             let constructor_name = Printf.sprintf "%s_%s" go_type_name variant_name in
-            Printf.sprintf "%s()" constructor_name
-        | _ ->
-            (* Real field access *)
+            if constructor_arity = 0 then
+              Printf.sprintf "%s()" constructor_name
+            else
+              constructor_name
+        | QualifiedTraitValue { trait_name; method_name; receiver_type; method_type_args } ->
+            let receiver_type =
+              normalize_type_for_codegen ~concrete_only:state.mono.concrete_only receiver_type
+            in
+            let type_suffix =
+              if method_type_args = [] then
+                mangle_type receiver_type
+              else
+                fingerprint_types (receiver_type :: method_type_args)
+            in
+            trait_method_func_name trait_name method_name type_suffix
+        | QualifiedInherentValue { method_name; receiver_type; method_type_args } ->
+            let receiver_type =
+              normalize_type_for_codegen ~concrete_only:state.mono.concrete_only receiver_type
+            in
+            let type_suffix =
+              if method_type_args = [] then
+                mangle_type receiver_type
+              else
+                fingerprint_types (receiver_type :: method_type_args)
+            in
+            inherent_method_func_name method_name type_suffix
+        | NotQualifiedCallable ->
             let receiver_str = emit_expr state type_map env receiver in
             Printf.sprintf "(%s).%s" receiver_str (go_record_field_name variant_name))
     | AST.MethodCall { mc_receiver = receiver; mc_method = variant_name; mc_args = args; _ } -> (
@@ -5662,14 +5967,12 @@ and emit_stmt
                   | None -> get_type type_map let_binding.value))
         in
         let expr_type =
-          match let_binding.value.expr with
-          | AST.Function _ when has_type_vars expr_type -> (
-              match
-                resolve_local_function_type_from_calls let_binding.name expr_type type_map env following_stmts
-              with
-              | Some resolved -> resolved
-              | None -> expr_type)
-          | _ -> expr_type
+          if has_type_vars expr_type && fst (extract_all_param_types expr_type) <> [] then
+            match resolve_local_function_type_from_calls let_binding.name expr_type type_map env following_stmts with
+            | Some resolved -> resolved
+            | None -> expr_type
+          else
+            expr_type
         in
         match let_binding.value.expr with
         | AST.Function _ when is_user_func state.mono let_binding.name ->
@@ -6450,52 +6753,127 @@ let collect_inherent_call_sites
     (method_type_args_map : (int, Types.mono_type list) Hashtbl.t)
     (placeholder_rewrite_map : Infer.placeholder_rewrite_map)
     (type_map : Infer.type_map)
+    (typed_env : Infer.type_env)
     (program : AST.program) : inherent_call_site list =
-  let rec collect_expr (acc : inherent_call_site list) (expr : AST.expression) : inherent_call_site list =
+  let rec collect_expr
+      ?(expected_type : Types.mono_type option = None)
+      (acc : inherent_call_site list)
+      (env : Infer.type_env)
+      (expr : AST.expression) : inherent_call_site list =
     let expr = placeholder_rewritten_expr placeholder_rewrite_map expr in
     match expr.expr with
     | AST.Identifier _ | AST.Integer _ | AST.Float _ | AST.Boolean _ | AST.String _ -> acc
-    | AST.Array elems -> List.fold_left collect_expr acc elems
-    | AST.Index (a, b) -> collect_expr (collect_expr acc a) b
+    | AST.Array elems -> List.fold_left (fun acc' e -> collect_expr acc' env e) acc elems
+    | AST.Index (a, b) -> collect_expr (collect_expr acc env a) env b
     | AST.Hash pairs ->
         List.fold_left
           (fun acc' (k, v) ->
-            let acc'' = collect_expr acc' k in
-            collect_expr acc'' v)
+            let acc'' = collect_expr acc' env k in
+            collect_expr acc'' env v)
           acc pairs
-    | AST.Prefix (_, e) -> collect_expr acc e
-    | AST.Infix (l, _, r) -> collect_expr (collect_expr acc l) r
-    | AST.TypeCheck (e, _type_ann) -> collect_expr acc e
+    | AST.Prefix (_, e) -> collect_expr acc env e
+    | AST.Infix (l, _, r) -> collect_expr (collect_expr acc env l) env r
+    | AST.TypeCheck (e, _type_ann) -> collect_expr acc env e
     | AST.If (condition, consequence, alternative) -> (
-        let acc' = collect_expr acc condition in
-        let acc'' = collect_stmt acc' consequence in
+        let acc' = collect_expr acc env condition in
+        let acc'', _ = collect_stmt acc' env consequence in
         match alternative with
         | None -> acc''
-        | Some alt -> collect_stmt acc'' alt)
-    | AST.Function { body; _ } -> collect_stmt acc body
+        | Some alt ->
+            let acc''', _ = collect_stmt acc'' env alt in
+            acc''')
+    | AST.Function fn_expr -> (
+        let arity = List.length fn_expr.params in
+        let param_types =
+          match extract_param_types_exact arity (get_type type_map expr) with
+          | Some (types, _) -> types
+          | None -> []
+        in
+        let body_env = add_param_bindings env (List.map fst fn_expr.params) param_types in
+        let acc', _ = collect_stmt acc body_env fn_expr.body in
+        acc')
     | AST.Call (callee, args) ->
-        let acc' = collect_expr acc callee in
-        List.fold_left collect_expr acc' args
-    | AST.EnumConstructor (_enum_name, _variant_name, args) -> List.fold_left collect_expr acc args
+        let callee_type_opt =
+          match callee.expr with
+          | AST.Identifier name -> (
+              match Infer.TypeEnv.find_opt name env with
+              | Some (Types.Forall (_, t)) -> Some t
+              | None -> Hashtbl.find_opt type_map callee.id)
+          | _ -> Hashtbl.find_opt type_map callee.id
+        in
+        let expected_arg_types =
+          match callee_type_opt with
+          | Some callee_type -> (
+              match callable_signature_exact (List.length args) callee_type with
+              | Some (params, _ret) -> params
+              | None -> fst (extract_param_types (List.length args) callee_type))
+          | None -> []
+        in
+        let acc' = collect_expr acc env callee in
+        let rec collect_args acc'' remaining_args remaining_expected =
+          match (remaining_args, remaining_expected) with
+          | [], _ -> acc''
+          | arg :: rest_args, expected :: rest_expected ->
+              collect_args (collect_expr ~expected_type:(Some expected) acc'' env arg) rest_args rest_expected
+          | arg :: rest_args, [] -> collect_args (collect_expr acc'' env arg) rest_args []
+        in
+        collect_args acc' args expected_arg_types
+    | AST.EnumConstructor (_enum_name, _variant_name, args) ->
+        List.fold_left (fun acc' arg -> collect_expr acc' env arg) acc args
     | AST.Match (scrutinee, arms) ->
-        let acc' = collect_expr acc scrutinee in
-        List.fold_left (fun acc' (arm : AST.match_arm) -> collect_expr acc' arm.body) acc' arms
+        let acc' = collect_expr acc env scrutinee in
+        List.fold_left (fun acc' (arm : AST.match_arm) -> collect_expr acc' env arm.body) acc' arms
     | AST.RecordLit (fields, spread) -> (
+        let record_type =
+          match expected_type with
+          | Some t -> t
+          | None -> get_type type_map expr
+        in
+        let result_fields =
+          match record_type with
+          | Types.TRecord (fields, row) ->
+              let normalized_fields, _ = normalize_record_row_type fields row in
+              normalized_fields
+          | _ -> []
+        in
+        let expected_field_type field_name =
+          List.find_opt (fun (field : Types.record_field_type) -> field.name = field_name) result_fields
+          |> Option.map (fun (field : Types.record_field_type) -> field.typ)
+        in
         let acc' =
           List.fold_left
             (fun acc' (field : AST.record_field) ->
               match field.field_value with
               | None -> acc'
-              | Some v -> collect_expr acc' v)
+              | Some v -> (
+                  match expected_field_type field.field_name with
+                  | Some field_type -> collect_expr ~expected_type:(Some field_type) acc' env v
+                  | None -> collect_expr acc' env v))
             acc fields
         in
         match spread with
         | None -> acc'
-        | Some s -> collect_expr acc' s)
-    | AST.FieldAccess (receiver, _field_name) -> collect_expr acc receiver
+        | Some s -> collect_expr acc' env s)
+    | AST.FieldAccess (receiver, field_name) -> (
+        match
+          resolve_field_access_callable ~call_resolution_map ~method_type_args_map type_map env ~expected_type expr
+            receiver field_name
+        with
+        | QualifiedInherentValue { method_name; receiver_type; method_type_args } ->
+            let receiver_type =
+              normalize_type_for_codegen ~concrete_only (Types.canonicalize_mono_type receiver_type)
+            in
+            add_inherent_call_site_if_new acc
+              {
+                call_method_name = method_name;
+                call_receiver_type = receiver_type;
+                call_method_type_args = method_type_args;
+              }
+        | EnumConstructorValue _ | QualifiedTraitValue _ -> acc
+        | NotQualifiedCallable -> collect_expr acc env receiver)
     | AST.MethodCall { mc_receiver = receiver; mc_method = method_name; mc_args = args; _ } -> (
-        let acc' = collect_expr acc receiver in
-        let acc'' = List.fold_left collect_expr acc' args in
+        let acc' = collect_expr acc env receiver in
+        let acc'' = List.fold_left (fun acc' arg -> collect_expr acc' env arg) acc' args in
         match Hashtbl.find_opt call_resolution_map expr.id with
         | Some Infer.InherentMethod ->
             let receiver_type =
@@ -6528,30 +6906,72 @@ let collect_inherent_call_sites
         | Some Infer.UfcsFunctionCall
         | None ->
             acc'')
-    | AST.BlockExpr stmts -> List.fold_left collect_stmt acc stmts
-  and collect_stmt (acc : inherent_call_site list) (stmt : AST.statement) : inherent_call_site list =
+    | AST.BlockExpr stmts -> collect_stmt_list acc env stmts
+  and collect_stmt
+      ?(following_stmts : AST.statement list = [])
+      (acc : inherent_call_site list)
+      (env : Infer.type_env)
+      (stmt : AST.statement) : inherent_call_site list * Infer.type_env =
     match stmt.stmt with
-    | AST.Let let_binding -> collect_expr acc let_binding.value
-    | AST.Return e | AST.ExpressionStmt e -> collect_expr acc e
-    | AST.Block stmts -> List.fold_left collect_stmt acc stmts
-    | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ | AST.TypeAlias _ | AST.DeriveDef _ -> acc
+    | AST.Let let_binding ->
+        let expr_type =
+          match explicit_binding_annotation_type let_binding.type_annotation with
+          | Some annotated_type -> annotated_type
+          | None -> (
+              match Infer.TypeEnv.find_opt let_binding.name env with
+              | Some (Types.Forall (_, t)) -> t
+              | None -> get_type type_map let_binding.value)
+        in
+        let expr_type =
+          if has_type_vars expr_type && fst (extract_all_param_types expr_type) <> [] then
+            match
+              resolve_local_function_type_from_calls let_binding.name expr_type type_map env following_stmts
+            with
+            | Some resolved -> resolved
+            | None -> expr_type
+          else
+            expr_type
+        in
+        let env_with_binding = Infer.TypeEnv.add let_binding.name (Types.Forall ([], expr_type)) env in
+        (collect_expr ~expected_type:(Some expr_type) acc env_with_binding let_binding.value, env_with_binding)
+    | AST.Return e | AST.ExpressionStmt e -> (collect_expr acc env e, env)
+    | AST.Block stmts -> (collect_stmt_list acc env stmts, env)
+    | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ | AST.TypeAlias _ | AST.DeriveDef _ -> (acc, env)
     | AST.TraitDef trait_def ->
-        List.fold_left
-          (fun acc' (m : AST.method_sig) ->
-            match m.method_default_impl with
-            | None -> acc'
-            | Some e -> collect_expr acc' e)
-          acc trait_def.methods
+        ( List.fold_left
+            (fun acc' (m : AST.method_sig) ->
+              match m.method_default_impl with
+              | None -> acc'
+              | Some e -> collect_expr acc' env e)
+            acc trait_def.methods,
+          env )
     | AST.ImplDef impl ->
-        List.fold_left
-          (fun acc' (m : AST.method_impl) -> collect_stmt acc' m.impl_method_body)
-          acc impl.impl_methods
+        ( List.fold_left
+            (fun acc' (m : AST.method_impl) ->
+              let acc'', _ = collect_stmt acc' env m.impl_method_body in
+              acc'')
+            acc impl.impl_methods,
+          env )
     | AST.InherentImplDef impl ->
-        List.fold_left
-          (fun acc' (m : AST.method_impl) -> collect_stmt acc' m.impl_method_body)
-          acc impl.inherent_methods
+        ( List.fold_left
+            (fun acc' (m : AST.method_impl) ->
+              let acc'', _ = collect_stmt acc' env m.impl_method_body in
+              acc'')
+            acc impl.inherent_methods,
+          env )
+  and collect_stmt_list
+      (acc : inherent_call_site list)
+      (env : Infer.type_env)
+      (stmts : AST.statement list) : inherent_call_site list =
+    let rec go acc' env' = function
+      | [] -> acc'
+      | stmt :: rest ->
+          let next_acc, next_env = collect_stmt ~following_stmts:rest acc' env' stmt in
+          go next_acc next_env rest
+    in
+    go acc env stmts
   in
-  List.fold_left collect_stmt [] program
+  collect_stmt_list [] typed_env program
   |> List.sort (fun a b ->
          let c = String.compare a.call_method_name b.call_method_name in
          if c <> 0 then
@@ -6842,7 +7262,7 @@ let emit_inherent_methods
   let inherent_impls = collect_inherent_impl_defs program in
   let call_sites =
     collect_inherent_call_sites ~concrete_only:state.mono.concrete_only state.mono.call_resolution_map
-      state.mono.method_type_args_map state.mono.placeholder_rewrite_map type_map program
+      state.mono.method_type_args_map state.mono.placeholder_rewrite_map type_map typed_env program
   in
 
   let concrete_method_targets : (string * Types.mono_type) list =
@@ -7070,7 +7490,7 @@ let emit_program_with_typed_env
        StringSet.empty program);
 
   (* Pass 2: Collect instantiations using the already-typed environment and type_map *)
-  ignore (List.fold_left (collect_insts_stmt mono_state type_map) typed_env program);
+  ignore (collect_insts_stmt_list mono_state type_map typed_env program);
 
   (* Pass 3: Register type alias shapes for records *)
   List.iter
@@ -8519,7 +8939,7 @@ puts(1.show())
                    (fun bindings stmt ->
                      collect_funcs_stmt ~top_level:true ~available_bindings:bindings mono_state stmt)
                    StringSet.empty program);
-              ignore (List.fold_left (collect_insts_stmt mono_state type_map) typed_env program);
+              ignore (collect_insts_stmt_list mono_state type_map typed_env program);
               ImplInstSet.cardinal mono_state.impl_instantiations = 1
               && Hashtbl.length mono_state.impl_inst_payloads = 1))
 

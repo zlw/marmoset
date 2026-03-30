@@ -1,0 +1,8 @@
+type Wrapper = { v: Int }
+
+impl Wrapper = {
+  fn transform[b](w: Wrapper, f: (Int) -> b) -> b = f(w.v)
+}
+
+let transform = Wrapper.transform
+puts(transform({ v: 10 }, (n: Int) -> n.show()))  # output: 10

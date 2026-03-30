@@ -1,0 +1,11 @@
+trait Show[a] = {
+  fn show(x: a) -> Str
+}
+
+impl Show[Int] = {
+  fn show(x: Int) -> Str = if (x == 7) { "direct" } else { "wrong" }
+}
+
+fn apply_show(f: (Int) -> Str, x: Int) -> Str = f(x)
+
+puts(apply_show(Show.show, 7))  # output: direct

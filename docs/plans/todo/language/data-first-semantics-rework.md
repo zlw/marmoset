@@ -548,6 +548,7 @@ Relationship notes:
 - 2026-03-30: Canonicalized constructor-bearing sum syntax in the surface AST: `type Name = { Variant(...) }` is now the primary parsed form, while `enum Name = { ... }` is retained only as compatibility sugar lowering through the same `STypeDef(STNamedSum ...)` path.
 - 2026-03-30: Re-ran the affected syntax/tooling/typecheck/unit/integration suites after the alias-removal migration; all suites are green on the branch.
 - 2026-03-30: Canonicalized the active docs/examples and the broad fixture corpus to the data-first surface: README and feature docs now teach transparent `type` plus constructor-bearing `type` as the default model, examples use canonical `type` sums, and non-compatibility fixtures were migrated away from `enum`.
+- 2026-03-30: Added first-class qualified value support for trait methods, exact-type impl functions, and constructor-bearing sums. Bare references such as `Show.show`, `MyInt.label`, `Box.is_empty`, and `OptionInt.Some` can now be stored, passed, and called as ordinary values instead of only working in direct qualified-call form.
 
 ### Findings
 
@@ -563,6 +564,7 @@ Relationship notes:
 - After the bulk fixture rewrite, the remaining integration failures collapsed to one real compiler bug in derive expansion plus stale tests/examples that still treated transparent `type` names as constructor-bearing nominal wrappers.
 - The previous surface split was real: before this follow-up, `type Name = { Variant(...) }` and `enum Name = { ... }` shared downstream machinery but still entered lowering through different surface declarations, while `alias` remained as a separate transparent-name path. That split is now removed at the parser/surface-AST level.
 - After the fixture/docs audit, the remaining in-tree `enum` fixtures are all intentional compatibility coverage or historical/internal references rather than the default teaching surface. The active README/docs/examples no longer present `enum` as the primary way to define named sums.
+- Namespace-qualified references were only handled in direct call position. Bare `Trait.method` and `Type.method` previously fell through to unbound-variable or constructor-only paths, and higher-order codegen only refined let-bound callable values when the RHS was syntactically a lambda/function.
 
 ### Caveats
 
@@ -571,6 +573,7 @@ Relationship notes:
 - Internal compiler data structures still use names such as `TypeAlias`/`alias_name` for transparent `type` declarations. That is now an implementation detail rather than accepted surface syntax.
 - Some fixture filenames still reflect the older nominal/alias terminology even when their contents now exercise the new transparent-`type` behavior; the semantic coverage is updated first, and path cleanup can happen separately if desired.
 - Compatibility coverage still uses `enum` on purpose in dedicated tests. That is a surface-policy choice rather than a semantic split in the parser/lowering pipeline.
+- Namespace qualification itself is still not a value. `Show.show` now works as a callable value, but `let ns = Show` or `let t = MyInt` is still not meaningful, and dot-call ambiguity still follows the current precedence rules until the separate dot-call-resolution plan lands.
 
 ### Verification
 
@@ -605,4 +608,9 @@ Relationship notes:
 - `make integration cross_feature/xf22_e22_recursive_sum_param_annotation_works.mr`
 - `make integration cross_feature/xf36_g38_inherent_method_on_recursive_sum_works.mr`
 - `make integration enums/e100_canonical_recursive_sum_prints_nested_payloads.mr enums/e101_canonical_recursive_record_payload_sum.mr enums/e102_enum_sugar_recursive_sum_prints_nested_payloads.mr`
+- `make integration`
+- `make integration enums/e68_unknown_variant_rejected.mr function_model/fm135_qualified_trait_value_first_class.mr function_model/fm136_qualified_named_type_method_value_first_class.mr function_model/fm137_qualified_enum_method_value_first_class.mr function_model/fm138_enum_constructor_value_first_class.mr function_model/fm139_qualified_trait_value_passed_as_argument.mr function_model/fm140_qualified_inherent_generic_value_first_class.mr`
+- `dune runtest --root /Users/zlw/src/marmoset/marmoset lib/frontend/typecheck/ --force`
+- `dune runtest --root /Users/zlw/src/marmoset/marmoset lib/backend/go/ --force`
+- `make integration function_model`
 - `make integration`
