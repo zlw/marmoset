@@ -527,6 +527,22 @@ let%test "hover on literal 2 inside fib body" =
   | _, Some h -> string_contains h.type_text "Int"
   | _ -> false
 
+let%test "hover on mid-name of left recursive call highlights that call" =
+  match
+    hover_marked
+      "fn fibonacci(x: Int) -> Int = {\n  if (x == 0) {\n    0\n  } else {\n    if (x == 1) {\n      return 1\n    } else {\n      fibon|acci(x - 1) + fibonacci(x - 2)\n    }\n  }\n}\n"
+  with
+  | _, Some h -> string_contains h.type_text "Int" && h.highlighted = "fibonacci(x - 1)"
+  | _ -> false
+
+let%test "hover on left recursive call argument operator stays on subexpression" =
+  match
+    hover_marked
+      "fn fibonacci(x: Int) -> Int = {\n  if (x == 0) {\n    0\n  } else {\n    if (x == 1) {\n      return 1\n    } else {\n      fibonacci(x |- 1) + fibonacci(x - 2)\n    }\n  }\n}\n"
+  with
+  | _, Some h -> string_contains h.type_text "Int" && h.highlighted = "x - 1"
+  | _ -> false
+
 let%test "hover on + operator inside fib body" =
   match hover_marked "fn fib(n) = {\n  if (n < 2) { return n }\n  return fib(n - 2) |+ fib(n - 1)\n}" with
   | _, Some _ -> true

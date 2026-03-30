@@ -1296,7 +1296,7 @@ and parse_prefix_expression (p : parser) : (parser * Surface.surface_expr, parse
   let p2 = next_token p in
   let* p3, right = parse_expression p2 prec_prefix in
   let id = fresh_id p3 in
-  Ok (p3, mk_surface_expr id pos (Surface.SEPrefix (op, right)))
+  Ok (p3, with_surface_expr_end p3 (mk_surface_expr id pos (Surface.SEPrefix (op, right))))
 
 and parse_infix_expression (p : parser) (left : Surface.surface_expr) :
     (parser * Surface.surface_expr, parser) result =
@@ -1310,14 +1310,14 @@ and parse_infix_expression (p : parser) (left : Surface.surface_expr) :
         let type_name = p2.curr_token.literal in
         let type_expr = Surface.STCon type_name in
         let id = fresh_id p2 in
-        Ok (p2, mk_surface_expr id pos (Surface.SETypeCheck (left, type_expr)))
+        Ok (p2, with_surface_expr_end p2 (mk_surface_expr id pos (Surface.SETypeCheck (left, type_expr))))
   | _ ->
       let op = p.curr_token.literal in
       let prec = curr_precedence p in
       let p2 = next_token p in
       let* p3, right = parse_expression p2 prec in
       let id = fresh_id p3 in
-      Ok (p3, mk_surface_expr id pos (Surface.SEInfix (left, op, right)))
+      Ok (p3, with_surface_expr_end p3 (mk_surface_expr id pos (Surface.SEInfix (left, op, right))))
 
 and parse_boolean (p : parser) : (parser * Surface.surface_expr, parser) result =
   let pos = p.curr_token.pos in
@@ -1353,13 +1353,14 @@ and parse_lambda_or_grouped (p : parser) : (parser * Surface.surface_expr, parse
     let id = fresh_id p4 in
     Ok
       ( p4,
-        mk_surface_expr id pos
-          (Surface.SEArrowLambda
-             {
-               se_lambda_params = [];
-               se_lambda_is_effectful = is_effectful;
-               se_lambda_body = Surface.SEOBExpr body_expr;
-             }) )
+        with_surface_expr_end p4
+          (mk_surface_expr id pos
+             (Surface.SEArrowLambda
+                {
+                  se_lambda_params = [];
+                  se_lambda_is_effectful = is_effectful;
+                  se_lambda_body = Surface.SEOBExpr body_expr;
+                })) )
   else if is_multi_or_typed then
     (* Parse as explicit lambda params *)
     let* p2, lparams = parse_lambda_param_list (next_token p) in
@@ -1374,13 +1375,14 @@ and parse_lambda_or_grouped (p : parser) : (parser * Surface.surface_expr, parse
       let id = fresh_id p4 in
       Ok
         ( p4,
-          mk_surface_expr id pos
-            (Surface.SEArrowLambda
-               {
-                 se_lambda_params = lparams;
-                 se_lambda_is_effectful = is_effectful;
-                 se_lambda_body = Surface.SEOBExpr body_expr;
-               }) )
+          with_surface_expr_end p4
+            (mk_surface_expr id pos
+               (Surface.SEArrowLambda
+                  {
+                    se_lambda_params = lparams;
+                    se_lambda_is_effectful = is_effectful;
+                    se_lambda_body = Surface.SEOBExpr body_expr;
+                  })) )
   else
     (* Grouped expression or single-param lambda: (x) -> expr *)
     let* p2, expr = parse_expression (next_token p) prec_lowest in
@@ -1396,13 +1398,14 @@ and parse_lambda_or_grouped (p : parser) : (parser * Surface.surface_expr, parse
           let id = fresh_id p5 in
           Ok
             ( p5,
-              mk_surface_expr id pos
-                (Surface.SEArrowLambda
-                   {
-                     se_lambda_params = [ (name, None) ];
-                     se_lambda_is_effectful = is_effectful;
-                     se_lambda_body = Surface.SEOBExpr body_expr;
-                   }) )
+              with_surface_expr_end p5
+                (mk_surface_expr id pos
+                   (Surface.SEArrowLambda
+                      {
+                        se_lambda_params = [ (name, None) ];
+                        se_lambda_is_effectful = is_effectful;
+                        se_lambda_body = Surface.SEOBExpr body_expr;
+                      })) )
       | _ -> Ok (p3, expr)
     else
       Ok (p3, expr)
@@ -1472,7 +1475,7 @@ and parse_if_expression (p : parser) : (parser * Surface.surface_expr, parser) r
 
   if not (peek_token_is p5 Token.Else) then
     let id = fresh_id p5 in
-    Ok (p5, mk_surface_expr id pos (Surface.SEIf (cond, cons, None)))
+    Ok (p5, with_surface_expr_end p5 (mk_surface_expr id pos (Surface.SEIf (cond, cons, None))))
   else
     let p6 = next_token p5 in
     (* Now at 'else' token *)
@@ -1508,7 +1511,7 @@ and parse_if_expression (p : parser) : (parser * Surface.surface_expr, parser) r
         Error (add_error ~code:"parse-unexpected-token" p6 "Expected '{' or 'return' after 'else'")
     in
     let id = fresh_id p7 in
-    Ok (p7, mk_surface_expr id pos (Surface.SEIf (cond, cons, Some alt)))
+    Ok (p7, with_surface_expr_end p7 (mk_surface_expr id pos (Surface.SEIf (cond, cons, Some alt))))
 
 and parse_block_statement (p : parser) : (parser * Surface.surface_block, parser) result =
   let pos = p.curr_token.pos in
@@ -1562,25 +1565,26 @@ and parse_call_expression (p : parser) (c : Surface.surface_expr) : (parser * Su
   if peek_token_is p Token.RParen then
     let* p2, arguments = parse_expression_list p Token.RParen in
     let id = fresh_id p2 in
-    Ok (p2, mk_surface_expr id pos (Surface.SECall (c, arguments)))
+    Ok (p2, with_surface_expr_end p2 (mk_surface_expr id pos (Surface.SECall (c, arguments))))
   else
     let p_args = next_token p in
     if curr_token_is p_args Token.Spread || (curr_token_is p_args Token.Ident && peek_token_is p_args Token.Colon)
     then
       let* p2, record_arg = parse_labeled_call_record p_args in
       let id = fresh_id p2 in
-      Ok (p2, mk_surface_expr id pos (Surface.SECall (c, [ record_arg ])))
+      Ok (p2, with_surface_expr_end p2 (mk_surface_expr id pos (Surface.SECall (c, [ record_arg ]))))
     else
       let* p2, arguments = parse_expression_list p Token.RParen in
       let id = fresh_id p2 in
-      Ok (p2, mk_surface_expr id pos (Surface.SECall (c, arguments)))
+      Ok (p2, with_surface_expr_end p2 (mk_surface_expr id pos (Surface.SECall (c, arguments))))
 
 and parse_labeled_call_record (p : parser) : (parser * Surface.surface_expr, parser) result =
   let pos = p.curr_token.pos in
   let rec loop lp rev_fields spread =
     if curr_token_is lp Token.RParen then
       let id = fresh_id lp in
-      Ok (lp, mk_surface_expr id pos (Surface.SERecordLit (List.rev rev_fields, spread)))
+      Ok
+        (lp, with_surface_expr_end lp (mk_surface_expr id pos (Surface.SERecordLit (List.rev rev_fields, spread))))
     else if curr_token_is lp Token.Spread then
       let lp2 = next_token lp in
       let* lp3, spread_expr = parse_expression lp2 prec_lowest in
@@ -1640,7 +1644,7 @@ and parse_array_literal (p : parser) : (parser * Surface.surface_expr, parser) r
   let pos = p.curr_token.pos in
   let* p2, exprs = parse_expression_list p Token.RBracket in
   let id = fresh_id p2 in
-  Ok (p2, mk_surface_expr id pos (Surface.SEArray exprs))
+  Ok (p2, with_surface_expr_end p2 (mk_surface_expr id pos (Surface.SEArray exprs)))
 
 and parse_index_expression (p : parser) (left : Surface.surface_expr) :
     (parser * Surface.surface_expr, parser) result =
@@ -1649,7 +1653,7 @@ and parse_index_expression (p : parser) (left : Surface.surface_expr) :
   let* p3, index = parse_expression p2 prec_lowest in
   let* p4 = expect_peek p3 Token.RBracket in
   let id = fresh_id p4 in
-  Ok (p4, mk_surface_expr id pos (Surface.SEIndex (left, index)))
+  Ok (p4, with_surface_expr_end p4 (mk_surface_expr id pos (Surface.SEIndex (left, index))))
 
 (* Phase 4.3: Dot expression parsing - handles method calls and field access *)
 (* Note: enum constructors are also parsed as MethodCall here, type checker will distinguish *)
@@ -1670,9 +1674,10 @@ and parse_dot_expression (p : parser) (left : Surface.surface_expr) :
       let id = fresh_id p4 in
       Ok
         ( p4,
-          mk_surface_expr id pos
-            (Surface.SEMethodCall
-               { se_receiver = left; se_method = member_name; se_type_args = None; se_args = args }) )
+          with_surface_expr_end p4
+            (mk_surface_expr id pos
+               (Surface.SEMethodCall
+                  { se_receiver = left; se_method = member_name; se_type_args = None; se_args = args })) )
     else if peek_token_is p2 Token.LBracket then
       (* expr.member[...] -> could be method type args or index; try type args first *)
       let p_bracket = next_token (next_token p2) in
@@ -1689,18 +1694,23 @@ and parse_dot_expression (p : parser) (left : Surface.surface_expr) :
           let id = fresh_id p_after_args in
           Ok
             ( p_after_args,
-              mk_surface_expr id pos
-                (Surface.SEMethodCall
-                   { se_receiver = left; se_method = member_name; se_type_args = Some type_args; se_args = args })
-            )
+              with_surface_expr_end p_after_args
+                (mk_surface_expr id pos
+                   (Surface.SEMethodCall
+                      {
+                        se_receiver = left;
+                        se_method = member_name;
+                        se_type_args = Some type_args;
+                        se_args = args;
+                      })) )
       | _ ->
           (* Not type args — fall back to field access (infix [ will handle indexing) *)
           let id = fresh_id p2 in
-          Ok (p2, mk_surface_expr id pos (Surface.SEFieldAccess (left, member_name)))
+          Ok (p2, with_surface_expr_end p2 (mk_surface_expr id pos (Surface.SEFieldAccess (left, member_name))))
     else
       (* expr.member -> Field access or nullary enum constructor *)
       let id = fresh_id p2 in
-      Ok (p2, mk_surface_expr id pos (Surface.SEFieldAccess (left, member_name)))
+      Ok (p2, with_surface_expr_end p2 (mk_surface_expr id pos (Surface.SEFieldAccess (left, member_name))))
 
 (* Parse { stmts } in expression position as a block expression (SEBlockExpr) *)
 and parse_block_expr (p : parser) : (parser * Surface.surface_expr, parser) result =
@@ -1714,7 +1724,7 @@ and parse_block_expr (p : parser) : (parser * Surface.surface_expr, parser) resu
       expect_peek p2 Token.RBrace
   in
   let id = fresh_id p3 in
-  Ok (p3, mk_surface_expr id pos (Surface.SEBlockExpr block))
+  Ok (p3, with_surface_expr_end p3 (mk_surface_expr id pos (Surface.SEBlockExpr block)))
 
 (* Phase 4.6: Distinguish record literal from hash literal using one mode-locked loop *)
 and parse_record_or_hash_literal (p : parser) : (parser * Surface.surface_expr, parser) result =
@@ -1727,8 +1737,9 @@ and parse_record_or_hash_literal (p : parser) : (parser * Surface.surface_expr, 
       lp =
     let id = fresh_id lp in
     match mode with
-    | RecordMode -> Ok (lp, mk_surface_expr id pos (Surface.SERecordLit (List.rev fields, spread)))
-    | HashMode -> Ok (lp, mk_surface_expr id pos (Surface.SEHash (List.rev pairs)))
+    | RecordMode ->
+        Ok (lp, with_surface_expr_end lp (mk_surface_expr id pos (Surface.SERecordLit (List.rev fields, spread))))
+    | HashMode -> Ok (lp, with_surface_expr_end lp (mk_surface_expr id pos (Surface.SEHash (List.rev pairs))))
   in
   let rec loop
       (lp : parser)
@@ -1849,7 +1860,7 @@ and parse_match_expression (p : parser) : (parser * Surface.surface_expr, parser
   in
 
   let id = fresh_id p5 in
-  Ok (p5, mk_surface_expr id pos (Surface.SEMatch (scrutinee, arms)))
+  Ok (p5, with_surface_expr_end p5 (mk_surface_expr id pos (Surface.SEMatch (scrutinee, arms))))
 
 and parse_match_arms (p : parser) : (parser * Surface.surface_match_arm list, parser) result =
   let rec loop lp arms =

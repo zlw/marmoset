@@ -526,6 +526,7 @@ Relationship notes:
 
 ### Progress
 
+- 2026-03-30: Fixed parser span propagation for nested composite expressions (`call`, `infix`, `if`, `match`, block/record/hash literals, method/index access, lambdas). Those nodes now record their own end span even when they become the left child of a larger expression, which fixes asymmetric LSP hover ranges in recursive call expressions like `fibonacci(x - 1) + fibonacci(x - 2)`.
 - 2026-03-30: Fixed LSP hover on match-pattern bindings in the showcase surface. Hover now traverses pattern nodes before falling back to expression hover, so bindings like `Option.Some(x)` and record-pattern punning such as `{ name:, ...rest }` report the bound field/payload type instead of the enclosing `match` expression.
 - 2026-03-30: Added recursive-sum edge-case coverage for the new Go representation: nested pretty-printing of recursive canonical `type` sums, recursive record payloads that contain the same sum, and the same pretty-print path through `enum` compatibility sugar. Added matching emitter unit tests so pointer boxing and `String()` dereference behavior are asserted directly in codegen tests.
 - 2026-03-30: Fixed Go codegen for recursive constructor-bearing sums by boxing aggregate enum payload slots in the emitted Go representation, then updating constructors, pattern bindings, and enum `String()` formatting to preserve source-level behavior.
@@ -548,6 +549,7 @@ Relationship notes:
 
 ### Findings
 
+- The parser used to stamp many composite expression spans only when they were the outermost result of `parse_expression`. If the same node became the left child of a larger expression, its `end_pos` stayed truncated, which made hover select `fibonacci(` or the whole enclosing sum instead of `fibonacci(x - 1)` / `x - 1`.
 - LSP hover only walked expressions, not patterns. That meant complex showcase files with `match` arms could typecheck and highlight correctly while hover still returned the enclosing `match` or nothing for bound names inside constructor and record patterns.
 - The fragile follow-up area after the backend fix was enum pretty-printing, because `puts` exercises the generated `String()` method over boxed payload slots rather than the pattern-binding path. Recursive sums now have explicit coverage there, including recursive record payloads nested inside the same sum.
 - The frontend/typechecker already accepted recursive constructor-bearing sums after the earlier parser/checker pass, but Go codegen still emitted payload fields as direct values. That produced invalid self-recursive Go structs for cases like `type Expr = { Add(Expr, Expr) }` until the backend representation was made indirect for aggregate payloads.
@@ -570,6 +572,7 @@ Relationship notes:
 
 ### Verification
 
+- `dune runtest --root /Users/zlw/src/marmoset/marmoset lib/frontend/syntax/ --force`
 - `./_build/default/bin/main.exe check examples/new-syntax-upcase.mr`
 - `dune runtest --root /Users/zlw/src/marmoset/marmoset tools/lsp/lib/ --force`
 - `./_build/default/bin/main.exe run test/fixtures/enums/e100_canonical_recursive_sum_prints_nested_payloads.mr`
