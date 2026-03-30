@@ -41,9 +41,9 @@ Before committing or running CI, restore the portable manifest with:
 
 ### From source (after pushing)
 
-Update the pinned grammar `rev` in `extension.toml` when the tree-sitter
-grammar changes and you want the checked-in dev extension manifest to follow the
-new revision.
+Update the pinned grammar `rev` in
+`tools/zed-marmoset/scripts/render_extension_manifest.py`, then regenerate the
+checked-in manifest with `./tools/zed-marmoset/scripts/set-grammar-source.sh pinned`.
 
 ## Features
 
