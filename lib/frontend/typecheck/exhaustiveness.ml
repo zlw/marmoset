@@ -35,7 +35,7 @@ let check_exhaustive (scrutinee_type : mono_type) (arms : AST.match_arm list) : 
     | TEnum (enum_name, _) -> (
         (* Get all variants *)
         match Enum_registry.lookup enum_name with
-        | None -> Error (Printf.sprintf "Unknown enum: %s" enum_name)
+        | None -> Error (Printf.sprintf "Unknown type: %s" enum_name)
         | Some def ->
             (* Collect covered variants *)
             let covered =

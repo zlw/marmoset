@@ -1,6 +1,6 @@
 # T78: Return type projection hides non-trait fields at typecheck
 trait Named = {
-  name: Str  # error: Trait bodies are method-only; move structural fields to a shape declaration
+  name: Str  # error: Trait bodies are method-only; use 'shape' for structural field contracts
 }
 fn mk_named(n: Str, a: Int) -> Named = { name: n, age: a }
 let x = mk_named("alice", 30)

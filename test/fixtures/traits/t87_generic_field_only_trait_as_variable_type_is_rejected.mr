@@ -1,5 +1,5 @@
 # T87: Legacy generic field-style trait syntax is rejected in variable annotations
 trait Container[a] = {
-  value: a  # error: Trait bodies are method-only; move structural fields to a shape declaration
+  value: a  # error: Trait bodies are method-only; use 'shape' for structural field contracts
 }
 let x: Container = { value: 42 }

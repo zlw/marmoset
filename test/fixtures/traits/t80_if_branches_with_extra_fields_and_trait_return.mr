@@ -1,6 +1,6 @@
 # T80: If branches with extra fields and trait return
 trait Named = {
-  name: Str  # error: Trait bodies are method-only; move structural fields to a shape declaration
+  name: Str  # error: Trait bodies are method-only; use 'shape' for structural field contracts
 }
 fn describe(age: Int) -> Named = {
   if (age < 30) {

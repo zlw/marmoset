@@ -1,6 +1,6 @@
 # T101: Supertrait chain with conflicting field types is rejected
 trait HasXInt = {
-  x: Int  # error: Trait bodies are method-only; move structural fields to a shape declaration
+  x: Int  # error: Trait bodies are method-only; use 'shape' for structural field contracts
 }
 trait HasXString = {
   x: Str

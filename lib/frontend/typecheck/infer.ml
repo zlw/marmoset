@@ -758,6 +758,11 @@ let error_at_stmt ~code ~message (stmt : AST.statement) =
 let warning_at_stmt ~code ~message (stmt : AST.statement) =
   { (error_at_stmt ~code ~message stmt) with severity = Diagnostic.Warning }
 
+let unknown_constructor_message (type_name : string) (constructor_name : string) : string =
+  Printf.sprintf "Unknown constructor: %s.%s" type_name constructor_name
+
+let unknown_type_message (type_name : string) : string = Printf.sprintf "Unknown type: %s" type_name
+
 (* Result type for inference *)
 type 'a infer_result = ('a, Diagnostic.t) result
 
@@ -1499,7 +1504,7 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
         | None ->
             Error
               (error_at ~code:"type-constructor"
-                 ~message:(Printf.sprintf "Unknown enum constructor: %s.%s" enum_name variant_name)
+                 ~message:(unknown_constructor_message enum_name variant_name)
                  expr)
         | Some variant -> (
             (* Infer types of constructor arguments *)
@@ -1520,10 +1525,7 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                   (* Get the enum definition to know type parameters *)
                   match Enum_registry.lookup enum_name with
                   | None ->
-                      Error
-                        (error_at ~code:"type-constructor"
-                           ~message:(Printf.sprintf "Unknown enum: %s" enum_name)
-                           expr)
+                      Error (error_at ~code:"type-constructor" ~message:(unknown_type_message enum_name) expr)
                   | Some enum_def -> (
                       (* Create fresh type variables for each type parameter *)
                       let fresh_vars = List.map (fun _ -> fresh_type_var ()) enum_def.type_params in
@@ -1582,7 +1584,7 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
             | None ->
                 Error
                   (error_at ~code:"type-constructor"
-                     ~message:(Printf.sprintf "Unknown enum constructor: %s.%s" enum_name variant_name)
+                     ~message:(unknown_constructor_message enum_name variant_name)
                      expr)
             | Some variant -> (
                 if List.length variant.fields <> 0 then
@@ -1596,10 +1598,7 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                   (* Get the enum definition to know type parameters *)
                   match Enum_registry.lookup enum_name with
                   | None ->
-                      Error
-                        (error_at ~code:"type-constructor"
-                           ~message:(Printf.sprintf "Unknown enum: %s" enum_name)
-                           expr)
+                      Error (error_at ~code:"type-constructor" ~message:(unknown_type_message enum_name) expr)
                   | Some enum_def ->
                       (* Create fresh type variables for each type parameter *)
                       let fresh_vars = List.map (fun _ -> fresh_type_var ()) enum_def.type_params in
@@ -1849,7 +1848,7 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
           | None ->
               Error
                 (error_at ~code:"type-constructor"
-                   ~message:(Printf.sprintf "Unknown enum constructor: %s.%s" enum_name method_name)
+                   ~message:(unknown_constructor_message enum_name method_name)
                    expr)
           | Some variant -> (
               match infer_args type_map env empty_substitution args with
@@ -1865,10 +1864,7 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                   else
                     match Enum_registry.lookup enum_name with
                     | None ->
-                        Error
-                          (error_at ~code:"type-constructor"
-                             ~message:(Printf.sprintf "Unknown enum: %s" enum_name)
-                             expr)
+                        Error (error_at ~code:"type-constructor" ~message:(unknown_type_message enum_name) expr)
                     | Some enum_def -> (
                         let fresh_vars = List.map (fun _ -> fresh_type_var ()) enum_def.type_params in
                         let param_subst = substitution_of_list (List.combine enum_def.type_params fresh_vars) in
@@ -4072,51 +4068,13 @@ and infer_statement type_map env stmt =
       Type_registry.register_shape { Type_registry.shape_name; shape_type_params; shape_fields = field_types };
       Ok (empty_substitution, TNull)
   | AST.EnumDef { name; type_params; variants } -> (
-      (* Register the enum in the registry *)
-      (* Convert type expressions to mono_types, treating type_params as TVar *)
+      (* Predeclare the type name so recursive constructor payloads can resolve. *)
+      Enum_registry.register { Enum_registry.name; type_params; variants = [] };
+      let type_bindings = List.map (fun type_param -> (type_param, TVar type_param)) type_params in
       let convert_type_expr (te : AST.type_expr) : (mono_type, Diagnostic.t) result =
-        let enum_err msg = Error (error ~code:"type-constructor" ~message:msg) in
-        let rec convert = function
-          | AST.TVar v -> Ok (TVar v)
-          | AST.TCon c ->
-              if List.mem c type_params then
-                Ok (TVar c)
-              else
-                Annotation.type_expr_to_mono_type (AST.TCon c)
-          | AST.TApp (con_name, args) -> (
-              if List.mem con_name type_params then
-                enum_err (Printf.sprintf "Type parameter '%s' cannot be used as type constructor" con_name)
-              else
-                match con_name with
-                | "list" -> (
-                    match args with
-                    | [ elem ] ->
-                        let* t = convert elem in
-                        Ok (TArray t)
-                    | _ -> enum_err "list expects 1 argument")
-                | "map" -> (
-                    match args with
-                    | [ k; v ] ->
-                        let* kt = convert k in
-                        let* vt = convert v in
-                        Ok (THash (kt, vt))
-                    | _ -> enum_err "map expects 2 arguments")
-                | _ -> enum_err (Printf.sprintf "Unknown type constructor in enum: %s" con_name))
-          | AST.TArrow (params, ret, is_effectful) ->
-              let* param_types = map_result convert params in
-              let* ret_type = convert ret in
-              let mk_fun arg ret = TFun (arg, ret, is_effectful) in
-              Ok (List.fold_right mk_fun param_types ret_type)
-          | AST.TTraitObject traits -> Ok (canonicalize_mono_type (TTraitObject traits))
-          | AST.TUnion types ->
-              let* converted = map_result convert types in
-              Ok (normalize_union converted)
-          | AST.TIntersection types ->
-              let* converted = map_result convert types in
-              Annotation.validate_intersection_type converted
-          | AST.TRecord (_fields, _row) -> enum_err "Record types not yet implemented in enum definition"
-        in
-        convert te
+        match Annotation.type_expr_to_mono_type_with type_bindings te with
+        | Ok typ -> Ok typ
+        | Error diag -> Error (error ~code:diag.code ~message:diag.message)
       in
 
       let variant_defs_result =
@@ -5886,7 +5844,7 @@ let infer_program ?(env = empty_env) ?state (program : AST.program) :
                                 if StringSet.mem enum_def.name seen_enums then
                                   Error
                                     (error ~code:"type-constructor"
-                                       ~message:(Printf.sprintf "Duplicate enum definition: %s" enum_def.name))
+                                       ~message:(Printf.sprintf "Duplicate type definition: %s" enum_def.name))
                                 else
                                   Ok
                                     ( seen_traits,
@@ -6233,7 +6191,7 @@ module Test = struct
     match infer_string "enum Dup = { A }\nenum Dup = { B }\n1" with
     | Error diag when is_code diag "type-constructor" ->
         let msg = diag.message in
-        let needle = "Duplicate enum definition: Dup" in
+        let needle = "Duplicate type definition: Dup" in
         let len_msg = String.length msg in
         let len_needle = String.length needle in
         let rec has_needle i =
@@ -6643,6 +6601,14 @@ module Test = struct
     match infer_string code with
     | Error _ -> true
     | Ok _ -> false
+
+  let%test "infer canonical sum type with recursive payloads" =
+    let code = "type Expr = { Num(Int), Add(Expr, Expr) }\nlet expr = Expr.Add(Expr.Num(1), Expr.Num(2))\nexpr" in
+    infers_to code (TEnum ("Expr", []))
+
+  let%test "infer canonical sum type with record payloads" =
+    let code = "type Event = { Click({ x: Int, y: Int }), Quit }\nEvent.Click({ x: 1, y: 2 })" in
+    infers_to code (TEnum ("Event", []))
 
   (* Match expression tests *)
   let%test "infer simple match with option" =

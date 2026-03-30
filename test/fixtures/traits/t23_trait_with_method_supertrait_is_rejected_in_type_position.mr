@@ -1,6 +1,6 @@
 # T23: Trait with method supertrait is rejected in type position
 trait Named = {
-  name: Str  # error: Trait bodies are method-only; move structural fields to a shape declaration
+  name: Str  # error: Trait bodies are method-only; use 'shape' for structural field contracts
 }
 trait Show[a] = {
   fn show(x: a) -> Str

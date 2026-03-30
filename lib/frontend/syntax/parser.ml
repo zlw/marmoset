@@ -872,7 +872,7 @@ and parse_trait_member_list (p : parser) : (parser * Surface.surface_method_sig 
     else if curr_token_is lp Token.Ident && peek_token_is lp Token.Colon then
       Error
         (add_error ~code:"parse-invalid-trait-member" lp
-           "Trait bodies are method-only; move structural fields to a shape declaration")
+           "Trait bodies are method-only; use 'shape' for structural field contracts")
     else if curr_token_is lp Token.EOF then
       Error (no_prefix_parse_fn_error lp lp.curr_token.token_type)
     else
@@ -1614,7 +1614,7 @@ and parse_labeled_call_record (p : parser) : (parser * Surface.surface_expr, par
       else
         Error (peek_error lp3 Token.RParen)
     else
-      Error (add_error ~code:"parse-unexpected-token" lp "expected labeled constructor argument")
+      Error (add_error ~code:"parse-unexpected-token" lp "expected labeled argument")
   in
   loop p [] None
 
@@ -1743,7 +1743,7 @@ and parse_record_or_hash_literal (p : parser) : (parser * Surface.surface_expr, 
       | None ->
           Error
             (add_error ~code:"parse-invalid-record" lp
-               "empty '{}' literal is not supported as a map/record literal in vNext")
+               "empty '{}' literal is not supported as a map or record literal")
     else
       match mode with
       | Some RecordMode -> (
@@ -3337,7 +3337,7 @@ let%test "parse field-only trait definition is rejected" =
       List.exists (fun (d : Diagnostic.t) -> d.code = "parse-invalid-trait-member") errs
       && List.exists
            (fun (d : Diagnostic.t) ->
-             String_utils.contains_substring ~needle:"move structural fields to a shape declaration" d.message)
+             String_utils.contains_substring ~needle:"use 'shape' for structural field contracts" d.message)
            errs
 
 let%test "parse trait member missing fn uses neutral member error" =

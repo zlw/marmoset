@@ -1,7 +1,7 @@
 # T15: Legacy mixed field+method trait syntax is rejected; split fields into a shape
 type Person = { name: Str, age: Int }
 trait Named = {
-  name: Str  # error: Trait bodies are method-only; move structural fields to a shape declaration
+  name: Str  # error: Trait bodies are method-only; use 'shape' for structural field contracts
 }
 trait Shown[a] = {
   fn show(x: a) -> Str

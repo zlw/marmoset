@@ -1,6 +1,6 @@
 # T12: Legacy field-style trait syntax is rejected before missing-field checking
 trait Named = {
-  name: Str  # error: Trait bodies are method-only; move structural fields to a shape declaration
+  name: Str  # error: Trait bodies are method-only; use 'shape' for structural field contracts
 }
 fn get_name[t: Named](x: t) -> Str = "ok"
 get_name({ age: 42 })

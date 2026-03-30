@@ -1,6 +1,6 @@
 # T95: Function accessing projected field on trait object
 trait Greetable = {
-  greeting: Str  # error: Trait bodies are method-only; move structural fields to a shape declaration
+  greeting: Str  # error: Trait bodies are method-only; use 'shape' for structural field contracts
 }
 fn get_greeting(g: Greetable) -> Str = g.greeting
 puts(get_greeting({ greeting: "hello", id: 1 }))  # output: hello

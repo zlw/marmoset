@@ -83,7 +83,7 @@ let lookup_enum_by_source_name (name : string) : Enum_registry.enum_def option =
       | None -> None)
 
 let trait_type_position_error (name : string) : string =
-  Printf.sprintf "Trait '%s' cannot be used as a type in vNext; use constrained function parameters instead" name
+  Printf.sprintf "Trait '%s' cannot be used as a type; use a constrained type parameter or Dyn[...] instead" name
 
 let type_position_error_for_constructor (name : string) : string =
   if Trait_registry.lookup_trait name <> None then
@@ -253,7 +253,7 @@ let rec merged_record_intersection_type (members : Types.mono_type list) : (Type
                       add_record_fields field_rest))
         in
         add_record_fields fields
-    | Types.TRecord (_, Some _) :: _ -> intersection_error "Open-record intersections are not supported in v1"
+    | Types.TRecord (_, Some _) :: _ -> intersection_error "Open-record intersections are not supported"
     | _ -> intersection_error "Internal error: expected only record members in record intersection merge"
   in
   let* () = add_fields members in
@@ -280,7 +280,7 @@ let validate_intersection_type (members : Types.mono_type list) : (Types.mono_ty
         Error
           (Diagnostic.error_no_span ~code:"type-annotation-invalid"
              ~message:
-               "Intersection types may not mix Dyn[...] members with non-Dyn members in v1. Split the annotation or use a single Dyn[...] trait set.")
+               "Intersection types may not mix Dyn[...] members with non-Dyn members. Split the annotation or use a single Dyn[...] trait set.")
       else
         match normalized_members with
         | many
@@ -295,13 +295,13 @@ let validate_intersection_type (members : Types.mono_type list) : (Types.mono_ty
             Error
               (Diagnostic.error_no_span ~code:"type-annotation-invalid"
                  ~message:
-                   "General callable intersections are not supported in v1 unless normalization leaves a single callable type.")
+                   "General callable intersections are not supported unless normalization leaves a single callable type.")
         | many ->
             Error
               (Diagnostic.error_no_span ~code:"type-annotation-invalid"
                  ~message:
                    (Printf.sprintf
-                      "Unsupported intersection in v1: %s. v1 supports compatible record meets, Dyn[...] trait-set merging, and intersections that simplify to a single member."
+                      "Unsupported intersection: %s. Supported forms are compatible record meets, Dyn[...] trait-set merging, and intersections that simplify to a single member."
                       (Types.to_string (Types.TIntersection many)))))
   | Types.TFun _ as callable -> Ok callable
   | other -> Ok other
@@ -369,7 +369,7 @@ let rec type_expr_to_mono_type_with
                           if enum_def.type_params = [] then
                             Ok (Types.TEnum (enum_def.name, []))
                           else
-                            ann_error (Printf.sprintf "Enum %s expects type arguments" enum_def.name)
+                            ann_error (Printf.sprintf "Type %s expects type arguments" enum_def.name)
                       | None -> (
                           match lookup_type_alias name with
                           | Some alias_info ->
@@ -416,7 +416,7 @@ let rec type_expr_to_mono_type_with
                       let actual_arity = List.length arg_types in
                       if expected_arity <> actual_arity then
                         ann_error
-                          (Printf.sprintf "Enum %s expects %d type argument(s), got %d" enum_def.name
+                          (Printf.sprintf "Type %s expects %d type argument(s), got %d" enum_def.name
                              expected_arity actual_arity)
                       else
                         Ok (Types.TEnum (enum_def.name, arg_types))
@@ -456,7 +456,7 @@ let rec type_expr_to_mono_type_with
           Error
             (Diagnostic.error_no_span ~code:"type-open-row-rejected"
                ~message:
-                 "Open row variables (e.g., '...row') in type annotations are not supported in v1. Use a closed record type annotation (e.g., '{ x: int, y: int }') or omit the annotation.")
+                 "Open row variables (e.g., '...row') are not supported in type annotations. Use a closed record type annotation (e.g., '{ x: int, y: int }') or omit the annotation.")
       | None ->
           let* field_types =
             map_result
@@ -805,19 +805,22 @@ let setup_trait_annotation_tests () =
 let%test "trait annotation is rejected in type position" =
   setup_trait_annotation_tests ();
   match type_expr_to_mono_type (Syntax.Ast.AST.TCon "Named") with
-  | Error d -> Diagnostics.String_utils.contains_substring ~needle:"use constrained function parameters" d.message
+  | Error d ->
+      Diagnostics.String_utils.contains_substring ~needle:"constrained type parameter or Dyn[...]" d.message
   | Ok _ -> false
 
 let%test "method trait annotation is rejected in type position" =
   setup_trait_annotation_tests ();
   match type_expr_to_mono_type (Syntax.Ast.AST.TCon "Show") with
-  | Error d -> Diagnostics.String_utils.contains_substring ~needle:"use constrained function parameters" d.message
+  | Error d ->
+      Diagnostics.String_utils.contains_substring ~needle:"constrained type parameter or Dyn[...]" d.message
   | Ok _ -> false
 
 let%test "trait type constructor application is rejected in type position" =
   setup_trait_annotation_tests ();
   match type_expr_to_mono_type (Syntax.Ast.AST.TApp ("Show", [ Syntax.Ast.AST.TCon "Int" ])) with
-  | Error d -> Diagnostics.String_utils.contains_substring ~needle:"use constrained function parameters" d.message
+  | Error d ->
+      Diagnostics.String_utils.contains_substring ~needle:"constrained type parameter or Dyn[...]" d.message
   | Ok _ -> false
 
 let%test "is_subtype_of: TVar only matches same TVar name" =

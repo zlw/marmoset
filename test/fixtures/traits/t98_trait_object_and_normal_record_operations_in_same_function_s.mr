@@ -1,6 +1,6 @@
 # T98: Trait object and normal record operations in same function scope
 trait Named = {
-  name: Str  # error: Trait bodies are method-only; move structural fields to a shape declaration
+  name: Str  # error: Trait bodies are method-only; use 'shape' for structural field contracts
 }
 fn process(x: Named, extra: Int) -> Str = {
   let n = x.name

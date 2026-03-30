@@ -3,6 +3,6 @@ trait Show[a] = {
   fn show(x: a) -> Str
 }
 trait Describable: Show = {
-  label: Str  # error: Trait bodies are method-only; move structural fields to a shape declaration
+  label: Str  # error: Trait bodies are method-only; use 'shape' for structural field contracts
 }
 let x: Describable = { label: "hi" }

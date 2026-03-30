@@ -1,6 +1,6 @@
 # T96: Function cannot access non-projected field on trait param
 trait Greetable = {
-  greeting: Str  # error: Trait bodies are method-only; move structural fields to a shape declaration
+  greeting: Str  # error: Trait bodies are method-only; use 'shape' for structural field contracts
 }
 fn get_id(g: Greetable) -> Int = g.id
 puts(get_id({ greeting: "hello", id: 1 }))

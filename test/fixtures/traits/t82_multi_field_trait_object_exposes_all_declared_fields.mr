@@ -1,6 +1,6 @@
 # T82: Multi-field trait object exposes all declared fields
 trait PersonLike = {
-  name: Str  # error: Trait bodies are method-only; move structural fields to a shape declaration
+  name: Str  # error: Trait bodies are method-only; use 'shape' for structural field contracts
   age: Int
 }
 let x: PersonLike = { name: "alice", age: 30, active: true }
