@@ -628,6 +628,7 @@ type field_mapping = {
   data_field_name : string; (* e.g., "Data0" *)
   data_field_type : Types.mono_type;
   go_type : string; (* e.g., "int64" *)
+  boxed : bool; (* Stored indirectly to break recursive Go struct cycles *)
 }
 
 type variant_field_map = (int * field_mapping) list (* position -> mapping *)
@@ -905,6 +906,39 @@ and emit_trait_object_type_defs (state : mono_state) (type_map : Infer.type_map)
     in
     "type marmosetDyn struct{ typeID string; payload any; witness any }\n\n" ^ witness_defs
 
+(* Enum payload slots box aggregate Go values so recursive sum types lower to
+   pointer-safe structs instead of invalid directly self-embedded Go structs. *)
+and enum_payload_needs_boxing
+    (state : mono_state)
+    ?(visited_named = StringSet.empty)
+    (t : Types.mono_type) : bool =
+  match normalize_type_for_codegen ~concrete_only:state.concrete_only t with
+  | Types.TEnum _ | Types.TRecord _ -> true
+  | Types.TNamed (name, args) as named_type ->
+      let key = mangle_type named_type in
+      if StringSet.mem key visited_named then
+        true
+      else
+        (match named_type_codegen_body_exn name args with
+        | `Product _ -> true
+        | `Wrapper representation ->
+            enum_payload_needs_boxing state ~visited_named:(StringSet.add key visited_named) representation)
+  | Types.TIntersection members ->
+      enum_payload_needs_boxing state ~visited_named (collapse_intersection_for_codegen_exn members)
+  | Types.TInt
+  | Types.TFloat
+  | Types.TBool
+  | Types.TString
+  | Types.TNull
+  | Types.TVar _
+  | Types.TFun _
+  | Types.TArray _
+  | Types.THash _
+  | Types.TRowVar _
+  | Types.TTraitObject _
+  | Types.TUnion _ ->
+      false
+
 (* Analyze enum fields and build layout mapping *)
 and analyze_enum_layout
     (state : mono_state) (enum_def : Typecheck.Enum_registry.enum_def) (type_args : Types.mono_type list) :
@@ -945,9 +979,17 @@ and analyze_enum_layout
     List.mapi
       (fun idx (pos, field_type) ->
         let field_name = Printf.sprintf "Data%d" idx in
+        let boxed = enum_payload_needs_boxing state field_type in
+        let go_type =
+          let base_go_type = type_to_go state field_type in
+          if boxed then
+            "*" ^ base_go_type
+          else
+            base_go_type
+        in
         ( pos,
           field_type,
-          { data_field_name = field_name; data_field_type = field_type; go_type = type_to_go state field_type } ))
+          { data_field_name = field_name; data_field_type = field_type; go_type; boxed } ))
       all_position_types
   in
 
@@ -4209,21 +4251,26 @@ and emit_match_enum ?target state type_map env scrutinee scrutinee_type enum_nam
                     (fun (v : Typecheck.Enum_registry.variant_def) -> v.name = variant_name)
                     enum_def.variants
                 in
-                let variant =
-                  match variant_opt with
-                  | Some v -> v
-                  | None -> failwith (Printf.sprintf "Unknown variant %s.%s" enum_name_pat variant_name)
-                in
+                (match variant_opt with
+                | Some _ -> ()
+                | None -> failwith (Printf.sprintf "Unknown variant %s.%s" enum_name_pat variant_name));
                 let tag_constant = Printf.sprintf "%s_%s_tag" go_type_name variant_name in
                 let layout = analyze_enum_layout state.mono enum_def type_args in
-                let bindings = emit_pattern_bindings layout variant_name field_patterns variant.fields in
+                let bindings = emit_pattern_bindings layout variant_name field_patterns in
                 let ind = indent_str state in
                 let binding_lines =
                   List.map
-                    (fun (var_name, data_field_name, _field_type) ->
+                    (fun (var_name, mapping) ->
                       let go_name = go_safe_ident var_name in
-                      Printf.sprintf "%s%s := %s.%s\n%s_ = %s\n" (ind ^ "        ") go_name scrutinee_var
-                        data_field_name (ind ^ "        ") go_name)
+                      let field_expr = Printf.sprintf "%s.%s" scrutinee_var mapping.data_field_name in
+                      let bound_expr =
+                        if mapping.boxed then
+                          "*" ^ field_expr
+                        else
+                          field_expr
+                      in
+                      Printf.sprintf "%s%s := %s\n%s_ = %s\n" (ind ^ "        ") go_name bound_expr
+                        (ind ^ "        ") go_name)
                     bindings
                   |> String.concat ""
                 in
@@ -4427,11 +4474,9 @@ and emit_match_arm_enum
         List.find_opt (fun (v : Typecheck.Enum_registry.variant_def) -> v.name = variant_name) enum_def.variants
       in
 
-      let variant =
-        match variant_opt with
-        | Some v -> v
-        | None -> failwith (Printf.sprintf "Unknown variant %s.%s" enum_name_pat variant_name)
-      in
+      (match variant_opt with
+      | Some _ -> ()
+      | None -> failwith (Printf.sprintf "Unknown variant %s.%s" enum_name_pat variant_name));
 
       (* Generate case for this tag *)
       let tag_constant = Printf.sprintf "%s_%s_tag" go_type_name variant_name in
@@ -4440,14 +4485,21 @@ and emit_match_arm_enum
       let layout = analyze_enum_layout state.mono enum_def type_args in
 
       (* Extract field bindings with layout mapping *)
-      let bindings = emit_pattern_bindings layout variant_name field_patterns variant.fields in
+      let bindings = emit_pattern_bindings layout variant_name field_patterns in
 
       (* Generate the case *)
       let binding_strs =
         List.map
-          (fun (var_name, data_field_name, _field_type) ->
+          (fun (var_name, mapping) ->
             let go_name = go_safe_ident var_name in
-            Printf.sprintf "\t\t%s := %s.%s\n\t\t_ = %s" go_name scrutinee_var data_field_name go_name)
+            let field_expr = Printf.sprintf "%s.%s" scrutinee_var mapping.data_field_name in
+            let bound_expr =
+              if mapping.boxed then
+                "*" ^ field_expr
+              else
+                field_expr
+            in
+            Printf.sprintf "\t\t%s := %s\n\t\t_ = %s" go_name bound_expr go_name)
           bindings
       in
 
@@ -4467,8 +4519,7 @@ and emit_match_arm_enum
 and emit_pattern_bindings
     (layout : enum_layout)
     (variant_name : string)
-    (field_patterns : AST.pattern list)
-    (_field_types : Types.mono_type list) : (string * string * Types.mono_type) list =
+    (field_patterns : AST.pattern list) : (string * field_mapping) list =
   (* Get the field mapping for this variant *)
   let variant_field_map = List.assoc variant_name layout.variant_maps in
 
@@ -4482,7 +4533,7 @@ and emit_pattern_bindings
           | AST.PVariable var_name ->
               (* Find the mapping for this position *)
               let _pos, mapping = List.find (fun (p, _) -> p = pos) variant_field_map in
-              Some (var_name, mapping.data_field_name, mapping.data_field_type)
+              Some (var_name, mapping)
           | AST.PWildcard -> None
           | _ -> failwith "Complex field patterns not yet supported")
         patterns
@@ -6022,7 +6073,14 @@ let emit_enum_type (state : mono_state) (enum_name : string) (type_args : Types.
                  let variant_field_map = List.assoc v.name layout.variant_maps in
                  let field_inits =
                    List.map
-                     (fun (pos, mapping) -> Printf.sprintf "%s: v%d" mapping.data_field_name pos)
+                     (fun (pos, mapping) ->
+                       let init_expr =
+                         if mapping.boxed then
+                           Printf.sprintf "&v%d" pos
+                         else
+                           Printf.sprintf "v%d" pos
+                       in
+                       Printf.sprintf "%s: %s" mapping.data_field_name init_expr)
                      variant_field_map
                    |> String.concat ", "
                  in
@@ -6050,7 +6108,13 @@ let emit_enum_type (state : mono_state) (enum_name : string) (type_args : Types.
                 (* Variant with fields - print name and fields *)
                 let field_formats = List.map (fun _ -> "%v") v.fields |> String.concat ", " in
                 let field_args =
-                  List.map (fun (_, mapping) -> Printf.sprintf "e.%s" mapping.data_field_name) variant_field_map
+                  List.map
+                    (fun (_, mapping) ->
+                      if mapping.boxed then
+                        Printf.sprintf "(*e.%s)" mapping.data_field_name
+                      else
+                        Printf.sprintf "e.%s" mapping.data_field_name)
+                    variant_field_map
                   |> String.concat ", "
                 in
                 Printf.sprintf "\tcase %s_%s_tag:\n\t\treturn fmt.Sprintf(\"%s(%s)\", %s)" go_type_name v.name

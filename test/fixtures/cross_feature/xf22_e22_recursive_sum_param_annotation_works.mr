@@ -1,5 +1,5 @@
-# XF22: E22: BUG: Recursive enum as param type annotation fails
-enum MyList = { Cons(Int, MyList), Nil }  # error: Unknown type constructor: MyList
+# XF22: E22: Recursive sum type works in parameter annotations
+type MyList = { Cons(Int, MyList), Nil }
 fn sum(xs: MyList) -> Int = {
   match xs {
     case MyList.Cons(h, t): h + sum(t)

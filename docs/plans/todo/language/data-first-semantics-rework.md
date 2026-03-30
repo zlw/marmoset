@@ -526,6 +526,8 @@ Relationship notes:
 
 ### Progress
 
+- 2026-03-30: Fixed Go codegen for recursive constructor-bearing sums by boxing aggregate enum payload slots in the emitted Go representation, then updating constructors, pattern bindings, and enum `String()` formatting to preserve source-level behavior.
+- 2026-03-30: Added integration coverage for recursive canonical `type` sums and recursive `enum` compatibility sugar, and converted two stale cross-feature negative fixtures into positive recursive-sum coverage now that the backend supports them end-to-end.
 - 2026-03-30: Read `CLAUDE.md`, confirmed worktree/branch state, and mapped the parser, lowering, type registry, inference, and codegen paths that currently enforce the `alias` versus nominal-`type` split.
 - 2026-03-30: Started the plan's migration sequence with docs alignment. Updating the plan and feature notes before checker work so the target surface is visible in-repo while implementation lands.
 - 2026-03-30: Completed the docs-alignment pass and verified the compiler unit suite still passes before the first commit.
@@ -544,6 +546,7 @@ Relationship notes:
 
 ### Findings
 
+- The frontend/typechecker already accepted recursive constructor-bearing sums after the earlier parser/checker pass, but Go codegen still emitted payload fields as direct values. That produced invalid self-recursive Go structs for cases like `type Expr = { Add(Expr, Expr) }` until the backend representation was made indirect for aggregate payloads.
 - The current parser/lowering pipeline still treats `type Name = { ... }` as a nominal named product and `alias Name = ...` as the only transparent naming surface.
 - Trait and inherent registries already canonicalize impl targets by resolved type, so once transparent `type` forms resolve to exact structural records, behavior slots can naturally key off exact structural types.
 - Wrapper boundaries are only partially enforced today: named-product field access/spread/pattern matching are structural by special case, while wrapper projection and constructor-pattern sugar are still missing.
@@ -563,6 +566,9 @@ Relationship notes:
 
 ### Verification
 
+- `dune build --root /Users/zlw/src/marmoset/marmoset ./bin/main.exe`
+- `./_build/default/bin/main.exe run test/fixtures/enums/e97_canonical_sum_type_recursive_payload.mr`
+- `./_build/default/bin/main.exe run test/fixtures/enums/e99_enum_sugar_recursive_payload.mr`
 - `make unit compiler`
 - `dune runtest --root /Users/zlw/src/marmoset/marmoset lib/frontend/syntax/ --force`
 - `dune runtest --root /Users/zlw/src/marmoset/marmoset lib/frontend/typecheck/ --force`
@@ -582,3 +588,6 @@ Relationship notes:
 - `git diff --check`
 - `make integration unions codegen codegen_mono codegen_stress cross_feature runtime operators purity function_model traits_inherent traits_impl vnext_canary symbols`
 - `make integration traits`
+- `make integration cross_feature/xf22_e22_recursive_sum_param_annotation_works.mr`
+- `make integration cross_feature/xf36_g38_inherent_method_on_recursive_sum_works.mr`
+- `make integration`

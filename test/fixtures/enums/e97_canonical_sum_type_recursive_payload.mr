@@ -1,0 +1,10 @@
+# E97: Canonical constructor-bearing type supports recursive payloads
+type Expr = { Num(Int), Add(Expr, Expr) }
+
+fn eval(expr: Expr) -> Int = match expr {
+  case Expr.Num(n): n
+  case Expr.Add(left, right): eval(left) + eval(right)
+}
+
+let expr = Expr.Add(Expr.Num(1), Expr.Add(Expr.Num(2), Expr.Num(3)))
+puts(eval(expr))  # output: 6

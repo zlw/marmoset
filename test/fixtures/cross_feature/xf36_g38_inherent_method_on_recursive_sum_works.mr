@@ -1,5 +1,5 @@
-# XF36: G38: BUG: Inherent method on user-defined enum fails type resolution
-enum MyList = { Cons(Int, MyList), Nil }  # error: Unknown type constructor: MyList
+# XF36: G38: Inherent methods on recursive sum types typecheck and codegen
+type MyList = { Cons(Int, MyList), Nil }
 impl MyList = {
   fn sum(xs: MyList) -> Int = {
     match xs {
