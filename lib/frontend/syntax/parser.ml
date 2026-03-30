@@ -869,12 +869,14 @@ and parse_trait_member_list (p : parser) : (parser * Surface.surface_method_sig 
     else if curr_token_is lp Token.Function then
       let* lp2, method_sig = parse_method_sig lp in
       loop lp2 (method_sig :: methods)
-    else if curr_token_is lp Token.Ident then
+    else if curr_token_is lp Token.Ident && peek_token_is lp Token.Colon then
       Error
         (add_error ~code:"parse-invalid-trait-member" lp
            "Trait bodies are method-only; move structural fields to a shape declaration")
-    else
+    else if curr_token_is lp Token.EOF then
       Error (no_prefix_parse_fn_error lp lp.curr_token.token_type)
+    else
+      Error (add_error ~code:"parse-invalid-trait-member" lp "Trait members must start with 'fn'")
   in
   loop p []
 
@@ -3331,7 +3333,30 @@ let%test "parse non-generic trait with supertraits" =
 let%test "parse field-only trait definition is rejected" =
   match parse ~file_id:"<test>" "trait Named = { name: Str }" with
   | Ok _ -> false
-  | Error _ -> true
+  | Error errs ->
+      List.exists (fun (d : Diagnostic.t) -> d.code = "parse-invalid-trait-member") errs
+      && List.exists
+           (fun (d : Diagnostic.t) ->
+             String_utils.contains_substring ~needle:"move structural fields to a shape declaration" d.message)
+           errs
+
+let%test "parse trait member missing fn uses neutral member error" =
+  match parse ~file_id:"<test>" "trait Printable[a] = { format(x: a) -> Str }" with
+  | Ok _ -> false
+  | Error errs ->
+      List.exists (fun (d : Diagnostic.t) -> d.code = "parse-invalid-trait-member") errs
+      && List.exists
+           (fun (d : Diagnostic.t) -> String_utils.contains_substring ~needle:"must start with 'fn'" d.message)
+           errs
+
+let%test "parse let in trait body uses neutral member error" =
+  match parse ~file_id:"<test>" "trait Printable[a] = { let x = 1 }" with
+  | Ok _ -> false
+  | Error errs ->
+      List.exists (fun (d : Diagnostic.t) -> d.code = "parse-invalid-trait-member") errs
+      && List.exists
+           (fun (d : Diagnostic.t) -> String_utils.contains_substring ~needle:"must start with 'fn'" d.message)
+           errs
 
 let%test "parse parameter constraint shorthand with ampersand" =
   match parse_surface ~file_id:"<test>" "fn describe(x: Named & Aged) -> Str = x.name" with
