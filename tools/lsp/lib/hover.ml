@@ -35,6 +35,16 @@ let identifier_at_offset ~(source : string) ~(offset : int) : string option =
   | Some (start, stop) -> Some (String.sub source start (stop - start + 1))
   | None -> None
 
+let make_hover_contents (type_str : string) =
+  let snippet =
+    if Diagnostics.String_utils.contains_substring ~needle:":" type_str then
+      type_str
+    else
+      Printf.sprintf "value: %s" type_str
+  in
+  Lsp_t.MarkupContent.create ~kind:Lsp_t.MarkupKind.Markdown
+    ~value:(Printf.sprintf "```marmoset\n%s\n```" snippet)
+
 (* The parser sets pos to the operator/paren position for Infix, Call,
    MethodCall, FieldAccess — not the leftmost token. This helper computes
    the true start by walking into left children recursively. *)
@@ -143,6 +153,84 @@ and find_expr_in_stmt (offset : int) (stmt : Ast.AST.statement) : Ast.AST.expres
 (* Find an expression at a given offset across the entire program *)
 let find_in_program (offset : int) (program : Ast.AST.program) : Ast.AST.expression option =
   List.find_map (find_expr_in_stmt offset) program
+
+let rec find_let_binding_in_stmt ~(source : string) ~(offset : int) (stmt : Ast.AST.statement) :
+    (string * Ast.AST.expression * int * int) option =
+  match stmt.stmt with
+  | Ast.AST.Let { name; value; _ } ->
+      if offset >= stmt.pos && offset <= value.pos then
+        match identifier_range_at_offset ~source ~offset with
+        | Some (start_pos, end_pos) when String.sub source start_pos (end_pos - start_pos + 1) = name ->
+            Some (name, value, start_pos, end_pos)
+        | _ -> None
+      else
+        None
+  | Ast.AST.Block stmts -> List.find_map (find_let_binding_in_stmt ~source ~offset) stmts
+  | Ast.AST.ImplDef { impl_methods; _ } ->
+      List.find_map
+        (fun (m : Ast.AST.method_impl) -> find_let_binding_in_stmt ~source ~offset m.impl_method_body)
+        impl_methods
+  | Ast.AST.InherentImplDef { inherent_methods; _ } ->
+      List.find_map
+        (fun (m : Ast.AST.method_impl) -> find_let_binding_in_stmt ~source ~offset m.impl_method_body)
+        inherent_methods
+  | Ast.AST.TraitDef { methods; _ } ->
+      List.find_map
+        (fun (m : Ast.AST.method_sig) ->
+          Option.bind m.method_default_impl (find_let_binding_in_expr ~source ~offset))
+        methods
+  | Ast.AST.ExpressionStmt e -> find_let_binding_in_expr ~source ~offset e
+  | Ast.AST.Return e -> find_let_binding_in_expr ~source ~offset e
+  | Ast.AST.EnumDef _ | Ast.AST.TypeDef _ | Ast.AST.ShapeDef _ | Ast.AST.DeriveDef _ | Ast.AST.TypeAlias _ -> None
+
+and find_let_binding_in_expr ~(source : string) ~(offset : int) (expr : Ast.AST.expression) :
+    (string * Ast.AST.expression * int * int) option =
+  match expr.expr with
+  | Ast.AST.If (cond, then_, else_) ->
+      first_some
+        (find_let_binding_in_expr ~source ~offset cond)
+        (first_some
+           (find_let_binding_in_stmt ~source ~offset then_)
+           (Option.bind else_ (find_let_binding_in_stmt ~source ~offset)))
+  | Ast.AST.Function { body; _ } -> find_let_binding_in_stmt ~source ~offset body
+  | Ast.AST.Infix (left, _, right) ->
+      first_some (find_let_binding_in_expr ~source ~offset left) (find_let_binding_in_expr ~source ~offset right)
+  | Ast.AST.Prefix (_, e) | Ast.AST.TypeCheck (e, _) | Ast.AST.FieldAccess (e, _) ->
+      find_let_binding_in_expr ~source ~offset e
+  | Ast.AST.Call (fn_expr, args) ->
+      first_some
+        (find_let_binding_in_expr ~source ~offset fn_expr)
+        (List.find_map (find_let_binding_in_expr ~source ~offset) args)
+  | Ast.AST.Index (arr, idx) ->
+      first_some (find_let_binding_in_expr ~source ~offset arr) (find_let_binding_in_expr ~source ~offset idx)
+  | Ast.AST.Array elts -> List.find_map (find_let_binding_in_expr ~source ~offset) elts
+  | Ast.AST.Hash pairs ->
+      List.find_map
+        (fun (k, v) ->
+          first_some (find_let_binding_in_expr ~source ~offset k) (find_let_binding_in_expr ~source ~offset v))
+        pairs
+  | Ast.AST.MethodCall { mc_receiver; mc_args; _ } ->
+      first_some
+        (find_let_binding_in_expr ~source ~offset mc_receiver)
+        (List.find_map (find_let_binding_in_expr ~source ~offset) mc_args)
+  | Ast.AST.Match (scrutinee, arms) ->
+      first_some
+        (find_let_binding_in_expr ~source ~offset scrutinee)
+        (List.find_map (fun (arm : Ast.AST.match_arm) -> find_let_binding_in_expr ~source ~offset arm.body) arms)
+  | Ast.AST.RecordLit (fields, spread) ->
+      first_some
+        (List.find_map
+           (fun (f : Ast.AST.record_field) ->
+             Option.bind f.field_value (find_let_binding_in_expr ~source ~offset))
+           fields)
+        (Option.bind spread (find_let_binding_in_expr ~source ~offset))
+  | Ast.AST.EnumConstructor (_, _, args) -> List.find_map (find_let_binding_in_expr ~source ~offset) args
+  | Ast.AST.BlockExpr stmts -> List.find_map (find_let_binding_in_stmt ~source ~offset) stmts
+  | Ast.AST.Identifier _ | Ast.AST.Integer _ | Ast.AST.Float _ | Ast.AST.Boolean _ | Ast.AST.String _ -> None
+
+let find_let_binding_in_program ~(source : string) ~(offset : int) (program : Ast.AST.program) :
+    (string * Ast.AST.expression * int * int) option =
+  List.find_map (find_let_binding_in_stmt ~source ~offset) program
 
 let rec find_pattern_in_expr ~(offset : int) ~(type_map : Infer.type_map) (expr : Ast.AST.expression) :
     (Ast.AST.pattern * Types.mono_type) option =
@@ -300,6 +388,21 @@ let format_hover_pattern
               in
               Some (Printf.sprintf "%s: %s" literal_text (format_type pattern_type))))
 
+let format_hover_binding
+    ~(type_var_user_names : type_var_user_name_map)
+    ~(type_map : Infer.type_map)
+    ~(environment : Infer.type_env)
+    ~(name : string)
+    (value : Ast.AST.expression) : string option =
+  match Infer.TypeEnv.find_opt name environment with
+  | Some poly -> Some (format_poly ~type_var_user_names ~name poly)
+  | None -> (
+      match Hashtbl.find_opt type_map value.id with
+      | Some mono ->
+          let norm = normalize_with_user_names ~type_var_user_names mono in
+          Some (Printf.sprintf "%s: %s" name (type_to_source ~type_var_user_names norm))
+      | None -> None)
+
 (* Provide hover info at a given cursor position *)
 let hover_at
     ~(source : string)
@@ -310,36 +413,39 @@ let hover_at
     ~(line : int)
     ~(character : int) : Lsp_t.Hover.t option =
   let offset = Lsp_utils.position_to_offset ~source ~line ~character in
-  match find_pattern_in_program ~offset ~type_map program with
-  | Some (pattern, scrutinee_type) -> (
-      match format_hover_pattern ~source ~offset ~type_var_user_names pattern scrutinee_type with
+  match find_let_binding_in_program ~source ~offset program with
+  | Some (name, value, pos, end_pos) -> (
+      match format_hover_binding ~type_var_user_names ~type_map ~environment ~name value with
       | None -> None
       | Some type_str ->
-          let contents =
-            Lsp_t.MarkupContent.create ~kind:Lsp_t.MarkupKind.Markdown
-              ~value:(Printf.sprintf "```marmoset\n%s\n```" type_str)
-          in
-          let pos, end_pos =
-            match identifier_range_at_offset ~source ~offset with
-            | Some (start, stop) -> (start, stop)
-            | None -> (pattern.pos, pattern.end_pos)
-          in
+          let contents = make_hover_contents type_str in
           let range = Lsp_utils.offset_range_to_lsp ~source ~pos ~end_pos in
           Some (Lsp_t.Hover.create ~contents:(`MarkupContent contents) ~range ()))
   | None -> (
-      match find_in_program offset program with
-      | None -> None
-      | Some expr -> (
-          match format_hover_type ~type_var_user_names ~type_map ~environment expr with
+      match find_pattern_in_program ~offset ~type_map program with
+      | Some (pattern, scrutinee_type) -> (
+          match format_hover_pattern ~source ~offset ~type_var_user_names pattern scrutinee_type with
           | None -> None
           | Some type_str ->
-              let contents =
-                Lsp_t.MarkupContent.create ~kind:Lsp_t.MarkupKind.Markdown
-                  ~value:(Printf.sprintf "```marmoset\n%s\n```" type_str)
+              let contents = make_hover_contents type_str in
+              let pos, end_pos =
+                match identifier_range_at_offset ~source ~offset with
+                | Some (start, stop) -> (start, stop)
+                | None -> (pattern.pos, pattern.end_pos)
               in
-              let effective_pos = effective_start_pos expr in
-              let range = Lsp_utils.offset_range_to_lsp ~source ~pos:effective_pos ~end_pos:expr.end_pos in
-              Some (Lsp_t.Hover.create ~contents:(`MarkupContent contents) ~range ())))
+              let range = Lsp_utils.offset_range_to_lsp ~source ~pos ~end_pos in
+              Some (Lsp_t.Hover.create ~contents:(`MarkupContent contents) ~range ()))
+      | None -> (
+          match find_in_program offset program with
+          | None -> None
+          | Some expr -> (
+              match format_hover_type ~type_var_user_names ~type_map ~environment expr with
+              | None -> None
+              | Some type_str ->
+                  let contents = make_hover_contents type_str in
+                  let effective_pos = effective_start_pos expr in
+                  let range = Lsp_utils.offset_range_to_lsp ~source ~pos:effective_pos ~end_pos:expr.end_pos in
+                  Some (Lsp_t.Hover.create ~contents:(`MarkupContent contents) ~range ()))))
 
 (* ============================================================
    Tests
@@ -451,10 +557,15 @@ let%test "hover on polymorphic function uses bracket syntax" =
   | _, Some h -> string_contains h.type_text "->" && h.highlighted = "id"
   | _, None -> false
 
-let%test "hover on let binding name: shows value type" =
+let%test "hover on let binding name shows named type and highlights binding" =
   match hover_info "let x = 42;" 0 4 with
-  | Some h -> string_contains h.type_text "Int"
+  | Some h -> string_contains h.type_text "x: Int" && h.highlighted = "x"
   | None -> false
+
+let%test "hover on let binding name for aggregate rhs stays on the name" =
+  match hover_marked "let |numbers = [1, 1 + 1, 4 - 1, 2 * 2, 2 + 3, 12 / 2]" with
+  | _, Some h -> string_contains h.type_text "numbers: List[Int]" && h.highlighted = "numbers"
+  | _, None -> false
 
 (* ============================================================
    Tests: function calls — identifier vs call result

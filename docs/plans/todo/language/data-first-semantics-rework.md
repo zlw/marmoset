@@ -526,6 +526,8 @@ Relationship notes:
 
 ### Progress
 
+- 2026-03-30: Fixed LSP hover on `let` binding names so definition-site hovers anchor to the binding identifier and format as `name: Type` instead of using the RHS expression span/type as a proxy.
+- 2026-03-30: Kept syntax-highlighted hover code blocks, but wrapped bare type-only payloads as valid Marmoset annotation snippets (`value: TypeExpr`) so editor hover highlighting can parse generic types like `Map[Str, Str]` instead of partially coloring them.
 - 2026-03-30: Fixed parser span propagation for nested composite expressions (`call`, `infix`, `if`, `match`, block/record/hash literals, method/index access, lambdas). Those nodes now record their own end span even when they become the left child of a larger expression, which fixes asymmetric LSP hover ranges in recursive call expressions like `fibonacci(x - 1) + fibonacci(x - 2)`.
 - 2026-03-30: Fixed LSP hover on match-pattern bindings in the showcase surface. Hover now traverses pattern nodes before falling back to expression hover, so bindings like `Option.Some(x)` and record-pattern punning such as `{ name:, ...rest }` report the bound field/payload type instead of the enclosing `match` expression.
 - 2026-03-30: Added recursive-sum edge-case coverage for the new Go representation: nested pretty-printing of recursive canonical `type` sums, recursive record payloads that contain the same sum, and the same pretty-print path through `enum` compatibility sugar. Added matching emitter unit tests so pointer boxing and `String()` dereference behavior are asserted directly in codegen tests.
