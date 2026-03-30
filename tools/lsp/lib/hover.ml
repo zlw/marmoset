@@ -40,7 +40,7 @@ let make_hover_contents (type_str : string) =
     if Diagnostics.String_utils.contains_substring ~needle:":" type_str then
       type_str
     else
-      Printf.sprintf "value: %s" type_str
+      Printf.sprintf "type Hover = %s" type_str
   in
   Lsp_t.MarkupContent.create ~kind:Lsp_t.MarkupKind.Markdown
     ~value:(Printf.sprintf "```marmoset\n%s\n```" snippet)
