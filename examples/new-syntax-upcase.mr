@@ -220,23 +220,9 @@ impl[a: Show] Show[Option[a]] = {
 impl Monkey = {
   fn hungry?(self: Monkey) -> Bool = self.bananas_eaten < 3
   fn alpha!(self: Monkey) -> Monkey =
-    Monkey(
-      id: self.id,
-      name: self.name,
-      age: self.age,
-      favorite_fruit: self.favorite_fruit,
-      bananas_eaten: self.bananas_eaten,
-      is_alpha: true,
-    )
+    { ...self, is_alpha: true, }
   fn with_fruit(self: Monkey, f: Fruit) -> Monkey =
-    Monkey(
-      id: self.id,
-      name: self.name,
-      age: self.age,
-      favorite_fruit: f,
-      bananas_eaten: self.bananas_eaten,
-      is_alpha: self.is_alpha,
-    )
+    { ...self, favorite_fruit: f, }
 }
 
 # ─── Match: All Pattern Forms ───────────────────────────────────
