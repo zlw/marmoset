@@ -38,6 +38,37 @@ let identifier_at_offset ~(source : string) ~(offset : int) : string option =
 let make_hover_contents (type_str : string) =
   `MarkedString Lsp_t.MarkedString.{ value = type_str; language = Some "marmoset" }
 
+let starts_with_at ~(source : string) ~(pos : int) ~(prefix : string) : bool =
+  let prefix_len = String.length prefix in
+  pos >= 0 && pos + prefix_len <= String.length source && String.sub source pos prefix_len = prefix
+
+let skip_ascii_spaces ~(source : string) ~(pos : int) : int =
+  let i = ref pos in
+  while !i < String.length source && Char.code source.[!i] <= 32 do
+    incr i
+  done;
+  !i
+
+let binding_name_range_in_stmt ~(source : string) ~(stmt : Ast.AST.statement) ~(name : string) :
+    (int * int) option =
+  let keyword_pos = skip_ascii_spaces ~source ~pos:stmt.pos in
+  let name_pos =
+    if starts_with_at ~source ~pos:keyword_pos ~prefix:"let" then
+      Some (skip_ascii_spaces ~source ~pos:(keyword_pos + 3))
+    else if starts_with_at ~source ~pos:keyword_pos ~prefix:"fn" then
+      Some (skip_ascii_spaces ~source ~pos:(keyword_pos + 2))
+    else
+      None
+  in
+  match name_pos with
+  | None -> None
+  | Some start_pos ->
+      let end_pos = start_pos + String.length name - 1 in
+      if end_pos < String.length source && String.sub source start_pos (String.length name) = name then
+        Some (start_pos, end_pos)
+      else
+        None
+
 (* The parser sets pos to the operator/paren position for Infix, Call,
    MethodCall, FieldAccess — not the leftmost token. This helper computes
    the true start by walking into left children recursively. *)
@@ -151,13 +182,12 @@ let rec find_let_binding_in_stmt ~(source : string) ~(offset : int) (stmt : Ast.
     (string * Ast.AST.expression * int * int) option =
   match stmt.stmt with
   | Ast.AST.Let { name; value; _ } ->
-      if offset >= stmt.pos && offset <= value.pos then
-        match identifier_range_at_offset ~source ~offset with
-        | Some (start_pos, end_pos) when String.sub source start_pos (end_pos - start_pos + 1) = name ->
+      let binding_range = binding_name_range_in_stmt ~source ~stmt ~name in
+      Option.bind binding_range (fun (start_pos, end_pos) ->
+          if offset >= start_pos && offset <= end_pos then
             Some (name, value, start_pos, end_pos)
-        | _ -> None
-      else
-        None
+          else
+            None)
   | Ast.AST.Block stmts -> List.find_map (find_let_binding_in_stmt ~source ~offset) stmts
   | Ast.AST.ImplDef { impl_methods; _ } ->
       List.find_map
@@ -564,6 +594,15 @@ let%test "hover on let binding name shows named type and highlights binding" =
 let%test "hover on let binding name for aggregate rhs stays on the name" =
   match hover_marked "let |numbers = [1, 1 + 1, 4 - 1, 2 * 2, 2 + 3, 12 / 2]" with
   | _, Some h -> string_contains h.type_text "numbers: List[Int]" && h.highlighted = "numbers"
+  | _, None -> false
+
+let%test "hover on top-level fn declaration name shows named function type and highlights name" =
+  match hover_marked "fn |print_book_name(book: Map[Str, Str]) => Unit = {\n  puts(book[\"title\"])\n}" with
+  | _, Some h ->
+      string_contains h.type_text "print_book_name:"
+      && string_contains h.type_text "Map[Str, Str]"
+      && string_contains h.type_text "=> Unit"
+      && h.highlighted = "print_book_name"
   | _, None -> false
 
 (* ============================================================
