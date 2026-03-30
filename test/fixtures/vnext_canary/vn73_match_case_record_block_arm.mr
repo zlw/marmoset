@@ -1,5 +1,5 @@
 # VN73: Record-pattern case arms may use block bodies
-alias Person = { name: Str, age: Int }
+type Person = { name: Str, age: Int }
 
 fn describe(r: Person) -> Str = match r {
   case { name:, age: }: {

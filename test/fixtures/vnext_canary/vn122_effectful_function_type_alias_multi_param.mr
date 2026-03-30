@@ -1,5 +1,5 @@
 # VN122: Effectful function type aliases support multiple parameters
-alias SideEffector[a] = (a, a) => a
+type SideEffector[a] = (a, a) => a
 
 fn apply_effect(f: SideEffector[Int], left: Int, right: Int) => Int = f(left, right)
 

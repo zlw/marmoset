@@ -143,7 +143,7 @@ module AST = struct
     | TypeAlias of type_alias_def (* transparent alias declaration *)
   [@@deriving show]
 
-  (* Phase 4.4: Type alias definition *)
+  (* Phase 4.4: Transparent type definition *)
   and type_alias_def = {
     alias_name : string;
     alias_type_params : string list;
@@ -373,7 +373,7 @@ module AST = struct
             else
               "[" ^ String.concat ", " alias_type_params ^ "]"
           in
-          Printf.sprintf "alias %s%s = %s" alias_name params_str (show_type_expr alias_body)
+          Printf.sprintf "type %s%s = %s" alias_name params_str (show_type_expr alias_body)
     and expression_to_string (e : expression) : string =
       match e.expr with
       | Identifier ident -> ident

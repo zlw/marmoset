@@ -55,7 +55,7 @@
 
 These areas already have a concrete plan and should not also live here as loose deferred bullets:
 
-- declaration-role split (`type` / `alias` / `shape` / `trait`), named-type identity/construction, effect freeze, and unions vs named sums:
+- declaration-role split (`type` / `shape` / `trait`), transparent vs constructor-bearing type forms, effect freeze, and unions vs named sums:
   [Pre-modules semantics foundation](docs/plans/todo/language/01_pre-modules-semantics-foundation.md)
 - feature/codegen parity, checker-to-emitter contract hardening, docs validation, generated-Go snapshots, and regression gates:
   [Pre-modules parity and hardening](docs/plans/todo/language/02_pre-modules-parity-and-hardening.md)

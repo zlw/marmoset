@@ -1,4 +1,4 @@
 # OP95: Comparison of record fields
-alias Point = { x: Int, y: Int }
+type Point = { x: Int, y: Int }
 let p: Point = { x: 10, y: 20 }
 puts(p.x < p.y)  # output: true

@@ -1249,7 +1249,7 @@ let%test "Phase6 prep: placeholder shorthand survives field access inside nested
   Trait_registry.clear ();
   match
     check_string ~env:(Builtins.prelude_env ()) ~file_id:"<test>"
-      "alias User = { id: Int }\nfn apply[a, b](x: a, f: (a) -> b) -> b = f(x)\nfn plus_one(n: Int) -> Int = n + 1\nfn render(n: Int) -> Str = \"#\" + n.show()\nlet user: User = { id: 7 }\nlet result = apply(user, render(plus_one(_.id)))\nresult"
+      "type User = { id: Int }\nfn apply[a, b](x: a, f: (a) -> b) -> b = f(x)\nfn plus_one(n: Int) -> Int = n + 1\nfn render(n: Int) -> Str = \"#\" + n.show()\nlet user: User = { id: 7 }\nlet result = apply(user, render(plus_one(_.id)))\nresult"
   with
   | Ok result -> result.result_type = Types.TString
   | Error _ -> false

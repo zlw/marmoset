@@ -33,6 +33,7 @@ module Surface = struct
     | STTransparent of surface_type_expr
     | STNamedProduct of surface_record_type_field list
     | STNamedWrapper of surface_type_expr
+    | STNamedSum of surface_variant_def list
 
   (* ── Surface patterns ── *)
   type surface_pattern_kind =
@@ -177,22 +178,11 @@ module Surface = struct
         is_effectful : bool;
         body : surface_expr_or_block;
       }
-    | SEnumDef of {
-        name : string;
-        type_params : string list;
-        variants : surface_variant_def list;
-        derive : AST.derive_trait list;
-      }
     | STypeDef of {
         type_name : string;
         type_type_params : string list;
         type_body : surface_type_def_kind;
         derive : AST.derive_trait list;
-      }
-    | SAliasDef of {
-        alias_name : string;
-        alias_type_params : string list;
-        alias_body : surface_type_expr;
       }
     | SShapeDef of {
         shape_name : string;

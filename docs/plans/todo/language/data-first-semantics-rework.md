@@ -537,6 +537,9 @@ Relationship notes:
 - 2026-03-30: Bulk-migrated the remaining structural-record fixtures from nominal constructor syntax to structural literals/spreads, then fixed the residual integration failures by rewriting the last stale wrapper/derive fixtures and updating active docs/examples to the data-first `type` surface.
 - 2026-03-30: Fixed derive expansion so user-trait derives can see transparent `type` aliases during shape-superconstraint checks before the main typechecker predeclaration pass runs.
 - 2026-03-30: Re-ran repo-level validation after the derive/doc/fixture cleanup. The compiler/unit target and the full integration suite are both green again.
+- 2026-03-30: Removed the legacy `alias` surface from the lexer/parser/tree-sitter/editor grammars, migrated the remaining executable fixtures/tests/examples to plain transparent `type`, and updated user-facing diagnostics so duplicate transparent names and arity errors now refer to `type` rather than `alias`.
+- 2026-03-30: Canonicalized constructor-bearing sum syntax in the surface AST: `type Name = { Variant(...) }` is now the primary parsed form, while `enum Name = { ... }` is retained only as compatibility sugar lowering through the same `STypeDef(STNamedSum ...)` path.
+- 2026-03-30: Re-ran the affected syntax/tooling/typecheck/unit/integration suites after the alias-removal migration; all suites are green on the branch.
 
 ### Findings
 
@@ -546,12 +549,13 @@ Relationship notes:
 - Backend test state is not fully self-isolating: repeated compiler setup through the builtin prelude path can leave trait/enum/inherent registry entries behind unless the relevant test clears them explicitly first.
 - User-trait derive expansion still depended on predeclared type information before the main inference pipeline had registered transparent `type` aliases. That gap broke derives whose superconstraints should be satisfied structurally by transparent record aliases.
 - After the bulk fixture rewrite, the remaining integration failures collapsed to one real compiler bug in derive expansion plus stale tests/examples that still treated transparent `type` names as constructor-bearing nominal wrappers.
+- The previous surface split was real: before this follow-up, `type Name = { Variant(...) }` and `enum Name = { ... }` shared downstream machinery but still entered lowering through different surface declarations, while `alias` remained as a separate transparent-name path. That split is now removed at the parser/surface-AST level.
 
 ### Caveats
 
 - The branch still documents and tests nominal named products in many places; those clusters will flip incrementally rather than all at once.
-- `enum` syntax currently coexists with `type`-based constructor syntax. The semantic rework is targeting the plan's `type`-first surface while preserving compatibility until the migration is complete.
-- `alias` syntax is still accepted at this stage. The parser/lowering work establishes the new `type` meaning first; removal of the old spelling will happen in a later migration step once the rest of the compiler and fixtures are aligned.
+- `enum` syntax still coexists with constructor-bearing `type` syntax, but only as compatibility sugar. The canonical surface representation is now the `type`-first sum form described in this plan.
+- Internal compiler data structures still use names such as `TypeAlias`/`alias_name` for transparent `type` declarations. That is now an implementation detail rather than accepted surface syntax.
 - Some fixture filenames still reflect the older nominal/alias terminology even when their contents now exercise the new transparent-`type` behavior; the semantic coverage is updated first, and path cleanup can happen separately if desired.
 
 ### Verification
@@ -563,5 +567,12 @@ Relationship notes:
 - `npm test` (in `/Users/zlw/src/marmoset/marmoset/tools/tree-sitter-marmoset`)
 - `dune runtest --root /Users/zlw/src/marmoset/marmoset tools/lsp/lib/ --force`
 - `make integration function_model/fm063_error_wrong_receiver_qualified_call.mr traits/t117_user_trait_derive_same_clause_satisfies_supertrait.mr traits_inherent/th01_inherent_method_on_type_alias_int.mr traits_impl/ti38_trait_impl_target_transparent_alias_is_rejected.mr traits_inherent/th49_inherent_impl_target_transparent_alias_is_rejected.mr vnext_canary/vn104_user_trait_derive_structural_field_supertrait_missing.mr vnext_canary/vn109_user_trait_derive_sees_late_supertrait_impl.mr vnext_canary/vn113_user_trait_derive_dyn_child_exposes_supertrait_method.mr vnext_canary/vn90_user_trait_derive_supertrait_already_impl_success.mr`
+- `make unit compiler`
+- `make integration`
+- `dune runtest --root /Users/zlw/src/marmoset/marmoset lib/frontend/syntax/ --force`
+- `npm run generate` (in `/Users/zlw/src/marmoset/marmoset/tools/tree-sitter-marmoset`)
+- `npm test` (in `/Users/zlw/src/marmoset/marmoset/tools/tree-sitter-marmoset`)
+- `dune runtest --root /Users/zlw/src/marmoset/marmoset tools/lsp/lib/ --force`
+- `dune runtest --root /Users/zlw/src/marmoset/marmoset lib/frontend/typecheck/ --force`
 - `make unit compiler`
 - `make integration`

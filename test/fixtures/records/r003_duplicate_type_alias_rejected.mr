@@ -1,4 +1,4 @@
 # R003: Duplicate type alias definition is rejected
-alias Point = { x: Int, y: Int }
-alias Point = { y: Int, x: Int }  # error: Duplicate type alias definition: Point
+type Point = { x: Int, y: Int }
+type Point = { y: Int, x: Int }  # error: Duplicate type definition: Point
 puts(1)

@@ -139,8 +139,8 @@ let%test "transparent type produces Struct symbol" =
   | [ s ] -> s.name = "Point" && s.kind = Lsp_t.SymbolKind.Struct
   | _ -> false
 
-let%test "legacy alias is surfaced as Struct symbol" =
-  let symbols = get_symbols "alias Point = { x: Int, y: Int }" in
+let%test "transparent type alias lowering is surfaced as Struct symbol" =
+  let symbols = get_symbols "type Point = { x: Int, y: Int }" in
   match symbols with
   | [ s ] -> s.name = "Point" && s.kind = Lsp_t.SymbolKind.Struct
   | _ -> false

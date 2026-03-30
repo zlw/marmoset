@@ -1,73 +1,5 @@
 [
   {
-    "type": "alias_definition",
-    "named": true,
-    "fields": {
-      "name": {
-        "multiple": false,
-        "required": true,
-        "types": [
-          {
-            "type": "identifier",
-            "named": true
-          }
-        ]
-      },
-      "type": {
-        "multiple": false,
-        "required": true,
-        "types": [
-          {
-            "type": "function_type",
-            "named": true
-          },
-          {
-            "type": "generic_type",
-            "named": true
-          },
-          {
-            "type": "intersection_type",
-            "named": true
-          },
-          {
-            "type": "parenthesized_type",
-            "named": true
-          },
-          {
-            "type": "record_type",
-            "named": true
-          },
-          {
-            "type": "trait_object_type",
-            "named": true
-          },
-          {
-            "type": "type_identifier",
-            "named": true
-          },
-          {
-            "type": "type_variable",
-            "named": true
-          },
-          {
-            "type": "union_type",
-            "named": true
-          }
-        ]
-      },
-      "type_params": {
-        "multiple": false,
-        "required": false,
-        "types": [
-          {
-            "type": "type_parameter_list",
-            "named": true
-          }
-        ]
-      }
-    }
-  },
-  {
     "type": "alternative_pattern",
     "named": true,
     "fields": {},
@@ -189,10 +121,6 @@
       "multiple": true,
       "required": false,
       "types": [
-        {
-          "type": "alias_definition",
-          "named": true
-        },
         {
           "type": "enum_definition",
           "named": true
@@ -3397,10 +3325,6 @@
       "required": false,
       "types": [
         {
-          "type": "alias_definition",
-          "named": true
-        },
-        {
           "type": "enum_definition",
           "named": true
         },
@@ -4166,10 +4090,6 @@
   },
   {
     "type": "_",
-    "named": false
-  },
-  {
-    "type": "alias",
     "named": false
   },
   {

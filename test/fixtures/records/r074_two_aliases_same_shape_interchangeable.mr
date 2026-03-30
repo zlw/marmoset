@@ -1,6 +1,6 @@
 # R074: Two aliases for same shape are interchangeable
-alias Point = { x: Int, y: Int }
-alias Vec2d = { x: Int, y: Int }
+type Point = { x: Int, y: Int }
+type Vec2d = { x: Int, y: Int }
 let p: Point = { x: 1, y: 2 }
 let v: Vec2d = p
 puts(v.x + v.y)  # output: 3

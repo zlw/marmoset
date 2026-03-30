@@ -44,7 +44,6 @@ module.exports = grammar({
         $.return_statement,
         $.enum_definition,
         $.type_definition,
-        $.alias_definition,
         $.shape_definition,
         $.trait_definition,
         $.impl_block,
@@ -213,15 +212,6 @@ module.exports = grammar({
         "{",
         repeat(choice($.enum_variant, ",")),
         "}",
-      ),
-
-    alias_definition: ($) =>
-      seq(
-        "alias",
-        field("name", $.identifier),
-        optional(field("type_params", $.type_parameter_list)),
-        "=",
-        field("type", $._type),
       ),
 
     // ── Types ───────────────────────────────────────────────────

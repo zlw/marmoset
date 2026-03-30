@@ -31,9 +31,7 @@ let lower_context_of_program (prog : Surface.surface_program) : lower_context =
       match ts.std_decl with
       | Surface.STraitDef { name; _ } | Surface.SShapeDef { shape_name = name; _ } ->
           { acc with constraint_names = StringSet.add name constraint_names }
-      | Surface.SEnumDef { name; _ }
-      | Surface.STypeDef { type_name = name; _ }
-      | Surface.SAliasDef { alias_name = name; _ } ->
+      | Surface.STypeDef { type_name = name; _ } ->
           { acc with type_names = StringSet.add name type_names }
       | _ -> acc)
     empty_lower_context prog
@@ -515,29 +513,6 @@ let lower_top_decl_with_ctx
              })
       in
       [ AST.mk_stmt ~pos ~end_pos ~file_id (AST.Let { name; value = fn_expr; type_annotation = None }) ]
-  | Surface.SEnumDef { name; type_params; variants; derive } ->
-      let bound_type_vars = bound_type_vars_of_names type_params in
-      let enum_stmt =
-        AST.mk_stmt ~pos ~end_pos ~file_id
-          (AST.EnumDef
-             { name; type_params; variants = List.map (lower_variant_with_bound_vars bound_type_vars) variants })
-      in
-      let derive_stmts =
-        if derive = [] then
-          []
-        else
-          let for_type =
-            if type_params = [] then
-              AST.TCon name
-            else
-              AST.TApp (name, List.map (fun p -> AST.TVar p) type_params)
-          in
-          [
-            AST.mk_stmt ~pos ~end_pos ~file_id
-              (AST.DeriveDef { derive_traits = derive; derive_for_type = for_type });
-          ]
-      in
-      enum_stmt :: derive_stmts
   | Surface.STypeDef { type_name; type_type_params; type_body; derive } ->
       let bound_type_vars = bound_type_vars_of_names type_type_params in
       let type_stmt =
@@ -568,6 +543,14 @@ let lower_top_decl_with_ctx
                    type_type_params;
                    type_body = AST.NamedTypeWrapper (lower_type_expr_with_bound_vars bound_type_vars wrapper_body);
                  })
+        | Surface.STNamedSum variants ->
+            AST.mk_stmt ~pos ~end_pos ~file_id
+              (AST.EnumDef
+                 {
+                   name = type_name;
+                   type_params = type_type_params;
+                   variants = List.map (lower_variant_with_bound_vars bound_type_vars) variants;
+                 })
       in
       let derive_stmts =
         if derive = [] then
@@ -585,18 +568,6 @@ let lower_top_decl_with_ctx
           ]
       in
       type_stmt :: derive_stmts
-  | Surface.SAliasDef { alias_name; alias_type_params; alias_body } ->
-      let bound_type_vars = bound_type_vars_of_names alias_type_params in
-      let alias_stmt =
-        AST.mk_stmt ~pos ~end_pos ~file_id
-          (AST.TypeAlias
-             {
-               alias_name;
-               alias_type_params;
-               alias_body = lower_type_expr_with_bound_vars bound_type_vars alias_body;
-             })
-      in
-      [ alias_stmt ]
   | Surface.SShapeDef { shape_name; shape_type_params; shape_fields } ->
       let bound_type_vars = bound_type_vars_of_names shape_type_params in
       let shape_stmt =
@@ -689,19 +660,20 @@ let%test "lower SLet integer" =
   | [ { AST.stmt = AST.Let { name = "x"; value = { AST.expr = AST.Integer 42L; _ }; _ }; _ } ] -> true
   | _ -> false
 
-let%test "lower SEnumDef" =
+let%test "lower STNamedSum type definition" =
   let id_supply = Id_supply.Id_supply.create 0 in
   let decl =
-    Surface.SEnumDef
+    Surface.STypeDef
       {
-        name = "Color";
-        type_params = [];
-        variants =
-          [
-            Surface.{ sv_name = "Red"; sv_fields = [] };
-            Surface.{ sv_name = "Green"; sv_fields = [] };
-            Surface.{ sv_name = "Blue"; sv_fields = [] };
-          ];
+        type_name = "Color";
+        type_type_params = [];
+        type_body =
+          Surface.STNamedSum
+            [
+              Surface.{ sv_name = "Red"; sv_fields = [] };
+              Surface.{ sv_name = "Green"; sv_fields = [] };
+              Surface.{ sv_name = "Blue"; sv_fields = [] };
+            ];
         derive = [];
       }
   in
@@ -727,10 +699,16 @@ let%test "lower SEnumDef" =
       true
   | _ -> false
 
-let%test "lower SAliasDef" =
+let%test "lower transparent type definition" =
   let id_supply = Id_supply.Id_supply.create 0 in
   let decl =
-    Surface.SAliasDef { alias_name = "Point"; alias_type_params = []; alias_body = Surface.STCon "Int" }
+    Surface.STypeDef
+      {
+        type_name = "Point";
+        type_type_params = [];
+        type_body = Surface.STTransparent (Surface.STCon "Int");
+        derive = [];
+      }
   in
   let result = lower_top_decl id_supply (mk_test_ts decl) in
   match result with
@@ -740,14 +718,15 @@ let%test "lower SAliasDef" =
       true
   | _ -> false
 
-let%test "alias type params lower lowercase names to TVars in alias bodies" =
+let%test "transparent type params lower lowercase names to TVars in type bodies" =
   let id_supply = Id_supply.Id_supply.create 0 in
   let decl =
-    Surface.SAliasDef
+    Surface.STypeDef
       {
-        alias_name = "Reducer";
-        alias_type_params = [ "a" ];
-        alias_body = Surface.STArrow ([ Surface.STCon "a"; Surface.STCon "a" ], Surface.STCon "a", false);
+        type_name = "Reducer";
+        type_type_params = [ "a" ];
+        type_body = Surface.STTransparent (Surface.STArrow ([ Surface.STCon "a"; Surface.STCon "a" ], Surface.STCon "a", false));
+        derive = [];
       }
   in
   let result = lower_top_decl id_supply (mk_test_ts decl) in
@@ -767,14 +746,15 @@ let%test "alias type params lower lowercase names to TVars in alias bodies" =
       true
   | _ -> false
 
-let%test "lower trait object type alias" =
+let%test "lower trait object transparent type" =
   let id_supply = Id_supply.Id_supply.create 0 in
   let decl =
-    Surface.SAliasDef
+    Surface.STypeDef
       {
-        alias_name = "Printer";
-        alias_type_params = [];
-        alias_body = Surface.STTraitObject [ "Show"; "Eq" ];
+        type_name = "Printer";
+        type_type_params = [];
+        type_body = Surface.STTransparent (Surface.STTraitObject [ "Show"; "Eq" ]);
+        derive = [];
       }
   in
   let result = lower_top_decl id_supply (mk_test_ts decl) in
@@ -782,19 +762,21 @@ let%test "lower trait object type alias" =
   | [ { AST.stmt = AST.TypeAlias { alias_body = AST.TTraitObject [ "Show"; "Eq" ]; _ }; _ } ] -> true
   | _ -> false
 
-let%test "lower intersection type alias" =
+let%test "lower intersection transparent type" =
   let id_supply = Id_supply.Id_supply.create 0 in
   let decl =
-    Surface.SAliasDef
+    Surface.STypeDef
       {
-        alias_name = "NamedAge";
-        alias_type_params = [];
-        alias_body =
-          Surface.STIntersection
-            [
-              Surface.STRecord ([ Surface.{ sf_name = "name"; sf_type = Surface.STCon "Str" } ], None);
-              Surface.STRecord ([ Surface.{ sf_name = "age"; sf_type = Surface.STCon "Int" } ], None);
-            ];
+        type_name = "NamedAge";
+        type_type_params = [];
+        type_body =
+          Surface.STTransparent
+            (Surface.STIntersection
+               [
+                 Surface.STRecord ([ Surface.{ sf_name = "name"; sf_type = Surface.STCon "Str" } ], None);
+                 Surface.STRecord ([ Surface.{ sf_name = "age"; sf_type = Surface.STCon "Int" } ], None);
+               ]);
+        derive = [];
       }
   in
   let result = lower_top_decl id_supply (mk_test_ts decl) in
@@ -927,14 +909,14 @@ let%test "lower SEOBBlock in match arm -> AST.BlockExpr" =
   | AST.BlockExpr [ { stmt = AST.ExpressionStmt { expr = AST.String "block"; _ }; _ } ] -> true
   | _ -> false
 
-let%test "SEnumDef with postfix derive generates DeriveDef" =
+let%test "STNamedSum with postfix derive generates DeriveDef" =
   let id_supply = Id_supply.Id_supply.create 0 in
   let decl =
-    Surface.SEnumDef
+    Surface.STypeDef
       {
-        name = "Color";
-        type_params = [];
-        variants = [];
+        type_name = "Color";
+        type_type_params = [];
+        type_body = Surface.STNamedSum [];
         derive =
           [
             AST.{ derive_trait_name = "Eq"; derive_trait_constraints = [] };
@@ -990,7 +972,7 @@ let%test "STypeDef lowering preserves derive target params" =
       {
         type_name = "Box";
         type_type_params = [ "t" ];
-        type_body = Surface.STNamedProduct [ Surface.{ sf_name = "value"; sf_type = Surface.STVar "t" } ];
+        type_body = Surface.STTransparent (Surface.STRecord ([ Surface.{ sf_name = "value"; sf_type = Surface.STVar "t" } ], None));
         derive =
           [
             AST.
@@ -1004,7 +986,7 @@ let%test "STypeDef lowering preserves derive target params" =
   let result = lower_top_decl id_supply (mk_test_ts decl) in
   match result with
   | [
-   { AST.stmt = AST.TypeDef { type_name = "Box"; _ }; _ };
+   { AST.stmt = AST.TypeAlias { alias_name = "Box"; _ }; _ };
    {
      AST.stmt =
        AST.DeriveDef

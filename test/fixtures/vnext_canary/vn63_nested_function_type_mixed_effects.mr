@@ -1,5 +1,5 @@
 # VN63: Nested function types preserve mixed pure/effectful arrows
-alias Runner = ((Int) -> Str) -> ((Int) => Str)
+type Runner = ((Int) -> Str) -> ((Int) => Str)
 
 let wrap: Runner = (f: (Int) -> Str) -> (n: Int) => f(n)
 

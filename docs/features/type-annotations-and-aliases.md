@@ -17,8 +17,8 @@ This doc covers:
 
 ## Status Note
 
-The language is being migrated away from the separate `alias` keyword.
-The target surface is:
+The separate `alias` keyword has been removed.
+The surface is:
 
 - `type Name = TypeExpr` for transparent names,
 - `type Name = Name(Payload)` for nominal wrappers,

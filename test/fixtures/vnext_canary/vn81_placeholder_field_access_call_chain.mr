@@ -1,5 +1,5 @@
 # VN81: Placeholder shorthand traverses field access and nested call chains
-alias User = { id: Int }
+type User = { id: Int }
 
 fn apply[a, b](x: a, f: (a) -> b) -> b = f(x)
 fn plus_one(n: Int) -> Int = n + 1

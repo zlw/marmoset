@@ -1,4 +1,4 @@
 # OP96: Multiplication of record fields
-alias Rect = { w: Int, h: Int }
+type Rect = { w: Int, h: Int }
 let r: Rect = { w: 10, h: 20 }
 puts(r.w * r.h)  # output: 200

@@ -7722,7 +7722,7 @@ let%test "emit record match pattern" =
       && string_contains code "x := __scrutinee_0.x"
   | Error _ -> false
 
-let%test "emit record match pattern for transparent record alias" =
+let%test "emit record match pattern for transparent record type" =
   match
     compile_string ~file_id:"<codegen>"
       "type Point = { x: Int, y: Int, z: Int }\nfn sum_rest(rest: { y: Int, z: Int }) -> Int = rest.y + rest.z\nlet p: Point = { x: 1, y: 2, z: 3 }\nmatch p {\n  case { x:, ...rest }: x + sum_rest(rest)\n  case _: 0\n}"
@@ -7732,7 +7732,7 @@ let%test "emit record match pattern for transparent record alias" =
       && string_contains code "rest := Record_y_int64_z_int64{y: __scrutinee_0.y, z: __scrutinee_0.z}"
   | Error _ -> false
 
-let%test "emit union match pattern for transparent record aliases narrows scrutinee in arm body" =
+let%test "emit union match pattern for transparent record types narrows scrutinee in arm body" =
   match
     compile_string ~file_id:"<codegen>"
       "type Left = { x: Int }\ntype Right = { y: Int }\nfn read(v: Left | Right) -> Int = {\n  match v {\n    case { x: }: v.x\n    case { y: }: v.y\n    case _: 0\n  }\n}\nlet left: Left = { x: 1 }\nread(left)"
@@ -7746,21 +7746,21 @@ let%test "emit union match pattern for transparent record aliases narrows scruti
       && string_contains code "return (v).y"
   | Error _ -> false
 
-let%test "alias emits named Go type" =
+let%test "transparent type emits named Go type" =
   match
-    compile_string ~file_id:"<codegen>" "alias Point = { x: Int, y: Int }\nlet p: Point = { x: 1, y: 2 }\np.x"
+    compile_string ~file_id:"<codegen>" "type Point = { x: Int, y: Int }\nlet p: Point = { x: 1, y: 2 }\np.x"
   with
   | Ok (code, _) ->
-      (* Should emit "type Point struct{...}" using alias name, not Record_... *)
+      (* Should emit "type Point struct{...}" using the declared type name, not Record_... *)
       string_contains code "type Point struct"
   | Error _ -> false
 
-let%test "alias used in record literal" =
+let%test "transparent type used in record literal" =
   match
-    compile_string ~file_id:"<codegen>" "alias Point = { x: Int, y: Int }\nlet p: Point = { x: 1, y: 2 }\np.x"
+    compile_string ~file_id:"<codegen>" "type Point = { x: Int, y: Int }\nlet p: Point = { x: 1, y: 2 }\np.x"
   with
   | Ok (code, _) ->
-      (* Record literal should use alias name *)
+      (* Record literal should use the declared type name *)
       string_contains code "Point{x:"
   | Error _ -> false
 
@@ -7783,19 +7783,19 @@ let%test "case-distinct record fields compile to distinct Go fields" =
   | Ok (code, _) -> string_contains code "type Record_X_int64_x_int64 struct{X int64; x int64}"
   | Error _ -> false
 
-let%test "type alias replaces generated shape name" =
+let%test "transparent type replaces generated shape name" =
   match
-    compile_string ~file_id:"<codegen>" "alias Point = { x: Int, y: Int }\nlet p: Point = { x: 1, y: 2 }\np.x"
+    compile_string ~file_id:"<codegen>" "type Point = { x: Int, y: Int }\nlet p: Point = { x: 1, y: 2 }\np.x"
   with
   | Ok (code, _) ->
-      (* Should NOT emit Record_x_int64_y_int64 when alias exists *)
+      (* Should NOT emit Record_x_int64_y_int64 when a declared type exists *)
       not (string_contains code "Record_x_int64_y_int64")
   | Error _ -> false
 
-let%test "nested record aliases use alias names inside enclosing shapes" =
+let%test "nested transparent record types use declared names inside enclosing shapes" =
   match
     compile_string ~file_id:"<codegen>"
-      "alias Inner = { v: Int }\nalias Outer = { i: Inner }\nlet i: Inner = { v: 1 }\nlet o: Outer = { i: i }\no.i.v"
+      "type Inner = { v: Int }\ntype Outer = { i: Inner }\nlet i: Inner = { v: 1 }\nlet o: Outer = { i: i }\no.i.v"
   with
   | Ok (code, _) -> string_contains code "type Outer struct{i Inner}"
   | Error _ -> false

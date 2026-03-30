@@ -60,7 +60,6 @@ and token_type =
   | Impl (* impl keyword for trait implementations *)
   | Derive (* derive keyword for automatic trait derivation *)
   | Type (* type keyword for named types *)
-  | Alias (* alias keyword for transparent type aliases *)
   | Shape (* shape keyword for named open structural types *)
   | Override (* override keyword for impl methods *)
   | Case (* case keyword for match arms *)
@@ -87,7 +86,6 @@ let lookup_ident s =
   | "impl" -> Impl
   | "derive" -> Derive
   | "type" -> Type
-  | "alias" -> Alias
   | "shape" -> Shape
   | "override" -> Override
   | "case" -> Case

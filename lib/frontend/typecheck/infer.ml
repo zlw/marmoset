@@ -105,7 +105,7 @@ let symbol_kind_tag = function
   | Param -> "param"
   | PatternVar -> "pattern-var"
   | TypeSym -> "type"
-  | TypeAliasSym -> "type-alias"
+  | TypeAliasSym -> "type"
   | ShapeSym -> "shape"
   | TraitSym -> "trait"
   | EnumSym -> "enum"
@@ -3748,7 +3748,7 @@ and infer_hash_pairs type_map env subst key_type val_type pairs =
 
 (* Shared receiver classifier for FieldAccess and MethodCall handlers.
    Determines what kind of entity a dotted-access receiver identifier refers to,
-   using a unified priority: bound variable > enum > type alias > trait > unknown. *)
+   using a unified priority: bound variable > enum > transparent type > trait > unknown. *)
 and classify_dotted_receiver (env : type_env) (name : string) (member_name : string) :
     [ `BoundVar | `EnumVariant | `EnumType | `TypeName of mono_type | `TraitName | `Unknown ] =
   if TypeEnv.mem name env then
@@ -4057,7 +4057,7 @@ and infer_statement type_map env stmt =
                 (error_at_stmt ~code:"type-invalid-wrapper"
                    ~message:
                      (Printf.sprintf
-                        "Named type '%s' cannot wrap a raw structural union in this milestone; use an alias for the union or a named sum type instead"
+                        "Named type '%s' cannot wrap a raw structural union in this milestone; use a transparent type for the union or a named sum type instead"
                         type_name)
                    stmt)
           | wrapper_type' ->
@@ -5728,7 +5728,7 @@ let predeclare_top_level_type_aliases (program : AST.program) : (unit, Diagnosti
             if StringSet.mem alias_def.alias_name seen then
               Error
                 (error_at_stmt ~code:"type-constructor"
-                   ~message:(Printf.sprintf "Duplicate type alias definition: %s" alias_def.alias_name)
+                   ~message:(Printf.sprintf "Duplicate type definition: %s" alias_def.alias_name)
                    stmt)
             else (
               Annotation.register_type_alias alias_def;
@@ -5842,8 +5842,7 @@ let infer_program ?(env = empty_env) ?state (program : AST.program) :
                         if StringSet.mem alias_def.alias_name seen_aliases then
                           Error
                             (error ~code:"type-constructor"
-                               ~message:
-                               (Printf.sprintf "Duplicate type alias definition: %s" alias_def.alias_name))
+                               ~message:(Printf.sprintf "Duplicate type definition: %s" alias_def.alias_name))
                         else
                           Ok
                             ( seen_traits,
@@ -6194,17 +6193,17 @@ module Test = struct
   let%test "return annotation unifies with record field type var" =
     infers_to "fn f(r) -> Str = r.name\nf({ name: \"hi\" })" TString
 
-  let%test "infer type alias for record annotation" =
-    infers_to "alias Point = { x: Int, y: Int }\nlet p: Point = { x: 1, y: 2 }\np.x" TInt
+  let%test "infer transparent type for record annotation" =
+    infers_to "type Point = { x: Int, y: Int }\nlet p: Point = { x: 1, y: 2 }\np.x" TInt
 
-  let%test "top-level let annotation can forward-reference a later type alias" =
-    infers_to "let p: Point = { x: 1, y: 2 }\nalias Point = { x: Int, y: Int }\np.x" TInt
+  let%test "top-level let annotation can forward-reference a later type" =
+    infers_to "let p: Point = { x: 1, y: 2 }\ntype Point = { x: Int, y: Int }\np.x" TInt
 
-  let%test "top-level fn signature can forward-reference a later type alias" =
-    infers_to "fn get_x(p: Point) -> Int = p.x\nalias Point = { x: Int, y: Int }\nget_x({ x: 1, y: 2 })" TInt
+  let%test "top-level fn signature can forward-reference a later type" =
+    infers_to "fn get_x(p: Point) -> Int = p.x\ntype Point = { x: Int, y: Int }\nget_x({ x: 1, y: 2 })" TInt
 
-  let%test "infer generic type alias annotation" =
-    infers_to "alias Box[a] = { value: a }\nlet p: Box[Str] = { value: \"ok\" }\np.value" TString
+  let%test "infer generic transparent type annotation" =
+    infers_to "type Box[a] = { value: a }\nlet p: Box[Str] = { value: \"ok\" }\np.value" TString
 
   let%test "duplicate trait definition in one program is rejected" =
     match
@@ -6244,11 +6243,11 @@ module Test = struct
         has_needle 0
     | _ -> false
 
-  let%test "duplicate type alias definition in one program is rejected" =
-    match infer_string "alias Point = { x: Int }\nalias Point = { y: Int }\n1" with
+  let%test "duplicate type definition in one program is rejected" =
+    match infer_string "type Point = { x: Int }\ntype Point = { y: Int }\n1" with
     | Error diag when is_code diag "type-constructor" ->
         let msg = diag.message in
-        let needle = "Duplicate type alias definition: Point" in
+        let needle = "Duplicate type definition: Point" in
         let len_msg = String.length msg in
         let len_needle = String.length needle in
         let rec has_needle i =

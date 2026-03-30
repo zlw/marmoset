@@ -2,7 +2,7 @@
 shape Named = {
   name: Str
 }
-alias NameOnly = { name: Str }
+type NameOnly = { name: Str }
 
 fn keep_named[t: Named](x: t) -> NameOnly = {
   { name: x.name }

@@ -204,16 +204,12 @@ let rec parse_surface_program (p : parser) : (parser * Surface.surface_program, 
       let* lp2, decl = parse_top_decl lp in
       let lp3 =
         match decl with
-        | Surface.STypeDef _ | Surface.SAliasDef _ | Surface.SShapeDef _ ->
+        | Surface.STypeDef _ | Surface.SShapeDef _ ->
             (* Declaration parsers leave us at the token after the body. *)
             if curr_token_is lp2 Token.Semicolon then
               next_token lp2
             else
               lp2
-        | Surface.SEnumDef { derive = _ :: _; _ } ->
-            (* postfix derive: parse_derive_trait_list leaves parser one past the
-               last trait name, matching the STypeDef convention — no extra advance *)
-            lp2
         | _ -> next_token lp2
       in
       let end_pos = max start_pos (token_end lp2.curr_token) in
@@ -232,7 +228,6 @@ and parse_top_decl (p : parser) : (parser * Surface.top_decl, parser) result =
   | Token.Trait -> parse_trait_definition p
   | Token.Impl -> parse_impl_definition p
   | Token.Type -> parse_type_definition p
-  | Token.Alias -> parse_alias_definition p
   | Token.Shape -> parse_shape_definition p
   | Token.Function when peek_token_is p Token.Ident -> parse_fn_decl_top p
   | _ -> parse_expression_top p
@@ -598,36 +593,18 @@ and parse_enum_definition (p : parser) : (parser * Surface.top_decl, parser) res
     else
       expect_peek p3 Token.Assign
   in
-  let* p5 =
-    if peek_token_is p4 Token.LBrace then
-      Ok (next_token p4)
-    else
-      expect_peek p4 Token.LBrace
-  in
-
-  (* Parse variants *)
-  let* p6, variants = parse_variant_list (next_token p5) in
-
-  (* Expect closing brace *)
-  let* p7 =
-    if curr_token_is p6 Token.RBrace then
-      Ok p6
-    else
-      expect_peek p6 Token.RBrace
-  in
-
-  (* Check for postfix derive: } derive Eq, Show *)
-  let* p8, derive =
-    if peek_token_is p7 Token.Derive && not (token_starts_line p7 p7.peek_token) then
-      let p8 = next_token p7 in
-      (* advance to 'derive' *)
-      let* p9, traits = parse_derive_trait_list (next_token p8) in
-      Ok (p9, traits)
-    else
-      Ok (p7, [])
-  in
-
-  Ok (p8, Surface.SEnumDef { name; type_params; variants; derive })
+  let p_body = next_token p4 in
+  let* p5, variants = parse_sum_type_body p_body in
+  let* p6, derive = parse_postfix_derive p5 in
+  Ok
+    ( p6,
+      Surface.STypeDef
+        {
+          type_name = name;
+          type_type_params = type_params;
+          type_body = Surface.STNamedSum variants;
+          derive;
+        } )
 
 and parse_type_param_list (p : parser) : (parser * string list, parser) result =
   let rec loop lp rev_params =
@@ -682,6 +659,16 @@ and parse_variant_list (p : parser) : (parser * Surface.surface_variant_def list
   in
   loop p []
 
+and parse_sum_type_body (p : parser) : (parser * Surface.surface_variant_def list, parser) result =
+  if curr_token_is p Token.LBrace then
+    let* p2, variants = parse_variant_list (next_token p) in
+    if curr_token_is p2 Token.RBrace then
+      Ok (next_token p2, variants)
+    else
+      Error (peek_error p2 Token.RBrace)
+  else
+    Error (peek_error p Token.LBrace)
+
 and parse_postfix_derive (p : parser) : (parser * AST.derive_trait list, parser) result =
   if curr_token_is p Token.Derive && not (token_starts_line p p.curr_token) then
     let* p2, traits = parse_derive_trait_list (next_token p) in
@@ -713,24 +700,6 @@ and parse_named_product_field_list (p : parser) :
       Error (no_prefix_parse_fn_error lp lp.curr_token.token_type)
   in
   loop p []
-
-and parse_alias_definition (p : parser) : (parser * Surface.top_decl, parser) result =
-  let* p2 = expect_peek p Token.Ident in
-  let alias_name = p2.curr_token.literal in
-  let* p3, alias_type_params =
-    if peek_token_is p2 Token.LBracket then
-      parse_type_param_list (next_token (next_token p2))
-    else
-      Ok (next_token p2, [])
-  in
-  let* p4 =
-    if curr_token_is p3 Token.Assign then
-      Ok p3
-    else
-      expect_peek p3 Token.Assign
-  in
-  let* p5, alias_body = parse_type_expr (next_token p4) in
-  Ok (p5, Surface.SAliasDef { alias_name; alias_type_params; alias_body })
 
 and parse_shape_definition (p : parser) : (parser * Surface.top_decl, parser) result =
   let* p2 = expect_peek p Token.Ident in
@@ -812,7 +781,7 @@ and parse_type_definition (p : parser) : (parser * Surface.top_decl, parser) res
       || curr_token_is p_members Token.Spread
       || (curr_token_is p_members Token.Ident && peek_token_is p_members Token.Colon)
     then (
-      let* p5, record_body = parse_record_type p_body in
+      let* p5, record_body = parse_type_expr p_body in
       let* p6, derive = parse_postfix_derive p5 in
       Ok
         ( p6,
@@ -824,9 +793,17 @@ and parse_type_definition (p : parser) : (parser * Surface.top_decl, parser) res
               derive;
             } ))
     else (
-      let* p5, variants = parse_variant_list p_members in
+      let* p5, variants = parse_sum_type_body p_body in
       let* p6, derive = parse_postfix_derive p5 in
-      Ok (p6, Surface.SEnumDef { name = type_name; type_params = type_type_params; variants; derive })))
+      Ok
+        ( p6,
+          Surface.STypeDef
+            {
+              type_name;
+              type_type_params;
+              type_body = Surface.STNamedSum variants;
+              derive;
+            } )))
   else (
     let* p5, transparent_body = parse_type_expr p_body in
     let* p6, derive = parse_postfix_derive p5 in
@@ -2997,7 +2974,7 @@ module Test = struct
     | Error _ -> false
     | Ok result -> (
         match result.program with
-        | [ { Surface.std_decl = Surface.SEnumDef { derive; _ }; _ } ] ->
+        | [ { Surface.std_decl = Surface.STypeDef { type_body = Surface.STNamedSum _; derive; _ }; _ } ] ->
             derive
             = [
                 AST.{ derive_trait_name = "Eq"; derive_trait_constraints = [] };
@@ -3071,6 +3048,47 @@ module Test = struct
         ] ->
         true
     | _ -> false
+
+  let%test "parse constructor-bearing type lowers to enum definition" =
+    let input = "type Event = { Click(Int), Quit }" in
+    match parse ~file_id:"<test>" input with
+    | Ok
+        [
+          {
+            AST.stmt =
+              AST.EnumDef
+                {
+                  name = "Event";
+                  type_params = [];
+                  variants = [ { AST.variant_name = "Click"; _ }; { AST.variant_name = "Quit"; _ } ];
+                };
+            _;
+          };
+        ] ->
+        true
+    | _ -> false
+
+  let%test "enum sugar canonicalizes to sum type surface" =
+    let input = "enum Event = { Click(Int), Quit }" in
+    match parse_surface ~file_id:"<test>" input with
+    | Error _ -> false
+    | Ok result -> (
+        match result.program with
+        | [
+         {
+           Surface.std_decl =
+             Surface.STypeDef
+               {
+                 type_name = "Event";
+                 type_type_params = [];
+                 type_body = Surface.STNamedSum [ { sv_name = "Click"; _ }; { sv_name = "Quit"; _ } ];
+                 derive = [];
+               };
+           _;
+         };
+        ] ->
+            true
+        | _ -> false)
 
   let%test "parse type definition preserves postfix derive target params" =
     let input = "type Box[t] = { value: t } derive Forwarder[u]" in
@@ -3585,30 +3603,30 @@ let%test "standalone derive statement is a parse error" =
   | Ok _ -> false
   | Error _ -> true
 
-let%test "standalone derive after alias is a parse error" =
-  match parse ~file_id:"<test>" "alias Point = Int\nderive Eq for Point" with
+let%test "standalone derive after type is a parse error" =
+  match parse ~file_id:"<test>" "type Point = Int\nderive Eq for Point" with
   | Ok _ -> false
   | Error _ -> true
 
-(* Phase 4.4: Type alias tests *)
+(* Phase 4.4: Transparent type tests *)
 let%test "parse type - just keyword" =
   let input = "type" in
   let lexer = Lexer.init input in
   let p = init ~file_id:"<test>" lexer in
   curr_token_is p Token.Type
 
-let%test "parse alias declaration with alias keyword" =
+let%test "parse alias declaration with alias keyword is rejected" =
   match parse ~file_id:"<test>" "alias Point = Int" with
-  | Ok _ -> true
-  | Error _ -> false
+  | Ok _ -> false
+  | Error _ -> true
 
 let%test "parse shape declaration with shape keyword" =
   match parse ~file_id:"<test>" "shape HasName = { name: Str }" with
   | Ok _ -> true
   | Error _ -> false
 
-let%test "parse simple alias" =
-  let input = "alias Point = Int" in
+let%test "parse simple transparent type" =
+  let input = "type Point = Int" in
   let lexer = Lexer.init input in
   match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
@@ -3626,8 +3644,8 @@ let%test "parse simple alias" =
       | _ -> false)
   | Error _ -> false
 
-let%test "parse alias with function type body" =
-  let input = "alias Endo = (Int) -> Int" in
+let%test "parse transparent type with function type body" =
+  let input = "type Endo = (Int) -> Int" in
   let lexer = Lexer.init input in
   match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
@@ -3642,8 +3660,8 @@ let%test "parse alias with function type body" =
       | _ -> false)
   | Error _ -> false
 
-let%test "parse Dyn trait object alias" =
-  let input = "alias Printer = Dyn[Show]" in
+let%test "parse Dyn trait object type" =
+  let input = "type Printer = Dyn[Show]" in
   let lexer = Lexer.init input in
   match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
@@ -3675,12 +3693,12 @@ let%test "parse Dyn multi-trait function parameter annotation" =
   | Error _ -> false
 
 let%test "parse Dyn rejects empty trait set" =
-  match parse ~file_id:"<test>" "alias Empty = Dyn[]" with
+  match parse ~file_id:"<test>" "type Empty = Dyn[]" with
   | Ok _ -> false
   | Error _ -> true
 
-let%test "parse alias with intersection body" =
-  let input = "alias NamedAge = { name: Str } & { age: Int }" in
+let%test "parse transparent type with intersection body" =
+  let input = "type NamedAge = { name: Str } & { age: Int }" in
   let lexer = Lexer.init input in
   match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
@@ -3696,7 +3714,7 @@ let%test "parse alias with intersection body" =
   | Error _ -> false
 
 let%test "parse type intersection binds tighter than union" =
-  let input = "alias Example = Int | Str & Bool" in
+  let input = "type Example = Int | Str & Bool" in
   let lexer = Lexer.init input in
   match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
@@ -3712,7 +3730,7 @@ let%test "parse type intersection binds tighter than union" =
   | Error _ -> false
 
 let%test "parse type intersection parenthesizes function members" =
-  let input = "alias Example = ((Int) -> Str) & Bool" in
+  let input = "type Example = ((Int) -> Str) & Bool" in
   let lexer = Lexer.init input in
   match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
@@ -3748,19 +3766,19 @@ let%test "parse function parameter annotation with function type" =
   | Error _ -> false
 
 let%test "parse function type requires parenthesized arrow syntax" =
-  match parse ~file_id:"<test>" "alias Endo = fn(Int) -> Int" with
+  match parse ~file_id:"<test>" "type Endo = fn(Int) -> Int" with
   | Ok _ -> false
   | Error _ -> true
 
-let%test "parse alias followed by let without semicolon" =
-  let input = "alias MyInt = Int\nlet x: MyInt = 1\nx" in
+let%test "parse transparent type followed by let without semicolon" =
+  let input = "type MyInt = Int\nlet x: MyInt = 1\nx" in
   let lexer = Lexer.init input in
   match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> List.length program = 3
   | Error _ -> false
 
-let%test "parse alias with generic param" =
-  let input = "alias Box[a] = a" in
+let%test "parse transparent type with generic param" =
+  let input = "type Box[a] = a" in
   let lexer = Lexer.init input in
   match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
@@ -3783,8 +3801,8 @@ let%test "parse named product constructor-call syntax" =
   | Ok _ -> true
   | Error _ -> false
 
-let%test "parse alias with multiple generic params" =
-  let input = "alias Pair[a, b] = Int" in
+let%test "parse transparent type with multiple generic params" =
+  let input = "type Pair[a, b] = Int" in
   let lexer = Lexer.init input in
   match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
@@ -3796,8 +3814,8 @@ let%test "parse alias with multiple generic params" =
       | _ -> false)
   | Error _ -> false
 
-let%test "parse record alias - empty" =
-  let input = "alias UnitLike = { }" in
+let%test "parse record type - empty" =
+  let input = "type UnitLike = { }" in
   let lexer = Lexer.init input in
   match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
@@ -3812,8 +3830,8 @@ let%test "parse record alias - empty" =
       | _ -> false)
   | Error _ -> false
 
-let%test "parse record alias - single field" =
-  let input = "alias Point = { x: Int }" in
+let%test "parse record type - single field" =
+  let input = "type Point = { x: Int }" in
   let lexer = Lexer.init input in
   match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
@@ -3834,8 +3852,8 @@ let%test "parse record alias - single field" =
       | _ -> false)
   | Error _ -> false
 
-let%test "parse record alias - multiple fields" =
-  let input = "alias Point = { x: Int, y: Int }" in
+let%test "parse record type - multiple fields" =
+  let input = "type Point = { x: Int, y: Int }" in
   let lexer = Lexer.init input in
   match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
@@ -3853,8 +3871,8 @@ let%test "parse record alias - multiple fields" =
       | _ -> false)
   | Error _ -> false
 
-let%test "parse record alias - with row variable" =
-  let input = "alias PointRow[r] = { x: Int, ...r }" in
+let%test "parse record type - with row variable" =
+  let input = "type PointRow[r] = { x: Int, ...r }" in
   let lexer = Lexer.init input in
   match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
@@ -3870,8 +3888,8 @@ let%test "parse record alias - with row variable" =
       | _ -> false)
   | Error _ -> false
 
-let%test "parse record alias - only row variable" =
-  let input = "alias Any[r] = { ...r }" in
+let%test "parse record type - only row variable" =
+  let input = "type Any[r] = { ...r }" in
   let lexer = Lexer.init input in
   match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (

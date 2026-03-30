@@ -278,16 +278,17 @@ let%test "test_lexer" =
   let actual = lex input in
   List.length actual = List.length expected && List.for_all2 Token.equal_ignoring_pos actual expected
 
-let%test "alias and shape lex as dedicated keywords" =
-  match lex "alias Name = Int\nshape HasName = { name: Str }\n" with
-  | { token_type = Alias; _ }
+let%test "type and shape lex as dedicated keywords while alias falls back to identifier" =
+  let tokens = lex "type Name = Int\nshape HasName = { name: Str }\nalias\n" in
+  match tokens with
+  | { token_type = Type; _ }
     :: { token_type = Ident; literal = "Name"; _ }
     :: { token_type = Assign; _ }
     :: { token_type = Ident; literal = "Int"; _ }
     :: { token_type = Shape; _ }
     :: { token_type = Ident; literal = "HasName"; _ }
     :: _ ->
-      true
+      List.exists (fun tok -> tok.token_type = Ident && tok.literal = "alias") tokens
   | _ -> false
 
 let%test "identifiers with digits" =

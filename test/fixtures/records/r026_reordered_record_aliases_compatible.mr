@@ -1,6 +1,6 @@
 # R026: Reordered record aliases are assignment-compatible
-alias Point = { x: Int, y: Int }
-alias Vec = { y: Int, x: Int }
+type Point = { x: Int, y: Int }
+type Vec = { y: Int, x: Int }
 let p: Point = { x: 1, y: 2 }
 let v: Vec = p
 puts(v.x + v.y)  # output: 3

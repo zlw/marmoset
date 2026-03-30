@@ -377,7 +377,7 @@ let rec type_expr_to_mono_type_with
                       if alias_info.alias_type_params = [] then
                         type_expr_to_mono_type_with type_bindings alias_info.alias_body
                       else
-                        ann_error (Printf.sprintf "Type alias %s expects type arguments" name)
+                        ann_error (Printf.sprintf "Type %s expects type arguments" name)
                   | None ->
                       if Trait_registry.lookup_trait name <> None then
                         ann_error (trait_type_position_error name)
@@ -428,7 +428,7 @@ let rec type_expr_to_mono_type_with
                   let actual_arity = List.length arg_types in
                   if expected_arity <> actual_arity then
                     ann_error
-                      (Printf.sprintf "Type alias %s expects %d type argument(s), got %d" con_name expected_arity
+                      (Printf.sprintf "Type %s expects %d type argument(s), got %d" con_name expected_arity
                          actual_arity)
                   else
                     let alias_bindings = List.combine alias_info.alias_type_params arg_types in
@@ -756,7 +756,7 @@ let%test "closed record annotation still works" =
   in
   type_expr_to_mono_type te = Ok (Types.TRecord ([ { Types.name = "x"; typ = Types.TInt } ], None))
 
-let%test "type alias annotation resolves non-generic alias" =
+let%test "transparent type annotation resolves non-generic type" =
   clear_type_aliases ();
   register_type_alias
     {
@@ -773,7 +773,7 @@ let%test "type alias annotation resolves non-generic alias" =
   type_expr_to_mono_type (Syntax.Ast.AST.TCon "Point")
   = Ok (Types.TRecord ([ { Types.name = "x"; typ = Types.TInt }; { Types.name = "y"; typ = Types.TInt } ], None))
 
-let%test "type alias annotation resolves generic alias application" =
+let%test "transparent type annotation resolves generic type application" =
   clear_type_aliases ();
   register_type_alias
     {

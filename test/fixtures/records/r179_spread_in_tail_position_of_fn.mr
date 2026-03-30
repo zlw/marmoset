@@ -1,5 +1,5 @@
 # R179: Spread in tail position of fn body
-alias Point = { x: Int, y: Int }
+type Point = { x: Int, y: Int }
 fn set_x(p: Point, v: Int) -> Point = { { ...p, x: v } }
 let p: Point = { x: 1, y: 2 }
 let q = set_x(p, 10)

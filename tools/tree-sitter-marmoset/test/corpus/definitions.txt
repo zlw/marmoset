@@ -327,22 +327,3 @@ type Event = { Click({ x: Int, y: Int }), Quit }
             type: (type_identifier))))
       (enum_variant
         name: (identifier)))))
-
-================================================================================
-Legacy alias definition
-================================================================================
-
-alias Point = { x: Int, y: Int }
-
---------------------------------------------------------------------------------
-
-(source_file
-  (alias_definition
-    name: (identifier)
-    type: (record_type
-      (record_type_field
-        name: (identifier)
-        type: (type_identifier))
-      (record_type_field
-        name: (identifier)
-        type: (type_identifier)))))

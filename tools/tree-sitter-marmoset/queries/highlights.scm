@@ -150,11 +150,8 @@
 (derive_clause
   trait: (identifier) @type)
 
-; Type definitions and legacy aliases
+; Type definitions
 (type_definition
-  name: (identifier) @type)
-
-(alias_definition
   name: (identifier) @type)
 
 ; Type parameters
