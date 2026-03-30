@@ -1,5 +1,5 @@
 # VN74: Standalone derive is a parse error
-enum Color = {
+type Color = {
   Red,
   Blue,
 }

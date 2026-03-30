@@ -1,4 +1,4 @@
-enum Wrap[a] = { Val(a) }
+type Wrap[a] = { Val(a) }
 
 impl[a] Wrap[a] = {
   fn convert[b](w: Wrap[a], f: (a) -> b) -> Wrap[b] = match w {

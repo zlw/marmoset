@@ -1,5 +1,5 @@
-# U34: Non-exhaustive match on enum with no patterns at all should error
-enum Option[a] = { Some(a), None }  # error: *
+# U34: Non-exhaustive match on named sum with no patterns at all should error
+type Option[a] = { Some(a), None }  # error: *
 let x = Option.Some(1)
 match x {
 }

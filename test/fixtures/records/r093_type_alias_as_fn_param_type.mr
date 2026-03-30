@@ -1,4 +1,4 @@
-# R093: Type alias as function param type
+# R093: Transparent type as function param type
 type Point = { x: Int, y: Int }
 fn sum_point(p: Point) -> Int = { p.x + p.y }
 let p: Point = { x: 10, y: 20 }

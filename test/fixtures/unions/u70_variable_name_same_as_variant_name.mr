@@ -1,5 +1,5 @@
 # U70: Variable name same as variant name
-enum Option[a] = { Some(a), None }
+type Option[a] = { Some(a), None }
 let some = 42
 let x = Option.Some(some)
 let out = match x {

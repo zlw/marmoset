@@ -15,7 +15,7 @@ Supported targets:
 - primitives,
 - exact structural types named with `type`,
 - constructor-bearing nominal wrappers,
-- enums,
+- constructor-bearing sums,
 - concrete type applications.
 
 ## Status Note

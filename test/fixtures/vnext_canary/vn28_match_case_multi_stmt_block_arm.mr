@@ -1,5 +1,5 @@
 # VN28: case arms may use multi-statement block bodies
-enum Switch = { On, Off }
+type Switch = { On, Off }
 
 fn describe(s: Switch) -> Str = match s {
   case Switch.On: {

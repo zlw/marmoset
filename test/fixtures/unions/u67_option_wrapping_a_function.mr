@@ -1,5 +1,5 @@
 # U67: Option wrapping a function
-enum Option[a] = { Some(a), None }
+type Option[a] = { Some(a), None }
 fn f(x: Int) -> Int = x * 2
 let wrapped = Option.Some(f)
 let out = match wrapped {

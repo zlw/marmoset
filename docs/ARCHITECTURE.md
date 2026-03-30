@@ -170,7 +170,7 @@ Emitter phases:
 2. Collect concrete instantiations from typed call sites and function-value flows.
 3. Compute free-variable capture sets for nested functions.
 4. Perform lambda lifting for nested functions with explicit environment parameters.
-5. Emit specialized functions + trait helpers + enum helpers + main body.
+5. Emit specialized functions + trait helpers + named-sum helpers + main body.
 
 Typed data dependency:
 - Emitter uses type map from typechecker (no re-inference in codegen path).

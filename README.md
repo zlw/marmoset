@@ -20,7 +20,8 @@ impl Alarm[Monkey] = {
   override fn ring!(x) = x.name + " spotted " + x.bananas.show() + " bananas"
 }
 
-puts(Monkey(name: "milo", bananas: 3).ring!())
+let milo: Monkey = { name: "milo", bananas: 3 }
+puts(milo.ring!())
 ```
 
 ```sh
@@ -130,12 +131,12 @@ puts(moved.bananas)  # 10
 puts(moved.vines)    # 2
 ```
 
-### 🎯 Enums & pattern matching
+### 🎯 Named sums & pattern matching
 
 Algebraic data types with exhaustive pattern matching:
 
 ```marmoset
-enum Snack = { Banana(Int), Coconut(Int) }
+type Snack = { Banana(Int), Coconut(Int) }
 
 fn calories(snack: Snack) -> Int = match snack {
   case Snack.Banana(count): count * 10
@@ -146,10 +147,12 @@ puts(calories(Snack.Banana(3)))   # 30
 puts(calories(Snack.Coconut(2)))  # 50
 ```
 
-Generic enums with methods — model your domain:
+Constructor-bearing `type` is the canonical sum surface. `enum` remains accepted as compatibility sugar.
+
+Generic sums with methods — model your domain:
 
 ```marmoset
-enum Vine[a] = { Holding(a), Dropped(a), Empty }
+type Vine[a] = { Holding(a), Dropped(a), Empty }
 
 impl Vine[a] = {
   fn occupied(self: Vine[a]) -> Bool = match self {
@@ -217,7 +220,7 @@ type Relic = { animal: Str, leaves: Int } derive Show, Drum
 
 fn announce(x: Dyn[Show]) -> Str = "found " + x.show()
 
-let relic = Relic(animal: "jaguar", leaves: 3)
+let relic: Relic = { animal: "jaguar", leaves: 3 }
 puts(relic.drum())        # boom
 puts(announce(relic))     # found { animal: jaguar, leaves: 3 }
 puts(announce("banana"))  # found banana
@@ -225,7 +228,7 @@ puts(announce("banana"))  # found banana
 
 ### 🛠️ Inherent methods
 
-Attach methods directly to types that own behavior — no trait ceremony:
+Register exact-type extension methods when a data shape has stable helpers:
 
 ```marmoset
 type Stash = { bananas: Int }
@@ -252,7 +255,7 @@ impl VineTag = {
   fn cheer(tag: VineTag, item: Show) -> Str = tag.prefix + item.show()
 }
 
-let tag = VineTag(prefix: "seen: ")
+let tag: VineTag = { prefix: "seen: " }
 
 puts(tag.render(3, _.show()))  # seen: 3
 puts(tag.cheer("banana"))      # seen: banana

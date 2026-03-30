@@ -1,4 +1,4 @@
-# R172: Type alias with derived eq used in function
+# R172: Transparent type with derived eq used in function
 type Point = { x: Int, y: Int } derive Eq
 fn check_eq(a: Point, b: Point) -> Bool = a.eq(b)
 let p1: Point = {x: 1, y: 2}

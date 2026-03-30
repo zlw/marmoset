@@ -1,4 +1,4 @@
-enum Maybe[a] = { Just(a), Nothing }
+type Maybe[a] = { Just(a), Nothing }
 
 impl[a] Maybe[a] = {
   fn is_just(m: Maybe[a]) -> Bool = match m {

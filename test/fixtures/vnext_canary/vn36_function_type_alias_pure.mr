@@ -1,4 +1,4 @@
-# VN36: Pure function types work in type aliases and annotations
+# VN36: Pure function types work in transparent typees and annotations
 type Formatter = (Int) -> Str
 
 fn apply_formatter(f: Formatter, n: Int) -> Str = f(n)

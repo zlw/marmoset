@@ -1,4 +1,4 @@
-enum Wrap[a] = { Val(a) }
+type Wrap[a] = { Val(a) }
 
 impl Wrap[Int] = {
   fn get(w: Wrap[Int]) -> Int = match w {

@@ -1,4 +1,4 @@
-enum Result[a, b] = { Ok(a), Err(b) }
+type Result[a, b] = { Ok(a), Err(b) }
 
 impl[a, b] Result[a, b] = {
   fn map[c](r: Result[a, b], f: (a) -> c) -> Result[c, b] = match r {

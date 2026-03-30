@@ -540,6 +540,7 @@ Relationship notes:
 - 2026-03-30: Removed the legacy `alias` surface from the lexer/parser/tree-sitter/editor grammars, migrated the remaining executable fixtures/tests/examples to plain transparent `type`, and updated user-facing diagnostics so duplicate transparent names and arity errors now refer to `type` rather than `alias`.
 - 2026-03-30: Canonicalized constructor-bearing sum syntax in the surface AST: `type Name = { Variant(...) }` is now the primary parsed form, while `enum Name = { ... }` is retained only as compatibility sugar lowering through the same `STypeDef(STNamedSum ...)` path.
 - 2026-03-30: Re-ran the affected syntax/tooling/typecheck/unit/integration suites after the alias-removal migration; all suites are green on the branch.
+- 2026-03-30: Canonicalized the active docs/examples and the broad fixture corpus to the data-first surface: README and feature docs now teach transparent `type` plus constructor-bearing `type` as the default model, examples use canonical `type` sums, and non-compatibility fixtures were migrated away from `enum`.
 
 ### Findings
 
@@ -550,6 +551,7 @@ Relationship notes:
 - User-trait derive expansion still depended on predeclared type information before the main inference pipeline had registered transparent `type` aliases. That gap broke derives whose superconstraints should be satisfied structurally by transparent record aliases.
 - After the bulk fixture rewrite, the remaining integration failures collapsed to one real compiler bug in derive expansion plus stale tests/examples that still treated transparent `type` names as constructor-bearing nominal wrappers.
 - The previous surface split was real: before this follow-up, `type Name = { Variant(...) }` and `enum Name = { ... }` shared downstream machinery but still entered lowering through different surface declarations, while `alias` remained as a separate transparent-name path. That split is now removed at the parser/surface-AST level.
+- After the fixture/docs audit, the remaining in-tree `enum` fixtures are all intentional compatibility coverage or historical/internal references rather than the default teaching surface. The active README/docs/examples no longer present `enum` as the primary way to define named sums.
 
 ### Caveats
 
@@ -557,6 +559,7 @@ Relationship notes:
 - `enum` syntax still coexists with constructor-bearing `type` syntax, but only as compatibility sugar. The canonical surface representation is now the `type`-first sum form described in this plan.
 - Internal compiler data structures still use names such as `TypeAlias`/`alias_name` for transparent `type` declarations. That is now an implementation detail rather than accepted surface syntax.
 - Some fixture filenames still reflect the older nominal/alias terminology even when their contents now exercise the new transparent-`type` behavior; the semantic coverage is updated first, and path cleanup can happen separately if desired.
+- Compatibility coverage still uses `enum` on purpose in dedicated tests. That is a surface-policy choice rather than a semantic split in the parser/lowering pipeline.
 
 ### Verification
 
@@ -576,3 +579,6 @@ Relationship notes:
 - `dune runtest --root /Users/zlw/src/marmoset/marmoset lib/frontend/typecheck/ --force`
 - `make unit compiler`
 - `make integration`
+- `git diff --check`
+- `make integration unions codegen codegen_mono codegen_stress cross_feature runtime operators purity function_model traits_inherent traits_impl vnext_canary symbols`
+- `make integration traits`

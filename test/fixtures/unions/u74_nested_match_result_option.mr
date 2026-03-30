@@ -1,6 +1,6 @@
 # U74: Nested match: outer=Result, inner=Option
-enum Option[a] = { Some(a), None }
-enum Result[a, e] = { Ok(a), Err(e) }
+type Option[a] = { Some(a), None }
+type Result[a, e] = { Ok(a), Err(e) }
 let x: Result[Option[Int], Str] = Result.Ok(Option.Some(42))
 let out = match x {
   case Result.Ok(inner): match inner {

@@ -1,4 +1,4 @@
-enum Either[a, b] = { Left(a), Right(b) }
+type Either[a, b] = { Left(a), Right(b) }
 
 impl[a, b] Either[a, b] = {
   fn is_left(e: Either[a, b]) -> Bool = match e {

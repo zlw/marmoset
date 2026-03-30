@@ -10,24 +10,24 @@ type JungleThing = Int | Str | Bool         # transparent union type
 type Reducer[a] = (a, a) -> a               # pure function type
 type SideEffector[a] = (a, a) => a          # effectful function type
 
-# ─── Enums ──────────────────────────────────────────────────────
-enum Option[a] = {
+# ─── Named Sums ─────────────────────────────────────────────────
+type Option[a] = {
   Some(a),
   None,
 }
 
-enum Result[a, e] = {
+type Result[a, e] = {
   Success(a),
   Failure(e),
 }
 
-enum Fruit = {
+type Fruit = {
   Banana,
   Mango,
   Coconut,
 } derive Eq, Show
 
-enum Mood = {
+type Mood = {
   Happy,
   Hangry,
   Philosophical,

@@ -1,5 +1,5 @@
 # XF07: B7: Match arms each return different record values
-enum Direction = { Left, Right }
+type Direction = { Left, Right }
 let d = Direction.Left
 let r = match d {
   case Direction.Left: { val: 100 }

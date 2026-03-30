@@ -1,4 +1,4 @@
-# VN52: Postfix derive on type aliases lowers to canonical derive obligations
+# VN52: Postfix derive on transparent typees lowers to canonical derive obligations
 type Point = { x: Int, y: Int } derive Eq
 
 let a: Point = {x: 1, y: 2}

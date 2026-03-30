@@ -1,4 +1,4 @@
-enum Color = { Red, Green, Blue }
+type Color = { Red, Green, Blue }
 
 trait Label[a] = { fn label(x: a) -> Str }
 

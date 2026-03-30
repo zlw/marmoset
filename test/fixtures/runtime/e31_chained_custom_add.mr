@@ -1,4 +1,4 @@
-enum Boxed = { Val(Int) }
+type Boxed = { Val(Int) }
 impl Num[Boxed] = {
   fn add(x: Boxed, y: Boxed) -> Boxed = x
   fn sub(x: Boxed, y: Boxed) -> Boxed = x

@@ -1,5 +1,5 @@
 # XF14: C13b: Trait impl match binding may be unused in arm body
-enum OptionInt = { Some(Int), None }
+type OptionInt = { Some(Int), None }
 trait Render[a] = {
   fn render(x: a) -> Str
 }

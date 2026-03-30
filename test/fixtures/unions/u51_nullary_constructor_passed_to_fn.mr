@@ -1,5 +1,5 @@
 # U51: Nullary constructor passed to function
-enum Option[a] = { Some(a), None }
+type Option[a] = { Some(a), None }
 let n: Option[Int] = Option.None()
 fn unwrap(x: Option[Int]) -> Int = {
   match x { case Option.Some(v): v case Option.None: 0 }

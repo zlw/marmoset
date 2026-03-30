@@ -1,5 +1,5 @@
-# U12: Match on Int result of prior enum match (chained)
-enum Option[a] = { Some(a), None }
+# U12: Match on Int result of prior named-sum match (chained)
+type Option[a] = { Some(a), None }
 let x: Option[Int] = Option.Some(10)
 let y: Option[Int] = Option.Some(20)
 let a = match x { case Option.Some(v): v case Option.None: 0 }

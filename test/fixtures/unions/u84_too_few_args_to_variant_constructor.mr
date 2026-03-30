@@ -1,4 +1,4 @@
 # U84: Too few args to variant constructor
-enum Pair = { Mk(Int, Int) }  # error: *
+type Pair = { Mk(Int, Int) }  # error: *
 let x = Pair.Mk(1)
 x

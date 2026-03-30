@@ -1,5 +1,5 @@
-# U32: Variable pattern as catch-all on enum
-enum Color = { Red, Green, Blue }
+# U32: Variable pattern as catch-all on named sum
+type Color = { Red, Green, Blue }
 let c = Color.Blue
 let out = match c {
   case Color.Red: "Red"

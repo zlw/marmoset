@@ -1,5 +1,5 @@
 # U60: Wildcard as first and only arm catches all
-enum Option[a] = { Some(a), None }
+type Option[a] = { Some(a), None }
 let x = Option.Some(42)
 let out = match x {
   case _: "caught"

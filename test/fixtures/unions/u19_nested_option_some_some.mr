@@ -1,5 +1,5 @@
 # U19: Nested Option: Some(Some(42))
-enum Option[a] = { Some(a), None }
+type Option[a] = { Some(a), None }
 let x: Option[Option[Int]] = Option.Some(Option.Some(42))
 let out = match x {
   case Option.Some(inner): match inner {

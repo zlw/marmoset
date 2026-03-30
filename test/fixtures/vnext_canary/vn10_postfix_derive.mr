@@ -1,5 +1,5 @@
-# VN10: Postfix derive on enum definition
-enum Color = {
+# VN10: Postfix derive on constructor-bearing type definition
+type Color = {
   Red,
   Green,
   Blue,

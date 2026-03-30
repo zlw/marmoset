@@ -1,4 +1,4 @@
-# TI01: Impl for record type via type alias
+# TI01: Impl for record type via transparent type
 type Point = { x: Int, y: Int }
 trait Show[a] = {
   fn show(x: a) -> Str

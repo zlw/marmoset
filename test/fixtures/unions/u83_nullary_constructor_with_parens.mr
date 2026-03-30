@@ -1,5 +1,5 @@
 # U83: Nullary constructor with parens
-enum Option[a] = { Some(a), None }
+type Option[a] = { Some(a), None }
 let a: Option[Int] = Option.None()
 let b = match a { case Option.Some(_): 0 case Option.None: 1 }
 puts(b)  # output: 1

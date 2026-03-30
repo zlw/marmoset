@@ -1,5 +1,5 @@
 # TH42: Inherent method with Go keyword 'default' param (none path)
-enum OptionInt = {
+type OptionInt = {
   Some(Int),
   None,
 }

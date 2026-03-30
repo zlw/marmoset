@@ -1,4 +1,4 @@
-enum Priority = { Low, High }
+type Priority = { Low, High }
 impl Eq[Priority] = {
   fn eq(x: Priority, y: Priority) -> Bool = false
 }

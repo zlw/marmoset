@@ -1,5 +1,5 @@
 # U38: Match on result of a prior match (via let)
-enum Option[a] = { Some(a), None }
+type Option[a] = { Some(a), None }
 let x: Option[Option[Int]] = Option.Some(Option.Some(99))
 let inner = match x {
   case Option.Some(v): v

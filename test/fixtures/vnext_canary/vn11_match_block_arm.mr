@@ -1,5 +1,5 @@
 # VN11: Match arm with block body using case keyword
-enum Direction = { North, South, East, West }
+type Direction = { North, South, East, West }
 fn describe(d: Direction) -> Str = match d {
   case Direction.North: { "going north" }
   case Direction.South: { "going south" }

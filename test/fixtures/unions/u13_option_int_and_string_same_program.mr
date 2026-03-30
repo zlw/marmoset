@@ -1,5 +1,5 @@
 # U13: Option[Int] and Option[Str] in same program
-enum Option[a] = { Some(a), None }
+type Option[a] = { Some(a), None }
 let a = Option.Some(42)
 let b = Option.Some("hello")
 let va = match a { case Option.Some(v): v case Option.None: 0 }

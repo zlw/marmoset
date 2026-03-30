@@ -1,5 +1,5 @@
 # U86: Wrong number of pattern fields
-enum Pair = { Mk(Int, Int) }  # error: *
+type Pair = { Mk(Int, Int) }  # error: *
 let x = Pair.Mk(1, 2)
 match x {
   case Pair.Mk(a): a

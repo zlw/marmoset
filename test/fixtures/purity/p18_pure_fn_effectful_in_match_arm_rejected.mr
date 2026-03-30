@@ -1,5 +1,5 @@
 # P18: Pure fn with effectful call in match-arm is rejected
-enum Choice = {
+type Choice = {
   Yes,
   No,
 }

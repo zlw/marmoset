@@ -1,4 +1,4 @@
-enum Color = { Red, Green, Blue }
+type Color = { Red, Green, Blue }
 impl Eq[Color] = {
   fn eq(x: Color, y: Color) -> Bool = true
 }

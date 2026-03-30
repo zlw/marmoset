@@ -1,5 +1,5 @@
 # U37: Two successive matches on the same scrutinee variable
-enum Option[a] = { Some(a), None }
+type Option[a] = { Some(a), None }
 let x = Option.Some(42)
 let a = match x { case Option.Some(v): v case Option.None: 0 }
 puts(a)  # output: 42

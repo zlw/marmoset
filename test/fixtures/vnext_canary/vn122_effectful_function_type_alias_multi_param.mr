@@ -1,4 +1,4 @@
-# VN122: Effectful function type aliases support multiple parameters
+# VN122: Effectful function transparent typees support multiple parameters
 type SideEffector[a] = (a, a) => a
 
 fn apply_effect(f: SideEffector[Int], left: Int, right: Int) => Int = f(left, right)

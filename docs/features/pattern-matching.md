@@ -55,7 +55,7 @@ let r = match p {
 ## Sub-Features and Use Cases
 
 - expression-level branching returning values,
-- destructuring payloads from enums/records,
+- destructuring payloads from constructor-bearing sums/records,
 - replacing fragile index/flag-based branching logic.
 
 ## Type-System Semantics
@@ -101,13 +101,13 @@ Cons:
 
 ### Candidate approaches
 
-1. Lower to Go `switch` for enums/primitives and `if/else` chains for record patterns (Chosen).
+1. Lower to Go `switch` for named sums/primitives and `if/else` chains for record patterns (Chosen).
 2. Build a custom decision-tree IR first.
 3. Runtime pattern engine with interpreted matcher.
 
 ### Approach 1 (Chosen)
 
-- enum match -> switch on tag,
+- named-sum match -> switch on tag,
 - primitive match -> switch on value,
 - record match -> emitted conditional chain with bindings.
 
@@ -173,7 +173,7 @@ Direct lowering keeps implementation and generated code straightforward while co
 
 Pros:
 - expressive branching,
-- integration with type narrowing and enum/record destructuring,
+- integration with type narrowing and sum/record destructuring,
 - strong compile-time validation opportunities.
 
 Cons:

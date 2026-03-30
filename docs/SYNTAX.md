@@ -78,6 +78,7 @@ ExprOrBlock    ::= Expr | Block
 - Top-level `fn` declarations and impl methods may omit the purity/return suffix. When omitted, the compiler infers both from the body.
 - Plain `type` expressions with no constructors are transparent exact type names.
 - Constructor-bearing `type` forms are nominal and require explicit construction/patterns.
+- `enum Name = { ... }` remains accepted compatibility sugar for constructor-bearing sum `type` declarations, but canonical docs use `type`.
 - `shape` introduces structural field constraints.
 - Union types use `|`: `Int | Str`.
 - Intersection types use `&`: `A & B`.
@@ -94,7 +95,7 @@ type UserId = Int
 type Reducer[a] = (a, a) -> a
 shape Named = { name: Str }
 
-enum Result[a, e] = {
+type Result[a, e] = {
   Success(a),
   Failure(e),
 } derive Eq, Show
@@ -267,12 +268,12 @@ Restrictions:
 type UserId = Int
 type Reducer[a] = (a, a) -> a
 
-enum Role = {
+type Role = {
   User,
   Admin,
 }
 
-enum Result[a, e] = {
+type Result[a, e] = {
   Success(a),
   Failure(e),
 }

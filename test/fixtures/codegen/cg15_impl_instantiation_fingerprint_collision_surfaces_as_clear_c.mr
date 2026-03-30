@@ -1,7 +1,7 @@
 # CG15: Canonical names keep the old impl collision shapes distinct
-enum B = { V }
-enum A[t] = { Wrap(t) }
-enum AB = { Wrap }
+type B = { V }
+type A[t] = { Wrap(t) }
+type AB = { Wrap }
 trait Show[x] = { fn show(x: x) -> Str }
 impl Show[AB] = {
   fn show(x: AB) -> Str = "AB"

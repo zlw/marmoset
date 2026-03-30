@@ -1,5 +1,5 @@
 # VN48: Omitted impl binders are inferred from all free vars in trait and inherent impl targets
-enum PairBox[a, b] = { Wrap(a, b) }
+type PairBox[a, b] = { Wrap(a, b) }
 
 trait Label[a] = {
   fn label(x: a) -> Str

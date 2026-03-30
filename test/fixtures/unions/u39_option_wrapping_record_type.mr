@@ -1,5 +1,5 @@
 # U39: Option wrapping record type
-enum Option[a] = { Some(a), None }
+type Option[a] = { Some(a), None }
 let p = { x: 1, y: 2 }
 let wrapped = Option.Some(p)
 let out = match wrapped {

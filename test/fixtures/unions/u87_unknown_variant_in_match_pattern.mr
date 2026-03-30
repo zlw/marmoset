@@ -1,5 +1,5 @@
 # U87: Unknown variant in match pattern
-enum Option[a] = { Some(a), None }  # error: *
+type Option[a] = { Some(a), None }  # error: *
 let x = Option.Some(1)
 match x {
   case Option.Some(v): v

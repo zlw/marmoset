@@ -1,4 +1,4 @@
-enum Shape = { Circle(Int), Rect(Int, Int) }
+type Shape = { Circle(Int), Rect(Int, Int) }
 
 impl Shape = {
   fn area(s: Shape) -> Int = match s {

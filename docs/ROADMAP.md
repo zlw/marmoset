@@ -94,7 +94,7 @@ These areas already have a concrete plan and should not also live here as loose 
 
 - spread/update optimization beyond copy semantics
 - escape-analysis-guided lowering and structural-shape canonicalization
-- enum layout tuning and constructor/match micro-optimizations
+- named-sum layout tuning and constructor/match micro-optimizations
 - optimized union representations and narrowing codegen
 - closure lowering with explicit environment structs
 - specialization deduping and explosion-analysis tooling

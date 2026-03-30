@@ -1,5 +1,5 @@
 # U20: Triple-nested Option: Some(Some(Some(1)))
-enum Option[a] = { Some(a), None }
+type Option[a] = { Some(a), None }
 let x: Option[Option[Option[Int]]] = Option.Some(Option.Some(Option.Some(1)))
 let out = match x {
   case Option.Some(a): match a {

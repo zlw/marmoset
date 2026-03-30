@@ -1,5 +1,5 @@
 # VN39: Omitted inherent impl binders are inferred from the generic impl target
-enum Result[a, b] = {
+type Result[a, b] = {
   Ok(a),
   Err(b),
 }
