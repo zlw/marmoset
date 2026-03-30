@@ -4,6 +4,8 @@ module Lsp_t = Linol_lsp.Types
 module Ast = Marmoset.Lib.Ast
 module Infer = Marmoset.Lib.Infer
 module Types = Marmoset.Lib.Types
+module Lexer = Marmoset.Lib.Lexer
+module Token = Marmoset.Lib.Token
 
 type type_var_user_name_map = Source_syntax.type_var_user_name_map
 
@@ -37,6 +39,197 @@ let identifier_at_offset ~(source : string) ~(offset : int) : string option =
 
 let make_hover_contents (type_str : string) =
   `MarkedString Lsp_t.MarkedString.{ value = type_str; language = Some "marmoset" }
+
+type declaration_hover_item = {
+  start_pos : int;
+  end_pos : int;
+  text : string;
+}
+
+let token_end_pos (tok : Token.token) : int = max tok.pos (tok.pos + String.length tok.literal - 1)
+
+let source_between_tokens ~(source : string) (start_tok : Token.token) (end_tok : Token.token) : string =
+  let start_pos = start_tok.pos in
+  let end_pos = min (String.length source - 1) (token_end_pos end_tok) in
+  if end_pos < start_pos then
+    ""
+  else
+    String.sub source start_pos (end_pos - start_pos + 1)
+
+let skip_balanced_group
+    (tokens : Token.token array) (start_idx : int) ~(open_ : Token.token_type) ~(close_ : Token.token_type) : int
+    =
+  let rec loop idx depth =
+    if idx >= Array.length tokens then
+      idx
+    else
+      let depth =
+        match tokens.(idx).token_type with
+        | tt when tt = open_ -> depth + 1
+        | tt when tt = close_ -> depth - 1
+        | _ -> depth
+      in
+      if depth = 0 then
+        idx + 1
+      else
+        loop (idx + 1) depth
+  in
+  loop start_idx 0
+
+let find_annotation_stop (tokens : Token.token array) ~(start_idx : int) ~(stop_tokens : Token.token_type list) :
+    int =
+  let rec loop idx paren_depth bracket_depth brace_depth =
+    if idx >= Array.length tokens then
+      idx
+    else
+      let tok = tokens.(idx) in
+      if paren_depth = 0 && bracket_depth = 0 && brace_depth = 0 && List.mem tok.token_type stop_tokens then
+        idx
+      else
+        let paren_depth, bracket_depth, brace_depth =
+          match tok.token_type with
+          | Token.LParen -> (paren_depth + 1, bracket_depth, brace_depth)
+          | Token.RParen -> (paren_depth - 1, bracket_depth, brace_depth)
+          | Token.LBracket -> (paren_depth, bracket_depth + 1, brace_depth)
+          | Token.RBracket -> (paren_depth, bracket_depth - 1, brace_depth)
+          | Token.LBrace -> (paren_depth, bracket_depth, brace_depth + 1)
+          | Token.RBrace -> (paren_depth, bracket_depth, brace_depth - 1)
+          | _ -> (paren_depth, bracket_depth, brace_depth)
+        in
+        loop (idx + 1) paren_depth bracket_depth brace_depth
+  in
+  loop start_idx 0 0 0
+
+let parse_fn_header_hover_items ~(source : string) (tokens : Token.token array) (fn_idx : int) :
+    declaration_hover_item list =
+  let items = ref [] in
+  let len = Array.length tokens in
+  if fn_idx + 1 >= len then
+    []
+  else
+    match tokens.(fn_idx + 1).token_type with
+    | Token.Ident ->
+        let name_tok = tokens.(fn_idx + 1) in
+        let idx = ref (fn_idx + 2) in
+        if !idx < len && tokens.(!idx).token_type = Token.LBracket then
+          idx := skip_balanced_group tokens !idx ~open_:Token.LBracket ~close_:Token.RBracket;
+        if !idx >= len || tokens.(!idx).token_type <> Token.LParen then
+          []
+        else (
+          incr idx;
+          let param_type_texts = ref [] in
+          while !idx < len && tokens.(!idx).token_type <> Token.RParen do
+            match tokens.(!idx).token_type with
+            | Token.Ident ->
+                let param_tok = tokens.(!idx) in
+                incr idx;
+                if !idx < len && tokens.(!idx).token_type = Token.Colon then (
+                  let annot_start = !idx + 1 in
+                  let stop_idx =
+                    find_annotation_stop tokens ~start_idx:annot_start ~stop_tokens:[ Token.Comma; Token.RParen ]
+                  in
+                  if annot_start < stop_idx then (
+                    let annot_end = tokens.(stop_idx - 1) in
+                    let type_text = source_between_tokens ~source tokens.(annot_start) annot_end in
+                    items :=
+                      {
+                        start_pos = param_tok.pos;
+                        end_pos = token_end_pos param_tok;
+                        text = param_tok.literal ^ ": " ^ type_text;
+                      }
+                      :: !items;
+                    param_type_texts := type_text :: !param_type_texts);
+                  idx := stop_idx)
+                else
+                  param_type_texts := "_" :: !param_type_texts
+            | Token.Comma -> incr idx
+            | _ -> incr idx
+          done;
+          if !idx < len && tokens.(!idx).token_type = Token.RParen then
+            incr idx;
+          (if !idx < len && (tokens.(!idx).token_type = Token.Arrow || tokens.(!idx).token_type = Token.FatArrow)
+           then
+             let arrow_token = tokens.(!idx) in
+             let ret_start = !idx + 1 in
+             let ret_stop =
+               find_annotation_stop tokens ~start_idx:ret_start
+                 ~stop_tokens:[ Token.Assign; Token.RBrace; Token.Function; Token.Override ]
+             in
+             if ret_start < ret_stop then
+               let ret_end = tokens.(ret_stop - 1) in
+               let return_text = source_between_tokens ~source tokens.(ret_start) ret_end in
+               let arrow_text =
+                 if arrow_token.token_type = Token.FatArrow then
+                   " => "
+                 else
+                   " -> "
+               in
+               let params_text = "(" ^ String.concat ", " (List.rev !param_type_texts) ^ ")" in
+               items :=
+                 {
+                   start_pos = name_tok.pos;
+                   end_pos = token_end_pos name_tok;
+                   text = name_tok.literal ^ ": " ^ params_text ^ arrow_text ^ return_text;
+                 }
+                 :: !items);
+          List.rev !items)
+    | _ -> []
+
+let parse_record_field_hover_items ~(source : string) (tokens : Token.token array) (kw_idx : int) :
+    declaration_hover_item list =
+  let len = Array.length tokens in
+  let idx = ref (kw_idx + 1) in
+  if !idx >= len || tokens.(!idx).token_type <> Token.Ident then
+    []
+  else (
+    incr idx;
+    if !idx < len && tokens.(!idx).token_type = Token.LBracket then
+      idx := skip_balanced_group tokens !idx ~open_:Token.LBracket ~close_:Token.RBracket;
+    if !idx < len && tokens.(!idx).token_type = Token.Assign then
+      incr idx;
+    if !idx >= len || tokens.(!idx).token_type <> Token.LBrace then
+      []
+    else (
+      incr idx;
+      let items = ref [] in
+      while !idx < len && tokens.(!idx).token_type <> Token.RBrace do
+        match tokens.(!idx).token_type with
+        | Token.Ident when !idx + 1 < len && tokens.(!idx + 1).token_type = Token.Colon ->
+            let field_tok = tokens.(!idx) in
+            let annot_start = !idx + 2 in
+            let stop_idx =
+              find_annotation_stop tokens ~start_idx:annot_start ~stop_tokens:[ Token.Comma; Token.RBrace ]
+            in
+            if annot_start < stop_idx then (
+              let annot_end = tokens.(stop_idx - 1) in
+              let type_text = source_between_tokens ~source tokens.(annot_start) annot_end in
+              items :=
+                {
+                  start_pos = field_tok.pos;
+                  end_pos = token_end_pos field_tok;
+                  text = field_tok.literal ^ ": " ^ type_text;
+                }
+                :: !items;
+              idx := stop_idx)
+        | Token.Comma -> incr idx
+        | _ -> incr idx
+      done;
+      List.rev !items))
+
+let find_declaration_header_hover ~(source : string) ~(offset : int) : declaration_hover_item option =
+  match identifier_range_at_offset ~source ~offset with
+  | None -> None
+  | Some _ ->
+      let tokens = Array.of_list (Lexer.lex source) in
+      let items = ref [] in
+      Array.iteri
+        (fun idx (tok : Token.token) ->
+          match tok.token_type with
+          | Token.Function -> items := parse_fn_header_hover_items ~source tokens idx @ !items
+          | Token.Shape | Token.Type -> items := parse_record_field_hover_items ~source tokens idx @ !items
+          | _ -> ())
+        tokens;
+      List.find_opt (fun item -> offset >= item.start_pos && offset <= item.end_pos) (List.rev !items)
 
 let starts_with_at ~(source : string) ~(pos : int) ~(prefix : string) : bool =
   let prefix_len = String.length prefix in
@@ -445,30 +638,38 @@ let hover_at
           let range = Lsp_utils.offset_range_to_lsp ~source ~pos ~end_pos in
           Some (Lsp_t.Hover.create ~contents ~range ()))
   | None -> (
-      match find_pattern_in_program ~offset ~type_map program with
-      | Some (pattern, scrutinee_type) -> (
-          match format_hover_pattern ~source ~offset ~type_var_user_names pattern scrutinee_type with
-          | None -> None
-          | Some type_str ->
-              let contents = make_hover_contents type_str in
-              let pos, end_pos =
-                match identifier_range_at_offset ~source ~offset with
-                | Some (start, stop) -> (start, stop)
-                | None -> (pattern.pos, pattern.end_pos)
-              in
-              let range = Lsp_utils.offset_range_to_lsp ~source ~pos ~end_pos in
-              Some (Lsp_t.Hover.create ~contents ~range ()))
+      match find_declaration_header_hover ~source ~offset with
+      | Some { start_pos; end_pos; text } ->
+          let contents = make_hover_contents text in
+          let range = Lsp_utils.offset_range_to_lsp ~source ~pos:start_pos ~end_pos in
+          Some (Lsp_t.Hover.create ~contents ~range ())
       | None -> (
-          match find_in_program offset program with
-          | None -> None
-          | Some expr -> (
-              match format_hover_type ~type_var_user_names ~type_map ~environment expr with
+          match find_pattern_in_program ~offset ~type_map program with
+          | Some (pattern, scrutinee_type) -> (
+              match format_hover_pattern ~source ~offset ~type_var_user_names pattern scrutinee_type with
               | None -> None
               | Some type_str ->
                   let contents = make_hover_contents type_str in
-                  let effective_pos = effective_start_pos expr in
-                  let range = Lsp_utils.offset_range_to_lsp ~source ~pos:effective_pos ~end_pos:expr.end_pos in
-                  Some (Lsp_t.Hover.create ~contents ~range ()))))
+                  let pos, end_pos =
+                    match identifier_range_at_offset ~source ~offset with
+                    | Some (start, stop) -> (start, stop)
+                    | None -> (pattern.pos, pattern.end_pos)
+                  in
+                  let range = Lsp_utils.offset_range_to_lsp ~source ~pos ~end_pos in
+                  Some (Lsp_t.Hover.create ~contents ~range ()))
+          | None -> (
+              match find_in_program offset program with
+              | None -> None
+              | Some expr -> (
+                  match format_hover_type ~type_var_user_names ~type_map ~environment expr with
+                  | None -> None
+                  | Some type_str ->
+                      let contents = make_hover_contents type_str in
+                      let effective_pos = effective_start_pos expr in
+                      let range =
+                        Lsp_utils.offset_range_to_lsp ~source ~pos:effective_pos ~end_pos:expr.end_pos
+                      in
+                      Some (Lsp_t.Hover.create ~contents ~range ())))))
 
 (* ============================================================
    Tests
@@ -603,6 +804,39 @@ let%test "hover on top-level fn declaration name shows named function type and h
       && string_contains h.type_text "Map[Str, Str]"
       && string_contains h.type_text "=> Unit"
       && h.highlighted = "print_book_name"
+  | _, None -> false
+
+let%test "hover on top-level fn param highlights only the param name" =
+  match hover_marked "fn print_book_name(|book: Map[Str, Str]) => Unit = {\n  puts(book[\"title\"])\n}" with
+  | _, Some h -> string_contains h.type_text "book: Map[Str, Str]" && h.highlighted = "book"
+  | _, None -> false
+
+let%test "hover on trait method name shows signature and highlights name" =
+  match hover_marked "trait Greeter[a] = {\n  fn |greet(x: a) -> Str\n}" with
+  | _, Some h -> string_contains h.type_text "greet: (a) -> Str" && h.highlighted = "greet"
+  | _, None -> false
+
+let%test "hover on trait method param highlights only the param name" =
+  match hover_marked "trait Greeter[a] = {\n  fn greet(|x: a) -> Str\n}" with
+  | _, Some h -> string_contains h.type_text "x: a" && h.highlighted = "x"
+  | _, None -> false
+
+let%test "hover on trait impl method param highlights only the param name" =
+  match
+    hover_marked
+      "trait Show[a] = {\n  fn show(x: a) -> Str\n}\nimpl Show[Int] = {\n  fn show(|x: Int) -> Str = \"hi\"\n}"
+  with
+  | _, Some h -> string_contains h.type_text "x: Int" && h.highlighted = "x"
+  | _, None -> false
+
+let%test "hover on inherent impl method param highlights only the param name" =
+  match hover_marked "impl Int = {\n  fn double(|x: Int) -> Int = x * 2\n}" with
+  | _, Some h -> string_contains h.type_text "x: Int" && h.highlighted = "x"
+  | _, None -> false
+
+let%test "hover on shape field highlights only the field name" =
+  match hover_marked "shape Named = { |name: Str, age: Int }\nfn greet[t: Named](x: t) -> Str = x.name" with
+  | _, Some h -> string_contains h.type_text "name: Str" && h.highlighted = "name"
   | _, None -> false
 
 (* ============================================================
