@@ -2,14 +2,14 @@
 
 ## Maintenance
 
-- Last verified: 2026-03-28
+- Last verified: 2026-03-30
 - Implementation status: Planning (not started)
 - Update trigger: Any prelude/stdlib, builtin, or module system change
 - Prerequisites: Module system (docs/plans/todo/language/03_module-system.md) must be implemented first
 
 ## Context
 
-Users must redefine `enum Option[a] = { Some(a), None }` and `enum Result[a, e] = { Success(a), Failure(e) }` in every file. There is no prelude. This plan creates `std/prelude.mr` with core named types and traits, auto-imported into every module. Under the accepted pre-modules semantics, those `enum` declarations remain valid surface syntax but lower to the same canonical named-sum `type` form.
+Users must redefine `type Option[a] = { Some(a), None }` and `type Result[a, e] = { Success(a), Failure(e) }` in every file. There is no prelude. This plan creates `std/prelude.mr` with core named types and traits, auto-imported into every module. `enum` remains accepted compatibility sugar, but the prelude and the surrounding plan should use the canonical constructor-bearing `type` surface.
 
 **Modules → Basic stdlib + prelude → FFI → Full stdlib via FFI**
 
@@ -29,9 +29,9 @@ Users must redefine `enum Option[a] = { Some(a), None }` and `enum Result[a, e] 
 
 | Item | Currently in | Why move |
 |------|-------------|----------|
-| `Ordering` named sum (surfaced as `enum`) | `builtins.ml` | Users shouldn't need to define this |
-| `Option[a]` named sum (surfaced as `enum`) | `enum_registry.ml` | Users redefine in every file today |
-| `Result[a, e]` named sum (surfaced as `enum`) | `enum_registry.ml` | Users redefine in every file today |
+| `Ordering` named sum (canonical `type`; `enum` still accepted as sugar) | `builtins.ml` | Users shouldn't need to define this |
+| `Option[a]` named sum (canonical `type`; `enum` still accepted as sugar) | `enum_registry.ml` | Users redefine in every file today |
+| `Result[a, e]` named sum (canonical `type`; `enum` still accepted as sugar) | `enum_registry.ml` | Users redefine in every file today |
 | `trait Eq[a]` | `builtins.ml` | Completeness — prelude is the source of truth |
 | `trait Show[a]` | `builtins.ml` | Same |
 | `trait Debug[a]` | `builtins.ml` | Same |
@@ -60,11 +60,11 @@ None of this is "magic" — it's all emitted as normal Go source. The Go code ju
 export Ordering, Option, Result
 export Eq, Show, Debug, Ord, Hash, Num, Neg
 
-# --- Core named sums (written with `enum` sugar) ---
+# --- Core named sums ---
 
-enum Ordering = { Less, Equal, Greater }
-enum Option[a] = { Some(a), None }
-enum Result[a, e] = { Success(a), Failure(e) }
+type Ordering = { Less, Equal, Greater }
+type Option[a] = { Some(a), None }
+type Result[a, e] = { Success(a), Failure(e) }
 
 # --- Core traits ---
 
@@ -117,7 +117,7 @@ Core declarations ~30 lines. Inherent methods for option/result added in Phase S
 
 **Auto-import mechanism:**
 1. Compiler compiles `std/prelude.mr` → named types and traits are registered in registries
-2. Extracts module signature (exported values, named types, aliases/shapes if any, traits)
+2. Extracts module signature (exported values, named types, transparent types/shapes if any, traits)
 3. For every other module: injects prelude signature into initial type_env
 4. `builtins.ml` then registers primitive impls (references traits now in registry from prelude)
 5. User code compiled with prelude env + builtin impls + builtin functions
@@ -136,7 +136,7 @@ Core declarations ~30 lines. Inherent methods for option/result added in Phase S
 4. User module compiled with combined env
 ```
 
-**Backwards compat / surface policy:** Existing test files that define `enum Option[a] = { Some(a), None }` still work. `enum` remains accepted surface sugar for named sums even though the canonical ownership model now lives under `type`.
+**Backwards compat / surface policy:** Existing test files that define `enum Option[a] = { Some(a), None }` still work. `enum` remains accepted surface sugar for named sums, but the canonical prelude source should use constructor-bearing `type`.
 
 **Write `std/prelude.mr`** with the content shown above.
 
@@ -238,7 +238,7 @@ impl[a, e] Result[a, e] = {
 }
 ```
 
-All real Marmoset — just `match`. Method-level generics (`map[b]`, `map_fail[f]`) are inferred at each call site, same as any polymorphic function. The explicit declaration attaches to the method name, consistent with `trait Show[a]` and the pre-modules semantics split where `Option` / `Result` are named types (surfaced here with `enum` sugar).
+All real Marmoset — just `match`. Method-level generics (`map[b]`, `map_fail[f]`) are inferred at each call site, same as any polymorphic function. The explicit declaration attaches to the method name, consistent with `trait Show[a]` and the current semantics where `Option` / `Result` are constructor-bearing named `type` declarations (`enum` remains compatibility sugar only).
 
 **Tests:**
 - `Option.Some(42).unwrap_or(0)` → 42
@@ -274,6 +274,6 @@ All real Marmoset — just `match`. Method-level generics (`map[b]`, `map_fail[f
 
 | File | Role |
 |------|------|
-| **New:** `std/prelude.mr` | Enums + traits + option/result methods |
+| **New:** `std/prelude.mr` | Core named sums + traits + option/result methods |
 | `lib/frontend/compiler.ml` | Prelude auto-import orchestration (module system component) |
 | `lib/frontend/typecheck/builtins.ml` | Remove enum/trait init; keep impl init + builtin functions |

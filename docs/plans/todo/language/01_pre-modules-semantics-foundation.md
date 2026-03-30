@@ -2,8 +2,8 @@
 
 ## Maintenance
 
-- Last verified: 2026-03-28
-- Implementation status: Planning (rewritten around accepted direction)
+- Last verified: 2026-03-30
+- Implementation status: Historical background only; declaration semantics superseded by `docs/plans/todo/language/data-first-semantics-rework.md`
 - Prerequisites:
   - `docs/plans/done/language/02_syntax-rework.md`
   - `docs/plans/done/language/03_syntax-rework-followup.md`
@@ -12,39 +12,50 @@
 
 Before modules, prelude, FFI, and stdlib freeze public APIs, Marmoset needs one stable semantics story for:
 
-- named types vs transparent aliases,
+- transparent types vs constructor-bearing named types,
 - structural shapes vs nominal traits,
 - effects and purity,
 - unions vs named sums.
 
-This milestone no longer treats the already-landed `Dyn[...]`, intersection, and user-trait-derive work as unsettled design space. Those features remain part of the background constraints for this plan, but the plan now focuses on the still-unresolved semantics that modules would otherwise have to build on top of.
+This file still matters as historical context for the shape/trait split, derive groundwork, and tooling cleanup that later plans depend on. Its declaration-surface semantics do not match the compiler anymore. Those semantics were superseded by `docs/plans/todo/language/data-first-semantics-rework.md`, and downstream plans should follow the current surface described there.
 
-The accepted direction for this milestone is:
+The current accepted direction is:
 
 ```mr
 type User = { first_name: Str, last_name: Str }
-type UserId = Int
+type UserId = UserId(Int)
 type Color = { Red, Blue, Green }
 type UserExternalId = { IntId(Int), StringId(Str) }
 
-alias Users = List[User]
+type Users = List[User]
 shape HasName = { first_name: Str }
 
-trait Named[T] = {
-  fn name(self: T) -> Str
+trait Named[a] = {
+  fn name(self: a) -> Str
 }
 ```
 
 In this model:
 
-- `type` always introduces a distinct named type with identity,
-- `alias` is the only transparent synonym form,
+- plain `type Name = TypeExpr` is transparent/exact,
+- constructor-bearing `type` forms introduce nominal wrappers or sums,
+- `enum Name = { ... }` remains accepted compatibility sugar for constructor-bearing sum `type` forms,
 - `shape` is the named open structural record form,
 - `trait` is method-only nominal behavior,
 - unions remain structural type expressions (`Int | Str`),
-- named sums use `type Name = { Variant, Variant(T), ... }`,
-- `enum Name = { ... }` remains accepted as syntax sugar for the same named-sum form,
+- `alias` is no longer surface syntax,
+- record construction like `User(...)` only applies to constructor-bearing types, not transparent record `type`s,
 - there are no field-only or mixed traits.
+
+## Status Note (2026-03-30)
+
+This document records an earlier nominal-product branch. Keep using it for historical implementation context, but do not read its detailed `alias` / named-product rules as current language semantics. Whenever the body below says:
+
+- plain `type` always creates identity,
+- `alias` is the surface transparent form,
+- or transparent record `type`s should use constructor-call syntax,
+
+that text is historical and superseded. For the canonical current semantics, use `docs/plans/todo/language/data-first-semantics-rework.md` and the updated downstream plans that depend on it.
 
 ## In Scope
 
@@ -762,71 +773,32 @@ Exit criteria:
 
 - `docs/plans/done/language/03_syntax-rework-followup.md` owns the already-landed `Dyn[...]`, intersections, and derive follow-up work that this plan now treats as background constraints
 - `docs/plans/todo/language/02_pre-modules-parity-and-hardening.md` hardens the semantics frozen here
-- `docs/plans/todo/language/03_module-system.md` should build on this declaration-role split instead of defining its own workaround semantics
+- `docs/plans/todo/language/03_module-system.md` should build on the current data-first semantics rather than the historical declaration-role split preserved here
 
 ## PROGRESS
 
 ### Status
 
-- Complete
+- Historical / superseded for declaration semantics on 2026-03-30
 
 ### Completed
 
-- Read `CLAUDE.md` commit/testing rules before implementation
-- Read and executed the full plan across parser, lowering, checker, emitter, docs, tooling, and fixture layers
-- Landed the declaration-role split:
-  - `alias` is transparent and behaviorless
-  - `type` owns nominal named products, wrappers, and sums
-  - `shape` owns structural field expectations
-  - `trait` is method-only
-- Added explicit constructor handling for named products and wrappers through parsing, lowering, inference, and Go emission
-- Added nominal type representation in the typechecker via `Types.TNamed` plus named-type registry support
-- Moved structural superconstraint satisfaction to shapes instead of field-only / mixed traits
-- Removed field members from trait definitions and updated derive expansion, impl validation, constrained field access, and method resolution to reflect the new model
-- Preserved canonical named sums through `enum` while documenting `type` as the canonical nominal declaration story
-- Migrated focused fixtures from the retired field-only / mixed-trait model to `shape` / nominal-type semantics
-- Updated first-party docs and examples to teach:
-  - explicit named-type construction
-  - `shape` for structural constraints
-  - method-only `trait`
-  - transparent `alias`
-- Updated LSP/editor and tree-sitter grammar/token classification for the declaration-role split
-- Added / updated focused checker coverage for:
-  - enum references inside named-product and shape fields
-  - derive expansion over shape superconstraints satisfied by named products
-- Reworked `examples/new-syntax-upcase.mr` so every showcased construct compiles under the final semantics
+- Audited this plan against the now-landed data-first surface semantics.
+- Marked the declaration model here as historical rather than current guidance.
+- Redirected downstream readers to `data-first-semantics-rework.md` and the updated module/prelude plans for the canonical semantics story.
+- Kept this file as background context for the implementation work that still feeds later milestones: shape-vs-trait cleanup, derive/tooling groundwork, and plan dependencies.
 
 ### Findings
 
-- The existing `enum` machinery was strong enough to preserve accepted sum-type behavior while moving the rest of the language onto canonical nominal `type` semantics
-- Named products and wrappers needed materially more work than named sums because nominal identity had to be carried through annotation conversion, constraint solving, method lookup, and Go codegen
-- Top-level registration order matters:
-  - enums must register before named products / shapes whose field annotations mention them
-- Derive expansion needs a fallback path that works both before full registration and in partially registered test setups
-- Record patterns remain structural:
-  - they do not destructure nominal `type` values directly
-  - the showcase example had to use a closed structural record annotation for the pattern demo
-- Field-function fallback codegen needed an additional named-product lookup path for `TNamed` receivers in mixed dot / qualified-call chains
+- This file still describes the earlier nominal named-product + surface `alias` branch in many detailed sections below.
+- Later plans only need its historical implementation context, not its outdated declaration-surface rules.
+- Leaving it unqualified is misleading because the current compiler now treats plain `type` as transparent/exact and reserves nominality for constructor-bearing `type` forms.
 
 ### Caveats
 
-- `enum` remains accepted for named sums; docs now treat `type` as the canonical nominal surface while preserving `enum` compatibility
-- Derive expansion still carries a source-level fallback for shapes / named products before the full registration pass; that is intentional and covered by focused tests
-- The final semantics intentionally keep structural record-pattern behavior separate from nominal named-type behavior
+- Many detailed sections below are intentionally left as historical implementation notes rather than rewritten line by line.
+- Any future plan work should follow `data-first-semantics-rework.md`, not the nominal-product rules preserved here.
 
 ### Verification
 
-- `dune runtest --root /Users/zlw/src/marmoset/marmoset lib/frontend/typecheck --force`
-- `dune runtest --root /Users/zlw/src/marmoset/marmoset lib/backend/go --force`
-- `dune build --root /Users/zlw/src/marmoset/marmoset bin/main.exe`
-- `./test/integration.sh traits_field`
-- `./test/integration.sh traits`
-- `./test/integration.sh cross_feature`
-- `./test/integration.sh traits_impl symbols codegen_mono vnext_canary`
-- `./test/integration.sh function_model records operators runtime traits_inherent`
-- `cd /Users/zlw/src/marmoset/marmoset/tools/tree-sitter-marmoset && npm run generate`
-- `cd /Users/zlw/src/marmoset/marmoset/tools/tree-sitter-marmoset && npm test`
-- `./_build/default/bin/main.exe /Users/zlw/src/marmoset/marmoset/examples/records-typed.mr`
-- `./_build/default/bin/main.exe /Users/zlw/src/marmoset/marmoset/examples/traits-typed.mr`
-- `./_build/default/bin/main.exe /Users/zlw/src/marmoset/marmoset/examples/user.mr`
-- `./_build/default/bin/main.exe /Users/zlw/src/marmoset/marmoset/examples/new-syntax-upcase.mr`
+- Documentation audit only; no code-path changes or tests run for this update.
