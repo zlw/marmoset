@@ -49,7 +49,6 @@ let register_type_alias (alias_def : Syntax.Ast.AST.type_alias_def) : unit =
 
 let clear_type_aliases () : unit = Hashtbl.clear type_alias_registry
 let lookup_type_alias (name : string) : type_alias_info option = Hashtbl.find_opt type_alias_registry name
-
 let fresh_shape_row_counter = ref 0
 
 let fresh_shape_row_var () : Types.mono_type =
@@ -311,8 +310,8 @@ let rec type_expr_to_mono_type_with
     (type_bindings : (string * Types.mono_type) list) (te : Syntax.Ast.AST.type_expr) :
     (Types.mono_type, Diagnostic.t) result =
   let convert_shape_fields_with
-      (shape_bindings : (string * Types.mono_type) list)
-      (shape_fields : Syntax.Ast.AST.record_type_field list) : (Types.record_field_type list, Diagnostic.t) result =
+      (shape_bindings : (string * Types.mono_type) list) (shape_fields : Syntax.Ast.AST.record_type_field list) :
+      (Types.record_field_type list, Diagnostic.t) result =
     map_result
       (fun (f : Syntax.Ast.AST.record_type_field) ->
         let* typ = type_expr_to_mono_type_with shape_bindings f.field_type in
@@ -327,8 +326,8 @@ let rec type_expr_to_mono_type_with
     let ann_error msg = Error (Diagnostic.error_no_span ~code:"type-annotation-invalid" ~message:msg) in
     if List.length shape_type_params <> List.length arg_types then
       ann_error
-        (Printf.sprintf "Shape %s expects %d type argument(s), got %d" shape_name
-           (List.length shape_type_params) (List.length arg_types))
+        (Printf.sprintf "Shape %s expects %d type argument(s), got %d" shape_name (List.length shape_type_params)
+           (List.length arg_types))
     else
       let shape_bindings = List.combine shape_type_params arg_types in
       let* fields = convert_shape_fields_with (shape_bindings @ type_bindings) shape_fields in
@@ -365,24 +364,24 @@ let rec type_expr_to_mono_type_with
                         (Printf.sprintf "Shape %s expects %d type argument(s)" name
                            (List.length shape_def.shape_type_params))
                   | None -> (
-              match lookup_enum_by_source_name name with
-              | Some enum_def ->
-                  if enum_def.type_params = [] then
-                    Ok (Types.TEnum (enum_def.name, []))
-                  else
-                    ann_error (Printf.sprintf "Enum %s expects type arguments" enum_def.name)
-              | None -> (
-                  match lookup_type_alias name with
-                  | Some alias_info ->
-                      if alias_info.alias_type_params = [] then
-                        type_expr_to_mono_type_with type_bindings alias_info.alias_body
-                      else
-                        ann_error (Printf.sprintf "Type %s expects type arguments" name)
-                  | None ->
-                      if Trait_registry.lookup_trait name <> None then
-                        ann_error (trait_type_position_error name)
-                      else
-                        ann_error (type_position_error_for_constructor name)))))))
+                      match lookup_enum_by_source_name name with
+                      | Some enum_def ->
+                          if enum_def.type_params = [] then
+                            Ok (Types.TEnum (enum_def.name, []))
+                          else
+                            ann_error (Printf.sprintf "Enum %s expects type arguments" enum_def.name)
+                      | None -> (
+                          match lookup_type_alias name with
+                          | Some alias_info ->
+                              if alias_info.alias_type_params = [] then
+                                type_expr_to_mono_type_with type_bindings alias_info.alias_body
+                              else
+                                ann_error (Printf.sprintf "Type %s expects type arguments" name)
+                          | None ->
+                              if Trait_registry.lookup_trait name <> None then
+                                ann_error (trait_type_position_error name)
+                              else
+                                ann_error (type_position_error_for_constructor name)))))))
   | Syntax.Ast.AST.TApp (con_name, type_args) -> (
       let ann_error msg = Error (Diagnostic.error_no_span ~code:"type-annotation-invalid" ~message:msg) in
       let* arg_types = map_result (type_expr_to_mono_type_with type_bindings) type_args in
@@ -411,29 +410,29 @@ let rec type_expr_to_mono_type_with
                   shape_type_to_mono_type_with con_name shape_def.shape_type_params shape_def.shape_fields
                     arg_types
               | None -> (
-          match lookup_enum_by_source_name con_name with
-          | Some enum_def ->
-              let expected_arity = List.length enum_def.type_params in
-              let actual_arity = List.length arg_types in
-              if expected_arity <> actual_arity then
-                ann_error
-                  (Printf.sprintf "Enum %s expects %d type argument(s), got %d" enum_def.name expected_arity
-                     actual_arity)
-              else
-                Ok (Types.TEnum (enum_def.name, arg_types))
-          | None -> (
-              match lookup_type_alias con_name with
-              | Some alias_info ->
-                  let expected_arity = List.length alias_info.alias_type_params in
-                  let actual_arity = List.length arg_types in
-                  if expected_arity <> actual_arity then
-                    ann_error
-                      (Printf.sprintf "Type %s expects %d type argument(s), got %d" con_name expected_arity
-                         actual_arity)
-                  else
-                    let alias_bindings = List.combine alias_info.alias_type_params arg_types in
-                    type_expr_to_mono_type_with (alias_bindings @ type_bindings) alias_info.alias_body
-              | None -> ann_error (type_position_error_for_constructor con_name))))))
+                  match lookup_enum_by_source_name con_name with
+                  | Some enum_def ->
+                      let expected_arity = List.length enum_def.type_params in
+                      let actual_arity = List.length arg_types in
+                      if expected_arity <> actual_arity then
+                        ann_error
+                          (Printf.sprintf "Enum %s expects %d type argument(s), got %d" enum_def.name
+                             expected_arity actual_arity)
+                      else
+                        Ok (Types.TEnum (enum_def.name, arg_types))
+                  | None -> (
+                      match lookup_type_alias con_name with
+                      | Some alias_info ->
+                          let expected_arity = List.length alias_info.alias_type_params in
+                          let actual_arity = List.length arg_types in
+                          if expected_arity <> actual_arity then
+                            ann_error
+                              (Printf.sprintf "Type %s expects %d type argument(s), got %d" con_name
+                                 expected_arity actual_arity)
+                          else
+                            let alias_bindings = List.combine alias_info.alias_type_params arg_types in
+                            type_expr_to_mono_type_with (alias_bindings @ type_bindings) alias_info.alias_body
+                      | None -> ann_error (type_position_error_for_constructor con_name))))))
   | Syntax.Ast.AST.TArrow (param_types, return_type, is_effectful) ->
       let* param_mono = map_result (type_expr_to_mono_type_with type_bindings) param_types in
       let* return_mono = type_expr_to_mono_type_with type_bindings return_type in
@@ -665,7 +664,8 @@ let rec format_mono_type (t : Types.mono_type) : string =
   | Types.TEnum (name, []) -> name
   | Types.TEnum (name, args) -> Printf.sprintf "%s[%s]" name (String.concat ", " (List.map format_mono_type args))
   | Types.TNamed (name, []) -> name
-  | Types.TNamed (name, args) -> Printf.sprintf "%s[%s]" name (String.concat ", " (List.map format_mono_type args))
+  | Types.TNamed (name, args) ->
+      Printf.sprintf "%s[%s]" name (String.concat ", " (List.map format_mono_type args))
 
 (* ============================================================
    Phase 4.3: Tests for Enum Type Annotations

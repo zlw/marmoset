@@ -19,7 +19,7 @@ let is_identifier_path (path : path) : bool = path.fields = []
 let to_string (path : path) : string = String.concat "." (path.root :: path.fields)
 
 let temp_name (path : path) (suffix : string) : string =
-  String.concat "_" (path.root :: path.fields @ [ suffix ])
+  String.concat "_" ((path.root :: path.fields) @ [ suffix ])
 
 let replacement_identifier (name : string) (expr : AST.expression) : AST.expression =
   { expr with expr = AST.Identifier name }
@@ -41,16 +41,11 @@ let substitute_path_in_expr
       | AST.If (cond, cons, alt) ->
           { expr with expr = AST.If (subst_expr cond, subst_stmt cons, Option.map subst_stmt alt) }
       | AST.Function _ when not descend_into_functions -> expr
-      | AST.Function fn_expr ->
-          { expr with expr = AST.Function { fn_expr with body = subst_stmt fn_expr.body } }
-      | AST.Call (fn_expr, args) ->
-          { expr with expr = AST.Call (subst_expr fn_expr, List.map subst_expr args) }
+      | AST.Function fn_expr -> { expr with expr = AST.Function { fn_expr with body = subst_stmt fn_expr.body } }
+      | AST.Call (fn_expr, args) -> { expr with expr = AST.Call (subst_expr fn_expr, List.map subst_expr args) }
       | AST.Array elements -> { expr with expr = AST.Array (List.map subst_expr elements) }
       | AST.Hash pairs ->
-          {
-            expr with
-            expr = AST.Hash (List.map (fun (key, value) -> (subst_expr key, subst_expr value)) pairs);
-          }
+          { expr with expr = AST.Hash (List.map (fun (key, value) -> (subst_expr key, subst_expr value)) pairs) }
       | AST.Index (container, index) -> { expr with expr = AST.Index (subst_expr container, subst_expr index) }
       | AST.EnumConstructor (enum_name, variant_name, args) ->
           { expr with expr = AST.EnumConstructor (enum_name, variant_name, List.map subst_expr args) }
@@ -60,9 +55,7 @@ let substitute_path_in_expr
             expr =
               AST.Match
                 ( subst_expr scrutinee,
-                  List.map
-                    (fun (arm : AST.match_arm) -> { arm with body = subst_expr arm.body })
-                    arms );
+                  List.map (fun (arm : AST.match_arm) -> { arm with body = subst_expr arm.body }) arms );
           }
       | AST.RecordLit (fields, spread) ->
           {
@@ -75,7 +68,8 @@ let substitute_path_in_expr
                     fields,
                   Option.map subst_expr spread );
           }
-      | AST.FieldAccess (receiver, field_name) -> { expr with expr = AST.FieldAccess (subst_expr receiver, field_name) }
+      | AST.FieldAccess (receiver, field_name) ->
+          { expr with expr = AST.FieldAccess (subst_expr receiver, field_name) }
       | AST.MethodCall { mc_receiver; mc_method; mc_type_args; mc_args } ->
           {
             expr with
@@ -91,7 +85,8 @@ let substitute_path_in_expr
       | AST.BlockExpr stmts -> { expr with expr = AST.BlockExpr (List.map subst_stmt stmts) }
   and subst_stmt (stmt : AST.statement) =
     match stmt.stmt with
-    | AST.Let ({ value; _ } as let_binding) -> { stmt with stmt = AST.Let { let_binding with value = subst_expr value } }
+    | AST.Let ({ value; _ } as let_binding) ->
+        { stmt with stmt = AST.Let { let_binding with value = subst_expr value } }
     | AST.Return expr -> { stmt with stmt = AST.Return (subst_expr expr) }
     | AST.ExpressionStmt expr -> { stmt with stmt = AST.ExpressionStmt (subst_expr expr) }
     | AST.Block stmts -> { stmt with stmt = AST.Block (List.map subst_stmt stmts) }
@@ -116,10 +111,7 @@ let substitute_path_in_stmt
               { let_binding with value = substitute_path_in_expr ~descend_into_functions target ~replace value };
         }
     | AST.Return expr ->
-        {
-          stmt with
-          stmt = AST.Return (substitute_path_in_expr ~descend_into_functions target ~replace expr);
-        }
+        { stmt with stmt = AST.Return (substitute_path_in_expr ~descend_into_functions target ~replace expr) }
     | AST.ExpressionStmt expr ->
         {
           stmt with
@@ -166,9 +158,7 @@ let compute_complement_type (current_type : Types.mono_type) (narrow_type : Type
   | _ when Annotation.is_subtype_of current_type narrow_type -> None
   | _ -> Some current_type
 
-let static_outcome
-    (current_type_opt : Types.mono_type option)
-    (narrow_type : Types.mono_type) :
+let static_outcome (current_type_opt : Types.mono_type option) (narrow_type : Types.mono_type) :
     [ `Always_true | `Always_false | `Runtime_check of Types.mono_type option ] =
   match current_type_opt with
   | None -> `Runtime_check None
@@ -187,8 +177,7 @@ let%test "path_of_expr extracts nested field paths" =
   let expr =
     AST.mk_expr ~id:3
       (AST.FieldAccess
-         ( AST.mk_expr ~id:2 (AST.FieldAccess (AST.mk_expr ~id:1 (AST.Identifier "box"), "value")),
-           "name" ))
+         (AST.mk_expr ~id:2 (AST.FieldAccess (AST.mk_expr ~id:1 (AST.Identifier "box"), "value")), "name"))
   in
   path_of_expr expr = Some { root = "box"; fields = [ "value"; "name" ] }
 
@@ -197,17 +186,14 @@ let%test "substitute_path_in_expr rewrites matching field access" =
     AST.mk_expr ~id:4
       (AST.MethodCall
          {
-           mc_receiver =
-             AST.mk_expr ~id:2 (AST.FieldAccess (AST.mk_expr ~id:1 (AST.Identifier "box"), "value"));
+           mc_receiver = AST.mk_expr ~id:2 (AST.FieldAccess (AST.mk_expr ~id:1 (AST.Identifier "box"), "value"));
            mc_method = "show";
            mc_type_args = None;
            mc_args = [];
          })
   in
   let target = { root = "box"; fields = [ "value" ] } in
-  match
-    substitute_path_in_expr target ~replace:(replacement_identifier "box_value_typed") expr
-  with
+  match substitute_path_in_expr target ~replace:(replacement_identifier "box_value_typed") expr with
   | { AST.expr = AST.MethodCall { mc_receiver = { AST.expr = AST.Identifier "box_value_typed"; _ }; _ }; _ } ->
       true
   | _ -> false

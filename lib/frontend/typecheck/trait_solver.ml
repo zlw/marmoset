@@ -21,8 +21,7 @@ let dedupe_preserve_order (constraints : Constraints.t list) : Constraints.t lis
   go StringSet.empty [] constraints
 
 let expand_constraint_refs (constraints : Constraints.t list) : Constraints.t list =
-  let rec expand_one (visited : StringSet.t) (constraint_ref : Constraints.t) :
-      StringSet.t * Constraints.t list =
+  let rec expand_one (visited : StringSet.t) (constraint_ref : Constraints.t) : StringSet.t * Constraints.t list =
     let constraint_ref = Constraints.canonicalize constraint_ref in
     let constraint_name = Constraints.name constraint_ref in
     if StringSet.mem constraint_name visited then
@@ -39,8 +38,7 @@ let expand_constraint_refs (constraints : Constraints.t list) : Constraints.t li
                 expand_many visited' (Constraints.of_names trait_def.trait_supertraits)
               in
               (visited'', constraint_ref :: expanded_supertraits))
-  and expand_many (visited : StringSet.t) (constraints : Constraints.t list) :
-      StringSet.t * Constraints.t list =
+  and expand_many (visited : StringSet.t) (constraints : Constraints.t list) : StringSet.t * Constraints.t list =
     match constraints with
     | [] -> (visited, [])
     | constraint_ref :: rest ->
@@ -56,8 +54,8 @@ let expand_constraint_names (constraints : string list) : string list =
 let expand_constraints_with_supertraits_refs (constraints : Constraints.t list) : Constraints.t list =
   expand_constraint_refs constraints
   |> List.filter (function
-         | Constraints.TraitConstraint _ -> true
-         | Constraints.ShapeConstraint _ -> false)
+       | Constraints.TraitConstraint _ -> true
+       | Constraints.ShapeConstraint _ -> false)
   |> dedupe_preserve_order
 
 let expand_constraints_with_supertraits (constraints : string list) : string list =
@@ -94,7 +92,7 @@ let rec check_shape_fields (typ : Types.mono_type) (shape_name : string) : (unit
                         trait_error ~code:"type-shape-missing-field"
                           (Printf.sprintf "Type %s does not satisfy shape %s because field '%s' is required"
                              type_str shape_name required.name)
-                    | Some actual -> (
+                    | Some actual ->
                         let actual_type = Types.canonicalize_mono_type actual.typ in
                         let required_type = Types.canonicalize_mono_type required.typ in
                         if Structural.field_types_compatible actual_type required_type then
@@ -104,7 +102,7 @@ let rec check_shape_fields (typ : Types.mono_type) (shape_name : string) : (unit
                             (Printf.sprintf
                                "Type %s does not satisfy shape %s because field '%s' has type %s but expected %s"
                                type_str shape_name required.name (Types.to_string actual_type)
-                               (Types.to_string required_type))))
+                               (Types.to_string required_type)))
               in
               check_required required_fields
           | None ->
@@ -160,9 +158,8 @@ and check_trait_self_requirements (typ : Types.mono_type) (trait_name : string) 
   | Some _ -> check_trait_methods typ trait_name
 
 and check_constraint_ref_with_superconstraints
-    (visited : StringSet.t)
-    (typ : Types.mono_type)
-    (constraint_ref : Constraints.t) : (unit, Diagnostic.t) result =
+    (visited : StringSet.t) (typ : Types.mono_type) (constraint_ref : Constraints.t) : (unit, Diagnostic.t) result
+    =
   let constraint_ref = Constraints.canonicalize constraint_ref in
   let constraint_name = Constraints.name constraint_ref in
   if StringSet.mem constraint_name visited then
@@ -170,7 +167,7 @@ and check_constraint_ref_with_superconstraints
   else
     match constraint_ref with
     | Constraints.ShapeConstraint shape_name -> check_shape_fields typ shape_name
-    | Constraints.TraitConstraint trait_name ->
+    | Constraints.TraitConstraint trait_name -> (
         let visited' = StringSet.add constraint_name visited in
         match check_trait_self_requirements typ trait_name with
         | Error _ as err -> err
@@ -178,7 +175,7 @@ and check_constraint_ref_with_superconstraints
             match Trait_registry.lookup_trait trait_name with
             | None -> Ok ()
             | Some trait_def ->
-                check_superconstraints visited' typ (Constraints.of_names trait_def.trait_supertraits))
+                check_superconstraints visited' typ (Constraints.of_names trait_def.trait_supertraits)))
 
 and check_superconstraints (visited : StringSet.t) (typ : Types.mono_type) (constraints : Constraints.t list) :
     (unit, Diagnostic.t) result =
@@ -205,7 +202,8 @@ let satisfies_trait_bool (typ : Types.mono_type) (trait_name : string) : bool =
 
 let implements_trait (typ : Types.mono_type) (trait_name : string) : bool = satisfies_trait_bool typ trait_name
 
-let check_constraint_refs (typ : Types.mono_type) (constraints : Constraints.t list) : (unit, Diagnostic.t) result =
+let check_constraint_refs (typ : Types.mono_type) (constraints : Constraints.t list) : (unit, Diagnostic.t) result
+    =
   let rec check = function
     | [] -> Ok ()
     | constraint_ref :: rest -> (
@@ -226,11 +224,11 @@ let satisfies_constraints (typ : Types.mono_type) (constraints : string list) : 
 let available_methods_refs (constraints : Constraints.t list) : (string * Trait_registry.trait_def) list =
   expand_constraints_with_supertraits_refs constraints
   |> List.filter_map (function
-         | Constraints.ShapeConstraint _ -> None
-         | Constraints.TraitConstraint trait_name -> (
-             match Trait_registry.lookup_trait trait_name with
-             | Some trait_def -> Some (trait_name, trait_def)
-             | None -> None))
+       | Constraints.ShapeConstraint _ -> None
+       | Constraints.TraitConstraint trait_name -> (
+           match Trait_registry.lookup_trait trait_name with
+           | Some trait_def -> Some (trait_name, trait_def)
+           | None -> None))
 
 let available_methods (constraints : string list) : (string * Trait_registry.trait_def) list =
   available_methods_refs (Constraints.of_names constraints)
@@ -474,7 +472,9 @@ let%test "shape constraint is satisfied structurally by matching record" =
       shape_type_params = [];
       shape_fields = [ { Types.name = "name"; typ = Types.TString } ];
     };
-  match check_constraints (Types.TRecord ([ { Types.name = "name"; typ = Types.TString } ], None)) [ "named" ] with
+  match
+    check_constraints (Types.TRecord ([ { Types.name = "name"; typ = Types.TString } ], None)) [ "named" ]
+  with
   | Ok () -> true
   | Error _ -> false
 
@@ -520,7 +520,11 @@ let%test "trait with shape superconstraint requires both structural fields and n
       trait_type_param = Some "a";
       trait_supertraits = [ "named" ];
       trait_methods =
-        [ Trait_registry.mk_method_sig ~name:"show" ~params:[ ("x", Types.TVar "a") ] ~return_type:Types.TString () ];
+        [
+          Trait_registry.mk_method_sig ~name:"show"
+            ~params:[ ("x", Types.TVar "a") ]
+            ~return_type:Types.TString ();
+        ];
     };
   let fails_without_impl =
     match satisfies_trait person_type "named_show" with

@@ -29,7 +29,8 @@ let mk_method_sig ?(generics = []) ?(effect = `Pure) ~name ~params ~return_type 
   {
     method_key = Resolution_artifacts.SyntheticCallable name;
     method_name = name;
-    method_generics = List.map (fun (generic_name, constraints) -> (generic_name, Constraints.of_names constraints)) generics;
+    method_generics =
+      List.map (fun (generic_name, constraints) -> (generic_name, Constraints.of_names constraints)) generics;
     method_params = params;
     method_return_type = return_type;
     method_effect = effect;
@@ -84,14 +85,16 @@ let builtin_impl_keys : (string * mono_type, unit) Hashtbl.t = Hashtbl.create 32
 let generic_impl_source_registry : (string * mono_type, impl_source) Hashtbl.t = Hashtbl.create 32
 let builtin_generic_impl_keys : (string * mono_type, unit) Hashtbl.t = Hashtbl.create 32
 let canonical_type (t : mono_type) : mono_type = canonicalize_mono_type t
-
 let builtin_trait_internal_name = Constraints.builtin_trait_internal_name
 let canonical_trait_name = Constraints.canonical_trait_name
 
 let canonicalize_method_constraints (m : method_sig) : method_sig =
   {
     m with
-    method_generics = List.map (fun (name, constraints) -> (name, List.map Constraints.canonicalize constraints)) m.method_generics;
+    method_generics =
+      List.map
+        (fun (name, constraints) -> (name, List.map Constraints.canonicalize constraints))
+        m.method_generics;
   }
 
 let canonicalize_impl_type_param_constraints (p : AST.generic_param) : AST.generic_param =
@@ -640,7 +643,8 @@ let generate_derived_impl (trait_name : string) (for_type : mono_type) : impl_de
           | None -> []
         in
         field_vars @ row_vars
-    | TEnum (_, args) | TNamed (_, args) | TUnion args | TIntersection args -> List.concat_map collect_type_vars args
+    | TEnum (_, args) | TNamed (_, args) | TUnion args | TIntersection args ->
+        List.concat_map collect_type_vars args
     | TRowVar _ | TTraitObject _ | TInt | TFloat | TBool | TString | TNull -> []
   in
   let impl_type_params =
@@ -896,8 +900,7 @@ let validate_impl (def : impl_def) : (unit, string) result =
               unused_impl_params |> List.map (fun (p : AST.generic_param) -> p.name) |> String.concat ", "
             in
             Error
-              (Printf.sprintf
-                 "Generic impl for trait '%s' has type parameter(s) not used in impl target type: %s"
+              (Printf.sprintf "Generic impl for trait '%s' has type parameter(s) not used in impl target type: %s"
                  def'.impl_trait_name names)
           else
             match validate_impl_signature trait_def def' with
@@ -912,7 +915,8 @@ let validate_impl (def : impl_def) : (unit, string) result =
                         let supertrait_ref = Constraints.of_name supertrait in
                         let supertrait_satisfied =
                           match supertrait_ref with
-                          | Constraints.ShapeConstraint shape_name -> Structural.type_satisfies_shape for_type' shape_name
+                          | Constraints.ShapeConstraint shape_name ->
+                              Structural.type_satisfies_shape for_type' shape_name
                           | Constraints.TraitConstraint trait_name -> implements_trait trait_name for_type'
                         in
                         if supertrait_satisfied then
@@ -922,8 +926,8 @@ let validate_impl (def : impl_def) : (unit, string) result =
                             (Printf.sprintf
                                "Impl for trait '%s' on type %s is missing required supertrait '%s' implementation"
                                def'.impl_trait_name (to_string for_type') supertrait)
-                      in
-                      check_supertraits (supertraits_of_trait def'.impl_trait_name)))
+                  in
+                  check_supertraits (supertraits_of_trait def'.impl_trait_name)))
 
 (* Initialize with built-in traits (if any) *)
 let init_builtins () = clear ()

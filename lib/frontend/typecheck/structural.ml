@@ -17,8 +17,7 @@ let lookup_field_type (typ : mono_type) (field_name : string) : mono_type option
       |> Option.map (fun (field : record_field_type) -> field.typ)
 
 let rec required_fields_satisfied
-    (actual_fields : record_field_type list)
-    (required_fields : record_field_type list) : bool =
+    (actual_fields : record_field_type list) (required_fields : record_field_type list) : bool =
   List.for_all
     (fun (required : record_field_type) ->
       match List.find_opt (fun (field : record_field_type) -> field.name = required.name) actual_fields with
@@ -28,7 +27,8 @@ let rec required_fields_satisfied
 
 and type_satisfies_required_fields (typ : mono_type) (required_fields : record_field_type list) : bool =
   match canonicalize_mono_type typ with
-  | TIntersection members -> List.for_all (fun member -> type_satisfies_required_fields member required_fields) members
+  | TIntersection members ->
+      List.for_all (fun member -> type_satisfies_required_fields member required_fields) members
   | concrete -> (
       match fields_of_type concrete with
       | Some actual_fields -> required_fields_satisfied actual_fields required_fields

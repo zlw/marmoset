@@ -331,17 +331,17 @@ and collect_stmt ~source ~type_map ~environment ~params ~tokens (stmt : Ast.AST.
                 :: !tokens
           | None -> ())
         variants
-  | Ast.AST.TypeDef { type_name; _ } ->
+  | Ast.AST.TypeDef { type_name; _ } -> (
       let nlen = String.length type_name in
-      (match find_name ~source ~start:stmt.pos ~limit:(stmt.end_pos + 1) type_name with
+      match find_name ~source ~start:stmt.pos ~limit:(stmt.end_pos + 1) type_name with
       | Some (nstart, _) ->
           tokens :=
             { pos = nstart; end_pos = nstart + nlen - 1; token_type = _type_type; modifiers = declaration_mod }
             :: !tokens
       | None -> ())
-  | Ast.AST.ShapeDef { shape_name; _ } ->
+  | Ast.AST.ShapeDef { shape_name; _ } -> (
       let nlen = String.length shape_name in
-      (match find_name ~source ~start:stmt.pos ~limit:(stmt.end_pos + 1) shape_name with
+      match find_name ~source ~start:stmt.pos ~limit:(stmt.end_pos + 1) shape_name with
       | Some (nstart, _) ->
           tokens :=
             {
@@ -436,9 +436,9 @@ and collect_stmt ~source ~type_map ~environment ~params ~tokens (stmt : Ast.AST.
           collect_stmt ~source ~type_map ~environment ~params ~tokens m.impl_method_body;
           search_from := m.impl_method_body.end_pos + 1)
         inherent_methods
-  | Ast.AST.TypeAlias { alias_name; _ } ->
+  | Ast.AST.TypeAlias { alias_name; _ } -> (
       let nlen = String.length alias_name in
-      (match find_name ~source ~start:stmt.pos ~limit:(stmt.end_pos + 1) alias_name with
+      match find_name ~source ~start:stmt.pos ~limit:(stmt.end_pos + 1) alias_name with
       | Some (nstart, _) ->
           tokens :=
             { pos = nstart; end_pos = nstart + nlen - 1; token_type = _type_type; modifiers = declaration_mod }

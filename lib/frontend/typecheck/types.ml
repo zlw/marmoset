@@ -271,7 +271,8 @@ let rec free_type_vars (mono : mono_type) : TypeVarSet.t =
   | TIntersection types ->
       List.fold_left (fun acc t -> TypeVarSet.union acc (free_type_vars t)) TypeVarSet.empty types
   | TEnum (_, args) -> List.fold_left (fun acc t -> TypeVarSet.union acc (free_type_vars t)) TypeVarSet.empty args
-  | TNamed (_, args) -> List.fold_left (fun acc t -> TypeVarSet.union acc (free_type_vars t)) TypeVarSet.empty args
+  | TNamed (_, args) ->
+      List.fold_left (fun acc t -> TypeVarSet.union acc (free_type_vars t)) TypeVarSet.empty args
 
 (* Free type variables in a poly_type - quantified vars are NOT free *)
 let free_type_vars_poly (Forall (quantified_vars, mono)) : TypeVarSet.t =

@@ -691,33 +691,26 @@ let track_named_type_inst (state : mono_state) (t : Types.mono_type) : unit =
       state.named_type_insts <- NamedTypeInstSet.add (name, args) state.named_type_insts
   | _ -> ()
 
-let named_type_codegen_body_exn
-    (type_name : string)
-    (type_args : Types.mono_type list)
-    : [ `Product of Types.record_field_type list | `Wrapper of Types.mono_type ] =
+let named_type_codegen_body_exn (type_name : string) (type_args : Types.mono_type list) :
+    [ `Product of Types.record_field_type list | `Wrapper of Types.mono_type ] =
   match Type_registry.lookup_named_type type_name with
-  | None ->
-      failwith (Printf.sprintf "Codegen error: unknown named type '%s'" type_name)
+  | None -> failwith (Printf.sprintf "Codegen error: unknown named type '%s'" type_name)
   | Some def -> (
       match def.named_type_body with
       | Type_registry.NamedProduct _ -> (
           match Type_registry.instantiate_named_product_fields type_name type_args with
           | Some (Ok fields) -> `Product fields
           | Some (Error msg) ->
-              failwith
-                (Printf.sprintf "Codegen error: cannot instantiate named product '%s': %s" type_name msg)
-          | None ->
-              failwith
-                (Printf.sprintf "Codegen error: missing named product definition for '%s'" type_name))
+              failwith (Printf.sprintf "Codegen error: cannot instantiate named product '%s': %s" type_name msg)
+          | None -> failwith (Printf.sprintf "Codegen error: missing named product definition for '%s'" type_name)
+          )
       | Type_registry.NamedWrapper _ -> (
           match Type_registry.instantiate_named_wrapper_representation type_name type_args with
           | Some (Ok representation) -> `Wrapper representation
           | Some (Error msg) ->
-              failwith
-                (Printf.sprintf "Codegen error: cannot instantiate named wrapper '%s': %s" type_name msg)
-          | None ->
-              failwith
-                (Printf.sprintf "Codegen error: missing named wrapper definition for '%s'" type_name)))
+              failwith (Printf.sprintf "Codegen error: cannot instantiate named wrapper '%s': %s" type_name msg)
+          | None -> failwith (Printf.sprintf "Codegen error: missing named wrapper definition for '%s'" type_name)
+          ))
 
 let named_type_representation_exn (type_name : string) (type_args : Types.mono_type list) : Types.mono_type =
   match named_type_codegen_body_exn type_name type_args with
@@ -1686,13 +1679,7 @@ let specialize_signature
         | None -> false)
     | Types.TEnum (_, args) -> List.exists is_callable_like args
     | Types.TNamed (_, _)
-    | Types.TInt
-    | Types.TFloat
-    | Types.TBool
-    | Types.TString
-    | Types.TNull
-    | Types.TVar _
-    | Types.TRowVar _
+    | Types.TInt | Types.TFloat | Types.TBool | Types.TString | Types.TNull | Types.TVar _ | Types.TRowVar _
     | Types.TTraitObject _ ->
         false
   in
@@ -1960,13 +1947,7 @@ let rec is_callable_like_type (t : Types.mono_type) =
       | None -> false)
   | Types.TEnum (_, args) -> List.exists is_callable_like_type args
   | Types.TNamed (_, _)
-  | Types.TInt
-  | Types.TFloat
-  | Types.TBool
-  | Types.TString
-  | Types.TNull
-  | Types.TVar _
-  | Types.TRowVar _
+  | Types.TInt | Types.TFloat | Types.TBool | Types.TString | Types.TNull | Types.TVar _ | Types.TRowVar _
   | Types.TTraitObject _ ->
       false
 
@@ -3117,7 +3098,7 @@ let rec project_value_to_expected_type
   match expected_type with
   | Types.TNamed (expected_name, expected_args) -> (
       match actual_type with
-      | Types.TNamed (actual_name, actual_args) when actual_name = expected_name -> (
+      | Types.TNamed (actual_name, actual_args) when actual_name = expected_name ->
           if Annotation.mono_types_equal actual_type expected_type then
             source_expr
           else
@@ -3130,7 +3111,7 @@ let rec project_value_to_expected_type
                 source_representation
             in
             let expected_go_type = type_to_go state.mono expected_type in
-            Printf.sprintf "%s(%s)" expected_go_type projected_representation)
+            Printf.sprintf "%s(%s)" expected_go_type projected_representation
       | _ -> source_expr)
   | Types.TTraitObject target_traits -> (
       match
@@ -3381,9 +3362,7 @@ let substitute_path_in_stmt (path : Type_narrowing.path) (replacement_name : str
     ~replace:(Type_narrowing.replacement_identifier replacement_name)
     stmt
 
-let type_check_static_outcome
-    (current_type_opt : Types.mono_type option)
-    (narrow_type : Types.mono_type) :
+let type_check_static_outcome (current_type_opt : Types.mono_type option) (narrow_type : Types.mono_type) :
     [ `Always_true | `Always_false | `Runtime_check of Types.mono_type option ] =
   Type_narrowing.static_outcome current_type_opt narrow_type
 
@@ -3812,7 +3791,9 @@ and emit_field_function_call
   | None ->
       let arg_types = List.map (expr_type_from_env_or_map env type_map) args in
       let result_type = get_type type_map call_expr in
-      let callable_type = List.fold_right (fun param acc -> Types.TFun (param, acc, false)) arg_types result_type in
+      let callable_type =
+        List.fold_right (fun param acc -> Types.TFun (param, acc, false)) arg_types result_type
+      in
       let callable_go_type = type_to_go state.mono callable_type in
       let args_str = emit_args_with_expected_types arg_types in
       Printf.sprintf "(%s.(%s))(%s)" field_str callable_go_type args_str
@@ -3925,7 +3906,8 @@ and emit_match ?target state type_map env match_expr scrutinee arms =
         match_result_type
   | Types.TInt | Types.TString | Types.TBool ->
       emit_match_primitive ?target state type_map env scrutinee scrutinee_type arms match_result_type
-  | Types.TRecord _ -> emit_match_record ?target state type_map env scrutinee scrutinee_type arms match_result_type
+  | Types.TRecord _ ->
+      emit_match_record ?target state type_map env scrutinee scrutinee_type arms match_result_type
   | Types.TNamed _ when Option.is_some (Structural.fields_of_type scrutinee_type) ->
       emit_match_record ?target state type_map env scrutinee scrutinee_type arms match_result_type
   | _ -> failwith (Printf.sprintf "Match on type %s not yet supported" (Types.to_string scrutinee_type))
@@ -3965,7 +3947,8 @@ and emit_record_match_arm
   in
   let body_code =
     match target with
-    | Some t -> pre_body_code ^ with_indent_delta state 2 (fun () -> emit_expr_to_target state type_map env body t)
+    | Some t ->
+        pre_body_code ^ with_indent_delta state 2 (fun () -> emit_expr_to_target state type_map env body t)
     | None ->
         let body_str = emit_expr_for_expected_type state type_map env match_result_type body in
         pre_body_code ^ "\t\t" ^ result_prefix ^ body_str ^ "\n"
@@ -4007,7 +3990,9 @@ and emit_record_match_arm
         match rest with
         | None -> bind_lines
         | Some rest_name ->
-            let matched_names = List.map (fun (field : AST.record_pattern_field) -> field.pat_field_name) fields in
+            let matched_names =
+              List.map (fun (field : AST.record_pattern_field) -> field.pat_field_name) fields
+            in
             let remaining_fields =
               List.filter
                 (fun (field : Types.record_field_type) -> not (List.mem field.name matched_names))
@@ -4053,15 +4038,16 @@ and emit_match_record ?target state type_map env scrutinee scrutinee_type arms m
     match Structural.fields_of_type scrutinee_type with
     | Some fields -> fields
     | None ->
-        failwith (Printf.sprintf "Record match expects record-like scrutinee, got %s" (Types.to_string scrutinee_type))
+        failwith
+          (Printf.sprintf "Record match expects record-like scrutinee, got %s" (Types.to_string scrutinee_type))
   in
   let arm_blocks =
     List.mapi
       (fun idx (arm : AST.match_arm) ->
         match arm.patterns with
         | [ pattern ] ->
-            emit_record_match_arm ?target state type_map env match_result_type scrutinee_var scrutinee_fields pattern
-              arm.body (idx = 0)
+            emit_record_match_arm ?target state type_map env match_result_type scrutinee_var scrutinee_fields
+              pattern arm.body (idx = 0)
         | [] -> failwith "Match arm must have at least one pattern"
         | _ -> failwith "Multiple patterns per arm not yet supported in codegen")
       arms
@@ -4090,7 +4076,7 @@ and emit_match_union_record ?target state type_map env scrutinee _scrutinee_type
     List.find_opt
       (fun (arm : AST.match_arm) ->
         match arm.patterns with
-        | [ { AST.pat = (AST.PWildcard | AST.PVariable _); _ } ] -> true
+        | [ { AST.pat = AST.PWildcard | AST.PVariable _; _ } ] -> true
         | _ -> false)
       arms
   in
@@ -4127,7 +4113,8 @@ and emit_match_union_record ?target state type_map env scrutinee _scrutinee_type
                       match (pattern.AST.pat, scrutinee_path_opt) with
                       | AST.PRecord _, Some path when Type_narrowing.is_identifier_path path ->
                           let go_name = go_safe_ident path.root in
-                          ([ Printf.sprintf "%s := %s" go_name member_var; Printf.sprintf "_ = %s" go_name ], Fun.id)
+                          ( [ Printf.sprintf "%s := %s" go_name member_var; Printf.sprintf "_ = %s" go_name ],
+                            Fun.id )
                       | AST.PRecord _, Some path ->
                           let narrowed_name = Type_narrowing.temp_name path "typed" in
                           let go_name = go_safe_ident narrowed_name in
@@ -4148,7 +4135,7 @@ and emit_match_union_record ?target state type_map env scrutinee _scrutinee_type
           | Some arm -> emit_fallback_arm arm
           | None -> (
               match fallback_arm_opt with
-          | Some arm -> emit_fallback_arm arm
+              | Some arm -> emit_fallback_arm arm
               | None -> "\t\tpanic(\"non-exhaustive union match\")\n"))
     in
     Printf.sprintf "\tcase %s:\n%s" go_member_type case_body
@@ -4341,8 +4328,8 @@ and emit_match_primitive ?target state type_map env scrutinee scrutinee_type arm
       let match_body = String.concat "" (List.map emit_case_target arms) in
       let ind = indent_str state in
       if has_wildcard then
-        Printf.sprintf "%s%s := %s\n%sswitch %s {\n%s\n%s}\n" ind scrutinee_var scrutinee_str ind
-          scrutinee_var match_body ind
+        Printf.sprintf "%s%s := %s\n%sswitch %s {\n%s\n%s}\n" ind scrutinee_var scrutinee_str ind scrutinee_var
+          match_body ind
       else
         Printf.sprintf
           "%s%s := %s\n%sswitch %s {\n%s\n%sdefault:\n%s\tpanic(\"unreachable: exhaustive match\")\n%s}\n" ind
@@ -4364,8 +4351,8 @@ and emit_match_primitive ?target state type_map env scrutinee scrutinee_type arm
         String.concat "\n" cases
       in
       if has_wildcard then
-        Printf.sprintf "(func() %s {\n\t%s := %s\n\tswitch %s {\n%s\n\t}\n})()" match_result_go_type
-          scrutinee_var scrutinee_str scrutinee_var match_body
+        Printf.sprintf "(func() %s {\n\t%s := %s\n\tswitch %s {\n%s\n\t}\n})()" match_result_go_type scrutinee_var
+          scrutinee_str scrutinee_var match_body
       else
         Printf.sprintf
           "(func() %s {\n\t%s := %s\n\tswitch %s {\n%s\n\tdefault:\n\t\tpanic(\"unreachable: exhaustive match\")\n\t}\n})()"
@@ -4739,9 +4726,10 @@ and emit_type_switch
   in
 
   (* Generate type switch *)
-  Printf.sprintf "func() %s {\n%s%s    switch %s := %s.(type) {\n%s    case %s:\n%s%s    default:\n%s%s    }\n%s}()"
-    result_type_str ind subject_binding_prefix narrowed_var subject_expr ind narrow_type_str cons_str ind
-    alt_str ind ind
+  Printf.sprintf
+    "func() %s {\n%s%s    switch %s := %s.(type) {\n%s    case %s:\n%s%s    default:\n%s%s    }\n%s}()"
+    result_type_str ind subject_binding_prefix narrowed_var subject_expr ind narrow_type_str cons_str ind alt_str
+    ind ind
 
 and emit_type_switch_to_target
     state type_map env checked_expr path narrow_type complement_type_opt result_type cons alt target =
@@ -4789,7 +4777,7 @@ and emit_type_switch_to_target
     | AST.ExpressionStmt e ->
         with_indent_delta state 1 (fun () -> emit_expr_to_target state type_map branch_env e value_target)
     | AST.Return e -> inner_ind ^ "    return " ^ emit_expr_for_current_return state type_map branch_env e ^ "\n"
-        | _ -> fst (emit_stmt state type_map branch_env stmt)
+    | _ -> fst (emit_stmt state type_map branch_env stmt)
   in
   let cons_stmt = substitute_path_in_stmt path narrowed_var cons in
   let narrowed_env = Infer.TypeEnv.add narrowed_var (Types.Forall ([], narrow_type)) env in
@@ -5144,7 +5132,7 @@ and emit_call state type_map env call_expr func args =
   (* Check for builtin function calls that need special handling *)
   match func.expr with
   | AST.Identifier type_name
-    when not (Infer.TypeEnv.mem type_name env) && Type_registry.is_named_type_name type_name -> (
+    when (not (Infer.TypeEnv.mem type_name env)) && Type_registry.is_named_type_name type_name -> (
       match named_constructor_result_type () with
       | Some (_resolved_name, type_args) ->
           let result_type = Types.TNamed (type_name, type_args) in
@@ -6675,7 +6663,7 @@ let emit_named_product_derived_impl
       in
       Some
         (Printf.sprintf "func hash_hash_%s(x %s) int64 {\n\th := int64(17)\n%s\treturn h\n}\n" type_suffix
-          type_str hash_steps)
+           type_str hash_steps)
 
 let emit_named_wrapper_derived_impl
     (state : emit_state)
@@ -6697,8 +6685,8 @@ let emit_named_wrapper_derived_impl
            rep_suffix rep_go_type)
   | Typecheck.Trait_registry.DeriveDebug ->
       Some
-        (Printf.sprintf "func debug_debug_%s(x %s) string {\n\treturn debug_debug_%s(%s(x))\n}\n" type_suffix type_str
-           rep_suffix rep_go_type)
+        (Printf.sprintf "func debug_debug_%s(x %s) string {\n\treturn debug_debug_%s(%s(x))\n}\n" type_suffix
+           type_str rep_suffix rep_go_type)
   | Typecheck.Trait_registry.DeriveOrd ->
       Some
         (Printf.sprintf "func ord_compare_%s(x, y %s) ordering {\n\treturn ord_compare_%s(%s(x), %s(y))\n}\n"
@@ -7970,9 +7958,13 @@ let%test "match in tail position emits without IIFE" =
   | Error _ -> false
 
 let%test "primitive match without wildcard emits fallback panic for Go exhaustiveness" =
-  match compile_string ~file_id:"<codegen>" "fn f(x: Bool) -> Str = { match x { case true: \"yes\" case false: \"no\" } }\nf(true)" with
+  match
+    compile_string ~file_id:"<codegen>"
+      "fn f(x: Bool) -> Str = { match x { case true: \"yes\" case false: \"no\" } }\nf(true)"
+  with
   | Ok (code, _) ->
-      string_contains code "switch" && string_contains code "default:"
+      string_contains code "switch"
+      && string_contains code "default:"
       && string_contains code "panic(\"unreachable: exhaustive match\")"
   | Error _ -> false
 

@@ -599,12 +599,7 @@ and parse_enum_definition (p : parser) : (parser * Surface.top_decl, parser) res
   Ok
     ( p6,
       Surface.STypeDef
-        {
-          type_name = name;
-          type_type_params = type_params;
-          type_body = Surface.STNamedSum variants;
-          derive;
-        } )
+        { type_name = name; type_type_params = type_params; type_body = Surface.STNamedSum variants; derive } )
 
 and parse_type_param_list (p : parser) : (parser * string list, parser) result =
   let rec loop lp rev_params =
@@ -680,8 +675,8 @@ and parse_postfix_derive (p : parser) : (parser * AST.derive_trait list, parser)
   else
     Ok (p, [])
 
-and parse_named_product_field_list (p : parser) :
-    (parser * Surface.surface_record_type_field list, parser) result =
+and parse_named_product_field_list (p : parser) : (parser * Surface.surface_record_type_field list, parser) result
+    =
   let rec loop lp rev_fields =
     if curr_token_is lp Token.RBrace then
       Ok (lp, List.rev rev_fields)
@@ -749,7 +744,9 @@ and parse_type_definition (p : parser) : (parser * Surface.top_decl, parser) res
       expect_peek p3 Token.Assign
   in
   let p_body = next_token p4 in
-  if curr_token_is p_body Token.Ident && p_body.curr_token.literal = type_name && peek_token_is p_body Token.LParen then (
+  if
+    curr_token_is p_body Token.Ident && p_body.curr_token.literal = type_name && peek_token_is p_body Token.LParen
+  then
     let p_open = next_token p_body in
     let* p_payload_end, payload_types = parse_type_expr_list (next_token p_open) in
     let* p_after_paren =
@@ -764,58 +761,35 @@ and parse_type_definition (p : parser) : (parser * Surface.top_decl, parser) res
         Ok
           ( p6,
             Surface.STypeDef
-              {
-                type_name;
-                type_type_params;
-                type_body = Surface.STNamedWrapper wrapper_body;
-                derive;
-              } )
+              { type_name; type_type_params; type_body = Surface.STNamedWrapper wrapper_body; derive } )
     | _ ->
         Error
           (add_error ~code:"parse-invalid-type-definition" p_body
-             (Printf.sprintf "Wrapper type '%s' expects exactly one payload type" type_name)))
-  else if curr_token_is p_body Token.LBrace then (
+             (Printf.sprintf "Wrapper type '%s' expects exactly one payload type" type_name))
+  else if curr_token_is p_body Token.LBrace then
     let p_members = next_token p_body in
     if
       curr_token_is p_members Token.RBrace
       || curr_token_is p_members Token.Spread
       || (curr_token_is p_members Token.Ident && peek_token_is p_members Token.Colon)
-    then (
+    then
       let* p5, record_body = parse_type_expr p_body in
       let* p6, derive = parse_postfix_derive p5 in
       Ok
         ( p6,
-          Surface.STypeDef
-            {
-              type_name;
-              type_type_params;
-              type_body = Surface.STTransparent record_body;
-              derive;
-            } ))
-    else (
+          Surface.STypeDef { type_name; type_type_params; type_body = Surface.STTransparent record_body; derive }
+        )
+    else
       let* p5, variants = parse_sum_type_body p_body in
       let* p6, derive = parse_postfix_derive p5 in
-      Ok
-        ( p6,
-          Surface.STypeDef
-            {
-              type_name;
-              type_type_params;
-              type_body = Surface.STNamedSum variants;
-              derive;
-            } )))
-  else (
+      Ok (p6, Surface.STypeDef { type_name; type_type_params; type_body = Surface.STNamedSum variants; derive })
+  else
     let* p5, transparent_body = parse_type_expr p_body in
     let* p6, derive = parse_postfix_derive p5 in
     Ok
       ( p6,
         Surface.STypeDef
-          {
-            type_name;
-            type_type_params;
-            type_body = Surface.STTransparent transparent_body;
-            derive;
-          } ))
+          { type_name; type_type_params; type_body = Surface.STTransparent transparent_body; derive } )
 
 (* Phase 4.3: Trait definition parsing *)
 and parse_trait_definition (p : parser) : (parser * Surface.top_decl, parser) result =
@@ -1589,7 +1563,8 @@ and parse_call_expression (p : parser) (c : Surface.surface_expr) : (parser * Su
     Ok (p2, mk_surface_expr id pos (Surface.SECall (c, arguments)))
   else
     let p_args = next_token p in
-    if curr_token_is p_args Token.Spread || (curr_token_is p_args Token.Ident && peek_token_is p_args Token.Colon) then
+    if curr_token_is p_args Token.Spread || (curr_token_is p_args Token.Ident && peek_token_is p_args Token.Colon)
+    then
       let* p2, record_arg = parse_labeled_call_record p_args in
       let id = fresh_id p2 in
       Ok (p2, mk_surface_expr id pos (Surface.SECall (c, [ record_arg ])))
@@ -1928,9 +1903,8 @@ and parse_patterns (p : parser) : (parser * Surface.surface_pattern list, parser
 
   loop p2 [ first_pattern ]
 
-and parse_constructor_payload_patterns
-    ~(constructor_pos : int)
-    (p : parser) : (parser * Surface.surface_pattern list, parser) result =
+and parse_constructor_payload_patterns ~(constructor_pos : int) (p : parser) :
+    (parser * Surface.surface_pattern list, parser) result =
   let parse_flattened_record_payload (lp : parser) : (parser * Surface.surface_pattern list, parser) result =
     let rec loop current fields rest =
       if curr_token_is current Token.RParen then
@@ -2762,8 +2736,7 @@ module Test = struct
     | AST.Return e | AST.ExpressionStmt e -> collect_expr_ids e
     | AST.Block stmts -> List.concat_map collect_stmt_ids stmts
     | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ | AST.TraitDef _ | AST.ImplDef _ | AST.InherentImplDef _
-    | AST.DeriveDef _ | AST.TypeAlias _
-      ->
+    | AST.DeriveDef _ | AST.TypeAlias _ ->
         []
 
   let%test "parser assigns unique expression ids for nested function and record literals" =
@@ -3038,11 +3011,7 @@ module Test = struct
           {
             AST.stmt =
               AST.TypeDef
-                {
-                  type_name = "UserId";
-                  type_type_params = [];
-                  type_body = AST.NamedTypeWrapper (AST.TCon "Int");
-                };
+                { type_name = "UserId"; type_type_params = []; type_body = AST.NamedTypeWrapper (AST.TCon "Int") };
             _;
           };
         ] ->
@@ -3286,9 +3255,7 @@ let%test "parse trait with multiple methods" =
       | [ stmt ] -> (
           match stmt.stmt with
           | AST.TraitDef trait_def ->
-              trait_def.name = "Num"
-              && trait_def.type_param = Some "a"
-              && List.length trait_def.methods = 2
+              trait_def.name = "Num" && trait_def.type_param = Some "a" && List.length trait_def.methods = 2
           | _ -> false)
       | _ -> false)
   | Error _ -> false
@@ -4104,7 +4071,8 @@ let%test "parse named product constructor-call with spread update" =
           match stmt.stmt with
           | AST.Let { value; _ } -> (
               match value.expr with
-              | AST.Call ({ expr = AST.Identifier "Point"; _ }, [ { expr = AST.RecordLit (fields, Some _); _ } ]) ->
+              | AST.Call ({ expr = AST.Identifier "Point"; _ }, [ { expr = AST.RecordLit (fields, Some _); _ } ])
+                ->
                   List.length fields = 1 && (List.hd fields).field_name = "x"
               | _ -> false)
           | _ -> false)
@@ -4375,7 +4343,8 @@ let%test "parse unqualified wrapper constructor pattern with flattened record pa
                                         {
                                           AST.pat =
                                             AST.PRecord
-                                              ([ { AST.pat_field_name = "name"; pat_field_pattern = None } ], Some "rest");
+                                              ( [ { AST.pat_field_name = "name"; pat_field_pattern = None } ],
+                                                Some "rest" );
                                           _;
                                         };
                                       ] );
@@ -4404,13 +4373,7 @@ let%test "parse unqualified nullary constructor pattern" =
               {
                 AST.expr =
                   AST.Match
-                    ( _,
-                      [
-                        {
-                          AST.patterns = [ { AST.pat = AST.PConstructor ("Quit", "Quit", []); _ } ];
-                          _;
-                        };
-                      ] );
+                    (_, [ { AST.patterns = [ { AST.pat = AST.PConstructor ("Quit", "Quit", []); _ } ]; _ } ]);
                 _;
               };
           _;

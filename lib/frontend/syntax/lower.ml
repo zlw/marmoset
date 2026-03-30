@@ -31,8 +31,7 @@ let lower_context_of_program (prog : Surface.surface_program) : lower_context =
       match ts.std_decl with
       | Surface.STraitDef { name; _ } | Surface.SShapeDef { shape_name = name; _ } ->
           { acc with constraint_names = StringSet.add name constraint_names }
-      | Surface.STypeDef { type_name = name; _ } ->
-          { acc with type_names = StringSet.add name type_names }
+      | Surface.STypeDef { type_name = name; _ } -> { acc with type_names = StringSet.add name type_names }
       | _ -> acc)
     empty_lower_context prog
 
@@ -401,8 +400,8 @@ let lower_variant_with_bound_vars (bound_type_vars : StringSet.t) (sv : Surface.
       variant_fields = List.map (lower_type_expr_with_bound_vars bound_type_vars) sv.sv_fields;
     }
 
-let lower_record_type_field_with_bound_vars (bound_type_vars : StringSet.t) (f : Surface.surface_record_type_field) :
-    AST.record_type_field =
+let lower_record_type_field_with_bound_vars
+    (bound_type_vars : StringSet.t) (f : Surface.surface_record_type_field) : AST.record_type_field =
   AST.
     {
       field_name = f.Surface.sf_name;
@@ -576,8 +575,7 @@ let lower_top_decl_with_ctx
              {
                shape_name;
                shape_type_params;
-               shape_fields =
-                 List.map (lower_record_type_field_with_bound_vars bound_type_vars) shape_fields;
+               shape_fields = List.map (lower_record_type_field_with_bound_vars bound_type_vars) shape_fields;
              })
       in
       [ shape_stmt ]
@@ -614,13 +612,7 @@ let lower_top_decl_with_ctx
           }
       in
       let td =
-        AST.
-          {
-            name;
-            type_param;
-            supertraits;
-            methods = List.map lower_method_sig_with_trait_bindings methods;
-          }
+        AST.{ name; type_param; supertraits; methods = List.map lower_method_sig_with_trait_bindings methods }
       in
       [ AST.mk_stmt ~pos ~end_pos ~file_id (AST.TraitDef td) ]
   | Surface.SAmbiguousImplDef { impl_type_params; impl_head_type; impl_methods } -> (
@@ -725,7 +717,9 @@ let%test "transparent type params lower lowercase names to TVars in type bodies"
       {
         type_name = "Reducer";
         type_type_params = [ "a" ];
-        type_body = Surface.STTransparent (Surface.STArrow ([ Surface.STCon "a"; Surface.STCon "a" ], Surface.STCon "a", false));
+        type_body =
+          Surface.STTransparent
+            (Surface.STArrow ([ Surface.STCon "a"; Surface.STCon "a" ], Surface.STCon "a", false));
         derive = [];
       }
   in
@@ -847,8 +841,7 @@ let%test "lower SEArrowLambda to canonical Function" =
 let%test "arrow lambda shorthand param lowers with program trait context" =
   let id_supply = Id_supply.Id_supply.create 0 in
   let trait_decl =
-    mk_test_ts
-      (Surface.STraitDef { name = "Named"; type_param = None; supertraits = []; methods = [] })
+    mk_test_ts (Surface.STraitDef { name = "Named"; type_param = None; supertraits = []; methods = [] })
   in
   let body_expr = Surface.mk_surface_expr ~id:1 ~pos:0 (Surface.SEIdentifier "x") in
   let lambda_expr =
@@ -972,7 +965,9 @@ let%test "STypeDef lowering preserves derive target params" =
       {
         type_name = "Box";
         type_type_params = [ "t" ];
-        type_body = Surface.STTransparent (Surface.STRecord ([ Surface.{ sf_name = "value"; sf_type = Surface.STVar "t" } ], None));
+        type_body =
+          Surface.STTransparent
+            (Surface.STRecord ([ Surface.{ sf_name = "value"; sf_type = Surface.STVar "t" } ], None));
         derive =
           [
             AST.
@@ -1079,8 +1074,7 @@ let%test "bare trait param shorthand lowers to fresh constrained generic" =
     lower_program id_supply
       [
         mk_test_ts
-          (Surface.STraitDef
-             { name = "JungleDweller"; type_param = Some "a"; supertraits = []; methods = [] });
+          (Surface.STraitDef { name = "JungleDweller"; type_param = Some "a"; supertraits = []; methods = [] });
         mk_test_ts decl;
       ]
   in
@@ -1214,8 +1208,7 @@ let%test "explicit generics and shorthand params stay independent" =
   let prog =
     lower_program id_supply
       [
-        mk_test_ts
-          (Surface.STraitDef { name = "Named"; type_param = None; supertraits = []; methods = [] });
+        mk_test_ts (Surface.STraitDef { name = "Named"; type_param = None; supertraits = []; methods = [] });
         mk_test_ts decl;
       ]
   in

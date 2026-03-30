@@ -32,9 +32,7 @@ let of_name (name : string) : t =
 let of_names (names : string list) : t list = List.map of_name names
 
 let name = function
-  | TraitConstraint name
-  | ShapeConstraint name ->
-      name
+  | TraitConstraint name | ShapeConstraint name -> name
 
 let names (constraints : t list) : string list = List.map name constraints
 

@@ -33,7 +33,9 @@ let predeclare_named_type (def : AST.named_type_def) : unit =
 
 let predeclare_shape (def : AST.shape_def) : unit = Hashtbl.replace shape_source_registry def.shape_name def
 
-let lookup_named_type_source (name : string) : AST.named_type_def option = Hashtbl.find_opt named_type_source_registry name
+let lookup_named_type_source (name : string) : AST.named_type_def option =
+  Hashtbl.find_opt named_type_source_registry name
+
 let lookup_shape_source (name : string) : AST.shape_def option = Hashtbl.find_opt shape_source_registry name
 
 let register_named_type (def : named_type_def) : unit =
@@ -91,8 +93,7 @@ let shape_arity (name : string) : int option =
 
 let instantiate_type_params (params : string list) (args : mono_type list) : (substitution, string) result =
   if List.length params <> List.length args then
-    Error
-      (Printf.sprintf "Expected %d type argument(s), got %d" (List.length params) (List.length args))
+    Error (Printf.sprintf "Expected %d type argument(s), got %d" (List.length params) (List.length args))
   else
     Ok (substitution_of_list (List.combine params args))
 
@@ -127,7 +128,8 @@ let instantiate_named_wrapper_representation (name : string) (args : mono_type l
               Some (Error (Printf.sprintf "Named type %s is a product type, not a wrapper type" name))
           | NamedWrapper mono -> Some (Ok (apply_substitution subst mono))))
 
-let instantiate_shape_fields (name : string) (args : mono_type list) : (record_field_type list, string) result option =
+let instantiate_shape_fields (name : string) (args : mono_type list) :
+    (record_field_type list, string) result option =
   match lookup_shape name with
   | None -> None
   | Some def -> (
