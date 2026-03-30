@@ -3012,6 +3012,13 @@ and collect_insts_expr
                       register_user_func_call_instantiation state type_map env ~target_name ~args ~call_expr:expr
                   | _ -> collect_insts_expr state type_map env receiver)
               | _ -> collect_insts_expr state type_map env receiver)
+          | Some Infer.UfcsFunctionCall ->
+              collect_insts_expr state type_map env
+                (AST.mk_expr ~id:expr.id ~pos:expr.pos ~end_pos:expr.end_pos ~file_id:expr.file_id
+                   (AST.Call
+                      ( AST.mk_expr ~id:(-1) ~pos:expr.pos ~end_pos:expr.end_pos ~file_id:expr.file_id
+                          (AST.Identifier method_name),
+                        receiver :: args )))
           | None -> collect_insts_expr state type_map env receiver))
   | AST.BlockExpr stmts ->
       ignore (List.fold_left (fun e stmt -> collect_insts_stmt state type_map e stmt) env stmts)
@@ -3745,6 +3752,11 @@ let rec emit_expr
                 Printf.sprintf "%s(%s)" func_name (String.concat ", " all_args)
             | Some Infer.FieldFunctionCall ->
                 emit_field_function_call state type_map env expr receiver variant_name args
+            | Some Infer.UfcsFunctionCall ->
+                emit_call state type_map env expr
+                  (AST.mk_expr ~id:(-1) ~pos:expr.pos ~end_pos:expr.end_pos ~file_id:expr.file_id
+                     (AST.Identifier variant_name))
+                  (receiver :: args)
             | None ->
                 failwith
                   (Printf.sprintf
@@ -6513,6 +6525,7 @@ let collect_inherent_call_sites
         | Some (Infer.DynamicTraitMethod _)
         | Some (Infer.QualifiedTraitMethod _)
         | Some Infer.FieldFunctionCall
+        | Some Infer.UfcsFunctionCall
         | None ->
             acc'')
     | AST.BlockExpr stmts -> List.fold_left collect_stmt acc stmts

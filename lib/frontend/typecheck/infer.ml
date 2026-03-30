@@ -144,6 +144,7 @@ and method_resolution =
   | QualifiedTraitMethod of string (* Trait.method(receiver, args...) *)
   | QualifiedInherentMethod (* Type.method(receiver, args...) *)
   | FieldFunctionCall
+  | UfcsFunctionCall
 
 let create_inference_state () : inference_state =
   {
@@ -1922,6 +1923,34 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                             let result_type = TEnum (enum_name, result_type_args) in
                             Ok (final_subst, result_type))))
         in
+        let infer_ufcs_function_call () : (substitution * mono_type) infer_result option =
+          let func_expr =
+            AST.mk_expr ~id:(fresh_synthetic_expr_id ()) ~pos:expr.pos ~end_pos:expr.end_pos ~file_id:expr.file_id
+              (AST.Identifier method_name)
+          in
+          match infer_expression type_map env func_expr with
+          | Error _ -> None
+          | Ok (_subst_func, callee_type) -> (
+              match contextual_callable_signature callee_type with
+              | None -> None
+              | Some _ ->
+                  let call_expr =
+                    AST.mk_expr ~id:(fresh_synthetic_expr_id ()) ~pos:expr.pos ~end_pos:expr.end_pos
+                      ~file_id:expr.file_id
+                      (AST.Call (func_expr, receiver :: args))
+                  in
+                  match infer_expression type_map env call_expr with
+                  | Error e -> Some (Error e)
+                  | Ok (subst_call, call_type) ->
+                      let callee_type' =
+                        match Hashtbl.find_opt type_map func_expr.id with
+                        | Some typ -> apply_substitution subst_call typ
+                        | None -> apply_substitution subst_call callee_type
+                      in
+                      record_method_resolution expr UfcsFunctionCall;
+                      record_effectful_method_call expr (type_may_be_effectful_callable callee_type');
+                      Some (Ok (subst_call, call_type)))
+        in
         let infer_real_method_call () : (substitution * mono_type) infer_result =
           match infer_expression type_map env receiver with
           | Error e -> Error e
@@ -2181,13 +2210,16 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                               (AST.FieldAccess (receiver, method_name))
                           in
                           match infer_expression type_map env field_expr with
-                          | Error _ ->
-                              Error
-                                (error_at ~code:"type-constructor"
-                                   ~message:
-                                     (Printf.sprintf "No method '%s' found for type %s" method_name
-                                        (Types.to_string receiver_type'))
-                                   expr)
+                          | Error _ -> (
+                              match infer_ufcs_function_call () with
+                              | Some result -> result
+                              | None ->
+                                  Error
+                                    (error_at ~code:"type-constructor"
+                                       ~message:
+                                         (Printf.sprintf "No method '%s' found for type %s" method_name
+                                            (Types.to_string receiver_type'))
+                                       expr))
                           | Ok (subst_field, field_callee_type) -> (
                               let env_field = apply_substitution_env subst_field env in
                               let args_expr =
@@ -2204,13 +2236,16 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                                   record_effectful_method_call expr
                                     (type_may_be_effectful_callable field_callee_type');
                                   Ok (compose_substitution subst_field_call subst_field, field_call_type)
-                              | Error _ ->
-                                  Error
-                                    (error_at ~code:"type-constructor"
-                                       ~message:
-                                         (Printf.sprintf "No method '%s' found for type %s" method_name
-                                            (Types.to_string receiver_type'))
-                                       expr))))
+                              | Error _ -> (
+                                  match infer_ufcs_function_call () with
+                                  | Some result -> result
+                                  | None ->
+                                      Error
+                                        (error_at ~code:"type-constructor"
+                                           ~message:
+                                             (Printf.sprintf "No method '%s' found for type %s" method_name
+                                                (Types.to_string receiver_type'))
+                                           expr)))))
                   | `Found (trait_name, method_sig) -> (
                       let is_self_defining =
                         let recv_canon = canonicalize_mono_type receiver_type' in
@@ -6958,6 +6993,12 @@ f" in
   let%test "inherent method call resolves for concrete receiver" =
     let code =
       "type Point = { x: Int, y: Int }\nimpl Point = { fn sum(p: Point) -> Int = p.x + p.y }\nlet p: Point = { x: 1, y: 2 }\np.sum()"
+    in
+    infers_to code TInt
+
+  let%test "dot call falls back to top-level generic UFCS function" =
+    let code =
+      "fn apply_twice[a](x: a, f: (a) -> a) -> a = f(f(x))\n1.apply_twice((x: Int) -> x * 2)"
     in
     infers_to code TInt
 

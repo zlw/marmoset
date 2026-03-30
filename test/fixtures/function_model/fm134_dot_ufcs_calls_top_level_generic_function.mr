@@ -1,0 +1,15 @@
+# FM134: dot call falls back to top-level generic UFCS function
+fn map[a](arr: List[a], f: (a) -> a) -> List[a] = {
+  let iter = (arr: List[a], accumulated: List[a]) -> {
+    if (len(arr) == 0) {
+      accumulated
+    } else {
+      iter(rest(arr), push(accumulated, f(first(arr))))
+    }
+  }
+
+  iter(arr, [])
+}
+
+let numbers = [1, 2, 3]
+puts(numbers.map((x: Int) -> x * 2))  # output: [2 4 6]
