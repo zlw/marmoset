@@ -144,7 +144,13 @@ class marmoset_server =
                     let text =
                       match hover.contents with
                       | `MarkupContent mc -> mc.value
-                      | _ -> "?"
+                      | `MarkedString ms -> ms.value
+                      | `List items ->
+                          String.concat "\n"
+                            (List.map
+                               (function
+                                 | { Lsp_t.MarkedString.value; _ } -> value)
+                               items)
                     in
                     Printf.eprintf "[marmoset-lsp] hover %d:%d → %s\n%!" pos.line pos.character
                       (String.escaped text)

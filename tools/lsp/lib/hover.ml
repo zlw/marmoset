@@ -36,14 +36,7 @@ let identifier_at_offset ~(source : string) ~(offset : int) : string option =
   | None -> None
 
 let make_hover_contents (type_str : string) =
-  let snippet =
-    if Diagnostics.String_utils.contains_substring ~needle:":" type_str then
-      type_str
-    else
-      Printf.sprintf "type Hover = %s" type_str
-  in
-  Lsp_t.MarkupContent.create ~kind:Lsp_t.MarkupKind.Markdown
-    ~value:(Printf.sprintf "```marmoset\n%s\n```" snippet)
+  `MarkedString Lsp_t.MarkedString.{ value = type_str; language = Some "marmoset" }
 
 (* The parser sets pos to the operator/paren position for Infix, Call,
    MethodCall, FieldAccess — not the leftmost token. This helper computes
@@ -420,7 +413,7 @@ let hover_at
       | Some type_str ->
           let contents = make_hover_contents type_str in
           let range = Lsp_utils.offset_range_to_lsp ~source ~pos ~end_pos in
-          Some (Lsp_t.Hover.create ~contents:(`MarkupContent contents) ~range ()))
+          Some (Lsp_t.Hover.create ~contents ~range ()))
   | None -> (
       match find_pattern_in_program ~offset ~type_map program with
       | Some (pattern, scrutinee_type) -> (
@@ -434,7 +427,7 @@ let hover_at
                 | None -> (pattern.pos, pattern.end_pos)
               in
               let range = Lsp_utils.offset_range_to_lsp ~source ~pos ~end_pos in
-              Some (Lsp_t.Hover.create ~contents:(`MarkupContent contents) ~range ()))
+              Some (Lsp_t.Hover.create ~contents ~range ()))
       | None -> (
           match find_in_program offset program with
           | None -> None
@@ -445,7 +438,7 @@ let hover_at
                   let contents = make_hover_contents type_str in
                   let effective_pos = effective_start_pos expr in
                   let range = Lsp_utils.offset_range_to_lsp ~source ~pos:effective_pos ~end_pos:expr.end_pos in
-                  Some (Lsp_t.Hover.create ~contents:(`MarkupContent contents) ~range ()))))
+                  Some (Lsp_t.Hover.create ~contents ~range ()))))
 
 (* ============================================================
    Tests
@@ -482,7 +475,13 @@ let hover_info source line character : hover_result option =
       let type_text =
         match hover.contents with
         | `MarkupContent mc -> mc.value
-        | _ -> ""
+        | `MarkedString ms -> ms.value
+        | `List items ->
+            String.concat "\n"
+              (List.map
+                 (function
+                   | { Lsp_t.MarkedString.value; _ } -> value)
+                 items)
       in
       let r =
         match hover.range with
