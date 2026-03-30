@@ -103,6 +103,9 @@ search_fixed 'path = "tools/tree-sitter-marmoset"' extension.toml
 search_fixed 'languages = ["languages/marmoset"]' extension.toml
 search_fixed 'kind = "Rust"' extension.toml
 search_fixed 'portable instead of depending on a machine-specific local `file://`' README.md
+search_fixed 'set-grammar-source.sh local --reset-cache' README.md
+search_fixed 'sync-local-grammar-cache.sh' README.md
+search_fixed 'set-grammar-source.sh pinned' README.md
 search_fixed 'remove that directory and reinstall the dev' README.md
 search_fixed '"case" @keyword.conditional' languages/marmoset/highlights.scm
 search_fixed '"shape" @keyword.type' languages/marmoset/highlights.scm
@@ -121,3 +124,65 @@ search_fixed '(type_definition' languages/marmoset/outline.scm
 search_fixed 'target:' languages/marmoset/outline.scm
 search_fixed 'expr_or_block' languages/marmoset/indents.scm
 search_fixed 'constructor_type_body' languages/marmoset/indents.scm
+
+TMP_DIR=$(mktemp -d)
+trap 'rm -rf "$TMP_DIR"' EXIT
+
+python3 scripts/render_extension_manifest.py \
+  --mode pinned \
+  --repo-root "$REPO_ROOT" \
+  --output "$TMP_DIR/pinned.toml"
+cmp -s extension.toml "$TMP_DIR/pinned.toml"
+
+python3 scripts/render_extension_manifest.py \
+  --mode local \
+  --repo-root "$REPO_ROOT" \
+  --output "$TMP_DIR/local.toml"
+
+python3 - <<'PY' "$TMP_DIR/local.toml" "$REPO_ROOT"
+import pathlib
+import re
+import sys
+
+manifest_path = pathlib.Path(sys.argv[1])
+repo_root = pathlib.Path(sys.argv[2]).resolve()
+text = manifest_path.read_text()
+
+assert f'repository = "{repo_root.as_uri()}"' in text, text
+assert 'path = "tools/tree-sitter-marmoset"' in text, text
+assert re.search(r'rev = "[0-9a-f]{40}"', text), text
+PY
+
+"$ZED_DIR/scripts/set-grammar-source.sh" local \
+  --repo-root "$REPO_ROOT" \
+  --extension-dir "$TMP_DIR/extension"
+search_fixed "repository = \"file://" "$TMP_DIR/extension/extension.toml"
+
+python3 - <<'PY' "$TMP_DIR/repo"
+import pathlib
+import subprocess
+import sys
+
+repo_root = pathlib.Path(sys.argv[1])
+(repo_root / "tools/tree-sitter-marmoset/src").mkdir(parents=True, exist_ok=True)
+(repo_root / "tools/tree-sitter-marmoset/src/parser.c").write_text("new parser\n")
+(repo_root / "tools/tree-sitter-marmoset/grammar.js").write_text("new grammar\n")
+(repo_root / "tools/zed-marmoset/grammars/marmoset/tools/tree-sitter-marmoset").mkdir(parents=True, exist_ok=True)
+(repo_root / "tools/zed-marmoset/grammars/marmoset/.git").mkdir(parents=True, exist_ok=True)
+(repo_root / "tools/zed-marmoset/grammars/marmoset/tools/tree-sitter-marmoset/stale.txt").write_text("stale\n")
+(repo_root / "tools/zed-marmoset/grammars/marmoset.wasm").write_text("wasm\n")
+subprocess.run(["git", "init", str(repo_root)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+subprocess.run(["git", "-C", str(repo_root), "config", "user.email", "test@example.com"], check=True)
+subprocess.run(["git", "-C", str(repo_root), "config", "user.name", "Test"], check=True)
+subprocess.run(["git", "-C", str(repo_root), "add", "."], check=True)
+subprocess.run(["git", "-C", str(repo_root), "commit", "-m", "init"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+PY
+
+"$ZED_DIR/scripts/sync-local-grammar-cache.sh" \
+  --repo-root "$TMP_DIR/repo" \
+  --cache-root "$TMP_DIR/repo/tools/zed-marmoset/grammars"
+
+test -f "$TMP_DIR/repo/tools/zed-marmoset/grammars/marmoset/tools/tree-sitter-marmoset/src/parser.c"
+test -f "$TMP_DIR/repo/tools/zed-marmoset/grammars/marmoset/tools/tree-sitter-marmoset/grammar.js"
+test ! -e "$TMP_DIR/repo/tools/zed-marmoset/grammars/marmoset/tools/tree-sitter-marmoset/stale.txt"
+test ! -e "$TMP_DIR/repo/tools/zed-marmoset/grammars/marmoset.wasm"

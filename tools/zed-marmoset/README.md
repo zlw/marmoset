@@ -13,11 +13,31 @@ Syntax highlighting, bracket matching, auto-indentation, and code outline for [M
 The checked-in manifest fetches the grammar from the main Marmoset repository at
 a pinned revision, with `path = "tools/tree-sitter-marmoset"`. That keeps dev
 installs portable instead of depending on a machine-specific local `file://`
-repository path.
+repository path, but it is not a good local grammar iteration loop by itself.
 
 If a previous failed install left a stale grammar checkout under
 `tools/zed-marmoset/grammars/`, remove that directory and reinstall the dev
 extension so Zed can clone the grammar again from a clean state.
+
+### Local grammar mode
+
+For fast local grammar testing in Zed:
+
+1. Run `./tools/zed-marmoset/scripts/set-grammar-source.sh local --reset-cache`
+2. Install or reinstall the dev extension from `tools/zed-marmoset/`
+3. After uncommitted edits under `tools/tree-sitter-marmoset/`, run
+   `./tools/zed-marmoset/scripts/sync-local-grammar-cache.sh`
+
+Zed's grammar manifest still requires a repository URL plus a Git revision. The
+local mode script switches the manifest to a `file://` repository rooted at the
+current checkout and pins it to the current `HEAD`, so committed local changes
+can be reinstalled without pushing to GitHub. The cache sync script fills the
+remaining gap for uncommitted grammar edits by copying the working tree into
+Zed's cached grammar checkout and clearing the cached `marmoset.wasm`.
+
+Before committing or running CI, restore the portable manifest with:
+
+`./tools/zed-marmoset/scripts/set-grammar-source.sh pinned`
 
 ### From source (after pushing)
 
