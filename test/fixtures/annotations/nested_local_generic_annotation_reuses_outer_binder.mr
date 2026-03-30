@@ -1,0 +1,15 @@
+fn map[a](arr: List[a], f: (a) -> a) -> List[a] = {
+  let iter = (arr: List[a], accumulated: List[a]) -> {
+    if (len(arr) == 0) {
+      accumulated
+    } else {
+      iter(rest(arr), push(accumulated, f(first(arr))))
+    }
+  }
+
+  iter(arr, [])
+}
+
+let numbers = [1, 2, 3]
+let inc = (x: Int) -> x + 1
+puts(map(numbers, inc))  # output: [2 3 4]

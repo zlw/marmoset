@@ -399,6 +399,38 @@ let lookup_type_var_user_name_in_state (state : inference_state) (fresh_name : s
 let type_var_user_name_bindings_in_state (state : inference_state) : (string * string) list =
   Hashtbl.to_seq state.type_var_user_names |> List.of_seq
 
+let user_named_type_bindings_in_env (env : type_env) : (string * mono_type) list =
+  let add_binding acc fresh_name =
+    match lookup_type_var_user_name fresh_name with
+    | Some user_name when not (List.mem_assoc user_name acc) -> (user_name, TVar fresh_name) :: acc
+    | _ -> acc
+  in
+  let rec collect_mono acc = function
+    | TInt | TFloat | TBool | TString | TNull -> acc
+    | TVar fresh_name -> add_binding acc fresh_name
+    | TFun (arg, ret, _) -> collect_mono (collect_mono acc arg) ret
+    | TArray element -> collect_mono acc element
+    | THash (key, value) -> collect_mono (collect_mono acc key) value
+    | TRecord (fields, row) ->
+        let acc =
+          List.fold_left (fun inner (field : record_field_type) -> collect_mono inner field.typ) acc fields
+        in
+        let acc =
+          match row with
+          | Some row_type -> collect_mono acc row_type
+          | None -> acc
+        in
+        acc
+    | TRowVar _ | TTraitObject _ -> acc
+    | TUnion members | TIntersection members | TEnum (_, members) | TNamed (_, members) ->
+        List.fold_left collect_mono acc members
+  in
+  let collect_poly acc = function
+    | Forall ([], mono) -> collect_mono acc mono
+    | Forall (_ :: _, _) -> acc
+  in
+  TypeEnv.fold (fun _ poly acc -> collect_poly acc poly) env [] |> List.rev
+
 let record_method_resolution (expr : AST.expression) (resolution : method_resolution) : unit =
   Hashtbl.replace global_method_resolution_store expr.id resolution
 
@@ -1080,11 +1112,12 @@ let expression_type_or_lookup (type_map : type_map) (expr : AST.expression) : (m
            ~message:(Printf.sprintf "Missing inferred type for expression id %d at Dyn coercion site" expr.id))
 
 let provisional_function_type
+    ?(outer_type_bindings = [])
     (generics_opt : AST.generic_param list option)
     (params : (string * AST.type_expr option) list)
     (return_annot : AST.type_expr option)
     (is_effectful : bool) : (mono_type, Diagnostic.t) result =
-  let type_var_map =
+  let local_type_var_map =
     match generics_opt with
     | None -> []
     | Some generics ->
@@ -1099,6 +1132,7 @@ let provisional_function_type
             (generic.name, fresh_var))
           generics
   in
+  let type_var_map = local_type_var_map @ outer_type_bindings in
   let convert_annot_or_fresh = annotation_with_bindings_or_fresh type_var_map in
   let return_type_result =
     match return_annot with
@@ -3090,7 +3124,8 @@ and contextual_callable_signature (typ : mono_type) : (mono_type list * mono_typ
 and infer_function_with_annotations
     ?(known_param_types = []) ?known_return type_map env generics_opt params return_annot is_effectful body =
   (* Process generic parameters and their constraints *)
-  let type_var_map =
+  let outer_type_bindings = user_named_type_bindings_in_env env in
+  let local_type_var_map =
     match generics_opt with
     | None -> []
     | Some generics ->
@@ -3105,6 +3140,7 @@ and infer_function_with_annotations
             (generic.name, fresh_var))
           generics
   in
+  let type_var_map = local_type_var_map @ outer_type_bindings in
   (* Map effect annotation: => is Effectful, -> with return annot is Pure, otherwise Unspecified *)
   let effect_annot =
     if is_effectful then
@@ -5468,7 +5504,9 @@ and infer_let ?(prefer_existing_self = false) type_map env name expr type_annota
   (* If so, create a partially constrained type for recursion *)
   let inferred_self_type_result =
     match (expr.expr, type_annotation) with
-    | AST.Function f, _ -> provisional_function_type f.generics f.params f.return_type f.is_effectful
+    | AST.Function f, _ ->
+        provisional_function_type ~outer_type_bindings:(user_named_type_bindings_in_env env) f.generics f.params
+          f.return_type f.is_effectful
     | _, Some type_expr -> annotation_or_fresh type_expr
     | _, None -> Ok (fresh_type_var ())
   in
@@ -5656,7 +5694,10 @@ let predeclare_top_level_lets (env : type_env) (program : AST.program) : (type_e
               else
                 match let_binding.value.expr with
                 | AST.Function f -> (
-                    match provisional_function_type f.generics f.params f.return_type f.is_effectful with
+                    match
+                      provisional_function_type ~outer_type_bindings:(user_named_type_bindings_in_env env_acc)
+                        f.generics f.params f.return_type f.is_effectful
+                    with
                     | Error e -> Error e
                     | Ok placeholder ->
                         set_top_level_placeholder let_binding.name placeholder;
@@ -6439,6 +6480,11 @@ module Test = struct
     infers_to
       "shape Named = { name: Str }\nfn apply[a, b](x: a, f: (a) -> b) -> b = f(x)\nlet user = { name: \"mia\", id: 7 }\napply(user, (x: Named) -> x.name)"
       TString
+
+  let%test "nested lambda annotations reuse outer generic binders" =
+    infers_to
+      "fn keep[a](x: a) -> a = {\n  let loop = (y: a) -> {\n    if (true) { y } else { loop(y) }\n  }\n  loop(x)\n}\nkeep(1)"
+      TInt
 
   let%test "generic impl cannot specialize generic return type from body literals" =
     match
