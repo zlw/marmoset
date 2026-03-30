@@ -12,6 +12,29 @@ let first_some a b =
   | Some _ -> a
   | None -> b
 
+let is_ident_char = function
+  | 'a' .. 'z' | 'A' .. 'Z' | '0' .. '9' | '_' | '?' | '!' -> true
+  | _ -> false
+
+let identifier_range_at_offset ~(source : string) ~(offset : int) : (int * int) option =
+  if offset < 0 || offset >= String.length source || not (is_ident_char source.[offset]) then
+    None
+  else
+    let start = ref offset in
+    let stop = ref offset in
+    while !start > 0 && is_ident_char source.[!start - 1] do
+      decr start
+    done;
+    while !stop + 1 < String.length source && is_ident_char source.[!stop + 1] do
+      incr stop
+    done;
+    Some (!start, !stop)
+
+let identifier_at_offset ~(source : string) ~(offset : int) : string option =
+  match identifier_range_at_offset ~source ~offset with
+  | Some (start, stop) -> Some (String.sub source start (stop - start + 1))
+  | None -> None
+
 (* The parser sets pos to the operator/paren position for Infix, Call,
    MethodCall, FieldAccess — not the leftmost token. This helper computes
    the true start by walking into left children recursively. *)
@@ -64,6 +87,24 @@ let rec find_expr_at (offset : int) (expr : Ast.AST.expression) : Ast.AST.expres
     | Some _ -> child
     | None -> Some expr
 
+and find_pattern_at (offset : int) (pat : Ast.AST.pattern) : Ast.AST.pattern option =
+  if offset < pat.pos || offset > pat.end_pos then
+    None
+  else
+    let child =
+      match pat.pat with
+      | Ast.AST.PConstructor (_, _, fields) -> List.find_map (find_pattern_at offset) fields
+      | Ast.AST.PRecord (fields, _) ->
+          List.find_map
+            (fun (field : Ast.AST.record_pattern_field) ->
+              Option.bind field.pat_field_pattern (find_pattern_at offset))
+            fields
+      | Ast.AST.PWildcard | Ast.AST.PVariable _ | Ast.AST.PLiteral _ -> None
+    in
+    match child with
+    | Some _ -> child
+    | None -> Some pat
+
 and find_expr_in_stmt (offset : int) (stmt : Ast.AST.statement) : Ast.AST.expression option =
   match stmt.stmt with
   | Ast.AST.ExpressionStmt e -> find_expr_at offset e
@@ -103,6 +144,90 @@ and find_expr_in_stmt (offset : int) (stmt : Ast.AST.statement) : Ast.AST.expres
 let find_in_program (offset : int) (program : Ast.AST.program) : Ast.AST.expression option =
   List.find_map (find_expr_in_stmt offset) program
 
+let rec find_pattern_in_expr ~(offset : int) ~(type_map : Infer.type_map) (expr : Ast.AST.expression) :
+    (Ast.AST.pattern * Types.mono_type) option =
+  match expr.expr with
+  | Ast.AST.If (cond, then_, else_) ->
+      first_some
+        (find_pattern_in_expr ~offset ~type_map cond)
+        (first_some
+           (find_pattern_in_stmt ~offset ~type_map then_)
+           (Option.bind else_ (find_pattern_in_stmt ~offset ~type_map)))
+  | Ast.AST.Function { body; _ } -> find_pattern_in_stmt ~offset ~type_map body
+  | Ast.AST.Infix (left, _, right) ->
+      first_some (find_pattern_in_expr ~offset ~type_map left) (find_pattern_in_expr ~offset ~type_map right)
+  | Ast.AST.Prefix (_, e) | Ast.AST.TypeCheck (e, _) | Ast.AST.FieldAccess (e, _) ->
+      find_pattern_in_expr ~offset ~type_map e
+  | Ast.AST.Call (fn_expr, args) ->
+      first_some
+        (find_pattern_in_expr ~offset ~type_map fn_expr)
+        (List.find_map (find_pattern_in_expr ~offset ~type_map) args)
+  | Ast.AST.Index (arr, idx) ->
+      first_some (find_pattern_in_expr ~offset ~type_map arr) (find_pattern_in_expr ~offset ~type_map idx)
+  | Ast.AST.Array elts -> List.find_map (find_pattern_in_expr ~offset ~type_map) elts
+  | Ast.AST.Hash pairs ->
+      List.find_map
+        (fun (k, v) ->
+          first_some (find_pattern_in_expr ~offset ~type_map k) (find_pattern_in_expr ~offset ~type_map v))
+        pairs
+  | Ast.AST.MethodCall { mc_receiver; mc_args; _ } ->
+      first_some
+        (find_pattern_in_expr ~offset ~type_map mc_receiver)
+        (List.find_map (find_pattern_in_expr ~offset ~type_map) mc_args)
+  | Ast.AST.Match (scrutinee, arms) ->
+      first_some
+        (find_pattern_in_expr ~offset ~type_map scrutinee)
+        (List.find_map
+           (fun (arm : Ast.AST.match_arm) ->
+             let pattern_target =
+               List.find_map
+                 (fun (pat : Ast.AST.pattern) ->
+                   if offset >= pat.pos && offset <= pat.end_pos then
+                     match Hashtbl.find_opt type_map scrutinee.id with
+                     | Some scrutinee_type -> Some (pat, Types.canonicalize_mono_type scrutinee_type)
+                     | None -> None
+                   else
+                     None)
+                 arm.patterns
+             in
+             first_some pattern_target (find_pattern_in_expr ~offset ~type_map arm.body))
+           arms)
+  | Ast.AST.RecordLit (fields, spread) ->
+      first_some
+        (List.find_map
+           (fun (f : Ast.AST.record_field) -> Option.bind f.field_value (find_pattern_in_expr ~offset ~type_map))
+           fields)
+        (Option.bind spread (find_pattern_in_expr ~offset ~type_map))
+  | Ast.AST.EnumConstructor (_, _, args) -> List.find_map (find_pattern_in_expr ~offset ~type_map) args
+  | Ast.AST.BlockExpr stmts -> List.find_map (find_pattern_in_stmt ~offset ~type_map) stmts
+  | Ast.AST.Identifier _ | Ast.AST.Integer _ | Ast.AST.Float _ | Ast.AST.Boolean _ | Ast.AST.String _ -> None
+
+and find_pattern_in_stmt ~(offset : int) ~(type_map : Infer.type_map) (stmt : Ast.AST.statement) :
+    (Ast.AST.pattern * Types.mono_type) option =
+  match stmt.stmt with
+  | Ast.AST.ExpressionStmt e -> find_pattern_in_expr ~offset ~type_map e
+  | Ast.AST.Let { value; _ } -> find_pattern_in_expr ~offset ~type_map value
+  | Ast.AST.Return e -> find_pattern_in_expr ~offset ~type_map e
+  | Ast.AST.Block stmts -> List.find_map (find_pattern_in_stmt ~offset ~type_map) stmts
+  | Ast.AST.ImplDef { impl_methods; _ } ->
+      List.find_map
+        (fun (m : Ast.AST.method_impl) -> find_pattern_in_stmt ~offset ~type_map m.impl_method_body)
+        impl_methods
+  | Ast.AST.InherentImplDef { inherent_methods; _ } ->
+      List.find_map
+        (fun (m : Ast.AST.method_impl) -> find_pattern_in_stmt ~offset ~type_map m.impl_method_body)
+        inherent_methods
+  | Ast.AST.TraitDef { methods; _ } ->
+      List.find_map
+        (fun (m : Ast.AST.method_sig) ->
+          Option.bind m.method_default_impl (find_pattern_in_expr ~offset ~type_map))
+        methods
+  | Ast.AST.EnumDef _ | Ast.AST.TypeDef _ | Ast.AST.ShapeDef _ | Ast.AST.DeriveDef _ | Ast.AST.TypeAlias _ -> None
+
+let find_pattern_in_program ~(offset : int) ~(type_map : Infer.type_map) (program : Ast.AST.program) :
+    (Ast.AST.pattern * Types.mono_type) option =
+  List.find_map (find_pattern_in_stmt ~offset ~type_map) program
+
 let type_to_source = Source_syntax.mono_type_to_source
 let normalize_with_user_names = Source_syntax.normalize_mono_type_with_user_names
 let format_poly = Source_syntax.format_poly_binding
@@ -131,6 +256,50 @@ let format_hover_type
           Some (type_to_source ~type_var_user_names norm)
       | None -> None)
 
+let format_hover_pattern
+    ~(source : string)
+    ~(offset : int)
+    ~(type_var_user_names : type_var_user_name_map)
+    (pattern : Ast.AST.pattern)
+    (scrutinee_type : Types.mono_type) : string option =
+  match Infer.check_pattern pattern scrutinee_type with
+  | Error _ -> None
+  | Ok (bindings, pattern_type) -> (
+      let format_type t =
+        let norm = normalize_with_user_names ~type_var_user_names t in
+        type_to_source ~type_var_user_names norm
+      in
+      let binding_hover =
+        Option.bind (identifier_at_offset ~source ~offset) (fun hovered_ident ->
+            Option.map
+              (fun bound_type -> Printf.sprintf "%s: %s" hovered_ident (format_type bound_type))
+              (List.assoc_opt hovered_ident bindings))
+      in
+      match binding_hover with
+      | Some _ as info -> info
+      | None -> (
+          match pattern.pat with
+          | Ast.AST.PVariable name ->
+              Option.map
+                (fun bound_type -> Printf.sprintf "%s: %s" name (format_type bound_type))
+                (List.assoc_opt name bindings)
+          | Ast.AST.PConstructor (enum_name, variant_name, _) ->
+              Some (Printf.sprintf "%s.%s: %s" enum_name variant_name (format_type pattern_type))
+          | Ast.AST.PRecord _ -> Some (format_type pattern_type)
+          | Ast.AST.PWildcard -> Some (Printf.sprintf "_: %s" (format_type pattern_type))
+          | Ast.AST.PLiteral lit ->
+              let literal_text =
+                match lit with
+                | Ast.AST.LInt n -> Int64.to_string n
+                | Ast.AST.LString s -> Printf.sprintf "%S" s
+                | Ast.AST.LBool b ->
+                    if b then
+                      "true"
+                    else
+                      "false"
+              in
+              Some (Printf.sprintf "%s: %s" literal_text (format_type pattern_type))))
+
 (* Provide hover info at a given cursor position *)
 let hover_at
     ~(source : string)
@@ -141,19 +310,36 @@ let hover_at
     ~(line : int)
     ~(character : int) : Lsp_t.Hover.t option =
   let offset = Lsp_utils.position_to_offset ~source ~line ~character in
-  match find_in_program offset program with
-  | None -> None
-  | Some expr -> (
-      match format_hover_type ~type_var_user_names ~type_map ~environment expr with
+  match find_pattern_in_program ~offset ~type_map program with
+  | Some (pattern, scrutinee_type) -> (
+      match format_hover_pattern ~source ~offset ~type_var_user_names pattern scrutinee_type with
       | None -> None
       | Some type_str ->
           let contents =
             Lsp_t.MarkupContent.create ~kind:Lsp_t.MarkupKind.Markdown
               ~value:(Printf.sprintf "```marmoset\n%s\n```" type_str)
           in
-          let effective_pos = effective_start_pos expr in
-          let range = Lsp_utils.offset_range_to_lsp ~source ~pos:effective_pos ~end_pos:expr.end_pos in
+          let pos, end_pos =
+            match identifier_range_at_offset ~source ~offset with
+            | Some (start, stop) -> (start, stop)
+            | None -> (pattern.pos, pattern.end_pos)
+          in
+          let range = Lsp_utils.offset_range_to_lsp ~source ~pos ~end_pos in
           Some (Lsp_t.Hover.create ~contents:(`MarkupContent contents) ~range ()))
+  | None -> (
+      match find_in_program offset program with
+      | None -> None
+      | Some expr -> (
+          match format_hover_type ~type_var_user_names ~type_map ~environment expr with
+          | None -> None
+          | Some type_str ->
+              let contents =
+                Lsp_t.MarkupContent.create ~kind:Lsp_t.MarkupKind.Markdown
+                  ~value:(Printf.sprintf "```marmoset\n%s\n```" type_str)
+              in
+              let effective_pos = effective_start_pos expr in
+              let range = Lsp_utils.offset_range_to_lsp ~source ~pos:effective_pos ~end_pos:expr.end_pos in
+              Some (Lsp_t.Hover.create ~contents:(`MarkupContent contents) ~range ())))
 
 (* ============================================================
    Tests
@@ -419,6 +605,22 @@ let inherent_impl_source = "impl Int = {\n  fn double(x: Int) -> Int = x * 2\n}\
 let%test "hover on expression inside inherent impl method body" =
   match hover_marked "impl Int = {\n  fn double(x: Int) -> Int = x |* 2\n}\nputs(42.double())" with
   | _, Some h -> string_contains h.type_text "Int"
+  | _ -> false
+
+let%test "hover on constructor pattern binding shows bound type" =
+  match
+    hover_marked
+      "type Option[a] = {\n  Some(a),\n  None,\n}\nfn unwrap(v: Option[Int]) -> Int = match v {\n  case Option.Some(|x): x\n  case Option.None: 0\n}"
+  with
+  | _, Some h -> string_contains h.type_text "x: Int" && h.highlighted = "x"
+  | _ -> false
+
+let%test "hover on record pattern punning shows bound field type" =
+  match
+    hover_marked
+      "fn greet(m: { name: Str, bananas_eaten: Int }) -> Str = match m {\n  case { |name:, ...rest }: name\n}"
+  with
+  | _, Some h -> string_contains h.type_text "name: Str" && h.highlighted = "name"
   | _ -> false
 
 let%test "hover formats list types with vnext casing" =
