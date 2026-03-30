@@ -30,7 +30,7 @@ new revision.
 - Syntax highlighting (keywords, types, literals, operators, comments, etc.)
 - Bracket matching and rainbow brackets
 - Auto-indentation for blocks, arrays, objects, match arms
-- Code outline (let bindings, enums, traits, impls, methods, type aliases)
+- Code outline (let bindings, types, shapes, enums, traits, impls, methods)
 
 ## Requirements
 

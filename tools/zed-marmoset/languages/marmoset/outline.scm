@@ -10,6 +10,10 @@
   "enum" @context
   name: (identifier) @name) @item
 
+(shape_definition
+  "shape" @context
+  name: (identifier) @name) @item
+
 (trait_definition
   "trait" @context
   name: (identifier) @name) @item
@@ -22,6 +26,6 @@
   "fn" @context
   name: (identifier) @name) @item
 
-(type_alias
+(type_definition
   "type" @context
   name: (identifier) @name) @item

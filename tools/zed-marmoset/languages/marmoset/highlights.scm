@@ -7,6 +7,7 @@
 "case" @keyword.conditional
 "fn" @keyword.function
 "enum" @keyword.type
+"shape" @keyword.type
 "trait" @keyword.type
 "impl" @keyword.type
 "derive" @keyword.type
@@ -67,6 +68,9 @@
 (generic_type
   name: (identifier) @type)
 
+(generic_type
+  name: (type_identifier) @type.builtin)
+
 ; Function definitions
 (fn_declaration
   name: (identifier) @function)
@@ -118,11 +122,17 @@
 (enum_variant
   name: (identifier) @constructor)
 
+(wrapper_type
+  constructor: (identifier) @constructor)
+
 ; Trait definition
 (trait_definition
   name: (identifier) @type)
 
-(trait_field
+(shape_definition
+  name: (identifier) @type)
+
+(shape_field
   name: (identifier) @property)
 
 (impl_block
@@ -136,8 +146,8 @@
 (derive_clause
   trait: (identifier) @type)
 
-; Type alias
-(type_alias
+; Type definitions
+(type_definition
   name: (identifier) @type)
 
 ; Type parameters
@@ -161,6 +171,9 @@
 
 (constructor_pattern
   enum: (identifier) @type
+  variant: (identifier) @constructor)
+
+(constructor_pattern
   variant: (identifier) @constructor)
 
 (record_pattern_field

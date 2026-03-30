@@ -105,6 +105,7 @@ search_fixed 'kind = "Rust"' extension.toml
 search_fixed 'portable instead of depending on a machine-specific local `file://`' README.md
 search_fixed 'remove that directory and reinstall the dev' README.md
 search_fixed '"case" @keyword.conditional' languages/marmoset/highlights.scm
+search_fixed '"shape" @keyword.type' languages/marmoset/highlights.scm
 search_fixed '"override" @keyword.modifier' languages/marmoset/highlights.scm
 search_fixed '"=>" @operator' languages/marmoset/highlights.scm
 search_fixed '"&" @operator' languages/marmoset/highlights.scm
@@ -112,6 +113,11 @@ search_fixed '"%" @operator' languages/marmoset/highlights.scm
 search_fixed '(fn_declaration' languages/marmoset/highlights.scm
 search_fixed '(lambda_expression' languages/marmoset/highlights.scm
 search_fixed '(derive_clause' languages/marmoset/highlights.scm
+search_fixed '(shape_definition' languages/marmoset/highlights.scm
+search_fixed '(wrapper_type' languages/marmoset/highlights.scm
 search_fixed '(fn_declaration' languages/marmoset/outline.scm
+search_fixed '(shape_definition' languages/marmoset/outline.scm
+search_fixed '(type_definition' languages/marmoset/outline.scm
 search_fixed 'target:' languages/marmoset/outline.scm
 search_fixed 'expr_or_block' languages/marmoset/indents.scm
+search_fixed 'constructor_type_body' languages/marmoset/indents.scm
