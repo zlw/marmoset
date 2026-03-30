@@ -190,7 +190,7 @@ module.exports = grammar({
       )),
 
     type_definition: ($) =>
-      prec.right(seq(
+      prec.right(1, seq(
         "type",
         field("name", $.identifier),
         optional(field("type_params", $.type_parameter_list)),
@@ -200,12 +200,12 @@ module.exports = grammar({
       )),
 
     wrapper_type: ($) =>
-      seq(
+      prec(2, seq(
         field("constructor", alias($.constructor_name, $.identifier)),
         "(",
         field("payload", $._type),
         ")",
-      ),
+      )),
 
     constructor_type_body: ($) =>
       seq(
@@ -233,11 +233,11 @@ module.exports = grammar({
     type_identifier: ($) =>
       token(choice("Int", "Str", "Bool", "Float", "Unit", "List", "Map")),
 
-    type_variable: ($) => $.identifier,
+    type_variable: ($) => choice(alias($.constructor_name, $.identifier), $.identifier),
 
     generic_type: ($) =>
       prec(1, seq(
-        field("name", choice($.type_identifier, $.identifier)),
+        field("name", choice($.type_identifier, alias($.constructor_name, $.identifier), $.identifier)),
         "[",
         commaSep1(field("arg", $._type)),
         "]",

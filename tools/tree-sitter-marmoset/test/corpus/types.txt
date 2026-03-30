@@ -168,6 +168,37 @@ type UserId = UserId(Int)
       payload: (type_identifier))))
 
 ================================================================================
+Transparent named type alias
+================================================================================
+
+type Nameable = Named
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (type_definition
+    name: (identifier)
+    type: (type_variable
+      (identifier))))
+
+================================================================================
+Transparent generic type alias
+================================================================================
+
+type MonkeyOrSadness = Result[Monkey, Str]
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (type_definition
+    name: (identifier)
+    type: (generic_type
+      name: (identifier)
+      arg: (type_variable
+        (identifier))
+      arg: (type_identifier))))
+
+================================================================================
 Constructor-bearing sum type
 ================================================================================
 
