@@ -46,6 +46,10 @@ type declaration_hover_item = {
   text : string;
 }
 
+let push_hover_item (items : declaration_hover_item list ref) ~start_pos ~end_pos ~text =
+  if end_pos >= start_pos then
+    items := { start_pos; end_pos; text } :: !items
+
 let token_end_pos (tok : Token.token) : int = max tok.pos (tok.pos + String.length tok.literal - 1)
 
 let source_between_tokens ~(source : string) (start_tok : Token.token) (end_tok : Token.token) : string =
@@ -131,13 +135,12 @@ let parse_fn_header_hover_items ~(source : string) (tokens : Token.token array) 
                   if annot_start < stop_idx then (
                     let annot_end = tokens.(stop_idx - 1) in
                     let type_text = source_between_tokens ~source tokens.(annot_start) annot_end in
-                    items :=
-                      {
-                        start_pos = param_tok.pos;
-                        end_pos = token_end_pos param_tok;
-                        text = param_tok.literal ^ ": " ^ type_text;
-                      }
-                      :: !items;
+                    push_hover_item items ~start_pos:param_tok.pos ~end_pos:(token_end_pos param_tok)
+                      ~text:(param_tok.literal ^ ": " ^ type_text);
+                    push_hover_item items ~start_pos:tokens.(annot_start).pos ~end_pos:(token_end_pos annot_end)
+                      ~text:type_text;
+                    push_hover_item items ~start_pos:param_tok.pos ~end_pos:(token_end_pos annot_end)
+                      ~text:(param_tok.literal ^ ": " ^ type_text);
                     param_type_texts := type_text :: !param_type_texts);
                   idx := stop_idx)
                 else
@@ -155,9 +158,11 @@ let parse_fn_header_hover_items ~(source : string) (tokens : Token.token array) 
                find_annotation_stop tokens ~start_idx:ret_start
                  ~stop_tokens:[ Token.Assign; Token.RBrace; Token.Function; Token.Override ]
              in
-             if ret_start < ret_stop then
+             if ret_start < ret_stop then (
                let ret_end = tokens.(ret_stop - 1) in
                let return_text = source_between_tokens ~source tokens.(ret_start) ret_end in
+               push_hover_item items ~start_pos:tokens.(ret_start).pos ~end_pos:(token_end_pos ret_end)
+                 ~text:return_text;
                let arrow_text =
                  if arrow_token.token_type = Token.FatArrow then
                    " => "
@@ -165,13 +170,8 @@ let parse_fn_header_hover_items ~(source : string) (tokens : Token.token array) 
                    " -> "
                in
                let params_text = "(" ^ String.concat ", " (List.rev !param_type_texts) ^ ")" in
-               items :=
-                 {
-                   start_pos = name_tok.pos;
-                   end_pos = token_end_pos name_tok;
-                   text = name_tok.literal ^ ": " ^ params_text ^ arrow_text ^ return_text;
-                 }
-                 :: !items);
+               push_hover_item items ~start_pos:name_tok.pos ~end_pos:(token_end_pos name_tok)
+                 ~text:(name_tok.literal ^ ": " ^ params_text ^ arrow_text ^ return_text)));
           List.rev !items)
     | _ -> []
 
@@ -203,13 +203,12 @@ let parse_record_field_hover_items ~(source : string) (tokens : Token.token arra
             if annot_start < stop_idx then (
               let annot_end = tokens.(stop_idx - 1) in
               let type_text = source_between_tokens ~source tokens.(annot_start) annot_end in
-              items :=
-                {
-                  start_pos = field_tok.pos;
-                  end_pos = token_end_pos field_tok;
-                  text = field_tok.literal ^ ": " ^ type_text;
-                }
-                :: !items;
+              push_hover_item items ~start_pos:field_tok.pos ~end_pos:(token_end_pos field_tok)
+                ~text:(field_tok.literal ^ ": " ^ type_text);
+              push_hover_item items ~start_pos:tokens.(annot_start).pos ~end_pos:(token_end_pos annot_end)
+                ~text:type_text;
+              push_hover_item items ~start_pos:field_tok.pos ~end_pos:(token_end_pos annot_end)
+                ~text:(field_tok.literal ^ ": " ^ type_text);
               idx := stop_idx)
         | Token.Comma -> incr idx
         | _ -> incr idx
@@ -225,11 +224,11 @@ let find_declaration_header_hover ~(source : string) ~(offset : int) : declarati
       Array.iteri
         (fun idx (tok : Token.token) ->
           match tok.token_type with
-          | Token.Function -> items := parse_fn_header_hover_items ~source tokens idx @ !items
-          | Token.Shape | Token.Type -> items := parse_record_field_hover_items ~source tokens idx @ !items
+          | Token.Function -> items := !items @ parse_fn_header_hover_items ~source tokens idx
+          | Token.Shape | Token.Type -> items := !items @ parse_record_field_hover_items ~source tokens idx
           | _ -> ())
         tokens;
-      List.find_opt (fun item -> offset >= item.start_pos && offset <= item.end_pos) (List.rev !items)
+      List.find_opt (fun item -> offset >= item.start_pos && offset <= item.end_pos) !items
 
 let starts_with_at ~(source : string) ~(pos : int) ~(prefix : string) : bool =
   let prefix_len = String.length prefix in
@@ -811,6 +810,21 @@ let%test "hover on top-level fn param highlights only the param name" =
   | _, Some h -> string_contains h.type_text "book: Map[Str, Str]" && h.highlighted = "book"
   | _, None -> false
 
+let%test "hover on second top-level fn param highlights only that param name" =
+  match hover_marked "fn pair(x: Int, |y: Int) -> Int = x + y" with
+  | _, Some h -> string_contains h.type_text "y: Int" && h.highlighted = "y"
+  | _, None -> false
+
+let%test "hover on top-level fn param type highlights only the annotation" =
+  match hover_marked "fn print_book_name(book: |Map[Str, Str]) => Unit = {\n  puts(book[\"title\"])\n}" with
+  | _, Some h -> h.type_text = "Map[Str, Str]" && h.highlighted = "Map[Str, Str]"
+  | _, None -> false
+
+let%test "hover on top-level fn return type highlights only the annotation" =
+  match hover_marked "fn print_book_name(book: Map[Str, Str]) => |Unit = {\n  puts(book[\"title\"])\n}" with
+  | _, Some h -> h.type_text = "Unit" && h.highlighted = "Unit"
+  | _, None -> false
+
 let%test "hover on trait method name shows signature and highlights name" =
   match hover_marked "trait Greeter[a] = {\n  fn |greet(x: a) -> Str\n}" with
   | _, Some h -> string_contains h.type_text "greet: (a) -> Str" && h.highlighted = "greet"
@@ -821,6 +835,16 @@ let%test "hover on trait method param highlights only the param name" =
   | _, Some h -> string_contains h.type_text "x: a" && h.highlighted = "x"
   | _, None -> false
 
+let%test "hover on second trait method param highlights only that param name" =
+  match hover_marked "trait Greeter[a] = {\n  fn compare(x: a, |y: a) -> Bool\n}" with
+  | _, Some h -> string_contains h.type_text "y: a" && h.highlighted = "y"
+  | _, None -> false
+
+let%test "hover on trait method return type highlights only the annotation" =
+  match hover_marked "trait Greeter[a] = {\n  fn greet(x: a) -> |Str\n}" with
+  | _, Some h -> h.type_text = "Str" && h.highlighted = "Str"
+  | _, None -> false
+
 let%test "hover on trait impl method param highlights only the param name" =
   match
     hover_marked
@@ -829,14 +853,50 @@ let%test "hover on trait impl method param highlights only the param name" =
   | _, Some h -> string_contains h.type_text "x: Int" && h.highlighted = "x"
   | _, None -> false
 
+let%test "hover on second trait impl method param highlights only that param name" =
+  match
+    hover_marked
+      "trait Num[a] = {\n  fn add(x: a, y: a) -> a\n}\nimpl Num[Int] = {\n  fn add(x: Int, |y: Int) -> Int = x + y\n}"
+  with
+  | _, Some h -> string_contains h.type_text "y: Int" && h.highlighted = "y"
+  | _, None -> false
+
+let%test "hover on trait impl method return type highlights only the annotation" =
+  match
+    hover_marked
+      "trait Show[a] = {\n  fn show(x: a) -> Str\n}\nimpl Show[Int] = {\n  fn show(x: Int) -> |Str = \"hi\"\n}"
+  with
+  | _, Some h -> h.type_text = "Str" && h.highlighted = "Str"
+  | _, None -> false
+
 let%test "hover on inherent impl method param highlights only the param name" =
   match hover_marked "impl Int = {\n  fn double(|x: Int) -> Int = x * 2\n}" with
   | _, Some h -> string_contains h.type_text "x: Int" && h.highlighted = "x"
   | _, None -> false
 
+let%test "hover on second inherent impl method param highlights only that param name" =
+  match hover_marked "impl Int = {\n  fn add(x: Int, |y: Int) -> Int = x + y\n}" with
+  | _, Some h -> string_contains h.type_text "y: Int" && h.highlighted = "y"
+  | _, None -> false
+
+let%test "hover on inherent impl method return type highlights only the annotation" =
+  match hover_marked "impl Int = {\n  fn double(x: Int) -> |Int = x * 2\n}" with
+  | _, Some h -> h.type_text = "Int" && h.highlighted = "Int"
+  | _, None -> false
+
 let%test "hover on shape field highlights only the field name" =
   match hover_marked "shape Named = { |name: Str, age: Int }\nfn greet[t: Named](x: t) -> Str = x.name" with
   | _, Some h -> string_contains h.type_text "name: Str" && h.highlighted = "name"
+  | _, None -> false
+
+let%test "hover on second shape field highlights only that field name" =
+  match hover_marked "shape Named = { name: Str, |age: Int }\nfn greet[t: Named](x: t) -> Str = x.name" with
+  | _, Some h -> string_contains h.type_text "age: Int" && h.highlighted = "age"
+  | _, None -> false
+
+let%test "hover on shape field type highlights only the annotation" =
+  match hover_marked "shape Named = { name: |Str, age: Int }\nfn greet[t: Named](x: t) -> Str = x.name" with
+  | _, Some h -> h.type_text = "Str" && h.highlighted = "Str"
   | _, None -> false
 
 (* ============================================================
