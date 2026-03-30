@@ -1,0 +1,5 @@
+# E100: Canonical recursive sum pretty-prints nested boxed payloads
+type Tree = { Leaf(Int), Branch(Tree, Tree) }
+
+let tree = Tree.Branch(Tree.Leaf(1), Tree.Branch(Tree.Leaf(2), Tree.Leaf(3)))
+puts(tree)  # output: Branch(Leaf(1), Branch(Leaf(2), Leaf(3)))

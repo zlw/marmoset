@@ -8946,6 +8946,34 @@ puts(x)|} with
   | Ok (code, _) -> string_contains code {|panic("unreachable: invalid enum tag")|}
   | Error _ -> false
 
+let%test "recursive canonical sums box payload fields and dereference them in String" =
+  match
+    compile_string ~file_id:"<codegen>"
+      {|type Tree = { Leaf(Int), Branch(Tree, Tree) }
+let tree = Tree.Branch(Tree.Leaf(1), Tree.Leaf(2))
+puts(tree)|}
+  with
+  | Ok (code, _) ->
+      string_contains code "func Tree_Branch(v0 Tree, v1 Tree) Tree"
+      && string_contains code "&v0"
+      && string_contains code "&v1"
+      && string_contains code "(*e.Data"
+  | Error _ -> false
+
+let%test "recursive record payloads are boxed in enum codegen" =
+  match
+    compile_string ~file_id:"<codegen>"
+      {|type Tree = { Empty, Node({ value: Int, next: Tree }) }
+let tree = Tree.Node({ value: 1, next: Tree.Empty })
+puts(tree)|}
+  with
+  | Ok (code, _) ->
+      string_contains code "type Tree struct"
+      && string_contains code "Data0 *Record_"
+      && string_contains code "&v0"
+      && string_contains code "(*e.Data0)"
+  | Error _ -> false
+
 let%test "codegen produces valid Go (int64)" =
   match compile_string ~file_id:"<codegen>" "let x = 42; x" with
   | Ok (code, _) -> string_contains code "int64"

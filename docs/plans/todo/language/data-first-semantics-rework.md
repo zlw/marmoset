@@ -526,6 +526,7 @@ Relationship notes:
 
 ### Progress
 
+- 2026-03-30: Added recursive-sum edge-case coverage for the new Go representation: nested pretty-printing of recursive canonical `type` sums, recursive record payloads that contain the same sum, and the same pretty-print path through `enum` compatibility sugar. Added matching emitter unit tests so pointer boxing and `String()` dereference behavior are asserted directly in codegen tests.
 - 2026-03-30: Fixed Go codegen for recursive constructor-bearing sums by boxing aggregate enum payload slots in the emitted Go representation, then updating constructors, pattern bindings, and enum `String()` formatting to preserve source-level behavior.
 - 2026-03-30: Added integration coverage for recursive canonical `type` sums and recursive `enum` compatibility sugar, and converted two stale cross-feature negative fixtures into positive recursive-sum coverage now that the backend supports them end-to-end.
 - 2026-03-30: Read `CLAUDE.md`, confirmed worktree/branch state, and mapped the parser, lowering, type registry, inference, and codegen paths that currently enforce the `alias` versus nominal-`type` split.
@@ -546,6 +547,7 @@ Relationship notes:
 
 ### Findings
 
+- The fragile follow-up area after the backend fix was enum pretty-printing, because `puts` exercises the generated `String()` method over boxed payload slots rather than the pattern-binding path. Recursive sums now have explicit coverage there, including recursive record payloads nested inside the same sum.
 - The frontend/typechecker already accepted recursive constructor-bearing sums after the earlier parser/checker pass, but Go codegen still emitted payload fields as direct values. That produced invalid self-recursive Go structs for cases like `type Expr = { Add(Expr, Expr) }` until the backend representation was made indirect for aggregate payloads.
 - The current parser/lowering pipeline still treats `type Name = { ... }` as a nominal named product and `alias Name = ...` as the only transparent naming surface.
 - Trait and inherent registries already canonicalize impl targets by resolved type, so once transparent `type` forms resolve to exact structural records, behavior slots can naturally key off exact structural types.
@@ -566,6 +568,9 @@ Relationship notes:
 
 ### Verification
 
+- `./_build/default/bin/main.exe run test/fixtures/enums/e100_canonical_recursive_sum_prints_nested_payloads.mr`
+- `./_build/default/bin/main.exe run test/fixtures/enums/e101_canonical_recursive_record_payload_sum.mr`
+- `./_build/default/bin/main.exe run test/fixtures/enums/e102_enum_sugar_recursive_sum_prints_nested_payloads.mr`
 - `dune build --root /Users/zlw/src/marmoset/marmoset ./bin/main.exe`
 - `./_build/default/bin/main.exe run test/fixtures/enums/e97_canonical_sum_type_recursive_payload.mr`
 - `./_build/default/bin/main.exe run test/fixtures/enums/e99_enum_sugar_recursive_payload.mr`
@@ -590,4 +595,5 @@ Relationship notes:
 - `make integration traits`
 - `make integration cross_feature/xf22_e22_recursive_sum_param_annotation_works.mr`
 - `make integration cross_feature/xf36_g38_inherent_method_on_recursive_sum_works.mr`
+- `make integration enums/e100_canonical_recursive_sum_prints_nested_payloads.mr enums/e101_canonical_recursive_record_payload_sum.mr enums/e102_enum_sugar_recursive_sum_prints_nested_payloads.mr`
 - `make integration`
