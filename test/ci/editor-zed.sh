@@ -5,6 +5,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 ZED_DIR="$REPO_ROOT/tools/zed-marmoset"
+TREE_SITTER_DIR="$REPO_ROOT/tools/tree-sitter-marmoset"
 
 cd "$ZED_DIR"
 cargo test --locked
@@ -124,6 +125,127 @@ search_fixed '(type_definition' languages/marmoset/outline.scm
 search_fixed 'target:' languages/marmoset/outline.scm
 search_fixed 'expr_or_block' languages/marmoset/indents.scm
 search_fixed 'constructor_type_body' languages/marmoset/indents.scm
+
+(
+  cd "$TREE_SITTER_DIR"
+  npm install --no-package-lock >/dev/null
+  python3 - <<'PY' "$REPO_ROOT" "$TREE_SITTER_DIR"
+import pathlib
+import re
+import subprocess
+import sys
+import tempfile
+import textwrap
+
+repo_root = pathlib.Path(sys.argv[1]).resolve()
+tree_sitter_dir = pathlib.Path(sys.argv[2]).resolve()
+zed_lang_dir = repo_root / "tools" / "zed-marmoset" / "languages" / "marmoset"
+
+capture_re = re.compile(r"capture:\s+\d+\s+-\s+([^,]+), .*text: `(.*)`$")
+
+def run_query(query_path: pathlib.Path, source_path: pathlib.Path):
+    output = subprocess.check_output(
+        ["npx", "tree-sitter", "query", "--captures", str(query_path), str(source_path)],
+        cwd=tree_sitter_dir,
+        text=True,
+    )
+    captures = []
+    for line in output.splitlines():
+        match = capture_re.search(line)
+        if match:
+            captures.append((match.group(1), match.group(2)))
+    return captures
+
+def assert_capture(captures, capture, text):
+    if (capture, text) not in captures:
+        raise AssertionError(f"missing capture {(capture, text)!r}")
+
+highlights_query = zed_lang_dir / "highlights.scm"
+outline_query = zed_lang_dir / "outline.scm"
+
+monkey_highlights = run_query(highlights_query, repo_root / "examples" / "monkey.mr")
+for expected in [
+    ("function", "print_book_name"),
+    ("variable.parameter", "book"),
+    ("type.builtin", "Map"),
+    ("operator", "=>"),
+    ("function", "fibonacci"),
+]:
+    assert_capture(monkey_highlights, *expected)
+
+upcase_outline = run_query(outline_query, repo_root / "examples" / "new-syntax-upcase.mr")
+for expected in [
+    ("name", "Option"),
+    ("name", "NamedDweller"),
+    ("name", "JungleDweller"),
+    ("name", "Monkey"),
+    ("name", "identity"),
+]:
+    assert_capture(upcase_outline, *expected)
+
+scenario_source = textwrap.dedent(
+    """
+    type Option[a] = {
+      Some(a),
+      None,
+    }
+
+    shape Named = {
+      name: Str,
+      age: Int,
+    }
+
+    trait Greeter[a] = {
+      fn greet(self: a, prefix: Str) -> Str
+    }
+
+    type Monkey = {
+      name: Str,
+      age: Int,
+    }
+
+    impl Greeter[Monkey] = {
+      fn greet(self: Monkey, prefix: Str) -> Str = prefix + self.name
+    }
+
+    impl Monkey = {
+      fn rename(self: Monkey, next_name: Str) -> Monkey = self
+    }
+
+    fn print_book_name(book: Map[Str, Str], fallback: Str) => Unit = {
+      let title = book["title"]
+      puts(title + fallback)
+    }
+    """
+).strip() + "\n"
+
+with tempfile.TemporaryDirectory() as tmpdir:
+    scenario_path = pathlib.Path(tmpdir) / "zed-scenario.mr"
+    scenario_path.write_text(scenario_source)
+
+    scenario_highlights = run_query(highlights_query, scenario_path)
+    for expected in [
+        ("keyword.type", "shape"),
+        ("constructor", "Some"),
+        ("function.method", "rename"),
+        ("variable.parameter", "next_name"),
+        ("property", "age"),
+        ("type.builtin", "Unit"),
+    ]:
+        assert_capture(scenario_highlights, *expected)
+
+    scenario_outline = run_query(outline_query, scenario_path)
+    for expected in [
+        ("name", "Option"),
+        ("name", "Named"),
+        ("name", "Greeter"),
+        ("name", "Greeter[Monkey]"),
+        ("name", "rename"),
+        ("name", "print_book_name"),
+    ]:
+        assert_capture(scenario_outline, *expected)
+PY
+)
 
 TMP_DIR=$(mktemp -d)
 trap 'rm -rf "$TMP_DIR"' EXIT
