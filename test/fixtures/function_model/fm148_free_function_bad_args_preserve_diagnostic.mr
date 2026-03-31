@@ -1,0 +1,3 @@
+fn foo(x: Int) -> Int = x
+
+1.foo(2)  # error: Argument count mismatch

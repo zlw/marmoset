@@ -2054,40 +2054,6 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                             let result_type = TEnum (enum_name, result_type_args) in
                             Ok (final_subst, result_type))))
         in
-        let infer_ufcs_function_call () : method_call_attempt infer_result option =
-          let func_expr =
-            AST.mk_expr ~id:(fresh_synthetic_expr_id ()) ~pos:expr.pos ~end_pos:expr.end_pos ~file_id:expr.file_id
-              (AST.Identifier method_name)
-          in
-          match infer_expression type_map env func_expr with
-          | Error _ -> None
-          | Ok (_subst_func, callee_type) -> (
-              match contextual_callable_signature callee_type with
-              | None -> None
-              | Some _ ->
-                  let call_expr =
-                    AST.mk_expr ~id:(fresh_synthetic_expr_id ()) ~pos:expr.pos ~end_pos:expr.end_pos
-                      ~file_id:expr.file_id
-                      (AST.Call (func_expr, receiver :: args))
-                  in
-                  match infer_expression type_map env call_expr with
-                  | Error _ -> None
-                  | Ok (subst_call, call_type) ->
-                      let callee_type' =
-                        match Hashtbl.find_opt type_map func_expr.id with
-                        | Some typ -> apply_substitution subst_call typ
-                        | None -> apply_substitution subst_call callee_type
-                      in
-                      Some
-                        (Ok
-                           {
-                             mca_subst = subst_call;
-                             mca_return_type = call_type;
-                             mca_resolution = UfcsFunctionCall;
-                             mca_effectful = type_may_be_effectful_callable callee_type';
-                             mca_method_type_args = None;
-                           }))
-        in
         let infer_real_method_call () : (substitution * mono_type) infer_result =
           match infer_expression type_map env receiver with
           | Error e -> Error e
@@ -2103,6 +2069,10 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                 | Some resolved_type_args -> record_method_type_args expr resolved_type_args
                 | None -> ());
                 Ok (attempt.mca_subst, attempt.mca_return_type)
+              in
+              let match_probe = function
+                | Ok attempt -> `Match attempt
+                | Error diag -> `NearMiss diag
               in
               let infer_with_method_signature
                   (resolved_method : Trait_registry.method_sig) (resolution : method_resolution) :
@@ -2311,6 +2281,52 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                   ~file_id:expr.file_id
                   (AST.FieldAccess (receiver, method_name))
               in
+              let infer_ufcs_function_probe () :
+                  [ `Miss | `NearMiss of Diagnostic.t | `Match of string * method_call_attempt ] infer_result =
+                match mc_type_args with
+                | Some _ -> Ok `Miss
+                | None ->
+                    let func_expr =
+                      AST.mk_expr ~id:(fresh_synthetic_expr_id ()) ~pos:expr.pos ~end_pos:expr.end_pos
+                        ~file_id:expr.file_id
+                        (AST.Identifier method_name)
+                    in
+                    match infer_expression type_map env func_expr with
+                    | Error _ -> Ok `Miss
+                    | Ok (_subst_func, callee_type) -> (
+                        match contextual_callable_signature callee_type with
+                        | None -> Ok `Miss
+                        | Some (param_types, return_type) -> (
+                            match param_types with
+                            | [] -> Ok `Miss
+                            | receiver_expected_type :: expected_arg_types -> (
+                                match
+                                  infer_arg_against_expected type_map env empty_substitution receiver
+                                    receiver_expected_type
+                                with
+                                | Error _ -> Ok `Miss
+                                | Ok (subst_receiver, _receiver_arg_type) ->
+                                    let env_receiver = apply_substitution_env subst_receiver env in
+                                    match
+                                      infer_args_against_expected type_map env_receiver subst_receiver args
+                                        expected_arg_types
+                                    with
+                                    | Error diag -> Ok (`NearMiss diag)
+                                    | Ok (subst_call, _arg_types) ->
+                                        let callee_type' = apply_substitution subst_call callee_type in
+                                        Ok
+                                          (`Match
+                                            ( method_name,
+                                              {
+                                                mca_subst = subst_call;
+                                                mca_return_type =
+                                                  apply_substitution subst_call return_type;
+                                                mca_resolution = UfcsFunctionCall;
+                                                mca_effectful =
+                                                  type_may_be_effectful_callable callee_type';
+                                                mca_method_type_args = None;
+                                              } )))))
+              in
               let infer_callable_field_attempt () : method_call_attempt infer_result option =
                 match infer_expression type_map env field_expr with
                 | Error _ -> None
@@ -2419,45 +2435,54 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                       in
                       let inherent_probe =
                         match receiver_type' with
-                        | TVar _ -> Ok None
+                        | TVar _ -> Ok `Miss
                         | _ -> (
                             match Inherent_registry.resolve_method receiver_type' method_name with
                             | Error msg -> Error (error_at ~code:"type-constructor" ~message:msg expr)
-                            | Ok None -> Ok None
-                            | Ok (Some inherent_sig) -> (
-                                match infer_with_method_signature inherent_sig InherentMethod with
-                                | Ok attempt -> Ok (Some (Printf.sprintf "%s.%s" (Types.to_string receiver_type_canon) method_name, attempt))
-                                | Error e -> Error e))
+                            | Ok None -> Ok `Miss
+                            | Ok (Some inherent_sig) ->
+                                Ok
+                                  (match
+                                     infer_with_method_signature inherent_sig InherentMethod
+                                     |> match_probe
+                                   with
+                                  | `Match attempt ->
+                                      `Match
+                                        (Printf.sprintf "%s.%s" (Types.to_string receiver_type_canon) method_name, attempt)
+                                  | `NearMiss diag -> `NearMiss diag))
                       in
                       let trait_probe =
                         match receiver_type_canon with
-                        | TTraitObject _ | TVar _ -> Ok None
+                        | TTraitObject _ | TVar _ -> Ok `Miss
                         | _ -> (
                             match Trait_registry.resolve_method receiver_type' method_name with
                             | Ok (trait_name, method_sig) -> (
                                 match Trait_solver.satisfies_trait receiver_type' trait_name with
-                                | Error _ -> Ok None
-                                | Ok () -> (
-                                    match
-                                      infer_with_method_signature
-                                        (instantiate_trait_method_for_receiver trait_name method_sig)
-                                        (TraitMethod trait_name)
-                                    with
-                                    | Ok attempt ->
-                                        Ok (Some (Printf.sprintf "%s.%s" trait_name method_name, attempt))
-                                    | Error e -> Error e))
-                            | Error msg when is_missing_method_message msg -> Ok None
+                                | Error _ -> Ok `Miss
+                                | Ok () ->
+                                    Ok
+                                      (match
+                                         infer_with_method_signature
+                                           (instantiate_trait_method_for_receiver trait_name method_sig)
+                                           (TraitMethod trait_name)
+                                         |> match_probe
+                                       with
+                                      | `Match attempt ->
+                                          `Match (Printf.sprintf "%s.%s" trait_name method_name, attempt)
+                                      | `NearMiss diag -> `NearMiss diag))
+                            | Error msg when is_missing_method_message msg -> Ok `Miss
                             | Error msg -> Error (error_at ~code:"type-constructor" ~message:msg expr))
                       in
                       let ufcs_function_probe =
-                        match infer_ufcs_function_call () with
-                        | None -> Ok None
-                        | Some (Ok attempt) -> Ok (Some (method_name, attempt))
-                        | Some (Error e) -> Error e
+                        infer_ufcs_function_probe ()
                       in
                       let add_candidate acc = function
-                        | None -> acc
-                        | Some candidate -> candidate :: acc
+                        | `Match candidate -> candidate :: acc
+                        | `Miss | `NearMiss _ -> acc
+                      in
+                      let add_near_miss acc = function
+                        | `NearMiss diag -> diag :: acc
+                        | `Miss | `Match _ -> acc
                       in
                       let candidate_suggestions (labels : string list) : string =
                         labels
@@ -2479,15 +2504,25 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                                       function_candidate
                                     |> List.rev
                                   in
+                                  let near_misses =
+                                    add_near_miss
+                                      (add_near_miss (add_near_miss [] inherent_candidate) trait_candidate)
+                                      function_candidate
+                                    |> List.rev
+                                  in
                                   match candidates with
                                   | [] ->
-                                      Error
-                                        (error_at ~code:"type-constructor"
-                                           ~message:
-                                             (Printf.sprintf
-                                                "No dot-call target '%s' matched for type %s"
-                                                method_name (Types.to_string receiver_type_canon))
-                                           expr)
+                                      (match near_misses with
+                                      | first_diag :: _ -> Error first_diag
+                                      | [] ->
+                                          Error
+                                            (error_at ~code:"type-constructor"
+                                               ~message:
+                                                 (Printf.sprintf
+                                                    "No dot-call target '%s' matched for type %s"
+                                                    method_name
+                                                    (Types.to_string receiver_type_canon))
+                                               expr))
                                   | [ (_label, attempt) ] -> commit_method_call_attempt attempt
                                   | many ->
                                       let labels =
@@ -7227,6 +7262,25 @@ f" in
       "fn apply_twice[a](x: a, f: (a) -> a) -> a = f(f(x))\n1.apply_twice((x: Int) -> x * 2)"
     in
     infers_to code TInt
+
+  let%test "wrong-arity inherent candidate does not block matching free-function UFCS target" =
+    let code =
+      "impl Int = { fn foo(x: Int) -> Int = x }\nfn foo(x: Int, y: Int) -> Int = x + y\n1.foo(2)"
+    in
+    infers_to code TInt
+
+  let%test "wrong-arity trait candidate does not block matching free-function UFCS target" =
+    let code =
+      "trait Foo[a] = { fn foo(x: a) -> Int }\nimpl Foo[Int] = { fn foo(x: Int) -> Int = x }\nfn foo(x: Int, y: Int) -> Int = x + y\n1.foo(2)"
+    in
+    infers_to code TInt
+
+  let%test "free-function UFCS bad-argument case preserves call diagnostic" =
+    let contains_substring s sub = String_utils.contains_substring ~needle:sub s in
+    let code = "fn foo(x: Int) -> Int = x\n1.foo(2)" in
+    match infer_string code with
+    | Ok _ -> false
+    | Error e -> contains_substring e.message "Argument count mismatch"
 
   let%test "inherent method call resolves for type-application receiver" =
     let code = "impl List[Int] = { fn size(xs: List[Int]) -> Int = 1 }\n[1, 2, 3].size()" in
