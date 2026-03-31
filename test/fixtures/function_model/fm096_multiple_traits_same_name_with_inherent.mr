@@ -17,5 +17,7 @@ impl Val = {
 
 let v = {n: 1}
 
-# inherent wins on dot, no ambiguity
-puts(v.fmt())  # output: inherent
+# dot sugar is ambiguous here; explicit targets stay stable
+puts(FmtA.fmt(v))  # output: a
+puts(FmtB.fmt(v))  # output: b
+puts(Val.fmt(v))  # output: inherent

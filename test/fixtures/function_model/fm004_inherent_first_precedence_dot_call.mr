@@ -16,4 +16,5 @@ impl Widget = {
 
 let w = {v: 42}
 
-puts(w.info())  # output: inherent:42
+puts(Describe.info(w))  # output: trait:42
+puts(Widget.info(w))  # output: inherent:42

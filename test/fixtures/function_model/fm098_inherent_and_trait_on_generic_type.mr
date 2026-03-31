@@ -1,22 +1,23 @@
 type Opt[a] = { Some(a), None }
 
-trait Unwrapper[a] = {
-  fn get(x: a) -> Int
+trait Label[a] = {
+  fn tag(x: a) -> Str
 }
 
-impl Unwrapper[Opt[Int]] = {
-  fn get(x: Opt[Int]) -> Int = match x {
-    case Opt.Some(v): v
-    case Opt.None: 0
+impl[a] Label[Opt[a]] = {
+  fn tag(x: Opt[a]) -> Str = match x {
+    case Opt.Some(_): "trait:some"
+    case Opt.None: "trait:none"
   }
 }
 
-impl Opt[Int] = {
-  fn get(o: Opt[Int]) -> Int = match o {
-    case Opt.Some(v): v
-    case Opt.None: -1
+impl[a] Opt[a] = {
+  fn tag(o: Opt[a]) -> Str = match o {
+    case Opt.Some(_): "inherent:some"
+    case Opt.None: "inherent:none"
   }
 }
 
 let x = Opt.Some(42)
-puts(x.get())  # output: 42
+puts(Label.tag(x))  # output: trait:some
+puts(Opt.tag(x))  # output: inherent:some

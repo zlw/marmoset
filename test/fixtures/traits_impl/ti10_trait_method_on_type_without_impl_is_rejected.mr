@@ -5,4 +5,4 @@ trait Describe[a] = {
 impl Describe[Int] = {
   fn describe(x: Int) -> Str = "int"
 }
-puts("hello".describe())  # error: No method 'describe' found for type
+puts("hello".describe())  # error: No dot-call target 'describe'

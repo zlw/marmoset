@@ -14,5 +14,6 @@ impl Cell = {
 
 let c = {v: 1}
 
-# inherent wins, no ambiguity
-puts(c.draw())  # output: inherent
+# dot sugar is ambiguous here; explicit targets stay stable
+puts(Render.draw(c))  # output: trait
+puts(Cell.draw(c))  # output: inherent

@@ -12,7 +12,8 @@ impl Widget = {
   fn render(w: Widget) -> Str = { "inherent" }
 }
 
-# Both definitions accepted; dot call picks inherent
+# Both definitions are accepted; explicit targets select the implementation
 let w = {v: 1}
 
-puts(w.render())  # output: inherent
+puts(Display.render(w))  # output: trait
+puts(Widget.render(w))  # output: inherent

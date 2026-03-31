@@ -146,6 +146,14 @@ and method_resolution =
   | FieldFunctionCall
   | UfcsFunctionCall
 
+and method_call_attempt = {
+  mca_subst : substitution;
+  mca_return_type : mono_type;
+  mca_resolution : method_resolution;
+  mca_effectful : bool;
+  mca_method_type_args : mono_type list option;
+}
+
 let create_inference_state () : inference_state =
   {
     fresh_var_counter = ref 0;
@@ -2046,7 +2054,7 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                             let result_type = TEnum (enum_name, result_type_args) in
                             Ok (final_subst, result_type))))
         in
-        let infer_ufcs_function_call () : (substitution * mono_type) infer_result option =
+        let infer_ufcs_function_call () : method_call_attempt infer_result option =
           let func_expr =
             AST.mk_expr ~id:(fresh_synthetic_expr_id ()) ~pos:expr.pos ~end_pos:expr.end_pos ~file_id:expr.file_id
               (AST.Identifier method_name)
@@ -2063,16 +2071,22 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                       (AST.Call (func_expr, receiver :: args))
                   in
                   match infer_expression type_map env call_expr with
-                  | Error e -> Some (Error e)
+                  | Error _ -> None
                   | Ok (subst_call, call_type) ->
                       let callee_type' =
                         match Hashtbl.find_opt type_map func_expr.id with
                         | Some typ -> apply_substitution subst_call typ
                         | None -> apply_substitution subst_call callee_type
                       in
-                      record_method_resolution expr UfcsFunctionCall;
-                      record_effectful_method_call expr (type_may_be_effectful_callable callee_type');
-                      Some (Ok (subst_call, call_type)))
+                      Some
+                        (Ok
+                           {
+                             mca_subst = subst_call;
+                             mca_return_type = call_type;
+                             mca_resolution = UfcsFunctionCall;
+                             mca_effectful = type_may_be_effectful_callable callee_type';
+                             mca_method_type_args = None;
+                           }))
         in
         let infer_real_method_call () : (substitution * mono_type) infer_result =
           match infer_expression type_map env receiver with
@@ -2080,9 +2094,19 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
           | Ok (subst1, receiver_type) -> (
               let env1 = apply_substitution_env subst1 env in
               let receiver_type' = apply_substitution subst1 receiver_type in
+              let receiver_type_canon = canonicalize_mono_type receiver_type' in
+              let commit_method_call_attempt (attempt : method_call_attempt) :
+                  (substitution * mono_type) infer_result =
+                record_method_resolution expr attempt.mca_resolution;
+                record_effectful_method_call expr attempt.mca_effectful;
+                (match attempt.mca_method_type_args with
+                | Some resolved_type_args -> record_method_type_args expr resolved_type_args
+                | None -> ());
+                Ok (attempt.mca_subst, attempt.mca_return_type)
+              in
               let infer_with_method_signature
                   (resolved_method : Trait_registry.method_sig) (resolution : method_resolution) :
-                  (substitution * mono_type) infer_result =
+                  method_call_attempt infer_result =
                 (* Phase 3.4: Method generic instantiation at call site *)
                 let method_generics = resolved_method.method_generics in
                 let instantiate_method_generics () :
@@ -2245,8 +2269,6 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                                   let return_type =
                                     apply_substitution final_subst instantiated_method.method_return_type
                                   in
-                                  record_method_resolution expr resolution;
-                                  record_effectful_method_call expr (resolved_method.method_effect = `Effectful);
                                   (* Phase 6.4: Record resolved method-level type args for emitter *)
                                   let resolved_method_type_args =
                                     List.map
@@ -2256,164 +2278,232 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                                         |> canonicalize_mono_type)
                                       method_generics
                                   in
-                                  record_method_type_args expr resolved_method_type_args;
-                                  Ok (final_subst, return_type))))
+                                  Ok
+                                    {
+                                      mca_subst = final_subst;
+                                      mca_return_type = return_type;
+                                      mca_resolution = resolution;
+                                      mca_effectful = (resolved_method.method_effect = `Effectful);
+                                      mca_method_type_args = Some resolved_method_type_args;
+                                    })))
               in
-              match canonicalize_mono_type receiver_type' with
-              | TTraitObject _ -> (
-                  match
-                    instantiate_dynamic_trait_method
-                      ~mk_error:(fun ~code ~message -> error_at ~code ~message expr)
-                      receiver_type' method_name
-                  with
-                  | Error e -> Error e
-                  | Ok (trait_name, method_sig) ->
-                      infer_with_method_signature method_sig (DynamicTraitMethod trait_name))
-              | _ -> (
-                  let method_lookup_result =
-                    match receiver_type' with
-                    | TVar type_var_name -> (
+              let instantiate_trait_method_for_receiver (trait_name : string) (method_sig : Trait_registry.method_sig)
+                  : Trait_registry.method_sig =
+                match Trait_registry.lookup_trait trait_name with
+                | None -> method_sig
+                | Some trait_def -> (
+                    match trait_def.trait_type_param with
+                    | None -> method_sig
+                    | Some type_param ->
+                        let subst_type_param = substitution_singleton type_param receiver_type' in
+                        {
+                          method_sig with
+                          method_params =
+                            List.map
+                              (fun (name, ty) -> (name, apply_substitution subst_type_param ty))
+                              method_sig.method_params;
+                          method_return_type =
+                            apply_substitution subst_type_param method_sig.method_return_type;
+                        })
+              in
+              let field_expr =
+                AST.mk_expr ~id:(fresh_synthetic_expr_id ()) ~pos:expr.pos ~end_pos:expr.end_pos
+                  ~file_id:expr.file_id
+                  (AST.FieldAccess (receiver, method_name))
+              in
+              let infer_callable_field_attempt () : method_call_attempt infer_result option =
+                match infer_expression type_map env field_expr with
+                | Error _ -> None
+                | Ok (subst_field, field_callee_type) -> (
+                    let field_type_may_be_callable =
+                      match (canonicalize_mono_type field_callee_type, contextual_callable_signature field_callee_type) with
+                      | TVar _, _ -> true
+                      | _, Some _ -> true
+                      | _ -> false
+                    in
+                    if not field_type_may_be_callable then
+                      None
+                    else
+                        let env_field = apply_substitution_env subst_field env in
+                        let args_expr =
+                          AST.mk_expr ~id:(fresh_synthetic_expr_id ()) ~pos:expr.pos ~end_pos:expr.end_pos
+                            ~file_id:expr.file_id
+                            (AST.Call (field_expr, args))
+                        in
+                        match infer_expression type_map env_field args_expr with
+                        | Error e -> Some (Error e)
+                        | Ok (subst_field_call, field_call_type) ->
+                            let field_callee_type' = apply_substitution subst_field_call field_callee_type in
+                            Some
+                              (Ok
+                                 {
+                                   mca_subst = compose_substitution subst_field_call subst_field;
+                                   mca_return_type = field_call_type;
+                                   mca_resolution = FieldFunctionCall;
+                                   mca_effectful = type_may_be_effectful_callable field_callee_type';
+                                   mca_method_type_args = None;
+                                 }))
+              in
+              match infer_callable_field_attempt () with
+              | Some (Ok field_attempt) -> commit_method_call_attempt field_attempt
+              | Some (Error field_error) -> Error field_error
+              | None ->
+                  let direct_interface_method_attempt () : method_call_attempt infer_result option =
+                    match receiver_type_canon with
+                    | TTraitObject trait_names ->
+                        let candidates = trait_object_method_candidates trait_names method_name in
+                        if candidates = [] then
+                          None
+                        else
+                          Some
+                            (match
+                               instantiate_dynamic_trait_method
+                                 ~mk_error:(fun ~code ~message -> error_at ~code ~message expr)
+                                 receiver_type' method_name
+                             with
+                            | Error e -> Error e
+                            | Ok (trait_name, method_sig) ->
+                                infer_with_method_signature method_sig (DynamicTraitMethod trait_name))
+                    | TVar type_var_name ->
                         let constraints = lookup_type_var_constraints type_var_name in
                         if constraints = [] then
-                          `Not_found
-                        else
+                          None
+                        else (
+                          let seen_source_traits : (string, unit) Hashtbl.t = Hashtbl.create 8 in
                           let candidates =
                             Trait_solver.available_methods_refs constraints
-                            |> List.filter_map (fun (trait_name, trait_def) ->
+                            |> List.filter_map (fun (trait_name, _trait_def) ->
                                    match
-                                     List.find_opt
-                                       (fun (m : Trait_registry.method_sig) -> m.method_name = method_name)
-                                       trait_def.Trait_registry.trait_methods
+                                     Trait_registry.lookup_trait_method_with_supertraits trait_name method_name
                                    with
                                    | None -> None
-                                   | Some method_sig -> Some (trait_name, method_sig))
+                                   | Some (source_trait_def, method_sig) ->
+                                       let source_trait_name =
+                                         Trait_registry.canonical_trait_name source_trait_def.trait_name
+                                       in
+                                       if Hashtbl.mem seen_source_traits source_trait_name then
+                                         None
+                                       else (
+                                         Hashtbl.replace seen_source_traits source_trait_name ();
+                                         Some (source_trait_name, method_sig)))
                             |> List.sort (fun (a, _) (b, _) -> String.compare a b)
                           in
                           match candidates with
-                          | [] -> `Not_found
-                          | [ candidate ] -> `Found candidate
+                          | [] -> None
+                          | [ (trait_name, method_sig) ] ->
+                              Some
+                                (infer_with_method_signature
+                                   (instantiate_trait_method_for_receiver trait_name method_sig)
+                                   (TraitMethod trait_name))
                           | many ->
                               let trait_names = many |> List.map fst |> List.sort_uniq String.compare in
-                              `Error
-                                (Printf.sprintf
-                                   "Ambiguous method '%s' for constrained type variable '%s' (provided by traits: %s)"
-                                   method_name type_var_name (String.concat ", " trait_names)))
-                    | _ -> (
-                        match Trait_registry.resolve_method receiver_type' method_name with
-                        | Ok method_info -> `Found method_info
-                        | Error msg ->
-                            let no_method_prefix = "No method '" in
-                            if
-                              String.length msg >= String.length no_method_prefix
-                              && String.sub msg 0 (String.length no_method_prefix) = no_method_prefix
-                            then
-                              `Not_found
-                            else
-                              `Error msg)
-                  in
-                  let inherent_method_result =
-                    match receiver_type' with
-                    | TVar _ -> Ok None
-                    | _ -> Inherent_registry.resolve_method receiver_type' method_name
-                  in
-                  match method_lookup_result with
-                  | `Error msg -> (
-                      (* Phase 4.3: Even on ambiguity, inherent method wins if present *)
-                      match inherent_method_result with
-                      | Ok (Some inherent_sig) -> infer_with_method_signature inherent_sig InherentMethod
-                      | _ -> Error (error_at ~code:"type-constructor" ~message:msg expr))
-                  | `Not_found -> (
-                      match inherent_method_result with
-                      | Error msg -> Error (error_at ~code:"type-constructor" ~message:msg expr)
-                      | Ok (Some inherent_sig) -> infer_with_method_signature inherent_sig InherentMethod
-                      | Ok None -> (
-                          let field_expr =
-                            AST.mk_expr ~id:(fresh_synthetic_expr_id ()) ~pos:expr.pos ~end_pos:expr.end_pos
-                              ~file_id:expr.file_id
-                              (AST.FieldAccess (receiver, method_name))
-                          in
-                          match infer_expression type_map env field_expr with
-                          | Error _ -> (
-                              match infer_ufcs_function_call () with
-                              | Some result -> result
-                              | None ->
-                                  Error
-                                    (error_at ~code:"type-constructor"
-                                       ~message:
-                                         (Printf.sprintf "No method '%s' found for type %s" method_name
-                                            (Types.to_string receiver_type'))
-                                       expr))
-                          | Ok (subst_field, field_callee_type) -> (
-                              let env_field = apply_substitution_env subst_field env in
-                              let args_expr =
-                                AST.mk_expr ~id:(fresh_synthetic_expr_id ()) ~pos:expr.pos ~end_pos:expr.end_pos
-                                  ~file_id:expr.file_id
-                                  (AST.Call (field_expr, args))
+                              let diag =
+                                error_at ~code:"type-constructor"
+                                  ~message:
+                                    (Printf.sprintf
+                                       "Ambiguous direct interface method '%s' for constrained type variable '%s' (provided by traits: %s)"
+                                       method_name type_var_name (String.concat ", " trait_names))
+                                  expr
                               in
-                              match infer_expression type_map env_field args_expr with
-                              | Ok (subst_field_call, field_call_type) ->
-                                  let field_callee_type' =
-                                    apply_substitution subst_field_call field_callee_type
+                              Some (Error diag))
+                    | _ -> None
+                  in
+                  match direct_interface_method_attempt () with
+                  | Some (Ok direct_attempt) -> commit_method_call_attempt direct_attempt
+                  | Some (Error direct_error) -> Error direct_error
+                  | None ->
+                      let no_method_prefix = "No method '" in
+                      let is_missing_method_message (msg : string) : bool =
+                        String.length msg >= String.length no_method_prefix
+                        && String.sub msg 0 (String.length no_method_prefix) = no_method_prefix
+                      in
+                      let inherent_probe =
+                        match receiver_type' with
+                        | TVar _ -> Ok None
+                        | _ -> (
+                            match Inherent_registry.resolve_method receiver_type' method_name with
+                            | Error msg -> Error (error_at ~code:"type-constructor" ~message:msg expr)
+                            | Ok None -> Ok None
+                            | Ok (Some inherent_sig) -> (
+                                match infer_with_method_signature inherent_sig InherentMethod with
+                                | Ok attempt -> Ok (Some (Printf.sprintf "%s.%s" (Types.to_string receiver_type_canon) method_name, attempt))
+                                | Error e -> Error e))
+                      in
+                      let trait_probe =
+                        match receiver_type_canon with
+                        | TTraitObject _ | TVar _ -> Ok None
+                        | _ -> (
+                            match Trait_registry.resolve_method receiver_type' method_name with
+                            | Ok (trait_name, method_sig) -> (
+                                match Trait_solver.satisfies_trait receiver_type' trait_name with
+                                | Error _ -> Ok None
+                                | Ok () -> (
+                                    match
+                                      infer_with_method_signature
+                                        (instantiate_trait_method_for_receiver trait_name method_sig)
+                                        (TraitMethod trait_name)
+                                    with
+                                    | Ok attempt ->
+                                        Ok (Some (Printf.sprintf "%s.%s" trait_name method_name, attempt))
+                                    | Error e -> Error e))
+                            | Error msg when is_missing_method_message msg -> Ok None
+                            | Error msg -> Error (error_at ~code:"type-constructor" ~message:msg expr))
+                      in
+                      let ufcs_function_probe =
+                        match infer_ufcs_function_call () with
+                        | None -> Ok None
+                        | Some (Ok attempt) -> Ok (Some (method_name, attempt))
+                        | Some (Error e) -> Error e
+                      in
+                      let add_candidate acc = function
+                        | None -> acc
+                        | Some candidate -> candidate :: acc
+                      in
+                      let candidate_suggestions (labels : string list) : string =
+                        labels
+                        |> List.map (fun label -> label ^ "(...)")
+                        |> String.concat ", "
+                      in
+                      match inherent_probe with
+                      | Error e -> Error e
+                      | Ok inherent_candidate ->
+                          match trait_probe with
+                          | Error e -> Error e
+                          | Ok trait_candidate ->
+                              match ufcs_function_probe with
+                              | Error e -> Error e
+                              | Ok function_candidate ->
+                                  let candidates =
+                                    add_candidate
+                                      (add_candidate (add_candidate [] inherent_candidate) trait_candidate)
+                                      function_candidate
+                                    |> List.rev
                                   in
-                                  record_method_resolution expr FieldFunctionCall;
-                                  record_effectful_method_call expr
-                                    (type_may_be_effectful_callable field_callee_type');
-                                  Ok (compose_substitution subst_field_call subst_field, field_call_type)
-                              | Error _ -> (
-                                  match infer_ufcs_function_call () with
-                                  | Some result -> result
-                                  | None ->
+                                  match candidates with
+                                  | [] ->
                                       Error
                                         (error_at ~code:"type-constructor"
                                            ~message:
-                                             (Printf.sprintf "No method '%s' found for type %s" method_name
-                                                (Types.to_string receiver_type'))
-                                           expr)))))
-                  | `Found (trait_name, method_sig) -> (
-                      let is_self_defining =
-                        let recv_canon = canonicalize_mono_type receiver_type' in
-                        List.exists
-                          (fun (for_type, mname) ->
-                            mname = method_name && canonicalize_mono_type for_type = recv_canon)
-                          !current_inherent_impl_methods
-                      in
-                      let instantiated_method_sig =
-                        match Trait_registry.lookup_trait trait_name with
-                        | None -> method_sig
-                        | Some trait_def -> (
-                            match trait_def.trait_type_param with
-                            | None -> method_sig
-                            | Some type_param ->
-                                let subst_type_param = substitution_singleton type_param receiver_type' in
-                                {
-                                  method_sig with
-                                  method_params =
-                                    List.map
-                                      (fun (name, ty) -> (name, apply_substitution subst_type_param ty))
-                                      method_sig.method_params;
-                                  method_return_type =
-                                    apply_substitution subst_type_param method_sig.method_return_type;
-                                })
-                      in
-                      let trait_requirement_result =
-                        match receiver_type' with
-                        | TVar _ -> Ok ()
-                        | _ -> (
-                            match Trait_solver.satisfies_trait receiver_type' trait_name with
-                            | Ok () -> Ok ()
-                            | Error diag -> Error diag)
-                      in
-                      match inherent_method_result with
-                      | Error msg -> Error (error_at ~code:"type-constructor" ~message:msg expr)
-                      | Ok (Some inherent_sig) when not is_self_defining ->
-                          (* Phase 4.3: Inherent method takes precedence over trait on dot calls,
-                             unless the inherent method is currently being defined (avoid infinite recursion) *)
-                          infer_with_method_signature inherent_sig InherentMethod
-                      | Ok (Some _) | Ok None -> (
-                          match trait_requirement_result with
-                          | Error diag -> Error (error_at ~code:diag.code ~message:diag.message expr)
-                          | Ok () -> infer_with_method_signature instantiated_method_sig (TraitMethod trait_name))
-                      )))
+                                             (Printf.sprintf
+                                                "No dot-call target '%s' matched for type %s"
+                                                method_name (Types.to_string receiver_type_canon))
+                                           expr)
+                                  | [ (_label, attempt) ] -> commit_method_call_attempt attempt
+                                  | many ->
+                                      let labels =
+                                        many
+                                        |> List.map fst
+                                        |> List.sort_uniq String.compare
+                                      in
+                                      Error
+                                        (error_at ~code:"type-constructor"
+                                           ~message:
+                                             (Printf.sprintf
+                                                "Ambiguous dot call '%s' for type %s. Matching receiver-first targets: %s. Use an explicit call target: %s"
+                                                method_name (Types.to_string receiver_type_canon)
+                                                (String.concat ", " labels)
+                                                (candidate_suggestions labels))
+                                           expr))
         in
         (* Phase 4.4: Qualified call resolution *)
         let infer_qualified_trait_call (trait_name : string) : (substitution * mono_type) infer_result =
@@ -5212,8 +5302,8 @@ and infer_statement type_map env stmt =
                                           (Types.to_string target_type)))
                             | Ok _ ->
                                 (* Phase 4.6: Allow inherent methods even when a trait provides the same name.
-                           Collision is resolved at call sites: inherent wins on dot calls,
-                           qualified calls can explicitly select the trait. *)
+                           Collision is resolved at call sites: dot calls may be ambiguous,
+                           and qualified calls can explicitly select the desired target. *)
                                 register_current_method ()))
                   in
                   let result = register_methods empty_substitution inherent_methods in
@@ -7124,7 +7214,7 @@ f" in
     | Ok _ -> false
     | Error e ->
         let msg = e.message in
-        contains_substring msg "Ambiguous method 'render'"
+        contains_substring msg "Ambiguous direct interface method 'render'"
 
   let%test "inherent method call resolves for concrete receiver" =
     let code =

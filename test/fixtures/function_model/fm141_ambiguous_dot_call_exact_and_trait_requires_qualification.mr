@@ -1,0 +1,17 @@
+type Point = { x: Int }
+
+trait Render[a] = {
+  fn render(x: a) -> Str
+}
+
+impl Render[Point] = {
+  fn render(x: Point) -> Str = { "trait" }
+}
+
+impl Point = {
+  fn render(x: Point) -> Str = { "exact" }
+}
+
+let p = {x: 1}
+
+p.render()  # error: Ambiguous

@@ -16,5 +16,6 @@ impl Counter = {
 
 let c = {n: 5}
 
-# inherent wins on dot call
-puts(c.render())  # output: counter:5
+# dot sugar is ambiguous here; explicit targets stay stable
+puts(Display.render(c))  # output: display:5
+puts(Counter.render(c))  # output: counter:5

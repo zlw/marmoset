@@ -14,5 +14,6 @@ impl Data = {
 
 let d = {v: 42}
 
-# inherent returns int, trait returns string — different signatures OK
-puts(d.info())  # output: 42
+# explicit calls disambiguate the different signatures
+puts(Summarize.info(d))  # output: 42
+puts(Data.info(d).show())  # output: 42

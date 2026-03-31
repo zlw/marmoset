@@ -13,4 +13,5 @@ impl Color = {
 }
 
 let c = Color.Red
-puts(c.desc())  # output: inherent
+puts(Describe.desc(c))  # output: trait
+puts(Color.desc(c))  # output: inherent

@@ -14,7 +14,6 @@ impl Item = {
 
 let i = {v: 3}
 
-# dot call → inherent
-puts(i.name())  # output: inherent:3
-# qualified call → specific trait
+# qualified calls remain explicit and stable
 puts(Label.name(i))  # output: trait:3
+puts(Item.name(i))  # output: inherent:3

@@ -14,5 +14,6 @@ impl Data = {
 
 let d = {v: 7}
 
-# inherent wins, NOT ambiguity
-puts(d.show_val())  # output: inherent:7
+# dot sugar is ambiguous here; explicit targets stay stable
+puts(Fmt.show_val(d))  # output: trait:7
+puts(Data.show_val(d))  # output: inherent:7

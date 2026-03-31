@@ -1,0 +1,15 @@
+trait ShowIt[a] = {
+  fn show(x: a) -> Str
+}
+
+type Box = { n: Int }
+
+impl ShowIt[Box] = {
+  fn show(x: Box) -> Str = { "trait" }
+}
+
+fn show[a](x: a) -> Str = "free"
+
+fn render[t: ShowIt](x: t) -> Str = x.show()
+
+puts(render({n: 1}))  # output: trait

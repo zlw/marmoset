@@ -1,4 +1,4 @@
-# TH21: Inherent method coexists with builtin show on Int (inherent wins on dot call)
+# TH21: Inherent method coexists with builtin show on Int
 impl Int = {
   fn show(x: Int) -> Str = "my-show"
 }

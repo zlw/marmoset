@@ -6,4 +6,4 @@ trait Show[a] = {
 impl[b: Named] Show[List[b]] = {
   fn show(x: List[b]) -> Str = "ok"
 }
-puts([1, 2].show())  # error: does not satisfy
+puts([1, 2].show())  # error: No dot-call target 'show'

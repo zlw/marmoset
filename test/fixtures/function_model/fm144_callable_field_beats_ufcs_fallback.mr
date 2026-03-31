@@ -1,0 +1,7 @@
+type Runner = { run: (Int) -> Int }
+
+fn run(x: Runner, y: Int) -> Int = x.run(y) + 100
+
+let r: Runner = { run: (x: Int) -> x * 2 }
+
+puts(r.run(10).show())  # output: 20

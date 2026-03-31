@@ -14,4 +14,5 @@ impl Cell = {
 
 let c = {v: 5}
 
-puts(c.detail())  # output: inherent:5
+puts(Info.detail(c))  # output: trait:5
+puts(Cell.detail(c))  # output: inherent:5
