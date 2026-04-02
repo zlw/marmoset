@@ -1148,7 +1148,8 @@ let rec collect_funcs_stmt
     StringSet.t =
   match stmt.stmt with
   | AST.Let let_binding -> (
-      match let_binding.value.expr with
+      let value_expr = placeholder_rewritten_expr state.placeholder_rewrite_map let_binding.value in
+      match value_expr.expr with
       | AST.Function f ->
           let param_bindings = string_set_of_list (List.map fst f.params) in
           let captures =
@@ -1160,10 +1161,10 @@ let rec collect_funcs_stmt
                 if top_level then
                   let_binding.name
                 else
-                  hoisted_local_func_name let_binding.name let_binding.value.id
+                  hoisted_local_func_name let_binding.name value_expr.id
               in
               add_func_def state ~name:target_name ~params:f.params ~body:f.body
-                ~func_expr_id:let_binding.value.id
+                ~func_expr_id:value_expr.id
           in
           let nested_available = StringSet.union available_bindings param_bindings in
           ignore (collect_funcs_stmt ~top_level:false ~available_bindings:nested_available state f.body);
@@ -5956,9 +5957,10 @@ and emit_stmt
   let ind = indent_str state in
   match stmt.stmt with
   | AST.Let let_binding -> (
+      let value_expr = placeholder_rewritten_expr state.mono.placeholder_rewrite_map let_binding.value in
       if let_binding.name = "_" then
         (* Blank binding is a discard, not a named variable declaration. *)
-        match let_binding.value.expr with
+        match value_expr.expr with
         | AST.If (cond, cons, alt) ->
             let code = emit_if_to_target state type_map env let_binding.value cond cons alt DiscardTarget in
             (code, env)
@@ -5990,14 +5992,14 @@ and emit_stmt
           else
             expr_type
         in
-        match let_binding.value.expr with
+        match value_expr.expr with
         | AST.Function _ when is_user_func state.mono let_binding.name ->
             (* Skip - this is a top-level function, emitted separately *)
             let env' = Infer.TypeEnv.add let_binding.name (Types.Forall ([], expr_type)) env in
             ("", env')
         | AST.Function _ -> (
             let env' = Infer.TypeEnv.add let_binding.name (Types.Forall ([], expr_type)) env in
-            match hoisted_local_func_target_name state.mono let_binding.name let_binding.value.id with
+            match hoisted_local_func_target_name state.mono let_binding.name value_expr.id with
             | Some _target_name -> ("", env')
             | None ->
                 (* Emit local function values with split declaration+assignment.
@@ -7890,6 +7892,11 @@ let%test "emit addition" =
 let%test "emit let binding" =
   match compile_string ~file_id:"<codegen>" "let x = 5; x" with
   | Ok (code, _) -> string_contains code "x := int64(5)" && string_contains code "_ = x"
+  | Error _ -> false
+
+let%test "emit top-level placeholder section forward ref hoists function binding" =
+  match compile_string ~file_id:"<codegen>" "let y = add1(41)\nlet add1 = _ + 1\ny" with
+  | Ok (code, _) -> string_contains code "func add1_" && not (string_contains code "add1 :=")
   | Error _ -> false
 
 let%test "emit boolean" =
