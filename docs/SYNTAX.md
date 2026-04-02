@@ -250,6 +250,10 @@ Notes:
 
 Examples:
 ```mr
+let times_two = _ * 2
+let visible_to_ada = Visible.visible_to(_, "ada")
+let updated_at = _.updated_at
+
 list.map(ids, _ * 2)              # x -> x * 2
 list.map(users, _.name)           # x -> x.name
 list.map(ids, do_something(_))    # x -> do_something(x)
@@ -262,6 +266,7 @@ Restrictions:
 - Expressions with zero placeholders remain ordinary expressions and are not rewritten.
 - Multi-placeholder forms like `_ + _` are rejected.
 - Effectful callbacks require explicit `=>` lambda (no placeholder effectful form).
+- Placeholder rewrite does not fire inside an explicit `(x) -> ...` or `(x) => ...` body.
 
 ## 12. Canonical Example (Condensed)
 ```mr
@@ -551,6 +556,7 @@ _ * 2                 => (it) -> it * 2
 _.name                => (it) -> it.name
 do_something(_)       => (it) -> do_something(it)
 trim(lowercase(_))    => (it) -> trim(lowercase(it))
+Visible.visible_to(_, user) => (it) -> Visible.visible_to(it, user)
 ```
 
 Zero-placeholder expressions are left unchanged.
