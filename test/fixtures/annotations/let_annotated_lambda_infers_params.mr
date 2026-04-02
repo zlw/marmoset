@@ -1,0 +1,2 @@
+let add_bananas: (Int, Int) -> Int = (x, y) -> x + y
+puts(add_bananas(2, 3))  # output: 5
