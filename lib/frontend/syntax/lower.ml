@@ -211,6 +211,151 @@ let rec lower_pattern (sp : Surface.surface_pattern) : AST.pattern =
 
 (* ── Expressions ── *)
 
+let rec placeholder_count_expr (expr : AST.expression) : int =
+  match expr.expr with
+  | AST.Identifier "_" -> 1
+  | AST.Identifier _ | AST.Integer _ | AST.Float _ | AST.Boolean _ | AST.String _ -> 0
+  | AST.Prefix (_, inner) | AST.TypeCheck (inner, _) | AST.FieldAccess (inner, _) ->
+      placeholder_count_expr inner
+  | AST.Infix (left, _, right) -> placeholder_count_expr left + placeholder_count_expr right
+  | AST.TypeApply (callee, _) -> placeholder_count_expr callee
+  | AST.If (cond, cons, alt) ->
+      placeholder_count_expr cond + placeholder_count_stmt cons
+      +
+      (match alt with
+      | None -> 0
+      | Some stmt -> placeholder_count_stmt stmt)
+  | AST.Function _ -> 0
+  | AST.Call (fn_expr, args) ->
+      placeholder_count_expr fn_expr + List.fold_left (fun acc arg -> acc + placeholder_count_expr arg) 0 args
+  | AST.Array elements -> List.fold_left (fun acc arg -> acc + placeholder_count_expr arg) 0 elements
+  | AST.Hash pairs ->
+      List.fold_left
+        (fun acc (key, value) -> acc + placeholder_count_expr key + placeholder_count_expr value)
+        0 pairs
+  | AST.Index (container, index) -> placeholder_count_expr container + placeholder_count_expr index
+  | AST.EnumConstructor (_, _, args) ->
+      List.fold_left (fun acc arg -> acc + placeholder_count_expr arg) 0 args
+  | AST.Match (scrutinee, arms) ->
+      placeholder_count_expr scrutinee
+      + List.fold_left (fun acc arm -> acc + placeholder_count_expr arm.AST.body) 0 arms
+  | AST.RecordLit (fields, spread) ->
+      List.fold_left
+        (fun acc (field : AST.record_field) ->
+          acc
+          +
+          (match field.field_value with
+          | None -> 0
+          | Some value -> placeholder_count_expr value))
+        0 fields
+      +
+      (match spread with
+      | None -> 0
+      | Some spread_expr -> placeholder_count_expr spread_expr)
+  | AST.MethodCall { mc_receiver; mc_args; _ } ->
+      placeholder_count_expr mc_receiver
+      + List.fold_left (fun acc arg -> acc + placeholder_count_expr arg) 0 mc_args
+  | AST.BlockExpr stmts -> placeholder_count_stmt_list stmts
+
+and placeholder_count_stmt (stmt : AST.statement) : int =
+  match stmt.stmt with
+  | AST.Let { value; _ } -> placeholder_count_expr value
+  | AST.Return expr | AST.ExpressionStmt expr -> placeholder_count_expr expr
+  | AST.Block stmts -> placeholder_count_stmt_list stmts
+  | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ | AST.TraitDef _ | AST.ImplDef _ | AST.InherentImplDef _
+  | AST.DeriveDef _ | AST.TypeAlias _ ->
+      0
+
+and placeholder_count_stmt_list (stmts : AST.statement list) : int =
+  List.fold_left (fun acc stmt -> acc + placeholder_count_stmt stmt) 0 stmts
+
+let rec replace_placeholder_with_expr (replacement : AST.expression) (expr : AST.expression) : AST.expression =
+  let rewritten =
+    match expr.expr with
+    | AST.Identifier "_" -> replacement.expr
+    | AST.Identifier _ | AST.Integer _ | AST.Float _ | AST.Boolean _ | AST.String _ -> expr.expr
+    | AST.Prefix (op, inner) -> AST.Prefix (op, replace_placeholder_with_expr replacement inner)
+    | AST.Infix (left, op, right) ->
+        AST.Infix
+          (replace_placeholder_with_expr replacement left, op, replace_placeholder_with_expr replacement right)
+    | AST.TypeCheck (inner, typ) -> AST.TypeCheck (replace_placeholder_with_expr replacement inner, typ)
+    | AST.TypeApply (callee, type_args) ->
+        AST.TypeApply (replace_placeholder_with_expr replacement callee, type_args)
+    | AST.If (cond, cons, alt) ->
+        AST.If
+          ( replace_placeholder_with_expr replacement cond,
+            replace_placeholder_with_stmt replacement cons,
+            Option.map (replace_placeholder_with_stmt replacement) alt )
+    | AST.Function _ -> expr.expr
+    | AST.Call (fn_expr, args) ->
+        AST.Call
+          ( replace_placeholder_with_expr replacement fn_expr,
+            List.map (replace_placeholder_with_expr replacement) args )
+    | AST.Array elements -> AST.Array (List.map (replace_placeholder_with_expr replacement) elements)
+    | AST.Hash pairs ->
+        AST.Hash
+          (List.map
+             (fun (key, value) ->
+               (replace_placeholder_with_expr replacement key, replace_placeholder_with_expr replacement value))
+             pairs)
+    | AST.Index (container, index) ->
+        AST.Index
+          (replace_placeholder_with_expr replacement container, replace_placeholder_with_expr replacement index)
+    | AST.EnumConstructor (enum_name, variant_name, args) ->
+        AST.EnumConstructor (enum_name, variant_name, List.map (replace_placeholder_with_expr replacement) args)
+    | AST.Match (scrutinee, arms) ->
+        AST.Match
+          ( replace_placeholder_with_expr replacement scrutinee,
+            List.map
+              (fun (arm : AST.match_arm) ->
+                { arm with body = replace_placeholder_with_expr replacement arm.body })
+              arms )
+    | AST.RecordLit (fields, spread) ->
+        AST.RecordLit
+          ( List.map
+              (fun (field : AST.record_field) ->
+                {
+                  field with
+                  field_value = Option.map (replace_placeholder_with_expr replacement) field.field_value;
+                })
+              fields,
+            Option.map (replace_placeholder_with_expr replacement) spread )
+    | AST.FieldAccess (receiver, field_name) ->
+        AST.FieldAccess (replace_placeholder_with_expr replacement receiver, field_name)
+    | AST.MethodCall { mc_receiver; mc_method; mc_type_args; mc_args } ->
+        AST.MethodCall
+          {
+            mc_receiver = replace_placeholder_with_expr replacement mc_receiver;
+            mc_method;
+            mc_type_args;
+            mc_args = List.map (replace_placeholder_with_expr replacement) mc_args;
+          }
+    | AST.BlockExpr stmts -> AST.BlockExpr (List.map (replace_placeholder_with_stmt replacement) stmts)
+  in
+  { expr with expr = rewritten }
+
+and replace_placeholder_with_stmt (replacement : AST.expression) (stmt : AST.statement) : AST.statement =
+  let rewritten =
+    match stmt.stmt with
+    | AST.Let ({ value; _ } as let_binding) ->
+        AST.Let { let_binding with value = replace_placeholder_with_expr replacement value }
+    | AST.Return expr -> AST.Return (replace_placeholder_with_expr replacement expr)
+    | AST.ExpressionStmt expr -> AST.ExpressionStmt (replace_placeholder_with_expr replacement expr)
+    | AST.Block stmts -> AST.Block (List.map (replace_placeholder_with_stmt replacement) stmts)
+    | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ | AST.TraitDef _ | AST.ImplDef _ | AST.InherentImplDef _
+    | AST.DeriveDef _ | AST.TypeAlias _ ->
+        stmt.stmt
+  in
+  { stmt with stmt = rewritten }
+
+let lower_pipe_expr (lhs : AST.expression) (rhs : AST.expression) : AST.expr_kind =
+  match rhs.expr with
+  | AST.MethodCall { mc_receiver; mc_method; mc_type_args; mc_args } ->
+      AST.MethodCall { mc_receiver; mc_method; mc_type_args; mc_args = lhs :: mc_args }
+  | AST.Call (callee, args) -> AST.Call (callee, lhs :: args)
+  | _ when placeholder_count_expr rhs = 1 -> (replace_placeholder_with_expr lhs rhs).expr
+  | _ -> AST.Call (rhs, [ lhs ])
+
 let rec lower_expr_with_ctx (ctx : lower_context) (id_supply : Id_supply.Id_supply.t) (se : Surface.surface_expr)
     : AST.expression =
   let pos = se.se_pos and end_pos = se.se_end_pos and file_id = se.se_file_id and id = se.se_id in
@@ -232,6 +377,10 @@ let rec lower_expr_with_ctx (ctx : lower_context) (id_supply : Id_supply.Id_supp
              (fun (k, v) -> (lower_expr_with_ctx ctx id_supply k, lower_expr_with_ctx ctx id_supply v))
              pairs)
     | Surface.SEPrefix (op, e) -> AST.Prefix (op, lower_expr_with_ctx ctx id_supply e)
+    | Surface.SEInfix (l, "|>", r) ->
+        let lhs = lower_expr_with_ctx ctx id_supply l in
+        let rhs = lower_expr_with_ctx ctx id_supply r in
+        lower_pipe_expr lhs rhs
     | Surface.SEInfix (l, op, r) ->
         AST.Infix (lower_expr_with_ctx ctx id_supply l, op, lower_expr_with_ctx ctx id_supply r)
     | Surface.SETypeCheck (e, t) -> AST.TypeCheck (lower_expr_with_ctx ctx id_supply e, lower_type_expr t)
@@ -886,6 +1035,95 @@ let%test "lower SEBlockExpr to AST.BlockExpr" =
   let se = Surface.mk_surface_expr ~id:2 ~pos:0 (Surface.SEBlockExpr block) in
   match (lower_expr id_supply se).expr with
   | AST.BlockExpr [ { stmt = AST.ExpressionStmt { expr = AST.Integer 7L; _ }; _ } ] -> true
+  | _ -> false
+
+let%test "lower pipe desugars rhs callable into Call" =
+  let id_supply = Id_supply.Id_supply.create 0 in
+  let se =
+    Surface.mk_surface_expr ~id:3 ~pos:0
+      (Surface.SEInfix
+         ( Surface.mk_surface_expr ~id:1 ~pos:0 (Surface.SEIdentifier "x"),
+           "|>",
+           Surface.mk_surface_expr ~id:2 ~pos:5 (Surface.SEIdentifier "f") ))
+  in
+  match (lower_expr id_supply se).expr with
+  | AST.Call ({ AST.expr = AST.Identifier "f"; _ }, [ { AST.expr = AST.Identifier "x"; _ } ]) -> true
+  | _ -> false
+
+let%test "lower pipe prepends lhs into existing rhs call" =
+  let id_supply = Id_supply.Id_supply.create 0 in
+  let rhs_call =
+    Surface.mk_surface_expr ~id:4 ~pos:5
+      (Surface.SECall
+         ( Surface.mk_surface_expr ~id:2 ~pos:5 (Surface.SEIdentifier "f"),
+           [ Surface.mk_surface_expr ~id:3 ~pos:7 (Surface.SEInteger 1L) ] ))
+  in
+  let se =
+    Surface.mk_surface_expr ~id:5 ~pos:0
+      (Surface.SEInfix (Surface.mk_surface_expr ~id:1 ~pos:0 (Surface.SEIdentifier "x"), "|>", rhs_call))
+  in
+  match (lower_expr id_supply se).expr with
+  | AST.Call
+      ({ AST.expr = AST.Identifier "f"; _ }, [ { AST.expr = AST.Identifier "x"; _ }; { AST.expr = AST.Integer 1L; _ } ]) ->
+      true
+  | _ -> false
+
+let%test "lower pipe prepends lhs into qualified method call args" =
+  let id_supply = Id_supply.Id_supply.create 0 in
+  let rhs_method =
+    Surface.mk_surface_expr ~id:4 ~pos:5
+      (Surface.SEMethodCall
+         {
+           se_receiver = Surface.mk_surface_expr ~id:2 ~pos:5 (Surface.SEIdentifier "Box");
+           se_method = "map";
+           se_type_args = None;
+           se_args = [ Surface.mk_surface_expr ~id:3 ~pos:13 (Surface.SEInteger 1L) ];
+         })
+  in
+  let se =
+    Surface.mk_surface_expr ~id:5 ~pos:0
+      (Surface.SEInfix (Surface.mk_surface_expr ~id:1 ~pos:0 (Surface.SEIdentifier "x"), "|>", rhs_method))
+  in
+  match (lower_expr id_supply se).expr with
+  | AST.MethodCall
+      {
+        mc_receiver = { AST.expr = AST.Identifier "Box"; _ };
+        mc_method = "map";
+        mc_args = [ { AST.expr = AST.Identifier "x"; _ }; { AST.expr = AST.Integer 1L; _ } ];
+        _;
+      } ->
+      true
+  | _ -> false
+
+let%test "lower pipe substitutes lhs into projection section rhs" =
+  let id_supply = Id_supply.Id_supply.create 0 in
+  let rhs =
+    Surface.mk_surface_expr ~id:3 ~pos:5
+      (Surface.SEFieldAccess (Surface.mk_surface_expr ~id:2 ~pos:5 (Surface.SEIdentifier "_"), "updated_at"))
+  in
+  let se =
+    Surface.mk_surface_expr ~id:4 ~pos:0
+      (Surface.SEInfix (Surface.mk_surface_expr ~id:1 ~pos:0 (Surface.SEIdentifier "post"), "|>", rhs))
+  in
+  match (lower_expr id_supply se).expr with
+  | AST.FieldAccess ({ AST.expr = AST.Identifier "post"; _ }, "updated_at") -> true
+  | _ -> false
+
+let%test "lower pipe substitutes lhs into infix section rhs" =
+  let id_supply = Id_supply.Id_supply.create 0 in
+  let rhs =
+    Surface.mk_surface_expr ~id:4 ~pos:5
+      (Surface.SEInfix
+         ( Surface.mk_surface_expr ~id:2 ~pos:5 (Surface.SEIdentifier "_"),
+           "+",
+           Surface.mk_surface_expr ~id:3 ~pos:9 (Surface.SEInteger 1L) ))
+  in
+  let se =
+    Surface.mk_surface_expr ~id:5 ~pos:0
+      (Surface.SEInfix (Surface.mk_surface_expr ~id:1 ~pos:0 (Surface.SEIdentifier "x"), "|>", rhs))
+  in
+  match (lower_expr id_supply se).expr with
+  | AST.Infix ({ AST.expr = AST.Identifier "x"; _ }, "+", { AST.expr = AST.Integer 1L; _ }) -> true
   | _ -> false
 
 let%test "lower SEOBBlock in match arm -> AST.BlockExpr" =

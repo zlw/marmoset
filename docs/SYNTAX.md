@@ -414,7 +414,7 @@ Stmt                 ::= LetDecl
                        | ExprStmt
 ExprStmt             ::= Expr
 
-Expr                 ::= MatchExpr | IfExpr | ExplicitLambda | OrExpr
+Expr                 ::= MatchExpr | IfExpr | ExplicitLambda | PipeExpr
 
 IfExpr               ::= "if" "(" Expr ")" ExprOrBlock "else" ExprOrBlock
 MatchExpr            ::= "match" Expr "{" { CaseArm } "}"
@@ -424,6 +424,7 @@ ExplicitLambda       ::= "(" [LambdaParamList] ")" PurityArrow ExprOrBlock
 LambdaParamList      ::= LambdaParam { "," LambdaParam }
 LambdaParam          ::= Ident [ ":" TypeExpr ]
 
+PipeExpr             ::= OrExpr { "|>" OrExpr }
 OrExpr               ::= AndExpr { "||" AndExpr }
 AndExpr              ::= EqExpr { "&&" EqExpr }
 EqExpr               ::= RelExpr { ("==" | "!=") RelExpr }
@@ -488,17 +489,27 @@ From highest to lowest:
 6. Equality: `== !=` (left-associative)
 7. Logical and: `&&` (left-associative)
 8. Logical or: `||` (left-associative)
-9. Match/if/lambda forms bind at expression level and are parsed by keyword lead-in.
+9. Pipe: `|>` (left-associative)
+10. Match/if/lambda forms bind at expression level and are parsed by keyword lead-in.
 
 ### 13.5 Desugaring Order (Normative)
 The frontend should apply these rewrites in this order:
 1. Resolve symbols (distinguish type vs trait names for shorthand).
 2. Infer unconstrained impl binders from free type variables in impl targets.
 3. Expand constrained-param shorthand in function declarations.
-4. Expand placeholder lambdas.
-5. Validate purity arrows (`->` pure, `=>` effectful).
-6. Lower built-in `derive` into synthesized impl obligations.
-7. Enforce `override` rules.
+4. Desugar pipe expressions.
+5. Expand placeholder lambdas.
+6. Validate purity arrows (`->` pure, `=>` effectful).
+7. Lower built-in `derive` into synthesized impl obligations.
+8. Enforce `override` rules.
+
+Pipe rewrite rules:
+- `x |> f` rewrites to `f(x)`.
+- `x |> f(y, z)` rewrites to `f(x, y, z)`.
+- `x |> Type.method(y)` rewrites to `Type.method(x, y)`.
+- If the RHS is a single-placeholder section value, the pipe fills that placeholder directly:
+  - `x |> _.name` rewrites to `x.name`
+  - `x |> (_ + 1)` rewrites to `x + 1`
 
 ### 13.6 Impl Binder Inference
 - If an impl declaration omits an explicit binder list, every free lowercase type variable appearing in the impl target is lifted into an unconstrained binder in first-occurrence order.
@@ -559,11 +570,19 @@ trim(lowercase(_))    => (it) -> trim(lowercase(it))
 Visible.visible_to(_, user) => (it) -> Visible.visible_to(it, user)
 ```
 
+Pipe composes with the same shorthand after pipe rewrite:
+```mr
+post |> _.updated_at      => post.updated_at
+count |> (_ + 1)          => count + 1
+box |> Box.map(_ * 2)     => Box.map(box, (it) -> it * 2)
+```
+
 Zero-placeholder expressions are left unchanged.
 
 Errors:
 - Any expression containing more than one placeholder is rejected.
 - Effectful intent with placeholder is not inferred. Use explicit `=>` lambda.
+- Explicit lambda bodies are not rewritten. `_` stays a literal identifier inside `(x) -> ...` or `(x) => ...`.
 
 ### 13.9 Trait/Impl/Derive Validation Rules
 - Trait impl target shape is `impl [GenericParams] Trait[Type] = { ... }`.

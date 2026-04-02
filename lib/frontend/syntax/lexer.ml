@@ -61,7 +61,9 @@ let rec next_token (l : lexer) : lexer * Token.token =
   | ']' -> (read_char l, Token.init ~pos RBracket "]")
   | ',' -> (read_char l, Token.init ~pos Comma ",")
   | '|' ->
-      if peek_char l = '|' then
+      if peek_char l = '>' then
+        (read_char (read_char l), Token.init ~pos PipeForward "|>")
+      else if peek_char l = '|' then
         (read_char (read_char l), Token.init ~pos PipePipe "||")
       else
         (read_char l, Token.init ~pos Pipe "|")
@@ -400,6 +402,10 @@ let%test "pipepipe token" =
   let tokens = lex "x || y" in
   List.exists (fun t -> t.Token.token_type = Token.PipePipe && t.Token.literal = "||") tokens
 
+let%test "pipe forward token" =
+  let tokens = lex "x |> f" in
+  List.exists (fun t -> t.Token.token_type = Token.PipeForward && t.Token.literal = "|>") tokens
+
 let%test "percent token" =
   let tokens = lex "x % 3" in
   List.exists (fun t -> t.Token.token_type = Token.Percent && t.Token.literal = "%") tokens
@@ -438,11 +444,14 @@ let%test "bang suffix does not absorb not-equal" =
 
 let%test "pipe vs pipepipe distinction" =
   let tokens_single = lex "a | b" in
+  let tokens_forward = lex "a |> b" in
   let tokens_double = lex "a || b" in
   let has_pipe = List.exists (fun t -> t.Token.token_type = Token.Pipe) tokens_single in
+  let has_pipeforward = List.exists (fun t -> t.Token.token_type = Token.PipeForward) tokens_forward in
   let has_pipepipe = List.exists (fun t -> t.Token.token_type = Token.PipePipe) tokens_double in
   let no_pipepipe_in_single = not (List.exists (fun t -> t.Token.token_type = Token.PipePipe) tokens_single) in
-  has_pipe && has_pipepipe && no_pipepipe_in_single
+  let no_pipeforward_in_single = not (List.exists (fun t -> t.Token.token_type = Token.PipeForward) tokens_single) in
+  has_pipe && has_pipeforward && has_pipepipe && no_pipepipe_in_single && no_pipeforward_in_single
 
 let%test "amp vs ampamp distinction" =
   let tokens_single = lex "a & b" in

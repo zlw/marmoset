@@ -29,6 +29,7 @@ and token_type =
   | Arrow (* -> for return type annotations *)
   | FatArrow (* => for effect markers *)
   | Pipe (* | for union types *)
+  | PipeForward (* |> for forward pipe *)
   | Ampersand (* & for trait constraints *)
   | AmpAmp (* && for logical and *)
   | PipePipe (* || for logical or *)

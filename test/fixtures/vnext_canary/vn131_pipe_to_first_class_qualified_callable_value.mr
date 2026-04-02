@@ -1,0 +1,2 @@
+# VN131: Pipe feeds first-class qualified callable values
+puts(42 |> Show.show)  # output: 42

@@ -110,17 +110,19 @@ let fresh_id (p : parser) : int = Id_supply.Id_supply.fresh p.id_supply
 type precedence = int
 
 let prec_lowest = 1
-let prec_or = 2 (* || *)
-let prec_and = 3 (* && *)
-let prec_equals = 4 (* == != is *)
-let prec_less_greater = 5 (* < > <= >= *)
-let prec_sum = 6 (* + - *)
-let prec_product = 7 (* * / % *)
-let prec_prefix = 8 (* ! - (prefix) *)
-let prec_call = 9 (* f(args) *)
-let prec_index = 10 (* a[i] a.b *)
+let prec_pipe = 2 (* |> *)
+let prec_or = 3 (* || *)
+let prec_and = 4 (* && *)
+let prec_equals = 5 (* == != is *)
+let prec_less_greater = 6 (* < > <= >= *)
+let prec_sum = 7 (* + - *)
+let prec_product = 8 (* * / % *)
+let prec_prefix = 9 (* ! - (prefix) *)
+let prec_call = 10 (* f(args) *)
+let prec_index = 11 (* a[i] a.b *)
 
 let precedences = function
+  | Token.PipeForward -> prec_pipe
   | Token.PipePipe -> prec_or
   | Token.AmpAmp -> prec_and
   | Token.Eq | Token.NotEq | Token.Is -> prec_equals
@@ -1246,7 +1248,7 @@ and infixFn (p : parser) (left_expr : Surface.surface_expr) (prec : precedence) 
       let* lp2, left2 =
         match lp.peek_token.token_type with
         | Token.Plus | Token.Minus | Token.Slash | Token.Asterisk | Token.Eq | Token.NotEq | Token.Lt | Token.Gt
-        | Token.Le | Token.Ge | Token.Is | Token.PipePipe | Token.AmpAmp | Token.Percent ->
+        | Token.Le | Token.Ge | Token.Is | Token.PipeForward | Token.PipePipe | Token.AmpAmp | Token.Percent ->
             parse_infix_expression (next_token lp) left
         | LParen -> parse_call_expression (next_token lp) left
         | LBracket -> parse_index_expression (next_token lp) left
@@ -2924,6 +2926,58 @@ module Test = struct
     (* a && b == c should be a && (b == c) *)
     match parse ~file_id:"<test>" "a && b == c" with
     | Ok [ { AST.stmt = AST.ExpressionStmt { AST.expr = AST.Infix (_, "&&", _); _ }; _ } ] -> true
+    | _ -> false
+
+  let%test "pipe desugars to single-argument call" =
+    match parse ~file_id:"<test>" "x |> f" with
+    | Ok [ { AST.stmt = AST.ExpressionStmt { AST.expr = AST.Call ({ AST.expr = AST.Identifier "f"; _ }, [ { AST.expr = AST.Identifier "x"; _ } ]); _ }; _ } ] ->
+        true
+    | _ -> false
+
+  let%test "pipe prepends lhs into rhs call arguments" =
+    match parse ~file_id:"<test>" "x |> f(1)" with
+    | Ok [ { AST.stmt = AST.ExpressionStmt { AST.expr = AST.Call ({ AST.expr = AST.Identifier "f"; _ }, [ { AST.expr = AST.Identifier "x"; _ }; { AST.expr = AST.Integer 1L; _ } ]); _ }; _ } ] ->
+        true
+    | _ -> false
+
+  let%test "pipe has lower precedence than additive operators" =
+    match parse ~file_id:"<test>" "1 + 2 |> f" with
+    | Ok
+        [
+          {
+            AST.stmt =
+              AST.ExpressionStmt
+                {
+                  AST.expr =
+                    AST.Call
+                      ( { AST.expr = AST.Identifier "f"; _ },
+                        [ { AST.expr = AST.Infix ({ AST.expr = AST.Integer 1L; _ }, "+", { AST.expr = AST.Integer 2L; _ }); _ } ] );
+                  _;
+                };
+            _;
+          };
+        ] ->
+        true
+    | _ -> false
+
+  let%test "pipe is left associative" =
+    match parse ~file_id:"<test>" "x |> f |> g" with
+    | Ok
+        [
+          {
+            AST.stmt =
+              AST.ExpressionStmt
+                {
+                  AST.expr =
+                    AST.Call
+                      ( { AST.expr = AST.Identifier "g"; _ },
+                        [ { AST.expr = AST.Call ({ AST.expr = AST.Identifier "f"; _ }, [ { AST.expr = AST.Identifier "x"; _ } ]); _ } ] );
+                  _;
+                };
+            _;
+          };
+        ] ->
+        true
     | _ -> false
 
   let%test "percent operator parses as infix" =
