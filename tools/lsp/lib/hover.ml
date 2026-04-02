@@ -272,6 +272,14 @@ let rec effective_start_pos (expr : Ast.AST.expression) : int =
   | Ast.AST.Call (fn_expr, _) -> min (effective_start_pos fn_expr) expr.pos
   | _ -> expr.pos
 
+let uppercase_identifier = function
+  | Ast.AST.{ expr = Ast.AST.Identifier name; _ } when String.length name > 0 ->
+      Char.uppercase_ascii name.[0] = name.[0]
+  | _ -> false
+
+let synthetic_method_receiver (receiver : Ast.AST.expression) (args : Ast.AST.expression list) : bool =
+  List.exists (fun (arg : Ast.AST.expression) -> effective_start_pos arg = receiver.pos) args
+
 (* Find the deepest expression in the AST that contains the given byte offset. *)
 let rec find_expr_at (offset : int) (expr : Ast.AST.expression) : Ast.AST.expression option =
   let start_pos = effective_start_pos expr in
@@ -292,9 +300,19 @@ let rec find_expr_at (offset : int) (expr : Ast.AST.expression) : Ast.AST.expres
       | Ast.AST.Array elts -> List.find_map (find_expr_at offset) elts
       | Ast.AST.Hash pairs ->
           List.find_map (fun (k, v) -> first_some (find_expr_at offset k) (find_expr_at offset v)) pairs
-      | Ast.AST.FieldAccess (e, _) -> find_expr_at offset e
+      | Ast.AST.FieldAccess (e, _) ->
+          if uppercase_identifier e && offset >= effective_start_pos e && offset <= e.end_pos then
+            None
+          else
+            find_expr_at offset e
       | Ast.AST.MethodCall { mc_receiver; mc_args; _ } ->
-          first_some (find_expr_at offset mc_receiver) (List.find_map (find_expr_at offset) mc_args)
+          if synthetic_method_receiver mc_receiver mc_args then
+            first_some (List.find_map (find_expr_at offset) mc_args) (find_expr_at offset mc_receiver)
+          else if uppercase_identifier mc_receiver && offset >= effective_start_pos mc_receiver && offset <= mc_receiver.end_pos
+          then
+            None
+          else
+            first_some (find_expr_at offset mc_receiver) (List.find_map (find_expr_at offset) mc_args)
       | Ast.AST.Match (scrutinee, arms) ->
           first_some (find_expr_at offset scrutinee)
             (List.find_map (fun (arm : Ast.AST.match_arm) -> find_expr_at offset arm.body) arms)
@@ -1085,4 +1103,19 @@ let%test "hover on record pattern punning shows bound field type" =
 let%test "hover formats list types with vnext casing" =
   match hover_info "let xs = [1, 2, 3]; xs" 0 20 with
   | Some h -> string_contains h.type_text "List[Int]"
+  | None -> false
+
+let%test "hover on bare identifier inside interpolation keeps identifier range" =
+  match snd (hover_marked "fn render[a: Show](x: a) -> Str = \"value #{|x}\"") with
+  | Some h -> string_contains h.type_text "x: a" && h.highlighted = "x"
+  | None -> false
+
+let%test "hover on qualified call inside interpolation does not get swallowed by synthetic show call" =
+  match
+    snd
+      (hover_marked
+         "trait JungleDweller[a] = {\n  fn introduce(x: a) -> Str\n}\nfn render[t: JungleDweller](x: t) -> Str = \"#{|JungleDweller.introduce(x)}\"")
+  with
+  | Some h ->
+      string_contains h.type_text "Str" && h.highlighted = "JungleDweller.introduce(x)"
   | None -> false

@@ -18,8 +18,10 @@
 ; Literals
 (integer_literal) @number
 (float_literal) @number.float
-(string_literal) @string
 (string_content) @string
+(string_hash) @string.escape
+(interpolation "#{" @punctuation.special)
+(interpolation "}" @punctuation.special)
 (boolean_literal) @boolean
 (comment) @comment
 
@@ -107,6 +109,11 @@
 (call_expression
   function: (field_access
     field: (identifier) @function.method.call))
+
+; Qualified receiver names
+((field_access
+   object: (identifier) @type)
+ (#match? @type "^[A-Z]"))
 
 ; Field access
 (field_access

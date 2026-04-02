@@ -212,13 +212,25 @@ let contains_interpolation_marker (s : string) : bool =
 let synth_expr ~file_id ~id ~pos ~end_pos expr =
   Surface.{ se_id = id; se_expr = expr; se_pos = pos; se_end_pos = end_pos; se_file_id = Some file_id }
 
+let rec surface_effective_start_pos (expr : Surface.surface_expr) : int =
+  match expr.se_expr with
+  | Surface.SEMethodCall { se_receiver; _ } | Surface.SEFieldAccess (se_receiver, _) ->
+      min (surface_effective_start_pos se_receiver) expr.se_pos
+  | Surface.SEInfix (left, _, _) -> min (surface_effective_start_pos left) expr.se_pos
+  | Surface.SECall (fn_expr, _) | Surface.SETypeApply (fn_expr, _) ->
+      min (surface_effective_start_pos fn_expr) expr.se_pos
+  | Surface.SEIndex (container, _) | Surface.SETypeCheck (container, _) ->
+      min (surface_effective_start_pos container) expr.se_pos
+  | _ -> expr.se_pos
+
 let wrap_expr_with_show_call (p : parser) (expr : Surface.surface_expr) : Surface.surface_expr =
-  let receiver_end_pos = expr.se_pos + String.length "Show" - 1 in
+  let start_pos = surface_effective_start_pos expr in
+  let receiver_end_pos = start_pos + String.length "Show" - 1 in
   let receiver =
-    synth_expr ~file_id:p.file_id ~id:(fresh_id p) ~pos:expr.se_pos ~end_pos:receiver_end_pos
+    synth_expr ~file_id:p.file_id ~id:(fresh_id p) ~pos:start_pos ~end_pos:receiver_end_pos
       (Surface.SEIdentifier "Show")
   in
-  synth_expr ~file_id:p.file_id ~id:(fresh_id p) ~pos:expr.se_pos ~end_pos:expr.se_end_pos
+  synth_expr ~file_id:p.file_id ~id:(fresh_id p) ~pos:start_pos ~end_pos:expr.se_end_pos
     (Surface.SEMethodCall
        { se_receiver = receiver; se_method = "show"; se_type_args = None; se_args = [ expr ] })
 
@@ -2367,6 +2379,14 @@ module Test = struct
         match expr.expr with
         | AST.Infix (_, "+", { expr = AST.MethodCall { mc_args = [ { expr = AST.Call ({ expr = AST.Identifier "label"; _ }, [ { expr = AST.String "vine"; _ } ]); _ } ]; _ }; _ }) ->
             true
+        | _ -> false)
+    | _ -> false
+
+  let%test "string interpolation keeps qualified call span at receiver start" =
+    match parse ~file_id:"<test>" "\"#{JungleDweller.introduce(x)}\";" with
+    | Ok [ { AST.stmt = AST.ExpressionStmt { expr = AST.MethodCall { mc_receiver = show_recv; mc_args = [ qualified_call ]; _ }; pos; _ }; _ } ] -> (
+        match show_recv.expr, qualified_call.expr with
+        | AST.Identifier "Show", AST.MethodCall { mc_receiver = qualified_recv; _ } -> pos = 3 && show_recv.pos = 3 && qualified_recv.pos = 3
         | _ -> false)
     | _ -> false
 
