@@ -2,7 +2,7 @@
 
 ## Maintenance
 
-- Last verified: 2026-03-28
+- Last verified: 2026-04-02
 - Implementation status: Canonical (actively maintained)
 - Update trigger: Any parser, typechecker, solver, or codegen change affecting traits, shapes, derives, or method resolution
 
@@ -13,7 +13,7 @@ Traits provide:
 - nominal method capabilities via explicit impls,
 - superconstraints across traits and shapes,
 - constrained generics,
-- method-call syntax (`x.foo(...)`),
+- explicit trait-qualified calls,
 - explicit trait objects via `Dyn[...]`.
 
 Structural field constraints are handled by `shape`, not `trait`.
@@ -66,7 +66,7 @@ impl Greeter[Person] = {
 - Shape satisfaction is structural and checked from available fields.
 - A trait may depend on both traits and shapes through its superconstraint list.
 - Constrained-param shorthand works with either:
-  - `fn render(x: Show) -> Str = x.show()`
+  - `fn render(x: Show) -> Str = Show.show(x)`
   - `fn name_of(x: Named) -> Str = x.name`
 
 ## Derive
@@ -80,15 +80,16 @@ User-trait derive is default-backed only:
 
 ## Method Resolution
 
-For `receiver.method(args...)`:
+For dotted access:
 
-1. Inherent methods win over trait methods on concrete receiver types.
-2. Qualified trait calls (`Trait.method(x)`) select trait impls explicitly.
-3. Qualified inherent calls (`Type.method(x)`) select inherent methods explicitly.
-4. Constrained type variables resolve methods only from their constraint set.
-5. Shapes do not contribute methods.
+1. `x.f` means field access or direct interface field projection.
+2. `x.f(...)` means callable-field invocation only.
+3. Dot never searches trait impls, inherent impls, or free functions for behavior.
+4. Qualified trait calls (`Trait.method(x, ...)`) select trait impls explicitly, including `Dyn[...]` receivers.
+5. Qualified inherent calls (`Type.method(x, ...)`) select exact-type grouped functions explicitly.
+6. Shapes do not contribute methods.
 
-Field access (`x.name`) is separate from method resolution (`x.show()`).
+Field access (`x.name`) is separate from trait qualification (`Show.show(x)`) and exact-type qualification (`Point.sum(x)`).
 
 ## Trait Objects
 

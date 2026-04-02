@@ -124,7 +124,7 @@ Cons:
 Responsibilities:
 - Infer expression types.
 - Enforce annotation compatibility.
-- Resolve trait-method calls by receiver type.
+- Resolve field access, callable-field calls, and explicit trait/type-qualified calls.
 - Narrow unions via `is` checks.
 - Validate match exhaustiveness for supported scrutinee classes.
 

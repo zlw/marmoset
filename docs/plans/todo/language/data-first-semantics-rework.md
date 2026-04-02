@@ -2,7 +2,7 @@
 
 ## Maintenance
 
-- Last verified: 2026-03-29
+- Last verified: 2026-04-02
 - Implementation status: Planning (design reset under evaluation)
 - Prerequisites: None
 
@@ -38,7 +38,7 @@ This plan resets that part of the language toward a data-first model while keepi
 - keep `shape` as the named row-constraint surface
 - keep `trait` as the behavioral/ad-hoc-polymorphism surface
 - redesign or remove inherent methods in a way that matches structural records
-- use UFCS-style dot sugar over qualified function calls
+- keep APIs function-first and module-qualified, with dot reserved for field access and callable fields
 - preserve and reuse the good implementation work from the pre-modules semantics branch wherever it still fits
 - update docs, fixtures, parser/lowering/typechecker/codegen, tree-sitter, and LSP to match the new model
 
@@ -127,7 +127,7 @@ match evt {
 }
 ```
 
-This means a wrapper such as `type VerySpecificPoint = VerySpecificPoint({ a: Int })` does not automatically gain `impl Point = { ... }` behavior for `type Point = { a: Int }`, and it does not automatically satisfy matching `shape` constraints either. Qualified calls, shape-constrained functions, and UFCS sugar all follow the same rule: the wrapper must either project explicitly to structural form or provide its own delegating impl.
+This means a wrapper such as `type VerySpecificPoint = VerySpecificPoint({ a: Int })` does not automatically gain `impl Point = { ... }` behavior for `type Point = { a: Int }`, and it does not automatically satisfy matching `shape` constraints either. Qualified calls, shape-constrained functions, and interface-value dot surfaces all follow the same rule: the wrapper must either project explicitly to structural form or provide its own delegating impl.
 
 Rules:
 
@@ -248,7 +248,7 @@ Traits with required methods still need an explicit impl, and impls may override
 ```mr
 trait Render[a]: HasName = {
   fn prefix(self: a) -> Str
-  fn render(self: a) -> Str = self.prefix() + self.name
+  fn render(self: a) -> Str = Render.prefix(self) + self.name
 }
 
 impl Render[User] = {
@@ -302,13 +302,13 @@ Locked policy:
 
 ## Behavior Model
 
-Dot calls use a UFCS-style model. Current `impl Type = { ... }` blocks are reinterpreted as exact-type extension functions rather than nominal owner behavior.
+Dot calls are no longer a broad UFCS surface. Current `impl Type = { ... }` blocks should be understood as exact-type grouped functions rather than nominal owner behavior.
 
-The intended mental model is UFCS:
+The intended mental model is:
 
 - qualified calls are the real API surface,
-- the receiver is just the first argument,
-- dot syntax is only alternate call spelling,
+- the receiver is just the first argument in ordinary functions,
+- dot syntax is reserved for fields and callable fields,
 - dot syntax does not imply type-owned behavior.
 
 Example:
@@ -335,22 +335,22 @@ Call sites:
 let p: geom.Point = { x: 1, y: 2 }
 
 let a = geom.move(p, 3, 4)
-let b = p.move(3, 4)
+let b = Point.move(p, 3, 4)
 let c = Show.show(p)
-let d = p.show()
+let shown: Show = p
+let d = Show.show(shown)
 ```
 
 Rules:
 
 - `module.fn(value, ...)` is canonical,
-- `value.fn(...)` is UFCS sugar for a qualified call that takes `value` as argument 0,
-- `impl Point = { ... }` on an exact structural type registers extension-style functions for that exact type,
+- `value.fn(...)` only works for callable fields,
+- `impl Point = { ... }` on an exact structural type registers grouped functions for that exact type,
 - extension methods target exact types only, not open shapes,
-- ambiguous dot calls must be rejected with a qualification hint,
-- trait methods also use the same UFCS sugar: `value.show()` as sugar for `Show.show(value)`,
-- top-level functions and exact-type `impl` functions behave consistently: if a function accepts the exact `Point` type, any other exact same-shape type also fits.
+- trait calls are explicit through `Trait.method(value, ...)`,
+- top-level functions and exact-type grouped functions remain data-first because they are spelled explicitly rather than hidden behind fallback lookup.
 
-This keeps much of the scripting/Ruby feel without forcing nominal ownership onto records, but the docs must be explicit that dot calls are UFCS sugar, not owner lookup.
+This keeps records non-owner-like without forcing every behavior surface into dot syntax.
 
 ## Layering And Boundaries
 
@@ -421,14 +421,14 @@ This preserves strong domain boundaries where needed without making every produc
 
 ### Phase D3. Rework Behavior Attachment
 
-- Reinterpret current `impl Type = { ... }` blocks as exact-type extension-method registration under a UFCS model.
+- Reinterpret current `impl Type = { ... }` blocks as exact-type grouped function registration without broad UFCS.
 - Preserve default methods, explicit trait impls, and explicit derives.
-- Keep ambiguity reporting and qualification hints first-class.
+- Keep explicit qualification and interface-value surfaces first-class.
 
 ### Phase D4. Reconcile Resolution And Codegen
 
 - Reuse the existing typed call-resolution and narrowing cleanup where possible.
-- Rework dot-call resolution around either extension sugar or trait-only dot calls.
+- Rework dot-call resolution around fields and callable fields only.
 - Keep module-qualified calls canonical in both checker and emitter.
 - Ensure structural records still lower to efficient Go structs without runtime row dictionaries.
 - Ensure constructor-bearing wrappers remain zero-cost or near-zero-cost in the generated Go representation.
@@ -451,7 +451,7 @@ This preserves strong domain boundaries where needed without making every produc
    - make `type Name = { ... }` structural again,
    - keep constructor-bearing wrappers and sums nominal,
    - add wrapper constructor patterns and flattened payload-pattern sugar,
-   - keep UFCS call syntax accepted as surface sugar,
+   - keep dot limited to field access and callable fields,
    - update tree-sitter/LSP syntax expectations in the same pass.
 3. Refactor the internal type model before broad checker edits:
    - remove nominal named-product identity,
@@ -463,7 +463,7 @@ This preserves strong domain boundaries where needed without making every produc
    - shape satisfaction,
    - wrapper constructor matching,
    - nominal rebuild/update,
-   - UFCS resolution,
+   - qualified-call and direct-surface resolution,
    - narrowing and exhaustiveness.
 5. After the checker is stable, update Go codegen:
    - structural named records should lower the same way as anonymous exact records,

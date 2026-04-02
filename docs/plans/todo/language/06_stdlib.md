@@ -2,14 +2,14 @@
 
 ## Maintenance
 
-- Last verified: 2026-02-28
+- Last verified: 2026-04-02
 - Implementation status: Planning (not started)
 - Update trigger: Any stdlib, FFI, or prelude change
 - Prerequisites: Module system, prelude (`docs/plans/todo/language/04_prelude.md`), FFI (`docs/plans/todo/language/05_ffi.md`)
 
 ## Context
 
-Marmoset compiles to Go but isn't Go's sibling — it's an FP language that happens to use Go's runtime. The stdlib wraps Go's standard library with idiomatic Marmoset APIs: methods on types, immutable by default, Ruby-inspired naming, `?` suffix for boolean methods.
+Marmoset compiles to Go but isn't Go's sibling — it's an FP language that happens to use Go's runtime. The stdlib should wrap Go's standard library with idiomatic Marmoset APIs: module functions, pipe-friendly data-first argument order, immutable by default, Ruby-inspired naming, and `?` suffix for boolean predicates.
 
 **Modules -> Prelude -> FFI -> Stdlib (this plan)**
 
@@ -17,11 +17,11 @@ Marmoset compiles to Go but isn't Go's sibling — it's an FP language that happ
 
 ## Locked Decisions
 
-1. **Methods on types.** Collections and strings use method syntax (`xs.map(f)`, `"hello".upcase()`), not free functions.
+1. **Module-function-first APIs.** Collections and strings use qualified functions (`list.map(xs, f)`, `str.upcase("hello")`) with pipe-friendly first-argument order. Dot syntax is not the stdlib's primary abstraction surface.
 2. **Immutable wrappers.** Hash `put`/`delete`/`merge` return new values. Go's mutable internals are hidden.
 3. **All IO is effectful.** Every IO operation uses `=>`. Failable IO returns `Result[T, Str]`.
 4. **Ruby-inspired naming.** `select`/`reject` not `filter`/`filter_not`. `upcase`/`downcase` not `to_upper`/`to_lower`. `include?` not `contains`. `strip` not `trim`.
-5. **`?` suffix for boolean methods.** `empty?()`, `include?("x")`, `any?(fn)`, etc.
+5. **`?` suffix for boolean predicates.** `empty?()`, `include?("x")`, `any?(fn)`, etc. remain good names even as module functions.
 6. **Separate modules for console vs file IO.** `console` for terminal, `file` for filesystem.
 7. **Concurrency model TBD.** Some abstraction over goroutines/channels — not raw channels. Designed later.
 
@@ -91,79 +91,79 @@ Wraps Go's `os.ReadFile`, `os.WriteFile`, `os.OpenFile` with append flag.
 
 ---
 
-## String Methods
+## String Functions
 
-Methods on `Str`. All pure unless noted.
+Functions in `std/str`. All pure unless noted.
 
 ```marmoset
-"hello".length()                 # -> Int
-"hello".upcase()                 # -> Str
-"hello".downcase()               # -> Str
-"  hello  ".strip()              # -> Str
-"  hello  ".lstrip()             # -> Str
-"  hello  ".rstrip()             # -> Str
-"hello world".split(" ")         # -> List[Str]
-"hello".include?("ell")          # -> Bool
-"hello".starts_with?("he")       # -> Bool
-"hello".ends_with?("lo")         # -> Bool
-"hello".empty?()                 # -> Bool
-"hello".replace("l", "r")        # -> Str
-"hello".slice(1, 3)              # -> Str
-"hello".chars()                  # -> List[Str]
-["a", "b", "c"].join(", ")       # -> Str (method on List[Str])
+str.length("hello")                 # -> Int
+str.upcase("hello")                 # -> Str
+str.downcase("hello")               # -> Str
+str.strip("  hello  ")              # -> Str
+str.lstrip("  hello  ")             # -> Str
+str.rstrip("  hello  ")             # -> Str
+str.split("hello world", " ")       # -> List[Str]
+str.include?("hello", "ell")        # -> Bool
+str.starts_with?("hello", "he")     # -> Bool
+str.ends_with?("hello", "lo")       # -> Bool
+str.empty?("hello")                 # -> Bool
+str.replace("hello", "l", "r")      # -> Str
+str.slice("hello", 1, 3)            # -> Str
+str.chars("hello")                  # -> List[Str]
+str.join(["a", "b", "c"], ", ")     # -> Str
 ```
 
 Wraps Go's `strings` package (`strings.ToUpper`, `strings.TrimSpace`, `strings.Split`, etc.).
 
 ---
 
-## List Methods
+## List Functions
 
-Methods on `List[a]`. Pure unless noted.
+Functions in `std/list.mr`. Pure unless noted. Prefer explicit qualification or pipes.
 
 ```marmoset
-[1, 2, 3].map((x) -> x + 1)                 # -> List[Int]
-[1, 2, 3].select((x) -> x > 1)              # -> List[Int]
-[1, 2, 3].reject((x) -> x > 1)              # -> List[Int]
-[1, 2, 3].each((x) => console.stdout(x))    # => Unit (effectful)
-[1, 2, 3].reduce(0, (acc, x) -> acc + x)    # -> Int
-[1, 2, 3].flat_map((x) -> [x, x])           # -> List[Int]
-[1, 2, 3].find((x) -> x > 1)                # -> Option[Int]
-[1, 2, 3].any?((x) -> x > 2)                # -> Bool
-[1, 2, 3].all?((x) -> x > 0)                # -> Bool
-[1, 2, 3].none?((x) -> x > 5)               # -> Bool
-[1, 2, 3].empty?()                           # -> Bool
-[1, 2, 3].count()                            # -> Int
-[1, 2, 3].reverse()                          # -> List[Int]
-[1, 2, 3].sort()                             # -> List[Int] (requires Ord)
-[1, 2, 3].take(2)                            # -> List[Int]
-[1, 2, 3].drop(1)                            # -> List[Int]
-[1, 2, 3].zip([4, 5, 6])                     # -> List[(Int, Int)]
-[1, 2, 3].include?(2)                        # -> Bool
-[1, 2, 3].uniq()                             # -> List[Int]
+[1, 2, 3] |> list.map((x) -> x + 1)                 # -> List[Int]
+[1, 2, 3] |> list.select((x) -> x > 1)              # -> List[Int]
+[1, 2, 3] |> list.reject((x) -> x > 1)              # -> List[Int]
+[1, 2, 3] |> list.each((x) => console.stdout(x))    # => Unit (effectful)
+[1, 2, 3] |> list.reduce(0, (acc, x) -> acc + x)    # -> Int
+[1, 2, 3] |> list.flat_map((x) -> [x, x])           # -> List[Int]
+[1, 2, 3] |> list.find((x) -> x > 1)                # -> Option[Int]
+[1, 2, 3] |> list.any?((x) -> x > 2)                # -> Bool
+[1, 2, 3] |> list.all?((x) -> x > 0)                # -> Bool
+[1, 2, 3] |> list.none?((x) -> x > 5)               # -> Bool
+[1, 2, 3] |> list.empty?()                          # -> Bool
+[1, 2, 3] |> list.count()                           # -> Int
+[1, 2, 3] |> list.reverse()                         # -> List[Int]
+[1, 2, 3] |> list.sort()                            # -> List[Int] (requires Ord)
+[1, 2, 3] |> list.take(2)                           # -> List[Int]
+[1, 2, 3] |> list.drop(1)                           # -> List[Int]
+[1, 2, 3] |> list.zip([4, 5, 6])                    # -> List[(Int, Int)]
+[1, 2, 3] |> list.include?(2)                       # -> Bool
+[1, 2, 3] |> list.uniq()                            # -> List[Int]
 ```
 
-Implemented as generic inherent methods on `List[a]`. Go slices underneath; `map`/`select`/etc. allocate new slices.
+Implemented as generic module functions over `List[a]`. Go slices underneath; `map`/`select`/etc. allocate new slices.
 
 ---
 
-## Hash Methods
+## Hash Functions
 
-Methods on `Map[k, v]`. Pure unless noted. Immutable; mutating ops return new maps.
+Functions in `std/map.mr`. Pure unless noted. Immutable; mutating ops return new maps.
 
 ```marmoset
-h.keys()                                     # -> List[k]
-h.values()                                   # -> List[v]
-h.get(key)                                   # -> Option[v]
-h.put(key, val)                              # -> Map[k, v] (new map)
-h.delete(key)                                # -> Map[k, v] (new map)
-h.has_key?(key)                              # -> Bool
-h.empty?()                                   # -> Bool
-h.count()                                    # -> Int
-h.merge(other)                               # -> Map[k, v]
-h.map((k, v) -> ...)                        # -> Map[k2, v2]
-h.select((k, v) -> ...)                     # -> Map[k, v]
-h.each((k, v) => ...)                       # => Unit (effectful)
+map.keys(h)                                  # -> List[k]
+map.values(h)                                # -> List[v]
+map.get(h, key)                              # -> Option[v]
+map.put(h, key, val)                         # -> Map[k, v] (new map)
+map.delete(h, key)                           # -> Map[k, v] (new map)
+map.has_key?(h, key)                         # -> Bool
+map.empty?(h)                                # -> Bool
+map.count(h)                                 # -> Int
+map.merge(h, other)                          # -> Map[k, v]
+map.map(h, (k, v) -> ...)                    # -> Map[k2, v2]
+map.select(h, (k, v) -> ...)                 # -> Map[k, v]
+map.each(h, (k, v) => ...)                   # => Unit (effectful)
 ```
 
 Go maps underneath. `put`/`delete`/`merge` copy the map before mutating — immutable semantics over mutable Go internals.
@@ -203,11 +203,11 @@ Go maps underneath. `put`/`delete`/`merge` copy the map before mutating — immu
 
 ---
 
-### Phase L2: String Methods
+### Phase L2: String Module
 
-**Goal:** Methods on `Str` available.
+**Goal:** `std/str.mr` available.
 
-**Implementation:** Generic inherent impls on `Str`. Each method wraps a Go `strings` package function via FFI or direct emitter support.
+**Implementation:** Module functions in `std/str.mr`. Each function wraps a Go `strings` package function via FFI or direct emitter support.
 
 **Tests:**
 - All methods listed in String Methods section
@@ -217,11 +217,11 @@ Go maps underneath. `put`/`delete`/`merge` copy the map before mutating — immu
 
 ---
 
-### Phase L3: List Methods
+### Phase L3: List Module
 
-**Goal:** Methods on `List[a]` available.
+**Goal:** `std/list.mr` available.
 
-**Implementation:** Generic inherent impls on `List[a]`. Each method is implemented as a Go generic function operating on slices.
+**Implementation:** Generic module functions over `List[a]`. Each function is implemented as a Go generic function operating on slices.
 
 **Tests:**
 - All methods listed in List Methods section
@@ -231,11 +231,11 @@ Go maps underneath. `put`/`delete`/`merge` copy the map before mutating — immu
 
 ---
 
-### Phase L4: Hash Methods
+### Phase L4: Hash Module
 
-**Goal:** Methods on `Map[k, v]` available.
+**Goal:** `std/map.mr` available.
 
-**Implementation:** Generic inherent impls on `Map[k, v]`. Immutable semantics; copy-on-write for mutating ops.
+**Implementation:** Generic module functions over `Map[k, v]`. Immutable semantics; copy-on-write for mutating ops.
 
 **Tests:**
 - All methods listed in Hash Methods section
@@ -274,7 +274,7 @@ Prioritize based on what's needed to build a simple HTTP server as a proof-of-co
 
 1. **Performance of immutable wrappers.** Copy-on-write for hash `put`/`delete` has O(n) cost. Acceptable for v1 — optimize with persistent data structures later if needed.
 2. **String method explosion.** Ruby has ~150 string methods. Start with the core set above, add more as needed.
-3. **Generic inherent impls prereq.** List/hash methods need generic inherent impls (being implemented by Codex). String methods need inherent impls on primitive `string` type.
+3. **Generic helper surface.** List/hash modules need generic top-level/module functions with good inference and codegen. This is simpler than inherents, but still touches stdlib ergonomics and emitter support.
 4. **`?` identifier change.** Touches lexer and emitter — small blast radius but needs care to not break existing identifiers.
 5. **FFI maturity.** All IO modules depend on FFI working reliably. Phase L1 is the real stress test.
 
@@ -288,4 +288,6 @@ Prioritize based on what's needed to build a simple HTTP server as a proof-of-co
 | `lib/backend/go/emitter.ml` | `?` mangling to valid Go |
 | **New:** `std/console.mr` | Terminal IO wrapper |
 | **New:** `std/file.mr` | Filesystem IO wrapper |
-| String/list/hash inherent impls | Methods on types (location TBD — prelude.mr or separate std modules) |
+| **New:** `std/str.mr` | String helper functions |
+| **New:** `std/list.mr` | List helper functions |
+| **New:** `std/map.mr` | Map helper functions |

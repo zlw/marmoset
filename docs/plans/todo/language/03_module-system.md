@@ -2,7 +2,7 @@
 
 ## Maintenance
 
-- Last verified: 2026-03-30
+- Last verified: 2026-04-02
 - Implementation status: Planning (not started)
 - Update trigger: Any module/import/export syntax or compilation model change
 
@@ -23,7 +23,7 @@ This plan adds a module system as the first of two milestones (modules, then FFI
 ## Locked Decisions
 
 1. **File = module** (implicit). No `module` keyword. `math.mr` defines module `math`. `collections/list.mr` defines module `collections.list`.
-2. **`.` is the universal qualifier** — field access, method calls, named-sum constructors, module access, and later extern-qualified access. Parser stays syntactic; one central checker classifier resolves semantics.
+2. **`.` is the universal qualifier** — field access, callable-field/direct-interface surfaces, named-sum constructors, module access, and later extern-qualified access. Parser stays syntactic; one central checker classifier resolves semantics.
 3. **`import` keyword** with `.`-separated paths. One import per line in v1. Aliasing with `as` supported.
 4. **`export` list at top of file** for visibility. No per-declaration keywords. Everything not exported is private. Export statement is optional (no export = all private).
 5. **No wildcard imports.** Every imported name must be listed explicitly.
@@ -71,31 +71,31 @@ let p: Point = { x: 1, y: 2 }   # direct-imported transparent record type
 let c = math.Color.Red          # qualified named-sum constructor
 ```
 
-**Unified Qualified-Call Classifier:** `.` is used for field access, method calls, named-sum constructors, module access, trait-qualified calls, inherent-qualified calls, and later extern package access. The checker uses one centralized classifier and one `call_resolution` artifact family. This is the canonical reference — other plans defer to this order.
+**Unified Qualified-Call Classifier:** `.` is used for field access, callable-field calls, named-sum constructors, module access, trait-qualified calls, exact-type qualified calls, and later extern package access. The checker uses one centralized classifier and one `call_resolution` artifact family. This is the canonical reference — other plans defer to this order.
 
 Given `a.b` or `a.b(args)` where `a` is a bare identifier:
 
 | Priority | Check | Result | Example |
 |----------|-------|--------|---------|
-| 1 | Is `a` a value binding in scope? | Infer type, then field access or method call | `x.show()`, `record.field` |
+| 1 | Is `a` a value binding in scope? | Infer type, then field access, callable-field call, or interface field projection | `record.field`, `runner.run(1)` |
 | 2 | Is `a` a namespace binding? | Namespace-qualified access | `math.add(1, 2)`, future: `fmt.Println(s)` |
 | 3 | Is `a` a named-sum type? | Sub-resolve (see below) | `Option.Some(42)`, `Result.map(r, f)` |
 | 4 | Is `a` a trait name? | Trait-qualified call | `Show.show(x)` |
-| 5 | Is `a` another named type? | Inherent-qualified call | `Point.distance(p)`, `UserId.show(id)` |
+| 5 | Is `a` another named type? | Exact-type qualified call | `Point.distance(p)`, `UserId.show(id)` |
 | 6 | None of the above | Error: unknown identifier | |
 
 **Namespace bucket:** In this plan, namespace means imported module bindings. In the later FFI plan, extern qualifiers join this same bucket. They do not get a separate later precedence tier.
 
-Transparent `type` declarations and shapes participate in import/export and type-position resolution, but they do not create callable/member namespaces for `a.b`.
+Shapes participate in import/export and type-position resolution, but they do not create callable/member namespaces for `a.b`. Named types may participate in `Type.member` lookup when they have constructors or explicit exact-type impl entries. That qualification is explicit namespace lookup, not value-dot fallback.
 
 **Named-sum sub-resolution (priority 3):** When `a` is a named-sum type (declared canonically with `type` or via `enum` sugar), check `b`:
 - Is `b` a variant of named sum `a`? → constructor (`Option.Some(42)`, `Option.None`)
-- Is `b` an inherent method on type `a`? → inherent-qualified call (`Result.map(r, f)`)
+- Is `b` an exact-type grouped function on type `a`? → exact-type qualified call (`Result.map(r, f)`)
 - Neither → error: unknown variant or method
 
 **Key rules:**
-- Value bindings always win (priority 1) — a local variable shadows a module/type/trait name
-- Named-sum variants are checked before inherent methods — constructors take priority within the named-sum namespace
+- Value bindings always win (priority 1) — a local variable shadows a module/type/trait name, and once `a` is a value there is no fallback UFCS search from `a.b(...)`
+- Named-sum variants are checked before exact-type grouped functions — constructors take priority within the named-sum namespace
 - This order is stable across all plans and must be implemented as one centralized classifier, not duplicated rewrite-time and typecheck-time resolution paths
 
 **FFI-relevant:** The `import` keyword and `.`-separated paths establish the convention that FFI declarations will also follow.
@@ -394,7 +394,7 @@ These are flagged but NOT designed here. FFI is a separate plan.
 1. **Expression ID collision across files** — mitigated by per-file ID offset ranges in Phase M2
 2. **`infer_program` refactor scope** — the biggest risk. Currently monolithic with global mutable state. Refactoring to accept external env/registries touches the core of type checking. Mitigated by: keeping the internal inference logic unchanged, only changing how state is initialized and extracted.
 3. **Named-type / constructor collision across modules** — mitigated by module-prefixed registry keys
-4. **`.` disambiguation** — resolved by the unified classifier defined in the Syntax Design section. Value bindings win first, then namespace bindings, then named sums (variants before inherent methods), then traits, then other named types. Transparent `type` declarations and shapes do not create callable/member namespaces. Later extern qualifiers join the namespace bucket rather than introducing a second precedence rule.
+4. **`.` disambiguation** — resolved by the unified classifier defined in the Syntax Design section. Value bindings win first, then namespace bindings, then named sums (variants before exact-type grouped functions), then traits, then other named types. Shapes do not create callable/member namespaces. Later extern qualifiers join the namespace bucket rather than introducing a second precedence rule.
 5. **Monomorphization across modules** — emitter runs whole-program across all checked modules. `collect_insts_stmt` sees all call sites from all modules.
 6. **Trait impl visibility** — impls must be visible across modules even without explicit import (coherence). The per-module approach must auto-inject upstream impls into each module's registry.
 

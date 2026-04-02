@@ -2,7 +2,7 @@
 
 ## Maintenance
 
-- Last verified: 2026-03-28
+- Last verified: 2026-04-02
 - Implementation status: Canonical (actively maintained)
 - Update trigger: Any parser, typechecker, or codegen change affecting inherent impl parsing, method resolution, or lowering
 
@@ -22,7 +22,7 @@ Supported targets:
 
 The data-first rework changes the ownership model for inherent methods:
 
-- `impl Type = { ... }` on an exact structural record is UFCS-style extension registration for that exact type,
+- `impl Type = { ... }` on an exact structural record is exact-type grouped function registration,
 - constructor-bearing wrappers remain nominal and may still carry their own wrapper-side impls,
 - wrapper payload access should prefer constructor-pattern matching; structural projection remains explicit and secondary.
 
@@ -38,7 +38,7 @@ impl Point = {
 }
 
 let p: Point = { x: 1, y: 2 }
-puts(p.sum())
+puts(Point.sum(p))
 ```
 
 ### Method generics
@@ -51,7 +51,7 @@ impl Box = {
 }
 
 let b: Box = { v: 5 }
-let s = b.cast[Str]((n: Int) -> n.show())
+let s = Box.cast[Str](b, (n: Int) -> Show.show(n))
 ```
 
 ### Recursive inherent methods
@@ -65,7 +65,7 @@ impl Counter = {
       "done"
     } else {
       let next: Counter = { n: c.n - 1 }
-      next.count_down()
+      Counter.count_down(next)
     }
   }
 }
@@ -94,14 +94,15 @@ trait Renderable[a] = { fn render(a) -> Str }
 type Widget = { id: Int }
 impl Widget = { fn render(w: Widget) -> Str = "widget" }
 
-fn use[t: Renderable](x: t) -> Str = x.render()
+fn use[t: Renderable](x: t) -> Str = Renderable.render(x)
 ```
 
 ## Resolution
 
-- For dot calls, inherent methods take precedence over trait methods on the same concrete type.
-- Qualified trait calls (`Trait.method(x)`) bypass that precedence.
-- Constrained type variables resolve only through their trait constraints.
+- `Type.method(x, ...)` is the canonical inherent-call surface.
+- Concrete `x.f(...)` does not search inherent methods, trait impls, or top-level functions.
+- Value dot stays literal: `x.f` is field access or direct interface field projection, and `x.f(...)` is callable-field invocation only.
+- Trait-constrained values and `Dyn[...]` values use explicit qualified calls such as `Renderable.render(x)`.
 
 ## Codegen
 
@@ -109,7 +110,7 @@ Inherent calls lower to static helper functions selected from typechecker metada
 
 Examples:
 
-- `x.sum()` -> `inherent_sum_<type_suffix>(x)`
+- `Point.sum(p)` -> `inherent_sum_<type_suffix>(p)`
 - `Point.translate(p, 1, 2)` -> the same inherent helper with explicit qualification
 
 Field-function fallback remains separate from inherent dispatch and continues to work on structural records when the selected member is a function-valued field.

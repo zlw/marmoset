@@ -2,7 +2,7 @@
 
 ## Maintenance
 
-- Last verified: 2026-03-30
+- Last verified: 2026-04-02
 - Implementation status: Planning (not started)
 - Update trigger: Any prelude/stdlib, builtin, or module system change
 - Prerequisites: Module system (docs/plans/todo/language/03_module-system.md) must be implemented first
@@ -21,7 +21,7 @@ Users must redefine `type Option[a] = { Some(a), None }` and `type Result[a, e] 
 2. **Auto-import.** Prelude exports are available in every module without explicit `import`.
 3. **Primitive impls stay in OCaml.** `builtins.ml` continues to register builtin primitive impls (`Eq[Int]`, `Show[Str]`, etc.) with `~builtin:true`. The emitter's hardcoded Go strings are unchanged. No stub bodies, no migration. Post-FFI these could move to `std/prelude.mr` using `extern` blocks.
 4. **Builtin functions stay in OCaml.** `puts`, `len`, `first`, `last`, `rest`, `push` keep their registrations in `builtins.ml` and their Go implementations in `runtime.go`. They move to stdlib modules after FFI.
-5. **Methods on types.** `Option` / `Result` utility methods (`unwrap_or`, `map`, `bind`, `map_fail`, etc.) live as inherent methods. Generic inherent impls are a prerequisite.
+5. **Option/Result helpers are module functions.** `Option` / `Result` utility APIs (`unwrap_or`, `map`, `bind`, `map_fail`, etc.) live in explicit modules such as `std.option` and `std.result`, not as inherent methods. This keeps the prelude small and fits the no-UFCS, pipe-friendly direction.
 
 ---
 
@@ -100,7 +100,7 @@ trait Neg[a] = {
 }
 ```
 
-Core declarations ~30 lines. Inherent methods for option/result added in Phase S2 (requires method-level generics from `docs/plans/done/language/01_function-model.md`).
+Core declarations stay small. Option/result helper APIs are added in Phase S2 as ordinary module functions rather than inherent methods.
 
 ---
 
@@ -145,7 +145,7 @@ Core declarations ~30 lines. Inherent methods for option/result added in Phase S
 - `Result.Success("ok")` works without a user-defined prelude sum
 - Match on option/result works
 - All 7 traits available without user trait definition
-- Operators still work (`42 == 42`, `1 + 2`, `x.show()`)
+- Operators still work (`42 == 42`, `1 + 2`, `Show.show(x)`)
 - Existing tests with local `enum Option[a] = { Some(a), None }` still pass until the fixture migration prefers canonical `type` examples
 - Missing `std/prelude.mr` falls back to builtin behavior
 
@@ -166,90 +166,70 @@ Core declarations ~30 lines. Inherent methods for option/result added in Phase S
 
 ---
 
-### Phase S2: Methods on Option/Result in Prelude
+### Phase S2: Option/Result Helper Modules
 
 **Prereqs:**
-- Generic inherent impls (being implemented separately by Codex).
-- Method-level generics `fn name[b](...)` syntax (`docs/plans/done/language/01_function-model.md` Phase F1).
+- Module system from [03_module-system.md](/Users/zlw/src/marmoset/marmoset/docs/plans/todo/language/03_module-system.md)
+- Prelude Phase S0 so `Option` and `Result` exist everywhere
 
-**Goal:** Add utility methods to prelude.mr.
+**Goal:** Add `std/option.mr` and `std/result.mr` as ordinary module APIs.
 
-Methods that introduce new type variables (like `map`, `bind`, `map_fail`) use explicit method-level generics with `fn name[b](...)` syntax. Methods that only use the impl-level type variables (like `unwrap_or`, `is_some`) don't need method-level generics.
+Add:
 
-Add to `std/prelude.mr`:
 ```marmoset
-impl[a] Option[a] = {
-  fn unwrap_or(self: Option[a], fallback: a) -> a = match self {
-    case Option.Some(v): v
-    case Option.None: fallback
-  }
+# std/option.mr
 
-  fn map[b](self: Option[a], f: (a) -> b) -> Option[b] = match self {
-    case Option.Some(v): Option.Some(f(v))
-    case Option.None: Option.None
-  }
+export unwrap_or, map, bind, is_some, is_none
 
-  fn bind[b](self: Option[a], f: (a) -> Option[b]) -> Option[b] = match self {
-    case Option.Some(v): f(v)
-    case Option.None: Option.None
-  }
-
-  fn is_some(self: Option[a]) -> Bool = match self {
-    case Option.Some(_): true
-    case Option.None: false
-  }
-
-  fn is_none(self: Option[a]) -> Bool = match self {
-    case Option.Some(_): false
-    case Option.None: true
-  }
+fn unwrap_or[a](self: Option[a], fallback: a) -> a = match self {
+  case Option.Some(v): v
+  case Option.None: fallback
 }
 
-impl[a, e] Result[a, e] = {
-  fn unwrap_or(self: Result[a, e], fallback: a) -> a = match self {
-    case Result.Success(v): v
-    case Result.Failure(_): fallback
-  }
+fn map[a, b](self: Option[a], f: (a) -> b) -> Option[b] = match self {
+  case Option.Some(v): Option.Some(f(v))
+  case Option.None: Option.None
+}
 
-  fn map[b](self: Result[a, e], f: (a) -> b) -> Result[b, e] = match self {
-    case Result.Success(v): Result.Success(f(v))
-    case Result.Failure(err): Result.Failure(err)
-  }
-
-  fn map_fail[f](self: Result[a, e], g: (e) -> f) -> Result[a, f] = match self {
-    case Result.Success(v): Result.Success(v)
-    case Result.Failure(err): Result.Failure(g(err))
-  }
-
-  fn bind[b](self: Result[a, e], f: (a) -> Result[b, e]) -> Result[b, e] = match self {
-    case Result.Success(v): f(v)
-    case Result.Failure(err): Result.Failure(err)
-  }
-
-  fn is_ok(self: Result[a, e]) -> Bool = match self {
-    case Result.Success(_): true
-    case Result.Failure(_): false
-  }
-
-  fn is_err(self: Result[a, e]) -> Bool = match self {
-    case Result.Success(_): false
-    case Result.Failure(_): true
-  }
+fn bind[a, b](self: Option[a], f: (a) -> Option[b]) -> Option[b] = match self {
+  case Option.Some(v): f(v)
+  case Option.None: Option.None
 }
 ```
 
-All real Marmoset — just `match`. Method-level generics (`map[b]`, `map_fail[f]`) are inferred at each call site, same as any polymorphic function. The explicit declaration attaches to the method name, consistent with `trait Show[a]` and the current semantics where `Option` / `Result` are constructor-bearing named `type` declarations (`enum` remains compatibility sugar only).
+```marmoset
+# std/result.mr
+
+export unwrap_or, map, map_fail, bind, is_ok, is_err
+
+fn unwrap_or[a, e](self: Result[a, e], fallback: a) -> a = match self {
+  case Result.Success(v): v
+  case Result.Failure(_): fallback
+}
+
+fn map[a, b, e](self: Result[a, e], f: (a) -> b) -> Result[b, e] = match self {
+  case Result.Success(v): Result.Success(f(v))
+  case Result.Failure(err): Result.Failure(err)
+}
+
+fn map_fail[a, e, f](self: Result[a, e], g: (e) -> f) -> Result[a, f] = match self {
+  case Result.Success(v): Result.Success(v)
+  case Result.Failure(err): Result.Failure(g(err))
+}
+```
+
+These stay ordinary functions and work well with explicit qualification and pipes.
 
 **Tests:**
-- `Option.Some(42).unwrap_or(0)` → 42
-- `Option.None.unwrap_or(7)` → 7
-- `Option.Some(42).map((x) -> x.show())` → `Option.Some("42")`
-- `Option.Some(42).bind((x) -> Option.Some(x + 1))` → `Option.Some(43)`
-- `Option.None.map((x: Int) -> x + 1)` → `Option.None`
-- `Result.Success(42).map((x) -> x.show())` → `Result.Success("42")`
-- `Result.Failure("err").map_fail((e) -> e + "!")` → `Result.Failure("err!")`
-- `Result.Success(42).bind((x) -> Result.Success(x + 1))` → `Result.Success(43)`
-- `Result.Failure("err").unwrap_or(0)` → 0
+- `option.unwrap_or(Option.Some(42), 0)` → 42
+- `option.unwrap_or(Option.None, 7)` → 7
+- `option.map(Option.Some(42), Show.show)` → `Option.Some("42")`
+- `option.bind(Option.Some(42), (x) -> Option.Some(x + 1))` → `Option.Some(43)`
+- `option.map(Option.None, (x: Int) -> x + 1)` → `Option.None`
+- `result.map(Result.Success(42), Show.show)` → `Result.Success("42")`
+- `result.map_fail(Result.Failure("err"), (e) -> e + "!")` → `Result.Failure("err!")`
+- `result.bind(Result.Success(42), (x) -> Result.Success(x + 1))` → `Result.Success(43)`
+- `result.unwrap_or(Result.Failure("err"), 0)` → 0
 
 **Gate:** `make unit && make integration` green.
 
@@ -274,6 +254,8 @@ All real Marmoset — just `match`. Method-level generics (`map[b]`, `map_fail[f
 
 | File | Role |
 |------|------|
-| **New:** `std/prelude.mr` | Core named sums + traits + option/result methods |
+| **New:** `std/prelude.mr` | Core named sums + traits |
+| **New:** `std/option.mr` | Option helper functions |
+| **New:** `std/result.mr` | Result helper functions |
 | `lib/frontend/compiler.ml` | Prelude auto-import orchestration (module system component) |
 | `lib/frontend/typecheck/builtins.ml` | Remove enum/trait init; keep impl init + builtin functions |

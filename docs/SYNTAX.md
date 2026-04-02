@@ -169,7 +169,7 @@ fn always_true[t0: Eq, t1: Eq](x: t0, y: t1) -> Bool = true
 
 ### 7.4 Same-Type Tie Requires Explicit Generic
 ```mr
-fn same_eq[t: Eq](x: t, y: t) -> Bool = x.eq(y)
+fn same_eq[t: Eq](x: t, y: t) -> Bool = Eq.eq(x, y)
 ```
 
 ### 7.5 Bare Constraint Names
@@ -250,11 +250,11 @@ Notes:
 
 Examples:
 ```mr
-ids.map(_ * 2)                    # x -> x * 2
-users.map(_.name)                 # x -> x.name
-ids.map(do_something(_))          # x -> do_something(x)
-names.map(trim(lowercase(_)))     # x -> trim(lowercase(x))
-users.filter(is_admin?(_))        # x -> is_admin?(x)
+list.map(ids, _ * 2)              # x -> x * 2
+list.map(users, _.name)           # x -> x.name
+list.map(ids, do_something(_))    # x -> do_something(x)
+list.map(names, trim(lowercase(_))) # x -> trim(lowercase(x))
+list.filter(users, is_admin?(_))  # x -> is_admin?(x)
 ```
 
 Restrictions:
@@ -302,7 +302,7 @@ impl Account[User] = {
   override fn full_name(self: User) -> Str = self.name
 }
 
-fn label_user(x: Account) -> Str = x.full_name()
+fn label_user(x: Account) -> Str = Account.full_name(x)
 
 fn role_to_string(r: Role) -> Str = match r {
   case Role.User: "user"
@@ -522,11 +522,11 @@ Rules:
 ### 13.7 Constrained-Param Shorthand Rewrite
 - Input:
 ```mr
-fn f(x: Named) -> Str = x.full_name()
+fn f(x: Named) -> Str = Named.full_name(x)
 ```
 - Output:
 ```mr
-fn f[t0: Named](x: t0) -> Str = x.full_name()
+fn f[t0: Named](x: t0) -> Str = Named.full_name(x)
 ```
 
 Rules:

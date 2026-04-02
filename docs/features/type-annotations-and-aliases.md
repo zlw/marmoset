@@ -32,7 +32,7 @@ let x: Int = 5
 fn add(a: Int, b: Int) -> Int = a + b
 
 fn id[a](x: a) -> a = x
-fn show_eq[a: Show & Eq](x: a) -> Str = x.show()
+fn show_eq[a: Show & Eq](x: a) -> Str = Show.show(x)
 
 type Point = { x: Int, y: Int }
 type Reducer[a] = (a, a) -> a
