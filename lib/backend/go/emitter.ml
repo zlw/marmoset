@@ -607,6 +607,14 @@ let placeholder_rewritten_expr (rewrite_map : Infer.placeholder_rewrite_map) (ex
   | Some rewritten -> rewritten
   | None -> expr
 
+let synthetic_helper_suffix (expr_id : int) : string =
+  if expr_id < 0 then
+    "neg" ^ string_of_int (-expr_id)
+  else
+    string_of_int expr_id
+
+let hoisted_section_func_name (expr_id : int) : string = "__section_" ^ synthetic_helper_suffix expr_id
+
 let lookup_method_def_exn
     (method_def_map : (int, Typecheck.Resolution_artifacts.typed_method_def) Hashtbl.t)
     ~(method_id : int)
@@ -1193,6 +1201,7 @@ let rec collect_funcs_stmt
 
 and collect_funcs_expr ?(available_bindings = StringSet.empty) (state : mono_state) (expr : AST.expression) : unit
     =
+  let expr = placeholder_rewritten_expr state.placeholder_rewrite_map expr in
   match expr.expr with
   | AST.Integer _ | AST.Float _ | AST.Boolean _ | AST.String _ | AST.Identifier _ -> ()
   | AST.Prefix (_, e) -> collect_funcs_expr ~available_bindings state e
@@ -1219,6 +1228,15 @@ and collect_funcs_expr ?(available_bindings = StringSet.empty) (state : mono_sta
       collect_funcs_expr ~available_bindings state container;
       collect_funcs_expr ~available_bindings state index
   | AST.Function f ->
+      let param_bindings = string_set_of_list (List.map fst f.params) in
+      let captures =
+        captures_top_level_values_stmt available_bindings param_bindings f.body |> StringSet.elements
+      in
+      (match (f.origin, captures) with
+      | AST.PlaceholderSection, [] ->
+          add_func_def state ~name:(hoisted_section_func_name expr.id) ~params:f.params ~body:f.body
+            ~func_expr_id:expr.id
+      | _ -> ());
       let nested_available = StringSet.union available_bindings (string_set_of_list (List.map fst f.params)) in
       ignore (collect_funcs_stmt ~top_level:false ~available_bindings:nested_available state f.body)
   | AST.EnumConstructor (_, _, args) -> List.iter (collect_funcs_expr ~available_bindings state) args
@@ -1386,6 +1404,13 @@ let track_enum_inst state (t : Types.mono_type) =
 let is_user_func (state : mono_state) (name : string) : bool =
   List.exists (fun fd -> fd.name = name) state.func_defs
 
+let hoisted_section_target_name (state : mono_state) (expr : AST.expression) : string option =
+  let target_name = hoisted_section_func_name expr.id in
+  if is_user_func state target_name then
+    Some target_name
+  else
+    None
+
 let unique_instantiated_func_name (state : mono_state) (name : string) : string option =
   let candidates =
     InstSet.elements state.instantiations |> List.filter (fun (inst : instantiation) -> inst.func_name = name)
@@ -1489,6 +1514,27 @@ let extract_all_param_types (t : Types.mono_type) : Types.mono_type list * Types
     | final_ret -> (List.rev acc, final_ret)
   in
   go [] t
+
+let select_function_value_signature ?expected_type (inferred_func_type : Types.mono_type) :
+    Types.mono_type list * Types.mono_type =
+  let inferred_params, inferred_ret = extract_all_param_types inferred_func_type in
+  match expected_type with
+  | Some expected_func_type -> (
+      let expected_param_types, expected_ret = extract_all_param_types expected_func_type in
+      if expected_param_types <> [] && not (List.exists has_type_vars expected_param_types) then
+        let selected_ret =
+          if has_type_vars expected_ret then
+            inferred_ret
+          else
+            expected_ret
+        in
+        (expected_param_types, selected_ret)
+      else
+        let inferred_arity = List.length inferred_params in
+        match callable_signature_exact inferred_arity expected_func_type with
+        | Some (callable_params, callable_ret) -> (callable_params, callable_ret)
+        | None -> (inferred_params, inferred_ret))
+  | None -> (inferred_params, inferred_ret)
 
 let add_param_bindings (env : Infer.type_env) (param_names : string list) (param_types : Types.mono_type list) :
     Infer.type_env =
@@ -1796,6 +1842,29 @@ let add_instantiation (state : mono_state) (inst : instantiation) : unit =
              (Types.to_string inst.return_type))
     | _ -> state.instantiations <- InstSet.add inst state.instantiations
 
+let register_user_function_value_instantiation
+    (state : mono_state)
+    ~(target_name : string)
+    ~(param_types : Types.mono_type list)
+    ~(return_type : Types.mono_type) : unit =
+  let arity = List.length param_types in
+  let has_unresolved = List.exists has_type_vars (return_type :: param_types) in
+  if arity > 0 && not has_unresolved then
+    match lookup_func_def_for_call state target_name arity with
+    | None -> ()
+    | Some func_def ->
+        add_instantiation state
+          {
+            func_name = func_def.name;
+            module_path = state.module_path;
+            func_expr_id = func_def.func_expr_id;
+            func_arity = arity;
+            concrete_only_mode = state.concrete_only;
+            concrete_types = param_types;
+            type_fingerprint = fingerprint_types param_types;
+            return_type;
+          }
+
 let impl_inst_payload_key (inst : impl_instantiation) : string =
   Printf.sprintf "%s|%b|%s|%s|%s" inst.module_path inst.concrete_only_mode inst.trait_name inst.method_name
     inst.type_fingerprint
@@ -1835,13 +1904,15 @@ let add_impl_instantiation (state : mono_state) (inst : impl_instantiation) (pay
 let field_alias_key (record_name : string) (field_name : string) : string = record_name ^ "." ^ field_name
 
 let rec user_func_target_name_for_expr (state : mono_state) (expr : AST.expression) : string option =
-  match expr.expr with
-  | AST.TypeApply (callee, _) -> user_func_target_name_for_expr state callee
-  | AST.Identifier name when is_user_func state name -> Some name
-  | AST.Identifier alias_name -> (
+  match placeholder_rewritten_expr state.placeholder_rewrite_map expr with
+  | { expr = AST.TypeApply (callee, _); _ } -> user_func_target_name_for_expr state callee
+  | { expr = AST.Identifier name; _ } when is_user_func state name -> Some name
+  | { expr = AST.Identifier alias_name; _ } -> (
       match Hashtbl.find_opt state.value_func_aliases alias_name with
       | Some target_name when is_user_func state target_name -> Some target_name
       | _ -> None)
+  | ({ expr = AST.Function { origin = AST.PlaceholderSection; _ }; _ } as rewritten_expr) ->
+      hoisted_section_target_name state rewritten_expr
   | _ -> None
 
 let target_name_for_value_alias (state : mono_state) (value_expr : AST.expression) : string option =
@@ -2596,6 +2667,7 @@ let rec collect_insts_stmt
     (stmt : AST.statement) : Infer.type_env =
   match stmt.stmt with
   | AST.Let let_binding ->
+      let value_expr = placeholder_rewritten_expr state.placeholder_rewrite_map let_binding.value in
       (* Prefer the explicit local binding annotation so Dyn/intersection lets
          keep the intended runtime representation. *)
       let expr_type =
@@ -2620,9 +2692,9 @@ let rec collect_insts_stmt
       let env_with_binding = Infer.TypeEnv.add let_binding.name (Types.Forall ([], expr_type)) env in
       (* Pass the expected type to collect_insts_expr so it can use it for EnumConstructors *)
       collect_insts_expr ~expected_type:(Some expr_type) state type_map env_with_binding let_binding.value;
-      (match let_binding.value.expr with
+      (match value_expr.expr with
       | AST.Function _ -> (
-          match hoisted_local_func_target_name state let_binding.name let_binding.value.id with
+          match hoisted_local_func_target_name state let_binding.name value_expr.id with
           | Some target_name -> Hashtbl.replace state.value_func_aliases let_binding.name target_name
           | None -> Hashtbl.remove state.value_func_aliases let_binding.name)
       | AST.Identifier target_name when is_user_func state target_name ->
@@ -2987,45 +3059,35 @@ and collect_insts_expr
                 | Some (Types.Forall (_, t)) -> t
                 | None -> get_type type_map expr)
           in
-          let inferred_params, inferred_ret = extract_all_param_types inferred_func_type in
-          let selected_params, selected_ret =
+          let param_types, return_type =
+            select_function_value_signature ?expected_type inferred_func_type
+          in
+          register_user_function_value_instantiation state ~target_name ~param_types ~return_type))
+  | AST.Function fn_expr -> (
+      (match (fn_expr.origin, hoisted_section_target_name state expr) with
+      | AST.PlaceholderSection, Some target_name ->
+          let inferred_func_type = get_type type_map expr in
+          let param_types, return_type =
+            select_function_value_signature ?expected_type inferred_func_type
+          in
+          register_user_function_value_instantiation state ~target_name ~param_types ~return_type
+      | _ -> ());
+      let param_names = List.map fst fn_expr.params in
+      let arity = List.length param_names in
+      let func_type = get_type type_map expr in
+      let param_types =
+        match extract_param_types_exact arity func_type with
+        | Some (types, _) -> types
+        | None -> (
             match expected_type with
             | Some expected_func_type -> (
-                let expected_params, expected_ret = extract_all_param_types expected_func_type in
-                if expected_params <> [] && not (List.exists has_type_vars expected_params) then
-                  let selected_ret =
-                    if has_type_vars expected_ret then
-                      inferred_ret
-                    else
-                      expected_ret
-                  in
-                  (expected_params, selected_ret)
-                else
-                  let inferred_arity = List.length inferred_params in
-                  match callable_signature_exact inferred_arity expected_func_type with
-                  | Some (callable_params, callable_ret) -> (callable_params, callable_ret)
-                  | None -> (inferred_params, inferred_ret))
-            | None -> (inferred_params, inferred_ret)
-          in
-          let arity = List.length selected_params in
-          let has_unresolved = List.exists has_type_vars (selected_ret :: selected_params) in
-          if arity > 0 && not has_unresolved then
-            match lookup_func_def_for_call state target_name arity with
-            | None -> ()
-            | Some func_def ->
-                let inst =
-                  {
-                    func_name = target_name;
-                    module_path = state.module_path;
-                    func_expr_id = func_def.func_expr_id;
-                    func_arity = arity;
-                    concrete_only_mode = state.concrete_only;
-                    concrete_types = selected_params;
-                    type_fingerprint = fingerprint_types selected_params;
-                    return_type = selected_ret;
-                  }
-                in
-                add_instantiation state inst))
+                match extract_param_types_exact arity expected_func_type with
+                | Some (types, _) -> types
+                | None -> [])
+            | None -> [])
+      in
+      let body_env = add_param_bindings env param_names param_types in
+      ignore (collect_insts_stmt state type_map body_env fn_expr.body))
   | AST.Prefix (op, e) -> (
       collect_insts_expr state type_map env e;
       match op with
@@ -3183,24 +3245,6 @@ and collect_insts_expr
   | AST.Index (container, index) ->
       collect_insts_expr state type_map env container;
       collect_insts_expr state type_map env index
-  | AST.Function f ->
-      (* Phase 2: Create env with params for the body *)
-      let param_names = List.map fst f.params in
-      let arity = List.length param_names in
-      let func_type = get_type type_map expr in
-      let param_types =
-        match extract_param_types_exact arity func_type with
-        | Some (types, _) -> types
-        | None -> (
-            match expected_type with
-            | Some expected_func_type -> (
-                match extract_param_types_exact arity expected_func_type with
-                | Some (types, _) -> types
-                | None -> [])
-            | None -> [])
-      in
-      let body_env = add_param_bindings env param_names param_types in
-      ignore (collect_insts_stmt state type_map body_env f.body)
   | AST.EnumConstructor (enum_name, _, args) ->
       List.iter (collect_insts_expr state type_map env) args;
       (* Use expected_type if available (from let binding context), otherwise get from type_map *)
@@ -3824,7 +3868,21 @@ let rec emit_expr
           else
             inferred_func_type
         in
-        emit_function_expr ~func_type_override:selected_func_type state type_map env expr param_exprs f.body
+        (match (f.origin, hoisted_section_target_name state.mono expr) with
+        | AST.PlaceholderSection, Some target_name ->
+            let param_types, return_type =
+              select_function_value_signature ?expected_type selected_func_type
+            in
+            let has_unresolved = List.exists has_type_vars (return_type :: param_types) in
+            if List.length param_types > 0 && not has_unresolved then (
+              register_user_function_value_instantiation state.mono ~target_name ~param_types ~return_type;
+              mangle_func_name target_name param_types)
+            else
+              emit_function_expr ~func_type_override:selected_func_type state type_map env expr param_exprs
+                f.body
+        | _ ->
+            emit_function_expr ~func_type_override:selected_func_type state type_map env expr param_exprs
+              f.body)
     | AST.EnumConstructor (enum_name, variant_name, args) ->
         (* Only enum-shaped expected types may refine constructor specialization. *)
         let enum_type = enum_constructor_codegen_type type_map expr expected_type enum_name in
@@ -7897,6 +7955,27 @@ let%test "emit let binding" =
 let%test "emit top-level placeholder section forward ref hoists function binding" =
   match compile_string ~file_id:"<codegen>" "let y = add1(41)\nlet add1 = _ + 1\ny" with
   | Ok (code, _) -> string_contains code "func add1_" && not (string_contains code "add1 :=")
+  | Error _ -> false
+
+let%test "non-capturing placeholder section argument hoists to helper" =
+  match compile_string ~file_id:"<codegen>" "fn apply(x: Int, f: (Int) -> Int) -> Int = f(x)\napply(41, _ + 1)" with
+  | Ok (code, _) -> string_contains code "func __section_" && not (string_contains code "apply(int64(41), func(")
+  | Error _ -> false
+
+let%test "capturing placeholder section argument stays inline" =
+  match
+    compile_string ~file_id:"<codegen>"
+      "let delta = 1\nfn apply(x: Int, f: (Int) -> Int) -> Int = f(x)\napply(41, _ + delta)"
+  with
+  | Ok (code, _) -> string_contains code "func(it int64) int64"
+  | Error _ -> false
+
+let%test "projection placeholder section argument hoists to helper" =
+  match
+    compile_string ~file_id:"<codegen>"
+      "type Post = { updated_at: Int }\nfn project(post: Post, f: (Post) -> Int) -> Int = f(post)\nlet post: Post = { updated_at: 7 }\nproject(post, _.updated_at)"
+  with
+  | Ok (code, _) -> string_contains code "func __section_" && not (string_contains code "project(post, func(")
   | Error _ -> false
 
 let%test "emit boolean" =
