@@ -6,8 +6,8 @@ trait Greeter[a] = {
 }
 
 impl Greeter[{ x: Int }] = {
-  fn greet(x: { x: Int }) -> Str = x.x.show()
+  fn greet(x: { x: Int }) -> Str = Show.show(x.x)
 }
 
 let value: ({ x: Int, y: Str } & { x: Int }) = { x: 1, y: "ok" }
-puts(apply(value, _.greet()))  # output: 1
+puts(apply(value, Greeter.greet(_)))  # output: 1

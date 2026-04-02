@@ -12,4 +12,4 @@ impl Result[a, b] = {
   }
 }
 let ok = Result.Success(1)
-puts(ok.is_success())  # output: true
+puts(Result.is_success(ok))  # output: true

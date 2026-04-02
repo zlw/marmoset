@@ -142,7 +142,7 @@ type Point = { x: Int, y: Int }
 --------------------------------------------------------------------------------
 
 (source_file
-  (type_alias
+  (type_definition
     name: (identifier)
     type: (record_type
       (record_type_field
@@ -151,6 +151,76 @@ type Point = { x: Int, y: Int }
       (record_type_field
         name: (identifier)
         type: (type_identifier)))))
+
+================================================================================
+Wrapper type
+================================================================================
+
+type UserId = UserId(Int)
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (type_definition
+    name: (identifier)
+    type: (wrapper_type
+      constructor: (identifier)
+      payload: (type_identifier))))
+
+================================================================================
+Transparent named type alias
+================================================================================
+
+type Nameable = Named
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (type_definition
+    name: (identifier)
+    type: (type_variable
+      (identifier))))
+
+================================================================================
+Transparent generic type alias
+================================================================================
+
+type MonkeyOrSadness = Result[Monkey, Str]
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (type_definition
+    name: (identifier)
+    type: (generic_type
+      name: (identifier)
+      arg: (type_variable
+        (identifier))
+      arg: (type_identifier))))
+
+================================================================================
+Constructor-bearing sum type
+================================================================================
+
+type Event = { Click({ x: Int, y: Int }), Quit }
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (type_definition
+    name: (identifier)
+    type: (constructor_type_body
+      (enum_variant
+        name: (identifier)
+        (record_type
+          (record_type_field
+            name: (identifier)
+            type: (type_identifier))
+          (record_type_field
+            name: (identifier)
+            type: (type_identifier))))
+      (enum_variant
+        name: (identifier)))))
 
 ================================================================================
 Record type with row variable
@@ -229,7 +299,7 @@ type NamedAge = { name: Str } & { age: Int }
 --------------------------------------------------------------------------------
 
 (source_file
-  (type_alias
+  (type_definition
     name: (identifier)
     type: (intersection_type
       (record_type
@@ -250,7 +320,7 @@ type Example = Int | Str & Bool
 --------------------------------------------------------------------------------
 
 (source_file
-  (type_alias
+  (type_definition
     name: (identifier)
     type: (union_type
       (type_identifier)
@@ -267,7 +337,7 @@ type Handler = ((Int) -> Str) & Bool
 --------------------------------------------------------------------------------
 
 (source_file
-  (type_alias
+  (type_definition
     name: (identifier)
     type: (intersection_type
       (parenthesized_type

@@ -1,4 +1,4 @@
-# R096: Type alias record with computed field values
+# R096: Transparent type record with computed field values
 type Result = { val: Int, doubled: Int }
 fn make_result(n: Int) -> Result = { { val: n, doubled: n * 2 } }
 let r = make_result(10)

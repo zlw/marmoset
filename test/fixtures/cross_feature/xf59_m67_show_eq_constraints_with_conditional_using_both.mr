@@ -1,7 +1,7 @@
 # XF59: M67: Show+Eq constraints with conditional using both
 fn show_if_equal[a: Show & Eq](x: a, y: a) -> Str = {
-  if (x.eq(y)) {
-    x.show()
+  if (Eq.eq(x, y)) {
+    Show.show(x)
   } else {
     "different"
   }

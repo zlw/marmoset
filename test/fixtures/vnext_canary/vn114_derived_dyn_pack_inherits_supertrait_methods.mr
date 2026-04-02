@@ -2,13 +2,13 @@
 fn apply[a, b](x: a, f: (a) -> b) -> b = f(x)
 
 trait Label[a]: Show = {
-  fn label(self: a) -> Str = apply(self, (x) -> x.show())
+  fn label(self: a) -> Str = apply(self, (x) -> Show.show(x))
 }
 
 trait Pack[a]: Label = {}
 
 type Point = { x: Int } derive Show, Label, Pack
 
-let value: Dyn[Pack] = { x: 1 }
-puts(value.show())   # output: { x: 1 }
-puts(value.label())  # output: { x: 1 }
+let value: Dyn[Pack] = {x: 1}
+puts(Show.show(value))   # output: { x: 1 }
+puts(Pack.label(value))  # output: { x: 1 }

@@ -6,9 +6,10 @@ type Data = { v: Int }
 
 impl Processor[Data] = {
   fn process(x: Data) => Str = {
-    x.v.show()
+    Show.show(x.v)
   }
 }
 
-let d: Data = { v: 7 }
-puts(d.process())  # output: 7
+let d = {v: 7}
+
+puts(Processor.process(d))  # output: 7

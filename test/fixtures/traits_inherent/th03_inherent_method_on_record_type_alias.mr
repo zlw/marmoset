@@ -1,9 +1,9 @@
-# TH03: Inherent method on record type alias
+# TH03: Inherent method on named record type
 type Point = { x: Int, y: Int }
 impl Point = {
   fn sum(p: Point) -> Int = {
     p.x + p.y
   }
 }
-let p: Point = { x: 10, y: 20 }
-puts(p.sum())  # output: 30
+let p = {x: 10, y: 20}
+puts(Point.sum(p))  # output: 30

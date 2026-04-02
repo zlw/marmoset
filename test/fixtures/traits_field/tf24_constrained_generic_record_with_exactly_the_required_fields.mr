@@ -1,5 +1,5 @@
-# TF24: Constrained generic: record with exactly the required fields
-trait HasTag = {
+# TF24: Constrained generic: record with exactly the required shape fields
+shape HasTag = {
   tag: Str
 }
 fn get_tag[t: HasTag](v: t) -> Str = v.tag

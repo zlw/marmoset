@@ -1,4 +1,4 @@
-enum Wrapper = { Val(Int) }
+type Wrapper = { Val(Int) }
 impl Neg[Wrapper] = {
   fn neg(x: Wrapper) -> Wrapper = x
 }

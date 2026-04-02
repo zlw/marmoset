@@ -8,5 +8,5 @@ enum Option[t] = {
   None
 } derive Show, Eq, Pack
 
-let value = Option.Some(1).pack()
-puts(value.show())  # output: Some(1)
+let value = Pack.pack(Option.Some(1))
+puts(Show.show(value))  # output: Some(1)

@@ -1,7 +1,7 @@
 # T77: Fn returning wider record with trait return type
 trait Named = {
-  name: Str
+  name: Str  # error: Trait bodies are method-only; use 'shape' for structural field contracts
 }
-fn mk_named(n: Str, a: Int) -> Named = { name: n, age: a }  # error: cannot be used as a type in vNext
+fn mk_named(n: Str, a: Int) -> Named = { name: n, age: a }
 let x = mk_named("alice", 30)
 puts(x.name)  # output: alice

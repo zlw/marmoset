@@ -4,8 +4,8 @@ fn apply[a, b](x: a, f: (a) -> b) -> b = f(x)
 type Box[a] = { value: a }
 
 let value: ({ box: Box[Dyn[Show & Eq]], tag: Int } & { box: Box[Dyn[Show]] }) = {
-  box: { value: 42 },
+  box: {value: 42},
   tag: 1,
 }
 
-puts(apply(value, _.box.value.show()))  # output: 42
+puts(apply(value, Show.show(_.box.value)))  # output: 42

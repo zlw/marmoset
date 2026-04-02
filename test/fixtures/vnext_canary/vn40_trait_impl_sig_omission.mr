@@ -6,8 +6,8 @@ trait Display[a] = {
 type Thing = { v: Int }
 
 impl Display[Thing] = {
-  fn render(x) = "thing:" + x.v.show()
+  fn render(x) = "thing:" + Show.show(x.v)
 }
 
-let thing: Thing = { v: 42 }
-puts(thing.render())  # output: thing:42
+let thing: Thing = {v: 42}
+puts(Display.render(thing))  # output: thing:42

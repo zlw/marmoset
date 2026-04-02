@@ -3,5 +3,5 @@ impl Int = {
   fn double(x: Int) -> Int = x + x
 }
 let n = 5
-let result = n.double()
+let result = Int.double(n)
 puts(result)  # output: 10

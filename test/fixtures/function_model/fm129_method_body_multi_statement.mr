@@ -3,10 +3,11 @@ type Acc = { total: Int }
 impl Acc = {
   fn add_and_show(a: Acc, n: Int) -> Str = {
     let new_total = a.total + n
-    let result = "total:" + new_total.show()
+    let result = "total:" + Show.show(new_total)
     result
   }
 }
 
-let a: Acc = { total: 10 }
-puts(a.add_and_show(5))  # output: total:15
+let a = {total: 10}
+
+puts(Acc.add_and_show(a, 5))  # output: total:15

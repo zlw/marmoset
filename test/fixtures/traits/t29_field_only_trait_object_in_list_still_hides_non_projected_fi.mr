@@ -1,8 +1,8 @@
-# T29: Field-only trait object in list still hides non-projected fields
+# T29: Legacy field-style trait syntax is rejected before list projection rules apply
 trait Named = {
-  name: Str
+  name: Str  # error: Trait bodies are method-only; use 'shape' for structural field contracts
 }
-let a: Named = { name: "alice", age: 1 }  # error: cannot be used as a type in vNext
+let a: Named = { name: "alice", age: 1 }
 let b: Named = { name: "bob", age: 2 }
 let xs: List[Named] = [a, b]
 puts(xs[0].age)

@@ -5,4 +5,4 @@ trait YesNo[a] = {
 impl YesNo[Bool] = {
   fn yesno(b: Bool) -> Str = if (b) { "yes" } else { "no" }
 }
-puts(true.yesno())  # output: yes
+puts(YesNo.yesno(true))  # output: yes

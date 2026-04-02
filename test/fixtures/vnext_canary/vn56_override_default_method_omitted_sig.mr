@@ -7,4 +7,4 @@ impl Greeter[Int] = {
   override fn greet(x) = "hi"
 }
 
-puts(1.greet())  # output: hi
+puts(Greeter.greet(1))  # output: hi

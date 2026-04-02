@@ -1,5 +1,5 @@
 # U27: Match in tail position of function body
-enum Option[a] = { Some(a), None }
+type Option[a] = { Some(a), None }
 fn unwrap(x: Option[Int]) -> Int = {
   match x {
     case Option.Some(v): v

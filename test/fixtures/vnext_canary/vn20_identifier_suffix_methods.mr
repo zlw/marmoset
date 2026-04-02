@@ -3,9 +3,9 @@ type Monkey = { bananas_eaten: Int, is_alpha: Bool }
 
 impl Monkey = {
   fn hungry?(self: Monkey) -> Bool = self.bananas_eaten < 3
-  fn alpha!(self: Monkey) -> Monkey = { ...self, is_alpha: true }
+  fn alpha!(self: Monkey) -> Monkey = {bananas_eaten: self.bananas_eaten, is_alpha: true}
 }
 
-let m: Monkey = { bananas_eaten: 1, is_alpha: false }
-puts(m.hungry?())        # output: true
-puts(m.alpha!().is_alpha)  # output: true
+let m: Monkey = {bananas_eaten: 1, is_alpha: false}
+puts(Monkey.hungry?(m))        # output: true
+puts(Monkey.alpha!(m).is_alpha)  # output: true

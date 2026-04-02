@@ -7,5 +7,5 @@ impl Cmp[Int] = {
 }
 
 let a = 10
-puts(a.gt(5))  # output: true
-puts(a.gt(20))  # output: false
+puts(Cmp.gt(a, 5))  # output: true
+puts(Cmp.gt(a, 20))  # output: false

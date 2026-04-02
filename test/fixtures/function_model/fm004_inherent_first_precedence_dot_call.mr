@@ -4,15 +4,17 @@ trait Describe[a] = { fn info(x: a) -> Str }
 
 impl Describe[Widget] = {
   fn info(x: Widget) -> Str = {
-    "trait:" + x.v.show()
+    "trait:" + Show.show(x.v)
   }
 }
 
 impl Widget = {
   fn info(w: Widget) -> Str = {
-    "inherent:" + w.v.show()
+    "inherent:" + Show.show(w.v)
   }
 }
 
-let w: Widget = { v: 42 }
-puts(w.info())  # output: inherent:42
+let w = {v: 42}
+
+puts(Describe.info(w))  # output: trait:42
+puts(Widget.info(w))  # output: inherent:42

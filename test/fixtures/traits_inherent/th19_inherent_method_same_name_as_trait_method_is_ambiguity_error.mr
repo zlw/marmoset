@@ -1,4 +1,4 @@
-# TH19: Inherent method same name as trait method coexists (inherent wins on dot call)
+# TH19: Inherent and trait methods with the same name can coexist
 trait Describable[a] = {
   fn describe(x: a) -> Str
 }

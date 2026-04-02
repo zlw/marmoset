@@ -1,4 +1,4 @@
-# R075: Type alias record updated via spread
+# R075: Transparent type record updated via spread
 type Point = { x: Int, y: Int }
 let p: Point = { x: 1, y: 2 }
 let q = { ...p, x: 10 }

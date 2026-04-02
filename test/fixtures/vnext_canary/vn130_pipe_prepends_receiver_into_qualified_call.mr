@@ -1,0 +1,10 @@
+# VN130: Pipe prepends its lhs into qualified calls with remaining arguments
+type Box = { value: Int }
+
+impl Box = {
+  fn map[b](box: Box, f: (Int) -> b) -> b = f(box.value)
+}
+
+let box: Box = { value: 21 }
+
+puts(box |> Box.map(_ * 2) |> Show.show)  # output: 42

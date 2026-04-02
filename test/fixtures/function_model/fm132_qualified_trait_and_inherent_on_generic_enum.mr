@@ -21,6 +21,6 @@ impl[a] Opt[a] = {
 let some = Opt.Some(7)
 let none: Opt[Int] = Opt.None
 
-puts(some.tag())       # output: inherent:some
+puts(Opt.tag(some))    # output: inherent:some
 puts(Label.tag(some))  # output: trait:some
 puts(Opt.tag(none))    # output: inherent:none

@@ -1,4 +1,4 @@
-enum Color = { Red, Green, Blue }
+type Color = { Red, Green, Blue }
 
 trait Label[a] = { fn label(x: a) -> Str }
 
@@ -11,4 +11,4 @@ impl Label[Color] = {
 }
 
 let c = Color.Red
-puts(c.label())  # output: red
+puts(Label.label(c))  # output: red

@@ -1,0 +1,5 @@
+# R187: Structural spread may copy fields from a named product base
+type Point = { x: Int, y: Int }
+let p = {x: 1, y: 2}
+let q = { ...p, x: 10 }
+puts(q.x + q.y)  # output: 12

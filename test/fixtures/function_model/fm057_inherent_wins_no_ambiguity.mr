@@ -5,13 +5,15 @@ trait Fmt[a] = {
 }
 
 impl Fmt[Data] = {
-  fn show_val(x: Data) -> Str = { "trait:" + x.v.show() }
+  fn show_val(x: Data) -> Str = { "trait:" + Show.show(x.v) }
 }
 
 impl Data = {
-  fn show_val(d: Data) -> Str = { "inherent:" + d.v.show() }
+  fn show_val(d: Data) -> Str = { "inherent:" + Show.show(d.v) }
 }
 
-let d: Data = { v: 7 }
-# inherent wins, NOT ambiguity
-puts(d.show_val())  # output: inherent:7
+let d = {v: 7}
+
+# explicit targets stay stable
+puts(Fmt.show_val(d))  # output: trait:7
+puts(Data.show_val(d))  # output: inherent:7

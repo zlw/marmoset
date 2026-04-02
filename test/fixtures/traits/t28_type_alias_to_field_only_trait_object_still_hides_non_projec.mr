@@ -1,7 +1,7 @@
-# T28: Type-alias to field-only trait object still hides non-projected fields
+# T28: Legacy field-style trait syntax is rejected in aliased type position
 trait Named = {
-  name: Str
+  name: Str  # error: Trait bodies are method-only; use 'shape' for structural field contracts
 }
-type NameAlias = Named  # error: cannot be used as a type in vNext
+type NameAlias = Named
 let x: NameAlias = { name: "alice", age: 1 }
 puts(x.age)

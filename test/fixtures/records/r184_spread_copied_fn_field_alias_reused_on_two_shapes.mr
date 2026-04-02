@@ -4,9 +4,9 @@ fn get_x(r) = r.x
 
 let base = { f: get_x, label: "base" }
 let copied = { ...base, extra: 1 }
-let alias = copied.f
+let copied_f = copied.f
 
-let left = apply(alias, { x: 10, y: 2 })
-let right = apply(alias, { x: 20, z: 3 })
+let left = apply(copied_f, { x: 10, y: 2 })
+let right = apply(copied_f, { x: 20, z: 3 })
 
 puts(left + right)  # output: 30

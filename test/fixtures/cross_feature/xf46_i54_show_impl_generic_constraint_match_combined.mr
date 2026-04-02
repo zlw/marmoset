@@ -1,5 +1,5 @@
 # XF46: I54: Show impl + generic constraint + match combined
-enum Direction = { Left, Right, Up, Down }
+type Direction = { Left, Right, Up, Down }
 impl Show[Direction] = {
   fn show(d: Direction) -> Str = {
     match d {
@@ -10,5 +10,5 @@ impl Show[Direction] = {
     }
   }
 }
-fn render[a: Show](x: a) -> Str = x.show()
+fn render[a: Show](x: a) -> Str = Show.show(x)
 puts(render(Direction.Left))  # output: left

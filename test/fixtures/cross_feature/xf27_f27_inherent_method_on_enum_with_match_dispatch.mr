@@ -9,4 +9,4 @@ impl Box = {
   }
 }
 let b = Box.Val(42)
-puts(b.unwrap_or(0))  # output: 42
+puts(Box.unwrap_or(b, 0))  # output: 42

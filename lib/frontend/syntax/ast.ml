@@ -34,12 +34,30 @@ module AST = struct
   }
   [@@deriving show]
 
+  and named_type_body =
+    | NamedTypeProduct of record_type_field list
+    | NamedTypeWrapper of type_expr
+  [@@deriving show]
+
+  and named_type_def = {
+    type_name : string;
+    type_type_params : string list;
+    type_body : named_type_body;
+  }
+  [@@deriving show]
+
+  and shape_def = {
+    shape_name : string;
+    shape_type_params : string list;
+    shape_fields : record_type_field list;
+  }
+  [@@deriving show]
+
   (* Phase 4.3: Trait definitions *)
   and trait_def = {
     name : string;
     type_param : string option; (* The 'a' in trait Show[a], or None for non-generic traits *)
     supertraits : string list; (* trait Ord[a]: Eq & Hash *)
-    fields : record_type_field list; (* field-only/mixed trait members *)
     methods : method_sig list;
   }
 
@@ -116,19 +134,27 @@ module AST = struct
         type_params : string list;
         variants : variant_def list;
       }
+    | TypeDef of named_type_def
+    | ShapeDef of shape_def
     | TraitDef of trait_def (* Phase 4.3: trait Show[a] = { ... } *)
     | ImplDef of impl_def (* Phase 4.3: impl Show[Int] = { ... } *)
     | InherentImplDef of inherent_impl_def (* Phase 4.5: impl Point = { ... } *)
     | DeriveDef of derive_def (* canonical internal derive form *)
-    | TypeAlias of type_alias_def (* Phase 4.4: type Point = { x: Int, y: Int } *)
+    | TypeAlias of type_alias_def (* transparent alias declaration *)
   [@@deriving show]
 
-  (* Phase 4.4: Type alias definition *)
+  (* Phase 4.4: Transparent type definition *)
   and type_alias_def = {
     alias_name : string;
     alias_type_params : string list;
     alias_body : type_expr;
   }
+  [@@deriving show]
+
+  and function_origin =
+    | DeclaredFunction
+    | ExplicitLambda
+    | PlaceholderSection
   [@@deriving show]
 
   and expression = {
@@ -147,12 +173,14 @@ module AST = struct
     | String of string
     | Array of expression list
     | Index of expression * expression
+    | TypeApply of expression * type_expr list
     | Hash of (expression * expression) list
     | Prefix of string * expression
     | Infix of expression * string * expression
     | TypeCheck of expression * type_expr (* x is Int *)
     | If of expression * statement * statement option
     | Function of {
+        origin : function_origin;
         generics : generic_param list option; (* [a], [a: show], etc. *)
         params : (string * type_expr option) list; (* parameter names and optional type annotations *)
         return_type : type_expr option; (* return type annotation *)
@@ -243,6 +271,7 @@ module AST = struct
     | String a, String b -> a = b
     | Array a, Array b -> List.length a = List.length b && List.for_all2 expr_equal a b
     | Index (a1, a2), Index (b1, b2) -> expr_equal a1 b1 && expr_equal a2 b2
+    | TypeApply (e1, t1), TypeApply (e2, t2) -> expr_equal e1 e2 && t1 = t2
     | Hash a, Hash b ->
         List.length a = List.length b
         && List.for_all2 (fun (k1, v1) (k2, v2) -> expr_equal k1 k2 && expr_equal v1 v2) a b
@@ -281,6 +310,7 @@ module AST = struct
     | String _ -> "String"
     | Array _ -> "Array"
     | Index _ -> "Index"
+    | TypeApply _ -> "TypeApply"
     | Hash _ -> "Hash"
     | Prefix _ -> "Prefix"
     | Infix _ -> "Infix"
@@ -311,6 +341,27 @@ module AST = struct
               "[" ^ String.concat ", " type_params ^ "]"
           in
           Printf.sprintf "enum %s%s { ... }" name params_str
+      | TypeDef { type_name; type_type_params; type_body } ->
+          let params_str =
+            if type_type_params = [] then
+              ""
+            else
+              "[" ^ String.concat ", " type_type_params ^ "]"
+          in
+          let body_str =
+            match type_body with
+            | NamedTypeProduct _ -> "{ ... }"
+            | NamedTypeWrapper inner -> show_type_expr inner
+          in
+          Printf.sprintf "type %s%s = %s" type_name params_str body_str
+      | ShapeDef { shape_name; shape_type_params; _ } ->
+          let params_str =
+            if shape_type_params = [] then
+              ""
+            else
+              "[" ^ String.concat ", " shape_type_params ^ "]"
+          in
+          Printf.sprintf "shape %s%s = { ... }" shape_name params_str
       | TraitDef { name; type_param; _ } ->
           let params =
             match type_param with
@@ -341,6 +392,9 @@ module AST = struct
       | String s -> Printf.sprintf "\"%s\"" s
       | Array exprs -> Printf.sprintf "[%s]" (args_to_string exprs)
       | Index (arr, idx) -> Printf.sprintf "(%s[%s])" (expression_to_string arr) (expression_to_string idx)
+      | TypeApply (callee, type_args) ->
+          Printf.sprintf "%s[%s]" (expression_to_string callee)
+            (type_args |> List.map show_type_expr |> String.concat ", ")
       | Hash pairs ->
           Printf.sprintf "{%s}"
             (pairs

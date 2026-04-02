@@ -1,11 +1,9 @@
-type Myint = Int
-
-impl Myint = {
-  fn eq(x: Myint, y: Myint) -> Bool = {
+impl Int = {
+  fn eq(x: Int, y: Int) -> Bool = {
     x == y
   }
 }
 
-let a: Myint = 5
-let b: Myint = 5
-puts(a.eq(b))  # output: true
+let a = 5
+let b = 5
+puts(Int.eq(a, b))  # output: true

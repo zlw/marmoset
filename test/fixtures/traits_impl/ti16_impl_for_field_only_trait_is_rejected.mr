@@ -1,6 +1,6 @@
-# TI16: Impl for field-only trait is rejected
-trait Named = {  # error: field-only and cannot have impl blocks
-  name: Str
+# TI16: Old field-only trait syntax is rejected before impl validation
+trait Named = {
+  name: Str  # error: Trait bodies are method-only; use 'shape' for structural field contracts
 }
 impl Named[Int] = {
   fn fake(x: Int) -> Str = "nope"

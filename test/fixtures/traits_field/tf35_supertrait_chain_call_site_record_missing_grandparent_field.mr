@@ -1,8 +1,9 @@
-# TF35: Supertrait chain: call site record missing grandparent field
-trait HasA = {
+# TF35: Wider shape still rejects a record missing a required field
+shape HasA = {
   a: Int
 }
-trait HasB: HasA = {
+shape HasB = {
+  a: Int
   b: Int
 }
 fn get_a[t: HasB](v: t) -> Int = v.a

@@ -4,7 +4,7 @@ trait Stringify[a] = {
 
 impl Stringify[Int] = {
   fn to_str(x: Int) -> Str = {
-    x.show()
+    Show.show(x)
   }
 }
 

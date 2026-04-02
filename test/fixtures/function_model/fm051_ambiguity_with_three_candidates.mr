@@ -8,5 +8,6 @@ impl P1[Thing] = { fn go(x: Thing) -> Str = { "1" } }
 impl P2[Thing] = { fn go(x: Thing) -> Str = { "2" } }
 impl P3[Thing] = { fn go(x: Thing) -> Str = { "3" } }
 
-let t: Thing = { v: 0 }
-t.go()  # error: Ambiguous
+let t = {v: 0}
+
+t.go()  # error: not a callable field

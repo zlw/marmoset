@@ -5,12 +5,14 @@ trait Info[a] = {
 }
 
 impl Info[Cell] = {
-  fn detail(x: Cell) -> Str = { "trait:" + x.v.show() }
+  fn detail(x: Cell) -> Str = { "trait:" + Show.show(x.v) }
 }
 
 impl Cell = {
-  fn detail(c: Cell) -> Str = { "inherent:" + c.v.show() }
+  fn detail(c: Cell) -> Str = { "inherent:" + Show.show(c.v) }
 }
 
-let c: Cell = { v: 5 }
-puts(c.detail())  # output: inherent:5
+let c = {v: 5}
+
+puts(Info.detail(c))  # output: trait:5
+puts(Cell.detail(c))  # output: inherent:5

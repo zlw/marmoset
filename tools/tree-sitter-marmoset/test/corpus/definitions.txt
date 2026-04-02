@@ -173,19 +173,19 @@ trait Ord[a]: Eq = {
       return_type: (type_identifier))))
 
 ================================================================================
-Trait with field
+Shape definition
 ================================================================================
 
-trait Named = {
+shape Named = {
   name: Str
 }
 
 --------------------------------------------------------------------------------
 
 (source_file
-  (trait_definition
+  (shape_definition
     name: (identifier)
-    (trait_field
+    (shape_field
       name: (identifier)
       type: (type_identifier))))
 
@@ -267,7 +267,7 @@ type Score = Int derive Eq
 --------------------------------------------------------------------------------
 
 (source_file
-  (type_alias
+  (type_definition
     name: (identifier)
     type: (type_identifier)
     derive: (derive_clause
@@ -282,7 +282,7 @@ type ScoreList = Int derive Eq, Show
 --------------------------------------------------------------------------------
 
 (source_file
-  (type_alias
+  (type_definition
     name: (identifier)
     type: (type_identifier)
     derive: (derive_clause
@@ -290,20 +290,40 @@ type ScoreList = Int derive Eq, Show
       trait: (identifier))))
 
 ================================================================================
-Type alias
+Explicit wrapper type definition
 ================================================================================
 
-type Point = { x: Int, y: Int }
+type UserId = UserId(Int)
 
 --------------------------------------------------------------------------------
 
 (source_file
-  (type_alias
+  (type_definition
     name: (identifier)
-    type: (record_type
-      (record_type_field
+    type: (wrapper_type
+      constructor: (identifier)
+      payload: (type_identifier))))
+
+================================================================================
+Constructor-bearing sum type definition
+================================================================================
+
+type Event = { Click({ x: Int, y: Int }), Quit }
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (type_definition
+    name: (identifier)
+    type: (constructor_type_body
+      (enum_variant
         name: (identifier)
-        type: (type_identifier))
-      (record_type_field
-        name: (identifier)
-        type: (type_identifier)))))
+        (record_type
+          (record_type_field
+            name: (identifier)
+            type: (type_identifier))
+          (record_type_field
+            name: (identifier)
+            type: (type_identifier))))
+      (enum_variant
+        name: (identifier)))))

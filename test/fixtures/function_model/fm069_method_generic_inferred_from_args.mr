@@ -1,4 +1,4 @@
-enum Opt[a] = { Some(a), None }
+type Opt[a] = { Some(a), None }
 
 impl[a] Opt[a] = {
   fn map[b](o: Opt[a], f: (a) -> b) -> Opt[b] = match o {
@@ -7,5 +7,5 @@ impl[a] Opt[a] = {
   }
 }
 
-let x = Opt.Some(42)
-let y = x.map((n: Int) -> n.show())
+let x: Opt[Int] = Opt.Some(42)
+let y: Opt[Str] = Opt.map(x, (n: Int) -> Show.show(n))

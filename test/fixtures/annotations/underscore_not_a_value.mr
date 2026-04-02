@@ -1,2 +1,2 @@
 let _ = 1
-puts(_)  # error: Unbound variable
+puts(_)  # error: explicit '=>'

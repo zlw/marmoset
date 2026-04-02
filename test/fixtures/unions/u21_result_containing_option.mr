@@ -1,6 +1,6 @@
 # U21: Result containing Option: Ok(Some(5))
-enum Option[a] = { Some(a), None }
-enum Result[a, e] = { Ok(a), Err(e) }
+type Option[a] = { Some(a), None }
+type Result[a, e] = { Ok(a), Err(e) }
 let x: Result[Option[Int], Str] = Result.Ok(Option.Some(5))
 let out = match x {
   case Result.Ok(inner): match inner {

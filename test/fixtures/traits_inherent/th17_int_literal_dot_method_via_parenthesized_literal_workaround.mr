@@ -2,4 +2,4 @@
 impl Int = {
   fn double(x: Int) -> Int = x + x
 }
-puts((5).double())  # output: 10
+puts(Int.double(5))  # output: 10

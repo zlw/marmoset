@@ -11,6 +11,7 @@
 "case" @keyword.conditional
 "fn" @keyword.function
 "enum" @keyword.type
+"shape" @keyword.type
 "trait" @keyword.type
 "impl" @keyword.type
 "derive" @keyword.type
@@ -150,12 +151,18 @@
 (enum_variant
   name: (identifier) @constructor)
 
+(wrapper_type
+  constructor: (identifier) @constructor)
+
 ; ── Trait definition ──────────────────────────────────────────────
 
 (trait_definition
   name: (identifier) @type)
 
-(trait_field
+(shape_definition
+  name: (identifier) @type)
+
+(shape_field
   name: (identifier) @property)
 
 ; Supertrait names
@@ -180,9 +187,9 @@
 (derive_clause
   trait: (identifier) @type)
 
-; ── Type alias ────────────────────────────────────────────────────
+; ── Type definitions ──────────────────────────────────────────────
 
-(type_alias
+(type_definition
   name: (identifier) @type.definition)
 
 ; ── Type parameters ───────────────────────────────────────────────
@@ -210,6 +217,9 @@
 
 (constructor_pattern
   enum: (identifier) @type
+  variant: (identifier) @constructor)
+
+(constructor_pattern
   variant: (identifier) @constructor)
 
 (record_pattern_field

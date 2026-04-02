@@ -5,5 +5,5 @@ trait Mappable[a] = {
 
 impl Mappable[Int] = {}
 
-puts(1.map((n: Int) -> n.show()))  # output: 1
-puts(1.map((n: Int) -> n + 41))    # output: 42
+puts(Mappable.map(1, (n: Int) -> Show.show(n)))  # output: 1
+puts(Mappable.map(1, (n: Int) -> n + 41))    # output: 42

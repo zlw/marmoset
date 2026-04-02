@@ -1,7 +1,7 @@
 # CG14: Canonical names keep the old collision shapes distinct
-enum B = { V }
-enum A[t] = { Wrap(t) }
-enum AB = { Wrap }
+type B = { V }
+type A[t] = { Wrap(t) }
+type AB = { Wrap }
 fn id(x) = x
 let x = id(AB.Wrap)
 let y = id(A.Wrap(B.V))

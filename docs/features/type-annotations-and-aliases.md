@@ -1,19 +1,28 @@
-# Type Annotations and Type Aliases
+# Type Annotations And Named Types
 
 ## Maintenance
 
-- Last verified: 2026-02-28
+- Last verified: 2026-03-28
 - Implementation status: Canonical (actively maintained)
-- Update trigger: Any language behavior, typechecker, or codegen change affecting this topic
+- Update trigger: Any parser, typechecker, or codegen change affecting annotations or `type`
 
 ## Scope
 
 This doc covers:
 
-- optional annotations on lets/params/returns,
-- generic parameters and constraints syntax,
-- type aliases (`type name = ...`) including generic aliases,
-- record aliases used as named product types.
+- optional annotations on lets, params, and returns,
+- generic parameters and constraint syntax,
+- transparent naming via plain `type`,
+- constructor-bearing nominal wrappers and sums.
+
+## Status Note
+
+The separate `alias` keyword has been removed.
+The surface is:
+
+- `type Name = TypeExpr` for transparent names,
+- `type Name = Name(Payload)` for nominal wrappers,
+- constructor-bearing `type` forms for sums.
 
 ## Syntax
 
@@ -23,114 +32,60 @@ let x: Int = 5
 fn add(a: Int, b: Int) -> Int = a + b
 
 fn id[a](x: a) -> a = x
-fn show_eq[a: Show & Eq](x: a) -> Str = x.show()
+fn show_eq[a: Show & Eq](x: a) -> Str = Show.show(x)
 
 type Point = { x: Int, y: Int }
-type Box[a] = { value: a }
+type Reducer[a] = (a, a) -> a
+
+type UserId = UserId(Int)
 
 let p: Point = { x: 1, y: 2 }
-let s: Box[Str] = { value: "ok" }
+let id = UserId(42)
 ```
 
-## Sub-Features and Use Cases
+## Semantics
 
-- enforce expected boundary types,
-- document intent for APIs,
-- constrain polymorphism when inference is too broad,
-- define reusable type-level names.
+- Annotations are checked against inferred types.
+- Plain `type Name = TypeExpr` is transparent.
+- Constructor-bearing `type` forms introduce nominal identity.
+- Exact structural record names do not create a distinct product identity by themselves.
+- Trait impls, inherent impls, and derives for exact records attach to the exact structural type named by `type`.
 
-## Type-System Semantics
+## When To Use Which
 
-- annotations are checked against inferred types.
-- aliases are resolved in annotation conversion.
-- generic aliases instantiate with provided type arguments.
+Use plain `type Name = TypeExpr` when you want:
+- a reusable structural record name,
+- a shorthand for a function type,
+- a transparent name for an existing type expression.
 
-## Design Alternatives Considered
+Use constructor-bearing `type` forms when you want:
+- nominal identity,
+- derives,
+- inherent methods,
+- trait impls,
+- explicit construction at the call site.
 
-### Alternative A: Mandatory annotations everywhere
+Style convention:
+- Prefer plain `type` for transparent helper names such as `Point`, `Reducer`, or other purely structural views.
+- Prefer constructor-bearing `type` forms for domain entities and opaque values that need nominal meaning, such as `User`, `Monkey`, `UserId`, or `BananaPile`.
 
-Pros:
-- explicit and easy to read for large teams.
+## Codegen
 
-Cons:
-- high verbosity,
-- reduced HM ergonomics.
-
-### Alternative B: Inference only, no annotations
-
-Pros:
-- concise syntax.
-
-Cons:
-- weak API boundaries,
-- difficult inter-module contracts.
-
-### Alternative C: Optional annotations + HM inference (Chosen)
-
-Pros:
-- ergonomic default,
-- explicit where needed,
-- strong compatibility checks.
-
-Cons:
-- dual style requires clear team conventions.
-
-## Codegen: Detailed Design
-
-Annotations and aliases are compile-time only. They do not emit direct runtime entities by default.
-
-### Candidate Approaches
-
-1. Erase annotations/aliases after typecheck (Chosen).
-2. Preserve alias metadata in generated code comments.
-3. Generate nominal wrappers for aliases by default.
-
-### Approach 1 (Chosen)
-
-Pros:
-- zero runtime cost,
-- no duplication with backend types.
-
-Cons:
-- alias names not present in runtime artifacts.
-
-Pipeline details:
-
-1. Parser records annotations and alias declarations in AST.
-2. Annotation conversion resolves alias/type expressions to internal mono types.
-3. Typechecker validates annotation compatibility with inferred types.
-4. Emitter consumes resolved types from the type map; aliases do not emit runtime entities.
-
-### Approach 3 (Nominal wrappers)
-
-Pros:
-- nominal distinction preserved at runtime.
-
-Cons:
-- overhead and semantic shift from structural aliasing.
-
-## Why Current Choice
-
-The language currently treats aliases as type-level convenience/abstraction rather than runtime nominal wrappers. This keeps codegen simple and fast.
-
-## Pros and Cons of Current Model
-
-Pros:
-- clean integration with inference,
-- minimal backend complexity,
-- expressive generic APIs.
-
-Cons:
-- no runtime nominal identity for aliases,
-- alias-heavy code can hide expanded structural complexity.
+- Annotations are compile-time only.
+- Transparent `type` names do not create a distinct runtime type.
+- Constructor-bearing wrappers and sums emit nominal runtime representations.
 
 ## Related Docs
 
-- `docs/features/functions-and-polymorphism.md`
 - `docs/features/records.md`
+- `docs/features/traits.md`
+- `docs/features/inherent-methods.md`
 
 ## Implementation Touchpoints
 
-- Type-expression parsing and alias statements: `lib/frontend/syntax/parser.ml`
-- Annotation conversion and alias registry: `lib/frontend/typecheck/annotation.ml`
-- Annotation validation in inference/checker: `lib/frontend/typecheck/infer.ml`, `lib/frontend/typecheck/checker.ml`
+- Surface parsing: `lib/frontend/syntax/parser.ml`
+- Lowering: `lib/frontend/syntax/lower.ml`
+- Annotation conversion: `lib/frontend/typecheck/annotation.ml`
+- Named-type registry: `lib/frontend/typecheck/type_registry.ml`
+- Construction/type inference: `lib/frontend/typecheck/infer.ml`
+- Go emission: `lib/backend/go/emitter.ml`

@@ -1,5 +1,5 @@
 # U29: Match as argument to puts
-enum Option[a] = { Some(a), None }
+type Option[a] = { Some(a), None }
 let x = Option.Some(30)
 puts(match x {  # output: 30
   case Option.Some(v): v

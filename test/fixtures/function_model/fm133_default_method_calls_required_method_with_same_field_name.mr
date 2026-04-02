@@ -1,7 +1,7 @@
 # FM133: Default trait method calls required method even when a field shares the name
 trait Greet[a] = {
   fn name(x: a) -> Str
-  fn greet(x: a) -> Str = "hi " + x.name()
+  fn greet(x: a) -> Str = "hi " + Greet.name(x)
 }
 
 type Person = { name: Str }
@@ -10,5 +10,6 @@ impl Greet[Person] = {
   fn name(x: Person) -> Str = x.name
 }
 
-let p: Person = { name: "alice" }
-puts(p.greet())  # output: hi alice
+let p = {name: "alice"}
+
+puts(Greet.greet(p))  # output: hi alice

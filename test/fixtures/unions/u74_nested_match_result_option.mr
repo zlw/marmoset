@@ -1,10 +1,10 @@
 # U74: Nested match: outer=Result, inner=Option
-enum Option[a] = { Some(a), None }
-enum Result[a, e] = { Ok(a), Err(e) }
+type Option[a] = { Some(a), None }
+type Result[a, e] = { Ok(a), Err(e) }
 let x: Result[Option[Int], Str] = Result.Ok(Option.Some(42))
 let out = match x {
   case Result.Ok(inner): match inner {
-    case Option.Some(v): "found:" + v.show()
+    case Option.Some(v): "found:" + Show.show(v)
     case Option.None: "found:None"
   }
   case Result.Err(e): "Err:" + e

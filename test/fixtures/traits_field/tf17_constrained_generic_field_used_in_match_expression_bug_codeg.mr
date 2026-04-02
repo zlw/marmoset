@@ -1,5 +1,5 @@
-# TF17: Constrained generic field used in match expression (BUG: codegen missing return)
-trait HasFlag = {  # error: missing return
+# TF17: Constrained generic field used in match expression
+shape HasFlag = {
   flag: Bool
 }
 fn check[t: HasFlag](v: t) -> Str = match v.flag {
@@ -7,4 +7,4 @@ fn check[t: HasFlag](v: t) -> Str = match v.flag {
   case false: "no"
 }
 let r = { flag: true }
-puts(check(r))
+puts(check(r))  # output: yes

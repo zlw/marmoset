@@ -1,5 +1,5 @@
 # CS64: K70b: former parser limit, block body in match arm now supported
-enum Pair = { Make(Int, Str) }
+type Pair = { Make(Int, Str) }
 let p = Pair.Make(42, "hello")
 match p {
   case Pair.Make(n, s): { puts(n) }  # output: 42

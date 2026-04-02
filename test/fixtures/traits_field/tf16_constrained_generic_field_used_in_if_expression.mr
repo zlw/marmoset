@@ -1,5 +1,5 @@
 # TF16: Constrained generic field used in if-expression
-trait HasVal = {
+shape HasVal = {
   val: Int
 }
 fn classify[t: HasVal](v: t) -> Str = {

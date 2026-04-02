@@ -2,10 +2,14 @@ type Flag = { on: Bool }
 
 impl Flag = {
   fn toggle(f: Flag) -> Flag = {
-    { on: !(f.on) }
+    if (f.on) {
+      {on: false}
+    } else {
+      {on: true}
+    }
   }
 }
 
-let f: Flag = { on: true }
-let f2 = f.toggle()
+let f = {on: true}
+let f2 = Flag.toggle(f)
 puts(f2.on)  # output: false

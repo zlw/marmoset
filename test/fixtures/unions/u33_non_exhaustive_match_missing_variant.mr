@@ -1,5 +1,5 @@
-# U33: Non-exhaustive match on 4-variant enum missing one
-enum Dir = { North, South, East, West }
+# U33: Non-exhaustive match on 4-variant named sum missing one
+type Dir = { North, South, East, West }
 let d = Dir.North
 match d {  # error: Non-exhaustive
   case Dir.North: 1

@@ -89,10 +89,8 @@ When complete, all of these are true:
    - module namespace
    - extern qualifier
 4. Value dot calls (`x.m(...)`) resolve in this order:
-   - inherent methods
-   - trait methods
-   - field-function fallback
-5. Trait ambiguity on dot call is call-site error with qualification hint.
+   - callable field only
+5. Receiver-first UFCS candidate collection across inherent methods, trait methods, and free functions was later removed in the direct-surface follow-up.
 6. Method generics syntax is `fn name[b](...)`.
 7. Method call explicit type args syntax is `.name[type_args](...)`.
 8. Disambiguation rule for `.name[ ... ]`:

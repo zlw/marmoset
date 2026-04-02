@@ -1,0 +1,10 @@
+trait Show[a] = {
+  fn show(x: a) -> Str
+}
+
+impl Show[Int] = {
+  fn show(x: Int) -> Str = if (x == 42) { "ok" } else { "bad" }
+}
+
+let show_int = Show.show
+puts(show_int(42))  # output: ok

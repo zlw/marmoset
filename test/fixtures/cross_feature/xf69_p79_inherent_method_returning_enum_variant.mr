@@ -3,7 +3,7 @@ enum OptionInt = { Some(Int), None }
 impl Int = {
   fn to_option(x: Int) -> OptionInt = OptionInt.Some(x)
 }
-let result = 42.to_option()
+let result = Int.to_option(42)
 match result {  # output: 42
   case OptionInt.Some(n): puts(n)
   case OptionInt.None: puts(0)

@@ -1,5 +1,5 @@
 # T67: Trait solver: array lacks Show (should fail typecheck)
-fn check[a: Show](x: a) -> Str = x.show()
+fn check[a: Show](x: a) -> Str = Show.show(x)
 let arr = [1, 2, 3]
 let result = check(arr)  # error: does not implement trait
 puts(result)

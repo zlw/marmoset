@@ -1,5 +1,5 @@
 # CM20: Same trait method on same type from different call sites
 let a = 42
 let b = 99
-puts(a.show())  # output: 42
-puts(b.show())  # output: 99
+puts(Show.show(a))  # output: 42
+puts(Show.show(b))  # output: 99

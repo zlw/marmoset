@@ -2,4 +2,4 @@
 trait Show[a] = {
   fn show(x: a) -> Str
 }
-let x: Show = 1  # error: cannot be used as a type in vNext
+let x: Show = 1  # error: cannot be used as a type; use a constrained type parameter or Dyn[...] instead

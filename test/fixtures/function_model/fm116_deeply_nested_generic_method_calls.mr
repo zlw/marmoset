@@ -6,7 +6,10 @@ impl Val = {
   }
 }
 
-let v: Val = { v: 2 }
+let v: Val = {v: 2}
+
+fn times_ten(n: Int) -> Int = n * 10
+
 # Deeply nested: apply(apply(apply(...)))
-let r = v.apply((n: Int) -> n * 10)
-puts(r.show())  # output: 20
+let r: Int = Val.apply(v, times_ten)
+puts(Show.show(r))  # output: 20

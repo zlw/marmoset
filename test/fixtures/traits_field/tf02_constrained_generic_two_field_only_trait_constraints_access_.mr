@@ -1,8 +1,8 @@
-# TF02: Constrained generic: two field-only trait constraints, access each field
-trait HasName = {
+# TF02: Constrained generic: two shape constraints, access each field
+shape HasName = {
   name: Str
 }
-trait HasAge = {
+shape HasAge = {
   age: Int
 }
 fn describe[t: HasName & HasAge](v: t) -> Str = v.name

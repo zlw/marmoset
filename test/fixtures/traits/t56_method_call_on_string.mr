@@ -6,4 +6,4 @@ impl Show[Str] = {
   fn show(x: Str) -> Str = x
 }
 let s = "hello"
-puts(s.show())  # output: hello
+puts(Show.show(s))  # output: hello

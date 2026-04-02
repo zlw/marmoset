@@ -4,10 +4,10 @@ trait Render[a] = {
 }
 
 impl Render[Int] = {
-  fn render(x: Int) -> Str = "render:" + x.show()
+  fn render(x: Int) -> Str = "render:" + Show.show(x)
 }
 
 fn box() -> Dyn[Show] & Dyn[Render] = 42
 let value = box()
-puts(value.show())    # output: 42
-puts(value.render())  # output: render:42
+puts(Show.show(value))    # output: 42
+puts(Render.render(value))  # output: render:42

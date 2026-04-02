@@ -1,5 +1,5 @@
-# XF02: A2: Spread of trait-typed param into new record
-trait Named = {
+# XF02: A2: Spread of shape-constrained param into new record
+shape Named = {
   name: Str
 }
 fn wrap[t: Named](x: t) -> { name: Str } = {

@@ -60,9 +60,10 @@ let find_close_paren ~source ~start ~limit =
   in
   scan (limit - 1)
 
-(* Check if an expression is a chain-able receiver (MethodCall or FieldAccess) *)
-let is_chain_receiver (expr : Ast.AST.expression) =
+(* Check if an expression is a chain-able receiver (MethodCall or FieldAccess). *)
+let rec is_chain_receiver (expr : Ast.AST.expression) =
   match expr.expr with
+  | Ast.AST.TypeApply (inner, _) -> is_chain_receiver inner
   | Ast.AST.MethodCall _ | Ast.AST.FieldAccess _ -> true
   | _ -> false
 
@@ -210,7 +211,7 @@ let rec walk_stmt ~source ~type_map ~range_start ~range_end ~hints (stmt : Ast.A
           (fun (m : Ast.AST.method_sig) ->
             Option.iter (walk_expr ~source ~type_map ~range_start ~range_end ~hints) m.method_default_impl)
           methods
-    | Ast.AST.EnumDef _ | Ast.AST.DeriveDef _ | Ast.AST.TypeAlias _ -> ()
+    | Ast.AST.EnumDef _ | Ast.AST.TypeDef _ | Ast.AST.ShapeDef _ | Ast.AST.DeriveDef _ | Ast.AST.TypeAlias _ -> ()
 
 (* Walk expressions to find nested functions *)
 and walk_expr ~source ~type_map ~range_start ~range_end ~hints (expr : Ast.AST.expression) =
@@ -231,7 +232,8 @@ and walk_expr ~source ~type_map ~range_start ~range_end ~hints (expr : Ast.AST.e
     | Ast.AST.Infix (l, _, r) ->
         walk_expr ~source ~type_map ~range_start ~range_end ~hints l;
         walk_expr ~source ~type_map ~range_start ~range_end ~hints r
-    | Ast.AST.Prefix (_, e) -> walk_expr ~source ~type_map ~range_start ~range_end ~hints e
+    | Ast.AST.Prefix (_, e) | Ast.AST.TypeApply (e, _) ->
+        walk_expr ~source ~type_map ~range_start ~range_end ~hints e
     | Ast.AST.Index (arr, idx) ->
         walk_expr ~source ~type_map ~range_start ~range_end ~hints arr;
         walk_expr ~source ~type_map ~range_start ~range_end ~hints idx
@@ -380,28 +382,28 @@ let%test "multiple let bindings each get hints" =
   && List.exists (fun l -> l = ": String") labels
 
 let%test "multiline method chain shows intermediate type hint" =
-  let source = "let result = 42.show()\n  .show();" in
+  let source =
+    "let render = (_: Int) -> \"ok\"; let next = (_: Int) -> { render: render }; let result = { next: next }.next(0)\n  .render(0);"
+  in
   let hints = get_hints source in
-  let labels = hint_labels hints in
-  (* Let binding hint ": String" + chain hint ": String" for 42.show() receiver *)
-  let string_hints = List.filter (fun l -> l = ": String") labels in
-  List.length string_hints >= 2
+  let chain_hints = List.filter (fun (h : Lsp_t.InlayHint.t) -> h.paddingLeft = Some true) hints in
+  List.length chain_hints = 1
 
 let%test "single-line method chain gets no chain hint" =
-  let source = "let result = 42.show().show();" in
+  let source =
+    "let render = (_: Int) -> \"ok\"; let next = (_: Int) -> { render: render }; let result = { next: next }.next(0).render(0);"
+  in
   let hints = get_hints source in
-  let labels = hint_labels hints in
-  (* Only the let binding hint ": String", no intermediate chain hint *)
-  let string_hints = List.filter (fun l -> l = ": String") labels in
-  List.length string_hints = 1
+  let chain_hints = List.filter (fun (h : Lsp_t.InlayHint.t) -> h.paddingLeft = Some true) hints in
+  chain_hints = []
 
 let%test "multiline chain with 3 steps shows intermediate type hints" =
-  let source = "let result = 42.add(1)\n  .add(2)\n  .show();" in
+  let source =
+    "let done_ = (_: Int) -> \"ok\"; let next2 = (_: Int) -> { done: done_ }; let next1 = (_: Int) -> { next: next2 }; let result = { next: next1 }.next(0)\n  .next(0)\n  .done(0);"
+  in
   let hints = get_hints source in
-  let labels = hint_labels hints in
-  (* Two chain hints ": Int" for .add(1) and .add(2) intermediate results *)
-  let int_hints = List.filter (fun l -> l = ": Int") labels in
-  List.length int_hints >= 2
+  let chain_hints = List.filter (fun (h : Lsp_t.InlayHint.t) -> h.paddingLeft = Some true) hints in
+  List.length chain_hints = 2
 
 let%test "non-chain multiline expression gets no chain hint" =
   let source = "let x = len(\n  [1, 2, 3]\n);" in
@@ -411,49 +413,30 @@ let%test "non-chain multiline expression gets no chain hint" =
   List.length labels = 1 && List.hd labels = ": Int"
 
 let%test "chain hint position is after receiver closing paren, not at dot" =
-  (* "let result = 42.show()\n  .show();"
-     offset: l=0..t=2, ' '=3, r=4..t=9, ' '=10, '='=11, ' '=12,
-             '4'=13, '2'=14, '.'=15, s=16..w=19, '('=20, ')'=21,
-             '\n'=22, ' '=23, ' '=24, '.'=25, s=26..w=29, '('=30, ')'=31, ';'=32
-     The chain hint should be at offset 22 (right after ')' at 21), which is
-     line 0, character 22 in LSP terms (end of first line). *)
-  let source = "let result = 42.show()\n  .show();" in
-  let hints = get_hints source in
-  let chain_hints =
-    List.filter
-      (fun (h : Lsp_t.InlayHint.t) ->
-        h.paddingLeft = Some true
-        &&
-        match h.label with
-        | `String s -> s = ": String"
-        | _ -> false)
-      hints
+  let source =
+    "let render = (_: Int) -> \"ok\"; let next = (_: Int) -> { render: render }; let result = { next: next }.next(0)\n  .render(0);"
   in
+  let hints = get_hints source in
+  let chain_hints = List.filter (fun (h : Lsp_t.InlayHint.t) -> h.paddingLeft = Some true) hints in
+  let expected_char = String.index source '\n' in
   match chain_hints with
-  | [ h ] -> h.position.line = 0 && h.position.character = 22
+  | [ h ] -> h.position.line = 0 && h.position.character = expected_char
   | _ -> false
 
 let%test "multiline chain with tab indentation" =
-  let source = "let result = 42.show()\n\t.show();" in
+  let source =
+    "let render = (_: Int) -> \"ok\"; let next = (_: Int) -> { render: render }; let result = { next: next }.next(0)\n\t.render(0);"
+  in
   let hints = get_hints source in
-  let labels = hint_labels hints in
-  let string_hints = List.filter (fun l -> l = ": String") labels in
-  (* Let binding hint + chain hint *)
-  List.length string_hints >= 2
+  let chain_hints = List.filter (fun (h : Lsp_t.InlayHint.t) -> h.paddingLeft = Some true) hints in
+  List.length chain_hints = 1
 
 let%test "expression-statement chain (no let binding) gets chain hint" =
-  let source = "42.show()\n  .show();" in
-  let hints = get_hints source in
-  let chain_hints =
-    List.filter
-      (fun (h : Lsp_t.InlayHint.t) ->
-        h.paddingLeft = Some true
-        &&
-        match h.label with
-        | `String s -> s = ": String"
-        | _ -> false)
-      hints
+  let source =
+    "let render = (_: Int) -> \"ok\"; let next = (_: Int) -> { render: render }; { next: next }.next(0)\n  .render(0);"
   in
+  let hints = get_hints source in
+  let chain_hints = List.filter (fun (h : Lsp_t.InlayHint.t) -> h.paddingLeft = Some true) hints in
   List.length chain_hints = 1
 
 let%test "find_recv_actual_end skips # line comments" =
@@ -478,22 +461,23 @@ let%test "find_recv_actual_end skips # line comments" =
 
 let%test "multiline chain with # comment between segments shows hint" =
   (* End-to-end: comment between chain segments should not break hint placement.
-     "let r = 42.show()  # comment\n  .show();"
-     ')' at offset 16, hint should be at offset 17 = line 0 char 17 *)
-  let source = "let r = 42.show()  # comment\n  .show();" in
+     hint should be placed at the end of the first line, after the receiver call. *)
+  let source =
+    "let render = (_: Int) -> \"ok\"; let next = (_: Int) -> { render: render }; let r = { next: next }.next(0)  # comment\n  .render(0);"
+  in
   let hints = get_hints source in
-  let chain_hints =
-    List.filter
-      (fun (h : Lsp_t.InlayHint.t) ->
-        h.paddingLeft = Some true
-        &&
-        match h.label with
-        | `String s -> s = ": String"
-        | _ -> false)
-      hints
+  let chain_hints = List.filter (fun (h : Lsp_t.InlayHint.t) -> h.paddingLeft = Some true) hints in
+  let expected_char =
+    let rec scan i =
+      if source.[i] = ' ' then
+        scan (i - 1)
+      else
+        i + 1
+    in
+    scan (String.index source '#' - 1)
   in
   match chain_hints with
-  | [ h ] -> h.position.line = 0 && h.position.character = 17
+  | [ h ] -> h.position.line = 0 && h.position.character = expected_char
   | _ -> false
 
 let%test "find_recv_actual_end with only whitespace between dot and recv" =

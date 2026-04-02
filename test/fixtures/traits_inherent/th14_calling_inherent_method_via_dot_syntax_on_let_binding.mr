@@ -3,4 +3,4 @@ impl Int = {
   fn double(x: Int) -> Int = x + x
 }
 let n = 4
-puts(n.double())  # output: 8
+puts(Int.double(n))  # output: 8

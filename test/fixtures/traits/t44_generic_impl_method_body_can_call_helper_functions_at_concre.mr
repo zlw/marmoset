@@ -6,4 +6,4 @@ fn render_len(n: Int) -> Str = "ok"
 impl[b: Show] Show[List[b]] = {
   fn show(x: List[b]) -> Str = render_len(len(x))
 }
-puts([1, 2].show())  # output: ok
+puts(Show.show([1, 2]))  # output: ok

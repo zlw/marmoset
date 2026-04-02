@@ -1,0 +1,12 @@
+# U90: Field-path narrowing works on direct record projections
+type Box = { value: Int | Str }
+
+fn render(box: Box) -> Str = {
+  if (box.value is Int) {
+    Show.show(box.value)
+  } else {
+    box.value
+  }
+}
+
+puts(render({value: 1}))  # output: 1

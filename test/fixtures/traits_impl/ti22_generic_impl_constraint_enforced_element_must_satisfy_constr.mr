@@ -1,11 +1,9 @@
 # TI22: Generic impl constraint enforced: element must satisfy constraint
-trait Named = {
-  name: Str
-}
+shape Named = { name: Str }
 trait Show[a] = {
   fn show(x: a) -> Str
 }
 impl[b: Named] Show[List[b]] = {
   fn show(x: List[b]) -> Str = "ok"
 }
-puts([1, 2].show())  # error: does not satisfy
+puts(Show.show([1, 2]))  # error: constraint Named

@@ -10,35 +10,35 @@ let failwith_unimplemented variant =
   failwith (Printf.sprintf "Lower: unexpected surface-only form '%s' after parsing" variant)
 
 type lower_context = {
-  trait_names : StringSet.t;
+  constraint_names : StringSet.t;
   type_names : StringSet.t;
 }
 
-let builtin_trait_names = [ "Eq"; "Show"; "Debug"; "Ord"; "Hash"; "Num"; "Neg" ]
+let builtin_trait_names = [ "Eq"; "Show"; "Debug"; "Ord"; "Hash"; "Num"; "Rem"; "Neg" ]
 
 let builtin_type_names =
   [ "Int"; "Float"; "Bool"; "Str"; "String"; "Unit"; "Null"; "List"; "Map"; "Option"; "Result"; "Ordering" ]
 
 let empty_lower_context =
   {
-    trait_names = List.fold_left (fun acc name -> StringSet.add name acc) StringSet.empty builtin_trait_names;
+    constraint_names = List.fold_left (fun acc name -> StringSet.add name acc) StringSet.empty builtin_trait_names;
     type_names = List.fold_left (fun acc name -> StringSet.add name acc) StringSet.empty builtin_type_names;
   }
 
 let lower_context_of_program (prog : Surface.surface_program) : lower_context =
   List.fold_left
-    (fun ({ trait_names; type_names } as acc) (ts : Surface.surface_top_stmt) ->
+    (fun ({ constraint_names; type_names } as acc) (ts : Surface.surface_top_stmt) ->
       match ts.std_decl with
-      | Surface.STraitDef { name; _ } -> { acc with trait_names = StringSet.add name trait_names }
-      | Surface.SEnumDef { name; _ } | Surface.STypeDef { alias_name = name; _ } ->
-          { acc with type_names = StringSet.add name type_names }
+      | Surface.STraitDef { name; _ } | Surface.SShapeDef { shape_name = name; _ } ->
+          { acc with constraint_names = StringSet.add name constraint_names }
+      | Surface.STypeDef { type_name = name; _ } -> { acc with type_names = StringSet.add name type_names }
       | _ -> acc)
     empty_lower_context prog
 
 let trait_shorthand_constraint (ctx : lower_context) (st : Surface.surface_type_expr) : string list option =
   match st with
   | Surface.STConstraintShorthand traits -> Some traits
-  | Surface.STCon name when StringSet.mem name ctx.trait_names && not (StringSet.mem name ctx.type_names) ->
+  | Surface.STCon name when StringSet.mem name ctx.constraint_names && not (StringSet.mem name ctx.type_names) ->
       Some [ name ]
   | _ -> None
 
@@ -68,7 +68,7 @@ let is_lower_ident (name : string) : bool =
   | _ -> false
 
 let known_type_name (ctx : lower_context) (name : string) : bool =
-  StringSet.mem name ctx.type_names || StringSet.mem name ctx.trait_names
+  StringSet.mem name ctx.type_names || StringSet.mem name ctx.constraint_names
 
 let infer_impl_type_params (ctx : lower_context) (impl_for_type : Surface.surface_type_expr) :
     AST.generic_param list =
@@ -211,6 +211,201 @@ let rec lower_pattern (sp : Surface.surface_pattern) : AST.pattern =
 
 (* ── Expressions ── *)
 
+let rec placeholder_count_expr (expr : AST.expression) : int =
+  match expr.expr with
+  | AST.Identifier "_" -> 1
+  | AST.Identifier _ | AST.Integer _ | AST.Float _ | AST.Boolean _ | AST.String _ -> 0
+  | AST.Prefix (_, inner) | AST.TypeCheck (inner, _) | AST.FieldAccess (inner, _) -> placeholder_count_expr inner
+  | AST.Infix (left, _, right) -> placeholder_count_expr left + placeholder_count_expr right
+  | AST.TypeApply (callee, _) -> placeholder_count_expr callee
+  | AST.If (cond, cons, alt) -> (
+      placeholder_count_expr cond
+      + placeholder_count_stmt cons
+      +
+      match alt with
+      | None -> 0
+      | Some stmt -> placeholder_count_stmt stmt)
+  | AST.Function _ -> 0
+  | AST.Call (fn_expr, args) ->
+      placeholder_count_expr fn_expr + List.fold_left (fun acc arg -> acc + placeholder_count_expr arg) 0 args
+  | AST.Array elements -> List.fold_left (fun acc arg -> acc + placeholder_count_expr arg) 0 elements
+  | AST.Hash pairs ->
+      List.fold_left
+        (fun acc (key, value) -> acc + placeholder_count_expr key + placeholder_count_expr value)
+        0 pairs
+  | AST.Index (container, index) -> placeholder_count_expr container + placeholder_count_expr index
+  | AST.EnumConstructor (_, _, args) -> List.fold_left (fun acc arg -> acc + placeholder_count_expr arg) 0 args
+  | AST.Match (scrutinee, arms) ->
+      placeholder_count_expr scrutinee
+      + List.fold_left (fun acc arm -> acc + placeholder_count_expr arm.AST.body) 0 arms
+  | AST.RecordLit (fields, spread) -> (
+      List.fold_left
+        (fun acc (field : AST.record_field) ->
+          acc
+          +
+          match field.field_value with
+          | None -> 0
+          | Some value -> placeholder_count_expr value)
+        0 fields
+      +
+      match spread with
+      | None -> 0
+      | Some spread_expr -> placeholder_count_expr spread_expr)
+  | AST.MethodCall { mc_receiver; mc_args; _ } ->
+      placeholder_count_expr mc_receiver
+      + List.fold_left (fun acc arg -> acc + placeholder_count_expr arg) 0 mc_args
+  | AST.BlockExpr stmts -> placeholder_count_stmt_list stmts
+
+and placeholder_count_stmt (stmt : AST.statement) : int =
+  match stmt.stmt with
+  | AST.Let { value; _ } -> placeholder_count_expr value
+  | AST.Return expr | AST.ExpressionStmt expr -> placeholder_count_expr expr
+  | AST.Block stmts -> placeholder_count_stmt_list stmts
+  | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ | AST.TraitDef _ | AST.ImplDef _ | AST.InherentImplDef _
+  | AST.DeriveDef _ | AST.TypeAlias _ ->
+      0
+
+and placeholder_count_stmt_list (stmts : AST.statement list) : int =
+  List.fold_left (fun acc stmt -> acc + placeholder_count_stmt stmt) 0 stmts
+
+let is_placeholder_identifier (expr : AST.expression) : bool =
+  match expr.expr with
+  | AST.Identifier "_" -> true
+  | _ -> false
+
+let rec replace_placeholder_with_expr (replacement : AST.expression) (expr : AST.expression) : AST.expression =
+  match expr.expr with
+  | AST.Identifier "_" -> replacement
+  | AST.Identifier _ | AST.Integer _ | AST.Float _ | AST.Boolean _ | AST.String _ -> expr
+  | AST.Prefix (op, inner) ->
+      { expr with expr = AST.Prefix (op, replace_placeholder_with_expr replacement inner) }
+  | AST.Infix (left, op, right) ->
+      {
+        expr with
+        expr =
+          AST.Infix
+            (replace_placeholder_with_expr replacement left, op, replace_placeholder_with_expr replacement right);
+      }
+  | AST.TypeCheck (inner, typ) ->
+      { expr with expr = AST.TypeCheck (replace_placeholder_with_expr replacement inner, typ) }
+  | AST.TypeApply (callee, type_args) ->
+      { expr with expr = AST.TypeApply (replace_placeholder_with_expr replacement callee, type_args) }
+  | AST.If (cond, cons, alt) ->
+      {
+        expr with
+        expr =
+          AST.If
+            ( replace_placeholder_with_expr replacement cond,
+              replace_placeholder_with_stmt replacement cons,
+              Option.map (replace_placeholder_with_stmt replacement) alt );
+      }
+  | AST.Function _ -> expr
+  | AST.Call (fn_expr, args) ->
+      {
+        expr with
+        expr =
+          AST.Call
+            ( replace_placeholder_with_expr replacement fn_expr,
+              List.map (replace_placeholder_with_expr replacement) args );
+      }
+  | AST.Array elements ->
+      { expr with expr = AST.Array (List.map (replace_placeholder_with_expr replacement) elements) }
+  | AST.Hash pairs ->
+      {
+        expr with
+        expr =
+          AST.Hash
+            (List.map
+               (fun (key, value) ->
+                 (replace_placeholder_with_expr replacement key, replace_placeholder_with_expr replacement value))
+               pairs);
+      }
+  | AST.Index (container, index) ->
+      {
+        expr with
+        expr =
+          AST.Index
+            (replace_placeholder_with_expr replacement container, replace_placeholder_with_expr replacement index);
+      }
+  | AST.EnumConstructor (enum_name, variant_name, args) ->
+      {
+        expr with
+        expr =
+          AST.EnumConstructor (enum_name, variant_name, List.map (replace_placeholder_with_expr replacement) args);
+      }
+  | AST.Match (scrutinee, arms) ->
+      {
+        expr with
+        expr =
+          AST.Match
+            ( replace_placeholder_with_expr replacement scrutinee,
+              List.map
+                (fun (arm : AST.match_arm) ->
+                  { arm with body = replace_placeholder_with_expr replacement arm.body })
+                arms );
+      }
+  | AST.RecordLit (fields, spread) ->
+      {
+        expr with
+        expr =
+          AST.RecordLit
+            ( List.map
+                (fun (field : AST.record_field) ->
+                  {
+                    field with
+                    field_value = Option.map (replace_placeholder_with_expr replacement) field.field_value;
+                  })
+                fields,
+              Option.map (replace_placeholder_with_expr replacement) spread );
+      }
+  | AST.FieldAccess (receiver, field_name) ->
+      { expr with expr = AST.FieldAccess (replace_placeholder_with_expr replacement receiver, field_name) }
+  | AST.MethodCall { mc_receiver; mc_method; mc_type_args; mc_args } ->
+      {
+        expr with
+        expr =
+          AST.MethodCall
+            {
+              mc_receiver = replace_placeholder_with_expr replacement mc_receiver;
+              mc_method;
+              mc_type_args;
+              mc_args = List.map (replace_placeholder_with_expr replacement) mc_args;
+            };
+      }
+  | AST.BlockExpr stmts ->
+      { expr with expr = AST.BlockExpr (List.map (replace_placeholder_with_stmt replacement) stmts) }
+
+and replace_placeholder_with_stmt (replacement : AST.expression) (stmt : AST.statement) : AST.statement =
+  let rewritten =
+    match stmt.stmt with
+    | AST.Let ({ value; _ } as let_binding) ->
+        AST.Let { let_binding with value = replace_placeholder_with_expr replacement value }
+    | AST.Return expr -> AST.Return (replace_placeholder_with_expr replacement expr)
+    | AST.ExpressionStmt expr -> AST.ExpressionStmt (replace_placeholder_with_expr replacement expr)
+    | AST.Block stmts -> AST.Block (List.map (replace_placeholder_with_stmt replacement) stmts)
+    | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ | AST.TraitDef _ | AST.ImplDef _ | AST.InherentImplDef _
+    | AST.DeriveDef _ | AST.TypeAlias _ ->
+        stmt.stmt
+  in
+  { stmt with stmt = rewritten }
+
+let lower_pipe_expr (lhs : AST.expression) (rhs : AST.expression) : AST.expr_kind =
+  let placeholder_count = placeholder_count_expr rhs in
+  match rhs.expr with
+  | AST.MethodCall { mc_receiver; mc_args; _ }
+    when placeholder_count = 1
+         && (is_placeholder_identifier mc_receiver || List.exists is_placeholder_identifier mc_args) ->
+      (replace_placeholder_with_expr lhs rhs).expr
+  | AST.MethodCall { mc_receiver; mc_method; mc_type_args; mc_args } ->
+      AST.MethodCall { mc_receiver; mc_method; mc_type_args; mc_args = lhs :: mc_args }
+  | AST.Call (callee, args)
+    when placeholder_count = 1 && (is_placeholder_identifier callee || List.exists is_placeholder_identifier args)
+    ->
+      (replace_placeholder_with_expr lhs rhs).expr
+  | AST.Call (callee, args) -> AST.Call (callee, lhs :: args)
+  | _ when placeholder_count = 1 -> (replace_placeholder_with_expr lhs rhs).expr
+  | _ -> AST.Call (rhs, [ lhs ])
+
 let rec lower_expr_with_ctx (ctx : lower_context) (id_supply : Id_supply.Id_supply.t) (se : Surface.surface_expr)
     : AST.expression =
   let pos = se.se_pos and end_pos = se.se_end_pos and file_id = se.se_file_id and id = se.se_id in
@@ -224,12 +419,18 @@ let rec lower_expr_with_ctx (ctx : lower_context) (id_supply : Id_supply.Id_supp
     | Surface.SEArray elems -> AST.Array (List.map (lower_expr_with_ctx ctx id_supply) elems)
     | Surface.SEIndex (container, idx) ->
         AST.Index (lower_expr_with_ctx ctx id_supply container, lower_expr_with_ctx ctx id_supply idx)
+    | Surface.SETypeApply (callee, type_args) ->
+        AST.TypeApply (lower_expr_with_ctx ctx id_supply callee, List.map lower_type_expr type_args)
     | Surface.SEHash pairs ->
         AST.Hash
           (List.map
              (fun (k, v) -> (lower_expr_with_ctx ctx id_supply k, lower_expr_with_ctx ctx id_supply v))
              pairs)
     | Surface.SEPrefix (op, e) -> AST.Prefix (op, lower_expr_with_ctx ctx id_supply e)
+    | Surface.SEInfix (l, "|>", r) ->
+        let lhs = lower_expr_with_ctx ctx id_supply l in
+        let rhs = lower_expr_with_ctx ctx id_supply r in
+        lower_pipe_expr lhs rhs
     | Surface.SEInfix (l, op, r) ->
         AST.Infix (lower_expr_with_ctx ctx id_supply l, op, lower_expr_with_ctx ctx id_supply r)
     | Surface.SETypeCheck (e, t) -> AST.TypeCheck (lower_expr_with_ctx ctx id_supply e, lower_type_expr t)
@@ -269,7 +470,14 @@ let rec lower_expr_with_ctx (ctx : lower_context) (id_supply : Id_supply.Id_supp
         let generics, params = lower_callable_signature ctx None se_lambda_params in
         let fn_body = lower_expr_or_block_to_stmt_with_ctx ctx id_supply se_lambda_body in
         AST.Function
-          { generics; params; return_type = None; is_effectful = se_lambda_is_effectful; body = fn_body }
+          {
+            origin = AST.ExplicitLambda;
+            generics;
+            params;
+            return_type = None;
+            is_effectful = se_lambda_is_effectful;
+            body = fn_body;
+          }
     | Surface.SEPlaceholder -> failwith_unimplemented "SEPlaceholder"
     | Surface.SEBlockExpr block -> AST.BlockExpr (List.map (lower_stmt_with_ctx ctx id_supply) block.sb_stmts)
   in
@@ -400,6 +608,14 @@ let lower_variant_with_bound_vars (bound_type_vars : StringSet.t) (sv : Surface.
       variant_fields = List.map (lower_type_expr_with_bound_vars bound_type_vars) sv.sv_fields;
     }
 
+let lower_record_type_field_with_bound_vars
+    (bound_type_vars : StringSet.t) (f : Surface.surface_record_type_field) : AST.record_type_field =
+  AST.
+    {
+      field_name = f.Surface.sf_name;
+      field_type = lower_type_expr_with_bound_vars bound_type_vars f.Surface.sf_type;
+    }
+
 let lower_top_decl_with_ctx
     (ctx : lower_context) (id_supply : Id_supply.Id_supply.t) (ts : Surface.surface_top_stmt) : AST.statement list
     =
@@ -496,6 +712,7 @@ let lower_top_decl_with_ctx
         AST.mk_expr ~id:(Id_supply.Id_supply.fresh id_supply) ~pos ~end_pos ~file_id
           (AST.Function
              {
+               origin = AST.DeclaredFunction;
                generics;
                params;
                return_type = Option.map (lower_type_expr_with_bound_vars bound_type_vars) return_type;
@@ -504,68 +721,78 @@ let lower_top_decl_with_ctx
              })
       in
       [ AST.mk_stmt ~pos ~end_pos ~file_id (AST.Let { name; value = fn_expr; type_annotation = None }) ]
-  | Surface.SEnumDef { name; type_params; variants; derive } ->
-      let bound_type_vars = bound_type_vars_of_names type_params in
-      let enum_stmt =
-        AST.mk_stmt ~pos ~end_pos ~file_id
-          (AST.EnumDef
-             { name; type_params; variants = List.map (lower_variant_with_bound_vars bound_type_vars) variants })
+  | Surface.STypeDef { type_name; type_type_params; type_body; derive } ->
+      let bound_type_vars = bound_type_vars_of_names type_type_params in
+      let type_stmt =
+        match type_body with
+        | Surface.STTransparent transparent_body ->
+            AST.mk_stmt ~pos ~end_pos ~file_id
+              (AST.TypeAlias
+                 {
+                   alias_name = type_name;
+                   alias_type_params = type_type_params;
+                   alias_body = lower_type_expr_with_bound_vars bound_type_vars transparent_body;
+                 })
+        | Surface.STNamedProduct fields ->
+            AST.mk_stmt ~pos ~end_pos ~file_id
+              (AST.TypeDef
+                 {
+                   type_name;
+                   type_type_params;
+                   type_body =
+                     AST.NamedTypeProduct
+                       (List.map (lower_record_type_field_with_bound_vars bound_type_vars) fields);
+                 })
+        | Surface.STNamedWrapper wrapper_body ->
+            AST.mk_stmt ~pos ~end_pos ~file_id
+              (AST.TypeDef
+                 {
+                   type_name;
+                   type_type_params;
+                   type_body = AST.NamedTypeWrapper (lower_type_expr_with_bound_vars bound_type_vars wrapper_body);
+                 })
+        | Surface.STNamedSum variants ->
+            AST.mk_stmt ~pos ~end_pos ~file_id
+              (AST.EnumDef
+                 {
+                   name = type_name;
+                   type_params = type_type_params;
+                   variants = List.map (lower_variant_with_bound_vars bound_type_vars) variants;
+                 })
       in
       let derive_stmts =
         if derive = [] then
           []
         else
           let for_type =
-            if type_params = [] then
-              AST.TCon name
+            if type_type_params = [] then
+              AST.TCon type_name
             else
-              AST.TApp (name, List.map (fun p -> AST.TVar p) type_params)
+              AST.TApp (type_name, List.map (fun p -> AST.TVar p) type_type_params)
           in
           [
             AST.mk_stmt ~pos ~end_pos ~file_id
               (AST.DeriveDef { derive_traits = derive; derive_for_type = for_type });
           ]
       in
-      enum_stmt :: derive_stmts
-  | Surface.STypeDef { alias_name; alias_type_params; alias_body; derive } ->
-      let bound_type_vars = bound_type_vars_of_names alias_type_params in
-      let alias_stmt =
+      type_stmt :: derive_stmts
+  | Surface.SShapeDef { shape_name; shape_type_params; shape_fields } ->
+      let bound_type_vars = bound_type_vars_of_names shape_type_params in
+      let shape_stmt =
         AST.mk_stmt ~pos ~end_pos ~file_id
-          (AST.TypeAlias
+          (AST.ShapeDef
              {
-               alias_name;
-               alias_type_params;
-               alias_body = lower_type_expr_with_bound_vars bound_type_vars alias_body;
+               shape_name;
+               shape_type_params;
+               shape_fields = List.map (lower_record_type_field_with_bound_vars bound_type_vars) shape_fields;
              })
       in
-      let derive_stmts =
-        if derive = [] then
-          []
-        else
-          let for_type =
-            if alias_type_params = [] then
-              AST.TCon alias_name
-            else
-              AST.TApp (alias_name, List.map (fun p -> AST.TVar p) alias_type_params)
-          in
-          [
-            AST.mk_stmt ~pos ~end_pos ~file_id
-              (AST.DeriveDef { derive_traits = derive; derive_for_type = for_type });
-          ]
-      in
-      alias_stmt :: derive_stmts
-  | Surface.STraitDef { name; type_param; supertraits; fields; methods } ->
+      [ shape_stmt ]
+  | Surface.STraitDef { name; type_param; supertraits; methods } ->
       let trait_bound_type_vars =
         match type_param with
         | None -> StringSet.empty
         | Some param -> StringSet.singleton param
-      in
-      let lower_field f =
-        AST.
-          {
-            field_name = f.Surface.sf_name;
-            field_type = lower_type_expr_with_bound_vars trait_bound_type_vars f.Surface.sf_type;
-          }
       in
       let lower_method_sig_with_trait_bindings (sm : Surface.surface_method_sig) =
         let method_generics, method_params =
@@ -594,14 +821,7 @@ let lower_top_decl_with_ctx
           }
       in
       let td =
-        AST.
-          {
-            name;
-            type_param;
-            supertraits;
-            fields = List.map lower_field fields;
-            methods = List.map lower_method_sig_with_trait_bindings methods;
-          }
+        AST.{ name; type_param; supertraits; methods = List.map lower_method_sig_with_trait_bindings methods }
       in
       [ AST.mk_stmt ~pos ~end_pos ~file_id (AST.TraitDef td) ]
   | Surface.SAmbiguousImplDef { impl_type_params; impl_head_type; impl_methods } -> (
@@ -641,19 +861,20 @@ let%test "lower SLet integer" =
   | [ { AST.stmt = AST.Let { name = "x"; value = { AST.expr = AST.Integer 42L; _ }; _ }; _ } ] -> true
   | _ -> false
 
-let%test "lower SEnumDef" =
+let%test "lower STNamedSum type definition" =
   let id_supply = Id_supply.Id_supply.create 0 in
   let decl =
-    Surface.SEnumDef
+    Surface.STypeDef
       {
-        name = "Color";
-        type_params = [];
-        variants =
-          [
-            Surface.{ sv_name = "Red"; sv_fields = [] };
-            Surface.{ sv_name = "Green"; sv_fields = [] };
-            Surface.{ sv_name = "Blue"; sv_fields = [] };
-          ];
+        type_name = "Color";
+        type_type_params = [];
+        type_body =
+          Surface.STNamedSum
+            [
+              Surface.{ sv_name = "Red"; sv_fields = [] };
+              Surface.{ sv_name = "Green"; sv_fields = [] };
+              Surface.{ sv_name = "Blue"; sv_fields = [] };
+            ];
         derive = [];
       }
   in
@@ -679,11 +900,16 @@ let%test "lower SEnumDef" =
       true
   | _ -> false
 
-let%test "lower STypeDef" =
+let%test "lower transparent type definition" =
   let id_supply = Id_supply.Id_supply.create 0 in
   let decl =
     Surface.STypeDef
-      { alias_name = "Point"; alias_type_params = []; alias_body = Surface.STCon "Int"; derive = [] }
+      {
+        type_name = "Point";
+        type_type_params = [];
+        type_body = Surface.STTransparent (Surface.STCon "Int");
+        derive = [];
+      }
   in
   let result = lower_top_decl id_supply (mk_test_ts decl) in
   match result with
@@ -693,14 +919,16 @@ let%test "lower STypeDef" =
       true
   | _ -> false
 
-let%test "alias type params lower lowercase names to TVars in alias bodies" =
+let%test "transparent type params lower lowercase names to TVars in type bodies" =
   let id_supply = Id_supply.Id_supply.create 0 in
   let decl =
     Surface.STypeDef
       {
-        alias_name = "Reducer";
-        alias_type_params = [ "a" ];
-        alias_body = Surface.STArrow ([ Surface.STCon "a"; Surface.STCon "a" ], Surface.STCon "a", false);
+        type_name = "Reducer";
+        type_type_params = [ "a" ];
+        type_body =
+          Surface.STTransparent
+            (Surface.STArrow ([ Surface.STCon "a"; Surface.STCon "a" ], Surface.STCon "a", false));
         derive = [];
       }
   in
@@ -721,14 +949,14 @@ let%test "alias type params lower lowercase names to TVars in alias bodies" =
       true
   | _ -> false
 
-let%test "lower trait object type alias" =
+let%test "lower trait object transparent type" =
   let id_supply = Id_supply.Id_supply.create 0 in
   let decl =
     Surface.STypeDef
       {
-        alias_name = "Printer";
-        alias_type_params = [];
-        alias_body = Surface.STTraitObject [ "Show"; "Eq" ];
+        type_name = "Printer";
+        type_type_params = [];
+        type_body = Surface.STTransparent (Surface.STTraitObject [ "Show"; "Eq" ]);
         derive = [];
       }
   in
@@ -737,19 +965,20 @@ let%test "lower trait object type alias" =
   | [ { AST.stmt = AST.TypeAlias { alias_body = AST.TTraitObject [ "Show"; "Eq" ]; _ }; _ } ] -> true
   | _ -> false
 
-let%test "lower intersection type alias" =
+let%test "lower intersection transparent type" =
   let id_supply = Id_supply.Id_supply.create 0 in
   let decl =
     Surface.STypeDef
       {
-        alias_name = "NamedAge";
-        alias_type_params = [];
-        alias_body =
-          Surface.STIntersection
-            [
-              Surface.STRecord ([ Surface.{ sf_name = "name"; sf_type = Surface.STCon "Str" } ], None);
-              Surface.STRecord ([ Surface.{ sf_name = "age"; sf_type = Surface.STCon "Int" } ], None);
-            ];
+        type_name = "NamedAge";
+        type_type_params = [];
+        type_body =
+          Surface.STTransparent
+            (Surface.STIntersection
+               [
+                 Surface.STRecord ([ Surface.{ sf_name = "name"; sf_type = Surface.STCon "Str" } ], None);
+                 Surface.STRecord ([ Surface.{ sf_name = "age"; sf_type = Surface.STCon "Int" } ], None);
+               ]);
         derive = [];
       }
   in
@@ -821,8 +1050,7 @@ let%test "lower SEArrowLambda to canonical Function" =
 let%test "arrow lambda shorthand param lowers with program trait context" =
   let id_supply = Id_supply.Id_supply.create 0 in
   let trait_decl =
-    mk_test_ts
-      (Surface.STraitDef { name = "Named"; type_param = None; supertraits = []; fields = []; methods = [] })
+    mk_test_ts (Surface.STraitDef { name = "Named"; type_param = None; supertraits = []; methods = [] })
   in
   let body_expr = Surface.mk_surface_expr ~id:1 ~pos:0 (Surface.SEIdentifier "x") in
   let lambda_expr =
@@ -859,6 +1087,98 @@ let%test "lower SEBlockExpr to AST.BlockExpr" =
   | AST.BlockExpr [ { stmt = AST.ExpressionStmt { expr = AST.Integer 7L; _ }; _ } ] -> true
   | _ -> false
 
+let%test "lower pipe desugars rhs callable into Call" =
+  let id_supply = Id_supply.Id_supply.create 0 in
+  let se =
+    Surface.mk_surface_expr ~id:3 ~pos:0
+      (Surface.SEInfix
+         ( Surface.mk_surface_expr ~id:1 ~pos:0 (Surface.SEIdentifier "x"),
+           "|>",
+           Surface.mk_surface_expr ~id:2 ~pos:5 (Surface.SEIdentifier "f") ))
+  in
+  match (lower_expr id_supply se).expr with
+  | AST.Call ({ AST.expr = AST.Identifier "f"; _ }, [ { AST.expr = AST.Identifier "x"; _ } ]) -> true
+  | _ -> false
+
+let%test "lower pipe prepends lhs into existing rhs call" =
+  let id_supply = Id_supply.Id_supply.create 0 in
+  let rhs_call =
+    Surface.mk_surface_expr ~id:4 ~pos:5
+      (Surface.SECall
+         ( Surface.mk_surface_expr ~id:2 ~pos:5 (Surface.SEIdentifier "f"),
+           [ Surface.mk_surface_expr ~id:3 ~pos:7 (Surface.SEInteger 1L) ] ))
+  in
+  let se =
+    Surface.mk_surface_expr ~id:5 ~pos:0
+      (Surface.SEInfix (Surface.mk_surface_expr ~id:1 ~pos:0 (Surface.SEIdentifier "x"), "|>", rhs_call))
+  in
+  match (lower_expr id_supply se).expr with
+  | AST.Call
+      ( { AST.expr = AST.Identifier "f"; _ },
+        [ { AST.expr = AST.Identifier "x"; _ }; { AST.expr = AST.Integer 1L; _ } ] ) ->
+      true
+  | _ -> false
+
+let%test "lower pipe prepends lhs into qualified method call args" =
+  let id_supply = Id_supply.Id_supply.create 0 in
+  let rhs_method =
+    Surface.mk_surface_expr ~id:4 ~pos:5
+      (Surface.SEMethodCall
+         {
+           se_receiver = Surface.mk_surface_expr ~id:2 ~pos:5 (Surface.SEIdentifier "Box");
+           se_method = "map";
+           se_type_args = None;
+           se_args = [ Surface.mk_surface_expr ~id:3 ~pos:13 (Surface.SEInteger 1L) ];
+         })
+  in
+  let se =
+    Surface.mk_surface_expr ~id:5 ~pos:0
+      (Surface.SEInfix (Surface.mk_surface_expr ~id:1 ~pos:0 (Surface.SEIdentifier "x"), "|>", rhs_method))
+  in
+  match (lower_expr id_supply se).expr with
+  | AST.MethodCall
+      {
+        mc_receiver = { AST.expr = AST.Identifier "Box"; _ };
+        mc_method = "map";
+        mc_args = [ { AST.expr = AST.Identifier "x"; _ }; { AST.expr = AST.Integer 1L; _ } ];
+        _;
+      } ->
+      true
+  | _ -> false
+
+let%test "lower pipe substitutes lhs into projection section rhs" =
+  let id_supply = Id_supply.Id_supply.create 0 in
+  let rhs =
+    Surface.mk_surface_expr ~id:3 ~pos:8 ~end_pos:18
+      (Surface.SEFieldAccess
+         (Surface.mk_surface_expr ~id:2 ~pos:8 ~end_pos:8 (Surface.SEIdentifier "_"), "updated_at"))
+  in
+  let se =
+    Surface.mk_surface_expr ~id:4 ~pos:0 ~end_pos:18
+      (Surface.SEInfix (Surface.mk_surface_expr ~id:1 ~pos:0 ~end_pos:3 (Surface.SEIdentifier "post"), "|>", rhs))
+  in
+  match (lower_expr id_supply se).expr with
+  | AST.FieldAccess ({ AST.expr = AST.Identifier "post"; pos; end_pos; _ }, "updated_at") ->
+      pos = 0 && end_pos = 3
+  | _ -> false
+
+let%test "lower pipe substitutes lhs into infix section rhs" =
+  let id_supply = Id_supply.Id_supply.create 0 in
+  let rhs =
+    Surface.mk_surface_expr ~id:4 ~pos:5
+      (Surface.SEInfix
+         ( Surface.mk_surface_expr ~id:2 ~pos:5 (Surface.SEIdentifier "_"),
+           "+",
+           Surface.mk_surface_expr ~id:3 ~pos:9 (Surface.SEInteger 1L) ))
+  in
+  let se =
+    Surface.mk_surface_expr ~id:5 ~pos:0
+      (Surface.SEInfix (Surface.mk_surface_expr ~id:1 ~pos:0 (Surface.SEIdentifier "x"), "|>", rhs))
+  in
+  match (lower_expr id_supply se).expr with
+  | AST.Infix ({ AST.expr = AST.Identifier "x"; _ }, "+", { AST.expr = AST.Integer 1L; _ }) -> true
+  | _ -> false
+
 let%test "lower SEOBBlock in match arm -> AST.BlockExpr" =
   let id_supply = Id_supply.Id_supply.create 0 in
   let e = Surface.mk_surface_expr ~id:1 ~pos:0 (Surface.SEString "block") in
@@ -883,14 +1203,14 @@ let%test "lower SEOBBlock in match arm -> AST.BlockExpr" =
   | AST.BlockExpr [ { stmt = AST.ExpressionStmt { expr = AST.String "block"; _ }; _ } ] -> true
   | _ -> false
 
-let%test "SEnumDef with postfix derive generates DeriveDef" =
+let%test "STNamedSum with postfix derive generates DeriveDef" =
   let id_supply = Id_supply.Id_supply.create 0 in
   let decl =
-    Surface.SEnumDef
+    Surface.STypeDef
       {
-        name = "Color";
-        type_params = [];
-        variants = [];
+        type_name = "Color";
+        type_type_params = [];
+        type_body = Surface.STNamedSum [];
         derive =
           [
             AST.{ derive_trait_name = "Eq"; derive_trait_constraints = [] };
@@ -920,16 +1240,16 @@ let%test "STypeDef with postfix derive generates DeriveDef" =
   let decl =
     Surface.STypeDef
       {
-        alias_name = "MyInt";
-        alias_type_params = [];
-        alias_body = Surface.STCon "Int";
+        type_name = "MyInt";
+        type_type_params = [];
+        type_body = Surface.STNamedWrapper (Surface.STCon "Int");
         derive = [ AST.{ derive_trait_name = "Eq"; derive_trait_constraints = [] } ];
       }
   in
   let result = lower_top_decl id_supply (mk_test_ts decl) in
   match result with
   | [
-   { AST.stmt = AST.TypeAlias { alias_name = "MyInt"; _ }; _ };
+   { AST.stmt = AST.TypeDef { type_name = "MyInt"; _ }; _ };
    {
      AST.stmt =
        AST.DeriveDef { derive_traits = [ { derive_trait_name = "Eq"; _ } ]; derive_for_type = AST.TCon "MyInt" };
@@ -944,9 +1264,11 @@ let%test "STypeDef lowering preserves derive target params" =
   let decl =
     Surface.STypeDef
       {
-        alias_name = "Box";
-        alias_type_params = [ "t" ];
-        alias_body = Surface.STRecord ([ Surface.{ sf_name = "value"; sf_type = Surface.STVar "t" } ], None);
+        type_name = "Box";
+        type_type_params = [ "t" ];
+        type_body =
+          Surface.STTransparent
+            (Surface.STRecord ([ Surface.{ sf_name = "value"; sf_type = Surface.STVar "t" } ], None));
         derive =
           [
             AST.
@@ -1053,8 +1375,7 @@ let%test "bare trait param shorthand lowers to fresh constrained generic" =
     lower_program id_supply
       [
         mk_test_ts
-          (Surface.STraitDef
-             { name = "JungleDweller"; type_param = Some "a"; supertraits = []; fields = []; methods = [] });
+          (Surface.STraitDef { name = "JungleDweller"; type_param = Some "a"; supertraits = []; methods = [] });
         mk_test_ts decl;
       ]
   in
@@ -1188,8 +1509,7 @@ let%test "explicit generics and shorthand params stay independent" =
   let prog =
     lower_program id_supply
       [
-        mk_test_ts
-          (Surface.STraitDef { name = "Named"; type_param = None; supertraits = []; fields = []; methods = [] });
+        mk_test_ts (Surface.STraitDef { name = "Named"; type_param = None; supertraits = []; methods = [] });
         mk_test_ts decl;
       ]
   in
@@ -1348,7 +1668,9 @@ let%test "ambiguous vNext impl head lowers to inherent impl when head names a ty
 
 let%test "ambiguous vNext impl head lowers to trait impl when head names a trait" =
   let id_supply = Id_supply.Id_supply.create 0 in
-  let ctx = { empty_lower_context with trait_names = StringSet.add "Show" empty_lower_context.trait_names } in
+  let ctx =
+    { empty_lower_context with constraint_names = StringSet.add "Show" empty_lower_context.constraint_names }
+  in
   let decl =
     Surface.SAmbiguousImplDef
       {

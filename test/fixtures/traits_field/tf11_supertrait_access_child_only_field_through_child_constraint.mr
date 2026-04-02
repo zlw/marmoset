@@ -1,8 +1,6 @@
-# TF11: Supertrait: access child-only field through child constraint
-trait HasName = {
+# TF11: Wider shape constraint exposes its own fields
+shape Person = {
   name: Str
-}
-trait Person: HasName = {
   age: Int
 }
 fn get_age[t: Person](v: t) -> Int = v.age

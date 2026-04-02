@@ -1,12 +1,12 @@
-# XF37: G39: Dual field-only constraints on generic function
-trait Named = {
+# XF37: G39: Dual shape constraints on generic function
+shape Named = {
   name: Str
 }
-trait Scored = {
+shape Scored = {
   score: Int
 }
 fn describe[t: Named & Scored](x: t) -> Str = {
-  x.name + " " + x.score.show()
+  x.name + " " + Show.show(x.score)
 }
 let p = { name: "alice", score: 42, extra: true }
 puts(describe(p))  # output: alice 42

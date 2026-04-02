@@ -318,7 +318,7 @@ Exit criteria:
   - `let x: Dyn[Show] = 42` — implicit coercion from `int` to `Dyn[Show]`.
   - `let items: List[Dyn[Show]] = [42, "hello", true]` — each element coerced implicitly.
   - `fn print_all(xs: List[Dyn[Show]])` — callers pass concrete values, coercion inserted by compiler.
-- Method dispatch on `Dyn[...]` values is dynamic and requires no explicit unwrapping. Calling `.show()` on a `Dyn[Show]` dispatches through the witness table.
+- Method dispatch on `Dyn[...]` values is dynamic and requires no explicit unwrapping, but the surface call is qualified: `Show.show(x)` dispatches through the witness table.
 - Motivating use cases:
   - Heterogeneous collections: `List[Dyn[Show]]` holding values of different concrete types.
   - Extensibility: one library defining a trait, another providing impls, a third consuming trait objects without knowing concrete types.
@@ -331,7 +331,7 @@ Exit criteria:
 - The explicit canonical artifacts for Track B are:
   - `Types.TTraitObject of string list` for the type itself,
   - `Resolution_artifacts.trait_object_coercion` keyed by source `expr.id` for each inserted packaging site,
-  - `Infer.method_resolution = ... | DynamicTraitMethod of string` to record which trait witness services a dynamic dot-call.
+  - `Infer.method_resolution = ... | DynamicTraitMethod of string` to record which trait witness services a dynamic qualified trait call.
 - `Dyn[...]` exists for method-bearing trait values only. It is not an alternate spelling for the existing field-only projection path.
 
 ### Phase B0. Freeze The Dyn Spec

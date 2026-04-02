@@ -1,4 +1,4 @@
-enum Wrap[a] = { Val(a) }
+type Wrap[a] = { Val(a) }
 
 impl[a] Wrap[a] = {
   fn convert[b](w: Wrap[a], f: (a) -> b) -> Wrap[b] = match w {
@@ -7,5 +7,5 @@ impl[a] Wrap[a] = {
 }
 
 # a and b must be separate scopes — no leakage
-let w = Wrap.Val(42)
-let w2 = w.convert((n: Int) -> n.show())
+let w: Wrap[Int] = Wrap.Val(42)
+let w2: Wrap[Str] = Wrap.convert(w, (n: Int) -> Show.show(n))

@@ -8,5 +8,5 @@ impl Label[Int] = {
 impl Label[Str] = {
   fn label(x: Str) -> Str = "STR"
 }
-puts(1.label())  # output: INT
-puts("a".label())  # output: STR
+puts(Label.label(1))  # output: INT
+puts(Label.label("a"))  # output: STR

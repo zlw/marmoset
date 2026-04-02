@@ -16,5 +16,6 @@ impl Walker[Node] = {
   fn visit(x: Node) -> Str = { "walker" }
 }
 
-let n: Node = { id: 1 }
-n.visit()  # error: Ambiguous
+let n = {id: 1}
+
+n.visit()  # error: not a callable field

@@ -1,0 +1,4 @@
+# VN132: Pipe fills the placeholder inside a call-shaped section
+fn add(x: Int, y: Int) -> Int = x + y
+
+puts(1 |> add(_, 2) |> Show.show)  # output: 3

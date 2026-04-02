@@ -1,0 +1,15 @@
+# VN126: Placeholder shorthand supports qualified partial application
+type Post = { owner: Str }
+
+trait Visible[a] = {
+  fn visible_to(x: a, viewer: Str) -> Bool
+}
+
+impl Visible[Post] = {
+  fn visible_to(x: Post, viewer: Str) -> Bool = x.owner == viewer
+}
+
+let visible_to_ada = Visible.visible_to(_, "ada")
+
+puts(Show.show(visible_to_ada({ owner: "ada" })))   # output: true
+puts(Show.show(visible_to_ada({ owner: "grace" }))) # output: false

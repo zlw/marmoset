@@ -1,4 +1,4 @@
-enum Opt[a] = { Some(a), None }
+type Opt[a] = { Some(a), None }
 
 impl[a] Opt[a] = {
   fn and_then[b](o: Opt[a], f: (a) -> Opt[b]) -> Opt[b] = match o {
@@ -7,5 +7,5 @@ impl[a] Opt[a] = {
   }
 }
 
-let x = Opt.Some(42)
-let y = x.and_then((n: Int) -> Opt.Some(n.show()))
+let x: Opt[Int] = Opt.Some(42)
+let y: Opt[Str] = Opt.and_then(x, (n: Int) -> Opt.Some(Show.show(n)))

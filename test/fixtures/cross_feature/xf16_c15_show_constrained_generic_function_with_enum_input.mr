@@ -10,6 +10,6 @@ impl Show[Color] = {
   }
 }
 fn display[a: Show](x: a) -> Str = {
-  x.show()
+  Show.show(x)
 }
 puts(display(Color.Red))  # output: red

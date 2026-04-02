@@ -1,6 +1,6 @@
-# T118: Dyn rejects mixed trait sets that include a field-only trait
+# T118: Dyn rejects legacy trait sets that include field-style traits
 trait Named = {
-  name: Str
+  name: Str  # error: Trait bodies are method-only; use 'shape' for structural field contracts
 }
-let x: Dyn[Show & Named] = 42  # error: field-only trait
+let x: Dyn[Show & Named] = 42
 x

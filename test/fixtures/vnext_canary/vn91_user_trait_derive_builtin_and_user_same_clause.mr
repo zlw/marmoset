@@ -5,6 +5,6 @@ trait Fancy[a] = {
 
 type Point = { x: Int } derive Show, Fancy
 
-let p = { x: 1 }
-puts(p.fancy())  # output: fancy
-puts(p.show())   # output: { x: 1 }
+let p = {x: 1}
+puts(Fancy.fancy(p))  # output: fancy
+puts(Show.show(p))   # output: { x: 1 }

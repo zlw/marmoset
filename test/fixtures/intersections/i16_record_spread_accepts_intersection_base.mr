@@ -2,4 +2,4 @@
 fn add_y(v: ({ x: Int } & { z: Int })) = { ...v, y: 2 }
 
 let out = add_y({ x: 1, z: 3 })
-puts((out.x + out.y + out.z).show())  # output: 6
+puts((out.x + out.y + out.z))  # output: 6

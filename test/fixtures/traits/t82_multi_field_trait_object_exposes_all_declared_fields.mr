@@ -1,7 +1,7 @@
 # T82: Multi-field trait object exposes all declared fields
 trait PersonLike = {
-  name: Str
+  name: Str  # error: Trait bodies are method-only; use 'shape' for structural field contracts
   age: Int
 }
-let x: PersonLike = { name: "alice", age: 30, active: true }  # error: cannot be used as a type in vNext
-puts(x.name + " " + x.age.show())  # output: alice 30
+let x: PersonLike = { name: "alice", age: 30, active: true }
+puts(x.name + " " + Show.show(x.age))  # output: alice 30

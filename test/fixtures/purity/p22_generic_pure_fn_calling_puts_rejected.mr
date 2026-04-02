@@ -1,6 +1,6 @@
 # P22: Generic pure fn calling puts is rejected
 fn log_identity[a: Show](x: a) -> Str = {  # error: effectful
   puts(x)
-  x.show()
+  Show.show(x)
 }
 log_identity(1)

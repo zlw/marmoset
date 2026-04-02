@@ -6,10 +6,11 @@
     { "include": "#comment" },
     { "include": "#fn-declaration" },
     { "include": "#enum-definition" },
+    { "include": "#shape-definition" },
     { "include": "#trait-definition" },
     { "include": "#impl-block" },
     { "include": "#derive-clause" },
-    { "include": "#type-alias" },
+    { "include": "#type-definition" },
     { "include": "#let-statement" },
     { "include": "#return-statement" },
     { "include": "#match-expression" },
@@ -34,10 +35,25 @@
         "0": { "name": "punctuation.definition.string.end.marmoset" }
       },
       "patterns": [
+        { "include": "#interpolation" },
         {
           "name": "constant.character.escape.marmoset",
           "match": "\\\\."
         }
+      ]
+    },
+
+    "interpolation": {
+      "begin": "#\\{",
+      "end": "\\}",
+      "beginCaptures": {
+        "0": { "name": "punctuation.section.interpolation.begin.marmoset" }
+      },
+      "endCaptures": {
+        "0": { "name": "punctuation.section.interpolation.end.marmoset" }
+      },
+      "patterns": [
+        { "include": "#expression" }
       ]
     },
 
@@ -82,6 +98,10 @@
           "match": "\\benum\\b"
         },
         {
+          "name": "keyword.other.shape.marmoset",
+          "match": "\\bshape\\b"
+        },
+        {
           "name": "keyword.other.trait.marmoset",
           "match": "\\btrait\\b"
         },
@@ -119,6 +139,10 @@
         {
           "name": "keyword.operator.arrow.marmoset",
           "match": "->|=>"
+        },
+        {
+          "name": "keyword.operator.pipe.marmoset",
+          "match": "\\|>"
         },
         {
           "name": "keyword.operator.spread.marmoset",
@@ -177,7 +201,7 @@
     },
 
     "type-annotation": {
-      "comment": "Type annotation after colon in parameters, let bindings, trait fields",
+      "comment": "Type annotation after colon in parameters, let bindings, and shape fields",
       "patterns": [
         { "include": "#intersection-type" },
         { "include": "#union-type" },
@@ -479,8 +503,36 @@
           "end": "(?=\\})",
           "patterns": [
             { "include": "#comment" },
-            { "include": "#trait-method-signature" },
-            { "include": "#trait-field" }
+            { "include": "#trait-method-signature" }
+          ]
+        }
+      ]
+    },
+
+    "shape-definition": {
+      "comment": "shape Named = { name: Str }",
+      "begin": "\\b(shape)\\s+([a-zA-Z_][a-zA-Z0-9_]*)",
+      "beginCaptures": {
+        "1": { "name": "keyword.other.shape.marmoset" },
+        "2": { "name": "entity.name.type.shape.marmoset" }
+      },
+      "end": "\\}",
+      "endCaptures": {
+        "0": { "name": "punctuation.bracket.curly.end.marmoset" }
+      },
+      "patterns": [
+        { "include": "#type-parameter-list" },
+        {
+          "comment": "Shape body",
+          "begin": "(=\\s*)\\{",
+          "beginCaptures": {
+            "1": { "name": "keyword.operator.assignment.marmoset" },
+            "0": { "name": "punctuation.bracket.curly.begin.marmoset" }
+          },
+          "end": "(?=\\})",
+          "patterns": [
+            { "include": "#comment" },
+            { "include": "#shape-field" }
           ]
         }
       ]
@@ -512,8 +564,8 @@
       ]
     },
 
-    "trait-field": {
-      "comment": "name: Str (field in trait body)",
+    "shape-field": {
+      "comment": "name: Str (field in shape body)",
       "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*(:)\\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\\[[^\\]]*\\])?)",
       "captures": {
         "1": { "name": "variable.other.property.marmoset" },
@@ -612,17 +664,52 @@
       }
     },
 
-    "type-alias": {
-      "comment": "type Point = { x: Int, y: Int }",
+    "type-definition": {
+      "comment": "type Point = { x: Int, y: Int } or type Event = { Click(Int) Quit }",
       "begin": "\\b(type)\\s+([a-zA-Z_][a-zA-Z0-9_]*)\\s*(=)",
       "beginCaptures": {
         "1": { "name": "keyword.other.type.marmoset" },
-        "2": { "name": "entity.name.type.alias.marmoset" },
+        "2": { "name": "entity.name.type.marmoset" },
         "3": { "name": "keyword.operator.assignment.marmoset" }
       },
       "end": "(?=[;\\n])|(?=\\}\\s*$)",
       "patterns": [
+        { "include": "#constructor-type-body" },
+        { "include": "#wrapper-type" },
         { "include": "#type-annotation" }
+      ]
+    },
+
+    "constructor-type-body": {
+      "comment": "Canonical sum type body: { Some(Int) None }",
+      "begin": "\\{",
+      "beginCaptures": {
+        "0": { "name": "punctuation.bracket.curly.begin.marmoset" }
+      },
+      "end": "\\}",
+      "endCaptures": {
+        "0": { "name": "punctuation.bracket.curly.end.marmoset" }
+      },
+      "patterns": [
+        { "include": "#comment" },
+        { "include": "#enum-variant" }
+      ]
+    },
+
+    "wrapper-type": {
+      "comment": "Wrapper type: UserId(Int)",
+      "begin": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*(\\()",
+      "beginCaptures": {
+        "1": { "name": "entity.name.tag.variant.marmoset" },
+        "2": { "name": "punctuation.bracket.round.begin.marmoset" }
+      },
+      "end": "\\)",
+      "endCaptures": {
+        "0": { "name": "punctuation.bracket.round.end.marmoset" }
+      },
+      "patterns": [
+        { "include": "#type-annotation" },
+        { "include": "#punctuation" }
       ]
     },
 
@@ -779,7 +866,7 @@
       "patterns": [
         {
           "comment": "Parameter with type annotation: x: Int",
-          "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*(:)\\s*",
+          "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*[!?]?)\\s*(:)\\s*",
           "captures": {
             "1": { "name": "variable.parameter.marmoset" },
             "2": { "name": "punctuation.separator.type.marmoset" }
@@ -841,7 +928,7 @@
 
     "field-access": {
       "comment": "Field access: p.x, enum constructor: Option.Some",
-      "match": "(\\.)\\s*([a-zA-Z_][a-zA-Z0-9_]*)\\b(?!\\s*\\()",
+      "match": "(\\.)\\s*([a-zA-Z_][a-zA-Z0-9_]*[!?]?)\\b(?!\\s*\\()",
       "captures": {
         "1": { "name": "punctuation.accessor.dot.marmoset" },
         "2": { "name": "variable.other.property.marmoset" }
@@ -885,7 +972,7 @@
         },
         {
           "comment": "Identifier key in object: x: value",
-          "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*(:)",
+          "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*[!?]?)\\s*(:)",
           "captures": {
             "1": { "name": "variable.other.property.marmoset" },
             "2": { "name": "punctuation.separator.colon.marmoset" }
@@ -927,9 +1014,12 @@
         { "include": "#builtin-types" },
         { "include": "#builtin-functions" },
         { "include": "#lambda-expression" },
+        { "include": "#match-expression" },
+        { "include": "#if-expression" },
         { "include": "#function-call" },
         { "include": "#field-access" },
         { "include": "#array-literal" },
+        { "include": "#object-literal" },
         { "include": "#operators" },
         { "include": "#parenthesized-expression" },
         { "include": "#block" },

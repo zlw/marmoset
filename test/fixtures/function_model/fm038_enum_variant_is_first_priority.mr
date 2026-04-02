@@ -2,7 +2,7 @@ enum Shape = { Circle(Int), Square(Int) }
 
 let c = Shape.Circle(5)
 let result = match c {
-  case Shape.Circle(r): "circle:" + r.show()
-  case Shape.Square(s): "square:" + s.show()
+  case Shape.Circle(r): "circle:" + Show.show(r)
+  case Shape.Square(s): "square:" + Show.show(s)
 }
 puts(result)  # output: circle:5

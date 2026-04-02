@@ -1,10 +1,10 @@
 # XF63: N72: Array of projected records from heterogeneous Named inputs
-trait Named = {
+shape Named = {
   name: Str
 }
 type NameOnly = { name: Str }
 
-fn keep_named[t: Named](x: t) -> { name: Str } = {
+fn keep_named[t: Named](x: t) -> NameOnly = {
   { name: x.name }
 }
 

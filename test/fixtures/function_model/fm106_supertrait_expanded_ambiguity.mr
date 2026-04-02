@@ -26,6 +26,7 @@ impl ChildB[Thing] = {
   fn op(x: Thing) -> Int = { 2 }
 }
 
-let t: Thing = { v: 0 }
-# op is provided by Base, ChildA, and ChildB -> ambiguity
-t.op()  # error: Ambiguous
+let t = {v: 0}
+
+# op is provided by Base, ChildA, and ChildB -> explicit qualification required
+t.op()  # error: not a callable field

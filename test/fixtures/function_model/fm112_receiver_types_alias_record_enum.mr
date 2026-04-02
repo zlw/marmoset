@@ -1,9 +1,8 @@
-type Mystr = Str
 type Point = { x: Int, y: Int }
 enum Flag = { On, Off }
 
-impl Mystr = {
-  fn loud(s: Mystr) -> Mystr = {
+impl Str = {
+  fn loud(s: Str) -> Str = {
     s + "!"
   }
 }
@@ -19,9 +18,10 @@ impl Flag = {
   }
 }
 
-let s: Mystr = "hi"
-puts(s.loud())  # output: hi!
-let p: Point = { x: 1, y: 2 }
-puts(p.sum())  # output: 3
+let s = "hi"
+puts(Str.loud(s))  # output: hi!
+let p = {x: 1, y: 2}
+
+puts(Point.sum(p))  # output: 3
 let f = Flag.On
-puts(f.is_on())  # output: true
+puts(Flag.is_on(f))  # output: true

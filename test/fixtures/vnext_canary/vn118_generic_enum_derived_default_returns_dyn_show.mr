@@ -8,5 +8,5 @@ enum Option[t] = {
   None
 } derive Show, Boxed
 
-let value = Option.Some(1).box()
-puts(value.show())  # output: Some(1)
+let value = Boxed.box(Option.Some(1))
+puts(Show.show(value))  # output: Some(1)

@@ -3,6 +3,6 @@ type Val = { v: Int }
 impl Val = {
   fn bad(v: Val) -> Str = {
     puts(v.v)  # error: *
-    v.v.show()
+    Show.show(v.v)
   }
 }

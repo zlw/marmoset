@@ -1,0 +1,9 @@
+# TH49: Inherent impl target can be a transparent type definition
+type Total = Int
+
+impl Total = {
+  fn plus_one(total: Total) -> Int = total + 1
+}
+
+let total: Total = 41
+puts(Total.plus_one(total))  # output: 42

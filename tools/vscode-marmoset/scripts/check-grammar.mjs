@@ -63,6 +63,7 @@ const repo = grammar.repository;
 assertAnyMatch(repo.keywords.patterns, "case", "keyword patterns");
 assertAnyMatch(repo.keywords.patterns, "override", "keyword patterns");
 assertAnyMatch(repo.keywords.patterns, "fn", "keyword patterns");
+assertAnyMatch(repo.keywords.patterns, "shape", "keyword patterns");
 assertNoMatch(repo.keywords.patterns, "for", "keyword patterns");
 
 assertRegexMatches(repo["builtin-types"], "match", "Int", "builtin type pattern");
@@ -71,6 +72,7 @@ assertRegexMatches(repo["builtin-types"], "match", "Unit", "builtin type pattern
 assertRegexDoesNotMatch(repo["builtin-types"], "match", "int", "builtin type pattern");
 
 assertAnyMatch(repo.operators.patterns, "=>", "operator patterns");
+assertAnyMatch(repo.operators.patterns, "|>", "operator patterns");
 assertAnyMatch(repo.operators.patterns, "&&", "operator patterns");
 assertAnyMatch(repo.operators.patterns, "||", "operator patterns");
 assertAnyMatch(repo.operators.patterns, "%", "operator patterns");
@@ -100,6 +102,10 @@ assertRegexDoesNotMatch(
 assert(repo["trait-object-type"], "trait-object-type repository entry is missing");
 assertRegexMatches(repo["trait-object-type"], "begin", "Dyn[Show & Eq]", "trait-object-type begin");
 assertRegexMatches(repo["trait-object-type"], "end", "]", "trait-object-type end");
+assert(repo["shape-definition"], "shape-definition repository entry is missing");
+assertRegexMatches(repo["shape-definition"], "begin", "shape Named = {", "shape-definition begin");
+assert(repo["shape-field"], "shape-field repository entry is missing");
+assertRegexMatches(repo["shape-field"], "match", "name: Str", "shape-field match");
 assert(repo["intersection-type"], "intersection-type repository entry is missing");
 assertRegexMatches(repo["intersection-type"], "match", "Named & Aged", "intersection-type match");
 assertRegexMatches(repo["intersection-type"], "match", "List[Int] & Named", "intersection-type match");
@@ -114,6 +120,7 @@ assert(repo["derive-clause"], "derive-clause repository entry is missing");
 assertRegexMatches(repo["derive-clause"], "match", "derive Eq, Show", "derive-clause match");
 assert(!repo["derive-statement"], "removed detached-derive entry should stay absent");
 assert(!repo["function-literal"], "removed block-lambda entry should stay absent");
+assert(!repo["trait-field"], "removed trait-field entry should stay absent");
 assert(
   !grammar.patterns.some((entry) => entry?.include === "#derive-statement"),
   "top-level patterns should not include the removed detached-derive entry",
@@ -121,6 +128,39 @@ assert(
 assert(
   !grammar.patterns.some((entry) => entry?.include === "#function-literal"),
   "top-level patterns should not include the removed block-lambda entry",
+);
+assert(
+  grammar.patterns.some((entry) => entry?.include === "#shape-definition"),
+  "top-level patterns should include shape-definition",
+);
+assert(
+  repo["type-definition"].patterns.some((entry) => entry?.include === "#constructor-type-body"),
+  "type-definition should highlight canonical constructor bodies",
+);
+assert(
+  repo["type-definition"].patterns.some((entry) => entry?.include === "#wrapper-type"),
+  "type-definition should highlight wrapper bodies",
+);
+assert(repo.interpolation, "interpolation repository entry is missing");
+assertRegexMatches(repo.interpolation, "begin", "#{name}", "interpolation begin");
+assertRegexMatches(repo.interpolation, "end", "}", "interpolation end");
+assert(
+  repo.string.patterns.some((entry) => entry?.include === "#interpolation"),
+  "string patterns should include interpolation",
+);
+assertRegexMatches(repo["field-access"], "match", ".ring!", "field-access match");
+assertRegexMatches(repo["field-access"], "match", ".hungry?", "field-access match");
+assert(
+  repo.expression.patterns.some((entry) => entry?.include === "#object-literal"),
+  "expression patterns should include object literals",
+);
+assert(
+  repo.expression.patterns.some((entry) => entry?.include === "#match-expression"),
+  "expression patterns should include match expressions",
+);
+assert(
+  repo.expression.patterns.some((entry) => entry?.include === "#if-expression"),
+  "expression patterns should include if expressions",
 );
 
 assertRegexMatches(

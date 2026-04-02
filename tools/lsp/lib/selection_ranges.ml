@@ -28,7 +28,7 @@ let rec find_in_expr ~source ~offset ~parent (expr : Ast.AST.expression) : Lsp_t
       | Ast.AST.Infix (left, _, right) ->
           first_some (find_in_expr ~source ~offset ~parent:current left) (fun () ->
               find_in_expr ~source ~offset ~parent:current right)
-      | Ast.AST.Prefix (_, e) -> find_in_expr ~source ~offset ~parent:current e
+      | Ast.AST.Prefix (_, e) | Ast.AST.TypeApply (e, _) -> find_in_expr ~source ~offset ~parent:current e
       | Ast.AST.Call (fn_expr, args) ->
           first_some (find_in_expr ~source ~offset ~parent:current fn_expr) (fun () ->
               find_first_in_exprs ~source ~offset ~parent:current args)
@@ -100,7 +100,8 @@ and find_in_stmt ~source ~offset ~parent (stmt : Ast.AST.statement) : Lsp_t.Sele
           List.find_map
             (fun (m : Ast.AST.method_impl) -> find_in_stmt ~source ~offset ~parent:current m.impl_method_body)
             inherent_methods
-      | Ast.AST.EnumDef _ | Ast.AST.DeriveDef _ | Ast.AST.TypeAlias _ -> None
+      | Ast.AST.EnumDef _ | Ast.AST.TypeDef _ | Ast.AST.ShapeDef _ | Ast.AST.DeriveDef _ | Ast.AST.TypeAlias _ ->
+          None
     in
     match child with
     | Some _ -> child

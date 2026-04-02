@@ -1,0 +1,10 @@
+# P107: String interpolation uses Show and embedded expressions
+type Ranger = { name: Str, bananas: Int }
+
+impl Show[Ranger] = {
+  fn show(r: Ranger) -> Str = "#{r.name}:#{r.bananas}"
+}
+
+let ranger: Ranger = { name: "milo", bananas: 3 }
+# output: watch milo:3 from 2 vines
+puts("watch #{ranger} from #{1 + 1} vines")

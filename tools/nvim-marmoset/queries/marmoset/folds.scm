@@ -13,6 +13,9 @@
 ; Enum definitions
 (enum_definition) @fold
 
+; Shape definitions
+(shape_definition) @fold
+
 ; Trait definitions
 (trait_definition) @fold
 
@@ -65,3 +68,6 @@
 
 ; Record types
 (record_type) @fold
+
+; Canonical sum-type bodies
+(constructor_type_body) @fold

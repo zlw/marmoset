@@ -1,5 +1,5 @@
-# XF04: A4: Field-only trait constraint accepts record with many extra fields
-trait Named = {
+# XF04: A4: Structural shape constraint accepts record with many extra fields
+shape Named = {
   name: Str
 }
 fn get_name[t: Named](x: t) -> Str = {

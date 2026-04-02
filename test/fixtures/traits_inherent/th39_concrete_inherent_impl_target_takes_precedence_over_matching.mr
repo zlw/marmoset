@@ -1,5 +1,5 @@
 # TH39: Concrete inherent impl target takes precedence over matching generic target
-enum Result[a, b] = {
+type Result[a, b] = {
   Success(a),
   Failure(b),
 }
@@ -16,5 +16,5 @@ impl Result[Int, Str] = {
 }
 let x = if (true) { Result.Success(1) } else { Result.Failure("boom") }
 let y = if (false) { Result.Success(true) } else { Result.Failure("boom") }
-puts(x.tag())  # output: concrete
-puts(y.tag())  # output: failure
+puts(Result.tag(x))  # output: concrete
+puts(Result.tag(y))  # output: failure

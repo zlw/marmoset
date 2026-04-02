@@ -11,4 +11,4 @@ trait Describe[a] = {
 impl[b: Show & Eq] Describe[List[b]] = {
   fn describe(x: List[b]) -> Str = "ok"
 }
-puts([1, 2].describe())  # output: ok
+puts(Describe.describe([1, 2]))  # output: ok

@@ -3,9 +3,9 @@ trait Render[a] = {
   fn render(x: a) -> Str
 }
 impl Render[Int] = {
-  fn render(x: Int) -> Str = "render:" + x.show()
+  fn render(x: Int) -> Str = "render:" + Show.show(x)
 }
 
 let value: Dyn[Show] & Dyn[Render] = 42
-puts(value.show())  # output: 42
-puts(value.render())  # output: render:42
+puts(Show.show(value))  # output: 42
+puts(Render.render(value))  # output: render:42

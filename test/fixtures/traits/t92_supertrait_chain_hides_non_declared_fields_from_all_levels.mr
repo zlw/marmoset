@@ -1,9 +1,9 @@
 # T92: Supertrait chain hides non-declared fields from all levels
 trait Named = {
-  name: Str
+  name: Str  # error: Trait bodies are method-only; use 'shape' for structural field contracts
 }
 trait Described: Named = {
   description: Str
 }
-let x: Described = { name: "alice", description: "a person", hobby: "chess" }  # error: cannot be used as a type in vNext
+let x: Described = { name: "alice", description: "a person", hobby: "chess" }
 puts(x.hobby)

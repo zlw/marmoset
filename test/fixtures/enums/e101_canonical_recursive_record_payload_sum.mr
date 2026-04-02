@@ -1,0 +1,10 @@
+# E101: Canonical recursive sum supports record payloads containing the same sum
+type Tree = { Empty, Node({ value: Int, next: Tree }) }
+
+fn sum(tree: Tree) -> Int = match tree {
+  case Tree.Empty: 0
+  case Tree.Node(node): node.value + sum(node.next)
+}
+
+let tree = Tree.Node({ value: 1, next: Tree.Node({ value: 2, next: Tree.Node({ value: 3, next: Tree.Empty }) }) })
+puts(sum(tree))  # output: 6

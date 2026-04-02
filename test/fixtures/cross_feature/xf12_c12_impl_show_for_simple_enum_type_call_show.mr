@@ -9,4 +9,4 @@ impl Show[Color] = {
     }
   }
 }
-puts(Color.Red.show())  # output: red
+puts(Show.show(Color.Red))  # output: red

@@ -1,5 +1,5 @@
 # U28: Match in let-binding position
-enum Option[a] = { Some(a), None }
+type Option[a] = { Some(a), None }
 let x = Option.Some(20)
 let y = match x {
   case Option.Some(v): v

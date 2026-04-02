@@ -1,7 +1,7 @@
 # T127: Local annotated Dyn lets inside function bodies keep Dyn runtime representation
 fn show_local() -> Str = {
   let wide: Dyn[Show] = 42
-  wide.show()
+  Show.show(wide)
 }
 
 puts(show_local())  # output: 42

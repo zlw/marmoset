@@ -4,16 +4,18 @@ trait Display[a] = { fn render(x: a) -> Str }
 
 impl Display[Counter] = {
   fn render(x: Counter) -> Str = {
-    "display:" + x.n.show()
+    "display:" + Show.show(x.n)
   }
 }
 
 impl Counter = {
   fn render(c: Counter) -> Str = {
-    "counter:" + c.n.show()
+    "counter:" + Show.show(c.n)
   }
 }
 
-let c: Counter = { n: 5 }
-# inherent wins on dot call
-puts(c.render())  # output: counter:5
+let c = {n: 5}
+
+# dot sugar is ambiguous here; explicit targets stay stable
+puts(Display.render(c))  # output: display:5
+puts(Counter.render(c))  # output: counter:5

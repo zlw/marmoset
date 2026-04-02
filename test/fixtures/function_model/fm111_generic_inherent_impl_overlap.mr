@@ -1,4 +1,4 @@
-enum Wrap[a] = { Val(a) }
+type Wrap[a] = { Val(a) }
 
 impl Wrap[Int] = {
   fn get(w: Wrap[Int]) -> Int = match w {
@@ -13,4 +13,4 @@ impl[a] Wrap[a] = {
 }
 
 let w = Wrap.Val(42)
-puts(w.get())  # output: 42
+puts(Wrap.get(w))  # output: 42

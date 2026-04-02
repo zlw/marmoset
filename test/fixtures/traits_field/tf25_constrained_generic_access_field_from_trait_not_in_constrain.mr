@@ -1,8 +1,8 @@
-# TF25: Constrained generic: access field from trait not in constraints
-trait HasName = {
+# TF25: Constrained generic: access field from shape not in constraints
+shape HasName = {
   name: Str
 }
-trait HasAge = {
+shape HasAge = {
   age: Int
 }
 fn get_age[t: HasName](v: t) -> Int = v.age  # error: not guaranteed by constraints

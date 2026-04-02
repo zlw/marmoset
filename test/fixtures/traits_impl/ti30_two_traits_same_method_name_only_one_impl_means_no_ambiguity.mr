@@ -8,4 +8,4 @@ trait BetaTrait[a] = {
 impl AlphaTrait[Int] = {
   fn tag(x: Int) -> Str = "alpha"
 }
-puts(1.tag())  # output: alpha
+puts(AlphaTrait.tag(1))  # output: alpha

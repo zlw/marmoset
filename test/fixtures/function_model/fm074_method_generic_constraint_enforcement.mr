@@ -2,9 +2,10 @@ type Box = { v: Int }
 
 impl Box = {
   fn render[t: Show](b: Box, f: (Int) -> t) -> Str = {
-    f(b.v).show()
+    Show.show(f(b.v))
   }
 }
 
-let b: Box = { v: 3 }
-puts(b.render((n: Int) -> n * 2))  # output: 6
+let b: Box = {v: 3}
+
+puts(Box.render(b, (n: Int) -> n * 2))  # output: 6

@@ -7,5 +7,5 @@ trait Beta[a] = {
 }
 
 fn f[t: Alpha & Beta](x: t) -> Str = {
-  x.go()  # error: Ambiguous
+  x.go()  # error: not a callable field
 }

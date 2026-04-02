@@ -11,4 +11,4 @@ impl AlphaTrait[Int] = {
 impl BetaTrait[Int] = {
   fn tag(x: Int) -> Str = "beta"
 }
-puts(1.tag())  # error: Ambiguous
+puts(1.tag())  # error: not a callable field

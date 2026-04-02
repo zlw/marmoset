@@ -7,4 +7,4 @@ impl Mapper[Int] = {
   override fn cast(x: Int, f) = f(x)
 }
 
-puts(1.cast((n: Int) -> n + 41))  # output: 42
+puts(Mapper.cast(1, (n: Int) -> n + 41))  # output: 42

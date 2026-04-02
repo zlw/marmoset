@@ -5,4 +5,4 @@ trait Greet[a] = {
 impl Greet[Int] = {
   fn greet(x: Int) -> Str = "hello int"
 }
-puts(1.greet())  # output: hello int
+puts(Greet.greet(1))  # output: hello int

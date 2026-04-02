@@ -7,9 +7,10 @@ type Thing = { v: Int }
 # Impl omits parameter/return annotations — infers from trait sig
 impl Display[Thing] = {
   fn render(x) = {
-    "thing:" + x.v.show()
+    "thing:" + Show.show(x.v)
   }
 }
 
-let t: Thing = { v: 42 }
-puts(t.render())  # output: thing:42
+let t = {v: 42}
+
+puts(Display.render(t))  # output: thing:42

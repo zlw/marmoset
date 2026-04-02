@@ -1,0 +1,8 @@
+type MyInt = MyInt(Int)
+
+impl MyInt = {
+  fn label(x: MyInt) -> Str = "wrapped"
+}
+
+let label = MyInt.label
+puts(label(MyInt(2)))  # output: wrapped

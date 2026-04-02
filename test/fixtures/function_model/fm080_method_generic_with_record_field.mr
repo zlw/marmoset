@@ -6,5 +6,6 @@ impl Config = {
   }
 }
 
-let cfg: Config = { value: 99 }
-puts(cfg.map_value((n: Int) -> n.show()))  # output: 99
+let cfg: Config = {value: 99}
+
+puts(Config.map_value(cfg, (n: Int) -> Show.show(n)))  # output: 99

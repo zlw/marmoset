@@ -1,0 +1,9 @@
+# R186: Record pattern rest binding works on named products
+type Point = { x: Int, y: Int, z: Int }
+fn sum_rest(rest: { y: Int, z: Int }) -> Int = rest.y + rest.z
+let p = {x: 1, y: 2, z: 3}
+let result = match p {
+  case { x:, ...rest }: x + sum_rest(rest)
+  case _: 0
+}
+puts(result)  # output: 6

@@ -1,5 +1,5 @@
 # T51: Custom Num impl drives + operator on non-primitive types
-enum Boxed = {
+type Boxed = {
   Val(Int),
 }
 impl Num[Boxed] = {

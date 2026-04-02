@@ -1,7 +1,7 @@
 # VN23: Top-level fn may omit purity/return suffix for an effectful body
 fn loud(n: Int) = {
   puts("seen")
-  n.show()
+  Show.show(n)
 }
 
 # output: seen

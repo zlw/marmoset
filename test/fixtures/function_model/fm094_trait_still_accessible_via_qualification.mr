@@ -5,15 +5,15 @@ trait Label[a] = {
 }
 
 impl Label[Item] = {
-  fn name(x: Item) -> Str = { "trait:" + x.v.show() }
+  fn name(x: Item) -> Str = { "trait:" + Show.show(x.v) }
 }
 
 impl Item = {
-  fn name(i: Item) -> Str = { "inherent:" + i.v.show() }
+  fn name(i: Item) -> Str = { "inherent:" + Show.show(i.v) }
 }
 
-let i: Item = { v: 3 }
-# dot call → inherent
-puts(i.name())  # output: inherent:3
-# qualified call → specific trait
+let i = {v: 3}
+
+# qualified calls remain explicit and stable
 puts(Label.name(i))  # output: trait:3
+puts(Item.name(i))  # output: inherent:3

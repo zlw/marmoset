@@ -6,9 +6,10 @@ trait Display[a] = {
 
 impl Display[Score] = {
   fn render(x: Score) -> Str = {
-    "score:" + x.v.show()
+    "score:" + Show.show(x.v)
   }
 }
 
-let s: Score = { v: 100 }
+let s = {v: 100}
+
 puts(Display.render(s))  # output: score:100

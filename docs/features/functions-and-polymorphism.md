@@ -25,7 +25,7 @@ fn inc(x: Int) -> Int = x + 1
 fn id[a](x: a) -> a = x
 
 fn show_if_equal[a: Show & Eq](x: a, y: a) -> Str = {
-  if (x.eq(y)) { x.show() } else { "different" }
+  if (Eq.eq(x, y)) { Show.show(x) } else { "different" }
 }
 ```
 

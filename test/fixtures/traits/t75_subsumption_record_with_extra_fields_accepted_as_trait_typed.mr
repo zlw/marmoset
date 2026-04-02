@@ -1,6 +1,6 @@
 # T75: Subsumption: record with extra fields accepted as trait-typed param
 trait Greeter = {
-  greeting: Str
+  greeting: Str  # error: Trait bodies are method-only; use 'shape' for structural field contracts
 }
 fn say(g: Greeter) -> Str = g.greeting
 puts(say({ greeting: "world", volume: 11, language: "en" }))  # output: world

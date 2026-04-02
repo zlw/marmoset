@@ -6,5 +6,6 @@ impl Rect = {
   }
 }
 
-let r: Rect = { w: 4, h: 5 }
-puts(r.area())  # output: 20
+let r = {w: 4, h: 5}
+
+puts(Rect.area(r))  # output: 20

@@ -7,4 +7,4 @@ impl Cmp[Int] = {
 }
 
 let n = 42
-n.eq("hello")  # error: *
+Cmp.eq(n, "hello")  # error: *

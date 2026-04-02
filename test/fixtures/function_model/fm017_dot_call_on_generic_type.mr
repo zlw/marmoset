@@ -1,4 +1,4 @@
-enum Maybe[a] = { Just(a), Nothing }
+type Maybe[a] = { Just(a), Nothing }
 
 impl[a] Maybe[a] = {
   fn is_just(m: Maybe[a]) -> Bool = match m {
@@ -8,6 +8,6 @@ impl[a] Maybe[a] = {
 }
 
 let x = Maybe.Just(42)
-puts(x.is_just())  # output: true
+puts(Maybe.is_just(x))  # output: true
 let y: Maybe[Int] = Maybe.Nothing
-puts(y.is_just())  # output: false
+puts(Maybe.is_just(y))  # output: false

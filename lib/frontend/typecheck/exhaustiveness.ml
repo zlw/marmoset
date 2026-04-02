@@ -5,6 +5,15 @@ module AST = Syntax.Ast.AST
 
 (* Check if patterns cover all cases of a type *)
 let check_exhaustive (scrutinee_type : mono_type) (arms : AST.match_arm list) : (unit, string) result =
+  let scrutinee_allows_record_patterns =
+    match canonicalize_mono_type scrutinee_type with
+    | TRecord _ -> true
+    | TNamed (name, args) -> (
+        match Type_registry.instantiate_named_product_fields name args with
+        | Some (Ok _) -> true
+        | Some (Error _) | None -> false)
+    | _ -> false
+  in
   (* Collect all patterns *)
   let all_patterns = List.concat_map (fun (arm : AST.match_arm) -> arm.patterns) arms in
 
@@ -14,7 +23,7 @@ let check_exhaustive (scrutinee_type : mono_type) (arms : AST.match_arm list) : 
       (fun (p : AST.pattern) ->
         match (p.pat, scrutinee_type) with
         | AST.PWildcard, _ | AST.PVariable _, _ -> true
-        | AST.PRecord _, TRecord _ -> true
+        | AST.PRecord _, _ when scrutinee_allows_record_patterns -> true
         | _ -> false)
       all_patterns
   in
@@ -26,7 +35,7 @@ let check_exhaustive (scrutinee_type : mono_type) (arms : AST.match_arm list) : 
     | TEnum (enum_name, _) -> (
         (* Get all variants *)
         match Enum_registry.lookup enum_name with
-        | None -> Error (Printf.sprintf "Unknown enum: %s" enum_name)
+        | None -> Error (Printf.sprintf "Unknown type: %s" enum_name)
         | Some def ->
             (* Collect covered variants *)
             let covered =
@@ -126,6 +135,29 @@ module Test = struct
       ]
     in
     match check_exhaustive (TRecord ([ { name = "name"; typ = TString } ], None)) arms with
+    | Ok () -> true
+    | Error _ -> false
+
+  let%test "record pattern is exhaustive for named product types" =
+    Type_registry.clear ();
+    Type_registry.register_named_type
+      {
+        Type_registry.named_type_name = "User";
+        named_type_params = [];
+        named_type_body = Type_registry.NamedProduct [ { name = "name"; typ = TString } ];
+      };
+    let arms =
+      [
+        mk_arm
+          [
+            mk_pat
+              (AST.PRecord
+                 ( [ AST.{ pat_field_name = "name"; pat_field_pattern = Some (mk_pat (AST.PVariable "name")) } ],
+                   None ));
+          ];
+      ]
+    in
+    match check_exhaustive (TNamed ("User", [])) arms with
     | Ok () -> true
     | Error _ -> false
 end

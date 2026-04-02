@@ -1,0 +1,13 @@
+trait Foo[a] = {
+  fn foo(x: a, y: Bool) -> Int
+}
+
+impl Foo[Int] = {
+  fn foo(x: Int, y: Bool) -> Int = x
+}
+
+impl Int = {
+  fn foo(x: Int, y: Int) -> Int = x + y
+}
+
+puts(Int.foo(1, 2))  # output: 3

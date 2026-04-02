@@ -6,6 +6,7 @@ impl Wrapper = {
   }
 }
 
-let w: Wrapper = { v: 10 }
-let s = w.transform((n: Int) -> n.show())
+let w: Wrapper = {v: 10}
+
+let s = Wrapper.transform(w, (n: Int) -> Show.show(n))
 puts(s)  # output: 10

@@ -5,6 +5,8 @@ module Ast = Marmoset.Lib.Ast
 module Infer = Marmoset.Lib.Infer
 module Types = Marmoset.Lib.Types
 module Trait_registry = Typecheck.Trait_registry
+module Inherent_registry = Typecheck.Inherent_registry
+module Structural = Typecheck.Structural
 
 (* Decompose a curried TFun into a flat param list, return type, and overall purity. *)
 let rec collect_params eff = function
@@ -152,7 +154,7 @@ let find_enclosing_call ~(source : string) (offset : int) (program : Ast.AST.pro
     | Ast.AST.Infix (l, _, r) ->
         visit_expr l;
         visit_expr r
-    | Ast.AST.Prefix (_, e) -> visit_expr e
+    | Ast.AST.Prefix (_, e) | Ast.AST.TypeApply (e, _) -> visit_expr e
     | Ast.AST.If (cond, then_, else_) ->
         visit_expr cond;
         visit_stmt then_;
@@ -185,8 +187,8 @@ let find_enclosing_call ~(source : string) (offset : int) (program : Ast.AST.pro
     | Ast.AST.Let { value; _ } -> visit_expr value
     | Ast.AST.Return e -> visit_expr e
     | Ast.AST.Block stmts -> List.iter visit_stmt stmts
-    | Ast.AST.EnumDef _ | Ast.AST.TraitDef _ | Ast.AST.ImplDef _ | Ast.AST.InherentImplDef _ | Ast.AST.DeriveDef _
-    | Ast.AST.TypeAlias _ ->
+    | Ast.AST.EnumDef _ | Ast.AST.TypeDef _ | Ast.AST.ShapeDef _ | Ast.AST.TraitDef _ | Ast.AST.ImplDef _
+    | Ast.AST.InherentImplDef _ | Ast.AST.DeriveDef _ | Ast.AST.TypeAlias _ ->
         ()
   in
   List.iter visit_stmt program;
@@ -289,9 +291,47 @@ let signature_help
       let fn_type_opt =
         match call.method_name with
         | Some mname -> (
-            match call.recv_id with
-            | None -> None
-            | Some recv_id -> (
+            match (call.recv_id, Infer.lookup_method_resolution call.fn_id) with
+            | Some recv_id, Some Infer.FieldFunctionCall -> (
+                match Hashtbl.find_opt type_map recv_id with
+                | Some recv_type -> (
+                    match Structural.lookup_field_type recv_type mname with
+                    | Some field_type -> Some (`FnType field_type)
+                    | None -> None)
+                | None -> None)
+            | Some recv_id, Some (Infer.TraitMethod trait_name)
+            | Some recv_id, Some (Infer.DynamicTraitMethod trait_name)
+            | Some recv_id, Some (Infer.QualifiedTraitMethod trait_name) -> (
+                match Trait_registry.lookup_trait_method_with_supertraits trait_name mname with
+                | Some (_source_trait, method_sig) ->
+                    let param_types = List.map snd method_sig.method_params in
+                    let param_names = List.map fst method_sig.method_params in
+                    let is_effectful = method_sig.method_effect = `Effectful in
+                    Some (`Method (param_types, method_sig.method_return_type, param_names, is_effectful))
+                | None -> (
+                    match Hashtbl.find_opt type_map recv_id with
+                    | None -> None
+                    | Some recv_type -> (
+                        match Trait_registry.lookup_method recv_type mname with
+                        | None -> None
+                        | Some (_trait_name, method_sig) ->
+                            let param_types = List.map snd method_sig.method_params in
+                            let param_names = List.map fst method_sig.method_params in
+                            let is_effectful = method_sig.method_effect = `Effectful in
+                            Some (`Method (param_types, method_sig.method_return_type, param_names, is_effectful))
+                        )))
+            | Some recv_id, Some Infer.InherentMethod | Some recv_id, Some Infer.QualifiedInherentMethod -> (
+                match Hashtbl.find_opt type_map recv_id with
+                | Some recv_type -> (
+                    match Inherent_registry.resolve_method recv_type mname with
+                    | Ok (Some method_sig) ->
+                        let param_types = List.map snd method_sig.method_params in
+                        let param_names = List.map fst method_sig.method_params in
+                        let is_effectful = method_sig.method_effect = `Effectful in
+                        Some (`Method (param_types, method_sig.method_return_type, param_names, is_effectful))
+                    | Ok None | Error _ -> None)
+                | None -> None)
+            | Some recv_id, None -> (
                 match Hashtbl.find_opt type_map recv_id with
                 | None -> None
                 | Some recv_type -> (
@@ -301,7 +341,8 @@ let signature_help
                         let param_types = List.map snd method_sig.method_params in
                         let param_names = List.map fst method_sig.method_params in
                         let is_effectful = method_sig.method_effect = `Effectful in
-                        Some (`Method (param_types, method_sig.method_return_type, param_names, is_effectful)))))
+                        Some (`Method (param_types, method_sig.method_return_type, param_names, is_effectful))))
+            | None, _ -> None)
         | None -> (
             match Hashtbl.find_opt type_map call.fn_id with
             | Some fn_type -> Some (`FnType fn_type)
@@ -497,10 +538,7 @@ let%test "outer function in nested call still works (BUG-27 regression)" =
 
 (* Phase 8 regression: signature help on dot-style method calls *)
 let%test "signature help on dot method call shows method signature" =
-  match
-    check_sig_marked
-      "trait Greet[a] = {\n  fn hello(x: a) -> Str\n}\nimpl Greet[Int] = {\n  fn hello(x: Int) -> Str = \"hi\"\n}\n42.hello(|)"
-  with
+  match check_sig_marked "let hello = (name: Str) -> name; let r = { hello: hello }\nr.hello(|\"hi\")" with
   | Some sh -> List.length sh.signatures >= 1
   | None -> false
 
@@ -513,8 +551,7 @@ let%test "effectful function keeps => in signature label" =
 
 let%test "effectful method keeps => in signature label" =
   match
-    check_sig_marked
-      "trait Greet[a] = {\n  fn hello(x: a) => Str\n}\nimpl Greet[Int] = {\n  fn hello(x: Int) => Str = { puts(x); \"hi\" }\n}\n42.hello(|)"
+    check_sig_marked "let hello = (name: Str) => { puts(name); name }; let r = { hello: hello }\nr.hello(|\"hi\")"
   with
   | Some sh ->
       let sig0 = List.hd sh.signatures in

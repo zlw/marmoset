@@ -1,5 +1,5 @@
 # XF40: H47: Match pattern with wrong number of variant fields
-enum Pair = { Val(Int, Str) }  # error: *
+type Pair = { Val(Int, Str) }  # error: *
 let p = Pair.Val(1, "a")
 match p {
   case Pair.Val(x): puts(x)

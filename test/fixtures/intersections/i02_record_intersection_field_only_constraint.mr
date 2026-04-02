@@ -1,5 +1,5 @@
-# I02: Record intersections satisfy field-only constraints when every member guarantees the field
-trait Named = { name: Str }
+# I02: Record intersections satisfy shape constraints when every member guarantees the field
+shape Named = { name: Str }
 
 fn get_name[t: Named](x: t) -> Str = x.name
 

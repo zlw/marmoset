@@ -1,10 +1,8 @@
-# VN79: Inherent methods may type their receiver with constrained-param shorthand
-trait Named = { name: Str }
-
+# VN79: Inherent methods still require the receiver to match the impl target type
 type User = { name: Str, id: Int }
 
 impl User = {
-  fn label(user: Named) -> Str = user.name
+  fn label(user: User) -> Str = user.name
 }
 
-puts({ name: "Ada", id: 1 }.label())  # output: Ada
+puts(User.label({name: "Ada", id: 1}))  # output: Ada

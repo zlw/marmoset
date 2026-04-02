@@ -2,7 +2,7 @@ enum Box = { Val(Int), Empty }
 
 impl Box = {
   fn describe(b: Box) -> Str = match b {
-    case Box.Val(n): "val:" + n.show()
+    case Box.Val(n): "val:" + Show.show(n)
     case Box.Empty: "empty"
   }
 }

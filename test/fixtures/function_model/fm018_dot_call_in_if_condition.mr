@@ -1,4 +1,4 @@
-enum Opt[a] = { Some(a), None }
+type Opt[a] = { Some(a), None }
 
 impl[a] Opt[a] = {
   fn has(o: Opt[a]) -> Bool = match o {
@@ -8,5 +8,5 @@ impl[a] Opt[a] = {
 }
 
 let x = Opt.Some(1)
-let msg = if (x.has()) { "yes" } else { "no" }
+let msg = if (Opt.has(x)) { "yes" } else { "no" }
 puts(msg)  # output: yes

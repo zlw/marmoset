@@ -1,5 +1,5 @@
 # TH12: Inherent method body with match expression
-enum Color = {
+type Color = {
   Red,
   Green,
   Blue,
@@ -14,4 +14,4 @@ impl Color = {
   }
 }
 let c = Color.Red
-puts(c.rank())  # output: one
+puts(Color.rank(c))  # output: one

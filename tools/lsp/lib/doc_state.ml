@@ -171,10 +171,10 @@ let%test "analyze successful code surfaces warning diagnostics" =
   | _ -> false
 
 let%test "analyze captures user generic names for hover formatting" =
-  let result = analyze ~source:"trait Named = { name: Str }\nfn get[t: Named](x: t) -> Str = x.name\nget" in
+  let result = analyze ~source:"shape HasName = { name: Str }\nfn get[t: HasName](x: t) -> Str = x.name\nget" in
   result.diagnostics = [] && List.exists (fun (_fresh, user_name) -> user_name = "t") result.type_var_user_names
 
 let%test "analyze does not leak generic-name mappings across documents" =
-  let _ = analyze ~source:"trait Named = { name: Str }\nfn get[t: Named](x: t) -> Str = x.name\nget" in
+  let _ = analyze ~source:"shape HasName = { name: Str }\nfn get[t: HasName](x: t) -> Str = x.name\nget" in
   let result = analyze ~source:"let x = 1; x" in
   result.type_var_user_names = []

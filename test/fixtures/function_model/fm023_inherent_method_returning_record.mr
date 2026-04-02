@@ -2,11 +2,13 @@ type Point = { x: Int, y: Int }
 
 impl Point = {
   fn origin(p: Point) -> Point = {
-    { x: 0, y: 0 }
+    {x: 0, y: 0}
+
   }
 }
 
-let p: Point = { x: 5, y: 5 }
-let o = p.origin()
+let p = {x: 5, y: 5}
+
+let o = Point.origin(p)
 puts(o.x)  # output: 0
 puts(o.y)  # output: 0

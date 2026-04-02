@@ -7,5 +7,5 @@ trait Pack[a]: Boxed = {}
 
 type Point = { x: Int } derive Show, Boxed, Pack
 
-let value = Pack.box({ x: 1 })
-puts(value.show())  # output: { x: 1 }
+let value = Pack.box({x: 1})
+puts(Show.show(value))  # output: { x: 1 }

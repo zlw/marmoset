@@ -1,0 +1,10 @@
+# OP116: Custom rem impl drives % operator on enum
+enum Boxed = { Val(Int) }
+impl Rem[Boxed] = {
+  fn rem(x: Boxed, y: Boxed) -> Boxed = y
+}
+let a = Boxed.Val(7)
+let b = Boxed.Val(11)
+match (a % b) {  # output: 11
+  case Boxed.Val(n): puts(n)
+}

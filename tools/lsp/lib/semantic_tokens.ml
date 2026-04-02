@@ -120,6 +120,7 @@ let rec collect_expr ~source ~type_map ~environment ~params ~tokens (expr : Ast.
           { pos = expr.pos; end_pos = expr.pos + op_len - 1; token_type = operator_type; modifiers = 0 }
           :: !tokens;
       collect_expr ~source ~type_map ~environment ~params ~tokens e
+  | Ast.AST.TypeApply (callee, _) -> collect_expr ~source ~type_map ~environment ~params ~tokens callee
   | Ast.AST.Infix (left, op, right) ->
       collect_expr ~source ~type_map ~environment ~params ~tokens left;
       (* Find operator position between left and right — use find_substr for operators *)
@@ -331,6 +332,27 @@ and collect_stmt ~source ~type_map ~environment ~params ~tokens (stmt : Ast.AST.
                 :: !tokens
           | None -> ())
         variants
+  | Ast.AST.TypeDef { type_name; _ } -> (
+      let nlen = String.length type_name in
+      match find_name ~source ~start:stmt.pos ~limit:(stmt.end_pos + 1) type_name with
+      | Some (nstart, _) ->
+          tokens :=
+            { pos = nstart; end_pos = nstart + nlen - 1; token_type = _type_type; modifiers = declaration_mod }
+            :: !tokens
+      | None -> ())
+  | Ast.AST.ShapeDef { shape_name; _ } -> (
+      let nlen = String.length shape_name in
+      match find_name ~source ~start:stmt.pos ~limit:(stmt.end_pos + 1) shape_name with
+      | Some (nstart, _) ->
+          tokens :=
+            {
+              pos = nstart;
+              end_pos = nstart + nlen - 1;
+              token_type = interface_type;
+              modifiers = declaration_mod;
+            }
+            :: !tokens
+      | None -> ())
   | Ast.AST.TraitDef { name; methods; _ } ->
       let nlen = String.length name in
       let search_from = ref stmt.pos in
@@ -415,7 +437,15 @@ and collect_stmt ~source ~type_map ~environment ~params ~tokens (stmt : Ast.AST.
           collect_stmt ~source ~type_map ~environment ~params ~tokens m.impl_method_body;
           search_from := m.impl_method_body.end_pos + 1)
         inherent_methods
-  | Ast.AST.DeriveDef _ | Ast.AST.TypeAlias _ -> ()
+  | Ast.AST.TypeAlias { alias_name; _ } -> (
+      let nlen = String.length alias_name in
+      match find_name ~source ~start:stmt.pos ~limit:(stmt.end_pos + 1) alias_name with
+      | Some (nstart, _) ->
+          tokens :=
+            { pos = nstart; end_pos = nstart + nlen - 1; token_type = _type_type; modifiers = declaration_mod }
+            :: !tokens
+      | None -> ())
+  | Ast.AST.DeriveDef _ -> ()
 
 (* Sort tokens by position, then delta-encode *)
 let encode_tokens ~source (raw : raw_token list) : int array =
@@ -557,9 +587,6 @@ let%test "no tokens for empty/failing source" =
   tokens = None
 
 let%test "method call produces method token" =
-  (* Use a trait impl so method call typechecks *)
-  let src =
-    "trait Greet[a] = {\n  fn hello(self: a) -> Str\n}\nimpl Greet[Int] = {\n  fn hello(self: Int) -> Str = \"hi\"\n}\nlet x = 1; x.hello()"
-  in
+  let src = "let hello = (_: Int) -> \"hi\"; let r = { hello: hello }\nr.hello(0)" in
   let tokens = get_tokens src in
   has_token_type method_type tokens

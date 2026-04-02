@@ -6,9 +6,11 @@ impl Pair = {
   }
 }
 
-let p: Pair = { a: 10, b: 20 }
+let p = {a: 10, b: 20}
+
 # These two forms should produce identical results
-let via_dot = p.total()
+let total = Pair.total
+let via_value = total(p)
 let via_qual = Pair.total(p)
-puts(via_dot)  # output: 30
+puts(via_value)  # output: 30
 puts(via_qual)  # output: 30

@@ -1,6 +1,6 @@
 # XF41: I49: Generic show function monomorphized at int and string
 fn render[a: Show](x: a) -> Str = {
-  x.show()
+  Show.show(x)
 }
 puts(render(42))  # output: 42
 puts(render("hello"))  # output: hello

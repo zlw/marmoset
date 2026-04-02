@@ -1,0 +1,5 @@
+impl Int = {
+  fn foo(x: Int, y: Bool) -> Int = x
+}
+
+Int.foo(1, 2)  # error: Cannot unify Int with Bool

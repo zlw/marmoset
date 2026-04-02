@@ -1,0 +1,14 @@
+# U91: Record patterns narrow named-product unions in match arm bodies
+type Left = { x: Int }
+type Right = { y: Int }
+
+fn read(v: Left | Right) -> Int = {
+  match v {
+    case { x: }: v.x
+    case { y: }: v.y
+    case _: 0
+  }
+}
+
+puts(read({x: 1}))   # output: 1
+puts(read({y: 2}))  # output: 2

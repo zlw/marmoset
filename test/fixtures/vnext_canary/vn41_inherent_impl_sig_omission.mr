@@ -5,5 +5,5 @@ impl Point = {
   fn sum(point: Point) = point.x + point.y
 }
 
-let point: Point = { x: 19, y: 23 }
-puts(point.sum())  # output: 42
+let point: Point = {x: 19, y: 23}
+puts(Point.sum(point))  # output: 42

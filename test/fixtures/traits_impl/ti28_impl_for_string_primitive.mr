@@ -5,4 +5,4 @@ trait Length[a] = {
 impl Length[Str] = {
   fn length(s: Str) -> Int = len(s)
 }
-puts("hello".length())  # output: 5
+puts(Length.length("hello"))  # output: 5

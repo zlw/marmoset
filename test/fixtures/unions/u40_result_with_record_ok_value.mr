@@ -1,5 +1,5 @@
 # U40: Result with record Ok value
-enum Result[a, e] = { Ok(a), Err(e) }
+type Result[a, e] = { Ok(a), Err(e) }
 let r: Result[{name: Str}, Int] = Result.Ok({name: "alice"})
 let out = match r {
   case Result.Ok(v): v.name

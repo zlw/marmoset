@@ -1,16 +1,12 @@
-# XF05: A5: Three-level supertrait chain with record containing all fields
-trait Named = {
+# XF05: A5: Wider shape with multiple required fields
+shape Profiled = {
   name: Str
-}
-trait Aged: Named = {
   age: Int
-}
-trait Profiled: Aged = {
   status: Str
 }
 
 fn summarize[t: Profiled](p: t) -> Str = {
-  p.name + " " + p.age.show() + " " + p.status
+  p.name + " " + Show.show(p.age) + " " + p.status
 }
 
 let p = { name: "alice", age: 30, status: "active", secret: true }

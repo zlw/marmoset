@@ -11,7 +11,7 @@
 Pattern matching is expression-oriented branching over structured values.
 
 Supported scrutinee classes include:
-- enums,
+- constructor-bearing wrappers and sums,
 - selected primitive patterns,
 - records.
 
@@ -21,6 +21,13 @@ Pattern forms include:
 - literals,
 - constructors,
 - record patterns (including rest binding forms where supported by semantics).
+
+## Status Note
+
+The data-first rework makes constructor patterns the primary unwrap/destructuring
+surface for nominal wrappers and sums. Structural projection such as
+`{ ...wrapper }` remains available, but docs and examples should prefer `match`
+with constructor patterns whenever code is reading or destructuring nominal payloads.
 
 ## Syntax
 
@@ -35,6 +42,10 @@ let v = match opt {
   case Option.None: 0
 }
 
+let name = match user {
+  case User(name:, ...rest): name
+}
+
 let r = match p {
   case { x:, y: }: x + y
   case _: 0
@@ -44,7 +55,7 @@ let r = match p {
 ## Sub-Features and Use Cases
 
 - expression-level branching returning values,
-- destructuring payloads from enums/records,
+- destructuring payloads from constructor-bearing sums/records,
 - replacing fragile index/flag-based branching logic.
 
 ## Type-System Semantics
@@ -54,7 +65,7 @@ let r = match p {
 - exhaustiveness checks applied for supported domains.
 
 Checker responsibilities:
-- constructor patterns validated against enum constructor signatures,
+- constructor patterns validated against wrapper/sum constructor signatures,
 - literal patterns validated against scrutinee compatibility,
 - record patterns validate required fields and bind names in arm scope.
 
@@ -90,13 +101,13 @@ Cons:
 
 ### Candidate approaches
 
-1. Lower to Go `switch` for enums/primitives and `if/else` chains for record patterns (Chosen).
+1. Lower to Go `switch` for named sums/primitives and `if/else` chains for record patterns (Chosen).
 2. Build a custom decision-tree IR first.
 3. Runtime pattern engine with interpreted matcher.
 
 ### Approach 1 (Chosen)
 
-- enum match -> switch on tag,
+- named-sum match -> switch on tag,
 - primitive match -> switch on value,
 - record match -> emitted conditional chain with bindings.
 
@@ -162,7 +173,7 @@ Direct lowering keeps implementation and generated code straightforward while co
 
 Pros:
 - expressive branching,
-- integration with type narrowing and enum/record destructuring,
+- integration with type narrowing and sum/record destructuring,
 - strong compile-time validation opportunities.
 
 Cons:

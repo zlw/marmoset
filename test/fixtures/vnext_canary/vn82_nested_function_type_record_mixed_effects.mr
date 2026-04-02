@@ -9,5 +9,5 @@ let handlers: MixedHandlers = {
   eff_outer: (f: (Int) -> Str) => f(21),
 }
 
-puts(handlers.pure_outer((n: Int) => n.show()))  # output: kept
-puts(handlers.eff_outer((n: Int) -> n.show()))   # output: 21
+puts(handlers.pure_outer((n: Int) => Show.show(n)))  # output: kept
+puts(handlers.eff_outer((n: Int) -> Show.show(n)))   # output: 21

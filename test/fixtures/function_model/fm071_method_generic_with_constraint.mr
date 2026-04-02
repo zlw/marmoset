@@ -2,9 +2,10 @@ type Container = { v: Int }
 
 impl Container = {
   fn show_as[b: Show](c: Container, f: (Int) -> b) -> Str = {
-    f(c.v).show()
+    Show.show(f(c.v))
   }
 }
 
-let c: Container = { v: 7 }
-puts(c.show_as((n: Int) -> n + 1))  # output: 8
+let c: Container = {v: 7}
+
+puts(Container.show_as(c, (n: Int) -> n + 1))  # output: 8

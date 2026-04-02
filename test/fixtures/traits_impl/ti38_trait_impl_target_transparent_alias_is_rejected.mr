@@ -1,0 +1,13 @@
+# TI38: Trait impl target can be a transparent type definition
+type Count = Int
+
+trait Double[a] = {
+  fn double(x: a) -> Int
+}
+
+impl Double[Count] = {
+  fn double(x: Count) -> Int = x + x
+}
+
+let count: Count = 21
+puts(Double.double(count))  # output: 42

@@ -1,3 +1,3 @@
-let x = Color.Red  # error: *
+let x = Color.Red
 enum Color = { Red, Green, Blue }
-puts(x)
+puts(x)  # output: Red

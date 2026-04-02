@@ -1,4 +1,4 @@
-enum Option[a] = {
+type Option[a] = {
   Some(a),
   None,
 }

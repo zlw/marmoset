@@ -5,17 +5,18 @@ const PREC = {
   OR_PATTERN: 1,
   UNION_TYPE: 2,
   INTERSECTION_TYPE: 3,
-  LOGICAL_OR: 4,
-  LOGICAL_AND: 5,
-  EQUALS: 6,
-  LESS_GREATER: 7,
-  SUM: 8,
-  PRODUCT: 9,
-  IS: 10,
-  PREFIX: 11,
-  CALL: 12,
-  INDEX: 13,
-  DOT: 14,
+  PIPE: 4,
+  LOGICAL_OR: 5,
+  LOGICAL_AND: 6,
+  EQUALS: 7,
+  LESS_GREATER: 8,
+  SUM: 9,
+  PRODUCT: 10,
+  IS: 11,
+  PREFIX: 12,
+  CALL: 13,
+  INDEX: 14,
+  DOT: 15,
 };
 
 module.exports = grammar({
@@ -43,9 +44,10 @@ module.exports = grammar({
         $.let_statement,
         $.return_statement,
         $.enum_definition,
+        $.type_definition,
+        $.shape_definition,
         $.trait_definition,
         $.impl_block,
-        $.type_alias,
         $.expression_statement,
       ),
 
@@ -98,7 +100,7 @@ module.exports = grammar({
 
     enum_variant: ($) =>
       seq(
-        field("name", $.identifier),
+        field("name", alias($.constructor_name, $.identifier)),
         optional(seq("(", commaSep1($._type), ")")),
       ),
 
@@ -110,7 +112,7 @@ module.exports = grammar({
         optional(seq(":", field("supertraits", $.supertrait_list))),
         "=",
         "{",
-        repeat(choice($.trait_method_signature, $.trait_field)),
+        repeat($.trait_method_signature),
         "}",
       ),
 
@@ -135,7 +137,18 @@ module.exports = grammar({
         field("type", $._type),
       ),
 
-    trait_field: ($) =>
+    shape_definition: ($) =>
+      seq(
+        "shape",
+        field("name", $.identifier),
+        optional(field("type_params", $.type_parameter_list)),
+        "=",
+        "{",
+        repeat($.shape_field),
+        "}",
+      ),
+
+    shape_field: ($) =>
       seq(field("name", $.identifier), ":", field("type", $._type), optional(",")),
 
     supertrait_list: ($) => seq($.identifier, repeat(seq("&", $.identifier))),
@@ -177,15 +190,30 @@ module.exports = grammar({
         commaSep1(field("trait", $.identifier)),
       )),
 
-    type_alias: ($) =>
-      prec.right(seq(
+    type_definition: ($) =>
+      prec.right(1, seq(
         "type",
         field("name", $.identifier),
         optional(field("type_params", $.type_parameter_list)),
         "=",
-        field("type", $._type),
+        field("type", choice($.wrapper_type, $.constructor_type_body, $._type)),
         optional(field("derive", $.derive_clause)),
       )),
+
+    wrapper_type: ($) =>
+      prec(2, seq(
+        field("constructor", alias($.constructor_name, $.identifier)),
+        "(",
+        field("payload", $._type),
+        ")",
+      )),
+
+    constructor_type_body: ($) =>
+      seq(
+        "{",
+        repeat(choice($.enum_variant, ",")),
+        "}",
+      ),
 
     // ── Types ───────────────────────────────────────────────────
 
@@ -206,11 +234,11 @@ module.exports = grammar({
     type_identifier: ($) =>
       token(choice("Int", "Str", "Bool", "Float", "Unit", "List", "Map")),
 
-    type_variable: ($) => $.identifier,
+    type_variable: ($) => choice(alias($.constructor_name, $.identifier), $.identifier),
 
     generic_type: ($) =>
       prec(1, seq(
-        field("name", choice($.type_identifier, $.identifier)),
+        field("name", choice($.type_identifier, alias($.constructor_name, $.identifier), $.identifier)),
         "[",
         commaSep1(field("arg", $._type)),
         "]",
@@ -300,9 +328,23 @@ module.exports = grammar({
 
     float_literal: ($) => /[0-9]+\.[0-9]+/,
 
-    string_literal: ($) => seq('"', optional($.string_content), '"'),
+    string_literal: ($) =>
+      seq(
+        '"',
+        repeat(choice($.string_content, $.string_hash, $.interpolation)),
+        '"',
+      ),
 
-    string_content: ($) => /[^"]+/,
+    string_content: ($) => token.immediate(prec(1, /[^"\\#]+|\\./)),
+
+    string_hash: ($) => token.immediate(prec(2, "#")),
+
+    interpolation: ($) =>
+      seq(
+        token.immediate(prec(3, "#{")),
+        field("expression", $._expression),
+        "}",
+      ),
 
     boolean_literal: ($) => choice("true", "false"),
 
@@ -338,6 +380,7 @@ module.exports = grammar({
     infix_expression: ($) =>
       choice(
         ...[
+          ["|>", PREC.PIPE],
           ["||", PREC.LOGICAL_OR],
           ["&&", PREC.LOGICAL_AND],
           ["+", PREC.SUM],
@@ -419,13 +462,26 @@ module.exports = grammar({
         optional(seq(":", field("type", $._type))),
       ),
 
+    constructor_argument_entry: ($) =>
+      choice(
+        seq(field("key", $.identifier), ":", field("value", $._expression)),
+        $.spread_entry,
+      ),
+
+    constructor_argument_list: ($) =>
+      seq(
+        choice($.constructor_argument_entry),
+        repeat(seq(",", $.constructor_argument_entry)),
+        optional(","),
+      ),
+
     call_expression: ($) =>
       prec(
         PREC.CALL,
         seq(
           field("function", $._expression),
           token.immediate("("),
-          commaSep($._expression),
+          optional(choice($.constructor_argument_list, commaSep($._expression))),
           ")",
         ),
       ),
@@ -479,19 +535,36 @@ module.exports = grammar({
 
     constructor_pattern: ($) =>
       seq(
-        field("enum", $.identifier),
-        ".",
-        field("variant", $.identifier),
-        optional(seq("(", commaSep1($._pattern), ")")),
+        choice(
+          seq(
+            field("enum", alias($.constructor_name, $.identifier)),
+            ".",
+            field("variant", alias($.constructor_name, $.identifier)),
+          ),
+          field("variant", alias($.constructor_name, $.identifier)),
+        ),
+        optional(seq(
+          "(",
+          choice(
+            commaSep1($._pattern),
+            alias($.flattened_record_pattern, $.record_pattern),
+          ),
+          ")",
+        )),
       ),
 
     record_pattern: ($) =>
       seq(
         "{",
-        commaSep1(
-          choice($.record_pattern_field, $.record_pattern_punned, $.spread_pattern),
-        ),
+        $._record_pattern_members,
         "}",
+      ),
+
+    flattened_record_pattern: ($) => $._record_pattern_members,
+
+    _record_pattern_members: ($) =>
+      commaSep1(
+        choice($.record_pattern_field, $.record_pattern_punned, $.spread_pattern),
       ),
 
     record_pattern_field: ($) =>
@@ -505,6 +578,8 @@ module.exports = grammar({
     // ── Atoms ───────────────────────────────────────────────────
 
     placeholder: ($) => "_",
+
+    constructor_name: ($) => token(prec(1, /[A-Z][a-zA-Z0-9_]*[!?]?/)),
 
     identifier: ($) => /[a-zA-Z_][a-zA-Z0-9_]*[!?]?/,
 

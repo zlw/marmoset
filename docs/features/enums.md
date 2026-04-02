@@ -1,14 +1,18 @@
-# Enums
+# Named Sums (`enum` Compatibility Sugar)
 
 ## Maintenance
 
-- Last verified: 2026-02-28
+- Last verified: 2026-03-30
 - Implementation status: Canonical (actively maintained)
 - Update trigger: Any language behavior, typechecker, or codegen change affecting this topic
 
 ## Scope
 
-Enums provide algebraic/variant types with named constructors and optional payloads.
+Constructor-bearing sum types provide algebraic/variant types with named constructors and optional payloads.
+
+Canonical surface:
+- `type Name = { Variant, Variant(Payload), ... }`
+- `enum Name = { ... }` is still accepted as compatibility sugar for the same construct
 
 Capabilities:
 - generic enums,
@@ -19,17 +23,17 @@ Capabilities:
 ## Syntax
 
 ```marmoset
-enum Option[a] = {
+type Option[a] = {
   Some(a),
   None,
 }
 
-enum Result[a, e] = {
+type Result[a, e] = {
   Success(a),
   Failure(e),
 }
 
-enum HttpResponse = {
+type HttpResponse = {
   Ok(Int, Str),
   Error(Int, Str),
 }
@@ -38,7 +42,7 @@ let x = Option.Some(42)
 let n = Option.None
 ```
 
-Constructor calls are namespaced by enum name.
+Constructor calls are namespaced by the sum type name.
 
 ## Sub-Features and Use Cases
 
@@ -48,8 +52,9 @@ Constructor calls are namespaced by enum name.
 
 ## Type-System Semantics
 
-Enum typing model:
-- enum definitions register constructor metadata and type parameters,
+Named-sum typing model:
+- constructor-bearing `type` definitions register constructor metadata and type parameters,
+- `enum` declarations lower to the same canonical sum representation,
 - constructor calls validate arity and payload types,
 - generic parameters instantiate from call-site evidence,
 - match checking uses constructor domain information for exhaustiveness.
@@ -68,7 +73,7 @@ Cons:
 - weak naming and domain semantics,
 - harder payload discipline.
 
-### Alternative B: Nominal enums with namespaced constructors (Chosen)
+### Alternative B: Nominal sums with namespaced constructors (Chosen)
 
 Pros:
 - clear domain intent,
@@ -98,13 +103,13 @@ Cons:
 ### Approach 1 (Chosen)
 
 Runtime representation:
-- one generated struct per enum type,
+- one generated struct per sum type,
 - explicit `Tag` field encodes active variant,
 - payload fields represent variant data layout.
 
 Lowering pipeline:
-1. Typechecker stores enum metadata in enum registry.
-2. Emitter generates enum type/constructor helpers.
+1. Typechecker stores sum metadata in the registry.
+2. Emitter generates named-sum type/constructor helpers.
 3. Constructor calls lower to helper invocations creating tagged values.
 4. Match expressions lower to `switch value.Tag` plus payload extraction.
 
@@ -116,7 +121,7 @@ Representative lowering:
 
 Marmoset:
 ```marmoset
-enum Option[a] = {
+type Option[a] = {
   Some(a),
   None,
 }
@@ -151,7 +156,7 @@ func to_int(x Option_int64) int64 {
 Pros:
 - predictable runtime behavior,
 - explicit and inspectable generated code,
-- avoids opaque interface-heavy dispatch for core enum operations.
+- avoids opaque interface-heavy dispatch for core named-sum operations.
 
 Cons:
 - layout logic complexity,
@@ -179,7 +184,7 @@ Cons:
 
 Tagged struct lowering gives a strong balance of static structure, runtime efficiency, and manageable backend complexity.
 
-## Pros and Cons of Current Enum Model
+## Pros and Cons of Current Sum Model
 
 Pros:
 - expressive ADT-style modeling,

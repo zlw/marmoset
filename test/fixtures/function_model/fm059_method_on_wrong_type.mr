@@ -7,5 +7,6 @@ impl Alpha = {
   }
 }
 
-let b: Beta = { w: "hello" }
-b.only_alpha()  # error: *
+let b = {w: "hello"}
+
+Alpha.only_alpha(b)  # error: *

@@ -1,4 +1,4 @@
-# R072: Type alias used for two different bindings
+# R072: Transparent type used for two different bindings
 type Point = { x: Int, y: Int }
 let p1: Point = { x: 10, y: 20 }
 let p2: Point = { x: 100, y: 200 }

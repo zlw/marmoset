@@ -1,5 +1,5 @@
-# VN77: Inherent methods compose shorthand params, omitted suffixes, and block bodies
-trait Named = { name: Str }
+# VN77: Inherent methods compose shape shorthand, omitted suffixes, and block bodies
+shape Named = { name: Str }
 
 type Formatter = { prefix: Str }
 
@@ -10,6 +10,6 @@ impl Formatter = {
   }
 }
 
-let fmt: Formatter = { prefix: "hi " }
+let fmt: Formatter = {prefix: "hi "}
 let monkey = { name: "mia", id: 7 }
-puts(fmt.label(monkey))  # output: hi mia
+puts(Formatter.label(fmt, monkey))  # output: hi mia

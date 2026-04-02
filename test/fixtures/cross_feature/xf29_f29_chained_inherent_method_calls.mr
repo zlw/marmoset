@@ -4,4 +4,4 @@ impl Int = {
   fn add_one(x: Int) -> Int = x + 1
 }
 let n = 5
-puts(n.double().double())  # output: 20
+puts(Int.double(Int.double(n)))  # output: 20

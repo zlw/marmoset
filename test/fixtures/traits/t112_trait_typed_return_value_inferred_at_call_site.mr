@@ -1,6 +1,6 @@
 # T112: Trait-typed return value inferred at call site
 trait Named = {
-  name: Str
+  name: Str  # error: Trait bodies are method-only; use 'shape' for structural field contracts
 }
 fn extract(x: Named) -> Str = x.name
 let result = extract({ name: "alice", age: 30, role: "admin" })

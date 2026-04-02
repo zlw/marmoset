@@ -1,0 +1,9 @@
+# E98: Canonical constructor-bearing type supports record payloads
+type Event = { Click({ x: Int, y: Int }), Quit }
+
+fn render(event: Event) -> Int = match event {
+  case Event.Click(position): position.x + position.y
+  case Event.Quit: 0
+}
+
+puts(render(Event.Click({ x: 1, y: 2 })))  # output: 3

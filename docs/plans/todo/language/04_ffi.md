@@ -13,7 +13,7 @@ Marmoset compiles to Go source code. "FFI" means: declare Go functions/types in 
 This is the third milestone in the language evolution. It depends on the module system and basic stdlib being in place, since the FFI pattern uses wrapper modules and prelude types like `result`.
 
 ### Prerequisites
-- Module system (import/export, per-module compilation, module signatures) — `docs/plans/todo/language/03_module-system.md`
+- Module system (import/export, per-module compilation, module signatures) — `docs/plans/todo/language/02_module-system.md`
 - Basic stdlib with prelude (`option`, `result`, core traits, migrate builtins to modules) — plan TBD
 - Purity annotations working (`->` pure, `=>` effectful) — extern functions require explicit purity
 - Function-model rework plumbing in place:
@@ -348,7 +348,7 @@ func main() {
 
 1. **`int64` vs `int`** — mitigated by generated Go wrapper functions that handle conversion
 2. **Extern qualifier collision with module names** — mitigated by namespace-scope validation, clear error
-3. **`.` disambiguation** — extern qualifiers live in the same namespace bucket defined in `docs/plans/todo/language/03_module-system.md` and the function-model rework (`value > namespace > named sum > trait > named type`)
+3. **`.` disambiguation** — extern qualifiers live in the same namespace bucket defined in `docs/plans/todo/language/02_module-system.md` and the function-model rework (`value > namespace > named sum > trait > named type`)
 4. **Generated Go size** — wrappers only emitted for functions actually called
 5. **Go function signatures evolving** — wrapper modules are user-maintained, updated as needed
 

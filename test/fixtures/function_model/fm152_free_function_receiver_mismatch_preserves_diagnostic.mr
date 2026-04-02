@@ -1,0 +1,3 @@
+fn foo(x: Str, y: Int) -> Int = y
+
+foo(1, 2)  # error: Cannot unify Int with String

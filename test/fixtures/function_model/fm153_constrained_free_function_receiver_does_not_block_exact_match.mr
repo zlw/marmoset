@@ -1,0 +1,9 @@
+shape Named = { name: Str }
+
+impl Int = {
+  fn label(x: Int, suffix: Str) -> Str = suffix
+}
+
+fn label[t: Named](x: t, suffix: Str) -> Str = x.name + suffix
+
+puts(Int.label(1, "!"))  # output: !

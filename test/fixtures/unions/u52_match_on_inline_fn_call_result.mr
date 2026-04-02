@@ -1,5 +1,5 @@
 # U52: Match on inline function call result
-enum Option[a] = { Some(a), None }
+type Option[a] = { Some(a), None }
 fn make(x: Int) -> Option[Int] = Option.Some(x)
 let out = match make(100) {
   case Option.Some(v): v

@@ -1,5 +1,5 @@
 # U61: Wildcard for individual fields in multi-field variant
-enum Http = { Response(Int, Str) }
+type Http = { Response(Int, Str) }
 let r = Http.Response(200, "OK")
 let out = match r {
   case Http.Response(code, _): code

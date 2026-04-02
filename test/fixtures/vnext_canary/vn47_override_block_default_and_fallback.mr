@@ -10,11 +10,11 @@ trait Greeter[a]: Show = {
 impl Greeter[Int] = {
   override fn greet(x: Int) -> Str = {
     let prefix = "override "
-    prefix + x.show()
+    prefix + Show.show(x)
   }
 }
 
 impl Greeter[Bool] = {}
 
-puts(1.greet())     # output: override 1
-puts(true.greet())  # output: hello fallback
+puts(Greeter.greet(1))     # output: override 1
+puts(Greeter.greet(true))  # output: hello fallback

@@ -1,4 +1,4 @@
-# R003: Duplicate type alias definition is rejected
+# R003: Duplicate transparent type definition is rejected
 type Point = { x: Int, y: Int }
-type Point = { y: Int, x: Int }  # error: Duplicate type alias definition: Point
+type Point = { y: Int, x: Int }  # error: Duplicate type definition: Point
 puts(1)

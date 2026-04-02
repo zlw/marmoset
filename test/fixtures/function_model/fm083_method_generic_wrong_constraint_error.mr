@@ -6,10 +6,11 @@ trait Special[a] = {
 
 impl Box = {
   fn needs_special[t: Special](b: Box, f: (Int) -> t) -> Int = {
-    f(b.v).special_op()
+    Special.special_op(f(b.v))
   }
 }
 
 # Int doesn't implement Special → error
-let b: Box = { v: 1 }
+let b = {v: 1}
+
 b.needs_special((n: Int) -> n)  # error: *

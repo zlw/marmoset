@@ -1,7 +1,7 @@
-# T108: Non-generic trait with generic field-only supertrait is rejected
+# T108: Legacy generic field-style supertrait syntax is rejected
 trait Boxed[a] = {
-  value: a
+  value: a  # error: Trait bodies are method-only; use 'shape' for structural field contracts
 }
-trait LabeledBox: Boxed = {  # error: generic field-only supertrait
+trait LabeledBox: Boxed = {
   label: Str
 }

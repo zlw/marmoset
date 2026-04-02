@@ -7,5 +7,5 @@ impl Show[Int] = {
 }
 let x = 1
 let y = 2
-puts(x.show())  # output: number
-puts(y.show())  # output: number
+puts(Show.show(x))  # output: number
+puts(Show.show(y))  # output: number

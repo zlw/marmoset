@@ -1,4 +1,4 @@
-enum Tag = { A, B }
+type Tag = { A, B }
 impl Eq[Tag] = {
   fn eq(x: Tag, y: Tag) -> Bool = true
 }

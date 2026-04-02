@@ -53,6 +53,10 @@ let document_symbols ~(source : string) ~(program : Ast.AST.program) : Lsp_t.Doc
               methods
           in
           Some (symbol ~name ~kind:Lsp_t.SymbolKind.Interface ~range:(range_of_stmt stmt) ~children ())
+      | Ast.AST.TypeDef { type_name; _ } ->
+          Some (symbol ~name:type_name ~kind:Lsp_t.SymbolKind.Struct ~range:(range_of_stmt stmt) ())
+      | Ast.AST.ShapeDef { shape_name; _ } ->
+          Some (symbol ~name:shape_name ~kind:Lsp_t.SymbolKind.Interface ~range:(range_of_stmt stmt) ())
       | Ast.AST.ImplDef { impl_trait_name; impl_for_type; impl_methods; _ } ->
           let type_name = type_expr_to_string impl_for_type in
           let name = Printf.sprintf "impl %s[%s]" (Source_syntax.canonical_type_name impl_trait_name) type_name in
@@ -73,7 +77,7 @@ let document_symbols ~(source : string) ~(program : Ast.AST.program) : Lsp_t.Doc
           in
           Some (symbol ~name ~kind:Lsp_t.SymbolKind.Class ~range:(range_of_stmt stmt) ~children ())
       | Ast.AST.TypeAlias { alias_name; _ } ->
-          Some (symbol ~name:alias_name ~kind:Lsp_t.SymbolKind.TypeParameter ~range:(range_of_stmt stmt) ())
+          Some (symbol ~name:alias_name ~kind:Lsp_t.SymbolKind.Struct ~range:(range_of_stmt stmt) ())
       | Ast.AST.DeriveDef _ | Ast.AST.ExpressionStmt _ | Ast.AST.Return _ | Ast.AST.Block _ -> None)
     program
 
@@ -117,10 +121,28 @@ let%test "trait produces Interface symbol" =
   | [ s ] -> s.name = "Show" && s.kind = Lsp_t.SymbolKind.Interface
   | _ -> false
 
-let%test "type alias produces TypeParameter symbol" =
+let%test "named type produces Struct symbol" =
   let symbols = get_symbols "type Point = { x: Int, y: Int }" in
   match symbols with
-  | [ s ] -> s.name = "Point" && s.kind = Lsp_t.SymbolKind.TypeParameter
+  | [ s ] -> s.name = "Point" && s.kind = Lsp_t.SymbolKind.Struct
+  | _ -> false
+
+let%test "shape produces Interface symbol" =
+  let symbols = get_symbols "shape HasName = { name: Str }" in
+  match symbols with
+  | [ s ] -> s.name = "HasName" && s.kind = Lsp_t.SymbolKind.Interface
+  | _ -> false
+
+let%test "transparent type produces Struct symbol" =
+  let symbols = get_symbols "type Point = { x: Int, y: Int }" in
+  match symbols with
+  | [ s ] -> s.name = "Point" && s.kind = Lsp_t.SymbolKind.Struct
+  | _ -> false
+
+let%test "transparent type alias lowering is surfaced as Struct symbol" =
+  let symbols = get_symbols "type Point = { x: Int, y: Int }" in
+  match symbols with
+  | [ s ] -> s.name = "Point" && s.kind = Lsp_t.SymbolKind.Struct
   | _ -> false
 
 let%test "multiple definitions produce multiple symbols" =

@@ -1,0 +1,6 @@
+# VN129: Pipe chains with projection and section shorthand
+type Post = { updated_at: Int }
+
+let post: Post = { updated_at: 7 }
+
+puts(post |> _.updated_at |> (_ + 1) |> Show.show)  # output: 8

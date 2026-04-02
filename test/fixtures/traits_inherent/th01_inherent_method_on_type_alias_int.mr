@@ -1,9 +1,7 @@
-# TH01: Inherent method on type alias (Int)
-type MyInt = Int
+# TH01: Inherent method on explicit wrapper (Int)
+type MyInt = MyInt(Int)
 impl MyInt = {
-  fn triple(x: MyInt) -> MyInt = {
-    x + x + x
-  }
+  fn label(x: MyInt) -> Str = "wrapped"
 }
-let n: MyInt = 2
-puts(n.triple())  # output: 6
+let n = MyInt(2)
+puts(MyInt.label(n))  # output: wrapped

@@ -1,0 +1,13 @@
+shape Named = { name: Str }
+
+trait Mix[a] = {
+  fn mix(x: a, y: Int) -> Int
+}
+
+impl Mix[Int] = {
+  fn mix(x: Int, y: Int) -> Int = x + y
+}
+
+fn mix[a: Named](x: Int, y: a) -> Int = 0
+
+puts(Mix.mix(1, 2))  # output: 3

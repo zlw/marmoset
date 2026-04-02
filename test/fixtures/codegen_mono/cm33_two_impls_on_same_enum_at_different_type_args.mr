@@ -4,12 +4,12 @@ trait Label[a] = {
   fn label(x: a) -> Str
 }
 impl Label[Box[Int]] = {
-  fn label(x: Box[Int]) -> Str = match x { case Box.Wrap(v): "int:" + v.show() }
+  fn label(x: Box[Int]) -> Str = match x { case Box.Wrap(v): "int:" + Show.show(v) }
 }
 impl Label[Box[Str]] = {
   fn label(x: Box[Str]) -> Str = match x { case Box.Wrap(v): "str:" + v }
 }
 let a: Box[Int] = Box.Wrap(42)
 let b: Box[Str] = Box.Wrap("hello")
-puts(a.label())  # output: int:42
-puts(b.label())  # output: str:hello
+puts(Label.label(a))  # output: int:42
+puts(Label.label(b))  # output: str:hello

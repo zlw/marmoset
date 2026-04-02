@@ -45,7 +45,7 @@ let rec walk_expr ~source ~ranges (expr : Ast.AST.expression) =
   | Ast.AST.Infix (l, _, r) ->
       walk_expr ~source ~ranges l;
       walk_expr ~source ~ranges r
-  | Ast.AST.Prefix (_, e) -> walk_expr ~source ~ranges e
+  | Ast.AST.Prefix (_, e) | Ast.AST.TypeApply (e, _) -> walk_expr ~source ~ranges e
   | Ast.AST.Index (arr, idx) ->
       walk_expr ~source ~ranges arr;
       walk_expr ~source ~ranges idx
@@ -95,6 +95,8 @@ and walk_stmt ~source ~ranges (stmt : Ast.AST.statement) =
   | Ast.AST.InherentImplDef { inherent_methods; _ } ->
       maybe_range ~source ~pos:stmt.pos ~end_pos:stmt.end_pos ~kind:Lsp_t.FoldingRangeKind.Region ranges;
       List.iter (fun (m : Ast.AST.method_impl) -> walk_stmt ~source ~ranges m.impl_method_body) inherent_methods
+  | Ast.AST.TypeDef _ | Ast.AST.ShapeDef _ ->
+      maybe_range ~source ~pos:stmt.pos ~end_pos:stmt.end_pos ~kind:Lsp_t.FoldingRangeKind.Region ranges
   | Ast.AST.DeriveDef _ | Ast.AST.TypeAlias _ -> ()
 
 (* Public entry point *)

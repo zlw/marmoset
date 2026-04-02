@@ -193,8 +193,8 @@ let rec walk_stmt ~source ~type_map ~range_start ~range_end ~sites (stmt : Ast.A
     | Ast.AST.Block stmts -> List.iter (walk_stmt ~source ~type_map ~range_start ~range_end ~sites) stmts
     | Ast.AST.ExpressionStmt e -> walk_expr ~source ~type_map ~range_start ~range_end ~sites e
     | Ast.AST.Return e -> walk_expr ~source ~type_map ~range_start ~range_end ~sites e
-    | Ast.AST.EnumDef _ | Ast.AST.TraitDef _ | Ast.AST.ImplDef _ | Ast.AST.InherentImplDef _ | Ast.AST.DeriveDef _
-    | Ast.AST.TypeAlias _ ->
+    | Ast.AST.EnumDef _ | Ast.AST.TypeDef _ | Ast.AST.ShapeDef _ | Ast.AST.TraitDef _ | Ast.AST.ImplDef _
+    | Ast.AST.InherentImplDef _ | Ast.AST.DeriveDef _ | Ast.AST.TypeAlias _ ->
         ()
 
 and walk_expr ~source ~type_map ~range_start ~range_end ~sites (expr : Ast.AST.expression) =
@@ -216,7 +216,8 @@ and walk_expr ~source ~type_map ~range_start ~range_end ~sites (expr : Ast.AST.e
     | Ast.AST.Infix (l, _, r) ->
         walk_expr ~source ~type_map ~range_start ~range_end ~sites l;
         walk_expr ~source ~type_map ~range_start ~range_end ~sites r
-    | Ast.AST.Prefix (_, e) -> walk_expr ~source ~type_map ~range_start ~range_end ~sites e
+    | Ast.AST.Prefix (_, e) | Ast.AST.TypeApply (e, _) ->
+        walk_expr ~source ~type_map ~range_start ~range_end ~sites e
     | Ast.AST.Index (arr, idx) ->
         walk_expr ~source ~type_map ~range_start ~range_end ~sites arr;
         walk_expr ~source ~type_map ~range_start ~range_end ~sites idx

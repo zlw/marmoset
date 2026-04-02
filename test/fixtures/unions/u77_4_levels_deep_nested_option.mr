@@ -1,5 +1,5 @@
 # U77: 4 levels deep nested Option (all in nested match)
-enum Option[a] = { Some(a), None }
+type Option[a] = { Some(a), None }
 let x: Option[Option[Option[Option[Int]]]] = Option.Some(Option.Some(Option.Some(Option.Some(7))))
 let d = match x {
   case Option.Some(a): match a {

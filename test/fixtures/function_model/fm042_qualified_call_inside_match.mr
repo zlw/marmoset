@@ -6,7 +6,8 @@ impl Flag = {
   }
 }
 
-let f: Flag = { on: true }
+let f = {on: true}
+
 let msg = match Flag.is_on(f) {
   case true: "yes"
   case false: "no"

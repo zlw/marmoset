@@ -1,13 +1,13 @@
 # T70: Supertrait: impl Ord requires Eq for same type
-trait Eq[a] = {  # error: supertrait
+trait Eq[a] = {
   fn eq(x: a, y: a) -> Bool
 }
 trait Ord[a]: Eq = {
   fn compare(x: a, y: a) -> Int
 }
 type Point = { x: Int }
-impl Ord[Point] = {
+impl Ord[Point] = {  # error: missing required supertrait 'eq'
   fn compare(x: Point, y: Point) -> Int = 0
 }
 let p: Point = { x: 1 }
-puts(p.compare(p))
+puts(Ord.compare(p, p))

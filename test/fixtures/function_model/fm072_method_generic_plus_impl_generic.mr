@@ -1,4 +1,4 @@
-enum Result[a, b] = { Ok(a), Err(b) }
+type Result[a, b] = { Ok(a), Err(b) }
 
 impl[a, b] Result[a, b] = {
   fn map[c](r: Result[a, b], f: (a) -> c) -> Result[c, b] = match r {
@@ -7,5 +7,5 @@ impl[a, b] Result[a, b] = {
   }
 }
 
-let r = Result.Ok(42)
-let r2 = r.map((n: Int) -> n.show())
+let r: Result[Int, Str] = Result.Ok(42)
+let r2: Result[Str, Str] = Result.map(r, (n: Int) -> Show.show(n))

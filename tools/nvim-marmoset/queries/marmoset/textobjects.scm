@@ -82,11 +82,29 @@
   "{" @_start
   "}" @_end) @class.inner
 
+(shape_definition) @class.outer
+
+(shape_definition
+  "{" @_start
+  "}" @_end) @class.inner
+
 (trait_definition) @class.outer
 
 (trait_definition
   "{" @_start
   "}" @_end) @class.inner
+
+(type_definition) @class.outer
+
+(type_definition
+  type: (record_type
+    "{" @_start
+    "}" @_end)) @class.inner
+
+(type_definition
+  type: (constructor_type_body
+    "{" @_start
+    "}" @_end)) @class.inner
 
 (impl_block) @class.outer
 

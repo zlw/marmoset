@@ -8,6 +8,11 @@
   "{" @indent.begin
   "}" @indent.end)
 
+; Indent inside shape bodies
+(shape_definition
+  "{" @indent.begin
+  "}" @indent.end)
+
 ; Indent inside trait bodies
 (trait_definition
   "{" @indent.begin
@@ -35,6 +40,11 @@
 
 ; Indent inside record types
 (record_type
+  "{" @indent.begin
+  "}" @indent.end)
+
+; Indent inside canonical sum-type bodies
+(constructor_type_body
   "{" @indent.begin
   "}" @indent.end)
 

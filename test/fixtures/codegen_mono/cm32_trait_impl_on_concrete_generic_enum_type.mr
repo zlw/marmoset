@@ -12,4 +12,4 @@ impl Describe[Option[Int]] = {
   }
 }
 let v: Option[Int] = Option.Some(42)
-puts(v.describe())  # output: present
+puts(Describe.describe(v))  # output: present

@@ -1,6 +1,6 @@
-# T12: Field-only trait constraint rejects missing required field
+# T12: Legacy field-style trait syntax is rejected before missing-field checking
 trait Named = {
-  name: Str
+  name: Str  # error: Trait bodies are method-only; use 'shape' for structural field contracts
 }
 fn get_name[t: Named](x: t) -> Str = "ok"
-get_name({ age: 42 })  # error: missing-field
+get_name({ age: 42 })

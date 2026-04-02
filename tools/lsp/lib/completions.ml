@@ -14,12 +14,13 @@ let keywords =
     ("return", "Return from function");
     ("match", "Pattern matching");
     ("case", "Match arm");
-    ("enum", "Algebraic data type");
+    ("enum", "Compatibility sugar for constructor-bearing sum types");
+    ("type", "Type declaration (transparent, wrapper, or sum)");
+    ("shape", "Structural shape definition");
     ("trait", "Trait (interface) definition");
     ("impl", "Trait implementation");
     ("derive", "Automatic trait derivation");
     ("override", "Trait default replacement");
-    ("type", "Type alias");
     ("true", "Boolean literal");
     ("false", "Boolean literal");
     ("is", "Type check operator");
@@ -30,7 +31,7 @@ let kind_of_type (mono : Types.mono_type) : Lsp_t.CompletionItemKind.t =
   match mono with
   | Types.TFun _ -> Lsp_t.CompletionItemKind.Function
   | Types.TEnum _ -> Lsp_t.CompletionItemKind.Enum
-  | Types.TRecord _ -> Lsp_t.CompletionItemKind.Struct
+  | Types.TNamed _ | Types.TRecord _ -> Lsp_t.CompletionItemKind.Struct
   | _ -> Lsp_t.CompletionItemKind.Variable
 
 (* Format a poly_type for completion detail in Marmoset syntax.
@@ -134,6 +135,23 @@ let%test "empty env still returns keywords" =
   let items = completions ~environment:Infer.empty_env in
   List.length items = List.length keywords
 
+let%test "completions do not suggest legacy alias keyword" =
+  let items = completions ~environment:Infer.empty_env in
+  let labels = List.map (fun (i : Lsp_t.CompletionItem.t) -> i.label) items in
+  not (List.mem "alias" labels)
+
+let%test "enum keyword detail reflects compatibility sugar" =
+  let items = completions ~environment:Infer.empty_env in
+  match List.find_opt (fun (i : Lsp_t.CompletionItem.t) -> i.label = "enum") items with
+  | Some item -> item.detail = Some "Compatibility sugar for constructor-bearing sum types"
+  | None -> false
+
+let%test "type keyword detail reflects canonical declaration surface" =
+  let items = completions ~environment:Infer.empty_env in
+  match List.find_opt (fun (i : Lsp_t.CompletionItem.t) -> i.label = "type") items with
+  | Some item -> item.detail = Some "Type declaration (transparent, wrapper, or sum)"
+  | None -> false
+
 let%test "detail shows type for monomorphic binding" =
   let env = env_with [ ("x", Types.Forall ([], Types.TInt)) ] in
   let items = completions ~environment:env in
@@ -141,7 +159,7 @@ let%test "detail shows type for monomorphic binding" =
   | Some item -> item.detail = Some "Int"
   | None -> false
 
-let%test "detail uses vNext collection syntax" =
+let%test "detail uses canonical collection syntax" =
   let env = env_with [ ("xs", Types.Forall ([], Types.TArray Types.TInt)) ] in
   let items = completions ~environment:env in
   match List.find_opt (fun (i : Lsp_t.CompletionItem.t) -> i.label = "xs") items with

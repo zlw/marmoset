@@ -1,5 +1,5 @@
-# XF30: G31: Trait-constrained fn + enum + record + match
-trait Named = {
+# XF30: G31: Shape-constrained fn + enum + record + match
+shape Named = {
   name: Str
 }
 enum Wrapper = { Some(Int), None }

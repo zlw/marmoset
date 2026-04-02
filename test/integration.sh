@@ -294,12 +294,12 @@ parse_fixture() {
             fi
         fi
 
-        if [[ "$line" =~ ^[^#]*#[[:space:]]*output:[[:space:]]*(.*) ]]; then
+        if [[ "$line" =~ \#[[:space:]]*output:[[:space:]]*(.*) ]]; then
             OUTPUT_LINES+=("${BASH_REMATCH[1]}")
             has_output=true
         fi
 
-        if [[ "$line" =~ ^[^#]*#[[:space:]]*error:[[:space:]]*(.*) ]]; then
+        if [[ "$line" =~ \#[[:space:]]*error:[[:space:]]*(.*) ]]; then
             DIAG_TYPES+=("error")
             DIAG_VALUES+=("${BASH_REMATCH[1]}")
             DIAG_LINENOS+=("$lineno")
@@ -307,14 +307,14 @@ parse_fixture() {
             has_error_diag=true
         fi
 
-        if [[ "$line" =~ ^[^#]*#[[:space:]]*warning:[[:space:]]*(.*) ]]; then
+        if [[ "$line" =~ \#[[:space:]]*warning:[[:space:]]*(.*) ]]; then
             DIAG_TYPES+=("warning")
             DIAG_VALUES+=("${BASH_REMATCH[1]}")
             DIAG_LINENOS+=("$lineno")
             has_diag=true
         fi
 
-        if [[ "$line" =~ ^[^#]*#[[:space:]]*info:[[:space:]]*(.*) ]]; then
+        if [[ "$line" =~ \#[[:space:]]*info:[[:space:]]*(.*) ]]; then
             DIAG_TYPES+=("info")
             DIAG_VALUES+=("${BASH_REMATCH[1]}")
             DIAG_LINENOS+=("$lineno")

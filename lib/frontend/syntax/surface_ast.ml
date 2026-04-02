@@ -29,6 +29,12 @@ module Surface = struct
     sv_fields : surface_type_expr list;
   }
 
+  and surface_type_def_kind =
+    | STTransparent of surface_type_expr
+    | STNamedProduct of surface_record_type_field list
+    | STNamedWrapper of surface_type_expr
+    | STNamedSum of surface_variant_def list
+
   (* ── Surface patterns ── *)
   type surface_pattern_kind =
     | SPWildcard
@@ -59,6 +65,7 @@ module Surface = struct
     | SEString of string
     | SEArray of surface_expr list
     | SEIndex of surface_expr * surface_expr
+    | SETypeApply of surface_expr * surface_type_expr list
     | SEHash of (surface_expr * surface_expr) list
     | SEPrefix of string * surface_expr
     | SEInfix of surface_expr * string * surface_expr
@@ -172,23 +179,21 @@ module Surface = struct
         is_effectful : bool;
         body : surface_expr_or_block;
       }
-    | SEnumDef of {
-        name : string;
-        type_params : string list;
-        variants : surface_variant_def list;
+    | STypeDef of {
+        type_name : string;
+        type_type_params : string list;
+        type_body : surface_type_def_kind;
         derive : AST.derive_trait list;
       }
-    | STypeDef of {
-        alias_name : string;
-        alias_type_params : string list;
-        alias_body : surface_type_expr;
-        derive : AST.derive_trait list;
+    | SShapeDef of {
+        shape_name : string;
+        shape_type_params : string list;
+        shape_fields : surface_record_type_field list;
       }
     | STraitDef of {
         name : string;
         type_param : string option;
         supertraits : string list;
-        fields : surface_record_type_field list;
         methods : surface_method_sig list;
       }
     | SAmbiguousImplDef of {

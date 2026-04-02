@@ -1,5 +1,5 @@
-# TF31: Constrained generic: Bool field driving control flow
-trait HasActive = {
+# TF31: Constrained generic: Bool shape field driving control flow
+shape HasActive = {
   active: Bool
 }
 fn status[t: HasActive](v: t) -> Str = if (v.active) { "active" } else { "inactive" }

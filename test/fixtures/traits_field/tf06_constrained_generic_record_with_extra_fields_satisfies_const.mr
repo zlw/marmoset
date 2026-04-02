@@ -1,5 +1,5 @@
-# TF06: Constrained generic: record with extra fields satisfies constraint
-trait HasName = {
+# TF06: Constrained generic: record with extra fields satisfies shape constraint
+shape HasName = {
   name: Str
 }
 fn get_name[t: HasName](v: t) -> Str = v.name

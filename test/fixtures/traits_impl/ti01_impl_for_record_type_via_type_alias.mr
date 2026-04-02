@@ -1,12 +1,12 @@
-# TI01: Impl for record type via type alias
+# TI01: Impl for record type via transparent type
 type Point = { x: Int, y: Int }
 trait Show[a] = {
   fn show(x: a) -> Str
 }
 impl Show[Point] = {
   fn show(p: Point) -> Str = {
-    "point(" + p.x.show() + "," + p.y.show() + ")"
+    "point(" + Show.show(p.x) + "," + Show.show(p.y) + ")"
   }
 }
-let p: Point = { x: 1, y: 2 }
-puts(p.show())  # output: point(1,2)
+let p: Point = {x: 1, y: 2}
+puts(Show.show(p))  # output: point(1,2)

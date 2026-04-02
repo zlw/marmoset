@@ -149,6 +149,20 @@ let init_builtin_traits () =
         ];
     };
 
+  (* trait rem[a] { fn rem(x: a, y: a) -> a } *)
+  Trait_registry.register_trait
+    {
+      trait_name = "rem";
+      trait_type_param = Some "a";
+      trait_supertraits = [];
+      trait_methods =
+        [
+          Trait_registry.mk_method_sig ~name:"rem"
+            ~params:[ ("x", TVar "a"); ("y", TVar "a") ]
+            ~return_type:(TVar "a") ();
+        ];
+    };
+
   (* trait neg[a] { fn neg(x: a) -> a } *)
   Trait_registry.register_trait
     {
@@ -233,6 +247,16 @@ let init_builtin_impls () =
           Trait_registry.mk_method_sig ~name:"mul" ~params:[ ("x", TInt); ("y", TInt) ] ~return_type:TInt ();
           Trait_registry.mk_method_sig ~name:"div" ~params:[ ("x", TInt); ("y", TInt) ] ~return_type:TInt ();
         ];
+    };
+
+  (* impl rem for int *)
+  Trait_registry.register_impl ~builtin:true
+    {
+      impl_trait_name = "rem";
+      impl_type_params = [];
+      impl_for_type = TInt;
+      impl_methods =
+        [ Trait_registry.mk_method_sig ~name:"rem" ~params:[ ("x", TInt); ("y", TInt) ] ~return_type:TInt () ];
     };
 
   (* impl neg for int *)
@@ -455,7 +479,8 @@ let%test "builtin traits are registered" =
   let show_exists = Trait_registry.lookup_trait "show" <> None in
   let eq_exists = Trait_registry.lookup_trait "eq" <> None in
   let ord_exists = Trait_registry.lookup_trait "ord" <> None in
-  show_exists && eq_exists && ord_exists
+  let rem_exists = Trait_registry.lookup_trait "rem" <> None in
+  show_exists && eq_exists && ord_exists && rem_exists
 
 let%test "puts is effectful, other builtins are pure" =
   let is_effectful = function

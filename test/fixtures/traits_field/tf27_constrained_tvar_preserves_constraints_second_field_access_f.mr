@@ -1,5 +1,5 @@
-# TF27: Constrained TVar preserves constraints: second field access fails
-trait HasX = {
+# TF27: Constrained TVar preserves shape constraints: second field access fails
+shape HasX = {
   x: Int
 }
 fn bad[t: HasX](v: t) -> Int = v.x + v.y  # error: not guaranteed by constraints

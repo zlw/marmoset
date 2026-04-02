@@ -13,7 +13,9 @@ impl Outer = {
   }
 }
 
-let i: Inner = { v: 77 }
-let o: Outer = { i: i }
-let got = o.get_inner()
-puts(got.val())  # output: 77
+let i = {v: 77}
+
+let o = {i: i}
+
+let got = Outer.get_inner(o)
+puts(Inner.val(got))  # output: 77

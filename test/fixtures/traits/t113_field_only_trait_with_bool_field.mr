@@ -1,6 +1,6 @@
-# T113: Field-only trait with Bool field
+# T113: Legacy field-style trait syntax with Bool fields is rejected
 trait Togglable = {
-  active: Bool
+  active: Bool  # error: Trait bodies are method-only; use 'shape' for structural field contracts
 }
-let x: Togglable = { active: true, name: "switch" }  # error: cannot be used as a type in vNext
+let x: Togglable = { active: true, name: "switch" }
 puts(x.active)  # output: true

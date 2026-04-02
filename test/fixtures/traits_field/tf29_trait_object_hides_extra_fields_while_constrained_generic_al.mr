@@ -1,6 +1,6 @@
-# TF29: Trait object hides extra fields while constrained generic allows access to declared fields
-trait HasName = {
+# TF29: Shape annotation accepts a wider record and preserves guaranteed fields
+shape HasName = {
   name: Str
 }
-let x: HasName = { name: "test", extra: 1 }  # error: cannot be used as a type in vNext
-puts(x.extra)
+let x: HasName = { name: "test", extra: 1 }
+puts(x.name)  # output: test

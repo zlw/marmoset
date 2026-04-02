@@ -4,4 +4,4 @@ impl Int = {
 }
 fn show_num(n: Int) -> Int = n
 let n = 10
-puts(show_num(n.double()))  # output: 20
+puts(show_num(Int.double(n)))  # output: 20

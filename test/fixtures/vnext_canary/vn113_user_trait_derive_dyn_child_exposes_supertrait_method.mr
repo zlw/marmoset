@@ -4,11 +4,12 @@ trait Base[a] = {
 }
 
 trait Child[a]: Base = {
-  fn child(self: a) -> Str = self.base() + ":child"
+  fn child(self: a) -> Str = Base.base(self) + ":child"
 }
 
 type Score = Int derive Child, Base
 
-let value: Dyn[Child] = 1
-puts(value.base())   # output: base
-puts(value.child())  # output: base:child
+let score: Score = 1
+let value: Dyn[Child] = score
+puts(Base.base(value))   # output: base
+puts(Child.child(value))  # output: base:child

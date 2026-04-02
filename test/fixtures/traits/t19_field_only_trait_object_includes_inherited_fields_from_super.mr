@@ -1,10 +1,10 @@
-# T19: Field-only trait object includes inherited fields from supertraits
+# T19: Legacy field-style supertrait syntax is rejected
 trait Named = {
-  name: Str
+  name: Str  # error: Trait bodies are method-only; use 'shape' for structural field contracts
 }
 trait Aged = {
   age: Int
 }
 trait Person: Named & Aged = {}
-let p: Person = { name: "alice", age: 43, active: true }  # error: cannot be used as a type in vNext
+let p: Person = { name: "alice", age: 43, active: true }
 puts(p.age)  # output: 43

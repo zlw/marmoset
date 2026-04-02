@@ -6,5 +6,6 @@ impl Logger = {
   }
 }
 
-let l: Logger = { prefix: "INFO" }
+let l = {prefix: "INFO"}
+
 puts(Logger.log(l, "hello"))  # output: INFO: hello

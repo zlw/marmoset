@@ -2,13 +2,13 @@
 
 ## Maintenance
 
-- Last verified: 2026-03-28
+- Last verified: 2026-04-02
 - Implementation status: Planning (not started)
 - Update trigger: Any module/import/export syntax or compilation model change
 
 ## Context
 
-Marmoset currently supports single-file compilation only. The pipeline is: source.mr → Lexer → Parser → Typechecker → Go Emitter → `go build`. The current registries and lookup tables still reflect the pre-module, pre-semantics-rewrite surface (enum, trait, impl, inherent, and `type`-alias-oriented buckets) and are global mutable Hashtbl values keyed by flat strings. Identifiers are `Identifier of string` with no qualified names, no symbol table, and no multi-file awareness. The Go backend emits a single `package main` with one `main.go`.
+Marmoset currently supports single-file compilation only. The pipeline is: source.mr → Lexer → Parser → Typechecker → Go Emitter → `go build`. The current registries and lookup tables still reflect the pre-module single-file world (enum, trait, impl, inherent, and transparent-type metadata that still uses some alias-like internal names) and are global mutable Hashtbl values keyed by flat strings. Identifiers are `Identifier of string` with no qualified names, no symbol table, and no multi-file awareness. The Go backend emits a single `package main` with one `main.go`.
 
 This plan adds a module system as the first of two milestones (modules, then FFI). Some decisions are flagged as FFI-relevant.
 
@@ -23,7 +23,7 @@ This plan adds a module system as the first of two milestones (modules, then FFI
 ## Locked Decisions
 
 1. **File = module** (implicit). No `module` keyword. `math.mr` defines module `math`. `collections/list.mr` defines module `collections.list`.
-2. **`.` is the universal qualifier** — field access, method calls, named-sum constructors, module access, and later extern-qualified access. Parser stays syntactic; one central checker classifier resolves semantics.
+2. **`.` is the universal qualifier** — field access, callable-field/direct-interface surfaces, named-sum constructors, module access, and later extern-qualified access. Parser stays syntactic; one central checker classifier resolves semantics.
 3. **`import` keyword** with `.`-separated paths. One import per line in v1. Aliasing with `as` supported.
 4. **`export` list at top of file** for visibility. No per-declaration keywords. Everything not exported is private. Export statement is optional (no export = all private).
 5. **No wildcard imports.** Every imported name must be listed explicitly.
@@ -47,8 +47,8 @@ let pi = 3.14159
 fn helper(x: Int) -> Int = x * 2    # private (not in export list)
 
 type Point = { x: Int, y: Int }
-enum Color = { Red, Green, Blue }     # accepted sugar for a named sum type
-alias Points = List[Point]
+type Color = { Red, Green, Blue }     # canonical sum surface; `enum` remains compatibility sugar
+type Points = List[Point]
 shape HasXY = { x: Int, y: Int }
 trait Drawable[a] = { fn draw(self: a) -> Str }
 ```
@@ -60,42 +60,42 @@ import math                     # namespace: math.add(1, 2), math.Point, math.Co
 import math.add                 # direct: add(1, 2)
 import math.Point               # direct: Point available as type name
 import math.Point as Pt         # aliased: Pt instead of Point
-import math.Points              # direct: Points available as alias name
+import math.Points              # direct: Points available as transparent type name
 import math.HasXY               # direct: HasXY available as shape name
 import collections.list         # nested module: collections.list.map(...)
 import collections.list as l    # aliased namespace: l.map(...)
 
 math.add(1, 2)                  # qualified call
 add(1, 2)                       # unqualified (if directly imported)
-let p = Point(x: 1, y: 2)       # direct-imported named type with explicit construction
+let p: Point = { x: 1, y: 2 }   # direct-imported transparent record type
 let c = math.Color.Red          # qualified named-sum constructor
 ```
 
-**Unified Qualified-Call Classifier:** `.` is used for field access, method calls, named-sum constructors, module access, trait-qualified calls, inherent-qualified calls, and later extern package access. The checker uses one centralized classifier and one `call_resolution` artifact family. This is the canonical reference — other plans defer to this order.
+**Unified Qualified-Call Classifier:** `.` is used for field access, callable-field calls, named-sum constructors, module access, trait-qualified calls, exact-type qualified calls, and later extern package access. The checker uses one centralized classifier and one `call_resolution` artifact family. This is the canonical reference — other plans defer to this order.
 
 Given `a.b` or `a.b(args)` where `a` is a bare identifier:
 
 | Priority | Check | Result | Example |
 |----------|-------|--------|---------|
-| 1 | Is `a` a value binding in scope? | Infer type, then field access or method call | `x.show()`, `record.field` |
+| 1 | Is `a` a value binding in scope? | Infer type, then field access, callable-field call, or interface field projection | `record.field`, `runner.run(1)` |
 | 2 | Is `a` a namespace binding? | Namespace-qualified access | `math.add(1, 2)`, future: `fmt.Println(s)` |
 | 3 | Is `a` a named-sum type? | Sub-resolve (see below) | `Option.Some(42)`, `Result.map(r, f)` |
 | 4 | Is `a` a trait name? | Trait-qualified call | `Show.show(x)` |
-| 5 | Is `a` another named type? | Inherent-qualified call | `Point.distance(p)`, `UserId.show(id)` |
+| 5 | Is `a` another named type? | Exact-type qualified call | `Point.distance(p)`, `UserId.show(id)` |
 | 6 | None of the above | Error: unknown identifier | |
 
 **Namespace bucket:** In this plan, namespace means imported module bindings. In the later FFI plan, extern qualifiers join this same bucket. They do not get a separate later precedence tier.
 
-Aliases and shapes participate in import/export and type-position resolution, but they do not create callable/member namespaces for `a.b`.
+Shapes participate in import/export and type-position resolution, but they do not create callable/member namespaces for `a.b`. Named types may participate in `Type.member` lookup when they have constructors or explicit exact-type impl entries. That qualification is explicit namespace lookup, not value-dot fallback.
 
 **Named-sum sub-resolution (priority 3):** When `a` is a named-sum type (declared canonically with `type` or via `enum` sugar), check `b`:
 - Is `b` a variant of named sum `a`? → constructor (`Option.Some(42)`, `Option.None`)
-- Is `b` an inherent method on type `a`? → inherent-qualified call (`Result.map(r, f)`)
+- Is `b` an exact-type grouped function on type `a`? → exact-type qualified call (`Result.map(r, f)`)
 - Neither → error: unknown variant or method
 
 **Key rules:**
-- Value bindings always win (priority 1) — a local variable shadows a module/type/trait name
-- Named-sum variants are checked before inherent methods — constructors take priority within the named-sum namespace
+- Value bindings always win (priority 1) — a local variable shadows a module/type/trait name, and once `a` is a value there is no fallback UFCS search from `a.b(...)`
+- Named-sum variants are checked before exact-type grouped functions — constructors take priority within the named-sum namespace
 - This order is stable across all plans and must be implemented as one centralized classifier, not duplicated rewrite-time and typecheck-time resolution paths
 
 **FFI-relevant:** The `import` keyword and `.`-separated paths establish the convention that FFI declarations will also follow.
@@ -113,7 +113,7 @@ This is P0-8 Phase 1 from the existing problem doc. Not the full multi-pass arch
 - Add `symbol` type to `infer.ml` (or new `symbol_table.ml`):
   ```ocaml
   type symbol_id = int
-  type symbol_kind = TopLevelLet | LocalLet | Param | TypeSym | AliasSym | ShapeSym | TraitSym | ...
+  type symbol_kind = TopLevelLet | LocalLet | Param | TypeSym | TransparentTypeSym | ShapeSym | TraitSym | ...
   type symbol = { id: symbol_id; name: string; kind: symbol_kind;
                   definition_pos: int; definition_end_pos: int; file_id: string option }
   ```
@@ -123,7 +123,7 @@ This is P0-8 Phase 1 from the existing problem doc. Not the full multi-pass arch
 
 **Files:** `lib/frontend/typecheck/infer.ml` (or new `lib/frontend/typecheck/symbol_table.ml`)
 
-**Tests:** Unit tests that symbols are created for let bindings, function params, named types, aliases, and shapes. Verify symbol IDs are unique within a file.
+**Tests:** Unit tests that symbols are created for let bindings, function params, named types, transparent `type` declarations, and shapes. Verify symbol IDs are unique within a file.
 
 **Gate:** All existing unit + integration tests pass unchanged.
 
@@ -213,7 +213,7 @@ type module_graph = { modules: (string, parsed_module) Hashtbl.t;
 **Architecture:** For each module in topological order:
 1. Build the module's initial `type_env` from builtins + imported module signatures
 2. Run `infer_program` on the module's AST alone
-3. Extract a `module_signature` from the results (exported values, named types, aliases, shapes, traits, impls)
+3. Extract a `module_signature` from the results (exported values, nominal named types, transparent `type` declarations, shapes, traits, impls)
 4. Store the signature for use by downstream modules
 5. The type checker ONLY sees what's been explicitly made available — correct isolation by construction
 
@@ -222,15 +222,15 @@ type module_graph = { modules: (string, parsed_module) Hashtbl.t;
 type module_signature = {
   module_id : string;
   values : (string * poly_type) list;         (* exported let bindings *)
-  types : (string * named_type_info) list;    (* exported named types, including named sums *)
-  aliases : (string * type_alias_info) list;  (* exported transparent aliases *)
+  types : (string * named_type_info) list;    (* exported nominal named types, including sums and wrappers *)
+  transparent_types : (string * type_alias_info) list;  (* exported `type Name = TypeExpr` declarations *)
   shapes : (string * shape_def) list;         (* exported open structural shapes *)
   traits : (string * trait_def) list;         (* exported trait definitions *)
   impls : impl_entry list;                    (* all impls (always visible) *)
 }
 ```
 
-Note: trait `impl` blocks are always visible across modules (like Rust's coherence — if you import a type or trait, you get its impls). Values, named types, aliases, shapes, and traits participate in explicit export.
+Note: trait `impl` blocks are always visible across modules (like Rust's coherence — if you import a type or trait, you get its impls). Values, nominal named types, transparent `type` declarations, shapes, and traits participate in explicit export.
 
 **Key changes:**
 
@@ -239,7 +239,7 @@ Note: trait `impl` blocks are always visible across modules (like Rust's coheren
    val infer_program :
      ?env:type_env ->              (* pre-populated with imported signatures *)
      ?external_types:named_type_info list ->
-     ?external_aliases:type_alias_info list ->
+     ?external_transparent_types:type_alias_info list ->
      ?external_shapes:shape_def list ->
      ?external_traits:trait_def list ->
      ?external_impls:impl_entry list ->
@@ -265,7 +265,7 @@ Note: trait `impl` blocks are always visible across modules (like Rust's coheren
    - Do **not** use AST rewrite as the semantic source of truth for dotted qualification
    - Rewrite type-position names: directly imported `Point`, `Points`, `HasXY` → module-prefixed internal names
 
-4. **Module-qualified registry keys:** Named-type, trait, impl, alias, and shape registries use prefixed keys:
+4. **Module-qualified registry keys:** Named-type, trait, impl, transparent-type, and shape registries use prefixed keys:
    - `"math__point"` instead of `"point"`
    - `"math__color"` instead of `"color"`
    - Builtins remain unqualified
@@ -289,7 +289,7 @@ Note: trait `impl` blocks are always visible across modules (like Rust's coheren
 - `lib/frontend/typecheck/infer.ml` — accept external env/registries, don't auto-clear
 - `lib/frontend/typecheck/enum_registry.ml` — evolve existing sum/type registry logic to per-module named-sum population + query
 - `lib/frontend/typecheck/trait_registry.ml` — per-module population + query
-- `lib/frontend/typecheck/annotation.ml` — prefixed named-type / alias / shape lookup
+- `lib/frontend/typecheck/annotation.ml` — prefixed named-type / transparent-type / shape lookup
 - `lib/frontend/typecheck/checker.ml` — per-module check entry point
 - `lib/backend/go/emitter.ml` — remove guard, update mangling, accept multiple checked modules
 - `bin/main.ml` — wire up full multi-module pipeline
@@ -298,7 +298,7 @@ Note: trait `impl` blocks are always visible across modules (like Rust's coheren
 - Two-module programs: module A exports function, module B calls it
 - Cross-module named sum: define `type Color = { ... }` or `enum Color = { ... }` in A, construct/match in B
 - Cross-module trait: define trait in A, impl in B (impls auto-visible)
-- Cross-module alias: define `alias Users = List[User]` in A, use in B
+- Cross-module transparent type: define `type Users = List[User]` in A, use in B
 - Cross-module shape: define `shape HasXY = { x: Int, y: Int }` in A, use in B
 - Export enforcement: error when importing a non-exported name
 - Isolation: module B cannot access module A's private names (type checker doesn't see them)
@@ -394,7 +394,7 @@ These are flagged but NOT designed here. FFI is a separate plan.
 1. **Expression ID collision across files** — mitigated by per-file ID offset ranges in Phase M2
 2. **`infer_program` refactor scope** — the biggest risk. Currently monolithic with global mutable state. Refactoring to accept external env/registries touches the core of type checking. Mitigated by: keeping the internal inference logic unchanged, only changing how state is initialized and extracted.
 3. **Named-type / constructor collision across modules** — mitigated by module-prefixed registry keys
-4. **`.` disambiguation** — resolved by the unified classifier defined in the Syntax Design section. Value bindings win first, then namespace bindings, then named sums (variants before inherent methods), then traits, then other named types. Aliases and shapes do not create callable/member namespaces. Later extern qualifiers join the namespace bucket rather than introducing a second precedence rule.
+4. **`.` disambiguation** — resolved by the unified classifier defined in the Syntax Design section. Value bindings win first, then namespace bindings, then named sums (variants before exact-type grouped functions), then traits, then other named types. Shapes do not create callable/member namespaces. Later extern qualifiers join the namespace bucket rather than introducing a second precedence rule.
 5. **Monomorphization across modules** — emitter runs whole-program across all checked modules. `collect_insts_stmt` sees all call sites from all modules.
 6. **Trait impl visibility** — impls must be visible across modules even without explicit import (coherence). The per-module approach must auto-inject upstream impls into each module's registry.
 
@@ -422,7 +422,7 @@ After each phase:
 | `lib/frontend/typecheck/infer.ml` | Symbol table, registry clearing, prefixed env |
 | `lib/frontend/typecheck/enum_registry.ml` | Evolve current sum/type registry logic to module-prefixed named-sum keys |
 | `lib/frontend/typecheck/trait_registry.ml` | Module-prefixed keys |
-| `lib/frontend/typecheck/annotation.ml` | Prefixed named-type / alias / shape lookup |
+| `lib/frontend/typecheck/annotation.ml` | Prefixed named-type / transparent-type / shape lookup |
 | `lib/frontend/typecheck/checker.ml` | Per-module check entry point |
 | `lib/backend/go/emitter.ml` | Remove guard, module-prefixed mangling, compile_modules |
 | `bin/main.ml` | Wire up loader + multi-module pipeline |

@@ -12,4 +12,4 @@ impl Child[Int] = {
 }
 
 let value: Dyn[Child] = 1
-puts(value.greet())  # output: child
+puts(Child.greet(value))  # output: child

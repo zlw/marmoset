@@ -1,7 +1,7 @@
 # XF26: F26: Inherent method calling trait method on same type
 impl Int = {
   fn render(x: Int) -> Str = {
-    x.show()
+    Show.show(x)
   }
 }
-puts(42.render())  # output: 42
+puts(Int.render(42))  # output: 42

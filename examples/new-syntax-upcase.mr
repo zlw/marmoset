@@ -3,31 +3,31 @@
 # Every vNext surface feature appears at least once below.
 # Theme: monkeys, jungles, bananas, and questionable life choices.
 
-# ─── Type Aliases ───────────────────────────────────────────────
+# ─── Transparent Types ──────────────────────────────────────────
 type MonkeyID = Int
 type BananaCount = Int
-type JungleThing = Int | Str | Bool          # union type
+type JungleThing = Int | Str | Bool         # transparent union type
 type Reducer[a] = (a, a) -> a               # pure function type
 type SideEffector[a] = (a, a) => a          # effectful function type
 
-# ─── Enums ──────────────────────────────────────────────────────
-enum Option[a] = {
+# ─── Named Sums ─────────────────────────────────────────────────
+type Option[a] = {
   Some(a),
   None,
 }
 
-enum Result[a, e] = {
+type Result[a, e] = {
   Success(a),
   Failure(e),
 }
 
-enum Fruit = {
+type Fruit = {
   Banana,
   Mango,
   Coconut,
 } derive Eq, Show
 
-enum Mood = {
+type Mood = {
   Happy,
   Hangry,
   Philosophical,
@@ -51,27 +51,20 @@ type Jungle = {
 
 type MonkeyOrSadness = Result[Monkey, Str]
 
-# ─── Traits ─────────────────────────────────────────────────────
-trait Show[a] = {
-  fn show(a) -> Str                          # positional typed param (signature-only)
-}
-
-trait Eq[a] = {
-  fn eq(a, a) -> Bool
+# ─── Shapes & Traits ────────────────────────────────────────────
+shape NamedDweller = {
+  name: Str,
 }
 
 trait Noisy[a] = {
   fn volume(a) -> Int
   fn make_noise(a) => Str                    # effectful required method
 
-  fn scream(self: a) => Str = self.make_noise()  # default method
+  fn scream(self: a) => Str = Noisy.make_noise(self)  # default method
 }
 
 # supertrait constraint composition with &
-trait JungleDweller[a]: Show & Eq = {
-  name: Str,                                 # trait field (comma-separated)
-  favorite_fruit: Fruit,                     # another trait field
-
+trait JungleDweller[a]: Show & Eq & NamedDweller = {
   fn territory(a) -> Str                     # required method
   fn forage(a, Str) => Result[Fruit, Str]    # effectful required method
 
@@ -84,23 +77,24 @@ trait JungleDweller[a]: Show & Eq = {
 fn identity[a](x: a) -> a = x
 
 # explicit generic constraint
-fn describe_dweller[a: JungleDweller](x: a) -> Str = x.introduce()
+fn describe_dweller[a: JungleDweller](x: a) -> Str = JungleDweller.introduce(x)
 
 # constrained-param shorthand
-fn who_dis(x: JungleDweller) -> Str = x.introduce()
+fn who_dis(x: JungleDweller) -> Str = JungleDweller.introduce(x)
 # desugars to:
-# fn who_dis[t0: JungleDweller](x: t0) -> Str = x.introduce()
+# fn who_dis[t0: JungleDweller](x: t0) -> Str = JungleDweller.introduce(x)
 
 # multiple shorthand params are independent (different types)
-fn same_species(x: Eq, y: Eq) -> Bool = true
+fn radio_pair(left: Show, right: Show) -> Str = "#{left} / #{right}"
 # desugars to:
-# fn same_species[t0: Eq, t1: Eq](x: t0, y: t1) -> Bool = true
+# fn radio_pair[t0: Show, t1: Show](left: t0, right: t1) -> Str = "#{left} / #{right}"
 
 # same-type tie requires explicit generic
-fn are_equal[t: Eq](x: t, y: t) -> Bool = x.eq(y)
+fn are_equal[t: Eq](x: t, y: t) -> Bool = x == y
 
 # multi-trait constraint in generic params
-fn noisy_dweller[t: JungleDweller & Noisy](x: t) -> Str = x.introduce()
+fn noisy_dweller[t: JungleDweller & Noisy](x: t) -> Str =
+  "#{JungleDweller.introduce(x)} says #{Noisy.scream(x)}"
 
 # effectful top-level fn
 fn yell_name(m: Monkey) => Str = {
@@ -209,15 +203,15 @@ impl JungleDweller[Monkey] = {
   override fn introduce(self: Monkey) -> Str = self.name
 }
 
-# impl with inferred binders (free type vars lifted automatically)
-impl Show[List[a]] = {
-  fn show(self: List[a]) -> Str = "a list of mysterious things"
+# concrete impl over a collection type
+impl Show[List[Int]] = {
+  fn show(self: List[Int]) -> Str = "a list of banana counts"
 }
 
-# impl with explicit constrained binders
-impl[a: Show] Show[Option[a]] = {
-  fn show(self: Option[a]) -> Str = match self {
-    case Option.Some(x): "option with " + x.show() + " inside"
+# concrete impl over a generic enum at one instantiation
+impl Show[Option[Fruit]] = {
+  fn show(self: Option[Fruit]) -> Str = match self {
+    case Option.Some(x): "option with #{x} inside"
     case Option.None: "nothing (like my banana supply)"
   }
 }
@@ -226,8 +220,10 @@ impl[a: Show] Show[Option[a]] = {
 
 impl Monkey = {
   fn hungry?(self: Monkey) -> Bool = self.bananas_eaten < 3
-  fn alpha!(self: Monkey) -> Monkey = { ...self, is_alpha: true, }
-  fn with_fruit(self: Monkey, f: Fruit) -> Monkey = { ...self, favorite_fruit: f, }
+  fn alpha!(self: Monkey) -> Monkey =
+    { ...self, is_alpha: true, }
+  fn with_fruit(self: Monkey, f: Fruit) -> Monkey =
+    { ...self, favorite_fruit: f, }
 }
 
 # ─── Match: All Pattern Forms ───────────────────────────────────
@@ -260,7 +256,7 @@ fn unwrap_banana(v: Option[Fruit], fallback: Fruit) -> Fruit = match v {
 }
 
 # record pattern with punning + rest spread
-fn greet_by_name(m: Monkey, fallback: Str) -> Str = match m {
+fn greet_by_name(m: { name: Str, bananas_eaten: Int }) -> Str = match m {
   case { name:, ...rest }: name
 }
 

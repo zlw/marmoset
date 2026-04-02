@@ -1,4 +1,4 @@
-enum Either[a, b] = { Left(a), Right(b) }
+type Either[a, b] = { Left(a), Right(b) }
 
 impl[a, b] Either[a, b] = {
   fn is_left(e: Either[a, b]) -> Bool = match e {
@@ -8,6 +8,6 @@ impl[a, b] Either[a, b] = {
 }
 
 let x = Either.Left(42)
-puts(x.is_left())  # output: true
+puts(Either.is_left(x))  # output: true
 let y: Either[Int, Str] = Either.Right("hi")
-puts(y.is_left())  # output: false
+puts(Either.is_left(y))  # output: false

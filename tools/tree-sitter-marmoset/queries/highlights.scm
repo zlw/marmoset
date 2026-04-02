@@ -7,6 +7,7 @@
 "case" @keyword.conditional
 "fn" @keyword.function
 "enum" @keyword.type
+"shape" @keyword.type
 "trait" @keyword.type
 "impl" @keyword.type
 "derive" @keyword.type
@@ -17,8 +18,10 @@
 ; Literals
 (integer_literal) @number
 (float_literal) @number.float
-(string_literal) @string
 (string_content) @string
+(string_hash) @string.escape
+(interpolation "#{" @punctuation.special)
+(interpolation "}" @punctuation.special)
 (boolean_literal) @boolean
 (comment) @comment
 
@@ -39,6 +42,7 @@
 "=" @operator
 "->" @operator
 "=>" @operator
+"|>" @operator
 "|" @operator
 "&" @operator
 "." @operator
@@ -50,11 +54,27 @@
 ")" @punctuation.bracket
 "[" @punctuation.bracket
 "]" @punctuation.bracket
-"{" @punctuation.bracket
-"}" @punctuation.bracket
 "," @punctuation.delimiter
 ";" @punctuation.delimiter
 ":" @punctuation.delimiter
+
+; Structural braces
+(block "{" @punctuation.bracket)
+(block "}" @punctuation.bracket)
+(constructor_type_body "{" @punctuation.bracket)
+(constructor_type_body "}" @punctuation.bracket)
+(record_type "{" @punctuation.bracket)
+(record_type "}" @punctuation.bracket)
+(object_literal "{" @punctuation.bracket)
+(object_literal "}" @punctuation.bracket)
+(trait_definition "{" @punctuation.bracket)
+(trait_definition "}" @punctuation.bracket)
+(shape_definition "{" @punctuation.bracket)
+(shape_definition "}" @punctuation.bracket)
+(impl_block "{" @punctuation.bracket)
+(impl_block "}" @punctuation.bracket)
+(match_expression "{" @punctuation.bracket)
+(match_expression "}" @punctuation.bracket)
 
 ; Type identifiers
 (type_identifier) @type.builtin
@@ -106,6 +126,11 @@
   function: (field_access
     field: (identifier) @function.method.call))
 
+; Qualified receiver names
+((field_access
+   object: (identifier) @type)
+ (#match? @type "^[A-Z]"))
+
 ; Field access
 (field_access
   field: (identifier) @property)
@@ -121,11 +146,17 @@
 (enum_variant
   name: (identifier) @constructor)
 
+(wrapper_type
+  constructor: (identifier) @constructor)
+
 ; Trait definition
 (trait_definition
   name: (identifier) @type)
 
-(trait_field
+(shape_definition
+  name: (identifier) @type)
+
+(shape_field
   name: (identifier) @property)
 
 ; Impl block
@@ -144,8 +175,8 @@
 (derive_clause
   trait: (identifier) @type)
 
-; Type alias
-(type_alias
+; Type definitions
+(type_definition
   name: (identifier) @type)
 
 ; Type parameters
@@ -169,6 +200,9 @@
 
 (constructor_pattern
   enum: (identifier) @type
+  variant: (identifier) @constructor)
+
+(constructor_pattern
   variant: (identifier) @constructor)
 
 (record_pattern_field

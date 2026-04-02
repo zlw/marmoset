@@ -15,6 +15,9 @@ impl Val = {
   fn fmt(v: Val) -> Str = { "inherent" }
 }
 
-let v: Val = { n: 1 }
-# inherent wins on dot, no ambiguity
-puts(v.fmt())  # output: inherent
+let v = {n: 1}
+
+# explicit targets stay stable
+puts(FmtA.fmt(v))  # output: a
+puts(FmtB.fmt(v))  # output: b
+puts(Val.fmt(v))  # output: inherent

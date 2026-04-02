@@ -1,5 +1,5 @@
-# TF07: Constrained generic: record missing required field
-trait HasName = {
+# TF07: Constrained generic: record missing required shape field
+shape HasName = {
   name: Str
 }
 fn get_name[t: HasName](v: t) -> Str = v.name

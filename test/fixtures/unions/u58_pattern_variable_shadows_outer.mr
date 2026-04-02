@@ -1,5 +1,5 @@
 # U58: Pattern variable shadows outer let binding
-enum Option[a] = { Some(a), None }
+type Option[a] = { Some(a), None }
 let v = 999
 let x = Option.Some(10)
 let out = match x {

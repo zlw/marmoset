@@ -1,4 +1,4 @@
-# R094: Type alias as function return type
+# R094: Transparent type as function return type
 type Point = { x: Int, y: Int }
 fn make_point(a: Int, b: Int) -> Point = { { x: a, y: b } }
 let p = make_point(3, 4)

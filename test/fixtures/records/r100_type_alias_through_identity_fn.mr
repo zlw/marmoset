@@ -1,4 +1,4 @@
-# R100: Type alias through identity function
+# R100: Transparent type through identity function
 type Point = { x: Int, y: Int }
 fn id(p: Point) -> Point = { p }
 let p: Point = { x: 1, y: 2 }

@@ -1,7 +1,7 @@
 impl Int = {
   fn show(x: Int) -> Str = {
-    "custom:" + x.show()
+    "custom:" + Show.show(x)
   }
 }
 
-puts(42.show())  # output: custom:42
+puts(Int.show(42))  # output: custom:42

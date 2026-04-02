@@ -1,9 +1,8 @@
 # T132: Dyn trait-object fields package direct values before placeholder callbacks consume them
 type Box[a] = { value: a }
 
-impl[a] Box[a] = {
-  fn map[b](box: Box[a], f: (a) -> b) -> b = f(box.value)
-}
+fn map_box[a, b](box: Box[a], f: (a) -> b) -> b = f(box.value)
 
-let box: Box[Dyn[Show & Eq]] = { value: 42 }
-puts(box.map(_.show()))  # output: 42
+let value: Dyn[Show & Eq] = 42
+let box = {value: value}
+puts(Show.show(map_box(box, _)))  # output: 42

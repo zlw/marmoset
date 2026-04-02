@@ -1,6 +1,6 @@
 # XF38: H41: Enum without show impl fails show constraint
 enum Color = { Red, Green, Blue }
 fn render[a: Show](x: a) -> Str = {
-  x.show()
+  Show.show(x)
 }
 puts(render(Color.Red))  # error: does not implement trait

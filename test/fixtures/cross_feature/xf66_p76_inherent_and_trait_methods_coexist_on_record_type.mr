@@ -9,6 +9,6 @@ impl Describable[Point] = {
 impl Point = {
   fn sum(p: Point) -> Int = p.x + p.y
 }
-let p: Point = { x: 10, y: 20 }
-puts(p.describe())  # output: hello
-puts(p.sum())  # output: 30
+let p = {x: 10, y: 20}
+puts(Describable.describe(p))  # output: hello
+puts(Point.sum(p))  # output: 30

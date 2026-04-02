@@ -1,8 +1,8 @@
-# TF05: Constrained generic: access field from first constraint when second is present
-trait HasX = {
+# TF05: Constrained generic: access field from first shape when second is present
+shape HasX = {
   x: Int
 }
-trait HasY = {
+shape HasY = {
   y: Int
 }
 fn get_x_only[t: HasX & HasY](v: t) -> Int = v.x

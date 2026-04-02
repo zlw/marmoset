@@ -1,4 +1,4 @@
-# T99: BUG-EMPTY-TRAIT-KIND: empty trait rejected as MethodOnly (should be FieldOnly)
+# T99: Empty method-only traits still require an impl before Dyn coercion
 trait Marker = {
 }
-let x: Dyn[Marker] = 1  # error: field-only trait
+let x: Dyn[Marker] = 1  # error: does not implement trait Marker

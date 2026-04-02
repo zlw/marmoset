@@ -8,5 +8,6 @@ impl EmptyTrait[Thing] = {
   fn exists(x: Thing) -> Bool = { true }
 }
 
-let t: Thing = { v: 0 }
+let t = {v: 0}
+
 EmptyTrait.nonexistent(t)  # error: *

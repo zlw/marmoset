@@ -2,7 +2,7 @@
 fn id(x) = { x }
 let n = 1
 let result = match n {
-  case 1: id(42).show()
+  case 1: Show.show(id(42))
   case _: "other"
 }
 puts(result)  # output: 42

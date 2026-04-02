@@ -1,4 +1,4 @@
-enum Opt[a] = { Some(a), None }
+type Opt[a] = { Some(a), None }
 
 impl[a] Opt[a] = {
   fn is_some(o: Opt[a]) -> Bool = match o {

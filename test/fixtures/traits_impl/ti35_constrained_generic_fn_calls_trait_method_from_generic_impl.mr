@@ -6,6 +6,6 @@ impl[b: Show] Show[List[b]] = {
   fn show(x: List[b]) -> Str = "ok"
 }
 fn render[t: Show](x: t) -> Str = {
-  x.show()
+  Show.show(x)
 }
 puts(render([1, 2]))  # output: ok

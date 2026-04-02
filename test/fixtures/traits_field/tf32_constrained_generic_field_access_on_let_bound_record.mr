@@ -1,5 +1,5 @@
-# TF32: Constrained generic: field access on let-bound record
-trait HasData = {
+# TF32: Constrained generic: shape field access on let-bound record
+shape HasData = {
   data: Str
 }
 fn extract[t: HasData](v: t) -> Str = v.data

@@ -1,7 +1,7 @@
-# TH27: Inherent method on type alias for record, create and call
+# TH27: Inherent method on named record type, create and call
 type Pair = { a: Int, b: Int }
 impl Pair = {
   fn sum(p: Pair) -> Int = p.a + p.b
 }
-let p: Pair = { a: 1, b: 2 }
-puts(p.sum())  # output: 3
+let p = {a: 1, b: 2}
+puts(Pair.sum(p))  # output: 3

@@ -1,8 +1,8 @@
-# T18: Field-only trait object arrays can be built from annotated values
+# T18: Legacy field-style trait syntax is rejected before array annotation checking
 trait Named = {
-  name: Str
+  name: Str  # error: Trait bodies are method-only; use 'shape' for structural field contracts
 }
-let person: Named = { name: "alice", age: 42 }  # error: cannot be used as a type in vNext
+let person: Named = { name: "alice", age: 42 }
 let company: Named = { name: "acme", employees: 10 }
 let xs: List[Named] = [person, company]
 puts(xs[1].name)  # output: acme

@@ -2,4 +2,4 @@
 let value: ({ x: Int, y: Str } & { x: Int }) = { x: 1, y: "ok" }
 let projected: { x: Int } = value
 
-puts(projected.x.show())  # output: 1
+puts(Show.show(projected.x))  # output: 1

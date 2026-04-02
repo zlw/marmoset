@@ -1,5 +1,5 @@
 # R089: Derived eq on records with different field values
 type Point = { x: Int, y: Int } derive Eq
-let p1: Point = { x: 1, y: 2 }
-let p2: Point = { x: 1, y: 3 }
-puts(p1.eq(p2))  # output: false
+let p1: Point = {x: 1, y: 2}
+let p2: Point = {x: 1, y: 3}
+puts(Eq.eq(p1, p2))  # output: false

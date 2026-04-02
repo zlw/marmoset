@@ -1,4 +1,4 @@
-# E02: Duplicate enum definition is rejected in one program
-enum Direction = { North, South, East, West }  # error: Duplicate enum definition: Direction
+# E02: Duplicate type definition is rejected in one program
+enum Direction = { North, South, East, West }  # error: Duplicate type definition: Direction
 enum Direction = { Up, Down }
 puts(1)

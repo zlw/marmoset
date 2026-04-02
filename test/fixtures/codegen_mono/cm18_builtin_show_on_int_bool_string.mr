@@ -1,4 +1,4 @@
 # CM18: Builtin show on Int, Bool, Str
-puts(42.show())  # output: 42
-puts(true.show())  # output: true
-puts("hello".show())  # output: hello
+puts(Show.show(42))  # output: 42
+puts(Show.show(true))  # output: true
+puts(Show.show("hello"))  # output: hello

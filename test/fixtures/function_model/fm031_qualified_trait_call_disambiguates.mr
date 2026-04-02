@@ -20,6 +20,7 @@ impl Beta[Item] = {
   }
 }
 
-let i: Item = { v: 1 }
+let i = {v: 1}
+
 puts(Alpha.tag(i))  # output: alpha
 puts(Beta.tag(i))  # output: beta

@@ -1,5 +1,5 @@
-# TF30: Constrained generic accesses declared field that trait object would also expose
-trait HasName = {
+# TF30: Constrained generic accesses the field declared by a shape
+shape HasName = {
   name: Str
 }
 fn get_name[t: HasName](v: t) -> Str = v.name

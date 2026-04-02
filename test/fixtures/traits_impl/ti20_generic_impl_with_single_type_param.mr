@@ -5,4 +5,4 @@ trait Show[a] = {
 impl[b: Show] Show[List[b]] = {
   fn show(x: List[b]) -> Str = "list"
 }
-puts([1, 2, 3].show())  # output: list
+puts(Show.show([1, 2, 3]))  # output: list

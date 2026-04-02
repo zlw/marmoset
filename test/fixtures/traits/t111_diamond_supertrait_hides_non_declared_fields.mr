@@ -1,6 +1,6 @@
 # T111: Diamond supertrait hides non-declared fields
 trait Named = {
-  name: Str
+  name: Str  # error: Trait bodies are method-only; use 'shape' for structural field contracts
 }
 trait Worker: Named = {
   job: Str
@@ -9,5 +9,5 @@ trait Resident: Named = {
   city: Str
 }
 trait Citizen: Worker & Resident = {}
-let x: Citizen = { name: "alice", job: "eng", city: "sf", extra: true }  # error: cannot be used as a type in vNext
+let x: Citizen = { name: "alice", job: "eng", city: "sf", extra: true }
 puts(x.extra)

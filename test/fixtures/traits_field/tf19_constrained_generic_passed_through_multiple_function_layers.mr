@@ -1,5 +1,5 @@
-# TF19: Constrained generic passed through multiple function layers
-trait HasName = {
+# TF19: Constrained generic shape passed through multiple function layers
+shape HasName = {
   name: Str
 }
 fn inner[t: HasName](v: t) -> Str = "inner:" + v.name

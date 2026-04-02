@@ -5,11 +5,13 @@ impl Counter = {
     if (c.n <= 0) {
       "done"
     } else {
-      let next: Counter = { n: c.n - 1 }
-      next.count_down()
+      let next = {n: c.n - 1}
+
+      Counter.count_down(next)
     }
   }
 }
 
-let c: Counter = { n: 3 }
-puts(c.count_down())  # output: done
+let c = {n: 3}
+
+puts(Counter.count_down(c))  # output: done

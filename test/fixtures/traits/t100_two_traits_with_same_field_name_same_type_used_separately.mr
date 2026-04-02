@@ -1,10 +1,10 @@
 # T100: Two traits with same field name (same type) used separately
 trait Named = {
-  name: Str
+  name: Str  # error: Trait bodies are method-only; use 'shape' for structural field contracts
 }
 trait Labeled = {
   name: Str
 }
-let a: Named = { name: "alice", x: 1 }  # error: cannot be used as a type in vNext
+let a: Named = { name: "alice", x: 1 }
 let b: Labeled = { name: "bob", y: 2 }
 puts(a.name + " " + b.name)  # output: alice bob

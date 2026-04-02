@@ -1,5 +1,5 @@
 # U31: Wildcard after specific variant patterns
-enum Color = { Red, Green, Blue, Yellow }
+type Color = { Red, Green, Blue, Yellow }
 let c = Color.Yellow
 let name = match c {
   case Color.Red: "Red"

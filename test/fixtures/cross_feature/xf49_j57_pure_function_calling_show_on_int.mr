@@ -1,5 +1,5 @@
 # XF49: J57: Pure function calling show on int
 fn to_string(x: Int) -> Str = {
-  x.show()
+  Show.show(x)
 }
 puts(to_string(42))  # output: 42

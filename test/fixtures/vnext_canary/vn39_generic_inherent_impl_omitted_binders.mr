@@ -1,5 +1,5 @@
 # VN39: Omitted inherent impl binders are inferred from the generic impl target
-enum Result[a, b] = {
+type Result[a, b] = {
   Ok(a),
   Err(b),
 }
@@ -14,5 +14,5 @@ impl Result[a, b] = {
 let ok = if (true) { Result.Ok(42) } else { Result.Err("boom") }
 let err = if (false) { Result.Ok(42) } else { Result.Err("boom") }
 
-puts(ok.fold_to_str((n: Int) -> n.show(), (s: Str) -> s))   # output: 42
-puts(err.fold_to_str((n: Int) -> n.show(), (s: Str) -> s))  # output: boom
+puts(Result.fold_to_str(ok, (n: Int) -> Show.show(n), (s: Str) -> s))   # output: 42
+puts(Result.fold_to_str(err, (n: Int) -> Show.show(n), (s: Str) -> s))  # output: boom

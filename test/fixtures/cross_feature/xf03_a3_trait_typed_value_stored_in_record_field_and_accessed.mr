@@ -1,5 +1,5 @@
-# XF03: A3: Field-only constrained value stored in record field and accessed
-trait Named = {
+# XF03: A3: Shape-constrained value stored in record field and accessed
+shape Named = {
   name: Str
 }
 fn keep_named[t: Named](x: t) -> { name: Str } = {

@@ -1,5 +1,5 @@
 # U81: Or-pattern in match arm (codegen limitation)
-enum Color = { Red, Green, Blue, Yellow }  # error: *
+type Color = { Red, Green, Blue, Yellow }  # error: *
 let c = Color.Red
 let kind = match c {
   case Color.Red | Color.Blue: "primary"

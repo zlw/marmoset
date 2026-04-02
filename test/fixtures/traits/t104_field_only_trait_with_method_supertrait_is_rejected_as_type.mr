@@ -1,8 +1,8 @@
-# T104: Field-only trait with method supertrait is rejected as type
+# T104: Legacy field-style trait syntax with method supertraits is rejected in type position
 trait Show[a] = {
   fn show(x: a) -> Str
 }
 trait Describable: Show = {
-  label: Str
+  label: Str  # error: Trait bodies are method-only; use 'shape' for structural field contracts
 }
-let x: Describable = { label: "hi" }  # error: cannot be used as a type in vNext
+let x: Describable = { label: "hi" }

@@ -1,0 +1,15 @@
+type Point = { x: Int }
+
+trait Render[a] = {
+  fn render(x: a) -> Str
+}
+
+impl Render[Point] = {
+  fn render(x: Point) -> Str = { "trait" }
+}
+
+fn render(x: Point) -> Str = "free"
+
+let p = {x: 1}
+
+p.render()  # error: not a callable field

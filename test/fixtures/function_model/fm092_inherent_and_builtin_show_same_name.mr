@@ -1,10 +1,8 @@
-type Mynum = Int
-
-impl Mynum = {
-  fn show(x: Mynum) -> Str = {
-    "my:" + x.show()
+impl Int = {
+  fn show(x: Int) -> Str = {
+    "my:" + Show.show(x)
   }
 }
 
-let n: Mynum = 42
-puts(n.show())  # output: my:42
+let n = 42
+puts(Int.show(n))  # output: my:42

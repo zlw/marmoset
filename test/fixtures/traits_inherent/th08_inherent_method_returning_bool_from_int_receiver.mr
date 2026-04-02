@@ -5,4 +5,4 @@ impl Int = {
   }
 }
 let n = 42
-puts(n.is_positive())  # output: true
+puts(Int.is_positive(n))  # output: true

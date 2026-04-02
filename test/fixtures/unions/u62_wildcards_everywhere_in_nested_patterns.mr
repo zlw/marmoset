@@ -1,5 +1,5 @@
 # U62: Wildcards everywhere in nested patterns
-enum Pair[a, b] = { Mk(a, b) }
+type Pair[a, b] = { Mk(a, b) }
 let x: Pair[Int, Str] = Pair.Mk(1, "two")
 let out = match x {
   case Pair.Mk(_, _): "matched"

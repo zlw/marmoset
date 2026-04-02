@@ -1,4 +1,4 @@
-# R073: Type alias record assigned from unaliased record
+# R073: Transparent type record assigned from unaliased record
 type Point = { x: Int, y: Int }
 let raw = { x: 1, y: 2 }
 let p: Point = raw

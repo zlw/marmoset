@@ -1,6 +1,6 @@
 # XF60: M68: Multi-constraint generic called at Int and Str
 fn check[a: Show & Eq](x: a, y: a) -> Str = {
-  if (x.eq(y)) { "same" } else { "diff" }
+  if (Eq.eq(x, y)) { "same" } else { "diff" }
 }
 puts(check(1, 1))  # output: same
 puts(check("a", "a"))  # output: same

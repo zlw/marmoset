@@ -3,8 +3,8 @@ trait Render[a] = {
   fn render(x: a) -> Str
 }
 impl Render[Int] = {
-  fn render(x: Int) -> Str = "render:" + x.show()
+  fn render(x: Int) -> Str = "render:" + Show.show(x)
 }
 let x: Dyn[Show & Render] = 42
-puts(x.show())  # output: 42
-puts(x.render())  # output: render:42
+puts(Show.show(x))  # output: 42
+puts(Render.render(x))  # output: render:42

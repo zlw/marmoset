@@ -2,14 +2,13 @@
 type Point = { x: Int, y: Int }
 enum Status = { Ok, Fail }
 enum OptionInt = { Some(Int), None }
-trait Named = { name: Str }
 fn process(s: Status, v: OptionInt) -> Str = {
   let prefix = match s {
     case Status.Ok: "ok"
     case Status.Fail: "err"
   }
   let suffix = match v {
-    case OptionInt.Some(n): ":" + n.show()
+    case OptionInt.Some(n): ":" + Show.show(n)
     case OptionInt.None: ":none"
   }
   prefix + suffix

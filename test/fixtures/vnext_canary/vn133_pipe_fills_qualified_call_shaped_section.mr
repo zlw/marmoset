@@ -1,0 +1,14 @@
+# VN133: Pipe fills the placeholder inside a qualified call-shaped section
+type Post = { owner: Str }
+
+trait Visible[a] = {
+  fn visible_to(x: a, viewer: Str) -> Bool
+}
+
+impl Visible[Post] = {
+  fn visible_to(x: Post, viewer: Str) -> Bool = x.owner == viewer
+}
+
+let post: Post = { owner: "ada" }
+
+puts(post |> Visible.visible_to(_, "ada") |> Show.show)  # output: true

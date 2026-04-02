@@ -212,7 +212,7 @@ let check_program_with_annotations ?state ?(env = Infer.empty_env) (program : Sy
       and check_expr_annotations (expr : Syntax.Ast.AST.expression) (inferred : mono_type) :
           (unit, Diagnostic.t) result =
         match expr.expr with
-        | Syntax.Ast.AST.Function { return_type; params = _; body; generics; is_effectful = _ } -> (
+        | Syntax.Ast.AST.Function { return_type; params = _; body; generics; is_effectful = _; _ } -> (
             (* For generic functions, skip the return annotation check: type_callable already
                validated it during inference with proper type variable bindings.
                The second-pass check here can't reproduce the fresh-var mapping. *)
@@ -578,6 +578,31 @@ let%test "annotation: full signature with params and return" =
       | Some (Forall (_, TFun (TInt, TFun (TInt, TInt, _), _))) -> true
       | _ -> false)
 
+let%test "annotation: let function annotation drives unannotated lambda params" =
+  Infer.reset_fresh_counter ();
+  match check_string ~file_id:"<test>" "let add_bananas: (Int, Int) -> Int = (x, y) -> x + y\nadd_bananas" with
+  | Error _ -> false
+  | Ok { environment; _ } -> (
+      match lookup "add_bananas" environment with
+      | Some (Forall (_, TFun (TInt, TFun (TInt, TInt, _), _))) -> true
+      | _ -> false)
+
+let%test "annotation: let function annotation drives recursive lambda self type" =
+  Infer.reset_fresh_counter ();
+  let code = "let fact: (Int) -> Int = (n) -> if (n < 2) { 1 } else { n * fact(n - 1) }\nfact(5)" in
+  match check_string ~file_id:"<test>" code with
+  | Ok result -> result.result_type = TInt
+  | Error _ -> false
+
+let%test "annotation: let function annotation preserves nested function return aliases" =
+  Infer.reset_fresh_counter ();
+  let code =
+    "type Runner = ((Int) -> Str) -> ((Int) => Str)\nlet wrap: Runner = (f: (Int) -> Str) -> (n: Int) => f(n)\nwrap((n: Int) -> Show.show(n))(42)"
+  in
+  match check_string ~file_id:"<test>" code with
+  | Ok result -> result.result_type = TString
+  | Error _ -> false
+
 let%test "annotation: conditional with matching return type" =
   Infer.reset_fresh_counter ();
   match check_string ~file_id:"<test>" "fn f(x: Int) -> Int = if (x < 0) { 0 } else { x }\nf" with
@@ -740,11 +765,11 @@ let%test "invalid bare trait let annotation is not masked by later body errors" 
   let state = Infer.create_inference_state () in
   let code =
     {|
-      trait Named = {
-        name: Str
+      trait Named[a] = {
+        fn show(x: a) -> Str
       }
-      let x: Named = { name: "alice" }
-      x.show()
+      let x: Named = 1
+      Named.show(x)
     |}
   in
   match check_string ~state ~file_id:"main.mr" code with
@@ -789,12 +814,12 @@ let%test "effectful function types in enum payloads preserve their effect bit" =
   | Ok _ -> true
   | Error _ -> false
 
-let%test "effectful function types in structural trait fields preserve their effect bit" =
+let%test "effectful function types in shape fields preserve their effect bit" =
   Infer.reset_fresh_counter ();
   let state = Infer.create_inference_state () in
   let code =
     {|
-      trait Processor = {
+      shape Processor = {
         run: (Int) => Int
       }
       fn invoke(x: Processor) => Int = x.run(1)
@@ -822,18 +847,94 @@ let%test "record literal with punning typechecks" =
   | Ok { result_type = TInt; _ } -> true
   | _ -> false
 
-let%test "type alias for record typechecks" =
+let%test "transparent type for record typechecks" =
   Infer.reset_fresh_counter ();
   let code = "type Point = { x: Int, y: Int }\nlet p: Point = { x: 1, y: 2 }\np.x + p.y" in
   match check code with
   | Ok { result_type = TInt; _ } -> true
   | _ -> false
 
-let%test "generic type alias for record typechecks" =
+let%test "generic transparent type for record typechecks" =
   Infer.reset_fresh_counter ();
   let code = "type Box[a] = { value: a }\nlet p: Box[Int] = { value: 42 }\np.value" in
   match check code with
   | Ok { result_type = TInt; _ } -> true
+  | _ -> false
+
+let%test "transparent type may participate in explicit trait-qualified calls" =
+  Infer.reset_fresh_counter ();
+  let code =
+    {|
+      type Point = { x: Int, y: Int }
+      trait Show[a] = {
+        fn show(x: a) -> Str
+      }
+      impl Show[Point] = {
+        fn show(p: Point) -> Str = "point"
+      }
+      let p: Point = { x: 1, y: 2 }
+      Show.show(p)
+    |}
+  in
+  match check code with
+  | Ok { result_type = TString; _ } -> true
+  | Ok _ -> false
+  | Error _ -> false
+
+let%test "transparent type may participate in explicit exact-type calls" =
+  Infer.reset_fresh_counter ();
+  let code =
+    {|
+      type Point = { x: Int, y: Int }
+      impl Point = {
+        fn sum(self: Point) -> Int = self.x + self.y
+      }
+      let p: Point = { x: 1, y: 2 }
+      Point.sum(p)
+    |}
+  in
+  match check code with
+  | Ok { result_type = TInt; _ } -> true
+  | Ok _ -> false
+  | Error _ -> false
+
+let%test "field-path union narrowing supports direct projection checks" =
+  Infer.reset_fresh_counter ();
+  let code =
+    {|
+      type Box = { value: Int | Str }
+      fn render(box: Box) -> Str = {
+        if (box.value is Int) {
+          Show.show(box.value)
+        } else {
+          box.value
+        }
+      }
+      render({ value: 1 })
+    |}
+  in
+  match check code with
+  | Ok { result_type = Types.TString; _ } -> true
+  | _ -> false
+
+let%test "match record patterns narrow union scrutinees in arm bodies" =
+  Infer.reset_fresh_counter ();
+  let code =
+    {|
+      type Left = { x: Int }
+      type Right = { y: Int }
+      fn read(v: Left | Right) -> Int = {
+        match v {
+          case { x: }: v.x
+          case { y: }: v.y
+          case _: 0
+        }
+      }
+      read({ x: 1 })
+    |}
+  in
+  match check code with
+  | Ok { result_type = Types.TInt; _ } -> true
   | _ -> false
 
 let%test "explicit row-polymorphic annotation is rejected in v1" =
@@ -876,7 +977,9 @@ let%test "env reuse with shared inference state preserves constrained generic ob
       impl_methods = [ Trait_registry.mk_method_sig ~name:"show" ~params:[ ("x", TInt) ] ~return_type:TString () ];
     };
   let shared_state = Infer.create_inference_state () in
-  match check_string ~file_id:"<test>" ~state:shared_state "fn check[a: Show](x: a) -> Str = x.show()\ncheck" with
+  match
+    check_string ~file_id:"<test>" ~state:shared_state "fn check[a: Show](x: a) -> Str = Show.show(x)\ncheck"
+  with
   | Error _ -> false
   | Ok first -> (
       match check_string ~file_id:"<test>" ~state:shared_state ~env:first.environment "check((y) -> y)" with
@@ -935,8 +1038,8 @@ let%test "Phase3: trait default method - impl without method succeeds if default
   (* Register an impl that does NOT provide the method (uses default) *)
   Trait_registry.register_impl ~builtin:true
     { impl_trait_name = "greetable"; impl_type_params = []; impl_for_type = Types.TInt; impl_methods = [] };
-  (* Should be able to call greet on int *)
-  match check_string ~file_id:"<test>" "1.greet()" with
+  (* Should be able to call greet on int via explicit qualification *)
+  match check_string ~file_id:"<test>" "greetable.greet(1)" with
   | Ok result -> result.result_type = Types.TString
   | Error _ -> false
 
@@ -945,7 +1048,7 @@ let%test "followup A2: user default-backed derive expands into a callable impl" 
   Trait_registry.clear ();
   match
     check_string ~file_id:"<test>"
-      "trait Greeter[a] = { fn greet(self: a) -> Str = \"hello\" }\ntype Score = Int derive Greeter\nlet s: Score = 1\ns.greet()"
+      "trait Greeter[a] = { fn greet(self: a) -> Str = \"hello\" }\ntype Score = Int derive Greeter\nlet s: Score = 1\nGreeter.greet(s)"
   with
   | Ok result -> result.result_type = Types.TString
   | Error _ -> false
@@ -955,7 +1058,7 @@ let%test "followup A2: user default-backed derive registers default-derived prov
   Trait_registry.clear ();
   match
     check_string ~file_id:"<test>"
-      "trait Greeter[a] = { fn greet(self: a) -> Str = \"hello\" }\ntype Score = Int derive Greeter\nlet s: Score = 1\ns.greet()"
+      "trait Greeter[a] = { fn greet(self: a) -> Str = \"hello\" }\ntype Score = Int derive Greeter\nlet s: Score = 1\nGreeter.greet(s)"
   with
   | Error _ -> false
   | Ok _ -> Trait_registry.lookup_impl_origin "Greeter" Types.TInt = Some Trait_registry.DefaultDerivedImpl
@@ -965,7 +1068,7 @@ let%test "Phase6 prep: canonical builtin trait names work in derives" =
   Trait_registry.clear ();
   let env = default_env () in
   match
-    check_string ~env ~file_id:"<test>" "type Point = { x: Int } derive Eq\nlet p: Point = { x: 1 }\np.eq(p)"
+    check_string ~env ~file_id:"<test>" "type Point = { x: Int } derive Eq\nlet p: Point = { x: 1 }\nEq.eq(p, p)"
   with
   | Ok result -> result.result_type = Types.TBool
   | Error _ -> false
@@ -974,7 +1077,7 @@ let%test "Phase6 prep: canonical builtin trait names work in generic constraints
   Infer.reset_fresh_counter ();
   Trait_registry.clear ();
   let env = default_env () in
-  match check_string ~env ~file_id:"<test>" "fn same[a: Eq](x: a, y: a) -> Bool = x.eq(y)\nsame(1, 2)" with
+  match check_string ~env ~file_id:"<test>" "fn same[a: Eq](x: a, y: a) -> Bool = Eq.eq(x, y)\nsame(1, 2)" with
   | Ok result -> result.result_type = Types.TBool
   | Error _ -> false
 
@@ -983,9 +1086,31 @@ let%test "Phase6 prep: canonical builtin trait names work in impl headers" =
   Trait_registry.clear ();
   let env = default_env () in
   match
-    check_string ~env ~file_id:"<test>" "impl Show[Int] = { fn show(self: Int) -> Str = \"int\" }\n1.show()"
+    check_string ~env ~file_id:"<test>" "impl Show[Int] = { fn show(self: Int) -> Str = \"int\" }\nShow.show(1)"
   with
   | Ok result -> result.result_type = Types.TString
+  | Error _ -> false
+
+let%test "Phase6 prep: transparent record fields may reference enum types" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  let env = default_env () in
+  match
+    check_string ~env ~file_id:"<test>"
+      "enum Fruit = { Banana, Mango }\ntype Monkey = { favorite_fruit: Fruit }\nlet m: Monkey = { favorite_fruit: Fruit.Banana }\nm.favorite_fruit"
+  with
+  | Ok result -> result.result_type = Types.TEnum ("Fruit", [])
+  | Error _ -> false
+
+let%test "Phase6 prep: shape fields may reference enum types" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  let env = default_env () in
+  match
+    check_string ~env ~file_id:"<test>"
+      "enum Fruit = { Banana, Mango }\nshape HasFruit = { favorite_fruit: Fruit }\nfn get[t: HasFruit](x: t) -> Fruit = x.favorite_fruit\nget({ favorite_fruit: Fruit.Banana })"
+  with
+  | Ok result -> result.result_type = Types.TEnum ("Fruit", [])
   | Error _ -> false
 
 let%test "Phase6 prep: omitted impl binders are inferred from impl targets" =
@@ -1004,7 +1129,7 @@ let%test "Phase6 prep: constrained-param shorthand works end-to-end for top-leve
   Trait_registry.clear ();
   match
     check_string ~file_id:"<test>"
-      "trait JungleDweller[a] = { fn introduce(a) -> Str }\ntype Monkey = { name: Str }\nimpl JungleDweller[Monkey] = { fn introduce(self: Monkey) -> Str = self.name }\nfn who_dis(x: JungleDweller) -> Str = x.introduce()\nlet george: Monkey = { name: \"George\" }\nwho_dis(george)"
+      "trait JungleDweller[a] = { fn introduce(a) -> Str }\ntype Monkey = { name: Str }\nimpl JungleDweller[Monkey] = { fn introduce(self: Monkey) -> Str = self.name }\nfn who_dis(x: JungleDweller) -> Str = JungleDweller.introduce(x)\nlet george: Monkey = { name: \"George\" }\nwho_dis(george)"
   with
   | Ok result -> result.result_type = Types.TString
   | Error _ -> false
@@ -1014,7 +1139,7 @@ let%test "Phase6 prep: constrained-param shorthand works in typed arrow-lambda p
   Trait_registry.clear ();
   match
     check_string ~file_id:"<test>"
-      "trait Named = { name: Str }\nlet get_name = (x: Named) -> x.name\nget_name({ name: \"Ada\" })"
+      "shape Named = { name: Str }\nlet get_name = (x: Named) -> x.name\nget_name({ name: \"Ada\" })"
   with
   | Ok result -> result.result_type = Types.TString
   | Error _ -> false
@@ -1024,7 +1149,7 @@ let%test "Phase6 prep: constrained-param shorthand works in inherent method para
   Trait_registry.clear ();
   match
     check_string ~file_id:"<test>"
-      "trait Named = { name: Str }\ntype User = { name: Str }\nimpl User = {\n\  fn label(user: Named) -> Str = user.name\n}\n{ name: \"Ada\" }.label()"
+      "shape Named = { name: Str }\ntype User = { name: Str }\nimpl User = {\n\  fn label(self: User, other: Named) -> Str = other.name\n}\nlet user: User = { name: \"Ada\" }\nUser.label(user, { name: \"Ada\" })"
   with
   | Ok result -> result.result_type = Types.TString
   | Error _ -> false
@@ -1044,6 +1169,40 @@ let%test "Phase6 prep: placeholder shorthand works in call arguments" =
       "fn map_list[a, b](items: List[a], f: (a) -> b) -> List[b] = []\nlet doubled = map_list([1, 2], _ * 2)\ndoubled"
   with
   | Ok result -> result.result_type = Types.TArray Types.TInt
+  | Error _ -> false
+
+let%test "Phase6 prep: placeholder shorthand works as a standalone section value" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  match check_string ~file_id:"<test>" "let times_two = _ * 2\ntimes_two(21)" with
+  | Ok result -> result.result_type = Types.TInt
+  | Error _ -> false
+
+let%test "Phase6 prep: standalone sections support top-level forward references" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  match check_string ~file_id:"<test>" "let y = add1(41)\nlet add1 = _ + 1\ny" with
+  | Ok result -> result.result_type = Types.TInt
+  | Error _ -> false
+
+let%test "Phase6 prep: placeholder shorthand supports qualified partial application" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  match
+    check_string ~env:(Builtins.prelude_env ()) ~file_id:"<test>"
+      "type Post = { owner: Str }\ntrait Visible[a] = {\n  fn visible_to(x: a, viewer: Str) -> Bool\n}\nimpl Visible[Post] = {\n  fn visible_to(x: Post, viewer: Str) -> Bool = x.owner == viewer\n}\nlet visible_to_ada = Visible.visible_to(_, \"ada\")\nvisible_to_ada({ owner: \"ada\" })"
+  with
+  | Ok result -> result.result_type = Types.TBool
+  | Error _ -> false
+
+let%test "Phase6 prep: placeholder shorthand supports projection section values" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  match
+    check_string ~file_id:"<test>"
+      "type Post = { updated_at: Int }\nlet updated_at = _.updated_at\nupdated_at({ updated_at: 7 })"
+  with
+  | Ok result -> result.result_type = Types.TInt
   | Error _ -> false
 
 let%test "Phase6 prep: placeholder shorthand works when callback is invoked in the callee" =
@@ -1116,8 +1275,18 @@ let%test "Phase6 prep: placeholder shorthand rejects effectful callback slots" =
   | Error diags ->
       List.exists
         (fun (d : Diagnostic.t) ->
-          d.code = "type-invalid-placeholder"
-          && String_utils.contains_substring ~needle:"effectful callbacks require explicit '=>'" d.message)
+          d.code = "type-invalid-placeholder" && String_utils.contains_substring ~needle:"explicit '=>'" d.message)
+        diags
+  | Ok _ -> false
+
+let%test "Phase6 prep: placeholder shorthand rejects effectful standalone sections" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  match check_string ~env:(Builtins.prelude_env ()) ~file_id:"<test>" "let printer = puts(_)\nprinter" with
+  | Error diags ->
+      List.exists
+        (fun (d : Diagnostic.t) ->
+          d.code = "type-invalid-placeholder" && String_utils.contains_substring ~needle:"explicit '=>'" d.message)
         diags
   | Ok _ -> false
 
@@ -1151,9 +1320,28 @@ let%test "Phase6 prep: placeholder shorthand survives field access inside nested
   Trait_registry.clear ();
   match
     check_string ~env:(Builtins.prelude_env ()) ~file_id:"<test>"
-      "type User = { id: Int }\nfn apply[a, b](x: a, f: (a) -> b) -> b = f(x)\nfn plus_one(n: Int) -> Int = n + 1\nfn render(n: Int) -> Str = \"#\" + n.show()\nlet user: User = { id: 7 }\nlet result = apply(user, render(plus_one(_.id)))\nresult"
+      "type User = { id: Int }\nfn apply[a, b](x: a, f: (a) -> b) -> b = f(x)\nfn plus_one(n: Int) -> Int = n + 1\nfn render(n: Int) -> Str = \"#\" + Show.show(n)\nlet user: User = { id: 7 }\nlet result = apply(user, render(plus_one(_.id)))\nresult"
   with
   | Ok result -> result.result_type = Types.TString
+  | Error _ -> false
+
+let%test "Phase6 prep: pipe fills placeholder inside call-shaped sections" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  match
+    check_string ~file_id:"<test>" "fn add(x: Int, y: Int) -> Int = x + y\nlet result = 1 |> add(_, 2)\nresult"
+  with
+  | Ok result -> result.result_type = Types.TInt
+  | Error _ -> false
+
+let%test "Phase6 prep: pipe fills placeholder inside qualified call sections" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  match
+    check_string ~env:(Builtins.prelude_env ()) ~file_id:"<test>"
+      "type Post = { owner: Str }\ntrait Visible[a] = {\n  fn visible_to(x: a, viewer: Str) -> Bool\n}\nimpl Visible[Post] = {\n  fn visible_to(x: Post, viewer: Str) -> Bool = x.owner == viewer\n}\nlet post: Post = { owner: \"ada\" }\nlet result = post |> Visible.visible_to(_, \"ada\")\nresult"
+  with
+  | Ok result -> result.result_type = Types.TBool
   | Error _ -> false
 
 let%test "followup B1: successful checks expose an empty trait object coercion map by default" =
@@ -1204,12 +1392,12 @@ let%test "followup B3: Dyn return position records a coercion site" =
            result.trait_object_coercion_map false
   | Error _ -> false
 
-let%test "followup B3: Dyn rejects field-only traits in annotations" =
+let%test "followup B3: Dyn rejects shapes in annotations" =
   Infer.reset_fresh_counter ();
   Trait_registry.clear ();
   let code =
     {|
-      trait Named = {
+      shape Named = {
         name: Str
       }
       let x: Dyn[Named] = { name: "alice" }
@@ -1218,14 +1406,14 @@ let%test "followup B3: Dyn rejects field-only traits in annotations" =
   in
   match check_string ~env:(Builtins.prelude_env ()) ~file_id:"main.mr" code with
   | Ok _ -> false
-  | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-trait-object-field-only") diags
+  | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-trait-object-shape") diags
 
-let%test "followup B3: Dyn rejects mixed trait sets containing a field-only trait" =
+let%test "followup B3: Dyn rejects mixed trait sets containing a shape" =
   Infer.reset_fresh_counter ();
   Trait_registry.clear ();
   let code =
     {|
-      trait Named = {
+      shape Named = {
         name: Str
       }
       let x: Dyn[Show & Named] = 42
@@ -1234,18 +1422,13 @@ let%test "followup B3: Dyn rejects mixed trait sets containing a field-only trai
   in
   match check_string ~env:(Builtins.prelude_env ()) ~file_id:"main.mr" code with
   | Ok _ -> false
-  | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-trait-object-field-only") diags
+  | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-trait-object-shape") diags
 
-let%test "followup B3: Dyn method calls use dynamic trait resolution metadata" =
+let%test "followup B3: qualified Dyn trait calls typecheck" =
   Infer.reset_fresh_counter ();
   Trait_registry.clear ();
-  match check_string ~env:(Builtins.prelude_env ()) ~file_id:"<test>" "let x: Dyn[Show] = 42\nx.show()" with
-  | Ok result ->
-      result.result_type = Types.TString
-      && Hashtbl.fold
-           (fun _id (resolution : Infer.method_resolution) acc ->
-             acc || resolution = Infer.DynamicTraitMethod "show")
-           result.call_resolution_map false
+  match check_string ~env:(Builtins.prelude_env ()) ~file_id:"<test>" "let x: Dyn[Show] = 42\nShow.show(x)" with
+  | Ok result -> result.result_type = Types.TString
   | Error _ -> false
 
 let%test "followup B3: Dyn field access is rejected explicitly" =
@@ -1255,13 +1438,13 @@ let%test "followup B3: Dyn field access is rejected explicitly" =
     {|
       type Person = { name: Str }
       trait NamedShow[a] = {
-        name: Str
         fn show(x: a) -> Str
       }
       impl NamedShow[Person] = {
         fn show(x: Person) -> Str = x.name
       }
-      let x: Dyn[NamedShow] = { name: "alice" }
+      let person: Person = { name: "alice" }
+      let x: Dyn[NamedShow] = person
       x.name
     |}
   in
@@ -1288,7 +1471,7 @@ let%test "followup B3: Dyn coercion reports missing impl diagnostics" =
 let%test "followup B3: Dyn rejects non-object-safe method calls" =
   Infer.reset_fresh_counter ();
   Trait_registry.clear ();
-  match check_string ~env:(Builtins.prelude_env ()) ~file_id:"<test>" "let x: Dyn[Eq] = 1\nx.eq(x)" with
+  match check_string ~env:(Builtins.prelude_env ()) ~file_id:"<test>" "let x: Dyn[Eq] = 1\nEq.eq(x, x)" with
   | Ok _ -> false
   | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-trait-object-object-unsafe") diags
 
@@ -1304,7 +1487,7 @@ let%test "followup B3: Dyn rejects method-generic dispatch" =
         fn cast[b](x: Int, f: (Int) -> b) -> b = f(x)
       }
       let x: Dyn[Caster] = 1
-      x.cast[Str]((n: Int) -> n.show())
+      Caster.cast[Str](x, (n: Int) -> Show.show(n))
     |}
   in
   match check_string ~env:(Builtins.prelude_env ()) ~file_id:"main.mr" code with
@@ -1396,12 +1579,12 @@ let%test "followup C2: intersection values flow to compatible record annotations
   | Ok result -> result.result_type = Types.TInt
   | Error _ -> false
 
-let%test "followup C2: field-only constraints accept compatible record intersections" =
+let%test "followup C2: shape constraints accept compatible record intersections" =
   Infer.reset_fresh_counter ();
   Trait_registry.clear ();
   let code =
     {|
-      trait Named = { name: Str }
+      shape Named = { name: Str }
       fn get_name[t: Named](x: t) -> Str = x.name
       let value: ({ name: Str, age: Int } & { name: Str }) = { name: "alice", age: 1 }
       get_name(value)
@@ -1493,12 +1676,12 @@ let%test "spread-returning polymorphic function preserves wide record fields" =
   | Ok result -> result.result_type = Types.TInt
   | Error _ -> false
 
-let%test "followup C2: record intersections satisfy field-only constraints" =
+let%test "followup C2: record intersections satisfy shape constraints" =
   Infer.reset_fresh_counter ();
   Trait_registry.clear ();
   let code =
     {|
-      trait Named = {
+      shape Named = {
         name: Str
       }
       fn get_name[t: Named](x: t) -> Str = x.name

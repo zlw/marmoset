@@ -1,5 +1,5 @@
-# TF01: Constrained generic: single field-only trait, access that field
-trait HasX = {
+# TF01: Constrained generic: single shape constraint, access that field
+shape HasX = {
   x: Int
 }
 fn get_x[t: HasX](v: t) -> Int = v.x

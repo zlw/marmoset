@@ -1,5 +1,5 @@
 # U59: Same variable name in nested match arms
-enum Option[a] = { Some(a), None }
+type Option[a] = { Some(a), None }
 let x: Option[Option[Str]] = Option.Some(Option.Some("inner"))
 let out = match x {
   case Option.Some(v): match v {

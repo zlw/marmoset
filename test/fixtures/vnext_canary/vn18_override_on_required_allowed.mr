@@ -5,4 +5,4 @@ trait Greeter[a] = {
 impl Greeter[Int] = {
   override fn greet(x: Int) -> Str = "hi"  # warning: override-unnecessary
 }
-puts(1.greet())  # output: hi
+puts(Greeter.greet(1))  # output: hi

@@ -1,13 +1,13 @@
-# VN29: Function type arrows work in aliases, record fields, and enum payloads
+# VN29: Function type arrows work in transparent types, record fields, and named-sum payloads
 type HandlerBox = { pure: (Int) -> Int, eff: (Int) => Str }
-enum Job = {
+type Job = {
   UsePure((Int) -> Int),
   UseEff((Int) => Str),
 }
 
 let handlers: HandlerBox = {
   pure: (n: Int) -> n + 1,
-  eff: (n: Int) => n.show(),
+  eff: (n: Int) => Show.show(n),
 }
 
 let pure_job = Job.UsePure(handlers.pure)

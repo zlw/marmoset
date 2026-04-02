@@ -7,4 +7,4 @@ impl Eq[Int] = {
 }
 let a = 42
 let b = 42
-puts(a.eq(b))  # output: true
+puts(Eq.eq(a, b))  # output: true
