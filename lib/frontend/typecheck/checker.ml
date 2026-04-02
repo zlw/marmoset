@@ -578,6 +578,24 @@ let%test "annotation: full signature with params and return" =
       | Some (Forall (_, TFun (TInt, TFun (TInt, TInt, _), _))) -> true
       | _ -> false)
 
+let%test "annotation: let function annotation drives unannotated lambda params" =
+  Infer.reset_fresh_counter ();
+  match check_string ~file_id:"<test>" "let add_bananas: (Int, Int) -> Int = (x, y) -> x + y\nadd_bananas" with
+  | Error _ -> false
+  | Ok { environment; _ } -> (
+      match lookup "add_bananas" environment with
+      | Some (Forall (_, TFun (TInt, TFun (TInt, TInt, _), _))) -> true
+      | _ -> false)
+
+let%test "annotation: let function annotation drives recursive lambda self type" =
+  Infer.reset_fresh_counter ();
+  let code =
+    "let fact: (Int) -> Int = (n) -> if (n < 2) { 1 } else { n * fact(n - 1) }\nfact(5)"
+  in
+  match check_string ~file_id:"<test>" code with
+  | Ok result -> result.result_type = TInt
+  | Error _ -> false
+
 let%test "annotation: conditional with matching return type" =
   Infer.reset_fresh_counter ();
   match check_string ~file_id:"<test>" "fn f(x: Int) -> Int = if (x < 0) { 0 } else { x }\nf" with

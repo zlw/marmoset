@@ -3761,6 +3761,21 @@ and infer_function_literal
       Ok (subst_fn, func_type)
   | Error _ as err -> err
 
+and callable_annotation_context
+    ?(type_bindings = [])
+    (type_annotation : AST.type_expr option) :
+    (((mono_type * (mono_type list * mono_type)) option), Diagnostic.t) result =
+  match type_annotation with
+  | None -> Ok None
+  | Some type_expr -> (
+      match Annotation.type_expr_to_mono_type_with type_bindings type_expr with
+      | Error d when should_preserve_annotation_error type_expr d -> Error d
+      | Error _ -> Ok None
+      | Ok annotated_type -> (
+          match contextual_callable_signature annotated_type with
+          | Some signature -> Ok (Some (annotated_type, signature))
+          | None -> Ok None))
+
 and infer_placeholder_section_expr
     (type_map : type_map)
     (env : type_env)
@@ -5858,15 +5873,24 @@ and unify_function_shape_ignoring_effect (left : mono_type) (right : mono_type) 
     for non-recursive bindings and enables recursion for functions.
 *)
 and infer_let ?(prefer_existing_self = false) type_map env name expr type_annotation =
+  let outer_type_bindings = user_named_type_bindings_in_env env in
+  let callable_context_result =
+    match expr.expr with
+    | AST.Function _ -> callable_annotation_context ~type_bindings:outer_type_bindings type_annotation
+    | _ -> Ok None
+  in
+  match callable_context_result with
+  | Error e -> Error e
+  | Ok callable_context ->
   (* Check if the expression is a function with a return type annotation *)
   (* If so, create a partially constrained type for recursion *)
   let inferred_self_type_result =
-    match (expr.expr, type_annotation) with
-    | AST.Function f, _ ->
-        provisional_function_type ~outer_type_bindings:(user_named_type_bindings_in_env env) f.generics f.params
-          f.return_type f.is_effectful
-    | _, Some type_expr -> annotation_or_fresh type_expr
-    | _, None -> Ok (fresh_type_var ())
+    match (expr.expr, callable_context, type_annotation) with
+    | AST.Function _, Some (annotated_type, _), _ -> Ok annotated_type
+    | AST.Function f, None, _ ->
+        provisional_function_type ~outer_type_bindings f.generics f.params f.return_type f.is_effectful
+    | _, _, Some type_expr -> annotation_or_fresh type_expr
+    | _, _, None -> Ok (fresh_type_var ())
   in
   match inferred_self_type_result with
   | Error e -> Error e
@@ -5887,7 +5911,17 @@ and infer_let ?(prefer_existing_self = false) type_map env name expr type_annota
           TypeEnv.add name (mono_to_poly self_type) env
       in
       (* Infer expression type with self in scope *)
-      match infer_expression type_map env_with_self expr with
+      let infer_expr_result =
+        match (expr.expr, callable_context) with
+        | AST.Function { origin; generics; params; return_type; is_effectful; body }, Some (_, signature) ->
+            infer_function_literal ~known_signature:signature type_map env_with_self expr ~origin ~generics
+              ~params ~return_type ~is_effectful ~body
+        | AST.Function { origin; generics; params; return_type; is_effectful; body }, None ->
+            infer_function_literal type_map env_with_self expr ~origin ~generics ~params ~return_type
+              ~is_effectful ~body
+        | _ -> infer_expression type_map env_with_self expr
+      in
+      match infer_expr_result with
       | Error e -> Error e
       | Ok (subst1, expr_type) -> (
           (* Unify the inferred type with our placeholder *)
