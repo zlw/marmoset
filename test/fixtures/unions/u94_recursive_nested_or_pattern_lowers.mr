@@ -1,0 +1,11 @@
+# U94: Recursive nested patterns compose with or-pattern arms
+type Option[a] = { Some(a), None }
+type Box = { Wrap({ tag: Int, payload: Option[Int] }), Empty }
+
+let value = Box.Wrap({ tag: 1, payload: Option.Some(5) })
+let out = match value {
+  case Box.Wrap({ tag: 0, payload: Option.Some(v) }) | Box.Wrap({ tag: 1, payload: Option.Some(v) }): v
+  case _: 0
+}
+
+puts(out)  # output: 5

@@ -1699,9 +1699,7 @@ let rec resolve_expr_symbols (stack : symbol_scope_stack) (expr : AST.expression
 
 and resolve_match_arm_symbols (stack : symbol_scope_stack) (arm : AST.match_arm) : unit =
   let arm_scope =
-    match arm.patterns with
-    | [] -> push_scope stack
-    | first :: _ -> resolve_pattern_bindings (push_scope stack) first
+    List.fold_left resolve_pattern_bindings (push_scope stack) arm.patterns
   in
   resolve_expr_symbols arm_scope arm.body
 
@@ -5647,6 +5645,36 @@ and merge_pattern_bindings (binding_sets : (string * mono_type) list list) : (st
   in
   List.fold_left (fun acc bindings -> List.fold_left upsert acc bindings) [] binding_sets
 
+and pattern_binding_names (bindings : (string * mono_type) list) : StringSet.t =
+  List.fold_left (fun acc (name, _typ) -> StringSet.add name acc) StringSet.empty bindings
+
+and pattern_binding_names_to_string (bindings : StringSet.t) : string =
+  match StringSet.elements bindings with
+  | [] -> "<none>"
+  | names -> String.concat ", " names
+
+and validate_or_pattern_bindings (results : ((string * mono_type) list * mono_type) list) :
+    (unit, Diagnostic.t) result =
+  match results with
+  | [] | [ _ ] -> Ok ()
+  | (first_bindings, _) :: rest ->
+      let expected = pattern_binding_names first_bindings in
+      let rec loop = function
+        | [] -> Ok ()
+        | (bindings, _) :: remaining ->
+            let actual = pattern_binding_names bindings in
+            if StringSet.equal expected actual then
+              loop remaining
+            else
+              Error
+                (error ~code:"type-pattern"
+                   ~message:
+                     (Printf.sprintf "Or-pattern alternatives must bind the same names (expected %s, found %s)"
+                        (pattern_binding_names_to_string expected)
+                        (pattern_binding_names_to_string actual)))
+      in
+      loop rest
+
 and combine_pattern_results (results : ((string * mono_type) list * mono_type) list) :
     (string * mono_type) list * mono_type =
   let narrowed_members =
@@ -5751,7 +5779,10 @@ and check_patterns patterns scrutinee_type =
           in
           match check_rest rest with
           | Error e -> Error e
-          | Ok results -> Ok (combine_pattern_results results)))
+          | Ok results -> (
+              match validate_or_pattern_bindings results with
+              | Error e -> Error e
+              | Ok () -> Ok (combine_pattern_results results))))
 
 (* Check a single pattern against the scrutinee type, return variable bindings *)
 and check_pattern pattern scrutinee_type =

@@ -1,0 +1,10 @@
+# U93: Record patterns inside constructor payloads lower end to end
+type Box = { Wrap({ x: Int, y: Int, label: Str }), Empty }
+
+let value = Box.Wrap({ x: 7, y: 5, label: "hi" })
+let out = match value {
+  case Box.Wrap({ x:, y: 5, ...rest }): x + len(rest.label)
+  case _: 0
+}
+
+puts(out)  # output: 9
