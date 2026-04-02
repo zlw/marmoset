@@ -4981,6 +4981,11 @@ and emit_infix state type_map env left op right =
         Printf.sprintf "(%s / %s)" left_str right_str
       else
         Printf.sprintf "num_div_%s(%s, %s)" type_suffix left_str right_str
+  | "%" ->
+      if left_type = Types.TInt then
+        Printf.sprintf "(%s %% %s)" left_str right_str
+      else
+        Printf.sprintf "rem_rem_%s(%s, %s)" type_suffix left_str right_str
   | "==" ->
       if is_eq_primitive then
         Printf.sprintf "(%s == %s)" left_str right_str
@@ -7521,6 +7526,8 @@ let emit_builtin_impls (program : AST.program) : string =
       ( ("num", "float64"),
         "func num_add_float64(x, y float64) float64 {\n\treturn x + y\n}\nfunc num_sub_float64(x, y float64) float64 {\n\treturn x - y\n}\nfunc num_mul_float64(x, y float64) float64 {\n\treturn x * y\n}\nfunc num_div_float64(x, y float64) float64 {\n\treturn x / y\n}"
       );
+      (* rem trait implementations *)
+      (("rem", "int64"), "func rem_rem_int64(x, y int64) int64 {\n\treturn x % y\n}");
       (* neg trait implementations *)
       (("neg", "int64"), "func neg_neg_int64(x int64) int64 {\n\treturn -x\n}");
       (("neg", "float64"), "func neg_neg_float64(x float64) float64 {\n\treturn -x\n}");

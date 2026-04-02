@@ -11,6 +11,7 @@ let builtin_trait_internal_name (name : string) : string option =
   | "ord" | "Ord" -> Some "ord"
   | "hash" | "Hash" -> Some "hash"
   | "num" | "Num" -> Some "num"
+  | "rem" | "Rem" -> Some "rem"
   | "neg" | "Neg" -> Some "neg"
   | _ -> None
 

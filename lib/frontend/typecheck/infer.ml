@@ -2338,6 +2338,7 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                 | "ord" -> "Ord"
                 | "hash" -> "Hash"
                 | "num" -> "Num"
+                | "rem" -> "Rem"
                 | "neg" -> "Neg"
                 | other -> other
               in
@@ -2927,7 +2928,7 @@ and infer_infix type_map env left op right =
           let left_type' = apply_substitution subst2 left_type in
           match op with
           (* Arithmetic operators: both operands same numeric type, result same type *)
-          | "+" | "-" | "*" | "/" | "%" -> (
+          | "+" | "-" | "*" | "/" -> (
               (* First unify left and right *)
               match unify left_type' right_type with
               | Error e -> Error (error_at ~code:e.code ~message:e.message right)
@@ -2942,6 +2943,15 @@ and infer_infix type_map env left op right =
                     match enforce_trait_requirement_on_type result_type "num" with
                     | Ok () -> Ok (subst', result_type)
                     | Error diag -> Error (error_at ~code:diag.code ~message:diag.message right)))
+          | "%" -> (
+              match unify left_type' right_type with
+              | Error e -> Error (error_at ~code:e.code ~message:e.message right)
+              | Ok subst3 -> (
+                  let subst' = compose_substitution subst subst3 in
+                  let result_type = apply_substitution subst3 left_type' in
+                  match enforce_trait_requirement_on_type result_type "rem" with
+                  | Ok () -> Ok (subst', result_type)
+                  | Error diag -> Error (error_at ~code:diag.code ~message:diag.message right)))
           (* Comparison operators: both same type, result Bool *)
           | "<" | ">" | "<=" | ">=" -> (
               match unify left_type' right_type with

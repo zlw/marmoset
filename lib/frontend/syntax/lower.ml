@@ -14,7 +14,7 @@ type lower_context = {
   type_names : StringSet.t;
 }
 
-let builtin_trait_names = [ "Eq"; "Show"; "Debug"; "Ord"; "Hash"; "Num"; "Neg" ]
+let builtin_trait_names = [ "Eq"; "Show"; "Debug"; "Ord"; "Hash"; "Num"; "Rem"; "Neg" ]
 
 let builtin_type_names =
   [ "Int"; "Float"; "Bool"; "Str"; "String"; "Unit"; "Null"; "List"; "Map"; "Option"; "Result"; "Ordering" ]

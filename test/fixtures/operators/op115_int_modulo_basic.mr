@@ -1,0 +1,2 @@
+# OP115: Int modulo basic
+puts(10 % 3)  # output: 1
