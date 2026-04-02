@@ -589,9 +589,7 @@ let%test "annotation: let function annotation drives unannotated lambda params" 
 
 let%test "annotation: let function annotation drives recursive lambda self type" =
   Infer.reset_fresh_counter ();
-  let code =
-    "let fact: (Int) -> Int = (n) -> if (n < 2) { 1 } else { n * fact(n - 1) }\nfact(5)"
-  in
+  let code = "let fact: (Int) -> Int = (n) -> if (n < 2) { 1 } else { n * fact(n - 1) }\nfact(5)" in
   match check_string ~file_id:"<test>" code with
   | Ok result -> result.result_type = TInt
   | Error _ -> false
@@ -970,7 +968,9 @@ let%test "env reuse with shared inference state preserves constrained generic ob
       impl_methods = [ Trait_registry.mk_method_sig ~name:"show" ~params:[ ("x", TInt) ] ~return_type:TString () ];
     };
   let shared_state = Infer.create_inference_state () in
-  match check_string ~file_id:"<test>" ~state:shared_state "fn check[a: Show](x: a) -> Str = Show.show(x)\ncheck" with
+  match
+    check_string ~file_id:"<test>" ~state:shared_state "fn check[a: Show](x: a) -> Str = Show.show(x)\ncheck"
+  with
   | Error _ -> false
   | Ok first -> (
       match check_string ~file_id:"<test>" ~state:shared_state ~env:first.environment "check((y) -> y)" with
@@ -1189,7 +1189,10 @@ let%test "Phase6 prep: placeholder shorthand supports qualified partial applicat
 let%test "Phase6 prep: placeholder shorthand supports projection section values" =
   Infer.reset_fresh_counter ();
   Trait_registry.clear ();
-  match check_string ~file_id:"<test>" "type Post = { updated_at: Int }\nlet updated_at = _.updated_at\nupdated_at({ updated_at: 7 })" with
+  match
+    check_string ~file_id:"<test>"
+      "type Post = { updated_at: Int }\nlet updated_at = _.updated_at\nupdated_at({ updated_at: 7 })"
+  with
   | Ok result -> result.result_type = Types.TInt
   | Error _ -> false
 
@@ -1263,8 +1266,7 @@ let%test "Phase6 prep: placeholder shorthand rejects effectful callback slots" =
   | Error diags ->
       List.exists
         (fun (d : Diagnostic.t) ->
-          d.code = "type-invalid-placeholder"
-          && String_utils.contains_substring ~needle:"explicit '=>'" d.message)
+          d.code = "type-invalid-placeholder" && String_utils.contains_substring ~needle:"explicit '=>'" d.message)
         diags
   | Ok _ -> false
 
@@ -1275,8 +1277,7 @@ let%test "Phase6 prep: placeholder shorthand rejects effectful standalone sectio
   | Error diags ->
       List.exists
         (fun (d : Diagnostic.t) ->
-          d.code = "type-invalid-placeholder"
-          && String_utils.contains_substring ~needle:"explicit '=>'" d.message)
+          d.code = "type-invalid-placeholder" && String_utils.contains_substring ~needle:"explicit '=>'" d.message)
         diags
   | Ok _ -> false
 
@@ -1319,8 +1320,7 @@ let%test "Phase6 prep: pipe fills placeholder inside call-shaped sections" =
   Infer.reset_fresh_counter ();
   Trait_registry.clear ();
   match
-    check_string ~file_id:"<test>"
-      "fn add(x: Int, y: Int) -> Int = x + y\nlet result = 1 |> add(_, 2)\nresult"
+    check_string ~file_id:"<test>" "fn add(x: Int, y: Int) -> Int = x + y\nlet result = 1 |> add(_, 2)\nresult"
   with
   | Ok result -> result.result_type = Types.TInt
   | Error _ -> false

@@ -318,9 +318,9 @@ let signature_help
                             let param_types = List.map snd method_sig.method_params in
                             let param_names = List.map fst method_sig.method_params in
                             let is_effectful = method_sig.method_effect = `Effectful in
-                            Some (`Method (param_types, method_sig.method_return_type, param_names, is_effectful)))))
-            | Some recv_id, Some Infer.InherentMethod
-            | Some recv_id, Some Infer.QualifiedInherentMethod -> (
+                            Some (`Method (param_types, method_sig.method_return_type, param_names, is_effectful))
+                        )))
+            | Some recv_id, Some Infer.InherentMethod | Some recv_id, Some Infer.QualifiedInherentMethod -> (
                 match Hashtbl.find_opt type_map recv_id with
                 | Some recv_type -> (
                     match Inherent_registry.resolve_method recv_type mname with
@@ -538,10 +538,7 @@ let%test "outer function in nested call still works (BUG-27 regression)" =
 
 (* Phase 8 regression: signature help on dot-style method calls *)
 let%test "signature help on dot method call shows method signature" =
-  match
-    check_sig_marked
-      "let hello = (name: Str) -> name; let r = { hello: hello }\nr.hello(|\"hi\")"
-  with
+  match check_sig_marked "let hello = (name: Str) -> name; let r = { hello: hello }\nr.hello(|\"hi\")" with
   | Some sh -> List.length sh.signatures >= 1
   | None -> false
 
@@ -554,8 +551,7 @@ let%test "effectful function keeps => in signature label" =
 
 let%test "effectful method keeps => in signature label" =
   match
-    check_sig_marked
-      "let hello = (name: Str) => { puts(name); name }; let r = { hello: hello }\nr.hello(|\"hi\")"
+    check_sig_marked "let hello = (name: Str) => { puts(name); name }; let r = { hello: hello }\nr.hello(|\"hi\")"
   with
   | Some sh ->
       let sig0 = List.hd sh.signatures in

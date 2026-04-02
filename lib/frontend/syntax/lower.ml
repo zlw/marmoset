@@ -215,14 +215,14 @@ let rec placeholder_count_expr (expr : AST.expression) : int =
   match expr.expr with
   | AST.Identifier "_" -> 1
   | AST.Identifier _ | AST.Integer _ | AST.Float _ | AST.Boolean _ | AST.String _ -> 0
-  | AST.Prefix (_, inner) | AST.TypeCheck (inner, _) | AST.FieldAccess (inner, _) ->
-      placeholder_count_expr inner
+  | AST.Prefix (_, inner) | AST.TypeCheck (inner, _) | AST.FieldAccess (inner, _) -> placeholder_count_expr inner
   | AST.Infix (left, _, right) -> placeholder_count_expr left + placeholder_count_expr right
   | AST.TypeApply (callee, _) -> placeholder_count_expr callee
-  | AST.If (cond, cons, alt) ->
-      placeholder_count_expr cond + placeholder_count_stmt cons
+  | AST.If (cond, cons, alt) -> (
+      placeholder_count_expr cond
+      + placeholder_count_stmt cons
       +
-      (match alt with
+      match alt with
       | None -> 0
       | Some stmt -> placeholder_count_stmt stmt)
   | AST.Function _ -> 0
@@ -234,22 +234,21 @@ let rec placeholder_count_expr (expr : AST.expression) : int =
         (fun acc (key, value) -> acc + placeholder_count_expr key + placeholder_count_expr value)
         0 pairs
   | AST.Index (container, index) -> placeholder_count_expr container + placeholder_count_expr index
-  | AST.EnumConstructor (_, _, args) ->
-      List.fold_left (fun acc arg -> acc + placeholder_count_expr arg) 0 args
+  | AST.EnumConstructor (_, _, args) -> List.fold_left (fun acc arg -> acc + placeholder_count_expr arg) 0 args
   | AST.Match (scrutinee, arms) ->
       placeholder_count_expr scrutinee
       + List.fold_left (fun acc arm -> acc + placeholder_count_expr arm.AST.body) 0 arms
-  | AST.RecordLit (fields, spread) ->
+  | AST.RecordLit (fields, spread) -> (
       List.fold_left
         (fun acc (field : AST.record_field) ->
           acc
           +
-          (match field.field_value with
+          match field.field_value with
           | None -> 0
-          | Some value -> placeholder_count_expr value))
+          | Some value -> placeholder_count_expr value)
         0 fields
       +
-      (match spread with
+      match spread with
       | None -> 0
       | Some spread_expr -> placeholder_count_expr spread_expr)
   | AST.MethodCall { mc_receiver; mc_args; _ } ->
@@ -331,7 +330,8 @@ let rec replace_placeholder_with_expr (replacement : AST.expression) (expr : AST
   | AST.EnumConstructor (enum_name, variant_name, args) ->
       {
         expr with
-        expr = AST.EnumConstructor (enum_name, variant_name, List.map (replace_placeholder_with_expr replacement) args);
+        expr =
+          AST.EnumConstructor (enum_name, variant_name, List.map (replace_placeholder_with_expr replacement) args);
       }
   | AST.Match (scrutinee, arms) ->
       {
@@ -399,8 +399,8 @@ let lower_pipe_expr (lhs : AST.expression) (rhs : AST.expression) : AST.expr_kin
   | AST.MethodCall { mc_receiver; mc_method; mc_type_args; mc_args } ->
       AST.MethodCall { mc_receiver; mc_method; mc_type_args; mc_args = lhs :: mc_args }
   | AST.Call (callee, args)
-    when placeholder_count = 1
-         && (is_placeholder_identifier callee || List.exists is_placeholder_identifier args) ->
+    when placeholder_count = 1 && (is_placeholder_identifier callee || List.exists is_placeholder_identifier args)
+    ->
       (replace_placeholder_with_expr lhs rhs).expr
   | AST.Call (callee, args) -> AST.Call (callee, lhs :: args)
   | _ when placeholder_count = 1 -> (replace_placeholder_with_expr lhs rhs).expr
@@ -1114,7 +1114,8 @@ let%test "lower pipe prepends lhs into existing rhs call" =
   in
   match (lower_expr id_supply se).expr with
   | AST.Call
-      ({ AST.expr = AST.Identifier "f"; _ }, [ { AST.expr = AST.Identifier "x"; _ }; { AST.expr = AST.Integer 1L; _ } ]) ->
+      ( { AST.expr = AST.Identifier "f"; _ },
+        [ { AST.expr = AST.Identifier "x"; _ }; { AST.expr = AST.Integer 1L; _ } ] ) ->
       true
   | _ -> false
 
@@ -1154,8 +1155,7 @@ let%test "lower pipe substitutes lhs into projection section rhs" =
   in
   let se =
     Surface.mk_surface_expr ~id:4 ~pos:0 ~end_pos:18
-      (Surface.SEInfix
-         (Surface.mk_surface_expr ~id:1 ~pos:0 ~end_pos:3 (Surface.SEIdentifier "post"), "|>", rhs))
+      (Surface.SEInfix (Surface.mk_surface_expr ~id:1 ~pos:0 ~end_pos:3 (Surface.SEIdentifier "post"), "|>", rhs))
   in
   match (lower_expr id_supply se).expr with
   | AST.FieldAccess ({ AST.expr = AST.Identifier "post"; pos; end_pos; _ }, "updated_at") ->

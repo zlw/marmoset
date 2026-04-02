@@ -231,8 +231,7 @@ let wrap_expr_with_show_call (p : parser) (expr : Surface.surface_expr) : Surfac
       (Surface.SEIdentifier "Show")
   in
   synth_expr ~file_id:p.file_id ~id:(fresh_id p) ~pos:start_pos ~end_pos:expr.se_end_pos
-    (Surface.SEMethodCall
-       { se_receiver = receiver; se_method = "show"; se_type_args = None; se_args = [ expr ] })
+    (Surface.SEMethodCall { se_receiver = receiver; se_method = "show"; se_type_args = None; se_args = [ expr ] })
 
 let concat_string_parts (p : parser) (parts : string_interp_part list) : Surface.surface_expr =
   let lower_part = function
@@ -241,7 +240,13 @@ let concat_string_parts (p : parser) (parts : string_interp_part list) : Surface
         synth_expr ~file_id:p.file_id ~id:(fresh_id p) ~pos ~end_pos (Surface.SEString text)
     | StringExpr expr -> wrap_expr_with_show_call p expr
   in
-  match List.filter_map (function StringText ("", _) -> None | part -> Some (lower_part part)) parts with
+  match
+    List.filter_map
+      (function
+        | StringText ("", _) -> None
+        | part -> Some (lower_part part))
+      parts
+  with
   | [] ->
       synth_expr ~file_id:p.file_id ~id:(fresh_id p) ~pos:p.curr_token.pos ~end_pos:(token_end p.curr_token)
         (Surface.SEString "")
@@ -1359,8 +1364,7 @@ and parse_string_interpolation_expr (p : parser) ~(start_pos : int) (source : st
     (Surface.surface_expr, parser) result =
   if String.trim source = "" then
     let token = Token.init ~pos:start_pos Token.Illegal "}" in
-    Error
-      (add_error ~code:"parse-invalid-interpolation" ~token p "string interpolation cannot be empty")
+    Error (add_error ~code:"parse-invalid-interpolation" ~token p "string interpolation cannot be empty")
   else
     let padded_source = String.make start_pos ' ' ^ source in
     let subparser = init_with_shared_ids ~file_id:p.file_id ~id_supply:p.id_supply (Lexer.init padded_source) in
@@ -1801,8 +1805,8 @@ and parse_index_expression (p : parser) (left : Surface.surface_expr) :
   let p2 = next_token p in
   match parse_type_expr_list p2 with
   | Ok (p_after_types, type_args)
-    when curr_token_is p_after_types Token.RBracket && peek_token_is p_after_types Token.LParen
-         && type_args <> [] ->
+    when curr_token_is p_after_types Token.RBracket && peek_token_is p_after_types Token.LParen && type_args <> []
+    ->
       let type_apply_id = fresh_id p_after_types in
       let specialized =
         with_surface_expr_end p_after_types
@@ -1811,7 +1815,9 @@ and parse_index_expression (p : parser) (left : Surface.surface_expr) :
       let p_after_bracket = next_token p_after_types in
       let* p_after_args, args = parse_expression_list p_after_bracket Token.RParen in
       let id = fresh_id p_after_args in
-      Ok (p_after_args, with_surface_expr_end p_after_args (mk_surface_expr id pos (Surface.SECall (specialized, args))))
+      Ok
+        ( p_after_args,
+          with_surface_expr_end p_after_args (mk_surface_expr id pos (Surface.SECall (specialized, args))) )
   | _ ->
       let* p3, index = parse_expression p2 prec_lowest in
       let* p4 = expect_peek p3 Token.RBracket in
@@ -2179,8 +2185,7 @@ and parse_pattern (p : parser) : (parser * Surface.surface_pattern, parser) resu
   | Token.String ->
       if contains_interpolation_marker p.curr_token.literal then
         Error
-          (add_error ~code:"parse-invalid-pattern" p
-             "interpolated strings are not allowed in pattern position")
+          (add_error ~code:"parse-invalid-pattern" p "interpolated strings are not allowed in pattern position")
       else
         Ok (p, mk_surface_pat p.curr_token.pos (Surface.SPLiteral (AST.LString p.curr_token.literal)))
   | Token.True -> Ok (p, mk_surface_pat p.curr_token.pos (Surface.SPLiteral (AST.LBool true)))
@@ -2303,14 +2308,7 @@ module Test = struct
   (* Helper for Function expressions with the new record structure *)
   let fn_expr params body =
     AST.Function
-      {
-        origin = AST.DeclaredFunction;
-        generics = None;
-        params;
-        return_type = None;
-        is_effectful = false;
-        body;
-      }
+      { origin = AST.DeclaredFunction; generics = None; params; return_type = None; is_effectful = false; body }
 
   let run (tests : test list) : bool =
     tests
@@ -2366,8 +2364,11 @@ module Test = struct
     match parse ~file_id:"<test>" "\"hello #{name}\";" with
     | Ok [ { AST.stmt = AST.ExpressionStmt expr; _ } ] -> (
         match expr.expr with
-        | AST.Infix ({ expr = AST.String "hello "; _ }, "+", { expr = AST.MethodCall { mc_receiver; mc_method; mc_args; _ }; _ }) -> (
-            match mc_receiver.expr, mc_method, mc_args with
+        | AST.Infix
+            ( { expr = AST.String "hello "; _ },
+              "+",
+              { expr = AST.MethodCall { mc_receiver; mc_method; mc_args; _ }; _ } ) -> (
+            match (mc_receiver.expr, mc_method, mc_args) with
             | AST.Identifier "Show", "show", [ { expr = AST.Identifier "name"; _ } ] -> true
             | _ -> false)
         | _ -> false)
@@ -2377,16 +2378,43 @@ module Test = struct
     match parse ~file_id:"<test>" "\"hello #{label(\"vine\")}\";" with
     | Ok [ { AST.stmt = AST.ExpressionStmt expr; _ } ] -> (
         match expr.expr with
-        | AST.Infix (_, "+", { expr = AST.MethodCall { mc_args = [ { expr = AST.Call ({ expr = AST.Identifier "label"; _ }, [ { expr = AST.String "vine"; _ } ]); _ } ]; _ }; _ }) ->
+        | AST.Infix
+            ( _,
+              "+",
+              {
+                expr =
+                  AST.MethodCall
+                    {
+                      mc_args =
+                        [
+                          {
+                            expr =
+                              AST.Call ({ expr = AST.Identifier "label"; _ }, [ { expr = AST.String "vine"; _ } ]);
+                            _;
+                          };
+                        ];
+                      _;
+                    };
+                _;
+              } ) ->
             true
         | _ -> false)
     | _ -> false
 
   let%test "string interpolation keeps qualified call span at receiver start" =
     match parse ~file_id:"<test>" "\"#{JungleDweller.introduce(x)}\";" with
-    | Ok [ { AST.stmt = AST.ExpressionStmt { expr = AST.MethodCall { mc_receiver = show_recv; mc_args = [ qualified_call ]; _ }; pos; _ }; _ } ] -> (
-        match show_recv.expr, qualified_call.expr with
-        | AST.Identifier "Show", AST.MethodCall { mc_receiver = qualified_recv; _ } -> pos = 3 && show_recv.pos = 3 && qualified_recv.pos = 3
+    | Ok
+        [
+          {
+            AST.stmt =
+              AST.ExpressionStmt
+                { expr = AST.MethodCall { mc_receiver = show_recv; mc_args = [ qualified_call ]; _ }; pos; _ };
+            _;
+          };
+        ] -> (
+        match (show_recv.expr, qualified_call.expr) with
+        | AST.Identifier "Show", AST.MethodCall { mc_receiver = qualified_recv; _ } ->
+            pos = 3 && show_recv.pos = 3 && qualified_recv.pos = 3
         | _ -> false)
     | _ -> false
 
@@ -3121,13 +3149,39 @@ module Test = struct
 
   let%test "pipe desugars to single-argument call" =
     match parse ~file_id:"<test>" "x |> f" with
-    | Ok [ { AST.stmt = AST.ExpressionStmt { AST.expr = AST.Call ({ AST.expr = AST.Identifier "f"; _ }, [ { AST.expr = AST.Identifier "x"; _ } ]); _ }; _ } ] ->
+    | Ok
+        [
+          {
+            AST.stmt =
+              AST.ExpressionStmt
+                {
+                  AST.expr =
+                    AST.Call ({ AST.expr = AST.Identifier "f"; _ }, [ { AST.expr = AST.Identifier "x"; _ } ]);
+                  _;
+                };
+            _;
+          };
+        ] ->
         true
     | _ -> false
 
   let%test "pipe prepends lhs into rhs call arguments" =
     match parse ~file_id:"<test>" "x |> f(1)" with
-    | Ok [ { AST.stmt = AST.ExpressionStmt { AST.expr = AST.Call ({ AST.expr = AST.Identifier "f"; _ }, [ { AST.expr = AST.Identifier "x"; _ }; { AST.expr = AST.Integer 1L; _ } ]); _ }; _ } ] ->
+    | Ok
+        [
+          {
+            AST.stmt =
+              AST.ExpressionStmt
+                {
+                  AST.expr =
+                    AST.Call
+                      ( { AST.expr = AST.Identifier "f"; _ },
+                        [ { AST.expr = AST.Identifier "x"; _ }; { AST.expr = AST.Integer 1L; _ } ] );
+                  _;
+                };
+            _;
+          };
+        ] ->
         true
     | _ -> false
 
@@ -3164,8 +3218,7 @@ module Test = struct
                       {
                         mc_receiver = { AST.expr = AST.Identifier "Visible"; _ };
                         mc_method = "visible_to";
-                        mc_args =
-                          [ { AST.expr = AST.Identifier "post"; _ }; { AST.expr = AST.String "ada"; _ } ];
+                        mc_args = [ { AST.expr = AST.Identifier "post"; _ }; { AST.expr = AST.String "ada"; _ } ];
                         _;
                       };
                   _;
@@ -3187,7 +3240,13 @@ module Test = struct
                   AST.expr =
                     AST.Call
                       ( { AST.expr = AST.Identifier "f"; _ },
-                        [ { AST.expr = AST.Infix ({ AST.expr = AST.Integer 1L; _ }, "+", { AST.expr = AST.Integer 2L; _ }); _ } ] );
+                        [
+                          {
+                            AST.expr =
+                              AST.Infix ({ AST.expr = AST.Integer 1L; _ }, "+", { AST.expr = AST.Integer 2L; _ });
+                            _;
+                          };
+                        ] );
                   _;
                 };
             _;
@@ -3207,7 +3266,14 @@ module Test = struct
                   AST.expr =
                     AST.Call
                       ( { AST.expr = AST.Identifier "g"; _ },
-                        [ { AST.expr = AST.Call ({ AST.expr = AST.Identifier "f"; _ }, [ { AST.expr = AST.Identifier "x"; _ } ]); _ } ] );
+                        [
+                          {
+                            AST.expr =
+                              AST.Call
+                                ({ AST.expr = AST.Identifier "f"; _ }, [ { AST.expr = AST.Identifier "x"; _ } ]);
+                            _;
+                          };
+                        ] );
                   _;
                 };
             _;
@@ -4561,7 +4627,10 @@ let%test "parse explicit type args on rebound callable value" =
           match (stmt1.stmt, stmt2.stmt) with
           | AST.Let { name = "cast"; _ }, AST.Let { value; _ } -> (
               match value.expr with
-              | AST.Call ({ expr = AST.TypeApply ({ expr = AST.Identifier "cast"; _ }, [ AST.TCon "Str" ]); _ }, [ { expr = AST.Integer 1L; _ } ]) -> true
+              | AST.Call
+                  ( { expr = AST.TypeApply ({ expr = AST.Identifier "cast"; _ }, [ AST.TCon "Str" ]); _ },
+                    [ { expr = AST.Integer 1L; _ } ] ) ->
+                  true
               | _ -> false)
           | _ -> false)
       | _ -> false)

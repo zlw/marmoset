@@ -120,6 +120,7 @@ let rec next_token (l : lexer) : lexer * Token.token =
 
 and read_identifier (l : lexer) : lexer * string = read_until l is_ident_char
 and read_number (l : lexer) : lexer * string = read_until l is_digit
+
 and read_string (l : lexer) : lexer * string =
   let start = l.position in
   let rec scan_string (ll : lexer) : lexer =
@@ -494,7 +495,9 @@ let%test "pipe vs pipepipe distinction" =
   let has_pipeforward = List.exists (fun t -> t.Token.token_type = Token.PipeForward) tokens_forward in
   let has_pipepipe = List.exists (fun t -> t.Token.token_type = Token.PipePipe) tokens_double in
   let no_pipepipe_in_single = not (List.exists (fun t -> t.Token.token_type = Token.PipePipe) tokens_single) in
-  let no_pipeforward_in_single = not (List.exists (fun t -> t.Token.token_type = Token.PipeForward) tokens_single) in
+  let no_pipeforward_in_single =
+    not (List.exists (fun t -> t.Token.token_type = Token.PipeForward) tokens_single)
+  in
   has_pipe && has_pipeforward && has_pipepipe && no_pipepipe_in_single && no_pipeforward_in_single
 
 let%test "amp vs ampamp distinction" =

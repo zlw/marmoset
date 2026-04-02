@@ -255,7 +255,8 @@ let init_builtin_impls () =
       impl_trait_name = "rem";
       impl_type_params = [];
       impl_for_type = TInt;
-      impl_methods = [ Trait_registry.mk_method_sig ~name:"rem" ~params:[ ("x", TInt); ("y", TInt) ] ~return_type:TInt () ];
+      impl_methods =
+        [ Trait_registry.mk_method_sig ~name:"rem" ~params:[ ("x", TInt); ("y", TInt) ] ~return_type:TInt () ];
     };
 
   (* impl neg for int *)

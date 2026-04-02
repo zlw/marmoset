@@ -343,8 +343,7 @@ let clone_default_body
       | (AST.Identifier _ | AST.Integer _ | AST.Float _ | AST.Boolean _ | AST.String _) as literal -> literal
       | AST.Array items -> AST.Array (List.map clone_expr items)
       | AST.Index (container, index) -> AST.Index (clone_expr container, clone_expr index)
-      | AST.TypeApply (callee, type_args) ->
-          AST.TypeApply (clone_expr callee, List.map substitute_type type_args)
+      | AST.TypeApply (callee, type_args) -> AST.TypeApply (clone_expr callee, List.map substitute_type type_args)
       | AST.Hash pairs -> AST.Hash (List.map (fun (key, value) -> (clone_expr key, clone_expr value)) pairs)
       | AST.Prefix (op, operand) -> AST.Prefix (op, clone_expr operand)
       | AST.Infix (left, op, right) -> AST.Infix (clone_expr left, op, clone_expr right)

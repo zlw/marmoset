@@ -123,8 +123,7 @@ let decode_tokens ~(source : string) = function
             else
               delta_char
           in
-          go (i + 5) line character
-            ({ line; character; length; token_type; modifiers } :: acc)
+          go (i + 5) line character ({ line; character; length; token_type; modifiers } :: acc)
       in
       let _ = source in
       go 0 0 0 []
@@ -134,12 +133,9 @@ let token_under_cursor ~(needle : string) ?(occurrence = 1) ?(offset_in_needle =
   let line, character = position_of_substring ~source:scenario_source ~needle ~occurrence ~offset_in_needle () in
   decode_tokens ~source:scenario_source (get_semantic_tokens scenario_source)
   |> List.find_opt (fun token ->
-         token.line = line
-         && token.character <= character
-         && character < token.character + token.length)
+         token.line = line && token.character <= character && character < token.character + token.length)
 
 let symbol_names symbols = List.map (fun (s : Lsp_t.DocumentSymbol.t) -> s.name) symbols
-
 let get_hints source = Inlay_hints.get_hints source
 
 let hint_labels hints =
@@ -206,8 +202,13 @@ let%test "editor scenario semantic tokens cover modern declarations and members"
       token_under_cursor ~needle:"self.name" ~offset_in_needle:5 (),
       token_under_cursor ~needle:"bananas: 3" () )
   with
-  | Some named, Some monkey, Some book_param, Some fallback_param, Some greet_impl, Some field_access, Some record_field
-    ->
+  | ( Some named,
+      Some monkey,
+      Some book_param,
+      Some fallback_param,
+      Some greet_impl,
+      Some field_access,
+      Some record_field ) ->
       named.token_type = Semantic_tokens.interface_type
       && has_decl_mod named
       && monkey.token_type = Semantic_tokens._type_type

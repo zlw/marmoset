@@ -308,7 +308,10 @@ let rec find_expr_at (offset : int) (expr : Ast.AST.expression) : Ast.AST.expres
       | Ast.AST.MethodCall { mc_receiver; mc_args; _ } ->
           if synthetic_method_receiver mc_receiver mc_args then
             first_some (List.find_map (find_expr_at offset) mc_args) (find_expr_at offset mc_receiver)
-          else if uppercase_identifier mc_receiver && offset >= effective_start_pos mc_receiver && offset <= mc_receiver.end_pos
+          else if
+            uppercase_identifier mc_receiver
+            && offset >= effective_start_pos mc_receiver
+            && offset <= mc_receiver.end_pos
           then
             None
           else
@@ -1116,6 +1119,5 @@ let%test "hover on qualified call inside interpolation does not get swallowed by
       (hover_marked
          "trait JungleDweller[a] = {\n  fn introduce(x: a) -> Str\n}\nfn render[t: JungleDweller](x: t) -> Str = \"#{|JungleDweller.introduce(x)}\"")
   with
-  | Some h ->
-      string_contains h.type_text "Str" && h.highlighted = "JungleDweller.introduce(x)"
+  | Some h -> string_contains h.type_text "Str" && h.highlighted = "JungleDweller.introduce(x)"
   | None -> false
