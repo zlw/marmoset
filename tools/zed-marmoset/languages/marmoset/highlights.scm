@@ -54,11 +54,27 @@
 ")" @punctuation.bracket
 "[" @punctuation.bracket
 "]" @punctuation.bracket
-"{" @punctuation.bracket
-"}" @punctuation.bracket
 "," @punctuation.delimiter
 ";" @punctuation.delimiter
 ":" @punctuation.delimiter
+
+; Structural braces
+(block "{" @punctuation.bracket)
+(block "}" @punctuation.bracket)
+(constructor_type_body "{" @punctuation.bracket)
+(constructor_type_body "}" @punctuation.bracket)
+(record_type "{" @punctuation.bracket)
+(record_type "}" @punctuation.bracket)
+(object_literal "{" @punctuation.bracket)
+(object_literal "}" @punctuation.bracket)
+(trait_definition "{" @punctuation.bracket)
+(trait_definition "}" @punctuation.bracket)
+(shape_definition "{" @punctuation.bracket)
+(shape_definition "}" @punctuation.bracket)
+(impl_block "{" @punctuation.bracket)
+(impl_block "}" @punctuation.bracket)
+(match_expression "{" @punctuation.bracket)
+(match_expression "}" @punctuation.bracket)
 
 ; Type identifiers
 (type_identifier) @type.builtin
