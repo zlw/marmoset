@@ -11,7 +11,7 @@ fn print_book_name(book: Map[Str, Str]) => Unit = {
   let title = book["title"]
   let author = book["author"]
 
-  puts(author + " - " + title)
+  puts("#{author} - #{title}")
 }
 print_book_name(book)
 

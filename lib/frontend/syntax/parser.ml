@@ -43,6 +43,10 @@ type brace_literal_mode =
   | RecordMode
   | HashMode
 
+type string_interp_part =
+  | StringText of string * int
+  | StringExpr of Surface.surface_expr
+
 let first_some a b =
   match a with
   | Some _ -> a
@@ -154,6 +158,9 @@ let init ~file_id (l : Lexer.lexer) : parser =
   |> next_token
   |> next_token
 
+let init_with_shared_ids ~file_id ~(id_supply : Id_supply.Id_supply.t) (l : Lexer.lexer) : parser =
+  { (init ~file_id l) with id_supply }
+
 let curr_token_is (p : parser) (t : Token.token_type) : bool = p.curr_token.token_type = t
 let peek_token_is (p : parser) (t : Token.token_type) : bool = p.peek_token.token_type = t
 
@@ -195,6 +202,44 @@ let expect_peek (p : parser) (tt : Token.token_type) : (parser, parser) result =
 let no_prefix_parse_fn_error (p : parser) (t : Token.token_type) : parser =
   let msg = Printf.sprintf "syntax error, unexpected %s found" (Token.show_token_type t) in
   add_error ~code:"parse-unexpected-token" p msg
+
+let contains_interpolation_marker (s : string) : bool =
+  let rec loop i =
+    i + 1 < String.length s && ((String.get s i = '#' && String.get s (i + 1) = '{') || loop (i + 1))
+  in
+  loop 0
+
+let synth_expr ~file_id ~id ~pos ~end_pos expr =
+  Surface.{ se_id = id; se_expr = expr; se_pos = pos; se_end_pos = end_pos; se_file_id = Some file_id }
+
+let wrap_expr_with_show_call (p : parser) (expr : Surface.surface_expr) : Surface.surface_expr =
+  let receiver_end_pos = expr.se_pos + String.length "Show" - 1 in
+  let receiver =
+    synth_expr ~file_id:p.file_id ~id:(fresh_id p) ~pos:expr.se_pos ~end_pos:receiver_end_pos
+      (Surface.SEIdentifier "Show")
+  in
+  synth_expr ~file_id:p.file_id ~id:(fresh_id p) ~pos:expr.se_pos ~end_pos:expr.se_end_pos
+    (Surface.SEMethodCall
+       { se_receiver = receiver; se_method = "show"; se_type_args = None; se_args = [ expr ] })
+
+let concat_string_parts (p : parser) (parts : string_interp_part list) : Surface.surface_expr =
+  let lower_part = function
+    | StringText (text, pos) ->
+        let end_pos = max pos (pos + String.length text - 1) in
+        synth_expr ~file_id:p.file_id ~id:(fresh_id p) ~pos ~end_pos (Surface.SEString text)
+    | StringExpr expr -> wrap_expr_with_show_call p expr
+  in
+  match List.filter_map (function StringText ("", _) -> None | part -> Some (lower_part part)) parts with
+  | [] ->
+      synth_expr ~file_id:p.file_id ~id:(fresh_id p) ~pos:p.curr_token.pos ~end_pos:(token_end p.curr_token)
+        (Surface.SEString "")
+  | [ expr ] -> expr
+  | first :: rest ->
+      List.fold_left
+        (fun (left : Surface.surface_expr) (right : Surface.surface_expr) ->
+          synth_expr ~file_id:p.file_id ~id:(fresh_id p) ~pos:left.se_pos ~end_pos:right.se_end_pos
+            (Surface.SEInfix (left, "+", right)))
+        first rest
 
 let rec parse_surface_program (p : parser) : (parser * Surface.surface_program, parser) result =
   let rec loop (lp : parser) (prog : Surface.surface_program) =
@@ -1289,8 +1334,98 @@ and parse_float_literal (p : parser) : (parser * Surface.surface_expr, parser) r
 
 and parse_string_literal (p : parser) : (parser * Surface.surface_expr, parser) result =
   let pos = p.curr_token.pos in
-  let id = fresh_id p in
-  Ok (p, mk_surface_expr id pos (Surface.SEString p.curr_token.literal))
+  let content = p.curr_token.literal in
+  if not (contains_interpolation_marker content) then
+    let id = fresh_id p in
+    Ok (p, mk_surface_expr id pos (Surface.SEString content))
+  else
+    let body_start_pos = pos + 1 in
+    let* parts = split_string_interpolation_parts p content ~body_start_pos in
+    Ok (p, concat_string_parts p parts)
+
+and parse_string_interpolation_expr (p : parser) ~(start_pos : int) (source : string) :
+    (Surface.surface_expr, parser) result =
+  if String.trim source = "" then
+    let token = Token.init ~pos:start_pos Token.Illegal "}" in
+    Error
+      (add_error ~code:"parse-invalid-interpolation" ~token p "string interpolation cannot be empty")
+  else
+    let padded_source = String.make start_pos ' ' ^ source in
+    let subparser = init_with_shared_ids ~file_id:p.file_id ~id_supply:p.id_supply (Lexer.init padded_source) in
+    let* subparser2, expr = parse_expression subparser prec_lowest in
+    if peek_token_is subparser2 Token.EOF then
+      Ok expr
+    else
+      Error
+        (add_error ~code:"parse-invalid-interpolation" ~token:subparser2.peek_token subparser2
+           "string interpolation must contain exactly one expression")
+
+and split_string_interpolation_parts (p : parser) (content : string) ~(body_start_pos : int) :
+    (string_interp_part list, parser) result =
+  let len = String.length content in
+  let rec find_nested_string_end i =
+    if i >= len then
+      len
+    else
+      match String.get content i with
+      | '"' -> i
+      | '#' when i + 1 < len && String.get content (i + 1) = '{' ->
+          let interp_end = find_interpolation_end (i + 2) 1 in
+          if interp_end >= len then
+            len
+          else
+            find_nested_string_end (interp_end + 1)
+      | _ -> find_nested_string_end (i + 1)
+  and find_interpolation_end i depth =
+    if i >= len then
+      len
+    else
+      match String.get content i with
+      | '"' ->
+          let nested_end = find_nested_string_end (i + 1) in
+          if nested_end >= len then
+            len
+          else
+            find_interpolation_end (nested_end + 1) depth
+      | '{' -> find_interpolation_end (i + 1) (depth + 1)
+      | '}' ->
+          if depth = 1 then
+            i
+          else
+            find_interpolation_end (i + 1) (depth - 1)
+      | _ -> find_interpolation_end (i + 1) depth
+  in
+  let rec loop i text_start rev_parts =
+    if i >= len then
+      let rev_parts =
+        if i > text_start then
+          StringText (String.sub content text_start (i - text_start), body_start_pos + text_start) :: rev_parts
+        else
+          rev_parts
+      in
+      Ok (List.rev rev_parts)
+    else if String.get content i = '#' && i + 1 < len && String.get content (i + 1) = '{' then
+      let rev_parts =
+        if i > text_start then
+          StringText (String.sub content text_start (i - text_start), body_start_pos + text_start) :: rev_parts
+        else
+          rev_parts
+      in
+      let expr_start = i + 2 in
+      let expr_end = find_interpolation_end expr_start 1 in
+      if expr_end >= len then
+        let token = Token.init ~pos:(body_start_pos + i) Token.Illegal "#" in
+        Error
+          (add_error ~code:"parse-invalid-interpolation" ~token p
+             "unterminated string interpolation; expected '}'")
+      else
+        let expr_source = String.sub content expr_start (expr_end - expr_start) in
+        let* expr = parse_string_interpolation_expr p ~start_pos:(body_start_pos + expr_start) expr_source in
+        loop (expr_end + 1) (expr_end + 1) (StringExpr expr :: rev_parts)
+    else
+      loop (i + 1) text_start rev_parts
+  in
+  loop 0 0 []
 
 and parse_prefix_expression (p : parser) : (parser * Surface.surface_expr, parser) result =
   let pos = p.curr_token.pos in
@@ -2029,7 +2164,13 @@ and parse_pattern (p : parser) : (parser * Surface.surface_pattern, parser) resu
       match Int64.of_string_opt p.curr_token.literal with
       | Some i -> Ok (p, mk_surface_pat p.curr_token.pos (Surface.SPLiteral (AST.LInt i)))
       | None -> Error (add_error ~code:"parse-invalid-number" p "invalid integer literal in pattern"))
-  | Token.String -> Ok (p, mk_surface_pat p.curr_token.pos (Surface.SPLiteral (AST.LString p.curr_token.literal)))
+  | Token.String ->
+      if contains_interpolation_marker p.curr_token.literal then
+        Error
+          (add_error ~code:"parse-invalid-pattern" p
+             "interpolated strings are not allowed in pattern position")
+      else
+        Ok (p, mk_surface_pat p.curr_token.pos (Surface.SPLiteral (AST.LString p.curr_token.literal)))
   | Token.True -> Ok (p, mk_surface_pat p.curr_token.pos (Surface.SPLiteral (AST.LBool true)))
   | Token.False -> Ok (p, mk_surface_pat p.curr_token.pos (Surface.SPLiteral (AST.LBool false)))
   | Token.LBrace -> parse_record_pattern p
@@ -2208,6 +2349,36 @@ module Test = struct
 
   let%test "test_string_literal_expressions" =
     [ { input = "\"hello world\";"; output = [ s (AST.ExpressionStmt (e (AST.String "hello world"))) ] } ] |> run
+
+  let%test "string interpolation lowers to show call plus concat" =
+    match parse ~file_id:"<test>" "\"hello #{name}\";" with
+    | Ok [ { AST.stmt = AST.ExpressionStmt expr; _ } ] -> (
+        match expr.expr with
+        | AST.Infix ({ expr = AST.String "hello "; _ }, "+", { expr = AST.MethodCall { mc_receiver; mc_method; mc_args; _ }; _ }) -> (
+            match mc_receiver.expr, mc_method, mc_args with
+            | AST.Identifier "Show", "show", [ { expr = AST.Identifier "name"; _ } ] -> true
+            | _ -> false)
+        | _ -> false)
+    | _ -> false
+
+  let%test "string interpolation parses embedded expressions with nested strings" =
+    match parse ~file_id:"<test>" "\"hello #{label(\"vine\")}\";" with
+    | Ok [ { AST.stmt = AST.ExpressionStmt expr; _ } ] -> (
+        match expr.expr with
+        | AST.Infix (_, "+", { expr = AST.MethodCall { mc_args = [ { expr = AST.Call ({ expr = AST.Identifier "label"; _ }, [ { expr = AST.String "vine"; _ } ]); _ } ]; _ }; _ }) ->
+            true
+        | _ -> false)
+    | _ -> false
+
+  let%test "interpolated strings are rejected in patterns" =
+    match parse ~file_id:"<test>" "match x { case \"#{y}\": 1 }" with
+    | Error errs ->
+        List.exists
+          (fun (d : Diagnostic.t) ->
+            String_utils.contains_substring ~needle:"interpolated strings are not allowed in pattern position"
+              d.message)
+          errs
+    | _ -> false
 
   let%test "expression span tracks token width" =
     match parse ~file_id:"<test>" "123;" with

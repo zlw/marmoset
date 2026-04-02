@@ -38,6 +38,7 @@ It does not fully define:
 - Generic type parameters are lowercase: `a`, `e`, `t0`.
 - Value/function identifiers are typically lowercase/snake_case.
 - `?` and `!` are allowed in identifiers (for example `admin?`, `panic!`).
+- String literals support interpolation with `#{expr}`. Embedded expressions are lowered through `Show.show(...)`.
 - Comments start with `#` and run to end of line.
 - Semicolons are optional separators accepted by the language surface, but canonical vNext formatting omits them.
 

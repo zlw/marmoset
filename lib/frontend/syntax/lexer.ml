@@ -120,7 +120,38 @@ let rec next_token (l : lexer) : lexer * Token.token =
 
 and read_identifier (l : lexer) : lexer * string = read_until l is_ident_char
 and read_number (l : lexer) : lexer * string = read_until l is_digit
-and read_string (l : lexer) : lexer * string = read_until l (fun c -> c <> '"' && c <> '\000')
+and read_string (l : lexer) : lexer * string =
+  let start = l.position in
+  let rec scan_string (ll : lexer) : lexer =
+    match ll.ch with
+    | '\000' | '"' -> ll
+    | '#' when peek_char ll = '{' ->
+        let after_open = read_char (read_char ll) in
+        scan_string (scan_interpolation after_open 1)
+    | _ -> scan_string (read_char ll)
+  and scan_interpolation (ll : lexer) (depth : int) : lexer =
+    match ll.ch with
+    | '\000' -> ll
+    | '"' ->
+        let nested_end = scan_string (read_char ll) in
+        let after_nested =
+          if nested_end.ch = '"' then
+            read_char nested_end
+          else
+            nested_end
+        in
+        scan_interpolation after_nested depth
+    | '{' -> scan_interpolation (read_char ll) (depth + 1)
+    | '}' ->
+        let ll' = read_char ll in
+        if depth = 1 then
+          ll'
+        else
+          scan_interpolation ll' (depth - 1)
+    | _ -> scan_interpolation (read_char ll) depth
+  in
+  let l2 = scan_string l in
+  (l2, String.sub l.input start (l2.position - start))
 
 and read_until (l : lexer) (f : char -> bool) : lexer * string =
   let start = l.position in
@@ -312,6 +343,19 @@ let%test "fat arrow token" =
   let input = "() => value" in
   let tokens = lex input in
   List.exists (fun t -> t.Token.token_type = Token.FatArrow) tokens
+
+let%test "string interpolation stays a single string token" =
+  let tokens = lex "\"banana #{count}\"" in
+  match tokens with
+  | [ { token_type = Token.String; literal = "banana #{count}"; _ }; { token_type = Token.EOF; _ } ] -> true
+  | _ -> false
+
+let%test "string interpolation may contain nested strings in embedded expressions" =
+  let tokens = lex "\"banana #{label(\"crate\")}\"" in
+  match tokens with
+  | [ { token_type = Token.String; literal = "banana #{label(\"crate\")}"; _ }; { token_type = Token.EOF; _ } ] ->
+      true
+  | _ -> false
 
 let%test "less-equal token" =
   let input = "1 <= 2" in

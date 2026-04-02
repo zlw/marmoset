@@ -7183,13 +7183,22 @@ match Result.Success(42) {
 }
 fn f[a: Show](x: a) -> Str = Show.show(x)
 f" in
-    let unconstrained_code = "fn id(x) = x\nid([1, 2, 3])" in
+  let unconstrained_code = "fn id(x) = x\nid([1, 2, 3])" in
     match infer_string constrained_code with
     | Error _ -> false
     | Ok _ -> (
         match infer_string unconstrained_code with
         | Error _ -> false
         | Ok (_, _, inferred_type) -> inferred_type = TArray TInt)
+
+  let%test "string interpolation requires show for embedded values" =
+    let code =
+      "type Stone = { weight: Int }\nlet stone: Stone = { weight: 3 }\n\"stone #{stone}\""
+    in
+    match infer_string code with
+    | Error diag when is_code diag "type-trait-missing-impl" ->
+        contains_substring diag.message "does not implement trait show"
+    | _ -> false
 
   let%test "obligations_from_substitution creates one obligation per trait" =
     clear_constraint_store ();
