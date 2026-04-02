@@ -269,70 +269,111 @@ and placeholder_count_stmt (stmt : AST.statement) : int =
 and placeholder_count_stmt_list (stmts : AST.statement list) : int =
   List.fold_left (fun acc stmt -> acc + placeholder_count_stmt stmt) 0 stmts
 
+let is_placeholder_identifier (expr : AST.expression) : bool =
+  match expr.expr with
+  | AST.Identifier "_" -> true
+  | _ -> false
+
 let rec replace_placeholder_with_expr (replacement : AST.expression) (expr : AST.expression) : AST.expression =
-  let rewritten =
-    match expr.expr with
-    | AST.Identifier "_" -> replacement.expr
-    | AST.Identifier _ | AST.Integer _ | AST.Float _ | AST.Boolean _ | AST.String _ -> expr.expr
-    | AST.Prefix (op, inner) -> AST.Prefix (op, replace_placeholder_with_expr replacement inner)
-    | AST.Infix (left, op, right) ->
-        AST.Infix
-          (replace_placeholder_with_expr replacement left, op, replace_placeholder_with_expr replacement right)
-    | AST.TypeCheck (inner, typ) -> AST.TypeCheck (replace_placeholder_with_expr replacement inner, typ)
-    | AST.TypeApply (callee, type_args) ->
-        AST.TypeApply (replace_placeholder_with_expr replacement callee, type_args)
-    | AST.If (cond, cons, alt) ->
-        AST.If
-          ( replace_placeholder_with_expr replacement cond,
-            replace_placeholder_with_stmt replacement cons,
-            Option.map (replace_placeholder_with_stmt replacement) alt )
-    | AST.Function _ -> expr.expr
-    | AST.Call (fn_expr, args) ->
-        AST.Call
-          ( replace_placeholder_with_expr replacement fn_expr,
-            List.map (replace_placeholder_with_expr replacement) args )
-    | AST.Array elements -> AST.Array (List.map (replace_placeholder_with_expr replacement) elements)
-    | AST.Hash pairs ->
-        AST.Hash
-          (List.map
-             (fun (key, value) ->
-               (replace_placeholder_with_expr replacement key, replace_placeholder_with_expr replacement value))
-             pairs)
-    | AST.Index (container, index) ->
-        AST.Index
-          (replace_placeholder_with_expr replacement container, replace_placeholder_with_expr replacement index)
-    | AST.EnumConstructor (enum_name, variant_name, args) ->
-        AST.EnumConstructor (enum_name, variant_name, List.map (replace_placeholder_with_expr replacement) args)
-    | AST.Match (scrutinee, arms) ->
-        AST.Match
-          ( replace_placeholder_with_expr replacement scrutinee,
-            List.map
-              (fun (arm : AST.match_arm) ->
-                { arm with body = replace_placeholder_with_expr replacement arm.body })
-              arms )
-    | AST.RecordLit (fields, spread) ->
-        AST.RecordLit
-          ( List.map
-              (fun (field : AST.record_field) ->
-                {
-                  field with
-                  field_value = Option.map (replace_placeholder_with_expr replacement) field.field_value;
-                })
-              fields,
-            Option.map (replace_placeholder_with_expr replacement) spread )
-    | AST.FieldAccess (receiver, field_name) ->
-        AST.FieldAccess (replace_placeholder_with_expr replacement receiver, field_name)
-    | AST.MethodCall { mc_receiver; mc_method; mc_type_args; mc_args } ->
-        AST.MethodCall
-          {
-            mc_receiver = replace_placeholder_with_expr replacement mc_receiver;
-            mc_method;
-            mc_type_args;
-            mc_args = List.map (replace_placeholder_with_expr replacement) mc_args;
-          }
-    | AST.BlockExpr stmts -> AST.BlockExpr (List.map (replace_placeholder_with_stmt replacement) stmts)
-  in
-  { expr with expr = rewritten }
+  match expr.expr with
+  | AST.Identifier "_" -> replacement
+  | AST.Identifier _ | AST.Integer _ | AST.Float _ | AST.Boolean _ | AST.String _ -> expr
+  | AST.Prefix (op, inner) ->
+      { expr with expr = AST.Prefix (op, replace_placeholder_with_expr replacement inner) }
+  | AST.Infix (left, op, right) ->
+      {
+        expr with
+        expr =
+          AST.Infix
+            (replace_placeholder_with_expr replacement left, op, replace_placeholder_with_expr replacement right);
+      }
+  | AST.TypeCheck (inner, typ) ->
+      { expr with expr = AST.TypeCheck (replace_placeholder_with_expr replacement inner, typ) }
+  | AST.TypeApply (callee, type_args) ->
+      { expr with expr = AST.TypeApply (replace_placeholder_with_expr replacement callee, type_args) }
+  | AST.If (cond, cons, alt) ->
+      {
+        expr with
+        expr =
+          AST.If
+            ( replace_placeholder_with_expr replacement cond,
+              replace_placeholder_with_stmt replacement cons,
+              Option.map (replace_placeholder_with_stmt replacement) alt );
+      }
+  | AST.Function _ -> expr
+  | AST.Call (fn_expr, args) ->
+      {
+        expr with
+        expr =
+          AST.Call
+            ( replace_placeholder_with_expr replacement fn_expr,
+              List.map (replace_placeholder_with_expr replacement) args );
+      }
+  | AST.Array elements ->
+      { expr with expr = AST.Array (List.map (replace_placeholder_with_expr replacement) elements) }
+  | AST.Hash pairs ->
+      {
+        expr with
+        expr =
+          AST.Hash
+            (List.map
+               (fun (key, value) ->
+                 (replace_placeholder_with_expr replacement key, replace_placeholder_with_expr replacement value))
+               pairs);
+      }
+  | AST.Index (container, index) ->
+      {
+        expr with
+        expr =
+          AST.Index
+            (replace_placeholder_with_expr replacement container, replace_placeholder_with_expr replacement index);
+      }
+  | AST.EnumConstructor (enum_name, variant_name, args) ->
+      {
+        expr with
+        expr = AST.EnumConstructor (enum_name, variant_name, List.map (replace_placeholder_with_expr replacement) args);
+      }
+  | AST.Match (scrutinee, arms) ->
+      {
+        expr with
+        expr =
+          AST.Match
+            ( replace_placeholder_with_expr replacement scrutinee,
+              List.map
+                (fun (arm : AST.match_arm) ->
+                  { arm with body = replace_placeholder_with_expr replacement arm.body })
+                arms );
+      }
+  | AST.RecordLit (fields, spread) ->
+      {
+        expr with
+        expr =
+          AST.RecordLit
+            ( List.map
+                (fun (field : AST.record_field) ->
+                  {
+                    field with
+                    field_value = Option.map (replace_placeholder_with_expr replacement) field.field_value;
+                  })
+                fields,
+              Option.map (replace_placeholder_with_expr replacement) spread );
+      }
+  | AST.FieldAccess (receiver, field_name) ->
+      { expr with expr = AST.FieldAccess (replace_placeholder_with_expr replacement receiver, field_name) }
+  | AST.MethodCall { mc_receiver; mc_method; mc_type_args; mc_args } ->
+      {
+        expr with
+        expr =
+          AST.MethodCall
+            {
+              mc_receiver = replace_placeholder_with_expr replacement mc_receiver;
+              mc_method;
+              mc_type_args;
+              mc_args = List.map (replace_placeholder_with_expr replacement) mc_args;
+            };
+      }
+  | AST.BlockExpr stmts ->
+      { expr with expr = AST.BlockExpr (List.map (replace_placeholder_with_stmt replacement) stmts) }
 
 and replace_placeholder_with_stmt (replacement : AST.expression) (stmt : AST.statement) : AST.statement =
   let rewritten =
@@ -349,11 +390,20 @@ and replace_placeholder_with_stmt (replacement : AST.expression) (stmt : AST.sta
   { stmt with stmt = rewritten }
 
 let lower_pipe_expr (lhs : AST.expression) (rhs : AST.expression) : AST.expr_kind =
+  let placeholder_count = placeholder_count_expr rhs in
   match rhs.expr with
+  | AST.MethodCall { mc_receiver; mc_args; _ }
+    when placeholder_count = 1
+         && (is_placeholder_identifier mc_receiver || List.exists is_placeholder_identifier mc_args) ->
+      (replace_placeholder_with_expr lhs rhs).expr
   | AST.MethodCall { mc_receiver; mc_method; mc_type_args; mc_args } ->
       AST.MethodCall { mc_receiver; mc_method; mc_type_args; mc_args = lhs :: mc_args }
+  | AST.Call (callee, args)
+    when placeholder_count = 1
+         && (is_placeholder_identifier callee || List.exists is_placeholder_identifier args) ->
+      (replace_placeholder_with_expr lhs rhs).expr
   | AST.Call (callee, args) -> AST.Call (callee, lhs :: args)
-  | _ when placeholder_count_expr rhs = 1 -> (replace_placeholder_with_expr lhs rhs).expr
+  | _ when placeholder_count = 1 -> (replace_placeholder_with_expr lhs rhs).expr
   | _ -> AST.Call (rhs, [ lhs ])
 
 let rec lower_expr_with_ctx (ctx : lower_context) (id_supply : Id_supply.Id_supply.t) (se : Surface.surface_expr)
@@ -1098,15 +1148,18 @@ let%test "lower pipe prepends lhs into qualified method call args" =
 let%test "lower pipe substitutes lhs into projection section rhs" =
   let id_supply = Id_supply.Id_supply.create 0 in
   let rhs =
-    Surface.mk_surface_expr ~id:3 ~pos:5
-      (Surface.SEFieldAccess (Surface.mk_surface_expr ~id:2 ~pos:5 (Surface.SEIdentifier "_"), "updated_at"))
+    Surface.mk_surface_expr ~id:3 ~pos:8 ~end_pos:18
+      (Surface.SEFieldAccess
+         (Surface.mk_surface_expr ~id:2 ~pos:8 ~end_pos:8 (Surface.SEIdentifier "_"), "updated_at"))
   in
   let se =
-    Surface.mk_surface_expr ~id:4 ~pos:0
-      (Surface.SEInfix (Surface.mk_surface_expr ~id:1 ~pos:0 (Surface.SEIdentifier "post"), "|>", rhs))
+    Surface.mk_surface_expr ~id:4 ~pos:0 ~end_pos:18
+      (Surface.SEInfix
+         (Surface.mk_surface_expr ~id:1 ~pos:0 ~end_pos:3 (Surface.SEIdentifier "post"), "|>", rhs))
   in
   match (lower_expr id_supply se).expr with
-  | AST.FieldAccess ({ AST.expr = AST.Identifier "post"; _ }, "updated_at") -> true
+  | AST.FieldAccess ({ AST.expr = AST.Identifier "post"; pos; end_pos; _ }, "updated_at") ->
+      pos = 0 && end_pos = 3
   | _ -> false
 
 let%test "lower pipe substitutes lhs into infix section rhs" =

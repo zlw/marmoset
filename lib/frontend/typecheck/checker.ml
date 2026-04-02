@@ -1151,6 +1151,13 @@ let%test "Phase6 prep: placeholder shorthand works as a standalone section value
   | Ok result -> result.result_type = Types.TInt
   | Error _ -> false
 
+let%test "Phase6 prep: standalone sections support top-level forward references" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  match check_string ~file_id:"<test>" "let y = add1(41)\nlet add1 = _ + 1\ny" with
+  | Ok result -> result.result_type = Types.TInt
+  | Error _ -> false
+
 let%test "Phase6 prep: placeholder shorthand supports qualified partial application" =
   Infer.reset_fresh_counter ();
   Trait_registry.clear ();
@@ -1288,6 +1295,26 @@ let%test "Phase6 prep: placeholder shorthand survives field access inside nested
       "type User = { id: Int }\nfn apply[a, b](x: a, f: (a) -> b) -> b = f(x)\nfn plus_one(n: Int) -> Int = n + 1\nfn render(n: Int) -> Str = \"#\" + Show.show(n)\nlet user: User = { id: 7 }\nlet result = apply(user, render(plus_one(_.id)))\nresult"
   with
   | Ok result -> result.result_type = Types.TString
+  | Error _ -> false
+
+let%test "Phase6 prep: pipe fills placeholder inside call-shaped sections" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  match
+    check_string ~file_id:"<test>"
+      "fn add(x: Int, y: Int) -> Int = x + y\nlet result = 1 |> add(_, 2)\nresult"
+  with
+  | Ok result -> result.result_type = Types.TInt
+  | Error _ -> false
+
+let%test "Phase6 prep: pipe fills placeholder inside qualified call sections" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  match
+    check_string ~env:(Builtins.prelude_env ()) ~file_id:"<test>"
+      "type Post = { owner: Str }\ntrait Visible[a] = {\n  fn visible_to(x: a, viewer: Str) -> Bool\n}\nimpl Visible[Post] = {\n  fn visible_to(x: Post, viewer: Str) -> Bool = x.owner == viewer\n}\nlet post: Post = { owner: \"ada\" }\nlet result = post |> Visible.visible_to(_, \"ada\")\nresult"
+  with
+  | Ok result -> result.result_type = Types.TBool
   | Error _ -> false
 
 let%test "followup B1: successful checks expose an empty trait object coercion map by default" =

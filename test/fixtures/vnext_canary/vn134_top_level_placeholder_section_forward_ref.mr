@@ -1,0 +1,5 @@
+# VN134: Standalone placeholder sections support top-level forward references
+let y = add1(41)
+let add1 = _ + 1
+
+puts(Show.show(y))  # output: 42

@@ -2940,6 +2940,51 @@ module Test = struct
         true
     | _ -> false
 
+  let%test "pipe fills placeholder inside rhs call-shaped section" =
+    match parse ~file_id:"<test>" "x |> f(_, 1)" with
+    | Ok
+        [
+          {
+            AST.stmt =
+              AST.ExpressionStmt
+                {
+                  AST.expr =
+                    AST.Call
+                      ( { AST.expr = AST.Identifier "f"; _ },
+                        [ { AST.expr = AST.Identifier "x"; _ }; { AST.expr = AST.Integer 1L; _ } ] );
+                  _;
+                };
+            _;
+          };
+        ] ->
+        true
+    | _ -> false
+
+  let%test "pipe fills placeholder inside rhs qualified call section" =
+    match parse ~file_id:"<test>" "post |> Visible.visible_to(_, \"ada\")" with
+    | Ok
+        [
+          {
+            AST.stmt =
+              AST.ExpressionStmt
+                {
+                  AST.expr =
+                    AST.MethodCall
+                      {
+                        mc_receiver = { AST.expr = AST.Identifier "Visible"; _ };
+                        mc_method = "visible_to";
+                        mc_args =
+                          [ { AST.expr = AST.Identifier "post"; _ }; { AST.expr = AST.String "ada"; _ } ];
+                        _;
+                      };
+                  _;
+                };
+            _;
+          };
+        ] ->
+        true
+    | _ -> false
+
   let%test "pipe has lower precedence than additive operators" =
     match parse ~file_id:"<test>" "1 + 2 |> f" with
     | Ok
