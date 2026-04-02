@@ -3479,6 +3479,35 @@ and contextual_callable_signature (typ : mono_type) : (mono_type list * mono_typ
   | signature :: rest when List.for_all (( = ) signature) rest -> Some signature
   | _ -> None
 
+and contextual_callable_signature_for_arity (arity : int) (typ : mono_type) : (mono_type list * mono_type) option
+    =
+  let rec take_params rev_params remaining typ =
+    if remaining = 0 then
+      Some (List.rev rev_params, canonicalize_mono_type typ)
+    else
+      match canonicalize_mono_type typ with
+      | TFun (arg, ret, _) -> take_params (arg :: rev_params) (remaining - 1) ret
+      | _ -> None
+  in
+  let signatures =
+    match canonicalize_mono_type typ with
+    | TFun (TNull, ret, _) when arity = 0 -> [ ([], canonicalize_mono_type ret) ]
+    | TFun _ as fn when arity > 0 -> Option.to_list (take_params [] arity fn)
+    | TUnion members ->
+        List.filter_map
+          (fun member ->
+            match canonicalize_mono_type member with
+            | TFun (TNull, ret, _) when arity = 0 -> Some ([], canonicalize_mono_type ret)
+            | TFun _ as fn when arity > 0 -> take_params [] arity fn
+            | _ -> None)
+          members
+    | _ -> []
+  in
+  match signatures with
+  | [] -> None
+  | signature :: rest when List.for_all (( = ) signature) rest -> Some signature
+  | _ -> None
+
 and infer_function_with_annotations
     ?(known_param_types = []) ?known_return type_map env generics_opt params return_annot is_effectful body =
   (* Process generic parameters and their constraints *)
@@ -3775,7 +3804,7 @@ and infer_function_literal
       Ok (subst_fn, func_type)
   | Error _ as err -> err
 
-and callable_annotation_context ?(type_bindings = []) (type_annotation : AST.type_expr option) :
+and callable_annotation_context ?(type_bindings = []) ?arity (type_annotation : AST.type_expr option) :
     ((mono_type * (mono_type list * mono_type)) option, Diagnostic.t) result =
   match type_annotation with
   | None -> Ok None
@@ -3784,7 +3813,12 @@ and callable_annotation_context ?(type_bindings = []) (type_annotation : AST.typ
       | Error d when should_preserve_annotation_error type_expr d -> Error d
       | Error _ -> Ok None
       | Ok annotated_type -> (
-          match contextual_callable_signature annotated_type with
+          let signature =
+            match arity with
+            | Some lambda_arity -> contextual_callable_signature_for_arity lambda_arity annotated_type
+            | None -> contextual_callable_signature annotated_type
+          in
+          match signature with
           | Some signature -> Ok (Some (annotated_type, signature))
           | None -> Ok None))
 
@@ -3830,7 +3864,7 @@ and infer_arg_against_expected type_map env subst (arg : AST.expression) (expect
         let infer_arg_expr () =
           match inferred_arg.expr with
           | AST.Function { origin; generics; params; return_type; is_effectful; body } -> (
-              match contextual_callable_signature expected_type' with
+              match contextual_callable_signature_for_arity (List.length params) expected_type' with
               | Some signature ->
                   infer_function_literal ~known_signature:signature type_map env' inferred_arg ~origin ~generics
                     ~params ~return_type ~is_effectful ~body
@@ -5887,7 +5921,8 @@ and infer_let ?(prefer_existing_self = false) type_map env name expr type_annota
   let outer_type_bindings = user_named_type_bindings_in_env env in
   let callable_context_result =
     match expr.expr with
-    | AST.Function _ -> callable_annotation_context ~type_bindings:outer_type_bindings type_annotation
+    | AST.Function { params; _ } ->
+        callable_annotation_context ~type_bindings:outer_type_bindings ~arity:(List.length params) type_annotation
     | _ -> Ok None
   in
   match callable_context_result with

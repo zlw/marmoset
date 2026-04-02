@@ -594,6 +594,15 @@ let%test "annotation: let function annotation drives recursive lambda self type"
   | Ok result -> result.result_type = TInt
   | Error _ -> false
 
+let%test "annotation: let function annotation preserves nested function return aliases" =
+  Infer.reset_fresh_counter ();
+  let code =
+    "type Runner = ((Int) -> Str) -> ((Int) => Str)\nlet wrap: Runner = (f: (Int) -> Str) -> (n: Int) => f(n)\nwrap((n: Int) -> Show.show(n))(42)"
+  in
+  match check_string ~file_id:"<test>" code with
+  | Ok result -> result.result_type = TString
+  | Error _ -> false
+
 let%test "annotation: conditional with matching return type" =
   Infer.reset_fresh_counter ();
   match check_string ~file_id:"<test>" "fn f(x: Int) -> Int = if (x < 0) { 0 } else { x }\nf" with
