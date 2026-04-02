@@ -9,6 +9,6 @@ impl Point = {
 
 let p = {x: 5, y: 5}
 
-let o = p.origin()
+let o = Point.origin(p)
 puts(o.x)  # output: 0
 puts(o.y)  # output: 0

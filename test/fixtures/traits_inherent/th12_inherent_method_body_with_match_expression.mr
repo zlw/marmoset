@@ -14,4 +14,4 @@ impl Color = {
   }
 }
 let c = Color.Red
-puts(c.rank())  # output: one
+puts(Color.rank(c))  # output: one

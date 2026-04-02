@@ -6,7 +6,7 @@ trait Display[a] = {
 
 impl Display[Score] = {
   fn render(x: Score) -> Str = {
-    "score:" + x.v.show()
+    "score:" + Show.show(x.v)
   }
 }
 

@@ -9,5 +9,5 @@ impl Show[AB] = {
 impl Show[A[B]] = {
   fn show(x: A[B]) -> Str = "AofB"
 }
-puts(AB.Wrap.show())  # output: AB
-puts(A.Wrap(B.V).show())  # output: AofB
+puts(Show.show(AB.Wrap))  # output: AB
+puts(Show.show(A.Wrap(B.V)))  # output: AofB

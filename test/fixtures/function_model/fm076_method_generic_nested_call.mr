@@ -6,7 +6,7 @@ impl Val = {
   }
 }
 
-let v = {v: 5}
+let v: Val = {v: 5}
 
 # nested: apply returns int, then show on it
-puts(v.apply((n: Int) -> n * 3).show())  # output: 15
+puts(Show.show(Val.apply(v, (n: Int) -> n * 3)))  # output: 15

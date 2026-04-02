@@ -4,4 +4,4 @@ impl MyInt = {
   fn label(x: MyInt) -> Str = "wrapped"
 }
 let n = MyInt(2)
-puts(n.label())  # output: wrapped
+puts(MyInt.label(n))  # output: wrapped

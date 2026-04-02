@@ -5,4 +5,4 @@ trait Describe[a]: Show = {
 
 impl Describe[Int] = {}
 
-puts(7.describe())  # output: 7
+puts(Describe.describe(7))  # output: 7

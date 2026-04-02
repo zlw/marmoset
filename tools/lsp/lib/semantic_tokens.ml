@@ -120,6 +120,7 @@ let rec collect_expr ~source ~type_map ~environment ~params ~tokens (expr : Ast.
           { pos = expr.pos; end_pos = expr.pos + op_len - 1; token_type = operator_type; modifiers = 0 }
           :: !tokens;
       collect_expr ~source ~type_map ~environment ~params ~tokens e
+  | Ast.AST.TypeApply (callee, _) -> collect_expr ~source ~type_map ~environment ~params ~tokens callee
   | Ast.AST.Infix (left, op, right) ->
       collect_expr ~source ~type_map ~environment ~params ~tokens left;
       (* Find operator position between left and right — use find_substr for operators *)
@@ -586,9 +587,6 @@ let%test "no tokens for empty/failing source" =
   tokens = None
 
 let%test "method call produces method token" =
-  (* Use a trait impl so method call typechecks *)
-  let src =
-    "trait Greet[a] = {\n  fn hello(self: a) -> Str\n}\nimpl Greet[Int] = {\n  fn hello(self: Int) -> Str = \"hi\"\n}\nlet x = 1; x.hello()"
-  in
+  let src = "let hello = (_: Int) -> \"hi\"; let r = { hello: hello }\nr.hello(0)" in
   let tokens = get_tokens src in
   has_token_type method_type tokens

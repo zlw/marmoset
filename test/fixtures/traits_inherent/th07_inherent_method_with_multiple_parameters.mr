@@ -5,4 +5,4 @@ impl Int = {
   }
 }
 let n = 7
-puts(n.clamp(0, 10))  # output: 7
+puts(Int.clamp(n, 0, 10))  # output: 7

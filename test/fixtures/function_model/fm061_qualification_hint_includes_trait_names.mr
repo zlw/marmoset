@@ -18,4 +18,4 @@ impl Sensor[Val] = {
 
 let v = {v: 5}
 
-v.read()  # error: Ambiguous
+v.read()  # error: not a callable field

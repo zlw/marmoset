@@ -8,9 +8,9 @@ trait Tagged[a] = {
 type User = { name: Str, age: Int, id: Int }
 
 impl Tagged[User] = {
-  fn tag(x: User) -> Str = "#" + x.id.show()
+  fn tag(x: User) -> Str = "#" + Show.show(x.id)
 }
 
-fn describe(x: Named & Aged & Tagged) -> Str = x.name + ":" + x.age.show() + ":" + x.tag()
+fn describe(x: Named & Aged & Tagged) -> Str = x.name + ":" + Show.show(x.age) + ":" + Tagged.tag(x)
 
 puts(describe({name: "Ada", age: 42, id: 7}))  # output: Ada:42:#7

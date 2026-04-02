@@ -9,7 +9,7 @@ impl Shape = {
 
 let s = Shape.Rect(4, 5)
 let a = match s {
-  case Shape.Circle(_): s.area()
-  case Shape.Rect(_, _): s.area()
+  case Shape.Circle(_): Shape.area(s)
+  case Shape.Rect(_, _): Shape.area(s)
 }
 puts(a)  # output: 20

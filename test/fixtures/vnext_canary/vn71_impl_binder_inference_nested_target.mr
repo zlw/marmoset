@@ -3,8 +3,8 @@ type Pair[a, b] = { Pair(a, b) }
 
 impl Pair[List[a], List[b]] = {
   fn describe(pair: Pair[List[a], List[b]]) -> Str = match pair {
-    case Pair.Pair(_, ys): len(ys).show()
+    case Pair.Pair(_, ys): Show.show(len(ys))
   }
 }
 
-puts(Pair.Pair([1], [10, 20, 30]).describe())  # output: 3
+puts(Pair.describe(Pair.Pair([1], [10, 20, 30])))  # output: 3

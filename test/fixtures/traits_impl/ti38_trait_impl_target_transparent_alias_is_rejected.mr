@@ -10,4 +10,4 @@ impl Double[Count] = {
 }
 
 let count: Count = 21
-puts(count.double())  # output: 42
+puts(Double.double(count))  # output: 42

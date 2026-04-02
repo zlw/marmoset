@@ -8,4 +8,4 @@ impl NamedShow[Person] = {
   fn show(x: Person) -> Str = x.name
 }
 let x: Dyn[NamedShow] = {name: "alice"}
-puts(x.show())  # output: alice
+puts(NamedShow.show(x))  # output: alice

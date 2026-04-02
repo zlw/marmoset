@@ -7,5 +7,5 @@ impl[a] Opt[a] = {
   }
 }
 
-let x = Opt.Some(42)
-let y = x.and_then((n: Int) -> Opt.Some(n.show()))
+let x: Opt[Int] = Opt.Some(42)
+let y: Opt[Str] = Opt.and_then(x, (n: Int) -> Opt.Some(Show.show(n)))

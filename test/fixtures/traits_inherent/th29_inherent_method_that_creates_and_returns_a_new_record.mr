@@ -4,5 +4,5 @@ impl Int = {
   fn boxed(x: Int) -> Box = {value: x}
 }
 let n = 99
-let b = n.boxed()
+let b = Int.boxed(n)
 puts(b.value)  # output: 99

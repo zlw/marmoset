@@ -6,7 +6,7 @@ impl Data = {
   }
 }
 
-let d = {v: 5}
+let d: Data = {v: 5}
 
 let double = (n: Int) -> n * 2
-puts(d.process(double))  # output: 10
+puts(Data.process(d, double))  # output: 10

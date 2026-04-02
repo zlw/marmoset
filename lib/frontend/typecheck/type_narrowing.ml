@@ -38,6 +38,7 @@ let substitute_path_in_expr
       | AST.Prefix (op, operand) -> { expr with expr = AST.Prefix (op, subst_expr operand) }
       | AST.Infix (left, op, right) -> { expr with expr = AST.Infix (subst_expr left, op, subst_expr right) }
       | AST.TypeCheck (inner, type_ann) -> { expr with expr = AST.TypeCheck (subst_expr inner, type_ann) }
+      | AST.TypeApply (callee, type_args) -> { expr with expr = AST.TypeApply (subst_expr callee, type_args) }
       | AST.If (cond, cons, alt) ->
           { expr with expr = AST.If (subst_expr cond, subst_stmt cons, Option.map subst_stmt alt) }
       | AST.Function _ when not descend_into_functions -> expr

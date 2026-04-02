@@ -5,19 +5,19 @@ trait Display[a] = {
 }
 
 impl Display[Counter] = {
-  fn render(x: Counter) -> Str = { "display:" + x.n.show() }
+  fn render(x: Counter) -> Str = { "display:" + Show.show(x.n) }
 }
 
 impl Counter = {
   fn value(c: Counter) -> Int = { c.n }
 }
 
-let fmt_fn = (n: Int) -> "n=" + n.show()
+let fmt_fn = (n: Int) -> "n=" + Show.show(n)
 let c = {n: 5, fmt: fmt_fn}
 
 
 # dot call (inherent)
-let v = c.value()
+let v = Counter.value(c)
 # field-function fallback
 let s = c.fmt(v)
 # qualified trait call

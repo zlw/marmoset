@@ -6,10 +6,10 @@ impl Box = {
   }
 }
 
-let b = {v: 42}
+let b: Box = {v: 42}
 
 # Two different specializations of the same method generic
-let s = b.as_type((n: Int) -> n.show())
-let i = b.as_type((n: Int) -> n + 1)
+let s = Box.as_type(b, (n: Int) -> Show.show(n))
+let i = Box.as_type(b, (n: Int) -> n + 1)
 puts(s)  # output: 42
 puts(i)  # output: 43

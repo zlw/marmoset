@@ -1,4 +1,4 @@
 # T66: Trait solver: Int implements Show
-fn check[a: Show](x: a) -> Str = x.show()
+fn check[a: Show](x: a) -> Str = Show.show(x)
 let result = check(42)
 puts(result)  # output: 42

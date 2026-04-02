@@ -1,6 +1,6 @@
 # R172: Transparent type with derived eq used in function
 type Point = { x: Int, y: Int } derive Eq
-fn check_eq(a: Point, b: Point) -> Bool = a.eq(b)
+fn check_eq(a: Point, b: Point) -> Bool = Eq.eq(a, b)
 let p1: Point = {x: 1, y: 2}
 let p2: Point = {x: 1, y: 2}
 let out = if (check_eq(p1, p2)) { "true" } else { "false" }

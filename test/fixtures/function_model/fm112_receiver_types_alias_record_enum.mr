@@ -19,9 +19,9 @@ impl Flag = {
 }
 
 let s = "hi"
-puts(s.loud())  # output: hi!
+puts(Str.loud(s))  # output: hi!
 let p = {x: 1, y: 2}
 
-puts(p.sum())  # output: 3
+puts(Point.sum(p))  # output: 3
 let f = Flag.On
-puts(f.is_on())  # output: true
+puts(Flag.is_on(f))  # output: true

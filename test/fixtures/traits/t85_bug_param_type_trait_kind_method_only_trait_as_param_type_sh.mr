@@ -5,5 +5,5 @@ trait Renderable[a] = {
 impl Renderable[Int] = {
   fn render(x: Int) -> Str = "ok"
 }
-fn f(x: Renderable) -> Str = x.render()
+fn f(x: Renderable) -> Str = Renderable.render(x)
 puts(f(42))  # output: ok

@@ -2,10 +2,14 @@ type Box = { v: Int }
 
 impl Box = {
   fn apply[b: Show](bx: Box, f: (Int) -> b) -> Str = {
-    f(bx.v).show()
+    Show.show(f(bx.v))
   }
 }
 
-let b = {v: 7}
+let b: Box = {v: 7}
 
-puts(b.apply((n: Int) -> n * 2))  # output: 14
+fn double(n: Int) -> Int = n * 2
+
+# Deeply nested: apply(apply(apply(...)))
+let r: Str = Box.apply(b, double)
+puts(r)  # output: 14

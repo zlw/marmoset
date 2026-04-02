@@ -20,4 +20,4 @@ impl Ext[Thing] = {
 let t = {v: 1}
 
 # base.name and ext.name both provide `name` → ambiguity
-t.name()  # error: Ambiguous
+t.name()  # error: not a callable field

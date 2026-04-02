@@ -2,10 +2,10 @@ type Mytype = { v: Int }
 
 impl Mytype = {
   fn show(m: Mytype) -> Str = {
-    "custom:" + m.v.show()
+    "custom:" + Show.show(m.v)
   }
 }
 
 let m = {v: 99}
 
-puts(m.show())  # output: custom:99
+puts(Mytype.show(m))  # output: custom:99

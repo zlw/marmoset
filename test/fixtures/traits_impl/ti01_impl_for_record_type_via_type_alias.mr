@@ -5,8 +5,8 @@ trait Show[a] = {
 }
 impl Show[Point] = {
   fn show(p: Point) -> Str = {
-    "point(" + p.x.show() + "," + p.y.show() + ")"
+    "point(" + Show.show(p.x) + "," + Show.show(p.y) + ")"
   }
 }
 let p: Point = {x: 1, y: 2}
-puts(p.show())  # output: point(1,2)
+puts(Show.show(p))  # output: point(1,2)

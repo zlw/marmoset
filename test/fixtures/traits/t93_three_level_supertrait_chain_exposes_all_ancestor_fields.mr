@@ -9,4 +9,4 @@ trait Profiled: Aged = {
   status: Str
 }
 let x: Profiled = { name: "alice", age: 30, status: "active", secret: true }
-puts(x.name + " " + x.age.show() + " " + x.status)  # output: alice 30 active
+puts(x.name + " " + Show.show(x.age) + " " + x.status)  # output: alice 30 active

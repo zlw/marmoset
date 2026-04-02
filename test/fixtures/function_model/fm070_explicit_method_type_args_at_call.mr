@@ -6,7 +6,7 @@ impl Box = {
   }
 }
 
-let b = {v: 5}
+let b: Box = {v: 5}
 
-let s = b.cast[Str]((n: Int) -> n.show())
+let s = Box.cast[Str](b, (n: Int) -> Show.show(n))
 puts(s)  # output: 5

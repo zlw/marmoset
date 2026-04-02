@@ -8,4 +8,4 @@ impl Foo[Int] = {
 
 fn foo(x: Int, y: Int) -> Int = x + y
 
-puts(1.foo(2))  # output: 3
+puts(foo(1, 2))  # output: 3

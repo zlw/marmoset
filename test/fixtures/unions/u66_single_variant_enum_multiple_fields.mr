@@ -2,6 +2,6 @@
 enum Entry = { Item(Str, Int) }
 let e = Entry.Item("hello", 42)
 let out = match e {
-  case Entry.Item(s, n): s + " " + n.show()
+  case Entry.Item(s, n): s + " " + Show.show(n)
 }
 puts(out)  # output: hello 42

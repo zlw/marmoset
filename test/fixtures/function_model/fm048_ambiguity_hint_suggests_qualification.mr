@@ -18,4 +18,4 @@ impl ViewB[Val] = {
 
 let v = {n: 1}
 
-v.view()  # error: Ambiguous
+v.view()  # error: not a callable field

@@ -8,4 +8,4 @@ impl Rect = {
 
 let r = {w: 4, h: 5}
 
-puts(r.area())  # output: 20
+puts(Rect.area(r))  # output: 20

@@ -15,4 +15,4 @@ impl Show[Color] = {
   }
 }
 let c = Color.Red
-puts(c.show())  # output: red
+puts(Show.show(c))  # output: red

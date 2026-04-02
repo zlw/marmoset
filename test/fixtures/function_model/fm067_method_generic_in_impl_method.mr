@@ -12,5 +12,5 @@ impl Mapper[Box] = {
 
 let b = {v: 42}
 
-let s = b.map((n: Int) -> n.show())
+let s = Mapper.map(b, (n: Int) -> Show.show(n))
 puts(s)  # output: 42

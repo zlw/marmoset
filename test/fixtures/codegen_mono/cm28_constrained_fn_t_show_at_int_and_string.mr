@@ -1,6 +1,6 @@
 # CM28: Constrained fn[t: Show] at Int and Str
 fn stringify[t: Show](x: t) -> Str = {
-  x.show()
+  Show.show(x)
 }
 puts(stringify(42))  # output: 42
 puts(stringify("hello"))  # output: hello

@@ -4,4 +4,4 @@ impl Pair = {
   fn sum(p: Pair) -> Int = p.a + p.b
 }
 let p = {a: 1, b: 2}
-puts(p.sum())  # output: 3
+puts(Pair.sum(p))  # output: 3

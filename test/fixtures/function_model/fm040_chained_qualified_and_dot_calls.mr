@@ -14,4 +14,5 @@ let n = {v: 0}
 
 # mix qualified and dot forms
 let n2 = Num.inc(n)
-puts(n2.value())  # output: 1
+let value = Num.value
+puts(value(n2))  # output: 1

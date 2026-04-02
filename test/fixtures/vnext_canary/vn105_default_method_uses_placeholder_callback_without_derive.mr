@@ -2,8 +2,8 @@
 fn apply[a, b](x: a, f: (a) -> b) -> b = f(x)
 
 trait Fancy[a]: Show = {
-  fn fancy(self: a) -> Str = apply(self, _.show())
+  fn fancy(self: a) -> Str = apply(self, Show.show(_))
 }
 
 impl Fancy[Int] = {}
-puts(1.fancy())  # output: 1
+puts(Fancy.fancy(1))  # output: 1

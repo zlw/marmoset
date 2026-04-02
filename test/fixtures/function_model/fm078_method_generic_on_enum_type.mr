@@ -12,5 +12,5 @@ impl[a] Maybe[a] = {
   }
 }
 
-let x = Maybe.Just(42)
-let y = x.map((n: Int) -> n.show())
+let x: Maybe[Int] = Maybe.Just(42)
+let y: Maybe[Str] = Maybe.map(x, (n: Int) -> Show.show(n))

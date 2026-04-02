@@ -6,7 +6,7 @@ shape Scored = {
   score: Int
 }
 fn describe[t: Named & Scored](x: t) -> Str = {
-  x.name + " " + x.score.show()
+  x.name + " " + Show.show(x.score)
 }
 let p = { name: "alice", score: 42, extra: true }
 puts(describe(p))  # output: alice 42

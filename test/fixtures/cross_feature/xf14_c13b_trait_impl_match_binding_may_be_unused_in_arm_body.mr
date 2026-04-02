@@ -11,4 +11,4 @@ impl Render[OptionInt] = {
     }
   }
 }
-puts(OptionInt.Some(42).render())  # output: found
+puts(Render.render(OptionInt.Some(42)))  # output: found

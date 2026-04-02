@@ -3,4 +3,4 @@ trait Named = {
   name: Str  # error: Trait bodies are method-only; use 'shape' for structural field contracts
 }
 let x: Named = { name: "alice", age: 1 }
-puts(x.show())
+puts(Show.show(x))

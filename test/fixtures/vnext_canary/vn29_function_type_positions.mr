@@ -7,7 +7,7 @@ type Job = {
 
 let handlers: HandlerBox = {
   pure: (n: Int) -> n + 1,
-  eff: (n: Int) => n.show(),
+  eff: (n: Int) => Show.show(n),
 }
 
 let pure_job = Job.UsePure(handlers.pure)

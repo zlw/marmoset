@@ -6,5 +6,5 @@ impl Double[Int] = {
   fn double(x: Int) -> Int = x + x
 }
 let n = 21
-let result = n.double()
+let result = Double.double(n)
 puts(result)  # output: 42

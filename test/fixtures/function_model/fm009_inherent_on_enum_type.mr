@@ -8,6 +8,6 @@ impl Box = {
 }
 
 let b = Box.Val(42)
-puts(b.is_empty())  # output: false
+puts(Box.is_empty(b))  # output: false
 let e = Box.Empty
-puts(e.is_empty())  # output: true
+puts(Box.is_empty(e))  # output: true

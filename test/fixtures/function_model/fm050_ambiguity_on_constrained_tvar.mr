@@ -7,5 +7,5 @@ trait Debug[a] = {
 }
 
 fn f[t: Fmt & Debug](x: t) -> Str = {
-  x.render()  # error: Ambiguous
+  x.render()  # error: not a callable field
 }

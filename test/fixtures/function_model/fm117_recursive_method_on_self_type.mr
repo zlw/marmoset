@@ -7,11 +7,11 @@ impl Counter = {
     } else {
       let next = {n: c.n - 1}
 
-      next.count_down()
+      Counter.count_down(next)
     }
   }
 }
 
 let c = {n: 3}
 
-puts(c.count_down())  # output: done
+puts(Counter.count_down(c))  # output: done

@@ -4,7 +4,7 @@ trait Alarm[a] = {
 }
 
 impl Alarm[Int] = {
-  override fn ring!(x) = "ring:" + x.show()
+  override fn ring!(x) = "ring:" + Show.show(x)
 }
 
-puts(1.ring!())  # output: ring:1
+puts(Alarm.ring!(1))  # output: ring:1

@@ -6,7 +6,7 @@ shape Profiled = {
 }
 
 fn summarize[t: Profiled](p: t) -> Str = {
-  p.name + " " + p.age.show() + " " + p.status
+  p.name + " " + Show.show(p.age) + " " + p.status
 }
 
 let p = { name: "alice", age: 30, status: "active", secret: true }

@@ -5,5 +5,5 @@ impl Int = {
     {value: x}
   }
 }
-let b = 99.boxed()
+let b = Int.boxed(99)
 puts(b.value)  # output: 99

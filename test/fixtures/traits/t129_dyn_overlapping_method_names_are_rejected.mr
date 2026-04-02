@@ -16,4 +16,4 @@ impl B[Int] = {
 }
 
 let value: Dyn[A & B] = 42
-value.ping()  # error: Ambiguous dynamic method 'ping'
+value.ping()  # error: not a callable field

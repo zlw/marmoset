@@ -2,7 +2,7 @@
 enum Option[a] = { Some(a), None }
 fn f(opt: Option[Int]) -> Str = {
   match opt {
-    case Option.Some(v): v.show()
+    case Option.Some(v): Show.show(v)
     case Option.None: "none"
   }
 }

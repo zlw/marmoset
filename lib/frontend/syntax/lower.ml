@@ -224,6 +224,8 @@ let rec lower_expr_with_ctx (ctx : lower_context) (id_supply : Id_supply.Id_supp
     | Surface.SEArray elems -> AST.Array (List.map (lower_expr_with_ctx ctx id_supply) elems)
     | Surface.SEIndex (container, idx) ->
         AST.Index (lower_expr_with_ctx ctx id_supply container, lower_expr_with_ctx ctx id_supply idx)
+    | Surface.SETypeApply (callee, type_args) ->
+        AST.TypeApply (lower_expr_with_ctx ctx id_supply callee, List.map lower_type_expr type_args)
     | Surface.SEHash pairs ->
         AST.Hash
           (List.map

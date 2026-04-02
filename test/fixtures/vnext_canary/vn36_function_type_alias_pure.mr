@@ -3,5 +3,5 @@ type Formatter = (Int) -> Str
 
 fn apply_formatter(f: Formatter, n: Int) -> Str = f(n)
 
-let fmt: Formatter = (n: Int) -> "n=" + n.show()
+let fmt: Formatter = (n: Int) -> "n=" + Show.show(n)
 puts(apply_formatter(fmt, 42))  # output: n=42

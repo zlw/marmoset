@@ -5,7 +5,7 @@ shape HasName = {
 shape HasAge = {
   age: Int
 }
-fn combine[a: HasName, b: HasAge](x: a, y: b) -> Str = x.name + y.age.show()
+fn combine[a: HasName, b: HasAge](x: a, y: b) -> Str = x.name + Show.show(y.age)
 let n = { name: "alice" }
 let a = { age: 42 }
 puts(combine(n, a))  # output: alice42

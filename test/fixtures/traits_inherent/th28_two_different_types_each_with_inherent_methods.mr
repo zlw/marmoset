@@ -9,5 +9,5 @@ impl Label = {
 }
 let p = {x: 10, y: 20}
 let l = {text: "hello"}
-puts(p.sum())  # output: 30
-puts(l.get_text())  # output: hello
+puts(Point.sum(p))  # output: 30
+puts(Label.get_text(l))  # output: hello

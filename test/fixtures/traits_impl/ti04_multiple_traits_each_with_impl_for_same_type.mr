@@ -11,5 +11,5 @@ impl Greet[Str] = {
 impl Check[Str] = {
   fn check(s: Str) -> Bool = true
 }
-puts("world".greet())  # output: hello
-puts("world".check())  # output: true
+puts(Greet.greet("world"))  # output: hello
+puts(Check.check("world"))  # output: true

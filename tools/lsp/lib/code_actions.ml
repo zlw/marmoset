@@ -216,7 +216,8 @@ and walk_expr ~source ~type_map ~range_start ~range_end ~sites (expr : Ast.AST.e
     | Ast.AST.Infix (l, _, r) ->
         walk_expr ~source ~type_map ~range_start ~range_end ~sites l;
         walk_expr ~source ~type_map ~range_start ~range_end ~sites r
-    | Ast.AST.Prefix (_, e) -> walk_expr ~source ~type_map ~range_start ~range_end ~sites e
+    | Ast.AST.Prefix (_, e) | Ast.AST.TypeApply (e, _) ->
+        walk_expr ~source ~type_map ~range_start ~range_end ~sites e
     | Ast.AST.Index (arr, idx) ->
         walk_expr ~source ~type_map ~range_start ~range_end ~sites arr;
         walk_expr ~source ~type_map ~range_start ~range_end ~sites idx

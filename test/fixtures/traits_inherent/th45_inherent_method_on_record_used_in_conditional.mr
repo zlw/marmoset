@@ -4,7 +4,7 @@ impl Point = {
   fn sum(p: Point) -> Int = p.x + p.y
 }
 let p = {x: 5, y: 3}
-if (p.sum() > 0) {  # output: positive
+if (Point.sum(p) > 0) {  # output: positive
   puts("positive")
 } else {
   puts("negative")

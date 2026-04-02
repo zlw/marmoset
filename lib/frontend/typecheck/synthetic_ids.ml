@@ -16,6 +16,7 @@ let create_from_program (program : AST.program) : t =
     | AST.Index (container, index) ->
         visit_expr container;
         visit_expr index
+    | AST.TypeApply (callee, _) -> visit_expr callee
     | AST.Hash pairs ->
         List.iter
           (fun (key, value) ->

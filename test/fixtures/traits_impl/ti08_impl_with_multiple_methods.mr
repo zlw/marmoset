@@ -7,5 +7,5 @@ impl Dialog[Int] = {
   fn hello(x: Int) -> Str = "hello"
   fn goodbye(x: Int) -> Str = "goodbye"
 }
-puts(1.hello())  # output: hello
-puts(1.goodbye())  # output: goodbye
+puts(Dialog.hello(1))  # output: hello
+puts(Dialog.goodbye(1))  # output: goodbye

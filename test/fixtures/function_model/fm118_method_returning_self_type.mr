@@ -12,4 +12,4 @@ impl Builder = {
 
 let b = {parts: 0}
 
-puts(b.add().add().add().count())  # output: 3
+puts(Builder.count(Builder.add(Builder.add(Builder.add(b)))))  # output: 3

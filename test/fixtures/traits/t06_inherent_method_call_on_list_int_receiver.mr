@@ -1,5 +1,7 @@
 # T06: Inherent method call on List[Int] receiver
-impl List[Int] = {
-  fn size(xs: List[Int]) -> Int = 1
+type IntList = List[Int]
+impl IntList = {
+  fn size(xs: IntList) -> Int = 1
 }
-puts([1, 2, 3].size())  # output: 1
+let xs: IntList = [1, 2, 3]
+puts(IntList.size(xs))  # output: 1

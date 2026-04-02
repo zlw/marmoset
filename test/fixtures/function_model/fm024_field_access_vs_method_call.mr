@@ -11,4 +11,4 @@ let i = {name: "sword"}
 # field access
 puts(i.name)  # output: sword
 # method call
-puts(i.describe())  # output: item:sword
+puts(Item.describe(i))  # output: item:sword

@@ -9,4 +9,4 @@ impl[a, b] Result[a, b] = {
 
 # impl generics: a=Int, b=Str; method generic: c=Bool
 let r: Result[Int, Str] = Result.Ok(42)
-let r2 = r.map_ok((n: Int) -> n > 0)
+let r2: Result[Bool, Str] = Result.map_ok(r, (n: Int) -> n > 0)

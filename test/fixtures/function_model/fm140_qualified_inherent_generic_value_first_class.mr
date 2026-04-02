@@ -5,4 +5,4 @@ impl Wrapper = {
 }
 
 let transform = Wrapper.transform
-puts(transform({ v: 10 }, (n: Int) -> n.show()))  # output: 10
+puts(transform({ v: 10 }, (n: Int) -> Show.show(n)))  # output: 10

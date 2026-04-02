@@ -65,6 +65,7 @@ module Surface = struct
     | SEString of string
     | SEArray of surface_expr list
     | SEIndex of surface_expr * surface_expr
+    | SETypeApply of surface_expr * surface_type_expr list
     | SEHash of (surface_expr * surface_expr) list
     | SEPrefix of string * surface_expr
     | SEInfix of surface_expr * string * surface_expr

@@ -5,8 +5,8 @@ trait Describe[a] = {
 }
 impl Describe[Box] = {
   fn describe(b: Box) -> Str = {
-    "value:" + b.value.show()
+    "value:" + Show.show(b.value)
   }
 }
 let b: Box = {value: 42}
-puts(b.describe())  # output: value:42
+puts(Describe.describe(b))  # output: value:42

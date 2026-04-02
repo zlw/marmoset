@@ -167,6 +167,7 @@ module AST = struct
     | String of string
     | Array of expression list
     | Index of expression * expression
+    | TypeApply of expression * type_expr list
     | Hash of (expression * expression) list
     | Prefix of string * expression
     | Infix of expression * string * expression
@@ -263,6 +264,7 @@ module AST = struct
     | String a, String b -> a = b
     | Array a, Array b -> List.length a = List.length b && List.for_all2 expr_equal a b
     | Index (a1, a2), Index (b1, b2) -> expr_equal a1 b1 && expr_equal a2 b2
+    | TypeApply (e1, t1), TypeApply (e2, t2) -> expr_equal e1 e2 && t1 = t2
     | Hash a, Hash b ->
         List.length a = List.length b
         && List.for_all2 (fun (k1, v1) (k2, v2) -> expr_equal k1 k2 && expr_equal v1 v2) a b
@@ -301,6 +303,7 @@ module AST = struct
     | String _ -> "String"
     | Array _ -> "Array"
     | Index _ -> "Index"
+    | TypeApply _ -> "TypeApply"
     | Hash _ -> "Hash"
     | Prefix _ -> "Prefix"
     | Infix _ -> "Infix"
@@ -382,6 +385,9 @@ module AST = struct
       | String s -> Printf.sprintf "\"%s\"" s
       | Array exprs -> Printf.sprintf "[%s]" (args_to_string exprs)
       | Index (arr, idx) -> Printf.sprintf "(%s[%s])" (expression_to_string arr) (expression_to_string idx)
+      | TypeApply (callee, type_args) ->
+          Printf.sprintf "%s[%s]" (expression_to_string callee)
+            (type_args |> List.map show_type_expr |> String.concat ", ")
       | Hash pairs ->
           Printf.sprintf "{%s}"
             (pairs

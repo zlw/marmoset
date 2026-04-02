@@ -3,9 +3,9 @@ trait Render[a] = {
 }
 
 impl Render[Int] = {
-  fn draw(x: Int) -> Str = { x.show() }
+  fn draw(x: Int) -> Str = { Show.show(x) }
 }
 
-let render = { draw: (x: Int) -> "custom:" + x.show() }
+let render = { draw: (x: Int) -> "custom:" + Show.show(x) }
 # `render` is now a value → field-function path, not trait qualifier
 puts(render.draw(42))  # output: custom:42

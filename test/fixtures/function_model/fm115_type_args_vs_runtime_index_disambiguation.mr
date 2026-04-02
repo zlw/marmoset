@@ -6,8 +6,10 @@ impl Box = {
   }
 }
 
-let b = {v: 5}
+let b: Box = {v: 5}
+
+fn show_int(n: Int) -> Str = Show.show(n)
 
 # method type args: .cast[Str](...) → method call with type arg
-let s = b.cast[Str]((n: Int) -> n.show())
+let s: Str = Box.cast[Str](b, show_int)
 puts(s)  # output: 5

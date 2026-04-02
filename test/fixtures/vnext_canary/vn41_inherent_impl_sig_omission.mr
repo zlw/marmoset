@@ -6,4 +6,4 @@ impl Point = {
 }
 
 let point: Point = {x: 19, y: 23}
-puts(point.sum())  # output: 42
+puts(Point.sum(point))  # output: 42

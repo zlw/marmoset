@@ -1,9 +1,9 @@
 # XF21: E21: Generic show fn + enum + operator interaction
 fn classify(n: Int) -> Str = {
   if (n > 10) {
-    n.show() + " is big"
+    Show.show(n) + " is big"
   } else {
-    n.show() + " is small"
+    Show.show(n) + " is small"
   }
 }
 puts(classify(42))  # output: 42 is big

@@ -1,0 +1,3 @@
+let x: Dyn[Show] = 42
+
+puts(x.show())  # error: not a callable field

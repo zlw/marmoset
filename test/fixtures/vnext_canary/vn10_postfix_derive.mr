@@ -5,6 +5,6 @@ type Color = {
   Blue,
 } derive Eq, Show
 let c = Color.Red
-puts(c.show())    # output: Red
-puts(c.eq(Color.Red))   # output: true
-puts(c.eq(Color.Blue))  # output: false
+puts(Show.show(c))    # output: Red
+puts(Eq.eq(c, Color.Red))   # output: true
+puts(Eq.eq(c, Color.Blue))  # output: false

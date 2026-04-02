@@ -12,4 +12,4 @@ impl Level = {
 
 let l = {n: 0}
 
-puts(l.next().next().next().value())  # output: 3
+puts(Level.value(Level.next(Level.next(Level.next(l)))))  # output: 3

@@ -6,4 +6,4 @@ impl Show[Int] = {
   fn show(x: Int) -> Str = "42"
 }
 let x = 42
-puts(x.show())  # output: 42
+puts(Show.show(x))  # output: 42

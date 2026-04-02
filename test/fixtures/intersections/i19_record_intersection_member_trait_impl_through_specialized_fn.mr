@@ -4,10 +4,10 @@ trait Greeter[a] = {
 }
 
 impl Greeter[{ x: Int }] = {
-  fn greet(x: { x: Int }) -> Str = x.x.show()
+  fn greet(x: { x: Int }) -> Str = Show.show(x.x)
 }
 
-fn call_greet(x: { x: Int }) -> Str = x.greet()
+fn call_greet(x: { x: Int }) -> Str = Greeter.greet(x)
 
 let value: ({ x: Int, y: Str } & { x: Int }) = { x: 1, y: "ok" }
 puts(call_greet(value))  # output: 1

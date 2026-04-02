@@ -10,4 +10,4 @@ impl Point = {
   }
 }
 let p = {x: 5, y: 3}
-puts(p.is_first_quadrant())  # output: true
+puts(Point.is_first_quadrant(p))  # output: true

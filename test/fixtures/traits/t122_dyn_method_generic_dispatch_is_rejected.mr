@@ -6,4 +6,4 @@ impl Caster[Int] = {
   fn cast[b](x: Int, f: (Int) -> b) -> b = f(x)
 }
 let x: Dyn[Caster] = 1
-x.cast[Str]((n: Int) -> n.show())  # error: method-generic dispatch
+Caster.cast[Str](x, (n: Int) -> Show.show(n))  # error: method-generic dispatch

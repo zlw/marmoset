@@ -4,4 +4,4 @@ type SideEffector[a] = (a, a) => a
 fn apply_effect(f: SideEffector[Int], left: Int, right: Int) => Int = f(left, right)
 
 let keep_left: SideEffector[Int] = (left: Int, right: Int) => left
-puts(apply_effect(keep_left, 7, 9).show())  # output: 7
+puts(apply_effect(keep_left, 7, 9))  # output: 7

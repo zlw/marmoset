@@ -9,6 +9,6 @@ trait Shown[a] = {
 impl Shown[Person] = {
   fn show(x: Person) -> Str = "shown"
 }
-fn describe[t: Named & Shown](v: t) -> Str = v.name + ": " + v.show()
+fn describe[t: Named & Shown](v: t) -> Str = v.name + ": " + Show.show(v)
 let p = {name: "alice", age: 30}
 puts(describe(p))  # output: alice: shown

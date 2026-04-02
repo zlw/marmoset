@@ -13,4 +13,4 @@ impl Ord[Point] = {
   fn compare(a: Point, b: Point) -> Int = 0
 }
 let p: Point = {x: 1}
-puts(p.compare(p))  # output: 0
+puts(Ord.compare(p, p))  # output: 0

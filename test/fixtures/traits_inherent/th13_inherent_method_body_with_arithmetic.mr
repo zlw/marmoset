@@ -6,4 +6,4 @@ impl Point = {
   }
 }
 let p = {x: 3, y: 4}
-puts(p.dist_sq())  # output: 25
+puts(Point.dist_sq(p))  # output: 25

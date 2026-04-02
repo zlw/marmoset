@@ -6,5 +6,5 @@ fn shrink(flag: Bool) -> Dyn[Show] = if (flag) {
   "no"
 }
 
-puts(shrink(true).show())   # output: 42
-puts(shrink(false).show())  # output: no
+puts(Show.show(shrink(true)))   # output: 42
+puts(Show.show(shrink(false)))  # output: no

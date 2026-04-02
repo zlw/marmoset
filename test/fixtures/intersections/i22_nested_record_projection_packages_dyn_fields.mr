@@ -8,4 +8,4 @@ let value: ({ box: Box[Dyn[Show & Eq]], tag: Int } & { box: Box[Dyn[Show]] }) = 
   tag: 1,
 }
 
-puts(apply(value, _.box.value.show()))  # output: 42
+puts(apply(value, Show.show(_.box.value)))  # output: 42

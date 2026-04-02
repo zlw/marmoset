@@ -15,4 +15,4 @@ impl Thing = {
 
 let t = {v: 10}
 
-puts(Thing.op(t).show())  # output: 11
+puts(Show.show(Thing.op(t)))  # output: 11

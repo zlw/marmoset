@@ -1,0 +1,14 @@
+trait Base[a] = {
+  fn base(x: a) -> Str
+}
+
+trait Child[a]: Base = {}
+
+impl Base[Int] = {
+  fn base(x: Int) -> Str = Show.show(x)
+}
+
+impl Child[Int] = {}
+
+let x: Dyn[Child] = 42
+puts(Base.base(x))  # output: 42

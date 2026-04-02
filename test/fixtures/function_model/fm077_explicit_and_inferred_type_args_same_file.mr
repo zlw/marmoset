@@ -6,11 +6,11 @@ impl Box = {
   }
 }
 
-let b = {v: 10}
+let b: Box = {v: 10}
 
 # inferred
-let r1 = b.transform((n: Int) -> n.show())
+let r1 = Box.transform(b, (n: Int) -> Show.show(n))
 # explicit
-let r2 = b.transform[Int]((n: Int) -> n + 1)
+let r2 = Box.transform[Int](b, (n: Int) -> n + 1)
 puts(r1)  # output: 10
 puts(r2)  # output: 11

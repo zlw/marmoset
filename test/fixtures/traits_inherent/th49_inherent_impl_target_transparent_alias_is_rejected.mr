@@ -6,4 +6,4 @@ impl Total = {
 }
 
 let total: Total = 41
-puts(total.plus_one())  # output: 42
+puts(Total.plus_one(total))  # output: 42

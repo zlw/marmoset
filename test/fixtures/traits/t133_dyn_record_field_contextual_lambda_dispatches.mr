@@ -7,4 +7,4 @@ let box: Box[Dyn[Show & Eq]] = apply(42, (n) -> {
   let value: Dyn[Show & Eq] = n
   {value: value}
 })
-puts(box.value.show())  # output: 42
+puts(Show.show(box.value))  # output: 42

@@ -5,6 +5,6 @@ trait Named = {
 fn process(x: Named, extra: Int) -> Str = {
   let n = x.name
   let plain = { value: extra }
-  n + " " + plain.value.show()
+  n + " " + Show.show(plain.value)
 }
 puts(process({ name: "alice", age: 30 }, 42))  # output: alice 42

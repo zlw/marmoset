@@ -5,7 +5,7 @@ trait Summarize[a] = {
 }
 
 impl Summarize[Data] = {
-  fn info(x: Data) -> Str = { x.v.show() }
+  fn info(x: Data) -> Str = { Show.show(x.v) }
 }
 
 impl Data = {
@@ -16,4 +16,4 @@ let d = {v: 42}
 
 # explicit calls disambiguate the different signatures
 puts(Summarize.info(d))  # output: 42
-puts(Data.info(d).show())  # output: 42
+puts(Show.show(Data.info(d)))  # output: 42

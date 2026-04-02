@@ -1,4 +1,4 @@
 # TH36: Calling nonexistent inherent method is rejected
 type Point = { x: Int }
 let p = {x: 1}
-puts(p.nonexistent())  # error: No dot-call target 'nonexistent'
+puts(p.nonexistent())  # error: not a callable field

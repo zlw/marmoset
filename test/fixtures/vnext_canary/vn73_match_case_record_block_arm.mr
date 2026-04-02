@@ -4,7 +4,7 @@ type Person = { name: Str, age: Int }
 fn describe(r: Person) -> Str = match r {
   case { name:, age: }: {
     let prefix = name
-    prefix + ":" + age.show()
+    prefix + ":" + Show.show(age)
   }
   case _: "other"
 }

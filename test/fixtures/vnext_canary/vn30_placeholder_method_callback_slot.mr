@@ -6,4 +6,4 @@ impl Box = {
 }
 
 let box: Box = {value: 21}
-puts(box.map(_ * 2))  # output: 42
+puts(Box.map(box, _ * 2))  # output: 42

@@ -14,4 +14,4 @@ impl Point = {
 
 let p = {x: 1}
 
-p.render()  # error: Ambiguous
+p.render()  # error: not a callable field

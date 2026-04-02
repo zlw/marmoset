@@ -2,4 +2,4 @@
 impl Int = {
   fn twice(x: Int) -> Int = x + x
 }
-puts(2.twice())  # output: 4
+puts(Int.twice(2))  # output: 4

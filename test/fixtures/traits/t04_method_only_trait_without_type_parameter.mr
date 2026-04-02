@@ -5,4 +5,4 @@ trait Ping = {
 impl Ping[Int] = {
   fn ping(x: Int) -> Int = x
 }
-puts(42.ping())  # output: 42
+puts(Ping.ping(42))  # output: 42

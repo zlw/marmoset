@@ -2,5 +2,5 @@
 fn apply_effectful(f: (Int) => Str, x: Int) => Str = {
   f(x)
 }
-fn to_str(n: Int) => Str = n.show()
+fn to_str(n: Int) => Str = Show.show(n)
 puts(apply_effectful(to_str, 42))  # output: 42

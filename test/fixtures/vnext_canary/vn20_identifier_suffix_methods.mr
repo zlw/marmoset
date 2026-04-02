@@ -7,5 +7,5 @@ impl Monkey = {
 }
 
 let m: Monkey = {bananas_eaten: 1, is_alpha: false}
-puts(m.hungry?())        # output: true
-puts(m.alpha!().is_alpha)  # output: true
+puts(Monkey.hungry?(m))        # output: true
+puts(Monkey.alpha!(m).is_alpha)  # output: true

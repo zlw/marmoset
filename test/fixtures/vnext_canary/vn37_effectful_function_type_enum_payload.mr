@@ -5,7 +5,7 @@ enum Runner = {
 
 let runner = Runner.Run((n: Int) => {
   puts("run")
-  n.show()
+  Show.show(n)
 })
 
 let result = match runner {

@@ -168,8 +168,27 @@ and check_constraint_ref_with_superconstraints
     match constraint_ref with
     | Constraints.ShapeConstraint shape_name -> check_shape_fields typ shape_name
     | Constraints.TraitConstraint trait_name -> (
+        let trait_name = Trait_registry.canonical_trait_name trait_name in
         let visited' = StringSet.add constraint_name visited in
-        match check_trait_self_requirements typ trait_name with
+        let trait_object_satisfies_target () =
+          match Types.canonicalize_mono_type typ with
+          | Types.TTraitObject source_traits ->
+              let available_traits =
+                source_traits
+                |> List.concat_map Trait_registry.trait_with_supertraits
+                |> List.map Trait_registry.canonical_trait_name
+                |> List.sort_uniq String.compare
+              in
+              if List.mem trait_name available_traits then
+                Ok ()
+              else
+                trait_error ~code:"type-trait-missing-impl"
+                  (Printf.sprintf "Type %s does not implement trait %s"
+                     (Types.to_string (Types.canonicalize_mono_type typ))
+                     trait_name)
+          | _ -> check_trait_self_requirements typ trait_name
+        in
+        match trait_object_satisfies_target () with
         | Error _ as err -> err
         | Ok () -> (
             match Trait_registry.lookup_trait trait_name with

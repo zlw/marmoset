@@ -12,4 +12,4 @@ impl RenderB[Int] = {
   fn render(x: Int) -> Str = "b"
 }
 let x = 1
-puts(x.render())  # error: impl sites:
+puts(x.render())  # error: not a callable field

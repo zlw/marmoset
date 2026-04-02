@@ -1,4 +1,4 @@
 # XF23: E23: Higher-order function applying trait method
 fn apply_show(f, x: Int) = f(x)
-let shower = (n: Int) -> n.show()
+let shower = (n: Int) -> Show.show(n)
 puts(apply_show(shower, 42))  # output: 42

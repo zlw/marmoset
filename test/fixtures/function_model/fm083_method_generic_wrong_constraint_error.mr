@@ -6,7 +6,7 @@ trait Special[a] = {
 
 impl Box = {
   fn needs_special[t: Special](b: Box, f: (Int) -> t) -> Int = {
-    f(b.v).special_op()
+    Special.special_op(f(b.v))
   }
 }
 

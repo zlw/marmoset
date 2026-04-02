@@ -1,0 +1,13 @@
+shape Named = { name: Str }
+
+trait Render[a] = {
+  fn label(x: a, suffix: Str) -> Str
+}
+
+impl Render[Int] = {
+  fn label(x: Int, suffix: Str) -> Str = suffix
+}
+
+fn label[t: Named](x: t, suffix: Str) -> Str = x.name + suffix
+
+puts(Render.label(1, "!"))  # output: !

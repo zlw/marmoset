@@ -68,6 +68,7 @@ let register_shape (def : shape_def) : unit =
 
 let lookup_named_type (name : string) : named_type_def option = Hashtbl.find_opt named_type_registry name
 let lookup_shape (name : string) : shape_def option = Hashtbl.find_opt shape_registry name
+let all_named_types () : named_type_def list = Hashtbl.to_seq_values named_type_registry |> List.of_seq
 
 let is_named_type_name (name : string) : bool =
   Hashtbl.mem named_type_source_registry name || Hashtbl.mem named_type_registry name

@@ -7,7 +7,7 @@ impl[a] Opt[a] = {
   }
 }
 
-let x = Opt.Some(5)
-let y = x.flat_map((n: Int) -> {
-  if (n > 0) { Opt.Some(n.show()) } else { Opt.None }
+let x: Opt[Int] = Opt.Some(5)
+let y: Opt[Str] = Opt.flat_map(x, (n: Int) -> {
+  if (n > 0) { Opt.Some(Show.show(n)) } else { Opt.None }
 })

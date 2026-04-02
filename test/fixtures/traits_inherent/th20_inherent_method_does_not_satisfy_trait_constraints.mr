@@ -7,7 +7,7 @@ impl Widget = {
   fn display(w: Widget) -> Str = "widget"
 }
 fn render[t: Showable](x: t) -> Str = {
-  x.display()
+  Showable.display(x)
 }
 let w = {id: 1}
 puts(render(w))  # error: does not implement trait

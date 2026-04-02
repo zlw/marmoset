@@ -2,4 +2,4 @@
 impl Int = {
   fn triple(x: Int) -> Int = x + x + x
 }
-puts(2.triple())  # output: 6
+puts(Int.triple(2))  # output: 6

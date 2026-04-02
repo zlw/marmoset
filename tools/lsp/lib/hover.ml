@@ -281,7 +281,7 @@ let rec find_expr_at (offset : int) (expr : Ast.AST.expression) : Ast.AST.expres
     let child =
       match expr.expr with
       | Ast.AST.Infix (left, _, right) -> first_some (find_expr_at offset left) (find_expr_at offset right)
-      | Ast.AST.Prefix (_, e) -> find_expr_at offset e
+      | Ast.AST.Prefix (_, e) | Ast.AST.TypeApply (e, _) -> find_expr_at offset e
       | Ast.AST.Call (fn_expr, args) ->
           first_some (find_expr_at offset fn_expr) (List.find_map (find_expr_at offset) args)
       | Ast.AST.If (cond, then_, else_) ->
@@ -410,7 +410,7 @@ and find_let_binding_in_expr ~(source : string) ~(offset : int) (expr : Ast.AST.
   | Ast.AST.Function { body; _ } -> find_let_binding_in_stmt ~source ~offset body
   | Ast.AST.Infix (left, _, right) ->
       first_some (find_let_binding_in_expr ~source ~offset left) (find_let_binding_in_expr ~source ~offset right)
-  | Ast.AST.Prefix (_, e) | Ast.AST.TypeCheck (e, _) | Ast.AST.FieldAccess (e, _) ->
+  | Ast.AST.Prefix (_, e) | Ast.AST.TypeCheck (e, _) | Ast.AST.FieldAccess (e, _) | Ast.AST.TypeApply (e, _) ->
       find_let_binding_in_expr ~source ~offset e
   | Ast.AST.Call (fn_expr, args) ->
       first_some
@@ -459,7 +459,7 @@ let rec find_pattern_in_expr ~(offset : int) ~(type_map : Infer.type_map) (expr 
   | Ast.AST.Function { body; _ } -> find_pattern_in_stmt ~offset ~type_map body
   | Ast.AST.Infix (left, _, right) ->
       first_some (find_pattern_in_expr ~offset ~type_map left) (find_pattern_in_expr ~offset ~type_map right)
-  | Ast.AST.Prefix (_, e) | Ast.AST.TypeCheck (e, _) | Ast.AST.FieldAccess (e, _) ->
+  | Ast.AST.Prefix (_, e) | Ast.AST.TypeCheck (e, _) | Ast.AST.FieldAccess (e, _) | Ast.AST.TypeApply (e, _) ->
       find_pattern_in_expr ~offset ~type_map e
   | Ast.AST.Call (fn_expr, args) ->
       first_some
@@ -1059,10 +1059,10 @@ let%test "hover on expression inside trait impl method body" =
   | _, Some h -> string_contains h.type_text "Str"
   | _ -> false
 
-let inherent_impl_source = "impl Int = {\n  fn double(x: Int) -> Int = x * 2\n}\nputs(42.double())"
+let inherent_impl_source = "impl Int = {\n  fn double(x: Int) -> Int = x * 2\n}\nputs(Int.double(42))"
 
 let%test "hover on expression inside inherent impl method body" =
-  match hover_marked "impl Int = {\n  fn double(x: Int) -> Int = x |* 2\n}\nputs(42.double())" with
+  match hover_marked "impl Int = {\n  fn double(x: Int) -> Int = x |* 2\n}\nputs(Int.double(42))" with
   | _, Some h -> string_contains h.type_text "Int"
   | _ -> false
 

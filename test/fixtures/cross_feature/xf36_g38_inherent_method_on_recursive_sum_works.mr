@@ -3,10 +3,10 @@ type MyList = { Cons(Int, MyList), Nil }
 impl MyList = {
   fn sum(xs: MyList) -> Int = {
     match xs {
-      case MyList.Cons(h, t): h + t.sum()
+      case MyList.Cons(h, t): h + MyList.sum(t)
       case MyList.Nil: 0
     }
   }
 }
 let xs = MyList.Cons(1, MyList.Cons(2, MyList.Cons(3, MyList.Nil)))
-puts(xs.sum())
+puts(MyList.sum(xs))

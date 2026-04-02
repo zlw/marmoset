@@ -2,4 +2,4 @@ type Point = { x: Int, y: Int }
 
 let p = {x: 1, y: 2}
 
-p.nonexistent()  # error: *
+p.nonexistent()  # error: not a callable field

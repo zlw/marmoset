@@ -12,5 +12,5 @@ impl Box = {
   }
 }
 let b = Box.Val(42)
-puts(b.unwrap())  # output: 42
-puts(b.show())  # output: boxed
+puts(Box.unwrap(b))  # output: 42
+puts(Show.show(b))  # output: boxed

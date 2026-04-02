@@ -5,4 +5,4 @@ impl EmptyEnum = {
 }
 
 let e = EmptyEnum.A
-puts(e.dummy())  # output: 0
+puts(EmptyEnum.dummy(e))  # output: 0

@@ -5,5 +5,5 @@ trait Named = {
 trait Scored = {
   score: Int
 }
-fn describe(n: Named, s: Scored) -> Str = n.name + " " + s.score.show()
+fn describe(n: Named, s: Scored) -> Str = n.name + " " + Show.show(s.score)
 puts(describe({ name: "alice", id: 1 }, { score: 42, rank: "A" }))  # output: alice 42

@@ -3,6 +3,6 @@ impl Int = {
   fn double(x: Int) -> Int = x + x
 }
 let n = 3
-let a = n.double()
+let a = Int.double(n)
 let b = a + 8
 puts(b)  # output: 14

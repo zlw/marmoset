@@ -9,4 +9,4 @@ impl Alpha = {
 
 let b = {w: "hello"}
 
-b.only_alpha()  # error: *
+Alpha.only_alpha(b)  # error: *

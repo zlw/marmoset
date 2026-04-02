@@ -2,7 +2,7 @@
 fn apply[a, b](x: a, f: (a) -> b) -> b = f(x)
 
 trait Label[a]: Show = {
-  fn label(self: a) -> Str = apply(self, _.show())
+  fn label(self: a) -> Str = apply(self, Show.show(_))
 }
 
 enum Box[t] = {
@@ -10,5 +10,5 @@ enum Box[t] = {
 } derive Show, Label
 
 let value: Dyn[Label] = Box.Wrap(42)
-puts(value.show())   # output: Wrap(42)
-puts(value.label())  # output: Wrap(42)
+puts(Show.show(value))   # output: Wrap(42)
+puts(Label.label(value))  # output: Wrap(42)

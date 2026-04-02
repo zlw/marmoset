@@ -18,4 +18,4 @@ impl Beta[Item] = {
 
 let i = {v: 1}
 
-i.tag()  # error: Ambiguous
+i.tag()  # error: not a callable field

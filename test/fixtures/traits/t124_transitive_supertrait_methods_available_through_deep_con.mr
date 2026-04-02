@@ -28,7 +28,11 @@ impl Ranked[Score] = {
 }
 
 fn describe[a: Ranked](x: a, y: a) -> Str = {
-  if (x.eq(y)) { "same:" + x.bucket() } else { x.compare(y).show() + ":" + y.bucket() }
+  if (Eq.eq(x, y)) {
+    "same:" + Ranked.bucket(x)
+  } else {
+    Show.show(Ord.compare(x, y)) + ":" + Ranked.bucket(y)
+  }
 }
 
 let left = {value: 2}

@@ -9,4 +9,4 @@ impl SumFields[Point] = {
   }
 }
 let p: Point = {x: 1, y: 2}
-puts(p.sum_fields())  # output: 3
+puts(SumFields.sum_fields(p))  # output: 3

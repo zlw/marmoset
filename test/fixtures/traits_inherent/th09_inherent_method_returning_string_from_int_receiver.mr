@@ -3,4 +3,4 @@ impl Int = {
   fn greet(x: Int) -> Str = "hello"
 }
 let n = 1
-puts(n.greet())  # output: hello
+puts(Int.greet(n))  # output: hello

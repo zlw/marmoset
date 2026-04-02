@@ -6,7 +6,7 @@ trait Shown[a]: Named = {
 }
 
 impl Shown[Int] = {  # error: required supertrait
-  fn show(x: Int) -> Str = x.show()
+  fn show(x: Int) -> Str = Show.show(x)
 }
 
 puts(1)

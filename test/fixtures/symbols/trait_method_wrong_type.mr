@@ -2,5 +2,5 @@ trait Greetable[a] = {
   fn greet(x: a) -> Str
 }
 let x = 42
-fn f[t: Greetable](x: t) -> Str = x.greet()
+fn f[t: Greetable](x: t) -> Str = Greetable.greet(x)
 puts(f(x))  # error: does not implement trait

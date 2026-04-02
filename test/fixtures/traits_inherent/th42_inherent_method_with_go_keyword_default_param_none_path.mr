@@ -12,4 +12,4 @@ impl OptionInt = {
   }
 }
 let x = OptionInt.None
-puts(x.unwrap_or(99))  # output: 99
+puts(OptionInt.unwrap_or(x, 99))  # output: 99

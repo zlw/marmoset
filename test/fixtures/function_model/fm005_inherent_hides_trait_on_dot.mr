@@ -4,13 +4,13 @@ trait Display[a] = { fn render(x: a) -> Str }
 
 impl Display[Counter] = {
   fn render(x: Counter) -> Str = {
-    "display:" + x.n.show()
+    "display:" + Show.show(x.n)
   }
 }
 
 impl Counter = {
   fn render(c: Counter) -> Str = {
-    "counter:" + c.n.show()
+    "counter:" + Show.show(c.n)
   }
 }
 

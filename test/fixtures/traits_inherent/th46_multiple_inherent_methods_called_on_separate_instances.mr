@@ -5,5 +5,5 @@ impl Point = {
 }
 let a = {x: 1, y: 5}
 let b = {x: 7, y: 8}
-puts(a.sum())  # output: 6
-puts(b.sum())  # output: 15
+puts(Point.sum(a))  # output: 6
+puts(Point.sum(b))  # output: 15

@@ -4,7 +4,7 @@ trait Base[a] = {
 }
 
 trait Child[a]: Base = {
-  fn child(self: a) -> Str = self.base() + ":child"
+  fn child(self: a) -> Str = Base.base(self) + ":child"
 }
 
 type Score = Int derive Child
@@ -12,4 +12,4 @@ type Score = Int derive Child
 impl Base[Score] = {}
 
 let score: Score = 1
-puts(score.child())  # output: base:child
+puts(Child.child(score))  # output: base:child

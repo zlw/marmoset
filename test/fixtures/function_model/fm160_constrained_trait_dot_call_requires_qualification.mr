@@ -1,0 +1,11 @@
+trait ShowIt[a] = {
+  fn show(x: a) -> Str
+}
+
+type Box = { n: Int }
+
+impl ShowIt[Box] = {
+  fn show(x: Box) -> Str = { "trait" }
+}
+
+fn render[t: ShowIt](x: t) -> Str = x.show()  # error: not a callable field

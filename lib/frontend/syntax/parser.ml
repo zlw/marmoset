@@ -1650,10 +1650,24 @@ and parse_index_expression (p : parser) (left : Surface.surface_expr) :
     (parser * Surface.surface_expr, parser) result =
   let pos = p.curr_token.pos in
   let p2 = next_token p in
-  let* p3, index = parse_expression p2 prec_lowest in
-  let* p4 = expect_peek p3 Token.RBracket in
-  let id = fresh_id p4 in
-  Ok (p4, with_surface_expr_end p4 (mk_surface_expr id pos (Surface.SEIndex (left, index))))
+  match parse_type_expr_list p2 with
+  | Ok (p_after_types, type_args)
+    when curr_token_is p_after_types Token.RBracket && peek_token_is p_after_types Token.LParen
+         && type_args <> [] ->
+      let type_apply_id = fresh_id p_after_types in
+      let specialized =
+        with_surface_expr_end p_after_types
+          (mk_surface_expr type_apply_id left.se_pos (Surface.SETypeApply (left, type_args)))
+      in
+      let p_after_bracket = next_token p_after_types in
+      let* p_after_args, args = parse_expression_list p_after_bracket Token.RParen in
+      let id = fresh_id p_after_args in
+      Ok (p_after_args, with_surface_expr_end p_after_args (mk_surface_expr id pos (Surface.SECall (specialized, args))))
+  | _ ->
+      let* p3, index = parse_expression p2 prec_lowest in
+      let* p4 = expect_peek p3 Token.RBracket in
+      let id = fresh_id p4 in
+      Ok (p4, with_surface_expr_end p4 (mk_surface_expr id pos (Surface.SEIndex (left, index))))
 
 (* Phase 4.3: Dot expression parsing - handles method calls and field access *)
 (* Note: enum constructors are also parsed as MethodCall here, type checker will distinguish *)
@@ -2709,6 +2723,7 @@ module Test = struct
       | AST.Prefix (_, e) -> collect_expr_ids e
       | AST.Infix (l, _, r) -> collect_expr_ids l @ collect_expr_ids r
       | AST.TypeCheck (e, _) -> collect_expr_ids e
+      | AST.TypeApply (callee, _) -> collect_expr_ids callee
       | AST.If (cond, cons, alt) -> (
           collect_expr_ids cond
           @ collect_stmt_ids cons
@@ -3680,7 +3695,7 @@ let%test "parse Dyn trait object type" =
   | Error _ -> false
 
 let%test "parse Dyn multi-trait function parameter annotation" =
-  let input = "fn show(x: Dyn[Show & Eq]) -> Str = x.show()" in
+  let input = "fn show(x: Dyn[Show & Eq]) -> Str = Show.show(x)" in
   let lexer = Lexer.init input in
   match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
@@ -4217,7 +4232,7 @@ let%test "parse field access vs method call" =
   | Error _ -> false
 
 let%test "parse method chain across newline before dot" =
-  let input = "let x = 42.show()\n  .show()" in
+  let input = "let x = box.step()\n  .finish()" in
   let lexer = Lexer.init input in
   match parse_program (init ~file_id:"<test>" lexer) with
   | Ok (_p, program) -> (
@@ -4226,13 +4241,29 @@ let%test "parse method chain across newline before dot" =
           match stmt.stmt with
           | AST.Let { value; _ } -> (
               match value.expr with
-              | AST.MethodCall { mc_receiver; mc_method = "show"; mc_args = []; _ } -> (
+              | AST.MethodCall { mc_receiver; mc_method = "finish"; mc_args = []; _ } -> (
                   match mc_receiver.expr with
-                  | AST.MethodCall { mc_receiver = inner_recv; mc_method = "show"; mc_args = []; _ } -> (
+                  | AST.MethodCall { mc_receiver = inner_recv; mc_method = "step"; mc_args = []; _ } -> (
                       match inner_recv.expr with
-                      | AST.Integer 42L -> true
+                      | AST.Identifier "box" -> true
                       | _ -> false)
                   | _ -> false)
+              | _ -> false)
+          | _ -> false)
+      | _ -> false)
+  | Error _ -> false
+
+let%test "parse explicit type args on rebound callable value" =
+  let input = "let cast = f\nlet x = cast[Str](1)" in
+  let lexer = Lexer.init input in
+  match parse_program (init ~file_id:"<test>" lexer) with
+  | Ok (_p, program) -> (
+      match program with
+      | [ stmt1; stmt2 ] -> (
+          match (stmt1.stmt, stmt2.stmt) with
+          | AST.Let { name = "cast"; _ }, AST.Let { value; _ } -> (
+              match value.expr with
+              | AST.Call ({ expr = AST.TypeApply ({ expr = AST.Identifier "cast"; _ }, [ AST.TCon "Str" ]); _ }, [ { expr = AST.Integer 1L; _ } ]) -> true
               | _ -> false)
           | _ -> false)
       | _ -> false)

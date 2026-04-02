@@ -8,4 +8,4 @@ impl Val = {
 
 let v = {v: 1}
 
-v.get(1, 2)  # error: *
+Val.get(v, 1, 2)  # error: *

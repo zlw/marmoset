@@ -8,4 +8,4 @@ impl[b: Show] Label[List[b]] = {
 impl Label[List[Int]] = {
   fn label(x: List[Int]) -> Str = "concrete"
 }
-puts([1, 2, 3].label())  # output: concrete
+puts(Label.label([1, 2, 3]))  # output: concrete

@@ -1,4 +1,4 @@
-# FM134: dot call falls back to top-level generic UFCS function
+# FM134: explicit top-level generic function call
 fn map[a](arr: List[a], f: (a) -> a) -> List[a] = {
   let iter = (arr: List[a], accumulated: List[a]) -> {
     if (len(arr) == 0) {
@@ -12,4 +12,4 @@ fn map[a](arr: List[a], f: (a) -> a) -> List[a] = {
 }
 
 let numbers = [1, 2, 3]
-puts(numbers.map((x: Int) -> x * 2))  # output: [2 4 6]
+puts(map(numbers, (x: Int) -> x * 2))  # output: [2 4 6]

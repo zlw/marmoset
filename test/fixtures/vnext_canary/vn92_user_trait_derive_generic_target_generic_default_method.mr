@@ -9,5 +9,5 @@ trait Forwarder[a] = {
 type Box[t] = { value: t } derive Forwarder
 
 let box: Box[Int] = {value: 1}
-puts(box.pass("ok"))       # output: ok
-puts(box.pass(41).show())  # output: 41
+puts(Forwarder.pass(box, "ok"))       # output: ok
+puts(Show.show(Forwarder.pass(box, 41)))  # output: 41

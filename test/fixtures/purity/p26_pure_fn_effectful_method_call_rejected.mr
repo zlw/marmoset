@@ -1,4 +1,4 @@
-# P26: Pure fn with effectful method call is rejected
+# P26: Pure fn with effectful qualified call is rejected
 type Logger = { prefix: Str }
 
 impl Logger = {
@@ -9,7 +9,7 @@ impl Logger = {
 }
 
 fn bad(l: Logger) -> Str = {  # error: effectful
-  l.log("x")
+  Logger.log(l, "x")
 }
 
 bad({prefix: "p"})

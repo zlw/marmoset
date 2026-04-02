@@ -2,7 +2,7 @@
 type Option[a] = { Some(a), None }
 let x = Option.Some(42)
 let out = match x {
-  case Option.Some(v): "value: " + v.show()
+  case Option.Some(v): "value: " + Show.show(v)
   case Option.None: "nothing"
 }
 puts(out)  # output: value: 42

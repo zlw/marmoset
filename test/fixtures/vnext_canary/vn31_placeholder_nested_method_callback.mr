@@ -9,4 +9,4 @@ fn trim(s: Str) -> Str = s
 fn strip(s: Str) -> Str = s
 
 let word: Word = {value: "banana"}
-puts(word.map(trim(strip(_))))  # output: banana
+puts(Word.map(word, trim(strip(_))))  # output: banana

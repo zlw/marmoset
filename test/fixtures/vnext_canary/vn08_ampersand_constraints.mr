@@ -2,8 +2,8 @@
 trait Display[a] = {
   fn display(x: a) -> Str
 }
-fn show_it[a: Display](x: a) -> Str = x.display()
+fn show_it[a: Display](x: a) -> Str = Display.display(x)
 impl Display[Int] = {
-  fn display(x: Int) -> Str = x.show()
+  fn display(x: Int) -> Str = Show.show(x)
 }
 puts(show_it(42))  # output: 42

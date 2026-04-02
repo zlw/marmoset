@@ -8,7 +8,7 @@ fn process(s: Status, v: OptionInt) -> Str = {
     case Status.Fail: "err"
   }
   let suffix = match v {
-    case OptionInt.Some(n): ":" + n.show()
+    case OptionInt.Some(n): ":" + Show.show(n)
     case OptionInt.None: ":none"
   }
   prefix + suffix

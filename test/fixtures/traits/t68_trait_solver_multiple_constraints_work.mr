@@ -1,7 +1,7 @@
 # T68: Trait solver: multiple constraints work
 fn show_if_equal[a: Show & Eq](x: a, y: a) -> Str = {
-  if (x.eq(y)) {
-    x.show()
+  if (Eq.eq(x, y)) {
+    Show.show(x)
   } else {
     "different"
   }

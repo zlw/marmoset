@@ -4,4 +4,4 @@ let w = Wrapper.Val(100)
 let n = match w {
   case Wrapper.Val(x): x
 }
-puts(n.show())  # output: 100
+puts(Show.show(n))  # output: 100

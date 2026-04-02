@@ -13,5 +13,5 @@ impl Result[a, b] = {
 }
 let ok = if (true) { Result.Success(1) } else { Result.Failure("x") }
 let err = if (false) { Result.Success(1) } else { Result.Failure("x") }
-puts(ok.is_success())  # output: true
-puts(err.is_success())  # output: false
+puts(Result.is_success(ok))  # output: true
+puts(Result.is_success(err))  # output: false

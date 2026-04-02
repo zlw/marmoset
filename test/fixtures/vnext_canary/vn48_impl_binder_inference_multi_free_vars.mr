@@ -18,5 +18,5 @@ impl PairBox[a, b] = {
 }
 
 let box = PairBox.Wrap(42, "ok")
-puts(box.label())  # output: pair
-puts(box.first())  # output: 42
+puts(Label.label(box))  # output: pair
+puts(PairBox.first(box))  # output: 42

@@ -2,6 +2,6 @@
 type Point = { x: Int, y: Int } derive Eq, Show
 
 let p: Point = {x: 1, y: 2}
-puts(p.show())                   # output: { x: 1, y: 2 }
-puts(p.eq({x: 1, y: 2}))    # output: true
-puts(p.eq({x: 2, y: 1}))    # output: false
+puts(Show.show(p))                   # output: { x: 1, y: 2 }
+puts(Eq.eq(p, {x: 1, y: 2}))    # output: true
+puts(Eq.eq(p, {x: 2, y: 1}))    # output: false

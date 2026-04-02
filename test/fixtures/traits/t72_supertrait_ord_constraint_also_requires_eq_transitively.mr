@@ -9,6 +9,6 @@ type Point = { x: Int }
 impl Ord[Point] = {  # error: missing required supertrait 'eq'
   fn compare(x: Point, y: Point) -> Int = 0
 }
-fn compare_self[a: Ord](x: a) -> Int = x.compare(x)
+fn compare_self[a: Ord](x: a) -> Int = Ord.compare(x, x)
 let p: Point = { x: 1 }
 puts(compare_self(p))

@@ -3,7 +3,7 @@ trait Named[a] = {
   fn name(x: a) -> Str
 }
 
-fn name_via_helper[a: Named](x: a) -> Str = x.name()
+fn name_via_helper[a: Named](x: a) -> Str = Named.name(x)
 
 trait LoudNamed[a]: Named = {
   fn shout(x: a) -> Str = name_via_helper(x) + "!"
@@ -18,4 +18,4 @@ impl Named[Person] = {
 impl LoudNamed[Person] = {}
 
 let p: Person = {name: "alice"}
-puts(p.shout())  # output: alice!
+puts(LoudNamed.shout(p))  # output: alice!

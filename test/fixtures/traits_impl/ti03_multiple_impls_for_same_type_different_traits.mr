@@ -11,5 +11,5 @@ impl Show[Int] = {
 impl Double[Int] = {
   fn double(x: Int) -> Int = x + x
 }
-puts(1.show())  # output: 42
-puts(3.double() == 6)  # output: true
+puts(Show.show(1))  # output: 42
+puts(Double.double(3) == 6)  # output: true

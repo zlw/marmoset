@@ -12,5 +12,5 @@ impl Greet[Person] = {
 
 let p = {name: "alice"}
 
-puts(p.hello())  # output: hi alice
-puts(p.goodbye())  # output: bye alice
+puts(Greet.hello(p))  # output: hi alice
+puts(Greet.goodbye(p))  # output: bye alice

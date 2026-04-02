@@ -4,4 +4,4 @@ impl Point = {
   fn sum(p: Point) -> Int = p.x + p.y
 }
 let p = {x: 15, y: 20}
-puts(p.sum())  # output: 35
+puts(Point.sum(p))  # output: 35

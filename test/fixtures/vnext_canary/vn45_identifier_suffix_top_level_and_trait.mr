@@ -6,8 +6,8 @@ trait Alarm[a] = {
 }
 
 impl Alarm[Int] = {
-  fn ring!(x: Int) -> Str = "alarm:" + x.show()
+  fn ring!(x: Int) -> Str = "alarm:" + Show.show(x)
 }
 
 puts(ready?(3))  # output: true
-puts(3.ring!())  # output: alarm:3
+puts(Alarm.ring!(3))  # output: alarm:3

@@ -6,7 +6,7 @@ shape Aged = {
   age: Int
 }
 fn describe[t: Named & Aged](x: t) -> Str = {
-  x.name + " " + x.age.show()
+  x.name + " " + Show.show(x.age)
 }
 let p = { name: "alice", age: 30, active: true }
 puts(describe(p))  # output: alice 30

@@ -8,5 +8,5 @@ impl Pair = {
 
 let p = {a: 10, b: 20}
 
-let result = p.total() + 5
+let result = Pair.total(p) + 5
 puts(result)  # output: 35

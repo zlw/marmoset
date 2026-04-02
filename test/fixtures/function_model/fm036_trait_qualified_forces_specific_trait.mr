@@ -9,11 +9,11 @@ trait FmtB[a] = {
 }
 
 impl FmtA[Val] = {
-  fn fmt(x: Val) -> Str = { "a:" + x.n.show() }
+  fn fmt(x: Val) -> Str = { "a:" + Show.show(x.n) }
 }
 
 impl FmtB[Val] = {
-  fn fmt(x: Val) -> Str = { "b:" + x.n.show() }
+  fn fmt(x: Val) -> Str = { "b:" + Show.show(x.n) }
 }
 
 let v = {n: 5}

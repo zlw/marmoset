@@ -3,7 +3,7 @@ enum OptionInt = { Some(Int), None }
 fn describe(flag: Bool, val: OptionInt) -> Str = {
   if (flag) {
     match val {
-      case OptionInt.Some(n): "found: " + n.show()
+      case OptionInt.Some(n): "found: " + Show.show(n)
       case OptionInt.None: "empty"
     }
   } else {

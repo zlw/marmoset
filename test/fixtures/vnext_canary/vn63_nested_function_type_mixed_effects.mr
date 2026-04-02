@@ -3,4 +3,4 @@ type Runner = ((Int) -> Str) -> ((Int) => Str)
 
 let wrap: Runner = (f: (Int) -> Str) -> (n: Int) => f(n)
 
-puts(wrap((n: Int) -> n.show())(42))  # output: 42
+puts(wrap((n: Int) -> Show.show(n))(42))  # output: 42

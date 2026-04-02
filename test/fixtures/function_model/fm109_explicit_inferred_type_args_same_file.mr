@@ -6,9 +6,12 @@ impl Val = {
   }
 }
 
-let v = {v: 42}
+let v: Val = {v: 42}
 
-let inferred = v.convert((n: Int) -> n.show())
-let explicit = v.convert[Bool]((n: Int) -> n > 0)
+fn show_int(n: Int) -> Str = Show.show(n)
+fn positive(n: Int) -> Bool = n > 0
+
+let inferred: Str = Val.convert(v, show_int)
+let explicit: Bool = Val.convert[Bool](v, positive)
 puts(inferred)  # output: 42
 puts(explicit)  # output: true

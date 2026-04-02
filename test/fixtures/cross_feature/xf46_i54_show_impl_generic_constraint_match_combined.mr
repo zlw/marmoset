@@ -10,5 +10,5 @@ impl Show[Direction] = {
     }
   }
 }
-fn render[a: Show](x: a) -> Str = x.show()
+fn render[a: Show](x: a) -> Str = Show.show(x)
 puts(render(Direction.Left))  # output: left

@@ -4,11 +4,11 @@ trait Base[a] = {
 }
 
 trait Child[a]: Base = {
-  fn child(self: a) -> Str = self.base() + ":child"
+  fn child(self: a) -> Str = Base.base(self) + ":child"
 }
 
 trait Loud[a]: Child = {
-  fn loud(self: a) -> Str = self.base() + ":" + self.child()
+  fn loud(self: a) -> Str = Base.base(self) + ":" + Child.child(self)
 }
 
 impl Base[Int] = {}
@@ -16,6 +16,6 @@ impl Child[Int] = {}
 impl Loud[Int] = {}
 
 let value: Dyn[Loud] = 1
-puts(value.base())   # output: base
-puts(value.child())  # output: base:child
-puts(value.loud())   # output: base:base:child
+puts(Base.base(value))   # output: base
+puts(Child.child(value))  # output: base:child
+puts(Loud.loud(value))   # output: base:base:child

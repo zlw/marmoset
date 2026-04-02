@@ -5,4 +5,4 @@ impl Int = {
   }
 }
 let n = 5
-puts(n.double())  # output: 10
+puts(Int.double(n))  # output: 10

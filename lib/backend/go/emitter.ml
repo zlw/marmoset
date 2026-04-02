@@ -1035,7 +1035,8 @@ let rec captures_top_level_values_expr
         StringSet.singleton name
       else
         StringSet.empty
-  | AST.Prefix (_, e) | AST.TypeCheck (e, _) -> captures_top_level_values_expr top_level_values bound e
+  | AST.Prefix (_, e) | AST.TypeCheck (e, _) | AST.TypeApply (e, _) ->
+      captures_top_level_values_expr top_level_values bound e
   | AST.Infix (l, _, r) ->
       StringSet.union
         (captures_top_level_values_expr top_level_values bound l)
@@ -1194,6 +1195,7 @@ and collect_funcs_expr ?(available_bindings = StringSet.empty) (state : mono_sta
   match expr.expr with
   | AST.Integer _ | AST.Float _ | AST.Boolean _ | AST.String _ | AST.Identifier _ -> ()
   | AST.Prefix (_, e) -> collect_funcs_expr ~available_bindings state e
+  | AST.TypeApply (callee, _) -> collect_funcs_expr ~available_bindings state callee
   | AST.Infix (l, _, r) ->
       collect_funcs_expr ~available_bindings state l;
       collect_funcs_expr ~available_bindings state r
@@ -1831,6 +1833,16 @@ let add_impl_instantiation (state : mono_state) (inst : impl_instantiation) (pay
 
 let field_alias_key (record_name : string) (field_name : string) : string = record_name ^ "." ^ field_name
 
+let rec user_func_target_name_for_expr (state : mono_state) (expr : AST.expression) : string option =
+  match expr.expr with
+  | AST.TypeApply (callee, _) -> user_func_target_name_for_expr state callee
+  | AST.Identifier name when is_user_func state name -> Some name
+  | AST.Identifier alias_name -> (
+      match Hashtbl.find_opt state.value_func_aliases alias_name with
+      | Some target_name when is_user_func state target_name -> Some target_name
+      | _ -> None)
+  | _ -> None
+
 let target_name_for_value_alias (state : mono_state) (value_expr : AST.expression) : string option =
   match value_expr.expr with
   | AST.Identifier target_name when is_user_func state target_name -> Some target_name
@@ -2161,15 +2173,7 @@ let refine_callable_param_types_from_user_args
   in
   List.map2
     (fun (arg_expr : AST.expression) (param_type : Types.mono_type) ->
-      let target_name_opt =
-        match arg_expr.expr with
-        | AST.Identifier name when is_user_func state name -> Some name
-        | AST.Identifier alias_name -> (
-            match Hashtbl.find_opt state.value_func_aliases alias_name with
-            | Some target_name when is_user_func state target_name -> Some target_name
-            | _ -> None)
-        | _ -> None
-      in
+      let target_name_opt = user_func_target_name_for_expr state arg_expr in
       match target_name_opt with
       | Some target_name -> (
           let arity = List.length (fst (extract_all_param_types param_type)) in
@@ -2297,13 +2301,7 @@ let register_user_func_call_instantiation
         add_instantiation state inst
 
 let resolved_user_func_call_target (state : mono_state) (func : AST.expression) : string option =
-  match func.expr with
-  | AST.Identifier name when is_user_func state name -> Some name
-  | AST.Identifier alias_name -> (
-      match Hashtbl.find_opt state.value_func_aliases alias_name with
-      | Some target_name when is_user_func state target_name -> Some target_name
-      | _ -> None)
-  | _ -> None
+  user_func_target_name_for_expr state func
 
 let hoisted_local_func_target_name (state : mono_state) (name : string) (expr_id : int) : string option =
   let target_name = hoisted_local_func_name name expr_id in
@@ -2463,6 +2461,7 @@ let rec collect_forward_call_arg_types_expr
     match expr.expr with
     | AST.Integer _ | AST.Float _ | AST.Boolean _ | AST.String _ | AST.Identifier _ -> []
     | AST.Prefix (_, e) -> collect_forward_call_arg_types_expr name type_map env e
+    | AST.TypeApply (callee, _) -> collect_forward_call_arg_types_expr name type_map env callee
     | AST.Infix (l, _, r) ->
         collect_forward_call_arg_types_expr name type_map env l
         @ collect_forward_call_arg_types_expr name type_map env r
@@ -2514,6 +2513,11 @@ let rec collect_forward_call_arg_types_expr
   in
   match expr.expr with
   | AST.Call ({ expr = AST.Identifier callee_name; _ }, args) when callee_name = name -> (
+      match List.map (type_from_env_or_map_for_collect env type_map) args |> all_some with
+      | Some arg_types -> arg_types :: nested
+      | None -> nested)
+  | AST.Call ({ expr = AST.TypeApply ({ expr = AST.Identifier callee_name; _ }, _); _ }, args)
+    when callee_name = name -> (
       match List.map (type_from_env_or_map_for_collect env type_map) args |> all_some with
       | Some arg_types -> arg_types :: nested
       | None -> nested)
@@ -2959,6 +2963,9 @@ and collect_insts_expr
       | None -> ()));
   match expr.expr with
   | AST.Integer _ | AST.Float _ | AST.Boolean _ | AST.String _ -> ()
+  | AST.TypeApply (callee, _) ->
+      let specialized_type = get_type type_map expr in
+      collect_insts_expr ~expected_type:(Some specialized_type) state type_map env callee
   | AST.Identifier name -> (
       let target_name_opt =
         if is_user_func state name then
@@ -3161,15 +3168,10 @@ and collect_insts_expr
       in
       collect_args_with_expected args call_param_types;
       (* Check if this is a call to a user-defined function *)
-      match func.expr with
-      | AST.Identifier name when is_user_func state name ->
-          register_user_func_call_instantiation state type_map env ~target_name:name ~args ~call_expr:expr
-      | AST.Identifier alias_name -> (
-          match Hashtbl.find_opt state.value_func_aliases alias_name with
-          | Some target_name when is_user_func state target_name ->
-              register_user_func_call_instantiation state type_map env ~target_name ~args ~call_expr:expr
-          | _ -> ())
-      | _ -> ())
+      match user_call_target with
+      | Some target_name ->
+          register_user_func_call_instantiation state type_map env ~target_name ~args ~call_expr:expr
+      | None -> ())
   | AST.Array elements -> List.iter (collect_insts_expr state type_map env) elements
   | AST.Hash pairs ->
       List.iter
@@ -3246,8 +3248,15 @@ and collect_insts_expr
       with
       | EnumConstructorValue { result_type; _ } -> track_enum_inst state result_type
       | QualifiedTraitValue { trait_name; method_name; receiver_type; method_type_args } ->
-          register_impl_method_use state type_map env ~trait_name ~method_name ~for_type:receiver_type
-            ~method_type_args
+          if
+            match Types.canonicalize_mono_type receiver_type with
+            | Types.TTraitObject _ -> true
+            | _ -> false
+          then
+            ()
+          else
+            register_impl_method_use state type_map env ~trait_name ~method_name ~for_type:receiver_type
+              ~method_type_args
       | QualifiedInherentValue _ -> ()
       | NotQualifiedCallable -> collect_insts_expr state type_map env receiver)
   | AST.MethodCall { mc_receiver = receiver; mc_method = method_name; mc_args = args; _ } -> (
@@ -3267,12 +3276,16 @@ and collect_insts_expr
           | Some (Infer.QualifiedTraitMethod trait_name) ->
               (* Qualified: first arg is receiver *)
               let for_type = Types.canonicalize_mono_type (method_dispatch_type env type_map (List.hd args)) in
-              let method_type_args =
-                match Hashtbl.find_opt state.method_type_args_map expr.id with
-                | Some args -> args
-                | None -> []
-              in
-              register_impl_method_use state type_map env ~trait_name ~method_name ~for_type ~method_type_args
+              (match for_type with
+              | Types.TTraitObject _ -> ()
+              | _ ->
+                  let method_type_args =
+                    match Hashtbl.find_opt state.method_type_args_map expr.id with
+                    | Some args -> args
+                    | None -> []
+                  in
+                  register_impl_method_use state type_map env ~trait_name ~method_name ~for_type
+                    ~method_type_args)
           | Some (Infer.TraitMethod trait_name) ->
               collect_insts_expr state type_map env receiver;
               let for_type = Types.canonicalize_mono_type (method_dispatch_type env type_map receiver) in
@@ -3295,13 +3308,6 @@ and collect_insts_expr
                       register_user_func_call_instantiation state type_map env ~target_name ~args ~call_expr:expr
                   | _ -> collect_insts_expr state type_map env receiver)
               | _ -> collect_insts_expr state type_map env receiver)
-          | Some Infer.UfcsFunctionCall ->
-              collect_insts_expr state type_map env
-                (AST.mk_expr ~id:expr.id ~pos:expr.pos ~end_pos:expr.end_pos ~file_id:expr.file_id
-                   (AST.Call
-                      ( AST.mk_expr ~id:(-1) ~pos:expr.pos ~end_pos:expr.end_pos ~file_id:expr.file_id
-                          (AST.Identifier method_name),
-                        receiver :: args )))
           | None -> collect_insts_expr state type_map env receiver))
   | AST.BlockExpr stmts ->
       ignore (collect_insts_stmt_list state type_map env stmts)
@@ -3598,6 +3604,8 @@ let rec copy_specialized_expr_types
   match expr.expr with
   | AST.Integer _ | AST.Float _ | AST.Boolean _ | AST.String _ | AST.Identifier _ -> ()
   | AST.Prefix (_, operand) -> copy_specialized_expr_types source_map target_map specialization_subst operand
+  | AST.TypeApply (callee, _) ->
+      copy_specialized_expr_types source_map target_map specialization_subst callee
   | AST.Infix (left, _, right) ->
       copy_specialized_expr_types source_map target_map specialization_subst left;
       copy_specialized_expr_types source_map target_map specialization_subst right
@@ -3716,6 +3724,9 @@ let rec emit_expr
     | AST.Boolean true -> "true"
     | AST.Boolean false -> "false"
     | AST.String s -> Printf.sprintf "%S" s
+    | AST.TypeApply (callee, _) ->
+        let specialized_type = get_type type_map expr in
+        emit_expr ~expected_type:(Some specialized_type) state type_map env callee
     | AST.Identifier name -> (
         let target_name_opt =
           if is_user_func state.mono name then
@@ -4003,16 +4014,20 @@ let rec emit_expr
                   normalize_type_for_codegen ~concrete_only:state.mono.concrete_only
                     (method_dispatch_type env type_map (List.hd args))
                 in
-                let type_suffix = type_suffix_with_mta first_arg_type in
-                let func_name = trait_method_func_name trait_name variant_name type_suffix in
-                let arg_strs =
-                  match args with
-                  | [] -> []
-                  | receiver_arg :: rest ->
-                      emit_expr_for_expected_type state type_map env first_arg_type receiver_arg
-                      :: List.map (emit_expr state type_map env) rest
-                in
-                Printf.sprintf "%s(%s)" func_name (String.concat ", " arg_strs)
+                (match (first_arg_type, args) with
+                | Types.TTraitObject _, receiver_arg :: rest ->
+                    emit_dynamic_trait_call state type_map env expr receiver_arg variant_name rest
+                | _ ->
+                    let type_suffix = type_suffix_with_mta first_arg_type in
+                    let func_name = trait_method_func_name trait_name variant_name type_suffix in
+                    let arg_strs =
+                      match args with
+                      | [] -> []
+                      | receiver_arg :: rest ->
+                          emit_expr_for_expected_type state type_map env first_arg_type receiver_arg
+                          :: List.map (emit_expr state type_map env) rest
+                    in
+                    Printf.sprintf "%s(%s)" func_name (String.concat ", " arg_strs))
             | Some (Infer.DynamicTraitMethod _) ->
                 emit_dynamic_trait_call state type_map env expr receiver variant_name args
             | Some Infer.QualifiedInherentMethod ->
@@ -4057,11 +4072,6 @@ let rec emit_expr
                 Printf.sprintf "%s(%s)" func_name (String.concat ", " all_args)
             | Some Infer.FieldFunctionCall ->
                 emit_field_function_call state type_map env expr receiver variant_name args
-            | Some Infer.UfcsFunctionCall ->
-                emit_call state type_map env expr
-                  (AST.mk_expr ~id:(-1) ~pos:expr.pos ~end_pos:expr.end_pos ~file_id:expr.file_id
-                     (AST.Identifier variant_name))
-                  (receiver :: args)
             | None ->
                 failwith
                   (Printf.sprintf
@@ -5546,7 +5556,7 @@ and emit_call state type_map env call_expr func args =
       let arr_str = emit_expr state type_map env (List.hd args) in
       let val_str = emit_expr state type_map env (List.nth args 1) in
       Printf.sprintf "push(%s, %s)" arr_str val_str
-  | AST.Identifier _name when Option.is_some user_call_target ->
+  | _ when Option.is_some user_call_target ->
       let target_name = Option.get user_call_target in
       let actual_arg_types = List.map (arg_type_for_specialization state.mono env type_map) args in
       let param_types, mangled_name =
@@ -5811,6 +5821,7 @@ and collect_local_call_arg_types_expr
     match expr.expr with
     | AST.Integer _ | AST.Float _ | AST.Boolean _ | AST.String _ | AST.Identifier _ -> []
     | AST.Prefix (_, e) -> collect_local_call_arg_types_expr name type_map env e
+    | AST.TypeApply (callee, _) -> collect_local_call_arg_types_expr name type_map env callee
     | AST.Infix (l, _, r) ->
         collect_local_call_arg_types_expr name type_map env l
         @ collect_local_call_arg_types_expr name type_map env r
@@ -5864,6 +5875,11 @@ and collect_local_call_arg_types_expr
   in
   match expr.expr with
   | AST.Call ({ expr = AST.Identifier callee_name; _ }, args) when callee_name = name -> (
+      match List.map (type_from_env_or_map env type_map) args |> all_some with
+      | Some arg_types -> arg_types :: nested
+      | None -> nested)
+  | AST.Call ({ expr = AST.TypeApply ({ expr = AST.Identifier callee_name; _ }, _); _ }, args)
+    when callee_name = name -> (
       match List.map (type_from_env_or_map env type_map) args |> all_some with
       | Some arg_types -> arg_types :: nested
       | None -> nested)
@@ -6765,6 +6781,9 @@ let collect_inherent_call_sites
     | AST.Identifier _ | AST.Integer _ | AST.Float _ | AST.Boolean _ | AST.String _ -> acc
     | AST.Array elems -> List.fold_left (fun acc' e -> collect_expr acc' env e) acc elems
     | AST.Index (a, b) -> collect_expr (collect_expr acc env a) env b
+    | AST.TypeApply (callee, _) ->
+        let specialized_type = get_type type_map expr in
+        collect_expr ~expected_type:(Some specialized_type) acc env callee
     | AST.Hash pairs ->
         List.fold_left
           (fun acc' (k, v) ->
@@ -6903,7 +6922,6 @@ let collect_inherent_call_sites
         | Some (Infer.DynamicTraitMethod _)
         | Some (Infer.QualifiedTraitMethod _)
         | Some Infer.FieldFunctionCall
-        | Some Infer.UfcsFunctionCall
         | None ->
             acc'')
     | AST.BlockExpr stmts -> collect_stmt_list acc env stmts
@@ -7914,7 +7932,7 @@ let%test "builtin derives emit helpers for transparent structural types" =
       Typecheck.Builtins.init_builtin_impls ();
       match
         compile_string ~file_id:"<codegen>"
-          "type Point = { x: Int, y: Int } derive Eq, Show\nlet a: Point = { x: 1, y: 2 }\nlet b: Point = { x: 1, y: 2 }\nlet _ = a == b\na.show()"
+          "type Point = { x: Int, y: Int } derive Eq, Show\nlet a: Point = { x: 1, y: 2 }\nlet b: Point = { x: 1, y: 2 }\nlet _ = a == b\nShow.show(a)"
       with
       | Ok (code, _) ->
           string_contains code "return (x.x == y.x) && (x.y == y.y)"
@@ -7948,7 +7966,7 @@ let%test "identifier suffix methods compile through codegen" =
   Typecheck.Inherent_registry.clear ();
   match
     compile_string ~file_id:"<codegen>"
-      "type Monkey = { bananas_eaten: Int, is_alpha: Bool }\nimpl Monkey = {\nfn hungry?(self: Monkey) -> Bool = self.bananas_eaten < 3\nfn alpha!(self: Monkey) -> Monkey = { bananas_eaten: self.bananas_eaten, is_alpha: true }\n}\nlet m: Monkey = { bananas_eaten: 1, is_alpha: false }\nputs(m.hungry?())\nputs(m.alpha!().is_alpha)"
+      "type Monkey = { bananas_eaten: Int, is_alpha: Bool }\nimpl Monkey = {\nfn hungry?(self: Monkey) -> Bool = self.bananas_eaten < 3\nfn alpha!(self: Monkey) -> Monkey = { bananas_eaten: self.bananas_eaten, is_alpha: true }\n}\nlet m: Monkey = { bananas_eaten: 1, is_alpha: false }\nputs(Monkey.hungry?(m))\nputs(Monkey.alpha!(m).is_alpha)"
   with
   | Ok (code, _) ->
       string_contains code "func inherent_hungry_q_"
@@ -8286,8 +8304,8 @@ let%test "nested transparent record types use declared names inside enclosing sh
   | Error _ -> false
 
 let%test "emitter method calls use typechecker resolution metadata" =
-  let source =
-    {|
+let source =
+  {|
 trait Ping[a] = {
   fn ping(x: a) -> Int
 }
@@ -8295,7 +8313,7 @@ impl Ping[Int] = {
   fn ping(x: Int) -> Int = x
 }
 let v = 1
-v.ping()
+Ping.ping(v)
 |}
   in
   match Syntax.Parser.parse ~file_id:"<codegen>" source with
@@ -8328,19 +8346,19 @@ v.ping()
 
 let%test "emitter lowers inherent methods to inherent_* helpers" =
   match
-    compile_string ~file_id:"<codegen>" "impl Int = { fn double(x: Int) -> Int = x + x }\nlet v = 2\nv.double()"
+    compile_string ~file_id:"<codegen>" "impl Int = { fn double(x: Int) -> Int = x + x }\nlet v = 2\nInt.double(v)"
   with
   | Ok (code, _) ->
       string_contains code "func inherent_double_int64(" && string_contains code "inherent_double_int64(v)"
   | Error _ -> false
 
 let%test "emitter inherent method calls use typechecker resolution metadata" =
-  let source = {|
+let source = {|
 impl Int = {
   fn ping(x: Int) -> Int = x
 }
 let v = 1
-v.ping()
+Int.ping(v)
 |} in
   match Syntax.Parser.parse ~file_id:"<codegen>" source with
   | Error _ -> false
@@ -8378,7 +8396,7 @@ enum Box = {
 impl Box = {
   fn describe(b: Box) -> Str = {
     match b {
-      case Box.Val(n): "val:" + n.show()
+      case Box.Val(n): "val:" + Show.show(n)
       case Box.Empty: "empty"
     }
   }
@@ -8410,7 +8428,7 @@ impl Result[Int, Str] = {
   fn tag(r: Result[Int, Str]) -> Str = "concrete"
 }
 let x: Result[Int, Str] = Result.Success(1)
-x.tag()
+Result.tag(x)
 |}
   in
   match compile_string ~file_id:"<codegen>" source with
@@ -8612,7 +8630,7 @@ let%test "field-path type-check if emits a runtime type switch" =
       type Box = { value: Int | Str }
       fn render(box: Box) -> Str = {
         if (box.value is Int) {
-          box.value.show()
+          Show.show(box.value)
         } else {
           box.value
         }
@@ -8628,7 +8646,7 @@ let%test "field-path type-check if emits a runtime type switch" =
   | Error _ -> false
 
 let%test "Dyn codegen emits runtime wrapper and witness for Show" =
-  match compile_string ~file_id:"<codegen>" "let x: Dyn[Show] = 42\nputs(x.show())" with
+  match compile_string ~file_id:"<codegen>" "let x: Dyn[Show] = 42\nputs(Show.show(x))" with
   | Ok (code, _) ->
       string_contains code "type marmosetDyn struct"
       && string_contains code "type marmosetDynWitness_show struct"
@@ -8676,10 +8694,10 @@ trait Render[a] = {
   fn render(x: a) -> Str
 }
 impl Render[Int] = {
-  fn render(x: Int) -> Str = "render:" + x.show()
+  fn render(x: Int) -> Str = "render:" + Show.show(x)
 }
 let x: Dyn[Show & Render] = 42
-puts(x.render())
+puts(Render.render(x))
 |}
   in
   match compile_string ~file_id:"<codegen>" source with
@@ -8697,15 +8715,15 @@ trait Base[a] = {
 }
 
 trait Child[a]: Base = {
-  fn child(self: a) -> Str = self.base() + ":child"
+  fn child(self: a) -> Str = Base.base(self) + ":child"
 }
 
 impl Base[Int] = {}
 impl Child[Int] = {}
 
 let value: Dyn[Child] = 1
-puts(value.base())
-puts(value.child())
+puts(Base.base(value))
+puts(Child.child(value))
 |}
   in
   match compile_string ~file_id:"<codegen>" source with
@@ -8903,11 +8921,11 @@ let%test "compile_string preserves checker diagnostic on type failure" =
   | Error [] -> false
 
 let%test "collect_insts registers impl methods in cache" =
-  let source = {|
+let source = {|
 impl Show[Int] = {
   fn show(self: Int) -> Str = "int!"
 }
-puts(1.show())
+puts(Show.show(1))
 |} in
   Fun.protect
     ~finally:(fun () ->
@@ -8944,8 +8962,8 @@ puts(1.show())
               && Hashtbl.length mono_state.impl_inst_payloads = 1))
 
 let%test "canonical builtin trait impl header emits canonical helper name" =
-  let source = {|impl Show[Int] = { fn show(self: Int) -> Str = "int!" }
-puts(1.show())|} in
+let source = {|impl Show[Int] = { fn show(self: Int) -> Str = "int!" }
+puts(Show.show(1))|} in
   Fun.protect
     ~finally:(fun () ->
       Typecheck.Trait_registry.clear ();
@@ -8960,8 +8978,8 @@ puts(1.show())|} in
       | Error _ -> false)
 
 let%test "canonical generic builtin impl emits specialized helper name" =
-  let source = {|impl[a: Show] Show[List[a]] = { fn show(self: List[a]) -> Str = "list" }
-puts([1, 2].show())|} in
+let source = {|impl[a: Show] Show[List[a]] = { fn show(self: List[a]) -> Str = "list" }
+puts(Show.show([1, 2]))|} in
   Fun.protect
     ~finally:(fun () ->
       Typecheck.Trait_registry.clear ();
@@ -9346,7 +9364,7 @@ let%test "constrained generic method call does not emit any-mangled specializati
   }
 }
 fn id[t: Show](x: t) -> Str = {
-  x.show()
+  Show.show(x)
 }
 puts(id(1))|}
   in
@@ -9462,9 +9480,9 @@ impl Label[Str] = {
 impl Label[Bool] = {
   fn label(x: Bool) -> Str = "BOOL"
 }
-puts(1.label())
-puts("a".label())
-puts(true.label())|}
+puts(Label.label(1))
+puts(Label.label("a"))
+puts(Label.label(true))|}
 
 let%test "Q81: codegen deterministic for records + enums + traits" =
   is_deterministic
@@ -9483,5 +9501,5 @@ impl Point = {
   fn sum(p: Point) -> Int = p.x + p.y
 }
 let p: Point = { x: 3, y: 4 }
-let result = p.sum() + 10
+let result = Point.sum(p) + 10
 puts(result)|}

@@ -10,4 +10,4 @@ impl Mixer[User] = {
   fn mix(x: User, y: Named) = x.name + ":" + y.name
 }
 
-puts({name: "left"}.mix({ name: "right" }))  # output: left:right
+puts(Mixer.mix({name: "left"}, { name: "right" }))  # output: left:right

@@ -2,4 +2,4 @@ type Empty = { v: Int }
 
 let e = {v: 0}
 
-e.missing()  # error: *
+Empty.missing(e)  # error: *

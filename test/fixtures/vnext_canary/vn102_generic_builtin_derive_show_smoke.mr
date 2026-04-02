@@ -2,4 +2,4 @@
 type Box[t] = { value: t } derive Show
 
 let box: Box[Int] = {value: 1}
-puts(box.show())  # output: { value: 1 }
+puts(Show.show(box))  # output: { value: 1 }

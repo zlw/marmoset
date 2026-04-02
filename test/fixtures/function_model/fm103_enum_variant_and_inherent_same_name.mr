@@ -8,5 +8,5 @@ impl Thing = {
 
 # On enum qualifier: variant constructor wins
 let t = Thing.Value(42)
-# On value dot call: inherent method
-puts(t.value())  # output: 42
+# On type qualifier: inherent method
+puts(Thing.value(t))  # output: 42

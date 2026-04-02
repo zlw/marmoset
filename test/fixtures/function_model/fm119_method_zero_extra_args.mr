@@ -11,5 +11,5 @@ impl Flag = {
 }
 
 let f = {on: true}
-let f2 = f.toggle()
+let f2 = Flag.toggle(f)
 puts(f2.on)  # output: false

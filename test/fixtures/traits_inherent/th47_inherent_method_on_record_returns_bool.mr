@@ -4,4 +4,4 @@ impl Point = {
   fn is_origin(p: Point) -> Bool = p.x == 0
 }
 let p = {x: 0, y: 5}
-puts(p.is_origin())  # output: true
+puts(Point.is_origin(p))  # output: true

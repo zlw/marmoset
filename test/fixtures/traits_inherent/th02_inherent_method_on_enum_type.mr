@@ -8,4 +8,4 @@ impl Box = {
   }
 }
 let b = Box.Val(42)
-puts(b.unwrap())  # output: 42
+puts(Box.unwrap(b))  # output: 42

@@ -18,4 +18,4 @@ impl Walker[Node] = {
 
 let n = {id: 1}
 
-n.visit()  # error: Ambiguous
+n.visit()  # error: not a callable field

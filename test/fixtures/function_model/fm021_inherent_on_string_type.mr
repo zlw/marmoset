@@ -4,4 +4,4 @@ impl Str = {
   }
 }
 
-puts("hello".exclaim())  # output: hello!
+puts(Str.exclaim("hello"))  # output: hello!

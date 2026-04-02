@@ -5,4 +5,4 @@ trait Size[a] = {
 impl[b: Show] Size[List[b]] = {
   fn size(x: List[b]) -> Int = len(x)
 }
-puts([10, 20].size())  # output: 2
+puts(Size.size([10, 20]))  # output: 2

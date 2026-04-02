@@ -8,5 +8,5 @@ trait Mapper[a] = {
 
 impl Mapper[Int] = {}
 
-puts(1.cast((n: Int) -> n.show()))  # output: 1
-puts(1.cast((n: Int) -> n + 1))     # output: 2
+puts(Mapper.cast(1, (n: Int) -> Show.show(n)))  # output: 1
+puts(Mapper.cast(1, (n: Int) -> n + 1))     # output: 2
