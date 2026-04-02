@@ -5,7 +5,7 @@
 - Last verified: 2026-03-12
 - Implementation status: Planning (not started)
 - Prerequisites:
-  - `docs/plans/todo/language/01_pre-modules-semantics-foundation.md`
+  - `docs/plans/done/language/04_pre-modules-semantics-foundation.md`
   - `docs/plans/done/tooling/01_diagnostics-rework.md`
 
 ## Summary
@@ -72,6 +72,6 @@ Once the semantic foundation is frozen, harden it before modules land. This plan
 
 ## Related Plans
 
-- `docs/plans/todo/language/01_pre-modules-semantics-foundation.md` freezes the semantics first.
-- `docs/plans/todo/language/03_module-system.md` depends on this hardening pass being complete.
+- `docs/plans/done/language/04_pre-modules-semantics-foundation.md` freezes the semantics first.
+- `docs/plans/todo/language/02_module-system.md` depends on this hardening pass being complete.
 - `docs/plans/done/tooling/01_diagnostics-rework.md` is the diagnostics prerequisite, not an active part of this plan.

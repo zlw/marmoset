@@ -5,10 +5,10 @@
 - Last verified: 2026-03-12
 - Implementation status: Planning (not started)
 - Prerequisites:
-  - `docs/plans/todo/language/03_module-system.md`
-  - `docs/plans/todo/language/04_prelude.md`
-  - `docs/plans/todo/language/05_ffi.md`
-  - `docs/plans/todo/language/06_stdlib.md`
+  - `docs/plans/todo/language/02_module-system.md`
+  - `docs/plans/todo/language/03_prelude.md`
+  - `docs/plans/todo/language/04_ffi.md`
+  - `docs/plans/todo/language/05_stdlib.md`
 
 ## Summary
 
@@ -67,5 +67,5 @@ After modules and public APIs exist, revisit the type-system expansions that are
 
 ## Related Plans
 
-- `docs/plans/todo/language/03_module-system.md`, `04_prelude.md`, `05_ffi.md`, and `06_stdlib.md` create the public-API pressure that justifies this later work.
+- `docs/plans/todo/language/02_module-system.md`, `03_prelude.md`, `04_ffi.md`, and `05_stdlib.md` create the public-API pressure that justifies this later work.
 - `docs/ROADMAP.md` should keep more speculative ideas deferred until they are concrete enough to deserve their own plan.

@@ -2,9 +2,9 @@
 
 ## Maintenance
 
-- Last verified: 2026-03-28
+- Last verified: 2026-04-02
 - Implementation status: Canonical (actively maintained)
-- Update trigger: Any parser, typechecker, or codegen change affecting records, aliases, spreads, or named products
+- Update trigger: Any parser, typechecker, or codegen change affecting records, transparent `type` names, spreads, or named products
 
 ## Scope
 
@@ -19,10 +19,10 @@ Records provide:
 
 ## Status Note
 
-The canonical behavior in this file is being migrated to the data-first plan in
-`docs/plans/todo/language/data-first-semantics-rework.md`.
+The canonical semantics baseline for records now lives in
+`docs/plans/done/language/04_pre-modules-semantics-foundation.md`.
 
-During that migration, treat these rules as the target direction:
+This file already reflects that landed model:
 
 - exact product records are structural again, even when named with `type`,
 - constructor-bearing wrappers and sums remain the nominal boundary,
