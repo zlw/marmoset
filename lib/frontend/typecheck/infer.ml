@@ -388,6 +388,34 @@ let record_placeholder_rewrite (original_expr : AST.expression) (rewritten_expr 
 let snapshot_placeholder_rewrite_store () : placeholder_rewrite_map =
   Hashtbl.copy global_placeholder_rewrite_store
 
+let placeholder_section_rewrite_disable_depth = ref 0
+let placeholder_section_fallback_disable_depth = ref 0
+
+let placeholder_rewrite_enabled () : bool = !placeholder_section_rewrite_disable_depth = 0
+
+let placeholder_section_fallback_enabled () : bool =
+  placeholder_rewrite_enabled () && !placeholder_section_fallback_disable_depth = 0
+
+let with_placeholder_section_rewrite_disabled (f : unit -> 'a) : 'a =
+  incr placeholder_section_rewrite_disable_depth;
+  match f () with
+  | result ->
+      decr placeholder_section_rewrite_disable_depth;
+      result
+  | exception exn ->
+      decr placeholder_section_rewrite_disable_depth;
+      raise exn
+
+let with_placeholder_section_fallback_disabled (f : unit -> 'a) : 'a =
+  incr placeholder_section_fallback_disable_depth;
+  match f () with
+  | result ->
+      decr placeholder_section_fallback_disable_depth;
+      result
+  | exception exn ->
+      decr placeholder_section_fallback_disable_depth;
+      raise exn
+
 let fresh_synthetic_expr_id () : int =
   let id = !global_synthetic_expr_id_counter in
   decr global_synthetic_expr_id_counter;
@@ -1678,8 +1706,15 @@ let resolve_program_symbols (env : type_env) (program : AST.program) : (unit, Di
 
 let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expression) :
     (substitution * mono_type) infer_result =
-  let result =
-    match expr.expr with
+  let standalone_placeholder_count =
+    if placeholder_section_fallback_enabled () then
+      placeholder_identifier_count_expr expr
+    else
+      0
+  in
+  let infer_without_section_fallback () =
+    with_placeholder_section_fallback_disabled (fun () ->
+      match expr.expr with
     (* Literals have known types *)
     | AST.Integer _ -> Ok (empty_substitution, TInt)
     | AST.Float _ -> Ok (empty_substitution, TFloat)
@@ -1711,10 +1746,8 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
     (* If expressions *)
     | AST.If (condition, consequence, alternative) -> infer_if type_map env condition consequence alternative
     (* Function literals *)
-    | AST.Function f ->
-        (* Phase 2: Use parameter and return type annotations to guide inference *)
-        (* Phase 4.3+: Handle generic parameters with constraints *)
-        infer_function_with_annotations type_map env f.generics f.params f.return_type f.is_effectful f.body
+    | AST.Function { origin; generics; params; return_type; is_effectful; body } ->
+        infer_function_literal type_map env expr ~origin ~generics ~params ~return_type ~is_effectful ~body
     (* Function calls *)
     | AST.Call (func, args) -> infer_call type_map env expr func args
     | AST.TypeApply (func, type_args) -> infer_type_apply type_map env expr func type_args
@@ -2865,7 +2898,18 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
             | `TraitName -> infer_qualified_trait_call name
             | `Unknown -> infer_real_method_call ())
         | _ -> infer_real_method_call ())
-    | AST.BlockExpr stmts -> infer_block type_map env stmts
+    | AST.BlockExpr stmts -> infer_block type_map env stmts)
+  in
+  let result =
+    if standalone_placeholder_count > 1 then
+      Error (placeholder_count_error expr standalone_placeholder_count)
+    else if standalone_placeholder_count = 1 then
+      match infer_without_section_fallback () with
+      | Ok _ as ok -> ok
+      | Error diag when placeholder_unbound_identifier_error diag -> infer_placeholder_section_expr type_map env expr
+      | Error _ as err -> err
+    else
+      infer_without_section_fallback ()
   in
   (* Record the type in the type map before returning *)
   match result with
@@ -3743,6 +3787,7 @@ and placeholder_lambda_expr (expr : AST.expression) : AST.expression =
   AST.mk_expr ~id:wrapper_id ~pos:expr.pos ~end_pos:expr.end_pos ~file_id:expr.file_id
     (AST.Function
        {
+         origin = AST.PlaceholderSection;
          generics = None;
          params = [ (param_name, None) ];
          return_type = None;
@@ -3750,24 +3795,92 @@ and placeholder_lambda_expr (expr : AST.expression) : AST.expression =
          body = body_stmt;
        })
 
+and placeholder_count_in_current_context (expr : AST.expression) : int =
+  if placeholder_rewrite_enabled () then
+    placeholder_identifier_count_expr expr
+  else
+    0
+
+and placeholder_count_error (expr : AST.expression) (count : int) : Diagnostic.t =
+  error_at ~code:"type-invalid-placeholder"
+    ~message:(Printf.sprintf "Placeholder shorthand requires exactly one '_' placeholder, found %d" count)
+    expr
+
+and placeholder_effectful_error (expr : AST.expression) : Diagnostic.t =
+  error_at ~code:"type-invalid-placeholder"
+    ~message:"Placeholder shorthand is pure-only; use an explicit '=>' lambda for effectful functions" expr
+
+and placeholder_unbound_identifier_error (diag : Diagnostic.t) : bool =
+  diag.code = "type-unbound-var" && String_utils.contains_substring ~needle:"Unbound variable: _" diag.message
+
+and placeholder_callable_is_effectful (typ : mono_type) : bool =
+  match canonicalize_mono_type typ with
+  | TFun (_, _, is_effectful) -> is_effectful
+  | TUnion members -> List.exists placeholder_callable_is_effectful members
+  | _ -> false
+
+and infer_function_literal
+    ?known_signature
+    (type_map : type_map)
+    (env : type_env)
+    (fn_expr : AST.expression)
+    ~(origin : AST.function_origin)
+    ~(generics : AST.generic_param list option)
+    ~(params : (string * AST.type_expr option) list)
+    ~(return_type : AST.type_expr option)
+    ~(is_effectful : bool)
+    ~(body : AST.statement) : (substitution * mono_type) infer_result =
+  let infer_literal () =
+    match known_signature with
+    | Some (param_types, known_return_type) ->
+        let known_param_types = List.mapi (fun i ty -> (i, ty)) param_types in
+        infer_function_with_annotations ~known_param_types ~known_return:known_return_type type_map env generics params
+          return_type is_effectful body
+    | None -> infer_function_with_annotations type_map env generics params return_type is_effectful body
+  in
+  let infer_result =
+    match origin with
+    | AST.ExplicitLambda -> with_placeholder_section_rewrite_disabled infer_literal
+    | AST.DeclaredFunction | AST.PlaceholderSection -> infer_literal ()
+  in
+  match infer_result with
+  | Ok (subst_fn, func_type) ->
+      record_type type_map fn_expr (apply_substitution subst_fn func_type);
+      Ok (subst_fn, func_type)
+  | Error _ as err -> err
+
+and infer_placeholder_section_expr
+    (type_map : type_map)
+    (env : type_env)
+    (expr : AST.expression) : (substitution * mono_type) infer_result =
+  let rewritten_expr = placeholder_lambda_expr expr in
+  record_placeholder_rewrite expr rewritten_expr;
+  match rewritten_expr.expr with
+  | AST.Function { origin; generics; params; return_type; is_effectful; body } -> (
+      match
+        infer_function_literal type_map env rewritten_expr ~origin ~generics ~params ~return_type ~is_effectful
+          ~body
+      with
+      | Error _ as err -> err
+      | Ok (subst, func_type) ->
+          let inferred_type = apply_substitution subst func_type in
+          if placeholder_callable_is_effectful inferred_type then
+            Error (placeholder_effectful_error expr)
+          else
+            Ok (subst, func_type))
+  | _ -> failwith "placeholder section rewrite must produce a function literal"
+
 and infer_arg_against_expected type_map env subst (arg : AST.expression) (expected_type : mono_type) :
     (substitution * mono_type) infer_result =
   let expected_type' = apply_substitution subst expected_type in
-  let placeholder_count = placeholder_identifier_count_expr arg in
+  let placeholder_count = placeholder_count_in_current_context arg in
   let placeholder_expectation = placeholder_callback_expectation expected_type' in
   if placeholder_count > 1 then
-    Error
-      (error_at ~code:"type-invalid-placeholder"
-         ~message:
-           (Printf.sprintf "Placeholder shorthand requires exactly one '_' placeholder, found %d"
-              placeholder_count)
-         arg)
+    Error (placeholder_count_error arg placeholder_count)
   else
     match (placeholder_count, placeholder_expectation) with
     | 1, PlaceholderCallbackEffectfulOnly ->
-        Error
-          (error_at ~code:"type-invalid-placeholder"
-             ~message:"Placeholder shorthand is pure-only; effectful callbacks require explicit '=>' lambda" arg)
+        Error (placeholder_effectful_error arg)
     | _ -> (
         let inferred_arg =
           match (placeholder_count, placeholder_expectation) with
@@ -3780,27 +3893,14 @@ and infer_arg_against_expected type_map env subst (arg : AST.expression) (expect
         let env' = apply_substitution_env subst env in
         let infer_arg_expr () =
           match inferred_arg.expr with
-          | AST.Function f -> (
+          | AST.Function { origin; generics; params; return_type; is_effectful; body } -> (
               match contextual_callable_signature expected_type' with
-              | Some (param_types, return_type) -> (
-                  let known_param_types = List.mapi (fun i ty -> (i, ty)) param_types in
-                  match
-                    infer_function_with_annotations ~known_param_types ~known_return:return_type type_map env'
-                      f.generics f.params f.return_type f.is_effectful f.body
-                  with
-                  | Ok (subst_fn, func_type) ->
-                      record_type type_map inferred_arg (apply_substitution subst_fn func_type);
-                      Ok (subst_fn, func_type)
-                  | Error _ as err -> err)
-              | None -> (
-                  match
-                    infer_function_with_annotations type_map env' f.generics f.params f.return_type f.is_effectful
-                      f.body
-                  with
-                  | Ok (subst_fn, func_type) ->
-                      record_type type_map inferred_arg (apply_substitution subst_fn func_type);
-                      Ok (subst_fn, func_type)
-                  | Error _ as err -> err))
+              | Some signature ->
+                  infer_function_literal ~known_signature:signature type_map env' inferred_arg ~origin ~generics
+                    ~params ~return_type ~is_effectful ~body
+              | None ->
+                  infer_function_literal type_map env' inferred_arg ~origin ~generics ~params ~return_type
+                    ~is_effectful ~body)
           | _ -> infer_expression type_map env' inferred_arg
         in
         match infer_arg_expr () with
@@ -3809,25 +3909,30 @@ and infer_arg_against_expected type_map env subst (arg : AST.expression) (expect
             let subst' = compose_substitution subst subst1 in
             let expected_type'' = apply_substitution subst' expected_type in
             let arg_type' = apply_substitution subst' arg_type in
-            match canonicalize_mono_type expected_type'' with
-            | TTraitObject _ -> (
-                match
-                  maybe_record_trait_object_coercion
-                    ~mk_error:(fun ~code ~message -> error_at ~code ~message arg)
-                    arg arg_type' expected_type''
-                with
-                | Error e -> Error e
-                | Ok () ->
-                    propagate_type_var_constraints_through_substitution subst';
-                    Ok (subst' (* coercion is metadata-only *), expected_type''))
-            | _ -> (
-                match compatible_with_expected_type arg_type' expected_type'' with
-                | Error e -> Error (error_at ~code:e.code ~message:e.message arg)
-                | Ok subst2 ->
-                    let final_subst = compose_substitution subst' subst2 in
-                    let final_type = apply_substitution final_subst arg_type in
-                    propagate_type_var_constraints_through_substitution final_subst;
-                    Ok (final_subst, final_type))))
+            if placeholder_count = 1 && placeholder_expectation = PlaceholderCallbackPureAllowed
+               && placeholder_callable_is_effectful arg_type'
+            then
+              Error (placeholder_effectful_error arg)
+            else
+              match canonicalize_mono_type expected_type'' with
+              | TTraitObject _ -> (
+                  match
+                    maybe_record_trait_object_coercion
+                      ~mk_error:(fun ~code ~message -> error_at ~code ~message arg)
+                      arg arg_type' expected_type''
+                  with
+                  | Error e -> Error e
+                  | Ok () ->
+                      propagate_type_var_constraints_through_substitution subst';
+                      Ok (subst' (* coercion is metadata-only *), expected_type''))
+              | _ -> (
+                  match compatible_with_expected_type arg_type' expected_type'' with
+                  | Error e -> Error (error_at ~code:e.code ~message:e.message arg)
+                  | Ok subst2 ->
+                      let final_subst = compose_substitution subst' subst2 in
+                      let final_type = apply_substitution final_subst arg_type in
+                      propagate_type_var_constraints_through_substitution final_subst;
+                      Ok (final_subst, final_type))))
 
 and infer_args_against_expected type_map env subst args expected_types =
   match (args, expected_types) with
@@ -6490,10 +6595,8 @@ module Test = struct
     (* let _ = 5; 1 should still infer as Int and not bind '_' *)
     infers_to "let _ = 5; 1" TInt
 
-  let%test "infer underscore is not available as value after let discard" =
-    match infer_string "let _ = 5; _" with
-    | Error diag -> is_code diag "type-unbound-var" && contains_substring diag.message "Unbound variable: _"
-    | _ -> false
+  let%test "infer discard binding does not shadow placeholder identity section" =
+    infers_to "let _ = 5\nlet id = _\nid(1)" TInt
 
   let%test "infer let with function" =
     (* fn f(x) = x + 1; f(5) should be Int *)

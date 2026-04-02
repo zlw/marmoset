@@ -271,7 +271,14 @@ let rec lower_expr_with_ctx (ctx : lower_context) (id_supply : Id_supply.Id_supp
         let generics, params = lower_callable_signature ctx None se_lambda_params in
         let fn_body = lower_expr_or_block_to_stmt_with_ctx ctx id_supply se_lambda_body in
         AST.Function
-          { generics; params; return_type = None; is_effectful = se_lambda_is_effectful; body = fn_body }
+          {
+            origin = AST.ExplicitLambda;
+            generics;
+            params;
+            return_type = None;
+            is_effectful = se_lambda_is_effectful;
+            body = fn_body;
+          }
     | Surface.SEPlaceholder -> failwith_unimplemented "SEPlaceholder"
     | Surface.SEBlockExpr block -> AST.BlockExpr (List.map (lower_stmt_with_ctx ctx id_supply) block.sb_stmts)
   in
@@ -506,6 +513,7 @@ let lower_top_decl_with_ctx
         AST.mk_expr ~id:(Id_supply.Id_supply.fresh id_supply) ~pos ~end_pos ~file_id
           (AST.Function
              {
+               origin = AST.DeclaredFunction;
                generics;
                params;
                return_type = Option.map (lower_type_expr_with_bound_vars bound_type_vars) return_type;

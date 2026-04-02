@@ -1,0 +1,2 @@
+# VN128: Placeholder shorthand stays pure-only outside callback positions
+let printer = puts(_)  # error: explicit '=>'

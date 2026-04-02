@@ -1,0 +1,6 @@
+# VN127: Placeholder shorthand supports projection sections
+type Post = { updated_at: Int }
+
+let updated_at = _.updated_at
+
+puts(Show.show(updated_at({ updated_at: 7 })))  # output: 7

@@ -151,6 +151,12 @@ module AST = struct
   }
   [@@deriving show]
 
+  and function_origin =
+    | DeclaredFunction
+    | ExplicitLambda
+    | PlaceholderSection
+  [@@deriving show]
+
   and expression = {
     id : int;
     expr : expr_kind;
@@ -174,6 +180,7 @@ module AST = struct
     | TypeCheck of expression * type_expr (* x is Int *)
     | If of expression * statement * statement option
     | Function of {
+        origin : function_origin;
         generics : generic_param list option; (* [a], [a: show], etc. *)
         params : (string * type_expr option) list; (* parameter names and optional type annotations *)
         return_type : type_expr option; (* return type annotation *)

@@ -212,7 +212,7 @@ let check_program_with_annotations ?state ?(env = Infer.empty_env) (program : Sy
       and check_expr_annotations (expr : Syntax.Ast.AST.expression) (inferred : mono_type) :
           (unit, Diagnostic.t) result =
         match expr.expr with
-        | Syntax.Ast.AST.Function { return_type; params = _; body; generics; is_effectful = _ } -> (
+        | Syntax.Ast.AST.Function { return_type; params = _; body; generics; is_effectful = _; _ } -> (
             (* For generic functions, skip the return annotation check: type_callable already
                validated it during inference with proper type variable bindings.
                The second-pass check here can't reproduce the fresh-var mapping. *)
@@ -1144,6 +1144,30 @@ let%test "Phase6 prep: placeholder shorthand works in call arguments" =
   | Ok result -> result.result_type = Types.TArray Types.TInt
   | Error _ -> false
 
+let%test "Phase6 prep: placeholder shorthand works as a standalone section value" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  match check_string ~file_id:"<test>" "let times_two = _ * 2\ntimes_two(21)" with
+  | Ok result -> result.result_type = Types.TInt
+  | Error _ -> false
+
+let%test "Phase6 prep: placeholder shorthand supports qualified partial application" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  match
+    check_string ~env:(Builtins.prelude_env ()) ~file_id:"<test>"
+      "type Post = { owner: Str }\ntrait Visible[a] = {\n  fn visible_to(x: a, viewer: Str) -> Bool\n}\nimpl Visible[Post] = {\n  fn visible_to(x: Post, viewer: Str) -> Bool = x.owner == viewer\n}\nlet visible_to_ada = Visible.visible_to(_, \"ada\")\nvisible_to_ada({ owner: \"ada\" })"
+  with
+  | Ok result -> result.result_type = Types.TBool
+  | Error _ -> false
+
+let%test "Phase6 prep: placeholder shorthand supports projection section values" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  match check_string ~file_id:"<test>" "type Post = { updated_at: Int }\nlet updated_at = _.updated_at\nupdated_at({ updated_at: 7 })" with
+  | Ok result -> result.result_type = Types.TInt
+  | Error _ -> false
+
 let%test "Phase6 prep: placeholder shorthand works when callback is invoked in the callee" =
   Infer.reset_fresh_counter ();
   Trait_registry.clear ();
@@ -1215,7 +1239,19 @@ let%test "Phase6 prep: placeholder shorthand rejects effectful callback slots" =
       List.exists
         (fun (d : Diagnostic.t) ->
           d.code = "type-invalid-placeholder"
-          && String_utils.contains_substring ~needle:"effectful callbacks require explicit '=>'" d.message)
+          && String_utils.contains_substring ~needle:"explicit '=>'" d.message)
+        diags
+  | Ok _ -> false
+
+let%test "Phase6 prep: placeholder shorthand rejects effectful standalone sections" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  match check_string ~env:(Builtins.prelude_env ()) ~file_id:"<test>" "let printer = puts(_)\nprinter" with
+  | Error diags ->
+      List.exists
+        (fun (d : Diagnostic.t) ->
+          d.code = "type-invalid-placeholder"
+          && String_utils.contains_substring ~needle:"explicit '=>'" d.message)
         diags
   | Ok _ -> false
 

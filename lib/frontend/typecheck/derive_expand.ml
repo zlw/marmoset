@@ -354,7 +354,7 @@ let clone_default_body
             ( clone_expr condition,
               clone_stmt bound_names consequence,
               Option.map (clone_stmt bound_names) alternative )
-      | AST.Function { generics; params; return_type; is_effectful; body } ->
+      | AST.Function { origin; generics; params; return_type; is_effectful; body } ->
           let generic_names =
             match generics with
             | None -> []
@@ -363,6 +363,7 @@ let clone_default_body
           let bound_names' = List.fold_left (fun acc name -> StringSet.add name acc) bound_names generic_names in
           AST.Function
             {
+              origin;
               generics;
               params =
                 List.map

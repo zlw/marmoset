@@ -2147,7 +2147,15 @@ module Test = struct
 
   (* Helper for Function expressions with the new record structure *)
   let fn_expr params body =
-    AST.Function { generics = None; params; return_type = None; is_effectful = false; body }
+    AST.Function
+      {
+        origin = AST.DeclaredFunction;
+        generics = None;
+        params;
+        return_type = None;
+        is_effectful = false;
+        body;
+      }
 
   let run (tests : test list) : bool =
     tests
