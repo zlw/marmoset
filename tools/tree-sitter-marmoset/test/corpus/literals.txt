@@ -48,6 +48,22 @@ Empty string literal
     (string_literal)))
 
 ================================================================================
+Interpolated string literal
+================================================================================
+
+"hello #{name}!"
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (expression_statement
+    (string_literal
+      (string_content)
+      (interpolation
+        expression: (identifier))
+      (string_content))))
+
+================================================================================
 Boolean true
 ================================================================================
 
@@ -165,6 +181,25 @@ Record literal with spread
       (object_entry
         key: (identifier)
         value: (integer_literal)))))
+
+================================================================================
+Record literal with punned fields and spread
+================================================================================
+
+{ ...crate, troop:, bananas: }
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (expression_statement
+    (object_literal
+      (object_entry
+        (spread_entry
+          (identifier)))
+      (object_entry
+        key: (identifier))
+      (object_entry
+        key: (identifier)))))
 
 ================================================================================
 Comment

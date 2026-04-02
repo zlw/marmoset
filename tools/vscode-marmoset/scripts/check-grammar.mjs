@@ -72,6 +72,7 @@ assertRegexMatches(repo["builtin-types"], "match", "Unit", "builtin type pattern
 assertRegexDoesNotMatch(repo["builtin-types"], "match", "int", "builtin type pattern");
 
 assertAnyMatch(repo.operators.patterns, "=>", "operator patterns");
+assertAnyMatch(repo.operators.patterns, "|>", "operator patterns");
 assertAnyMatch(repo.operators.patterns, "&&", "operator patterns");
 assertAnyMatch(repo.operators.patterns, "||", "operator patterns");
 assertAnyMatch(repo.operators.patterns, "%", "operator patterns");
@@ -139,6 +140,27 @@ assert(
 assert(
   repo["type-definition"].patterns.some((entry) => entry?.include === "#wrapper-type"),
   "type-definition should highlight wrapper bodies",
+);
+assert(repo.interpolation, "interpolation repository entry is missing");
+assertRegexMatches(repo.interpolation, "begin", "#{name}", "interpolation begin");
+assertRegexMatches(repo.interpolation, "end", "}", "interpolation end");
+assert(
+  repo.string.patterns.some((entry) => entry?.include === "#interpolation"),
+  "string patterns should include interpolation",
+);
+assertRegexMatches(repo["field-access"], "match", ".ring!", "field-access match");
+assertRegexMatches(repo["field-access"], "match", ".hungry?", "field-access match");
+assert(
+  repo.expression.patterns.some((entry) => entry?.include === "#object-literal"),
+  "expression patterns should include object literals",
+);
+assert(
+  repo.expression.patterns.some((entry) => entry?.include === "#match-expression"),
+  "expression patterns should include match expressions",
+);
+assert(
+  repo.expression.patterns.some((entry) => entry?.include === "#if-expression"),
+  "expression patterns should include if expressions",
 );
 
 assertRegexMatches(

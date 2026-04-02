@@ -5,17 +5,18 @@ const PREC = {
   OR_PATTERN: 1,
   UNION_TYPE: 2,
   INTERSECTION_TYPE: 3,
-  LOGICAL_OR: 4,
-  LOGICAL_AND: 5,
-  EQUALS: 6,
-  LESS_GREATER: 7,
-  SUM: 8,
-  PRODUCT: 9,
-  IS: 10,
-  PREFIX: 11,
-  CALL: 12,
-  INDEX: 13,
-  DOT: 14,
+  PIPE: 4,
+  LOGICAL_OR: 5,
+  LOGICAL_AND: 6,
+  EQUALS: 7,
+  LESS_GREATER: 8,
+  SUM: 9,
+  PRODUCT: 10,
+  IS: 11,
+  PREFIX: 12,
+  CALL: 13,
+  INDEX: 14,
+  DOT: 15,
 };
 
 module.exports = grammar({
@@ -327,9 +328,23 @@ module.exports = grammar({
 
     float_literal: ($) => /[0-9]+\.[0-9]+/,
 
-    string_literal: ($) => seq('"', optional($.string_content), '"'),
+    string_literal: ($) =>
+      seq(
+        '"',
+        repeat(choice($.string_content, $.string_hash, $.interpolation)),
+        '"',
+      ),
 
-    string_content: ($) => /[^"]+/,
+    string_content: ($) => token.immediate(prec(1, /[^"\\#]+|\\./)),
+
+    string_hash: ($) => token.immediate(prec(2, "#")),
+
+    interpolation: ($) =>
+      seq(
+        token.immediate(prec(3, "#{")),
+        field("expression", $._expression),
+        "}",
+      ),
 
     boolean_literal: ($) => choice("true", "false"),
 
@@ -365,6 +380,7 @@ module.exports = grammar({
     infix_expression: ($) =>
       choice(
         ...[
+          ["|>", PREC.PIPE],
           ["||", PREC.LOGICAL_OR],
           ["&&", PREC.LOGICAL_AND],
           ["+", PREC.SUM],

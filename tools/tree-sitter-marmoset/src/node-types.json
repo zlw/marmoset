@@ -1682,12 +1682,100 @@
             "named": false
           },
           {
+            "type": "|>",
+            "named": false
+          },
+          {
             "type": "||",
             "named": false
           }
         ]
       },
       "right": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "array_literal",
+            "named": true
+          },
+          {
+            "type": "boolean_literal",
+            "named": true
+          },
+          {
+            "type": "call_expression",
+            "named": true
+          },
+          {
+            "type": "field_access",
+            "named": true
+          },
+          {
+            "type": "float_literal",
+            "named": true
+          },
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "if_expression",
+            "named": true
+          },
+          {
+            "type": "index_expression",
+            "named": true
+          },
+          {
+            "type": "infix_expression",
+            "named": true
+          },
+          {
+            "type": "integer_literal",
+            "named": true
+          },
+          {
+            "type": "is_expression",
+            "named": true
+          },
+          {
+            "type": "lambda_expression",
+            "named": true
+          },
+          {
+            "type": "match_expression",
+            "named": true
+          },
+          {
+            "type": "object_literal",
+            "named": true
+          },
+          {
+            "type": "parenthesized_expression",
+            "named": true
+          },
+          {
+            "type": "placeholder",
+            "named": true
+          },
+          {
+            "type": "prefix_expression",
+            "named": true
+          },
+          {
+            "type": "string_literal",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "interpolation",
+    "named": true,
+    "fields": {
+      "expression": {
         "multiple": false,
         "required": true,
         "types": [
@@ -3466,11 +3554,19 @@
     "named": true,
     "fields": {},
     "children": {
-      "multiple": false,
+      "multiple": true,
       "required": false,
       "types": [
         {
+          "type": "interpolation",
+          "named": true
+        },
+        {
           "type": "string_content",
+          "named": true
+        },
+        {
+          "type": "string_hash",
           "named": true
         }
       ]
@@ -3989,6 +4085,10 @@
     "named": false
   },
   {
+    "type": "#{",
+    "named": false
+  },
+  {
     "type": "%",
     "named": false
   },
@@ -4169,6 +4269,10 @@
     "named": true
   },
   {
+    "type": "string_hash",
+    "named": true
+  },
+  {
     "type": "trait",
     "named": false
   },
@@ -4190,6 +4294,10 @@
   },
   {
     "type": "|",
+    "named": false
+  },
+  {
+    "type": "|>",
     "named": false
   },
   {

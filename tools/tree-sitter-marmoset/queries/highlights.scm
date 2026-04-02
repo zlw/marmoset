@@ -7,6 +7,7 @@
 "case" @keyword.conditional
 "fn" @keyword.function
 "enum" @keyword.type
+"shape" @keyword.type
 "trait" @keyword.type
 "impl" @keyword.type
 "derive" @keyword.type
@@ -39,6 +40,7 @@
 "=" @operator
 "->" @operator
 "=>" @operator
+"|>" @operator
 "|" @operator
 "&" @operator
 "." @operator

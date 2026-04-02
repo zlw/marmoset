@@ -33,7 +33,7 @@ fn display_name[t: Named](x: t) -> Str = x.name
 
 fn print_book_name(book: Map[Str, Str], fallback: Str) => Unit = {
   let title = book["title"]
-  puts(title + fallback)
+  puts("#{title}#{fallback}")
 }
 
 let book = {
@@ -41,6 +41,9 @@ let book = {
 }
 
 let monkey = { name: "George", age: 7, bananas: 3 }
+let name = "Curious George"
+let promoted = { ...monkey, name: }
+let banner = promoted |> display_name
 
 display_name(monkey)
 print_book_name(book, "!")

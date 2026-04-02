@@ -112,6 +112,7 @@ search_fixed '"case" @keyword.conditional' languages/marmoset/highlights.scm
 search_fixed '"shape" @keyword.type' languages/marmoset/highlights.scm
 search_fixed '"override" @keyword.modifier' languages/marmoset/highlights.scm
 search_fixed '"=>" @operator' languages/marmoset/highlights.scm
+search_fixed '"|>" @operator' languages/marmoset/highlights.scm
 search_fixed '"&" @operator' languages/marmoset/highlights.scm
 search_fixed '"%" @operator' languages/marmoset/highlights.scm
 search_fixed '(fn_declaration' languages/marmoset/highlights.scm
@@ -212,9 +213,13 @@ scenario_source = textwrap.dedent(
       fn rename(self: Monkey, next_name: Str) -> Monkey = self
     }
 
+    let name = "Curious George"
+    let promoted = { ...{ name: "George", age: 7 }, name: }
+    let banner = promoted |> Greeter.greet("hi ")
+
     fn print_book_name(book: Map[Str, Str], fallback: Str) => Unit = {
       let title = book["title"]
-      puts(title + fallback)
+      puts("#{title}#{fallback}")
     }
     """
 ).strip() + "\n"
@@ -230,6 +235,8 @@ with tempfile.TemporaryDirectory() as tmpdir:
         ("function.method", "rename"),
         ("variable.parameter", "next_name"),
         ("property", "age"),
+        ("operator", "|>"),
+        ("property", "name"),
         ("type.builtin", "Unit"),
     ]:
         assert_capture(scenario_highlights, *expected)
