@@ -100,6 +100,7 @@ and find_in_stmt ~source ~offset ~parent (stmt : Ast.AST.statement) : Lsp_t.Sele
           List.find_map
             (fun (m : Ast.AST.method_impl) -> find_in_stmt ~source ~offset ~parent:current m.impl_method_body)
             inherent_methods
+      | Ast.AST.ExportDecl _ | Ast.AST.ImportDecl _ -> None
       | Ast.AST.EnumDef _ | Ast.AST.TypeDef _ | Ast.AST.ShapeDef _ | Ast.AST.DeriveDef _ | Ast.AST.TypeAlias _ ->
           None
     in

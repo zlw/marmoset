@@ -167,22 +167,32 @@ let run_command_capture_combined_output (cmd : string) : int * string =
   in
   (exit_code, output)
 
-let print_diagnostics ~(file_id : string) ~(source : string) (diags : Diagnostic.t list) : unit =
-  let source_lookup candidate_file_id =
-    if String.equal candidate_file_id file_id then
-      Some source
-    else
-      None
+let source_lookup_for_cli ~(entry_file : string) ~(entry_source : string) (candidate_file_id : string) : string option =
+  let try_read path =
+    try
+      if Sys.file_exists path then
+        Some (read_file path)
+      else
+        None
+    with _ -> None
   in
+  if String.equal candidate_file_id entry_file then
+    Some entry_source
+  else
+    let direct = try_read candidate_file_id in
+    match direct with
+    | Some _ -> direct
+    | None when Filename.is_relative candidate_file_id ->
+        try_read (Filename.concat (Sys.getcwd ()) candidate_file_id)
+    | None -> None
+
+let print_diagnostics ~(file_id : string) ~(source : string) (diags : Diagnostic.t list) : unit =
+  let source_lookup = source_lookup_for_cli ~entry_file:file_id ~entry_source:source in
   Printf.eprintf "%s\n" (Diagnostic.render_many_cli ~source_lookup diags)
 
-let compile_to_binary
-    ~(input_file : string)
-    ~(source : string)
-    ~(output_bin : string)
-    ~(emit_go_dir : string option)
-    ~(release : bool) : (Diagnostic.t list, Diagnostic.t list) result =
-  match Marmoset.Lib.Go_emitter.compile_to_build ~file_id:input_file source with
+let compile_to_binary ~(input_file : string) ~(output_bin : string) ~(emit_go_dir : string option) ~(release : bool) :
+    (Diagnostic.t list, Diagnostic.t list) result =
+  match Marmoset.Lib.Frontend_compiler.compile_entry_to_build ~entry_file:input_file with
   | Error diags -> Error diags
   | Ok build_output ->
       let diagnostics = build_output.diagnostics in
@@ -229,7 +239,7 @@ let run_build input output_opt emit_go_opt =
     | None -> Filename.basename (Filename.remove_extension input)
   in
   match
-    compile_to_binary ~input_file:input ~source ~output_bin:output ~emit_go_dir:emit_go_opt ~release:false
+    compile_to_binary ~input_file:input ~output_bin:output ~emit_go_dir:emit_go_opt ~release:false
   with
   | Ok diagnostics ->
       if diagnostics <> [] then
@@ -249,7 +259,7 @@ let run_release input output_opt =
     | Some o -> o
     | None -> Filename.basename (Filename.remove_extension input)
   in
-  match compile_to_binary ~input_file:input ~source ~output_bin:output ~emit_go_dir:None ~release:true with
+  match compile_to_binary ~input_file:input ~output_bin:output ~emit_go_dir:None ~release:true with
   | Ok diagnostics ->
       if diagnostics <> [] then
         print_diagnostics ~file_id:input ~source diagnostics;
@@ -264,7 +274,7 @@ let run_file ~(benchmark : bool) ~(filename : string) =
   (try Sys.remove tmp_bin with _ -> ());
 
   let release = benchmark in
-  match compile_to_binary ~input_file:filename ~source ~output_bin:tmp_bin ~emit_go_dir:None ~release with
+  match compile_to_binary ~input_file:filename ~output_bin:tmp_bin ~emit_go_dir:None ~release with
   | Error diags ->
       print_diagnostics ~file_id:filename ~source diags;
       exit 1
@@ -283,11 +293,10 @@ let run_file ~(benchmark : bool) ~(filename : string) =
 let run_check filename =
   let source = read_file filename in
   Marmoset_lsp.Doc_state.reset_globals ();
-  let env = Marmoset.Lib.Builtins.prelude_env () in
-  match Marmoset.Lib.Checker.check_string_with_annotations ~env ~file_id:filename source with
-  | Ok result ->
-      if result.diagnostics <> [] then
-        print_diagnostics ~file_id:filename ~source result.diagnostics;
+  match Marmoset.Lib.Frontend_compiler.check_entry ~entry_file:filename with
+  | Ok diagnostics ->
+      if diagnostics <> [] then
+        print_diagnostics ~file_id:filename ~source diagnostics;
       Printf.printf "OK\n"
   | Error errs ->
       print_diagnostics ~file_id:filename ~source errs;

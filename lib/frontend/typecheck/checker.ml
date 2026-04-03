@@ -27,10 +27,11 @@ type typecheck_result = {
   diagnostics : Diagnostic.t list; (* Diagnostics emitted during a successful check *)
 }
 
-let infer_program_safe ?state ~(env : Infer.type_env) (program : Syntax.Ast.AST.program) :
+let infer_program_safe ?state ?(prepare_state = true) ~(env : Infer.type_env)
+    (program : Syntax.Ast.AST.program) :
     (Infer.type_env * Infer.type_map * mono_type, Diagnostic.t list) result =
   try
-    match Infer.infer_program ?state ~env program with
+    match Infer.infer_program ?state ~prepare_state ~env program with
     | Ok result -> Ok result
     | Error e -> Error [ e ]
   with exn -> Error [ Diagnostic.error_no_span ~code:"type-internal" ~message:(Printexc.to_string exn) ]
@@ -75,9 +76,9 @@ let make_typecheck_result ~(result_type : mono_type) ~(environment : Infer.type_
 
 (* Type check a program (list of statements).
    Returns the type of the last expression and the final environment. *)
-let check_program ?state ?(env = Infer.empty_env) (program : Syntax.Ast.AST.program) :
+let check_program ?state ?(prepare_state = true) ?(env = Infer.empty_env) (program : Syntax.Ast.AST.program) :
     (typecheck_result, Diagnostic.t list) result =
-  match infer_program_safe ?state ~env program with
+  match infer_program_safe ?state ~prepare_state ~env program with
   | Error e -> Error (merge_diagnostics e)
   | Ok (final_env, type_map, result_type) ->
       Ok (make_typecheck_result ~result_type ~environment:final_env ~type_map)
@@ -85,12 +86,12 @@ let check_program ?state ?(env = Infer.empty_env) (program : Syntax.Ast.AST.prog
 (* Type check source code string.
     Parses and type checks in one step.
     Errors include source location information. *)
-let check_string ?state ?(env = Infer.empty_env) ~file_id (source : string) :
+let check_string ?state ?(prepare_state = true) ?(env = Infer.empty_env) ~file_id (source : string) :
     (typecheck_result, Diagnostic.t list) result =
   match Syntax.Parser.parse ~file_id source with
   | Error errors -> Error errors
   | Ok program -> (
-      match infer_program_safe ?state ~env program with
+      match infer_program_safe ?state ~prepare_state ~env program with
       | Error e -> Error (merge_diagnostics e)
       | Ok (final_env, type_map, result_type) ->
           Ok (make_typecheck_result ~result_type ~environment:final_env ~type_map))
@@ -163,10 +164,11 @@ let check_function_annotation (return_annotation : Syntax.Ast.AST.type_expr opti
 (* Type check a program with annotation support.
     This checks that all annotations match the inferred types.
     For Phase 2, constraint validation is skipped (Phase 3 work). *)
-let check_program_with_annotations ?state ?(env = Infer.empty_env) (program : Syntax.Ast.AST.program) :
+let check_program_with_annotations ?state ?(prepare_state = true) ?(env = Infer.empty_env)
+    (program : Syntax.Ast.AST.program) :
     (typecheck_result, Diagnostic.t list) result =
   (* First, do standard inference *)
-  match infer_program_safe ?state ~env program with
+  match infer_program_safe ?state ~prepare_state ~env program with
   | Error e -> Error (merge_diagnostics e)
   | Ok (final_env, type_map, result_type) -> (
       (* Phase 2: Validate annotations against inferred types *)
@@ -240,11 +242,12 @@ let check_program_with_annotations ?state ?(env = Infer.empty_env) (program : Sy
 
 (* Type check source code with annotations.
    Parses and type checks in one step, with annotation support. *)
-let check_string_with_annotations ?state ?(env = Infer.empty_env) ~file_id (source : string) :
+let check_string_with_annotations ?state ?(prepare_state = true) ?(env = Infer.empty_env) ~file_id
+    (source : string) :
     (typecheck_result, Diagnostic.t list) result =
   match Syntax.Parser.parse ~file_id source with
   | Error errors -> Error errors
-  | Ok program -> check_program_with_annotations ?state ~env program
+  | Ok program -> check_program_with_annotations ?state ~prepare_state ~env program
 
 (* Get the type of an expression as a string *)
 let type_string (source : string) : string =

@@ -1208,6 +1208,7 @@ and captures_top_level_values_stmt (top_level_values : StringSet.t) (bound : Str
           (bound, StringSet.empty) stmts
       in
       captured
+  | AST.ExportDecl _ | AST.ImportDecl _ -> StringSet.empty
   | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ | AST.TraitDef _ | AST.ImplDef _ | AST.InherentImplDef _
   | AST.DeriveDef _ | AST.TypeAlias _ ->
       StringSet.empty
@@ -1277,6 +1278,7 @@ let rec collect_funcs_stmt
       List.fold_left
         (fun bindings stmt -> collect_funcs_stmt ~top_level:false ~available_bindings:bindings state stmt)
         available_bindings stmts
+  | AST.ExportDecl _ | AST.ImportDecl _ -> available_bindings
   | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ -> available_bindings
   | AST.TraitDef _ | AST.ImplDef _ | AST.InherentImplDef _ | AST.DeriveDef _ | AST.TypeAlias _ ->
       available_bindings
@@ -2684,6 +2686,7 @@ and collect_forward_call_arg_types_stmt
       List.concat_map
         (fun (m : AST.method_impl) -> collect_forward_call_arg_types_stmt name type_map env m.impl_method_body)
         impl.inherent_methods
+  | AST.ExportDecl _ | AST.ImportDecl _ -> []
   | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ | AST.TraitDef _ | AST.DeriveDef _ | AST.TypeAlias _ -> []
 
 let resolve_local_function_type_from_calls_for_collect
@@ -2822,6 +2825,7 @@ let rec collect_insts_stmt
       collect_insts_expr state type_map env e;
       env
   | AST.Block stmts -> collect_insts_stmt_list state type_map env stmts
+  | AST.ExportDecl _ | AST.ImportDecl _ -> env
   | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ -> env (* Compile-time only *)
   | AST.TraitDef _ | AST.DeriveDef _ | AST.TypeAlias _ -> env
   | AST.ImplDef impl ->
@@ -3750,6 +3754,7 @@ and copy_specialized_stmt_types
   | AST.Return expr | AST.ExpressionStmt expr ->
       copy_specialized_expr_types source_map target_map specialization_subst expr
   | AST.Block stmts -> List.iter (copy_specialized_stmt_types source_map target_map specialization_subst) stmts
+  | AST.ExportDecl _ | AST.ImportDecl _ -> ()
   | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ | AST.TraitDef _ | AST.ImplDef _ | AST.InherentImplDef _
   | AST.DeriveDef _ | AST.TypeAlias _ ->
       ()
@@ -6039,6 +6044,7 @@ and collect_local_call_arg_types_stmt
       List.concat_map
         (fun (m : AST.method_impl) -> collect_local_call_arg_types_stmt name type_map env m.impl_method_body)
         impl.inherent_methods
+  | AST.ExportDecl _ | AST.ImportDecl _ -> []
   | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ | AST.TraitDef _ | AST.DeriveDef _ | AST.TypeAlias _ -> []
 
 and resolve_local_function_type_from_calls
@@ -6316,6 +6322,7 @@ and emit_stmt
   | AST.Block stmts ->
       let code, env' = emit_stmts state type_map env stmts in
       (code, env')
+  | AST.ExportDecl _ | AST.ImportDecl _ -> ("", env)
   | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ ->
       (* Compile-time-only declarations *)
       ("", env)
@@ -7145,6 +7152,7 @@ let collect_inherent_call_sites
         (collect_expr ~expected_type:(Some expr_type) acc env_with_binding let_binding.value, env_with_binding)
     | AST.Return e | AST.ExpressionStmt e -> (collect_expr acc env e, env)
     | AST.Block stmts -> (collect_stmt_list acc env stmts, env)
+    | AST.ExportDecl _ | AST.ImportDecl _ -> (acc, env)
     | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ | AST.TypeAlias _ | AST.DeriveDef _ -> (acc, env)
     | AST.TraitDef trait_def ->
         ( List.fold_left

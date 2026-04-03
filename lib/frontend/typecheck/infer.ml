@@ -6654,16 +6654,17 @@ let register_top_level_named_declarations (program : AST.program) : (unit, Diagn
   let* () = register_enums program in
   register_named program
 
-let infer_program ?(env = empty_env) ?state (program : AST.program) :
+let infer_program ?(env = empty_env) ?state ?(prepare_state = true) (program : AST.program) :
     (type_env * type_map * mono_type) infer_result =
   let state = Option.value state ~default:(create_inference_state ()) in
   with_inference_state state (fun () ->
-      Annotation.clear_type_aliases ();
-      Type_registry.clear ();
-      Inherent_registry.clear ();
-      clear_method_resolution_store ();
-      clear_type_var_user_names ();
-      clear_top_level_placeholders ();
+      if prepare_state then (
+        Annotation.clear_type_aliases ();
+        Type_registry.clear ();
+        Inherent_registry.clear ();
+        clear_method_resolution_store ();
+        clear_type_var_user_names ();
+        clear_top_level_placeholders ());
       match Derive_expand.expand_user_derives program with
       | Error e -> Error e
       | Ok expanded_program -> (
