@@ -8,6 +8,8 @@ source "$SCRIPT_DIR/common.sh"
 
 SNAPSHOT_ROOT="$REPO_ROOT/test/snapshots/go_normalized"
 CANARY_FIXTURE="$REPO_ROOT/test/fixtures/codegen_canary/cc01_pre_modules_mixed_feature_canary.mr"
+UNION_FALLBACK_FIXTURE="$REPO_ROOT/test/fixtures/codegen_canary/cc02_union_record_match_catch_all.mr"
+SPREAD_DYN_FIXTURE="$REPO_ROOT/test/fixtures/codegen_canary/cc03_record_spread_dyn_projection.mr"
 
 run_canary_structural_assertions() {
     TOTAL=$((TOTAL + 1))
@@ -115,5 +117,15 @@ milo!?|milo!?
 int:5
 str:ok" \
     "$(cat "$CANARY_FIXTURE")"
+
+expect_run \
+    "mixed record and scalar union members still reach catch-all arms" \
+    "99" \
+    "$(cat "$UNION_FALLBACK_FIXTURE")"
+
+expect_run \
+    "record spread copies package values into expected Dyn fields" \
+    "1" \
+    "$(cat "$SPREAD_DYN_FIXTURE")"
 
 suite_end

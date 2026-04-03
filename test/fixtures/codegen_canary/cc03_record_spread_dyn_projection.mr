@@ -1,0 +1,6 @@
+type Box = { value: Dyn[Show], tag: Int }
+
+let src = { value: 1, tag: 0 }
+let box: Box = { ...src }
+
+puts(Show.show(box.value))

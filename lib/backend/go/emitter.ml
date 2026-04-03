@@ -3860,14 +3860,14 @@ let rec emit_expr
               failwith
                 (Printf.sprintf "Record literal expected record type, got %s" (Types.to_string record_type))
         in
-        let result_fields =
+        let base_fields_opt, result_fields =
           match spread with
-          | None -> declared_fields
+          | None -> (None, declared_fields)
           | Some base_expr -> (
               match type_from_env_or_map env type_map base_expr |> Option.map Types.canonicalize_mono_type with
               | Some (Types.TRecord (base_fields, base_row)) ->
                   let base_fields, _ = normalize_record_row_type base_fields base_row in
-                  merge_record_fields base_fields declared_fields
+                  (Some base_fields, merge_record_fields base_fields declared_fields)
               | Some (Types.TIntersection members)
                 when List.for_all
                        (function
@@ -3877,13 +3877,15 @@ let rec emit_expr
                   match Annotation.merged_record_intersection_type members with
                   | Ok (Types.TRecord (base_fields, base_row)) ->
                       let base_fields, _ = normalize_record_row_type base_fields base_row in
-                      merge_record_fields base_fields declared_fields
-                  | _ -> declared_fields)
+                      (Some base_fields, merge_record_fields base_fields declared_fields)
+                  | _ -> (None, declared_fields))
               | Some base_type -> (
                   match Structural.fields_of_type base_type with
-                  | Some base_fields -> merge_record_fields base_fields declared_fields
-                  | None -> declared_fields)
-              | None -> declared_fields)
+                  | Some base_fields ->
+                      let base_fields = Types.normalize_record_fields base_fields in
+                      (Some base_fields, merge_record_fields base_fields declared_fields)
+                  | None -> (None, declared_fields))
+              | None -> (None, declared_fields))
         in
         let struct_type = emit_record_struct_type state result_fields in
         let emit_field_assignment field base_var_opt =
@@ -3894,7 +3896,23 @@ let rec emit_expr
               Printf.sprintf "%s: %s" go_name field_str
           | None -> (
               match base_var_opt with
-              | Some base_var -> Printf.sprintf "%s: %s.%s" go_name base_var go_name
+              | Some base_var ->
+                  let direct_value = Printf.sprintf "%s.%s" base_var go_name in
+                  let value_expr =
+                    match base_fields_opt with
+                    | Some base_fields -> (
+                        match
+                          List.find_opt
+                            (fun (base_field : Types.record_field_type) -> base_field.name = field.Types.name)
+                            base_fields
+                        with
+                        | Some base_field ->
+                            project_value_to_expected_type state type_map env base_field.typ field.Types.typ
+                              direct_value
+                        | None -> direct_value)
+                    | None -> direct_value
+                  in
+                  Printf.sprintf "%s: %s" go_name value_expr
               | None ->
                   failwith
                     (Printf.sprintf "Record field '%s' not provided and no spread base available" field.Types.name)
@@ -4584,44 +4602,40 @@ and emit_match_union_record ?target state type_map env scrutinee _scrutinee_type
         flat_patterns
     in
     let case_body =
-      match Structural.fields_of_type member_type with
-      | Some _member_fields ->
-          let arm_blocks =
-            List.mapi
-              (fun idx (pattern, body) ->
-                let pre_body_lines, body_transform =
-                  match (pattern.AST.pat, scrutinee_path_opt) with
-                  | AST.PRecord _, Some path when Type_narrowing.is_identifier_path path ->
-                      let go_name = go_safe_ident path.root in
-                      ( [ Printf.sprintf "%s := %s" go_name member_var; Printf.sprintf "_ = %s" go_name ],
-                        Fun.id )
-                  | AST.PRecord _, Some path ->
-                      let narrowed_name = Type_narrowing.temp_name path "typed" in
-                      let go_name = go_safe_ident narrowed_name in
-                      ( [ Printf.sprintf "%s := %s" go_name member_var; Printf.sprintf "_ = %s" go_name ],
-                        Type_narrowing.substitute_path_in_expr path
-                          ~replace:(Type_narrowing.replacement_identifier narrowed_name) )
-                  | _ -> ([], Fun.id)
-                in
-                emit_record_match_arm ~pre_body_lines ~body_transform ?target state type_map env
-                  match_result_type member_var member_type pattern body (idx = 0))
-              matching_patterns
-          in
-          let has_unconditional =
-            List.exists
-              (fun (pattern, _body) ->
-                let conds, _binds = emit_pattern_plan state pattern member_var member_type in
-                conds = [])
-              matching_patterns
-          in
-          if matching_patterns = [] then
-            "\t\tpanic(\"non-exhaustive union match\")\n"
-          else if has_unconditional then
-            String.concat "" arm_blocks ^ "\n"
-          else
-            append_else_panic ~branch_code:(String.concat "" arm_blocks) ~indent:"\t"
-              ~message:"non-exhaustive union match"
-      | None -> "\t\tpanic(\"non-exhaustive union match\")\n"
+      let arm_blocks =
+        List.mapi
+          (fun idx (pattern, body) ->
+            let pre_body_lines, body_transform =
+              match (pattern.AST.pat, scrutinee_path_opt, Structural.fields_of_type member_type) with
+              | AST.PRecord _, Some path, Some _member_fields when Type_narrowing.is_identifier_path path ->
+                  let go_name = go_safe_ident path.root in
+                  ([ Printf.sprintf "%s := %s" go_name member_var; Printf.sprintf "_ = %s" go_name ], Fun.id)
+              | AST.PRecord _, Some path, Some _member_fields ->
+                  let narrowed_name = Type_narrowing.temp_name path "typed" in
+                  let go_name = go_safe_ident narrowed_name in
+                  ( [ Printf.sprintf "%s := %s" go_name member_var; Printf.sprintf "_ = %s" go_name ],
+                    Type_narrowing.substitute_path_in_expr path
+                      ~replace:(Type_narrowing.replacement_identifier narrowed_name) )
+              | _ -> ([], Fun.id)
+            in
+            emit_record_match_arm ~pre_body_lines ~body_transform ?target state type_map env
+              match_result_type member_var member_type pattern body (idx = 0))
+          matching_patterns
+      in
+      let has_unconditional =
+        List.exists
+          (fun (pattern, _body) ->
+            let conds, _binds = emit_pattern_plan state pattern member_var member_type in
+            conds = [])
+          matching_patterns
+      in
+      if matching_patterns = [] then
+        "\t\tpanic(\"non-exhaustive union match\")\n"
+      else if has_unconditional then
+        String.concat "" arm_blocks ^ "\n"
+      else
+        append_else_panic ~branch_code:(String.concat "" arm_blocks) ~indent:"\t"
+          ~message:"non-exhaustive union match"
     in
     Printf.sprintf "\tcase %s:\n%s" go_member_type case_body
   in
@@ -6051,11 +6065,11 @@ and emit_stmt
                         (Printf.sprintf "Record literal expected record-like type, got %s"
                            (Types.to_string other)))
             in
-            let result_fields =
+            let base_fields_opt, result_fields =
               match type_from_env_or_map env type_map base_expr |> Option.map Types.canonicalize_mono_type with
               | Some (Types.TRecord (base_fields, base_row)) ->
                   let base_fields, _ = normalize_record_row_type base_fields base_row in
-                  merge_record_fields base_fields declared_fields
+                  (Some base_fields, merge_record_fields base_fields declared_fields)
               | Some (Types.TIntersection members)
                 when List.for_all
                        (function
@@ -6065,13 +6079,15 @@ and emit_stmt
                   match Annotation.merged_record_intersection_type members with
                   | Ok (Types.TRecord (base_fields, base_row)) ->
                       let base_fields, _ = normalize_record_row_type base_fields base_row in
-                      merge_record_fields base_fields declared_fields
-                  | _ -> declared_fields)
+                      (Some base_fields, merge_record_fields base_fields declared_fields)
+                  | _ -> (None, declared_fields))
               | Some base_type -> (
                   match Structural.fields_of_type base_type with
-                  | Some base_fields -> merge_record_fields base_fields declared_fields
-                  | None -> declared_fields)
-              | None -> declared_fields
+                  | Some base_fields ->
+                      let base_fields = Types.normalize_record_fields base_fields in
+                      (Some base_fields, merge_record_fields base_fields declared_fields)
+                  | None -> (None, declared_fields))
+              | None -> (None, declared_fields)
             in
             let struct_type = emit_record_struct_type state result_fields in
             let base_str = emit_expr state type_map env base_expr in
@@ -6096,7 +6112,22 @@ and emit_stmt
                   Printf.sprintf "%s: %s" go_name field_str
               | None ->
                   if uses_spread_base then
-                    Printf.sprintf "%s: %s.%s" go_name spread_var go_name
+                    let direct_value = Printf.sprintf "%s.%s" spread_var go_name in
+                    let value_expr =
+                      match base_fields_opt with
+                      | Some base_fields -> (
+                          match
+                            List.find_opt
+                              (fun (base_field : Types.record_field_type) -> base_field.name = field.Types.name)
+                              base_fields
+                          with
+                          | Some base_field ->
+                              project_value_to_expected_type state type_map env base_field.typ field.Types.typ
+                                direct_value
+                          | None -> direct_value)
+                      | None -> direct_value
+                    in
+                    Printf.sprintf "%s: %s" go_name value_expr
                   else
                     failwith
                       (Printf.sprintf "Record field '%s' not provided and spread base disabled" field.Types.name)
