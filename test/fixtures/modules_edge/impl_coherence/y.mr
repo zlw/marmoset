@@ -1,0 +1,5 @@
+import b_impl
+
+export y
+
+let y = 2

@@ -45,6 +45,21 @@ let compiler_error ~(code : string) ~(message : string) : Diagnostic.t =
 
 let merge_hashtbl dst src = Hashtbl.iter (fun key value -> Hashtbl.replace dst key value) src
 
+let iter_result f xs =
+  let rec go = function
+    | [] -> Ok ()
+    | x :: rest ->
+        let* () = f x in
+        go rest
+  in
+  go xs
+
+let error_at_stmt ~(code : string) ~(message : string) (stmt : AST.statement) : Diagnostic.t =
+  match stmt.file_id with
+  | Some file_id ->
+      Diagnostic.error_with_span ~code ~message ~file_id ~start_pos:stmt.pos ~end_pos:stmt.end_pos ()
+  | None -> compiler_error ~code ~message
+
 let reset_module_state () =
   Annotation.clear_type_aliases ();
   Type_registry.clear ();
@@ -340,13 +355,83 @@ let extract_module_signature
       type_impls = locals.type_impls;
     }
 
+let rewrite_project_modules
+    ~(surfaces : (string, Import_resolver.module_surface) Hashtbl.t)
+    (graph : Module_context.module_graph) :
+    ((string, Import_resolver.rewrite_result) Hashtbl.t, Diagnostic.t list) result =
+  let rewrites = Hashtbl.create (List.length graph.topo_order) in
+  let rec go = function
+    | [] -> Ok rewrites
+    | module_id :: rest -> (
+        match Hashtbl.find_opt graph.modules module_id with
+        | None ->
+            Error [ compiler_error ~code:"module-missing" ~message:(Printf.sprintf "Missing module '%s'" module_id) ]
+        | Some module_info -> (
+            let* rewrite =
+              Import_resolver.rewrite_module ~surfaces module_info |> Result.map_error (fun diag -> [ diag ])
+            in
+            Hashtbl.replace rewrites module_id rewrite;
+            go rest))
+  in
+  go graph.topo_order
+
+let validate_build_wide_trait_impl_coherence
+    ~(rewrites : (string, Import_resolver.rewrite_result) Hashtbl.t)
+    (graph : Module_context.module_graph) : (unit, Diagnostic.t list) result =
+  reset_module_state ();
+  ignore (Builtins.prelude_env ());
+  let programs =
+    List.filter_map
+      (fun module_id ->
+        Hashtbl.find_opt rewrites module_id
+        |> Option.map (fun (rewrite : Import_resolver.rewrite_result) -> rewrite.program))
+      graph.topo_order
+  in
+  let* () =
+    iter_result Infer.predeclare_top_level_named_declarations programs |> Result.map_error (fun diag -> [ diag ])
+  in
+  let* () =
+    iter_result Infer.predeclare_top_level_type_aliases programs |> Result.map_error (fun diag -> [ diag ])
+  in
+  let* () =
+    iter_result Infer.register_top_level_named_declarations programs |> Result.map_error (fun diag -> [ diag ])
+  in
+  let register_impl_stmt (stmt : AST.statement) =
+    match stmt.stmt with
+    | AST.ImplDef impl_def ->
+        let type_bindings =
+          List.map (fun (param : AST.generic_param) -> (param.name, Types.TVar param.name)) impl_def.impl_type_params
+        in
+        let* for_type =
+          Annotation.type_expr_to_mono_type_with type_bindings impl_def.impl_for_type
+          |> Result.map_error (fun (diag : Diagnostic.t) ->
+                 [ error_at_stmt ~code:"module-trait-impl-register" ~message:diag.message stmt ])
+        in
+        (try
+           Trait_registry.register_impl
+             {
+               Trait_registry.impl_trait_name = impl_def.impl_trait_name;
+               impl_type_params = impl_def.impl_type_params;
+               impl_for_type = for_type;
+               impl_methods = [];
+             };
+           Ok ()
+         with Failure message ->
+           Error [ error_at_stmt ~code:"module-trait-impl-register" ~message stmt ])
+    | _ -> Ok ()
+  in
+  iter_result
+    (fun module_id ->
+      match Hashtbl.find_opt rewrites module_id with
+      | None -> Ok ()
+      | Some rewrite -> iter_result register_impl_stmt rewrite.program)
+    graph.topo_order
+
 let compile_module
     ~(surfaces : (string, Import_resolver.module_surface) Hashtbl.t)
     ~(typed_signatures : (string, Module_sig.module_signature) Hashtbl.t)
+    ~(rewrite : Import_resolver.rewrite_result)
     (module_info : Module_context.parsed_module) : (checked_module, Diagnostic.t list) result =
-  let* rewrite =
-    Import_resolver.rewrite_module ~surfaces module_info |> Result.map_error (fun diag -> [ diag ])
-  in
   reset_module_state ();
   let* env =
     let rec seed_imports env_acc = function
@@ -431,6 +516,8 @@ let merge_checked_modules (modules : checked_module list) : compiled_project =
 
 let compile_project (graph : Module_context.module_graph) : (compiled_project, Diagnostic.t list) result =
   let* surfaces = Import_resolver.build_module_surfaces graph |> Result.map_error (fun diag -> [ diag ]) in
+  let* rewrites = rewrite_project_modules ~surfaces graph in
+  let* () = validate_build_wide_trait_impl_coherence ~rewrites graph in
   let typed_signatures = Hashtbl.create (List.length graph.topo_order) in
   let rec go acc = function
     | [] -> Ok (merge_checked_modules (List.rev acc))
@@ -439,7 +526,14 @@ let compile_project (graph : Module_context.module_graph) : (compiled_project, D
         | None ->
             Error [ compiler_error ~code:"module-missing" ~message:(Printf.sprintf "Missing module '%s'" module_id) ]
         | Some module_info -> (
-            let* checked_module = compile_module ~surfaces ~typed_signatures module_info in
+            let* rewrite =
+              match Hashtbl.find_opt rewrites module_id with
+              | Some rewrite -> Ok rewrite
+              | None ->
+                  Error
+                    [ compiler_error ~code:"module-rewrite-missing" ~message:(Printf.sprintf "Missing rewrite for '%s'" module_id) ]
+            in
+            let* checked_module = compile_module ~surfaces ~typed_signatures ~rewrite module_info in
             Hashtbl.replace typed_signatures module_id checked_module.signature;
             go (checked_module :: acc) rest))
   in
@@ -544,3 +638,43 @@ let%test "compile_entry_to_build keeps legacy single-file path working" =
       match compile_entry_to_build ~entry_file:(Filename.concat root "main.mr") with
       | Error _ -> false
       | Ok build_output -> Diagnostics.String_utils.contains_substring ~needle:"func add_" build_output.main_go)
+
+let%test "check_entry rejects colliding direct imports" =
+  Discovery.with_temp_project
+    [
+      ("main.mr", "import a.add\nimport b.add\nputs(add(1, 2))\n");
+      ("a.mr", "export add\nfn add(x: Int, y: Int) -> Int = x + y\n");
+      ("b.mr", "export add\nfn add(x: Int, y: Int) -> Int = x + y + 10\n");
+    ]
+    (fun root ->
+      match check_entry ~entry_file:(Filename.concat root "main.mr") with
+      | Ok _ -> false
+      | Error diags ->
+          List.exists
+            (fun (diag : Diagnostic.t) ->
+              diag.code = "module-import-name-collision"
+              && Diagnostics.String_utils.contains_substring ~needle:"existing binding 'add'" diag.message)
+            diags)
+
+let%test "compile_project rejects duplicate impls across transitive imports" =
+  Discovery.with_temp_project
+    [
+      ("main.mr", "import x\nimport y\nputs(1)\n");
+      ("point.mr", "export Point, Printer\ntype Point = { x: Int, y: Int }\ntrait Printer[a] = { fn print(x: a) -> Str }\n");
+      ("a_impl.mr", "import point.Point\nimport point.Printer\nimpl Printer[Point] = { fn print(p: Point) -> Str = \"a\" }\n");
+      ("b_impl.mr", "import point.Point\nimport point.Printer\nimpl Printer[Point] = { fn print(p: Point) -> Str = \"b\" }\n");
+      ("x.mr", "import a_impl\nexport x\nlet x = 1\n");
+      ("y.mr", "import b_impl\nexport y\nlet y = 2\n");
+    ]
+    (fun root ->
+      match Discovery.discover_project ~entry_file:(Filename.concat root "main.mr") with
+      | Error _ -> false
+      | Ok graph -> (
+          match compile_project graph with
+          | Ok _ -> false
+          | Error diags ->
+              List.exists
+                (fun (diag : Diagnostic.t) ->
+                  diag.code = "module-trait-impl-register"
+                  && Diagnostics.String_utils.contains_substring ~needle:"Duplicate impl registration for trait" diag.message)
+                diags))

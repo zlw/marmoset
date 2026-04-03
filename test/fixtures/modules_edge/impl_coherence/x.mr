@@ -1,0 +1,5 @@
+import a_impl
+
+export x
+
+let x = 1
