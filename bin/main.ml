@@ -167,7 +167,8 @@ let run_command_capture_combined_output (cmd : string) : int * string =
   in
   (exit_code, output)
 
-let source_lookup_for_cli ~(entry_file : string) ~(entry_source : string) (candidate_file_id : string) : string option =
+let source_lookup_for_cli ~(entry_file : string) ~(entry_source : string) (candidate_file_id : string) :
+    string option =
   let try_read path =
     try
       if Sys.file_exists path then
@@ -190,7 +191,8 @@ let print_diagnostics ~(file_id : string) ~(source : string) (diags : Diagnostic
   let source_lookup = source_lookup_for_cli ~entry_file:file_id ~entry_source:source in
   Printf.eprintf "%s\n" (Diagnostic.render_many_cli ~source_lookup diags)
 
-let compile_to_binary ~(input_file : string) ~(output_bin : string) ~(emit_go_dir : string option) ~(release : bool) :
+let compile_to_binary
+    ~(input_file : string) ~(output_bin : string) ~(emit_go_dir : string option) ~(release : bool) :
     (Diagnostic.t list, Diagnostic.t list) result =
   match Marmoset.Lib.Frontend_compiler.compile_entry_to_build ~entry_file:input_file with
   | Error diags -> Error diags
@@ -238,9 +240,7 @@ let run_build input output_opt emit_go_opt =
     | Some o -> o
     | None -> Filename.basename (Filename.remove_extension input)
   in
-  match
-    compile_to_binary ~input_file:input ~output_bin:output ~emit_go_dir:emit_go_opt ~release:false
-  with
+  match compile_to_binary ~input_file:input ~output_bin:output ~emit_go_dir:emit_go_opt ~release:false with
   | Ok diagnostics ->
       if diagnostics <> [] then
         print_diagnostics ~file_id:input ~source diagnostics;

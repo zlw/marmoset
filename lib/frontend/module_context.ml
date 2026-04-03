@@ -52,12 +52,12 @@ let build_graph
       | Some idx ->
           let cycle_tail = drop idx (List.rev stack) in
           Error (cycle_error (cycle_tail @ [ module_id ]))
-      | None ->
+      | None -> (
           Hashtbl.replace visiting module_id (List.length stack);
           let deps = Option.value (Hashtbl.find_opt dependencies module_id) ~default:[] in
           let rec visit_deps = function
             | [] -> Ok ()
-            | dep :: rest ->
+            | dep :: rest -> (
                 if not (Hashtbl.mem modules dep) then
                   Error
                     (Diagnostic.error_no_span ~code:"module-missing"
@@ -65,7 +65,7 @@ let build_graph
                 else
                   match visit (module_id :: stack) dep with
                   | Error _ as err -> err
-                  | Ok () -> visit_deps rest
+                  | Ok () -> visit_deps rest)
           in
           match visit_deps deps with
           | Error _ as err -> err
@@ -73,7 +73,7 @@ let build_graph
               Hashtbl.remove visiting module_id;
               Hashtbl.replace visited module_id ();
               order := module_id :: !order;
-              Ok ()
+              Ok ())
   in
   match visit [] entry_module with
   | Error _ as err -> err
@@ -110,5 +110,4 @@ let%test "build_graph reports cycle path" =
   match build_graph ~modules ~dependencies:deps ~entry_module:"main" with
   | Ok _ -> false
   | Error diag ->
-      diag.code = "module-cycle"
-      && String.equal diag.message "Circular module dependency: a -> b -> a"
+      diag.code = "module-cycle" && String.equal diag.message "Circular module dependency: a -> b -> a"

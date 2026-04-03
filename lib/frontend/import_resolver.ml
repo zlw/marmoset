@@ -1,6 +1,5 @@
 module Diagnostic = Diagnostics.Diagnostic
 module AST = Syntax.Ast.AST
-
 module StringMap = Map.Make (String)
 module StringSet = Set.Make (String)
 
@@ -65,27 +64,26 @@ let escape_internal_component (name : string) : string =
 let internal_prefix_of_module_id (module_id : string) : string =
   String.split_on_char '.' module_id |> List.map escape_internal_component |> String.concat "__"
 
-let internal_name_of module_id name = internal_prefix_of_module_id module_id ^ "__" ^ escape_internal_component name
+let internal_name_of module_id name =
+  internal_prefix_of_module_id module_id ^ "__" ^ escape_internal_component name
 
 let%test "internal mangling keeps module separators distinct from literal underscores" =
   internal_prefix_of_module_id "foo.bar" = "foo__bar"
   && internal_prefix_of_module_id "foo__bar" = "foo_u005f_u005fbar"
   && internal_name_of "bang" "panic!" = "bang__panic_u0021"
 
-let merge_presence (existing : member_presence option) ~(internal_name : string)
-    ?(has_value = false) ?(has_enum = false) ?(has_named_type = false) ?(has_transparent_type = false)
-    ?(has_shape = false) ?(has_trait = false) () =
+let merge_presence
+    (existing : member_presence option)
+    ~(internal_name : string)
+    ?(has_value = false)
+    ?(has_enum = false)
+    ?(has_named_type = false)
+    ?(has_transparent_type = false)
+    ?(has_shape = false)
+    ?(has_trait = false)
+    () =
   match existing with
-  | None ->
-      {
-        internal_name;
-        has_value;
-        has_enum;
-        has_named_type;
-        has_transparent_type;
-        has_shape;
-        has_trait;
-      }
+  | None -> { internal_name; has_value; has_enum; has_named_type; has_transparent_type; has_shape; has_trait }
   | Some prior ->
       {
         internal_name = prior.internal_name;
@@ -111,11 +109,11 @@ let presence_of_decl module_id (stmt : AST.statement) (decls : member_presence S
   in
   match stmt.stmt with
   | AST.Let { name; _ } when not (String.equal name "_") ->
-      add name ~has_value:true ~has_enum:false ~has_named_type:false ~has_transparent_type:false
-        ~has_shape:false ~has_trait:false
+      add name ~has_value:true ~has_enum:false ~has_named_type:false ~has_transparent_type:false ~has_shape:false
+        ~has_trait:false
   | AST.EnumDef { name; _ } ->
-      add name ~has_value:false ~has_enum:true ~has_named_type:false ~has_transparent_type:false
-        ~has_shape:false ~has_trait:false
+      add name ~has_value:false ~has_enum:true ~has_named_type:false ~has_transparent_type:false ~has_shape:false
+        ~has_trait:false
   | AST.TypeDef { type_name; _ } ->
       add type_name ~has_value:false ~has_enum:false ~has_named_type:true ~has_transparent_type:false
         ~has_shape:false ~has_trait:false
@@ -123,8 +121,8 @@ let presence_of_decl module_id (stmt : AST.statement) (decls : member_presence S
       add shape_name ~has_value:false ~has_enum:false ~has_named_type:false ~has_transparent_type:false
         ~has_shape:true ~has_trait:false
   | AST.TraitDef { name; _ } ->
-      add name ~has_value:false ~has_enum:false ~has_named_type:false ~has_transparent_type:false
-        ~has_shape:false ~has_trait:true
+      add name ~has_value:false ~has_enum:false ~has_named_type:false ~has_transparent_type:false ~has_shape:false
+        ~has_trait:true
   | AST.TypeAlias { alias_name; _ } ->
       add alias_name ~has_value:false ~has_enum:false ~has_named_type:false ~has_transparent_type:true
         ~has_shape:false ~has_trait:false
@@ -163,10 +161,10 @@ let build_module_surfaces (graph : Module_context.module_graph) :
   let seq = Hashtbl.to_seq_values graph.modules |> List.of_seq in
   let rec go = function
     | [] -> Ok surfaces
-    | module_info :: rest -> (
+    | module_info :: rest ->
         let* surface = build_module_surface module_info in
         Hashtbl.replace surfaces surface.module_id surface;
-        go rest)
+        go rest
   in
   go seq
 
@@ -188,9 +186,7 @@ let import_error (imp : Module_context.import_info) ~(code : string) ~(message :
       Diagnostic.error_with_span ~code ~message ~file_id ~start_pos:imp.start_pos ~end_pos:imp.end_pos ()
   | None -> Diagnostic.error_no_span ~code ~message
 
-let resolve_import_kind
-    (surfaces : (string, module_surface) Hashtbl.t)
-    (imp : Module_context.import_info) :
+let resolve_import_kind (surfaces : (string, module_surface) Hashtbl.t) (imp : Module_context.import_info) :
     ([ `Namespace of module_surface | `Direct of module_surface * member_presence ], Diagnostic.t) result =
   let full_module_id = import_path_string imp.import_path in
   let module_candidate = Hashtbl.find_opt surfaces full_module_id in
@@ -212,10 +208,11 @@ let resolve_import_kind
         (import_error imp ~code:"module-import-ambiguous"
            ~message:
              (Printf.sprintf "Ambiguous import '%s': it matches both module '%s' and exported member '%s'"
-                full_module_id full_module_id (List.hd (List.rev imp.import_path))))
+                full_module_id full_module_id
+                (List.hd (List.rev imp.import_path))))
   | Some module_surface, None -> Ok (`Namespace module_surface)
   | None, Some (parent_surface, exported) -> Ok (`Direct (parent_surface, exported))
-  | None, None ->
+  | None, None -> (
       let parent_not_exported =
         match List.rev imp.import_path with
         | [] | [ _ ] -> None
@@ -225,7 +222,7 @@ let resolve_import_kind
             | None -> None
             | Some _ -> Some (parent_id, member_name))
       in
-      (match parent_not_exported with
+      match parent_not_exported with
       | Some (parent_id, member_name) ->
           Error
             (import_error imp ~code:"module-import-not-exported"
@@ -243,8 +240,8 @@ let import_name_collision_error (imp : Module_context.import_info) ~(local_name 
          local_name)
 
 let build_resolved_imports
-    ~(surfaces : (string, module_surface) Hashtbl.t)
-    (module_info : Module_context.parsed_module) : (resolved_imports, Diagnostic.t) result =
+    ~(surfaces : (string, module_surface) Hashtbl.t) (module_info : Module_context.parsed_module) :
+    (resolved_imports, Diagnostic.t) result =
   let rec go namespace_roots direct_bindings direct_modules = function
     | [] ->
         Ok
@@ -264,23 +261,27 @@ let build_resolved_imports
                     Error (import_name_collision_error imp ~local_name:alias)
                   else
                     Ok
-                      (StringMap.add alias (insert_namespace_path empty_namespace_node [] module_surface)
+                      (StringMap.add alias
+                         (insert_namespace_path empty_namespace_node [] module_surface)
                          namespace_roots)
               | None -> (
                   match module_surface.module_path with
                   | [] -> Ok namespace_roots
-                  | root :: tail ->
+                  | root :: tail -> (
                       if StringMap.mem root direct_bindings then
                         Error (import_name_collision_error imp ~local_name:root)
                       else
                         let root_node =
                           Option.value (StringMap.find_opt root namespace_roots) ~default:empty_namespace_node
                         in
-                        (match root_node.module_ref with
+                        match root_node.module_ref with
                         | Some existing_root when not (String.equal existing_root.module_id root) ->
                             Error (import_name_collision_error imp ~local_name:root)
                         | _ ->
-                            Ok (StringMap.add root (insert_namespace_path root_node tail module_surface) namespace_roots)))
+                            Ok
+                              (StringMap.add root
+                                 (insert_namespace_path root_node tail module_surface)
+                                 namespace_roots)))
             in
             go namespace_roots direct_bindings (module_surface.module_id :: direct_modules) rest
         | `Direct (parent_surface, exported) ->
@@ -294,7 +295,8 @@ let build_resolved_imports
             else
               go namespace_roots
                 (StringMap.add local_name exported direct_bindings)
-                (parent_surface.module_id :: direct_modules) rest)
+                (parent_surface.module_id :: direct_modules)
+                rest)
   in
   go StringMap.empty StringMap.empty [] module_info.imports
 
@@ -338,11 +340,7 @@ let chain_segments_of_expr (expr : AST.expression) : string list option =
 
 let%test "chain_segments_of_expr keeps qualifier order stable" =
   let open AST in
-  let expr =
-    mk_expr
-      (FieldAccess
-         (mk_expr (FieldAccess (mk_expr (Identifier "collections"), "list")), "head"))
-  in
+  let expr = mk_expr (FieldAccess (mk_expr (FieldAccess (mk_expr (Identifier "collections"), "list")), "head")) in
   chain_segments_of_expr expr = Some [ "collections"; "list"; "head" ]
 
 let lookup_namespace_node (roots : namespace_node StringMap.t) (parts : string list) : namespace_node option =
@@ -361,17 +359,16 @@ let lookup_namespace_node (roots : namespace_node StringMap.t) (parts : string l
           in
           walk node rest)
 
-let resolve_namespace_member
-    ~(namespace_roots : namespace_node StringMap.t)
-    (segments : string list) : [ `ModulePath | `Exported of member_presence ] option =
+let resolve_namespace_member ~(namespace_roots : namespace_node StringMap.t) (segments : string list) :
+    [ `ModulePath | `Exported of member_presence ] option =
   match lookup_namespace_node namespace_roots segments with
   | Some { module_ref = Some _; _ } -> Some `ModulePath
   | Some _ -> None
-  | None -> (
+  | None ->
       let rec try_split rev_prefix rev_suffix =
         match rev_prefix with
         | [] -> None
-        | part :: prefix_tail ->
+        | part :: prefix_tail -> (
             let prefix = List.rev (part :: prefix_tail) in
             let suffix = List.rev rev_suffix in
             match lookup_namespace_node namespace_roots prefix with
@@ -382,9 +379,9 @@ let resolve_namespace_member
                     | Some exported -> Some (`Exported exported)
                     | None -> None)
                 | _ -> None)
-            | _ -> try_split prefix_tail (part :: rev_suffix)
+            | _ -> try_split prefix_tail (part :: rev_suffix))
       in
-      try_split (List.rev segments) [])
+      try_split (List.rev segments) []
 
 let collect_inherent_target_generics (te : AST.type_expr) : StringSet.t =
   let is_known_type_name (name : string) =
@@ -409,15 +406,15 @@ let collect_inherent_target_generics (te : AST.type_expr) : StringSet.t =
         go ~in_head:false acc ret
     | AST.TUnion members | AST.TIntersection members -> List.fold_left (go ~in_head:false) acc members
     | AST.TRecord (fields, _row) ->
-        List.fold_left (fun acc (field : AST.record_type_field) -> go ~in_head:false acc field.field_type) acc
-          fields
+        List.fold_left
+          (fun acc (field : AST.record_type_field) -> go ~in_head:false acc field.field_type)
+          acc fields
   in
   go ~in_head:true StringSet.empty te
 
 let rewrite_constraints
-    ~(type_bindings : StringSet.t)
-    ~(available_bindings : member_presence StringMap.t)
-    (constraints : string list) : string list =
+    ~(type_bindings : StringSet.t) ~(available_bindings : member_presence StringMap.t) (constraints : string list)
+    : string list =
   List.map
     (fun name ->
       if StringSet.mem name type_bindings then
@@ -432,9 +429,8 @@ let rewrite_constraints
     constraints
 
 let rec rewrite_type_expr
-    ~(type_bindings : StringSet.t)
-    ~(available_bindings : member_presence StringMap.t)
-    (te : AST.type_expr) : AST.type_expr =
+    ~(type_bindings : StringSet.t) ~(available_bindings : member_presence StringMap.t) (te : AST.type_expr) :
+    AST.type_expr =
   let rewrite_name name =
     if StringSet.mem name type_bindings then
       name
@@ -454,8 +450,7 @@ let rec rewrite_type_expr
         ( List.map (rewrite_type_expr ~type_bindings ~available_bindings) params,
           rewrite_type_expr ~type_bindings ~available_bindings ret,
           is_effectful )
-  | AST.TUnion members ->
-      AST.TUnion (List.map (rewrite_type_expr ~type_bindings ~available_bindings) members)
+  | AST.TUnion members -> AST.TUnion (List.map (rewrite_type_expr ~type_bindings ~available_bindings) members)
   | AST.TIntersection members ->
       AST.TIntersection (List.map (rewrite_type_expr ~type_bindings ~available_bindings) members)
   | AST.TRecord (fields, row) ->
@@ -474,9 +469,7 @@ let builtin_value_names : StringSet.t =
     StringSet.empty Typecheck.Builtins.builtin_types
 
 let missing_namespace_member_error (expr : AST.expression) (segments : string list) : Diagnostic.t =
-  let message =
-    Printf.sprintf "Unresolved qualified name '%s'" (String.concat "." segments)
-  in
+  let message = Printf.sprintf "Unresolved qualified name '%s'" (String.concat "." segments) in
   match expr.file_id with
   | Some file_id ->
       Diagnostic.error_with_span ~code:"module-qualified-name" ~message ~file_id ~start_pos:expr.pos
@@ -499,12 +492,12 @@ let rewrite_program
   let rec rewrite_statements ~at_top_level value_scope stmts =
     match stmts with
     | [] -> Ok []
-    | stmt :: rest -> (
+    | stmt :: rest ->
         let* stmt', value_scope' = rewrite_statement ~at_top_level value_scope stmt in
         let* rest' = rewrite_statements ~at_top_level value_scope' rest in
-        Ok (stmt' :: rest'))
+        Ok (stmt' :: rest')
   and rewrite_statement ~at_top_level value_scope (stmt : AST.statement) :
-      ((AST.statement * string StringMap.t), Diagnostic.t) result =
+      (AST.statement * string StringMap.t, Diagnostic.t) result =
     let type_bindings_of_generic_params params =
       List.fold_left (fun acc (p : AST.generic_param) -> StringSet.add p.name acc) StringSet.empty params
     in
@@ -548,12 +541,13 @@ let rewrite_program
           ( AST.
               {
                 stmt with
-                stmt =
-                  EnumDef { name = internal_name_of current_module.module_id name; type_params; variants };
+                stmt = EnumDef { name = internal_name_of current_module.module_id name; type_params; variants };
               },
             value_scope )
     | AST.TypeDef { type_name; type_type_params; type_body } ->
-        let type_bindings = List.fold_left (fun acc name -> StringSet.add name acc) StringSet.empty type_type_params in
+        let type_bindings =
+          List.fold_left (fun acc name -> StringSet.add name acc) StringSet.empty type_type_params
+        in
         let type_body =
           match type_body with
           | AST.NamedTypeProduct fields ->
@@ -572,11 +566,19 @@ let rewrite_program
           ( AST.
               {
                 stmt with
-                stmt = TypeDef { type_name = internal_name_of current_module.module_id type_name; type_type_params; type_body };
+                stmt =
+                  TypeDef
+                    {
+                      type_name = internal_name_of current_module.module_id type_name;
+                      type_type_params;
+                      type_body;
+                    };
               },
             value_scope )
     | AST.ShapeDef { shape_name; shape_type_params; shape_fields } ->
-        let type_bindings = List.fold_left (fun acc name -> StringSet.add name acc) StringSet.empty shape_type_params in
+        let type_bindings =
+          List.fold_left (fun acc name -> StringSet.add name acc) StringSet.empty shape_type_params
+        in
         let shape_fields =
           List.map
             (fun (field : AST.record_type_field) ->
@@ -603,23 +605,14 @@ let rewrite_program
           | None -> StringSet.empty
         in
         let supertraits = rewrite_constraints ~type_bindings ~available_bindings supertraits in
-        let* methods =
-          map_result
-            (rewrite_method_sig ~value_scope ~parent_type_bindings:type_bindings)
-            methods
-        in
+        let* methods = map_result (rewrite_method_sig ~value_scope ~parent_type_bindings:type_bindings) methods in
         Ok
           ( AST.
               {
                 stmt with
                 stmt =
                   TraitDef
-                    {
-                      name = internal_name_of current_module.module_id name;
-                      type_param;
-                      supertraits;
-                      methods;
-                    };
+                    { name = internal_name_of current_module.module_id name; type_param; supertraits; methods };
               },
             value_scope )
     | AST.ImplDef { impl_type_params; impl_trait_name; impl_for_type; impl_methods } ->
@@ -640,20 +633,18 @@ let rewrite_program
         in
         let impl_for_type = rewrite_type_expr ~type_bindings ~available_bindings impl_for_type in
         let* impl_methods =
-          map_result
-            (rewrite_method_impl ~value_scope ~parent_type_bindings:type_bindings)
-            impl_methods
+          map_result (rewrite_method_impl ~value_scope ~parent_type_bindings:type_bindings) impl_methods
         in
         Ok
           ( AST.{ stmt with stmt = ImplDef { impl_type_params; impl_trait_name; impl_for_type; impl_methods } },
             value_scope )
     | AST.InherentImplDef { inherent_for_type; inherent_methods } ->
         let target_generics = collect_inherent_target_generics inherent_for_type in
-        let inherent_for_type = rewrite_type_expr ~type_bindings:target_generics ~available_bindings inherent_for_type in
+        let inherent_for_type =
+          rewrite_type_expr ~type_bindings:target_generics ~available_bindings inherent_for_type
+        in
         let* inherent_methods =
-          map_result
-            (rewrite_method_impl ~value_scope ~parent_type_bindings:target_generics)
-            inherent_methods
+          map_result (rewrite_method_impl ~value_scope ~parent_type_bindings:target_generics) inherent_methods
         in
         Ok (AST.{ stmt with stmt = InherentImplDef { inherent_for_type; inherent_methods } }, value_scope)
     | AST.DeriveDef { derive_traits; derive_for_type } ->
@@ -683,10 +674,14 @@ let rewrite_program
               AST.{ derive_trait_name; derive_trait_constraints })
             derive_traits
         in
-        let derive_for_type = rewrite_type_expr ~type_bindings:StringSet.empty ~available_bindings derive_for_type in
+        let derive_for_type =
+          rewrite_type_expr ~type_bindings:StringSet.empty ~available_bindings derive_for_type
+        in
         Ok (AST.{ stmt with stmt = DeriveDef { derive_traits; derive_for_type } }, value_scope)
     | AST.TypeAlias { alias_name; alias_type_params; alias_body } ->
-        let type_bindings = List.fold_left (fun acc name -> StringSet.add name acc) StringSet.empty alias_type_params in
+        let type_bindings =
+          List.fold_left (fun acc name -> StringSet.add name acc) StringSet.empty alias_type_params
+        in
         let alias_body = rewrite_type_expr ~type_bindings ~available_bindings alias_body in
         Ok
           ( AST.
@@ -703,7 +698,13 @@ let rewrite_program
             value_scope )
   and rewrite_block value_scope stmts =
     let* stmts = rewrite_statements ~at_top_level:false value_scope stmts in
-    Ok (List.filter (fun (stmt : AST.statement) -> match stmt.stmt with AST.Block [] -> false | _ -> true) stmts)
+    Ok
+      (List.filter
+         (fun (stmt : AST.statement) ->
+           match stmt.stmt with
+           | AST.Block [] -> false
+           | _ -> true)
+         stmts)
   and rewrite_method_sig ~value_scope ~parent_type_bindings (method_sig : AST.method_sig) :
       (AST.method_sig, Diagnostic.t) result =
     let method_type_bindings =
@@ -715,7 +716,11 @@ let rewrite_program
     let method_generics =
       Option.map
         (List.map (fun (p : AST.generic_param) ->
-             { p with constraints = rewrite_constraints ~type_bindings:method_type_bindings ~available_bindings p.constraints }))
+             {
+               p with
+               constraints =
+                 rewrite_constraints ~type_bindings:method_type_bindings ~available_bindings p.constraints;
+             }))
         method_sig.method_generics
     in
     let method_params =
@@ -726,7 +731,9 @@ let rewrite_program
     let value_scope =
       List.fold_left (fun acc (name, _) -> bind_local_value acc name) value_scope method_sig.method_params
     in
-    let return_type = rewrite_type_expr ~type_bindings:method_type_bindings ~available_bindings method_sig.method_return_type in
+    let return_type =
+      rewrite_type_expr ~type_bindings:method_type_bindings ~available_bindings method_sig.method_return_type
+    in
     let* method_default_impl =
       match method_sig.method_default_impl with
       | None -> Ok None
@@ -746,39 +753,33 @@ let rewrite_program
     let impl_method_generics =
       Option.map
         (List.map (fun (p : AST.generic_param) ->
-             { p with constraints = rewrite_constraints ~type_bindings:method_type_bindings ~available_bindings p.constraints }))
+             {
+               p with
+               constraints =
+                 rewrite_constraints ~type_bindings:method_type_bindings ~available_bindings p.constraints;
+             }))
         method_impl.impl_method_generics
     in
     let impl_method_params =
       List.map
         (fun (name, te_opt) ->
-          ( name,
-            Option.map (rewrite_type_expr ~type_bindings:method_type_bindings ~available_bindings) te_opt ))
+          (name, Option.map (rewrite_type_expr ~type_bindings:method_type_bindings ~available_bindings) te_opt))
         method_impl.impl_method_params
     in
     let body_scope =
       List.fold_left (fun acc (name, _) -> bind_local_value acc name) value_scope method_impl.impl_method_params
     in
     let impl_method_return_type =
-      Option.map (rewrite_type_expr ~type_bindings:method_type_bindings ~available_bindings)
+      Option.map
+        (rewrite_type_expr ~type_bindings:method_type_bindings ~available_bindings)
         method_impl.impl_method_return_type
     in
     let* impl_method_body = rewrite_statement ~at_top_level:false body_scope method_impl.impl_method_body in
     let impl_method_body = fst impl_method_body in
-    Ok
-      {
-        method_impl with
-        impl_method_generics;
-        impl_method_params;
-        impl_method_return_type;
-        impl_method_body;
-      }
+    Ok { method_impl with impl_method_generics; impl_method_params; impl_method_return_type; impl_method_body }
   and rewrite_pattern (pat : AST.pattern) : AST.pattern =
     let rewrite_record_field (field : AST.record_pattern_field) =
-      {
-        field with
-        pat_field_pattern = Option.map rewrite_pattern field.pat_field_pattern;
-      }
+      { field with pat_field_pattern = Option.map rewrite_pattern field.pat_field_pattern }
     in
     match pat.pat with
     | AST.PConstructor (enum_name, variant_name, fields) ->
@@ -913,9 +914,8 @@ let rewrite_program
                       match pat.pat with
                       | AST.PWildcard | AST.PLiteral _ -> acc
                       | AST.PVariable name -> bind_local_value acc name
-                      | AST.PConstructor (_, _, fields) ->
-                          List.fold_left add_pattern_bindings acc fields
-                      | AST.PRecord (fields, rest) ->
+                      | AST.PConstructor (_, _, fields) -> List.fold_left add_pattern_bindings acc fields
+                      | AST.PRecord (fields, rest) -> (
                           let acc =
                             List.fold_left
                               (fun inner (field : AST.record_pattern_field) ->
@@ -924,7 +924,7 @@ let rewrite_program
                                 | None -> bind_local_value inner field.pat_field_name)
                               acc fields
                           in
-                          (match rest with
+                          match rest with
                           | Some name -> bind_local_value acc name
                           | None -> acc)
                     in
@@ -972,7 +972,9 @@ let rewrite_program
     | AST.MethodCall { mc_receiver; mc_method; mc_type_args; mc_args } -> (
         match chain_segments_of_expr mc_receiver with
         | Some receiver_segments when not (root_has_value_binding (List.hd receiver_segments)) -> (
-            match resolve_namespace_member ~namespace_roots:imports.namespace_roots (receiver_segments @ [ mc_method ]) with
+            match
+              resolve_namespace_member ~namespace_roots:imports.namespace_roots (receiver_segments @ [ mc_method ])
+            with
             | Some (`Exported exported) when exported.has_value ->
                 let* args = map_result (rewrite_expr ~value_scope ~type_bindings) mc_args in
                 let callee = identifier_expr_like mc_receiver exported.internal_name in
@@ -985,8 +987,7 @@ let rewrite_program
                           expr with
                           expr =
                             TypeApply
-                              ( callee,
-                                List.map (rewrite_type_expr ~type_bindings ~available_bindings) type_args );
+                              (callee, List.map (rewrite_type_expr ~type_bindings ~available_bindings) type_args);
                         }
                 in
                 Ok AST.{ expr with expr = Call (callee, args) }
@@ -1002,8 +1003,7 @@ let rewrite_program
                           expr with
                           expr =
                             TypeApply
-                              ( callee,
-                                List.map (rewrite_type_expr ~type_bindings ~available_bindings) type_args );
+                              (callee, List.map (rewrite_type_expr ~type_bindings ~available_bindings) type_args);
                         }
                 in
                 Ok AST.{ expr with expr = Call (callee, args) }
@@ -1032,13 +1032,14 @@ let available_bindings_for_module ~(current_module : module_surface) ~(imports :
     member_presence StringMap.t =
   StringMap.fold StringMap.add current_module.declarations imports.direct_bindings
 
-let rewrite_module
-    ~(surfaces : (string, module_surface) Hashtbl.t)
-    (module_info : Module_context.parsed_module) : (rewrite_result, Diagnostic.t) result =
+let rewrite_module ~(surfaces : (string, module_surface) Hashtbl.t) (module_info : Module_context.parsed_module) :
+    (rewrite_result, Diagnostic.t) result =
   let current_module = Hashtbl.find surfaces module_info.module_id in
   let* resolved_imports = build_resolved_imports ~surfaces module_info in
   let available_bindings = available_bindings_for_module ~current_module ~imports:resolved_imports in
-  let* program = rewrite_program ~current_module ~imports:resolved_imports ~available_bindings module_info.program in
+  let* program =
+    rewrite_program ~current_module ~imports:resolved_imports ~available_bindings module_info.program
+  in
   let program =
     List.filter
       (fun (stmt : AST.statement) ->

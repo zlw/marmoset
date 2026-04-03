@@ -27,8 +27,7 @@ type typecheck_result = {
   diagnostics : Diagnostic.t list; (* Diagnostics emitted during a successful check *)
 }
 
-let infer_program_safe ?state ?(prepare_state = true) ~(env : Infer.type_env)
-    (program : Syntax.Ast.AST.program) :
+let infer_program_safe ?state ?(prepare_state = true) ~(env : Infer.type_env) (program : Syntax.Ast.AST.program) :
     (Infer.type_env * Infer.type_map * mono_type, Diagnostic.t list) result =
   try
     match Infer.infer_program ?state ~prepare_state ~env program with
@@ -164,8 +163,8 @@ let check_function_annotation (return_annotation : Syntax.Ast.AST.type_expr opti
 (* Type check a program with annotation support.
     This checks that all annotations match the inferred types.
     For Phase 2, constraint validation is skipped (Phase 3 work). *)
-let check_program_with_annotations ?state ?(prepare_state = true) ?(env = Infer.empty_env)
-    (program : Syntax.Ast.AST.program) :
+let check_program_with_annotations
+    ?state ?(prepare_state = true) ?(env = Infer.empty_env) (program : Syntax.Ast.AST.program) :
     (typecheck_result, Diagnostic.t list) result =
   (* First, do standard inference *)
   match infer_program_safe ?state ~prepare_state ~env program with
@@ -242,8 +241,8 @@ let check_program_with_annotations ?state ?(prepare_state = true) ?(env = Infer.
 
 (* Type check source code with annotations.
    Parses and type checks in one step, with annotation support. *)
-let check_string_with_annotations ?state ?(prepare_state = true) ?(env = Infer.empty_env) ~file_id
-    (source : string) :
+let check_string_with_annotations
+    ?state ?(prepare_state = true) ?(env = Infer.empty_env) ~file_id (source : string) :
     (typecheck_result, Diagnostic.t list) result =
   match Syntax.Parser.parse ~file_id source with
   | Error errors -> Error errors

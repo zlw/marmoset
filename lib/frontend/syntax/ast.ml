@@ -335,9 +335,9 @@ module AST = struct
     let rec statement_to_string (s : statement) : string =
       match s.stmt with
       | ExportDecl names -> Printf.sprintf "export %s" (String.concat ", " names)
-      | ImportDecl { import_path; import_alias } ->
+      | ImportDecl { import_path; import_alias } -> (
           let base = Printf.sprintf "import %s" (String.concat "." import_path) in
-          (match import_alias with
+          match import_alias with
           | None -> base
           | Some alias -> base ^ " as " ^ alias)
       | Let l -> Printf.sprintf "let %s = %s;" l.name (expression_to_string l.value)

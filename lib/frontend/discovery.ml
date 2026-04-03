@@ -162,8 +162,7 @@ and resolve_import (state : discovery_state) (imp : Module_context.import_info) 
       (import_error imp ~code:"module-import-ambiguous"
          ~message:
            (Printf.sprintf "Ambiguous import '%s': it matches both module '%s' and exported member '%s'"
-              (import_path_string imp.import_path)
-              (import_path_string imp.import_path)
+              (import_path_string imp.import_path) (import_path_string imp.import_path)
               (List.hd (List.rev imp.import_path))))
   else if module_candidate_exists then
     let module_id = import_path_string imp.import_path in
@@ -175,8 +174,7 @@ and resolve_import (state : discovery_state) (imp : Module_context.import_info) 
     | Some (module_id, _module_info, member_name) ->
         Error
           (import_error imp ~code:"module-import-not-exported"
-             ~message:
-               (Printf.sprintf "Module '%s' does not export '%s'" module_id member_name))
+             ~message:(Printf.sprintf "Module '%s' does not export '%s'" module_id member_name))
     | None ->
         Error
           (import_error imp ~code:"module-import-not-found"
@@ -202,9 +200,7 @@ let make_temp_dir (prefix : string) : string =
 
 let write_file (path : string) (content : string) : unit =
   let oc = open_out_bin path in
-  Fun.protect
-    ~finally:(fun () -> close_out oc)
-    (fun () -> output_string oc content)
+  Fun.protect ~finally:(fun () -> close_out oc) (fun () -> output_string oc content)
 
 let mkdir_p (path : string) : unit =
   let rec go current =
@@ -226,9 +222,7 @@ let with_temp_project (files : (string * string) list) (f : string -> bool) : bo
     write_file path content
   in
   List.iter write_one files;
-  Fun.protect
-    ~finally:(fun () -> ignore (Sys.command ("rm -rf " ^ Filename.quote root)))
-    (fun () -> f root)
+  Fun.protect ~finally:(fun () -> ignore (Sys.command ("rm -rf " ^ Filename.quote root))) (fun () -> f root)
 
 let collect_expr_ids (program : AST.program) : int list =
   let rec expr_ids (expr : AST.expression) =
@@ -241,8 +235,7 @@ let collect_expr_ids (program : AST.program) : int list =
       | AST.Hash pairs -> List.concat_map (fun (k, v) -> expr_ids k @ expr_ids v) pairs
       | AST.Prefix (_, e) | AST.TypeCheck (e, _) | AST.FieldAccess (e, _) -> expr_ids e
       | AST.Infix (l, _, r) -> expr_ids l @ expr_ids r
-      | AST.If (cond, cons, alt) ->
-          expr_ids cond @ stmt_ids cons @ option_map_default alt ~default:[] ~f:stmt_ids
+      | AST.If (cond, cons, alt) -> expr_ids cond @ stmt_ids cons @ option_map_default alt ~default:[] ~f:stmt_ids
       | AST.Function { body; _ } -> stmt_ids body
       | AST.Call (callee, args) -> expr_ids callee @ List.concat_map expr_ids args
       | AST.EnumConstructor (_, _, args) -> List.concat_map expr_ids args
@@ -272,31 +265,25 @@ let collect_expr_ids (program : AST.program) : int list =
 let%test "discover_project finds transitive module dependencies" =
   with_temp_project
     [
-      ( "main.mr",
-        "import math\nputs(math.add(1, 2))\n" );
-      ( "math.mr",
-        "export add\nimport util.helper\nfn add(x: Int, y: Int) -> Int = helper(x + y)\n" );
-      ( "util.mr",
-        "export helper\nfn helper(x: Int) -> Int = x\n" );
+      ("main.mr", "import math\nputs(math.add(1, 2))\n");
+      ("math.mr", "export add\nimport util.helper\nfn add(x: Int, y: Int) -> Int = helper(x + y)\n");
+      ("util.mr", "export helper\nfn helper(x: Int) -> Int = x\n");
     ]
     (fun root ->
       match discover_project ~entry_file:(Filename.concat root "main.mr") with
       | Error _ -> false
-      | Ok graph ->
+      | Ok graph -> (
           Hashtbl.length graph.modules = 3
           && graph.topo_order = [ "util"; "math"; "main" ]
           &&
           match Hashtbl.find_opt graph.dependencies "math" with
           | Some [ "util" ] -> true
-          | _ -> false)
+          | _ -> false))
 
 let%test "discover_project reports import ambiguity" =
   with_temp_project
     [
-      ( "main.mr",
-        "import a.b.c\nputs(1)\n" );
-      ("a/b.mr", "export c\nlet c = 1\n");
-      ("a/b/c.mr", "let value = 1\n");
+      ("main.mr", "import a.b.c\nputs(1)\n"); ("a/b.mr", "export c\nlet c = 1\n"); ("a/b/c.mr", "let value = 1\n");
     ]
     (fun root ->
       match discover_project ~entry_file:(Filename.concat root "main.mr") with
@@ -305,10 +292,7 @@ let%test "discover_project reports import ambiguity" =
 
 let%test "discover_project assigns non-overlapping expression id ranges per file" =
   with_temp_project
-    [
-      ("main.mr", "import math\nputs(math.value)\n");
-      ("math.mr", "export value\nlet value = 1\n");
-    ]
+    [ ("main.mr", "import math\nputs(math.value)\n"); ("math.mr", "export value\nlet value = 1\n") ]
     (fun root ->
       match discover_project ~entry_file:(Filename.concat root "main.mr") with
       | Error _ -> false

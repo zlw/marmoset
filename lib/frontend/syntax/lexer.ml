@@ -509,17 +509,18 @@ let%test "amp vs ampamp distinction" =
 
 let%test "module-system keywords lex correctly" =
   match lex "import math\nexport add\nimport math.Point as Pt" with
-  | { token_type = Token.Import; _ }
-    :: { token_type = Token.Ident; literal = "math"; _ }
-    :: { token_type = Token.Export; _ }
-    :: { token_type = Token.Ident; literal = "add"; _ }
-    :: { token_type = Token.Import; _ }
-    :: { token_type = Token.Ident; literal = "math"; _ }
-    :: { token_type = Token.Dot; _ }
-    :: { token_type = Token.Ident; literal = "Point"; _ }
-    :: { token_type = Token.As; _ }
-    :: { token_type = Token.Ident; literal = "Pt"; _ }
-    :: { token_type = Token.EOF; _ }
-    :: [] ->
+  | [
+   { token_type = Token.Import; _ };
+   { token_type = Token.Ident; literal = "math"; _ };
+   { token_type = Token.Export; _ };
+   { token_type = Token.Ident; literal = "add"; _ };
+   { token_type = Token.Import; _ };
+   { token_type = Token.Ident; literal = "math"; _ };
+   { token_type = Token.Dot; _ };
+   { token_type = Token.Ident; literal = "Point"; _ };
+   { token_type = Token.As; _ };
+   { token_type = Token.Ident; literal = "Pt"; _ };
+   { token_type = Token.EOF; _ };
+  ] ->
       true
   | _ -> false
