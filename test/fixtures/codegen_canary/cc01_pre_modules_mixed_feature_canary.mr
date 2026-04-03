@@ -1,0 +1,60 @@
+# CC01: Pre-modules mixed-feature codegen canary.
+shape Named = { name: Str }
+
+trait Label[a]: Show & Named = {
+  fn label(self: a) -> Str = "#{self.name}=#{self}"
+}
+
+type Person = { name: Str, score: Int } derive Show
+
+impl Label[Person] = {}
+
+impl Person = {
+  fn rename(person: Person, suffix: Str) -> Person = { ...person, name: person.name + suffix }
+}
+
+type Box = { value: Dyn[Show], tag: Int }
+
+impl Box = {
+  fn describe(box: Box) -> Str = Show.show(box.value) + ":" + Show.show(box.tag)
+}
+
+type Event = { Number(Int), Wrapped({ owner: Person, box: Box }), Empty }
+
+fn make_box(flag: Bool, seed: Int) -> Box = { value: if (flag) { seed } else { seed + 1 }, tag: seed }
+
+fn with_suffix[a: Named](value: a, suffix: Str) -> Str = value.name + suffix
+
+fn render_twice[a](value: a, render: (a) -> Str) -> Str = render(value) + "|" + render(value)
+
+fn classify(event: Event) -> Str = match event {
+  case Event.Number(0) | Event.Number(1): "tiny"
+  case Event.Wrapped({ owner: { name:, score: 7 }, box: box }):
+    name + ":7:" + Box.describe(box)
+  case Event.Wrapped({ owner:, box: box }):
+    Label.label(owner) + ":" + Box.describe(box)
+  case Event.Empty: "empty"
+}
+
+fn describe_input(input: Int | Str) -> Str = {
+  if (input is Int) {
+    "int:" + Show.show(input + 1)
+  } else {
+    "str:" + input
+  }
+}
+
+let person = Person.rename({ name: "milo", score: 8 }, "!")
+let box = make_box(true, 2)
+let boosted: Box = { ...box, value: match Event.Number(2) { case Event.Number(n): n + 40 case _: 0 }, tag: box.tag + 1 }
+let exact = Event.Wrapped({ owner: { name: "ada", score: 7 }, box: make_box(true, 2) })
+let event = Event.Wrapped({ owner: person, box: boosted })
+
+puts(classify(Event.Number(1)))                           # output: tiny
+puts(classify(exact))                                     # output: ada:7:2:2
+puts(Box.describe(boosted))                               # output: 42:3
+puts(classify(event))                                     # output: milo!={ name: milo!, score: 8 }:42:3
+puts(render_twice(person, (p) -> with_suffix(p, "?")))   # output: milo!?|milo!?
+puts(render_twice(3, Show.show))                          # output: 3|3
+puts(describe_input(4))                                   # output: int:5
+puts(describe_input("ok"))                                # output: str:ok

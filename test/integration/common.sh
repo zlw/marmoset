@@ -429,3 +429,62 @@ test_emit_go_exact_snapshot() {
     rm -f "$binpath" "$diff_file"
     rm -rf "$outdir"
 }
+
+normalize_go_file() {
+    local input_file="$1"
+
+    sed -E 's/[[:space:]]+$//' "$input_file" | awk '
+        {
+            if ($0 == "") {
+                if (blank) next
+                blank = 1
+            } else {
+                blank = 0
+            }
+            print
+        }
+    '
+}
+
+test_emit_go_normalized_snapshot() {
+    local name="$1"
+    local source_file="$2"
+    local snapshot_file="$3"
+
+    TOTAL=$((TOTAL + 1))
+    echo -n "TEST [$TOTAL] $name ... "
+
+    local outdir binpath diff_file actual_norm expected_norm build_output
+    outdir=$(mktemp -d marmoset_emit_norm_snapshot.XXXXXX)
+    binpath=$(mktemp "$REPO_ROOT/.marmoset/build/marmoset_norm_snapshot_bin.XXXXXX")
+    diff_file=$(mktemp)
+    actual_norm=$(mktemp)
+    expected_norm=$(mktemp)
+    rm -f "$binpath"
+
+    if [ ! -f "$source_file" ]; then
+        echo "✗ FAIL (missing source file $source_file)"
+        FAIL=$((FAIL + 1))
+    elif [ ! -f "$snapshot_file" ]; then
+        echo "✗ FAIL (missing snapshot file $snapshot_file)"
+        FAIL=$((FAIL + 1))
+    elif build_output=$($EXECUTABLE build "$source_file" --emit-go "$outdir" -o "$binpath" 2>&1); then
+        normalize_go_file "$outdir/main.go" > "$actual_norm"
+        normalize_go_file "$snapshot_file" > "$expected_norm"
+        if diff -u "$expected_norm" "$actual_norm" > "$diff_file"; then
+            echo "✓ PASS"
+            PASS=$((PASS + 1))
+        else
+            echo "✗ FAIL (normalized main.go snapshot drift)"
+            sed -n '1,80p' "$diff_file" | sed 's/^/  /'
+            FAIL=$((FAIL + 1))
+        fi
+    else
+        echo "✗ FAIL (build failed)"
+        echo "  Output: $build_output"
+        FAIL=$((FAIL + 1))
+    fi
+
+    rm -f "$binpath" "$diff_file" "$actual_norm" "$expected_norm"
+    rm -rf "$outdir"
+}

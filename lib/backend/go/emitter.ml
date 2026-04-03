@@ -4667,33 +4667,44 @@ and emit_match_enum ?target state type_map env scrutinee scrutinee_type enum_nam
       | AST.PLiteral _ -> failwith "Literal patterns not supported for enum match"
       | AST.PRecord _ -> failwith "Record patterns not yet implemented in enum match"
     in
-    if cond_parts = [] && is_first then
-      let binds_block = binding_block_lines ~indent:"\t\t" bind_lines in
-      let body_code =
-        match target with
-        | Some t -> with_indent_delta state 2 (fun () -> emit_expr_to_target state type_map env body t)
-        | None ->
-            let body_str = emit_expr_for_expected_type state type_map env match_result_type body in
-            "\t\treturn " ^ body_str ^ "\n"
-      in
-      (binds_block ^ body_code, true)
-    else
-      let cond_str = String.concat " && " cond_parts in
-      let binds_block = binding_block_lines ~indent:"\t\t\t" bind_lines in
-      let body_code =
-        match target with
-        | Some t -> with_indent_delta state 3 (fun () -> emit_expr_to_target state type_map env body t)
-        | None ->
-            let body_str = emit_expr_for_expected_type state type_map env match_result_type body in
-            "\t\t\treturn " ^ body_str ^ "\n"
-      in
-      let branch_prefix =
-        if is_first then
-          "\t\tif"
-        else
-          " else if"
-      in
-      (Printf.sprintf "%s %s {\n%s%s\t\t}" branch_prefix cond_str binds_block body_code, false)
+    match cond_parts with
+    | [] when is_first ->
+        let binds_block = binding_block_lines ~indent:"\t\t" bind_lines in
+        let body_code =
+          match target with
+          | Some t -> with_indent_delta state 2 (fun () -> emit_expr_to_target state type_map env body t)
+          | None ->
+              let body_str = emit_expr_for_expected_type state type_map env match_result_type body in
+              "\t\treturn " ^ body_str ^ "\n"
+        in
+        (binds_block ^ body_code, true)
+    | [] ->
+        let binds_block = binding_block_lines ~indent:"\t\t\t" bind_lines in
+        let body_code =
+          match target with
+          | Some t -> with_indent_delta state 3 (fun () -> emit_expr_to_target state type_map env body t)
+          | None ->
+              let body_str = emit_expr_for_expected_type state type_map env match_result_type body in
+              "\t\t\treturn " ^ body_str ^ "\n"
+        in
+        (Printf.sprintf " else {\n%s%s\t\t}" binds_block body_code, true)
+    | cond_parts ->
+        let cond_str = String.concat " && " cond_parts in
+        let binds_block = binding_block_lines ~indent:"\t\t\t" bind_lines in
+        let body_code =
+          match target with
+          | Some t -> with_indent_delta state 3 (fun () -> emit_expr_to_target state type_map env body t)
+          | None ->
+              let body_str = emit_expr_for_expected_type state type_map env match_result_type body in
+              "\t\t\treturn " ^ body_str ^ "\n"
+        in
+        let branch_prefix =
+          if is_first then
+            "\t\tif"
+          else
+            " else if"
+        in
+        (Printf.sprintf "%s %s {\n%s%s\t\t}" branch_prefix cond_str binds_block body_code, false)
   in
   let emit_variant_case (variant : Typecheck.Enum_registry.variant_def) =
     let tag_constant = Printf.sprintf "%s_%s_tag" go_type_name variant.name in
@@ -4706,7 +4717,16 @@ and emit_match_enum ?target state type_map env scrutinee scrutinee_type enum_nam
           | AST.PLiteral _ | AST.PRecord _ -> false)
         flat_patterns
     in
-    let branches = List.mapi (fun idx (pattern, body) -> emit_enum_branch ~target pattern body ~is_first:(idx = 0)) relevant_patterns in
+    let rec collect_branches acc is_first = function
+      | [] -> List.rev acc
+      | (pattern, body) :: rest ->
+          let branch = emit_enum_branch ~target pattern body ~is_first in
+          if snd branch then
+            List.rev (branch :: acc)
+          else
+            collect_branches (branch :: acc) false rest
+    in
+    let branches = collect_branches [] true relevant_patterns in
     let has_unconditional = List.exists snd branches in
     let branch_code = String.concat "" (List.map fst branches) in
     let case_body =
@@ -9309,6 +9329,19 @@ puts(result)|}
   | Ok (code, _) ->
       string_contains code "} else {\n\t\t\tpanic(\"non-exhaustive enum match\")\n\t\t}"
       && string_not_contains code "}\n\t\tpanic(\"non-exhaustive enum match\")"
+  | Error _ -> false
+
+let%test "enum match with wildcard after unconditional constructor arm emits no empty else-if" =
+  match
+    compile_string ~file_id:"<codegen>"
+      {|type Event = { Number(Int), Empty }
+let result = match Event.Number(2) {
+  case Event.Number(n): n + 40
+  case _: 0
+}
+puts(result)|}
+  with
+  | Ok (code, _) -> string_not_contains code " else if  {"
   | Error _ -> false
 
 let%test "match nested inside match arm avoids IIFE" =
