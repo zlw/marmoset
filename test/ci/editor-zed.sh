@@ -189,6 +189,37 @@ for expected in [
 ]:
     assert_capture(monkey_highlights, *expected)
 
+module_highlights = run_query(
+    highlights_query,
+    repo_root
+    / "test"
+    / "fixtures"
+    / "modules_codegen"
+    / "mc04_namespace_values_and_nested_qualifiers"
+    / "main.mr",
+)
+for expected in [
+    ("keyword.import", "import"),
+    ("type", "math"),
+    ("type", "geometry"),
+    ("function.method.call", "make_point"),
+    ("type", "Point"),
+    ("function.method.call", "distance"),
+    ("type", "Show"),
+    ("function.method.call", "show"),
+    ("type", "Color"),
+    ("constructor", "Red"),
+]:
+    assert_capture(module_highlights, *expected)
+
+records_highlights = run_query(highlights_query, repo_root / "examples" / "records-typed.mr")
+for expected in [
+    ("keyword.import", "import"),
+    ("type", "sum"),
+    ("function.method.call", "sum"),
+]:
+    assert_capture(records_highlights, *expected)
+
 upcase_outline = run_query(outline_query, repo_root / "examples" / "new-syntax-upcase.mr")
 for expected in [
     ("name", "Option"),

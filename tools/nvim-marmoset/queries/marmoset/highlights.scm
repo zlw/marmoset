@@ -5,6 +5,9 @@
 
 "let" @keyword
 "return" @keyword.return
+"import" @keyword.import
+"export" @keyword.import
+"as" @keyword.import
 "if" @keyword.conditional
 "else" @keyword.conditional
 "match" @keyword.conditional
@@ -80,6 +83,14 @@
 (generic_type
   name: (type_identifier) @type.builtin)
 
+; Module imports
+(import_statement
+  path: (module_path
+    segment: (identifier) @type))
+
+(import_statement
+  alias: (identifier) @type)
+
 ; Record type field names
 (record_type_field
   name: (identifier) @property)
@@ -128,6 +139,12 @@
   function: (field_access
     field: (identifier) @function.method.call))
 
+; Pipe target: xs |> Module.fn
+(infix_expression
+  operator: "|>"
+  right: (field_access
+    field: (identifier) @function.method.call))
+
 ; ── Builtin functions ─────────────────────────────────────────────
 
 ((identifier) @function.builtin
@@ -135,8 +152,30 @@
 
 ; ── Field access ──────────────────────────────────────────────────
 
-(field_access
-  field: (identifier) @property)
+((field_access
+   object: (identifier) @type
+   field: (identifier) @_qualified_type_member)
+ (#match? @type "^[a-z]")
+ (#match? @_qualified_type_member "^[A-Z]"))
+
+((field_access
+   object: (identifier) @_module_root
+   field: (identifier) @type)
+ (#match? @_module_root "^[a-z]")
+ (#match? @type "^[A-Z]"))
+
+((field_access
+   object: (field_access
+     object: (identifier) @_module_root
+     field: (identifier) @type)
+   field: (identifier) @constructor)
+ (#match? @_module_root "^[a-z]")
+ (#match? @type "^[A-Z]")
+ (#match? @constructor "^[A-Z]"))
+
+((field_access
+   field: (identifier) @property)
+ (#match? @property "^[a-z_]"))
 
 ; ── Let binding ───────────────────────────────────────────────────
 
