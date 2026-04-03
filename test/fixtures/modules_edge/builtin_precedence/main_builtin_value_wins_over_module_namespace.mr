@@ -1,0 +1,3 @@
+import puts
+
+puts.answer()  # error: Dot call syntax only works with callable fields.

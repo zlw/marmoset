@@ -1,0 +1,4 @@
+export panic!, panic_bang
+
+fn panic!() -> Int = 1
+fn panic_bang() -> Int = 2

@@ -1,0 +1,7 @@
+export User, Team, Badge, make_team
+
+type User = { name: Str, age: Int }
+type Team = { lead: User, size: Int }
+enum Badge = { Gold, Silver }
+
+fn make_team(name: Str, age: Int) -> Team = { lead: { name: name, age: age }, size: 1 }

@@ -1,0 +1,4 @@
+export make_right
+
+fn helper() -> Int = 11
+fn make_right() -> Int = helper()

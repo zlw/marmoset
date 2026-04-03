@@ -86,6 +86,7 @@ let substitute_path_in_expr
       | AST.BlockExpr stmts -> { expr with expr = AST.BlockExpr (List.map subst_stmt stmts) }
   and subst_stmt (stmt : AST.statement) =
     match stmt.stmt with
+    | AST.ExportDecl _ | AST.ImportDecl _ -> stmt
     | AST.Let ({ value; _ } as let_binding) ->
         { stmt with stmt = AST.Let { let_binding with value = subst_expr value } }
     | AST.Return expr -> { stmt with stmt = AST.Return (subst_expr expr) }
@@ -104,6 +105,7 @@ let substitute_path_in_stmt
     (stmt : AST.statement) : AST.statement =
   let rec subst_stmt (stmt : AST.statement) =
     match stmt.stmt with
+    | AST.ExportDecl _ | AST.ImportDecl _ -> stmt
     | AST.Let ({ value; _ } as let_binding) ->
         {
           stmt with

@@ -1,0 +1,4 @@
+import math
+
+puts(math.add(1, 2))  # output: 3
+puts(math.add_one(2))  # output: 3

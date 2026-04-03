@@ -1,0 +1,7 @@
+import left
+import right
+import left.make_left
+import right.make_right
+
+let total = make_left() + make_right() + left.make_left() + right.make_right()
+puts(total)  # output: 36

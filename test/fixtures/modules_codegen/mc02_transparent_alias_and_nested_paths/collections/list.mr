@@ -1,0 +1,5 @@
+export length, duplicate
+
+fn length(xs: List[Int]) -> Int = len(xs)
+
+fn duplicate(x: Int) -> List[Int] = [x, x]

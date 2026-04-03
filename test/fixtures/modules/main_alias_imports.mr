@@ -1,0 +1,8 @@
+import math as m
+import math.add as plus
+import types.wrappers.Users as People
+
+puts(m.add(1, 2))  # output: 3
+puts(plus(4, 5))  # output: 9
+let xs: People = [1, 2, 3]
+puts(len(xs))  # output: 3

@@ -1,0 +1,7 @@
+export Point, Printer
+
+type Point = { x: Int, y: Int }
+
+trait Printer[a] = {
+  fn print(x: a) -> Str
+}

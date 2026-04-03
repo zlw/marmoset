@@ -1,6 +1,6 @@
 (library
  (name marmoset)
- (libraries syntax typecheck codegen diagnostics)
+ (libraries syntax typecheck codegen diagnostics frontend)
  (inline_tests
   (flags (-verbose)))
  (preprocess

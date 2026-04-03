@@ -1,0 +1,8 @@
+# MS04: Shared transparent-type alias module
+export Users, empty_users, count_users
+
+type Users = List[Int]
+
+fn empty_users() -> Users = []
+fn count_users(xs: Users) -> Int = len(xs)
+fn private_normalize(xs: List[Int]) -> List[Int] = xs

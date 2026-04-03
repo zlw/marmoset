@@ -1,0 +1,11 @@
+import geometry.Point
+import geometry.Show
+import geometry.make_point
+import geometry.distance
+import geometry.render
+
+let p: Point = make_point(2, 3)
+let d = Point.distance(p)
+let s = Show.show(p)
+puts(distance(p) + d)  # output: 10
+puts(s)  # output: Point

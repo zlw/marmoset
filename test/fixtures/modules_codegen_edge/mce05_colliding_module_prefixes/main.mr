@@ -1,0 +1,5 @@
+import foo.bar.value as bar_value
+import foo__bar.value as flat_value
+
+puts(bar_value)  # output: 1
+puts(flat_value)  # output: 2

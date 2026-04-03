@@ -1,0 +1,5 @@
+# MS06: Collision partner beta with a private helper of the same name as alpha
+export run
+
+fn helper(x: Int) -> Int = x + 2
+fn run(x: Int) -> Int = helper(x)

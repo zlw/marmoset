@@ -1,0 +1,5 @@
+import point.Point
+import point.Printer
+
+let p: Point = { x: 1, y: 2 }
+puts(Printer.print(p))  # error: does not implement trait

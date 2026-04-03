@@ -1,0 +1,5 @@
+# ME03: Module with a private helper that must not be imported directly
+export visible
+
+fn visible(x: Int) -> Int = x
+fn hidden(x: Int) -> Int = x + 100

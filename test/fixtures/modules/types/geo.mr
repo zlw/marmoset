@@ -1,0 +1,16 @@
+# MS03: Shared type/trait/shape module
+export Point, HasXY, Drawable, render_point
+
+type Point = { x: Int, y: Int }
+shape HasXY = { x: Int, y: Int }
+
+trait Drawable[a] = {
+  fn draw(x: a) -> Str
+}
+
+impl Drawable[Point] = {
+  fn draw(p: Point) -> Str = "point"
+}
+
+fn render_point(p: Point) -> Str = Drawable.draw(p)
+fn secret_label(p: Point) -> Str = "secret"

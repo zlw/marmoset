@@ -15,6 +15,7 @@ module Diagnostic = Diagnostics.Diagnostic
 module String_utils = Diagnostics.String_utils
 module Builtins = Typecheck.Builtins
 module Checker = Typecheck.Checker
+module Frontend_compiler = Frontend.Compiler
 
 (* Backend: Go codegen *)
 module Go_emitter = Codegen.Emitter

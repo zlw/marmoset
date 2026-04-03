@@ -1,0 +1,2 @@
+import middle.leaf_value  # error: does not export 'leaf_value'
+puts(1)

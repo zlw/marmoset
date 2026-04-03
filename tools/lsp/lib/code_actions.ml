@@ -193,6 +193,7 @@ let rec walk_stmt ~source ~type_map ~range_start ~range_end ~sites (stmt : Ast.A
     | Ast.AST.Block stmts -> List.iter (walk_stmt ~source ~type_map ~range_start ~range_end ~sites) stmts
     | Ast.AST.ExpressionStmt e -> walk_expr ~source ~type_map ~range_start ~range_end ~sites e
     | Ast.AST.Return e -> walk_expr ~source ~type_map ~range_start ~range_end ~sites e
+    | Ast.AST.ExportDecl _ | Ast.AST.ImportDecl _ -> ()
     | Ast.AST.EnumDef _ | Ast.AST.TypeDef _ | Ast.AST.ShapeDef _ | Ast.AST.TraitDef _ | Ast.AST.ImplDef _
     | Ast.AST.InherentImplDef _ | Ast.AST.DeriveDef _ | Ast.AST.TypeAlias _ ->
         ()

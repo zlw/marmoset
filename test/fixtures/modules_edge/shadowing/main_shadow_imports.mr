@@ -1,0 +1,7 @@
+import math
+import math.add
+
+let math = 10
+let add = 11
+puts(math)  # output: 10
+puts(add)  # output: 11

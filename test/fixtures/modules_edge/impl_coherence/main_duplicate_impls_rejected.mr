@@ -1,0 +1,4 @@
+import x  # error: Duplicate impl registration for trait
+import y
+
+puts(1)

@@ -1,0 +1,10 @@
+import data.user.Team as Crew
+import data.user.make_team
+import data.user.Badge
+import collections.list.length
+import collections.list as listmod
+
+let crew: Crew = make_team("Ada", 37)
+let badge = Badge.Gold
+let count = length(listmod.duplicate(crew.size))
+puts(count)  # output: 2

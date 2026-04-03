@@ -1,0 +1,7 @@
+import fmt
+import fmt.join
+import fmt.Point as Pt
+
+let p: Pt = { x: 1, y: 2 }
+puts(join("left", "right"))  # output: left:right
+puts(fmt.format_point(p))  # output: x:y

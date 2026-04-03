@@ -29,6 +29,7 @@ let lower_context_of_program (prog : Surface.surface_program) : lower_context =
   List.fold_left
     (fun ({ constraint_names; type_names } as acc) (ts : Surface.surface_top_stmt) ->
       match ts.std_decl with
+      | Surface.SExportDecl _ | Surface.SImportDecl _ -> acc
       | Surface.STraitDef { name; _ } | Surface.SShapeDef { shape_name = name; _ } ->
           { acc with constraint_names = StringSet.add name constraint_names }
       | Surface.STypeDef { type_name = name; _ } -> { acc with type_names = StringSet.add name type_names }
@@ -258,6 +259,7 @@ let rec placeholder_count_expr (expr : AST.expression) : int =
 
 and placeholder_count_stmt (stmt : AST.statement) : int =
   match stmt.stmt with
+  | AST.ExportDecl _ | AST.ImportDecl _ -> 0
   | AST.Let { value; _ } -> placeholder_count_expr value
   | AST.Return expr | AST.ExpressionStmt expr -> placeholder_count_expr expr
   | AST.Block stmts -> placeholder_count_stmt_list stmts
@@ -378,6 +380,7 @@ let rec replace_placeholder_with_expr (replacement : AST.expression) (expr : AST
 and replace_placeholder_with_stmt (replacement : AST.expression) (stmt : AST.statement) : AST.statement =
   let rewritten =
     match stmt.stmt with
+    | AST.ExportDecl _ | AST.ImportDecl _ -> stmt.stmt
     | AST.Let ({ value; _ } as let_binding) ->
         AST.Let { let_binding with value = replace_placeholder_with_expr replacement value }
     | AST.Return expr -> AST.Return (replace_placeholder_with_expr replacement expr)
@@ -694,6 +697,9 @@ let lower_top_decl_with_ctx
     [ AST.mk_stmt ~pos ~end_pos ~file_id (AST.InherentImplDef iid) ]
   in
   match ts.Surface.std_decl with
+  | Surface.SExportDecl names -> [ AST.mk_stmt ~pos ~end_pos ~file_id (AST.ExportDecl names) ]
+  | Surface.SImportDecl { import_path; import_alias } ->
+      [ AST.mk_stmt ~pos ~end_pos ~file_id (AST.ImportDecl { import_path; import_alias }) ]
   | Surface.SLet { name; value; type_annotation } ->
       [
         AST.mk_stmt ~pos ~end_pos ~file_id

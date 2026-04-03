@@ -1,0 +1,2 @@
+# ME02: Ambiguous import support module for the nested-path branch
+fn c() -> Int = 2

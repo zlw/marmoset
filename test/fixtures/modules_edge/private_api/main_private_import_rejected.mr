@@ -1,0 +1,3 @@
+import math.hidden  # error: does not export 'hidden'
+
+puts(1)

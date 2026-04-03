@@ -445,6 +445,7 @@ and collect_stmt ~source ~type_map ~environment ~params ~tokens (stmt : Ast.AST.
             { pos = nstart; end_pos = nstart + nlen - 1; token_type = _type_type; modifiers = declaration_mod }
             :: !tokens
       | None -> ())
+  | Ast.AST.ExportDecl _ | Ast.AST.ImportDecl _ -> ()
   | Ast.AST.DeriveDef _ -> ()
 
 (* Sort tokens by position, then delta-encode *)

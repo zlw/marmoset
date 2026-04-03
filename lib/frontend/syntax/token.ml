@@ -64,6 +64,9 @@ and token_type =
   | Shape (* shape keyword for named open structural types *)
   | Override (* override keyword for impl methods *)
   | Case (* case keyword for match arms *)
+  | Import
+  | Export
+  | As
 [@@deriving show]
 
 let init ?(pos = 0) t l = { token_type = t; literal = l; pos }
@@ -90,4 +93,10 @@ let lookup_ident s =
   | "shape" -> Shape
   | "override" -> Override
   | "case" -> Case
+  | "import" -> Import
+  | "export" -> Export
+  | "as" -> As
   | _ -> Ident
+
+let%test "lookup_ident recognizes module-system keywords" =
+  lookup_ident "import" = Import && lookup_ident "export" = Export && lookup_ident "as" = As

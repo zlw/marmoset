@@ -1,0 +1,6 @@
+import point.Point
+import point.Printer
+
+impl Printer[Point] = {
+  fn print(p: Point) -> Str = "a"
+}

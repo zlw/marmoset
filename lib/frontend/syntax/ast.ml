@@ -121,6 +121,11 @@ module AST = struct
   }
 
   and stmt_kind =
+    | ExportDecl of string list
+    | ImportDecl of {
+        import_path : string list;
+        import_alias : string option;
+      }
     | Let of {
         name : string;
         value : expression;
@@ -329,6 +334,12 @@ module AST = struct
   let to_string (program : program) : string =
     let rec statement_to_string (s : statement) : string =
       match s.stmt with
+      | ExportDecl names -> Printf.sprintf "export %s" (String.concat ", " names)
+      | ImportDecl { import_path; import_alias } -> (
+          let base = Printf.sprintf "import %s" (String.concat "." import_path) in
+          match import_alias with
+          | None -> base
+          | Some alias -> base ^ " as " ^ alias)
       | Let l -> Printf.sprintf "let %s = %s;" l.name (expression_to_string l.value)
       | Return expr -> Printf.sprintf "return %s;" (expression_to_string expr)
       | ExpressionStmt expr -> expression_to_string expr
