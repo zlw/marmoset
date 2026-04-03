@@ -3,7 +3,7 @@
 ## Maintenance
 
 - Last verified: 2026-04-03
-- Implementation status: In progress
+- Implementation status: Complete
 - Prerequisites:
   - `docs/plans/done/language/04_pre-modules-semantics-foundation.md`
   - `docs/plans/done/tooling/01_diagnostics-rework.md`
@@ -136,6 +136,15 @@ Once the semantic foundation is frozen, harden it before modules land. This plan
   - normalized + structural canary coverage for large mixed-feature programs.
 - Trait duplicate / overlap / conflict diagnostics are stable enough to serve as groundwork for build-wide coherence in the module system plan.
 - Module, prelude, and FFI work can assume the current language is already stable and auditable.
+
+## Verification
+
+Verified against the implementation on 2026-04-03 with:
+
+- `make unit compiler`
+- `./test/integration.sh docs_examples`
+- `./test/integration.sh snapshots`
+- `./test/integration.sh hardening`
 
 ## Related Plans
 
