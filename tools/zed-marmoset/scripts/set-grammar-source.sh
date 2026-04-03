@@ -6,6 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 EXTENSION_DIR="$REPO_ROOT/tools/zed-marmoset"
 RESET_CACHE=0
+PINNED_REPOSITORY="https://github.com/zlw/marmoset"
 
 usage() {
   cat <<'EOF'
@@ -62,6 +63,20 @@ done
 
 OUTPUT="$EXTENSION_DIR/extension.toml"
 python3 "$SCRIPT_DIR/render_extension_manifest.py" --mode "$MODE" --repo-root "$REPO_ROOT" --output "$OUTPUT"
+
+if [ "$MODE" = "pinned" ]; then
+  CACHE_REPO="$EXTENSION_DIR/grammars/marmoset"
+  if [ -e "$CACHE_REPO" ]; then
+    CACHE_REMOTE=""
+    if [ -d "$CACHE_REPO/.git" ]; then
+      CACHE_REMOTE="$(git -C "$CACHE_REPO" remote get-url origin 2>/dev/null || true)"
+    fi
+    if [ ! -d "$CACHE_REPO/.git" ] || [ "$CACHE_REMOTE" != "$PINNED_REPOSITORY" ]; then
+      rm -rf "$EXTENSION_DIR/grammars"
+      echo "Removed stale grammar cache at $EXTENSION_DIR/grammars because it did not match $PINNED_REPOSITORY"
+    fi
+  fi
+fi
 
 if [ "$RESET_CACHE" -eq 1 ] && [ -d "$EXTENSION_DIR/grammars" ]; then
   rm -rf "$EXTENSION_DIR/grammars"

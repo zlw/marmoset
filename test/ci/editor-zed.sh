@@ -302,6 +302,21 @@ PY
   --extension-dir "$TMP_DIR/extension"
 search_fixed "repository = \"file://" "$TMP_DIR/extension/extension.toml"
 
+python3 - <<'PY' "$TMP_DIR/pinned-ext"
+import pathlib
+
+ext = pathlib.Path(__import__("sys").argv[1])
+(ext / "grammars/marmoset/.git").mkdir(parents=True, exist_ok=True)
+(ext / "grammars/marmoset/.git/config").write_text(
+    "[remote \"origin\"]\n\turl = file:///tmp/marmoset\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n"
+)
+(ext / "grammars/marmoset/stale.txt").write_text("stale\n")
+PY
+
+"$ZED_DIR/scripts/set-grammar-source.sh" pinned \
+  --extension-dir "$TMP_DIR/pinned-ext"
+test ! -e "$TMP_DIR/pinned-ext/grammars"
+
 python3 - <<'PY' "$TMP_DIR/repo"
 import pathlib
 import subprocess
