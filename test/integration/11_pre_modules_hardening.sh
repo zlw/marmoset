@@ -11,6 +11,11 @@ CANARY_FIXTURE="$REPO_ROOT/test/fixtures/codegen_canary/cc01_pre_modules_mixed_f
 UNION_FALLBACK_FIXTURE="$REPO_ROOT/test/fixtures/codegen_canary/cc02_union_record_match_catch_all.mr"
 SPREAD_DYN_FIXTURE="$REPO_ROOT/test/fixtures/codegen_canary/cc03_record_spread_dyn_projection.mr"
 UNION_VARIABLE_FALLBACK_FIXTURE="$REPO_ROOT/test/fixtures/codegen_canary/cc04_union_record_match_variable_catch_all.mr"
+TRAIT_DYN_PACK_FIXTURE="$REPO_ROOT/test/fixtures/vnext_canary/vn114_derived_dyn_pack_inherits_supertrait_methods.mr"
+DEFAULT_DYN_BOX_FIXTURE="$REPO_ROOT/test/fixtures/vnext_canary/vn117_generic_record_derived_default_returns_dyn_show.mr"
+OVERRIDE_CALLBACK_FIXTURE="$REPO_ROOT/test/fixtures/vnext_canary/vn112_qualified_child_trait_override_generic_call.mr"
+POLY_CALLBACK_FIXTURE="$REPO_ROOT/test/fixtures/runtime/p105_local_poly_helper_callback_through_hof_two_types.mr"
+MATCH_CLOSURE_FIXTURE="$REPO_ROOT/test/fixtures/codegen_stress/cs49_h50_closure_defined_inside_match_arm.mr"
 
 run_canary_structural_assertions() {
     TOTAL=$((TOTAL + 1))
@@ -78,6 +83,259 @@ run_canary_structural_assertions() {
     rm -rf "$outdir"
 }
 
+run_trait_dyn_pack_structural_assertions() {
+    TOTAL=$((TOTAL + 1))
+    echo -n "TEST [$TOTAL] derived child-trait Dyn witnesses keep inherited methods ... "
+
+    local outdir binpath build_output main_go failures label_calls
+    outdir=$(mktemp -d marmoset_emit_trait_dyn.XXXXXX)
+    binpath=$(mktemp "$REPO_ROOT/.marmoset/build/marmoset_trait_dyn_bin.XXXXXX")
+    rm -f "$binpath"
+
+    if ! build_output=$($EXECUTABLE build "$TRAIT_DYN_PACK_FIXTURE" --emit-go "$outdir" -o "$binpath" 2>&1); then
+        echo "✗ FAIL (build failed)"
+        echo "  Output: $build_output"
+        FAIL=$((FAIL + 1))
+        rm -f "$binpath"
+        rm -rf "$outdir"
+        return
+    fi
+
+    main_go="$outdir/main.go"
+    failures=()
+
+    if ! grep -q 'type marmosetDynWitness_Pack struct{label func(any) string; show func(any) string}' "$main_go"; then
+        failures+=("missing Pack witness carrying inherited label and show methods")
+    fi
+    if ! grep -q 'func Label_label_record_x_int64_closed(self Point) string {' "$main_go"; then
+        failures+=("missing inherited Label helper for derived Point impl")
+    fi
+    if ! grep -q 'func Pack_label_record_x_int64_closed(self Point) string {' "$main_go"; then
+        failures+=("missing Pack forwarding helper for derived Point impl")
+    fi
+
+    label_calls=$(grep -c 'apply_record_x_int64_closed_fn_record_x_int64_closed_string(self, func(x Point) string {' "$main_go")
+    if [ "$label_calls" != "2" ]; then
+        failures+=("expected 2 lambda-backed label calls through apply, found $label_calls")
+    fi
+
+    if [ "${#failures[@]}" -eq 0 ]; then
+        echo "✓ PASS"
+        PASS=$((PASS + 1))
+    else
+        echo "✗ FAIL"
+        local failure
+        for failure in "${failures[@]}"; do
+            echo "  $failure"
+        done
+        FAIL=$((FAIL + 1))
+    fi
+
+    rm -f "$binpath"
+    rm -rf "$outdir"
+}
+
+run_default_dyn_box_structural_assertions() {
+    TOTAL=$((TOTAL + 1))
+    echo -n "TEST [$TOTAL] derived default Dyn boxing keeps concrete payloads ... "
+
+    local outdir binpath build_output main_go failures dyn_count
+    outdir=$(mktemp -d marmoset_emit_default_dyn.XXXXXX)
+    binpath=$(mktemp "$REPO_ROOT/.marmoset/build/marmoset_default_dyn_bin.XXXXXX")
+    rm -f "$binpath"
+
+    if ! build_output=$($EXECUTABLE build "$DEFAULT_DYN_BOX_FIXTURE" --emit-go "$outdir" -o "$binpath" 2>&1); then
+        echo "✗ FAIL (build failed)"
+        echo "  Output: $build_output"
+        FAIL=$((FAIL + 1))
+        rm -f "$binpath"
+        rm -rf "$outdir"
+        return
+    fi
+
+    main_go="$outdir/main.go"
+    failures=()
+
+    if ! grep -q 'type marmosetDynWitness_show struct{show func(any) string}' "$main_go"; then
+        failures+=("missing Dyn[Show] witness shape for derived box method")
+    fi
+    if ! grep -q 'func Boxed_box_record_value_int64_closed(self Record_value_int64) marmosetDyn {' "$main_go"; then
+        failures+=("missing derived Boxed.box helper for concrete record instantiation")
+    fi
+
+    dyn_count=$(grep -o 'marmosetDyn{typeID: "{ value: Int }", payload: __payload' "$main_go" | wc -l | tr -d ' ')
+    if [ "$dyn_count" != "1" ]; then
+        failures+=("expected 1 direct concrete Dyn packaging site, found $dyn_count")
+    fi
+
+    if [ "${#failures[@]}" -eq 0 ]; then
+        echo "✓ PASS"
+        PASS=$((PASS + 1))
+    else
+        echo "✗ FAIL"
+        local failure
+        for failure in "${failures[@]}"; do
+            echo "  $failure"
+        done
+        FAIL=$((FAIL + 1))
+    fi
+
+    rm -f "$binpath"
+    rm -rf "$outdir"
+}
+
+run_override_callback_structural_assertions() {
+    TOTAL=$((TOTAL + 1))
+    echo -n "TEST [$TOTAL] qualified override calls keep lifted callback helpers ... "
+
+    local outdir binpath build_output main_go failures
+    outdir=$(mktemp -d marmoset_emit_override_callback.XXXXXX)
+    binpath=$(mktemp "$REPO_ROOT/.marmoset/build/marmoset_override_callback_bin.XXXXXX")
+    rm -f "$binpath"
+
+    if ! build_output=$($EXECUTABLE build "$OVERRIDE_CALLBACK_FIXTURE" --emit-go "$outdir" -o "$binpath" 2>&1); then
+        echo "✗ FAIL (build failed)"
+        echo "  Output: $build_output"
+        FAIL=$((FAIL + 1))
+        rm -f "$binpath"
+        rm -rf "$outdir"
+        return
+    fi
+
+    main_go="$outdir/main.go"
+    failures=()
+
+    if ! grep -Eq '^func __section_.*_int64\(it int64\) int64 \{$' "$main_go"; then
+        failures+=("missing lifted helper for placeholder callback passed to Child.cast")
+    fi
+    if ! grep -q 'func Child_cast_int64__int64(x int64, f func(int64) int64) int64 {' "$main_go"; then
+        failures+=("missing specialized override helper for Child.cast")
+    fi
+    if ! grep -q 'return f(x)' "$main_go"; then
+        failures+=("override helper no longer forwards the callback directly")
+    fi
+    if ! grep -Eq '_ = puts\(Child_cast_int64__int64\(int64\(1\), __section_.*_int64\)\)' "$main_go"; then
+        failures+=("main no longer routes the qualified override through the lifted helper")
+    fi
+
+    if [ "${#failures[@]}" -eq 0 ]; then
+        echo "✓ PASS"
+        PASS=$((PASS + 1))
+    else
+        echo "✗ FAIL"
+        local failure
+        for failure in "${failures[@]}"; do
+            echo "  $failure"
+        done
+        FAIL=$((FAIL + 1))
+    fi
+
+    rm -f "$binpath"
+    rm -rf "$outdir"
+}
+
+run_poly_callback_structural_assertions() {
+    TOTAL=$((TOTAL + 1))
+    echo -n "TEST [$TOTAL] local polymorphic callbacks specialize per HOF use ... "
+
+    local outdir binpath build_output main_go failures
+    outdir=$(mktemp -d marmoset_emit_poly_callback.XXXXXX)
+    binpath=$(mktemp "$REPO_ROOT/.marmoset/build/marmoset_poly_callback_bin.XXXXXX")
+    rm -f "$binpath"
+
+    if ! build_output=$($EXECUTABLE build "$POLY_CALLBACK_FIXTURE" --emit-go "$outdir" -o "$binpath" 2>&1); then
+        echo "✗ FAIL (build failed)"
+        echo "  Output: $build_output"
+        FAIL=$((FAIL + 1))
+        rm -f "$binpath"
+        rm -rf "$outdir"
+        return
+    fi
+
+    main_go="$outdir/main.go"
+    failures=()
+
+    if ! grep -Eq '^func __local_same_.*_int64_int64\(x int64, y int64\) bool \{$' "$main_go"; then
+        failures+=("missing Int specialization for lifted local callback")
+    fi
+    if ! grep -Eq '^func __local_same_.*_string_string\(x string, y string\) bool \{$' "$main_go"; then
+        failures+=("missing String specialization for lifted local callback")
+    fi
+    if ! grep -q 'if apply2_fn_int64_fn_int64_bool_int64_int64(' "$main_go"; then
+        failures+=("run() no longer uses the specialized Int higher-order helper")
+    fi
+    if ! grep -q 'if apply2_fn_string_fn_string_bool_string_string(' "$main_go"; then
+        failures+=("run() no longer uses the specialized String higher-order helper")
+    fi
+
+    if [ "${#failures[@]}" -eq 0 ]; then
+        echo "✓ PASS"
+        PASS=$((PASS + 1))
+    else
+        echo "✗ FAIL"
+        local failure
+        for failure in "${failures[@]}"; do
+            echo "  $failure"
+        done
+        FAIL=$((FAIL + 1))
+    fi
+
+    rm -f "$binpath"
+    rm -rf "$outdir"
+}
+
+run_match_closure_structural_assertions() {
+    TOTAL=$((TOTAL + 1))
+    echo -n "TEST [$TOTAL] match-arm closures stay branch-local after lowering ... "
+
+    local outdir binpath build_output main_go failures closure_count
+    outdir=$(mktemp -d marmoset_emit_match_closure.XXXXXX)
+    binpath=$(mktemp "$REPO_ROOT/.marmoset/build/marmoset_match_closure_bin.XXXXXX")
+    rm -f "$binpath"
+
+    if ! build_output=$($EXECUTABLE build "$MATCH_CLOSURE_FIXTURE" --emit-go "$outdir" -o "$binpath" 2>&1); then
+        echo "✗ FAIL (build failed)"
+        echo "  Output: $build_output"
+        FAIL=$((FAIL + 1))
+        rm -f "$binpath"
+        rm -rf "$outdir"
+        return
+    fi
+
+    main_go="$outdir/main.go"
+    failures=()
+
+    if ! grep -q 'switch __scrutinee_0 {' "$main_go"; then
+        failures+=("missing switch lowering for the closure-producing match")
+    fi
+    if ! grep -q 'case int64(1):' "$main_go"; then
+        failures+=("missing concrete match arm in lowered closure switch")
+    fi
+    if ! grep -q 'default:' "$main_go"; then
+        failures+=("missing default arm in lowered closure switch")
+    fi
+
+    closure_count=$(grep -c 'f = func(x int64) int64 {' "$main_go")
+    if [ "$closure_count" != "2" ]; then
+        failures+=("expected 2 branch-local closure literals, found $closure_count")
+    fi
+
+    if [ "${#failures[@]}" -eq 0 ]; then
+        echo "✓ PASS"
+        PASS=$((PASS + 1))
+    else
+        echo "✗ FAIL"
+        local failure
+        for failure in "${failures[@]}"; do
+            echo "  $failure"
+        done
+        FAIL=$((FAIL + 1))
+    fi
+
+    rm -f "$binpath"
+    rm -rf "$outdir"
+}
+
 suite_begin "Pre-Modules Hardening Regression Tests"
 
 test_emit_go_normalized_snapshot \
@@ -86,6 +344,11 @@ test_emit_go_normalized_snapshot \
     "$SNAPSHOT_ROOT/cc01_pre_modules_mixed_feature_canary.main.go"
 
 run_canary_structural_assertions
+run_trait_dyn_pack_structural_assertions
+run_default_dyn_box_structural_assertions
+run_override_callback_structural_assertions
+run_poly_callback_structural_assertions
+run_match_closure_structural_assertions
 
 expect_reject \
     "duplicate trait definitions stay rejected" \
