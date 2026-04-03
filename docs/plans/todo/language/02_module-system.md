@@ -8,15 +8,15 @@
 
 ## Context
 
-Marmoset currently supports single-file compilation only. The pipeline is: source.mr → Lexer → Parser → Typechecker → Go Emitter → `go build`. The current registries and lookup tables still reflect the pre-module single-file world (enum, trait, impl, inherent, and transparent-type metadata that still uses some alias-like internal names) and are global mutable Hashtbl values keyed by flat strings. Identifiers are `Identifier of string` with no qualified names, no symbol table, and no multi-file awareness. The Go backend emits a single `package main` with one `main.go`.
+Marmoset currently supports single-file compilation only. The pipeline is: source.mr → Lexer → Parser → Typechecker → Go Emitter → `go build`. The current registries and lookup tables still reflect the pre-module single-file world (enum, trait, impl, grouped type-extension, and transparent-type metadata that still uses some alias-like internal names) and are global mutable Hashtbl values keyed by flat strings. Identifiers are still `Identifier of string` at the AST surface, there is no namespace-aware module scope model yet, and there is no multi-file compilation orchestration. The Go backend emits a single `package main` with one `main.go`.
 
 This plan adds a module system as the first of two milestones (modules, then FFI). Some decisions are flagged as FFI-relevant.
 
 ### Key Pre-Module Status
-- P0-8 (Symbol/ID model): **NOT STARTED** — critical blocker. No symbol table, no qualified names, global registries need scoping.
+- Symbol IDs / identifier tracking: **PARTIALLY DONE** — basic symbol IDs exist already; the remaining blocker is namespace-aware scope/binding spaces rather than raw symbol allocation.
 - All other P0 blockers: Done or partially done.
 - `module_path` field exists in `mono_state` but is locked to `"main"` with a guard.
-- Function-model rework now defines the canonical qualifier classifier and wrapped artifact-key direction (`expr_key`, `callable_key`, `call_resolution`). Module work should extend that machinery, not replace it.
+- Function-model rework now defines the canonical qualifier classifier direction and wrapped artifact-key direction (`expr_key`, `callable_key`, future-generalized `call_resolution`). Module work should extend that machinery, not replace it.
 
 ---
 
@@ -24,7 +24,11 @@ This plan adds a module system as the first of two milestones (modules, then FFI
 
 1. **File = module** (implicit). No `module` keyword. `math.mr` defines module `math`. `collections/list.mr` defines module `collections.list`.
 2. **`.` is the universal qualifier** — field access, callable-field/direct-interface surfaces, named-sum constructors, module access, and later extern-qualified access. Parser stays syntactic; one central checker classifier resolves semantics.
-3. **`import` keyword** with `.`-separated paths. One import per line in v1. Aliasing with `as` supported.
+3. **`import` keyword** with `.`-separated paths. One import per line in v1. Aliasing with `as` supported. `import a.b.c` is parsed as a raw dotted path and resolved semantically later:
+   - if `a.b.c` is a module path, it is a namespace import,
+   - else if `a.b` is a module path and `c` is one of its exported members, it is a direct import,
+   - else it is an error,
+   - if both interpretations are valid, it is an ambiguity error.
 4. **`export` list at top of file** for visibility. No per-declaration keywords. Everything not exported is private. Export statement is optional (no export = all private).
 5. **No wildcard imports.** Every imported name must be listed explicitly.
 6. **No multi-import `{...}` syntax in v1.** Sugar for later.
@@ -33,28 +37,55 @@ This plan adds a module system as the first of two milestones (modules, then FFI
 9. **Bail-on-first error** per module (consistent with diagnostics plan).
 10. **Per-module compilation from day one.** Each module type-checked independently. Module signatures passed to downstream modules. No combined-AST shortcut — clean architecture for incremental compilation and LSP.
 11. **No orphan rule in v1 modules.** A module may define `impl Trait[Type]` even if it owns neither the trait nor the type.
-12. **Coherence is build-wide, not import-scoped.** All impls from all modules in the build participate in one global impl set. Imports do not select between competing impl worlds.
-13. **No scoped impl imports / local impl worlds in v1.** Trait satisfaction and dispatch must not depend on which helper module happened to be imported.
+12. **Build membership = transitive import closure from the entry module.** Files on disk that are not reachable through imports are not part of the build and do not affect semantics.
+13. **Trait impls are open-world, direct-import visible, and globally coherent.**
+14. **Type `impl` blocks are open-world grouped extensions, direct-import visible, and locally ambiguous.**
+15. **Neither kind of impl is transitively re-exported in v1.** If module `A` imports an impl module, that does not make those impls visible in module `B`.
+16. **Top-level runtime initialization executes once in module dependency order.** Do not inherit Go package-var/init semantics as the language model.
+
+### Binding Spaces
+
+Modules introduce multiple binding spaces. The checker must not model everything as "value in `type_env`".
+
+Each module scope conceptually contains separate maps for:
+- values
+- modules / namespaces
+- named types (constructor-bearing and transparent)
+- traits
+- shapes
+
+These may be threaded as one record with distinct fields rather than as separate unrelated parameters.
+
+Visibility rules:
+- `import math` introduces a module binding only.
+- `import math.add` introduces a value binding only.
+- `import math.Point` introduces a named-type binding only.
+- `import math.Show` introduces a trait binding only.
+- `import math.HasXY` introduces a shape binding only.
+- Local value bindings shadow imported module/type/trait/shape names in expression position.
 
 ### Trait Impl Coherence Model
 
-This plan intentionally adopts **no orphan rule + global build-wide coherence**.
+This plan intentionally adopts **no orphan rule + global build-wide coherence with direct-import visibility**.
 
 Rationale:
 - Marmoset's transparent exact types are structural again, so nominal "type ownership" is not a reliable coherence boundary for exact structural receivers.
 - A Rust-style orphan boundary would fit constructor-bearing nominal wrappers and sums better than transparent exact structural types, and would therefore be an awkward mismatch for the language's current data model.
-- Import-scoped impl worlds would preserve flexibility, but they would make trait satisfaction, `Dyn[...]` packaging, and qualified dispatch import-sensitive in ways that are difficult to reason about and difficult to compile predictably.
+- Full build-global visibility would keep resolution simple, but it would make imports poor documentation because behavior could appear in a file only because some other file imported an impl module elsewhere.
 
 Operational policy:
 - Any module may declare `impl Trait[Type]`.
-- All impls discovered anywhere in the build participate in one global coherence set.
-- Imports/exports do not gate impl visibility and do not choose between competing impls.
-- The same global impl set is used for:
-  - trait constraint solving,
-  - qualified trait calls,
+- Build-wide overlap / duplicate checking is global across all reachable modules in the build.
+- Trait impl usability is local to the current module: a file may use trait impls defined in:
+  - the current module,
+  - modules it directly imports.
+- Trait impl visibility is not re-exported transitively through intermediate modules.
+- The current module's visible trait impl set is used for:
+  - concrete trait constraint solving,
+  - qualified trait calls when a concrete witness is needed,
   - `Dyn[...]` witness packaging,
-  - derive validation and expansion,
-  - emitter specialization/helper selection.
+  - derive validation and expansion for imported traits/types,
+  - emitter specialization/helper selection for code proven in that module.
 
 Conflict policy:
 - Concrete impl identity is keyed by canonical `(trait, receiver-type)` pairs.
@@ -66,7 +97,32 @@ Conflict policy:
 
 Implementation consequence:
 - Per-module checking still applies to value/type/shape/trait visibility.
-- Impl visibility is handled separately through a build-wide pre-scan and global registry injection, not through ordinary import/export visibility.
+- Trait-impl overlap checking is handled with a build-wide pre-scan and global registry.
+- Trait-impl usability in a given module is still filtered by that module's directly imported impl modules.
+
+### Type `impl` Extension Model
+
+`impl Type = { ... }` is not treated like trait coherence evidence. In a structural/data-first language it behaves more like an import-scoped grouped extension surface.
+
+Operational policy:
+- Any module may declare `impl Type = { ... }`.
+- A file may use grouped type-extension members defined in:
+  - the current module,
+  - modules it directly imports.
+- Type `impl` visibility is not re-exported transitively.
+- Type `impl` lookup does not participate in trait solving or `Dyn[...]`.
+
+Conflict policy:
+- Extension identity is keyed by canonical `(receiver-type, member-name)` pairs.
+- Lookup for `Type.member(...)` collects candidates only from the current module and directly imported modules visible in the current file.
+- `0` candidates → unknown member error.
+- `1` candidate → success.
+- `>1` candidates → local ambiguity error with origin-rich diagnostics.
+
+Implementation consequence:
+- Transparent exact types collapse to their canonical structural receiver type for grouped-extension lookup.
+- Constructor-bearing wrappers and sums keep their nominal identity.
+- Type-grouped extensions are intentionally more like explicit open classes / extension groups than owner-only inherent methods.
 
 ---
 
@@ -99,6 +155,7 @@ import math.Points              # direct: Points available as transparent type n
 import math.HasXY               # direct: HasXY available as shape name
 import collections.list         # nested module: collections.list.map(...)
 import collections.list as l    # aliased namespace: l.map(...)
+import instances.show_point     # direct-imports trait/type impls from that module into this file only
 
 math.add(1, 2)                  # qualified call
 add(1, 2)                       # unqualified (if directly imported)
@@ -133,32 +190,46 @@ Shapes participate in import/export and type-position resolution, but they do no
 - Named-sum variants are checked before exact-type grouped functions — constructors take priority within the named-sum namespace
 - This order is stable across all plans and must be implemented as one centralized classifier, not duplicated rewrite-time and typecheck-time resolution paths
 
+### Import Resolution Rules
+
+`import a.b.c` is intentionally resolved semantically, not syntactically:
+- If `a/b/c.mr` exists and is a module, the import is a namespace import of module `a.b.c`.
+- Else if `a/b.mr` exists and module `a.b` exports `c`, the import is a direct import of member `c` from module `a.b`.
+- Else the import is an error.
+- If both interpretations are valid, the import is an ambiguity error and the user must rename one side or use a less ambiguous path.
+
 **FFI-relevant:** The `import` keyword and `.`-separated paths establish the convention that FFI declarations will also follow.
 
 ---
 
 ## Implementation Phases
 
-### Phase M0: Symbol ID Model Foundation
-**Goal:** Establish minimal symbol infrastructure that modules will build on.
-
-This is P0-8 Phase 1 from the existing problem doc. Not the full multi-pass architecture — just enough to have stable, unique symbol IDs.
+### Phase M0: Namespace-Aware Scope And Resolution Foundation
+**Goal:** Establish the binding/scope substrate that modules will build on.
 
 **Changes:**
-- Add `symbol` type to `infer.ml` (or new `symbol_table.ml`):
+- Keep the existing symbol-ID machinery, but stop treating it as the missing blocker.
+- Introduce a scope record for per-module checking, for example:
   ```ocaml
-  type symbol_id = int
-  type symbol_kind = TopLevelLet | LocalLet | Param | TypeSym | TransparentTypeSym | ShapeSym | TraitSym | ...
-  type symbol = { id: symbol_id; name: string; kind: symbol_kind;
-                  definition_pos: int; definition_end_pos: int; file_id: string option }
+  type module_scope = {
+    value_bindings : poly_type StringMap.t;
+    module_bindings : namespace_info StringMap.t;
+    type_bindings : named_type_ref StringMap.t;
+    trait_bindings : trait_ref StringMap.t;
+    shape_bindings : shape_ref StringMap.t;
+  }
   ```
-- Create global `symbol_table: (symbol_id, symbol) Hashtbl.t`
-- During inference, register symbols when bindings are created
-- Map `(expr.id, symbol_id)` for identifier resolution tracking
+- Generalize checker/emitter-facing resolution artifacts from the current method-only side channel to a namespace-aware `call_resolution` family that can represent module-qualified access without replacing the API shape later.
+- Thread scope lookup through the central dotted classifier instead of using value env membership as a proxy for all names.
+- Define local shadowing and lookup rules explicitly for values/modules/types/traits/shapes.
 
-**Files:** `lib/frontend/typecheck/infer.ml` (or new `lib/frontend/typecheck/symbol_table.ml`)
+**Files:** `lib/frontend/typecheck/infer.ml`, `lib/frontend/typecheck/checker.ml`,
+`lib/frontend/typecheck/resolution_artifacts.ml` (and helper modules if split out)
 
-**Tests:** Unit tests that symbols are created for let bindings, function params, named types, transparent `type` declarations, and shapes. Verify symbol IDs are unique within a file.
+**Tests:**
+- Unit tests for separate binding spaces and shadowing
+- Unit tests for dotted classification with values vs modules vs traits vs types
+- Existing symbol-table tests still pass unchanged
 
 **Gate:** All existing unit + integration tests pass unchanged.
 
@@ -180,10 +251,9 @@ This is P0-8 Phase 1 from the existing problem doc. Not the full multi-pass arch
 (* Export declaration — must be first statement if present *)
 | ExportDecl of string list   (* export add, pi, Point *)
 
-(* Import declaration *)
+(* Import declaration: raw path, resolved semantically later *)
 | ImportDecl of {
-    import_module: string list;       (* ["math"] or ["collections"; "list"] *)
-    import_name: string option;       (* Some "add" for import math.add, None for import math *)
+    import_path: string list;         (* ["math"; "add"] or ["collections"; "list"] *)
     import_alias: string option;      (* Some "Pt" for import math.Point as Pt *)
   }
 ```
@@ -192,9 +262,11 @@ No new expression kinds needed — `.` already parses as `FieldAccess` and `Meth
 
 **Parser changes** (`lib/frontend/syntax/parser.ml`):
 - Parse `export name1, name2, ...` as `ExportDecl`
-- Parse `import a.b.c` as `ImportDecl` (dot-separated path)
+- Parse `import a.b.c` as raw-path `ImportDecl` (dot-separated path only)
 - Parse `import a.b.c as alias` with `As` keyword
-- Validate: `export` must be first non-import statement (or first statement entirely)
+- Validate: `export` must be the first statement if present; imports follow it
+
+No semantic distinction between module import and direct import is made in the parser. That is resolved later by the import resolver.
 
 **Tests:**
 - Unit: lex `import`, `export`, `as`
@@ -224,9 +296,13 @@ type module_graph = { modules: (string, parsed_module) Hashtbl.t;
 ```
 
 **File resolution rules:**
-- `import math` → `./math.mr` relative to entry file directory
-- `import collections.list` → `./collections/list.mr` relative to project root
 - Project root = directory containing entry file
+- `import math` → `./math.mr` relative to project root
+- `import collections.list` → `./collections/list.mr` relative to project root
+- `import a.b.c` tries:
+  1. module path `./a/b/c.mr`
+  2. member import from module `./a/b.mr` with exported member `c`
+  3. ambiguity error if both succeed
 
 **Expression ID collision fix:** Parser's `next_id` becomes file-scoped with offset ranges. File 0: IDs 0–999,999. File 1: IDs 1,000,000–1,999,999. Passed via `~id_offset` parameter to parser. Wrapped artifact keys continue to include `file_id`, consistent with the function-model rework.
 
@@ -246,12 +322,21 @@ type module_graph = { modules: (string, parsed_module) Hashtbl.t;
 **Goal:** Type-check each module independently. Extract module signatures. Pass signatures to downstream modules.
 
 **Architecture:** For each module in topological order:
-1. Pre-scan the full build for trait/type/shape definitions and impl headers needed for global coherence
-2. Build the module's initial `type_env` from builtins + imported module signatures, while separately injecting the build-wide impl/coherence registry state
-3. Run `infer_program` on the module's AST alone
-4. Extract a `module_signature` from the results (exported values, nominal named types, transparent `type` declarations, shapes, traits, impls)
-5. Store the signature for use by downstream modules
-6. Ordinary names remain explicitly imported/exported; impl coherence metadata follows the separate build-wide visibility rule above
+1. Pre-scan the full build for trait/type/shape definitions and impl headers needed for:
+   - global trait coherence,
+   - grouped-extension collision indexing,
+   - module signature extraction
+2. Resolve the current module's imports against upstream module signatures
+3. Build the module's initial scope from:
+   - builtins,
+   - imported module signatures,
+   - directly imported trait-impl modules visible in this file,
+   - directly imported type-extension modules visible in this file,
+   - build-wide trait-coherence metadata
+4. Run derive expansion using that imported context
+5. Run `infer_program` on the expanded module AST alone
+6. Extract a `module_signature` from the results (exported values, nominal named types, transparent `type` declarations, shapes, traits, trait impls, type extensions)
+7. Store the signature for use by downstream modules
 
 **New type: Module Signature** (new file `lib/frontend/typecheck/module_sig.ml`):
 ```ocaml
@@ -262,44 +347,50 @@ type module_signature = {
   transparent_types : (string * type_alias_info) list;  (* exported `type Name = TypeExpr` declarations *)
   shapes : (string * shape_def) list;         (* exported open structural shapes *)
   traits : (string * trait_def) list;         (* exported trait definitions *)
-  impls : impl_entry list;                    (* all impls (always build-visible; not export-gated) *)
+  trait_impls : trait_impl_entry list;        (* visible only to modules that directly import this module *)
+  type_impls : type_impl_entry list;          (* visible only to modules that directly import this module *)
 }
 ```
 
-Note: trait `impl` blocks are always visible across modules and are not export-gated. This is not Rust's orphan-rule model. Marmoset allows foreign-trait-for-foreign-type impls, but requires one coherent build-wide impl set. Values, nominal named types, transparent `type` declarations, shapes, and traits still participate in explicit export.
+Note: values, nominal named types, transparent `type` declarations, shapes, and traits participate in explicit export. Trait impls and type impls are not ordinary exported names, but they also do not become globally visible merely because the module is in the build; they become usable only in modules that directly import the defining module.
 
 **Key changes:**
 
 1. **Refactor `infer_program` to accept external environment:**
    ```ocaml
    val infer_program :
-     ?env:type_env ->              (* pre-populated with imported signatures *)
+     ?scope:module_scope ->        (* pre-populated with imported names in separate binding spaces *)
      ?external_types:named_type_info list ->
      ?external_transparent_types:type_alias_info list ->
      ?external_shapes:shape_def list ->
      ?external_traits:trait_def list ->
-     ?external_impls:impl_entry list ->
+     ?visible_trait_impls:trait_impl_entry list ->
+     ?visible_type_impls:type_impl_entry list ->
+     ?global_trait_coherence:trait_coherence_state ->
      AST.program -> infer_result
    ```
-   The existing `infer_program` clears all registries and starts fresh. The refactored version accepts pre-populated registry state from imported signatures plus the build-wide impl/coherence pre-scan. The clear calls move to a `reset_all` function called once per full build, then each module *adds* its definitions.
+   The existing `infer_program` clears all registries and starts fresh. The refactored version accepts pre-populated imported scope plus imported registry state and visible impl sets. The clear calls move to a `reset_all` function called once per full build, then each module *adds* its definitions.
 
 2. **Per-module registries:**
    - Each module's `infer_program` call populates registries with its own definitions (module-prefixed keys)
-   - Before body checking any module, do a whole-build pre-scan for trait/type/shape definitions and impl headers needed for global coherence
+   - Before body checking any module, do a whole-build pre-scan for trait/type/shape definitions and trait-impl headers needed for global coherence
    - Before calling `infer_program` for a module, inject:
      - imported module signature entries for ordinary visibility,
-     - the build-wide impl registry and related coherence metadata for trait resolution
+     - directly imported trait impls and type impls for this file,
+     - the build-wide trait-coherence metadata needed for duplicate/overlap checks
+   - Run derive expansion after imports have been resolved and imported traits/types are visible
    - After `infer_program` completes, extract the module's signature from the registry state + type_env
    - Private names are NOT included in the signature → downstream modules can't see them
-   - Impl visibility remains build-wide even when other declarations remain import/export-gated
+   - Neither trait impls nor type impls are transitively re-exported
 
 3. **Import resolution + namespace environment** (new `lib/frontend/import_resolver.ml`):
    - For each module, resolve `import` declarations against upstream signatures
-   - Verify imported names exist and are exported
-   - Build the module's initial scope/environment:
-     - `import math` → bind `"math"` as a namespace binding in scope
-     - `import math.add` → bind `"add"` → `math__add` in type_env
-     - `import math.Point as Pt` → bind `"Pt"` → `math__Point` in type_env
+   - Verify imported names exist and are exported where export visibility applies
+   - Build the module's initial scope record:
+     - `import math` → bind `"math"` as a namespace binding
+     - `import math.add` → bind `"add"` in the value space
+     - `import math.Point as Pt` → bind `"Pt"` in the named-type space
+   - Record directly imported modules whose trait impls and type impls are visible in this file
    - Expose namespace metadata to the central checker classifier so `math.add(...)` classifies as a namespace-qualified call/member access
    - Optional lowering/desugaring after classification may rewrite already-resolved direct imports to internal names
    - Do **not** use AST rewrite as the semantic source of truth for dotted qualification
@@ -337,13 +428,17 @@ Note: trait `impl` blocks are always visible across modules and are not export-g
 **Tests:**
 - Two-module programs: module A exports function, module B calls it
 - Cross-module named sum: define `type Color = { ... }` or `enum Color = { ... }` in A, construct/match in B
-- Cross-module trait: define trait in A, impl in B (impls auto-visible)
+- Cross-module trait: define trait in A, impl in B, import impl module in C, and verify the impl is usable only in C
 - Cross-module transparent type: define `type Users = List[User]` in A, use in B
 - Cross-module shape: define `shape HasXY = { x: Int, y: Int }` in A, use in B
 - Export enforcement: error when importing a non-exported name
 - Isolation: module B cannot access module A's private names (type checker doesn't see them)
 - Direct import: `import math.add` then bare `add(1, 2)` works
 - Aliased import: `import math.Point as Pt` then `Pt` works as type name
+- Import ambiguity: error when `import a.b.c` could mean either module `a.b.c` or member `c` from `a.b`
+- Imported trait derive: derive an imported trait for an imported type in a third module
+- Type extension visibility: `Type.member(...)` is usable only when the extension-defining module is directly imported
+- Type extension ambiguity: two directly imported modules defining the same `Type.member` produce a local ambiguity error
 - Name collision: two modules with same-named private function → no collision (not in signatures)
 - Full integration: multi-file .mr programs compile to Go, build, run with correct output
 
@@ -359,7 +454,7 @@ Note: trait `impl` blocks are always visible across modules and are not export-g
 **Key changes:**
 - Emitter accepts a list of `checked_module` records instead of a single program
 - Monomorphization runs whole-program: collect all instantiations across all modules, emit specialized functions once
-- Non-main module top-level let bindings execute before main's code (emitted at top of `func main()` in dependency order, or as package-level `var` declarations)
+- Runtime top-level code is emitted as explicit per-module init helpers and executes exactly once in module-topological dependency order
 - Module-prefixed function names in Go output: `math__add`, `math__identity_string`
 
 **Files:** `lib/backend/go/emitter.ml`, `bin/main.ml`
@@ -436,8 +531,10 @@ These are flagged but NOT designed here. FFI is a separate plan.
 3. **Named-type / constructor collision across modules** — mitigated by module-prefixed registry keys
 4. **`.` disambiguation** — resolved by the unified classifier defined in the Syntax Design section. Value bindings win first, then namespace bindings, then named sums (variants before exact-type grouped functions), then traits, then other named types. Shapes do not create callable/member namespaces. Later extern qualifiers join the namespace bucket rather than introducing a second precedence rule.
 5. **Monomorphization across modules** — emitter runs whole-program across all checked modules. `collect_insts_stmt` sees all call sites from all modules.
-6. **Trait impl visibility** — impls must be visible across modules even without explicit import. With no orphan rule, the per-module approach must inject one build-wide impl/coherence set into every module check rather than treating impls as ordinary imported names.
-7. **Open-world impl conflict risk** — because foreign impls are allowed, adding a dependency can introduce duplicate or overlapping impls elsewhere in the build. Mitigate with canonical impl keys, whole-build overlap checks, and origin-rich diagnostics. No import-scoped impl selection is allowed as an escape hatch.
+6. **Import ambiguity** — `import a.b.c` intentionally permits two semantic interpretations. Mitigate with a deterministic resolution order and a hard ambiguity error when both interpretations are valid.
+7. **Trait impl visibility vs coherence** — trait impl usability is local, but overlap checking is global. Mitigate by explicitly separating "visible trait impls for this file" from "global coherence state for the build".
+8. **Open-world impl conflict risk** — because foreign trait impls are allowed, adding a reachable dependency can introduce duplicate or overlapping impls elsewhere in the build. Mitigate with canonical impl keys, whole-build overlap checks, and origin-rich diagnostics.
+9. **Type-extension ambiguity** — open-world `impl Type = { ... }` can produce conflicting `Type.member` groups. Mitigate with direct-import-only visibility and local ambiguity errors instead of pretending there is one global winner.
 
 ---
 
@@ -450,7 +547,8 @@ After each phase:
 4. Multi-module coherence tests cover:
    - foreign trait for foreign type is accepted,
    - duplicate/overlapping impls across different modules fail deterministically,
-   - imports do not affect impl availability or impl selection.
+   - trait impl imports affect local availability but not global duplicate detection,
+   - type-extension imports affect local availability and can trigger local ambiguity.
 5. Manual verification: write a 2-3 module program, compile, run, verify output
 
 ---
