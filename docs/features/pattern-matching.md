@@ -2,7 +2,7 @@
 
 ## Maintenance
 
-- Last verified: 2026-02-28
+- Last verified: 2026-04-03
 - Implementation status: Canonical (actively maintained)
 - Update trigger: Any language behavior, typechecker, or codegen change affecting this topic
 
@@ -20,7 +20,14 @@ Pattern forms include:
 - variable binding,
 - literals,
 - constructors,
-- record patterns (including rest binding forms where supported by semantics).
+- record patterns (including rest binding forms where supported by semantics),
+- nested combinations of the current forms,
+- or-patterns.
+
+Out of scope for the current surface:
+- tuple patterns,
+- array/list patterns,
+- guard clauses on arms.
 
 ## Status Note
 
@@ -28,6 +35,24 @@ The data-first rework makes constructor patterns the primary unwrap/destructurin
 surface for nominal wrappers and sums. Structural projection such as
 `{ ...wrapper }` remains available, but docs and examples should prefer `match`
 with constructor patterns whenever code is reading or destructuring nominal payloads.
+
+All currently accepted pattern forms in this document are codegen-safe end to
+end. The project no longer treats any accepted current-grammar pattern form as
+"typechecks but backend rejects."
+
+## Current Capability Matrix
+
+This matrix is the frozen pre-modules support surface for pattern matching.
+
+| Pattern form | Accepted scrutinee classes | Narrowing and bindings | Exhaustiveness behavior | Codegen guarantee |
+| --- | --- | --- | --- | --- |
+| Wildcard (`_`) | Any scrutinee type | No bindings; no extra narrowing | Catch-all; always contributes full coverage | Fully supported |
+| Variable (`name`) | Any scrutinee type | Binds the full scrutinee value in arm scope | Catch-all; always contributes full coverage | Fully supported |
+| Literal (`0`, `true`, `"x"`) | Compatible primitive scrutinees and compatible union members | Narrows matched arm to compatible member when the checker can prove it | Closed literal coverage is enforced for `Bool`; open literal domains still require a catch-all arm | Fully supported |
+| Constructor (`Option.Some(x)`) | Constructor-bearing sums, wrappers, and compatible union members | Narrows to the matched constructor and binds payload names | Closed constructor sets are exhaustive when every constructor is covered or a catch-all arm exists | Fully supported |
+| Record (`{ x:, y: pat, ...rest }`) | Structural records, transparent record types, and compatible union members | Binds named fields/rest and narrows record-like union members | Record-like scrutinees are exhaustive with a record catch-all shape; mixed domains still need coverage for non-record members | Fully supported |
+| Nested combinations | Any scrutinee class accepted by the outer pattern form | Constructor payloads and record fields may recursively use the current pattern forms | Exhaustiveness follows the outer pattern domain; nested checks must still typecheck | Fully supported |
+| Or-patterns / multi-pattern arms | Any scrutinee class where each alternative is individually valid | All alternatives must bind the same names; bindings/narrowing merge across alternatives | Coverage is the union of the alternatives; closed domains still require full coverage or a catch-all arm | Fully supported |
 
 ## Syntax
 
@@ -62,7 +87,9 @@ let r = match p {
 
 - arm result types are unified/validated,
 - pattern bindings extend local environment for arm body inference,
-- exhaustiveness checks applied for supported domains.
+- exhaustiveness checks applied for supported domains,
+- union scrutinees narrow through constructor, record, literal, and wildcard/variable coverage where applicable,
+- or-pattern alternatives must bind the same names.
 
 Checker responsibilities:
 - constructor patterns validated against wrapper/sum constructor signatures,
@@ -177,7 +204,7 @@ Pros:
 - strong compile-time validation opportunities.
 
 Cons:
-- advanced pattern forms and optimization passes remain future work,
+- tuple/list-pattern work and optimization passes remain future work,
 - some exhaustive-analysis corners are still conservative.
 
 ## Related Docs

@@ -3,7 +3,7 @@
 ## Maintenance
 
 - Last verified: 2026-04-03
-- Implementation status: Planning (not started)
+- Implementation status: In progress
 - Prerequisites:
   - `docs/plans/done/language/04_pre-modules-semantics-foundation.md`
   - `docs/plans/done/tooling/01_diagnostics-rework.md`
