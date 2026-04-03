@@ -1,0 +1,4 @@
+import a.add
+import b.add  # error: conflicts with existing binding 'add'
+
+puts(add(1, 2))

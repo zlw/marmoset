@@ -218,6 +218,12 @@ let resolve_import_kind
                ~message:
                  (Printf.sprintf "Import '%s' does not resolve to a module or exported member" full_module_id)))
 
+let import_name_collision_error (imp : Module_context.import_info) ~(local_name : string) : Diagnostic.t =
+  import_error imp ~code:"module-import-name-collision"
+    ~message:
+      (Printf.sprintf "Import '%s' conflicts with existing binding '%s'" (import_path_string imp.import_path)
+         local_name)
+
 let build_resolved_imports
     ~(surfaces : (string, module_surface) Hashtbl.t)
     (module_info : Module_context.parsed_module) : (resolved_imports, Diagnostic.t) result =
@@ -233,19 +239,30 @@ let build_resolved_imports
         let* resolved = resolve_import_kind surfaces imp in
         match resolved with
         | `Namespace module_surface ->
-            let namespace_roots =
+            let* namespace_roots =
               match imp.import_alias with
               | Some alias ->
-                  StringMap.add alias (insert_namespace_path empty_namespace_node [] module_surface)
-                    namespace_roots
+                  if StringMap.mem alias direct_bindings || StringMap.mem alias namespace_roots then
+                    Error (import_name_collision_error imp ~local_name:alias)
+                  else
+                    Ok
+                      (StringMap.add alias (insert_namespace_path empty_namespace_node [] module_surface)
+                         namespace_roots)
               | None -> (
                   match module_surface.module_path with
-                  | [] -> namespace_roots
+                  | [] -> Ok namespace_roots
                   | root :: tail ->
-                      let root_node =
-                        Option.value (StringMap.find_opt root namespace_roots) ~default:empty_namespace_node
-                      in
-                      StringMap.add root (insert_namespace_path root_node tail module_surface) namespace_roots)
+                      if StringMap.mem root direct_bindings then
+                        Error (import_name_collision_error imp ~local_name:root)
+                      else
+                        let root_node =
+                          Option.value (StringMap.find_opt root namespace_roots) ~default:empty_namespace_node
+                        in
+                        (match root_node.module_ref with
+                        | Some existing_root when not (String.equal existing_root.module_id root) ->
+                            Error (import_name_collision_error imp ~local_name:root)
+                        | _ ->
+                            Ok (StringMap.add root (insert_namespace_path root_node tail module_surface) namespace_roots)))
             in
             go namespace_roots direct_bindings (module_surface.module_id :: direct_modules) rest
         | `Direct (parent_surface, exported) ->
@@ -254,9 +271,12 @@ let build_resolved_imports
               | Some alias -> alias
               | None -> List.hd (List.rev imp.import_path)
             in
-            go namespace_roots
-              (StringMap.add local_name exported direct_bindings)
-              (parent_surface.module_id :: direct_modules) rest)
+            if StringMap.mem local_name namespace_roots || StringMap.mem local_name direct_bindings then
+              Error (import_name_collision_error imp ~local_name)
+            else
+              go namespace_roots
+                (StringMap.add local_name exported direct_bindings)
+                (parent_surface.module_id :: direct_modules) rest)
   in
   go StringMap.empty StringMap.empty [] module_info.imports
 
@@ -292,11 +312,20 @@ let direct_shape_internal_name (bindings : member_presence StringMap.t) (name : 
 
 let chain_segments_of_expr (expr : AST.expression) : string list option =
   let rec go acc = function
-    | { AST.expr = AST.Identifier name; _ } -> Some (List.rev (name :: acc))
+    | { AST.expr = AST.Identifier name; _ } -> Some (name :: acc)
     | { AST.expr = AST.FieldAccess (receiver, member); _ } -> go (member :: acc) receiver
     | _ -> None
   in
   go [] expr
+
+let%test "chain_segments_of_expr keeps qualifier order stable" =
+  let open AST in
+  let expr =
+    mk_expr
+      (FieldAccess
+         (mk_expr (FieldAccess (mk_expr (Identifier "collections"), "list")), "head"))
+  in
+  chain_segments_of_expr expr = Some [ "collections"; "list"; "head" ]
 
 let lookup_namespace_node (roots : namespace_node StringMap.t) (parts : string list) : namespace_node option =
   match parts with
@@ -420,6 +449,11 @@ let rec rewrite_type_expr
           Option.map (rewrite_type_expr ~type_bindings ~available_bindings) row )
 
 let identifier_expr_like original name = { original with AST.expr = AST.Identifier name }
+
+let builtin_value_names : StringSet.t =
+  List.fold_left
+    (fun acc (name, _poly) -> StringSet.add name acc)
+    StringSet.empty Typecheck.Builtins.builtin_types
 
 let missing_namespace_member_error (expr : AST.expression) (segments : string list) : Diagnostic.t =
   let message =
@@ -742,7 +776,16 @@ let rewrite_program
     | AST.PRecord (fields, rest) -> { pat with pat = PRecord (List.map rewrite_record_field fields, rest) }
     | _ -> pat
   and rewrite_expr ~value_scope ~type_bindings (expr : AST.expression) : (AST.expression, Diagnostic.t) result =
-    let local_value_shadow name = StringMap.mem name value_scope in
+    let root_has_value_binding name =
+      StringMap.mem name value_scope
+      ||
+      match StringMap.find_opt name imports.direct_bindings with
+      | Some presence when presence.has_value -> true
+      | _ -> (
+          match StringMap.find_opt name current_module.declarations with
+          | Some presence when presence.has_value -> true
+          | _ -> StringSet.mem name builtin_value_names)
+    in
     let rewrite_identifier name =
       match StringMap.find_opt name value_scope with
       | Some rewritten_name -> rewritten_name
@@ -898,7 +941,7 @@ let rewrite_program
         Ok AST.{ expr with expr = RecordLit (fields, spread) }
     | AST.FieldAccess (receiver, field_name) -> (
         match chain_segments_of_expr expr with
-        | Some segments when not (local_value_shadow (List.hd segments)) -> (
+        | Some segments when not (root_has_value_binding (List.hd segments)) -> (
             match resolve_namespace_member ~namespace_roots:imports.namespace_roots segments with
             | Some (`Exported exported) -> Ok (identifier_expr_like expr exported.internal_name)
             | Some `ModulePath -> Ok expr
@@ -910,7 +953,7 @@ let rewrite_program
             Ok AST.{ expr with expr = FieldAccess (receiver, field_name) })
     | AST.MethodCall { mc_receiver; mc_method; mc_type_args; mc_args } -> (
         match chain_segments_of_expr mc_receiver with
-        | Some receiver_segments when not (local_value_shadow (List.hd receiver_segments)) -> (
+        | Some receiver_segments when not (root_has_value_binding (List.hd receiver_segments)) -> (
             match resolve_namespace_member ~namespace_roots:imports.namespace_roots (receiver_segments @ [ mc_method ]) with
             | Some (`Exported exported) when exported.has_value ->
                 let* args = map_result (rewrite_expr ~value_scope ~type_bindings) mc_args in
