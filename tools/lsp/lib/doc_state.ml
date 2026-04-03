@@ -2,6 +2,7 @@
 
 module Lsp_t = Linol_lsp.Types
 module Checker = Marmoset.Lib.Checker
+module Compiler = Marmoset.Lib.Frontend_compiler
 module Parser = Marmoset.Lib.Parser
 module Infer = Marmoset.Lib.Infer
 module Builtins = Marmoset.Lib.Builtins
@@ -33,6 +34,23 @@ let zero_range =
   let zero = Lsp_t.Position.create ~line:0 ~character:0 in
   Lsp_t.Range.create ~start:zero ~end_:zero
 
+let file_path_of_file_id (file_id : string) : string option =
+  try
+    if Diagnostics.String_utils.contains_substring ~needle:"://" file_id then
+      Some (Lsp_t.DocumentUri.(to_path (of_string file_id)))
+    else if Sys.file_exists file_id then
+      Some file_id
+    else
+      None
+  with _ -> None
+
+let active_file_matches ~(active_file_id : string) ~(diag_file_id : string) : bool =
+  String.equal diag_file_id active_file_id
+  ||
+  match file_path_of_file_id active_file_id with
+  | Some active_path -> String.equal diag_file_id active_path
+  | None -> false
+
 let lsp_severity_of_diagnostic = function
   | Diagnostic.Error -> Lsp_t.DiagnosticSeverity.Error
   | Diagnostic.Warning -> Lsp_t.DiagnosticSeverity.Warning
@@ -43,12 +61,12 @@ let range_of_diagnostic_span ~(source : string) ~(active_file_id : string) (span
   match span with
   | None | Some Diagnostic.NoSpan -> zero_range
   | Some (Diagnostic.Span { file_id; start_pos; end_pos = Some end_pos }) ->
-      if not (String.equal file_id active_file_id) then
+      if not (active_file_matches ~active_file_id ~diag_file_id:file_id) then
         zero_range
       else
         Lsp_utils.offset_range_to_lsp ~source ~pos:start_pos ~end_pos
   | Some (Diagnostic.Span { file_id; start_pos; end_pos = None }) ->
-      if not (String.equal file_id active_file_id) then
+      if not (active_file_matches ~active_file_id ~diag_file_id:file_id) then
         zero_range
       else
         let start = Lsp_utils.offset_to_position ~source ~offset:start_pos in
@@ -63,6 +81,26 @@ let lsp_diagnostic_of_canonical ~(source : string) ~(active_file_id : string) (d
   let severity = lsp_severity_of_diagnostic diag.severity in
   make_diagnostic ~code:(Some (lsp_code_of_diagnostic diag)) ~range ~severity ~message:diag.message
 
+let has_module_headers (program : Ast.AST.program) : bool =
+  List.exists
+    (fun (stmt : Ast.AST.statement) ->
+      match stmt.stmt with
+      | Ast.AST.ExportDecl _ | Ast.AST.ImportDecl _ -> true
+      | _ -> false)
+    program
+
+let module_aware_analysis_with_file_id ~(file_id : string) ~(source : string) ~(program : Ast.AST.program) :
+    analysis_result option =
+  match (file_path_of_file_id file_id, has_module_headers program) with
+  | Some entry_file, true -> (
+      let diagnostics =
+        match Compiler.check_entry_with_source ~entry_file ~entry_source:source with
+        | Ok diags | Error diags ->
+            List.map (lsp_diagnostic_of_canonical ~source ~active_file_id:file_id) diags
+      in
+      Some { source; program = Some program; type_map = None; environment = None; type_var_user_names = []; diagnostics })
+  | _ -> None
+
 (* Analyze a document, returning parse/type errors as LSP diagnostics *)
 let analyze_with_file_id ~(file_id : string) ~(source : string) : analysis_result =
   reset_globals ();
@@ -72,34 +110,50 @@ let analyze_with_file_id ~(file_id : string) ~(source : string) : analysis_resul
       let diagnostics = List.map (lsp_diagnostic_of_canonical ~source ~active_file_id:file_id) errors in
       { source; program = None; type_map = None; environment = None; type_var_user_names = []; diagnostics }
   | Ok program -> (
-      let env = Builtins.prelude_env () in
-      match Checker.check_program_with_annotations ~state ~env program with
-      | Error diags ->
-          let type_var_user_names = Infer.type_var_user_name_bindings_in_state state in
-          let diagnostics = List.map (lsp_diagnostic_of_canonical ~source ~active_file_id:file_id) diags in
-          {
-            source;
-            program = Some program;
-            type_map = None;
-            environment = None;
-            type_var_user_names;
-            diagnostics;
-          }
-      | Ok result ->
-          let type_var_user_names = Infer.type_var_user_name_bindings_in_state state in
-          let diagnostics =
-            List.map (lsp_diagnostic_of_canonical ~source ~active_file_id:file_id) result.diagnostics
-          in
-          {
-            source;
-            program = Some program;
-            type_map = Some result.type_map;
-            environment = Some result.environment;
-            type_var_user_names;
-            diagnostics;
-          })
+      match module_aware_analysis_with_file_id ~file_id ~source ~program with
+      | Some result -> result
+      | None ->
+          let env = Builtins.prelude_env () in
+          match Checker.check_program_with_annotations ~state ~env program with
+          | Error diags ->
+              let type_var_user_names = Infer.type_var_user_name_bindings_in_state state in
+              let diagnostics = List.map (lsp_diagnostic_of_canonical ~source ~active_file_id:file_id) diags in
+              {
+                source;
+                program = Some program;
+                type_map = None;
+                environment = None;
+                type_var_user_names;
+                diagnostics;
+              }
+          | Ok result ->
+              let type_var_user_names = Infer.type_var_user_name_bindings_in_state state in
+              let diagnostics =
+                List.map (lsp_diagnostic_of_canonical ~source ~active_file_id:file_id) result.diagnostics
+              in
+              {
+                source;
+                program = Some program;
+                type_map = Some result.type_map;
+                environment = Some result.environment;
+                type_var_user_names;
+                diagnostics;
+              })
 
 let analyze ~(source : string) : analysis_result = analyze_with_file_id ~file_id:"<lsp>" ~source
+
+let with_temp_project (files : (string * string) list) (f : string -> bool) : bool =
+  let root = Filename.temp_file "marmoset_lsp_modules_" "" in
+  Sys.remove root;
+  ignore (Sys.command ("mkdir -p " ^ Filename.quote root));
+  let write_one (relative_path, content) =
+    let path = Filename.concat root relative_path in
+    ignore (Sys.command ("mkdir -p " ^ Filename.quote (Filename.dirname path)));
+    let oc = open_out_bin path in
+    Fun.protect ~finally:(fun () -> close_out oc) (fun () -> output_string oc content)
+  in
+  List.iter write_one files;
+  Fun.protect ~finally:(fun () -> ignore (Sys.command ("rm -rf " ^ Filename.quote root))) (fun () -> f root)
 
 (* ============================================================
    Tests
@@ -178,3 +232,34 @@ let%test "analyze does not leak generic-name mappings across documents" =
   let _ = analyze ~source:"shape HasName = { name: Str }\nfn get[t: HasName](x: t) -> Str = x.name\nget" in
   let result = analyze ~source:"let x = 1; x" in
   result.type_var_user_names = []
+
+let%test "analyze_with_file_id uses module-aware checking for imported files" =
+  with_temp_project
+    [
+      ( "main.mr",
+        "import sum\n\
+         type Point = { x: Int, y: Int }\n\
+         let point: Point = { x: 1, y: 2 }\n\
+         let moved = { ...point, x: 10 }\n\
+         fn get_x(value: Point) -> Int = value.x\n\
+         let nums = sum.sum([1, 2, 3])\n\
+         puts(get_x(moved))\n\
+         puts(moved.x + moved.y)\n\
+         puts(nums)\n" );
+      ("sum.mr", "export sum\nfn sum(values: List[Int]) -> Int = len(values)\n");
+    ]
+    (fun root ->
+      let file_id = Filename.concat root "main.mr" in
+      let source =
+        "import sum\n\
+         type Point = { x: Int, y: Int }\n\
+         let point: Point = { x: 1, y: 2 }\n\
+         let moved = { ...point, x: 10 }\n\
+         fn get_x(value: Point) -> Int = value.x\n\
+         let nums = sum.sum([1, 2, 3])\n\
+         puts(get_x(moved))\n\
+         puts(moved.x + moved.y)\n\
+         puts(nums)\n"
+      in
+      let result = analyze_with_file_id ~file_id ~source in
+      result.diagnostics = [] && result.program <> None)
