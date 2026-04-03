@@ -56,6 +56,7 @@ let create_from_program (program : AST.program) : t =
     visit_stmt m.impl_method_body
   and visit_stmt (stmt : AST.statement) =
     match stmt.stmt with
+    | AST.ExportDecl _ | AST.ImportDecl _ -> ()
     | AST.Let let_binding -> visit_expr let_binding.value
     | AST.Return expr | AST.ExpressionStmt expr -> visit_expr expr
     | AST.Block stmts -> List.iter visit_stmt stmts

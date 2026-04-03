@@ -574,3 +574,17 @@ After each phase:
 | **New:** `lib/frontend/import_resolver.ml` | Resolve imports, build namespace env, optional post-classification lowering |
 | **New:** `lib/frontend/typecheck/module_sig.ml` | Module signature type + extraction |
 | **New:** `lib/frontend/compiler.ml` | Project-level orchestrator |
+
+---
+
+## PROGRESS
+
+- 2026-04-03: Started implementation.
+- 2026-04-03: Completed Phase M1 parser/header surface and Phase M2 discovery/graph groundwork.
+- Current focus: Phase M3 entry work — import resolution, internal-name rewriting, and per-module checker orchestration.
+- Locked-plan caveat being preserved: implementation will keep the plan's semantics even where the current single-file compiler internals encourage shortcut rewrites.
+- Immediate findings:
+  - The current integration harness only understands single `.mr` fixtures, so multi-module coverage will need either harness support for fixture directories or dedicated integration helpers.
+  - The existing checker/emitter pipeline is still strongly single-program and global-registry based; `infer_program` reset behavior is the main refactor seam for per-module checking.
+  - The parser/discovery layer now supports `import`/`export`/`as`, dependency graph construction, cycle detection, ambiguity detection, and per-file expression-ID offsetting.
+  - Generated Go tests are already present and should be extended with module-qualified naming/resolution snapshots once the first multi-module path is compiling.

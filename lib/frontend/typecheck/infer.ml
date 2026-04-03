@@ -1434,6 +1434,7 @@ let rec record_expected_trait_object_coercions
 and record_stmt_tail_expected_trait_object_coercions
     (type_map : type_map) (stmt : AST.statement) (expected_type : mono_type) : (unit, Diagnostic.t) result =
   match stmt.stmt with
+  | AST.ExportDecl _ | AST.ImportDecl _ -> Ok ()
   | AST.ExpressionStmt expr | AST.Return expr ->
       record_expected_trait_object_coercions type_map expr expected_type
   | AST.Block [] -> Ok ()
@@ -1572,6 +1573,7 @@ let rec placeholder_identifier_count_expr (expr : AST.expression) : int =
 
 and placeholder_identifier_count_stmt (stmt : AST.statement) : int =
   match stmt.stmt with
+  | AST.ExportDecl _ | AST.ImportDecl _ -> 0
   | AST.Let { value; _ } -> placeholder_identifier_count_expr value
   | AST.Return expr | AST.ExpressionStmt expr -> placeholder_identifier_count_expr expr
   | AST.Block stmts -> placeholder_identifier_count_stmts stmts
@@ -1825,6 +1827,7 @@ and resolve_impl_method_symbols (stack : symbol_scope_stack) (m : AST.method_imp
 and resolve_stmt_symbols (stack : symbol_scope_stack) ~(is_top_level : bool) (stmt : AST.statement) :
     symbol_scope_stack =
   match stmt.stmt with
+  | AST.ExportDecl _ | AST.ImportDecl _ -> stack
   | AST.ExpressionStmt expr ->
       resolve_expr_symbols stack expr;
       stack
@@ -3256,6 +3259,7 @@ and infer_if type_map env condition consequence alternative =
 and collect_and_unify_returns type_map env expected_ret_type (stmt : AST.statement) subst :
     (substitution * mono_type, Diagnostic.t) result =
   match stmt.AST.stmt with
+  | AST.ExportDecl _ | AST.ImportDecl _ -> Ok (subst, expected_ret_type)
   | AST.Return expr -> (
       match infer_expression type_map env expr with
       | Error e -> Error e
@@ -3309,6 +3313,7 @@ and collect_and_unify_returns type_map env expected_ret_type (stmt : AST.stateme
 
 and body_has_effectful_call (type_map : type_map) (stmt : AST.statement) : bool =
   match stmt.stmt with
+  | AST.ExportDecl _ | AST.ImportDecl _ -> false
   | AST.Let { value; _ } -> expr_has_effectful_call type_map value
   | AST.Return expr -> expr_has_effectful_call type_map expr
   | AST.ExpressionStmt expr -> expr_has_effectful_call type_map expr
@@ -3706,6 +3711,7 @@ and collect_used_names_expr (used : StringSet.t) (expr : AST.expression) : Strin
 
 and collect_used_names_stmt (used : StringSet.t) (stmt : AST.statement) : StringSet.t =
   match stmt.stmt with
+  | AST.ExportDecl _ | AST.ImportDecl _ -> used
   | AST.Let { name; value; _ } -> collect_used_names_expr (StringSet.add name used) value
   | AST.Return expr | AST.ExpressionStmt expr -> collect_used_names_expr used expr
   | AST.Block stmts -> collect_used_names_stmts used stmts
@@ -3808,6 +3814,7 @@ and replace_placeholder_identifier_expr (param_name : string) (expr : AST.expres
 and replace_placeholder_identifier_stmt (param_name : string) (stmt : AST.statement) : AST.statement =
   let rewritten =
     match stmt.stmt with
+    | AST.ExportDecl _ | AST.ImportDecl _ -> stmt.stmt
     | AST.Let ({ value; _ } as let_binding) ->
         AST.Let { let_binding with value = replace_placeholder_identifier_expr param_name value }
     | AST.Return expr -> AST.Return (replace_placeholder_identifier_expr param_name expr)
@@ -4881,6 +4888,7 @@ and infer_index type_map env container index_expr =
 
 and infer_statement type_map env stmt =
   match stmt.stmt with
+  | AST.ExportDecl _ | AST.ImportDecl _ -> Ok (empty_substitution, TNull)
   | AST.ExpressionStmt expr -> infer_expression type_map env expr
   | AST.Return expr -> infer_expression type_map env expr
   | AST.Block stmts -> infer_block type_map env stmts
@@ -5915,6 +5923,7 @@ and infer_statement type_map env stmt =
 and record_tail_trait_object_coercions (type_map : type_map) (expected_type : mono_type) (stmt : AST.statement) :
     (unit, Diagnostic.t) result =
   match stmt.stmt with
+  | AST.ExportDecl _ | AST.ImportDecl _ -> Ok ()
   | AST.Return _ -> Ok ()
   | AST.ExpressionStmt expr -> record_expected_trait_object_coercions type_map expr expected_type
   | AST.Block [] -> Ok ()
@@ -5926,6 +5935,7 @@ and record_tail_trait_object_coercions (type_map : type_map) (expected_type : mo
 and record_explicit_return_trait_object_coercions
     (type_map : type_map) (expected_type : mono_type) (stmt : AST.statement) : (unit, Diagnostic.t) result =
   match stmt.stmt with
+  | AST.ExportDecl _ | AST.ImportDecl _ -> Ok ()
   | AST.Return expr -> record_expected_trait_object_coercions type_map expr expected_type
   | AST.Block stmts ->
       let rec loop = function
@@ -5946,6 +5956,7 @@ and validate_return_statements
     (type_map : type_map) (env : type_env) (expected_type : mono_type) (stmt : AST.statement) :
     (unit, Diagnostic.t) result =
   match stmt.stmt with
+  | AST.ExportDecl _ | AST.ImportDecl _ -> Ok ()
   | AST.Return expr -> (
       match infer_expression type_map env expr with
       | Error e -> Error e
@@ -6932,6 +6943,7 @@ module Test = struct
 
   and identifier_occurrences_in_stmt (name : string) (stmt : AST.statement) : (int * int) list =
     match stmt.stmt with
+    | AST.ExportDecl _ | AST.ImportDecl _ -> []
     | AST.ExpressionStmt e | AST.Return e -> identifier_occurrences_in_expr name e
     | AST.Block stmts -> List.concat_map (identifier_occurrences_in_stmt name) stmts
     | AST.Let let_binding -> identifier_occurrences_in_expr name let_binding.value

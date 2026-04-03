@@ -146,13 +146,13 @@ let next_token (p : parser) : parser =
   let lexer, peek_token = Lexer.next_token p.lexer in
   { p with lexer; curr_token; peek_token }
 
-let init ~file_id (l : Lexer.lexer) : parser =
+let init ?(id_offset = 0) ~file_id (l : Lexer.lexer) : parser =
   {
     lexer = l;
     curr_token = Token.init Illegal "";
     peek_token = Token.init Illegal "";
     errors = [];
-    id_supply = Id_supply.Id_supply.create 0;
+    id_supply = Id_supply.Id_supply.create id_offset;
     file_id;
   }
   |> next_token
@@ -259,13 +259,29 @@ let concat_string_parts (p : parser) (parts : string_interp_part list) : Surface
         first rest
 
 let rec parse_surface_program (p : parser) : (parser * Surface.surface_program, parser) result =
-  let rec loop (lp : parser) (prog : Surface.surface_program) =
+  let rec loop (lp : parser) (prog : Surface.surface_program) ~(saw_export : bool) ~(saw_body : bool) =
     if curr_token_is lp Token.EOF then
       Ok (lp, List.rev prog)
     else
       let start_pos = lp.curr_token.pos in
       let start_file_id = Some lp.file_id in
       let* lp2, decl = parse_top_decl lp in
+      let saw_export', saw_body' =
+        match decl with
+        | Surface.SExportDecl _ -> (true, saw_body)
+        | Surface.SImportDecl _ -> (saw_export, saw_body)
+        | _ -> (saw_export, true)
+      in
+      let* () =
+        match decl with
+        | Surface.SExportDecl _ when saw_export ->
+            Error (add_error ~code:"parse-module-header-order" lp "export must appear at most once")
+        | Surface.SExportDecl _ when saw_body ->
+            Error (add_error ~code:"parse-module-header-order" lp "export must be the first statement if present")
+        | Surface.SImportDecl _ when saw_body ->
+            Error (add_error ~code:"parse-module-header-order" lp "imports must appear before other statements")
+        | _ -> Ok ()
+      in
       let lp3 =
         match decl with
         | Surface.STypeDef _ | Surface.SShapeDef _ ->
@@ -274,18 +290,25 @@ let rec parse_surface_program (p : parser) : (parser * Surface.surface_program, 
               next_token lp2
             else
               lp2
-        | _ -> next_token lp2
+        | _ ->
+            let lp3 = next_token lp2 in
+            if curr_token_is lp3 Token.Semicolon then
+              next_token lp3
+            else
+              lp3
       in
       let end_pos = max start_pos (token_end lp2.curr_token) in
       let ts =
         Surface.{ std_decl = decl; std_pos = start_pos; std_end_pos = end_pos; std_file_id = start_file_id }
       in
-      loop lp3 (ts :: prog)
+      loop lp3 (ts :: prog) ~saw_export:saw_export' ~saw_body:saw_body'
   in
-  loop p []
+  loop p [] ~saw_export:false ~saw_body:false
 
 and parse_top_decl (p : parser) : (parser * Surface.top_decl, parser) result =
   match p.curr_token.token_type with
+  | Token.Export -> parse_export_decl p
+  | Token.Import -> parse_import_decl p
   | Token.Let -> parse_let_top p
   | Token.Return -> parse_return_top p
   | Token.Enum -> parse_enum_definition p
@@ -313,6 +336,35 @@ and parse_expression_top (p : parser) : (parser * Surface.top_decl, parser) resu
   let* p2, expr = parse_expression p prec_lowest in
   let p3 = skip p2 Token.Semicolon in
   Ok (p3, Surface.SExpressionStmt expr)
+
+and parse_export_decl (p : parser) : (parser * Surface.top_decl, parser) result =
+  let* p2 = expect_peek p Token.Ident in
+  let rec loop (lp : parser) (names : string list) =
+    let names = lp.curr_token.literal :: names in
+    if peek_token_is lp Token.Comma then
+      let* lp2 = expect_peek (next_token lp) Token.Ident in
+      loop lp2 names
+    else
+      Ok (lp, Surface.SExportDecl (List.rev names))
+  in
+  loop p2 []
+
+and parse_import_decl (p : parser) : (parser * Surface.top_decl, parser) result =
+  let* p2 = expect_peek p Token.Ident in
+  let rec parse_path (lp : parser) (rev_path : string list) =
+    let rev_path = lp.curr_token.literal :: rev_path in
+    if peek_token_is lp Token.Dot then
+      let* lp2 = expect_peek (next_token lp) Token.Ident in
+      parse_path lp2 rev_path
+    else
+      Ok (lp, List.rev rev_path)
+  in
+  let* p3, import_path = parse_path p2 [] in
+  if peek_token_is p3 Token.As then
+    let* p4 = expect_peek (next_token p3) Token.Ident in
+    Ok (p4, Surface.SImportDecl { import_path; import_alias = Some p4.curr_token.literal })
+  else
+    Ok (p3, Surface.SImportDecl { import_path; import_alias = None })
 
 (* Phase 1b: vNext top-level fn declaration: fn name[generics](params) -> T = expr_or_block *)
 and parse_fn_decl_top (p : parser) : (parser * Surface.top_decl, parser) result =
@@ -2275,8 +2327,8 @@ let parse_program (p : parser) : (parser * AST.program, parser) result =
   | Ok (p2, surface_prog) -> Ok (p2, Lower.lower_program id_supply surface_prog)
   | Error p_err -> Error p_err
 
-let parse ~file_id (s : string) : (AST.program, errors) result =
-  match s |> Lexer.init |> init ~file_id |> parse_program with
+let parse ?(id_offset = 0) ~file_id (s : string) : (AST.program, errors) result =
+  match s |> Lexer.init |> init ~id_offset ~file_id |> parse_program with
   | Ok (_, program) -> Ok program
   | Error parser -> Error (List.rev parser.errors)
 
@@ -2285,12 +2337,38 @@ type parse_surface_result = {
   id_supply : Id_supply.Id_supply.t;
 }
 
-let parse_surface ~file_id (s : string) : (parse_surface_result, errors) result =
-  let p = s |> Lexer.init |> init ~file_id in
+let parse_surface ?(id_offset = 0) ~file_id (s : string) : (parse_surface_result, errors) result =
+  let p = s |> Lexer.init |> init ~id_offset ~file_id in
   let id_supply = p.id_supply in
   match parse_surface_program p with
   | Ok (_, surface_prog) -> Ok { program = surface_prog; id_supply }
   | Error parser -> Error (List.rev parser.errors)
+
+let%test "parse export declaration" =
+  match parse ~file_id:"<test>" "export add, Point, Color" with
+  | Ok [ { AST.stmt = AST.ExportDecl [ "add"; "Point"; "Color" ]; _ } ] -> true
+  | _ -> false
+
+let%test "parse import declarations with aliasing" =
+  match parse ~file_id:"<test>" "import math\nimport math.Point as Pt\nimport collections.list as l" with
+  | Ok
+      [
+        { AST.stmt = AST.ImportDecl { import_path = [ "math" ]; import_alias = None }; _ };
+        { AST.stmt = AST.ImportDecl { import_path = [ "math"; "Point" ]; import_alias = Some "Pt" }; _ };
+        { AST.stmt = AST.ImportDecl { import_path = [ "collections"; "list" ]; import_alias = Some "l" }; _ };
+      ] ->
+      true
+  | _ -> false
+
+let%test "export must be first statement if present" =
+  match parse ~file_id:"<test>" "let x = 1\nexport x" with
+  | Error diags -> List.exists (fun (d : Diagnostic.t) -> d.code = "parse-module-header-order") diags
+  | Ok _ -> false
+
+let%test "imports must precede body statements" =
+  match parse ~file_id:"<test>" "let x = 1\nimport math" with
+  | Error diags -> List.exists (fun (d : Diagnostic.t) -> d.code = "parse-module-header-order") diags
+  | Ok _ -> false
 
 module Test = struct
   type test = {
@@ -2989,6 +3067,7 @@ module Test = struct
 
   and collect_stmt_ids (stmt : AST.statement) : int list =
     match stmt.stmt with
+    | AST.ExportDecl _ | AST.ImportDecl _ -> []
     | AST.Let { value; _ } -> collect_expr_ids value
     | AST.Return e | AST.ExpressionStmt e -> collect_expr_ids e
     | AST.Block stmts -> List.concat_map collect_stmt_ids stmts

@@ -166,6 +166,11 @@ module Surface = struct
   }
 
   type top_decl =
+    | SExportDecl of string list
+    | SImportDecl of {
+        import_path : string list;
+        import_alias : string option;
+      }
     | SLet of {
         name : string;
         value : surface_expr;

@@ -409,6 +409,7 @@ let clone_default_body
   and clone_stmt bound_names (stmt : AST.statement) : AST.statement =
     let stmt_kind =
       match stmt.stmt with
+      | AST.ExportDecl _ | AST.ImportDecl _ -> stmt.stmt
       | AST.Let let_binding ->
           AST.Let
             {
