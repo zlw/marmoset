@@ -1389,7 +1389,6 @@ let rec record_expected_trait_object_coercions
         | _ -> Ok ())
     | _ -> Ok ()
   in
-  let* () = record_here () in
   match expr.expr with
   | AST.If (_cond, cons, alt_opt) -> (
       let* () = record_stmt_tail_expected_trait_object_coercions type_map cons expected_type in
@@ -1408,26 +1407,29 @@ let rec record_expected_trait_object_coercions
       match List.rev stmts with
       | [] -> Ok ()
       | last :: _ -> record_stmt_tail_expected_trait_object_coercions type_map last expected_type)
-  | AST.RecordLit (fields, _spread) -> (
-      match Structural.fields_of_type (canonicalize_mono_type expected_type) with
-      | Some expected_fields -> record_record_fields expected_fields fields
-      | None -> Ok ())
-  | AST.EnumConstructor (enum_name, variant_name, args) ->
-      record_enum_constructor_args enum_name variant_name args
-  | AST.MethodCall
-      { mc_receiver = { expr = AST.Identifier enum_name; _ }; mc_method = variant_name; mc_args = args; _ } ->
-      record_enum_constructor_args enum_name variant_name args
-  | AST.Call ({ expr = AST.Identifier type_name; _ }, [ arg ]) when Type_registry.is_named_type_name type_name
-    -> (
-      match canonicalize_mono_type expected_type with
-      | TNamed (expected_name, type_args) when expected_name = type_name -> (
-          match Type_registry.instantiate_named_wrapper_representation type_name type_args with
-          | Some (Ok representation_type) ->
-              record_expected_trait_object_coercions type_map arg representation_type
-          | Some (Error msg) -> Error (error_at ~code:"type-constructor" ~message:msg expr)
+  | _ -> (
+      let* () = record_here () in
+      match expr.expr with
+      | AST.RecordLit (fields, _spread) -> (
+          match Structural.fields_of_type (canonicalize_mono_type expected_type) with
+          | Some expected_fields -> record_record_fields expected_fields fields
           | None -> Ok ())
+      | AST.EnumConstructor (enum_name, variant_name, args) ->
+          record_enum_constructor_args enum_name variant_name args
+      | AST.MethodCall
+          { mc_receiver = { expr = AST.Identifier enum_name; _ }; mc_method = variant_name; mc_args = args; _ } ->
+          record_enum_constructor_args enum_name variant_name args
+      | AST.Call ({ expr = AST.Identifier type_name; _ }, [ arg ]) when Type_registry.is_named_type_name type_name
+        -> (
+          match canonicalize_mono_type expected_type with
+          | TNamed (expected_name, type_args) when expected_name = type_name -> (
+              match Type_registry.instantiate_named_wrapper_representation type_name type_args with
+              | Some (Ok representation_type) ->
+                  record_expected_trait_object_coercions type_map arg representation_type
+              | Some (Error msg) -> Error (error_at ~code:"type-constructor" ~message:msg expr)
+              | None -> Ok ())
+          | _ -> Ok ())
       | _ -> Ok ())
-  | _ -> Ok ()
 
 and record_stmt_tail_expected_trait_object_coercions
     (type_map : type_map) (stmt : AST.statement) (expected_type : mono_type) : (unit, Diagnostic.t) result =

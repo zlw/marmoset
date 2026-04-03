@@ -163,7 +163,7 @@ func main() {
 		age := ((__scrutinee_0).profile).age
 		_ = age
             out = age
-	} else if true {
+	} else {
             out = int64(0)
 	}
     _ = out

@@ -4650,19 +4650,19 @@ and emit_record_match_arm
         pre_body_code ^ "\t\t" ^ result_prefix ^ body_str ^ "\n"
   in
   let cond_parts, bind_lines = emit_pattern_plan state pattern scrutinee_var scrutinee_type in
-  let branch_prefix =
-    if is_first then
-      "\tif"
-    else
-      " else if"
-  in
-  let cond_str =
-    match cond_parts with
-    | [] -> "true"
-    | cs -> String.concat " && " cs
-  in
   let binds_block = binding_block_lines ~indent:"\t\t" bind_lines in
-  Printf.sprintf "%s %s {\n%s%s\t}" branch_prefix cond_str binds_block body_code
+  match cond_parts with
+  | [] when is_first -> Printf.sprintf "\tif true {\n%s%s\t}" binds_block body_code
+  | [] -> Printf.sprintf " else {\n%s%s\t}" binds_block body_code
+  | cs ->
+      let branch_prefix =
+        if is_first then
+          "\tif"
+        else
+          " else if"
+      in
+      let cond_str = String.concat " && " cs in
+      Printf.sprintf "%s %s {\n%s%s\t}" branch_prefix cond_str binds_block body_code
 
 and emit_match_record ?target state type_map env scrutinee scrutinee_type arms match_result_type =
   let scrutinee_str = emit_expr state type_map env scrutinee in
@@ -4837,6 +4837,18 @@ and emit_match_enum
           | AST.PWildcard | AST.PVariable _ -> true
           | AST.PLiteral _ | AST.PRecord _ -> false)
         flat_patterns
+    in
+    let relevant_patterns =
+      let constructor_patterns, fallback_patterns =
+        List.partition
+          (fun (pattern, _body) ->
+            match pattern.AST.pat with
+            | AST.PConstructor _ -> true
+            | AST.PWildcard | AST.PVariable _ -> false
+            | AST.PLiteral _ | AST.PRecord _ -> false)
+          relevant_patterns
+      in
+      constructor_patterns @ fallback_patterns
     in
     let rec collect_branches acc is_first = function
       | [] -> List.rev acc
