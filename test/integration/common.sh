@@ -390,3 +390,42 @@ test_emit_go_contains() {
 
     rm -rf "$tmpdir_go" "$tmpfile"
 }
+
+test_emit_go_exact_snapshot() {
+    local name="$1"
+    local source_file="$2"
+    local snapshot_file="$3"
+
+    TOTAL=$((TOTAL + 1))
+    echo -n "TEST [$TOTAL] $name ... "
+
+    local outdir binpath diff_file build_output
+    outdir=$(mktemp -d marmoset_emit_snapshot.XXXXXX)
+    binpath=$(mktemp "$REPO_ROOT/.marmoset/build/marmoset_snapshot_bin.XXXXXX")
+    diff_file=$(mktemp)
+    rm -f "$binpath"
+
+    if [ ! -f "$source_file" ]; then
+        echo "✗ FAIL (missing source file $source_file)"
+        FAIL=$((FAIL + 1))
+    elif [ ! -f "$snapshot_file" ]; then
+        echo "✗ FAIL (missing snapshot file $snapshot_file)"
+        FAIL=$((FAIL + 1))
+    elif build_output=$($EXECUTABLE build "$source_file" --emit-go "$outdir" -o "$binpath" 2>&1); then
+        if diff -u "$snapshot_file" "$outdir/main.go" > "$diff_file"; then
+            echo "✓ PASS"
+            PASS=$((PASS + 1))
+        else
+            echo "✗ FAIL (main.go snapshot drift)"
+            sed -n '1,80p' "$diff_file" | sed 's/^/  /'
+            FAIL=$((FAIL + 1))
+        fi
+    else
+        echo "✗ FAIL (build failed)"
+        echo "  Output: $build_output"
+        FAIL=$((FAIL + 1))
+    fi
+
+    rm -f "$binpath" "$diff_file"
+    rm -rf "$outdir"
+}
