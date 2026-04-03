@@ -170,3 +170,33 @@ let abs = (x: Int) -> {
                   operand: (identifier)))
               alternative: (return_shorthand
                 (identifier)))))))))
+
+================================================================================
+Import and export statements
+================================================================================
+
+export add, Point, Color
+import math
+import math.Point as Pt
+import collections.list as lists
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (export_statement
+    name: (identifier)
+    name: (identifier)
+    name: (identifier))
+  (import_statement
+    path: (module_path
+      segment: (identifier)))
+  (import_statement
+    path: (module_path
+      segment: (identifier)
+      segment: (identifier))
+    alias: (identifier))
+  (import_statement
+    path: (module_path
+      segment: (identifier)
+      segment: (identifier))
+    alias: (identifier)))

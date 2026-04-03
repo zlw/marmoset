@@ -126,6 +126,10 @@
           "named": true
         },
         {
+          "type": "export_statement",
+          "named": true
+        },
+        {
           "type": "expression_statement",
           "named": true
         },
@@ -135,6 +139,10 @@
         },
         {
           "type": "impl_block",
+          "named": true
+        },
+        {
+          "type": "import_statement",
           "named": true
         },
         {
@@ -680,6 +688,22 @@
           "named": true
         }
       ]
+    }
+  },
+  {
+    "type": "export_statement",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": true,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      }
     }
   },
   {
@@ -1383,6 +1407,32 @@
           "named": true
         }
       ]
+    }
+  },
+  {
+    "type": "import_statement",
+    "named": true,
+    "fields": {
+      "alias": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "path": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "module_path",
+            "named": true
+          }
+        ]
+      }
     }
   },
   {
@@ -2488,6 +2538,22 @@
     }
   },
   {
+    "type": "module_path",
+    "named": true,
+    "fields": {
+      "segment": {
+        "multiple": true,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
     "type": "object_entry",
     "named": true,
     "fields": {
@@ -3417,6 +3483,10 @@
           "named": true
         },
         {
+          "type": "export_statement",
+          "named": true
+        },
+        {
           "type": "expression_statement",
           "named": true
         },
@@ -3426,6 +3496,10 @@
         },
         {
           "type": "impl_block",
+          "named": true
+        },
+        {
+          "type": "import_statement",
           "named": true
         },
         {
@@ -4193,6 +4267,10 @@
     "named": false
   },
   {
+    "type": "as",
+    "named": false
+  },
+  {
     "type": "case",
     "named": false
   },
@@ -4210,6 +4288,10 @@
   },
   {
     "type": "enum",
+    "named": false
+  },
+  {
+    "type": "export",
     "named": false
   },
   {
@@ -4234,6 +4316,10 @@
   },
   {
     "type": "impl",
+    "named": false
+  },
+  {
+    "type": "import",
     "named": false
   },
   {

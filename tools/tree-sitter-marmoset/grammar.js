@@ -40,6 +40,8 @@ module.exports = grammar({
 
     _statement: ($) =>
       choice(
+        $.export_statement,
+        $.import_statement,
         $.fn_declaration,
         $.let_statement,
         $.return_statement,
@@ -50,6 +52,26 @@ module.exports = grammar({
         $.impl_block,
         $.expression_statement,
       ),
+
+    export_statement: ($) =>
+      prec.right(seq(
+        "export",
+        field("name", $.identifier),
+        repeat(seq(",", field("name", $.identifier))),
+        optional(","),
+        optional(";"),
+      )),
+
+    import_statement: ($) =>
+      seq(
+        "import",
+        field("path", $.module_path),
+        optional(seq("as", field("alias", $.identifier))),
+        optional(";"),
+      ),
+
+    module_path: ($) =>
+      seq(field("segment", $.identifier), repeat(seq(".", field("segment", $.identifier)))),
 
     let_statement: ($) =>
       seq(
