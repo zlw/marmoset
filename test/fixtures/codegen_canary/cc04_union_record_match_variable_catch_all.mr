@@ -1,0 +1,14 @@
+type Left = { x: Int }
+
+let value: Left | Int = 5
+let out = match value {
+  case { x: }: x
+  case other:
+    if (other is Int) {
+      other + 1
+    } else {
+      0
+    }
+}
+
+puts(out)

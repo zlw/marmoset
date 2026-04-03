@@ -1,0 +1,26 @@
+# CM54: Expected Dyn payload types package heterogeneous constructor payloads and results
+type Option[a] = { Some(a), None }
+
+fn render(value: Option[Dyn[Show]]) -> Str = match value {
+  case Option.Some(v): Show.show(v)
+  case Option.None: "none"
+}
+
+let direct_payload: Option[Dyn[Show]] = Option.Some(if (true) { 42 } else { "unused" })
+
+fn via_if(flag: Bool) -> Option[Dyn[Show]] =
+  if (flag) {
+    Option.Some(42)
+  } else {
+    Option.Some("ok")
+  }
+
+fn via_match(flag: Bool) -> Option[Dyn[Show]] = match flag {
+  case true: Option.Some("left")
+  case false: Option.Some(0)
+}
+
+puts(render(direct_payload))    # output: 42
+puts(render(via_if(false)))     # output: ok
+puts(render(via_match(true)))   # output: left
+puts(render(via_match(false)))  # output: 0

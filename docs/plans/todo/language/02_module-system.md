@@ -2,7 +2,7 @@
 
 ## Maintenance
 
-- Last verified: 2026-04-02
+- Last verified: 2026-04-03
 - Implementation status: Planning (not started)
 - Update trigger: Any module/import/export syntax or compilation model change
 
@@ -32,6 +32,41 @@ This plan adds a module system as the first of two milestones (modules, then FFI
 8. **Circular dependencies disallowed.** Error at dependency graph construction time.
 9. **Bail-on-first error** per module (consistent with diagnostics plan).
 10. **Per-module compilation from day one.** Each module type-checked independently. Module signatures passed to downstream modules. No combined-AST shortcut — clean architecture for incremental compilation and LSP.
+11. **No orphan rule in v1 modules.** A module may define `impl Trait[Type]` even if it owns neither the trait nor the type.
+12. **Coherence is build-wide, not import-scoped.** All impls from all modules in the build participate in one global impl set. Imports do not select between competing impl worlds.
+13. **No scoped impl imports / local impl worlds in v1.** Trait satisfaction and dispatch must not depend on which helper module happened to be imported.
+
+### Trait Impl Coherence Model
+
+This plan intentionally adopts **no orphan rule + global build-wide coherence**.
+
+Rationale:
+- Marmoset's transparent exact types are structural again, so nominal "type ownership" is not a reliable coherence boundary for exact structural receivers.
+- A Rust-style orphan boundary would fit constructor-bearing nominal wrappers and sums better than transparent exact structural types, and would therefore be an awkward mismatch for the language's current data model.
+- Import-scoped impl worlds would preserve flexibility, but they would make trait satisfaction, `Dyn[...]` packaging, and qualified dispatch import-sensitive in ways that are difficult to reason about and difficult to compile predictably.
+
+Operational policy:
+- Any module may declare `impl Trait[Type]`.
+- All impls discovered anywhere in the build participate in one global coherence set.
+- Imports/exports do not gate impl visibility and do not choose between competing impls.
+- The same global impl set is used for:
+  - trait constraint solving,
+  - qualified trait calls,
+  - `Dyn[...]` witness packaging,
+  - derive validation and expansion,
+  - emitter specialization/helper selection.
+
+Conflict policy:
+- Concrete impl identity is keyed by canonical `(trait, receiver-type)` pairs.
+- Generic impl identity and overlap checks are also keyed by canonicalized receiver/type-head structure.
+- Transparent exact types collapse to their canonical receiver type for impl identity and conflict checking; alias/module ownership is not a separate coherence slot.
+- Constructor-bearing wrappers and sums keep their nominal identity.
+- Shapes do not own impls and are never coherence owners.
+- Duplicate or overlapping impls that can both satisfy the same concrete receiver are deterministic build errors with origin-rich diagnostics.
+
+Implementation consequence:
+- Per-module checking still applies to value/type/shape/trait visibility.
+- Impl visibility is handled separately through a build-wide pre-scan and global registry injection, not through ordinary import/export visibility.
 
 ---
 
@@ -211,11 +246,12 @@ type module_graph = { modules: (string, parsed_module) Hashtbl.t;
 **Goal:** Type-check each module independently. Extract module signatures. Pass signatures to downstream modules.
 
 **Architecture:** For each module in topological order:
-1. Build the module's initial `type_env` from builtins + imported module signatures
-2. Run `infer_program` on the module's AST alone
-3. Extract a `module_signature` from the results (exported values, nominal named types, transparent `type` declarations, shapes, traits, impls)
-4. Store the signature for use by downstream modules
-5. The type checker ONLY sees what's been explicitly made available — correct isolation by construction
+1. Pre-scan the full build for trait/type/shape definitions and impl headers needed for global coherence
+2. Build the module's initial `type_env` from builtins + imported module signatures, while separately injecting the build-wide impl/coherence registry state
+3. Run `infer_program` on the module's AST alone
+4. Extract a `module_signature` from the results (exported values, nominal named types, transparent `type` declarations, shapes, traits, impls)
+5. Store the signature for use by downstream modules
+6. Ordinary names remain explicitly imported/exported; impl coherence metadata follows the separate build-wide visibility rule above
 
 **New type: Module Signature** (new file `lib/frontend/typecheck/module_sig.ml`):
 ```ocaml
@@ -226,11 +262,11 @@ type module_signature = {
   transparent_types : (string * type_alias_info) list;  (* exported `type Name = TypeExpr` declarations *)
   shapes : (string * shape_def) list;         (* exported open structural shapes *)
   traits : (string * trait_def) list;         (* exported trait definitions *)
-  impls : impl_entry list;                    (* all impls (always visible) *)
+  impls : impl_entry list;                    (* all impls (always build-visible; not export-gated) *)
 }
 ```
 
-Note: trait `impl` blocks are always visible across modules (like Rust's coherence — if you import a type or trait, you get its impls). Values, nominal named types, transparent `type` declarations, shapes, and traits participate in explicit export.
+Note: trait `impl` blocks are always visible across modules and are not export-gated. This is not Rust's orphan-rule model. Marmoset allows foreign-trait-for-foreign-type impls, but requires one coherent build-wide impl set. Values, nominal named types, transparent `type` declarations, shapes, and traits still participate in explicit export.
 
 **Key changes:**
 
@@ -245,13 +281,17 @@ Note: trait `impl` blocks are always visible across modules (like Rust's coheren
      ?external_impls:impl_entry list ->
      AST.program -> infer_result
    ```
-   The existing `infer_program` clears all registries and starts fresh. The refactored version accepts pre-populated registry state from upstream modules. The clear calls (infer.ml:3146-3148) move to a `reset_all` function called once per full build, then each module *adds* its definitions.
+   The existing `infer_program` clears all registries and starts fresh. The refactored version accepts pre-populated registry state from imported signatures plus the build-wide impl/coherence pre-scan. The clear calls move to a `reset_all` function called once per full build, then each module *adds* its definitions.
 
 2. **Per-module registries:**
    - Each module's `infer_program` call populates registries with its own definitions (module-prefixed keys)
-   - Before calling `infer_program` for a module, inject imported module's registry entries
+   - Before body checking any module, do a whole-build pre-scan for trait/type/shape definitions and impl headers needed for global coherence
+   - Before calling `infer_program` for a module, inject:
+     - imported module signature entries for ordinary visibility,
+     - the build-wide impl registry and related coherence metadata for trait resolution
    - After `infer_program` completes, extract the module's signature from the registry state + type_env
    - Private names are NOT included in the signature → downstream modules can't see them
+   - Impl visibility remains build-wide even when other declarations remain import/export-gated
 
 3. **Import resolution + namespace environment** (new `lib/frontend/import_resolver.ml`):
    - For each module, resolve `import` declarations against upstream signatures
@@ -396,7 +436,8 @@ These are flagged but NOT designed here. FFI is a separate plan.
 3. **Named-type / constructor collision across modules** — mitigated by module-prefixed registry keys
 4. **`.` disambiguation** — resolved by the unified classifier defined in the Syntax Design section. Value bindings win first, then namespace bindings, then named sums (variants before exact-type grouped functions), then traits, then other named types. Shapes do not create callable/member namespaces. Later extern qualifiers join the namespace bucket rather than introducing a second precedence rule.
 5. **Monomorphization across modules** — emitter runs whole-program across all checked modules. `collect_insts_stmt` sees all call sites from all modules.
-6. **Trait impl visibility** — impls must be visible across modules even without explicit import (coherence). The per-module approach must auto-inject upstream impls into each module's registry.
+6. **Trait impl visibility** — impls must be visible across modules even without explicit import. With no orphan rule, the per-module approach must inject one build-wide impl/coherence set into every module check rather than treating impls as ordinary imported names.
+7. **Open-world impl conflict risk** — because foreign impls are allowed, adding a dependency can introduce duplicate or overlapping impls elsewhere in the build. Mitigate with canonical impl keys, whole-build overlap checks, and origin-rich diagnostics. No import-scoped impl selection is allowed as an escape hatch.
 
 ---
 
@@ -406,7 +447,11 @@ After each phase:
 1. `make unit` — all inline tests pass
 2. `make integration` — all integration suites pass
 3. New module-specific tests added per phase (see test sections above)
-4. Manual verification: write a 2-3 module program, compile, run, verify output
+4. Multi-module coherence tests cover:
+   - foreign trait for foreign type is accepted,
+   - duplicate/overlapping impls across different modules fail deterministically,
+   - imports do not affect impl availability or impl selection.
+5. Manual verification: write a 2-3 module program, compile, run, verify output
 
 ---
 

@@ -1,0 +1,19 @@
+# docs/features/traits.md: superconstraints and Dyn[Show] examples stay runnable.
+shape PersonShape = {
+  name: Str
+}
+
+trait Greeter[a]: Show & PersonShape = {
+  fn greet(self: a) -> Str = "hello, " + self.name
+}
+
+type Person = { name: Str } derive Show
+
+impl Greeter[Person] = {}
+
+fn announce(x: Dyn[Show]) -> Str = "seen #{x}"
+
+let person: Person = { name: "milo" }
+puts(Greeter.greet(person))  # output: hello, milo
+puts(announce(person))       # output: seen { name: milo }
+puts(announce(42))           # output: seen 42

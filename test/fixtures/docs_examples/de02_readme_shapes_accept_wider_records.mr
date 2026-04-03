@@ -1,0 +1,10 @@
+# README shapes example: structural shape constraints accept wider records.
+shape Named = { name: Str }
+
+fn greet[a: Named](x: a) -> Str = "hello, #{x.name}"
+
+let monkey = { name: "milo", bananas: 3 }
+let parrot = { name: "kiwi", words: 10 }
+
+puts(greet(monkey))  # output: hello, milo
+puts(greet(parrot))  # output: hello, kiwi

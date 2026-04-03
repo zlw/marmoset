@@ -1,0 +1,13 @@
+# README dyn example: derives, qualified trait calls, and Dyn[Show] dispatch work together.
+trait Drum[a] = {
+  fn drum(self: a) -> Str = "boom"
+}
+
+type Relic = { animal: Str, leaves: Int } derive Show, Drum
+
+fn announce(x: Dyn[Show]) -> Str = "found #{x}"
+
+let relic: Relic = { animal: "jaguar", leaves: 3 }
+puts(Drum.drum(relic))    # output: boom
+puts(announce(relic))     # output: found { animal: jaguar, leaves: 3 }
+puts(announce("banana"))  # output: found banana

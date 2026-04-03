@@ -2,7 +2,7 @@
 
 ## Maintenance
 
-- Last verified: 2026-04-02
+- Last verified: 2026-04-03
 - Implementation status: Canonical (actively maintained)
 - Update trigger: Any change to milestone status, plan ordering, or deferred-ideas ownership
 
@@ -22,6 +22,7 @@
 2. [Syntax rework](docs/plans/done/language/02_syntax-rework.md)
 3. [Syntax rework follow-up](docs/plans/done/language/03_syntax-rework-followup.md)
 4. [Pre-modules semantics foundation](docs/plans/done/language/04_pre-modules-semantics-foundation.md)
+5. [Pre-modules parity and hardening](docs/plans/done/language/05_pre-modules-parity-and-hardening.md)
 
 ### Tooling
 
@@ -36,12 +37,11 @@
 
 ### Main Language Track
 
-1. [Pre-modules parity and hardening](docs/plans/todo/language/01_pre-modules-parity-and-hardening.md)
-2. [Module system](docs/plans/todo/language/02_module-system.md)
-3. [Prelude](docs/plans/todo/language/03_prelude.md)
-4. [FFI](docs/plans/todo/language/04_ffi.md)
-5. [Stdlib](docs/plans/todo/language/05_stdlib.md)
-6. [Post-modules type-system expansion](docs/plans/todo/language/06_post-modules-type-system-expansion.md)
+1. [Module system](docs/plans/todo/language/02_module-system.md)
+2. [Prelude](docs/plans/todo/language/03_prelude.md)
+3. [FFI](docs/plans/todo/language/04_ffi.md)
+4. [Stdlib](docs/plans/todo/language/05_stdlib.md)
+5. [Post-modules type-system expansion](docs/plans/todo/language/06_post-modules-type-system-expansion.md)
 
 ### Queued Language Work
 
@@ -67,7 +67,7 @@ These areas already have a concrete plan or completed milestone and should not a
 - declaration-role split (`type` / `shape` / `trait`), transparent vs constructor-bearing type forms, effect freeze, and unions vs named sums:
   [Pre-modules semantics foundation](docs/plans/done/language/04_pre-modules-semantics-foundation.md)
 - feature/codegen parity, checker-to-emitter contract hardening, docs validation, generated-Go snapshots, and regression gates:
-  [Pre-modules parity and hardening](docs/plans/todo/language/01_pre-modules-parity-and-hardening.md)
+  [Pre-modules parity and hardening](docs/plans/done/language/05_pre-modules-parity-and-hardening.md)
 - imports, exports, per-module checking, and multi-file compilation:
   [Module system](docs/plans/todo/language/02_module-system.md)
 - core language/library platform milestones:

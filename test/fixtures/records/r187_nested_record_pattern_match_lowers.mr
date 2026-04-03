@@ -1,0 +1,8 @@
+# R187: Nested record field patterns lower end to end
+let user = { profile: { name: "Ada", age: 10 }, active: true }
+let out = match user {
+  case { profile: { name: "Ada", age: age }, active: true }: age
+  case _: 0
+}
+
+puts(out)  # output: 10

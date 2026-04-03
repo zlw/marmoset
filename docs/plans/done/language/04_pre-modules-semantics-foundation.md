@@ -70,7 +70,7 @@ Show.show(shown)
 - interface value types beyond the current `Dyn[...]` trait-object surface
 - function overloading
 - post-modules associated types / open rows / coherence expansion
-- broad parity and hardening work that belongs to `01_pre-modules-parity-and-hardening.md`
+- broad parity and hardening work that belongs to `05_pre-modules-parity-and-hardening.md`
 
 ## Locked Decisions
 
@@ -234,7 +234,7 @@ The original pre-modules branch also landed real cleanup around:
 - derive/tooling groundwork.
 
 Those improvements remain part of this milestone.
-`01_pre-modules-parity-and-hardening.md` owns hardening and drift prevention, not
+`05_pre-modules-parity-and-hardening.md` owns hardening and drift prevention, not
 semantic redefinition.
 
 ## What This Milestone Completed
@@ -249,7 +249,7 @@ semantic redefinition.
 
 ## Remaining Follow-Up
 
-- `docs/plans/todo/language/01_pre-modules-parity-and-hardening.md` hardens and audits this baseline
+- `docs/plans/done/language/05_pre-modules-parity-and-hardening.md` hardens and audits this baseline
 - `docs/plans/todo/language/02_module-system.md` extends the same qualifier classifier into real module namespaces
 - `docs/plans/todo/language/07_function-overloading.md` can build only on plain and qualified calls, not on value-dot fallback
 - `docs/plans/todo/language/08_forall-exists.md` stays separate from this baseline because it changes value-level interface packaging rather than the core pre-modules declaration and call model

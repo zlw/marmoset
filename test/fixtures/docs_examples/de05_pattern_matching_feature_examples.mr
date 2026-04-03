@@ -1,0 +1,16 @@
+# docs/features/pattern-matching.md: sum and record examples remain runnable.
+type Snack = { Banana(Int), Coconut(Int) }
+
+fn calories(snack: Snack) -> Int = match snack {
+  case Snack.Banana(count): count * 10
+  case Snack.Coconut(count): count * 25
+}
+
+let supply = { bananas: 7, coconuts: 2 }
+
+puts(calories(Snack.Banana(3)))     # output: 30
+puts(calories(Snack.Coconut(2)))    # output: 50
+puts(match supply {                 # output: 9
+  case { bananas:, coconuts: }: bananas + coconuts
+  case _: 0
+})

@@ -1,0 +1,12 @@
+# U92: Nested constructor payload patterns lower end to end
+type Option[a] = { Some(a), None }
+type Box = { Wrap(Option[Int]), Empty }
+
+let value = Box.Wrap(Option.Some(41))
+let out = match value {
+  case Box.Wrap(Option.Some(n)): n + 1
+  case Box.Wrap(Option.None): 0
+  case Box.Empty: 0
+}
+
+puts(out)  # output: 42

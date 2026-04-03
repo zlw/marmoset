@@ -2,7 +2,7 @@
 
 ## Maintenance
 
-- Last verified: 2026-04-02
+- Last verified: 2026-04-03
 - Implementation status: Planning
 - Prerequisites:
   - current data-first declaration semantics
@@ -342,6 +342,23 @@ Long term:
 - user-facing docs and examples should prefer plain value-position `trait`/`shape` names
 - implementation may still reuse or evolve existing `Dyn[...]` machinery internally
 
+### 10. Interface Runtime Adapters Must Be Shared And Auditable
+
+The current `Dyn[...]`-style runtime packaging is a useful starting point, but the
+forall/exists track should not freeze its current per-value costs into the long-term
+interface-value model.
+
+Required direction:
+
+- interface packaging must prefer shared top-level adapters or witness singletons when
+  the adapter shape depends only on the concrete source type and interface surface
+- runtime objects must not carry metadata that has no read path in codegen or runtime
+- primitive `show`/`debug` helpers should use fixed-format primitives rather than generic
+  `fmt.Sprintf`-style formatting where equivalent helpers exist
+- codegen cleanup that removes dead monomorphized helpers, duplicate forwarding
+  wrappers, and unnecessary expression-position IIFEs is part of making the interface
+  runtime auditable, even when those issues are secondary to the main packaging costs
+
 ## Target User Model
 
 Users should be able to think about the language this way:
@@ -434,6 +451,28 @@ type Userish = {
 - interface value coercion is not generalized across traits and shapes
 - docs do not currently explain the "one concrete type for all uses" vs "open interface value" split clearly
 
+## Current Backend Baseline
+
+The pre-modules backend/runtime hardening slice that originally sat in this plan is now
+complete and recorded in
+`docs/plans/done/language/05_pre-modules-parity-and-hardening.md`.
+
+That means this plan starts from a better existing `Dyn[...]` baseline:
+
+- trait-object packaging already reuses shared adapters / witness singletons for the
+  concrete pre-modules paths
+- dead `typeID`-style payload metadata has already been removed from `marmosetDyn`
+- primitive `show` / `debug` helpers already use cheaper fixed-format helpers instead
+  of generic `fmt.Sprintf` calls
+- the representative record-spread `Dyn[...]` packaging path already hoists control
+  flow out of composite literals
+- the pre-modules hardening suite already pins dead-helper suppression and the reduced
+  emitted-Go shape
+
+Remaining backend/runtime work in this plan should therefore be about generalizing that
+baseline to ordinary trait/shape interface values, not redoing the already-completed
+pre-modules cleanup.
+
 ## Implementation Plan
 
 ### Phase 0. Freeze Terminology
@@ -523,6 +562,9 @@ Acceptance criteria:
 
 - `let xs: List[Show] = [42, "hello"]` works
 - method calls on those values codegen correctly
+- trait interface values reuse the already-hardened shared-adapter runtime path from
+  the completed pre-modules hardening pass rather than rebuilding per-value witness
+  closures by default
 
 ### Phase 6. Lower Shape Interface Values
 

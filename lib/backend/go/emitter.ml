@@ -322,6 +322,17 @@ let trait_object_witness_type_name (traits : string list) : string =
 
 let trait_object_method_field_name (method_name : string) : string = go_safe_ident method_name
 
+let trait_object_adapter_func_name
+    ~(source_type : Types.mono_type) ~(traits : string list) ~(method_name : string) : string =
+  Printf.sprintf "__marmoset_dyn_adapter_%s_%s_%s"
+    (go_safe_ident (trait_object_witness_type_name traits))
+    (mangle_type source_type) (go_safe_ident method_name)
+
+let trait_object_witness_value_name ~(source_type : Types.mono_type) ~(traits : string list) : string =
+  Printf.sprintf "__marmoset_dyn_witness_%s_%s"
+    (go_safe_ident (trait_object_witness_type_name traits))
+    (mangle_type source_type)
+
 let type_mentions_trait_self (type_param : string) (typ : Types.mono_type) : bool =
   Types.TypeVarSet.mem type_param (Types.free_type_vars typ)
 
@@ -534,6 +545,12 @@ module NamedTypeInstSet = Set.Make (struct
   let compare = compare
 end)
 
+module TraitObjectAdapterInstSet = Set.Make (struct
+  type t = Types.mono_type * string list
+
+  let compare = compare
+end)
+
 type mono_state = {
   mutable func_defs : func_def list;
   mutable impl_templates : impl_template list;
@@ -562,6 +579,8 @@ type mono_state = {
       (* Phase 6.3: typed method definitions keyed by method id *)
   trait_object_coercion_map : (int, Typecheck.Resolution_artifacts.trait_object_coercion) Hashtbl.t;
       (* Track B B1: packaging sites for future Dyn[...] emission *)
+  mutable trait_object_adapter_insts : TraitObjectAdapterInstSet.t;
+      (* Shared concrete Dyn witness adapters discovered during actual emission *)
   placeholder_rewrite_map : Infer.placeholder_rewrite_map;
       (* Placeholder shorthand rewrites keyed by original expression id *)
 }
@@ -598,6 +617,7 @@ let create_mono_state
     method_type_args_map;
     method_def_map;
     trait_object_coercion_map;
+    trait_object_adapter_insts = TraitObjectAdapterInstSet.empty;
     placeholder_rewrite_map;
   }
 
@@ -606,6 +626,15 @@ let placeholder_rewritten_expr (rewrite_map : Infer.placeholder_rewrite_map) (ex
   match Hashtbl.find_opt rewrite_map expr.id with
   | Some rewritten -> rewritten
   | None -> expr
+
+let register_trait_object_adapter_instance
+    (state : mono_state) ~(source_type : Types.mono_type) ~(traits : string list) : unit =
+  let normalized_source_type =
+    normalize_type_for_codegen ~concrete_only:state.concrete_only (Types.canonicalize_mono_type source_type)
+  in
+  let normalized_traits = normalized_trait_object_traits_for_codegen traits in
+  state.trait_object_adapter_insts <-
+    TraitObjectAdapterInstSet.add (normalized_source_type, normalized_traits) state.trait_object_adapter_insts
 
 let synthetic_helper_suffix (expr_id : int) : string =
   if expr_id < 0 then
@@ -912,7 +941,75 @@ and emit_trait_object_type_defs (state : mono_state) (type_map : Infer.type_map)
       |> List.sort String.compare
       |> String.concat ""
     in
-    "type marmosetDyn struct{ typeID string; payload any; witness any }\n\n" ^ witness_defs
+    let adapter_defs =
+      TraitObjectAdapterInstSet.elements state.trait_object_adapter_insts
+      |> List.map (fun (source_type, traits) ->
+             let source_go_type = type_to_go state source_type in
+             let method_defs =
+               dynamic_trait_methods_for traits
+               |> List.map (fun (method_info : dyn_callable_method) ->
+                      let method_sig = method_info.dyn_method_sig in
+                      let adapter_name =
+                        trait_object_adapter_func_name ~source_type ~traits ~method_name:method_sig.method_name
+                      in
+                      let arg_params, arg_names =
+                        method_sig.method_params
+                        |> List.tl
+                        |> List.mapi (fun i (name, typ) ->
+                               let arg_name =
+                                 let candidate = go_safe_ident name in
+                                 if candidate = "" then
+                                   Printf.sprintf "__arg_%d" i
+                                 else
+                                   candidate
+                               in
+                               (Printf.sprintf "%s %s" arg_name (type_to_go state typ), arg_name))
+                        |> List.split
+                      in
+                      let type_suffix = fingerprint_types [ source_type ] in
+                      let dispatch_trait_name = dyn_dispatch_trait_name source_type method_info in
+                      let impl_func_name =
+                        trait_method_func_name dispatch_trait_name method_sig.method_name type_suffix
+                      in
+                      let params =
+                        String.concat ", "
+                          ("__receiver any" :: arg_params |> List.filter (fun param -> param <> ""))
+                      in
+                      let call_args =
+                        ("__receiver.(" ^ source_go_type ^ ")") :: arg_names |> String.concat ", "
+                      in
+                      Printf.sprintf "func %s(%s) %s {\n\treturn %s(%s)\n}\n" adapter_name params
+                        (type_to_go state method_sig.method_return_type)
+                        impl_func_name call_args)
+               |> String.concat "\n"
+             in
+             let witness_fields =
+               dynamic_trait_methods_for traits
+               |> List.map (fun (method_info : dyn_callable_method) ->
+                      let method_name = method_info.dyn_method_sig.method_name in
+                      let adapter_name = trait_object_adapter_func_name ~source_type ~traits ~method_name in
+                      Printf.sprintf "%s: %s" (trait_object_method_field_name method_name) adapter_name)
+               |> String.concat ", "
+             in
+             let witness_value_name = trait_object_witness_value_name ~source_type ~traits in
+             let witness_type_name = trait_object_witness_type_name traits in
+             let witness_value =
+               if witness_fields = "" then
+                 Printf.sprintf "var %s = %s{}\n" witness_value_name witness_type_name
+               else
+                 Printf.sprintf "var %s = %s{%s}\n" witness_value_name witness_type_name witness_fields
+             in
+             method_defs ^ witness_value)
+      |> List.sort String.compare
+      |> String.concat "\n"
+    in
+    let adapter_section =
+      if adapter_defs = "" then
+        ""
+      else
+        adapter_defs ^ "\n"
+    in
+    "type marmosetDyn struct{ payload any; witness any }\n\n" ^ witness_defs ^ adapter_section
 
 (* Enum payload slots box aggregate Go values so recursive sum types lower to
    pointer-safe structs instead of invalid directly self-embedded Go structs. *)
@@ -1288,32 +1385,6 @@ let enum_constructor_codegen_type
   match extract_enum_type candidate_type with
   | Some (Types.TEnum (_, type_args)) -> Types.TEnum (enum_name, type_args)
   | _ -> Types.TEnum (enum_name, [])
-
-let expected_trait_object_coercion
-    ~(trait_object_coercion_map : (int, Typecheck.Resolution_artifacts.trait_object_coercion) Hashtbl.t)
-    (type_map : Infer.type_map)
-    (expr : AST.expression)
-    (expected_type : Types.mono_type option) : Typecheck.Resolution_artifacts.trait_object_coercion option =
-  if Hashtbl.mem trait_object_coercion_map expr.id then
-    None
-  else
-    match expected_type with
-    | None -> None
-    | Some expected_type -> (
-        match Types.canonicalize_mono_type expected_type with
-        | Types.TTraitObject target_traits -> (
-            match
-              Infer.classify_trait_object_compatibility
-                ~mk_error:(fun ~code ~message -> Diagnostic.error_no_span ~code ~message)
-                (get_type type_map expr) target_traits
-            with
-            | Ok Infer.TraitObjectAlreadyCompatible -> None
-            | Ok (Infer.TraitObjectNeedsPackaging source_type) ->
-                Some
-                  Typecheck.Resolution_artifacts.
-                    { target_traits; source_type = Types.canonicalize_mono_type source_type }
-            | Error _ -> None)
-        | _ -> None)
 
 (* Check if a type contains unresolved type variables *)
 let rec has_type_vars (t : Types.mono_type) : bool =
@@ -2260,99 +2331,124 @@ let register_user_func_call_instantiation
   let arity = List.length args in
   let func_def_opt = lookup_func_def_for_call state target_name arity in
   let raw_arg_types = List.map (arg_type_for_specialization state env type_map) args in
-  let declared_signature_opt =
-    match Infer.TypeEnv.find_opt target_name env with
-    | Some (Types.Forall (_, func_type)) -> extract_param_types_exact arity func_type
-    | None -> None
+  let has_imprecise_callable_arg_type (t : Types.mono_type) : bool =
+    match Types.canonicalize_mono_type t with
+    | Types.TFun _ -> false
+    | Types.TUnion members | Types.TIntersection members -> List.exists is_callable_like_type members
+    | Types.TVar _ | Types.TRowVar _ -> true
+    | _ -> false
   in
-  let declared_param_types, declared_return_type_opt =
-    match declared_signature_opt with
-    | Some (params, ret) -> (params, Some ret)
-    | None -> (raw_arg_types, None)
-  in
-  let arg_types =
-    List.map2
-      (fun (arg_expr : AST.expression) (arg_type, declared_param_type) ->
-        match Hashtbl.find_opt state.trait_object_coercion_map arg_expr.id with
-        | Some (coercion : Typecheck.Resolution_artifacts.trait_object_coercion) -> (
-            match Types.canonicalize_mono_type declared_param_type with
-            | Types.TTraitObject expected_traits
-              when Types.normalize_trait_object_traits expected_traits = coercion.target_traits ->
-                declared_param_type
-            | _ -> arg_type)
-        | None -> arg_type)
-      args
-      (List.combine raw_arg_types declared_param_types)
-  in
-  let specialized_declared_signature =
-    match (declared_signature_opt, declared_return_type_opt) with
-    | Some (_params, _ret), Some declared_return ->
-        specialize_signature declared_param_types declared_return arg_types
-    | _ -> None
-  in
-  let inferred_call_return = get_type type_map call_expr in
-  let partially_specialized_params =
-    let partial = partially_specialize_declared_params_from_noncallable_args declared_param_types arg_types in
-    match declared_return_type_opt with
-    | Some declared_return -> (
-        match Unify.unify declared_return inferred_call_return with
-        | Ok return_subst -> List.map (Types.apply_substitution return_subst) partial
-        | Error _ -> partial)
-    | None -> partial
-  in
-  let concrete_param_types =
-    let base_param_types =
-      match specialized_declared_signature with
-      | Some (specialized_params, _specialized_return) when not (List.exists has_type_vars specialized_params) ->
-          List.map2
-            (fun actual specialized -> prefer_actual_codegen_param_type ~actual ~specialized)
-            arg_types specialized_params
-      | None -> arg_types
-      | Some _ -> arg_types
+  if List.exists has_imprecise_callable_arg_type raw_arg_types then
+    ()
+  else
+    let declared_signature_opt =
+      match Infer.TypeEnv.find_opt target_name env with
+      | Some (Types.Forall (_, func_type)) -> extract_param_types_exact arity func_type
+      | None -> None
     in
-    let refined_callable_hint_params =
-      refine_callable_param_types_from_user_args state env type_map ~args partially_specialized_params
+    let declared_param_types, declared_return_type_opt =
+      match declared_signature_opt with
+      | Some (params, ret) -> (params, Some ret)
+      | None -> (raw_arg_types, None)
     in
-    List.map2 prefer_more_precise_param_type base_param_types refined_callable_hint_params
-  in
-  let return_type =
-    match declared_return_type_opt with
-    | Some declared_return_type ->
-        let candidate_return =
-          match specialized_declared_signature with
-          | Some (_specialized_params, specialized_return) -> specialized_return
-          | None -> (
-              match
-                infer_return_type_from_signature declared_param_types declared_return_type concrete_param_types
-              with
-              | Some inferred_ret -> inferred_ret
-              | None -> inferred_call_return)
-        in
-        if has_unresolved_codegen_type candidate_return then
-          inferred_call_return
+    let arg_types =
+      List.map2
+        (fun (arg_expr : AST.expression) (arg_type, declared_param_type) ->
+          match Hashtbl.find_opt state.trait_object_coercion_map arg_expr.id with
+          | Some (coercion : Typecheck.Resolution_artifacts.trait_object_coercion) -> (
+              match Types.canonicalize_mono_type declared_param_type with
+              | Types.TTraitObject expected_traits
+                when Types.normalize_trait_object_traits expected_traits = coercion.target_traits ->
+                  declared_param_type
+              | _ -> arg_type)
+          | None -> arg_type)
+        args
+        (List.combine raw_arg_types declared_param_types)
+    in
+    let specialized_declared_signature =
+      match (declared_signature_opt, declared_return_type_opt) with
+      | Some (_params, _ret), Some declared_return ->
+          specialize_signature declared_param_types declared_return arg_types
+      | _ -> None
+    in
+    let inferred_call_return = get_type type_map call_expr in
+    let partially_specialized_params =
+      let partial = partially_specialize_declared_params_from_noncallable_args declared_param_types arg_types in
+      match declared_return_type_opt with
+      | Some declared_return -> (
+          match Unify.unify declared_return inferred_call_return with
+          | Ok return_subst -> List.map (Types.apply_substitution return_subst) partial
+          | Error _ -> partial)
+      | None -> partial
+    in
+    let concrete_param_types =
+      let base_param_types =
+        match specialized_declared_signature with
+        | Some (specialized_params, _specialized_return) when not (List.exists has_type_vars specialized_params)
+          ->
+            List.map2
+              (fun actual specialized -> prefer_actual_codegen_param_type ~actual ~specialized)
+              arg_types specialized_params
+        | None -> arg_types
+        | Some _ -> arg_types
+      in
+      let refined_callable_hint_params =
+        refine_callable_param_types_from_user_args state env type_map ~args partially_specialized_params
+      in
+      List.map2 prefer_more_precise_param_type base_param_types refined_callable_hint_params
+    in
+    let should_defer_callable_specialization ~(actual : Types.mono_type) ~(selected : Types.mono_type) : bool =
+      match actual with
+      | Types.TFun _ ->
+          let normalized_actual = normalize_type_for_codegen ~concrete_only:state.concrete_only actual in
+          let normalized_selected = normalize_type_for_codegen ~concrete_only:state.concrete_only selected in
+          is_callable_like_type selected && mangle_type normalized_actual <> mangle_type normalized_selected
+      | _ -> false
+    in
+    let return_type =
+      match declared_return_type_opt with
+      | Some declared_return_type ->
+          let candidate_return =
+            match specialized_declared_signature with
+            | Some (_specialized_params, specialized_return) -> specialized_return
+            | None -> (
+                match
+                  infer_return_type_from_signature declared_param_types declared_return_type concrete_param_types
+                with
+                | Some inferred_ret -> inferred_ret
+                | None -> inferred_call_return)
+          in
+          if has_unresolved_codegen_type candidate_return then
+            inferred_call_return
+          else
+            candidate_return
+      | None -> inferred_call_return
+    in
+    match func_def_opt with
+    | None -> ()
+    | Some func_def ->
+        if state.concrete_only && List.exists has_type_vars concrete_param_types then
+          ()
+        else if
+          List.exists2
+            (fun actual selected -> should_defer_callable_specialization ~actual ~selected)
+            raw_arg_types concrete_param_types
+        then
+          ()
         else
-          candidate_return
-    | None -> inferred_call_return
-  in
-  match func_def_opt with
-  | None -> ()
-  | Some func_def ->
-      if state.concrete_only && List.exists has_type_vars concrete_param_types then
-        ()
-      else
-        let inst =
-          {
-            func_name = func_def.name;
-            module_path = state.module_path;
-            func_expr_id = func_def.func_expr_id;
-            func_arity = arity;
-            concrete_only_mode = state.concrete_only;
-            concrete_types = concrete_param_types;
-            type_fingerprint = fingerprint_types concrete_param_types;
-            return_type;
-          }
-        in
-        add_instantiation state inst
+          let inst =
+            {
+              func_name = func_def.name;
+              module_path = state.module_path;
+              func_expr_id = func_def.func_expr_id;
+              func_arity = arity;
+              concrete_only_mode = state.concrete_only;
+              concrete_types = concrete_param_types;
+              type_fingerprint = fingerprint_types concrete_param_types;
+              return_type;
+            }
+          in
+          add_instantiation state inst
 
 let resolved_user_func_call_target (state : mono_state) (func : AST.expression) : string option =
   user_func_target_name_for_expr state func
@@ -2998,19 +3094,12 @@ and collect_insts_expr
     (type_map : Infer.type_map)
     (env : Infer.type_env)
     (expr : AST.expression) : unit =
+  let _ = expected_type in
   let expr = placeholder_rewritten_expr state.placeholder_rewrite_map expr in
   (match Hashtbl.find_opt state.trait_object_coercion_map expr.id with
   | Some (coercion : Typecheck.Resolution_artifacts.trait_object_coercion) ->
       register_trait_object_support_use state type_map env ~source_expr:expr ~target_traits:coercion.target_traits
-  | None -> (
-      match
-        expected_trait_object_coercion ~trait_object_coercion_map:state.trait_object_coercion_map type_map expr
-          expected_type
-      with
-      | Some coercion ->
-          register_trait_object_support_use state type_map env ~source_expr:expr
-            ~target_traits:coercion.target_traits
-      | None -> ()));
+  | None -> ());
   match expr.expr with
   | AST.Integer _ | AST.Float _ | AST.Boolean _ | AST.String _ -> ()
   | AST.TypeApply (callee, _) ->
@@ -3166,7 +3255,9 @@ and collect_insts_expr
             | None -> [])
       in
       (* Collect from subexpressions first *)
-      collect_insts_expr state type_map env func;
+      (match user_call_target with
+      | Some _ -> ()
+      | None -> collect_insts_expr state type_map env func);
       let rec collect_args_with_expected remaining_args remaining_expected =
         match (remaining_args, remaining_expected) with
         | arg :: rest_args, expected_type :: rest_expected ->
@@ -3357,17 +3448,31 @@ let with_return_type (state : emit_state) (return_type : Types.mono_type) (f : u
 
 type emit_target =
   | ReturnTarget
-  | AssignTarget of string
+  | AssignTarget of string * Types.mono_type
   | DiscardTarget
 
 let target_prefix = function
   | ReturnTarget -> "return "
-  | AssignTarget name -> name ^ " = "
+  | AssignTarget (name, _) -> name ^ " = "
   | DiscardTarget -> "_ = "
 
 let emit_record_struct_type (state : emit_state) (fields : Types.record_field_type list) : string =
   let fields = Types.normalize_record_fields fields in
   intern_record_shape state.mono fields
+
+let enum_constructor_expected_arg_types (enum_type : Types.mono_type) (enum_name : string) (variant_name : string)
+    : Types.mono_type list =
+  match Types.canonicalize_mono_type enum_type with
+  | Types.TEnum (resolved_enum_name, type_args) when resolved_enum_name = enum_name -> (
+      match
+        ( Typecheck.Enum_registry.lookup resolved_enum_name,
+          Typecheck.Enum_registry.lookup_variant resolved_enum_name variant_name )
+      with
+      | Some enum_def, Some variant ->
+          let subst = Types.substitution_of_list (List.combine enum_def.type_params type_args) in
+          List.map (Types.apply_substitution subst) variant.fields
+      | _ -> [])
+  | _ -> []
 
 let emit_trait_object_package_value
     (state : emit_state) ~(source_type : Types.mono_type) ~(target_traits : string list) (expr_str : string) :
@@ -3394,46 +3499,12 @@ let emit_trait_object_package_value
           witness_type_name ^ "{" ^ witness_fields ^ "}"
       in
       Printf.sprintf
-        "(func() marmosetDyn { __source := %s; __sourceWitness := __source.witness.(%s); return marmosetDyn{typeID: __source.typeID, payload: __source.payload, witness: %s} })()"
+        "(func() marmosetDyn { __source := %s; __sourceWitness := __source.witness.(%s); return marmosetDyn{payload: __source.payload, witness: %s} })()"
         expr_str source_witness_type_name witness_expr
   | _ ->
-      let source_go_type = type_to_go state.mono source_type in
-      let witness_fields =
-        dynamic_trait_methods_for normalized_traits
-        |> List.map (fun (method_info : dyn_callable_method) ->
-               let method_sig = method_info.dyn_method_sig in
-               let arg_fields =
-                 method_sig.method_params
-                 |> List.tl
-                 |> List.map (fun (name, typ) ->
-                        Printf.sprintf "%s %s" (go_safe_ident name) (type_to_go state.mono typ))
-               in
-               let arg_names =
-                 method_sig.method_params |> List.tl |> List.map (fun (name, _) -> go_safe_ident name)
-               in
-               let closure_params = String.concat ", " ("__receiver any" :: arg_fields) in
-               let type_suffix = fingerprint_types [ source_type ] in
-               let dispatch_trait_name = dyn_dispatch_trait_name source_type method_info in
-               let impl_func_name =
-                 trait_method_func_name dispatch_trait_name method_sig.method_name type_suffix
-               in
-               let closure_args = ("__receiver.(" ^ source_go_type ^ ")") :: arg_names |> String.concat ", " in
-               Printf.sprintf "%s: func(%s) %s { return %s(%s) }"
-                 (trait_object_method_field_name method_sig.method_name)
-                 closure_params
-                 (type_to_go state.mono method_sig.method_return_type)
-                 impl_func_name closure_args)
-        |> String.concat ", "
-      in
-      let witness_expr =
-        if witness_fields = "" then
-          witness_type_name ^ "{}"
-        else
-          witness_type_name ^ "{" ^ witness_fields ^ "}"
-      in
-      Printf.sprintf
-        "(func() marmosetDyn { __payload := %s; return marmosetDyn{typeID: %S, payload: __payload, witness: %s} })()"
-        expr_str (Types.to_string source_type) witness_expr
+      register_trait_object_adapter_instance state.mono ~source_type ~traits:normalized_traits;
+      let witness_value_name = trait_object_witness_value_name ~source_type ~traits:normalized_traits in
+      Printf.sprintf "marmosetDyn{payload: %s, witness: %s}" expr_str witness_value_name
 
 let rec project_value_to_expected_type
     (state : emit_state)
@@ -3690,7 +3761,8 @@ type type_check_info = {
   narrow_type : Types.mono_type;
 }
 
-let type_check_info_of_expr (type_map : Infer.type_map) (expr : AST.expression) : type_check_info option =
+let type_check_info_of_expr (type_map : Infer.type_map) (env : Infer.type_env) (expr : AST.expression) :
+    type_check_info option =
   match expr.expr with
   | AST.TypeCheck (checked_expr, type_ann) -> (
       match Type_narrowing.path_of_expr checked_expr with
@@ -3700,7 +3772,7 @@ let type_check_info_of_expr (type_map : Infer.type_map) (expr : AST.expression) 
             {
               path;
               checked_expr;
-              current_type = get_type type_map checked_expr;
+              current_type = expr_type_from_env_or_map env type_map checked_expr;
               narrow_type = annotation_exn (Annotation.type_expr_to_mono_type type_ann);
             })
   | _ -> None
@@ -3863,7 +3935,7 @@ let rec emit_expr
         let go_type_name = mangle_type enum_type in
         let constructor_name = Printf.sprintf "%s_%s" go_type_name variant_name in
         (* Emit arguments *)
-        let arg_strs = List.map (emit_expr state type_map env) args in
+        let arg_strs = emit_enum_constructor_args state type_map env enum_type enum_name variant_name args in
         if arg_strs = [] then
           Printf.sprintf "%s()" constructor_name
         else
@@ -3878,14 +3950,14 @@ let rec emit_expr
               failwith
                 (Printf.sprintf "Record literal expected record type, got %s" (Types.to_string record_type))
         in
-        let result_fields =
+        let base_fields_opt, result_fields =
           match spread with
-          | None -> declared_fields
+          | None -> (None, declared_fields)
           | Some base_expr -> (
               match type_from_env_or_map env type_map base_expr |> Option.map Types.canonicalize_mono_type with
               | Some (Types.TRecord (base_fields, base_row)) ->
                   let base_fields, _ = normalize_record_row_type base_fields base_row in
-                  merge_record_fields base_fields declared_fields
+                  (Some base_fields, merge_record_fields base_fields declared_fields)
               | Some (Types.TIntersection members)
                 when List.for_all
                        (function
@@ -3895,13 +3967,15 @@ let rec emit_expr
                   match Annotation.merged_record_intersection_type members with
                   | Ok (Types.TRecord (base_fields, base_row)) ->
                       let base_fields, _ = normalize_record_row_type base_fields base_row in
-                      merge_record_fields base_fields declared_fields
-                  | _ -> declared_fields)
+                      (Some base_fields, merge_record_fields base_fields declared_fields)
+                  | _ -> (None, declared_fields))
               | Some base_type -> (
                   match Structural.fields_of_type base_type with
-                  | Some base_fields -> merge_record_fields base_fields declared_fields
-                  | None -> declared_fields)
-              | None -> declared_fields)
+                  | Some base_fields ->
+                      let base_fields = Types.normalize_record_fields base_fields in
+                      (Some base_fields, merge_record_fields base_fields declared_fields)
+                  | None -> (None, declared_fields))
+              | None -> (None, declared_fields))
         in
         let struct_type = emit_record_struct_type state result_fields in
         let emit_field_assignment field base_var_opt =
@@ -3912,7 +3986,23 @@ let rec emit_expr
               Printf.sprintf "%s: %s" go_name field_str
           | None -> (
               match base_var_opt with
-              | Some base_var -> Printf.sprintf "%s: %s.%s" go_name base_var go_name
+              | Some base_var ->
+                  let direct_value = Printf.sprintf "%s.%s" base_var go_name in
+                  let value_expr =
+                    match base_fields_opt with
+                    | Some base_fields -> (
+                        match
+                          List.find_opt
+                            (fun (base_field : Types.record_field_type) -> base_field.name = field.Types.name)
+                            base_fields
+                        with
+                        | Some base_field ->
+                            project_value_to_expected_type state type_map env base_field.typ field.Types.typ
+                              direct_value
+                        | None -> direct_value)
+                    | None -> direct_value
+                  in
+                  Printf.sprintf "%s: %s" go_name value_expr
               | None ->
                   failwith
                     (Printf.sprintf "Record field '%s' not provided and no spread base available" field.Types.name)
@@ -3955,11 +4045,16 @@ let rec emit_expr
         with
         | EnumConstructorValue { enum_name; result_type; constructor_arity; _ } ->
             let enum_type =
-              if state.mono.concrete_only && has_type_vars result_type && enum_allows_unresolved_erasure enum_name
+              let refined_type = enum_constructor_codegen_type type_map expr expected_type enum_name in
+              let refined_type = Types.canonicalize_mono_type refined_type in
+              if
+                state.mono.concrete_only && has_type_vars refined_type && enum_allows_unresolved_erasure enum_name
               then
-                normalize_type_for_codegen ~concrete_only:state.mono.concrete_only result_type
+                normalize_type_for_codegen ~concrete_only:state.mono.concrete_only refined_type
               else
-                result_type
+                match expected_type with
+                | Some _ -> refined_type
+                | None -> result_type
             in
             let go_type_name = mangle_type enum_type in
             let constructor_name = Printf.sprintf "%s_%s" go_type_name variant_name in
@@ -4013,7 +4108,7 @@ let rec emit_expr
             let go_type_name = mangle_type enum_type in
             let constructor_name = Printf.sprintf "%s_%s" go_type_name variant_name in
             (* Emit arguments *)
-            let arg_strs = List.map (emit_expr state type_map env) args in
+            let arg_strs = emit_enum_constructor_args state type_map env enum_type enum_name variant_name args in
             if arg_strs = [] then
               Printf.sprintf "%s()" constructor_name
             else
@@ -4134,7 +4229,7 @@ let rec emit_expr
             Printf.sprintf "(func() %s {\n%s%s})()" go_type body_str ind)
   in
   let projected = maybe_project_to_expected_record_type state type_map env expr expected_type emitted in
-  maybe_package_trait_object_expr state type_map env expr projected
+  projected
 
 and emit_field_function_call
     (state : emit_state)
@@ -4154,7 +4249,7 @@ and emit_field_function_call
       match (remaining_args, remaining_expected) with
       | [], _ -> String.concat ", " (List.rev acc)
       | arg :: rest_args, expected :: rest_expected ->
-          emit (emit_expr ~expected_type:(Some expected) state type_map env arg :: acc) rest_args rest_expected
+          emit (emit_expr_for_expected_type state type_map env expected arg :: acc) rest_args rest_expected
       | arg :: rest_args, [] -> emit (emit_expr state type_map env arg :: acc) rest_args []
     in
     emit [] args expected_types
@@ -4192,6 +4287,24 @@ and emit_field_function_call
       let args_str = emit_args_with_expected_types arg_types in
       Printf.sprintf "(%s.(%s))(%s)" field_str callable_go_type args_str
 
+and emit_enum_constructor_args
+    (state : emit_state)
+    (type_map : Infer.type_map)
+    (env : Infer.type_env)
+    (enum_type : Types.mono_type)
+    (enum_name : string)
+    (variant_name : string)
+    (args : AST.expression list) : string list =
+  let expected_types = enum_constructor_expected_arg_types enum_type enum_name variant_name in
+  let rec emit acc remaining_args remaining_expected =
+    match (remaining_args, remaining_expected) with
+    | [], _ -> List.rev acc
+    | arg :: rest_args, expected_type :: rest_expected ->
+        emit (emit_expr_for_expected_type state type_map env expected_type arg :: acc) rest_args rest_expected
+    | arg :: rest_args, [] -> emit (emit_expr state type_map env arg :: acc) rest_args []
+  in
+  emit [] args expected_types
+
 and emit_expr_for_expected_type
     (state : emit_state)
     (type_map : Infer.type_map)
@@ -4199,12 +4312,13 @@ and emit_expr_for_expected_type
     (expected_type : Types.mono_type)
     (expr : AST.expression) : string =
   let emitted = emit_expr ~expected_type:(Some expected_type) state type_map env expr in
-  match
-    expected_trait_object_coercion ~trait_object_coercion_map:state.mono.trait_object_coercion_map type_map expr
-      (Some expected_type)
-  with
-  | Some coercion -> emit_trait_object_package_expr state type_map env expr coercion emitted
-  | None -> emitted
+  match Types.canonicalize_mono_type expected_type with
+  | Types.TTraitObject expected_traits -> (
+      match Hashtbl.find_opt state.mono.trait_object_coercion_map expr.id with
+      | Some coercion when coercion.target_traits = Types.normalize_trait_object_traits expected_traits ->
+          emit_trait_object_package_expr state type_map env expr coercion emitted
+      | _ -> emitted)
+  | _ -> emitted
 
 and emit_expr_for_current_return
     (state : emit_state) (type_map : Infer.type_map) (env : Infer.type_env) (expr : AST.expression) : string =
@@ -4306,78 +4420,97 @@ and emit_match ?target state type_map env match_expr scrutinee arms =
       emit_match_record ?target state type_map env scrutinee scrutinee_type arms match_result_type
   | _ -> failwith (Printf.sprintf "Match on type %s not yet supported" (Types.to_string scrutinee_type))
 
-and emit_record_match_arm
-    ?(pre_body_lines = [])
-    ?(body_transform = Fun.id)
-    ?target
-    state
-    type_map
-    env
-    match_result_type
-    scrutinee_var
-    scrutinee_fields
-    pattern
-    body
-    is_first =
-  let result_prefix =
-    match target with
-    | Some t -> target_prefix t
-    | None -> "return "
-  in
-  let emit_lit = function
-    | AST.LInt n -> Printf.sprintf "int64(%Ld)" n
-    | AST.LString s -> Printf.sprintf "%S" s
-    | AST.LBool b ->
-        if b then
-          "true"
-        else
-          "false"
-  in
-  let body = body_transform body in
-  let pre_body_code =
-    match pre_body_lines with
-    | [] -> ""
-    | lines -> String.concat "" (List.map (fun line -> "\t\t" ^ line ^ "\n") lines)
-  in
-  let body_code =
-    match target with
-    | Some t ->
-        pre_body_code ^ with_indent_delta state 2 (fun () -> emit_expr_to_target state type_map env body t)
-    | None ->
-        let body_str = emit_expr_for_expected_type state type_map env match_result_type body in
-        pre_body_code ^ "\t\t" ^ result_prefix ^ body_str ^ "\n"
-  in
-  let branch_prefix_if =
-    if is_first then
-      "\tif"
-    else
-      " else if"
-  in
-  let branch_prefix_else =
-    if is_first then
-      "\tif true"
-    else
-      " else"
-  in
+and emit_pattern_literal = function
+  | AST.LInt n -> Printf.sprintf "int64(%Ld)" n
+  | AST.LString s -> Printf.sprintf "%S" s
+  | AST.LBool b ->
+      if b then
+        "true"
+      else
+        "false"
+
+and go_field_access (base_expr : string) (field_name : string) : string =
+  Printf.sprintf "(%s).%s" base_expr field_name
+
+and go_deref_expr (expr : string) : string = Printf.sprintf "(*(%s))" expr
+
+and binding_line_for_pattern_name (name : string) (expr : string) : string =
+  Printf.sprintf "%s := %s" (go_safe_ident name) expr
+
+and binding_block_lines ~(indent : string) (lines : string list) : string =
+  match lines with
+  | [] -> ""
+  | _ ->
+      let markers = List.map (fun line -> indent ^ "_ = " ^ String.sub line 0 (String.index line ' ')) lines in
+      String.concat "\n" (List.map (fun line -> indent ^ line) lines @ markers) ^ "\n"
+
+and append_else_panic ~(branch_code : string) ~(indent : string) ~(message : string) : string =
+  Printf.sprintf "%s else {\n%s\tpanic(%S)\n%s}\n" branch_code indent message indent
+
+and flatten_match_patterns (arms : AST.match_arm list) : (AST.pattern * AST.expression) list =
+  List.concat_map
+    (fun (arm : AST.match_arm) ->
+      match arm.patterns with
+      | [] -> failwith "Match arm must have at least one pattern"
+      | patterns -> List.map (fun pattern -> (pattern, arm.body)) patterns)
+    arms
+
+and normalized_pattern_scrutinee_type
+    (state : emit_state) (pattern : AST.pattern) (scrutinee_type : Types.mono_type) : Types.mono_type =
+  Infer.normalize_pattern_scrutinee pattern scrutinee_type
+  |> Types.canonicalize_mono_type
+  |> normalize_type_for_codegen ~concrete_only:state.mono.concrete_only
+
+and record_fields_for_pattern_exn (scrutinee_type : Types.mono_type) : Types.record_field_type list =
+  match Structural.fields_of_type scrutinee_type with
+  | Some fields -> fields
+  | None ->
+      failwith
+        (Printf.sprintf "Codegen error: record pattern expects record-like type, got %s"
+           (Types.to_string scrutinee_type))
+
+and emit_pattern_plan
+    ?(omit_constructor_tag_check = false)
+    (state : emit_state)
+    (pattern : AST.pattern)
+    (scrutinee_expr : string)
+    (scrutinee_type : Types.mono_type) : string list * string list =
+  let scrutinee_type = normalized_pattern_scrutinee_type state pattern scrutinee_type in
   match pattern.AST.pat with
-  | AST.PWildcard -> Printf.sprintf "%s {\n%s\t}" branch_prefix_else body_code
-  | AST.PVariable name ->
-      let go_name = go_safe_ident name in
-      Printf.sprintf "%s {\n\t\t%s := %s\n\t\t_ = %s\n%s\t}" branch_prefix_else go_name scrutinee_var go_name
-        body_code
+  | AST.PWildcard -> ([], [])
+  | AST.PVariable name -> ([], [ binding_line_for_pattern_name name scrutinee_expr ])
+  | AST.PLiteral lit -> ([ Printf.sprintf "(%s == %s)" scrutinee_expr (emit_pattern_literal lit) ], [])
   | AST.PRecord (fields, rest) ->
+      let scrutinee_fields = record_fields_for_pattern_exn scrutinee_type in
       let cond_parts, bind_lines =
         List.fold_left
-          (fun (conds, binds) (field : AST.record_pattern_field) ->
-            let access = Printf.sprintf "%s.%s" scrutinee_var (go_record_field_name field.pat_field_name) in
-            match field.pat_field_pattern with
-            | None -> (conds, Printf.sprintf "%s := %s" (go_safe_ident field.pat_field_name) access :: binds)
-            | Some p -> (
-                match p.AST.pat with
-                | AST.PWildcard -> (conds, binds)
-                | AST.PVariable name -> (conds, Printf.sprintf "%s := %s" (go_safe_ident name) access :: binds)
-                | AST.PLiteral lit -> (Printf.sprintf "(%s == %s)" access (emit_lit lit) :: conds, binds)
-                | _ -> failwith "Complex record patterns in codegen are not yet supported"))
+          (fun (conds_acc, binds_acc) (field : AST.record_pattern_field) ->
+            let field_type =
+              match
+                List.find_opt
+                  (fun (f : Types.record_field_type) -> f.name = field.pat_field_name)
+                  scrutinee_fields
+              with
+              | Some field_type -> field_type.typ
+              | None ->
+                  failwith
+                    (Printf.sprintf "Codegen error: unknown record pattern field '%s'" field.pat_field_name)
+            in
+            let field_access = go_field_access scrutinee_expr (go_record_field_name field.pat_field_name) in
+            let nested_pattern =
+              match field.pat_field_pattern with
+              | Some nested -> nested
+              | None ->
+                  AST.
+                    {
+                      pat = PVariable field.pat_field_name;
+                      pos = pattern.pos;
+                      end_pos = pattern.end_pos;
+                      file_id = pattern.file_id;
+                    }
+            in
+            let field_conds, field_binds = emit_pattern_plan state nested_pattern field_access field_type in
+            (conds_acc @ field_conds, binds_acc @ field_binds))
           ([], []) fields
       in
       let bind_lines =
@@ -4401,50 +4534,147 @@ and emit_record_match_arm
                     List.map
                       (fun (field : Types.record_field_type) ->
                         let go_name = go_record_field_name field.name in
-                        Printf.sprintf "%s: %s.%s" go_name scrutinee_var go_name)
+                        Printf.sprintf "%s: %s" go_name (go_field_access scrutinee_expr go_name))
                       remaining_fields
                   in
                   Printf.sprintf "%s := %s{%s}" (go_safe_ident rest_name) rest_struct_type
                     (String.concat ", " rest_assignments)
             in
-            rest_binding :: bind_lines
+            bind_lines @ [ rest_binding ]
       in
-      let cond_str =
-        match List.rev cond_parts with
-        | [] -> "true"
-        | cs -> String.concat " && " cs
+      (cond_parts, bind_lines)
+  | AST.PConstructor (enum_name_pat, variant_name, field_patterns) -> (
+      match scrutinee_type with
+      | Types.TEnum (enum_name, type_args) when enum_name = enum_name_pat ->
+          let enum_def =
+            match Typecheck.Enum_registry.lookup enum_name with
+            | Some def -> def
+            | None -> failwith (Printf.sprintf "Unknown enum: %s" enum_name)
+          in
+          let variant =
+            match Typecheck.Enum_registry.lookup_variant enum_name variant_name with
+            | Some variant -> variant
+            | None -> failwith (Printf.sprintf "Unknown variant %s.%s" enum_name_pat variant_name)
+          in
+          let subst = Types.substitution_of_list (List.combine enum_def.type_params type_args) in
+          let field_types = List.map (Types.apply_substitution subst) variant.fields in
+          let layout = analyze_enum_layout state.mono enum_def type_args in
+          let variant_field_map =
+            match List.assoc_opt variant_name layout.variant_maps with
+            | Some field_map -> field_map
+            | None ->
+                failwith
+                  (Printf.sprintf "Codegen error: missing field layout for variant %s.%s" enum_name variant_name)
+          in
+          let nested_conditions, nested_bindings =
+            List.mapi
+              (fun pos field_pattern ->
+                let field_type =
+                  match List.nth_opt field_types pos with
+                  | Some field_type -> field_type
+                  | None ->
+                      failwith
+                        (Printf.sprintf "Codegen error: missing field type for %s.%s position %d" enum_name
+                           variant_name pos)
+                in
+                let mapping =
+                  match List.find_opt (fun (mapping_pos, _) -> mapping_pos = pos) variant_field_map with
+                  | Some (_pos, mapping) -> mapping
+                  | None ->
+                      failwith
+                        (Printf.sprintf "Codegen error: missing layout mapping for %s.%s position %d" enum_name
+                           variant_name pos)
+                in
+                let field_expr =
+                  let raw_expr = go_field_access scrutinee_expr mapping.data_field_name in
+                  if mapping.boxed then
+                    go_deref_expr raw_expr
+                  else
+                    raw_expr
+                in
+                emit_pattern_plan state field_pattern field_expr field_type)
+              field_patterns
+            |> List.split
+          in
+          let tag_conditions =
+            if omit_constructor_tag_check then
+              []
+            else
+              let tag_constant = Printf.sprintf "%s_%s_tag" (mangle_type scrutinee_type) variant_name in
+              [ Printf.sprintf "(%s == %s)" (go_field_access scrutinee_expr "Tag") tag_constant ]
+          in
+          (tag_conditions @ List.concat nested_conditions, List.concat nested_bindings)
+      | _ ->
+          failwith
+            (Printf.sprintf "Codegen error: constructor pattern %s.%s doesn't match scrutinee type %s"
+               enum_name_pat variant_name (Types.to_string scrutinee_type)))
+
+and emit_record_match_arm
+    ?(pre_body_lines = [])
+    ?(body_transform = Fun.id)
+    ?target
+    state
+    type_map
+    env
+    match_result_type
+    scrutinee_var
+    scrutinee_type
+    pattern
+    body
+    is_first =
+  let body_env =
+    match Infer.check_pattern pattern scrutinee_type with
+    | Ok (bindings, _narrowed_type) ->
+        List.fold_left
+          (fun env_acc (name, typ) -> Infer.TypeEnv.add name (Types.Forall ([], typ)) env_acc)
+          env bindings
+    | Error _ -> env
+  in
+  let result_prefix =
+    match target with
+    | Some t -> target_prefix t
+    | None -> "return "
+  in
+  let body = body_transform body in
+  let pre_body_code =
+    match pre_body_lines with
+    | [] -> ""
+    | lines -> String.concat "" (List.map (fun line -> "\t\t" ^ line ^ "\n") lines)
+  in
+  let body_code =
+    match target with
+    | Some t ->
+        pre_body_code ^ with_indent_delta state 2 (fun () -> emit_expr_to_target state type_map body_env body t)
+    | None ->
+        let body_str = emit_expr_for_expected_type state type_map body_env match_result_type body in
+        pre_body_code ^ "\t\t" ^ result_prefix ^ body_str ^ "\n"
+  in
+  let cond_parts, bind_lines = emit_pattern_plan state pattern scrutinee_var scrutinee_type in
+  let binds_block = binding_block_lines ~indent:"\t\t" bind_lines in
+  match cond_parts with
+  | [] when is_first -> Printf.sprintf "\tif true {\n%s%s\t}" binds_block body_code
+  | [] -> Printf.sprintf " else {\n%s%s\t}" binds_block body_code
+  | cs ->
+      let branch_prefix =
+        if is_first then
+          "\tif"
+        else
+          " else if"
       in
-      let binds_block =
-        let lines = List.rev bind_lines in
-        let markers = List.map (fun line -> "\t\t_ = " ^ String.sub line 0 (String.index line ' ')) lines in
-        match lines with
-        | [] -> ""
-        | _ -> String.concat "\n" (List.map (fun line -> "\t\t" ^ line) lines @ markers) ^ "\n"
-      in
-      Printf.sprintf "%s %s {\n%s%s\t}" branch_prefix_if cond_str binds_block body_code
-  | _ -> failwith "Only record, wildcard, or variable patterns are supported for record match codegen"
+      let cond_str = String.concat " && " cs in
+      Printf.sprintf "%s %s {\n%s%s\t}" branch_prefix cond_str binds_block body_code
 
 and emit_match_record ?target state type_map env scrutinee scrutinee_type arms match_result_type =
   let scrutinee_str = emit_expr state type_map env scrutinee in
   let scrutinee_var = fresh_temp_name state "__scrutinee" in
   let match_result_go_type = type_to_go state.mono match_result_type in
-  let scrutinee_fields =
-    match Structural.fields_of_type scrutinee_type with
-    | Some fields -> fields
-    | None ->
-        failwith
-          (Printf.sprintf "Record match expects record-like scrutinee, got %s" (Types.to_string scrutinee_type))
-  in
+  let flat_patterns = flatten_match_patterns arms in
   let arm_blocks =
     List.mapi
-      (fun idx (arm : AST.match_arm) ->
-        match arm.patterns with
-        | [ pattern ] ->
-            emit_record_match_arm ?target state type_map env match_result_type scrutinee_var scrutinee_fields
-              pattern arm.body (idx = 0)
-        | [] -> failwith "Match arm must have at least one pattern"
-        | _ -> failwith "Multiple patterns per arm not yet supported in codegen")
-      arms
+      (fun idx (pattern, body) ->
+        emit_record_match_arm ?target state type_map env match_result_type scrutinee_var scrutinee_type pattern
+          body (idx = 0))
+      flat_patterns
   in
   match target with
   | Some ReturnTarget | Some DiscardTarget ->
@@ -4466,71 +4696,52 @@ and emit_match_union_record ?target state type_map env scrutinee _scrutinee_type
   let member_var = fresh_temp_name state "__member" in
   let match_result_go_type = type_to_go state.mono match_result_type in
   let scrutinee_path_opt = Type_narrowing.path_of_expr scrutinee in
-  let fallback_arm_opt =
-    List.find_opt
-      (fun (arm : AST.match_arm) ->
-        match arm.patterns with
-        | [ { AST.pat = AST.PWildcard | AST.PVariable _; _ } ] -> true
-        | _ -> false)
-      arms
-  in
-  let emit_fallback_arm (arm : AST.match_arm) =
-    match arm.patterns with
-    | [ pattern ] -> (
-        match pattern.AST.pat with
-        | AST.PWildcard ->
-            emit_record_match_arm ?target state type_map env match_result_type member_var [] pattern arm.body true
-        | AST.PVariable _ ->
-            emit_record_match_arm ?target state type_map env match_result_type member_var [] pattern arm.body true
-        | _ -> failwith "Expected wildcard or variable fallback arm")
-    | _ -> failwith "Multiple patterns per arm not yet supported in codegen"
-  in
+  let flat_patterns = flatten_match_patterns arms in
   let emit_member_case (member_type : Types.mono_type) =
     let go_member_type = type_to_go state.mono member_type in
-    let matching_arms =
+    let matching_patterns =
       List.filter
-        (fun (arm : AST.match_arm) ->
-          match Infer.check_patterns arm.patterns member_type with
+        (fun (pattern, _body) ->
+          match Infer.check_pattern pattern member_type with
           | Ok _ -> true
           | Error _ -> false)
-        arms
+        flat_patterns
     in
     let case_body =
-      match Structural.fields_of_type member_type with
-      | Some member_fields ->
-          let arm_blocks =
-            List.mapi
-              (fun idx (arm : AST.match_arm) ->
-                match arm.patterns with
-                | [ pattern ] ->
-                    let pre_body_lines, body_transform =
-                      match (pattern.AST.pat, scrutinee_path_opt) with
-                      | AST.PRecord _, Some path when Type_narrowing.is_identifier_path path ->
-                          let go_name = go_safe_ident path.root in
-                          ( [ Printf.sprintf "%s := %s" go_name member_var; Printf.sprintf "_ = %s" go_name ],
-                            Fun.id )
-                      | AST.PRecord _, Some path ->
-                          let narrowed_name = Type_narrowing.temp_name path "typed" in
-                          let go_name = go_safe_ident narrowed_name in
-                          ( [ Printf.sprintf "%s := %s" go_name member_var; Printf.sprintf "_ = %s" go_name ],
-                            Type_narrowing.substitute_path_in_expr path
-                              ~replace:(Type_narrowing.replacement_identifier narrowed_name) )
-                      | _ -> ([], Fun.id)
-                    in
-                    emit_record_match_arm ~pre_body_lines ~body_transform ?target state type_map env
-                      match_result_type member_var member_fields pattern arm.body (idx = 0)
-                | [] -> failwith "Match arm must have at least one pattern"
-                | _ -> failwith "Multiple patterns per arm not yet supported in codegen")
-              matching_arms
-          in
-          String.concat "" arm_blocks ^ "\n\t\tpanic(\"non-exhaustive union match\")\n"
-      | None -> (
-          match List.find_opt (fun arm -> List.memq arm matching_arms) arms with
-          | Some arm -> emit_fallback_arm arm
-          | None -> (
-              match fallback_arm_opt with
-              | Some arm -> emit_fallback_arm arm
-              | None -> "\t\tpanic(\"non-exhaustive union match\")\n"))
+      let arm_blocks =
+        List.mapi
+          (fun idx (pattern, body) ->
+            let pre_body_lines, body_transform =
+              match (pattern.AST.pat, scrutinee_path_opt, Structural.fields_of_type member_type) with
+              | AST.PRecord _, Some path, Some _member_fields when Type_narrowing.is_identifier_path path ->
+                  let go_name = go_safe_ident path.root in
+                  ([ Printf.sprintf "%s := %s" go_name member_var; Printf.sprintf "_ = %s" go_name ], Fun.id)
+              | AST.PRecord _, Some path, Some _member_fields ->
+                  let narrowed_name = Type_narrowing.temp_name path "typed" in
+                  let go_name = go_safe_ident narrowed_name in
+                  ( [ Printf.sprintf "%s := %s" go_name member_var; Printf.sprintf "_ = %s" go_name ],
+                    Type_narrowing.substitute_path_in_expr path
+                      ~replace:(Type_narrowing.replacement_identifier narrowed_name) )
+              | _ -> ([], Fun.id)
+            in
+            emit_record_match_arm ~pre_body_lines ~body_transform ?target state type_map env match_result_type
+              member_var member_type pattern body (idx = 0))
+          matching_patterns
+      in
+      let has_unconditional =
+        List.exists
+          (fun (pattern, _body) ->
+            let conds, _binds = emit_pattern_plan state pattern member_var member_type in
+            conds = [])
+          matching_patterns
+      in
+      if matching_patterns = [] then
+        "\t\tpanic(\"non-exhaustive union match\")\n"
+      else if has_unconditional then
+        String.concat "" arm_blocks ^ "\n"
+      else
+        append_else_panic ~branch_code:(String.concat "" arm_blocks) ~indent:"\t"
+          ~message:"non-exhaustive union match"
     in
     Printf.sprintf "\tcase %s:\n%s" go_member_type case_body
   in
@@ -4546,8 +4757,8 @@ and emit_match_union_record ?target state type_map env scrutinee _scrutinee_type
         "(func() %s {\n\t%s := %s\n\tswitch %s := %s.(type) {\n%s\tdefault:\n\t\tpanic(\"unreachable union match member\")\n\t}\n})()"
         match_result_go_type scrutinee_var scrutinee_str member_var scrutinee_var match_body
 
-and emit_match_enum ?target state type_map env scrutinee scrutinee_type enum_name type_args arms match_result_type
-    =
+and emit_match_enum
+    ?target state type_map env scrutinee scrutinee_type enum_name _type_args arms match_result_type =
   (* Generate mangled enum type name *)
   let go_type_name = mangle_type scrutinee_type in
 
@@ -4565,110 +4776,120 @@ and emit_match_enum ?target state type_map env scrutinee scrutinee_type enum_nam
 
   (* Convert match result type to Go type *)
   let match_result_go_type = type_to_go state.mono match_result_type in
-
-  (* Check if any arm has a wildcard pattern - if so, no panic needed *)
-  let has_wildcard =
-    List.exists
-      (fun (arm : AST.match_arm) ->
-        List.exists
-          (fun (pat : AST.pattern) ->
-            match pat.pat with
-            | AST.PWildcard -> true
-            | AST.PVariable _ -> true (* Variable patterns also act as wildcards *)
-            | _ -> false)
-          arm.patterns)
-      arms
+  let flat_patterns = flatten_match_patterns arms in
+  let emit_enum_branch
+      ~(target : emit_target option) (pattern : AST.pattern) (body : AST.expression) ~(is_first : bool) :
+      string * bool =
+    let cond_parts, bind_lines =
+      match pattern.AST.pat with
+      | AST.PConstructor _ ->
+          emit_pattern_plan ~omit_constructor_tag_check:true state pattern scrutinee_var scrutinee_type
+      | AST.PWildcard | AST.PVariable _ -> emit_pattern_plan state pattern scrutinee_var scrutinee_type
+      | AST.PLiteral _ -> failwith "Literal patterns not supported for enum match"
+      | AST.PRecord _ -> failwith "Record patterns not yet implemented in enum match"
+    in
+    match cond_parts with
+    | [] when is_first ->
+        let binds_block = binding_block_lines ~indent:"\t\t" bind_lines in
+        let body_code =
+          match target with
+          | Some t -> with_indent_delta state 2 (fun () -> emit_expr_to_target state type_map env body t)
+          | None ->
+              let body_str = emit_expr_for_expected_type state type_map env match_result_type body in
+              "\t\treturn " ^ body_str ^ "\n"
+        in
+        (binds_block ^ body_code, true)
+    | [] ->
+        let binds_block = binding_block_lines ~indent:"\t\t\t" bind_lines in
+        let body_code =
+          match target with
+          | Some t -> with_indent_delta state 3 (fun () -> emit_expr_to_target state type_map env body t)
+          | None ->
+              let body_str = emit_expr_for_expected_type state type_map env match_result_type body in
+              "\t\t\treturn " ^ body_str ^ "\n"
+        in
+        (Printf.sprintf " else {\n%s%s\t\t}" binds_block body_code, true)
+    | cond_parts ->
+        let cond_str = String.concat " && " cond_parts in
+        let binds_block = binding_block_lines ~indent:"\t\t\t" bind_lines in
+        let body_code =
+          match target with
+          | Some t -> with_indent_delta state 3 (fun () -> emit_expr_to_target state type_map env body t)
+          | None ->
+              let body_str = emit_expr_for_expected_type state type_map env match_result_type body in
+              "\t\t\treturn " ^ body_str ^ "\n"
+        in
+        let branch_prefix =
+          if is_first then
+            "\t\tif"
+          else
+            " else if"
+        in
+        (Printf.sprintf "%s %s {\n%s%s\t\t}" branch_prefix cond_str binds_block body_code, false)
   in
+  let emit_variant_case (variant : Typecheck.Enum_registry.variant_def) =
+    let tag_constant = Printf.sprintf "%s_%s_tag" go_type_name variant.name in
+    let relevant_patterns =
+      List.filter
+        (fun (pattern, _body) ->
+          match pattern.AST.pat with
+          | AST.PConstructor (_enum_name_pat, variant_name, _) -> variant_name = variant.name
+          | AST.PWildcard | AST.PVariable _ -> true
+          | AST.PLiteral _ | AST.PRecord _ -> false)
+        flat_patterns
+    in
+    let relevant_patterns =
+      let constructor_patterns, fallback_patterns =
+        List.partition
+          (fun (pattern, _body) ->
+            match pattern.AST.pat with
+            | AST.PConstructor _ -> true
+            | AST.PWildcard | AST.PVariable _ -> false
+            | AST.PLiteral _ | AST.PRecord _ -> false)
+          relevant_patterns
+      in
+      constructor_patterns @ fallback_patterns
+    in
+    let rec collect_branches acc is_first = function
+      | [] -> List.rev acc
+      | (pattern, body) :: rest ->
+          let branch = emit_enum_branch ~target pattern body ~is_first in
+          if snd branch then
+            List.rev (branch :: acc)
+          else
+            collect_branches (branch :: acc) false rest
+    in
+    let branches = collect_branches [] true relevant_patterns in
+    let has_unconditional = List.exists snd branches in
+    let branch_code = String.concat "" (List.map fst branches) in
+    let case_body =
+      if branches = [] then
+        "\t\tpanic(\"unreachable: exhaustive match\")\n"
+      else if has_unconditional then
+        branch_code ^ "\n"
+      else
+        append_else_panic ~branch_code ~indent:"\t\t" ~message:"non-exhaustive enum match"
+    in
+    Printf.sprintf "\tcase %s:\n%s" tag_constant case_body
+  in
+  let match_body = String.concat "" (List.map emit_variant_case enum_def.variants) in
 
   match target with
-  | Some t ->
-      let emit_case_target (arm : AST.match_arm) =
-        match arm.patterns with
-        | [ pattern ] -> (
-            let emit_arm_body () =
-              with_indent_delta state 2 (fun () -> emit_expr_to_target state type_map env arm.body t)
-            in
-            match pattern.AST.pat with
-            | AST.PWildcard ->
-                let ind = indent_str state in
-                Printf.sprintf "%sdefault:\n%s" (ind ^ "    ") (emit_arm_body ())
-            | AST.PVariable var_name ->
-                let ind = indent_str state in
-                let go_var_name = go_safe_ident var_name in
-                Printf.sprintf "%sdefault:\n%s%s := %s\n%s_ = %s\n%s" (ind ^ "    ") (ind ^ "        ")
-                  go_var_name scrutinee_var (ind ^ "        ") go_var_name (emit_arm_body ())
-            | AST.PConstructor (enum_name_pat, variant_name, field_patterns) ->
-                let variant_opt =
-                  List.find_opt
-                    (fun (v : Typecheck.Enum_registry.variant_def) -> v.name = variant_name)
-                    enum_def.variants
-                in
-                (match variant_opt with
-                | Some _ -> ()
-                | None -> failwith (Printf.sprintf "Unknown variant %s.%s" enum_name_pat variant_name));
-                let tag_constant = Printf.sprintf "%s_%s_tag" go_type_name variant_name in
-                let layout = analyze_enum_layout state.mono enum_def type_args in
-                let bindings = emit_pattern_bindings layout variant_name field_patterns in
-                let ind = indent_str state in
-                let binding_lines =
-                  List.map
-                    (fun (var_name, mapping) ->
-                      let go_name = go_safe_ident var_name in
-                      let field_expr = Printf.sprintf "%s.%s" scrutinee_var mapping.data_field_name in
-                      let bound_expr =
-                        if mapping.boxed then
-                          "*" ^ field_expr
-                        else
-                          field_expr
-                      in
-                      Printf.sprintf "%s%s := %s\n%s_ = %s\n" (ind ^ "        ") go_name bound_expr
-                        (ind ^ "        ") go_name)
-                    bindings
-                  |> String.concat ""
-                in
-                Printf.sprintf "%scase %s:\n%s%s" (ind ^ "    ") tag_constant binding_lines (emit_arm_body ())
-            | AST.PLiteral _ -> failwith "Literal patterns not supported for enum match"
-            | AST.PRecord _ -> failwith "Record patterns not yet implemented in enum match")
-        | [] -> failwith "Match arm must have at least one pattern"
-        | _ -> failwith "Multiple patterns per arm not yet supported in codegen"
-      in
-      let match_body = String.concat "" (List.map emit_case_target arms) in
+  | Some _ ->
       let ind = indent_str state in
-      if has_wildcard then
-        Printf.sprintf "%s%s := %s\n%sswitch %s.Tag {\n%s\n%s}\n" ind scrutinee_var scrutinee_str ind
-          scrutinee_var match_body ind
-      else
-        Printf.sprintf
-          "%s%s := %s\n%sswitch %s.Tag {\n%s\n%sdefault:\n%s\tpanic(\"unreachable: exhaustive match\")\n%s}\n" ind
-          scrutinee_var scrutinee_str ind scrutinee_var match_body ind ind ind
+      Printf.sprintf
+        "%s%s := %s\n%sswitch %s.Tag {\n%s\tdefault:\n\t\tpanic(\"unreachable: invalid enum tag\")\n%s}\n" ind
+        scrutinee_var scrutinee_str ind scrutinee_var match_body ind
   | None ->
-      let result_prefix = "return " in
-      let match_body =
-        let cases =
-          List.map
-            (fun (arm : AST.match_arm) ->
-              match arm.patterns with
-              | [ pattern ] ->
-                  emit_match_arm_enum ~result_prefix ~scrutinee_var ~expected_type:match_result_type state
-                    type_map env go_type_name enum_def type_args pattern arm.body
-              | [] -> failwith "Match arm must have at least one pattern"
-              | _ -> failwith "Multiple patterns per arm not yet supported in codegen")
-            arms
-        in
-        String.concat "\n" cases
-      in
-      if has_wildcard then
-        Printf.sprintf "(func() %s {\n\t%s := %s\n\tswitch %s.Tag {\n%s\n\t}\n})()" match_result_go_type
-          scrutinee_var scrutinee_str scrutinee_var match_body
-      else
-        Printf.sprintf
-          "(func() %s {\n\t%s := %s\n\tswitch %s.Tag {\n%s\n\tdefault:\n\t\tpanic(\"unreachable: exhaustive match\")\n\t}\n})()"
-          match_result_go_type scrutinee_var scrutinee_str scrutinee_var match_body
+      Printf.sprintf
+        "(func() %s {\n\t%s := %s\n\tswitch %s.Tag {\n%s\tdefault:\n\t\tpanic(\"unreachable: invalid enum tag\")\n\t}\n})()"
+        match_result_go_type scrutinee_var scrutinee_str scrutinee_var match_body
 
 and emit_match_primitive ?target state type_map env scrutinee scrutinee_type arms match_result_type =
   (* Emit scrutinee to a temporary variable *)
   let scrutinee_str = emit_expr state type_map env scrutinee in
   let scrutinee_var = fresh_temp_name state "__scrutinee" in
+  let flat_patterns = flatten_match_patterns arms in
 
   (* Convert match result type to Go type *)
   let match_result_go_type = type_to_go state.mono match_result_type in
@@ -4678,53 +4899,45 @@ and emit_match_primitive ?target state type_map env scrutinee scrutinee_type arm
      with a synthetic default panic when no wildcard arm exists. *)
   let has_wildcard =
     List.exists
-      (fun (arm : AST.match_arm) ->
-        List.exists
-          (fun (pat : AST.pattern) ->
-            match pat.pat with
-            | AST.PWildcard -> true
-            | AST.PVariable _ -> true
-            | _ -> false)
-          arm.patterns)
-      arms
+      (fun (pat, _body) ->
+        match pat.AST.pat with
+        | AST.PWildcard | AST.PVariable _ -> true
+        | _ -> false)
+      flat_patterns
   in
 
   match target with
   | Some t ->
-      let emit_case_target (arm : AST.match_arm) =
-        match arm.patterns with
-        | [ pattern ] -> (
-            let emit_arm_body () =
-              with_indent_delta state 2 (fun () -> emit_expr_to_target state type_map env arm.body t)
+      let emit_case_target (pattern, body) =
+        let emit_arm_body () =
+          with_indent_delta state 2 (fun () -> emit_expr_to_target state type_map env body t)
+        in
+        match pattern.AST.pat with
+        | AST.PWildcard ->
+            let ind = indent_str state in
+            Printf.sprintf "%sdefault:\n%s" (ind ^ "    ") (emit_arm_body ())
+        | AST.PVariable var_name ->
+            let ind = indent_str state in
+            let go_var_name = go_safe_ident var_name in
+            Printf.sprintf "%sdefault:\n%s%s := %s\n%s_ = %s\n%s" (ind ^ "    ") (ind ^ "        ") go_var_name
+              scrutinee_var (ind ^ "        ") go_var_name (emit_arm_body ())
+        | AST.PLiteral lit ->
+            let lit_str =
+              match lit with
+              | AST.LInt n -> Printf.sprintf "int64(%Ld)" n
+              | AST.LString s -> Printf.sprintf "\"%s\"" (String.escaped s)
+              | AST.LBool b ->
+                  if b then
+                    "true"
+                  else
+                    "false"
             in
-            match pattern.AST.pat with
-            | AST.PWildcard ->
-                let ind = indent_str state in
-                Printf.sprintf "%sdefault:\n%s" (ind ^ "    ") (emit_arm_body ())
-            | AST.PVariable var_name ->
-                let ind = indent_str state in
-                let go_var_name = go_safe_ident var_name in
-                Printf.sprintf "%sdefault:\n%s%s := %s\n%s_ = %s\n%s" (ind ^ "    ") (ind ^ "        ")
-                  go_var_name scrutinee_var (ind ^ "        ") go_var_name (emit_arm_body ())
-            | AST.PLiteral lit ->
-                let lit_str =
-                  match lit with
-                  | AST.LInt n -> Printf.sprintf "int64(%Ld)" n
-                  | AST.LString s -> Printf.sprintf "\"%s\"" (String.escaped s)
-                  | AST.LBool b ->
-                      if b then
-                        "true"
-                      else
-                        "false"
-                in
-                let ind = indent_str state in
-                Printf.sprintf "%scase %s:\n%s" (ind ^ "    ") lit_str (emit_arm_body ())
-            | AST.PConstructor _ -> failwith "Constructor patterns not valid for primitive match"
-            | AST.PRecord _ -> failwith "Record patterns not valid for primitive match")
-        | [] -> failwith "Match arm must have at least one pattern"
-        | _ -> failwith "Multiple patterns per arm not yet supported in codegen"
+            let ind = indent_str state in
+            Printf.sprintf "%scase %s:\n%s" (ind ^ "    ") lit_str (emit_arm_body ())
+        | AST.PConstructor _ -> failwith "Constructor patterns not valid for primitive match"
+        | AST.PRecord _ -> failwith "Record patterns not valid for primitive match"
       in
-      let match_body = String.concat "" (List.map emit_case_target arms) in
+      let match_body = String.concat "" (List.map emit_case_target flat_patterns) in
       let ind = indent_str state in
       if has_wildcard then
         Printf.sprintf "%s%s := %s\n%sswitch %s {\n%s\n%s}\n" ind scrutinee_var scrutinee_str ind scrutinee_var
@@ -4738,14 +4951,10 @@ and emit_match_primitive ?target state type_map env scrutinee scrutinee_type arm
       let match_body =
         let cases =
           List.map
-            (fun (arm : AST.match_arm) ->
-              match arm.patterns with
-              | [ pattern ] ->
-                  emit_match_arm_primitive ~result_prefix ~scrutinee_var ~expected_type:match_result_type state
-                    type_map env scrutinee_type pattern arm.body
-              | [] -> failwith "Match arm must have at least one pattern"
-              | _ -> failwith "Multiple patterns per arm not yet supported in codegen")
-            arms
+            (fun (pattern, body) ->
+              emit_match_arm_primitive ~result_prefix ~scrutinee_var ~expected_type:match_result_type state
+                type_map env scrutinee_type pattern body)
+            flat_patterns
         in
         String.concat "\n" cases
       in
@@ -4793,101 +5002,6 @@ and emit_match_arm_primitive
       Printf.sprintf "\tcase %s:\n\t\t%s%s" lit_str result_prefix body_str
   | AST.PConstructor _ -> failwith "Constructor patterns not valid for primitive match"
   | AST.PRecord _ -> failwith "Record patterns not valid for primitive match"
-
-and emit_match_arm_enum
-    ?(result_prefix = "return ")
-    ?(scrutinee_var = "__scrutinee")
-    ~expected_type
-    state
-    type_map
-    env
-    go_type_name
-    enum_def
-    type_args
-    pattern
-    body =
-  match pattern.AST.pat with
-  | AST.PWildcard ->
-      (* Wildcard matches everything - use default case *)
-      let body_str = emit_expr_for_expected_type state type_map env expected_type body in
-      Printf.sprintf "\tdefault:\n\t\t%s%s" result_prefix body_str
-  | AST.PLiteral _lit ->
-      (* Literal patterns - not for enums, shouldn't happen *)
-      failwith "Literal patterns not supported for enum match"
-  | AST.PVariable _var_name ->
-      (* Variable pattern - binds the entire enum value *)
-      (* For now, treat as wildcard since we don't track variable bindings in Go codegen *)
-      let body_str = emit_expr_for_expected_type state type_map env expected_type body in
-      Printf.sprintf "\tdefault:\n\t\t%s%s" result_prefix body_str
-  | AST.PConstructor (enum_name_pat, variant_name, field_patterns) ->
-      (* Constructor pattern - match specific variant and extract fields *)
-      (* Find the variant definition *)
-      let variant_opt =
-        List.find_opt (fun (v : Typecheck.Enum_registry.variant_def) -> v.name = variant_name) enum_def.variants
-      in
-
-      (match variant_opt with
-      | Some _ -> ()
-      | None -> failwith (Printf.sprintf "Unknown variant %s.%s" enum_name_pat variant_name));
-
-      (* Generate case for this tag *)
-      let tag_constant = Printf.sprintf "%s_%s_tag" go_type_name variant_name in
-
-      (* Get layout for field mapping *)
-      let layout = analyze_enum_layout state.mono enum_def type_args in
-
-      (* Extract field bindings with layout mapping *)
-      let bindings = emit_pattern_bindings layout variant_name field_patterns in
-
-      (* Generate the case *)
-      let binding_strs =
-        List.map
-          (fun (var_name, mapping) ->
-            let go_name = go_safe_ident var_name in
-            let field_expr = Printf.sprintf "%s.%s" scrutinee_var mapping.data_field_name in
-            let bound_expr =
-              if mapping.boxed then
-                "*" ^ field_expr
-              else
-                field_expr
-            in
-            Printf.sprintf "\t\t%s := %s\n\t\t_ = %s" go_name bound_expr go_name)
-          bindings
-      in
-
-      let bindings_code =
-        if bindings = [] then
-          ""
-        else
-          String.concat "\n" binding_strs ^ "\n"
-      in
-
-      (* Emit body with bindings *)
-      let body_str = emit_expr_for_expected_type state type_map env expected_type body in
-
-      Printf.sprintf "\tcase %s:\n%s\t\t%s%s" tag_constant bindings_code result_prefix body_str
-  | AST.PRecord _ -> failwith "Record patterns not yet implemented in enum match"
-
-and emit_pattern_bindings (layout : enum_layout) (variant_name : string) (field_patterns : AST.pattern list) :
-    (string * field_mapping) list =
-  (* Get the field mapping for this variant *)
-  let variant_field_map = List.assoc variant_name layout.variant_maps in
-
-  (* Match patterns with field positions *)
-  match field_patterns with
-  | [] -> []
-  | patterns ->
-      List.mapi
-        (fun pos pat ->
-          match pat.AST.pat with
-          | AST.PVariable var_name ->
-              (* Find the mapping for this position *)
-              let _pos, mapping = List.find (fun (p, _) -> p = pos) variant_field_map in
-              Some (var_name, mapping)
-          | AST.PWildcard -> None
-          | _ -> failwith "Complex field patterns not yet supported")
-        patterns
-      |> List.filter_map Fun.id
 
 and emit_prefix state type_map env op operand =
   let operand_str = emit_expr state type_map env operand in
@@ -5221,7 +5335,7 @@ and emit_type_switch_to_target
     else
       match target with
       | ReturnTarget -> ind ^ "return struct{}{}\n"
-      | AssignTarget name -> ind ^ name ^ " = struct{}{}\n"
+      | AssignTarget (name, _) -> ind ^ name ^ " = struct{}{}\n"
       | DiscardTarget -> ""
   in
   switch_code ^ unit_tail
@@ -5233,7 +5347,7 @@ and emit_if state type_map env if_expr cond cons alt =
   let inner_ind = ind ^ "    " in
 
   (* Check if condition is a type check (x is T) *)
-  let type_check_info = type_check_info_of_expr type_map cond in
+  let type_check_info = type_check_info_of_expr type_map env cond in
 
   match type_check_info with
   | Some info -> (
@@ -5369,10 +5483,7 @@ and emit_expr_to_target state type_map env expr target =
       let expr_str =
         match target with
         | ReturnTarget -> emit_expr_for_current_return state type_map env expr
-        | AssignTarget _ -> (
-            match Hashtbl.find_opt type_map expr.id with
-            | Some expected_type -> emit_expr_for_expected_type state type_map env expected_type expr
-            | None -> emit_expr state type_map env expr)
+        | AssignTarget (_, expected_type) -> emit_expr_for_expected_type state type_map env expected_type expr
         | DiscardTarget -> emit_expr state type_map env expr
       in
       ind ^ target_prefix target ^ expr_str ^ "\n"
@@ -5387,7 +5498,7 @@ and emit_if_to_target state type_map env if_expr (cond : AST.expression) cons al
     else
       target
   in
-  let type_check_info = type_check_info_of_expr type_map cond in
+  let type_check_info = type_check_info_of_expr type_map env cond in
   match type_check_info with
   | Some info -> (
       let emit_branch_to_target branch_env stmt =
@@ -5423,7 +5534,7 @@ and emit_if_to_target state type_map env if_expr (cond : AST.expression) cons al
               else
                 match target with
                 | ReturnTarget -> indent_str state ^ "return struct{}{}\n"
-                | AssignTarget name -> indent_str state ^ name ^ " = struct{}{}\n"
+                | AssignTarget (name, _) -> indent_str state ^ name ^ " = struct{}{}\n"
                 | DiscardTarget -> ""))
       | `Runtime_check complement_type_opt ->
           emit_type_switch_to_target state type_map env info.checked_expr info.path info.narrow_type
@@ -5465,7 +5576,7 @@ and emit_if_to_target state type_map env if_expr (cond : AST.expression) cons al
         else
           match target with
           | ReturnTarget -> ind ^ "return struct{}{}\n"
-          | AssignTarget name -> ind ^ name ^ " = struct{}{}\n"
+          | AssignTarget (name, _) -> ind ^ name ^ " = struct{}{}\n"
           | DiscardTarget -> ""
       in
       if_code ^ unit_tail
@@ -5530,7 +5641,7 @@ and emit_call state type_map env call_expr func args =
       match (remaining_args, remaining_expected) with
       | [], _ -> String.concat ", " (List.rev acc)
       | arg :: rest_args, expected :: rest_expected ->
-          emit (emit_expr ~expected_type:(Some expected) state type_map env arg :: acc) rest_args rest_expected
+          emit (emit_expr_for_expected_type state type_map env expected arg :: acc) rest_args rest_expected
       | arg :: rest_args, [] -> emit (emit_expr state type_map env arg :: acc) rest_args []
     in
     emit [] args expected_types
@@ -5646,7 +5757,7 @@ and emit_array ?expected_elem_type state type_map env elements =
         | None -> get_type type_map first
       in
       let elem_type_str = type_to_go state.mono elem_type in
-      let emit_elem e = emit_expr ~expected_type:(Some elem_type) state type_map env e in
+      let emit_elem e = emit_expr_for_expected_type state type_map env elem_type e in
       let elems_str = List.map emit_elem elements |> String.concat ", " in
       Printf.sprintf "[]%s{%s}" elem_type_str elems_str
 
@@ -5996,7 +6107,7 @@ and emit_stmt
             (code, env)
         | _ ->
             let expr_type = get_type type_map let_binding.value in
-            let expr_str = emit_expr ~expected_type:(Some expr_type) state type_map env let_binding.value in
+            let expr_str = emit_expr_for_expected_type state type_map env expr_type let_binding.value in
             (Printf.sprintf "%s_ = %s\n" ind expr_str, env)
       else
         let go_binding_name = go_safe_ident let_binding.name in
@@ -6033,7 +6144,7 @@ and emit_stmt
             | None ->
                 (* Emit local function values with split declaration+assignment.
                  This keeps the name in scope inside the function literal body for recursion/captures. *)
-                let expr_str = emit_expr ~expected_type:(Some expr_type) state type_map env let_binding.value in
+                let expr_str = emit_expr_for_expected_type state type_map env expr_type let_binding.value in
                 let go_type = type_to_go state.mono expr_type in
                 let binding_code =
                   Printf.sprintf "%svar %s %s\n%s%s = %s\n%s_ = %s\n" ind go_binding_name go_type ind
@@ -6044,7 +6155,8 @@ and emit_stmt
             let go_type = type_to_go state.mono expr_type in
             let decl = Printf.sprintf "%svar %s %s\n" ind go_binding_name go_type in
             let if_code =
-              emit_if_to_target state type_map env let_binding.value cond cons alt (AssignTarget go_binding_name)
+              emit_if_to_target state type_map env let_binding.value cond cons alt
+                (AssignTarget (go_binding_name, expr_type))
             in
             let used_marker = Printf.sprintf "%s_ = %s\n" ind go_binding_name in
             let env' = Infer.TypeEnv.add let_binding.name (Types.Forall ([], expr_type)) env in
@@ -6053,27 +6165,33 @@ and emit_stmt
             let go_type = type_to_go state.mono expr_type in
             let decl = Printf.sprintf "%svar %s %s\n" ind go_binding_name go_type in
             let match_code =
-              emit_match ~target:(AssignTarget go_binding_name) state type_map env let_binding.value scrutinee
-                arms
+              emit_match
+                ~target:(AssignTarget (go_binding_name, expr_type))
+                state type_map env let_binding.value scrutinee arms
             in
             let used_marker = Printf.sprintf "%s_ = %s\n" ind go_binding_name in
             let env' = Infer.TypeEnv.add let_binding.name (Types.Forall ([], expr_type)) env in
             (decl ^ match_code ^ used_marker, env')
         | AST.RecordLit (fields, Some base_expr) ->
             (* Record spread without IIFE *)
-            let record_type = get_type type_map let_binding.value in
-            let declared_fields, _result_row =
-              match record_type with
-              | Types.TRecord (f, row) -> normalize_record_row_type f row
-              | _ ->
-                  failwith
-                    (Printf.sprintf "Record literal expected record type, got %s" (Types.to_string record_type))
+            let declared_fields =
+              match Structural.fields_of_type expr_type with
+              | Some fields -> Types.normalize_record_fields fields
+              | None -> (
+                  match get_type type_map let_binding.value with
+                  | Types.TRecord (f, row) ->
+                      let normalized_fields, _ = normalize_record_row_type f row in
+                      normalized_fields
+                  | other ->
+                      failwith
+                        (Printf.sprintf "Record literal expected record-like type, got %s" (Types.to_string other))
+                  )
             in
-            let result_fields =
+            let base_fields_opt, result_fields =
               match type_from_env_or_map env type_map base_expr |> Option.map Types.canonicalize_mono_type with
               | Some (Types.TRecord (base_fields, base_row)) ->
                   let base_fields, _ = normalize_record_row_type base_fields base_row in
-                  merge_record_fields base_fields declared_fields
+                  (Some base_fields, merge_record_fields base_fields declared_fields)
               | Some (Types.TIntersection members)
                 when List.for_all
                        (function
@@ -6083,13 +6201,15 @@ and emit_stmt
                   match Annotation.merged_record_intersection_type members with
                   | Ok (Types.TRecord (base_fields, base_row)) ->
                       let base_fields, _ = normalize_record_row_type base_fields base_row in
-                      merge_record_fields base_fields declared_fields
-                  | _ -> declared_fields)
+                      (Some base_fields, merge_record_fields base_fields declared_fields)
+                  | _ -> (None, declared_fields))
               | Some base_type -> (
                   match Structural.fields_of_type base_type with
-                  | Some base_fields -> merge_record_fields base_fields declared_fields
-                  | None -> declared_fields)
-              | None -> declared_fields
+                  | Some base_fields ->
+                      let base_fields = Types.normalize_record_fields base_fields in
+                      (Some base_fields, merge_record_fields base_fields declared_fields)
+                  | None -> (None, declared_fields))
+              | None -> (None, declared_fields)
             in
             let struct_type = emit_record_struct_type state result_fields in
             let base_str = emit_expr state type_map env base_expr in
@@ -6106,15 +6226,55 @@ and emit_stmt
               else
                 Printf.sprintf "%s_ = %s\n" ind base_str
             in
+            let field_preludes = ref [] in
             let emit_field_assignment field =
               let go_name = go_record_field_name field.Types.name in
               match find_last_record_field_expr field.Types.name fields with
               | Some field_expr ->
-                  let field_str = emit_expr state type_map env field_expr in
+                  let actual_field_type = get_type type_map field_expr in
+                  let should_hoist_dyn_payload =
+                    match
+                      (field_expr.AST.expr, Types.canonicalize_mono_type field.Types.typ, actual_field_type)
+                    with
+                    | (AST.If _ | AST.Match _ | AST.BlockExpr _), Types.TTraitObject _, Types.TTraitObject _ ->
+                        false
+                    | (AST.If _ | AST.Match _ | AST.BlockExpr _), Types.TTraitObject _, _ -> true
+                    | _ -> false
+                  in
+                  let field_str =
+                    if should_hoist_dyn_payload then (
+                      let payload_var = fresh_temp_name state "__field_payload" in
+                      let payload_go_type = type_to_go state.mono actual_field_type in
+                      let payload_decl = Printf.sprintf "%svar %s %s\n" ind payload_var payload_go_type in
+                      let payload_assign =
+                        emit_expr_to_target state type_map env field_expr
+                          (AssignTarget (payload_var, actual_field_type))
+                      in
+                      field_preludes := !field_preludes @ [ payload_decl; payload_assign ];
+                      project_value_to_expected_type state type_map env actual_field_type field.Types.typ
+                        payload_var)
+                    else
+                      emit_expr_for_expected_type state type_map env field.Types.typ field_expr
+                  in
                   Printf.sprintf "%s: %s" go_name field_str
               | None ->
                   if uses_spread_base then
-                    Printf.sprintf "%s: %s.%s" go_name spread_var go_name
+                    let direct_value = Printf.sprintf "%s.%s" spread_var go_name in
+                    let value_expr =
+                      match base_fields_opt with
+                      | Some base_fields -> (
+                          match
+                            List.find_opt
+                              (fun (base_field : Types.record_field_type) -> base_field.name = field.Types.name)
+                              base_fields
+                          with
+                          | Some base_field ->
+                              project_value_to_expected_type state type_map env base_field.typ field.Types.typ
+                                direct_value
+                          | None -> direct_value)
+                      | None -> direct_value
+                    in
+                    Printf.sprintf "%s: %s" go_name value_expr
                   else
                     failwith
                       (Printf.sprintf "Record field '%s' not provided and spread base disabled" field.Types.name)
@@ -6125,10 +6285,10 @@ and emit_stmt
                 (String.concat ", " assignments) ind go_binding_name
             in
             let env' = Infer.TypeEnv.add let_binding.name (Types.Forall ([], expr_type)) env in
-            (spread_decl ^ binding_code, env')
+            (spread_decl ^ String.concat "" !field_preludes ^ binding_code, env')
         | _ ->
             (* Pass expected_type so EnumConstructors get the correct concrete type *)
-            let expr_str = emit_expr ~expected_type:(Some expr_type) state type_map env let_binding.value in
+            let expr_str = emit_expr_for_expected_type state type_map env expr_type let_binding.value in
             let binding_code =
               match let_binding.type_annotation with
               | Some _ ->
@@ -7450,15 +7610,17 @@ let emit_builtin_impls (program : AST.program) : string =
   let all_builtins =
     [
       (* show trait implementations *)
-      (("show", "int64"), "func show_show_int64(x int64) string {\n\treturn fmt.Sprintf(\"%d\", x)\n}");
-      (("show", "bool"), "func show_show_bool(x bool) string {\n\treturn fmt.Sprintf(\"%t\", x)\n}");
+      (("show", "int64"), "func show_show_int64(x int64) string {\n\treturn strconv.FormatInt(x, 10)\n}");
+      (("show", "bool"), "func show_show_bool(x bool) string {\n\treturn strconv.FormatBool(x)\n}");
       (("show", "string"), "func show_show_string(x string) string {\n\treturn x\n}");
-      (("show", "float64"), "func show_show_float64(x float64) string {\n\treturn fmt.Sprintf(\"%g\", x)\n}");
+      ( ("show", "float64"),
+        "func show_show_float64(x float64) string {\n\treturn strconv.FormatFloat(x, 'g', -1, 64)\n}" );
       (* debug trait implementations *)
-      (("debug", "int64"), "func debug_debug_int64(x int64) string {\n\treturn fmt.Sprintf(\"%d\", x)\n}");
-      (("debug", "bool"), "func debug_debug_bool(x bool) string {\n\treturn fmt.Sprintf(\"%t\", x)\n}");
-      (("debug", "string"), "func debug_debug_string(x string) string {\n\treturn fmt.Sprintf(\"%q\", x)\n}");
-      (("debug", "float64"), "func debug_debug_float64(x float64) string {\n\treturn fmt.Sprintf(\"%g\", x)\n}");
+      (("debug", "int64"), "func debug_debug_int64(x int64) string {\n\treturn strconv.FormatInt(x, 10)\n}");
+      (("debug", "bool"), "func debug_debug_bool(x bool) string {\n\treturn strconv.FormatBool(x)\n}");
+      (("debug", "string"), "func debug_debug_string(x string) string {\n\treturn strconv.Quote(x)\n}");
+      ( ("debug", "float64"),
+        "func debug_debug_float64(x float64) string {\n\treturn strconv.FormatFloat(x, 'g', -1, 64)\n}" );
       (* eq trait implementations *)
       (("eq", "int64"), "func eq_eq_int64(x, y int64) bool {\n\treturn x == y\n}");
       (("eq", "bool"), "func eq_eq_bool(x, y bool) bool {\n\treturn x == y\n}");
@@ -7616,8 +7778,6 @@ let emit_program_with_typed_env
   let trait_object_type_defs = emit_trait_object_type_defs mono_state type_map typed_env in
 
   (* Build final output *)
-  (* Always import fmt since builtin impls use it *)
-  let imports = "import \"fmt\"\n\n" in
   let type_defs =
     let trait_object_section =
       if trait_object_type_defs = "" then
@@ -7672,6 +7832,23 @@ let emit_program_with_typed_env
   in
   let top_funcs =
     specialized_funcs_str ^ builtin_impl_funcs_str ^ impl_funcs_str ^ inherent_funcs_str ^ derived_impl_funcs_str
+  in
+  let import_scan_source = type_defs ^ top_funcs ^ main_body in
+  let import_specs =
+    let specs = ref [] in
+    if String_utils.contains_substring ~needle:"fmt." import_scan_source then
+      specs := "fmt" :: !specs;
+    if String_utils.contains_substring ~needle:"strconv." import_scan_source then
+      specs := "strconv" :: !specs;
+    List.sort_uniq String.compare !specs
+  in
+  let imports =
+    match import_specs with
+    | [] -> ""
+    | [ spec ] -> Printf.sprintf "import %S\n\n" spec
+    | specs ->
+        let body = specs |> List.map (fun spec -> Printf.sprintf "\t%S" spec) |> String.concat "\n" in
+        Printf.sprintf "import (\n%s\n)\n\n" body
   in
 
   Printf.sprintf "package main\n\n%s%s%sfunc main() {\n%s}\n" imports type_defs top_funcs main_body
@@ -8281,7 +8458,8 @@ let%test "emit record match pattern" =
   | Ok (code, _) ->
       string_contains code "__scrutinee_0 :="
       && string_contains code "if true"
-      && string_contains code "x := __scrutinee_0.x"
+      && string_contains code "x := (__scrutinee_0).x"
+      && string_contains code "y := (__scrutinee_0).y"
   | Error _ -> false
 
 let%test "emit record match pattern for transparent record type" =
@@ -8290,8 +8468,8 @@ let%test "emit record match pattern for transparent record type" =
       "type Point = { x: Int, y: Int, z: Int }\nfn sum_rest(rest: { y: Int, z: Int }) -> Int = rest.y + rest.z\nlet p: Point = { x: 1, y: 2, z: 3 }\nmatch p {\n  case { x:, ...rest }: x + sum_rest(rest)\n  case _: 0\n}"
   with
   | Ok (code, _) ->
-      string_contains code "x := __scrutinee_0.x"
-      && string_contains code "rest := Record_y_int64_z_int64{y: __scrutinee_0.y, z: __scrutinee_0.z}"
+      string_contains code "x := (__scrutinee_0).x"
+      && string_contains code "rest := Record_y_int64_z_int64{y: (__scrutinee_0).y, z: (__scrutinee_0).z}"
   | Error _ -> false
 
 let%test "emit union match pattern for transparent record types narrows scrutinee in arm body" =
@@ -8710,8 +8888,50 @@ let%test "Dyn codegen emits runtime wrapper and witness for Show" =
   | Ok (code, _) ->
       string_contains code "type marmosetDyn struct"
       && string_contains code "type marmosetDynWitness_show struct"
+      && string_contains code "var __marmoset_dyn_witness_marmosetDynWitness_show_int64"
+      && string_contains code "witness: __marmoset_dyn_witness_marmosetDynWitness_show_int64"
+      && (not (string_contains code "witness: marmosetDynWitness_show{"))
       && string_contains code "__witness.show(__dyn.payload)"
   | Error _ -> false
+
+let%test "Dyn codegen runtime payload omits dead typeID metadata" =
+  match compile_string ~file_id:"<codegen>" "let x: Dyn[Show] = 42\nputs(Show.show(x))" with
+  | Ok (code, _) -> (not (string_contains code "typeID string")) && not (string_contains code "typeID:")
+  | Error _ -> false
+
+let%test "primitive show/debug builtins use strconv helpers" =
+  match compile_string ~file_id:"<codegen>" "let _ = Show.show(42)\nlet _ = Debug.debug(\"ok\")\n0" with
+  | Ok (code, _) ->
+      string_contains code {|import "strconv"|}
+      && string_contains code "strconv.FormatInt"
+      && string_contains code "strconv.Quote"
+      && not (string_contains code {|fmt.Sprintf("%d", x)|})
+  | Error _ -> false
+
+let%test "Dyn codegen does not synthesize coercions without recorded metadata" =
+  let source = "let x: Dyn[Show] = 42\nputs(Show.show(x))" in
+  match Syntax.Parser.parse ~file_id:"<codegen>" source with
+  | Error _ -> false
+  | Ok program -> (
+      match Typecheck.Checker.check_program ~env:(Typecheck.Builtins.prelude_env ()) program with
+      | Error _ -> false
+      | Ok
+          {
+            Typecheck.Checker.environment = typed_env;
+            type_map;
+            call_resolution_map;
+            method_type_args_map;
+            method_def_map;
+            _;
+          } ->
+          let empty_coercions = Hashtbl.create 0 in
+          let code =
+            emit_program_with_typed_env ~call_resolution_map ~method_type_args_map ~method_def_map
+              ~trait_object_coercion_map:empty_coercions type_map typed_env program
+          in
+          string_contains code "var x marmosetDyn = int64(42)"
+          && (not (string_contains code "var x marmosetDyn = marmosetDyn{"))
+          && not (string_contains code "witness: marmosetDynWitness_show{"))
 
 let%test "record intersections erase local bindings to merged record shapes" =
   let source = {|
@@ -9303,6 +9523,37 @@ let result = match value {
 puts(result)|}
   with
   | Ok (code, _) -> string_not_contains code "func()"
+  | Error _ -> false
+
+let%test "enum match with nested payload patterns uses case-local else fallback" =
+  match
+    compile_string ~file_id:"<codegen>"
+      {|type Option[a] = { Some(a), None }
+type Box = { Wrap(Option[Int]), Empty }
+let value = Box.Wrap(Option.Some(41))
+let result = match value {
+  case Box.Wrap(Option.Some(n)): n + 1
+  case Box.Wrap(Option.None): 0
+  case Box.Empty: 0
+}
+puts(result)|}
+  with
+  | Ok (code, _) ->
+      string_contains code "} else {\n\t\t\tpanic(\"non-exhaustive enum match\")\n\t\t}"
+      && string_not_contains code "}\n\t\tpanic(\"non-exhaustive enum match\")"
+  | Error _ -> false
+
+let%test "enum match with wildcard after unconditional constructor arm emits no empty else-if" =
+  match
+    compile_string ~file_id:"<codegen>"
+      {|type Event = { Number(Int), Empty }
+let result = match Event.Number(2) {
+  case Event.Number(n): n + 40
+  case _: 0
+}
+puts(result)|}
+  with
+  | Ok (code, _) -> string_not_contains code " else if  {"
   | Error _ -> false
 
 let%test "match nested inside match arm avoids IIFE" =

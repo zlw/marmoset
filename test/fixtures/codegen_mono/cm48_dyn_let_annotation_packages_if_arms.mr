@@ -1,0 +1,3 @@
+# CM48: Dyn let annotations package if-arm results
+let x: Dyn[Show] = if (true) { 42 } else { 43 }
+puts(Show.show(x))  # output: 42

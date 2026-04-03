@@ -1,8 +1,8 @@
-# CG11: Specialized body codegen failure is surfaced cleanly
-fn f(x: Int) -> Int = { # error: Codegen error: Multiple patterns per arm not yet supported in codegen
+# CG11: Multi-pattern primitive match lowers cleanly
+fn f(x: Int) -> Int = {
   match x {
     case 1 | 2: 1
     case _: 0
   }
 }
-puts(f(1))
+puts(f(1))  # output: 1

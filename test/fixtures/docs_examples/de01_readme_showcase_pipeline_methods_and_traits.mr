@@ -1,0 +1,18 @@
+# README showcase: transparent type, trait impl, inherent method, and pipeline syntax.
+type BananaCrate = { troop: Str, bananas: Int } derive Show
+
+trait RangerReport[a]: Show = {
+  fn render(x: a) -> Str = "report: #{x}"
+}
+
+impl RangerReport[BananaCrate] = {
+  override fn render(x) = "#{x.troop} troop needs #{x.bananas} bananas"
+}
+
+impl BananaCrate = {
+  fn restock(crate: BananaCrate, extra: Int) -> BananaCrate =
+    { ...crate, bananas: crate.bananas + extra }
+}
+
+let crate: BananaCrate = { troop: "milo", bananas: 3 }
+puts(crate |> BananaCrate.restock(2) |> RangerReport.render)  # output: milo troop needs 5 bananas

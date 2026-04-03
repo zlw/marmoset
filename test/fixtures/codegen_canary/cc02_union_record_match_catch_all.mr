@@ -1,0 +1,9 @@
+type Left = { x: Int }
+
+let value: Left | Int = 5
+let out = match value {
+  case { x: }: x
+  case _: 99
+}
+
+puts(out)

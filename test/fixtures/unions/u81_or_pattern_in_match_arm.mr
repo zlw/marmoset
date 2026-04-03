@@ -1,8 +1,8 @@
-# U81: Or-pattern in match arm (codegen limitation)
-type Color = { Red, Green, Blue, Yellow }  # error: *
+# U81: Or-pattern in match arm lowers cleanly
+type Color = { Red, Green, Blue, Yellow }
 let c = Color.Red
 let kind = match c {
   case Color.Red | Color.Blue: "primary"
   case _: "other"
 }
-puts(kind)
+puts(kind)  # output: primary
