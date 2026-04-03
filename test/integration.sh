@@ -1,7 +1,7 @@
 #!/bin/bash
 # Unified integration runner.
 #
-# Default: run all fixture tests under test/fixtures.
+# Default: run all fixture tests under test/fixtures plus snapshot and hardening suites.
 # Optional: run CLI integration suite with `cli` selector.
 
 set -e
@@ -36,11 +36,11 @@ fi
 print_usage() {
     cat <<USAGE
 Usage:
-  ./test/integration.sh                 # run all fixture groups
+  ./test/integration.sh                 # run all fixture groups plus snapshots and hardening
   ./test/integration.sh <selector> [...] 
 
 Selectors:
-  all                  # all fixture groups
+  all                  # all fixture groups plus snapshots and hardening
   cli                  # run 08_cli.sh suite
   harness              # run 09_harness_canaries.sh suite
   snapshots            # run 10_codegen_snapshots.sh suite
@@ -100,7 +100,7 @@ resolve_selector() {
     local group
 
     if [ "$name" = "all" ]; then
-        echo "${ALL_GROUPS[*]}"
+        echo "${ALL_GROUPS[*]} __SNAPSHOTS__ __HARDENING__"
         return 0
     fi
 
@@ -1245,6 +1245,8 @@ selected_groups=()
 selected_fixture_files=()
 if [ "$#" -eq 0 ]; then
     selected_groups=("${ALL_GROUPS[@]}")
+    run_snapshots=1
+    run_hardening=1
 else
     for arg in "$@"; do
         fixture_file=$(resolve_fixture_file_selector "$arg" || true)
