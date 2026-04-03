@@ -1,0 +1,8 @@
+import math
+import geometry
+
+let p = geometry.make_point(2, 3)
+puts(math.pi)  # output: 3
+puts(math.describe(math.Color.Red))  # output: red
+puts(geometry.Point.distance(p))  # output: 5
+puts(geometry.Show.show(p))  # output: Point

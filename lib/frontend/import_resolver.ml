@@ -49,10 +49,28 @@ let map_result f xs =
   in
   go [] xs
 
-let internal_prefix_of_module_id (module_id : string) : string =
-  String.concat "__" (String.split_on_char '.' module_id)
+let escape_internal_component (name : string) : string =
+  let buffer = Buffer.create (String.length name + 8) in
+  String.iter
+    (function
+      | ('a' .. 'z' | 'A' .. 'Z' | '0' .. '9') as c -> Buffer.add_char buffer c
+      | c -> Buffer.add_string buffer (Printf.sprintf "_u%04x" (Char.code c)))
+    name;
+  let escaped = Buffer.contents buffer in
+  if escaped = "" then
+    "_"
+  else
+    escaped
 
-let internal_name_of module_id name = internal_prefix_of_module_id module_id ^ "__" ^ name
+let internal_prefix_of_module_id (module_id : string) : string =
+  String.split_on_char '.' module_id |> List.map escape_internal_component |> String.concat "__"
+
+let internal_name_of module_id name = internal_prefix_of_module_id module_id ^ "__" ^ escape_internal_component name
+
+let%test "internal mangling keeps module separators distinct from literal underscores" =
+  internal_prefix_of_module_id "foo.bar" = "foo__bar"
+  && internal_prefix_of_module_id "foo__bar" = "foo_u005f_u005fbar"
+  && internal_name_of "bang" "panic!" = "bang__panic_u0021"
 
 let merge_presence (existing : member_presence option) ~(internal_name : string)
     ?(has_value = false) ?(has_enum = false) ?(has_named_type = false) ?(has_transparent_type = false)

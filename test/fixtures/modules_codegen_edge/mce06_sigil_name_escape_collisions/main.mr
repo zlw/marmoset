@@ -1,0 +1,5 @@
+import bang.panic!
+import bang.panic_bang
+
+puts(panic!())  # output: 1
+puts(panic_bang())  # output: 2

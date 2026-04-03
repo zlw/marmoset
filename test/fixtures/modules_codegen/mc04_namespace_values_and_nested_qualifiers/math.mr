@@ -1,0 +1,11 @@
+export pi, Color, describe
+
+let pi = 3
+
+type Color = { Red, Blue }
+
+fn describe(c: Color) -> Str =
+  match c {
+    case Color.Red: "red"
+    case Color.Blue: "blue"
+  }

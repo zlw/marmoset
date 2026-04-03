@@ -1,0 +1,17 @@
+export Point, Show, make_point
+
+type Point = { x: Int, y: Int }
+
+trait Show[a] = {
+  fn show(self: a) -> Str
+}
+
+impl Show[Point] = {
+  fn show(self: Point) -> Str = "Point"
+}
+
+impl Point = {
+  fn distance(self: Point) -> Int = self.x + self.y
+}
+
+fn make_point(x: Int, y: Int) -> Point = { x: x, y: y }

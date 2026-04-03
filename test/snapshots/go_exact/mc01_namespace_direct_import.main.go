@@ -172,7 +172,7 @@ func main() {
     _ = main__moved
     main__total := math__add_int64_int64((main__moved).x, (main__moved).y)
     _ = main__total
-    main__final_value := values__identity_int64(main__total)
-    _ = main__final_value
-    _ = puts(main__final_value)
+    main__final_u005fvalue := values__identity_int64(main__total)
+    _ = main__final_u005fvalue
+    _ = puts(main__final_u005fvalue)
 }

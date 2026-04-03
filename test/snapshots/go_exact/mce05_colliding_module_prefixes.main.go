@@ -36,16 +36,6 @@ func (e ordering) String() string {
 }
 
 
-type Geometry__Point struct{x int64; y int64}
-
-func geometry__make_u005fpoint_int64_int64(x int64, y int64) Geometry__Point {
-    return Geometry__Point{x: x, y: y}
-}
-
-func geometry__distance_record_x_int64_y_int64_closed(p Geometry__Point) int64 {
-    return inherent_distance_record_x_int64_y_int64_closed(p)
-}
-
 func show_show_int64(x int64) string {
 	return strconv.FormatInt(x, 10)
 }
@@ -161,21 +151,11 @@ func neg_neg_int64(x int64) int64 {
 func neg_neg_float64(x float64) float64 {
 	return -x
 }
-func geometry__Show_show_record_x_int64_y_int64_closed(self Geometry__Point) string {
-        return "Point"
-}
-
-func inherent_distance_record_x_int64_y_int64_closed(self Geometry__Point) int64 {
-        return ((self).x + (self).y)
-}
-
 func main() {
-    var main__p Geometry__Point = geometry__make_u005fpoint_int64_int64(int64(2), int64(3))
-    _ = main__p
-    main__d := inherent_distance_record_x_int64_y_int64_closed(main__p)
-    _ = main__d
-    main__s := geometry__Show_show_record_x_int64_y_int64_closed(main__p)
-    _ = main__s
-    _ = puts((geometry__distance_record_x_int64_y_int64_closed(main__p) + main__d))
-    _ = puts(main__s)
+    foo__bar__value := int64(1)
+    _ = foo__bar__value
+    foo_u005f_u005fbar__value := int64(2)
+    _ = foo_u005f_u005fbar__value
+    _ = puts(foo__bar__value)
+    _ = puts(foo_u005f_u005fbar__value)
 }
