@@ -19,6 +19,8 @@ Once the semantic foundation is frozen, harden it before modules land. This plan
 - row-polymorphism and user `shape`-constraint diagnostics plus internal consistency cleanup after the policy is frozen
 - narrowly scoped expected-type propagation for identified pre-modules pain points, not a general bidirectional-typing rewrite
 - generated-Go stability gates, snapshots, structural assertions, and regression suites that prevent semantic drift
+- pre-modules Go emitter/runtime hardening for the existing `Dyn[...]` machinery so
+  later module and `forall/exists` work starts from a smaller, audited backend shape
 
 ## Out Of Scope
 
@@ -113,6 +115,24 @@ Once the semantic foundation is frozen, harden it before modules land. This plan
   - mixed-feature codegen paths.
 - Treat these overlap/conflict gates as groundwork for the later module plan's no-orphan, build-wide coherence model.
 
+### Phase P4A. Pre-Modules Interface Runtime Hardening
+
+- Harden the existing Go `Dyn[...]` runtime representation before modules land:
+  - remove dead runtime metadata such as `typeID` from `marmosetDyn`,
+  - replace per-package-site witness func literal synthesis with shared adapters /
+    witness singletons on the concrete pre-modules paths,
+  - replace primitive `show` / `debug` `fmt.Sprintf` lowering with cheaper fixed-format
+    helpers where equivalent helpers exist,
+  - hoist representative control-flow payload computation out of composite-literal
+    `Dyn[...]` packaging paths,
+  - suppress dead monomorphized higher-order / forwarding helpers that concrete call
+    sites never use.
+- Pin the resulting emitted-Go shape in both exact snapshots and structural hardening
+  assertions so backend cleanup does not silently regress.
+- Treat this as completed groundwork for
+  `docs/plans/todo/language/08_forall-exists.md`, not as unfinished work that still
+  belongs in that later interface-value plan.
+
 ### Phase P5. Narrow Expected-Type Propagation Cleanup
 
 - Limit this phase to concrete pre-modules pain points where an expected type is already available, but the checker does not use it early enough and the result is surprising inference, unstable behavior, or avoidable codegen/parity failures.
@@ -134,6 +154,13 @@ Once the semantic foundation is frozen, harden it before modules land. This plan
 - Generated-Go drift gates cover both:
   - exact curated snapshots for small codegen behaviors,
   - normalized + structural canary coverage for large mixed-feature programs.
+- The existing pre-modules `Dyn[...]` runtime path is already hardened:
+  - shared witness adapters / singleton values are used on the concrete packaging
+    paths covered by the hardening fixtures,
+  - dead `typeID`-style metadata is gone,
+  - primitive builtin formatting no longer uses generic `fmt.Sprintf`,
+  - representative spread/update packaging no longer embeds control-flow payload IIFEs,
+  - dead higher-order helper emission is pinned against regression.
 - Trait duplicate / overlap / conflict diagnostics are stable enough to serve as groundwork for build-wide coherence in the module system plan.
 - Module, prelude, and FFI work can assume the current language is already stable and auditable.
 
