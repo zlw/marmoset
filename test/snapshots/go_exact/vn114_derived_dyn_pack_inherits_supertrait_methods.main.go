@@ -1,10 +1,22 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+	"strconv"
+)
 
-type marmosetDyn struct{ typeID string; payload any; witness any }
+type marmosetDyn struct{ payload any; witness any }
 
 type marmosetDynWitness_Pack struct{label func(any) string; show func(any) string}
+func __marmoset_dyn_adapter_marmosetDynWitness_Pack_record_x_int64_closed_label(__receiver any) string {
+	return Pack_label_record_x_int64_closed(__receiver.(Point))
+}
+
+func __marmoset_dyn_adapter_marmosetDynWitness_Pack_record_x_int64_closed_show(__receiver any) string {
+	return show_show_record_x_int64_closed(__receiver.(Point))
+}
+var __marmoset_dyn_witness_marmosetDynWitness_Pack_record_x_int64_closed = marmosetDynWitness_Pack{label: __marmoset_dyn_adapter_marmosetDynWitness_Pack_record_x_int64_closed_label, show: __marmoset_dyn_adapter_marmosetDynWitness_Pack_record_x_int64_closed_show}
+
 
 type ordering struct {
 	Tag int8
@@ -47,11 +59,11 @@ func apply_record_x_int64_closed_fn_record_x_int64_closed_string(x Point, f func
 }
 
 func show_show_int64(x int64) string {
-	return fmt.Sprintf("%d", x)
+	return strconv.FormatInt(x, 10)
 }
 
 func show_show_bool(x bool) string {
-	return fmt.Sprintf("%t", x)
+	return strconv.FormatBool(x)
 }
 
 func show_show_string(x string) string {
@@ -59,23 +71,23 @@ func show_show_string(x string) string {
 }
 
 func show_show_float64(x float64) string {
-	return fmt.Sprintf("%g", x)
+	return strconv.FormatFloat(x, 'g', -1, 64)
 }
 
 func debug_debug_int64(x int64) string {
-	return fmt.Sprintf("%d", x)
+	return strconv.FormatInt(x, 10)
 }
 
 func debug_debug_bool(x bool) string {
-	return fmt.Sprintf("%t", x)
+	return strconv.FormatBool(x)
 }
 
 func debug_debug_string(x string) string {
-	return fmt.Sprintf("%q", x)
+	return strconv.Quote(x)
 }
 
 func debug_debug_float64(x float64) string {
-	return fmt.Sprintf("%g", x)
+	return strconv.FormatFloat(x, 'g', -1, 64)
 }
 
 func eq_eq_int64(x, y int64) bool {
@@ -178,7 +190,7 @@ func show_show_record_x_int64_closed(x Point) string {
 }
 
 func main() {
-    var value marmosetDyn = (func() marmosetDyn { __payload := Point{x: int64(1)}; return marmosetDyn{typeID: "{ x: Int }", payload: __payload, witness: marmosetDynWitness_Pack{label: func(__receiver any) string { return Pack_label_record_x_int64_closed(__receiver.(Point)) }, show: func(__receiver any) string { return show_show_record_x_int64_closed(__receiver.(Point)) }}} })()
+    var value marmosetDyn = marmosetDyn{payload: Point{x: int64(1)}, witness: __marmoset_dyn_witness_marmosetDynWitness_Pack_record_x_int64_closed}
     _ = value
     _ = puts((func() string { __dyn := value; __witness := __dyn.witness.(marmosetDynWitness_Pack); return __witness.show(__dyn.payload) })())
     _ = puts((func() string { __dyn := value; __witness := __dyn.witness.(marmosetDynWitness_Pack); return __witness.label(__dyn.payload) })())

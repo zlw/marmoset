@@ -1,10 +1,15 @@
 package main
 
-import "fmt"
+import "strconv"
 
-type marmosetDyn struct{ typeID string; payload any; witness any }
+type marmosetDyn struct{ payload any; witness any }
 
 type marmosetDynWitness_show struct{show func(any) string}
+func __marmoset_dyn_adapter_marmosetDynWitness_show_int64_show(__receiver any) string {
+	return show_show_int64(__receiver.(int64))
+}
+var __marmoset_dyn_witness_marmosetDynWitness_show_int64 = marmosetDynWitness_show{show: __marmoset_dyn_adapter_marmosetDynWitness_show_int64_show}
+
 
 type ordering struct {
 	Tag int8
@@ -44,11 +49,11 @@ type Box struct{tag int64; value marmosetDyn}
 type Record_tag_int64_value_int64 struct{tag int64; value int64}
 
 func show_show_int64(x int64) string {
-	return fmt.Sprintf("%d", x)
+	return strconv.FormatInt(x, 10)
 }
 
 func show_show_bool(x bool) string {
-	return fmt.Sprintf("%t", x)
+	return strconv.FormatBool(x)
 }
 
 func show_show_string(x string) string {
@@ -56,23 +61,23 @@ func show_show_string(x string) string {
 }
 
 func show_show_float64(x float64) string {
-	return fmt.Sprintf("%g", x)
+	return strconv.FormatFloat(x, 'g', -1, 64)
 }
 
 func debug_debug_int64(x int64) string {
-	return fmt.Sprintf("%d", x)
+	return strconv.FormatInt(x, 10)
 }
 
 func debug_debug_bool(x bool) string {
-	return fmt.Sprintf("%t", x)
+	return strconv.FormatBool(x)
 }
 
 func debug_debug_string(x string) string {
-	return fmt.Sprintf("%q", x)
+	return strconv.Quote(x)
 }
 
 func debug_debug_float64(x float64) string {
-	return fmt.Sprintf("%g", x)
+	return strconv.FormatFloat(x, 'g', -1, 64)
 }
 
 func eq_eq_int64(x, y int64) bool {
@@ -159,16 +164,16 @@ func neg_neg_float64(x float64) float64 {
 	return -x
 }
 func main() {
-    var box Box = (func(__src Record_tag_int64_value_int64) Box { return Box{tag: __src.tag, value: (func() marmosetDyn { __payload := __src.value; return marmosetDyn{typeID: "Int", payload: __payload, witness: marmosetDynWitness_show{show: func(__receiver any) string { return show_show_int64(__receiver.(int64)) }}} })()} })(Record_tag_int64_value_int64{tag: int64(0), value: int64(1)})
+    var box Box = (func(__src Record_tag_int64_value_int64) Box { return Box{tag: __src.tag, value: marmosetDyn{payload: __src.value, witness: __marmoset_dyn_witness_marmosetDynWitness_show_int64}} })(Record_tag_int64_value_int64{tag: int64(0), value: int64(1)})
     _ = box
     __spread_0 := box
-    updated := Box{tag: __spread_0.tag, value: (func() marmosetDyn { __payload := func() int64 {
+    var __field_payload_1 int64
         if true {
-            return int64(42)
+            __field_payload_1 = int64(42)
         } else {
-            return int64(43)
+            __field_payload_1 = int64(43)
         }
-    }(); return marmosetDyn{typeID: "Int", payload: __payload, witness: marmosetDynWitness_show{show: func(__receiver any) string { return show_show_int64(__receiver.(int64)) }}} })()}
+    updated := Box{tag: __spread_0.tag, value: marmosetDyn{payload: __field_payload_1, witness: __marmoset_dyn_witness_marmosetDynWitness_show_int64}}
     _ = updated
     _ = puts((func() string { __dyn := (updated).value; __witness := __dyn.witness.(marmosetDynWitness_show); return __witness.show(__dyn.payload) })())
 }

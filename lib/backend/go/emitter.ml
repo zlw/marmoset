@@ -322,6 +322,20 @@ let trait_object_witness_type_name (traits : string list) : string =
 
 let trait_object_method_field_name (method_name : string) : string = go_safe_ident method_name
 
+let trait_object_adapter_func_name
+    ~(source_type : Types.mono_type)
+    ~(traits : string list)
+    ~(method_name : string) : string =
+  Printf.sprintf "__marmoset_dyn_adapter_%s_%s_%s"
+    (go_safe_ident (trait_object_witness_type_name traits))
+    (mangle_type source_type)
+    (go_safe_ident method_name)
+
+let trait_object_witness_value_name ~(source_type : Types.mono_type) ~(traits : string list) : string =
+  Printf.sprintf "__marmoset_dyn_witness_%s_%s"
+    (go_safe_ident (trait_object_witness_type_name traits))
+    (mangle_type source_type)
+
 let type_mentions_trait_self (type_param : string) (typ : Types.mono_type) : bool =
   Types.TypeVarSet.mem type_param (Types.free_type_vars typ)
 
@@ -534,6 +548,12 @@ module NamedTypeInstSet = Set.Make (struct
   let compare = compare
 end)
 
+module TraitObjectAdapterInstSet = Set.Make (struct
+  type t = Types.mono_type * string list
+
+  let compare = compare
+end)
+
 type mono_state = {
   mutable func_defs : func_def list;
   mutable impl_templates : impl_template list;
@@ -562,6 +582,8 @@ type mono_state = {
       (* Phase 6.3: typed method definitions keyed by method id *)
   trait_object_coercion_map : (int, Typecheck.Resolution_artifacts.trait_object_coercion) Hashtbl.t;
       (* Track B B1: packaging sites for future Dyn[...] emission *)
+  mutable trait_object_adapter_insts : TraitObjectAdapterInstSet.t;
+      (* Shared concrete Dyn witness adapters discovered during actual emission *)
   placeholder_rewrite_map : Infer.placeholder_rewrite_map;
       (* Placeholder shorthand rewrites keyed by original expression id *)
 }
@@ -598,6 +620,7 @@ let create_mono_state
     method_type_args_map;
     method_def_map;
     trait_object_coercion_map;
+    trait_object_adapter_insts = TraitObjectAdapterInstSet.empty;
     placeholder_rewrite_map;
   }
 
@@ -606,6 +629,17 @@ let placeholder_rewritten_expr (rewrite_map : Infer.placeholder_rewrite_map) (ex
   match Hashtbl.find_opt rewrite_map expr.id with
   | Some rewritten -> rewritten
   | None -> expr
+
+let register_trait_object_adapter_instance
+    (state : mono_state)
+    ~(source_type : Types.mono_type)
+    ~(traits : string list) : unit =
+  let normalized_source_type =
+    normalize_type_for_codegen ~concrete_only:state.concrete_only (Types.canonicalize_mono_type source_type)
+  in
+  let normalized_traits = normalized_trait_object_traits_for_codegen traits in
+  state.trait_object_adapter_insts <-
+    TraitObjectAdapterInstSet.add (normalized_source_type, normalized_traits) state.trait_object_adapter_insts
 
 let synthetic_helper_suffix (expr_id : int) : string =
   if expr_id < 0 then
@@ -912,7 +946,73 @@ and emit_trait_object_type_defs (state : mono_state) (type_map : Infer.type_map)
       |> List.sort String.compare
       |> String.concat ""
     in
-    "type marmosetDyn struct{ typeID string; payload any; witness any }\n\n" ^ witness_defs
+    let adapter_defs =
+      TraitObjectAdapterInstSet.elements state.trait_object_adapter_insts
+      |> List.map (fun (source_type, traits) ->
+          let source_go_type = type_to_go state source_type in
+          let method_defs =
+            dynamic_trait_methods_for traits
+            |> List.map (fun (method_info : dyn_callable_method) ->
+                   let method_sig = method_info.dyn_method_sig in
+                   let adapter_name =
+                     trait_object_adapter_func_name ~source_type ~traits ~method_name:method_sig.method_name
+                   in
+                   let arg_params, arg_names =
+                     method_sig.method_params
+                     |> List.tl
+                     |> List.mapi (fun i (name, typ) ->
+                            let arg_name =
+                              let candidate = go_safe_ident name in
+                              if candidate = "" then
+                                Printf.sprintf "__arg_%d" i
+                              else
+                                candidate
+                            in
+                            (Printf.sprintf "%s %s" arg_name (type_to_go state typ), arg_name))
+                     |> List.split
+                   in
+                   let type_suffix = fingerprint_types [ source_type ] in
+                   let dispatch_trait_name = dyn_dispatch_trait_name source_type method_info in
+                   let impl_func_name =
+                     trait_method_func_name dispatch_trait_name method_sig.method_name type_suffix
+                   in
+                   let params =
+                     String.concat ", "
+                       (("__receiver any" :: arg_params) |> List.filter (fun param -> param <> ""))
+                   in
+                   let call_args = ("__receiver.(" ^ source_go_type ^ ")") :: arg_names |> String.concat ", " in
+                   Printf.sprintf "func %s(%s) %s {\n\treturn %s(%s)\n}\n" adapter_name params
+                     (type_to_go state method_sig.method_return_type)
+                     impl_func_name call_args)
+            |> String.concat "\n"
+          in
+          let witness_fields =
+            dynamic_trait_methods_for traits
+            |> List.map (fun (method_info : dyn_callable_method) ->
+                   let method_name = method_info.dyn_method_sig.method_name in
+                   let adapter_name = trait_object_adapter_func_name ~source_type ~traits ~method_name in
+                   Printf.sprintf "%s: %s" (trait_object_method_field_name method_name) adapter_name)
+            |> String.concat ", "
+          in
+          let witness_value_name = trait_object_witness_value_name ~source_type ~traits in
+          let witness_type_name = trait_object_witness_type_name traits in
+          let witness_value =
+            if witness_fields = "" then
+              Printf.sprintf "var %s = %s{}\n" witness_value_name witness_type_name
+            else
+              Printf.sprintf "var %s = %s{%s}\n" witness_value_name witness_type_name witness_fields
+          in
+          method_defs ^ witness_value)
+      |> List.sort String.compare
+      |> String.concat "\n"
+    in
+    let adapter_section =
+      if adapter_defs = "" then
+        ""
+      else
+        adapter_defs ^ "\n"
+    in
+    "type marmosetDyn struct{ payload any; witness any }\n\n" ^ witness_defs ^ adapter_section
 
 (* Enum payload slots box aggregate Go values so recursive sum types lower to
    pointer-safe structs instead of invalid directly self-embedded Go structs. *)
@@ -2234,99 +2334,125 @@ let register_user_func_call_instantiation
   let arity = List.length args in
   let func_def_opt = lookup_func_def_for_call state target_name arity in
   let raw_arg_types = List.map (arg_type_for_specialization state env type_map) args in
-  let declared_signature_opt =
-    match Infer.TypeEnv.find_opt target_name env with
-    | Some (Types.Forall (_, func_type)) -> extract_param_types_exact arity func_type
-    | None -> None
+  let has_imprecise_callable_arg_type (t : Types.mono_type) : bool =
+    match Types.canonicalize_mono_type t with
+    | Types.TFun _ -> false
+    | Types.TUnion members | Types.TIntersection members -> List.exists is_callable_like_type members
+    | Types.TVar _ | Types.TRowVar _ -> true
+    | _ -> false
   in
-  let declared_param_types, declared_return_type_opt =
-    match declared_signature_opt with
-    | Some (params, ret) -> (params, Some ret)
-    | None -> (raw_arg_types, None)
-  in
-  let arg_types =
-    List.map2
-      (fun (arg_expr : AST.expression) (arg_type, declared_param_type) ->
-        match Hashtbl.find_opt state.trait_object_coercion_map arg_expr.id with
-        | Some (coercion : Typecheck.Resolution_artifacts.trait_object_coercion) -> (
-            match Types.canonicalize_mono_type declared_param_type with
-            | Types.TTraitObject expected_traits
-              when Types.normalize_trait_object_traits expected_traits = coercion.target_traits ->
-                declared_param_type
-            | _ -> arg_type)
-        | None -> arg_type)
-      args
-      (List.combine raw_arg_types declared_param_types)
-  in
-  let specialized_declared_signature =
-    match (declared_signature_opt, declared_return_type_opt) with
-    | Some (_params, _ret), Some declared_return ->
-        specialize_signature declared_param_types declared_return arg_types
-    | _ -> None
-  in
-  let inferred_call_return = get_type type_map call_expr in
-  let partially_specialized_params =
-    let partial = partially_specialize_declared_params_from_noncallable_args declared_param_types arg_types in
-    match declared_return_type_opt with
-    | Some declared_return -> (
-        match Unify.unify declared_return inferred_call_return with
-        | Ok return_subst -> List.map (Types.apply_substitution return_subst) partial
-        | Error _ -> partial)
-    | None -> partial
-  in
+  if List.exists has_imprecise_callable_arg_type raw_arg_types then
+    ()
+  else
+    let declared_signature_opt =
+      match Infer.TypeEnv.find_opt target_name env with
+      | Some (Types.Forall (_, func_type)) -> extract_param_types_exact arity func_type
+      | None -> None
+    in
+    let declared_param_types, declared_return_type_opt =
+      match declared_signature_opt with
+      | Some (params, ret) -> (params, Some ret)
+      | None -> (raw_arg_types, None)
+    in
+    let arg_types =
+      List.map2
+        (fun (arg_expr : AST.expression) (arg_type, declared_param_type) ->
+          match Hashtbl.find_opt state.trait_object_coercion_map arg_expr.id with
+          | Some (coercion : Typecheck.Resolution_artifacts.trait_object_coercion) -> (
+              match Types.canonicalize_mono_type declared_param_type with
+              | Types.TTraitObject expected_traits
+                when Types.normalize_trait_object_traits expected_traits = coercion.target_traits ->
+                  declared_param_type
+              | _ -> arg_type)
+          | None -> arg_type)
+        args
+        (List.combine raw_arg_types declared_param_types)
+    in
+    let specialized_declared_signature =
+      match (declared_signature_opt, declared_return_type_opt) with
+      | Some (_params, _ret), Some declared_return ->
+          specialize_signature declared_param_types declared_return arg_types
+      | _ -> None
+    in
+    let inferred_call_return = get_type type_map call_expr in
+    let partially_specialized_params =
+      let partial = partially_specialize_declared_params_from_noncallable_args declared_param_types arg_types in
+      match declared_return_type_opt with
+      | Some declared_return -> (
+          match Unify.unify declared_return inferred_call_return with
+          | Ok return_subst -> List.map (Types.apply_substitution return_subst) partial
+          | Error _ -> partial)
+      | None -> partial
+    in
   let concrete_param_types =
     let base_param_types =
       match specialized_declared_signature with
-      | Some (specialized_params, _specialized_return) when not (List.exists has_type_vars specialized_params) ->
-          List.map2
-            (fun actual specialized -> prefer_actual_codegen_param_type ~actual ~specialized)
-            arg_types specialized_params
-      | None -> arg_types
-      | Some _ -> arg_types
-    in
-    let refined_callable_hint_params =
+        | Some (specialized_params, _specialized_return) when not (List.exists has_type_vars specialized_params) ->
+            List.map2
+              (fun actual specialized -> prefer_actual_codegen_param_type ~actual ~specialized)
+              arg_types specialized_params
+        | None -> arg_types
+        | Some _ -> arg_types
+      in
+      let refined_callable_hint_params =
       refine_callable_param_types_from_user_args state env type_map ~args partially_specialized_params
     in
     List.map2 prefer_more_precise_param_type base_param_types refined_callable_hint_params
   in
+  let should_defer_callable_specialization ~(actual : Types.mono_type) ~(selected : Types.mono_type) : bool =
+    match actual with
+    | Types.TFun _ ->
+        let normalized_actual = normalize_type_for_codegen ~concrete_only:state.concrete_only actual in
+        let normalized_selected = normalize_type_for_codegen ~concrete_only:state.concrete_only selected in
+        is_callable_like_type selected
+        && mangle_type normalized_actual <> mangle_type normalized_selected
+    | _ -> false
+  in
   let return_type =
     match declared_return_type_opt with
-    | Some declared_return_type ->
-        let candidate_return =
-          match specialized_declared_signature with
-          | Some (_specialized_params, specialized_return) -> specialized_return
-          | None -> (
-              match
-                infer_return_type_from_signature declared_param_types declared_return_type concrete_param_types
-              with
-              | Some inferred_ret -> inferred_ret
-              | None -> inferred_call_return)
-        in
-        if has_unresolved_codegen_type candidate_return then
-          inferred_call_return
-        else
-          candidate_return
-    | None -> inferred_call_return
+      | Some declared_return_type ->
+          let candidate_return =
+            match specialized_declared_signature with
+            | Some (_specialized_params, specialized_return) -> specialized_return
+            | None -> (
+                match
+                  infer_return_type_from_signature declared_param_types declared_return_type
+                    concrete_param_types
+                with
+                | Some inferred_ret -> inferred_ret
+                | None -> inferred_call_return)
+          in
+          if has_unresolved_codegen_type candidate_return then
+            inferred_call_return
+          else
+            candidate_return
+      | None -> inferred_call_return
   in
   match func_def_opt with
   | None -> ()
   | Some func_def ->
-      if state.concrete_only && List.exists has_type_vars concrete_param_types then
-        ()
-      else
-        let inst =
-          {
-            func_name = func_def.name;
-            module_path = state.module_path;
-            func_expr_id = func_def.func_expr_id;
-            func_arity = arity;
-            concrete_only_mode = state.concrete_only;
-            concrete_types = concrete_param_types;
-            type_fingerprint = fingerprint_types concrete_param_types;
-            return_type;
-          }
-        in
-        add_instantiation state inst
+        if state.concrete_only && List.exists has_type_vars concrete_param_types then
+          ()
+        else if
+          List.exists2
+            (fun actual selected -> should_defer_callable_specialization ~actual ~selected)
+            raw_arg_types concrete_param_types
+        then
+          ()
+        else
+          let inst =
+            {
+              func_name = func_def.name;
+              module_path = state.module_path;
+              func_expr_id = func_def.func_expr_id;
+              func_arity = arity;
+              concrete_only_mode = state.concrete_only;
+              concrete_types = concrete_param_types;
+              type_fingerprint = fingerprint_types concrete_param_types;
+              return_type;
+            }
+          in
+          add_instantiation state inst
 
 let resolved_user_func_call_target (state : mono_state) (func : AST.expression) : string option =
   user_func_target_name_for_expr state func
@@ -3133,7 +3259,9 @@ and collect_insts_expr
             | None -> [])
       in
       (* Collect from subexpressions first *)
-      collect_insts_expr state type_map env func;
+      (match user_call_target with
+      | Some _ -> ()
+      | None -> collect_insts_expr state type_map env func);
       let rec collect_args_with_expected remaining_args remaining_expected =
         match (remaining_args, remaining_expected) with
         | arg :: rest_args, expected_type :: rest_expected ->
@@ -3376,46 +3504,12 @@ let emit_trait_object_package_value
           witness_type_name ^ "{" ^ witness_fields ^ "}"
       in
       Printf.sprintf
-        "(func() marmosetDyn { __source := %s; __sourceWitness := __source.witness.(%s); return marmosetDyn{typeID: __source.typeID, payload: __source.payload, witness: %s} })()"
+        "(func() marmosetDyn { __source := %s; __sourceWitness := __source.witness.(%s); return marmosetDyn{payload: __source.payload, witness: %s} })()"
         expr_str source_witness_type_name witness_expr
   | _ ->
-      let source_go_type = type_to_go state.mono source_type in
-      let witness_fields =
-        dynamic_trait_methods_for normalized_traits
-        |> List.map (fun (method_info : dyn_callable_method) ->
-               let method_sig = method_info.dyn_method_sig in
-               let arg_fields =
-                 method_sig.method_params
-                 |> List.tl
-                 |> List.map (fun (name, typ) ->
-                        Printf.sprintf "%s %s" (go_safe_ident name) (type_to_go state.mono typ))
-               in
-               let arg_names =
-                 method_sig.method_params |> List.tl |> List.map (fun (name, _) -> go_safe_ident name)
-               in
-               let closure_params = String.concat ", " ("__receiver any" :: arg_fields) in
-               let type_suffix = fingerprint_types [ source_type ] in
-               let dispatch_trait_name = dyn_dispatch_trait_name source_type method_info in
-               let impl_func_name =
-                 trait_method_func_name dispatch_trait_name method_sig.method_name type_suffix
-               in
-               let closure_args = ("__receiver.(" ^ source_go_type ^ ")") :: arg_names |> String.concat ", " in
-               Printf.sprintf "%s: func(%s) %s { return %s(%s) }"
-                 (trait_object_method_field_name method_sig.method_name)
-                 closure_params
-                 (type_to_go state.mono method_sig.method_return_type)
-                 impl_func_name closure_args)
-        |> String.concat ", "
-      in
-      let witness_expr =
-        if witness_fields = "" then
-          witness_type_name ^ "{}"
-        else
-          witness_type_name ^ "{" ^ witness_fields ^ "}"
-      in
-      Printf.sprintf
-        "(func() marmosetDyn { __payload := %s; return marmosetDyn{typeID: %S, payload: __payload, witness: %s} })()"
-        expr_str (Types.to_string source_type) witness_expr
+      register_trait_object_adapter_instance state.mono ~source_type ~traits:normalized_traits;
+      let witness_value_name = trait_object_witness_value_name ~source_type ~traits:normalized_traits in
+      Printf.sprintf "marmosetDyn{payload: %s, witness: %s}" expr_str witness_value_name
 
 let rec project_value_to_expected_type
     (state : emit_state)
@@ -6113,11 +6207,36 @@ and emit_stmt
               else
                 Printf.sprintf "%s_ = %s\n" ind base_str
             in
+            let field_preludes = ref [] in
             let emit_field_assignment field =
               let go_name = go_record_field_name field.Types.name in
               match find_last_record_field_expr field.Types.name fields with
               | Some field_expr ->
-                  let field_str = emit_expr_for_expected_type state type_map env field.Types.typ field_expr in
+                  let actual_field_type = get_type type_map field_expr in
+                  let should_hoist_dyn_payload =
+                    match
+                      (field_expr.AST.expr, Types.canonicalize_mono_type field.Types.typ, actual_field_type)
+                    with
+                    | (AST.If _ | AST.Match _ | AST.BlockExpr _), Types.TTraitObject _, Types.TTraitObject _ ->
+                        false
+                    | (AST.If _ | AST.Match _ | AST.BlockExpr _), Types.TTraitObject _, _ -> true
+                    | _ -> false
+                  in
+                  let field_str =
+                    if should_hoist_dyn_payload then
+                      let payload_var = fresh_temp_name state "__field_payload" in
+                      let payload_go_type = type_to_go state.mono actual_field_type in
+                      let payload_decl = Printf.sprintf "%svar %s %s\n" ind payload_var payload_go_type in
+                      let payload_assign =
+                        emit_expr_to_target state type_map env field_expr
+                          (AssignTarget (payload_var, actual_field_type))
+                      in
+                      field_preludes := !field_preludes @ [ payload_decl; payload_assign ];
+                      project_value_to_expected_type state type_map env actual_field_type field.Types.typ
+                        payload_var
+                    else
+                      emit_expr_for_expected_type state type_map env field.Types.typ field_expr
+                  in
                   Printf.sprintf "%s: %s" go_name field_str
               | None ->
                   if uses_spread_base then
@@ -6147,7 +6266,7 @@ and emit_stmt
                 (String.concat ", " assignments) ind go_binding_name
             in
             let env' = Infer.TypeEnv.add let_binding.name (Types.Forall ([], expr_type)) env in
-            (spread_decl ^ binding_code, env')
+            (spread_decl ^ String.concat "" !field_preludes ^ binding_code, env')
         | _ ->
             (* Pass expected_type so EnumConstructors get the correct concrete type *)
             let expr_str = emit_expr_for_expected_type state type_map env expr_type let_binding.value in
@@ -7472,15 +7591,15 @@ let emit_builtin_impls (program : AST.program) : string =
   let all_builtins =
     [
       (* show trait implementations *)
-      (("show", "int64"), "func show_show_int64(x int64) string {\n\treturn fmt.Sprintf(\"%d\", x)\n}");
-      (("show", "bool"), "func show_show_bool(x bool) string {\n\treturn fmt.Sprintf(\"%t\", x)\n}");
+      (("show", "int64"), "func show_show_int64(x int64) string {\n\treturn strconv.FormatInt(x, 10)\n}");
+      (("show", "bool"), "func show_show_bool(x bool) string {\n\treturn strconv.FormatBool(x)\n}");
       (("show", "string"), "func show_show_string(x string) string {\n\treturn x\n}");
-      (("show", "float64"), "func show_show_float64(x float64) string {\n\treturn fmt.Sprintf(\"%g\", x)\n}");
+      (("show", "float64"), "func show_show_float64(x float64) string {\n\treturn strconv.FormatFloat(x, 'g', -1, 64)\n}");
       (* debug trait implementations *)
-      (("debug", "int64"), "func debug_debug_int64(x int64) string {\n\treturn fmt.Sprintf(\"%d\", x)\n}");
-      (("debug", "bool"), "func debug_debug_bool(x bool) string {\n\treturn fmt.Sprintf(\"%t\", x)\n}");
-      (("debug", "string"), "func debug_debug_string(x string) string {\n\treturn fmt.Sprintf(\"%q\", x)\n}");
-      (("debug", "float64"), "func debug_debug_float64(x float64) string {\n\treturn fmt.Sprintf(\"%g\", x)\n}");
+      (("debug", "int64"), "func debug_debug_int64(x int64) string {\n\treturn strconv.FormatInt(x, 10)\n}");
+      (("debug", "bool"), "func debug_debug_bool(x bool) string {\n\treturn strconv.FormatBool(x)\n}");
+      (("debug", "string"), "func debug_debug_string(x string) string {\n\treturn strconv.Quote(x)\n}");
+      (("debug", "float64"), "func debug_debug_float64(x float64) string {\n\treturn strconv.FormatFloat(x, 'g', -1, 64)\n}");
       (* eq trait implementations *)
       (("eq", "int64"), "func eq_eq_int64(x, y int64) bool {\n\treturn x == y\n}");
       (("eq", "bool"), "func eq_eq_bool(x, y bool) bool {\n\treturn x == y\n}");
@@ -7638,8 +7757,6 @@ let emit_program_with_typed_env
   let trait_object_type_defs = emit_trait_object_type_defs mono_state type_map typed_env in
 
   (* Build final output *)
-  (* Always import fmt since builtin impls use it *)
-  let imports = "import \"fmt\"\n\n" in
   let type_defs =
     let trait_object_section =
       if trait_object_type_defs = "" then
@@ -7694,6 +7811,23 @@ let emit_program_with_typed_env
   in
   let top_funcs =
     specialized_funcs_str ^ builtin_impl_funcs_str ^ impl_funcs_str ^ inherent_funcs_str ^ derived_impl_funcs_str
+  in
+  let import_scan_source = type_defs ^ top_funcs ^ main_body in
+  let import_specs =
+    let specs = ref [] in
+    if String_utils.contains_substring ~needle:"fmt." import_scan_source then
+      specs := "fmt" :: !specs;
+    if String_utils.contains_substring ~needle:"strconv." import_scan_source then
+      specs := "strconv" :: !specs;
+    List.sort_uniq String.compare !specs
+  in
+  let imports =
+    match import_specs with
+    | [] -> ""
+    | [ spec ] -> Printf.sprintf "import %S\n\n" spec
+    | specs ->
+        let body = specs |> List.map (fun spec -> Printf.sprintf "\t%S" spec) |> String.concat "\n" in
+        Printf.sprintf "import (\n%s\n)\n\n" body
   in
 
   Printf.sprintf "package main\n\n%s%s%sfunc main() {\n%s}\n" imports type_defs top_funcs main_body
@@ -8733,7 +8867,24 @@ let%test "Dyn codegen emits runtime wrapper and witness for Show" =
   | Ok (code, _) ->
       string_contains code "type marmosetDyn struct"
       && string_contains code "type marmosetDynWitness_show struct"
+      && string_contains code "var __marmoset_dyn_witness_marmosetDynWitness_show_int64"
+      && string_contains code "witness: __marmoset_dyn_witness_marmosetDynWitness_show_int64"
+      && not (string_contains code "witness: marmosetDynWitness_show{")
       && string_contains code "__witness.show(__dyn.payload)"
+  | Error _ -> false
+
+let%test "Dyn codegen runtime payload omits dead typeID metadata" =
+  match compile_string ~file_id:"<codegen>" "let x: Dyn[Show] = 42\nputs(Show.show(x))" with
+  | Ok (code, _) -> not (string_contains code "typeID string") && not (string_contains code "typeID:")
+  | Error _ -> false
+
+let%test "primitive show/debug builtins use strconv helpers" =
+  match compile_string ~file_id:"<codegen>" "let _ = Show.show(42)\nlet _ = Debug.debug(\"ok\")\n0" with
+  | Ok (code, _) ->
+      string_contains code {|import "strconv"|}
+      && string_contains code "strconv.FormatInt"
+      && string_contains code "strconv.Quote"
+      && not (string_contains code {|fmt.Sprintf("%d", x)|})
   | Error _ -> false
 
 let%test "Dyn codegen does not synthesize coercions without recorded metadata" =

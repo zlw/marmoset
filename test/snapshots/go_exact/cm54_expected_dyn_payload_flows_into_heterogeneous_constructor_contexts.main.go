@@ -1,10 +1,23 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+	"strconv"
+)
 
-type marmosetDyn struct{ typeID string; payload any; witness any }
+type marmosetDyn struct{ payload any; witness any }
 
 type marmosetDynWitness_show struct{show func(any) string}
+func __marmoset_dyn_adapter_marmosetDynWitness_show_int64_show(__receiver any) string {
+	return show_show_int64(__receiver.(int64))
+}
+var __marmoset_dyn_witness_marmosetDynWitness_show_int64 = marmosetDynWitness_show{show: __marmoset_dyn_adapter_marmosetDynWitness_show_int64_show}
+
+func __marmoset_dyn_adapter_marmosetDynWitness_show_string_show(__receiver any) string {
+	return show_show_string(__receiver.(string))
+}
+var __marmoset_dyn_witness_marmosetDynWitness_show_string = marmosetDynWitness_show{show: __marmoset_dyn_adapter_marmosetDynWitness_show_string_show}
+
 
 type Option_int64 struct {
 	Data0 int64
@@ -142,9 +155,9 @@ func render_Option_dyn_Show(value Option_dyn_Show) string {
 
 func via_if_bool(flag bool) Option_dyn_Show {
     if flag {
-        return Option_dyn_Show_Some((func() marmosetDyn { __payload := int64(42); return marmosetDyn{typeID: "Int", payload: __payload, witness: marmosetDynWitness_show{show: func(__receiver any) string { return show_show_int64(__receiver.(int64)) }}} })())
+        return Option_dyn_Show_Some(marmosetDyn{payload: int64(42), witness: __marmoset_dyn_witness_marmosetDynWitness_show_int64})
     } else {
-        return Option_dyn_Show_Some((func() marmosetDyn { __payload := "ok"; return marmosetDyn{typeID: "String", payload: __payload, witness: marmosetDynWitness_show{show: func(__receiver any) string { return show_show_string(__receiver.(string)) }}} })())
+        return Option_dyn_Show_Some(marmosetDyn{payload: "ok", witness: __marmoset_dyn_witness_marmosetDynWitness_show_string})
     }
 }
 
@@ -152,9 +165,9 @@ func via_match_bool(flag bool) Option_dyn_Show {
     __scrutinee_1 := flag
     switch __scrutinee_1 {
         case true:
-            return Option_dyn_Show_Some((func() marmosetDyn { __payload := "left"; return marmosetDyn{typeID: "String", payload: __payload, witness: marmosetDynWitness_show{show: func(__receiver any) string { return show_show_string(__receiver.(string)) }}} })())
+            return Option_dyn_Show_Some(marmosetDyn{payload: "left", witness: __marmoset_dyn_witness_marmosetDynWitness_show_string})
         case false:
-            return Option_dyn_Show_Some((func() marmosetDyn { __payload := int64(0); return marmosetDyn{typeID: "Int", payload: __payload, witness: marmosetDynWitness_show{show: func(__receiver any) string { return show_show_int64(__receiver.(int64)) }}} })())
+            return Option_dyn_Show_Some(marmosetDyn{payload: int64(0), witness: __marmoset_dyn_witness_marmosetDynWitness_show_int64})
 
     default:
     	panic("unreachable: exhaustive match")
@@ -162,11 +175,11 @@ func via_match_bool(flag bool) Option_dyn_Show {
 }
 
 func show_show_int64(x int64) string {
-	return fmt.Sprintf("%d", x)
+	return strconv.FormatInt(x, 10)
 }
 
 func show_show_bool(x bool) string {
-	return fmt.Sprintf("%t", x)
+	return strconv.FormatBool(x)
 }
 
 func show_show_string(x string) string {
@@ -174,23 +187,23 @@ func show_show_string(x string) string {
 }
 
 func show_show_float64(x float64) string {
-	return fmt.Sprintf("%g", x)
+	return strconv.FormatFloat(x, 'g', -1, 64)
 }
 
 func debug_debug_int64(x int64) string {
-	return fmt.Sprintf("%d", x)
+	return strconv.FormatInt(x, 10)
 }
 
 func debug_debug_bool(x bool) string {
-	return fmt.Sprintf("%t", x)
+	return strconv.FormatBool(x)
 }
 
 func debug_debug_string(x string) string {
-	return fmt.Sprintf("%q", x)
+	return strconv.Quote(x)
 }
 
 func debug_debug_float64(x float64) string {
-	return fmt.Sprintf("%g", x)
+	return strconv.FormatFloat(x, 'g', -1, 64)
 }
 
 func eq_eq_int64(x, y int64) bool {
@@ -279,9 +292,9 @@ func neg_neg_float64(x float64) float64 {
 func main() {
     var direct_payload Option_dyn_Show = Option_dyn_Show_Some(func() marmosetDyn {
         if true {
-            return (func() marmosetDyn { __payload := int64(42); return marmosetDyn{typeID: "Int", payload: __payload, witness: marmosetDynWitness_show{show: func(__receiver any) string { return show_show_int64(__receiver.(int64)) }}} })()
+            return marmosetDyn{payload: int64(42), witness: __marmoset_dyn_witness_marmosetDynWitness_show_int64}
         } else {
-            return (func() marmosetDyn { __payload := "unused"; return marmosetDyn{typeID: "String", payload: __payload, witness: marmosetDynWitness_show{show: func(__receiver any) string { return show_show_string(__receiver.(string)) }}} })()
+            return marmosetDyn{payload: "unused", witness: __marmoset_dyn_witness_marmosetDynWitness_show_string}
         }
     }())
     _ = direct_payload

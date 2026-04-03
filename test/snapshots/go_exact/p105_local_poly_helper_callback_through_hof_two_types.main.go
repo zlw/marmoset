@@ -1,6 +1,6 @@
 package main
 
-import "fmt"
+import "strconv"
 
 type ordering struct {
 	Tag int8
@@ -52,14 +52,6 @@ func apply2_fn_string_fn_string_bool_string_string(f func(string, string) bool, 
     return f(a, b)
 }
 
-func apply2_union_fn_int64_fn_int64_bool_efffn_int64_efffn_int64_bool_int64_int64(f interface{}, a int64, b int64) bool {
-    return (f.(func(int64, int64) bool))(a, b)
-}
-
-func apply2_union_fn_string_fn_string_bool_efffn_string_efffn_string_bool_string_string(f interface{}, a string, b string) bool {
-    return (f.(func(string, string) bool))(a, b)
-}
-
 func run() string {
     if apply2_fn_int64_fn_int64_bool_int64_int64(__local_same_7_int64_int64, int64(1), int64(1)) {
             if apply2_fn_string_fn_string_bool_string_string(__local_same_7_string_string, "ok", "ok") {
@@ -73,11 +65,11 @@ func run() string {
 }
 
 func show_show_int64(x int64) string {
-	return fmt.Sprintf("%d", x)
+	return strconv.FormatInt(x, 10)
 }
 
 func show_show_bool(x bool) string {
-	return fmt.Sprintf("%t", x)
+	return strconv.FormatBool(x)
 }
 
 func show_show_string(x string) string {
@@ -85,23 +77,23 @@ func show_show_string(x string) string {
 }
 
 func show_show_float64(x float64) string {
-	return fmt.Sprintf("%g", x)
+	return strconv.FormatFloat(x, 'g', -1, 64)
 }
 
 func debug_debug_int64(x int64) string {
-	return fmt.Sprintf("%d", x)
+	return strconv.FormatInt(x, 10)
 }
 
 func debug_debug_bool(x bool) string {
-	return fmt.Sprintf("%t", x)
+	return strconv.FormatBool(x)
 }
 
 func debug_debug_string(x string) string {
-	return fmt.Sprintf("%q", x)
+	return strconv.Quote(x)
 }
 
 func debug_debug_float64(x float64) string {
-	return fmt.Sprintf("%g", x)
+	return strconv.FormatFloat(x, 'g', -1, 64)
 }
 
 func eq_eq_int64(x, y int64) bool {

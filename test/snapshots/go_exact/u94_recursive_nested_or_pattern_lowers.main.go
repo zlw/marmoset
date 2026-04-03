@@ -1,6 +1,9 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+	"strconv"
+)
 
 type Box struct {
 	Data0 *Record_payload_Option_int64_tag_int64
@@ -95,11 +98,11 @@ func (e ordering) String() string {
 type Record_payload_Option_int64_tag_int64 struct{payload Option_int64; tag int64}
 
 func show_show_int64(x int64) string {
-	return fmt.Sprintf("%d", x)
+	return strconv.FormatInt(x, 10)
 }
 
 func show_show_bool(x bool) string {
-	return fmt.Sprintf("%t", x)
+	return strconv.FormatBool(x)
 }
 
 func show_show_string(x string) string {
@@ -107,23 +110,23 @@ func show_show_string(x string) string {
 }
 
 func show_show_float64(x float64) string {
-	return fmt.Sprintf("%g", x)
+	return strconv.FormatFloat(x, 'g', -1, 64)
 }
 
 func debug_debug_int64(x int64) string {
-	return fmt.Sprintf("%d", x)
+	return strconv.FormatInt(x, 10)
 }
 
 func debug_debug_bool(x bool) string {
-	return fmt.Sprintf("%t", x)
+	return strconv.FormatBool(x)
 }
 
 func debug_debug_string(x string) string {
-	return fmt.Sprintf("%q", x)
+	return strconv.Quote(x)
 }
 
 func debug_debug_float64(x float64) string {
-	return fmt.Sprintf("%g", x)
+	return strconv.FormatFloat(x, 'g', -1, 64)
 }
 
 func eq_eq_int64(x, y int64) bool {

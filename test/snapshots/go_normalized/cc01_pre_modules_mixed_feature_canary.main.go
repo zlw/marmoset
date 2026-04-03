@@ -1,10 +1,18 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+	"strconv"
+)
 
-type marmosetDyn struct{ typeID string; payload any; witness any }
+type marmosetDyn struct{ payload any; witness any }
 
 type marmosetDynWitness_show struct{show func(any) string}
+func __marmoset_dyn_adapter_marmosetDynWitness_show_int64_show(__receiver any) string {
+	return show_show_int64(__receiver.(int64))
+}
+var __marmoset_dyn_witness_marmosetDynWitness_show_int64 = marmosetDynWitness_show{show: __marmoset_dyn_adapter_marmosetDynWitness_show_int64_show}
+
 
 type Event struct {
 	Data0 int64
@@ -41,6 +49,7 @@ func (e Event) String() string {
 	}
 }
 
+
 type ordering struct {
 	Tag int8
 }
@@ -74,13 +83,14 @@ func (e ordering) String() string {
 	}
 }
 
+
 type Box struct{tag int64; value marmosetDyn}
 type Person struct{name string; score int64}
 type Record_box_record_tag_int64_value_marmoset_dyn_closed_owner_record_name_string_score_int64_closed struct{box Box; owner Person}
 type Record_tag_int64_value_int64 struct{tag int64; value int64}
 
 func make_box_bool_int64(flag bool, seed int64) Box {
-    return (func(__src Record_tag_int64_value_int64) Box { return Box{tag: __src.tag, value: (func() marmosetDyn { __payload := __src.value; return marmosetDyn{typeID: "Int", payload: __payload, witness: marmosetDynWitness_show{show: func(__receiver any) string { return show_show_int64(__receiver.(int64)) }}} })()} })(Record_tag_int64_value_int64{tag: seed, value: func() int64 {
+    return (func(__src Record_tag_int64_value_int64) Box { return Box{tag: __src.tag, value: marmosetDyn{payload: __src.value, witness: __marmoset_dyn_witness_marmosetDynWitness_show_int64}} })(Record_tag_int64_value_int64{tag: seed, value: func() int64 {
     if flag {
         return seed
     } else {
@@ -102,26 +112,26 @@ func render_twice_record_name_string_score_int64_closed_fn_record_name_string_sc
 }
 
 func classify_Event(event Event) string {
-    __scrutinee_2 := event
-    switch __scrutinee_2.Tag {
+    __scrutinee_3 := event
+    switch __scrutinee_3.Tag {
 	case Event_Number_tag:
-		if ((__scrutinee_2).Data0 == int64(0)) {
+		if ((__scrutinee_3).Data0 == int64(0)) {
                 return "tiny"
-		} else if ((__scrutinee_2).Data0 == int64(1)) {
+		} else if ((__scrutinee_3).Data0 == int64(1)) {
                 return "tiny"
 		} else {
 			panic("non-exhaustive enum match")
 		}
 	case Event_Wrapped_tag:
-		if ((((*((__scrutinee_2).Data1))).owner).score == int64(7)) {
-			name := (((*((__scrutinee_2).Data1))).owner).name
-			box := ((*((__scrutinee_2).Data1))).box
+		if ((((*((__scrutinee_3).Data1))).owner).score == int64(7)) {
+			name := (((*((__scrutinee_3).Data1))).owner).name
+			box := ((*((__scrutinee_3).Data1))).box
 			_ = name
 			_ = box
                 return ((name + ":7:") + inherent_describe_record_tag_int64_value_dyn_Show_closed(box))
 		} else {
-			owner := ((*((__scrutinee_2).Data1))).owner
-			box := ((*((__scrutinee_2).Data1))).box
+			owner := ((*((__scrutinee_3).Data1))).owner
+			box := ((*((__scrutinee_3).Data1))).box
 			_ = owner
 			_ = box
                 return ((Label_label_record_name_string_score_int64_closed(owner) + ":") + inherent_describe_record_tag_int64_value_dyn_Show_closed(box))
@@ -147,11 +157,11 @@ func describe_input_union_int64_string(input interface{}) string {
 }
 
 func show_show_int64(x int64) string {
-	return fmt.Sprintf("%d", x)
+	return strconv.FormatInt(x, 10)
 }
 
 func show_show_bool(x bool) string {
-	return fmt.Sprintf("%t", x)
+	return strconv.FormatBool(x)
 }
 
 func show_show_string(x string) string {
@@ -159,23 +169,23 @@ func show_show_string(x string) string {
 }
 
 func show_show_float64(x float64) string {
-	return fmt.Sprintf("%g", x)
+	return strconv.FormatFloat(x, 'g', -1, 64)
 }
 
 func debug_debug_int64(x int64) string {
-	return fmt.Sprintf("%d", x)
+	return strconv.FormatInt(x, 10)
 }
 
 func debug_debug_bool(x bool) string {
-	return fmt.Sprintf("%t", x)
+	return strconv.FormatBool(x)
 }
 
 func debug_debug_string(x string) string {
-	return fmt.Sprintf("%q", x)
+	return strconv.Quote(x)
 }
 
 func debug_debug_float64(x float64) string {
-	return fmt.Sprintf("%g", x)
+	return strconv.FormatFloat(x, 'g', -1, 64)
 }
 
 func eq_eq_int64(x, y int64) bool {
@@ -283,24 +293,24 @@ func main() {
     box := make_box_bool_int64(true, int64(2))
     _ = box
     _ = box
-    boosted := Box{tag: ((box).tag + int64(1)), value: (func() marmosetDyn { __payload := (func() int64 {
-	__scrutinee_1 := Event_Number(int64(2))
-	switch __scrutinee_1.Tag {
+    var __field_payload_1 int64
+        __scrutinee_2 := Event_Number(int64(2))
+        switch __scrutinee_2.Tag {
 	case Event_Number_tag:
-		n := (__scrutinee_1).Data0
+		n := (__scrutinee_2).Data0
 		_ = n
-		return (n + int64(40))
+                __field_payload_1 = (n + int64(40))
 
 	case Event_Wrapped_tag:
-		return int64(0)
+                __field_payload_1 = int64(0)
 
 	case Event_Empty_tag:
-		return int64(0)
+                __field_payload_1 = int64(0)
 
 	default:
 		panic("unreachable: invalid enum tag")
-	}
-})(); return marmosetDyn{typeID: "Int", payload: __payload, witness: marmosetDynWitness_show{show: func(__receiver any) string { return show_show_int64(__receiver.(int64)) }}} })()}
+        }
+    boosted := Box{tag: ((box).tag + int64(1)), value: marmosetDyn{payload: __field_payload_1, witness: __marmoset_dyn_witness_marmosetDynWitness_show_int64}}
     _ = boosted
     exact := Event_Wrapped(Record_box_record_tag_int64_value_marmoset_dyn_closed_owner_record_name_string_score_int64_closed{box: make_box_bool_int64(true, int64(2)), owner: Person{name: "ada", score: int64(7)}})
     _ = exact

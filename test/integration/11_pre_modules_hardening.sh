@@ -10,6 +10,7 @@ SNAPSHOT_ROOT="$REPO_ROOT/test/snapshots/go_normalized"
 CANARY_FIXTURE="$REPO_ROOT/test/fixtures/codegen_canary/cc01_pre_modules_mixed_feature_canary.mr"
 UNION_FALLBACK_FIXTURE="$REPO_ROOT/test/fixtures/codegen_canary/cc02_union_record_match_catch_all.mr"
 SPREAD_DYN_FIXTURE="$REPO_ROOT/test/fixtures/codegen_canary/cc03_record_spread_dyn_projection.mr"
+SPREAD_DYN_CONTROL_FLOW_FIXTURE="$REPO_ROOT/test/fixtures/codegen_mono/cm52_record_spread_update_packages_expected_dyn_field.mr"
 UNION_VARIABLE_FALLBACK_FIXTURE="$REPO_ROOT/test/fixtures/codegen_canary/cc04_union_record_match_variable_catch_all.mr"
 TRAIT_DYN_PACK_FIXTURE="$REPO_ROOT/test/fixtures/vnext_canary/vn114_derived_dyn_pack_inherits_supertrait_methods.mr"
 DEFAULT_DYN_BOX_FIXTURE="$REPO_ROOT/test/fixtures/vnext_canary/vn117_generic_record_derived_default_returns_dyn_show.mr"
@@ -56,10 +57,19 @@ run_canary_structural_assertions() {
     if grep -q ' else if  {' "$main_go"; then
         failures+=("found malformed empty else-if fallback")
     fi
+    if ! grep -q 'type marmosetDyn struct{ payload any; witness any }' "$main_go"; then
+        failures+=("missing slim Dyn runtime shape without dead typeID metadata")
+    fi
+    if ! grep -q 'var __marmoset_dyn_witness_marmosetDynWitness_show_int64 = marmosetDynWitness_show{show: __marmoset_dyn_adapter_marmosetDynWitness_show_int64_show}' "$main_go"; then
+        failures+=("missing shared Int Dyn witness singleton")
+    fi
+    if grep -q 'marmosetDyn{payload: (func()' "$main_go" || grep -q 'marmosetDyn{payload: func()' "$main_go"; then
+        failures+=("found Dyn packaging that still embeds a control-flow IIFE payload")
+    fi
 
-    dyn_count=$(grep -o 'marmosetDyn{typeID: "Int"' "$main_go" | wc -l | tr -d ' ')
+    dyn_count=$(grep -o 'witness: __marmoset_dyn_witness_marmosetDynWitness_show_int64' "$main_go" | wc -l | tr -d ' ')
     if [ "$dyn_count" != "2" ]; then
-        failures+=("expected 2 recorded Dyn packaging sites, found $dyn_count")
+        failures+=("expected 2 Dyn packaging sites using the shared Int witness, found $dyn_count")
     fi
 
     record_count=$(grep -c '^type Record_box_record_tag_int64_value_marmoset_dyn_closed_owner_record_name_string_score_int64_closed struct' "$main_go")
@@ -106,6 +116,12 @@ run_trait_dyn_pack_structural_assertions() {
 
     if ! grep -q 'type marmosetDynWitness_Pack struct{label func(any) string; show func(any) string}' "$main_go"; then
         failures+=("missing Pack witness carrying inherited label and show methods")
+    fi
+    if ! grep -q 'func __marmoset_dyn_adapter_marmosetDynWitness_Pack_record_x_int64_closed_label(__receiver any) string {' "$main_go"; then
+        failures+=("missing shared Dyn adapter for inherited label method")
+    fi
+    if ! grep -q 'var __marmoset_dyn_witness_marmosetDynWitness_Pack_record_x_int64_closed = marmosetDynWitness_Pack{label: __marmoset_dyn_adapter_marmosetDynWitness_Pack_record_x_int64_closed_label, show: __marmoset_dyn_adapter_marmosetDynWitness_Pack_record_x_int64_closed_show}' "$main_go"; then
+        failures+=("missing shared Pack witness singleton for Point")
     fi
     if ! grep -q 'func Label_label_record_x_int64_closed(self Point) string {' "$main_go"; then
         failures+=("missing inherited Label helper for derived Point impl")
@@ -159,13 +175,66 @@ run_default_dyn_box_structural_assertions() {
     if ! grep -q 'type marmosetDynWitness_show struct{show func(any) string}' "$main_go"; then
         failures+=("missing Dyn[Show] witness shape for derived box method")
     fi
+    if ! grep -q 'func __marmoset_dyn_adapter_marmosetDynWitness_show_record_value_int64_closed_show(__receiver any) string {' "$main_go"; then
+        failures+=("missing shared Dyn adapter for the derived record impl")
+    fi
+    if ! grep -q 'var __marmoset_dyn_witness_marmosetDynWitness_show_record_value_int64_closed = marmosetDynWitness_show{show: __marmoset_dyn_adapter_marmosetDynWitness_show_record_value_int64_closed_show}' "$main_go"; then
+        failures+=("missing shared Dyn witness singleton for the derived record impl")
+    fi
     if ! grep -q 'func Boxed_box_record_value_int64_closed(self Record_value_int64) marmosetDyn {' "$main_go"; then
         failures+=("missing derived Boxed.box helper for concrete record instantiation")
     fi
 
-    dyn_count=$(grep -o 'marmosetDyn{typeID: "{ value: Int }", payload: __payload' "$main_go" | wc -l | tr -d ' ')
+    dyn_count=$(grep -o 'witness: __marmoset_dyn_witness_marmosetDynWitness_show_record_value_int64_closed' "$main_go" | wc -l | tr -d ' ')
     if [ "$dyn_count" != "1" ]; then
-        failures+=("expected 1 direct concrete Dyn packaging site, found $dyn_count")
+        failures+=("expected 1 direct concrete Dyn packaging site using the shared witness, found $dyn_count")
+    fi
+
+    if [ "${#failures[@]}" -eq 0 ]; then
+        echo "✓ PASS"
+        PASS=$((PASS + 1))
+    else
+        echo "✗ FAIL"
+        local failure
+        for failure in "${failures[@]}"; do
+            echo "  $failure"
+        done
+        FAIL=$((FAIL + 1))
+    fi
+
+    rm -f "$binpath"
+    rm -rf "$outdir"
+}
+
+run_spread_dyn_structural_assertions() {
+    TOTAL=$((TOTAL + 1))
+    echo -n "TEST [$TOTAL] spread updates hoist Dyn payload control flow before packaging ... "
+
+    local outdir binpath build_output main_go failures
+    outdir=$(mktemp -d marmoset_emit_spread_dyn.XXXXXX)
+    binpath=$(mktemp "$REPO_ROOT/.marmoset/build/marmoset_spread_dyn_bin.XXXXXX")
+    rm -f "$binpath"
+
+    if ! build_output=$($EXECUTABLE build "$SPREAD_DYN_CONTROL_FLOW_FIXTURE" --emit-go "$outdir" -o "$binpath" 2>&1); then
+        echo "✗ FAIL (build failed)"
+        echo "  Output: $build_output"
+        FAIL=$((FAIL + 1))
+        rm -f "$binpath"
+        rm -rf "$outdir"
+        return
+    fi
+
+    main_go="$outdir/main.go"
+    failures=()
+
+    if ! grep -Eq 'var __field_payload_[0-9]+ int64' "$main_go"; then
+        failures+=("missing hoisted payload temp for Dyn-packaged spread update")
+    fi
+    if grep -q 'marmosetDyn{payload: (func() int64 {' "$main_go" || grep -q 'marmosetDyn{payload: func() int64 {' "$main_go"; then
+        failures+=("Dyn packaging still embeds an expression-position payload IIFE")
+    fi
+    if ! grep -q 'witness: __marmoset_dyn_witness_marmosetDynWitness_show_int64' "$main_go"; then
+        failures+=("spread update no longer reuses the shared Int Dyn witness")
     fi
 
     if [ "${#failures[@]}" -eq 0 ]; then
@@ -267,6 +336,9 @@ run_poly_callback_structural_assertions() {
     if ! grep -q 'if apply2_fn_string_fn_string_bool_string_string(' "$main_go"; then
         failures+=("run() no longer uses the specialized String higher-order helper")
     fi
+    if grep -q '^func apply2_union_' "$main_go"; then
+        failures+=("dead union-only higher-order helper is still emitted")
+    fi
 
     if [ "${#failures[@]}" -eq 0 ]; then
         echo "✓ PASS"
@@ -346,6 +418,7 @@ test_emit_go_normalized_snapshot \
 run_canary_structural_assertions
 run_trait_dyn_pack_structural_assertions
 run_default_dyn_box_structural_assertions
+run_spread_dyn_structural_assertions
 run_override_callback_structural_assertions
 run_poly_callback_structural_assertions
 run_match_closure_structural_assertions
