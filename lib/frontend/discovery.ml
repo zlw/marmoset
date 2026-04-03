@@ -8,6 +8,7 @@ type discovery_state = {
   root_dir : string;
   modules : (string, Module_context.parsed_module) Hashtbl.t;
   dependencies : (string, string list) Hashtbl.t;
+  source_overrides : (string, string) Hashtbl.t;
   next_file_index : int ref;
 }
 
@@ -35,6 +36,12 @@ let read_file (path : string) : string =
     (fun () ->
       let len = in_channel_length ic in
       really_input_string ic len)
+
+let source_for_path (state : discovery_state) (path : string) : string =
+  let path = normalize_path path in
+  match Hashtbl.find_opt state.source_overrides path with
+  | Some source -> source
+  | None -> read_file path
 
 let relative_to_root ~(root_dir : string) (path : string) : string =
   let prefix = root_dir ^ Filename.dir_sep in
@@ -98,7 +105,7 @@ let rec discover_module (state : discovery_state) ~(module_id : string) ~(file_p
   if Hashtbl.mem state.modules module_id then
     Ok ()
   else
-    let source = read_file file_path in
+    let source = source_for_path state file_path in
     let file_index = !(state.next_file_index) in
     state.next_file_index := file_index + 1;
     let id_offset = file_index * id_stride in
@@ -187,8 +194,32 @@ let discover_project ~(entry_file : string) : (Module_context.module_graph, Diag
   let root_dir = Filename.dirname entry_file in
   let entry_module = module_id_of_file ~root_dir entry_file in
   let state =
-    { root_dir; modules = Hashtbl.create 16; dependencies = Hashtbl.create 16; next_file_index = ref 0 }
+    {
+      root_dir;
+      modules = Hashtbl.create 16;
+      dependencies = Hashtbl.create 16;
+      source_overrides = Hashtbl.create 0;
+      next_file_index = ref 0;
+    }
   in
+  let* () = discover_module state ~module_id:entry_module ~file_path:entry_file in
+  Module_context.build_graph ~modules:state.modules ~dependencies:state.dependencies ~entry_module
+
+let discover_project_with_entry_source ~(entry_file : string) ~(entry_source : string) :
+    (Module_context.module_graph, Diagnostic.t) result =
+  let entry_file = normalize_path entry_file in
+  let root_dir = Filename.dirname entry_file in
+  let entry_module = module_id_of_file ~root_dir entry_file in
+  let state =
+    {
+      root_dir;
+      modules = Hashtbl.create 16;
+      dependencies = Hashtbl.create 16;
+      source_overrides = Hashtbl.create 1;
+      next_file_index = ref 0;
+    }
+  in
+  Hashtbl.replace state.source_overrides entry_file entry_source;
   let* () = discover_module state ~module_id:entry_module ~file_path:entry_file in
   Module_context.build_graph ~modules:state.modules ~dependencies:state.dependencies ~entry_module
 

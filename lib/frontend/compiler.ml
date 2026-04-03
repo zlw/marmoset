@@ -592,21 +592,28 @@ let compile_project_to_build (graph : Module_context.module_graph) :
   let* project = compile_project graph in
   emit_compiled_project project
 
+let check_graph (graph : Module_context.module_graph) : (Diagnostic.t list, Diagnostic.t list) result =
+  match Hashtbl.find_opt graph.modules graph.entry_module with
+  | Some entry_module when Hashtbl.length graph.modules = 1 && not (has_module_headers entry_module.program) ->
+      reset_module_state ();
+      let env = Builtins.prelude_env () in
+      Checker.check_program_with_annotations ~env entry_module.program
+      |> Result.map (fun (result : Checker.typecheck_result) -> result.diagnostics)
+  | _ -> (
+      match compile_project graph with
+      | Ok project -> Ok project.diagnostics
+      | Error diags -> Error diags)
+
 let check_entry ~(entry_file : string) : (Diagnostic.t list, Diagnostic.t list) result =
   match Discovery.discover_project ~entry_file with
   | Error diag -> Error [ diag ]
-  | Ok graph -> (
-      match Hashtbl.find_opt graph.modules graph.entry_module with
-      | Some entry_module when Hashtbl.length graph.modules = 1 && not (has_module_headers entry_module.program)
-        ->
-          reset_module_state ();
-          let env = Builtins.prelude_env () in
-          Checker.check_program_with_annotations ~env entry_module.program
-          |> Result.map (fun (result : Checker.typecheck_result) -> result.diagnostics)
-      | _ -> (
-          match compile_project graph with
-          | Ok project -> Ok project.diagnostics
-          | Error diags -> Error diags))
+  | Ok graph -> check_graph graph
+
+let check_entry_with_source ~(entry_file : string) ~(entry_source : string) :
+    (Diagnostic.t list, Diagnostic.t list) result =
+  match Discovery.discover_project_with_entry_source ~entry_file ~entry_source with
+  | Error diag -> Error [ diag ]
+  | Ok graph -> check_graph graph
 
 let compile_entry_to_build ~(entry_file : string) : (Codegen.build_output, Diagnostic.t list) result =
   let* graph = Discovery.discover_project ~entry_file |> Result.map_error (fun diag -> [ diag ]) in
@@ -659,6 +666,20 @@ let%test "check_entry rejects colliding direct imports" =
               diag.code = "module-import-name-collision"
               && Diagnostics.String_utils.contains_substring ~needle:"existing binding 'add'" diag.message)
             diags)
+
+let%test "check_entry_with_source resolves unsaved entry imports" =
+  Discovery.with_temp_project
+    [
+      ("main.mr", "import sum\nputs(0)\n");
+      ("sum.mr", "export sum\nfn sum(values: List[Int]) -> Int = len(values)\n");
+    ]
+    (fun root ->
+      match
+        check_entry_with_source ~entry_file:(Filename.concat root "main.mr")
+          ~entry_source:"import sum\nputs(sum.sum([1, 2, 3]))\n"
+      with
+      | Error _ -> false
+      | Ok diagnostics -> diagnostics = [])
 
 let%test "compile_project rejects duplicate impls across transitive imports" =
   Discovery.with_temp_project
