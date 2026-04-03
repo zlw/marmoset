@@ -1289,32 +1289,6 @@ let enum_constructor_codegen_type
   | Some (Types.TEnum (_, type_args)) -> Types.TEnum (enum_name, type_args)
   | _ -> Types.TEnum (enum_name, [])
 
-let expected_trait_object_coercion
-    ~(trait_object_coercion_map : (int, Typecheck.Resolution_artifacts.trait_object_coercion) Hashtbl.t)
-    (type_map : Infer.type_map)
-    (expr : AST.expression)
-    (expected_type : Types.mono_type option) : Typecheck.Resolution_artifacts.trait_object_coercion option =
-  if Hashtbl.mem trait_object_coercion_map expr.id then
-    None
-  else
-    match expected_type with
-    | None -> None
-    | Some expected_type -> (
-        match Types.canonicalize_mono_type expected_type with
-        | Types.TTraitObject target_traits -> (
-            match
-              Infer.classify_trait_object_compatibility
-                ~mk_error:(fun ~code ~message -> Diagnostic.error_no_span ~code ~message)
-                (get_type type_map expr) target_traits
-            with
-            | Ok Infer.TraitObjectAlreadyCompatible -> None
-            | Ok (Infer.TraitObjectNeedsPackaging source_type) ->
-                Some
-                  Typecheck.Resolution_artifacts.
-                    { target_traits; source_type = Types.canonicalize_mono_type source_type }
-            | Error _ -> None)
-        | _ -> None)
-
 (* Check if a type contains unresolved type variables *)
 let rec has_type_vars (t : Types.mono_type) : bool =
   match t with
@@ -2998,19 +2972,12 @@ and collect_insts_expr
     (type_map : Infer.type_map)
     (env : Infer.type_env)
     (expr : AST.expression) : unit =
+  let _ = expected_type in
   let expr = placeholder_rewritten_expr state.placeholder_rewrite_map expr in
   (match Hashtbl.find_opt state.trait_object_coercion_map expr.id with
   | Some (coercion : Typecheck.Resolution_artifacts.trait_object_coercion) ->
       register_trait_object_support_use state type_map env ~source_expr:expr ~target_traits:coercion.target_traits
-  | None -> (
-      match
-        expected_trait_object_coercion ~trait_object_coercion_map:state.trait_object_coercion_map type_map expr
-          expected_type
-      with
-      | Some coercion ->
-          register_trait_object_support_use state type_map env ~source_expr:expr
-            ~target_traits:coercion.target_traits
-      | None -> ()));
+  | None -> ());
   match expr.expr with
   | AST.Integer _ | AST.Float _ | AST.Boolean _ | AST.String _ -> ()
   | AST.TypeApply (callee, _) ->
@@ -4241,13 +4208,7 @@ and emit_expr_for_expected_type
       match Hashtbl.find_opt state.mono.trait_object_coercion_map expr.id with
       | Some coercion when coercion.target_traits = Types.normalize_trait_object_traits expected_traits ->
           emit_trait_object_package_expr state type_map env expr coercion emitted
-      | _ -> (
-          match
-            expected_trait_object_coercion ~trait_object_coercion_map:state.mono.trait_object_coercion_map
-              type_map expr (Some expected_type)
-          with
-          | Some coercion -> emit_trait_object_package_expr state type_map env expr coercion emitted
-          | None -> emitted))
+      | _ -> emitted)
   | _ -> emitted
 
 and emit_expr_for_current_return
@@ -8714,6 +8675,31 @@ let%test "Dyn codegen emits runtime wrapper and witness for Show" =
       && string_contains code "type marmosetDynWitness_show struct"
       && string_contains code "__witness.show(__dyn.payload)"
   | Error _ -> false
+
+let%test "Dyn codegen does not synthesize coercions without recorded metadata" =
+  let source = "let x: Dyn[Show] = 42\nputs(Show.show(x))" in
+  match Syntax.Parser.parse ~file_id:"<codegen>" source with
+  | Error _ -> false
+  | Ok program -> (
+      match Typecheck.Checker.check_program ~env:(Typecheck.Builtins.prelude_env ()) program with
+      | Error _ -> false
+      | Ok
+          {
+            Typecheck.Checker.environment = typed_env;
+            type_map;
+            call_resolution_map;
+            method_type_args_map;
+            method_def_map;
+            _;
+          } ->
+          let empty_coercions = Hashtbl.create 0 in
+          let code =
+            emit_program_with_typed_env ~call_resolution_map ~method_type_args_map ~method_def_map
+              ~trait_object_coercion_map:empty_coercions type_map typed_env program
+          in
+          string_contains code "var x marmosetDyn = int64(42)"
+          && not (string_contains code "var x marmosetDyn = marmosetDyn{")
+          && not (string_contains code "witness: marmosetDynWitness_show{"))
 
 let%test "record intersections erase local bindings to merged record shapes" =
   let source = {|
