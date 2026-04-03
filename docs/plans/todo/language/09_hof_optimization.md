@@ -2,7 +2,7 @@
 
 ## Maintenance
 
-- Last verified: 2026-04-02
+- Last verified: 2026-04-03
 - Implementation status: Planning (not started)
 - Update trigger: Any module-system, stdlib collections API, pipe/placeholder semantics, or Go backend codegen change
 - Prerequisites:
@@ -25,7 +25,11 @@ After modules and stdlib APIs stabilize, optimize a bounded set of standard-libr
 
 This plan is about keeping the expressive surface while improving backend lowering.
 
-It is not the place to solve every callable-representation problem. Pre-stdlib backend cleanup such as hoisting non-capturing sections/lambdas is separate and should happen earlier if needed. This plan starts only once module-qualified stdlib identities are stable enough to optimize against directly.
+It is not the place to solve every callable-representation problem. Pre-stdlib backend
+cleanup such as hoisting non-capturing sections/lambdas, hardening interface-value or
+`Dyn[...]` packaging, removing dead runtime metadata, and trimming generic emitted-code
+debt is separate and should happen earlier if needed. This plan starts only once
+module-qualified stdlib identities are stable enough to optimize against directly.
 
 ## In Scope
 
@@ -44,6 +48,8 @@ It is not the place to solve every callable-representation problem. Pre-stdlib b
 - speculative rewrites against pre-stdlib names such as temporary `list.filter` vs `list.select` spellings
 - mutation-visible or reordering-visible transformations
 - pre-stdlib callable-representation work such as closure-hoisting for non-capturing sections
+- generic interface-runtime cleanup such as shared witness adapters, dead helper
+  suppression, primitive formatting cleanup, or `Dyn[...]` payload trimming
 
 ## Locked Decisions
 
@@ -224,4 +230,5 @@ If any stage in the candidate pipeline is effectful, ambiguous, or unsupported, 
 - `docs/plans/todo/language/02_module-system.md` must land first so optimization can key off real module-qualified identities.
 - `docs/plans/todo/language/05_stdlib.md` must land first so the optimizer targets the shipped HOF surface, not speculative names.
 - `docs/plans/todo/language/06_post-modules-type-system-expansion.md` remains a separate post-modules track; this plan is backend/performance-focused, not a type-system expansion.
+- `docs/plans/todo/language/08_forall-exists.md` owns the earlier interface-runtime cleanup work that makes shared adapters, cleaner callback shapes, and lower-overhead value packaging available before stdlib HOF specialization.
 - Pre-stdlib callable representation work such as hoisting non-capturing sections should be tracked separately and can improve the effectiveness of this plan, but is not part of it.

@@ -2,7 +2,7 @@
 
 ## Maintenance
 
-- Last verified: 2026-04-02
+- Last verified: 2026-04-03
 - Implementation status: Planning
 - Prerequisites:
   - current data-first declaration semantics
@@ -342,6 +342,23 @@ Long term:
 - user-facing docs and examples should prefer plain value-position `trait`/`shape` names
 - implementation may still reuse or evolve existing `Dyn[...]` machinery internally
 
+### 10. Interface Runtime Adapters Must Be Shared And Auditable
+
+The current `Dyn[...]`-style runtime packaging is a useful starting point, but the
+forall/exists track should not freeze its current per-value costs into the long-term
+interface-value model.
+
+Required direction:
+
+- interface packaging must prefer shared top-level adapters or witness singletons when
+  the adapter shape depends only on the concrete source type and interface surface
+- runtime objects must not carry metadata that has no read path in codegen or runtime
+- primitive `show`/`debug` helpers should use fixed-format primitives rather than generic
+  `fmt.Sprintf`-style formatting where equivalent helpers exist
+- codegen cleanup that removes dead monomorphized helpers, duplicate forwarding
+  wrappers, and unnecessary expression-position IIFEs is part of making the interface
+  runtime auditable, even when those issues are secondary to the main packaging costs
+
 ## Target User Model
 
 Users should be able to think about the language this way:
@@ -434,6 +451,28 @@ type Userish = {
 - interface value coercion is not generalized across traits and shapes
 - docs do not currently explain the "one concrete type for all uses" vs "open interface value" split clearly
 
+## Current Backend Findings To Fold Into This Plan
+
+The existing Go backend already exposes the main implementation risks for value-position
+interfaces:
+
+- current trait-object packaging creates fresh `marmosetDyn{...}` values with fresh
+  witness func literals at package sites instead of reusing shared adapters
+- the current `marmosetDyn` payload still carries a `typeID` string through packaging
+  and coercion paths even though the current backend does not read it
+- primitive `show` and `debug` builtins still route through `fmt.Sprintf`, which adds
+  avoidable generic formatting overhead on common paths
+- target-based lowering already avoids some IIFEs in returns and `let` bindings, but
+  composite literal fields still fall back to expression-position IIFEs that bloat the
+  emitted Go
+- some monomorphized union fallback helpers and forwarding wrappers are emitted even
+  when concrete call sites never use them
+- recursive enum payload boxing still moves wrapped aggregates to the heap; this is
+  real, but it is a separate representation tradeoff and not the first low-hanging fix
+
+This plan should explicitly absorb the first five items so the interface-value rollout
+does not build new surface syntax on top of avoidable backend costs.
+
 ## Implementation Plan
 
 ### Phase 0. Freeze Terminology
@@ -515,6 +554,36 @@ Acceptance criteria:
 - `let xs: List[HasName] = [...]` works
 - unannotated mixed literals are not silently widened
 
+### Phase 4A. Harden Existing Interface Runtime Machinery
+
+Before generalizing trait-only `Dyn[...]` packaging into the long-term interface-value
+story, tighten the existing backend representation so the plan does not inherit obvious
+avoidable costs.
+
+Required work:
+
+- audit the current `marmosetDyn` payload and remove metadata such as `typeID` unless a
+  concrete dynamic operation still reads it
+- replace per-package-site witness func literal synthesis with shared adapters or
+  witness singletons whenever the adapter shape is type-invariant
+- replace primitive `show` and `debug` builtin formatting helpers with cheaper
+  fixed-format helpers
+- extend target-based lowering enough to avoid representative composite-literal IIFE
+  nests in interface packaging paths
+- suppress dead monomorphized union fallback helpers and duplicate forwarding wrappers
+  that remain after specialization
+
+Acceptance criteria:
+
+- representative trait-object package sites no longer emit fresh witness closure tables
+  per value when the adapter shape is fully determined by the concrete source type
+- no dead `typeID`-style metadata remains in the runtime payload unless a checked-in
+  dynamic operation consumes it
+- primitive builtin `show`/`debug` helpers no longer use generic formatting for
+  `Int`, `Bool`, `Float`, and `Str`
+- codegen snapshots and hardening fixtures cover the reduced-IIFE and dead-helper cases
+  so the cleanup does not regress silently
+
 ### Phase 5. Lower Trait Interface Values
 
 Unify or reuse current trait-object machinery for ordinary value-position trait types.
@@ -523,6 +592,8 @@ Acceptance criteria:
 
 - `let xs: List[Show] = [42, "hello"]` works
 - method calls on those values codegen correctly
+- trait interface values reuse the hardened shared-adapter runtime path from Phase 4A
+  rather than rebuilding per-value witness closures by default
 
 ### Phase 6. Lower Shape Interface Values
 
