@@ -3950,6 +3950,331 @@ and infer_placeholder_section_expr (type_map : type_map) (env : type_env) (expr 
             Ok (subst, func_type))
   | _ -> failwith "placeholder section rewrite must produce a function literal"
 
+and infer_block_against_expected type_map env stmts expected_type =
+  match stmts with
+  | [] -> (
+      match compatible_with_expected_type TNull expected_type with
+      | Error e -> Error e
+      | Ok subst -> Ok (subst, apply_substitution subst expected_type))
+  | [ stmt ] -> infer_statement_against_expected type_map env stmt expected_type
+  | stmt :: rest -> (
+      match infer_statement type_map env stmt with
+      | Error e -> Error e
+      | Ok (subst1, stmt_type) -> (
+          let env' =
+            match stmt.stmt with
+            | AST.Let let_binding ->
+                let env_subst = apply_substitution_env subst1 env in
+                if let_binding.name = "_" then
+                  env_subst
+                else
+                  let binding_type =
+                    binding_type_for_env ~value_expr:let_binding.value
+                      ~type_annotation:let_binding.type_annotation stmt_type
+                  in
+                  let poly =
+                    if should_monomorphize_let_binding_value let_binding.value then
+                      mono_to_poly binding_type
+                    else
+                      generalize env_subst binding_type
+                  in
+                  TypeEnv.add let_binding.name poly env_subst
+            | _ -> apply_substitution_env subst1 env
+          in
+          match infer_block_against_expected type_map env' rest (apply_substitution subst1 expected_type) with
+          | Error e -> Error e
+          | Ok (subst2, result_type) -> Ok (compose_substitution subst1 subst2, result_type)))
+
+and infer_statement_against_expected type_map env stmt expected_type =
+  match stmt.stmt with
+  | AST.ExpressionStmt expr | AST.Return expr ->
+      infer_arg_against_expected type_map env empty_substitution expr expected_type
+  | AST.Block stmts -> infer_block_against_expected type_map env stmts expected_type
+  | _ -> (
+      match infer_statement type_map env stmt with
+      | Error e -> Error e
+      | Ok (subst, inferred_type) -> (
+          let inferred_type' = apply_substitution subst inferred_type in
+          let expected_type' = apply_substitution subst expected_type in
+          match compatible_with_expected_type inferred_type' expected_type' with
+          | Error e -> Error e
+          | Ok subst2 ->
+              let final_subst = compose_substitution subst subst2 in
+              Ok (final_subst, apply_substitution final_subst expected_type)))
+
+and infer_if_against_expected type_map env condition consequence alternative expected_type =
+  match alternative with
+  | None -> (
+      match infer_if type_map env condition consequence alternative with
+      | Error e -> Error e
+      | Ok (subst, inferred_type) -> (
+          let inferred_type' = apply_substitution subst inferred_type in
+          let expected_type' = apply_substitution subst expected_type in
+          match compatible_with_expected_type inferred_type' expected_type' with
+          | Error e -> Error e
+          | Ok subst2 ->
+              let final_subst = compose_substitution subst subst2 in
+              Ok (final_subst, apply_substitution final_subst expected_type)))
+  | Some alt -> (
+      match infer_expression type_map env condition with
+      | Error e -> Error e
+      | Ok (subst1, cond_type) ->
+          match unify cond_type TBool with
+          | Error _ ->
+              Error
+                (error_at ~code:"type-if-condition"
+                   ~message:("If condition must be Bool, got: " ^ to_string cond_type)
+                   condition)
+          | Ok subst2 ->
+              let subst = compose_substitution subst1 subst2 in
+              let env' = apply_substitution_env subst env in
+              let narrowing =
+                detect_is_narrowing type_map condition
+                |> Option.map (fun (path, current_type, narrow_type) ->
+                       (path, apply_substitution subst current_type, apply_substitution subst narrow_type))
+              in
+              let env_cons, consequence_stmt =
+                match narrowing with
+                | Some (path, current_type, narrow_type) when Type_narrowing.is_identifier_path path ->
+                    (narrow_identifier_in_env env' path.root current_type narrow_type, consequence)
+                | Some (path, current_type, narrow_type) ->
+                    let narrowed_type =
+                      match Type_narrowing.compute_narrowed_type current_type narrow_type with
+                      | Some narrowed -> narrowed
+                      | None -> narrow_type
+                    in
+                    let narrowed_name = Type_narrowing.temp_name path "typed" in
+                    ( TypeEnv.add narrowed_name (Forall ([], narrowed_type)) env',
+                      substitute_narrowed_path_in_stmt path narrowed_name consequence )
+                | None -> (env', consequence)
+              in
+              match
+                infer_statement_against_expected type_map env_cons consequence_stmt
+                  (apply_substitution subst expected_type)
+              with
+              | Error e -> Error e
+              | Ok (subst3, _cons_type) ->
+                  let subst' = compose_substitution subst subst3 in
+                  let env'' = apply_substitution_env subst' env' in
+                  let env_alt, alternative_stmt =
+                    match narrowing with
+                    | Some (path, current_type, narrow_type) when Type_narrowing.is_identifier_path path ->
+                        ( narrow_identifier_to_complement env'' path.root
+                            (apply_substitution subst' current_type)
+                            (apply_substitution subst' narrow_type),
+                          alt )
+                    | Some (path, current_type, narrow_type) -> (
+                        match
+                          Type_narrowing.compute_complement_type
+                            (apply_substitution subst' current_type)
+                            (apply_substitution subst' narrow_type)
+                        with
+                        | Some complement_type ->
+                            let complement_name = Type_narrowing.temp_name path "complement" in
+                            ( TypeEnv.add complement_name (Forall ([], complement_type)) env'',
+                              substitute_narrowed_path_in_stmt path complement_name alt )
+                        | None -> (env'', alt))
+                    | None -> (env'', alt)
+                  in
+                  match
+                    infer_statement_against_expected type_map env_alt alternative_stmt
+                      (apply_substitution subst' expected_type)
+                  with
+                  | Error e -> Error e
+                  | Ok (subst4, _alt_type) ->
+                      let final_subst = compose_substitution subst' subst4 in
+                      Ok (final_subst, apply_substitution final_subst expected_type))
+
+and infer_match_arm_against_expected type_map env scrutinee scrutinee_type arm expected_type =
+  let scrutinee_path_opt = Type_narrowing.path_of_expr scrutinee in
+  match check_patterns arm.AST.patterns scrutinee_type with
+  | Error e -> Error e
+  | Ok (bindings, narrowed_type) ->
+      let narrowed_scrutinee = canonicalize_mono_type narrowed_type <> canonicalize_mono_type scrutinee_type in
+      let env', body =
+        match (scrutinee_path_opt, narrowed_scrutinee) with
+        | Some path, true when Type_narrowing.is_identifier_path path ->
+            (TypeEnv.add path.root (mono_to_poly narrowed_type) env, arm.AST.body)
+        | Some path, true ->
+            let narrowed_name = Type_narrowing.temp_name path "typed" in
+            ( TypeEnv.add narrowed_name (mono_to_poly narrowed_type) env,
+              Type_narrowing.substitute_path_in_expr path
+                ~replace:(Type_narrowing.replacement_identifier narrowed_name)
+                arm.AST.body )
+        | _ -> (env, arm.AST.body)
+      in
+      let env' = List.fold_left (fun e (name, ty) -> TypeEnv.add name (mono_to_poly ty) e) env' bindings in
+      infer_arg_against_expected type_map env' empty_substitution body expected_type
+
+and infer_match_against_expected type_map env match_expr scrutinee arms expected_type =
+  match infer_expression type_map env scrutinee with
+  | Error e -> Error e
+  | Ok (subst, scrutinee_type) -> (
+      let env' = apply_substitution_env subst env in
+      match Exhaustiveness.check_exhaustive scrutinee_type arms with
+      | Error msg -> Error (error_at ~code:"type-match" ~message:msg match_expr)
+      | Ok () ->
+          let rec loop subst_acc = function
+            | [] -> Ok (subst_acc, apply_substitution subst_acc expected_type)
+            | arm :: rest -> (
+                match
+                  infer_match_arm_against_expected type_map env' scrutinee scrutinee_type arm
+                    (apply_substitution subst_acc expected_type)
+                with
+                | Error e -> Error e
+                | Ok (arm_subst, _body_type) -> loop (compose_substitution subst_acc arm_subst) rest)
+          in
+          loop subst arms)
+
+and infer_enum_constructor_expr
+    ?(expected_result_type : mono_type option = None)
+    type_map
+    env
+    expr
+    enum_name
+    variant_name
+    args =
+  match Enum_registry.lookup_variant enum_name variant_name with
+  | None ->
+      Error
+        (error_at ~code:"type-constructor"
+           ~message:(unknown_constructor_message enum_name variant_name)
+           expr)
+  | Some variant -> (
+      if List.length args <> List.length variant.fields then
+        Error
+          (error_at ~code:"type-constructor"
+             ~message:
+               (Printf.sprintf "%s.%s expects %d arguments, got %d" enum_name variant_name
+                  (List.length variant.fields) (List.length args))
+             expr)
+      else
+        match Enum_registry.lookup enum_name with
+        | None -> Error (error_at ~code:"type-constructor" ~message:(unknown_type_message enum_name) expr)
+        | Some enum_def -> (
+            match expected_result_type |> Option.map canonicalize_mono_type with
+            | Some (TEnum (expected_enum_name, type_args)) when expected_enum_name = enum_name ->
+                let param_subst = substitution_of_list (List.combine enum_def.type_params type_args) in
+                let expected_types = List.map (apply_substitution param_subst) variant.fields in
+                (match infer_args_against_expected type_map env empty_substitution args expected_types with
+                | Error e -> Error e
+                | Ok (subst, _arg_types) ->
+                    Ok (subst, apply_substitution subst (TEnum (enum_name, type_args))))
+            | _ -> (
+                match infer_args type_map env empty_substitution args with
+                | Error e -> Error e
+                | Ok (subst, arg_types) ->
+                    let fresh_vars = List.map (fun _ -> fresh_type_var ()) enum_def.type_params in
+                    let param_subst = substitution_of_list (List.combine enum_def.type_params fresh_vars) in
+                    let expected_types = List.map (apply_substitution param_subst) variant.fields in
+                    let arg_types' = List.map (apply_substitution subst) arg_types in
+                    let rec unify_all subst_acc types1 types2 =
+                      match (types1, types2) with
+                      | [], [] -> Ok subst_acc
+                      | t1 :: rest1, t2 :: rest2 -> (
+                          let t1' = apply_substitution subst_acc t1 in
+                          let t2' = apply_substitution subst_acc t2 in
+                          match unify t1' t2' with
+                          | Error e -> Error (error_at ~code:e.code ~message:e.message expr)
+                          | Ok subst2 ->
+                              let new_subst = compose_substitution subst_acc subst2 in
+                              unify_all new_subst rest1 rest2)
+                      | _ ->
+                          Error (error_at ~code:"type-constructor" ~message:"Argument count mismatch" expr)
+                    in
+                    match unify_all empty_substitution arg_types' expected_types with
+                    | Error e -> Error e
+                    | Ok subst2 ->
+                        let final_subst = compose_substitution subst subst2 in
+                        let result_type_args = List.map (apply_substitution final_subst) fresh_vars in
+                        Ok (final_subst, TEnum (enum_name, result_type_args)))))
+
+and infer_named_type_constructor_call_against_expected
+    (type_map : type_map)
+    (env : type_env)
+    (call_expr : AST.expression)
+    (type_name : string)
+    (args : AST.expression list)
+    (expected_type : mono_type) : (substitution * mono_type) infer_result =
+  match canonicalize_mono_type expected_type with
+  | TNamed (expected_name, type_args) when expected_name = type_name -> (
+      match Type_registry.lookup_named_type type_name with
+      | None ->
+          Error
+            (error_at ~code:"type-constructor"
+               ~message:(Printf.sprintf "Unknown named type constructor: %s" type_name)
+               call_expr)
+      | Some named_type_def ->
+          let expect_single_argument (expected_arg_type : mono_type) =
+            if List.length args <> 1 then
+              Error
+                (error_at ~code:"type-constructor"
+                   ~message:
+                     (Printf.sprintf "Named type constructor %s expects 1 argument, got %d" type_name
+                        (List.length args))
+                   call_expr)
+            else
+              match infer_args_against_expected type_map env empty_substitution args [ expected_arg_type ] with
+              | Error e -> Error e
+              | Ok (subst, _arg_types) -> Ok (subst, apply_substitution subst expected_type)
+          in
+          match named_type_def.named_type_body with
+          | Type_registry.NamedProduct _ -> (
+              match Type_registry.instantiate_named_product_fields type_name type_args with
+              | Some (Ok fields) -> expect_single_argument (TRecord (fields, None))
+              | Some (Error msg) -> Error (error_at ~code:"type-constructor" ~message:msg call_expr)
+              | None ->
+                  Error
+                    (error_at ~code:"type-constructor"
+                       ~message:(Printf.sprintf "Unknown named product constructor: %s" type_name)
+                       call_expr))
+          | Type_registry.NamedWrapper _ -> (
+              match Type_registry.instantiate_named_wrapper_representation type_name type_args with
+              | Some (Ok representation_type) -> expect_single_argument representation_type
+              | Some (Error msg) -> Error (error_at ~code:"type-constructor" ~message:msg call_expr)
+              | None ->
+                  Error
+                    (error_at ~code:"type-constructor"
+                       ~message:(Printf.sprintf "Unknown named wrapper constructor: %s" type_name)
+                       call_expr)))
+  | _ -> infer_named_type_constructor_call type_map env call_expr type_name args
+
+and infer_expression_against_expected type_map env (expr : AST.expression) expected_type =
+  let result =
+    match expr.expr with
+    | AST.Function { origin; generics; params; return_type; is_effectful; body } -> (
+        match contextual_callable_signature_for_arity (List.length params) expected_type with
+        | Some signature ->
+            infer_function_literal ~known_signature:signature type_map env expr ~origin ~generics ~params ~return_type
+              ~is_effectful ~body
+        | None ->
+            infer_function_literal type_map env expr ~origin ~generics ~params ~return_type ~is_effectful ~body)
+    | AST.If (condition, consequence, alternative) ->
+        infer_if_against_expected type_map env condition consequence alternative expected_type
+    | AST.Match (scrutinee, arms) -> infer_match_against_expected type_map env expr scrutinee arms expected_type
+    | AST.BlockExpr stmts -> infer_block_against_expected type_map env stmts expected_type
+    | AST.EnumConstructor (enum_name, variant_name, args) ->
+        infer_enum_constructor_expr ~expected_result_type:(Some expected_type) type_map env expr enum_name
+          variant_name args
+    | AST.MethodCall { mc_receiver = { expr = AST.Identifier name; _ }; mc_method = method_name; mc_args = args; _ }
+      -> (
+        match classify_dotted_receiver env name method_name with
+        | `EnumVariant ->
+            infer_enum_constructor_expr ~expected_result_type:(Some expected_type) type_map env expr name method_name
+              args
+        | _ -> infer_expression type_map env expr)
+    | AST.Call ({ expr = AST.Identifier type_name; _ }, args)
+      when (not (TypeEnv.mem type_name env)) && Type_registry.is_named_type_name type_name ->
+        infer_named_type_constructor_call_against_expected type_map env expr type_name args expected_type
+    | _ -> infer_expression type_map env expr
+  in
+  match result with
+  | Ok (subst, t) ->
+      let t' = apply_substitution subst t in
+      record_type type_map expr t';
+      Ok (subst, t)
+  | Error e -> Error e
+
 and infer_arg_against_expected type_map env subst (arg : AST.expression) (expected_type : mono_type) :
     (substitution * mono_type) infer_result =
   let expected_type' = apply_substitution subst expected_type in
@@ -3971,16 +4296,7 @@ and infer_arg_against_expected type_map env subst (arg : AST.expression) (expect
         in
         let env' = apply_substitution_env subst env in
         let infer_arg_expr () =
-          match inferred_arg.expr with
-          | AST.Function { origin; generics; params; return_type; is_effectful; body } -> (
-              match contextual_callable_signature_for_arity (List.length params) expected_type' with
-              | Some signature ->
-                  infer_function_literal ~known_signature:signature type_map env' inferred_arg ~origin ~generics
-                    ~params ~return_type ~is_effectful ~body
-              | None ->
-                  infer_function_literal type_map env' inferred_arg ~origin ~generics ~params ~return_type
-                    ~is_effectful ~body)
-          | _ -> infer_expression type_map env' inferred_arg
+          infer_expression_against_expected type_map env' inferred_arg expected_type'
         in
         match infer_arg_expr () with
         | Error e -> Error e
@@ -6067,14 +6383,18 @@ and infer_let ?(prefer_existing_self = false) type_map env name expr type_annota
           in
           (* Infer expression type with self in scope *)
           let infer_expr_result =
-            match (expr.expr, callable_context) with
-            | AST.Function { origin; generics; params; return_type; is_effectful; body }, Some (_, signature) ->
+            match (expr.expr, callable_context, type_annotation) with
+            | AST.Function { origin; generics; params; return_type; is_effectful; body }, Some (_, signature), _ ->
                 infer_function_literal ~known_signature:signature type_map env_with_self expr ~origin ~generics
                   ~params ~return_type ~is_effectful ~body
-            | AST.Function { origin; generics; params; return_type; is_effectful; body }, None ->
+            | AST.Function { origin; generics; params; return_type; is_effectful; body }, None, _ ->
                 infer_function_literal type_map env_with_self expr ~origin ~generics ~params ~return_type
                   ~is_effectful ~body
-            | _ -> infer_expression type_map env_with_self expr
+            | _, _, Some type_expr -> (
+                match Annotation.type_expr_to_mono_type type_expr with
+                | Error d -> Error d
+                | Ok annotated_type -> infer_expression_against_expected type_map env_with_self expr annotated_type)
+            | _, _, None -> infer_expression type_map env_with_self expr
           in
           match infer_expr_result with
           | Error e -> Error e

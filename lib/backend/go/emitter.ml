@@ -3672,7 +3672,8 @@ type type_check_info = {
   narrow_type : Types.mono_type;
 }
 
-let type_check_info_of_expr (type_map : Infer.type_map) (expr : AST.expression) : type_check_info option =
+let type_check_info_of_expr (type_map : Infer.type_map) (env : Infer.type_env) (expr : AST.expression) :
+    type_check_info option =
   match expr.expr with
   | AST.TypeCheck (checked_expr, type_ann) -> (
       match Type_narrowing.path_of_expr checked_expr with
@@ -3682,7 +3683,7 @@ let type_check_info_of_expr (type_map : Infer.type_map) (expr : AST.expression) 
             {
               path;
               checked_expr;
-              current_type = get_type type_map checked_expr;
+              current_type = expr_type_from_env_or_map env type_map checked_expr;
               narrow_type = annotation_exn (Annotation.type_expr_to_mono_type type_ann);
             })
   | _ -> None
@@ -4524,6 +4525,14 @@ and emit_record_match_arm
     pattern
     body
     is_first =
+  let body_env =
+    match Infer.check_pattern pattern scrutinee_type with
+    | Ok (bindings, _narrowed_type) ->
+        List.fold_left
+          (fun env_acc (name, typ) -> Infer.TypeEnv.add name (Types.Forall ([], typ)) env_acc)
+          env bindings
+    | Error _ -> env
+  in
   let result_prefix =
     match target with
     | Some t -> target_prefix t
@@ -4538,9 +4547,9 @@ and emit_record_match_arm
   let body_code =
     match target with
     | Some t ->
-        pre_body_code ^ with_indent_delta state 2 (fun () -> emit_expr_to_target state type_map env body t)
+        pre_body_code ^ with_indent_delta state 2 (fun () -> emit_expr_to_target state type_map body_env body t)
     | None ->
-        let body_str = emit_expr_for_expected_type state type_map env match_result_type body in
+        let body_str = emit_expr_for_expected_type state type_map body_env match_result_type body in
         pre_body_code ^ "\t\t" ^ result_prefix ^ body_str ^ "\n"
   in
   let cond_parts, bind_lines = emit_pattern_plan state pattern scrutinee_var scrutinee_type in
@@ -5226,7 +5235,7 @@ and emit_if state type_map env if_expr cond cons alt =
   let inner_ind = ind ^ "    " in
 
   (* Check if condition is a type check (x is T) *)
-  let type_check_info = type_check_info_of_expr type_map cond in
+  let type_check_info = type_check_info_of_expr type_map env cond in
 
   match type_check_info with
   | Some info -> (
@@ -5377,7 +5386,7 @@ and emit_if_to_target state type_map env if_expr (cond : AST.expression) cons al
     else
       target
   in
-  let type_check_info = type_check_info_of_expr type_map cond in
+  let type_check_info = type_check_info_of_expr type_map env cond in
   match type_check_info with
   | Some info -> (
       let emit_branch_to_target branch_env stmt =

@@ -977,6 +977,20 @@ let%test "or-pattern alternatives must bind the same names" =
           && String_utils.contains_substring diag.message ~needle:"bind the same names")
         diags
 
+let%test "or-pattern alternatives with the same names still typecheck" =
+  Infer.reset_fresh_counter ();
+  let code =
+    {|
+      type Choice = { Left(Int), Right(Int) }
+      let out = match Choice.Left(1) {
+        case Choice.Left(value) | Choice.Right(value): value + 1
+      }
+    |}
+  in
+  match check code with
+  | Ok { result_type = TInt; _ } -> true
+  | _ -> false
+
 let%test "env reuse with shared inference state preserves constrained generic obligations" =
   Infer.reset_fresh_counter ();
   Trait_registry.clear ();
