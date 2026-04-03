@@ -1,0 +1,5 @@
+# CM52: Record spread updates package values for expected Dyn fields
+type Box = { value: Dyn[Show], tag: Int }
+let box: Box = { value: 1, tag: 0 }
+let updated: Box = { ...box, value: if (true) { 42 } else { 43 } }
+puts(Show.show(updated.value))  # output: 42

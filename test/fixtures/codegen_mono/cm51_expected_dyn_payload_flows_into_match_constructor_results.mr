@@ -1,0 +1,7 @@
+# CM51: Expected Dyn payload types flow into match-built constructor results
+type Option[a] = { Some(a), None }
+let x: Option[Dyn[Show]] = match Option.Some(42) {
+  case Option.Some(n): Option.Some(n)
+  case Option.None: Option.None
+}
+puts(match x { case Option.Some(v): Show.show(v) case Option.None: "none" })  # output: 42

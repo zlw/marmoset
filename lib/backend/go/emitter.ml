@@ -3357,17 +3357,32 @@ let with_return_type (state : emit_state) (return_type : Types.mono_type) (f : u
 
 type emit_target =
   | ReturnTarget
-  | AssignTarget of string
+  | AssignTarget of string * Types.mono_type
   | DiscardTarget
 
 let target_prefix = function
   | ReturnTarget -> "return "
-  | AssignTarget name -> name ^ " = "
+  | AssignTarget (name, _) -> name ^ " = "
   | DiscardTarget -> "_ = "
 
 let emit_record_struct_type (state : emit_state) (fields : Types.record_field_type list) : string =
   let fields = Types.normalize_record_fields fields in
   intern_record_shape state.mono fields
+
+let enum_constructor_expected_arg_types
+    (enum_type : Types.mono_type)
+    (enum_name : string)
+    (variant_name : string) : Types.mono_type list =
+  match Types.canonicalize_mono_type enum_type with
+  | Types.TEnum (resolved_enum_name, type_args) when resolved_enum_name = enum_name -> (
+      match
+        (Typecheck.Enum_registry.lookup resolved_enum_name, Typecheck.Enum_registry.lookup_variant resolved_enum_name variant_name)
+      with
+      | Some enum_def, Some variant ->
+          let subst = Types.substitution_of_list (List.combine enum_def.type_params type_args) in
+          List.map (Types.apply_substitution subst) variant.fields
+      | _ -> [])
+  | _ -> []
 
 let emit_trait_object_package_value
     (state : emit_state) ~(source_type : Types.mono_type) ~(target_traits : string list) (expr_str : string) :
@@ -3863,7 +3878,7 @@ let rec emit_expr
         let go_type_name = mangle_type enum_type in
         let constructor_name = Printf.sprintf "%s_%s" go_type_name variant_name in
         (* Emit arguments *)
-        let arg_strs = List.map (emit_expr state type_map env) args in
+        let arg_strs = emit_enum_constructor_args state type_map env enum_type enum_name variant_name args in
         if arg_strs = [] then
           Printf.sprintf "%s()" constructor_name
         else
@@ -3955,11 +3970,15 @@ let rec emit_expr
         with
         | EnumConstructorValue { enum_name; result_type; constructor_arity; _ } ->
             let enum_type =
-              if state.mono.concrete_only && has_type_vars result_type && enum_allows_unresolved_erasure enum_name
+              let refined_type = enum_constructor_codegen_type type_map expr expected_type enum_name in
+              let refined_type = Types.canonicalize_mono_type refined_type in
+              if state.mono.concrete_only && has_type_vars refined_type && enum_allows_unresolved_erasure enum_name
               then
-                normalize_type_for_codegen ~concrete_only:state.mono.concrete_only result_type
+                normalize_type_for_codegen ~concrete_only:state.mono.concrete_only refined_type
               else
-                result_type
+                match expected_type with
+                | Some _ -> refined_type
+                | None -> result_type
             in
             let go_type_name = mangle_type enum_type in
             let constructor_name = Printf.sprintf "%s_%s" go_type_name variant_name in
@@ -4013,7 +4032,7 @@ let rec emit_expr
             let go_type_name = mangle_type enum_type in
             let constructor_name = Printf.sprintf "%s_%s" go_type_name variant_name in
             (* Emit arguments *)
-            let arg_strs = List.map (emit_expr state type_map env) args in
+            let arg_strs = emit_enum_constructor_args state type_map env enum_type enum_name variant_name args in
             if arg_strs = [] then
               Printf.sprintf "%s()" constructor_name
             else
@@ -4134,7 +4153,7 @@ let rec emit_expr
             Printf.sprintf "(func() %s {\n%s%s})()" go_type body_str ind)
   in
   let projected = maybe_project_to_expected_record_type state type_map env expr expected_type emitted in
-  maybe_package_trait_object_expr state type_map env expr projected
+  projected
 
 and emit_field_function_call
     (state : emit_state)
@@ -4154,7 +4173,7 @@ and emit_field_function_call
       match (remaining_args, remaining_expected) with
       | [], _ -> String.concat ", " (List.rev acc)
       | arg :: rest_args, expected :: rest_expected ->
-          emit (emit_expr ~expected_type:(Some expected) state type_map env arg :: acc) rest_args rest_expected
+          emit (emit_expr_for_expected_type state type_map env expected arg :: acc) rest_args rest_expected
       | arg :: rest_args, [] -> emit (emit_expr state type_map env arg :: acc) rest_args []
     in
     emit [] args expected_types
@@ -4192,6 +4211,24 @@ and emit_field_function_call
       let args_str = emit_args_with_expected_types arg_types in
       Printf.sprintf "(%s.(%s))(%s)" field_str callable_go_type args_str
 
+and emit_enum_constructor_args
+    (state : emit_state)
+    (type_map : Infer.type_map)
+    (env : Infer.type_env)
+    (enum_type : Types.mono_type)
+    (enum_name : string)
+    (variant_name : string)
+    (args : AST.expression list) : string list =
+  let expected_types = enum_constructor_expected_arg_types enum_type enum_name variant_name in
+  let rec emit acc remaining_args remaining_expected =
+    match (remaining_args, remaining_expected) with
+    | [], _ -> List.rev acc
+    | arg :: rest_args, expected_type :: rest_expected ->
+        emit (emit_expr_for_expected_type state type_map env expected_type arg :: acc) rest_args rest_expected
+    | arg :: rest_args, [] -> emit (emit_expr state type_map env arg :: acc) rest_args []
+  in
+  emit [] args expected_types
+
 and emit_expr_for_expected_type
     (state : emit_state)
     (type_map : Infer.type_map)
@@ -4199,12 +4236,19 @@ and emit_expr_for_expected_type
     (expected_type : Types.mono_type)
     (expr : AST.expression) : string =
   let emitted = emit_expr ~expected_type:(Some expected_type) state type_map env expr in
-  match
-    expected_trait_object_coercion ~trait_object_coercion_map:state.mono.trait_object_coercion_map type_map expr
-      (Some expected_type)
-  with
-  | Some coercion -> emit_trait_object_package_expr state type_map env expr coercion emitted
-  | None -> emitted
+  match Types.canonicalize_mono_type expected_type with
+  | Types.TTraitObject expected_traits -> (
+      match Hashtbl.find_opt state.mono.trait_object_coercion_map expr.id with
+      | Some coercion when coercion.target_traits = Types.normalize_trait_object_traits expected_traits ->
+          emit_trait_object_package_expr state type_map env expr coercion emitted
+      | _ -> (
+          match
+            expected_trait_object_coercion ~trait_object_coercion_map:state.mono.trait_object_coercion_map
+              type_map expr (Some expected_type)
+          with
+          | Some coercion -> emit_trait_object_package_expr state type_map env expr coercion emitted
+          | None -> emitted))
+  | _ -> emitted
 
 and emit_expr_for_current_return
     (state : emit_state) (type_map : Infer.type_map) (env : Infer.type_env) (expr : AST.expression) : string =
@@ -4662,26 +4706,33 @@ and emit_match_enum ?target state type_map env scrutinee scrutinee_type enum_nam
       | AST.PLiteral _ -> failwith "Literal patterns not supported for enum match"
       | AST.PRecord _ -> failwith "Record patterns not yet implemented in enum match"
     in
-    let cond_str =
-      match cond_parts with
-      | [] -> "true"
-      | cs -> String.concat " && " cs
-    in
-    let binds_block = binding_block_lines ~indent:"\t\t\t" bind_lines in
-    let body_code =
-      match target with
-      | Some t -> with_indent_delta state 3 (fun () -> emit_expr_to_target state type_map env body t)
-      | None ->
-          let body_str = emit_expr_for_expected_type state type_map env match_result_type body in
-          "\t\t\treturn " ^ body_str ^ "\n"
-    in
-    let branch_prefix =
-      if is_first then
-        "\t\tif"
-      else
-        " else if"
-    in
-    (Printf.sprintf "%s %s {\n%s%s\t\t}" branch_prefix cond_str binds_block body_code, cond_parts = [])
+    if cond_parts = [] && is_first then
+      let binds_block = binding_block_lines ~indent:"\t\t" bind_lines in
+      let body_code =
+        match target with
+        | Some t -> with_indent_delta state 2 (fun () -> emit_expr_to_target state type_map env body t)
+        | None ->
+            let body_str = emit_expr_for_expected_type state type_map env match_result_type body in
+            "\t\treturn " ^ body_str ^ "\n"
+      in
+      (binds_block ^ body_code, true)
+    else
+      let cond_str = String.concat " && " cond_parts in
+      let binds_block = binding_block_lines ~indent:"\t\t\t" bind_lines in
+      let body_code =
+        match target with
+        | Some t -> with_indent_delta state 3 (fun () -> emit_expr_to_target state type_map env body t)
+        | None ->
+            let body_str = emit_expr_for_expected_type state type_map env match_result_type body in
+            "\t\t\treturn " ^ body_str ^ "\n"
+      in
+      let branch_prefix =
+        if is_first then
+          "\t\tif"
+        else
+          " else if"
+      in
+      (Printf.sprintf "%s %s {\n%s%s\t\t}" branch_prefix cond_str binds_block body_code, false)
   in
   let emit_variant_case (variant : Typecheck.Enum_registry.variant_def) =
     let tag_constant = Printf.sprintf "%s_%s_tag" go_type_name variant.name in
@@ -5168,7 +5219,7 @@ and emit_type_switch_to_target
     else
       match target with
       | ReturnTarget -> ind ^ "return struct{}{}\n"
-      | AssignTarget name -> ind ^ name ^ " = struct{}{}\n"
+                | AssignTarget (name, _) -> ind ^ name ^ " = struct{}{}\n"
       | DiscardTarget -> ""
   in
   switch_code ^ unit_tail
@@ -5316,10 +5367,7 @@ and emit_expr_to_target state type_map env expr target =
       let expr_str =
         match target with
         | ReturnTarget -> emit_expr_for_current_return state type_map env expr
-        | AssignTarget _ -> (
-            match Hashtbl.find_opt type_map expr.id with
-            | Some expected_type -> emit_expr_for_expected_type state type_map env expected_type expr
-            | None -> emit_expr state type_map env expr)
+        | AssignTarget (_, expected_type) -> emit_expr_for_expected_type state type_map env expected_type expr
         | DiscardTarget -> emit_expr state type_map env expr
       in
       ind ^ target_prefix target ^ expr_str ^ "\n"
@@ -5370,7 +5418,7 @@ and emit_if_to_target state type_map env if_expr (cond : AST.expression) cons al
               else
                 match target with
                 | ReturnTarget -> indent_str state ^ "return struct{}{}\n"
-                | AssignTarget name -> indent_str state ^ name ^ " = struct{}{}\n"
+                | AssignTarget (name, _) -> indent_str state ^ name ^ " = struct{}{}\n"
                 | DiscardTarget -> ""))
       | `Runtime_check complement_type_opt ->
           emit_type_switch_to_target state type_map env info.checked_expr info.path info.narrow_type
@@ -5412,7 +5460,7 @@ and emit_if_to_target state type_map env if_expr (cond : AST.expression) cons al
         else
           match target with
           | ReturnTarget -> ind ^ "return struct{}{}\n"
-          | AssignTarget name -> ind ^ name ^ " = struct{}{}\n"
+          | AssignTarget (name, _) -> ind ^ name ^ " = struct{}{}\n"
           | DiscardTarget -> ""
       in
       if_code ^ unit_tail
@@ -5477,7 +5525,7 @@ and emit_call state type_map env call_expr func args =
       match (remaining_args, remaining_expected) with
       | [], _ -> String.concat ", " (List.rev acc)
       | arg :: rest_args, expected :: rest_expected ->
-          emit (emit_expr ~expected_type:(Some expected) state type_map env arg :: acc) rest_args rest_expected
+          emit (emit_expr_for_expected_type state type_map env expected arg :: acc) rest_args rest_expected
       | arg :: rest_args, [] -> emit (emit_expr state type_map env arg :: acc) rest_args []
     in
     emit [] args expected_types
@@ -5593,7 +5641,7 @@ and emit_array ?expected_elem_type state type_map env elements =
         | None -> get_type type_map first
       in
       let elem_type_str = type_to_go state.mono elem_type in
-      let emit_elem e = emit_expr ~expected_type:(Some elem_type) state type_map env e in
+      let emit_elem e = emit_expr_for_expected_type state type_map env elem_type e in
       let elems_str = List.map emit_elem elements |> String.concat ", " in
       Printf.sprintf "[]%s{%s}" elem_type_str elems_str
 
@@ -5943,7 +5991,7 @@ and emit_stmt
             (code, env)
         | _ ->
             let expr_type = get_type type_map let_binding.value in
-            let expr_str = emit_expr ~expected_type:(Some expr_type) state type_map env let_binding.value in
+            let expr_str = emit_expr_for_expected_type state type_map env expr_type let_binding.value in
             (Printf.sprintf "%s_ = %s\n" ind expr_str, env)
       else
         let go_binding_name = go_safe_ident let_binding.name in
@@ -5980,7 +6028,7 @@ and emit_stmt
             | None ->
                 (* Emit local function values with split declaration+assignment.
                  This keeps the name in scope inside the function literal body for recursion/captures. *)
-                let expr_str = emit_expr ~expected_type:(Some expr_type) state type_map env let_binding.value in
+                let expr_str = emit_expr_for_expected_type state type_map env expr_type let_binding.value in
                 let go_type = type_to_go state.mono expr_type in
                 let binding_code =
                   Printf.sprintf "%svar %s %s\n%s%s = %s\n%s_ = %s\n" ind go_binding_name go_type ind
@@ -5991,7 +6039,8 @@ and emit_stmt
             let go_type = type_to_go state.mono expr_type in
             let decl = Printf.sprintf "%svar %s %s\n" ind go_binding_name go_type in
             let if_code =
-              emit_if_to_target state type_map env let_binding.value cond cons alt (AssignTarget go_binding_name)
+              emit_if_to_target state type_map env let_binding.value cond cons alt
+                (AssignTarget (go_binding_name, expr_type))
             in
             let used_marker = Printf.sprintf "%s_ = %s\n" ind go_binding_name in
             let env' = Infer.TypeEnv.add let_binding.name (Types.Forall ([], expr_type)) env in
@@ -6000,21 +6049,26 @@ and emit_stmt
             let go_type = type_to_go state.mono expr_type in
             let decl = Printf.sprintf "%svar %s %s\n" ind go_binding_name go_type in
             let match_code =
-              emit_match ~target:(AssignTarget go_binding_name) state type_map env let_binding.value scrutinee
-                arms
+              emit_match ~target:(AssignTarget (go_binding_name, expr_type)) state type_map env let_binding.value
+                scrutinee arms
             in
             let used_marker = Printf.sprintf "%s_ = %s\n" ind go_binding_name in
             let env' = Infer.TypeEnv.add let_binding.name (Types.Forall ([], expr_type)) env in
             (decl ^ match_code ^ used_marker, env')
         | AST.RecordLit (fields, Some base_expr) ->
             (* Record spread without IIFE *)
-            let record_type = get_type type_map let_binding.value in
-            let declared_fields, _result_row =
-              match record_type with
-              | Types.TRecord (f, row) -> normalize_record_row_type f row
-              | _ ->
-                  failwith
-                    (Printf.sprintf "Record literal expected record type, got %s" (Types.to_string record_type))
+            let declared_fields =
+              match Structural.fields_of_type expr_type with
+              | Some fields -> Types.normalize_record_fields fields
+              | None -> (
+                  match get_type type_map let_binding.value with
+                  | Types.TRecord (f, row) ->
+                      let normalized_fields, _ = normalize_record_row_type f row in
+                      normalized_fields
+                  | other ->
+                      failwith
+                        (Printf.sprintf "Record literal expected record-like type, got %s"
+                           (Types.to_string other)))
             in
             let result_fields =
               match type_from_env_or_map env type_map base_expr |> Option.map Types.canonicalize_mono_type with
@@ -6057,7 +6111,7 @@ and emit_stmt
               let go_name = go_record_field_name field.Types.name in
               match find_last_record_field_expr field.Types.name fields with
               | Some field_expr ->
-                  let field_str = emit_expr state type_map env field_expr in
+                  let field_str = emit_expr_for_expected_type state type_map env field.Types.typ field_expr in
                   Printf.sprintf "%s: %s" go_name field_str
               | None ->
                   if uses_spread_base then
@@ -6075,7 +6129,7 @@ and emit_stmt
             (spread_decl ^ binding_code, env')
         | _ ->
             (* Pass expected_type so EnumConstructors get the correct concrete type *)
-            let expr_str = emit_expr ~expected_type:(Some expr_type) state type_map env let_binding.value in
+            let expr_str = emit_expr_for_expected_type state type_map env expr_type let_binding.value in
             let binding_code =
               match let_binding.type_annotation with
               | Some _ ->

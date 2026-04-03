@@ -1,0 +1,8 @@
+# CM49: Dyn let annotations package match-arm results
+type Option[a] = { Some(a), None }
+let source = Option.Some(42)
+let x: Dyn[Show] = match source {
+  case Option.Some(n): n
+  case Option.None: 0
+}
+puts(Show.show(x))  # output: 42

@@ -1321,10 +1321,121 @@ let maybe_record_trait_object_coercion
 let expression_type_or_lookup (type_map : type_map) (expr : AST.expression) : (mono_type, Diagnostic.t) result =
   match Hashtbl.find_opt type_map expr.id with
   | Some ty -> Ok ty
-  | None ->
-      Error
-        (Diagnostic.error_no_span ~code:"type-internal"
-           ~message:(Printf.sprintf "Missing inferred type for expression id %d at Dyn coercion site" expr.id))
+  | None -> (
+      match Hashtbl.find_opt global_placeholder_rewrite_store expr.id with
+      | Some rewritten_expr -> (
+          match Hashtbl.find_opt type_map rewritten_expr.id with
+          | Some ty -> Ok ty
+          | None ->
+              Error
+                (Diagnostic.error_no_span ~code:"type-internal"
+                   ~message:
+                     (Printf.sprintf
+                        "Missing inferred type for expression id %d (or placeholder rewrite id %d) at Dyn coercion site"
+                        expr.id rewritten_expr.id)))
+      | None ->
+          Error
+            (Diagnostic.error_no_span ~code:"type-internal"
+               ~message:(Printf.sprintf "Missing inferred type for expression id %d at Dyn coercion site" expr.id)))
+
+let rec record_expected_trait_object_coercions
+    (type_map : type_map)
+    (expr : AST.expression)
+    (expected_type : mono_type) : (unit, Diagnostic.t) result =
+  let record_here () =
+    match canonicalize_mono_type expected_type with
+    | TTraitObject _ ->
+        let* actual_type = expression_type_or_lookup type_map expr in
+        maybe_record_trait_object_coercion
+          ~mk_error:(fun ~code ~message -> error_at ~code ~message expr)
+          expr actual_type expected_type
+    | _ -> Ok ()
+  in
+  let record_record_fields expected_fields fields =
+    let rec loop = function
+      | [] -> Ok ()
+      | (field : AST.record_field) :: rest -> (
+          let* () =
+            match field.field_value with
+            | None -> Ok ()
+            | Some field_expr -> (
+                match List.find_opt (fun (expected_field : Types.record_field_type) -> expected_field.name = field.field_name) expected_fields with
+                | Some expected_field ->
+                    record_expected_trait_object_coercions type_map field_expr expected_field.typ
+                | None -> Ok ())
+          in
+          loop rest)
+    in
+    loop fields
+  in
+  let record_enum_constructor_args enum_name variant_name args =
+    match canonicalize_mono_type expected_type with
+    | TEnum (expected_enum_name, type_args) when expected_enum_name = enum_name -> (
+        match (Enum_registry.lookup enum_name, Enum_registry.lookup_variant enum_name variant_name) with
+        | Some enum_def, Some variant ->
+            let subst = substitution_of_list (List.combine enum_def.type_params type_args) in
+            let expected_fields = List.map (apply_substitution subst) variant.fields in
+            let rec loop remaining_args remaining_expected =
+              match (remaining_args, remaining_expected) with
+              | [], _ | _, [] -> Ok ()
+              | arg :: rest_args, expected_field :: rest_expected ->
+                  let* () = record_expected_trait_object_coercions type_map arg expected_field in
+                  loop rest_args rest_expected
+            in
+            loop args expected_fields
+        | _ -> Ok ())
+    | _ -> Ok ()
+  in
+  let* () = record_here () in
+  match expr.expr with
+  | AST.If (_cond, cons, alt_opt) ->
+      let* () = record_stmt_tail_expected_trait_object_coercions type_map cons expected_type in
+      (match alt_opt with
+      | None -> Ok ()
+      | Some alt_stmt -> record_stmt_tail_expected_trait_object_coercions type_map alt_stmt expected_type)
+  | AST.Match (_scrutinee, arms) ->
+      let rec loop = function
+        | [] -> Ok ()
+        | (arm : AST.match_arm) :: rest ->
+            let* () = record_expected_trait_object_coercions type_map arm.body expected_type in
+            loop rest
+      in
+      loop arms
+  | AST.BlockExpr stmts -> (
+      match List.rev stmts with
+      | [] -> Ok ()
+      | last :: _ -> record_stmt_tail_expected_trait_object_coercions type_map last expected_type)
+  | AST.RecordLit (fields, _spread) -> (
+      match Structural.fields_of_type (canonicalize_mono_type expected_type) with
+      | Some expected_fields -> record_record_fields expected_fields fields
+      | None -> Ok ())
+  | AST.EnumConstructor (enum_name, variant_name, args) -> record_enum_constructor_args enum_name variant_name args
+  | AST.MethodCall { mc_receiver = { expr = AST.Identifier enum_name; _ }; mc_method = variant_name; mc_args = args; _ }
+    ->
+      record_enum_constructor_args enum_name variant_name args
+  | AST.Call ({ expr = AST.Identifier type_name; _ }, [ arg ]) when Type_registry.is_named_type_name type_name -> (
+      match canonicalize_mono_type expected_type with
+      | TNamed (expected_name, type_args) when expected_name = type_name -> (
+          match Type_registry.instantiate_named_wrapper_representation type_name type_args with
+          | Some (Ok representation_type) ->
+              record_expected_trait_object_coercions type_map arg representation_type
+          | Some (Error msg) -> Error (error_at ~code:"type-constructor" ~message:msg expr)
+          | None -> Ok ())
+      | _ -> Ok ())
+  | _ -> Ok ()
+
+and record_stmt_tail_expected_trait_object_coercions
+    (type_map : type_map)
+    (stmt : AST.statement)
+    (expected_type : mono_type) : (unit, Diagnostic.t) result =
+  match stmt.stmt with
+  | AST.ExpressionStmt expr | AST.Return expr -> record_expected_trait_object_coercions type_map expr expected_type
+  | AST.Block [] -> Ok ()
+  | AST.Block stmts ->
+      record_stmt_tail_expected_trait_object_coercions type_map (List.hd (List.rev stmts)) expected_type
+  | AST.Let _ | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ | AST.TraitDef _ | AST.ImplDef _
+  | AST.InherentImplDef _ | AST.DeriveDef _ | AST.TypeAlias _ ->
+      Ok ()
 
 let provisional_function_type
     ?(outer_type_bindings = [])
@@ -3886,11 +3997,7 @@ and infer_arg_against_expected type_map env subst (arg : AST.expression) (expect
             else
               match canonicalize_mono_type expected_type'' with
               | TTraitObject _ -> (
-                  match
-                    maybe_record_trait_object_coercion
-                      ~mk_error:(fun ~code ~message -> error_at ~code ~message arg)
-                      arg arg_type' expected_type''
-                  with
+                  match record_expected_trait_object_coercions type_map arg expected_type'' with
                   | Error e -> Error e
                   | Ok () ->
                       propagate_type_var_constraints_through_substitution subst';
@@ -3901,8 +4008,11 @@ and infer_arg_against_expected type_map env subst (arg : AST.expression) (expect
                   | Ok subst2 ->
                       let final_subst = compose_substitution subst' subst2 in
                       let final_type = apply_substitution final_subst arg_type in
-                      propagate_type_var_constraints_through_substitution final_subst;
-                      Ok (final_subst, final_type))))
+                      match record_expected_trait_object_coercions type_map arg expected_type'' with
+                      | Error e -> Error e
+                      | Ok () ->
+                          propagate_type_var_constraints_through_substitution final_subst;
+                          Ok (final_subst, final_type))))
 
 and infer_args_against_expected type_map env subst args expected_types =
   match (args, expected_types) with
@@ -5497,26 +5607,9 @@ and infer_statement type_map env stmt =
    implicit tail expressions in function bodies. *)
 and record_tail_trait_object_coercions (type_map : type_map) (expected_type : mono_type) (stmt : AST.statement) :
     (unit, Diagnostic.t) result =
-  let record_expr expr =
-    let* actual_type = expression_type_or_lookup type_map expr in
-    maybe_record_trait_object_coercion
-      ~mk_error:(fun ~code ~message -> error_at ~code ~message expr)
-      expr actual_type expected_type
-  in
-  let record_expr_tail (expr : AST.expression) : (unit, Diagnostic.t) result =
-    match expr.expr with
-    | AST.If (_cond, cons, alt) -> (
-        match record_tail_trait_object_coercions type_map expected_type cons with
-        | Error _ as err -> err
-        | Ok () -> (
-            match alt with
-            | None -> Ok ()
-            | Some alt_stmt -> record_tail_trait_object_coercions type_map expected_type alt_stmt))
-    | _ -> record_expr expr
-  in
   match stmt.stmt with
   | AST.Return _ -> Ok ()
-  | AST.ExpressionStmt expr -> record_expr_tail expr
+  | AST.ExpressionStmt expr -> record_expected_trait_object_coercions type_map expr expected_type
   | AST.Block [] -> Ok ()
   | AST.Block stmts -> record_tail_trait_object_coercions type_map expected_type (List.hd (List.rev stmts))
   | AST.Let _ | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ | AST.TraitDef _ | AST.ImplDef _
@@ -5525,14 +5618,8 @@ and record_tail_trait_object_coercions (type_map : type_map) (expected_type : mo
 
 and record_explicit_return_trait_object_coercions
     (type_map : type_map) (expected_type : mono_type) (stmt : AST.statement) : (unit, Diagnostic.t) result =
-  let record_expr expr =
-    let* actual_type = expression_type_or_lookup type_map expr in
-    maybe_record_trait_object_coercion
-      ~mk_error:(fun ~code ~message -> error_at ~code ~message expr)
-      expr actual_type expected_type
-  in
   match stmt.stmt with
-  | AST.Return expr -> record_expr expr
+  | AST.Return expr -> record_expected_trait_object_coercions type_map expr expected_type
   | AST.Block stmts ->
       let rec loop = function
         | [] -> Ok ()
@@ -5542,16 +5629,7 @@ and record_explicit_return_trait_object_coercions
             | Ok () -> loop rest)
       in
       loop stmts
-  | AST.ExpressionStmt expr -> (
-      match expr.expr with
-      | AST.If (_cond, cons, alt) -> (
-          match record_explicit_return_trait_object_coercions type_map expected_type cons with
-          | Error _ as err -> err
-          | Ok () -> (
-              match alt with
-              | None -> Ok ()
-              | Some alt_stmt -> record_explicit_return_trait_object_coercions type_map expected_type alt_stmt))
-      | _ -> Ok ())
+  | AST.ExpressionStmt _ -> Ok ()
   | AST.Let _ | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ | AST.TraitDef _ | AST.ImplDef _
   | AST.InherentImplDef _ | AST.DeriveDef _ | AST.TypeAlias _ ->
       Ok ()
@@ -6006,11 +6084,7 @@ and infer_let ?(prefer_existing_self = false) type_map env name expr type_annota
               let unify_result =
                 match canonicalize_mono_type self_type' with
                 | TTraitObject _ -> (
-                    match
-                      maybe_record_trait_object_coercion
-                        ~mk_error:(fun ~code ~message -> error_at ~code ~message expr)
-                        expr expr_type self_type'
-                    with
+                    match record_expected_trait_object_coercions type_map expr self_type' with
                     | Ok () -> Ok empty_substitution
                     | Error e -> Error e)
                 | _ -> (
@@ -6058,11 +6132,7 @@ and infer_let ?(prefer_existing_self = false) type_map env name expr type_annota
                   match final_type_result with
                   | Error e -> Error e
                   | Ok final_type -> (
-                      match
-                        maybe_record_trait_object_coercion
-                          ~mk_error:(fun ~code ~message -> error_at ~code ~message expr)
-                          expr actual_expr_type final_type
-                      with
+                      match record_expected_trait_object_coercions type_map expr final_type with
                       | Error e -> Error e
                       | Ok () ->
                           (* For top-level forward-reference placeholders, avoid self-leak in Γ:

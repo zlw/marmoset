@@ -1,0 +1,4 @@
+# CM50: Expected Dyn payload types flow into constructor payload expressions
+type Option[a] = { Some(a), None }
+let x: Option[Dyn[Show]] = Option.Some(if (true) { 42 } else { 43 })
+puts(match x { case Option.Some(v): Show.show(v) case Option.None: "none" })  # output: 42

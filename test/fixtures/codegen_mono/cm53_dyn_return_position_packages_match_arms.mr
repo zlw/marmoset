@@ -1,0 +1,8 @@
+# CM53: Dyn return positions package match-arm results
+type Option[a] = { Some(a), None }
+fn box(flag: Bool) -> Dyn[Show] = match (if (flag) { Option.Some(42) } else { Option.None }) {
+  case Option.Some(n): n
+  case Option.None: 0
+}
+puts(Show.show(box(true)))   # output: 42
+puts(Show.show(box(false)))  # output: 0
