@@ -89,6 +89,21 @@ for query_path in pathlib.Path("languages/marmoset").glob("*.scm"):
         raise AssertionError(f"{query_path}: unknown query tokens {unknown_tokens}")
 PY
 
+PINNED_REV="$(
+  python3 - <<'PY'
+import pathlib
+import tomllib
+
+data = tomllib.loads(pathlib.Path("extension.toml").read_text())
+print(data["grammars"]["marmoset"]["rev"])
+PY
+)"
+
+if ! git merge-base --is-ancestor "$PINNED_REV" HEAD; then
+  echo "Pinned grammar rev is not reachable from HEAD: $PINNED_REV" >&2
+  exit 1
+fi
+
 search_fixed() {
   local needle="$1"
   local file="$2"
