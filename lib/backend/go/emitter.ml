@@ -323,13 +323,10 @@ let trait_object_witness_type_name (traits : string list) : string =
 let trait_object_method_field_name (method_name : string) : string = go_safe_ident method_name
 
 let trait_object_adapter_func_name
-    ~(source_type : Types.mono_type)
-    ~(traits : string list)
-    ~(method_name : string) : string =
+    ~(source_type : Types.mono_type) ~(traits : string list) ~(method_name : string) : string =
   Printf.sprintf "__marmoset_dyn_adapter_%s_%s_%s"
     (go_safe_ident (trait_object_witness_type_name traits))
-    (mangle_type source_type)
-    (go_safe_ident method_name)
+    (mangle_type source_type) (go_safe_ident method_name)
 
 let trait_object_witness_value_name ~(source_type : Types.mono_type) ~(traits : string list) : string =
   Printf.sprintf "__marmoset_dyn_witness_%s_%s"
@@ -631,9 +628,7 @@ let placeholder_rewritten_expr (rewrite_map : Infer.placeholder_rewrite_map) (ex
   | None -> expr
 
 let register_trait_object_adapter_instance
-    (state : mono_state)
-    ~(source_type : Types.mono_type)
-    ~(traits : string list) : unit =
+    (state : mono_state) ~(source_type : Types.mono_type) ~(traits : string list) : unit =
   let normalized_source_type =
     normalize_type_for_codegen ~concrete_only:state.concrete_only (Types.canonicalize_mono_type source_type)
   in
@@ -949,60 +944,62 @@ and emit_trait_object_type_defs (state : mono_state) (type_map : Infer.type_map)
     let adapter_defs =
       TraitObjectAdapterInstSet.elements state.trait_object_adapter_insts
       |> List.map (fun (source_type, traits) ->
-          let source_go_type = type_to_go state source_type in
-          let method_defs =
-            dynamic_trait_methods_for traits
-            |> List.map (fun (method_info : dyn_callable_method) ->
-                   let method_sig = method_info.dyn_method_sig in
-                   let adapter_name =
-                     trait_object_adapter_func_name ~source_type ~traits ~method_name:method_sig.method_name
-                   in
-                   let arg_params, arg_names =
-                     method_sig.method_params
-                     |> List.tl
-                     |> List.mapi (fun i (name, typ) ->
-                            let arg_name =
-                              let candidate = go_safe_ident name in
-                              if candidate = "" then
-                                Printf.sprintf "__arg_%d" i
-                              else
-                                candidate
-                            in
-                            (Printf.sprintf "%s %s" arg_name (type_to_go state typ), arg_name))
-                     |> List.split
-                   in
-                   let type_suffix = fingerprint_types [ source_type ] in
-                   let dispatch_trait_name = dyn_dispatch_trait_name source_type method_info in
-                   let impl_func_name =
-                     trait_method_func_name dispatch_trait_name method_sig.method_name type_suffix
-                   in
-                   let params =
-                     String.concat ", "
-                       (("__receiver any" :: arg_params) |> List.filter (fun param -> param <> ""))
-                   in
-                   let call_args = ("__receiver.(" ^ source_go_type ^ ")") :: arg_names |> String.concat ", " in
-                   Printf.sprintf "func %s(%s) %s {\n\treturn %s(%s)\n}\n" adapter_name params
-                     (type_to_go state method_sig.method_return_type)
-                     impl_func_name call_args)
-            |> String.concat "\n"
-          in
-          let witness_fields =
-            dynamic_trait_methods_for traits
-            |> List.map (fun (method_info : dyn_callable_method) ->
-                   let method_name = method_info.dyn_method_sig.method_name in
-                   let adapter_name = trait_object_adapter_func_name ~source_type ~traits ~method_name in
-                   Printf.sprintf "%s: %s" (trait_object_method_field_name method_name) adapter_name)
-            |> String.concat ", "
-          in
-          let witness_value_name = trait_object_witness_value_name ~source_type ~traits in
-          let witness_type_name = trait_object_witness_type_name traits in
-          let witness_value =
-            if witness_fields = "" then
-              Printf.sprintf "var %s = %s{}\n" witness_value_name witness_type_name
-            else
-              Printf.sprintf "var %s = %s{%s}\n" witness_value_name witness_type_name witness_fields
-          in
-          method_defs ^ witness_value)
+             let source_go_type = type_to_go state source_type in
+             let method_defs =
+               dynamic_trait_methods_for traits
+               |> List.map (fun (method_info : dyn_callable_method) ->
+                      let method_sig = method_info.dyn_method_sig in
+                      let adapter_name =
+                        trait_object_adapter_func_name ~source_type ~traits ~method_name:method_sig.method_name
+                      in
+                      let arg_params, arg_names =
+                        method_sig.method_params
+                        |> List.tl
+                        |> List.mapi (fun i (name, typ) ->
+                               let arg_name =
+                                 let candidate = go_safe_ident name in
+                                 if candidate = "" then
+                                   Printf.sprintf "__arg_%d" i
+                                 else
+                                   candidate
+                               in
+                               (Printf.sprintf "%s %s" arg_name (type_to_go state typ), arg_name))
+                        |> List.split
+                      in
+                      let type_suffix = fingerprint_types [ source_type ] in
+                      let dispatch_trait_name = dyn_dispatch_trait_name source_type method_info in
+                      let impl_func_name =
+                        trait_method_func_name dispatch_trait_name method_sig.method_name type_suffix
+                      in
+                      let params =
+                        String.concat ", "
+                          ("__receiver any" :: arg_params |> List.filter (fun param -> param <> ""))
+                      in
+                      let call_args =
+                        ("__receiver.(" ^ source_go_type ^ ")") :: arg_names |> String.concat ", "
+                      in
+                      Printf.sprintf "func %s(%s) %s {\n\treturn %s(%s)\n}\n" adapter_name params
+                        (type_to_go state method_sig.method_return_type)
+                        impl_func_name call_args)
+               |> String.concat "\n"
+             in
+             let witness_fields =
+               dynamic_trait_methods_for traits
+               |> List.map (fun (method_info : dyn_callable_method) ->
+                      let method_name = method_info.dyn_method_sig.method_name in
+                      let adapter_name = trait_object_adapter_func_name ~source_type ~traits ~method_name in
+                      Printf.sprintf "%s: %s" (trait_object_method_field_name method_name) adapter_name)
+               |> String.concat ", "
+             in
+             let witness_value_name = trait_object_witness_value_name ~source_type ~traits in
+             let witness_type_name = trait_object_witness_type_name traits in
+             let witness_value =
+               if witness_fields = "" then
+                 Printf.sprintf "var %s = %s{}\n" witness_value_name witness_type_name
+               else
+                 Printf.sprintf "var %s = %s{%s}\n" witness_value_name witness_type_name witness_fields
+             in
+             method_defs ^ witness_value)
       |> List.sort String.compare
       |> String.concat "\n"
     in
@@ -2384,10 +2381,11 @@ let register_user_func_call_instantiation
           | Error _ -> partial)
       | None -> partial
     in
-  let concrete_param_types =
-    let base_param_types =
-      match specialized_declared_signature with
-        | Some (specialized_params, _specialized_return) when not (List.exists has_type_vars specialized_params) ->
+    let concrete_param_types =
+      let base_param_types =
+        match specialized_declared_signature with
+        | Some (specialized_params, _specialized_return) when not (List.exists has_type_vars specialized_params)
+          ->
             List.map2
               (fun actual specialized -> prefer_actual_codegen_param_type ~actual ~specialized)
               arg_types specialized_params
@@ -2395,29 +2393,27 @@ let register_user_func_call_instantiation
         | Some _ -> arg_types
       in
       let refined_callable_hint_params =
-      refine_callable_param_types_from_user_args state env type_map ~args partially_specialized_params
+        refine_callable_param_types_from_user_args state env type_map ~args partially_specialized_params
+      in
+      List.map2 prefer_more_precise_param_type base_param_types refined_callable_hint_params
     in
-    List.map2 prefer_more_precise_param_type base_param_types refined_callable_hint_params
-  in
-  let should_defer_callable_specialization ~(actual : Types.mono_type) ~(selected : Types.mono_type) : bool =
-    match actual with
-    | Types.TFun _ ->
-        let normalized_actual = normalize_type_for_codegen ~concrete_only:state.concrete_only actual in
-        let normalized_selected = normalize_type_for_codegen ~concrete_only:state.concrete_only selected in
-        is_callable_like_type selected
-        && mangle_type normalized_actual <> mangle_type normalized_selected
-    | _ -> false
-  in
-  let return_type =
-    match declared_return_type_opt with
+    let should_defer_callable_specialization ~(actual : Types.mono_type) ~(selected : Types.mono_type) : bool =
+      match actual with
+      | Types.TFun _ ->
+          let normalized_actual = normalize_type_for_codegen ~concrete_only:state.concrete_only actual in
+          let normalized_selected = normalize_type_for_codegen ~concrete_only:state.concrete_only selected in
+          is_callable_like_type selected && mangle_type normalized_actual <> mangle_type normalized_selected
+      | _ -> false
+    in
+    let return_type =
+      match declared_return_type_opt with
       | Some declared_return_type ->
           let candidate_return =
             match specialized_declared_signature with
             | Some (_specialized_params, specialized_return) -> specialized_return
             | None -> (
                 match
-                  infer_return_type_from_signature declared_param_types declared_return_type
-                    concrete_param_types
+                  infer_return_type_from_signature declared_param_types declared_return_type concrete_param_types
                 with
                 | Some inferred_ret -> inferred_ret
                 | None -> inferred_call_return)
@@ -2427,10 +2423,10 @@ let register_user_func_call_instantiation
           else
             candidate_return
       | None -> inferred_call_return
-  in
-  match func_def_opt with
-  | None -> ()
-  | Some func_def ->
+    in
+    match func_def_opt with
+    | None -> ()
+    | Some func_def ->
         if state.concrete_only && List.exists has_type_vars concrete_param_types then
           ()
         else if
@@ -3464,14 +3460,13 @@ let emit_record_struct_type (state : emit_state) (fields : Types.record_field_ty
   let fields = Types.normalize_record_fields fields in
   intern_record_shape state.mono fields
 
-let enum_constructor_expected_arg_types
-    (enum_type : Types.mono_type)
-    (enum_name : string)
-    (variant_name : string) : Types.mono_type list =
+let enum_constructor_expected_arg_types (enum_type : Types.mono_type) (enum_name : string) (variant_name : string)
+    : Types.mono_type list =
   match Types.canonicalize_mono_type enum_type with
   | Types.TEnum (resolved_enum_name, type_args) when resolved_enum_name = enum_name -> (
       match
-        (Typecheck.Enum_registry.lookup resolved_enum_name, Typecheck.Enum_registry.lookup_variant resolved_enum_name variant_name)
+        ( Typecheck.Enum_registry.lookup resolved_enum_name,
+          Typecheck.Enum_registry.lookup_variant resolved_enum_name variant_name )
       with
       | Some enum_def, Some variant ->
           let subst = Types.substitution_of_list (List.combine enum_def.type_params type_args) in
@@ -4052,7 +4047,8 @@ let rec emit_expr
             let enum_type =
               let refined_type = enum_constructor_codegen_type type_map expr expected_type enum_name in
               let refined_type = Types.canonicalize_mono_type refined_type in
-              if state.mono.concrete_only && has_type_vars refined_type && enum_allows_unresolved_erasure enum_name
+              if
+                state.mono.concrete_only && has_type_vars refined_type && enum_allows_unresolved_erasure enum_name
               then
                 normalize_type_for_codegen ~concrete_only:state.mono.concrete_only refined_type
               else
@@ -4445,9 +4441,7 @@ and binding_block_lines ~(indent : string) (lines : string list) : string =
   match lines with
   | [] -> ""
   | _ ->
-      let markers =
-        List.map (fun line -> indent ^ "_ = " ^ String.sub line 0 (String.index line ' ')) lines
-      in
+      let markers = List.map (fun line -> indent ^ "_ = " ^ String.sub line 0 (String.index line ' ')) lines in
       String.concat "\n" (List.map (fun line -> indent ^ line) lines @ markers) ^ "\n"
 
 and append_else_panic ~(branch_code : string) ~(indent : string) ~(message : string) : string =
@@ -4461,9 +4455,10 @@ and flatten_match_patterns (arms : AST.match_arm list) : (AST.pattern * AST.expr
       | patterns -> List.map (fun pattern -> (pattern, arm.body)) patterns)
     arms
 
-and normalized_pattern_scrutinee_type (state : emit_state) (pattern : AST.pattern) (scrutinee_type : Types.mono_type) :
-    Types.mono_type =
-  Infer.normalize_pattern_scrutinee pattern scrutinee_type |> Types.canonicalize_mono_type
+and normalized_pattern_scrutinee_type
+    (state : emit_state) (pattern : AST.pattern) (scrutinee_type : Types.mono_type) : Types.mono_type =
+  Infer.normalize_pattern_scrutinee pattern scrutinee_type
+  |> Types.canonicalize_mono_type
   |> normalize_type_for_codegen ~concrete_only:state.mono.concrete_only
 
 and record_fields_for_pattern_exn (scrutinee_type : Types.mono_type) : Types.record_field_type list =
@@ -4491,7 +4486,11 @@ and emit_pattern_plan
         List.fold_left
           (fun (conds_acc, binds_acc) (field : AST.record_pattern_field) ->
             let field_type =
-              match List.find_opt (fun (f : Types.record_field_type) -> f.name = field.pat_field_name) scrutinee_fields with
+              match
+                List.find_opt
+                  (fun (f : Types.record_field_type) -> f.name = field.pat_field_name)
+                  scrutinee_fields
+              with
               | Some field_type -> field_type.typ
               | None ->
                   failwith
@@ -4518,9 +4517,13 @@ and emit_pattern_plan
         match rest with
         | None -> bind_lines
         | Some rest_name ->
-            let matched_names = List.map (fun (field : AST.record_pattern_field) -> field.pat_field_name) fields in
+            let matched_names =
+              List.map (fun (field : AST.record_pattern_field) -> field.pat_field_name) fields
+            in
             let remaining_fields =
-              List.filter (fun (field : Types.record_field_type) -> not (List.mem field.name matched_names)) scrutinee_fields
+              List.filter
+                (fun (field : Types.record_field_type) -> not (List.mem field.name matched_names))
+                scrutinee_fields
             in
             let rest_binding =
               match remaining_fields with
@@ -4542,7 +4545,7 @@ and emit_pattern_plan
       (cond_parts, bind_lines)
   | AST.PConstructor (enum_name_pat, variant_name, field_patterns) -> (
       match scrutinee_type with
-      | Types.TEnum (enum_name, type_args) when enum_name = enum_name_pat -> (
+      | Types.TEnum (enum_name, type_args) when enum_name = enum_name_pat ->
           let enum_def =
             match Typecheck.Enum_registry.lookup enum_name with
             | Some def -> def
@@ -4571,16 +4574,16 @@ and emit_pattern_plan
                   | Some field_type -> field_type
                   | None ->
                       failwith
-                        (Printf.sprintf "Codegen error: missing field type for %s.%s position %d" enum_name variant_name
-                           pos)
+                        (Printf.sprintf "Codegen error: missing field type for %s.%s position %d" enum_name
+                           variant_name pos)
                 in
                 let mapping =
                   match List.find_opt (fun (mapping_pos, _) -> mapping_pos = pos) variant_field_map with
                   | Some (_pos, mapping) -> mapping
                   | None ->
                       failwith
-                        (Printf.sprintf "Codegen error: missing layout mapping for %s.%s position %d" enum_name variant_name
-                           pos)
+                        (Printf.sprintf "Codegen error: missing layout mapping for %s.%s position %d" enum_name
+                           variant_name pos)
                 in
                 let field_expr =
                   let raw_expr = go_field_access scrutinee_expr mapping.data_field_name in
@@ -4600,11 +4603,11 @@ and emit_pattern_plan
               let tag_constant = Printf.sprintf "%s_%s_tag" (mangle_type scrutinee_type) variant_name in
               [ Printf.sprintf "(%s == %s)" (go_field_access scrutinee_expr "Tag") tag_constant ]
           in
-          (tag_conditions @ List.concat nested_conditions, List.concat nested_bindings))
+          (tag_conditions @ List.concat nested_conditions, List.concat nested_bindings)
       | _ ->
           failwith
-            (Printf.sprintf "Codegen error: constructor pattern %s.%s doesn't match scrutinee type %s" enum_name_pat
-               variant_name (Types.to_string scrutinee_type)))
+            (Printf.sprintf "Codegen error: constructor pattern %s.%s doesn't match scrutinee type %s"
+               enum_name_pat variant_name (Types.to_string scrutinee_type)))
 
 and emit_record_match_arm
     ?(pre_body_lines = [])
@@ -4721,8 +4724,8 @@ and emit_match_union_record ?target state type_map env scrutinee _scrutinee_type
                       ~replace:(Type_narrowing.replacement_identifier narrowed_name) )
               | _ -> ([], Fun.id)
             in
-            emit_record_match_arm ~pre_body_lines ~body_transform ?target state type_map env
-              match_result_type member_var member_type pattern body (idx = 0))
+            emit_record_match_arm ~pre_body_lines ~body_transform ?target state type_map env match_result_type
+              member_var member_type pattern body (idx = 0))
           matching_patterns
       in
       let has_unconditional =
@@ -4754,8 +4757,8 @@ and emit_match_union_record ?target state type_map env scrutinee _scrutinee_type
         "(func() %s {\n\t%s := %s\n\tswitch %s := %s.(type) {\n%s\tdefault:\n\t\tpanic(\"unreachable union match member\")\n\t}\n})()"
         match_result_go_type scrutinee_var scrutinee_str member_var scrutinee_var match_body
 
-and emit_match_enum ?target state type_map env scrutinee scrutinee_type enum_name _type_args arms match_result_type
-    =
+and emit_match_enum
+    ?target state type_map env scrutinee scrutinee_type enum_name _type_args arms match_result_type =
   (* Generate mangled enum type name *)
   let go_type_name = mangle_type scrutinee_type in
 
@@ -4774,12 +4777,13 @@ and emit_match_enum ?target state type_map env scrutinee scrutinee_type enum_nam
   (* Convert match result type to Go type *)
   let match_result_go_type = type_to_go state.mono match_result_type in
   let flat_patterns = flatten_match_patterns arms in
-  let emit_enum_branch ~(target : emit_target option) (pattern : AST.pattern) (body : AST.expression)
-      ~(is_first : bool) :
+  let emit_enum_branch
+      ~(target : emit_target option) (pattern : AST.pattern) (body : AST.expression) ~(is_first : bool) :
       string * bool =
     let cond_parts, bind_lines =
       match pattern.AST.pat with
-      | AST.PConstructor _ -> emit_pattern_plan ~omit_constructor_tag_check:true state pattern scrutinee_var scrutinee_type
+      | AST.PConstructor _ ->
+          emit_pattern_plan ~omit_constructor_tag_check:true state pattern scrutinee_var scrutinee_type
       | AST.PWildcard | AST.PVariable _ -> emit_pattern_plan state pattern scrutinee_var scrutinee_type
       | AST.PLiteral _ -> failwith "Literal patterns not supported for enum match"
       | AST.PRecord _ -> failwith "Record patterns not yet implemented in enum match"
@@ -4893,7 +4897,9 @@ and emit_match_primitive ?target state type_map env scrutinee scrutinee_type arm
   match target with
   | Some t ->
       let emit_case_target (pattern, body) =
-        let emit_arm_body () = with_indent_delta state 2 (fun () -> emit_expr_to_target state type_map env body t) in
+        let emit_arm_body () =
+          with_indent_delta state 2 (fun () -> emit_expr_to_target state type_map env body t)
+        in
         match pattern.AST.pat with
         | AST.PWildcard ->
             let ind = indent_str state in
@@ -4901,8 +4907,8 @@ and emit_match_primitive ?target state type_map env scrutinee scrutinee_type arm
         | AST.PVariable var_name ->
             let ind = indent_str state in
             let go_var_name = go_safe_ident var_name in
-            Printf.sprintf "%sdefault:\n%s%s := %s\n%s_ = %s\n%s" (ind ^ "    ") (ind ^ "        ")
-              go_var_name scrutinee_var (ind ^ "        ") go_var_name (emit_arm_body ())
+            Printf.sprintf "%sdefault:\n%s%s := %s\n%s_ = %s\n%s" (ind ^ "    ") (ind ^ "        ") go_var_name
+              scrutinee_var (ind ^ "        ") go_var_name (emit_arm_body ())
         | AST.PLiteral lit ->
             let lit_str =
               match lit with
@@ -5317,7 +5323,7 @@ and emit_type_switch_to_target
     else
       match target with
       | ReturnTarget -> ind ^ "return struct{}{}\n"
-                | AssignTarget (name, _) -> ind ^ name ^ " = struct{}{}\n"
+      | AssignTarget (name, _) -> ind ^ name ^ " = struct{}{}\n"
       | DiscardTarget -> ""
   in
   switch_code ^ unit_tail
@@ -6147,8 +6153,9 @@ and emit_stmt
             let go_type = type_to_go state.mono expr_type in
             let decl = Printf.sprintf "%svar %s %s\n" ind go_binding_name go_type in
             let match_code =
-              emit_match ~target:(AssignTarget (go_binding_name, expr_type)) state type_map env let_binding.value
-                scrutinee arms
+              emit_match
+                ~target:(AssignTarget (go_binding_name, expr_type))
+                state type_map env let_binding.value scrutinee arms
             in
             let used_marker = Printf.sprintf "%s_ = %s\n" ind go_binding_name in
             let env' = Infer.TypeEnv.add let_binding.name (Types.Forall ([], expr_type)) env in
@@ -6165,8 +6172,8 @@ and emit_stmt
                       normalized_fields
                   | other ->
                       failwith
-                        (Printf.sprintf "Record literal expected record-like type, got %s"
-                           (Types.to_string other)))
+                        (Printf.sprintf "Record literal expected record-like type, got %s" (Types.to_string other))
+                  )
             in
             let base_fields_opt, result_fields =
               match type_from_env_or_map env type_map base_expr |> Option.map Types.canonicalize_mono_type with
@@ -6223,7 +6230,7 @@ and emit_stmt
                     | _ -> false
                   in
                   let field_str =
-                    if should_hoist_dyn_payload then
+                    if should_hoist_dyn_payload then (
                       let payload_var = fresh_temp_name state "__field_payload" in
                       let payload_go_type = type_to_go state.mono actual_field_type in
                       let payload_decl = Printf.sprintf "%svar %s %s\n" ind payload_var payload_go_type in
@@ -6233,7 +6240,7 @@ and emit_stmt
                       in
                       field_preludes := !field_preludes @ [ payload_decl; payload_assign ];
                       project_value_to_expected_type state type_map env actual_field_type field.Types.typ
-                        payload_var
+                        payload_var)
                     else
                       emit_expr_for_expected_type state type_map env field.Types.typ field_expr
                   in
@@ -7594,12 +7601,14 @@ let emit_builtin_impls (program : AST.program) : string =
       (("show", "int64"), "func show_show_int64(x int64) string {\n\treturn strconv.FormatInt(x, 10)\n}");
       (("show", "bool"), "func show_show_bool(x bool) string {\n\treturn strconv.FormatBool(x)\n}");
       (("show", "string"), "func show_show_string(x string) string {\n\treturn x\n}");
-      (("show", "float64"), "func show_show_float64(x float64) string {\n\treturn strconv.FormatFloat(x, 'g', -1, 64)\n}");
+      ( ("show", "float64"),
+        "func show_show_float64(x float64) string {\n\treturn strconv.FormatFloat(x, 'g', -1, 64)\n}" );
       (* debug trait implementations *)
       (("debug", "int64"), "func debug_debug_int64(x int64) string {\n\treturn strconv.FormatInt(x, 10)\n}");
       (("debug", "bool"), "func debug_debug_bool(x bool) string {\n\treturn strconv.FormatBool(x)\n}");
       (("debug", "string"), "func debug_debug_string(x string) string {\n\treturn strconv.Quote(x)\n}");
-      (("debug", "float64"), "func debug_debug_float64(x float64) string {\n\treturn strconv.FormatFloat(x, 'g', -1, 64)\n}");
+      ( ("debug", "float64"),
+        "func debug_debug_float64(x float64) string {\n\treturn strconv.FormatFloat(x, 'g', -1, 64)\n}" );
       (* eq trait implementations *)
       (("eq", "int64"), "func eq_eq_int64(x, y int64) bool {\n\treturn x == y\n}");
       (("eq", "bool"), "func eq_eq_bool(x, y bool) bool {\n\treturn x == y\n}");
@@ -8869,13 +8878,13 @@ let%test "Dyn codegen emits runtime wrapper and witness for Show" =
       && string_contains code "type marmosetDynWitness_show struct"
       && string_contains code "var __marmoset_dyn_witness_marmosetDynWitness_show_int64"
       && string_contains code "witness: __marmoset_dyn_witness_marmosetDynWitness_show_int64"
-      && not (string_contains code "witness: marmosetDynWitness_show{")
+      && (not (string_contains code "witness: marmosetDynWitness_show{"))
       && string_contains code "__witness.show(__dyn.payload)"
   | Error _ -> false
 
 let%test "Dyn codegen runtime payload omits dead typeID metadata" =
   match compile_string ~file_id:"<codegen>" "let x: Dyn[Show] = 42\nputs(Show.show(x))" with
-  | Ok (code, _) -> not (string_contains code "typeID string") && not (string_contains code "typeID:")
+  | Ok (code, _) -> (not (string_contains code "typeID string")) && not (string_contains code "typeID:")
   | Error _ -> false
 
 let%test "primitive show/debug builtins use strconv helpers" =
@@ -8909,7 +8918,7 @@ let%test "Dyn codegen does not synthesize coercions without recorded metadata" =
               ~trait_object_coercion_map:empty_coercions type_map typed_env program
           in
           string_contains code "var x marmosetDyn = int64(42)"
-          && not (string_contains code "var x marmosetDyn = marmosetDyn{")
+          && (not (string_contains code "var x marmosetDyn = marmosetDyn{"))
           && not (string_contains code "witness: marmosetDynWitness_show{"))
 
 let%test "record intersections erase local bindings to merged record shapes" =

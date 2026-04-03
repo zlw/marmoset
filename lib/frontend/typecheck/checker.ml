@@ -973,8 +973,7 @@ let%test "or-pattern alternatives must bind the same names" =
   | Error diags ->
       List.exists
         (fun (diag : Diagnostic.t) ->
-          diag.code = "type-pattern"
-          && String_utils.contains_substring diag.message ~needle:"bind the same names")
+          diag.code = "type-pattern" && String_utils.contains_substring diag.message ~needle:"bind the same names")
         diags
 
 let%test "or-pattern alternatives with the same names still typecheck" =

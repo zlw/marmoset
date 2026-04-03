@@ -1336,12 +1336,11 @@ let expression_type_or_lookup (type_map : type_map) (expr : AST.expression) : (m
       | None ->
           Error
             (Diagnostic.error_no_span ~code:"type-internal"
-               ~message:(Printf.sprintf "Missing inferred type for expression id %d at Dyn coercion site" expr.id)))
+               ~message:(Printf.sprintf "Missing inferred type for expression id %d at Dyn coercion site" expr.id))
+      )
 
 let rec record_expected_trait_object_coercions
-    (type_map : type_map)
-    (expr : AST.expression)
-    (expected_type : mono_type) : (unit, Diagnostic.t) result =
+    (type_map : type_map) (expr : AST.expression) (expected_type : mono_type) : (unit, Diagnostic.t) result =
   let record_here () =
     match canonicalize_mono_type expected_type with
     | TTraitObject _ ->
@@ -1354,17 +1353,21 @@ let rec record_expected_trait_object_coercions
   let record_record_fields expected_fields fields =
     let rec loop = function
       | [] -> Ok ()
-      | (field : AST.record_field) :: rest -> (
+      | (field : AST.record_field) :: rest ->
           let* () =
             match field.field_value with
             | None -> Ok ()
             | Some field_expr -> (
-                match List.find_opt (fun (expected_field : Types.record_field_type) -> expected_field.name = field.field_name) expected_fields with
+                match
+                  List.find_opt
+                    (fun (expected_field : Types.record_field_type) -> expected_field.name = field.field_name)
+                    expected_fields
+                with
                 | Some expected_field ->
                     record_expected_trait_object_coercions type_map field_expr expected_field.typ
                 | None -> Ok ())
           in
-          loop rest)
+          loop rest
     in
     loop fields
   in
@@ -1388,9 +1391,9 @@ let rec record_expected_trait_object_coercions
   in
   let* () = record_here () in
   match expr.expr with
-  | AST.If (_cond, cons, alt_opt) ->
+  | AST.If (_cond, cons, alt_opt) -> (
       let* () = record_stmt_tail_expected_trait_object_coercions type_map cons expected_type in
-      (match alt_opt with
+      match alt_opt with
       | None -> Ok ()
       | Some alt_stmt -> record_stmt_tail_expected_trait_object_coercions type_map alt_stmt expected_type)
   | AST.Match (_scrutinee, arms) ->
@@ -1409,11 +1412,13 @@ let rec record_expected_trait_object_coercions
       match Structural.fields_of_type (canonicalize_mono_type expected_type) with
       | Some expected_fields -> record_record_fields expected_fields fields
       | None -> Ok ())
-  | AST.EnumConstructor (enum_name, variant_name, args) -> record_enum_constructor_args enum_name variant_name args
-  | AST.MethodCall { mc_receiver = { expr = AST.Identifier enum_name; _ }; mc_method = variant_name; mc_args = args; _ }
-    ->
+  | AST.EnumConstructor (enum_name, variant_name, args) ->
       record_enum_constructor_args enum_name variant_name args
-  | AST.Call ({ expr = AST.Identifier type_name; _ }, [ arg ]) when Type_registry.is_named_type_name type_name -> (
+  | AST.MethodCall
+      { mc_receiver = { expr = AST.Identifier enum_name; _ }; mc_method = variant_name; mc_args = args; _ } ->
+      record_enum_constructor_args enum_name variant_name args
+  | AST.Call ({ expr = AST.Identifier type_name; _ }, [ arg ]) when Type_registry.is_named_type_name type_name
+    -> (
       match canonicalize_mono_type expected_type with
       | TNamed (expected_name, type_args) when expected_name = type_name -> (
           match Type_registry.instantiate_named_wrapper_representation type_name type_args with
@@ -1425,11 +1430,10 @@ let rec record_expected_trait_object_coercions
   | _ -> Ok ()
 
 and record_stmt_tail_expected_trait_object_coercions
-    (type_map : type_map)
-    (stmt : AST.statement)
-    (expected_type : mono_type) : (unit, Diagnostic.t) result =
+    (type_map : type_map) (stmt : AST.statement) (expected_type : mono_type) : (unit, Diagnostic.t) result =
   match stmt.stmt with
-  | AST.ExpressionStmt expr | AST.Return expr -> record_expected_trait_object_coercions type_map expr expected_type
+  | AST.ExpressionStmt expr | AST.Return expr ->
+      record_expected_trait_object_coercions type_map expr expected_type
   | AST.Block [] -> Ok ()
   | AST.Block stmts ->
       record_stmt_tail_expected_trait_object_coercions type_map (List.hd (List.rev stmts)) expected_type
@@ -1809,9 +1813,7 @@ let rec resolve_expr_symbols (stack : symbol_scope_stack) (expr : AST.expression
       ignore (List.fold_left (fun acc stmt -> resolve_stmt_symbols acc ~is_top_level:false stmt) stack stmts)
 
 and resolve_match_arm_symbols (stack : symbol_scope_stack) (arm : AST.match_arm) : unit =
-  let arm_scope =
-    List.fold_left resolve_pattern_bindings (push_scope stack) arm.patterns
-  in
+  let arm_scope = List.fold_left resolve_pattern_bindings (push_scope stack) arm.patterns in
   resolve_expr_symbols arm_scope arm.body
 
 and resolve_impl_method_symbols (stack : symbol_scope_stack) (m : AST.method_impl) : unit =
@@ -4018,14 +4020,14 @@ and infer_if_against_expected type_map env condition consequence alternative exp
   | Some alt -> (
       match infer_expression type_map env condition with
       | Error e -> Error e
-      | Ok (subst1, cond_type) ->
+      | Ok (subst1, cond_type) -> (
           match unify cond_type TBool with
           | Error _ ->
               Error
                 (error_at ~code:"type-if-condition"
                    ~message:("If condition must be Bool, got: " ^ to_string cond_type)
                    condition)
-          | Ok subst2 ->
+          | Ok subst2 -> (
               let subst = compose_substitution subst1 subst2 in
               let env' = apply_substitution_env subst env in
               let narrowing =
@@ -4053,7 +4055,7 @@ and infer_if_against_expected type_map env condition consequence alternative exp
                   (apply_substitution subst expected_type)
               with
               | Error e -> Error e
-              | Ok (subst3, _cons_type) ->
+              | Ok (subst3, _cons_type) -> (
                   let subst' = compose_substitution subst subst3 in
                   let env'' = apply_substitution_env subst' env' in
                   let env_alt, alternative_stmt =
@@ -4083,7 +4085,7 @@ and infer_if_against_expected type_map env condition consequence alternative exp
                   | Error e -> Error e
                   | Ok (subst4, _alt_type) ->
                       let final_subst = compose_substitution subst' subst4 in
-                      Ok (final_subst, apply_substitution final_subst expected_type))
+                      Ok (final_subst, apply_substitution final_subst expected_type)))))
 
 and infer_match_arm_against_expected type_map env scrutinee scrutinee_type arm expected_type =
   let scrutinee_path_opt = Type_narrowing.path_of_expr scrutinee in
@@ -4127,19 +4129,10 @@ and infer_match_against_expected type_map env match_expr scrutinee arms expected
           loop subst arms)
 
 and infer_enum_constructor_expr
-    ?(expected_result_type : mono_type option = None)
-    type_map
-    env
-    expr
-    enum_name
-    variant_name
-    args =
+    ?(expected_result_type : mono_type option = None) type_map env expr enum_name variant_name args =
   match Enum_registry.lookup_variant enum_name variant_name with
   | None ->
-      Error
-        (error_at ~code:"type-constructor"
-           ~message:(unknown_constructor_message enum_name variant_name)
-           expr)
+      Error (error_at ~code:"type-constructor" ~message:(unknown_constructor_message enum_name variant_name) expr)
   | Some variant -> (
       if List.length args <> List.length variant.fields then
         Error
@@ -4153,17 +4146,16 @@ and infer_enum_constructor_expr
         | None -> Error (error_at ~code:"type-constructor" ~message:(unknown_type_message enum_name) expr)
         | Some enum_def -> (
             match expected_result_type |> Option.map canonicalize_mono_type with
-            | Some (TEnum (expected_enum_name, type_args)) when expected_enum_name = enum_name ->
+            | Some (TEnum (expected_enum_name, type_args)) when expected_enum_name = enum_name -> (
                 let param_subst = substitution_of_list (List.combine enum_def.type_params type_args) in
                 let expected_types = List.map (apply_substitution param_subst) variant.fields in
-                (match infer_args_against_expected type_map env empty_substitution args expected_types with
+                match infer_args_against_expected type_map env empty_substitution args expected_types with
                 | Error e -> Error e
-                | Ok (subst, _arg_types) ->
-                    Ok (subst, apply_substitution subst (TEnum (enum_name, type_args))))
+                | Ok (subst, _arg_types) -> Ok (subst, apply_substitution subst (TEnum (enum_name, type_args))))
             | _ -> (
                 match infer_args type_map env empty_substitution args with
                 | Error e -> Error e
-                | Ok (subst, arg_types) ->
+                | Ok (subst, arg_types) -> (
                     let fresh_vars = List.map (fun _ -> fresh_type_var ()) enum_def.type_params in
                     let param_subst = substitution_of_list (List.combine enum_def.type_params fresh_vars) in
                     let expected_types = List.map (apply_substitution param_subst) variant.fields in
@@ -4179,15 +4171,14 @@ and infer_enum_constructor_expr
                           | Ok subst2 ->
                               let new_subst = compose_substitution subst_acc subst2 in
                               unify_all new_subst rest1 rest2)
-                      | _ ->
-                          Error (error_at ~code:"type-constructor" ~message:"Argument count mismatch" expr)
+                      | _ -> Error (error_at ~code:"type-constructor" ~message:"Argument count mismatch" expr)
                     in
                     match unify_all empty_substitution arg_types' expected_types with
                     | Error e -> Error e
                     | Ok subst2 ->
                         let final_subst = compose_substitution subst subst2 in
                         let result_type_args = List.map (apply_substitution final_subst) fresh_vars in
-                        Ok (final_subst, TEnum (enum_name, result_type_args)))))
+                        Ok (final_subst, TEnum (enum_name, result_type_args))))))
 
 and infer_named_type_constructor_call_against_expected
     (type_map : type_map)
@@ -4204,7 +4195,7 @@ and infer_named_type_constructor_call_against_expected
             (error_at ~code:"type-constructor"
                ~message:(Printf.sprintf "Unknown named type constructor: %s" type_name)
                call_expr)
-      | Some named_type_def ->
+      | Some named_type_def -> (
           let expect_single_argument (expected_arg_type : mono_type) =
             if List.length args <> 1 then
               Error
@@ -4236,7 +4227,7 @@ and infer_named_type_constructor_call_against_expected
                   Error
                     (error_at ~code:"type-constructor"
                        ~message:(Printf.sprintf "Unknown named wrapper constructor: %s" type_name)
-                       call_expr)))
+                       call_expr))))
   | _ -> infer_named_type_constructor_call type_map env call_expr type_name args
 
 and infer_expression_against_expected type_map env (expr : AST.expression) expected_type =
@@ -4245,8 +4236,8 @@ and infer_expression_against_expected type_map env (expr : AST.expression) expec
     | AST.Function { origin; generics; params; return_type; is_effectful; body } -> (
         match contextual_callable_signature_for_arity (List.length params) expected_type with
         | Some signature ->
-            infer_function_literal ~known_signature:signature type_map env expr ~origin ~generics ~params ~return_type
-              ~is_effectful ~body
+            infer_function_literal ~known_signature:signature type_map env expr ~origin ~generics ~params
+              ~return_type ~is_effectful ~body
         | None ->
             infer_function_literal type_map env expr ~origin ~generics ~params ~return_type ~is_effectful ~body)
     | AST.If (condition, consequence, alternative) ->
@@ -4256,12 +4247,12 @@ and infer_expression_against_expected type_map env (expr : AST.expression) expec
     | AST.EnumConstructor (enum_name, variant_name, args) ->
         infer_enum_constructor_expr ~expected_result_type:(Some expected_type) type_map env expr enum_name
           variant_name args
-    | AST.MethodCall { mc_receiver = { expr = AST.Identifier name; _ }; mc_method = method_name; mc_args = args; _ }
-      -> (
+    | AST.MethodCall
+        { mc_receiver = { expr = AST.Identifier name; _ }; mc_method = method_name; mc_args = args; _ } -> (
         match classify_dotted_receiver env name method_name with
         | `EnumVariant ->
-            infer_enum_constructor_expr ~expected_result_type:(Some expected_type) type_map env expr name method_name
-              args
+            infer_enum_constructor_expr ~expected_result_type:(Some expected_type) type_map env expr name
+              method_name args
         | _ -> infer_expression type_map env expr)
     | AST.Call ({ expr = AST.Identifier type_name; _ }, args)
       when (not (TypeEnv.mem type_name env)) && Type_registry.is_named_type_name type_name ->
@@ -4295,9 +4286,7 @@ and infer_arg_against_expected type_map env subst (arg : AST.expression) (expect
           | _ -> arg
         in
         let env' = apply_substitution_env subst env in
-        let infer_arg_expr () =
-          infer_expression_against_expected type_map env' inferred_arg expected_type'
-        in
+        let infer_arg_expr () = infer_expression_against_expected type_map env' inferred_arg expected_type' in
         match infer_arg_expr () with
         | Error e -> Error e
         | Ok (subst1, arg_type) -> (
@@ -4321,14 +4310,14 @@ and infer_arg_against_expected type_map env subst (arg : AST.expression) (expect
               | _ -> (
                   match compatible_with_expected_type arg_type' expected_type'' with
                   | Error e -> Error (error_at ~code:e.code ~message:e.message arg)
-                  | Ok subst2 ->
+                  | Ok subst2 -> (
                       let final_subst = compose_substitution subst' subst2 in
                       let final_type = apply_substitution final_subst arg_type in
                       match record_expected_trait_object_coercions type_map arg expected_type'' with
                       | Error e -> Error e
                       | Ok () ->
                           propagate_type_var_constraints_through_substitution final_subst;
-                          Ok (final_subst, final_type))))
+                          Ok (final_subst, final_type)))))
 
 and infer_args_against_expected type_map env subst args expected_types =
   match (args, expected_types) with
@@ -6384,7 +6373,8 @@ and infer_let ?(prefer_existing_self = false) type_map env name expr type_annota
           (* Infer expression type with self in scope *)
           let infer_expr_result =
             match (expr.expr, callable_context, type_annotation) with
-            | AST.Function { origin; generics; params; return_type; is_effectful; body }, Some (_, signature), _ ->
+            | AST.Function { origin; generics; params; return_type; is_effectful; body }, Some (_, signature), _
+              ->
                 infer_function_literal ~known_signature:signature type_map env_with_self expr ~origin ~generics
                   ~params ~return_type ~is_effectful ~body
             | AST.Function { origin; generics; params; return_type; is_effectful; body }, None, _ ->
@@ -6393,7 +6383,8 @@ and infer_let ?(prefer_existing_self = false) type_map env name expr type_annota
             | _, _, Some type_expr -> (
                 match Annotation.type_expr_to_mono_type type_expr with
                 | Error d -> Error d
-                | Ok annotated_type -> infer_expression_against_expected type_map env_with_self expr annotated_type)
+                | Ok annotated_type ->
+                    infer_expression_against_expected type_map env_with_self expr annotated_type)
             | _, _, None -> infer_expression type_map env_with_self expr
           in
           match infer_expr_result with
