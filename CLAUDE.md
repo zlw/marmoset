@@ -231,7 +231,7 @@ make unit && make integration
 - `docs/review/` — analysis/progress tracking docs (local only)
 - Temporary test directories (e.g., `test_alias/`, `test_derive/`, `test_row_check/`)
 - Build artifacts or binaries
-- `.claude/` directory contents
+- `.claude/settings.local.json` and other machine-local Claude settings
 - Any file in `/tmp/`
 
 Always use `git add <specific files>` — never `git add .` or `git add -A`.

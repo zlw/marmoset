@@ -44,3 +44,9 @@ marmoset
 # Editors
 .idea
 .zed
+
+# macOS Finder metadata
+.DS_Store
+
+# Local Claude settings
+.claude/settings.local.json
