@@ -60,4 +60,19 @@ test_emit_go_exact_snapshot \
     "$REPO_ROOT/test/fixtures/codegen_stress/cs49_h50_closure_defined_inside_match_arm.mr" \
     "$SNAPSHOT_ROOT/cs49_h50_closure_defined_inside_match_arm.main.go"
 
+test_emit_go_exact_snapshot \
+    "module namespace and direct imports lower to stable internal names" \
+    "$REPO_ROOT/test/fixtures/modules_codegen/mc01_namespace_direct_import/main.mr" \
+    "$SNAPSHOT_ROOT/mc01_namespace_direct_import.main.go"
+
+test_emit_go_exact_snapshot \
+    "module trait and inherent qualification lowers through stable helpers" \
+    "$REPO_ROOT/test/fixtures/modules_codegen/mc03_trait_and_inherent_calls/main.mr" \
+    "$SNAPSHOT_ROOT/mc03_trait_and_inherent_calls.main.go"
+
+test_emit_go_exact_snapshot \
+    "module Go-keyword collisions keep emitted identifiers stable" \
+    "$REPO_ROOT/test/fixtures/modules_codegen_edge/mce02_go_keyword_collision/main.mr" \
+    "$SNAPSHOT_ROOT/mce02_go_keyword_collision.main.go"
+
 suite_end

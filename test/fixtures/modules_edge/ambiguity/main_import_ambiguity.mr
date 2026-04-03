@@ -1,0 +1,3 @@
+import a.b.c  # error: Ambiguous import
+
+puts(1)

@@ -1,0 +1,8 @@
+# MS01: Shared math module for module-import fixtures
+export add, add_one, Point, HasXY
+
+fn add(x: Int, y: Int) -> Int = x + y
+fn add_one(x: Int) -> Int = add(x, 1)
+
+type Point = { x: Int, y: Int }
+shape HasXY = { x: Int, y: Int }

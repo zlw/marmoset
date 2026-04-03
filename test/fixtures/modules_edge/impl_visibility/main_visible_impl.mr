@@ -1,0 +1,6 @@
+import point.Point
+import point.Printer
+import point_printer
+
+let p: Point = { x: 1, y: 2 }
+puts(Printer.print(p))  # output: point

@@ -1,0 +1,4 @@
+export make_left
+
+fn helper() -> Int = 7
+fn make_left() -> Int = helper()

@@ -1,0 +1,4 @@
+import leaf
+export middle_value
+
+let middle_value = leaf.leaf_value

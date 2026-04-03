@@ -1,0 +1,4 @@
+# ME01: Ambiguous import support module where the parent exports c
+export c
+
+fn c() -> Int = 1

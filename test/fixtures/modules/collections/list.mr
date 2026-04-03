@@ -1,0 +1,7 @@
+# MS02: Shared nested collections module for module-path fixtures
+export head, tail
+
+fn head(xs: List[Int]) -> Int = first(xs)
+fn tail(xs: List[Int]) -> List[Int] = rest(xs)
+
+fn private_seed(xs: List[Int]) -> Int = len(xs)

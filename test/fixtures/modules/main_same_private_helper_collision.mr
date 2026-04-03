@@ -1,0 +1,5 @@
+import collisions.alpha as alpha
+import collisions.beta as beta
+
+puts(alpha.run(1))  # output: 2
+puts(beta.run(1))  # output: 3

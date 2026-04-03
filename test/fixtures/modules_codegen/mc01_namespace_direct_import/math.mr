@@ -1,0 +1,7 @@
+export Point, add, move
+
+type Point = { x: Int, y: Int }
+
+fn add(x: Int, y: Int) -> Int = x + y
+
+fn move(p: Point, dx: Int, dy: Int) -> Point = { x: p.x + dx, y: p.y + dy }

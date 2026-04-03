@@ -3,7 +3,7 @@
 ## Maintenance
 
 - Last verified: 2026-04-03
-- Implementation status: Planning (not started)
+- Implementation status: Implemented (focused verification green)
 - Update trigger: Any module/import/export syntax or compilation model change
 
 ## Context
@@ -581,10 +581,20 @@ After each phase:
 
 - 2026-04-03: Started implementation.
 - 2026-04-03: Completed Phase M1 parser/header surface and Phase M2 discovery/graph groundwork.
-- Current focus: Phase M3 entry work — import resolution, internal-name rewriting, and per-module checker orchestration.
-- Locked-plan caveat being preserved: implementation will keep the plan's semantics even where the current single-file compiler internals encourage shortcut rewrites.
-- Immediate findings:
-  - The current integration harness only understands single `.mr` fixtures, so multi-module coverage will need either harness support for fixture directories or dedicated integration helpers.
-  - The existing checker/emitter pipeline is still strongly single-program and global-registry based; `infer_program` reset behavior is the main refactor seam for per-module checking.
-  - The parser/discovery layer now supports `import`/`export`/`as`, dependency graph construction, cycle detection, ambiguity detection, and per-file expression-ID offsetting.
-  - Generated Go tests are already present and should be extended with module-qualified naming/resolution snapshots once the first multi-module path is compiling.
+- 2026-04-03: Completed Phase M3 per-module orchestration. Added `lib/frontend/import_resolver.ml`, `lib/frontend/typecheck/module_sig.ml`, and `lib/frontend/compiler.ml` to resolve imports semantically, rewrite module-visible names to stable internal names, extract typed module signatures, seed direct-import visibility, and type-check reachable modules in topological order.
+- 2026-04-03: Completed Phase M3.5 multi-module codegen wiring. The CLI now builds/runs/checks from an entry file through discovery, keeps the locked single-file fast path for programs without module headers, emits one flattened Go `package main`, and preserves direct-import-only impl visibility plus non-transitive export visibility.
+- 2026-04-03: Completed Phase M4 hardening for the current scope. Added module fixture corpora under `test/fixtures/modules/`, `test/fixtures/modules_edge/`, `test/fixtures/modules_codegen/`, and `test/fixtures/modules_codegen_edge/`, normalized them to the locked "entry directory = project root" rule, taught the integration harness to treat `modules*` groups as entrypoint suites (`main*.mr` only), and added exact generated-Go snapshots for module namespace/direct import mangling, trait/inherent qualification, and Go-keyword collision cases.
+- 2026-04-03: Imported shape bindings now resolve correctly in type position through the registered shape registry, which was required for direct shape imports and shape aliases to type-check across module boundaries.
+- 2026-04-03: Kept the locked-plan semantics even where the old single-file pipeline pushed toward shortcuts. In particular:
+  - namespace-vs-direct import ambiguity is resolved semantically and rejected when both interpretations exist,
+  - direct-imported impl visibility is local to the importing module,
+  - impl visibility is not re-exported transitively,
+  - local value bindings still shadow imported module/type/trait/shape names in expression position.
+- 2026-04-03: Focused verification completed:
+  - `dune runtest --root /Users/zlw/src/marmoset/marmoset lib/frontend --force`
+  - `dune runtest --root /Users/zlw/src/marmoset/marmoset tools/lsp/lib --force`
+  - `./test/integration.sh modules modules_edge modules_codegen modules_codegen_edge snapshots`
+- Caveats and findings:
+  - `infer_program` now exposes `~prepare_state` for the module compiler, but shared-environment runs still rely on the caller keeping any env-borne constrained generic obligations intact; the compiler path avoids that pitfall by using fresh per-module inference state and explicitly seeded registries/env.
+  - Module fixtures need support modules colocated under the entry fixture's directory tree because discovery intentionally treats the entry file's directory as the project root.
+  - The new emitted-Go snapshots are especially useful for modules because runtime output alone does not catch name-mangling or qualification regressions.

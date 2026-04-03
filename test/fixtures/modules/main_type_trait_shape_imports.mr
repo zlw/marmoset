@@ -1,0 +1,7 @@
+import types.geo.Point
+import types.geo.HasXY as ShapeXY
+import types.geo.Drawable
+
+let p: Point = { x: 1, y: 2 }
+let q: ShapeXY = p
+puts(Drawable.draw(p))  # output: point

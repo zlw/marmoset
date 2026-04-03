@@ -1,0 +1,10 @@
+import math
+import math.add
+import math.Point as Pt
+import values.identity
+
+let p: Pt = { x: 1, y: 2 }
+let moved = math.move(p, 3, 4)
+let total = add(moved.x, moved.y)
+let final_value = identity(total)
+puts(final_value)  # output: 10

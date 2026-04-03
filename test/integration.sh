@@ -145,6 +145,16 @@ resolve_selector() {
     return 1
 }
 
+group_fixture_files() {
+    local group="$1"
+
+    if [[ "$group" == modules* ]]; then
+        find "$FIXTURE_ROOT/$group" -type f \( -name 'main*.mr' \) | LC_ALL=C sort
+    else
+        find "$FIXTURE_ROOT/$group" -type f -name '*.mr' | LC_ALL=C sort
+    fi
+}
+
 detect_fixture_jobs() {
     local n="${MARMOSET_FIXTURE_JOBS:-}"
     if [ -z "$n" ]; then
@@ -1302,7 +1312,7 @@ SELECTED_FIXTURES=()
 for group in "${unique_groups[@]}"; do
     while IFS= read -r f; do
         SELECTED_FIXTURES+=("$f")
-    done < <(find "$FIXTURE_ROOT/$group" -type f -name '*.mr' | LC_ALL=C sort)
+    done < <(group_fixture_files "$group")
 done
 
 for fixture in "${selected_fixture_files[@]}"; do

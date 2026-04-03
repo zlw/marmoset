@@ -1,0 +1,7 @@
+export Point, join, format_point
+
+type Point = { x: Int, y: Int }
+
+fn join(a: Str, b: Str) -> Str = a + ":" + b
+
+fn format_point(p: Point) -> Str = join("x", "y")
