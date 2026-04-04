@@ -32,6 +32,12 @@ type resolved_imports = {
   direct_modules : string list;
 }
 
+type namespace_member_resolution =
+  [ `ModulePath
+  | `Exported of member_presence
+  | `NotExported of module_surface * string
+  | `MissingMember of module_surface * string ]
+
 type rewrite_result = {
   program : AST.program;
   resolved_imports : resolved_imports;
@@ -360,7 +366,7 @@ let lookup_namespace_node (roots : namespace_node StringMap.t) (parts : string l
           walk node rest)
 
 let resolve_namespace_member ~(namespace_roots : namespace_node StringMap.t) (segments : string list) :
-    [ `ModulePath | `Exported of member_presence ] option =
+    namespace_member_resolution option =
   match lookup_namespace_node namespace_roots segments with
   | Some { module_ref = Some _; _ } -> Some `ModulePath
   | Some _ -> None
@@ -377,7 +383,11 @@ let resolve_namespace_member ~(namespace_roots : namespace_node StringMap.t) (se
                 | [ member_name ] -> (
                     match StringMap.find_opt member_name module_surface.exports with
                     | Some exported -> Some (`Exported exported)
-                    | None -> None)
+                    | None ->
+                        if StringMap.mem member_name module_surface.declarations then
+                          Some (`NotExported (module_surface, member_name))
+                        else
+                          Some (`MissingMember (module_surface, member_name)))
                 | _ -> None)
             | _ -> try_split prefix_tail (part :: rev_suffix))
       in
@@ -468,8 +478,17 @@ let builtin_value_names : StringSet.t =
     (fun acc (name, _poly) -> StringSet.add name acc)
     StringSet.empty Typecheck.Builtins.builtin_types
 
-let missing_namespace_member_error (expr : AST.expression) (segments : string list) : Diagnostic.t =
-  let message = Printf.sprintf "Unresolved qualified name '%s'" (String.concat "." segments) in
+let namespace_resolution_error (expr : AST.expression) (resolution : namespace_member_resolution) (segments : string list)
+    : Diagnostic.t =
+  let message =
+    match resolution with
+    | `ModulePath -> Printf.sprintf "Unresolved qualified name '%s'" (String.concat "." segments)
+    | `Exported _ -> Printf.sprintf "Unresolved qualified name '%s'" (String.concat "." segments)
+    | `NotExported (module_surface, member_name) ->
+        Printf.sprintf "Module '%s' does not export '%s'" module_surface.module_id member_name
+    | `MissingMember (module_surface, member_name) ->
+        Printf.sprintf "Module '%s' has no member '%s'" module_surface.module_id member_name
+  in
   match expr.file_id with
   | Some file_id ->
       Diagnostic.error_with_span ~code:"module-qualified-name" ~message ~file_id ~start_pos:expr.pos
@@ -962,6 +981,8 @@ let rewrite_program
         | Some segments when not (root_has_value_binding (List.hd segments)) -> (
             match resolve_namespace_member ~namespace_roots:imports.namespace_roots segments with
             | Some (`Exported exported) -> Ok (identifier_expr_like expr exported.internal_name)
+            | Some (`NotExported _ as resolution) | Some (`MissingMember _ as resolution) ->
+                Error (namespace_resolution_error expr resolution segments)
             | Some `ModulePath -> Ok expr
             | None ->
                 let* receiver = rewrite_expr ~value_scope ~type_bindings receiver in
@@ -1007,7 +1028,8 @@ let rewrite_program
                         }
                 in
                 Ok AST.{ expr with expr = Call (callee, args) }
-            | Some `ModulePath -> Error (missing_namespace_member_error expr (receiver_segments @ [ mc_method ]))
+            | Some ((`ModulePath | `NotExported _ | `MissingMember _) as resolution) ->
+                Error (namespace_resolution_error expr resolution (receiver_segments @ [ mc_method ]))
             | _ ->
                 let* mc_receiver = rewrite_expr ~value_scope ~type_bindings mc_receiver in
                 let* mc_args = map_result (rewrite_expr ~value_scope ~type_bindings) mc_args in

@@ -667,6 +667,38 @@ let%test "check_entry rejects colliding direct imports" =
               && Diagnostics.String_utils.contains_substring ~needle:"existing binding 'add'" diag.message)
             diags)
 
+let%test "check_entry reports non-exported namespace members clearly" =
+  Discovery.with_temp_project
+    [
+      ("main.mr", "import sum\nsum.reduce\n");
+      ("sum.mr", "fn reduce(values: List[Int]) -> Int = len(values)\n");
+    ]
+    (fun root ->
+      match check_entry ~entry_file:(Filename.concat root "main.mr") with
+      | Ok _ -> false
+      | Error diags ->
+          List.exists
+            (fun (diag : Diagnostic.t) ->
+              diag.code = "module-qualified-name"
+              && String.equal diag.message "Module 'sum' does not export 'reduce'")
+            diags)
+
+let%test "check_entry distinguishes missing namespace members from private ones" =
+  Discovery.with_temp_project
+    [
+      ("main.mr", "import sum\nsum.reduce\n");
+      ("sum.mr", "let value = 1\n");
+    ]
+    (fun root ->
+      match check_entry ~entry_file:(Filename.concat root "main.mr") with
+      | Ok _ -> false
+      | Error diags ->
+          List.exists
+            (fun (diag : Diagnostic.t) ->
+              diag.code = "module-qualified-name"
+              && String.equal diag.message "Module 'sum' has no member 'reduce'")
+            diags)
+
 let%test "check_entry_with_source resolves unsaved entry imports" =
   Discovery.with_temp_project
     [

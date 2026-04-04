@@ -263,3 +263,19 @@ let%test "analyze_with_file_id uses module-aware checking for imported files" =
       in
       let result = analyze_with_file_id ~file_id ~source in
       result.diagnostics = [] && result.program <> None)
+
+let%test "analyze_with_file_id preserves module export diagnostics for qualified access" =
+  with_temp_project
+    [
+      ("main.mr", "import sum\nsum.reduce\n");
+      ("sum.mr", "fn reduce(values: List[Int]) -> Int = len(values)\n");
+    ]
+    (fun root ->
+      let file_id = Filename.concat root "main.mr" in
+      let result = analyze_with_file_id ~file_id ~source:"import sum\nsum.reduce\n" in
+      List.exists
+        (fun (diag : Lsp_t.Diagnostic.t) ->
+          match diag.message with
+          | `String message -> String.equal message "Module 'sum' does not export 'reduce'"
+          | _ -> false)
+        result.diagnostics)
