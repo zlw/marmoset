@@ -8,6 +8,8 @@ module Diagnostic = Marmoset.Lib.Diagnostic
 
 type analysis_result = {
   source : string;
+  module_id : string option;
+  source_root : string option;
   program : Ast.AST.program option;
   type_map : Infer.type_map option;
   environment : Infer.type_env option;
@@ -102,6 +104,8 @@ let analyze_with_file_id ~(file_id : string) ~(source : string) : analysis_resul
   let should_expose_typed_state = expose_typed_state compiler_analysis in
   {
     source;
+    module_id = active_file.module_id;
+    source_root = compiler_analysis.source_root;
     program;
     type_map =
       (if should_expose_typed_state then
@@ -179,6 +183,8 @@ let%test "analyze type error has non-zero range when location available" =
 let%test "analyze successful code stores type_map and environment" =
   let result = analyze ~source:"let f = (x) -> x + 1; f" in
   result.diagnostics = []
+  && result.module_id = None
+  && result.source_root = None
   && result.type_map <> None
   && result.environment <> None
   && result.compiler_analysis <> None
@@ -232,13 +238,21 @@ let%test "analyze_with_file_id uses module-aware checking for imported files" =
         "import sum\ntype Point = { x: Int, y: Int }\nlet point: Point = { x: 1, y: 2 }\nlet moved = { ...point, x: 10 }\nfn get_x(value: Point) -> Int = value.x\nlet nums = sum.sum([1, 2, 3])\nputs(get_x(moved))\nputs(moved.x + moved.y)\nputs(nums)\n"
       in
       let result = analyze_with_file_id ~file_id ~source in
-      result.diagnostics = [] && result.program <> None && result.compiler_analysis <> None)
+      result.diagnostics = []
+      && result.module_id = Some "main"
+      && result.program <> None
+      && result.compiler_analysis <> None)
 
 let%test "analyze carries compiler-owned standalone analysis" =
   let result = analyze_with_file_id ~file_id:"<memory>" ~source:"let id = (x) -> x\nid(1)\n" in
   match result.compiler_analysis with
   | None -> false
-  | Some analysis -> analysis.mode = Compiler.Standalone && result.type_map <> None && result.environment <> None
+  | Some analysis ->
+      analysis.mode = Compiler.Standalone
+      && result.module_id = None
+      && result.source_root = None
+      && result.type_map <> None
+      && result.environment <> None
 
 let%test "analyze_with_file_id keeps module surface AST while exposing compiler analysis" =
   with_temp_project
@@ -285,6 +299,7 @@ let%test "analyze_with_file_id keeps module surface AST while exposing compiler 
       | Some analysis ->
           analysis.mode = Compiler.Modules
           && surface_has_namespace
+          && result.module_id = Some "main"
           && result.type_map = None
           && result.environment = None)
 
