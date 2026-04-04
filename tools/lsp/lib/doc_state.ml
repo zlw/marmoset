@@ -1,11 +1,8 @@
 (* Document analysis: parse + typecheck → diagnostics *)
 
 module Lsp_t = Linol_lsp.Types
-module Checker = Marmoset.Lib.Checker
 module Compiler = Marmoset.Lib.Frontend_compiler
-module Parser = Marmoset.Lib.Parser
 module Infer = Marmoset.Lib.Infer
-module Builtins = Marmoset.Lib.Builtins
 module Ast = Marmoset.Lib.Ast
 module Diagnostic = Marmoset.Lib.Diagnostic
 
@@ -16,15 +13,8 @@ type analysis_result = {
   environment : Infer.type_env option;
   type_var_user_names : (string * string) list;
   diagnostics : Lsp_t.Diagnostic.t list;
+  compiler_analysis : Compiler.entry_analysis option;
 }
-
-(* Reset all global mutable state before a fresh analysis *)
-let reset_globals () =
-  Infer.reset_fresh_counter ();
-  Infer.clear_method_resolution_store ();
-  Typecheck.Trait_registry.clear ();
-  Typecheck.Enum_registry.clear ();
-  Typecheck.Annotation.clear_type_aliases ()
 
 let make_diagnostic ~code ~(range : Lsp_t.Range.t) ~(severity : Lsp_t.DiagnosticSeverity.t) ~(message : string) :
     Lsp_t.Diagnostic.t =
@@ -89,56 +79,35 @@ let has_module_headers (program : Ast.AST.program) : bool =
       | _ -> false)
     program
 
-let module_aware_analysis_with_file_id ~(file_id : string) ~(source : string) ~(program : Ast.AST.program) :
-    analysis_result option =
-  match (file_path_of_file_id file_id, has_module_headers program) with
-  | Some entry_file, true -> (
-      let diagnostics =
-        match Compiler.check_entry_with_source ~entry_file ~entry_source:source with
-        | Ok diags | Error diags ->
-            List.map (lsp_diagnostic_of_canonical ~source ~active_file_id:file_id) diags
-      in
-      Some { source; program = Some program; type_map = None; environment = None; type_var_user_names = []; diagnostics })
-  | _ -> None
+let compiler_analysis_for_file_id ~(file_id : string) ~(source : string) : Compiler.entry_analysis =
+  match file_path_of_file_id file_id with
+  | Some entry_file -> Compiler.analyze_entry_with_source ~entry_file ~entry_source:source
+  | None -> Compiler.analyze_entry_with_source ~entry_file:file_id ~entry_source:source
+
+let expose_typed_state (analysis : Compiler.entry_analysis) : bool = analysis.mode = Compiler.Standalone
 
 (* Analyze a document, returning parse/type errors as LSP diagnostics *)
 let analyze_with_file_id ~(file_id : string) ~(source : string) : analysis_result =
-  reset_globals ();
-  let state = Infer.create_inference_state () in
-  match Parser.parse ~file_id source with
-  | Error errors ->
-      let diagnostics = List.map (lsp_diagnostic_of_canonical ~source ~active_file_id:file_id) errors in
-      { source; program = None; type_map = None; environment = None; type_var_user_names = []; diagnostics }
-  | Ok program -> (
-      match module_aware_analysis_with_file_id ~file_id ~source ~program with
-      | Some result -> result
-      | None ->
-          let env = Builtins.prelude_env () in
-          match Checker.check_program_with_annotations ~state ~env program with
-          | Error diags ->
-              let type_var_user_names = Infer.type_var_user_name_bindings_in_state state in
-              let diagnostics = List.map (lsp_diagnostic_of_canonical ~source ~active_file_id:file_id) diags in
-              {
-                source;
-                program = Some program;
-                type_map = None;
-                environment = None;
-                type_var_user_names;
-                diagnostics;
-              }
-          | Ok result ->
-              let type_var_user_names = Infer.type_var_user_name_bindings_in_state state in
-              let diagnostics =
-                List.map (lsp_diagnostic_of_canonical ~source ~active_file_id:file_id) result.diagnostics
-              in
-              {
-                source;
-                program = Some program;
-                type_map = Some result.type_map;
-                environment = Some result.environment;
-                type_var_user_names;
-                diagnostics;
-              })
+  let compiler_analysis = compiler_analysis_for_file_id ~file_id ~source in
+  let active_file = compiler_analysis.active_file in
+  let diagnostics =
+    List.map (lsp_diagnostic_of_canonical ~source ~active_file_id:file_id) active_file.diagnostics
+  in
+  let program =
+    match active_file.surface_program with
+    | Some program when not (has_module_headers program) || compiler_analysis.mode = Compiler.Modules -> Some program
+    | other -> other
+  in
+  let should_expose_typed_state = expose_typed_state compiler_analysis in
+  {
+    source;
+    program;
+    type_map = if should_expose_typed_state then active_file.type_map else None;
+    environment = if should_expose_typed_state then active_file.environment else None;
+    type_var_user_names = if should_expose_typed_state then active_file.type_var_user_names else [];
+    diagnostics;
+    compiler_analysis = Some compiler_analysis;
+  }
 
 let analyze ~(source : string) : analysis_result = analyze_with_file_id ~file_id:"<lsp>" ~source
 
@@ -196,7 +165,7 @@ let%test "analyze type error has non-zero range when location available" =
 
 let%test "analyze successful code stores type_map and environment" =
   let result = analyze ~source:"let f = (x) -> x + 1; f" in
-  result.diagnostics = [] && result.type_map <> None && result.environment <> None
+  result.diagnostics = [] && result.type_map <> None && result.environment <> None && result.compiler_analysis <> None
 
 let%test "analyze with builtins works" =
   let result = analyze ~source:"len([1, 2, 3])" in
@@ -262,7 +231,61 @@ let%test "analyze_with_file_id uses module-aware checking for imported files" =
          puts(nums)\n"
       in
       let result = analyze_with_file_id ~file_id ~source in
-      result.diagnostics = [] && result.program <> None)
+      result.diagnostics = [] && result.program <> None && result.compiler_analysis <> None)
+
+let%test "analyze carries compiler-owned standalone analysis" =
+  let result = analyze_with_file_id ~file_id:"<memory>" ~source:"let id = (x) -> x\nid(1)\n" in
+  match result.compiler_analysis with
+  | None -> false
+  | Some analysis -> analysis.mode = Compiler.Standalone && result.type_map <> None && result.environment <> None
+
+let%test "analyze_with_file_id keeps module surface AST while exposing compiler analysis" =
+  with_temp_project
+    [
+      ("main.mr", "import sum\nputs(sum.sum([1, 2, 3]))\n");
+      ("sum.mr", "export sum\nfn sum(values: List[Int]) -> Int = len(values)\n");
+    ]
+    (fun root ->
+      let file_id = Filename.concat root "main.mr" in
+      let result = analyze_with_file_id ~file_id ~source:"import sum\nputs(sum.sum([1, 2, 3]))\n" in
+      let surface_has_namespace =
+        match result.program with
+        | None -> false
+        | Some program ->
+            List.exists
+              (fun (stmt : Ast.AST.statement) ->
+                match stmt.stmt with
+                | Ast.AST.ExpressionStmt
+                    {
+                      expr =
+                        Ast.AST.Call
+                          ( { expr = Ast.AST.Identifier "puts"; _ },
+                            [
+                              {
+                                expr =
+                                  Ast.AST.MethodCall
+                                    {
+                                      mc_receiver = { expr = Ast.AST.Identifier "sum"; _ };
+                                      mc_method = "sum";
+                                      mc_args = _;
+                                      _;
+                                    };
+                                _;
+                              };
+                            ]
+                          );
+                      _;
+                    } -> true
+                | _ -> false)
+              program
+      in
+      match result.compiler_analysis with
+      | None -> false
+      | Some analysis ->
+          analysis.mode = Compiler.Modules
+          && surface_has_namespace
+          && result.type_map = None
+          && result.environment = None)
 
 let%test "analyze_with_file_id preserves module export diagnostics for qualified access" =
   with_temp_project
