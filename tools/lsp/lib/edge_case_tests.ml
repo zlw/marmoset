@@ -40,6 +40,21 @@ let count_token_type ty tokens =
       List.length (List.filter (fun (_, _, _, t, _) -> t = ty) decoded)
   | None -> 0
 
+let get_tokens_in_file ~(files : (string * string) list) ~(entry_rel : string) ~(source : string) =
+  let captured = ref None in
+  let _ =
+    Doc_state.with_temp_project files (fun root ->
+        let file_id = Filename.concat root entry_rel in
+        let result = Doc_state.analyze_with_file_id ~source_root:root ~file_id ~source () in
+        captured :=
+          (match (result.program, result.type_map, result.environment) with
+          | Some prog, Some tm, Some env ->
+              Semantic_tokens.compute ~source ~program:prog ~type_map:tm ~environment:env
+          | _ -> None);
+        true)
+  in
+  !captured
+
 (* Folding ranges helper *)
 let get_ranges source =
   match Marmoset.Lib.Parser.parse ~file_id:"<test>" source with
@@ -192,6 +207,21 @@ let%test "semantic_tokens: all token lengths are positive" =
   | Some st ->
       let decoded = decode_tokens st.data in
       List.for_all (fun (_, _, len, _, _) -> len > 0) decoded
+  | None -> false
+
+let%test "semantic_tokens: module namespace uses still produce tokens" =
+  let tokens =
+    get_tokens_in_file
+      ~files:
+        [
+          ("main.mr", "import math\nputs(math.add(1, 2))\n");
+          ("math.mr", "export add\nfn add(x: Int, y: Int) -> Int = x + y\n");
+        ]
+      ~entry_rel:"main.mr" ~source:"import math\nputs(math.add(1, 2))\n"
+  in
+  match tokens with
+  | Some _ ->
+      has_token_type Semantic_tokens.function_type tokens && has_token_type Semantic_tokens.method_type tokens
   | None -> false
 
 (* ============================================================

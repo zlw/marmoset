@@ -58,6 +58,23 @@ let render = (x: Int) -> {
 };
 |}
 
+let module_scenario_main_source =
+  {|
+import math
+import math.add
+import math.add as plus
+
+puts(add(1, 2))
+puts(math.add(3, 4))
+puts(plus(5, 6))
+|}
+
+let module_scenario_files =
+  [
+    ("main.mr", module_scenario_main_source);
+    ("math.mr", "export add\nfn add(x: Int, y: Int) -> Int = x + y\n");
+  ]
+
 let nth_substring_offset ~(source : string) ~(needle : string) ~(occurrence : int) : int option =
   let rec scan start remaining =
     if remaining <= 0 then
@@ -156,6 +173,52 @@ let hint_at_substring ~(source : string) ~(needle : string) ?(occurrence = 1) ?o
   let line, character = position_of_substring ~source ~needle ~occurrence ~offset_in_needle () in
   hint_at_position ~source ~line ~character
 
+let hover_summary ~(source : string) (hover : Lsp_t.Hover.t) : string * string =
+  let type_text =
+    match hover.contents with
+    | `MarkupContent mc -> mc.value
+    | `MarkedString ms -> ms.value
+    | `List items ->
+        String.concat "\n"
+          (List.map
+             (function
+               | { Lsp_t.MarkedString.value; _ } -> value)
+             items)
+  in
+  let range =
+    match hover.range with
+    | Some range -> range
+    | None -> failwith "hover missing range"
+  in
+  let start_off = Lsp_utils.position_to_offset ~source ~line:range.start.line ~character:range.start.character in
+  let end_off = Lsp_utils.position_to_offset ~source ~line:range.end_.line ~character:range.end_.character in
+  (type_text, String.sub source start_off (end_off - start_off))
+
+let module_hover_summary ~(needle : string) ?(occurrence = 1) ?(offset_in_needle = 0) () : (string * string) option =
+  let captured = ref None in
+  let _ =
+    Doc_state.with_temp_project module_scenario_files (fun root ->
+        let file_id = Filename.concat root "main.mr" in
+        let analysis =
+          Doc_state.analyze_with_file_id ~source_root:root ~file_id ~source:module_scenario_main_source ()
+        in
+        let line, character =
+          position_of_substring ~source:module_scenario_main_source ~needle ~occurrence ~offset_in_needle ()
+        in
+        captured :=
+          (match (analysis.program, analysis.type_map, analysis.environment) with
+          | Some prog, Some tm, Some env -> (
+              match
+                Hover.hover_at ~source:module_scenario_main_source ~program:prog ~type_map:tm ~environment:env
+                  ~type_var_user_names:analysis.type_var_user_names ~line ~character
+              with
+              | Some hover -> Some (hover_summary ~source:module_scenario_main_source hover)
+              | None -> None)
+          | _ -> None);
+        true)
+  in
+  !captured
+
 let%test "editor scenario analyzes cleanly" =
   let result = Doc_state.analyze ~source:scenario_source in
   result.diagnostics = [] && result.program <> None && result.type_map <> None && result.environment <> None
@@ -178,6 +241,30 @@ let%test "editor scenario hover keeps inherent impl return type precise" =
 let%test "editor scenario hover keeps shape field type precise" =
   match get_hover ~needle:"age: Int" ~offset_in_needle:5 () with
   | Some h -> h.type_text = "Int" && h.highlighted = "Int"
+  | None -> false
+
+let%test "editor module scenario hover keeps direct-import surface names" =
+  match module_hover_summary ~needle:"add(1, 2)" ~offset_in_needle:1 () with
+  | Some (type_text, highlighted) ->
+      let _ = highlighted in
+      String.equal type_text "Int"
+      && not (Diagnostics.String_utils.contains_substring ~needle:"math__add" type_text)
+  | None -> false
+
+let%test "editor module scenario hover keeps namespace member surface syntax" =
+  match module_hover_summary ~needle:"math.add(3, 4)" ~offset_in_needle:5 () with
+  | Some (type_text, highlighted) ->
+      let _ = highlighted in
+      Diagnostics.String_utils.contains_substring ~needle:"Int" type_text
+      && not (Diagnostics.String_utils.contains_substring ~needle:"math__add" type_text)
+  | None -> false
+
+let%test "editor module scenario hover keeps import aliases visible" =
+  match module_hover_summary ~needle:"plus(5, 6)" ~offset_in_needle:1 () with
+  | Some (type_text, highlighted) ->
+      let _ = highlighted in
+      String.equal type_text "Int"
+      && not (Diagnostics.String_utils.contains_substring ~needle:"math__add" type_text)
   | None -> false
 
 let%test "editor scenario signature help keeps second active parameter" =

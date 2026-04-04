@@ -194,7 +194,7 @@ let print_diagnostics ~(file_id : string) ~(source : string) (diags : Diagnostic
 let compile_to_binary
     ~(input_file : string) ~(output_bin : string) ~(emit_go_dir : string option) ~(release : bool) :
     (Diagnostic.t list, Diagnostic.t list) result =
-  match Marmoset.Lib.Frontend_compiler.compile_entry_to_build ~entry_file:input_file with
+  match Marmoset.Lib.Frontend_compiler.compile_entry_to_build ~entry_file:input_file () with
   | Error diags -> Error diags
   | Ok build_output ->
       let diagnostics = build_output.diagnostics in
@@ -292,8 +292,7 @@ let run_file ~(benchmark : bool) ~(filename : string) =
 
 let run_check filename =
   let source = read_file filename in
-  Marmoset_lsp.Doc_state.reset_globals ();
-  match Marmoset.Lib.Frontend_compiler.check_entry ~entry_file:filename with
+  match Marmoset.Lib.Frontend_compiler.check_entry ~entry_file:filename () with
   | Ok diagnostics ->
       if diagnostics <> [] then
         print_diagnostics ~file_id:filename ~source diagnostics;

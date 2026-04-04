@@ -3,7 +3,62 @@ module Types = Marmoset.Lib.Types
 
 type type_var_user_name_map = (string * string) list
 
+let split_internal_components (name : string) : string list =
+  let len = String.length name in
+  let rec collect start idx acc =
+    if idx >= len - 1 then
+      List.rev (String.sub name start (len - start) :: acc)
+    else if name.[idx] = '_' && name.[idx + 1] = '_' then
+      let part = String.sub name start (idx - start) in
+      collect (idx + 2) (idx + 2) (part :: acc)
+    else
+      collect start (idx + 1) acc
+  in
+  if len = 0 then
+    [ "" ]
+  else
+    collect 0 0 []
+
+let decode_internal_component (component : string) : string =
+  let len = String.length component in
+  let hex_value = function
+    | '0' .. '9' as c -> Some (Char.code c - Char.code '0')
+    | 'a' .. 'f' as c -> Some (10 + Char.code c - Char.code 'a')
+    | 'A' .. 'F' as c -> Some (10 + Char.code c - Char.code 'A')
+    | _ -> None
+  in
+  let buffer = Buffer.create len in
+  let rec loop i =
+    if i >= len then
+      ()
+    else if i + 5 < len && component.[i] = '_' && component.[i + 1] = 'u' then
+      match
+        ( hex_value component.[i + 2],
+          hex_value component.[i + 3],
+          hex_value component.[i + 4],
+          hex_value component.[i + 5] )
+      with
+      | Some a, Some b, Some c, Some d ->
+          let code = (((a lsl 4) lor b) lsl 8) lor ((c lsl 4) lor d) in
+          Buffer.add_char buffer (Char.chr code);
+          loop (i + 6)
+      | _ ->
+          Buffer.add_char buffer component.[i];
+          loop (i + 1)
+    else (
+      Buffer.add_char buffer component.[i];
+      loop (i + 1))
+  in
+  loop 0;
+  Buffer.contents buffer
+
+let surface_type_name (name : string) : string =
+  match List.rev (split_internal_components name) with
+  | component :: _ -> decode_internal_component component
+  | [] -> name
+
 let canonical_type_name name =
+  let name = surface_type_name name in
   let capitalize_segment segment =
     if segment = "" then
       ""
@@ -225,3 +280,8 @@ let%test "type_expr_to_source renders intersections with precedence" =
     (Ast.AST.TIntersection
        [ Ast.AST.TArrow ([ Ast.AST.TCon "Int" ], Ast.AST.TCon "Str", false); Ast.AST.TCon "Bool" ])
   = "((Int) -> Str) & Bool"
+
+let%test "canonical_type_name drops internal module prefixes" = canonical_type_name "math__Point" = "Point"
+
+let%test "canonical_type_name decodes escaped internal components" =
+  canonical_type_name "collections__user_u005fprofile" = "UserProfile"

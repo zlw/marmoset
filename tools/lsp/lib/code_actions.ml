@@ -85,6 +85,42 @@ let find_close_paren ~source ~start ~limit =
   in
   scan (limit - 1)
 
+let binding_annotation_type ~(type_map : Infer.type_map) ~(environment : Infer.type_env option) ~(name : string)
+    (value : Ast.AST.expression) : Types.mono_type option =
+  match environment with
+  | Some env -> (
+      match Infer.TypeEnv.find_opt name env with
+      | Some (Types.Forall (_, mono)) -> Some mono
+      | None -> Hashtbl.find_opt type_map value.id)
+  | None -> Hashtbl.find_opt type_map value.id
+
+let annotated_binding_source_type ~(program : Ast.AST.program) ~(name : string) : string option =
+  let rec find_in_stmts stmts =
+    List.find_map find_in_stmt stmts
+  and find_in_stmt (stmt : Ast.AST.statement) =
+    match stmt.stmt with
+    | Ast.AST.Let { name = binding_name; type_annotation = Some type_expr; _ } when String.equal binding_name name ->
+        Some (Source_syntax.type_expr_to_source type_expr)
+    | Ast.AST.Block stmts -> find_in_stmts stmts
+    | _ -> None
+  in
+  find_in_stmts program
+
+let binding_annotation_text ~(program : Ast.AST.program) ~(type_map : Infer.type_map) ~(environment : Infer.type_env option)
+    ~(name : string) (value : Ast.AST.expression) : string option =
+  match value.expr with
+  | Ast.AST.Identifier bound_name -> (
+      match annotated_binding_source_type ~program ~name:bound_name with
+      | Some text -> Some text
+      | None ->
+          Option.map
+            (fun mono -> type_to_source (Types.normalize mono))
+            (binding_annotation_type ~type_map ~environment ~name value))
+  | _ ->
+      Option.map
+        (fun mono -> type_to_source (Types.normalize mono))
+        (binding_annotation_type ~type_map ~environment ~name value)
+
 (* ============================================================
    Annotation site collection
    ============================================================ *)
@@ -164,18 +200,17 @@ let sites_for_function ~source ~type_map ~range_start ~range_end ~sites (fn_expr
   | _ -> ()
 
 (* Walk statements recursively, collecting annotation sites *)
-let rec walk_stmt ~source ~type_map ~range_start ~range_end ~sites (stmt : Ast.AST.statement) =
+let rec walk_stmt ~source ~program ~type_map ~environment ~range_start ~range_end ~sites (stmt : Ast.AST.statement) =
   if stmt.end_pos < range_start || stmt.pos > range_end then
     ()
   else
     match stmt.stmt with
     | Ast.AST.Let { name; value; type_annotation = None; _ } ->
         (* Let binding annotation site *)
-        (match Hashtbl.find_opt type_map value.id with
-        | Some mono -> (
+        (match binding_annotation_text ~program ~type_map ~environment ~name value with
+        | Some type_str -> (
             match find_name_end ~source ~start:stmt.pos ~limit:value.pos name with
             | Some name_end ->
-                let type_str = type_to_source (Types.normalize mono) in
                 sites :=
                   {
                     insert_offset = name_end;
@@ -186,19 +221,20 @@ let rec walk_stmt ~source ~type_map ~range_start ~range_end ~sites (stmt : Ast.A
             | None -> ())
         | None -> ());
         sites_for_function ~source ~type_map ~range_start ~range_end ~sites value;
-        walk_expr ~source ~type_map ~range_start ~range_end ~sites value
+        walk_expr ~source ~program ~type_map ~environment ~range_start ~range_end ~sites value
     | Ast.AST.Let { value; _ } ->
         sites_for_function ~source ~type_map ~range_start ~range_end ~sites value;
-        walk_expr ~source ~type_map ~range_start ~range_end ~sites value
-    | Ast.AST.Block stmts -> List.iter (walk_stmt ~source ~type_map ~range_start ~range_end ~sites) stmts
-    | Ast.AST.ExpressionStmt e -> walk_expr ~source ~type_map ~range_start ~range_end ~sites e
-    | Ast.AST.Return e -> walk_expr ~source ~type_map ~range_start ~range_end ~sites e
+        walk_expr ~source ~program ~type_map ~environment ~range_start ~range_end ~sites value
+    | Ast.AST.Block stmts ->
+        List.iter (walk_stmt ~source ~program ~type_map ~environment ~range_start ~range_end ~sites) stmts
+    | Ast.AST.ExpressionStmt e -> walk_expr ~source ~program ~type_map ~environment ~range_start ~range_end ~sites e
+    | Ast.AST.Return e -> walk_expr ~source ~program ~type_map ~environment ~range_start ~range_end ~sites e
     | Ast.AST.ExportDecl _ | Ast.AST.ImportDecl _ -> ()
     | Ast.AST.EnumDef _ | Ast.AST.TypeDef _ | Ast.AST.ShapeDef _ | Ast.AST.TraitDef _ | Ast.AST.ImplDef _
     | Ast.AST.InherentImplDef _ | Ast.AST.DeriveDef _ | Ast.AST.TypeAlias _ ->
         ()
 
-and walk_expr ~source ~type_map ~range_start ~range_end ~sites (expr : Ast.AST.expression) =
+and walk_expr ~source ~program ~type_map ~environment ~range_start ~range_end ~sites (expr : Ast.AST.expression) =
   if expr.end_pos < range_start || expr.pos > range_end then
     ()
   else
@@ -206,48 +242,55 @@ and walk_expr ~source ~type_map ~range_start ~range_end ~sites (expr : Ast.AST.e
     | Ast.AST.Function { body; _ } ->
         (* NOTE: sites_for_function is NOT called here — it's called by walk_stmt
            for let bindings. Calling it here too would produce duplicate sites. *)
-        walk_stmt ~source ~type_map ~range_start ~range_end ~sites body
+        walk_stmt ~source ~program ~type_map ~environment ~range_start ~range_end ~sites body
     | Ast.AST.If (cond, then_, else_) ->
-        walk_expr ~source ~type_map ~range_start ~range_end ~sites cond;
-        walk_stmt ~source ~type_map ~range_start ~range_end ~sites then_;
-        Option.iter (walk_stmt ~source ~type_map ~range_start ~range_end ~sites) else_
+        walk_expr ~source ~program ~type_map ~environment ~range_start ~range_end ~sites cond;
+        walk_stmt ~source ~program ~type_map ~environment ~range_start ~range_end ~sites then_;
+        Option.iter (walk_stmt ~source ~program ~type_map ~environment ~range_start ~range_end ~sites) else_
     | Ast.AST.Call (fn_expr, args) ->
-        walk_expr ~source ~type_map ~range_start ~range_end ~sites fn_expr;
-        List.iter (walk_expr ~source ~type_map ~range_start ~range_end ~sites) args
+        walk_expr ~source ~program ~type_map ~environment ~range_start ~range_end ~sites fn_expr;
+        List.iter (walk_expr ~source ~program ~type_map ~environment ~range_start ~range_end ~sites) args
     | Ast.AST.Infix (l, _, r) ->
-        walk_expr ~source ~type_map ~range_start ~range_end ~sites l;
-        walk_expr ~source ~type_map ~range_start ~range_end ~sites r
+        walk_expr ~source ~program ~type_map ~environment ~range_start ~range_end ~sites l;
+        walk_expr ~source ~program ~type_map ~environment ~range_start ~range_end ~sites r
     | Ast.AST.Prefix (_, e) | Ast.AST.TypeApply (e, _) ->
-        walk_expr ~source ~type_map ~range_start ~range_end ~sites e
+        walk_expr ~source ~program ~type_map ~environment ~range_start ~range_end ~sites e
     | Ast.AST.Index (arr, idx) ->
-        walk_expr ~source ~type_map ~range_start ~range_end ~sites arr;
-        walk_expr ~source ~type_map ~range_start ~range_end ~sites idx
-    | Ast.AST.Array elts -> List.iter (walk_expr ~source ~type_map ~range_start ~range_end ~sites) elts
+        walk_expr ~source ~program ~type_map ~environment ~range_start ~range_end ~sites arr;
+        walk_expr ~source ~program ~type_map ~environment ~range_start ~range_end ~sites idx
+    | Ast.AST.Array elts ->
+        List.iter (walk_expr ~source ~program ~type_map ~environment ~range_start ~range_end ~sites) elts
     | Ast.AST.Hash pairs ->
         List.iter
           (fun (k, v) ->
-            walk_expr ~source ~type_map ~range_start ~range_end ~sites k;
-            walk_expr ~source ~type_map ~range_start ~range_end ~sites v)
+            walk_expr ~source ~program ~type_map ~environment ~range_start ~range_end ~sites k;
+            walk_expr ~source ~program ~type_map ~environment ~range_start ~range_end ~sites v)
           pairs
-    | Ast.AST.FieldAccess (e, _) -> walk_expr ~source ~type_map ~range_start ~range_end ~sites e
+    | Ast.AST.FieldAccess (e, _) ->
+        walk_expr ~source ~program ~type_map ~environment ~range_start ~range_end ~sites e
     | Ast.AST.MethodCall { mc_receiver; mc_args; _ } ->
-        walk_expr ~source ~type_map ~range_start ~range_end ~sites mc_receiver;
-        List.iter (walk_expr ~source ~type_map ~range_start ~range_end ~sites) mc_args
+        walk_expr ~source ~program ~type_map ~environment ~range_start ~range_end ~sites mc_receiver;
+        List.iter (walk_expr ~source ~program ~type_map ~environment ~range_start ~range_end ~sites) mc_args
     | Ast.AST.Match (scrutinee, arms) ->
-        walk_expr ~source ~type_map ~range_start ~range_end ~sites scrutinee;
+        walk_expr ~source ~program ~type_map ~environment ~range_start ~range_end ~sites scrutinee;
         List.iter
-          (fun (arm : Ast.AST.match_arm) -> walk_expr ~source ~type_map ~range_start ~range_end ~sites arm.body)
+          (fun (arm : Ast.AST.match_arm) ->
+            walk_expr ~source ~program ~type_map ~environment ~range_start ~range_end ~sites arm.body)
           arms
     | Ast.AST.RecordLit (fields, spread) ->
         List.iter
           (fun (f : Ast.AST.record_field) ->
-            Option.iter (walk_expr ~source ~type_map ~range_start ~range_end ~sites) f.field_value)
+            Option.iter
+              (walk_expr ~source ~program ~type_map ~environment ~range_start ~range_end ~sites)
+              f.field_value)
           fields;
-        Option.iter (walk_expr ~source ~type_map ~range_start ~range_end ~sites) spread
+        Option.iter (walk_expr ~source ~program ~type_map ~environment ~range_start ~range_end ~sites) spread
     | Ast.AST.EnumConstructor (_, _, args) ->
-        List.iter (walk_expr ~source ~type_map ~range_start ~range_end ~sites) args
-    | Ast.AST.TypeCheck (e, _) -> walk_expr ~source ~type_map ~range_start ~range_end ~sites e
-    | Ast.AST.BlockExpr stmts -> List.iter (walk_stmt ~source ~type_map ~range_start ~range_end ~sites) stmts
+        List.iter (walk_expr ~source ~program ~type_map ~environment ~range_start ~range_end ~sites) args
+    | Ast.AST.TypeCheck (e, _) ->
+        walk_expr ~source ~program ~type_map ~environment ~range_start ~range_end ~sites e
+    | Ast.AST.BlockExpr stmts ->
+        List.iter (walk_stmt ~source ~program ~type_map ~environment ~range_start ~range_end ~sites) stmts
     | Ast.AST.Identifier _ | Ast.AST.Integer _ | Ast.AST.Float _ | Ast.AST.Boolean _ | Ast.AST.String _ -> ()
 
 (* ============================================================
@@ -282,13 +325,14 @@ let compute
     ~(uri : Lsp_t.DocumentUri.t)
     ~(program : Ast.AST.program)
     ~(type_map : Infer.type_map)
+    ~(environment : Infer.type_env option)
     ~(range : Lsp_t.Range.t) : Lsp_t.CodeAction.t list =
   let range_start =
     Lsp_utils.position_to_offset ~source ~line:range.start.line ~character:range.start.character
   in
   let range_end = Lsp_utils.position_to_offset ~source ~line:range.end_.line ~character:range.end_.character in
   let sites = ref [] in
-  List.iter (walk_stmt ~source ~type_map ~range_start ~range_end ~sites) program;
+  List.iter (walk_stmt ~source ~program ~type_map ~environment ~range_start ~range_end ~sites) program;
   let all_sites = List.rev !sites in
   match all_sites with
   | [] -> []
@@ -313,8 +357,30 @@ let get_actions source =
           ~start:(Lsp_t.Position.create ~line:0 ~character:0)
           ~end_:(Lsp_t.Position.create ~line:999 ~character:0)
       in
-      compute ~source ~uri:(Lsp_t.DocumentUri.of_string "file:///test.mr") ~program:prog ~type_map:tm ~range
+      compute ~source ~uri:(Lsp_t.DocumentUri.of_string "file:///test.mr") ~program:prog ~type_map:tm
+        ~environment:result.environment ~range
   | _ -> []
+
+let get_actions_in_file ~(files : (string * string) list) ~(entry_rel : string) ~(source : string) =
+  let captured = ref [] in
+  let _ =
+    Doc_state.with_temp_project files (fun root ->
+        let file_id = Filename.concat root entry_rel in
+        let result = Doc_state.analyze_with_file_id ~source_root:root ~file_id ~source () in
+        captured :=
+          (match (result.program, result.type_map) with
+          | Some prog, Some tm ->
+              let range =
+                Lsp_t.Range.create
+                  ~start:(Lsp_t.Position.create ~line:0 ~character:0)
+                  ~end_:(Lsp_t.Position.create ~line:999 ~character:0)
+              in
+              compute ~source ~uri:(Lsp_t.DocumentUri.of_path file_id) ~program:prog ~type_map:tm
+                ~environment:result.environment ~range
+          | _ -> []);
+        true)
+  in
+  !captured
 
 let action_titles actions = List.map (fun (a : Lsp_t.CodeAction.t) -> a.title) actions
 
@@ -431,10 +497,25 @@ let%test "range filtering works" =
           ~end_:(Lsp_t.Position.create ~line:0 ~character:10)
       in
       let actions =
-        compute ~source ~uri:(Lsp_t.DocumentUri.of_string "file:///test.mr") ~program:prog ~type_map:tm ~range
+        compute ~source ~uri:(Lsp_t.DocumentUri.of_string "file:///test.mr") ~program:prog ~type_map:tm
+          ~environment:result.environment ~range
       in
       let titles = action_titles actions in
       let has_x = List.exists (fun t -> starts_with t "Add type annotation: x:") titles in
       let has_y = List.exists (fun t -> starts_with t "Add type annotation: y:") titles in
       has_x && not has_y
   | _ -> false
+
+let%test "module code actions keep imported surface types in annotation text" =
+  let actions =
+    get_actions_in_file
+      ~files:
+        [
+          ("main.mr", "import math.Point\nlet typed: Point = { x: 0, y: 0 }\nlet point = typed\n");
+          ("math.mr", "export Point\ntype Point = { x: Int, y: Int }\n");
+        ]
+      ~entry_rel:"main.mr" ~source:"import math.Point\nlet typed: Point = { x: 0, y: 0 }\nlet point = typed\n"
+  in
+  let titles = action_titles actions in
+  List.exists (fun title -> Diagnostics.String_utils.contains_substring ~needle:"Add type annotation: point:" title) titles
+  && not (List.exists (fun title -> Diagnostics.String_utils.contains_substring ~needle:"math__" title) titles)
