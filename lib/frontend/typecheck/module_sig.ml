@@ -1,11 +1,23 @@
+type definition_site = {
+  file_path : string;
+  start_pos : int;
+  end_pos : int;
+}
+
 type member_binding = {
   internal_name : string;
   value_type : Types.poly_type option;
+  value_definition : definition_site option;
   enum_def : Enum_registry.enum_def option;
+  enum_definition : definition_site option;
   named_type_def : Type_registry.named_type_def option;
+  named_type_definition : definition_site option;
   transparent_type : Annotation.type_alias_info option;
+  transparent_type_definition : definition_site option;
   shape_def : Type_registry.shape_def option;
+  shape_definition : definition_site option;
   trait_def : Trait_registry.trait_def option;
+  trait_definition : definition_site option;
 }
 
 type type_impl_entry = {

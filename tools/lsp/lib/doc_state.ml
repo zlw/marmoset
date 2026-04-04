@@ -27,7 +27,7 @@ let zero_range =
 let file_path_of_file_id (file_id : string) : string option =
   try
     if Diagnostics.String_utils.contains_substring ~needle:"://" file_id then
-      Some (Lsp_t.DocumentUri.(to_path (of_string file_id)))
+      Some Lsp_t.DocumentUri.(to_path (of_string file_id))
     else if Sys.file_exists file_id then
       Some file_id
     else
@@ -81,8 +81,8 @@ let has_module_headers (program : Ast.AST.program) : bool =
 
 let compiler_analysis_for_file_id ~(file_id : string) ~(source : string) : Compiler.entry_analysis =
   match file_path_of_file_id file_id with
-  | Some entry_file -> Compiler.analyze_entry_with_source ~entry_file ~entry_source:source
-  | None -> Compiler.analyze_entry_with_source ~entry_file:file_id ~entry_source:source
+  | Some entry_file -> Compiler.analyze_entry_with_source ~entry_file ~entry_source:source ()
+  | None -> Compiler.analyze_entry_with_source ~entry_file:file_id ~entry_source:source ()
 
 let expose_typed_state (analysis : Compiler.entry_analysis) : bool = analysis.mode = Compiler.Standalone
 
@@ -95,16 +95,29 @@ let analyze_with_file_id ~(file_id : string) ~(source : string) : analysis_resul
   in
   let program =
     match active_file.surface_program with
-    | Some program when not (has_module_headers program) || compiler_analysis.mode = Compiler.Modules -> Some program
+    | Some program when (not (has_module_headers program)) || compiler_analysis.mode = Compiler.Modules ->
+        Some program
     | other -> other
   in
   let should_expose_typed_state = expose_typed_state compiler_analysis in
   {
     source;
     program;
-    type_map = if should_expose_typed_state then active_file.type_map else None;
-    environment = if should_expose_typed_state then active_file.environment else None;
-    type_var_user_names = if should_expose_typed_state then active_file.type_var_user_names else [];
+    type_map =
+      (if should_expose_typed_state then
+         active_file.type_map
+       else
+         None);
+    environment =
+      (if should_expose_typed_state then
+         active_file.environment
+       else
+         None);
+    type_var_user_names =
+      (if should_expose_typed_state then
+         active_file.type_var_user_names
+       else
+         []);
     diagnostics;
     compiler_analysis = Some compiler_analysis;
   }
@@ -165,7 +178,10 @@ let%test "analyze type error has non-zero range when location available" =
 
 let%test "analyze successful code stores type_map and environment" =
   let result = analyze ~source:"let f = (x) -> x + 1; f" in
-  result.diagnostics = [] && result.type_map <> None && result.environment <> None && result.compiler_analysis <> None
+  result.diagnostics = []
+  && result.type_map <> None
+  && result.environment <> None
+  && result.compiler_analysis <> None
 
 let%test "analyze with builtins works" =
   let result = analyze ~source:"len([1, 2, 3])" in
@@ -206,29 +222,14 @@ let%test "analyze_with_file_id uses module-aware checking for imported files" =
   with_temp_project
     [
       ( "main.mr",
-        "import sum\n\
-         type Point = { x: Int, y: Int }\n\
-         let point: Point = { x: 1, y: 2 }\n\
-         let moved = { ...point, x: 10 }\n\
-         fn get_x(value: Point) -> Int = value.x\n\
-         let nums = sum.sum([1, 2, 3])\n\
-         puts(get_x(moved))\n\
-         puts(moved.x + moved.y)\n\
-         puts(nums)\n" );
+        "import sum\ntype Point = { x: Int, y: Int }\nlet point: Point = { x: 1, y: 2 }\nlet moved = { ...point, x: 10 }\nfn get_x(value: Point) -> Int = value.x\nlet nums = sum.sum([1, 2, 3])\nputs(get_x(moved))\nputs(moved.x + moved.y)\nputs(nums)\n"
+      );
       ("sum.mr", "export sum\nfn sum(values: List[Int]) -> Int = len(values)\n");
     ]
     (fun root ->
       let file_id = Filename.concat root "main.mr" in
       let source =
-        "import sum\n\
-         type Point = { x: Int, y: Int }\n\
-         let point: Point = { x: 1, y: 2 }\n\
-         let moved = { ...point, x: 10 }\n\
-         fn get_x(value: Point) -> Int = value.x\n\
-         let nums = sum.sum([1, 2, 3])\n\
-         puts(get_x(moved))\n\
-         puts(moved.x + moved.y)\n\
-         puts(nums)\n"
+        "import sum\ntype Point = { x: Int, y: Int }\nlet point: Point = { x: 1, y: 2 }\nlet moved = { ...point, x: 10 }\nfn get_x(value: Point) -> Int = value.x\nlet nums = sum.sum([1, 2, 3])\nputs(get_x(moved))\nputs(moved.x + moved.y)\nputs(nums)\n"
       in
       let result = analyze_with_file_id ~file_id ~source in
       result.diagnostics = [] && result.program <> None && result.compiler_analysis <> None)
@@ -272,10 +273,10 @@ let%test "analyze_with_file_id keeps module surface AST while exposing compiler 
                                     };
                                 _;
                               };
-                            ]
-                          );
+                            ] );
                       _;
-                    } -> true
+                    } ->
+                    true
                 | _ -> false)
               program
       in
@@ -289,10 +290,7 @@ let%test "analyze_with_file_id keeps module surface AST while exposing compiler 
 
 let%test "analyze_with_file_id preserves module export diagnostics for qualified access" =
   with_temp_project
-    [
-      ("main.mr", "import sum\nsum.reduce\n");
-      ("sum.mr", "fn reduce(values: List[Int]) -> Int = len(values)\n");
-    ]
+    [ ("main.mr", "import sum\nsum.reduce\n"); ("sum.mr", "fn reduce(values: List[Int]) -> Int = len(values)\n") ]
     (fun root ->
       let file_id = Filename.concat root "main.mr" in
       let result = analyze_with_file_id ~file_id ~source:"import sum\nsum.reduce\n" in

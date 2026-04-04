@@ -98,6 +98,13 @@ type symbol = {
   file_id : string option;
 }
 
+type prebound_symbol_info = {
+  kind : symbol_kind;
+  definition_pos : int;
+  definition_end_pos : int;
+  file_id : string option;
+}
+
 let symbol_kind_tag = function
   | BuiltinValue -> "builtin-value"
   | TopLevelLet -> "toplevel-let"
@@ -1613,10 +1620,19 @@ let current_top_level_placeholder_type (env : type_env) (name : string) : mono_t
       | Some (Forall ([], mono)) -> Some mono
       | _ -> Some placeholder)
 
-let register_prebound_symbols (env : type_env) : symbol_scope =
+let register_prebound_symbols ?(prebound_symbols = []) (env : type_env) : symbol_scope =
+  let prebound_symbols =
+    List.fold_left (fun acc (name, info) -> NameMap.add name info acc) NameMap.empty prebound_symbols
+  in
   TypeEnv.fold
     (fun name _poly scope ->
-      let sid = register_symbol ~name ~kind:BuiltinValue ~pos:(-1) ~end_pos:(-1) ~file_id:None in
+      let sid =
+        match NameMap.find_opt name prebound_symbols with
+        | Some info ->
+            register_symbol ~name ~kind:info.kind ~pos:info.definition_pos ~end_pos:info.definition_end_pos
+              ~file_id:info.file_id
+        | None -> register_symbol ~name ~kind:BuiltinValue ~pos:(-1) ~end_pos:(-1) ~file_id:None
+      in
       NameMap.add name sid scope)
     env NameMap.empty
 
@@ -1887,9 +1903,10 @@ and resolve_stmt_list_symbols (stack : symbol_scope_stack) ~(is_top_level : bool
     symbol_scope_stack =
   List.fold_left (fun acc stmt -> resolve_stmt_symbols acc ~is_top_level stmt) stack stmts
 
-let resolve_program_symbols (env : type_env) (program : AST.program) : (unit, Diagnostic.t) result =
+let resolve_program_symbols ?(prebound_symbols = []) (env : type_env) (program : AST.program) :
+    (unit, Diagnostic.t) result =
   clear_symbol_stores ();
-  let root_scope = register_prebound_symbols env in
+  let root_scope = register_prebound_symbols ~prebound_symbols env in
   match register_top_level_symbol_definitions root_scope program with
   | Error e -> Error e
   | Ok root_scope' ->
@@ -6654,7 +6671,8 @@ let register_top_level_named_declarations (program : AST.program) : (unit, Diagn
   let* () = register_enums program in
   register_named program
 
-let infer_program ?(env = empty_env) ?state ?(prepare_state = true) (program : AST.program) :
+let infer_program
+    ?(env = empty_env) ?(prebound_symbols = []) ?state ?(prepare_state = true) (program : AST.program) :
     (type_env * type_map * mono_type) infer_result =
   let state = Option.value state ~default:(create_inference_state ()) in
   with_inference_state state (fun () ->
@@ -6677,7 +6695,7 @@ let infer_program ?(env = empty_env) ?state ?(prepare_state = true) (program : A
                   match register_top_level_named_declarations expanded_program with
                   | Error e -> Error e
                   | Ok () -> (
-                      match resolve_program_symbols env expanded_program with
+                      match resolve_program_symbols ~prebound_symbols env expanded_program with
                       | Error e -> Error e
                       | Ok () -> (
                           let predeclare_top_level_impl_headers (program : AST.program) : unit =

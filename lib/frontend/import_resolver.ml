@@ -1,16 +1,23 @@
 module Diagnostic = Diagnostics.Diagnostic
 module AST = Syntax.Ast.AST
+module Module_sig = Typecheck.Module_sig
 module StringMap = Map.Make (String)
 module StringSet = Set.Make (String)
 
 type member_presence = {
   internal_name : string;
   has_value : bool;
+  value_definition : Module_sig.definition_site option;
   has_enum : bool;
+  enum_definition : Module_sig.definition_site option;
   has_named_type : bool;
+  named_type_definition : Module_sig.definition_site option;
   has_transparent_type : bool;
+  transparent_type_definition : Module_sig.definition_site option;
   has_shape : bool;
+  shape_definition : Module_sig.definition_site option;
   has_trait : bool;
+  trait_definition : Module_sig.definition_site option;
 }
 
 type module_surface = {
@@ -36,7 +43,8 @@ type namespace_member_resolution =
   [ `ModulePath
   | `Exported of member_presence
   | `NotExported of module_surface * string
-  | `MissingMember of module_surface * string ]
+  | `MissingMember of module_surface * string
+  ]
 
 type rewrite_result = {
   program : AST.program;
@@ -82,56 +90,110 @@ let merge_presence
     (existing : member_presence option)
     ~(internal_name : string)
     ?(has_value = false)
+    ?value_definition
     ?(has_enum = false)
+    ?enum_definition
     ?(has_named_type = false)
+    ?named_type_definition
     ?(has_transparent_type = false)
+    ?transparent_type_definition
     ?(has_shape = false)
+    ?shape_definition
     ?(has_trait = false)
+    ?trait_definition
     () =
   match existing with
-  | None -> { internal_name; has_value; has_enum; has_named_type; has_transparent_type; has_shape; has_trait }
+  | None ->
+      {
+        internal_name;
+        has_value;
+        value_definition;
+        has_enum;
+        enum_definition;
+        has_named_type;
+        named_type_definition;
+        has_transparent_type;
+        transparent_type_definition;
+        has_shape;
+        shape_definition;
+        has_trait;
+        trait_definition;
+      }
   | Some prior ->
       {
         internal_name = prior.internal_name;
         has_value = prior.has_value || has_value;
+        value_definition = Option.fold ~none:value_definition ~some:(fun site -> Some site) prior.value_definition;
         has_enum = prior.has_enum || has_enum;
+        enum_definition = Option.fold ~none:enum_definition ~some:(fun site -> Some site) prior.enum_definition;
         has_named_type = prior.has_named_type || has_named_type;
+        named_type_definition =
+          Option.fold ~none:named_type_definition ~some:(fun site -> Some site) prior.named_type_definition;
         has_transparent_type = prior.has_transparent_type || has_transparent_type;
+        transparent_type_definition =
+          Option.fold ~none:transparent_type_definition
+            ~some:(fun site -> Some site)
+            prior.transparent_type_definition;
         has_shape = prior.has_shape || has_shape;
+        shape_definition = Option.fold ~none:shape_definition ~some:(fun site -> Some site) prior.shape_definition;
         has_trait = prior.has_trait || has_trait;
+        trait_definition = Option.fold ~none:trait_definition ~some:(fun site -> Some site) prior.trait_definition;
       }
 
 let add_presence map name presence = StringMap.add name presence map
 
-let presence_of_decl module_id (stmt : AST.statement) (decls : member_presence StringMap.t) :
-    member_presence StringMap.t =
-  let add name ~has_value ~has_enum ~has_named_type ~has_transparent_type ~has_shape ~has_trait =
+let definition_site_of_stmt ~(fallback_file_path : string) (stmt : AST.statement) : Module_sig.definition_site =
+  {
+    file_path = Option.value stmt.file_id ~default:fallback_file_path;
+    start_pos = stmt.pos;
+    end_pos = stmt.end_pos;
+  }
+
+let presence_of_decl module_id ~(file_path : string) (stmt : AST.statement) (decls : member_presence StringMap.t)
+    : member_presence StringMap.t =
+  let definition_site = definition_site_of_stmt ~fallback_file_path:file_path stmt in
+  let add
+      name
+      ~has_value
+      ?value_definition
+      ~has_enum
+      ?enum_definition
+      ~has_named_type
+      ?named_type_definition
+      ~has_transparent_type
+      ?transparent_type_definition
+      ~has_shape
+      ?shape_definition
+      ~has_trait
+      ?trait_definition
+      () =
     let internal_name = internal_name_of module_id name in
     let presence =
       merge_presence (StringMap.find_opt name decls) ~internal_name ~has_value ~has_enum ~has_named_type
-        ~has_transparent_type ~has_shape ~has_trait ()
+        ?value_definition ?enum_definition ?named_type_definition ?transparent_type_definition
+        ~has_transparent_type ?shape_definition ~has_shape ?trait_definition ~has_trait ()
     in
     add_presence decls name presence
   in
   match stmt.stmt with
   | AST.Let { name; _ } when not (String.equal name "_") ->
-      add name ~has_value:true ~has_enum:false ~has_named_type:false ~has_transparent_type:false ~has_shape:false
-        ~has_trait:false
+      add name ~has_value:true ~value_definition:definition_site ~has_enum:false ~has_named_type:false
+        ~has_transparent_type:false ~has_shape:false ~has_trait:false ()
   | AST.EnumDef { name; _ } ->
-      add name ~has_value:false ~has_enum:true ~has_named_type:false ~has_transparent_type:false ~has_shape:false
-        ~has_trait:false
+      add name ~has_value:false ~has_enum:true ~enum_definition:definition_site ~has_named_type:false
+        ~has_transparent_type:false ~has_shape:false ~has_trait:false ()
   | AST.TypeDef { type_name; _ } ->
-      add type_name ~has_value:false ~has_enum:false ~has_named_type:true ~has_transparent_type:false
-        ~has_shape:false ~has_trait:false
+      add type_name ~has_value:false ~has_enum:false ~has_named_type:true ~named_type_definition:definition_site
+        ~has_transparent_type:false ~has_shape:false ~has_trait:false ()
   | AST.ShapeDef { shape_name; _ } ->
       add shape_name ~has_value:false ~has_enum:false ~has_named_type:false ~has_transparent_type:false
-        ~has_shape:true ~has_trait:false
+        ~has_shape:true ~shape_definition:definition_site ~has_trait:false ()
   | AST.TraitDef { name; _ } ->
       add name ~has_value:false ~has_enum:false ~has_named_type:false ~has_transparent_type:false ~has_shape:false
-        ~has_trait:true
+        ~has_trait:true ~trait_definition:definition_site ()
   | AST.TypeAlias { alias_name; _ } ->
       add alias_name ~has_value:false ~has_enum:false ~has_named_type:false ~has_transparent_type:true
-        ~has_shape:false ~has_trait:false
+        ~transparent_type_definition:definition_site ~has_shape:false ~has_trait:false ()
   | _ -> decls
 
 let export_error (module_info : Module_context.parsed_module) ~(name : string) : Diagnostic.t =
@@ -141,7 +203,7 @@ let export_error (module_info : Module_context.parsed_module) ~(name : string) :
 let build_module_surface (module_info : Module_context.parsed_module) : (module_surface, Diagnostic.t) result =
   let declarations =
     List.fold_left
-      (fun decls stmt -> presence_of_decl module_info.module_id stmt decls)
+      (fun decls stmt -> presence_of_decl module_info.module_id ~file_path:module_info.file_path stmt decls)
       StringMap.empty module_info.program
   in
   let rec build_exports acc = function
@@ -478,8 +540,8 @@ let builtin_value_names : StringSet.t =
     (fun acc (name, _poly) -> StringSet.add name acc)
     StringSet.empty Typecheck.Builtins.builtin_types
 
-let namespace_resolution_error (expr : AST.expression) (resolution : namespace_member_resolution) (segments : string list)
-    : Diagnostic.t =
+let namespace_resolution_error
+    (expr : AST.expression) (resolution : namespace_member_resolution) (segments : string list) : Diagnostic.t =
   let message =
     match resolution with
     | `ModulePath -> Printf.sprintf "Unresolved qualified name '%s'" (String.concat "." segments)

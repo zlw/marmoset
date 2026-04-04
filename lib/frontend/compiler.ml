@@ -36,6 +36,8 @@ type compiled_project = {
   method_def_map : (int, Typecheck.Resolution_artifacts.typed_method_def) Hashtbl.t;
   trait_object_coercion_map : (int, Typecheck.Resolution_artifacts.trait_object_coercion) Hashtbl.t;
   placeholder_rewrite_map : Infer.placeholder_rewrite_map;
+  symbol_table : (Infer.symbol_id * Infer.symbol) list;
+  identifier_symbols : (int * Infer.symbol_id) list;
   diagnostics : Diagnostic.t list;
 }
 
@@ -45,17 +47,21 @@ type analysis_mode =
 
 type file_analysis = {
   file_path : string;
+  module_id : string option;
   source : string;
   surface_program : AST.program option;
   typed_program : AST.program option;
   type_map : Infer.type_map option;
   environment : Infer.type_env option;
   type_var_user_names : (string * string) list;
+  symbol_table : (Infer.symbol_id * Infer.symbol) list;
+  identifier_symbols : (int * Infer.symbol_id) list;
   diagnostics : Diagnostic.t list;
 }
 
 type entry_analysis = {
   mode : analysis_mode;
+  source_root : string option;
   graph : Module_context.module_graph option;
   project : compiled_project option;
   active_file : file_analysis;
@@ -125,6 +131,23 @@ let seed_signature_exports (signature : Module_sig.module_signature) (env : Infe
       Option.iter Trait_registry.register_trait binding.trait_def;
       env_acc)
     signature.exports env
+
+let prebound_value_symbols_of_signature (signature : Module_sig.module_signature) :
+    (string * Infer.prebound_symbol_info) list =
+  Hashtbl.fold
+    (fun _name (binding : Module_sig.member_binding) acc ->
+      match (binding.value_type, binding.value_definition) with
+      | Some _, Some definition ->
+          ( binding.internal_name,
+            {
+              Infer.kind = Infer.TopLevelLet;
+              definition_pos = definition.start_pos;
+              definition_end_pos = definition.end_pos;
+              file_id = Some definition.file_path;
+            } )
+          :: acc
+      | _ -> acc)
+    signature.exports []
 
 let seed_type_impls (entries : Module_sig.type_impl_entry list) : (unit, Diagnostic.t) result =
   let rec seed_methods for_type = function
@@ -351,31 +374,37 @@ let extract_module_signature
       {
         Module_sig.internal_name = presence.internal_name;
         value_type;
+        value_definition = presence.value_definition;
         enum_def =
           (if presence.has_enum then
              Import_resolver.StringMap.find_opt presence.internal_name enum_map
            else
              None);
+        enum_definition = presence.enum_definition;
         named_type_def =
           (if presence.has_named_type then
              Import_resolver.StringMap.find_opt presence.internal_name named_type_map
            else
              None);
+        named_type_definition = presence.named_type_definition;
         transparent_type =
           (if presence.has_transparent_type then
              Import_resolver.StringMap.find_opt presence.internal_name alias_map
            else
              None);
+        transparent_type_definition = presence.transparent_type_definition;
         shape_def =
           (if presence.has_shape then
              Import_resolver.StringMap.find_opt presence.internal_name shape_map
            else
              None);
+        shape_definition = presence.shape_definition;
         trait_def =
           (if presence.has_trait then
              Import_resolver.StringMap.find_opt presence.internal_name trait_map
            else
              None);
+        trait_definition = presence.trait_definition;
       }
     in
     Hashtbl.replace exports surface_name binding
@@ -469,21 +498,23 @@ let compile_module
     (module_info : Module_context.parsed_module) : (checked_module, Diagnostic.t list) result =
   reset_module_state ();
   let state = Infer.create_inference_state () in
-  let* env =
-    let rec seed_imports env_acc = function
-      | [] -> Ok env_acc
+  let* env, prebound_symbols =
+    let rec seed_imports env_acc prebound_symbols_acc = function
+      | [] -> Ok (env_acc, List.rev prebound_symbols_acc)
       | module_id :: rest -> (
           match Hashtbl.find_opt typed_signatures module_id with
-          | None -> seed_imports env_acc rest
+          | None -> seed_imports env_acc prebound_symbols_acc rest
           | Some signature ->
               let env_acc = seed_signature_exports signature env_acc in
               let* () = seed_visible_impls signature |> Result.map_error (fun diag -> [ diag ]) in
-              seed_imports env_acc rest)
+              seed_imports env_acc
+                (List.rev_append (prebound_value_symbols_of_signature signature) prebound_symbols_acc)
+                rest)
     in
-    seed_imports (Builtins.prelude_env ()) rewrite.resolved_imports.direct_modules
+    seed_imports (Builtins.prelude_env ()) [] rewrite.resolved_imports.direct_modules
   in
   let* result =
-    Checker.check_program_with_annotations ~state ~prepare_state:false ~env rewrite.program
+    Checker.check_program_with_annotations ~state ~prebound_symbols ~prepare_state:false ~env rewrite.program
     |> Result.map_error (fun diags -> diags)
   in
   let type_var_user_names = Infer.type_var_user_name_bindings_in_state state in
@@ -527,6 +558,8 @@ let merge_checked_modules (modules : checked_module list) : compiled_project =
   let method_def_map = Hashtbl.create 128 in
   let trait_object_coercion_map = Hashtbl.create 128 in
   let placeholder_rewrite_map = Hashtbl.create 128 in
+  let symbol_table = Hashtbl.create 256 in
+  let identifier_symbols = Hashtbl.create 256 in
   let diagnostics = modules |> List.concat_map (fun (m : checked_module) -> m.result.diagnostics) in
   List.iter
     (fun (m : checked_module) ->
@@ -535,7 +568,11 @@ let merge_checked_modules (modules : checked_module list) : compiled_project =
       merge_hashtbl method_type_args_map m.result.method_type_args_map;
       merge_hashtbl method_def_map m.result.method_def_map;
       merge_hashtbl trait_object_coercion_map m.result.trait_object_coercion_map;
-      merge_hashtbl placeholder_rewrite_map m.result.placeholder_rewrite_map)
+      merge_hashtbl placeholder_rewrite_map m.result.placeholder_rewrite_map;
+      List.iter (fun (symbol_id, symbol) -> Hashtbl.replace symbol_table symbol_id symbol) m.result.symbol_table;
+      List.iter
+        (fun (expr_id, symbol_id) -> Hashtbl.replace identifier_symbols expr_id symbol_id)
+        m.result.identifier_symbols)
     modules;
   {
     modules;
@@ -547,6 +584,8 @@ let merge_checked_modules (modules : checked_module list) : compiled_project =
     method_def_map;
     trait_object_coercion_map;
     placeholder_rewrite_map;
+    symbol_table = Hashtbl.to_seq symbol_table |> List.of_seq;
+    identifier_symbols = Hashtbl.to_seq identifier_symbols |> List.of_seq;
     diagnostics;
   }
 
@@ -632,17 +671,56 @@ let compile_project_to_build (graph : Module_context.module_graph) :
 
 let make_file_analysis
     ~(file_path : string)
+    ?module_id
     ~(source : string)
     ?surface_program
     ?typed_program
     ?type_map
     ?environment
     ?(type_var_user_names = [])
+    ?(symbol_table = [])
+    ?(identifier_symbols = [])
     ~(diagnostics : Diagnostic.t list)
     () : file_analysis =
-  { file_path; source; surface_program; typed_program; type_map; environment; type_var_user_names; diagnostics }
+  {
+    file_path;
+    module_id;
+    source;
+    surface_program;
+    typed_program;
+    type_map;
+    environment;
+    type_var_user_names;
+    symbol_table;
+    identifier_symbols;
+    diagnostics;
+  }
 
-let find_parsed_module_by_file (analysis : entry_analysis) ~(file_path : string) : Module_context.parsed_module option =
+let find_symbol_by_id (symbol_table : (Infer.symbol_id * Infer.symbol) list) (symbol_id : Infer.symbol_id) :
+    Infer.symbol option =
+  List.find_map
+    (fun (candidate_id, symbol) ->
+      if candidate_id = symbol_id then
+        Some symbol
+      else
+        None)
+    symbol_table
+
+let find_active_file_symbol (analysis : entry_analysis) ~(expr_id : int) : Infer.symbol option =
+  match
+    List.find_map
+      (fun (candidate_expr_id, symbol_id) ->
+        if candidate_expr_id = expr_id then
+          Some symbol_id
+        else
+          None)
+      analysis.active_file.identifier_symbols
+  with
+  | None -> None
+  | Some symbol_id -> find_symbol_by_id analysis.active_file.symbol_table symbol_id
+
+let find_parsed_module_by_file (analysis : entry_analysis) ~(file_path : string) :
+    Module_context.parsed_module option =
   match analysis.graph with
   | None -> None
   | Some graph ->
@@ -657,7 +735,20 @@ let find_checked_module_by_file (analysis : entry_analysis) ~(file_path : string
   | Some project ->
       List.find_opt (fun (module_ : checked_module) -> String.equal module_.file_path file_path) project.modules
 
-let analyze_standalone_program ~(entry_file : string) ~(source : string) (program : AST.program) : entry_analysis =
+let find_checked_module_by_id (analysis : entry_analysis) ~(module_id : string) : checked_module option =
+  match analysis.project with
+  | None -> None
+  | Some project ->
+      List.find_opt (fun (module_ : checked_module) -> String.equal module_.module_id module_id) project.modules
+
+let find_export_binding (analysis : entry_analysis) ~(module_id : string) ~(surface_name : string) :
+    Module_sig.member_binding option =
+  match find_checked_module_by_id analysis ~module_id with
+  | None -> None
+  | Some module_ -> Module_sig.find_export module_.signature surface_name
+
+let analyze_standalone_program ?source_root ~(entry_file : string) ~(source : string) (program : AST.program) :
+    entry_analysis =
   reset_module_state ();
   let env = Builtins.prelude_env () in
   let state = Infer.create_inference_state () in
@@ -665,23 +756,32 @@ let analyze_standalone_program ~(entry_file : string) ~(source : string) (progra
   | Error diags ->
       let active_file =
         make_file_analysis ~file_path:entry_file ~source ~surface_program:program ~diagnostics:diags
-          ~type_var_user_names:(Infer.type_var_user_name_bindings_in_state state) ()
+          ~type_var_user_names:(Infer.type_var_user_name_bindings_in_state state)
+          ~symbol_table:(Infer.symbol_table_bindings_in_state state)
+          ~identifier_symbols:(Infer.identifier_symbol_bindings_in_state state)
+          ()
       in
-      { mode = Standalone; graph = None; project = None; active_file }
+      { mode = Standalone; source_root; graph = None; project = None; active_file }
   | Ok result ->
       let active_file =
         make_file_analysis ~file_path:entry_file ~source ~surface_program:program ~typed_program:program
           ~type_map:result.type_map ~environment:result.environment ~diagnostics:result.diagnostics
-          ~type_var_user_names:(Infer.type_var_user_name_bindings_in_state state) ()
+          ~type_var_user_names:(Infer.type_var_user_name_bindings_in_state state)
+          ~symbol_table:result.symbol_table ~identifier_symbols:result.identifier_symbols ()
       in
-      { mode = Standalone; graph = None; project = None; active_file }
+      { mode = Standalone; source_root; graph = None; project = None; active_file }
 
-let analyze_module_graph ~(entry_file : string) ~(source : string) ~(entry_program : AST.program)
+let analyze_module_graph
+    ~(source_root : string option)
+    ~(entry_file : string)
+    ~(source : string)
+    ~(entry_program : AST.program)
     (graph : Module_context.module_graph) : entry_analysis =
   match Hashtbl.find_opt graph.modules graph.entry_module with
   | None ->
       let active_file =
-        make_file_analysis ~file_path:entry_file ~source ~surface_program:entry_program
+        make_file_analysis ~file_path:entry_file ~module_id:graph.entry_module ~source
+          ~surface_program:entry_program
           ~diagnostics:
             [
               compiler_error ~code:"module-missing"
@@ -689,21 +789,25 @@ let analyze_module_graph ~(entry_file : string) ~(source : string) ~(entry_progr
             ]
           ()
       in
-      { mode = Modules; graph = Some graph; project = None; active_file }
+      { mode = Modules; source_root; graph = Some graph; project = None; active_file }
   | Some entry_module -> (
       match compile_project graph with
       | Error diags ->
           let active_file =
-            make_file_analysis ~file_path:entry_module.file_path ~source:entry_module.source
-              ~surface_program:entry_module.program ~diagnostics:diags ()
+            make_file_analysis ~file_path:entry_module.file_path ~module_id:entry_module.module_id
+              ~source:entry_module.source ~surface_program:entry_module.program ~diagnostics:diags ()
           in
-          { mode = Modules; graph = Some graph; project = None; active_file }
+          { mode = Modules; source_root; graph = Some graph; project = None; active_file }
       | Ok project -> (
-          match List.find_opt (fun (module_ : checked_module) -> String.equal module_.module_id graph.entry_module) project.modules with
+          match
+            List.find_opt
+              (fun (module_ : checked_module) -> String.equal module_.module_id graph.entry_module)
+              project.modules
+          with
           | None ->
               let active_file =
-                make_file_analysis ~file_path:entry_module.file_path ~source:entry_module.source
-                  ~surface_program:entry_module.program
+                make_file_analysis ~file_path:entry_module.file_path ~module_id:entry_module.module_id
+                  ~source:entry_module.source ~surface_program:entry_module.program
                   ~diagnostics:
                     [
                       compiler_error ~code:"module-missing"
@@ -711,35 +815,40 @@ let analyze_module_graph ~(entry_file : string) ~(source : string) ~(entry_progr
                     ]
                   ()
               in
-              { mode = Modules; graph = Some graph; project = Some project; active_file }
+              { mode = Modules; source_root; graph = Some graph; project = Some project; active_file }
           | Some checked_entry ->
               let active_file =
-                make_file_analysis ~file_path:entry_module.file_path ~source:entry_module.source
-                  ~surface_program:entry_module.program ~typed_program:checked_entry.program
-                  ~type_map:checked_entry.result.type_map ~environment:checked_entry.result.environment
-                  ~type_var_user_names:checked_entry.type_var_user_names ~diagnostics:project.diagnostics ()
+                make_file_analysis ~file_path:entry_module.file_path ~module_id:entry_module.module_id
+                  ~source:entry_module.source ~surface_program:entry_module.program
+                  ~typed_program:checked_entry.program ~type_map:checked_entry.result.type_map
+                  ~environment:checked_entry.result.environment
+                  ~type_var_user_names:checked_entry.type_var_user_names
+                  ~symbol_table:checked_entry.result.symbol_table
+                  ~identifier_symbols:checked_entry.result.identifier_symbols ~diagnostics:project.diagnostics ()
               in
-              { mode = Modules; graph = Some graph; project = Some project; active_file }))
+              { mode = Modules; source_root; graph = Some graph; project = Some project; active_file }))
 
-let analyze_entry_with_source ~(entry_file : string) ~(entry_source : string) : entry_analysis =
+let analyze_entry_with_source
+    ?source_root ?(force_modules = false) ~(entry_file : string) ~(entry_source : string) () : entry_analysis =
   match Parser.parse ~file_id:entry_file entry_source with
   | Error diags ->
       let active_file = make_file_analysis ~file_path:entry_file ~source:entry_source ~diagnostics:diags () in
-      { mode = Standalone; graph = None; project = None; active_file }
-  | Ok entry_program ->
-      if not (has_module_headers entry_program) then
-        analyze_standalone_program ~entry_file ~source:entry_source entry_program
+      { mode = Standalone; source_root; graph = None; project = None; active_file }
+  | Ok entry_program -> (
+      if (not force_modules) && not (has_module_headers entry_program) then
+        analyze_standalone_program ?source_root ~entry_file ~source:entry_source entry_program
       else
-        match Discovery.discover_project_with_entry_source ~entry_file ~entry_source with
+        match Discovery.discover_project_with_entry_source ?source_root ~entry_file ~entry_source () with
         | Error diag ->
             let active_file =
               make_file_analysis ~file_path:entry_file ~source:entry_source ~surface_program:entry_program
                 ~diagnostics:[ diag ] ()
             in
-            { mode = Modules; graph = None; project = None; active_file }
-        | Ok graph -> analyze_module_graph ~entry_file ~source:entry_source ~entry_program graph
+            { mode = Modules; source_root; graph = None; project = None; active_file }
+        | Ok graph -> analyze_module_graph ~source_root ~entry_file ~source:entry_source ~entry_program graph)
 
-let analyze_entry ~(entry_file : string) : entry_analysis = analyze_entry_with_source ~entry_file ~entry_source:(read_source_file entry_file)
+let analyze_entry ?source_root ?(force_modules = false) ~(entry_file : string) () : entry_analysis =
+  analyze_entry_with_source ?source_root ~force_modules ~entry_file ~entry_source:(read_source_file entry_file) ()
 
 let check_graph (graph : Module_context.module_graph) : (Diagnostic.t list, Diagnostic.t list) result =
   match Hashtbl.find_opt graph.modules graph.entry_module with
@@ -753,23 +862,29 @@ let check_graph (graph : Module_context.module_graph) : (Diagnostic.t list, Diag
       | Ok project -> Ok project.diagnostics
       | Error diags -> Error diags)
 
-let check_entry ~(entry_file : string) : (Diagnostic.t list, Diagnostic.t list) result =
-  let analysis = analyze_entry ~entry_file in
+let check_entry ?source_root ?(force_modules = false) ~(entry_file : string) :
+    unit -> (Diagnostic.t list, Diagnostic.t list) result =
+ fun () ->
+  let analysis = analyze_entry ?source_root ~force_modules ~entry_file () in
   if diagnostics_have_errors analysis.active_file.diagnostics then
     Error analysis.active_file.diagnostics
   else
     Ok analysis.active_file.diagnostics
 
-let check_entry_with_source ~(entry_file : string) ~(entry_source : string) :
-    (Diagnostic.t list, Diagnostic.t list) result =
-  let analysis = analyze_entry_with_source ~entry_file ~entry_source in
+let check_entry_with_source ?source_root ?(force_modules = false) ~(entry_file : string) ~(entry_source : string)
+    : unit -> (Diagnostic.t list, Diagnostic.t list) result =
+ fun () ->
+  let analysis = analyze_entry_with_source ?source_root ~force_modules ~entry_file ~entry_source () in
   if diagnostics_have_errors analysis.active_file.diagnostics then
     Error analysis.active_file.diagnostics
   else
     Ok analysis.active_file.diagnostics
 
-let compile_entry_to_build ~(entry_file : string) : (Codegen.build_output, Diagnostic.t list) result =
-  let* graph = Discovery.discover_project ~entry_file |> Result.map_error (fun diag -> [ diag ]) in
+let compile_entry_to_build ?source_root ~(entry_file : string) () :
+    (Codegen.build_output, Diagnostic.t list) result =
+  let* graph =
+    Discovery.discover_project ?source_root ~entry_file () |> Result.map_error (fun diag -> [ diag ])
+  in
   match Hashtbl.find_opt graph.modules graph.entry_module with
   | Some entry_module when Hashtbl.length graph.modules = 1 && not (has_module_headers entry_module.program) ->
       Codegen.compile_to_build ~file_id:entry_module.file_path entry_module.source
@@ -782,7 +897,7 @@ let%test "compile_project rewrites namespace imports to internal names" =
       ("math.mr", "export add\nfn add(x: Int, y: Int) -> Int = x + y\n");
     ]
     (fun root ->
-      match Discovery.discover_project ~entry_file:(Filename.concat root "main.mr") with
+      match Discovery.discover_project ~entry_file:(Filename.concat root "main.mr") () with
       | Error _ -> false
       | Ok graph -> (
           match compile_project graph with
@@ -799,7 +914,7 @@ let%test "compile_entry_to_build keeps legacy single-file path working" =
   Discovery.with_temp_project
     [ ("main.mr", "fn add(x: Int, y: Int) -> Int = x + y\nputs(add(1, 2))\n") ]
     (fun root ->
-      match compile_entry_to_build ~entry_file:(Filename.concat root "main.mr") with
+      match compile_entry_to_build ~entry_file:(Filename.concat root "main.mr") () with
       | Error _ -> false
       | Ok build_output -> Diagnostics.String_utils.contains_substring ~needle:"func add_" build_output.main_go)
 
@@ -811,7 +926,7 @@ let%test "check_entry rejects colliding direct imports" =
       ("b.mr", "export add\nfn add(x: Int, y: Int) -> Int = x + y + 10\n");
     ]
     (fun root ->
-      match check_entry ~entry_file:(Filename.concat root "main.mr") with
+      match check_entry ~entry_file:(Filename.concat root "main.mr") () with
       | Ok _ -> false
       | Error diags ->
           List.exists
@@ -822,12 +937,9 @@ let%test "check_entry rejects colliding direct imports" =
 
 let%test "check_entry reports non-exported namespace members clearly" =
   Discovery.with_temp_project
-    [
-      ("main.mr", "import sum\nsum.reduce\n");
-      ("sum.mr", "fn reduce(values: List[Int]) -> Int = len(values)\n");
-    ]
+    [ ("main.mr", "import sum\nsum.reduce\n"); ("sum.mr", "fn reduce(values: List[Int]) -> Int = len(values)\n") ]
     (fun root ->
-      match check_entry ~entry_file:(Filename.concat root "main.mr") with
+      match check_entry ~entry_file:(Filename.concat root "main.mr") () with
       | Ok _ -> false
       | Error diags ->
           List.exists
@@ -838,12 +950,9 @@ let%test "check_entry reports non-exported namespace members clearly" =
 
 let%test "check_entry distinguishes missing namespace members from private ones" =
   Discovery.with_temp_project
-    [
-      ("main.mr", "import sum\nsum.reduce\n");
-      ("sum.mr", "let value = 1\n");
-    ]
+    [ ("main.mr", "import sum\nsum.reduce\n"); ("sum.mr", "let value = 1\n") ]
     (fun root ->
-      match check_entry ~entry_file:(Filename.concat root "main.mr") with
+      match check_entry ~entry_file:(Filename.concat root "main.mr") () with
       | Ok _ -> false
       | Error diags ->
           List.exists
@@ -861,7 +970,7 @@ let%test "check_entry_with_source resolves unsaved entry imports" =
     (fun root ->
       match
         check_entry_with_source ~entry_file:(Filename.concat root "main.mr")
-          ~entry_source:"import sum\nputs(sum.sum([1, 2, 3]))\n"
+          ~entry_source:"import sum\nputs(sum.sum([1, 2, 3]))\n" ()
       with
       | Error _ -> false
       | Ok diagnostics -> diagnostics = [])
@@ -883,7 +992,7 @@ let%test "compile_project rejects duplicate impls across transitive imports" =
       ("y.mr", "import b_impl\nexport y\nlet y = 2\n");
     ]
     (fun root ->
-      match Discovery.discover_project ~entry_file:(Filename.concat root "main.mr") with
+      match Discovery.discover_project ~entry_file:(Filename.concat root "main.mr") () with
       | Error _ -> false
       | Ok graph -> (
           match compile_project graph with
@@ -901,7 +1010,8 @@ let%test "analyze_entry_with_source returns typed standalone file state" =
     [ ("main.mr", "let id = (x) -> x\nid(1)\n") ]
     (fun root ->
       let analysis =
-        analyze_entry_with_source ~entry_file:(Filename.concat root "main.mr") ~entry_source:"let id = (x) -> x\nid(1)\n"
+        analyze_entry_with_source ~entry_file:(Filename.concat root "main.mr")
+          ~entry_source:"let id = (x) -> x\nid(1)\n" ()
       in
       analysis.mode = Standalone
       && analysis.graph = None
@@ -922,7 +1032,7 @@ let%test "analyze_entry_with_source keeps surface entry AST alongside typed modu
     (fun root ->
       let analysis =
         analyze_entry_with_source ~entry_file:(Filename.concat root "main.mr")
-          ~entry_source:"import sum\nputs(sum.sum([1, 2, 3]))\n"
+          ~entry_source:"import sum\nputs(sum.sum([1, 2, 3]))\n" ()
       in
       let surface_has_namespace =
         match analysis.active_file.surface_program with
@@ -948,10 +1058,10 @@ let%test "analyze_entry_with_source keeps surface entry AST alongside typed modu
                                     };
                                 _;
                               };
-                            ]
-                          );
+                            ] );
                       _;
-                    } -> true
+                    } ->
+                    true
                 | _ -> false)
               program
       in
@@ -966,9 +1076,11 @@ let%test "analyze_entry_with_source keeps surface entry AST alongside typed modu
                     {
                       expr =
                         AST.Call
-                          ({ expr = AST.Identifier "puts"; _ }, [ { expr = AST.Call ({ expr = AST.Identifier "sum__sum"; _ }, _); _ } ]);
+                          ( { expr = AST.Identifier "puts"; _ },
+                            [ { expr = AST.Call ({ expr = AST.Identifier "sum__sum"; _ }, _); _ } ] );
                       _;
-                    } -> true
+                    } ->
+                    true
                 | _ -> false)
               program
       in
@@ -979,3 +1091,114 @@ let%test "analyze_entry_with_source keeps surface entry AST alongside typed modu
       && analysis.active_file.environment <> None
       && surface_has_namespace
       && typed_has_internal_name)
+
+let%test "analyze_entry_with_source preserves imported definition provenance for symbol lookup" =
+  Discovery.with_temp_project
+    [
+      ("main.mr", "import math.add\nadd(1, 2)\n");
+      ("math.mr", "export add\nfn add(x: Int, y: Int) -> Int = x + y\n");
+    ]
+    (fun root ->
+      let analysis =
+        analyze_entry_with_source ~entry_file:(Filename.concat root "main.mr")
+          ~entry_source:"import math.add\nadd(1, 2)\n" ()
+      in
+      let add_ref_id =
+        match analysis.active_file.surface_program with
+        | Some
+            [
+              _;
+              { stmt = AST.ExpressionStmt { expr = AST.Call ({ expr = AST.Identifier "add"; id; _ }, _); _ }; _ };
+            ] ->
+            Some id
+        | _ -> None
+      in
+      let exported_value_definition =
+        match find_checked_module_by_file analysis ~file_path:(Filename.concat root "math.mr") with
+        | None -> None
+        | Some checked_math -> (
+            match Module_sig.find_export checked_math.signature "add" with
+            | None -> None
+            | Some binding -> binding.value_definition)
+      in
+      match (add_ref_id, exported_value_definition) with
+      | Some expr_id, Some definition -> (
+          match find_active_file_symbol analysis ~expr_id with
+          | None -> false
+          | Some symbol ->
+              analysis.mode = Modules
+              && symbol.file_id = Some (Filename.concat root "math.mr")
+              && symbol.definition_pos = definition.start_pos
+              && symbol.definition_end_pos = definition.end_pos)
+      | _ -> false)
+
+let%test "analyze_entry_with_source respects explicit source_root" =
+  Discovery.with_temp_project
+    [
+      ("src/main.mr", "import lib.answer\nputs(answer())\n");
+      ("lib.mr", "export answer\nfn answer() -> Int = 42\n");
+    ]
+    (fun root ->
+      let entry_file = Filename.concat root "src/main.mr" in
+      let analysis =
+        analyze_entry_with_source ~source_root:root ~entry_file
+          ~entry_source:"import lib.answer\nputs(answer())\n" ()
+      in
+      match analysis.graph with
+      | None -> false
+      | Some graph ->
+          analysis.mode = Modules
+          && analysis.source_root = Some root
+          && graph.entry_module = "src.main"
+          && analysis.active_file.diagnostics = [])
+
+let%test "analyze_entry_with_source can force headerless files into module mode" =
+  Discovery.with_temp_project
+    [ ("pkg/util.mr", "let helper = 1\n") ]
+    (fun root ->
+      let entry_file = Filename.concat root "pkg/util.mr" in
+      let analysis =
+        analyze_entry_with_source ~source_root:root ~force_modules:true ~entry_file
+          ~entry_source:"let helper = 1\n" ()
+      in
+      match analysis.graph with
+      | None -> false
+      | Some graph ->
+          analysis.mode = Modules
+          && analysis.active_file.module_id = Some "pkg.util"
+          && graph.entry_module = "pkg.util")
+
+let%test "find_export_binding exposes exported definition metadata through compiler boundary" =
+  Discovery.with_temp_project
+    [
+      ("main.mr", "import math\nputs(math.make(1))\n");
+      ("math.mr", "export make, Point\ntype Point = { value: Int }\nfn make(x: Int) -> Point = { value: x }\n");
+    ]
+    (fun root ->
+      let analysis =
+        analyze_entry_with_source ~entry_file:(Filename.concat root "main.mr")
+          ~entry_source:"import math\nputs(math.make(1))\n" ()
+      in
+      match
+        ( find_export_binding analysis ~module_id:"math" ~surface_name:"make",
+          find_export_binding analysis ~module_id:"math" ~surface_name:"Point" )
+      with
+      | Some value_binding, Some type_binding -> (
+          let type_definition =
+            match
+              [
+                type_binding.named_type_definition;
+                type_binding.transparent_type_definition;
+                type_binding.enum_definition;
+              ]
+              |> List.find_opt Option.is_some
+            with
+            | Some (Some definition) -> Some definition
+            | _ -> None
+          in
+          match (value_binding.value_definition, type_definition) with
+          | Some value_definition, Some type_definition ->
+              String.equal value_definition.file_path (Filename.concat root "math.mr")
+              && String.equal type_definition.file_path (Filename.concat root "math.mr")
+          | _ -> false)
+      | _ -> false)

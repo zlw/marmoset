@@ -189,9 +189,13 @@ and resolve_import (state : discovery_state) (imp : Module_context.import_info) 
                (Printf.sprintf "Import '%s' does not resolve to a module or exported member"
                   (import_path_string imp.import_path)))
 
-let discover_project ~(entry_file : string) : (Module_context.module_graph, Diagnostic.t) result =
+let discover_project ?source_root ~(entry_file : string) () : (Module_context.module_graph, Diagnostic.t) result =
   let entry_file = normalize_path entry_file in
-  let root_dir = Filename.dirname entry_file in
+  let root_dir =
+    match source_root with
+    | Some root -> normalize_path root
+    | None -> Filename.dirname entry_file
+  in
   let entry_module = module_id_of_file ~root_dir entry_file in
   let state =
     {
@@ -205,10 +209,14 @@ let discover_project ~(entry_file : string) : (Module_context.module_graph, Diag
   let* () = discover_module state ~module_id:entry_module ~file_path:entry_file in
   Module_context.build_graph ~modules:state.modules ~dependencies:state.dependencies ~entry_module
 
-let discover_project_with_entry_source ~(entry_file : string) ~(entry_source : string) :
+let discover_project_with_entry_source ?source_root ~(entry_file : string) ~(entry_source : string) () :
     (Module_context.module_graph, Diagnostic.t) result =
   let entry_file = normalize_path entry_file in
-  let root_dir = Filename.dirname entry_file in
+  let root_dir =
+    match source_root with
+    | Some root -> normalize_path root
+    | None -> Filename.dirname entry_file
+  in
   let entry_module = module_id_of_file ~root_dir entry_file in
   let state =
     {
@@ -301,7 +309,7 @@ let%test "discover_project finds transitive module dependencies" =
       ("util.mr", "export helper\nfn helper(x: Int) -> Int = x\n");
     ]
     (fun root ->
-      match discover_project ~entry_file:(Filename.concat root "main.mr") with
+      match discover_project ~entry_file:(Filename.concat root "main.mr") () with
       | Error _ -> false
       | Ok graph -> (
           Hashtbl.length graph.modules = 3
@@ -317,7 +325,7 @@ let%test "discover_project reports import ambiguity" =
       ("main.mr", "import a.b.c\nputs(1)\n"); ("a/b.mr", "export c\nlet c = 1\n"); ("a/b/c.mr", "let value = 1\n");
     ]
     (fun root ->
-      match discover_project ~entry_file:(Filename.concat root "main.mr") with
+      match discover_project ~entry_file:(Filename.concat root "main.mr") () with
       | Ok _ -> false
       | Error diag -> diag.code = "module-import-ambiguous")
 
@@ -325,7 +333,7 @@ let%test "discover_project assigns non-overlapping expression id ranges per file
   with_temp_project
     [ ("main.mr", "import math\nputs(math.value)\n"); ("math.mr", "export value\nlet value = 1\n") ]
     (fun root ->
-      match discover_project ~entry_file:(Filename.concat root "main.mr") with
+      match discover_project ~entry_file:(Filename.concat root "main.mr") () with
       | Error _ -> false
       | Ok graph -> (
           match (Hashtbl.find_opt graph.modules "main", Hashtbl.find_opt graph.modules "math") with
