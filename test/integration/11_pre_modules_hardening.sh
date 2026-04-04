@@ -430,7 +430,7 @@ expect_reject \
 
 expect_reject \
     "duplicate impls stay rejected" \
-    "Duplicate impl for trait 'show' and type Int" \
+    "Duplicate impl registration for trait 'show' and type Int" \
     "$(cat "$REPO_ROOT/test/fixtures/traits/t36_duplicate_impl_for_same_trait_and_type_is_rejected.mr")"
 
 expect_reject \

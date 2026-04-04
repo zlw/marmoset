@@ -1,0 +1,30 @@
+export Option
+
+type Option[a] = { Some(a), None }
+
+impl[a] Option[a] = {
+  fn unwrap_or(self: Option[a], fallback: a) -> a = match self {
+    case Option.Some(v): v
+    case Option.None: fallback
+  }
+
+  fn map[b](self: Option[a], f: (a) -> b) -> Option[b] = match self {
+    case Option.Some(v): Option.Some(f(v))
+    case Option.None: Option.None
+  }
+
+  fn bind[b](self: Option[a], f: (a) -> Option[b]) -> Option[b] = match self {
+    case Option.Some(v): f(v)
+    case Option.None: Option.None
+  }
+
+  fn is_some(self: Option[a]) -> Bool = match self {
+    case Option.Some(_): true
+    case Option.None: false
+  }
+
+  fn is_none(self: Option[a]) -> Bool = match self {
+    case Option.Some(_): false
+    case Option.None: true
+  }
+}

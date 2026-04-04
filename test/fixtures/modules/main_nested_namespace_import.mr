@@ -1,0 +1,4 @@
+import collections.list
+
+puts(list.head([1, 2, 3]))  # output: 1
+puts(list.head(list.tail([1, 2, 3])))  # output: 2

@@ -1,0 +1,4 @@
+type Option[a] = { Yep(a), Nope }
+
+let x: Option[Int] = Option.Yep(41)
+puts(Option.unwrap_or(x, 0))  # error: Type 'Option' has no constructor or inherent method 'unwrap_or'

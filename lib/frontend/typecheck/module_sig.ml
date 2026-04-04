@@ -25,10 +25,15 @@ type type_impl_entry = {
   methods : Trait_registry.method_sig list;
 }
 
+type trait_impl_entry = {
+  impl_def : Trait_registry.impl_def;
+  origin : Trait_registry.impl_origin;
+}
+
 type module_signature = {
   module_id : string;
   exports : (string, member_binding) Hashtbl.t;
-  trait_impls : Trait_registry.impl_def list;
+  trait_impls : trait_impl_entry list;
   type_impls : type_impl_entry list;
 }
 
@@ -38,7 +43,7 @@ type module_locals = {
   transparent_types : (string * Annotation.type_alias_info) list;
   shapes : Type_registry.shape_def list;
   traits : Trait_registry.trait_def list;
-  trait_impls : Trait_registry.impl_def list;
+  trait_impls : trait_impl_entry list;
   type_impls : type_impl_entry list;
 }
 

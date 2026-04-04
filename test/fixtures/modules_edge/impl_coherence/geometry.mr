@@ -1,0 +1,11 @@
+export Point, Drawable
+
+type Point = { x: Int, y: Int }
+
+trait Drawable[a] = {
+  fn draw(x: a) -> Str
+}
+
+impl Drawable[Point] = {
+  fn draw(p: Point) -> Str = "base"
+}

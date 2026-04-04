@@ -1,8 +1,5 @@
 # TI01: Impl for record type via transparent type
 type Point = { x: Int, y: Int }
-trait Show[a] = {
-  fn show(x: a) -> Str
-}
 impl Show[Point] = {
   fn show(p: Point) -> Str = {
     "point(" + Show.show(p.x) + "," + Show.show(p.y) + ")"

@@ -88,6 +88,27 @@ let canonical_type (t : mono_type) : mono_type = canonicalize_mono_type t
 let builtin_trait_internal_name = Constraints.builtin_trait_internal_name
 let canonical_trait_name = Constraints.canonical_trait_name
 
+let display_trait_name (trait_name : string) : string =
+  let len = String.length trait_name in
+  let rec find_suffix_start idx =
+    if idx <= 0 then
+      0
+    else if trait_name.[idx - 1] = '_' && trait_name.[idx] = '_' then
+      idx + 1
+    else
+      find_suffix_start (idx - 1)
+  in
+  let suffix_start = find_suffix_start (len - 1) in
+  let base_name = String.sub trait_name suffix_start (len - suffix_start) in
+  match builtin_trait_internal_name base_name with
+  | Some builtin_name -> builtin_name
+  | None -> base_name
+
+let display_constraint_name (constraint_name : string) : string =
+  match Constraints.of_name constraint_name with
+  | Constraints.ShapeConstraint _ -> constraint_name
+  | Constraints.TraitConstraint trait_name -> display_trait_name trait_name
+
 let canonicalize_method_constraints (m : method_sig) : method_sig =
   {
     m with
@@ -163,7 +184,8 @@ let register_impl ?(builtin = false) ?source ?(origin = ExplicitImpl) (def : imp
           failwith
             (Printf.sprintf
                "Duplicate impl registration for trait '%s' and type %s (existing user impl cannot be replaced by builtin)"
-               def'.impl_trait_name (to_string def'.impl_for_type))
+               (display_trait_name def'.impl_trait_name)
+               (to_string def'.impl_for_type))
       | _ ->
           Hashtbl.replace builtin_impl_keys key ();
           Hashtbl.replace impl_origin_registry key origin;
@@ -173,7 +195,8 @@ let register_impl ?(builtin = false) ?source ?(origin = ExplicitImpl) (def : imp
       match existing with
       | Some _ when not (Hashtbl.mem builtin_impl_keys key) ->
           failwith
-            (Printf.sprintf "Duplicate impl registration for trait '%s' and type %s" def'.impl_trait_name
+            (Printf.sprintf "Duplicate impl registration for trait '%s' and type %s"
+               (display_trait_name def'.impl_trait_name)
                (to_string def'.impl_for_type))
       | _ ->
           (* User impl replaces builtin marker for this key (allowed exactly once). *)
@@ -193,7 +216,7 @@ let register_impl ?(builtin = false) ?source ?(origin = ExplicitImpl) (def : imp
           failwith
             (Printf.sprintf
                "Duplicate generic impl registration for trait '%s' and pattern %s (existing user impl cannot be replaced by builtin)"
-               def'.impl_trait_name
+               (display_trait_name def'.impl_trait_name)
                (to_string (snd key)))
       | _ ->
           Hashtbl.replace builtin_generic_impl_keys key ();
@@ -205,7 +228,7 @@ let register_impl ?(builtin = false) ?source ?(origin = ExplicitImpl) (def : imp
       | Some _ when not (Hashtbl.mem builtin_generic_impl_keys key) ->
           failwith
             (Printf.sprintf "Duplicate generic impl registration for trait '%s' and pattern %s"
-               def'.impl_trait_name
+               (display_trait_name def'.impl_trait_name)
                (to_string (snd key)))
       | _ ->
           Hashtbl.remove builtin_generic_impl_keys key;
@@ -610,7 +633,7 @@ let can_derive (trait_name : string) (for_type : mono_type) : (unit, string) res
         (* Check if trait is derivable *)
         not (is_derivable trait_name)
       then
-        Error (Printf.sprintf "Trait '%s' cannot be auto-derived" trait_name)
+        Error (Printf.sprintf "Trait '%s' cannot be auto-derived" (display_trait_name trait_name))
       else
         (* Check if type is a valid target for derivation *)
         match for_type with
@@ -695,7 +718,9 @@ let derive_impl (trait_name : string) (for_type : mono_type) : (unit, string) re
   in
   match Hashtbl.find_opt impl_registry (trait_name, for_type') with
   | Some _ when not (is_builtin_impl_key trait_name for_type') ->
-      Error (Printf.sprintf "Duplicate impl for trait '%s' and type %s" trait_name (to_string for_type'))
+      Error
+        (Printf.sprintf "Duplicate impl for trait '%s' and type %s" (display_trait_name trait_name)
+           (to_string for_type'))
   | _ -> generate ()
 
 (* Validate that a trait definition is well-formed *)
@@ -721,8 +746,9 @@ let validate_trait_def (def : trait_def) : (unit, string) result =
     in
     if missing_supertraits <> [] then
       Error
-        (Printf.sprintf "Trait '%s' references undefined superconstraints: %s" def.trait_name
-           (String.concat ", " missing_supertraits))
+        (Printf.sprintf "Trait '%s' references undefined superconstraints: %s"
+           (display_trait_name def.trait_name)
+           (String.concat ", " (List.map display_constraint_name missing_supertraits)))
     else
       Ok ()
 
@@ -748,11 +774,13 @@ let validate_impl_signature (trait_def : trait_def) (def : impl_def) : (unit, st
   let extra_methods = List.filter (fun name -> not (List.mem name trait_method_names)) impl_method_names in
   if missing_required <> [] then
     Error
-      (Printf.sprintf "Impl for trait '%s' is missing required methods: %s" def.impl_trait_name
+      (Printf.sprintf "Impl for trait '%s' is missing required methods: %s"
+         (display_trait_name def.impl_trait_name)
          (String.concat ", " missing_required))
   else if extra_methods <> [] then
     Error
-      (Printf.sprintf "Impl for trait '%s' provides methods not in trait: %s" def.impl_trait_name
+      (Printf.sprintf "Impl for trait '%s' provides methods not in trait: %s"
+         (display_trait_name def.impl_trait_name)
          (String.concat ", " extra_methods))
   else
     (* Check each method signature matches *)
@@ -873,14 +901,17 @@ let validate_impl (def : impl_def) : (unit, string) result =
       match Hashtbl.find_opt impl_registry (def'.impl_trait_name, for_type') with
       | Some _ when not (is_builtin_impl_key def'.impl_trait_name for_type') ->
           Some
-            (Printf.sprintf "Duplicate impl for trait '%s' and type %s" def'.impl_trait_name (to_string for_type'))
+            (Printf.sprintf "Duplicate impl for trait '%s' and type %s"
+               (display_trait_name def'.impl_trait_name)
+               (to_string for_type'))
       | _ -> None
     else
       let generic_key = generic_impl_key def' in
       match Hashtbl.find_opt generic_impl_registry generic_key with
       | Some _ when not (is_builtin_generic_impl_key (fst generic_key) (snd generic_key)) ->
           Some
-            (Printf.sprintf "Duplicate generic impl for trait '%s' and pattern %s" def'.impl_trait_name
+            (Printf.sprintf "Duplicate generic impl for trait '%s' and pattern %s"
+               (display_trait_name def'.impl_trait_name)
                (to_string (snd generic_key)))
       | _ -> None
   in
@@ -888,7 +919,7 @@ let validate_impl (def : impl_def) : (unit, string) result =
   | Some msg -> Error msg
   | None -> (
       match lookup_trait def'.impl_trait_name with
-      | None -> Error (Printf.sprintf "Cannot implement undefined trait: %s" def'.impl_trait_name)
+      | None -> Error (Printf.sprintf "Cannot implement undefined trait: %s" (display_trait_name def'.impl_trait_name))
       | Some trait_def -> (
           let unused_impl_params =
             List.filter
@@ -901,7 +932,8 @@ let validate_impl (def : impl_def) : (unit, string) result =
             in
             Error
               (Printf.sprintf "Generic impl for trait '%s' has type parameter(s) not used in impl target type: %s"
-                 def'.impl_trait_name names)
+                 (display_trait_name def'.impl_trait_name)
+                 names)
           else
             match validate_impl_signature trait_def def' with
             | Error _ as err -> err
@@ -925,7 +957,9 @@ let validate_impl (def : impl_def) : (unit, string) result =
                           Error
                             (Printf.sprintf
                                "Impl for trait '%s' on type %s is missing required supertrait '%s' implementation"
-                               def'.impl_trait_name (to_string for_type') supertrait)
+                               (display_trait_name def'.impl_trait_name)
+                               (to_string for_type')
+                               (display_constraint_name supertrait))
                   in
                   check_supertraits (supertraits_of_trait def'.impl_trait_name)))
 

@@ -1,0 +1,7 @@
+import geometry
+
+impl geometry.Drawable[geometry.Point] = {  # error: Duplicate impl registration for trait
+  fn draw(p: geometry.Point) -> Str = "local"
+}
+
+puts(0)

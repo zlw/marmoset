@@ -68,6 +68,8 @@ let is_lower_ident (name : string) : bool =
   | 'a' .. 'z' -> true
   | _ -> false
 
+let is_qualified_name (name : string) : bool = String.contains name '.'
+
 let known_type_name (ctx : lower_context) (name : string) : bool =
   StringSet.mem name ctx.type_names || StringSet.mem name ctx.constraint_names
 
@@ -81,7 +83,12 @@ let infer_impl_type_params (ctx : lower_context) (impl_for_type : Surface.surfac
         else
           (StringSet.add name seen, name :: rev_names)
     | Surface.STCon name ->
-        if (not (is_lower_ident name)) || StringSet.mem name seen || known_type_name ctx name then
+        if
+          (not (is_lower_ident name))
+          || is_qualified_name name
+          || StringSet.mem name seen
+          || known_type_name ctx name
+        then
           (seen, rev_names)
         else
           (StringSet.add name seen, name :: rev_names)
@@ -124,7 +131,7 @@ let rec lower_type_expr_with_bound_vars (bound_type_vars : StringSet.t) (st : Su
     AST.type_expr =
   match st with
   | Surface.STVar s -> AST.TVar s
-  | Surface.STCon s when StringSet.mem s bound_type_vars -> AST.TVar s
+  | Surface.STCon s when (not (is_qualified_name s)) && StringSet.mem s bound_type_vars -> AST.TVar s
   | Surface.STCon s -> AST.TCon s
   | Surface.STConstraintShorthand _ -> failwith "Lower: constrained-param shorthand escaped parameter lowering"
   | Surface.STTraitObject traits -> AST.TTraitObject traits
@@ -1641,6 +1648,34 @@ let%test "omitted impl binders are inferred from free vars in impl target" =
                  _;
                };
              ];
+         };
+     _;
+   };
+  ] ->
+      true
+  | _ -> false
+
+let%test "omitted impl binders do not infer dotted qualified target names as type variables" =
+  let id_supply = Id_supply.Id_supply.create 0 in
+  let decl =
+    Surface.SAmbiguousImplDef
+      {
+        impl_type_params = [];
+        impl_head_type = Surface.STApp ("geometry.Drawable", [ Surface.STCon "geometry.Point" ]);
+        impl_methods = [];
+      }
+  in
+  let result = lower_top_decl_with_ctx empty_lower_context id_supply (mk_test_ts decl) in
+  match result with
+  | [
+   {
+     AST.stmt =
+       AST.ImplDef
+         {
+           impl_trait_name = "geometry.Drawable";
+           impl_type_params = [];
+           impl_for_type = AST.TCon "geometry.Point";
+           impl_methods = [];
          };
      _;
    };

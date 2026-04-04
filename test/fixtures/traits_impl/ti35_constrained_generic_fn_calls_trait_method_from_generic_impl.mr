@@ -1,7 +1,4 @@
 # TI35: Constrained generic fn calls trait method from generic impl
-trait Show[a] = {
-  fn show(x: a) -> Str
-}
 impl[b: Show] Show[List[b]] = {
   fn show(x: List[b]) -> Str = "ok"
 }

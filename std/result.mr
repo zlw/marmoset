@@ -1,0 +1,35 @@
+export Result
+
+type Result[a, e] = { Success(a), Failure(e) }
+
+impl[a, e] Result[a, e] = {
+  fn unwrap_or(self: Result[a, e], fallback: a) -> a = match self {
+    case Result.Success(v): v
+    case Result.Failure(_): fallback
+  }
+
+  fn map[b](self: Result[a, e], f: (a) -> b) -> Result[b, e] = match self {
+    case Result.Success(v): Result.Success(f(v))
+    case Result.Failure(err): Result.Failure(err)
+  }
+
+  fn map_fail[f](self: Result[a, e], g: (e) -> f) -> Result[a, f] = match self {
+    case Result.Success(v): Result.Success(v)
+    case Result.Failure(err): Result.Failure(g(err))
+  }
+
+  fn bind[b](self: Result[a, e], f: (a) -> Result[b, e]) -> Result[b, e] = match self {
+    case Result.Success(v): f(v)
+    case Result.Failure(err): Result.Failure(err)
+  }
+
+  fn is_ok(self: Result[a, e]) -> Bool = match self {
+    case Result.Success(_): true
+    case Result.Failure(_): false
+  }
+
+  fn is_err(self: Result[a, e]) -> Bool = match self {
+    case Result.Success(_): false
+    case Result.Failure(_): true
+  }
+}

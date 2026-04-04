@@ -50,18 +50,38 @@ let builtin_types : (string * poly_type) list =
    Builtin Traits
    ============================================================ *)
 
-(* Register the ordering enum used by ord trait *)
+(* Register the core enums needed by standalone helpers and direct checker tests. *)
 let init_builtin_enums () =
-  (* enum ordering { less equal greater } *)
+  (* type Ordering = { Less, Equal, Greater } *)
   Enum_registry.register
     {
-      Enum_registry.name = "ordering";
+      Enum_registry.name = "Ordering";
       type_params = [];
       variants =
         [
-          { Enum_registry.name = "less"; fields = [] };
-          { Enum_registry.name = "equal"; fields = [] };
-          { Enum_registry.name = "greater"; fields = [] };
+          { Enum_registry.name = "Less"; fields = [] };
+          { Enum_registry.name = "Equal"; fields = [] };
+          { Enum_registry.name = "Greater"; fields = [] };
+        ];
+    };
+
+  (* type Option[a] = { Some(a), None } *)
+  Enum_registry.register
+    {
+      Enum_registry.name = "Option";
+      type_params = [ "a" ];
+      variants = [ { Enum_registry.name = "Some"; fields = [ TVar "a" ] }; { Enum_registry.name = "None"; fields = [] } ];
+    };
+
+  (* type Result[a, e] = { Success(a), Failure(e) } *)
+  Enum_registry.register
+    {
+      Enum_registry.name = "Result";
+      type_params = [ "a"; "e" ];
+      variants =
+        [
+          { Enum_registry.name = "Success"; fields = [ TVar "a" ] };
+          { Enum_registry.name = "Failure"; fields = [ TVar "e" ] };
         ];
     }
 
@@ -101,7 +121,7 @@ let init_builtin_traits () =
         [ Trait_registry.mk_method_sig ~name:"debug" ~params:[ ("x", TVar "a") ] ~return_type:TString () ];
     };
 
-  (* trait ord[a]: eq { fn compare(x: a, y: a) -> ordering } *)
+  (* trait ord[a]: eq { fn compare(x: a, y: a) -> Ordering } *)
   Trait_registry.register_trait
     {
       trait_name = "ord";
@@ -111,7 +131,7 @@ let init_builtin_traits () =
         [
           Trait_registry.mk_method_sig ~name:"compare"
             ~params:[ ("x", TVar "a"); ("y", TVar "a") ]
-            ~return_type:(TEnum ("ordering", []))
+            ~return_type:(TEnum ("Ordering", []))
             ();
         ];
     };
@@ -220,7 +240,7 @@ let init_builtin_impls () =
         [
           Trait_registry.mk_method_sig ~name:"compare"
             ~params:[ ("x", TInt); ("y", TInt) ]
-            ~return_type:(TEnum ("ordering", []))
+            ~return_type:(TEnum ("Ordering", []))
             ();
         ];
     };
@@ -310,7 +330,7 @@ let init_builtin_impls () =
         [
           Trait_registry.mk_method_sig ~name:"compare"
             ~params:[ ("x", TBool); ("y", TBool) ]
-            ~return_type:(TEnum ("ordering", []))
+            ~return_type:(TEnum ("Ordering", []))
             ();
         ];
     };
@@ -368,7 +388,7 @@ let init_builtin_impls () =
         [
           Trait_registry.mk_method_sig ~name:"compare"
             ~params:[ ("x", TString); ("y", TString) ]
-            ~return_type:(TEnum ("ordering", []))
+            ~return_type:(TEnum ("Ordering", []))
             ();
         ];
     };
@@ -424,7 +444,7 @@ let init_builtin_impls () =
         [
           Trait_registry.mk_method_sig ~name:"compare"
             ~params:[ ("x", TFloat); ("y", TFloat) ]
-            ~return_type:(TEnum ("ordering", []))
+            ~return_type:(TEnum ("Ordering", []))
             ();
         ];
     };
@@ -453,13 +473,20 @@ let init_builtin_impls () =
       impl_methods = [ Trait_registry.mk_method_sig ~name:"neg" ~params:[ ("x", TFloat) ] ~return_type:TFloat () ];
     }
 
-(* Create a type environment with all builtins *)
-let prelude_env () : Infer.type_env =
-  (* Initialize builtin enums, traits, and impls on first call *)
+let seed_builtin_values (env : Infer.type_env) : Infer.type_env =
+  List.fold_left (fun env_acc (name, poly) -> Infer.TypeEnv.add name poly env_acc) env builtin_types
+
+let builtin_value_env () : Infer.type_env = seed_builtin_values Infer.empty_env
+
+let register_builtin_prelude_fallback () : unit =
   init_builtin_enums ();
-  init_builtin_traits ();
+  init_builtin_traits ()
+
+(* Legacy wrapper kept for direct single-file helpers; compiler bootstrap now uses the split helpers explicitly. *)
+let prelude_env () : Infer.type_env =
+  register_builtin_prelude_fallback ();
   init_builtin_impls ();
-  List.fold_left (fun env (name, poly) -> Infer.TypeEnv.add name poly env) Infer.empty_env builtin_types
+  builtin_value_env ()
 
 (* ============================================================
    Tests

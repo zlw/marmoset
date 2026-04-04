@@ -2,7 +2,7 @@
 
 ## Maintenance
 
-- Last verified: 2026-03-10
+- Last verified: 2026-04-04
 - Implementation status: Canonical (actively maintained)
 - Update trigger: Any language behavior, typechecker, or codegen change affecting this topic
 
@@ -91,6 +91,29 @@ Pros:
 Cons:
 - Lowering owns several context-sensitive rewrites and therefore needs strong tests.
 
+### 2.4 Module Discovery And Implicit Prelude
+
+Responsibilities:
+- Discover a project rooted at an explicit `source_root` or the entry file's directory, even for headerless single-file programs.
+- Build one dependency graph for both headered modules and headerless entries; the legacy standalone prelude shortcut is gone.
+- Resolve a toolchain stdlib root via explicit `stdlib_root`, `MARMOSET_STDLIB_ROOT`, or installed-toolchain probing.
+- Auto-load the required stdlib modules `std.prelude`, `std.option`, and `std.result` from that toolchain root.
+- Inject `std.prelude`, `std.option`, and `std.result` as implicit direct modules for non-stdlib user modules.
+- Rewrite implicit core bindings (`Ordering`, `Eq`, `Show`, `Debug`, `Ord`, `Hash`, `Num`, `Rem`, `Neg`, `Option`, `Result`) into each user module's direct binding set without requiring explicit `import`.
+
+Bootstrap policy:
+- File-backed module compilation no longer has a compiler-visible builtin prelude fallback. Missing required stdlib files are a hard error.
+- `builtins.ml` splits bootstrap into independent steps: builtin value bindings (`puts`, `len`, etc.), core enum/trait seeding for standalone helpers/tests, and builtin primitive impl registration.
+- `std.option` and `std.result` are ordinary stdlib modules. `Option` / `Result` live there, and their utility APIs are exposed as inherent methods on those nominal types.
+
+Pros:
+- Headerless files and multi-file module builds now see the same prelude and import behavior.
+- Toolchain-shipped stdlib files are inspectable Marmoset source rather than compiler-only definitions.
+
+Cons:
+- Compiler orchestration now depends on toolchain stdlib discovery and installed-layout conventions.
+- Codegen specialization must preserve enough concrete return information for imported generic helper modules.
+
 ## 3. Typechecker Architecture
 
 Main modules:
@@ -141,6 +164,18 @@ Pros:
 
 Cons:
 - Some advanced constraints are distributed across specialized modules.
+
+### 3.3 Prelude-Aware Typechecking Bootstrap
+
+Current bootstrap order:
+1. Seed builtin value types into the environment.
+2. Register the toolchain stdlib signatures and visible impls for `std.prelude`, `std.option`, and `std.result`.
+3. Register builtin primitive impls after the relevant traits exist.
+4. Seed imported module signatures and visible impls before checking each module body.
+
+Why it matters:
+- Primitive impls such as `Eq[Int]`, `Show[Int]`, and `Ord[Int]` remain compiler-provided, but now target the same trait identities exported by the toolchain stdlib.
+- `Option` and `Result` are ordinary stdlib-owned nominal types that become universally visible through resolver injection, not through special re-export semantics.
 
 ## 4. Backend (Go) Architecture
 

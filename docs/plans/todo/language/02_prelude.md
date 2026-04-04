@@ -3,13 +3,13 @@
 ## Maintenance
 
 - Last verified: 2026-04-04
-- Implementation status: Planning (not started)
+- Implementation status: Complete
 - Update trigger: Any prelude/stdlib, builtin, or module system change
 - Prerequisites: Module system (docs/plans/done/language/06_module-system.md) must be implemented first
 
 ## Context
 
-Users must redefine `type Option[a] = { Some(a), None }` and `type Result[a, e] = { Success(a), Failure(e) }` in every file. There is no prelude. This plan creates `std/prelude.mr` with core named types and traits, auto-imported into every module. `enum` remains accepted compatibility sugar, but the prelude and the surrounding plan should use the canonical constructor-bearing `type` surface.
+Users must redefine `type Option[a] = { Some(a), None }` and `type Result[a, e] = { Success(a), Failure(e) }` in every file. There is no prelude. This plan creates a toolchain-shipped stdlib with `std/prelude.mr`, `std/option.mr`, and `std/result.mr`, auto-injected into every module through the normal module pipeline. `enum` remains accepted compatibility sugar, but the stdlib sources and the surrounding plan use the canonical constructor-bearing `type` surface.
 
 **Modules → Basic stdlib + prelude → FFI → Full stdlib via FFI**
 
@@ -17,14 +17,14 @@ Users must redefine `type Option[a] = { Some(a), None }` and `type Result[a, e] 
 
 ## Locked Decisions
 
-1. **Real .mr file.** The prelude is `std/prelude.mr`, written in Marmoset. The compiler auto-imports it.
+1. **Real .mr files shipped with the toolchain.** `std/prelude.mr`, `std/option.mr`, and `std/result.mr` are written in Marmoset and resolved from the toolchain stdlib root rather than copied into each project.
 2. **Auto-import.** Prelude exports are available in every module without explicit `import`.
 3. **Primitive impls stay in OCaml.** `builtins.ml` continues to register builtin primitive impls (`Eq[Int]`, `Show[Str]`, etc.) with `~builtin:true`. The emitter's hardcoded Go strings are unchanged. No stub bodies, no migration. Post-FFI these could move to `std/prelude.mr` using `extern` blocks.
 4. **Builtin functions stay in OCaml.** `puts`, `len`, `first`, `last`, `rest`, `push` keep their registrations in `builtins.ml` and their Go implementations in `runtime.go`. They move to stdlib modules after FFI.
-5. **Option/Result helpers are module functions.** `Option` / `Result` utility APIs (`unwrap_or`, `map`, `bind`, `map_fail`, etc.) live in explicit modules such as `std.option` and `std.result`, not as inherent methods. This keeps the prelude small and fits the no-UFCS, pipe-friendly direction.
+5. **Option/Result live in their own stdlib modules and expose inherent methods.** `Option` is defined in `std.option`, `Result` in `std.result`, and helper APIs (`unwrap_or`, `map`, `bind`, `map_fail`, etc.) are implemented as inherent methods on those nominal types.
 6. **`Rem` is core prelude surface.** The `%` operator remains driven by the `Rem` trait, so `trait Rem[a]` ships in `std/prelude.mr` alongside `Num` and `Neg`.
-7. **One compilation pipeline.** Headerless single-file programs do not keep a separate prelude/builtin shortcut. All entry files go through the same project discovery + compiler orchestration path, with `std/prelude.mr` auto-loading when present and builtin fallback only when the file is absent.
-8. **Split builtin bootstrap responsibilities explicitly.** Replace the current monolithic `Builtins.prelude_env()` behavior with separate helpers for builtin value bindings, builtin prelude fallback registration, and builtin primitive impl registration so compiler and tests can control them independently.
+7. **One compilation pipeline, no compiler fallback.** Headerless single-file programs do not keep a separate prelude/builtin shortcut. All file-backed entry files go through the same project discovery + compiler orchestration path, and missing required toolchain stdlib files are a hard error.
+8. **Split builtin bootstrap responsibilities explicitly.** Replace the current monolithic `Builtins.prelude_env()` behavior with separate helpers for builtin value bindings, standalone helper/test enum+trait seeding, and builtin primitive impl registration so compiler and tests can control them independently.
 
 ---
 
@@ -33,8 +33,6 @@ Users must redefine `type Option[a] = { Some(a), None }` and `type Result[a, e] 
 | Item | Currently in | Why move |
 |------|-------------|----------|
 | `Ordering` named sum (canonical `type`; `enum` still accepted as sugar) | `builtins.ml` | Users shouldn't need to define this |
-| `Option[a]` named sum (canonical `type`; `enum` still accepted as sugar) | `enum_registry.ml` | Users redefine in every file today |
-| `Result[a, e]` named sum (canonical `type`; `enum` still accepted as sugar) | `enum_registry.ml` | Users redefine in every file today |
 | `trait Eq[a]` | `builtins.ml` | Completeness — prelude is the source of truth |
 | `trait Show[a]` | `builtins.ml` | Same |
 | `trait Debug[a]` | `builtins.ml` | Same |
@@ -61,14 +59,12 @@ None of this is "magic" — it's all emitted as normal Go source. The Go code ju
 ### `std/prelude.mr`
 
 ```marmoset
-export Ordering, Option, Result
+export Ordering
 export Eq, Show, Debug, Ord, Hash, Num, Rem, Neg
 
 # --- Core named sums ---
 
 type Ordering = { Less, Equal, Greater }
-type Option[a] = { Some(a), None }
-type Result[a, e] = { Success(a), Failure(e) }
 
 # --- Core traits ---
 
@@ -108,7 +104,7 @@ trait Neg[a] = {
 }
 ```
 
-Core declarations stay small. Option/result helper APIs are added in Phase S2 as ordinary module functions rather than inherent methods.
+Core declarations stay small. `Option` and `Result` live in `std.option` / `std.result`, and those modules are injected alongside `std.prelude` for user code.
 
 ---
 
@@ -116,41 +112,41 @@ Core declarations stay small. Option/result helper APIs are added in Phase S2 as
 
 ### Phase S0: Prelude Infrastructure + Content
 
-**Goal:** Compiler auto-loads `std/prelude.mr`, making option/result named types and traits available in all modules.
+**Goal:** Compiler auto-loads toolchain stdlib core modules, making `Ordering`, traits, `Option`, and `Result` available in all modules.
 
 **Stdlib path resolution:**
-- Compiler looks for `std/prelude.mr` relative to the source root
+- Compiler resolves a toolchain stdlib root from explicit `stdlib_root`, `MARMOSET_STDLIB_ROOT`, or installed-toolchain probing
 - Every entry file, including headerless single-file programs, goes through project discovery rooted at `source_root` or the entry directory
-- If `std/prelude.mr` exists, it is loaded through that same project/compiler machinery before user code
-- If it doesn't exist, the compiler uses explicit builtin fallback registration for core sums/traits instead of a special standalone path
+- `std/prelude.mr`, `std/option.mr`, and `std/result.mr` are loaded through that same project/compiler machinery before user code
+- Missing required toolchain stdlib modules fail loudly instead of falling back to compiler-owned prelude declarations
 
 **Auto-import mechanism:**
-1. Compiler discovers the project and checks whether `std/prelude.mr` exists under the source root
-2. If it exists, compiler compiles `std/prelude.mr` first via the normal module pipeline, then extracts its module signature
-3. If it does not exist, compiler runs builtin fallback registration for `Ordering`, `Option`, `Result`, `Eq`, `Show`, `Debug`, `Ord`, `Hash`, `Num`, `Rem`, and `Neg`
-4. Compiler seeds builtin value bindings (`puts`, `len`, etc.) separately from core prelude registration
+1. Compiler discovers the project and resolves the toolchain stdlib root
+2. Compiler compiles `std/prelude.mr`, `std/option.mr`, and `std/result.mr` first via the normal module pipeline, then extracts their module signatures
+3. Compiler seeds builtin value bindings (`puts`, `len`, etc.) separately from stdlib signature seeding
+4. Compiler injects `std.prelude`, `std.option`, and `std.result` into every user module's direct import set, along with direct bindings for core prelude names plus `Option` / `Result`
 5. Compiler registers builtin primitive impls after the relevant traits are available
 6. Every user module is then compiled with the same combined environment/signature seeding path regardless of whether the entry file has module headers
 
 **Changes:**
-- `lib/frontend/compiler.ml` (module orchestrator): detect and compile prelude first, and remove the legacy standalone fast path so all entry files use the same orchestration
+- `lib/frontend/compiler.ml` (module orchestrator): resolve/compile the core toolchain stdlib first, carry the derive-expanded module programs forward, and remove the legacy standalone fast path so all file-backed entry files use the same orchestration
 - `lib/frontend/discovery.ml`: ensure headerless single-file entrypoints still produce a normal project rooted at the entry directory or explicit `source_root`
+- `lib/frontend/import_resolver.ml`: inject `std.prelude`, `std.option`, and `std.result` into user modules without requiring module-system re-export support
 - Module signature extraction: reuse from module system
 - Inject prelude signature into each module's compilation context
 - `lib/frontend/typecheck/builtins.ml`: split `prelude_env()` into explicit responsibilities:
   - builtin value environment for `puts`, `len`, `first`, `last`, `rest`, `push`
-  - builtin fallback registration for core sums/traits when `std/prelude.mr` is missing
+  - standalone helper/test enum+trait seeding
   - builtin primitive impl registration
 - `lib/frontend/typecheck/checker.ml`, `lib/frontend/typecheck/annotation.ml`, and `lib/backend/go/emitter.ml`: update helper/test setup code that currently assumes one builtin bootstrap call registers everything
 
 **Ordering matters:**
 ```
 1. Discover project rooted at the entry file / explicit source_root
-2. If present, parse + typecheck `std/prelude.mr` → named types (`Ordering`, `Option`, `Result`) and traits (`Eq`, `Show`, `Debug`, `Ord`, `Hash`, `Num`, `Rem`, `Neg`) registered
-3. Otherwise run builtin fallback registration for those same sums/traits
-4. Register builtin primitive impls → these reference traits already registered from step 2 or 3
-5. Seed builtin function types (`puts`, `len`, etc.) into the value env
-6. Compile every user module through the same combined path
+2. Parse + typecheck `std/prelude.mr`, `std/option.mr`, and `std/result.mr`
+3. Register builtin primitive impls → these reference traits already registered from step 2
+4. Seed builtin function types (`puts`, `len`, etc.) into the value env
+5. Compile every user module through the same combined path with injected direct stdlib visibility
 ```
 
 **Backwards compat / surface policy:** Existing test files that define `enum Option[a] = { Some(a), None }` still work. `enum` remains accepted surface sugar for named sums, but the canonical prelude source should use constructor-bearing `type`.
@@ -163,9 +159,10 @@ Core declarations stay small. Option/result helper APIs are added in Phase S2 as
 - Match on option/result works
 - All 8 traits available without user trait definition
 - Operators still work (`42 == 42`, `1 + 2`, `10 % 3`, `Show.show(x)`)
+- `Option.map(...)`, `Option.unwrap_or(...)`, `Result.map(...)`, and `Result.bind(...)` resolve without explicit imports
 - Headerless single-file entrypoints use the same prelude-aware compilation path as module-based entrypoints
 - Existing tests with local `enum Option[a] = { Some(a), None }` still pass until the fixture migration prefers canonical `type` examples
-- Missing `std/prelude.mr` falls back to builtin core-registration behavior through the same compiler pipeline
+- Missing required toolchain stdlib files fail with a clear `stdlib-not-found` diagnostic
 - Unit/helper setup that previously called `Builtins.prelude_env()` or `Enum_registry.init_builtins()` directly is updated to use the split bootstrap helpers
 
 **Gate:** `make unit && make integration` green.
@@ -191,53 +188,51 @@ Core declarations stay small. Option/result helper APIs are added in Phase S2 as
 - Module system from [06_module-system.md](/Users/zlw/src/marmoset/marmoset/docs/plans/done/language/06_module-system.md)
 - Prelude Phase S0 so `Option` and `Result` exist everywhere
 
-**Goal:** Add `std/option.mr` and `std/result.mr` as ordinary module APIs.
+**Goal:** Add `std/option.mr` and `std/result.mr` as ordinary stdlib modules defining the nominal types and their inherent helper APIs.
 
 Add:
 
 ```marmoset
 # std/option.mr
 
-export unwrap_or, map, bind, is_some, is_none
+export Option
 
-fn unwrap_or[a](self: Option[a], fallback: a) -> a = match self {
-  case Option.Some(v): v
-  case Option.None: fallback
-}
+type Option[a] = { Some(a), None }
 
-fn map[a, b](self: Option[a], f: (a) -> b) -> Option[b] = match self {
-  case Option.Some(v): Option.Some(f(v))
-  case Option.None: Option.None
-}
+impl Option[a] = {
+  fn unwrap_or(self: Option[a], fallback: a) -> a = match self {
+    case Option.Some(v): v
+    case Option.None: fallback
+  }
 
-fn bind[a, b](self: Option[a], f: (a) -> Option[b]) -> Option[b] = match self {
-  case Option.Some(v): f(v)
-  case Option.None: Option.None
+  fn map[b](self: Option[a], f: (a) -> b) -> Option[b] = match self {
+    case Option.Some(v): Option.Some(f(v))
+    case Option.None: Option.None
+  }
 }
 ```
 
 ```marmoset
 # std/result.mr
 
-export unwrap_or, map, map_fail, bind, is_ok, is_err
+export Result
 
-fn unwrap_or[a, e](self: Result[a, e], fallback: a) -> a = match self {
-  case Result.Success(v): v
-  case Result.Failure(_): fallback
-}
+type Result[a, e] = { Success(a), Failure(e) }
 
-fn map[a, b, e](self: Result[a, e], f: (a) -> b) -> Result[b, e] = match self {
-  case Result.Success(v): Result.Success(f(v))
-  case Result.Failure(err): Result.Failure(err)
-}
+impl Result[a, e] = {
+  fn unwrap_or(self: Result[a, e], fallback: a) -> a = match self {
+    case Result.Success(v): v
+    case Result.Failure(_): fallback
+  }
 
-fn map_fail[a, e, f](self: Result[a, e], g: (e) -> f) -> Result[a, f] = match self {
-  case Result.Success(v): Result.Success(v)
-  case Result.Failure(err): Result.Failure(g(err))
+  fn map[b](self: Result[a, e], f: (a) -> b) -> Result[b, e] = match self {
+    case Result.Success(v): Result.Success(f(v))
+    case Result.Failure(err): Result.Failure(err)
+  }
 }
 ```
 
-These stay ordinary functions and work well with explicit qualification and pipes.
+These are ordinary stdlib modules, but their APIs surface as inherent methods on the nominal types and are callable via type qualification (`Option.map(...)`, `Result.bind(...)`).
 
 **Tests:**
 - `option.unwrap_or(Option.Some(42), 0)` → 42
@@ -274,12 +269,25 @@ These stay ordinary functions and work well with explicit qualification and pipe
 
 | File | Role |
 |------|------|
-| **New:** `std/prelude.mr` | Core named sums + traits |
-| **New:** `std/option.mr` | Option helper functions |
-| **New:** `std/result.mr` | Result helper functions |
+| **New:** `std/prelude.mr` | Core ordering sum + traits |
+| **New:** `std/option.mr` | `Option` type + inherent helper methods |
+| **New:** `std/result.mr` | `Result` type + inherent helper methods |
 | `lib/frontend/compiler.ml` | Prelude auto-import orchestration (module system component) |
-| `lib/frontend/discovery.ml` | Source-root project discovery for all entry files |
-| `lib/frontend/typecheck/builtins.ml` | Remove enum/trait init; keep impl init + builtin functions |
+| `lib/frontend/discovery.ml` | Entry-root discovery plus toolchain stdlib resolution |
+| `lib/frontend/import_resolver.ml` | Inject direct stdlib modules/bindings into user modules |
+| `lib/frontend/typecheck/builtins.ml` | Keep builtin value env + primitive impl init; trim file-backed fallback responsibility |
 | `lib/frontend/typecheck/checker.ml` | Update default env/bootstrap helpers |
 | `lib/frontend/typecheck/annotation.ml` | Remove direct builtin enum bootstrap assumptions in tests/helpers |
 | `lib/backend/go/emitter.ml` | Update direct single-file codegen/test helpers to use split bootstrap |
+
+## Progress
+
+- 2026-04-04 03:51 CEST: Implementation started. Reconstructed the work into three slices: S0 prelude bootstrap/pipeline, S1 integration+docs, and S2 std.option/std.result helpers. Preparing test-first coverage for S0 before changing compiler behavior.
+- 2026-04-04 04:15 CEST: S0 bootstrap/pipeline is green under `make unit compiler`. Headerless file-backed entries now use the unified module pipeline, `std/prelude.mr` auto-discovery is wired into project discovery/rewrite, and missing-prelude fallback uses the split builtin bootstrap helpers.
+- 2026-04-04 05:20 CEST: S1 integration+docs slice is green. Added the dedicated prelude integration script, wired it into the integration runner, and updated the architecture/roadmap docs to describe prelude auto-import and the new stdlib surface.
+- 2026-04-04 05:35 CEST: S2 stdlib helper slice is green. Added `std/option.mr` and `std/result.mr`, updated compiler/typechecker/codegen plumbing for canonical prelude enums and builtin/user impl coexistence, and refreshed the affected Go snapshots/hardening coverage.
+- 2026-04-04 14:38 CEST: Follow-up emitter trimming slice started. Adding red Go-inspection coverage for minimal programs so unused toolchain stdlib enums and primitive builtin trait helpers stop leaking into emitted `main.go`.
+- 2026-04-04 05:57 CEST: Final verification is green under `make unit compiler`, targeted fixture checks for the six previously failing regressions, `dune build --root /Users/zlw/src/marmoset/worktrees/prelude _build/default/bin/main.exe`, and `make integration` (1585 fixture tests, 16 exact snapshots, 16 hardening tests). Prelude plan implementation is complete.
+- 2026-04-04 06:56 CEST: Direction corrected after implementation review. Prelude/std lookup now targets a toolchain-owned stdlib root instead of project-local `std/`; file-backed compilation no longer uses builtin prelude fallback; `Option`/`Result` moved out of `std.prelude` into `std.option` / `std.result`; helper APIs are inherent methods resolved via direct stdlib injection rather than re-export semantics.
+- 2026-04-04 15:27 CEST: Follow-up emitter trimming slice is green. Removed an over-broad enum-registration pass from `emit_inherent_method` so concrete inherent emission no longer pulls ambient `Option`/`Result` into unrelated Go output. Verification is green under `make unit compiler`, `make integration 10_codegen_snapshots.sh 11_pre_modules_hardening.sh`, and full `make integration` (1585 fixture tests, 16 exact snapshots, 16 hardening tests).
+- 2026-04-04 17:52 CEST: Codex-only issue hunt across module system + prelude completed three rounds and produced three real regressions. Round 1 added namespace-type-position coverage and fixed dotted type parsing/resolution so `geo.Point` / `wrappers.Users` work in annotations and aliases. Round 2 hardened shadowing diagnostics so local `type Option` / `type Result` misses report source-facing names instead of mangled internals. Round 3 found that qualified impl headers like `impl geometry.Drawable[geometry.Point]` inferred `geometry.Point` as a bogus generic binder, which bypassed duplicate-impl coherence; lowering now treats dotted names as concrete, and qualified duplicate impls are rejected again. Verification is green under `make unit compiler`, `./test/integration.sh modules modules_edge modules_codegen modules_codegen_edge snapshots`, and `make integration 11_pre_modules_hardening.sh 12_prelude.sh`.

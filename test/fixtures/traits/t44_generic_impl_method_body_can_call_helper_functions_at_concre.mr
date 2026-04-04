@@ -1,7 +1,4 @@
 # T44: Generic impl method body can call helper functions at concrete use sites
-trait Show[a] = {
-  fn show(x: a) -> Str
-}
 fn render_len(n: Int) -> Str = "ok"
 impl[b: Show] Show[List[b]] = {
   fn show(x: List[b]) -> Str = render_len(len(x))

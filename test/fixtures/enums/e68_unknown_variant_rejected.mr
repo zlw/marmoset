@@ -1,4 +1,4 @@
 # E68: Unknown variant is rejected
 enum Color = { Red, Green, Blue }
-let x = Color.yellow  # error: Unknown
+let x = Color.yellow  # error: Type 'Color' has no constructor or inherent method 'yellow'
 puts(x)

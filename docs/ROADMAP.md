@@ -43,6 +43,10 @@
 3. [Stdlib](docs/plans/todo/language/04_stdlib.md)
 4. [Post-modules type-system expansion](docs/plans/todo/language/05_post-modules-type-system-expansion.md)
 
+Current status:
+- Prelude infrastructure is implemented in-tree: the compiler resolves a toolchain-owned stdlib root, auto-loads `std.prelude`, `std.option`, and `std.result` through the normal module pipeline, and uses the same discovery/orchestration path for headerless entries.
+- `Option` and `Result` now live in `std.option` / `std.result` and their helper APIs are inherent methods injected into every user module without explicit imports. Broader library expansion still belongs to the later [Stdlib](docs/plans/todo/language/04_stdlib.md) milestone.
+
 ### Queued Language Work
 
 1. [Function overloading](docs/plans/todo/language/06_function-overloading.md)

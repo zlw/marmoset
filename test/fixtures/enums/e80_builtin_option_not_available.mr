@@ -1,3 +1,6 @@
-# E80: Builtin Option not available without explicit declaration
-let x = Option.some(42)  # error: Unbound
-puts(x)
+# E80: Toolchain stdlib exposes Option with canonical constructors
+let x = Option.Some(42)
+match x {
+  case Option.Some(value): puts(value)  # output: 42
+  case Option.None: puts(0)
+}

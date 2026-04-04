@@ -33,10 +33,11 @@ let infer_program_safe
     ?state
     ?(prebound_symbols = [])
     ?(prepare_state = true)
+    ?(expand_derives = true)
     ~(env : Infer.type_env)
     (program : Syntax.Ast.AST.program) : (Infer.type_env * Infer.type_map * mono_type, Diagnostic.t list) result =
   try
-    match Infer.infer_program ?state ~prebound_symbols ~prepare_state ~env program with
+    match Infer.infer_program ?state ~prebound_symbols ~prepare_state ~expand_derives ~env program with
     | Ok result -> Ok result
     | Error e -> Error [ e ]
   with exn -> Error [ Diagnostic.error_no_span ~code:"type-internal" ~message:(Printexc.to_string exn) ]
@@ -88,10 +89,15 @@ let make_typecheck_result
 
 (* Type check a program (list of statements).
    Returns the type of the last expression and the final environment. *)
-let check_program ?state ?(prepare_state = true) ?(env = Infer.empty_env) (program : Syntax.Ast.AST.program) :
+let check_program
+    ?state
+    ?(prepare_state = true)
+    ?(expand_derives = true)
+    ?(env = Infer.empty_env)
+    (program : Syntax.Ast.AST.program) :
     (typecheck_result, Diagnostic.t list) result =
   let state = Option.value state ~default:(Infer.create_inference_state ()) in
-  match infer_program_safe ~state ~prepare_state ~env program with
+  match infer_program_safe ~state ~prepare_state ~expand_derives ~env program with
   | Error e -> Error (merge_diagnostics e)
   | Ok (final_env, type_map, result_type) ->
       Ok (make_typecheck_result ~state ~result_type ~environment:final_env ~type_map)
@@ -99,13 +105,19 @@ let check_program ?state ?(prepare_state = true) ?(env = Infer.empty_env) (progr
 (* Type check source code string.
     Parses and type checks in one step.
     Errors include source location information. *)
-let check_string ?state ?(prepare_state = true) ?(env = Infer.empty_env) ~file_id (source : string) :
+let check_string
+    ?state
+    ?(prepare_state = true)
+    ?(expand_derives = true)
+    ?(env = Infer.empty_env)
+    ~file_id
+    (source : string) :
     (typecheck_result, Diagnostic.t list) result =
   let state = Option.value state ~default:(Infer.create_inference_state ()) in
   match Syntax.Parser.parse ~file_id source with
   | Error errors -> Error errors
   | Ok program -> (
-      match infer_program_safe ~state ~prepare_state ~env program with
+      match infer_program_safe ~state ~prepare_state ~expand_derives ~env program with
       | Error e -> Error (merge_diagnostics e)
       | Ok (final_env, type_map, result_type) ->
           Ok (make_typecheck_result ~state ~result_type ~environment:final_env ~type_map))
@@ -182,11 +194,12 @@ let check_program_with_annotations
     ?state
     ?(prebound_symbols = [])
     ?(prepare_state = true)
+    ?(expand_derives = true)
     ?(env = Infer.empty_env)
     (program : Syntax.Ast.AST.program) : (typecheck_result, Diagnostic.t list) result =
   let state = Option.value state ~default:(Infer.create_inference_state ()) in
   (* First, do standard inference *)
-  match infer_program_safe ~state ~prebound_symbols ~prepare_state ~env program with
+  match infer_program_safe ~state ~prebound_symbols ~prepare_state ~expand_derives ~env program with
   | Error e -> Error (merge_diagnostics e)
   | Ok (final_env, type_map, result_type) -> (
       (* Phase 2: Validate annotations against inferred types *)
