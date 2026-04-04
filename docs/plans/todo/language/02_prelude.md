@@ -2,7 +2,7 @@
 
 ## Maintenance
 
-- Last verified: 2026-04-02
+- Last verified: 2026-04-04
 - Implementation status: Planning (not started)
 - Update trigger: Any prelude/stdlib, builtin, or module system change
 - Prerequisites: Module system (docs/plans/done/language/06_module-system.md) must be implemented first
@@ -22,6 +22,9 @@ Users must redefine `type Option[a] = { Some(a), None }` and `type Result[a, e] 
 3. **Primitive impls stay in OCaml.** `builtins.ml` continues to register builtin primitive impls (`Eq[Int]`, `Show[Str]`, etc.) with `~builtin:true`. The emitter's hardcoded Go strings are unchanged. No stub bodies, no migration. Post-FFI these could move to `std/prelude.mr` using `extern` blocks.
 4. **Builtin functions stay in OCaml.** `puts`, `len`, `first`, `last`, `rest`, `push` keep their registrations in `builtins.ml` and their Go implementations in `runtime.go`. They move to stdlib modules after FFI.
 5. **Option/Result helpers are module functions.** `Option` / `Result` utility APIs (`unwrap_or`, `map`, `bind`, `map_fail`, etc.) live in explicit modules such as `std.option` and `std.result`, not as inherent methods. This keeps the prelude small and fits the no-UFCS, pipe-friendly direction.
+6. **`Rem` is core prelude surface.** The `%` operator remains driven by the `Rem` trait, so `trait Rem[a]` ships in `std/prelude.mr` alongside `Num` and `Neg`.
+7. **One compilation pipeline.** Headerless single-file programs do not keep a separate prelude/builtin shortcut. All entry files go through the same project discovery + compiler orchestration path, with `std/prelude.mr` auto-loading when present and builtin fallback only when the file is absent.
+8. **Split builtin bootstrap responsibilities explicitly.** Replace the current monolithic `Builtins.prelude_env()` behavior with separate helpers for builtin value bindings, builtin prelude fallback registration, and builtin primitive impl registration so compiler and tests can control them independently.
 
 ---
 
@@ -38,6 +41,7 @@ Users must redefine `type Option[a] = { Some(a), None }` and `type Result[a, e] 
 | `trait Ord[a]: Eq` | `builtins.ml` | Same |
 | `trait Hash[a]` | `builtins.ml` | Same |
 | `trait Num[a]` | `builtins.ml` | Same |
+| `trait Rem[a]` | `builtins.ml` | `%` depends on it today |
 | `trait Neg[a]` | `builtins.ml` | Same |
 
 ## What Stays in OCaml (for now)
@@ -58,7 +62,7 @@ None of this is "magic" — it's all emitted as normal Go source. The Go code ju
 
 ```marmoset
 export Ordering, Option, Result
-export Eq, Show, Debug, Ord, Hash, Num, Neg
+export Eq, Show, Debug, Ord, Hash, Num, Rem, Neg
 
 # --- Core named sums ---
 
@@ -95,6 +99,10 @@ trait Num[a] = {
   fn div(x: a, y: a) -> a
 }
 
+trait Rem[a] = {
+  fn rem(x: a, y: a) -> a
+}
+
 trait Neg[a] = {
   fn neg(x: a) -> a
 }
@@ -112,28 +120,37 @@ Core declarations stay small. Option/result helper APIs are added in Phase S2 as
 
 **Stdlib path resolution:**
 - Compiler looks for `std/prelude.mr` relative to the source root
-- If it exists, it's compiled first (it has no imports)
-- If it doesn't exist, compiler falls back to current `Builtins.prelude_env()` behavior
+- Every entry file, including headerless single-file programs, goes through project discovery rooted at `source_root` or the entry directory
+- If `std/prelude.mr` exists, it is loaded through that same project/compiler machinery before user code
+- If it doesn't exist, the compiler uses explicit builtin fallback registration for core sums/traits instead of a special standalone path
 
 **Auto-import mechanism:**
-1. Compiler compiles `std/prelude.mr` → named types and traits are registered in registries
-2. Extracts module signature (exported values, named types, transparent types/shapes if any, traits)
-3. For every other module: injects prelude signature into initial type_env
-4. `builtins.ml` then registers primitive impls (references traits now in registry from prelude)
-5. User code compiled with prelude env + builtin impls + builtin functions
+1. Compiler discovers the project and checks whether `std/prelude.mr` exists under the source root
+2. If it exists, compiler compiles `std/prelude.mr` first via the normal module pipeline, then extracts its module signature
+3. If it does not exist, compiler runs builtin fallback registration for `Ordering`, `Option`, `Result`, `Eq`, `Show`, `Debug`, `Ord`, `Hash`, `Num`, `Rem`, and `Neg`
+4. Compiler seeds builtin value bindings (`puts`, `len`, etc.) separately from core prelude registration
+5. Compiler registers builtin primitive impls after the relevant traits are available
+6. Every user module is then compiled with the same combined environment/signature seeding path regardless of whether the entry file has module headers
 
 **Changes:**
-- `lib/frontend/compiler.ml` (module orchestrator): detect and compile prelude first
+- `lib/frontend/compiler.ml` (module orchestrator): detect and compile prelude first, and remove the legacy standalone fast path so all entry files use the same orchestration
+- `lib/frontend/discovery.ml`: ensure headerless single-file entrypoints still produce a normal project rooted at the entry directory or explicit `source_root`
 - Module signature extraction: reuse from module system
-- Inject prelude env into each module's compilation context
-- `builtins.ml`: remove `init_builtin_enums()` and `init_builtin_traits()` — prelude named types/traits come from `std/prelude.mr`. Keep `init_builtin_impls()` and `builtin_types` (functions).
+- Inject prelude signature into each module's compilation context
+- `lib/frontend/typecheck/builtins.ml`: split `prelude_env()` into explicit responsibilities:
+  - builtin value environment for `puts`, `len`, `first`, `last`, `rest`, `push`
+  - builtin fallback registration for core sums/traits when `std/prelude.mr` is missing
+  - builtin primitive impl registration
+- `lib/frontend/typecheck/checker.ml`, `lib/frontend/typecheck/annotation.ml`, and `lib/backend/go/emitter.ml`: update helper/test setup code that currently assumes one builtin bootstrap call registers everything
 
 **Ordering matters:**
 ```
-1. Parse + typecheck `std/prelude.mr` → named types (`Ordering`, `Option`, `Result`) and traits (`Eq`, `Show`, ...) registered
-2. builtins.ml registers primitive impls → these reference traits already registered from step 1
-3. builtins.ml registers builtin function types (puts, len, etc.) in type_env
-4. User module compiled with combined env
+1. Discover project rooted at the entry file / explicit source_root
+2. If present, parse + typecheck `std/prelude.mr` → named types (`Ordering`, `Option`, `Result`) and traits (`Eq`, `Show`, `Debug`, `Ord`, `Hash`, `Num`, `Rem`, `Neg`) registered
+3. Otherwise run builtin fallback registration for those same sums/traits
+4. Register builtin primitive impls → these reference traits already registered from step 2 or 3
+5. Seed builtin function types (`puts`, `len`, etc.) into the value env
+6. Compile every user module through the same combined path
 ```
 
 **Backwards compat / surface policy:** Existing test files that define `enum Option[a] = { Some(a), None }` still work. `enum` remains accepted surface sugar for named sums, but the canonical prelude source should use constructor-bearing `type`.
@@ -144,10 +161,12 @@ Core declarations stay small. Option/result helper APIs are added in Phase S2 as
 - `Option.Some(42)` works without a user-defined prelude sum
 - `Result.Success("ok")` works without a user-defined prelude sum
 - Match on option/result works
-- All 7 traits available without user trait definition
-- Operators still work (`42 == 42`, `1 + 2`, `Show.show(x)`)
+- All 8 traits available without user trait definition
+- Operators still work (`42 == 42`, `1 + 2`, `10 % 3`, `Show.show(x)`)
+- Headerless single-file entrypoints use the same prelude-aware compilation path as module-based entrypoints
 - Existing tests with local `enum Option[a] = { Some(a), None }` still pass until the fixture migration prefers canonical `type` examples
-- Missing `std/prelude.mr` falls back to builtin behavior
+- Missing `std/prelude.mr` falls back to builtin core-registration behavior through the same compiler pipeline
+- Unit/helper setup that previously called `Builtins.prelude_env()` or `Enum_registry.init_builtins()` directly is updated to use the split bootstrap helpers
 
 **Gate:** `make unit && make integration` green.
 
@@ -245,8 +264,9 @@ These stay ordinary functions and work well with explicit qualification and pipe
 ## Risks
 
 1. **Prelude compilation ordering** — Prelude must be compiled before user code AND before `init_builtin_impls()`. The impls reference traits that must already be registered. Straightforward to enforce in the compilation pipeline.
-2. **Name collision** — User defines `trait eq` in their module. Prelude's `eq` is already registered; user's definition would need to shadow or error. Follow same rules as module system for name resolution.
-3. **Circular dependency** — Prelude can't import anything. It's the root of the dependency graph. Fine since it only uses primitive types built into the compiler.
+2. **Single-pipeline cutover** — Removing the legacy standalone shortcut touches build/check/analyze helpers and their tests. Keep this change in the same phase so the compiler no longer has divergent prelude semantics.
+3. **Name collision** — User defines `trait eq` in their module. Prelude's `eq` is already registered; user's definition would need to shadow or error. Follow same rules as module system for name resolution.
+4. **Circular dependency** — Prelude can't import anything. It's the root of the dependency graph. Fine since it only uses primitive types built into the compiler.
 
 ---
 
@@ -258,4 +278,8 @@ These stay ordinary functions and work well with explicit qualification and pipe
 | **New:** `std/option.mr` | Option helper functions |
 | **New:** `std/result.mr` | Result helper functions |
 | `lib/frontend/compiler.ml` | Prelude auto-import orchestration (module system component) |
+| `lib/frontend/discovery.ml` | Source-root project discovery for all entry files |
 | `lib/frontend/typecheck/builtins.ml` | Remove enum/trait init; keep impl init + builtin functions |
+| `lib/frontend/typecheck/checker.ml` | Update default env/bootstrap helpers |
+| `lib/frontend/typecheck/annotation.ml` | Remove direct builtin enum bootstrap assumptions in tests/helpers |
+| `lib/backend/go/emitter.ml` | Update direct single-file codegen/test helpers to use split bootstrap |
