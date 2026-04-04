@@ -5,7 +5,7 @@
 - Last verified: 2026-04-02
 - Implementation status: Planning (not started)
 - Update trigger: Any prelude/stdlib, builtin, or module system change
-- Prerequisites: Module system (docs/plans/todo/language/02_module-system.md) must be implemented first
+- Prerequisites: Module system (docs/plans/done/language/06_module-system.md) must be implemented first
 
 ## Context
 
@@ -169,7 +169,7 @@ Core declarations stay small. Option/result helper APIs are added in Phase S2 as
 ### Phase S2: Option/Result Helper Modules
 
 **Prereqs:**
-- Module system from [02_module-system.md](/Users/zlw/src/marmoset/marmoset/docs/plans/todo/language/02_module-system.md)
+- Module system from [06_module-system.md](/Users/zlw/src/marmoset/marmoset/docs/plans/done/language/06_module-system.md)
 - Prelude Phase S0 so `Option` and `Result` exist everywhere
 
 **Goal:** Add `std/option.mr` and `std/result.mr` as ordinary module APIs.

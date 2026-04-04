@@ -130,7 +130,7 @@ Once the semantic foundation is frozen, harden it before modules land. This plan
 - Pin the resulting emitted-Go shape in both exact snapshots and structural hardening
   assertions so backend cleanup does not silently regress.
 - Treat this as completed groundwork for
-  `docs/plans/todo/language/08_forall-exists.md`, not as unfinished work that still
+  `docs/plans/todo/language/07_forall-exists.md`, not as unfinished work that still
   belongs in that later interface-value plan.
 
 ### Phase P5. Narrow Expected-Type Propagation Cleanup
@@ -143,7 +143,7 @@ Once the semantic foundation is frozen, harden it before modules land. This plan
   - qualified callable and placeholder-section sites that already participate in partial expected-typing but still behave inconsistently.
 - Each propagation rule in this phase must be justified by a concrete failing or surprising fixture first, then locked with a regression fixture after implementation.
 - This phase does not authorize a general bidirectional-typing rewrite, a broad collection-literal inference redesign, or public-API-driven expected-type work.
-- Stop once the identified pre-modules cases are predictable end-to-end. Broader expected-type propagation remains part of `docs/plans/todo/language/06_post-modules-type-system-expansion.md`.
+- Stop once the identified pre-modules cases are predictable end-to-end. Broader expected-type propagation remains part of `docs/plans/todo/language/05_post-modules-type-system-expansion.md`.
 
 ## Exit Criteria
 
@@ -176,5 +176,5 @@ Verified against the implementation on 2026-04-03 with:
 ## Related Plans
 
 - `docs/plans/done/language/04_pre-modules-semantics-foundation.md` freezes the semantics first.
-- `docs/plans/todo/language/02_module-system.md` depends on this hardening pass being complete, especially the overlap/conflict groundwork needed for build-wide coherence.
+- `docs/plans/done/language/06_module-system.md` depends on this hardening pass being complete, especially the overlap/conflict groundwork needed for build-wide coherence.
 - `docs/plans/done/tooling/01_diagnostics-rework.md` is the diagnostics prerequisite, not an active part of this plan.

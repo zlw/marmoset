@@ -250,9 +250,9 @@ semantic redefinition.
 ## Remaining Follow-Up
 
 - `docs/plans/done/language/05_pre-modules-parity-and-hardening.md` hardens and audits this baseline
-- `docs/plans/todo/language/02_module-system.md` extends the same qualifier classifier into real module namespaces
-- `docs/plans/todo/language/07_function-overloading.md` can build only on plain and qualified calls, not on value-dot fallback
-- `docs/plans/todo/language/08_forall-exists.md` stays separate from this baseline because it changes value-level interface packaging rather than the core pre-modules declaration and call model
+- `docs/plans/done/language/06_module-system.md` extends the same qualifier classifier into real module namespaces
+- `docs/plans/todo/language/06_function-overloading.md` can build only on plain and qualified calls, not on value-dot fallback
+- `docs/plans/todo/language/07_forall-exists.md` stays separate from this baseline because it changes value-level interface packaging rather than the core pre-modules declaration and call model
 
 ## Verification
 

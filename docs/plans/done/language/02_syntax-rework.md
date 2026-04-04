@@ -22,7 +22,7 @@ Deferred post-rollout work remains in `docs/plans/done/language/03_syntax-rework
 
 ## Non-Goals
 - Changing the runtime model or backend strategy.
-- Designing modules/imports beyond what is already locked in `docs/plans/todo/language/02_module-system.md`.
+- Designing modules/imports beyond what is already locked in `docs/plans/done/language/06_module-system.md`.
 - Adding a general optimization IR.
 - Depending on a formatter to make rollout possible.
 
@@ -63,7 +63,7 @@ Deferred post-rollout work remains in `docs/plans/done/language/03_syntax-rework
   - keeps `.` as the universal qualifier,
   - keeps `->` vs `=>`,
   - locks method generics and method call type-arg syntax.
-- `docs/plans/todo/language/02_module-system.md`
+- `docs/plans/done/language/06_module-system.md`
   - depends on `.` as the unified qualifier,
   - will later add import/export syntax to the same parser family.
 - `docs/plans/done/tooling/01_diagnostics-rework.md`

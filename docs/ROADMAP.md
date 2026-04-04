@@ -2,7 +2,7 @@
 
 ## Maintenance
 
-- Last verified: 2026-04-03
+- Last verified: 2026-04-04
 - Implementation status: Canonical (actively maintained)
 - Update trigger: Any change to milestone status, plan ordering, or deferred-ideas ownership
 
@@ -23,6 +23,7 @@
 3. [Syntax rework follow-up](docs/plans/done/language/03_syntax-rework-followup.md)
 4. [Pre-modules semantics foundation](docs/plans/done/language/04_pre-modules-semantics-foundation.md)
 5. [Pre-modules parity and hardening](docs/plans/done/language/05_pre-modules-parity-and-hardening.md)
+6. [Module system](docs/plans/done/language/06_module-system.md)
 
 ### Tooling
 
@@ -37,20 +38,19 @@
 
 ### Main Language Track
 
-1. [Module system](docs/plans/todo/language/02_module-system.md)
-2. [Prelude](docs/plans/todo/language/03_prelude.md)
-3. [FFI](docs/plans/todo/language/04_ffi.md)
-4. [Stdlib](docs/plans/todo/language/05_stdlib.md)
-5. [Post-modules type-system expansion](docs/plans/todo/language/06_post-modules-type-system-expansion.md)
+1. [Prelude](docs/plans/todo/language/02_prelude.md)
+2. [FFI](docs/plans/todo/language/03_ffi.md)
+3. [Stdlib](docs/plans/todo/language/04_stdlib.md)
+4. [Post-modules type-system expansion](docs/plans/todo/language/05_post-modules-type-system-expansion.md)
 
 ### Queued Language Work
 
-1. [Function overloading](docs/plans/todo/language/07_function-overloading.md)
-2. [Universal constraints and interface value types](docs/plans/todo/language/08_forall-exists.md)
+1. [Function overloading](docs/plans/todo/language/06_function-overloading.md)
+2. [Universal constraints and interface value types](docs/plans/todo/language/07_forall-exists.md)
 
 ### Post-Stdlib Performance Work
 
-1. [Higher-order function optimization](docs/plans/todo/language/09_hof_optimization.md)
+1. [Higher-order function optimization](docs/plans/todo/language/08_hof_optimization.md)
 
 ### Parallel Tooling Track
 
@@ -69,18 +69,18 @@ These areas already have a concrete plan or completed milestone and should not a
 - feature/codegen parity, checker-to-emitter contract hardening, docs validation, generated-Go snapshots, and regression gates:
   [Pre-modules parity and hardening](docs/plans/done/language/05_pre-modules-parity-and-hardening.md)
 - imports, exports, per-module checking, and multi-file compilation:
-  [Module system](docs/plans/todo/language/02_module-system.md)
+  [Module system](docs/plans/done/language/06_module-system.md)
 - core language/library platform milestones:
-  [Prelude](docs/plans/todo/language/03_prelude.md),
-  [FFI](docs/plans/todo/language/04_ffi.md),
-  [Stdlib](docs/plans/todo/language/05_stdlib.md)
+  [Prelude](docs/plans/todo/language/02_prelude.md),
+  [FFI](docs/plans/todo/language/03_ffi.md),
+  [Stdlib](docs/plans/todo/language/04_stdlib.md)
 - associated types, open rows, post-module coherence work, and later lowering expansion:
-  [Post-modules type-system expansion](docs/plans/todo/language/06_post-modules-type-system-expansion.md)
+  [Post-modules type-system expansion](docs/plans/todo/language/05_post-modules-type-system-expansion.md)
 - later planned language work on the stabilized explicit-qualified call model:
-  [Function overloading](docs/plans/todo/language/07_function-overloading.md),
-  [Universal constraints and interface value types](docs/plans/todo/language/08_forall-exists.md)
+  [Function overloading](docs/plans/todo/language/06_function-overloading.md),
+  [Universal constraints and interface value types](docs/plans/todo/language/07_forall-exists.md)
 - post-stdlib backend optimization work:
-  [Higher-order function optimization](docs/plans/todo/language/09_hof_optimization.md)
+  [Higher-order function optimization](docs/plans/todo/language/08_hof_optimization.md)
 - current planned tooling / CI work:
   [OCaml test harness rewrite](docs/plans/todo/tooling/01_ocaml-test-harness.md),
   [Single OCaml setup in CI](docs/plans/todo/ci/01_single-ocaml-setup-in-ci.md)

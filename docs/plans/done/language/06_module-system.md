@@ -2,7 +2,7 @@
 
 ## Maintenance
 
-- Last verified: 2026-04-03
+- Last verified: 2026-04-04
 - Implementation status: Implemented (focused verification green)
 - Update trigger: Any module/import/export syntax or compilation model change
 

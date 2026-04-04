@@ -100,7 +100,7 @@ Why:
 
 ### 2. Interface Value Types Come After The Core Call Model
 
-This plan should land before or alongside [08_forall-exists.md](/Users/zlw/src/marmoset/marmoset/docs/plans/todo/language/08_forall-exists.md), but only after plain and qualified calls already have a stable candidate model.
+This plan should land before or alongside [07_forall-exists.md](/Users/zlw/src/marmoset/marmoset/docs/plans/todo/language/07_forall-exists.md), but only after plain and qualified calls already have a stable candidate model.
 
 Why:
 
