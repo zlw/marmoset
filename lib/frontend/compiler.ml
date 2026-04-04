@@ -16,6 +16,11 @@ module Trait_registry = Typecheck.Trait_registry
 module Type_registry = Typecheck.Type_registry
 module Types = Typecheck.Types
 
+type module_navigation = {
+  surface : Import_resolver.module_surface;
+  resolved_imports : Import_resolver.resolved_imports;
+}
+
 type checked_module = {
   module_id : string;
   file_path : string;
@@ -24,6 +29,7 @@ type checked_module = {
   type_var_user_names : (string * string) list;
   signature : Module_sig.module_signature;
   locals : Module_sig.module_locals;
+  navigation : module_navigation;
 }
 
 type compiled_project = {
@@ -62,6 +68,7 @@ type file_analysis = {
 type entry_analysis = {
   mode : analysis_mode;
   source_root : string option;
+  project_root : string option;
   graph : Module_context.module_graph option;
   project : compiled_project option;
   active_file : file_analysis;
@@ -73,6 +80,11 @@ let merge_hashtbl dst src = Hashtbl.iter (fun key value -> Hashtbl.replace dst k
 
 let diagnostics_have_errors (diagnostics : Diagnostic.t list) : bool =
   List.exists (fun (diag : Diagnostic.t) -> diag.severity = Diagnostic.Error) diagnostics
+
+let resolved_project_root ?source_root ~(entry_file : string) () : string =
+  match source_root with
+  | Some root -> Discovery.normalize_path root
+  | None -> Filename.dirname (Discovery.normalize_path entry_file)
 
 let read_source_file (path : string) : string =
   let ic = open_in_bin path in
@@ -542,6 +554,7 @@ let compile_module
       type_var_user_names;
       signature;
       locals;
+      navigation = { surface; resolved_imports = rewrite.resolved_imports };
     }
 
 let merge_checked_modules (modules : checked_module list) : compiled_project =
@@ -761,7 +774,7 @@ let analyze_standalone_program ?source_root ~(entry_file : string) ~(source : st
           ~identifier_symbols:(Infer.identifier_symbol_bindings_in_state state)
           ()
       in
-      { mode = Standalone; source_root; graph = None; project = None; active_file }
+      { mode = Standalone; source_root; project_root = None; graph = None; project = None; active_file }
   | Ok result ->
       let active_file =
         make_file_analysis ~file_path:entry_file ~source ~surface_program:program ~typed_program:program
@@ -769,10 +782,11 @@ let analyze_standalone_program ?source_root ~(entry_file : string) ~(source : st
           ~type_var_user_names:(Infer.type_var_user_name_bindings_in_state state)
           ~symbol_table:result.symbol_table ~identifier_symbols:result.identifier_symbols ()
       in
-      { mode = Standalone; source_root; graph = None; project = None; active_file }
+      { mode = Standalone; source_root; project_root = None; graph = None; project = None; active_file }
 
 let analyze_module_graph
     ~(source_root : string option)
+    ~(project_root : string)
     ~(entry_file : string)
     ~(source : string)
     ~(entry_program : AST.program)
@@ -789,7 +803,14 @@ let analyze_module_graph
             ]
           ()
       in
-      { mode = Modules; source_root; graph = Some graph; project = None; active_file }
+      {
+        mode = Modules;
+        source_root;
+        project_root = Some project_root;
+        graph = Some graph;
+        project = None;
+        active_file;
+      }
   | Some entry_module -> (
       match compile_project graph with
       | Error diags ->
@@ -797,7 +818,14 @@ let analyze_module_graph
             make_file_analysis ~file_path:entry_module.file_path ~module_id:entry_module.module_id
               ~source:entry_module.source ~surface_program:entry_module.program ~diagnostics:diags ()
           in
-          { mode = Modules; source_root; graph = Some graph; project = None; active_file }
+          {
+            mode = Modules;
+            source_root;
+            project_root = Some project_root;
+            graph = Some graph;
+            project = None;
+            active_file;
+          }
       | Ok project -> (
           match
             List.find_opt
@@ -815,7 +843,14 @@ let analyze_module_graph
                     ]
                   ()
               in
-              { mode = Modules; source_root; graph = Some graph; project = Some project; active_file }
+              {
+                mode = Modules;
+                source_root;
+                project_root = Some project_root;
+                graph = Some graph;
+                project = Some project;
+                active_file;
+              }
           | Some checked_entry ->
               let active_file =
                 make_file_analysis ~file_path:entry_module.file_path ~module_id:entry_module.module_id
@@ -826,26 +861,57 @@ let analyze_module_graph
                   ~symbol_table:checked_entry.result.symbol_table
                   ~identifier_symbols:checked_entry.result.identifier_symbols ~diagnostics:project.diagnostics ()
               in
-              { mode = Modules; source_root; graph = Some graph; project = Some project; active_file }))
+              {
+                mode = Modules;
+                source_root;
+                project_root = Some project_root;
+                graph = Some graph;
+                project = Some project;
+                active_file;
+              }))
 
-let analyze_entry_with_source
+let rec analyze_entry_with_source
     ?source_root ?(force_modules = false) ~(entry_file : string) ~(entry_source : string) () : entry_analysis =
+  analyze_entry_with_overrides ?source_root ~force_modules ~entry_file ~entry_source
+    ~source_overrides:(Hashtbl.create 0) ()
+
+and analyze_entry_with_overrides
+    ?source_root
+    ?(force_modules = false)
+    ~(entry_file : string)
+    ~(entry_source : string)
+    ~(source_overrides : (string, string) Hashtbl.t)
+    () : entry_analysis =
   match Parser.parse ~file_id:entry_file entry_source with
   | Error diags ->
       let active_file = make_file_analysis ~file_path:entry_file ~source:entry_source ~diagnostics:diags () in
-      { mode = Standalone; source_root; graph = None; project = None; active_file }
+      { mode = Standalone; source_root; project_root = None; graph = None; project = None; active_file }
   | Ok entry_program -> (
       if (not force_modules) && not (has_module_headers entry_program) then
         analyze_standalone_program ?source_root ~entry_file ~source:entry_source entry_program
       else
-        match Discovery.discover_project_with_entry_source ?source_root ~entry_file ~entry_source () with
+        let project_root = resolved_project_root ?source_root ~entry_file () in
+        let all_overrides = Hashtbl.copy source_overrides in
+        Hashtbl.replace all_overrides (Discovery.normalize_path entry_file) entry_source;
+        match
+          Discovery.discover_project_with_overrides ?source_root ~entry_file ~source_overrides:all_overrides ()
+        with
         | Error diag ->
             let active_file =
               make_file_analysis ~file_path:entry_file ~source:entry_source ~surface_program:entry_program
                 ~diagnostics:[ diag ] ()
             in
-            { mode = Modules; source_root; graph = None; project = None; active_file }
-        | Ok graph -> analyze_module_graph ~source_root ~entry_file ~source:entry_source ~entry_program graph)
+            {
+              mode = Modules;
+              source_root;
+              project_root = Some project_root;
+              graph = None;
+              project = None;
+              active_file;
+            }
+        | Ok graph ->
+            analyze_module_graph ~source_root ~project_root:graph.root_dir ~entry_file ~source:entry_source
+              ~entry_program graph)
 
 let analyze_entry ?source_root ?(force_modules = false) ~(entry_file : string) () : entry_analysis =
   analyze_entry_with_source ?source_root ~force_modules ~entry_file ~entry_source:(read_source_file entry_file) ()
@@ -1149,8 +1215,25 @@ let%test "analyze_entry_with_source respects explicit source_root" =
       | Some graph ->
           analysis.mode = Modules
           && analysis.source_root = Some root
+          && analysis.project_root = Some root
           && graph.entry_module = "src.main"
           && analysis.active_file.diagnostics = [])
+
+let%test "analyze_entry_with_overrides sees imported file overrides" =
+  Discovery.with_temp_project
+    [ ("main.mr", "import math.answer\nanswer() + 1\n"); ("math.mr", "export answer\nfn answer() -> Int = 41\n") ]
+    (fun root ->
+      let overrides = Hashtbl.create 1 in
+      let math_path = Discovery.normalize_path (Filename.concat root "math.mr") in
+      Hashtbl.replace overrides math_path "export answer\nfn answer() -> Str = \"forty one\"\n";
+      let analysis =
+        analyze_entry_with_overrides ~entry_file:(Filename.concat root "main.mr")
+          ~entry_source:"import math.answer\nanswer() + 1\n" ~source_overrides:overrides ()
+      in
+      List.exists
+        (fun (diag : Diagnostic.t) ->
+          diag.code = "type-mismatch" || Diagnostics.String_utils.contains_substring ~needle:"Str" diag.message)
+        analysis.active_file.diagnostics)
 
 let%test "analyze_entry_with_source can force headerless files into module mode" =
   Discovery.with_temp_project
@@ -1165,8 +1248,32 @@ let%test "analyze_entry_with_source can force headerless files into module mode"
       | None -> false
       | Some graph ->
           analysis.mode = Modules
+          && analysis.project_root = Some root
           && analysis.active_file.module_id = Some "pkg.util"
           && graph.entry_module = "pkg.util")
+
+let%test "checked_module navigation keeps resolved imports for namespace and alias lookups" =
+  Discovery.with_temp_project
+    [
+      ("main.mr", "import math\nimport math.add as plus\nputs(math.add(1, 2) + plus(3, 4))\n");
+      ("math.mr", "export add\nfn add(x: Int, y: Int) -> Int = x + y\n");
+    ]
+    (fun root ->
+      let analysis =
+        analyze_entry_with_source ~entry_file:(Filename.concat root "main.mr")
+          ~entry_source:"import math\nimport math.add as plus\nputs(math.add(1, 2) + plus(3, 4))\n" ()
+      in
+      match find_checked_module_by_file analysis ~file_path:(Filename.concat root "main.mr") with
+      | None -> false
+      | Some checked_main -> (
+          Import_resolver.StringMap.mem "plus" checked_main.navigation.resolved_imports.direct_bindings
+          &&
+          match
+            Import_resolver.resolve_namespace_member
+              ~namespace_roots:checked_main.navigation.resolved_imports.namespace_roots [ "math"; "add" ]
+          with
+          | Some (`Exported exported) -> String.equal exported.internal_name "math__add"
+          | _ -> false))
 
 let%test "find_export_binding exposes exported definition metadata through compiler boundary" =
   Discovery.with_temp_project

@@ -29,6 +29,11 @@ let normalize_path (path : string) : string =
   else
     path
 
+let normalize_source_overrides (source_overrides : (string, string) Hashtbl.t) : (string, string) Hashtbl.t =
+  let normalized = Hashtbl.create (Hashtbl.length source_overrides) in
+  Hashtbl.iter (fun path source -> Hashtbl.replace normalized (normalize_path path) source) source_overrides;
+  normalized
+
 let read_file (path : string) : string =
   let ic = open_in_bin path in
   Fun.protect
@@ -189,27 +194,8 @@ and resolve_import (state : discovery_state) (imp : Module_context.import_info) 
                (Printf.sprintf "Import '%s' does not resolve to a module or exported member"
                   (import_path_string imp.import_path)))
 
-let discover_project ?source_root ~(entry_file : string) () : (Module_context.module_graph, Diagnostic.t) result =
-  let entry_file = normalize_path entry_file in
-  let root_dir =
-    match source_root with
-    | Some root -> normalize_path root
-    | None -> Filename.dirname entry_file
-  in
-  let entry_module = module_id_of_file ~root_dir entry_file in
-  let state =
-    {
-      root_dir;
-      modules = Hashtbl.create 16;
-      dependencies = Hashtbl.create 16;
-      source_overrides = Hashtbl.create 0;
-      next_file_index = ref 0;
-    }
-  in
-  let* () = discover_module state ~module_id:entry_module ~file_path:entry_file in
-  Module_context.build_graph ~modules:state.modules ~dependencies:state.dependencies ~entry_module
-
-let discover_project_with_entry_source ?source_root ~(entry_file : string) ~(entry_source : string) () :
+let discover_project_with_overrides
+    ?source_root ~(entry_file : string) ~(source_overrides : (string, string) Hashtbl.t) () :
     (Module_context.module_graph, Diagnostic.t) result =
   let entry_file = normalize_path entry_file in
   let root_dir =
@@ -223,13 +209,21 @@ let discover_project_with_entry_source ?source_root ~(entry_file : string) ~(ent
       root_dir;
       modules = Hashtbl.create 16;
       dependencies = Hashtbl.create 16;
-      source_overrides = Hashtbl.create 1;
+      source_overrides = normalize_source_overrides source_overrides;
       next_file_index = ref 0;
     }
   in
-  Hashtbl.replace state.source_overrides entry_file entry_source;
   let* () = discover_module state ~module_id:entry_module ~file_path:entry_file in
-  Module_context.build_graph ~modules:state.modules ~dependencies:state.dependencies ~entry_module
+  Module_context.build_graph ~root_dir ~modules:state.modules ~dependencies:state.dependencies ~entry_module
+
+let discover_project ?source_root ~(entry_file : string) () : (Module_context.module_graph, Diagnostic.t) result =
+  discover_project_with_overrides ?source_root ~entry_file ~source_overrides:(Hashtbl.create 0) ()
+
+let discover_project_with_entry_source ?source_root ~(entry_file : string) ~(entry_source : string) () :
+    (Module_context.module_graph, Diagnostic.t) result =
+  let source_overrides = Hashtbl.create 1 in
+  Hashtbl.replace source_overrides entry_file entry_source;
+  discover_project_with_overrides ?source_root ~entry_file ~source_overrides ()
 
 let make_temp_dir (prefix : string) : string =
   let path = Filename.temp_file prefix "" in

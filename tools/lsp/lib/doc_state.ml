@@ -10,6 +10,7 @@ type analysis_result = {
   source : string;
   module_id : string option;
   source_root : string option;
+  project_root : string option;
   program : Ast.AST.program option;
   type_map : Infer.type_map option;
   environment : Infer.type_env option;
@@ -26,15 +27,26 @@ let zero_range =
   let zero = Lsp_t.Position.create ~line:0 ~character:0 in
   Lsp_t.Range.create ~start:zero ~end_:zero
 
+let normalize_path (path : string) : string =
+  if Filename.is_relative path then
+    Filename.concat (Sys.getcwd ()) path
+  else
+    path
+
 let file_path_of_file_id (file_id : string) : string option =
   try
     if Diagnostics.String_utils.contains_substring ~needle:"://" file_id then
-      Some Lsp_t.DocumentUri.(to_path (of_string file_id))
-    else if Sys.file_exists file_id then
-      Some file_id
+      Some (normalize_path Lsp_t.DocumentUri.(to_path (of_string file_id)))
+    else if String.length file_id > 0 && file_id.[0] <> '<' then
+      Some (normalize_path file_id)
     else
       None
   with _ -> None
+
+let normalize_source_overrides (source_overrides : (string, string) Hashtbl.t) : (string, string) Hashtbl.t =
+  let normalized = Hashtbl.create (Hashtbl.length source_overrides) in
+  Hashtbl.iter (fun path source -> Hashtbl.replace normalized (normalize_path path) source) source_overrides;
+  normalized
 
 let active_file_matches ~(active_file_id : string) ~(diag_file_id : string) : bool =
   String.equal diag_file_id active_file_id
@@ -81,16 +93,25 @@ let has_module_headers (program : Ast.AST.program) : bool =
       | _ -> false)
     program
 
-let compiler_analysis_for_file_id ~(file_id : string) ~(source : string) : Compiler.entry_analysis =
+let compiler_analysis_for_file_id
+    ?source_root ?(source_overrides = Hashtbl.create 0) ~(file_id : string) ~(source : string) :
+    unit -> Compiler.entry_analysis =
+ fun () ->
   match file_path_of_file_id file_id with
-  | Some entry_file -> Compiler.analyze_entry_with_source ~entry_file ~entry_source:source ()
-  | None -> Compiler.analyze_entry_with_source ~entry_file:file_id ~entry_source:source ()
+  | Some entry_file ->
+      Compiler.analyze_entry_with_overrides ?source_root ~entry_file ~entry_source:source
+        ~source_overrides:(normalize_source_overrides source_overrides)
+        ()
+  | None -> Compiler.analyze_entry_with_source ?source_root ~entry_file:file_id ~entry_source:source ()
 
-let expose_typed_state (analysis : Compiler.entry_analysis) : bool = analysis.mode = Compiler.Standalone
+let expose_typed_state (_analysis : Compiler.entry_analysis) : bool = true
 
 (* Analyze a document, returning parse/type errors as LSP diagnostics *)
-let analyze_with_file_id ~(file_id : string) ~(source : string) : analysis_result =
-  let compiler_analysis = compiler_analysis_for_file_id ~file_id ~source in
+let analyze_with_file_id
+    ?source_root ?(source_overrides = Hashtbl.create 0) ~(file_id : string) ~(source : string) :
+    unit -> analysis_result =
+ fun () ->
+  let compiler_analysis = compiler_analysis_for_file_id ?source_root ~source_overrides ~file_id ~source () in
   let active_file = compiler_analysis.active_file in
   let diagnostics =
     List.map (lsp_diagnostic_of_canonical ~source ~active_file_id:file_id) active_file.diagnostics
@@ -106,6 +127,7 @@ let analyze_with_file_id ~(file_id : string) ~(source : string) : analysis_resul
     source;
     module_id = active_file.module_id;
     source_root = compiler_analysis.source_root;
+    project_root = compiler_analysis.project_root;
     program;
     type_map =
       (if should_expose_typed_state then
@@ -126,7 +148,7 @@ let analyze_with_file_id ~(file_id : string) ~(source : string) : analysis_resul
     compiler_analysis = Some compiler_analysis;
   }
 
-let analyze ~(source : string) : analysis_result = analyze_with_file_id ~file_id:"<lsp>" ~source
+let analyze ~(source : string) : analysis_result = analyze_with_file_id ~file_id:"<lsp>" ~source ()
 
 let with_temp_project (files : (string * string) list) (f : string -> bool) : bool =
   let root = Filename.temp_file "marmoset_lsp_modules_" "" in
@@ -185,6 +207,7 @@ let%test "analyze successful code stores type_map and environment" =
   result.diagnostics = []
   && result.module_id = None
   && result.source_root = None
+  && result.project_root = None
   && result.type_map <> None
   && result.environment <> None
   && result.compiler_analysis <> None
@@ -237,20 +260,21 @@ let%test "analyze_with_file_id uses module-aware checking for imported files" =
       let source =
         "import sum\ntype Point = { x: Int, y: Int }\nlet point: Point = { x: 1, y: 2 }\nlet moved = { ...point, x: 10 }\nfn get_x(value: Point) -> Int = value.x\nlet nums = sum.sum([1, 2, 3])\nputs(get_x(moved))\nputs(moved.x + moved.y)\nputs(nums)\n"
       in
-      let result = analyze_with_file_id ~file_id ~source in
+      let result = analyze_with_file_id ~file_id ~source () in
       result.diagnostics = []
       && result.module_id = Some "main"
       && result.program <> None
       && result.compiler_analysis <> None)
 
 let%test "analyze carries compiler-owned standalone analysis" =
-  let result = analyze_with_file_id ~file_id:"<memory>" ~source:"let id = (x) -> x\nid(1)\n" in
+  let result = analyze_with_file_id ~file_id:"<memory>" ~source:"let id = (x) -> x\nid(1)\n" () in
   match result.compiler_analysis with
   | None -> false
   | Some analysis ->
       analysis.mode = Compiler.Standalone
       && result.module_id = None
       && result.source_root = None
+      && result.project_root = None
       && result.type_map <> None
       && result.environment <> None
 
@@ -262,7 +286,7 @@ let%test "analyze_with_file_id keeps module surface AST while exposing compiler 
     ]
     (fun root ->
       let file_id = Filename.concat root "main.mr" in
-      let result = analyze_with_file_id ~file_id ~source:"import sum\nputs(sum.sum([1, 2, 3]))\n" in
+      let result = analyze_with_file_id ~file_id ~source:"import sum\nputs(sum.sum([1, 2, 3]))\n" () in
       let surface_has_namespace =
         match result.program with
         | None -> false
@@ -300,18 +324,40 @@ let%test "analyze_with_file_id keeps module surface AST while exposing compiler 
           analysis.mode = Compiler.Modules
           && surface_has_namespace
           && result.module_id = Some "main"
-          && result.type_map = None
-          && result.environment = None)
+          && result.project_root = Some root
+          && result.type_map <> None
+          && result.environment <> None)
 
 let%test "analyze_with_file_id preserves module export diagnostics for qualified access" =
   with_temp_project
     [ ("main.mr", "import sum\nsum.reduce\n"); ("sum.mr", "fn reduce(values: List[Int]) -> Int = len(values)\n") ]
     (fun root ->
       let file_id = Filename.concat root "main.mr" in
-      let result = analyze_with_file_id ~file_id ~source:"import sum\nsum.reduce\n" in
+      let result = analyze_with_file_id ~file_id ~source:"import sum\nsum.reduce\n" () in
       List.exists
         (fun (diag : Lsp_t.Diagnostic.t) ->
           match diag.message with
           | `String message -> String.equal message "Module 'sum' does not export 'reduce'"
           | _ -> false)
         result.diagnostics)
+
+let%test "analyze_with_file_id applies normalized file overrides for file URI inputs" =
+  with_temp_project
+    [ ("main.mr", "import math.answer\nanswer() + 1\n"); ("math.mr", "export answer\nfn answer() -> Int = 41\n") ]
+    (fun root ->
+      let main_path = Filename.concat root "main.mr" in
+      let main_uri = Lsp_t.DocumentUri.(to_string (of_path main_path)) in
+      let overrides = Hashtbl.create 1 in
+      Hashtbl.replace overrides (Filename.concat root "math.mr")
+        "export answer\nfn answer() -> Str = \"forty one\"\n";
+      let result =
+        analyze_with_file_id ~source_root:root ~source_overrides:overrides ~file_id:main_uri
+          ~source:"import math.answer\nanswer() + 1\n" ()
+      in
+      result.project_root = Some root
+      && List.exists
+           (fun (diag : Lsp_t.Diagnostic.t) ->
+             match diag.message with
+             | `String message -> Diagnostics.String_utils.contains_substring ~needle:"Str" message
+             | _ -> false)
+           result.diagnostics)
