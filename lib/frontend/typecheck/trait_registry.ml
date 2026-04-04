@@ -89,20 +89,7 @@ let builtin_trait_internal_name = Constraints.builtin_trait_internal_name
 let canonical_trait_name = Constraints.canonical_trait_name
 
 let display_trait_name (trait_name : string) : string =
-  let len = String.length trait_name in
-  let rec find_suffix_start idx =
-    if idx <= 0 then
-      0
-    else if trait_name.[idx - 1] = '_' && trait_name.[idx] = '_' then
-      idx + 1
-    else
-      find_suffix_start (idx - 1)
-  in
-  let suffix_start = find_suffix_start (len - 1) in
-  let base_name = String.sub trait_name suffix_start (len - suffix_start) in
-  match builtin_trait_internal_name base_name with
-  | Some builtin_name -> builtin_name
-  | None -> base_name
+  Display_names.display_trait_name ~builtin_trait_internal_name trait_name
 
 let display_constraint_name (constraint_name : string) : string =
   match Constraints.of_name constraint_name with

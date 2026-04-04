@@ -72,9 +72,6 @@ let builtin_type_constructor_name (name : string) : string option =
   match name with
   | "List" -> Some "list"
   | "Map" -> Some "map"
-  | "option" -> Some "Option"
-  | "result" -> Some "Result"
-  | "ordering" -> Some "Ordering"
   | _ -> None
 
 let lookup_enum_by_source_name (name : string) : Enum_registry.enum_def option =

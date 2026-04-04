@@ -1,6 +1,6 @@
 # XF70: E70: Generic fn with generic enum parameter annotation
-# A function like fn[t](opt: option[t]) should work — the type param `t`
-# inside `option[t]` resolves to the generic's fresh type variable.
+# A function like fn[t](opt: Option[t]) should work — the type param `t`
+# inside `Option[t]` resolves to the generic's fresh type variable.
 enum Option[a] = { Some(a), None }
 fn classify[t](opt: Option[t]) -> Str = {
   match opt {

@@ -19,27 +19,10 @@ let clear () = Hashtbl.clear registry
 let register (def : enum_def) : unit = Hashtbl.replace registry def.name def
 let lookup (name : string) : enum_def option = Hashtbl.find_opt registry name
 
-let builtin_variant_alias (enum_name : string) (variant_name : string) : string option =
-  match (enum_name, variant_name) with
-  | "Option", "some" -> Some "Some"
-  | "Option", "none" -> Some "None"
-  | "Result", "success" -> Some "Success"
-  | "Result", "failure" -> Some "Failure"
-  | "Ordering", "less" -> Some "Less"
-  | "Ordering", "equal" -> Some "Equal"
-  | "Ordering", "greater" -> Some "Greater"
-  | _ -> None
-
 let lookup_variant (enum_name : string) (variant_name : string) : variant_def option =
   match lookup enum_name with
   | None -> None
-  | Some def -> (
-      match List.find_opt (fun (v : variant_def) -> v.name = variant_name) def.variants with
-      | Some _ as variant -> variant
-      | None -> (
-          match builtin_variant_alias enum_name variant_name with
-          | Some canonical_name -> List.find_opt (fun (v : variant_def) -> v.name = canonical_name) def.variants
-          | None -> None))
+  | Some def -> List.find_opt (fun (v : variant_def) -> v.name = variant_name) def.variants
 
 (* Get constructor type for a variant *)
 let variant_type (enum_name : string) (variant_name : string) (type_args : mono_type list) : mono_type option =
@@ -115,7 +98,7 @@ let%test "lookup_variant returns none for unknown" =
   register { name = "Option"; type_params = [ "a" ]; variants = [ { name = "Some"; fields = [ TVar "a" ] } ] };
   lookup_variant "Option" "None" = None
 
-let%test "lookup_variant accepts legacy lowercase builtin variant aliases" =
+let%test "lookup_variant does not accept lowercase builtin variant aliases" =
   clear ();
   register
     {
@@ -123,9 +106,7 @@ let%test "lookup_variant accepts legacy lowercase builtin variant aliases" =
       type_params = [];
       variants = [ { name = "Less"; fields = [] }; { name = "Equal"; fields = [] }; { name = "Greater"; fields = [] } ];
     };
-  match lookup_variant "Ordering" "less" with
-  | Some v -> v.name = "Less"
-  | None -> false
+  lookup_variant "Ordering" "less" = None
 
 let%test "variant_type for nullary constructor" =
   clear ();

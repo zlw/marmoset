@@ -239,19 +239,38 @@ let is_prelude_module (module_id : string) : bool = String.equal module_id prelu
 
 let is_file_backed_entry (entry_file : string) : bool = Filename.check_suffix entry_file ".mr"
 
+type module_locals_acc = {
+  enums : Enum_registry.enum_def list;
+  named_types : Type_registry.named_type_def list;
+  transparent_types : (string * Annotation.type_alias_info) list;
+  shapes : Type_registry.shape_def list;
+  traits : Trait_registry.trait_def list;
+  trait_impls : Module_sig.trait_impl_entry list;
+  type_impls : Module_sig.type_impl_entry list;
+}
+
 let extract_module_locals (program : AST.program) : (Module_sig.module_locals, Diagnostic.t) result =
-  let rec go enums named_types transparent_types shapes traits trait_impls type_impls = function
+  let empty_locals_acc =
+    { enums = []; named_types = []; transparent_types = []; shapes = []; traits = []; trait_impls = []; type_impls = [] }
+  in
+  let finish_locals (acc : module_locals_acc) : Module_sig.module_locals =
+    {
+      Module_sig.enums = List.rev acc.enums;
+      named_types = List.rev acc.named_types;
+      transparent_types = List.rev acc.transparent_types;
+      shapes = List.rev acc.shapes;
+      traits = List.rev acc.traits;
+      trait_impls = List.rev acc.trait_impls;
+      type_impls = List.rev acc.type_impls;
+    }
+  in
+  let target_type_bindings (type_expr : AST.type_expr) =
+    Import_resolver.StringSet.elements (collect_inherent_target_generics type_expr)
+    |> List.map (fun name -> (name, Types.TVar name))
+  in
+  let rec go (acc : module_locals_acc) = function
     | [] ->
-        Ok
-          {
-            Module_sig.enums = List.rev enums;
-            named_types = List.rev named_types;
-            transparent_types = List.rev transparent_types;
-            shapes = List.rev shapes;
-            traits = List.rev traits;
-            trait_impls = List.rev trait_impls;
-            type_impls = List.rev type_impls;
-          }
+        Ok (finish_locals acc)
     | (stmt : AST.statement) :: rest -> (
         match stmt.stmt with
         | AST.EnumDef { name; _ } ->
@@ -260,37 +279,35 @@ let extract_module_locals (program : AST.program) : (Module_sig.module_locals, D
                 ~message:(Printf.sprintf "Missing enum registry entry for '%s'" name)
                 (Enum_registry.lookup name)
             in
-            go (enum_def :: enums) named_types transparent_types shapes traits trait_impls type_impls rest
+            go { acc with enums = enum_def :: acc.enums } rest
         | AST.TypeDef { type_name; _ } ->
             let* named_type_def =
               required_opt ~code:"module-signature-type"
                 ~message:(Printf.sprintf "Missing named type registry entry for '%s'" type_name)
                 (Type_registry.lookup_named_type type_name)
             in
-            go enums (named_type_def :: named_types) transparent_types shapes traits trait_impls type_impls rest
+            go { acc with named_types = named_type_def :: acc.named_types } rest
         | AST.TypeAlias { alias_name; _ } ->
             let* alias_info =
               required_opt ~code:"module-signature-alias"
                 ~message:(Printf.sprintf "Missing type alias registry entry for '%s'" alias_name)
                 (Annotation.lookup_type_alias alias_name)
             in
-            go enums named_types
-              ((alias_name, alias_info) :: transparent_types)
-              shapes traits trait_impls type_impls rest
+            go { acc with transparent_types = (alias_name, alias_info) :: acc.transparent_types } rest
         | AST.ShapeDef { shape_name; _ } ->
             let* shape_def =
               required_opt ~code:"module-signature-shape"
                 ~message:(Printf.sprintf "Missing shape registry entry for '%s'" shape_name)
                 (Type_registry.lookup_shape shape_name)
             in
-            go enums named_types transparent_types (shape_def :: shapes) traits trait_impls type_impls rest
+            go { acc with shapes = shape_def :: acc.shapes } rest
         | AST.TraitDef { name; _ } ->
             let* trait_def =
               required_opt ~code:"module-signature-trait"
                 ~message:(Printf.sprintf "Missing trait registry entry for '%s'" name)
                 (Trait_registry.lookup_trait name)
             in
-            go enums named_types transparent_types shapes (trait_def :: traits) trait_impls type_impls rest
+            go { acc with traits = trait_def :: acc.traits } rest
         | AST.ImplDef { impl_type_params; impl_trait_name; impl_for_type; _ } ->
             let type_bindings =
               List.map (fun (param : AST.generic_param) -> (param.name, Types.TVar param.name)) impl_type_params
@@ -314,14 +331,9 @@ let extract_module_locals (program : AST.program) : (Module_sig.module_locals, D
                      (Types.to_string for_type))
                 (Trait_registry.lookup_impl_origin impl_trait_name for_type)
             in
-            go enums named_types transparent_types shapes traits
-              ({ Module_sig.impl_def; origin } :: trait_impls)
-              type_impls rest
+            go { acc with trait_impls = { Module_sig.impl_def; origin } :: acc.trait_impls } rest
         | AST.InherentImplDef { inherent_for_type; inherent_methods } ->
-            let type_bindings =
-              Import_resolver.StringSet.elements (collect_inherent_target_generics inherent_for_type)
-              |> List.map (fun name -> (name, Types.TVar name))
-            in
+            let type_bindings = target_type_bindings inherent_for_type in
             let* for_type =
               Annotation.type_expr_to_mono_type_with type_bindings inherent_for_type
               |> Result.map_error (fun (diag : Diagnostic.t) ->
@@ -341,13 +353,10 @@ let extract_module_locals (program : AST.program) : (Module_sig.module_locals, D
                      else
                        None)
             in
-            let type_impls = merge_type_impl_entry type_impls { Module_sig.for_type; methods } in
-            go enums named_types transparent_types shapes traits trait_impls type_impls rest
+            let type_impls = merge_type_impl_entry acc.type_impls { Module_sig.for_type; methods } in
+            go { acc with type_impls } rest
         | AST.DeriveDef { derive_traits; derive_for_type } ->
-            let type_bindings =
-              Import_resolver.StringSet.elements (collect_inherent_target_generics derive_for_type)
-              |> List.map (fun name -> (name, Types.TVar name))
-            in
+            let type_bindings = target_type_bindings derive_for_type in
             let* for_type =
               Annotation.type_expr_to_mono_type_with type_bindings derive_for_type
               |> Result.map_error (fun (diag : Diagnostic.t) ->
@@ -375,13 +384,11 @@ let extract_module_locals (program : AST.program) : (Module_sig.module_locals, D
                 (Ok [])
                 derive_traits
             in
-            go enums named_types transparent_types shapes traits
-              (List.rev_append derived_impls trait_impls)
-              type_impls rest
+            go { acc with trait_impls = List.rev_append derived_impls acc.trait_impls } rest
         | AST.ExportDecl _ | AST.ImportDecl _ | AST.Let _ | AST.Return _ | AST.ExpressionStmt _ | AST.Block _ ->
-            go enums named_types transparent_types shapes traits trait_impls type_impls rest)
+            go acc rest)
   in
-  go [] [] [] [] [] [] [] program
+  go empty_locals_acc program
 
 let extract_module_signature
     ~(surface : Import_resolver.module_surface)
@@ -1119,7 +1126,7 @@ let%test "analyze_entry_with_source auto-loads std.prelude for headerless entrie
         "let opt: Option[Int] = Option.Some(42)\n\
          let status: Result[Str, Int] = Result.Success(\"ok\")\n\
          puts(Option.unwrap_or(opt, 0))\n\
-         puts(Result.unwrap_or(Result.map(status, (msg: Str) -> msg + \"!\"), \"bad\"))\n\
+         puts(Result.value_or(Result.map(status, (msg: Str) -> msg + \"!\"), \"bad\"))\n\
          puts(10 % 3)\n" );
     ]
     (fun root ->
@@ -1130,7 +1137,7 @@ let%test "analyze_entry_with_source auto-loads std.prelude for headerless entrie
             "let opt: Option[Int] = Option.Some(42)\n\
              let status: Result[Str, Int] = Result.Success(\"ok\")\n\
              puts(Option.unwrap_or(opt, 0))\n\
-             puts(Result.unwrap_or(Result.map(status, (msg: Str) -> msg + \"!\"), \"bad\"))\n\
+             puts(Result.value_or(Result.map(status, (msg: Str) -> msg + \"!\"), \"bad\"))\n\
              puts(10 % 3)\n"
           ()
       in
@@ -1200,7 +1207,7 @@ let%test "check_entry resolves toolchain stdlib without a project-local std dire
          \  case Option.Some(value): puts(value + remainder)\n\
          \  case Option.None: puts(0)\n\
          }\n\
-         puts(Result.unwrap_or(rendered, \"bad\"))\n" );
+         puts(Result.value_or(rendered, \"bad\"))\n" );
     ]
     (fun root ->
       match check_entry ~entry_file:(Filename.concat root "main.mr") () with
@@ -1266,13 +1273,13 @@ let%test "std.option signature exports Option as an enum for downstream modules"
             "export Result\n\
              type Result[a, e] = { Success(a), Failure(e) }\n\
              impl[a, e] Result[a, e] = {\n\
-             \  fn unwrap_or(self: Result[a, e], fallback: a) -> a = match self {\n\
+             \  fn value_or(self: Result[a, e], fallback: a) -> a = match self {\n\
              \    case Result.Success(v): v\n\
              \    case Result.Failure(_): fallback\n\
              \  }\n\
              }\n";
           Discovery.write_file (Filename.concat stdlib_root "std/foo.mr")
-            "export value\nfn value() -> Int = Option.Some(1).unwrap_or(0)\n";
+            "export value\nfn value() -> Int = Option.unwrap_or(Option.Some(1), 0)\n";
           match Discovery.discover_project ~stdlib_root ~entry_file:(Filename.concat root "main.mr") () with
           | Error _ -> false
           | Ok graph -> (
@@ -1343,7 +1350,7 @@ let%test "source-backed module compilation sees std.option and std.result signat
             "export Result\n\
              type Result[a, e] = { Success(a), Failure(e) }\n\
              impl[a, e] Result[a, e] = {\n\
-             \  fn unwrap_or(self: Result[a, e], fallback: a) -> a = match self {\n\
+             \  fn value_or(self: Result[a, e], fallback: a) -> a = match self {\n\
              \    case Result.Success(v): v\n\
              \    case Result.Failure(_): fallback\n\
              \  }\n\
@@ -1429,7 +1436,7 @@ let%test "non-core stdlib modules implicitly see Option and Result" =
             "export Result\n\
              type Result[a, e] = { Success(a), Failure(e) }\n\
              impl[a, e] Result[a, e] = {\n\
-             \  fn unwrap_or(self: Result[a, e], fallback: a) -> a = match self {\n\
+             \  fn value_or(self: Result[a, e], fallback: a) -> a = match self {\n\
              \    case Result.Success(v): v\n\
              \    case Result.Failure(_): fallback\n\
              \  }\n\

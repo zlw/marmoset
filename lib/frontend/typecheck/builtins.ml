@@ -50,8 +50,9 @@ let builtin_types : (string * poly_type) list =
    Builtin Traits
    ============================================================ *)
 
-(* Register the core enums needed by standalone helpers and direct checker tests. *)
-let init_builtin_enums () =
+(* Seed only the core stdlib enums needed by standalone helpers and direct checker tests.
+   Normal module compilation loads these from toolchain `std/*.mr` files instead. *)
+let seed_standalone_core_enums () =
   (* type Ordering = { Less, Equal, Greater } *)
   Enum_registry.register
     {
@@ -479,7 +480,7 @@ let seed_builtin_values (env : Infer.type_env) : Infer.type_env =
 let builtin_value_env () : Infer.type_env = seed_builtin_values Infer.empty_env
 
 let register_builtin_prelude_fallback () : unit =
-  init_builtin_enums ();
+  seed_standalone_core_enums ();
   init_builtin_traits ()
 
 (* Legacy wrapper kept for direct single-file helpers; compiler bootstrap now uses the split helpers explicitly. *)

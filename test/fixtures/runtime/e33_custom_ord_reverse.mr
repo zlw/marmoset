@@ -4,7 +4,7 @@ impl Eq[Priority] = {
 }
 impl Ord[Priority] = {
   fn compare(x: Priority, y: Priority) -> Ordering = {
-    ordering.greater
+    Ordering.Greater
   }
 }
 puts(Priority.Low < Priority.High)  # output: false

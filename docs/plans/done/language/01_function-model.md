@@ -349,7 +349,7 @@ Algorithm:
 Current code has overlapping generic-list helpers. Consolidate to avoid cursor bugs.
 
 1. Keep one declaration-side helper for `[a: show + eq, b]` after names.
-2. Add one call-site type-arg helper for `[int, result[a, b]]`.
+2. Add one call-site type-arg helper for `[Int, Result[a, b]]`.
 3. Do not use expression list parser for type args.
 4. Remove duplicated declaration-side generic helpers once the new path is in.
 
@@ -731,7 +731,7 @@ This prevents both current generic collisions and the next module-system naming 
 2. Dot inherent call and equivalent type-qualified call emit equivalent helper family + runtime args.
 3. Enum constructor behavior remains correct.
 4. Field-function fallback remains correct.
-5. Method generic specialization works with impl generics (e.g., `result[int, string].map[bool]`).
+5. Method generic specialization works with impl generics (e.g., `Result[Int, Str].map[Bool]`).
 6. Distinct method type args produce distinct specializations and cache keys.
 
 ### 6 exit criteria

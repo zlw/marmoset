@@ -1379,7 +1379,7 @@ let%test "toolchain std.option and std.result export canonical type names" =
 
 let%test "user modules implicitly see prelude traits and std option/result modules" =
   Discovery.with_temp_project
-    [ ("main.mr", "let opt: Option[Int] = Option.Some(41)\nputs(opt.unwrap_or(0))\n") ]
+    [ ("main.mr", "let opt: Option[Int] = Option.Some(41)\nputs(Option.unwrap_or(opt, 0))\n") ]
     (fun root ->
       let entry_file = Filename.concat root "main.mr" in
       match Discovery.discover_project ~source_root:root ~entry_file () with

@@ -21,7 +21,7 @@ Users must redefine `type Option[a] = { Some(a), None }` and `type Result[a, e] 
 2. **Auto-import.** Prelude exports are available in every module without explicit `import`.
 3. **Primitive impls stay in OCaml.** `builtins.ml` continues to register builtin primitive impls (`Eq[Int]`, `Show[Str]`, etc.) with `~builtin:true`. The emitter's hardcoded Go strings are unchanged. No stub bodies, no migration. Post-FFI these could move to `std/prelude.mr` using `extern` blocks.
 4. **Builtin functions stay in OCaml.** `puts`, `len`, `first`, `last`, `rest`, `push` keep their registrations in `builtins.ml` and their Go implementations in `runtime.go`. They move to stdlib modules after FFI.
-5. **Option/Result live in their own stdlib modules and expose inherent methods.** `Option` is defined in `std.option`, `Result` in `std.result`, and helper APIs (`unwrap_or`, `map`, `bind`, `map_fail`, etc.) are implemented as inherent methods on those nominal types.
+5. **Option/Result live in their own stdlib modules and expose inherent methods.** `Option` is defined in `std.option`, `Result` in `std.result`, and helper APIs (`unwrap_or`, `map`, `bind`, `value_or`, `or`, etc.) are implemented as inherent methods on those nominal types.
 6. **`Rem` is core prelude surface.** The `%` operator remains driven by the `Rem` trait, so `trait Rem[a]` ships in `std/prelude.mr` alongside `Num` and `Neg`.
 7. **One compilation pipeline, no compiler fallback.** Headerless single-file programs do not keep a separate prelude/builtin shortcut. All file-backed entry files go through the same project discovery + compiler orchestration path, and missing required toolchain stdlib files are a hard error.
 8. **Split builtin bootstrap responsibilities explicitly.** Replace the current monolithic `Builtins.prelude_env()` behavior with separate helpers for builtin value bindings, standalone helper/test enum+trait seeding, and builtin primitive impl registration so compiler and tests can control them independently.
@@ -220,7 +220,7 @@ export Result
 type Result[a, e] = { Success(a), Failure(e) }
 
 impl Result[a, e] = {
-  fn unwrap_or(self: Result[a, e], fallback: a) -> a = match self {
+  fn value_or(self: Result[a, e], fallback: a) -> a = match self {
     case Result.Success(v): v
     case Result.Failure(_): fallback
   }
@@ -235,15 +235,15 @@ impl Result[a, e] = {
 These are ordinary stdlib modules, but their APIs surface as inherent methods on the nominal types and are callable via type qualification (`Option.map(...)`, `Result.bind(...)`).
 
 **Tests:**
-- `option.unwrap_or(Option.Some(42), 0)` → 42
-- `option.unwrap_or(Option.None, 7)` → 7
-- `option.map(Option.Some(42), Show.show)` → `Option.Some("42")`
-- `option.bind(Option.Some(42), (x) -> Option.Some(x + 1))` → `Option.Some(43)`
-- `option.map(Option.None, (x: Int) -> x + 1)` → `Option.None`
-- `result.map(Result.Success(42), Show.show)` → `Result.Success("42")`
-- `result.map_fail(Result.Failure("err"), (e) -> e + "!")` → `Result.Failure("err!")`
-- `result.bind(Result.Success(42), (x) -> Result.Success(x + 1))` → `Result.Success(43)`
-- `result.unwrap_or(Result.Failure("err"), 0)` → 0
+- `Option.unwrap_or(Option.Some(42), 0)` → 42
+- `Option.unwrap_or(Option.None, 7)` → 7
+- `Option.map(Option.Some(42), Show.show)` → `Option.Some("42")`
+- `Option.bind(Option.Some(42), (x) -> Option.Some(x + 1))` → `Option.Some(43)`
+- `Option.map(Option.None, (x: Int) -> x + 1)` → `Option.None`
+- `Result.map(Result.Success(42), Show.show)` → `Result.Success("42")`
+- `Result.or(Result.Failure("err"), (e) -> e + "!")` → `Result.Failure("err!")`
+- `Result.bind(Result.Success(42), (x) -> Result.Success(x + 1))` → `Result.Success(43)`
+- `Result.value_or(Result.Failure("err"), 0)` → 0
 
 **Gate:** `make unit && make integration` green.
 

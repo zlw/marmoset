@@ -24,6 +24,7 @@
 4. [Pre-modules semantics foundation](docs/plans/done/language/04_pre-modules-semantics-foundation.md)
 5. [Pre-modules parity and hardening](docs/plans/done/language/05_pre-modules-parity-and-hardening.md)
 6. [Module system](docs/plans/done/language/06_module-system.md)
+7. [Prelude](docs/plans/done/language/07_prelude.md)
 
 ### Tooling
 
@@ -38,14 +39,13 @@
 
 ### Main Language Track
 
-1. [Prelude](docs/plans/todo/language/02_prelude.md)
-2. [FFI](docs/plans/todo/language/03_ffi.md)
-3. [Stdlib](docs/plans/todo/language/04_stdlib.md)
-4. [Post-modules type-system expansion](docs/plans/todo/language/05_post-modules-type-system-expansion.md)
+1. [FFI](docs/plans/todo/language/03_ffi.md)
+2. [Stdlib](docs/plans/todo/language/04_stdlib.md)
+3. [Post-modules type-system expansion](docs/plans/todo/language/05_post-modules-type-system-expansion.md)
 
 Current status:
-- Prelude infrastructure is implemented in-tree: the compiler resolves a toolchain-owned stdlib root, auto-loads `std.prelude`, `std.option`, and `std.result` through the normal module pipeline, and uses the same discovery/orchestration path for headerless entries.
-- `Option` and `Result` now live in `std.option` / `std.result` and their helper APIs are inherent methods injected into every user module without explicit imports. Broader library expansion still belongs to the later [Stdlib](docs/plans/todo/language/04_stdlib.md) milestone.
+- Prelude infrastructure is complete: the compiler resolves a toolchain-owned stdlib root, auto-loads `std.prelude`, `std.option`, and `std.result` through the normal module pipeline, and uses the same discovery/orchestration path for headerless entries.
+- Broader library expansion still belongs to the later [Stdlib](docs/plans/todo/language/04_stdlib.md) milestone.
 
 ### Queued Language Work
 
@@ -75,7 +75,7 @@ These areas already have a concrete plan or completed milestone and should not a
 - imports, exports, per-module checking, and multi-file compilation:
   [Module system](docs/plans/done/language/06_module-system.md)
 - core language/library platform milestones:
-  [Prelude](docs/plans/todo/language/02_prelude.md),
+  [Prelude](docs/plans/done/language/07_prelude.md),
   [FFI](docs/plans/todo/language/03_ffi.md),
   [Stdlib](docs/plans/todo/language/04_stdlib.md)
 - associated types, open rows, post-module coherence work, and later lowering expansion:

@@ -470,7 +470,7 @@ let%test "discover_project finds transitive module dependencies" =
 
 let%test "discover_project resolves std modules from an explicit toolchain stdlib root" =
   with_temp_project
-    [ ("main.mr", "puts(Result.Success(42).unwrap_or(0))\n") ]
+    [ ("main.mr", "puts(Result.value_or(Result.Success(42), 0))\n") ]
     (fun root ->
       let stdlib_root = make_temp_dir "marmoset_stdlib_" in
       Fun.protect
@@ -506,7 +506,7 @@ let%test "discover_project resolves std modules from an explicit toolchain stdli
             "export Result\n\
              type Result[a, e] = { Success(a), Failure(e) }\n\
              impl[a, e] Result[a, e] = {\n\
-             \  fn unwrap_or(self: Result[a, e], fallback: a) -> a = match self {\n\
+             \  fn value_or(self: Result[a, e], fallback: a) -> a = match self {\n\
              \    case Result.Success(v): v\n\
              \    case Result.Failure(_): fallback\n\
              \  }\n\

@@ -1,5 +1,5 @@
 # T61: Builtin Ord trait exists
 impl Ord[Int] = {
-  fn compare(x: Int, y: Int) -> Ordering = ordering.equal
+  fn compare(x: Int, y: Int) -> Ordering = Ordering.Equal
 }
 42

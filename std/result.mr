@@ -3,7 +3,7 @@ export Result
 type Result[a, e] = { Success(a), Failure(e) }
 
 impl[a, e] Result[a, e] = {
-  fn unwrap_or(self: Result[a, e], fallback: a) -> a = match self {
+  fn value_or(self: Result[a, e], fallback: a) -> a = match self {
     case Result.Success(v): v
     case Result.Failure(_): fallback
   }
@@ -13,9 +13,9 @@ impl[a, e] Result[a, e] = {
     case Result.Failure(err): Result.Failure(err)
   }
 
-  fn map_fail[f](self: Result[a, e], g: (e) -> f) -> Result[a, f] = match self {
+  fn or[b](self: Result[a, e], f: (e) -> b) -> Result[a, b] = match self {
     case Result.Success(v): Result.Success(v)
-    case Result.Failure(err): Result.Failure(g(err))
+    case Result.Failure(err): Result.Failure(f(err))
   }
 
   fn bind[b](self: Result[a, e], f: (a) -> Result[b, e]) -> Result[b, e] = match self {
@@ -23,12 +23,12 @@ impl[a, e] Result[a, e] = {
     case Result.Failure(err): Result.Failure(err)
   }
 
-  fn is_ok(self: Result[a, e]) -> Bool = match self {
+  fn success?(self: Result[a, e]) -> Bool = match self {
     case Result.Success(_): true
     case Result.Failure(_): false
   }
 
-  fn is_err(self: Result[a, e]) -> Bool = match self {
+  fn failure?(self: Result[a, e]) -> Bool = match self {
     case Result.Success(_): false
     case Result.Failure(_): true
   }

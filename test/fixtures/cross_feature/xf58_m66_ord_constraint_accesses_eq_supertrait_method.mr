@@ -7,7 +7,7 @@ impl Eq[Point] = {
 }
 impl Ord[Point] = {
   fn compare(a: Point, b: Point) -> Ordering = {
-    if (a.x < b.x) { ordering.less } else { if (a.x == b.x) { ordering.equal } else { ordering.greater } }
+    if (a.x < b.x) { Ordering.Less } else { if (a.x == b.x) { Ordering.Equal } else { Ordering.Greater } }
   }
 }
 fn same[a: Ord](x: a, y: a) -> Bool = {
