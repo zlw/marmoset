@@ -55,7 +55,7 @@ let parsed_surface_of_file ~(module_id : string) ~(file_path : string) ~(source 
           imports = [];
         }
       in
-      Result.to_option (Import_resolver.build_module_surface parsed_module)
+      Result.to_option (Import_resolver.build_module_surface ~preserve_top_level_names:false parsed_module)
 
 let hidden_dir (name : string) : bool =
   (String.length name > 0 && name.[0] = '.') || String.equal name "_build" || String.equal name "_opam"

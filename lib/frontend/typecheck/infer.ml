@@ -891,9 +891,19 @@ let warning_at_stmt ~code ~message (stmt : AST.statement) =
   { (error_at_stmt ~code ~message stmt) with severity = Diagnostic.Warning }
 
 let unknown_constructor_message (type_name : string) (constructor_name : string) : string =
-  Printf.sprintf "Unknown constructor: %s.%s" type_name constructor_name
+  Printf.sprintf "Unknown constructor: %s.%s" (Display_names.display_binding_name type_name) constructor_name
+
+let missing_constructor_or_inherent_method_message (type_name : string) (member_name : string) : string =
+  Printf.sprintf "Type '%s' has no constructor or inherent method '%s'"
+    (Display_names.display_binding_name type_name)
+    member_name
 
 let unknown_type_message (type_name : string) : string = Printf.sprintf "Unknown type: %s" type_name
+
+let canonical_enum_name_of_source_name (enum_name : string) : string =
+  match Annotation.lookup_enum_by_source_name enum_name with
+  | Some enum_def -> enum_def.name
+  | None -> enum_name
 
 let attach_constraint_refs_if_tvar (typ : mono_type) (constraints : Constraints.t list) : unit =
   match typ with
@@ -2062,17 +2072,20 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                     infer_match_arms type_map env' scrutinee scrutinee_type arms subst expr))
         | AST.RecordLit (fields, spread) -> infer_record_literal type_map env fields spread expr
         | AST.FieldAccess (receiver, variant_name) -> (
-            let infer_enum_constructor_value (enum_name : string) : (substitution * mono_type) infer_result =
+            let infer_enum_constructor_value (enum_source_name : string) : (substitution * mono_type) infer_result
+                =
+              let enum_name = canonical_enum_name_of_source_name enum_source_name in
               match Enum_registry.lookup_variant enum_name variant_name with
               | None ->
                   Error
                     (error_at ~code:"type-constructor"
-                       ~message:(unknown_constructor_message enum_name variant_name)
+                       ~message:(unknown_constructor_message enum_source_name variant_name)
                        expr)
               | Some variant -> (
                   match Enum_registry.lookup enum_name with
                   | None ->
-                      Error (error_at ~code:"type-constructor" ~message:(unknown_type_message enum_name) expr)
+                      Error
+                        (error_at ~code:"type-constructor" ~message:(unknown_type_message enum_source_name) expr)
                   | Some enum_def ->
                       let fresh_vars = List.map (fun _ -> fresh_type_var ()) enum_def.type_params in
                       let param_subst = substitution_of_list (List.combine enum_def.type_params fresh_vars) in
@@ -2401,19 +2414,20 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                                (fun () ->
                                  Error
                                    (error_at ~code:"type-constructor"
-                                      ~message:(unknown_constructor_message name variant_name)
+                                      ~message:(missing_constructor_or_inherent_method_message name variant_name)
                                       expr)))
                     | None -> infer_enum_constructor_value name)
                 | `TypeName for_type -> infer_qualified_type_value for_type
                 | `TraitName -> infer_qualified_trait_value name)
             | _ -> infer_real_field_access ())
         | AST.MethodCall { mc_receiver = receiver; mc_method = method_name; mc_type_args; mc_args = args } -> (
-            let infer_enum_constructor (enum_name : string) : (substitution * mono_type) infer_result =
+            let infer_enum_constructor (enum_source_name : string) : (substitution * mono_type) infer_result =
+              let enum_name = canonical_enum_name_of_source_name enum_source_name in
               match Enum_registry.lookup_variant enum_name method_name with
               | None ->
                   Error
                     (error_at ~code:"type-constructor"
-                       ~message:(unknown_constructor_message enum_name method_name)
+                       ~message:(unknown_constructor_message enum_source_name method_name)
                        expr)
               | Some variant -> (
                   match infer_args type_map env empty_substitution args with
@@ -2423,14 +2437,16 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                         Error
                           (error_at ~code:"type-constructor"
                              ~message:
-                               (Printf.sprintf "%s.%s expects %d arguments, got %d" enum_name method_name
+                               (Printf.sprintf "%s.%s expects %d arguments, got %d" enum_source_name method_name
                                   (List.length variant.fields) (List.length args))
                              expr)
                       else
                         match Enum_registry.lookup enum_name with
                         | None ->
                             Error
-                              (error_at ~code:"type-constructor" ~message:(unknown_type_message enum_name) expr)
+                              (error_at ~code:"type-constructor"
+                                 ~message:(unknown_type_message enum_source_name)
+                                 expr)
                         | Some enum_def -> (
                             let fresh_vars = List.map (fun _ -> fresh_type_var ()) enum_def.type_params in
                             let param_subst =
@@ -3006,7 +3022,7 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                                (fun () ->
                                  Error
                                    (error_at ~code:"type-constructor"
-                                      ~message:(unknown_constructor_message name method_name)
+                                      ~message:(missing_constructor_or_inherent_method_message name method_name)
                                       expr)))
                     | None -> infer_enum_constructor name)
                 | `TypeName for_type -> infer_qualified_type_call for_type
@@ -4671,11 +4687,14 @@ and classify_dotted_receiver (env : type_env) (name : string) (member_name : str
 and infer_record_literal type_map env fields spread expr =
   let rec infer_record_fields env_acc subst_acc typed_fields = function
     | [] -> Ok (env_acc, subst_acc, List.rev typed_fields)
-    | (field : AST.record_field) :: rest -> (
+    | ((idx, field) : int * AST.record_field) :: rest -> (
         let field_expr =
           match field.field_value with
           | Some e -> e
-          | None -> AST.mk_expr ~pos:expr.pos (AST.Identifier field.field_name)
+          | None ->
+              let synthetic_id = -((expr.id lsl 8) + idx + 1) in
+              AST.mk_expr ~id:synthetic_id ~pos:expr.pos ~end_pos:expr.end_pos ~file_id:expr.file_id
+                (AST.Identifier field.field_name)
         in
         match infer_expression type_map env_acc field_expr with
         | Error e -> Error e
@@ -4715,7 +4734,7 @@ and infer_record_literal type_map env fields spread expr =
     in
     go row
   in
-  match infer_record_fields env empty_substitution [] fields with
+  match infer_record_fields env empty_substitution [] (List.mapi (fun idx field -> (idx, field)) fields) with
   | Error e -> Error e
   | Ok (env1, subst1, field_types) -> (
       let field_types = dedupe_fields_last_wins field_types in
@@ -6672,8 +6691,12 @@ let register_top_level_named_declarations (program : AST.program) : (unit, Diagn
   register_named program
 
 let infer_program
-    ?(env = empty_env) ?(prebound_symbols = []) ?state ?(prepare_state = true) (program : AST.program) :
-    (type_env * type_map * mono_type) infer_result =
+    ?(env = empty_env)
+    ?(prebound_symbols = [])
+    ?state
+    ?(prepare_state = true)
+    ?(expand_derives = true)
+    (program : AST.program) : (type_env * type_map * mono_type) infer_result =
   let state = Option.value state ~default:(create_inference_state ()) in
   with_inference_state state (fun () ->
       if prepare_state then (
@@ -6683,7 +6706,13 @@ let infer_program
         clear_method_resolution_store ();
         clear_type_var_user_names ();
         clear_top_level_placeholders ());
-      match Derive_expand.expand_user_derives program with
+      let expanded_program_result =
+        if expand_derives then
+          Derive_expand.expand_user_derives program
+        else
+          Ok program
+      in
+      match expanded_program_result with
       | Error e -> Error e
       | Ok expanded_program -> (
           match predeclare_top_level_named_declarations expanded_program with

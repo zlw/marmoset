@@ -2,4 +2,4 @@
 type Point = { x: Int, y: Int } derive Eq, Ord
 let p1: Point = {x: 1, y: 2}
 let p2: Point = {x: 1, y: 3}
-puts(Ord.compare(p1, p2))  # output: less
+puts(Ord.compare(p1, p2))  # output: Less

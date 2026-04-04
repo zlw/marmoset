@@ -33,10 +33,11 @@ let infer_program_safe
     ?state
     ?(prebound_symbols = [])
     ?(prepare_state = true)
+    ?(expand_derives = true)
     ~(env : Infer.type_env)
     (program : Syntax.Ast.AST.program) : (Infer.type_env * Infer.type_map * mono_type, Diagnostic.t list) result =
   try
-    match Infer.infer_program ?state ~prebound_symbols ~prepare_state ~env program with
+    match Infer.infer_program ?state ~prebound_symbols ~prepare_state ~expand_derives ~env program with
     | Ok result -> Ok result
     | Error e -> Error [ e ]
   with exn -> Error [ Diagnostic.error_no_span ~code:"type-internal" ~message:(Printexc.to_string exn) ]
@@ -88,10 +89,14 @@ let make_typecheck_result
 
 (* Type check a program (list of statements).
    Returns the type of the last expression and the final environment. *)
-let check_program ?state ?(prepare_state = true) ?(env = Infer.empty_env) (program : Syntax.Ast.AST.program) :
-    (typecheck_result, Diagnostic.t list) result =
+let check_program
+    ?state
+    ?(prepare_state = true)
+    ?(expand_derives = true)
+    ?(env = Infer.empty_env)
+    (program : Syntax.Ast.AST.program) : (typecheck_result, Diagnostic.t list) result =
   let state = Option.value state ~default:(Infer.create_inference_state ()) in
-  match infer_program_safe ~state ~prepare_state ~env program with
+  match infer_program_safe ~state ~prepare_state ~expand_derives ~env program with
   | Error e -> Error (merge_diagnostics e)
   | Ok (final_env, type_map, result_type) ->
       Ok (make_typecheck_result ~state ~result_type ~environment:final_env ~type_map)
@@ -99,13 +104,14 @@ let check_program ?state ?(prepare_state = true) ?(env = Infer.empty_env) (progr
 (* Type check source code string.
     Parses and type checks in one step.
     Errors include source location information. *)
-let check_string ?state ?(prepare_state = true) ?(env = Infer.empty_env) ~file_id (source : string) :
+let check_string
+    ?state ?(prepare_state = true) ?(expand_derives = true) ?(env = Infer.empty_env) ~file_id (source : string) :
     (typecheck_result, Diagnostic.t list) result =
   let state = Option.value state ~default:(Infer.create_inference_state ()) in
   match Syntax.Parser.parse ~file_id source with
   | Error errors -> Error errors
   | Ok program -> (
-      match infer_program_safe ~state ~prepare_state ~env program with
+      match infer_program_safe ~state ~prepare_state ~expand_derives ~env program with
       | Error e -> Error (merge_diagnostics e)
       | Ok (final_env, type_map, result_type) ->
           Ok (make_typecheck_result ~state ~result_type ~environment:final_env ~type_map))
@@ -182,11 +188,12 @@ let check_program_with_annotations
     ?state
     ?(prebound_symbols = [])
     ?(prepare_state = true)
+    ?(expand_derives = true)
     ?(env = Infer.empty_env)
     (program : Syntax.Ast.AST.program) : (typecheck_result, Diagnostic.t list) result =
   let state = Option.value state ~default:(Infer.create_inference_state ()) in
   (* First, do standard inference *)
-  match infer_program_safe ~state ~prebound_symbols ~prepare_state ~env program with
+  match infer_program_safe ~state ~prebound_symbols ~prepare_state ~expand_derives ~env program with
   | Error e -> Error (merge_diagnostics e)
   | Ok (final_env, type_map, result_type) -> (
       (* Phase 2: Validate annotations against inferred types *)
@@ -290,8 +297,13 @@ let lookup_string (name : string) (env : env) : string =
 (* Add a type binding to the environment *)
 let bind (name : string) (poly : poly_type) (env : env) : env = Infer.TypeEnv.add name poly env
 
-(* Create environment with builtin types from prelude *)
-let default_env () : env = Builtins.prelude_env ()
+(* Create environment with builtin value bindings only. Trait/bootstrap state is explicit in tests. *)
+let default_env () : env = Builtins.builtin_value_env ()
+
+let env_with_builtin_traits () : env =
+  Builtins.init_builtin_traits ();
+  Builtins.init_builtin_impls ();
+  default_env ()
 
 (* ============================================================
    Pretty printing
@@ -620,7 +632,7 @@ let%test "annotation: let function annotation preserves nested function return a
   let code =
     "type Runner = ((Int) -> Str) -> ((Int) => Str)\nlet wrap: Runner = (f: (Int) -> Str) -> (n: Int) => f(n)\nwrap((n: Int) -> Show.show(n))(42)"
   in
-  match check_string ~file_id:"<test>" code with
+  match check_string ~file_id:"<test>" ~env:(env_with_builtin_traits ()) code with
   | Ok result -> result.result_type = TString
   | Error _ -> false
 
@@ -934,7 +946,7 @@ let%test "field-path union narrowing supports direct projection checks" =
       render({ value: 1 })
     |}
   in
-  match check code with
+  match check_string ~file_id:"<test>" ~env:(env_with_builtin_traits ()) code with
   | Ok { result_type = Types.TString; _ } -> true
   | _ -> false
 
@@ -1119,7 +1131,7 @@ let%test "followup A2: user default-backed derive registers default-derived prov
 let%test "Phase6 prep: canonical builtin trait names work in derives" =
   Infer.reset_fresh_counter ();
   Trait_registry.clear ();
-  let env = default_env () in
+  let env = env_with_builtin_traits () in
   match
     check_string ~env ~file_id:"<test>" "type Point = { x: Int } derive Eq\nlet p: Point = { x: 1 }\nEq.eq(p, p)"
   with
@@ -1129,7 +1141,7 @@ let%test "Phase6 prep: canonical builtin trait names work in derives" =
 let%test "Phase6 prep: canonical builtin trait names work in generic constraints" =
   Infer.reset_fresh_counter ();
   Trait_registry.clear ();
-  let env = default_env () in
+  let env = env_with_builtin_traits () in
   match check_string ~env ~file_id:"<test>" "fn same[a: Eq](x: a, y: a) -> Bool = Eq.eq(x, y)\nsame(1, 2)" with
   | Ok result -> result.result_type = Types.TBool
   | Error _ -> false
@@ -1137,7 +1149,7 @@ let%test "Phase6 prep: canonical builtin trait names work in generic constraints
 let%test "Phase6 prep: canonical builtin trait names work in impl headers" =
   Infer.reset_fresh_counter ();
   Trait_registry.clear ();
-  let env = default_env () in
+  let env = env_with_builtin_traits () in
   match
     check_string ~env ~file_id:"<test>" "impl Show[Int] = { fn show(self: Int) -> Str = \"int\" }\nShow.show(1)"
   with
@@ -1242,7 +1254,7 @@ let%test "Phase6 prep: placeholder shorthand supports qualified partial applicat
   Infer.reset_fresh_counter ();
   Trait_registry.clear ();
   match
-    check_string ~env:(Builtins.prelude_env ()) ~file_id:"<test>"
+    check_string ~env:(env_with_builtin_traits ()) ~file_id:"<test>"
       "type Post = { owner: Str }\ntrait Visible[a] = {\n  fn visible_to(x: a, viewer: Str) -> Bool\n}\nimpl Visible[Post] = {\n  fn visible_to(x: Post, viewer: Str) -> Bool = x.owner == viewer\n}\nlet visible_to_ada = Visible.visible_to(_, \"ada\")\nvisible_to_ada({ owner: \"ada\" })"
   with
   | Ok result -> result.result_type = Types.TBool
@@ -1277,7 +1289,7 @@ let%test "Phase6 prep: placeholder shorthand works through annotation checking" 
   with
   | Error _ -> false
   | Ok program -> (
-      match check_program_with_annotations ~env:(Builtins.prelude_env ()) program with
+      match check_program_with_annotations ~env:(env_with_builtin_traits ()) program with
       | Ok result -> result.result_type = Types.TInt
       | Error _ -> false)
 
@@ -1289,7 +1301,7 @@ let%test "Phase6 prep: outer non-callback calls do not steal placeholder rewrite
   with
   | Error _ -> false
   | Ok program -> (
-      match check_program_with_annotations ~env:(Builtins.prelude_env ()) program with
+      match check_program_with_annotations ~env:(env_with_builtin_traits ()) program with
       | Ok result -> result.result_type = Types.TNull
       | Error _ -> false)
 
@@ -1322,7 +1334,7 @@ let%test "Phase6 prep: placeholder shorthand rejects effectful callback slots" =
   Infer.reset_fresh_counter ();
   Trait_registry.clear ();
   match
-    check_string ~env:(Builtins.prelude_env ()) ~file_id:"<test>"
+    check_string ~env:(env_with_builtin_traits ()) ~file_id:"<test>"
       "fn foreach_list[a](items: List[a], f: (a) => Unit) => Unit = puts(\"x\")\nforeach_list([1, 2], puts(_))"
   with
   | Error diags ->
@@ -1335,7 +1347,7 @@ let%test "Phase6 prep: placeholder shorthand rejects effectful callback slots" =
 let%test "Phase6 prep: placeholder shorthand rejects effectful standalone sections" =
   Infer.reset_fresh_counter ();
   Trait_registry.clear ();
-  match check_string ~env:(Builtins.prelude_env ()) ~file_id:"<test>" "let printer = puts(_)\nprinter" with
+  match check_string ~env:(env_with_builtin_traits ()) ~file_id:"<test>" "let printer = puts(_)\nprinter" with
   | Error diags ->
       List.exists
         (fun (d : Diagnostic.t) ->
@@ -1372,7 +1384,7 @@ let%test "Phase6 prep: placeholder shorthand survives field access inside nested
   Infer.reset_fresh_counter ();
   Trait_registry.clear ();
   match
-    check_string ~env:(Builtins.prelude_env ()) ~file_id:"<test>"
+    check_string ~env:(env_with_builtin_traits ()) ~file_id:"<test>"
       "type User = { id: Int }\nfn apply[a, b](x: a, f: (a) -> b) -> b = f(x)\nfn plus_one(n: Int) -> Int = n + 1\nfn render(n: Int) -> Str = \"#\" + Show.show(n)\nlet user: User = { id: 7 }\nlet result = apply(user, render(plus_one(_.id)))\nresult"
   with
   | Ok result -> result.result_type = Types.TString
@@ -1391,7 +1403,7 @@ let%test "Phase6 prep: pipe fills placeholder inside qualified call sections" =
   Infer.reset_fresh_counter ();
   Trait_registry.clear ();
   match
-    check_string ~env:(Builtins.prelude_env ()) ~file_id:"<test>"
+    check_string ~env:(env_with_builtin_traits ()) ~file_id:"<test>"
       "type Post = { owner: Str }\ntrait Visible[a] = {\n  fn visible_to(x: a, viewer: Str) -> Bool\n}\nimpl Visible[Post] = {\n  fn visible_to(x: Post, viewer: Str) -> Bool = x.owner == viewer\n}\nlet post: Post = { owner: \"ada\" }\nlet result = post |> Visible.visible_to(_, \"ada\")\nresult"
   with
   | Ok result -> result.result_type = Types.TBool
@@ -1407,7 +1419,7 @@ let%test "followup B1: successful checks expose an empty trait object coercion m
 let%test "followup B3: let annotation to Dyn records one coercion site" =
   Infer.reset_fresh_counter ();
   Trait_registry.clear ();
-  match check_string ~env:(Builtins.prelude_env ()) ~file_id:"<test>" "let x: Dyn[Show] = 42\nx" with
+  match check_string ~env:(env_with_builtin_traits ()) ~file_id:"<test>" "let x: Dyn[Show] = 42\nx" with
   | Ok result ->
       result.result_type = Types.TTraitObject [ "Show" ]
       && Hashtbl.fold
@@ -1420,7 +1432,7 @@ let%test "followup B3: Dyn argument position records a coercion site" =
   Infer.reset_fresh_counter ();
   Trait_registry.clear ();
   match
-    check_string ~env:(Builtins.prelude_env ()) ~file_id:"<test>"
+    check_string ~env:(env_with_builtin_traits ()) ~file_id:"<test>"
       "fn keep(x: Dyn[Show]) -> Dyn[Show] = x\nlet y = keep(42)\ny"
   with
   | Ok result ->
@@ -1435,7 +1447,8 @@ let%test "followup B3: Dyn return position records a coercion site" =
   Infer.reset_fresh_counter ();
   Trait_registry.clear ();
   match
-    check_string ~env:(Builtins.prelude_env ()) ~file_id:"<test>" "fn box() -> Dyn[Show] = 42\nlet y = box()\ny"
+    check_string ~env:(env_with_builtin_traits ()) ~file_id:"<test>"
+      "fn box() -> Dyn[Show] = 42\nlet y = box()\ny"
   with
   | Ok result ->
       result.result_type = Types.TTraitObject [ "Show" ]
@@ -1457,7 +1470,7 @@ let%test "followup B3: Dyn rejects shapes in annotations" =
       x
     |}
   in
-  match check_string ~env:(Builtins.prelude_env ()) ~file_id:"main.mr" code with
+  match check_string ~env:(env_with_builtin_traits ()) ~file_id:"main.mr" code with
   | Ok _ -> false
   | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-trait-object-shape") diags
 
@@ -1473,14 +1486,16 @@ let%test "followup B3: Dyn rejects mixed trait sets containing a shape" =
       x
     |}
   in
-  match check_string ~env:(Builtins.prelude_env ()) ~file_id:"main.mr" code with
+  match check_string ~env:(env_with_builtin_traits ()) ~file_id:"main.mr" code with
   | Ok _ -> false
   | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-trait-object-shape") diags
 
 let%test "followup B3: qualified Dyn trait calls typecheck" =
   Infer.reset_fresh_counter ();
   Trait_registry.clear ();
-  match check_string ~env:(Builtins.prelude_env ()) ~file_id:"<test>" "let x: Dyn[Show] = 42\nShow.show(x)" with
+  match
+    check_string ~env:(env_with_builtin_traits ()) ~file_id:"<test>" "let x: Dyn[Show] = 42\nShow.show(x)"
+  with
   | Ok result -> result.result_type = Types.TString
   | Error _ -> false
 
@@ -1501,7 +1516,7 @@ let%test "followup B3: Dyn field access is rejected explicitly" =
       x.name
     |}
   in
-  match check_string ~env:(Builtins.prelude_env ()) ~file_id:"main.mr" code with
+  match check_string ~env:(env_with_builtin_traits ()) ~file_id:"main.mr" code with
   | Ok _ -> false
   | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-trait-object-field-access") diags
 
@@ -1517,14 +1532,14 @@ let%test "followup B3: Dyn coercion reports missing impl diagnostics" =
       x
     |}
   in
-  match check_string ~env:(Builtins.prelude_env ()) ~file_id:"main.mr" code with
+  match check_string ~env:(env_with_builtin_traits ()) ~file_id:"main.mr" code with
   | Ok _ -> false
   | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-trait-missing-impl") diags
 
 let%test "followup B3: Dyn rejects non-object-safe method calls" =
   Infer.reset_fresh_counter ();
   Trait_registry.clear ();
-  match check_string ~env:(Builtins.prelude_env ()) ~file_id:"<test>" "let x: Dyn[Eq] = 1\nEq.eq(x, x)" with
+  match check_string ~env:(env_with_builtin_traits ()) ~file_id:"<test>" "let x: Dyn[Eq] = 1\nEq.eq(x, x)" with
   | Ok _ -> false
   | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-trait-object-object-unsafe") diags
 
@@ -1543,7 +1558,7 @@ let%test "followup B3: Dyn rejects method-generic dispatch" =
       Caster.cast[Str](x, (n: Int) -> Show.show(n))
     |}
   in
-  match check_string ~env:(Builtins.prelude_env ()) ~file_id:"main.mr" code with
+  match check_string ~env:(env_with_builtin_traits ()) ~file_id:"main.mr" code with
   | Ok _ -> false
   | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-trait-object-object-unsafe") diags
 
@@ -1581,7 +1596,7 @@ let%test "followup C2: intersections reject mixed Dyn and non-Dyn members" =
       let value: Dyn[Show] & Int = 42
       value
     |} in
-  match check_string ~env:(Builtins.prelude_env ()) ~file_id:"main.mr" code with
+  match check_string ~env:(env_with_builtin_traits ()) ~file_id:"main.mr" code with
   | Ok _ -> false
   | Error diags ->
       List.exists
@@ -1614,7 +1629,7 @@ let%test "followup C2: invalid let intersection annotation survives initializer 
       let value: Dyn[Show] & Int = 1 + true
       value
     |} in
-  match check_string ~env:(Builtins.prelude_env ()) ~file_id:"main.mr" code with
+  match check_string ~env:(env_with_builtin_traits ()) ~file_id:"main.mr" code with
   | Ok _ -> false
   | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-annotation-invalid") diags
 
@@ -1673,7 +1688,7 @@ let%test "followup C2: invalid function return intersection annotations are reje
       fn bad() -> Dyn[Show] & Int = 42
       bad()
     |} in
-  match check_string ~env:(Builtins.prelude_env ()) ~file_id:"main.mr" code with
+  match check_string ~env:(env_with_builtin_traits ()) ~file_id:"main.mr" code with
   | Ok _ -> false
   | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-annotation-invalid") diags
 
@@ -1688,7 +1703,7 @@ let%test "generic equality operator rejects function specialization without Eq" 
       same(id1, id2)
     |}
   in
-  match check_string ~env:(Builtins.prelude_env ()) ~file_id:"main.mr" code with
+  match check_string ~env:(env_with_builtin_traits ()) ~file_id:"main.mr" code with
   | Ok _ -> false
   | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-trait-missing-impl") diags
 
@@ -1699,7 +1714,7 @@ let%test "generic ordering operator rejects array specialization without Ord" =
       fn less[a](x: a, y: a) -> Bool = x < y
       less([1], [2])
     |} in
-  match check_string ~env:(Builtins.prelude_env ()) ~file_id:"main.mr" code with
+  match check_string ~env:(env_with_builtin_traits ()) ~file_id:"main.mr" code with
   | Ok _ -> false
   | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-trait-missing-impl") diags
 
@@ -1710,7 +1725,7 @@ let%test "generic arithmetic operator rejects bool specialization without Num" =
       fn add[a](x: a, y: a) = x + y
       add(true, false)
     |} in
-  match check_string ~env:(Builtins.prelude_env ()) ~file_id:"main.mr" code with
+  match check_string ~env:(env_with_builtin_traits ()) ~file_id:"main.mr" code with
   | Ok _ -> false
   | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-trait-missing-impl") diags
 

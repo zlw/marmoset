@@ -163,6 +163,14 @@ let rec mangle_type_for_shape (t : Types.mono_type) : string =
   | Types.TNamed (name, []) -> name
   | Types.TNamed (name, args) -> name ^ "_" ^ String.concat "_" (List.map mangle_type_for_shape args)
 
+let ordering_go_type_name = "Ordering"
+let ordering_less_tag = "Ordering_Less_tag"
+let ordering_equal_tag = "Ordering_Equal_tag"
+let ordering_greater_tag = "Ordering_Greater_tag"
+let ordering_less_ctor = "Ordering_Less()"
+let ordering_equal_ctor = "Ordering_Equal()"
+let ordering_greater_ctor = "Ordering_Greater()"
+
 let rec erase_unresolved_type_vars_for_codegen (t : Types.mono_type) : Types.mono_type =
   match t with
   | Types.TVar _ | Types.TRowVar _ -> Types.TUnion []
@@ -282,6 +290,17 @@ let go_safe_ident (name : string) : string =
 
 let canonical_codegen_trait_name (trait_name : string) : string =
   Typecheck.Trait_registry.canonical_trait_name trait_name
+
+let canonical_enum_name_for_codegen (enum_name : string) : string =
+  match Typecheck.Annotation.lookup_enum_by_source_name enum_name with
+  | Some enum_def -> enum_def.name
+  | None -> enum_name
+
+let canonical_variant_name_for_codegen (enum_name : string) (variant_name : string) : string =
+  let enum_name = canonical_enum_name_for_codegen enum_name in
+  match Typecheck.Enum_registry.lookup_variant enum_name variant_name with
+  | Some variant -> variant.name
+  | None -> variant_name
 
 (* Generate mangled function name: name_type1_type2_... *)
 let mangle_func_name name (param_types : Types.mono_type list) : string =
@@ -551,6 +570,24 @@ module TraitObjectAdapterInstSet = Set.Make (struct
   let compare = compare
 end)
 
+module DerivedImplUseSet = Set.Make (struct
+  type t = string * Types.mono_type
+
+  let compare = compare
+end)
+
+module BuiltinImplUseSet = Set.Make (struct
+  type t = string * string * string
+
+  let compare = compare
+end)
+
+module InherentCallUseSet = Set.Make (struct
+  type t = string * Types.mono_type * Types.mono_type list
+
+  let compare = compare
+end)
+
 type mono_state = {
   mutable func_defs : func_def list;
   mutable impl_templates : impl_template list;
@@ -581,6 +618,12 @@ type mono_state = {
       (* Track B B1: packaging sites for future Dyn[...] emission *)
   mutable trait_object_adapter_insts : TraitObjectAdapterInstSet.t;
       (* Shared concrete Dyn witness adapters discovered during actual emission *)
+  mutable derived_impl_uses : DerivedImplUseSet.t;
+      (* Concrete builtin-derived impls reached only through registry resolution *)
+  mutable builtin_impl_uses : BuiltinImplUseSet.t;
+      (* Concrete builtin primitive impl helpers reached through actual codegen use sites *)
+  mutable inherent_call_uses : InherentCallUseSet.t;
+      (* Concrete inherent method helpers reached through actual codegen use sites *)
   placeholder_rewrite_map : Infer.placeholder_rewrite_map;
       (* Placeholder shorthand rewrites keyed by original expression id *)
 }
@@ -618,8 +661,74 @@ let create_mono_state
     method_def_map;
     trait_object_coercion_map;
     trait_object_adapter_insts = TraitObjectAdapterInstSet.empty;
+    derived_impl_uses = DerivedImplUseSet.empty;
+    builtin_impl_uses = BuiltinImplUseSet.empty;
+    inherent_call_uses = InherentCallUseSet.empty;
     placeholder_rewrite_map;
   }
+
+let builtin_impl_keys : StringPairSet.t =
+  StringPairSet.of_list
+    [
+      ("show", "int64");
+      ("show", "bool");
+      ("show", "string");
+      ("show", "float64");
+      ("debug", "int64");
+      ("debug", "bool");
+      ("debug", "string");
+      ("debug", "float64");
+      ("eq", "int64");
+      ("eq", "bool");
+      ("eq", "string");
+      ("eq", "float64");
+      ("ord", "int64");
+      ("ord", "bool");
+      ("ord", "string");
+      ("ord", "float64");
+      ("hash", "int64");
+      ("hash", "bool");
+      ("hash", "string");
+      ("num", "int64");
+      ("num", "float64");
+      ("rem", "int64");
+      ("neg", "int64");
+      ("neg", "float64");
+    ]
+
+let register_builtin_impl_use
+    (state : mono_state) ~(trait_name : string) ~(method_name : string) ~(for_type : Types.mono_type) : unit =
+  let trait_name = canonical_codegen_trait_name trait_name in
+  let normalized_for_type =
+    normalize_type_for_codegen ~concrete_only:state.concrete_only (Types.canonicalize_mono_type for_type)
+  in
+  if not (state.concrete_only && not (Types.TypeVarSet.is_empty (Types.free_type_vars normalized_for_type))) then
+    let type_suffix = mangle_type normalized_for_type in
+    if StringPairSet.mem (trait_name, type_suffix) builtin_impl_keys then
+      state.builtin_impl_uses <-
+        BuiltinImplUseSet.add (trait_name, method_name, type_suffix) state.builtin_impl_uses
+
+let register_inherent_call_use
+    ?(allow_erased_unresolved = false)
+    (state : mono_state)
+    ~(method_name : string)
+    ~(receiver_type : Types.mono_type)
+    ~(method_type_args : Types.mono_type list) : unit =
+  let has_free_type_vars (typ : Types.mono_type) = not (Types.TypeVarSet.is_empty (Types.free_type_vars typ)) in
+  let receiver_type = Types.canonicalize_mono_type receiver_type in
+  let method_type_args = List.map Types.canonicalize_mono_type method_type_args in
+  if
+    not
+      (state.concrete_only
+      && (not allow_erased_unresolved)
+      && (has_free_type_vars receiver_type || List.exists has_free_type_vars method_type_args))
+  then
+    let receiver_type = normalize_type_for_codegen ~concrete_only:state.concrete_only receiver_type in
+    let method_type_args =
+      List.map (normalize_type_for_codegen ~concrete_only:state.concrete_only) method_type_args
+    in
+    state.inherent_call_uses <-
+      InherentCallUseSet.add (method_name, receiver_type, method_type_args) state.inherent_call_uses
 
 let placeholder_rewritten_expr (rewrite_map : Infer.placeholder_rewrite_map) (expr : AST.expression) :
     AST.expression =
@@ -635,6 +744,21 @@ let register_trait_object_adapter_instance
   let normalized_traits = normalized_trait_object_traits_for_codegen traits in
   state.trait_object_adapter_insts <-
     TraitObjectAdapterInstSet.add (normalized_source_type, normalized_traits) state.trait_object_adapter_insts
+
+let register_registry_derived_impl_use (state : mono_state) ~(trait_name : string) ~(for_type : Types.mono_type) :
+    unit =
+  let trait_name = canonical_codegen_trait_name trait_name in
+  let normalized_for_type =
+    normalize_type_for_codegen ~concrete_only:state.concrete_only (Types.canonicalize_mono_type for_type)
+  in
+  match
+    ( Typecheck.Trait_registry.lookup_impl trait_name normalized_for_type,
+      Typecheck.Trait_registry.lookup_impl_origin trait_name normalized_for_type )
+  with
+  | Some impl, Some Typecheck.Trait_registry.BuiltinDerivedImpl
+    when Option.is_some (Typecheck.Trait_registry.derive_kind_for_impl impl) ->
+      state.derived_impl_uses <- DerivedImplUseSet.add (trait_name, normalized_for_type) state.derived_impl_uses
+  | _ -> ()
 
 let synthetic_helper_suffix (expr_id : int) : string =
   if expr_id < 0 then
@@ -949,6 +1073,9 @@ and emit_trait_object_type_defs (state : mono_state) (type_map : Infer.type_map)
                dynamic_trait_methods_for traits
                |> List.map (fun (method_info : dyn_callable_method) ->
                       let method_sig = method_info.dyn_method_sig in
+                      let dispatch_trait_name = dyn_dispatch_trait_name source_type method_info in
+                      register_builtin_impl_use state ~trait_name:dispatch_trait_name
+                        ~method_name:method_sig.method_name ~for_type:source_type;
                       let adapter_name =
                         trait_object_adapter_func_name ~source_type ~traits ~method_name:method_sig.method_name
                       in
@@ -967,7 +1094,6 @@ and emit_trait_object_type_defs (state : mono_state) (type_map : Infer.type_map)
                         |> List.split
                       in
                       let type_suffix = fingerprint_types [ source_type ] in
-                      let dispatch_trait_name = dyn_dispatch_trait_name source_type method_info in
                       let impl_func_name =
                         trait_method_func_name dispatch_trait_name method_sig.method_name type_suffix
                       in
@@ -2206,16 +2332,19 @@ let resolve_field_access_callable
       | [] -> NotQualifiedCallable)
   | _ -> (
       match receiver.expr with
-      | AST.Identifier enum_name when Infer.classify_dotted_receiver env enum_name field_name = `EnumVariant -> (
+      | AST.Identifier enum_source_name
+        when Infer.classify_dotted_receiver env enum_source_name field_name = `EnumVariant -> (
+          let enum_name = canonical_enum_name_for_codegen enum_source_name in
+          let variant_name = canonical_variant_name_for_codegen enum_name field_name in
           let resolved_expr_type, _subst = refined_expr_type_for_expected type_map expr expected_type in
           let resolved_expr_type = Types.canonicalize_mono_type resolved_expr_type in
           let _param_types, return_type = extract_all_param_types resolved_expr_type in
-          match Typecheck.Enum_registry.lookup_variant enum_name field_name with
+          match Typecheck.Enum_registry.lookup_variant enum_name variant_name with
           | Some variant ->
               EnumConstructorValue
                 {
                   enum_name;
-                  variant_name = field_name;
+                  variant_name;
                   result_type = Types.canonicalize_mono_type return_type;
                   constructor_arity = List.length variant.fields;
                 }
@@ -2952,28 +3081,29 @@ let rec collect_insts_stmt
       env
   | AST.InherentImplDef impl ->
       let bindings = inherent_type_bindings impl.inherent_for_type in
-      let _for_type = annotation_exn (Annotation.type_expr_to_mono_type_with bindings impl.inherent_for_type) in
-      List.iter
-        (fun (m : AST.method_impl) ->
-          (* Skip body collection for methods with method-level generics;
-             they're specialized per call site in emit_inherent_methods *)
-          let has_method_generics =
-            match m.impl_method_generics with
-            | Some (_ :: _) -> true
-            | _ -> false
-          in
-          if not has_method_generics then
-            let def =
-              lookup_method_def_exn state.method_def_map ~method_id:m.impl_method_id
-                ~owner:
-                  (Types.to_string
-                     (annotation_exn (Annotation.type_expr_to_mono_type_with bindings impl.inherent_for_type)))
-                ~method_name:m.impl_method_name
+      let for_type = annotation_exn (Annotation.type_expr_to_mono_type_with bindings impl.inherent_for_type) in
+      if not (has_type_vars for_type) then
+        List.iter
+          (fun (m : AST.method_impl) ->
+            (* Skip body collection for methods with method-level generics;
+               they're specialized per call site in emit_inherent_methods *)
+            let has_method_generics =
+              match m.impl_method_generics with
+              | Some (_ :: _) -> true
+              | _ -> false
             in
-            let method_param_names, method_param_types = (def.md_param_names, def.md_param_types) in
-            let method_env = add_param_bindings env method_param_names method_param_types in
-            ignore (collect_insts_stmt state type_map method_env m.impl_method_body))
-        impl.inherent_methods;
+            if not has_method_generics then
+              let def =
+                lookup_method_def_exn state.method_def_map ~method_id:m.impl_method_id
+                  ~owner:
+                    (Types.to_string
+                       (annotation_exn (Annotation.type_expr_to_mono_type_with bindings impl.inherent_for_type)))
+                  ~method_name:m.impl_method_name
+              in
+              let method_param_names, method_param_types = (def.md_param_names, def.md_param_types) in
+              let method_env = add_param_bindings env method_param_names method_param_types in
+              ignore (collect_insts_stmt state type_map method_env m.impl_method_body))
+          impl.inherent_methods;
       env
 
 and collect_insts_stmt_list
@@ -3002,7 +3132,12 @@ and register_impl_method_use
   else
     let for_type' = normalize_type_for_codegen ~concrete_only:state.concrete_only raw_for_type in
     match select_impl_template_for_type state trait_name method_name for_type' with
-    | None -> ()
+    | None ->
+        let type_suffix = mangle_type for_type' in
+        if StringPairSet.mem (trait_name, type_suffix) builtin_impl_keys then
+          register_builtin_impl_use state ~trait_name ~method_name ~for_type:for_type'
+        else
+          register_registry_derived_impl_use state ~trait_name ~for_type:for_type'
     | Some (template_method, impl_subst) ->
         (* Phase 6.4: Build method-generic substitution from template's generic names + call-site type args *)
         let method_generic_subst =
@@ -3076,21 +3211,29 @@ and register_impl_method_use
           let method_env = add_param_bindings env payload.param_names payload.param_types in
           ignore (collect_insts_stmt state type_map method_env payload.body_stmt)
 
-and register_trait_object_support_use
+and register_trait_object_support_for_type
     (state : mono_state)
     (type_map : Infer.type_map)
     (env : Infer.type_env)
-    ~(source_expr : AST.expression)
+    ~(source_type : Types.mono_type)
     ~(target_traits : string list) : unit =
   let source_type =
-    normalize_type_for_codegen ~concrete_only:state.concrete_only
-      (Types.canonicalize_mono_type (get_type type_map source_expr))
+    normalize_type_for_codegen ~concrete_only:state.concrete_only (Types.canonicalize_mono_type source_type)
   in
   dynamic_trait_methods_for target_traits
   |> List.iter (fun (method_info : dyn_callable_method) ->
          register_impl_method_use state type_map env
            ~trait_name:(dyn_dispatch_trait_name source_type method_info)
            ~method_name:method_info.dyn_method_sig.method_name ~for_type:source_type ~method_type_args:[])
+
+and register_trait_object_support_use
+    (state : mono_state)
+    (type_map : Infer.type_map)
+    (env : Infer.type_env)
+    ~(source_expr : AST.expression)
+    ~(target_traits : string list) : unit =
+  let source_type = Types.canonicalize_mono_type (get_type type_map source_expr) in
+  register_trait_object_support_for_type state type_map env ~source_type ~target_traits
 
 and collect_insts_expr
     ?(expected_type : Types.mono_type option = None)
@@ -3351,7 +3494,34 @@ and collect_insts_expr
           | None -> ())
         fields;
       match spread with
-      | Some expr -> collect_insts_expr state type_map env expr
+      | Some expr ->
+          collect_insts_expr state type_map env expr;
+          let spread_fields =
+            match Types.canonicalize_mono_type (get_type type_map expr) with
+            | Types.TRecord (fields, row) ->
+                let normalized_fields, _ = normalize_record_row_type fields row in
+                normalized_fields
+            | _ -> []
+          in
+          List.iter
+            (fun (result_field : Types.record_field_type) ->
+              match Types.canonicalize_mono_type result_field.typ with
+              | Types.TTraitObject target_traits -> (
+                  match
+                    List.find_opt
+                      (fun (field : Types.record_field_type) -> field.name = result_field.name)
+                      spread_fields
+                  with
+                  | Some source_field -> (
+                      match Types.canonicalize_mono_type source_field.typ with
+                      | Types.TTraitObject source_traits
+                        when Types.normalize_trait_object_traits source_traits = target_traits ->
+                          ()
+                      | source_type ->
+                          register_trait_object_support_for_type state type_map env ~source_type ~target_traits)
+                  | None -> ())
+              | _ -> ())
+            result_fields
       | None -> ())
   | AST.FieldAccess (receiver, field_name) -> (
       match
@@ -3369,7 +3539,8 @@ and collect_insts_expr
           else
             register_impl_method_use state type_map env ~trait_name ~method_name ~for_type:receiver_type
               ~method_type_args
-      | QualifiedInherentValue _ -> ()
+      | QualifiedInherentValue { method_name; receiver_type; method_type_args } ->
+          register_inherent_call_use state ~method_name ~receiver_type ~method_type_args
       | NotQualifiedCallable -> collect_insts_expr state type_map env receiver)
   | AST.MethodCall { mc_receiver = receiver; mc_method = method_name; mc_args = args; _ } -> (
       let method_resolution = Hashtbl.find_opt state.call_resolution_map expr.id in
@@ -3408,8 +3579,23 @@ and collect_insts_expr
               in
               register_impl_method_use state type_map env ~trait_name ~method_name ~for_type ~method_type_args
           | Some (Infer.DynamicTraitMethod _) -> collect_insts_expr state type_map env receiver
-          | Some Infer.InherentMethod -> collect_insts_expr state type_map env receiver
-          | Some Infer.QualifiedInherentMethod -> ()
+          | Some Infer.InherentMethod ->
+              collect_insts_expr state type_map env receiver;
+              let receiver_type = Types.canonicalize_mono_type (get_type type_map receiver) in
+              let method_type_args =
+                match Hashtbl.find_opt state.method_type_args_map expr.id with
+                | Some args -> args
+                | None -> []
+              in
+              register_inherent_call_use state ~method_name ~receiver_type ~method_type_args
+          | Some Infer.QualifiedInherentMethod ->
+              let receiver_type = Types.canonicalize_mono_type (get_type type_map (List.hd args)) in
+              let method_type_args =
+                match Hashtbl.find_opt state.method_type_args_map expr.id with
+                | Some args -> args
+                | None -> []
+              in
+              register_inherent_call_use state ~method_name ~receiver_type ~method_type_args
           | Some Infer.FieldFunctionCall -> (
               match receiver.expr with
               | AST.Identifier record_name -> (
@@ -3466,6 +3652,8 @@ let emit_record_struct_type (state : emit_state) (fields : Types.record_field_ty
 
 let enum_constructor_expected_arg_types (enum_type : Types.mono_type) (enum_name : string) (variant_name : string)
     : Types.mono_type list =
+  let enum_name = canonical_enum_name_for_codegen enum_name in
+  let variant_name = canonical_variant_name_for_codegen enum_name variant_name in
   match Types.canonicalize_mono_type enum_type with
   | Types.TEnum (resolved_enum_name, type_args) when resolved_enum_name = enum_name -> (
       match
@@ -3927,6 +4115,8 @@ let rec emit_expr
         | _ ->
             emit_function_expr ~func_type_override:selected_func_type state type_map env expr param_exprs f.body)
     | AST.EnumConstructor (enum_name, variant_name, args) ->
+        let enum_name = canonical_enum_name_for_codegen enum_name in
+        let variant_name = canonical_variant_name_for_codegen enum_name variant_name in
         (* Only enum-shaped expected types may refine constructor specialization. *)
         let enum_type = enum_constructor_codegen_type type_map expr expected_type enum_name in
         let enum_type = Types.canonicalize_mono_type enum_type in
@@ -3953,7 +4143,10 @@ let rec emit_expr
           | Types.TRecord (f, row) -> normalize_record_row_type f row
           | _ ->
               failwith
-                (Printf.sprintf "Record literal expected record type, got %s" (Types.to_string record_type))
+                (Printf.sprintf "Record literal expected record type, got %s (expr id %d, file %s, span %d-%d)"
+                   (Types.to_string record_type) expr.id
+                   (Option.value expr.file_id ~default:"<unknown>")
+                   expr.pos expr.end_pos)
         in
         let base_fields_opt, result_fields =
           match spread with
@@ -4048,7 +4241,7 @@ let rec emit_expr
             ~method_type_args_map:state.mono.method_type_args_map type_map env ~expected_type expr receiver
             variant_name
         with
-        | EnumConstructorValue { enum_name; result_type; constructor_arity; _ } ->
+        | EnumConstructorValue { enum_name; variant_name; result_type; constructor_arity } ->
             let enum_type =
               let refined_type = enum_constructor_codegen_type type_map expr expected_type enum_name in
               let refined_type = Types.canonicalize_mono_type refined_type in
@@ -4079,6 +4272,8 @@ let rec emit_expr
             in
             trait_method_func_name trait_name method_name type_suffix
         | QualifiedInherentValue { method_name; receiver_type; method_type_args } ->
+            register_inherent_call_use ~allow_erased_unresolved:true state.mono ~method_name ~receiver_type
+              ~method_type_args;
             let receiver_type =
               normalize_type_for_codegen ~concrete_only:state.mono.concrete_only receiver_type
             in
@@ -4096,9 +4291,12 @@ let rec emit_expr
         let method_resolution = Hashtbl.find_opt state.mono.call_resolution_map expr.id in
         (* Check if this is an enum constructor — bound variables shadow enum names *)
         match (receiver.expr, method_resolution) with
-        | AST.Identifier enum_name, None
-          when Typecheck.Enum_registry.lookup enum_name <> None && Infer.TypeEnv.find_opt enum_name env = None ->
+        | AST.Identifier enum_source_name, None
+          when Typecheck.Annotation.lookup_enum_by_source_name enum_source_name <> None
+               && Infer.TypeEnv.find_opt enum_source_name env = None ->
             (* This is an enum constructor - emit like EnumConstructor *)
+            let enum_name = canonical_enum_name_for_codegen enum_source_name in
+            let variant_name = canonical_variant_name_for_codegen enum_name variant_name in
             (* Only enum-shaped expected types may refine constructor specialization. *)
             let enum_type = enum_constructor_codegen_type type_map expr expected_type enum_name in
             let enum_type = Types.canonicalize_mono_type enum_type in
@@ -4157,9 +4355,11 @@ let rec emit_expr
                 emit_dynamic_trait_call state type_map env expr receiver variant_name args
             | Some Infer.QualifiedInherentMethod ->
                 (* Qualified call: Type.method(receiver, args...) — first arg is the receiver *)
+                let raw_receiver_type = method_dispatch_type env type_map (List.hd args) in
+                register_inherent_call_use ~allow_erased_unresolved:true state.mono ~method_name:variant_name
+                  ~receiver_type:raw_receiver_type ~method_type_args;
                 let first_arg_type =
-                  normalize_type_for_codegen ~concrete_only:state.mono.concrete_only
-                    (method_dispatch_type env type_map (List.hd args))
+                  normalize_type_for_codegen ~concrete_only:state.mono.concrete_only raw_receiver_type
                 in
                 let type_suffix = type_suffix_with_mta first_arg_type in
                 let func_name = inherent_method_func_name variant_name type_suffix in
@@ -4185,9 +4385,11 @@ let rec emit_expr
                 Printf.sprintf "%s(%s)" func_name (String.concat ", " all_args)
             | Some Infer.InherentMethod ->
                 (* Dot call: receiver.method(args...) — receiver is separate *)
+                let raw_receiver_type = method_dispatch_type env type_map receiver in
+                register_inherent_call_use ~allow_erased_unresolved:true state.mono ~method_name:variant_name
+                  ~receiver_type:raw_receiver_type ~method_type_args;
                 let receiver_type =
-                  normalize_type_for_codegen ~concrete_only:state.mono.concrete_only
-                    (method_dispatch_type env type_map receiver)
+                  normalize_type_for_codegen ~concrete_only:state.mono.concrete_only raw_receiver_type
                 in
                 let type_suffix = type_suffix_with_mta receiver_type in
                 let func_name = inherent_method_func_name variant_name type_suffix in
@@ -5083,22 +5285,22 @@ and emit_infix state type_map env left op right =
       if is_ord_primitive then
         Printf.sprintf "(%s < %s)" left_str right_str
       else
-        Printf.sprintf "((ord_compare_%s(%s, %s)).Tag == ordering_less_tag)" type_suffix left_str right_str
+        Printf.sprintf "((ord_compare_%s(%s, %s)).Tag == %s)" type_suffix left_str right_str ordering_less_tag
   | ">" ->
       if is_ord_primitive then
         Printf.sprintf "(%s > %s)" left_str right_str
       else
-        Printf.sprintf "((ord_compare_%s(%s, %s)).Tag == ordering_greater_tag)" type_suffix left_str right_str
+        Printf.sprintf "((ord_compare_%s(%s, %s)).Tag == %s)" type_suffix left_str right_str ordering_greater_tag
   | "<=" ->
       if is_ord_primitive then
         Printf.sprintf "(%s <= %s)" left_str right_str
       else
-        Printf.sprintf "((ord_compare_%s(%s, %s)).Tag != ordering_greater_tag)" type_suffix left_str right_str
+        Printf.sprintf "((ord_compare_%s(%s, %s)).Tag != %s)" type_suffix left_str right_str ordering_greater_tag
   | ">=" ->
       if is_ord_primitive then
         Printf.sprintf "(%s >= %s)" left_str right_str
       else
-        Printf.sprintf "((ord_compare_%s(%s, %s)).Tag != ordering_less_tag)" type_suffix left_str right_str
+        Printf.sprintf "((ord_compare_%s(%s, %s)).Tag != %s)" type_suffix left_str right_str ordering_less_tag
   | _ -> failwith ("Unknown infix operator: " ^ op)
 
 and emit_type_check state type_map env expr type_ann =
@@ -6481,15 +6683,23 @@ let emit_specialized_func
   let provisional_env_with_func =
     Infer.TypeEnv.add inst.func_name (Types.Forall ([], concrete_func_type)) typed_env
   in
-  let provisional_body_env = add_param_bindings provisional_env_with_func param_names inst.concrete_types in
   let specialized_type_map, inferred_body_type_opt =
     let inferred_map = Infer.create_type_map () in
     let infer_state = Infer.create_inference_state () in
     match
       Infer.with_inference_state infer_state (fun () ->
-          Infer.infer_statement inferred_map provisional_body_env func_def.body)
+          let known_param_types = List.mapi (fun idx param_type -> (idx, param_type)) inst.concrete_types in
+          let params = List.map (fun param_name -> (param_name, None)) param_names in
+          Infer.type_callable inferred_map provisional_env_with_func ~type_bindings:[] ~known_param_types ~params
+            ~return_annot:None ~known_return:(Some inst.return_type)
+            ~effect_annot:
+              (if arrow_is_effectful then
+                 `Effectful
+               else
+                 `Unspecified)
+            ~strict_return_check:false ~body:func_def.body)
     with
-    | Ok (subst, inferred_body_type) ->
+    | Ok (_param_names, _param_types, inferred_body_type, _actual_effectful, subst) ->
         Infer.apply_substitution_type_map subst inferred_map;
         let inferred_body_type =
           Types.canonicalize_mono_type (Types.apply_substitution subst inferred_body_type)
@@ -6504,6 +6714,9 @@ let emit_specialized_func
         match Hashtbl.find_opt specialized_type_map terminal_expr.id with
         | Some t -> Some (Types.canonicalize_mono_type t)
         | None ->
+            let provisional_body_env =
+              add_param_bindings provisional_env_with_func param_names inst.concrete_types
+            in
             type_from_env_or_map provisional_body_env specialized_type_map terminal_expr
             |> Option.map Types.canonicalize_mono_type)
   in
@@ -6910,14 +7123,12 @@ let emit_inherent_method
             type_map;
           copied
   in
-  (* For method-generic specializations, register any new enum instantiations
-     discovered in the specialized type_map (e.g. opt[String] from opt[b]) *)
-  if method_type_args <> [] then (
-    track_enum_inst state.mono return_type;
-    List.iter
-      (fun (_name, pty) -> track_enum_inst state.mono pty)
-      (List.combine method_param_names method_param_types);
-    Hashtbl.iter (fun _id ty -> track_enum_inst state.mono ty) method_type_map);
+  track_enum_inst state.mono for_type;
+  track_enum_inst state.mono return_type;
+  List.iter
+    (fun (_name, pty) -> track_enum_inst state.mono pty)
+    (List.combine method_param_names method_param_types);
+  ignore (collect_insts_stmt state.mono method_type_map method_env method_impl.impl_method_body);
   let body_str =
     with_return_type state return_type (fun () ->
         emit_func_body state method_type_map method_env method_impl.impl_method_body)
@@ -6969,6 +7180,26 @@ let collect_inherent_call_sites
     (type_map : Infer.type_map)
     (typed_env : Infer.type_env)
     (program : AST.program) : inherent_call_site list =
+  let maybe_add_call_site
+      (acc : inherent_call_site list)
+      ~(method_name : string)
+      ~(receiver_type : Types.mono_type)
+      ~(method_type_args : Types.mono_type list) : inherent_call_site list =
+    let has_free_type_vars (typ : Types.mono_type) = not (Types.TypeVarSet.is_empty (Types.free_type_vars typ)) in
+    let receiver_type = Types.canonicalize_mono_type receiver_type in
+    let method_type_args = List.map Types.canonicalize_mono_type method_type_args in
+    if concrete_only && (has_free_type_vars receiver_type || List.exists has_free_type_vars method_type_args) then
+      acc
+    else
+      let receiver_type = normalize_type_for_codegen ~concrete_only receiver_type in
+      let method_type_args = List.map (normalize_type_for_codegen ~concrete_only) method_type_args in
+      add_inherent_call_site_if_new acc
+        {
+          call_method_name = method_name;
+          call_receiver_type = receiver_type;
+          call_method_type_args = method_type_args;
+        }
+  in
   let rec collect_expr
       ?(expected_type : Types.mono_type option = None)
       (acc : inherent_call_site list)
@@ -7077,15 +7308,7 @@ let collect_inherent_call_sites
             expr receiver field_name
         with
         | QualifiedInherentValue { method_name; receiver_type; method_type_args } ->
-            let receiver_type =
-              normalize_type_for_codegen ~concrete_only (Types.canonicalize_mono_type receiver_type)
-            in
-            add_inherent_call_site_if_new acc
-              {
-                call_method_name = method_name;
-                call_receiver_type = receiver_type;
-                call_method_type_args = method_type_args;
-              }
+            maybe_add_call_site acc ~method_name ~receiver_type ~method_type_args
         | EnumConstructorValue _ | QualifiedTraitValue _ -> acc
         | NotQualifiedCallable -> collect_expr acc env receiver)
     | AST.MethodCall { mc_receiver = receiver; mc_method = method_name; mc_args = args; _ } -> (
@@ -7093,29 +7316,22 @@ let collect_inherent_call_sites
         let acc'' = List.fold_left (fun acc' arg -> collect_expr acc' env arg) acc' args in
         match Hashtbl.find_opt call_resolution_map expr.id with
         | Some Infer.InherentMethod ->
-            let receiver_type =
-              normalize_type_for_codegen ~concrete_only
-                (Types.canonicalize_mono_type (get_type type_map receiver))
-            in
             let mta =
               match Hashtbl.find_opt method_type_args_map expr.id with
               | Some a -> a
               | None -> []
             in
-            add_inherent_call_site_if_new acc''
-              { call_method_name = method_name; call_receiver_type = receiver_type; call_method_type_args = mta }
+            maybe_add_call_site acc'' ~method_name ~receiver_type:(get_type type_map receiver)
+              ~method_type_args:mta
         | Some Infer.QualifiedInherentMethod ->
-            let receiver_type =
-              normalize_type_for_codegen ~concrete_only
-                (Types.canonicalize_mono_type (get_type type_map (List.hd args)))
-            in
             let mta =
               match Hashtbl.find_opt method_type_args_map expr.id with
               | Some a -> a
               | None -> []
             in
-            add_inherent_call_site_if_new acc''
-              { call_method_name = method_name; call_receiver_type = receiver_type; call_method_type_args = mta }
+            maybe_add_call_site acc'' ~method_name
+              ~receiver_type:(get_type type_map (List.hd args))
+              ~method_type_args:mta
         | Some (Infer.TraitMethod _)
         | Some (Infer.DynamicTraitMethod _)
         | Some (Infer.QualifiedTraitMethod _)
@@ -7194,34 +7410,6 @@ let collect_inherent_call_sites
          else
            compare a.call_receiver_type b.call_receiver_type)
 
-let builtin_impl_keys : StringPairSet.t =
-  StringPairSet.of_list
-    [
-      ("show", "int64");
-      ("show", "bool");
-      ("show", "string");
-      ("show", "float64");
-      ("debug", "int64");
-      ("debug", "bool");
-      ("debug", "string");
-      ("debug", "float64");
-      ("eq", "int64");
-      ("eq", "bool");
-      ("eq", "string");
-      ("eq", "float64");
-      ("ord", "int64");
-      ("ord", "bool");
-      ("ord", "string");
-      ("ord", "float64");
-      ("hash", "int64");
-      ("hash", "bool");
-      ("hash", "string");
-      ("num", "int64");
-      ("num", "float64");
-      ("neg", "int64");
-      ("neg", "float64");
-    ]
-
 let emit_record_derived_impl
     (state : emit_state) (derive_kind : Typecheck.Trait_registry.derive_kind) (record_type : Types.mono_type) :
     string option =
@@ -7268,6 +7456,7 @@ let emit_record_derived_impl
       Some
         (Printf.sprintf "func %s%s(x %s) string {\n\treturn %s\n}\n" fn_prefix type_suffix type_str return_expr)
   | Typecheck.Trait_registry.DeriveOrd ->
+      track_enum_inst state.mono (Types.TEnum ("Ordering", []));
       let compare_pair (f : Types.record_field_type) =
         let x_access = go_field_access "x" f in
         let y_access = go_field_access "y" f in
@@ -7278,19 +7467,23 @@ let emit_record_derived_impl
       in
       let body =
         match fields with
-        | [] -> "\treturn ordering_equal()\n"
+        | [] -> Printf.sprintf "\treturn %s\n" ordering_equal_ctor
         | _ ->
             fields
             |> List.map compare_pair
             |> List.map (fun (less_expr, eq_expr) ->
-                   Printf.sprintf "\tif %s { return ordering_less() }\n\tif !%s { return ordering_greater() }\n"
-                     less_expr eq_expr)
+                   Printf.sprintf "\tif %s { return %s }\n\tif !%s { return %s }\n" less_expr ordering_less_ctor
+                     eq_expr ordering_greater_ctor)
             |> String.concat ""
       in
       Some
-        (Printf.sprintf "func ord_compare_%s(x, y %s) ordering {\n%s\treturn ordering_equal()\n}\n" type_suffix
-           type_str body)
+        (Printf.sprintf "func ord_compare_%s(x, y %s) %s {\n%s\treturn %s\n}\n" type_suffix type_str
+           ordering_go_type_name body ordering_equal_ctor)
   | Typecheck.Trait_registry.DeriveHash ->
+      List.iter
+        (fun (f : Types.record_field_type) ->
+          register_builtin_impl_use state.mono ~trait_name:"hash" ~method_name:"hash" ~for_type:f.typ)
+        fields;
       let hash_steps =
         fields
         |> List.map (fun (f : Types.record_field_type) ->
@@ -7344,6 +7537,7 @@ let emit_named_product_derived_impl
       Some
         (Printf.sprintf "func %s%s(x %s) string {\n\treturn %s\n}\n" fn_prefix type_suffix type_str return_expr)
   | Typecheck.Trait_registry.DeriveOrd ->
+      track_enum_inst state.mono (Types.TEnum ("Ordering", []));
       let compare_pair (f : Types.record_field_type) =
         let x_access = go_field_access "x" f in
         let y_access = go_field_access "y" f in
@@ -7354,19 +7548,23 @@ let emit_named_product_derived_impl
       in
       let body =
         match fields with
-        | [] -> "\treturn ordering_equal()\n"
+        | [] -> Printf.sprintf "\treturn %s\n" ordering_equal_ctor
         | _ ->
             fields
             |> List.map compare_pair
             |> List.map (fun (less_expr, eq_expr) ->
-                   Printf.sprintf "\tif %s { return ordering_less() }\n\tif !%s { return ordering_greater() }\n"
-                     less_expr eq_expr)
+                   Printf.sprintf "\tif %s { return %s }\n\tif !%s { return %s }\n" less_expr ordering_less_ctor
+                     eq_expr ordering_greater_ctor)
             |> String.concat ""
       in
       Some
-        (Printf.sprintf "func ord_compare_%s(x, y %s) ordering {\n%s\treturn ordering_equal()\n}\n" type_suffix
-           type_str body)
+        (Printf.sprintf "func ord_compare_%s(x, y %s) %s {\n%s\treturn %s\n}\n" type_suffix type_str
+           ordering_go_type_name body ordering_equal_ctor)
   | Typecheck.Trait_registry.DeriveHash ->
+      List.iter
+        (fun (f : Types.record_field_type) ->
+          register_builtin_impl_use state.mono ~trait_name:"hash" ~method_name:"hash" ~for_type:f.typ)
+        fields;
       let hash_steps =
         fields
         |> List.map (fun (f : Types.record_field_type) ->
@@ -7388,27 +7586,34 @@ let emit_named_wrapper_derived_impl
   let rep_go_type = type_to_go state.mono representation in
   match derive_kind with
   | Typecheck.Trait_registry.DeriveEq ->
+      register_builtin_impl_use state.mono ~trait_name:"eq" ~method_name:"eq" ~for_type:representation;
       Some
         (Printf.sprintf "func eq_eq_%s(x, y %s) bool {\n\treturn eq_eq_%s(%s(x), %s(y))\n}\n" type_suffix type_str
            rep_suffix rep_go_type rep_go_type)
   | Typecheck.Trait_registry.DeriveShow ->
+      register_builtin_impl_use state.mono ~trait_name:"show" ~method_name:"show" ~for_type:representation;
       Some
         (Printf.sprintf "func show_show_%s(x %s) string {\n\treturn show_show_%s(%s(x))\n}\n" type_suffix type_str
            rep_suffix rep_go_type)
   | Typecheck.Trait_registry.DeriveDebug ->
+      register_builtin_impl_use state.mono ~trait_name:"debug" ~method_name:"debug" ~for_type:representation;
       Some
         (Printf.sprintf "func debug_debug_%s(x %s) string {\n\treturn debug_debug_%s(%s(x))\n}\n" type_suffix
            type_str rep_suffix rep_go_type)
   | Typecheck.Trait_registry.DeriveOrd ->
+      track_enum_inst state.mono (Types.TEnum ("Ordering", []));
+      register_builtin_impl_use state.mono ~trait_name:"ord" ~method_name:"compare" ~for_type:representation;
       Some
-        (Printf.sprintf "func ord_compare_%s(x, y %s) ordering {\n\treturn ord_compare_%s(%s(x), %s(y))\n}\n"
-           type_suffix type_str rep_suffix rep_go_type rep_go_type)
+        (Printf.sprintf "func ord_compare_%s(x, y %s) %s {\n\treturn ord_compare_%s(%s(x), %s(y))\n}\n"
+           type_suffix type_str ordering_go_type_name rep_suffix rep_go_type rep_go_type)
   | Typecheck.Trait_registry.DeriveHash ->
+      register_builtin_impl_use state.mono ~trait_name:"hash" ~method_name:"hash" ~for_type:representation;
       Some
         (Printf.sprintf "func hash_hash_%s(x %s) int64 {\n\treturn hash_hash_%s(%s(x))\n}\n" type_suffix type_str
            rep_suffix rep_go_type)
 
-let emit_enum_derived_impl (derive_kind : Typecheck.Trait_registry.derive_kind) (enum_type : Types.mono_type) :
+let emit_enum_derived_impl
+    (state : emit_state) (derive_kind : Typecheck.Trait_registry.derive_kind) (enum_type : Types.mono_type) :
     string option =
   let type_suffix = mangle_type enum_type in
   let type_str =
@@ -7424,10 +7629,11 @@ let emit_enum_derived_impl (derive_kind : Typecheck.Trait_registry.derive_kind) 
   | Typecheck.Trait_registry.DeriveDebug ->
       Some (Printf.sprintf "func debug_debug_%s(x %s) string {\n\treturn x.String()\n}\n" type_suffix type_str)
   | Typecheck.Trait_registry.DeriveOrd ->
+      track_enum_inst state.mono (Types.TEnum ("Ordering", []));
       Some
         (Printf.sprintf
-           "func ord_compare_%s(x, y %s) ordering {\n\tif x.Tag < y.Tag { return ordering_less() }\n\tif x.Tag > y.Tag { return ordering_greater() }\n\treturn ordering_equal()\n}\n"
-           type_suffix type_str)
+           "func ord_compare_%s(x, y %s) %s {\n\tif x.Tag < y.Tag { return %s }\n\tif x.Tag > y.Tag { return %s }\n\treturn %s\n}\n"
+           type_suffix type_str ordering_go_type_name ordering_less_ctor ordering_greater_ctor ordering_equal_ctor)
   | Typecheck.Trait_registry.DeriveHash ->
       Some (Printf.sprintf "func hash_hash_%s(x %s) int64 {\n\treturn int64(x.Tag)\n}\n" type_suffix type_str)
 
@@ -7447,38 +7653,55 @@ let emit_registry_derived_impls (state : emit_state) (program : AST.program) : s
     (not (StringPairSet.mem (trait_name, type_suffix) user_impl_set))
     && not (StringPairSet.mem (trait_name, type_suffix) builtin_impl_keys)
   in
-  Typecheck.Trait_registry.all_impls ()
-  |> List.filter_map (fun (impl : Typecheck.Trait_registry.impl_def) ->
-         if has_unresolved_codegen_type impl.impl_for_type then
-           None
-         else
-           let type_suffix = mangle_type impl.impl_for_type in
-           if should_emit impl.impl_trait_name type_suffix then
-             match Typecheck.Trait_registry.derive_kind_for_impl impl with
-             | Some derive_kind -> (
-                 match impl.impl_for_type with
-                 | Types.TRecord _ -> emit_record_derived_impl state derive_kind impl.impl_for_type
-                 | Types.TEnum _ -> emit_enum_derived_impl derive_kind impl.impl_for_type
-                 | Types.TNamed (type_name, type_args) -> (
-                     match named_type_codegen_body_exn type_name type_args with
-                     | `Product fields ->
-                         emit_named_product_derived_impl state derive_kind impl.impl_for_type fields
-                     | `Wrapper representation ->
-                         emit_named_wrapper_derived_impl state derive_kind impl.impl_for_type representation)
-                 | _ -> None)
-             | None -> None
-           else
-             None)
-  |> String.concat "\n"
+  let requested_impls =
+    DerivedImplUseSet.elements state.mono.derived_impl_uses
+    |> List.filter_map (fun (trait_name, for_type) -> Typecheck.Trait_registry.lookup_impl trait_name for_type)
+  in
+  let emitted_impl_keys = ref StringPairSet.empty in
+  let emit_impl (impl : Typecheck.Trait_registry.impl_def) : string option =
+    if has_unresolved_codegen_type impl.impl_for_type then
+      None
+    else
+      let trait_name = canonical_codegen_trait_name impl.impl_trait_name in
+      let type_suffix = mangle_type impl.impl_for_type in
+      let impl_key = (trait_name, type_suffix) in
+      if StringPairSet.mem impl_key !emitted_impl_keys then
+        None
+      else (
+        emitted_impl_keys := StringPairSet.add impl_key !emitted_impl_keys;
+        if should_emit trait_name type_suffix then
+          match Typecheck.Trait_registry.derive_kind_for_impl impl with
+          | Some derive_kind -> (
+              match impl.impl_for_type with
+              | Types.TRecord _ -> emit_record_derived_impl state derive_kind impl.impl_for_type
+              | Types.TEnum _ -> emit_enum_derived_impl state derive_kind impl.impl_for_type
+              | Types.TNamed (type_name, type_args) -> (
+                  match named_type_codegen_body_exn type_name type_args with
+                  | `Product fields -> emit_named_product_derived_impl state derive_kind impl.impl_for_type fields
+                  | `Wrapper representation ->
+                      emit_named_wrapper_derived_impl state derive_kind impl.impl_for_type representation)
+              | _ -> None)
+          | None -> None
+        else
+          None)
+  in
+  Typecheck.Trait_registry.all_impls () @ requested_impls |> List.filter_map emit_impl |> String.concat "\n"
 
 let emit_inherent_methods
     (state : emit_state) (type_map : Infer.type_map) (typed_env : Infer.type_env) (program : AST.program) : string
     =
   let inherent_impls = collect_inherent_impl_defs program in
-  let call_sites =
+  let initial_call_sites =
     collect_inherent_call_sites ~concrete_only:state.mono.concrete_only state.mono.call_resolution_map
       state.mono.method_type_args_map state.mono.placeholder_rewrite_map type_map typed_env program
   in
+  List.iter
+    (fun (site : inherent_call_site) ->
+      state.mono.inherent_call_uses <-
+        InherentCallUseSet.add
+          (site.call_method_name, site.call_receiver_type, site.call_method_type_args)
+          state.mono.inherent_call_uses)
+    initial_call_sites;
 
   let concrete_method_targets : (string * Types.mono_type) list =
     inherent_impls
@@ -7506,10 +7729,16 @@ let emit_inherent_methods
       true)
   in
 
+  let current_call_sites () =
+    InherentCallUseSet.elements state.mono.inherent_call_uses
+    |> List.map (fun (call_method_name, call_receiver_type, call_method_type_args) ->
+           { call_method_name; call_receiver_type; call_method_type_args })
+  in
+
   (* Determine which method type arg combos are needed for each method on a concrete type *)
   let method_type_arg_combos_for (method_name : string) (for_type : Types.mono_type) : Types.mono_type list list =
     let combos =
-      call_sites
+      current_call_sites ()
       |> List.filter (fun site ->
              site.call_method_name = method_name
              && site.call_receiver_type = for_type
@@ -7527,7 +7756,7 @@ let emit_inherent_methods
       |> Types.canonicalize_mono_type
     in
     let relevant_call_sites =
-      call_sites
+      current_call_sites ()
       |> List.filter (fun site ->
              List.exists
                (fun (m : AST.method_impl) -> m.impl_method_name = site.call_method_name)
@@ -7586,8 +7815,13 @@ let emit_inherent_methods
                           else
                             None))
   in
-
-  inherent_impls |> List.concat_map emit_for_impl |> String.concat "\n"
+  let rec emit_pending (acc : string list) =
+    let newly_emitted = inherent_impls |> List.concat_map emit_for_impl in
+    match newly_emitted with
+    | [] -> String.concat "\n" (List.rev acc)
+    | _ -> emit_pending (List.rev_append newly_emitted acc)
+  in
+  emit_pending []
 
 (* ============================================================
     Builtin Trait Implementations - Go Code Generation
@@ -7595,7 +7829,7 @@ let emit_inherent_methods
 
 (* Emit Go code for builtin trait implementations for primitives *)
 (* Only emit builtins that are NOT overridden by user impls *)
-let emit_builtin_impls (program : AST.program) : string =
+let emit_builtin_impls (state : mono_state) (program : AST.program) : string =
   (* Collect user-defined impls from program *)
   let user_impls = collect_impl_defs program in
 
@@ -7618,60 +7852,68 @@ let emit_builtin_impls (program : AST.program) : string =
   let all_builtins =
     [
       (* show trait implementations *)
-      (("show", "int64"), "func show_show_int64(x int64) string {\n\treturn strconv.FormatInt(x, 10)\n}");
-      (("show", "bool"), "func show_show_bool(x bool) string {\n\treturn strconv.FormatBool(x)\n}");
-      (("show", "string"), "func show_show_string(x string) string {\n\treturn x\n}");
-      ( ("show", "float64"),
+      (("show", "show", "int64"), "func show_show_int64(x int64) string {\n\treturn strconv.FormatInt(x, 10)\n}");
+      (("show", "show", "bool"), "func show_show_bool(x bool) string {\n\treturn strconv.FormatBool(x)\n}");
+      (("show", "show", "string"), "func show_show_string(x string) string {\n\treturn x\n}");
+      ( ("show", "show", "float64"),
         "func show_show_float64(x float64) string {\n\treturn strconv.FormatFloat(x, 'g', -1, 64)\n}" );
       (* debug trait implementations *)
-      (("debug", "int64"), "func debug_debug_int64(x int64) string {\n\treturn strconv.FormatInt(x, 10)\n}");
-      (("debug", "bool"), "func debug_debug_bool(x bool) string {\n\treturn strconv.FormatBool(x)\n}");
-      (("debug", "string"), "func debug_debug_string(x string) string {\n\treturn strconv.Quote(x)\n}");
-      ( ("debug", "float64"),
+      ( ("debug", "debug", "int64"),
+        "func debug_debug_int64(x int64) string {\n\treturn strconv.FormatInt(x, 10)\n}" );
+      (("debug", "debug", "bool"), "func debug_debug_bool(x bool) string {\n\treturn strconv.FormatBool(x)\n}");
+      (("debug", "debug", "string"), "func debug_debug_string(x string) string {\n\treturn strconv.Quote(x)\n}");
+      ( ("debug", "debug", "float64"),
         "func debug_debug_float64(x float64) string {\n\treturn strconv.FormatFloat(x, 'g', -1, 64)\n}" );
       (* eq trait implementations *)
-      (("eq", "int64"), "func eq_eq_int64(x, y int64) bool {\n\treturn x == y\n}");
-      (("eq", "bool"), "func eq_eq_bool(x, y bool) bool {\n\treturn x == y\n}");
-      (("eq", "string"), "func eq_eq_string(x, y string) bool {\n\treturn x == y\n}");
-      (("eq", "float64"), "func eq_eq_float64(x, y float64) bool {\n\treturn x == y\n}");
-      (* ord trait implementations - returns ordering enum *)
-      ( ("ord", "int64"),
-        "func ord_compare_int64(x, y int64) ordering {\n\tif x < y { return ordering_less() } else if x == y { return ordering_equal() } else { return ordering_greater() }\n}"
+      (("eq", "eq", "int64"), "func eq_eq_int64(x, y int64) bool {\n\treturn x == y\n}");
+      (("eq", "eq", "bool"), "func eq_eq_bool(x, y bool) bool {\n\treturn x == y\n}");
+      (("eq", "eq", "string"), "func eq_eq_string(x, y string) bool {\n\treturn x == y\n}");
+      (("eq", "eq", "float64"), "func eq_eq_float64(x, y float64) bool {\n\treturn x == y\n}");
+      (* ord trait implementations - returns Ordering enum *)
+      ( ("ord", "compare", "int64"),
+        "func ord_compare_int64(x, y int64) Ordering {\n\tif x < y { return Ordering_Less() } else if x == y { return Ordering_Equal() } else { return Ordering_Greater() }\n}"
       );
-      ( ("ord", "bool"),
-        "func ord_compare_bool(x, y bool) ordering {\n\tif !x && y { return ordering_less() } else if x == y { return ordering_equal() } else { return ordering_greater() }\n}"
+      ( ("ord", "compare", "bool"),
+        "func ord_compare_bool(x, y bool) Ordering {\n\tif !x && y { return Ordering_Less() } else if x == y { return Ordering_Equal() } else { return Ordering_Greater() }\n}"
       );
-      ( ("ord", "string"),
-        "func ord_compare_string(x, y string) ordering {\n\tif x < y { return ordering_less() } else if x == y { return ordering_equal() } else { return ordering_greater() }\n}"
+      ( ("ord", "compare", "string"),
+        "func ord_compare_string(x, y string) Ordering {\n\tif x < y { return Ordering_Less() } else if x == y { return Ordering_Equal() } else { return Ordering_Greater() }\n}"
       );
-      ( ("ord", "float64"),
-        "func ord_compare_float64(x, y float64) ordering {\n\tif x < y { return ordering_less() } else if x == y { return ordering_equal() } else { return ordering_greater() }\n}"
+      ( ("ord", "compare", "float64"),
+        "func ord_compare_float64(x, y float64) Ordering {\n\tif x < y { return Ordering_Less() } else if x == y { return Ordering_Equal() } else { return Ordering_Greater() }\n}"
       );
       (* hash trait implementations *)
-      (("hash", "int64"), "func hash_hash_int64(x int64) int64 {\n\treturn x\n}");
-      (("hash", "bool"), "func hash_hash_bool(x bool) int64 {\n\tif x { return 1 } else { return 0 }\n}");
-      ( ("hash", "string"),
+      (("hash", "hash", "int64"), "func hash_hash_int64(x int64) int64 {\n\treturn x\n}");
+      (("hash", "hash", "bool"), "func hash_hash_bool(x bool) int64 {\n\tif x { return 1 } else { return 0 }\n}");
+      ( ("hash", "hash", "string"),
         "func hash_hash_string(x string) int64 {\n\tvar h int64 = 0\n\tfor _, c := range x { h = h*31 + int64(c) }\n\treturn h\n}"
       );
       (* num trait implementations *)
-      ( ("num", "int64"),
-        "func num_add_int64(x, y int64) int64 {\n\treturn x + y\n}\nfunc num_sub_int64(x, y int64) int64 {\n\treturn x - y\n}\nfunc num_mul_int64(x, y int64) int64 {\n\treturn x * y\n}\nfunc num_div_int64(x, y int64) int64 {\n\treturn x / y\n}"
-      );
-      ( ("num", "float64"),
-        "func num_add_float64(x, y float64) float64 {\n\treturn x + y\n}\nfunc num_sub_float64(x, y float64) float64 {\n\treturn x - y\n}\nfunc num_mul_float64(x, y float64) float64 {\n\treturn x * y\n}\nfunc num_div_float64(x, y float64) float64 {\n\treturn x / y\n}"
-      );
+      (("num", "add", "int64"), "func num_add_int64(x, y int64) int64 {\n\treturn x + y\n}");
+      (("num", "sub", "int64"), "func num_sub_int64(x, y int64) int64 {\n\treturn x - y\n}");
+      (("num", "mul", "int64"), "func num_mul_int64(x, y int64) int64 {\n\treturn x * y\n}");
+      (("num", "div", "int64"), "func num_div_int64(x, y int64) int64 {\n\treturn x / y\n}");
+      (("num", "add", "float64"), "func num_add_float64(x, y float64) float64 {\n\treturn x + y\n}");
+      (("num", "sub", "float64"), "func num_sub_float64(x, y float64) float64 {\n\treturn x - y\n}");
+      (("num", "mul", "float64"), "func num_mul_float64(x, y float64) float64 {\n\treturn x * y\n}");
+      (("num", "div", "float64"), "func num_div_float64(x, y float64) float64 {\n\treturn x / y\n}");
       (* rem trait implementations *)
-      (("rem", "int64"), "func rem_rem_int64(x, y int64) int64 {\n\treturn x % y\n}");
+      (("rem", "rem", "int64"), "func rem_rem_int64(x, y int64) int64 {\n\treturn x % y\n}");
       (* neg trait implementations *)
-      (("neg", "int64"), "func neg_neg_int64(x int64) int64 {\n\treturn -x\n}");
-      (("neg", "float64"), "func neg_neg_float64(x float64) float64 {\n\treturn -x\n}");
+      (("neg", "neg", "int64"), "func neg_neg_int64(x int64) int64 {\n\treturn -x\n}");
+      (("neg", "neg", "float64"), "func neg_neg_float64(x float64) float64 {\n\treturn -x\n}");
     ]
   in
 
-  (* Filter out user-defined impls *)
   let needed_impls =
-    List.filter (fun ((trait_name, type_name), _code) -> not (is_user_defined trait_name type_name)) all_builtins
+    all_builtins
+    |> List.filter (fun ((trait_name, method_name, type_name), _code) ->
+           BuiltinImplUseSet.mem (trait_name, method_name, type_name) state.builtin_impl_uses
+           && not (is_user_defined trait_name type_name))
   in
+
+  if List.exists (fun ((trait_name, _method_name, _type_name), _code) -> trait_name = "ord") needed_impls then
+    track_enum_inst state (Types.TEnum ("Ordering", []));
 
   let impl_codes = List.map snd needed_impls in
   String.concat "\n\n" impl_codes
@@ -7723,9 +7965,6 @@ let emit_program_with_typed_env
       | _ -> ())
     program;
 
-  (* ordering is a builtin enum used by ord helpers and operator desugaring. *)
-  mono_state.enum_insts <- EnumInstSet.add ("ordering", []) mono_state.enum_insts;
-
   let emit_state = create_emit_state mono_state in
 
   (* Emit main body before specialized functions so concrete function-value uses
@@ -7760,9 +7999,6 @@ let emit_program_with_typed_env
     emit_pending InstSet.empty []
   in
 
-  (* Generate builtin trait impl functions *)
-  let builtin_impl_funcs = emit_builtin_impls program in
-
   (* Generate trait impl functions *)
   let impl_funcs =
     ImplInstSet.elements mono_state.impl_instantiations
@@ -7771,6 +8007,8 @@ let emit_program_with_typed_env
   in
   let inherent_funcs = emit_inherent_methods emit_state type_map typed_env program in
   let derived_impl_funcs = emit_registry_derived_impls emit_state program in
+  let trait_object_type_defs = emit_trait_object_type_defs mono_state type_map typed_env in
+  let builtin_impl_funcs = emit_builtin_impls mono_state program in
 
   (* Generate enum types AFTER all function body emissions so that
      method-generic specializations can register new enum instantiations *)
@@ -7783,7 +8021,6 @@ let emit_program_with_typed_env
 
   (* Generate record shape type definitions *)
   let record_shape_defs = emit_record_shape_defs mono_state in
-  let trait_object_type_defs = emit_trait_object_type_defs mono_state type_map typed_env in
 
   (* Build final output *)
   let type_defs =
@@ -7861,8 +8098,13 @@ let emit_program_with_typed_env
 
   Printf.sprintf "package main\n\n%s%s%sfunc main() {\n%s}\n" imports type_defs top_funcs main_body
 
+let builtin_env_with_traits () : Typecheck.Infer.type_env =
+  Typecheck.Builtins.init_builtin_traits ();
+  Typecheck.Builtins.init_builtin_impls ();
+  Typecheck.Builtins.builtin_value_env ()
+
 let emit_program (program : AST.program) : string =
-  let env = Typecheck.Builtins.prelude_env () in
+  let env = builtin_env_with_traits () in
   match Typecheck.Checker.check_program_with_annotations ~env program with
   | Error (err :: _) ->
       failwith
@@ -8008,7 +8250,7 @@ let compile_string ~file_id (source : string) : (string * Diagnostic.t list, Dia
   match Syntax.Parser.parse ~file_id source with
   | Error errors -> Error errors
   | Ok program -> (
-      let env = Typecheck.Builtins.prelude_env () in
+      let env = builtin_env_with_traits () in
       match Typecheck.Checker.check_program_with_annotations ~env program with
       | Error errs -> Error errs
       | Ok
@@ -8053,6 +8295,19 @@ let get_runtime () = runtime_go
 
 let string_contains s substring = String_utils.contains_substring ~needle:substring s
 let string_not_contains s substring = not (string_contains s substring)
+
+let count_occurrences haystack needle =
+  let nl = String.length needle in
+  let rec loop pos acc =
+    match String.index_from_opt haystack pos needle.[0] with
+    | None -> acc
+    | Some i ->
+        if i + nl <= String.length haystack && String.sub haystack i nl = needle then
+          loop (i + 1) (acc + 1)
+        else
+          loop (i + 1) acc
+  in
+  loop 0 0
 
 let is_deterministic source =
   let build () =
@@ -8564,7 +8819,7 @@ Ping.ping(v)
   match Syntax.Parser.parse ~file_id:"<codegen>" source with
   | Error _ -> false
   | Ok program -> (
-      let env = Typecheck.Builtins.prelude_env () in
+      let env = builtin_env_with_traits () in
       match Typecheck.Checker.check_program_with_annotations ~env program with
       | Error _ -> false
       | Ok
@@ -8907,6 +9162,34 @@ let%test "Dyn codegen runtime payload omits dead typeID metadata" =
   | Ok (code, _) -> (not (string_contains code "typeID string")) && not (string_contains code "typeID:")
   | Error _ -> false
 
+let%test "Dyn codegen emits derived helpers for generic default trait boxing" =
+  Fun.protect
+    ~finally:(fun () ->
+      Typecheck.Type_registry.clear ();
+      Typecheck.Trait_registry.clear ();
+      Typecheck.Builtins.init_builtin_impls ())
+    (fun () ->
+      Typecheck.Type_registry.clear ();
+      Typecheck.Trait_registry.clear ();
+      Typecheck.Builtins.init_builtin_impls ();
+      let source =
+        {|
+trait Boxed[a]: Show = {
+  fn box(self: a) -> Dyn[Show] = self
+}
+
+type Box[t] = { value: t } derive Boxed, Show
+
+let value = Boxed.box({value: 1})
+puts(Show.show(value))
+|}
+      in
+      match compile_string ~file_id:"<codegen>" source with
+      | Ok (code, _) ->
+          string_contains code "func show_show_record_value_int64_closed(x Record_value_int64) string"
+          && string_contains code "show_show_record_value_int64_closed(__receiver.(Record_value_int64))"
+      | Error _ -> false)
+
 let%test "primitive show/debug builtins use strconv helpers" =
   match compile_string ~file_id:"<codegen>" "let _ = Show.show(42)\nlet _ = Debug.debug(\"ok\")\n0" with
   | Ok (code, _) ->
@@ -8921,7 +9204,7 @@ let%test "Dyn codegen does not synthesize coercions without recorded metadata" =
   match Syntax.Parser.parse ~file_id:"<codegen>" source with
   | Error _ -> false
   | Ok program -> (
-      match Typecheck.Checker.check_program ~env:(Typecheck.Builtins.prelude_env ()) program with
+      match Typecheck.Checker.check_program ~env:(builtin_env_with_traits ()) program with
       | Error _ -> false
       | Ok
           {
@@ -9223,7 +9506,7 @@ puts(Show.show(1))
       match Syntax.Parser.parse ~file_id:"<codegen>" source with
       | Error _ -> false
       | Ok program -> (
-          let env = Typecheck.Builtins.prelude_env () in
+          let env = builtin_env_with_traits () in
           match Typecheck.Checker.check_program_with_annotations ~env program with
           | Error _ -> false
           | Ok
@@ -9281,25 +9564,31 @@ puts(Show.show([1, 2]))|}
           string_contains code "func show_show_arr_int64(" && string_not_contains code "func Show_show_arr_int64("
       | Error _ -> false)
 
-let%test "trait impl methods are emitted exactly once" =
-  (* Builtin show_show_int64 should appear exactly once as a function definition *)
+let%test "unused stdlib helpers are omitted from minimal program" =
   match compile_string ~file_id:"<codegen>" "puts(42)" with
   | Ok (code, _) ->
-      let count_occurrences haystack needle =
-        let nl = String.length needle in
-        let rec loop pos acc =
-          match String.index_from_opt haystack pos needle.[0] with
-          | None -> acc
-          | Some i ->
-              if i + nl <= String.length haystack && String.sub haystack i nl = needle then
-                loop (i + 1) (acc + 1)
-              else
-                loop (i + 1) acc
-        in
-        loop 0 0
-      in
-      (* Each builtin trait function should be defined exactly once *)
-      count_occurrences code "func show_show_int64(" = 1 && count_occurrences code "func eq_eq_int64(" = 1
+      string_not_contains code "type Option_union_empty struct"
+      && string_not_contains code "type Result_union_empty_union_empty struct"
+      && string_not_contains code "type Ordering struct"
+      && string_not_contains code "func show_show_int64("
+      && string_not_contains code "func eq_eq_int64("
+      && string_not_contains code "func ord_compare_int64("
+      && string_not_contains code "func num_add_int64("
+      && string_not_contains code "func rem_rem_int64("
+      && string_not_contains code "func neg_neg_int64("
+  | Error _ -> false
+
+let%test "explicit primitive trait calls emit only referenced builtin helpers" =
+  match compile_string ~file_id:"<codegen>" "puts(Show.show(42))\nputs(Eq.eq(1, 1))\nputs(Num.add(1, 2))" with
+  | Ok (code, _) ->
+      count_occurrences code "func show_show_int64(" = 1
+      && count_occurrences code "func eq_eq_int64(" = 1
+      && count_occurrences code "func num_add_int64(" = 1
+      && string_not_contains code "func num_sub_int64("
+      && string_not_contains code "func num_mul_int64("
+      && string_not_contains code "func num_div_int64("
+      && string_not_contains code "type Option_union_empty struct"
+      && string_not_contains code "type Result_union_empty_union_empty struct"
   | Error _ -> false
 
 (* ============================================================

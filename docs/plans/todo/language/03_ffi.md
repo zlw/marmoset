@@ -77,7 +77,7 @@ lib.fmt.println("hello")
 
 ```
 # lib/strconv.mr — wraps Go's strconv with Marmoset semantics
-# result[t, e] comes from prelude (always available, no import needed)
+# Result[T, E] comes from prelude (always available, no import needed)
 
 export parse_int
 

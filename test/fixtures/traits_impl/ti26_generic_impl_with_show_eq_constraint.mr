@@ -1,10 +1,4 @@
 # TI26: Generic impl with Show+Eq constraint
-trait Show[a] = {
-  fn show(x: a) -> Str
-}
-trait Eq[a] = {
-  fn eq(x: a, y: a) -> Bool
-}
 trait Describe[a] = {
   fn describe(x: a) -> Str
 }

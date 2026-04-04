@@ -1,0 +1,38 @@
+export Ordering, Eq, Show, Debug, Ord, Hash, Num, Rem, Neg
+
+type Ordering = { Less, Equal, Greater }
+
+trait Eq[a] = {
+  fn eq(x: a, y: a) -> Bool
+}
+
+trait Show[a] = {
+  fn show(x: a) -> Str
+}
+
+trait Debug[a] = {
+  fn debug(x: a) -> Str
+}
+
+trait Ord[a]: Eq = {
+  fn compare(x: a, y: a) -> Ordering
+}
+
+trait Hash[a] = {
+  fn hash(x: a) -> Int
+}
+
+trait Num[a] = {
+  fn add(x: a, y: a) -> a
+  fn sub(x: a, y: a) -> a
+  fn mul(x: a, y: a) -> a
+  fn div(x: a, y: a) -> a
+}
+
+trait Rem[a] = {
+  fn rem(x: a, y: a) -> a
+}
+
+trait Neg[a] = {
+  fn neg(x: a) -> a
+}

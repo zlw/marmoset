@@ -1,7 +1,4 @@
 # CM36: Generic impl resolves for concrete List[Int]
-trait Show[a] = {
-  fn show(x: a) -> Str
-}
 impl[b: Show] Show[List[b]] = {
   fn show(x: List[b]) -> Str = "ok"
 }

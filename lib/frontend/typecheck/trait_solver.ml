@@ -118,7 +118,8 @@ let rec check_trait_methods (typ : Types.mono_type) (trait_name : string) : (uni
       trait_error ~code:"type-trait-impl-resolution" (Printf.sprintf "Trait impl resolution failed: %s" msg)
   | Ok None ->
       trait_error ~code:"type-trait-missing-impl"
-        (Printf.sprintf "Type %s does not implement trait %s" (Types.to_string typ') trait_name)
+        (Printf.sprintf "Type %s does not implement trait %s" (Types.to_string typ')
+           (Trait_registry.display_trait_name trait_name))
   | Ok (Some resolved_impl) ->
       let rec check_generic_constraints = function
         | [] -> Ok ()
@@ -127,7 +128,8 @@ let rec check_trait_methods (typ : Types.mono_type) (trait_name : string) : (uni
             | None ->
                 trait_error ~code:"type-trait-specialization"
                   (Printf.sprintf "Generic impl for trait %s could not resolve parameter '%s' for type %s"
-                     trait_name p.name (Types.to_string typ'))
+                     (Trait_registry.display_trait_name trait_name)
+                     p.name (Types.to_string typ'))
             | Some concrete_param_type -> (
                 let concrete_param_type' = Types.canonicalize_mono_type concrete_param_type in
                 let rec check_param_constraints = function
@@ -144,7 +146,8 @@ let rec check_trait_methods (typ : Types.mono_type) (trait_name : string) : (uni
                                "Parameter '%s' resolved to type %s does not satisfy required constraint %s (%s)"
                                p.name
                                (Types.to_string concrete_param_type')
-                               constraint_name diag.message))
+                               (Trait_registry.display_constraint_name constraint_name)
+                               diag.message))
                 in
                 match check_param_constraints p.constraints with
                 | Ok () -> check_generic_constraints rest
@@ -154,7 +157,9 @@ let rec check_trait_methods (typ : Types.mono_type) (trait_name : string) : (uni
 
 and check_trait_self_requirements (typ : Types.mono_type) (trait_name : string) : (unit, Diagnostic.t) result =
   match Trait_registry.lookup_trait trait_name with
-  | None -> trait_error ~code:"type-trait-unknown" (Printf.sprintf "Unknown trait: %s" trait_name)
+  | None ->
+      trait_error ~code:"type-trait-unknown"
+        (Printf.sprintf "Unknown trait: %s" (Trait_registry.display_trait_name trait_name))
   | Some _ -> check_trait_methods typ trait_name
 
 and check_constraint_ref_with_superconstraints
@@ -185,7 +190,7 @@ and check_constraint_ref_with_superconstraints
                 trait_error ~code:"type-trait-missing-impl"
                   (Printf.sprintf "Type %s does not implement trait %s"
                      (Types.to_string (Types.canonicalize_mono_type typ))
-                     trait_name)
+                     (Trait_registry.display_trait_name trait_name))
           | _ -> check_trait_self_requirements typ trait_name
         in
         match trait_object_satisfies_target () with

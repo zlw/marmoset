@@ -439,8 +439,17 @@ and parse_block_stmt (p : parser) : (parser * Surface.surface_stmt, parser) resu
 (* Parse a single type atom (not union) *)
 and parse_type_atom (p : parser) : (parser * Surface.surface_type_expr, parser) result =
   if curr_token_is p Token.Ident then
-    let ident = p.curr_token.literal in
-    let p2 = next_token p in
+    let rec collect_dotted_type_name rev_segments lp =
+      if curr_token_is lp Token.Dot then
+        let lp2 = next_token lp in
+        if curr_token_is lp2 Token.Ident then
+          collect_dotted_type_name (lp2.curr_token.literal :: rev_segments) (next_token lp2)
+        else
+          Error (no_prefix_parse_fn_error lp2 lp2.curr_token.token_type)
+      else
+        Ok (lp, String.concat "." (List.rev rev_segments))
+    in
+    let* p2, ident = collect_dotted_type_name [ p.curr_token.literal ] (next_token p) in
     if ident = "Dyn" && curr_token_is p2 Token.LBracket then
       let* p3, traits = parse_constraint_list (next_token p2) in
       if curr_token_is p3 Token.RBracket then

@@ -1,7 +1,4 @@
 # T42: Generic impl constraints do not overflow with type param name a
-trait Show[a] = {
-  fn show(x: a) -> Str
-}
 impl[a: Show] Show[List[a]] = {
   fn show(x: List[a]) -> Str = "ok"
 }

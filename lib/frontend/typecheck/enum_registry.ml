@@ -29,7 +29,7 @@ let variant_type (enum_name : string) (variant_name : string) (type_args : mono_
   match lookup enum_name with
   | None -> None
   | Some def -> (
-      match List.find_opt (fun (v : variant_def) -> v.name = variant_name) def.variants with
+      match lookup_variant enum_name variant_name with
       | None -> None
       | Some variant ->
           (* Create substitution from type params to type args *)
@@ -51,20 +51,20 @@ let variant_type (enum_name : string) (variant_name : string) (type_args : mono_
 let init_builtins () =
   clear ();
 
-  (* option[a] = some(a) | none *)
+  (* Option[a] = Some(a) | None *)
   register
     {
-      name = "option";
+      name = "Option";
       type_params = [ "a" ];
-      variants = [ { name = "some"; fields = [ TVar "a" ] }; { name = "none"; fields = [] } ];
+      variants = [ { name = "Some"; fields = [ TVar "a" ] }; { name = "None"; fields = [] } ];
     };
 
-  (* result[a, e] = success(a) | failure(e) *)
+  (* Result[a, e] = Success(a) | Failure(e) *)
   register
     {
-      name = "result";
+      name = "Result";
       type_params = [ "a"; "e" ];
-      variants = [ { name = "success"; fields = [ TVar "a" ] }; { name = "failure"; fields = [ TVar "e" ] } ];
+      variants = [ { name = "Success"; fields = [ TVar "a" ] }; { name = "Failure"; fields = [ TVar "e" ] } ];
     }
 
 (* Tests *)
@@ -85,33 +85,44 @@ let%test "lookup_variant finds variant" =
   clear ();
   register
     {
-      name = "option";
+      name = "Option";
       type_params = [ "a" ];
-      variants = [ { name = "some"; fields = [ TVar "a" ] }; { name = "none"; fields = [] } ];
+      variants = [ { name = "Some"; fields = [ TVar "a" ] }; { name = "None"; fields = [] } ];
     };
-  match lookup_variant "option" "some" with
+  match lookup_variant "Option" "Some" with
   | None -> false
-  | Some v -> v.name = "some" && List.length v.fields = 1
+  | Some v -> v.name = "Some" && List.length v.fields = 1
 
 let%test "lookup_variant returns none for unknown" =
   clear ();
-  register { name = "option"; type_params = [ "a" ]; variants = [ { name = "some"; fields = [ TVar "a" ] } ] };
-  lookup_variant "option" "none" = None
+  register { name = "Option"; type_params = [ "a" ]; variants = [ { name = "Some"; fields = [ TVar "a" ] } ] };
+  lookup_variant "Option" "None" = None
+
+let%test "lookup_variant does not accept lowercase builtin variant aliases" =
+  clear ();
+  register
+    {
+      name = "Ordering";
+      type_params = [];
+      variants =
+        [ { name = "Less"; fields = [] }; { name = "Equal"; fields = [] }; { name = "Greater"; fields = [] } ];
+    };
+  lookup_variant "Ordering" "less" = None
 
 let%test "variant_type for nullary constructor" =
   clear ();
-  register { name = "option"; type_params = [ "a" ]; variants = [ { name = "none"; fields = [] } ] };
-  match variant_type "option" "none" [ TInt ] with
+  register { name = "Option"; type_params = [ "a" ]; variants = [ { name = "None"; fields = [] } ] };
+  match variant_type "Option" "None" [ TInt ] with
   | None -> false
-  | Some t -> t = TEnum ("option", [ TInt ])
+  | Some t -> t = TEnum ("Option", [ TInt ])
 
 let%test "variant_type for unary constructor" =
   clear ();
-  register { name = "option"; type_params = [ "a" ]; variants = [ { name = "some"; fields = [ TVar "a" ] } ] };
-  match variant_type "option" "some" [ TInt ] with
+  register { name = "Option"; type_params = [ "a" ]; variants = [ { name = "Some"; fields = [ TVar "a" ] } ] };
+  match variant_type "Option" "Some" [ TInt ] with
   | None -> false
-  | Some t -> t = tfun TInt (TEnum ("option", [ TInt ]))
+  | Some t -> t = tfun TInt (TEnum ("Option", [ TInt ]))
 
 let%test "init_builtins registers option and result" =
   init_builtins ();
-  lookup "option" <> None && lookup "result" <> None
+  lookup "Option" <> None && lookup "Result" <> None

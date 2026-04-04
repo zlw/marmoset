@@ -50,21 +50,6 @@ let builtin_types : (string * poly_type) list =
    Builtin Traits
    ============================================================ *)
 
-(* Register the ordering enum used by ord trait *)
-let init_builtin_enums () =
-  (* enum ordering { less equal greater } *)
-  Enum_registry.register
-    {
-      Enum_registry.name = "ordering";
-      type_params = [];
-      variants =
-        [
-          { Enum_registry.name = "less"; fields = [] };
-          { Enum_registry.name = "equal"; fields = [] };
-          { Enum_registry.name = "greater"; fields = [] };
-        ];
-    }
-
 (* Register builtin traits in the global registry *)
 let init_builtin_traits () =
   (* trait eq[a] { fn eq(x: a, y: a) -> bool } *)
@@ -101,7 +86,7 @@ let init_builtin_traits () =
         [ Trait_registry.mk_method_sig ~name:"debug" ~params:[ ("x", TVar "a") ] ~return_type:TString () ];
     };
 
-  (* trait ord[a]: eq { fn compare(x: a, y: a) -> ordering } *)
+  (* trait ord[a]: eq { fn compare(x: a, y: a) -> Ordering } *)
   Trait_registry.register_trait
     {
       trait_name = "ord";
@@ -111,7 +96,7 @@ let init_builtin_traits () =
         [
           Trait_registry.mk_method_sig ~name:"compare"
             ~params:[ ("x", TVar "a"); ("y", TVar "a") ]
-            ~return_type:(TEnum ("ordering", []))
+            ~return_type:(TEnum ("Ordering", []))
             ();
         ];
     };
@@ -220,7 +205,7 @@ let init_builtin_impls () =
         [
           Trait_registry.mk_method_sig ~name:"compare"
             ~params:[ ("x", TInt); ("y", TInt) ]
-            ~return_type:(TEnum ("ordering", []))
+            ~return_type:(TEnum ("Ordering", []))
             ();
         ];
     };
@@ -310,7 +295,7 @@ let init_builtin_impls () =
         [
           Trait_registry.mk_method_sig ~name:"compare"
             ~params:[ ("x", TBool); ("y", TBool) ]
-            ~return_type:(TEnum ("ordering", []))
+            ~return_type:(TEnum ("Ordering", []))
             ();
         ];
     };
@@ -368,7 +353,7 @@ let init_builtin_impls () =
         [
           Trait_registry.mk_method_sig ~name:"compare"
             ~params:[ ("x", TString); ("y", TString) ]
-            ~return_type:(TEnum ("ordering", []))
+            ~return_type:(TEnum ("Ordering", []))
             ();
         ];
     };
@@ -424,7 +409,7 @@ let init_builtin_impls () =
         [
           Trait_registry.mk_method_sig ~name:"compare"
             ~params:[ ("x", TFloat); ("y", TFloat) ]
-            ~return_type:(TEnum ("ordering", []))
+            ~return_type:(TEnum ("Ordering", []))
             ();
         ];
     };
@@ -453,13 +438,10 @@ let init_builtin_impls () =
       impl_methods = [ Trait_registry.mk_method_sig ~name:"neg" ~params:[ ("x", TFloat) ] ~return_type:TFloat () ];
     }
 
-(* Create a type environment with all builtins *)
-let prelude_env () : Infer.type_env =
-  (* Initialize builtin enums, traits, and impls on first call *)
-  init_builtin_enums ();
-  init_builtin_traits ();
-  init_builtin_impls ();
-  List.fold_left (fun env (name, poly) -> Infer.TypeEnv.add name poly env) Infer.empty_env builtin_types
+let seed_builtin_values (env : Infer.type_env) : Infer.type_env =
+  List.fold_left (fun env_acc (name, poly) -> Infer.TypeEnv.add name poly env_acc) env builtin_types
+
+let builtin_value_env () : Infer.type_env = seed_builtin_values Infer.empty_env
 
 (* ============================================================
    Tests
@@ -469,8 +451,8 @@ let%test "builtin_types has all builtins" =
   let names = List.map fst builtin_types in
   List.for_all (fun name -> List.mem name names) [ "len"; "first"; "last"; "rest"; "push"; "puts" ]
 
-let%test "prelude_env creates valid environment" =
-  let env = prelude_env () in
+let%test "builtin_value_env creates valid environment" =
+  let env = builtin_value_env () in
   Infer.TypeEnv.cardinal env = 6
 
 let%test "builtin traits are registered" =

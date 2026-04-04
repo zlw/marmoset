@@ -1,3 +1,6 @@
-# E81: Builtin Result not available without explicit declaration
-let x = Result.success(100)  # error: Unbound
-puts(x)
+# E81: Toolchain stdlib exposes Result with canonical constructors
+let x: Result[Int, Str] = Result.Success(100)
+match x {
+  case Result.Success(value): puts(value)  # output: 100
+  case Result.Failure(_): puts(0)
+}

@@ -58,6 +58,7 @@ These may be threaded as one record with distinct fields rather than as separate
 
 Visibility rules:
 - `import math` introduces a module binding only.
+- `import collections.list` introduces the leaf module binding `list`.
 - `import math.add` introduces a value binding only.
 - `import math.Point` introduces a named-type binding only.
 - `import math.Show` introduces a trait binding only.
@@ -153,7 +154,7 @@ import math.Point               # direct: Point available as type name
 import math.Point as Pt         # aliased: Pt instead of Point
 import math.Points              # direct: Points available as transparent type name
 import math.HasXY               # direct: HasXY available as shape name
-import collections.list         # nested module: collections.list.map(...)
+import collections.list         # nested module: list.map(...)
 import collections.list as l    # aliased namespace: l.map(...)
 import instances.show_point     # direct-imports trait/type impls from that module into this file only
 
@@ -388,6 +389,7 @@ Note: values, nominal named types, transparent `type` declarations, shapes, and 
    - Verify imported names exist and are exported where export visibility applies
    - Build the module's initial scope record:
      - `import math` → bind `"math"` as a namespace binding
+     - `import collections.list` → bind `"list"` as a namespace binding
      - `import math.add` → bind `"add"` in the value space
      - `import math.Point as Pt` → bind `"Pt"` in the named-type space
    - Record directly imported modules whose trait impls and type impls are visible in this file

@@ -5,7 +5,7 @@ trait Show[a] = {
 impl Show[Int] = {
   fn show(x: Int) -> Str = "first"
 }
-impl Show[Int] = {  # error: Duplicate impl for trait 'show' and type Int
+impl Show[Int] = {  # error: Duplicate impl registration for trait 'show' and type Int
   fn show(x: Int) -> Str = "second"
 }
 42

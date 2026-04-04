@@ -1,0 +1,10 @@
+import types.geo
+import types.wrappers
+
+let p: geo.Point = { x: 1, y: 2 }
+let q: geo.HasXY = p
+let xs: wrappers.Users = wrappers.empty_users()
+
+puts(geo.render_point(p))  # output: point
+puts(q.x + q.y)  # output: 3
+puts(wrappers.count_users(xs))  # output: 0

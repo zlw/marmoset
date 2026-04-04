@@ -7,7 +7,7 @@
 - Update trigger: Any module-system, stdlib collections API, pipe/placeholder semantics, or Go backend codegen change
 - Prerequisites:
   - `docs/plans/done/language/06_module-system.md`
-  - `docs/plans/todo/language/02_prelude.md`
+  - `docs/plans/done/language/07_prelude.md`
   - `docs/plans/todo/language/03_ffi.md`
   - `docs/plans/todo/language/04_stdlib.md`
 

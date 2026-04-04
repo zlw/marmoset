@@ -5,7 +5,7 @@ impl Eq[Rank] = {
 }
 impl Ord[Rank] = {
   fn compare(x: Rank, y: Rank) -> Ordering = {
-    ordering.less
+    Ordering.Less
   }
 }
 puts(Rank.High < Rank.Low)  # output: true
