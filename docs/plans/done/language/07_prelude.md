@@ -24,7 +24,7 @@ Users must redefine `type Option[a] = { Some(a), None }` and `type Result[a, e] 
 5. **Option/Result live in their own stdlib modules and expose inherent methods.** `Option` is defined in `std.option`, `Result` in `std.result`, and helper APIs (`unwrap_or`, `map`, `bind`, `value_or`, `or`, etc.) are implemented as inherent methods on those nominal types.
 6. **`Rem` is core prelude surface.** The `%` operator remains driven by the `Rem` trait, so `trait Rem[a]` ships in `std/prelude.mr` alongside `Num` and `Neg`.
 7. **One compilation pipeline, no compiler fallback.** Headerless single-file programs do not keep a separate prelude/builtin shortcut. All file-backed entry files go through the same project discovery + compiler orchestration path, and missing required toolchain stdlib files are a hard error.
-8. **Split builtin bootstrap responsibilities explicitly.** Replace the current monolithic `Builtins.prelude_env()` behavior with separate helpers for builtin value bindings, standalone helper/test enum+trait seeding, and builtin primitive impl registration so compiler and tests can control them independently.
+8. **Split builtin bootstrap responsibilities explicitly.** Replace the current monolithic `Builtins.prelude_env()` behavior with separate helpers for builtin value bindings, builtin trait declarations, and builtin primitive impl registration so compiler and tests can control them independently.
 
 ---
 
@@ -136,7 +136,7 @@ Core declarations stay small. `Option` and `Result` live in `std.option` / `std.
 - Inject prelude signature into each module's compilation context
 - `lib/frontend/typecheck/builtins.ml`: split `prelude_env()` into explicit responsibilities:
   - builtin value environment for `puts`, `len`, `first`, `last`, `rest`, `push`
-  - standalone helper/test enum+trait seeding
+  - builtin trait declarations
   - builtin primitive impl registration
 - `lib/frontend/typecheck/checker.ml`, `lib/frontend/typecheck/annotation.ml`, and `lib/backend/go/emitter.ml`: update helper/test setup code that currently assumes one builtin bootstrap call registers everything
 
@@ -163,7 +163,7 @@ Core declarations stay small. `Option` and `Result` live in `std.option` / `std.
 - Headerless single-file entrypoints use the same prelude-aware compilation path as module-based entrypoints
 - Existing tests with local `enum Option[a] = { Some(a), None }` still pass until the fixture migration prefers canonical `type` examples
 - Missing required toolchain stdlib files fail with a clear `stdlib-not-found` diagnostic
-- Unit/helper setup that previously called `Builtins.prelude_env()` or `Enum_registry.init_builtins()` directly is updated to use the split bootstrap helpers
+- Unit/helper setup that previously called `Builtins.prelude_env()` or `Enum_registry.init_builtins()` directly is updated to use the remaining explicit bootstrap helpers instead of compiler-side enum fallback
 
 **Gate:** `make unit && make integration` green.
 

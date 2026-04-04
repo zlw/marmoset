@@ -8098,8 +8098,13 @@ let emit_program_with_typed_env
 
   Printf.sprintf "package main\n\n%s%s%sfunc main() {\n%s}\n" imports type_defs top_funcs main_body
 
+let builtin_env_with_traits () : Typecheck.Infer.type_env =
+  Typecheck.Builtins.init_builtin_traits ();
+  Typecheck.Builtins.init_builtin_impls ();
+  Typecheck.Builtins.builtin_value_env ()
+
 let emit_program (program : AST.program) : string =
-  let env = Typecheck.Builtins.prelude_env () in
+  let env = builtin_env_with_traits () in
   match Typecheck.Checker.check_program_with_annotations ~env program with
   | Error (err :: _) ->
       failwith
@@ -8245,7 +8250,7 @@ let compile_string ~file_id (source : string) : (string * Diagnostic.t list, Dia
   match Syntax.Parser.parse ~file_id source with
   | Error errors -> Error errors
   | Ok program -> (
-      let env = Typecheck.Builtins.prelude_env () in
+      let env = builtin_env_with_traits () in
       match Typecheck.Checker.check_program_with_annotations ~env program with
       | Error errs -> Error errs
       | Ok
@@ -8814,7 +8819,7 @@ Ping.ping(v)
   match Syntax.Parser.parse ~file_id:"<codegen>" source with
   | Error _ -> false
   | Ok program -> (
-      let env = Typecheck.Builtins.prelude_env () in
+      let env = builtin_env_with_traits () in
       match Typecheck.Checker.check_program_with_annotations ~env program with
       | Error _ -> false
       | Ok
@@ -9199,7 +9204,7 @@ let%test "Dyn codegen does not synthesize coercions without recorded metadata" =
   match Syntax.Parser.parse ~file_id:"<codegen>" source with
   | Error _ -> false
   | Ok program -> (
-      match Typecheck.Checker.check_program ~env:(Typecheck.Builtins.prelude_env ()) program with
+      match Typecheck.Checker.check_program ~env:(builtin_env_with_traits ()) program with
       | Error _ -> false
       | Ok
           {
@@ -9501,7 +9506,7 @@ puts(Show.show(1))
       match Syntax.Parser.parse ~file_id:"<codegen>" source with
       | Error _ -> false
       | Ok program -> (
-          let env = Typecheck.Builtins.prelude_env () in
+          let env = builtin_env_with_traits () in
           match Typecheck.Checker.check_program_with_annotations ~env program with
           | Error _ -> false
           | Ok

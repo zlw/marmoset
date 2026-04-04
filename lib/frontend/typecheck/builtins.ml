@@ -50,42 +50,6 @@ let builtin_types : (string * poly_type) list =
    Builtin Traits
    ============================================================ *)
 
-(* Seed only the core stdlib enums needed by standalone helpers and direct checker tests.
-   Normal module compilation loads these from toolchain `std/*.mr` files instead. *)
-let seed_standalone_core_enums () =
-  (* type Ordering = { Less, Equal, Greater } *)
-  Enum_registry.register
-    {
-      Enum_registry.name = "Ordering";
-      type_params = [];
-      variants =
-        [
-          { Enum_registry.name = "Less"; fields = [] };
-          { Enum_registry.name = "Equal"; fields = [] };
-          { Enum_registry.name = "Greater"; fields = [] };
-        ];
-    };
-
-  (* type Option[a] = { Some(a), None } *)
-  Enum_registry.register
-    {
-      Enum_registry.name = "Option";
-      type_params = [ "a" ];
-      variants = [ { Enum_registry.name = "Some"; fields = [ TVar "a" ] }; { Enum_registry.name = "None"; fields = [] } ];
-    };
-
-  (* type Result[a, e] = { Success(a), Failure(e) } *)
-  Enum_registry.register
-    {
-      Enum_registry.name = "Result";
-      type_params = [ "a"; "e" ];
-      variants =
-        [
-          { Enum_registry.name = "Success"; fields = [ TVar "a" ] };
-          { Enum_registry.name = "Failure"; fields = [ TVar "e" ] };
-        ];
-    }
-
 (* Register builtin traits in the global registry *)
 let init_builtin_traits () =
   (* trait eq[a] { fn eq(x: a, y: a) -> bool } *)
@@ -479,16 +443,6 @@ let seed_builtin_values (env : Infer.type_env) : Infer.type_env =
 
 let builtin_value_env () : Infer.type_env = seed_builtin_values Infer.empty_env
 
-let register_builtin_prelude_fallback () : unit =
-  seed_standalone_core_enums ();
-  init_builtin_traits ()
-
-(* Legacy wrapper kept for direct single-file helpers; compiler bootstrap now uses the split helpers explicitly. *)
-let prelude_env () : Infer.type_env =
-  register_builtin_prelude_fallback ();
-  init_builtin_impls ();
-  builtin_value_env ()
-
 (* ============================================================
    Tests
    ============================================================ *)
@@ -497,8 +451,8 @@ let%test "builtin_types has all builtins" =
   let names = List.map fst builtin_types in
   List.for_all (fun name -> List.mem name names) [ "len"; "first"; "last"; "rest"; "push"; "puts" ]
 
-let%test "prelude_env creates valid environment" =
-  let env = prelude_env () in
+let%test "builtin_value_env creates valid environment" =
+  let env = builtin_value_env () in
   Infer.TypeEnv.cardinal env = 6
 
 let%test "builtin traits are registered" =

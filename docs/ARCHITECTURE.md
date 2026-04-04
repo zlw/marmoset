@@ -103,7 +103,7 @@ Responsibilities:
 
 Bootstrap policy:
 - File-backed module compilation no longer has a compiler-visible builtin prelude fallback. Missing required stdlib files are a hard error.
-- `builtins.ml` splits bootstrap into independent steps: builtin value bindings (`puts`, `len`, etc.), core enum/trait seeding for standalone helpers/tests, and builtin primitive impl registration.
+- `builtins.ml` now only owns builtin value bindings (`puts`, `len`, etc.), builtin trait declarations, and builtin primitive impl registration. Core stdlib enums come from toolchain `std/*.mr`, not compiler-side fallback seeding.
 - `std.option` and `std.result` are ordinary stdlib modules. `Option` / `Result` live there, and their utility APIs are exposed as inherent methods on those nominal types.
 
 Pros:

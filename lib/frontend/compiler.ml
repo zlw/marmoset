@@ -29,16 +29,20 @@ type checked_module = {
   locals : Module_sig.module_locals;
 }
 
-type compiled_project = {
-  modules : checked_module list;
-  program : AST.program;
-  environment : Infer.type_env;
+type project_resolution_artifacts = {
   type_map : Infer.type_map;
   call_resolution_map : (int, Infer.method_resolution) Hashtbl.t;
   method_type_args_map : (int, Types.mono_type list) Hashtbl.t;
   method_def_map : (int, Typecheck.Resolution_artifacts.typed_method_def) Hashtbl.t;
   trait_object_coercion_map : (int, Typecheck.Resolution_artifacts.trait_object_coercion) Hashtbl.t;
   placeholder_rewrite_map : Infer.placeholder_rewrite_map;
+}
+
+type compiled_project = {
+  modules : checked_module list;
+  program : AST.program;
+  environment : Infer.type_env;
+  artifacts : project_resolution_artifacts;
   symbol_table : (Infer.symbol_id * Infer.symbol) list;
   identifier_symbols : (int * Infer.symbol_id) list;
   diagnostics : Diagnostic.t list;
@@ -73,6 +77,31 @@ type entry_analysis = {
 let ( let* ) = Result.bind
 let compiler_error ~(code : string) ~(message : string) : Diagnostic.t = Diagnostic.error_no_span ~code ~message
 let merge_hashtbl dst src = Hashtbl.iter (fun key value -> Hashtbl.replace dst key value) src
+
+let builtin_env_with_traits () : Infer.type_env =
+  Builtins.init_builtin_traits ();
+  Builtins.init_builtin_impls ();
+  Builtins.builtin_value_env ()
+
+let create_project_resolution_artifacts () : project_resolution_artifacts =
+  {
+    type_map = Hashtbl.create 512;
+    call_resolution_map = Hashtbl.create 256;
+    method_type_args_map = Hashtbl.create 128;
+    method_def_map = Hashtbl.create 128;
+    trait_object_coercion_map = Hashtbl.create 128;
+    placeholder_rewrite_map = Hashtbl.create 128;
+  }
+
+let merge_project_resolution_artifacts
+    (dst : project_resolution_artifacts)
+    (result : Checker.typecheck_result) : unit =
+  merge_hashtbl dst.type_map result.type_map;
+  merge_hashtbl dst.call_resolution_map result.call_resolution_map;
+  merge_hashtbl dst.method_type_args_map result.method_type_args_map;
+  merge_hashtbl dst.method_def_map result.method_def_map;
+  merge_hashtbl dst.trait_object_coercion_map result.trait_object_coercion_map;
+  merge_hashtbl dst.placeholder_rewrite_map result.placeholder_rewrite_map
 
 let diagnostics_have_errors (diagnostics : Diagnostic.t list) : bool =
   List.exists (fun (diag : Diagnostic.t) -> diag.severity = Diagnostic.Error) diagnostics
@@ -616,23 +645,13 @@ let merge_checked_modules (modules : checked_module list) : compiled_project =
         Infer.TypeEnv.union (fun _ existing _ -> Some existing) env_acc m.result.environment)
       Infer.empty_env modules
   in
-  let type_map = Hashtbl.create 512 in
-  let call_resolution_map = Hashtbl.create 256 in
-  let method_type_args_map = Hashtbl.create 128 in
-  let method_def_map = Hashtbl.create 128 in
-  let trait_object_coercion_map = Hashtbl.create 128 in
-  let placeholder_rewrite_map = Hashtbl.create 128 in
+  let artifacts = create_project_resolution_artifacts () in
   let symbol_table = Hashtbl.create 256 in
   let identifier_symbols = Hashtbl.create 256 in
   let diagnostics = modules |> List.concat_map (fun (m : checked_module) -> m.result.diagnostics) in
   List.iter
     (fun (m : checked_module) ->
-      merge_hashtbl type_map m.result.type_map;
-      merge_hashtbl call_resolution_map m.result.call_resolution_map;
-      merge_hashtbl method_type_args_map m.result.method_type_args_map;
-      merge_hashtbl method_def_map m.result.method_def_map;
-      merge_hashtbl trait_object_coercion_map m.result.trait_object_coercion_map;
-      merge_hashtbl placeholder_rewrite_map m.result.placeholder_rewrite_map;
+      merge_project_resolution_artifacts artifacts m.result;
       List.iter (fun (symbol_id, symbol) -> Hashtbl.replace symbol_table symbol_id symbol) m.result.symbol_table;
       List.iter
         (fun (expr_id, symbol_id) -> Hashtbl.replace identifier_symbols expr_id symbol_id)
@@ -642,12 +661,7 @@ let merge_checked_modules (modules : checked_module list) : compiled_project =
     modules;
     program;
     environment;
-    type_map;
-    call_resolution_map;
-    method_type_args_map;
-    method_def_map;
-    trait_object_coercion_map;
-    placeholder_rewrite_map;
+    artifacts;
     symbol_table = Hashtbl.to_seq symbol_table |> List.of_seq;
     identifier_symbols = Hashtbl.to_seq identifier_symbols |> List.of_seq;
     diagnostics;
@@ -726,11 +740,13 @@ let emit_compiled_project (project : compiled_project) : (Codegen.build_output, 
   in
   try
     let main_go =
-      Codegen.emit_program_with_typed_env ~call_resolution_map:project.call_resolution_map
-        ~method_type_args_map:project.method_type_args_map ~method_def_map:project.method_def_map
-        ~trait_object_coercion_map:project.trait_object_coercion_map
-        ~placeholder_rewrite_map:project.placeholder_rewrite_map project.type_map project.environment
-        project.program
+      Codegen.emit_program_with_typed_env
+        ~call_resolution_map:project.artifacts.call_resolution_map
+        ~method_type_args_map:project.artifacts.method_type_args_map
+        ~method_def_map:project.artifacts.method_def_map
+        ~trait_object_coercion_map:project.artifacts.trait_object_coercion_map
+        ~placeholder_rewrite_map:project.artifacts.placeholder_rewrite_map
+        project.artifacts.type_map project.environment project.program
     in
     Ok { Codegen.main_go; runtime_go = Codegen.get_runtime (); diagnostics = project.diagnostics }
   with
@@ -825,7 +841,7 @@ let find_export_binding (analysis : entry_analysis) ~(module_id : string) ~(surf
 let analyze_standalone_program ?source_root ~(entry_file : string) ~(source : string) (program : AST.program) :
     entry_analysis =
   reset_module_state ();
-  let env = Builtins.prelude_env () in
+  let env = builtin_env_with_traits () in
   let state = Infer.create_inference_state () in
   match Checker.check_program_with_annotations ~state ~env program with
   | Error diags ->
