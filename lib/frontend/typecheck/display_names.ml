@@ -15,9 +15,9 @@ let unescape_internal_component (name : string) : string =
       && is_hex name.[idx + 3]
       && is_hex name.[idx + 4]
       && is_hex name.[idx + 5]
-    then
+    then (
       let hex = String.sub name (idx + 2) 4 in
-      (match int_of_string_opt ("0x" ^ hex) with
+      match int_of_string_opt ("0x" ^ hex) with
       | Some code when code >= 0 && code <= 255 ->
           Buffer.add_char buffer (Char.chr code);
           go (idx + 6)
@@ -54,4 +54,9 @@ let%test "display_binding_name strips module prefixes and unmangles suffixes" =
   display_binding_name "std__result__Result_u0021" = "Result!"
 
 let%test "display_trait_name restores builtin source-facing names" =
-  display_trait_name ~builtin_trait_internal_name:(function "show" -> Some "Show" | _ -> None) "show" = "Show"
+  display_trait_name
+    ~builtin_trait_internal_name:(function
+      | "show" -> Some "Show"
+      | _ -> None)
+    "show"
+  = "Show"

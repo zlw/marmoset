@@ -697,10 +697,7 @@ let builtin_impl_keys : StringPairSet.t =
     ]
 
 let register_builtin_impl_use
-    (state : mono_state)
-    ~(trait_name : string)
-    ~(method_name : string)
-    ~(for_type : Types.mono_type) : unit =
+    (state : mono_state) ~(trait_name : string) ~(method_name : string) ~(for_type : Types.mono_type) : unit =
   let trait_name = canonical_codegen_trait_name trait_name in
   let normalized_for_type =
     normalize_type_for_codegen ~concrete_only:state.concrete_only (Types.canonicalize_mono_type for_type)
@@ -717,9 +714,7 @@ let register_inherent_call_use
     ~(method_name : string)
     ~(receiver_type : Types.mono_type)
     ~(method_type_args : Types.mono_type list) : unit =
-  let has_free_type_vars (typ : Types.mono_type) =
-    not (Types.TypeVarSet.is_empty (Types.free_type_vars typ))
-  in
+  let has_free_type_vars (typ : Types.mono_type) = not (Types.TypeVarSet.is_empty (Types.free_type_vars typ)) in
   let receiver_type = Types.canonicalize_mono_type receiver_type in
   let method_type_args = List.map Types.canonicalize_mono_type method_type_args in
   if
@@ -750,8 +745,8 @@ let register_trait_object_adapter_instance
   state.trait_object_adapter_insts <-
     TraitObjectAdapterInstSet.add (normalized_source_type, normalized_traits) state.trait_object_adapter_insts
 
-let register_registry_derived_impl_use
-    (state : mono_state) ~(trait_name : string) ~(for_type : Types.mono_type) : unit =
+let register_registry_derived_impl_use (state : mono_state) ~(trait_name : string) ~(for_type : Types.mono_type) :
+    unit =
   let trait_name = canonical_codegen_trait_name trait_name in
   let normalized_for_type =
     normalize_type_for_codegen ~concrete_only:state.concrete_only (Types.canonicalize_mono_type for_type)
@@ -760,11 +755,9 @@ let register_registry_derived_impl_use
     ( Typecheck.Trait_registry.lookup_impl trait_name normalized_for_type,
       Typecheck.Trait_registry.lookup_impl_origin trait_name normalized_for_type )
   with
-  | ( Some impl,
-      Some Typecheck.Trait_registry.BuiltinDerivedImpl )
+  | Some impl, Some Typecheck.Trait_registry.BuiltinDerivedImpl
     when Option.is_some (Typecheck.Trait_registry.derive_kind_for_impl impl) ->
-      state.derived_impl_uses <-
-        DerivedImplUseSet.add (trait_name, normalized_for_type) state.derived_impl_uses
+      state.derived_impl_uses <- DerivedImplUseSet.add (trait_name, normalized_for_type) state.derived_impl_uses
   | _ -> ()
 
 let synthetic_helper_suffix (expr_id : int) : string =
@@ -3239,9 +3232,7 @@ and register_trait_object_support_use
     (env : Infer.type_env)
     ~(source_expr : AST.expression)
     ~(target_traits : string list) : unit =
-  let source_type =
-    Types.canonicalize_mono_type (get_type type_map source_expr)
-  in
+  let source_type = Types.canonicalize_mono_type (get_type type_map source_expr) in
   register_trait_object_support_for_type state type_map env ~source_type ~target_traits
 
 and collect_insts_expr
@@ -3517,12 +3508,15 @@ and collect_insts_expr
               match Types.canonicalize_mono_type result_field.typ with
               | Types.TTraitObject target_traits -> (
                   match
-                    List.find_opt (fun (field : Types.record_field_type) -> field.name = result_field.name) spread_fields
+                    List.find_opt
+                      (fun (field : Types.record_field_type) -> field.name = result_field.name)
+                      spread_fields
                   with
                   | Some source_field -> (
                       match Types.canonicalize_mono_type source_field.typ with
                       | Types.TTraitObject source_traits
-                        when Types.normalize_trait_object_traits source_traits = target_traits -> ()
+                        when Types.normalize_trait_object_traits source_traits = target_traits ->
+                          ()
                       | source_type ->
                           register_trait_object_support_for_type state type_map env ~source_type ~target_traits)
                   | None -> ())
@@ -4149,8 +4143,7 @@ let rec emit_expr
           | Types.TRecord (f, row) -> normalize_record_row_type f row
           | _ ->
               failwith
-                (Printf.sprintf
-                   "Record literal expected record type, got %s (expr id %d, file %s, span %d-%d)"
+                (Printf.sprintf "Record literal expected record type, got %s (expr id %d, file %s, span %d-%d)"
                    (Types.to_string record_type) expr.id
                    (Option.value expr.file_id ~default:"<unknown>")
                    expr.pos expr.end_pos)
@@ -4366,8 +4359,7 @@ let rec emit_expr
                 register_inherent_call_use ~allow_erased_unresolved:true state.mono ~method_name:variant_name
                   ~receiver_type:raw_receiver_type ~method_type_args;
                 let first_arg_type =
-                  normalize_type_for_codegen ~concrete_only:state.mono.concrete_only
-                    raw_receiver_type
+                  normalize_type_for_codegen ~concrete_only:state.mono.concrete_only raw_receiver_type
                 in
                 let type_suffix = type_suffix_with_mta first_arg_type in
                 let func_name = inherent_method_func_name variant_name type_suffix in
@@ -4397,8 +4389,7 @@ let rec emit_expr
                 register_inherent_call_use ~allow_erased_unresolved:true state.mono ~method_name:variant_name
                   ~receiver_type:raw_receiver_type ~method_type_args;
                 let receiver_type =
-                  normalize_type_for_codegen ~concrete_only:state.mono.concrete_only
-                    raw_receiver_type
+                  normalize_type_for_codegen ~concrete_only:state.mono.concrete_only raw_receiver_type
                 in
                 let type_suffix = type_suffix_with_mta receiver_type in
                 let func_name = inherent_method_func_name variant_name type_suffix in
@@ -6699,9 +6690,13 @@ let emit_specialized_func
       Infer.with_inference_state infer_state (fun () ->
           let known_param_types = List.mapi (fun idx param_type -> (idx, param_type)) inst.concrete_types in
           let params = List.map (fun param_name -> (param_name, None)) param_names in
-          Infer.type_callable inferred_map provisional_env_with_func ~type_bindings:[] ~known_param_types
-            ~params ~return_annot:None ~known_return:(Some inst.return_type)
-            ~effect_annot:(if arrow_is_effectful then `Effectful else `Unspecified)
+          Infer.type_callable inferred_map provisional_env_with_func ~type_bindings:[] ~known_param_types ~params
+            ~return_annot:None ~known_return:(Some inst.return_type)
+            ~effect_annot:
+              (if arrow_is_effectful then
+                 `Effectful
+               else
+                 `Unspecified)
             ~strict_return_check:false ~body:func_def.body)
     with
     | Ok (_param_names, _param_types, inferred_body_type, _actual_effectful, subst) ->
@@ -6719,7 +6714,9 @@ let emit_specialized_func
         match Hashtbl.find_opt specialized_type_map terminal_expr.id with
         | Some t -> Some (Types.canonicalize_mono_type t)
         | None ->
-            let provisional_body_env = add_param_bindings provisional_env_with_func param_names inst.concrete_types in
+            let provisional_body_env =
+              add_param_bindings provisional_env_with_func param_names inst.concrete_types
+            in
             type_from_env_or_map provisional_body_env specialized_type_map terminal_expr
             |> Option.map Types.canonicalize_mono_type)
   in
@@ -7128,7 +7125,9 @@ let emit_inherent_method
   in
   track_enum_inst state.mono for_type;
   track_enum_inst state.mono return_type;
-  List.iter (fun (_name, pty) -> track_enum_inst state.mono pty) (List.combine method_param_names method_param_types);
+  List.iter
+    (fun (_name, pty) -> track_enum_inst state.mono pty)
+    (List.combine method_param_names method_param_types);
   ignore (collect_insts_stmt state.mono method_type_map method_env method_impl.impl_method_body);
   let body_str =
     with_return_type state return_type (fun () ->
@@ -7186,9 +7185,7 @@ let collect_inherent_call_sites
       ~(method_name : string)
       ~(receiver_type : Types.mono_type)
       ~(method_type_args : Types.mono_type list) : inherent_call_site list =
-    let has_free_type_vars (typ : Types.mono_type) =
-      not (Types.TypeVarSet.is_empty (Types.free_type_vars typ))
-    in
+    let has_free_type_vars (typ : Types.mono_type) = not (Types.TypeVarSet.is_empty (Types.free_type_vars typ)) in
     let receiver_type = Types.canonicalize_mono_type receiver_type in
     let method_type_args = List.map Types.canonicalize_mono_type method_type_args in
     if concrete_only && (has_free_type_vars receiver_type || List.exists has_free_type_vars method_type_args) then
@@ -7197,7 +7194,11 @@ let collect_inherent_call_sites
       let receiver_type = normalize_type_for_codegen ~concrete_only receiver_type in
       let method_type_args = List.map (normalize_type_for_codegen ~concrete_only) method_type_args in
       add_inherent_call_site_if_new acc
-        { call_method_name = method_name; call_receiver_type = receiver_type; call_method_type_args = method_type_args }
+        {
+          call_method_name = method_name;
+          call_receiver_type = receiver_type;
+          call_method_type_args = method_type_args;
+        }
   in
   let rec collect_expr
       ?(expected_type : Types.mono_type option = None)
@@ -7328,7 +7329,8 @@ let collect_inherent_call_sites
               | Some a -> a
               | None -> []
             in
-            maybe_add_call_site acc'' ~method_name ~receiver_type:(get_type type_map (List.hd args))
+            maybe_add_call_site acc'' ~method_name
+              ~receiver_type:(get_type type_map (List.hd args))
               ~method_type_args:mta
         | Some (Infer.TraitMethod _)
         | Some (Infer.DynamicTraitMethod _)
@@ -7611,9 +7613,8 @@ let emit_named_wrapper_derived_impl
            rep_suffix rep_go_type)
 
 let emit_enum_derived_impl
-    (state : emit_state)
-    (derive_kind : Typecheck.Trait_registry.derive_kind)
-    (enum_type : Types.mono_type) : string option =
+    (state : emit_state) (derive_kind : Typecheck.Trait_registry.derive_kind) (enum_type : Types.mono_type) :
+    string option =
   let type_suffix = mangle_type enum_type in
   let type_str =
     match enum_type with
@@ -7684,9 +7685,7 @@ let emit_registry_derived_impls (state : emit_state) (program : AST.program) : s
         else
           None)
   in
-  (Typecheck.Trait_registry.all_impls () @ requested_impls)
-  |> List.filter_map emit_impl
-  |> String.concat "\n"
+  Typecheck.Trait_registry.all_impls () @ requested_impls |> List.filter_map emit_impl |> String.concat "\n"
 
 let emit_inherent_methods
     (state : emit_state) (type_map : Infer.type_map) (typed_env : Infer.type_env) (program : AST.program) : string
@@ -7859,7 +7858,8 @@ let emit_builtin_impls (state : mono_state) (program : AST.program) : string =
       ( ("show", "show", "float64"),
         "func show_show_float64(x float64) string {\n\treturn strconv.FormatFloat(x, 'g', -1, 64)\n}" );
       (* debug trait implementations *)
-      (("debug", "debug", "int64"), "func debug_debug_int64(x int64) string {\n\treturn strconv.FormatInt(x, 10)\n}");
+      ( ("debug", "debug", "int64"),
+        "func debug_debug_int64(x int64) string {\n\treturn strconv.FormatInt(x, 10)\n}" );
       (("debug", "debug", "bool"), "func debug_debug_bool(x bool) string {\n\treturn strconv.FormatBool(x)\n}");
       (("debug", "debug", "string"), "func debug_debug_string(x string) string {\n\treturn strconv.Quote(x)\n}");
       ( ("debug", "debug", "float64"),

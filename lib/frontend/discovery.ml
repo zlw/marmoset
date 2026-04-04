@@ -30,6 +30,11 @@ let normalize_path (path : string) : string =
   else
     path
 
+let normalize_source_overrides (source_overrides : (string, string) Hashtbl.t) : (string, string) Hashtbl.t =
+  let normalized = Hashtbl.create (Hashtbl.length source_overrides) in
+  Hashtbl.iter (fun path source -> Hashtbl.replace normalized (normalize_path path) source) source_overrides;
+  normalized
+
 let read_file (path : string) : string =
   let ic = open_in_bin path in
   Fun.protect
@@ -105,8 +110,7 @@ let rec find_toolchain_root_from (dir : string) : string option =
       else
         find_toolchain_root_from parent
 
-let stdlib_error ~(message : string) : Diagnostic.t =
-  Diagnostic.error_no_span ~code:"stdlib-not-found" ~message
+let stdlib_error ~(message : string) : Diagnostic.t = Diagnostic.error_no_span ~code:"stdlib-not-found" ~message
 
 let resolve_toolchain_root ?stdlib_root () : (string, Diagnostic.t) result =
   let resolve_explicit label path =
@@ -116,8 +120,7 @@ let resolve_toolchain_root ?stdlib_root () : (string, Diagnostic.t) result =
         Error
           (stdlib_error
              ~message:
-               (Printf.sprintf
-                  "%s '%s' does not contain toolchain stdlib files under 'std/' (expected '%s')"
+               (Printf.sprintf "%s '%s' does not contain toolchain stdlib files under 'std/' (expected '%s')"
                   label (normalize_path path) prelude_relative_path))
   in
   match stdlib_root with
@@ -134,8 +137,7 @@ let resolve_toolchain_root ?stdlib_root () : (string, Diagnostic.t) result =
                 (stdlib_error
                    ~message:
                      (Printf.sprintf
-                        "Unable to locate toolchain stdlib. Set %s or install stdlib files alongside the compiler \
-                         (looked upward from '%s')."
+                        "Unable to locate toolchain stdlib. Set %s or install stdlib files alongside the compiler (looked upward from '%s')."
                         stdlib_env_var executable_dir))))
 
 let export_list_of_program (program : AST.program) : string list =
@@ -172,19 +174,22 @@ let exported_name_exists (module_info : Module_context.parsed_module) (name : st
   List.mem name module_info.exports
 
 let module_file_path_for_import (state : discovery_state) (parts : string list) : string =
-  let root_dir = if is_std_import_path parts then state.stdlib_root else state.project_root in
+  let root_dir =
+    if is_std_import_path parts then
+      state.stdlib_root
+    else
+      state.project_root
+  in
   module_file_path ~root_dir parts
 
-let required_stdlib_module_path (state : discovery_state) ~(module_id : string) :
-    (string, Diagnostic.t) result =
+let required_stdlib_module_path (state : discovery_state) ~(module_id : string) : (string, Diagnostic.t) result =
   let file_path = module_file_path ~root_dir:state.stdlib_root (String.split_on_char '.' module_id) in
   if Sys.file_exists file_path then
     Ok file_path
   else
     Error
       (stdlib_error
-         ~message:
-           (Printf.sprintf "Missing required toolchain stdlib module '%s' at '%s'" module_id file_path))
+         ~message:(Printf.sprintf "Missing required toolchain stdlib module '%s' at '%s'" module_id file_path))
 
 let implicit_stdlib_dependencies (module_id : string) : string list =
   if String.equal module_id prelude_module_id then
@@ -312,55 +317,42 @@ let discover_core_stdlib_modules (state : discovery_state) : (unit, Diagnostic.t
   attach_implicit_stdlib_dependencies state;
   Ok ()
 
+let discover_project_with_overrides
+    ?source_root ?stdlib_root ~(entry_file : string) ~(source_overrides : (string, string) Hashtbl.t) () :
+    (Module_context.module_graph, Diagnostic.t) result =
+  let entry_file = normalize_path entry_file in
+  let project_root =
+    match source_root with
+    | Some root -> normalize_path root
+    | None -> Filename.dirname entry_file
+  in
+  let* stdlib_root = resolve_toolchain_root ?stdlib_root () in
+  let entry_module = module_id_of_file ~root_dir:project_root entry_file in
+  let state =
+    {
+      project_root;
+      stdlib_root;
+      modules = Hashtbl.create 16;
+      dependencies = Hashtbl.create 16;
+      source_overrides = normalize_source_overrides source_overrides;
+      next_file_index = ref 0;
+    }
+  in
+  let* () = discover_module state ~module_id:entry_module ~file_path:entry_file in
+  let* () = discover_core_stdlib_modules state in
+  Module_context.build_graph ~root_dir:project_root ~modules:state.modules ~dependencies:state.dependencies
+    ~entry_module
+
 let discover_project ?source_root ?stdlib_root ~(entry_file : string) () :
     (Module_context.module_graph, Diagnostic.t) result =
-  let entry_file = normalize_path entry_file in
-  let project_root =
-    match source_root with
-    | Some root -> normalize_path root
-    | None -> Filename.dirname entry_file
-  in
-  let* stdlib_root = resolve_toolchain_root ?stdlib_root () in
-  let entry_module = module_id_of_file ~root_dir:project_root entry_file in
-  let state =
-    {
-      project_root;
-      stdlib_root;
-      modules = Hashtbl.create 16;
-      dependencies = Hashtbl.create 16;
-      source_overrides = Hashtbl.create 0;
-      next_file_index = ref 0;
-    }
-  in
-  let* () = discover_module state ~module_id:entry_module ~file_path:entry_file in
-  let* () = discover_core_stdlib_modules state in
-  Module_context.build_graph ~modules:state.modules ~dependencies:state.dependencies ~entry_module
+  discover_project_with_overrides ?source_root ?stdlib_root ~entry_file ~source_overrides:(Hashtbl.create 0) ()
 
-let discover_project_with_entry_source ?source_root ?stdlib_root ~(entry_file : string) ~(entry_source : string)
-    () :
+let discover_project_with_entry_source
+    ?source_root ?stdlib_root ~(entry_file : string) ~(entry_source : string) () :
     (Module_context.module_graph, Diagnostic.t) result =
-  let entry_file = normalize_path entry_file in
-  let project_root =
-    match source_root with
-    | Some root -> normalize_path root
-    | None -> Filename.dirname entry_file
-  in
-  let* stdlib_root = resolve_toolchain_root ?stdlib_root () in
-  let entry_module = module_id_of_file ~root_dir:project_root entry_file in
-  let state =
-    {
-      project_root;
-      stdlib_root;
-      modules = Hashtbl.create 16;
-      dependencies = Hashtbl.create 16;
-      source_overrides = Hashtbl.create 1;
-      next_file_index = ref 0;
-    }
-  in
-  Hashtbl.replace state.source_overrides entry_file entry_source;
-  let* () = discover_module state ~module_id:entry_module ~file_path:entry_file in
-  let* () = discover_core_stdlib_modules state in
-  Module_context.build_graph ~modules:state.modules ~dependencies:state.dependencies ~entry_module
+  let source_overrides = Hashtbl.create 1 in
+  Hashtbl.replace source_overrides entry_file entry_source;
+  discover_project_with_overrides ?source_root ?stdlib_root ~entry_file ~source_overrides ()
 
 let make_temp_dir (prefix : string) : string =
   let path = Filename.temp_file prefix "" in
@@ -442,7 +434,7 @@ let%test "discover_project finds transitive module dependencies" =
     (fun root ->
       match discover_project ~entry_file:(Filename.concat root "main.mr") () with
       | Error _ -> false
-      | Ok graph ->
+      | Ok graph -> (
           let index_of target =
             let rec go idx = function
               | [] -> None
@@ -464,9 +456,11 @@ let%test "discover_project finds transitive module dependencies" =
           &&
           match Hashtbl.find_opt graph.dependencies "math" with
           | Some deps ->
-              List.mem "util" deps && List.mem "std.prelude" deps && List.mem "std.option" deps
+              List.mem "util" deps
+              && List.mem "std.prelude" deps
+              && List.mem "std.option" deps
               && List.mem "std.result" deps
-          | _ -> false)
+          | _ -> false))
 
 let%test "discover_project resolves std modules from an explicit toolchain stdlib root" =
   with_temp_project
@@ -477,40 +471,15 @@ let%test "discover_project resolves std modules from an explicit toolchain stdli
         ~finally:(fun () -> ignore (Sys.command ("rm -rf " ^ Filename.quote stdlib_root)))
         (fun () ->
           mkdir_p (Filename.concat stdlib_root "std");
-          write_file (Filename.concat stdlib_root "std/prelude.mr")
-            "export Ordering, Eq, Show, Debug, Ord, Hash, Num, Rem, Neg\n\
-             type Ordering = { Less, Equal, Greater }\n\
-             trait Eq[a] = { fn eq(x: a, y: a) -> Bool }\n\
-             trait Show[a] = { fn show(x: a) -> Str }\n\
-             trait Debug[a] = { fn debug(x: a) -> Str }\n\
-             trait Ord[a]: Eq = { fn compare(x: a, y: a) -> Ordering }\n\
-             trait Hash[a] = { fn hash(x: a) -> Int }\n\
-             trait Num[a] = {\n\
-             \  fn add(x: a, y: a) -> a\n\
-             \  fn sub(x: a, y: a) -> a\n\
-             \  fn mul(x: a, y: a) -> a\n\
-             \  fn div(x: a, y: a) -> a\n\
-             }\n\
-             trait Rem[a] = { fn rem(x: a, y: a) -> a }\n\
-             trait Neg[a] = { fn neg(x: a) -> a }\n";
-          write_file (Filename.concat stdlib_root "std/option.mr")
-            "export Option\n\
-             type Option[a] = { Some(a), None }\n\
-             impl[a] Option[a] = {\n\
-             \  fn unwrap_or(self: Option[a], fallback: a) -> a = match self {\n\
-             \    case Option.Some(v): v\n\
-             \    case Option.None: fallback\n\
-             \  }\n\
-             }\n";
-          write_file (Filename.concat stdlib_root "std/result.mr")
-            "export Result\n\
-             type Result[a, e] = { Success(a), Failure(e) }\n\
-             impl[a, e] Result[a, e] = {\n\
-             \  fn value_or(self: Result[a, e], fallback: a) -> a = match self {\n\
-             \    case Result.Success(v): v\n\
-             \    case Result.Failure(_): fallback\n\
-             \  }\n\
-             }\n";
+          write_file
+            (Filename.concat stdlib_root "std/prelude.mr")
+            "export Ordering, Eq, Show, Debug, Ord, Hash, Num, Rem, Neg\ntype Ordering = { Less, Equal, Greater }\ntrait Eq[a] = { fn eq(x: a, y: a) -> Bool }\ntrait Show[a] = { fn show(x: a) -> Str }\ntrait Debug[a] = { fn debug(x: a) -> Str }\ntrait Ord[a]: Eq = { fn compare(x: a, y: a) -> Ordering }\ntrait Hash[a] = { fn hash(x: a) -> Int }\ntrait Num[a] = {\n\  fn add(x: a, y: a) -> a\n\  fn sub(x: a, y: a) -> a\n\  fn mul(x: a, y: a) -> a\n\  fn div(x: a, y: a) -> a\n}\ntrait Rem[a] = { fn rem(x: a, y: a) -> a }\ntrait Neg[a] = { fn neg(x: a) -> a }\n";
+          write_file
+            (Filename.concat stdlib_root "std/option.mr")
+            "export Option\ntype Option[a] = { Some(a), None }\nimpl[a] Option[a] = {\n\  fn unwrap_or(self: Option[a], fallback: a) -> a = match self {\n\    case Option.Some(v): v\n\    case Option.None: fallback\n\  }\n}\n";
+          write_file
+            (Filename.concat stdlib_root "std/result.mr")
+            "export Result\ntype Result[a, e] = { Success(a), Failure(e) }\nimpl[a, e] Result[a, e] = {\n\  fn value_or(self: Result[a, e], fallback: a) -> a = match self {\n\    case Result.Success(v): v\n\    case Result.Failure(_): fallback\n\  }\n}\n";
           match discover_project ~stdlib_root ~entry_file:(Filename.concat root "main.mr") () with
           | Error _ -> false
           | Ok graph ->
@@ -527,33 +496,21 @@ let%test "discover_project orders non-core stdlib modules after core stdlib modu
         ~finally:(fun () -> ignore (Sys.command ("rm -rf " ^ Filename.quote stdlib_root)))
         (fun () ->
           mkdir_p (Filename.concat stdlib_root "std");
-          write_file (Filename.concat stdlib_root "std/prelude.mr")
-            "export Ordering, Eq, Show, Debug, Ord, Hash, Num, Rem, Neg\n\
-             type Ordering = { Less, Equal, Greater }\n\
-             trait Eq[a] = { fn eq(x: a, y: a) -> Bool }\n\
-             trait Show[a] = { fn show(x: a) -> Str }\n\
-             trait Debug[a] = { fn debug(x: a) -> Str }\n\
-             trait Ord[a]: Eq = { fn compare(x: a, y: a) -> Ordering }\n\
-             trait Hash[a] = { fn hash(x: a) -> Int }\n\
-             trait Num[a] = {\n\
-             \  fn add(x: a, y: a) -> a\n\
-             \  fn sub(x: a, y: a) -> a\n\
-             \  fn mul(x: a, y: a) -> a\n\
-             \  fn div(x: a, y: a) -> a\n\
-             }\n\
-             trait Rem[a] = { fn rem(x: a, y: a) -> a }\n\
-             trait Neg[a] = { fn neg(x: a) -> a }\n";
-          write_file (Filename.concat stdlib_root "std/option.mr")
-            "export Option\n\
-             type Option[a] = { Some(a), None }\n";
-          write_file (Filename.concat stdlib_root "std/result.mr")
-            "export Result\n\
-             type Result[a, e] = { Success(a), Failure(e) }\n";
-          write_file (Filename.concat stdlib_root "std/foo.mr")
+          write_file
+            (Filename.concat stdlib_root "std/prelude.mr")
+            "export Ordering, Eq, Show, Debug, Ord, Hash, Num, Rem, Neg\ntype Ordering = { Less, Equal, Greater }\ntrait Eq[a] = { fn eq(x: a, y: a) -> Bool }\ntrait Show[a] = { fn show(x: a) -> Str }\ntrait Debug[a] = { fn debug(x: a) -> Str }\ntrait Ord[a]: Eq = { fn compare(x: a, y: a) -> Ordering }\ntrait Hash[a] = { fn hash(x: a) -> Int }\ntrait Num[a] = {\n\  fn add(x: a, y: a) -> a\n\  fn sub(x: a, y: a) -> a\n\  fn mul(x: a, y: a) -> a\n\  fn div(x: a, y: a) -> a\n}\ntrait Rem[a] = { fn rem(x: a, y: a) -> a }\ntrait Neg[a] = { fn neg(x: a) -> a }\n";
+          write_file
+            (Filename.concat stdlib_root "std/option.mr")
+            "export Option\ntype Option[a] = { Some(a), None }\n";
+          write_file
+            (Filename.concat stdlib_root "std/result.mr")
+            "export Result\ntype Result[a, e] = { Success(a), Failure(e) }\n";
+          write_file
+            (Filename.concat stdlib_root "std/foo.mr")
             "export value\nfn value() -> Int = Option.Some(1)\n";
           match discover_project ~stdlib_root ~entry_file:(Filename.concat root "main.mr") () with
           | Error _ -> false
-          | Ok graph ->
+          | Ok graph -> (
               let index_of target =
                 let rec go idx = function
                   | [] -> None
@@ -570,7 +527,7 @@ let%test "discover_project orders non-core stdlib modules after core stdlib modu
                   && List.mem "std.result" deps
                   && Option.get (index_of "std.prelude") < Option.get (index_of "std.foo")
                   && Option.get (index_of "std.option") < Option.get (index_of "std.foo")
-                  && Option.get (index_of "std.result") < Option.get (index_of "std.foo")))
+                  && Option.get (index_of "std.result") < Option.get (index_of "std.foo"))))
 
 let%test "discover_project errors when the toolchain stdlib root is missing core modules" =
   with_temp_project

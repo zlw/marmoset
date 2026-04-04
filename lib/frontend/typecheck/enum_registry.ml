@@ -104,7 +104,8 @@ let%test "lookup_variant does not accept lowercase builtin variant aliases" =
     {
       name = "Ordering";
       type_params = [];
-      variants = [ { name = "Less"; fields = [] }; { name = "Equal"; fields = [] }; { name = "Greater"; fields = [] } ];
+      variants =
+        [ { name = "Less"; fields = [] }; { name = "Equal"; fields = [] }; { name = "Greater"; fields = [] } ];
     };
   lookup_variant "Ordering" "less" = None
 

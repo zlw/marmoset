@@ -94,8 +94,7 @@ let check_program
     ?(prepare_state = true)
     ?(expand_derives = true)
     ?(env = Infer.empty_env)
-    (program : Syntax.Ast.AST.program) :
-    (typecheck_result, Diagnostic.t list) result =
+    (program : Syntax.Ast.AST.program) : (typecheck_result, Diagnostic.t list) result =
   let state = Option.value state ~default:(Infer.create_inference_state ()) in
   match infer_program_safe ~state ~prepare_state ~expand_derives ~env program with
   | Error e -> Error (merge_diagnostics e)
@@ -106,12 +105,7 @@ let check_program
     Parses and type checks in one step.
     Errors include source location information. *)
 let check_string
-    ?state
-    ?(prepare_state = true)
-    ?(expand_derives = true)
-    ?(env = Infer.empty_env)
-    ~file_id
-    (source : string) :
+    ?state ?(prepare_state = true) ?(expand_derives = true) ?(env = Infer.empty_env) ~file_id (source : string) :
     (typecheck_result, Diagnostic.t list) result =
   let state = Option.value state ~default:(Infer.create_inference_state ()) in
   match Syntax.Parser.parse ~file_id source with
@@ -1453,7 +1447,8 @@ let%test "followup B3: Dyn return position records a coercion site" =
   Infer.reset_fresh_counter ();
   Trait_registry.clear ();
   match
-    check_string ~env:(env_with_builtin_traits ()) ~file_id:"<test>" "fn box() -> Dyn[Show] = 42\nlet y = box()\ny"
+    check_string ~env:(env_with_builtin_traits ()) ~file_id:"<test>"
+      "fn box() -> Dyn[Show] = 42\nlet y = box()\ny"
   with
   | Ok result ->
       result.result_type = Types.TTraitObject [ "Show" ]
@@ -1498,7 +1493,9 @@ let%test "followup B3: Dyn rejects mixed trait sets containing a shape" =
 let%test "followup B3: qualified Dyn trait calls typecheck" =
   Infer.reset_fresh_counter ();
   Trait_registry.clear ();
-  match check_string ~env:(env_with_builtin_traits ()) ~file_id:"<test>" "let x: Dyn[Show] = 42\nShow.show(x)" with
+  match
+    check_string ~env:(env_with_builtin_traits ()) ~file_id:"<test>" "let x: Dyn[Show] = 42\nShow.show(x)"
+  with
   | Ok result -> result.result_type = Types.TString
   | Error _ -> false
 

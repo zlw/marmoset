@@ -104,17 +104,14 @@ let is_std_module_id (module_id : string) : bool =
 
 let is_locked_std_core_name ~(module_id : string) (name : string) : bool =
   match (module_id, name) with
-  | ( "std.prelude",
-      ("Ordering" | "Eq" | "Show" | "Debug" | "Ord" | "Hash" | "Num" | "Rem" | "Neg") ) ->
-      true
+  | "std.prelude", ("Ordering" | "Eq" | "Show" | "Debug" | "Ord" | "Hash" | "Num" | "Rem" | "Neg") -> true
   | "std.option", "Option" -> true
   | "std.result", "Result" -> true
   | _ -> false
 
 let is_implicit_std_core_name (name : string) : bool =
   match name with
-  | "Ordering" | "Eq" | "Show" | "Debug" | "Ord" | "Hash" | "Num" | "Rem" | "Neg" | "Option" | "Result" ->
-      true
+  | "Ordering" | "Eq" | "Show" | "Debug" | "Ord" | "Hash" | "Num" | "Rem" | "Neg" | "Option" | "Result" -> true
   | _ -> false
 
 let binding_internal_name ?(preserve_source_name = false) ~(module_id : string) (name : string) : string =
@@ -248,13 +245,13 @@ let export_error (module_info : Module_context.parsed_module) ~(name : string) :
   Diagnostic.error_no_span ~code:"module-export-missing"
     ~message:(Printf.sprintf "Module '%s' exports unknown name '%s'" module_info.module_id name)
 
-let build_module_surface
-    ~(preserve_top_level_names : bool)
-    (module_info : Module_context.parsed_module) : (module_surface, Diagnostic.t) result =
+let build_module_surface ~(preserve_top_level_names : bool) (module_info : Module_context.parsed_module) :
+    (module_surface, Diagnostic.t) result =
   let declarations =
     List.fold_left
       (fun decls stmt ->
-        presence_of_decl module_info.module_id ~preserve_top_level_names ~file_path:module_info.file_path stmt decls)
+        presence_of_decl module_info.module_id ~preserve_top_level_names ~file_path:module_info.file_path stmt
+          decls)
       StringMap.empty module_info.program
   in
   let rec build_exports acc = function
@@ -304,7 +301,8 @@ let rec insert_namespace_path (node : namespace_node) (parts : string list) (tar
 let import_path_string parts = String.concat "." parts
 
 let default_namespace_import_name (module_surface : module_surface) : string option =
-  List.rev module_surface.module_path |> function
+  List.rev module_surface.module_path
+  |> function
   | [] -> None
   | leaf :: _ -> Some leaf
 
@@ -370,8 +368,9 @@ let import_name_collision_error (imp : Module_context.import_info) ~(local_name 
 let can_shadow_implicit_binding (shadowable_bindings : StringSet.t) (local_name : string) : bool =
   StringSet.mem local_name shadowable_bindings
 
-let add_named_export_if_present ~(surface : module_surface) ~(export_name : string)
-    (bindings : member_presence StringMap.t) : member_presence StringMap.t =
+let add_named_export_if_present
+    ~(surface : module_surface) ~(export_name : string) (bindings : member_presence StringMap.t) :
+    member_presence StringMap.t =
   match StringMap.find_opt export_name surface.exports with
   | Some binding -> StringMap.add export_name binding bindings
   | None -> bindings
@@ -386,8 +385,9 @@ let implicit_direct_modules_for_module (module_id : string) : string list =
   else
     core_stdlib_modules
 
-let implicit_direct_bindings_for_module ~(current_module : module_surface)
-    ~(surfaces : (string, module_surface) Hashtbl.t) : member_presence StringMap.t =
+let implicit_direct_bindings_for_module
+    ~(current_module : module_surface) ~(surfaces : (string, module_surface) Hashtbl.t) :
+    member_presence StringMap.t =
   let add_prelude_exports bindings =
     match Hashtbl.find_opt surfaces prelude_module_id with
     | Some prelude_surface -> StringMap.fold StringMap.add prelude_surface.exports bindings
@@ -400,7 +400,9 @@ let implicit_direct_bindings_for_module ~(current_module : module_surface)
   in
   if String.equal current_module.module_id prelude_module_id then
     StringMap.empty
-  else if String.equal current_module.module_id option_module_id || String.equal current_module.module_id result_module_id
+  else if
+    String.equal current_module.module_id option_module_id
+    || String.equal current_module.module_id result_module_id
   then
     add_prelude_exports StringMap.empty
   else
@@ -411,8 +413,8 @@ let implicit_direct_bindings_for_module ~(current_module : module_surface)
 let build_resolved_imports
     ?(initial_direct_bindings = StringMap.empty)
     ?(initial_direct_modules = [])
-    ~(surfaces : (string, module_surface) Hashtbl.t) (module_info : Module_context.parsed_module) :
-    (resolved_imports, Diagnostic.t) result =
+    ~(surfaces : (string, module_surface) Hashtbl.t)
+    (module_info : Module_context.parsed_module) : (resolved_imports, Diagnostic.t) result =
   let initial_shadowable_bindings =
     StringMap.fold
       (fun name _ acc ->
@@ -439,7 +441,9 @@ let build_resolved_imports
               | Some alias ->
                   if StringMap.mem alias namespace_roots then
                     Error (import_name_collision_error imp ~local_name:alias)
-                  else if StringMap.mem alias direct_bindings && not (can_shadow_implicit_binding shadowable_bindings alias)
+                  else if
+                    StringMap.mem alias direct_bindings
+                    && not (can_shadow_implicit_binding shadowable_bindings alias)
                   then
                     Error (import_name_collision_error imp ~local_name:alias)
                   else
@@ -483,7 +487,9 @@ let build_resolved_imports
               | Some name -> StringSet.remove name shadowable_bindings
               | None -> shadowable_bindings
             in
-            go namespace_roots direct_bindings shadowable_bindings (module_surface.module_id :: direct_modules) rest
+            go namespace_roots direct_bindings shadowable_bindings
+              (module_surface.module_id :: direct_modules)
+              rest
         | `Direct (parent_surface, exported) ->
             let local_name =
               match imp.import_alias with
@@ -492,14 +498,15 @@ let build_resolved_imports
             in
             if StringMap.mem local_name namespace_roots then
               Error (import_name_collision_error imp ~local_name)
-            else if StringMap.mem local_name direct_bindings && not (can_shadow_implicit_binding shadowable_bindings local_name)
+            else if
+              StringMap.mem local_name direct_bindings
+              && not (can_shadow_implicit_binding shadowable_bindings local_name)
             then
               Error (import_name_collision_error imp ~local_name)
             else
               let direct_bindings = StringMap.add local_name exported direct_bindings in
               let shadowable_bindings = StringSet.remove local_name shadowable_bindings in
-              go namespace_roots
-                direct_bindings shadowable_bindings
+              go namespace_roots direct_bindings shadowable_bindings
                 (parent_surface.module_id :: direct_modules)
                 rest)
   in
@@ -644,9 +651,10 @@ let collect_inherent_target_generics (te : AST.type_expr) : StringSet.t =
   go ~in_head:true StringSet.empty te
 
 let rewrite_constraints
-    ~(imports : resolved_imports) ~(type_bindings : StringSet.t)
-    ~(available_bindings : member_presence StringMap.t) (constraints : string list)
-    : string list =
+    ~(imports : resolved_imports)
+    ~(type_bindings : StringSet.t)
+    ~(available_bindings : member_presence StringMap.t)
+    (constraints : string list) : string list =
   List.map
     (fun name ->
       if StringSet.mem name type_bindings then
@@ -667,9 +675,10 @@ let rewrite_constraints
     constraints
 
 let rec rewrite_type_expr
-    ~(imports : resolved_imports) ~(type_bindings : StringSet.t)
-    ~(available_bindings : member_presence StringMap.t) (te : AST.type_expr) :
-    AST.type_expr =
+    ~(imports : resolved_imports)
+    ~(type_bindings : StringSet.t)
+    ~(available_bindings : member_presence StringMap.t)
+    (te : AST.type_expr) : AST.type_expr =
   let rewrite_name name =
     if StringSet.mem name type_bindings then
       name
@@ -693,7 +702,8 @@ let rec rewrite_type_expr
         ( List.map (rewrite_type_expr ~imports ~type_bindings ~available_bindings) params,
           rewrite_type_expr ~imports ~type_bindings ~available_bindings ret,
           is_effectful )
-  | AST.TUnion members -> AST.TUnion (List.map (rewrite_type_expr ~imports ~type_bindings ~available_bindings) members)
+  | AST.TUnion members ->
+      AST.TUnion (List.map (rewrite_type_expr ~imports ~type_bindings ~available_bindings) members)
   | AST.TIntersection members ->
       AST.TIntersection (List.map (rewrite_type_expr ~imports ~type_bindings ~available_bindings) members)
   | AST.TRecord (fields, row) ->
@@ -775,7 +785,8 @@ let rewrite_program
         let value_scope_for_value = bind_value value_scope ~name ~rewritten_name in
         let* value = rewrite_expr ~value_scope:value_scope_for_value ~type_bindings:StringSet.empty value in
         let type_annotation =
-          Option.map (rewrite_type_expr ~imports ~type_bindings:StringSet.empty ~available_bindings)
+          Option.map
+            (rewrite_type_expr ~imports ~type_bindings:StringSet.empty ~available_bindings)
             type_annotation
         in
         Ok (AST.{ stmt with stmt = Let { name = rewritten_name; value; type_annotation } }, value_scope_for_value)
@@ -796,17 +807,12 @@ let rewrite_program
               {
                 variant with
                 variant_fields =
-                  List.map (rewrite_type_expr ~imports ~type_bindings ~available_bindings)
-                    variant.variant_fields;
+                  List.map (rewrite_type_expr ~imports ~type_bindings ~available_bindings) variant.variant_fields;
               })
             variants
         in
         Ok
-          ( AST.
-              {
-                stmt with
-                stmt = EnumDef { name = declaration_internal_name name; type_params; variants };
-              },
+          ( AST.{ stmt with stmt = EnumDef { name = declaration_internal_name name; type_params; variants } },
             value_scope )
     | AST.TypeDef { type_name; type_type_params; type_body } ->
         let type_bindings =
@@ -820,8 +826,7 @@ let rewrite_program
                    (fun (field : AST.record_type_field) ->
                      {
                        field with
-                       field_type =
-                         rewrite_type_expr ~imports ~type_bindings ~available_bindings field.field_type;
+                       field_type = rewrite_type_expr ~imports ~type_bindings ~available_bindings field.field_type;
                      })
                    fields)
           | AST.NamedTypeWrapper te ->
@@ -831,13 +836,7 @@ let rewrite_program
           ( AST.
               {
                 stmt with
-                stmt =
-                  TypeDef
-                    {
-                      type_name = declaration_internal_name type_name;
-                      type_type_params;
-                      type_body;
-                    };
+                stmt = TypeDef { type_name = declaration_internal_name type_name; type_type_params; type_body };
               },
             value_scope )
     | AST.ShapeDef { shape_name; shape_type_params; shape_fields } ->
@@ -858,12 +857,7 @@ let rewrite_program
               {
                 stmt with
                 stmt =
-                  ShapeDef
-                    {
-                      shape_name = declaration_internal_name shape_name;
-                      shape_type_params;
-                      shape_fields;
-                    };
+                  ShapeDef { shape_name = declaration_internal_name shape_name; shape_type_params; shape_fields };
               },
             value_scope )
     | AST.TraitDef { name; type_param; supertraits; methods } ->
@@ -878,9 +872,7 @@ let rewrite_program
           ( AST.
               {
                 stmt with
-                stmt =
-                  TraitDef
-                    { name = declaration_internal_name name; type_param; supertraits; methods };
+                stmt = TraitDef { name = declaration_internal_name name; type_param; supertraits; methods };
               },
             value_scope )
     | AST.ImplDef { impl_type_params; impl_trait_name; impl_for_type; impl_methods } ->
@@ -888,7 +880,10 @@ let rewrite_program
         let impl_type_params =
           List.map
             (fun (p : AST.generic_param) ->
-              { p with constraints = rewrite_constraints ~imports ~type_bindings ~available_bindings p.constraints })
+              {
+                p with
+                constraints = rewrite_constraints ~imports ~type_bindings ~available_bindings p.constraints;
+              })
             impl_type_params
         in
         let impl_trait_name =
@@ -939,8 +934,8 @@ let rewrite_program
                     {
                       p with
                       constraints =
-                        rewrite_constraints ~imports ~type_bindings:(StringSet.singleton p.name) ~available_bindings
-                          p.constraints;
+                        rewrite_constraints ~imports ~type_bindings:(StringSet.singleton p.name)
+                          ~available_bindings p.constraints;
                     })
                   trait.derive_trait_constraints
               in
@@ -961,12 +956,7 @@ let rewrite_program
               {
                 stmt with
                 stmt =
-                  TypeAlias
-                    {
-                      alias_name = declaration_internal_name alias_name;
-                      alias_type_params;
-                      alias_body;
-                    };
+                  TypeAlias { alias_name = declaration_internal_name alias_name; alias_type_params; alias_body };
               },
             value_scope )
   and rewrite_block value_scope stmts =
@@ -992,7 +982,8 @@ let rewrite_program
              {
                p with
                constraints =
-                 rewrite_constraints ~imports ~type_bindings:method_type_bindings ~available_bindings p.constraints;
+                 rewrite_constraints ~imports ~type_bindings:method_type_bindings ~available_bindings
+                   p.constraints;
              }))
         method_sig.method_generics
     in
@@ -1031,7 +1022,8 @@ let rewrite_program
              {
                p with
                constraints =
-                 rewrite_constraints ~imports ~type_bindings:method_type_bindings ~available_bindings p.constraints;
+                 rewrite_constraints ~imports ~type_bindings:method_type_bindings ~available_bindings
+                   p.constraints;
              }))
         method_impl.impl_method_generics
     in
@@ -1039,9 +1031,8 @@ let rewrite_program
       List.map
         (fun (name, te_opt) ->
           ( name,
-            Option.map
-              (rewrite_type_expr ~imports ~type_bindings:method_type_bindings ~available_bindings)
-              te_opt ))
+            Option.map (rewrite_type_expr ~imports ~type_bindings:method_type_bindings ~available_bindings) te_opt
+          ))
         method_impl.impl_method_params
     in
     let body_scope =
@@ -1151,7 +1142,10 @@ let rewrite_program
         let generics =
           Option.map
             (List.map (fun (p : AST.generic_param) ->
-                 { p with constraints = rewrite_constraints ~imports ~type_bindings ~available_bindings p.constraints }))
+                 {
+                   p with
+                   constraints = rewrite_constraints ~imports ~type_bindings ~available_bindings p.constraints;
+                 }))
             generics
         in
         let params =
@@ -1220,7 +1214,7 @@ let rewrite_program
     | AST.RecordLit (fields, spread) ->
         let* fields =
           map_result
-            (fun (idx, field : int * AST.record_field) ->
+            (fun ((idx, field) : int * AST.record_field) ->
               let* field_value =
                 match field.field_value with
                 | Some value -> rewrite_expr ~value_scope ~type_bindings value |> Result.map Option.some
@@ -1229,8 +1223,8 @@ let rewrite_program
                     let synthetic_id = -((expr.id lsl 8) + idx + 1) in
                     Ok
                       (Some
-                         (AST.mk_expr ~id:synthetic_id ~pos:expr.pos ~end_pos:expr.end_pos
-                            ~file_id:expr.file_id (AST.Identifier rewritten)))
+                         (AST.mk_expr ~id:synthetic_id ~pos:expr.pos ~end_pos:expr.end_pos ~file_id:expr.file_id
+                            (AST.Identifier rewritten)))
               in
               Ok { field with field_value })
             (List.mapi (fun idx field -> (idx, field)) fields)
@@ -1273,7 +1267,9 @@ let rewrite_program
                           expr with
                           expr =
                             TypeApply
-                              (callee, List.map (rewrite_type_expr ~imports ~type_bindings ~available_bindings) type_args);
+                              ( callee,
+                                List.map (rewrite_type_expr ~imports ~type_bindings ~available_bindings) type_args
+                              );
                         }
                 in
                 Ok AST.{ expr with expr = Call (callee, args) }
@@ -1360,7 +1356,9 @@ let%test "toolchain std.prelude exports keep canonical names" =
 
 let%test "toolchain std.option and std.result export canonical type names" =
   Discovery.with_temp_project
-    [ ("main.mr", "let opt: Option[Int] = Option.None\nlet res: Result[Int, Str] = Result.Success(1)\nputs(0)\n") ]
+    [
+      ("main.mr", "let opt: Option[Int] = Option.None\nlet res: Result[Int, Str] = Result.Success(1)\nputs(0)\n");
+    ]
     (fun root ->
       let entry_file = Filename.concat root "main.mr" in
       match Discovery.discover_project ~source_root:root ~entry_file () with
@@ -1372,7 +1370,8 @@ let%test "toolchain std.option and std.result export canonical type names" =
               let binding_name module_id export_name =
                 match Hashtbl.find_opt surfaces module_id with
                 | None -> None
-                | Some surface -> StringMap.find_opt export_name surface.exports |> Option.map (fun p -> p.internal_name)
+                | Some surface ->
+                    StringMap.find_opt export_name surface.exports |> Option.map (fun p -> p.internal_name)
               in
               binding_name option_module_id "Option" = Some "Option"
               && binding_name result_module_id "Result" = Some "Result"))
@@ -1410,29 +1409,17 @@ let%test "non-core stdlib modules implicitly see std option/result modules" =
         ~finally:(fun () -> ignore (Sys.command ("rm -rf " ^ Filename.quote stdlib_root)))
         (fun () ->
           Discovery.mkdir_p (Filename.concat stdlib_root "std");
-          Discovery.write_file (Filename.concat stdlib_root "std/prelude.mr")
-            "export Ordering, Eq, Show, Debug, Ord, Hash, Num, Rem, Neg\n\
-             type Ordering = { Less, Equal, Greater }\n\
-             trait Eq[a] = { fn eq(x: a, y: a) -> Bool }\n\
-             trait Show[a] = { fn show(x: a) -> Str }\n\
-             trait Debug[a] = { fn debug(x: a) -> Str }\n\
-             trait Ord[a]: Eq = { fn compare(x: a, y: a) -> Ordering }\n\
-             trait Hash[a] = { fn hash(x: a) -> Int }\n\
-             trait Num[a] = {\n\
-             \  fn add(x: a, y: a) -> a\n\
-             \  fn sub(x: a, y: a) -> a\n\
-             \  fn mul(x: a, y: a) -> a\n\
-             \  fn div(x: a, y: a) -> a\n\
-             }\n\
-             trait Rem[a] = { fn rem(x: a, y: a) -> a }\n\
-             trait Neg[a] = { fn neg(x: a) -> a }\n";
-          Discovery.write_file (Filename.concat stdlib_root "std/option.mr")
-            "export Option\n\
-             type Option[a] = { Some(a), None }\n";
-          Discovery.write_file (Filename.concat stdlib_root "std/result.mr")
-            "export Result\n\
-             type Result[a, e] = { Success(a), Failure(e) }\n";
-          Discovery.write_file (Filename.concat stdlib_root "std/foo.mr")
+          Discovery.write_file
+            (Filename.concat stdlib_root "std/prelude.mr")
+            "export Ordering, Eq, Show, Debug, Ord, Hash, Num, Rem, Neg\ntype Ordering = { Less, Equal, Greater }\ntrait Eq[a] = { fn eq(x: a, y: a) -> Bool }\ntrait Show[a] = { fn show(x: a) -> Str }\ntrait Debug[a] = { fn debug(x: a) -> Str }\ntrait Ord[a]: Eq = { fn compare(x: a, y: a) -> Ordering }\ntrait Hash[a] = { fn hash(x: a) -> Int }\ntrait Num[a] = {\n\  fn add(x: a, y: a) -> a\n\  fn sub(x: a, y: a) -> a\n\  fn mul(x: a, y: a) -> a\n\  fn div(x: a, y: a) -> a\n}\ntrait Rem[a] = { fn rem(x: a, y: a) -> a }\ntrait Neg[a] = { fn neg(x: a) -> a }\n";
+          Discovery.write_file
+            (Filename.concat stdlib_root "std/option.mr")
+            "export Option\ntype Option[a] = { Some(a), None }\n";
+          Discovery.write_file
+            (Filename.concat stdlib_root "std/result.mr")
+            "export Result\ntype Result[a, e] = { Success(a), Failure(e) }\n";
+          Discovery.write_file
+            (Filename.concat stdlib_root "std/foo.mr")
             "export value\nfn value() -> Int = Option.Some(1)\n";
           let entry_file = Filename.concat root "main.mr" in
           match Discovery.discover_project ~stdlib_root ~entry_file () with
@@ -1473,7 +1460,10 @@ let%test "bare nested namespace import binds the leaf module name" =
                   match rewrite_module ~surfaces module_info with
                   | Error _ -> false
                   | Ok rewrite -> (
-                      match resolve_namespace_member ~namespace_roots:rewrite.resolved_imports.namespace_roots [ "list"; "head" ] with
+                      match
+                        resolve_namespace_member ~namespace_roots:rewrite.resolved_imports.namespace_roots
+                          [ "list"; "head" ]
+                      with
                       | Some (`Exported exported) ->
                           String.equal exported.internal_name "collections__list__head"
                           && not (StringMap.mem "collections" rewrite.resolved_imports.direct_bindings)
@@ -1550,12 +1540,12 @@ let%test "headerless entry local Result shadows injected std.result in construct
 let%test "qualified impl headers rewrite imported trait and type names to canonical internals" =
   Discovery.with_temp_project
     [
-      ("main.mr", "import geometry\nimpl geometry.Drawable[geometry.Point] = { fn draw(p: geometry.Point) -> Str = \"local\" }\n");
+      ( "main.mr",
+        "import geometry\nimpl geometry.Drawable[geometry.Point] = { fn draw(p: geometry.Point) -> Str = \"local\" }\n"
+      );
       ( "geometry.mr",
-        "export Point, Drawable\n\
-         type Point = { x: Int, y: Int }\n\
-         trait Drawable[a] = { fn draw(x: a) -> Str }\n\
-         impl Drawable[Point] = { fn draw(p: Point) -> Str = \"base\" }\n" );
+        "export Point, Drawable\ntype Point = { x: Int, y: Int }\ntrait Drawable[a] = { fn draw(x: a) -> Str }\nimpl Drawable[Point] = { fn draw(p: Point) -> Str = \"base\" }\n"
+      );
     ]
     (fun root ->
       let entry_file = Filename.concat root "main.mr" in

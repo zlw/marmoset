@@ -1,7 +1,7 @@
 (library
  (name frontend)
  (libraries syntax diagnostics unix typecheck codegen)
- (modules module_context discovery import_resolver compiler)
+ (modules module_context discovery import_resolver module_catalog compiler)
  (inline_tests
   (flags (-verbose)))
  (preprocess

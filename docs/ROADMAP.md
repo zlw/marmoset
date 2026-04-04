@@ -30,6 +30,7 @@
 
 1. [Diagnostics rework](docs/plans/done/tooling/01_diagnostics-rework.md)
 2. [Fixture harness migration](docs/plans/done/tooling/02_fixture-harness-migration.md)
+3. [Module-aware LSP navigation and completion](docs/plans/done/tooling/03_module-aware-lsp.md)
 
 ### CI
 

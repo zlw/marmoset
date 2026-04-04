@@ -339,7 +339,7 @@ let rec type_expr_to_mono_type_with
       match List.assoc_opt name type_bindings with
       | Some ty -> Ok ty
       | None -> Ok (Types.TVar name))
-  | Syntax.Ast.AST.TCon name ->
+  | Syntax.Ast.AST.TCon name -> (
       let* bound_or_unbound =
         match List.assoc_opt name type_bindings with
         | Some ty -> Ok (Some ty)
@@ -385,16 +385,16 @@ let rec type_expr_to_mono_type_with
             ann_error (Printf.sprintf "Named type %s expects %d type argument(s)" name expected_arity)
         | None -> lookup_shape_source ()
       in
-      (match bound_or_unbound with
+      match bound_or_unbound with
       | Some ty -> Ok ty
       | None -> (
           match builtin_primitive_type name with
           | Some primitive -> Ok primitive
           | None -> lookup_named_type ()))
-  | Syntax.Ast.AST.TApp (con_name, type_args) ->
+  | Syntax.Ast.AST.TApp (con_name, type_args) -> (
       let ann_error msg = Error (Diagnostic.error_no_span ~code:"type-annotation-invalid" ~message:msg) in
       let* arg_types = map_result (type_expr_to_mono_type_with type_bindings) type_args in
-      (match builtin_type_constructor_name con_name with
+      match builtin_type_constructor_name con_name with
       | Some "list" -> (
           match arg_types with
           | [ elem_type ] -> Ok (Types.TArray elem_type)
@@ -700,7 +700,8 @@ let setup_test_enums () =
     {
       name = "Result";
       type_params = [ "a"; "b" ];
-      variants = [ { name = "Success"; fields = [ Types.TVar "a" ] }; { name = "Failure"; fields = [ Types.TVar "b" ] } ];
+      variants =
+        [ { name = "Success"; fields = [ Types.TVar "a" ] }; { name = "Failure"; fields = [ Types.TVar "b" ] } ];
     }
 
 let%test "enum annotation Option[Int]" =

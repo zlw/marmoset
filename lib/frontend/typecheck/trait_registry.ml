@@ -733,8 +733,7 @@ let validate_trait_def (def : trait_def) : (unit, string) result =
     in
     if missing_supertraits <> [] then
       Error
-        (Printf.sprintf "Trait '%s' references undefined superconstraints: %s"
-           (display_trait_name def.trait_name)
+        (Printf.sprintf "Trait '%s' references undefined superconstraints: %s" (display_trait_name def.trait_name)
            (String.concat ", " (List.map display_constraint_name missing_supertraits)))
     else
       Ok ()
@@ -906,7 +905,8 @@ let validate_impl (def : impl_def) : (unit, string) result =
   | Some msg -> Error msg
   | None -> (
       match lookup_trait def'.impl_trait_name with
-      | None -> Error (Printf.sprintf "Cannot implement undefined trait: %s" (display_trait_name def'.impl_trait_name))
+      | None ->
+          Error (Printf.sprintf "Cannot implement undefined trait: %s" (display_trait_name def'.impl_trait_name))
       | Some trait_def -> (
           let unused_impl_params =
             List.filter
@@ -945,8 +945,7 @@ let validate_impl (def : impl_def) : (unit, string) result =
                             (Printf.sprintf
                                "Impl for trait '%s' on type %s is missing required supertrait '%s' implementation"
                                (display_trait_name def'.impl_trait_name)
-                               (to_string for_type')
-                               (display_constraint_name supertrait))
+                               (to_string for_type') (display_constraint_name supertrait))
                   in
                   check_supertraits (supertraits_of_trait def'.impl_trait_name)))
 
