@@ -606,3 +606,6 @@ After each phase:
   - `dune runtest --root /Users/zlw/src/marmoset/marmoset lib/frontend --force`
 - 2026-04-04 02:37 CEST: LSP adapter slice green. `tools/lsp/lib/doc_state.ml` now consumes the compiler-owned analysis for both standalone and module files and stores the raw compiler result for future navigation/hover/completion work. Current policy stays conservative for module files: diagnostics and surface AST come from compiler analysis, but `type_map`/`environment` exposure remains off until the LSP side translates compiler-internal names for editor-facing features. Focused verification:
   - `dune runtest --root /Users/zlw/src/marmoset/marmoset tools/lsp/lib --force`
+- 2026-04-04 02:38 CEST: Combined focused verification green after both slices together:
+  - `dune runtest --root /Users/zlw/src/marmoset/marmoset lib/frontend --force`
+  - `dune runtest --root /Users/zlw/src/marmoset/marmoset tools/lsp/lib --force`
