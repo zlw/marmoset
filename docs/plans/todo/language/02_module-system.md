@@ -598,3 +598,9 @@ After each phase:
   - `infer_program` now exposes `~prepare_state` for the module compiler, but shared-environment runs still rely on the caller keeping any env-borne constrained generic obligations intact; the compiler path avoids that pitfall by using fresh per-module inference state and explicitly seeded registries/env.
   - Module fixtures need support modules colocated under the entry fixture's directory tree because discovery intentionally treats the entry file's directory as the project root.
   - The new emitted-Go snapshots are especially useful for modules because runtime output alone does not catch name-mangling or qualification regressions.
+- 2026-04-04 02:32 CEST: Started follow-up refactor to finish the plan's "clean architecture for incremental compilation and LSP" boundary. Current slices:
+  - extract a compiler-owned entry analysis API that returns parsed-graph plus typed-project artifacts without making LSP re-parse/re-check,
+  - migrate `tools/lsp/lib/doc_state.ml` to consume compiler analysis instead of mixing a standalone checker path with a diagnostics-only module path,
+  - keep current LSP surface behavior stable where module environments still use internalized compiler names, while exposing the richer compiler result for future navigation/hover/completion work.
+- 2026-04-04 02:36 CEST: Compiler slice green. `lib/frontend/compiler.ml` now owns entry analysis for both standalone files and module projects, returns active-file surface AST plus typed artifacts, snapshots per-module user generic names, and keeps `check_entry*` as wrappers over the new boundary. Focused verification:
+  - `dune runtest --root /Users/zlw/src/marmoset/marmoset lib/frontend --force`

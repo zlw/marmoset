@@ -3,6 +3,7 @@ module Diagnostic = Diagnostics.Diagnostic
 module Discovery = Discovery
 module Module_context = Module_context
 module Import_resolver = Import_resolver
+module Parser = Syntax.Parser
 module Annotation = Typecheck.Annotation
 module Builtins = Typecheck.Builtins
 module Checker = Typecheck.Checker
@@ -20,6 +21,7 @@ type checked_module = {
   file_path : string;
   program : AST.program;
   result : Checker.typecheck_result;
+  type_var_user_names : (string * string) list;
   signature : Module_sig.module_signature;
   locals : Module_sig.module_locals;
 }
@@ -37,9 +39,42 @@ type compiled_project = {
   diagnostics : Diagnostic.t list;
 }
 
+type analysis_mode =
+  | Standalone
+  | Modules
+
+type file_analysis = {
+  file_path : string;
+  source : string;
+  surface_program : AST.program option;
+  typed_program : AST.program option;
+  type_map : Infer.type_map option;
+  environment : Infer.type_env option;
+  type_var_user_names : (string * string) list;
+  diagnostics : Diagnostic.t list;
+}
+
+type entry_analysis = {
+  mode : analysis_mode;
+  graph : Module_context.module_graph option;
+  project : compiled_project option;
+  active_file : file_analysis;
+}
+
 let ( let* ) = Result.bind
 let compiler_error ~(code : string) ~(message : string) : Diagnostic.t = Diagnostic.error_no_span ~code ~message
 let merge_hashtbl dst src = Hashtbl.iter (fun key value -> Hashtbl.replace dst key value) src
+
+let diagnostics_have_errors (diagnostics : Diagnostic.t list) : bool =
+  List.exists (fun (diag : Diagnostic.t) -> diag.severity = Diagnostic.Error) diagnostics
+
+let read_source_file (path : string) : string =
+  let ic = open_in_bin path in
+  Fun.protect
+    ~finally:(fun () -> close_in ic)
+    (fun () ->
+      let len = in_channel_length ic in
+      really_input_string ic len)
 
 let iter_result f xs =
   let rec go = function
@@ -433,6 +468,7 @@ let compile_module
     ~(rewrite : Import_resolver.rewrite_result)
     (module_info : Module_context.parsed_module) : (checked_module, Diagnostic.t list) result =
   reset_module_state ();
+  let state = Infer.create_inference_state () in
   let* env =
     let rec seed_imports env_acc = function
       | [] -> Ok env_acc
@@ -447,9 +483,10 @@ let compile_module
     seed_imports (Builtins.prelude_env ()) rewrite.resolved_imports.direct_modules
   in
   let* result =
-    Checker.check_program_with_annotations ~prepare_state:false ~env rewrite.program
+    Checker.check_program_with_annotations ~state ~prepare_state:false ~env rewrite.program
     |> Result.map_error (fun diags -> diags)
   in
+  let type_var_user_names = Infer.type_var_user_name_bindings_in_state state in
   let* locals = extract_module_locals rewrite.program |> Result.map_error (fun diag -> [ diag ]) in
   let* surface =
     match Hashtbl.find_opt surfaces module_info.module_id with
@@ -471,6 +508,7 @@ let compile_module
       file_path = module_info.file_path;
       program = rewrite.program;
       result;
+      type_var_user_names;
       signature;
       locals;
     }
@@ -592,6 +630,117 @@ let compile_project_to_build (graph : Module_context.module_graph) :
   let* project = compile_project graph in
   emit_compiled_project project
 
+let make_file_analysis
+    ~(file_path : string)
+    ~(source : string)
+    ?surface_program
+    ?typed_program
+    ?type_map
+    ?environment
+    ?(type_var_user_names = [])
+    ~(diagnostics : Diagnostic.t list)
+    () : file_analysis =
+  { file_path; source; surface_program; typed_program; type_map; environment; type_var_user_names; diagnostics }
+
+let find_parsed_module_by_file (analysis : entry_analysis) ~(file_path : string) : Module_context.parsed_module option =
+  match analysis.graph with
+  | None -> None
+  | Some graph ->
+      Hashtbl.to_seq_values graph.modules
+      |> List.of_seq
+      |> List.find_opt (fun (module_info : Module_context.parsed_module) ->
+             String.equal module_info.file_path file_path)
+
+let find_checked_module_by_file (analysis : entry_analysis) ~(file_path : string) : checked_module option =
+  match analysis.project with
+  | None -> None
+  | Some project ->
+      List.find_opt (fun (module_ : checked_module) -> String.equal module_.file_path file_path) project.modules
+
+let analyze_standalone_program ~(entry_file : string) ~(source : string) (program : AST.program) : entry_analysis =
+  reset_module_state ();
+  let env = Builtins.prelude_env () in
+  let state = Infer.create_inference_state () in
+  match Checker.check_program_with_annotations ~state ~env program with
+  | Error diags ->
+      let active_file =
+        make_file_analysis ~file_path:entry_file ~source ~surface_program:program ~diagnostics:diags
+          ~type_var_user_names:(Infer.type_var_user_name_bindings_in_state state) ()
+      in
+      { mode = Standalone; graph = None; project = None; active_file }
+  | Ok result ->
+      let active_file =
+        make_file_analysis ~file_path:entry_file ~source ~surface_program:program ~typed_program:program
+          ~type_map:result.type_map ~environment:result.environment ~diagnostics:result.diagnostics
+          ~type_var_user_names:(Infer.type_var_user_name_bindings_in_state state) ()
+      in
+      { mode = Standalone; graph = None; project = None; active_file }
+
+let analyze_module_graph ~(entry_file : string) ~(source : string) ~(entry_program : AST.program)
+    (graph : Module_context.module_graph) : entry_analysis =
+  match Hashtbl.find_opt graph.modules graph.entry_module with
+  | None ->
+      let active_file =
+        make_file_analysis ~file_path:entry_file ~source ~surface_program:entry_program
+          ~diagnostics:
+            [
+              compiler_error ~code:"module-missing"
+                ~message:(Printf.sprintf "Missing entry module '%s'" graph.entry_module);
+            ]
+          ()
+      in
+      { mode = Modules; graph = Some graph; project = None; active_file }
+  | Some entry_module -> (
+      match compile_project graph with
+      | Error diags ->
+          let active_file =
+            make_file_analysis ~file_path:entry_module.file_path ~source:entry_module.source
+              ~surface_program:entry_module.program ~diagnostics:diags ()
+          in
+          { mode = Modules; graph = Some graph; project = None; active_file }
+      | Ok project -> (
+          match List.find_opt (fun (module_ : checked_module) -> String.equal module_.module_id graph.entry_module) project.modules with
+          | None ->
+              let active_file =
+                make_file_analysis ~file_path:entry_module.file_path ~source:entry_module.source
+                  ~surface_program:entry_module.program
+                  ~diagnostics:
+                    [
+                      compiler_error ~code:"module-missing"
+                        ~message:(Printf.sprintf "Missing checked entry module '%s'" graph.entry_module);
+                    ]
+                  ()
+              in
+              { mode = Modules; graph = Some graph; project = Some project; active_file }
+          | Some checked_entry ->
+              let active_file =
+                make_file_analysis ~file_path:entry_module.file_path ~source:entry_module.source
+                  ~surface_program:entry_module.program ~typed_program:checked_entry.program
+                  ~type_map:checked_entry.result.type_map ~environment:checked_entry.result.environment
+                  ~type_var_user_names:checked_entry.type_var_user_names ~diagnostics:project.diagnostics ()
+              in
+              { mode = Modules; graph = Some graph; project = Some project; active_file }))
+
+let analyze_entry_with_source ~(entry_file : string) ~(entry_source : string) : entry_analysis =
+  match Parser.parse ~file_id:entry_file entry_source with
+  | Error diags ->
+      let active_file = make_file_analysis ~file_path:entry_file ~source:entry_source ~diagnostics:diags () in
+      { mode = Standalone; graph = None; project = None; active_file }
+  | Ok entry_program ->
+      if not (has_module_headers entry_program) then
+        analyze_standalone_program ~entry_file ~source:entry_source entry_program
+      else
+        match Discovery.discover_project_with_entry_source ~entry_file ~entry_source with
+        | Error diag ->
+            let active_file =
+              make_file_analysis ~file_path:entry_file ~source:entry_source ~surface_program:entry_program
+                ~diagnostics:[ diag ] ()
+            in
+            { mode = Modules; graph = None; project = None; active_file }
+        | Ok graph -> analyze_module_graph ~entry_file ~source:entry_source ~entry_program graph
+
+let analyze_entry ~(entry_file : string) : entry_analysis = analyze_entry_with_source ~entry_file ~entry_source:(read_source_file entry_file)
+
 let check_graph (graph : Module_context.module_graph) : (Diagnostic.t list, Diagnostic.t list) result =
   match Hashtbl.find_opt graph.modules graph.entry_module with
   | Some entry_module when Hashtbl.length graph.modules = 1 && not (has_module_headers entry_module.program) ->
@@ -605,15 +754,19 @@ let check_graph (graph : Module_context.module_graph) : (Diagnostic.t list, Diag
       | Error diags -> Error diags)
 
 let check_entry ~(entry_file : string) : (Diagnostic.t list, Diagnostic.t list) result =
-  match Discovery.discover_project ~entry_file with
-  | Error diag -> Error [ diag ]
-  | Ok graph -> check_graph graph
+  let analysis = analyze_entry ~entry_file in
+  if diagnostics_have_errors analysis.active_file.diagnostics then
+    Error analysis.active_file.diagnostics
+  else
+    Ok analysis.active_file.diagnostics
 
 let check_entry_with_source ~(entry_file : string) ~(entry_source : string) :
     (Diagnostic.t list, Diagnostic.t list) result =
-  match Discovery.discover_project_with_entry_source ~entry_file ~entry_source with
-  | Error diag -> Error [ diag ]
-  | Ok graph -> check_graph graph
+  let analysis = analyze_entry_with_source ~entry_file ~entry_source in
+  if diagnostics_have_errors analysis.active_file.diagnostics then
+    Error analysis.active_file.diagnostics
+  else
+    Ok analysis.active_file.diagnostics
 
 let compile_entry_to_build ~(entry_file : string) : (Codegen.build_output, Diagnostic.t list) result =
   let* graph = Discovery.discover_project ~entry_file |> Result.map_error (fun diag -> [ diag ]) in
@@ -742,3 +895,87 @@ let%test "compile_project rejects duplicate impls across transitive imports" =
                   && Diagnostics.String_utils.contains_substring ~needle:"Duplicate impl registration for trait"
                        diag.message)
                 diags))
+
+let%test "analyze_entry_with_source returns typed standalone file state" =
+  Discovery.with_temp_project
+    [ ("main.mr", "let id = (x) -> x\nid(1)\n") ]
+    (fun root ->
+      let analysis =
+        analyze_entry_with_source ~entry_file:(Filename.concat root "main.mr") ~entry_source:"let id = (x) -> x\nid(1)\n"
+      in
+      analysis.mode = Standalone
+      && analysis.graph = None
+      && analysis.project = None
+      && analysis.active_file.file_path = Filename.concat root "main.mr"
+      && analysis.active_file.surface_program <> None
+      && analysis.active_file.typed_program <> None
+      && analysis.active_file.type_map <> None
+      && analysis.active_file.environment <> None
+      && analysis.active_file.diagnostics = [])
+
+let%test "analyze_entry_with_source keeps surface entry AST alongside typed module project" =
+  Discovery.with_temp_project
+    [
+      ("main.mr", "import sum\nputs(sum.sum([1, 2, 3]))\n");
+      ("sum.mr", "export sum\nfn sum(values: List[Int]) -> Int = len(values)\n");
+    ]
+    (fun root ->
+      let analysis =
+        analyze_entry_with_source ~entry_file:(Filename.concat root "main.mr")
+          ~entry_source:"import sum\nputs(sum.sum([1, 2, 3]))\n"
+      in
+      let surface_has_namespace =
+        match analysis.active_file.surface_program with
+        | None -> false
+        | Some program ->
+            List.exists
+              (fun (stmt : AST.statement) ->
+                match stmt.stmt with
+                | AST.ExpressionStmt
+                    {
+                      expr =
+                        AST.Call
+                          ( { expr = AST.Identifier "puts"; _ },
+                            [
+                              {
+                                expr =
+                                  AST.MethodCall
+                                    {
+                                      mc_receiver = { expr = AST.Identifier "sum"; _ };
+                                      mc_method = "sum";
+                                      mc_args = _;
+                                      _;
+                                    };
+                                _;
+                              };
+                            ]
+                          );
+                      _;
+                    } -> true
+                | _ -> false)
+              program
+      in
+      let typed_has_internal_name =
+        match analysis.active_file.typed_program with
+        | None -> false
+        | Some program ->
+            List.exists
+              (fun (stmt : AST.statement) ->
+                match stmt.stmt with
+                | AST.ExpressionStmt
+                    {
+                      expr =
+                        AST.Call
+                          ({ expr = AST.Identifier "puts"; _ }, [ { expr = AST.Call ({ expr = AST.Identifier "sum__sum"; _ }, _); _ } ]);
+                      _;
+                    } -> true
+                | _ -> false)
+              program
+      in
+      analysis.mode = Modules
+      && analysis.graph <> None
+      && analysis.project <> None
+      && analysis.active_file.type_map <> None
+      && analysis.active_file.environment <> None
+      && surface_has_namespace
+      && typed_has_internal_name)
