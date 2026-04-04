@@ -803,7 +803,14 @@ let analyze_module_graph
             ]
           ()
       in
-      { mode = Modules; source_root; project_root = Some project_root; graph = Some graph; project = None; active_file }
+      {
+        mode = Modules;
+        source_root;
+        project_root = Some project_root;
+        graph = Some graph;
+        project = None;
+        active_file;
+      }
   | Some entry_module -> (
       match compile_project graph with
       | Error diags ->
@@ -811,7 +818,14 @@ let analyze_module_graph
             make_file_analysis ~file_path:entry_module.file_path ~module_id:entry_module.module_id
               ~source:entry_module.source ~surface_program:entry_module.program ~diagnostics:diags ()
           in
-          { mode = Modules; source_root; project_root = Some project_root; graph = Some graph; project = None; active_file }
+          {
+            mode = Modules;
+            source_root;
+            project_root = Some project_root;
+            graph = Some graph;
+            project = None;
+            active_file;
+          }
       | Ok project -> (
           match
             List.find_opt
@@ -862,8 +876,12 @@ let rec analyze_entry_with_source
     ~source_overrides:(Hashtbl.create 0) ()
 
 and analyze_entry_with_overrides
-    ?source_root ?(force_modules = false) ~(entry_file : string) ~(entry_source : string)
-    ~(source_overrides : (string, string) Hashtbl.t) () : entry_analysis =
+    ?source_root
+    ?(force_modules = false)
+    ~(entry_file : string)
+    ~(entry_source : string)
+    ~(source_overrides : (string, string) Hashtbl.t)
+    () : entry_analysis =
   match Parser.parse ~file_id:entry_file entry_source with
   | Error diags ->
       let active_file = make_file_analysis ~file_path:entry_file ~source:entry_source ~diagnostics:diags () in
@@ -875,13 +893,22 @@ and analyze_entry_with_overrides
         let project_root = resolved_project_root ?source_root ~entry_file () in
         let all_overrides = Hashtbl.copy source_overrides in
         Hashtbl.replace all_overrides (Discovery.normalize_path entry_file) entry_source;
-        match Discovery.discover_project_with_overrides ?source_root ~entry_file ~source_overrides:all_overrides () with
+        match
+          Discovery.discover_project_with_overrides ?source_root ~entry_file ~source_overrides:all_overrides ()
+        with
         | Error diag ->
             let active_file =
               make_file_analysis ~file_path:entry_file ~source:entry_source ~surface_program:entry_program
                 ~diagnostics:[ diag ] ()
             in
-            { mode = Modules; source_root; project_root = Some project_root; graph = None; project = None; active_file }
+            {
+              mode = Modules;
+              source_root;
+              project_root = Some project_root;
+              graph = None;
+              project = None;
+              active_file;
+            }
         | Ok graph ->
             analyze_module_graph ~source_root ~project_root:graph.root_dir ~entry_file ~source:entry_source
               ~entry_program graph)
@@ -1194,10 +1221,7 @@ let%test "analyze_entry_with_source respects explicit source_root" =
 
 let%test "analyze_entry_with_overrides sees imported file overrides" =
   Discovery.with_temp_project
-    [
-      ("main.mr", "import math.answer\nanswer() + 1\n");
-      ("math.mr", "export answer\nfn answer() -> Int = 41\n");
-    ]
+    [ ("main.mr", "import math.answer\nanswer() + 1\n"); ("math.mr", "export answer\nfn answer() -> Int = 41\n") ]
     (fun root ->
       let overrides = Hashtbl.create 1 in
       let math_path = Discovery.normalize_path (Filename.concat root "math.mr") in
@@ -1208,8 +1232,7 @@ let%test "analyze_entry_with_overrides sees imported file overrides" =
       in
       List.exists
         (fun (diag : Diagnostic.t) ->
-          diag.code = "type-mismatch"
-          || Diagnostics.String_utils.contains_substring ~needle:"Str" diag.message)
+          diag.code = "type-mismatch" || Diagnostics.String_utils.contains_substring ~needle:"Str" diag.message)
         analysis.active_file.diagnostics)
 
 let%test "analyze_entry_with_source can force headerless files into module mode" =
@@ -1242,16 +1265,15 @@ let%test "checked_module navigation keeps resolved imports for namespace and ali
       in
       match find_checked_module_by_file analysis ~file_path:(Filename.concat root "main.mr") with
       | None -> false
-      | Some checked_main ->
+      | Some checked_main -> (
           Import_resolver.StringMap.mem "plus" checked_main.navigation.resolved_imports.direct_bindings
           &&
           match
             Import_resolver.resolve_namespace_member
-              ~namespace_roots:checked_main.navigation.resolved_imports.namespace_roots
-              [ "math"; "add" ]
+              ~namespace_roots:checked_main.navigation.resolved_imports.namespace_roots [ "math"; "add" ]
           with
           | Some (`Exported exported) -> String.equal exported.internal_name "math__add"
-          | _ -> false)
+          | _ -> false))
 
 let%test "find_export_binding exposes exported definition metadata through compiler boundary" =
   Discovery.with_temp_project

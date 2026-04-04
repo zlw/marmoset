@@ -31,7 +31,7 @@ let decode_internal_component (component : string) : string =
   let rec loop i =
     if i >= len then
       ()
-    else if i + 5 < len && component.[i] = '_' && component.[i + 1] = 'u' then
+    else if i + 5 < len && component.[i] = '_' && component.[i + 1] = 'u' then (
       match
         ( hex_value component.[i + 2],
           hex_value component.[i + 3],
@@ -44,7 +44,7 @@ let decode_internal_component (component : string) : string =
           loop (i + 6)
       | _ ->
           Buffer.add_char buffer component.[i];
-          loop (i + 1)
+          loop (i + 1))
     else (
       Buffer.add_char buffer component.[i];
       loop (i + 1))

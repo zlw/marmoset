@@ -118,7 +118,10 @@ let navigation_from_surface_graph (analysis : Doc_state.analysis_result) : navig
       match compiler_analysis.graph with
       | None -> None
       | Some graph -> (
-          match Compiler.find_parsed_module_by_file compiler_analysis ~file_path:compiler_analysis.active_file.file_path with
+          match
+            Compiler.find_parsed_module_by_file compiler_analysis
+              ~file_path:compiler_analysis.active_file.file_path
+          with
           | None -> None
           | Some parsed_module -> (
               match Import_resolver.build_module_surfaces graph with
@@ -153,8 +156,8 @@ let root_dir_of_analysis (analysis : Doc_state.analysis_result) : string option 
                 (Compiler.resolved_project_root ?source_root:compiler_analysis.source_root
                    ~entry_file:compiler_analysis.active_file.file_path ())))
 
-let root_dir_for_completion ~(latest : Doc_state.analysis_result) ~(last_good : Doc_state.analysis_result option) :
-    string option =
+let root_dir_for_completion ~(latest : Doc_state.analysis_result) ~(last_good : Doc_state.analysis_result option)
+    : string option =
   match root_dir_of_analysis latest with
   | Some _ as root -> root
   | None -> Option.bind last_good root_dir_of_analysis
@@ -162,13 +165,16 @@ let root_dir_for_completion ~(latest : Doc_state.analysis_result) ~(last_good : 
 let source_overrides_normalized (source_overrides : (string, string) Hashtbl.t) : (string, string) Hashtbl.t =
   Discovery.normalize_source_overrides source_overrides
 
-let module_catalog ~(latest : Doc_state.analysis_result) ~(last_good : Doc_state.analysis_result option)
-    ~(analysis : Doc_state.analysis_result) ~(source_overrides : (string, string) Hashtbl.t) :
-    Module_catalog.t option =
+let module_catalog
+    ~(latest : Doc_state.analysis_result)
+    ~(last_good : Doc_state.analysis_result option)
+    ~(analysis : Doc_state.analysis_result)
+    ~(source_overrides : (string, string) Hashtbl.t) : Module_catalog.t option =
   Option.map
     (fun root_dir ->
       Module_catalog.build ~root_dir ?analysis:analysis.compiler_analysis
-        ~source_overrides:(source_overrides_normalized source_overrides) ())
+        ~source_overrides:(source_overrides_normalized source_overrides)
+        ())
     (root_dir_for_completion ~latest ~last_good)
 
 let poly_detail_of_internal ~(environment : Infer.type_env option) ~(internal_name : string) : string option =
@@ -185,8 +191,7 @@ let kind_of_binding (binding : Module_sig.member_binding) : Lsp_t.CompletionItem
 let detail_of_binding (binding : Module_sig.member_binding) : string option =
   Option.map detail_of_poly binding.value_type
 
-let kind_of_presence ?typed_binding (presence : Import_resolver.member_presence) :
-    Lsp_t.CompletionItemKind.t =
+let kind_of_presence ?typed_binding (presence : Import_resolver.member_presence) : Lsp_t.CompletionItemKind.t =
   match typed_binding with
   | Some binding -> kind_of_binding binding
   | None when presence.has_enum -> Lsp_t.CompletionItemKind.Enum
@@ -223,8 +228,7 @@ let add_semantic_item (items : (string, semantic_item) Hashtbl.t) (item : semant
       in
       Hashtbl.replace items item.label { prior with kind; detail }
 
-let prefix_filter ~(prefix : string) (label : string) : bool =
-  prefix = "" || starts_with ~prefix label
+let prefix_filter ~(prefix : string) (label : string) : bool = prefix = "" || starts_with ~prefix label
 
 let identifier_prefix_at_offset ~(source : string) ~(offset : int) : string option =
   let tokens = Array.of_list (Lexer.lex source) in
@@ -274,7 +278,10 @@ let namespace_member_context ~(source : string) ~(offset : int) ~(trigger_is_dot
         best
     in
     match find_prev 0 None with
-    | Some dot_idx when tokens.(dot_idx).token_type = Token.Dot && dot_idx >= 1 && tokens.(dot_idx - 1).token_type = Token.Ident ->
+    | Some dot_idx
+      when tokens.(dot_idx).token_type = Token.Dot
+           && dot_idx >= 1
+           && tokens.(dot_idx - 1).token_type = Token.Ident ->
         Some (collect_left_chain tokens (dot_idx - 1), "", Some tokens.(dot_idx - 1).pos)
     | _ -> None
   else
@@ -313,7 +320,8 @@ let root_symbol_is_surface_local ~(analysis : Doc_state.analysis_result) ~(root_
   | Some navigation -> Import_resolver.StringMap.mem root_name navigation.surface.declarations
   | None -> false
 
-let bare_identifier_items ~(analysis : Doc_state.analysis_result) ~(prefix : string) : Lsp_t.CompletionItem.t list =
+let bare_identifier_items ~(analysis : Doc_state.analysis_result) ~(prefix : string) : Lsp_t.CompletionItem.t list
+    =
   let items = Hashtbl.create 32 in
   let navigation = current_navigation analysis in
   let environment = analysis.environment in
@@ -368,11 +376,26 @@ let bare_identifier_items ~(analysis : Doc_state.analysis_result) ~(prefix : str
              if prefix_filter ~prefix name && not (StringSet.mem name hidden_internal_names) then
                let (Types.Forall (_, mono)) = poly in
                add_semantic_item items
-                 { label = name; kind = kind_of_type mono; detail = Some (detail_of_poly poly); sort_text = Some name }))
+                 {
+                   label = name;
+                   kind = kind_of_type mono;
+                   detail = Some (detail_of_poly poly);
+                   sort_text = Some name;
+                 }))
     environment;
-  let semantic_items = Hashtbl.to_seq_values items |> List.of_seq |> List.sort (fun a b -> String.compare a.label b.label) in
-  semantic_items @ List.map (fun (kw, desc) ->
-    { label = kw; kind = Lsp_t.CompletionItemKind.Keyword; detail = Some desc; sort_text = Some ("zzz_" ^ kw) }) keywords
+  let semantic_items =
+    Hashtbl.to_seq_values items |> List.of_seq |> List.sort (fun a b -> String.compare a.label b.label)
+  in
+  semantic_items
+  @ List.map
+      (fun (kw, desc) ->
+        {
+          label = kw;
+          kind = Lsp_t.CompletionItemKind.Keyword;
+          detail = Some desc;
+          sort_text = Some ("zzz_" ^ kw);
+        })
+      keywords
   |> List.map completion_item_of_semantic
 
 let export_completion_items (entry : Module_catalog.entry) ~(prefix : string) : semantic_item list =
@@ -421,9 +444,13 @@ let context_at ~(source : string) ~(offset : int) ~(trigger_is_dot : bool) : com
           | Some prefix -> BareIdentifier { prefix }
           | None -> BareIdentifier { prefix = "" }))
 
-let complete_at ~(latest : Doc_state.analysis_result) ~(last_good : Doc_state.analysis_result option) ~(line : int)
-    ~(character : int) ~(trigger_is_dot : bool) ~(source_overrides : (string, string) Hashtbl.t) :
-    Lsp_t.CompletionItem.t list option =
+let complete_at
+    ~(latest : Doc_state.analysis_result)
+    ~(last_good : Doc_state.analysis_result option)
+    ~(line : int)
+    ~(character : int)
+    ~(trigger_is_dot : bool)
+    ~(source_overrides : (string, string) Hashtbl.t) : Lsp_t.CompletionItem.t list option =
   let source = latest.source in
   let offset = Lsp_utils.position_to_offset ~source ~line ~character in
   let semantic = semantic_analysis ~latest ~last_good in
@@ -445,7 +472,7 @@ let complete_at ~(latest : Doc_state.analysis_result) ~(last_good : Doc_state.an
       | Some navigation -> (
           match catalog with
           | None -> None
-          | Some catalog ->
+          | Some catalog -> (
               let root_offset =
                 match namespace_member_context ~source ~offset ~trigger_is_dot with
                 | Some (_, _, Some root_offset) -> root_offset
@@ -459,14 +486,14 @@ let complete_at ~(latest : Doc_state.analysis_result) ~(last_good : Doc_state.an
                 None
               else
                 match
-                  Import_resolver.lookup_namespace_node
-                    navigation.resolved_imports.namespace_roots receiver_segments
+                  Import_resolver.lookup_namespace_node navigation.resolved_imports.namespace_roots
+                    receiver_segments
                 with
                 | Some _ ->
                     Some
                       (namespace_or_import_items ~catalog ~prefix_segments:receiver_segments ~prefix
                       |> List.map completion_item_of_semantic)
-                | None -> None))
+                | None -> None)))
   | Unsupported -> None
 
 (* ============================================================
@@ -582,8 +609,13 @@ let source_with_cursor (annotated : string) : string * int * int =
   let pos = Lsp_utils.offset_to_position ~source ~offset:cursor in
   (source, pos.line, pos.character)
 
-let completion_items_at ?last_good_annotated ?(trigger_is_dot = false) ?(overrides = []) ~(files : (string * string) list)
-    ~(entry_rel : string) (annotated : string) : Lsp_t.CompletionItem.t list option =
+let completion_items_at
+    ?last_good_annotated
+    ?(trigger_is_dot = false)
+    ?(overrides = [])
+    ~(files : (string * string) list)
+    ~(entry_rel : string)
+    (annotated : string) : Lsp_t.CompletionItem.t list option =
   let captured = ref None in
   let _ =
     Doc_state.with_temp_project files (fun root ->
@@ -599,10 +631,10 @@ let completion_items_at ?last_good_annotated ?(trigger_is_dot = false) ?(overrid
         in
         let source_overrides = Hashtbl.create (List.length overrides) in
         List.iter
-          (fun (relative_path, contents) -> Hashtbl.replace source_overrides (Filename.concat root relative_path) contents)
+          (fun (relative_path, contents) ->
+            Hashtbl.replace source_overrides (Filename.concat root relative_path) contents)
           overrides;
-        captured :=
-          complete_at ~latest ~last_good ~line ~character ~trigger_is_dot ~source_overrides;
+        captured := complete_at ~latest ~last_good ~line ~character ~trigger_is_dot ~source_overrides;
         true)
   in
   !captured
@@ -622,7 +654,8 @@ let%test "module completions surface current top-level names without internal pr
       ~entry_rel:"main.mr" "export helper\nlet helper = 1\nhe|\n"
   in
   debug_labels ~label:"current-module top-level" labels;
-  List.mem "helper" labels && not (List.exists (fun label -> Diagnostics.String_utils.contains_substring ~needle:"__" label) labels)
+  List.mem "helper" labels
+  && not (List.exists (fun label -> Diagnostics.String_utils.contains_substring ~needle:"__" label) labels)
 
 let%test "module completions include direct-import aliases but not mangled targets" =
   let labels =
@@ -643,7 +676,9 @@ let%test "namespace completion returns exported members for parsed qualifiers" =
       ~files:
         [
           ("main.mr", "import math\nmath.ad|\n");
-          ("math.mr", "export add, Point, HasXY\nfn add(x: Int, y: Int) -> Int = x + y\ntype Point = { x: Int, y: Int }\nshape HasXY = { x: Int, y: Int }\n");
+          ( "math.mr",
+            "export add, Point, HasXY\nfn add(x: Int, y: Int) -> Int = x + y\ntype Point = { x: Int, y: Int }\nshape HasXY = { x: Int, y: Int }\n"
+          );
         ]
       ~entry_rel:"main.mr" "import math\nmath.ad|\n"
   in
@@ -656,9 +691,12 @@ let%test "bare-dot namespace completion can use last_good" =
       ~files:
         [
           ("main.mr", "import math\nmath.\n");
-          ("math.mr", "export add, Point, HasXY\nfn add(x: Int, y: Int) -> Int = x + y\ntype Point = { x: Int, y: Int }\nshape HasXY = { x: Int, y: Int }\n");
+          ( "math.mr",
+            "export add, Point, HasXY\nfn add(x: Int, y: Int) -> Int = x + y\ntype Point = { x: Int, y: Int }\nshape HasXY = { x: Int, y: Int }\n"
+          );
         ]
-      ~entry_rel:"main.mr" ~trigger_is_dot:true ~last_good_annotated:"import math\nmath|\n" "import math\nmath.|\n"
+      ~entry_rel:"main.mr" ~trigger_is_dot:true ~last_good_annotated:"import math\nmath|\n"
+      "import math\nmath.|\n"
   in
   debug_labels ~label:"bare-dot namespace" labels;
   List.mem "add" labels && List.mem "Point" labels && List.mem "HasXY" labels
@@ -681,7 +719,12 @@ let%test "import-path completion survives trailing dots and sees open overrides"
           ("math.mr", "export add\nfn add(x: Int, y: Int) -> Int = x + y\n");
           ("collections/list.mr", "export map\nfn map(x: Int) -> Int = x\n");
         ]
-      ~overrides:[ ("math.mr", "export mul, Point, HasXY\nfn mul(x: Int, y: Int) -> Int = x * y\ntype Point = { x: Int, y: Int }\nshape HasXY = { x: Int, y: Int }\n") ]
+      ~overrides:
+        [
+          ( "math.mr",
+            "export mul, Point, HasXY\nfn mul(x: Int, y: Int) -> Int = x * y\ntype Point = { x: Int, y: Int }\nshape HasXY = { x: Int, y: Int }\n"
+          );
+        ]
       ~entry_rel:"main.mr" "import math.|\n"
   in
   debug_labels ~label:"import trailing dot with override" labels;
@@ -692,8 +735,7 @@ let%test "import-path completion suggests sibling module segments from project r
     completion_labels ~trigger_is_dot:true
       ~files:
         [
-          ("main.mr", "import collections.\n");
-          ("collections/list.mr", "export map\nfn map(x: Int) -> Int = x\n");
+          ("main.mr", "import collections.\n"); ("collections/list.mr", "export map\nfn map(x: Int) -> Int = x\n");
         ]
       ~entry_rel:"main.mr" "import collections.|\n"
   in

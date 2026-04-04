@@ -85,7 +85,10 @@ let find_close_paren ~source ~start ~limit =
   in
   scan (limit - 1)
 
-let binding_annotation_type ~(type_map : Infer.type_map) ~(environment : Infer.type_env option) ~(name : string)
+let binding_annotation_type
+    ~(type_map : Infer.type_map)
+    ~(environment : Infer.type_env option)
+    ~(name : string)
     (value : Ast.AST.expression) : Types.mono_type option =
   match environment with
   | Some env -> (
@@ -95,19 +98,23 @@ let binding_annotation_type ~(type_map : Infer.type_map) ~(environment : Infer.t
   | None -> Hashtbl.find_opt type_map value.id
 
 let annotated_binding_source_type ~(program : Ast.AST.program) ~(name : string) : string option =
-  let rec find_in_stmts stmts =
-    List.find_map find_in_stmt stmts
+  let rec find_in_stmts stmts = List.find_map find_in_stmt stmts
   and find_in_stmt (stmt : Ast.AST.statement) =
     match stmt.stmt with
-    | Ast.AST.Let { name = binding_name; type_annotation = Some type_expr; _ } when String.equal binding_name name ->
+    | Ast.AST.Let { name = binding_name; type_annotation = Some type_expr; _ } when String.equal binding_name name
+      ->
         Some (Source_syntax.type_expr_to_source type_expr)
     | Ast.AST.Block stmts -> find_in_stmts stmts
     | _ -> None
   in
   find_in_stmts program
 
-let binding_annotation_text ~(program : Ast.AST.program) ~(type_map : Infer.type_map) ~(environment : Infer.type_env option)
-    ~(name : string) (value : Ast.AST.expression) : string option =
+let binding_annotation_text
+    ~(program : Ast.AST.program)
+    ~(type_map : Infer.type_map)
+    ~(environment : Infer.type_env option)
+    ~(name : string)
+    (value : Ast.AST.expression) : string option =
   match value.expr with
   | Ast.AST.Identifier bound_name -> (
       match annotated_binding_source_type ~program ~name:bound_name with
@@ -200,7 +207,8 @@ let sites_for_function ~source ~type_map ~range_start ~range_end ~sites (fn_expr
   | _ -> ()
 
 (* Walk statements recursively, collecting annotation sites *)
-let rec walk_stmt ~source ~program ~type_map ~environment ~range_start ~range_end ~sites (stmt : Ast.AST.statement) =
+let rec walk_stmt
+    ~source ~program ~type_map ~environment ~range_start ~range_end ~sites (stmt : Ast.AST.statement) =
   if stmt.end_pos < range_start || stmt.pos > range_end then
     ()
   else
@@ -227,7 +235,8 @@ let rec walk_stmt ~source ~program ~type_map ~environment ~range_start ~range_en
         walk_expr ~source ~program ~type_map ~environment ~range_start ~range_end ~sites value
     | Ast.AST.Block stmts ->
         List.iter (walk_stmt ~source ~program ~type_map ~environment ~range_start ~range_end ~sites) stmts
-    | Ast.AST.ExpressionStmt e -> walk_expr ~source ~program ~type_map ~environment ~range_start ~range_end ~sites e
+    | Ast.AST.ExpressionStmt e ->
+        walk_expr ~source ~program ~type_map ~environment ~range_start ~range_end ~sites e
     | Ast.AST.Return e -> walk_expr ~source ~program ~type_map ~environment ~range_start ~range_end ~sites e
     | Ast.AST.ExportDecl _ | Ast.AST.ImportDecl _ -> ()
     | Ast.AST.EnumDef _ | Ast.AST.TypeDef _ | Ast.AST.ShapeDef _ | Ast.AST.TraitDef _ | Ast.AST.ImplDef _
@@ -357,8 +366,9 @@ let get_actions source =
           ~start:(Lsp_t.Position.create ~line:0 ~character:0)
           ~end_:(Lsp_t.Position.create ~line:999 ~character:0)
       in
-      compute ~source ~uri:(Lsp_t.DocumentUri.of_string "file:///test.mr") ~program:prog ~type_map:tm
-        ~environment:result.environment ~range
+      compute ~source
+        ~uri:(Lsp_t.DocumentUri.of_string "file:///test.mr")
+        ~program:prog ~type_map:tm ~environment:result.environment ~range
   | _ -> []
 
 let get_actions_in_file ~(files : (string * string) list) ~(entry_rel : string) ~(source : string) =
@@ -367,17 +377,17 @@ let get_actions_in_file ~(files : (string * string) list) ~(entry_rel : string) 
     Doc_state.with_temp_project files (fun root ->
         let file_id = Filename.concat root entry_rel in
         let result = Doc_state.analyze_with_file_id ~source_root:root ~file_id ~source () in
-        captured :=
-          (match (result.program, result.type_map) with
-          | Some prog, Some tm ->
-              let range =
-                Lsp_t.Range.create
-                  ~start:(Lsp_t.Position.create ~line:0 ~character:0)
-                  ~end_:(Lsp_t.Position.create ~line:999 ~character:0)
-              in
-              compute ~source ~uri:(Lsp_t.DocumentUri.of_path file_id) ~program:prog ~type_map:tm
-                ~environment:result.environment ~range
-          | _ -> []);
+        (captured :=
+           match (result.program, result.type_map) with
+           | Some prog, Some tm ->
+               let range =
+                 Lsp_t.Range.create
+                   ~start:(Lsp_t.Position.create ~line:0 ~character:0)
+                   ~end_:(Lsp_t.Position.create ~line:999 ~character:0)
+               in
+               compute ~source ~uri:(Lsp_t.DocumentUri.of_path file_id) ~program:prog ~type_map:tm
+                 ~environment:result.environment ~range
+           | _ -> []);
         true)
   in
   !captured
@@ -497,8 +507,9 @@ let%test "range filtering works" =
           ~end_:(Lsp_t.Position.create ~line:0 ~character:10)
       in
       let actions =
-        compute ~source ~uri:(Lsp_t.DocumentUri.of_string "file:///test.mr") ~program:prog ~type_map:tm
-          ~environment:result.environment ~range
+        compute ~source
+          ~uri:(Lsp_t.DocumentUri.of_string "file:///test.mr")
+          ~program:prog ~type_map:tm ~environment:result.environment ~range
       in
       let titles = action_titles actions in
       let has_x = List.exists (fun t -> starts_with t "Add type annotation: x:") titles in
@@ -517,5 +528,7 @@ let%test "module code actions keep imported surface types in annotation text" =
       ~entry_rel:"main.mr" ~source:"import math.Point\nlet typed: Point = { x: 0, y: 0 }\nlet point = typed\n"
   in
   let titles = action_titles actions in
-  List.exists (fun title -> Diagnostics.String_utils.contains_substring ~needle:"Add type annotation: point:" title) titles
+  List.exists
+    (fun title -> Diagnostics.String_utils.contains_substring ~needle:"Add type annotation: point:" title)
+    titles
   && not (List.exists (fun title -> Diagnostics.String_utils.contains_substring ~needle:"math__" title) titles)

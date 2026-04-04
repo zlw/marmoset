@@ -46,11 +46,11 @@ let get_tokens_in_file ~(files : (string * string) list) ~(entry_rel : string) ~
     Doc_state.with_temp_project files (fun root ->
         let file_id = Filename.concat root entry_rel in
         let result = Doc_state.analyze_with_file_id ~source_root:root ~file_id ~source () in
-        captured :=
-          (match (result.program, result.type_map, result.environment) with
-          | Some prog, Some tm, Some env ->
-              Semantic_tokens.compute ~source ~program:prog ~type_map:tm ~environment:env
-          | _ -> None);
+        (captured :=
+           match (result.program, result.type_map, result.environment) with
+           | Some prog, Some tm, Some env ->
+               Semantic_tokens.compute ~source ~program:prog ~type_map:tm ~environment:env
+           | _ -> None);
         true)
   in
   !captured

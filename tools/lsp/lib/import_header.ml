@@ -53,11 +53,11 @@ let parse_import_header (tokens : Token.token array) (start_idx : int) : (header
         (List.rev acc, None, trailing_dot, idx)
       else
         match tokens.(idx).token_type with
-        | Token.Dot -> (
+        | Token.Dot ->
             if idx + 1 < len && tokens.(idx + 1).token_type = Token.Ident then
               collect_path (idx + 1) acc None
             else
-              (List.rev acc, None, Some tokens.(idx).pos, idx + 1))
+              (List.rev acc, None, Some tokens.(idx).pos, idx + 1)
         | Token.As ->
             if idx + 1 < len && tokens.(idx + 1).token_type = Token.Ident then
               (List.rev acc, Some (parse_path_segment tokens.(idx + 1)), trailing_dot, idx + 2)
@@ -75,12 +75,13 @@ let parse_import_header (tokens : Token.token array) (start_idx : int) : (header
           | None -> (
               match trailing_dot with
               | Some dot_pos -> dot_pos
-              | None ->
+              | None -> (
                   match List.rev path_segments with
                   | [] -> tokens.(start_idx).pos
-                  | segment :: _ -> segment.end_pos)
+                  | segment :: _ -> segment.end_pos))
         in
-        Some ({ path_segments; alias_segment; trailing_dot; start_pos = tokens.(start_idx).pos; end_pos }, next_idx)
+        Some
+          ({ path_segments; alias_segment; trailing_dot; start_pos = tokens.(start_idx).pos; end_pos }, next_idx)
 
 let all_headers ~(source : string) : header list =
   let tokens = Array.of_list (Lexer.lex source) in
@@ -113,7 +114,8 @@ let find_header_target_at_offset ~(source : string) ~(offset : int) : (header * 
   in
   List.find_map target_in_header (all_headers ~source)
 
-let path_segment_names (header : header) : string list = List.map (fun segment -> segment.name) header.path_segments
+let path_segment_names (header : header) : string list =
+  List.map (fun segment -> segment.name) header.path_segments
 
 let prefix_until ~(source : string) ~(start_pos : int) ~(offset : int) : string =
   let len = max 0 (offset - start_pos) in
@@ -131,7 +133,12 @@ let completion_context_at_offset ~(source : string) ~(offset : int) : completion
   let classify (header : header) =
     match header.alias_segment with
     | Some alias when offset >= alias.start_pos && offset <= alias.end_pos + 1 ->
-        Some { typed_segments = path_segment_names header; prefix = prefix_until ~source ~start_pos:alias.start_pos ~offset; in_alias = true }
+        Some
+          {
+            typed_segments = path_segment_names header;
+            prefix = prefix_until ~source ~start_pos:alias.start_pos ~offset;
+            in_alias = true;
+          }
     | _ -> (
         match header.trailing_dot with
         | Some dot_pos when offset = dot_pos + 1 ->

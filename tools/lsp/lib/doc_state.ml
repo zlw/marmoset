@@ -45,9 +45,7 @@ let file_path_of_file_id (file_id : string) : string option =
 
 let normalize_source_overrides (source_overrides : (string, string) Hashtbl.t) : (string, string) Hashtbl.t =
   let normalized = Hashtbl.create (Hashtbl.length source_overrides) in
-  Hashtbl.iter
-    (fun path source -> Hashtbl.replace normalized (normalize_path path) source)
-    source_overrides;
+  Hashtbl.iter (fun path source -> Hashtbl.replace normalized (normalize_path path) source) source_overrides;
   normalized
 
 let active_file_matches ~(active_file_id : string) ~(diag_file_id : string) : bool =
@@ -102,14 +100,16 @@ let compiler_analysis_for_file_id
   match file_path_of_file_id file_id with
   | Some entry_file ->
       Compiler.analyze_entry_with_overrides ?source_root ~entry_file ~entry_source:source
-        ~source_overrides:(normalize_source_overrides source_overrides) ()
+        ~source_overrides:(normalize_source_overrides source_overrides)
+        ()
   | None -> Compiler.analyze_entry_with_source ?source_root ~entry_file:file_id ~entry_source:source ()
 
 let expose_typed_state (_analysis : Compiler.entry_analysis) : bool = true
 
 (* Analyze a document, returning parse/type errors as LSP diagnostics *)
-let analyze_with_file_id ?source_root ?(source_overrides = Hashtbl.create 0) ~(file_id : string) ~(source : string)
-    : unit -> analysis_result =
+let analyze_with_file_id
+    ?source_root ?(source_overrides = Hashtbl.create 0) ~(file_id : string) ~(source : string) :
+    unit -> analysis_result =
  fun () ->
   let compiler_analysis = compiler_analysis_for_file_id ?source_root ~source_overrides ~file_id ~source () in
   let active_file = compiler_analysis.active_file in
@@ -343,10 +343,7 @@ let%test "analyze_with_file_id preserves module export diagnostics for qualified
 
 let%test "analyze_with_file_id applies normalized file overrides for file URI inputs" =
   with_temp_project
-    [
-      ("main.mr", "import math.answer\nanswer() + 1\n");
-      ("math.mr", "export answer\nfn answer() -> Int = 41\n");
-    ]
+    [ ("main.mr", "import math.answer\nanswer() + 1\n"); ("math.mr", "export answer\nfn answer() -> Int = 41\n") ]
     (fun root ->
       let main_path = Filename.concat root "main.mr" in
       let main_uri = Lsp_t.DocumentUri.(to_string (of_path main_path)) in

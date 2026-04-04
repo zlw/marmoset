@@ -310,7 +310,8 @@ let signature_help
     ~(environment : Infer.type_env)
     ~(line : int)
     ~(character : int)
-    ?compiler_analysis () : Lsp_t.SignatureHelp.t option =
+    ?compiler_analysis
+    () : Lsp_t.SignatureHelp.t option =
   let offset = Lsp_utils.position_to_offset ~source ~line ~character in
   match find_enclosing_call ~source offset program with
   | None -> None
@@ -338,25 +339,49 @@ let signature_help
         | Some mname -> (
             match namespace_fn_type with
             | Some _ as info -> info
-            | None ->
-            match (call.recv_id, Infer.lookup_method_resolution call.fn_id) with
-            | Some recv_id, Some Infer.FieldFunctionCall -> (
-                match Hashtbl.find_opt type_map recv_id with
-                | Some recv_type -> (
-                    match Structural.lookup_field_type recv_type mname with
-                    | Some field_type -> Some (`FnType field_type)
+            | None -> (
+                match (call.recv_id, Infer.lookup_method_resolution call.fn_id) with
+                | Some recv_id, Some Infer.FieldFunctionCall -> (
+                    match Hashtbl.find_opt type_map recv_id with
+                    | Some recv_type -> (
+                        match Structural.lookup_field_type recv_type mname with
+                        | Some field_type -> Some (`FnType field_type)
+                        | None -> None)
                     | None -> None)
-                | None -> None)
-            | Some recv_id, Some (Infer.TraitMethod trait_name)
-            | Some recv_id, Some (Infer.DynamicTraitMethod trait_name)
-            | Some recv_id, Some (Infer.QualifiedTraitMethod trait_name) -> (
-                match Trait_registry.lookup_trait_method_with_supertraits trait_name mname with
-                | Some (_source_trait, method_sig) ->
-                    let param_types = List.map snd method_sig.method_params in
-                    let param_names = List.map fst method_sig.method_params in
-                    let is_effectful = method_sig.method_effect = `Effectful in
-                    Some (`Method (param_types, method_sig.method_return_type, param_names, is_effectful))
-                | None -> (
+                | Some recv_id, Some (Infer.TraitMethod trait_name)
+                | Some recv_id, Some (Infer.DynamicTraitMethod trait_name)
+                | Some recv_id, Some (Infer.QualifiedTraitMethod trait_name) -> (
+                    match Trait_registry.lookup_trait_method_with_supertraits trait_name mname with
+                    | Some (_source_trait, method_sig) ->
+                        let param_types = List.map snd method_sig.method_params in
+                        let param_names = List.map fst method_sig.method_params in
+                        let is_effectful = method_sig.method_effect = `Effectful in
+                        Some (`Method (param_types, method_sig.method_return_type, param_names, is_effectful))
+                    | None -> (
+                        match Hashtbl.find_opt type_map recv_id with
+                        | None -> None
+                        | Some recv_type -> (
+                            match Trait_registry.lookup_method recv_type mname with
+                            | None -> None
+                            | Some (_trait_name, method_sig) ->
+                                let param_types = List.map snd method_sig.method_params in
+                                let param_names = List.map fst method_sig.method_params in
+                                let is_effectful = method_sig.method_effect = `Effectful in
+                                Some
+                                  (`Method (param_types, method_sig.method_return_type, param_names, is_effectful))
+                            )))
+                | Some recv_id, Some Infer.InherentMethod | Some recv_id, Some Infer.QualifiedInherentMethod -> (
+                    match Hashtbl.find_opt type_map recv_id with
+                    | Some recv_type -> (
+                        match Inherent_registry.resolve_method recv_type mname with
+                        | Ok (Some method_sig) ->
+                            let param_types = List.map snd method_sig.method_params in
+                            let param_names = List.map fst method_sig.method_params in
+                            let is_effectful = method_sig.method_effect = `Effectful in
+                            Some (`Method (param_types, method_sig.method_return_type, param_names, is_effectful))
+                        | Ok None | Error _ -> None)
+                    | None -> None)
+                | Some recv_id, None -> (
                     match Hashtbl.find_opt type_map recv_id with
                     | None -> None
                     | Some recv_type -> (
@@ -367,30 +392,8 @@ let signature_help
                             let param_names = List.map fst method_sig.method_params in
                             let is_effectful = method_sig.method_effect = `Effectful in
                             Some (`Method (param_types, method_sig.method_return_type, param_names, is_effectful))
-                        )))
-            | Some recv_id, Some Infer.InherentMethod | Some recv_id, Some Infer.QualifiedInherentMethod -> (
-                match Hashtbl.find_opt type_map recv_id with
-                | Some recv_type -> (
-                    match Inherent_registry.resolve_method recv_type mname with
-                    | Ok (Some method_sig) ->
-                        let param_types = List.map snd method_sig.method_params in
-                        let param_names = List.map fst method_sig.method_params in
-                        let is_effectful = method_sig.method_effect = `Effectful in
-                        Some (`Method (param_types, method_sig.method_return_type, param_names, is_effectful))
-                    | Ok None | Error _ -> None)
-                | None -> None)
-            | Some recv_id, None -> (
-                match Hashtbl.find_opt type_map recv_id with
-                | None -> None
-                | Some recv_type -> (
-                    match Trait_registry.lookup_method recv_type mname with
-                    | None -> None
-                    | Some (_trait_name, method_sig) ->
-                        let param_types = List.map snd method_sig.method_params in
-                        let param_names = List.map fst method_sig.method_params in
-                        let is_effectful = method_sig.method_effect = `Effectful in
-                        Some (`Method (param_types, method_sig.method_return_type, param_names, is_effectful))))
-            | None, _ -> None)
+                        ))
+                | None, _ -> None))
         | None -> (
             match Hashtbl.find_opt type_map call.fn_id with
             | Some fn_type -> Some (`FnType fn_type)
@@ -461,8 +464,8 @@ let check_sig source line character =
   let result = Doc_state.analyze ~source in
   match (result.program, result.type_map, result.environment) with
   | Some prog, Some tm, Some env ->
-      signature_help ?compiler_analysis:result.compiler_analysis ~source ~program:prog ~type_map:tm ~environment:env
-        ~line ~character ()
+      signature_help ?compiler_analysis:result.compiler_analysis ~source ~program:prog ~type_map:tm
+        ~environment:env ~line ~character ()
   | _ -> None
 
 let source_with_cursor annotated =
@@ -484,12 +487,12 @@ let check_sig_marked_in_file ~(files : (string * string) list) ~(entry_rel : str
         let source, line, character = source_with_cursor annotated in
         let file_id = Filename.concat root entry_rel in
         let result = Doc_state.analyze_with_file_id ~source_root:root ~file_id ~source () in
-        captured :=
-          (match (result.program, result.type_map, result.environment) with
-          | Some prog, Some tm, Some env ->
-              signature_help ?compiler_analysis:result.compiler_analysis ~source ~program:prog ~type_map:tm
-                ~environment:env ~line ~character ()
-          | _ -> None);
+        (captured :=
+           match (result.program, result.type_map, result.environment) with
+           | Some prog, Some tm, Some env ->
+               signature_help ?compiler_analysis:result.compiler_analysis ~source ~program:prog ~type_map:tm
+                 ~environment:env ~line ~character ()
+           | _ -> None);
         true)
   in
   !captured
@@ -633,12 +636,12 @@ let%test "module direct-import call keeps imported surface name in signature hel
   with
   | Some sh -> (
       match sh.signatures with
-      | sig0 :: _ ->
+      | sig0 :: _ -> (
           string_contains sig0.label "add"
           && string_contains sig0.label "Int"
-          && not (string_contains sig0.label "math__add")
+          && (not (string_contains sig0.label "math__add"))
           &&
-          (match sh.activeParameter with
+          match sh.activeParameter with
           | Some (Some 1) -> true
           | _ -> false)
       | [] -> false)
@@ -656,12 +659,12 @@ let%test "module namespace call keeps qualified surface syntax in signature help
   with
   | Some sh -> (
       match sh.signatures with
-      | sig0 :: _ ->
+      | sig0 :: _ -> (
           string_contains sig0.label "math.add"
           && string_contains sig0.label "Int"
-          && not (string_contains sig0.label "math__add")
+          && (not (string_contains sig0.label "math__add"))
           &&
-          (match sh.activeParameter with
+          match sh.activeParameter with
           | Some (Some 1) -> true
           | _ -> false)
       | [] -> false)

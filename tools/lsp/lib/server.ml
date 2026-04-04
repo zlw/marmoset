@@ -46,7 +46,8 @@ let cached_project_root (cached : cached_doc) : string option =
   | None -> Option.bind cached.last_good (fun analysis -> analysis.project_root)
 
 let choose_known_source_root
-    ~(analysis_cache : (Lsp_t.DocumentUri.t, cached_doc) Hashtbl.t) ~(uri : Lsp_t.DocumentUri.t)
+    ~(analysis_cache : (Lsp_t.DocumentUri.t, cached_doc) Hashtbl.t)
+    ~(uri : Lsp_t.DocumentUri.t)
     ~(file_path : string option) : string option =
   match Option.bind (Hashtbl.find_opt analysis_cache uri) cached_project_root with
   | Some _ as root -> root
@@ -65,7 +66,8 @@ let choose_known_source_root
             analysis_cache None)
 
 let related_open_docs
-    ~(open_docs : (Lsp_t.DocumentUri.t, open_doc) Hashtbl.t) ~(project_root : string)
+    ~(open_docs : (Lsp_t.DocumentUri.t, open_doc) Hashtbl.t)
+    ~(project_root : string)
     ~(exclude_uri : Lsp_t.DocumentUri.t option) : (Lsp_t.DocumentUri.t * string) list =
   Hashtbl.fold
     (fun uri (doc : open_doc) acc ->
@@ -134,7 +136,8 @@ class marmoset_server =
       overrides
 
     method private publish_diagnostics
-        ~(notify_back : Linol_lwt.Jsonrpc2.notify_back) ~(uri : Lsp_t.DocumentUri.t)
+        ~(notify_back : Linol_lwt.Jsonrpc2.notify_back)
+        ~(uri : Lsp_t.DocumentUri.t)
         (diagnostics : Lsp_t.Diagnostic.t list) =
       let open Lwt.Syntax in
       let prior_uri = notify_back#get_uri in
@@ -146,7 +149,8 @@ class marmoset_server =
       Lwt.return_unit
 
     method private refresh_related_docs
-        ~(notify_back : Linol_lwt.Jsonrpc2.notify_back) ~(project_root : string)
+        ~(notify_back : Linol_lwt.Jsonrpc2.notify_back)
+        ~(project_root : string)
         ~(exclude_uri : Lsp_t.DocumentUri.t option) =
       let related = related_open_docs ~open_docs ~project_root ~exclude_uri in
       Lwt_list.iter_s
@@ -155,7 +159,9 @@ class marmoset_server =
 
     (* Run analysis and push diagnostics — called after debounce or immediately on open *)
     method private analyze_and_notify
-        ~(notify_back : Linol_lwt.Jsonrpc2.notify_back) ?(refresh_related = true) (uri : Lsp_t.DocumentUri.t)
+        ~(notify_back : Linol_lwt.Jsonrpc2.notify_back)
+        ?(refresh_related = true)
+        (uri : Lsp_t.DocumentUri.t)
         (content : string) =
       let source_root =
         match Hashtbl.find_opt open_docs uri with
@@ -168,9 +174,7 @@ class marmoset_server =
       let analysis, diagnostics =
         try
           let file_id = Lsp_t.DocumentUri.to_string uri in
-          let a =
-            Doc_state.analyze_with_file_id ?source_root ~source_overrides ~file_id ~source:content ()
-          in
+          let a = Doc_state.analyze_with_file_id ?source_root ~source_overrides ~file_id ~source:content () in
           (Some a, a.diagnostics)
         with exn ->
           let bt = Printexc.get_backtrace () in
@@ -377,13 +381,7 @@ class marmoset_server =
         Lwt.return (Some (`List items))
 
     method! on_req_definition
-        ~notify_back:_
-        ~id:_
-        ~uri
-        ~pos
-        ~workDoneToken:_
-        ~partialResultToken:_
-        (_doc_state : Linol_lwt.doc_state) =
+        ~notify_back:_ ~id:_ ~uri ~pos ~workDoneToken:_ ~partialResultToken:_ (_doc_state : Linol_lwt.doc_state) =
       let result =
         match Hashtbl.find_opt analysis_cache uri with
         | None -> None

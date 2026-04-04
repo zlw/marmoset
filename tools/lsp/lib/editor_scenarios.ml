@@ -70,10 +70,7 @@ puts(plus(5, 6))
 |}
 
 let module_scenario_files =
-  [
-    ("main.mr", module_scenario_main_source);
-    ("math.mr", "export add\nfn add(x: Int, y: Int) -> Int = x + y\n");
-  ]
+  [ ("main.mr", module_scenario_main_source); ("math.mr", "export add\nfn add(x: Int, y: Int) -> Int = x + y\n") ]
 
 let nth_substring_offset ~(source : string) ~(needle : string) ~(occurrence : int) : int option =
   let rec scan start remaining =
@@ -194,7 +191,8 @@ let hover_summary ~(source : string) (hover : Lsp_t.Hover.t) : string * string =
   let end_off = Lsp_utils.position_to_offset ~source ~line:range.end_.line ~character:range.end_.character in
   (type_text, String.sub source start_off (end_off - start_off))
 
-let module_hover_summary ~(needle : string) ?(occurrence = 1) ?(offset_in_needle = 0) () : (string * string) option =
+let module_hover_summary ~(needle : string) ?(occurrence = 1) ?(offset_in_needle = 0) () :
+    (string * string) option =
   let captured = ref None in
   let _ =
     Doc_state.with_temp_project module_scenario_files (fun root ->
@@ -205,16 +203,16 @@ let module_hover_summary ~(needle : string) ?(occurrence = 1) ?(offset_in_needle
         let line, character =
           position_of_substring ~source:module_scenario_main_source ~needle ~occurrence ~offset_in_needle ()
         in
-        captured :=
-          (match (analysis.program, analysis.type_map, analysis.environment) with
-          | Some prog, Some tm, Some env -> (
-              match
-                Hover.hover_at ~source:module_scenario_main_source ~program:prog ~type_map:tm ~environment:env
-                  ~type_var_user_names:analysis.type_var_user_names ~line ~character
-              with
-              | Some hover -> Some (hover_summary ~source:module_scenario_main_source hover)
-              | None -> None)
-          | _ -> None);
+        (captured :=
+           match (analysis.program, analysis.type_map, analysis.environment) with
+           | Some prog, Some tm, Some env -> (
+               match
+                 Hover.hover_at ~source:module_scenario_main_source ~program:prog ~type_map:tm ~environment:env
+                   ~type_var_user_names:analysis.type_var_user_names ~line ~character
+               with
+               | Some hover -> Some (hover_summary ~source:module_scenario_main_source hover)
+               | None -> None)
+           | _ -> None);
         true)
   in
   !captured

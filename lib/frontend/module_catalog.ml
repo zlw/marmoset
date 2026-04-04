@@ -71,8 +71,7 @@ let rec collect_module_files (root_dir : string) (dir : string) (acc : string li
         acc := Discovery.normalize_path path :: !acc)
     (Sys.readdir dir)
 
-let build ?(source_overrides = Hashtbl.create 0) ~(root_dir : string) ?analysis ()
-    : t =
+let build ?(source_overrides = Hashtbl.create 0) ~(root_dir : string) ?analysis () : t =
   let root_dir = Discovery.normalize_path root_dir in
   let modules = Hashtbl.create 32 in
   Option.iter

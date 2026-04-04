@@ -31,9 +31,7 @@ let normalize_path (path : string) : string =
 
 let normalize_source_overrides (source_overrides : (string, string) Hashtbl.t) : (string, string) Hashtbl.t =
   let normalized = Hashtbl.create (Hashtbl.length source_overrides) in
-  Hashtbl.iter
-    (fun path source -> Hashtbl.replace normalized (normalize_path path) source)
-    source_overrides;
+  Hashtbl.iter (fun path source -> Hashtbl.replace normalized (normalize_path path) source) source_overrides;
   normalized
 
 let read_file (path : string) : string =
@@ -196,8 +194,9 @@ and resolve_import (state : discovery_state) (imp : Module_context.import_info) 
                (Printf.sprintf "Import '%s' does not resolve to a module or exported member"
                   (import_path_string imp.import_path)))
 
-let discover_project_with_overrides ?source_root ~(entry_file : string) ~(source_overrides : (string, string) Hashtbl.t)
-    () : (Module_context.module_graph, Diagnostic.t) result =
+let discover_project_with_overrides
+    ?source_root ~(entry_file : string) ~(source_overrides : (string, string) Hashtbl.t) () :
+    (Module_context.module_graph, Diagnostic.t) result =
   let entry_file = normalize_path entry_file in
   let root_dir =
     match source_root with

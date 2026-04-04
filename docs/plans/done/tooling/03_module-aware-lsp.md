@@ -3,7 +3,8 @@
 ## Maintenance
 
 - Last verified: 2026-04-04
-- Implementation status: Planning
+- Implementation status: Implemented
+- Type: Historical implementation plan
 - Update trigger: Any change to module discovery, import resolution, compiler analysis payloads, or `tools/lsp/lib/*` request handling.
 
 ## Context
@@ -27,7 +28,7 @@ The LSP currently fails to capitalize on that compiler state:
 - `Discovery.discover_project_with_entry_source` only overrides the entry file source. Unsaved imported files opened in the editor are invisible to analysis from their importers.
 - `lib/frontend/syntax/parser.ml` requires an identifier after both import-path dots and expression dots, so `import math.` and `math.` are parse-incomplete states. Completion for those edits cannot depend on a fresh AST or fresh typed analysis always being available.
 
-This plan belongs in `docs/plans/todo/tooling/` because the goal is editor/compiler-boundary work, not new language semantics.
+This milestone now lives in `docs/plans/done/tooling/` because the module-aware LSP work has been implemented and verified.
 
 ## Goals
 
@@ -560,7 +561,7 @@ Context classification must not require the whole document to parse. `ImportPath
 
 ## Progress
 
-- 2026-04-04 03:37 CEST: Draft plan created in `docs/plans/todo/tooling/02_module-aware-lsp.md`; awaiting `plan-review`.
+- 2026-04-04 03:37 CEST: Draft plan created in `docs/plans/done/tooling/03_module-aware-lsp.md`; awaiting `plan-review`.
 - 2026-04-04 03:48 CEST: Review pass started against the draft plus current compiler/LSP codepaths.
 - 2026-04-04 03:52 CEST: Cross-tool Claude review attempt stalled; skipped per user direction and continued with single-model adversarial review.
 - 2026-04-04 03:52 CEST: Plan revised after review to cover parser-tolerant completion, explicit root/path normalization, last-good analysis caching, signature-help/code-action parity, and off-graph module-catalog limits.
@@ -584,3 +585,5 @@ Context classification must not require the whole document to parse. `ImportPath
 - 2026-04-04 05:08 CEST: Focused tests green for the T3 slice via `dune runtest lib/frontend tools/lsp/lib --no-buffer -j 1`.
 - 2026-04-04 05:11 CEST: Commit created for the T3 completion slice after the focused frontend/LSP suites passed cleanly.
 - 2026-04-04 05:14 CEST: Final broader verification completed via `make unit`; no regressions were observed across the unit suites.
+- 2026-04-04 06:37 CEST: Moved the completed milestone to `docs/plans/done/tooling/03_module-aware-lsp.md` and updated `docs/ROADMAP.md` after PR review feedback.
+- 2026-04-04 06:39 CEST: Post-PR hygiene verification green via `make ci-quality-lint-fmt-doc` and `make unit`.

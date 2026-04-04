@@ -89,7 +89,8 @@ let definition_target_of_presence (presence : Import_resolver.member_presence) :
 
 let source_for_file ~(analysis : Doc_state.analysis_result) ~(file_path : string) : string option =
   match analysis.compiler_analysis with
-  | Some compiler_analysis when String.equal file_path compiler_analysis.active_file.file_path -> Some analysis.source
+  | Some compiler_analysis when String.equal file_path compiler_analysis.active_file.file_path ->
+      Some analysis.source
   | Some compiler_analysis -> (
       match Compiler.find_parsed_module_by_file compiler_analysis ~file_path with
       | Some (module_ : Compiler.Module_context.parsed_module) -> Some module_.source
@@ -99,7 +100,8 @@ let source_for_file ~(analysis : Doc_state.analysis_result) ~(file_path : string
 let read_file_source (file_path : string) : string option =
   try Some (Compiler.read_source_file file_path) with _ -> None
 
-let location_of_target ~(analysis : Doc_state.analysis_result) (target : definition_target) : Lsp_t.Location.t option =
+let location_of_target ~(analysis : Doc_state.analysis_result) (target : definition_target) :
+    Lsp_t.Location.t option =
   let mk_location ~file_path ~range =
     Some (Lsp_t.Location.create ~uri:(Lsp_t.DocumentUri.of_path file_path) ~range)
   in
@@ -119,8 +121,10 @@ let location_of_target ~(analysis : Doc_state.analysis_result) (target : definit
           Lsp_t.Location.create ~uri:(Lsp_t.DocumentUri.of_path file_path) ~range)
         source
 
-let locations ~(analysis : Doc_state.analysis_result) (target : definition_target option) : Lsp_t.Locations.t option =
-  Option.bind target (fun target -> Option.map (fun location -> `Location [ location ]) (location_of_target ~analysis target))
+let locations ~(analysis : Doc_state.analysis_result) (target : definition_target option) :
+    Lsp_t.Locations.t option =
+  Option.bind target (fun target ->
+      Option.map (fun location -> `Location [ location ]) (location_of_target ~analysis target))
 
 let module_file_path_of_id (analysis : Compiler.entry_analysis) ~(module_id : string) : string option =
   match Compiler.find_checked_module_by_id analysis ~module_id with
@@ -138,11 +142,13 @@ let module_target_of_id (analysis : Compiler.entry_analysis) ~(module_id : strin
 
 let symbol_target (symbol : Marmoset.Lib.Infer.symbol) : definition_target option =
   match Option.bind symbol.file_id Doc_state.file_path_of_file_id with
-  | Some file_path -> Some (Span { file_path; start_pos = symbol.definition_pos; end_pos = symbol.definition_end_pos })
+  | Some file_path ->
+      Some (Span { file_path; start_pos = symbol.definition_pos; end_pos = symbol.definition_end_pos })
   | None -> None
 
-let find_member_range_after_receiver ~(source : string) ~(receiver_end_pos : int) ~(search_end : int)
-    ~(member_name : string) : (int * int) option =
+let find_member_range_after_receiver
+    ~(source : string) ~(receiver_end_pos : int) ~(search_end : int) ~(member_name : string) : (int * int) option
+    =
   let len = String.length source in
   let limit = min search_end (len - 1) in
   let rec find_dot i =
@@ -153,34 +159,36 @@ let find_member_range_after_receiver ~(source : string) ~(receiver_end_pos : int
     else
       find_dot (i + 1)
   in
-  Option.bind (find_dot (receiver_end_pos + 1)) (fun after_dot ->
+  Option.bind
+    (find_dot (receiver_end_pos + 1))
+    (fun after_dot ->
       let start_pos = skip_ascii_spaces ~source ~pos:after_dot in
       let end_pos = start_pos + String.length member_name - 1 in
-      if end_pos <= limit
-         && String.sub source start_pos (String.length member_name) = member_name
-         && (end_pos + 1 >= len || not (is_ident_char source.[end_pos + 1]))
+      if
+        end_pos <= limit
+        && String.sub source start_pos (String.length member_name) = member_name
+        && (end_pos + 1 >= len || not (is_ident_char source.[end_pos + 1]))
       then
         Some (start_pos, end_pos)
       else
         None)
 
-let rec chain_of_expr ~(source : string) (expr : Ast.AST.expression) : (Ast.AST.expression * chain_segment list) option =
+let rec chain_of_expr ~(source : string) (expr : Ast.AST.expression) :
+    (Ast.AST.expression * chain_segment list) option =
   match expr.expr with
   | Ast.AST.Identifier name -> Some (expr, [ { name; start_pos = expr.pos; end_pos = expr.end_pos } ])
   | Ast.AST.FieldAccess (receiver, field_name) ->
       Option.bind (chain_of_expr ~source receiver) (fun (root_expr, segments) ->
           Option.map
-            (fun (start_pos, end_pos) ->
-              (root_expr, segments @ [ { name = field_name; start_pos; end_pos } ]))
+            (fun (start_pos, end_pos) -> (root_expr, segments @ [ { name = field_name; start_pos; end_pos } ]))
             (find_member_range_after_receiver ~source ~receiver_end_pos:receiver.end_pos ~search_end:expr.end_pos
                ~member_name:field_name))
   | Ast.AST.MethodCall { mc_receiver; mc_method; _ } ->
       Option.bind (chain_of_expr ~source mc_receiver) (fun (root_expr, segments) ->
           Option.map
-            (fun (start_pos, end_pos) ->
-              (root_expr, segments @ [ { name = mc_method; start_pos; end_pos } ]))
-            (find_member_range_after_receiver ~source ~receiver_end_pos:mc_receiver.end_pos ~search_end:expr.end_pos
-               ~member_name:mc_method))
+            (fun (start_pos, end_pos) -> (root_expr, segments @ [ { name = mc_method; start_pos; end_pos } ]))
+            (find_member_range_after_receiver ~source ~receiver_end_pos:mc_receiver.end_pos
+               ~search_end:expr.end_pos ~member_name:mc_method))
   | Ast.AST.TypeApply (inner, _) -> chain_of_expr ~source inner
   | _ -> None
 
@@ -211,7 +219,9 @@ and find_namespace_ref_in_children ~(source : string) ~(offset : int) (expr : As
     namespace_ref option =
   match expr.expr with
   | Ast.AST.Infix (left, _, right) ->
-      first_some (find_namespace_ref_in_expr ~source ~offset left) (find_namespace_ref_in_expr ~source ~offset right)
+      first_some
+        (find_namespace_ref_in_expr ~source ~offset left)
+        (find_namespace_ref_in_expr ~source ~offset right)
   | Ast.AST.Prefix (_, e) | Ast.AST.TypeApply (e, _) | Ast.AST.TypeCheck (e, _) ->
       find_namespace_ref_in_expr ~source ~offset e
   | Ast.AST.Call (fn_expr, args) ->
@@ -231,7 +241,9 @@ and find_namespace_ref_in_children ~(source : string) ~(offset : int) (expr : As
   | Ast.AST.Hash pairs ->
       List.find_map
         (fun (left, right) ->
-          first_some (find_namespace_ref_in_expr ~source ~offset left) (find_namespace_ref_in_expr ~source ~offset right))
+          first_some
+            (find_namespace_ref_in_expr ~source ~offset left)
+            (find_namespace_ref_in_expr ~source ~offset right))
         pairs
   | Ast.AST.FieldAccess (receiver, _) -> find_namespace_ref_in_expr ~source ~offset receiver
   | Ast.AST.MethodCall { mc_receiver; mc_args; _ } ->
@@ -241,7 +253,9 @@ and find_namespace_ref_in_children ~(source : string) ~(offset : int) (expr : As
   | Ast.AST.Match (scrutinee, arms) ->
       first_some
         (find_namespace_ref_in_expr ~source ~offset scrutinee)
-        (List.find_map (fun (arm : Ast.AST.match_arm) -> find_namespace_ref_in_expr ~source ~offset arm.body) arms)
+        (List.find_map
+           (fun (arm : Ast.AST.match_arm) -> find_namespace_ref_in_expr ~source ~offset arm.body)
+           arms)
   | Ast.AST.RecordLit (fields, spread) ->
       first_some
         (List.find_map
@@ -253,18 +267,21 @@ and find_namespace_ref_in_children ~(source : string) ~(offset : int) (expr : As
   | Ast.AST.BlockExpr stmts -> List.find_map (find_namespace_ref_in_stmt ~source ~offset) stmts
   | Ast.AST.Identifier _ | Ast.AST.Integer _ | Ast.AST.Float _ | Ast.AST.Boolean _ | Ast.AST.String _ -> None
 
-and find_namespace_ref_in_stmt ~(source : string) ~(offset : int) (stmt : Ast.AST.statement) : namespace_ref option =
+and find_namespace_ref_in_stmt ~(source : string) ~(offset : int) (stmt : Ast.AST.statement) :
+    namespace_ref option =
   match stmt.stmt with
   | Ast.AST.Let { value; _ } -> find_namespace_ref_in_expr ~source ~offset value
   | Ast.AST.ExpressionStmt expr | Ast.AST.Return expr -> find_namespace_ref_in_expr ~source ~offset expr
   | Ast.AST.Block stmts -> List.find_map (find_namespace_ref_in_stmt ~source ~offset) stmts
   | Ast.AST.ImplDef { impl_methods; _ } ->
       List.find_map
-        (fun (method_ : Ast.AST.method_impl) -> find_namespace_ref_in_stmt ~source ~offset method_.impl_method_body)
+        (fun (method_ : Ast.AST.method_impl) ->
+          find_namespace_ref_in_stmt ~source ~offset method_.impl_method_body)
         impl_methods
   | Ast.AST.InherentImplDef { inherent_methods; _ } ->
       List.find_map
-        (fun (method_ : Ast.AST.method_impl) -> find_namespace_ref_in_stmt ~source ~offset method_.impl_method_body)
+        (fun (method_ : Ast.AST.method_impl) ->
+          find_namespace_ref_in_stmt ~source ~offset method_.impl_method_body)
         inherent_methods
   | Ast.AST.TraitDef { methods; _ } ->
       List.find_map
@@ -274,7 +291,8 @@ and find_namespace_ref_in_stmt ~(source : string) ~(offset : int) (stmt : Ast.AS
   | Ast.AST.ExportDecl _ | Ast.AST.ImportDecl _ -> None
   | Ast.AST.EnumDef _ | Ast.AST.TypeDef _ | Ast.AST.ShapeDef _ | Ast.AST.DeriveDef _ | Ast.AST.TypeAlias _ -> None
 
-let find_namespace_ref_in_program ~(source : string) ~(offset : int) (program : Ast.AST.program) : namespace_ref option =
+let find_namespace_ref_in_program ~(source : string) ~(offset : int) (program : Ast.AST.program) :
+    namespace_ref option =
   List.find_map (find_namespace_ref_in_stmt ~source ~offset) program
 
 let lexical_namespace_ref ~(source : string) ~(program : Ast.AST.program) ~(offset : int) : namespace_ref option =
@@ -313,7 +331,8 @@ let lexical_namespace_ref ~(source : string) ~(program : Ast.AST.program) ~(offs
             else
               cursor_segment_index
           in
-          if idx + 2 < len && tokens.(idx + 1).token_type = Token.Dot && tokens.(idx + 2).token_type = Token.Ident then
+          if idx + 2 < len && tokens.(idx + 1).token_type = Token.Dot && tokens.(idx + 2).token_type = Token.Ident
+          then
             collect (idx + 2) (segment :: rev_segments) cursor_segment_index (next_segment_index + 1)
           else
             Some (List.rev (segment :: rev_segments), cursor_segment_index)
@@ -327,7 +346,8 @@ let lexical_namespace_ref ~(source : string) ~(program : Ast.AST.program) ~(offs
               | _ -> None)
           | _ -> None))
 
-let resolve_import_path_target (analysis : Compiler.entry_analysis) ~(path_segments : string list) : definition_target option =
+let resolve_import_path_target (analysis : Compiler.entry_analysis) ~(path_segments : string list) :
+    definition_target option =
   let module_id = String.concat "." path_segments in
   match module_target_of_id analysis ~module_id with
   | Some _ as target -> target
@@ -343,9 +363,10 @@ let resolve_import_path_target (analysis : Compiler.entry_analysis) ~(path_segme
                 definition_target_of_member_binding)
       | [] -> None)
 
-let resolve_visible_module_target (analysis : Compiler.entry_analysis)
-    ~(namespace_roots : Import_resolver.namespace_node Import_resolver.StringMap.t) ~(segments : string list) :
-    definition_target option =
+let resolve_visible_module_target
+    (analysis : Compiler.entry_analysis)
+    ~(namespace_roots : Import_resolver.namespace_node Import_resolver.StringMap.t)
+    ~(segments : string list) : definition_target option =
   match Import_resolver.resolve_namespace_member ~namespace_roots segments with
   | Some `ModulePath -> module_target_of_id analysis ~module_id:(String.concat "." segments)
   | _ -> None
@@ -353,9 +374,11 @@ let resolve_visible_module_target (analysis : Compiler.entry_analysis)
 let symbol_path (symbol : Marmoset.Lib.Infer.symbol) : string option =
   Option.bind symbol.file_id Doc_state.file_path_of_file_id
 
-let resolve_namespace_ref (analysis : Compiler.entry_analysis) ~(active_file_path : string)
-    ~(namespace_roots : Import_resolver.namespace_node Import_resolver.StringMap.t) (reference : namespace_ref) :
-    definition_target option =
+let resolve_namespace_ref
+    (analysis : Compiler.entry_analysis)
+    ~(active_file_path : string)
+    ~(namespace_roots : Import_resolver.namespace_node Import_resolver.StringMap.t)
+    (reference : namespace_ref) : definition_target option =
   let segment_names = List.map (fun segment -> segment.name) reference.segments in
   let root_symbol = Compiler.find_active_file_symbol analysis ~expr_id:reference.root_expr.id in
   match root_symbol with
@@ -364,7 +387,7 @@ let resolve_namespace_ref (analysis : Compiler.entry_analysis) ~(active_file_pat
         symbol_target symbol
       else
         None
-  | Some _ | None ->
+  | Some _ | None -> (
       let visible_prefix count =
         resolve_visible_module_target analysis ~namespace_roots ~segments:(take count segment_names)
       in
@@ -374,9 +397,10 @@ let resolve_namespace_ref (analysis : Compiler.entry_analysis) ~(active_file_pat
         match Import_resolver.resolve_namespace_member ~namespace_roots segment_names with
         | Some `ModulePath -> module_target_of_id analysis ~module_id:(String.concat "." segment_names)
         | Some (`Exported presence) -> definition_target_of_presence presence
-        | Some (`NotExported _) | Some (`MissingMember _) | None -> None
+        | Some (`NotExported _) | Some (`MissingMember _) | None -> None)
 
-let import_header_target (analysis : Compiler.entry_analysis) ~(source : string) ~(offset : int) : definition_target option =
+let import_header_target (analysis : Compiler.entry_analysis) ~(source : string) ~(offset : int) :
+    definition_target option =
   match Import_header.find_header_target_at_offset ~source ~offset with
   | Some (header, Import_header.Alias) ->
       resolve_import_path_target analysis ~path_segments:(Import_header.path_segment_names header)
@@ -388,11 +412,10 @@ let import_header_target (analysis : Compiler.entry_analysis) ~(source : string)
         resolve_import_path_target analysis ~path_segments
   | None -> None
 
-let expression_target (analysis : Compiler.entry_analysis) ~(source : string) ~(program : Ast.AST.program) ~(offset : int)
-    : definition_target option =
-  let active_module =
-    Compiler.find_checked_module_by_file analysis ~file_path:analysis.active_file.file_path
-  in
+let expression_target
+    (analysis : Compiler.entry_analysis) ~(source : string) ~(program : Ast.AST.program) ~(offset : int) :
+    definition_target option =
+  let active_module = Compiler.find_checked_module_by_file analysis ~file_path:analysis.active_file.file_path in
   let namespace_ref =
     match find_namespace_ref_in_program ~source ~offset program with
     | Some _ as reference -> reference
@@ -401,15 +424,15 @@ let expression_target (analysis : Compiler.entry_analysis) ~(source : string) ~(
   match (namespace_ref, active_module) with
   | Some namespace_ref, Some checked_module ->
       resolve_namespace_ref analysis ~active_file_path:analysis.active_file.file_path
-        ~namespace_roots:checked_module.navigation.resolved_imports.namespace_roots
-        namespace_ref
+        ~namespace_roots:checked_module.navigation.resolved_imports.namespace_roots namespace_ref
   | _ -> (
       match Hover.find_in_program offset program with
       | Some { expr = Ast.AST.Identifier _; id; _ } ->
           Option.bind (Compiler.find_active_file_symbol analysis ~expr_id:id) symbol_target
       | _ -> None)
 
-let find_definition ~(analysis : Doc_state.analysis_result) ~(line : int) ~(character : int) : definition_target option =
+let find_definition ~(analysis : Doc_state.analysis_result) ~(line : int) ~(character : int) :
+    definition_target option =
   let offset = Lsp_utils.position_to_offset ~source:analysis.source ~line ~character in
   match analysis.compiler_analysis with
   | None -> None
@@ -440,12 +463,12 @@ let nth_substring_offset ~(source : string) ~(needle : string) ~(occurrence : in
 let target_span_of_substring ~(file_path : string) ~(source : string) ~(needle : string) ?(occurrence = 1) () :
     definition_target option =
   Option.map
-    (fun start_pos ->
-      Span { file_path; start_pos; end_pos = start_pos + String.length needle - 1 })
+    (fun start_pos -> Span { file_path; start_pos; end_pos = start_pos + String.length needle - 1 })
     (nth_substring_offset ~source ~needle ~occurrence)
 
-let definition_at ?(occurrence = 1) ?(offset_in_needle = 0) ~(file_id : string) ~(source : string) ~(needle : string)
-    () : definition_target option =
+let definition_at
+    ?(occurrence = 1) ?(offset_in_needle = 0) ~(file_id : string) ~(source : string) ~(needle : string) () :
+    definition_target option =
   let analysis = Doc_state.analyze_with_file_id ~source_root:(Filename.dirname file_id) ~file_id ~source () in
   match nth_substring_offset ~source ~needle ~occurrence with
   | None -> None
@@ -456,10 +479,10 @@ let definition_at ?(occurrence = 1) ?(offset_in_needle = 0) ~(file_id : string) 
 let string_of_target = function
   | None -> "None"
   | Some (File_start file_path) -> Printf.sprintf "File_start(%s)" file_path
-  | Some (Span { file_path; start_pos; end_pos }) ->
-      Printf.sprintf "Span(%s:%d-%d)" file_path start_pos end_pos
+  | Some (Span { file_path; start_pos; end_pos }) -> Printf.sprintf "Span(%s:%d-%d)" file_path start_pos end_pos
 
-let expect_target ~(label : string) ~(actual : definition_target option) ~(expected : definition_target option) : bool =
+let expect_target ~(label : string) ~(actual : definition_target option) ~(expected : definition_target option) :
+    bool =
   if actual = expected then
     true
   else (
@@ -551,8 +574,7 @@ let%test "namespace member resolves to exported span" =
 let%test "shadowed namespace resolves to the local binding" =
   Doc_state.with_temp_project
     [
-      ( "main.mr",
-        "import math\nlet math = { add: (x: Int) -> x }\nmath.add(1)\n" );
+      ("main.mr", "import math\nlet math = { add: (x: Int) -> x }\nmath.add(1)\n");
       ("math.mr", "export add\nfn add(x: Int) -> Int = x\n");
     ]
     (fun root ->
@@ -566,12 +588,8 @@ let%test "shadowed namespace resolves to the local binding" =
 
 let%test "private import headers return none" =
   Doc_state.with_temp_project
-    [
-      ("main.mr", "import math.secret\nsecret()\n");
-      ("math.mr", "fn secret() -> Int = 1\n");
-    ]
+    [ ("main.mr", "import math.secret\nsecret()\n"); ("math.mr", "fn secret() -> Int = 1\n") ]
     (fun root ->
       let main_path = Filename.concat root "main.mr" in
       let main_source = "import math.secret\nsecret()\n" in
-      definition_at ~file_id:main_path ~source:main_source ~needle:"secret" ()
-      = None)
+      definition_at ~file_id:main_path ~source:main_source ~needle:"secret" () = None)
