@@ -10,7 +10,6 @@ build:
 
 release:
 	dune build --profile release ./bin/main.exe
-	dune install
 	@cp -f _build/default/bin/main.exe ./marmoset
 	@chmod +x ./marmoset
 

@@ -115,7 +115,7 @@ Core declarations stay small. `Option` and `Result` live in `std.option` / `std.
 **Goal:** Compiler auto-loads toolchain stdlib core modules, making `Ordering`, traits, `Option`, and `Result` available in all modules.
 
 **Stdlib path resolution:**
-- Compiler resolves a toolchain stdlib root from explicit `stdlib_root`, `MARMOSET_STDLIB_ROOT`, or installed-toolchain probing
+- Compiler resolves a toolchain stdlib root from explicit `stdlib_root`, `MARMOSET_ROOT`, or installed-toolchain probing
 - Every entry file, including headerless single-file programs, goes through project discovery rooted at `source_root` or the entry directory
 - `std/prelude.mr`, `std/option.mr`, and `std/result.mr` are loaded through that same project/compiler machinery before user code
 - Missing required toolchain stdlib modules fail loudly instead of falling back to compiler-owned prelude declarations

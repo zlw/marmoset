@@ -76,7 +76,7 @@ let prelude_module_id = "std.prelude"
 let option_module_id = "std.option"
 let result_module_id = "std.result"
 let prelude_relative_path = Filename.concat "std" "prelude.mr"
-let stdlib_env_var = "MARMOSET_STDLIB_ROOT"
+let toolchain_root_env_var = "MARMOSET_ROOT"
 let core_stdlib_modules = [ prelude_module_id; option_module_id; result_module_id ]
 
 let is_std_import_path = function
@@ -112,6 +112,11 @@ let rec find_toolchain_root_from (dir : string) : string option =
 
 let stdlib_error ~(message : string) : Diagnostic.t = Diagnostic.error_no_span ~code:"stdlib-not-found" ~message
 
+let with_env_var (name : string) (value : string option) : unit =
+  match value with
+  | Some value -> Unix.putenv name value
+  | None -> Unix.putenv name ""
+
 let resolve_toolchain_root ?stdlib_root () : (string, Diagnostic.t) result =
   let resolve_explicit label path =
     match normalize_toolchain_root_candidate path with
@@ -126,9 +131,9 @@ let resolve_toolchain_root ?stdlib_root () : (string, Diagnostic.t) result =
   match stdlib_root with
   | Some root -> resolve_explicit "Configured stdlib root" root
   | None -> (
-      match Sys.getenv_opt stdlib_env_var with
-      | Some root -> resolve_explicit ("Environment variable " ^ stdlib_env_var) root
-      | None -> (
+      match Sys.getenv_opt toolchain_root_env_var with
+      | Some root when root <> "" -> resolve_explicit ("Environment variable " ^ toolchain_root_env_var) root
+      | _ -> (
           let executable_dir = normalize_path Sys.executable_name |> Filename.dirname in
           match find_toolchain_root_from executable_dir with
           | Some root -> Ok root
@@ -138,7 +143,7 @@ let resolve_toolchain_root ?stdlib_root () : (string, Diagnostic.t) result =
                    ~message:
                      (Printf.sprintf
                         "Unable to locate toolchain stdlib. Set %s or install stdlib files alongside the compiler (looked upward from '%s')."
-                        stdlib_env_var executable_dir))))
+                        toolchain_root_env_var executable_dir))))
 
 let export_list_of_program (program : AST.program) : string list =
   let rec first_export = function
@@ -486,6 +491,29 @@ let%test "discover_project resolves std modules from an explicit toolchain stdli
               Hashtbl.mem graph.modules "std.prelude"
               && Hashtbl.mem graph.modules "std.option"
               && Hashtbl.mem graph.modules "std.result"))
+
+let%test "resolve_toolchain_root honors MARMOSET_ROOT before installed probing" =
+  let stdlib_root = make_temp_dir "marmoset_stdlib_env_" in
+  let prior_root = Sys.getenv_opt toolchain_root_env_var in
+  Fun.protect
+    ~finally:(fun () ->
+      with_env_var toolchain_root_env_var prior_root;
+      ignore (Sys.command ("rm -rf " ^ Filename.quote stdlib_root)))
+    (fun () ->
+      mkdir_p (Filename.concat stdlib_root "std");
+      write_file
+        (Filename.concat stdlib_root "std/prelude.mr")
+        "export Ordering\ntype Ordering = { Less, Equal, Greater }\n";
+      write_file
+        (Filename.concat stdlib_root "std/option.mr")
+        "export Option\ntype Option[a] = { Some(a), None }\n";
+      write_file
+        (Filename.concat stdlib_root "std/result.mr")
+        "export Result\ntype Result[a, e] = { Success(a), Failure(e) }\n";
+      with_env_var toolchain_root_env_var (Some stdlib_root);
+      match resolve_toolchain_root () with
+      | Ok root -> String.equal root stdlib_root
+      | Error _ -> false)
 
 let%test "discover_project orders non-core stdlib modules after core stdlib modules" =
   with_temp_project
