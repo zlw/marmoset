@@ -829,26 +829,41 @@ let namespace_member_context ~(source : string) ~(offset : int) ~(trigger_is_dot
     (string list * string * int option) option =
   let tokens = Array.of_list (Lexer.lex source) in
   let len = Array.length tokens in
-  if trigger_is_dot then
-    let rec find_prev idx best =
-      if idx >= len then
-        best
-      else if token_end_pos tokens.(idx) < offset then
-        find_prev (idx + 1) (Some idx)
+  let rec find_prev idx best =
+    if idx >= len then
+      best
+    else if token_end_pos tokens.(idx) < offset then
+      find_prev (idx + 1) (Some idx)
+    else
+      best
+  in
+  let whitespace_only_between start_pos end_pos =
+    let rec loop idx =
+      if idx >= end_pos then
+        true
       else
-        best
+        match source.[idx] with
+        | ' ' | '\t' | '\n' | '\r' -> loop (idx + 1)
+        | _ -> false
     in
+    loop start_pos
+  in
+  let bare_dot_context () =
     match find_prev 0 None with
     | Some dot_idx
       when tokens.(dot_idx).token_type = Token.Dot
            && dot_idx >= 1
-           && tokens.(dot_idx - 1).token_type = Token.Ident ->
+           && tokens.(dot_idx - 1).token_type = Token.Ident
+           && whitespace_only_between (token_end_pos tokens.(dot_idx) + 1) offset ->
         Some (collect_left_chain tokens (dot_idx - 1), "", Some tokens.(dot_idx - 1).pos)
     | _ -> None
+  in
+  if trigger_is_dot then
+    bare_dot_context ()
   else
     let rec find idx =
       if idx >= len then
-        None
+        bare_dot_context ()
       else
         let tok = tokens.(idx) in
         if tok.token_type = Token.Ident && offset >= tok.pos && offset <= token_end_pos tok + 1 then
@@ -963,8 +978,14 @@ let context_at
     ~(source : string)
     ~(offset : int)
     ~(trigger_is_dot : bool) : completion_context =
+  let should_fallback_on_unsupported =
+    trigger_is_dot
+    || Option.is_some (Import_header.completion_context_at_offset ~source ~offset)
+    || Option.is_some (namespace_member_context ~source ~offset ~trigger_is_dot)
+  in
   match structured_context_at ~analysis ~offset with
-  | Some Unsupported when trigger_is_dot -> fallback_context_at ~analysis ~source ~offset ~trigger_is_dot
+  | Some Unsupported when should_fallback_on_unsupported ->
+      fallback_context_at ~analysis ~source ~offset ~trigger_is_dot
   | Some context -> context
   | None -> fallback_context_at ~analysis ~source ~offset ~trigger_is_dot
 
@@ -1038,26 +1059,41 @@ let namespace_member_context ~(source : string) ~(offset : int) ~(trigger_is_dot
     (string list * string * int option) option =
   let tokens = Array.of_list (Lexer.lex source) in
   let len = Array.length tokens in
-  if trigger_is_dot then
-    let rec find_prev idx best =
-      if idx >= len then
-        best
-      else if token_end_pos tokens.(idx) < offset then
-        find_prev (idx + 1) (Some idx)
+  let rec find_prev idx best =
+    if idx >= len then
+      best
+    else if token_end_pos tokens.(idx) < offset then
+      find_prev (idx + 1) (Some idx)
+    else
+      best
+  in
+  let whitespace_only_between start_pos end_pos =
+    let rec loop idx =
+      if idx >= end_pos then
+        true
       else
-        best
+        match source.[idx] with
+        | ' ' | '\t' | '\n' | '\r' -> loop (idx + 1)
+        | _ -> false
     in
+    loop start_pos
+  in
+  let bare_dot_context () =
     match find_prev 0 None with
     | Some dot_idx
       when tokens.(dot_idx).token_type = Token.Dot
            && dot_idx >= 1
-           && tokens.(dot_idx - 1).token_type = Token.Ident ->
+           && tokens.(dot_idx - 1).token_type = Token.Ident
+           && whitespace_only_between (token_end_pos tokens.(dot_idx) + 1) offset ->
         Some (collect_left_chain tokens (dot_idx - 1), "", Some tokens.(dot_idx - 1).pos)
     | _ -> None
+  in
+  if trigger_is_dot then
+    bare_dot_context ()
   else
     let rec find idx =
       if idx >= len then
-        None
+        bare_dot_context ()
       else
         let tok = tokens.(idx) in
         if tok.token_type = Token.Ident && offset >= tok.pos && offset <= token_end_pos tok + 1 then
@@ -1268,6 +1304,28 @@ let%test "bare-dot namespace completion can use last_good" =
       "import math\nmath.|\n"
   in
   List.mem "add" labels && List.mem "Point" labels && List.mem "HasXY" labels
+
+let%test "bare-dot namespace completion also works without dot trigger" =
+  let labels =
+    completion_labels
+      ~last_good_annotated:"import types.geo\nlet p = 1\nlet q = 2\ngeo|\n"
+      ~files:
+        [
+          ("main.mr", "import types.geo\nlet p = 1\nlet q = 2\ngeo.\n");
+          ( "types/geo.mr",
+            "export render_point, Point, HasXY\n\
+             type Point = { x: Int, y: Int }\n\
+             shape HasXY = { x: Int, y: Int }\n\
+             fn render_point(p: Point) -> Str = \"point\"\n" );
+        ]
+      ~entry_rel:"main.mr" "import types.geo\nlet p = 1\nlet q = 2\ngeo.|\n"
+  in
+  List.mem "render_point" labels
+  && List.mem "Point" labels
+  && List.mem "HasXY" labels
+  && not (List.mem "p" labels)
+  && not (List.mem "q" labels)
+  && not (List.mem "let" labels)
 
 let%test "dot completion on a local value still returns none" =
   match

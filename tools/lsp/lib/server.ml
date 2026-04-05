@@ -741,6 +741,28 @@ let%test "server completion supports dot-triggered imported alias members" =
   in
   List.mem "render_point" labels && List.mem "Point" labels && List.mem "HasXY" labels
 
+let%test "server completion supports bare-dot imported alias members without trigger character" =
+  let labels =
+    cached_completion_labels
+      ~cached_annotated:"import types.geo\nlet p = 1\nlet q = 2\ngeo|\n"
+      ~files:
+        [
+          ("main.mr", "import types.geo\nlet p = 1\nlet q = 2\ngeo.\n");
+          ( "types/geo.mr",
+            "export render_point, Point, HasXY\n\
+             type Point = { x: Int, y: Int }\n\
+             shape HasXY = { x: Int, y: Int }\n\
+             fn render_point(p: Point) -> Str = \"point\"\n" );
+        ]
+      ~entry_rel:"main.mr" "import types.geo\nlet p = 1\nlet q = 2\ngeo.|\n"
+  in
+  List.mem "render_point" labels
+  && List.mem "Point" labels
+  && List.mem "HasXY" labels
+  && not (List.mem "p" labels)
+  && not (List.mem "q" labels)
+  && not (List.mem "let" labels)
+
 let%test "server completion supports qualified imported types" =
   let labels =
     cached_completion_labels
