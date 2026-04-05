@@ -878,6 +878,16 @@ let structured_context_at ~(analysis : Doc_state.analysis_result) ~(offset : int
       | Some (Cursor_context.Declaration_head _) -> Some Unsupported
       | Some (Cursor_context.Value_identifier { name_ref; _ }) ->
           Some (ValueIdentifier { prefix = prefix_of_name_ref ~source:analysis.source ~offset name_ref })
+      | Some (Cursor_context.Type_path_segment { segment_ref; path_segments; segment_index }) ->
+          if segment_index < List.length path_segments - 1 then
+            Some Unsupported
+          else
+            Some
+              (ModuleMember
+                 {
+                   receiver_segments = take segment_index path_segments;
+                   prefix = prefix_of_name_ref ~source:analysis.source ~offset segment_ref;
+                 })
       | Some (Cursor_context.Type_identifier { name_ref; _ }) ->
           Some (TypeIdentifier { prefix = prefix_of_name_ref ~source:analysis.source ~offset name_ref })
       | Some (Cursor_context.Constraint_identifier { name_ref }) ->

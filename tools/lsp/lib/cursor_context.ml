@@ -51,6 +51,11 @@ type reference =
       name_ref : Surface.name_ref;
       binding : scope_binding option;
     }
+  | Type_path_segment of {
+      segment_ref : Surface.name_ref;
+      path_segments : string list;
+      segment_index : int;
+    }
   | Constraint_identifier of {
       name_ref : Surface.name_ref;
     }
@@ -331,14 +336,46 @@ let declaration_ref_if_contains ~(offset : int) ~(name_ref : Surface.name_ref) ~
   else
     None
 
+let dotted_name_segments (name_ref : Surface.name_ref) : (Surface.name_ref list * string list) option =
+  match String.split_on_char '.' name_ref.text with
+  | [] | [ _ ] -> None
+  | path_segments ->
+      let rec build current_pos rev_refs = function
+        | [] -> Some (List.rev rev_refs, path_segments)
+        | segment :: rest ->
+            let segment_ref =
+              {
+                Surface.text = segment;
+                pos = current_pos;
+                end_pos = current_pos + String.length segment - 1;
+                file_id = name_ref.file_id;
+              }
+            in
+            build (segment_ref.end_pos + 2) (segment_ref :: rev_refs) rest
+      in
+      build name_ref.pos [] path_segments
+
+let type_path_reference_of_name ~(offset : int) (name_ref : Surface.name_ref) : reference option =
+  Option.bind (dotted_name_segments name_ref) (fun (segment_refs, path_segments) ->
+      List.find_mapi
+        (fun segment_index segment_ref ->
+          if name_ref_contains ~offset segment_ref then
+            Some (Type_path_segment { segment_ref; path_segments; segment_index })
+          else
+            None)
+        segment_refs)
+
 let type_reference_of_name ~(scope_index : scope_index) ~(offset : int) (name_ref : Surface.name_ref) : reference option =
-  if name_ref_contains ~offset name_ref then
-    let binding =
-      binding_of_name ~scope_index ~binding_kind:Type_binding ~name:name_ref.text ~offset
-    in
-    Some (Type_identifier { name_ref; binding })
-  else
-    None
+  match type_path_reference_of_name ~offset name_ref with
+  | Some _ as reference -> reference
+  | None ->
+      if name_ref_contains ~offset name_ref then
+        let binding =
+          binding_of_name ~scope_index ~binding_kind:Type_binding ~name:name_ref.text ~offset
+        in
+        Some (Type_identifier { name_ref; binding })
+      else
+        None
 
 let constraint_reference_of_name ~(offset : int) (name_ref : Surface.name_ref) : reference option =
   if name_ref_contains ~offset name_ref then
@@ -682,6 +719,15 @@ let%test "reference_at binds annotation type vars to the nearest generic scope" 
   match reference_for_needle ~source:"fn id[t](x: t) -> t = x\n" ~needle:"t" ~occurrence:3 () with
   | Some (Type_identifier { name_ref; binding = Some binding }) ->
       name_ref.text = "t" && binding.binding_kind = Type_binding && binding.binding_name = "t"
+  | _ -> false
+
+let%test "reference_at classifies qualified type members from the surface tree" =
+  match
+    reference_for_needle ~source:"import types.geo\nlet p: geo.Point = { x: 1, y: 2 }\n" ~needle:"geo.Point"
+      ~offset_in_needle:4 ()
+  with
+  | Some (Type_path_segment { segment_ref; path_segments; segment_index }) ->
+      segment_ref.text = "Point" && path_segments = [ "geo"; "Point" ] && segment_index = 1
   | _ -> false
 
 let%test "reference_at classifies enum constructor members" =
