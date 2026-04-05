@@ -615,7 +615,13 @@ let find_definition ~(analysis : Doc_state.analysis_result) ~(line : int) ~(char
   | Some compiler_analysis -> (
       match cursor_input_of_analysis analysis with
       | Some input -> (
-          match Cursor_context.reference_at ~source:analysis.source ~input ~offset with
+          let reference =
+            match Cursor_context.reference_at ~source:analysis.source ~input ~offset with
+            | Some _ as reference -> reference
+            | None when offset > 0 -> Cursor_context.reference_at ~source:analysis.source ~input ~offset:(offset - 1)
+            | None -> None
+          in
+          match reference with
           | Some reference ->
               first_some
                 (cursor_reference_target compiler_analysis ~source:analysis.source
@@ -794,6 +800,17 @@ let%test "type annotation resolves to named type declaration head" =
       let main_source = "type Point = { x: Int }\nlet p: Point = { x: 1 }\np\n" in
       expect_target ~label:"type annotation"
         ~actual:(definition_at ~file_id:main_path ~source:main_source ~needle:"Point = { x: 1 }" ())
+        ~expected:(target_span_of_substring ~file_path:main_path ~source:main_source ~needle:"Point" ()))
+
+let%test "type annotation resolves when the cursor is at the end of the type name" =
+  Doc_state.with_temp_project
+    [ ("main.mr", "type Point = { x: Int }\nlet p: Point = { x: 1 }\np\n") ]
+    (fun root ->
+      let main_path = Filename.concat root "main.mr" in
+      let main_source = "type Point = { x: Int }\nlet p: Point = { x: 1 }\np\n" in
+      expect_target ~label:"type annotation at end"
+        ~actual:(definition_at ~file_id:main_path ~source:main_source ~needle:"Point = { x: 1 }"
+                   ~offset_in_needle:5 ())
         ~expected:(target_span_of_substring ~file_path:main_path ~source:main_source ~needle:"Point" ()))
 
 let%test "generic annotation resolves to nearest type parameter declaration" =

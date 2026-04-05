@@ -26,6 +26,9 @@ let analysis_has_typed_state (analysis : Doc_state.analysis_result) : bool =
 let analysis_has_completion_semantics (analysis : Doc_state.analysis_result) : bool =
   analysis.compiler_analysis <> None && (analysis.environment <> None || analysis.project_root <> None || analysis.program <> None)
 
+let analysis_has_definition_semantics (analysis : Doc_state.analysis_result) : bool =
+  analysis.compiler_analysis <> None && (analysis.surface_program <> None || analysis.program <> None)
+
 let update_cached_doc (previous : cached_doc option) (latest : Doc_state.analysis_result) : cached_doc =
   {
     latest;
@@ -111,6 +114,27 @@ let completion_items_for_cached_doc
     | None -> cached.latest
   in
   Completions.complete_at ~latest ~last_good:cached.last_good ~line ~character ~trigger_is_dot ~source_overrides
+
+let definition_analysis_for_cached_doc
+    ~(cached : cached_doc)
+    ~(current_source : string option)
+    ~(file_id : string)
+    ~(source_root : string option)
+    ~(source_overrides : (string, string) Hashtbl.t) : cached_doc * Doc_state.analysis_result =
+  let refreshed =
+    match current_source with
+    | Some source when not (String.equal source cached.latest.source) ->
+        let latest = Doc_state.analyze_with_file_id ?source_root ~source_overrides ~file_id ~source () in
+        update_cached_doc (Some cached) latest
+    | Some _ | None -> cached
+  in
+  let analysis =
+    if analysis_has_definition_semantics refreshed.latest then
+      refreshed.latest
+    else
+      Option.value refreshed.last_good ~default:refreshed.latest
+  in
+  (refreshed, analysis)
 
 class marmoset_server =
   object (self)
@@ -406,7 +430,21 @@ class marmoset_server =
       let result =
         match Hashtbl.find_opt analysis_cache uri with
         | None -> None
-        | Some { latest = analysis; _ } ->
+        | Some cached ->
+            let current_source = Option.map (fun (doc : open_doc) -> doc.text) (Hashtbl.find_opt open_docs uri) in
+            let source_root =
+              match Hashtbl.find_opt open_docs uri with
+              | Some doc -> choose_known_source_root ~analysis_cache ~uri ~file_path:doc.file_path
+              | None ->
+                  choose_known_source_root ~analysis_cache ~uri
+                    ~file_path:(Doc_state.file_path_of_file_id (Lsp_t.DocumentUri.to_string uri))
+            in
+            let source_overrides = self#source_overrides () in
+            let file_id = Lsp_t.DocumentUri.to_string uri in
+            let cached, analysis =
+              definition_analysis_for_cached_doc ~cached ~current_source ~file_id ~source_root ~source_overrides
+            in
+            Hashtbl.replace analysis_cache uri cached;
             Definition.locations ~analysis
               (Definition.find_definition ~analysis ~line:pos.line ~character:pos.character)
       in
@@ -594,6 +632,59 @@ let cached_completion_labels
         true)
   in
   !captured
+
+let cached_definition_target
+    ?cached_annotated
+    ?last_good_annotated
+    ~(files : (string * string) list)
+    ~(entry_rel : string)
+    (annotated : string) : string * Definition.definition_target option =
+  let captured = ref ("", None) in
+  let _ =
+    Doc_state.with_temp_project files (fun root ->
+        let cached_annotated = Option.value cached_annotated ~default:annotated in
+        let cached_source, _, _ = source_with_cursor cached_annotated in
+        let source, line, character = source_with_cursor annotated in
+        let file_id = Filename.concat root entry_rel in
+        let latest = Doc_state.analyze_with_file_id ~source_root:root ~file_id ~source:cached_source () in
+        let previous =
+          Option.map
+            (fun annotated ->
+              let source, _, _ = source_with_cursor annotated in
+              let last_good = Doc_state.analyze_with_file_id ~source_root:root ~file_id ~source () in
+              update_cached_doc None last_good)
+            last_good_annotated
+        in
+        let cached = update_cached_doc previous latest in
+        let source_overrides = Hashtbl.create 0 in
+        let _, analysis =
+          definition_analysis_for_cached_doc ~cached ~current_source:(Some source) ~file_id ~source_root:(Some root)
+            ~source_overrides
+        in
+        captured := (file_id, Definition.find_definition ~analysis ~line ~character);
+        true)
+  in
+  !captured
+
+let%test "server definition uses live buffer text instead of stale cached source" =
+  let main_source = "type Point = { x: Int }\nlet p: Point = { x: 1 }\np\n" in
+  let main_path, actual =
+    cached_definition_target ~cached_annotated:"let stale = 1\n|\n"
+      ~files:[ ("main.mr", main_source) ] ~entry_rel:"main.mr"
+      "type Point = { x: Int }\nlet p: Point| = { x: 1 }\np\n"
+  in
+  actual = Definition.target_span_of_substring ~file_path:main_path ~source:main_source ~needle:"Point" ()
+
+let%test "server definition falls back to last_good during incomplete edits" =
+  let main_source = "type Point = { x: Int }\nlet p: Point = { x: 1 }\np\n" in
+  let main_path, actual =
+    cached_definition_target
+      ~cached_annotated:"type Point = { x: Int }\nlet p: Point| = { x: 1 }\np\n{"
+      ~last_good_annotated:"type Point = { x: Int }\nlet p: Point| = { x: 1 }\np\n"
+      ~files:[ ("main.mr", main_source) ] ~entry_rel:"main.mr"
+      "type Point = { x: Int }\nlet p: Point| = { x: 1 }\np\n{"
+  in
+  actual = Definition.target_span_of_substring ~file_path:main_path ~source:main_source ~needle:"Point" ()
 
 let%test "server completion uses live buffer text instead of leaking stale cached locals" =
   let labels =
