@@ -230,9 +230,9 @@ let rec discover_module (state : discovery_state) ~(module_id : string) ~(file_p
     let file_index = !(state.next_file_index) in
     state.next_file_index := file_index + 1;
     let id_offset = file_index * id_stride in
-    let* program =
-      match Syntax.Parser.parse ~id_offset ~file_id:file_path source with
-      | Ok program -> Ok program
+    let* parse_result =
+      match Syntax.Parser.parse_with_surface ~id_offset ~file_id:file_path source with
+      | Ok parse_result -> Ok parse_result
       | Error diagnostics -> Error (List.hd diagnostics)
     in
     let parsed_module =
@@ -240,9 +240,10 @@ let rec discover_module (state : discovery_state) ~(module_id : string) ~(file_p
         Module_context.module_id;
         file_path;
         source;
-        program;
-        exports = export_list_of_program program;
-        imports = imports_of_program program;
+        surface_program = parse_result.surface_program;
+        program = parse_result.program;
+        exports = export_list_of_program parse_result.program;
+        imports = imports_of_program parse_result.program;
       }
     in
     Hashtbl.replace state.modules module_id parsed_module;

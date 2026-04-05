@@ -3,26 +3,48 @@
 module Lsp_t = Linol_lsp.Types
 module Ast = Marmoset.Lib.Ast
 module Compiler = Marmoset.Lib.Frontend_compiler
+module Cursor_context = Cursor_context
 module Discovery = Frontend.Discovery
 module Infer = Marmoset.Lib.Infer
 module Import_resolver = Frontend.Import_resolver
 module Module_catalog = Frontend.Module_catalog
 module Module_sig = Typecheck.Module_sig
+module Surface = Marmoset.Lib.Surface_ast.Surface
+module Annotation = Typecheck.Annotation
+module Trait_registry = Typecheck.Trait_registry
+module Inherent_registry = Typecheck.Inherent_registry
 module Token = Marmoset.Lib.Token
 module Lexer = Marmoset.Lib.Lexer
 module Types = Marmoset.Lib.Types
 module StringSet = Set.Make (String)
 
 type completion_context =
-  | BareIdentifier of { prefix : string }
-  | NamespaceMember of {
-      receiver_segments : string list;
+  | ValueIdentifier of { prefix : string }
+  | TypeIdentifier of { prefix : string }
+  | ConstraintIdentifier of {
       prefix : string;
+      dyn_only : bool;
     }
   | ImportPath of {
       typed_segments : string list;
       prefix : string;
       in_alias : bool;
+    }
+  | ModuleMember of {
+      receiver_segments : string list;
+      prefix : string;
+    }
+  | EnumConstructorMember of {
+      type_name : string;
+      prefix : string;
+    }
+  | TraitMethodMember of {
+      trait_name : string;
+      prefix : string;
+    }
+  | InherentMethodMember of {
+      type_name : string;
+      prefix : string;
     }
   | Unsupported
 
@@ -86,6 +108,19 @@ let completions ~(environment : Infer.type_env) : Lsp_t.CompletionItem.t list =
 let starts_with ~(prefix : string) (value : string) : bool =
   let prefix_len = String.length prefix in
   String.length value >= prefix_len && String.sub value 0 prefix_len = prefix
+
+let first_some a b =
+  match a with
+  | Some _ -> a
+  | None -> b
+
+let take n xs =
+  let rec go acc remaining = function
+    | _ when remaining <= 0 -> List.rev acc
+    | [] -> List.rev acc
+    | x :: rest -> go (x :: acc) (remaining - 1) rest
+  in
+  go [] n xs
 
 let token_end_pos (tok : Token.token) : int = max tok.pos (tok.pos + String.length tok.literal - 1)
 
@@ -230,6 +265,496 @@ let add_semantic_item (items : (string, semantic_item) Hashtbl.t) (item : semant
 
 let prefix_filter ~(prefix : string) (label : string) : bool = prefix = "" || starts_with ~prefix label
 
+let active_file_path (analysis : Doc_state.analysis_result) : string option =
+  Option.map (fun compiler_analysis -> compiler_analysis.Compiler.active_file.file_path) analysis.compiler_analysis
+
+let cursor_input_of_analysis (analysis : Doc_state.analysis_result) : Cursor_context.cursor_context_input option =
+  match (analysis.surface_program, analysis.program) with
+  | Some surface_program, Some lowered_program ->
+      Some
+        {
+          Cursor_context.surface_program;
+          lowered_program;
+          scope_index = Cursor_context.build_scope_index surface_program;
+        }
+  | _ -> None
+
+let prefix_of_name_ref ~(source : string) ~(offset : int) (name_ref : Surface.name_ref) : string =
+  let end_exclusive = min offset (name_ref.end_pos + 1) in
+  let prefix_len = max 0 (end_exclusive - name_ref.pos) in
+  String.sub source name_ref.pos prefix_len
+
+let is_dyn_constraint_context ~(source : string) ~(offset : int) : bool =
+  let rec rewind_ident_start idx =
+    if idx < 0 then
+      idx
+    else
+      match source.[idx] with
+      | 'a' .. 'z' | 'A' .. 'Z' | '0' .. '9' | '_' -> rewind_ident_start (idx - 1)
+      | _ -> idx
+  in
+  let rec scan idx depth =
+    if idx < 0 then
+      false
+    else
+      match source.[idx] with
+      | ']' -> scan (idx - 1) (depth + 1)
+      | '[' ->
+          if depth > 0 then
+            scan (idx - 1) (depth - 1)
+          else
+            let j = ref (idx - 1) in
+            while !j >= 0 && Char.code source.[!j] <= 32 do
+              decr j
+            done;
+            let end_ident = !j in
+            j := rewind_ident_start !j;
+            let start_ident = !j + 1 in
+            end_ident >= start_ident
+            && String.equal (String.sub source start_ident (end_ident - start_ident + 1)) "Dyn"
+      | '\n' | '(' | '{' | '}' when depth = 0 -> false
+      | _ -> scan (idx - 1) depth
+  in
+  scan (offset - 1) 0
+
+let type_bindings_in_scope ~(input : Cursor_context.cursor_context_input) ~(offset : int) : string list =
+  input.scope_index
+  |> List.filter_map (fun (binding : Cursor_context.scope_binding) ->
+         if
+           binding.binding_kind = Cursor_context.Type_binding
+           && offset >= binding.scope_start
+           && offset <= binding.scope_end
+         then
+           Some binding.binding_name
+         else
+           None)
+  |> List.sort_uniq String.compare
+
+type visible_type_kind =
+  | Wrapper_type
+  | Enum_type of Surface.surface_variant_def list
+  | Product_type
+  | Transparent_type
+  | Shape_type
+  | Trait_type
+
+let classify_visible_type_in_surface_program
+    (program : Surface.surface_program)
+    ~(surface_name : string) : visible_type_kind option =
+  List.find_map
+    (fun (stmt : Surface.surface_top_stmt) ->
+      match stmt.std_decl with
+      | Surface.STypeDef { type_name; type_body; _ } when String.equal type_name surface_name -> (
+          match type_body with
+          | Surface.STNamedWrapper _ -> Some Wrapper_type
+          | Surface.STNamedSum variants -> Some (Enum_type variants)
+          | Surface.STNamedProduct _ -> Some Product_type
+          | Surface.STTransparent _ -> Some Transparent_type)
+      | Surface.SShapeDef { shape_name; _ } when String.equal shape_name surface_name -> Some Shape_type
+      | Surface.STraitDef { name; _ } when String.equal name surface_name -> Some Trait_type
+      | _ -> None)
+    program
+
+let visible_type_kind_of_name ~(analysis : Doc_state.analysis_result) ~(surface_name : string) :
+    visible_type_kind option =
+  match (analysis.compiler_analysis, active_file_path analysis) with
+  | Some compiler_analysis, Some file_path -> (
+      let visible_presence =
+        Option.bind (current_navigation analysis) (fun navigation ->
+            first_some
+              (Import_resolver.StringMap.find_opt surface_name navigation.surface.declarations)
+              (Import_resolver.StringMap.find_opt surface_name navigation.resolved_imports.direct_bindings))
+      in
+      match visible_presence with
+      | None -> None
+      | Some presence ->
+          let parsed_module =
+            first_some
+              (Compiler.find_parsed_module_by_file compiler_analysis ~file_path)
+              (Compiler.parsed_module_of_presence compiler_analysis presence)
+          in
+          let fallback =
+            if presence.has_enum then
+              Some (Enum_type [])
+            else if presence.has_trait then
+              Some Trait_type
+            else if presence.has_shape then
+              Some Shape_type
+            else if presence.has_transparent_type then
+              Some Transparent_type
+            else if presence.has_named_type then
+              Some Product_type
+            else
+              None
+          in
+          match parsed_module with
+          | Some parsed_module ->
+              first_some
+                (classify_visible_type_in_surface_program parsed_module.surface_program ~surface_name)
+                fallback
+          | None -> fallback)
+  | _ -> None
+
+let visible_enum_variants ~(analysis : Doc_state.analysis_result) ~(type_name : string) :
+    Surface.surface_variant_def list option =
+  match (analysis.compiler_analysis, active_file_path analysis) with
+  | Some compiler_analysis, Some file_path -> (
+      let visible_presence =
+        Option.bind (current_navigation analysis) (fun navigation ->
+            first_some
+              (Import_resolver.StringMap.find_opt type_name navigation.surface.declarations)
+              (Import_resolver.StringMap.find_opt type_name navigation.resolved_imports.direct_bindings))
+      in
+      match visible_presence with
+      | Some presence when presence.has_enum ->
+          let parsed_module =
+            first_some
+              (Compiler.find_parsed_module_by_file compiler_analysis ~file_path)
+              (Compiler.parsed_module_of_presence compiler_analysis presence)
+          in
+          Option.bind parsed_module (fun parsed_module ->
+              List.find_map
+                (fun (stmt : Surface.surface_top_stmt) ->
+                  match stmt.std_decl with
+                  | Surface.STypeDef { type_name = candidate_type; type_body = Surface.STNamedSum variants; _ }
+                    when String.equal candidate_type type_name ->
+                      Some variants
+                  | _ -> None)
+                parsed_module.surface_program)
+      | Some _ | None -> None)
+  | _ -> None
+
+let method_poly_detail (method_sig : Trait_registry.method_sig) : string =
+  let is_effectful = method_sig.method_effect = `Effectful in
+  let fn_type =
+    List.fold_right
+      (fun (_name, typ) acc ->
+        if is_effectful then
+          Types.tfun_eff typ acc
+        else
+          Types.tfun typ acc)
+      method_sig.method_params method_sig.method_return_type
+  in
+  detail_of_poly (Types.Forall (List.map fst method_sig.method_generics, fn_type))
+
+let root_symbol_is_local ~(analysis : Doc_state.analysis_result) ~(root_offset : int) : bool =
+  let value_symbol_is_local (symbol : Infer.symbol) ~(active_file_path : string) : bool =
+    let same_file =
+      match Option.bind symbol.file_id Doc_state.file_path_of_file_id with
+      | Some file_path -> String.equal file_path active_file_path
+      | None -> true
+    in
+    same_file
+    &&
+    match symbol.kind with
+    | Infer.BuiltinValue | Infer.TopLevelLet | Infer.LocalLet | Infer.Param | Infer.PatternVar
+    | Infer.ImplMethodParam ->
+        true
+    | Infer.TypeSym | Infer.TypeAliasSym | Infer.ShapeSym | Infer.TraitSym | Infer.EnumSym
+    | Infer.EnumVariantSym ->
+        false
+  in
+  match (analysis.compiler_analysis, analysis.program, active_file_path analysis) with
+  | Some compiler_analysis, Some program, Some file_path -> (
+      match Hover.find_in_program root_offset program with
+      | Some { expr = Ast.AST.Identifier _; id; _ } -> (
+          match Compiler.find_active_file_symbol compiler_analysis ~expr_id:id with
+          | Some symbol -> value_symbol_is_local symbol ~active_file_path:file_path
+          | None -> false)
+      | _ -> false)
+  | _ -> false
+
+let root_symbol_is_surface_local ~(analysis : Doc_state.analysis_result) ~(root_name : string) : bool =
+  match current_navigation analysis with
+  | Some navigation -> (
+      match Import_resolver.StringMap.find_opt root_name navigation.surface.declarations with
+      | Some presence -> presence.has_value
+      | None -> false)
+  | None -> false
+
+let visible_presence_bindings (navigation : navigation_snapshot) : (string * Import_resolver.member_presence) list =
+  let items = Hashtbl.create 16 in
+  Import_resolver.StringMap.iter (fun label presence -> Hashtbl.replace items label presence) navigation.surface.declarations;
+  Import_resolver.StringMap.iter
+    (fun label presence -> Hashtbl.replace items label presence)
+    navigation.resolved_imports.direct_bindings;
+  Hashtbl.to_seq items |> List.of_seq |> List.sort (fun (l, _) (r, _) -> String.compare l r)
+
+let value_identifier_items ~(analysis : Doc_state.analysis_result) ~(prefix : string) : Lsp_t.CompletionItem.t list =
+  let items = Hashtbl.create 32 in
+  let navigation = current_navigation analysis in
+  let environment = analysis.environment in
+  let hidden_internal_names =
+    match navigation with
+    | None -> StringSet.empty
+    | Some navigation ->
+        let from_decls =
+          Import_resolver.StringMap.fold
+            (fun _ (presence : Import_resolver.member_presence) acc -> StringSet.add presence.internal_name acc)
+            navigation.surface.declarations StringSet.empty
+        in
+        Import_resolver.StringMap.fold
+          (fun _ (presence : Import_resolver.member_presence) acc -> StringSet.add presence.internal_name acc)
+          navigation.resolved_imports.direct_bindings from_decls
+  in
+  Option.iter
+    (fun (navigation : navigation_snapshot) ->
+      List.iter
+        (fun (label, (presence : Import_resolver.member_presence)) ->
+          if prefix_filter ~prefix label && presence.has_value then
+            add_semantic_item items
+              {
+                label;
+                kind = kind_of_presence presence;
+                detail = poly_detail_of_internal ~environment ~internal_name:presence.internal_name;
+                sort_text = Some label;
+              };
+          if prefix_filter ~prefix label then
+            match visible_type_kind_of_name ~analysis ~surface_name:label with
+            | Some Wrapper_type ->
+                add_semantic_item items
+                  {
+                    label;
+                    kind = Lsp_t.CompletionItemKind.Function;
+                    detail = Some "wrapper constructor";
+                    sort_text = Some label;
+                  }
+            | Some (Enum_type _) | Some Product_type | Some Transparent_type | Some Shape_type | Some Trait_type
+            | None ->
+                ())
+        (visible_presence_bindings navigation);
+      Import_resolver.StringMap.iter
+        (fun label _ ->
+          if prefix_filter ~prefix label then
+            add_semantic_item items
+              { label; kind = Lsp_t.CompletionItemKind.Module; detail = Some "module"; sort_text = Some label })
+        navigation.resolved_imports.namespace_roots)
+    navigation;
+  Option.iter
+    (fun environment ->
+      Infer.TypeEnv.bindings environment
+      |> List.iter (fun (name, poly) ->
+             if prefix_filter ~prefix name && not (StringSet.mem name hidden_internal_names) then
+               let (Types.Forall (_, mono)) = poly in
+               add_semantic_item items
+                 {
+                   label = name;
+                   kind = kind_of_type mono;
+                   detail = Some (detail_of_poly poly);
+                   sort_text = Some name;
+                 }))
+    environment;
+  let semantic_items =
+    Hashtbl.to_seq_values items |> List.of_seq |> List.sort (fun a b -> String.compare a.label b.label)
+  in
+  semantic_items
+  @ List.map
+      (fun (kw, desc) ->
+        {
+          label = kw;
+          kind = Lsp_t.CompletionItemKind.Keyword;
+          detail = Some desc;
+          sort_text = Some ("zzz_" ^ kw);
+        })
+      keywords
+  |> List.map completion_item_of_semantic
+
+let type_identifier_items
+    ~(analysis : Doc_state.analysis_result)
+    ~(prefix : string)
+    ~(offset : int) : Lsp_t.CompletionItem.t list =
+  let items = Hashtbl.create 24 in
+  let builtin_types =
+    [
+      ("Int", "builtin type");
+      ("Float", "builtin type");
+      ("Bool", "builtin type");
+      ("Str", "builtin type");
+      ("Unit", "builtin type");
+      ("List", "builtin type constructor");
+      ("Map", "builtin type constructor");
+    ]
+  in
+  List.iter
+    (fun (label, detail) ->
+      if prefix_filter ~prefix label then
+        add_semantic_item items
+          { label; kind = Lsp_t.CompletionItemKind.Struct; detail = Some detail; sort_text = Some label })
+    builtin_types;
+  Option.iter
+    (fun input ->
+      type_bindings_in_scope ~input ~offset
+      |> List.iter (fun label ->
+             if prefix_filter ~prefix label then
+               add_semantic_item items
+                 {
+                   label;
+                   kind = Lsp_t.CompletionItemKind.Struct;
+                   detail = Some "type parameter";
+                   sort_text = Some label;
+                 }))
+    (cursor_input_of_analysis analysis);
+  Option.iter
+    (fun (navigation : navigation_snapshot) ->
+      List.iter
+        (fun (label, _presence) ->
+          if prefix_filter ~prefix label then
+            match visible_type_kind_of_name ~analysis ~surface_name:label with
+            | Some (Enum_type _) ->
+                add_semantic_item items
+                  {
+                    label;
+                    kind = Lsp_t.CompletionItemKind.Enum;
+                    detail = Some "enum type";
+                    sort_text = Some label;
+                  }
+            | Some Wrapper_type | Some Product_type | Some Transparent_type ->
+                add_semantic_item items
+                  {
+                    label;
+                    kind = Lsp_t.CompletionItemKind.Struct;
+                    detail = Some "type";
+                    sort_text = Some label;
+                  }
+            | Some Shape_type | Some Trait_type | None -> ())
+        (visible_presence_bindings navigation))
+    (current_navigation analysis);
+  Hashtbl.to_seq_values items |> List.of_seq |> List.sort (fun a b -> String.compare a.label b.label)
+  |> List.map completion_item_of_semantic
+
+let constraint_identifier_items
+    ~(analysis : Doc_state.analysis_result)
+    ~(prefix : string)
+    ~(dyn_only : bool) : Lsp_t.CompletionItem.t list =
+  let items = Hashtbl.create 16 in
+  Option.iter
+    (fun (navigation : navigation_snapshot) ->
+      List.iter
+        (fun (label, (presence : Import_resolver.member_presence)) ->
+          if prefix_filter ~prefix label then
+            if presence.has_trait then
+              add_semantic_item items
+                {
+                  label;
+                  kind = Lsp_t.CompletionItemKind.Interface;
+                  detail = Some "trait";
+                  sort_text = Some label;
+                }
+            else if presence.has_shape && not dyn_only then
+              add_semantic_item items
+                {
+                  label;
+                  kind = Lsp_t.CompletionItemKind.Interface;
+                  detail = Some "shape";
+                  sort_text = Some label;
+                })
+        (visible_presence_bindings navigation))
+    (current_navigation analysis);
+  Hashtbl.to_seq_values items |> List.of_seq |> List.sort (fun a b -> String.compare a.label b.label)
+  |> List.map completion_item_of_semantic
+
+let export_completion_items (entry : Module_catalog.entry) ~(prefix : string) : semantic_item list =
+  Import_resolver.StringMap.bindings entry.surface.exports
+  |> List.filter_map (fun (label, (presence : Import_resolver.member_presence)) ->
+         if prefix_filter ~prefix label then
+           let typed_binding =
+             Option.bind entry.typed_signature (fun signature -> Module_sig.find_export signature label)
+           in
+           Some
+             {
+               label;
+               kind = kind_of_presence ?typed_binding presence;
+               detail =
+                 (match typed_binding with
+                 | Some binding -> detail_of_binding binding
+                 | None -> None);
+               sort_text = Some label;
+             }
+         else
+           None)
+
+let namespace_or_import_items ~(catalog : Module_catalog.t) ~(prefix_segments : string list) ~(prefix : string) :
+    semantic_item list =
+  let items = Hashtbl.create 16 in
+  List.iter
+    (fun label ->
+      if prefix_filter ~prefix label then
+        add_semantic_item items
+          { label; kind = Lsp_t.CompletionItemKind.Module; detail = Some "module"; sort_text = Some label })
+    (Module_catalog.child_segments catalog ~prefix_segments);
+  Option.iter
+    (fun entry -> List.iter (add_semantic_item items) (export_completion_items entry ~prefix))
+    (Module_catalog.find_module catalog ~module_id:(String.concat "." prefix_segments));
+  Hashtbl.to_seq_values items |> List.of_seq |> List.sort (fun a b -> String.compare a.label b.label)
+
+let trait_method_items ~(trait_name : string) ~(prefix : string) : Lsp_t.CompletionItem.t list =
+  Trait_registry.trait_methods_with_supertraits trait_name
+  |> List.filter_map (fun (_trait_def, (method_sig : Trait_registry.method_sig)) ->
+         if prefix_filter ~prefix method_sig.method_name then
+           Some
+             {
+               label = method_sig.method_name;
+               kind = Lsp_t.CompletionItemKind.Function;
+               detail = Some (method_poly_detail method_sig);
+               sort_text = Some method_sig.method_name;
+             }
+         else
+           None)
+  |> List.sort (fun a b -> String.compare a.label b.label)
+  |> List.map completion_item_of_semantic
+
+let inherent_method_semantic_items
+    ~(analysis : Doc_state.analysis_result)
+    ~(type_name : string)
+    ~(prefix : string) : semantic_item list =
+  match (analysis.compiler_analysis, active_file_path analysis) with
+  | Some compiler_analysis, Some file_path -> (
+      match Compiler.resolve_visible_type_name_to_mono compiler_analysis ~file_path ~surface_name:type_name with
+      | None -> []
+      | Some receiver_type ->
+          let items = Hashtbl.create 8 in
+          Inherent_registry.all_methods ()
+          |> List.iter (fun (_pattern, (method_sig : Inherent_registry.method_sig)) ->
+                 let label = method_sig.method_name in
+                 if prefix_filter ~prefix label then
+                   match Inherent_registry.resolve_method receiver_type label with
+                   | Ok (Some resolved_method_sig) ->
+                       add_semantic_item items
+                         {
+                           label;
+                           kind = Lsp_t.CompletionItemKind.Function;
+                           detail = Some (method_poly_detail resolved_method_sig);
+                           sort_text = Some label;
+                         }
+                   | Ok None | Error _ -> ());
+          Hashtbl.to_seq_values items |> List.of_seq |> List.sort (fun a b -> String.compare a.label b.label))
+  | _ -> []
+
+let inherent_method_items ~(analysis : Doc_state.analysis_result) ~(type_name : string) ~(prefix : string) :
+    Lsp_t.CompletionItem.t list =
+  inherent_method_semantic_items ~analysis ~type_name ~prefix |> List.map completion_item_of_semantic
+
+let enum_constructor_items ~(analysis : Doc_state.analysis_result) ~(type_name : string) ~(prefix : string) :
+    Lsp_t.CompletionItem.t list =
+  let items = Hashtbl.create 8 in
+  Option.iter
+    (fun variants ->
+      List.iter
+        (fun (variant : Surface.surface_variant_def) ->
+          if prefix_filter ~prefix variant.sv_name then
+            add_semantic_item items
+              {
+                label = variant.sv_name;
+                kind = Lsp_t.CompletionItemKind.Enum;
+                detail = Some "enum constructor";
+                sort_text = Some variant.sv_name;
+              })
+        variants)
+    (visible_enum_variants ~analysis ~type_name);
+  List.iter (add_semantic_item items) (inherent_method_semantic_items ~analysis ~type_name ~prefix);
+  Hashtbl.to_seq_values items |> List.of_seq |> List.sort (fun a b -> String.compare a.label b.label)
+  |> List.map completion_item_of_semantic
+
 let identifier_prefix_at_offset ~(source : string) ~(offset : int) : string option =
   let tokens = Array.of_list (Lexer.lex source) in
   let len = Array.length tokens in
@@ -301,148 +826,101 @@ let namespace_member_context ~(source : string) ~(offset : int) ~(trigger_is_dot
     in
     find 0
 
-let root_symbol_is_local ~(analysis : Doc_state.analysis_result) ~(root_offset : int) : bool =
-  match (analysis.compiler_analysis, analysis.program) with
-  | Some compiler_analysis, Some program -> (
-      match Hover.find_in_program root_offset program with
-      | Some { expr = Ast.AST.Identifier _; id; _ } -> (
-          match Compiler.find_active_file_symbol compiler_analysis ~expr_id:id with
-          | Some symbol -> (
-              match Option.bind symbol.file_id Doc_state.file_path_of_file_id with
-              | Some file_path -> String.equal file_path compiler_analysis.active_file.file_path
-              | None -> true)
-          | None -> false)
-      | _ -> false)
-  | _ -> false
-
-let root_symbol_is_surface_local ~(analysis : Doc_state.analysis_result) ~(root_name : string) : bool =
-  match current_navigation analysis with
-  | Some navigation -> Import_resolver.StringMap.mem root_name navigation.surface.declarations
-  | None -> false
-
-let bare_identifier_items ~(analysis : Doc_state.analysis_result) ~(prefix : string) : Lsp_t.CompletionItem.t list
-    =
-  let items = Hashtbl.create 32 in
-  let navigation = current_navigation analysis in
-  let environment = analysis.environment in
-  let hidden_internal_names =
-    match navigation with
-    | None -> StringSet.empty
-    | Some navigation ->
-        let from_decls =
-          Import_resolver.StringMap.fold
-            (fun _ (presence : Import_resolver.member_presence) acc -> StringSet.add presence.internal_name acc)
-            navigation.surface.declarations StringSet.empty
+let qualified_member_context
+    ~(analysis : Doc_state.analysis_result)
+    ~(receiver_segments : string list)
+    ~(prefix : string)
+    ~(root_offset : int) : completion_context option =
+  match receiver_segments with
+  | [] -> None
+  | root_name :: _ ->
+      if
+        root_symbol_is_local ~analysis ~root_offset
+        || root_symbol_is_surface_local ~analysis ~root_name
+      then
+        Some Unsupported
+      else
+        let module_context =
+          Option.bind (current_navigation analysis) (fun navigation ->
+              match Import_resolver.lookup_namespace_node navigation.resolved_imports.namespace_roots receiver_segments with
+              | Some _ -> Some (ModuleMember { receiver_segments; prefix })
+              | None -> None)
         in
-        Import_resolver.StringMap.fold
-          (fun _ (presence : Import_resolver.member_presence) acc -> StringSet.add presence.internal_name acc)
-          navigation.resolved_imports.direct_bindings from_decls
-  in
-  Option.iter
-    (fun (navigation : navigation_snapshot) ->
-      Import_resolver.StringMap.iter
-        (fun label (presence : Import_resolver.member_presence) ->
-          if prefix_filter ~prefix label then
-            add_semantic_item items
-              {
-                label;
-                kind = kind_of_presence presence;
-                detail = poly_detail_of_internal ~environment ~internal_name:presence.internal_name;
-                sort_text = Some label;
-              })
-        navigation.surface.declarations;
-      Import_resolver.StringMap.iter
-        (fun label (presence : Import_resolver.member_presence) ->
-          if prefix_filter ~prefix label then
-            add_semantic_item items
-              {
-                label;
-                kind = kind_of_presence presence;
-                detail = poly_detail_of_internal ~environment ~internal_name:presence.internal_name;
-                sort_text = Some label;
-              })
-        navigation.resolved_imports.direct_bindings;
-      Import_resolver.StringMap.iter
-        (fun label _ ->
-          if prefix_filter ~prefix label then
-            add_semantic_item items
-              { label; kind = Lsp_t.CompletionItemKind.Module; detail = Some "module"; sort_text = Some label })
-        navigation.resolved_imports.namespace_roots)
-    navigation;
-  Option.iter
-    (fun environment ->
-      Infer.TypeEnv.bindings environment
-      |> List.iter (fun (name, poly) ->
-             if prefix_filter ~prefix name && not (StringSet.mem name hidden_internal_names) then
-               let (Types.Forall (_, mono)) = poly in
-               add_semantic_item items
-                 {
-                   label = name;
-                   kind = kind_of_type mono;
-                   detail = Some (detail_of_poly poly);
-                   sort_text = Some name;
-                 }))
-    environment;
-  let semantic_items =
-    Hashtbl.to_seq_values items |> List.of_seq |> List.sort (fun a b -> String.compare a.label b.label)
-  in
-  semantic_items
-  @ List.map
-      (fun (kw, desc) ->
-        {
-          label = kw;
-          kind = Lsp_t.CompletionItemKind.Keyword;
-          detail = Some desc;
-          sort_text = Some ("zzz_" ^ kw);
-        })
-      keywords
-  |> List.map completion_item_of_semantic
+        match module_context with
+        | Some _ as context -> context
+        | None -> (
+            match visible_type_kind_of_name ~analysis ~surface_name:root_name with
+            | Some (Enum_type _) -> Some (EnumConstructorMember { type_name = root_name; prefix })
+            | Some Trait_type -> Some (TraitMethodMember { trait_name = root_name; prefix })
+            | Some Shape_type -> Some Unsupported
+            | Some Wrapper_type | Some Product_type | Some Transparent_type ->
+                Some (InherentMethodMember { type_name = root_name; prefix })
+            | None -> None)
 
-let export_completion_items (entry : Module_catalog.entry) ~(prefix : string) : semantic_item list =
-  Import_resolver.StringMap.bindings entry.surface.exports
-  |> List.filter_map (fun (label, presence) ->
-         if prefix_filter ~prefix label then
-           let typed_binding =
-             Option.bind entry.typed_signature (fun signature -> Module_sig.find_export signature label)
-           in
-           Some
-             {
-               label;
-               kind = kind_of_presence ?typed_binding presence;
-               detail =
-                 (match typed_binding with
-                 | Some binding -> detail_of_binding binding
-                 | None -> None);
-               sort_text = Some label;
-             }
-         else
-           None)
+let structured_context_at ~(analysis : Doc_state.analysis_result) ~(offset : int) : completion_context option =
+  Option.bind (cursor_input_of_analysis analysis) (fun input ->
+      let reference =
+        match Cursor_context.reference_at ~source:analysis.source ~input ~offset with
+        | Some _ as reference -> reference
+        | None when offset > 0 -> Cursor_context.reference_at ~source:analysis.source ~input ~offset:(offset - 1)
+        | None -> None
+      in
+      match reference with
+      | Some (Cursor_context.Import_alias _) -> Some Unsupported
+      | Some (Cursor_context.Import_path_segment { segment_ref; import_path; segment_index }) ->
+          Some
+            (ImportPath
+               {
+                 typed_segments = take segment_index import_path;
+                 prefix = prefix_of_name_ref ~source:analysis.source ~offset segment_ref;
+                 in_alias = false;
+               })
+      | Some (Cursor_context.Declaration_head _) -> Some Unsupported
+      | Some (Cursor_context.Value_identifier { name_ref; _ }) ->
+          Some (ValueIdentifier { prefix = prefix_of_name_ref ~source:analysis.source ~offset name_ref })
+      | Some (Cursor_context.Type_identifier { name_ref; _ }) ->
+          Some (TypeIdentifier { prefix = prefix_of_name_ref ~source:analysis.source ~offset name_ref })
+      | Some (Cursor_context.Constraint_identifier { name_ref }) ->
+          Some
+            (ConstraintIdentifier
+               {
+                 prefix = prefix_of_name_ref ~source:analysis.source ~offset name_ref;
+                 dyn_only = is_dyn_constraint_context ~source:analysis.source ~offset;
+               })
+      | Some (Cursor_context.Qualified_root _) -> Some Unsupported
+      | Some (Cursor_context.Qualified_member { root_ref; member_ref; _ }) ->
+          qualified_member_context ~analysis ~receiver_segments:[ root_ref.text ]
+            ~prefix:(prefix_of_name_ref ~source:analysis.source ~offset member_ref) ~root_offset:root_ref.pos
+      | None -> None)
 
-let namespace_or_import_items ~(catalog : Module_catalog.t) ~(prefix_segments : string list) ~(prefix : string) :
-    semantic_item list =
-  let items = Hashtbl.create 16 in
-  List.iter
-    (fun label ->
-      if prefix_filter ~prefix label then
-        add_semantic_item items
-          { label; kind = Lsp_t.CompletionItemKind.Module; detail = Some "module"; sort_text = Some label })
-    (Module_catalog.child_segments catalog ~prefix_segments);
-  Option.iter
-    (fun entry -> List.iter (add_semantic_item items) (export_completion_items entry ~prefix))
-    (Module_catalog.find_module catalog ~module_id:(String.concat "." prefix_segments));
-  Hashtbl.to_seq_values items |> List.of_seq |> List.sort (fun a b -> String.compare a.label b.label)
-
-let context_at ~(source : string) ~(offset : int) ~(trigger_is_dot : bool) : completion_context =
+let fallback_context_at
+    ~(analysis : Doc_state.analysis_result)
+    ~(source : string)
+    ~(offset : int)
+    ~(trigger_is_dot : bool) : completion_context =
   match Import_header.completion_context_at_offset ~source ~offset with
   | Some { Import_header.typed_segments; prefix; in_alias } -> ImportPath { typed_segments; prefix; in_alias }
   | None -> (
       match namespace_member_context ~source ~offset ~trigger_is_dot with
-      | Some (receiver_segments, prefix, _) when receiver_segments <> [] ->
-          NamespaceMember { receiver_segments; prefix }
-      | _ -> (
+      | Some (receiver_segments, prefix, Some root_offset) when receiver_segments <> [] -> (
+          match qualified_member_context ~analysis ~receiver_segments ~prefix ~root_offset with
+          | Some context -> context
+          | None -> Unsupported)
+      | Some _ -> Unsupported
+      | None -> (
           match identifier_prefix_at_offset ~source ~offset with
-          | Some prefix -> BareIdentifier { prefix }
-          | None -> BareIdentifier { prefix = "" }))
+          | Some prefix -> ValueIdentifier { prefix }
+          | None -> ValueIdentifier { prefix = "" }))
+
+let context_at
+    ~(analysis : Doc_state.analysis_result)
+    ~(source : string)
+    ~(offset : int)
+    ~(trigger_is_dot : bool) : completion_context =
+  match structured_context_at ~analysis ~offset with
+  | Some Unsupported when trigger_is_dot -> fallback_context_at ~analysis ~source ~offset ~trigger_is_dot
+  | Some context -> context
+  | None -> fallback_context_at ~analysis ~source ~offset ~trigger_is_dot
 
 let complete_at
     ~(latest : Doc_state.analysis_result)
@@ -455,8 +933,11 @@ let complete_at
   let offset = Lsp_utils.position_to_offset ~source ~line ~character in
   let semantic = semantic_analysis ~latest ~last_good in
   let catalog = module_catalog ~latest ~last_good ~analysis:semantic ~source_overrides in
-  match context_at ~source ~offset ~trigger_is_dot with
-  | BareIdentifier { prefix } -> Some (bare_identifier_items ~analysis:semantic ~prefix)
+  match context_at ~analysis:semantic ~source ~offset ~trigger_is_dot with
+  | ValueIdentifier { prefix } -> Some (value_identifier_items ~analysis:semantic ~prefix)
+  | TypeIdentifier { prefix } -> Some (type_identifier_items ~analysis:semantic ~prefix ~offset)
+  | ConstraintIdentifier { prefix; dyn_only } ->
+      Some (constraint_identifier_items ~analysis:semantic ~prefix ~dyn_only)
   | ImportPath { typed_segments; prefix; in_alias } ->
       if in_alias then
         None
@@ -466,35 +947,87 @@ let complete_at
             namespace_or_import_items ~catalog ~prefix_segments:typed_segments ~prefix
             |> List.map completion_item_of_semantic)
           catalog
-  | NamespaceMember { receiver_segments; prefix } -> (
-      match current_navigation semantic with
-      | None -> None
-      | Some navigation -> (
-          match catalog with
-          | None -> None
-          | Some catalog -> (
-              let root_offset =
-                match namespace_member_context ~source ~offset ~trigger_is_dot with
-                | Some (_, _, Some root_offset) -> root_offset
-                | _ -> offset
-              in
-              let root_name = List.hd receiver_segments in
-              if
-                root_symbol_is_local ~analysis:semantic ~root_offset
-                || root_symbol_is_surface_local ~analysis:semantic ~root_name
-              then
-                None
-              else
-                match
-                  Import_resolver.lookup_namespace_node navigation.resolved_imports.namespace_roots
-                    receiver_segments
-                with
-                | Some _ ->
-                    Some
-                      (namespace_or_import_items ~catalog ~prefix_segments:receiver_segments ~prefix
-                      |> List.map completion_item_of_semantic)
-                | None -> None)))
+  | ModuleMember { receiver_segments; prefix } ->
+      Option.map
+        (fun catalog ->
+          namespace_or_import_items ~catalog ~prefix_segments:receiver_segments ~prefix
+          |> List.map completion_item_of_semantic)
+        catalog
+  | EnumConstructorMember { type_name; prefix } -> Some (enum_constructor_items ~analysis:semantic ~type_name ~prefix)
+  | TraitMethodMember { trait_name; prefix } -> Some (trait_method_items ~trait_name ~prefix)
+  | InherentMethodMember { type_name; prefix } -> Some (inherent_method_items ~analysis:semantic ~type_name ~prefix)
   | Unsupported -> None
+
+let identifier_prefix_at_offset ~(source : string) ~(offset : int) : string option =
+  let tokens = Array.of_list (Lexer.lex source) in
+  let len = Array.length tokens in
+  let rec find idx =
+    if idx >= len then
+      None
+    else
+      let tok = tokens.(idx) in
+      if tok.token_type = Token.Ident && offset >= tok.pos && offset <= token_end_pos tok + 1 then
+        let prefix_len = max 0 (min offset (token_end_pos tok + 1) - tok.pos) in
+        Some (String.sub source tok.pos prefix_len)
+      else
+        find (idx + 1)
+  in
+  find 0
+
+let collect_left_chain (tokens : Token.token array) (end_ident_idx : int) : string list =
+  let rec leftmost idx =
+    if idx >= 2 && tokens.(idx - 1).token_type = Token.Dot && tokens.(idx - 2).token_type = Token.Ident then
+      leftmost (idx - 2)
+    else
+      idx
+  in
+  let start_idx = leftmost end_ident_idx in
+  let rec collect idx acc =
+    if idx > end_ident_idx || tokens.(idx).token_type <> Token.Ident then
+      List.rev acc
+    else if idx + 1 < Array.length tokens && idx < end_ident_idx then
+      collect (idx + 2) (tokens.(idx).literal :: acc)
+    else
+      List.rev (tokens.(idx).literal :: acc)
+  in
+  collect start_idx []
+
+let namespace_member_context ~(source : string) ~(offset : int) ~(trigger_is_dot : bool) :
+    (string list * string * int option) option =
+  let tokens = Array.of_list (Lexer.lex source) in
+  let len = Array.length tokens in
+  if trigger_is_dot then
+    let rec find_prev idx best =
+      if idx >= len then
+        best
+      else if token_end_pos tokens.(idx) < offset then
+        find_prev (idx + 1) (Some idx)
+      else
+        best
+    in
+    match find_prev 0 None with
+    | Some dot_idx
+      when tokens.(dot_idx).token_type = Token.Dot
+           && dot_idx >= 1
+           && tokens.(dot_idx - 1).token_type = Token.Ident ->
+        Some (collect_left_chain tokens (dot_idx - 1), "", Some tokens.(dot_idx - 1).pos)
+    | _ -> None
+  else
+    let rec find idx =
+      if idx >= len then
+        None
+      else
+        let tok = tokens.(idx) in
+        if tok.token_type = Token.Ident && offset >= tok.pos && offset <= token_end_pos tok + 1 then
+          if idx >= 1 && tokens.(idx - 1).token_type = Token.Dot then
+            let prefix_len = max 0 (min offset (token_end_pos tok + 1) - tok.pos) in
+            Some (collect_left_chain tokens (idx - 2), String.sub source tok.pos prefix_len, Some tok.pos)
+          else
+            find (idx + 1)
+        else
+          find (idx + 1)
+    in
+    find 0
 
 (* ============================================================
    Tests
@@ -644,16 +1177,12 @@ let completion_labels ?last_good_annotated ?trigger_is_dot ?overrides ~files ~en
   | Some items -> List.map (fun (item : Lsp_t.CompletionItem.t) -> item.label) items
   | None -> []
 
-let debug_labels ~(label : string) (labels : string list) : unit =
-  Printf.eprintf "[completion-test] %s -> [%s]\n%!" label (String.concat ", " labels)
-
 let%test "module completions surface current top-level names without internal prefixes" =
   let labels =
     completion_labels
       ~files:[ ("main.mr", "export helper\nlet helper = 1\nhe|\n") ]
       ~entry_rel:"main.mr" "export helper\nlet helper = 1\nhe|\n"
   in
-  debug_labels ~label:"current-module top-level" labels;
   List.mem "helper" labels
   && not (List.exists (fun label -> Diagnostics.String_utils.contains_substring ~needle:"__" label) labels)
 
@@ -667,7 +1196,6 @@ let%test "module completions include direct-import aliases but not mangled targe
         ]
       ~entry_rel:"main.mr" "import math.add as plus\npl|\n"
   in
-  debug_labels ~label:"direct-import alias" labels;
   List.mem "plus" labels && not (List.mem "math__add" labels)
 
 let%test "namespace completion returns exported members for parsed qualifiers" =
@@ -682,7 +1210,6 @@ let%test "namespace completion returns exported members for parsed qualifiers" =
         ]
       ~entry_rel:"main.mr" "import math\nmath.ad|\n"
   in
-  debug_labels ~label:"parsed namespace member" labels;
   List.mem "add" labels && not (List.mem "math__add" labels)
 
 let%test "bare-dot namespace completion can use last_good" =
@@ -698,7 +1225,6 @@ let%test "bare-dot namespace completion can use last_good" =
       ~entry_rel:"main.mr" ~trigger_is_dot:true ~last_good_annotated:"import math\nmath|\n"
       "import math\nmath.|\n"
   in
-  debug_labels ~label:"bare-dot namespace" labels;
   List.mem "add" labels && List.mem "Point" labels && List.mem "HasXY" labels
 
 let%test "dot completion on a local value still returns none" =
@@ -727,7 +1253,6 @@ let%test "import-path completion survives trailing dots and sees open overrides"
         ]
       ~entry_rel:"main.mr" "import math.|\n"
   in
-  debug_labels ~label:"import trailing dot with override" labels;
   List.mem "mul" labels && List.mem "Point" labels && List.mem "HasXY" labels
 
 let%test "import-path completion suggests sibling module segments from project root" =
@@ -739,5 +1264,113 @@ let%test "import-path completion suggests sibling module segments from project r
         ]
       ~entry_rel:"main.mr" "import collections.|\n"
   in
-  debug_labels ~label:"import sibling segments" labels;
   List.mem "list" labels
+
+let%test "value completions include wrapper constructors but not type-only names" =
+  let source =
+    "type UserId = UserId(Int)\n\
+     type Point = { x: Int }\n\
+     shape Named = { name: Str }\n\
+     trait Greeter[a] = { fn greet(self: a) -> Str }\n\
+     let helper = 1\n\
+     |\n"
+  in
+  let labels = completion_labels ~files:[ ("main.mr", String.concat "" (String.split_on_char '|' source)) ] ~entry_rel:"main.mr" source in
+  List.mem "UserId" labels
+  && List.mem "helper" labels
+  && not (List.mem "Point" labels)
+  && not (List.mem "Named" labels)
+  && not (List.mem "Greeter" labels)
+
+let%test "type-position completion includes visible type names but not values or shapes" =
+  let latest =
+    "type Point = { x: Int }\nshape Named = { name: Str }\nlet helper = 1\nlet value: Po| = { x: 1 }\n"
+  in
+  let last_good =
+    "type Point = { x: Int }\nshape Named = { name: Str }\nlet helper = 1\nlet value: Point| = { x: 1 }\n"
+  in
+  let labels =
+    completion_labels ~last_good_annotated:last_good
+      ~files:[ ("main.mr", String.concat "" (String.split_on_char '|' latest)) ]
+      ~entry_rel:"main.mr" latest
+  in
+  List.mem "Point" labels && not (List.mem "helper" labels) && not (List.mem "Named" labels)
+
+let%test "type-position completion includes in-scope generic parameters" =
+  let source = "fn id[t](x: t) -> t = { let y: t| = x; y }\n" in
+  let labels = completion_labels ~files:[ ("main.mr", String.concat "" (String.split_on_char '|' source)) ] ~entry_rel:"main.mr" source in
+  List.mem "t" labels
+
+let%test "constraint-position completion includes shapes" =
+  let latest =
+    "trait Show[a] = { fn show(self: a) -> Str }\nshape Named = { name: Str }\nfn render[t: Na|](x: t) -> Str = \"\"\n"
+  in
+  let last_good =
+    "trait Show[a] = { fn show(self: a) -> Str }\nshape Named = { name: Str }\nfn render[t: Named|](x: t) -> Str = \"\"\n"
+  in
+  let labels =
+    completion_labels ~last_good_annotated:last_good
+      ~files:[ ("main.mr", String.concat "" (String.split_on_char '|' latest)) ]
+      ~entry_rel:"main.mr" latest
+  in
+  List.mem "Named" labels
+
+let%test "dyn constraint completion includes traits only" =
+  let latest =
+    "trait Show[a] = { fn show(self: a) -> Str }\nshape Named = { name: Str }\nfn render(x: Dyn[Sh|]) -> Int = 1\n"
+  in
+  let last_good =
+    "trait Show[a] = { fn show(self: a) -> Str }\nshape Named = { name: Str }\nfn render(x: Dyn[Show|]) -> Int = 1\n"
+  in
+  let labels =
+    completion_labels ~last_good_annotated:last_good
+      ~files:[ ("main.mr", String.concat "" (String.split_on_char '|' latest)) ]
+      ~entry_rel:"main.mr" latest
+  in
+  List.mem "Show" labels && not (List.mem "Named" labels)
+
+let%test "enum-qualified completion includes constructors" =
+  let latest = "type Option[a] = { Some(a), None }\nlet x = Option.So|\n" in
+  let last_good = "type Option[a] = { Some(a), None }\nlet x = Option.Some|\n" in
+  let labels =
+    completion_labels ~last_good_annotated:last_good
+      ~files:[ ("main.mr", String.concat "" (String.split_on_char '|' latest)) ]
+      ~entry_rel:"main.mr" latest
+  in
+  List.mem "Some" labels
+
+let%test "trait-qualified completion includes trait methods" =
+  let latest = "trait Greeter[a] = { fn greet(self: a, prefix: Str) -> Str }\nlet x = Greeter.gr|\n" in
+  let last_good =
+    "trait Greeter[a] = { fn greet(self: a, prefix: Str) -> Str }\nlet x = Greeter.greet|\n"
+  in
+  let labels =
+    completion_labels ~last_good_annotated:last_good
+      ~files:[ ("main.mr", String.concat "" (String.split_on_char '|' latest)) ]
+      ~entry_rel:"main.mr" latest
+  in
+  List.mem "greet" labels
+
+let%test "type-qualified completion includes inherent methods but not constructors" =
+  let latest =
+    "type Point = { x: Int }\nimpl Point = { fn rename(self: Point, next_name: Str) -> Point = self }\nlet x = Point.re|\n"
+  in
+  let last_good =
+    "type Point = { x: Int }\nimpl Point = { fn rename(self: Point, next_name: Str) -> Point = self }\nlet x = Point.rename|\n"
+  in
+  let labels =
+    completion_labels ~last_good_annotated:last_good
+      ~files:[ ("main.mr", String.concat "" (String.split_on_char '|' latest)) ]
+      ~entry_rel:"main.mr" latest
+  in
+  List.mem "rename" labels && not (List.mem "Point" labels)
+
+let%test "shape-qualified completion returns no member items" =
+  match
+    completion_items_at
+      ~last_good_annotated:"shape Named = { name: Str }\nlet x = Named.name|\n"
+      ~files:[ ("main.mr", "shape Named = { name: Str }\nlet x = Named.na\n") ]
+      ~entry_rel:"main.mr" "shape Named = { name: Str }\nlet x = Named.na|\n"
+  with
+  | None -> true
+  | Some items -> items = []

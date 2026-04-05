@@ -5,6 +5,7 @@ module Token = Syntax.Token
 module Lexer = Syntax.Lexer
 module Parser = Syntax.Parser
 module Ast = Syntax.Ast
+module Surface_ast = Syntax.Surface_ast
 
 (* Frontend: type checking *)
 module Types = Typecheck.Types

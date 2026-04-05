@@ -100,6 +100,7 @@ let completion_items_for_cached_doc
         {
           cached.latest with
           source;
+          surface_program = None;
           program = None;
           type_map = None;
           environment = None;
@@ -499,6 +500,7 @@ let fake_analysis ?module_id ?source_root ?project_root ?program ?type_map ?envi
     module_id;
     source_root;
     project_root;
+    surface_program = None;
     program;
     type_map;
     environment;

@@ -4,6 +4,7 @@ module Lsp_t = Linol_lsp.Types
 module Compiler = Marmoset.Lib.Frontend_compiler
 module Infer = Marmoset.Lib.Infer
 module Ast = Marmoset.Lib.Ast
+module Surface = Marmoset.Lib.Surface_ast.Surface
 module Diagnostic = Marmoset.Lib.Diagnostic
 
 type analysis_result = {
@@ -11,6 +12,7 @@ type analysis_result = {
   module_id : string option;
   source_root : string option;
   project_root : string option;
+  surface_program : Surface.surface_program option;
   program : Ast.AST.program option;
   type_map : Infer.type_map option;
   environment : Infer.type_env option;
@@ -85,14 +87,6 @@ let lsp_diagnostic_of_canonical ~(source : string) ~(active_file_id : string) (d
   let severity = lsp_severity_of_diagnostic diag.severity in
   make_diagnostic ~code:(Some (lsp_code_of_diagnostic diag)) ~range ~severity ~message:diag.message
 
-let has_module_headers (program : Ast.AST.program) : bool =
-  List.exists
-    (fun (stmt : Ast.AST.statement) ->
-      match stmt.stmt with
-      | Ast.AST.ExportDecl _ | Ast.AST.ImportDecl _ -> true
-      | _ -> false)
-    program
-
 let compiler_analysis_for_file_id
     ?source_root ?(source_overrides = Hashtbl.create 0) ~(file_id : string) ~(source : string) :
     unit -> Compiler.entry_analysis =
@@ -116,19 +110,14 @@ let analyze_with_file_id
   let diagnostics =
     List.map (lsp_diagnostic_of_canonical ~source ~active_file_id:file_id) active_file.diagnostics
   in
-  let program =
-    match active_file.surface_program with
-    | Some program when (not (has_module_headers program)) || compiler_analysis.mode = Compiler.Modules ->
-        Some program
-    | other -> other
-  in
   let should_expose_typed_state = expose_typed_state compiler_analysis in
   {
     source;
     module_id = active_file.module_id;
     source_root = compiler_analysis.source_root;
     project_root = compiler_analysis.project_root;
-    program;
+    surface_program = active_file.surface_program;
+    program = active_file.lowered_program;
     type_map =
       (if should_expose_typed_state then
          active_file.type_map
@@ -176,11 +165,11 @@ let with_temp_project (files : (string * string) list) (f : string -> bool) : bo
 
 let%test "analyze valid code produces empty diagnostics" =
   let result = analyze ~source:"let x = 42;" in
-  result.diagnostics = [] && result.program <> None && result.type_map <> None
+  result.diagnostics = [] && result.surface_program <> None && result.program <> None && result.type_map <> None
 
 let%test "analyze parse error produces diagnostic" =
   let result = analyze ~source:"let = ;" in
-  List.length result.diagnostics > 0 && result.program = None && result.type_map = None
+  List.length result.diagnostics > 0 && result.surface_program = None && result.program = None && result.type_map = None
 
 let%test "analyze parse error has non-zero range when span exists" =
   let result = analyze ~source:"let = ;" in
@@ -270,6 +259,7 @@ let%test "analyze_with_file_id uses module-aware checking for imported files" =
       let result = analyze_with_file_id ~file_id ~source () in
       result.diagnostics = []
       && result.module_id = Some "main"
+      && result.surface_program <> None
       && result.program <> None
       && result.compiler_analysis <> None)
 
@@ -295,6 +285,42 @@ let%test "analyze_with_file_id keeps module surface AST while exposing compiler 
       let file_id = Filename.concat root "main.mr" in
       let result = analyze_with_file_id ~file_id ~source:"import sum\nputs(sum.sum([1, 2, 3]))\n" () in
       let surface_has_namespace =
+        match result.surface_program with
+        | None -> false
+        | Some program ->
+            List.exists
+              (fun (stmt : Marmoset.Lib.Surface_ast.Surface.surface_top_stmt) ->
+                match stmt.std_decl with
+                | Marmoset.Lib.Surface_ast.Surface.SExpressionStmt
+                    {
+                      se_expr =
+                        Marmoset.Lib.Surface_ast.Surface.SECall
+                          ( { se_expr = Marmoset.Lib.Surface_ast.Surface.SEIdentifier { text = "puts"; _ }; _ },
+                            [
+                              {
+                                se_expr =
+                                  Marmoset.Lib.Surface_ast.Surface.SEMethodCall
+                                    {
+                                      se_receiver =
+                                        {
+                                          se_expr =
+                                            Marmoset.Lib.Surface_ast.Surface.SEIdentifier { text = "sum"; _ };
+                                          _;
+                                        };
+                                      se_method = "sum";
+                                      se_args = _;
+                                      _;
+                                    };
+                                _;
+                              };
+                            ] );
+                      _;
+                    } ->
+                    true
+                | _ -> false)
+              program
+      in
+      let lowered_has_namespace =
         match result.program with
         | None -> false
         | Some program ->
@@ -330,6 +356,7 @@ let%test "analyze_with_file_id keeps module surface AST while exposing compiler 
       | Some analysis ->
           analysis.mode = Compiler.Modules
           && surface_has_namespace
+          && lowered_has_namespace
           && result.module_id = Some "main"
           && result.project_root = Some root
           && result.type_map <> None
