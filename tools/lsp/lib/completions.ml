@@ -128,7 +128,7 @@ let semantic_analysis ~(latest : Doc_state.analysis_result) ~(last_good : Doc_st
     Doc_state.analysis_result =
   let has_semantics (analysis : Doc_state.analysis_result) =
     analysis.compiler_analysis <> None
-    && (analysis.environment <> None || analysis.project_root <> None || analysis.program <> None)
+    && (analysis.surface_program <> None || analysis.program <> None || analysis.environment <> None)
   in
   if has_semantics latest then
     latest
@@ -687,6 +687,42 @@ let namespace_or_import_items ~(catalog : Module_catalog.t) ~(prefix_segments : 
     (Module_catalog.find_module catalog ~module_id:(String.concat "." prefix_segments));
   Hashtbl.to_seq_values items |> List.of_seq |> List.sort (fun a b -> String.compare a.label b.label)
 
+let module_member_items
+    ~(analysis : Doc_state.analysis_result)
+    ~(catalog : Module_catalog.t)
+    ~(receiver_segments : string list)
+    ~(prefix : string) : Lsp_t.CompletionItem.t list =
+  let items = Hashtbl.create 16 in
+  let add_module_child_items (node : Import_resolver.namespace_node) =
+    Import_resolver.StringMap.iter
+      (fun label _ ->
+        if prefix_filter ~prefix label then
+          add_semantic_item items
+            { label; kind = Lsp_t.CompletionItemKind.Module; detail = Some "module"; sort_text = Some label })
+      node.children
+  in
+  let add_export_items (module_surface : Import_resolver.module_surface) =
+    match Module_catalog.find_module catalog ~module_id:module_surface.module_id with
+    | Some entry -> List.iter (add_semantic_item items) (export_completion_items entry ~prefix)
+    | None ->
+        Import_resolver.StringMap.iter
+          (fun label presence ->
+            if prefix_filter ~prefix label then
+              add_semantic_item items
+                { label; kind = kind_of_presence presence; detail = None; sort_text = Some label })
+          module_surface.exports
+  in
+  Option.iter
+    (fun (navigation : navigation_snapshot) ->
+      match Import_resolver.lookup_namespace_node navigation.resolved_imports.namespace_roots receiver_segments with
+      | Some node ->
+          add_module_child_items node;
+          Option.iter add_export_items node.module_ref
+      | None -> ())
+    (current_navigation analysis);
+  Hashtbl.to_seq_values items |> List.of_seq |> List.sort (fun a b -> String.compare a.label b.label)
+  |> List.map completion_item_of_semantic
+
 let trait_method_items ~(trait_name : string) ~(prefix : string) : Lsp_t.CompletionItem.t list =
   Trait_registry.trait_methods_with_supertraits trait_name
   |> List.filter_map (fun (_trait_def, (method_sig : Trait_registry.method_sig)) ->
@@ -958,11 +994,7 @@ let complete_at
             |> List.map completion_item_of_semantic)
           catalog
   | ModuleMember { receiver_segments; prefix } ->
-      Option.map
-        (fun catalog ->
-          namespace_or_import_items ~catalog ~prefix_segments:receiver_segments ~prefix
-          |> List.map completion_item_of_semantic)
-        catalog
+      Option.map (fun catalog -> module_member_items ~analysis:semantic ~catalog ~receiver_segments ~prefix) catalog
   | EnumConstructorMember { type_name; prefix } -> Some (enum_constructor_items ~analysis:semantic ~type_name ~prefix)
   | TraitMethodMember { trait_name; prefix } -> Some (trait_method_items ~trait_name ~prefix)
   | InherentMethodMember { type_name; prefix } -> Some (inherent_method_items ~analysis:semantic ~type_name ~prefix)
@@ -1384,3 +1416,49 @@ let%test "shape-qualified completion returns no member items" =
   with
   | None -> true
   | Some items -> items = []
+
+let%test "nested namespace completion uses imported alias for module members" =
+  let latest = "import types.geo\nlet p = geo.re|\n" in
+  let last_good = "import types.geo\nlet p = geo.render_point|\n" in
+  let labels =
+    completion_labels ~last_good_annotated:last_good
+      ~files:
+        [
+          ("main.mr", String.concat "" (String.split_on_char '|' latest));
+          ( "types/geo.mr",
+            "export render_point, Point, HasXY\n\
+             type Point = { x: Int, y: Int }\n\
+             shape HasXY = { x: Int, y: Int }\n\
+             fn render_point(p: Point) -> Str = \"point\"\n" );
+        ]
+      ~entry_rel:"main.mr" latest
+  in
+  List.mem "render_point" labels && not (List.mem "Point" labels) && not (List.mem "HasXY" labels)
+
+let%test "qualified type completion uses imported alias for exported types" =
+  let latest = "import types.geo\nlet p: geo.Po| = { x: 1, y: 2 }\n" in
+  let last_good = "import types.geo\nlet p: geo.Point| = { x: 1, y: 2 }\n" in
+  let labels =
+    completion_labels ~last_good_annotated:last_good
+      ~files:
+        [
+          ("main.mr", String.concat "" (String.split_on_char '|' latest));
+          ( "types/geo.mr",
+            "export render_point, Point, HasXY\n\
+             type Point = { x: Int, y: Int }\n\
+             shape HasXY = { x: Int, y: Int }\n\
+             fn render_point(p: Point) -> Str = \"point\"\n" );
+        ]
+      ~entry_rel:"main.mr" latest
+  in
+  List.mem "Point" labels && not (List.mem "HasXY" labels) && not (List.mem "render_point" labels)
+
+let%test "type-position completion survives incomplete same-module annotations" =
+  let latest = "type Point = { x: Int }\nlet value: Po|\n" in
+  let last_good = "type Point = { x: Int }\nlet value: Point| = { x: 1 }\n" in
+  let labels =
+    completion_labels ~last_good_annotated:last_good
+      ~files:[ ("main.mr", String.concat "" (String.split_on_char '|' latest)) ]
+      ~entry_rel:"main.mr" latest
+  in
+  List.mem "Point" labels

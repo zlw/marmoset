@@ -24,7 +24,8 @@ let analysis_has_typed_state (analysis : Doc_state.analysis_result) : bool =
   analysis.program <> None && analysis.type_map <> None && analysis.environment <> None
 
 let analysis_has_completion_semantics (analysis : Doc_state.analysis_result) : bool =
-  analysis.compiler_analysis <> None && (analysis.environment <> None || analysis.project_root <> None || analysis.program <> None)
+  analysis.compiler_analysis <> None
+  && (analysis.surface_program <> None || analysis.program <> None || analysis.environment <> None)
 
 let analysis_has_definition_semantics (analysis : Doc_state.analysis_result) : bool =
   analysis.compiler_analysis <> None && (analysis.surface_program <> None || analysis.program <> None)
@@ -723,3 +724,46 @@ let%test "server completion supports dot-triggered namespace members" =
       ~entry_rel:"main.mr" "import math\nmath.|\n"
   in
   List.mem "add" labels
+
+let%test "server completion supports dot-triggered imported alias members" =
+  let labels =
+    cached_completion_labels ~trigger_is_dot:true ~last_good_annotated:"import types.geo\ngeo|\n"
+      ~files:
+        [
+          ("main.mr", "import types.geo\ngeo.\n");
+          ( "types/geo.mr",
+            "export render_point, Point, HasXY\n\
+             type Point = { x: Int, y: Int }\n\
+             shape HasXY = { x: Int, y: Int }\n\
+             fn render_point(p: Point) -> Str = \"point\"\n" );
+        ]
+      ~entry_rel:"main.mr" "import types.geo\ngeo.|\n"
+  in
+  List.mem "render_point" labels && List.mem "Point" labels && List.mem "HasXY" labels
+
+let%test "server completion supports qualified imported types" =
+  let labels =
+    cached_completion_labels
+      ~last_good_annotated:"import types.geo\nlet p: geo.Point| = { x: 1, y: 2 }\n"
+      ~files:
+        [
+          ("main.mr", "import types.geo\nlet p: geo.Po = { x: 1, y: 2 }\n");
+          ( "types/geo.mr",
+            "export render_point, Point, HasXY\n\
+             type Point = { x: Int, y: Int }\n\
+             shape HasXY = { x: Int, y: Int }\n\
+             fn render_point(p: Point) -> Str = \"point\"\n" );
+        ]
+      ~entry_rel:"main.mr" "import types.geo\nlet p: geo.Po| = { x: 1, y: 2 }\n"
+  in
+  List.mem "Point" labels && not (List.mem "HasXY" labels) && not (List.mem "render_point" labels)
+
+let%test "server completion falls back to last_good for incomplete type annotations" =
+  let labels =
+    cached_completion_labels
+      ~cached_annotated:"type Point = { x: Int }\nlet value: Po|\n"
+      ~last_good_annotated:"type Point = { x: Int }\nlet value: Point| = { x: 1 }\n"
+      ~files:[ ("main.mr", "type Point = { x: Int }\nlet value: Po\n") ]
+      ~entry_rel:"main.mr" "type Point = { x: Int }\nlet value: Po|\n"
+  in
+  List.mem "Point" labels
