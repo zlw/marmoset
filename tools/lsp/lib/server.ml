@@ -23,11 +23,14 @@ let debounce_delay = 0.3
 let analysis_has_typed_state (analysis : Doc_state.analysis_result) : bool =
   analysis.program <> None && analysis.type_map <> None && analysis.environment <> None
 
+let analysis_has_completion_semantics (analysis : Doc_state.analysis_result) : bool =
+  analysis.compiler_analysis <> None && (analysis.environment <> None || analysis.project_root <> None || analysis.program <> None)
+
 let update_cached_doc (previous : cached_doc option) (latest : Doc_state.analysis_result) : cached_doc =
   {
     latest;
     last_good =
-      (if analysis_has_typed_state latest then
+      (if analysis_has_completion_semantics latest then
          Some latest
        else
          Option.bind previous (fun cached -> cached.last_good));
@@ -83,6 +86,30 @@ let related_open_docs
         | Some file_path when path_is_within_root ~root:project_root file_path -> (uri, doc.text) :: acc
         | _ -> acc)
     open_docs []
+
+let completion_items_for_cached_doc
+    ~(cached : cached_doc)
+    ~(current_source : string option)
+    ~(line : int)
+    ~(character : int)
+    ~(trigger_is_dot : bool)
+    ~(source_overrides : (string, string) Hashtbl.t) : Lsp_t.CompletionItem.t list option =
+  let latest =
+    match current_source with
+    | Some source ->
+        {
+          cached.latest with
+          source;
+          program = None;
+          type_map = None;
+          environment = None;
+          type_var_user_names = [];
+          diagnostics = [];
+          compiler_analysis = None;
+        }
+    | None -> cached.latest
+  in
+  Completions.complete_at ~latest ~last_good:cached.last_good ~line ~character ~trigger_is_dot ~source_overrides
 
 class marmoset_server =
   object (self)
@@ -349,13 +376,11 @@ class marmoset_server =
         ~notify_back:_
         ~id:_
         ~uri
-        ~pos:_
+        ~pos
         ~ctx
         ~workDoneToken:_
         ~partialResultToken:_
         (_doc_state : Linol_lwt.doc_state) =
-      (* Don't return global completions when trigger char is "." — that should
-         be method/field completions which we don't yet support. *)
       let is_dot_trigger =
         match ctx with
         | Some ctx -> (
@@ -364,21 +389,16 @@ class marmoset_server =
             | _ -> false)
         | None -> false
       in
-      if is_dot_trigger then
-        Lwt.return None
-      else
-        let env =
-          match Hashtbl.find_opt analysis_cache uri with
-          | Some { latest = analysis; _ } -> analysis.environment
-          | None -> None
-        in
-        let environment =
-          match env with
-          | Some e -> e
-          | None -> Marmoset.Lib.Infer.empty_env
-        in
-        let items = Completions.completions ~environment in
-        Lwt.return (Some (`List items))
+      let result =
+        match Hashtbl.find_opt analysis_cache uri with
+        | None -> None
+        | Some cached ->
+            let current_source = Option.map (fun (doc : open_doc) -> doc.text) (Hashtbl.find_opt open_docs uri) in
+            let source_overrides = self#source_overrides () in
+            completion_items_for_cached_doc ~cached ~current_source ~line:pos.line ~character:pos.character
+              ~trigger_is_dot:is_dot_trigger ~source_overrides
+      in
+      Lwt.return (Option.map (fun items -> `List items) result)
 
     method! on_req_definition
         ~notify_back:_ ~id:_ ~uri ~pos ~workDoneToken:_ ~partialResultToken:_ (_doc_state : Linol_lwt.doc_state) =
@@ -487,24 +507,35 @@ let fake_analysis ?module_id ?source_root ?project_root ?program ?type_map ?envi
     compiler_analysis = None;
   }
 
-let%test "update_cached_doc captures a last_good snapshot from typed analyses" =
-  let typed =
-    fake_analysis ~program:[] ~type_map:(Hashtbl.create 1) ~environment:Marmoset.Lib.Infer.empty_env ()
-  in
-  match update_cached_doc None typed with
-  | { last_good = Some cached; _ } -> cached.program <> None
+let%test "update_cached_doc captures a last_good snapshot from semantic analyses" =
+  let analysis = Doc_state.analyze ~source:"let x = 1\nx\n" in
+  match update_cached_doc None analysis with
+  | { last_good = Some cached; _ } -> cached.compiler_analysis <> None && cached.program <> None
   | _ -> false
 
-let%test "update_cached_doc preserves last_good across parse-broken latest edits" =
-  let typed =
-    fake_analysis ~program:[] ~type_map:(Hashtbl.create 1) ~environment:Marmoset.Lib.Infer.empty_env ()
-  in
-  let stale = update_cached_doc None typed in
+let%test "update_cached_doc preserves last_good across non-semantic latest edits" =
+  let semantic = Doc_state.analyze ~source:"let x = 1\nx\n" in
+  let stale = update_cached_doc None semantic in
   let latest = fake_analysis ~diagnostics:[] () in
   match update_cached_doc (Some stale) latest with
   | { latest = latest_analysis; last_good = Some cached } ->
-      latest_analysis.program = None && cached.program <> None
+      latest_analysis.compiler_analysis = None && cached.compiler_analysis <> None
   | _ -> false
+
+let%test "update_cached_doc retains namespace-navigation snapshots even when typing is incomplete" =
+  Doc_state.with_temp_project
+    [
+      ("main.mr", "import math\nmath\n");
+      ("math.mr", "export add\nfn add(x: Int, y: Int) -> Int = x + y\n");
+    ]
+    (fun root ->
+      let file_id = Filename.concat root "main.mr" in
+      let analysis = Doc_state.analyze_with_file_id ~source_root:root ~file_id ~source:"import math\nmath\n" () in
+      match update_cached_doc None analysis with
+      | { last_good = Some cached; _ } ->
+          cached.compiler_analysis <> None && cached.project_root <> None && cached.environment = None
+  | _ -> false
+    )
 
 let%test "related_open_docs selects sibling file-backed docs under the same project root" =
   let open_docs = Hashtbl.create 3 in
@@ -517,3 +548,85 @@ let%test "related_open_docs selects sibling file-backed docs under the same proj
   match related_open_docs ~open_docs ~project_root:"/tmp/project" ~exclude_uri:(Some main_uri) with
   | [ (uri, "math") ] -> Lsp_t.DocumentUri.equal uri math_uri
   | _ -> false
+
+let source_with_cursor (annotated : string) : string * int * int =
+  let cursor = String.index annotated '|' in
+  let source =
+    String.sub annotated 0 cursor ^ String.sub annotated (cursor + 1) (String.length annotated - cursor - 1)
+  in
+  let pos = Lsp_utils.offset_to_position ~source ~offset:cursor in
+  (source, pos.line, pos.character)
+
+let cached_completion_labels
+    ?cached_annotated
+    ?last_good_annotated
+    ?(trigger_is_dot = false)
+    ~(files : (string * string) list)
+    ~(entry_rel : string)
+    (annotated : string) : string list =
+  let captured = ref [] in
+  let _ =
+    Doc_state.with_temp_project files (fun root ->
+        let cached_annotated = Option.value cached_annotated ~default:annotated in
+        let cached_source, _, _ = source_with_cursor cached_annotated in
+        let source, line, character = source_with_cursor annotated in
+        let file_id = Filename.concat root entry_rel in
+        let latest = Doc_state.analyze_with_file_id ~source_root:root ~file_id ~source:cached_source () in
+        let previous =
+          Option.map
+            (fun annotated ->
+              let source, _, _ = source_with_cursor annotated in
+              let last_good = Doc_state.analyze_with_file_id ~source_root:root ~file_id ~source () in
+              update_cached_doc None last_good)
+            last_good_annotated
+        in
+        let cached = update_cached_doc previous latest in
+        let source_overrides = Hashtbl.create 0 in
+        captured :=
+          (match
+             completion_items_for_cached_doc ~cached ~current_source:(Some source) ~line ~character
+               ~trigger_is_dot ~source_overrides
+           with
+          | Some items -> List.map (fun (item : Lsp_t.CompletionItem.t) -> item.label) items
+          | None -> []);
+        true)
+  in
+  !captured
+
+let%test "server completion uses live buffer text instead of leaking stale cached locals" =
+  let labels =
+    cached_completion_labels
+      ~cached_annotated:
+        "import types.geo\nlet xs = [1]\nlet p = { x: 1, y: 2 }\nlet q = { x: 1 }\n|\n"
+      ~files:
+        [
+          ( "main_namespace_type_positions.mr",
+            "import types.geo\nlet xs = [1]\nlet p = { x: 1, y: 2 }\nlet q = { x: 1 }\nimpo|\n" );
+          ("types/geo.mr", "export origin\nlet origin = { x: 0, y: 0 }\n");
+        ]
+      ~entry_rel:"main_namespace_type_positions.mr"
+      "import types.geo\nlet xs = [1]\nlet p = { x: 1, y: 2 }\nlet q = { x: 1 }\nimpo|\n"
+  in
+  List.mem "let" labels
+  && not (List.mem "xs" labels)
+  && not (List.mem "p" labels)
+  && not (List.mem "q" labels)
+  &&
+  not
+    (List.exists
+       (fun label ->
+         Diagnostics.String_utils.contains_substring ~needle:"u005f" label
+         || Diagnostics.String_utils.contains_substring ~needle:"__" label)
+       labels)
+
+let%test "server completion supports dot-triggered namespace members" =
+  let labels =
+    cached_completion_labels ~trigger_is_dot:true ~last_good_annotated:"import math\nmath|\n"
+      ~files:
+        [
+          ("main.mr", "import math\nmath.\n");
+          ("math.mr", "export add\nfn add(x: Int, y: Int) -> Int = x + y\n");
+        ]
+      ~entry_rel:"main.mr" "import math\nmath.|\n"
+  in
+  List.mem "add" labels
