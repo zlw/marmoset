@@ -1093,7 +1093,7 @@ let%test "hover on expression inside inherent impl method body" =
 let%test "hover on constructor pattern binding shows bound type" =
   match
     hover_marked
-      "type Option[a] = {\n  Some(a),\n  None,\n}\nfn unwrap(v: Option[Int]) -> Int = match v {\n  case Option.Some(|x): x\n  case Option.None: 0\n}"
+      "fn unwrap(v: Option[Int]) -> Int = match v {\n  case Option.Some(|x): x\n  case Option.None: 0\n}"
   with
   | _, Some h -> string_contains h.type_text "x: Int" && h.highlighted = "x"
   | _ -> false

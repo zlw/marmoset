@@ -276,7 +276,6 @@ let required_opt ~(code : string) ~(message : string) = function
   | None -> Error (compiler_error ~code ~message)
 
 let is_prelude_module (module_id : string) : bool = String.equal module_id prelude_module_id
-let is_file_backed_entry (entry_file : string) : bool = Filename.check_suffix entry_file ".mr"
 
 type module_locals_acc = {
   enums : Enum_registry.enum_def list;
@@ -858,30 +857,6 @@ let find_export_binding (analysis : entry_analysis) ~(module_id : string) ~(surf
   | None -> None
   | Some module_ -> Module_sig.find_export module_.signature surface_name
 
-let analyze_standalone_program ?source_root ~(entry_file : string) ~(source : string) (program : AST.program) :
-    entry_analysis =
-  reset_module_state ();
-  let env = builtin_env_with_traits () in
-  let state = Infer.create_inference_state () in
-  match Checker.check_program_with_annotations ~state ~env program with
-  | Error diags ->
-      let active_file =
-        make_file_analysis ~file_path:entry_file ~source ~surface_program:program ~diagnostics:diags
-          ~type_var_user_names:(Infer.type_var_user_name_bindings_in_state state)
-          ~symbol_table:(Infer.symbol_table_bindings_in_state state)
-          ~identifier_symbols:(Infer.identifier_symbol_bindings_in_state state)
-          ()
-      in
-      { mode = Standalone; source_root; project_root = None; graph = None; project = None; active_file }
-  | Ok result ->
-      let active_file =
-        make_file_analysis ~file_path:entry_file ~source ~surface_program:program ~typed_program:program
-          ~type_map:result.type_map ~environment:result.environment ~diagnostics:result.diagnostics
-          ~type_var_user_names:(Infer.type_var_user_name_bindings_in_state state)
-          ~symbol_table:result.symbol_table ~identifier_symbols:result.identifier_symbols ()
-      in
-      { mode = Standalone; source_root; project_root = None; graph = None; project = None; active_file }
-
 let analyze_module_graph
     ~(source_root : string option)
     ~(project_root : string)
@@ -968,16 +943,14 @@ let analyze_module_graph
                 active_file;
               }))
 
-let rec analyze_entry_with_source
-    ?source_root ?stdlib_root ?(force_modules = false) ~(entry_file : string) ~(entry_source : string) () :
+let rec analyze_entry_with_source ?source_root ?stdlib_root ~(entry_file : string) ~(entry_source : string) () :
     entry_analysis =
-  analyze_entry_with_overrides ?source_root ?stdlib_root ~force_modules ~entry_file ~entry_source
+  analyze_entry_with_overrides ?source_root ?stdlib_root ~entry_file ~entry_source
     ~source_overrides:(Hashtbl.create 0) ()
 
 and analyze_entry_with_overrides
     ?source_root
     ?stdlib_root
-    ?(force_modules = false)
     ~(entry_file : string)
     ~(entry_source : string)
     ~(source_overrides : (string, string) Hashtbl.t)
@@ -987,59 +960,51 @@ and analyze_entry_with_overrides
       let active_file = make_file_analysis ~file_path:entry_file ~source:entry_source ~diagnostics:diags () in
       { mode = Standalone; source_root; project_root = None; graph = None; project = None; active_file }
   | Ok entry_program -> (
-      if (not force_modules) && (not (is_file_backed_entry entry_file)) && not (has_module_headers entry_program)
-      then
-        analyze_standalone_program ?source_root ~entry_file ~source:entry_source entry_program
-      else
-        let project_root = resolved_project_root ?source_root ~entry_file () in
-        let all_overrides = Hashtbl.copy source_overrides in
-        Hashtbl.replace all_overrides (Discovery.normalize_path entry_file) entry_source;
-        match
-          Discovery.discover_project_with_overrides ?source_root ?stdlib_root ~entry_file
-            ~source_overrides:all_overrides ()
-        with
-        | Error diag ->
-            let active_file =
-              make_file_analysis ~file_path:entry_file ~source:entry_source ~surface_program:entry_program
-                ~diagnostics:[ diag ] ()
-            in
-            {
-              mode = Modules;
-              source_root;
-              project_root = Some project_root;
-              graph = None;
-              project = None;
-              active_file;
-            }
-        | Ok graph ->
-            analyze_module_graph ~source_root ~project_root:graph.root_dir ~entry_file ~source:entry_source
-              ~entry_program graph)
+      let project_root = resolved_project_root ?source_root ~entry_file () in
+      let all_overrides = Hashtbl.copy source_overrides in
+      Hashtbl.replace all_overrides (Discovery.normalize_path entry_file) entry_source;
+      match
+        Discovery.discover_project_with_overrides ?source_root ?stdlib_root ~entry_file
+          ~source_overrides:all_overrides ()
+      with
+      | Error diag ->
+          let active_file =
+            make_file_analysis ~file_path:entry_file ~source:entry_source ~surface_program:entry_program
+              ~diagnostics:[ diag ] ()
+          in
+          {
+            mode = Modules;
+            source_root;
+            project_root = Some project_root;
+            graph = None;
+            project = None;
+            active_file;
+          }
+      | Ok graph ->
+          analyze_module_graph ~source_root ~project_root:graph.root_dir ~entry_file ~source:entry_source
+            ~entry_program graph)
 
-let analyze_entry ?source_root ?stdlib_root ?(force_modules = false) ~(entry_file : string) () : entry_analysis =
-  analyze_entry_with_source ?source_root ?stdlib_root ~force_modules ~entry_file
-    ~entry_source:(read_source_file entry_file) ()
+let analyze_entry ?source_root ?stdlib_root ~(entry_file : string) () : entry_analysis =
+  analyze_entry_with_source ?source_root ?stdlib_root ~entry_file ~entry_source:(read_source_file entry_file) ()
 
 let check_graph (graph : Module_context.module_graph) : (Diagnostic.t list, Diagnostic.t list) result =
   match compile_project graph with
   | Ok project -> Ok project.diagnostics
   | Error diags -> Error diags
 
-let check_entry ?source_root ?stdlib_root ?(force_modules = false) ~(entry_file : string) :
+let check_entry ?source_root ?stdlib_root ~(entry_file : string) :
     unit -> (Diagnostic.t list, Diagnostic.t list) result =
  fun () ->
-  let analysis = analyze_entry ?source_root ?stdlib_root ~force_modules ~entry_file () in
+  let analysis = analyze_entry ?source_root ?stdlib_root ~entry_file () in
   if diagnostics_have_errors analysis.active_file.diagnostics then
     Error analysis.active_file.diagnostics
   else
     Ok analysis.active_file.diagnostics
 
-let check_entry_with_source
-    ?source_root ?stdlib_root ?(force_modules = false) ~(entry_file : string) ~(entry_source : string) :
+let check_entry_with_source ?source_root ?stdlib_root ~(entry_file : string) ~(entry_source : string) :
     unit -> (Diagnostic.t list, Diagnostic.t list) result =
  fun () ->
-  let analysis =
-    analyze_entry_with_source ?source_root ?stdlib_root ~force_modules ~entry_file ~entry_source ()
-  in
+  let analysis = analyze_entry_with_source ?source_root ?stdlib_root ~entry_file ~entry_source () in
   if diagnostics_have_errors analysis.active_file.diagnostics then
     Error analysis.active_file.diagnostics
   else
@@ -1647,14 +1612,13 @@ let%test "analyze_entry_with_overrides sees imported file overrides" =
           diag.code = "type-mismatch" || Diagnostics.String_utils.contains_substring ~needle:"Str" diag.message)
         analysis.active_file.diagnostics)
 
-let%test "analyze_entry_with_source can force headerless files into module mode" =
+let%test "analyze_entry_with_source routes extensionless entries through module analysis" =
   Discovery.with_temp_project
-    [ ("pkg/util.mr", "let helper = 1\n") ]
+    [ ("pkg/util", "let helper = 1\n") ]
     (fun root ->
-      let entry_file = Filename.concat root "pkg/util.mr" in
+      let entry_file = Filename.concat root "pkg/util" in
       let analysis =
-        analyze_entry_with_source ~source_root:root ~force_modules:true ~entry_file
-          ~entry_source:"let helper = 1\n" ()
+        analyze_entry_with_source ~source_root:root ~entry_file ~entry_source:"let helper = 1\n" ()
       in
       match analysis.graph with
       | None -> false

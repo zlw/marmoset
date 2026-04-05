@@ -148,7 +148,14 @@ let analyze_with_file_id
     compiler_analysis = Some compiler_analysis;
   }
 
-let analyze ~(source : string) : analysis_result = analyze_with_file_id ~file_id:"<lsp>" ~source ()
+let analyze ~(source : string) : analysis_result =
+  let root = Filename.temp_file "marmoset_lsp_snippet_" "" in
+  Sys.remove root;
+  ignore (Sys.command ("mkdir -p " ^ Filename.quote root));
+  let entry_file = Filename.concat root "main.mr" in
+  Fun.protect
+    ~finally:(fun () -> ignore (Sys.command ("rm -rf " ^ Filename.quote root)))
+    (fun () -> analyze_with_file_id ~file_id:entry_file ~source ())
 
 let with_temp_project (files : (string * string) list) (f : string -> bool) : bool =
   let root = Filename.temp_file "marmoset_lsp_modules_" "" in
@@ -205,9 +212,9 @@ let%test "analyze type error has non-zero range when location available" =
 let%test "analyze successful code stores type_map and environment" =
   let result = analyze ~source:"let f = (x) -> x + 1; f" in
   result.diagnostics = []
-  && result.module_id = None
+  && result.module_id = Some "main"
   && result.source_root = None
-  && result.project_root = None
+  && result.project_root <> None
   && result.type_map <> None
   && result.environment <> None
   && result.compiler_analysis <> None
@@ -266,15 +273,15 @@ let%test "analyze_with_file_id uses module-aware checking for imported files" =
       && result.program <> None
       && result.compiler_analysis <> None)
 
-let%test "analyze carries compiler-owned standalone analysis" =
-  let result = analyze_with_file_id ~file_id:"<memory>" ~source:"let id = (x) -> x\nid(1)\n" () in
+let%test "analyze helper uses module-aware compiler analysis" =
+  let result = analyze ~source:"let id = (x) -> x\nid(1)\n" in
   match result.compiler_analysis with
   | None -> false
   | Some analysis ->
-      analysis.mode = Compiler.Standalone
-      && result.module_id = None
+      analysis.mode = Compiler.Modules
+      && result.module_id = Some "main"
       && result.source_root = None
-      && result.project_root = None
+      && result.project_root <> None
       && result.type_map <> None
       && result.environment <> None
 
