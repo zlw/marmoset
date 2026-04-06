@@ -85,7 +85,15 @@ let build_graph
 
 let%test "build_graph topo orders dependencies before dependents" =
   let mk module_id =
-    { module_id; file_path = module_id ^ ".mr"; source = ""; surface_program = []; program = []; exports = []; imports = [] }
+    {
+      module_id;
+      file_path = module_id ^ ".mr";
+      source = "";
+      surface_program = [];
+      program = [];
+      exports = [];
+      imports = [];
+    }
   in
   let modules = Hashtbl.create 3 in
   Hashtbl.replace modules "main" (mk "main");
@@ -101,7 +109,15 @@ let%test "build_graph topo orders dependencies before dependents" =
 
 let%test "build_graph reports cycle path" =
   let mk module_id =
-    { module_id; file_path = module_id ^ ".mr"; source = ""; surface_program = []; program = []; exports = []; imports = [] }
+    {
+      module_id;
+      file_path = module_id ^ ".mr";
+      source = "";
+      surface_program = [];
+      program = [];
+      exports = [];
+      imports = [];
+    }
   in
   let modules = Hashtbl.create 3 in
   Hashtbl.replace modules "main" (mk "main");

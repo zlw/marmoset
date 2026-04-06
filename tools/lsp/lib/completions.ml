@@ -266,7 +266,9 @@ let add_semantic_item (items : (string, semantic_item) Hashtbl.t) (item : semant
 let prefix_filter ~(prefix : string) (label : string) : bool = prefix = "" || starts_with ~prefix label
 
 let active_file_path (analysis : Doc_state.analysis_result) : string option =
-  Option.map (fun compiler_analysis -> compiler_analysis.Compiler.active_file.file_path) analysis.compiler_analysis
+  Option.map
+    (fun compiler_analysis -> compiler_analysis.Compiler.active_file.file_path)
+    analysis.compiler_analysis
 
 let cursor_input_of_analysis (analysis : Doc_state.analysis_result) : Cursor_context.cursor_context_input option =
   match (analysis.surface_program, analysis.program) with
@@ -312,7 +314,7 @@ let is_dyn_constraint_context ~(source : string) ~(offset : int) : bool =
             let start_ident = !j + 1 in
             end_ident >= start_ident
             && String.equal (String.sub source start_ident (end_ident - start_ident + 1)) "Dyn"
-      | '\n' | '(' | '{' | '}' when depth = 0 -> false
+      | ('\n' | '(' | '{' | '}') when depth = 0 -> false
       | _ -> scan (idx - 1) depth
   in
   scan (offset - 1) 0
@@ -338,9 +340,8 @@ type visible_type_kind =
   | Shape_type
   | Trait_type
 
-let classify_visible_type_in_surface_program
-    (program : Surface.surface_program)
-    ~(surface_name : string) : visible_type_kind option =
+let classify_visible_type_in_surface_program (program : Surface.surface_program) ~(surface_name : string) :
+    visible_type_kind option =
   List.find_map
     (fun (stmt : Surface.surface_top_stmt) ->
       match stmt.std_decl with
@@ -367,7 +368,7 @@ let visible_type_kind_of_name ~(analysis : Doc_state.analysis_result) ~(surface_
       in
       match visible_presence with
       | None -> None
-      | Some presence ->
+      | Some presence -> (
           let parsed_module =
             first_some
               (Compiler.find_parsed_module_by_file compiler_analysis ~file_path)
@@ -392,7 +393,7 @@ let visible_type_kind_of_name ~(analysis : Doc_state.analysis_result) ~(surface_
               first_some
                 (classify_visible_type_in_surface_program parsed_module.surface_program ~surface_name)
                 fallback
-          | None -> fallback)
+          | None -> fallback))
   | _ -> None
 
 let visible_enum_variants ~(analysis : Doc_state.analysis_result) ~(type_name : string) :
@@ -450,8 +451,8 @@ let root_symbol_is_local ~(analysis : Doc_state.analysis_result) ~(root_offset :
     | Infer.BuiltinValue | Infer.TopLevelLet | Infer.LocalLet | Infer.Param | Infer.PatternVar
     | Infer.ImplMethodParam ->
         true
-    | Infer.TypeSym | Infer.TypeAliasSym | Infer.ShapeSym | Infer.TraitSym | Infer.EnumSym
-    | Infer.EnumVariantSym ->
+    | Infer.TypeSym | Infer.TypeAliasSym | Infer.ShapeSym | Infer.TraitSym | Infer.EnumSym | Infer.EnumVariantSym
+      ->
         false
   in
   match (analysis.compiler_analysis, analysis.program, active_file_path analysis) with
@@ -472,15 +473,19 @@ let root_symbol_is_surface_local ~(analysis : Doc_state.analysis_result) ~(root_
       | None -> false)
   | None -> false
 
-let visible_presence_bindings (navigation : navigation_snapshot) : (string * Import_resolver.member_presence) list =
+let visible_presence_bindings (navigation : navigation_snapshot) : (string * Import_resolver.member_presence) list
+    =
   let items = Hashtbl.create 16 in
-  Import_resolver.StringMap.iter (fun label presence -> Hashtbl.replace items label presence) navigation.surface.declarations;
+  Import_resolver.StringMap.iter
+    (fun label presence -> Hashtbl.replace items label presence)
+    navigation.surface.declarations;
   Import_resolver.StringMap.iter
     (fun label presence -> Hashtbl.replace items label presence)
     navigation.resolved_imports.direct_bindings;
   Hashtbl.to_seq items |> List.of_seq |> List.sort (fun (l, _) (r, _) -> String.compare l r)
 
-let value_identifier_items ~(analysis : Doc_state.analysis_result) ~(prefix : string) : Lsp_t.CompletionItem.t list =
+let value_identifier_items ~(analysis : Doc_state.analysis_result) ~(prefix : string) :
+    Lsp_t.CompletionItem.t list =
   let items = Hashtbl.create 32 in
   let navigation = current_navigation analysis in
   let environment = analysis.environment in
@@ -519,7 +524,11 @@ let value_identifier_items ~(analysis : Doc_state.analysis_result) ~(prefix : st
                     detail = Some "wrapper constructor";
                     sort_text = Some label;
                   }
-            | Some (Enum_type _) | Some Product_type | Some Transparent_type | Some Shape_type | Some Trait_type
+            | Some (Enum_type _)
+            | Some Product_type
+            | Some Transparent_type
+            | Some Shape_type
+            | Some Trait_type
             | None ->
                 ())
         (visible_presence_bindings navigation);
@@ -559,10 +568,8 @@ let value_identifier_items ~(analysis : Doc_state.analysis_result) ~(prefix : st
       keywords
   |> List.map completion_item_of_semantic
 
-let type_identifier_items
-    ~(analysis : Doc_state.analysis_result)
-    ~(prefix : string)
-    ~(offset : int) : Lsp_t.CompletionItem.t list =
+let type_identifier_items ~(analysis : Doc_state.analysis_result) ~(prefix : string) ~(offset : int) :
+    Lsp_t.CompletionItem.t list =
   let items = Hashtbl.create 24 in
   let builtin_types =
     [
@@ -610,22 +617,17 @@ let type_identifier_items
                   }
             | Some Wrapper_type | Some Product_type | Some Transparent_type ->
                 add_semantic_item items
-                  {
-                    label;
-                    kind = Lsp_t.CompletionItemKind.Struct;
-                    detail = Some "type";
-                    sort_text = Some label;
-                  }
+                  { label; kind = Lsp_t.CompletionItemKind.Struct; detail = Some "type"; sort_text = Some label }
             | Some Shape_type | Some Trait_type | None -> ())
         (visible_presence_bindings navigation))
     (current_navigation analysis);
-  Hashtbl.to_seq_values items |> List.of_seq |> List.sort (fun a b -> String.compare a.label b.label)
+  Hashtbl.to_seq_values items
+  |> List.of_seq
+  |> List.sort (fun a b -> String.compare a.label b.label)
   |> List.map completion_item_of_semantic
 
-let constraint_identifier_items
-    ~(analysis : Doc_state.analysis_result)
-    ~(prefix : string)
-    ~(dyn_only : bool) : Lsp_t.CompletionItem.t list =
+let constraint_identifier_items ~(analysis : Doc_state.analysis_result) ~(prefix : string) ~(dyn_only : bool) :
+    Lsp_t.CompletionItem.t list =
   let items = Hashtbl.create 16 in
   Option.iter
     (fun (navigation : navigation_snapshot) ->
@@ -650,7 +652,9 @@ let constraint_identifier_items
                 })
         (visible_presence_bindings navigation))
     (current_navigation analysis);
-  Hashtbl.to_seq_values items |> List.of_seq |> List.sort (fun a b -> String.compare a.label b.label)
+  Hashtbl.to_seq_values items
+  |> List.of_seq
+  |> List.sort (fun a b -> String.compare a.label b.label)
   |> List.map completion_item_of_semantic
 
 let export_completion_items (entry : Module_catalog.entry) ~(prefix : string) : semantic_item list =
@@ -714,13 +718,17 @@ let module_member_items
   in
   Option.iter
     (fun (navigation : navigation_snapshot) ->
-      match Import_resolver.lookup_namespace_node navigation.resolved_imports.namespace_roots receiver_segments with
+      match
+        Import_resolver.lookup_namespace_node navigation.resolved_imports.namespace_roots receiver_segments
+      with
       | Some node ->
           add_module_child_items node;
           Option.iter add_export_items node.module_ref
       | None -> ())
     (current_navigation analysis);
-  Hashtbl.to_seq_values items |> List.of_seq |> List.sort (fun a b -> String.compare a.label b.label)
+  Hashtbl.to_seq_values items
+  |> List.of_seq
+  |> List.sort (fun a b -> String.compare a.label b.label)
   |> List.map completion_item_of_semantic
 
 let trait_method_items ~(trait_name : string) ~(prefix : string) : Lsp_t.CompletionItem.t list =
@@ -740,9 +748,7 @@ let trait_method_items ~(trait_name : string) ~(prefix : string) : Lsp_t.Complet
   |> List.map completion_item_of_semantic
 
 let inherent_method_semantic_items
-    ~(analysis : Doc_state.analysis_result)
-    ~(type_name : string)
-    ~(prefix : string) : semantic_item list =
+    ~(analysis : Doc_state.analysis_result) ~(type_name : string) ~(prefix : string) : semantic_item list =
   match (analysis.compiler_analysis, active_file_path analysis) with
   | Some compiler_analysis, Some file_path -> (
       match Compiler.resolve_visible_type_name_to_mono compiler_analysis ~file_path ~surface_name:type_name with
@@ -788,7 +794,9 @@ let enum_constructor_items ~(analysis : Doc_state.analysis_result) ~(type_name :
         variants)
     (visible_enum_variants ~analysis ~type_name);
   List.iter (add_semantic_item items) (inherent_method_semantic_items ~analysis ~type_name ~prefix);
-  Hashtbl.to_seq_values items |> List.of_seq |> List.sort (fun a b -> String.compare a.label b.label)
+  Hashtbl.to_seq_values items
+  |> List.of_seq
+  |> List.sort (fun a b -> String.compare a.label b.label)
   |> List.map completion_item_of_semantic
 
 let identifier_prefix_at_offset ~(source : string) ~(offset : int) : string option =
@@ -884,16 +892,16 @@ let qualified_member_context
     ~(root_offset : int) : completion_context option =
   match receiver_segments with
   | [] -> None
-  | root_name :: _ ->
-      if
-        root_symbol_is_local ~analysis ~root_offset
-        || root_symbol_is_surface_local ~analysis ~root_name
-      then
+  | root_name :: _ -> (
+      if root_symbol_is_local ~analysis ~root_offset || root_symbol_is_surface_local ~analysis ~root_name then
         Some Unsupported
       else
         let module_context =
           Option.bind (current_navigation analysis) (fun navigation ->
-              match Import_resolver.lookup_namespace_node navigation.resolved_imports.namespace_roots receiver_segments with
+              match
+                Import_resolver.lookup_namespace_node navigation.resolved_imports.namespace_roots
+                  receiver_segments
+              with
               | Some _ -> Some (ModuleMember { receiver_segments; prefix })
               | None -> None)
         in
@@ -906,7 +914,7 @@ let qualified_member_context
             | Some Shape_type -> Some Unsupported
             | Some Wrapper_type | Some Product_type | Some Transparent_type ->
                 Some (InherentMethodMember { type_name = root_name; prefix })
-            | None -> None)
+            | None -> None))
 
 let structured_context_at ~(analysis : Doc_state.analysis_result) ~(offset : int) : completion_context option =
   Option.bind (cursor_input_of_analysis analysis) (fun input ->
@@ -951,14 +959,13 @@ let structured_context_at ~(analysis : Doc_state.analysis_result) ~(offset : int
       | Some (Cursor_context.Qualified_root _) -> Some Unsupported
       | Some (Cursor_context.Qualified_member { root_ref; member_ref; _ }) ->
           qualified_member_context ~analysis ~receiver_segments:[ root_ref.text ]
-            ~prefix:(prefix_of_name_ref ~source:analysis.source ~offset member_ref) ~root_offset:root_ref.pos
+            ~prefix:(prefix_of_name_ref ~source:analysis.source ~offset member_ref)
+            ~root_offset:root_ref.pos
       | None -> None)
 
 let fallback_context_at
-    ~(analysis : Doc_state.analysis_result)
-    ~(source : string)
-    ~(offset : int)
-    ~(trigger_is_dot : bool) : completion_context =
+    ~(analysis : Doc_state.analysis_result) ~(source : string) ~(offset : int) ~(trigger_is_dot : bool) :
+    completion_context =
   match Import_header.completion_context_at_offset ~source ~offset with
   | Some { Import_header.typed_segments; prefix; in_alias } -> ImportPath { typed_segments; prefix; in_alias }
   | None -> (
@@ -973,11 +980,8 @@ let fallback_context_at
           | Some prefix -> ValueIdentifier { prefix }
           | None -> ValueIdentifier { prefix = "" }))
 
-let context_at
-    ~(analysis : Doc_state.analysis_result)
-    ~(source : string)
-    ~(offset : int)
-    ~(trigger_is_dot : bool) : completion_context =
+let context_at ~(analysis : Doc_state.analysis_result) ~(source : string) ~(offset : int) ~(trigger_is_dot : bool)
+    : completion_context =
   let should_fallback_on_unsupported =
     trigger_is_dot
     || Option.is_some (Import_header.completion_context_at_offset ~source ~offset)
@@ -1015,10 +1019,14 @@ let complete_at
             |> List.map completion_item_of_semantic)
           catalog
   | ModuleMember { receiver_segments; prefix } ->
-      Option.map (fun catalog -> module_member_items ~analysis:semantic ~catalog ~receiver_segments ~prefix) catalog
-  | EnumConstructorMember { type_name; prefix } -> Some (enum_constructor_items ~analysis:semantic ~type_name ~prefix)
+      Option.map
+        (fun catalog -> module_member_items ~analysis:semantic ~catalog ~receiver_segments ~prefix)
+        catalog
+  | EnumConstructorMember { type_name; prefix } ->
+      Some (enum_constructor_items ~analysis:semantic ~type_name ~prefix)
   | TraitMethodMember { trait_name; prefix } -> Some (trait_method_items ~trait_name ~prefix)
-  | InherentMethodMember { type_name; prefix } -> Some (inherent_method_items ~analysis:semantic ~type_name ~prefix)
+  | InherentMethodMember { type_name; prefix } ->
+      Some (inherent_method_items ~analysis:semantic ~type_name ~prefix)
   | Unsupported -> None
 
 let identifier_prefix_at_offset ~(source : string) ~(offset : int) : string option =
@@ -1307,24 +1315,21 @@ let%test "bare-dot namespace completion can use last_good" =
 
 let%test "bare-dot namespace completion also works without dot trigger" =
   let labels =
-    completion_labels
-      ~last_good_annotated:"import types.geo\nlet p = 1\nlet q = 2\ngeo|\n"
+    completion_labels ~last_good_annotated:"import types.geo\nlet p = 1\nlet q = 2\ngeo|\n"
       ~files:
         [
           ("main.mr", "import types.geo\nlet p = 1\nlet q = 2\ngeo.\n");
           ( "types/geo.mr",
-            "export render_point, Point, HasXY\n\
-             type Point = { x: Int, y: Int }\n\
-             shape HasXY = { x: Int, y: Int }\n\
-             fn render_point(p: Point) -> Str = \"point\"\n" );
+            "export render_point, Point, HasXY\ntype Point = { x: Int, y: Int }\nshape HasXY = { x: Int, y: Int }\nfn render_point(p: Point) -> Str = \"point\"\n"
+          );
         ]
       ~entry_rel:"main.mr" "import types.geo\nlet p = 1\nlet q = 2\ngeo.|\n"
   in
   List.mem "render_point" labels
   && List.mem "Point" labels
   && List.mem "HasXY" labels
-  && not (List.mem "p" labels)
-  && not (List.mem "q" labels)
+  && (not (List.mem "p" labels))
+  && (not (List.mem "q" labels))
   && not (List.mem "let" labels)
 
 let%test "dot completion on a local value still returns none" =
@@ -1368,18 +1373,17 @@ let%test "import-path completion suggests sibling module segments from project r
 
 let%test "value completions include wrapper constructors but not type-only names" =
   let source =
-    "type UserId = UserId(Int)\n\
-     type Point = { x: Int }\n\
-     shape Named = { name: Str }\n\
-     trait Greeter[a] = { fn greet(self: a) -> Str }\n\
-     let helper = 1\n\
-     |\n"
+    "type UserId = UserId(Int)\ntype Point = { x: Int }\nshape Named = { name: Str }\ntrait Greeter[a] = { fn greet(self: a) -> Str }\nlet helper = 1\n|\n"
   in
-  let labels = completion_labels ~files:[ ("main.mr", String.concat "" (String.split_on_char '|' source)) ] ~entry_rel:"main.mr" source in
+  let labels =
+    completion_labels
+      ~files:[ ("main.mr", String.concat "" (String.split_on_char '|' source)) ]
+      ~entry_rel:"main.mr" source
+  in
   List.mem "UserId" labels
   && List.mem "helper" labels
-  && not (List.mem "Point" labels)
-  && not (List.mem "Named" labels)
+  && (not (List.mem "Point" labels))
+  && (not (List.mem "Named" labels))
   && not (List.mem "Greeter" labels)
 
 let%test "type-position completion includes visible type names but not values or shapes" =
@@ -1394,11 +1398,15 @@ let%test "type-position completion includes visible type names but not values or
       ~files:[ ("main.mr", String.concat "" (String.split_on_char '|' latest)) ]
       ~entry_rel:"main.mr" latest
   in
-  List.mem "Point" labels && not (List.mem "helper" labels) && not (List.mem "Named" labels)
+  List.mem "Point" labels && (not (List.mem "helper" labels)) && not (List.mem "Named" labels)
 
 let%test "type-position completion includes in-scope generic parameters" =
   let source = "fn id[t](x: t) -> t = { let y: t| = x; y }\n" in
-  let labels = completion_labels ~files:[ ("main.mr", String.concat "" (String.split_on_char '|' source)) ] ~entry_rel:"main.mr" source in
+  let labels =
+    completion_labels
+      ~files:[ ("main.mr", String.concat "" (String.split_on_char '|' source)) ]
+      ~entry_rel:"main.mr" source
+  in
   List.mem "t" labels
 
 let%test "constraint-position completion includes shapes" =
@@ -1441,9 +1449,7 @@ let%test "enum-qualified completion includes constructors" =
 
 let%test "trait-qualified completion includes trait methods" =
   let latest = "trait Greeter[a] = { fn greet(self: a, prefix: Str) -> Str }\nlet x = Greeter.gr|\n" in
-  let last_good =
-    "trait Greeter[a] = { fn greet(self: a, prefix: Str) -> Str }\nlet x = Greeter.greet|\n"
-  in
+  let last_good = "trait Greeter[a] = { fn greet(self: a, prefix: Str) -> Str }\nlet x = Greeter.greet|\n" in
   let labels =
     completion_labels ~last_good_annotated:last_good
       ~files:[ ("main.mr", String.concat "" (String.split_on_char '|' latest)) ]
@@ -1467,8 +1473,7 @@ let%test "type-qualified completion includes inherent methods but not constructo
 
 let%test "shape-qualified completion returns no member items" =
   match
-    completion_items_at
-      ~last_good_annotated:"shape Named = { name: Str }\nlet x = Named.name|\n"
+    completion_items_at ~last_good_annotated:"shape Named = { name: Str }\nlet x = Named.name|\n"
       ~files:[ ("main.mr", "shape Named = { name: Str }\nlet x = Named.na\n") ]
       ~entry_rel:"main.mr" "shape Named = { name: Str }\nlet x = Named.na|\n"
   with
@@ -1484,14 +1489,12 @@ let%test "nested namespace completion uses imported alias for module members" =
         [
           ("main.mr", String.concat "" (String.split_on_char '|' latest));
           ( "types/geo.mr",
-            "export render_point, Point, HasXY\n\
-             type Point = { x: Int, y: Int }\n\
-             shape HasXY = { x: Int, y: Int }\n\
-             fn render_point(p: Point) -> Str = \"point\"\n" );
+            "export render_point, Point, HasXY\ntype Point = { x: Int, y: Int }\nshape HasXY = { x: Int, y: Int }\nfn render_point(p: Point) -> Str = \"point\"\n"
+          );
         ]
       ~entry_rel:"main.mr" latest
   in
-  List.mem "render_point" labels && not (List.mem "Point" labels) && not (List.mem "HasXY" labels)
+  List.mem "render_point" labels && (not (List.mem "Point" labels)) && not (List.mem "HasXY" labels)
 
 let%test "qualified type completion uses imported alias for exported types" =
   let latest = "import types.geo\nlet p: geo.Po| = { x: 1, y: 2 }\n" in
@@ -1502,14 +1505,12 @@ let%test "qualified type completion uses imported alias for exported types" =
         [
           ("main.mr", String.concat "" (String.split_on_char '|' latest));
           ( "types/geo.mr",
-            "export render_point, Point, HasXY\n\
-             type Point = { x: Int, y: Int }\n\
-             shape HasXY = { x: Int, y: Int }\n\
-             fn render_point(p: Point) -> Str = \"point\"\n" );
+            "export render_point, Point, HasXY\ntype Point = { x: Int, y: Int }\nshape HasXY = { x: Int, y: Int }\nfn render_point(p: Point) -> Str = \"point\"\n"
+          );
         ]
       ~entry_rel:"main.mr" latest
   in
-  List.mem "Point" labels && not (List.mem "HasXY" labels) && not (List.mem "render_point" labels)
+  List.mem "Point" labels && (not (List.mem "HasXY" labels)) && not (List.mem "render_point" labels)
 
 let%test "type-position completion survives incomplete same-module annotations" =
   let latest = "type Point = { x: Int }\nlet value: Po|\n" in

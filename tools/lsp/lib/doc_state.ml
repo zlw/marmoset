@@ -169,7 +169,10 @@ let%test "analyze valid code produces empty diagnostics" =
 
 let%test "analyze parse error produces diagnostic" =
   let result = analyze ~source:"let = ;" in
-  List.length result.diagnostics > 0 && result.surface_program = None && result.program = None && result.type_map = None
+  List.length result.diagnostics > 0
+  && result.surface_program = None
+  && result.program = None
+  && result.type_map = None
 
 let%test "analyze parse error has non-zero range when span exists" =
   let result = analyze ~source:"let = ;" in

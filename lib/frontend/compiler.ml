@@ -902,10 +902,13 @@ let navigation_from_surface_graph (analysis : entry_analysis) ~(file_path : stri
 
 let current_navigation (analysis : entry_analysis) ~(file_path : string) : module_navigation option =
   first_some
-    (Option.map (fun (module_ : checked_module) -> module_.navigation) (find_checked_module_by_file analysis ~file_path))
+    (Option.map
+       (fun (module_ : checked_module) -> module_.navigation)
+       (find_checked_module_by_file analysis ~file_path))
     (navigation_from_surface_graph analysis ~file_path)
 
-let find_parsed_module_by_id (analysis : entry_analysis) ~(module_id : string) : Module_context.parsed_module option =
+let find_parsed_module_by_id (analysis : entry_analysis) ~(module_id : string) :
+    Module_context.parsed_module option =
   match analysis.graph with
   | None -> None
   | Some graph -> Hashtbl.find_opt graph.modules module_id
@@ -920,7 +923,11 @@ let find_visible_presence (analysis : entry_analysis) ~(file_path : string) ~(su
         (Import_resolver.StringMap.find_opt surface_name navigation.resolved_imports.direct_bindings)
 
 let presence_has_type_namespace (presence : Import_resolver.member_presence) : bool =
-  presence.has_enum || presence.has_named_type || presence.has_transparent_type || presence.has_shape || presence.has_trait
+  presence.has_enum
+  || presence.has_named_type
+  || presence.has_transparent_type
+  || presence.has_shape
+  || presence.has_trait
 
 let presence_has_constraint_namespace (presence : Import_resolver.member_presence) : bool =
   presence.has_trait || presence.has_shape
@@ -930,13 +937,11 @@ let parsed_module_of_presence (analysis : entry_analysis) (presence : Import_res
   Option.bind (definition_site_of_presence presence) (fun site ->
       first_some
         (find_parsed_module_by_file analysis ~file_path:site.file_path)
-        (Option.bind
-           (find_checked_module_by_file analysis ~file_path:site.file_path)
-           (fun checked_module -> find_parsed_module_by_id analysis ~module_id:checked_module.module_id)))
+        (Option.bind (find_checked_module_by_file analysis ~file_path:site.file_path) (fun checked_module ->
+             find_parsed_module_by_id analysis ~module_id:checked_module.module_id)))
 
-let find_type_head_site_in_surface_program
-    (program : Surface.surface_program)
-    ~(surface_name : string) : Module_sig.definition_site option =
+let find_type_head_site_in_surface_program (program : Surface.surface_program) ~(surface_name : string) :
+    Module_sig.definition_site option =
   List.find_map
     (fun (stmt : Surface.surface_top_stmt) ->
       match stmt.std_decl with
@@ -944,14 +949,14 @@ let find_type_head_site_in_surface_program
           definition_site_of_name_ref type_name_ref
       | Surface.SShapeDef { shape_name; shape_name_ref; _ } when String.equal shape_name surface_name ->
           definition_site_of_name_ref shape_name_ref
-      | Surface.STraitDef { name; name_ref; _ } when String.equal name surface_name -> definition_site_of_name_ref name_ref
+      | Surface.STraitDef { name; name_ref; _ } when String.equal name surface_name ->
+          definition_site_of_name_ref name_ref
       | _ -> None)
     program
 
 let find_variant_site_in_surface_program
-    (program : Surface.surface_program)
-    ~(type_name : string)
-    ~(variant_name : string) : Module_sig.definition_site option =
+    (program : Surface.surface_program) ~(type_name : string) ~(variant_name : string) :
+    Module_sig.definition_site option =
   List.find_map
     (fun (stmt : Surface.surface_top_stmt) ->
       match stmt.std_decl with
@@ -968,11 +973,8 @@ let find_variant_site_in_surface_program
     program
 
 let find_text_site_in_range
-    ~(source : string)
-    ~(file_path : string)
-    ~(needle : string)
-    ~(start_pos : int)
-    ~(end_pos : int) : Module_sig.definition_site option =
+    ~(source : string) ~(file_path : string) ~(needle : string) ~(start_pos : int) ~(end_pos : int) :
+    Module_sig.definition_site option =
   let source_len = String.length source in
   let needle_len = String.length needle in
   let last_start = min (source_len - needle_len) end_pos in
@@ -991,19 +993,17 @@ let find_text_site_in_range
   else
     search start_pos
 
-let find_visible_type_declaration_site
-    (analysis : entry_analysis)
-    ~(file_path : string)
-    ~(surface_name : string) : Module_sig.definition_site option =
-  Option.bind
-    (find_visible_presence analysis ~file_path ~surface_name)
-    (fun presence ->
+let find_visible_type_declaration_site (analysis : entry_analysis) ~(file_path : string) ~(surface_name : string)
+    : Module_sig.definition_site option =
+  Option.bind (find_visible_presence analysis ~file_path ~surface_name) (fun presence ->
       if not (presence_has_type_namespace presence) then
         None
       else
         let fallback = definition_site_of_presence presence in
         let parsed_module =
-          first_some (find_parsed_module_by_file analysis ~file_path) (parsed_module_of_presence analysis presence)
+          first_some
+            (find_parsed_module_by_file analysis ~file_path)
+            (parsed_module_of_presence analysis presence)
         in
         match parsed_module with
         | None -> fallback
@@ -1013,18 +1013,17 @@ let find_visible_type_declaration_site
               fallback)
 
 let find_visible_constraint_declaration_site
-    (analysis : entry_analysis)
-    ~(file_path : string)
-    ~(surface_name : string) : Module_sig.definition_site option =
-  Option.bind
-    (find_visible_presence analysis ~file_path ~surface_name)
-    (fun presence ->
+    (analysis : entry_analysis) ~(file_path : string) ~(surface_name : string) : Module_sig.definition_site option
+    =
+  Option.bind (find_visible_presence analysis ~file_path ~surface_name) (fun presence ->
       if not (presence_has_constraint_namespace presence) then
         None
       else
         let fallback = definition_site_of_presence presence in
         let parsed_module =
-          first_some (find_parsed_module_by_file analysis ~file_path) (parsed_module_of_presence analysis presence)
+          first_some
+            (find_parsed_module_by_file analysis ~file_path)
+            (parsed_module_of_presence analysis presence)
         in
         match parsed_module with
         | None -> fallback
@@ -1034,19 +1033,17 @@ let find_visible_constraint_declaration_site
               fallback)
 
 let find_visible_variant_declaration_site
-    (analysis : entry_analysis)
-    ~(file_path : string)
-    ~(type_name : string)
-    ~(variant_name : string) : Module_sig.definition_site option =
-  Option.bind
-    (find_visible_presence analysis ~file_path ~surface_name:type_name)
-    (fun presence ->
+    (analysis : entry_analysis) ~(file_path : string) ~(type_name : string) ~(variant_name : string) :
+    Module_sig.definition_site option =
+  Option.bind (find_visible_presence analysis ~file_path ~surface_name:type_name) (fun presence ->
       if not presence.has_enum then
         None
       else
         let fallback = definition_site_of_presence presence in
         let parsed_module =
-          first_some (find_parsed_module_by_file analysis ~file_path) (parsed_module_of_presence analysis presence)
+          first_some
+            (find_parsed_module_by_file analysis ~file_path)
+            (parsed_module_of_presence analysis presence)
         in
         match parsed_module with
         | None -> fallback
@@ -1057,16 +1054,16 @@ let find_visible_variant_declaration_site
             first_some exact_site
               (first_some
                  (Option.bind fallback (fun site ->
-                      find_text_site_in_range ~source:parsed_module.source ~file_path:site.file_path ~needle:variant_name
-                        ~start_pos:site.start_pos ~end_pos:site.end_pos))
+                      find_text_site_in_range ~source:parsed_module.source ~file_path:site.file_path
+                        ~needle:variant_name ~start_pos:site.start_pos ~end_pos:site.end_pos))
                  (first_some
                     (find_text_site_in_range ~source:parsed_module.source ~file_path:parsed_module.file_path
-                       ~needle:variant_name ~start_pos:0 ~end_pos:(String.length parsed_module.source - 1))
+                       ~needle:variant_name ~start_pos:0
+                       ~end_pos:(String.length parsed_module.source - 1))
                     fallback)))
 
-let find_method_site_in_surface_program
-    (program : Surface.surface_program)
-    ~(callable_id : int) : Module_sig.definition_site option =
+let find_method_site_in_surface_program (program : Surface.surface_program) ~(callable_id : int) :
+    Module_sig.definition_site option =
   List.find_map
     (fun (stmt : Surface.surface_top_stmt) ->
       match stmt.std_decl with
@@ -1078,8 +1075,8 @@ let find_method_site_in_surface_program
               else
                 None)
             methods
-      | Surface.SAmbiguousImplDef { impl_methods; _ } | Surface.SInherentImplDef { inherent_methods = impl_methods; _ }
-        ->
+      | Surface.SAmbiguousImplDef { impl_methods; _ }
+      | Surface.SInherentImplDef { inherent_methods = impl_methods; _ } ->
           List.find_map
             (fun (method_ : Surface.surface_method_impl) ->
               if method_.smi_id = callable_id then
@@ -1091,8 +1088,8 @@ let find_method_site_in_surface_program
     program
 
 let find_callable_definition_site
-    (analysis : entry_analysis)
-    ~(callable_key : Typecheck.Resolution_artifacts.callable_key) : Module_sig.definition_site option =
+    (analysis : entry_analysis) ~(callable_key : Typecheck.Resolution_artifacts.callable_key) :
+    Module_sig.definition_site option =
   match callable_key with
   | Typecheck.Resolution_artifacts.SyntheticCallable _ -> None
   | Typecheck.Resolution_artifacts.UserCallable { callable_id; _ } ->
@@ -1102,17 +1099,17 @@ let find_callable_definition_site
         (match analysis.graph with
         | None -> None
         | Some graph ->
-            Hashtbl.to_seq_values graph.modules |> List.of_seq
+            Hashtbl.to_seq_values graph.modules
+            |> List.of_seq
             |> List.find_map (fun (module_ : Module_context.parsed_module) ->
                    find_method_site_in_surface_program module_.surface_program ~callable_id))
 
-let find_active_file_method_resolution (analysis : entry_analysis) ~(expr_id : int) : Infer.method_resolution option =
+let find_active_file_method_resolution (analysis : entry_analysis) ~(expr_id : int) :
+    Infer.method_resolution option =
   Option.bind analysis.project (fun project -> Hashtbl.find_opt project.artifacts.call_resolution_map expr_id)
 
-let resolve_visible_type_name_to_mono
-    (analysis : entry_analysis)
-    ~(file_path : string)
-    ~(surface_name : string) : Types.mono_type option =
+let resolve_visible_type_name_to_mono (analysis : entry_analysis) ~(file_path : string) ~(surface_name : string) :
+    Types.mono_type option =
   let fresh_args arity =
     List.init arity (fun idx -> Types.TVar (Printf.sprintf "__lsp_%s_%d" surface_name idx))
   in
@@ -1137,18 +1134,15 @@ let resolve_visible_type_name_to_mono
           | None -> None)
       | Some _ | None -> None)
 
-let find_trait_method_declaration_site
-    (analysis : entry_analysis)
-    ~(trait_name : string)
-    ~(method_name : string) : Module_sig.definition_site option =
+let find_trait_method_declaration_site (analysis : entry_analysis) ~(trait_name : string) ~(method_name : string)
+    : Module_sig.definition_site option =
   match Trait_registry.lookup_trait_method_with_supertraits trait_name method_name with
   | Some (_source_trait, method_sig) -> find_callable_definition_site analysis ~callable_key:method_sig.method_key
   | None -> None
 
 let find_inherent_method_declaration_site
-    (analysis : entry_analysis)
-    ~(receiver_type : Types.mono_type)
-    ~(method_name : string) : Module_sig.definition_site option =
+    (analysis : entry_analysis) ~(receiver_type : Types.mono_type) ~(method_name : string) :
+    Module_sig.definition_site option =
   match Inherent_registry.resolve_method receiver_type method_name with
   | Ok (Some method_sig) -> find_callable_definition_site analysis ~callable_key:method_sig.method_key
   | Ok None | Error _ -> None
@@ -1227,9 +1221,8 @@ let analyze_module_graph
               let active_file =
                 make_file_analysis ~file_path:entry_module.file_path ~module_id:entry_module.module_id
                   ~source:entry_module.source ~surface_program:entry_module.surface_program
-                  ~lowered_program:entry_module.program
-                  ~typed_program:checked_entry.program ~type_map:checked_entry.result.type_map
-                  ~environment:checked_entry.result.environment
+                  ~lowered_program:entry_module.program ~typed_program:checked_entry.program
+                  ~type_map:checked_entry.result.type_map ~environment:checked_entry.result.environment
                   ~type_var_user_names:checked_entry.type_var_user_names
                   ~symbol_table:checked_entry.result.symbol_table
                   ~identifier_symbols:checked_entry.result.identifier_symbols ~diagnostics:project.diagnostics ()
@@ -1799,8 +1792,7 @@ let%test "analyze_entry_with_source keeps surface entry AST alongside typed modu
                                     {
                                       se_receiver =
                                         {
-                                          se_expr =
-                                            Syntax.Surface_ast.Surface.SEIdentifier { text = "sum"; _ };
+                                          se_expr = Syntax.Surface_ast.Surface.SEIdentifier { text = "sum"; _ };
                                           _;
                                         };
                                       se_method = "sum";
@@ -1897,7 +1889,11 @@ let%test "analyze_entry_with_source preserves imported definition provenance for
                     {
                       se_expr =
                         Syntax.Surface_ast.Surface.SECall
-                          ( { se_expr = Syntax.Surface_ast.Surface.SEIdentifier { text = "add"; _ }; se_id = id; _ },
+                          ( {
+                              se_expr = Syntax.Surface_ast.Surface.SEIdentifier { text = "add"; _ };
+                              se_id = id;
+                              _;
+                            },
                             _ );
                       _;
                     };
