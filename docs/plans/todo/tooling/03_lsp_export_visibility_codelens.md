@@ -400,3 +400,5 @@ Mitigation:
 - 2026-04-06 02:02 CEST: Reconstructed implementation into test-first slices matching the commit plan: T0 export edit helpers and focused helper tests, T1 CodeLens plus execute-command plumbing and LSP server tests, T2/T3 dependent counting plus stale-command hardening and focused project/server tests.
 - 2026-04-06 02:06 CEST: Phase T0 completed: added `tools/lsp/lib/export_edits.ml` with exportable-declaration discovery plus minimal export-header edit generation covering append/create/remove/delete-empty cases and no-op visibility requests.
 - 2026-04-06 02:06 CEST: Focused verification for Phase T0 passed with `make unit lsp`.
+- 2026-04-06 02:13 CEST: Phase T1 completed: added `tools/lsp/lib/code_lens.ml`, advertised CodeLens plus `marmoset.setExportVisibility`, reused cached `latest`/`last_good` analysis policy for CodeLens requests, and wired execute-command handling through `workspace/applyEdit`.
+- 2026-04-06 02:13 CEST: Focused verification for Phase T1 passed with `make unit lsp`.

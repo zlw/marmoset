@@ -2,6 +2,7 @@
 
 module Lsp_t = Linol_lsp.Types
 module Diagnostic = Marmoset.Lib.Diagnostic
+module Server_request = Linol_lsp.Server_request
 
 (* Per-document cached analysis *)
 type cached_doc = {
@@ -29,6 +30,9 @@ let analysis_has_completion_semantics (analysis : Doc_state.analysis_result) : b
 
 let analysis_has_definition_semantics (analysis : Doc_state.analysis_result) : bool =
   analysis.compiler_analysis <> None && (analysis.surface_program <> None || analysis.program <> None)
+
+let analysis_has_code_lens_semantics (analysis : Doc_state.analysis_result) : bool =
+  analysis.compiler_analysis <> None && analysis.surface_program <> None
 
 let update_cached_doc (previous : cached_doc option) (latest : Doc_state.analysis_result) : cached_doc =
   {
@@ -137,6 +141,98 @@ let definition_analysis_for_cached_doc
   in
   (refreshed, analysis)
 
+let codelens_analysis_for_cached_doc
+    ~(cached : cached_doc)
+    ~(current_source : string option)
+    ~(file_id : string)
+    ~(source_root : string option)
+    ~(source_overrides : (string, string) Hashtbl.t) : cached_doc * Doc_state.analysis_result =
+  let refreshed =
+    match current_source with
+    | Some source when not (String.equal source cached.latest.source) ->
+        let latest = Doc_state.analyze_with_file_id ?source_root ~source_overrides ~file_id ~source () in
+        update_cached_doc (Some cached) latest
+    | Some _ | None -> cached
+  in
+  let analysis =
+    if analysis_has_code_lens_semantics refreshed.latest then
+      refreshed.latest
+    else
+      Option.value refreshed.last_good ~default:refreshed.latest
+  in
+  (refreshed, analysis)
+
+let positions_equal (left : Lsp_t.Position.t) (right : Lsp_t.Position.t) : bool =
+  left.line = right.line && left.character = right.character
+
+let ranges_equal (left : Lsp_t.Range.t) (right : Lsp_t.Range.t) : bool =
+  positions_equal left.start right.start && positions_equal left.end_ right.end_
+
+let export_command_args_of_jsons = function
+  | Some [ json ] -> Code_lens.args_of_json json
+  | _ -> Error "expected exactly one export-visibility command argument"
+
+let revalidated_export_decl
+    ~(source : string)
+    ~(program : Export_edits.Surface.surface_program)
+    ~(args : Code_lens.command_args) : Export_edits.exportable_decl option =
+  let matching =
+    Export_edits.exportable_declarations program
+    |> List.filter (fun (decl : Export_edits.exportable_decl) ->
+           String.equal decl.surface_name args.surface_name && decl.declaration_kind = args.declaration_kind)
+  in
+  match
+    List.find_opt
+      (fun (decl : Export_edits.exportable_decl) ->
+        ranges_equal (Export_edits.declaration_range ~source decl) args.original_range)
+      matching
+  with
+  | Some _ as decl -> decl
+  | None -> (
+      match matching with
+      | [ decl ] -> Some decl
+      | _ -> None)
+
+let apply_workspace_edit_params_for_export_command
+    ~(source : string)
+    ~(program : Export_edits.Surface.surface_program)
+    ~(args : Code_lens.command_args) : (Lsp_t.ApplyWorkspaceEditParams.t, string) result =
+  match revalidated_export_decl ~source ~program ~args with
+  | None ->
+      Error
+        (Printf.sprintf "unable to revalidate %s declaration '%s'"
+           (Code_lens.string_of_declaration_kind args.declaration_kind)
+           args.surface_name)
+  | Some decl -> (
+      match Export_edits.edit_for_visibility ~source ~program ~decl ~visibility:args.visibility with
+      | None ->
+          Error
+            (Printf.sprintf "visibility for '%s' already matches requested state" args.surface_name)
+      | Some edits ->
+          let edit = Lsp_t.WorkspaceEdit.create ~changes:[ (args.uri, edits) ] () in
+          Ok
+            (Lsp_t.ApplyWorkspaceEditParams.create ~edit
+               ~label:(Printf.sprintf "Set export visibility for %s" args.surface_name)
+               ()))
+
+let send_apply_workspace_edit
+    ~(notify_back : Linol_lwt.Jsonrpc2.notify_back)
+    (params : Lsp_t.ApplyWorkspaceEditParams.t) : Yojson.Safe.t Lwt.t =
+  let open Lwt.Syntax in
+  let waiter, wakener = Lwt.wait () in
+  let* _ =
+    notify_back#send_request (Server_request.WorkspaceApplyEdit params) (fun result ->
+        Lwt.wakeup_later wakener result;
+        Lwt.return_unit)
+  in
+  let* result = waiter in
+  (match result with
+  | Ok (_ : Lsp_t.ApplyWorkspaceEditResult.t) -> Lwt.return `Null
+  | Error err ->
+      let _ = err in
+      Printf.eprintf "[marmoset-lsp] workspace/applyEdit failed\n%!";
+      Lwt.return `Null)
+
 class marmoset_server =
   object (self)
     inherit Linol_lwt.Jsonrpc2.server as super
@@ -151,6 +247,8 @@ class marmoset_server =
     method! config_inlay_hints = Some (`Bool true)
     method! config_definition = Some (`Bool true)
     method! config_completion = Some (Lsp_t.CompletionOptions.create ~triggerCharacters:[ "." ] ())
+    method! config_code_lens_options = Some (Lsp_t.CodeLensOptions.create ())
+    method! config_list_commands = [ Code_lens.export_visibility_command ]
 
     method! config_modify_capabilities c =
       {
@@ -451,6 +549,80 @@ class marmoset_server =
       in
       Lwt.return result
 
+    method! on_req_code_lens
+        ~notify_back:_ ~id:_ ~uri ~workDoneToken:_ ~partialResultToken:_ (_doc_state : Linol_lwt.doc_state) =
+      let result =
+        match Hashtbl.find_opt analysis_cache uri with
+        | None -> []
+        | Some cached ->
+            let current_source = Option.map (fun (doc : open_doc) -> doc.text) (Hashtbl.find_opt open_docs uri) in
+            let source_root =
+              match Hashtbl.find_opt open_docs uri with
+              | Some doc -> choose_known_source_root ~analysis_cache ~uri ~file_path:doc.file_path
+              | None ->
+                  choose_known_source_root ~analysis_cache ~uri
+                    ~file_path:(Doc_state.file_path_of_file_id (Lsp_t.DocumentUri.to_string uri))
+            in
+            let source_overrides = self#source_overrides () in
+            let file_id = Lsp_t.DocumentUri.to_string uri in
+            let cached, analysis =
+              codelens_analysis_for_cached_doc ~cached ~current_source ~file_id ~source_root ~source_overrides
+            in
+            Hashtbl.replace analysis_cache uri cached;
+            match analysis.surface_program with
+            | Some program -> Code_lens.compute ~source:analysis.source ~uri ~program ()
+            | None -> []
+      in
+      Lwt.return result
+
+    method! on_req_execute_command ~notify_back ~id:_ ~workDoneToken:_ command args =
+      if not (String.equal command Code_lens.export_visibility_command) then
+        Lwt.return `Null
+      else
+        match export_command_args_of_jsons args with
+        | Error message ->
+            Printf.eprintf "[marmoset-lsp] executeCommand rejected: %s\n%!" message;
+            Lwt.return `Null
+        | Ok args ->
+            let uri = args.uri in
+            let current_source =
+              match Hashtbl.find_opt open_docs uri with
+              | Some doc -> Some doc.text
+              | None -> Option.map (fun cached -> cached.latest.source) (Hashtbl.find_opt analysis_cache uri)
+            in
+            let source_root =
+              match Hashtbl.find_opt open_docs uri with
+              | Some doc -> choose_known_source_root ~analysis_cache ~uri ~file_path:doc.file_path
+              | None ->
+                  choose_known_source_root ~analysis_cache ~uri
+                    ~file_path:(Doc_state.file_path_of_file_id (Lsp_t.DocumentUri.to_string uri))
+            in
+            (match current_source with
+            | None ->
+                Printf.eprintf "[marmoset-lsp] executeCommand rejected: no source for %s\n%!"
+                  (Lsp_t.DocumentUri.to_string uri);
+                Lwt.return `Null
+            | Some source ->
+                let source_overrides = self#source_overrides () in
+                let file_id = Lsp_t.DocumentUri.to_string uri in
+                let analysis =
+                  Doc_state.analyze_with_file_id ?source_root ~source_overrides ~file_id ~source ()
+                in
+                let previous = Hashtbl.find_opt analysis_cache uri in
+                Hashtbl.replace analysis_cache uri (update_cached_doc previous analysis);
+                match analysis.surface_program with
+                | None ->
+                    Printf.eprintf
+                      "[marmoset-lsp] executeCommand rejected: current document does not have a parseable surface program\n\
+                       %!";
+                    Lwt.return `Null
+                | Some program -> (
+                    match apply_workspace_edit_params_for_export_command ~source ~program ~args with
+                    | Error message ->
+                        Printf.eprintf "[marmoset-lsp] executeCommand rejected: %s\n%!" message;
+                        Lwt.return `Null
+                    | Ok params -> send_apply_workspace_edit ~notify_back params))
+
     method! on_request_unhandled : type r. notify_back:_ -> id:_ -> r Linol_lsp.Client_request.t -> r Lwt.t =
       fun ~notify_back ~id req ->
         match req with
@@ -667,6 +839,63 @@ let cached_definition_target
   in
   !captured
 
+let cached_code_lens_titles ?cached_annotated ?last_good_annotated ~(files : (string * string) list) ~(entry_rel : string)
+    (annotated : string) : string list =
+  let captured = ref [] in
+  let _ =
+    Doc_state.with_temp_project files (fun root ->
+        let cached_annotated = Option.value cached_annotated ~default:annotated in
+        let cached_source, _, _ = source_with_cursor cached_annotated in
+        let source, _, _ = source_with_cursor annotated in
+        let file_id = Filename.concat root entry_rel in
+        let latest = Doc_state.analyze_with_file_id ~source_root:root ~file_id ~source:cached_source () in
+        let previous =
+          Option.map
+            (fun annotated ->
+              let source, _, _ = source_with_cursor annotated in
+              let last_good = Doc_state.analyze_with_file_id ~source_root:root ~file_id ~source () in
+              update_cached_doc None last_good)
+            last_good_annotated
+        in
+        let cached = update_cached_doc previous latest in
+        let source_overrides = Hashtbl.create 0 in
+        let _, analysis =
+          codelens_analysis_for_cached_doc ~cached ~current_source:(Some source) ~file_id ~source_root:(Some root)
+            ~source_overrides
+        in
+        captured :=
+          (match analysis.surface_program with
+          | Some program ->
+              Code_lens.compute ~source:analysis.source ~uri:(Lsp_t.DocumentUri.of_path file_id) ~program ()
+              |> Code_lens.lens_titles
+          | None -> []);
+        true)
+  in
+  !captured
+
+let command_args_from_lens (lens : Lsp_t.CodeLens.t) : Code_lens.command_args option =
+  Option.bind lens.command (fun (command : Lsp_t.Command.t) ->
+      match command.arguments with
+      | Some [ json ] -> Result.to_option (Code_lens.args_of_json json)
+      | _ -> None)
+
+let first_code_lens_for_source ~(source : string) ~(file_path : string) : Lsp_t.CodeLens.t option =
+  match Code_lens.compute ~source ~uri:(Lsp_t.DocumentUri.of_path file_path)
+          ~program:(Export_edits.parse_surface_program ~source) ()
+  with
+  | lens :: _ -> Some lens
+  | [] -> None
+
+let apply_source_for_command ~(source : string) ~(args : Code_lens.command_args) : string option =
+  match
+    apply_workspace_edit_params_for_export_command ~source ~program:(Export_edits.parse_surface_program ~source) ~args
+  with
+  | Ok params -> (
+      match params.edit.changes with
+      | Some [ (_uri, edits) ] -> Some (Export_edits.apply_text_edits ~source edits)
+      | _ -> None)
+  | Error _ -> None
+
 let%test "server definition uses live buffer text instead of stale cached source" =
   let main_source = "type Point = { x: Int }\nlet p: Point = { x: 1 }\np\n" in
   let main_path, actual =
@@ -675,6 +904,45 @@ let%test "server definition uses live buffer text instead of stale cached source
       "type Point = { x: Int }\nlet p: Point| = { x: 1 }\np\n"
   in
   actual = Definition.target_span_of_substring ~file_path:main_path ~source:main_source ~needle:"Point" ()
+
+let%test "server code lens uses live buffer text instead of stale cached source" =
+  let titles =
+    cached_code_lens_titles ~cached_annotated:"export greet\nfn greet(name: Str) -> Str = name\n|\n"
+      ~files:[ ("main.mr", "fn greet(name: Str) -> Str = name\n") ] ~entry_rel:"main.mr"
+      "fn greet(name: Str) -> Str = name\n|\n"
+  in
+  titles = [ "make public" ]
+
+let%test "server code lens falls back to last_good during incomplete edits" =
+  let titles =
+    cached_code_lens_titles
+      ~cached_annotated:"fn greet(name: Str) -> Str = {|\n"
+      ~last_good_annotated:"fn greet(name: Str) -> Str = name|\n"
+      ~files:[ ("main.mr", "fn greet(name: Str) -> Str = name\n") ] ~entry_rel:"main.mr"
+      "fn greet(name: Str) -> Str = {|\n"
+  in
+  titles = [ "make public" ]
+
+let%test "server execute command builds export edits against live open-buffer text" =
+  let stale_source = "fn greet(name: Str) -> Str = name\n" in
+  let live_source = "# heading\n\nfn greet(name: Str) -> Str = name\n" in
+  match first_code_lens_for_source ~source:stale_source ~file_path:"/tmp/server_execute_command_test.mr" with
+  | None -> false
+  | Some lens -> (
+      match command_args_from_lens lens with
+      | None -> false
+      | Some args ->
+          apply_source_for_command ~source:live_source ~args
+          = Some "# heading\n\nexport greet\nfn greet(name: Str) -> Str = name\n")
+
+let%test "server execute command rejects renamed declarations instead of guessing" =
+  let source = "fn greet(name: Str) -> Str = name\n" in
+  match first_code_lens_for_source ~source ~file_path:"/tmp/server_execute_command_test.mr" with
+  | None -> false
+  | Some lens -> (
+      match command_args_from_lens lens with
+      | None -> false
+      | Some args -> apply_source_for_command ~source:"fn renamed(name: Str) -> Str = name\n" ~args = None)
 
 let%test "server definition falls back to last_good during incomplete edits" =
   let main_source = "type Point = { x: Int }\nlet p: Point = { x: 1 }\np\n" in
