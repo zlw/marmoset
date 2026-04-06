@@ -3,7 +3,7 @@
 ## Maintenance
 
 - Last verified: 2026-04-06
-- Implementation status: In Progress
+- Implementation status: Implemented (unit suites green; repo quality gate still blocked by unrelated formatting drift)
 - Type: Tooling plan
 - Update trigger: Any change to export-header syntax/ordering, `lib/frontend/{discovery,module_context,import_resolver,compiler}.ml`, `tools/lsp/lib/{server,doc_state,cursor_context}.ml`, or editor/LSP capability plumbing around CodeLens and execute-command.
 
@@ -402,3 +402,6 @@ Mitigation:
 - 2026-04-06 02:06 CEST: Focused verification for Phase T0 passed with `make unit lsp`.
 - 2026-04-06 02:13 CEST: Phase T1 completed: added `tools/lsp/lib/code_lens.ml`, advertised CodeLens plus `marmoset.setExportVisibility`, reused cached `latest`/`last_good` analysis policy for CodeLens requests, and wired execute-command handling through `workspace/applyEdit`.
 - 2026-04-06 02:13 CEST: Focused verification for Phase T1 passed with `make unit lsp`.
+- 2026-04-06 02:27 CEST: Phase T2/T3 completed: added bulk surface-reference collection in `tools/lsp/lib/cursor_context.ml`, per-request dependent counting in `tools/lsp/lib/server.ml`, nonzero `make private (used by N module[s])` titles, and stale-command hardening that revalidates declaration heads against live buffers before applying edits.
+- 2026-04-06 02:27 CEST: Focused verification for Phase T2/T3 passed with `make unit lsp`; broader verification also passed with `make unit`.
+- 2026-04-06 02:27 CEST: Repo quality gate remains blocked by pre-existing unrelated formatting drift in untouched files including `lib/frontend/module_context.ml`, `tools/lsp/lib/doc_state.ml`, and `lib/frontend/syntax/parser.ml`; `./test/ci/quality.sh` is therefore still red for this branch.

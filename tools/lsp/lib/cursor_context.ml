@@ -56,9 +56,7 @@ type reference =
       path_segments : string list;
       segment_index : int;
     }
-  | Constraint_identifier of {
-      name_ref : Surface.name_ref;
-    }
+  | Constraint_identifier of { name_ref : Surface.name_ref }
   | Qualified_root of {
       root_ref : Surface.name_ref;
       root_expr_id : int option;
@@ -78,7 +76,8 @@ type cursor_context_input = {
   scope_index : scope_index;
 }
 
-let name_ref_contains ~(offset : int) (ref_ : Surface.name_ref) : bool = offset >= ref_.pos && offset <= ref_.end_pos
+let name_ref_contains ~(offset : int) (ref_ : Surface.name_ref) : bool =
+  offset >= ref_.pos && offset <= ref_.end_pos
 
 let binding_of_name ~(scope_index : scope_index) ~(binding_kind : binding_kind) ~(name : string) ~(offset : int) :
     scope_binding option =
@@ -236,10 +235,12 @@ let build_scope_index (program : Surface.surface_program) : scope_index =
           in
           let acc =
             match type_body with
-            | Surface.STTransparent type_expr | Surface.STNamedWrapper type_expr -> build_scope_index_type acc type_expr
+            | Surface.STTransparent type_expr | Surface.STNamedWrapper type_expr ->
+                build_scope_index_type acc type_expr
             | Surface.STNamedProduct fields ->
                 List.fold_left
-                  (fun acc (field : Surface.surface_record_type_field) -> build_scope_index_type acc field.sf_type)
+                  (fun acc (field : Surface.surface_record_type_field) ->
+                    build_scope_index_type acc field.sf_type)
                   acc fields
             | Surface.STNamedSum variants ->
                 List.fold_left
@@ -278,7 +279,10 @@ let build_scope_index (program : Surface.surface_program) : scope_index =
                   ~some:(add_generic_param_bindings acc ~scope_start:stmt.std_pos ~scope_end:stmt.std_end_pos)
                   method_.sm_generics
               in
-              let acc = add_typed_param_bindings acc ~scope_start:stmt.std_pos ~scope_end:stmt.std_end_pos method_.sm_params in
+              let acc =
+                add_typed_param_bindings acc ~scope_start:stmt.std_pos ~scope_end:stmt.std_end_pos
+                  method_.sm_params
+              in
               let acc = build_scope_index_type acc method_.sm_return_type in
               Option.fold ~none:acc ~some:(build_scope_index_expr_or_block acc) method_.sm_default_impl)
             acc methods
@@ -294,7 +298,10 @@ let build_scope_index (program : Surface.surface_program) : scope_index =
                   ~some:(add_generic_param_bindings acc ~scope_start:stmt.std_pos ~scope_end:stmt.std_end_pos)
                   method_.smi_generics
               in
-              let acc = add_value_param_bindings acc ~scope_start:stmt.std_pos ~scope_end:stmt.std_end_pos method_.smi_params in
+              let acc =
+                add_value_param_bindings acc ~scope_start:stmt.std_pos ~scope_end:stmt.std_end_pos
+                  method_.smi_params
+              in
               let acc = Option.fold ~none:acc ~some:(build_scope_index_type acc) method_.smi_return_type in
               build_scope_index_expr_or_block acc method_.smi_body)
             acc impl_methods
@@ -307,7 +314,10 @@ let build_scope_index (program : Surface.surface_program) : scope_index =
                   ~some:(add_generic_param_bindings acc ~scope_start:stmt.std_pos ~scope_end:stmt.std_end_pos)
                   method_.smi_generics
               in
-              let acc = add_value_param_bindings acc ~scope_start:stmt.std_pos ~scope_end:stmt.std_end_pos method_.smi_params in
+              let acc =
+                add_value_param_bindings acc ~scope_start:stmt.std_pos ~scope_end:stmt.std_end_pos
+                  method_.smi_params
+              in
               let acc = Option.fold ~none:acc ~some:(build_scope_index_type acc) method_.smi_return_type in
               build_scope_index_expr_or_block acc method_.smi_body)
             acc inherent_methods
@@ -329,8 +339,8 @@ let identifier_root_of_expr (expr : Surface.surface_expr) : (Surface.name_ref * 
       | _ -> None)
   | _ -> None
 
-let declaration_ref_if_contains ~(offset : int) ~(name_ref : Surface.name_ref) ~(declaration_kind : declaration_kind) :
-    reference option =
+let declaration_ref_if_contains
+    ~(offset : int) ~(name_ref : Surface.name_ref) ~(declaration_kind : declaration_kind) : reference option =
   if name_ref_contains ~offset name_ref then
     Some (Declaration_head { name_ref; declaration_kind })
   else
@@ -365,14 +375,13 @@ let type_path_reference_of_name ~(offset : int) (name_ref : Surface.name_ref) : 
             None)
         segment_refs)
 
-let type_reference_of_name ~(scope_index : scope_index) ~(offset : int) (name_ref : Surface.name_ref) : reference option =
+let type_reference_of_name ~(scope_index : scope_index) ~(offset : int) (name_ref : Surface.name_ref) :
+    reference option =
   match type_path_reference_of_name ~offset name_ref with
   | Some _ as reference -> reference
   | None ->
       if name_ref_contains ~offset name_ref then
-        let binding =
-          binding_of_name ~scope_index ~binding_kind:Type_binding ~name:name_ref.text ~offset
-        in
+        let binding = binding_of_name ~scope_index ~binding_kind:Type_binding ~name:name_ref.text ~offset in
         Some (Type_identifier { name_ref; binding })
       else
         None
@@ -388,12 +397,11 @@ let reference_in_generic_param ~(offset : int) (param : Surface.surface_generic_
     (declaration_ref_if_contains ~offset ~name_ref:param.sg_name_ref ~declaration_kind:Generic_decl)
     (List.find_map (constraint_reference_of_name ~offset) param.sg_constraint_refs)
 
-let value_reference_of_expr ~(scope_index : scope_index) ~(offset : int) (expr : Surface.surface_expr)
-    (name_ref : Surface.name_ref) : reference option =
+let value_reference_of_expr
+    ~(scope_index : scope_index) ~(offset : int) (expr : Surface.surface_expr) (name_ref : Surface.name_ref) :
+    reference option =
   if name_ref_contains ~offset name_ref then
-    let binding =
-      binding_of_name ~scope_index ~binding_kind:Value_binding ~name:name_ref.text ~offset
-    in
+    let binding = binding_of_name ~scope_index ~binding_kind:Value_binding ~name:name_ref.text ~offset in
     Some (Value_identifier { name_ref; expr_id = expr.se_id; binding })
   else
     None
@@ -417,14 +425,17 @@ let rec reference_in_type ~(scope_index : scope_index) ~(offset : int) (type_exp
   | Surface.STRecord (fields, row) ->
       first_some
         (List.find_map
-           (fun (field : Surface.surface_record_type_field) -> reference_in_type ~scope_index ~offset field.sf_type)
+           (fun (field : Surface.surface_record_type_field) ->
+             reference_in_type ~scope_index ~offset field.sf_type)
            fields)
         (Option.bind row (reference_in_type ~scope_index ~offset))
 
-let rec reference_in_expr ~(scope_index : scope_index) ~(offset : int) (expr : Surface.surface_expr) : reference option =
+let rec reference_in_expr ~(scope_index : scope_index) ~(offset : int) (expr : Surface.surface_expr) :
+    reference option =
   match expr.se_expr with
   | Surface.SEIdentifier name_ref -> value_reference_of_expr ~scope_index ~offset expr name_ref
-  | Surface.SEInteger _ | Surface.SEFloat _ | Surface.SEBoolean _ | Surface.SEString _ | Surface.SEPlaceholder -> None
+  | Surface.SEInteger _ | Surface.SEFloat _ | Surface.SEBoolean _ | Surface.SEString _ | Surface.SEPlaceholder ->
+      None
   | Surface.SEArray exprs -> List.find_map (reference_in_expr ~scope_index ~offset) exprs
   | Surface.SEIndex (left, right) | Surface.SEInfix (left, _, right) ->
       first_some (reference_in_expr ~scope_index ~offset left) (reference_in_expr ~scope_index ~offset right)
@@ -461,7 +472,8 @@ let rec reference_in_expr ~(scope_index : scope_index) ~(offset : int) (expr : S
       first_some
         (reference_in_expr ~scope_index ~offset scrutinee)
         (List.find_map
-           (fun (arm : Surface.surface_match_arm) -> reference_in_expr_or_block ~scope_index ~offset arm.se_arm_body)
+           (fun (arm : Surface.surface_match_arm) ->
+             reference_in_expr_or_block ~scope_index ~offset arm.se_arm_body)
            arms)
   | Surface.SERecordLit (fields, spread) ->
       first_some
@@ -489,8 +501,7 @@ let rec reference_in_expr ~(scope_index : scope_index) ~(offset : int) (expr : S
       if name_ref_contains ~offset se_method_ref then
         Option.map
           (fun (root_ref, root_expr_id) ->
-            Qualified_member
-              { root_ref; root_expr_id; member_ref = se_method_ref; access_expr_id = expr.se_id })
+            Qualified_member { root_ref; root_expr_id; member_ref = se_method_ref; access_expr_id = expr.se_id })
           (identifier_root_of_expr se_receiver)
       else
         first_some
@@ -512,7 +523,8 @@ and reference_in_expr_or_block ~(scope_index : scope_index) ~(offset : int) = fu
   | Surface.SEOBExpr expr -> reference_in_expr ~scope_index ~offset expr
   | Surface.SEOBBlock block -> reference_in_block ~scope_index ~offset block
 
-and reference_in_stmt ~(scope_index : scope_index) ~(offset : int) (stmt : Surface.surface_stmt) : reference option =
+and reference_in_stmt ~(scope_index : scope_index) ~(offset : int) (stmt : Surface.surface_stmt) :
+    reference option =
   match stmt.ss_stmt with
   | Surface.SSLet { ss_name_ref; ss_type_annotation; ss_value; _ } ->
       first_some
@@ -523,7 +535,8 @@ and reference_in_stmt ~(scope_index : scope_index) ~(offset : int) (stmt : Surfa
   | Surface.SSReturn expr | Surface.SSExpressionStmt expr -> reference_in_expr ~scope_index ~offset expr
   | Surface.SSBlock block -> reference_in_block ~scope_index ~offset block
 
-and reference_in_block ~(scope_index : scope_index) ~(offset : int) (block : Surface.surface_block) : reference option =
+and reference_in_block ~(scope_index : scope_index) ~(offset : int) (block : Surface.surface_block) :
+    reference option =
   List.find_map (reference_in_stmt ~scope_index ~offset) block.sb_stmts
 
 and reference_in_method_sig ~(scope_index : scope_index) ~(offset : int) (method_ : Surface.surface_method_sig) :
@@ -543,8 +556,8 @@ and reference_in_method_sig ~(scope_index : scope_index) ~(offset : int) (method
              (reference_in_type ~scope_index ~offset method_.sm_return_type)
              (Option.bind method_.sm_default_impl (reference_in_expr_or_block ~scope_index ~offset)))))
 
-and reference_in_method_impl ~(scope_index : scope_index) ~(offset : int) (method_ : Surface.surface_method_impl) :
-    reference option =
+and reference_in_method_impl ~(scope_index : scope_index) ~(offset : int) (method_ : Surface.surface_method_impl)
+    : reference option =
   first_some
     (declaration_ref_if_contains ~offset ~name_ref:method_.smi_name_ref ~declaration_kind:Inherent_method_decl)
     (first_some
@@ -671,6 +684,231 @@ let reference_in_top_stmt ~(scope_index : scope_index) ~(offset : int) (stmt : S
 let reference_at ~source:_ ~(input : cursor_context_input) ~(offset : int) : reference option =
   List.find_map (reference_in_top_stmt ~scope_index:input.scope_index ~offset) input.surface_program
 
+let collect_type_reference ~(scope_index : scope_index) (name_ref : Surface.name_ref) : reference list =
+  match dotted_name_segments name_ref with
+  | Some (segment_refs, path_segments) ->
+      List.mapi
+        (fun segment_index segment_ref -> Type_path_segment { segment_ref; path_segments; segment_index })
+        segment_refs
+  | None ->
+      let binding =
+        binding_of_name ~scope_index ~binding_kind:Type_binding ~name:name_ref.text ~offset:name_ref.pos
+      in
+      [ Type_identifier { name_ref; binding } ]
+
+let collect_constraint_references (refs : Surface.name_ref list) : reference list =
+  List.map (fun name_ref -> Constraint_identifier { name_ref }) refs
+
+let collect_generic_param_references (params : Surface.surface_generic_param list) : reference list =
+  List.concat_map
+    (fun (param : Surface.surface_generic_param) -> collect_constraint_references param.sg_constraint_refs)
+    params
+
+let rec collect_expr_references ~(scope_index : scope_index) (expr : Surface.surface_expr) : reference list =
+  match expr.se_expr with
+  | Surface.SEIdentifier name_ref ->
+      let binding =
+        binding_of_name ~scope_index ~binding_kind:Value_binding ~name:name_ref.text ~offset:name_ref.pos
+      in
+      [ Value_identifier { name_ref; expr_id = expr.se_id; binding } ]
+  | Surface.SEInteger _ | Surface.SEFloat _ | Surface.SEBoolean _ | Surface.SEString _ | Surface.SEPlaceholder ->
+      []
+  | Surface.SEArray exprs -> List.concat_map (collect_expr_references ~scope_index) exprs
+  | Surface.SEIndex (left, right) | Surface.SEInfix (left, _, right) ->
+      collect_expr_references ~scope_index left @ collect_expr_references ~scope_index right
+  | Surface.SETypeApply (callee, type_args) ->
+      collect_expr_references ~scope_index callee
+      @ List.concat_map (collect_type_references ~scope_index) type_args
+  | Surface.SEHash pairs ->
+      List.concat_map
+        (fun (left, right) ->
+          collect_expr_references ~scope_index left @ collect_expr_references ~scope_index right)
+        pairs
+  | Surface.SEPrefix (_, inner) -> collect_expr_references ~scope_index inner
+  | Surface.SETypeCheck (inner, type_expr) ->
+      collect_expr_references ~scope_index inner @ collect_type_references ~scope_index type_expr
+  | Surface.SEIf (cond, then_, else_) ->
+      collect_expr_references ~scope_index cond
+      @ collect_stmt_references ~scope_index then_
+      @ Option.fold ~none:[] ~some:(collect_stmt_references ~scope_index) else_
+  | Surface.SECall (callee, args) ->
+      collect_expr_references ~scope_index callee @ List.concat_map (collect_expr_references ~scope_index) args
+  | Surface.SEEnumConstructor (root_ref, member_ref, args) ->
+      Qualified_root { root_ref; root_expr_id = None; member_ref; access_expr_id = expr.se_id }
+      :: Qualified_member { root_ref; root_expr_id = None; member_ref; access_expr_id = expr.se_id }
+      :: List.concat_map (collect_expr_references ~scope_index) args
+  | Surface.SEMatch (scrutinee, arms) ->
+      collect_expr_references ~scope_index scrutinee
+      @ List.concat_map
+          (fun (arm : Surface.surface_match_arm) -> collect_expr_or_block_references ~scope_index arm.se_arm_body)
+          arms
+  | Surface.SERecordLit (fields, spread) ->
+      List.concat_map
+        (fun (field : Surface.surface_record_field) ->
+          Option.fold ~none:[] ~some:(collect_expr_references ~scope_index) field.se_field_value)
+        fields
+      @ Option.fold ~none:[] ~some:(collect_expr_references ~scope_index) spread
+  | Surface.SEFieldAccess (receiver, member_ref) ->
+      let receiver_refs = collect_expr_references ~scope_index receiver in
+      let qualified_refs =
+        match identifier_root_of_expr receiver with
+        | Some (root_ref, root_expr_id) ->
+            [
+              Qualified_root { root_ref; root_expr_id; member_ref; access_expr_id = expr.se_id };
+              Qualified_member { root_ref; root_expr_id; member_ref; access_expr_id = expr.se_id };
+            ]
+        | None -> []
+      in
+      receiver_refs @ qualified_refs
+  | Surface.SEMethodCall { se_receiver; se_method_ref; se_type_args; se_args; _ } ->
+      let receiver_refs = collect_expr_references ~scope_index se_receiver in
+      let qualified_refs =
+        match identifier_root_of_expr se_receiver with
+        | Some (root_ref, root_expr_id) ->
+            [
+              Qualified_root { root_ref; root_expr_id; member_ref = se_method_ref; access_expr_id = expr.se_id };
+              Qualified_member { root_ref; root_expr_id; member_ref = se_method_ref; access_expr_id = expr.se_id };
+            ]
+        | None -> []
+      in
+      receiver_refs
+      @ qualified_refs
+      @ Option.fold ~none:[] ~some:(List.concat_map (collect_type_references ~scope_index)) se_type_args
+      @ List.concat_map (collect_expr_references ~scope_index) se_args
+  | Surface.SEArrowLambda { se_lambda_body; _ } -> collect_expr_or_block_references ~scope_index se_lambda_body
+  | Surface.SEBlockExpr block -> collect_block_references ~scope_index block
+
+and collect_expr_or_block_references ~(scope_index : scope_index) = function
+  | Surface.SEOBExpr expr -> collect_expr_references ~scope_index expr
+  | Surface.SEOBBlock block -> collect_block_references ~scope_index block
+
+and collect_stmt_references ~(scope_index : scope_index) (stmt : Surface.surface_stmt) : reference list =
+  match stmt.ss_stmt with
+  | Surface.SSLet { ss_type_annotation; ss_value; _ } ->
+      Option.fold ~none:[] ~some:(collect_type_references ~scope_index) ss_type_annotation
+      @ collect_expr_references ~scope_index ss_value
+  | Surface.SSReturn expr | Surface.SSExpressionStmt expr -> collect_expr_references ~scope_index expr
+  | Surface.SSBlock block -> collect_block_references ~scope_index block
+
+and collect_block_references ~(scope_index : scope_index) (block : Surface.surface_block) : reference list =
+  List.concat_map (collect_stmt_references ~scope_index) block.sb_stmts
+
+and collect_type_references ~(scope_index : scope_index) (type_expr : Surface.surface_type_expr) : reference list
+    =
+  match type_expr.ste_desc with
+  | Surface.STVar name_ref | Surface.STCon name_ref -> collect_type_reference ~scope_index name_ref
+  | Surface.STApp (name_ref, args) ->
+      collect_type_reference ~scope_index name_ref @ List.concat_map (collect_type_references ~scope_index) args
+  | Surface.STConstraintShorthand refs | Surface.STTraitObject refs -> collect_constraint_references refs
+  | Surface.STArrow (params, ret, _) ->
+      List.concat_map (collect_type_references ~scope_index) params @ collect_type_references ~scope_index ret
+  | Surface.STUnion members | Surface.STIntersection members ->
+      List.concat_map (collect_type_references ~scope_index) members
+  | Surface.STRecord (fields, row) ->
+      List.concat_map
+        (fun (field : Surface.surface_record_type_field) -> collect_type_references ~scope_index field.sf_type)
+        fields
+      @ Option.fold ~none:[] ~some:(collect_type_references ~scope_index) row
+
+let collect_references ~(input : cursor_context_input) : reference list =
+  List.concat_map
+    (fun (stmt : Surface.surface_top_stmt) ->
+      match stmt.std_decl with
+      | Surface.SExportDecl _ -> []
+      | Surface.SImportDecl { import_path; import_path_refs; import_alias_ref; _ } ->
+          Option.fold ~none:[]
+            ~some:(fun alias_ref -> [ Import_alias { alias_ref; import_path } ])
+            import_alias_ref
+          @ List.mapi
+              (fun segment_index segment_ref -> Import_path_segment { segment_ref; import_path; segment_index })
+              import_path_refs
+      | Surface.SLet { type_annotation; value; _ } ->
+          Option.fold ~none:[] ~some:(collect_type_references ~scope_index:input.scope_index) type_annotation
+          @ collect_expr_references ~scope_index:input.scope_index value
+      | Surface.SFnDecl { generics; params; return_type; body; _ } ->
+          Option.fold ~none:[] ~some:collect_generic_param_references generics
+          @ List.concat_map
+              (fun (param : Surface.surface_value_param) ->
+                Option.fold ~none:[] ~some:(collect_type_references ~scope_index:input.scope_index) param.svp_type)
+              params
+          @ Option.fold ~none:[] ~some:(collect_type_references ~scope_index:input.scope_index) return_type
+          @ collect_expr_or_block_references ~scope_index:input.scope_index body
+      | Surface.STypeDef { type_body; derive; _ } ->
+          (match type_body with
+          | Surface.STTransparent type_expr | Surface.STNamedWrapper type_expr ->
+              collect_type_references ~scope_index:input.scope_index type_expr
+          | Surface.STNamedProduct fields ->
+              List.concat_map
+                (fun (field : Surface.surface_record_type_field) ->
+                  collect_type_references ~scope_index:input.scope_index field.sf_type)
+                fields
+          | Surface.STNamedSum variants ->
+              List.concat_map
+                (fun (variant : Surface.surface_variant_def) ->
+                  List.concat_map (collect_type_references ~scope_index:input.scope_index) variant.sv_fields)
+                variants)
+          @ List.concat_map
+              (fun (derive_trait : Surface.surface_derive_trait) ->
+                Constraint_identifier { name_ref = derive_trait.sdt_name_ref }
+                :: collect_generic_param_references derive_trait.sdt_constraints)
+              derive
+      | Surface.SShapeDef { shape_fields; _ } ->
+          List.concat_map
+            (fun (field : Surface.surface_record_type_field) ->
+              collect_type_references ~scope_index:input.scope_index field.sf_type)
+            shape_fields
+      | Surface.STraitDef { supertrait_refs; methods; _ } ->
+          collect_constraint_references supertrait_refs
+          @ List.concat_map
+              (fun (method_ : Surface.surface_method_sig) ->
+                Option.fold ~none:[] ~some:collect_generic_param_references method_.sm_generics
+                @ List.concat_map
+                    (fun (param : Surface.surface_typed_param) ->
+                      collect_type_references ~scope_index:input.scope_index param.stp_type)
+                    method_.sm_params
+                @ collect_type_references ~scope_index:input.scope_index method_.sm_return_type
+                @ Option.fold ~none:[]
+                    ~some:(collect_expr_or_block_references ~scope_index:input.scope_index)
+                    method_.sm_default_impl)
+              methods
+      | Surface.SAmbiguousImplDef { impl_type_params; impl_head_type; impl_methods } ->
+          collect_generic_param_references impl_type_params
+          @ collect_type_references ~scope_index:input.scope_index impl_head_type
+          @ List.concat_map
+              (fun (method_ : Surface.surface_method_impl) ->
+                Option.fold ~none:[] ~some:collect_generic_param_references method_.smi_generics
+                @ List.concat_map
+                    (fun (param : Surface.surface_value_param) ->
+                      Option.fold ~none:[]
+                        ~some:(collect_type_references ~scope_index:input.scope_index)
+                        param.svp_type)
+                    method_.smi_params
+                @ Option.fold ~none:[]
+                    ~some:(collect_type_references ~scope_index:input.scope_index)
+                    method_.smi_return_type
+                @ collect_expr_or_block_references ~scope_index:input.scope_index method_.smi_body)
+              impl_methods
+      | Surface.SInherentImplDef { inherent_for_type; inherent_methods } ->
+          collect_type_references ~scope_index:input.scope_index inherent_for_type
+          @ List.concat_map
+              (fun (method_ : Surface.surface_method_impl) ->
+                Option.fold ~none:[] ~some:collect_generic_param_references method_.smi_generics
+                @ List.concat_map
+                    (fun (param : Surface.surface_value_param) ->
+                      Option.fold ~none:[]
+                        ~some:(collect_type_references ~scope_index:input.scope_index)
+                        param.svp_type)
+                    method_.smi_params
+                @ Option.fold ~none:[]
+                    ~some:(collect_type_references ~scope_index:input.scope_index)
+                    method_.smi_return_type
+                @ collect_expr_or_block_references ~scope_index:input.scope_index method_.smi_body)
+              inherent_methods
+      | Surface.SExpressionStmt expr | Surface.SReturn expr ->
+          collect_expr_references ~scope_index:input.scope_index expr
+      | Surface.SBlock block -> collect_block_references ~scope_index:input.scope_index block)
+    input.surface_program
+
 let nth_substring_offset ~(source : string) ~(needle : string) ~(occurrence : int) : int option =
   let rec scan start remaining =
     if remaining <= 0 then
@@ -732,10 +970,43 @@ let%test "reference_at classifies qualified type members from the surface tree" 
 
 let%test "reference_at classifies enum constructor members" =
   match
-    reference_for_needle
-      ~source:"type Option[a] = { Some(a), None }\nlet x = Option.Some(42)\n"
+    reference_for_needle ~source:"type Option[a] = { Some(a), None }\nlet x = Option.Some(42)\n"
       ~needle:"Option.Some" ~offset_in_needle:7 ()
   with
   | Some (Qualified_member { root_ref; root_expr_id = Some _; member_ref; access_expr_id = _ }) ->
       root_ref.text = "Option" && member_ref.text = "Some"
   | _ -> false
+
+let%test "collect_references includes value, qualified member, and qualified type usages" =
+  match
+    Parser.parse_with_surface ~file_id:"<test>"
+      "import math\nimport types.geo\nadd(1)\nmath.add(2)\nlet p: geo.Point = { x: 1, y: 2 }\n"
+  with
+  | Error _ -> false
+  | Ok parse_result ->
+      let refs =
+        collect_references
+          ~input:
+            {
+              surface_program = parse_result.surface_program;
+              lowered_program = parse_result.program;
+              scope_index = build_scope_index parse_result.surface_program;
+            }
+      in
+      List.exists
+        (function
+          | Value_identifier { name_ref; _ } -> String.equal name_ref.text "add"
+          | _ -> false)
+        refs
+      && List.exists
+           (function
+             | Qualified_member { root_ref; member_ref; _ } ->
+                 String.equal root_ref.text "math" && String.equal member_ref.text "add"
+             | _ -> false)
+           refs
+      && List.exists
+           (function
+             | Type_path_segment { path_segments; segment_index; _ } ->
+                 path_segments = [ "geo"; "Point" ] && segment_index = 1
+             | _ -> false)
+           refs

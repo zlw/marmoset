@@ -24,12 +24,14 @@ let exportable_declarations (program : Surface.surface_program) : exportable_dec
     (fun (stmt : Surface.surface_top_stmt) ->
       match stmt.std_decl with
       | Surface.SLet { name; name_ref; _ } -> Some { surface_name = name; declaration_kind = Let_decl; name_ref }
-      | Surface.SFnDecl { name; name_ref; _ } -> Some { surface_name = name; declaration_kind = Fn_decl; name_ref }
+      | Surface.SFnDecl { name; name_ref; _ } ->
+          Some { surface_name = name; declaration_kind = Fn_decl; name_ref }
       | Surface.STypeDef { type_name; type_name_ref; _ } ->
           Some { surface_name = type_name; declaration_kind = Type_decl; name_ref = type_name_ref }
       | Surface.SShapeDef { shape_name; shape_name_ref; _ } ->
           Some { surface_name = shape_name; declaration_kind = Shape_decl; name_ref = shape_name_ref }
-      | Surface.STraitDef { name; name_ref; _ } -> Some { surface_name = name; declaration_kind = Trait_decl; name_ref }
+      | Surface.STraitDef { name; name_ref; _ } ->
+          Some { surface_name = name; declaration_kind = Trait_decl; name_ref }
       | Surface.SExportDecl _ | Surface.SImportDecl _ | Surface.SAmbiguousImplDef _ | Surface.SInherentImplDef _
       | Surface.SExpressionStmt _ | Surface.SReturn _ | Surface.SBlock _ ->
           None)
@@ -103,10 +105,8 @@ let render_export_header ~(names : string list) ~(has_semicolon : bool) : string
   "export " ^ String.concat ", " names ^ suffix
 
 let edit_for_visibility
-    ~(source : string)
-    ~(program : Surface.surface_program)
-    ~(decl : exportable_decl)
-    ~(visibility : visibility) : Lsp_t.TextEdit.t list option =
+    ~(source : string) ~(program : Surface.surface_program) ~(decl : exportable_decl) ~(visibility : visibility) :
+    Lsp_t.TextEdit.t list option =
   let exports = current_exports program in
   let already_exported = is_exported ~exports decl in
   match (visibility, already_exported, export_header_stmt program) with
@@ -138,15 +138,17 @@ let parse_surface_program ~(source : string) : Surface.surface_program =
   | Ok result -> result.surface_program
   | Error diagnostics ->
       let message =
-        diagnostics
-        |> List.map (fun (diag : Marmoset.Lib.Diagnostic.t) -> diag.message)
-        |> String.concat "; "
+        diagnostics |> List.map (fun (diag : Marmoset.Lib.Diagnostic.t) -> diag.message) |> String.concat "; "
       in
       failwith ("parse failed: " ^ message)
 
 let declaration_named ~(source : string) ~(name : string) : exportable_decl =
   let program = parse_surface_program ~source in
-  match List.find_opt (fun (decl : exportable_decl) -> String.equal decl.surface_name name) (exportable_declarations program) with
+  match
+    List.find_opt
+      (fun (decl : exportable_decl) -> String.equal decl.surface_name name)
+      (exportable_declarations program)
+  with
   | Some decl -> decl
   | None -> failwith ("missing exportable declaration: " ^ name)
 
@@ -166,8 +168,7 @@ let apply_text_edits ~(source : string) (edits : Lsp_t.TextEdit.t list) : string
   in
   List.fold_left
     (fun acc (start_offset, end_offset, new_text) ->
-      String.sub acc 0 start_offset ^ new_text
-      ^ String.sub acc end_offset (String.length acc - end_offset))
+      String.sub acc 0 start_offset ^ new_text ^ String.sub acc end_offset (String.length acc - end_offset))
     source edits_with_offsets
 
 let updated_source ~(source : string) ~(name : string) ~(visibility : visibility) : string option =
@@ -186,7 +187,8 @@ let%test "exportable_declarations includes only top-level exportable declaration
 
 let%test "edit_for_visibility appends a name to an existing export header" =
   let source = "export foo\nfn foo() -> Int = 1\nfn bar() -> Int = 2\n" in
-  updated_source ~source ~name:"bar" ~visibility:Public = Some "export foo, bar\nfn foo() -> Int = 1\nfn bar() -> Int = 2\n"
+  updated_source ~source ~name:"bar" ~visibility:Public
+  = Some "export foo, bar\nfn foo() -> Int = 1\nfn bar() -> Int = 2\n"
 
 let%test "edit_for_visibility creates an export header before imports" =
   let source = "import math\nfn foo() -> Int = math.add(1, 2)\n" in

@@ -77,8 +77,11 @@ let args_of_json = function
           List.assoc_opt "visibility" fields,
           List.assoc_opt "originalRange" fields )
       with
-      | Some (`String uri), Some (`String surface_name), Some (`String declaration_kind), Some (`String visibility), Some range_json
-        -> (
+      | ( Some (`String uri),
+          Some (`String surface_name),
+          Some (`String declaration_kind),
+          Some (`String visibility),
+          Some range_json ) -> (
           match
             ( declaration_kind_of_string declaration_kind,
               visibility_of_string visibility,
@@ -119,9 +122,7 @@ let compute
     ~(uri : Lsp_t.DocumentUri.t)
     ~(program : Export_edits.Surface.surface_program)
     () : Lsp_t.CodeLens.t list =
-  let dependent_count =
-    Option.value dependent_count ~default:(fun (_decl : Export_edits.exportable_decl) -> 0)
-  in
+  let dependent_count = Option.value dependent_count ~default:(fun (_decl : Export_edits.exportable_decl) -> 0) in
   let exports = Export_edits.current_exports program in
   Export_edits.exportable_declarations program
   |> List.map (fun (decl : Export_edits.exportable_decl) ->
@@ -139,14 +140,22 @@ let compute
              ~arguments:
                [
                  args_to_json
-                   { uri; surface_name = decl.surface_name; declaration_kind = decl.declaration_kind; visibility; original_range = range };
+                   {
+                     uri;
+                     surface_name = decl.surface_name;
+                     declaration_kind = decl.declaration_kind;
+                     visibility;
+                     original_range = range;
+                   };
                ]
              ()
          in
          Lsp_t.CodeLens.create ~command ~range ())
 
 let lens_titles (lenses : Lsp_t.CodeLens.t list) : string list =
-  List.filter_map (fun (lens : Lsp_t.CodeLens.t) -> Option.map (fun (command : Lsp_t.Command.t) -> command.title) lens.command) lenses
+  List.filter_map
+    (fun (lens : Lsp_t.CodeLens.t) -> Option.map (fun (command : Lsp_t.Command.t) -> command.title) lens.command)
+    lenses
 
 let code_lenses_for_source (source : string) : Lsp_t.CodeLens.t list =
   let program = Export_edits.parse_surface_program ~source in

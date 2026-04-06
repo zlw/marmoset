@@ -1,7 +1,10 @@
 (* LSP server: class + entry point *)
 
 module Lsp_t = Linol_lsp.Types
+module Compiler = Marmoset.Lib.Frontend_compiler
 module Diagnostic = Marmoset.Lib.Diagnostic
+module Module_catalog = Frontend.Module_catalog
+module StringSet = Set.Make (String)
 module Server_request = Linol_lsp.Server_request
 
 (* Per-document cached analysis *)
@@ -173,9 +176,8 @@ let export_command_args_of_jsons = function
   | _ -> Error "expected exactly one export-visibility command argument"
 
 let revalidated_export_decl
-    ~(source : string)
-    ~(program : Export_edits.Surface.surface_program)
-    ~(args : Code_lens.command_args) : Export_edits.exportable_decl option =
+    ~(source : string) ~(program : Export_edits.Surface.surface_program) ~(args : Code_lens.command_args) :
+    Export_edits.exportable_decl option =
   let matching =
     Export_edits.exportable_declarations program
     |> List.filter (fun (decl : Export_edits.exportable_decl) ->
@@ -194,9 +196,8 @@ let revalidated_export_decl
       | _ -> None)
 
 let apply_workspace_edit_params_for_export_command
-    ~(source : string)
-    ~(program : Export_edits.Surface.surface_program)
-    ~(args : Code_lens.command_args) : (Lsp_t.ApplyWorkspaceEditParams.t, string) result =
+    ~(source : string) ~(program : Export_edits.Surface.surface_program) ~(args : Code_lens.command_args) :
+    (Lsp_t.ApplyWorkspaceEditParams.t, string) result =
   match revalidated_export_decl ~source ~program ~args with
   | None ->
       Error
@@ -205,9 +206,7 @@ let apply_workspace_edit_params_for_export_command
            args.surface_name)
   | Some decl -> (
       match Export_edits.edit_for_visibility ~source ~program ~decl ~visibility:args.visibility with
-      | None ->
-          Error
-            (Printf.sprintf "visibility for '%s' already matches requested state" args.surface_name)
+      | None -> Error (Printf.sprintf "visibility for '%s' already matches requested state" args.surface_name)
       | Some edits ->
           let edit = Lsp_t.WorkspaceEdit.create ~changes:[ (args.uri, edits) ] () in
           Ok
@@ -216,8 +215,8 @@ let apply_workspace_edit_params_for_export_command
                ()))
 
 let send_apply_workspace_edit
-    ~(notify_back : Linol_lwt.Jsonrpc2.notify_back)
-    (params : Lsp_t.ApplyWorkspaceEditParams.t) : Yojson.Safe.t Lwt.t =
+    ~(notify_back : Linol_lwt.Jsonrpc2.notify_back) (params : Lsp_t.ApplyWorkspaceEditParams.t) :
+    Yojson.Safe.t Lwt.t =
   let open Lwt.Syntax in
   let waiter, wakener = Lwt.wait () in
   let* _ =
@@ -226,12 +225,155 @@ let send_apply_workspace_edit
         Lwt.return_unit)
   in
   let* result = waiter in
-  (match result with
+  match result with
   | Ok (_ : Lsp_t.ApplyWorkspaceEditResult.t) -> Lwt.return `Null
   | Error err ->
       let _ = err in
       Printf.eprintf "[marmoset-lsp] workspace/applyEdit failed\n%!";
-      Lwt.return `Null)
+      Lwt.return `Null
+
+type decl_identity = {
+  file_path : string;
+  start_pos : int;
+  end_pos : int;
+}
+
+let decl_identity_key (identity : decl_identity) : string =
+  Printf.sprintf "%s:%d:%d" identity.file_path identity.start_pos identity.end_pos
+
+let decl_identity_of_exportable_decl ~(default_file_path : string) (decl : Export_edits.exportable_decl) :
+    decl_identity =
+  {
+    file_path = Option.value decl.name_ref.file_id ~default:default_file_path;
+    start_pos = decl.name_ref.pos;
+    end_pos = decl.name_ref.end_pos;
+  }
+
+let exportable_decl_keys ~(default_file_path : string) (program : Export_edits.Surface.surface_program) :
+    (Export_edits.exportable_decl * string list) list =
+  let file_path_of_name_ref (name_ref : Export_edits.Surface.name_ref) =
+    Option.value name_ref.file_id ~default:default_file_path
+  in
+  List.filter_map
+    (fun (stmt : Export_edits.Surface.surface_top_stmt) ->
+      let with_decl (decl : Export_edits.exportable_decl) =
+        let file_path = file_path_of_name_ref decl.name_ref in
+        let name_key = decl_identity_key (decl_identity_of_exportable_decl ~default_file_path decl) in
+        let stmt_key = decl_identity_key { file_path; start_pos = stmt.std_pos; end_pos = stmt.std_end_pos } in
+        Some (decl, [ name_key; stmt_key ])
+      in
+      match stmt.std_decl with
+      | Export_edits.Surface.SLet { name; name_ref; _ } ->
+          with_decl { surface_name = name; declaration_kind = Export_edits.Let_decl; name_ref }
+      | Export_edits.Surface.SFnDecl { name; name_ref; _ } ->
+          with_decl { surface_name = name; declaration_kind = Export_edits.Fn_decl; name_ref }
+      | Export_edits.Surface.STypeDef { type_name; type_name_ref; _ } ->
+          with_decl
+            { surface_name = type_name; declaration_kind = Export_edits.Type_decl; name_ref = type_name_ref }
+      | Export_edits.Surface.SShapeDef { shape_name; shape_name_ref; _ } ->
+          with_decl
+            { surface_name = shape_name; declaration_kind = Export_edits.Shape_decl; name_ref = shape_name_ref }
+      | Export_edits.Surface.STraitDef { name; name_ref; _ } ->
+          with_decl { surface_name = name; declaration_kind = Export_edits.Trait_decl; name_ref }
+      | Export_edits.Surface.SExportDecl _ | Export_edits.Surface.SImportDecl _
+      | Export_edits.Surface.SAmbiguousImplDef _ | Export_edits.Surface.SInherentImplDef _
+      | Export_edits.Surface.SExpressionStmt _ | Export_edits.Surface.SReturn _ | Export_edits.Surface.SBlock _ ->
+          None)
+    program
+
+let decl_identity_of_definition_target = function
+  | Definition.Span { file_path; start_pos; end_pos } -> Some { file_path; start_pos; end_pos }
+  | Definition.File_start _ -> None
+
+let countable_reference = function
+  | Cursor_context.Import_alias _ | Cursor_context.Import_path_segment _ | Cursor_context.Declaration_head _ ->
+      false
+  | _ -> true
+
+let source_for_file ~(source_overrides : (string, string) Hashtbl.t) (file_path : string) : string =
+  let file_path = Doc_state.normalize_path file_path in
+  match Hashtbl.find_opt source_overrides file_path with
+  | Some source -> source
+  | None -> Compiler.read_source_file file_path
+
+let dependent_modules_by_decl
+    ~(project_root : string)
+    ~(active_analysis : Compiler.entry_analysis)
+    ~(source_overrides : (string, string) Hashtbl.t)
+    ~(active_file_path : string)
+    ~(active_module_id : string option)
+    ~(program : Export_edits.Surface.surface_program) : (string, StringSet.t) Hashtbl.t =
+  let normalized_overrides = Doc_state.normalize_source_overrides source_overrides in
+  let catalog =
+    Module_catalog.build ~root_dir:project_root ~analysis:active_analysis ~source_overrides:normalized_overrides
+      ()
+  in
+  let target_to_modules = Hashtbl.create 16 in
+  let target_to_decl = Hashtbl.create 16 in
+  exportable_decl_keys ~default_file_path:active_file_path program
+  |> List.iter (fun ((decl : Export_edits.exportable_decl), (keys : string list)) ->
+         let canonical =
+           decl_identity_key (decl_identity_of_exportable_decl ~default_file_path:active_file_path decl)
+         in
+         Hashtbl.replace target_to_modules canonical StringSet.empty;
+         List.iter (fun key -> Hashtbl.replace target_to_decl key canonical) keys);
+  Hashtbl.iter
+    (fun module_id (entry : Module_catalog.entry) ->
+      let same_file = String.equal entry.file_path active_file_path in
+      let same_module =
+        match active_module_id with
+        | Some active_module_id -> String.equal module_id active_module_id
+        | None -> false
+      in
+      let in_project = path_is_within_root ~root:project_root entry.file_path in
+      if in_project && (not same_file) && not same_module then
+        let source = source_for_file ~source_overrides:normalized_overrides entry.file_path in
+        let module_analysis =
+          Doc_state.analyze_with_file_id ~source_root:project_root ~source_overrides:normalized_overrides
+            ~file_id:entry.file_path ~source ()
+        in
+        match (module_analysis.compiler_analysis, module_analysis.surface_program, module_analysis.program) with
+        | Some compiler_analysis, Some surface_program, Some lowered_program ->
+            let input =
+              {
+                Cursor_context.surface_program;
+                lowered_program;
+                scope_index = Cursor_context.build_scope_index surface_program;
+              }
+            in
+            Cursor_context.collect_references ~input
+            |> List.iter (fun reference ->
+                   if countable_reference reference then
+                     match
+                       Definition.cursor_reference_target compiler_analysis ~source:module_analysis.source
+                         ~surface_program:module_analysis.surface_program ~reference
+                     with
+                     | Some target -> (
+                         match decl_identity_of_definition_target target with
+                         | Some identity -> (
+                             let key = decl_identity_key identity in
+                             match Hashtbl.find_opt target_to_decl key with
+                             | Some dependents ->
+                                 let prior =
+                                   Option.value
+                                     (Hashtbl.find_opt target_to_modules dependents)
+                                     ~default:StringSet.empty
+                                 in
+                                 Hashtbl.replace target_to_modules dependents (StringSet.add module_id prior)
+                             | None -> ())
+                         | None -> ())
+                     | None -> ())
+        | _ -> ())
+    catalog.modules;
+  target_to_modules
+
+let dependent_count_for_decl
+    ~(counts : (string, StringSet.t) Hashtbl.t) ~(active_file_path : string) (decl : Export_edits.exportable_decl)
+    : int =
+  let key = decl_identity_key (decl_identity_of_exportable_decl ~default_file_path:active_file_path decl) in
+  match Hashtbl.find_opt counts key with
+  | Some dependents -> StringSet.cardinal dependents
+  | None -> 0
 
 class marmoset_server =
   object (self)
@@ -554,7 +696,7 @@ class marmoset_server =
       let result =
         match Hashtbl.find_opt analysis_cache uri with
         | None -> []
-        | Some cached ->
+        | Some cached -> (
             let current_source = Option.map (fun (doc : open_doc) -> doc.text) (Hashtbl.find_opt open_docs uri) in
             let source_root =
               match Hashtbl.find_opt open_docs uri with
@@ -569,9 +711,24 @@ class marmoset_server =
               codelens_analysis_for_cached_doc ~cached ~current_source ~file_id ~source_root ~source_overrides
             in
             Hashtbl.replace analysis_cache uri cached;
-            match analysis.surface_program with
-            | Some program -> Code_lens.compute ~source:analysis.source ~uri ~program ()
-            | None -> []
+            match (analysis.surface_program, analysis.compiler_analysis) with
+            | Some program, Some compiler_analysis ->
+                let project_root =
+                  Option.value analysis.project_root
+                    ~default:
+                      (Option.value source_root ~default:(Filename.dirname (Doc_state.normalize_path file_id)))
+                in
+                let counts =
+                  dependent_modules_by_decl ~project_root ~active_analysis:compiler_analysis ~source_overrides
+                    ~active_file_path:compiler_analysis.active_file.file_path
+                    ~active_module_id:compiler_analysis.active_file.module_id ~program
+                in
+                Code_lens.compute ~source:analysis.source ~uri ~program
+                  ~dependent_count:
+                    (dependent_count_for_decl ~counts ~active_file_path:compiler_analysis.active_file.file_path)
+                  ()
+            | None, _ -> []
+            | Some _, None -> [])
       in
       Lwt.return result
 
@@ -583,7 +740,7 @@ class marmoset_server =
         | Error message ->
             Printf.eprintf "[marmoset-lsp] executeCommand rejected: %s\n%!" message;
             Lwt.return `Null
-        | Ok args ->
+        | Ok args -> (
             let uri = args.uri in
             let current_source =
               match Hashtbl.find_opt open_docs uri with
@@ -597,12 +754,12 @@ class marmoset_server =
                   choose_known_source_root ~analysis_cache ~uri
                     ~file_path:(Doc_state.file_path_of_file_id (Lsp_t.DocumentUri.to_string uri))
             in
-            (match current_source with
+            match current_source with
             | None ->
                 Printf.eprintf "[marmoset-lsp] executeCommand rejected: no source for %s\n%!"
                   (Lsp_t.DocumentUri.to_string uri);
                 Lwt.return `Null
-            | Some source ->
+            | Some source -> (
                 let source_overrides = self#source_overrides () in
                 let file_id = Lsp_t.DocumentUri.to_string uri in
                 let analysis =
@@ -613,15 +770,14 @@ class marmoset_server =
                 match analysis.surface_program with
                 | None ->
                     Printf.eprintf
-                      "[marmoset-lsp] executeCommand rejected: current document does not have a parseable surface program\n\
-                       %!";
+                      "[marmoset-lsp] executeCommand rejected: current document does not have a parseable surface program\n%!";
                     Lwt.return `Null
                 | Some program -> (
                     match apply_workspace_edit_params_for_export_command ~source ~program ~args with
                     | Error message ->
                         Printf.eprintf "[marmoset-lsp] executeCommand rejected: %s\n%!" message;
                         Lwt.return `Null
-                    | Ok params -> send_apply_workspace_edit ~notify_back params))
+                    | Ok params -> send_apply_workspace_edit ~notify_back params)))
 
     method! on_request_unhandled : type r. notify_back:_ -> id:_ -> r Linol_lsp.Client_request.t -> r Lwt.t =
       fun ~notify_back ~id req ->
@@ -737,18 +893,14 @@ let%test "update_cached_doc preserves last_good across non-semantic latest edits
 
 let%test "update_cached_doc retains namespace-navigation snapshots even when typing is incomplete" =
   Doc_state.with_temp_project
-    [
-      ("main.mr", "import math\nmath\n");
-      ("math.mr", "export add\nfn add(x: Int, y: Int) -> Int = x + y\n");
-    ]
+    [ ("main.mr", "import math\nmath\n"); ("math.mr", "export add\nfn add(x: Int, y: Int) -> Int = x + y\n") ]
     (fun root ->
       let file_id = Filename.concat root "main.mr" in
       let analysis = Doc_state.analyze_with_file_id ~source_root:root ~file_id ~source:"import math\nmath\n" () in
       match update_cached_doc None analysis with
       | { last_good = Some cached; _ } ->
           cached.compiler_analysis <> None && cached.project_root <> None && cached.environment = None
-  | _ -> false
-    )
+      | _ -> false)
 
 let%test "related_open_docs selects sibling file-backed docs under the same project root" =
   let open_docs = Hashtbl.create 3 in
@@ -795,13 +947,13 @@ let cached_completion_labels
         in
         let cached = update_cached_doc previous latest in
         let source_overrides = Hashtbl.create 0 in
-        captured :=
-          (match
+        (captured :=
+           match
              completion_items_for_cached_doc ~cached ~current_source:(Some source) ~line ~character
                ~trigger_is_dot ~source_overrides
            with
-          | Some items -> List.map (fun (item : Lsp_t.CompletionItem.t) -> item.label) items
-          | None -> []);
+           | Some items -> List.map (fun (item : Lsp_t.CompletionItem.t) -> item.label) items
+           | None -> []);
         true)
   in
   !captured
@@ -831,15 +983,19 @@ let cached_definition_target
         let cached = update_cached_doc previous latest in
         let source_overrides = Hashtbl.create 0 in
         let _, analysis =
-          definition_analysis_for_cached_doc ~cached ~current_source:(Some source) ~file_id ~source_root:(Some root)
-            ~source_overrides
+          definition_analysis_for_cached_doc ~cached ~current_source:(Some source) ~file_id
+            ~source_root:(Some root) ~source_overrides
         in
         captured := (file_id, Definition.find_definition ~analysis ~line ~character);
         true)
   in
   !captured
 
-let cached_code_lens_titles ?cached_annotated ?last_good_annotated ~(files : (string * string) list) ~(entry_rel : string)
+let cached_code_lens_titles
+    ?cached_annotated
+    ?last_good_annotated
+    ~(files : (string * string) list)
+    ~(entry_rel : string)
     (annotated : string) : string list =
   let captured = ref [] in
   let _ =
@@ -863,12 +1019,12 @@ let cached_code_lens_titles ?cached_annotated ?last_good_annotated ~(files : (st
           codelens_analysis_for_cached_doc ~cached ~current_source:(Some source) ~file_id ~source_root:(Some root)
             ~source_overrides
         in
-        captured :=
-          (match analysis.surface_program with
-          | Some program ->
-              Code_lens.compute ~source:analysis.source ~uri:(Lsp_t.DocumentUri.of_path file_id) ~program ()
-              |> Code_lens.lens_titles
-          | None -> []);
+        (captured :=
+           match analysis.surface_program with
+           | Some program ->
+               Code_lens.compute ~source:analysis.source ~uri:(Lsp_t.DocumentUri.of_path file_id) ~program ()
+               |> Code_lens.lens_titles
+           | None -> []);
         true)
   in
   !captured
@@ -880,15 +1036,19 @@ let command_args_from_lens (lens : Lsp_t.CodeLens.t) : Code_lens.command_args op
       | _ -> None)
 
 let first_code_lens_for_source ~(source : string) ~(file_path : string) : Lsp_t.CodeLens.t option =
-  match Code_lens.compute ~source ~uri:(Lsp_t.DocumentUri.of_path file_path)
-          ~program:(Export_edits.parse_surface_program ~source) ()
+  match
+    Code_lens.compute ~source ~uri:(Lsp_t.DocumentUri.of_path file_path)
+      ~program:(Export_edits.parse_surface_program ~source)
+      ()
   with
   | lens :: _ -> Some lens
   | [] -> None
 
 let apply_source_for_command ~(source : string) ~(args : Code_lens.command_args) : string option =
   match
-    apply_workspace_edit_params_for_export_command ~source ~program:(Export_edits.parse_surface_program ~source) ~args
+    apply_workspace_edit_params_for_export_command ~source
+      ~program:(Export_edits.parse_surface_program ~source)
+      ~args
   with
   | Ok params -> (
       match params.edit.changes with
@@ -896,30 +1056,70 @@ let apply_source_for_command ~(source : string) ~(args : Code_lens.command_args)
       | _ -> None)
   | Error _ -> None
 
+let project_code_lenses
+    ?source_overrides ~(files : (string * string) list) ~(entry_rel : string) ~(source : string) () :
+    Lsp_t.CodeLens.t list =
+  let source_overrides = Option.value source_overrides ~default:[] in
+  let captured = ref [] in
+  let _ =
+    Doc_state.with_temp_project files (fun root ->
+        let file_id = Filename.concat root entry_rel in
+        let overrides = Hashtbl.create (List.length source_overrides) in
+        List.iter
+          (fun (relative_path, contents) ->
+            Hashtbl.replace overrides (Filename.concat root relative_path) contents)
+          source_overrides;
+        let analysis =
+          Doc_state.analyze_with_file_id ~source_root:root ~source_overrides:overrides ~file_id ~source ()
+        in
+        (captured :=
+           match (analysis.compiler_analysis, analysis.surface_program) with
+           | Some compiler_analysis, Some program ->
+               let counts =
+                 dependent_modules_by_decl ~project_root:root ~active_analysis:compiler_analysis
+                   ~source_overrides:overrides ~active_file_path:compiler_analysis.active_file.file_path
+                   ~active_module_id:compiler_analysis.active_file.module_id ~program
+               in
+               Code_lens.compute ~source ~uri:(Lsp_t.DocumentUri.of_path file_id) ~program
+                 ~dependent_count:
+                   (dependent_count_for_decl ~counts ~active_file_path:compiler_analysis.active_file.file_path)
+                 ()
+           | _ -> []);
+        true)
+  in
+  !captured
+
+let lens_title_for_name ~(name : string) (lenses : Lsp_t.CodeLens.t list) : string option =
+  List.find_map
+    (fun (lens : Lsp_t.CodeLens.t) ->
+      match (lens.command, command_args_from_lens lens) with
+      | Some command, Some args when String.equal args.surface_name name -> Some command.title
+      | _ -> None)
+    lenses
+
 let%test "server definition uses live buffer text instead of stale cached source" =
   let main_source = "type Point = { x: Int }\nlet p: Point = { x: 1 }\np\n" in
   let main_path, actual =
     cached_definition_target ~cached_annotated:"let stale = 1\n|\n"
-      ~files:[ ("main.mr", main_source) ] ~entry_rel:"main.mr"
-      "type Point = { x: Int }\nlet p: Point| = { x: 1 }\np\n"
+      ~files:[ ("main.mr", main_source) ]
+      ~entry_rel:"main.mr" "type Point = { x: Int }\nlet p: Point| = { x: 1 }\np\n"
   in
   actual = Definition.target_span_of_substring ~file_path:main_path ~source:main_source ~needle:"Point" ()
 
 let%test "server code lens uses live buffer text instead of stale cached source" =
   let titles =
     cached_code_lens_titles ~cached_annotated:"export greet\nfn greet(name: Str) -> Str = name\n|\n"
-      ~files:[ ("main.mr", "fn greet(name: Str) -> Str = name\n") ] ~entry_rel:"main.mr"
-      "fn greet(name: Str) -> Str = name\n|\n"
+      ~files:[ ("main.mr", "fn greet(name: Str) -> Str = name\n") ]
+      ~entry_rel:"main.mr" "fn greet(name: Str) -> Str = name\n|\n"
   in
   titles = [ "make public" ]
 
 let%test "server code lens falls back to last_good during incomplete edits" =
   let titles =
-    cached_code_lens_titles
-      ~cached_annotated:"fn greet(name: Str) -> Str = {|\n"
+    cached_code_lens_titles ~cached_annotated:"fn greet(name: Str) -> Str = {|\n"
       ~last_good_annotated:"fn greet(name: Str) -> Str = name|\n"
-      ~files:[ ("main.mr", "fn greet(name: Str) -> Str = name\n") ] ~entry_rel:"main.mr"
-      "fn greet(name: Str) -> Str = {|\n"
+      ~files:[ ("main.mr", "fn greet(name: Str) -> Str = name\n") ]
+      ~entry_rel:"main.mr" "fn greet(name: Str) -> Str = {|\n"
   in
   titles = [ "make public" ]
 
@@ -944,22 +1144,100 @@ let%test "server execute command rejects renamed declarations instead of guessin
       | None -> false
       | Some args -> apply_source_for_command ~source:"fn renamed(name: Str) -> Str = name\n" ~args = None)
 
+let%test "server code lens counts direct import value dependents once" =
+  let lenses =
+    project_code_lenses ~entry_rel:"math.mr"
+      ~files:
+        [
+          ("math.mr", "export add\nfn add(x: Int, y: Int) -> Int = x + y\n");
+          ("main.mr", "import math.add\nadd(1, 2)\nadd(3, 4)\n");
+        ]
+      ~source:"export add\nfn add(x: Int, y: Int) -> Int = x + y\n" ()
+  in
+  lens_title_for_name ~name:"add" lenses = Some "make private (used by 1 module)"
+
+let%test "server code lens counts direct import aliases once" =
+  let lenses =
+    project_code_lenses ~entry_rel:"math.mr"
+      ~files:
+        [
+          ("math.mr", "export add\nfn add(x: Int, y: Int) -> Int = x + y\n");
+          ("main.mr", "import math.add as plus\nplus(1, 2)\n");
+        ]
+      ~source:"export add\nfn add(x: Int, y: Int) -> Int = x + y\n" ()
+  in
+  lens_title_for_name ~name:"add" lenses = Some "make private (used by 1 module)"
+
+let%test "server code lens counts namespace-qualified value dependents" =
+  let lenses =
+    project_code_lenses ~entry_rel:"math.mr"
+      ~files:
+        [
+          ("math.mr", "export add\nfn add(x: Int, y: Int) -> Int = x + y\n");
+          ("main.mr", "import math\nmath.add(1, 2)\n");
+        ]
+      ~source:"export add\nfn add(x: Int, y: Int) -> Int = x + y\n" ()
+  in
+  lens_title_for_name ~name:"add" lenses = Some "make private (used by 1 module)"
+
+let%test "server code lens counts namespace-qualified type dependents" =
+  let lenses =
+    project_code_lenses ~entry_rel:"types/geo.mr"
+      ~files:
+        [
+          ("types/geo.mr", "export Point\ntype Point = { x: Int, y: Int }\n");
+          ("main.mr", "import types.geo\nlet p: geo.Point = { x: 1, y: 2 }\n");
+        ]
+      ~source:"export Point\ntype Point = { x: Int, y: Int }\n" ()
+  in
+  lens_title_for_name ~name:"Point" lenses = Some "make private (used by 1 module)"
+
+let%test "server code lens ignores namespace imports without symbol use and same-module refs" =
+  let lenses =
+    project_code_lenses ~entry_rel:"math.mr"
+      ~files:
+        [
+          ("math.mr", "export add\nfn add(x: Int, y: Int) -> Int = x + y\nlet same = add(1, 2)\n");
+          ("main.mr", "import math\nputs(\"unused namespace\")\n");
+        ]
+      ~source:"export add\nfn add(x: Int, y: Int) -> Int = x + y\nlet same = add(1, 2)\n" ()
+  in
+  lens_title_for_name ~name:"add" lenses = Some "make private"
+
+let%test "server code lens reflects unsaved dependent overrides in counts" =
+  let base_files =
+    [
+      ("math.mr", "export add\nfn add(x: Int, y: Int) -> Int = x + y\n");
+      ("main.mr", "import math.add\nadd(1, 2)\n");
+    ]
+  in
+  let base_lenses =
+    project_code_lenses ~entry_rel:"math.mr" ~files:base_files
+      ~source:"export add\nfn add(x: Int, y: Int) -> Int = x + y\n" ()
+  in
+  let override_lenses =
+    project_code_lenses ~entry_rel:"math.mr" ~files:base_files
+      ~source:"export add\nfn add(x: Int, y: Int) -> Int = x + y\n"
+      ~source_overrides:[ ("main.mr", "import math.add\nputs(\"removed\")\n") ]
+      ()
+  in
+  lens_title_for_name ~name:"add" base_lenses = Some "make private (used by 1 module)"
+  && lens_title_for_name ~name:"add" override_lenses = Some "make private"
+
 let%test "server definition falls back to last_good during incomplete edits" =
   let main_source = "type Point = { x: Int }\nlet p: Point = { x: 1 }\np\n" in
   let main_path, actual =
-    cached_definition_target
-      ~cached_annotated:"type Point = { x: Int }\nlet p: Point| = { x: 1 }\np\n{"
+    cached_definition_target ~cached_annotated:"type Point = { x: Int }\nlet p: Point| = { x: 1 }\np\n{"
       ~last_good_annotated:"type Point = { x: Int }\nlet p: Point| = { x: 1 }\np\n"
-      ~files:[ ("main.mr", main_source) ] ~entry_rel:"main.mr"
-      "type Point = { x: Int }\nlet p: Point| = { x: 1 }\np\n{"
+      ~files:[ ("main.mr", main_source) ]
+      ~entry_rel:"main.mr" "type Point = { x: Int }\nlet p: Point| = { x: 1 }\np\n{"
   in
   actual = Definition.target_span_of_substring ~file_path:main_path ~source:main_source ~needle:"Point" ()
 
 let%test "server completion uses live buffer text instead of leaking stale cached locals" =
   let labels =
     cached_completion_labels
-      ~cached_annotated:
-        "import types.geo\nlet xs = [1]\nlet p = { x: 1, y: 2 }\nlet q = { x: 1 }\n|\n"
+      ~cached_annotated:"import types.geo\nlet xs = [1]\nlet p = { x: 1, y: 2 }\nlet q = { x: 1 }\n|\n"
       ~files:
         [
           ( "main_namespace_type_positions.mr",
@@ -970,24 +1248,22 @@ let%test "server completion uses live buffer text instead of leaking stale cache
       "import types.geo\nlet xs = [1]\nlet p = { x: 1, y: 2 }\nlet q = { x: 1 }\nimpo|\n"
   in
   List.mem "let" labels
-  && not (List.mem "xs" labels)
-  && not (List.mem "p" labels)
-  && not (List.mem "q" labels)
-  &&
-  not
-    (List.exists
-       (fun label ->
-         Diagnostics.String_utils.contains_substring ~needle:"u005f" label
-         || Diagnostics.String_utils.contains_substring ~needle:"__" label)
-       labels)
+  && (not (List.mem "xs" labels))
+  && (not (List.mem "p" labels))
+  && (not (List.mem "q" labels))
+  && not
+       (List.exists
+          (fun label ->
+            Diagnostics.String_utils.contains_substring ~needle:"u005f" label
+            || Diagnostics.String_utils.contains_substring ~needle:"__" label)
+          labels)
 
 let%test "server completion supports dot-triggered namespace members" =
   let labels =
     cached_completion_labels ~trigger_is_dot:true ~last_good_annotated:"import math\nmath|\n"
       ~files:
         [
-          ("main.mr", "import math\nmath.\n");
-          ("math.mr", "export add\nfn add(x: Int, y: Int) -> Int = x + y\n");
+          ("main.mr", "import math\nmath.\n"); ("math.mr", "export add\nfn add(x: Int, y: Int) -> Int = x + y\n");
         ]
       ~entry_rel:"main.mr" "import math\nmath.|\n"
   in
@@ -1000,10 +1276,8 @@ let%test "server completion supports dot-triggered imported alias members" =
         [
           ("main.mr", "import types.geo\ngeo.\n");
           ( "types/geo.mr",
-            "export render_point, Point, HasXY\n\
-             type Point = { x: Int, y: Int }\n\
-             shape HasXY = { x: Int, y: Int }\n\
-             fn render_point(p: Point) -> Str = \"point\"\n" );
+            "export render_point, Point, HasXY\ntype Point = { x: Int, y: Int }\nshape HasXY = { x: Int, y: Int }\nfn render_point(p: Point) -> Str = \"point\"\n"
+          );
         ]
       ~entry_rel:"main.mr" "import types.geo\ngeo.|\n"
   in
@@ -1011,47 +1285,40 @@ let%test "server completion supports dot-triggered imported alias members" =
 
 let%test "server completion supports bare-dot imported alias members without trigger character" =
   let labels =
-    cached_completion_labels
-      ~cached_annotated:"import types.geo\nlet p = 1\nlet q = 2\ngeo|\n"
+    cached_completion_labels ~cached_annotated:"import types.geo\nlet p = 1\nlet q = 2\ngeo|\n"
       ~files:
         [
           ("main.mr", "import types.geo\nlet p = 1\nlet q = 2\ngeo.\n");
           ( "types/geo.mr",
-            "export render_point, Point, HasXY\n\
-             type Point = { x: Int, y: Int }\n\
-             shape HasXY = { x: Int, y: Int }\n\
-             fn render_point(p: Point) -> Str = \"point\"\n" );
+            "export render_point, Point, HasXY\ntype Point = { x: Int, y: Int }\nshape HasXY = { x: Int, y: Int }\nfn render_point(p: Point) -> Str = \"point\"\n"
+          );
         ]
       ~entry_rel:"main.mr" "import types.geo\nlet p = 1\nlet q = 2\ngeo.|\n"
   in
   List.mem "render_point" labels
   && List.mem "Point" labels
   && List.mem "HasXY" labels
-  && not (List.mem "p" labels)
-  && not (List.mem "q" labels)
+  && (not (List.mem "p" labels))
+  && (not (List.mem "q" labels))
   && not (List.mem "let" labels)
 
 let%test "server completion supports qualified imported types" =
   let labels =
-    cached_completion_labels
-      ~last_good_annotated:"import types.geo\nlet p: geo.Point| = { x: 1, y: 2 }\n"
+    cached_completion_labels ~last_good_annotated:"import types.geo\nlet p: geo.Point| = { x: 1, y: 2 }\n"
       ~files:
         [
           ("main.mr", "import types.geo\nlet p: geo.Po = { x: 1, y: 2 }\n");
           ( "types/geo.mr",
-            "export render_point, Point, HasXY\n\
-             type Point = { x: Int, y: Int }\n\
-             shape HasXY = { x: Int, y: Int }\n\
-             fn render_point(p: Point) -> Str = \"point\"\n" );
+            "export render_point, Point, HasXY\ntype Point = { x: Int, y: Int }\nshape HasXY = { x: Int, y: Int }\nfn render_point(p: Point) -> Str = \"point\"\n"
+          );
         ]
       ~entry_rel:"main.mr" "import types.geo\nlet p: geo.Po| = { x: 1, y: 2 }\n"
   in
-  List.mem "Point" labels && not (List.mem "HasXY" labels) && not (List.mem "render_point" labels)
+  List.mem "Point" labels && (not (List.mem "HasXY" labels)) && not (List.mem "render_point" labels)
 
 let%test "server completion falls back to last_good for incomplete type annotations" =
   let labels =
-    cached_completion_labels
-      ~cached_annotated:"type Point = { x: Int }\nlet value: Po|\n"
+    cached_completion_labels ~cached_annotated:"type Point = { x: Int }\nlet value: Po|\n"
       ~last_good_annotated:"type Point = { x: Int }\nlet value: Point| = { x: 1 }\n"
       ~files:[ ("main.mr", "type Point = { x: Int }\nlet value: Po\n") ]
       ~entry_rel:"main.mr" "type Point = { x: Int }\nlet value: Po|\n"
