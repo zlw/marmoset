@@ -34,24 +34,15 @@ local function find_marmoset_root(start_path)
   return nil
 end
 
-local function repo_binary_candidates(root)
-  return {
-    root .. "/marmoset",
-    root .. "/_build/default/bin/main.exe",
-    root .. "/_build/install/default/bin/marmoset",
-  }
+local function repo_binary_path(root)
+  return root .. "/marmoset"
 end
 
 local function resolve_lsp_cmd(base_cmd, marmoset_root)
   local cmd = vim.deepcopy(base_cmd)
 
   if marmoset_root and type(cmd) == "table" and cmd[1] == "marmoset" then
-    for _, candidate in ipairs(repo_binary_candidates(marmoset_root)) do
-      if vim.fn.executable(candidate) == 1 then
-        cmd[1] = candidate
-        break
-      end
-    end
+    cmd[1] = repo_binary_path(marmoset_root)
   end
 
   return cmd
@@ -93,11 +84,6 @@ end
 
 function M._start_lsp()
   if not M._config.lsp.enable then
-    return
-  end
-
-  local cmd = M._config.lsp.cmd
-  if vim.fn.executable(cmd[1]) ~= 1 then
     return
   end
 

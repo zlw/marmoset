@@ -86,14 +86,36 @@ let export_stmt_end ~(source : string) (stmt : Surface.surface_top_stmt) : int *
   else
     (stmt.std_end_pos, false)
 
-let delete_end_after_newline ~(source : string) ~(end_pos : int) : int =
-  let next = end_pos + 1 in
-  if next + 1 < String.length source && source.[next] = '\r' && source.[next + 1] = '\n' then
-    next + 1
-  else if next < String.length source && (source.[next] = '\n' || source.[next] = '\r') then
-    next
+let newline_sequence_len ~(source : string) ~(offset : int) : int =
+  if offset + 1 < String.length source && source.[offset] = '\r' && source.[offset + 1] = '\n' then
+    2
+  else if offset < String.length source && (source.[offset] = '\n' || source.[offset] = '\r') then
+    1
   else
+    0
+
+let delete_end_after_separator ~(source : string) ~(end_pos : int) : int =
+  let first_start = end_pos + 1 in
+  let first_len = newline_sequence_len ~source ~offset:first_start in
+  if first_len = 0 then
     end_pos
+  else
+    let second_start = first_start + first_len in
+    let second_len = newline_sequence_len ~source ~offset:second_start in
+    if second_len = 0 then
+      second_start - 1
+    else
+      second_start + second_len - 1
+
+let starts_with_at ~(source : string) ~(offset : int) ~(prefix : string) : bool =
+  let prefix_len = String.length prefix in
+  offset + prefix_len <= String.length source && String.sub source offset prefix_len = prefix
+
+let inserted_export_header_text ~(source : string) ~(insert_at : int) ~(name : string) : string =
+  if insert_at >= String.length source || starts_with_at ~source ~offset:insert_at ~prefix:"export" then
+    "export " ^ name ^ "\n"
+  else
+    "export " ^ name ^ "\n\n"
 
 let render_export_header ~(names : string list) ~(has_semicolon : bool) : string =
   let suffix =
@@ -121,12 +143,16 @@ let edit_for_visibility
         | first_stmt :: _ -> first_stmt.std_pos
         | [] -> String.length source
       in
-      Some [ insert_edit ~source ~offset:insert_at ~new_text:("export " ^ decl.surface_name ^ "\n") ]
+      Some
+        [
+          insert_edit ~source ~offset:insert_at
+            ~new_text:(inserted_export_header_text ~source ~insert_at ~name:decl.surface_name);
+        ]
   | Private, true, Some (header_stmt, header_names) ->
       let remaining = List.filter (fun name -> not (String.equal name decl.surface_name)) header_names in
       let end_pos, has_semicolon = export_stmt_end ~source header_stmt in
       if remaining = [] then
-        let delete_end = delete_end_after_newline ~source ~end_pos in
+        let delete_end = delete_end_after_separator ~source ~end_pos in
         Some [ replace_edit ~source ~start_pos:header_stmt.std_pos ~end_pos:delete_end ~new_text:"" ]
       else
         let updated = render_export_header ~names:remaining ~has_semicolon in
@@ -193,11 +219,11 @@ let%test "edit_for_visibility appends a name to an existing export header" =
 let%test "edit_for_visibility creates an export header before imports" =
   let source = "import math\nfn foo() -> Int = math.add(1, 2)\n" in
   updated_source ~source ~name:"foo" ~visibility:Public
-  = Some "export foo\nimport math\nfn foo() -> Int = math.add(1, 2)\n"
+  = Some "export foo\n\nimport math\nfn foo() -> Int = math.add(1, 2)\n"
 
 let%test "edit_for_visibility creates an export header after leading comments and blanks" =
   let source = "# heading\n\nfn foo() -> Int = 1\n" in
-  updated_source ~source ~name:"foo" ~visibility:Public = Some "# heading\n\nexport foo\nfn foo() -> Int = 1\n"
+  updated_source ~source ~name:"foo" ~visibility:Public = Some "# heading\n\nexport foo\n\nfn foo() -> Int = 1\n"
 
 let%test "edit_for_visibility removes a middle export name" =
   let source = "export foo, bar, baz\nfn foo() -> Int = 1\nfn bar() -> Int = 2\nfn baz() -> Int = 3\n" in
@@ -206,6 +232,10 @@ let%test "edit_for_visibility removes a middle export name" =
 
 let%test "edit_for_visibility removes the final export header and one trailing newline" =
   let source = "export foo\nfn foo() -> Int = 1\n" in
+  updated_source ~source ~name:"foo" ~visibility:Private = Some "fn foo() -> Int = 1\n"
+
+let%test "edit_for_visibility removes a final export header without leaving a blank separator" =
+  let source = "export foo\n\nfn foo() -> Int = 1\n" in
   updated_source ~source ~name:"foo" ~visibility:Private = Some "fn foo() -> Int = 1\n"
 
 let%test "edit_for_visibility returns no edit when visibility already matches reality" =

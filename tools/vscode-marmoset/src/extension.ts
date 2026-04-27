@@ -40,20 +40,8 @@ function resolveMarmosetRoot(startDir: string | undefined): string | undefined {
   return ancestorDirs(startDir).find(hasToolchainStdlib);
 }
 
-function isExecutable(filePath: string): boolean {
-  try {
-    return fs.statSync(filePath).isFile();
-  } catch {
-    return false;
-  }
-}
-
-function repoBinaryCandidates(marmosetRoot: string): string[] {
-  return [
-    path.join(marmosetRoot, "marmoset"),
-    path.join(marmosetRoot, "_build", "default", "bin", "main.exe"),
-    path.join(marmosetRoot, "_build", "install", "default", "bin", "marmoset"),
-  ];
+function repoBinaryPath(marmosetRoot: string): string {
+  return path.join(marmosetRoot, "marmoset");
 }
 
 export function activate(context: vscode.ExtensionContext) {
@@ -69,7 +57,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   const command =
     serverPath === "marmoset" && marmosetRoot
-      ? repoBinaryCandidates(marmosetRoot).find(isExecutable) ?? serverPath
+      ? repoBinaryPath(marmosetRoot)
       : serverPath;
 
   const serverOptions: ServerOptions = {

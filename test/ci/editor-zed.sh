@@ -10,6 +10,16 @@ TREE_SITTER_DIR="$REPO_ROOT/tools/tree-sitter-marmoset"
 cd "$ZED_DIR"
 cargo test --locked
 
+if command -v rg >/dev/null 2>&1; then
+  rg -Fq 'repo_root.join("marmoset")' src/marmoset.rs
+  ! rg -Fq '_build/default/bin/main.exe' src/marmoset.rs
+  ! rg -Fq '_build/install/default/bin/marmoset' src/marmoset.rs
+else
+  grep -Fq 'repo_root.join("marmoset")' src/marmoset.rs
+  ! grep -Fq '_build/default/bin/main.exe' src/marmoset.rs
+  ! grep -Fq '_build/install/default/bin/marmoset' src/marmoset.rs
+fi
+
 python3 - <<'PY'
 import json
 import pathlib
@@ -179,100 +189,139 @@ def assert_capture(captures, capture, text):
 highlights_query = zed_lang_dir / "highlights.scm"
 outline_query = zed_lang_dir / "outline.scm"
 
-monkey_highlights = run_query(highlights_query, repo_root / "examples" / "monkey.mr")
-for expected in [
-    ("function", "print_book_name"),
-    ("variable.parameter", "book"),
-    ("type.builtin", "Map"),
-    ("operator", "=>"),
-    ("function", "fibonacci"),
-]:
-    assert_capture(monkey_highlights, *expected)
-
-module_highlights = run_query(
-    highlights_query,
-    repo_root
-    / "test"
-    / "fixtures"
-    / "modules_codegen"
-    / "mc04_namespace_values_and_nested_qualifiers"
-    / "main.mr",
-)
-for expected in [
-    ("keyword.import", "import"),
-    ("type", "math"),
-    ("type", "geometry"),
-    ("function.method.call", "make_point"),
-    ("type", "Point"),
-    ("function.method.call", "distance"),
-    ("type", "Show"),
-    ("function.method.call", "show"),
-    ("type", "Color"),
-    ("constructor", "Red"),
-]:
-    assert_capture(module_highlights, *expected)
-
-records_highlights = run_query(highlights_query, repo_root / "examples" / "records-typed.mr")
-for expected in [
-    ("keyword.import", "import"),
-    ("type", "sum"),
-    ("function.method.call", "sum"),
-]:
-    assert_capture(records_highlights, *expected)
-
-upcase_outline = run_query(outline_query, repo_root / "examples" / "new-syntax-upcase.mr")
-for expected in [
-    ("name", "Option"),
-    ("name", "NamedDweller"),
-    ("name", "JungleDweller"),
-    ("name", "Monkey"),
-    ("name", "identity"),
-]:
-    assert_capture(upcase_outline, *expected)
-
-scenario_source = textwrap.dedent(
-    """
-    type Option[a] = {
-      Some(a),
-      None,
-    }
-
-    shape Named = {
-      name: Str,
-      age: Int,
-    }
-
-    trait Greeter[a] = {
-      fn greet(self: a, prefix: Str) -> Str
-    }
-
-    type Monkey = {
-      name: Str,
-      age: Int,
-    }
-
-    impl Greeter[Monkey] = {
-      fn greet(self: Monkey, prefix: Str) -> Str = prefix + self.name
-    }
-
-    impl Monkey = {
-      fn rename(self: Monkey, next_name: Str) -> Monkey = self
-    }
-
-    let name = "Curious George"
-    let promoted = { ...{ name: "George", age: 7 }, name: }
-    let banner = promoted |> Greeter.greet("hi ")
-
-    fn print_book_name(book: Map[Str, Str], fallback: Str) => Unit = {
-      let title = book["title"]
-      puts("#{title}#{fallback}")
-    }
-    """
-).strip() + "\n"
-
 with tempfile.TemporaryDirectory() as tmpdir:
+    monkey_path = pathlib.Path(tmpdir) / "zed-monkey.mr"
+    monkey_path.write_text(
+        textwrap.dedent(
+            """
+            fn fibonacci(n: Int) -> Int = n
+
+            fn print_book_name(book: Map[Str, Str], fallback: Str) => Unit = {
+              puts(book["title"])
+              puts(fallback)
+            }
+            """
+        ).strip()
+        + "\n"
+    )
+    monkey_highlights = run_query(highlights_query, monkey_path)
+    for expected in [
+        ("function", "print_book_name"),
+        ("variable.parameter", "book"),
+        ("type.builtin", "Map"),
+        ("operator", "=>"),
+        ("function", "fibonacci"),
+    ]:
+        assert_capture(monkey_highlights, *expected)
+
+    module_highlights = run_query(
+        highlights_query,
+        repo_root
+        / "test"
+        / "fixtures"
+        / "modules_codegen"
+        / "mc04_namespace_values_and_nested_qualifiers"
+        / "main.mr",
+    )
+    for expected in [
+        ("keyword.import", "import"),
+        ("type", "math"),
+        ("type", "geometry"),
+        ("function.method.call", "make_point"),
+        ("type", "Point"),
+        ("function.method.call", "distance"),
+        ("type", "Show"),
+        ("function.method.call", "show"),
+        ("type", "Color"),
+        ("constructor", "Red"),
+    ]:
+        assert_capture(module_highlights, *expected)
+
+    records_path = pathlib.Path(tmpdir) / "zed-records.mr"
+    records_path.write_text(
+        textwrap.dedent(
+            """
+            import sum
+
+            sum.sum(1, 2)
+            """
+        ).strip()
+        + "\n"
+    )
+    records_highlights = run_query(highlights_query, records_path)
+    for expected in [
+        ("keyword.import", "import"),
+        ("type", "sum"),
+        ("function.method.call", "sum"),
+    ]:
+        assert_capture(records_highlights, *expected)
+
+    upcase_path = pathlib.Path(tmpdir) / "zed-upcase.mr"
+    upcase_path.write_text(
+        textwrap.dedent(
+            """
+            type Option[a] = { Some(a), None }
+            shape NamedDweller = { name: Str }
+            trait JungleDweller[a] = { fn greet(self: a) -> Str }
+            type Monkey = { name: Str }
+            fn identity(x: Int) -> Int = x
+            """
+        ).strip()
+        + "\n"
+    )
+    upcase_outline = run_query(outline_query, upcase_path)
+    for expected in [
+        ("name", "Option"),
+        ("name", "NamedDweller"),
+        ("name", "JungleDweller"),
+        ("name", "Monkey"),
+        ("name", "identity"),
+    ]:
+        assert_capture(upcase_outline, *expected)
+
     scenario_path = pathlib.Path(tmpdir) / "zed-scenario.mr"
-    scenario_path.write_text(scenario_source)
+    scenario_path.write_text(
+        textwrap.dedent(
+            """
+            type Option[a] = {
+              Some(a),
+              None,
+            }
+
+            shape Named = {
+              name: Str,
+              age: Int,
+            }
+
+            trait Greeter[a] = {
+              fn greet(self: a, prefix: Str) -> Str
+            }
+
+            type Monkey = {
+              name: Str,
+              age: Int,
+            }
+
+            impl Greeter[Monkey] = {
+              fn greet(self: Monkey, prefix: Str) -> Str = prefix + self.name
+            }
+
+            impl Monkey = {
+              fn rename(self: Monkey, next_name: Str) -> Monkey = self
+            }
+
+            let name = "Curious George"
+            let promoted = { ...{ name: "George", age: 7 }, name: }
+            let banner = promoted |> Greeter.greet("hi ")
+
+            fn print_book_name(book: Map[Str, Str], fallback: Str) => Unit = {
+              let title = book["title"]
+              puts("#{title}#{fallback}")
+            }
+            """
+        ).strip()
+        + "\n"
+    )
 
     scenario_highlights = run_query(highlights_query, scenario_path)
     for expected in [

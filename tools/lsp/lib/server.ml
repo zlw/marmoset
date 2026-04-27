@@ -101,27 +101,22 @@ let related_open_docs
 let completion_items_for_cached_doc
     ~(cached : cached_doc)
     ~(current_source : string option)
+    ~(file_id : string)
+    ~(source_root : string option)
     ~(line : int)
     ~(character : int)
     ~(trigger_is_dot : bool)
-    ~(source_overrides : (string, string) Hashtbl.t) : Lsp_t.CompletionItem.t list option =
-  let latest =
+    ~(source_overrides : (string, string) Hashtbl.t) : cached_doc * Lsp_t.CompletionItem.t list option =
+  let refreshed =
     match current_source with
-    | Some source ->
-        {
-          cached.latest with
-          source;
-          surface_program = None;
-          program = None;
-          type_map = None;
-          environment = None;
-          type_var_user_names = [];
-          diagnostics = [];
-          compiler_analysis = None;
-        }
-    | None -> cached.latest
+    | Some source when not (String.equal source cached.latest.source) ->
+        let latest = Doc_state.analyze_with_file_id ?source_root ~source_overrides ~file_id ~source () in
+        update_cached_doc (Some cached) latest
+    | Some _ | None -> cached
   in
-  Completions.complete_at ~latest ~last_good:cached.last_good ~line ~character ~trigger_is_dot ~source_overrides
+  ( refreshed,
+    Completions.complete_at ~latest:refreshed.latest ~last_good:refreshed.last_good ~line ~character
+      ~trigger_is_dot ~source_overrides )
 
 let definition_analysis_for_cached_doc
     ~(cached : cached_doc)
@@ -660,9 +655,21 @@ class marmoset_server =
         | None -> None
         | Some cached ->
             let current_source = Option.map (fun (doc : open_doc) -> doc.text) (Hashtbl.find_opt open_docs uri) in
+            let source_root =
+              match Hashtbl.find_opt open_docs uri with
+              | Some doc -> choose_known_source_root ~analysis_cache ~uri ~file_path:doc.file_path
+              | None ->
+                  choose_known_source_root ~analysis_cache ~uri
+                    ~file_path:(Doc_state.file_path_of_file_id (Lsp_t.DocumentUri.to_string uri))
+            in
             let source_overrides = self#source_overrides () in
-            completion_items_for_cached_doc ~cached ~current_source ~line:pos.line ~character:pos.character
-              ~trigger_is_dot:is_dot_trigger ~source_overrides
+            let file_id = Lsp_t.DocumentUri.to_string uri in
+            let cached, items =
+              completion_items_for_cached_doc ~cached ~current_source ~file_id ~source_root ~line:pos.line
+                ~character:pos.character ~trigger_is_dot:is_dot_trigger ~source_overrides
+            in
+            Hashtbl.replace analysis_cache uri cached;
+            items
       in
       Lwt.return (Option.map (fun items -> `List items) result)
 
@@ -947,11 +954,12 @@ let cached_completion_labels
         in
         let cached = update_cached_doc previous latest in
         let source_overrides = Hashtbl.create 0 in
+        let _, items =
+          completion_items_for_cached_doc ~cached ~current_source:(Some source) ~file_id ~source_root:(Some root)
+            ~line ~character ~trigger_is_dot ~source_overrides
+        in
         (captured :=
-           match
-             completion_items_for_cached_doc ~cached ~current_source:(Some source) ~line ~character
-               ~trigger_is_dot ~source_overrides
-           with
+           match items with
            | Some items -> List.map (fun (item : Lsp_t.CompletionItem.t) -> item.label) items
            | None -> []);
         true)
@@ -1133,7 +1141,7 @@ let%test "server execute command builds export edits against live open-buffer te
       | None -> false
       | Some args ->
           apply_source_for_command ~source:live_source ~args
-          = Some "# heading\n\nexport greet\nfn greet(name: Str) -> Str = name\n")
+          = Some "# heading\n\nexport greet\n\nfn greet(name: Str) -> Str = name\n")
 
 let%test "server execute command rejects renamed declarations instead of guessing" =
   let source = "fn greet(name: Str) -> Str = name\n" in
@@ -1300,6 +1308,44 @@ let%test "server completion supports bare-dot imported alias members without tri
   && List.mem "HasXY" labels
   && (not (List.mem "p" labels))
   && (not (List.mem "q" labels))
+  && not (List.mem "let" labels)
+
+let%test "server completion on imported module bare dot excludes local names" =
+  let source =
+    "import fibonacci\n\ntype Point = { x: Int, y: Int }\n\nlet point: Point = { x: 1, y: 2 }\nlet moved = { ...point, x: 10 }\n\nfn get_x(value: Point) -> Int = value.x\n\nfibonacci.\nputs(get_x(moved))\nputs(moved.x + moved.y)\n"
+  in
+  let labels =
+    cached_completion_labels
+      ~files:[ ("main.mr", source); ("fibonacci.mr", "export fib\n\nfn fib(n: Int) -> Int = n\n") ]
+      ~entry_rel:"main.mr"
+      "import fibonacci\n\ntype Point = { x: Int, y: Int }\n\nlet point: Point = { x: 1, y: 2 }\nlet moved = { ...point, x: 10 }\n\nfn get_x(value: Point) -> Int = value.x\n\nfibonacci.|\nputs(get_x(moved))\nputs(moved.x + moved.y)\n"
+  in
+  List.mem "fib" labels
+  && (not (List.mem "get_x" labels))
+  && (not (List.mem "moved" labels))
+  && (not (List.mem "point" labels))
+  && not (List.mem "let" labels)
+
+let%test "server completion uses live buffer text for namespace members when cache is stale" =
+  let cached_source =
+    "type Point = { x: Int, y: Int }\n\nlet point: Point = { x: 1, y: 2 }\nlet moved = { ...point, x: 10 }\n\nfn get_x(value: Point) -> Int = value.x\n\n|\nputs(get_x(moved))\nputs(moved.x + moved.y)\n"
+  in
+  let labels =
+    cached_completion_labels ~cached_annotated:cached_source
+      ~files:
+        [
+          ( "main.mr",
+            "import fibonacci\n\ntype Point = { x: Int, y: Int }\n\nlet point: Point = { x: 1, y: 2 }\nlet moved = { ...point, x: 10 }\n\nfn get_x(value: Point) -> Int = value.x\n\nfibonacci.\nputs(get_x(moved))\nputs(moved.x + moved.y)\n"
+          );
+          ("fibonacci.mr", "export fib\n\nfn fib(n: Int) -> Int = n\n");
+        ]
+      ~entry_rel:"main.mr"
+      "import fibonacci\n\ntype Point = { x: Int, y: Int }\n\nlet point: Point = { x: 1, y: 2 }\nlet moved = { ...point, x: 10 }\n\nfn get_x(value: Point) -> Int = value.x\n\nfibonacci.|\nputs(get_x(moved))\nputs(moved.x + moved.y)\n"
+  in
+  List.mem "fib" labels
+  && (not (List.mem "get_x" labels))
+  && (not (List.mem "moved" labels))
+  && (not (List.mem "point" labels))
   && not (List.mem "let" labels)
 
 let%test "server completion supports qualified imported types" =
