@@ -58,8 +58,6 @@ puts(banana_total(3, 4))  # 12
 
 Both compile to the exact same binary. You choose the style.
 
-Strings support interpolation with `#{expr}`. Embedded values use `Show`, so the same syntax works for primitives and user types with a `Show` impl.
-
 ---
 
 ## 🍌 What does Marmoset look like?
@@ -100,41 +98,39 @@ puts(compare_inventory("banana", "banana"))  # same inventory: banana
 puts(compare_inventory(3, 5))                # different inventories
 ```
 
-### 🧾 Transparent types
+### 🧩 Data types
 
-Transparent `type` declarations name existing exact type expressions without creating a new nominal type:
+Marmoset's core scalars are `Int`, `Float`, `Bool`, `Str`, and `Unit`. Strings support concatenation, indexing, negative indexing, and interpolation with `#{expr}`. Interpolation uses `Show`, so the same syntax works for primitives and user types with a `Show` impl.
+
+```marmoset
+let name: Str = "milo"
+let count = 3
+
+puts("#{name} has #{count + 2} bananas")  # milo has 5 bananas
+puts(name[0])                             # m
+puts(name[-1])                            # o
+```
+
+Lists and maps are homogeneous and infer their element, key, and value types:
+
+```marmoset
+let troop: List[Str] = ["milo", "kiwi", "boba"]
+let counts: Map[Str, Int] = { "bananas": 3, "mangos": 2 }
+
+puts(troop[-1])          # boba
+puts(counts["bananas"])  # 3
+puts(len(troop))         # 3
+```
+
+Records are structural, support field access and spread updates, and can be named with transparent `type` declarations:
 
 ```marmoset
 type Perch = { bananas: Int, vines: Int }
 
 let start: Perch = { bananas: 1, vines: 2 }
-fn gather_more(p: Perch, extra: Int) -> Perch = { ...p, bananas: p.bananas + extra }
+let moved = { ...start, bananas: start.bananas + 3 }
 
-puts(gather_more(start, 3).bananas)  # 4
-puts(start.vines)                    # 2
-```
-
-### 📦 Records
-
-Structural records support field access and spread updates:
-
-```marmoset
-let supply = { bananas: 1, coconuts: 2 }
-let restocked = { ...supply, bananas: 10 }
-
-puts(restocked.bananas)   # 10
-puts(restocked.coconuts)  # 2
-```
-
-Named exact records use the same structural field access and spread updates:
-
-```marmoset
-type JungleStop = { bananas: Int, vines: Int }
-
-let start: JungleStop = { bananas: 1, vines: 2 }
-let moved = { ...start, bananas: 10 }
-
-puts(moved.bananas)  # 10
+puts(moved.bananas)  # 4
 puts(moved.vines)    # 2
 ```
 
@@ -171,6 +167,37 @@ impl Vine[a] = {
 
 let vine = Vine.Holding("banana")
 puts(Vine.occupied(vine))  # true
+```
+
+### 📚 Modules, imports & prelude
+
+Every `.mr` file is a module. An `export` list controls public names, unexported declarations stay private, and `import` supports namespace imports, direct imports, and aliases:
+
+```marmoset
+# math.mr
+export Point, add
+
+type Point = { x: Int, y: Int }
+fn add(x: Int, y: Int) -> Int = x + y
+
+# main.mr
+import math
+import math.Point
+import math.add as plus
+
+let origin: Point = { x: 0, y: 0 }
+
+puts(math.add(origin.x, 3))  # 3
+puts(plus(origin.y, 2))      # 2
+```
+
+The toolchain also ships Marmoset stdlib modules. `std.prelude`, `std.option`, and `std.result` are auto-loaded, so core traits like `Eq`, `Show`, `Ord`, and `Hash` plus `Option` and `Result` are available without explicit imports.
+
+```marmoset
+let snack = Option.Some("banana")
+
+puts(Option.unwrap_or(snack, "none"))  # banana
+puts(Show.show(42))                    # 42
 ```
 
 ### 🧱 Shapes
@@ -385,7 +412,17 @@ Marmoset ships with an LSP server and plugins for:
 | Neovim | `tools/nvim-marmoset/` |
 | JetBrains | `tools/jetbrains-marmoset/` |
 
-Features: diagnostics, hover, signature help, semantic tokens, inlay hints, folding ranges, selection ranges.
+Implemented LSP features:
+
+- Diagnostics from parsing, typechecking, module resolution, and export visibility checks
+- Hover for expressions, bindings, declaration headers, patterns, and type annotations
+- Go to definition for local and imported values, modules, types, shapes, traits, constructors, generic parameters, and trait/inherent methods
+- Completion for values, keywords, imports, module exports, type positions, constraints, constructors, and qualified trait/type/module members
+- Signature help, semantic tokens, inlay hints, document symbols, folding ranges, and selection ranges
+- Quick-fix code actions for adding inferred type annotations
+- Export visibility code lenses for making module declarations public or private
+
+Not implemented yet: rename, references, workspace symbols, call hierarchy, and generic record-field completion.
 
 ---
 
