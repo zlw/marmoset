@@ -118,6 +118,14 @@ let merge_project_resolution_artifacts (dst : project_resolution_artifacts) (res
   merge_hashtbl dst.trait_object_coercion_map result.trait_object_coercion_map;
   merge_hashtbl dst.placeholder_rewrite_map result.placeholder_rewrite_map
 
+let extern_signatures_equal
+    (a : Typecheck.Resolution_artifacts.extern_func)
+    (b : Typecheck.Resolution_artifacts.extern_func) : bool =
+  List.length a.param_types = List.length b.param_types
+  && List.for_all2 (=) a.param_types b.param_types
+  && a.return_type = b.return_type
+  && Bool.equal a.is_effectful b.is_effectful
+
 let diagnostics_have_errors (diagnostics : Diagnostic.t list) : bool =
   List.exists (fun (diag : Diagnostic.t) -> diag.severity = Diagnostic.Error) diagnostics
 
@@ -664,6 +672,42 @@ let compile_module
       navigation = { surface; resolved_imports = rewrite.resolved_imports };
     }
 
+let validate_project_extern_signature_coherence (modules : checked_module list) : (unit, Diagnostic.t list) result =
+  let seen : (string, Typecheck.Resolution_artifacts.extern_func) Hashtbl.t = Hashtbl.create 64 in
+  let rec check_module = function
+    | [] -> Ok ()
+    | (module_ : checked_module) :: rest ->
+        let conflict =
+          Hashtbl.fold
+            (fun extern_key (func : Typecheck.Resolution_artifacts.extern_func) acc ->
+              match acc with
+              | Some _ -> acc
+              | None -> (
+                  match Hashtbl.find_opt seen extern_key with
+                  | Some existing when not (extern_signatures_equal existing func) ->
+                      Some (existing, func)
+                  | Some _ ->
+                      Hashtbl.replace seen extern_key func;
+                      None
+                  | None ->
+                      Hashtbl.replace seen extern_key func;
+                      None))
+            module_.result.extern_declarations None
+        in
+        (match conflict with
+        | None -> check_module rest
+        | Some (existing, func) ->
+            Error
+              [
+                compiler_error ~code:"module-extern-signature-conflict"
+                  ~message:
+                    (Printf.sprintf
+                       "Conflicting extern signatures for %S.%s between modules '%s' and '%s'"
+                       func.go_path func.go_func_name existing.declaring_module func.declaring_module);
+              ])
+  in
+  check_module modules
+
 let merge_checked_modules (modules : checked_module list) : compiled_project =
   let program = List.concat_map (fun (m : checked_module) -> m.program) modules in
   let environment =
@@ -700,7 +744,10 @@ let compile_project (graph : Module_context.module_graph) : (compiled_project, D
   let* () = validate_build_wide_trait_impl_coherence ~rewrites graph in
   let typed_signatures = Hashtbl.create (List.length graph.topo_order) in
   let rec go acc = function
-    | [] -> Ok (merge_checked_modules (List.rev acc))
+    | [] ->
+        let modules = List.rev acc in
+        let* () = validate_project_extern_signature_coherence modules in
+        Ok (merge_checked_modules modules)
     | module_id :: rest -> (
         match Hashtbl.find_opt graph.modules module_id with
         | None ->
@@ -1322,6 +1369,24 @@ let compile_entry_to_build ?source_root ?stdlib_root ~(entry_file : string) () :
   in
   compile_project_to_build graph
 
+let string_contains s substring = Diagnostics.String_utils.contains_substring ~needle:substring s
+
+let count_occurrences haystack needle =
+  let needle_len = String.length needle in
+  let rec loop pos acc =
+    match String.index_from_opt haystack pos needle.[0] with
+    | None -> acc
+    | Some idx ->
+        if idx + needle_len <= String.length haystack && String.sub haystack idx needle_len = needle then
+          loop (idx + 1) (acc + 1)
+        else
+          loop (idx + 1) acc
+  in
+  if needle_len = 0 then
+    0
+  else
+    loop 0 0
+
 let%test "compile_project rewrites namespace imports to internal names" =
   Discovery.with_temp_project
     [
@@ -1434,6 +1499,61 @@ let%test "ffi F1d: compile_project merges extern artifacts" =
           | Ok project ->
               Hashtbl.length project.artifacts.extern_declarations = 1
               && Hashtbl.length project.artifacts.extern_calls = 1))
+
+let%test "ffi F3: wrapper module exports ordinary API backed by private extern" =
+  Discovery.with_temp_project
+    [
+      ("main.mr", "import lib.str\nputs(str.upcase(\"hi\"))\n");
+      ( "lib/str.mr",
+        "export upcase\nextern \"strings\" = { fn ToUpper(s: Str) -> Str }\nfn upcase(s: Str) -> Str = strings.ToUpper(s)\n"
+      );
+    ]
+    (fun root ->
+      match compile_entry_to_build ~entry_file:(Filename.concat root "main.mr") () with
+      | Error _ -> false
+      | Ok build_output ->
+          string_contains build_output.main_go {|import mext_strings "strings"|}
+          && string_contains build_output.main_go "func extern__strings__ToUpper(s string) string"
+          && string_contains build_output.main_go "mext_strings.ToUpper(s)"
+          && string_contains build_output.main_go "str__upcase_string")
+
+let%test "ffi F3: matching externs across wrapper modules dedupe wrappers and imports" =
+  Discovery.with_temp_project
+    [
+      ("main.mr", "import a.up\nimport b.loud\nputs(up(\"hi\"))\nputs(loud(\"bye\"))\n");
+      ( "a.mr",
+        "export up\nextern \"strings\" = { fn ToUpper(s: Str) -> Str }\nfn up(s: Str) -> Str = strings.ToUpper(s)\n"
+      );
+      ( "b.mr",
+        "export loud\nextern \"strings\" as text = { fn ToUpper(s: Str) -> Str }\nfn loud(s: Str) -> Str = text.ToUpper(s)\n"
+      );
+    ]
+    (fun root ->
+      match compile_entry_to_build ~entry_file:(Filename.concat root "main.mr") () with
+      | Error _ -> false
+      | Ok build_output ->
+          count_occurrences build_output.main_go {|import mext_strings "strings"|} = 1
+          && count_occurrences build_output.main_go "func extern__strings__ToUpper(s string) string" = 1
+          && count_occurrences build_output.main_go "extern__strings__ToUpper(s)" = 2)
+
+let%test "ffi F3: conflicting extern signatures across modules are rejected" =
+  Discovery.with_temp_project
+    [
+      ("main.mr", "import a.up\nimport b.bad\nputs(up(\"hi\"))\nputs(bad(1))\n");
+      ( "a.mr",
+        "export up\nextern \"strings\" = { fn ToUpper(s: Str) -> Str }\nfn up(s: Str) -> Str = strings.ToUpper(s)\n"
+      );
+      ( "b.mr",
+        "export bad\nextern \"strings\" as text = { fn ToUpper(i: Int) -> Str }\nfn bad(i: Int) -> Str = text.ToUpper(i)\n"
+      );
+    ]
+    (fun root ->
+      match compile_entry_to_build ~entry_file:(Filename.concat root "main.mr") () with
+      | Ok _ -> false
+      | Error diags ->
+          List.exists
+            (fun (diag : Diagnostic.t) -> diag.code = "module-extern-signature-conflict")
+            diags)
 
 let%test "check_entry reports non-exported namespace members clearly" =
   Discovery.with_temp_project
