@@ -2,366 +2,466 @@
 
 ## Maintenance
 
-- Last verified: 2026-03-28
-- Implementation status: Planning (not started)
-- Update trigger: Any FFI/extern syntax or Go interop change
+- Last verified: 2026-04-28
+- Implementation status: Planning (reviewed, not started)
+- Update trigger: Any extern syntax, module import resolution, call-resolution artifact, Go emitter import, or stdlib wrapper change
 
 ## Context
 
-Marmoset compiles to Go source code. "FFI" means: declare Go functions/types in Marmoset so the type checker knows about them, then the emitter generates correct Go import statements and function calls. There is no marshaling, no ABI boundary, no CGO — just Go-to-Go.
+Marmoset compiles to Go source code. In this milestone, "FFI" means trusted declarations for Go package functions so Marmoset wrapper modules can type-check calls to those functions and the Go backend can emit package imports plus small adapter wrappers.
 
-This is the third milestone in the language evolution. It depends on the module system and basic stdlib being in place, since the FFI pattern uses wrapper modules and prelude types like `result`.
+There is no ABI boundary, no CGO, no reflection, and no automatic Go signature discovery. An `extern` declaration is a compiler-trusted contract written by the wrapper author.
 
-### Prerequisites
-- Module system (import/export, per-module compilation, module signatures) — `docs/plans/done/language/06_module-system.md`
-- Basic stdlib with prelude (`option`, `result`, core traits, migrate builtins to modules) — plan TBD
-- Purity annotations working (`->` pure, `=>` effectful) — extern functions require explicit purity
-- Function-model rework plumbing in place:
-  - shared wrapped artifact keys (`expr_key`, `callable_key`)
-  - central qualified-call classifier
-  - general `call_resolution` artifact family
+The prerequisites are now landed:
 
-### Milestone Ordering
-1. **Modules** → 2. **Basic stdlib + prelude** → 3. **FFI** → 4. **Full stdlib via FFI**
+- Module system: `docs/plans/done/language/06_module-system.md`
+- Prelude and core stdlib modules: `docs/plans/done/language/07_prelude.md`
+- `std/prelude.mr`, `std/option.mr`, and `std/result.mr` are auto-loaded through the normal project pipeline
+- Purity annotations already distinguish pure `->` and effectful `=>` function types
 
----
+Current architecture matters for this plan:
+
+- Parser output is `Surface_ast` first, then `lower.ml` creates canonical `Ast`.
+- Module-qualified value calls are currently rewritten by `lib/frontend/import_resolver.ml` before typechecking.
+- The current "call resolution" plumbing is still `Infer.method_resolution` keyed by expression id, not a general artifact family.
+- Project emission receives merged artifacts through `Compiler.project_resolution_artifacts`; data needed by the emitter must flow through that path, not through ad hoc global registry state.
+
+## Goals
+
+1. Add top-level `extern` blocks for declaring Go package functions inside Marmoset wrapper modules.
+2. Type-check direct extern-qualified calls such as `strings.ToUpper(s)` inside the declaring module.
+3. Keep extern functions private to their declaring module. Users import exported Marmoset wrappers, not Go package qualifiers.
+4. Emit deterministic Go imports and generated adapter functions for only the extern functions that are actually called.
+5. Preserve Marmoset effect checking: pure wrappers cannot call effectful extern functions.
+6. Keep v1 small enough to implement safely before the full stdlib milestone.
+
+## Non-Goals
+
+1. No Go signature discovery or `go doc` integration.
+2. No CGO, ABI marshaling, reflection, or runtime dynamic calls.
+3. No Go methods, interfaces, channels, `any`, or variadic Marmoset surface syntax. A fixed-arity extern declaration may still call a Go variadic function when Go accepts the emitted arguments.
+4. No automatic `(T, error) -> Result[T, Str]` or `(T, bool) -> Option[T]` translation in v1.
+5. No first-class extern function values in v1. `let f = strings.ToUpper` is rejected; only direct call syntax is supported.
+6. No migration of builtin functions or primitive trait impls out of OCaml in this milestone.
 
 ## Locked Decisions
 
-1. **Wrapper module pattern.** Extern declarations live in dedicated wrapper `.mr` files. Wrapper functions provide Marmoset-idiomatic API. Users import the wrapper module, never see `extern` directly.
-2. **`extern` block syntax.** `extern "go/import/path" { fn Name(...) -> Type }`. Groups functions by Go package.
-3. **Qualified access inside wrappers.** `fmt.Println(s)` — extern functions accessed via Go package qualifier.
-4. **Go package qualifier = last path component** (`"encoding/json"` → `json`). Aliasing with `as` supported.
-5. **Purity annotation required** on every extern function (`->` or `=>`). Cannot infer purity for external code.
-6. **No artificial type restrictions.** If a Go type has a clear Marmoset equivalent, allow it. Wrapper modules handle semantic translation. Unsupported types (channels, `any`) produce clear errors.
-7. **Generated Go wrappers** handle type conversion (`int64` ↔ `int`, `void` → `struct{}`).
-8. **Extern qualifiers share the same namespace bucket as module qualifiers.** They do not get a separate precedence tier.
-9. **Extern-qualified calls use the shared `call_resolution` artifact family.** FFI extends the central classifier; it does not add a second extern-only fast path.
+1. **Wrapper module pattern.** Extern declarations may appear in any module, but the intended API is a dedicated wrapper module that exports ordinary Marmoset functions.
+2. **Top-level syntax.** `extern "go/import/path" { fn Name(param: Type, ...) -> Type }` and `extern "path" as alias { ... }`.
+3. **Extern blocks are declarations, not imports.** Go import paths never become `Module_context.import_info`, discovery dependencies, or Marmoset module ids.
+4. **Extern functions are private.** `export ToUpper` for an extern-only function is still invalid. A module must define and export a Marmoset wrapper function.
+5. **Qualifier is stored once.** The effective qualifier is the explicit alias or the last import-path segment. It is stored on the extern block during parsing/lowering and not recomputed later. If the derived segment is not a plain valid identifier, the user must write `as alias`.
+6. **Qualifier merging is narrow.** Multiple extern blocks may use the same qualifier only when they refer to the same Go import path and same alias. Duplicate function names under that qualifier are rejected.
+7. **Namespace collision policy.** Extern qualifiers are checked against imported module namespace roots, direct imports, implicit prelude/core direct bindings, and top-level declarations in the same module. Local value bindings inside a body may shadow a qualifier in expression position.
+8. **Direct calls only.** `qualifier.Function(args...)` is legal; `qualifier` as a value and `qualifier.Function` as a value are rejected with extern-specific diagnostics.
+9. **V1 type mapping is deliberately narrow.** Extern parameters are limited to `Str`, `Bool`, `Float`, and `Int`. Non-`Unit` returns are limited to the same set. `Unit` is return-only in v1. `Int` means the current backend representation, Go `int64`. Go `int` adapters require later Go-type metadata.
+10. **Trusted Go return handling.** If the Marmoset return type is `Unit`, the generated wrapper emits the Go call as a statement and returns `struct{}{}`, ignoring any Go returns. If the Marmoset return type is non-`Unit`, the Go call must produce one assignable Go value.
+11. **Generalized call artifact now.** This milestone replaces the method-only resolution map with a `Resolution_artifacts.call_resolution` family and adds an extern-qualified-call variant. The emitter must not rediscover extern calls from syntax.
+12. **Structured imports.** The emitter stops relying on substring scans such as `fmt.` and `strconv.` for main imports. Builtin and extern import needs are accumulated as structured import specs and rendered deterministically.
+13. **Project-wide extern signature coherence.** The same Go import path plus function name must have exactly one Marmoset extern signature across the reachable project. If two modules declare conflicting signatures, compilation fails before codegen.
 
----
-
-## Syntax Design
+## Syntax
 
 ### Wrapper Module
 
-```
-# lib/fmt.mr — wrapper for Go's fmt package
+```marmoset
+# std/str.mr
 
-export println, sprintf
+export upcase, include?
 
-extern "fmt" {
-  fn Println(s: Str) => Unit
-  fn Sprintf(format: Str, arg: Str) -> Str
+extern "strings" {
+  fn ToUpper(s: Str) -> Str
+  fn Contains(s: Str, substr: Str) -> Bool
 }
 
-fn println(s: Str) => Unit = {
-  fmt.Println(s)
+fn upcase(s: Str) -> Str = {
+  strings.ToUpper(s)
 }
 
-fn sprintf(format: Str, arg: Str) -> Str = {
-  fmt.Sprintf(format, arg)
-}
-```
-
-### User Code (no extern visible)
-
-```
-# main.mr
-
-import lib.fmt
-
-lib.fmt.println("hello")
-```
-
-### Richer Wrapper (semantic translation)
-
-```
-# lib/strconv.mr — wraps Go's strconv with Marmoset semantics
-# Result[T, E] comes from prelude (always available, no import needed)
-
-export parse_int
-
-extern "strconv" {
-  fn Atoi(s: Str) => Int           # simplified v1 signature
-}
-
-fn parse_int(s: Str) -> Result[Int, Str] = {
-  # v2: translate Go's (int, error) -> Result[Int, Str]
-  # v1: simplified, just forward
-  Result.Success(strconv.Atoi(s))
+fn include?(s: Str, substr: Str) -> Bool = {
+  strings.Contains(s, substr)
 }
 ```
 
 ### Aliased Go Package
 
-```
-extern "encoding/json" as json {
-  fn Marshal(v: Str) -> Str
+```marmoset
+extern "path/filepath" as fp {
+  fn Base(path: Str) -> Str
 }
 
-json.Marshal("test")
+fn basename(path: Str) -> Str = {
+  fp.Base(path)
+}
 ```
 
----
+### Effectful Extern
 
-## Type Mapping
+```marmoset
+extern "os" {
+  fn Getenv(key: Str) => Str
+}
 
-No artificial restrictions. If a type maps, it maps:
+fn home() => Str = {
+  os.Getenv("HOME")
+}
+```
 
-| Go | Marmoset | Notes |
+The effect annotation is trusted. A wrapper author must mark any externally observable behavior as `=>`.
+
+## V1 Type Mapping
+
+| Marmoset | Go emitted in wrapper | Notes |
 |---|---|---|
-| `int`, `int64` | `Int` | Wrapper handles int64 ↔ int conversion |
-| `float64` | `Float` | Direct |
-| `string` | `Str` | Direct |
-| `bool` | `Bool` | Direct |
-| `void` (no return) | `Unit` | Wrapper returns `struct{}{}` |
-| `[]T` | `List[T]` | Go slice ↔ Marmoset array |
-| `map[K]V` | `Map[K, V]` | Direct |
-| `struct{fields}` | `{ field: type, ... }` | Record mapping |
-| `interface{methods}` | `Dyn[Trait]` | Trait mapping |
-| `(T, error)` | `Result[T, Str]` | Wrapper translates |
-| `(T, bool)` | `Option[T]` | Wrapper translates |
-| `nil` | `Option.None` | Wrapper translates |
-| `chan T` | **unsupported** | Clear error |
-| `any` / `interface{}` | **unsupported** | Clear error (no universal type) |
+| `Str` | `string` | Direct |
+| `Bool` | `bool` | Direct |
+| `Float` | `float64` | Direct |
+| `Int` | `int64` | Direct current backend representation |
+| `Unit` | `struct{}` | Return-only in v1; wrapper returns `struct{}{}` |
 
-In v1, the extern declaration uses Marmoset types. The compiler generates Go wrappers that handle the conversion. Complex translations (error → result, nil → option) happen in the wrapper module's Marmoset code.
+Unsupported in v1:
 
----
+- `Unit` parameters, `List[T]`, `Map[K, V]`, records, named wrappers, named sums, unions, intersections, `Dyn[...]`, function values, open rows, `Option`, and `Result`
+- Go `int`/`uint` width adapters
+- Go `error`, `any`, channels, pointers, methods, interfaces, and multiple returns as values
+
+Transparent aliases to allowed primitive types are normalized after import/type rewriting. Transparent aliases to unsupported representations are rejected with the same unsupported-extern-type diagnostic.
+
+The full stdlib can still start with scalar wrappers such as `std/str` and later expand the mapping when Go-side type metadata exists.
 
 ## Implementation Phases
 
-### Phase F0: Keyword, AST, Parsing
-**Goal:** Parser recognizes `extern` blocks. No type checking or codegen.
+### Phase F0: Syntax, Surface AST, Lowering
 
-**Token additions** (`lib/frontend/syntax/token.ml`):
-- `Extern` keyword
+**Goal:** Parse extern blocks and preserve them through surface and lowered ASTs. No typechecking or codegen yet.
 
-**AST additions** (`lib/frontend/syntax/ast.ml`):
+**Changes:**
+
+- `lib/frontend/syntax/token.ml`: add `Extern` keyword.
+- `lib/frontend/syntax/surface_ast.ml`: add `SExternBlock` plus positioned extern package/function/parameter nodes.
+- `lib/frontend/syntax/ast.ml`: add canonical `ExternBlock`.
+- `lib/frontend/syntax/lower.ml`: lower surface extern declarations into `AST.ExternBlock`.
+- `lib/frontend/syntax/parser.ml`: add a dedicated extern parser, not `parse_function_parameters`, because extern params must be named and typed.
+- Exhaustive AST consumers that walk top-level statements, including derive expansion, synthetic-id/codegen collection, and debug/printer helpers, must deliberately preserve, ignore, or reject `ExternBlock` during this syntax-only phase.
+
+Preferred canonical shape:
+
 ```ocaml
-| ExternBlock of extern_block_def
-
-and extern_block_def = {
-  extern_go_path : string;              (* "fmt", "encoding/json" *)
-  extern_alias : string option;         (* Some "json" for as json *)
+type extern_block_def = {
+  extern_go_path : string;
+  extern_alias : string option;
+  extern_qualifier : string;
   extern_fns : extern_fn_sig list;
 }
 
 and extern_fn_sig = {
-  extern_fn_name : string;              (* "Println" — preserves Go PascalCase *)
-  extern_fn_params : (string * type_expr) list;
+  extern_fn_name : string;
+  extern_fn_params : extern_param list;
   extern_fn_return_type : type_expr;
-  extern_fn_effectful : bool;           (* true for =>, false for -> *)
+  extern_fn_effectful : bool;
   extern_fn_pos : int;
   extern_fn_end_pos : int;
 }
+
+and extern_param = {
+  extern_param_name : string;
+  extern_param_type : type_expr;
+}
 ```
 
-**Parser changes** (`lib/frontend/syntax/parser.ml`):
-- Parse `extern "path" { fn Name(params) -> Type; ... }`
-- Parse `extern "path" as alias { ... }`
-- All params MUST have type annotations (no inference for extern)
-- Arrow (`->` or `=>`) REQUIRED
+**Parser rules:**
+
+- `extern` is top-level only.
+- It counts as a body declaration for header ordering: `export` and `import` must appear before it.
+- A default qualifier derived from the import path must be a plain identifier; otherwise parsing/lowering reports that an explicit `as alias` is required.
+- Function signatures inside the block require:
+  - no body
+  - no generics in v1
+  - every parameter named and annotated
+  - explicit `->` or `=>`
+  - explicit return type
+- Alias and Go function names must be valid plain identifiers without `?` or `!` suffixes in v1.
 
 **Tests:**
-- Unit: lex `extern`
-- Unit: parse `extern "fmt" { fn Println(s: Str) => Unit }`
-- Unit: parse multiple functions in one block
-- Unit: parse `extern "encoding/json" as json { ... }`
-- Unit: error for missing type annotations
-- Unit: error for missing arrow
-- Integration: all existing tests pass
 
-**Gate:** `make unit && make integration` green.
+- Lex `extern`.
+- Parse basic block, aliased block, multiple functions, and multiple blocks for the same package.
+- Reject missing param annotation, missing arrow, missing return type, function body, generic extern function, and positional type-only params.
+- Reject invalid derived qualifiers unless `as alias` is present, and reject aliases or function names with `?`/`!` suffixes.
+- Lowering test proves path, alias, qualifier, spans, param types, return type, and effect flag survive.
+- Discovery test proves `extern "fmt"` does not try to load `fmt.mr`.
 
----
+**Gate:** `make unit` green.
 
-### Phase F1: Extern Registry and Type Checking
-**Goal:** Type checker validates extern declarations, makes extern functions available.
+### Phase F1: Extern Metadata, Scope, and Call Artifacts
 
-**New file:** `lib/frontend/typecheck/extern_registry.ml`
+**Goal:** Validate extern declarations, make direct extern calls type-check, and record structured call metadata for the emitter.
+
+**New or changed modules:**
+
+- `lib/frontend/typecheck/resolution_artifacts.ml`
+  - Introduce `call_resolution` and move existing method variants out of `Infer.method_resolution`.
+  - Add `ExternQualifiedCall of extern_call_key`.
+- `lib/frontend/typecheck/extern_registry.ml`
+  - Store extern metadata inside `Infer.inference_state`, or otherwise clear/snapshot it from the same Checker/Infer prepare path used by standalone `Checker.check_program`; do not rely only on `Compiler.reset_module_state`.
+  - Validate duplicate qualifier/path/function rules.
+  - Validate project-wide signature coherence for the same Go path plus function.
+  - Validate allowed v1 types.
+  - Snapshot declarations and used calls for `Checker.typecheck_result`.
+- `lib/frontend/typecheck/checker.ml`
+  - Replace `call_resolution_map : (int, Infer.method_resolution) Hashtbl.t` with `(int, Resolution_artifacts.call_resolution) Hashtbl.t`.
+  - Add explicit `extern_declarations : extern_func StringMap.t` and `extern_calls : (int, extern_call) Hashtbl.t` snapshots.
+- `lib/frontend/compiler.ml`
+  - Clear extern state in `reset_module_state`.
+  - Merge extern declarations/calls into `project_resolution_artifacts`.
+  - Pass extern artifacts to codegen.
+- `lib/frontend/import_resolver.ml`
+  - Rewrite type annotations inside `ExternBlock` using the same `rewrite_type_expr` path as other declarations.
+  - Ignore extern declarations for module exports/declarations.
+  - Check extern qualifier collisions against resolved imports and current module declarations.
+- `lib/frontend/typecheck/infer.ml`
+  - During top-level registration, register extern blocks before checking bodies.
+  - Extend the dotted receiver classifier with an extern namespace case after value/local shadowing and before falling through to real field/method access.
+  - Type-check direct `qualifier.Function(args...)` calls against the extern signature.
+  - Record `ExternQualifiedCall` for the call expression id.
+  - Make effectfulness available during inference: either `record_call_resolution` carries it immediately, or extern calls also record into the existing effectful-call store until the full migration is complete.
+  - Reject `qualifier` and `qualifier.Function` value use in v1.
+
+Required artifact payloads:
+
 ```ocaml
 type extern_func = {
-  go_package : string;
+  extern_key : string;              (* stable key: go_path + go_func_name *)
+  declaring_module : string;
+  go_path : string;
+  source_qualifier : string;        (* qualifier accepted in Marmoset source *)
+  go_import_alias : string;         (* deterministic generated Go alias for this path *)
   go_func_name : string;
-  qualifier : string;
-  marmoset_type : Types.poly_type;
+  param_names : string list;
+  param_types : Types.mono_type list;
+  return_type : Types.mono_type;
   is_effectful : bool;
+  source_span : Diagnostics.Diagnostic.span;
 }
 
-val register_package : string -> string -> extern_fn_sig list -> unit
-val lookup_function : qualifier:string -> func_name:string -> extern_func option
-val used_packages : unit -> string list   (* Go paths of packages actually called *)
-```
-
-**Type checking changes** (`lib/frontend/typecheck/infer.ml`):
-- Handle `ExternBlock` in top-level declaration registration
-- Register each extern function's type in extern_registry
-- Register qualifier as a namespace binding (not a value)
-- Extend the central qualified-call classifier so extern qualifiers participate in the existing `Namespace` bucket
-- When classifier resolves `fmt.Println(args)` as an extern-qualified namespace call, produce `NamespaceCall { namespace_kind = Extern; ... }` in the shared `call_resolution` artifact family
-- Type-check args against declared parameter types
-- Track which extern functions are actually called (for import generation)
-
-**Tests:**
-- Unit: extern function types registered correctly
-- Unit: `fmt.Println("hello")` type-checks with effectful flag
-- Unit: `strings.Contains("hello", "ell")` type-checks to `Bool`
-- Unit: type error for wrong argument type
-- Unit: error for unknown extern function name
-- Unit: error for using extern qualifier as a value
-
-**Gate:** `make unit && make integration` green.
-
----
-
-### Phase F2: Code Generation
-**Goal:** Extern calls compile to working Go code.
-
-**Emitter changes** (`lib/backend/go/emitter.ml`):
-
-1. **Dynamic import collection.** Replace hardcoded `import "fmt"` with collection of all required Go imports (builtins + used extern packages).
-
-2. **Emit Go wrapper functions** for each used extern function:
-   ```go
-   func extern__fmt__Println(s string) struct{} {
-       fmt.Println(s)
-       return struct{}{}
-   }
-   ```
-   Wrappers handle: `int64` → `int` conversion, `void` → `struct{}` return, etc.
-
-3. **Route extern calls via `call_resolution` artifacts**: when emitter sees `NamespaceCall { namespace_kind = Extern; ... }`, emit call to the wrapper: `extern__fmt__Println(s)`.
-
-4. **Only emit wrappers for functions actually called** (tracked by usage flag in registry).
-
-**Tests:**
-- Integration: `extern "fmt" { fn Println(s: Str) => Unit }` + wrapper -> compiles, runs, prints
-- Integration: `extern "strings" { fn ToUpper(s: Str) -> Str }` -> "HELLO"
-- Integration: multiple extern blocks in one file
-- Integration: extern function called inside user-defined function
-- Integration: generated Go compiles with `go build`
-
-**Gate:** `make unit && make integration` green.
-
----
-
-### Phase F3: Integration with Module System
-**Goal:** Extern wrapper modules work as regular importable modules.
-
-- Extern declarations in a wrapper `.mr` file
-- Wrapper functions exported via `export`
-- Other modules import the wrapper module
-- Extern registry entries scoped per module (like other registries)
-- Extern qualifiers share the namespace bucket with modules; collisions are rejected when building namespace scope
-- Go imports collected across all modules for the single `package main` output
-
-**Tests:**
-- Multi-file: wrapper module with extern + wrappers, main module imports wrapper
-- Extern functions not visible from importing module (only exported wrappers)
-- Multiple wrapper modules for different Go packages
-
-**Gate:** `make unit && make integration` green.
-
----
-
-### Phase F4: Polish and Hardening
-**Goal:** Edge cases, error quality.
-
-- Error messages: unsupported Go types, duplicate extern qualifiers, namespace collision with module/import alias
-- Extern/module namespace collision → clear error
-- Documentation and examples
-- Test suite: `test/integration/09_extern_edge_cases.sh`
-
----
-
-## Go Output Example
-
-**lib/fmt.mr:**
-```
-export println
-
-extern "fmt" {
-  fn Println(s: Str) => Unit
-}
-
-fn println(s: Str) => Unit = {
-  fmt.Println(s)
+type extern_call = {
+  call_func_key : string;
+  call_arg_types : Types.mono_type list;
+  call_return_type : Types.mono_type;
+  call_effectful : bool;
 }
 ```
 
-**main.mr:**
-```
-import lib.fmt
+The generated Go import alias is canonical per import path, for example `mext_strings` or `mext_path_filepath`. It is independent of the Marmoset source qualifier so identical extern functions declared through different source aliases can still deduplicate safely.
 
-lib.fmt.println("hello world")
+**Scope invariants:**
+
+- Extern metadata is module-local during typechecking.
+- Importing a wrapper module never imports its Go package qualifier.
+- Wrapper functions are ordinary Marmoset declarations and are the only exported API.
+- Local value bindings shadow extern qualifiers only inside their lexical value scope.
+
+**Effect invariants:**
+
+- An extern signature with `=>` has an effectful function type.
+- Pure functions cannot call effectful externs.
+- A pure extern may be called from pure or effectful wrappers.
+- The call artifact carries effectfulness so emitter and later LSP/features do not infer it from syntax.
+
+**Tests:**
+
+- Unit: extern package/function metadata registers and snapshots per module.
+- Unit: duplicate qualifier/path/function diagnostics.
+- Unit: conflicting project-wide signatures for the same Go path/function are rejected.
+- Unit: unsupported v1 types are rejected in params and returns.
+- Unit: `Unit` parameters are rejected, while `Unit` return is accepted.
+- Unit: transparent aliases to primitives normalize, but aliases to unsupported types are rejected.
+- Unit: `strings.ToUpper("x")` has type `Str`; `strings.Contains("abc", "b")` has type `Bool`.
+- Unit: wrong arity and wrong argument type diagnostics.
+- Unit: unknown extern function diagnostic.
+- Unit: `let f = strings.ToUpper` and `strings` as a value are rejected.
+- Unit: pure wrapper calling effectful extern is rejected.
+- Unit: effectful-call validation sees extern effectfulness during inference, not only after Checker snapshots.
+- Compiler/import tests:
+  - extern qualifier does not create a module dependency
+  - extern names are not exportable
+  - wrapper module can call its extern, importing module cannot
+  - extern alias collides with module alias/direct import/top-level declaration with clear diagnostics
+  - extern alias collides with implicit core names such as `Option` or `Result`
+  - type annotations in extern signatures see prelude and direct imports
+
+**Gate:** `make unit` green.
+
+### Phase F2: Go Import and Wrapper Emission
+
+**Goal:** Compile extern calls to Go through generated wrappers and structured imports.
+
+**Emitter changes (`lib/backend/go/emitter.ml`):**
+
+1. Replace substring-based import detection with structured import accumulation.
+   - Builtin runtime needs still add `fmt`, `reflect`, or other builtin imports explicitly.
+   - Extern calls add their Go package path and deterministic generated Go alias.
+   - Imports are sorted deterministically by path and alias.
+2. Add `extern_type_to_go` for the v1 mapping. Do not reuse broader `type_to_go` for unsupported types.
+3. Emit one wrapper per used extern function identity:
+   - identity is based on full Go import path plus Go function name after signature-coherence validation, not local qualifier
+   - wrapper name uses existing Go-safe escaping helpers
+   - unused extern declarations emit no wrapper and no import
+4. Lower `ExternQualifiedCall` artifacts to wrapper calls.
+5. For `Unit` return, emit the Go call as a statement and return `struct{}{}`:
+
+```go
+func extern__fmt__Println(s string) struct{} {
+    mext_fmt.Println(s)
+    return struct{}{}
+}
 ```
 
-**Generated main.go:**
+6. For non-`Unit` return, emit `return pkg.Func(args...)` and rely on `go build` to validate the trusted contract.
+
+**Wrapper naming:**
+
+- Use the full Go import path in the generated wrapper name, for example `extern__path_filepath__Base`.
+- The wrapper body calls the deterministic generated Go import alias for the path, not the Marmoset source qualifier.
+- The source qualifier only controls which dotted name the Marmoset typechecker accepts.
+- Two different import paths with the same basename must not collide.
+
+**Generated output example:**
+
+Source:
+
+```marmoset
+export upcase
+
+extern "strings" {
+  fn ToUpper(s: Str) -> Str
+}
+
+fn upcase(s: Str) -> Str = {
+  strings.ToUpper(s)
+}
+```
+
+Output shape:
+
 ```go
 package main
 
-import "fmt"
+import mext_strings "strings"
 
-// Extern wrapper
-func extern__fmt__Println(s string) struct{} {
-    fmt.Println(s)
-    return struct{}{}
+func extern__strings__ToUpper(s string) string {
+    return mext_strings.ToUpper(s)
 }
 
-// lib/fmt module wrapper
-func lib__fmt__println(s string) struct{} {
-    return extern__fmt__Println(s)
-}
-
-func main() {
-    lib__fmt__println("hello world")
+func std__str__upcase_string(s string) string {
+    return extern__strings__ToUpper(s)
 }
 ```
 
----
+The exact module wrapper function name follows the existing monomorphized module naming scheme.
 
-## Relationship to Module System
+**Tests:**
 
-- `extern` is a statement type (like `type`, `alias`, `shape`, or `trait`) — can appear in any module
-- Convention: put extern blocks in dedicated wrapper modules
-- Extern qualifiers share the same namespace bucket as imported modules/aliases
-- Namespace collisions between extern qualifiers and module bindings are rejected when the scope is built
-- Extern registry follows same per-module scoping as other registries
-- Extern-qualified calls use the same central classifier and `call_resolution` family as module-qualified and method-qualified calls
-- Go imports from all modules collected into single import block (single Go package)
+- Integration: `strings.ToUpper` wrapper compiles and runs.
+- Integration: `strings.Contains` wrapper compiles and returns `Bool`.
+- Integration: alias import `extern "path/filepath" as fp { fn Base(path: Str) -> Str }`.
+- Integration/snapshot: unused extern does not emit wrapper or import.
+- Snapshot: two packages with the same basename do not collide in wrapper names.
+- Snapshot: import block is sorted and aliases render correctly.
+- Integration: generated Go compiles with `go build`.
+- Negative integration: trusted signature mismatch surfaces as a `build-go-compile` diagnostic.
 
----
+**Gate:** focused FFI integration plus `make unit` green.
 
-## Future Extensions (v2+)
+### Phase F3: Multi-Module Wrapper Flow and Privacy
 
-1. **Multiple return values:** `fn Atoi(s: Str) => (Int, Error)` with automatic result type mapping
-2. **Go methods:** `extern "strings" type Builder { fn WriteString(self, s: Str) -> Int }`
-3. **Go interfaces → traits:** automatic mapping
-4. **Auto-discovery:** `marmoset gen-extern "fmt"` CLI tool generates wrapper stubs from `go doc`
-5. **Variadic functions:** `fn Sprintf(format: Str, args: ...Str) -> Str`
-6. **Distinct handle types:** Go types with no Marmoset equivalent wrapped as distinct named `type` handles
+**Goal:** Prove wrapper modules work as normal public APIs and extern qualifiers stay private.
 
----
+**Tests:**
+
+- `lib/str.mr` declares `extern "strings"` and exports `upcase`; `main.mr` imports `lib.str` and calls `str.upcase("hi")`.
+- `main.mr` cannot call `strings.ToUpper("hi")` unless it declares its own extern block.
+- Two wrapper modules can use the same Go package/function only when their extern signatures match exactly; imports and wrappers are deduplicated for matching declarations.
+- Two wrapper modules can use different source aliases for the same package without wrapper-name or Go import alias collision.
+- Module import alias and extern alias collisions produce origin-rich diagnostics.
+
+**Gate:** `make unit && make integration ffi` green.
+
+### Phase F4: Docs, Fixtures, and Hardening
+
+**Goal:** Document the trusted FFI contract and lock the edge cases.
+
+**Changes:**
+
+- Add `docs/features/ffi.md`.
+- Update `docs/INDEX.md` so the new feature doc is discoverable.
+- Update `docs/ARCHITECTURE.md` around Go backend and stdlib/FFI boundaries.
+- Update `docs/ROADMAP.md` after implementation lands.
+- Add fixture group `test/fixtures/ffi/`.
+- Add `test/integration/13_ffi.sh` and wire explicit selector support through `test/integration.sh`:
+  - `FFI_SUITE="$INTEGRATION_DIR/13_ffi.sh"`
+  - `ffi`, `13_ffi`, and `13_ffi.sh` resolve to `__FFI__`
+  - `all` includes `__FFI__`
+  - a `run_ffi` branch executes the suite
+- Keep exact generated-Go assertions in the existing snapshot suite or call the snapshot helper from `13_ffi.sh`; do not leave wrapper/import assertions only as fixture stdout tests.
+
+**Edge-case tests:**
+
+- duplicate package alias
+- duplicate function name
+- extern qualifier vs module alias
+- extern qualifier vs direct import
+- extern qualifier vs top-level declaration
+- local value shadowing of qualifier inside a function
+- unsupported type diagnostics for `List`, `Map`, records, `Dyn`, `Option`, and `Result`
+- `Unit` parameter rejected
+- transparent alias to primitive accepted; transparent alias to unsupported type rejected
+- unknown extern function
+- extern function used as first-class value
+- effectful extern inside pure wrapper
+
+**Gate:** `make unit && make integration ffi && make integration snapshots` green. Full integration remains a final user-run gate unless explicitly requested.
+
+## Commit Plan
+
+1. Syntax and lowering: token, surface AST, AST, parser, lower tests.
+2. Metadata and typechecking: extern registry, call-resolution artifact migration, import-resolver rewriting, compiler artifact merge.
+3. Codegen: structured imports, wrapper emission, extern call lowering, snapshots.
+4. Multi-module privacy and docs: wrapper flow fixtures, feature docs, roadmap update.
+
+Each commit should keep focused tests green before moving to the next slice.
 
 ## Risks
 
-1. **`int64` vs `int`** — mitigated by generated Go wrapper functions that handle conversion
-2. **Extern qualifier collision with module names** — mitigated by namespace-scope validation, clear error
-3. **`.` disambiguation** — extern qualifiers live in the same namespace bucket defined in `docs/plans/done/language/06_module-system.md` and the function-model rework (`value > namespace > named sum > trait > named type`)
-4. **Generated Go size** — wrappers only emitted for functions actually called
-5. **Go function signatures evolving** — wrapper modules are user-maintained, updated as needed
-
----
+1. **Artifact migration touches shared codegen paths.** Keep the first commit mechanical: move existing method variants into `Resolution_artifacts.call_resolution` before adding extern semantics.
+2. **Extern trusted signatures can lie.** Typecheck validates Marmoset-side use; Go build remains the authority for Go-side assignability.
+3. **Import aliasing can collide subtly.** Store import path, effective qualifier, and alias separately, and key wrappers by full path plus function name.
+4. **Type mapping creep.** Reject unsupported types loudly in F1 instead of generating Go that happens to compile for a narrow example.
+5. **Module/private boundary leaks.** Keep extern declarations out of module signatures and exports; only wrapper functions enter the public surface.
 
 ## Critical Files
 
 | File | Role |
-|------|------|
-| `lib/frontend/syntax/ast.ml` | Add ExternBlock, extern_block_def, extern_fn_sig |
-| `lib/frontend/syntax/token.ml` | Add Extern keyword |
-| `lib/frontend/syntax/parser.ml` | Parse extern blocks |
-| `lib/frontend/typecheck/resolution_artifacts.ml` | Shared wrapped keys + `call_resolution` family reused for extern-qualified calls |
-| `lib/frontend/typecheck/infer.ml` | Handle ExternBlock, extend namespace classifier, build extern `NamespaceCall` artifacts |
-| `lib/backend/go/emitter.ml` | Dynamic imports, emit Go wrappers, lower extern `NamespaceCall` artifacts |
-| **New:** `lib/frontend/typecheck/extern_registry.ml` | Extern function registry |
+|---|---|
+| `lib/frontend/syntax/token.ml` | Add `Extern` keyword |
+| `lib/frontend/syntax/surface_ast.ml` | Add positioned surface extern declarations |
+| `lib/frontend/syntax/ast.ml` | Add canonical `ExternBlock` |
+| `lib/frontend/syntax/parser.ml` | Parse extern block/signature syntax |
+| `lib/frontend/syntax/lower.ml` | Lower surface externs |
+| `lib/frontend/import_resolver.ml` | Rewrite extern signature types and validate qualifier collisions |
+| `lib/frontend/typecheck/resolution_artifacts.ml` | Generalize call resolution and add extern call metadata |
+| `lib/frontend/typecheck/extern_registry.ml` | New extern declaration/use registry |
+| `lib/frontend/typecheck/infer.ml` | Register externs and type-check extern-qualified calls |
+| `lib/frontend/typecheck/checker.ml` | Snapshot extern/call artifacts |
+| `lib/frontend/compiler.ml` | Reset, merge, and pass extern project artifacts |
+| `lib/backend/go/emitter.ml` | Structured imports, wrapper emission, extern call lowering |
+| `test/fixtures/ffi/**` | End-to-end fixtures |
+| `test/integration/13_ffi.sh` | Focused FFI integration suite |
+| `docs/features/ffi.md` | User-facing feature documentation |
+
+## Progress
+
+- 2026-04-28 16:25 CEST: Codex-only plan review started after moving completed tooling plans from `todo` to `done`; Claude review intentionally skipped per request.
+- 2026-04-28 16:31 CEST: Parallel Codex review agents reported stale assumptions around prelude status, surface/lower parsing, missing generalized call artifacts, module-local extern metadata, over-broad type mapping, import generation, and fixture numbering.
+- 2026-04-28 16:40 CEST: Plan revised to match the current compiler pipeline, narrow v1 type mapping, require a real call-resolution artifact migration, specify module-local extern privacy, and add concrete tests/docs/commit boundaries.
+- 2026-04-28 16:47 CEST: Second Codex-only review completed; plan patched to resolve `Unit` parameter policy, fixed-arity variadic/ignored-return wording, explicit extern artifact payloads, registry lifetime, canonical Go import aliases, default qualifier validation, transparent alias policy, and `13_ffi.sh` selector wiring.
