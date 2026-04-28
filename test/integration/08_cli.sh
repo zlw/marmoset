@@ -9,6 +9,7 @@ source "$SCRIPT_DIR/common.sh"
 suite_begin "CLI SUBCOMMAND TESTS"
 
 installed_root=""
+installed_install_error=""
 
 ensure_installed_toolchain() {
     if [ -n "$installed_root" ] && [ -x "$installed_root/bin/marmoset" ]; then
@@ -16,7 +17,12 @@ ensure_installed_toolchain() {
     fi
 
     installed_root=$(mktemp -d)
-    if (cd "$REPO_ROOT" && dune install --prefix "$installed_root" >/dev/null 2>&1); then
+    installed_install_error=""
+    if installed_install_error=$(
+        cd "$REPO_ROOT" &&
+        dune build @install &&
+        dune install --prefix "$installed_root" 2>&1
+    ); then
         return 0
     fi
 
@@ -43,7 +49,12 @@ if output=$($EXECUTABLE check "$tmpfile" 2>&1) && echo "$output" | grep -q "OK";
     echo "✓ PASS"
     PASS=$((PASS + 1))
 else
-    echo "✗ FAIL (output: $output)"
+    if [ -n "$installed_install_error" ] && [ -z "${output:-}" ]; then
+        echo "✗ FAIL (install failed)"
+        printf '%s\n' "$installed_install_error"
+    else
+        echo "✗ FAIL (output: $output)"
+    fi
     FAIL=$((FAIL + 1))
 fi
 rm -f "$tmpfile"
@@ -183,6 +194,9 @@ if ensure_installed_toolchain; then
     fi
 else
     echo "✗ FAIL (install failed)"
+    if [ -n "$installed_install_error" ]; then
+        printf '%s\n' "$installed_install_error"
+    fi
     FAIL=$((FAIL + 1))
 fi
 rm -rf "$tmpdir" "$lsp_output"
