@@ -169,37 +169,6 @@ let vine = Vine.Holding("banana")
 puts(Vine.occupied(vine))  # true
 ```
 
-### 📚 Modules, imports & prelude
-
-Every `.mr` file is a module. An `export` list controls public names, unexported declarations stay private, and `import` supports namespace imports, direct imports, and aliases:
-
-```marmoset
-# math.mr
-export Point, add
-
-type Point = { x: Int, y: Int }
-fn add(x: Int, y: Int) -> Int = x + y
-
-# main.mr
-import math
-import math.Point
-import math.add as plus
-
-let origin: Point = { x: 0, y: 0 }
-
-puts(math.add(origin.x, 3))  # 3
-puts(plus(origin.y, 2))      # 2
-```
-
-The toolchain also ships Marmoset stdlib modules. `std.prelude`, `std.option`, and `std.result` are auto-loaded, so core traits like `Eq`, `Show`, `Ord`, and `Hash` plus `Option` and `Result` are available without explicit imports.
-
-```marmoset
-let snack = Option.Some("banana")
-
-puts(Option.unwrap_or(snack, "none"))  # banana
-puts(Show.show(42))                    # 42
-```
-
 ### 🧱 Shapes
 
 Shapes capture structural field constraints:
@@ -349,6 +318,37 @@ shout(banner("milo"))  # monkey milo
 ```
 
 Omit the arrow entirely and the compiler infers it from the body.
+
+### 📚 Modules, imports & prelude
+
+Every `.mr` file is a module. An `export` list controls public names, unexported declarations stay private, and `import` supports namespace imports, direct imports, and aliases:
+
+```marmoset
+# math.mr
+export Point, add
+
+type Point = { x: Int, y: Int }
+fn add(x: Int, y: Int) -> Int = x + y
+
+# main.mr
+import math
+import math.Point
+import math.add as plus
+
+let origin: Point = { x: 0, y: 0 }
+
+puts(math.add(origin.x, 3))  # 3
+puts(plus(origin.y, 2))      # 2
+```
+
+The toolchain also ships Marmoset stdlib modules. `std.prelude`, `std.option`, and `std.result` are auto-loaded, so core traits like `Eq`, `Show`, `Ord`, and `Hash` plus `Option` and `Result` are available without explicit imports.
+
+```marmoset
+let snack = Option.Some("banana")
+
+puts(Option.unwrap_or(snack, "none"))  # banana
+puts(Show.show(42))                    # 42
+```
 
 ---
 
