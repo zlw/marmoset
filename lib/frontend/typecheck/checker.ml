@@ -1803,6 +1803,34 @@ let%test "ffi F1b: checker rejects unsupported extern parameter type" =
   | Ok _ -> false
   | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-extern") diags
 
+let%test "ffi F1b: checker rejects unsupported extern boundary type families" =
+  let cases =
+    [
+      "extern \"x\" = { fn Bad(xs: List[Str]) -> Str }";
+      "extern \"x\" = { fn Bad(m: Map[Str, Int]) -> Str }";
+      "extern \"x\" = { fn Bad(r: { name: Str }) -> Str }";
+      "extern \"x\" = { fn Bad(x: Dyn[Show]) -> Str }";
+      "extern \"x\" = { fn Bad(x: Option[Int]) -> Str }";
+      "extern \"x\" = { fn Bad(x: Result[Int, Str]) -> Str }";
+      "extern \"x\" = { fn Bad(f: (Str) -> Str) -> Str }";
+      "extern \"x\" = { fn Bad(s: Str) -> List[Str] }";
+      "extern \"x\" = { fn Bad(s: Str) -> Map[Str, Int] }";
+      "extern \"x\" = { fn Bad(s: Str) -> { name: Str } }";
+      "extern \"x\" = { fn Bad(s: Str) -> Dyn[Show] }";
+      "extern \"x\" = { fn Bad(s: Str) -> Option[Int] }";
+      "extern \"x\" = { fn Bad(s: Str) -> Result[Int, Str] }";
+      "extern \"x\" = { fn Bad(s: Str) -> (Str) -> Str }";
+    ]
+  in
+  List.for_all
+    (fun source ->
+      Infer.reset_fresh_counter ();
+      Trait_registry.clear ();
+      match check_string ~file_id:"main.mr" source with
+      | Ok _ -> false
+      | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-extern") diags)
+    cases
+
 let%test "ffi F1b: checker normalizes primitive aliases in extern signatures" =
   Infer.reset_fresh_counter ();
   Trait_registry.clear ();
@@ -1948,6 +1976,23 @@ let%test "ffi F1c: extern blocks are visible before their textual position" =
   in
   match check_string ~file_id:"main.mr" code with
   | Ok result -> result.result_type = Types.TString && Hashtbl.length result.extern_calls = 1
+  | Error _ -> false
+
+let%test "ffi F1c: local value binding shadows extern qualifier in expression position" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  let code =
+    {|
+      extern "strings" = { fn ToUpper(s: Str) -> Str }
+      fn shadow() -> Str = {
+        let strings = "local"
+        strings
+      }
+      shadow()
+    |}
+  in
+  match check_string ~file_id:"main.mr" code with
+  | Ok result -> result.result_type = Types.TString && Hashtbl.length result.extern_calls = 0
   | Error _ -> false
 
 let%test "ffi F1c: pure wrapper cannot call effectful extern" =

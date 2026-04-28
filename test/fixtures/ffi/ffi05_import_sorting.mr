@@ -1,0 +1,9 @@
+extern "strings" = {
+  fn ToUpper(s: Str) -> Str
+}
+
+extern "path/filepath" as fp = {
+  fn Base(path: Str) -> Str
+}
+
+puts(strings.ToUpper(fp.Base("/tmp/marmoset.txt")))

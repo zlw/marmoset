@@ -70,47 +70,44 @@ run_project_expect_reject() {
     rm -rf "$root"
 }
 
-run_project_emit_assertions() {
+test_emit_go_exact_snapshot_emit_only() {
     local name="$1"
-    local setup_project="$2"
-    shift 2
-    local expected_fragments=("$@")
+    local source_file="$2"
+    local snapshot_file="$3"
 
     TOTAL=$((TOTAL + 1))
     echo -n "TEST [$TOTAL] $name ... "
 
-    local root outdir binpath build_output main_go fragment missing=()
-    root=$(mktemp -d marmoset_ffi_project.XXXXXX)
+    local outdir binpath diff_file build_output
     outdir=$(mktemp -d marmoset_ffi_emit.XXXXXX)
     binpath=$(mktemp "$REPO_ROOT/.marmoset/build/marmoset_ffi_bin.XXXXXX")
+    diff_file=$(mktemp)
     rm -f "$binpath"
 
-    eval "$setup_project"
-
-    build_output=$($EXECUTABLE build "$root/main.mr" --emit-go "$outdir" -o "$binpath" 2>&1) || true
-    if [ -f "$outdir/main.go" ]; then
-        main_go="$outdir/main.go"
-        for fragment in "${expected_fragments[@]}"; do
-            if ! grep -qF "$fragment" "$main_go"; then
-                missing+=("$fragment")
-            fi
-        done
-        if [ "${#missing[@]}" -eq 0 ]; then
+    build_output=$($EXECUTABLE build "$source_file" --emit-go "$outdir" -o "$binpath" 2>&1) || true
+    if [ ! -f "$source_file" ]; then
+        echo "✗ FAIL (missing source file $source_file)"
+        FAIL=$((FAIL + 1))
+    elif [ ! -f "$snapshot_file" ]; then
+        echo "✗ FAIL (missing snapshot file $snapshot_file)"
+        FAIL=$((FAIL + 1))
+    elif [ ! -f "$outdir/main.go" ]; then
+        echo "✗ FAIL (Go emission did not produce main.go)"
+        echo "  Output: $build_output"
+        FAIL=$((FAIL + 1))
+    else
+        if diff -u "$snapshot_file" "$outdir/main.go" > "$diff_file"; then
             echo "✓ PASS"
             PASS=$((PASS + 1))
         else
-            echo "✗ FAIL (missing emitted Go fragment)"
-            printf '  Missing: %s\n' "${missing[@]}"
+            echo "✗ FAIL (main.go snapshot drift)"
+            sed -n '1,80p' "$diff_file" | sed 's/^/  /'
             FAIL=$((FAIL + 1))
         fi
-    else
-        echo "✗ FAIL (Go emission failed)"
-        echo "  Output: $build_output"
-        FAIL=$((FAIL + 1))
     fi
 
-    rm -f "$binpath"
-    rm -rf "$root" "$outdir"
+    rm -f "$binpath" "$diff_file"
+    rm -rf "$outdir"
 }
 
 run_project_emit_count() {
@@ -153,6 +150,26 @@ test_emit_go_exact_snapshot \
     "single-file strings extern emits stable wrapper/import shape" \
     "$REPO_ROOT/test/fixtures/ffi/ffi01_strings_to_upper.mr" \
     "$SNAPSHOT_ROOT/ffi01_strings_to_upper.main.go"
+
+test_emit_go_exact_snapshot \
+    "unused extern emits no import or wrapper in stable Go shape" \
+    "$REPO_ROOT/test/fixtures/ffi/ffi04_unused_extern.mr" \
+    "$SNAPSHOT_ROOT/ffi04_unused_extern.main.go"
+
+test_emit_go_exact_snapshot \
+    "multiple extern imports emit sorted stable Go shape" \
+    "$REPO_ROOT/test/fixtures/ffi/ffi05_import_sorting.mr" \
+    "$SNAPSHOT_ROOT/ffi05_import_sorting.main.go"
+
+test_emit_go_exact_snapshot_emit_only \
+    "duplicate package basenames use stable distinct wrappers and aliases" \
+    "$REPO_ROOT/test/fixtures/ffi/ffi06_duplicate_basename_packages.mr" \
+    "$SNAPSHOT_ROOT/ffi06_duplicate_basename_packages.main.go"
+
+test_emit_go_exact_snapshot_emit_only \
+    "sanitized path collisions use stable distinct wrappers and aliases" \
+    "$REPO_ROOT/test/fixtures/ffi/ffi07_sanitized_path_collision.mr" \
+    "$SNAPSHOT_ROOT/ffi07_sanitized_path_collision.main.go"
 
 expect_runtime_output \
     "strings.ToUpper wrapper compiles and runs" \
@@ -249,23 +266,6 @@ extern "strings" as text = {
 }
 fn bad(i: Int) -> Str = text.ToUpper(i)
 EOF'
-
-run_project_emit_assertions \
-    "duplicate package basenames use distinct wrappers and aliases" \
-    'cat > "$root/main.mr" <<'"'"'EOF'"'"'
-extern "path/filepath" as fp = {
-  fn Base(path: Str) -> Str
-}
-extern "other/filepath" as other = {
-  fn Base(path: Str) -> Str
-}
-let _ = fp.Base("a")
-other.Base("b")
-EOF' \
-    'mext_path_filepath "path/filepath"' \
-    'mext_other_filepath "other/filepath"' \
-    'func extern__path_filepath__Base(path string) string' \
-    'func extern__other_filepath__Base(path string) string'
 
 run_emit_go_not_contains_from_stdin \
     "unused extern does not emit wrapper" \

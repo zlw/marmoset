@@ -1,0 +1,10 @@
+extern "example.com/acme/text-case" as hyphen = {
+  fn F(s: Str) -> Str
+}
+
+extern "example.com/acme/text_case" as under = {
+  fn F(s: Str) -> Str
+}
+
+let _ = hyphen.F("a")
+under.F("b")

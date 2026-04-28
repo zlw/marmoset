@@ -648,6 +648,8 @@ type mono_state = {
       (* Phase 5: explicit call-resolution metadata from typechecker *)
   extern_declarations : (string, Typecheck.Resolution_artifacts.extern_func) Hashtbl.t;
       (* FFI declarations keyed by full Go path plus function name *)
+  extern_wrapper_names : (string, string) Hashtbl.t;
+      (* FFI wrapper names keyed by extern_key after resolving codegen name collisions *)
   extern_calls : (int, Typecheck.Resolution_artifacts.extern_call) Hashtbl.t;
       (* FFI call artifacts keyed by call expression id *)
   method_type_args_map : (int, Types.mono_type list) Hashtbl.t;
@@ -705,6 +707,7 @@ let create_mono_state
     top_level_value_bindings = StringSet.empty;
     call_resolution_map;
     extern_declarations;
+    extern_wrapper_names = Hashtbl.create 64;
     extern_calls;
     method_type_args_map;
     method_def_map;
@@ -716,6 +719,33 @@ let create_mono_state
     go_imports = GoImportSet.empty;
     placeholder_rewrite_map;
   }
+
+let used_emitted_function_names (state : mono_state) : StringSet.t =
+  let names =
+    InstSet.fold
+      (fun (inst : instantiation) acc -> StringSet.add (mangle_func_name inst.func_name inst.concrete_types) acc)
+      state.instantiations StringSet.empty
+  in
+  Hashtbl.fold (fun _ name acc -> StringSet.add name acc) state.extern_wrapper_names names
+
+let extern_wrapper_name_for_state
+    (state : mono_state)
+    (func : Typecheck.Resolution_artifacts.extern_func) : string =
+  match Hashtbl.find_opt state.extern_wrapper_names func.extern_key with
+  | Some name -> name
+  | None ->
+      let base = extern_wrapper_name func in
+      let used_names = used_emitted_function_names state in
+      let rec pick n =
+        let candidate = if n = 0 then base else Printf.sprintf "%s__ffi%d" base n in
+        if StringSet.mem candidate used_names then
+          pick (n + 1)
+        else
+          candidate
+      in
+      let name = pick 0 in
+      Hashtbl.replace state.extern_wrapper_names func.extern_key name;
+      name
 
 let builtin_impl_keys : StringPairSet.t =
   StringPairSet.of_list
@@ -4491,7 +4521,8 @@ let rec emit_expr
                         (Printf.sprintf "Codegen error: extern call argument artifact mismatch for %s"
                            func.go_func_name)
                 in
-                Printf.sprintf "%s(%s)" (extern_wrapper_name func) (String.concat ", " arg_strs)
+                Printf.sprintf "%s(%s)" (extern_wrapper_name_for_state state.mono func)
+                  (String.concat ", " arg_strs)
             | None ->
                 failwith
                   (Printf.sprintf
@@ -8060,7 +8091,7 @@ let emit_extern_wrapper (state : mono_state) (func : Typecheck.Resolution_artifa
     | Types.TNull -> Printf.sprintf "\t%s\n\treturn struct{}{}" go_call
     | _ -> Printf.sprintf "\treturn %s" go_call
   in
-  Printf.sprintf "func %s(%s) %s {\n%s\n}\n" (extern_wrapper_name func) params return_type body
+  Printf.sprintf "func %s(%s) %s {\n%s\n}\n" (extern_wrapper_name_for_state state func) params return_type body
 
 let emit_extern_wrappers (state : mono_state) : string =
   let keys =
@@ -9461,6 +9492,27 @@ under.F("b")
       && string_contains code {|mext_example_x2e_com_acme_text_u_case "example.com/acme/text_case"|}
       && string_contains code "func extern__example_x2e_com_acme_text_x2d_case__F(s string) string"
       && string_contains code "func extern__example_x2e_com_acme_text_u_case__F(s string) string"
+  | Error _ -> false
+
+let%test "extern wrapper names avoid used zero-arg function names" =
+  match
+    compile_string ~file_id:"<codegen>"
+      {|
+extern "x" = {
+  fn F() -> Str
+}
+
+fn extern__x__F() -> Str = "local"
+fn extern__x__F__ffi1() -> Str = "reserved"
+let _ = extern__x__F()
+let _ = extern__x__F__ffi1()
+x.F()
+|}
+  with
+  | Ok (code, _) -> count_occurrences code "func extern__x__F() string" = 1
+      && count_occurrences code "func extern__x__F__ffi1() string" = 1
+      && string_contains code "func extern__x__F__ffi2() string"
+      && string_contains code "extern__x__F__ffi2()"
   | Error _ -> false
 
 let%test "Dyn codegen does not synthesize coercions without recorded metadata" =

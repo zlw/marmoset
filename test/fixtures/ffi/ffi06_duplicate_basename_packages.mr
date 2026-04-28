@@ -1,0 +1,10 @@
+extern "path/filepath" as fp = {
+  fn Base(path: Str) -> Str
+}
+
+extern "other/filepath" as other = {
+  fn Base(path: Str) -> Str
+}
+
+let _ = fp.Base("a")
+other.Base("b")
