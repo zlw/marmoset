@@ -17,6 +17,7 @@ HARNESS_SUITE="$INTEGRATION_DIR/09_harness_canaries.sh"
 SNAPSHOT_SUITE="$INTEGRATION_DIR/10_codegen_snapshots.sh"
 HARDENING_SUITE="$INTEGRATION_DIR/11_pre_modules_hardening.sh"
 PRELUDE_SUITE="$INTEGRATION_DIR/12_prelude.sh"
+FFI_SUITE="$INTEGRATION_DIR/13_ffi.sh"
 TEST_BUILD_DIR="$REPO_ROOT/.marmoset/build"
 
 source "$INTEGRATION_DIR/common.sh"
@@ -47,6 +48,7 @@ Selectors:
   snapshots            # run 10_codegen_snapshots.sh suite
   hardening            # run 11_pre_modules_hardening.sh suite
   prelude              # run 12_prelude.sh suite
+  ffi                  # run 13_ffi.sh suite
   <group>              # exact fixture group (e.g. traits, runtime)
   <group-prefix>       # prefix match (e.g. codegen -> codegen/codegen_*)
   <group>/<file>.mr    # single fixture file under test/fixtures
@@ -102,7 +104,7 @@ resolve_selector() {
     local group
 
     if [ "$name" = "all" ]; then
-        echo "${ALL_GROUPS[*]} __SNAPSHOTS__ __HARDENING__ __PRELUDE__"
+        echo "${ALL_GROUPS[*]} __SNAPSHOTS__ __HARDENING__ __PRELUDE__ __FFI__"
         return 0
     fi
 
@@ -128,6 +130,11 @@ resolve_selector() {
 
     if [ "$name" = "prelude" ] || [ "$name" = "stdlib-prelude" ] || [ "$name" = "12_prelude.sh" ]; then
         echo "__PRELUDE__"
+        return 0
+    fi
+
+    if [ "$name" = "ffi" ] || [ "$name" = "13_ffi" ] || [ "$name" = "13_ffi.sh" ]; then
+        echo "__FFI__"
         return 0
     fi
 
@@ -1259,6 +1266,7 @@ run_harness=0
 run_snapshots=0
 run_hardening=0
 run_prelude=0
+run_ffi=0
 selected_groups=()
 selected_fixture_files=()
 if [ "$#" -eq 0 ]; then
@@ -1289,6 +1297,8 @@ else
                 run_hardening=1
             elif [ "$token" = "__PRELUDE__" ]; then
                 run_prelude=1
+            elif [ "$token" = "__FFI__" ]; then
+                run_ffi=1
             else
                 selected_groups+=("$token")
             fi
@@ -1311,7 +1321,7 @@ for group in "${selected_groups[@]}"; do
     fi
 done
 
-if [ "${#unique_groups[@]}" -eq 0 ] && [ "${#selected_fixture_files[@]}" -eq 0 ] && [ "$run_cli" -eq 0 ] && [ "$run_harness" -eq 0 ] && [ "$run_snapshots" -eq 0 ] && [ "$run_hardening" -eq 0 ] && [ "$run_prelude" -eq 0 ]; then
+if [ "${#unique_groups[@]}" -eq 0 ] && [ "${#selected_fixture_files[@]}" -eq 0 ] && [ "$run_cli" -eq 0 ] && [ "$run_harness" -eq 0 ] && [ "$run_snapshots" -eq 0 ] && [ "$run_hardening" -eq 0 ] && [ "$run_prelude" -eq 0 ] && [ "$run_ffi" -eq 0 ]; then
     echo "No test targets selected." >&2
     print_usage
     exit 2
@@ -1408,6 +1418,16 @@ if [ "$run_prelude" -eq 1 ]; then
     suite_count=$((suite_count + 1))
     echo ""
     if "$PRELUDE_SUITE"; then
+        suite_pass=$((suite_pass + 1))
+    else
+        suite_fail=$((suite_fail + 1))
+    fi
+fi
+
+if [ "$run_ffi" -eq 1 ]; then
+    suite_count=$((suite_count + 1))
+    echo ""
+    if "$FFI_SUITE"; then
         suite_pass=$((suite_pass + 1))
     else
         suite_fail=$((suite_fail + 1))

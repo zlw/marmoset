@@ -25,3 +25,4 @@ This directory is the current source of truth for language and compiler design.
 - `docs/features/inherent-methods.md`
 - `docs/features/records.md`
 - `docs/features/pattern-matching.md`
+- `docs/features/ffi.md`

@@ -1,0 +1,5 @@
+extern "strings" = {
+  fn ToUpper(s: Str) -> Str
+}
+
+puts(strings.ToUpper("hello"))  # output: HELLO

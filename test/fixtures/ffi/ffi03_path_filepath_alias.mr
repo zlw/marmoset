@@ -1,0 +1,5 @@
+extern "path/filepath" as fp = {
+  fn Base(path: Str) -> Str
+}
+
+puts(fp.Base("/tmp/marmoset.txt"))  # output: marmoset.txt

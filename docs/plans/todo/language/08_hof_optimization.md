@@ -8,7 +8,7 @@
 - Prerequisites:
   - `docs/plans/done/language/06_module-system.md`
   - `docs/plans/done/language/07_prelude.md`
-  - `docs/plans/todo/language/03_ffi.md`
+  - `docs/plans/done/language/08_ffi.md`
   - `docs/plans/todo/language/04_stdlib.md`
 
 ## Summary

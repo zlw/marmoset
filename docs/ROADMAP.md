@@ -25,6 +25,7 @@
 5. [Pre-modules parity and hardening](docs/plans/done/language/05_pre-modules-parity-and-hardening.md)
 6. [Module system](docs/plans/done/language/06_module-system.md)
 7. [Prelude](docs/plans/done/language/07_prelude.md)
+8. [FFI](docs/plans/done/language/08_ffi.md)
 
 ### Tooling
 
@@ -42,12 +43,12 @@
 
 ### Main Language Track
 
-1. [FFI](docs/plans/todo/language/03_ffi.md)
-2. [Stdlib](docs/plans/todo/language/04_stdlib.md)
-3. [Post-modules type-system expansion](docs/plans/todo/language/05_post-modules-type-system-expansion.md)
+1. [Stdlib](docs/plans/todo/language/04_stdlib.md)
+2. [Post-modules type-system expansion](docs/plans/todo/language/05_post-modules-type-system-expansion.md)
 
 Current status:
 - Prelude infrastructure is complete: the compiler resolves a toolchain-owned stdlib root, auto-loads `std.prelude`, `std.option`, and `std.result` through the normal module pipeline, and uses the same discovery/orchestration path for headerless entries.
+- FFI v1 is complete: modules can declare trusted Go extern functions, wrapper modules expose ordinary Marmoset APIs, and the Go backend emits deterministic imports plus wrappers for used extern calls.
 - Broader library expansion still belongs to the later [Stdlib](docs/plans/todo/language/04_stdlib.md) milestone.
 
 ### Queued Language Work
@@ -79,7 +80,7 @@ These areas already have a concrete plan or completed milestone and should not a
   [Module system](docs/plans/done/language/06_module-system.md)
 - core language/library platform milestones:
   [Prelude](docs/plans/done/language/07_prelude.md),
-  [FFI](docs/plans/todo/language/03_ffi.md),
+  [FFI](docs/plans/done/language/08_ffi.md),
   [Stdlib](docs/plans/todo/language/04_stdlib.md)
 - associated types, open rows, post-module coherence work, and later lowering expansion:
   [Post-modules type-system expansion](docs/plans/todo/language/05_post-modules-type-system-expansion.md)

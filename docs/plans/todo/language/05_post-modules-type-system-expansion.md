@@ -7,7 +7,7 @@
 - Prerequisites:
   - `docs/plans/done/language/06_module-system.md`
   - `docs/plans/done/language/07_prelude.md`
-  - `docs/plans/todo/language/03_ffi.md`
+  - `docs/plans/done/language/08_ffi.md`
   - `docs/plans/todo/language/04_stdlib.md`
 
 ## Summary
@@ -67,5 +67,5 @@ After modules and public APIs exist, revisit the type-system expansions that are
 
 ## Related Plans
 
-- `docs/plans/done/language/06_module-system.md`, `07_prelude.md`, `03_ffi.md`, and `04_stdlib.md` create the public-API pressure that justifies this later work.
+- `docs/plans/done/language/06_module-system.md`, `07_prelude.md`, `08_ffi.md`, and `04_stdlib.md` create the public-API pressure that justifies this later work.
 - `docs/ROADMAP.md` should keep more speculative ideas deferred until they are concrete enough to deserve their own plan.

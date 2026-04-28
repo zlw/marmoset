@@ -234,20 +234,27 @@ Locked function/closure policy (2026-02-27):
 - Records -> named struct types via shape interning, with transparent `type` support.
 - Trait methods -> static free functions with mangled names.
 
-### 4.4 Modules/FFI guardrail policy (current, binding)
+### 4.4 Modules And FFI
 
-Until module and extern features are fully designed:
+Current backend policy:
 - One Go package per build is the backend policy.
 - Trait impl emission assumes single-package visibility; cross-package impl stitching is out of scope.
 - No trait-object ABI is exposed across boundaries.
 
-Initial extern ABI mapping constraints (when extern is enabled):
-- Allowed first-wave value types: `Int`, `Float`, `Bool`, `Str`, `Unit`.
+Extern calls are compiled through generated Go wrappers:
+- Typechecking records extern declaration and call artifacts; the emitter consumes those artifacts instead of rediscovering extern calls from syntax.
+- Imports are accumulated structurally and rendered with deterministic generated aliases such as `mext_strings`.
+- Wrappers are emitted only for used extern functions and are keyed by full Go import path plus Go function name.
+- Extern declarations remain module-local; wrapper modules export ordinary Marmoset functions as the public API.
+
+Extern ABI mapping constraints:
+- Allowed v1 boundary types: `Int`, `Float`, `Bool`, `Str`, and `Unit` return.
+- `Unit` parameters are rejected.
 - Deferred until representation freeze: records, enums, unions, trait objects, and unconstrained polymorphic values.
 - Deferred until ownership rules are explicit: arrays/maps with mutation/aliasing semantics across boundary.
 
 Rationale:
-- keeps codegen coherent while modules are introduced,
+- keeps codegen coherent while modules and FFI share a single-package backend,
 - avoids locking an unstable runtime layout into public ABI,
 - reduces rewrite risk for future IR and dispatch changes.
 
