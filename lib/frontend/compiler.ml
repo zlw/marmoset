@@ -772,6 +772,7 @@ let emit_compiled_project (project : compiled_project) : (Codegen.build_output, 
   try
     let main_go =
       Codegen.emit_program_with_typed_env ~call_resolution_map:project.artifacts.call_resolution_map
+        ~extern_declarations:project.artifacts.extern_declarations ~extern_calls:project.artifacts.extern_calls
         ~method_type_args_map:project.artifacts.method_type_args_map
         ~method_def_map:project.artifacts.method_def_map
         ~trait_object_coercion_map:project.artifacts.trait_object_coercion_map

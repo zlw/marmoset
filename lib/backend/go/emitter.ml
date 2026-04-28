@@ -339,6 +339,20 @@ let trait_method_func_name (trait_name : string) (method_name : string) (type_su
 let inherent_method_func_name (method_name : string) (type_suffix : string) : string =
   Printf.sprintf "inherent_%s_%s" (go_safe_ident method_name) type_suffix
 
+let go_path_name_fragment (path : string) : string =
+  let buf = Buffer.create (String.length path) in
+  String.iter
+    (function
+      | ('a' .. 'z' | 'A' .. 'Z' | '0' .. '9') as c -> Buffer.add_char buf c
+      | _ -> Buffer.add_char buf '_')
+    path;
+  match Buffer.contents buf with
+  | "" -> "pkg"
+  | fragment -> go_safe_ident fragment
+
+let extern_wrapper_name (func : Typecheck.Resolution_artifacts.extern_func) : string =
+  Printf.sprintf "extern__%s__%s" (go_path_name_fragment func.go_path) (go_safe_ident func.go_func_name)
+
 type dyn_callable_method = {
   dyn_trait_name : string;
   dyn_source_trait_name : string;
@@ -626,6 +640,10 @@ type mono_state = {
       (* top-level non-function let bindings available to later top-level functions *)
   call_resolution_map : (int, Typecheck.Resolution_artifacts.call_resolution) Hashtbl.t;
       (* Phase 5: explicit call-resolution metadata from typechecker *)
+  extern_declarations : (string, Typecheck.Resolution_artifacts.extern_func) Hashtbl.t;
+      (* FFI declarations keyed by full Go path plus function name *)
+  extern_calls : (int, Typecheck.Resolution_artifacts.extern_call) Hashtbl.t;
+      (* FFI call artifacts keyed by call expression id *)
   method_type_args_map : (int, Types.mono_type list) Hashtbl.t;
       (* Phase 6.4: resolved method-level type args per call site *)
   method_def_map : (int, Typecheck.Resolution_artifacts.typed_method_def) Hashtbl.t;
@@ -653,6 +671,8 @@ let create_mono_state
     ?(module_path = "main")
     ?(concrete_only = true)
     ?(call_resolution_map = Hashtbl.create 0)
+    ?(extern_declarations = Hashtbl.create 0)
+    ?(extern_calls = Hashtbl.create 0)
     ?(method_type_args_map = Hashtbl.create 0)
     ?(method_def_map = Hashtbl.create 0)
     ?(trait_object_coercion_map = Hashtbl.create 0)
@@ -678,6 +698,8 @@ let create_mono_state
     value_func_aliases = Hashtbl.create 32;
     top_level_value_bindings = StringSet.empty;
     call_resolution_map;
+    extern_declarations;
+    extern_calls;
     method_type_args_map;
     method_def_map;
     trait_object_coercion_map;
@@ -3663,6 +3685,13 @@ let fresh_temp_name (state : emit_state) (prefix : string) : string =
   state.mono.name_counter <- n + 1;
   Printf.sprintf "%s_%d" prefix n
 
+let extern_func_exn (state : mono_state) (extern_key : string) : Typecheck.Resolution_artifacts.extern_func =
+  match Hashtbl.find_opt state.extern_declarations extern_key with
+  | Some func -> func
+  | None ->
+      failwith
+        (Printf.sprintf "Codegen error: missing extern declaration artifact for key %S" extern_key)
+
 let with_indent_delta (state : emit_state) (delta : int) (f : unit -> 'a) : 'a =
   state.indent <- state.indent + delta;
   Fun.protect ~finally:(fun () -> state.indent <- state.indent - delta) f
@@ -4435,8 +4464,28 @@ let rec emit_expr
                 Printf.sprintf "%s(%s)" func_name (String.concat ", " all_args)
             | Some Typecheck.Resolution_artifacts.FieldFunctionCall ->
                 emit_field_function_call state type_map env expr receiver variant_name args
-            | Some (Typecheck.Resolution_artifacts.ExternQualifiedCall _) ->
-                failwith "extern call codegen is implemented in F2"
+            | Some (Typecheck.Resolution_artifacts.ExternQualifiedCall extern_key) ->
+                let call =
+                  match Hashtbl.find_opt state.mono.extern_calls expr.id with
+                  | Some call -> call
+                  | None ->
+                      failwith
+                        (Printf.sprintf "Codegen error: missing extern call artifact for expression %d" expr.id)
+                in
+                let func = extern_func_exn state.mono extern_key in
+                let arg_strs =
+                  match List.combine args call.call_arg_types with
+                  | arg_pairs ->
+                      List.map
+                        (fun (arg, expected_type) ->
+                          emit_expr_for_expected_type state type_map env expected_type arg)
+                        arg_pairs
+                  | exception Invalid_argument _ ->
+                      failwith
+                        (Printf.sprintf "Codegen error: extern call argument artifact mismatch for %s"
+                           func.go_func_name)
+                in
+                Printf.sprintf "%s(%s)" (extern_wrapper_name func) (String.concat ", " arg_strs)
             | None ->
                 failwith
                   (Printf.sprintf
@@ -7990,12 +8039,39 @@ let format_go_imports (imports : GoImportSet.t) : string =
       let body = specs |> List.map (fun spec -> "\t" ^ format_go_import_spec spec) |> String.concat "\n" in
       Printf.sprintf "import (\n%s\n)\n\n" body
 
+let emit_extern_wrapper (state : mono_state) (func : Typecheck.Resolution_artifacts.extern_func) : string =
+  add_go_import ~alias:func.go_import_alias state func.go_path;
+  let params =
+    List.combine func.param_names func.param_types
+    |> List.map (fun (name, typ) -> Printf.sprintf "%s %s" (go_safe_ident name) (extern_type_to_go typ))
+    |> String.concat ", "
+  in
+  let args = func.param_names |> List.map go_safe_ident |> String.concat ", " in
+  let go_call = Printf.sprintf "%s.%s(%s)" func.go_import_alias func.go_func_name args in
+  let return_type = extern_type_to_go func.return_type in
+  let body =
+    match Types.canonicalize_mono_type func.return_type with
+    | Types.TNull -> Printf.sprintf "\t%s\n\treturn struct{}{}" go_call
+    | _ -> Printf.sprintf "\treturn %s" go_call
+  in
+  Printf.sprintf "func %s(%s) %s {\n%s\n}\n" (extern_wrapper_name func) params return_type body
+
+let emit_extern_wrappers (state : mono_state) : string =
+  let keys =
+    Hashtbl.fold (fun _ (call : Typecheck.Resolution_artifacts.extern_call) acc -> call.call_func_key :: acc)
+      state.extern_calls []
+    |> List.sort_uniq String.compare
+  in
+  keys |> List.map (fun key -> emit_extern_wrapper state (extern_func_exn state key)) |> String.concat "\n"
+
 (* ============================================================
     Program Emission
     ============================================================ *)
 
 let emit_program_with_typed_env
     ~(call_resolution_map : (int, Typecheck.Resolution_artifacts.call_resolution) Hashtbl.t)
+    ?(extern_declarations = Hashtbl.create 0)
+    ?(extern_calls = Hashtbl.create 0)
     ~(method_type_args_map : (int, Types.mono_type list) Hashtbl.t)
     ~(method_def_map : (int, Typecheck.Resolution_artifacts.typed_method_def) Hashtbl.t)
     ~(trait_object_coercion_map : (int, Typecheck.Resolution_artifacts.trait_object_coercion) Hashtbl.t)
@@ -8013,7 +8089,7 @@ let emit_program_with_typed_env
   in
   let mono_state =
     create_mono_state ~call_resolution_map ~method_type_args_map ~method_def_map ~trait_object_coercion_map
-      ~placeholder_rewrite_map ()
+      ~extern_declarations ~extern_calls ~placeholder_rewrite_map ()
   in
 
   (* Pass 1: Collect function definitions *)
@@ -8081,6 +8157,7 @@ let emit_program_with_typed_env
   let derived_impl_funcs = emit_registry_derived_impls emit_state program in
   let trait_object_type_defs = emit_trait_object_type_defs mono_state type_map typed_env in
   let builtin_impl_funcs = emit_builtin_impls mono_state program in
+  let extern_wrapper_funcs = emit_extern_wrappers mono_state in
 
   (* Generate enum types AFTER all function body emissions so that
      method-generic specializations can register new enum instantiations *)
@@ -8129,6 +8206,12 @@ let emit_program_with_typed_env
       specialized_funcs ^ "\n"
   in
   let builtin_impl_funcs_str = builtin_impl_funcs ^ "\n" in
+  let extern_wrapper_funcs_str =
+    if extern_wrapper_funcs = "" then
+      ""
+    else
+      extern_wrapper_funcs ^ "\n"
+  in
   let impl_funcs_str =
     if impl_funcs = "" then
       ""
@@ -8148,7 +8231,8 @@ let emit_program_with_typed_env
       derived_impl_funcs ^ "\n"
   in
   let top_funcs =
-    specialized_funcs_str ^ builtin_impl_funcs_str ^ impl_funcs_str ^ inherent_funcs_str ^ derived_impl_funcs_str
+    extern_wrapper_funcs_str ^ specialized_funcs_str ^ builtin_impl_funcs_str ^ impl_funcs_str ^ inherent_funcs_str
+    ^ derived_impl_funcs_str
   in
   let imports = format_go_imports mono_state.go_imports in
 
@@ -8171,6 +8255,8 @@ let emit_program (program : AST.program) : string =
         environment = typed_env;
         type_map;
         call_resolution_map;
+        extern_declarations;
+        extern_calls;
         method_type_args_map;
         method_def_map;
         trait_object_coercion_map;
@@ -8178,7 +8264,8 @@ let emit_program (program : AST.program) : string =
         _;
       } ->
       emit_program_with_typed_env ~call_resolution_map ~method_type_args_map ~method_def_map
-        ~trait_object_coercion_map ~placeholder_rewrite_map type_map typed_env program
+        ~extern_declarations ~extern_calls ~trait_object_coercion_map ~placeholder_rewrite_map type_map typed_env
+        program
 
 (* ============================================================
    Runtime
@@ -8314,6 +8401,8 @@ let compile_string ~file_id (source : string) : (string * Diagnostic.t list, Dia
             environment = typed_env;
             type_map;
             call_resolution_map;
+            extern_declarations;
+            extern_calls;
             method_type_args_map;
             method_def_map;
             trait_object_coercion_map;
@@ -8324,7 +8413,8 @@ let compile_string ~file_id (source : string) : (string * Diagnostic.t list, Dia
           try
             Ok
               ( emit_program_with_typed_env ~call_resolution_map ~method_type_args_map ~method_def_map
-                  ~trait_object_coercion_map ~placeholder_rewrite_map type_map typed_env program,
+                  ~extern_declarations ~extern_calls ~trait_object_coercion_map ~placeholder_rewrite_map type_map
+                  typed_env program,
                 diagnostics )
           with
           | Failure msg -> Error [ diagnostic_of_codegen_failure_message msg ]
@@ -9268,6 +9358,81 @@ let%test "extern type lowering rejects unsupported backend types" =
   match extern_type_to_go (Types.TArray Types.TInt) with
   | _ -> false
   | exception Failure msg -> string_contains msg "unsupported extern type reached backend"
+
+let%test "extern call emits aliased import wrapper and wrapper call" =
+  match
+    compile_string ~file_id:"<codegen>"
+      {|
+extern "strings" = {
+  fn ToUpper(s: Str) -> Str
+}
+
+strings.ToUpper("ok")
+|}
+  with
+  | Ok (code, _) ->
+      string_contains code {|import mext_strings "strings"|}
+      && string_contains code "func extern__strings__ToUpper(s string) string"
+      && string_contains code "return mext_strings.ToUpper(s)"
+      && string_contains code {|extern__strings__ToUpper("ok")|}
+  | Error _ -> false
+
+let%test "unused extern declaration emits no import or wrapper" =
+  match
+    compile_string ~file_id:"<codegen>"
+      {|
+extern "strings" = {
+  fn ToUpper(s: Str) -> Str
+}
+
+"ok"
+|}
+  with
+  | Ok (code, _) -> (not (string_contains code "mext_strings")) && not (string_contains code "extern__strings__ToUpper")
+  | Error _ -> false
+
+let%test "effectful unit extern wrapper returns unit after Go call" =
+  match
+    compile_string ~file_id:"<codegen>"
+      {|
+extern "fmt" = {
+  fn Println(s: Str) => Unit
+}
+
+fmt.Println("ok")
+|}
+  with
+  | Ok (code, _) ->
+      string_contains code {|import mext_fmt "fmt"|}
+      && string_contains code "func extern__fmt__Println(s string) struct{}"
+      && string_contains code "mext_fmt.Println(s)\n\treturn struct{}{}"
+      && string_contains code {|extern__fmt__Println("ok")|}
+  | Error _ -> false
+
+let%test "extern wrappers distinguish duplicate basename packages" =
+  match
+    compile_string ~file_id:"<codegen>"
+      {|
+extern "path/filepath" as fp = {
+  fn Base(s: Str) -> Str
+}
+
+extern "other/filepath" as ofp = {
+  fn Base(s: Str) -> Str
+}
+
+let _ = fp.Base("a")
+ofp.Base("b")
+|}
+  with
+  | Ok (code, _) ->
+      string_contains code {|mext_path_filepath "path/filepath"|}
+      && string_contains code {|mext_other_filepath "other/filepath"|}
+      && string_contains code "func extern__path_filepath__Base(s string) string"
+      && string_contains code "func extern__other_filepath__Base(s string) string"
+      && string_contains code {|extern__path_filepath__Base("a")|}
+      && string_contains code {|extern__other_filepath__Base("b")|}
+  | Error _ -> false
 
 let%test "Dyn codegen does not synthesize coercions without recorded metadata" =
   let source = "let x: Dyn[Show] = 42\nputs(Show.show(x))" in
