@@ -38,7 +38,7 @@ type checked_module = {
 
 type project_resolution_artifacts = {
   type_map : Infer.type_map;
-  call_resolution_map : (int, Infer.method_resolution) Hashtbl.t;
+  call_resolution_map : (int, Typecheck.Resolution_artifacts.call_resolution) Hashtbl.t;
   method_type_args_map : (int, Types.mono_type list) Hashtbl.t;
   method_def_map : (int, Typecheck.Resolution_artifacts.typed_method_def) Hashtbl.t;
   trait_object_coercion_map : (int, Typecheck.Resolution_artifacts.trait_object_coercion) Hashtbl.t;
@@ -148,7 +148,7 @@ let reset_module_state () =
   Trait_registry.clear ();
   Inherent_registry.clear ();
   Enum_registry.clear ();
-  Infer.clear_method_resolution_store ();
+  Infer.clear_call_resolution_store ();
   Infer.clear_type_var_user_names ();
   Infer.clear_top_level_placeholders ();
   Infer.clear_constraint_store ()
@@ -1105,8 +1105,8 @@ let find_callable_definition_site
             |> List.find_map (fun (module_ : Module_context.parsed_module) ->
                    find_method_site_in_surface_program module_.surface_program ~callable_id))
 
-let find_active_file_method_resolution (analysis : entry_analysis) ~(expr_id : int) :
-    Infer.method_resolution option =
+let find_active_file_call_resolution (analysis : entry_analysis) ~(expr_id : int) :
+    Typecheck.Resolution_artifacts.call_resolution option =
   Option.bind analysis.project (fun project -> Hashtbl.find_opt project.artifacts.call_resolution_map expr_id)
 
 let resolve_visible_type_name_to_mono (analysis : entry_analysis) ~(file_path : string) ~(surface_name : string) :

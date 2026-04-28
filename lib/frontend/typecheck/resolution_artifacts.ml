@@ -21,6 +21,14 @@ type trait_object_coercion = {
   source_type : Types.mono_type;
 }
 
+type call_resolution =
+  | TraitMethod of string
+  | DynamicTraitMethod of string
+  | InherentMethod
+  | QualifiedTraitMethod of string (* Trait.method(receiver, args...) *)
+  | QualifiedInherentMethod (* Type.method(receiver, args...) *)
+  | FieldFunctionCall
+
 (* Phase 5.4: Typed method-definition artifact.
    Records inferred signatures so the emitter can use them as source-of-truth
    without re-reading trait/inherent registries. Populated during Phase 6. *)

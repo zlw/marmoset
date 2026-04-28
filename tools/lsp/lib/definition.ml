@@ -544,21 +544,21 @@ let cursor_reference_target
             Option.bind (same_file_symbol analysis ~expr_id) value_namespace_symbol_target)
       in
       let method_target =
-        match Compiler.find_active_file_method_resolution analysis ~expr_id:access_expr_id with
+        match Compiler.find_active_file_call_resolution analysis ~expr_id:access_expr_id with
         | Some
-            ( Marmoset.Lib.Infer.TraitMethod trait_name
-            | Marmoset.Lib.Infer.DynamicTraitMethod trait_name
-            | Marmoset.Lib.Infer.QualifiedTraitMethod trait_name ) ->
+            ( Typecheck.Resolution_artifacts.TraitMethod trait_name
+            | Typecheck.Resolution_artifacts.DynamicTraitMethod trait_name
+            | Typecheck.Resolution_artifacts.QualifiedTraitMethod trait_name ) ->
             definition_target_of_exact_site
               (Compiler.find_trait_method_declaration_site analysis ~trait_name ~method_name:member_ref.text)
-        | Some (Marmoset.Lib.Infer.InherentMethod | Marmoset.Lib.Infer.QualifiedInherentMethod) ->
+        | Some (Typecheck.Resolution_artifacts.InherentMethod | Typecheck.Resolution_artifacts.QualifiedInherentMethod) ->
             Option.bind
               (Compiler.resolve_visible_type_name_to_mono analysis ~file_path:active_file_path
                  ~surface_name:root_ref.text) (fun receiver_type ->
                 definition_target_of_exact_site
                   (Compiler.find_inherent_method_declaration_site analysis ~receiver_type
                      ~method_name:member_ref.text))
-        | Some Marmoset.Lib.Infer.FieldFunctionCall | None -> None
+        | Some Typecheck.Resolution_artifacts.FieldFunctionCall | None -> None
       in
       let module_root_target =
         Option.bind (namespace_roots_of_analysis analysis) (fun namespace_roots ->

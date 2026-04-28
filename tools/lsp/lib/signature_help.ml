@@ -5,6 +5,7 @@ module Ast = Marmoset.Lib.Ast
 module Infer = Marmoset.Lib.Infer
 module Types = Marmoset.Lib.Types
 module Compiler = Marmoset.Lib.Frontend_compiler
+module Resolution_artifacts = Typecheck.Resolution_artifacts
 module Import_resolver = Frontend.Import_resolver
 module Trait_registry = Typecheck.Trait_registry
 module Inherent_registry = Typecheck.Inherent_registry
@@ -340,17 +341,17 @@ let signature_help
             match namespace_fn_type with
             | Some _ as info -> info
             | None -> (
-                match (call.recv_id, Infer.lookup_method_resolution call.fn_id) with
-                | Some recv_id, Some Infer.FieldFunctionCall -> (
+                match (call.recv_id, Infer.lookup_call_resolution call.fn_id) with
+                | Some recv_id, Some Resolution_artifacts.FieldFunctionCall -> (
                     match Hashtbl.find_opt type_map recv_id with
                     | Some recv_type -> (
                         match Structural.lookup_field_type recv_type mname with
                         | Some field_type -> Some (`FnType field_type)
                         | None -> None)
                     | None -> None)
-                | Some recv_id, Some (Infer.TraitMethod trait_name)
-                | Some recv_id, Some (Infer.DynamicTraitMethod trait_name)
-                | Some recv_id, Some (Infer.QualifiedTraitMethod trait_name) -> (
+                | Some recv_id, Some (Resolution_artifacts.TraitMethod trait_name)
+                | Some recv_id, Some (Resolution_artifacts.DynamicTraitMethod trait_name)
+                | Some recv_id, Some (Resolution_artifacts.QualifiedTraitMethod trait_name) -> (
                     match Trait_registry.lookup_trait_method_with_supertraits trait_name mname with
                     | Some (_source_trait, method_sig) ->
                         let param_types = List.map snd method_sig.method_params in
@@ -370,7 +371,8 @@ let signature_help
                                 Some
                                   (`Method (param_types, method_sig.method_return_type, param_names, is_effectful))
                             )))
-                | Some recv_id, Some Infer.InherentMethod | Some recv_id, Some Infer.QualifiedInherentMethod -> (
+                | Some recv_id, Some Resolution_artifacts.InherentMethod
+                | Some recv_id, Some Resolution_artifacts.QualifiedInherentMethod -> (
                     match Hashtbl.find_opt type_map recv_id with
                     | Some recv_type -> (
                         match Inherent_registry.resolve_method recv_type mname with

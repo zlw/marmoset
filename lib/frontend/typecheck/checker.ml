@@ -16,7 +16,7 @@ type typecheck_result = {
   type_map : Infer.type_map; (* Map from expression IDs to their inferred types *)
   symbol_table : (Infer.symbol_id * Infer.symbol) list;
   identifier_symbols : (int * Infer.symbol_id) list;
-  call_resolution_map : (int, Infer.method_resolution) Hashtbl.t;
+  call_resolution_map : (int, Resolution_artifacts.call_resolution) Hashtbl.t;
       (* Phase 5: Explicit call-resolution metadata for emitter *)
   method_def_map : (int, Resolution_artifacts.typed_method_def) Hashtbl.t;
       (* Phase 5.4: Typed method definitions for emitter. Populated during Phase 6. *)
@@ -61,7 +61,7 @@ let make_typecheck_result
     ~(result_type : mono_type)
     ~(environment : Infer.type_env)
     ~(type_map : Infer.type_map) : typecheck_result =
-  let call_resolution_map = Infer.snapshot_method_resolution_store () in
+  let call_resolution_map = Infer.snapshot_call_resolution_store () in
   let method_def_map = Infer.snapshot_method_def_store () in
   let method_type_args_map = Infer.snapshot_method_type_args_store () in
   let trait_object_coercion_map = Infer.snapshot_trait_object_coercion_store () in

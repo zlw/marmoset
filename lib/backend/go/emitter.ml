@@ -608,7 +608,7 @@ type mono_state = {
       (* local value alias (e.g. let f = r.compute) -> user function name *)
   mutable top_level_value_bindings : StringSet.t;
       (* top-level non-function let bindings available to later top-level functions *)
-  call_resolution_map : (int, Infer.method_resolution) Hashtbl.t;
+  call_resolution_map : (int, Typecheck.Resolution_artifacts.call_resolution) Hashtbl.t;
       (* Phase 5: explicit call-resolution metadata from typechecker *)
   method_type_args_map : (int, Types.mono_type list) Hashtbl.t;
       (* Phase 6.4: resolved method-level type args per call site *)
@@ -2292,7 +2292,7 @@ let resolved_method_type_args_for_expr
   | None -> []
 
 let resolve_field_access_callable
-    ~(call_resolution_map : (int, Infer.method_resolution) Hashtbl.t)
+    ~(call_resolution_map : (int, Typecheck.Resolution_artifacts.call_resolution) Hashtbl.t)
     ~(method_type_args_map : (int, Types.mono_type list) Hashtbl.t)
     (type_map : Infer.type_map)
     (env : Infer.type_env)
@@ -2301,7 +2301,7 @@ let resolve_field_access_callable
     (receiver : AST.expression)
     (field_name : string) : field_access_callable_resolution =
   match Hashtbl.find_opt call_resolution_map expr.id with
-  | Some (Infer.QualifiedTraitMethod trait_name) -> (
+  | Some (Typecheck.Resolution_artifacts.QualifiedTraitMethod trait_name) -> (
       let resolved_expr_type, subst = refined_expr_type_for_expected type_map expr expected_type in
       let resolved_expr_type = Types.canonicalize_mono_type resolved_expr_type in
       let param_types, _return_type = extract_all_param_types resolved_expr_type in
@@ -2316,7 +2316,7 @@ let resolve_field_access_callable
               method_type_args = resolved_method_type_args;
             }
       | [] -> NotQualifiedCallable)
-  | Some Infer.QualifiedInherentMethod -> (
+  | Some Typecheck.Resolution_artifacts.QualifiedInherentMethod -> (
       let resolved_expr_type, subst = refined_expr_type_for_expected type_map expr expected_type in
       let resolved_expr_type = Types.canonicalize_mono_type resolved_expr_type in
       let param_types, _return_type = extract_all_param_types resolved_expr_type in
@@ -3543,9 +3543,9 @@ and collect_insts_expr
           register_inherent_call_use state ~method_name ~receiver_type ~method_type_args
       | NotQualifiedCallable -> collect_insts_expr state type_map env receiver)
   | AST.MethodCall { mc_receiver = receiver; mc_method = method_name; mc_args = args; _ } -> (
-      let method_resolution = Hashtbl.find_opt state.call_resolution_map expr.id in
+      let call_resolution = Hashtbl.find_opt state.call_resolution_map expr.id in
       (* Check if this is an enum constructor and register it *)
-      match (receiver.expr, method_resolution) with
+      match (receiver.expr, call_resolution) with
       | AST.Identifier enum_name, None when Typecheck.Enum_registry.lookup enum_name <> None ->
           (* This is an enum constructor - track it like EnumConstructor *)
           let enum_type = get_type type_map expr in
@@ -3555,8 +3555,8 @@ and collect_insts_expr
       | _ -> (
           (* Real method call - collect insts in receiver and args *)
           List.iter (fun arg -> collect_insts_expr state type_map env arg) args;
-          match method_resolution with
-          | Some (Infer.QualifiedTraitMethod trait_name) -> (
+          match call_resolution with
+          | Some (Typecheck.Resolution_artifacts.QualifiedTraitMethod trait_name) -> (
               (* Qualified: first arg is receiver *)
               let for_type = Types.canonicalize_mono_type (method_dispatch_type env type_map (List.hd args)) in
               match for_type with
@@ -3569,7 +3569,7 @@ and collect_insts_expr
                   in
                   register_impl_method_use state type_map env ~trait_name ~method_name ~for_type ~method_type_args
               )
-          | Some (Infer.TraitMethod trait_name) ->
+          | Some (Typecheck.Resolution_artifacts.TraitMethod trait_name) ->
               collect_insts_expr state type_map env receiver;
               let for_type = Types.canonicalize_mono_type (method_dispatch_type env type_map receiver) in
               let method_type_args =
@@ -3578,8 +3578,8 @@ and collect_insts_expr
                 | None -> []
               in
               register_impl_method_use state type_map env ~trait_name ~method_name ~for_type ~method_type_args
-          | Some (Infer.DynamicTraitMethod _) -> collect_insts_expr state type_map env receiver
-          | Some Infer.InherentMethod ->
+          | Some (Typecheck.Resolution_artifacts.DynamicTraitMethod _) -> collect_insts_expr state type_map env receiver
+          | Some Typecheck.Resolution_artifacts.InherentMethod ->
               collect_insts_expr state type_map env receiver;
               let receiver_type = Types.canonicalize_mono_type (get_type type_map receiver) in
               let method_type_args =
@@ -3588,7 +3588,7 @@ and collect_insts_expr
                 | None -> []
               in
               register_inherent_call_use state ~method_name ~receiver_type ~method_type_args
-          | Some Infer.QualifiedInherentMethod ->
+          | Some Typecheck.Resolution_artifacts.QualifiedInherentMethod ->
               let receiver_type = Types.canonicalize_mono_type (get_type type_map (List.hd args)) in
               let method_type_args =
                 match Hashtbl.find_opt state.method_type_args_map expr.id with
@@ -3596,7 +3596,7 @@ and collect_insts_expr
                 | None -> []
               in
               register_inherent_call_use state ~method_name ~receiver_type ~method_type_args
-          | Some Infer.FieldFunctionCall -> (
+          | Some Typecheck.Resolution_artifacts.FieldFunctionCall -> (
               match receiver.expr with
               | AST.Identifier record_name -> (
                   match
@@ -4288,9 +4288,9 @@ let rec emit_expr
             let receiver_str = emit_expr state type_map env receiver in
             Printf.sprintf "(%s).%s" receiver_str (go_record_field_name variant_name))
     | AST.MethodCall { mc_receiver = receiver; mc_method = variant_name; mc_args = args; _ } -> (
-        let method_resolution = Hashtbl.find_opt state.mono.call_resolution_map expr.id in
+        let call_resolution = Hashtbl.find_opt state.mono.call_resolution_map expr.id in
         (* Check if this is an enum constructor — bound variables shadow enum names *)
-        match (receiver.expr, method_resolution) with
+        match (receiver.expr, call_resolution) with
         | AST.Identifier enum_source_name, None
           when Typecheck.Annotation.lookup_enum_by_source_name enum_source_name <> None
                && Infer.TypeEnv.find_opt enum_source_name env = None ->
@@ -4330,8 +4330,8 @@ let rec emit_expr
               else
                 fingerprint_types (for_type :: method_type_args)
             in
-            match method_resolution with
-            | Some (Infer.QualifiedTraitMethod trait_name) -> (
+            match call_resolution with
+            | Some (Typecheck.Resolution_artifacts.QualifiedTraitMethod trait_name) -> (
                 (* Qualified call: Trait.method(receiver, args...) — first arg is the receiver *)
                 let first_arg_type =
                   normalize_type_for_codegen ~concrete_only:state.mono.concrete_only
@@ -4351,9 +4351,9 @@ let rec emit_expr
                           :: List.map (emit_expr state type_map env) rest
                     in
                     Printf.sprintf "%s(%s)" func_name (String.concat ", " arg_strs))
-            | Some (Infer.DynamicTraitMethod _) ->
+            | Some (Typecheck.Resolution_artifacts.DynamicTraitMethod _) ->
                 emit_dynamic_trait_call state type_map env expr receiver variant_name args
-            | Some Infer.QualifiedInherentMethod ->
+            | Some Typecheck.Resolution_artifacts.QualifiedInherentMethod ->
                 (* Qualified call: Type.method(receiver, args...) — first arg is the receiver *)
                 let raw_receiver_type = method_dispatch_type env type_map (List.hd args) in
                 register_inherent_call_use ~allow_erased_unresolved:true state.mono ~method_name:variant_name
@@ -4371,7 +4371,7 @@ let rec emit_expr
                       :: List.map (emit_expr state type_map env) rest
                 in
                 Printf.sprintf "%s(%s)" func_name (String.concat ", " arg_strs)
-            | Some (Infer.TraitMethod trait_name) ->
+            | Some (Typecheck.Resolution_artifacts.TraitMethod trait_name) ->
                 (* Dot call: receiver.method(args...) — receiver is separate *)
                 let receiver_type =
                   normalize_type_for_codegen ~concrete_only:state.mono.concrete_only
@@ -4383,7 +4383,7 @@ let rec emit_expr
                 let arg_strs = List.map (emit_expr state type_map env) args in
                 let all_args = receiver_str :: arg_strs in
                 Printf.sprintf "%s(%s)" func_name (String.concat ", " all_args)
-            | Some Infer.InherentMethod ->
+            | Some Typecheck.Resolution_artifacts.InherentMethod ->
                 (* Dot call: receiver.method(args...) — receiver is separate *)
                 let raw_receiver_type = method_dispatch_type env type_map receiver in
                 register_inherent_call_use ~allow_erased_unresolved:true state.mono ~method_name:variant_name
@@ -4397,7 +4397,7 @@ let rec emit_expr
                 let arg_strs = List.map (emit_expr state type_map env) args in
                 let all_args = receiver_str :: arg_strs in
                 Printf.sprintf "%s(%s)" func_name (String.concat ", " all_args)
-            | Some Infer.FieldFunctionCall ->
+            | Some Typecheck.Resolution_artifacts.FieldFunctionCall ->
                 emit_field_function_call state type_map env expr receiver variant_name args
             | None ->
                 failwith
@@ -7174,7 +7174,7 @@ let add_inherent_call_site_if_new (sites : inherent_call_site list) (site : inhe
 
 let collect_inherent_call_sites
     ~(concrete_only : bool)
-    (call_resolution_map : (int, Infer.method_resolution) Hashtbl.t)
+    (call_resolution_map : (int, Typecheck.Resolution_artifacts.call_resolution) Hashtbl.t)
     (method_type_args_map : (int, Types.mono_type list) Hashtbl.t)
     (placeholder_rewrite_map : Infer.placeholder_rewrite_map)
     (type_map : Infer.type_map)
@@ -7315,7 +7315,7 @@ let collect_inherent_call_sites
         let acc' = collect_expr acc env receiver in
         let acc'' = List.fold_left (fun acc' arg -> collect_expr acc' env arg) acc' args in
         match Hashtbl.find_opt call_resolution_map expr.id with
-        | Some Infer.InherentMethod ->
+        | Some Typecheck.Resolution_artifacts.InherentMethod ->
             let mta =
               match Hashtbl.find_opt method_type_args_map expr.id with
               | Some a -> a
@@ -7323,7 +7323,7 @@ let collect_inherent_call_sites
             in
             maybe_add_call_site acc'' ~method_name ~receiver_type:(get_type type_map receiver)
               ~method_type_args:mta
-        | Some Infer.QualifiedInherentMethod ->
+        | Some Typecheck.Resolution_artifacts.QualifiedInherentMethod ->
             let mta =
               match Hashtbl.find_opt method_type_args_map expr.id with
               | Some a -> a
@@ -7332,10 +7332,10 @@ let collect_inherent_call_sites
             maybe_add_call_site acc'' ~method_name
               ~receiver_type:(get_type type_map (List.hd args))
               ~method_type_args:mta
-        | Some (Infer.TraitMethod _)
-        | Some (Infer.DynamicTraitMethod _)
-        | Some (Infer.QualifiedTraitMethod _)
-        | Some Infer.FieldFunctionCall
+        | Some (Typecheck.Resolution_artifacts.TraitMethod _)
+        | Some (Typecheck.Resolution_artifacts.DynamicTraitMethod _)
+        | Some (Typecheck.Resolution_artifacts.QualifiedTraitMethod _)
+        | Some Typecheck.Resolution_artifacts.FieldFunctionCall
         | None ->
             acc'')
     | AST.BlockExpr stmts -> collect_stmt_list acc env stmts
@@ -7924,7 +7924,7 @@ let emit_builtin_impls (state : mono_state) (program : AST.program) : string =
     ============================================================ *)
 
 let emit_program_with_typed_env
-    ~(call_resolution_map : (int, Infer.method_resolution) Hashtbl.t)
+    ~(call_resolution_map : (int, Typecheck.Resolution_artifacts.call_resolution) Hashtbl.t)
     ~(method_type_args_map : (int, Types.mono_type list) Hashtbl.t)
     ~(method_def_map : (int, Typecheck.Resolution_artifacts.typed_method_def) Hashtbl.t)
     ~(trait_object_coercion_map : (int, Typecheck.Resolution_artifacts.trait_object_coercion) Hashtbl.t)

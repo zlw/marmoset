@@ -2,6 +2,7 @@
 
 open Types
 open Unify
+open Resolution_artifacts
 module AST = Syntax.Ast.AST
 module Constraints = Constraints
 module Diagnostic = Diagnostics.Diagnostic
@@ -141,21 +142,13 @@ type inference_state = {
   symbol_table : (symbol_id, symbol) Hashtbl.t;
   symbol_key_store : (symbol_id, string) Hashtbl.t;
   identifier_symbol_store : (int, symbol_id) Hashtbl.t;
-  method_resolution_store : (int, method_resolution) Hashtbl.t;
+  call_resolution_store : (int, Resolution_artifacts.call_resolution) Hashtbl.t;
 }
-
-and method_resolution =
-  | TraitMethod of string
-  | DynamicTraitMethod of string
-  | InherentMethod
-  | QualifiedTraitMethod of string (* Trait.method(receiver, args...) *)
-  | QualifiedInherentMethod (* Type.method(receiver, args...) *)
-  | FieldFunctionCall
 
 and method_call_attempt = {
   mca_subst : substitution;
   mca_return_type : mono_type;
-  mca_resolution : method_resolution;
+  mca_resolution : Resolution_artifacts.call_resolution;
   mca_effectful : bool;
   mca_method_type_args : mono_type list option;
 }
@@ -170,11 +163,11 @@ let create_inference_state () : inference_state =
     symbol_table = Hashtbl.create 256;
     symbol_key_store = Hashtbl.create 256;
     identifier_symbol_store = Hashtbl.create 512;
-    method_resolution_store = Hashtbl.create 128;
+    call_resolution_store = Hashtbl.create 128;
   }
 
 let active_inference_state : inference_state ref = ref (create_inference_state ())
-let global_method_resolution_store : (int, method_resolution) Hashtbl.t = Hashtbl.create 256
+let global_call_resolution_store : (int, Resolution_artifacts.call_resolution) Hashtbl.t = Hashtbl.create 256
 let global_method_type_args_store : (int, mono_type list) Hashtbl.t = Hashtbl.create 64
 let global_effectful_method_call_store : (int, bool) Hashtbl.t = Hashtbl.create 128
 
@@ -370,8 +363,8 @@ let clear_constraint_store () : unit =
 
 let global_method_def_store : (int, Resolution_artifacts.typed_method_def) Hashtbl.t = Hashtbl.create 64
 
-let clear_method_resolution_store () : unit =
-  Hashtbl.clear global_method_resolution_store;
+let clear_call_resolution_store () : unit =
+  Hashtbl.clear global_call_resolution_store;
   Hashtbl.clear global_method_type_args_store;
   Hashtbl.clear global_effectful_method_call_store;
   Hashtbl.clear global_trait_object_coercion_store;
@@ -473,11 +466,11 @@ let user_named_type_bindings_in_env (env : type_env) : (string * mono_type) list
   in
   TypeEnv.fold (fun _ poly acc -> collect_poly acc poly) env [] |> List.rev
 
-let record_method_resolution (expr : AST.expression) (resolution : method_resolution) : unit =
-  Hashtbl.replace global_method_resolution_store expr.id resolution
+let record_call_resolution (expr : AST.expression) (resolution : Resolution_artifacts.call_resolution) : unit =
+  Hashtbl.replace global_call_resolution_store expr.id resolution
 
-let lookup_method_resolution (expr_id : int) : method_resolution option =
-  Hashtbl.find_opt global_method_resolution_store expr_id
+let lookup_call_resolution (expr_id : int) : Resolution_artifacts.call_resolution option =
+  Hashtbl.find_opt global_call_resolution_store expr_id
 
 let record_effectful_method_call (expr : AST.expression) (is_effectful : bool) : unit =
   Hashtbl.replace global_effectful_method_call_store expr.id is_effectful
@@ -487,8 +480,8 @@ let lookup_effectful_method_call (expr_id : int) : bool =
   | Some is_effectful -> is_effectful
   | None -> false
 
-let snapshot_method_resolution_store () : (int, method_resolution) Hashtbl.t =
-  Hashtbl.copy global_method_resolution_store
+let snapshot_call_resolution_store () : (int, Resolution_artifacts.call_resolution) Hashtbl.t =
+  Hashtbl.copy global_call_resolution_store
 
 let record_trait_object_coercion (expr : AST.expression) (coercion : Resolution_artifacts.trait_object_coercion) :
     unit =
@@ -513,7 +506,7 @@ let apply_substitution_method_type_args_store (subst : substitution) : unit =
     global_method_type_args_store
 
 let%test "trait object coercion store snapshots and clears" =
-  clear_method_resolution_store ();
+  clear_call_resolution_store ();
   let expr = AST.mk_expr ~id:77 (AST.Integer 1L) in
   record_trait_object_coercion expr Resolution_artifacts.{ target_traits = [ "Show"; "Eq" ]; source_type = TInt };
   let snapshot = snapshot_trait_object_coercion_store () in
@@ -521,17 +514,17 @@ let%test "trait object coercion store snapshots and clears" =
     Hashtbl.find_opt snapshot expr.id
     = Some Resolution_artifacts.{ target_traits = [ "Eq"; "Show" ]; source_type = TInt }
   in
-  clear_method_resolution_store ();
+  clear_call_resolution_store ();
   before_clear && Hashtbl.length (snapshot_trait_object_coercion_store ()) = 0
 
 let%test "dynamic trait method resolution snapshots and clears" =
-  clear_method_resolution_store ();
+  clear_call_resolution_store ();
   let expr = AST.mk_expr ~id:91 (AST.Integer 1L) in
-  record_method_resolution expr (DynamicTraitMethod "Show");
-  let snapshot = snapshot_method_resolution_store () in
+  record_call_resolution expr (DynamicTraitMethod "Show");
+  let snapshot = snapshot_call_resolution_store () in
   let before_clear = Hashtbl.find_opt snapshot expr.id = Some (DynamicTraitMethod "Show") in
-  clear_method_resolution_store ();
-  before_clear && Hashtbl.length (snapshot_method_resolution_store ()) = 0
+  clear_call_resolution_store ();
+  before_clear && Hashtbl.length (snapshot_call_resolution_store ()) = 0
 
 type obligation_reason = GenericConstraint of string
 
@@ -1062,7 +1055,7 @@ let should_monomorphize_let_binding_value (value_expr : AST.expression) : bool =
   match value_expr.expr with
   | AST.RecordLit _ -> true
   | AST.FieldAccess _ -> (
-      match lookup_method_resolution value_expr.id with
+      match lookup_call_resolution value_expr.id with
       | Some (QualifiedTraitMethod _) | Some QualifiedInherentMethod -> false
       | Some (TraitMethod _) | Some (DynamicTraitMethod _) | Some InherentMethod | Some FieldFunctionCall | None
         ->
@@ -2132,7 +2125,7 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                       let instantiated_sig, resolved_method_type_args =
                         instantiate_method_generics_for_value trait_instantiated_sig
                       in
-                      record_method_resolution expr (QualifiedTraitMethod trait_name);
+                      record_call_resolution expr (QualifiedTraitMethod trait_name);
                       record_method_type_args expr resolved_method_type_args;
                       Ok (empty_substitution, callable_type_of_method_sig instantiated_sig))
             in
@@ -2155,7 +2148,7 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                   let instantiated_sig, resolved_method_type_args =
                     instantiate_method_generics_for_value method_sig
                   in
-                  record_method_resolution expr QualifiedInherentMethod;
+                  record_call_resolution expr QualifiedInherentMethod;
                   record_method_type_args expr resolved_method_type_args;
                   Ok (empty_substitution, callable_type_of_method_sig instantiated_sig)
             in
@@ -2483,7 +2476,7 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                   let receiver_type_canon = canonicalize_mono_type receiver_type' in
                   let commit_method_call_attempt (attempt : method_call_attempt) :
                       (substitution * mono_type) infer_result =
-                    record_method_resolution expr attempt.mca_resolution;
+                    record_call_resolution expr attempt.mca_resolution;
                     record_effectful_method_call expr attempt.mca_effectful;
                     (match attempt.mca_method_type_args with
                     | Some resolved_type_args -> record_method_type_args expr resolved_type_args
@@ -2918,7 +2911,7 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                         with
                         | Error e -> Error e
                         | Ok (final_subst, return_type, resolved_method_type_args) ->
-                            record_method_resolution expr (QualifiedTraitMethod trait_name);
+                            record_call_resolution expr (QualifiedTraitMethod trait_name);
                             record_method_type_args expr resolved_method_type_args;
                             Ok (final_subst, return_type)
                       in
@@ -2970,7 +2963,7 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                                                           (List.length dynamic_sig.method_params)
                                                           (List.length args)))
                                               else (
-                                                record_method_resolution expr (QualifiedTraitMethod trait_name);
+                                                record_call_resolution expr (QualifiedTraitMethod trait_name);
                                                 Ok
                                                   ( final_subst,
                                                     apply_substitution final_subst dynamic_sig.method_return_type
@@ -3002,7 +2995,7 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                   with
                   | Error e -> Error e
                   | Ok (final_subst, return_type, resolved_method_type_args) ->
-                      record_method_resolution expr QualifiedInherentMethod;
+                      record_call_resolution expr QualifiedInherentMethod;
                       record_method_type_args expr resolved_method_type_args;
                       record_effectful_method_call expr (method_sig.method_effect = `Effectful);
                       Ok (final_subst, return_type))
@@ -6703,7 +6696,7 @@ let infer_program
         Annotation.clear_type_aliases ();
         Type_registry.clear ();
         Inherent_registry.clear ();
-        clear_method_resolution_store ();
+        clear_call_resolution_store ();
         clear_type_var_user_names ();
         clear_top_level_placeholders ());
       let expanded_program_result =
