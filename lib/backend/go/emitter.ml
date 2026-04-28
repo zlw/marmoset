@@ -20,6 +20,22 @@ end
 
 module StringPairSet = Set.Make (StringPairOrd)
 
+type go_import_spec = {
+  import_alias : string option;
+  import_path : string;
+}
+
+module GoImportSet = Set.Make (struct
+  type t = go_import_spec
+
+  let compare a b =
+    let c = String.compare a.import_path b.import_path in
+    if c <> 0 then
+      c
+    else
+      compare a.import_alias b.import_alias
+end)
+
 (* Unwrap annotation Result — emitter processes type-checked code so annotation
    errors here are internal failures *)
 let annotation_exn r =
@@ -624,9 +640,14 @@ type mono_state = {
       (* Concrete builtin primitive impl helpers reached through actual codegen use sites *)
   mutable inherent_call_uses : InherentCallUseSet.t;
       (* Concrete inherent method helpers reached through actual codegen use sites *)
+  mutable go_imports : GoImportSet.t;
+      (* Structured package imports required by emitted main-package code *)
   placeholder_rewrite_map : Infer.placeholder_rewrite_map;
       (* Placeholder shorthand rewrites keyed by original expression id *)
 }
+
+let add_go_import ?alias (state : mono_state) (path : string) : unit =
+  state.go_imports <- GoImportSet.add { import_alias = alias; import_path = path } state.go_imports
 
 let create_mono_state
     ?(module_path = "main")
@@ -664,6 +685,7 @@ let create_mono_state
     derived_impl_uses = DerivedImplUseSet.empty;
     builtin_impl_uses = BuiltinImplUseSet.empty;
     inherent_call_uses = InherentCallUseSet.empty;
+    go_imports = GoImportSet.empty;
     placeholder_rewrite_map;
   }
 
@@ -6877,6 +6899,7 @@ let emit_enum_type (state : mono_state) (enum_name : string) (type_args : Types.
       let needs_fmt =
         List.exists (fun (v : Typecheck.Enum_registry.variant_def) -> v.fields <> []) enum_def.variants
       in
+      if needs_fmt then add_go_import state "fmt";
       (struct_def ^ tag_constants ^ constructors ^ string_method, needs_fmt)
 
 let emit_named_type_def (state : mono_state) (type_name : string) (type_args : Types.mono_type list) : string =
@@ -7456,8 +7479,10 @@ let emit_record_derived_impl
       let return_expr =
         if args_str = "" then
           Printf.sprintf "%S" format_str
-        else
+        else (
+          add_go_import state.mono "fmt";
           Printf.sprintf "fmt.Sprintf(%S, %s)" format_str args_str
+        )
       in
       Some
         (Printf.sprintf "func %s%s(x %s) string {\n\treturn %s\n}\n" fn_prefix type_suffix type_str return_expr)
@@ -7537,8 +7562,10 @@ let emit_named_product_derived_impl
       let return_expr =
         if args_str = "" then
           Printf.sprintf "%S" format_str
-        else
+        else (
+          add_go_import state.mono "fmt";
           Printf.sprintf "fmt.Sprintf(%S, %s)" format_str args_str
+        )
       in
       Some
         (Printf.sprintf "func %s%s(x %s) string {\n\treturn %s\n}\n" fn_prefix type_suffix type_str return_expr)
@@ -7921,8 +7948,35 @@ let emit_builtin_impls (state : mono_state) (program : AST.program) : string =
   if List.exists (fun ((trait_name, _method_name, _type_name), _code) -> trait_name = "ord") needed_impls then
     track_enum_inst state (Types.TEnum ("Ordering", []));
 
+  let needs_strconv ((trait_name, method_name, type_name), _code) =
+    match (trait_name, method_name, type_name) with
+    | "show", "show", "int64"
+    | "show", "show", "bool"
+    | "show", "show", "float64"
+    | "debug", "debug", "int64"
+    | "debug", "debug", "bool"
+    | "debug", "debug", "string"
+    | "debug", "debug", "float64" ->
+        true
+    | _ -> false
+  in
+  if List.exists needs_strconv needed_impls then add_go_import state "strconv";
+
   let impl_codes = List.map snd needed_impls in
   String.concat "\n\n" impl_codes
+
+let format_go_import_spec (spec : go_import_spec) : string =
+  match spec.import_alias with
+  | None -> Printf.sprintf "%S" spec.import_path
+  | Some alias -> Printf.sprintf "%s %S" alias spec.import_path
+
+let format_go_imports (imports : GoImportSet.t) : string =
+  match GoImportSet.elements imports with
+  | [] -> ""
+  | [ spec ] -> Printf.sprintf "import %s\n\n" (format_go_import_spec spec)
+  | specs ->
+      let body = specs |> List.map (fun spec -> "\t" ^ format_go_import_spec spec) |> String.concat "\n" in
+      Printf.sprintf "import (\n%s\n)\n\n" body
 
 (* ============================================================
     Program Emission
@@ -8084,23 +8138,7 @@ let emit_program_with_typed_env
   let top_funcs =
     specialized_funcs_str ^ builtin_impl_funcs_str ^ impl_funcs_str ^ inherent_funcs_str ^ derived_impl_funcs_str
   in
-  let import_scan_source = type_defs ^ top_funcs ^ main_body in
-  let import_specs =
-    let specs = ref [] in
-    if String_utils.contains_substring ~needle:"fmt." import_scan_source then
-      specs := "fmt" :: !specs;
-    if String_utils.contains_substring ~needle:"strconv." import_scan_source then
-      specs := "strconv" :: !specs;
-    List.sort_uniq String.compare !specs
-  in
-  let imports =
-    match import_specs with
-    | [] -> ""
-    | [ spec ] -> Printf.sprintf "import %S\n\n" spec
-    | specs ->
-        let body = specs |> List.map (fun spec -> Printf.sprintf "\t%S" spec) |> String.concat "\n" in
-        Printf.sprintf "import (\n%s\n)\n\n" body
-  in
+  let imports = format_go_imports mono_state.go_imports in
 
   Printf.sprintf "package main\n\n%s%s%sfunc main() {\n%s}\n" imports type_defs top_funcs main_body
 
@@ -9203,6 +9241,11 @@ let%test "primitive show/debug builtins use strconv helpers" =
       && string_contains code "strconv.FormatInt"
       && string_contains code "strconv.Quote"
       && not (string_contains code {|fmt.Sprintf("%d", x)|})
+  | Error _ -> false
+
+let%test "structured imports ignore package-looking string literals" =
+  match compile_string ~file_id:"<codegen>" {|let s = "fmt.Sprintf strconv.FormatInt"; s|} with
+  | Ok (code, _) -> (not (string_contains code {|import "fmt"|})) && not (string_contains code {|import "strconv"|})
   | Error _ -> false
 
 let%test "Dyn codegen does not synthesize coercions without recorded metadata" =
