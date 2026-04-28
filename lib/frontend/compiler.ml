@@ -1,4 +1,5 @@
 module AST = Syntax.Ast.AST
+module Surface = Syntax.Surface_ast.Surface
 module Diagnostic = Diagnostics.Diagnostic
 module Derive_expand = Typecheck.Derive_expand
 module Discovery = Discovery
@@ -62,7 +63,8 @@ type file_analysis = {
   file_path : string;
   module_id : string option;
   source : string;
-  surface_program : AST.program option;
+  surface_program : Surface.surface_program option;
+  lowered_program : AST.program option;
   typed_program : AST.program option;
   type_map : Infer.type_map option;
   environment : Infer.type_env option;
@@ -276,7 +278,6 @@ let required_opt ~(code : string) ~(message : string) = function
   | None -> Error (compiler_error ~code ~message)
 
 let is_prelude_module (module_id : string) : bool = String.equal module_id prelude_module_id
-let is_file_backed_entry (entry_file : string) : bool = Filename.check_suffix entry_file ".mr"
 
 type module_locals_acc = {
   enums : Enum_registry.enum_def list;
@@ -785,6 +786,7 @@ let make_file_analysis
     ?module_id
     ~(source : string)
     ?surface_program
+    ?lowered_program
     ?typed_program
     ?type_map
     ?environment
@@ -798,6 +800,7 @@ let make_file_analysis
     module_id;
     source;
     surface_program;
+    lowered_program;
     typed_program;
     type_map;
     environment;
@@ -858,42 +861,305 @@ let find_export_binding (analysis : entry_analysis) ~(module_id : string) ~(surf
   | None -> None
   | Some module_ -> Module_sig.find_export module_.signature surface_name
 
-let analyze_standalone_program ?source_root ~(entry_file : string) ~(source : string) (program : AST.program) :
-    entry_analysis =
-  reset_module_state ();
-  let env = builtin_env_with_traits () in
-  let state = Infer.create_inference_state () in
-  match Checker.check_program_with_annotations ~state ~env program with
-  | Error diags ->
-      let active_file =
-        make_file_analysis ~file_path:entry_file ~source ~surface_program:program ~diagnostics:diags
-          ~type_var_user_names:(Infer.type_var_user_name_bindings_in_state state)
-          ~symbol_table:(Infer.symbol_table_bindings_in_state state)
-          ~identifier_symbols:(Infer.identifier_symbol_bindings_in_state state)
-          ()
-      in
-      { mode = Standalone; source_root; project_root = None; graph = None; project = None; active_file }
-  | Ok result ->
-      let active_file =
-        make_file_analysis ~file_path:entry_file ~source ~surface_program:program ~typed_program:program
-          ~type_map:result.type_map ~environment:result.environment ~diagnostics:result.diagnostics
-          ~type_var_user_names:(Infer.type_var_user_name_bindings_in_state state)
-          ~symbol_table:result.symbol_table ~identifier_symbols:result.identifier_symbols ()
-      in
-      { mode = Standalone; source_root; project_root = None; graph = None; project = None; active_file }
+let first_some a b =
+  match a with
+  | Some _ -> a
+  | None -> b
+
+let definition_site_of_name_ref (name_ref : Surface.name_ref) : Module_sig.definition_site option =
+  Option.map
+    (fun file_path -> { Module_sig.file_path; start_pos = name_ref.pos; end_pos = name_ref.end_pos })
+    name_ref.file_id
+
+let definition_site_of_presence (presence : Import_resolver.member_presence) : Module_sig.definition_site option =
+  [
+    presence.value_definition;
+    presence.enum_definition;
+    presence.named_type_definition;
+    presence.transparent_type_definition;
+    presence.shape_definition;
+    presence.trait_definition;
+  ]
+  |> List.find_opt Option.is_some
+  |> Option.join
+
+let navigation_from_surface_graph (analysis : entry_analysis) ~(file_path : string) : module_navigation option =
+  match analysis.graph with
+  | None -> None
+  | Some graph -> (
+      match find_parsed_module_by_file analysis ~file_path with
+      | None -> None
+      | Some parsed_module -> (
+          match Import_resolver.build_module_surfaces graph with
+          | Error _ -> None
+          | Ok surfaces -> (
+              match Hashtbl.find_opt surfaces parsed_module.module_id with
+              | None -> None
+              | Some surface -> (
+                  match Import_resolver.build_resolved_imports ~surfaces parsed_module with
+                  | Ok resolved_imports -> Some { surface; resolved_imports }
+                  | Error _ -> None))))
+
+let current_navigation (analysis : entry_analysis) ~(file_path : string) : module_navigation option =
+  first_some
+    (Option.map
+       (fun (module_ : checked_module) -> module_.navigation)
+       (find_checked_module_by_file analysis ~file_path))
+    (navigation_from_surface_graph analysis ~file_path)
+
+let find_parsed_module_by_id (analysis : entry_analysis) ~(module_id : string) :
+    Module_context.parsed_module option =
+  match analysis.graph with
+  | None -> None
+  | Some graph -> Hashtbl.find_opt graph.modules module_id
+
+let find_visible_presence (analysis : entry_analysis) ~(file_path : string) ~(surface_name : string) :
+    Import_resolver.member_presence option =
+  match current_navigation analysis ~file_path with
+  | None -> None
+  | Some navigation ->
+      first_some
+        (Import_resolver.StringMap.find_opt surface_name navigation.surface.declarations)
+        (Import_resolver.StringMap.find_opt surface_name navigation.resolved_imports.direct_bindings)
+
+let presence_has_type_namespace (presence : Import_resolver.member_presence) : bool =
+  presence.has_enum
+  || presence.has_named_type
+  || presence.has_transparent_type
+  || presence.has_shape
+  || presence.has_trait
+
+let presence_has_constraint_namespace (presence : Import_resolver.member_presence) : bool =
+  presence.has_trait || presence.has_shape
+
+let parsed_module_of_presence (analysis : entry_analysis) (presence : Import_resolver.member_presence) :
+    Module_context.parsed_module option =
+  Option.bind (definition_site_of_presence presence) (fun site ->
+      first_some
+        (find_parsed_module_by_file analysis ~file_path:site.file_path)
+        (Option.bind (find_checked_module_by_file analysis ~file_path:site.file_path) (fun checked_module ->
+             find_parsed_module_by_id analysis ~module_id:checked_module.module_id)))
+
+let find_type_head_site_in_surface_program (program : Surface.surface_program) ~(surface_name : string) :
+    Module_sig.definition_site option =
+  List.find_map
+    (fun (stmt : Surface.surface_top_stmt) ->
+      match stmt.std_decl with
+      | Surface.STypeDef { type_name; type_name_ref; _ } when String.equal type_name surface_name ->
+          definition_site_of_name_ref type_name_ref
+      | Surface.SShapeDef { shape_name; shape_name_ref; _ } when String.equal shape_name surface_name ->
+          definition_site_of_name_ref shape_name_ref
+      | Surface.STraitDef { name; name_ref; _ } when String.equal name surface_name ->
+          definition_site_of_name_ref name_ref
+      | _ -> None)
+    program
+
+let find_variant_site_in_surface_program
+    (program : Surface.surface_program) ~(type_name : string) ~(variant_name : string) :
+    Module_sig.definition_site option =
+  List.find_map
+    (fun (stmt : Surface.surface_top_stmt) ->
+      match stmt.std_decl with
+      | Surface.STypeDef { type_name = candidate_type; type_body = Surface.STNamedSum variants; _ }
+        when String.equal candidate_type type_name ->
+          List.find_map
+            (fun (variant : Surface.surface_variant_def) ->
+              if String.equal variant.sv_name variant_name then
+                definition_site_of_name_ref variant.sv_name_ref
+              else
+                None)
+            variants
+      | _ -> None)
+    program
+
+let find_text_site_in_range
+    ~(source : string) ~(file_path : string) ~(needle : string) ~(start_pos : int) ~(end_pos : int) :
+    Module_sig.definition_site option =
+  let source_len = String.length source in
+  let needle_len = String.length needle in
+  let last_start = min (source_len - needle_len) end_pos in
+  let rec search pos =
+    if needle_len <= 0 || pos > last_start then
+      None
+    else if pos < 0 then
+      search 0
+    else if String.sub source pos needle_len = needle then
+      Some { Module_sig.file_path; start_pos = pos; end_pos = pos + needle_len - 1 }
+    else
+      search (pos + 1)
+  in
+  if needle_len <= 0 || source_len < needle_len || start_pos > end_pos then
+    None
+  else
+    search start_pos
+
+let find_visible_type_declaration_site (analysis : entry_analysis) ~(file_path : string) ~(surface_name : string)
+    : Module_sig.definition_site option =
+  Option.bind (find_visible_presence analysis ~file_path ~surface_name) (fun presence ->
+      if not (presence_has_type_namespace presence) then
+        None
+      else
+        let fallback = definition_site_of_presence presence in
+        let parsed_module =
+          first_some
+            (find_parsed_module_by_file analysis ~file_path)
+            (parsed_module_of_presence analysis presence)
+        in
+        match parsed_module with
+        | None -> fallback
+        | Some parsed_module ->
+            first_some
+              (find_type_head_site_in_surface_program parsed_module.surface_program ~surface_name)
+              fallback)
+
+let find_visible_constraint_declaration_site
+    (analysis : entry_analysis) ~(file_path : string) ~(surface_name : string) : Module_sig.definition_site option
+    =
+  Option.bind (find_visible_presence analysis ~file_path ~surface_name) (fun presence ->
+      if not (presence_has_constraint_namespace presence) then
+        None
+      else
+        let fallback = definition_site_of_presence presence in
+        let parsed_module =
+          first_some
+            (find_parsed_module_by_file analysis ~file_path)
+            (parsed_module_of_presence analysis presence)
+        in
+        match parsed_module with
+        | None -> fallback
+        | Some parsed_module ->
+            first_some
+              (find_type_head_site_in_surface_program parsed_module.surface_program ~surface_name)
+              fallback)
+
+let find_visible_variant_declaration_site
+    (analysis : entry_analysis) ~(file_path : string) ~(type_name : string) ~(variant_name : string) :
+    Module_sig.definition_site option =
+  Option.bind (find_visible_presence analysis ~file_path ~surface_name:type_name) (fun presence ->
+      if not presence.has_enum then
+        None
+      else
+        let fallback = definition_site_of_presence presence in
+        let parsed_module =
+          first_some
+            (find_parsed_module_by_file analysis ~file_path)
+            (parsed_module_of_presence analysis presence)
+        in
+        match parsed_module with
+        | None -> fallback
+        | Some parsed_module ->
+            let exact_site =
+              find_variant_site_in_surface_program parsed_module.surface_program ~type_name ~variant_name
+            in
+            first_some exact_site
+              (first_some
+                 (Option.bind fallback (fun site ->
+                      find_text_site_in_range ~source:parsed_module.source ~file_path:site.file_path
+                        ~needle:variant_name ~start_pos:site.start_pos ~end_pos:site.end_pos))
+                 (first_some
+                    (find_text_site_in_range ~source:parsed_module.source ~file_path:parsed_module.file_path
+                       ~needle:variant_name ~start_pos:0
+                       ~end_pos:(String.length parsed_module.source - 1))
+                    fallback)))
+
+let find_method_site_in_surface_program (program : Surface.surface_program) ~(callable_id : int) :
+    Module_sig.definition_site option =
+  List.find_map
+    (fun (stmt : Surface.surface_top_stmt) ->
+      match stmt.std_decl with
+      | Surface.STraitDef { methods; _ } ->
+          List.find_map
+            (fun (method_ : Surface.surface_method_sig) ->
+              if method_.sm_id = callable_id then
+                definition_site_of_name_ref method_.sm_name_ref
+              else
+                None)
+            methods
+      | Surface.SAmbiguousImplDef { impl_methods; _ }
+      | Surface.SInherentImplDef { inherent_methods = impl_methods; _ } ->
+          List.find_map
+            (fun (method_ : Surface.surface_method_impl) ->
+              if method_.smi_id = callable_id then
+                definition_site_of_name_ref method_.smi_name_ref
+              else
+                None)
+            impl_methods
+      | _ -> None)
+    program
+
+let find_callable_definition_site
+    (analysis : entry_analysis) ~(callable_key : Typecheck.Resolution_artifacts.callable_key) :
+    Module_sig.definition_site option =
+  match callable_key with
+  | Typecheck.Resolution_artifacts.SyntheticCallable _ -> None
+  | Typecheck.Resolution_artifacts.UserCallable { callable_id; _ } ->
+      first_some
+        (Option.bind analysis.active_file.surface_program (fun program ->
+             find_method_site_in_surface_program program ~callable_id))
+        (match analysis.graph with
+        | None -> None
+        | Some graph ->
+            Hashtbl.to_seq_values graph.modules
+            |> List.of_seq
+            |> List.find_map (fun (module_ : Module_context.parsed_module) ->
+                   find_method_site_in_surface_program module_.surface_program ~callable_id))
+
+let find_active_file_method_resolution (analysis : entry_analysis) ~(expr_id : int) :
+    Infer.method_resolution option =
+  Option.bind analysis.project (fun project -> Hashtbl.find_opt project.artifacts.call_resolution_map expr_id)
+
+let resolve_visible_type_name_to_mono (analysis : entry_analysis) ~(file_path : string) ~(surface_name : string) :
+    Types.mono_type option =
+  let fresh_args arity =
+    List.init arity (fun idx -> Types.TVar (Printf.sprintf "__lsp_%s_%d" surface_name idx))
+  in
+  match Annotation.builtin_primitive_type surface_name with
+  | Some primitive -> Some primitive
+  | None -> (
+      match find_visible_presence analysis ~file_path ~surface_name with
+      | Some presence when presence.has_named_type -> (
+          match Type_registry.named_type_arity surface_name with
+          | Some arity -> Some (Types.TNamed (surface_name, fresh_args arity))
+          | None -> None)
+      | Some presence when presence.has_transparent_type -> (
+          match Annotation.lookup_type_alias surface_name with
+          | Some alias_info when alias_info.alias_type_params = [] -> (
+              match Annotation.type_expr_to_mono_type alias_info.alias_body with
+              | Ok mono -> Some mono
+              | Error _ -> None)
+          | Some _ | None -> None)
+      | Some presence when presence.has_enum -> (
+          match Annotation.lookup_enum_by_source_name surface_name with
+          | Some enum_def -> Some (Types.TEnum (enum_def.name, fresh_args (List.length enum_def.type_params)))
+          | None -> None)
+      | Some _ | None -> None)
+
+let find_trait_method_declaration_site (analysis : entry_analysis) ~(trait_name : string) ~(method_name : string)
+    : Module_sig.definition_site option =
+  match Trait_registry.lookup_trait_method_with_supertraits trait_name method_name with
+  | Some (_source_trait, method_sig) -> find_callable_definition_site analysis ~callable_key:method_sig.method_key
+  | None -> None
+
+let find_inherent_method_declaration_site
+    (analysis : entry_analysis) ~(receiver_type : Types.mono_type) ~(method_name : string) :
+    Module_sig.definition_site option =
+  match Inherent_registry.resolve_method receiver_type method_name with
+  | Ok (Some method_sig) -> find_callable_definition_site analysis ~callable_key:method_sig.method_key
+  | Ok None | Error _ -> None
 
 let analyze_module_graph
     ~(source_root : string option)
     ~(project_root : string)
     ~(entry_file : string)
     ~(source : string)
+    ~(entry_surface_program : Surface.surface_program)
     ~(entry_program : AST.program)
     (graph : Module_context.module_graph) : entry_analysis =
   match Hashtbl.find_opt graph.modules graph.entry_module with
   | None ->
       let active_file =
         make_file_analysis ~file_path:entry_file ~module_id:graph.entry_module ~source
-          ~surface_program:entry_program
+          ~surface_program:entry_surface_program ~lowered_program:entry_program
           ~diagnostics:
             [
               compiler_error ~code:"module-missing"
@@ -914,7 +1180,8 @@ let analyze_module_graph
       | Error diags ->
           let active_file =
             make_file_analysis ~file_path:entry_module.file_path ~module_id:entry_module.module_id
-              ~source:entry_module.source ~surface_program:entry_module.program ~diagnostics:diags ()
+              ~source:entry_module.source ~surface_program:entry_module.surface_program
+              ~lowered_program:entry_module.program ~diagnostics:diags ()
           in
           {
             mode = Modules;
@@ -933,7 +1200,8 @@ let analyze_module_graph
           | None ->
               let active_file =
                 make_file_analysis ~file_path:entry_module.file_path ~module_id:entry_module.module_id
-                  ~source:entry_module.source ~surface_program:entry_module.program
+                  ~source:entry_module.source ~surface_program:entry_module.surface_program
+                  ~lowered_program:entry_module.program
                   ~diagnostics:
                     [
                       compiler_error ~code:"module-missing"
@@ -952,9 +1220,9 @@ let analyze_module_graph
           | Some checked_entry ->
               let active_file =
                 make_file_analysis ~file_path:entry_module.file_path ~module_id:entry_module.module_id
-                  ~source:entry_module.source ~surface_program:entry_module.program
-                  ~typed_program:checked_entry.program ~type_map:checked_entry.result.type_map
-                  ~environment:checked_entry.result.environment
+                  ~source:entry_module.source ~surface_program:entry_module.surface_program
+                  ~lowered_program:entry_module.program ~typed_program:checked_entry.program
+                  ~type_map:checked_entry.result.type_map ~environment:checked_entry.result.environment
                   ~type_var_user_names:checked_entry.type_var_user_names
                   ~symbol_table:checked_entry.result.symbol_table
                   ~identifier_symbols:checked_entry.result.identifier_symbols ~diagnostics:project.diagnostics ()
@@ -968,78 +1236,70 @@ let analyze_module_graph
                 active_file;
               }))
 
-let rec analyze_entry_with_source
-    ?source_root ?stdlib_root ?(force_modules = false) ~(entry_file : string) ~(entry_source : string) () :
+let rec analyze_entry_with_source ?source_root ?stdlib_root ~(entry_file : string) ~(entry_source : string) () :
     entry_analysis =
-  analyze_entry_with_overrides ?source_root ?stdlib_root ~force_modules ~entry_file ~entry_source
+  analyze_entry_with_overrides ?source_root ?stdlib_root ~entry_file ~entry_source
     ~source_overrides:(Hashtbl.create 0) ()
 
 and analyze_entry_with_overrides
     ?source_root
     ?stdlib_root
-    ?(force_modules = false)
     ~(entry_file : string)
     ~(entry_source : string)
     ~(source_overrides : (string, string) Hashtbl.t)
     () : entry_analysis =
-  match Parser.parse ~file_id:entry_file entry_source with
+  match Parser.parse_with_surface ~file_id:entry_file entry_source with
   | Error diags ->
       let active_file = make_file_analysis ~file_path:entry_file ~source:entry_source ~diagnostics:diags () in
       { mode = Standalone; source_root; project_root = None; graph = None; project = None; active_file }
-  | Ok entry_program -> (
-      if (not force_modules) && (not (is_file_backed_entry entry_file)) && not (has_module_headers entry_program)
-      then
-        analyze_standalone_program ?source_root ~entry_file ~source:entry_source entry_program
-      else
-        let project_root = resolved_project_root ?source_root ~entry_file () in
-        let all_overrides = Hashtbl.copy source_overrides in
-        Hashtbl.replace all_overrides (Discovery.normalize_path entry_file) entry_source;
-        match
-          Discovery.discover_project_with_overrides ?source_root ?stdlib_root ~entry_file
-            ~source_overrides:all_overrides ()
-        with
-        | Error diag ->
-            let active_file =
-              make_file_analysis ~file_path:entry_file ~source:entry_source ~surface_program:entry_program
-                ~diagnostics:[ diag ] ()
-            in
-            {
-              mode = Modules;
-              source_root;
-              project_root = Some project_root;
-              graph = None;
-              project = None;
-              active_file;
-            }
-        | Ok graph ->
-            analyze_module_graph ~source_root ~project_root:graph.root_dir ~entry_file ~source:entry_source
-              ~entry_program graph)
+  | Ok entry_parse_result -> (
+      let project_root = resolved_project_root ?source_root ~entry_file () in
+      let all_overrides = Hashtbl.copy source_overrides in
+      Hashtbl.replace all_overrides (Discovery.normalize_path entry_file) entry_source;
+      match
+        Discovery.discover_project_with_overrides ?source_root ?stdlib_root ~entry_file
+          ~source_overrides:all_overrides ()
+      with
+      | Error diag ->
+          let active_file =
+            make_file_analysis ~file_path:entry_file ~source:entry_source
+              ~surface_program:entry_parse_result.surface_program ~lowered_program:entry_parse_result.program
+              ~diagnostics:[ diag ] ()
+          in
+          {
+            mode = Modules;
+            source_root;
+            project_root = Some project_root;
+            graph = None;
+            project = None;
+            active_file;
+          }
+      | Ok graph ->
+          analyze_module_graph ~source_root ~project_root:graph.root_dir ~entry_file ~source:entry_source
+            ~entry_surface_program:entry_parse_result.surface_program ~entry_program:entry_parse_result.program
+            graph)
 
-let analyze_entry ?source_root ?stdlib_root ?(force_modules = false) ~(entry_file : string) () : entry_analysis =
-  analyze_entry_with_source ?source_root ?stdlib_root ~force_modules ~entry_file
-    ~entry_source:(read_source_file entry_file) ()
+let analyze_entry ?source_root ?stdlib_root ~(entry_file : string) () : entry_analysis =
+  analyze_entry_with_source ?source_root ?stdlib_root ~entry_file ~entry_source:(read_source_file entry_file) ()
 
 let check_graph (graph : Module_context.module_graph) : (Diagnostic.t list, Diagnostic.t list) result =
   match compile_project graph with
   | Ok project -> Ok project.diagnostics
   | Error diags -> Error diags
 
-let check_entry ?source_root ?stdlib_root ?(force_modules = false) ~(entry_file : string) :
+let check_entry ?source_root ?stdlib_root ~(entry_file : string) :
     unit -> (Diagnostic.t list, Diagnostic.t list) result =
  fun () ->
-  let analysis = analyze_entry ?source_root ?stdlib_root ~force_modules ~entry_file () in
+  let analysis = analyze_entry ?source_root ?stdlib_root ~entry_file () in
   if diagnostics_have_errors analysis.active_file.diagnostics then
     Error analysis.active_file.diagnostics
   else
     Ok analysis.active_file.diagnostics
 
-let check_entry_with_source
-    ?source_root ?stdlib_root ?(force_modules = false) ~(entry_file : string) ~(entry_source : string) :
+let check_entry_with_source ?source_root ?stdlib_root ~(entry_file : string) ~(entry_source : string) :
     unit -> (Diagnostic.t list, Diagnostic.t list) result =
  fun () ->
-  let analysis =
-    analyze_entry_with_source ?source_root ?stdlib_root ~force_modules ~entry_file ~entry_source ()
-  in
+  let analysis = analyze_entry_with_source ?source_root ?stdlib_root ~entry_file ~entry_source () in
   if diagnostics_have_errors analysis.active_file.diagnostics then
     Error analysis.active_file.diagnostics
   else
@@ -1205,6 +1465,7 @@ let%test "analyze_entry_with_source routes file-backed headerless entries throug
       && analysis.active_file.file_path = Filename.concat root "main.mr"
       && analysis.active_file.module_id = Some "main"
       && analysis.active_file.surface_program <> None
+      && analysis.active_file.lowered_program <> None
       && analysis.active_file.typed_program <> None
       && analysis.active_file.type_map <> None
       && analysis.active_file.environment <> None
@@ -1517,6 +1778,41 @@ let%test "analyze_entry_with_source keeps surface entry AST alongside typed modu
         | None -> false
         | Some program ->
             List.exists
+              (fun (stmt : Syntax.Surface_ast.Surface.surface_top_stmt) ->
+                match stmt.std_decl with
+                | Syntax.Surface_ast.Surface.SExpressionStmt
+                    {
+                      se_expr =
+                        Syntax.Surface_ast.Surface.SECall
+                          ( { se_expr = Syntax.Surface_ast.Surface.SEIdentifier { text = "puts"; _ }; _ },
+                            [
+                              {
+                                se_expr =
+                                  Syntax.Surface_ast.Surface.SEMethodCall
+                                    {
+                                      se_receiver =
+                                        {
+                                          se_expr = Syntax.Surface_ast.Surface.SEIdentifier { text = "sum"; _ };
+                                          _;
+                                        };
+                                      se_method = "sum";
+                                      se_args = _;
+                                      _;
+                                    };
+                                _;
+                              };
+                            ] );
+                      _;
+                    } ->
+                    true
+                | _ -> false)
+              program
+      in
+      let lowered_has_namespace =
+        match analysis.active_file.lowered_program with
+        | None -> false
+        | Some program ->
+            List.exists
               (fun (stmt : AST.statement) ->
                 match stmt.stmt with
                 | AST.ExpressionStmt
@@ -1568,6 +1864,7 @@ let%test "analyze_entry_with_source keeps surface entry AST alongside typed modu
       && analysis.active_file.type_map <> None
       && analysis.active_file.environment <> None
       && surface_has_namespace
+      && lowered_has_namespace
       && typed_has_internal_name)
 
 let%test "analyze_entry_with_source preserves imported definition provenance for symbol lookup" =
@@ -1586,7 +1883,22 @@ let%test "analyze_entry_with_source preserves imported definition provenance for
         | Some
             [
               _;
-              { stmt = AST.ExpressionStmt { expr = AST.Call ({ expr = AST.Identifier "add"; id; _ }, _); _ }; _ };
+              {
+                Syntax.Surface_ast.Surface.std_decl =
+                  Syntax.Surface_ast.Surface.SExpressionStmt
+                    {
+                      se_expr =
+                        Syntax.Surface_ast.Surface.SECall
+                          ( {
+                              se_expr = Syntax.Surface_ast.Surface.SEIdentifier { text = "add"; _ };
+                              se_id = id;
+                              _;
+                            },
+                            _ );
+                      _;
+                    };
+                _;
+              };
             ] ->
             Some id
         | _ -> None
@@ -1647,14 +1959,13 @@ let%test "analyze_entry_with_overrides sees imported file overrides" =
           diag.code = "type-mismatch" || Diagnostics.String_utils.contains_substring ~needle:"Str" diag.message)
         analysis.active_file.diagnostics)
 
-let%test "analyze_entry_with_source can force headerless files into module mode" =
+let%test "analyze_entry_with_source routes extensionless entries through module analysis" =
   Discovery.with_temp_project
-    [ ("pkg/util.mr", "let helper = 1\n") ]
+    [ ("pkg/util", "let helper = 1\n") ]
     (fun root ->
-      let entry_file = Filename.concat root "pkg/util.mr" in
+      let entry_file = Filename.concat root "pkg/util" in
       let analysis =
-        analyze_entry_with_source ~source_root:root ~force_modules:true ~entry_file
-          ~entry_source:"let helper = 1\n" ()
+        analyze_entry_with_source ~source_root:root ~entry_file ~entry_source:"let helper = 1\n" ()
       in
       match analysis.graph with
       | None -> false

@@ -30,3 +30,17 @@ if command -v luac >/dev/null 2>&1; then
   luac -p "$NVIM_DIR/ftplugin/marmoset.lua"
   luac -p "$NVIM_DIR/lua/marmoset/init.lua"
 fi
+
+if command -v rg >/dev/null 2>&1; then
+  rg -Fq 'MARMOSET_ROOT' "$NVIM_DIR/lua/marmoset/init.lua"
+  rg -Fq 'std/prelude.mr' "$NVIM_DIR/lua/marmoset/init.lua"
+  rg -Fq 'return root .. "/marmoset"' "$NVIM_DIR/lua/marmoset/init.lua"
+  ! rg -Fq '_build/default/bin/main.exe' "$NVIM_DIR/lua/marmoset/init.lua"
+  ! rg -Fq '_build/install/default/bin/marmoset' "$NVIM_DIR/lua/marmoset/init.lua"
+else
+  grep -Fq 'MARMOSET_ROOT' "$NVIM_DIR/lua/marmoset/init.lua"
+  grep -Fq 'std/prelude.mr' "$NVIM_DIR/lua/marmoset/init.lua"
+  grep -Fq 'return root .. "/marmoset"' "$NVIM_DIR/lua/marmoset/init.lua"
+  ! grep -Fq '_build/default/bin/main.exe' "$NVIM_DIR/lua/marmoset/init.lua"
+  ! grep -Fq '_build/install/default/bin/marmoset' "$NVIM_DIR/lua/marmoset/init.lua"
+fi

@@ -42,16 +42,17 @@ let source_for_path ~(source_overrides : (string, string) Hashtbl.t) (path : str
 
 let parsed_surface_of_file ~(module_id : string) ~(file_path : string) ~(source : string) :
     Import_resolver.module_surface option =
-  match Parser.parse ~id_offset:0 ~file_id:file_path source with
+  match Parser.parse_with_surface ~id_offset:0 ~file_id:file_path source with
   | Error _ -> None
-  | Ok program ->
+  | Ok parse_result ->
       let parsed_module =
         {
           Module_context.module_id;
           file_path;
           source;
-          program;
-          exports = export_list_of_program program;
+          surface_program = parse_result.surface_program;
+          program = parse_result.program;
+          exports = export_list_of_program parse_result.program;
           imports = [];
         }
       in

@@ -1,6 +1,7 @@
 module Lsp_t = Linol_lsp.Types
 module Ast = Marmoset.Lib.Ast
 module Compiler = Marmoset.Lib.Frontend_compiler
+module Cursor_context = Cursor_context
 module Lexer = Marmoset.Lib.Lexer
 module Token = Marmoset.Lib.Token
 module Import_resolver = Frontend.Import_resolver
@@ -86,6 +87,18 @@ let definition_target_of_presence (presence : Import_resolver.member_presence) :
   match definition_site with
   | Some (Some site) -> Some (definition_target_of_site site)
   | _ -> None
+
+let exact_type_target_of_presence
+    (analysis : Compiler.entry_analysis) ~(surface_name : string) (presence : Import_resolver.member_presence) :
+    definition_target option =
+  let fallback = definition_target_of_presence presence in
+  match Compiler.parsed_module_of_presence analysis presence with
+  | None -> fallback
+  | Some parsed_module ->
+      first_some
+        (Option.map definition_target_of_site
+           (Compiler.find_type_head_site_in_surface_program parsed_module.surface_program ~surface_name))
+        fallback
 
 let source_for_file ~(analysis : Doc_state.analysis_result) ~(file_path : string) : string option =
   match analysis.compiler_analysis with
@@ -367,12 +380,213 @@ let resolve_visible_module_target
     (analysis : Compiler.entry_analysis)
     ~(namespace_roots : Import_resolver.namespace_node Import_resolver.StringMap.t)
     ~(segments : string list) : definition_target option =
-  match Import_resolver.resolve_namespace_member ~namespace_roots segments with
-  | Some `ModulePath -> module_target_of_id analysis ~module_id:(String.concat "." segments)
-  | _ -> None
+  let module_ref_of_segments roots = function
+    | [] -> None
+    | root :: rest -> (
+        match Import_resolver.StringMap.find_opt root roots with
+        | None -> None
+        | Some node ->
+            let rec walk current = function
+              | [] -> current.Import_resolver.module_ref
+              | segment :: tail -> (
+                  match Import_resolver.StringMap.find_opt segment current.children with
+                  | None -> None
+                  | Some next -> walk next tail)
+            in
+            walk node rest)
+  in
+  Option.bind (module_ref_of_segments namespace_roots segments)
+    (fun (module_surface : Import_resolver.module_surface) ->
+      module_target_of_id analysis ~module_id:module_surface.module_id)
 
 let symbol_path (symbol : Marmoset.Lib.Infer.symbol) : string option =
   Option.bind symbol.file_id Doc_state.file_path_of_file_id
+
+let definition_target_of_exact_site (site : Module_sig.definition_site option) : definition_target option =
+  Option.map definition_target_of_site site
+
+let definition_target_of_name_ref (name_ref : Marmoset.Lib.Surface_ast.Surface.name_ref) :
+    definition_target option =
+  definition_target_of_exact_site (Compiler.definition_site_of_name_ref name_ref)
+
+let local_variant_target
+    ~(surface_program : Marmoset.Lib.Surface_ast.Surface.surface_program option)
+    ~(type_name : string)
+    ~(variant_name : string) : definition_target option =
+  Option.bind surface_program (fun program ->
+      List.find_map
+        (fun (stmt : Marmoset.Lib.Surface_ast.Surface.surface_top_stmt) ->
+          match stmt.std_decl with
+          | Marmoset.Lib.Surface_ast.Surface.STypeDef
+              { type_name = candidate_type; type_body = Marmoset.Lib.Surface_ast.Surface.STNamedSum variants; _ }
+            when String.equal candidate_type type_name ->
+              List.find_map
+                (fun (variant : Marmoset.Lib.Surface_ast.Surface.surface_variant_def) ->
+                  if String.equal variant.sv_name variant_name then
+                    definition_target_of_name_ref variant.sv_name_ref
+                  else
+                    None)
+                variants
+          | _ -> None)
+        program)
+
+let cursor_input_of_analysis (analysis : Doc_state.analysis_result) : Cursor_context.cursor_context_input option =
+  match (analysis.surface_program, analysis.program) with
+  | Some surface_program, Some lowered_program ->
+      Some
+        {
+          Cursor_context.surface_program;
+          lowered_program;
+          scope_index = Cursor_context.build_scope_index surface_program;
+        }
+  | _ -> None
+
+let namespace_roots_of_analysis (analysis : Compiler.entry_analysis) :
+    Import_resolver.namespace_node Import_resolver.StringMap.t option =
+  Option.map
+    (fun (module_ : Compiler.checked_module) -> module_.navigation.resolved_imports.namespace_roots)
+    (Compiler.find_checked_module_by_file analysis ~file_path:analysis.active_file.file_path)
+
+let same_file_symbol_target (analysis : Compiler.entry_analysis) ~(expr_id : int) : definition_target option =
+  match Compiler.find_active_file_symbol analysis ~expr_id with
+  | Some symbol
+    when Option.fold ~none:true ~some:(String.equal analysis.active_file.file_path) (symbol_path symbol) ->
+      symbol_target symbol
+  | Some _ | None -> None
+
+let same_file_symbol (analysis : Compiler.entry_analysis) ~(expr_id : int) : Marmoset.Lib.Infer.symbol option =
+  match Compiler.find_active_file_symbol analysis ~expr_id with
+  | Some symbol
+    when Option.fold ~none:true ~some:(String.equal analysis.active_file.file_path) (symbol_path symbol) ->
+      Some symbol
+  | Some _ | None -> None
+
+let value_namespace_symbol_target (symbol : Marmoset.Lib.Infer.symbol) : definition_target option =
+  match symbol.kind with
+  | Marmoset.Lib.Infer.BuiltinValue | Marmoset.Lib.Infer.TopLevelLet | Marmoset.Lib.Infer.LocalLet
+  | Marmoset.Lib.Infer.Param | Marmoset.Lib.Infer.PatternVar | Marmoset.Lib.Infer.ImplMethodParam ->
+      symbol_target symbol
+  | Marmoset.Lib.Infer.TypeSym | Marmoset.Lib.Infer.TypeAliasSym | Marmoset.Lib.Infer.ShapeSym
+  | Marmoset.Lib.Infer.TraitSym | Marmoset.Lib.Infer.EnumSym | Marmoset.Lib.Infer.EnumVariantSym ->
+      None
+
+let cursor_reference_target
+    (analysis : Compiler.entry_analysis)
+    ~(source : string)
+    ~(surface_program : Marmoset.Lib.Surface_ast.Surface.surface_program option)
+    ~(reference : Cursor_context.reference) : definition_target option =
+  let _ = source in
+  let active_file_path = analysis.active_file.file_path in
+  match reference with
+  | Cursor_context.Import_alias { import_path; _ } ->
+      resolve_import_path_target analysis ~path_segments:import_path
+  | Cursor_context.Import_path_segment { import_path; segment_index; _ } ->
+      if segment_index < List.length import_path - 1 then
+        module_target_of_id analysis ~module_id:(String.concat "." (take (segment_index + 1) import_path))
+      else
+        resolve_import_path_target analysis ~path_segments:import_path
+  | Cursor_context.Declaration_head { name_ref; _ } -> definition_target_of_name_ref name_ref
+  | Cursor_context.Type_identifier { binding = Some binding; _ } ->
+      definition_target_of_name_ref binding.binding_ref
+  | Cursor_context.Type_path_segment { path_segments; segment_index; _ } -> (
+      match namespace_roots_of_analysis analysis with
+      | None -> None
+      | Some namespace_roots -> (
+          if segment_index < List.length path_segments - 1 then
+            resolve_visible_module_target analysis ~namespace_roots
+              ~segments:(take (segment_index + 1) path_segments)
+          else
+            match Import_resolver.resolve_namespace_member ~namespace_roots path_segments with
+            | Some `ModulePath -> resolve_visible_module_target analysis ~namespace_roots ~segments:path_segments
+            | Some (`Exported presence)
+              when Compiler.presence_has_type_namespace presence
+                   || Compiler.presence_has_constraint_namespace presence ->
+                exact_type_target_of_presence analysis
+                  ~surface_name:(List.nth path_segments (List.length path_segments - 1))
+                  presence
+            | Some (`Exported _) | Some (`NotExported _) | Some (`MissingMember _) | None -> None))
+  | Cursor_context.Type_identifier { name_ref; binding = None } ->
+      definition_target_of_exact_site
+        (Compiler.find_visible_type_declaration_site analysis ~file_path:active_file_path
+           ~surface_name:name_ref.text)
+  | Cursor_context.Constraint_identifier { name_ref } ->
+      definition_target_of_exact_site
+        (Compiler.find_visible_constraint_declaration_site analysis ~file_path:active_file_path
+           ~surface_name:name_ref.text)
+  | Cursor_context.Value_identifier { expr_id; name_ref; _ } ->
+      first_some
+        (Option.bind (Compiler.find_active_file_symbol analysis ~expr_id) symbol_target)
+        (definition_target_of_exact_site
+           (Compiler.find_visible_type_declaration_site analysis ~file_path:active_file_path
+              ~surface_name:name_ref.text))
+  | Cursor_context.Qualified_root { root_ref; root_expr_id; access_expr_id = _; _ } ->
+      let module_root_target =
+        Option.bind (namespace_roots_of_analysis analysis) (fun namespace_roots ->
+            resolve_visible_module_target analysis ~namespace_roots ~segments:[ root_ref.text ])
+      in
+      first_some
+        (Option.bind root_expr_id (fun expr_id -> same_file_symbol_target analysis ~expr_id))
+        (match module_root_target with
+        | Some _ as target -> target
+        | None ->
+            first_some
+              (definition_target_of_exact_site
+                 (Compiler.find_visible_type_declaration_site analysis ~file_path:active_file_path
+                    ~surface_name:root_ref.text))
+              (definition_target_of_exact_site
+                 (Compiler.find_visible_constraint_declaration_site analysis ~file_path:active_file_path
+                    ~surface_name:root_ref.text)))
+  | Cursor_context.Qualified_member { root_ref; root_expr_id; member_ref; access_expr_id } ->
+      let same_file_root_target =
+        Option.bind root_expr_id (fun expr_id ->
+            Option.bind (same_file_symbol analysis ~expr_id) value_namespace_symbol_target)
+      in
+      let method_target =
+        match Compiler.find_active_file_method_resolution analysis ~expr_id:access_expr_id with
+        | Some
+            ( Marmoset.Lib.Infer.TraitMethod trait_name
+            | Marmoset.Lib.Infer.DynamicTraitMethod trait_name
+            | Marmoset.Lib.Infer.QualifiedTraitMethod trait_name ) ->
+            definition_target_of_exact_site
+              (Compiler.find_trait_method_declaration_site analysis ~trait_name ~method_name:member_ref.text)
+        | Some (Marmoset.Lib.Infer.InherentMethod | Marmoset.Lib.Infer.QualifiedInherentMethod) ->
+            Option.bind
+              (Compiler.resolve_visible_type_name_to_mono analysis ~file_path:active_file_path
+                 ~surface_name:root_ref.text) (fun receiver_type ->
+                definition_target_of_exact_site
+                  (Compiler.find_inherent_method_declaration_site analysis ~receiver_type
+                     ~method_name:member_ref.text))
+        | Some Marmoset.Lib.Infer.FieldFunctionCall | None -> None
+      in
+      let module_root_target =
+        Option.bind (namespace_roots_of_analysis analysis) (fun namespace_roots ->
+            match Import_resolver.resolve_namespace_member ~namespace_roots [ root_ref.text ] with
+            | Some `ModulePath -> Some ()
+            | _ -> None)
+      in
+      let module_member_target =
+        Option.bind (namespace_roots_of_analysis analysis) (fun namespace_roots ->
+            match
+              Import_resolver.resolve_namespace_member ~namespace_roots [ root_ref.text; member_ref.text ]
+            with
+            | Some `ModulePath ->
+                resolve_visible_module_target analysis ~namespace_roots
+                  ~segments:[ root_ref.text; member_ref.text ]
+            | Some (`Exported presence) -> definition_target_of_presence presence
+            | Some (`NotExported _) | Some (`MissingMember _) | None -> None)
+      in
+      let type_member_target =
+        first_some
+          (local_variant_target ~surface_program ~type_name:root_ref.text ~variant_name:member_ref.text)
+          (definition_target_of_exact_site
+             (Compiler.find_visible_variant_declaration_site analysis ~file_path:active_file_path
+                ~type_name:root_ref.text ~variant_name:member_ref.text))
+      in
+      first_some method_target
+        (first_some same_file_root_target
+           (match module_root_target with
+           | Some () -> module_member_target
+           | None -> first_some type_member_target module_member_target))
 
 let resolve_namespace_ref
     (analysis : Compiler.entry_analysis)
@@ -437,12 +651,35 @@ let find_definition ~(analysis : Doc_state.analysis_result) ~(line : int) ~(char
   match analysis.compiler_analysis with
   | None -> None
   | Some compiler_analysis -> (
-      match import_header_target compiler_analysis ~source:analysis.source ~offset with
-      | Some _ as target -> target
+      match cursor_input_of_analysis analysis with
+      | Some input -> (
+          let reference =
+            match Cursor_context.reference_at ~source:analysis.source ~input ~offset with
+            | Some _ as reference -> reference
+            | None when offset > 0 ->
+                Cursor_context.reference_at ~source:analysis.source ~input ~offset:(offset - 1)
+            | None -> None
+          in
+          match reference with
+          | Some reference ->
+              first_some
+                (cursor_reference_target compiler_analysis ~source:analysis.source
+                   ~surface_program:analysis.surface_program ~reference)
+                None
+          | None -> (
+              match import_header_target compiler_analysis ~source:analysis.source ~offset with
+              | Some _ as target -> target
+              | None -> (
+                  match analysis.program with
+                  | Some program -> expression_target compiler_analysis ~source:analysis.source ~program ~offset
+                  | None -> None)))
       | None -> (
-          match analysis.program with
-          | Some program -> expression_target compiler_analysis ~source:analysis.source ~program ~offset
-          | None -> None))
+          match import_header_target compiler_analysis ~source:analysis.source ~offset with
+          | Some _ as target -> target
+          | None -> (
+              match analysis.program with
+              | Some program -> expression_target compiler_analysis ~source:analysis.source ~program ~offset
+              | None -> None)))
 
 let nth_substring_offset ~(source : string) ~(needle : string) ~(occurrence : int) : int option =
   let rec scan start remaining =
@@ -593,3 +830,196 @@ let%test "private import headers return none" =
       let main_path = Filename.concat root "main.mr" in
       let main_source = "import math.secret\nsecret()\n" in
       definition_at ~file_id:main_path ~source:main_source ~needle:"secret" () = None)
+
+let%test "type annotation resolves to named type declaration head" =
+  Doc_state.with_temp_project
+    [ ("main.mr", "type Point = { x: Int }\nlet p: Point = { x: 1 }\np\n") ]
+    (fun root ->
+      let main_path = Filename.concat root "main.mr" in
+      let main_source = "type Point = { x: Int }\nlet p: Point = { x: 1 }\np\n" in
+      expect_target ~label:"type annotation"
+        ~actual:(definition_at ~file_id:main_path ~source:main_source ~needle:"Point = { x: 1 }" ())
+        ~expected:(target_span_of_substring ~file_path:main_path ~source:main_source ~needle:"Point" ()))
+
+let%test "type annotation resolves when the cursor is at the end of the type name" =
+  Doc_state.with_temp_project
+    [ ("main.mr", "type Point = { x: Int }\nlet p: Point = { x: 1 }\np\n") ]
+    (fun root ->
+      let main_path = Filename.concat root "main.mr" in
+      let main_source = "type Point = { x: Int }\nlet p: Point = { x: 1 }\np\n" in
+      expect_target ~label:"type annotation at end"
+        ~actual:
+          (definition_at ~file_id:main_path ~source:main_source ~needle:"Point = { x: 1 }" ~offset_in_needle:5 ())
+        ~expected:(target_span_of_substring ~file_path:main_path ~source:main_source ~needle:"Point" ()))
+
+let%test "generic annotation resolves to nearest type parameter declaration" =
+  let source = "fn id[t](x: t) -> t = x\nid\n" in
+  let file_id = Filename.concat (Filename.get_temp_dir_name ()) "cursor_generic.mr" in
+  expect_target ~label:"generic annotation"
+    ~actual:(definition_at ~file_id ~source ~needle:"t) ->" ())
+    ~expected:(target_span_of_substring ~file_path:file_id ~source ~needle:"t" ())
+
+let%test "wrapper constructor call head resolves to type declaration head" =
+  Doc_state.with_temp_project
+    [ ("main.mr", "type UserId = UserId(Int)\nlet id = UserId(42)\nid\n") ]
+    (fun root ->
+      let main_path = Filename.concat root "main.mr" in
+      let main_source = "type UserId = UserId(Int)\nlet id = UserId(42)\nid\n" in
+      expect_target ~label:"wrapper constructor"
+        ~actual:(definition_at ~file_id:main_path ~source:main_source ~needle:"UserId(42)" ())
+        ~expected:(target_span_of_substring ~file_path:main_path ~source:main_source ~needle:"UserId" ()))
+
+let%test "enum constructor member resolves to the variant declaration head" =
+  Doc_state.with_temp_project
+    [ ("main.mr", "type Option[a] = { Some(a), None }\nlet x = Option.Some(42)\nx\n") ]
+    (fun root ->
+      let main_path = Filename.concat root "main.mr" in
+      let main_source = "type Option[a] = { Some(a), None }\nlet x = Option.Some(42)\nx\n" in
+      expect_target ~label:"enum constructor member"
+        ~actual:
+          (definition_at ~file_id:main_path ~source:main_source ~needle:"Option.Some" ~offset_in_needle:7 ())
+        ~expected:(target_span_of_substring ~file_path:main_path ~source:main_source ~needle:"Some" ()))
+
+let%test "constraint annotation resolves to trait declaration head" =
+  Doc_state.with_temp_project
+    [ ("main.mr", "trait Named[a] = { fn label(self: a) -> Str }\nfn show[t: Named](x: t) -> t = x\nshow\n") ]
+    (fun root ->
+      let main_path = Filename.concat root "main.mr" in
+      let main_source =
+        "trait Named[a] = { fn label(self: a) -> Str }\nfn show[t: Named](x: t) -> t = x\nshow\n"
+      in
+      expect_target ~label:"constraint annotation"
+        ~actual:(definition_at ~file_id:main_path ~source:main_source ~needle:"Named](x" ())
+        ~expected:(target_span_of_substring ~file_path:main_path ~source:main_source ~needle:"Named" ()))
+
+let%test "qualified trait method resolves to the trait method declaration head" =
+  Doc_state.with_temp_project
+    [
+      ( "main.mr",
+        "trait Greeter[a] = { fn greet(self: a, prefix: Str) -> Str }\ntype Monkey = { name: Str }\nimpl Greeter[Monkey] = { fn greet(self: Monkey, prefix: Str) -> Str = prefix + self.name }\nlet monkey = { name: \"George\" }\nlet x = Greeter.greet(monkey, \"hi\")\nx\n"
+      );
+    ]
+    (fun root ->
+      let main_path = Filename.concat root "main.mr" in
+      let main_source =
+        "trait Greeter[a] = { fn greet(self: a, prefix: Str) -> Str }\ntype Monkey = { name: Str }\nimpl Greeter[Monkey] = { fn greet(self: Monkey, prefix: Str) -> Str = prefix + self.name }\nlet monkey = { name: \"George\" }\nlet x = Greeter.greet(monkey, \"hi\")\nx\n"
+      in
+      expect_target ~label:"qualified trait method"
+        ~actual:
+          (definition_at ~file_id:main_path ~source:main_source ~needle:"Greeter.greet" ~offset_in_needle:8 ())
+        ~expected:(target_span_of_substring ~file_path:main_path ~source:main_source ~needle:"greet" ()))
+
+let%test "qualified inherent method resolves to the impl method declaration head" =
+  Doc_state.with_temp_project
+    [
+      ( "main.mr",
+        "type Monkey = { name: Str }\nimpl Monkey = { fn rename(self: Monkey, next_name: Str) -> Monkey = self }\nlet monkey = { name: \"George\" }\nlet x = Monkey.rename(monkey, \"Bob\")\nx\n"
+      );
+    ]
+    (fun root ->
+      let main_path = Filename.concat root "main.mr" in
+      let main_source =
+        "type Monkey = { name: Str }\nimpl Monkey = { fn rename(self: Monkey, next_name: Str) -> Monkey = self }\nlet monkey = { name: \"George\" }\nlet x = Monkey.rename(monkey, \"Bob\")\nx\n"
+      in
+      expect_target ~label:"qualified inherent method"
+        ~actual:
+          (definition_at ~file_id:main_path ~source:main_source ~needle:"Monkey.rename" ~offset_in_needle:7 ())
+        ~expected:(target_span_of_substring ~file_path:main_path ~source:main_source ~needle:"rename" ()))
+
+let%test "namespace alias receiver resolves to module file start outside import headers" =
+  Doc_state.with_temp_project
+    [
+      ("main.mr", "import types.geo\nlet p = { x: 1, y: 2 }\nputs(geo.render_point(p))\n");
+      ( "types/geo.mr",
+        "export Point, HasXY, Drawable, render_point\ntype Point = { x: Int, y: Int }\nshape HasXY = { x: Int, y: Int }\ntrait Drawable[a] = { fn draw(x: a) -> Str }\nimpl Drawable[Point] = { fn draw(p: Point) -> Str = \"point\" }\nfn render_point(p: Point) -> Str = Drawable.draw(p)\n"
+      );
+    ]
+    (fun root ->
+      let main_path = Filename.concat root "main.mr" in
+      let main_source = "import types.geo\nlet p = { x: 1, y: 2 }\nputs(geo.render_point(p))\n" in
+      expect_target ~label:"namespace alias receiver in expression"
+        ~actual:(definition_at ~file_id:main_path ~source:main_source ~needle:"geo.render_point" ())
+        ~expected:(Some (File_start (Filename.concat root "types/geo.mr"))))
+
+let%test "qualified type namespace root resolves to imported module file start" =
+  Doc_state.with_temp_project
+    [
+      ("main.mr", "import types.geo\nlet p: geo.Point = { x: 1, y: 2 }\n");
+      ("types/geo.mr", "export Point\ntype Point = { x: Int, y: Int }\n");
+    ]
+    (fun root ->
+      let main_path = Filename.concat root "main.mr" in
+      let main_source = "import types.geo\nlet p: geo.Point = { x: 1, y: 2 }\n" in
+      expect_target ~label:"qualified type namespace root"
+        ~actual:(definition_at ~file_id:main_path ~source:main_source ~needle:"geo.Point" ())
+        ~expected:(Some (File_start (Filename.concat root "types/geo.mr"))))
+
+let%test "qualified named type member resolves to exported type declaration head" =
+  Doc_state.with_temp_project
+    [
+      ("main.mr", "import types.geo\nlet p: geo.Point = { x: 1, y: 2 }\n");
+      ("types/geo.mr", "export Point\ntype Point = { x: Int, y: Int }\n");
+    ]
+    (fun root ->
+      let main_path = Filename.concat root "main.mr" in
+      let geo_path = Filename.concat root "types/geo.mr" in
+      let main_source = "import types.geo\nlet p: geo.Point = { x: 1, y: 2 }\n" in
+      let geo_source = "export Point\ntype Point = { x: Int, y: Int }\n" in
+      expect_target ~label:"qualified named type member"
+        ~actual:(definition_at ~file_id:main_path ~source:main_source ~needle:"geo.Point" ~offset_in_needle:4 ())
+        ~expected:
+          (target_span_of_substring ~file_path:geo_path ~source:geo_source ~needle:"Point" ~occurrence:2 ()))
+
+let%test "qualified shape member resolves to exported shape declaration head" =
+  Doc_state.with_temp_project
+    [
+      ("main.mr", "import types.geo\nlet p = { x: 1, y: 2 }\nlet q: geo.HasXY = p\n");
+      ("types/geo.mr", "export HasXY\nshape HasXY = { x: Int, y: Int }\n");
+    ]
+    (fun root ->
+      let main_path = Filename.concat root "main.mr" in
+      let geo_path = Filename.concat root "types/geo.mr" in
+      let main_source = "import types.geo\nlet p = { x: 1, y: 2 }\nlet q: geo.HasXY = p\n" in
+      let geo_source = "export HasXY\nshape HasXY = { x: Int, y: Int }\n" in
+      expect_target ~label:"qualified shape member"
+        ~actual:(definition_at ~file_id:main_path ~source:main_source ~needle:"geo.HasXY" ~offset_in_needle:4 ())
+        ~expected:
+          (target_span_of_substring ~file_path:geo_path ~source:geo_source ~needle:"HasXY" ~occurrence:2 ()))
+
+let%test "qualified transparent type member resolves to exported alias declaration head" =
+  Doc_state.with_temp_project
+    [
+      ("main.mr", "import types.wrappers\nlet xs: wrappers.Users = wrappers.empty_users()\n");
+      ("types/wrappers.mr", "export Users, empty_users\ntype Users = List[Int]\nfn empty_users() -> Users = []\n");
+    ]
+    (fun root ->
+      let main_path = Filename.concat root "main.mr" in
+      let wrappers_path = Filename.concat root "types/wrappers.mr" in
+      let main_source = "import types.wrappers\nlet xs: wrappers.Users = wrappers.empty_users()\n" in
+      let wrappers_source =
+        "export Users, empty_users\ntype Users = List[Int]\nfn empty_users() -> Users = []\n"
+      in
+      expect_target ~label:"qualified transparent type member"
+        ~actual:
+          (definition_at ~file_id:main_path ~source:main_source ~needle:"wrappers.Users" ~offset_in_needle:9 ())
+        ~expected:
+          (target_span_of_substring ~file_path:wrappers_path ~source:wrappers_source ~needle:"Users" ~occurrence:2
+             ()))
+
+let%test "definition on a declaration head returns that declaration span" =
+  Doc_state.with_temp_project
+    [ ("main.mr", "fn add(x: Int) -> Int = x\nadd(1)\n") ]
+    (fun root ->
+      let main_path = Filename.concat root "main.mr" in
+      let main_source = "fn add(x: Int) -> Int = x\nadd(1)\n" in
+      expect_target ~label:"declaration head"
+        ~actual:(definition_at ~file_id:main_path ~source:main_source ~needle:"add(x" ())
+        ~expected:(target_span_of_substring ~file_path:main_path ~source:main_source ~needle:"add" ()))
+
+let%test "builtin primitive type returns no definition target" =
+  Doc_state.with_temp_project
+    [ ("main.mr", "let x: Int = 1\nx\n") ]
+    (fun root ->
+      let main_path = Filename.concat root "main.mr" in
+      let main_source = "let x: Int = 1\nx\n" in
+      definition_at ~file_id:main_path ~source:main_source ~needle:"Int" () = None)

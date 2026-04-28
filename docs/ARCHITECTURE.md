@@ -96,7 +96,7 @@ Cons:
 Responsibilities:
 - Discover a project rooted at an explicit `source_root` or the entry file's directory, even for headerless single-file programs.
 - Build one dependency graph for both headered modules and headerless entries; the legacy standalone prelude shortcut is gone.
-- Resolve a toolchain stdlib root via explicit `stdlib_root`, `MARMOSET_STDLIB_ROOT`, or installed-toolchain probing.
+- Resolve a toolchain stdlib root via explicit `stdlib_root`, `MARMOSET_ROOT`, or installed-toolchain probing.
 - Auto-load the required stdlib modules `std.prelude`, `std.option`, and `std.result` from that toolchain root.
 - Inject `std.prelude`, `std.option`, and `std.result` as implicit direct modules for non-stdlib user modules.
 - Rewrite implicit core bindings (`Ordering`, `Eq`, `Show`, `Debug`, `Ord`, `Hash`, `Num`, `Rem`, `Neg`, `Option`, `Result`) into each user module's direct binding set without requiring explicit `import`.

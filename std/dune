@@ -2,6 +2,6 @@
  (section share)
  (package marmoset)
  (files
-  (prelude.mr as marmoset/std/prelude.mr)
-  (option.mr as marmoset/std/option.mr)
-  (result.mr as marmoset/std/result.mr)))
+  (prelude.mr as std/prelude.mr)
+  (option.mr as std/option.mr)
+  (result.mr as std/result.mr)))

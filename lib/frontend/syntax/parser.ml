@@ -52,6 +52,22 @@ let first_some a b =
   | Some _ -> a
   | None -> b
 
+let name_ref_of_token (p : parser) (tok : Token.token) : Surface.name_ref =
+  Surface.mk_name_ref ~pos:tok.pos ~end_pos:(token_end tok) ~file_id:(Some p.file_id) tok.literal
+
+let current_name_ref (p : parser) : Surface.name_ref = name_ref_of_token p p.curr_token
+
+let name_texts (refs : Surface.name_ref list) : string list =
+  List.map (fun (ref_ : Surface.name_ref) -> ref_.text) refs
+
+let with_surface_type_end p (te : Surface.surface_type_expr) : Surface.surface_type_expr =
+  Surface.
+    {
+      te with
+      ste_end_pos = max te.ste_end_pos (token_end p.curr_token);
+      ste_file_id = first_some te.ste_file_id (Some p.file_id);
+    }
+
 let with_surface_expr_end p (e : Surface.surface_expr) : Surface.surface_expr =
   Surface.
     {
@@ -226,12 +242,25 @@ let rec surface_effective_start_pos (expr : Surface.surface_expr) : int =
 let wrap_expr_with_show_call (p : parser) (expr : Surface.surface_expr) : Surface.surface_expr =
   let start_pos = surface_effective_start_pos expr in
   let receiver_end_pos = start_pos + String.length "Show" - 1 in
+  let show_ref = Surface.mk_name_ref ~pos:start_pos ~end_pos:receiver_end_pos ~file_id:(Some p.file_id) "Show" in
   let receiver =
     synth_expr ~file_id:p.file_id ~id:(fresh_id p) ~pos:start_pos ~end_pos:receiver_end_pos
-      (Surface.SEIdentifier "Show")
+      (Surface.SEIdentifier show_ref)
+  in
+  let method_ref =
+    Surface.mk_name_ref ~pos:start_pos
+      ~end_pos:(start_pos + String.length "show" - 1)
+      ~file_id:(Some p.file_id) "show"
   in
   synth_expr ~file_id:p.file_id ~id:(fresh_id p) ~pos:start_pos ~end_pos:expr.se_end_pos
-    (Surface.SEMethodCall { se_receiver = receiver; se_method = "show"; se_type_args = None; se_args = [ expr ] })
+    (Surface.SEMethodCall
+       {
+         se_receiver = receiver;
+         se_method = "show";
+         se_method_ref = method_ref;
+         se_type_args = None;
+         se_args = [ expr ];
+       })
 
 let concat_string_parts (p : parser) (parts : string_interp_part list) : Surface.surface_expr =
   let lower_part = function
@@ -322,8 +351,9 @@ and parse_top_decl (p : parser) : (parser * Surface.top_decl, parser) result =
 and parse_let_top (p : parser) : (parser * Surface.top_decl, parser) result =
   let* p2, ss = parse_let_statement p in
   match ss.Surface.ss_stmt with
-  | Surface.SSLet { ss_name = name; ss_value = value; ss_type_annotation = type_annotation } ->
-      Ok (p2, Surface.SLet { name; value; type_annotation })
+  | Surface.SSLet
+      { ss_name = name; ss_name_ref = name_ref; ss_value = value; ss_type_annotation = type_annotation } ->
+      Ok (p2, Surface.SLet { name; name_ref; value; type_annotation })
   | _ -> assert false
 
 and parse_return_top (p : parser) : (parser * Surface.top_decl, parser) result =
@@ -351,26 +381,37 @@ and parse_export_decl (p : parser) : (parser * Surface.top_decl, parser) result 
 
 and parse_import_decl (p : parser) : (parser * Surface.top_decl, parser) result =
   let* p2 = expect_peek p Token.Ident in
-  let rec parse_path (lp : parser) (rev_path : string list) =
-    let rev_path = lp.curr_token.literal :: rev_path in
+  let rec parse_path (lp : parser) (rev_path : Surface.name_ref list) =
+    let rev_path = current_name_ref lp :: rev_path in
     if peek_token_is lp Token.Dot then
       let* lp2 = expect_peek (next_token lp) Token.Ident in
       parse_path lp2 rev_path
     else
       Ok (lp, List.rev rev_path)
   in
-  let* p3, import_path = parse_path p2 [] in
+  let* p3, import_path_refs = parse_path p2 [] in
+  let import_path = List.map (fun (ref_ : Surface.name_ref) -> ref_.text) import_path_refs in
   if peek_token_is p3 Token.As then
     let* p4 = expect_peek (next_token p3) Token.Ident in
-    Ok (p4, Surface.SImportDecl { import_path; import_alias = Some p4.curr_token.literal })
+    let import_alias_ref = current_name_ref p4 in
+    Ok
+      ( p4,
+        Surface.SImportDecl
+          {
+            import_path;
+            import_path_refs;
+            import_alias = Some import_alias_ref.text;
+            import_alias_ref = Some import_alias_ref;
+          } )
   else
-    Ok (p3, Surface.SImportDecl { import_path; import_alias = None })
+    Ok (p3, Surface.SImportDecl { import_path; import_path_refs; import_alias = None; import_alias_ref = None })
 
 (* Phase 1b: vNext top-level fn declaration: fn name[generics](params) -> T = expr_or_block *)
 and parse_fn_decl_top (p : parser) : (parser * Surface.top_decl, parser) result =
   (* curr_token = 'fn', peek = Ident *)
   let* p2 = expect_peek p Token.Ident in
   let name = p2.curr_token.literal in
+  let name_ref = current_name_ref p2 in
 
   (* Optional generics: [a: Show, b] *)
   let* p3, generics = parse_generic_params p2 in
@@ -421,7 +462,7 @@ and parse_fn_decl_top (p : parser) : (parser * Surface.top_decl, parser) result 
       Ok (p9, Surface.SEOBExpr expr)
   in
 
-  Ok (p8, Surface.SFnDecl { name; generics; params; return_type; is_effectful; body })
+  Ok (p8, Surface.SFnDecl { name; name_ref; generics; params; return_type; is_effectful; body })
 
 and parse_block_stmt (p : parser) : (parser * Surface.surface_stmt, parser) result =
   let finalize = function
@@ -439,34 +480,49 @@ and parse_block_stmt (p : parser) : (parser * Surface.surface_stmt, parser) resu
 (* Parse a single type atom (not union) *)
 and parse_type_atom (p : parser) : (parser * Surface.surface_type_expr, parser) result =
   if curr_token_is p Token.Ident then
-    let rec collect_dotted_type_name rev_segments lp =
+    let start_ref = current_name_ref p in
+    let rec collect_dotted_type_name rev_segments last_tok lp =
       if curr_token_is lp Token.Dot then
         let lp2 = next_token lp in
         if curr_token_is lp2 Token.Ident then
-          collect_dotted_type_name (lp2.curr_token.literal :: rev_segments) (next_token lp2)
+          collect_dotted_type_name (lp2.curr_token.literal :: rev_segments) lp2.curr_token (next_token lp2)
         else
           Error (no_prefix_parse_fn_error lp2 lp2.curr_token.token_type)
       else
-        Ok (lp, String.concat "." (List.rev rev_segments))
+        let name_ref =
+          Surface.mk_name_ref ~pos:start_ref.pos ~end_pos:(token_end last_tok) ~file_id:start_ref.file_id
+            (String.concat "." (List.rev rev_segments))
+        in
+        Ok (lp, name_ref)
     in
-    let* p2, ident = collect_dotted_type_name [ p.curr_token.literal ] (next_token p) in
-    if ident = "Dyn" && curr_token_is p2 Token.LBracket then
+    let* p2, ident_ref = collect_dotted_type_name [ p.curr_token.literal ] p.curr_token (next_token p) in
+    if ident_ref.text = "Dyn" && curr_token_is p2 Token.LBracket then
       let* p3, traits = parse_constraint_list (next_token p2) in
       if curr_token_is p3 Token.RBracket then
-        Ok (next_token p3, Surface.STTraitObject traits)
+        Ok
+          ( next_token p3,
+            with_surface_type_end p3 (Surface.mk_surface_type ~pos:start_ref.pos (Surface.STTraitObject traits))
+          )
       else
         Error (peek_error p3 Token.RBracket)
       (* Check for generic application: List[Int], Map[Str, Int], etc. *)
     else if curr_token_is p2 Token.LBracket then
       let* p3, type_args = parse_type_expr_list (next_token p2) in
       if curr_token_is p3 Token.RBracket then
-        Ok (next_token p3, Surface.STApp (ident, type_args))
+        Ok
+          ( next_token p3,
+            with_surface_type_end p3
+              (Surface.mk_surface_type ~pos:start_ref.pos (Surface.STApp (ident_ref, type_args))) )
       else
         Error (peek_error p3 Token.RBracket)
     else
-      Ok (p2, Surface.STCon ident)
+      Ok
+        ( p2,
+          Surface.mk_surface_type ~pos:start_ref.pos ~end_pos:ident_ref.end_pos ~file_id:ident_ref.file_id
+            (Surface.STCon ident_ref) )
   else if curr_token_is p Token.LParen then
     (* Parenthesized type or function type: (Int | Str) or (Int, Str) -> Bool *)
+    let pos = p.curr_token.pos in
     let* p2, first = parse_type_expr (next_token p) in
     if curr_token_is p2 Token.Comma then
       (* Multiple params: (Int, Str) -> Bool *)
@@ -485,7 +541,10 @@ and parse_type_atom (p : parser) : (parser * Surface.surface_type_expr, parser) 
       let is_effectful = curr_token_is p4 Token.FatArrow in
       if curr_token_is p4 Token.Arrow || is_effectful then
         let* p5, return_type = parse_type_expr (next_token p4) in
-        Ok (p5, Surface.STArrow (params, return_type, is_effectful))
+        Ok
+          ( p5,
+            with_surface_type_end p5
+              (Surface.mk_surface_type ~pos (Surface.STArrow (params, return_type, is_effectful))) )
       else
         Error (peek_error p3 Token.Arrow)
     else if curr_token_is p2 Token.RParen then
@@ -494,7 +553,10 @@ and parse_type_atom (p : parser) : (parser * Surface.surface_type_expr, parser) 
       if curr_token_is p3 Token.Arrow || curr_token_is p3 Token.FatArrow then
         let is_effectful = curr_token_is p3 Token.FatArrow in
         let* p5, return_type = parse_type_expr (next_token p3) in
-        Ok (p5, Surface.STArrow ([ first ], return_type, is_effectful))
+        Ok
+          ( p5,
+            with_surface_type_end p5
+              (Surface.mk_surface_type ~pos (Surface.STArrow ([ first ], return_type, is_effectful))) )
       else
         (* Just grouping: (Int) or (Int | Str) *)
         Ok (p3, first)
@@ -516,7 +578,10 @@ and parse_type_intersection (p : parser) : (parser * Surface.surface_type_expr, 
       if curr_token_is lp2 Token.Ampersand then
         collect_intersection_members lp2 rev_members
       else
-        Ok (lp2, Surface.STIntersection (List.rev rev_members))
+        Ok
+          ( lp2,
+            with_surface_type_end lp2
+              (Surface.mk_surface_type ~pos:first_type.ste_pos (Surface.STIntersection (List.rev rev_members))) )
     in
     collect_intersection_members p2 [ first_type ]
   else
@@ -533,7 +598,10 @@ and parse_type_expr (p : parser) : (parser * Surface.surface_type_expr, parser) 
       if curr_token_is lp2 Token.Pipe then
         collect_union_members lp2 rev_members
       else
-        Ok (lp2, Surface.STUnion (List.rev rev_members))
+        Ok
+          ( lp2,
+            with_surface_type_end lp2
+              (Surface.mk_surface_type ~pos:first_type.ste_pos (Surface.STUnion (List.rev rev_members))) )
     in
     collect_union_members p2 [ first_type ]
   else
@@ -553,19 +621,25 @@ and parse_type_expr_list (p : parser) : (parser * Surface.surface_type_expr list
     loop p []
 
 and parse_param_type_expr (p : parser) : (parser * Surface.surface_type_expr, parser) result =
-  let rec try_constraint_chain (lp : parser) (rev_traits : string list) :
+  let rec try_constraint_chain (lp : parser) (rev_traits : Surface.name_ref list) :
       (parser * Surface.surface_type_expr, parser) result option =
     if curr_token_is lp Token.Ident then
-      let trait_name = lp.curr_token.literal in
+      let trait_ref = current_name_ref lp in
       let lp2 = next_token lp in
       if curr_token_is lp2 Token.Ampersand then
-        match try_constraint_chain (next_token lp2) (trait_name :: rev_traits) with
+        match try_constraint_chain (next_token lp2) (trait_ref :: rev_traits) with
         | Some result -> Some result
         | None -> None
       else if curr_token_is lp2 Token.Comma || curr_token_is lp2 Token.RParen then
         match rev_traits with
         | [] -> None
-        | _ -> Some (Ok (lp2, Surface.STConstraintShorthand (List.rev (trait_name :: rev_traits))))
+        | _ ->
+            let traits = List.rev (trait_ref :: rev_traits) in
+            Some
+              (Ok
+                 ( lp2,
+                   with_surface_type_end lp
+                     (Surface.mk_surface_type ~pos:trait_ref.pos (Surface.STConstraintShorthand traits)) ))
       else
         None
     else
@@ -575,11 +649,11 @@ and parse_param_type_expr (p : parser) : (parser * Surface.surface_type_expr, pa
   | Some result -> result
   | None -> parse_type_expr p
 
-and parse_trait_constraint (p : parser) : (parser * string list, parser) result =
+and parse_trait_constraint (p : parser) : (parser * Surface.name_ref list, parser) result =
   (* Parse trait constraints: Eq, Show, Eq & Show, etc. *)
-  let rec loop (lp : parser) (traits : string list) =
+  let rec loop (lp : parser) (traits : Surface.name_ref list) =
     if curr_token_is lp Token.Ident then
-      let trait = lp.curr_token.literal in
+      let trait = current_name_ref lp in
       let lp2 = next_token lp in
       if curr_token_is lp2 Token.Ampersand then
         loop (next_token lp2) (trait :: traits)
@@ -590,25 +664,33 @@ and parse_trait_constraint (p : parser) : (parser * string list, parser) result 
   in
   loop p []
 
-and parse_generic_params (p : parser) : (parser * AST.generic_param list option, parser) result =
+and parse_generic_params (p : parser) : (parser * Surface.surface_generic_param list option, parser) result =
   (* Parse generic parameters: [a], [a: Show], [a: Show & Eq, b: Eq], etc. *)
   (* Check if the NEXT token is [ (generics start after fn keyword) *)
   if peek_token_is p Token.LBracket then
     let p_bracket = next_token p in
     (* Move to [ *)
-    let rec loop (lp : parser) (params : AST.generic_param list) =
+    let rec loop (lp : parser) (params : Surface.surface_generic_param list) =
       if not (curr_token_is lp Token.Ident) then
         Error (no_prefix_parse_fn_error lp lp.curr_token.token_type)
       else
-        let name = lp.curr_token.literal in
+        let name_ref = current_name_ref lp in
         let lp3 = next_token lp in
-        let* lp4, constraints =
+        let* lp4, constraint_refs =
           if curr_token_is lp3 Token.Colon then
             parse_trait_constraint (next_token lp3)
           else
             Ok (lp3, [])
         in
-        let param = AST.{ name; constraints } in
+        let param =
+          Surface.
+            {
+              sg_name = name_ref.text;
+              sg_name_ref = name_ref;
+              sg_constraints = name_texts constraint_refs;
+              sg_constraint_refs = constraint_refs;
+            }
+        in
         if curr_token_is lp4 Token.Comma then
           loop (next_token lp4) ([ param ] @ params)
         else if curr_token_is lp4 Token.RBracket then
@@ -624,13 +706,16 @@ and parse_generic_params (p : parser) : (parser * AST.generic_param list option,
 (* Phase 4.5: Parse record type: { x: Int, y: Str, ...r } *)
 and parse_record_type (p : parser) : (parser * Surface.surface_type_expr, parser) result =
   (* Current token is { *)
+  let pos = p.curr_token.pos in
   let p2 = next_token p in
 
   (* Parse fields and optional row variable *)
   let rec parse_fields lp fields =
     if curr_token_is lp Token.RBrace then
       (* Empty record or end of fields: { } *)
-      Ok (next_token lp, Surface.STRecord (List.rev fields, None))
+      Ok
+        ( next_token lp,
+          with_surface_type_end lp (Surface.mk_surface_type ~pos (Surface.STRecord (List.rev fields, None))) )
     else if curr_token_is lp Token.Spread then
       (* Row variable: ...r *)
       let lp2 = next_token lp in
@@ -641,14 +726,17 @@ and parse_record_type (p : parser) : (parser * Surface.surface_type_expr, parser
         else
           expect_peek lp3 Token.RBrace
       in
-      Ok (next_token lp4, Surface.STRecord (List.rev fields, Some row_var))
+      Ok
+        ( next_token lp4,
+          with_surface_type_end lp4
+            (Surface.mk_surface_type ~pos (Surface.STRecord (List.rev fields, Some row_var))) )
     else if curr_token_is lp Token.Ident then
       (* Field: field_name: type *)
-      let sf_name = lp.curr_token.literal in
+      let sf_name_ref = current_name_ref lp in
       let* lp2 = expect_peek lp Token.Colon in
       let lp2 = next_token lp2 in
       let* lp3, sf_type = parse_type_expr lp2 in
-      let field = Surface.{ sf_name; sf_type } in
+      let field = Surface.{ sf_name = sf_name_ref.text; sf_name_ref; sf_type } in
       if curr_token_is lp3 Token.Comma then
         (* More fields *)
         parse_fields (next_token lp3) (field :: fields)
@@ -664,6 +752,7 @@ and parse_let_statement (p : parser) : (parser * Surface.surface_stmt, parser) r
   let pos = p.curr_token.pos in
   let* p2 = expect_peek p Token.Ident in
   let ss_name = p2.curr_token.literal in
+  let ss_name_ref = current_name_ref p2 in
   (* Phase 2: Parse optional type annotation *)
   let* p3, ss_type_annotation =
     if peek_token_is p2 Token.Colon then
@@ -689,7 +778,7 @@ and parse_let_statement (p : parser) : (parser * Surface.surface_stmt, parser) r
   in
   let* p5, ss_value = parse_expression (next_token p4) prec_lowest in
   let p6 = skip p5 Token.Semicolon in
-  Ok (p6, mk_surface_stmt pos (Surface.SSLet { ss_name; ss_value; ss_type_annotation }))
+  Ok (p6, mk_surface_stmt pos (Surface.SSLet { ss_name; ss_name_ref; ss_value; ss_type_annotation }))
 
 and parse_return_statement (p : parser) : (parser * Surface.surface_stmt, parser) result =
   let pos = p.curr_token.pos in
@@ -702,14 +791,16 @@ and parse_enum_definition (p : parser) : (parser * Surface.top_decl, parser) res
   (* Current token is 'enum' *)
   let* p2 = expect_peek p Token.Ident in
   let name = p2.curr_token.literal in
+  let name_ref = current_name_ref p2 in
 
   (* Parse optional type parameters: [a, b] *)
-  let* p3, type_params =
+  let* p3, type_type_param_refs =
     if peek_token_is p2 Token.LBracket then
       parse_type_param_list (next_token (next_token p2))
     else
       Ok (next_token p2, [])
   in
+  let type_type_params = name_texts type_type_param_refs in
 
   (* Expect: = { *)
   let* p4 =
@@ -724,12 +815,19 @@ and parse_enum_definition (p : parser) : (parser * Surface.top_decl, parser) res
   Ok
     ( p6,
       Surface.STypeDef
-        { type_name = name; type_type_params = type_params; type_body = Surface.STNamedSum variants; derive } )
+        {
+          type_name = name;
+          type_name_ref = name_ref;
+          type_type_params;
+          type_type_param_refs;
+          type_body = Surface.STNamedSum variants;
+          derive;
+        } )
 
-and parse_type_param_list (p : parser) : (parser * string list, parser) result =
+and parse_type_param_list (p : parser) : (parser * Surface.name_ref list, parser) result =
   let rec loop lp rev_params =
     if curr_token_is lp Token.Ident then
-      let param = lp.curr_token.literal in
+      let param = current_name_ref lp in
       let lp2 = next_token lp in
       if curr_token_is lp2 Token.Comma then
         loop (next_token lp2) (param :: rev_params)
@@ -749,7 +847,7 @@ and parse_variant_list (p : parser) : (parser * Surface.surface_variant_def list
     if curr_token_is lp Token.RBrace then
       Ok (lp, List.rev variants)
     else if curr_token_is lp Token.Ident then
-      let sv_name = lp.curr_token.literal in
+      let sv_name_ref = current_name_ref lp in
       let lp2 = next_token lp in
       (* Check for variant data: some(a) *)
       let* lp3, sv_fields =
@@ -765,7 +863,7 @@ and parse_variant_list (p : parser) : (parser * Surface.surface_variant_def list
         else
           Ok (lp2, [])
       in
-      let variant = Surface.{ sv_name; sv_fields } in
+      let variant = Surface.{ sv_name = sv_name_ref.text; sv_name_ref; sv_fields } in
       (* Skip optional comma between variants *)
       let lp4 =
         if curr_token_is lp3 Token.Comma then
@@ -789,7 +887,7 @@ and parse_sum_type_body (p : parser) : (parser * Surface.surface_variant_def lis
   else
     Error (peek_error p Token.LBrace)
 
-and parse_postfix_derive (p : parser) : (parser * AST.derive_trait list, parser) result =
+and parse_postfix_derive (p : parser) : (parser * Surface.surface_derive_trait list, parser) result =
   if curr_token_is p Token.Derive && not (token_starts_line p p.curr_token) then
     let* p2, traits = parse_derive_trait_list (next_token p) in
     Ok (p2, traits)
@@ -806,7 +904,7 @@ and parse_named_product_field_list (p : parser) : (parser * Surface.surface_reco
     if curr_token_is lp Token.RBrace then
       Ok (lp, List.rev rev_fields)
     else if curr_token_is lp Token.Ident then
-      let sf_name = lp.curr_token.literal in
+      let sf_name_ref = current_name_ref lp in
       let* lp2 = expect_peek lp Token.Colon in
       let* lp3, sf_type = parse_type_expr (next_token lp2) in
       let next_lp =
@@ -815,7 +913,7 @@ and parse_named_product_field_list (p : parser) : (parser * Surface.surface_reco
         else
           lp3
       in
-      loop next_lp (Surface.{ sf_name; sf_type } :: rev_fields)
+      loop next_lp (Surface.{ sf_name = sf_name_ref.text; sf_name_ref; sf_type } :: rev_fields)
     else
       Error (no_prefix_parse_fn_error lp lp.curr_token.token_type)
   in
@@ -824,12 +922,14 @@ and parse_named_product_field_list (p : parser) : (parser * Surface.surface_reco
 and parse_shape_definition (p : parser) : (parser * Surface.top_decl, parser) result =
   let* p2 = expect_peek p Token.Ident in
   let shape_name = p2.curr_token.literal in
-  let* p3, shape_type_params =
+  let shape_name_ref = current_name_ref p2 in
+  let* p3, shape_type_param_refs =
     if peek_token_is p2 Token.LBracket then
       parse_type_param_list (next_token (next_token p2))
     else
       Ok (next_token p2, [])
   in
+  let shape_type_params = name_texts shape_type_param_refs in
   let* p4 =
     if curr_token_is p3 Token.Assign then
       Ok p3
@@ -851,17 +951,19 @@ and parse_shape_definition (p : parser) : (parser * Surface.top_decl, parser) re
     else
       expect_peek p6 Token.RBrace
   in
-  Ok (p7, Surface.SShapeDef { shape_name; shape_type_params; shape_fields })
+  Ok (p7, Surface.SShapeDef { shape_name; shape_name_ref; shape_type_params; shape_type_param_refs; shape_fields })
 
 and parse_type_definition (p : parser) : (parser * Surface.top_decl, parser) result =
   let* p2 = expect_peek p Token.Ident in
   let type_name = p2.curr_token.literal in
-  let* p3, type_type_params =
+  let type_name_ref = current_name_ref p2 in
+  let* p3, type_type_param_refs =
     if peek_token_is p2 Token.LBracket then
       parse_type_param_list (next_token (next_token p2))
     else
       Ok (next_token p2, [])
   in
+  let type_type_params = name_texts type_type_param_refs in
   let* p4 =
     if curr_token_is p3 Token.Assign then
       Ok p3
@@ -886,7 +988,14 @@ and parse_type_definition (p : parser) : (parser * Surface.top_decl, parser) res
         Ok
           ( p6,
             Surface.STypeDef
-              { type_name; type_type_params; type_body = Surface.STNamedWrapper wrapper_body; derive } )
+              {
+                type_name;
+                type_name_ref;
+                type_type_params;
+                type_type_param_refs;
+                type_body = Surface.STNamedWrapper wrapper_body;
+                derive;
+              } )
     | _ ->
         Error
           (add_error ~code:"parse-invalid-type-definition" p_body
@@ -902,40 +1011,66 @@ and parse_type_definition (p : parser) : (parser * Surface.top_decl, parser) res
       let* p6, derive = parse_postfix_derive p5 in
       Ok
         ( p6,
-          Surface.STypeDef { type_name; type_type_params; type_body = Surface.STTransparent record_body; derive }
-        )
+          Surface.STypeDef
+            {
+              type_name;
+              type_name_ref;
+              type_type_params;
+              type_type_param_refs;
+              type_body = Surface.STTransparent record_body;
+              derive;
+            } )
     else
       let* p5, variants = parse_sum_type_body p_body in
       let* p6, derive = parse_postfix_derive p5 in
-      Ok (p6, Surface.STypeDef { type_name; type_type_params; type_body = Surface.STNamedSum variants; derive })
+      Ok
+        ( p6,
+          Surface.STypeDef
+            {
+              type_name;
+              type_name_ref;
+              type_type_params;
+              type_type_param_refs;
+              type_body = Surface.STNamedSum variants;
+              derive;
+            } )
   else
     let* p5, transparent_body = parse_type_expr p_body in
     let* p6, derive = parse_postfix_derive p5 in
     Ok
       ( p6,
         Surface.STypeDef
-          { type_name; type_type_params; type_body = Surface.STTransparent transparent_body; derive } )
+          {
+            type_name;
+            type_name_ref;
+            type_type_params;
+            type_type_param_refs;
+            type_body = Surface.STTransparent transparent_body;
+            derive;
+          } )
 
 (* Phase 4.3: Trait definition parsing *)
 and parse_trait_definition (p : parser) : (parser * Surface.top_decl, parser) result =
   (* Current token is 'trait' *)
   let* p2 = expect_peek p Token.Ident in
   let name = p2.curr_token.literal in
+  let name_ref = current_name_ref p2 in
 
   (* Parse optional type parameter: [a] *)
-  let* p3, type_param =
+  let* p3, type_param_ref =
     if peek_token_is p2 Token.LBracket then
       let* p3 = expect_peek p2 Token.LBracket in
       let* p4 = expect_peek p3 Token.Ident in
-      let type_param = Some p4.curr_token.literal in
+      let type_param = Some (current_name_ref p4) in
       let* p5 = expect_peek p4 Token.RBracket in
       Ok (p5, type_param)
     else
       Ok (next_token p2, None)
   in
+  let type_param = Option.map (fun (ref_ : Surface.name_ref) -> ref_.text) type_param_ref in
 
   (* Parse optional supertraits: : Eq or : Eq & Show *)
-  let* p4, supertraits =
+  let* p4, supertrait_refs =
     if curr_token_is p3 Token.Colon then
       parse_supertrait_list (next_token p3)
     else if peek_token_is p3 Token.Colon then
@@ -943,6 +1078,7 @@ and parse_trait_definition (p : parser) : (parser * Surface.top_decl, parser) re
     else
       Ok (p3, [])
   in
+  let supertraits = name_texts supertrait_refs in
 
   (* Expect: = { *)
   let* p5 =
@@ -969,12 +1105,12 @@ and parse_trait_definition (p : parser) : (parser * Surface.top_decl, parser) re
       expect_peek p7 Token.RBrace
   in
 
-  Ok (p8, Surface.STraitDef { name; type_param; supertraits; methods })
+  Ok (p8, Surface.STraitDef { name; name_ref; type_param; type_param_ref; supertraits; supertrait_refs; methods })
 
-and parse_supertrait_list (p : parser) : (parser * string list, parser) result =
+and parse_supertrait_list (p : parser) : (parser * Surface.name_ref list, parser) result =
   let rec loop lp rev_traits =
     if curr_token_is lp Token.Ident then
-      let trait_name = lp.curr_token.literal in
+      let trait_name = current_name_ref lp in
       let lp2 = next_token lp in
       if curr_token_is lp2 Token.Ampersand then
         (* More supertraits: & trait *)
@@ -1010,6 +1146,7 @@ and parse_method_sig (p : parser) : (parser * Surface.surface_method_sig, parser
   let sm_id = fresh_id p in
   let* p2 = expect_peek p Token.Ident in
   let sm_name = p2.curr_token.literal in
+  let sm_name_ref = current_name_ref p2 in
 
   (* Parse optional method-level generics [a, b: show] *)
   let* p3, sm_generics = parse_generic_params p2 in
@@ -1068,31 +1205,50 @@ and parse_method_sig (p : parser) : (parser * Surface.surface_method_sig, parser
       Ok (p7, None)
   in
 
-  Ok (p8, Surface.{ sm_id; sm_name; sm_generics; sm_params = params; sm_return_type; sm_effect; sm_default_impl })
+  Ok
+    ( p8,
+      Surface.
+        {
+          sm_id;
+          sm_name;
+          sm_name_ref;
+          sm_generics;
+          sm_params = params;
+          sm_return_type;
+          sm_effect;
+          sm_default_impl;
+        } )
 
-and parse_param_list_with_types (p : parser) : (parser * (string * Surface.surface_type_expr) list, parser) result
-    =
+and parse_param_list_with_types (p : parser) : (parser * Surface.surface_typed_param list, parser) result =
   let rec loop lp pos_idx rev_params =
     if curr_token_is lp Token.RParen then
       Ok (lp, List.rev rev_params)
     else if curr_token_is lp Token.Ident && peek_token_is lp Token.Colon then
       (* Named param: name: type *)
-      let param_name = lp.curr_token.literal in
+      let param_name_ref = current_name_ref lp in
       let lp2 = next_token lp in
       (* now at : *)
       let* lp3, param_type = parse_param_type_expr (next_token lp2) in
+      let param =
+        Surface.{ stp_name = param_name_ref.text; stp_name_ref = param_name_ref; stp_type = param_type }
+      in
       if curr_token_is lp3 Token.Comma then
-        loop (next_token lp3) (pos_idx + 1) ((param_name, param_type) :: rev_params)
+        loop (next_token lp3) (pos_idx + 1) (param :: rev_params)
       else
-        Ok (lp3, List.rev ((param_name, param_type) :: rev_params))
+        Ok (lp3, List.rev (param :: rev_params))
     else if curr_token_is lp Token.Ident then
       (* Positional param: just a type expression (no colon) *)
       let* lp2, param_type = parse_param_type_expr lp in
       let param_name = Printf.sprintf "$%d" pos_idx in
+      let param_name_ref =
+        Surface.mk_name_ref ~pos:param_type.ste_pos ~end_pos:param_type.ste_pos ~file_id:param_type.ste_file_id
+          param_name
+      in
+      let param = Surface.{ stp_name = param_name; stp_name_ref = param_name_ref; stp_type = param_type } in
       if curr_token_is lp2 Token.Comma then
-        loop (next_token lp2) (pos_idx + 1) ((param_name, param_type) :: rev_params)
+        loop (next_token lp2) (pos_idx + 1) (param :: rev_params)
       else
-        Ok (lp2, List.rev ((param_name, param_type) :: rev_params))
+        Ok (lp2, List.rev (param :: rev_params))
     else
       Error (no_prefix_parse_fn_error lp lp.curr_token.token_type)
   in
@@ -1137,25 +1293,33 @@ and parse_impl_definition (p : parser) : (parser * Surface.top_decl, parser) res
   in
   let* p_end, impl_methods = parse_methods_block p_assign in
   match (explicit_type_params, impl_head_type) with
-  | [], Surface.STCon _ ->
+  | [], { Surface.ste_desc = Surface.STCon _; _ } ->
       Ok (p_end, Surface.SInherentImplDef { inherent_for_type = impl_head_type; inherent_methods = impl_methods })
   | _ ->
       Ok
         ( p_end,
           Surface.SAmbiguousImplDef { impl_type_params = explicit_type_params; impl_head_type; impl_methods } )
 
-and parse_generic_param_list (p : parser) : (parser * AST.generic_param list, parser) result =
+and parse_generic_param_list (p : parser) : (parser * Surface.surface_generic_param list, parser) result =
   let rec loop lp rev_params =
     if curr_token_is lp Token.Ident then
-      let param_name = lp.curr_token.literal in
-      let* lp2, constraints =
+      let param_name_ref = current_name_ref lp in
+      let* lp2, constraint_refs =
         if peek_token_is lp Token.Colon then
           (* Parse constraints: a: Eq & Ord *)
           parse_constraint_list (next_token (next_token lp))
         else
           Ok (next_token lp, [])
       in
-      let generic_param = AST.{ name = param_name; constraints } in
+      let generic_param =
+        Surface.
+          {
+            sg_name = param_name_ref.text;
+            sg_name_ref = param_name_ref;
+            sg_constraints = name_texts constraint_refs;
+            sg_constraint_refs = constraint_refs;
+          }
+      in
       let lp3 = lp2 in
       if curr_token_is lp3 Token.Comma then
         loop (next_token lp3) (generic_param :: rev_params)
@@ -1170,10 +1334,10 @@ and parse_generic_param_list (p : parser) : (parser * AST.generic_param list, pa
   in
   loop p []
 
-and parse_constraint_list (p : parser) : (parser * string list, parser) result =
+and parse_constraint_list (p : parser) : (parser * Surface.name_ref list, parser) result =
   let rec loop lp rev_constraints =
     if curr_token_is lp Token.Ident then
-      let constraint_name = lp.curr_token.literal in
+      let constraint_name = current_name_ref lp in
       let lp2 = next_token lp in
       if curr_token_is lp2 Token.Ampersand then
         (* More constraints: & trait *)
@@ -1220,6 +1384,7 @@ and parse_method_impl (p : parser) : (parser * Surface.surface_method_impl, pars
   let smi_id = fresh_id p in
   let* p2 = expect_peek p Token.Ident in
   let smi_name = p2.curr_token.literal in
+  let smi_name_ref = current_name_ref p2 in
 
   (* Parse optional method-level generics [a, b: show] *)
   let* p3, smi_generics = parse_generic_params p2 in
@@ -1288,6 +1453,7 @@ and parse_method_impl (p : parser) : (parser * Surface.surface_method_impl, pars
         {
           smi_id;
           smi_name;
+          smi_name_ref;
           smi_generics;
           smi_params = params;
           smi_return_type;
@@ -1296,10 +1462,10 @@ and parse_method_impl (p : parser) : (parser * Surface.surface_method_impl, pars
           smi_body;
         } )
 
-and parse_derive_trait_list (p : parser) : (parser * AST.derive_trait list, parser) result =
+and parse_derive_trait_list (p : parser) : (parser * Surface.surface_derive_trait list, parser) result =
   let rec loop lp rev_traits =
     if curr_token_is lp Token.Ident then
-      let trait_name = lp.curr_token.literal in
+      let trait_name_ref = current_name_ref lp in
       let lp2 = next_token lp in
 
       (* Check for type parameters: eq[a: show] *)
@@ -1310,7 +1476,9 @@ and parse_derive_trait_list (p : parser) : (parser * AST.derive_trait list, pars
           Ok (lp2, [])
       in
 
-      let derive_trait = AST.{ derive_trait_name = trait_name; derive_trait_constraints = constraints } in
+      let derive_trait =
+        Surface.{ sdt_name = trait_name_ref.text; sdt_name_ref = trait_name_ref; sdt_constraints = constraints }
+      in
 
       (* Check for comma (more traits) *)
       if curr_token_is lp3 Token.Comma then
@@ -1386,7 +1554,7 @@ and infixFn (p : parser) (left_expr : Surface.surface_expr) (prec : precedence) 
 
 and parse_identifier (p : parser) : (parser * Surface.surface_expr, parser) result =
   let pos = p.curr_token.pos in
-  let name = p.curr_token.literal in
+  let name = current_name_ref p in
   let id = fresh_id p in
   Ok (p, mk_surface_expr id pos (Surface.SEIdentifier name))
 
@@ -1521,8 +1689,11 @@ and parse_infix_expression (p : parser) (left : Surface.surface_expr) :
       if not (curr_token_is p2 Token.Ident) then
         Error (add_error ~code:"parse-unexpected-token" p2 "Expected type name after 'is'")
       else
-        let type_name = p2.curr_token.literal in
-        let type_expr = Surface.STCon type_name in
+        let type_name = current_name_ref p2 in
+        let type_expr =
+          Surface.mk_surface_type ~pos:type_name.pos ~end_pos:type_name.end_pos ~file_id:type_name.file_id
+            (Surface.STCon type_name)
+        in
         let id = fresh_id p2 in
         Ok (p2, with_surface_expr_end p2 (mk_surface_expr id pos (Surface.SETypeCheck (left, type_expr))))
   | _ ->
@@ -1616,7 +1787,8 @@ and parse_lambda_or_grouped (p : parser) : (parser * Surface.surface_expr, parse
                 (mk_surface_expr id pos
                    (Surface.SEArrowLambda
                       {
-                        se_lambda_params = [ (name, None) ];
+                        se_lambda_params =
+                          [ Surface.{ svp_name = name.text; svp_name_ref = name; svp_type = None } ];
                         se_lambda_is_effectful = is_effectful;
                         se_lambda_body = Surface.SEOBExpr body_expr;
                       })) )
@@ -1624,14 +1796,13 @@ and parse_lambda_or_grouped (p : parser) : (parser * Surface.surface_expr, parse
     else
       Ok (p3, expr)
 
-and parse_lambda_param_list (p : parser) :
-    (parser * (string * Surface.surface_type_expr option) list, parser) result =
+and parse_lambda_param_list (p : parser) : (parser * Surface.surface_value_param list, parser) result =
   (* p.curr_token = first token of params, inside ( *)
   let rec loop lp rev_params =
     if curr_token_is lp Token.RParen then
       Ok (lp, List.rev rev_params)
     else if curr_token_is lp Token.Ident then
-      let name = lp.curr_token.literal in
+      let name_ref = current_name_ref lp in
       let lp2 = next_token lp in
       let* lp3, type_annot =
         if curr_token_is lp2 Token.Colon then
@@ -1640,10 +1811,11 @@ and parse_lambda_param_list (p : parser) :
         else
           Ok (lp2, None)
       in
+      let param = Surface.{ svp_name = name_ref.text; svp_name_ref = name_ref; svp_type = type_annot } in
       if curr_token_is lp3 Token.Comma then
-        loop (next_token lp3) ((name, type_annot) :: rev_params)
+        loop (next_token lp3) (param :: rev_params)
       else
-        Ok (lp3, List.rev ((name, type_annot) :: rev_params))
+        Ok (lp3, List.rev (param :: rev_params))
     else
       Error (no_prefix_parse_fn_error lp lp.curr_token.token_type)
   in
@@ -1742,17 +1914,16 @@ and parse_block_statement (p : parser) : (parser * Surface.surface_block, parser
 
   loop (next_token p) []
 
-and parse_function_parameters (p : parser) :
-    (parser * (string * Surface.surface_type_expr option) list, parser) result =
+and parse_function_parameters (p : parser) : (parser * Surface.surface_value_param list, parser) result =
   if peek_token_is p Token.RParen then
     Ok (next_token p, [])
   else
-    let rec loop (lp : parser) (rev_params_acc : (string * Surface.surface_type_expr option) list) =
+    let rec loop (lp : parser) (rev_params_acc : Surface.surface_value_param list) =
       (* Get the parameter name *)
       if not (curr_token_is lp Token.Ident) then
         Error (no_prefix_parse_fn_error lp lp.curr_token.token_type)
       else
-        let param_name = lp.curr_token.literal in
+        let param_name_ref = current_name_ref lp in
         let lp_after_name = next_token lp in
         (* Phase 2: Parse type annotation if present *)
         let* lp_after_annot, type_annot =
@@ -1762,7 +1933,9 @@ and parse_function_parameters (p : parser) :
           else
             Ok (lp_after_name, None)
         in
-        let new_param = (param_name, type_annot) in
+        let new_param =
+          Surface.{ svp_name = param_name_ref.text; svp_name_ref = param_name_ref; svp_type = type_annot }
+        in
         if curr_token_is lp_after_annot Token.Comma then
           loop (next_token lp_after_annot) (new_param :: rev_params_acc)
         else if curr_token_is lp_after_annot Token.RParen then
@@ -1817,10 +1990,13 @@ and parse_labeled_call_record (p : parser) : (parser * Surface.surface_expr, par
       else
         Error (peek_error lp3 Token.RParen)
     else if curr_token_is lp Token.Ident && peek_token_is lp Token.Colon then
-      let se_field_name = lp.curr_token.literal in
+      let se_field_name_ref = current_name_ref lp in
       let* lp2 = expect_peek lp Token.Colon in
       let* lp3, se_field_value = parse_expression (next_token lp2) prec_lowest in
-      let field = Surface.{ se_field_name; se_field_value = Some se_field_value } in
+      let field =
+        Surface.
+          { se_field_name = se_field_name_ref.text; se_field_name_ref; se_field_value = Some se_field_value }
+      in
       if curr_token_is lp3 Token.Comma then
         loop (next_token lp3) (field :: rev_fields) spread
       else if curr_token_is lp3 Token.RParen then
@@ -1895,7 +2071,8 @@ and parse_dot_expression (p : parser) (left : Surface.surface_expr) :
   if not (curr_token_is p2 Token.Ident) then
     Error (add_error ~code:"parse-unexpected-token" p2 "expected identifier after '.'")
   else
-    let member_name = p2.curr_token.literal in
+    let member_name_ref = current_name_ref p2 in
+    let member_name = member_name_ref.text in
 
     if peek_token_is p2 Token.LParen then
       (* expr.member(args) -> Method call or enum constructor *)
@@ -1907,7 +2084,13 @@ and parse_dot_expression (p : parser) (left : Surface.surface_expr) :
           with_surface_expr_end p4
             (mk_surface_expr id pos
                (Surface.SEMethodCall
-                  { se_receiver = left; se_method = member_name; se_type_args = None; se_args = args })) )
+                  {
+                    se_receiver = left;
+                    se_method = member_name;
+                    se_method_ref = member_name_ref;
+                    se_type_args = None;
+                    se_args = args;
+                  })) )
     else if peek_token_is p2 Token.LBracket then
       (* expr.member[...] -> could be method type args or index; try type args first *)
       let p_bracket = next_token (next_token p2) in
@@ -1930,17 +2113,19 @@ and parse_dot_expression (p : parser) (left : Surface.surface_expr) :
                       {
                         se_receiver = left;
                         se_method = member_name;
+                        se_method_ref = member_name_ref;
                         se_type_args = Some type_args;
                         se_args = args;
                       })) )
       | _ ->
           (* Not type args — fall back to field access (infix [ will handle indexing) *)
           let id = fresh_id p2 in
-          Ok (p2, with_surface_expr_end p2 (mk_surface_expr id pos (Surface.SEFieldAccess (left, member_name))))
+          Ok
+            (p2, with_surface_expr_end p2 (mk_surface_expr id pos (Surface.SEFieldAccess (left, member_name_ref))))
     else
       (* expr.member -> Field access or nullary enum constructor *)
       let id = fresh_id p2 in
-      Ok (p2, with_surface_expr_end p2 (mk_surface_expr id pos (Surface.SEFieldAccess (left, member_name))))
+      Ok (p2, with_surface_expr_end p2 (mk_surface_expr id pos (Surface.SEFieldAccess (left, member_name_ref))))
 
 (* Parse { stmts } in expression position as a block expression (SEBlockExpr) *)
 and parse_block_expr (p : parser) : (parser * Surface.surface_expr, parser) result =
@@ -2026,7 +2211,7 @@ and parse_record_entry (p : parser) :
     let* p3, spread_expr = parse_expression p2 prec_lowest in
     Ok (p3, `Spread spread_expr)
   else if curr_token_is p Token.Ident && peek_token_is p Token.Colon then
-    let se_field_name = p.curr_token.literal in
+    let se_field_name_ref = current_name_ref p in
     let* p2 = expect_peek p Token.Colon in
     let* p3, se_field_value =
       if peek_token_is p2 Token.Comma || peek_token_is p2 Token.RBrace then
@@ -2035,7 +2220,7 @@ and parse_record_entry (p : parser) :
         let* p3, value = parse_expression (next_token p2) prec_lowest in
         Ok (p3, Some value)
     in
-    Ok (p3, `Field Surface.{ se_field_name; se_field_value })
+    Ok (p3, `Field Surface.{ se_field_name = se_field_name_ref.text; se_field_name_ref; se_field_value })
   else
     Error (add_error ~code:"parse-invalid-record" p "cannot mix hash-style entries into record literal")
 
@@ -2170,7 +2355,7 @@ and parse_constructor_payload_patterns ~(constructor_pos : int) (p : parser) :
             (add_error ~code:"parse-invalid-pattern" current2
                "expected identifier after '...' in constructor payload pattern")
       else if curr_token_is current Token.Ident && peek_token_is current Token.Colon then
-        let field_name = current.curr_token.literal in
+        let field_name_ref = current_name_ref current in
         let current2 = next_token current in
         let* current3, field_pattern =
           if peek_token_is current2 Token.Comma || peek_token_is current2 Token.RParen then
@@ -2179,7 +2364,14 @@ and parse_constructor_payload_patterns ~(constructor_pos : int) (p : parser) :
             let* current3, pat = parse_pattern (next_token current2) in
             Ok (current3, Some pat)
         in
-        let field = Surface.{ sp_field_name = field_name; sp_field_pattern = field_pattern } in
+        let field =
+          Surface.
+            {
+              sp_field_name = field_name_ref.text;
+              sp_field_name_ref = field_name_ref;
+              sp_field_pattern = field_pattern;
+            }
+        in
         if curr_token_is current3 Token.Comma then
           loop (next_token current3) (field :: fields) rest
         else
@@ -2208,37 +2400,69 @@ and parse_pattern (p : parser) : (parser * Surface.surface_pattern, parser) resu
       if p.curr_token.literal = "_" then
         Ok (p, mk_surface_pat p.curr_token.pos Surface.SPWildcard)
       else if peek_token_is p Token.LParen then
-        let constructor_name = p.curr_token.literal in
+        let constructor_name_ref = current_name_ref p in
         let p2 = next_token p in
         let* p3, nested_patterns = parse_constructor_payload_patterns ~constructor_pos:p.curr_token.pos p2 in
         Ok
           ( p3,
             mk_surface_pat p.curr_token.pos
-              (Surface.SPConstructor (constructor_name, constructor_name, nested_patterns)) )
+              (Surface.SPConstructor
+                 {
+                   sp_enum_name = constructor_name_ref.text;
+                   sp_enum_name_ref = constructor_name_ref;
+                   sp_constructor_name = constructor_name_ref.text;
+                   sp_constructor_name_ref = constructor_name_ref;
+                   sp_args = nested_patterns;
+                 }) )
       else if peek_token_is p Token.Dot then
         (* Enum constructor pattern: enum.variant or enum.variant(patterns) *)
-        let enum_name = p.curr_token.literal in
+        let enum_name_ref = current_name_ref p in
         let p2 = next_token (next_token p) in
         if curr_token_is p2 Token.Ident then
-          let variant_name = p2.curr_token.literal in
+          let variant_name_ref = current_name_ref p2 in
           if peek_token_is p2 Token.LParen then
             let p3 = next_token p2 in
             let* p4, nested_patterns = parse_constructor_payload_patterns ~constructor_pos:p.curr_token.pos p3 in
             Ok
               ( p4,
-                mk_surface_pat p.curr_token.pos (Surface.SPConstructor (enum_name, variant_name, nested_patterns))
-              )
+                mk_surface_pat p.curr_token.pos
+                  (Surface.SPConstructor
+                     {
+                       sp_enum_name = enum_name_ref.text;
+                       sp_enum_name_ref = enum_name_ref;
+                       sp_constructor_name = variant_name_ref.text;
+                       sp_constructor_name_ref = variant_name_ref;
+                       sp_args = nested_patterns;
+                     }) )
           else
-            Ok (p2, mk_surface_pat p.curr_token.pos (Surface.SPConstructor (enum_name, variant_name, [])))
+            Ok
+              ( p2,
+                mk_surface_pat p.curr_token.pos
+                  (Surface.SPConstructor
+                     {
+                       sp_enum_name = enum_name_ref.text;
+                       sp_enum_name_ref = enum_name_ref;
+                       sp_constructor_name = variant_name_ref.text;
+                       sp_constructor_name_ref = variant_name_ref;
+                       sp_args = [];
+                     }) )
         else
           Error (add_error ~code:"parse-invalid-pattern" p2 "expected variant name after '.'")
       else if is_upper_ident p.curr_token.literal then
+        let constructor_name_ref = current_name_ref p in
         Ok
           ( p,
             mk_surface_pat p.curr_token.pos
-              (Surface.SPConstructor (p.curr_token.literal, p.curr_token.literal, [])) )
+              (Surface.SPConstructor
+                 {
+                   sp_enum_name = constructor_name_ref.text;
+                   sp_enum_name_ref = constructor_name_ref;
+                   sp_constructor_name = constructor_name_ref.text;
+                   sp_constructor_name_ref = constructor_name_ref;
+                   sp_args = [];
+                 }) )
       else
-        Ok (p, mk_surface_pat p.curr_token.pos (Surface.SPVariable p.curr_token.literal))
+        Ok (p, mk_surface_pat p.curr_token.pos (Surface.SPVariable (current_name_ref p)))
   | Token.Int -> (
       match Int64.of_string_opt p.curr_token.literal with
       | Some i -> Ok (p, mk_surface_pat p.curr_token.pos (Surface.SPLiteral (AST.LInt i)))
@@ -2278,7 +2502,7 @@ and parse_record_pattern (p : parser) : (parser * Surface.surface_pattern, parse
       else
         Error (add_error ~code:"parse-invalid-pattern" lp2 "expected identifier after '...' in record pattern")
     else if curr_token_is lp Token.Ident then
-      let sp_field_name = lp.curr_token.literal in
+      let sp_field_name_ref = current_name_ref lp in
       let* lp2 = expect_peek lp Token.Colon in
 
       let* lp3, sp_field_pattern =
@@ -2289,7 +2513,7 @@ and parse_record_pattern (p : parser) : (parser * Surface.surface_pattern, parse
           Ok (lp3, Some pat)
       in
 
-      let field = Surface.{ sp_field_name; sp_field_pattern } in
+      let field = Surface.{ sp_field_name = sp_field_name_ref.text; sp_field_name_ref; sp_field_pattern } in
 
       if curr_token_is lp3 Token.Comma then
         loop (next_token lp3) (field :: fields) rest
@@ -2336,10 +2560,24 @@ let parse_program (p : parser) : (parser * AST.program, parser) result =
   | Ok (p2, surface_prog) -> Ok (p2, Lower.lower_program id_supply surface_prog)
   | Error p_err -> Error p_err
 
-let parse ?(id_offset = 0) ~file_id (s : string) : (AST.program, errors) result =
-  match s |> Lexer.init |> init ~id_offset ~file_id |> parse_program with
-  | Ok (_, program) -> Ok program
+type parse_result = {
+  surface_program : Surface_ast.Surface.surface_program;
+  program : AST.program;
+  id_supply : Id_supply.Id_supply.t;
+}
+
+let parse_with_surface ?(id_offset = 0) ~file_id (s : string) : (parse_result, errors) result =
+  let p = s |> Lexer.init |> init ~id_offset ~file_id in
+  let id_supply = p.id_supply in
+  match parse_surface_program p with
+  | Ok (_, surface_program) ->
+      Ok { surface_program; program = Lower.lower_program id_supply surface_program; id_supply }
   | Error parser -> Error (List.rev parser.errors)
+
+let parse ?(id_offset = 0) ~file_id (s : string) : (AST.program, errors) result =
+  match parse_with_surface ~id_offset ~file_id s with
+  | Ok result -> Ok result.program
+  | Error errors -> Error errors
 
 type parse_surface_result = {
   program : Surface_ast.Surface.surface_program;
@@ -2347,11 +2585,9 @@ type parse_surface_result = {
 }
 
 let parse_surface ?(id_offset = 0) ~file_id (s : string) : (parse_surface_result, errors) result =
-  let p = s |> Lexer.init |> init ~id_offset ~file_id in
-  let id_supply = p.id_supply in
-  match parse_surface_program p with
-  | Ok (_, surface_prog) -> Ok { program = surface_prog; id_supply }
-  | Error parser -> Error (List.rev parser.errors)
+  match parse_with_surface ~id_offset ~file_id s with
+  | Ok result -> Ok { program = result.surface_program; id_supply = result.id_supply }
+  | Error errors -> Error errors
 
 let%test "parse export declaration" =
   match parse ~file_id:"<test>" "export add, Point, Color" with
@@ -3084,6 +3320,78 @@ module Test = struct
     | AST.DeriveDef _ | AST.TypeAlias _ ->
         []
 
+  let rec collect_surface_expr_ids (expr : Surface.surface_expr) : int list =
+    let child_ids =
+      match expr.se_expr with
+      | Surface.SEIdentifier _ | Surface.SEInteger _ | Surface.SEFloat _ | Surface.SEBoolean _
+      | Surface.SEString _ ->
+          []
+      | Surface.SEArray xs -> List.concat_map collect_surface_expr_ids xs
+      | Surface.SEIndex (a, b) -> collect_surface_expr_ids a @ collect_surface_expr_ids b
+      | Surface.SETypeApply (callee, _) -> collect_surface_expr_ids callee
+      | Surface.SEHash pairs ->
+          List.concat_map (fun (k, v) -> collect_surface_expr_ids k @ collect_surface_expr_ids v) pairs
+      | Surface.SEPrefix (_, e) | Surface.SETypeCheck (e, _) | Surface.SEFieldAccess (e, _) ->
+          collect_surface_expr_ids e
+      | Surface.SEInfix (l, _, r) -> collect_surface_expr_ids l @ collect_surface_expr_ids r
+      | Surface.SEIf (cond, cons, alt) -> (
+          collect_surface_expr_ids cond
+          @ collect_surface_stmt_ids cons
+          @
+          match alt with
+          | Some stmt -> collect_surface_stmt_ids stmt
+          | None -> [])
+      | Surface.SECall (callee, args) ->
+          collect_surface_expr_ids callee @ List.concat_map collect_surface_expr_ids args
+      | Surface.SEEnumConstructor (_, _, args) -> List.concat_map collect_surface_expr_ids args
+      | Surface.SEMatch (scrutinee, arms) ->
+          collect_surface_expr_ids scrutinee
+          @ List.concat_map
+              (fun (arm : Surface.surface_match_arm) -> collect_surface_expr_or_block_ids arm.se_arm_body)
+              arms
+      | Surface.SERecordLit (fields, spread) -> (
+          List.concat_map
+            (fun (field : Surface.surface_record_field) ->
+              match field.se_field_value with
+              | Some value -> collect_surface_expr_ids value
+              | None -> [])
+            fields
+          @
+          match spread with
+          | Some value -> collect_surface_expr_ids value
+          | None -> [])
+      | Surface.SEMethodCall { se_receiver; se_args; _ } ->
+          collect_surface_expr_ids se_receiver @ List.concat_map collect_surface_expr_ids se_args
+      | Surface.SEArrowLambda { se_lambda_body; _ } -> collect_surface_expr_or_block_ids se_lambda_body
+      | Surface.SEPlaceholder -> []
+      | Surface.SEBlockExpr block -> collect_surface_block_ids block
+    in
+    expr.se_id :: child_ids
+
+  and collect_surface_block_ids (block : Surface.surface_block) : int list =
+    List.concat_map collect_surface_stmt_ids block.sb_stmts
+
+  and collect_surface_expr_or_block_ids = function
+    | Surface.SEOBExpr expr -> collect_surface_expr_ids expr
+    | Surface.SEOBBlock block -> collect_surface_block_ids block
+
+  and collect_surface_stmt_ids (stmt : Surface.surface_stmt) : int list =
+    match stmt.ss_stmt with
+    | Surface.SSLet { ss_value; _ } -> collect_surface_expr_ids ss_value
+    | Surface.SSReturn expr | Surface.SSExpressionStmt expr -> collect_surface_expr_ids expr
+    | Surface.SSBlock block -> collect_surface_block_ids block
+
+  let collect_surface_top_stmt_ids (stmt : Surface.surface_top_stmt) : int list =
+    match stmt.std_decl with
+    | Surface.SExportDecl _ | Surface.SImportDecl _ -> []
+    | Surface.SLet { value; _ } -> collect_surface_expr_ids value
+    | Surface.SFnDecl { body; _ } -> collect_surface_expr_or_block_ids body
+    | Surface.STypeDef _ | Surface.SShapeDef _ | Surface.STraitDef _ | Surface.SAmbiguousImplDef _
+    | Surface.SInherentImplDef _ ->
+        []
+    | Surface.SExpressionStmt expr | Surface.SReturn expr -> collect_surface_expr_ids expr
+    | Surface.SBlock block -> collect_surface_block_ids block
+
   let%test "parser assigns unique expression ids for nested function and record literals" =
     let input = "fn outer(x) = { let mk = (v) -> { inner: v }; mk(x) }\nlet o = outer(5)\nputs(o.inner)" in
     match parse ~file_id:"<test>" input with
@@ -3092,6 +3400,17 @@ module Test = struct
         let ids = List.concat_map collect_stmt_ids program in
         let unique_ids = List.sort_uniq Int.compare ids in
         List.length ids = List.length unique_ids
+
+  let%test "parse_with_surface preserves surface expression ids in lowered output" =
+    let input = "fn outer(x) = { let mk = (v) -> { inner: v }; mk(x) }\nlet o = outer(5)\nputs(o.inner)" in
+    match parse_with_surface ~file_id:"<test>" input with
+    | Error _ -> false
+    | Ok result ->
+        let surface_ids =
+          List.concat_map collect_surface_top_stmt_ids result.surface_program |> List.sort compare
+        in
+        let lowered_ids = List.concat_map collect_stmt_ids result.program |> List.sort compare in
+        List.for_all (fun id -> List.mem id lowered_ids) surface_ids
 
   let%test "parse-invalid-number on malformed integer" =
     match parse ~file_id:"<test>" "let x = 99999999999999999999" with
@@ -3428,11 +3747,7 @@ module Test = struct
     | Ok result -> (
         match result.program with
         | [ { Surface.std_decl = Surface.STypeDef { type_body = Surface.STNamedSum _; derive; _ }; _ } ] ->
-            derive
-            = [
-                AST.{ derive_trait_name = "Eq"; derive_trait_constraints = [] };
-                AST.{ derive_trait_name = "Show"; derive_trait_constraints = [] };
-              ]
+            List.map (fun (trait_ : Surface.surface_derive_trait) -> trait_.sdt_name) derive = [ "Eq"; "Show" ]
         | _ -> false)
 
   let%test "parse enum rejects missing equals" =
@@ -3448,7 +3763,7 @@ module Test = struct
     | Ok result -> (
         match result.program with
         | [ { Surface.std_decl = Surface.STypeDef { derive; type_name = "MyInt"; _ }; _ } ] ->
-            derive = [ AST.{ derive_trait_name = "Eq"; derive_trait_constraints = [] } ]
+            List.map (fun (trait_ : Surface.surface_derive_trait) -> trait_.sdt_name) derive = [ "Eq" ]
         | _ -> false)
 
   let%test "parse structural type declaration lowers to transparent type alias" =
@@ -3532,6 +3847,7 @@ module Test = struct
                  type_type_params = [];
                  type_body = Surface.STNamedSum [ { sv_name = "Click"; _ }; { sv_name = "Quit"; _ } ];
                  derive = [];
+                 _;
                };
            _;
          };
@@ -3546,8 +3862,11 @@ module Test = struct
     | Ok result -> (
         match result.program with
         | [ { Surface.std_decl = Surface.STypeDef { derive = [ derive_trait ]; type_name = "Box"; _ }; _ } ] ->
-            derive_trait.derive_trait_name = "Forwarder"
-            && derive_trait.derive_trait_constraints = [ AST.{ name = "u"; constraints = [] } ]
+            derive_trait.sdt_name = "Forwarder"
+            && List.map
+                 (fun (param : Surface.surface_generic_param) -> param.sg_name)
+                 derive_trait.sdt_constraints
+               = [ "u" ]
         | _ -> false)
 
   (* Phase 1d: vNext impl syntax *)
@@ -3583,7 +3902,10 @@ module Test = struct
     | Ok result -> (
         match result.program with
         | [ { Surface.std_decl = Surface.SInherentImplDef { inherent_for_type; inherent_methods }; _ } ] ->
-            inherent_for_type = Surface.STCon "Monkey" && List.length inherent_methods = 1
+            (match inherent_for_type.ste_desc with
+            | Surface.STCon name_ref -> name_ref.text = "Monkey"
+            | _ -> false)
+            && List.length inherent_methods = 1
         | _ -> false)
 
   let%test "parse vNext generic inherent impl with inferred binders" =
@@ -3656,7 +3978,9 @@ module Test = struct
         match result.program with
         | [ { Surface.std_decl = Surface.SExpressionStmt e; _ } ] -> (
             match e.se_expr with
-            | Surface.SEArrowLambda { se_lambda_params = [ ("x", None) ]; _ } -> true
+            | Surface.SEArrowLambda { se_lambda_params = [ { Surface.svp_name = "x"; svp_type = None; _ } ]; _ }
+              ->
+                true
             | _ -> false)
         | _ -> false)
 
@@ -3668,7 +3992,16 @@ module Test = struct
         match result.program with
         | [ { Surface.std_decl = Surface.SExpressionStmt e; _ } ] -> (
             match e.se_expr with
-            | Surface.SEArrowLambda { se_lambda_params = [ ("x", None); ("y", None) ]; _ } -> true
+            | Surface.SEArrowLambda
+                {
+                  se_lambda_params =
+                    [
+                      { Surface.svp_name = "x"; svp_type = None; _ };
+                      { Surface.svp_name = "y"; svp_type = None; _ };
+                    ];
+                  _;
+                } ->
+                true
             | _ -> false)
         | _ -> false)
 
@@ -3844,7 +4177,25 @@ let%test "parse parameter constraint shorthand with ampersand" =
       | [
        {
          Surface.std_decl =
-           Surface.SFnDecl { params = [ ("x", Some (Surface.STConstraintShorthand [ "Named"; "Aged" ])) ]; _ };
+           Surface.SFnDecl
+             {
+               params =
+                 [
+                   {
+                     Surface.svp_name = "x";
+                     svp_type =
+                       Some
+                         {
+                           ste_desc =
+                             Surface.STConstraintShorthand
+                               [ { Surface.text = "Named"; _ }; { Surface.text = "Aged"; _ } ];
+                           _;
+                         };
+                     _;
+                   };
+                 ];
+               _;
+             };
          _;
        };
       ] ->
@@ -3860,7 +4211,27 @@ let%test "parse parenthesized parameter intersection does not become shorthand" 
        {
          Surface.std_decl =
            Surface.SFnDecl
-             { params = [ ("x", Some (Surface.STIntersection [ Surface.STCon "Foo"; Surface.STCon "Bar" ])) ]; _ };
+             {
+               params =
+                 [
+                   {
+                     Surface.svp_name = "x";
+                     svp_type =
+                       Some
+                         {
+                           ste_desc =
+                             Surface.STIntersection
+                               [
+                                 { ste_desc = Surface.STCon { Surface.text = "Foo"; _ }; _ };
+                                 { ste_desc = Surface.STCon { Surface.text = "Bar"; _ }; _ };
+                               ];
+                           _;
+                         };
+                     _;
+                   };
+                 ];
+               _;
+             };
          _;
        };
       ] ->

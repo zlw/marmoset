@@ -1,5 +1,6 @@
 module Diagnostic = Diagnostics.Diagnostic
 module AST = Syntax.Ast.AST
+module Surface = Syntax.Surface_ast.Surface
 
 type import_info = {
   import_path : string list;
@@ -13,6 +14,7 @@ type parsed_module = {
   module_id : string;
   file_path : string;
   source : string;
+  surface_program : Surface.surface_program;
   program : AST.program;
   exports : string list;
   imports : import_info list;
@@ -83,7 +85,15 @@ let build_graph
 
 let%test "build_graph topo orders dependencies before dependents" =
   let mk module_id =
-    { module_id; file_path = module_id ^ ".mr"; source = ""; program = []; exports = []; imports = [] }
+    {
+      module_id;
+      file_path = module_id ^ ".mr";
+      source = "";
+      surface_program = [];
+      program = [];
+      exports = [];
+      imports = [];
+    }
   in
   let modules = Hashtbl.create 3 in
   Hashtbl.replace modules "main" (mk "main");
@@ -99,7 +109,15 @@ let%test "build_graph topo orders dependencies before dependents" =
 
 let%test "build_graph reports cycle path" =
   let mk module_id =
-    { module_id; file_path = module_id ^ ".mr"; source = ""; program = []; exports = []; imports = [] }
+    {
+      module_id;
+      file_path = module_id ^ ".mr";
+      source = "";
+      surface_program = [];
+      program = [];
+      exports = [];
+      imports = [];
+    }
   in
   let modules = Hashtbl.create 3 in
   Hashtbl.replace modules "main" (mk "main");
