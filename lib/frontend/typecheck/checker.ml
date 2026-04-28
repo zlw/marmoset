@@ -1831,3 +1831,108 @@ let%test "ffi F1b: checker rejects conflicting aliases for the same qualifier" =
   match check_string ~file_id:"main.mr" code with
   | Ok _ -> false
   | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-extern") diags
+
+let%test "ffi F1c: extern direct call returns declared type and records artifacts" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  let code =
+    {|
+      extern "strings" = { fn ToUpper(s: Str) -> Str }
+      strings.ToUpper("x")
+    |}
+  in
+  match check_string ~file_id:"main.mr" code with
+  | Ok result ->
+      let has_call_resolution =
+        Hashtbl.fold
+          (fun _ resolution acc ->
+            acc
+            ||
+            match resolution with
+            | Resolution_artifacts.ExternQualifiedCall key ->
+                key = Extern_registry.extern_key ~go_path:"strings" ~go_func_name:"ToUpper"
+            | _ -> false)
+          result.call_resolution_map false
+      in
+      result.result_type = Types.TString && has_call_resolution && Hashtbl.length result.extern_calls = 1
+  | Error _ -> false
+
+let%test "ffi F1c: extern bool return typechecks" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  let code =
+    {|
+      extern "strings" = { fn Contains(s: Str, substr: Str) -> Bool }
+      strings.Contains("abc", "b")
+    |}
+  in
+  match check_string ~file_id:"main.mr" code with
+  | Ok result -> result.result_type = Types.TBool
+  | Error _ -> false
+
+let%test "ffi F1c: extern call rejects wrong arity" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  let code =
+    {|
+      extern "strings" = { fn Contains(s: Str, substr: Str) -> Bool }
+      strings.Contains("abc")
+    |}
+  in
+  match check_string ~file_id:"main.mr" code with
+  | Ok _ -> false
+  | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-constructor") diags
+
+let%test "ffi F1c: extern call rejects wrong argument type" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  let code =
+    {|
+      extern "strings" = { fn ToUpper(s: Str) -> Str }
+      strings.ToUpper(1)
+    |}
+  in
+  match check_string ~file_id:"main.mr" code with
+  | Ok _ -> false
+  | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-mismatch") diags
+
+let%test "ffi F1c: unknown extern function is rejected" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  let code =
+    {|
+      extern "strings" = { fn ToUpper(s: Str) -> Str }
+      strings.Trim(" x ")
+    |}
+  in
+  match check_string ~file_id:"main.mr" code with
+  | Ok _ -> false
+  | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-extern") diags
+
+let%test "ffi F1c: extern function value use is rejected" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  let code =
+    {|
+      extern "strings" = { fn ToUpper(s: Str) -> Str }
+      let f = strings.ToUpper
+      f("x")
+    |}
+  in
+  match check_string ~file_id:"main.mr" code with
+  | Ok _ -> false
+  | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-extern") diags
+
+let%test "ffi F1c: pure wrapper cannot call effectful extern" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  let code =
+    {|
+      extern "fmt" = { fn Println(s: Str) => Unit }
+      fn say(s: Str) -> Unit = fmt.Println(s)
+      say("x")
+    |}
+  in
+  match check_string ~file_id:"main.mr" code with
+  | Ok _ -> false
+  | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-purity") diags

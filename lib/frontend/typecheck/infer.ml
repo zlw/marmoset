@@ -1057,8 +1057,8 @@ let should_monomorphize_let_binding_value (value_expr : AST.expression) : bool =
   | AST.FieldAccess _ -> (
       match lookup_call_resolution value_expr.id with
       | Some (QualifiedTraitMethod _) | Some QualifiedInherentMethod -> false
-      | Some (TraitMethod _) | Some (DynamicTraitMethod _) | Some InherentMethod | Some FieldFunctionCall | None
-        ->
+      | Some (TraitMethod _) | Some (DynamicTraitMethod _) | Some InherentMethod | Some FieldFunctionCall
+      | Some (ExternQualifiedCall _) | None ->
           true)
   | _ -> false
 
@@ -2397,6 +2397,19 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
             | AST.Identifier name -> (
                 match classify_dotted_receiver env name variant_name with
                 | `BoundVar | `Unknown -> infer_real_field_access ()
+                | `ExternNamespace (Some _func) ->
+                    Error
+                      (error_at ~code:"type-extern"
+                         ~message:
+                           (Printf.sprintf
+                              "extern function '%s.%s' can only be used as a direct call" name
+                              variant_name)
+                         expr)
+                | `ExternNamespace None ->
+                    Error
+                      (error_at ~code:"type-extern"
+                         ~message:(Printf.sprintf "Unknown extern function '%s.%s'" name variant_name)
+                         expr)
                 | `EnumVariant -> infer_enum_constructor_value name
                 | `EnumType -> (
                     match resolve_dotted_type_name name with
@@ -2757,6 +2770,34 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
               else
                 infer_args_against_expected type_map env empty_substitution args param_types
             in
+            let infer_extern_call (func : Resolution_artifacts.extern_func) :
+                (substitution * mono_type) infer_result =
+              let mk_error ~code ~message = error_at ~code ~message expr in
+              match mc_type_args with
+              | Some type_args when type_args <> [] ->
+                  Error
+                    (mk_error ~code:"type-extern"
+                       ~message:
+                         (Printf.sprintf "extern function '%s.%s' takes no type arguments"
+                            func.source_qualifier func.go_func_name))
+              | _ -> (
+                  let call_target = Printf.sprintf "%s.%s" func.source_qualifier func.go_func_name in
+                  match infer_qualified_method_args ~mk_error ~call_target func.param_types with
+                  | Error e -> Error e
+                  | Ok (subst, arg_types) ->
+                      record_call_resolution expr (ExternQualifiedCall func.extern_key);
+                      record_effectful_method_call expr func.is_effectful;
+                      let call_arg_types = List.map (apply_substitution subst) arg_types in
+                      let call_return_type = apply_substitution subst func.return_type in
+                      Extern_registry.record_call expr.id
+                        {
+                          Resolution_artifacts.call_func_key = func.extern_key;
+                          call_arg_types;
+                          call_return_type;
+                          call_effectful = func.is_effectful;
+                        };
+                      Ok (subst, call_return_type))
+            in
             let rec unify_qualified_method_params
                 ~(mk_error : code:string -> message:string -> Diagnostic.t)
                 (subst_acc : substitution)
@@ -3005,6 +3046,12 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                 (* Use shared classifier for consistent priority across FieldAccess and MethodCall *)
                 match classify_dotted_receiver env name method_name with
                 | `BoundVar -> infer_real_method_call ()
+                | `ExternNamespace (Some func) -> infer_extern_call func
+                | `ExternNamespace None ->
+                    Error
+                      (error_at ~code:"type-extern"
+                         ~message:(Printf.sprintf "Unknown extern function '%s.%s'" name method_name)
+                         expr)
                 | `EnumVariant -> infer_enum_constructor name
                 | `EnumType -> (
                     match resolve_dotted_type_name name with
@@ -4639,9 +4686,17 @@ and infer_hash_pairs type_map env subst key_type val_type pairs =
    Determines what kind of entity a dotted-access receiver identifier refers to,
    using a unified priority: bound variable > enum > transparent type > trait > unknown. *)
 and classify_dotted_receiver (env : type_env) (name : string) (member_name : string) :
-    [ `BoundVar | `EnumVariant | `EnumType | `TypeName of mono_type | `TraitName | `Unknown ] =
+    [ `BoundVar
+    | `ExternNamespace of Resolution_artifacts.extern_func option
+    | `EnumVariant
+    | `EnumType
+    | `TypeName of mono_type
+    | `TraitName
+    | `Unknown ] =
   if TypeEnv.mem name env then
     `BoundVar
+  else if Extern_registry.is_qualifier name then
+    `ExternNamespace (Extern_registry.lookup ~source_qualifier:name ~go_func_name:member_name)
   else
     let enum_def_opt = Annotation.lookup_enum_by_source_name name in
     let is_enum = Option.is_some enum_def_opt in

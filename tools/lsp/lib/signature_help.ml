@@ -383,6 +383,7 @@ let signature_help
                             Some (`Method (param_types, method_sig.method_return_type, param_names, is_effectful))
                         | Ok None | Error _ -> None)
                     | None -> None)
+                | _, Some (Resolution_artifacts.ExternQualifiedCall _) -> None
                 | Some recv_id, None -> (
                     match Hashtbl.find_opt type_map recv_id with
                     | None -> None

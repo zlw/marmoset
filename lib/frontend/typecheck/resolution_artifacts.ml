@@ -28,6 +28,7 @@ type call_resolution =
   | QualifiedTraitMethod of string (* Trait.method(receiver, args...) *)
   | QualifiedInherentMethod (* Type.method(receiver, args...) *)
   | FieldFunctionCall
+  | ExternQualifiedCall of string
 
 type extern_func = {
   extern_key : string;

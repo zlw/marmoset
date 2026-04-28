@@ -2301,6 +2301,7 @@ let resolve_field_access_callable
     (receiver : AST.expression)
     (field_name : string) : field_access_callable_resolution =
   match Hashtbl.find_opt call_resolution_map expr.id with
+  | Some (Typecheck.Resolution_artifacts.ExternQualifiedCall _) -> NotQualifiedCallable
   | Some (Typecheck.Resolution_artifacts.QualifiedTraitMethod trait_name) -> (
       let resolved_expr_type, subst = refined_expr_type_for_expected type_map expr expected_type in
       let resolved_expr_type = Types.canonicalize_mono_type resolved_expr_type in
@@ -3606,6 +3607,7 @@ and collect_insts_expr
                       register_user_func_call_instantiation state type_map env ~target_name ~args ~call_expr:expr
                   | _ -> collect_insts_expr state type_map env receiver)
               | _ -> collect_insts_expr state type_map env receiver)
+          | Some (Typecheck.Resolution_artifacts.ExternQualifiedCall _) -> ()
           | None -> collect_insts_expr state type_map env receiver))
   | AST.BlockExpr stmts -> ignore (collect_insts_stmt_list state type_map env stmts)
 
@@ -4399,6 +4401,8 @@ let rec emit_expr
                 Printf.sprintf "%s(%s)" func_name (String.concat ", " all_args)
             | Some Typecheck.Resolution_artifacts.FieldFunctionCall ->
                 emit_field_function_call state type_map env expr receiver variant_name args
+            | Some (Typecheck.Resolution_artifacts.ExternQualifiedCall _) ->
+                failwith "extern call codegen is implemented in F2"
             | None ->
                 failwith
                   (Printf.sprintf
@@ -7336,6 +7340,7 @@ let collect_inherent_call_sites
         | Some (Typecheck.Resolution_artifacts.DynamicTraitMethod _)
         | Some (Typecheck.Resolution_artifacts.QualifiedTraitMethod _)
         | Some Typecheck.Resolution_artifacts.FieldFunctionCall
+        | Some (Typecheck.Resolution_artifacts.ExternQualifiedCall _)
         | None ->
             acc'')
     | AST.BlockExpr stmts -> collect_stmt_list acc env stmts

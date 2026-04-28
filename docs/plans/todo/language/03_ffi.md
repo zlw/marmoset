@@ -611,3 +611,5 @@ This plan should be implementable by a medium-reasoning model if it follows thes
 - 2026-04-28 17:22 CEST: F1a mechanical migration green; `dune runtest lib/frontend/typecheck`, `dune runtest lib/frontend`, `dune runtest lib/backend/go`, `dune runtest tools/lsp/lib`, and `dune build @all` pass.
 - 2026-04-28 17:23 CEST: F1a shared call-resolution artifacts and mechanical consumer updates committed.
 - 2026-04-28 17:38 CEST: F1b extern declaration registry implemented with declaration/call artifact types, deterministic Go import aliases, duplicate/signature/type validation, checker/compiler snapshots, and green `dune runtest lib/frontend/typecheck`, `dune build @all`, and `make unit`.
+- 2026-04-28 17:40 CEST: F1c extern call typechecking started; scope is direct `qualifier.Function(...)` calls, call/effect artifacts, and value-use rejection.
+- 2026-04-28 17:50 CEST: F1c extern call typechecking green; direct extern calls type-check and record `ExternQualifiedCall`, extern call, and effect artifacts, value-use/unknown/arity/type/purity errors are covered, and `dune runtest lib/frontend/typecheck`, `dune build @all`, and `make unit` pass.

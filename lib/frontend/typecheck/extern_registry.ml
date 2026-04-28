@@ -180,6 +180,8 @@ let register_block ~(declaring_module : string) ~(file_id : string option) (bloc
 let lookup ~(source_qualifier : string) ~(go_func_name : string) : Artifacts.extern_func option =
   Hashtbl.find_opt declaration_by_source (source_qualifier, go_func_name)
 
+let is_qualifier (source_qualifier : string) : bool = Hashtbl.mem path_by_qualifier source_qualifier
+
 let record_call (expr_id : int) (call : Artifacts.extern_call) : unit =
   Hashtbl.replace extern_calls expr_id call
 

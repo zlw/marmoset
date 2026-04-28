@@ -558,7 +558,10 @@ let cursor_reference_target
                 definition_target_of_exact_site
                   (Compiler.find_inherent_method_declaration_site analysis ~receiver_type
                      ~method_name:member_ref.text))
-        | Some Typecheck.Resolution_artifacts.FieldFunctionCall | None -> None
+        | Some Typecheck.Resolution_artifacts.FieldFunctionCall
+        | Some (Typecheck.Resolution_artifacts.ExternQualifiedCall _)
+        | None ->
+            None
       in
       let module_root_target =
         Option.bind (namespace_roots_of_analysis analysis) (fun namespace_roots ->
