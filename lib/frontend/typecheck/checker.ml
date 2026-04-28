@@ -1923,6 +1923,33 @@ let%test "ffi F1c: extern function value use is rejected" =
   | Ok _ -> false
   | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-extern") diags
 
+let%test "ffi F1c: extern qualifier value use is rejected with extern diagnostic" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  let code =
+    {|
+      extern "strings" = { fn ToUpper(s: Str) -> Str }
+      strings
+    |}
+  in
+  match check_string ~file_id:"main.mr" code with
+  | Ok _ -> false
+  | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-extern") diags
+
+let%test "ffi F1c: extern blocks are visible before their textual position" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  let code =
+    {|
+      fn upper(s: Str) -> Str = strings.ToUpper(s)
+      extern "strings" = { fn ToUpper(s: Str) -> Str }
+      upper("x")
+    |}
+  in
+  match check_string ~file_id:"main.mr" code with
+  | Ok result -> result.result_type = Types.TString && Hashtbl.length result.extern_calls = 1
+  | Error _ -> false
+
 let%test "ffi F1c: pure wrapper cannot call effectful extern" =
   Infer.reset_fresh_counter ();
   Trait_registry.clear ();

@@ -1954,7 +1954,15 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
             | None -> (
                 match lookup_top_level_placeholder name with
                 | Some placeholder -> Ok (empty_substitution, instantiate (mono_to_poly placeholder))
-                | None -> Error (error_at ~code:"type-unbound-var" ~message:("Unbound variable: " ^ name) expr))
+                | None ->
+                    if Extern_registry.is_qualifier name then
+                      Error
+                        (error_at ~code:"type-extern"
+                           ~message:
+                             (Printf.sprintf "extern qualifier '%s' can only be used in direct calls" name)
+                           expr)
+                    else
+                      Error (error_at ~code:"type-unbound-var" ~message:("Unbound variable: " ^ name) expr))
             | Some poly_type ->
                 let instantiated = instantiate poly_type in
                 Ok (empty_substitution, instantiated))
@@ -6862,12 +6870,19 @@ let infer_program
                                       seen_aliases,
                                       seen_types,
                                       seen_shapes )
-                            | AST.ExternBlock block ->
-                                let declaring_module = Option.value stmt.file_id ~default:"<unknown>" in
-                                let file_id = stmt.file_id in
-                                let* () = Extern_registry.register_block ~declaring_module ~file_id block in
-                                Ok (seen_traits, seen_enums, seen_aliases, seen_types, seen_shapes)
+                            | AST.ExternBlock _ -> Ok (seen_traits, seen_enums, seen_aliases, seen_types, seen_shapes)
                             | _ -> Ok (seen_traits, seen_enums, seen_aliases, seen_types, seen_shapes)
+                          in
+                          let rec register_top_level_externs = function
+                            | [] -> Ok ()
+                            | (stmt : AST.statement) :: rest -> (
+                                match stmt.stmt with
+                                | AST.ExternBlock block ->
+                                    let declaring_module = Option.value stmt.file_id ~default:"<unknown>" in
+                                    let file_id = stmt.file_id in
+                                    let* () = Extern_registry.register_block ~declaring_module ~file_id block in
+                                    register_top_level_externs rest
+                                | _ -> register_top_level_externs rest)
                           in
                           let infer_top_level_stmt env (stmt : AST.statement) =
                             match stmt.stmt with
@@ -6945,15 +6960,18 @@ let infer_program
                           match predeclare_top_level_lets env expanded_program with
                           | Error e -> Error e
                           | Ok env_with_placeholders -> (
-                              match
-                                go env_with_placeholders empty_substitution StringSet.empty StringSet.empty
-                                  StringSet.empty StringSet.empty StringSet.empty expanded_program
-                              with
+                              match register_top_level_externs expanded_program with
                               | Error e -> Error e
-                              | Ok (env', final_subst, result_type) ->
-                                  apply_substitution_type_map final_subst type_map;
-                                  apply_substitution_method_type_args_store final_subst;
-                                  Ok (env', type_map, result_type))))))))
+                              | Ok () -> (
+                                  match
+                                    go env_with_placeholders empty_substitution StringSet.empty StringSet.empty
+                                      StringSet.empty StringSet.empty StringSet.empty expanded_program
+                                  with
+                                  | Error e -> Error e
+                                  | Ok (env', final_subst, result_type) ->
+                                      apply_substitution_type_map final_subst type_map;
+                                      apply_substitution_method_type_args_store final_subst;
+                                      Ok (env', type_map, result_type)))))))))
 
 module Test = struct
   (* Helper to parse and infer *)

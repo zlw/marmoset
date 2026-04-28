@@ -339,16 +339,22 @@ let trait_method_func_name (trait_name : string) (method_name : string) (type_su
 let inherent_method_func_name (method_name : string) (type_suffix : string) : string =
   Printf.sprintf "inherent_%s_%s" (go_safe_ident method_name) type_suffix
 
-let go_path_name_fragment (path : string) : string =
+let encoded_go_path_fragment (path : string) : string =
   let buf = Buffer.create (String.length path) in
   String.iter
     (function
-      | ('a' .. 'z' | 'A' .. 'Z' | '0' .. '9') as c -> Buffer.add_char buf c
-      | _ -> Buffer.add_char buf '_')
+      | ('a' .. 'z' | '0' .. '9') as c -> Buffer.add_char buf c
+      | 'A' .. 'Z' as c -> Buffer.add_char buf (Char.lowercase_ascii c)
+      | '/' -> Buffer.add_char buf '_'
+      | '_' -> Buffer.add_string buf "_u_"
+      | c -> Buffer.add_string buf (Printf.sprintf "_x%02x_" (Char.code c)))
     path;
   match Buffer.contents buf with
   | "" -> "pkg"
-  | fragment -> go_safe_ident fragment
+  | fragment -> fragment
+
+let go_path_name_fragment (path : string) : string =
+  go_safe_ident (encoded_go_path_fragment path)
 
 let extern_wrapper_name (func : Typecheck.Resolution_artifacts.extern_func) : string =
   Printf.sprintf "extern__%s__%s" (go_path_name_fragment func.go_path) (go_safe_ident func.go_func_name)
@@ -9432,6 +9438,29 @@ ofp.Base("b")
       && string_contains code "func extern__other_filepath__Base(s string) string"
       && string_contains code {|extern__path_filepath__Base("a")|}
       && string_contains code {|extern__other_filepath__Base("b")|}
+  | Error _ -> false
+
+let%test "extern wrappers distinguish sanitized path collisions" =
+  match
+    compile_string ~file_id:"<codegen>"
+      {|
+extern "example.com/acme/text-case" as hyphen = {
+  fn F(s: Str) -> Str
+}
+
+extern "example.com/acme/text_case" as under = {
+  fn F(s: Str) -> Str
+}
+
+let _ = hyphen.F("a")
+under.F("b")
+|}
+  with
+  | Ok (code, _) ->
+      string_contains code {|mext_example_x2e_com_acme_text_x2d_case "example.com/acme/text-case"|}
+      && string_contains code {|mext_example_x2e_com_acme_text_u_case "example.com/acme/text_case"|}
+      && string_contains code "func extern__example_x2e_com_acme_text_x2d_case__F(s string) string"
+      && string_contains code "func extern__example_x2e_com_acme_text_u_case__F(s string) string"
   | Error _ -> false
 
 let%test "Dyn codegen does not synthesize coercions without recorded metadata" =

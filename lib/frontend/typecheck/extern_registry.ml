@@ -29,31 +29,27 @@ let clear () : unit =
 
 let extern_key ~(go_path : string) ~(go_func_name : string) : string = go_path ^ "\x00" ^ go_func_name
 
-let go_import_alias (go_path : string) : string =
-  let buf = Buffer.create (String.length go_path + 5) in
-  Buffer.add_string buf "mext_";
-  let last_was_sep = ref false in
+let encoded_go_path_fragment (go_path : string) : string =
+  let buf = Buffer.create (String.length go_path) in
+  let append_escape ch = Buffer.add_string buf (Printf.sprintf "_x%02x_" (Char.code ch)) in
   String.iter
-    (fun ch ->
-      let add_sep () =
-        if (not !last_was_sep) && Buffer.length buf > 5 then (
-          Buffer.add_char buf '_';
-          last_was_sep := true)
-      in
-      match ch with
-      | 'a' .. 'z' | '0' .. '9' ->
-          Buffer.add_char buf ch;
-          last_was_sep := false
-      | 'A' .. 'Z' ->
-          Buffer.add_char buf (Char.lowercase_ascii ch);
-          last_was_sep := false
-      | _ -> add_sep ())
+    (function
+      | ('a' .. 'z' | '0' .. '9') as ch -> Buffer.add_char buf ch
+      | 'A' .. 'Z' as ch -> Buffer.add_char buf (Char.lowercase_ascii ch)
+      | '/' -> Buffer.add_char buf '_'
+      | '_' -> Buffer.add_string buf "_u_"
+      | ch -> append_escape ch)
     go_path;
-  let alias = Buffer.contents buf in
-  if alias = "mext_" then
-    "mext_pkg"
-  else
-    alias
+  match Buffer.contents buf with
+  | "" -> "pkg"
+  | fragment -> fragment
+
+let go_import_alias (go_path : string) : string =
+  let fragment = encoded_go_path_fragment go_path in
+  let buf = Buffer.create (String.length fragment + 5) in
+  Buffer.add_string buf "mext_";
+  Buffer.add_string buf fragment;
+  Buffer.contents buf
 
 let source_span ~(file_id : string option) ~(start_pos : int) ~(end_pos : int) : Diagnostic.span =
   match file_id with
@@ -103,6 +99,20 @@ let validate_return_type span ~(fn_name : string) (typ : mono_type) : (unit, Dia
     type_error span
       (Printf.sprintf "extern function %s return uses unsupported type %s" fn_name (to_string typ))
 
+let validate_unique_param_names span ~(fn_name : string) (params : AST.extern_param list) :
+    (unit, Diagnostic.t) result =
+  let rec go seen = function
+    | [] -> Ok ()
+    | (param : AST.extern_param) :: rest ->
+        if List.mem param.extern_param_name seen then
+          type_error span
+            (Printf.sprintf "extern function %s has duplicate parameter name %s" fn_name
+               param.extern_param_name)
+        else
+          go (param.extern_param_name :: seen) rest
+  in
+  go [] params
+
 let build_func ~(declaring_module : string) ~(file_id : string option) (block : AST.extern_block_def)
     (fn_sig : AST.extern_fn_sig) : (Artifacts.extern_func, Diagnostic.t) result =
   let span = source_span ~file_id ~start_pos:fn_sig.extern_fn_pos ~end_pos:fn_sig.extern_fn_end_pos in
@@ -119,6 +129,7 @@ let build_func ~(declaring_module : string) ~(file_id : string option) (block : 
     |> Result.map canonicalize_mono_type
     |> Result.map_error (fun (diag : Diagnostic.t) -> error_at_span ~code:"type-extern" ~message:diag.message span)
   in
+  let* () = validate_unique_param_names span ~fn_name:fn_sig.extern_fn_name fn_sig.extern_fn_params in
   let* () =
     map_result
       (fun ((param : AST.extern_param), typ) ->
@@ -190,7 +201,9 @@ let snapshot_calls () : (int, Artifacts.extern_call) Hashtbl.t = Hashtbl.copy ex
 
 let%test "go import alias canonicalizes paths" =
   go_import_alias "path/filepath" = "mext_path_filepath"
-  && go_import_alias "github.com/acme/text-case" = "mext_github_com_acme_text_case"
+  && go_import_alias "github.com/acme/text-case" = "mext_github_x2e_com_acme_text_x2d_case"
+  && go_import_alias "github.com/acme/text_case" = "mext_github_x2e_com_acme_text_u_case"
+  && go_import_alias "github.com/acme/text-case" <> go_import_alias "github.com/acme/text_case"
 
 let parse_one_extern source =
   match Syntax.Parser.parse ~file_id:"<test>" source with
@@ -226,6 +239,12 @@ let%test "extern registry accepts Unit return" =
   match register_source "extern \"fmt\" = { fn Println(s: Str) => Unit }" with
   | Ok () -> true
   | Error _ -> false
+
+let%test "extern registry rejects duplicate parameter names" =
+  clear ();
+  match register_source "extern \"strings\" = { fn Repeat(s: Str, s: Str) -> Str }" with
+  | Error diag -> diag.code = "type-extern" && String.contains diag.message 's'
+  | Ok () -> false
 
 let%test "extern registry rejects duplicate source functions" =
   clear ();

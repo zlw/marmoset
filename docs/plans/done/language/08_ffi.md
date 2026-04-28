@@ -3,7 +3,7 @@
 ## Maintenance
 
 - Last verified: 2026-04-28
-- Implementation status: Planning (reviewed, not started)
+- Implementation status: Complete (canonical v1)
 - Update trigger: Any extern syntax, module import resolution, call-resolution artifact, Go emitter import, or stdlib wrapper change
 
 ## Context
