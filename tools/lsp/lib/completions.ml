@@ -64,6 +64,7 @@ let keywords =
     ("trait", "Trait (interface) definition");
     ("impl", "Trait implementation");
     ("derive", "Automatic trait derivation");
+    ("extern", "Trusted Go FFI declarations");
     ("override", "Trait default replacement");
     ("true", "Boolean literal");
     ("false", "Boolean literal");
@@ -1138,6 +1139,7 @@ let%test "completions include keywords" =
   && List.mem "fn" labels
   && List.mem "match" labels
   && List.mem "case" labels
+  && List.mem "extern" labels
   && List.mem "override" labels
 
 let%test "function gets Function kind" =

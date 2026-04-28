@@ -445,8 +445,39 @@ and collect_stmt ~source ~type_map ~environment ~params ~tokens (stmt : Ast.AST.
             { pos = nstart; end_pos = nstart + nlen - 1; token_type = _type_type; modifiers = declaration_mod }
             :: !tokens
       | None -> ())
+  | Ast.AST.ExternBlock { extern_fns; _ } ->
+      List.iter
+        (fun (fn_sig : Ast.AST.extern_fn_sig) ->
+          let fn_len = String.length fn_sig.extern_fn_name in
+          (match find_name ~source ~start:fn_sig.extern_fn_pos ~limit:(fn_sig.extern_fn_end_pos + 1) fn_sig.extern_fn_name with
+          | Some (fn_start, _) ->
+              tokens :=
+                {
+                  pos = fn_start;
+                  end_pos = fn_start + fn_len - 1;
+                  token_type = function_type;
+                  modifiers = declaration_mod;
+                }
+                :: !tokens
+          | None -> ());
+          List.iter
+            (fun (param : Ast.AST.extern_param) ->
+              let param_len = String.length param.extern_param_name in
+              match find_name ~source ~start:fn_sig.extern_fn_pos ~limit:(fn_sig.extern_fn_end_pos + 1) param.extern_param_name with
+              | Some (param_start, _) ->
+                  tokens :=
+                    {
+                      pos = param_start;
+                      end_pos = param_start + param_len - 1;
+                      token_type = parameter_type;
+                      modifiers = declaration_mod;
+                    }
+                    :: !tokens
+              | None -> ())
+            fn_sig.extern_fn_params)
+        extern_fns
   | Ast.AST.ExportDecl _ | Ast.AST.ImportDecl _ -> ()
-  | Ast.AST.DeriveDef _ | Ast.AST.ExternBlock _ -> ()
+  | Ast.AST.DeriveDef _ -> ()
 
 (* Sort tokens by position, then delta-encode *)
 let encode_tokens ~source (raw : raw_token list) : int array =
@@ -591,3 +622,12 @@ let%test "method call produces method token" =
   let src = "let hello = (_: Int) -> \"hi\"; let r = { hello: hello }\nr.hello(0)" in
   let tokens = get_tokens src in
   has_token_type method_type tokens
+
+let%test "extern signatures produce function and parameter declaration tokens" =
+  let tokens = get_tokens "extern \"strings\" = { fn ToUpper(s: Str) -> Str }" in
+  match tokens with
+  | Some st ->
+      let decoded = decode_tokens st.data in
+      List.exists (fun (_, _, _, t, m) -> t = function_type && m land declaration_mod <> 0) decoded
+      && List.exists (fun (_, _, _, t, m) -> t = parameter_type && m land declaration_mod <> 0) decoded
+  | None -> false

@@ -98,7 +98,9 @@ and walk_stmt ~source ~ranges (stmt : Ast.AST.statement) =
   | Ast.AST.TypeDef _ | Ast.AST.ShapeDef _ ->
       maybe_range ~source ~pos:stmt.pos ~end_pos:stmt.end_pos ~kind:Lsp_t.FoldingRangeKind.Region ranges
   | Ast.AST.ExportDecl _ | Ast.AST.ImportDecl _ -> ()
-  | Ast.AST.DeriveDef _ | Ast.AST.TypeAlias _ | Ast.AST.ExternBlock _ -> ()
+  | Ast.AST.ExternBlock _ ->
+      maybe_range ~source ~pos:stmt.pos ~end_pos:stmt.end_pos ~kind:Lsp_t.FoldingRangeKind.Region ranges
+  | Ast.AST.DeriveDef _ | Ast.AST.TypeAlias _ -> ()
 
 (* Public entry point *)
 let compute ~(source : string) ~(program : Ast.AST.program) : Lsp_t.FoldingRange.t list =
@@ -124,6 +126,10 @@ let%test "multi-line function body produces folding range" =
 let%test "single-line function produces no folding range" =
   let ranges = get_ranges "let f = (x) -> { x }" in
   List.length ranges = 0
+
+let%test "multi-line extern block produces folding range" =
+  let ranges = get_ranges "extern \"strings\" = {\n  fn ToUpper(s: Str) -> Str\n}" in
+  List.length ranges = 1
 
 let%test "multi-line enum produces folding range" =
   let ranges = get_ranges "enum Color = {\n  Red\n  Green\n  Blue\n}" in
