@@ -6696,6 +6696,7 @@ let infer_program
         Annotation.clear_type_aliases ();
         Type_registry.clear ();
         Inherent_registry.clear ();
+        Extern_registry.clear ();
         clear_call_resolution_store ();
         clear_type_var_user_names ();
         clear_top_level_placeholders ());
@@ -6806,6 +6807,11 @@ let infer_program
                                       seen_aliases,
                                       seen_types,
                                       seen_shapes )
+                            | AST.ExternBlock block ->
+                                let declaring_module = Option.value stmt.file_id ~default:"<unknown>" in
+                                let file_id = stmt.file_id in
+                                let* () = Extern_registry.register_block ~declaring_module ~file_id block in
+                                Ok (seen_traits, seen_enums, seen_aliases, seen_types, seen_shapes)
                             | _ -> Ok (seen_traits, seen_enums, seen_aliases, seen_types, seen_shapes)
                           in
                           let infer_top_level_stmt env (stmt : AST.statement) =

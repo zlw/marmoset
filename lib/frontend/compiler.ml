@@ -11,6 +11,7 @@ module Builtins = Typecheck.Builtins
 module Checker = Typecheck.Checker
 module Codegen = Codegen.Emitter
 module Enum_registry = Typecheck.Enum_registry
+module Extern_registry = Typecheck.Extern_registry
 module Inherent_registry = Typecheck.Inherent_registry
 module Infer = Typecheck.Infer
 module Module_sig = Typecheck.Module_sig
@@ -39,6 +40,8 @@ type checked_module = {
 type project_resolution_artifacts = {
   type_map : Infer.type_map;
   call_resolution_map : (int, Typecheck.Resolution_artifacts.call_resolution) Hashtbl.t;
+  extern_declarations : (string, Typecheck.Resolution_artifacts.extern_func) Hashtbl.t;
+  extern_calls : (int, Typecheck.Resolution_artifacts.extern_call) Hashtbl.t;
   method_type_args_map : (int, Types.mono_type list) Hashtbl.t;
   method_def_map : (int, Typecheck.Resolution_artifacts.typed_method_def) Hashtbl.t;
   trait_object_coercion_map : (int, Typecheck.Resolution_artifacts.trait_object_coercion) Hashtbl.t;
@@ -96,6 +99,8 @@ let create_project_resolution_artifacts () : project_resolution_artifacts =
   {
     type_map = Hashtbl.create 512;
     call_resolution_map = Hashtbl.create 256;
+    extern_declarations = Hashtbl.create 64;
+    extern_calls = Hashtbl.create 128;
     method_type_args_map = Hashtbl.create 128;
     method_def_map = Hashtbl.create 128;
     trait_object_coercion_map = Hashtbl.create 128;
@@ -106,6 +111,8 @@ let merge_project_resolution_artifacts (dst : project_resolution_artifacts) (res
     unit =
   merge_hashtbl dst.type_map result.type_map;
   merge_hashtbl dst.call_resolution_map result.call_resolution_map;
+  merge_hashtbl dst.extern_declarations result.extern_declarations;
+  merge_hashtbl dst.extern_calls result.extern_calls;
   merge_hashtbl dst.method_type_args_map result.method_type_args_map;
   merge_hashtbl dst.method_def_map result.method_def_map;
   merge_hashtbl dst.trait_object_coercion_map result.trait_object_coercion_map;
@@ -148,6 +155,7 @@ let reset_module_state () =
   Trait_registry.clear ();
   Inherent_registry.clear ();
   Enum_registry.clear ();
+  Extern_registry.clear ();
   Infer.clear_call_resolution_store ();
   Infer.clear_type_var_user_names ();
   Infer.clear_top_level_placeholders ();

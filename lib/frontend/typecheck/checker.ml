@@ -18,6 +18,10 @@ type typecheck_result = {
   identifier_symbols : (int * Infer.symbol_id) list;
   call_resolution_map : (int, Resolution_artifacts.call_resolution) Hashtbl.t;
       (* Phase 5: Explicit call-resolution metadata for emitter *)
+  extern_declarations : (string, Resolution_artifacts.extern_func) Hashtbl.t;
+      (* FFI: extern declarations keyed by Go path/function identity *)
+  extern_calls : (int, Resolution_artifacts.extern_call) Hashtbl.t;
+      (* FFI: extern call artifacts keyed by expression id *)
   method_def_map : (int, Resolution_artifacts.typed_method_def) Hashtbl.t;
       (* Phase 5.4: Typed method definitions for emitter. Populated during Phase 6. *)
   method_type_args_map : (int, Types.mono_type list) Hashtbl.t;
@@ -62,6 +66,8 @@ let make_typecheck_result
     ~(environment : Infer.type_env)
     ~(type_map : Infer.type_map) : typecheck_result =
   let call_resolution_map = Infer.snapshot_call_resolution_store () in
+  let extern_declarations = Extern_registry.snapshot_declarations () in
+  let extern_calls = Extern_registry.snapshot_calls () in
   let method_def_map = Infer.snapshot_method_def_store () in
   let method_type_args_map = Infer.snapshot_method_type_args_store () in
   let trait_object_coercion_map = Infer.snapshot_trait_object_coercion_store () in
@@ -76,6 +82,8 @@ let make_typecheck_result
     symbol_table;
     identifier_symbols;
     call_resolution_map;
+    extern_declarations;
+    extern_calls;
     method_def_map;
     method_type_args_map;
     trait_object_coercion_map;
@@ -1774,3 +1782,52 @@ let%test "followup C2: intersections can flow to compatible member record annota
   match check_string ~file_id:"main.mr" code with
   | Ok result -> result.result_type = Types.TInt
   | Error _ -> false
+
+let%test "ffi F1b: checker snapshots extern declarations" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  match check_string ~file_id:"main.mr" "extern \"strings\" = { fn ToUpper(s: Str) -> Str }" with
+  | Ok result -> (
+      match Hashtbl.find_opt result.extern_declarations (Extern_registry.extern_key ~go_path:"strings" ~go_func_name:"ToUpper") with
+      | Some func ->
+          func.source_qualifier = "strings" && func.go_import_alias = "mext_strings"
+          && func.param_names = [ "s" ] && func.param_types = [ Types.TString ]
+          && func.return_type = Types.TString
+      | None -> false)
+  | Error _ -> false
+
+let%test "ffi F1b: checker rejects unsupported extern parameter type" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  match check_string ~file_id:"main.mr" "extern \"strings\" = { fn Join(xs: List[Str]) -> Str }" with
+  | Ok _ -> false
+  | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-extern") diags
+
+let%test "ffi F1b: checker normalizes primitive aliases in extern signatures" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  let code =
+    {|
+      type Stringy = Str
+      extern "strings" = { fn ToUpper(s: Stringy) -> Stringy }
+    |}
+  in
+  match check_string ~file_id:"main.mr" code with
+  | Ok result -> (
+      match Hashtbl.find_opt result.extern_declarations (Extern_registry.extern_key ~go_path:"strings" ~go_func_name:"ToUpper") with
+      | Some func -> func.param_types = [ Types.TString ] && func.return_type = Types.TString
+      | None -> false)
+  | Error _ -> false
+
+let%test "ffi F1b: checker rejects conflicting aliases for the same qualifier" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  let code =
+    {|
+      extern "strings" as s = { fn ToUpper(s: Str) -> Str }
+      extern "path/filepath" as s = { fn Base(path: Str) -> Str }
+    |}
+  in
+  match check_string ~file_id:"main.mr" code with
+  | Ok _ -> false
+  | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-extern") diags

@@ -610,3 +610,4 @@ This plan should be implementable by a medium-reasoning model if it follows thes
 - 2026-04-28 17:16 CEST: F1a mechanical call-resolution migration started; target is moving existing method-call variants into `Resolution_artifacts.call_resolution` with no extern semantics.
 - 2026-04-28 17:22 CEST: F1a mechanical migration green; `dune runtest lib/frontend/typecheck`, `dune runtest lib/frontend`, `dune runtest lib/backend/go`, `dune runtest tools/lsp/lib`, and `dune build @all` pass.
 - 2026-04-28 17:23 CEST: F1a shared call-resolution artifacts and mechanical consumer updates committed.
+- 2026-04-28 17:38 CEST: F1b extern declaration registry implemented with declaration/call artifact types, deterministic Go import aliases, duplicate/signature/type validation, checker/compiler snapshots, and green `dune runtest lib/frontend/typecheck`, `dune build @all`, and `make unit`.

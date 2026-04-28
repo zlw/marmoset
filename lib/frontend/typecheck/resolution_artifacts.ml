@@ -29,6 +29,27 @@ type call_resolution =
   | QualifiedInherentMethod (* Type.method(receiver, args...) *)
   | FieldFunctionCall
 
+type extern_func = {
+  extern_key : string;
+  declaring_module : string;
+  go_path : string;
+  source_qualifier : string;
+  go_import_alias : string;
+  go_func_name : string;
+  param_names : string list;
+  param_types : Types.mono_type list;
+  return_type : Types.mono_type;
+  is_effectful : bool;
+  source_span : Diagnostics.Diagnostic.span;
+}
+
+type extern_call = {
+  call_func_key : string;
+  call_arg_types : Types.mono_type list;
+  call_return_type : Types.mono_type;
+  call_effectful : bool;
+}
+
 (* Phase 5.4: Typed method-definition artifact.
    Records inferred signatures so the emitter can use them as source-of-truth
    without re-reading trait/inherent registries. Populated during Phase 6. *)
