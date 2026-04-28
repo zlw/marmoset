@@ -1013,6 +1013,18 @@ let rec type_to_go (state : mono_state) (t : Types.mono_type) : string =
       track_named_type_inst state t;
       mangle_type t
 
+and extern_type_to_go (t : Types.mono_type) : string =
+  match Types.canonicalize_mono_type t with
+  | Types.TInt -> "int64"
+  | Types.TFloat -> "float64"
+  | Types.TBool -> "bool"
+  | Types.TString -> "string"
+  | Types.TNull -> "struct{}"
+  | unsupported ->
+      failwith
+        (Printf.sprintf "Codegen error: unsupported extern type reached backend: %s"
+           (Types.to_string unsupported))
+
 and emit_func_type state arg ret =
   let rec collect_args = function
     | Types.TFun (a, r, _) ->
@@ -9247,6 +9259,15 @@ let%test "structured imports ignore package-looking string literals" =
   match compile_string ~file_id:"<codegen>" {|let s = "fmt.Sprintf strconv.FormatInt"; s|} with
   | Ok (code, _) -> (not (string_contains code {|import "fmt"|})) && not (string_contains code {|import "strconv"|})
   | Error _ -> false
+
+let%test "extern type lowering accepts v1 scalar boundary" =
+  List.map extern_type_to_go [ Types.TInt; Types.TFloat; Types.TBool; Types.TString; Types.TNull ]
+  = [ "int64"; "float64"; "bool"; "string"; "struct{}" ]
+
+let%test "extern type lowering rejects unsupported backend types" =
+  match extern_type_to_go (Types.TArray Types.TInt) with
+  | _ -> false
+  | exception Failure msg -> string_contains msg "unsupported extern type reached backend"
 
 let%test "Dyn codegen does not synthesize coercions without recorded metadata" =
   let source = "let x: Dyn[Show] = 42\nputs(Show.show(x))" in
