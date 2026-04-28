@@ -34,6 +34,7 @@ Current architecture matters for this plan:
 4. Emit deterministic Go imports and generated adapter functions for only the extern functions that are actually called.
 5. Preserve Marmoset effect checking: pure wrappers cannot call effectful extern functions.
 6. Keep v1 small enough to implement safely before the full stdlib milestone.
+7. Establish a clear extension path for Go values that should not become raw Marmoset surface concepts, such as pointers, `any`, and channels.
 
 ## Non-Goals
 
@@ -43,11 +44,12 @@ Current architecture matters for this plan:
 4. No automatic `(T, error) -> Result[T, Str]` or `(T, bool) -> Option[T]` translation in v1.
 5. No first-class extern function values in v1. `let f = strings.ToUpper` is rejected; only direct call syntax is supported.
 6. No migration of builtin functions or primitive trait impls out of OCaml in this milestone.
+7. No raw pointer, raw channel, or untyped `Any` Marmoset surface.
 
 ## Locked Decisions
 
 1. **Wrapper module pattern.** Extern declarations may appear in any module, but the intended API is a dedicated wrapper module that exports ordinary Marmoset functions.
-2. **Top-level syntax.** `extern "go/import/path" { fn Name(param: Type, ...) -> Type }` and `extern "path" as alias { ... }`.
+2. **Top-level syntax.** `extern "go/import/path" = { fn Name(param: Type, ...) -> Type }` and `extern "path" as alias = { ... }`.
 3. **Extern blocks are declarations, not imports.** Go import paths never become `Module_context.import_info`, discovery dependencies, or Marmoset module ids.
 4. **Extern functions are private.** `export ToUpper` for an extern-only function is still invalid. A module must define and export a Marmoset wrapper function.
 5. **Qualifier is stored once.** The effective qualifier is the explicit alias or the last import-path segment. It is stored on the extern block during parsing/lowering and not recomputed later. If the derived segment is not a plain valid identifier, the user must write `as alias`.
@@ -59,6 +61,8 @@ Current architecture matters for this plan:
 11. **Generalized call artifact now.** This milestone replaces the method-only resolution map with a `Resolution_artifacts.call_resolution` family and adds an extern-qualified-call variant. The emitter must not rediscover extern calls from syntax.
 12. **Structured imports.** The emitter stops relying on substring scans such as `fmt.` and `strconv.` for main imports. Builtin and extern import needs are accumulated as structured import specs and rendered deterministically.
 13. **Project-wide extern signature coherence.** The same Go import path plus function name must have exactly one Marmoset extern signature across the reachable project. If two modules declare conflicting signatures, compilation fails before codegen.
+14. **Semantic adapters are explicit.** Go idioms such as `(T, error)`, `(T, bool)`, and nil returns must not silently become `Result` or `Option`. Wrapper authors choose the Marmoset API shape explicitly.
+15. **No raw Go escape hatches.** Pointers, `any`, and channels are not first-class Marmoset concepts. Future support must wrap them in Marmoset-owned abstractions instead of exposing Go's raw model.
 
 ## Syntax
 
@@ -69,7 +73,7 @@ Current architecture matters for this plan:
 
 export upcase, include?
 
-extern "strings" {
+extern "strings" = {
   fn ToUpper(s: Str) -> Str
   fn Contains(s: Str, substr: Str) -> Bool
 }
@@ -86,7 +90,7 @@ fn include?(s: Str, substr: Str) -> Bool = {
 ### Aliased Go Package
 
 ```marmoset
-extern "path/filepath" as fp {
+extern "path/filepath" as fp = {
   fn Base(path: Str) -> Str
 }
 
@@ -98,7 +102,7 @@ fn basename(path: Str) -> Str = {
 ### Effectful Extern
 
 ```marmoset
-extern "os" {
+extern "os" = {
   fn Getenv(key: Str) => Str
 }
 
@@ -128,6 +132,74 @@ Unsupported in v1:
 Transparent aliases to allowed primitive types are normalized after import/type rewriting. Transparent aliases to unsupported representations are rejected with the same unsupported-extern-type diagnostic.
 
 The full stdlib can still start with scalar wrappers such as `std/str` and later expand the mapping when Go-side type metadata exists.
+
+## Future Mapping Direction
+
+This plan intentionally separates "not in v1" from "never". The long-term rule is that Marmoset should expose Marmoset semantics, not Go implementation details.
+
+### Collections
+
+Slices and maps can be added later when recursive FFI type mapping exists.
+
+Required decisions before enabling them:
+
+- `[]T` maps only when `T` maps recursively.
+- `map[K]V` maps only when `K` and `V` map recursively and `K` is valid for Go map keys.
+- Go slices/maps are mutable and can be nil. Marmoset collection APIs should not expose aliasing mutation by accident.
+- If a Go function returns a slice/map and Marmoset exposes it as `List`/`Map`, the wrapper policy must say whether to copy, borrow read-only, or keep an opaque handle.
+- Nil collection results must be explicit: either the wrapper maps nil to empty, or it exposes `Option[List[T]]` / `Option[Map[K, V]]`. There is no global nil-to-empty rule in this plan.
+
+### Structs And Records
+
+Simple Go structs may map to Marmoset records later only when field names and field types are fully known in the extern declaration.
+
+Rules to decide later:
+
+- exported Go fields only, unless generated Go wrapper code deliberately accesses unexported fields inside the same package, which normal external packages cannot do
+- field order and missing-field diagnostics
+- copy semantics for struct values
+- no implicit mapping for embedded fields or methods in the first struct phase
+
+### Pointers And Handles
+
+Marmoset should not expose raw pointers.
+
+Future pointer-facing APIs should use one of these explicit shapes:
+
+- `Option[T]` for nullable pointer-to-value results when the wrapper chooses value-copy semantics
+- an opaque nominal handle type for resources such as files, buffers, database handles, HTTP clients, or OS handles
+- an effectful stdlib module that owns lifecycle operations such as open/close/read/write
+
+Raw `*T`, pointer arithmetic, address-taking, and pointer identity are out of scope for Marmoset source.
+
+### `any` And Interfaces
+
+Go `any` / `interface{}` should not map to a universal Marmoset `Any`.
+
+Future wrappers should choose one explicit representation:
+
+- decode into a concrete Marmoset type
+- decode into a closed sum such as a future JSON value type
+- expose a trait object only when the Go value has a declared object-safe behavior contract
+- keep it behind an opaque handle
+
+This avoids making every use of `any` a dynamic type-system hole.
+
+### Errors, Nil, And Presence Returns
+
+Go error and presence idioms need explicit mapping because their meanings vary by API.
+
+- `(T, error)` may become `Result[T, Str]`, `Result[T, E]`, panic-on-error, or an effectful wrapper-specific diagnostic policy.
+- `(T, bool)` may mean optional lookup, successful parse, changed state, accepted write, or some other predicate.
+- nil may mean absent, empty, default, invalid, closed, or error-dependent.
+
+Therefore future FFI syntax may add explicit adapter declarations, but this milestone does not add silent global conversions. In v1, wrapper modules expose `Result` and `Option` by writing ordinary Marmoset APIs around supported scalar externs, or by waiting for an explicit adapter phase.
+
+### Concurrency
+
+Go channels and goroutines should not appear raw in Marmoset signatures.
+
+Future concurrency should come through Marmoset-owned abstractions such as `Task`, `Stream`, `Mailbox`, or another stdlib design. Go channel interop can live behind those modules later, but `chan T` is not part of the user-facing FFI type mapping.
 
 ## Implementation Phases
 
@@ -171,7 +243,7 @@ and extern_param = {
 
 **Parser rules:**
 
-- `extern` is top-level only.
+- `extern` is top-level only and uses the normal declaration separator before its body: `extern "path" [as alias] = { ... }`.
 - It counts as a body declaration for header ordering: `export` and `import` must appear before it.
 - A default qualifier derived from the import path must be a plain identifier; otherwise parsing/lowering reports that an explicit `as alias` is required.
 - Function signatures inside the block require:
@@ -189,13 +261,36 @@ and extern_param = {
 - Reject missing param annotation, missing arrow, missing return type, function body, generic extern function, and positional type-only params.
 - Reject invalid derived qualifiers unless `as alias` is present, and reject aliases or function names with `?`/`!` suffixes.
 - Lowering test proves path, alias, qualifier, spans, param types, return type, and effect flag survive.
-- Discovery test proves `extern "fmt"` does not try to load `fmt.mr`.
+- Discovery test proves `extern "fmt" = { ... }` does not try to load `fmt.mr`.
 
 **Gate:** `make unit` green.
 
 ### Phase F1: Extern Metadata, Scope, and Call Artifacts
 
 **Goal:** Validate extern declarations, make direct extern calls type-check, and record structured call metadata for the emitter.
+
+**Execution slices:**
+
+1. **F1a: Mechanical call-resolution migration only.**
+   - Move the existing `Infer.method_resolution` variants into `Resolution_artifacts.call_resolution`.
+   - Keep behavior unchanged.
+   - Update `Checker.typecheck_result`, `Compiler.project_resolution_artifacts`, LSP helpers, and emitter parameters to use the new type.
+   - Focused verification: existing unit tests in `lib/frontend/typecheck`, `lib/frontend`, `lib/backend/go`, and `tools/lsp/lib`.
+2. **F1b: Extern declaration registry.**
+   - Add registry storage and snapshots.
+   - Register `ExternBlock` declarations.
+   - Validate duplicates, qualifier/path/function consistency, unsupported types, and transparent alias normalization.
+   - Do not type-check extern calls yet.
+3. **F1c: Extern call typechecking.**
+   - Add the extern namespace branch to dotted-call inference.
+   - Enforce direct-call-only behavior.
+   - Record `ExternQualifiedCall` plus effectfulness during inference.
+4. **F1d: Module/import integration.**
+   - Rewrite extern signature types in `import_resolver`.
+   - Validate qualifier collisions against imports, implicit bindings, and declarations.
+   - Merge extern artifacts through the compiler project.
+
+Do not combine F1a with extern semantics. The artifact migration is risky enough to deserve its own green checkpoint.
 
 **New or changed modules:**
 
@@ -296,6 +391,23 @@ The generated Go import alias is canonical per import path, for example `mext_st
 
 **Goal:** Compile extern calls to Go through generated wrappers and structured imports.
 
+**Execution slices:**
+
+1. **F2a: Structured import builder.**
+   - Replace the final import substring scan with an explicit import accumulator.
+   - Preserve current builtin import behavior first.
+   - Snapshot current generated Go for representative existing fixtures before adding externs.
+2. **F2b: Extern type-to-Go lowering.**
+   - Add `extern_type_to_go` for only the v1 scalar mapping.
+   - Add unit tests for unsupported types at the codegen boundary even though typecheck should reject them earlier.
+3. **F2c: Wrapper emission.**
+   - Emit wrappers for used extern calls only.
+   - Use stable wrapper names based on Go path plus function name after signature coherence validation.
+   - Use deterministic generated Go import aliases in wrapper bodies.
+4. **F2d: Extern call lowering.**
+   - Lower `ExternQualifiedCall` artifacts to wrapper calls.
+   - Add exact generated-Go snapshots for imports, aliases, wrappers, unused externs, and duplicate-basename packages.
+
 **Emitter changes (`lib/backend/go/emitter.ml`):**
 
 1. Replace substring-based import detection with structured import accumulation.
@@ -333,7 +445,7 @@ Source:
 ```marmoset
 export upcase
 
-extern "strings" {
+extern "strings" = {
   fn ToUpper(s: Str) -> Str
 }
 
@@ -364,7 +476,7 @@ The exact module wrapper function name follows the existing monomorphized module
 
 - Integration: `strings.ToUpper` wrapper compiles and runs.
 - Integration: `strings.Contains` wrapper compiles and returns `Bool`.
-- Integration: alias import `extern "path/filepath" as fp { fn Base(path: Str) -> Str }`.
+- Integration: alias import `extern "path/filepath" as fp = { fn Base(path: Str) -> Str }`.
 - Integration/snapshot: unused extern does not emit wrapper or import.
 - Snapshot: two packages with the same basename do not collide in wrapper names.
 - Snapshot: import block is sorted and aliases render correctly.
@@ -379,7 +491,7 @@ The exact module wrapper function name follows the existing monomorphized module
 
 **Tests:**
 
-- `lib/str.mr` declares `extern "strings"` and exports `upcase`; `main.mr` imports `lib.str` and calls `str.upcase("hi")`.
+- `lib/str.mr` declares `extern "strings" = { ... }` and exports `upcase`; `main.mr` imports `lib.str` and calls `str.upcase("hi")`.
 - `main.mr` cannot call `strings.ToUpper("hi")` unless it declares its own extern block.
 - Two wrapper modules can use the same Go package/function only when their extern signatures match exactly; imports and wrappers are deduplicated for matching declarations.
 - Two wrapper modules can use different source aliases for the same package without wrapper-name or Go import alias collision.
@@ -424,12 +536,38 @@ The exact module wrapper function name follows the existing monomorphized module
 
 ## Commit Plan
 
-1. Syntax and lowering: token, surface AST, AST, parser, lower tests.
-2. Metadata and typechecking: extern registry, call-resolution artifact migration, import-resolver rewriting, compiler artifact merge.
-3. Codegen: structured imports, wrapper emission, extern call lowering, snapshots.
-4. Multi-module privacy and docs: wrapper flow fixtures, feature docs, roadmap update.
+1. Syntax data model: token, surface AST, canonical AST, lowering, pass-through statement walkers.
+2. Syntax parser: extern parser, header ordering, invalid qualifier/name diagnostics, discovery non-dependency test.
+3. Mechanical call-resolution migration: no extern semantics, existing tests green.
+4. Extern registry: signature validation, v1 type policy, transparent alias policy, duplicate/coherence checks.
+5. Extern call inference: direct call typechecking, effect tracking, first-class use rejection.
+6. Module integration: import resolver type rewriting, qualifier collision diagnostics, compiler artifact merge.
+7. Structured imports: replace substring scan while preserving existing generated Go behavior.
+8. Wrapper codegen: extern wrappers, deterministic import aliases, extern call lowering, snapshots.
+9. Multi-module privacy: wrapper module fixtures and cross-module rejection tests.
+10. Docs and harness: `docs/features/ffi.md`, `docs/INDEX.md`, `docs/ARCHITECTURE.md`, roadmap, `13_ffi.sh` selector wiring.
 
 Each commit should keep focused tests green before moving to the next slice.
+
+## Execution Guardrails For Implementation
+
+This plan should be implementable by a medium-reasoning model if it follows these guardrails:
+
+1. Start each slice by adding one focused failing test for the behavior in that slice.
+2. Do not edit emitter code during F0/F1 except for type signature fallout from the mechanical artifact migration.
+3. Do not add stdlib wrapper modules until extern syntax, typecheck, and codegen are green on small fixtures.
+4. Keep the first call-resolution commit behavior-preserving. If generated Go changes in that commit, stop and investigate.
+5. Keep unsupported type diagnostics in typecheck, not codegen. Codegen checks are defensive only.
+6. When a slice changes shared artifacts, update all snapshot/lookup consumers in the same commit: compiler, emitter, LSP definition/completion/signature-help helpers, and tests.
+7. Prefer exact diagnostics over broad failure strings for negative fixtures.
+8. Run focused tests after each slice:
+   - syntax/lowering: `dune runtest lib/frontend/syntax`
+   - registry/typecheck: `dune runtest lib/frontend/typecheck`
+   - compiler/import integration: `dune runtest lib/frontend`
+   - emitter: `dune runtest lib/backend/go`
+   - LSP artifact fallout: `dune runtest tools/lsp/lib`
+   - fixtures: `make integration ffi`
+   - generated Go snapshots: `make integration snapshots`
 
 ## Risks
 
@@ -465,3 +603,7 @@ Each commit should keep focused tests green before moving to the next slice.
 - 2026-04-28 16:31 CEST: Parallel Codex review agents reported stale assumptions around prelude status, surface/lower parsing, missing generalized call artifacts, module-local extern metadata, over-broad type mapping, import generation, and fixture numbering.
 - 2026-04-28 16:40 CEST: Plan revised to match the current compiler pipeline, narrow v1 type mapping, require a real call-resolution artifact migration, specify module-local extern privacy, and add concrete tests/docs/commit boundaries.
 - 2026-04-28 16:47 CEST: Second Codex-only review completed; plan patched to resolve `Unit` parameter policy, fixed-arity variadic/ignored-return wording, explicit extern artifact payloads, registry lifetime, canonical Go import aliases, default qualifier validation, transparent alias policy, and `13_ffi.sh` selector wiring.
+- 2026-04-28 17:07 CEST: F0 syntax/lowering test-first slice started; scope is lexer keyword, surface/core AST extern nodes, parser/lowering preservation, and syntax-only pass-through updates.
+- 2026-04-28 17:08 CEST: User syntax correction accepted; extern blocks now require `=` before `{` to match other top-level declaration forms.
+- 2026-04-28 17:13 CEST: F0 syntax/lowering implementation green; `dune build @all`, `dune runtest lib/frontend/syntax`, and `make unit` pass.
+- 2026-04-28 17:14 CEST: Commit `427ad94` created for F0 extern syntax, parser/lowering preservation, discovery non-dependency coverage, and syntax-only pass-through fallout.

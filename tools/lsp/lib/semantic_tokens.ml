@@ -446,7 +446,7 @@ and collect_stmt ~source ~type_map ~environment ~params ~tokens (stmt : Ast.AST.
             :: !tokens
       | None -> ())
   | Ast.AST.ExportDecl _ | Ast.AST.ImportDecl _ -> ()
-  | Ast.AST.DeriveDef _ -> ()
+  | Ast.AST.DeriveDef _ | Ast.AST.ExternBlock _ -> ()
 
 (* Sort tokens by position, then delta-encode *)
 let encode_tokens ~source (raw : raw_token list) : int array =

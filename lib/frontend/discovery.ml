@@ -169,6 +169,11 @@ let imports_of_program (program : AST.program) : Module_context.import_info list
       | _ -> None)
     program
 
+let%test "extern declarations do not create module imports" =
+  match Syntax.Parser.parse ~file_id:"<test>" "extern \"fmt\" = { fn Println(s: Str) => Unit }\n" with
+  | Ok program -> imports_of_program program = []
+  | Error _ -> false
+
 let import_error (imp : Module_context.import_info) ~(code : string) ~(message : string) : Diagnostic.t =
   match imp.file_id with
   | Some file_id ->
@@ -425,7 +430,7 @@ let collect_expr_ids (program : AST.program) : int list =
     | AST.Return expr | AST.ExpressionStmt expr -> expr_ids expr
     | AST.Block stmts -> List.concat_map stmt_ids stmts
     | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ | AST.TraitDef _ | AST.ImplDef _ | AST.InherentImplDef _
-    | AST.DeriveDef _ | AST.TypeAlias _ ->
+    | AST.DeriveDef _ | AST.TypeAlias _ | AST.ExternBlock _ ->
         []
   in
   List.concat_map stmt_ids program

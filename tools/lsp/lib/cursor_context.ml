@@ -208,7 +208,7 @@ let build_scope_index (program : Surface.surface_program) : scope_index =
   List.fold_left
     (fun acc (stmt : Surface.surface_top_stmt) ->
       match stmt.std_decl with
-      | Surface.SExportDecl _ | Surface.SImportDecl _ -> acc
+      | Surface.SExportDecl _ | Surface.SImportDecl _ | Surface.SExternBlock _ -> acc
       | Surface.SLet { name; name_ref; value; type_annotation } ->
           let acc =
             add_binding acc ~binding_kind:Value_binding ~binding_name:name ~binding_ref:name_ref
@@ -576,7 +576,7 @@ and reference_in_method_impl ~(scope_index : scope_index) ~(offset : int) (metho
 let reference_in_top_stmt ~(scope_index : scope_index) ~(offset : int) (stmt : Surface.surface_top_stmt) :
     reference option =
   match stmt.std_decl with
-  | Surface.SExportDecl _ -> None
+  | Surface.SExportDecl _ | Surface.SExternBlock _ -> None
   | Surface.SImportDecl { import_path; import_path_refs; import_alias_ref; _ } ->
       first_some
         (Option.bind import_alias_ref (fun alias_ref ->
@@ -814,7 +814,7 @@ let collect_references ~(input : cursor_context_input) : reference list =
   List.concat_map
     (fun (stmt : Surface.surface_top_stmt) ->
       match stmt.std_decl with
-      | Surface.SExportDecl _ -> []
+      | Surface.SExportDecl _ | Surface.SExternBlock _ -> []
       | Surface.SImportDecl { import_path; import_path_refs; import_alias_ref; _ } ->
           Option.fold ~none:[]
             ~some:(fun alias_ref -> [ Import_alias { alias_ref; import_path } ])

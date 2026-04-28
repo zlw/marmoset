@@ -270,7 +270,7 @@ let exportable_decl_keys ~(default_file_path : string) (program : Export_edits.S
             { surface_name = shape_name; declaration_kind = Export_edits.Shape_decl; name_ref = shape_name_ref }
       | Export_edits.Surface.STraitDef { name; name_ref; _ } ->
           with_decl { surface_name = name; declaration_kind = Export_edits.Trait_decl; name_ref }
-      | Export_edits.Surface.SExportDecl _ | Export_edits.Surface.SImportDecl _
+      | Export_edits.Surface.SExportDecl _ | Export_edits.Surface.SImportDecl _ | Export_edits.Surface.SExternBlock _
       | Export_edits.Surface.SAmbiguousImplDef _ | Export_edits.Surface.SInherentImplDef _
       | Export_edits.Surface.SExpressionStmt _ | Export_edits.Surface.SReturn _ | Export_edits.Surface.SBlock _ ->
           None)

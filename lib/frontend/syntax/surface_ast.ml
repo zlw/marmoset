@@ -76,6 +76,31 @@ module Surface = struct
     stp_type : surface_type_expr;
   }
 
+  and surface_extern_block = {
+    seb_go_path : string;
+    seb_go_path_ref : name_ref;
+    seb_alias : string option;
+    seb_alias_ref : name_ref option;
+    seb_qualifier : string;
+    seb_fns : surface_extern_fn_sig list;
+  }
+
+  and surface_extern_fn_sig = {
+    sef_name : string;
+    sef_name_ref : name_ref;
+    sef_params : surface_extern_param list;
+    sef_return_type : surface_type_expr;
+    sef_effectful : bool;
+    sef_pos : int;
+    sef_end_pos : int;
+  }
+
+  and surface_extern_param = {
+    sep_name : string;
+    sep_name_ref : name_ref;
+    sep_type : surface_type_expr;
+  }
+
   (* ── Surface patterns ── *)
   and surface_pattern_kind =
     | SPWildcard
@@ -224,6 +249,7 @@ module Surface = struct
         import_alias : string option;
         import_alias_ref : name_ref option;
       }
+    | SExternBlock of surface_extern_block
     | SLet of {
         name : string;
         name_ref : name_ref;

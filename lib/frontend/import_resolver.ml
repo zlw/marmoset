@@ -775,6 +775,7 @@ let rewrite_program
     in
     match stmt.stmt with
     | AST.ExportDecl _ | AST.ImportDecl _ -> Ok (AST.{ stmt with stmt = Block [] }, value_scope)
+    | AST.ExternBlock _ -> Ok (stmt, value_scope)
     | AST.Let { name; value; type_annotation } ->
         let rewritten_name =
           if String.equal name "_" || not at_top_level then

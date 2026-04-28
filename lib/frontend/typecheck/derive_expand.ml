@@ -421,7 +421,7 @@ let clone_default_body
       | AST.ExpressionStmt expr -> AST.ExpressionStmt (clone_expr bound_names expr)
       | AST.Block stmts -> AST.Block (List.map (clone_stmt bound_names) stmts)
       | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ | AST.TraitDef _ | AST.ImplDef _ | AST.InherentImplDef _
-      | AST.DeriveDef _ | AST.TypeAlias _ ->
+      | AST.DeriveDef _ | AST.TypeAlias _ | AST.ExternBlock _ ->
           stmt.stmt
     in
     AST.mk_stmt ~pos:stmt.pos ~end_pos:stmt.end_pos ~file_id:stmt.file_id stmt_kind

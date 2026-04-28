@@ -431,7 +431,8 @@ let extract_module_locals (program : AST.program) : (Module_sig.module_locals, D
                 (Ok []) derive_traits
             in
             go { acc with trait_impls = List.rev_append derived_impls acc.trait_impls } rest
-        | AST.ExportDecl _ | AST.ImportDecl _ | AST.Let _ | AST.Return _ | AST.ExpressionStmt _ | AST.Block _ ->
+        | AST.ExportDecl _ | AST.ImportDecl _ | AST.ExternBlock _ | AST.Let _ | AST.Return _ | AST.ExpressionStmt _
+        | AST.Block _ ->
             go acc rest)
   in
   go empty_locals_acc program

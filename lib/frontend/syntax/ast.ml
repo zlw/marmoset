@@ -113,6 +113,28 @@ module AST = struct
   }
   [@@deriving show]
 
+  and extern_block_def = {
+    extern_go_path : string;
+    extern_alias : string option;
+    extern_qualifier : string;
+    extern_fns : extern_fn_sig list;
+  }
+
+  and extern_fn_sig = {
+    extern_fn_name : string;
+    extern_fn_params : extern_param list;
+    extern_fn_return_type : type_expr;
+    extern_fn_effectful : bool;
+    extern_fn_pos : int;
+    extern_fn_end_pos : int;
+  }
+
+  and extern_param = {
+    extern_param_name : string;
+    extern_param_type : type_expr;
+  }
+  [@@deriving show]
+
   and statement = {
     stmt : stmt_kind;
     pos : int;
@@ -146,6 +168,7 @@ module AST = struct
     | InherentImplDef of inherent_impl_def (* Phase 4.5: impl Point = { ... } *)
     | DeriveDef of derive_def (* canonical internal derive form *)
     | TypeAlias of type_alias_def (* transparent alias declaration *)
+    | ExternBlock of extern_block_def
   [@@deriving show]
 
   (* Phase 4.4: Transparent type definition *)
@@ -340,6 +363,7 @@ module AST = struct
           match import_alias with
           | None -> base
           | Some alias -> base ^ " as " ^ alias)
+      | ExternBlock block -> Printf.sprintf "extern %S as %s = { ... }" block.extern_go_path block.extern_qualifier
       | Let l -> Printf.sprintf "let %s = %s;" l.name (expression_to_string l.value)
       | Return expr -> Printf.sprintf "return %s;" (expression_to_string expr)
       | ExpressionStmt expr -> expression_to_string expr

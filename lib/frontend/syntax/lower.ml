@@ -29,7 +29,7 @@ let lower_context_of_program (prog : Surface.surface_program) : lower_context =
   List.fold_left
     (fun ({ constraint_names; type_names } as acc) (ts : Surface.surface_top_stmt) ->
       match ts.std_decl with
-      | Surface.SExportDecl _ | Surface.SImportDecl _ -> acc
+      | Surface.SExportDecl _ | Surface.SImportDecl _ | Surface.SExternBlock _ -> acc
       | Surface.STraitDef { name; _ } | Surface.SShapeDef { shape_name = name; _ } ->
           { acc with constraint_names = StringSet.add name constraint_names }
       | Surface.STypeDef { type_name = name; _ } -> { acc with type_names = StringSet.add name type_names }
@@ -292,7 +292,7 @@ let rec placeholder_count_expr (expr : AST.expression) : int =
 
 and placeholder_count_stmt (stmt : AST.statement) : int =
   match stmt.stmt with
-  | AST.ExportDecl _ | AST.ImportDecl _ -> 0
+  | AST.ExportDecl _ | AST.ImportDecl _ | AST.ExternBlock _ -> 0
   | AST.Let { value; _ } -> placeholder_count_expr value
   | AST.Return expr | AST.ExpressionStmt expr -> placeholder_count_expr expr
   | AST.Block stmts -> placeholder_count_stmt_list stmts
@@ -413,7 +413,7 @@ let rec replace_placeholder_with_expr (replacement : AST.expression) (expr : AST
 and replace_placeholder_with_stmt (replacement : AST.expression) (stmt : AST.statement) : AST.statement =
   let rewritten =
     match stmt.stmt with
-    | AST.ExportDecl _ | AST.ImportDecl _ -> stmt.stmt
+    | AST.ExportDecl _ | AST.ImportDecl _ | AST.ExternBlock _ -> stmt.stmt
     | AST.Let ({ value; _ } as let_binding) ->
         AST.Let { let_binding with value = replace_placeholder_with_expr replacement value }
     | AST.Return expr -> AST.Return (replace_placeholder_with_expr replacement expr)
@@ -733,6 +733,31 @@ let lower_top_decl_with_ctx
   | Surface.SExportDecl names -> [ AST.mk_stmt ~pos ~end_pos ~file_id (AST.ExportDecl names) ]
   | Surface.SImportDecl { import_path; import_alias; _ } ->
       [ AST.mk_stmt ~pos ~end_pos ~file_id (AST.ImportDecl { import_path; import_alias }) ]
+  | Surface.SExternBlock block ->
+      let lower_param (param : Surface.surface_extern_param) : AST.extern_param =
+        AST.{ extern_param_name = param.sep_name; extern_param_type = lower_type_expr param.sep_type }
+      in
+      let lower_fn (fn_sig : Surface.surface_extern_fn_sig) : AST.extern_fn_sig =
+        AST.
+          {
+            extern_fn_name = fn_sig.sef_name;
+            extern_fn_params = List.map lower_param fn_sig.sef_params;
+            extern_fn_return_type = lower_type_expr fn_sig.sef_return_type;
+            extern_fn_effectful = fn_sig.sef_effectful;
+            extern_fn_pos = fn_sig.sef_pos;
+            extern_fn_end_pos = fn_sig.sef_end_pos;
+          }
+      in
+      [
+        AST.mk_stmt ~pos ~end_pos ~file_id
+          (AST.ExternBlock
+             {
+               extern_go_path = block.seb_go_path;
+               extern_alias = block.seb_alias;
+               extern_qualifier = block.seb_qualifier;
+               extern_fns = List.map lower_fn block.seb_fns;
+             });
+      ]
   | Surface.SLet { name; value; type_annotation; _ } ->
       [
         AST.mk_stmt ~pos ~end_pos ~file_id

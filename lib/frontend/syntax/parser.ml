@@ -338,6 +338,7 @@ and parse_top_decl (p : parser) : (parser * Surface.top_decl, parser) result =
   match p.curr_token.token_type with
   | Token.Export -> parse_export_decl p
   | Token.Import -> parse_import_decl p
+  | Token.Extern -> parse_extern_block p
   | Token.Let -> parse_let_top p
   | Token.Return -> parse_return_top p
   | Token.Enum -> parse_enum_definition p
@@ -405,6 +406,157 @@ and parse_import_decl (p : parser) : (parser * Surface.top_decl, parser) result 
           } )
   else
     Ok (p3, Surface.SImportDecl { import_path; import_path_refs; import_alias = None; import_alias_ref = None })
+
+and valid_extern_identifier (name : string) : bool =
+  String.length name > 0
+  && (not (String.ends_with ~suffix:"?" name))
+  && (not (String.ends_with ~suffix:"!" name))
+  &&
+  match String.get name 0 with
+  | 'A' .. 'Z' | 'a' .. 'z' | '_' ->
+      String.for_all
+        (function
+          | 'A' .. 'Z' | 'a' .. 'z' | '0' .. '9' | '_' -> true
+          | _ -> false)
+        name
+  | _ -> false
+
+and default_extern_qualifier (path : string) : string option =
+  match List.rev (String.split_on_char '/' path) with
+  | segment :: _ when valid_extern_identifier segment -> Some segment
+  | _ -> None
+
+and parse_extern_param (p : parser) : (parser * Surface.surface_extern_param, parser) result =
+  if not (curr_token_is p Token.Ident) then
+    Error (add_error ~code:"parse-extern-signature" p "extern parameters must be named")
+  else
+    let sep_name_ref = current_name_ref p in
+    let* p2 =
+      if peek_token_is p Token.Colon then
+        Ok (next_token p)
+      else
+        Error (add_error ~code:"parse-extern-signature" p "extern parameters require type annotations")
+    in
+    let* p3, sep_type = parse_type_expr (next_token p2) in
+    Ok (p3, Surface.{ sep_name = sep_name_ref.text; sep_name_ref; sep_type })
+
+and parse_extern_params (p : parser) : (parser * Surface.surface_extern_param list, parser) result =
+  if peek_token_is p Token.RParen then
+    Ok (next_token p, [])
+  else
+    let rec loop (lp : parser) (rev_params : Surface.surface_extern_param list) =
+      let* lp2, param = parse_extern_param lp in
+      if curr_token_is lp2 Token.Comma then
+        loop (next_token lp2) (param :: rev_params)
+      else if curr_token_is lp2 Token.RParen then
+        Ok (lp2, List.rev (param :: rev_params))
+      else
+        Error (add_error ~code:"parse-extern-signature" lp2 "expected ',' or ')' after extern parameter")
+    in
+    loop (next_token p) []
+
+and parse_extern_fn_sig (p : parser) : (parser * Surface.surface_extern_fn_sig, parser) result =
+  let sef_pos = p.curr_token.pos in
+  let* p2 = expect_peek p Token.Ident in
+  let sef_name_ref = current_name_ref p2 in
+  if not (valid_extern_identifier sef_name_ref.text) then
+    Error
+      (add_error ~code:"parse-extern-signature" ~token:p2.curr_token p2
+         "extern function names must be plain identifiers")
+  else if peek_token_is p2 Token.LBracket then
+    Error
+      (add_error ~code:"parse-extern-signature" ~token:p2.peek_token p2
+         "extern functions cannot declare generics in v1")
+  else
+    let* p3 = expect_peek p2 Token.LParen in
+    let* p4, sef_params = parse_extern_params p3 in
+    let* p5, sef_effectful =
+      if peek_token_is p4 Token.Arrow then
+        Ok (next_token p4, false)
+      else if peek_token_is p4 Token.FatArrow then
+        Ok (next_token p4, true)
+      else
+        Error
+          (add_error ~code:"parse-extern-signature" p4
+             "extern function signatures require an explicit return arrow")
+    in
+    let* p6, sef_return_type = parse_type_expr (next_token p5) in
+    let sef_end_pos = max sef_pos (token_end p6.curr_token) in
+    Ok
+      ( p6,
+        Surface.
+          {
+            sef_name = sef_name_ref.text;
+            sef_name_ref;
+            sef_params;
+            sef_return_type;
+            sef_effectful;
+            sef_pos;
+            sef_end_pos;
+          } )
+
+and parse_extern_block (p : parser) : (parser * Surface.top_decl, parser) result =
+  let* p2 =
+    if peek_token_is p Token.String then
+      Ok (next_token p)
+    else
+      Error (add_error ~code:"parse-extern-signature" p "extern requires a quoted Go import path")
+  in
+  let seb_go_path_ref = current_name_ref p2 in
+  let seb_go_path = p2.curr_token.literal in
+  let* p3, seb_alias, seb_alias_ref =
+    if peek_token_is p2 Token.As then
+      let* p_alias = expect_peek (next_token p2) Token.Ident in
+      let alias_ref = current_name_ref p_alias in
+      if valid_extern_identifier alias_ref.text then
+        Ok (p_alias, Some alias_ref.text, Some alias_ref)
+      else
+        Error
+          (add_error ~code:"parse-extern-signature" ~token:p_alias.curr_token p_alias
+             "extern aliases must be plain identifiers")
+    else
+      Ok (p2, None, None)
+  in
+  let* seb_qualifier =
+    match seb_alias with
+    | Some alias -> Ok alias
+    | None -> (
+        match default_extern_qualifier seb_go_path with
+        | Some qualifier -> Ok qualifier
+        | None ->
+            Error
+              (add_error ~code:"parse-extern-signature" p3
+                 "extern import path requires an explicit plain identifier alias"))
+  in
+  let* p4 =
+    if peek_token_is p3 Token.Assign then
+      Ok (next_token p3)
+    else
+      Error (add_error ~code:"parse-extern-signature" p3 "extern blocks require '=' before the body")
+  in
+  let* p5 = expect_peek p4 Token.LBrace in
+  let rec loop (lp : parser) (rev_fns : Surface.surface_extern_fn_sig list) =
+    if curr_token_is lp Token.RBrace then
+      Ok (lp, List.rev rev_fns)
+    else if curr_token_is lp Token.EOF then
+      Error (add_error ~code:"parse-extern-signature" lp "unterminated extern block")
+    else if curr_token_is lp Token.Function then
+      let* lp2, fn_sig = parse_extern_fn_sig lp in
+      let lp3 =
+        if curr_token_is lp2 Token.Semicolon then
+          next_token lp2
+        else
+          lp2
+      in
+      loop lp3 (fn_sig :: rev_fns)
+    else
+      Error (add_error ~code:"parse-extern-signature" lp "expected extern function signature")
+  in
+  let* p6, seb_fns = loop (next_token p5) [] in
+  Ok
+    ( p6,
+      Surface.SExternBlock
+        Surface.{ seb_go_path; seb_go_path_ref; seb_alias; seb_alias_ref; seb_qualifier; seb_fns } )
 
 (* Phase 1b: vNext top-level fn declaration: fn name[generics](params) -> T = expr_or_block *)
 and parse_fn_decl_top (p : parser) : (parser * Surface.top_decl, parser) result =
@@ -2615,6 +2767,82 @@ let%test "imports must precede body statements" =
   | Error diags -> List.exists (fun (d : Diagnostic.t) -> d.code = "parse-module-header-order") diags
   | Ok _ -> false
 
+let%test "parse extern block with alias and effectful signature" =
+  match
+    parse ~file_id:"<test>"
+      "extern \"path/filepath\" as fp = {\n\
+      \  fn Base(path: Str) -> Str\n\
+      \  fn Walk(root: Str) => Unit\n\
+       }"
+  with
+  | Ok
+      [
+        {
+          AST.stmt =
+            AST.ExternBlock
+              {
+                extern_go_path = "path/filepath";
+                extern_alias = Some "fp";
+                extern_qualifier = "fp";
+                extern_fns =
+                  [
+                    {
+                      extern_fn_name = "Base";
+                      extern_fn_params = [ { extern_param_name = "path"; extern_param_type = AST.TCon "Str" } ];
+                      extern_fn_return_type = AST.TCon "Str";
+                      extern_fn_effectful = false;
+                      _;
+                    };
+                    {
+                      extern_fn_name = "Walk";
+                      extern_fn_params = [ { extern_param_name = "root"; extern_param_type = AST.TCon "Str" } ];
+                      extern_fn_return_type = AST.TCon "Unit";
+                      extern_fn_effectful = true;
+                      _;
+                    };
+                  ];
+              };
+          _;
+        };
+      ] ->
+      true
+  | _ -> false
+
+let%test "extern starts module body for header ordering" =
+  match parse ~file_id:"<test>" "extern \"strings\" = { fn ToUpper(s: Str) -> Str }\nimport math" with
+  | Error diags -> List.exists (fun (d : Diagnostic.t) -> d.code = "parse-module-header-order") diags
+  | Ok _ -> false
+
+let%test "extern rejects missing parameter annotation" =
+  match parse ~file_id:"<test>" "extern \"strings\" = { fn ToUpper(s) -> Str }" with
+  | Error diags -> List.exists (fun (d : Diagnostic.t) -> d.code = "parse-extern-signature") diags
+  | Ok _ -> false
+
+let%test "extern rejects missing equals before body" =
+  match parse ~file_id:"<test>" "extern \"strings\" { fn ToUpper(s: Str) -> Str }" with
+  | Error diags -> List.exists (fun (d : Diagnostic.t) -> d.code = "parse-extern-signature") diags
+  | Ok _ -> false
+
+let%test "extern rejects missing return arrow" =
+  match parse ~file_id:"<test>" "extern \"strings\" = { fn ToUpper(s: Str) Str }" with
+  | Error diags -> List.exists (fun (d : Diagnostic.t) -> d.code = "parse-extern-signature") diags
+  | Ok _ -> false
+
+let%test "extern rejects generic function signature" =
+  match parse ~file_id:"<test>" "extern \"strings\" = { fn ToUpper[a](s: Str) -> Str }" with
+  | Error diags -> List.exists (fun (d : Diagnostic.t) -> d.code = "parse-extern-signature") diags
+  | Ok _ -> false
+
+let%test "extern rejects invalid derived qualifier without alias" =
+  match parse ~file_id:"<test>" "extern \"path/with-hyphen\" = { fn Base(s: Str) -> Str }" with
+  | Error diags -> List.exists (fun (d : Diagnostic.t) -> d.code = "parse-extern-signature") diags
+  | Ok _ -> false
+
+let%test "extern rejects bang suffix names" =
+  match parse ~file_id:"<test>" "extern \"strings\" as strings! = { fn Panic!(s: Str) -> Str }" with
+  | Error diags -> List.exists (fun (d : Diagnostic.t) -> d.code = "parse-extern-signature") diags
+  | Ok _ -> false
+
 module Test = struct
   type test = {
     input : string;
@@ -3317,7 +3545,7 @@ module Test = struct
     | AST.Return e | AST.ExpressionStmt e -> collect_expr_ids e
     | AST.Block stmts -> List.concat_map collect_stmt_ids stmts
     | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ | AST.TraitDef _ | AST.ImplDef _ | AST.InherentImplDef _
-    | AST.DeriveDef _ | AST.TypeAlias _ ->
+    | AST.DeriveDef _ | AST.TypeAlias _ | AST.ExternBlock _ ->
         []
 
   let rec collect_surface_expr_ids (expr : Surface.surface_expr) : int list =
@@ -3383,7 +3611,7 @@ module Test = struct
 
   let collect_surface_top_stmt_ids (stmt : Surface.surface_top_stmt) : int list =
     match stmt.std_decl with
-    | Surface.SExportDecl _ | Surface.SImportDecl _ -> []
+    | Surface.SExportDecl _ | Surface.SImportDecl _ | Surface.SExternBlock _ -> []
     | Surface.SLet { value; _ } -> collect_surface_expr_ids value
     | Surface.SFnDecl { body; _ } -> collect_surface_expr_or_block_ids body
     | Surface.STypeDef _ | Surface.SShapeDef _ | Surface.STraitDef _ | Surface.SAmbiguousImplDef _

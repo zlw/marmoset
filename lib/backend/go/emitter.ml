@@ -1336,7 +1336,7 @@ and captures_top_level_values_stmt (top_level_values : StringSet.t) (bound : Str
       captured
   | AST.ExportDecl _ | AST.ImportDecl _ -> StringSet.empty
   | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ | AST.TraitDef _ | AST.ImplDef _ | AST.InherentImplDef _
-  | AST.DeriveDef _ | AST.TypeAlias _ ->
+  | AST.DeriveDef _ | AST.TypeAlias _ | AST.ExternBlock _ ->
       StringSet.empty
 
 let top_level_function_captures
@@ -1406,7 +1406,7 @@ let rec collect_funcs_stmt
         available_bindings stmts
   | AST.ExportDecl _ | AST.ImportDecl _ -> available_bindings
   | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ -> available_bindings
-  | AST.TraitDef _ | AST.ImplDef _ | AST.InherentImplDef _ | AST.DeriveDef _ | AST.TypeAlias _ ->
+  | AST.TraitDef _ | AST.ImplDef _ | AST.InherentImplDef _ | AST.DeriveDef _ | AST.TypeAlias _ | AST.ExternBlock _ ->
       available_bindings
 
 and collect_funcs_expr ?(available_bindings = StringSet.empty) (state : mono_state) (expr : AST.expression) : unit
@@ -2816,7 +2816,7 @@ and collect_forward_call_arg_types_stmt
         (fun (m : AST.method_impl) -> collect_forward_call_arg_types_stmt name type_map env m.impl_method_body)
         impl.inherent_methods
   | AST.ExportDecl _ | AST.ImportDecl _ -> []
-  | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ | AST.TraitDef _ | AST.DeriveDef _ | AST.TypeAlias _ -> []
+  | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ | AST.TraitDef _ | AST.DeriveDef _ | AST.TypeAlias _ | AST.ExternBlock _ -> []
 
 let resolve_local_function_type_from_calls_for_collect
     (name : string)
@@ -2956,7 +2956,7 @@ let rec collect_insts_stmt
   | AST.Block stmts -> collect_insts_stmt_list state type_map env stmts
   | AST.ExportDecl _ | AST.ImportDecl _ -> env
   | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ -> env (* Compile-time only *)
-  | AST.TraitDef _ | AST.DeriveDef _ | AST.TypeAlias _ -> env
+  | AST.TraitDef _ | AST.DeriveDef _ | AST.TypeAlias _ | AST.ExternBlock _ -> env
   | AST.ImplDef impl ->
       ignore (register_impl_template state impl);
       if impl.impl_type_params = [] then (
@@ -3944,7 +3944,7 @@ and copy_specialized_stmt_types
   | AST.Block stmts -> List.iter (copy_specialized_stmt_types source_map target_map specialization_subst) stmts
   | AST.ExportDecl _ | AST.ImportDecl _ -> ()
   | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ | AST.TraitDef _ | AST.ImplDef _ | AST.InherentImplDef _
-  | AST.DeriveDef _ | AST.TypeAlias _ ->
+  | AST.DeriveDef _ | AST.TypeAlias _ | AST.ExternBlock _ ->
       ()
 
 type type_check_info = {
@@ -6247,7 +6247,7 @@ and collect_local_call_arg_types_stmt
         (fun (m : AST.method_impl) -> collect_local_call_arg_types_stmt name type_map env m.impl_method_body)
         impl.inherent_methods
   | AST.ExportDecl _ | AST.ImportDecl _ -> []
-  | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ | AST.TraitDef _ | AST.DeriveDef _ | AST.TypeAlias _ -> []
+  | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ | AST.TraitDef _ | AST.DeriveDef _ | AST.TypeAlias _ | AST.ExternBlock _ -> []
 
 and resolve_local_function_type_from_calls
     (name : string)
@@ -6528,7 +6528,7 @@ and emit_stmt
   | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ ->
       (* Compile-time-only declarations *)
       ("", env)
-  | AST.TraitDef _ | AST.ImplDef _ | AST.InherentImplDef _ | AST.DeriveDef _ | AST.TypeAlias _ ->
+  | AST.TraitDef _ | AST.ImplDef _ | AST.InherentImplDef _ | AST.DeriveDef _ | AST.TypeAlias _ | AST.ExternBlock _ ->
       (* Trait definitions/impls/derives/type aliases are compile-time only *)
       ("", env)
 
@@ -7369,7 +7369,8 @@ let collect_inherent_call_sites
     | AST.Return e | AST.ExpressionStmt e -> (collect_expr acc env e, env)
     | AST.Block stmts -> (collect_stmt_list acc env stmts, env)
     | AST.ExportDecl _ | AST.ImportDecl _ -> (acc, env)
-    | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ | AST.TypeAlias _ | AST.DeriveDef _ -> (acc, env)
+    | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ | AST.TypeAlias _ | AST.DeriveDef _ | AST.ExternBlock _ ->
+        (acc, env)
     | AST.TraitDef trait_def ->
         ( List.fold_left
             (fun acc' (m : AST.method_sig) ->

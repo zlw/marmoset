@@ -240,7 +240,7 @@ let rec walk_stmt
     | Ast.AST.Return e -> walk_expr ~source ~program ~type_map ~environment ~range_start ~range_end ~sites e
     | Ast.AST.ExportDecl _ | Ast.AST.ImportDecl _ -> ()
     | Ast.AST.EnumDef _ | Ast.AST.TypeDef _ | Ast.AST.ShapeDef _ | Ast.AST.TraitDef _ | Ast.AST.ImplDef _
-    | Ast.AST.InherentImplDef _ | Ast.AST.DeriveDef _ | Ast.AST.TypeAlias _ ->
+    | Ast.AST.InherentImplDef _ | Ast.AST.DeriveDef _ | Ast.AST.TypeAlias _ | Ast.AST.ExternBlock _ ->
         ()
 
 and walk_expr ~source ~program ~type_map ~environment ~range_start ~range_end ~sites (expr : Ast.AST.expression) =

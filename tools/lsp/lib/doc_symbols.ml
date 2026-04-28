@@ -79,7 +79,7 @@ let document_symbols ~(source : string) ~(program : Ast.AST.program) : Lsp_t.Doc
       | Ast.AST.TypeAlias { alias_name; _ } ->
           Some (symbol ~name:alias_name ~kind:Lsp_t.SymbolKind.Struct ~range:(range_of_stmt stmt) ())
       | Ast.AST.ExportDecl _ | Ast.AST.ImportDecl _ -> None
-      | Ast.AST.DeriveDef _ | Ast.AST.ExpressionStmt _ | Ast.AST.Return _ | Ast.AST.Block _ -> None)
+      | Ast.AST.DeriveDef _ | Ast.AST.ExternBlock _ | Ast.AST.ExpressionStmt _ | Ast.AST.Return _ | Ast.AST.Block _ -> None)
     program
 
 (* ============================================================
