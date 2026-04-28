@@ -2,7 +2,7 @@
 
 ## Maintenance
 
-- Last verified: 2026-04-04
+- Last verified: 2026-04-28
 - Implementation status: Canonical (actively maintained)
 - Update trigger: Any change to milestone status, plan ordering, or deferred-ideas ownership
 
@@ -31,6 +31,8 @@
 1. [Diagnostics rework](docs/plans/done/tooling/01_diagnostics-rework.md)
 2. [Fixture harness migration](docs/plans/done/tooling/02_fixture-harness-migration.md)
 3. [Module-aware LSP navigation and completion](docs/plans/done/tooling/03_module-aware-lsp.md)
+4. [Broaden LSP symbol navigation and completion](docs/plans/done/tooling/04_lsp_symbol_navigation_and_completion.md)
+5. [LSP export visibility CodeLens](docs/plans/done/tooling/05_lsp_export_visibility_codelens.md)
 
 ### CI
 
