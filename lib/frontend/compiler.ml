@@ -1366,6 +1366,74 @@ let%test "check_entry rejects colliding direct imports" =
               && Diagnostics.String_utils.contains_substring ~needle:"existing binding 'add'" diag.message)
             diags)
 
+let%test "ffi F1d: extern qualifier collides with namespace import" =
+  Discovery.with_temp_project
+    [
+      ("main.mr", "import strings\nextern \"strings\" = { fn ToUpper(s: Str) -> Str }\n");
+      ("strings.mr", "export id\nfn id(s: Str) -> Str = s\n");
+    ]
+    (fun root ->
+      match check_entry ~entry_file:(Filename.concat root "main.mr") () with
+      | Ok _ -> false
+      | Error diags ->
+          List.exists
+            (fun (diag : Diagnostic.t) -> diag.code = "module-extern-qualifier-collision")
+            diags)
+
+let%test "ffi F1d: extern qualifier collides with top-level declaration" =
+  Discovery.with_temp_project
+    [ ("main.mr", "let strings = 1\nextern \"strings\" = { fn ToUpper(s: Str) -> Str }\n") ]
+    (fun root ->
+      match check_entry ~entry_file:(Filename.concat root "main.mr") () with
+      | Ok _ -> false
+      | Error diags ->
+          List.exists
+            (fun (diag : Diagnostic.t) -> diag.code = "module-extern-qualifier-collision")
+            diags)
+
+let%test "ffi F1d: extern qualifier collides with implicit core binding" =
+  Discovery.with_temp_project
+    [ ("main.mr", "extern \"fmt\" as Option = { fn Println(s: Str) => Unit }\n") ]
+    (fun root ->
+      match check_entry ~entry_file:(Filename.concat root "main.mr") () with
+      | Ok _ -> false
+      | Error diags ->
+          List.exists
+            (fun (diag : Diagnostic.t) -> diag.code = "module-extern-qualifier-collision")
+            diags)
+
+let%test "ffi F1d: extern declarations remain module-local" =
+  Discovery.with_temp_project
+    [
+      ("main.mr", "import wrapper.upper\nstrings.ToUpper(\"x\")\n");
+      ( "wrapper.mr",
+        "export upper\nextern \"strings\" = { fn ToUpper(s: Str) -> Str }\nfn upper(s: Str) -> Str = strings.ToUpper(s)\n"
+      );
+    ]
+    (fun root ->
+      match check_entry ~entry_file:(Filename.concat root "main.mr") () with
+      | Ok _ -> false
+      | Error diags ->
+          List.exists
+            (fun (diag : Diagnostic.t) -> diag.code = "type-unbound-var" || diag.code = "type-extern")
+            diags)
+
+let%test "ffi F1d: compile_project merges extern artifacts" =
+  Discovery.with_temp_project
+    [
+      ( "main.mr",
+        "extern \"strings\" = { fn ToUpper(s: Str) -> Str }\nlet value = strings.ToUpper(\"x\")\n" );
+    ]
+    (fun root ->
+      match Discovery.discover_project ~entry_file:(Filename.concat root "main.mr") () with
+      | Error _ -> false
+      | Ok graph -> (
+          match compile_project graph with
+          | Error _ -> false
+          | Ok project ->
+              Hashtbl.length project.artifacts.extern_declarations = 1
+              && Hashtbl.length project.artifacts.extern_calls = 1))
+
 let%test "check_entry reports non-exported namespace members clearly" =
   Discovery.with_temp_project
     [ ("main.mr", "import sum\nsum.reduce\n"); ("sum.mr", "fn reduce(values: List[Int]) -> Int = len(values)\n") ]

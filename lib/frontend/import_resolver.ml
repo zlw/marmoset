@@ -741,6 +741,14 @@ let namespace_resolution_error
         ~end_pos:expr.end_pos ()
   | None -> Diagnostic.error_no_span ~code:"module-qualified-name" ~message
 
+let extern_qualifier_collision_error (stmt : AST.statement) ~(qualifier : string) ~(reason : string) : Diagnostic.t =
+  let message = Printf.sprintf "extern qualifier '%s' conflicts with %s" qualifier reason in
+  match stmt.file_id with
+  | Some file_id ->
+      Diagnostic.error_with_span ~code:"module-extern-qualifier-collision" ~message ~file_id
+        ~start_pos:stmt.pos ~end_pos:stmt.end_pos ()
+  | None -> Diagnostic.error_no_span ~code:"module-extern-qualifier-collision" ~message
+
 let rewrite_program
     ~(current_module : module_surface)
     ~(imports : resolved_imports)
@@ -761,6 +769,39 @@ let rewrite_program
       StringMap.add name rewritten_name value_scope
   in
   let bind_local_value value_scope name = bind_value value_scope ~name ~rewritten_name:name in
+  let validate_extern_qualifier (stmt : AST.statement) (block : AST.extern_block_def) :
+      (unit, Diagnostic.t) result =
+    let qualifier = block.extern_qualifier in
+    if StringMap.mem qualifier current_module.declarations then
+      Error (extern_qualifier_collision_error stmt ~qualifier ~reason:"a top-level declaration")
+    else if StringMap.mem qualifier imports.namespace_roots then
+      Error (extern_qualifier_collision_error stmt ~qualifier ~reason:"an imported module namespace")
+    else if StringMap.mem qualifier imports.direct_bindings then
+      Error (extern_qualifier_collision_error stmt ~qualifier ~reason:"an imported binding")
+    else if is_implicit_std_core_name qualifier then
+      Error (extern_qualifier_collision_error stmt ~qualifier ~reason:"an implicit core binding")
+    else
+      Ok ()
+  in
+  let rewrite_extern_block (block : AST.extern_block_def) : AST.extern_block_def =
+    let rewrite_param (param : AST.extern_param) : AST.extern_param =
+      {
+        param with
+        extern_param_type =
+          rewrite_type_expr ~imports ~type_bindings:StringSet.empty ~available_bindings param.extern_param_type;
+      }
+    in
+    let rewrite_fn (fn_sig : AST.extern_fn_sig) : AST.extern_fn_sig =
+      {
+        fn_sig with
+        extern_fn_params = List.map rewrite_param fn_sig.extern_fn_params;
+        extern_fn_return_type =
+          rewrite_type_expr ~imports ~type_bindings:StringSet.empty ~available_bindings
+            fn_sig.extern_fn_return_type;
+      }
+    in
+    { block with extern_fns = List.map rewrite_fn block.extern_fns }
+  in
   let rec rewrite_statements ~at_top_level value_scope stmts =
     match stmts with
     | [] -> Ok []
@@ -775,7 +816,9 @@ let rewrite_program
     in
     match stmt.stmt with
     | AST.ExportDecl _ | AST.ImportDecl _ -> Ok (AST.{ stmt with stmt = Block [] }, value_scope)
-    | AST.ExternBlock _ -> Ok (stmt, value_scope)
+    | AST.ExternBlock block ->
+        let* () = validate_extern_qualifier stmt block in
+        Ok (AST.{ stmt with stmt = ExternBlock (rewrite_extern_block block) }, value_scope)
     | AST.Let { name; value; type_annotation } ->
         let rewritten_name =
           if String.equal name "_" || not at_top_level then
@@ -1493,6 +1536,38 @@ let%test "explicit imports may shadow implicit stdlib bindings" =
                       match StringMap.find_opt "Show" rewrite.resolved_imports.direct_bindings with
                       | Some presence -> String.equal presence.internal_name "geometry__Show"
                       | None -> false)))))
+
+let%test "extern signatures rewrite imported type annotations" =
+  Discovery.with_temp_project
+    [
+      ("main.mr", "import types.Stringy\nextern \"strings\" = { fn ToUpper(s: Stringy) -> Stringy }\n");
+      ("types.mr", "export Stringy\ntype Stringy = Str\n");
+    ]
+    (fun root ->
+      let entry_file = Filename.concat root "main.mr" in
+      match Discovery.discover_project ~source_root:root ~entry_file () with
+      | Error _ -> false
+      | Ok graph -> (
+          match build_module_surfaces graph with
+          | Error _ -> false
+          | Ok surfaces -> (
+              match Hashtbl.find_opt graph.modules "main" with
+              | None -> false
+              | Some module_info -> (
+                  match rewrite_module ~surfaces module_info with
+                  | Error _ -> false
+                  | Ok rewrite ->
+                      List.exists
+                        (fun (stmt : AST.statement) ->
+                          match stmt.stmt with
+                          | AST.ExternBlock { extern_fns = [ fn_sig ]; _ } -> (
+                              match (fn_sig.extern_fn_params, fn_sig.extern_fn_return_type) with
+                              | [ { extern_param_type = AST.TCon param_type; _ } ], AST.TCon return_type ->
+                                  String.equal param_type "types__Stringy"
+                                  && String.equal return_type "types__Stringy"
+                              | _ -> false)
+                          | _ -> false)
+                        rewrite.program))))
 
 let%test "headerless entry local Result shadows injected std.result in constructors and annotations" =
   Discovery.with_temp_project
