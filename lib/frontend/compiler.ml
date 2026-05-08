@@ -350,6 +350,13 @@ let extract_module_locals (program : AST.program) : (Module_sig.module_locals, D
                 (Type_registry.lookup_named_type type_name)
             in
             go { acc with named_types = named_type_def :: acc.named_types } rest
+        | AST.ExternTypeDef { extern_type_name } ->
+            let* named_type_def =
+              required_opt ~code:"module-signature-type"
+                ~message:(Printf.sprintf "Missing extern type registry entry for '%s'" extern_type_name)
+                (Type_registry.lookup_named_type extern_type_name)
+            in
+            go { acc with named_types = named_type_def :: acc.named_types } rest
         | AST.TypeAlias { alias_name; _ } ->
             let* alias_info =
               required_opt ~code:"module-signature-alias"
@@ -640,6 +647,7 @@ let compile_module
   if not (is_prelude_module module_info.module_id) then
     Builtins.init_builtin_impls ();
   Extern_registry.set_current_module_id module_info.module_id;
+  Type_registry.set_current_module_id module_info.module_id;
   let* result =
     Checker.check_program_with_annotations ~state ~prebound_symbols ~prepare_state:false ~expand_derives:false
       ~env expanded_program
@@ -1028,6 +1036,9 @@ let find_type_head_site_in_surface_program (program : Surface.surface_program) ~
       match stmt.std_decl with
       | Surface.STypeDef { type_name; type_name_ref; _ } when String.equal type_name surface_name ->
           definition_site_of_name_ref type_name_ref
+      | Surface.SExternTypeDef { extern_type_name; extern_type_name_ref }
+        when String.equal extern_type_name surface_name ->
+          definition_site_of_name_ref extern_type_name_ref
       | Surface.SShapeDef { shape_name; shape_name_ref; _ } when String.equal shape_name surface_name ->
           definition_site_of_name_ref shape_name_ref
       | Surface.STraitDef { name; name_ref; _ } when String.equal name surface_name ->

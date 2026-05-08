@@ -250,6 +250,10 @@ module Surface = struct
         import_alias_ref : name_ref option;
       }
     | SExternBlock of surface_extern_block
+    | SExternTypeDef of {
+        extern_type_name : string;
+        extern_type_name_ref : name_ref;
+      }
     | SLet of {
         name : string;
         name_ref : name_ref;

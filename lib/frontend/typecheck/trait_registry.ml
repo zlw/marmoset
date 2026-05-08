@@ -626,6 +626,8 @@ let can_derive (trait_name : string) (for_type : mono_type) : (unit, string) res
         match for_type with
         | TInt | TBool | TString | TNull -> Ok () (* Primitives can always derive *)
         | TEnum _ -> Ok () (* Enums can derive if variants are derivable - we'll check this later *)
+        | TNamed (name, _) when Type_registry.is_extern_type_name name ->
+            Error (Printf.sprintf "Cannot derive traits for extern type %s" (to_string for_type))
         | TArray _ | THash _ ->
             (* Arrays/hashes can derive eq/show if element types can derive *)
             Ok () (* TODO: Check element types recursively *)

@@ -170,6 +170,7 @@ let pre_scan_program (program : AST.program) :
       match stmt.stmt with
       | AST.TraitDef trait_def -> register_program_trait traits trait_def
       | AST.TypeDef type_def -> Type_registry.predeclare_named_type type_def
+      | AST.ExternTypeDef extern_type_def -> Type_registry.predeclare_extern_type extern_type_def
       | AST.TypeAlias alias_def -> Annotation.register_type_alias alias_def
       | AST.ShapeDef shape_def -> Type_registry.predeclare_shape shape_def
       | AST.ImplDef impl_def -> Hashtbl.replace explicit_impls (impl_key_of_explicit_impl impl_def) ()
@@ -420,8 +421,8 @@ let clone_default_body
       | AST.Return expr -> AST.Return (clone_expr bound_names expr)
       | AST.ExpressionStmt expr -> AST.ExpressionStmt (clone_expr bound_names expr)
       | AST.Block stmts -> AST.Block (List.map (clone_stmt bound_names) stmts)
-      | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ | AST.TraitDef _ | AST.ImplDef _ | AST.InherentImplDef _
-      | AST.DeriveDef _ | AST.TypeAlias _ | AST.ExternBlock _ ->
+      | AST.EnumDef _ | AST.TypeDef _ | AST.ExternTypeDef _ | AST.ShapeDef _ | AST.TraitDef _ | AST.ImplDef _
+      | AST.InherentImplDef _ | AST.DeriveDef _ | AST.TypeAlias _ | AST.ExternBlock _ ->
           stmt.stmt
     in
     AST.mk_stmt ~pos:stmt.pos ~end_pos:stmt.end_pos ~file_id:stmt.file_id stmt_kind

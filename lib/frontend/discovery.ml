@@ -429,8 +429,8 @@ let collect_expr_ids (program : AST.program) : int list =
     | AST.Let { value; _ } -> expr_ids value
     | AST.Return expr | AST.ExpressionStmt expr -> expr_ids expr
     | AST.Block stmts -> List.concat_map stmt_ids stmts
-    | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ | AST.TraitDef _ | AST.ImplDef _ | AST.InherentImplDef _
-    | AST.DeriveDef _ | AST.TypeAlias _ | AST.ExternBlock _ ->
+    | AST.EnumDef _ | AST.TypeDef _ | AST.ExternTypeDef _ | AST.ShapeDef _ | AST.TraitDef _ | AST.ImplDef _
+    | AST.InherentImplDef _ | AST.DeriveDef _ | AST.TypeAlias _ | AST.ExternBlock _ ->
         []
   in
   List.concat_map stmt_ids program

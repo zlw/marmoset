@@ -265,6 +265,13 @@ let exportable_decl_keys ~(default_file_path : string) (program : Export_edits.S
       | Export_edits.Surface.STypeDef { type_name; type_name_ref; _ } ->
           with_decl
             { surface_name = type_name; declaration_kind = Export_edits.Type_decl; name_ref = type_name_ref }
+      | Export_edits.Surface.SExternTypeDef { extern_type_name; extern_type_name_ref } ->
+          with_decl
+            {
+              surface_name = extern_type_name;
+              declaration_kind = Export_edits.Type_decl;
+              name_ref = extern_type_name_ref;
+            }
       | Export_edits.Surface.SShapeDef { shape_name; shape_name_ref; _ } ->
           with_decl
             { surface_name = shape_name; declaration_kind = Export_edits.Shape_decl; name_ref = shape_name_ref }

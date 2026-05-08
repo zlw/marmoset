@@ -92,8 +92,8 @@ let substitute_path_in_expr
     | AST.Return expr -> { stmt with stmt = AST.Return (subst_expr expr) }
     | AST.ExpressionStmt expr -> { stmt with stmt = AST.ExpressionStmt (subst_expr expr) }
     | AST.Block stmts -> { stmt with stmt = AST.Block (List.map subst_stmt stmts) }
-    | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ | AST.TraitDef _ | AST.ImplDef _ | AST.InherentImplDef _
-    | AST.DeriveDef _ | AST.TypeAlias _ | AST.ExternBlock _ ->
+    | AST.EnumDef _ | AST.TypeDef _ | AST.ExternTypeDef _ | AST.ShapeDef _ | AST.TraitDef _ | AST.ImplDef _
+    | AST.InherentImplDef _ | AST.DeriveDef _ | AST.TypeAlias _ | AST.ExternBlock _ ->
         stmt
   in
   subst_expr expr
@@ -121,8 +121,8 @@ let substitute_path_in_stmt
           stmt = AST.ExpressionStmt (substitute_path_in_expr ~descend_into_functions target ~replace expr);
         }
     | AST.Block stmts -> { stmt with stmt = AST.Block (List.map subst_stmt stmts) }
-    | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ | AST.TraitDef _ | AST.ImplDef _ | AST.InherentImplDef _
-    | AST.DeriveDef _ | AST.TypeAlias _ | AST.ExternBlock _ ->
+    | AST.EnumDef _ | AST.TypeDef _ | AST.ExternTypeDef _ | AST.ShapeDef _ | AST.TraitDef _ | AST.ImplDef _
+    | AST.InherentImplDef _ | AST.DeriveDef _ | AST.TypeAlias _ | AST.ExternBlock _ ->
         stmt
   in
   subst_stmt stmt

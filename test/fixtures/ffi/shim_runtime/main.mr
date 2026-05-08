@@ -1,8 +1,12 @@
 import test.scalar
 import test.result
 import test.status
+import test.handle
 
 puts(scalar.upcase("hi"))
 puts(Option.unwrap_or(scalar.maybe(true), 0))
 puts(Result.value_or(result.parse("41"), 0))
 puts(status.label(status.flip(true)))
+let file = handle.open("plan")
+puts(handle.label(file))
+puts(handle.close(file))

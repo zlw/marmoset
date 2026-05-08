@@ -338,7 +338,11 @@ and parse_top_decl (p : parser) : (parser * Surface.top_decl, parser) result =
   match p.curr_token.token_type with
   | Token.Export -> parse_export_decl p
   | Token.Import -> parse_import_decl p
-  | Token.Extern -> parse_extern_block p
+  | Token.Extern ->
+      if peek_token_is p Token.Type then
+        parse_extern_type_definition p
+      else
+        parse_extern_block p
   | Token.Let -> parse_let_top p
   | Token.Return -> parse_return_top p
   | Token.Enum -> parse_enum_definition p
@@ -566,6 +570,24 @@ and parse_extern_block (p : parser) : (parser * Surface.top_decl, parser) result
     ( p6,
       Surface.SExternBlock
         Surface.{ seb_shim_id; seb_shim_id_ref; seb_alias; seb_alias_ref; seb_qualifier; seb_fns } )
+
+and parse_extern_type_definition (p : parser) : (parser * Surface.top_decl, parser) result =
+  let* p_type = expect_peek p Token.Type in
+  let* p_name = expect_peek p_type Token.Ident in
+  if peek_token_is p_name Token.LBracket then
+    Error
+      (add_error ~code:"parse-extern-type" ~token:p_name.peek_token p_name
+         "extern type declarations do not support type parameters")
+  else if peek_token_is p_name Token.Derive && not (token_starts_line p_name p_name.peek_token) then
+    Error
+      (add_error ~code:"parse-extern-type" ~token:p_name.peek_token p_name
+         "extern type declarations cannot derive traits")
+  else
+    let extern_type_name_ref = current_name_ref p_name in
+    Ok
+      ( p_name,
+        Surface.SExternTypeDef
+          { extern_type_name = extern_type_name_ref.text; extern_type_name_ref } )
 
 (* Phase 1b: vNext top-level fn declaration: fn name[generics](params) -> T = expr_or_block *)
 and parse_fn_decl_top (p : parser) : (parser * Surface.top_decl, parser) result =
@@ -3559,8 +3581,8 @@ module Test = struct
     | AST.Let { value; _ } -> collect_expr_ids value
     | AST.Return e | AST.ExpressionStmt e -> collect_expr_ids e
     | AST.Block stmts -> List.concat_map collect_stmt_ids stmts
-    | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ | AST.TraitDef _ | AST.ImplDef _ | AST.InherentImplDef _
-    | AST.DeriveDef _ | AST.TypeAlias _ | AST.ExternBlock _ ->
+    | AST.EnumDef _ | AST.TypeDef _ | AST.ExternTypeDef _ | AST.ShapeDef _ | AST.TraitDef _ | AST.ImplDef _
+    | AST.InherentImplDef _ | AST.DeriveDef _ | AST.TypeAlias _ | AST.ExternBlock _ ->
         []
 
   let rec collect_surface_expr_ids (expr : Surface.surface_expr) : int list =
@@ -3626,7 +3648,7 @@ module Test = struct
 
   let collect_surface_top_stmt_ids (stmt : Surface.surface_top_stmt) : int list =
     match stmt.std_decl with
-    | Surface.SExportDecl _ | Surface.SImportDecl _ | Surface.SExternBlock _ -> []
+    | Surface.SExportDecl _ | Surface.SImportDecl _ | Surface.SExternBlock _ | Surface.SExternTypeDef _ -> []
     | Surface.SLet { value; _ } -> collect_surface_expr_ids value
     | Surface.SFnDecl { body; _ } -> collect_surface_expr_or_block_ids body
     | Surface.STypeDef _ | Surface.SShapeDef _ | Surface.STraitDef _ | Surface.SAmbiguousImplDef _

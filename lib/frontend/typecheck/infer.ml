@@ -1444,7 +1444,7 @@ let rec record_expected_trait_object_coercions
 and record_stmt_tail_expected_trait_object_coercions
     (type_map : type_map) (stmt : AST.statement) (expected_type : mono_type) : (unit, Diagnostic.t) result =
   match stmt.stmt with
-  | AST.ExportDecl _ | AST.ImportDecl _ | AST.ExternBlock _ -> Ok ()
+  | AST.ExportDecl _ | AST.ImportDecl _ | AST.ExternBlock _ | AST.ExternTypeDef _ -> Ok ()
   | AST.ExpressionStmt expr | AST.Return expr ->
       record_expected_trait_object_coercions type_map expr expected_type
   | AST.Block [] -> Ok ()
@@ -1583,7 +1583,7 @@ let rec placeholder_identifier_count_expr (expr : AST.expression) : int =
 
 and placeholder_identifier_count_stmt (stmt : AST.statement) : int =
   match stmt.stmt with
-  | AST.ExportDecl _ | AST.ImportDecl _ | AST.ExternBlock _ -> 0
+  | AST.ExportDecl _ | AST.ImportDecl _ | AST.ExternBlock _ | AST.ExternTypeDef _ -> 0
   | AST.Let { value; _ } -> placeholder_identifier_count_expr value
   | AST.Return expr | AST.ExpressionStmt expr -> placeholder_identifier_count_expr expr
   | AST.Block stmts -> placeholder_identifier_count_stmts stmts
@@ -1679,6 +1679,12 @@ let register_top_level_symbol_definitions (root_scope : symbol_scope) (program :
             let _ =
               register_symbol ~name:type_def.type_name ~kind:TypeSym ~pos:stmt.pos ~end_pos:stmt.end_pos
                 ~file_id:stmt.file_id
+            in
+            go scope seen_lets rest
+        | AST.ExternTypeDef extern_type_def ->
+            let _ =
+              register_symbol ~name:extern_type_def.extern_type_name ~kind:TypeSym ~pos:stmt.pos
+                ~end_pos:stmt.end_pos ~file_id:stmt.file_id
             in
             go scope seen_lets rest
         | AST.ShapeDef shape_def ->
@@ -1847,6 +1853,11 @@ and resolve_stmt_symbols (stack : symbol_scope_stack) ~(is_top_level : bool) (st
     symbol_scope_stack =
   match stmt.stmt with
   | AST.ExportDecl _ | AST.ImportDecl _ | AST.ExternBlock _ -> stack
+  | AST.ExternTypeDef extern_type_def ->
+      ignore
+        (register_symbol ~name:extern_type_def.extern_type_name ~kind:TypeSym ~pos:stmt.pos ~end_pos:stmt.end_pos
+           ~file_id:stmt.file_id);
+      stack
   | AST.ExpressionStmt expr ->
       resolve_expr_symbols stack expr;
       stack
@@ -2276,12 +2287,15 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                                        (Printf.sprintf "Field '%s' not found in named type %s" variant_name
                                           (Types.to_string receiver_type'))
                                      expr))
-                        | Some (Error _) ->
+                        | Some (Error msg) ->
                             Error
                               (error_at ~code:"type-constructor"
                                  ~message:
-                                   (Printf.sprintf "Field '%s' is not available on wrapper type %s" variant_name
-                                      (Types.to_string receiver_type'))
+                                   (if Type_registry.is_extern_type_name type_name then
+                                      msg
+                                    else
+                                      Printf.sprintf "Field '%s' is not available on wrapper type %s" variant_name
+                                        (Types.to_string receiver_type'))
                                  expr)
                         | None ->
                             Error
@@ -2523,6 +2537,7 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                         |> List.find_map (fun (def : Type_registry.named_type_def) ->
                                match def.named_type_body with
                                | Type_registry.NamedWrapper _ -> None
+                               | Type_registry.NamedExtern _ -> None
                                | Type_registry.NamedProduct _ -> (
                                    let fresh_args = List.map (fun _ -> fresh_type_var ()) def.named_type_params in
                                    match
@@ -3342,7 +3357,7 @@ and infer_if type_map env condition consequence alternative =
 and collect_and_unify_returns type_map env expected_ret_type (stmt : AST.statement) subst :
     (substitution * mono_type, Diagnostic.t) result =
   match stmt.AST.stmt with
-  | AST.ExportDecl _ | AST.ImportDecl _ | AST.ExternBlock _ -> Ok (subst, expected_ret_type)
+  | AST.ExportDecl _ | AST.ImportDecl _ | AST.ExternBlock _ | AST.ExternTypeDef _ -> Ok (subst, expected_ret_type)
   | AST.Return expr -> (
       match infer_expression type_map env expr with
       | Error e -> Error e
@@ -3396,12 +3411,13 @@ and collect_and_unify_returns type_map env expected_ret_type (stmt : AST.stateme
 
 and body_has_effectful_call (type_map : type_map) (stmt : AST.statement) : bool =
   match stmt.stmt with
-  | AST.ExportDecl _ | AST.ImportDecl _ | AST.ExternBlock _ -> false
+  | AST.ExportDecl _ | AST.ImportDecl _ | AST.ExternBlock _ | AST.ExternTypeDef _ -> false
   | AST.Let { value; _ } -> expr_has_effectful_call type_map value
   | AST.Return expr -> expr_has_effectful_call type_map expr
   | AST.ExpressionStmt expr -> expr_has_effectful_call type_map expr
   | AST.Block stmts -> List.exists (body_has_effectful_call type_map) stmts
-  | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ | AST.TraitDef _ | AST.ImplDef _ | AST.InherentImplDef _
+  | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ | AST.TraitDef _ | AST.ImplDef _
+  | AST.InherentImplDef _
   | AST.DeriveDef _ | AST.TypeAlias _ ->
       false
 
@@ -3794,11 +3810,12 @@ and collect_used_names_expr (used : StringSet.t) (expr : AST.expression) : Strin
 
 and collect_used_names_stmt (used : StringSet.t) (stmt : AST.statement) : StringSet.t =
   match stmt.stmt with
-  | AST.ExportDecl _ | AST.ImportDecl _ | AST.ExternBlock _ -> used
+  | AST.ExportDecl _ | AST.ImportDecl _ | AST.ExternBlock _ | AST.ExternTypeDef _ -> used
   | AST.Let { name; value; _ } -> collect_used_names_expr (StringSet.add name used) value
   | AST.Return expr | AST.ExpressionStmt expr -> collect_used_names_expr used expr
   | AST.Block stmts -> collect_used_names_stmts used stmts
-  | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ | AST.TraitDef _ | AST.ImplDef _ | AST.InherentImplDef _
+  | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ | AST.TraitDef _ | AST.ImplDef _
+  | AST.InherentImplDef _
   | AST.DeriveDef _ | AST.TypeAlias _ ->
       used
 
@@ -3897,7 +3914,7 @@ and replace_placeholder_identifier_expr (param_name : string) (expr : AST.expres
 and replace_placeholder_identifier_stmt (param_name : string) (stmt : AST.statement) : AST.statement =
   let rewritten =
     match stmt.stmt with
-    | AST.ExportDecl _ | AST.ImportDecl _ | AST.ExternBlock _ -> stmt.stmt
+    | AST.ExportDecl _ | AST.ImportDecl _ | AST.ExternBlock _ | AST.ExternTypeDef _ -> stmt.stmt
     | AST.Let ({ value; _ } as let_binding) ->
         AST.Let { let_binding with value = replace_placeholder_identifier_expr param_name value }
     | AST.Return expr -> AST.Return (replace_placeholder_identifier_expr param_name expr)
@@ -4319,7 +4336,12 @@ and infer_named_type_constructor_call_against_expected
                   Error
                     (error_at ~code:"type-constructor"
                        ~message:(Printf.sprintf "Unknown named wrapper constructor: %s" type_name)
-                       call_expr))))
+                       call_expr))
+          | Type_registry.NamedExtern _ ->
+              Error
+                (error_at ~code:"type-constructor"
+                   ~message:(Printf.sprintf "Extern type %s cannot be constructed" type_name)
+                   call_expr)))
   | _ -> infer_named_type_constructor_call type_map env call_expr type_name args
 
 and infer_expression_against_expected type_map env (expr : AST.expression) expected_type =
@@ -4473,7 +4495,12 @@ and infer_named_type_constructor_call
               Error
                 (error_at ~code:"type-constructor"
                    ~message:(Printf.sprintf "Unknown named wrapper constructor: %s" type_name)
-                   call_expr)))
+                   call_expr))
+      | Type_registry.NamedExtern _ ->
+          Error
+            (error_at ~code:"type-constructor"
+               ~message:(Printf.sprintf "Extern type %s cannot be constructed" type_name)
+               call_expr))
 
 and infer_call type_map env (call_expr : AST.expression) func args =
   match func.expr with
@@ -4983,6 +5010,9 @@ and infer_index type_map env container index_expr =
 and infer_statement type_map env stmt =
   match stmt.stmt with
   | AST.ExportDecl _ | AST.ImportDecl _ | AST.ExternBlock _ -> Ok (empty_substitution, TNull)
+  | AST.ExternTypeDef def ->
+      Type_registry.register_extern_type def;
+      Ok (empty_substitution, TNull)
   | AST.ExpressionStmt expr -> infer_expression type_map env expr
   | AST.Return expr -> infer_expression type_map env expr
   | AST.Block stmts -> infer_block type_map env stmts
@@ -6017,19 +6047,20 @@ and infer_statement type_map env stmt =
 and record_tail_trait_object_coercions (type_map : type_map) (expected_type : mono_type) (stmt : AST.statement) :
     (unit, Diagnostic.t) result =
   match stmt.stmt with
-  | AST.ExportDecl _ | AST.ImportDecl _ | AST.ExternBlock _ -> Ok ()
+  | AST.ExportDecl _ | AST.ImportDecl _ | AST.ExternBlock _ | AST.ExternTypeDef _ -> Ok ()
   | AST.Return _ -> Ok ()
   | AST.ExpressionStmt expr -> record_expected_trait_object_coercions type_map expr expected_type
   | AST.Block [] -> Ok ()
   | AST.Block stmts -> record_tail_trait_object_coercions type_map expected_type (List.hd (List.rev stmts))
-  | AST.Let _ | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ | AST.TraitDef _ | AST.ImplDef _
+  | AST.Let _ | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ | AST.TraitDef _
+  | AST.ImplDef _
   | AST.InherentImplDef _ | AST.DeriveDef _ | AST.TypeAlias _ ->
       Ok ()
 
 and record_explicit_return_trait_object_coercions
     (type_map : type_map) (expected_type : mono_type) (stmt : AST.statement) : (unit, Diagnostic.t) result =
   match stmt.stmt with
-  | AST.ExportDecl _ | AST.ImportDecl _ | AST.ExternBlock _ -> Ok ()
+  | AST.ExportDecl _ | AST.ImportDecl _ | AST.ExternBlock _ | AST.ExternTypeDef _ -> Ok ()
   | AST.Return expr -> record_expected_trait_object_coercions type_map expr expected_type
   | AST.Block stmts ->
       let rec loop = function
@@ -6041,7 +6072,8 @@ and record_explicit_return_trait_object_coercions
       in
       loop stmts
   | AST.ExpressionStmt _ -> Ok ()
-  | AST.Let _ | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ | AST.TraitDef _ | AST.ImplDef _
+  | AST.Let _ | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ | AST.TraitDef _
+  | AST.ImplDef _
   | AST.InherentImplDef _ | AST.DeriveDef _ | AST.TypeAlias _ ->
       Ok ()
 
@@ -6050,7 +6082,7 @@ and validate_return_statements
     (type_map : type_map) (env : type_env) (expected_type : mono_type) (stmt : AST.statement) :
     (unit, Diagnostic.t) result =
   match stmt.stmt with
-  | AST.ExportDecl _ | AST.ImportDecl _ | AST.ExternBlock _ -> Ok ()
+  | AST.ExportDecl _ | AST.ImportDecl _ | AST.ExternBlock _ | AST.ExternTypeDef _ -> Ok ()
   | AST.Return expr -> (
       match infer_expression type_map env expr with
       | Error e -> Error e
@@ -6352,6 +6384,10 @@ and check_pattern pattern scrutinee_type =
                         (to_string scrutinee_type))))
       | AST.PRecord (fields, rest) -> (
           match scrutinee_type with
+          | TNamed (name, _) when Type_registry.is_extern_type_name name ->
+              Error
+                (error ~code:"type-pattern"
+                   ~message:(Printf.sprintf "Extern type %s cannot be pattern matched" (to_string scrutinee_type)))
           | TRecord (scrutinee_fields, scrutinee_row) ->
               let rec check_fields seen_names bindings = function
                 | [] ->
@@ -6710,6 +6746,15 @@ let predeclare_top_level_named_declarations (program : AST.program) : (unit, Dia
             else (
               Type_registry.predeclare_named_type type_def;
               go (StringSet.add type_def.type_name seen_types) seen_shapes rest)
+        | AST.ExternTypeDef extern_type_def ->
+            if StringSet.mem extern_type_def.extern_type_name seen_types then
+              Error
+                (error_at_stmt ~code:"type-constructor"
+                   ~message:(Printf.sprintf "Duplicate type definition: %s" extern_type_def.extern_type_name)
+                   stmt)
+            else (
+              Type_registry.predeclare_extern_type extern_type_def;
+              go (StringSet.add extern_type_def.extern_type_name seen_types) seen_shapes rest)
         | AST.ShapeDef shape_def ->
             if StringSet.mem shape_def.shape_name seen_shapes then
               Error
@@ -6739,7 +6784,7 @@ let register_top_level_named_declarations (program : AST.program) : (unit, Diagn
     | [] -> Ok ()
     | (stmt : AST.statement) :: rest -> (
         match stmt.stmt with
-        | AST.TypeDef _ | AST.ShapeDef _ -> (
+        | AST.TypeDef _ | AST.ExternTypeDef _ | AST.ShapeDef _ -> (
             match infer_statement predecl_type_map empty_env stmt with
             | Error e -> Error e
             | Ok _ -> register_named rest)
@@ -6834,6 +6879,20 @@ let infer_program
                                       seen_enums,
                                       seen_aliases,
                                       StringSet.add type_def.type_name seen_types,
+                                      seen_shapes )
+                            | AST.ExternTypeDef extern_type_def ->
+                                if StringSet.mem extern_type_def.extern_type_name seen_types then
+                                  Error
+                                    (error ~code:"type-constructor"
+                                       ~message:
+                                         (Printf.sprintf "Duplicate type definition: %s"
+                                            extern_type_def.extern_type_name))
+                                else
+                                  Ok
+                                    ( seen_traits,
+                                      seen_enums,
+                                      seen_aliases,
+                                      StringSet.add extern_type_def.extern_type_name seen_types,
                                       seen_shapes )
                             | AST.ShapeDef shape_def ->
                                 if StringSet.mem shape_def.shape_name seen_shapes then
@@ -7068,7 +7127,7 @@ module Test = struct
 
   and identifier_occurrences_in_stmt (name : string) (stmt : AST.statement) : (int * int) list =
     match stmt.stmt with
-    | AST.ExportDecl _ | AST.ImportDecl _ | AST.ExternBlock _ -> []
+    | AST.ExportDecl _ | AST.ImportDecl _ | AST.ExternBlock _ | AST.ExternTypeDef _ -> []
     | AST.ExpressionStmt e | AST.Return e -> identifier_occurrences_in_expr name e
     | AST.Block stmts -> List.concat_map (identifier_occurrences_in_stmt name) stmts
     | AST.Let let_binding -> identifier_occurrences_in_expr name let_binding.value
@@ -7080,7 +7139,9 @@ module Test = struct
         List.concat_map
           (fun (m : AST.method_impl) -> identifier_occurrences_in_stmt name m.impl_method_body)
           impl_def.inherent_methods
-    | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ | AST.TraitDef _ | AST.DeriveDef _ | AST.TypeAlias _ -> []
+    | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ | AST.TraitDef _ | AST.DeriveDef _
+    | AST.TypeAlias _ ->
+        []
 
   let identifier_occurrences_in_program (name : string) (program : AST.program) : (int * int) list =
     List.concat_map (identifier_occurrences_in_stmt name) program

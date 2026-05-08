@@ -302,8 +302,8 @@ and find_namespace_ref_in_stmt ~(source : string) ~(offset : int) (stmt : Ast.AS
           Option.bind method_.method_default_impl (find_namespace_ref_in_expr ~source ~offset))
         methods
   | Ast.AST.ExportDecl _ | Ast.AST.ImportDecl _ -> None
-  | Ast.AST.EnumDef _ | Ast.AST.TypeDef _ | Ast.AST.ShapeDef _ | Ast.AST.DeriveDef _ | Ast.AST.TypeAlias _
-  | Ast.AST.ExternBlock _ ->
+  | Ast.AST.EnumDef _ | Ast.AST.TypeDef _ | Ast.AST.ExternTypeDef _ | Ast.AST.ShapeDef _ | Ast.AST.DeriveDef _
+  | Ast.AST.TypeAlias _ | Ast.AST.ExternBlock _ ->
       None
 
 let find_namespace_ref_in_program ~(source : string) ~(offset : int) (program : Ast.AST.program) :

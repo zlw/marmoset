@@ -230,6 +230,9 @@ let presence_of_decl
   | AST.TypeDef { type_name; _ } ->
       add type_name ~has_value:false ~has_enum:false ~has_named_type:true ~named_type_definition:definition_site
         ~has_transparent_type:false ~has_shape:false ~has_trait:false ()
+  | AST.ExternTypeDef { extern_type_name } ->
+      add extern_type_name ~has_value:false ~has_enum:false ~has_named_type:true
+        ~named_type_definition:definition_site ~has_transparent_type:false ~has_shape:false ~has_trait:false ()
   | AST.ShapeDef { shape_name; _ } ->
       add shape_name ~has_value:false ~has_enum:false ~has_named_type:false ~has_transparent_type:false
         ~has_shape:true ~shape_definition:definition_site ~has_trait:false ()
@@ -916,6 +919,14 @@ let rewrite_program
               {
                 stmt with
                 stmt = TypeDef { type_name = declaration_internal_name type_name; type_type_params; type_body };
+              },
+            value_scope )
+    | AST.ExternTypeDef { extern_type_name } ->
+        Ok
+          ( AST.
+              {
+                stmt with
+                stmt = ExternTypeDef { extern_type_name = declaration_internal_name extern_type_name };
               },
             value_scope )
     | AST.ShapeDef { shape_name; shape_type_params; shape_fields } ->

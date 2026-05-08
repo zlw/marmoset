@@ -80,6 +80,11 @@ let owner_internal_prefix (owner_module_id : string) : string =
 let is_owner_enum ~(owner_module_id : string) (enum_name : string) : bool =
   starts_with ~prefix:(owner_internal_prefix owner_module_id ^ "__") enum_name
 
+let extern_handle_owner_matches ~(owner_module_id : string) (type_name : string) : bool =
+  match Type_registry.extern_type_owner_module_id type_name with
+  | Some owner -> String.equal owner owner_module_id
+  | None -> false
+
 let unsupported ?source_span ~(typ : mono_type) () =
   let message = Printf.sprintf "unsupported shim boundary type %s" (Types.to_string typ) in
   let code = "type-shim-boundary" in
@@ -114,6 +119,17 @@ let rec classify ?source_span ~(owner_module_id : string) (typ : mono_type) :
       in
       let* enum_type_args = classify_args [] args in
       Ok (BOwnerEnum { enum_name = name; enum_type_args })
+  | TNamed (name, []) when Type_registry.is_extern_type_name name ->
+      if extern_handle_owner_matches ~owner_module_id name then
+        Ok
+          (BExternHandle
+             {
+               extern_type_name = name;
+               owner_module_id =
+                 Option.value (Type_registry.extern_type_owner_module_id name) ~default:owner_module_id;
+             })
+      else
+        Error (unsupported ?source_span ~typ ())
   | _ -> Error (unsupported ?source_span ~typ ())
 
 let%test "classifies scalar boundary types" =

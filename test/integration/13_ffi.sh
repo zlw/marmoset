@@ -115,8 +115,8 @@ copy_shim_fixture_project() {
 }
 
 run_fixture_expect_output \
-    "shim adapters run scalar, Option, Result, and owner enum calls" \
-    $'HI\n42\n41\nmessage:flipped' \
+    "shim adapters run scalar, Option, Result, owner enum, and handle calls" \
+    $'HI\n42\n41\nmessage:flipped\nfile:plan\nclosed:plan' \
     "$SHIM_RUNTIME_MAIN"
 
 test_emit_go_tree_snapshot \
@@ -142,6 +142,69 @@ import test.status
 puts(status.label(status.nil_status()))
 EOF'
 
+run_fixture_expect_runtime_failure \
+    "zero-value handle returned by shim is an ABI runtime failure" \
+    "invalid zero-value handle returned by shim" \
+    'copy_shim_fixture_project "$root"
+cat > "$root/main.mr" <<'"'"'EOF'"'"'
+import test.handle
+puts(handle.label(handle.invalid()))
+EOF'
+
+run_fixture_expect_runtime_failure \
+    "stale handle lookup is defined by shim table code" \
+    "stale handle" \
+    'copy_shim_fixture_project "$root"
+cat > "$root/main.mr" <<'"'"'EOF'"'"'
+import test.handle
+let file = handle.open("stale")
+handle.close(file)
+puts(handle.label(file))
+EOF'
+
+run_fixture_expect_build_failure \
+    "extern handles cannot be constructed in Marmoset" \
+    "cannot be constructed" \
+    'copy_shim_fixture_project "$root"
+cat > "$root/main.mr" <<'"'"'EOF'"'"'
+import test.handle.File
+import test.handle.open
+let file = File(open("x"))
+puts(0)
+EOF'
+
+run_fixture_expect_build_failure \
+    "extern handles cannot expose fields" \
+    "has no fields to inspect" \
+    'copy_shim_fixture_project "$root"
+cat > "$root/main.mr" <<'"'"'EOF'"'"'
+import test.handle
+let file = handle.open("x")
+puts(file.name)
+EOF'
+
+run_fixture_expect_build_failure \
+    "extern handles cannot be record-pattern matched" \
+    "cannot be pattern matched" \
+    'copy_shim_fixture_project "$root"
+cat > "$root/main.mr" <<'"'"'EOF'"'"'
+import test.handle
+puts(match handle.open("x") { case { name: }: name case _: "" })
+EOF'
+
+run_fixture_expect_build_failure \
+    "extern handles cannot derive traits" \
+    "extern type declarations cannot derive traits" \
+    'copy_shim_fixture_project "$root"
+cat > "$root/test/handle.mr" <<'"'"'EOF'"'"'
+export File
+extern type File derive Show
+EOF
+cat > "$root/main.mr" <<'"'"'EOF'"'"'
+import test.handle.File
+puts(0)
+EOF'
+
 run_fixture_expect_build_failure \
     "wrong shim signature fails at Go compile time" \
     "cannot use" \
@@ -156,6 +219,28 @@ extern "test/scalar" = {
   fn upcase(i: Int) -> Str
 }
 fn upcase(i: Int) -> Str = scalar.upcase(i)
+EOF'
+
+run_fixture_expect_build_failure \
+    "wrong handle type fails at Go compile time" \
+    "cannot use" \
+    'mkdir -p "$root/test"
+cat > "$root/main.mr" <<'"'"'EOF'"'"'
+import test.handle
+puts(handle.label(handle.open("x")))
+EOF
+cat > "$root/test/handle.mr" <<'"'"'EOF'"'"'
+export File, Other, open, label, invalid
+extern type File
+extern type Other
+extern "test/handle" = {
+  fn open(name: Str) -> Other
+  fn label(file: Other) -> Str
+  fn invalid() -> File
+}
+fn open(name: Str) -> Other = handle.open(name)
+fn label(file: Other) -> Str = handle.label(file)
+fn invalid() -> File = handle.invalid()
 EOF'
 
 expect_reject \

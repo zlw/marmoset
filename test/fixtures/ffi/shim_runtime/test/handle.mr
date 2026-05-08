@@ -1,0 +1,15 @@
+export File, open, label, close, invalid
+
+extern type File
+
+extern "test/handle" = {
+  fn open(name: Str) -> File
+  fn label(file: File) -> Str
+  fn close(file: File) -> Str
+  fn invalid() -> File
+}
+
+fn open(name: Str) -> File = handle.open(name)
+fn label(file: File) -> Str = handle.label(file)
+fn close(file: File) -> Str = handle.close(file)
+fn invalid() -> File = handle.invalid()

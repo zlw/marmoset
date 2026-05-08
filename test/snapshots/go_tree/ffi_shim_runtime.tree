@@ -1,3 +1,12 @@
+===== api/test/handle/api.go =====
+package mapi_test_handle
+
+import "marmoset_out/marmoset"
+
+type FileTag struct{}
+
+type File = marmoset.Handle[FileTag]
+
 ===== api/test/result/api.go =====
 package mapi_test_result
 
@@ -33,8 +42,10 @@ package main
 
 import (
 	"fmt"
+	mapi_test_handle "marmoset_out/api/test/handle"
 	mapi_test_status "marmoset_out/api/test/status"
 	"marmoset_out/marmoset"
+	mshim_test_handle "marmoset_out/shims/test/handle"
 	mshim_test_result "marmoset_out/shims/test/result"
 	mshim_test_scalar "marmoset_out/shims/test/scalar"
 	mshim_test_status "marmoset_out/shims/test/status"
@@ -124,6 +135,66 @@ func (e test__status__Status) String() string {
 	}
 }
 
+
+func extern__test_handle__close(file mapi_test_handle.File) string {
+	defer func() {
+		if __panic := recover(); __panic != nil {
+			panic(fmt.Sprintf("shim ABI violation at test/handle.close: %v", __panic))
+		}
+	}()
+	__ret := mshim_test_handle.Close((func(__value mapi_test_handle.File) mapi_test_handle.File {
+		if !marmoset.HandleIsValid(__value) {
+			panic("test/handle.close: invalid zero-value handle passed to shim")
+		}
+		return __value
+	})(file))
+	return __ret
+}
+
+func extern__test_handle__invalid() mapi_test_handle.File {
+	defer func() {
+		if __panic := recover(); __panic != nil {
+			panic(fmt.Sprintf("shim ABI violation at test/handle.invalid: %v", __panic))
+		}
+	}()
+	__ret := mshim_test_handle.Invalid()
+	return (func(__value mapi_test_handle.File) mapi_test_handle.File {
+		if !marmoset.HandleIsValid(__value) {
+			panic("test/handle.invalid: invalid zero-value handle returned by shim")
+		}
+		return __value
+	})(__ret)
+}
+
+func extern__test_handle__label(file mapi_test_handle.File) string {
+	defer func() {
+		if __panic := recover(); __panic != nil {
+			panic(fmt.Sprintf("shim ABI violation at test/handle.label: %v", __panic))
+		}
+	}()
+	__ret := mshim_test_handle.Label((func(__value mapi_test_handle.File) mapi_test_handle.File {
+		if !marmoset.HandleIsValid(__value) {
+			panic("test/handle.label: invalid zero-value handle passed to shim")
+		}
+		return __value
+	})(file))
+	return __ret
+}
+
+func extern__test_handle__open(name string) mapi_test_handle.File {
+	defer func() {
+		if __panic := recover(); __panic != nil {
+			panic(fmt.Sprintf("shim ABI violation at test/handle.open: %v", __panic))
+		}
+	}()
+	__ret := mshim_test_handle.Open(name)
+	return (func(__value mapi_test_handle.File) mapi_test_handle.File {
+		if !marmoset.HandleIsValid(__value) {
+			panic("test/handle.open: invalid zero-value handle returned by shim")
+		}
+		return __value
+	})(__ret)
+}
 
 func extern__test_result__invalid() Result_int64_string {
 	defer func() {
@@ -278,6 +349,18 @@ func test__status__flip_bool(flag bool) test__status__Status {
     return extern__test_status__flip(flag)
 }
 
+func test__handle__open_string(name string) mapi_test_handle.File {
+    return extern__test_handle__open(name)
+}
+
+func test__handle__label_test__handle__File(file mapi_test_handle.File) string {
+    return extern__test_handle__label(file)
+}
+
+func test__handle__close_test__handle__File(file mapi_test_handle.File) string {
+    return extern__test_handle__close(file)
+}
+
 
 func inherent_value_or_Result_int64_string(self Result_int64_string, fallback int64) int64 {
         __scrutinee_0 := self
@@ -372,6 +455,10 @@ func main() {
     _ = puts(inherent_unwrap_or_Option_int64(test__scalar__maybe_bool(true), int64(0)))
     _ = puts(inherent_value_or_Result_int64_string(test__result__parse_string("41"), int64(0)))
     _ = puts(test__status__label_test__status__Status(test__status__flip_bool(true)))
+    main__file := test__handle__open_string("plan")
+    _ = main__file
+    _ = puts(test__handle__label_test__handle__File(main__file))
+    _ = puts(test__handle__close_test__handle__File(main__file))
 }
 
 ===== marmoset/bytes.go =====
@@ -397,7 +484,10 @@ func (bytes Bytes) Copy() []byte {
 ===== marmoset/handle.go =====
 package marmoset
 
-import "sync/atomic"
+import (
+	"sync"
+	"sync/atomic"
+)
 
 type Handle[Tag any] struct {
 	id uint64
@@ -415,6 +505,60 @@ func NewHandle[Tag any]() Handle[Tag] {
 
 func HandleIsValid[Tag any](handle Handle[Tag]) bool {
 	return handle.id != 0
+}
+
+type HandleTable[Tag any, Value any] struct {
+	mu     sync.Mutex
+	next   uint64
+	values map[uint64]Value
+}
+
+func NewHandleTable[Tag any, Value any]() *HandleTable[Tag, Value] {
+	return &HandleTable[Tag, Value]{
+		values: make(map[uint64]Value),
+	}
+}
+
+func (table *HandleTable[Tag, Value]) Insert(value Value) Handle[Tag] {
+	table.mu.Lock()
+	defer table.mu.Unlock()
+
+	if table.values == nil {
+		table.values = make(map[uint64]Value)
+	}
+	table.next++
+	if table.next == 0 {
+		table.next++
+	}
+	handle := Handle[Tag]{id: table.next}
+	table.values[handle.id] = value
+	return handle
+}
+
+func (table *HandleTable[Tag, Value]) Get(handle Handle[Tag]) (Value, bool) {
+	table.mu.Lock()
+	defer table.mu.Unlock()
+
+	var zero Value
+	if handle.id == 0 || table.values == nil {
+		return zero, false
+	}
+	value, ok := table.values[handle.id]
+	return value, ok
+}
+
+func (table *HandleTable[Tag, Value]) Delete(handle Handle[Tag]) bool {
+	table.mu.Lock()
+	defer table.mu.Unlock()
+
+	if handle.id == 0 || table.values == nil {
+		return false
+	}
+	if _, ok := table.values[handle.id]; !ok {
+		return false
+	}
+	delete(table.values, handle.id)
+	return true
 }
 
 ===== marmoset/option.go =====
@@ -548,6 +692,46 @@ func rest[T any](arr []T) []T {
 // push appends an element to an array and returns the new array
 func push[T any](arr []T, v T) []T {
 	return append(arr, v)
+}
+
+===== shims/test/handle/handle.go =====
+package handle
+
+import (
+	handleapi "marmoset_out/api/test/handle"
+	"marmoset_out/marmoset"
+)
+
+type fileResource struct {
+	name string
+}
+
+var files = marmoset.NewHandleTable[handleapi.FileTag, *fileResource]()
+
+func Open(name string) handleapi.File {
+	return files.Insert(&fileResource{name: name})
+}
+
+func Label(file handleapi.File) string {
+	resource, ok := files.Get(file)
+	if !ok {
+		panic("stale handle")
+	}
+	return "file:" + resource.name
+}
+
+func Close(file handleapi.File) string {
+	resource, ok := files.Get(file)
+	if !ok {
+		panic("stale handle")
+	}
+	files.Delete(file)
+	return "closed:" + resource.name
+}
+
+func Invalid() handleapi.File {
+	var zero handleapi.File
+	return zero
 }
 
 ===== shims/test/result/result.go =====

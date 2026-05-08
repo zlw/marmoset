@@ -340,6 +340,14 @@ and collect_stmt ~source ~type_map ~environment ~params ~tokens (stmt : Ast.AST.
             { pos = nstart; end_pos = nstart + nlen - 1; token_type = _type_type; modifiers = declaration_mod }
             :: !tokens
       | None -> ())
+  | Ast.AST.ExternTypeDef { extern_type_name } -> (
+      let nlen = String.length extern_type_name in
+      match find_name ~source ~start:stmt.pos ~limit:(stmt.end_pos + 1) extern_type_name with
+      | Some (nstart, _) ->
+          tokens :=
+            { pos = nstart; end_pos = nstart + nlen - 1; token_type = _type_type; modifiers = declaration_mod }
+            :: !tokens
+      | None -> ())
   | Ast.AST.ShapeDef { shape_name; _ } -> (
       let nlen = String.length shape_name in
       match find_name ~source ~start:stmt.pos ~limit:(stmt.end_pos + 1) shape_name with

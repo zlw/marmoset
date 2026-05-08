@@ -369,6 +369,12 @@ let api_import_path (shim_id : string) : string = "marmoset_out/api/" ^ shim_id
 let shim_import_alias (shim_id : string) : string = "mshim_" ^ go_path_name_fragment shim_id
 let shim_import_path (shim_id : string) : string = "marmoset_out/shims/" ^ shim_id
 
+let shim_id_of_owner_module_id (owner_module_id : string) : string =
+  String.split_on_char '.' owner_module_id |> String.concat "/"
+
+let extern_handle_api_type_name (type_name : string) : string =
+  exported_go_ident (Typecheck.Display_names.display_binding_name type_name)
+
 let extern_wrapper_name (func : Typecheck.Resolution_artifacts.extern_func) : string =
   Printf.sprintf "extern__%s__%s" (go_path_name_fragment func.shim_id) (go_safe_ident func.marmoset_func_name)
 
@@ -942,9 +948,19 @@ let merge_record_fields
 
 let track_named_type_inst (state : mono_state) (t : Types.mono_type) : unit =
   match normalize_instantiation_type ~concrete_only:state.concrete_only t with
+  | Types.TNamed (name, _) when Type_registry.is_extern_type_name name -> ()
   | Types.TNamed (name, args) ->
       state.named_type_insts <- NamedTypeInstSet.add (name, args) state.named_type_insts
   | _ -> ()
+
+let extern_handle_go_type (state : mono_state) (type_name : string) : string =
+  match Type_registry.extern_type_owner_module_id type_name with
+  | Some owner_module_id ->
+      let shim_id = shim_id_of_owner_module_id owner_module_id in
+      let api_alias = api_package_name shim_id in
+      add_go_import ~alias:api_alias state (api_import_path shim_id);
+      Printf.sprintf "%s.%s" api_alias (extern_handle_api_type_name type_name)
+  | None -> failwith (Printf.sprintf "Codegen error: unknown extern type '%s'" type_name)
 
 let named_type_codegen_body_exn (type_name : string) (type_args : Types.mono_type list) :
     [ `Product of Types.record_field_type list | `Wrapper of Types.mono_type ] =
@@ -965,7 +981,10 @@ let named_type_codegen_body_exn (type_name : string) (type_args : Types.mono_typ
           | Some (Error msg) ->
               failwith (Printf.sprintf "Codegen error: cannot instantiate named wrapper '%s': %s" type_name msg)
           | None -> failwith (Printf.sprintf "Codegen error: missing named wrapper definition for '%s'" type_name)
-          ))
+          )
+      | Type_registry.NamedExtern _ ->
+          failwith
+            (Printf.sprintf "Codegen error: extern type '%s' has no Marmoset representation" type_name))
 
 let named_type_representation_exn (type_name : string) (type_args : Types.mono_type list) : Types.mono_type =
   match named_type_codegen_body_exn type_name type_args with
@@ -1001,6 +1020,7 @@ let rec shape_field_type_to_go (state : mono_state) (t : Types.mono_type) : stri
   | Types.TUnion _ -> "interface{}"
   | Types.TIntersection members -> shape_field_type_to_go state (collapse_intersection_for_codegen_exn members)
   | Types.TEnum _ -> mangle_type_for_shape t
+  | Types.TNamed (name, []) when Type_registry.is_extern_type_name name -> extern_handle_go_type state name
   | Types.TNamed _ ->
       track_named_type_inst state t;
       mangle_type t
@@ -1080,6 +1100,7 @@ let rec type_to_go (state : mono_state) (t : Types.mono_type) : string =
   | Types.TUnion _ -> "interface{}" (* Phase 4.1: unions compile to interface{} *)
   | Types.TIntersection members -> type_to_go state (collapse_intersection_for_codegen_exn members)
   | Types.TEnum (name, args) -> mangle_type (Types.TEnum (name, args))
+  | Types.TNamed (name, []) when Type_registry.is_extern_type_name name -> extern_handle_go_type state name
   | Types.TNamed _ ->
       track_named_type_inst state t;
       mangle_type t
@@ -1248,6 +1269,7 @@ and enum_payload_needs_boxing (state : mono_state) ?(visited_named = StringSet.e
     =
   match normalize_type_for_codegen ~concrete_only:state.concrete_only t with
   | Types.TEnum _ | Types.TRecord _ -> true
+  | Types.TNamed (name, []) when Type_registry.is_extern_type_name name -> false
   | Types.TNamed (name, args) as named_type -> (
       let key = mangle_type named_type in
       if StringSet.mem key visited_named then
@@ -1440,7 +1462,8 @@ and captures_top_level_values_stmt (top_level_values : StringSet.t) (bound : Str
       in
       captured
   | AST.ExportDecl _ | AST.ImportDecl _ -> StringSet.empty
-  | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ | AST.TraitDef _ | AST.ImplDef _ | AST.InherentImplDef _
+  | AST.EnumDef _ | AST.TypeDef _ | AST.ExternTypeDef _ | AST.ShapeDef _ | AST.TraitDef _ | AST.ImplDef _
+  | AST.InherentImplDef _
   | AST.DeriveDef _ | AST.TypeAlias _ | AST.ExternBlock _ ->
       StringSet.empty
 
@@ -1510,7 +1533,7 @@ let rec collect_funcs_stmt
         (fun bindings stmt -> collect_funcs_stmt ~top_level:false ~available_bindings:bindings state stmt)
         available_bindings stmts
   | AST.ExportDecl _ | AST.ImportDecl _ -> available_bindings
-  | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ -> available_bindings
+  | AST.EnumDef _ | AST.TypeDef _ | AST.ExternTypeDef _ | AST.ShapeDef _ -> available_bindings
   | AST.TraitDef _ | AST.ImplDef _ | AST.InherentImplDef _ | AST.DeriveDef _ | AST.TypeAlias _ | AST.ExternBlock _ ->
       available_bindings
 
@@ -2922,7 +2945,9 @@ and collect_forward_call_arg_types_stmt
         (fun (m : AST.method_impl) -> collect_forward_call_arg_types_stmt name type_map env m.impl_method_body)
         impl.inherent_methods
   | AST.ExportDecl _ | AST.ImportDecl _ -> []
-  | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ | AST.TraitDef _ | AST.DeriveDef _ | AST.TypeAlias _ | AST.ExternBlock _ -> []
+  | AST.EnumDef _ | AST.TypeDef _ | AST.ExternTypeDef _ | AST.ShapeDef _ | AST.TraitDef _ | AST.DeriveDef _
+  | AST.TypeAlias _ | AST.ExternBlock _ ->
+      []
 
 let resolve_local_function_type_from_calls_for_collect
     (name : string)
@@ -3061,7 +3086,7 @@ let rec collect_insts_stmt
       env
   | AST.Block stmts -> collect_insts_stmt_list state type_map env stmts
   | AST.ExportDecl _ | AST.ImportDecl _ -> env
-  | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ -> env (* Compile-time only *)
+  | AST.EnumDef _ | AST.TypeDef _ | AST.ExternTypeDef _ | AST.ShapeDef _ -> env (* Compile-time only *)
   | AST.TraitDef _ | AST.DeriveDef _ | AST.TypeAlias _ | AST.ExternBlock _ -> env
   | AST.ImplDef impl ->
       ignore (register_impl_template state impl);
@@ -4057,7 +4082,8 @@ and copy_specialized_stmt_types
       copy_specialized_expr_types source_map target_map specialization_subst expr
   | AST.Block stmts -> List.iter (copy_specialized_stmt_types source_map target_map specialization_subst) stmts
   | AST.ExportDecl _ | AST.ImportDecl _ -> ()
-  | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ | AST.TraitDef _ | AST.ImplDef _ | AST.InherentImplDef _
+  | AST.EnumDef _ | AST.TypeDef _ | AST.ExternTypeDef _ | AST.ShapeDef _ | AST.TraitDef _ | AST.ImplDef _
+  | AST.InherentImplDef _
   | AST.DeriveDef _ | AST.TypeAlias _ | AST.ExternBlock _ ->
       ()
 
@@ -6385,7 +6411,9 @@ and collect_local_call_arg_types_stmt
         (fun (m : AST.method_impl) -> collect_local_call_arg_types_stmt name type_map env m.impl_method_body)
         impl.inherent_methods
   | AST.ExportDecl _ | AST.ImportDecl _ -> []
-  | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ | AST.TraitDef _ | AST.DeriveDef _ | AST.TypeAlias _ | AST.ExternBlock _ -> []
+  | AST.EnumDef _ | AST.TypeDef _ | AST.ExternTypeDef _ | AST.ShapeDef _ | AST.TraitDef _ | AST.DeriveDef _
+  | AST.TypeAlias _ | AST.ExternBlock _ ->
+      []
 
 and resolve_local_function_type_from_calls
     (name : string)
@@ -6666,7 +6694,8 @@ and emit_stmt
   | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ ->
       (* Compile-time-only declarations *)
       ("", env)
-  | AST.TraitDef _ | AST.ImplDef _ | AST.InherentImplDef _ | AST.DeriveDef _ | AST.TypeAlias _ | AST.ExternBlock _ ->
+  | AST.TraitDef _ | AST.ImplDef _ | AST.InherentImplDef _ | AST.DeriveDef _ | AST.TypeAlias _
+  | AST.ExternBlock _ | AST.ExternTypeDef _ ->
       (* Trait definitions/impls/derives/type aliases are compile-time only *)
       ("", env)
 
@@ -7015,10 +7044,13 @@ let emit_enum_type (state : mono_state) (enum_name : string) (type_args : Types.
       (struct_def ^ tag_constants ^ constructors ^ string_method, needs_fmt)
 
 let emit_named_type_def (state : mono_state) (type_name : string) (type_args : Types.mono_type list) : string =
-  let go_type_name = mangle_type (Types.TNamed (type_name, type_args)) in
-  let representation_type = named_type_representation_exn type_name type_args in
-  let representation_go_type = type_to_go state representation_type in
-  Printf.sprintf "type %s %s\n" go_type_name representation_go_type
+  if Type_registry.is_extern_type_name type_name then
+    ""
+  else
+    let go_type_name = mangle_type (Types.TNamed (type_name, type_args)) in
+    let representation_type = named_type_representation_exn type_name type_args in
+    let representation_go_type = type_to_go state representation_type in
+    Printf.sprintf "type %s %s\n" go_type_name representation_go_type
 
 let emit_named_type_defs (state : mono_state) : string =
   let rec emit_pending (emitted : NamedTypeInstSet.t) (acc : string list) =
@@ -7033,7 +7065,13 @@ let emit_named_type_defs (state : mono_state) : string =
           List.fold_left
             (fun (emitted_acc, code_acc) ((type_name, type_args) as inst) ->
               let code = emit_named_type_def state type_name type_args in
-              (NamedTypeInstSet.add inst emitted_acc, code :: code_acc))
+              let code_acc =
+                if code = "" then
+                  code_acc
+                else
+                  code :: code_acc
+              in
+              (NamedTypeInstSet.add inst emitted_acc, code_acc))
             (emitted, acc) pending
         in
         emit_pending emitted' acc'
@@ -7509,7 +7547,8 @@ let collect_inherent_call_sites
     | AST.Return e | AST.ExpressionStmt e -> (collect_expr acc env e, env)
     | AST.Block stmts -> (collect_stmt_list acc env stmts, env)
     | AST.ExportDecl _ | AST.ImportDecl _ -> (acc, env)
-    | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ | AST.TypeAlias _ | AST.DeriveDef _ | AST.ExternBlock _ ->
+    | AST.EnumDef _ | AST.TypeDef _ | AST.ExternTypeDef _ | AST.ShapeDef _ | AST.TypeAlias _ | AST.DeriveDef _
+    | AST.ExternBlock _ ->
         (acc, env)
     | AST.TraitDef trait_def ->
         ( List.fold_left
@@ -8106,7 +8145,7 @@ let rec abi_type_go_for_main
       Printf.sprintf "%s.%s" api_alias
         (exported_go_ident (Typecheck.Display_names.display_binding_name enum.enum_name))
   | BStdBytes -> "marmoset.Bytes"
-  | BExternHandle handle -> Printf.sprintf "marmoset.Handle[%sTag]" (exported_go_ident handle.extern_type_name)
+  | BExternHandle handle -> Printf.sprintf "%s.%s" api_alias (extern_handle_api_type_name handle.extern_type_name)
 
 let rec track_boundary_marmoset_types
     (state : mono_state) (boundary : Typecheck.Shim_boundary.boundary_type) : unit =
@@ -8130,7 +8169,7 @@ let register_shim_boundary_imports
     (boundary : Typecheck.Shim_boundary.boundary_type) : unit =
   let rec go (boundary : Typecheck.Shim_boundary.boundary_type) =
     match boundary with
-    | BUnit | BStdOption _ | BStdResult _ | BStdBytes | BExternHandle _ ->
+    | BUnit | BStdOption _ | BStdResult _ | BStdBytes ->
         add_go_import state "marmoset_out/marmoset";
         (match boundary with
         | BStdOption inner -> go inner
@@ -8138,6 +8177,9 @@ let register_shim_boundary_imports
             go ok_type;
             go err_type
         | _ -> ())
+    | BExternHandle _ ->
+        add_go_import state "marmoset_out/marmoset";
+        add_go_import ~alias:api_alias state (api_import_path shim_id)
     | BOwnerEnum enum ->
         add_go_import ~alias:api_alias state (api_import_path shim_id);
         List.iter go enum.enum_type_args
@@ -8287,7 +8329,13 @@ let rec to_abi_expr
         "(func(__value %s) %s {\n\t\tswitch __value.Tag {\n%s\n\t\tdefault:\n\t\t\tpanic(%S)\n\t\t}\n\t})(%s)"
         value_type api_type cases (Printf.sprintf "%s: invalid Marmoset enum tag crossing shim boundary" context)
         expr
-  | BStdBytes | BExternHandle _ ->
+  | BExternHandle _ ->
+      let value_type = boundary_marmoset_go_type state boundary in
+      let api_type = abi_type_go_for_main ~api_alias boundary in
+      Printf.sprintf
+        "(func(__value %s) %s {\n\t\tif !marmoset.HandleIsValid(__value) {\n\t\t\tpanic(%S)\n\t\t}\n\t\treturn __value\n\t})(%s)"
+        value_type api_type (Printf.sprintf "%s: invalid zero-value handle passed to shim" context) expr
+  | BStdBytes ->
       failwith
         (Printf.sprintf "Codegen error: unsupported S4 shim adapter boundary reached backend: %s"
            (Typecheck.Shim_boundary.to_string boundary))
@@ -8351,7 +8399,13 @@ and from_abi_expr
         api_type value_type (Printf.sprintf "%s: nil enum returned by shim" context) cases
         (Printf.sprintf "%s: unknown enum variant returned by shim" context)
         expr
-  | BStdBytes | BExternHandle _ ->
+  | BExternHandle _ ->
+      let value_type = boundary_marmoset_go_type state boundary in
+      let api_type = abi_type_go_for_main ~api_alias boundary in
+      Printf.sprintf
+        "(func(__value %s) %s {\n\t\tif !marmoset.HandleIsValid(__value) {\n\t\t\tpanic(%S)\n\t\t}\n\t\treturn __value\n\t})(%s)"
+        api_type value_type (Printf.sprintf "%s: invalid zero-value handle returned by shim" context) expr
+  | BStdBytes ->
       failwith
         (Printf.sprintf "Codegen error: unsupported S4 shim adapter boundary reached backend: %s"
            (Typecheck.Shim_boundary.to_string boundary))
@@ -8956,7 +9010,10 @@ func (bytes Bytes) Copy() []byte {
 let support_handle_go =
   {|package marmoset
 
-import "sync/atomic"
+import (
+	"sync"
+	"sync/atomic"
+)
 
 type Handle[Tag any] struct {
 	id uint64
@@ -8974,6 +9031,60 @@ func NewHandle[Tag any]() Handle[Tag] {
 
 func HandleIsValid[Tag any](handle Handle[Tag]) bool {
 	return handle.id != 0
+}
+
+type HandleTable[Tag any, Value any] struct {
+	mu     sync.Mutex
+	next   uint64
+	values map[uint64]Value
+}
+
+func NewHandleTable[Tag any, Value any]() *HandleTable[Tag, Value] {
+	return &HandleTable[Tag, Value]{
+		values: make(map[uint64]Value),
+	}
+}
+
+func (table *HandleTable[Tag, Value]) Insert(value Value) Handle[Tag] {
+	table.mu.Lock()
+	defer table.mu.Unlock()
+
+	if table.values == nil {
+		table.values = make(map[uint64]Value)
+	}
+	table.next++
+	if table.next == 0 {
+		table.next++
+	}
+	handle := Handle[Tag]{id: table.next}
+	table.values[handle.id] = value
+	return handle
+}
+
+func (table *HandleTable[Tag, Value]) Get(handle Handle[Tag]) (Value, bool) {
+	table.mu.Lock()
+	defer table.mu.Unlock()
+
+	var zero Value
+	if handle.id == 0 || table.values == nil {
+		return zero, false
+	}
+	value, ok := table.values[handle.id]
+	return value, ok
+}
+
+func (table *HandleTable[Tag, Value]) Delete(handle Handle[Tag]) bool {
+	table.mu.Lock()
+	defer table.mu.Unlock()
+
+	if handle.id == 0 || table.values == nil {
+		return false
+	}
+	if _, ok := table.values[handle.id]; !ok {
+		return false
+	}
+	delete(table.values, handle.id)
+	return true
 }
 |}
 
@@ -9062,6 +9173,24 @@ let collect_func_boundary_enums (func : Typecheck.Resolution_artifacts.extern_fu
   List.fold_left collect_boundary_enums [] (func.return_boundary_type :: func.param_boundary_types)
   |> List.sort_uniq String.compare
 
+let rec collect_boundary_handles
+    (acc : Typecheck.Shim_boundary.extern_type_identity list)
+    (boundary : Typecheck.Shim_boundary.boundary_type) : Typecheck.Shim_boundary.extern_type_identity list =
+  match boundary with
+  | BUnit | BBool | BInt | BFloat | BStr | BStdBytes -> acc
+  | BStdOption inner -> collect_boundary_handles acc inner
+  | BStdResult (ok_type, err_type) -> collect_boundary_handles (collect_boundary_handles acc ok_type) err_type
+  | BOwnerEnum enum -> List.fold_left collect_boundary_handles acc enum.enum_type_args
+  | BExternHandle handle -> handle :: acc
+
+let collect_func_boundary_handles (func : Typecheck.Resolution_artifacts.extern_func) :
+    Typecheck.Shim_boundary.extern_type_identity list =
+  List.fold_left collect_boundary_handles [] (func.return_boundary_type :: func.param_boundary_types)
+  |> List.sort_uniq (fun (a : Typecheck.Shim_boundary.extern_type_identity) b ->
+         match String.compare a.extern_type_name b.extern_type_name with
+         | 0 -> String.compare a.owner_module_id b.owner_module_id
+         | cmp -> cmp)
+
 let rec abi_type_go (boundary : Typecheck.Shim_boundary.boundary_type) : string * bool =
   match boundary with
   | BUnit -> ("marmoset.Unit", true)
@@ -9078,8 +9207,7 @@ let rec abi_type_go (boundary : Typecheck.Shim_boundary.boundary_type) : string 
       (Printf.sprintf "marmoset.Result[%s, %s]" ok_go err_go, true)
   | BOwnerEnum enum -> (exported_go_ident (Typecheck.Display_names.display_binding_name enum.enum_name), false)
   | BStdBytes -> ("marmoset.Bytes", true)
-  | BExternHandle handle ->
-      (Printf.sprintf "marmoset.Handle[%sTag]" (exported_go_ident handle.extern_type_name), true)
+  | BExternHandle handle -> (extern_handle_api_type_name handle.extern_type_name, false)
 
 let enum_field_boundary ~(owner_module_id : string) (field_type : Types.mono_type) :
     Typecheck.Shim_boundary.boundary_type option =
@@ -9119,9 +9247,20 @@ let emit_api_enum ~(owner_module_id : string) (enum_name : string) : string * bo
       in
       (body, !import_needed)
 
+let emit_api_handle (handle : Typecheck.Shim_boundary.extern_type_identity) : string =
+  let type_name = extern_handle_api_type_name handle.extern_type_name in
+  Printf.sprintf "type %sTag struct{}\n\ntype %s = marmoset.Handle[%sTag]\n" type_name type_name type_name
+
 let emit_api_package (shim_id : string) (funcs : Typecheck.Resolution_artifacts.extern_func list) : go_aux_file =
   let enum_names =
     funcs |> List.concat_map collect_func_boundary_enums |> List.sort_uniq String.compare
+  in
+  let handles =
+    funcs |> List.concat_map collect_func_boundary_handles
+    |> List.sort_uniq (fun (a : Typecheck.Shim_boundary.extern_type_identity) b ->
+           match String.compare a.extern_type_name b.extern_type_name with
+           | 0 -> String.compare a.owner_module_id b.owner_module_id
+           | cmp -> cmp)
   in
   let owner_module_id =
     match funcs with
@@ -9131,7 +9270,8 @@ let emit_api_package (shim_id : string) (funcs : Typecheck.Resolution_artifacts.
         | Ok owner -> owner
         | Error _ -> shim_id)
   in
-  let enum_bodies, needs_marmoset =
+  let handle_bodies = handles |> List.map emit_api_handle in
+  let enum_bodies, enum_needs_marmoset =
     enum_names
     |> List.map (emit_api_enum ~owner_module_id)
     |> List.fold_left
@@ -9142,6 +9282,7 @@ let emit_api_package (shim_id : string) (funcs : Typecheck.Resolution_artifacts.
              (body :: bodies, needs_import || body_needs_import))
          ([], false)
   in
+  let needs_marmoset = enum_needs_marmoset || handle_bodies <> [] in
   let package_line = Printf.sprintf "package %s\n\n" (api_package_name shim_id) in
   let imports =
     if needs_marmoset then
@@ -9149,7 +9290,7 @@ let emit_api_package (shim_id : string) (funcs : Typecheck.Resolution_artifacts.
     else
       ""
   in
-  let body = enum_bodies |> List.rev |> String.concat "\n" in
+  let body = String.concat "\n" (handle_bodies @ (enum_bodies |> List.rev)) in
   {
     rel_path = Printf.sprintf "api/%s/api.go" shim_id;
     contents = package_line ^ imports ^ body;

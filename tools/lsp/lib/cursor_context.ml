@@ -209,6 +209,9 @@ let build_scope_index (program : Surface.surface_program) : scope_index =
     (fun acc (stmt : Surface.surface_top_stmt) ->
       match stmt.std_decl with
       | Surface.SExportDecl _ | Surface.SImportDecl _ | Surface.SExternBlock _ -> acc
+      | Surface.SExternTypeDef { extern_type_name; extern_type_name_ref } ->
+          add_binding acc ~binding_kind:Type_binding ~binding_name:extern_type_name
+            ~binding_ref:extern_type_name_ref ~scope_start:stmt.std_pos ~scope_end:stmt.std_end_pos
       | Surface.SLet { name; name_ref; value; type_annotation } ->
           let acc =
             add_binding acc ~binding_kind:Value_binding ~binding_name:name ~binding_ref:name_ref
@@ -577,6 +580,8 @@ let reference_in_top_stmt ~(scope_index : scope_index) ~(offset : int) (stmt : S
     reference option =
   match stmt.std_decl with
   | Surface.SExportDecl _ | Surface.SExternBlock _ -> None
+  | Surface.SExternTypeDef { extern_type_name_ref; _ } ->
+      declaration_ref_if_contains ~offset ~name_ref:extern_type_name_ref ~declaration_kind:Type_decl
   | Surface.SImportDecl { import_path; import_path_refs; import_alias_ref; _ } ->
       first_some
         (Option.bind import_alias_ref (fun alias_ref ->
@@ -815,6 +820,8 @@ let collect_references ~(input : cursor_context_input) : reference list =
     (fun (stmt : Surface.surface_top_stmt) ->
       match stmt.std_decl with
       | Surface.SExportDecl _ | Surface.SExternBlock _ -> []
+      | Surface.SExternTypeDef { extern_type_name_ref; _ } ->
+          [ Declaration_head { name_ref = extern_type_name_ref; declaration_kind = Type_decl } ]
       | Surface.SImportDecl { import_path; import_path_refs; import_alias_ref; _ } ->
           Option.fold ~none:[]
             ~some:(fun alias_ref -> [ Import_alias { alias_ref; import_path } ])

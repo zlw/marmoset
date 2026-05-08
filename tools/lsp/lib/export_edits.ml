@@ -28,11 +28,14 @@ let exportable_declarations (program : Surface.surface_program) : exportable_dec
           Some { surface_name = name; declaration_kind = Fn_decl; name_ref }
       | Surface.STypeDef { type_name; type_name_ref; _ } ->
           Some { surface_name = type_name; declaration_kind = Type_decl; name_ref = type_name_ref }
+      | Surface.SExternTypeDef { extern_type_name; extern_type_name_ref } ->
+          Some { surface_name = extern_type_name; declaration_kind = Type_decl; name_ref = extern_type_name_ref }
       | Surface.SShapeDef { shape_name; shape_name_ref; _ } ->
           Some { surface_name = shape_name; declaration_kind = Shape_decl; name_ref = shape_name_ref }
       | Surface.STraitDef { name; name_ref; _ } ->
           Some { surface_name = name; declaration_kind = Trait_decl; name_ref }
-      | Surface.SExportDecl _ | Surface.SImportDecl _ | Surface.SExternBlock _ | Surface.SAmbiguousImplDef _ | Surface.SInherentImplDef _
+      | Surface.SExportDecl _ | Surface.SImportDecl _ | Surface.SExternBlock _ | Surface.SAmbiguousImplDef _
+      | Surface.SInherentImplDef _
       | Surface.SExpressionStmt _ | Surface.SReturn _ | Surface.SBlock _ ->
           None)
     program

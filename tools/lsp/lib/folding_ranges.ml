@@ -100,7 +100,7 @@ and walk_stmt ~source ~ranges (stmt : Ast.AST.statement) =
   | Ast.AST.ExportDecl _ | Ast.AST.ImportDecl _ -> ()
   | Ast.AST.ExternBlock _ ->
       maybe_range ~source ~pos:stmt.pos ~end_pos:stmt.end_pos ~kind:Lsp_t.FoldingRangeKind.Region ranges
-  | Ast.AST.DeriveDef _ | Ast.AST.TypeAlias _ -> ()
+  | Ast.AST.DeriveDef _ | Ast.AST.TypeAlias _ | Ast.AST.ExternTypeDef _ -> ()
 
 (* Public entry point *)
 let compute ~(source : string) ~(program : Ast.AST.program) : Lsp_t.FoldingRange.t list =

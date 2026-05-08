@@ -46,6 +46,8 @@ module AST = struct
   }
   [@@deriving show]
 
+  and extern_type_def = { extern_type_name : string } [@@deriving show]
+
   and shape_def = {
     shape_name : string;
     shape_type_params : string list;
@@ -162,6 +164,7 @@ module AST = struct
         variants : variant_def list;
       }
     | TypeDef of named_type_def
+    | ExternTypeDef of extern_type_def
     | ShapeDef of shape_def
     | TraitDef of trait_def (* Phase 4.3: trait Show[a] = { ... } *)
     | ImplDef of impl_def (* Phase 4.3: impl Show[Int] = { ... } *)
@@ -364,6 +367,7 @@ module AST = struct
           | None -> base
           | Some alias -> base ^ " as " ^ alias)
       | ExternBlock block -> Printf.sprintf "extern %S as %s = { ... }" block.extern_shim_id block.extern_qualifier
+      | ExternTypeDef { extern_type_name } -> Printf.sprintf "extern type %s" extern_type_name
       | Let l -> Printf.sprintf "let %s = %s;" l.name (expression_to_string l.value)
       | Return expr -> Printf.sprintf "return %s;" (expression_to_string expr)
       | ExpressionStmt expr -> expression_to_string expr
