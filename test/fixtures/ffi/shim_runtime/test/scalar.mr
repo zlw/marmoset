@@ -1,0 +1,9 @@
+export upcase, maybe
+
+extern "test/scalar" = {
+  fn upcase(s: Str) -> Str
+  fn maybe(flag: Bool) -> Option[Int]
+}
+
+fn upcase(s: Str) -> Str = scalar.upcase(s)
+fn maybe(flag: Bool) -> Option[Int] = scalar.maybe(flag)

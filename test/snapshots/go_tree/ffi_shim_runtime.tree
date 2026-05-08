@@ -1,0 +1,624 @@
+===== api/test/result/api.go =====
+package mapi_test_result
+
+
+===== api/test/scalar/api.go =====
+package mapi_test_scalar
+
+
+===== api/test/status/api.go =====
+package mapi_test_status
+
+type Status interface {
+	isStatus()
+}
+
+type StatusReady struct{}
+
+func (StatusReady) isStatus() {}
+
+type StatusMessage struct {
+	Field0 string
+}
+
+func (StatusMessage) isStatus() {}
+
+===== go.mod =====
+module marmoset_out
+
+go 1.18
+
+===== main.go =====
+package main
+
+import (
+	"fmt"
+	mapi_test_status "marmoset_out/api/test/status"
+	"marmoset_out/marmoset"
+	mshim_test_result "marmoset_out/shims/test/result"
+	mshim_test_scalar "marmoset_out/shims/test/scalar"
+	mshim_test_status "marmoset_out/shims/test/status"
+)
+
+type Option_int64 struct {
+	Data0 int64
+	Tag int8
+}
+
+const Option_int64_Some_tag = 0
+const Option_int64_None_tag = 1
+
+func Option_int64_Some(v0 int64) Option_int64 {
+	return Option_int64{Tag: Option_int64_Some_tag, Data0: v0}
+}
+
+func Option_int64_None() Option_int64 {
+	return Option_int64{Tag: Option_int64_None_tag}
+}
+
+func (e Option_int64) String() string {
+	switch e.Tag {
+	case Option_int64_Some_tag:
+		return fmt.Sprintf("Some(%v)", e.Data0)
+	case Option_int64_None_tag:
+		return "None"
+	default:
+		panic("unreachable: invalid enum tag")
+	}
+}
+
+
+type Result_int64_string struct {
+	Data0 int64
+	Data1 string
+	Tag int8
+}
+
+const Result_int64_string_Success_tag = 0
+const Result_int64_string_Failure_tag = 1
+
+func Result_int64_string_Success(v0 int64) Result_int64_string {
+	return Result_int64_string{Tag: Result_int64_string_Success_tag, Data0: v0}
+}
+
+func Result_int64_string_Failure(v0 string) Result_int64_string {
+	return Result_int64_string{Tag: Result_int64_string_Failure_tag, Data1: v0}
+}
+
+func (e Result_int64_string) String() string {
+	switch e.Tag {
+	case Result_int64_string_Success_tag:
+		return fmt.Sprintf("Success(%v)", e.Data0)
+	case Result_int64_string_Failure_tag:
+		return fmt.Sprintf("Failure(%v)", e.Data1)
+	default:
+		panic("unreachable: invalid enum tag")
+	}
+}
+
+
+type test__status__Status struct {
+	Data0 string
+	Tag int8
+}
+
+const test__status__Status_Ready_tag = 0
+const test__status__Status_Message_tag = 1
+
+func test__status__Status_Ready() test__status__Status {
+	return test__status__Status{Tag: test__status__Status_Ready_tag}
+}
+
+func test__status__Status_Message(v0 string) test__status__Status {
+	return test__status__Status{Tag: test__status__Status_Message_tag, Data0: v0}
+}
+
+func (e test__status__Status) String() string {
+	switch e.Tag {
+	case test__status__Status_Ready_tag:
+		return "Ready"
+	case test__status__Status_Message_tag:
+		return fmt.Sprintf("Message(%v)", e.Data0)
+	default:
+		panic("unreachable: invalid enum tag")
+	}
+}
+
+
+func extern__test_result__invalid() Result_int64_string {
+	defer func() {
+		if __panic := recover(); __panic != nil {
+			panic(fmt.Sprintf("shim ABI violation at test/result.invalid: %v", __panic))
+		}
+	}()
+	__ret := mshim_test_result.Invalid()
+	return (func(__value marmoset.Result[int64, string]) Result_int64_string {
+		__state, __success, __failure := marmoset.InspectResult(__value)
+		switch __state {
+		case marmoset.ResultSuccess:
+			return Result_int64_string_Success(__success)
+		case marmoset.ResultFailure:
+			return Result_int64_string_Failure(__failure)
+		default:
+			panic("test/result.invalid: invalid zero-value Result returned by shim")
+		}
+	})(__ret)
+}
+
+func extern__test_result__parse(s string) Result_int64_string {
+	defer func() {
+		if __panic := recover(); __panic != nil {
+			panic(fmt.Sprintf("shim ABI violation at test/result.parse: %v", __panic))
+		}
+	}()
+	__ret := mshim_test_result.Parse(s)
+	return (func(__value marmoset.Result[int64, string]) Result_int64_string {
+		__state, __success, __failure := marmoset.InspectResult(__value)
+		switch __state {
+		case marmoset.ResultSuccess:
+			return Result_int64_string_Success(__success)
+		case marmoset.ResultFailure:
+			return Result_int64_string_Failure(__failure)
+		default:
+			panic("test/result.parse: invalid zero-value Result returned by shim")
+		}
+	})(__ret)
+}
+
+func extern__test_scalar__maybe(flag bool) Option_int64 {
+	defer func() {
+		if __panic := recover(); __panic != nil {
+			panic(fmt.Sprintf("shim ABI violation at test/scalar.maybe: %v", __panic))
+		}
+	}()
+	__ret := mshim_test_scalar.Maybe(flag)
+	return (func(__value marmoset.Option[int64]) Option_int64 {
+		__state, __some := marmoset.InspectOption(__value)
+		switch __state {
+		case marmoset.OptionSome:
+			return Option_int64_Some(__some)
+		case marmoset.OptionNone:
+			return Option_int64_None()
+		default:
+			panic("test/scalar.maybe: invalid zero-value Option returned by shim")
+		}
+	})(__ret)
+}
+
+func extern__test_scalar__upcase(s string) string {
+	defer func() {
+		if __panic := recover(); __panic != nil {
+			panic(fmt.Sprintf("shim ABI violation at test/scalar.upcase: %v", __panic))
+		}
+	}()
+	__ret := mshim_test_scalar.Upcase(s)
+	return __ret
+}
+
+func extern__test_status__flip(flag bool) test__status__Status {
+	defer func() {
+		if __panic := recover(); __panic != nil {
+			panic(fmt.Sprintf("shim ABI violation at test/status.flip: %v", __panic))
+		}
+	}()
+	__ret := mshim_test_status.Flip(flag)
+	return (func(__value mapi_test_status.Status) test__status__Status {
+		if __value == nil {
+			panic("test/status.flip: nil enum returned by shim")
+		}
+		switch __variant := __value.(type) {
+		case mapi_test_status.StatusReady:
+			return test__status__Status_Ready()
+		case mapi_test_status.StatusMessage:
+			return test__status__Status_Message(__variant.Field0)
+		default:
+			panic("test/status.flip: unknown enum variant returned by shim")
+		}
+	})(__ret)
+}
+
+func extern__test_status__label(input test__status__Status) string {
+	defer func() {
+		if __panic := recover(); __panic != nil {
+			panic(fmt.Sprintf("shim ABI violation at test/status.label: %v", __panic))
+		}
+	}()
+	__ret := mshim_test_status.Label((func(__value test__status__Status) mapi_test_status.Status {
+		switch __value.Tag {
+		case test__status__Status_Ready_tag:
+			return mapi_test_status.StatusReady{}
+		case test__status__Status_Message_tag:
+			return mapi_test_status.StatusMessage{Field0: __value.Data0}
+		default:
+			panic("test/status.label: invalid Marmoset enum tag crossing shim boundary")
+		}
+	})(input))
+	return __ret
+}
+
+func extern__test_status__nil_status() test__status__Status {
+	defer func() {
+		if __panic := recover(); __panic != nil {
+			panic(fmt.Sprintf("shim ABI violation at test/status.nil_status: %v", __panic))
+		}
+	}()
+	__ret := mshim_test_status.NilStatus()
+	return (func(__value mapi_test_status.Status) test__status__Status {
+		if __value == nil {
+			panic("test/status.nil_status: nil enum returned by shim")
+		}
+		switch __variant := __value.(type) {
+		case mapi_test_status.StatusReady:
+			return test__status__Status_Ready()
+		case mapi_test_status.StatusMessage:
+			return test__status__Status_Message(__variant.Field0)
+		default:
+			panic("test/status.nil_status: unknown enum variant returned by shim")
+		}
+	})(__ret)
+}
+
+func test__scalar__upcase_string(s string) string {
+    return extern__test_scalar__upcase(s)
+}
+
+func test__scalar__maybe_bool(flag bool) Option_int64 {
+    return extern__test_scalar__maybe(flag)
+}
+
+func test__result__parse_string(s string) Result_int64_string {
+    return extern__test_result__parse(s)
+}
+
+func test__status__label_test__status__Status(input test__status__Status) string {
+    return extern__test_status__label(input)
+}
+
+func test__status__flip_bool(flag bool) test__status__Status {
+    return extern__test_status__flip(flag)
+}
+
+
+func inherent_value_or_Result_int64_string(self Result_int64_string, fallback int64) int64 {
+        __scrutinee_0 := self
+        switch __scrutinee_0.Tag {
+	case Result_int64_string_Success_tag:
+		v := (__scrutinee_0).Data0
+		_ = v
+                return v
+
+	case Result_int64_string_Failure_tag:
+                return fallback
+
+	default:
+		panic("unreachable: invalid enum tag")
+        }
+}
+
+func inherent_success_q_Result_int64_string(self Result_int64_string) bool {
+        __scrutinee_1 := self
+        switch __scrutinee_1.Tag {
+	case Result_int64_string_Success_tag:
+                return true
+
+	case Result_int64_string_Failure_tag:
+                return false
+
+	default:
+		panic("unreachable: invalid enum tag")
+        }
+}
+
+func inherent_failure_q_Result_int64_string(self Result_int64_string) bool {
+        __scrutinee_2 := self
+        switch __scrutinee_2.Tag {
+	case Result_int64_string_Success_tag:
+                return false
+
+	case Result_int64_string_Failure_tag:
+                return true
+
+	default:
+		panic("unreachable: invalid enum tag")
+        }
+}
+
+func inherent_unwrap_or_Option_int64(self Option_int64, fallback int64) int64 {
+        __scrutinee_3 := self
+        switch __scrutinee_3.Tag {
+	case Option_int64_Some_tag:
+		v := (__scrutinee_3).Data0
+		_ = v
+                return v
+
+	case Option_int64_None_tag:
+                return fallback
+
+	default:
+		panic("unreachable: invalid enum tag")
+        }
+}
+
+func inherent_is_some_Option_int64(self Option_int64) bool {
+        __scrutinee_4 := self
+        switch __scrutinee_4.Tag {
+	case Option_int64_Some_tag:
+                return true
+
+	case Option_int64_None_tag:
+                return false
+
+	default:
+		panic("unreachable: invalid enum tag")
+        }
+}
+
+func inherent_is_none_Option_int64(self Option_int64) bool {
+        __scrutinee_5 := self
+        switch __scrutinee_5.Tag {
+	case Option_int64_Some_tag:
+                return false
+
+	case Option_int64_None_tag:
+                return true
+
+	default:
+		panic("unreachable: invalid enum tag")
+        }
+}
+
+func main() {
+    _ = puts(test__scalar__upcase_string("hi"))
+    _ = puts(inherent_unwrap_or_Option_int64(test__scalar__maybe_bool(true), int64(0)))
+    _ = puts(inherent_value_or_Result_int64_string(test__result__parse_string("41"), int64(0)))
+    _ = puts(test__status__label_test__status__Status(test__status__flip_bool(true)))
+}
+
+===== marmoset/bytes.go =====
+package marmoset
+
+type Bytes struct {
+	data []byte
+}
+
+func BytesCopy(input []byte) Bytes {
+	copied := append([]byte(nil), input...)
+	return Bytes{data: copied}
+}
+
+func BytesFromString(input string) Bytes {
+	return BytesCopy([]byte(input))
+}
+
+func (bytes Bytes) Copy() []byte {
+	return append([]byte(nil), bytes.data...)
+}
+
+===== marmoset/handle.go =====
+package marmoset
+
+import "sync/atomic"
+
+type Handle[Tag any] struct {
+	id uint64
+}
+
+var nextHandleID uint64
+
+func NewHandle[Tag any]() Handle[Tag] {
+	id := atomic.AddUint64(&nextHandleID, 1)
+	if id == 0 {
+		id = atomic.AddUint64(&nextHandleID, 1)
+	}
+	return Handle[Tag]{id: id}
+}
+
+func HandleIsValid[Tag any](handle Handle[Tag]) bool {
+	return handle.id != 0
+}
+
+===== marmoset/option.go =====
+package marmoset
+
+type OptionState int
+
+const (
+	OptionInvalid OptionState = iota
+	OptionSome
+	OptionNone
+)
+
+type Option[T any] struct {
+	state OptionState
+	value T
+}
+
+func Some[T any](value T) Option[T] {
+	return Option[T]{state: OptionSome, value: value}
+}
+
+func None[T any]() Option[T] {
+	return Option[T]{state: OptionNone}
+}
+
+func InspectOption[T any](option Option[T]) (OptionState, T) {
+	return option.state, option.value
+}
+
+===== marmoset/result.go =====
+package marmoset
+
+type ResultState int
+
+const (
+	ResultInvalid ResultState = iota
+	ResultSuccess
+	ResultFailure
+)
+
+type Result[T, E any] struct {
+	state   ResultState
+	success T
+	failure E
+}
+
+func Success[T, E any](value T) Result[T, E] {
+	return Result[T, E]{state: ResultSuccess, success: value}
+}
+
+func Failure[T, E any](failure E) Result[T, E] {
+	return Result[T, E]{state: ResultFailure, failure: failure}
+}
+
+func InspectResult[T, E any](result Result[T, E]) (ResultState, T, E) {
+	return result.state, result.success, result.failure
+}
+
+===== marmoset/unit.go =====
+package marmoset
+
+type Unit struct{}
+
+func NewUnit() Unit {
+	return Unit{}
+}
+
+===== runtime.go =====
+// Marmoset Runtime - builtin functions for generated Go code
+package main
+
+import (
+	"fmt"
+	"reflect"
+)
+
+// puts prints values to stdout, returns struct{}
+func puts[T any](v T) struct{} {
+	fmt.Println(v)
+	return struct{}{}
+}
+
+// typeIs checks if a value is of a specific Go type
+func typeIs[T any](v T, typeName string) bool {
+	return reflect.TypeOf(v).String() == typeName
+}
+
+// indexArr handles negative indexing for arrays
+func indexArr[T any](arr []T, i int64) T {
+	if i < 0 {
+		i = int64(len(arr)) + i
+	}
+	return arr[i]
+}
+
+// indexStr handles negative indexing for strings
+func indexStr(s string, i int64) string {
+	if i < 0 {
+		i = int64(len(s)) + i
+	}
+	return string(s[i])
+}
+
+// first returns the first element of an array, or zero value if empty
+func first[T any](arr []T) T {
+	if len(arr) == 0 {
+		var zero T
+		return zero
+	}
+	return arr[0]
+}
+
+// last returns the last element of an array, or zero value if empty
+func last[T any](arr []T) T {
+	if len(arr) == 0 {
+		var zero T
+		return zero
+	}
+	return arr[len(arr)-1]
+}
+
+// rest returns all but the first element, or empty array if empty
+func rest[T any](arr []T) []T {
+	if len(arr) == 0 {
+		return []T{}
+	}
+	return arr[1:]
+}
+
+// push appends an element to an array and returns the new array
+func push[T any](arr []T, v T) []T {
+	return append(arr, v)
+}
+
+===== shims/test/result/result.go =====
+package result
+
+import (
+	"strconv"
+
+	"marmoset_out/marmoset"
+)
+
+func Parse(s string) marmoset.Result[int64, string] {
+	value, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return marmoset.Failure[int64, string](err.Error())
+	}
+	return marmoset.Success[int64, string](value)
+}
+
+func Invalid() marmoset.Result[int64, string] {
+	var zero marmoset.Result[int64, string]
+	return zero
+}
+
+===== shims/test/scalar/scalar.go =====
+package scalar
+
+import (
+	"strings"
+
+	"marmoset_out/marmoset"
+)
+
+func Upcase(s string) string {
+	return strings.ToUpper(s)
+}
+
+func AddOne(i int64) int64 {
+	return i + 1
+}
+
+func Maybe(flag bool) marmoset.Option[int64] {
+	if flag {
+		return marmoset.Some[int64](42)
+	}
+	return marmoset.None[int64]()
+}
+
+===== shims/test/status/status.go =====
+package status
+
+import statusapi "marmoset_out/api/test/status"
+
+func Label(status statusapi.Status) string {
+	switch value := status.(type) {
+	case statusapi.StatusReady:
+		return "ready"
+	case statusapi.StatusMessage:
+		return "message:" + value.Field0
+	default:
+		panic("unknown status")
+	}
+}
+
+func Flip(flag bool) statusapi.Status {
+	if flag {
+		return statusapi.StatusMessage{Field0: "flipped"}
+	}
+	return statusapi.StatusReady{}
+}
+
+func NilStatus() statusapi.Status {
+	return nil
+}

@@ -1,0 +1,13 @@
+export Status, label, flip, nil_status
+
+type Status = { Ready, Message(Str) }
+
+extern "test/status" = {
+  fn label(input: Status) -> Str
+  fn flip(flag: Bool) -> Status
+  fn nil_status() -> Status
+}
+
+fn label(input: Status) -> Str = status.label(input)
+fn flip(flag: Bool) -> Status = status.flip(flag)
+fn nil_status() -> Status = status.nil_status()

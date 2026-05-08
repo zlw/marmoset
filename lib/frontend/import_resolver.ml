@@ -784,20 +784,55 @@ let rewrite_program
       Ok ()
   in
   let rewrite_extern_block (block : AST.extern_block_def) : AST.extern_block_def =
+    let canonical_std_extern_type_name (name : string) : string =
+      let is_current_module_decl = StringMap.mem name current_module.declarations in
+      if (not is_current_module_decl) && String.equal name "Option" then
+        match direct_type_internal_name available_bindings name with
+        | Some "Option" -> Typecheck.Shim_boundary.option_enum_name
+        | _ -> name
+      else if (not is_current_module_decl) && String.equal name "Result" then
+        match direct_type_internal_name available_bindings name with
+        | Some "Result" -> Typecheck.Shim_boundary.result_enum_name
+        | _ -> name
+      else
+        name
+    in
+    let rec canonicalize_std_extern_type_expr (te : AST.type_expr) : AST.type_expr =
+      match te with
+      | AST.TVar _ -> te
+      | AST.TCon name -> AST.TCon (canonical_std_extern_type_name name)
+      | AST.TApp (name, args) ->
+          AST.TApp (canonical_std_extern_type_name name, List.map canonicalize_std_extern_type_expr args)
+      | AST.TTraitObject _ -> te
+      | AST.TArrow (params, ret, is_effectful) ->
+          AST.TArrow
+            ( List.map canonicalize_std_extern_type_expr params,
+              canonicalize_std_extern_type_expr ret,
+              is_effectful )
+      | AST.TUnion members -> AST.TUnion (List.map canonicalize_std_extern_type_expr members)
+      | AST.TIntersection members -> AST.TIntersection (List.map canonicalize_std_extern_type_expr members)
+      | AST.TRecord (fields, row) ->
+          AST.TRecord
+            ( List.map
+                (fun (field : AST.record_type_field) ->
+                  { field with field_type = canonicalize_std_extern_type_expr field.field_type })
+                fields,
+              Option.map canonicalize_std_extern_type_expr row )
+    in
+    let rewrite_extern_type_expr te =
+      rewrite_type_expr ~imports ~type_bindings:StringSet.empty ~available_bindings te
+      |> canonicalize_std_extern_type_expr
+    in
     let rewrite_param (param : AST.extern_param) : AST.extern_param =
       {
-        param with
-        extern_param_type =
-          rewrite_type_expr ~imports ~type_bindings:StringSet.empty ~available_bindings param.extern_param_type;
+        param with extern_param_type = rewrite_extern_type_expr param.extern_param_type;
       }
     in
     let rewrite_fn (fn_sig : AST.extern_fn_sig) : AST.extern_fn_sig =
       {
         fn_sig with
         extern_fn_params = List.map rewrite_param fn_sig.extern_fn_params;
-        extern_fn_return_type =
-          rewrite_type_expr ~imports ~type_bindings:StringSet.empty ~available_bindings
-            fn_sig.extern_fn_return_type;
+        extern_fn_return_type = rewrite_extern_type_expr fn_sig.extern_fn_return_type;
       }
     in
     { block with extern_fns = List.map rewrite_fn block.extern_fns }

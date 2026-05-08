@@ -1537,7 +1537,9 @@ let%test "shim S2: wrapper module exports ordinary API backed by private shim" =
       | Error _ -> false
       | Ok build_output ->
           string_contains build_output.main_go "func extern__test_scalar__upcase(s string) string"
-          && string_contains build_output.main_go {|panic("shim adapter not implemented: test/scalar.upcase")|}
+          && string_contains build_output.main_go {|mshim_test_scalar "marmoset_out/shims/test/scalar"|}
+          && string_contains build_output.main_go "mshim_test_scalar.Upcase(s)"
+          && not (string_contains build_output.main_go "shim adapter not implemented")
           && string_contains build_output.main_go "scalar__upcase_string")
 
 let%test "shim S3: compile_entry_to_build emits support and api aux files for called shim" =

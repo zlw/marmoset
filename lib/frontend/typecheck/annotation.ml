@@ -78,9 +78,26 @@ let lookup_enum_by_source_name (name : string) : Enum_registry.enum_def option =
   match Enum_registry.lookup name with
   | Some _ as enum_def -> enum_def
   | None -> (
-      match builtin_type_constructor_name name with
-      | Some builtin_name -> Enum_registry.lookup builtin_name
-      | None -> None)
+      let lookup_canonical_std_alias () =
+        let alias =
+          match name with
+          | "std__option__Option" -> Some "Option"
+          | "std__result__Result" -> Some "Result"
+          | _ -> None
+        in
+        match alias with
+        | None -> None
+        | Some source_name ->
+            Option.map
+              (fun (def : Enum_registry.enum_def) -> { def with Enum_registry.name })
+              (Enum_registry.lookup source_name)
+      in
+      match lookup_canonical_std_alias () with
+      | Some _ as enum_def -> enum_def
+      | None -> (
+          match builtin_type_constructor_name name with
+          | Some builtin_name -> Enum_registry.lookup builtin_name
+          | None -> None))
 
 let trait_type_position_error (name : string) : string =
   Printf.sprintf "Trait '%s' cannot be used as a type; use a constrained type parameter or Dyn[...] instead" name

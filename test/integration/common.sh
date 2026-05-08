@@ -436,11 +436,19 @@ write_go_tree_snapshot() {
 
     (
         cd "$tree_root"
-        find . -type f | sed 's#^\./##' | sort | while IFS= read -r rel_path; do
+        rel_list=$(mktemp)
+        find . -type f | sed 's#^\./##' | sort > "$rel_list"
+        count=$(wc -l < "$rel_list" | tr -d ' ')
+        idx=0
+        while IFS= read -r rel_path; do
+            idx=$((idx + 1))
             printf '===== %s =====\n' "$rel_path"
             cat "$rel_path"
-            printf '\n'
-        done
+            if [ "$idx" -lt "$count" ]; then
+                printf '\n'
+            fi
+        done < "$rel_list"
+        rm -f "$rel_list"
     ) > "$output_file"
 }
 

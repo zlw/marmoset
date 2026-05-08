@@ -64,8 +64,8 @@ let rec to_mono_type = function
   | BInt -> TInt
   | BFloat -> TFloat
   | BStr -> TString
-  | BStdOption inner -> TEnum (option_enum_name, [ to_mono_type inner ])
-  | BStdResult (ok_type, err_type) -> TEnum (result_enum_name, [ to_mono_type ok_type; to_mono_type err_type ])
+  | BStdOption inner -> TEnum ("Option", [ to_mono_type inner ])
+  | BStdResult (ok_type, err_type) -> TEnum ("Result", [ to_mono_type ok_type; to_mono_type err_type ])
   | BOwnerEnum enum -> TEnum (enum.enum_name, List.map to_mono_type enum.enum_type_args)
   | BStdBytes -> TNamed ("std__bytes__Bytes", [])
   | BExternHandle handle -> TNamed (handle.extern_type_name, [])
