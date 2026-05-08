@@ -8459,16 +8459,87 @@ let compile_string ~file_id (source : string) : (string * Diagnostic.t list, Dia
               let msg = normalize_codegen_failure_message (Printexc.to_string exn) in
               Error [ Diagnostic.error_no_span ~code:"codegen-internal" ~message:msg ]))
 
+type go_aux_file = {
+  rel_path : string;
+  contents : string;
+}
+
 type build_output = {
+  go_mod : string;
   main_go : string;
   runtime_go : string;
+  aux_go_files : go_aux_file list;
   diagnostics : Diagnostic.t list;
 }
+
+let default_go_mod = "module marmoset_out\n\ngo 1.18\n"
+
+let reserved_go_output_paths = [ "go.mod"; "main.go"; "runtime.go" ]
+
+let is_windows_drive_path (path : string) : bool =
+  String.length path >= 2
+  &&
+  let c = path.[0] in
+  ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) && Char.equal path.[1] ':'
+
+let normalize_aux_go_rel_path (rel_path : string) : (string, string) result =
+  if String.equal rel_path "" then
+    Error "auxiliary Go output path cannot be empty"
+  else if (not (Filename.is_relative rel_path)) || is_windows_drive_path rel_path then
+    Error (Printf.sprintf "auxiliary Go output path must be relative: %s" rel_path)
+  else if String.contains rel_path '\\' then
+    Error (Printf.sprintf "auxiliary Go output path must use '/' separators: %s" rel_path)
+  else
+    let parts = String.split_on_char '/' rel_path in
+    if List.exists (fun part -> String.equal part "" || String.equal part "." || String.equal part "..") parts then
+      Error (Printf.sprintf "auxiliary Go output path contains an unsafe component: %s" rel_path)
+    else
+      let normalized = String.concat "/" parts in
+      match parts with
+      | [ single ] when List.mem single reserved_go_output_paths ->
+          Error (Printf.sprintf "auxiliary Go output path cannot overwrite reserved file: %s" single)
+      | _ -> Ok normalized
+
+let validate_go_aux_files (files : go_aux_file list) : (go_aux_file list, string) result =
+  let seen = Hashtbl.create (List.length files) in
+  let rec go acc = function
+    | [] ->
+        Ok
+          (List.sort
+             (fun (a : go_aux_file) (b : go_aux_file) -> String.compare a.rel_path b.rel_path)
+             (List.rev acc))
+    | (file : go_aux_file) :: rest -> (
+        match normalize_aux_go_rel_path file.rel_path with
+        | Error msg -> Error msg
+        | Ok normalized ->
+            if Hashtbl.mem seen normalized then
+              Error (Printf.sprintf "duplicate auxiliary Go output path: %s" normalized)
+            else (
+              Hashtbl.add seen normalized ();
+              go ({ file with rel_path = normalized } :: acc) rest))
+  in
+  go [] files
+
+let go_output_files (output : build_output) : (go_aux_file list, string) result =
+  match validate_go_aux_files output.aux_go_files with
+  | Error msg -> Error msg
+  | Ok aux_go_files ->
+      Ok
+        ([
+           { rel_path = "go.mod"; contents = output.go_mod };
+           { rel_path = "main.go"; contents = output.main_go };
+           { rel_path = "runtime.go"; contents = output.runtime_go };
+         ]
+        @ aux_go_files)
 
 let compile_to_build ~file_id (source : string) : (build_output, Diagnostic.t list) result =
   match compile_string ~file_id source with
   | Error e -> Error e
-  | Ok (main_go, diagnostics) -> Ok { main_go; runtime_go; diagnostics }
+  | Ok (main_go, diagnostics) ->
+      let output = { go_mod = default_go_mod; main_go; runtime_go; aux_go_files = []; diagnostics } in
+      (match validate_go_aux_files output.aux_go_files with
+      | Ok aux_go_files -> Ok { output with aux_go_files }
+      | Error msg -> Error [ diagnostic_of_codegen_failure_message msg ])
 
 let get_runtime () = runtime_go
 
@@ -8501,8 +8572,114 @@ let is_deterministic source =
       (fun () -> compile_to_build ~file_id:"<codegen>" source)
   in
   match (build (), build ()) with
-  | Ok a, Ok b -> a.main_go = b.main_go && a.runtime_go = b.runtime_go
+  | Ok a, Ok b ->
+      a.go_mod = b.go_mod && a.main_go = b.main_go && a.runtime_go = b.runtime_go
+      && a.aux_go_files = b.aux_go_files
   | _ -> false
+
+let%test "aux go file validation sorts deterministic relative paths" =
+  match
+    validate_go_aux_files
+      [
+        { rel_path = "zeta/z.go"; contents = "package zeta\n" };
+        { rel_path = "alpha/a.go"; contents = "package alpha\n" };
+      ]
+  with
+  | Ok files -> List.map (fun (file : go_aux_file) -> file.rel_path) files = [ "alpha/a.go"; "zeta/z.go" ]
+  | Error _ -> false
+
+let%test "aux go file validation rejects unsafe or reserved paths" =
+  let rejects rel_path =
+    match validate_go_aux_files [ { rel_path; contents = "package main\n" } ] with
+    | Ok _ -> false
+    | Error _ -> true
+  in
+  List.for_all rejects
+    [ ""; "/abs.go"; "C:/abs.go"; "a//b.go"; "./a.go"; "a/../b.go"; "main.go"; "runtime.go"; "go.mod" ]
+
+let%test "aux go file validation rejects duplicate normalized paths" =
+  match
+    validate_go_aux_files
+      [
+        { rel_path = "pkg/a.go"; contents = "package pkg\n" };
+        { rel_path = "pkg/a.go"; contents = "package pkg\n" };
+      ]
+  with
+  | Ok _ -> false
+  | Error _ -> true
+
+let%test "build output file list includes go.mod reserved files and sorted aux files" =
+  let output =
+    {
+      go_mod = "module marmoset_out\n\ngo 1.18\n";
+      main_go = "package main\nfunc main() {}\n";
+      runtime_go = "package main\n";
+      aux_go_files =
+        [
+          { rel_path = "zeta/z.go"; contents = "package zeta\n" };
+          { rel_path = "alpha/a.go"; contents = "package alpha\n" };
+        ];
+      diagnostics = [];
+    }
+  in
+  match go_output_files output with
+  | Error _ -> false
+  | Ok files ->
+      List.map (fun (file : go_aux_file) -> file.rel_path) files
+      = [ "go.mod"; "main.go"; "runtime.go"; "alpha/a.go"; "zeta/z.go" ]
+
+let%test "malformed root auxiliary Go file classifies as Go compile failure" =
+  if Sys.command "command -v go >/dev/null 2>&1" <> 0 then
+    true
+  else
+    let temp_dir = Filename.temp_file "marmoset-aux-build" "" in
+    Sys.remove temp_dir;
+    Unix.mkdir temp_dir 0o755;
+    let write_file rel_path contents =
+      let path = Filename.concat temp_dir rel_path in
+      let oc = open_out path in
+      output_string oc contents;
+      close_out oc
+    in
+    let read_all ic =
+      let buf = Buffer.create 256 in
+      (try
+         while true do
+           Buffer.add_string buf (input_line ic);
+           Buffer.add_char buf '\n'
+         done
+       with End_of_file -> ());
+      Buffer.contents buf
+    in
+    let cleanup () = ignore (Sys.command ("rm -rf " ^ temp_dir)) in
+    let result =
+      try
+        let output =
+          {
+            go_mod = default_go_mod;
+            main_go = "package main\nfunc main() {}\n";
+            runtime_go = "package main\n";
+            aux_go_files = [ { rel_path = "bad.go"; contents = "package main\nfunc broken( {\n" } ];
+            diagnostics = [];
+          }
+        in
+        match go_output_files output with
+        | Error _ -> false
+        | Ok files ->
+            List.iter (fun (file : go_aux_file) -> write_file file.rel_path file.contents) files;
+            let ic = Unix.open_process_in (Printf.sprintf "cd %s && go build . 2>&1" temp_dir) in
+            let go_output = String.trim (read_all ic) in
+            let status = Unix.close_process_in ic in
+            let exit_code =
+              match status with
+              | Unix.WEXITED code -> code
+              | Unix.WSIGNALED signal | Unix.WSTOPPED signal -> 128 + signal
+            in
+            exit_code <> 0 && (classify_go_build_failure ~exit_code ~output:go_output).code = "build-go-compile"
+      with _ -> false
+    in
+    cleanup ();
+    result
 
 let capture_stderr f =
   let original_stderr = Unix.dup Unix.stderr in

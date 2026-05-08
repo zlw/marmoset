@@ -826,7 +826,14 @@ let emit_compiled_project (project : compiled_project) : (Codegen.build_output, 
         ~placeholder_rewrite_map:project.artifacts.placeholder_rewrite_map project.artifacts.type_map
         project.environment project.program
     in
-    Ok { Codegen.main_go; runtime_go = Codegen.get_runtime (); diagnostics = project.diagnostics }
+    Ok
+      {
+        Codegen.go_mod = Codegen.default_go_mod;
+        main_go;
+        runtime_go = Codegen.get_runtime ();
+        aux_go_files = [];
+        diagnostics = project.diagnostics;
+      }
   with
   | Failure message -> Error [ Codegen.diagnostic_of_codegen_failure_message message ]
   | exn ->

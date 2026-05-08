@@ -305,7 +305,7 @@ run_codegen_deterministic_from_stdin() {
     echo "$source" > "$tmpfile"
 
     if build1=$($EXECUTABLE build "$tmpfile" --emit-go "$out1" -o "$bin1" 2>&1) && build2=$($EXECUTABLE build "$tmpfile" --emit-go "$out2" -o "$bin2" 2>&1); then
-        if diff -u "$out1/main.go" "$out2/main.go" >/dev/null 2>&1 && diff -u "$out1/runtime.go" "$out2/runtime.go" >/dev/null 2>&1; then
+        if diff -u "$out1/go.mod" "$out2/go.mod" >/dev/null 2>&1 && diff -u "$out1/main.go" "$out2/main.go" >/dev/null 2>&1 && diff -u "$out1/runtime.go" "$out2/runtime.go" >/dev/null 2>&1; then
             echo "✓ PASS"
             PASS=$((PASS + 1))
         else
@@ -427,6 +427,61 @@ test_emit_go_exact_snapshot() {
     fi
 
     rm -f "$binpath" "$diff_file"
+    rm -rf "$outdir"
+}
+
+write_go_tree_snapshot() {
+    local tree_root="$1"
+    local output_file="$2"
+
+    (
+        cd "$tree_root"
+        find . -type f | sed 's#^\./##' | sort | while IFS= read -r rel_path; do
+            printf '===== %s =====\n' "$rel_path"
+            cat "$rel_path"
+            printf '\n'
+        done
+    ) > "$output_file"
+}
+
+test_emit_go_tree_snapshot() {
+    local name="$1"
+    local source_file="$2"
+    local snapshot_file="$3"
+
+    TOTAL=$((TOTAL + 1))
+    echo -n "TEST [$TOTAL] $name ... "
+
+    local outdir binpath diff_file actual_snapshot build_output
+    outdir=$(mktemp -d marmoset_emit_tree_snapshot.XXXXXX)
+    binpath=$(mktemp "$REPO_ROOT/.marmoset/build/marmoset_tree_snapshot_bin.XXXXXX")
+    diff_file=$(mktemp)
+    actual_snapshot=$(mktemp)
+    rm -f "$binpath"
+
+    if [ ! -f "$source_file" ]; then
+        echo "✗ FAIL (missing source file $source_file)"
+        FAIL=$((FAIL + 1))
+    elif [ ! -f "$snapshot_file" ]; then
+        echo "✗ FAIL (missing snapshot file $snapshot_file)"
+        FAIL=$((FAIL + 1))
+    elif build_output=$($EXECUTABLE build "$source_file" --emit-go "$outdir" -o "$binpath" 2>&1); then
+        write_go_tree_snapshot "$outdir" "$actual_snapshot"
+        if diff -u "$snapshot_file" "$actual_snapshot" > "$diff_file"; then
+            echo "✓ PASS"
+            PASS=$((PASS + 1))
+        else
+            echo "✗ FAIL (Go tree snapshot drift)"
+            sed -n '1,120p' "$diff_file" | sed 's/^/  /'
+            FAIL=$((FAIL + 1))
+        fi
+    else
+        echo "✗ FAIL (build failed)"
+        echo "  Output: $build_output"
+        FAIL=$((FAIL + 1))
+    fi
+
+    rm -f "$binpath" "$diff_file" "$actual_snapshot"
     rm -rf "$outdir"
 }
 

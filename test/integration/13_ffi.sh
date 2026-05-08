@@ -146,6 +146,40 @@ run_project_emit_count() {
     rm -rf "$root" "$outdir"
 }
 
+test_emit_go_writes_go_mod() {
+    local name="$1"
+    local source_file="$2"
+
+    TOTAL=$((TOTAL + 1))
+    echo -n "TEST [$TOTAL] $name ... "
+
+    local outdir binpath build_output
+    outdir=$(mktemp -d marmoset_ffi_emit.XXXXXX)
+    binpath=$(mktemp "$REPO_ROOT/.marmoset/build/marmoset_ffi_bin.XXXXXX")
+    rm -f "$binpath"
+
+    if build_output=$($EXECUTABLE build "$source_file" --emit-go "$outdir" -o "$binpath" 2>&1); then
+        if [ -f "$outdir/go.mod" ] && grep -qF "module marmoset_out" "$outdir/go.mod" && grep -qF "go 1.18" "$outdir/go.mod"; then
+            echo "✓ PASS"
+            PASS=$((PASS + 1))
+        else
+            echo "✗ FAIL (emit-go did not write expected go.mod)"
+            FAIL=$((FAIL + 1))
+        fi
+    else
+        echo "✗ FAIL (build failed)"
+        echo "  Output: $build_output"
+        FAIL=$((FAIL + 1))
+    fi
+
+    rm -f "$binpath"
+    rm -rf "$outdir"
+}
+
+test_emit_go_writes_go_mod \
+    "--emit-go writes go.mod alongside main and runtime" \
+    "$REPO_ROOT/test/fixtures/ffi/ffi01_strings_to_upper.mr"
+
 test_emit_go_exact_snapshot \
     "single-file strings extern emits stable wrapper/import shape" \
     "$REPO_ROOT/test/fixtures/ffi/ffi01_strings_to_upper.mr" \

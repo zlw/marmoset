@@ -140,6 +140,31 @@ let write_file path content =
   output_string oc content;
   close_out oc
 
+let rec mkdir_p dir =
+  if dir = "" || dir = "." || Sys.file_exists dir then
+    ()
+  else (
+    let parent = Filename.dirname dir in
+    if parent <> dir then mkdir_p parent;
+    try Unix.mkdir dir 0o755 with
+    | Unix.Unix_error (Unix.EEXIST, _, _) -> ())
+
+let ensure_parent_dir path = mkdir_p (Filename.dirname path)
+
+let write_go_output_tree ~(root : string) (build_output : Marmoset.Lib.Go_emitter.build_output) :
+    (unit, Diagnostic.t list) result =
+  match Marmoset.Lib.Go_emitter.go_output_files build_output with
+  | Error message -> Error [ Diagnostic.error_no_span ~code:"build-go-output-path" ~message ]
+  | Ok files ->
+      mkdir_p root;
+      List.iter
+        (fun (file : Marmoset.Lib.Go_emitter.go_aux_file) ->
+          let path = Filename.concat root file.rel_path in
+          ensure_parent_dir path;
+          write_file path file.contents)
+        files;
+      Ok ()
+
 let output_absolute_path (output : string) : string =
   if Filename.is_relative output then
     Filename.concat (Sys.getcwd ()) output
@@ -199,39 +224,35 @@ let compile_to_binary
   | Ok build_output ->
       let diagnostics = build_output.diagnostics in
       let temp_dir = ".marmoset/build/" ^ string_of_int (Unix.getpid ()) in
-      ignore (Sys.command ("mkdir -p " ^ temp_dir));
+      (match write_go_output_tree ~root:temp_dir build_output with
+      | Error diags -> Error (diagnostics @ diags)
+      | Ok () ->
+          let emit_result =
+            match emit_go_dir with
+            | Some dir -> write_go_output_tree ~root:dir build_output
+            | None -> Ok ()
+          in
+          (match emit_result with
+          | Error diags -> Error (diagnostics @ diags)
+          | Ok () ->
+              let output_abs = output_absolute_path output_bin in
+              let go_flags =
+                if release then
+                  "-ldflags=\"-s -w\" -trimpath"
+                else
+                  ""
+              in
+              let cmd = Printf.sprintf "cd %s && go build %s -o %s ." temp_dir go_flags output_abs in
+              let exit_code, go_output = run_command_capture_combined_output cmd in
 
-      let main_go_path = Filename.concat temp_dir "main.go" in
-      let runtime_go_path = Filename.concat temp_dir "runtime.go" in
-      let go_mod_path = Filename.concat temp_dir "go.mod" in
+              (try ignore (Sys.command ("rm -rf " ^ temp_dir)) with _ -> ());
 
-      write_file main_go_path build_output.main_go;
-      write_file runtime_go_path build_output.runtime_go;
-      write_file go_mod_path "module marmoset_out\n\ngo 1.18\n";
-
-      (match emit_go_dir with
-      | Some dir ->
-          ignore (Sys.command ("mkdir -p " ^ dir));
-          write_file (Filename.concat dir "main.go") build_output.main_go;
-          write_file (Filename.concat dir "runtime.go") build_output.runtime_go
-      | None -> ());
-
-      let output_abs = output_absolute_path output_bin in
-      let go_flags =
-        if release then
-          "-ldflags=\"-s -w\" -trimpath"
-        else
-          ""
-      in
-      let cmd = Printf.sprintf "cd %s && go build %s -o %s ." temp_dir go_flags output_abs in
-      let exit_code, go_output = run_command_capture_combined_output cmd in
-
-      (try ignore (Sys.command ("rm -rf " ^ temp_dir)) with _ -> ());
-
-      if exit_code = 0 then
-        Ok diagnostics
-      else
-        Error (diagnostics @ [ Marmoset.Lib.Go_emitter.classify_go_build_failure ~exit_code ~output:go_output ])
+              if exit_code = 0 then
+                Ok diagnostics
+              else
+                Error
+                  (diagnostics
+                  @ [ Marmoset.Lib.Go_emitter.classify_go_build_failure ~exit_code ~output:go_output ])))
 
 let run_build input output_opt emit_go_opt =
   let source = read_file input in
