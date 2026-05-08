@@ -26,6 +26,7 @@ and boundary_type =
 
 let option_enum_name = "std__option__Option"
 let result_enum_name = "std__result__Result"
+let std_bytes_type_name = "std__bytes__Bytes"
 
 let rec equal_boundary_type a b =
   match (a, b) with
@@ -67,7 +68,7 @@ let rec to_mono_type = function
   | BStdOption inner -> TEnum ("Option", [ to_mono_type inner ])
   | BStdResult (ok_type, err_type) -> TEnum ("Result", [ to_mono_type ok_type; to_mono_type err_type ])
   | BOwnerEnum enum -> TEnum (enum.enum_name, List.map to_mono_type enum.enum_type_args)
-  | BStdBytes -> TNamed ("std__bytes__Bytes", [])
+  | BStdBytes -> TNamed (std_bytes_type_name, [])
   | BExternHandle handle -> TNamed (handle.extern_type_name, [])
 
 let starts_with ~(prefix : string) (s : string) : bool =
@@ -119,6 +120,7 @@ let rec classify ?source_span ~(owner_module_id : string) (typ : mono_type) :
       in
       let* enum_type_args = classify_args [] args in
       Ok (BOwnerEnum { enum_name = name; enum_type_args })
+  | TNamed (name, []) when String.equal name std_bytes_type_name -> Ok BStdBytes
   | TNamed (name, []) when Type_registry.is_extern_type_name name ->
       if extern_handle_owner_matches ~owner_module_id name then
         Ok
@@ -145,6 +147,11 @@ let%test "classifies canonical option and result identities" =
       (TEnum (result_enum_name, [ TEnum (option_enum_name, [ TInt ]); TString ]))
   with
   | Ok (BStdResult (BStdOption BInt, BStr)) -> true
+  | _ -> false
+
+let%test "classifies canonical std bytes identity" =
+  match classify ~owner_module_id:"std.bytes" (TNamed ("std__bytes__Bytes", [])) with
+  | Ok BStdBytes -> true
   | _ -> false
 
 let%test "rejects impostor option identity" =

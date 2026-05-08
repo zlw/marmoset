@@ -4,4 +4,5 @@
  (files
   (prelude.mr as std/prelude.mr)
   (option.mr as std/option.mr)
-  (result.mr as std/result.mr)))
+  (result.mr as std/result.mr)
+  (bytes.mr as std/bytes.mr)))

@@ -115,8 +115,8 @@ copy_shim_fixture_project() {
 }
 
 run_fixture_expect_output \
-    "shim adapters run scalar, Option, Result, owner enum, and handle calls" \
-    $'HI\n42\n41\nmessage:flipped\nfile:plan\nclosed:plan' \
+    "shim adapters run scalar, Option, Result, owner enum, handle, and Bytes calls" \
+    $'HI\n42\n41\nmessage:flipped\nfile:plan\nclosed:plan\nhi:shim\n2\nequal\nstay\nXi\nhi' \
     "$SHIM_RUNTIME_MAIN"
 
 test_emit_go_tree_snapshot \
@@ -203,6 +203,48 @@ EOF
 cat > "$root/main.mr" <<'"'"'EOF'"'"'
 import test.handle.File
 puts(0)
+EOF'
+
+run_fixture_expect_build_failure \
+    "std bytes cannot be constructed in Marmoset" \
+    "cannot be constructed" \
+    'copy_shim_fixture_project "$root"
+cat > "$root/main.mr" <<'"'"'EOF'"'"'
+import std.bytes
+import std.bytes.Bytes
+let payload = Bytes(bytes.from_str("x"))
+puts(0)
+EOF'
+
+run_fixture_expect_build_failure \
+    "std bytes cannot expose fields" \
+    "has no fields to inspect" \
+    'copy_shim_fixture_project "$root"
+cat > "$root/main.mr" <<'"'"'EOF'"'"'
+import std.bytes
+let payload = bytes.from_str("x")
+puts(payload.data)
+EOF'
+
+run_fixture_expect_build_failure \
+    "noncanonical extern type named Bytes remains a handle" \
+    "cannot use" \
+    'mkdir -p "$root/test"
+cat > "$root/main.mr" <<'"'"'EOF'"'"'
+import test.bytes
+puts(bytes.to_str_lossy(bytes.add_suffix(bytes.from_str("x"))))
+EOF
+cat > "$root/test/bytes.mr" <<'"'"'EOF'"'"'
+export Bytes, from_str, to_str_lossy, add_suffix
+extern type Bytes
+extern "test/bytes" as byte_shim = {
+  fn from_str(input: Str) -> Bytes
+  fn to_str_lossy(input: Bytes) -> Str
+  fn add_suffix(input: Bytes) -> Bytes
+}
+fn from_str(input: Str) -> Bytes = byte_shim.from_str(input)
+fn to_str_lossy(input: Bytes) -> Str = byte_shim.to_str_lossy(input)
+fn add_suffix(input: Bytes) -> Bytes = byte_shim.add_suffix(input)
 EOF'
 
 run_fixture_expect_build_failure \

@@ -2,8 +2,8 @@
 
 ## Maintenance
 
-- Last verified: 2026-05-08
-- Implementation status: Planning (blocked on `docs/plans/todo/language/04_shim-first-go-interop.md`)
+- Last verified: 2026-05-09
+- Implementation status: Planning (`std.bytes` proof landed; `std.file` proof still blocked on `docs/plans/todo/language/04_shim-first-go-interop.md`)
 - Update trigger: Any stdlib, shim interop, prelude, module discovery, `Bytes`, resource-handle, or collection representation change
 - Prerequisites:
   - `docs/plans/done/language/06_module-system.md`
@@ -54,7 +54,7 @@ Modules -> Prelude -> Shim-first Go interop -> Stdlib
 
 - `std/prelude.mr`, `std/option.mr`, and `std/result.mr` are toolchain stdlib modules loaded through the normal module pipeline.
 - `Option` and `Result` are canonical stdlib nominal types with inherent helper APIs.
-- `04_shim-first-go-interop.md` will introduce `std.bytes`, a `std.file` proof slice, `extern type`, and checked-in Go shims.
+- `04_shim-first-go-interop.md` has introduced `extern type`, checked-in Go shims, and canonical immutable `std.bytes.Bytes`; its `std.file` proof slice is still pending.
 - Existing `docs/features/ffi.md` still documents current direct FFI v1 behavior until shim interop is implemented.
 - Existing list/map/str examples are mostly fixtures and exploratory docs; there is no committed full stdlib module set yet.
 

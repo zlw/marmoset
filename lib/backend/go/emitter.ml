@@ -694,6 +694,13 @@ type mono_state = {
 let add_go_import ?alias (state : mono_state) (path : string) : unit =
   state.go_imports <- GoImportSet.add { import_alias = alias; import_path = path } state.go_imports
 
+let is_std_bytes_type_name (name : string) : bool =
+  String.equal name Typecheck.Shim_boundary.std_bytes_type_name
+
+let std_bytes_go_type (state : mono_state) : string =
+  add_go_import state "marmoset_out/marmoset";
+  "marmoset.Bytes"
+
 let create_mono_state
     ?(module_path = "main")
     ?(concrete_only = true)
@@ -948,6 +955,7 @@ let merge_record_fields
 
 let track_named_type_inst (state : mono_state) (t : Types.mono_type) : unit =
   match normalize_instantiation_type ~concrete_only:state.concrete_only t with
+  | Types.TNamed (name, []) when is_std_bytes_type_name name -> ()
   | Types.TNamed (name, _) when Type_registry.is_extern_type_name name -> ()
   | Types.TNamed (name, args) ->
       state.named_type_insts <- NamedTypeInstSet.add (name, args) state.named_type_insts
@@ -1020,6 +1028,7 @@ let rec shape_field_type_to_go (state : mono_state) (t : Types.mono_type) : stri
   | Types.TUnion _ -> "interface{}"
   | Types.TIntersection members -> shape_field_type_to_go state (collapse_intersection_for_codegen_exn members)
   | Types.TEnum _ -> mangle_type_for_shape t
+  | Types.TNamed (name, []) when is_std_bytes_type_name name -> std_bytes_go_type state
   | Types.TNamed (name, []) when Type_registry.is_extern_type_name name -> extern_handle_go_type state name
   | Types.TNamed _ ->
       track_named_type_inst state t;
@@ -1100,6 +1109,7 @@ let rec type_to_go (state : mono_state) (t : Types.mono_type) : string =
   | Types.TUnion _ -> "interface{}" (* Phase 4.1: unions compile to interface{} *)
   | Types.TIntersection members -> type_to_go state (collapse_intersection_for_codegen_exn members)
   | Types.TEnum (name, args) -> mangle_type (Types.TEnum (name, args))
+  | Types.TNamed (name, []) when is_std_bytes_type_name name -> std_bytes_go_type state
   | Types.TNamed (name, []) when Type_registry.is_extern_type_name name -> extern_handle_go_type state name
   | Types.TNamed _ ->
       track_named_type_inst state t;
@@ -1269,6 +1279,7 @@ and enum_payload_needs_boxing (state : mono_state) ?(visited_named = StringSet.e
     =
   match normalize_type_for_codegen ~concrete_only:state.concrete_only t with
   | Types.TEnum _ | Types.TRecord _ -> true
+  | Types.TNamed (name, []) when is_std_bytes_type_name name -> false
   | Types.TNamed (name, []) when Type_registry.is_extern_type_name name -> false
   | Types.TNamed (name, args) as named_type -> (
       let key = mangle_type named_type in
@@ -8335,10 +8346,7 @@ let rec to_abi_expr
       Printf.sprintf
         "(func(__value %s) %s {\n\t\tif !marmoset.HandleIsValid(__value) {\n\t\t\tpanic(%S)\n\t\t}\n\t\treturn __value\n\t})(%s)"
         value_type api_type (Printf.sprintf "%s: invalid zero-value handle passed to shim" context) expr
-  | BStdBytes ->
-      failwith
-        (Printf.sprintf "Codegen error: unsupported S4 shim adapter boundary reached backend: %s"
-           (Typecheck.Shim_boundary.to_string boundary))
+  | BStdBytes -> Printf.sprintf "marmoset.BytesCopy(%s.Copy())" expr
 
 and from_abi_expr
     (state : mono_state)
@@ -8405,10 +8413,7 @@ and from_abi_expr
       Printf.sprintf
         "(func(__value %s) %s {\n\t\tif !marmoset.HandleIsValid(__value) {\n\t\t\tpanic(%S)\n\t\t}\n\t\treturn __value\n\t})(%s)"
         api_type value_type (Printf.sprintf "%s: invalid zero-value handle returned by shim" context) expr
-  | BStdBytes ->
-      failwith
-        (Printf.sprintf "Codegen error: unsupported S4 shim adapter boundary reached backend: %s"
-           (Typecheck.Shim_boundary.to_string boundary))
+  | BStdBytes -> Printf.sprintf "marmoset.BytesCopy(%s.Copy())" expr
 
 let emit_extern_wrapper (state : mono_state) (func : Typecheck.Resolution_artifacts.extern_func) : string =
   let shim_alias = shim_import_alias func.shim_id in
@@ -9487,6 +9492,43 @@ let go_test_output_files (files : go_aux_file list) : bool =
         write_file { rel_path = ".tool-versions"; contents = tool_versions };
         Sys.command ("cd " ^ Filename.quote temp_dir ^ " && go test ./... >/dev/null 2>&1") = 0)
 
+let go_test_output_files_fails_with (files : go_aux_file list) ~(needle : string) : bool =
+  if Sys.command "command -v go >/dev/null 2>&1" <> 0 then
+    true
+  else
+    let temp_dir = Filename.temp_file "marmoset-go-test-fail" "" in
+    Sys.remove temp_dir;
+    Unix.mkdir temp_dir 0o755;
+    let write_file (file : go_aux_file) =
+      let path = Filename.concat temp_dir file.rel_path in
+      let dir = Filename.dirname path in
+      ignore (Sys.command ("mkdir -p " ^ Filename.quote dir));
+      let oc = open_out_bin path in
+      Fun.protect ~finally:(fun () -> close_out oc) (fun () -> output_string oc file.contents)
+    in
+    let read_all ic =
+      let buf = Buffer.create 256 in
+      (try
+         while true do
+           Buffer.add_string buf (input_line ic);
+           Buffer.add_char buf '\n'
+         done
+       with End_of_file -> ());
+      Buffer.contents buf
+    in
+    Fun.protect
+      ~finally:(fun () -> ignore (Sys.command ("rm -rf " ^ Filename.quote temp_dir)))
+      (fun () ->
+        List.iter write_file files;
+        let tool_versions = Option.value (read_file_if_exists ".tool-versions") ~default:"golang 1.25.6\n" in
+        write_file { rel_path = ".tool-versions"; contents = tool_versions };
+        let command = "cd " ^ Filename.quote temp_dir ^ " && go test ./... 2>&1" in
+        let ic = Unix.open_process_in command in
+        let output = read_all ic in
+        match Unix.close_process_in ic with
+        | Unix.WEXITED 0 -> false
+        | Unix.WEXITED _ | Unix.WSIGNALED _ | Unix.WSTOPPED _ -> string_contains output needle)
+
 let%test "shim build emits marmoset support and api package for called shim" =
   match
     compile_to_build ~file_id:"test.scalar"
@@ -9588,6 +9630,23 @@ scalar.upcase("ok")
       match go_output_files output with
       | Error _ -> false
       | Ok files -> go_test_output_files files)
+
+let%test "marmoset Bytes data is not field-mutable from shim packages" =
+  let bad_shim =
+    {|
+package bytesbad
+
+import "marmoset_out/marmoset"
+
+func Mutate(input marmoset.Bytes) {
+	input.data = nil
+}
+|}
+  in
+  go_test_output_files_fails_with
+    ({ rel_path = "go.mod"; contents = default_go_mod } :: marmoset_support_files ()
+    @ [ { rel_path = "shims/test/bytes_bad/bytes_bad.go"; contents = bad_shim } ])
+    ~needle:"unexported field data"
 
 let%test "generated shim api package names are keyword safe" =
   Typecheck.Enum_registry.clear ();

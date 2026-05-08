@@ -1,3 +1,11 @@
+===== api/std/bytes/api.go =====
+package mapi_std_bytes
+
+
+===== api/test/bytes/api.go =====
+package mapi_test_bytes
+
+
 ===== api/test/handle/api.go =====
 package mapi_test_handle
 
@@ -45,6 +53,8 @@ import (
 	mapi_test_handle "marmoset_out/api/test/handle"
 	mapi_test_status "marmoset_out/api/test/status"
 	"marmoset_out/marmoset"
+	mshim_std_bytes "marmoset_out/shims/std/bytes"
+	mshim_test_bytes "marmoset_out/shims/test/bytes"
 	mshim_test_handle "marmoset_out/shims/test/handle"
 	mshim_test_result "marmoset_out/shims/test/result"
 	mshim_test_scalar "marmoset_out/shims/test/scalar"
@@ -135,6 +145,76 @@ func (e test__status__Status) String() string {
 	}
 }
 
+
+func extern__std_bytes__equal_q(left marmoset.Bytes, right marmoset.Bytes) bool {
+	defer func() {
+		if __panic := recover(); __panic != nil {
+			panic(fmt.Sprintf("shim ABI violation at std/bytes.equal?: %v", __panic))
+		}
+	}()
+	__ret := mshim_std_bytes.EqualQ(marmoset.BytesCopy(left.Copy()), marmoset.BytesCopy(right.Copy()))
+	return __ret
+}
+
+func extern__std_bytes__from_str(input string) marmoset.Bytes {
+	defer func() {
+		if __panic := recover(); __panic != nil {
+			panic(fmt.Sprintf("shim ABI violation at std/bytes.from_str: %v", __panic))
+		}
+	}()
+	__ret := mshim_std_bytes.FromStr(input)
+	return marmoset.BytesCopy(__ret.Copy())
+}
+
+func extern__std_bytes__length(input marmoset.Bytes) int64 {
+	defer func() {
+		if __panic := recover(); __panic != nil {
+			panic(fmt.Sprintf("shim ABI violation at std/bytes.length: %v", __panic))
+		}
+	}()
+	__ret := mshim_std_bytes.Length(marmoset.BytesCopy(input.Copy()))
+	return __ret
+}
+
+func extern__std_bytes__to_str_lossy(input marmoset.Bytes) string {
+	defer func() {
+		if __panic := recover(); __panic != nil {
+			panic(fmt.Sprintf("shim ABI violation at std/bytes.to_str_lossy: %v", __panic))
+		}
+	}()
+	__ret := mshim_std_bytes.ToStrLossy(marmoset.BytesCopy(input.Copy()))
+	return __ret
+}
+
+func extern__test_bytes__add_suffix(input marmoset.Bytes) marmoset.Bytes {
+	defer func() {
+		if __panic := recover(); __panic != nil {
+			panic(fmt.Sprintf("shim ABI violation at test/bytes.add_suffix: %v", __panic))
+		}
+	}()
+	__ret := mshim_test_bytes.AddSuffix(marmoset.BytesCopy(input.Copy()))
+	return marmoset.BytesCopy(__ret.Copy())
+}
+
+func extern__test_bytes__mutate_after_return(input string) marmoset.Bytes {
+	defer func() {
+		if __panic := recover(); __panic != nil {
+			panic(fmt.Sprintf("shim ABI violation at test/bytes.mutate_after_return: %v", __panic))
+		}
+	}()
+	__ret := mshim_test_bytes.MutateAfterReturn(input)
+	return marmoset.BytesCopy(__ret.Copy())
+}
+
+func extern__test_bytes__mutate_param(input marmoset.Bytes) string {
+	defer func() {
+		if __panic := recover(); __panic != nil {
+			panic(fmt.Sprintf("shim ABI violation at test/bytes.mutate_param: %v", __panic))
+		}
+	}()
+	__ret := mshim_test_bytes.MutateParam(marmoset.BytesCopy(input.Copy()))
+	return __ret
+}
 
 func extern__test_handle__close(file mapi_test_handle.File) string {
 	defer func() {
@@ -361,6 +441,34 @@ func test__handle__close_test__handle__File(file mapi_test_handle.File) string {
     return extern__test_handle__close(file)
 }
 
+func std__bytes__from_u005fstr_string(input string) marmoset.Bytes {
+    return extern__std_bytes__from_str(input)
+}
+
+func std__bytes__to_u005fstr_u005flossy_std__bytes__Bytes(input marmoset.Bytes) string {
+    return extern__std_bytes__to_str_lossy(input)
+}
+
+func std__bytes__length_std__bytes__Bytes(input marmoset.Bytes) int64 {
+    return extern__std_bytes__length(input)
+}
+
+func std__bytes__equal_u003f_std__bytes__Bytes_std__bytes__Bytes(left marmoset.Bytes, right marmoset.Bytes) bool {
+    return extern__std_bytes__equal_q(left, right)
+}
+
+func test__bytes__add_u005fsuffix_std__bytes__Bytes(input marmoset.Bytes) marmoset.Bytes {
+    return extern__test_bytes__add_suffix(input)
+}
+
+func test__bytes__mutate_u005fafter_u005freturn_string(input string) marmoset.Bytes {
+    return extern__test_bytes__mutate_after_return(input)
+}
+
+func test__bytes__mutate_u005fparam_std__bytes__Bytes(input marmoset.Bytes) string {
+    return extern__test_bytes__mutate_param(input)
+}
+
 
 func inherent_value_or_Result_int64_string(self Result_int64_string, fallback int64) int64 {
         __scrutinee_0 := self
@@ -459,6 +567,20 @@ func main() {
     _ = main__file
     _ = puts(test__handle__label_test__handle__File(main__file))
     _ = puts(test__handle__close_test__handle__File(main__file))
+    main__payload := std__bytes__from_u005fstr_string("hi")
+    _ = main__payload
+    _ = puts(std__bytes__to_u005fstr_u005flossy_std__bytes__Bytes(test__bytes__add_u005fsuffix_std__bytes__Bytes(main__payload)))
+    _ = puts(std__bytes__length_std__bytes__Bytes(main__payload))
+    _ = puts(func() string {
+        if std__bytes__equal_u003f_std__bytes__Bytes_std__bytes__Bytes(main__payload, std__bytes__from_u005fstr_string("hi")) {
+            return "equal"
+        } else {
+            return "different"
+        }
+    }())
+    _ = puts(std__bytes__to_u005fstr_u005flossy_std__bytes__Bytes(test__bytes__mutate_u005fafter_u005freturn_string("stay")))
+    _ = puts(test__bytes__mutate_u005fparam_std__bytes__Bytes(main__payload))
+    _ = puts(std__bytes__to_u005fstr_u005flossy_std__bytes__Bytes(main__payload))
 }
 
 ===== marmoset/bytes.go =====
@@ -692,6 +814,67 @@ func rest[T any](arr []T) []T {
 // push appends an element to an array and returns the new array
 func push[T any](arr []T, v T) []T {
 	return append(arr, v)
+}
+
+===== shims/std/bytes/bytes.go =====
+package bytes
+
+import (
+	stdbytes "bytes"
+
+	"marmoset_out/marmoset"
+)
+
+func FromStr(input string) marmoset.Bytes {
+	return marmoset.BytesFromString(input)
+}
+
+func ToStrLossy(input marmoset.Bytes) string {
+	return string(input.Copy())
+}
+
+func Length(input marmoset.Bytes) int64 {
+	return int64(len(input.Copy()))
+}
+
+func EqualQ(left marmoset.Bytes, right marmoset.Bytes) bool {
+	return stdbytes.Equal(left.Copy(), right.Copy())
+}
+
+===== shims/test/bytes/bytes.go =====
+package bytes
+
+import "marmoset_out/marmoset"
+
+func FromStr(input string) marmoset.Bytes {
+	return marmoset.BytesFromString(input)
+}
+
+func ToStrLossy(input marmoset.Bytes) string {
+	return string(input.Copy())
+}
+
+func AddSuffix(input marmoset.Bytes) marmoset.Bytes {
+	data := input.Copy()
+	data = append(data, []byte(":shim")...)
+	return marmoset.BytesCopy(data)
+}
+
+func MutateAfterReturn(input string) marmoset.Bytes {
+	data := []byte(input)
+	result := marmoset.BytesCopy(data)
+	if len(data) > 0 {
+		data[0] = 'X'
+	}
+	return result
+}
+
+func MutateParam(input marmoset.Bytes) string {
+	data := input.Copy()
+	if len(data) > 0 {
+		data[0] = 'X'
+	}
+	return string(data)
 }
 
 ===== shims/test/handle/handle.go =====

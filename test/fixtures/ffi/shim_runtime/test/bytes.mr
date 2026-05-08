@@ -1,0 +1,13 @@
+import std.bytes.Bytes
+
+export add_suffix, mutate_after_return, mutate_param
+
+extern "test/bytes" as byte_shim = {
+  fn add_suffix(input: Bytes) -> Bytes
+  fn mutate_after_return(input: Str) -> Bytes
+  fn mutate_param(input: Bytes) -> Str
+}
+
+fn add_suffix(input: Bytes) -> Bytes = byte_shim.add_suffix(input)
+fn mutate_after_return(input: Str) -> Bytes = byte_shim.mutate_after_return(input)
+fn mutate_param(input: Bytes) -> Str = byte_shim.mutate_param(input)
