@@ -8363,7 +8363,7 @@ and from_abi_expr
       let inner_abi_type = abi_type_go_for_main ~api_alias inner in
       let some_expr = from_abi_expr state ~api_alias ~owner_module_id ~context inner "__some" in
       Printf.sprintf
-        "(func(__value marmoset.Option[%s]) %s {\n\t\t__state, __some := marmoset.InspectOption(__value)\n\t\tswitch __state {\n\t\tcase marmoset.OptionSome:\n\t\t\treturn %s_Some(%s)\n\t\tcase marmoset.OptionNone:\n\t\t\treturn %s_None()\n\t\tdefault:\n\t\t\tpanic(%S)\n\t\t}\n\t})(%s)"
+        "(func(__value marmoset.Option[%s]) %s {\n\t\t__state, __some := marmoset.InspectOption(__value)\n\t\t_ = __some\n\t\tswitch __state {\n\t\tcase marmoset.OptionSome:\n\t\t\treturn %s_Some(%s)\n\t\tcase marmoset.OptionNone:\n\t\t\treturn %s_None()\n\t\tdefault:\n\t\t\tpanic(%S)\n\t\t}\n\t})(%s)"
         inner_abi_type value_type value_type some_expr value_type
         (Printf.sprintf "%s: invalid zero-value Option returned by shim" context)
         expr
@@ -8374,7 +8374,7 @@ and from_abi_expr
       let ok_expr = from_abi_expr state ~api_alias ~owner_module_id ~context ok_type "__success" in
       let err_expr = from_abi_expr state ~api_alias ~owner_module_id ~context err_type "__failure" in
       Printf.sprintf
-        "(func(__value marmoset.Result[%s, %s]) %s {\n\t\t__state, __success, __failure := marmoset.InspectResult(__value)\n\t\tswitch __state {\n\t\tcase marmoset.ResultSuccess:\n\t\t\treturn %s_Success(%s)\n\t\tcase marmoset.ResultFailure:\n\t\t\treturn %s_Failure(%s)\n\t\tdefault:\n\t\t\tpanic(%S)\n\t\t}\n\t})(%s)"
+        "(func(__value marmoset.Result[%s, %s]) %s {\n\t\t__state, __success, __failure := marmoset.InspectResult(__value)\n\t\t_ = __success\n\t\t_ = __failure\n\t\tswitch __state {\n\t\tcase marmoset.ResultSuccess:\n\t\t\treturn %s_Success(%s)\n\t\tcase marmoset.ResultFailure:\n\t\t\treturn %s_Failure(%s)\n\t\tdefault:\n\t\t\tpanic(%S)\n\t\t}\n\t})(%s)"
         ok_abi_type err_abi_type value_type value_type ok_expr value_type err_expr
         (Printf.sprintf "%s: invalid zero-value Result returned by shim" context)
         expr

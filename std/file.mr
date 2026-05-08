@@ -1,0 +1,22 @@
+import std.bytes.Bytes
+
+export File, FileReadError, FileWriteError, FileOpenError, FileCloseError, read, write, open, close
+
+extern type File
+
+type FileReadError = { NotFound, PermissionDenied, IsDirectory, Other(Str) }
+type FileWriteError = { NotFound, PermissionDenied, IsDirectory, Other(Str) }
+type FileOpenError = { NotFound, PermissionDenied, IsDirectory, Other(Str) }
+type FileCloseError = { AlreadyClosed, Other(Str) }
+
+extern "std/file" as file_shim = {
+  fn read(path: Str) => Result[Bytes, FileReadError]
+  fn write(path: Str, bytes: Bytes) => Result[Unit, FileWriteError]
+  fn open(path: Str) => Result[File, FileOpenError]
+  fn close(file: File) => Result[Unit, FileCloseError]
+}
+
+fn read(path: Str) => Result[Bytes, FileReadError] = file_shim.read(path)
+fn write(path: Str, bytes: Bytes) => Result[Unit, FileWriteError] = file_shim.write(path, bytes)
+fn open(path: Str) => Result[File, FileOpenError] = file_shim.open(path)
+fn close(file: File) => Result[Unit, FileCloseError] = file_shim.close(file)

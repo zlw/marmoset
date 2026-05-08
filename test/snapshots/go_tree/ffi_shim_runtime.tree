@@ -285,6 +285,8 @@ func extern__test_result__invalid() Result_int64_string {
 	__ret := mshim_test_result.Invalid()
 	return (func(__value marmoset.Result[int64, string]) Result_int64_string {
 		__state, __success, __failure := marmoset.InspectResult(__value)
+		_ = __success
+		_ = __failure
 		switch __state {
 		case marmoset.ResultSuccess:
 			return Result_int64_string_Success(__success)
@@ -305,6 +307,8 @@ func extern__test_result__parse(s string) Result_int64_string {
 	__ret := mshim_test_result.Parse(s)
 	return (func(__value marmoset.Result[int64, string]) Result_int64_string {
 		__state, __success, __failure := marmoset.InspectResult(__value)
+		_ = __success
+		_ = __failure
 		switch __state {
 		case marmoset.ResultSuccess:
 			return Result_int64_string_Success(__success)
@@ -325,6 +329,7 @@ func extern__test_scalar__maybe(flag bool) Option_int64 {
 	__ret := mshim_test_scalar.Maybe(flag)
 	return (func(__value marmoset.Option[int64]) Option_int64 {
 		__state, __some := marmoset.InspectOption(__value)
+		_ = __some
 		switch __state {
 		case marmoset.OptionSome:
 			return Option_int64_Some(__some)

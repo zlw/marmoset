@@ -3,7 +3,7 @@
 ## Maintenance
 
 - Last verified: 2026-05-09
-- Implementation status: Planning (`std.bytes` proof landed; `std.file` proof still blocked on `docs/plans/todo/language/04_shim-first-go-interop.md`)
+- Implementation status: Planning (`std.bytes` and `std.file` proof slices landed; broader stdlib expansion pending)
 - Update trigger: Any stdlib, shim interop, prelude, module discovery, `Bytes`, resource-handle, or collection representation change
 - Prerequisites:
   - `docs/plans/done/language/06_module-system.md`
@@ -54,8 +54,8 @@ Modules -> Prelude -> Shim-first Go interop -> Stdlib
 
 - `std/prelude.mr`, `std/option.mr`, and `std/result.mr` are toolchain stdlib modules loaded through the normal module pipeline.
 - `Option` and `Result` are canonical stdlib nominal types with inherent helper APIs.
-- `04_shim-first-go-interop.md` has introduced `extern type`, checked-in Go shims, and canonical immutable `std.bytes.Bytes`; its `std.file` proof slice is still pending.
-- Existing `docs/features/ffi.md` still documents current direct FFI v1 behavior until shim interop is implemented.
+- `04_shim-first-go-interop.md` has introduced `extern type`, checked-in Go shims, canonical immutable `std.bytes.Bytes`, and the initial `std.file` proof slice.
+- `docs/features/ffi.md` now documents shim-first interop as the current direction, with direct package externs retained only as historical context.
 - Existing list/map/str examples are mostly fixtures and exploratory docs; there is no committed full stdlib module set yet.
 
 ## Core Modules
@@ -111,7 +111,9 @@ Rules:
 
 - Go errors map to domain enums in `runtime/go/shims/std/file`.
 - `File` is an opaque Marmoset handle.
-- Closing and stale-handle behavior must be documented and tested.
+- `FileReadError`, `FileWriteError`, and `FileOpenError` currently use `NotFound`, `PermissionDenied`, `IsDirectory`, and `Other(Str)`.
+- `FileCloseError` currently uses `AlreadyClosed` and `Other(Str)`.
+- Closing an already-closed or unknown handle returns `FileCloseError.AlreadyClosed`.
 
 ### `std.console`
 
