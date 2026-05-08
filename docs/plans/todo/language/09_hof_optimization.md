@@ -9,7 +9,8 @@
   - `docs/plans/done/language/06_module-system.md`
   - `docs/plans/done/language/07_prelude.md`
   - `docs/plans/done/language/08_ffi.md`
-  - `docs/plans/todo/language/04_stdlib.md`
+  - `docs/plans/todo/language/05_stdlib.md`
+  - `docs/plans/todo/language/08_forall-exists.md` if interface-runtime cleanup becomes necessary for the selected HOF target set
 
 ## Summary
 
@@ -99,7 +100,7 @@ The exact names depend on the stdlib plan that actually ships. The initial candi
 - `list.none?`
 - a join-like sink if the stdlib ends up with a canonical list/string join surface
 
-The optimization plan must use the names that really land in `04_stdlib.md`, not the names that happened to appear in older exploratory docs.
+The optimization plan must use the names that really land in `05_stdlib.md`, not the names that happened to appear in older exploratory docs.
 
 ## Target User Model
 
@@ -223,12 +224,16 @@ If any stage in the candidate pipeline is effectful, ambiguous, or unsupported, 
 | `lib/frontend/typecheck/resolution_artifacts.ml` | preserve canonical callable identity into codegen if current artifacts are insufficient |
 | `lib/frontend/typecheck/infer.ml` | source of method/call resolution metadata consumed by the emitter |
 | `docs/plans/done/language/06_module-system.md` | required so canonical module-qualified identities exist |
-| `docs/plans/todo/language/04_stdlib.md` | defines the APIs this plan is allowed to optimize |
+| `docs/plans/todo/language/05_stdlib.md` | defines the APIs this plan is allowed to optimize |
 
 ## Related Plans
 
 - `docs/plans/done/language/06_module-system.md` must land first so optimization can key off real module-qualified identities.
-- `docs/plans/todo/language/04_stdlib.md` must land first so the optimizer targets the shipped HOF surface, not speculative names.
-- `docs/plans/todo/language/05_post-modules-type-system-expansion.md` remains a separate post-modules track; this plan is backend/performance-focused, not a type-system expansion.
-- `docs/plans/todo/language/07_forall-exists.md` owns the earlier interface-runtime cleanup work that makes shared adapters, cleaner callback shapes, and lower-overhead value packaging available before stdlib HOF specialization.
+- `docs/plans/todo/language/05_stdlib.md` must land first so the optimizer targets the shipped HOF surface, not speculative names.
+- `docs/plans/todo/language/06_post-modules-type-system-expansion.md` remains a separate post-modules track; this plan is backend/performance-focused, not a type-system expansion.
+- `docs/plans/todo/language/08_forall-exists.md` owns interface-runtime cleanup work that may make shared adapters, cleaner callback shapes, and lower-overhead value packaging available before stdlib HOF specialization.
 - Pre-stdlib callable representation work such as hoisting non-capturing sections should be tracked separately and can improve the effectiveness of this plan, but is not part of it.
+
+## Progress
+
+- 2026-05-08 23:52 CEST: Renumbered from `08_hof_optimization.md` to `09_hof_optimization.md` and updated dependencies to the renumbered shim-first stdlib and interface-value plans.

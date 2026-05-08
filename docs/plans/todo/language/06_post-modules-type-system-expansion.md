@@ -8,11 +8,12 @@
   - `docs/plans/done/language/06_module-system.md`
   - `docs/plans/done/language/07_prelude.md`
   - `docs/plans/done/language/08_ffi.md`
-  - `docs/plans/todo/language/04_stdlib.md`
+  - `docs/plans/todo/language/04_shim-first-go-interop.md`
+  - `docs/plans/todo/language/05_stdlib.md`
 
 ## Summary
 
-After modules and public APIs exist, revisit the type-system expansions that are hard to judge in a single-file language. This plan is intentionally later: it should be driven by real module, stdlib, and wrapper pressure instead of speculation.
+After modules, shim interop, and public stdlib APIs exist, revisit the type-system expansions that are hard to judge in a single-file language. This plan is intentionally later: it should be driven by real module, stdlib, and wrapper pressure instead of speculation.
 
 ## In Scope
 
@@ -34,7 +35,7 @@ After modules and public APIs exist, revisit the type-system expansions that are
 
 ### Phase P0. Capture Real Post-Modules Pressure
 
-- Collect concrete examples from module signatures, stdlib wrappers, and FFI-facing APIs.
+- Collect concrete examples from module signatures, stdlib wrappers, and shim-facing APIs.
 - Reject features that still look hypothetical after modules land.
 
 ### Phase P1. Associated Types And Coherence Boundaries
@@ -62,10 +63,14 @@ After modules and public APIs exist, revisit the type-system expansions that are
 ## Exit Criteria
 
 - Post-module type-system additions are justified by real API pressure instead of speculative design.
-- Any accepted feature has a clear interaction story with module signatures, traits, derives, and FFI wrappers.
+- Any accepted feature has a clear interaction story with module signatures, traits, derives, and shim-backed wrappers.
 - The roadmap retains only genuinely deferred explorations after these concrete post-modules items are either planned or rejected.
 
 ## Related Plans
 
-- `docs/plans/done/language/06_module-system.md`, `07_prelude.md`, `08_ffi.md`, and `04_stdlib.md` create the public-API pressure that justifies this later work.
+- `docs/plans/done/language/06_module-system.md`, `07_prelude.md`, `08_ffi.md`, plus `04_shim-first-go-interop.md` and `05_stdlib.md` create the public-API pressure that justifies this later work.
 - `docs/ROADMAP.md` should keep more speculative ideas deferred until they are concrete enough to deserve their own plan.
+
+## Progress
+
+- 2026-05-08 23:52 CEST: Renumbered from `05_post-modules-type-system-expansion.md` to `06_post-modules-type-system-expansion.md` and updated prerequisites to depend on shim-first interop plus the renumbered stdlib plan.

@@ -100,13 +100,26 @@ Why:
 
 ### 2. Interface Value Types Come After The Core Call Model
 
-This plan should land before or alongside [07_forall-exists.md](/Users/zlw/src/marmoset/marmoset/docs/plans/todo/language/07_forall-exists.md), but only after plain and qualified calls already have a stable candidate model.
+This plan should land before or alongside [08_forall-exists.md](/Users/zlw/src/marmoset/marmoset/docs/plans/todo/language/08_forall-exists.md), but only after plain and qualified calls already have a stable candidate model.
 
 Why:
 
 - value-position `Show` / `HasName` keeps interface values in the type system without reopening receiver-method lookup,
 - overloads should stay clearly separate from field access and qualified trait calls,
 - otherwise we risk collapsing explicit interface calls and overload resolution into one problem.
+
+### 3. Shim And Stdlib Work Comes First
+
+This plan is now queued after:
+
+- [04_shim-first-go-interop.md](/Users/zlw/src/marmoset/marmoset/docs/plans/todo/language/04_shim-first-go-interop.md)
+- [05_stdlib.md](/Users/zlw/src/marmoset/marmoset/docs/plans/todo/language/05_stdlib.md)
+- [06_post-modules-type-system-expansion.md](/Users/zlw/src/marmoset/marmoset/docs/plans/todo/language/06_post-modules-type-system-expansion.md)
+
+Why:
+
+- stdlib module identities and shim-backed APIs should stabilize before overload sets add another call-resolution axis;
+- overloading should not compensate for unsettled interop wrapper design.
 
 ## Locked Decisions
 
@@ -508,3 +521,7 @@ This feature is reasonable if kept narrow:
 - ambiguity on multiple viable candidates
 
 That gives Marmoset an Erlang/Elixir-like "does this call fit?" feel without reintroducing the broad UFCS resolver that the language just decided to remove.
+
+## Progress
+
+- 2026-05-08 23:52 CEST: Renumbered from `06_function-overloading.md` to `07_function-overloading.md` and updated related-plan links after shim-first interop and stdlib were moved ahead of this work.

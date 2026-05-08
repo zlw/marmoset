@@ -5,6 +5,9 @@
 - Last verified: 2026-04-03
 - Implementation status: Planning
 - Prerequisites:
+  - `docs/plans/todo/language/04_shim-first-go-interop.md`
+  - `docs/plans/todo/language/05_stdlib.md`
+  - `docs/plans/todo/language/06_post-modules-type-system-expansion.md`
   - current data-first declaration semantics
   - current trait/shape split
   - current monomorphizing frontend/backend pipeline
@@ -617,3 +620,7 @@ Adopt this layered model:
 - no inferred heterogeneous unions for now
 
 This preserves Marmoset's static generic story, gives data-first code a real open-interface story, and avoids both explicit existential jargon and TypeScript-style widening.
+
+## Progress
+
+- 2026-05-08 23:52 CEST: Renumbered from `07_forall-exists.md` to `08_forall-exists.md` and updated prerequisites after shim-first interop, stdlib, and post-module type-system work were moved ahead of interface value types.
