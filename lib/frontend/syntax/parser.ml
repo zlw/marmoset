@@ -421,6 +421,15 @@ and valid_extern_identifier (name : string) : bool =
         name
   | _ -> false
 
+and valid_extern_function_identifier (name : string) : bool =
+  let base =
+    if String.ends_with ~suffix:"?" name || String.ends_with ~suffix:"!" name then
+      String.sub name 0 (String.length name - 1)
+    else
+      name
+  in
+  valid_extern_identifier base
+
 and default_extern_qualifier (path : string) : string option =
   match List.rev (String.split_on_char '/' path) with
   | segment :: _ when valid_extern_identifier segment -> Some segment
@@ -459,10 +468,10 @@ and parse_extern_fn_sig (p : parser) : (parser * Surface.surface_extern_fn_sig, 
   let sef_pos = p.curr_token.pos in
   let* p2 = expect_peek p Token.Ident in
   let sef_name_ref = current_name_ref p2 in
-  if not (valid_extern_identifier sef_name_ref.text) then
+  if not (valid_extern_function_identifier sef_name_ref.text) then
     Error
       (add_error ~code:"parse-extern-signature" ~token:p2.curr_token p2
-         "extern function names must be plain identifiers")
+         "extern function names must be valid function identifiers")
   else if peek_token_is p2 Token.LBracket then
     Error
       (add_error ~code:"parse-extern-signature" ~token:p2.peek_token p2
@@ -500,10 +509,10 @@ and parse_extern_block (p : parser) : (parser * Surface.top_decl, parser) result
     if peek_token_is p Token.String then
       Ok (next_token p)
     else
-      Error (add_error ~code:"parse-extern-signature" p "extern requires a quoted Go import path")
+      Error (add_error ~code:"parse-extern-signature" p "extern requires a quoted shim id")
   in
-  let seb_go_path_ref = current_name_ref p2 in
-  let seb_go_path = p2.curr_token.literal in
+  let seb_shim_id_ref = current_name_ref p2 in
+  let seb_shim_id = p2.curr_token.literal in
   let* p3, seb_alias, seb_alias_ref =
     if peek_token_is p2 Token.As then
       let* p_alias = expect_peek (next_token p2) Token.Ident in
@@ -521,12 +530,12 @@ and parse_extern_block (p : parser) : (parser * Surface.top_decl, parser) result
     match seb_alias with
     | Some alias -> Ok alias
     | None -> (
-        match default_extern_qualifier seb_go_path with
+        match default_extern_qualifier seb_shim_id with
         | Some qualifier -> Ok qualifier
         | None ->
             Error
               (add_error ~code:"parse-extern-signature" p3
-                 "extern import path requires an explicit plain identifier alias"))
+                 "extern shim id requires an explicit plain identifier alias"))
   in
   let* p4 =
     if peek_token_is p3 Token.Assign then
@@ -556,7 +565,7 @@ and parse_extern_block (p : parser) : (parser * Surface.top_decl, parser) result
   Ok
     ( p6,
       Surface.SExternBlock
-        Surface.{ seb_go_path; seb_go_path_ref; seb_alias; seb_alias_ref; seb_qualifier; seb_fns } )
+        Surface.{ seb_shim_id; seb_shim_id_ref; seb_alias; seb_alias_ref; seb_qualifier; seb_fns } )
 
 (* Phase 1b: vNext top-level fn declaration: fn name[generics](params) -> T = expr_or_block *)
 and parse_fn_decl_top (p : parser) : (parser * Surface.top_decl, parser) result =
@@ -2767,12 +2776,12 @@ let%test "imports must precede body statements" =
   | Error diags -> List.exists (fun (d : Diagnostic.t) -> d.code = "parse-module-header-order") diags
   | Ok _ -> false
 
-let%test "parse extern block with alias and effectful signature" =
+let%test "parse shim extern block with alias and effectful signature" =
   match
     parse ~file_id:"<test>"
-      "extern \"path/filepath\" as fp = {\n\
-      \  fn Base(path: Str) -> Str\n\
-      \  fn Walk(root: Str) => Unit\n\
+      "extern \"test/scalar\" as scalar = {\n\
+      \  fn read(path: Str) -> Str\n\
+      \  fn write!(root: Str) => Unit\n\
        }"
   with
   | Ok
@@ -2781,20 +2790,20 @@ let%test "parse extern block with alias and effectful signature" =
           AST.stmt =
             AST.ExternBlock
               {
-                extern_go_path = "path/filepath";
-                extern_alias = Some "fp";
-                extern_qualifier = "fp";
+                extern_shim_id = "test/scalar";
+                extern_alias = Some "scalar";
+                extern_qualifier = "scalar";
                 extern_fns =
                   [
                     {
-                      extern_fn_name = "Base";
+                      extern_fn_name = "read";
                       extern_fn_params = [ { extern_param_name = "path"; extern_param_type = AST.TCon "Str" } ];
                       extern_fn_return_type = AST.TCon "Str";
                       extern_fn_effectful = false;
                       _;
                     };
                     {
-                      extern_fn_name = "Walk";
+                      extern_fn_name = "write!";
                       extern_fn_params = [ { extern_param_name = "root"; extern_param_type = AST.TCon "Str" } ];
                       extern_fn_return_type = AST.TCon "Unit";
                       extern_fn_effectful = true;
@@ -2838,10 +2847,16 @@ let%test "extern rejects invalid derived qualifier without alias" =
   | Error diags -> List.exists (fun (d : Diagnostic.t) -> d.code = "parse-extern-signature") diags
   | Ok _ -> false
 
-let%test "extern rejects bang suffix names" =
-  match parse ~file_id:"<test>" "extern \"strings\" as strings! = { fn Panic!(s: Str) -> Str }" with
+let%test "extern rejects bang suffix aliases" =
+  match parse ~file_id:"<test>" "extern \"test/scalar\" as scalar! = { fn panic!(s: Str) -> Str }" with
   | Error diags -> List.exists (fun (d : Diagnostic.t) -> d.code = "parse-extern-signature") diags
   | Ok _ -> false
+
+let%test "extern accepts question and bang suffix function names" =
+  match parse ~file_id:"<test>" "extern \"test/pred\" = { fn exists?(s: Str) -> Bool fn write!(s: Str) => Unit }" with
+  | Ok [ { AST.stmt = AST.ExternBlock { extern_fns = [ a; b ]; _ }; _ } ] ->
+      a.extern_fn_name = "exists?" && b.extern_fn_name = "write!"
+  | _ -> false
 
 module Test = struct
   type test = {

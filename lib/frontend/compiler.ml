@@ -121,9 +121,9 @@ let merge_project_resolution_artifacts (dst : project_resolution_artifacts) (res
 let extern_signatures_equal
     (a : Typecheck.Resolution_artifacts.extern_func)
     (b : Typecheck.Resolution_artifacts.extern_func) : bool =
-  List.length a.param_types = List.length b.param_types
-  && List.for_all2 (=) a.param_types b.param_types
-  && a.return_type = b.return_type
+  List.length a.param_boundary_types = List.length b.param_boundary_types
+  && List.for_all2 Typecheck.Shim_boundary.equal_boundary_type a.param_boundary_types b.param_boundary_types
+  && Typecheck.Shim_boundary.equal_boundary_type a.return_boundary_type b.return_boundary_type
   && Bool.equal a.is_effectful b.is_effectful
 
 let diagnostics_have_errors (diagnostics : Diagnostic.t list) : bool =
@@ -639,6 +639,7 @@ let compile_module
   in
   if not (is_prelude_module module_info.module_id) then
     Builtins.init_builtin_impls ();
+  Extern_registry.set_current_module_id module_info.module_id;
   let* result =
     Checker.check_program_with_annotations ~state ~prebound_symbols ~prepare_state:false ~expand_derives:false
       ~env expanded_program
@@ -674,36 +675,50 @@ let compile_module
 
 let validate_project_extern_signature_coherence (modules : checked_module list) : (unit, Diagnostic.t list) result =
   let seen : (string, Typecheck.Resolution_artifacts.extern_func) Hashtbl.t = Hashtbl.create 64 in
+  let owners_by_shim_id : (string, Typecheck.Resolution_artifacts.extern_func) Hashtbl.t = Hashtbl.create 64 in
   let rec check_module = function
     | [] -> Ok ()
     | (module_ : checked_module) :: rest ->
         let conflict =
           Hashtbl.fold
-            (fun extern_key (func : Typecheck.Resolution_artifacts.extern_func) acc ->
+            (fun shim_key (func : Typecheck.Resolution_artifacts.extern_func) acc ->
               match acc with
               | Some _ -> acc
               | None -> (
-                  match Hashtbl.find_opt seen extern_key with
-                  | Some existing when not (extern_signatures_equal existing func) ->
-                      Some (existing, func)
-                  | Some _ ->
-                      Hashtbl.replace seen extern_key func;
-                      None
-                  | None ->
-                      Hashtbl.replace seen extern_key func;
-                      None))
+                  match Hashtbl.find_opt owners_by_shim_id func.shim_id with
+                  | Some existing when not (String.equal existing.owner_module_id func.owner_module_id) ->
+                      Some (`OwnerDuplicate (existing, func))
+                  | Some _ | None -> (
+                      Hashtbl.replace owners_by_shim_id func.shim_id func;
+                      match Hashtbl.find_opt seen shim_key with
+                      | Some existing when not (extern_signatures_equal existing func) ->
+                          Some (`SignatureConflict (existing, func))
+                      | Some _ ->
+                          Hashtbl.replace seen shim_key func;
+                          None
+                      | None ->
+                          Hashtbl.replace seen shim_key func;
+                          None)))
             module_.result.extern_declarations None
         in
         (match conflict with
         | None -> check_module rest
-        | Some (existing, func) ->
+        | Some (`OwnerDuplicate (existing, func)) ->
             Error
               [
-                compiler_error ~code:"module-extern-signature-conflict"
+                compiler_error ~code:"shim-owner-duplicate"
+                  ~message:
+                    (Printf.sprintf "Shim %S is declared by both module '%s' and module '%s'" func.shim_id
+                       existing.owner_module_id func.owner_module_id);
+              ]
+        | Some (`SignatureConflict (existing, func)) ->
+            Error
+              [
+                compiler_error ~code:"shim-function-duplicate"
                   ~message:
                     (Printf.sprintf
-                       "Conflicting extern signatures for %S.%s between modules '%s' and '%s'"
-                       func.go_path func.go_func_name existing.declaring_module func.declaring_module);
+                       "Conflicting shim signatures for %S.%s between modules '%s' and '%s'"
+                       func.shim_id func.marmoset_func_name existing.owner_module_id func.owner_module_id);
               ])
   in
   check_module modules
@@ -1439,48 +1454,48 @@ let%test "check_entry rejects colliding direct imports" =
               && Diagnostics.String_utils.contains_substring ~needle:"existing binding 'add'" diag.message)
             diags)
 
-let%test "ffi F1d: extern qualifier collides with namespace import" =
+let%test "shim S2: extern qualifier collides with namespace import" =
   Discovery.with_temp_project
     [
-      ("main.mr", "import strings\nextern \"strings\" = { fn ToUpper(s: Str) -> Str }\n");
-      ("strings.mr", "export id\nfn id(s: Str) -> Str = s\n");
+      ("test/scalar.mr", "import lib.conflict\nextern \"test/scalar\" as conflict = { fn upcase(s: Str) -> Str }\n");
+      ("lib/conflict.mr", "export id\nfn id(s: Str) -> Str = s\n");
     ]
     (fun root ->
-      match check_entry ~entry_file:(Filename.concat root "main.mr") () with
+      match check_entry ~source_root:root ~entry_file:(Filename.concat root "test/scalar.mr") () with
       | Ok _ -> false
       | Error diags ->
           List.exists
             (fun (diag : Diagnostic.t) -> diag.code = "module-extern-qualifier-collision")
             diags)
 
-let%test "ffi F1d: extern qualifier collides with top-level declaration" =
+let%test "shim S2: extern qualifier collides with top-level declaration" =
   Discovery.with_temp_project
-    [ ("main.mr", "let strings = 1\nextern \"strings\" = { fn ToUpper(s: Str) -> Str }\n") ]
+    [ ("test/scalar.mr", "let scalar = 1\nextern \"test/scalar\" = { fn upcase(s: Str) -> Str }\n") ]
     (fun root ->
-      match check_entry ~entry_file:(Filename.concat root "main.mr") () with
+      match check_entry ~source_root:root ~entry_file:(Filename.concat root "test/scalar.mr") () with
       | Ok _ -> false
       | Error diags ->
           List.exists
             (fun (diag : Diagnostic.t) -> diag.code = "module-extern-qualifier-collision")
             diags)
 
-let%test "ffi F1d: extern qualifier collides with implicit core binding" =
+let%test "shim S2: extern qualifier collides with implicit core binding" =
   Discovery.with_temp_project
-    [ ("main.mr", "extern \"fmt\" as Option = { fn Println(s: Str) => Unit }\n") ]
+    [ ("test/scalar.mr", "extern \"test/scalar\" as Option = { fn upcase(s: Str) -> Str }\n") ]
     (fun root ->
-      match check_entry ~entry_file:(Filename.concat root "main.mr") () with
+      match check_entry ~source_root:root ~entry_file:(Filename.concat root "test/scalar.mr") () with
       | Ok _ -> false
       | Error diags ->
           List.exists
             (fun (diag : Diagnostic.t) -> diag.code = "module-extern-qualifier-collision")
             diags)
 
-let%test "ffi F1d: extern declarations remain module-local" =
+let%test "shim S2: extern declarations remain module-local" =
   Discovery.with_temp_project
     [
-      ("main.mr", "import wrapper.upper\nstrings.ToUpper(\"x\")\n");
-      ( "wrapper.mr",
-        "export upper\nextern \"strings\" = { fn ToUpper(s: Str) -> Str }\nfn upper(s: Str) -> Str = strings.ToUpper(s)\n"
+      ("main.mr", "import test.scalar.upcase\nscalar.upcase(\"x\")\n");
+      ( "test/scalar.mr",
+        "export upcase\nextern \"test/scalar\" = { fn upcase(s: Str) -> Str }\nfn upcase(s: Str) -> Str = scalar.upcase(s)\n"
       );
     ]
     (fun root ->
@@ -1491,14 +1506,14 @@ let%test "ffi F1d: extern declarations remain module-local" =
             (fun (diag : Diagnostic.t) -> diag.code = "type-unbound-var" || diag.code = "type-extern")
             diags)
 
-let%test "ffi F1d: compile_project merges extern artifacts" =
+let%test "shim S2: compile_project merges shim artifacts" =
   Discovery.with_temp_project
     [
-      ( "main.mr",
-        "extern \"strings\" = { fn ToUpper(s: Str) -> Str }\nlet value = strings.ToUpper(\"x\")\n" );
+      ( "test/scalar.mr",
+        "extern \"test/scalar\" = { fn upcase(s: Str) -> Str }\nlet value = scalar.upcase(\"x\")\n" );
     ]
     (fun root ->
-      match Discovery.discover_project ~entry_file:(Filename.concat root "main.mr") () with
+      match Discovery.discover_project ~source_root:root ~entry_file:(Filename.concat root "test/scalar.mr") () with
       | Error _ -> false
       | Ok graph -> (
           match compile_project graph with
@@ -1507,59 +1522,60 @@ let%test "ffi F1d: compile_project merges extern artifacts" =
               Hashtbl.length project.artifacts.extern_declarations = 1
               && Hashtbl.length project.artifacts.extern_calls = 1))
 
-let%test "ffi F3: wrapper module exports ordinary API backed by private extern" =
+let%test "shim S2: wrapper module exports ordinary API backed by private shim" =
   Discovery.with_temp_project
     [
-      ("main.mr", "import lib.str\nputs(str.upcase(\"hi\"))\n");
-      ( "lib/str.mr",
-        "export upcase\nextern \"strings\" = { fn ToUpper(s: Str) -> Str }\nfn upcase(s: Str) -> Str = strings.ToUpper(s)\n"
+      ("main.mr", "import test.scalar\nputs(scalar.upcase(\"hi\"))\n");
+      ( "test/scalar.mr",
+        "export upcase\nextern \"test/scalar\" = { fn upcase(s: Str) -> Str }\nfn upcase(s: Str) -> Str = scalar.upcase(s)\n"
       );
     ]
     (fun root ->
       match compile_entry_to_build ~entry_file:(Filename.concat root "main.mr") () with
       | Error _ -> false
       | Ok build_output ->
-          string_contains build_output.main_go {|import mext_strings "strings"|}
-          && string_contains build_output.main_go "func extern__strings__ToUpper(s string) string"
-          && string_contains build_output.main_go "mext_strings.ToUpper(s)"
-          && string_contains build_output.main_go "str__upcase_string")
+          string_contains build_output.main_go "func extern__test_scalar__upcase(s string) string"
+          && string_contains build_output.main_go {|panic("shim adapter not implemented: test/scalar.upcase")|}
+          && string_contains build_output.main_go "scalar__upcase_string")
 
-let%test "ffi F3: matching externs across wrapper modules dedupe wrappers and imports" =
+let%test "shim S2: distinct shim ids emit distinct adapter wrappers" =
   Discovery.with_temp_project
     [
       ("main.mr", "import a.up\nimport b.loud\nputs(up(\"hi\"))\nputs(loud(\"bye\"))\n");
       ( "a.mr",
-        "export up\nextern \"strings\" = { fn ToUpper(s: Str) -> Str }\nfn up(s: Str) -> Str = strings.ToUpper(s)\n"
+        "export up\nimport test.scalar.upcase\nfn up(s: Str) -> Str = upcase(s)\n"
       );
       ( "b.mr",
-        "export loud\nextern \"strings\" as text = { fn ToUpper(s: Str) -> Str }\nfn loud(s: Str) -> Str = text.ToUpper(s)\n"
+        "export loud\nimport test.other.downcase\nfn loud(s: Str) -> Str = downcase(s)\n"
+      );
+      ( "test/scalar.mr",
+        "export upcase\nextern \"test/scalar\" = { fn upcase(s: Str) -> Str }\nfn upcase(s: Str) -> Str = scalar.upcase(s)\n"
+      );
+      ( "test/other.mr",
+        "export downcase\nextern \"test/other\" = { fn downcase(s: Str) -> Str }\nfn downcase(s: Str) -> Str = other.downcase(s)\n"
       );
     ]
     (fun root ->
       match compile_entry_to_build ~entry_file:(Filename.concat root "main.mr") () with
       | Error _ -> false
       | Ok build_output ->
-          count_occurrences build_output.main_go {|import mext_strings "strings"|} = 1
-          && count_occurrences build_output.main_go "func extern__strings__ToUpper(s string) string" = 1
-          && count_occurrences build_output.main_go "extern__strings__ToUpper(s)" = 2)
+          count_occurrences build_output.main_go "func extern__test_scalar__upcase(s string) string" = 1
+          && count_occurrences build_output.main_go "func extern__test_other__downcase(s string) string" = 1
+          && string_contains build_output.main_go "extern__test_scalar__upcase(s)"
+          && string_contains build_output.main_go "extern__test_other__downcase(s)")
 
-let%test "ffi F3: conflicting extern signatures across modules are rejected" =
+let%test "shim S2: direct Go package externs are rejected at project compile" =
   Discovery.with_temp_project
     [
-      ("main.mr", "import a.up\nimport b.bad\nputs(up(\"hi\"))\nputs(bad(1))\n");
-      ( "a.mr",
-        "export up\nextern \"strings\" = { fn ToUpper(s: Str) -> Str }\nfn up(s: Str) -> Str = strings.ToUpper(s)\n"
-      );
-      ( "b.mr",
-        "export bad\nextern \"strings\" as text = { fn ToUpper(i: Int) -> Str }\nfn bad(i: Int) -> Str = text.ToUpper(i)\n"
-      );
+      ( "main.mr",
+        "extern \"strings\" = { fn ToUpper(s: Str) -> Str }\nlet value = strings.ToUpper(\"x\")\n" );
     ]
     (fun root ->
       match compile_entry_to_build ~entry_file:(Filename.concat root "main.mr") () with
       | Ok _ -> false
       | Error diags ->
           List.exists
-            (fun (diag : Diagnostic.t) -> diag.code = "module-extern-signature-conflict")
+            (fun (diag : Diagnostic.t) -> diag.code = "shim-id-invalid")
             diags)
 
 let%test "check_entry reports non-exported namespace members clearly" =

@@ -1,5 +1,3 @@
-open Types
-
 module AST = Syntax.Ast.AST
 module Diagnostic = Diagnostics.Diagnostic
 module Artifacts = Resolution_artifacts
@@ -9,47 +7,32 @@ let ( let* ) = Result.bind
 let map_result f xs =
   let rec go acc = function
     | [] -> Ok (List.rev acc)
-    | x :: rest -> (
-        match f x with
-        | Error e -> Error e
-        | Ok y -> go (y :: acc) rest)
+    | x :: rest ->
+        let* y = f x in
+        go (y :: acc) rest
   in
   go [] xs
 
 let declaration_by_source : (string * string, Artifacts.extern_func) Hashtbl.t = Hashtbl.create 64
 let declaration_by_key : (string, Artifacts.extern_func) Hashtbl.t = Hashtbl.create 64
-let path_by_qualifier : (string, string) Hashtbl.t = Hashtbl.create 32
+let shim_id_by_qualifier : (string, string) Hashtbl.t = Hashtbl.create 32
+let registered_block_shim_ids : (string, Diagnostic.span) Hashtbl.t = Hashtbl.create 16
 let extern_calls : (int, Artifacts.extern_call) Hashtbl.t = Hashtbl.create 128
+let current_module_id : string option ref = ref None
 
 let clear () : unit =
   Hashtbl.clear declaration_by_source;
   Hashtbl.clear declaration_by_key;
-  Hashtbl.clear path_by_qualifier;
-  Hashtbl.clear extern_calls
+  Hashtbl.clear shim_id_by_qualifier;
+  Hashtbl.clear registered_block_shim_ids;
+  Hashtbl.clear extern_calls;
+  current_module_id := None
 
-let extern_key ~(go_path : string) ~(go_func_name : string) : string = go_path ^ "\x00" ^ go_func_name
+let set_current_module_id module_id = current_module_id := Some module_id
+let declaring_module_or fallback = Option.value !current_module_id ~default:fallback
 
-let encoded_go_path_fragment (go_path : string) : string =
-  let buf = Buffer.create (String.length go_path) in
-  let append_escape ch = Buffer.add_string buf (Printf.sprintf "_x%02x_" (Char.code ch)) in
-  String.iter
-    (function
-      | ('a' .. 'z' | '0' .. '9') as ch -> Buffer.add_char buf ch
-      | 'A' .. 'Z' as ch -> Buffer.add_char buf (Char.lowercase_ascii ch)
-      | '/' -> Buffer.add_char buf '_'
-      | '_' -> Buffer.add_string buf "_u_"
-      | ch -> append_escape ch)
-    go_path;
-  match Buffer.contents buf with
-  | "" -> "pkg"
-  | fragment -> fragment
-
-let go_import_alias (go_path : string) : string =
-  let fragment = encoded_go_path_fragment go_path in
-  let buf = Buffer.create (String.length fragment + 5) in
-  Buffer.add_string buf "mext_";
-  Buffer.add_string buf fragment;
-  Buffer.contents buf
+let shim_key ~(shim_id : string) ~(func_name : string) : string = shim_id ^ "\x00" ^ func_name
+let extern_key = shim_key
 
 let source_span ~(file_id : string option) ~(start_pos : int) ~(end_pos : int) : Diagnostic.span =
   match file_id with
@@ -61,43 +44,61 @@ let error_at_span ~code ~message = function
       Diagnostic.error_with_span ~code ~message ~file_id ~start_pos ?end_pos ()
   | Diagnostic.NoSpan -> Diagnostic.error_no_span ~code ~message
 
-let type_error span message = Error (error_at_span ~code:"type-extern" ~message span)
+let registry_error span ~code ~message = Error (error_at_span ~code ~message span)
 
-let allowed_param_type = function
-  | TInt | TFloat | TBool | TString -> true
-  | TNull | TVar _ | TFun _ | TArray _ | THash _ | TRecord _ | TRowVar _ | TTraitObject _ | TUnion _
-  | TIntersection _ | TEnum _ | TNamed _ ->
-      false
+let capitalize_words words =
+  words |> List.filter (fun word -> not (String.equal word "")) |> List.map String.capitalize_ascii
+  |> String.concat ""
 
-let allowed_return_type = function
-  | TInt | TFloat | TBool | TString | TNull -> true
-  | TVar _ | TFun _ | TArray _ | THash _ | TRecord _ | TRowVar _ | TTraitObject _ | TUnion _ | TIntersection _
-  | TEnum _ | TNamed _ ->
-      false
+let words_of_identifier_base (base : string) : string list =
+  let flush current words =
+    match Buffer.contents current with
+    | "" -> words
+    | word ->
+        Buffer.clear current;
+        String.lowercase_ascii word :: words
+  in
+  let current = Buffer.create (String.length base) in
+  let rec go words prev_lower_or_digit idx =
+    if idx >= String.length base then
+      List.rev (flush current words)
+    else
+      match base.[idx] with
+      | '_' -> go (flush current words) false (idx + 1)
+      | ('A' .. 'Z' as ch) when prev_lower_or_digit ->
+          let words = flush current words in
+          Buffer.add_char current (Char.lowercase_ascii ch);
+          go words false (idx + 1)
+      | ('A' .. 'Z' as ch) ->
+          Buffer.add_char current (Char.lowercase_ascii ch);
+          go words false (idx + 1)
+      | ('a' .. 'z' | '0' .. '9') as ch ->
+          Buffer.add_char current ch;
+          go words true (idx + 1)
+      | ch ->
+          Buffer.add_string current (Printf.sprintf "x%02x" (Char.code ch));
+          go words false (idx + 1)
+  in
+  go [] false 0
+
+let go_symbol_name (name : string) : string =
+  let base, suffix =
+    if String.ends_with ~suffix:"?" name then
+      (String.sub name 0 (String.length name - 1), [ "q" ])
+    else if String.ends_with ~suffix:"!" name then
+      (String.sub name 0 (String.length name - 1), [ "bang" ])
+    else
+      (name, [])
+  in
+  match capitalize_words (words_of_identifier_base base @ suffix) with
+  | "" -> "Shim"
+  | symbol -> symbol
 
 let signature_equal (a : Artifacts.extern_func) (b : Artifacts.extern_func) : bool =
-  List.length a.param_types = List.length b.param_types
-  && List.for_all2 (=) a.param_types b.param_types
-  && a.return_type = b.return_type
+  List.length a.param_boundary_types = List.length b.param_boundary_types
+  && List.for_all2 Shim_boundary.equal_boundary_type a.param_boundary_types b.param_boundary_types
+  && Shim_boundary.equal_boundary_type a.return_boundary_type b.return_boundary_type
   && Bool.equal a.is_effectful b.is_effectful
-
-let validate_param_type span ~(fn_name : string) ~(param_name : string) (typ : mono_type) : (unit, Diagnostic.t) result
-    =
-  let typ = canonicalize_mono_type typ in
-  if allowed_param_type typ then
-    Ok ()
-  else
-    type_error span
-      (Printf.sprintf "extern function %s parameter %s uses unsupported type %s" fn_name param_name
-         (to_string typ))
-
-let validate_return_type span ~(fn_name : string) (typ : mono_type) : (unit, Diagnostic.t) result =
-  let typ = canonicalize_mono_type typ in
-  if allowed_return_type typ then
-    Ok ()
-  else
-    type_error span
-      (Printf.sprintf "extern function %s return uses unsupported type %s" fn_name (to_string typ))
 
 let validate_unique_param_names span ~(fn_name : string) (params : AST.extern_param list) :
     (unit, Diagnostic.t) result =
@@ -105,93 +106,135 @@ let validate_unique_param_names span ~(fn_name : string) (params : AST.extern_pa
     | [] -> Ok ()
     | (param : AST.extern_param) :: rest ->
         if List.mem param.extern_param_name seen then
-          type_error span
-            (Printf.sprintf "extern function %s has duplicate parameter name %s" fn_name
-               param.extern_param_name)
+          registry_error span ~code:"shim-function-duplicate"
+            ~message:
+              (Printf.sprintf "shim function %s has duplicate parameter name %s" fn_name
+                 param.extern_param_name)
         else
           go (param.extern_param_name :: seen) rest
   in
   go [] params
 
-let build_func ~(declaring_module : string) ~(file_id : string option) (block : AST.extern_block_def)
+let build_func ~(owner_module_id : string) ~(file_id : string option) (block : AST.extern_block_def)
     (fn_sig : AST.extern_fn_sig) : (Artifacts.extern_func, Diagnostic.t) result =
   let span = source_span ~file_id ~start_pos:fn_sig.extern_fn_pos ~end_pos:fn_sig.extern_fn_end_pos in
   let* param_types =
     map_result
       (fun (param : AST.extern_param) ->
         Annotation.type_expr_to_mono_type param.extern_param_type
-        |> Result.map canonicalize_mono_type
-        |> Result.map_error (fun (diag : Diagnostic.t) -> error_at_span ~code:"type-extern" ~message:diag.message span))
+        |> Result.map Types.canonicalize_mono_type
+        |> Result.map_error (fun (diag : Diagnostic.t) ->
+               error_at_span ~code:"type-shim-boundary" ~message:diag.message span))
       fn_sig.extern_fn_params
   in
   let* return_type =
     Annotation.type_expr_to_mono_type fn_sig.extern_fn_return_type
-    |> Result.map canonicalize_mono_type
-    |> Result.map_error (fun (diag : Diagnostic.t) -> error_at_span ~code:"type-extern" ~message:diag.message span)
+    |> Result.map Types.canonicalize_mono_type
+    |> Result.map_error (fun (diag : Diagnostic.t) ->
+           error_at_span ~code:"type-shim-boundary" ~message:diag.message span)
   in
   let* () = validate_unique_param_names span ~fn_name:fn_sig.extern_fn_name fn_sig.extern_fn_params in
-  let* () =
+  let* param_boundary_types =
     map_result
-      (fun ((param : AST.extern_param), typ) ->
-        validate_param_type span ~fn_name:fn_sig.extern_fn_name ~param_name:param.extern_param_name typ)
-      (List.combine fn_sig.extern_fn_params param_types)
-    |> Result.map (fun _ -> ())
+      (fun typ -> Shim_boundary.classify ~source_span:span ~owner_module_id typ)
+      param_types
   in
-  let* () = validate_return_type span ~fn_name:fn_sig.extern_fn_name return_type in
+  let* return_boundary_type = Shim_boundary.classify ~source_span:span ~owner_module_id return_type in
   Ok
     {
-      Artifacts.extern_key =
-        extern_key ~go_path:block.extern_go_path ~go_func_name:fn_sig.extern_fn_name;
-      declaring_module;
-      go_path = block.extern_go_path;
+      Artifacts.shim_key = shim_key ~shim_id:block.extern_shim_id ~func_name:fn_sig.extern_fn_name;
+      shim_id = block.extern_shim_id;
+      owner_module_id;
       source_qualifier = block.extern_qualifier;
-      go_import_alias = go_import_alias block.extern_go_path;
-      go_func_name = fn_sig.extern_fn_name;
+      marmoset_func_name = fn_sig.extern_fn_name;
+      go_symbol_name = go_symbol_name fn_sig.extern_fn_name;
       param_names = List.map (fun (param : AST.extern_param) -> param.extern_param_name) fn_sig.extern_fn_params;
-      param_types;
-      return_type;
+      param_boundary_types;
+      return_boundary_type;
       is_effectful = fn_sig.extern_fn_effectful;
       source_span = span;
+      boundary_spans = List.init (List.length fn_sig.extern_fn_params + 1) (fun _ -> span);
     }
 
 let register_func (func : Artifacts.extern_func) : (unit, Diagnostic.t) result =
-  let source_key = (func.source_qualifier, func.go_func_name) in
+  let source_key = (func.source_qualifier, func.marmoset_func_name) in
   match Hashtbl.find_opt declaration_by_source source_key with
   | Some _ ->
-      type_error func.source_span
-        (Printf.sprintf "duplicate extern function %s.%s" func.source_qualifier func.go_func_name)
+      registry_error func.source_span ~code:"shim-function-duplicate"
+        ~message:(Printf.sprintf "duplicate shim function %s.%s" func.source_qualifier func.marmoset_func_name)
   | None -> (
-      match Hashtbl.find_opt path_by_qualifier func.source_qualifier with
-      | Some existing_path when existing_path <> func.go_path ->
-          type_error func.source_span
-            (Printf.sprintf "extern qualifier %s already refers to %S, not %S" func.source_qualifier
-               existing_path func.go_path)
+      match Hashtbl.find_opt shim_id_by_qualifier func.source_qualifier with
+      | Some existing_id when existing_id <> func.shim_id ->
+          registry_error func.source_span ~code:"module-extern-qualifier-collision"
+            ~message:
+              (Printf.sprintf "extern qualifier %s already refers to shim %S, not %S" func.source_qualifier
+                 existing_id func.shim_id)
       | _ -> (
-          match Hashtbl.find_opt declaration_by_key func.extern_key with
+          match Hashtbl.find_opt declaration_by_key func.shim_key with
           | Some existing when not (signature_equal existing func) ->
-              type_error func.source_span
-                (Printf.sprintf "conflicting extern signatures for %S.%s" func.go_path func.go_func_name)
+              registry_error func.source_span ~code:"shim-function-duplicate"
+                ~message:
+                  (Printf.sprintf "conflicting shim signatures for %S.%s" func.shim_id
+                     func.marmoset_func_name)
           | Some _ | None ->
-              Hashtbl.replace path_by_qualifier func.source_qualifier func.go_path;
+              Hashtbl.replace shim_id_by_qualifier func.source_qualifier func.shim_id;
               Hashtbl.replace declaration_by_source source_key func;
-              Hashtbl.replace declaration_by_key func.extern_key func;
+              Hashtbl.replace declaration_by_key func.shim_key func;
               Ok ()))
 
-let register_block ~(declaring_module : string) ~(file_id : string option) (block : AST.extern_block_def) :
-    (unit, Diagnostic.t) result =
-  let* funcs = map_result (build_func ~declaring_module ~file_id block) block.extern_fns in
+let validate_go_symbol_collisions (funcs : Artifacts.extern_func list) : (unit, Diagnostic.t) result =
+  let by_symbol : (string, Artifacts.extern_func) Hashtbl.t = Hashtbl.create (List.length funcs) in
   let rec go = function
     | [] -> Ok ()
-    | func :: rest ->
-        let* () = register_func func in
-        go rest
+    | (func : Artifacts.extern_func) :: rest -> (
+        match Hashtbl.find_opt by_symbol func.go_symbol_name with
+        | Some existing ->
+            registry_error func.source_span ~code:"shim-symbol-collision"
+              ~message:
+                (Printf.sprintf "shim functions %s and %s both map to Go symbol %s"
+                   existing.marmoset_func_name func.marmoset_func_name func.go_symbol_name)
+        | None ->
+            Hashtbl.add by_symbol func.go_symbol_name func;
+            go rest)
   in
   go funcs
 
-let lookup ~(source_qualifier : string) ~(go_func_name : string) : Artifacts.extern_func option =
-  Hashtbl.find_opt declaration_by_source (source_qualifier, go_func_name)
+let register_block ~(declaring_module : string) ~(file_id : string option) (block : AST.extern_block_def) :
+    (unit, Diagnostic.t) result =
+  let block_span =
+    match block.extern_fns with
+    | first :: _ -> source_span ~file_id ~start_pos:first.extern_fn_pos ~end_pos:first.extern_fn_end_pos
+    | [] -> Diagnostic.NoSpan
+  in
+  let* _segments = Shim_catalog.validate_known ~source_span:block_span block.extern_shim_id in
+  let* expected_owner =
+    Shim_catalog.owner_module_id block.extern_shim_id
+    |> Result.map_error (fun _ -> Shim_catalog.invalid_diagnostic ~source_span:block_span block.extern_shim_id)
+  in
+  if not (String.equal declaring_module expected_owner) then
+    registry_error block_span ~code:"shim-owner-mismatch"
+      ~message:
+        (Printf.sprintf "shim %S must be declared by owner module '%s', not '%s'" block.extern_shim_id
+           expected_owner declaring_module)
+  else if Hashtbl.mem registered_block_shim_ids block.extern_shim_id then
+    registry_error block_span ~code:"shim-block-duplicate"
+      ~message:(Printf.sprintf "shim %S is declared by multiple extern blocks in module '%s'" block.extern_shim_id declaring_module)
+  else (
+    Hashtbl.add registered_block_shim_ids block.extern_shim_id block_span;
+    let* funcs = map_result (build_func ~owner_module_id:declaring_module ~file_id block) block.extern_fns in
+    let* () = validate_go_symbol_collisions funcs in
+    let rec go = function
+      | [] -> Ok ()
+      | func :: rest ->
+          let* () = register_func func in
+          go rest
+    in
+    go funcs)
 
-let is_qualifier (source_qualifier : string) : bool = Hashtbl.mem path_by_qualifier source_qualifier
+let lookup ~(source_qualifier : string) ~(func_name : string) : Artifacts.extern_func option =
+  Hashtbl.find_opt declaration_by_source (source_qualifier, func_name)
+
+let is_qualifier (source_qualifier : string) : bool = Hashtbl.mem shim_id_by_qualifier source_qualifier
 
 let record_call (expr_id : int) (call : Artifacts.extern_call) : unit =
   Hashtbl.replace extern_calls expr_id call
@@ -199,11 +242,12 @@ let record_call (expr_id : int) (call : Artifacts.extern_call) : unit =
 let snapshot_declarations () : (string, Artifacts.extern_func) Hashtbl.t = Hashtbl.copy declaration_by_key
 let snapshot_calls () : (int, Artifacts.extern_call) Hashtbl.t = Hashtbl.copy extern_calls
 
-let%test "go import alias canonicalizes paths" =
-  go_import_alias "path/filepath" = "mext_path_filepath"
-  && go_import_alias "github.com/acme/text-case" = "mext_github_x2e_com_acme_text_x2d_case"
-  && go_import_alias "github.com/acme/text_case" = "mext_github_x2e_com_acme_text_u_case"
-  && go_import_alias "github.com/acme/text-case" <> go_import_alias "github.com/acme/text_case"
+let%test "shim symbol mangling handles suffixes and collisions" =
+  go_symbol_name "read_bytes" = "ReadBytes"
+  && go_symbol_name "exists?" = "ExistsQ"
+  && go_symbol_name "exists_q" = "ExistsQ"
+  && go_symbol_name "existsQ" = "ExistsQ"
+  && go_symbol_name "write!" = "WriteBang"
 
 let parse_one_extern source =
   match Syntax.Parser.parse ~file_id:"<test>" source with
@@ -211,92 +255,44 @@ let parse_one_extern source =
   | Ok _ -> Error "expected one extern block"
   | Error diags -> Error (String.concat "; " (List.map (fun (diag : Diagnostic.t) -> diag.message) diags))
 
-let register_source source =
+let register_source ?(declaring_module = "test.scalar") source =
   match parse_one_extern source with
   | Error msg -> Error (Diagnostic.error_no_span ~code:"test" ~message:msg)
-  | Ok (block, file_id) -> register_block ~declaring_module:"<test>" ~file_id block
+  | Ok (block, file_id) -> register_block ~declaring_module ~file_id block
 
-let%test "extern registry snapshots declarations" =
+let%test "shim registry snapshots scalar declarations" =
   clear ();
-  match register_source "extern \"strings\" = { fn ToUpper(s: Str) -> Str }" with
+  match register_source "extern \"test/scalar\" = { fn upcase(s: Str) -> Str }" with
   | Error _ -> false
   | Ok () -> (
-      match lookup ~source_qualifier:"strings" ~go_func_name:"ToUpper" with
+      match lookup ~source_qualifier:"scalar" ~func_name:"upcase" with
       | Some func ->
-          func.go_path = "strings" && func.go_import_alias = "mext_strings"
-          && func.param_types = [ TString ] && func.return_type = TString
+          func.shim_id = "test/scalar" && func.go_symbol_name = "Upcase"
+          && func.param_boundary_types = [ Shim_boundary.BStr ]
+          && func.return_boundary_type = Shim_boundary.BStr
           && Hashtbl.length (snapshot_declarations ()) = 1
       | None -> false)
 
-let%test "extern registry rejects Unit parameters" =
+let%test "shim registry rejects direct Go import paths" =
   clear ();
-  match register_source "extern \"fmt\" = { fn Println(x: Unit) -> Unit }" with
-  | Error diag -> diag.code = "type-extern" && String.contains diag.message 'x'
+  match register_source ~declaring_module:"strings" "extern \"strings\" = { fn ToUpper(s: Str) -> Str }" with
+  | Error diag -> diag.code = "shim-id-invalid"
   | Ok () -> false
 
-let%test "extern registry accepts Unit return" =
+let%test "shim registry rejects owner mismatch" =
   clear ();
-  match register_source "extern \"fmt\" = { fn Println(s: Str) => Unit }" with
-  | Ok () -> true
-  | Error _ -> false
-
-let%test "extern registry rejects duplicate parameter names" =
-  clear ();
-  match register_source "extern \"strings\" = { fn Repeat(s: Str, s: Str) -> Str }" with
-  | Error diag -> diag.code = "type-extern" && String.contains diag.message 's'
+  match register_source ~declaring_module:"main" "extern \"test/scalar\" = { fn upcase(s: Str) -> Str }" with
+  | Error diag -> diag.code = "shim-owner-mismatch"
   | Ok () -> false
 
-let%test "extern registry rejects duplicate source functions" =
+let%test "shim registry rejects unsupported boundary types" =
   clear ();
-  match
-    register_source
-      "extern \"strings\" = {\n\
-      \  fn ToUpper(s: Str) -> Str\n\
-      \  fn ToUpper(s: Str) -> Str\n\
-       }"
-  with
-  | Error diag -> diag.code = "type-extern"
+  match register_source "extern \"test/scalar\" = { fn bad(xs: List[Str]) -> Str }" with
+  | Error diag -> diag.code = "type-shim-boundary"
   | Ok () -> false
 
-let%test "extern registry rejects conflicting path function signatures" =
+let%test "shim registry rejects post-mangle symbol collisions" =
   clear ();
-  match register_source "extern \"strings\" as s1 = { fn ToUpper(s: Str) -> Str }" with
-  | Error _ -> false
-  | Ok () -> (
-      match register_source "extern \"strings\" as s2 = { fn ToUpper(s: Int) -> Str }" with
-      | Error diag -> diag.code = "type-extern"
-      | Ok () -> false)
-
-let%test "extern registry normalizes transparent aliases" =
-  clear ();
-  match
-    Syntax.Parser.parse ~file_id:"<test>"
-      "type Stringy = Str\n\
-       extern \"strings\" = { fn ToUpper(s: Stringy) -> Stringy }"
-  with
-  | Error _ -> false
-  | Ok program ->
-      Annotation.clear_type_aliases ();
-      List.iter
-        (fun (stmt : AST.statement) ->
-          match stmt.stmt with
-          | AST.TypeAlias alias_def -> Annotation.register_type_alias alias_def
-          | _ -> ())
-        program;
-      let result =
-        List.fold_left
-          (fun acc (stmt : AST.statement) ->
-            match (acc, stmt.stmt) with
-            | Error _ as err, _ -> err
-            | Ok (), AST.ExternBlock block -> register_block ~declaring_module:"<test>" ~file_id:stmt.file_id block
-            | Ok (), _ -> Ok ())
-          (Ok ()) program
-      in
-      let ok =
-        match lookup ~source_qualifier:"strings" ~go_func_name:"ToUpper" with
-        | Some func -> func.param_types = [ TString ] && func.return_type = TString
-        | None -> false
-      in
-      clear ();
-      Annotation.clear_type_aliases ();
-      Result.is_ok result && ok
+  match register_source "extern \"test/scalar\" = { fn exists?(s: Str) -> Bool fn exists_q(s: Str) -> Bool }" with
+  | Error diag -> diag.code = "shim-symbol-collision"
+  | Ok () -> false

@@ -114,7 +114,7 @@ module AST = struct
   [@@deriving show]
 
   and extern_block_def = {
-    extern_go_path : string;
+    extern_shim_id : string;
     extern_alias : string option;
     extern_qualifier : string;
     extern_fns : extern_fn_sig list;
@@ -363,7 +363,7 @@ module AST = struct
           match import_alias with
           | None -> base
           | Some alias -> base ^ " as " ^ alias)
-      | ExternBlock block -> Printf.sprintf "extern %S as %s = { ... }" block.extern_go_path block.extern_qualifier
+      | ExternBlock block -> Printf.sprintf "extern %S as %s = { ... }" block.extern_shim_id block.extern_qualifier
       | Let l -> Printf.sprintf "let %s = %s;" l.name (expression_to_string l.value)
       | Return expr -> Printf.sprintf "return %s;" (expression_to_string expr)
       | ExpressionStmt expr -> expression_to_string expr

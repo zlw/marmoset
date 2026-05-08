@@ -1058,7 +1058,7 @@ let should_monomorphize_let_binding_value (value_expr : AST.expression) : bool =
       match lookup_call_resolution value_expr.id with
       | Some (QualifiedTraitMethod _) | Some QualifiedInherentMethod -> false
       | Some (TraitMethod _) | Some (DynamicTraitMethod _) | Some InherentMethod | Some FieldFunctionCall
-      | Some (ExternQualifiedCall _) | None ->
+      | Some (ShimQualifiedCall _) | None ->
           true)
   | _ -> false
 
@@ -2786,25 +2786,27 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                   Error
                     (mk_error ~code:"type-extern"
                        ~message:
-                         (Printf.sprintf "extern function '%s.%s' takes no type arguments"
-                            func.source_qualifier func.go_func_name))
+                         (Printf.sprintf "shim function '%s.%s' takes no type arguments"
+                            func.source_qualifier func.marmoset_func_name))
               | _ -> (
-                  let call_target = Printf.sprintf "%s.%s" func.source_qualifier func.go_func_name in
-                  match infer_qualified_method_args ~mk_error ~call_target func.param_types with
+                  let call_target = Printf.sprintf "%s.%s" func.source_qualifier func.marmoset_func_name in
+                  let param_types = List.map Shim_boundary.to_mono_type func.param_boundary_types in
+                  let return_type = Shim_boundary.to_mono_type func.return_boundary_type in
+                  match infer_qualified_method_args ~mk_error ~call_target param_types with
                   | Error e -> Error e
-                  | Ok (subst, arg_types) ->
-                      record_call_resolution expr (ExternQualifiedCall func.extern_key);
+                  | Ok (subst, _arg_types) ->
+                      record_call_resolution expr (ShimQualifiedCall func.shim_key);
                       record_effectful_method_call expr func.is_effectful;
-                      let call_arg_types = List.map (apply_substitution subst) arg_types in
-                      let call_return_type = apply_substitution subst func.return_type in
+                      let call_arg_boundary_types = func.param_boundary_types in
+                      let call_return_boundary_type = func.return_boundary_type in
                       Extern_registry.record_call expr.id
                         {
-                          Resolution_artifacts.call_func_key = func.extern_key;
-                          call_arg_types;
-                          call_return_type;
+                          Resolution_artifacts.call_func_key = func.shim_key;
+                          call_arg_boundary_types;
+                          call_return_boundary_type;
                           call_effectful = func.is_effectful;
                         };
-                      Ok (subst, call_return_type))
+                      Ok (subst, apply_substitution subst return_type))
             in
             let rec unify_qualified_method_params
                 ~(mk_error : code:string -> message:string -> Diagnostic.t)
@@ -4704,7 +4706,7 @@ and classify_dotted_receiver (env : type_env) (name : string) (member_name : str
   if TypeEnv.mem name env then
     `BoundVar
   else if Extern_registry.is_qualifier name then
-    `ExternNamespace (Extern_registry.lookup ~source_qualifier:name ~go_func_name:member_name)
+    `ExternNamespace (Extern_registry.lookup ~source_qualifier:name ~func_name:member_name)
   else
     let enum_def_opt = Annotation.lookup_enum_by_source_name name in
     let is_enum = Option.is_some enum_def_opt in
@@ -6878,7 +6880,10 @@ let infer_program
                             | (stmt : AST.statement) :: rest -> (
                                 match stmt.stmt with
                                 | AST.ExternBlock block ->
-                                    let declaring_module = Option.value stmt.file_id ~default:"<unknown>" in
+                                    let declaring_module =
+                                      Extern_registry.declaring_module_or
+                                        (Option.value stmt.file_id ~default:"<unknown>")
+                                    in
                                     let file_id = stmt.file_id in
                                     let* () = Extern_registry.register_block ~declaring_module ~file_id block in
                                     register_top_level_externs rest

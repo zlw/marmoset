@@ -1783,93 +1783,93 @@ let%test "followup C2: intersections can flow to compatible member record annota
   | Ok result -> result.result_type = Types.TInt
   | Error _ -> false
 
-let%test "ffi F1b: checker snapshots extern declarations" =
+let%test "shim S2: checker snapshots scalar shim declarations" =
   Infer.reset_fresh_counter ();
   Trait_registry.clear ();
-  match check_string ~file_id:"main.mr" "extern \"strings\" = { fn ToUpper(s: Str) -> Str }" with
+  match check_string ~file_id:"test.scalar" "extern \"test/scalar\" = { fn upcase(s: Str) -> Str }" with
   | Ok result -> (
-      match Hashtbl.find_opt result.extern_declarations (Extern_registry.extern_key ~go_path:"strings" ~go_func_name:"ToUpper") with
+      match Hashtbl.find_opt result.extern_declarations (Extern_registry.shim_key ~shim_id:"test/scalar" ~func_name:"upcase") with
       | Some func ->
-          func.source_qualifier = "strings" && func.go_import_alias = "mext_strings"
-          && func.param_names = [ "s" ] && func.param_types = [ Types.TString ]
-          && func.return_type = Types.TString
+          func.source_qualifier = "scalar" && func.shim_id = "test/scalar"
+          && func.param_names = [ "s" ] && func.param_boundary_types = [ Shim_boundary.BStr ]
+          && func.return_boundary_type = Shim_boundary.BStr
       | None -> false)
   | Error _ -> false
 
-let%test "ffi F1b: checker rejects unsupported extern parameter type" =
+let%test "shim S2: checker rejects direct Go import style extern ids" =
   Infer.reset_fresh_counter ();
   Trait_registry.clear ();
-  match check_string ~file_id:"main.mr" "extern \"strings\" = { fn Join(xs: List[Str]) -> Str }" with
+  match check_string ~file_id:"strings" "extern \"strings\" = { fn ToUpper(s: Str) -> Str }" with
   | Ok _ -> false
-  | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-extern") diags
+  | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "shim-id-invalid") diags
 
-let%test "ffi F1b: checker rejects unsupported extern boundary type families" =
+let%test "shim S2: checker rejects unsupported shim boundary type families" =
   let cases =
     [
-      "extern \"x\" = { fn Bad(xs: List[Str]) -> Str }";
-      "extern \"x\" = { fn Bad(m: Map[Str, Int]) -> Str }";
-      "extern \"x\" = { fn Bad(r: { name: Str }) -> Str }";
-      "extern \"x\" = { fn Bad(x: Dyn[Show]) -> Str }";
-      "extern \"x\" = { fn Bad(x: Option[Int]) -> Str }";
-      "extern \"x\" = { fn Bad(x: Result[Int, Str]) -> Str }";
-      "extern \"x\" = { fn Bad(f: (Str) -> Str) -> Str }";
-      "extern \"x\" = { fn Bad(s: Str) -> List[Str] }";
-      "extern \"x\" = { fn Bad(s: Str) -> Map[Str, Int] }";
-      "extern \"x\" = { fn Bad(s: Str) -> { name: Str } }";
-      "extern \"x\" = { fn Bad(s: Str) -> Dyn[Show] }";
-      "extern \"x\" = { fn Bad(s: Str) -> Option[Int] }";
-      "extern \"x\" = { fn Bad(s: Str) -> Result[Int, Str] }";
-      "extern \"x\" = { fn Bad(s: Str) -> (Str) -> Str }";
+      "extern \"test/scalar\" = { fn bad(xs: List[Str]) -> Str }";
+      "extern \"test/scalar\" = { fn bad(m: Map[Str, Int]) -> Str }";
+      "extern \"test/scalar\" = { fn bad(r: { name: Str }) -> Str }";
+      "extern \"test/scalar\" = { fn bad(x: Dyn[Show]) -> Str }";
+      "type Option[a] = { Some(a), None }\nextern \"test/scalar\" = { fn bad(x: Option[Int]) -> Str }";
+      "type Result[a, e] = { Success(a), Failure(e) }\nextern \"test/scalar\" = { fn bad(x: Result[Int, Str]) -> Str }";
+      "extern \"test/scalar\" = { fn bad(f: (Str) -> Str) -> Str }";
+      "extern \"test/scalar\" = { fn bad(s: Str) -> List[Str] }";
+      "extern \"test/scalar\" = { fn bad(s: Str) -> Map[Str, Int] }";
+      "extern \"test/scalar\" = { fn bad(s: Str) -> { name: Str } }";
+      "extern \"test/scalar\" = { fn bad(s: Str) -> Dyn[Show] }";
+      "type Option[a] = { Some(a), None }\nextern \"test/scalar\" = { fn bad(s: Str) -> Option[Int] }";
+      "type Result[a, e] = { Success(a), Failure(e) }\nextern \"test/scalar\" = { fn bad(s: Str) -> Result[Int, Str] }";
+      "extern \"test/scalar\" = { fn bad(s: Str) -> (Str) -> Str }";
     ]
   in
   List.for_all
     (fun source ->
       Infer.reset_fresh_counter ();
       Trait_registry.clear ();
-      match check_string ~file_id:"main.mr" source with
+      match check_string ~file_id:"test.scalar" source with
       | Ok _ -> false
-      | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-extern") diags)
+      | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-shim-boundary") diags)
     cases
 
-let%test "ffi F1b: checker normalizes primitive aliases in extern signatures" =
+let%test "shim S2: checker normalizes primitive aliases in shim signatures" =
   Infer.reset_fresh_counter ();
   Trait_registry.clear ();
   let code =
     {|
       type Stringy = Str
-      extern "strings" = { fn ToUpper(s: Stringy) -> Stringy }
+      extern "test/scalar" = { fn upcase(s: Stringy) -> Stringy }
     |}
   in
-  match check_string ~file_id:"main.mr" code with
+  match check_string ~file_id:"test.scalar" code with
   | Ok result -> (
-      match Hashtbl.find_opt result.extern_declarations (Extern_registry.extern_key ~go_path:"strings" ~go_func_name:"ToUpper") with
-      | Some func -> func.param_types = [ Types.TString ] && func.return_type = Types.TString
+      match Hashtbl.find_opt result.extern_declarations (Extern_registry.shim_key ~shim_id:"test/scalar" ~func_name:"upcase") with
+      | Some func -> func.param_boundary_types = [ Shim_boundary.BStr ] && func.return_boundary_type = Shim_boundary.BStr
       | None -> false)
   | Error _ -> false
 
-let%test "ffi F1b: checker rejects conflicting aliases for the same qualifier" =
+let%test "shim S2: checker rejects duplicate blocks for the same shim" =
   Infer.reset_fresh_counter ();
   Trait_registry.clear ();
   let code =
     {|
-      extern "strings" as s = { fn ToUpper(s: Str) -> Str }
-      extern "path/filepath" as s = { fn Base(path: Str) -> Str }
+      extern "test/scalar" as s = { fn upcase(s: Str) -> Str }
+      extern "test/scalar" as other = { fn downcase(s: Str) -> Str }
     |}
   in
-  match check_string ~file_id:"main.mr" code with
+  match check_string ~file_id:"test.scalar" code with
   | Ok _ -> false
-  | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-extern") diags
+  | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "shim-block-duplicate") diags
 
-let%test "ffi F1c: extern direct call returns declared type and records artifacts" =
+let%test "shim S2: shim direct call returns declared type and records artifacts" =
   Infer.reset_fresh_counter ();
   Trait_registry.clear ();
   let code =
     {|
-      extern "strings" = { fn ToUpper(s: Str) -> Str }
-      strings.ToUpper("x")
+      extern "test/scalar" = { fn upcase(s: Str) -> Str }
+      scalar.upcase("x")
     |}
   in
-  match check_string ~file_id:"main.mr" code with
+  match check_string ~file_id:"test.scalar" code with
   | Ok result ->
       let has_call_resolution =
         Hashtbl.fold
@@ -1877,134 +1877,134 @@ let%test "ffi F1c: extern direct call returns declared type and records artifact
             acc
             ||
             match resolution with
-            | Resolution_artifacts.ExternQualifiedCall key ->
-                key = Extern_registry.extern_key ~go_path:"strings" ~go_func_name:"ToUpper"
+            | Resolution_artifacts.ShimQualifiedCall key ->
+                key = Extern_registry.shim_key ~shim_id:"test/scalar" ~func_name:"upcase"
             | _ -> false)
           result.call_resolution_map false
       in
       result.result_type = Types.TString && has_call_resolution && Hashtbl.length result.extern_calls = 1
   | Error _ -> false
 
-let%test "ffi F1c: extern bool return typechecks" =
+let%test "shim S2: shim bool return typechecks" =
   Infer.reset_fresh_counter ();
   Trait_registry.clear ();
   let code =
     {|
-      extern "strings" = { fn Contains(s: Str, substr: Str) -> Bool }
-      strings.Contains("abc", "b")
+      extern "test/scalar" = { fn contains?(s: Str, substr: Str) -> Bool }
+      scalar.contains?("abc", "b")
     |}
   in
-  match check_string ~file_id:"main.mr" code with
+  match check_string ~file_id:"test.scalar" code with
   | Ok result -> result.result_type = Types.TBool
   | Error _ -> false
 
-let%test "ffi F1c: extern call rejects wrong arity" =
+let%test "shim S2: shim call rejects wrong arity" =
   Infer.reset_fresh_counter ();
   Trait_registry.clear ();
   let code =
     {|
-      extern "strings" = { fn Contains(s: Str, substr: Str) -> Bool }
-      strings.Contains("abc")
+      extern "test/scalar" = { fn contains?(s: Str, substr: Str) -> Bool }
+      scalar.contains?("abc")
     |}
   in
-  match check_string ~file_id:"main.mr" code with
+  match check_string ~file_id:"test.scalar" code with
   | Ok _ -> false
   | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-constructor") diags
 
-let%test "ffi F1c: extern call rejects wrong argument type" =
+let%test "shim S2: shim call rejects wrong argument type" =
   Infer.reset_fresh_counter ();
   Trait_registry.clear ();
   let code =
     {|
-      extern "strings" = { fn ToUpper(s: Str) -> Str }
-      strings.ToUpper(1)
+      extern "test/scalar" = { fn upcase(s: Str) -> Str }
+      scalar.upcase(1)
     |}
   in
-  match check_string ~file_id:"main.mr" code with
+  match check_string ~file_id:"test.scalar" code with
   | Ok _ -> false
   | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-mismatch") diags
 
-let%test "ffi F1c: unknown extern function is rejected" =
+let%test "shim S2: unknown shim function is rejected" =
   Infer.reset_fresh_counter ();
   Trait_registry.clear ();
   let code =
     {|
-      extern "strings" = { fn ToUpper(s: Str) -> Str }
-      strings.Trim(" x ")
+      extern "test/scalar" = { fn upcase(s: Str) -> Str }
+      scalar.trim(" x ")
     |}
   in
-  match check_string ~file_id:"main.mr" code with
+  match check_string ~file_id:"test.scalar" code with
   | Ok _ -> false
   | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-extern") diags
 
-let%test "ffi F1c: extern function value use is rejected" =
+let%test "shim S2: shim function value use is rejected" =
   Infer.reset_fresh_counter ();
   Trait_registry.clear ();
   let code =
     {|
-      extern "strings" = { fn ToUpper(s: Str) -> Str }
-      let f = strings.ToUpper
+      extern "test/scalar" = { fn upcase(s: Str) -> Str }
+      let f = scalar.upcase
       f("x")
     |}
   in
-  match check_string ~file_id:"main.mr" code with
+  match check_string ~file_id:"test.scalar" code with
   | Ok _ -> false
   | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-extern") diags
 
-let%test "ffi F1c: extern qualifier value use is rejected with extern diagnostic" =
+let%test "shim S2: shim qualifier value use is rejected with extern diagnostic" =
   Infer.reset_fresh_counter ();
   Trait_registry.clear ();
   let code =
     {|
-      extern "strings" = { fn ToUpper(s: Str) -> Str }
-      strings
+      extern "test/scalar" = { fn upcase(s: Str) -> Str }
+      scalar
     |}
   in
-  match check_string ~file_id:"main.mr" code with
+  match check_string ~file_id:"test.scalar" code with
   | Ok _ -> false
   | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-extern") diags
 
-let%test "ffi F1c: extern blocks are visible before their textual position" =
+let%test "shim S2: shim blocks are visible before their textual position" =
   Infer.reset_fresh_counter ();
   Trait_registry.clear ();
   let code =
     {|
-      fn upper(s: Str) -> Str = strings.ToUpper(s)
-      extern "strings" = { fn ToUpper(s: Str) -> Str }
+      fn upper(s: Str) -> Str = scalar.upcase(s)
+      extern "test/scalar" = { fn upcase(s: Str) -> Str }
       upper("x")
     |}
   in
-  match check_string ~file_id:"main.mr" code with
+  match check_string ~file_id:"test.scalar" code with
   | Ok result -> result.result_type = Types.TString && Hashtbl.length result.extern_calls = 1
   | Error _ -> false
 
-let%test "ffi F1c: local value binding shadows extern qualifier in expression position" =
+let%test "shim S2: local value binding shadows shim qualifier in expression position" =
   Infer.reset_fresh_counter ();
   Trait_registry.clear ();
   let code =
     {|
-      extern "strings" = { fn ToUpper(s: Str) -> Str }
+      extern "test/scalar" = { fn upcase(s: Str) -> Str }
       fn shadow() -> Str = {
-        let strings = "local"
-        strings
+        let scalar = "local"
+        scalar
       }
       shadow()
     |}
   in
-  match check_string ~file_id:"main.mr" code with
+  match check_string ~file_id:"test.scalar" code with
   | Ok result -> result.result_type = Types.TString && Hashtbl.length result.extern_calls = 0
   | Error _ -> false
 
-let%test "ffi F1c: pure wrapper cannot call effectful extern" =
+let%test "shim S2: pure wrapper cannot call effectful shim" =
   Infer.reset_fresh_counter ();
   Trait_registry.clear ();
   let code =
     {|
-      extern "fmt" = { fn Println(s: Str) => Unit }
-      fn say(s: Str) -> Unit = fmt.Println(s)
+      extern "test/scalar" = { fn println!(s: Str) => Unit }
+      fn say(s: Str) -> Unit = scalar.println!(s)
       say("x")
     |}
   in
-  match check_string ~file_id:"main.mr" code with
+  match check_string ~file_id:"test.scalar" code with
   | Ok _ -> false
   | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-purity") diags

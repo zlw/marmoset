@@ -752,7 +752,7 @@ let lower_top_decl_with_ctx
         AST.mk_stmt ~pos ~end_pos ~file_id
           (AST.ExternBlock
              {
-               extern_go_path = block.seb_go_path;
+               extern_shim_id = block.seb_shim_id;
                extern_alias = block.seb_alias;
                extern_qualifier = block.seb_qualifier;
                extern_fns = List.map lower_fn block.seb_fns;

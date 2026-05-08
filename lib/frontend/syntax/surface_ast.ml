@@ -77,8 +77,8 @@ module Surface = struct
   }
 
   and surface_extern_block = {
-    seb_go_path : string;
-    seb_go_path_ref : name_ref;
+    seb_shim_id : string;
+    seb_shim_id_ref : name_ref;
     seb_alias : string option;
     seb_alias_ref : name_ref option;
     seb_qualifier : string;

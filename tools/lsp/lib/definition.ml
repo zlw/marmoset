@@ -559,7 +559,7 @@ let cursor_reference_target
                   (Compiler.find_inherent_method_declaration_site analysis ~receiver_type
                      ~method_name:member_ref.text))
         | Some Typecheck.Resolution_artifacts.FieldFunctionCall
-        | Some (Typecheck.Resolution_artifacts.ExternQualifiedCall _)
+        | Some (Typecheck.Resolution_artifacts.ShimQualifiedCall _)
         | None ->
             None
       in

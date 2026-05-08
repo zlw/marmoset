@@ -624,10 +624,16 @@ let%test "method call produces method token" =
   has_token_type method_type tokens
 
 let%test "extern signatures produce function and parameter declaration tokens" =
-  let tokens = get_tokens "extern \"strings\" = { fn ToUpper(s: Str) -> Str }" in
-  match tokens with
-  | Some st ->
-      let decoded = decode_tokens st.data in
-      List.exists (fun (_, _, _, t, m) -> t = function_type && m land declaration_mod <> 0) decoded
-      && List.exists (fun (_, _, _, t, m) -> t = parameter_type && m land declaration_mod <> 0) decoded
-  | None -> false
+  let source = "extern \"test/scalar\" = { fn upcase(s: Str) -> Str }" in
+  Doc_state.with_temp_project [ ("test/scalar.mr", source) ] (fun root ->
+      let file_id = Filename.concat root "test/scalar.mr" in
+      let result = Doc_state.analyze_with_file_id ~source_root:root ~file_id ~source () in
+      match (result.program, result.type_map, result.environment) with
+      | Some prog, Some tm, Some env -> (
+          match compute ~source ~program:prog ~type_map:tm ~environment:env with
+          | Some st ->
+              let decoded = decode_tokens st.data in
+              List.exists (fun (_, _, _, t, m) -> t = function_type && m land declaration_mod <> 0) decoded
+              && List.exists (fun (_, _, _, t, m) -> t = parameter_type && m land declaration_mod <> 0) decoded
+          | None -> false)
+      | _ -> false)

@@ -28,28 +28,32 @@ type call_resolution =
   | QualifiedTraitMethod of string (* Trait.method(receiver, args...) *)
   | QualifiedInherentMethod (* Type.method(receiver, args...) *)
   | FieldFunctionCall
-  | ExternQualifiedCall of string
+  | ShimQualifiedCall of string
 
-type extern_func = {
-  extern_key : string;
-  declaring_module : string;
-  go_path : string;
+type shim_func = {
+  shim_key : string;
+  shim_id : string;
+  owner_module_id : string;
   source_qualifier : string;
-  go_import_alias : string;
-  go_func_name : string;
+  marmoset_func_name : string;
+  go_symbol_name : string;
   param_names : string list;
-  param_types : Types.mono_type list;
-  return_type : Types.mono_type;
+  param_boundary_types : Shim_boundary.boundary_type list;
+  return_boundary_type : Shim_boundary.boundary_type;
   is_effectful : bool;
   source_span : Diagnostics.Diagnostic.span;
+  boundary_spans : Diagnostics.Diagnostic.span list;
 }
 
-type extern_call = {
+type shim_call = {
   call_func_key : string;
-  call_arg_types : Types.mono_type list;
-  call_return_type : Types.mono_type;
+  call_arg_boundary_types : Shim_boundary.boundary_type list;
+  call_return_boundary_type : Shim_boundary.boundary_type;
   call_effectful : bool;
 }
+
+type extern_func = shim_func
+type extern_call = shim_call
 
 (* Phase 5.4: Typed method-definition artifact.
    Records inferred signatures so the emitter can use them as source-of-truth

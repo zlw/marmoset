@@ -357,7 +357,7 @@ let go_path_name_fragment (path : string) : string =
   go_safe_ident (encoded_go_path_fragment path)
 
 let extern_wrapper_name (func : Typecheck.Resolution_artifacts.extern_func) : string =
-  Printf.sprintf "extern__%s__%s" (go_path_name_fragment func.go_path) (go_safe_ident func.go_func_name)
+  Printf.sprintf "extern__%s__%s" (go_path_name_fragment func.shim_id) (go_safe_ident func.marmoset_func_name)
 
 type dyn_callable_method = {
   dyn_trait_name : string;
@@ -731,7 +731,7 @@ let used_emitted_function_names (state : mono_state) : StringSet.t =
 let extern_wrapper_name_for_state
     (state : mono_state)
     (func : Typecheck.Resolution_artifacts.extern_func) : string =
-  match Hashtbl.find_opt state.extern_wrapper_names func.extern_key with
+  match Hashtbl.find_opt state.extern_wrapper_names func.shim_key with
   | Some name -> name
   | None ->
       let base = extern_wrapper_name func in
@@ -744,7 +744,7 @@ let extern_wrapper_name_for_state
           candidate
       in
       let name = pick 0 in
-      Hashtbl.replace state.extern_wrapper_names func.extern_key name;
+      Hashtbl.replace state.extern_wrapper_names func.shim_key name;
       name
 
 let builtin_impl_keys : StringPairSet.t =
@@ -2393,7 +2393,7 @@ let resolve_field_access_callable
     (receiver : AST.expression)
     (field_name : string) : field_access_callable_resolution =
   match Hashtbl.find_opt call_resolution_map expr.id with
-  | Some (Typecheck.Resolution_artifacts.ExternQualifiedCall _) -> NotQualifiedCallable
+  | Some (Typecheck.Resolution_artifacts.ShimQualifiedCall _) -> NotQualifiedCallable
   | Some (Typecheck.Resolution_artifacts.QualifiedTraitMethod trait_name) -> (
       let resolved_expr_type, subst = refined_expr_type_for_expected type_map expr expected_type in
       let resolved_expr_type = Types.canonicalize_mono_type resolved_expr_type in
@@ -3699,7 +3699,7 @@ and collect_insts_expr
                       register_user_func_call_instantiation state type_map env ~target_name ~args ~call_expr:expr
                   | _ -> collect_insts_expr state type_map env receiver)
               | _ -> collect_insts_expr state type_map env receiver)
-          | Some (Typecheck.Resolution_artifacts.ExternQualifiedCall _) -> ()
+          | Some (Typecheck.Resolution_artifacts.ShimQualifiedCall _) -> ()
           | None -> collect_insts_expr state type_map env receiver))
   | AST.BlockExpr stmts -> ignore (collect_insts_stmt_list state type_map env stmts)
 
@@ -4500,26 +4500,27 @@ let rec emit_expr
                 Printf.sprintf "%s(%s)" func_name (String.concat ", " all_args)
             | Some Typecheck.Resolution_artifacts.FieldFunctionCall ->
                 emit_field_function_call state type_map env expr receiver variant_name args
-            | Some (Typecheck.Resolution_artifacts.ExternQualifiedCall extern_key) ->
+            | Some (Typecheck.Resolution_artifacts.ShimQualifiedCall shim_key) ->
                 let call =
                   match Hashtbl.find_opt state.mono.extern_calls expr.id with
                   | Some call -> call
                   | None ->
                       failwith
-                        (Printf.sprintf "Codegen error: missing extern call artifact for expression %d" expr.id)
+                        (Printf.sprintf "Codegen error: missing shim call artifact for expression %d" expr.id)
                 in
-                let func = extern_func_exn state.mono extern_key in
+                let func = extern_func_exn state.mono shim_key in
                 let arg_strs =
-                  match List.combine args call.call_arg_types with
+                  match List.combine args call.call_arg_boundary_types with
                   | arg_pairs ->
                       List.map
-                        (fun (arg, expected_type) ->
+                        (fun (arg, expected_boundary_type) ->
+                          let expected_type = Typecheck.Shim_boundary.to_mono_type expected_boundary_type in
                           emit_expr_for_expected_type state type_map env expected_type arg)
                         arg_pairs
                   | exception Invalid_argument _ ->
                       failwith
-                        (Printf.sprintf "Codegen error: extern call argument artifact mismatch for %s"
-                           func.go_func_name)
+                        (Printf.sprintf "Codegen error: shim call argument artifact mismatch for %s"
+                           func.marmoset_func_name)
                 in
                 Printf.sprintf "%s(%s)" (extern_wrapper_name_for_state state.mono func)
                   (String.concat ", " arg_strs)
@@ -7461,7 +7462,7 @@ let collect_inherent_call_sites
         | Some (Typecheck.Resolution_artifacts.DynamicTraitMethod _)
         | Some (Typecheck.Resolution_artifacts.QualifiedTraitMethod _)
         | Some Typecheck.Resolution_artifacts.FieldFunctionCall
-        | Some (Typecheck.Resolution_artifacts.ExternQualifiedCall _)
+        | Some (Typecheck.Resolution_artifacts.ShimQualifiedCall _)
         | None ->
             acc'')
     | AST.BlockExpr stmts -> collect_stmt_list acc env stmts
@@ -8077,19 +8078,15 @@ let format_go_imports (imports : GoImportSet.t) : string =
       Printf.sprintf "import (\n%s\n)\n\n" body
 
 let emit_extern_wrapper (state : mono_state) (func : Typecheck.Resolution_artifacts.extern_func) : string =
-  add_go_import ~alias:func.go_import_alias state func.go_path;
   let params =
-    List.combine func.param_names func.param_types
+    List.combine func.param_names (List.map Typecheck.Shim_boundary.to_mono_type func.param_boundary_types)
     |> List.map (fun (name, typ) -> Printf.sprintf "%s %s" (go_safe_ident name) (extern_type_to_go typ))
     |> String.concat ", "
   in
-  let args = func.param_names |> List.map go_safe_ident |> String.concat ", " in
-  let go_call = Printf.sprintf "%s.%s(%s)" func.go_import_alias func.go_func_name args in
-  let return_type = extern_type_to_go func.return_type in
+  let return_type = extern_type_to_go (Typecheck.Shim_boundary.to_mono_type func.return_boundary_type) in
   let body =
-    match Types.canonicalize_mono_type func.return_type with
-    | Types.TNull -> Printf.sprintf "\t%s\n\treturn struct{}{}" go_call
-    | _ -> Printf.sprintf "\treturn %s" go_call
+    Printf.sprintf "\tpanic(%S)"
+      (Printf.sprintf "shim adapter not implemented: %s.%s" func.shim_id func.marmoset_func_name)
   in
   Printf.sprintf "func %s(%s) %s {\n%s\n}\n" (extern_wrapper_name_for_state state func) params return_type body
 
@@ -9564,7 +9561,7 @@ let%test "structured imports ignore package-looking string literals" =
   | Ok (code, _) -> (not (string_contains code {|import "fmt"|})) && not (string_contains code {|import "strconv"|})
   | Error _ -> false
 
-let%test "extern type lowering accepts v1 scalar boundary" =
+let%test "extern type lowering accepts shim scalar boundary" =
   List.map extern_type_to_go [ Types.TInt; Types.TFloat; Types.TBool; Types.TString; Types.TNull ]
   = [ "int64"; "float64"; "bool"; "string"; "struct{}" ]
 
@@ -9573,123 +9570,107 @@ let%test "extern type lowering rejects unsupported backend types" =
   | _ -> false
   | exception Failure msg -> string_contains msg "unsupported extern type reached backend"
 
-let%test "extern call emits aliased import wrapper and wrapper call" =
+let%test "shim call emits placeholder adapter wrapper and wrapper call" =
   match
-    compile_string ~file_id:"<codegen>"
+    compile_string ~file_id:"test.scalar"
       {|
-extern "strings" = {
-  fn ToUpper(s: Str) -> Str
+extern "test/scalar" = {
+  fn upcase(s: Str) -> Str
 }
 
-strings.ToUpper("ok")
+scalar.upcase("ok")
 |}
   with
   | Ok (code, _) ->
-      string_contains code {|import mext_strings "strings"|}
-      && string_contains code "func extern__strings__ToUpper(s string) string"
-      && string_contains code "return mext_strings.ToUpper(s)"
-      && string_contains code {|extern__strings__ToUpper("ok")|}
+      (not (string_contains code "mext_"))
+      && string_contains code "func extern__test_scalar__upcase(s string) string"
+      && string_contains code {|panic("shim adapter not implemented: test/scalar.upcase")|}
+      && string_contains code {|extern__test_scalar__upcase("ok")|}
   | Error _ -> false
 
-let%test "unused extern declaration emits no import or wrapper" =
+let%test "unused shim declaration emits no import or wrapper" =
   match
-    compile_string ~file_id:"<codegen>"
+    compile_string ~file_id:"test.scalar"
       {|
-extern "strings" = {
-  fn ToUpper(s: Str) -> Str
+extern "test/scalar" = {
+  fn upcase(s: Str) -> Str
 }
 
 "ok"
 |}
   with
-  | Ok (code, _) -> (not (string_contains code "mext_strings")) && not (string_contains code "extern__strings__ToUpper")
+  | Ok (code, _) -> (not (string_contains code "mext_")) && not (string_contains code "extern__test_scalar__upcase")
   | Error _ -> false
 
-let%test "effectful unit extern wrapper returns unit after Go call" =
+let%test "effectful unit shim wrapper emits unit-shaped placeholder" =
   match
-    compile_string ~file_id:"<codegen>"
+    compile_string ~file_id:"test.log"
       {|
-extern "fmt" = {
-  fn Println(s: Str) => Unit
+extern "test/log" = {
+  fn println(s: Str) => Unit
 }
 
-fmt.Println("ok")
+log.println("ok")
 |}
   with
   | Ok (code, _) ->
-      string_contains code {|import mext_fmt "fmt"|}
-      && string_contains code "func extern__fmt__Println(s string) struct{}"
-      && string_contains code "mext_fmt.Println(s)\n\treturn struct{}{}"
-      && string_contains code {|extern__fmt__Println("ok")|}
+      (not (string_contains code "mext_"))
+      && string_contains code "func extern__test_log__println(s string) struct{}"
+      && string_contains code {|panic("shim adapter not implemented: test/log.println")|}
+      && string_contains code {|extern__test_log__println("ok")|}
   | Error _ -> false
 
-let%test "extern wrappers distinguish duplicate basename packages" =
+let%test "shim wrapper names include full nested shim id" =
   match
-    compile_string ~file_id:"<codegen>"
+    compile_string ~file_id:"test.path.file"
       {|
-extern "path/filepath" as fp = {
-  fn Base(s: Str) -> Str
+extern "test/path/file" = {
+  fn base(s: Str) -> Str
 }
 
-extern "other/filepath" as ofp = {
-  fn Base(s: Str) -> Str
-}
-
-let _ = fp.Base("a")
-ofp.Base("b")
+file.base("a")
 |}
   with
   | Ok (code, _) ->
-      string_contains code {|mext_path_filepath "path/filepath"|}
-      && string_contains code {|mext_other_filepath "other/filepath"|}
-      && string_contains code "func extern__path_filepath__Base(s string) string"
-      && string_contains code "func extern__other_filepath__Base(s string) string"
-      && string_contains code {|extern__path_filepath__Base("a")|}
-      && string_contains code {|extern__other_filepath__Base("b")|}
+      string_contains code "func extern__test_path_file__base(s string) string"
+      && string_contains code {|extern__test_path_file__base("a")|}
   | Error _ -> false
 
-let%test "extern wrappers distinguish sanitized path collisions" =
+let%test "shim wrapper names encode underscore path segments" =
   match
-    compile_string ~file_id:"<codegen>"
+    compile_string ~file_id:"test.text_case"
       {|
-extern "example.com/acme/text-case" as hyphen = {
-  fn F(s: Str) -> Str
+extern "test/text_case" = {
+  fn map_text(s: Str) -> Str
 }
 
-extern "example.com/acme/text_case" as under = {
-  fn F(s: Str) -> Str
-}
-
-let _ = hyphen.F("a")
-under.F("b")
+text_case.map_text("a")
 |}
   with
   | Ok (code, _) ->
-      string_contains code {|mext_example_x2e_com_acme_text_x2d_case "example.com/acme/text-case"|}
-      && string_contains code {|mext_example_x2e_com_acme_text_u_case "example.com/acme/text_case"|}
-      && string_contains code "func extern__example_x2e_com_acme_text_x2d_case__F(s string) string"
-      && string_contains code "func extern__example_x2e_com_acme_text_u_case__F(s string) string"
+      string_contains code "func extern__test_text_u_case__map_text(s string) string"
+      && string_contains code {|extern__test_text_u_case__map_text("a")|}
   | Error _ -> false
 
-let%test "extern wrapper names avoid used zero-arg function names" =
+let%test "shim wrapper names avoid used zero-arg function names" =
   match
-    compile_string ~file_id:"<codegen>"
+    compile_string ~file_id:"test.x"
       {|
-extern "x" = {
-  fn F() -> Str
+extern "test/x" = {
+  fn f() -> Str
 }
 
-fn extern__x__F() -> Str = "local"
-fn extern__x__F__ffi1() -> Str = "reserved"
-let _ = extern__x__F()
-let _ = extern__x__F__ffi1()
-x.F()
+fn extern__test_x__f() -> Str = "local"
+fn extern__test_x__f__ffi1() -> Str = "reserved"
+let _ = extern__test_x__f()
+let _ = extern__test_x__f__ffi1()
+x.f()
 |}
   with
-  | Ok (code, _) -> count_occurrences code "func extern__x__F() string" = 1
-      && count_occurrences code "func extern__x__F__ffi1() string" = 1
-      && string_contains code "func extern__x__F__ffi2() string"
-      && string_contains code "extern__x__F__ffi2()"
+  | Ok (code, _) -> count_occurrences code "func extern__test_x__f() string" = 1
+      && count_occurrences code "func extern__test_x__f__ffi1() string" = 1
+      && string_contains code "func extern__test_x__f__ffi2() string"
+      && string_contains code "extern__test_x__f__ffi2()"
   | Error _ -> false
 
 let%test "Dyn codegen does not synthesize coercions without recorded metadata" =
