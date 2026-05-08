@@ -1,0 +1,9 @@
+(install
+ (section share)
+ (package marmoset)
+ (files
+  (marmoset/result.go as runtime/go/marmoset/result.go)
+  (marmoset/option.go as runtime/go/marmoset/option.go)
+  (marmoset/unit.go as runtime/go/marmoset/unit.go)
+  (marmoset/bytes.go as runtime/go/marmoset/bytes.go)
+  (marmoset/handle.go as runtime/go/marmoset/handle.go)))

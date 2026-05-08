@@ -8529,14 +8529,352 @@ let go_output_files (output : build_output) : (go_aux_file list, string) result 
          ]
         @ aux_go_files)
 
+let read_file_if_exists (path : string) : string option =
+  if Sys.file_exists path && not (Sys.is_directory path) then
+    let ic = open_in_bin path in
+    Fun.protect
+      ~finally:(fun () -> close_in ic)
+      (fun () ->
+        let len = in_channel_length ic in
+        really_input_string ic len |> Option.some)
+  else
+    None
+
+let support_result_go =
+  {|package marmoset
+
+type ResultState int
+
+const (
+	ResultInvalid ResultState = iota
+	ResultSuccess
+	ResultFailure
+)
+
+type Result[T, E any] struct {
+	state   ResultState
+	success T
+	failure E
+}
+
+func Success[T, E any](value T) Result[T, E] {
+	return Result[T, E]{state: ResultSuccess, success: value}
+}
+
+func Failure[T, E any](failure E) Result[T, E] {
+	return Result[T, E]{state: ResultFailure, failure: failure}
+}
+
+func InspectResult[T, E any](result Result[T, E]) (ResultState, T, E) {
+	return result.state, result.success, result.failure
+}
+|}
+
+let support_option_go =
+  {|package marmoset
+
+type OptionState int
+
+const (
+	OptionInvalid OptionState = iota
+	OptionSome
+	OptionNone
+)
+
+type Option[T any] struct {
+	state OptionState
+	value T
+}
+
+func Some[T any](value T) Option[T] {
+	return Option[T]{state: OptionSome, value: value}
+}
+
+func None[T any]() Option[T] {
+	return Option[T]{state: OptionNone}
+}
+
+func InspectOption[T any](option Option[T]) (OptionState, T) {
+	return option.state, option.value
+}
+|}
+
+let support_unit_go =
+  {|package marmoset
+
+type Unit struct{}
+
+func NewUnit() Unit {
+	return Unit{}
+}
+|}
+
+let support_bytes_go =
+  {|package marmoset
+
+type Bytes struct {
+	data []byte
+}
+
+func BytesCopy(input []byte) Bytes {
+	copied := append([]byte(nil), input...)
+	return Bytes{data: copied}
+}
+
+func BytesFromString(input string) Bytes {
+	return BytesCopy([]byte(input))
+}
+
+func (bytes Bytes) Copy() []byte {
+	return append([]byte(nil), bytes.data...)
+}
+|}
+
+let support_handle_go =
+  {|package marmoset
+
+import "sync/atomic"
+
+type Handle[Tag any] struct {
+	id uint64
+}
+
+var nextHandleID uint64
+
+func NewHandle[Tag any]() Handle[Tag] {
+	id := atomic.AddUint64(&nextHandleID, 1)
+	if id == 0 {
+		id = atomic.AddUint64(&nextHandleID, 1)
+	}
+	return Handle[Tag]{id: id}
+}
+
+func HandleIsValid[Tag any](handle Handle[Tag]) bool {
+	return handle.id != 0
+}
+|}
+
+let marmoset_support_file_specs =
+  [
+    ("result.go", support_result_go);
+    ("option.go", support_option_go);
+    ("unit.go", support_unit_go);
+    ("bytes.go", support_bytes_go);
+    ("handle.go", support_handle_go);
+  ]
+
+let marmoset_support_files () : go_aux_file list =
+  List.map
+    (fun (name, fallback) ->
+      let rel_path = "marmoset/" ^ name in
+      let source_path = Filename.concat (Filename.concat (Filename.concat "runtime" "go") "marmoset") name in
+      let contents = Option.value (read_file_if_exists source_path) ~default:fallback in
+      { rel_path; contents })
+    marmoset_support_file_specs
+
+let called_shim_funcs
+    ~(extern_declarations : (string, Typecheck.Resolution_artifacts.extern_func) Hashtbl.t)
+    ~(extern_calls : (int, Typecheck.Resolution_artifacts.extern_call) Hashtbl.t) :
+    Typecheck.Resolution_artifacts.extern_func list =
+  Hashtbl.fold (fun _ (call : Typecheck.Resolution_artifacts.extern_call) acc -> call.call_func_key :: acc)
+    extern_calls []
+  |> List.sort_uniq String.compare
+  |> List.map (fun key ->
+         match Hashtbl.find_opt extern_declarations key with
+         | Some func -> func
+         | None -> failwith (Printf.sprintf "Codegen error: missing shim declaration for key %S" key))
+
+let rec collect_boundary_enums (acc : string list) (boundary : Typecheck.Shim_boundary.boundary_type) :
+    string list =
+  match boundary with
+  | BUnit | BBool | BInt | BFloat | BStr | BStdBytes | BExternHandle _ -> acc
+  | BStdOption inner -> collect_boundary_enums acc inner
+  | BStdResult (ok_type, err_type) -> collect_boundary_enums (collect_boundary_enums acc ok_type) err_type
+  | BOwnerEnum enum ->
+      List.fold_left collect_boundary_enums (enum.enum_name :: acc) enum.enum_type_args
+
+let collect_func_boundary_enums (func : Typecheck.Resolution_artifacts.extern_func) : string list =
+  List.fold_left collect_boundary_enums [] (func.return_boundary_type :: func.param_boundary_types)
+  |> List.sort_uniq String.compare
+
+let exported_go_ident (name : string) : string =
+  let ident = go_safe_ident name in
+  if ident = "" then
+    "_"
+  else
+    let first = Char.uppercase_ascii ident.[0] in
+    String.make 1 first ^ String.sub ident 1 (String.length ident - 1)
+
+let api_package_name (shim_id : string) : string = "mapi_" ^ go_path_name_fragment shim_id
+
+let rec abi_type_go (boundary : Typecheck.Shim_boundary.boundary_type) : string * bool =
+  match boundary with
+  | BUnit -> ("marmoset.Unit", true)
+  | BBool -> ("bool", false)
+  | BInt -> ("int64", false)
+  | BFloat -> ("float64", false)
+  | BStr -> ("string", false)
+  | BStdOption inner ->
+      let inner_go, _ = abi_type_go inner in
+      (Printf.sprintf "marmoset.Option[%s]" inner_go, true)
+  | BStdResult (ok_type, err_type) ->
+      let ok_go, _ = abi_type_go ok_type in
+      let err_go, _ = abi_type_go err_type in
+      (Printf.sprintf "marmoset.Result[%s, %s]" ok_go err_go, true)
+  | BOwnerEnum enum -> (exported_go_ident (Typecheck.Display_names.display_binding_name enum.enum_name), false)
+  | BStdBytes -> ("marmoset.Bytes", true)
+  | BExternHandle handle ->
+      (Printf.sprintf "marmoset.Handle[%sTag]" (exported_go_ident handle.extern_type_name), true)
+
+let enum_field_boundary ~(owner_module_id : string) (field_type : Types.mono_type) :
+    Typecheck.Shim_boundary.boundary_type option =
+  match Typecheck.Shim_boundary.classify ~owner_module_id field_type with
+  | Ok boundary -> Some boundary
+  | Error _ -> None
+
+let emit_api_enum ~(owner_module_id : string) (enum_name : string) : string * bool =
+  match Typecheck.Enum_registry.lookup enum_name with
+  | None -> ("", false)
+  | Some enum_def ->
+      let type_name = exported_go_ident (Typecheck.Display_names.display_binding_name enum_def.name) in
+      let import_needed = ref false in
+      let emit_variant (variant : Typecheck.Enum_registry.variant_def) : string =
+        let variant_type = type_name ^ exported_go_ident variant.name in
+        let fields =
+          variant.fields
+          |> List.mapi (fun idx field_type ->
+                 match enum_field_boundary ~owner_module_id field_type with
+                 | None -> None
+                 | Some boundary ->
+                     let go_type, needs_import = abi_type_go boundary in
+                     if needs_import then import_needed := true;
+                     Some (Printf.sprintf "\tField%d %s" idx go_type))
+          |> List.filter_map Fun.id
+        in
+        let struct_body =
+          match fields with
+          | [] -> "struct{}"
+          | _ -> Printf.sprintf "struct {\n%s\n}" (String.concat "\n" fields)
+        in
+        Printf.sprintf "type %s %s\n\nfunc (%s) is%s() {}\n" variant_type struct_body variant_type type_name
+      in
+      let body =
+        Printf.sprintf "type %s interface {\n\tis%s()\n}\n\n%s" type_name type_name
+          (enum_def.variants |> List.map emit_variant |> String.concat "\n")
+      in
+      (body, !import_needed)
+
+let emit_api_package (shim_id : string) (funcs : Typecheck.Resolution_artifacts.extern_func list) : go_aux_file =
+  let enum_names =
+    funcs |> List.concat_map collect_func_boundary_enums |> List.sort_uniq String.compare
+  in
+  let owner_module_id =
+    match funcs with
+    | func :: _ -> func.owner_module_id
+    | [] -> (
+        match Typecheck.Shim_catalog.owner_module_id shim_id with
+        | Ok owner -> owner
+        | Error _ -> shim_id)
+  in
+  let enum_bodies, needs_marmoset =
+    enum_names
+    |> List.map (emit_api_enum ~owner_module_id)
+    |> List.fold_left
+         (fun (bodies, needs_import) (body, body_needs_import) ->
+           if body = "" then
+             (bodies, needs_import || body_needs_import)
+           else
+             (body :: bodies, needs_import || body_needs_import))
+         ([], false)
+  in
+  let package_line = Printf.sprintf "package %s\n\n" (api_package_name shim_id) in
+  let imports =
+    if needs_marmoset then
+      "import \"marmoset_out/marmoset\"\n\n"
+    else
+      ""
+  in
+  let body = enum_bodies |> List.rev |> String.concat "\n" in
+  {
+    rel_path = Printf.sprintf "api/%s/api.go" shim_id;
+    contents = package_line ^ imports ^ body;
+  }
+
+let group_funcs_by_shim_id (funcs : Typecheck.Resolution_artifacts.extern_func list) :
+    (string * Typecheck.Resolution_artifacts.extern_func list) list =
+  let grouped = Hashtbl.create (List.length funcs) in
+  List.iter
+    (fun (func : Typecheck.Resolution_artifacts.extern_func) ->
+      let existing = Option.value (Hashtbl.find_opt grouped func.shim_id) ~default:[] in
+      Hashtbl.replace grouped func.shim_id (func :: existing))
+    funcs;
+  Hashtbl.to_seq grouped
+  |> List.of_seq
+  |> List.sort (fun (a, _) (b, _) -> String.compare a b)
+  |> List.map (fun (shim_id, funcs) ->
+         ( shim_id,
+           List.sort
+             (fun (a : Typecheck.Resolution_artifacts.extern_func)
+                  (b : Typecheck.Resolution_artifacts.extern_func) -> String.compare a.shim_key b.shim_key)
+             funcs ))
+
+let shim_aux_go_files
+    ~(extern_declarations : (string, Typecheck.Resolution_artifacts.extern_func) Hashtbl.t)
+    ~(extern_calls : (int, Typecheck.Resolution_artifacts.extern_call) Hashtbl.t) : go_aux_file list =
+  let funcs = called_shim_funcs ~extern_declarations ~extern_calls in
+  match funcs with
+  | [] -> []
+  | _ ->
+      let api_files =
+        group_funcs_by_shim_id funcs |> List.map (fun (shim_id, funcs) -> emit_api_package shim_id funcs)
+      in
+      validate_go_aux_files (marmoset_support_files () @ api_files)
+      |> Result.fold ~ok:Fun.id ~error:(fun msg -> failwith ("Codegen error: " ^ msg))
+
 let compile_to_build ~file_id (source : string) : (build_output, Diagnostic.t list) result =
-  match compile_string ~file_id source with
-  | Error e -> Error e
-  | Ok (main_go, diagnostics) ->
-      let output = { go_mod = default_go_mod; main_go; runtime_go; aux_go_files = []; diagnostics } in
-      (match validate_go_aux_files output.aux_go_files with
-      | Ok aux_go_files -> Ok { output with aux_go_files }
-      | Error msg -> Error [ diagnostic_of_codegen_failure_message msg ])
+  match Syntax.Parser.parse ~file_id source with
+  | Error errors -> Error errors
+  | Ok program -> (
+      let env = builtin_env_with_traits () in
+      match Typecheck.Checker.check_program_with_annotations ~env program with
+      | Error errs -> Error errs
+      | Ok
+          {
+            environment = typed_env;
+            type_map;
+            call_resolution_map;
+            extern_declarations;
+            extern_calls;
+            method_type_args_map;
+            method_def_map;
+            trait_object_coercion_map;
+            placeholder_rewrite_map;
+            diagnostics;
+            _;
+          } -> (
+          try
+            let main_go =
+              emit_program_with_typed_env ~call_resolution_map ~method_type_args_map ~method_def_map
+                ~extern_declarations ~extern_calls ~trait_object_coercion_map ~placeholder_rewrite_map type_map
+                typed_env program
+            in
+            let output =
+              {
+                go_mod = default_go_mod;
+                main_go;
+                runtime_go;
+                aux_go_files = shim_aux_go_files ~extern_declarations ~extern_calls;
+                diagnostics;
+              }
+            in
+            (match validate_go_aux_files output.aux_go_files with
+            | Ok aux_go_files -> Ok { output with aux_go_files }
+            | Error msg -> Error [ diagnostic_of_codegen_failure_message msg ])
+          with
+          | Failure msg -> Error [ diagnostic_of_codegen_failure_message msg ]
+          | exn ->
+              let msg = normalize_codegen_failure_message (Printexc.to_string exn) in
+              Error [ Diagnostic.error_no_span ~code:"codegen-internal" ~message:msg ]))
 
 let get_runtime () = runtime_go
 
@@ -8624,6 +8962,196 @@ let%test "build output file list includes go.mod reserved files and sorted aux f
   | Ok files ->
       List.map (fun (file : go_aux_file) -> file.rel_path) files
       = [ "go.mod"; "main.go"; "runtime.go"; "alpha/a.go"; "zeta/z.go" ]
+
+let aux_rel_paths (files : go_aux_file list) : string list =
+  List.map (fun (file : go_aux_file) -> file.rel_path) files |> List.sort String.compare
+
+let find_aux_file (files : go_aux_file list) (rel_path : string) : go_aux_file option =
+  List.find_opt (fun (file : go_aux_file) -> String.equal file.rel_path rel_path) files
+
+let go_test_output_files (files : go_aux_file list) : bool =
+  if Sys.command "command -v go >/dev/null 2>&1" <> 0 then
+    true
+  else
+    let temp_dir = Filename.temp_file "marmoset-go-test" "" in
+    Sys.remove temp_dir;
+    Unix.mkdir temp_dir 0o755;
+    let write_file (file : go_aux_file) =
+      let path = Filename.concat temp_dir file.rel_path in
+      let dir = Filename.dirname path in
+      ignore (Sys.command ("mkdir -p " ^ Filename.quote dir));
+      let oc = open_out_bin path in
+      Fun.protect ~finally:(fun () -> close_out oc) (fun () -> output_string oc file.contents)
+    in
+    Fun.protect
+      ~finally:(fun () -> ignore (Sys.command ("rm -rf " ^ Filename.quote temp_dir)))
+      (fun () ->
+        List.iter write_file files;
+        let tool_versions = Option.value (read_file_if_exists ".tool-versions") ~default:"golang 1.25.6\n" in
+        write_file { rel_path = ".tool-versions"; contents = tool_versions };
+        Sys.command ("cd " ^ Filename.quote temp_dir ^ " && go test ./... >/dev/null 2>&1") = 0)
+
+let%test "shim build emits marmoset support and api package for called shim" =
+  match
+    compile_to_build ~file_id:"test.scalar"
+      {|
+extern "test/scalar" = {
+  fn upcase(s: Str) -> Str
+}
+
+scalar.upcase("ok")
+|}
+  with
+  | Error _ -> false
+  | Ok output ->
+      let paths = aux_rel_paths output.aux_go_files in
+      List.mem "api/test/scalar/api.go" paths
+      && List.mem "marmoset/result.go" paths
+      && List.mem "marmoset/option.go" paths
+      && List.mem "marmoset/unit.go" paths
+      && List.mem "marmoset/bytes.go" paths
+      && List.mem "marmoset/handle.go" paths
+
+let%test "unused shim declaration emits no marmoset support package" =
+  match
+    compile_to_build ~file_id:"test.scalar"
+      {|
+extern "test/scalar" = {
+  fn upcase(s: Str) -> Str
+}
+
+"ok"
+|}
+  with
+  | Error _ -> false
+  | Ok output -> output.aux_go_files = []
+
+let%test "generated shim api package includes owner enum variants" =
+  Typecheck.Enum_registry.clear ();
+  Typecheck.Enum_registry.register
+    {
+      Typecheck.Enum_registry.name = "test__scalar__Status";
+      type_params = [];
+      variants =
+        [
+          { Typecheck.Enum_registry.name = "Ok"; fields = [] };
+          { Typecheck.Enum_registry.name = "Other"; fields = [ Types.TString; Types.TInt ] };
+        ];
+    };
+  let shim_key = Typecheck.Extern_registry.shim_key ~shim_id:"test/scalar" ~func_name:"read" in
+  let extern_declarations = Hashtbl.create 1 in
+  let extern_calls = Hashtbl.create 1 in
+  let enum_boundary =
+    Typecheck.Shim_boundary.BOwnerEnum { enum_name = "test__scalar__Status"; enum_type_args = [] }
+  in
+  Hashtbl.add extern_declarations shim_key
+    {
+      Typecheck.Resolution_artifacts.shim_key;
+      shim_id = "test/scalar";
+      owner_module_id = "test.scalar";
+      source_qualifier = "scalar";
+      marmoset_func_name = "read";
+      go_symbol_name = "Read";
+      param_names = [ "status" ];
+      param_boundary_types = [ enum_boundary ];
+      return_boundary_type = Typecheck.Shim_boundary.BStr;
+      is_effectful = false;
+      source_span = Diagnostic.NoSpan;
+      boundary_spans = [ Diagnostic.NoSpan; Diagnostic.NoSpan ];
+    };
+  Hashtbl.add extern_calls 1
+    {
+      Typecheck.Resolution_artifacts.call_func_key = shim_key;
+      call_arg_boundary_types = [ enum_boundary ];
+      call_return_boundary_type = Typecheck.Shim_boundary.BStr;
+      call_effectful = false;
+    };
+  match find_aux_file (shim_aux_go_files ~extern_declarations ~extern_calls) "api/test/scalar/api.go" with
+  | None -> false
+  | Some file ->
+      string_contains file.contents "package mapi_test_scalar"
+      && string_contains file.contents "type Status interface"
+      && string_contains file.contents "type StatusOk struct{}"
+      && string_contains file.contents "type StatusOther struct"
+      && string_contains file.contents "Field0 string"
+      && string_contains file.contents "Field1 int64"
+
+let%test "shim support and generated api packages compile with go 1.18" =
+  match
+    compile_to_build ~file_id:"test.scalar"
+      {|
+extern "test/scalar" = {
+  fn upcase(s: Str) -> Str
+}
+
+scalar.upcase("ok")
+|}
+  with
+  | Error _ -> false
+  | Ok output -> (
+      match go_output_files output with
+      | Error _ -> false
+      | Ok files -> go_test_output_files files)
+
+let%test "generated shim api package names are keyword safe" =
+  Typecheck.Enum_registry.clear ();
+  Typecheck.Enum_registry.register
+    {
+      Typecheck.Enum_registry.name = "test__type__Map";
+      type_params = [];
+      variants =
+        [
+          { Typecheck.Enum_registry.name = "type"; fields = [] };
+          { Typecheck.Enum_registry.name = "func"; fields = [ Types.TString ] };
+        ];
+    };
+  let shim_key = Typecheck.Extern_registry.shim_key ~shim_id:"test/type" ~func_name:"decode" in
+  let extern_declarations = Hashtbl.create 1 in
+  let extern_calls = Hashtbl.create 1 in
+  let enum_boundary =
+    Typecheck.Shim_boundary.BOwnerEnum { enum_name = "test__type__Map"; enum_type_args = [] }
+  in
+  Hashtbl.add extern_declarations shim_key
+    {
+      Typecheck.Resolution_artifacts.shim_key;
+      shim_id = "test/type";
+      owner_module_id = "test.type";
+      source_qualifier = "type";
+      marmoset_func_name = "decode";
+      go_symbol_name = "Decode";
+      param_names = [];
+      param_boundary_types = [];
+      return_boundary_type = enum_boundary;
+      is_effectful = false;
+      source_span = Diagnostic.NoSpan;
+      boundary_spans = [ Diagnostic.NoSpan ];
+    };
+  Hashtbl.add extern_calls 1
+    {
+      Typecheck.Resolution_artifacts.call_func_key = shim_key;
+      call_arg_boundary_types = [];
+      call_return_boundary_type = enum_boundary;
+      call_effectful = false;
+    };
+  let output =
+    {
+      go_mod = default_go_mod;
+      main_go = "package main\nfunc main() {}\n";
+      runtime_go = "package main\n";
+      aux_go_files = shim_aux_go_files ~extern_declarations ~extern_calls;
+      diagnostics = [];
+    }
+  in
+  match go_output_files output with
+  | Error _ -> false
+  | Ok files -> (
+      match find_aux_file output.aux_go_files "api/test/type/api.go" with
+      | None -> false
+      | Some file ->
+          string_contains file.contents "package mapi_test_type"
+          && string_contains file.contents "type MapType_ struct{}"
+          && string_contains file.contents "type MapFunc_ struct"
+          && go_test_output_files files)
 
 let%test "malformed root auxiliary Go file classifies as Go compile failure" =
   if Sys.command "command -v go >/dev/null 2>&1" <> 0 then

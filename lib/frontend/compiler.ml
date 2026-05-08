@@ -846,7 +846,9 @@ let emit_compiled_project (project : compiled_project) : (Codegen.build_output, 
         Codegen.go_mod = Codegen.default_go_mod;
         main_go;
         runtime_go = Codegen.get_runtime ();
-        aux_go_files = [];
+        aux_go_files =
+          Codegen.shim_aux_go_files ~extern_declarations:project.artifacts.extern_declarations
+            ~extern_calls:project.artifacts.extern_calls;
         diagnostics = project.diagnostics;
       }
   with
@@ -1537,6 +1539,25 @@ let%test "shim S2: wrapper module exports ordinary API backed by private shim" =
           string_contains build_output.main_go "func extern__test_scalar__upcase(s string) string"
           && string_contains build_output.main_go {|panic("shim adapter not implemented: test/scalar.upcase")|}
           && string_contains build_output.main_go "scalar__upcase_string")
+
+let%test "shim S3: compile_entry_to_build emits support and api aux files for called shim" =
+  Discovery.with_temp_project
+    [
+      ("main.mr", "import test.scalar\nputs(scalar.upcase(\"hi\"))\n");
+      ( "test/scalar.mr",
+        "export upcase\nextern \"test/scalar\" = { fn upcase(s: Str) -> Str }\nfn upcase(s: Str) -> Str = scalar.upcase(s)\n"
+      );
+    ]
+    (fun root ->
+      match compile_entry_to_build ~entry_file:(Filename.concat root "main.mr") () with
+      | Error _ -> false
+      | Ok build_output ->
+          let paths =
+            build_output.aux_go_files
+            |> List.map (fun (file : Codegen.go_aux_file) -> file.rel_path)
+            |> List.sort String.compare
+          in
+          List.mem "api/test/scalar/api.go" paths && List.mem "marmoset/result.go" paths)
 
 let%test "shim S2: distinct shim ids emit distinct adapter wrappers" =
   Discovery.with_temp_project
