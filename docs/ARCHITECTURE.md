@@ -2,7 +2,7 @@
 
 ## Maintenance
 
-- Last verified: 2026-04-04
+- Last verified: 2026-05-09
 - Implementation status: Canonical (actively maintained)
 - Update trigger: Any language behavior, typechecker, or codegen change affecting this topic
 
@@ -234,7 +234,7 @@ Locked function/closure policy (2026-02-27):
 - Records -> named struct types via shape interning, with transparent `type` support.
 - Trait methods -> static free functions with mangled names.
 
-### 4.4 Modules And FFI
+### 4.4 Modules And Interop
 
 Current backend policy:
 - One Go package per build is the backend policy.
@@ -257,6 +257,29 @@ Rationale:
 - keeps codegen coherent while modules and FFI share a single-package backend,
 - avoids locking an unstable runtime layout into public ABI,
 - reduces rewrite risk for future IR and dispatch changes.
+
+Active interop direction:
+- `docs/plans/todo/language/04_shim-first-go-interop.md` supersedes direct arbitrary Go package externs with shim externs.
+- In the shim model, `extern "std/file"` names a shim id, not a Go import path.
+- Public modules expose ordinary Marmoset wrapper APIs; Go package paths, Go errors, pointers, channels, interfaces, and generated ABI helper names stay outside Marmoset source.
+
+Planned shim build layout:
+- Go output becomes a complete module tree, not just `main.go` and `runtime.go`.
+- The CLI writes `go.mod`, `main.go`, `runtime.go`, and deterministic auxiliary Go files under the temporary build directory.
+- `--emit-go` writes the same complete tree so snapshots and users inspect the exact build input.
+- Auxiliary paths are normalized and rejected if they are absolute, escape the build root, duplicate another normalized output path, or overwrite reserved root files.
+
+Planned shim package graph:
+- `runtime/go/marmoset` contains the typed Go ABI support package named `marmoset`.
+- `runtime/go/shims/<shim-id>/` contains checked-in toolchain shim packages.
+- Generated `api/<shim-id>/api.go` packages expose typed Go interfaces and structs for the Marmoset boundary declared by each shim-owning module.
+- Generated adapter wrappers in `main.go` import the support package, generated API packages, and copied shim packages through deterministic local module paths such as `marmoset_out/marmoset`, `marmoset_out/api/std/file`, and `marmoset_out/shims/std/file`.
+
+Shim catalog and ownership:
+- Phase one resolves toolchain shim ids from the same source-tree or installed share root as the stdlib.
+- Synthetic `test/*` shim ids are available only to tests.
+- Each shim id has one project owner module; in phase one, `std/file` is owned by `std.file`.
+- The typechecker validates shim id shape, catalog presence, duplicate ownership, duplicate shim blocks/functions, qualifier collisions, Go symbol collisions, and boundary-type support before codegen.
 
 ## 5. Error Architecture
 
