@@ -47,9 +47,11 @@ module.exports = grammar({
         $.return_statement,
         $.enum_definition,
         $.type_definition,
+        $.extern_type_definition,
         $.shape_definition,
         $.trait_definition,
         $.impl_block,
+        $.extern_block,
         $.expression_statement,
       ),
 
@@ -221,6 +223,45 @@ module.exports = grammar({
         field("type", choice($.wrapper_type, $.constructor_type_body, $._type)),
         optional(field("derive", $.derive_clause)),
       )),
+
+    extern_type_definition: ($) =>
+      seq(
+        "extern",
+        "type",
+        field("name", $.identifier),
+        optional(";"),
+      ),
+
+    extern_block: ($) =>
+      seq(
+        "extern",
+        field("shim", $.string_literal),
+        optional(seq("as", field("alias", $.identifier))),
+        "=",
+        "{",
+        repeat($.extern_fn_signature),
+        "}",
+        optional(";"),
+      ),
+
+    extern_fn_signature: ($) =>
+      seq(
+        "fn",
+        field("name", $.identifier),
+        "(",
+        commaSep($.extern_parameter),
+        ")",
+        choice("->", "=>"),
+        field("return_type", $._type),
+        optional(";"),
+      ),
+
+    extern_parameter: ($) =>
+      seq(
+        field("name", $.identifier),
+        ":",
+        field("type", $._type),
+      ),
 
     wrapper_type: ($) =>
       prec(2, seq(

@@ -16,6 +16,7 @@
 "derive" @keyword.type
 "override" @keyword.modifier
 "type" @keyword.type
+"extern" @keyword.type
 "is" @keyword.operator
 
 ; Literals
@@ -76,6 +77,8 @@
 (shape_definition "}" @punctuation.bracket)
 (impl_block "{" @punctuation.bracket)
 (impl_block "}" @punctuation.bracket)
+(extern_block "{" @punctuation.bracket)
+(extern_block "}" @punctuation.bracket)
 (match_expression "{" @punctuation.bracket)
 (match_expression "}" @punctuation.bracket)
 
@@ -213,6 +216,19 @@
 ; Type definitions
 (type_definition
   name: (identifier) @type)
+
+(extern_type_definition
+  name: (identifier) @type)
+
+(extern_block
+  alias: (identifier) @namespace)
+
+(extern_fn_signature
+  name: (identifier) @function)
+
+(extern_fn_signature
+  (extern_parameter
+    name: (identifier) @variable.parameter))
 
 ; Type parameters
 (type_parameter_list

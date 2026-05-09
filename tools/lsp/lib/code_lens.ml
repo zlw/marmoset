@@ -169,12 +169,12 @@ let%test "code lens computes make public for unexported top-level fn" =
   let lenses = code_lenses_for_source "fn greet(name: Str) -> Str = name\n" in
   lens_titles lenses = [ "make public" ]
 
-let%test "code lens includes let, type, shape, and trait declarations" =
+let%test "code lens includes let, type, extern type, shape, and trait declarations" =
   let lenses =
     code_lenses_for_source
-      "export top, Point, Named, Show\nlet top = 1\ntype Point = { x: Int }\nshape Named = { name: Str }\ntrait Show[a] = { fn show(self: a) -> Str }\n"
+      "export top, Point, File, Named, Show\nlet top = 1\ntype Point = { x: Int }\nextern type File\nshape Named = { name: Str }\ntrait Show[a] = { fn show(self: a) -> Str }\n"
   in
-  lens_titles lenses = [ "make private"; "make private"; "make private"; "make private" ]
+  lens_titles lenses = [ "make private"; "make private"; "make private"; "make private"; "make private" ]
 
 let%test "code lens excludes local lets, trait methods, and impl methods" =
   let lenses =

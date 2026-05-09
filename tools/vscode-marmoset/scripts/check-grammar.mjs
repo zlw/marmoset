@@ -64,6 +64,7 @@ assertAnyMatch(repo.keywords.patterns, "case", "keyword patterns");
 assertAnyMatch(repo.keywords.patterns, "override", "keyword patterns");
 assertAnyMatch(repo.keywords.patterns, "fn", "keyword patterns");
 assertAnyMatch(repo.keywords.patterns, "shape", "keyword patterns");
+assertAnyMatch(repo.keywords.patterns, "extern", "keyword patterns");
 assertNoMatch(repo.keywords.patterns, "for", "keyword patterns");
 
 assertRegexMatches(repo["builtin-types"], "match", "Int", "builtin type pattern");
@@ -106,6 +107,17 @@ assert(repo["shape-definition"], "shape-definition repository entry is missing")
 assertRegexMatches(repo["shape-definition"], "begin", "shape Named = {", "shape-definition begin");
 assert(repo["shape-field"], "shape-field repository entry is missing");
 assertRegexMatches(repo["shape-field"], "match", "name: Str", "shape-field match");
+assert(repo["extern-type-definition"], "extern-type-definition repository entry is missing");
+assertRegexMatches(repo["extern-type-definition"], "match", "extern type File", "extern-type-definition match");
+assert(repo["extern-block"], "extern-block repository entry is missing");
+assertRegexMatches(repo["extern-block"], "begin", 'extern "std/file" as file_shim = {', "extern-block begin");
+assert(repo["extern-function-signature"], "extern-function-signature repository entry is missing");
+assertRegexMatches(
+  repo["extern-function-signature"],
+  "begin",
+  "fn write!(path: Str, bytes: Bytes) => Result[Unit, FileWriteError]",
+  "extern-function-signature begin",
+);
 assert(repo["intersection-type"], "intersection-type repository entry is missing");
 assertRegexMatches(repo["intersection-type"], "match", "Named & Aged", "intersection-type match");
 assertRegexMatches(repo["intersection-type"], "match", "List[Int] & Named", "intersection-type match");
@@ -132,6 +144,14 @@ assert(
 assert(
   grammar.patterns.some((entry) => entry?.include === "#shape-definition"),
   "top-level patterns should include shape-definition",
+);
+assert(
+  grammar.patterns.some((entry) => entry?.include === "#extern-type-definition"),
+  "top-level patterns should include extern-type-definition",
+);
+assert(
+  grammar.patterns.some((entry) => entry?.include === "#extern-block"),
+  "top-level patterns should include extern-block",
 );
 assert(
   repo["type-definition"].patterns.some((entry) => entry?.include === "#constructor-type-body"),

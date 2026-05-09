@@ -135,6 +135,7 @@ search_fixed 'set-grammar-source.sh pinned' README.md
 search_fixed 'remove that directory and reinstall the dev' README.md
 search_fixed '"case" @keyword.conditional' languages/marmoset/highlights.scm
 search_fixed '"shape" @keyword.type' languages/marmoset/highlights.scm
+search_fixed '"extern" @keyword.type' languages/marmoset/highlights.scm
 search_fixed '"override" @keyword.modifier' languages/marmoset/highlights.scm
 search_fixed '"=>" @operator' languages/marmoset/highlights.scm
 search_fixed '"|>" @operator' languages/marmoset/highlights.scm
@@ -144,13 +145,19 @@ search_fixed '(fn_declaration' languages/marmoset/highlights.scm
 search_fixed '(lambda_expression' languages/marmoset/highlights.scm
 search_fixed '(derive_clause' languages/marmoset/highlights.scm
 search_fixed '(shape_definition' languages/marmoset/highlights.scm
+search_fixed '(extern_type_definition' languages/marmoset/highlights.scm
+search_fixed '(extern_block' languages/marmoset/highlights.scm
+search_fixed '(extern_fn_signature' languages/marmoset/highlights.scm
 search_fixed '(wrapper_type' languages/marmoset/highlights.scm
 search_fixed '(fn_declaration' languages/marmoset/outline.scm
 search_fixed '(shape_definition' languages/marmoset/outline.scm
+search_fixed '(extern_type_definition' languages/marmoset/outline.scm
+search_fixed '(extern_fn_signature' languages/marmoset/outline.scm
 search_fixed '(type_definition' languages/marmoset/outline.scm
 search_fixed 'target:' languages/marmoset/outline.scm
 search_fixed 'expr_or_block' languages/marmoset/indents.scm
 search_fixed 'constructor_type_body' languages/marmoset/indents.scm
+search_fixed 'extern_block' languages/marmoset/indents.scm
 
 (
   cd "$TREE_SITTER_DIR"
@@ -200,6 +207,13 @@ with tempfile.TemporaryDirectory() as tmpdir:
               puts(book["title"])
               puts(fallback)
             }
+
+            extern type File
+
+            extern "std/file" as file_shim = {
+              fn read(path: Str) -> Result[Bytes, FileReadError]
+              fn write!(path: Str, bytes: Bytes) => Result[Unit, FileWriteError]
+            }
             """
         ).strip()
         + "\n"
@@ -211,6 +225,11 @@ with tempfile.TemporaryDirectory() as tmpdir:
         ("type.builtin", "Map"),
         ("operator", "=>"),
         ("function", "fibonacci"),
+        ("keyword.type", "extern"),
+        ("type", "File"),
+        ("function", "read"),
+        ("function", "write!"),
+        ("variable.parameter", "bytes"),
     ]:
         assert_capture(monkey_highlights, *expected)
 
