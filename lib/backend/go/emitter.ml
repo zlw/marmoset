@@ -670,6 +670,7 @@ type mono_state = {
       (* Shim adapter wrapper names keyed by shim_key after resolving codegen name collisions *)
   extern_calls : (int, Typecheck.Resolution_artifacts.extern_call) Hashtbl.t;
       (* Shim extern call artifacts keyed by call expression id *)
+  extern_func_refs : (int, string) Hashtbl.t; (* Shim extern function-value references keyed by expression id *)
   method_type_args_map : (int, Types.mono_type list) Hashtbl.t;
       (* Phase 6.4: resolved method-level type args per call site *)
   method_def_map : (int, Typecheck.Resolution_artifacts.typed_method_def) Hashtbl.t;
@@ -708,6 +709,7 @@ let create_mono_state
     ?(call_resolution_map = Hashtbl.create 0)
     ?(extern_declarations = Hashtbl.create 0)
     ?(extern_calls = Hashtbl.create 0)
+    ?(extern_func_refs = Hashtbl.create 0)
     ?(method_type_args_map = Hashtbl.create 0)
     ?(method_def_map = Hashtbl.create 0)
     ?(trait_object_coercion_map = Hashtbl.create 0)
@@ -736,6 +738,7 @@ let create_mono_state
     extern_declarations;
     extern_wrapper_names = Hashtbl.create 64;
     extern_calls;
+    extern_func_refs;
     method_type_args_map;
     method_def_map;
     trait_object_coercion_map;
@@ -4168,63 +4171,68 @@ let rec emit_expr
         let specialized_type = get_type type_map expr in
         emit_expr ~expected_type:(Some specialized_type) state type_map env callee
     | AST.Identifier name -> (
-        let target_name_opt =
-          if is_user_func state.mono name then
-            Some name
-          else
-            match Hashtbl.find_opt state.mono.value_func_aliases name with
-            | Some target_name when is_user_func state.mono target_name -> Some target_name
-            | _ -> None
-        in
-        match target_name_opt with
-        | Some target_name ->
-            let inferred_params, inferred_ret =
-              match Hashtbl.find_opt type_map expr.id with
-              | Some inferred_func_type -> extract_all_param_types inferred_func_type
-              | None -> (
-                  match Infer.TypeEnv.find_opt name env with
-                  | Some (Types.Forall (_, inferred_func_type)) -> extract_all_param_types inferred_func_type
-                  | None -> ([], Types.TNull))
+        match Hashtbl.find_opt state.mono.extern_func_refs expr.id with
+        | Some shim_key ->
+            let func = extern_func_exn state.mono shim_key in
+            extern_wrapper_name_for_state state.mono func
+        | None -> (
+            let target_name_opt =
+              if is_user_func state.mono name then
+                Some name
+              else
+                match Hashtbl.find_opt state.mono.value_func_aliases name with
+                | Some target_name when is_user_func state.mono target_name -> Some target_name
+                | _ -> None
             in
-            let param_types, return_type =
-              match expected_type with
-              | Some expected_func_type -> (
-                  let expected_param_types, _ = extract_all_param_types expected_func_type in
-                  if expected_param_types <> [] && not (List.exists has_type_vars expected_param_types) then
-                    (expected_param_types, snd (extract_all_param_types expected_func_type))
-                  else
-                    let inferred_arity = List.length inferred_params in
-                    match callable_signature_exact inferred_arity expected_func_type with
-                    | Some (callable_params, callable_ret) -> (callable_params, callable_ret)
-                    | None -> (inferred_params, inferred_ret))
-              | None -> (inferred_params, inferred_ret)
-            in
-            let arity = List.length param_types in
-            let has_unresolved = List.exists has_type_vars (return_type :: param_types) in
-            let () =
-              if arity > 0 && not has_unresolved then
-                match lookup_func_def_for_call state.mono target_name arity with
-                | None -> ()
-                | Some func_def ->
-                    add_instantiation state.mono
-                      {
-                        func_name = func_def.name;
-                        module_path = state.mono.module_path;
-                        func_expr_id = func_def.func_expr_id;
-                        func_arity = arity;
-                        concrete_only_mode = state.mono.concrete_only;
-                        concrete_types = param_types;
-                        type_fingerprint = fingerprint_types param_types;
-                        return_type;
-                      }
-            in
-            if List.exists has_type_vars param_types then
-              match unique_instantiated_func_name state.mono target_name with
-              | Some resolved_name -> resolved_name
-              | None -> go_safe_ident target_name
-            else
-              mangle_func_name target_name param_types
-        | None -> go_safe_ident name)
+            match target_name_opt with
+            | Some target_name ->
+                let inferred_params, inferred_ret =
+                  match Hashtbl.find_opt type_map expr.id with
+                  | Some inferred_func_type -> extract_all_param_types inferred_func_type
+                  | None -> (
+                      match Infer.TypeEnv.find_opt name env with
+                      | Some (Types.Forall (_, inferred_func_type)) -> extract_all_param_types inferred_func_type
+                      | None -> ([], Types.TNull))
+                in
+                let param_types, return_type =
+                  match expected_type with
+                  | Some expected_func_type -> (
+                      let expected_param_types, _ = extract_all_param_types expected_func_type in
+                      if expected_param_types <> [] && not (List.exists has_type_vars expected_param_types) then
+                        (expected_param_types, snd (extract_all_param_types expected_func_type))
+                      else
+                        let inferred_arity = List.length inferred_params in
+                        match callable_signature_exact inferred_arity expected_func_type with
+                        | Some (callable_params, callable_ret) -> (callable_params, callable_ret)
+                        | None -> (inferred_params, inferred_ret))
+                  | None -> (inferred_params, inferred_ret)
+                in
+                let arity = List.length param_types in
+                let has_unresolved = List.exists has_type_vars (return_type :: param_types) in
+                let () =
+                  if arity > 0 && not has_unresolved then
+                    match lookup_func_def_for_call state.mono target_name arity with
+                    | None -> ()
+                    | Some func_def ->
+                        add_instantiation state.mono
+                          {
+                            func_name = func_def.name;
+                            module_path = state.mono.module_path;
+                            func_expr_id = func_def.func_expr_id;
+                            func_arity = arity;
+                            concrete_only_mode = state.mono.concrete_only;
+                            concrete_types = param_types;
+                            type_fingerprint = fingerprint_types param_types;
+                            return_type;
+                          }
+                in
+                if List.exists has_type_vars param_types then
+                  match unique_instantiated_func_name state.mono target_name with
+                  | Some resolved_name -> resolved_name
+                  | None -> go_safe_ident target_name
+                else
+                  mangle_func_name target_name param_types
+            | None -> go_safe_ident name))
     | AST.Prefix (op, operand) -> emit_prefix state type_map env op operand
     | AST.Infix (left, op, right) -> emit_infix state type_map env left op right
     | AST.TypeCheck (expr, type_ann) -> emit_type_check state type_map env expr type_ann
@@ -8508,9 +8516,12 @@ let emit_extern_wrapper (state : mono_state) (func : Typecheck.Resolution_artifa
 
 let emit_extern_wrappers (state : mono_state) : string =
   let keys =
-    Hashtbl.fold
-      (fun _ (call : Typecheck.Resolution_artifacts.extern_call) acc -> call.call_func_key :: acc)
-      state.extern_calls []
+    let call_keys =
+      Hashtbl.fold
+        (fun _ (call : Typecheck.Resolution_artifacts.extern_call) acc -> call.call_func_key :: acc)
+        state.extern_calls []
+    in
+    Hashtbl.fold (fun _ shim_key acc -> shim_key :: acc) state.extern_func_refs call_keys
     |> List.sort_uniq String.compare
   in
   keys |> List.map (fun key -> emit_extern_wrapper state (extern_func_exn state key)) |> String.concat "\n"
@@ -8523,6 +8534,7 @@ let emit_program_with_typed_env
     ~(call_resolution_map : (int, Typecheck.Resolution_artifacts.call_resolution) Hashtbl.t)
     ?(extern_declarations = Hashtbl.create 0)
     ?(extern_calls = Hashtbl.create 0)
+    ?(extern_func_refs = Hashtbl.create 0)
     ~(method_type_args_map : (int, Types.mono_type list) Hashtbl.t)
     ~(method_def_map : (int, Typecheck.Resolution_artifacts.typed_method_def) Hashtbl.t)
     ~(trait_object_coercion_map : (int, Typecheck.Resolution_artifacts.trait_object_coercion) Hashtbl.t)
@@ -8540,7 +8552,7 @@ let emit_program_with_typed_env
   in
   let mono_state =
     create_mono_state ~call_resolution_map ~method_type_args_map ~method_def_map ~trait_object_coercion_map
-      ~extern_declarations ~extern_calls ~placeholder_rewrite_map ()
+      ~extern_declarations ~extern_calls ~extern_func_refs ~placeholder_rewrite_map ()
   in
 
   (* Pass 1: Collect function definitions *)
@@ -8708,6 +8720,7 @@ let emit_program (program : AST.program) : string =
         call_resolution_map;
         extern_declarations;
         extern_calls;
+        extern_func_refs;
         method_type_args_map;
         method_def_map;
         trait_object_coercion_map;
@@ -8715,7 +8728,8 @@ let emit_program (program : AST.program) : string =
         _;
       } ->
       emit_program_with_typed_env ~call_resolution_map ~method_type_args_map ~method_def_map ~extern_declarations
-        ~extern_calls ~trait_object_coercion_map ~placeholder_rewrite_map type_map typed_env program
+        ~extern_calls ~extern_func_refs ~trait_object_coercion_map ~placeholder_rewrite_map type_map typed_env
+        program
 
 (* ============================================================
    Go support files
@@ -8785,6 +8799,7 @@ let compile_string ~file_id (source : string) : (string * Diagnostic.t list, Dia
             call_resolution_map;
             extern_declarations;
             extern_calls;
+            extern_func_refs;
             method_type_args_map;
             method_def_map;
             trait_object_coercion_map;
@@ -8795,8 +8810,8 @@ let compile_string ~file_id (source : string) : (string * Diagnostic.t list, Dia
           try
             Ok
               ( emit_program_with_typed_env ~call_resolution_map ~method_type_args_map ~method_def_map
-                  ~extern_declarations ~extern_calls ~trait_object_coercion_map ~placeholder_rewrite_map type_map
-                  typed_env program,
+                  ~extern_declarations ~extern_calls ~extern_func_refs ~trait_object_coercion_map
+                  ~placeholder_rewrite_map type_map typed_env program,
                 diagnostics )
           with
           | Failure msg -> Error [ diagnostic_of_codegen_failure_message msg ]
@@ -8978,16 +8993,35 @@ let shim_package_files ?toolchain_root (shim_id : string) : go_aux_file list =
 
 let called_shim_funcs
     ~(extern_declarations : (string, Typecheck.Resolution_artifacts.extern_func) Hashtbl.t)
-    ~(extern_calls : (int, Typecheck.Resolution_artifacts.extern_call) Hashtbl.t) :
-    Typecheck.Resolution_artifacts.extern_func list =
+    ~(extern_calls : (int, Typecheck.Resolution_artifacts.extern_call) Hashtbl.t)
+    ~(extern_func_refs : (int, string) Hashtbl.t) : Typecheck.Resolution_artifacts.extern_func list =
+  let keys =
+    let call_keys =
+      Hashtbl.fold
+        (fun _ (call : Typecheck.Resolution_artifacts.extern_call) acc -> call.call_func_key :: acc)
+        extern_calls []
+    in
+    Hashtbl.fold (fun _ shim_key acc -> shim_key :: acc) extern_func_refs call_keys
+    |> List.sort_uniq String.compare
+  in
+  let used_shim_ids =
+    keys
+    |> List.map (fun key ->
+           match Hashtbl.find_opt extern_declarations key with
+           | Some func -> func.shim_id
+           | None -> failwith (Printf.sprintf "Codegen error: missing shim declaration for key %S" key))
+    |> List.sort_uniq String.compare
+  in
+  (* Go compiles a copied shim package as a whole, so the generated API package
+     must include boundary types for every declaration in any referenced shim. *)
   Hashtbl.fold
-    (fun _ (call : Typecheck.Resolution_artifacts.extern_call) acc -> call.call_func_key :: acc)
-    extern_calls []
-  |> List.sort_uniq String.compare
-  |> List.map (fun key ->
-         match Hashtbl.find_opt extern_declarations key with
-         | Some func -> func
-         | None -> failwith (Printf.sprintf "Codegen error: missing shim declaration for key %S" key))
+    (fun _ (func : Typecheck.Resolution_artifacts.extern_func) acc ->
+      if List.mem func.shim_id used_shim_ids then
+        func :: acc
+      else
+        acc)
+    extern_declarations []
+  |> List.sort (fun (a : Typecheck.Resolution_artifacts.extern_func) b -> String.compare a.shim_key b.shim_key)
 
 let rec collect_boundary_enums (acc : string list) (boundary : Typecheck.Shim_boundary.boundary_type) :
     string list =
@@ -9143,8 +9177,9 @@ let shim_aux_go_files
     ?toolchain_root
     ~(extern_declarations : (string, Typecheck.Resolution_artifacts.extern_func) Hashtbl.t)
     ~(extern_calls : (int, Typecheck.Resolution_artifacts.extern_call) Hashtbl.t)
+    ?(extern_func_refs = Hashtbl.create 0)
     () : go_aux_file list =
-  let funcs = called_shim_funcs ~extern_declarations ~extern_calls in
+  let funcs = called_shim_funcs ~extern_declarations ~extern_calls ~extern_func_refs in
   match funcs with
   | [] -> []
   | _ ->
@@ -9170,6 +9205,7 @@ let compile_to_build ~file_id (source : string) : (build_output, Diagnostic.t li
             call_resolution_map;
             extern_declarations;
             extern_calls;
+            extern_func_refs;
             method_type_args_map;
             method_def_map;
             trait_object_coercion_map;
@@ -9180,14 +9216,14 @@ let compile_to_build ~file_id (source : string) : (build_output, Diagnostic.t li
           try
             let main_go =
               emit_program_with_typed_env ~call_resolution_map ~method_type_args_map ~method_def_map
-                ~extern_declarations ~extern_calls ~trait_object_coercion_map ~placeholder_rewrite_map type_map
-                typed_env program
+                ~extern_declarations ~extern_calls ~extern_func_refs ~trait_object_coercion_map
+                ~placeholder_rewrite_map type_map typed_env program
             in
             let output =
               {
                 go_mod = default_go_mod;
                 main_go;
-                aux_go_files = shim_aux_go_files ~extern_declarations ~extern_calls ();
+                aux_go_files = shim_aux_go_files ~extern_declarations ~extern_calls ~extern_func_refs ();
                 diagnostics;
               }
             in

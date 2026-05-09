@@ -22,6 +22,7 @@ type typecheck_result = {
       (* Shim extern declarations keyed by shim id/function identity *)
   extern_calls : (int, Resolution_artifacts.extern_call) Hashtbl.t;
       (* Shim extern call artifacts keyed by expression id *)
+  extern_func_refs : (int, string) Hashtbl.t; (* Shim extern function-value references keyed by expression id *)
   method_def_map : (int, Resolution_artifacts.typed_method_def) Hashtbl.t;
       (* Phase 5.4: Typed method definitions for emitter. Populated during Phase 6. *)
   method_type_args_map : (int, Types.mono_type list) Hashtbl.t;
@@ -68,6 +69,7 @@ let make_typecheck_result
   let call_resolution_map = Infer.snapshot_call_resolution_store () in
   let extern_declarations = Extern_registry.snapshot_declarations () in
   let extern_calls = Extern_registry.snapshot_calls () in
+  let extern_func_refs = Extern_registry.snapshot_func_refs () in
   let method_def_map = Infer.snapshot_method_def_store () in
   let method_type_args_map = Infer.snapshot_method_type_args_store () in
   let trait_object_coercion_map = Infer.snapshot_trait_object_coercion_store () in
@@ -84,6 +86,7 @@ let make_typecheck_result
     call_resolution_map;
     extern_declarations;
     extern_calls;
+    extern_func_refs;
     method_def_map;
     method_type_args_map;
     trait_object_coercion_map;

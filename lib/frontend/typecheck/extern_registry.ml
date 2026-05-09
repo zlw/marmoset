@@ -19,6 +19,7 @@ let exported_binding_by_internal_name : (string, Artifacts.extern_func) Hashtbl.
 let shim_id_by_qualifier : (string, string) Hashtbl.t = Hashtbl.create 32
 let registered_block_shim_ids : (string, Diagnostic.span) Hashtbl.t = Hashtbl.create 16
 let extern_calls : (int, Artifacts.extern_call) Hashtbl.t = Hashtbl.create 128
+let extern_func_refs : (int, string) Hashtbl.t = Hashtbl.create 128
 let current_module_id : string option ref = ref None
 
 let clear () : unit =
@@ -28,6 +29,7 @@ let clear () : unit =
   Hashtbl.clear shim_id_by_qualifier;
   Hashtbl.clear registered_block_shim_ids;
   Hashtbl.clear extern_calls;
+  Hashtbl.clear extern_func_refs;
   current_module_id := None
 
 let set_current_module_id module_id = current_module_id := Some module_id
@@ -248,8 +250,13 @@ let lookup_exported_binding (internal_name : string) : Artifacts.extern_func opt
 
 let is_qualifier (source_qualifier : string) : bool = Hashtbl.mem shim_id_by_qualifier source_qualifier
 let record_call (expr_id : int) (call : Artifacts.extern_call) : unit = Hashtbl.replace extern_calls expr_id call
+
+let record_func_ref (expr_id : int) ~(shim_key : string) : unit =
+  Hashtbl.replace extern_func_refs expr_id shim_key
+
 let snapshot_declarations () : (string, Artifacts.extern_func) Hashtbl.t = Hashtbl.copy declaration_by_key
 let snapshot_calls () : (int, Artifacts.extern_call) Hashtbl.t = Hashtbl.copy extern_calls
+let snapshot_func_refs () : (int, string) Hashtbl.t = Hashtbl.copy extern_func_refs
 
 let%test "shim symbol mangling handles suffixes and collisions" =
   go_symbol_name "read_bytes" = "ReadBytes"

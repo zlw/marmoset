@@ -8,6 +8,7 @@ source "$SCRIPT_DIR/common.sh"
 
 SNAPSHOT_ROOT="$REPO_ROOT/test/snapshots/go_tree"
 SHIM_RUNTIME_MAIN="$REPO_ROOT/test/fixtures/ffi/shim_runtime/main.mr"
+SHIM_FUNCTION_VALUES_MAIN="$REPO_ROOT/test/fixtures/ffi/shim_function_values/main.mr"
 
 suite_begin "FFI TESTS"
 
@@ -75,6 +76,12 @@ run_fixture_expect_output \
     "std.bytes shim adapters run through production shims" \
     $'hi\n2\nequal' \
     "$SHIM_RUNTIME_MAIN"
+
+run_fixture_expect_output \
+    "exported shim functions work as first-class values" \
+    "hi" \
+    "$SHIM_FUNCTION_VALUES_MAIN"
+rm -f "$REPO_ROOT/.marmoset/build/marmoset_ffi_function_values.tmp"
 
 test_emit_go_tree_snapshot \
     "std.bytes shim adapter Go tree includes runtime, API, and copied shims" \

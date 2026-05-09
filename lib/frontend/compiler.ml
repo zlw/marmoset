@@ -42,6 +42,7 @@ type project_resolution_artifacts = {
   call_resolution_map : (int, Typecheck.Resolution_artifacts.call_resolution) Hashtbl.t;
   extern_declarations : (string, Typecheck.Resolution_artifacts.extern_func) Hashtbl.t;
   extern_calls : (int, Typecheck.Resolution_artifacts.extern_call) Hashtbl.t;
+  extern_func_refs : (int, string) Hashtbl.t;
   method_type_args_map : (int, Types.mono_type list) Hashtbl.t;
   method_def_map : (int, Typecheck.Resolution_artifacts.typed_method_def) Hashtbl.t;
   trait_object_coercion_map : (int, Typecheck.Resolution_artifacts.trait_object_coercion) Hashtbl.t;
@@ -102,6 +103,7 @@ let create_project_resolution_artifacts () : project_resolution_artifacts =
     call_resolution_map = Hashtbl.create 256;
     extern_declarations = Hashtbl.create 64;
     extern_calls = Hashtbl.create 128;
+    extern_func_refs = Hashtbl.create 128;
     method_type_args_map = Hashtbl.create 128;
     method_def_map = Hashtbl.create 128;
     trait_object_coercion_map = Hashtbl.create 128;
@@ -114,6 +116,7 @@ let merge_project_resolution_artifacts (dst : project_resolution_artifacts) (res
   merge_hashtbl dst.call_resolution_map result.call_resolution_map;
   merge_hashtbl dst.extern_declarations result.extern_declarations;
   merge_hashtbl dst.extern_calls result.extern_calls;
+  merge_hashtbl dst.extern_func_refs result.extern_func_refs;
   merge_hashtbl dst.method_type_args_map result.method_type_args_map;
   merge_hashtbl dst.method_def_map result.method_def_map;
   merge_hashtbl dst.trait_object_coercion_map result.trait_object_coercion_map;
@@ -921,6 +924,7 @@ let emit_compiled_project (project : compiled_project) : (Codegen.build_output, 
     let main_go =
       Codegen.emit_program_with_typed_env ~call_resolution_map:project.artifacts.call_resolution_map
         ~extern_declarations:project.artifacts.extern_declarations ~extern_calls:project.artifacts.extern_calls
+        ~extern_func_refs:project.artifacts.extern_func_refs
         ~method_type_args_map:project.artifacts.method_type_args_map
         ~method_def_map:project.artifacts.method_def_map
         ~trait_object_coercion_map:project.artifacts.trait_object_coercion_map
@@ -934,7 +938,7 @@ let emit_compiled_project (project : compiled_project) : (Codegen.build_output, 
         aux_go_files =
           Codegen.shim_aux_go_files ?toolchain_root:project.toolchain_root
             ~extern_declarations:project.artifacts.extern_declarations
-            ~extern_calls:project.artifacts.extern_calls ();
+            ~extern_calls:project.artifacts.extern_calls ~extern_func_refs:project.artifacts.extern_func_refs ();
         diagnostics = project.diagnostics;
       }
   with
@@ -1629,6 +1633,38 @@ let%test "shim exports lower without Marmoset identity wrappers" =
           && (not (string_contains build_output.main_go "func std__bytes__from_u005fstr"))
           && (not (string_contains build_output.main_go "func std__bytes__to_u005fstr_u005flossy"))
           && not (string_contains build_output.main_go "func std__file__write"))
+
+let%test "exported shim functions are ordinary first-class values" =
+  Discovery.with_temp_project
+    [
+      ( "main.mr",
+        "import std.bytes\nimport std.file\nfn apply(make, value) = make(value)\nlet make_bytes = bytes.from_str\nlet render = bytes.to_str_lossy\nlet payload = apply(make_bytes, \"hi\")\nlet write_bytes = file.write\nlet _ = write_bytes(\"marmoset.tmp\", payload)\nputs(render(payload))\n"
+      );
+    ]
+    (fun root ->
+      match compile_entry_to_build ~entry_file:(Filename.concat root "main.mr") () with
+      | Error _ -> false
+      | Ok build_output ->
+          string_contains build_output.main_go "main__make_u005fbytes := extern__std_bytes__from_str"
+          && string_contains build_output.main_go "main__render := extern__std_bytes__to_str_lossy"
+          && string_contains build_output.main_go "main__write_u005fbytes := extern__std_file__write"
+          && string_contains build_output.main_go "func extern__std_bytes__from_str(input string) marmoset.Bytes"
+          && string_contains build_output.main_go
+               "func extern__std_file__write(path string, bytes marmoset.Bytes) Result_unit_std__file__FileWriteError"
+          && (not (string_contains build_output.main_go "func std__bytes__from_u005fstr"))
+          && not (string_contains build_output.main_go "func std__file__write"))
+
+let%test "exported shim function value preserves effect checking" =
+  Discovery.with_temp_project
+    [
+      ( "main.mr",
+        "import std.bytes.Bytes\nimport std.file\nfn pure_write(path: Str, bytes: Bytes) -> Unit = {\n  let write_bytes = file.write\n  let _ = write_bytes(path, bytes)\n}\n"
+      );
+    ]
+    (fun root ->
+      match check_entry ~entry_file:(Filename.concat root "main.mr") () with
+      | Ok _ -> false
+      | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-purity") diags)
 
 let%test "implicit puts is std.basics code backed by basics shim" =
   Discovery.with_temp_project

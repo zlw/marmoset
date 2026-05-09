@@ -60,7 +60,7 @@ Unsupported boundary types fail during typechecking instead of leaking Go repres
 
 ## Ownership
 
-Extern qualifiers are module-local. Importing a shim-backed stdlib module never imports its private shim qualifier. If an extern function name appears in the module's `export` list, callers use that exported module API directly and codegen lowers the call through the generated shim adapter.
+Extern qualifiers are module-local. Importing a shim-backed stdlib module never imports its private shim qualifier. If an extern function name appears in the module's `export` list, callers use that exported module API directly. Direct calls lower through the generated shim adapter, and first-class references such as `let read = file.read` use that same generated adapter as an ordinary function value.
 
 Each shim id has exactly one owning Marmoset module in a project. In phase one, the owner module id must match the shim id with `/` converted to `.`, so `std/file` is owned by `std.file`. Duplicate owners, duplicate blocks for the same shim id, qualifier collisions, Go symbol collisions, malformed shim ids, and missing shim ids produce explicit diagnostics.
 
@@ -72,7 +72,7 @@ Go errors, pointers, methods, channels, interfaces, panics, sentinel values, and
 
 ## Codegen
 
-Shim codegen emits a complete Go module tree rather than a single root Go package. Called shims cause the build tree to include:
+Shim codegen emits a complete Go module tree rather than a single root Go package. Called or first-class-referenced shims cause the build tree to include:
 
 ```text
 go.mod

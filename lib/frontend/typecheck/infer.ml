@@ -1051,6 +1051,11 @@ let binding_type_for_env
           | Ok annotated_type -> annotated_type
           | Error _ -> stmt_type))
 
+let mono_type_of_extern_func (func : Resolution_artifacts.extern_func) : mono_type =
+  let param_types = List.map Shim_boundary.to_mono_type func.param_boundary_types in
+  let return_type = Shim_boundary.to_mono_type func.return_boundary_type in
+  List.fold_right (fun param_type acc -> TFun (param_type, acc, func.is_effectful)) param_types return_type
+
 let should_monomorphize_let_binding_value (value_expr : AST.expression) : bool =
   match value_expr.expr with
   | AST.RecordLit _ -> true
@@ -1967,12 +1972,8 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
         | AST.Identifier name -> (
             match Extern_registry.lookup_exported_binding name with
             | Some func ->
-                Error
-                  (error_at ~code:"type-extern"
-                     ~message:
-                       (Printf.sprintf "shim function '%s' can only be used as a direct call"
-                          func.marmoset_func_name)
-                     expr)
+                Extern_registry.record_func_ref expr.id ~shim_key:func.shim_key;
+                Ok (empty_substitution, mono_type_of_extern_func func)
             | None -> (
                 match TypeEnv.find_opt name env with
                 | None -> (
