@@ -159,6 +159,17 @@ let with_temp_project (files : (string * string) list) (f : string -> bool) : bo
   List.iter write_one files;
   Fun.protect ~finally:(fun () -> ignore (Sys.command ("rm -rf " ^ Filename.quote root))) (fun () -> f root)
 
+let with_env_var name value f =
+  let prior = Sys.getenv_opt name in
+  Fun.protect
+    ~finally:(fun () ->
+      match prior with
+      | Some prior -> Unix.putenv name prior
+      | None -> Unix.putenv name "")
+    (fun () ->
+      Unix.putenv name value;
+      f ())
+
 (* ============================================================
    Tests
    ============================================================ *)
@@ -265,6 +276,36 @@ let%test "analyze_with_file_id uses module-aware checking for imported files" =
       && result.surface_program <> None
       && result.program <> None
       && result.compiler_analysis <> None)
+
+let%test "analyze_with_file_id treats direct stdlib entries as std modules" =
+  with_temp_project
+    [
+      ("std/prelude.mr", "export Show\ntrait Show[a] = { fn show(value: a) -> Str }\n");
+      ( "std/basics.mr",
+        "import std.prelude.Show\n\nexport puts\n\nextern \"std/basics\" as basics_shim = {\n\  fn puts_str(value: Str) => Unit\n}\n\nfn puts[a: Show](value: a) => Unit = basics_shim.puts_str(Show.show(value))\n"
+      );
+      ("std/option.mr", "export Option\ntype Option[a] = { Some(a), None }\n");
+      ("std/result.mr", "export Result\ntype Result[a, e] = { Success(a), Failure(e) }\n");
+    ]
+    (fun root ->
+      with_env_var "MARMOSET_ROOT" root (fun () ->
+          let file_id = Filename.concat root "std/basics.mr" in
+          let source_root = Filename.dirname file_id in
+          let source =
+            "import std.prelude.Show\n\nexport puts\n\nextern \"std/basics\" as basics_shim = {\n\  fn puts_str(value: Str) => Unit\n}\n\nfn puts[a: Show](value: a) => Unit = basics_shim.puts_str(Show.show(value))\n"
+          in
+          let result = analyze_with_file_id ~source_root ~file_id ~source () in
+          result.module_id = Some "std.basics"
+          && result.project_root = Some root
+          && not
+               (List.exists
+                  (fun (diag : Lsp_t.Diagnostic.t) ->
+                    match diag.message with
+                    | `String message ->
+                        Diagnostics.String_utils.contains_substring ~needle:"shim \"std/basics\""
+                          message
+                    | _ -> false)
+                  result.diagnostics)))
 
 let%test "analyze helper uses module-aware compiler analysis" =
   let result = analyze ~source:"let id = (x) -> x\nid(1)\n" in

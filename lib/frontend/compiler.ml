@@ -1551,11 +1551,12 @@ let%test "check_entry treats direct stdlib entries as std modules" =
         (Filename.concat stdlib_root "std/result.mr")
         "export Result\ntype Result[a, e] = { Success(a), Failure(e) }\n";
       let entry_file = Filename.concat stdlib_root "std/basics.mr" in
+      let source_root = Filename.dirname entry_file in
       let stdlib_root = Filename.concat stdlib_root "." in
-      let analysis = analyze_entry ~stdlib_root ~entry_file () in
+      let analysis = analyze_entry ~source_root ~stdlib_root ~entry_file () in
       analysis.active_file.module_id = Some "std.basics"
       &&
-      match check_entry ~stdlib_root ~entry_file () with
+      match check_entry ~source_root ~stdlib_root ~entry_file () with
       | Ok _ -> true
       | Error _ -> false)
 

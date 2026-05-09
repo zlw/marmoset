@@ -355,10 +355,12 @@ let discover_project_with_overrides
   let entry_file = normalize_path entry_file in
   let* stdlib_root = resolve_toolchain_root ?stdlib_root () in
   let project_root =
-    match source_root with
-    | Some root -> normalize_path root
-    | None when path_is_under_root ~root_dir:stdlib_root entry_file -> stdlib_root
-    | None -> Filename.dirname entry_file
+    if path_is_under_root ~root_dir:stdlib_root entry_file then
+      stdlib_root
+    else
+      match source_root with
+      | Some root -> normalize_path root
+      | None -> Filename.dirname entry_file
   in
   let entry_module = module_id_of_file ~root_dir:project_root entry_file in
   let state =

@@ -55,14 +55,49 @@ fn env_with_marmoset_root(env: &[(String, String)], marmoset_root: &str) -> Vec<
     merged
 }
 
-fn marmoset_root_from_env(env: &[(String, String)]) -> Option<PathBuf> {
-    env.iter().find_map(|(name, value)| {
-        if name == "MARMOSET_ROOT" && !value.is_empty() {
-            Some(PathBuf::from(value))
+fn env_value<'a>(env: &'a [(String, String)], name: &str) -> Option<&'a str> {
+    env.iter().find_map(|(env_name, value)| {
+        if env_name == name {
+            Some(value.as_str())
         } else {
             None
         }
     })
+}
+
+fn marmoset_root_from_env(env: &[(String, String)]) -> Option<PathBuf> {
+    env_value(env, "MARMOSET_ROOT")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+}
+
+fn marmoset_roots_from_path_binary_entries(env: &[(String, String)]) -> Vec<PathBuf> {
+    env_value(env, "PATH")
+        .map(|path_value| {
+            std::env::split_paths(path_value)
+                .filter_map(|entry| {
+                    if entry.file_name().and_then(|name| name.to_str()) == Some("marmoset") {
+                        entry.parent().map(Path::to_path_buf)
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn push_candidate_root(candidate_roots: &mut Vec<PathBuf>, repo_root: PathBuf) {
+    if repo_root.as_os_str().is_empty() {
+        return;
+    }
+
+    if !candidate_roots
+        .iter()
+        .any(|candidate_root| candidate_root == &repo_root)
+    {
+        candidate_roots.push(repo_root);
+    }
 }
 
 fn repo_dev_binary(
@@ -73,16 +108,15 @@ fn repo_dev_binary(
     let mut candidate_roots = Vec::new();
 
     if let Some(repo_root) = marmoset_root_from_env(shell_env) {
-        candidate_roots.push(repo_root);
+        push_candidate_root(&mut candidate_roots, repo_root);
     }
 
     for repo_root in ancestor_dirs(worktree_root) {
-        if !candidate_roots
-            .iter()
-            .any(|candidate_root| candidate_root == &repo_root)
-        {
-            candidate_roots.push(repo_root);
-        }
+        push_candidate_root(&mut candidate_roots, repo_root);
+    }
+
+    for repo_root in marmoset_roots_from_path_binary_entries(shell_env) {
+        push_candidate_root(&mut candidate_roots, repo_root);
     }
 
     for repo_root in candidate_roots {
@@ -194,6 +228,43 @@ mod tests {
     fn uses_marmoset_root_env_before_worktree_ancestors() {
         let worktree_root = PathBuf::from("/tmp/unrelated/project");
         let shell_env = vec![("MARMOSET_ROOT".to_string(), "/tmp/marmoset-dev".to_string())];
+        let repo_binary = "/tmp/marmoset-dev/marmoset".to_string();
+        let mut probed = Vec::new();
+
+        let selected = repo_dev_binary(worktree_root.as_path(), &shell_env, |path, env| {
+            probed.push((path.to_string(), env.to_vec()));
+            path == repo_binary
+                && env
+                    .iter()
+                    .any(|(name, value)| name == "MARMOSET_ROOT" && value == "/tmp/marmoset-dev")
+        });
+
+        assert_eq!(
+            selected,
+            Some(RepoBinaryLaunch {
+                path: repo_binary.clone(),
+                marmoset_root: "/tmp/marmoset-dev".to_string(),
+            })
+        );
+        assert_eq!(probed.first().map(|(path, _env)| path), Some(&repo_binary));
+    }
+
+    #[test]
+    fn does_not_probe_plain_path_marmoset_for_empty_worktree_root() {
+        let selected = repo_dev_binary(PathBuf::from("").as_path(), &[], |path, _env| {
+            path == "marmoset"
+        });
+
+        assert_eq!(selected, None);
+    }
+
+    #[test]
+    fn uses_marmoset_binary_path_entries_from_shell_path() {
+        let worktree_root = PathBuf::from("");
+        let shell_env = vec![(
+            "PATH".to_string(),
+            "/tmp/marmoset-dev/marmoset:/usr/bin".to_string(),
+        )];
         let repo_binary = "/tmp/marmoset-dev/marmoset".to_string();
         let mut probed = Vec::new();
 
