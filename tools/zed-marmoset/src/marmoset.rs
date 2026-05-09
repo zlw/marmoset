@@ -74,7 +74,10 @@ fn marmoset_root_from_env(env: &[(String, String)]) -> Option<PathBuf> {
 fn marmoset_roots_from_path_binary_entries(env: &[(String, String)]) -> Vec<PathBuf> {
     env_value(env, "PATH")
         .map(|path_value| {
-            std::env::split_paths(path_value)
+            path_value
+                .split(':')
+                .filter(|entry| !entry.is_empty())
+                .map(PathBuf::from)
                 .filter_map(|entry| {
                     if entry.file_name().and_then(|name| name.to_str()) == Some("marmoset") {
                         entry.parent().map(Path::to_path_buf)
