@@ -1722,12 +1722,8 @@ let enum_allows_unresolved_erasure (enum_name : string) : bool =
 let track_enum_inst state (t : Types.mono_type) =
   match t with
   | Types.TEnum (name, args) ->
-      if state.concrete_only && List.exists has_type_vars args then
-        if enum_allows_unresolved_erasure name then
-          let erased_args = List.map erase_unresolved_type_vars_for_codegen args in
-          state.enum_insts <- EnumInstSet.add (name, erased_args) state.enum_insts
-        else
-          ()
+      if state.concrete_only && List.exists has_unresolved_codegen_type args then
+        ()
       else
         state.enum_insts <- EnumInstSet.add (name, args) state.enum_insts
   | _ -> ()
@@ -10985,6 +10981,31 @@ let%test "explicit primitive trait calls emit only referenced builtin helpers" =
       && string_not_contains code "func num_div_int64("
       && string_not_contains code "type Option_union_empty struct"
       && string_not_contains code "type Result_union_empty_union_empty struct"
+  | Error _ -> false
+
+let%test "generic callback result wrapper emits only concrete enum instantiations" =
+  match
+    compile_string ~file_id:"<codegen>"
+      {|type UseError[e] = { Use(e) }
+type Problem = { Bad }
+type Result[a, e] = { Success(a), Failure(e) }
+
+fn wrap[a, e](seed: Int, body: (Int) -> Result[a, e]) -> Result[a, UseError[e]] = match body(seed) {
+  case Result.Success(value): Result.Success(value)
+  case Result.Failure(err): Result.Failure(UseError.Use(err))
+}
+
+match wrap(1, (n: Int) -> if (n == 0) { Result.Success("ok") } else { Result.Failure(Problem.Bad) }) {
+  case Result.Success(value): puts(value)
+  case Result.Failure(err): match err {
+    case UseError.Use(_): puts("use")
+  }
+}|}
+  with
+  | Ok (code, _) ->
+      string_contains code "type Result_string_UseError_Problem struct"
+      && string_contains code "type UseError_Problem struct"
+      && string_not_contains code "union_empty"
   | Error _ -> false
 
 (* ============================================================
