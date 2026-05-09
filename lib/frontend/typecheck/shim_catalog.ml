@@ -29,7 +29,9 @@ let go_keywords =
     "var";
   ]
 
-let allowed_roots = [ "std"; "test" ]
+let allowed_roots = [ "std" ]
+let toolchain_root : string option ref = ref None
+let set_toolchain_root root = toolchain_root := root
 
 let is_lower_snake_segment (segment : string) : bool =
   let len = String.length segment in
@@ -51,8 +53,12 @@ let validate_id (shim_id : string) : (string list, string) result =
   match segments with
   | root :: _ when List.length segments >= 2 ->
       if not (List.mem root allowed_roots) then
-        Error (Printf.sprintf "invalid shim id %S: allowed roots are std and test" shim_id)
-      else if List.exists (fun segment -> String.equal segment "" || String.equal segment "." || String.equal segment "..") segments then
+        Error (Printf.sprintf "invalid shim id %S: allowed root is std" shim_id)
+      else if
+        List.exists
+          (fun segment -> String.equal segment "" || String.equal segment "." || String.equal segment "..")
+          segments
+      then
         Error (Printf.sprintf "invalid shim id %S: segments must be non-empty and cannot be . or .." shim_id)
       else if List.exists (fun segment -> not (is_lower_snake_segment segment)) segments then
         Error (Printf.sprintf "invalid shim id %S: segments must be lowercase snake-case identifiers" shim_id)
@@ -70,14 +76,40 @@ let default_qualifier (shim_id : string) : string option =
 let owner_module_id (shim_id : string) : (string, string) result =
   Result.map (String.concat ".") (validate_id shim_id)
 
-let runtime_shim_dir_from_cwd (segments : string list) : string =
-  List.fold_left Filename.concat "runtime/go/shims" segments
+let concat_path_parts (root : string) (parts : string list) : string = List.fold_left Filename.concat root parts
+
+let find_existing_path_upwards (parts : string list) : string option =
+  let rec search dir remaining =
+    let candidate = concat_path_parts dir parts in
+    if Sys.file_exists candidate then
+      Some candidate
+    else if remaining = 0 then
+      None
+    else
+      let parent = Filename.dirname dir in
+      if parent = dir then
+        None
+      else
+        search parent (remaining - 1)
+  in
+  search (Sys.getcwd ()) 10
+
+let runtime_shim_dir_from_toolchain_root (root : string) (segments : string list) : string =
+  List.fold_left Filename.concat (Filename.concat root "runtime/go/shims") segments
 
 let exists (shim_id : string) : bool =
   match validate_id shim_id with
   | Error _ -> false
-  | Ok ("test" :: _) -> true
-  | Ok segments -> Sys.file_exists (runtime_shim_dir_from_cwd segments)
+  | Ok segments -> (
+      let cwd_path = find_existing_path_upwards ([ "runtime"; "go"; "shims" ] @ segments) in
+      let toolchain_path =
+        Option.map (fun root -> runtime_shim_dir_from_toolchain_root root segments) !toolchain_root
+      in
+      Option.is_some cwd_path
+      ||
+      match toolchain_path with
+      | Some path -> Sys.file_exists path
+      | None -> false)
 
 let invalid_diagnostic ?source_span (shim_id : string) : Diagnostic.t =
   let message =
@@ -106,10 +138,10 @@ let validate_known ?source_span (shim_id : string) : (string list, Diagnostic.t)
       else
         Error (not_found_diagnostic ?source_span shim_id)
 
-let%test "validates synthetic test shim ids" =
-  validate_known "test/scalar" = Ok [ "test"; "scalar" ]
-  && default_qualifier "test/scalar" = Some "scalar"
-  && owner_module_id "test/scalar" = Ok "test.scalar"
+let%test "validates std shim ids" =
+  validate_known "std/bytes" = Ok [ "std"; "bytes" ]
+  && default_qualifier "std/bytes" = Some "bytes"
+  && owner_module_id "std/bytes" = Ok "std.bytes"
 
 let%test "rejects direct Go import looking shim ids before catalog lookup" =
   match validate_known "strings" with
@@ -127,4 +159,4 @@ let%test "rejects unsafe shim id segments" =
       match validate_known shim_id with
       | Error diag -> diag.code = "shim-id-invalid"
       | Ok _ -> false)
-    [ "test/"; "test/../x"; "test/Camel"; "test/has-hyphen"; "test/type" ]
+    [ "std/"; "std/../x"; "std/Camel"; "std/has-hyphen"; "std/type"; "test/scalar" ]

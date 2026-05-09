@@ -584,10 +584,7 @@ and parse_extern_type_definition (p : parser) : (parser * Surface.top_decl, pars
          "extern type declarations cannot derive traits")
   else
     let extern_type_name_ref = current_name_ref p_name in
-    Ok
-      ( p_name,
-        Surface.SExternTypeDef
-          { extern_type_name = extern_type_name_ref.text; extern_type_name_ref } )
+    Ok (p_name, Surface.SExternTypeDef { extern_type_name = extern_type_name_ref.text; extern_type_name_ref })
 
 (* Phase 1b: vNext top-level fn declaration: fn name[generics](params) -> T = expr_or_block *)
 and parse_fn_decl_top (p : parser) : (parser * Surface.top_decl, parser) result =
@@ -2801,10 +2798,7 @@ let%test "imports must precede body statements" =
 let%test "parse shim extern block with alias and effectful signature" =
   match
     parse ~file_id:"<test>"
-      "extern \"test/scalar\" as scalar = {\n\
-      \  fn read(path: Str) -> Str\n\
-      \  fn write!(root: Str) => Unit\n\
-       }"
+      "extern \"std/bytes\" as bytes = {\n\  fn read(path: Str) -> Str\n\  fn write!(root: Str) => Unit\n}"
   with
   | Ok
       [
@@ -2812,9 +2806,9 @@ let%test "parse shim extern block with alias and effectful signature" =
           AST.stmt =
             AST.ExternBlock
               {
-                extern_shim_id = "test/scalar";
-                extern_alias = Some "scalar";
-                extern_qualifier = "scalar";
+                extern_shim_id = "std/bytes";
+                extern_alias = Some "bytes";
+                extern_qualifier = "bytes";
                 extern_fns =
                   [
                     {
@@ -2870,12 +2864,14 @@ let%test "extern rejects invalid derived qualifier without alias" =
   | Ok _ -> false
 
 let%test "extern rejects bang suffix aliases" =
-  match parse ~file_id:"<test>" "extern \"test/scalar\" as scalar! = { fn panic!(s: Str) -> Str }" with
+  match parse ~file_id:"<test>" "extern \"std/bytes\" as bytes! = { fn panic!(s: Str) -> Str }" with
   | Error diags -> List.exists (fun (d : Diagnostic.t) -> d.code = "parse-extern-signature") diags
   | Ok _ -> false
 
 let%test "extern accepts question and bang suffix function names" =
-  match parse ~file_id:"<test>" "extern \"test/pred\" = { fn exists?(s: Str) -> Bool fn write!(s: Str) => Unit }" with
+  match
+    parse ~file_id:"<test>" "extern \"std/bytes\" = { fn exists?(s: Str) -> Bool fn write!(s: Str) => Unit }"
+  with
   | Ok [ { AST.stmt = AST.ExternBlock { extern_fns = [ a; b ]; _ }; _ } ] ->
       a.extern_fn_name = "exists?" && b.extern_fn_name = "write!"
   | _ -> false

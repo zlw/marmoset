@@ -75,6 +75,51 @@ fi
 rm -rf "$tmpdir"
 
 TOTAL=$((TOTAL + 1))
+echo -n "TEST [$TOTAL] installed build: locates bundled std shim runtime ... "
+tmpdir=$(mktemp -d)
+tmpfile="$tmpdir/main.mr"
+binpath="$tmpdir/main"
+cp "$REPO_ROOT/.tool-versions" "$tmpdir/.tool-versions"
+cat > "$tmpfile" <<'EOF'
+import std.bytes
+puts(bytes.to_str_lossy(bytes.from_str("installed")))
+EOF
+if ensure_installed_toolchain \
+    && build_output=$(cd "$tmpdir" && env -u MARMOSET_ROOT "$installed_root/bin/marmoset" build "$tmpfile" -o "$binpath" 2>&1) \
+    && output=$("$binpath" 2>&1) \
+    && [ "$output" = "installed" ]; then
+    echo "✓ PASS"
+    PASS=$((PASS + 1))
+else
+    echo "✗ FAIL (build: ${build_output:-}, output: ${output:-})"
+    FAIL=$((FAIL + 1))
+fi
+rm -rf "$tmpdir"
+
+TOTAL=$((TOTAL + 1))
+echo -n "TEST [$TOTAL] installed build: test shim root is rejected ... "
+tmpdir=$(mktemp -d)
+cp "$REPO_ROOT/.tool-versions" "$tmpdir/.tool-versions"
+cat > "$tmpdir/main.mr" <<'EOF'
+extern "test/scalar" = {
+  fn upcase(s: Str) -> Str
+}
+scalar.upcase("x")
+EOF
+if ensure_installed_toolchain \
+    && build_output=$(cd "$tmpdir" && env -u MARMOSET_ROOT "$installed_root/bin/marmoset" build "$tmpdir/main.mr" -o "$tmpdir/main" 2>&1); then
+    echo "✗ FAIL (expected build failure)"
+    FAIL=$((FAIL + 1))
+elif echo "${build_output:-}" | grep -qF 'allowed root is std'; then
+    echo "✓ PASS"
+    PASS=$((PASS + 1))
+else
+    echo "✗ FAIL (output: ${build_output:-})"
+    FAIL=$((FAIL + 1))
+fi
+rm -rf "$tmpdir"
+
+TOTAL=$((TOTAL + 1))
 echo -n "TEST [$TOTAL] check: type error exits 1 with message ... "
 tmpfile=$(mktemp)
 echo '1 + true' > "$tmpfile"

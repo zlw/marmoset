@@ -6,7 +6,7 @@
 - Implementation status: Shim-first interop implemented
 - Update trigger: Any change to extern syntax, supported FFI types, typechecking, module visibility, or Go codegen
 
-Marmoset interop is shim-first. An `extern` declaration names a Marmoset shim id such as `std/bytes`, `std/file`, or `test/scalar`, not an arbitrary Go import path. Go-specific details stay inside checked-in or project-provided shim packages, and public Marmoset modules expose ordinary Marmoset APIs built from `Result`, `Option`, `Bytes`, opaque handles, enums, records, and effects.
+Marmoset interop is shim-first. An `extern` declaration names a Marmoset shim id such as `std/bytes` or `std/file`, not an arbitrary Go import path. Go-specific details stay inside checked-in or project-provided shim packages, and public Marmoset modules expose ordinary Marmoset APIs built from `Result`, `Option`, `Bytes`, opaque handles, enums, records, and effects.
 
 Direct arbitrary Go package externs have been removed. A declaration such as `extern "strings"` is rejected as a malformed shim id before catalog lookup.
 
@@ -30,7 +30,7 @@ fn read(path: Str) => Result[Bytes, FileReadError] = {
 }
 ```
 
-Phase one requires shim ids to have an allowed root and at least two slash-separated segments. Valid examples include `std/bytes`, `std/file`, and synthetic test-only ids such as `test/scalar`. Single-segment ids such as `strings` are rejected with `shim-id-invalid`; syntactically valid but unknown ids such as `std/missing` fail with `shim-id-not-found`.
+Phase one requires shim ids to use the `std` root and at least two slash-separated segments. Valid examples include `std/bytes` and `std/file`. Single-segment ids such as `strings` are rejected with `shim-id-invalid`; syntactically valid but unknown ids such as `std/missing` fail with `shim-id-not-found`.
 
 Opaque resource handles use `extern type` in the owning shim module:
 

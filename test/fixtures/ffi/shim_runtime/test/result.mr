@@ -1,9 +1,0 @@
-export parse, invalid
-
-extern "test/result" = {
-  fn parse(s: Str) -> Result[Int, Str]
-  fn invalid() -> Result[Int, Str]
-}
-
-fn parse(s: Str) -> Result[Int, Str] = result.parse(s)
-fn invalid() -> Result[Int, Str] = result.invalid()

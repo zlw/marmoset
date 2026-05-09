@@ -632,9 +632,9 @@ let%test "method call produces method token" =
   has_token_type method_type tokens
 
 let%test "extern signatures produce function and parameter declaration tokens" =
-  let source = "extern \"test/scalar\" = { fn upcase(s: Str) -> Str }" in
-  Doc_state.with_temp_project [ ("test/scalar.mr", source) ] (fun root ->
-      let file_id = Filename.concat root "test/scalar.mr" in
+  let source = "extern \"std/bytes\" = { fn from_str(input: Str) -> Str }" in
+  Doc_state.with_temp_project [ ("std/bytes.mr", source) ] (fun root ->
+      let file_id = Filename.concat root "std/bytes.mr" in
       let result = Doc_state.analyze_with_file_id ~source_root:root ~file_id ~source () in
       match (result.program, result.type_map, result.environment) with
       | Some prog, Some tm, Some env -> (

@@ -69,7 +69,7 @@ runtime/
 4. Do not expose generated Go type names, Go runtime handles, or shim helper types as public Marmoset API.
 5. Do not use a dynamic Go-side ABI value as the primary shim contract.
 6. Do not require Go signature discovery, reflection, CGO, plugins, or runtime dynamic loading.
-7. Do not implement project-local user shim packaging in this milestone. Phase one supports toolchain shims and test shims only; user shims need a follow-up plan.
+7. Do not implement project-local user shim packaging in this milestone. Phase one supports shipped toolchain `std/*` shims only; user shims need a follow-up plan.
 8. Do not solve full async/concurrency semantics in this milestone. Channels stay hidden behind later Marmoset-owned abstractions such as `Task`, `Stream`, or `Mailbox`.
 9. Do not implement callbacks in this milestone. Callback policy is specified as follow-up design work, not part of the core landing path.
 
@@ -141,17 +141,16 @@ If no extern function matches the exported name, the existing unknown-export dia
 
 ### Shim Catalog, Ownership, And Identity
 
-Phase one supports two shim roots:
+Phase one supports one shim root:
 
-- toolchain shims under `runtime/go/shims/<shim-id>/`;
-- synthetic `test/*` shims registered by tests.
+- shipped toolchain shims under `runtime/go/shims/std/<shim-id>/`.
 
 Project-local user shims are a follow-up plan. This is an intentional cost of removing direct FFI: application authors use shipped stdlib/toolchain shims until user-shim packaging lands.
 
 Shim ids obey these rules in phase one:
 
 - slash-separated, at least two non-empty segments;
-- allowed roots are `std` and `test`;
+- the only allowed root is `std`;
 - no `.`, `..`, absolute paths, drive-letter paths, empty segments, or machine paths;
 - segments are lowercase snake-case identifiers;
 - Go keyword segments are rejected for phase one to keep checked-in shim package names simple;
@@ -162,7 +161,6 @@ Each shim id has exactly one owning Marmoset module in a project. For phase one,
 ```text
 std/file   <-> std.file
 std/bytes  <-> std.bytes
-test/bytes <-> test.bytes
 ```
 
 A module `lib.file` cannot declare `extern "std/file"`. That fails with `shim-owner-mismatch`. The same shim id declared by two modules fails with `shim-owner-duplicate`, even if signatures match. Multiple extern blocks for the same shim id in one module are rejected in phase one unless a later review explicitly allows block merging.
@@ -718,7 +716,7 @@ Changes:
 - Extend extern function parsing to accept ordinary Marmoset function identifier suffixes such as `?` and `!`.
 - Add `Shim_catalog`:
   - discover checked-in shim ids under `runtime/go/shims/**`;
-  - support synthetic `test/*` shim ids in tests;
+  - reject non-`std` roots, including `test/*`, before catalog lookup;
   - reject unknown ids with `shim-id-not-found`;
   - reject malformed ids with `shim-id-invalid`;
   - add install rules so an installed compiler can locate `runtime/go/marmoset` and `runtime/go/shims`.
@@ -829,8 +827,7 @@ Files:
 - `lib/backend/go/emitter.ml`
 - `lib/frontend/typecheck/types.ml`
 - `lib/frontend/typecheck/display_names.ml`
-- `runtime/go/shims/test/scalar/**`
-- `runtime/go/shims/test/result/**`
+- `runtime/go/shims/std/bytes/**`
 - `test/integration/13_ffi.sh`
 - `test/snapshots/go_tree/**`
 
@@ -950,7 +947,6 @@ Files:
 - `std/bytes.mr`
 - `runtime/go/marmoset/bytes.go`
 - `runtime/go/shims/std/bytes/**`
-- `runtime/go/shims/test/bytes/**`
 - `lib/frontend/typecheck/shim_boundary.ml`
 - `lib/backend/go/emitter.ml`
 - `docs/features/ffi.md`
@@ -964,7 +960,7 @@ Changes:
 - Require copies on Go-to-Marmoset returns and Marmoset-to-Go parameters by default.
 - Add no mutable buffer API in this phase.
 - Add compile test proving shims cannot mutate `marmoset.Bytes` through exported fields.
-- Use a synthetic `test/bytes` shim for aliasing tests before `std/file` depends on bytes.
+- Use production `std/bytes` shim calls for adapter and aliasing tests.
 
 Tests:
 
@@ -1090,7 +1086,7 @@ Each commit should add failing tests first, make only the targeted slice pass, a
 5. **Boundary scope creep.** Adding too many boundary types at once risks recreating direct FFI complexity. Each type needs explicit copy, ownership, and diagnostic rules.
 6. **Copying cost.** Bytes immutability requires copies. Optimize only after correctness is pinned.
 7. **Handle lifecycle.** The compiler can enforce opaqueness, but close/idempotency/error policy belongs to each stdlib shim.
-8. **User shim packaging.** Project-local shims need conventions for source layout, generated API discovery, and security review. This milestone starts with toolchain/test shims only.
+8. **User shim packaging.** Project-local shims need conventions for source layout, generated API discovery, and security review. This milestone starts with shipped toolchain `std/*` shims only.
 9. **Framework callbacks.** HTTP-style callbacks involve concurrency and effects. They are deliberately follow-up work.
 
 ## Resolved Questions
@@ -1101,7 +1097,7 @@ Each commit should add failing tests first, make only the targeted slice pass, a
 4. Shim declarations use `extern "std/file" = { ... }`; no additional keyword is added.
 5. Resource handles use `extern type File`.
 6. Checked-in Go runtime support and shims live under `runtime/go/marmoset` and `runtime/go/shims`.
-7. Phase one supports toolchain and synthetic test shims only; project-local shims are a follow-up plan.
+7. Phase one supports shipped toolchain `std/*` shims only; project-local shims are a follow-up plan.
 8. API packages are keyed by shim id, and phase-one owner module id must match shim id after `/` to `.` conversion.
 9. Canonical `Result` ABI uses `Success`/`Failure`, matching `std/result.mr`.
 10. Callbacks are not part of this milestone.
@@ -1127,7 +1123,7 @@ Each commit should add failing tests first, make only the targeted slice pass, a
 - 2026-05-09 00:05 CEST: S1 auxiliary Go package build-layout slice started test-first. Inspecting `bin/main.ml`, `lib/frontend/compiler.ml`, `lib/backend/go/emitter.ml`, `test/integration/common.sh`, and `test/integration/13_ffi.sh`.
 - 2026-05-09 00:05 CEST: S1 red observed with `dune runtest lib/backend/go` failing on missing `validate_go_aux_files`; implemented `go_mod`, sorted auxiliary output files, safe relative-path validation, complete CLI tree writing, recursive tree snapshot helpers, and the `--emit-go` go.mod integration check. `dune runtest lib/backend/go`, `git diff --check`, and `make integration ffi` passed.
 - 2026-05-09 00:05 CEST: Added S1 malformed root auxiliary Go compile-failure coverage; `dune runtest lib/backend/go` passed with the classifier test.
-- 2026-05-09 00:09 CEST: S2 shim extern syntax/catalog/typechecking slice started test-first. Added frontend expectations for shim ids replacing direct Go import paths, owner-module enforcement, synthetic `test/*` catalog entries, boundary classification, shim artifacts, and LSP/backend fallout.
+- 2026-05-09 00:09 CEST: S2 shim extern syntax/catalog/typechecking slice started test-first. Added frontend expectations for shim ids replacing direct Go import paths, owner-module enforcement, temporary synthetic catalog entries, boundary classification, shim artifacts, and LSP/backend fallout.
 - 2026-05-09 00:23 CEST: S2 implementation reached focused green state locally: parser/syntax accepts shim ids and suffixed extern names, typechecking rejects direct Go package externs and unsupported boundaries, project compilation enforces shim ownership and module-local shim qualifiers, LSP semantic-token fixtures use owner-aware shim documents, and the Go backend now emits temporary placeholder shim adapter wrappers instead of direct package imports.
 - 2026-05-09 00:24 CEST: S2 committed as `f6983ac` (`Replace direct FFI artifacts with shim externs`) after `git diff --check`, `dune runtest lib/frontend/syntax`, `dune runtest lib/frontend/typecheck`, `dune runtest lib/frontend`, `dune runtest lib/backend/go`, and `dune runtest tools/lsp/lib`.
 - 2026-05-09 00:24 CEST: S3 support-package/API-package slice started test-first. No `runtime/` tree exists yet, so this slice will add `runtime/go/marmoset`, emit it only for called shims, and generate deterministic `api/<shim-id>/api.go` skeletons from owner-module enum boundary metadata.
@@ -1138,9 +1134,9 @@ Each commit should add failing tests first, make only the targeted slice pass, a
 - 2026-05-09 01:06 CEST: S4 committed as `d287e18` (`Generate typed shim adapters`).
 - 2026-05-09 01:06 CEST: S5 extern-type handle slice completed test-first. Red was observed with `make integration ffi` failing because `extern type File` still parsed as an extern signature requiring a quoted shim id. The slice added frontend `extern type` syntax/AST/lowering/import handling, extern named-type registry support, opaque construction/field/pattern/derive diagnostics, `BExternHandle` classification, generated API handle aliases, `marmoset.Handle`/`HandleTable`, typed handle adapter validation, synthetic handle shims, LSP coverage, and FFI integration positives/negatives for handle return/pass/stale/zero/wrong-type behavior. Verification passed with `dune runtest lib/frontend`, `dune runtest tools/lsp/lib`, `dune runtest lib/backend/go`, `make integration ffi`, and `git diff --check`.
 - 2026-05-09 01:06 CEST: S5 committed as `d32ab5c` (`Add extern handle support`).
-- 2026-05-09 01:06 CEST: S6 immutable Bytes slice started test-first. Added red expectations for canonical `std.bytes.Bytes` boundary classification, `std.bytes` wrapper use, byte-return and byte-parameter copy behavior through a synthetic `test/bytes` shim, noncanonical `extern type Bytes` staying handle-shaped, and direct construction/field inspection rejection.
-- 2026-05-09 01:14 CEST: S6 red observed with `dune runtest lib/frontend/typecheck` failing on canonical `std.bytes.Bytes` classification and `make integration ffi` failing because `std.bytes` and `test/bytes` were not yet implemented.
-- 2026-05-09 01:14 CEST: S6 reached focused green state: added `std/bytes.mr`, installed it in the toolchain stdlib, mapped only canonical `std__bytes__Bytes` to `BStdBytes`, represented it as `marmoset.Bytes` in Go, copied Bytes on both shim ingress and return, added checked-in `std/bytes` and `test/bytes` Go shims, added a backend Go compile guard proving shim packages cannot assign to `marmoset.Bytes.data`, documented canonical Bytes boundary rules, and regenerated the recursive Go tree snapshot. Verification passed with `dune runtest lib/frontend/typecheck`, `dune runtest lib/backend/go`, and `make integration ffi`.
+- 2026-05-09 01:06 CEST: S6 immutable Bytes slice started test-first. Added red expectations for canonical `std.bytes.Bytes` boundary classification, `std.bytes` wrapper use, byte-return and byte-parameter copy behavior through a temporary bytes shim, noncanonical `extern type Bytes` staying handle-shaped, and direct construction/field inspection rejection.
+- 2026-05-09 01:14 CEST: S6 red observed with `dune runtest lib/frontend/typecheck` failing on canonical `std.bytes.Bytes` classification and `make integration ffi` failing because `std.bytes` and the temporary bytes shim were not yet implemented.
+- 2026-05-09 01:14 CEST: S6 reached focused green state: added `std/bytes.mr`, installed it in the toolchain stdlib, mapped only canonical `std__bytes__Bytes` to `BStdBytes`, represented it as `marmoset.Bytes` in Go, copied Bytes on both shim ingress and return, added checked-in `std/bytes` and temporary bytes Go shims, added a backend Go compile guard proving shim packages cannot assign to `marmoset.Bytes.data`, documented canonical Bytes boundary rules, and regenerated the recursive Go tree snapshot. Verification passed with `dune runtest lib/frontend/typecheck`, `dune runtest lib/backend/go`, and `make integration ffi`.
 - 2026-05-09 01:19 CEST: S6 committed as `f5f7d30` (`Add immutable Bytes shim boundary`).
 - 2026-05-09 01:19 CEST: S7 std.file proof slice started test-first. Added `14_stdlib_shims.sh` and integration selectors for `stdlib`, `stdlib-shims`, and `14_stdlib_shims.sh`; red was observed with `make integration stdlib-shims` failing because `std.file` was not yet implemented.
 - 2026-05-09 01:19 CEST: S7 reached focused green state: added `std/file.mr`, installed it in the toolchain stdlib, added checked-in `std/file` Go shim code with explicit `NotFound`, `PermissionDenied`, `IsDirectory`, `Other(Str)`, and `AlreadyClosed` mappings, tested read/write Bytes round trips, missing/directory error mapping, open/close handle flow, double-close behavior, and public `File` construction rejection. Fixed generated `Option`/`Result` adapter inspectors to avoid unused payload locals for erased payload conversions such as `Result[Unit, E]`. Verification passed with `make integration stdlib-shims`, `make integration ffi`, and `dune runtest lib/backend/go`.
@@ -1148,3 +1144,5 @@ Each commit should add failing tests first, make only the targeted slice pass, a
 - 2026-05-09 01:22 CEST: Final verification for shim-first Go interop completed with `dune runtest lib/frontend/syntax`, `dune runtest lib/frontend/typecheck`, `dune runtest lib/backend/go`, `dune runtest tools/lsp/lib`, `make integration ffi`, `make integration snapshots`, and `make integration stdlib-shims`.
 - 2026-05-09 02:58 CEST: Cleanup pass removed stale direct-FFI fixture and exact Go snapshot files, rewrote active FFI/architecture/roadmap docs around the implemented shim model, moved this plan to `docs/plans/done/language/09_shim-first-go-interop.md`, and kept only rejection tests plus archived historical plan text for old direct Go package externs.
 - 2026-05-09 03:00 CEST: Cleanup verification passed with `dune runtest lib/frontend/typecheck`, `dune runtest lib/backend/go`, `make integration ffi`, `make integration snapshots`, `make integration stdlib-shims`, and `git diff --check`.
+- 2026-05-09 03:11 CEST: Follow-up cleanup slice started to remove the synthetic non-`std` shim root entirely. Active fixtures and positive tests now must use production `std/*` shims only; the old root may remain only in invalid-root rejection assertions.
+- 2026-05-09 03:23 CEST: Synthetic shim-root removal reached green state: deleted checked-in `runtime/go/shims/test/**` and fixture shim modules, restricted the catalog to `std`, rewired unit/LSP/integration coverage to production `std.bytes`/`std.file` where positive behavior is tested, kept only invalid-root rejection assertions for the removed root, regenerated the FFI Go-tree snapshot, and verified with `dune runtest lib/frontend`, `dune runtest lib/backend/go`, `dune runtest tools/lsp/lib`, `make integration ffi`, `make integration 08_cli.sh`, `make integration stdlib-shims`, `make integration snapshots`, and `git diff --check`.

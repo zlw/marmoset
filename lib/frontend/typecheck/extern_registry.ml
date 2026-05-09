@@ -30,7 +30,6 @@ let clear () : unit =
 
 let set_current_module_id module_id = current_module_id := Some module_id
 let declaring_module_or fallback = Option.value !current_module_id ~default:fallback
-
 let shim_key ~(shim_id : string) ~(func_name : string) : string = shim_id ^ "\x00" ^ func_name
 
 let source_span ~(file_id : string option) ~(start_pos : int) ~(end_pos : int) : Diagnostic.span =
@@ -46,7 +45,9 @@ let error_at_span ~code ~message = function
 let registry_error span ~code ~message = Error (error_at_span ~code ~message span)
 
 let capitalize_words words =
-  words |> List.filter (fun word -> not (String.equal word "")) |> List.map String.capitalize_ascii
+  words
+  |> List.filter (fun word -> not (String.equal word ""))
+  |> List.map String.capitalize_ascii
   |> String.concat ""
 
 let words_of_identifier_base (base : string) : string list =
@@ -64,11 +65,11 @@ let words_of_identifier_base (base : string) : string list =
     else
       match base.[idx] with
       | '_' -> go (flush current words) false (idx + 1)
-      | ('A' .. 'Z' as ch) when prev_lower_or_digit ->
+      | 'A' .. 'Z' as ch when prev_lower_or_digit ->
           let words = flush current words in
           Buffer.add_char current (Char.lowercase_ascii ch);
           go words false (idx + 1)
-      | ('A' .. 'Z' as ch) ->
+      | 'A' .. 'Z' as ch ->
           Buffer.add_char current (Char.lowercase_ascii ch);
           go words false (idx + 1)
       | ('a' .. 'z' | '0' .. '9') as ch ->
@@ -107,14 +108,16 @@ let validate_unique_param_names span ~(fn_name : string) (params : AST.extern_pa
         if List.mem param.extern_param_name seen then
           registry_error span ~code:"shim-function-duplicate"
             ~message:
-              (Printf.sprintf "shim function %s has duplicate parameter name %s" fn_name
-                 param.extern_param_name)
+              (Printf.sprintf "shim function %s has duplicate parameter name %s" fn_name param.extern_param_name)
         else
           go (param.extern_param_name :: seen) rest
   in
   go [] params
 
-let build_func ~(owner_module_id : string) ~(file_id : string option) (block : AST.extern_block_def)
+let build_func
+    ~(owner_module_id : string)
+    ~(file_id : string option)
+    (block : AST.extern_block_def)
     (fn_sig : AST.extern_fn_sig) : (Artifacts.extern_func, Diagnostic.t) result =
   let span = source_span ~file_id ~start_pos:fn_sig.extern_fn_pos ~end_pos:fn_sig.extern_fn_end_pos in
   let* param_types =
@@ -134,9 +137,7 @@ let build_func ~(owner_module_id : string) ~(file_id : string option) (block : A
   in
   let* () = validate_unique_param_names span ~fn_name:fn_sig.extern_fn_name fn_sig.extern_fn_params in
   let* param_boundary_types =
-    map_result
-      (fun typ -> Shim_boundary.classify ~source_span:span ~owner_module_id typ)
-      param_types
+    map_result (fun typ -> Shim_boundary.classify ~source_span:span ~owner_module_id typ) param_types
   in
   let* return_boundary_type = Shim_boundary.classify ~source_span:span ~owner_module_id return_type in
   Ok
@@ -173,8 +174,7 @@ let register_func (func : Artifacts.extern_func) : (unit, Diagnostic.t) result =
           | Some existing when not (signature_equal existing func) ->
               registry_error func.source_span ~code:"shim-function-duplicate"
                 ~message:
-                  (Printf.sprintf "conflicting shim signatures for %S.%s" func.shim_id
-                     func.marmoset_func_name)
+                  (Printf.sprintf "conflicting shim signatures for %S.%s" func.shim_id func.marmoset_func_name)
           | Some _ | None ->
               Hashtbl.replace shim_id_by_qualifier func.source_qualifier func.shim_id;
               Hashtbl.replace declaration_by_source source_key func;
@@ -190,8 +190,8 @@ let validate_go_symbol_collisions (funcs : Artifacts.extern_func list) : (unit, 
         | Some existing ->
             registry_error func.source_span ~code:"shim-symbol-collision"
               ~message:
-                (Printf.sprintf "shim functions %s and %s both map to Go symbol %s"
-                   existing.marmoset_func_name func.marmoset_func_name func.go_symbol_name)
+                (Printf.sprintf "shim functions %s and %s both map to Go symbol %s" existing.marmoset_func_name
+                   func.marmoset_func_name func.go_symbol_name)
         | None ->
             Hashtbl.add by_symbol func.go_symbol_name func;
             go rest)
@@ -217,7 +217,9 @@ let register_block ~(declaring_module : string) ~(file_id : string option) (bloc
            expected_owner declaring_module)
   else if Hashtbl.mem registered_block_shim_ids block.extern_shim_id then
     registry_error block_span ~code:"shim-block-duplicate"
-      ~message:(Printf.sprintf "shim %S is declared by multiple extern blocks in module '%s'" block.extern_shim_id declaring_module)
+      ~message:
+        (Printf.sprintf "shim %S is declared by multiple extern blocks in module '%s'" block.extern_shim_id
+           declaring_module)
   else (
     Hashtbl.add registered_block_shim_ids block.extern_shim_id block_span;
     let* funcs = map_result (build_func ~owner_module_id:declaring_module ~file_id block) block.extern_fns in
@@ -234,10 +236,7 @@ let lookup ~(source_qualifier : string) ~(func_name : string) : Artifacts.extern
   Hashtbl.find_opt declaration_by_source (source_qualifier, func_name)
 
 let is_qualifier (source_qualifier : string) : bool = Hashtbl.mem shim_id_by_qualifier source_qualifier
-
-let record_call (expr_id : int) (call : Artifacts.extern_call) : unit =
-  Hashtbl.replace extern_calls expr_id call
-
+let record_call (expr_id : int) (call : Artifacts.extern_call) : unit = Hashtbl.replace extern_calls expr_id call
 let snapshot_declarations () : (string, Artifacts.extern_func) Hashtbl.t = Hashtbl.copy declaration_by_key
 let snapshot_calls () : (int, Artifacts.extern_call) Hashtbl.t = Hashtbl.copy extern_calls
 
@@ -254,21 +253,22 @@ let parse_one_extern source =
   | Ok _ -> Error "expected one extern block"
   | Error diags -> Error (String.concat "; " (List.map (fun (diag : Diagnostic.t) -> diag.message) diags))
 
-let register_source ?(declaring_module = "test.scalar") source =
+let register_source ?(declaring_module = "std.bytes") source =
   match parse_one_extern source with
   | Error msg -> Error (Diagnostic.error_no_span ~code:"test" ~message:msg)
   | Ok (block, file_id) -> register_block ~declaring_module ~file_id block
 
-let%test "shim registry snapshots scalar declarations" =
+let%test "shim registry snapshots std bytes declarations" =
   clear ();
-  match register_source "extern \"test/scalar\" = { fn upcase(s: Str) -> Str }" with
+  match register_source "extern \"std/bytes\" = { fn length(input: Str) -> Int }" with
   | Error _ -> false
   | Ok () -> (
-      match lookup ~source_qualifier:"scalar" ~func_name:"upcase" with
+      match lookup ~source_qualifier:"bytes" ~func_name:"length" with
       | Some func ->
-          func.shim_id = "test/scalar" && func.go_symbol_name = "Upcase"
+          func.shim_id = "std/bytes"
+          && func.go_symbol_name = "Length"
           && func.param_boundary_types = [ Shim_boundary.BStr ]
-          && func.return_boundary_type = Shim_boundary.BStr
+          && func.return_boundary_type = Shim_boundary.BInt
           && Hashtbl.length (snapshot_declarations ()) = 1
       | None -> false)
 
@@ -280,18 +280,21 @@ let%test "shim registry rejects direct Go import paths" =
 
 let%test "shim registry rejects owner mismatch" =
   clear ();
-  match register_source ~declaring_module:"main" "extern \"test/scalar\" = { fn upcase(s: Str) -> Str }" with
+  match register_source ~declaring_module:"main" "extern \"std/bytes\" = { fn length(input: Str) -> Int }" with
   | Error diag -> diag.code = "shim-owner-mismatch"
   | Ok () -> false
 
 let%test "shim registry rejects unsupported boundary types" =
   clear ();
-  match register_source "extern \"test/scalar\" = { fn bad(xs: List[Str]) -> Str }" with
+  match register_source "extern \"std/bytes\" = { fn bad(xs: List[Str]) -> Str }" with
   | Error diag -> diag.code = "type-shim-boundary"
   | Ok () -> false
 
 let%test "shim registry rejects post-mangle symbol collisions" =
   clear ();
-  match register_source "extern \"test/scalar\" = { fn exists?(s: Str) -> Bool fn exists_q(s: Str) -> Bool }" with
+  match
+    register_source
+      "extern \"std/bytes\" = { fn equal?(left: Str, right: Str) -> Bool fn equal_q(left: Str, right: Str) -> Bool }"
+  with
   | Error diag -> diag.code = "shim-symbol-collision"
   | Ok () -> false

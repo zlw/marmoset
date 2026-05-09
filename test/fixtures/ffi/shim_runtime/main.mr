@@ -1,21 +1,6 @@
-import test.scalar
-import test.result
-import test.status
-import test.handle
 import std.bytes
-import test.bytes as test_bytes
 
-puts(scalar.upcase("hi"))
-puts(Option.unwrap_or(scalar.maybe(true), 0))
-puts(Result.value_or(result.parse("41"), 0))
-puts(status.label(status.flip(true)))
-let file = handle.open("plan")
-puts(handle.label(file))
-puts(handle.close(file))
 let payload = bytes.from_str("hi")
-puts(bytes.to_str_lossy(test_bytes.add_suffix(payload)))
+puts(bytes.to_str_lossy(payload))
 puts(bytes.length(payload))
 puts(if (bytes.equal?(payload, bytes.from_str("hi"))) { "equal" } else { "different" })
-puts(bytes.to_str_lossy(test_bytes.mutate_after_return("stay")))
-puts(test_bytes.mutate_param(payload))
-puts(bytes.to_str_lossy(payload))

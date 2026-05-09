@@ -351,8 +351,8 @@ let discover_project_with_overrides
   in
   let* () = discover_module state ~module_id:entry_module ~file_path:entry_file in
   let* () = discover_core_stdlib_modules state in
-  Module_context.build_graph ~root_dir:project_root ~modules:state.modules ~dependencies:state.dependencies
-    ~entry_module
+  Module_context.build_graph ~root_dir:project_root ~toolchain_root:stdlib_root ~modules:state.modules
+    ~dependencies:state.dependencies ~entry_module ()
 
 let discover_project ?source_root ?stdlib_root ~(entry_file : string) () :
     (Module_context.module_graph, Diagnostic.t) result =

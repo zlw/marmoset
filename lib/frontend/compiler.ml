@@ -49,6 +49,7 @@ type project_resolution_artifacts = {
 }
 
 type compiled_project = {
+  toolchain_root : string option;
   modules : checked_module list;
   program : AST.program;
   environment : Infer.type_env;
@@ -119,8 +120,7 @@ let merge_project_resolution_artifacts (dst : project_resolution_artifacts) (res
   merge_hashtbl dst.placeholder_rewrite_map result.placeholder_rewrite_map
 
 let extern_signatures_equal
-    (a : Typecheck.Resolution_artifacts.extern_func)
-    (b : Typecheck.Resolution_artifacts.extern_func) : bool =
+    (a : Typecheck.Resolution_artifacts.extern_func) (b : Typecheck.Resolution_artifacts.extern_func) : bool =
   List.length a.param_boundary_types = List.length b.param_boundary_types
   && List.for_all2 Typecheck.Shim_boundary.equal_boundary_type a.param_boundary_types b.param_boundary_types
   && Typecheck.Shim_boundary.equal_boundary_type a.return_boundary_type b.return_boundary_type
@@ -454,8 +454,8 @@ let extract_module_locals (program : AST.program) : (Module_sig.module_locals, D
                 (Ok []) derive_traits
             in
             go { acc with trait_impls = List.rev_append derived_impls acc.trait_impls } rest
-        | AST.ExportDecl _ | AST.ImportDecl _ | AST.ExternBlock _ | AST.Let _ | AST.Return _ | AST.ExpressionStmt _
-        | AST.Block _ ->
+        | AST.ExportDecl _ | AST.ImportDecl _ | AST.ExternBlock _ | AST.Let _ | AST.Return _
+        | AST.ExpressionStmt _ | AST.Block _ ->
             go acc rest)
   in
   go empty_locals_acc program
@@ -681,12 +681,13 @@ let compile_module
       navigation = { surface; resolved_imports = rewrite.resolved_imports };
     }
 
-let validate_project_extern_signature_coherence (modules : checked_module list) : (unit, Diagnostic.t list) result =
+let validate_project_extern_signature_coherence (modules : checked_module list) : (unit, Diagnostic.t list) result
+    =
   let seen : (string, Typecheck.Resolution_artifacts.extern_func) Hashtbl.t = Hashtbl.create 64 in
   let owners_by_shim_id : (string, Typecheck.Resolution_artifacts.extern_func) Hashtbl.t = Hashtbl.create 64 in
   let rec check_module = function
     | [] -> Ok ()
-    | (module_ : checked_module) :: rest ->
+    | (module_ : checked_module) :: rest -> (
         let conflict =
           Hashtbl.fold
             (fun shim_key (func : Typecheck.Resolution_artifacts.extern_func) acc ->
@@ -709,7 +710,7 @@ let validate_project_extern_signature_coherence (modules : checked_module list) 
                           None)))
             module_.result.extern_declarations None
         in
-        (match conflict with
+        match conflict with
         | None -> check_module rest
         | Some (`OwnerDuplicate (existing, func)) ->
             Error
@@ -724,14 +725,13 @@ let validate_project_extern_signature_coherence (modules : checked_module list) 
               [
                 compiler_error ~code:"shim-function-duplicate"
                   ~message:
-                    (Printf.sprintf
-                       "Conflicting shim signatures for %S.%s between modules '%s' and '%s'"
+                    (Printf.sprintf "Conflicting shim signatures for %S.%s between modules '%s' and '%s'"
                        func.shim_id func.marmoset_func_name existing.owner_module_id func.owner_module_id);
               ])
   in
   check_module modules
 
-let merge_checked_modules (modules : checked_module list) : compiled_project =
+let merge_checked_modules ?toolchain_root (modules : checked_module list) : compiled_project =
   let program = List.concat_map (fun (m : checked_module) -> m.program) modules in
   let environment =
     List.fold_left
@@ -752,6 +752,7 @@ let merge_checked_modules (modules : checked_module list) : compiled_project =
         m.result.identifier_symbols)
     modules;
   {
+    toolchain_root;
     modules;
     program;
     environment;
@@ -762,36 +763,43 @@ let merge_checked_modules (modules : checked_module list) : compiled_project =
   }
 
 let compile_project (graph : Module_context.module_graph) : (compiled_project, Diagnostic.t list) result =
-  let* surfaces = Import_resolver.build_module_surfaces graph |> Result.map_error (fun diag -> [ diag ]) in
-  let* rewrites = rewrite_project_modules ~surfaces graph in
-  let* () = validate_build_wide_trait_impl_coherence ~rewrites graph in
-  let typed_signatures = Hashtbl.create (List.length graph.topo_order) in
-  let rec go acc = function
-    | [] ->
-        let modules = List.rev acc in
-        let* () = validate_project_extern_signature_coherence modules in
-        Ok (merge_checked_modules modules)
-    | module_id :: rest -> (
-        match Hashtbl.find_opt graph.modules module_id with
-        | None ->
-            Error
-              [ compiler_error ~code:"module-missing" ~message:(Printf.sprintf "Missing module '%s'" module_id) ]
-        | Some module_info ->
-            let* rewrite =
-              match Hashtbl.find_opt rewrites module_id with
-              | Some rewrite -> Ok rewrite
-              | None ->
-                  Error
-                    [
-                      compiler_error ~code:"module-rewrite-missing"
-                        ~message:(Printf.sprintf "Missing rewrite for '%s'" module_id);
-                    ]
-            in
-            let* checked_module = compile_module ~surfaces ~typed_signatures ~rewrite module_info in
-            Hashtbl.replace typed_signatures module_id checked_module.signature;
-            go (checked_module :: acc) rest)
-  in
-  go [] graph.topo_order
+  Typecheck.Shim_catalog.set_toolchain_root graph.toolchain_root;
+  Fun.protect
+    ~finally:(fun () -> Typecheck.Shim_catalog.set_toolchain_root None)
+    (fun () ->
+      let* surfaces = Import_resolver.build_module_surfaces graph |> Result.map_error (fun diag -> [ diag ]) in
+      let* rewrites = rewrite_project_modules ~surfaces graph in
+      let* () = validate_build_wide_trait_impl_coherence ~rewrites graph in
+      let typed_signatures = Hashtbl.create (List.length graph.topo_order) in
+      let rec go acc = function
+        | [] ->
+            let modules = List.rev acc in
+            let* () = validate_project_extern_signature_coherence modules in
+            Ok (merge_checked_modules ?toolchain_root:graph.toolchain_root modules)
+        | module_id :: rest -> (
+            match Hashtbl.find_opt graph.modules module_id with
+            | None ->
+                Error
+                  [
+                    compiler_error ~code:"module-missing"
+                      ~message:(Printf.sprintf "Missing module '%s'" module_id);
+                  ]
+            | Some module_info ->
+                let* rewrite =
+                  match Hashtbl.find_opt rewrites module_id with
+                  | Some rewrite -> Ok rewrite
+                  | None ->
+                      Error
+                        [
+                          compiler_error ~code:"module-rewrite-missing"
+                            ~message:(Printf.sprintf "Missing rewrite for '%s'" module_id);
+                        ]
+                in
+                let* checked_module = compile_module ~surfaces ~typed_signatures ~rewrite module_info in
+                Hashtbl.replace typed_signatures module_id checked_module.signature;
+                go (checked_module :: acc) rest)
+      in
+      go [] graph.topo_order)
 
 let seed_module_locals (locals : Module_sig.module_locals) : (unit, Diagnostic.t) result =
   List.iter Enum_registry.register locals.enums;
@@ -855,8 +863,9 @@ let emit_compiled_project (project : compiled_project) : (Codegen.build_output, 
         main_go;
         runtime_go = Codegen.get_runtime ();
         aux_go_files =
-          Codegen.shim_aux_go_files ~extern_declarations:project.artifacts.extern_declarations
-            ~extern_calls:project.artifacts.extern_calls;
+          Codegen.shim_aux_go_files ?toolchain_root:project.toolchain_root
+            ~extern_declarations:project.artifacts.extern_declarations
+            ~extern_calls:project.artifacts.extern_calls ();
         diagnostics = project.diagnostics;
       }
   with
@@ -1470,46 +1479,39 @@ let%test "check_entry rejects colliding direct imports" =
 let%test "shim S2: extern qualifier collides with namespace import" =
   Discovery.with_temp_project
     [
-      ("test/scalar.mr", "import lib.conflict\nextern \"test/scalar\" as conflict = { fn upcase(s: Str) -> Str }\n");
+      ( "std/bytes.mr",
+        "import lib.conflict\nextern \"std/bytes\" as conflict = { fn from_str(input: Str) -> Str }\n" );
       ("lib/conflict.mr", "export id\nfn id(s: Str) -> Str = s\n");
     ]
     (fun root ->
-      match check_entry ~source_root:root ~entry_file:(Filename.concat root "test/scalar.mr") () with
+      match check_entry ~source_root:root ~entry_file:(Filename.concat root "std/bytes.mr") () with
       | Ok _ -> false
       | Error diags ->
-          List.exists
-            (fun (diag : Diagnostic.t) -> diag.code = "module-extern-qualifier-collision")
-            diags)
+          List.exists (fun (diag : Diagnostic.t) -> diag.code = "module-extern-qualifier-collision") diags)
 
 let%test "shim S2: extern qualifier collides with top-level declaration" =
   Discovery.with_temp_project
-    [ ("test/scalar.mr", "let scalar = 1\nextern \"test/scalar\" = { fn upcase(s: Str) -> Str }\n") ]
+    [ ("std/bytes.mr", "let bytes = 1\nextern \"std/bytes\" = { fn from_str(input: Str) -> Str }\n") ]
     (fun root ->
-      match check_entry ~source_root:root ~entry_file:(Filename.concat root "test/scalar.mr") () with
+      match check_entry ~source_root:root ~entry_file:(Filename.concat root "std/bytes.mr") () with
       | Ok _ -> false
       | Error diags ->
-          List.exists
-            (fun (diag : Diagnostic.t) -> diag.code = "module-extern-qualifier-collision")
-            diags)
+          List.exists (fun (diag : Diagnostic.t) -> diag.code = "module-extern-qualifier-collision") diags)
 
 let%test "shim S2: extern qualifier collides with implicit core binding" =
   Discovery.with_temp_project
-    [ ("test/scalar.mr", "extern \"test/scalar\" as Option = { fn upcase(s: Str) -> Str }\n") ]
+    [ ("std/bytes.mr", "extern \"std/bytes\" as Option = { fn from_str(input: Str) -> Str }\n") ]
     (fun root ->
-      match check_entry ~source_root:root ~entry_file:(Filename.concat root "test/scalar.mr") () with
+      match check_entry ~source_root:root ~entry_file:(Filename.concat root "std/bytes.mr") () with
       | Ok _ -> false
       | Error diags ->
-          List.exists
-            (fun (diag : Diagnostic.t) -> diag.code = "module-extern-qualifier-collision")
-            diags)
+          List.exists (fun (diag : Diagnostic.t) -> diag.code = "module-extern-qualifier-collision") diags)
 
 let%test "shim S2: extern declarations remain module-local" =
   Discovery.with_temp_project
     [
-      ("main.mr", "import test.scalar.upcase\nscalar.upcase(\"x\")\n");
-      ( "test/scalar.mr",
-        "export upcase\nextern \"test/scalar\" = { fn upcase(s: Str) -> Str }\nfn upcase(s: Str) -> Str = scalar.upcase(s)\n"
-      );
+      ( "main.mr",
+        "import std.bytes.from_str\nimport std.bytes.to_str_lossy\nbytes.to_str_lossy(from_str(\"x\"))\n" );
     ]
     (fun root ->
       match check_entry ~entry_file:(Filename.concat root "main.mr") () with
@@ -1521,46 +1523,32 @@ let%test "shim S2: extern declarations remain module-local" =
 
 let%test "shim S2: compile_project merges shim artifacts" =
   Discovery.with_temp_project
-    [
-      ( "test/scalar.mr",
-        "extern \"test/scalar\" = { fn upcase(s: Str) -> Str }\nlet value = scalar.upcase(\"x\")\n" );
-    ]
+    [ ("main.mr", "import std.bytes\nlet payload = bytes.from_str(\"x\")\nbytes.length(payload)\n") ]
     (fun root ->
-      match Discovery.discover_project ~source_root:root ~entry_file:(Filename.concat root "test/scalar.mr") () with
+      match Discovery.discover_project ~source_root:root ~entry_file:(Filename.concat root "main.mr") () with
       | Error _ -> false
       | Ok graph -> (
           match compile_project graph with
           | Error _ -> false
           | Ok project ->
-              Hashtbl.length project.artifacts.extern_declarations = 1
-              && Hashtbl.length project.artifacts.extern_calls = 1))
+              Hashtbl.length project.artifacts.extern_declarations >= 2
+              && Hashtbl.length project.artifacts.extern_calls >= 2))
 
-let%test "shim S2: wrapper module exports ordinary API backed by private shim" =
+let%test "shim S2: std wrapper module exports ordinary API backed by private shim" =
   Discovery.with_temp_project
-    [
-      ("main.mr", "import test.scalar\nputs(scalar.upcase(\"hi\"))\n");
-      ( "test/scalar.mr",
-        "export upcase\nextern \"test/scalar\" = { fn upcase(s: Str) -> Str }\nfn upcase(s: Str) -> Str = scalar.upcase(s)\n"
-      );
-    ]
+    [ ("main.mr", "import std.bytes\nputs(bytes.to_str_lossy(bytes.from_str(\"hi\")))\n") ]
     (fun root ->
       match compile_entry_to_build ~entry_file:(Filename.concat root "main.mr") () with
       | Error _ -> false
       | Ok build_output ->
-          string_contains build_output.main_go "func extern__test_scalar__upcase(s string) string"
-          && string_contains build_output.main_go {|mshim_test_scalar "marmoset_out/shims/test/scalar"|}
-          && string_contains build_output.main_go "mshim_test_scalar.Upcase(s)"
-          && not (string_contains build_output.main_go "shim adapter not implemented")
-          && string_contains build_output.main_go "scalar__upcase_string")
+          string_contains build_output.main_go "func extern__std_bytes__from_str(input string) marmoset.Bytes"
+          && string_contains build_output.main_go {|mshim_std_bytes "marmoset_out/shims/std/bytes"|}
+          && string_contains build_output.main_go "mshim_std_bytes.FromStr(input)"
+          && not (string_contains build_output.main_go "shim adapter not implemented"))
 
-let%test "shim S3: compile_entry_to_build emits support and api aux files for called shim" =
+let%test "shim S3: compile_entry_to_build emits support and api aux files for called std shim" =
   Discovery.with_temp_project
-    [
-      ("main.mr", "import test.scalar\nputs(scalar.upcase(\"hi\"))\n");
-      ( "test/scalar.mr",
-        "export upcase\nextern \"test/scalar\" = { fn upcase(s: Str) -> Str }\nfn upcase(s: Str) -> Str = scalar.upcase(s)\n"
-      );
-    ]
+    [ ("main.mr", "import std.bytes\nputs(bytes.to_str_lossy(bytes.from_str(\"hi\")))\n") ]
     (fun root ->
       match compile_entry_to_build ~entry_file:(Filename.concat root "main.mr") () with
       | Error _ -> false
@@ -1570,47 +1558,34 @@ let%test "shim S3: compile_entry_to_build emits support and api aux files for ca
             |> List.map (fun (file : Codegen.go_aux_file) -> file.rel_path)
             |> List.sort String.compare
           in
-          List.mem "api/test/scalar/api.go" paths && List.mem "marmoset/result.go" paths)
+          List.mem "api/std/bytes/api.go" paths && List.mem "marmoset/result.go" paths)
 
-let%test "shim S2: distinct shim ids emit distinct adapter wrappers" =
+let%test "shim S2: distinct std shim ids emit distinct adapter wrappers" =
   Discovery.with_temp_project
     [
-      ("main.mr", "import a.up\nimport b.loud\nputs(up(\"hi\"))\nputs(loud(\"bye\"))\n");
-      ( "a.mr",
-        "export up\nimport test.scalar.upcase\nfn up(s: Str) -> Str = upcase(s)\n"
-      );
-      ( "b.mr",
-        "export loud\nimport test.other.downcase\nfn loud(s: Str) -> Str = downcase(s)\n"
-      );
-      ( "test/scalar.mr",
-        "export upcase\nextern \"test/scalar\" = { fn upcase(s: Str) -> Str }\nfn upcase(s: Str) -> Str = scalar.upcase(s)\n"
-      );
-      ( "test/other.mr",
-        "export downcase\nextern \"test/other\" = { fn downcase(s: Str) -> Str }\nfn downcase(s: Str) -> Str = other.downcase(s)\n"
+      ( "main.mr",
+        "import std.bytes\nimport std.file\nlet payload = bytes.from_str(\"hi\")\nlet _ = file.write(\"marmoset.tmp\", payload)\nputs(bytes.to_str_lossy(payload))\n"
       );
     ]
     (fun root ->
       match compile_entry_to_build ~entry_file:(Filename.concat root "main.mr") () with
       | Error _ -> false
       | Ok build_output ->
-          count_occurrences build_output.main_go "func extern__test_scalar__upcase(s string) string" = 1
-          && count_occurrences build_output.main_go "func extern__test_other__downcase(s string) string" = 1
-          && string_contains build_output.main_go "extern__test_scalar__upcase(s)"
-          && string_contains build_output.main_go "extern__test_other__downcase(s)")
+          count_occurrences build_output.main_go "func extern__std_bytes__from_str(input string) marmoset.Bytes"
+          = 1
+          && count_occurrences build_output.main_go
+               "func extern__std_file__write(path string, bytes marmoset.Bytes) Result_unit_std__file__FileWriteError"
+             = 1
+          && string_contains build_output.main_go "extern__std_bytes__from_str"
+          && string_contains build_output.main_go "extern__std_file__write")
 
 let%test "shim S2: direct Go package externs are rejected at project compile" =
   Discovery.with_temp_project
-    [
-      ( "main.mr",
-        "extern \"strings\" = { fn ToUpper(s: Str) -> Str }\nlet value = strings.ToUpper(\"x\")\n" );
-    ]
+    [ ("main.mr", "extern \"strings\" = { fn ToUpper(s: Str) -> Str }\nlet value = strings.ToUpper(\"x\")\n") ]
     (fun root ->
       match compile_entry_to_build ~entry_file:(Filename.concat root "main.mr") () with
       | Ok _ -> false
-      | Error diags ->
-          List.exists
-            (fun (diag : Diagnostic.t) -> diag.code = "shim-id-invalid")
-            diags)
+      | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "shim-id-invalid") diags)
 
 let%test "check_entry reports non-exported namespace members clearly" =
   Discovery.with_temp_project

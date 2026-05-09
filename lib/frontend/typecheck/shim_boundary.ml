@@ -1,5 +1,4 @@
 open Types
-
 module Diagnostic = Diagnostics.Diagnostic
 
 type enum_identity = {
@@ -54,8 +53,7 @@ let rec to_string = function
       if enum.enum_type_args = [] then
         enum.enum_name
       else
-        Printf.sprintf "%s[%s]" enum.enum_name
-          (String.concat ", " (List.map to_string enum.enum_type_args))
+        Printf.sprintf "%s[%s]" enum.enum_name (String.concat ", " (List.map to_string enum.enum_type_args))
   | BStdBytes -> "Bytes"
   | BExternHandle handle -> handle.extern_type_name
 
@@ -94,8 +92,8 @@ let unsupported ?source_span ~(typ : mono_type) () =
       Diagnostic.error_with_span ~code ~message ~file_id ~start_pos ?end_pos ()
   | Some Diagnostic.NoSpan | None -> Diagnostic.error_no_span ~code ~message
 
-let rec classify ?source_span ~(owner_module_id : string) (typ : mono_type) :
-    (boundary_type, Diagnostic.t) result =
+let rec classify ?source_span ~(owner_module_id : string) (typ : mono_type) : (boundary_type, Diagnostic.t) result
+    =
   let typ = canonicalize_mono_type typ in
   match typ with
   | TNull -> Ok BUnit
@@ -135,15 +133,15 @@ let rec classify ?source_span ~(owner_module_id : string) (typ : mono_type) :
   | _ -> Error (unsupported ?source_span ~typ ())
 
 let%test "classifies scalar boundary types" =
-  classify ~owner_module_id:"test.scalar" TInt = Ok BInt
-  && classify ~owner_module_id:"test.scalar" TFloat = Ok BFloat
-  && classify ~owner_module_id:"test.scalar" TBool = Ok BBool
-  && classify ~owner_module_id:"test.scalar" TString = Ok BStr
-  && classify ~owner_module_id:"test.scalar" TNull = Ok BUnit
+  classify ~owner_module_id:"std.bytes" TInt = Ok BInt
+  && classify ~owner_module_id:"std.bytes" TFloat = Ok BFloat
+  && classify ~owner_module_id:"std.bytes" TBool = Ok BBool
+  && classify ~owner_module_id:"std.bytes" TString = Ok BStr
+  && classify ~owner_module_id:"std.bytes" TNull = Ok BUnit
 
 let%test "classifies canonical option and result identities" =
   match
-    classify ~owner_module_id:"test.scalar"
+    classify ~owner_module_id:"std.bytes"
       (TEnum (result_enum_name, [ TEnum (option_enum_name, [ TInt ]); TString ]))
   with
   | Ok (BStdResult (BStdOption BInt, BStr)) -> true
@@ -155,6 +153,6 @@ let%test "classifies canonical std bytes identity" =
   | _ -> false
 
 let%test "rejects impostor option identity" =
-  match classify ~owner_module_id:"test.scalar" (TEnum ("Option", [ TInt ])) with
+  match classify ~owner_module_id:"std.bytes" (TEnum ("Option", [ TInt ])) with
   | Error diag -> diag.code = "type-shim-boundary"
   | Ok _ -> false

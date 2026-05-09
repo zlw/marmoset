@@ -269,7 +269,6 @@ Shim package graph:
 
 Shim catalog and ownership:
 - Phase one resolves toolchain shim ids from the same source-tree or installed share root as the stdlib.
-- Synthetic `test/*` shim ids are available only to tests.
 - Each shim id has one project owner module; in phase one, `std/file` is owned by `std.file`.
 - The typechecker validates shim id shape, catalog presence, duplicate ownership, duplicate shim blocks/functions, qualifier collisions, Go symbol collisions, and boundary-type support before codegen.
 
