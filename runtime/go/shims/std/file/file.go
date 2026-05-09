@@ -2,6 +2,7 @@ package file
 
 import (
 	"errors"
+	"io"
 	"os"
 	"syscall"
 
@@ -94,7 +95,19 @@ func Write(path string, bytes marmoset.Bytes) marmoset.Result[marmoset.Unit, fil
 	return marmoset.Success[marmoset.Unit, fileapi.FileWriteError](marmoset.NewUnit())
 }
 
-func Open(path string) marmoset.Result[fileapi.File, fileapi.FileOpenError] {
+func ReadAll(file fileapi.File) marmoset.Result[marmoset.Bytes, fileapi.FileReadError] {
+	resource, ok := files.Get(file)
+	if !ok {
+		return marmoset.Failure[marmoset.Bytes, fileapi.FileReadError](fileapi.FileReadErrorAlreadyClosed{})
+	}
+	data, err := io.ReadAll(resource.file)
+	if err != nil {
+		return marmoset.Failure[marmoset.Bytes, fileapi.FileReadError](fileapi.FileReadErrorOther{Field0: err.Error()})
+	}
+	return marmoset.Success[marmoset.Bytes, fileapi.FileReadError](marmoset.BytesCopy(data))
+}
+
+func OpenHandle(path string) marmoset.Result[fileapi.File, fileapi.FileOpenError] {
 	if isDirectoryPath(path) {
 		return marmoset.Failure[fileapi.File, fileapi.FileOpenError](fileapi.FileOpenErrorIsDirectory{})
 	}
@@ -105,7 +118,7 @@ func Open(path string) marmoset.Result[fileapi.File, fileapi.FileOpenError] {
 	return marmoset.Success[fileapi.File, fileapi.FileOpenError](files.Insert(&fileResource{file: file}))
 }
 
-func Close(file fileapi.File) marmoset.Result[marmoset.Unit, fileapi.FileCloseError] {
+func CloseHandle(file fileapi.File) marmoset.Result[marmoset.Unit, fileapi.FileCloseError] {
 	resource, ok := files.Get(file)
 	if !ok {
 		return marmoset.Failure[marmoset.Unit, fileapi.FileCloseError](fileapi.FileCloseErrorAlreadyClosed{})

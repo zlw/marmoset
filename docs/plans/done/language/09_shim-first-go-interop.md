@@ -2,7 +2,7 @@
 
 ## Maintenance
 
-- Last verified: 2026-05-09
+- Last verified: 2026-05-10
 - Implementation status: Complete
 - Prerequisites:
   - `docs/plans/done/language/06_module-system.md`
@@ -472,17 +472,20 @@ Do not silently convert ABI violations into domain enum errors.
 Resource handles use `extern type`:
 
 ```marmoset
-export File, open, close
+export File, FileScopeError, open
 
 extern type File
 
-type FileOpenError = { NotFound, PermissionDenied, Other(Str) }
+type FileOpenError = { NotFound, PermissionDenied, IsDirectory, Other(Str) }
 type FileCloseError = { AlreadyClosed, Other(Str) }
+type FileScopeError = { Open(FileOpenError), Close(FileCloseError) }
 
 extern "std/file" as fs = {
-  fn open(path: Str) => Result[File, FileOpenError]
-  fn close(file: File) => Result[Unit, FileCloseError]
+  fn open_handle(path: Str) => Result[File, FileOpenError]
+  fn close_handle(file: File) => Result[Unit, FileCloseError]
 }
+
+fn open[a](path: Str, body: (File) => a) => Result[a, FileScopeError]
 ```
 
 `extern type File` means:
@@ -990,24 +993,27 @@ Files:
 - `test/integration/common.sh`
 - `docs/plans/todo/language/05_stdlib.md`
 
-Initial APIs:
+Current hardened API:
 
 ```marmoset
 import std.bytes.Bytes
 
 file.read(path: Str) => Result[Bytes, FileReadError]
 file.write(path: Str, bytes: Bytes) => Result[Unit, FileWriteError]
-file.open(path: Str) => Result[File, FileOpenError]
-file.close(file: File) => Result[Unit, FileCloseError]
+file.read_all(file: File) => Result[Bytes, FileReadError]
+file.open(path: Str, body: (File) => a) => Result[a, FileScopeError]
 ```
+
+The original proof slice exposed low-level `open`/`close` while proving handles. `docs/plans/todo/language/05_stdlib.md` hardens `std.file` into the public scoped API above, with raw handle operations kept as private `open_handle`/`close_handle` shim plumbing inside the owning module.
 
 Candidate domain errors for the proof:
 
 ```marmoset
-type FileReadError = { NotFound, PermissionDenied, IsDirectory, Other(Str) }
+type FileReadError = { NotFound, PermissionDenied, IsDirectory, AlreadyClosed, Other(Str) }
 type FileWriteError = { NotFound, PermissionDenied, IsDirectory, Other(Str) }
 type FileOpenError = { NotFound, PermissionDenied, IsDirectory, Other(Str) }
 type FileCloseError = { AlreadyClosed, Other(Str) }
+type FileScopeError = { Open(FileOpenError), Close(FileCloseError) }
 ```
 
 These variants may be tightened by the stdlib plan, but S7 must lock the exact variants it tests before implementation starts.
@@ -1146,3 +1152,4 @@ Each commit should add failing tests first, make only the targeted slice pass, a
 - 2026-05-09 03:00 CEST: Cleanup verification passed with `dune runtest lib/frontend/typecheck`, `dune runtest lib/backend/go`, `make integration ffi`, `make integration snapshots`, `make integration stdlib-shims`, and `git diff --check`.
 - 2026-05-09 03:11 CEST: Follow-up cleanup slice started to remove the synthetic non-`std` shim root entirely. Active fixtures and positive tests now must use production `std/*` shims only; the old root may remain only in invalid-root rejection assertions.
 - 2026-05-09 03:23 CEST: Synthetic shim-root removal reached green state: deleted checked-in `runtime/go/shims/test/**` and fixture shim modules, restricted the catalog to `std`, rewired unit/LSP/integration coverage to production `std.bytes`/`std.file` where positive behavior is tested, kept only invalid-root rejection assertions for the removed root, regenerated the FFI Go-tree snapshot, and verified with `dune runtest lib/frontend`, `dune runtest lib/backend/go`, `dune runtest tools/lsp/lib`, `make integration ffi`, `make integration 08_cli.sh`, `make integration stdlib-shims`, `make integration snapshots`, and `git diff --check`.
+- 2026-05-10 00:14 CEST: Reconciled the historical `std.file` proof text with the hardened stdlib design from `05_stdlib.md`: public examples now show callback-based `file.open` and private raw `open_handle`/`close_handle` shim plumbing.

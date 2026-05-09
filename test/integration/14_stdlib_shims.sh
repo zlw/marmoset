@@ -79,22 +79,19 @@ EXISTING_PATH="$DATA_DIR/existing.txt"
 printf "opened" > "$EXISTING_PATH"
 
 run_source_expect_output \
-    "std.file maps bytes, filesystem errors, and handles" \
-    $'roundtrip\nread:not-found\nread:is-directory\nwrite:is-directory\nopen:not-found\nclosed\nalready-closed' <<EOF
+    "std.file maps bytes and filesystem errors" \
+    $'roundtrip\nread:not-found\nread:is-directory\nwrite:is-directory' <<EOF
 import std.bytes
 import std.file.read
 import std.file.write
-import std.file.open
-import std.file.close
 import std.file.FileReadError
 import std.file.FileWriteError
-import std.file.FileOpenError
-import std.file.FileCloseError
 
 fn read_error_label(err: FileReadError) -> Str = match err {
   case FileReadError.NotFound: "read:not-found"
   case FileReadError.PermissionDenied: "read:permission-denied"
   case FileReadError.IsDirectory: "read:is-directory"
+  case FileReadError.AlreadyClosed: "read:already-closed"
   case FileReadError.Other(message): "read:other:" + message
 }
 
@@ -103,18 +100,6 @@ fn write_error_label(err: FileWriteError) -> Str = match err {
   case FileWriteError.PermissionDenied: "write:permission-denied"
   case FileWriteError.IsDirectory: "write:is-directory"
   case FileWriteError.Other(message): "write:other:" + message
-}
-
-fn open_error_label(err: FileOpenError) -> Str = match err {
-  case FileOpenError.NotFound: "open:not-found"
-  case FileOpenError.PermissionDenied: "open:permission-denied"
-  case FileOpenError.IsDirectory: "open:is-directory"
-  case FileOpenError.Other(message): "open:other:" + message
-}
-
-fn close_error_label(err: FileCloseError) -> Str = match err {
-  case FileCloseError.AlreadyClosed: "already-closed"
-  case FileCloseError.Other(message): "close:other:" + message
 }
 
 match write("$ROUNDTRIP_PATH", bytes.from_str("roundtrip")) {
@@ -139,24 +124,59 @@ match write("$DATA_DIR", bytes.from_str("x")) {
   case Result.Success(_): puts("write-dir:unexpected-success")
   case Result.Failure(err): puts(write_error_label(err))
 }
+EOF
 
-match open("$MISSING_PATH") {
-  case Result.Success(_): puts("open:unexpected-success")
-  case Result.Failure(err): puts(open_error_label(err))
+run_source_expect_output \
+    "std.file scopes open handles through managed callbacks" \
+    $'scoped:opened\nopen:not-found\nleaked:read:already-closed' <<EOF
+import std.bytes
+import std.file
+import std.file.File
+import std.file.FileReadError
+import std.file.FileOpenError
+import std.file.FileScopeError
+
+fn read_error_label(err: FileReadError) -> Str = match err {
+  case FileReadError.NotFound: "read:not-found"
+  case FileReadError.PermissionDenied: "read:permission-denied"
+  case FileReadError.IsDirectory: "read:is-directory"
+  case FileReadError.AlreadyClosed: "read:already-closed"
+  case FileReadError.Other(message): "read:other:" + message
 }
 
-match open("$EXISTING_PATH") {
-  case Result.Success(file): {
-    match close(file) {
-      case Result.Success(_): puts("closed")
-      case Result.Failure(err): puts(close_error_label(err))
-    }
-    match close(file) {
-      case Result.Success(_): puts("closed-again")
-      case Result.Failure(err): puts(close_error_label(err))
+fn open_error_label(err: FileOpenError) -> Str = match err {
+  case FileOpenError.NotFound: "open:not-found"
+  case FileOpenError.PermissionDenied: "open:permission-denied"
+  case FileOpenError.IsDirectory: "open:is-directory"
+  case FileOpenError.Other(message): "open:other:" + message
+}
+
+fn scope_error_label(err: FileScopeError) -> Str = match err {
+  case FileScopeError.Open(open_err): open_error_label(open_err)
+  case FileScopeError.Close(_): "close"
+}
+
+match file.open("$EXISTING_PATH", (handle: File) => match file.read_all(handle) {
+  case Result.Success(payload): "scoped:" + bytes.to_str_lossy(payload)
+  case Result.Failure(err): read_error_label(err)
+}) {
+  case Result.Success(label): puts(label)
+  case Result.Failure(err): puts(scope_error_label(err))
+}
+
+match file.open("$MISSING_PATH", (handle: File) => bytes.length(bytes.from_str("unused"))) {
+  case Result.Success(_): puts("open:unexpected-success")
+  case Result.Failure(err): puts(scope_error_label(err))
+}
+
+match file.open("$EXISTING_PATH", (handle: File) => handle) {
+  case Result.Success(leaked): {
+    match file.read_all(leaked) {
+      case Result.Success(_): puts("leaked:unexpected-success")
+      case Result.Failure(err): puts("leaked:" + read_error_label(err))
     }
   }
-  case Result.Failure(err): puts(open_error_label(err))
+  case Result.Failure(err): puts(scope_error_label(err))
 }
 EOF
 
@@ -164,9 +184,16 @@ run_source_expect_build_failure \
     "std.file File cannot be constructed by importers" \
     "cannot be constructed" <<'EOF'
 import std.file.File
-import std.file.open
 
-let file = File(open("x"))
+let file = File(0)
+puts(0)
+EOF
+
+run_source_expect_build_failure \
+    "std.file close is private shim plumbing" \
+    "does not export 'close'" <<'EOF'
+import std.file.close
+
 puts(0)
 EOF
 

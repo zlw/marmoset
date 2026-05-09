@@ -2,7 +2,7 @@
 
 ## Maintenance
 
-- Last verified: 2026-05-09
+- Last verified: 2026-05-10
 - Implementation status: Shim-first interop implemented
 - Update trigger: Any change to extern syntax, supported FFI types, typechecking, module visibility, or Go codegen
 
@@ -28,17 +28,27 @@ extern "std/file" as file_shim = {
 
 Phase one requires shim ids to use the `std` root and at least two slash-separated segments. Valid examples include `std/bytes` and `std/file`. Single-segment ids such as `strings` are rejected with `shim-id-invalid`; syntactically valid but unknown ids such as `std/missing` fail with `shim-id-not-found`.
 
-Opaque resource handles use `extern type` in the owning shim module:
+Opaque resource handles use `extern type` in the owning shim module. Public modules should still expose the highest-level Marmoset API they can. For example, `std.file` keeps raw handle open/close calls private and exports a callback-based `open` helper:
 
 ```marmoset
-export File, open, close
+import std.bytes.Bytes
+
+export File, FileScopeError, read_all, open
 
 extern type File
 
+type FileReadError = { NotFound, PermissionDenied, IsDirectory, AlreadyClosed, Other(Str) }
+type FileOpenError = { NotFound, PermissionDenied, IsDirectory, Other(Str) }
+type FileCloseError = { AlreadyClosed, Other(Str) }
+type FileScopeError = { Open(FileOpenError), Close(FileCloseError) }
+
 extern "std/file" as file_shim = {
-  fn open(path: Str) => Result[File, FileOpenError]
-  fn close(file: File) => Result[Unit, FileCloseError]
+  fn open_handle(path: Str) => Result[File, FileOpenError]
+  fn close_handle(file: File) => Result[Unit, FileCloseError]
+  fn read_all(file: File) => Result[Bytes, FileReadError]
 }
+
+fn open[a](path: Str, body: (File) => a) => Result[a, FileScopeError]
 ```
 
 `extern type` values cannot be constructed, field-inspected, record-pattern matched, or given derived trait implementations in Marmoset. Shim code owns their representation and lifecycle.
@@ -60,7 +70,7 @@ Unsupported boundary types fail during typechecking instead of leaking Go repres
 
 ## Ownership
 
-Extern qualifiers are module-local. Importing a shim-backed stdlib module never imports its private shim qualifier. If an extern function name appears in the module's `export` list, callers use that exported module API directly. Direct calls lower through the generated shim adapter, and first-class references such as `let read = file.read` use that same generated adapter as an ordinary function value.
+Extern qualifiers are module-local. Importing a shim-backed stdlib module never imports its private shim qualifier. If an extern function name appears in the module's `export` list, callers use that exported module API directly. Direct calls lower through the generated shim adapter, and first-class references such as `let read = file.read` use that same generated adapter as an ordinary function value. Shim owners can also keep extern functions private and wrap them in ordinary Marmoset functions when the public API needs to enforce a lifecycle or combine lower-level operations.
 
 Each shim id has exactly one owning Marmoset module in a project. In phase one, the owner module id must match the shim id with `/` converted to `.`, so `std/file` is owned by `std.file`. Duplicate owners, duplicate blocks for the same shim id, qualifier collisions, Go symbol collisions, malformed shim ids, and missing shim ids produce explicit diagnostics.
 

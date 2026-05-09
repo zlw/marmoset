@@ -1,17 +1,30 @@
 import std.bytes.Bytes
 
-export File, FileReadError, FileWriteError, FileOpenError, FileCloseError, read, write, open, close
+export File, FileReadError, FileWriteError, FileOpenError, FileCloseError, FileScopeError, read, write, read_all, open
 
 extern type File
 
-type FileReadError = { NotFound, PermissionDenied, IsDirectory, Other(Str) }
+type FileReadError = { NotFound, PermissionDenied, IsDirectory, AlreadyClosed, Other(Str) }
 type FileWriteError = { NotFound, PermissionDenied, IsDirectory, Other(Str) }
 type FileOpenError = { NotFound, PermissionDenied, IsDirectory, Other(Str) }
 type FileCloseError = { AlreadyClosed, Other(Str) }
+type FileScopeError = { Open(FileOpenError), Close(FileCloseError) }
 
 extern "std/file" as file_shim = {
   fn read(path: Str) => Result[Bytes, FileReadError]
   fn write(path: Str, bytes: Bytes) => Result[Unit, FileWriteError]
-  fn open(path: Str) => Result[File, FileOpenError]
-  fn close(file: File) => Result[Unit, FileCloseError]
+  fn read_all(file: File) => Result[Bytes, FileReadError]
+  fn open_handle(path: Str) => Result[File, FileOpenError]
+  fn close_handle(file: File) => Result[Unit, FileCloseError]
+}
+
+fn open[a](path: Str, body: (File) => a) => Result[a, FileScopeError] = match file_shim.open_handle(path) {
+  case Result.Failure(err): Result.Failure(FileScopeError.Open(err))
+  case Result.Success(file): {
+    let value = body(file)
+    match file_shim.close_handle(file) {
+      case Result.Success(_): Result.Success(value)
+      case Result.Failure(err): Result.Failure(FileScopeError.Close(err))
+    }
+  }
 }

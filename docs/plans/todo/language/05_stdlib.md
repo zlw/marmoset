@@ -2,7 +2,7 @@
 
 ## Maintenance
 
-- Last verified: 2026-05-09
+- Last verified: 2026-05-10
 - Implementation status: In progress (`std.basics`, `std.bytes`, and `std.file` proof slices landed; broader stdlib expansion pending)
 - Update trigger: Any stdlib, shim interop, prelude, module discovery, `Bytes`, resource-handle, or collection representation change
 - Prerequisites:
@@ -109,33 +109,38 @@ Rules:
 
 Filesystem operations. Introduced as a proof slice by `09_shim-first-go-interop.md`, then expanded here.
 
-Initial API:
+Current API:
 
 ```marmoset
 import std.bytes.Bytes
 
-export File, read, write, open, close
+export File, FileReadError, FileWriteError, FileOpenError, FileCloseError, FileScopeError, read, write, read_all, open
 
 extern type File
 
-type FileReadError = { NotFound, PermissionDenied, IsDirectory, Other(Str) }
+type FileReadError = { NotFound, PermissionDenied, IsDirectory, AlreadyClosed, Other(Str) }
 type FileWriteError = { NotFound, PermissionDenied, IsDirectory, Other(Str) }
 type FileOpenError = { NotFound, PermissionDenied, IsDirectory, Other(Str) }
 type FileCloseError = { AlreadyClosed, Other(Str) }
+type FileScopeError = { Open(FileOpenError), Close(FileCloseError) }
 
 fn read(path: Str) => Result[Bytes, FileReadError]
 fn write(path: Str, bytes: Bytes) => Result[Unit, FileWriteError]
-fn open(path: Str) => Result[File, FileOpenError]
-fn close(file: File) => Result[Unit, FileCloseError]
+fn read_all(file: File) => Result[Bytes, FileReadError]
+fn open[a](path: Str, body: (File) => a) => Result[a, FileScopeError]
 ```
 
 Rules:
 
 - Go errors map to domain enums in `runtime/go/shims/std/file`.
-- `File` is an opaque Marmoset handle.
-- `FileReadError`, `FileWriteError`, and `FileOpenError` currently use `NotFound`, `PermissionDenied`, `IsDirectory`, and `Other(Str)`.
-- `FileCloseError` currently uses `AlreadyClosed` and `Other(Str)`.
-- Closing an already-closed or unknown handle returns `FileCloseError.AlreadyClosed`.
+- `read` and `write` are the simple whole-file APIs for callers that do not need a scoped handle.
+- `open` is the normal handle-lifecycle API. It opens the file, calls the callback, then closes the handle on normal callback return.
+- `File` is an opaque Marmoset token for values passed into scoped callbacks. It is not constructible or inspectable in Marmoset.
+- `read_all` is the scoped-handle read helper. Reading a closed, leaked, or unknown handle returns `FileReadError.AlreadyClosed`.
+- Raw handle operations stay in the private `file_shim` extern block as `open_handle` and `close_handle`; `std.file` does not export a raw close or one-argument open.
+- `FileReadError` currently uses `NotFound`, `PermissionDenied`, `IsDirectory`, `AlreadyClosed`, and `Other(Str)`.
+- `FileWriteError` and `FileOpenError` currently use `NotFound`, `PermissionDenied`, `IsDirectory`, and `Other(Str)`.
+- `FileCloseError` currently uses `AlreadyClosed` and `Other(Str)` for private close failures surfaced through `FileScopeError.Close`.
 
 ### `std.console`
 
@@ -395,3 +400,8 @@ HTTP, SQL, and framework-style wrappers likely need follow-up shim features such
 - 2026-05-09 16:50 CEST: Started the exported-shim-function-value cleanup slice. Goal: remove the artificial direct-call-only split for exported shim APIs by letting references such as `bytes.from_str` and `file.write` behave as ordinary first-class function values backed by generated shim adapters.
 - 2026-05-09 16:56 CEST: Exported shim APIs now work as first-class function values backed by generated adapters. Added explicit function-reference artifacts, preserved effect checking for effectful shim values, fixed shim API package generation to include all declarations for any copied shim package, and verified with `dune runtest lib/frontend`, `dune runtest lib/backend/go`, `make integration ffi`, `make integration stdlib-shims`, `make integration snapshots`, `make integration all`, and `git diff --check`.
 - 2026-05-09 23:29 CEST: Fixed the repeated Zed/LSP `std/file` shim-owner diagnostic at the local-dev boundary. The stale error reproduced with the opam-installed `marmoset 85a9d27`; the repo binary accepted `std/file.mr`. Added LSP coverage for direct non-core stdlib shim entries and hardened the Zed launcher to prefer the repo binary from `PWD` before falling back to PATH. Verification passed with `dune runtest tools/lsp/lib`, `cargo test --locked`, direct repo/opam `std/file.mr` checks, and `git diff --check`.
+- 2026-05-10 00:06 CEST: Started the `std.file` public API redesign slice. Goal: make file IO the stdlib poster-child for high-level Marmoset APIs backed by private Go shim plumbing, with scoped resource helpers as the normal surface and raw open/close kept out of the exported API.
+- 2026-05-10 00:08 CEST: Added red stdlib-shim tests for the new managed file API. Current failures are expected: `FileReadError.AlreadyClosed` and `FileScopeError` are missing, and the raw handle lifecycle is still exposed as the public file API.
+- 2026-05-10 00:11 CEST: Tried a richer generic use-error helper for callback-returning file APIs, but current exported generic `Result`/error composition is not ready for that stdlib surface. Kept this slice to the simpler managed API (`open` plus `read_all`) and left richer error composition for a dedicated follow-up.
+- 2026-05-10 00:14 CEST: Implemented the managed `std.file` surface. Public file handles now flow through callback-based `file.open`, raw handle open/close remain private shim plumbing, `read_all` reports `FileReadError.AlreadyClosed` for stale handles, and verification passed with `make integration stdlib-shims`, `make integration ffi`, `dune runtest lib/frontend lib/backend/go`, and `git diff --check`.
+- 2026-05-10 00:18 CEST: Tightened the public/private naming boundary: the user-facing scoped helper is `file.open(path, callback)`, while private Go shim plumbing is named `open_handle`/`close_handle`. Re-ran `make integration stdlib-shims`, `make integration ffi`, `dune runtest lib/frontend lib/backend/go`, and `git diff --check`.
