@@ -169,6 +169,43 @@ let reset_module_state () =
   Infer.clear_top_level_placeholders ();
   Infer.clear_constraint_store ()
 
+let sanitize_signature_type_var_component (s : string) : string =
+  let is_ident_char = function
+    | 'a' .. 'z' | 'A' .. 'Z' | '0' .. '9' | '_' -> true
+    | _ -> false
+  in
+  String.map (fun ch -> if is_ident_char ch then ch else '_') s
+
+let namespaced_exported_value_type
+    ~(module_id : string)
+    ~(internal_name : string)
+    (poly : Types.poly_type) : Types.poly_type * (string * Typecheck.Constraints.t list) list =
+  let (Types.Forall (vars, mono)) = poly in
+  let prefix =
+    Printf.sprintf "__sig_%s__%s__"
+      (sanitize_signature_type_var_component module_id)
+      (sanitize_signature_type_var_component internal_name)
+  in
+  let row_vars = Infer.row_vars_in_type mono in
+  let mapping = List.map (fun var -> (var, prefix ^ sanitize_signature_type_var_component var)) vars in
+  let subst =
+    mapping
+    |> List.map (fun (var, namespaced_var) ->
+           if Types.TypeVarSet.mem var row_vars then
+             (var, Types.TRowVar namespaced_var)
+           else
+             (var, Types.TVar namespaced_var))
+    |> Types.substitution_of_list
+  in
+  let value_constraints =
+    mapping
+    |> List.filter_map (fun (var, namespaced_var) ->
+           match Infer.lookup_type_var_constraints var with
+           | [] -> None
+           | constraints -> Some (namespaced_var, constraints))
+  in
+  (Types.Forall (List.map snd mapping, Types.apply_substitution subst mono), value_constraints)
+
 let has_module_headers (program : AST.program) : bool =
   List.exists
     (fun (stmt : AST.statement) ->
@@ -182,7 +219,11 @@ let seed_signature_exports (signature : Module_sig.module_signature) (env : Infe
     (fun _name (binding : Module_sig.member_binding) env_acc ->
       let env_acc =
         match binding.value_type with
-        | Some poly -> Infer.TypeEnv.add binding.internal_name poly env_acc
+        | Some poly ->
+            List.iter
+              (fun (var, constraints) -> Infer.add_type_var_constraint_refs var constraints)
+              binding.value_constraints;
+            Infer.TypeEnv.add binding.internal_name poly env_acc
         | None -> env_acc
       in
       Option.iter Enum_registry.register binding.enum_def;
@@ -491,16 +532,23 @@ let extract_module_signature
       Import_resolver.StringMap.empty locals.traits
   in
   let add_export surface_name (presence : Import_resolver.member_presence) =
-    let value_type =
+    let value_type, value_constraints =
       if presence.has_value then
-        Infer.TypeEnv.find_opt presence.internal_name environment
+        match Infer.TypeEnv.find_opt presence.internal_name environment with
+        | None -> (None, [])
+        | Some poly ->
+            let poly, constraints =
+              namespaced_exported_value_type ~module_id:surface.module_id ~internal_name:presence.internal_name poly
+            in
+            (Some poly, constraints)
       else
-        None
+        (None, [])
     in
     let binding =
       {
         Module_sig.internal_name = presence.internal_name;
         value_type;
+        value_constraints;
         value_definition = presence.value_definition;
         enum_def =
           (if presence.has_enum then
@@ -630,19 +678,20 @@ let compile_module
   in
   let state = Infer.create_inference_state () in
   let* env, prebound_symbols =
-    let rec seed_imports env_acc prebound_symbols_acc = function
-      | [] -> Ok (env_acc, List.rev prebound_symbols_acc)
-      | module_id :: rest -> (
-          match Hashtbl.find_opt typed_signatures module_id with
-          | None -> seed_imports env_acc prebound_symbols_acc rest
-          | Some signature ->
-              let env_acc = seed_signature_exports signature env_acc in
-              let* () = seed_visible_impls signature |> Result.map_error (fun diag -> [ diag ]) in
-              seed_imports env_acc
-                (List.rev_append (prebound_value_symbols_of_signature signature) prebound_symbols_acc)
-                rest)
-    in
-    seed_imports (Builtins.builtin_value_env ()) [] rewrite.resolved_imports.direct_modules
+    Infer.with_inference_state state (fun () ->
+        let rec seed_imports env_acc prebound_symbols_acc = function
+          | [] -> Ok (env_acc, List.rev prebound_symbols_acc)
+          | module_id :: rest -> (
+              match Hashtbl.find_opt typed_signatures module_id with
+              | None -> seed_imports env_acc prebound_symbols_acc rest
+              | Some signature ->
+                  let env_acc = seed_signature_exports signature env_acc in
+                  let* () = seed_visible_impls signature |> Result.map_error (fun diag -> [ diag ]) in
+                  seed_imports env_acc
+                    (List.rev_append (prebound_value_symbols_of_signature signature) prebound_symbols_acc)
+                    rest)
+        in
+        seed_imports (Builtins.primitive_value_env ()) [] rewrite.resolved_imports.direct_modules)
   in
   if not (is_prelude_module module_info.module_id) then
     Builtins.init_builtin_impls ();
@@ -666,7 +715,7 @@ let compile_module
           ]
   in
   let* signature =
-    extract_module_signature ~surface ~environment:result.environment ~locals
+    Infer.with_inference_state state (fun () -> extract_module_signature ~surface ~environment:result.environment ~locals)
     |> Result.map_error (fun diag -> [ diag ])
   in
   Ok
@@ -861,7 +910,6 @@ let emit_compiled_project (project : compiled_project) : (Codegen.build_output, 
       {
         Codegen.go_mod = Codegen.default_go_mod;
         main_go;
-        runtime_go = Codegen.get_runtime ();
         aux_go_files =
           Codegen.shim_aux_go_files ?toolchain_root:project.toolchain_root
             ~extern_declarations:project.artifacts.extern_declarations
@@ -1546,6 +1594,36 @@ let%test "shim S2: std wrapper module exports ordinary API backed by private shi
           && string_contains build_output.main_go "mshim_std_bytes.FromStr(input)"
           && not (string_contains build_output.main_go "shim adapter not implemented"))
 
+let%test "prelude puts is stdlib code backed by basics shim" =
+  Discovery.with_temp_project
+    [ ("main.mr", "puts(42)\n") ]
+    (fun root ->
+      match compile_entry_to_build ~entry_file:(Filename.concat root "main.mr") () with
+      | Error _ -> false
+      | Ok build_output ->
+          string_contains build_output.main_go "func puts_int64(value int64) struct{}"
+          && string_contains build_output.main_go
+               "return std__basics__puts_u005fstr_string(show_show_int64(value))"
+          && string_contains build_output.main_go "func extern__std_basics__puts_str(value string) struct{}"
+          && string_contains build_output.main_go {|mshim_std_basics "marmoset_out/shims/std/basics"|}
+          && Option.is_some (List.find_opt (fun (file : Codegen.go_aux_file) ->
+                 String.equal file.rel_path "shims/std/basics/basics.go") build_output.aux_go_files)
+          && not (string_contains build_output.main_go "marmoset.Puts"))
+
+let%test "imported constrained generics do not inherit local type variable constraints" =
+  Discovery.with_temp_project
+    [
+      ( "main.mr",
+        "shape Named = { name: Str }\n\
+         fn describe[t: Named](x: t) -> Str = x.name\n\
+         let p = { name: \"milo\", age: 3 }\n\
+         puts(describe(p))\n" );
+    ]
+    (fun root ->
+      match compile_entry_to_build ~entry_file:(Filename.concat root "main.mr") () with
+      | Ok _ -> true
+      | Error _ -> false)
+
 let%test "shim S3: compile_entry_to_build emits support and api aux files for called std shim" =
   Discovery.with_temp_project
     [ ("main.mr", "import std.bytes\nputs(bytes.to_str_lossy(bytes.from_str(\"hi\")))\n") ]
@@ -1921,7 +1999,7 @@ let%test "source-backed module compilation sees std.option and std.result signat
 
 let%test "non-core stdlib modules implicitly see Option and Result" =
   Discovery.with_temp_project
-    [ ("main.mr", "import std.foo as foo\nputs(foo.value())\n") ]
+    [ ("main.mr", "import std.foo as foo\nfoo.value()\n") ]
     (fun root ->
       let stdlib_root = Discovery.make_temp_dir "marmoset_review_stdlib_" in
       Fun.protect
@@ -2231,13 +2309,13 @@ let%test "checked_module navigation keeps resolved imports for namespace and ali
 let%test "find_export_binding exposes exported definition metadata through compiler boundary" =
   Discovery.with_temp_project
     [
-      ("main.mr", "import math\nputs(math.make(1))\n");
+      ("main.mr", "import math\nlet p = math.make(1)\nputs(p.value)\n");
       ("math.mr", "export make, Point\ntype Point = { value: Int }\nfn make(x: Int) -> Point = { value: x }\n");
     ]
     (fun root ->
       let analysis =
         analyze_entry_with_source ~entry_file:(Filename.concat root "main.mr")
-          ~entry_source:"import math\nputs(math.make(1))\n" ()
+          ~entry_source:"import math\nlet p = math.make(1)\nputs(p.value)\n" ()
       in
       match
         ( find_export_binding analysis ~module_id:"math" ~surface_name:"make",

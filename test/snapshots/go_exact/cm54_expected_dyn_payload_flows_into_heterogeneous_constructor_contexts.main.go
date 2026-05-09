@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	mshim_std_basics "marmoset_out/shims/std/basics"
 	"strconv"
 )
 
@@ -103,6 +104,16 @@ func (e cm54_u005fexpected_u005fdyn_u005fpayload_u005fflows_u005finto_u005fheter
 }
 
 
+func extern__std_basics__puts_str(value string) struct{} {
+	defer func() {
+		if __panic := recover(); __panic != nil {
+			panic(fmt.Sprintf("shim ABI violation at std/basics.puts_str: %v", __panic))
+		}
+	}()
+	mshim_std_basics.PutsStr(value)
+	return struct{}{}
+}
+
 func render_cm54_u005fexpected_u005fdyn_u005fpayload_u005fflows_u005finto_u005fheterogeneous_u005fconstructor_u005fcontexts__Option_dyn_Show(value cm54_u005fexpected_u005fdyn_u005fpayload_u005fflows_u005finto_u005fheterogeneous_u005fconstructor_u005fcontexts__Option_dyn_Show) string {
     __scrutinee_0 := value
     switch __scrutinee_0.Tag {
@@ -140,6 +151,14 @@ func via_match_bool(flag bool) cm54_u005fexpected_u005fdyn_u005fpayload_u005fflo
     }
 }
 
+func puts_string(value string) struct{} {
+    return std__basics__puts_u005fstr_string(show_show_string(value))
+}
+
+func std__basics__puts_u005fstr_string(value string) struct{} {
+    return extern__std_basics__puts_str(value)
+}
+
 func show_show_int64(x int64) string {
 	return strconv.FormatInt(x, 10)
 }
@@ -156,8 +175,8 @@ func main() {
         }
     }())
     _ = direct_payload
-    _ = puts(render_cm54_u005fexpected_u005fdyn_u005fpayload_u005fflows_u005finto_u005fheterogeneous_u005fconstructor_u005fcontexts__Option_dyn_Show(direct_payload))
-    _ = puts(render_cm54_u005fexpected_u005fdyn_u005fpayload_u005fflows_u005finto_u005fheterogeneous_u005fconstructor_u005fcontexts__Option_dyn_Show(via_if_bool(false)))
-    _ = puts(render_cm54_u005fexpected_u005fdyn_u005fpayload_u005fflows_u005finto_u005fheterogeneous_u005fconstructor_u005fcontexts__Option_dyn_Show(via_match_bool(true)))
-    _ = puts(render_cm54_u005fexpected_u005fdyn_u005fpayload_u005fflows_u005finto_u005fheterogeneous_u005fconstructor_u005fcontexts__Option_dyn_Show(via_match_bool(false)))
+    _ = puts_string(render_cm54_u005fexpected_u005fdyn_u005fpayload_u005fflows_u005finto_u005fheterogeneous_u005fconstructor_u005fcontexts__Option_dyn_Show(direct_payload))
+    _ = puts_string(render_cm54_u005fexpected_u005fdyn_u005fpayload_u005fflows_u005finto_u005fheterogeneous_u005fconstructor_u005fcontexts__Option_dyn_Show(via_if_bool(false)))
+    _ = puts_string(render_cm54_u005fexpected_u005fdyn_u005fpayload_u005fflows_u005finto_u005fheterogeneous_u005fconstructor_u005fcontexts__Option_dyn_Show(via_match_bool(true)))
+    _ = puts_string(render_cm54_u005fexpected_u005fdyn_u005fpayload_u005fflows_u005finto_u005fheterogeneous_u005fconstructor_u005fcontexts__Option_dyn_Show(via_match_bool(false)))
 }

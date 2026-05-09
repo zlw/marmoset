@@ -3,7 +3,7 @@
 ## Maintenance
 
 - Last verified: 2026-05-09
-- Implementation status: Planning (`std.bytes` and `std.file` proof slices landed; broader stdlib expansion pending)
+- Implementation status: In progress (`std.basics`, `std.bytes`, and `std.file` proof slices landed; broader stdlib expansion pending)
 - Update trigger: Any stdlib, shim interop, prelude, module discovery, `Bytes`, resource-handle, or collection representation change
 - Prerequisites:
   - `docs/plans/done/language/06_module-system.md`
@@ -55,10 +55,30 @@ Modules -> Prelude -> Shim-first Go interop -> Stdlib
 - `std/prelude.mr`, `std/option.mr`, and `std/result.mr` are toolchain stdlib modules loaded through the normal module pipeline.
 - `Option` and `Result` are canonical stdlib nominal types with inherent helper APIs.
 - `09_shim-first-go-interop.md` has introduced `extern type`, checked-in Go shims, canonical immutable `std.bytes.Bytes`, and the initial `std.file` proof slice.
+- `std.basics` now owns the terminal output shim used by prelude `puts`; the compiler no longer lowers `puts` as an emitter special case.
 - `docs/features/ffi.md` now documents shim-first interop as the current direction, with direct package externs retained only as historical context.
 - Existing list/map/str examples are mostly fixtures and exploratory docs; there is no committed full stdlib module set yet.
 
 ## Core Modules
+
+### `std.basics`
+
+Minimal implementation substrate for prelude functions that need shim-backed runtime behavior before broader stdlib modules land.
+
+Current API:
+
+```marmoset
+export puts_str
+
+extern "std/basics" = {
+  fn puts_str(value: Str) => Unit
+}
+```
+
+Rules:
+
+- Public code should keep using prelude `puts`; `std.basics.puts_str` is the shim-backed primitive that `puts` calls after `Show.show`.
+- This module should stay small. Domain-specific IO belongs in `std.console` or other explicit modules.
 
 ### `std.bytes`
 
@@ -364,3 +384,5 @@ HTTP, SQL, and framework-style wrappers likely need follow-up shim features such
 ## Progress
 
 - 2026-05-08 23:52 CEST: Renumbered from `04_stdlib.md` to `05_stdlib.md` and rewritten around shim-first interop. Direct FFI wrapper assumptions were removed; `std.bytes` and `std.file` now depend on `09_shim-first-go-interop.md`.
+- 2026-05-09 05:06 CEST: Started the stdlib-basics dogfooding slice from the shim-first interop substrate. Added `std.basics.puts_str` plus checked-in `runtime/go/shims/std/basics`, rewired prelude `puts` to call it, removed the backend `puts` runtime special case, moved remaining checked-in helper runtime code under `runtime/go/marmoset`, and made stale direct-print fixtures supply explicit `Show`/rendering. Verification passed with `dune runtest lib/frontend lib/backend/go`, focused former-failure fixtures plus hardening, `git diff --check`, and `make integration all`.
+- 2026-05-09 05:07 CEST: Stdlib-basics dogfooding slice committed.

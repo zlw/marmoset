@@ -1,3 +1,7 @@
+===== api/std/basics/api.go =====
+package mapi_std_basics
+
+
 ===== api/std/bytes/api.go =====
 package mapi_std_bytes
 
@@ -13,8 +17,20 @@ package main
 import (
 	"fmt"
 	"marmoset_out/marmoset"
+	mshim_std_basics "marmoset_out/shims/std/basics"
 	mshim_std_bytes "marmoset_out/shims/std/bytes"
+	"strconv"
 )
+
+func extern__std_basics__puts_str(value string) struct{} {
+	defer func() {
+		if __panic := recover(); __panic != nil {
+			panic(fmt.Sprintf("shim ABI violation at std/basics.puts_str: %v", __panic))
+		}
+	}()
+	mshim_std_basics.PutsStr(value)
+	return struct{}{}
+}
 
 func extern__std_bytes__equal_q(left marmoset.Bytes, right marmoset.Bytes) bool {
 	defer func() {
@@ -72,13 +88,31 @@ func std__bytes__equal_u003f_std__bytes__Bytes_std__bytes__Bytes(left marmoset.B
     return extern__std_bytes__equal_q(left, right)
 }
 
+func puts_int64(value int64) struct{} {
+    return std__basics__puts_u005fstr_string(show_show_int64(value))
+}
 
+func puts_string(value string) struct{} {
+    return std__basics__puts_u005fstr_string(show_show_string(value))
+}
+
+func std__basics__puts_u005fstr_string(value string) struct{} {
+    return extern__std_basics__puts_str(value)
+}
+
+func show_show_int64(x int64) string {
+	return strconv.FormatInt(x, 10)
+}
+
+func show_show_string(x string) string {
+	return x
+}
 func main() {
     main__payload := std__bytes__from_u005fstr_string("hi")
     _ = main__payload
-    _ = puts(std__bytes__to_u005fstr_u005flossy_std__bytes__Bytes(main__payload))
-    _ = puts(std__bytes__length_std__bytes__Bytes(main__payload))
-    _ = puts(func() string {
+    _ = puts_string(std__bytes__to_u005fstr_u005flossy_std__bytes__Bytes(main__payload))
+    _ = puts_int64(std__bytes__length_std__bytes__Bytes(main__payload))
+    _ = puts_string(func() string {
         if std__bytes__equal_u003f_std__bytes__Bytes_std__bytes__Bytes(main__payload, std__bytes__from_u005fstr_string("hi")) {
             return "equal"
         } else {
@@ -187,6 +221,56 @@ func (table *HandleTable[Tag, Value]) Delete(handle Handle[Tag]) bool {
 	return true
 }
 
+===== marmoset/helpers.go =====
+package marmoset
+
+import "reflect"
+
+func TypeIs[T any](v T, typeName string) bool {
+	return reflect.TypeOf(v).String() == typeName
+}
+
+func IndexArr[T any](arr []T, i int64) T {
+	if i < 0 {
+		i = int64(len(arr)) + i
+	}
+	return arr[i]
+}
+
+func IndexStr(s string, i int64) string {
+	if i < 0 {
+		i = int64(len(s)) + i
+	}
+	return string(s[i])
+}
+
+func First[T any](arr []T) T {
+	if len(arr) == 0 {
+		var zero T
+		return zero
+	}
+	return arr[0]
+}
+
+func Last[T any](arr []T) T {
+	if len(arr) == 0 {
+		var zero T
+		return zero
+	}
+	return arr[len(arr)-1]
+}
+
+func Rest[T any](arr []T) []T {
+	if len(arr) == 0 {
+		return []T{}
+	}
+	return arr[1:]
+}
+
+func Push[T any](arr []T, v T) []T {
+	return append(arr, v)
+}
+
 ===== marmoset/option.go =====
 package marmoset
 
@@ -253,71 +337,18 @@ func NewUnit() Unit {
 	return Unit{}
 }
 
-===== runtime.go =====
-// Marmoset Runtime - builtin functions for generated Go code
-package main
+===== shims/std/basics/basics.go =====
+package basics
 
 import (
 	"fmt"
-	"reflect"
+
+	"marmoset_out/marmoset"
 )
 
-// puts prints values to stdout, returns struct{}
-func puts[T any](v T) struct{} {
-	fmt.Println(v)
-	return struct{}{}
-}
-
-// typeIs checks if a value is of a specific Go type
-func typeIs[T any](v T, typeName string) bool {
-	return reflect.TypeOf(v).String() == typeName
-}
-
-// indexArr handles negative indexing for arrays
-func indexArr[T any](arr []T, i int64) T {
-	if i < 0 {
-		i = int64(len(arr)) + i
-	}
-	return arr[i]
-}
-
-// indexStr handles negative indexing for strings
-func indexStr(s string, i int64) string {
-	if i < 0 {
-		i = int64(len(s)) + i
-	}
-	return string(s[i])
-}
-
-// first returns the first element of an array, or zero value if empty
-func first[T any](arr []T) T {
-	if len(arr) == 0 {
-		var zero T
-		return zero
-	}
-	return arr[0]
-}
-
-// last returns the last element of an array, or zero value if empty
-func last[T any](arr []T) T {
-	if len(arr) == 0 {
-		var zero T
-		return zero
-	}
-	return arr[len(arr)-1]
-}
-
-// rest returns all but the first element, or empty array if empty
-func rest[T any](arr []T) []T {
-	if len(arr) == 0 {
-		return []T{}
-	}
-	return arr[1:]
-}
-
-// push appends an element to an array and returns the new array
-func push[T any](arr []T, v T) []T {
-	return append(arr, v)
+func PutsStr(value string) marmoset.Unit {
+	fmt.Println(value)
+	return marmoset.NewUnit()
 }
 
 ===== shims/std/bytes/bytes.go =====

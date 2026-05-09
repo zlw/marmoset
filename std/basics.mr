@@ -1,0 +1,7 @@
+export puts_str
+
+extern "std/basics" as basics_shim = {
+  fn puts_str(value: Str) => Unit
+}
+
+fn puts_str(value: Str) => Unit = basics_shim.puts_str(value)

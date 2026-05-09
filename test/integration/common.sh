@@ -305,7 +305,7 @@ run_codegen_deterministic_from_stdin() {
     echo "$source" > "$tmpfile"
 
     if build1=$($EXECUTABLE build "$tmpfile" --emit-go "$out1" -o "$bin1" 2>&1) && build2=$($EXECUTABLE build "$tmpfile" --emit-go "$out2" -o "$bin2" 2>&1); then
-        if diff -u "$out1/go.mod" "$out2/go.mod" >/dev/null 2>&1 && diff -u "$out1/main.go" "$out2/main.go" >/dev/null 2>&1 && diff -u "$out1/runtime.go" "$out2/runtime.go" >/dev/null 2>&1; then
+        if diff -ru "$out1" "$out2" >/dev/null 2>&1; then
             echo "✓ PASS"
             PASS=$((PASS + 1))
         else
@@ -344,7 +344,7 @@ run_emit_go_not_contains_from_stdin() {
     echo "$source" > "$tmpfile"
 
     if build_output=$($EXECUTABLE build "$tmpfile" --emit-go "$outdir" -o "$binpath" 2>&1); then
-        if rg -n "$forbidden_fragment" "$outdir/main.go" "$outdir/runtime.go" >/dev/null 2>&1; then
+        if rg -n "$forbidden_fragment" "$outdir" >/dev/null 2>&1; then
             echo "✗ FAIL (emitted Go contains forbidden fragment '$forbidden_fragment')"
             FAIL=$((FAIL + 1))
         else

@@ -698,6 +698,10 @@ let std_bytes_go_type (state : mono_state) : string =
   add_go_import state "marmoset_out/marmoset";
   "marmoset.Bytes"
 
+let marmoset_runtime_helper (state : mono_state) (name : string) : string =
+  add_go_import state "marmoset_out/marmoset";
+  "marmoset." ^ name
+
 let create_mono_state
     ?(module_path = "main")
     ?(concrete_only = true)
@@ -781,10 +785,12 @@ let builtin_impl_keys : StringPairSet.t =
       ("show", "bool");
       ("show", "string");
       ("show", "float64");
+      ("show", "unit");
       ("debug", "int64");
       ("debug", "bool");
       ("debug", "string");
       ("debug", "float64");
+      ("debug", "unit");
       ("eq", "int64");
       ("eq", "bool");
       ("eq", "string");
@@ -5489,7 +5495,7 @@ and emit_type_check state type_map env expr type_ann =
     | Types.TFloat -> "float64"
     | _ -> failwith "Type check for complex types not yet implemented"
   in
-  Printf.sprintf "typeIs(%s, \"%s\")" expr_str go_type_name
+  Printf.sprintf "%s(%s, \"%s\")" (marmoset_runtime_helper state.mono "TypeIs") expr_str go_type_name
 
 (* Emit a Go type switch for type narrowing *)
 and emit_type_switch
@@ -6048,34 +6054,31 @@ and emit_call state type_map env call_expr func args =
          | _ -> false ->
       let arg_str = emit_expr state type_map env (List.hd args) in
       Printf.sprintf "int64(len(%s))" arg_str
-  | AST.Identifier "puts" ->
-      let args_str = List.map (emit_expr state type_map env) args |> String.concat ", " in
-      Printf.sprintf "puts(%s)" args_str
   | AST.Identifier "first"
     when match args with
          | [ _ ] -> true
          | _ -> false ->
       let arg_str = emit_expr state type_map env (List.hd args) in
-      Printf.sprintf "first(%s)" arg_str
+      Printf.sprintf "%s(%s)" (marmoset_runtime_helper state.mono "First") arg_str
   | AST.Identifier "last"
     when match args with
          | [ _ ] -> true
          | _ -> false ->
       let arg_str = emit_expr state type_map env (List.hd args) in
-      Printf.sprintf "last(%s)" arg_str
+      Printf.sprintf "%s(%s)" (marmoset_runtime_helper state.mono "Last") arg_str
   | AST.Identifier "rest"
     when match args with
          | [ _ ] -> true
          | _ -> false ->
       let arg_str = emit_expr state type_map env (List.hd args) in
-      Printf.sprintf "rest(%s)" arg_str
+      Printf.sprintf "%s(%s)" (marmoset_runtime_helper state.mono "Rest") arg_str
   | AST.Identifier "push"
     when match args with
          | [ _; _ ] -> true
          | _ -> false ->
       let arr_str = emit_expr state type_map env (List.hd args) in
       let val_str = emit_expr state type_map env (List.nth args 1) in
-      Printf.sprintf "push(%s, %s)" arr_str val_str
+      Printf.sprintf "%s(%s, %s)" (marmoset_runtime_helper state.mono "Push") arr_str val_str
   | _ when Option.is_some user_call_target ->
       let target_name = Option.get user_call_target in
       let actual_arg_types = List.map (arg_type_for_specialization state.mono env type_map) args in
@@ -6177,7 +6180,7 @@ and emit_index state type_map env container index =
       (* Literal negative: transform to len-based *)
       | Some i -> Printf.sprintf "string(%s[len(%s)%Ld])" container_str container_str i
       (* Variable: use runtime helper *)
-      | None -> Printf.sprintf "indexStr(%s, %s)" container_str index_str)
+      | None -> Printf.sprintf "%s(%s, %s)" (marmoset_runtime_helper state.mono "IndexStr") container_str index_str)
   | Types.TArray _ -> (
       match literal_int with
       (* Literal positive: direct access *)
@@ -6185,7 +6188,7 @@ and emit_index state type_map env container index =
       (* Literal negative: transform to len-based *)
       | Some i -> Printf.sprintf "%s[len(%s)%Ld]" container_str container_str i
       (* Variable: use runtime helper *)
-      | None -> Printf.sprintf "indexArr(%s, %s)" container_str index_str)
+      | None -> Printf.sprintf "%s(%s, %s)" (marmoset_runtime_helper state.mono "IndexArr") container_str index_str)
   | Types.THash _ -> Printf.sprintf "%s[%s]" container_str index_str
   | _ -> Printf.sprintf "%s[%s]" container_str index_str
 
@@ -8048,6 +8051,7 @@ let emit_builtin_impls (state : mono_state) (program : AST.program) : string =
       (("show", "show", "int64"), "func show_show_int64(x int64) string {\n\treturn strconv.FormatInt(x, 10)\n}");
       (("show", "show", "bool"), "func show_show_bool(x bool) string {\n\treturn strconv.FormatBool(x)\n}");
       (("show", "show", "string"), "func show_show_string(x string) string {\n\treturn x\n}");
+      (("show", "show", "unit"), "func show_show_unit(x struct{}) string {\n\treturn \"Unit\"\n}");
       ( ("show", "show", "float64"),
         "func show_show_float64(x float64) string {\n\treturn strconv.FormatFloat(x, 'g', -1, 64)\n}" );
       (* debug trait implementations *)
@@ -8055,6 +8059,7 @@ let emit_builtin_impls (state : mono_state) (program : AST.program) : string =
         "func debug_debug_int64(x int64) string {\n\treturn strconv.FormatInt(x, 10)\n}" );
       (("debug", "debug", "bool"), "func debug_debug_bool(x bool) string {\n\treturn strconv.FormatBool(x)\n}");
       (("debug", "debug", "string"), "func debug_debug_string(x string) string {\n\treturn strconv.Quote(x)\n}");
+      (("debug", "debug", "unit"), "func debug_debug_unit(x struct{}) string {\n\treturn \"Unit\"\n}");
       ( ("debug", "debug", "float64"),
         "func debug_debug_float64(x float64) string {\n\treturn strconv.FormatFloat(x, 'g', -1, 64)\n}" );
       (* eq trait implementations *)
@@ -8429,11 +8434,14 @@ let emit_extern_wrapper (state : mono_state) (func : Typecheck.Resolution_artifa
   let context = Printf.sprintf "%s.%s" func.shim_id func.marmoset_func_name in
   add_go_import ~alias:shim_alias state (shim_import_path func.shim_id);
   add_go_import state "fmt";
-  List.iter
-    (fun boundary ->
-      track_boundary_marmoset_types state boundary;
-      register_shim_boundary_imports state ~shim_id:func.shim_id ~api_alias boundary)
-    (func.return_boundary_type :: func.param_boundary_types);
+  let register_boundary boundary =
+    track_boundary_marmoset_types state boundary;
+    register_shim_boundary_imports state ~shim_id:func.shim_id ~api_alias boundary
+  in
+  List.iter register_boundary func.param_boundary_types;
+  (match func.return_boundary_type with
+  | BUnit -> track_boundary_marmoset_types state func.return_boundary_type
+  | boundary -> register_boundary boundary);
   let params =
     List.combine func.param_names func.param_boundary_types
     |> List.map (fun (name, boundary) ->
@@ -8450,14 +8458,19 @@ let emit_extern_wrapper (state : mono_state) (func : Typecheck.Resolution_artifa
   in
   let body =
     let call = Printf.sprintf "%s.%s(%s)" shim_alias func.go_symbol_name call_args in
-    let return_expr =
-      from_abi_expr state ~api_alias ~owner_module_id:func.owner_module_id ~context func.return_boundary_type
-        "__ret"
+    let panic_guard =
+      Printf.sprintf
+        "\tdefer func() {\n\t\tif __panic := recover(); __panic != nil {\n\t\t\tpanic(fmt.Sprintf(%S, __panic))\n\t\t}\n\t}()"
+        (Printf.sprintf "shim ABI violation at %s: %%v" context)
     in
-    Printf.sprintf
-      "\tdefer func() {\n\t\tif __panic := recover(); __panic != nil {\n\t\t\tpanic(fmt.Sprintf(%S, __panic))\n\t\t}\n\t}()\n\t__ret := %s\n\treturn %s"
-      (Printf.sprintf "shim ABI violation at %s: %%v" context)
-      call return_expr
+    match func.return_boundary_type with
+    | BUnit -> Printf.sprintf "%s\n\t%s\n\treturn struct{}{}" panic_guard call
+    | _ ->
+        let return_expr =
+          from_abi_expr state ~api_alias ~owner_module_id:func.owner_module_id ~context func.return_boundary_type
+            "__ret"
+        in
+        Printf.sprintf "%s\n\t__ret := %s\n\treturn %s" panic_guard call return_expr
   in
   Printf.sprintf "func %s(%s) %s {\n%s\n}\n" (extern_wrapper_name_for_state state func) params return_type body
 
@@ -8673,76 +8686,8 @@ let emit_program (program : AST.program) : string =
         ~extern_calls ~trait_object_coercion_map ~placeholder_rewrite_map type_map typed_env program
 
 (* ============================================================
-   Runtime
+   Go support files
    ============================================================ *)
-
-let runtime_go =
-  {|// Marmoset Runtime - builtin functions for generated Go code
-package main
-
-import (
-	"fmt"
-	"reflect"
-)
-
-// puts prints values to stdout, returns struct{}
-func puts[T any](v T) struct{} {
-	fmt.Println(v)
-	return struct{}{}
-}
-
-// typeIs checks if a value is of a specific Go type
-func typeIs[T any](v T, typeName string) bool {
-	return reflect.TypeOf(v).String() == typeName
-}
-
-// indexArr handles negative indexing for arrays
-func indexArr[T any](arr []T, i int64) T {
-	if i < 0 {
-		i = int64(len(arr)) + i
-	}
-	return arr[i]
-}
-
-// indexStr handles negative indexing for strings
-func indexStr(s string, i int64) string {
-	if i < 0 {
-		i = int64(len(s)) + i
-	}
-	return string(s[i])
-}
-
-// first returns the first element of an array, or zero value if empty
-func first[T any](arr []T) T {
-	if len(arr) == 0 {
-		var zero T
-		return zero
-	}
-	return arr[0]
-}
-
-// last returns the last element of an array, or zero value if empty
-func last[T any](arr []T) T {
-	if len(arr) == 0 {
-		var zero T
-		return zero
-	}
-	return arr[len(arr)-1]
-}
-
-// rest returns all but the first element, or empty array if empty
-func rest[T any](arr []T) []T {
-	if len(arr) == 0 {
-		return []T{}
-	}
-	return arr[1:]
-}
-
-// push appends an element to an array and returns the new array
-func push[T any](arr []T, v T) []T {
-	return append(arr, v)
-}
-|}
 
 (* ============================================================
     Main Entry Point
@@ -8835,13 +8780,12 @@ type go_aux_file = {
 type build_output = {
   go_mod : string;
   main_go : string;
-  runtime_go : string;
   aux_go_files : go_aux_file list;
   diagnostics : Diagnostic.t list;
 }
 
 let default_go_mod = "module marmoset_out\n\ngo 1.18\n"
-let reserved_go_output_paths = [ "go.mod"; "main.go"; "runtime.go" ]
+let reserved_go_output_paths = [ "go.mod"; "main.go" ]
 
 let is_windows_drive_path (path : string) : bool =
   String.length path >= 2
@@ -8896,7 +8840,6 @@ let go_output_files (output : build_output) : (go_aux_file list, string) result 
         ([
            { rel_path = "go.mod"; contents = output.go_mod };
            { rel_path = "main.go"; contents = output.main_go };
-           { rel_path = "runtime.go"; contents = output.runtime_go };
          ]
         @ aux_go_files)
 
@@ -8941,192 +8884,22 @@ let find_existing_path_upwards ?toolchain_root (parts : string list) : string op
   | Some path -> Some path
   | None -> search (Sys.getcwd ()) 10
 
-let support_result_go =
-  {|package marmoset
-
-type ResultState int
-
-const (
-	ResultInvalid ResultState = iota
-	ResultSuccess
-	ResultFailure
-)
-
-type Result[T, E any] struct {
-	state   ResultState
-	success T
-	failure E
-}
-
-func Success[T, E any](value T) Result[T, E] {
-	return Result[T, E]{state: ResultSuccess, success: value}
-}
-
-func Failure[T, E any](failure E) Result[T, E] {
-	return Result[T, E]{state: ResultFailure, failure: failure}
-}
-
-func InspectResult[T, E any](result Result[T, E]) (ResultState, T, E) {
-	return result.state, result.success, result.failure
-}
-|}
-
-let support_option_go =
-  {|package marmoset
-
-type OptionState int
-
-const (
-	OptionInvalid OptionState = iota
-	OptionSome
-	OptionNone
-)
-
-type Option[T any] struct {
-	state OptionState
-	value T
-}
-
-func Some[T any](value T) Option[T] {
-	return Option[T]{state: OptionSome, value: value}
-}
-
-func None[T any]() Option[T] {
-	return Option[T]{state: OptionNone}
-}
-
-func InspectOption[T any](option Option[T]) (OptionState, T) {
-	return option.state, option.value
-}
-|}
-
-let support_unit_go = {|package marmoset
-
-type Unit struct{}
-
-func NewUnit() Unit {
-	return Unit{}
-}
-|}
-
-let support_bytes_go =
-  {|package marmoset
-
-type Bytes struct {
-	data []byte
-}
-
-func BytesCopy(input []byte) Bytes {
-	copied := append([]byte(nil), input...)
-	return Bytes{data: copied}
-}
-
-func BytesFromString(input string) Bytes {
-	return BytesCopy([]byte(input))
-}
-
-func (bytes Bytes) Copy() []byte {
-	return append([]byte(nil), bytes.data...)
-}
-|}
-
-let support_handle_go =
-  {|package marmoset
-
-import (
-	"sync"
-	"sync/atomic"
-)
-
-type Handle[Tag any] struct {
-	id uint64
-}
-
-var nextHandleID uint64
-
-func NewHandle[Tag any]() Handle[Tag] {
-	id := atomic.AddUint64(&nextHandleID, 1)
-	if id == 0 {
-		id = atomic.AddUint64(&nextHandleID, 1)
-	}
-	return Handle[Tag]{id: id}
-}
-
-func HandleIsValid[Tag any](handle Handle[Tag]) bool {
-	return handle.id != 0
-}
-
-type HandleTable[Tag any, Value any] struct {
-	mu     sync.Mutex
-	next   uint64
-	values map[uint64]Value
-}
-
-func NewHandleTable[Tag any, Value any]() *HandleTable[Tag, Value] {
-	return &HandleTable[Tag, Value]{
-		values: make(map[uint64]Value),
-	}
-}
-
-func (table *HandleTable[Tag, Value]) Insert(value Value) Handle[Tag] {
-	table.mu.Lock()
-	defer table.mu.Unlock()
-
-	if table.values == nil {
-		table.values = make(map[uint64]Value)
-	}
-	table.next++
-	if table.next == 0 {
-		table.next++
-	}
-	handle := Handle[Tag]{id: table.next}
-	table.values[handle.id] = value
-	return handle
-}
-
-func (table *HandleTable[Tag, Value]) Get(handle Handle[Tag]) (Value, bool) {
-	table.mu.Lock()
-	defer table.mu.Unlock()
-
-	var zero Value
-	if handle.id == 0 || table.values == nil {
-		return zero, false
-	}
-	value, ok := table.values[handle.id]
-	return value, ok
-}
-
-func (table *HandleTable[Tag, Value]) Delete(handle Handle[Tag]) bool {
-	table.mu.Lock()
-	defer table.mu.Unlock()
-
-	if handle.id == 0 || table.values == nil {
-		return false
-	}
-	if _, ok := table.values[handle.id]; !ok {
-		return false
-	}
-	delete(table.values, handle.id)
-	return true
-}
-|}
-
-let marmoset_support_file_specs =
-  [
-    ("result.go", support_result_go);
-    ("option.go", support_option_go);
-    ("unit.go", support_unit_go);
-    ("bytes.go", support_bytes_go);
-    ("handle.go", support_handle_go);
-  ]
+let marmoset_support_file_specs = [ "result.go"; "option.go"; "unit.go"; "bytes.go"; "handle.go"; "helpers.go" ]
 
 let marmoset_support_files ?toolchain_root () : go_aux_file list =
   List.map
-    (fun (name, fallback) ->
+    (fun name ->
       let rel_path = "marmoset/" ^ name in
-      let source_path = find_existing_path_upwards ?toolchain_root [ "runtime"; "go"; "marmoset"; name ] in
-      let contents = Option.bind source_path read_file_if_exists |> Option.value ~default:fallback in
-      { rel_path; contents })
+      match find_existing_path_upwards ?toolchain_root [ "runtime"; "go"; "marmoset"; name ] with
+      | Some source_path -> (
+          match read_file_if_exists source_path with
+          | Some contents -> { rel_path; contents }
+          | None ->
+              failwith
+                (Printf.sprintf "Codegen error: missing checked-in Go runtime support file %S" source_path))
+      | None ->
+          failwith
+            (Printf.sprintf "Codegen error: missing checked-in Go runtime support file runtime/go/marmoset/%s" name))
     marmoset_support_file_specs
 
 let runtime_go_shim_dir ?toolchain_root (shim_id : string) : string option =
@@ -9382,7 +9155,6 @@ let compile_to_build ~file_id (source : string) : (build_output, Diagnostic.t li
               {
                 go_mod = default_go_mod;
                 main_go;
-                runtime_go;
                 aux_go_files = shim_aux_go_files ~extern_declarations ~extern_calls ();
                 diagnostics;
               }
@@ -9395,9 +9167,6 @@ let compile_to_build ~file_id (source : string) : (build_output, Diagnostic.t li
           | exn ->
               let msg = normalize_codegen_failure_message (Printexc.to_string exn) in
               Error [ Diagnostic.error_no_span ~code:"codegen-internal" ~message:msg ]))
-
-let get_runtime () = runtime_go
-
 (* ============================================================
    Tests
    ============================================================ *)
@@ -9428,10 +9197,7 @@ let is_deterministic source =
   in
   match (build (), build ()) with
   | Ok a, Ok b ->
-      a.go_mod = b.go_mod
-      && a.main_go = b.main_go
-      && a.runtime_go = b.runtime_go
-      && a.aux_go_files = b.aux_go_files
+      a.go_mod = b.go_mod && a.main_go = b.main_go && a.aux_go_files = b.aux_go_files
   | _ -> false
 
 let%test "aux go file validation sorts deterministic relative paths" =
@@ -9452,7 +9218,7 @@ let%test "aux go file validation rejects unsafe or reserved paths" =
     | Error _ -> true
   in
   List.for_all rejects
-    [ ""; "/abs.go"; "C:/abs.go"; "a//b.go"; "./a.go"; "a/../b.go"; "main.go"; "runtime.go"; "go.mod" ]
+    [ ""; "/abs.go"; "C:/abs.go"; "a//b.go"; "./a.go"; "a/../b.go"; "main.go"; "go.mod" ]
 
 let%test "aux go file validation rejects duplicate normalized paths" =
   match
@@ -9470,7 +9236,6 @@ let%test "build output file list includes go.mod reserved files and sorted aux f
     {
       go_mod = "module marmoset_out\n\ngo 1.18\n";
       main_go = "package main\nfunc main() {}\n";
-      runtime_go = "package main\n";
       aux_go_files =
         [
           { rel_path = "zeta/z.go"; contents = "package zeta\n" };
@@ -9483,7 +9248,7 @@ let%test "build output file list includes go.mod reserved files and sorted aux f
   | Error _ -> false
   | Ok files ->
       List.map (fun (file : go_aux_file) -> file.rel_path) files
-      = [ "go.mod"; "main.go"; "runtime.go"; "alpha/a.go"; "zeta/z.go" ]
+      = [ "go.mod"; "main.go"; "alpha/a.go"; "zeta/z.go" ]
 
 let aux_rel_paths (files : go_aux_file list) : string list =
   List.map (fun (file : go_aux_file) -> file.rel_path) files |> List.sort String.compare
@@ -9664,7 +9429,6 @@ let%test "shim support and generated std api packages compile with go 1.18" =
     {
       go_mod = default_go_mod;
       main_go = "package main\nfunc main() {}\n";
-      runtime_go = "package main\n";
       aux_go_files = shim_aux_go_files ~extern_declarations ~extern_calls ();
       diagnostics = [];
     }
@@ -9732,7 +9496,6 @@ let%test "generated shim api package names are keyword safe" =
     {
       go_mod = default_go_mod;
       main_go = "package main\nfunc main() {}\n";
-      runtime_go = "package main\n";
       aux_go_files = shim_aux_go_files ~extern_declarations ~extern_calls ();
       diagnostics = [];
     }
@@ -9796,7 +9559,6 @@ let%test "malformed root auxiliary Go file classifies as Go compile failure" =
           {
             go_mod = default_go_mod;
             main_go = "package main\nfunc main() {}\n";
-            runtime_go = "package main\n";
             aux_go_files = [ { rel_path = "bad.go"; contents = "package main\nfunc broken( {\n" } ];
             diagnostics = [];
           }
@@ -10025,7 +9787,7 @@ let%test "emit array index with literal" =
 
 let%test "emit array index with variable" =
   match compile_string ~file_id:"<codegen>" "let a = [1,2,3]; let i = 1; a[i]" with
-  | Ok (code, _) -> string_contains code "indexArr(a, i)"
+  | Ok (code, _) -> string_contains code "marmoset.IndexArr(a, i)"
   | Error _ -> false
 
 let%test "emit if inside function body" =

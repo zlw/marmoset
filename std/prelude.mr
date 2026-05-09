@@ -1,4 +1,6 @@
-export Ordering, Eq, Show, Debug, Ord, Hash, Num, Rem, Neg
+import std.basics.puts_str
+
+export Ordering, Eq, Show, Debug, Ord, Hash, Num, Rem, Neg, puts
 
 type Ordering = { Less, Equal, Greater }
 
@@ -36,3 +38,5 @@ trait Rem[a] = {
 trait Neg[a] = {
   fn neg(x: a) -> a
 }
+
+fn puts[a: Show](value: a) => Unit = puts_str(Show.show(value))

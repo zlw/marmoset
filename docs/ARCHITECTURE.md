@@ -256,10 +256,10 @@ Shim ABI mapping constraints:
 - Go package paths, Go errors, pointers, channels, interfaces, methods, variadics, and generated ABI helper names stay outside Marmoset source.
 
 Shim build layout:
-- Go output is a complete module tree, not just `main.go` and `runtime.go`.
-- The CLI writes `go.mod`, `main.go`, `runtime.go`, and deterministic auxiliary Go files under the temporary build directory.
+- Go output is a complete module tree, not a single root Go package.
+- The CLI writes `go.mod`, `main.go`, copied `runtime/go/marmoset` support files, and deterministic auxiliary Go files under the temporary build directory.
 - `--emit-go` writes the same complete tree so snapshots and users inspect the exact build input.
-- Auxiliary paths are normalized and rejected if they are absolute, escape the build root, duplicate another normalized output path, or overwrite reserved root files.
+- Auxiliary paths are normalized and rejected if they are absolute, escape the build root, duplicate another normalized output path, or overwrite reserved generated files.
 
 Shim package graph:
 - `runtime/go/marmoset` contains the typed Go ABI support package named `marmoset`.

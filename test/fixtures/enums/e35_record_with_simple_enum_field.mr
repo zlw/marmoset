@@ -1,4 +1,12 @@
 # E35: Record with simple enum field
 enum Direction = { North, South, East, West }
+impl Show[Direction] = {
+  fn show(direction: Direction) -> Str = match direction {
+    case Direction.North: "North"
+    case Direction.South: "South"
+    case Direction.East: "East"
+    case Direction.West: "West"
+  }
+}
 let r = { name: "compass", dir: Direction.East }
 puts(r.dir)  # output: East

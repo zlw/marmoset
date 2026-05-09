@@ -1,5 +1,11 @@
 # CS16: C16: generic id at 5 different types
 type Option[a] = { Some(a), None }
+impl Show[Option[Int]] = {
+  fn show(option: Option[Int]) -> Str = match option {
+    case Option.Some(value): "Some(" + Show.show(value) + ")"
+    case Option.None: "None"
+  }
+}
 fn id(x) = { x }
 puts(id(42))  # output: 42
 puts(id(3.14))  # output: 3.14

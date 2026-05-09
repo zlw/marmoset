@@ -76,12 +76,11 @@ Go errors, pointers, methods, channels, interfaces, panics, sentinel values, and
 
 ## Codegen
 
-Shim codegen emits a complete Go module tree rather than only `main.go` and `runtime.go`. Called shims cause the build tree to include:
+Shim codegen emits a complete Go module tree rather than a single root Go package. Called shims cause the build tree to include:
 
 ```text
 go.mod
 main.go
-runtime.go
 marmoset/
 api/<shim-id>/api.go
 shims/<shim-id>/

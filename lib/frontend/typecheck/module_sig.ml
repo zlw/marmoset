@@ -7,6 +7,7 @@ type definition_site = {
 type member_binding = {
   internal_name : string;
   value_type : Types.poly_type option;
+  value_constraints : (string * Constraints.t list) list;
   value_definition : definition_site option;
   enum_def : Enum_registry.enum_def option;
   enum_definition : definition_site option;

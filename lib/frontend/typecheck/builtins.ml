@@ -436,12 +436,39 @@ let init_builtin_impls () =
       impl_type_params = [];
       impl_for_type = TFloat;
       impl_methods = [ Trait_registry.mk_method_sig ~name:"neg" ~params:[ ("x", TFloat) ] ~return_type:TFloat () ];
+    };
+
+  (* unit: show, debug *)
+
+  Trait_registry.register_impl ~builtin:true
+    {
+      impl_trait_name = "show";
+      impl_type_params = [];
+      impl_for_type = TNull;
+      impl_methods =
+        [ Trait_registry.mk_method_sig ~name:"show" ~params:[ ("x", TNull) ] ~return_type:TString () ];
+    };
+
+  Trait_registry.register_impl ~builtin:true
+    {
+      impl_trait_name = "debug";
+      impl_type_params = [];
+      impl_for_type = TNull;
+      impl_methods =
+        [ Trait_registry.mk_method_sig ~name:"debug" ~params:[ ("x", TNull) ] ~return_type:TString () ];
     }
 
 let seed_builtin_values (env : Infer.type_env) : Infer.type_env =
   List.fold_left (fun env_acc (name, poly) -> Infer.TypeEnv.add name poly env_acc) env builtin_types
 
 let builtin_value_env () : Infer.type_env = seed_builtin_values Infer.empty_env
+
+let primitive_builtin_types = List.filter (fun (name, _) -> not (String.equal name "puts")) builtin_types
+
+let seed_primitive_values (env : Infer.type_env) : Infer.type_env =
+  List.fold_left (fun env_acc (name, poly) -> Infer.TypeEnv.add name poly env_acc) env primitive_builtin_types
+
+let primitive_value_env () : Infer.type_env = seed_primitive_values Infer.empty_env
 
 (* ============================================================
    Tests

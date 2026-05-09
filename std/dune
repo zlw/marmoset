@@ -3,6 +3,7 @@
  (package marmoset)
  (files
   (prelude.mr as std/prelude.mr)
+  (basics.mr as std/basics.mr)
   (option.mr as std/option.mr)
   (result.mr as std/result.mr)
   (bytes.mr as std/bytes.mr)

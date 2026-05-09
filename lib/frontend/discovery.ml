@@ -78,6 +78,7 @@ let result_module_id = "std.result"
 let prelude_relative_path = Filename.concat "std" "prelude.mr"
 let toolchain_root_env_var = "MARMOSET_ROOT"
 let core_stdlib_modules = [ prelude_module_id; option_module_id; result_module_id ]
+let prelude_support_module_id = "std.basics"
 
 let is_std_import_path = function
   | "std" :: _ -> true
@@ -203,6 +204,8 @@ let required_stdlib_module_path (state : discovery_state) ~(module_id : string) 
 
 let implicit_stdlib_dependencies (module_id : string) : string list =
   if String.equal module_id prelude_module_id then
+    []
+  else if String.equal module_id prelude_support_module_id then
     []
   else if String.equal module_id option_module_id || String.equal module_id result_module_id then
     [ prelude_module_id ]

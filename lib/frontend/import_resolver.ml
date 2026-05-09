@@ -7,6 +7,7 @@ module StringSet = Set.Make (String)
 let prelude_module_id = "std.prelude"
 let option_module_id = "std.option"
 let result_module_id = "std.result"
+let prelude_support_module_id = "std.basics"
 let core_stdlib_modules = [ prelude_module_id; option_module_id; result_module_id ]
 
 type member_presence = {
@@ -104,14 +105,18 @@ let is_std_module_id (module_id : string) : bool =
 
 let is_locked_std_core_name ~(module_id : string) (name : string) : bool =
   match (module_id, name) with
-  | "std.prelude", ("Ordering" | "Eq" | "Show" | "Debug" | "Ord" | "Hash" | "Num" | "Rem" | "Neg") -> true
+  | "std.prelude", ("Ordering" | "Eq" | "Show" | "Debug" | "Ord" | "Hash" | "Num" | "Rem" | "Neg" | "puts")
+    ->
+      true
   | "std.option", "Option" -> true
   | "std.result", "Result" -> true
   | _ -> false
 
 let is_implicit_std_core_name (name : string) : bool =
   match name with
-  | "Ordering" | "Eq" | "Show" | "Debug" | "Ord" | "Hash" | "Num" | "Rem" | "Neg" | "Option" | "Result" -> true
+  | "Ordering" | "Eq" | "Show" | "Debug" | "Ord" | "Hash" | "Num" | "Rem" | "Neg" | "puts" | "Option"
+  | "Result" ->
+      true
   | _ -> false
 
 let binding_internal_name ?(preserve_source_name = false) ~(module_id : string) (name : string) : string =
@@ -381,6 +386,8 @@ let add_named_export_if_present
 let implicit_direct_modules_for_module (module_id : string) : string list =
   if String.equal module_id prelude_module_id then
     []
+  else if String.equal module_id prelude_support_module_id then
+    []
   else if String.equal module_id option_module_id || String.equal module_id result_module_id then
     [ prelude_module_id ]
   else if is_std_module_id module_id then
@@ -402,6 +409,8 @@ let implicit_direct_bindings_for_module
     | None -> bindings
   in
   if String.equal current_module.module_id prelude_module_id then
+    StringMap.empty
+  else if String.equal current_module.module_id prelude_support_module_id then
     StringMap.empty
   else if
     String.equal current_module.module_id option_module_id

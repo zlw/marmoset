@@ -1,2 +1,9 @@
 enum Color = { Red, Green, Blue }
+impl Show[Color] = {
+  fn show(color: Color) -> Str = match color {
+    case Color.Red: "Red"
+    case Color.Green: "Green"
+    case Color.Blue: "Blue"
+  }
+}
 puts(Color.Red)  # output: Red

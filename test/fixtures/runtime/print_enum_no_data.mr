@@ -1,4 +1,11 @@
 enum Option[a] = { Some(a), None }
 
+impl Show[Option[Int]] = {
+  fn show(option: Option[Int]) -> Str = match option {
+    case Option.Some(value): "Some(" + Show.show(value) + ")"
+    case Option.None: "None"
+  }
+}
+
 let x: Option[Int] = Option.None
 puts(x)  # output: None

@@ -1,6 +1,9 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+	mshim_std_basics "marmoset_out/shims/std/basics"
+)
 
 type marmosetDyn struct{ payload any; witness any }
 
@@ -17,11 +20,31 @@ var __marmoset_dyn_witness_marmosetDynWitness_Pack_record_x_int64_closed = marmo
 
 type Point struct{x int64}
 
+func extern__std_basics__puts_str(value string) struct{} {
+	defer func() {
+		if __panic := recover(); __panic != nil {
+			panic(fmt.Sprintf("shim ABI violation at std/basics.puts_str: %v", __panic))
+		}
+	}()
+	mshim_std_basics.PutsStr(value)
+	return struct{}{}
+}
+
 func apply_record_x_int64_closed_fn_record_x_int64_closed_string(x Point, f func(Point) string) string {
     return f(x)
 }
 
+func puts_string(value string) struct{} {
+    return std__basics__puts_u005fstr_string(show_show_string(value))
+}
 
+func std__basics__puts_u005fstr_string(value string) struct{} {
+    return extern__std_basics__puts_str(value)
+}
+
+func show_show_string(x string) string {
+	return x
+}
 func Label_label_record_x_int64_closed(self Point) string {
         return apply_record_x_int64_closed_fn_record_x_int64_closed_string(self, func(x Point) string {
         return show_show_record_x_int64_closed(x)
@@ -41,6 +64,6 @@ func show_show_record_x_int64_closed(x Point) string {
 func main() {
     var value marmosetDyn = marmosetDyn{payload: Point{x: int64(1)}, witness: __marmoset_dyn_witness_marmosetDynWitness_Pack_record_x_int64_closed}
     _ = value
-    _ = puts((func() string { __dyn := value; __witness := __dyn.witness.(marmosetDynWitness_Pack); return __witness.show(__dyn.payload) })())
-    _ = puts((func() string { __dyn := value; __witness := __dyn.witness.(marmosetDynWitness_Pack); return __witness.label(__dyn.payload) })())
+    _ = puts_string((func() string { __dyn := value; __witness := __dyn.witness.(marmosetDynWitness_Pack); return __witness.show(__dyn.payload) })())
+    _ = puts_string((func() string { __dyn := value; __witness := __dyn.witness.(marmosetDynWitness_Pack); return __witness.label(__dyn.payload) })())
 }
