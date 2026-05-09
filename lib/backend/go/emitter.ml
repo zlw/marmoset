@@ -2346,7 +2346,12 @@ let rec expr_type_from_env_or_map (env : Infer.type_env) (type_map : Infer.type_
       in
       match (map_type_opt, env_type_opt) with
       | Some map_type, Some env_type ->
-          if Types.canonicalize_mono_type map_type = Types.TUnion [] then
+          if
+            has_unresolved_codegen_type map_type
+            && not (has_unresolved_codegen_type env_type)
+          then
+            env_type
+          else if Types.canonicalize_mono_type map_type = Types.TUnion [] then
             env_type
           else if Annotation.is_subtype_of map_type env_type || Annotation.is_subtype_of env_type map_type then
             prefer_more_precise_param_type map_type env_type
@@ -2379,6 +2384,7 @@ let rec expr_type_from_env_or_map (env : Infer.type_env) (type_map : Infer.type_
 let method_dispatch_type (env : Infer.type_env) (type_map : Infer.type_map) (expr : AST.expression) :
     Types.mono_type =
   match Hashtbl.find_opt type_map expr.id with
+  | Some typ when has_unresolved_codegen_type typ -> expr_type_from_env_or_map env type_map expr
   | Some typ when Types.canonicalize_mono_type typ = Types.TUnion [] -> expr_type_from_env_or_map env type_map expr
   | Some typ -> typ
   | None -> expr_type_from_env_or_map env type_map expr

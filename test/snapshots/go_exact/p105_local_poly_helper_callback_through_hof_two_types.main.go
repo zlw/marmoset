@@ -27,12 +27,8 @@ func run() string {
     }
 }
 
-func std__basics__puts_u005fstr_string(value string) struct{} {
-    return extern__std_basics__puts_str(value)
-}
-
 func puts_string(value string) struct{} {
-    return std__basics__puts_u005fstr_string(show_show_string(value))
+    return extern__std_basics__puts_str(show_show_string(value))
 }
 
 func __local_same_7_int64_int64(x int64, y int64) bool {

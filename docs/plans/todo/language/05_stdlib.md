@@ -79,7 +79,7 @@ fn puts[a: Show](value: a) => Unit
 
 Rules:
 
-- Public code should keep using implicit `puts`; `std.basics.puts` is the generic `Show`-based function and owns the private `puts_str` shim call.
+- Public code should keep using implicit `puts`; `std.basics.puts` is the generic `Show`-based function and calls the private `puts_str` shim directly.
 - This module should stay small. Domain-specific IO belongs in `std.console` or other explicit modules.
 
 ### `std.bytes`
@@ -389,3 +389,4 @@ HTTP, SQL, and framework-style wrappers likely need follow-up shim features such
 - 2026-05-09 05:06 CEST: Started the stdlib-basics dogfooding slice from the shim-first interop substrate. Added `std.basics.puts` plus checked-in `runtime/go/shims/std/basics`, removed the backend `puts` runtime special case, moved remaining checked-in helper runtime code under `runtime/go/marmoset`, and made stale direct-print fixtures supply explicit `Show`/rendering. Verification passed with `dune runtest lib/frontend lib/backend/go`, focused former-failure fixtures plus hardening, `git diff --check`, and `make integration all`.
 - 2026-05-09 05:07 CEST: Stdlib-basics dogfooding slice committed.
 - 2026-05-09 16:05 CEST: Follow-up cleanup moved the public implicit `puts` definition out of `std.prelude` and into `std.basics`; `std.basics` is now a core stdlib module loaded for implicit bindings, with only a private monomorphic `puts_str` adapter at the shim boundary. Verification passed with `dune runtest lib/frontend lib/backend/go`, `make integration runtime/g41a_puts_int.mr prelude hardening snapshots`, `make integration ffi`, `make integration all`, and `git diff --check`.
+- 2026-05-09 16:24 CEST: Fixed generic direct shim calls so nested trait arguments prefer the concrete specialized environment over stale unresolved type-map entries. Collapsed `std.basics.puts` to call `basics_shim.puts_str(Show.show(value))` directly and added a regression test for the former `show_show_union_empty` emission.

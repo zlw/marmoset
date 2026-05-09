@@ -1603,12 +1603,50 @@ let%test "implicit puts is std.basics code backed by basics shim" =
       | Ok build_output ->
           string_contains build_output.main_go "func puts_int64(value int64) struct{}"
           && string_contains build_output.main_go
-               "return std__basics__puts_u005fstr_string(show_show_int64(value))"
+               "return extern__std_basics__puts_str(show_show_int64(value))"
           && string_contains build_output.main_go "func extern__std_basics__puts_str(value string) struct{}"
           && string_contains build_output.main_go {|mshim_std_basics "marmoset_out/shims/std/basics"|}
           && Option.is_some (List.find_opt (fun (file : Codegen.go_aux_file) ->
                  String.equal file.rel_path "shims/std/basics/basics.go") build_output.aux_go_files)
-          && not (string_contains build_output.main_go "marmoset.Puts"))
+          && not (string_contains build_output.main_go "marmoset.Puts")
+          && not (string_contains build_output.main_go "std__basics__puts_u005fstr"))
+
+let%test "generic direct shim call specializes nested trait argument" =
+  Discovery.with_temp_project
+    [ ("main.mr", "puts(42)\n") ]
+    (fun root ->
+      let stdlib_root = Discovery.make_temp_dir "marmoset_direct_shim_stdlib_" in
+      Fun.protect
+        ~finally:(fun () -> ignore (Sys.command ("rm -rf " ^ Filename.quote stdlib_root)))
+        (fun () ->
+          Discovery.mkdir_p (Filename.concat stdlib_root "std");
+          match Discovery.resolve_toolchain_root () with
+          | Error _ -> false
+          | Ok toolchain_root ->
+              Discovery.write_file
+                (Filename.concat stdlib_root "std/prelude.mr")
+                (read_source_file (Filename.concat toolchain_root "std/prelude.mr"));
+              Discovery.write_file
+                (Filename.concat stdlib_root "std/option.mr")
+                (read_source_file (Filename.concat toolchain_root "std/option.mr"));
+              Discovery.write_file
+                (Filename.concat stdlib_root "std/result.mr")
+                (read_source_file (Filename.concat toolchain_root "std/result.mr"));
+              Discovery.write_file
+                (Filename.concat stdlib_root "std/basics.mr")
+                "import std.prelude.Show\n\n\
+                 export puts\n\n\
+                 extern \"std/basics\" as basics_shim = {\n\
+                 \  fn puts_str(value: Str) => Unit\n\
+                 }\n\n\
+                 fn puts[a: Show](value: a) => Unit = basics_shim.puts_str(Show.show(value))\n";
+              match compile_entry_to_build ~stdlib_root ~entry_file:(Filename.concat root "main.mr") () with
+              | Error _ -> false
+              | Ok build_output ->
+                  string_contains build_output.main_go
+                    "return extern__std_basics__puts_str(show_show_int64(value))"
+                  && not (string_contains build_output.main_go "show_show_union_empty")
+                  && not (string_contains build_output.main_go "std__basics__puts_u005fstr")))
 
 let%test "imported constrained generics do not inherit local type variable constraints" =
   Discovery.with_temp_project

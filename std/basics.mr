@@ -6,6 +6,4 @@ extern "std/basics" as basics_shim = {
   fn puts_str(value: Str) => Unit
 }
 
-fn puts_str(value: Str) => Unit = basics_shim.puts_str(value)
-
-fn puts[a: Show](value: a) => Unit = puts_str(Show.show(value))
+fn puts[a: Show](value: a) => Unit = basics_shim.puts_str(Show.show(value))

@@ -20,12 +20,8 @@ func __section_neg28_int64(it int64) int64 {
     return (it + int64(41))
 }
 
-func std__basics__puts_u005fstr_string(value string) struct{} {
-    return extern__std_basics__puts_str(value)
-}
-
 func puts_int64(value int64) struct{} {
-    return std__basics__puts_u005fstr_string(show_show_int64(value))
+    return extern__std_basics__puts_str(show_show_int64(value))
 }
 
 func show_show_int64(x int64) string {

@@ -25,12 +25,8 @@ func fmt__format_u005fpoint_record_x_int64_y_int64_closed(p Fmt__Point) string {
     return fmt__join_string_string("x", "y")
 }
 
-func std__basics__puts_u005fstr_string(value string) struct{} {
-    return extern__std_basics__puts_str(value)
-}
-
 func puts_string(value string) struct{} {
-    return std__basics__puts_u005fstr_string(show_show_string(value))
+    return extern__std_basics__puts_str(show_show_string(value))
 }
 
 func show_show_string(x string) string {
