@@ -55,12 +55,37 @@ fn env_with_marmoset_root(env: &[(String, String)], marmoset_root: &str) -> Vec<
     merged
 }
 
+fn marmoset_root_from_env(env: &[(String, String)]) -> Option<PathBuf> {
+    env.iter().find_map(|(name, value)| {
+        if name == "MARMOSET_ROOT" && !value.is_empty() {
+            Some(PathBuf::from(value))
+        } else {
+            None
+        }
+    })
+}
+
 fn repo_dev_binary(
     worktree_root: &Path,
     shell_env: &[(String, String)],
     mut is_launchable: impl FnMut(&str, &[(String, String)]) -> bool,
 ) -> Option<RepoBinaryLaunch> {
+    let mut candidate_roots = Vec::new();
+
+    if let Some(repo_root) = marmoset_root_from_env(shell_env) {
+        candidate_roots.push(repo_root);
+    }
+
     for repo_root in ancestor_dirs(worktree_root) {
+        if !candidate_roots
+            .iter()
+            .any(|candidate_root| candidate_root == &repo_root)
+        {
+            candidate_roots.push(repo_root);
+        }
+    }
+
+    for repo_root in candidate_roots {
         let candidate = repo_binary_launch(&repo_root);
         let env = env_with_marmoset_root(shell_env, &candidate.marmoset_root);
         if is_launchable(&candidate.path, &env) {
@@ -163,6 +188,31 @@ mod tests {
                 ("MARMOSET_ROOT".to_string(), "/tmp/marmoset-dev".to_string()),
             ]
         );
+    }
+
+    #[test]
+    fn uses_marmoset_root_env_before_worktree_ancestors() {
+        let worktree_root = PathBuf::from("/tmp/unrelated/project");
+        let shell_env = vec![("MARMOSET_ROOT".to_string(), "/tmp/marmoset-dev".to_string())];
+        let repo_binary = "/tmp/marmoset-dev/marmoset".to_string();
+        let mut probed = Vec::new();
+
+        let selected = repo_dev_binary(worktree_root.as_path(), &shell_env, |path, env| {
+            probed.push((path.to_string(), env.to_vec()));
+            path == repo_binary
+                && env
+                    .iter()
+                    .any(|(name, value)| name == "MARMOSET_ROOT" && value == "/tmp/marmoset-dev")
+        });
+
+        assert_eq!(
+            selected,
+            Some(RepoBinaryLaunch {
+                path: repo_binary.clone(),
+                marmoset_root: "/tmp/marmoset-dev".to_string(),
+            })
+        );
+        assert_eq!(probed.first().map(|(path, _env)| path), Some(&repo_binary));
     }
 
     #[test]
