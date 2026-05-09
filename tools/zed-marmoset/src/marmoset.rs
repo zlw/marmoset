@@ -71,6 +71,12 @@ fn marmoset_root_from_env(env: &[(String, String)]) -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
+fn pwd_from_env(env: &[(String, String)]) -> Option<PathBuf> {
+    env_value(env, "PWD")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+}
+
 fn marmoset_roots_from_path_binary_entries(env: &[(String, String)]) -> Vec<PathBuf> {
     env_value(env, "PATH")
         .map(|path_value| {
@@ -111,6 +117,10 @@ fn repo_dev_binary(
     let mut candidate_roots = Vec::new();
 
     if let Some(repo_root) = marmoset_root_from_env(shell_env) {
+        push_candidate_root(&mut candidate_roots, repo_root);
+    }
+
+    if let Some(repo_root) = pwd_from_env(shell_env) {
         push_candidate_root(&mut candidate_roots, repo_root);
     }
 
@@ -268,6 +278,37 @@ mod tests {
             "PATH".to_string(),
             "/tmp/marmoset-dev/marmoset:/usr/bin".to_string(),
         )];
+        let repo_binary = "/tmp/marmoset-dev/marmoset".to_string();
+        let mut probed = Vec::new();
+
+        let selected = repo_dev_binary(worktree_root.as_path(), &shell_env, |path, env| {
+            probed.push((path.to_string(), env.to_vec()));
+            path == repo_binary
+                && env
+                    .iter()
+                    .any(|(name, value)| name == "MARMOSET_ROOT" && value == "/tmp/marmoset-dev")
+        });
+
+        assert_eq!(
+            selected,
+            Some(RepoBinaryLaunch {
+                path: repo_binary.clone(),
+                marmoset_root: "/tmp/marmoset-dev".to_string(),
+            })
+        );
+        assert_eq!(probed.first().map(|(path, _env)| path), Some(&repo_binary));
+    }
+
+    #[test]
+    fn uses_pwd_env_when_worktree_root_is_empty() {
+        let worktree_root = PathBuf::from("");
+        let shell_env = vec![
+            ("PWD".to_string(), "/tmp/marmoset-dev".to_string()),
+            (
+                "PATH".to_string(),
+                "/Users/zlw/.opam/default/bin:/usr/bin".to_string(),
+            ),
+        ];
         let repo_binary = "/tmp/marmoset-dev/marmoset".to_string();
         let mut probed = Vec::new();
 

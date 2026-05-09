@@ -307,6 +307,35 @@ let%test "analyze_with_file_id treats direct stdlib entries as std modules" =
                     | _ -> false)
                   result.diagnostics)))
 
+let%test "analyze_with_file_id treats direct non-core stdlib shim entries as std modules" =
+  let file_source =
+    "import std.bytes.Bytes\n\nexport File, FileReadError, FileWriteError, FileOpenError, FileCloseError, read, write, open, close\n\nextern type File\n\ntype FileReadError = { NotFound, PermissionDenied, IsDirectory, Other(Str) }\ntype FileWriteError = { NotFound, PermissionDenied, IsDirectory, Other(Str) }\ntype FileOpenError = { NotFound, PermissionDenied, IsDirectory, Other(Str) }\ntype FileCloseError = { AlreadyClosed, Other(Str) }\n\nextern \"std/file\" as file_shim = {\n  fn read(path: Str) => Result[Bytes, FileReadError]\n  fn write(path: Str, bytes: Bytes) => Result[Unit, FileWriteError]\n  fn open(path: Str) => Result[File, FileOpenError]\n  fn close(file: File) => Result[Unit, FileCloseError]\n}\n"
+  in
+  with_temp_project
+    [
+      ("std/prelude.mr", "export Show\ntrait Show[a] = { fn show(value: a) -> Str }\n");
+      ("std/basics.mr", "import std.prelude.Show\nexport puts\nfn puts[a: Show](value: a) => Unit = {}\n");
+      ("std/option.mr", "export Option\ntype Option[a] = { Some(a), None }\n");
+      ("std/result.mr", "export Result\ntype Result[a, e] = { Success(a), Failure(e) }\n");
+      ("std/bytes.mr", "export Bytes\nextern type Bytes\n");
+      ("std/file.mr", file_source);
+    ]
+    (fun root ->
+      with_env_var "MARMOSET_ROOT" root (fun () ->
+          let file_id = Filename.concat root "std/file.mr" in
+          let source_root = Filename.dirname file_id in
+          let result = analyze_with_file_id ~source_root ~file_id ~source:file_source () in
+          result.module_id = Some "std.file"
+          && result.project_root = Some root
+          && not
+               (List.exists
+                  (fun (diag : Lsp_t.Diagnostic.t) ->
+                    match diag.message with
+                    | `String message ->
+                        Diagnostics.String_utils.contains_substring ~needle:"shim \"std/file\"" message
+                    | _ -> false)
+                  result.diagnostics)))
+
 let%test "analyze helper uses module-aware compiler analysis" =
   let result = analyze ~source:"let id = (x) -> x\nid(1)\n" in
   match result.compiler_analysis with
