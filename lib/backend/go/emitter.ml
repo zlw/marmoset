@@ -2346,10 +2346,7 @@ let rec expr_type_from_env_or_map (env : Infer.type_env) (type_map : Infer.type_
       in
       match (map_type_opt, env_type_opt) with
       | Some map_type, Some env_type ->
-          if
-            has_unresolved_codegen_type map_type
-            && not (has_unresolved_codegen_type env_type)
-          then
+          if has_unresolved_codegen_type map_type && not (has_unresolved_codegen_type env_type) then
             env_type
           else if Types.canonicalize_mono_type map_type = Types.TUnion [] then
             env_type
@@ -2385,7 +2382,8 @@ let method_dispatch_type (env : Infer.type_env) (type_map : Infer.type_map) (exp
     Types.mono_type =
   match Hashtbl.find_opt type_map expr.id with
   | Some typ when has_unresolved_codegen_type typ -> expr_type_from_env_or_map env type_map expr
-  | Some typ when Types.canonicalize_mono_type typ = Types.TUnion [] -> expr_type_from_env_or_map env type_map expr
+  | Some typ when Types.canonicalize_mono_type typ = Types.TUnion [] ->
+      expr_type_from_env_or_map env type_map expr
   | Some typ -> typ
   | None -> expr_type_from_env_or_map env type_map expr
 
@@ -6040,97 +6038,122 @@ and emit_call state type_map env call_expr func args =
     in
     emit [] args expected_types
   in
-  (* Check for builtin function calls that need special handling *)
-  match func.expr with
-  | AST.Identifier type_name
-    when (not (Infer.TypeEnv.mem type_name env)) && Type_registry.is_named_type_name type_name -> (
-      match named_constructor_result_type () with
-      | Some (_resolved_name, type_args) ->
-          let result_type = Types.TNamed (type_name, type_args) in
-          let representation_type = named_type_representation_exn type_name type_args in
-          let constructor_name = type_to_go state.mono result_type in
-          let args_str = emit_args_with_expected_types [ representation_type ] in
-          Printf.sprintf "%s(%s)" constructor_name args_str
+  let emit_shim_call shim_key =
+    let call =
+      match Hashtbl.find_opt state.mono.extern_calls call_expr.id with
+      | Some call -> call
       | None ->
+          failwith (Printf.sprintf "Codegen error: missing shim call artifact for expression %d" call_expr.id)
+    in
+    let func = extern_func_exn state.mono shim_key in
+    let arg_strs =
+      match List.combine args call.call_arg_boundary_types with
+      | arg_pairs ->
+          List.map
+            (fun (arg, expected_boundary_type) ->
+              let expected_type = Typecheck.Shim_boundary.to_mono_type expected_boundary_type in
+              emit_expr_for_expected_type state type_map env expected_type arg)
+            arg_pairs
+      | exception Invalid_argument _ ->
+          failwith
+            (Printf.sprintf "Codegen error: shim call argument artifact mismatch for %s" func.marmoset_func_name)
+    in
+    Printf.sprintf "%s(%s)" (extern_wrapper_name_for_state state.mono func) (String.concat ", " arg_strs)
+  in
+  (* Check for builtin function calls that need special handling *)
+  match Hashtbl.find_opt state.mono.call_resolution_map call_expr.id with
+  | Some (Typecheck.Resolution_artifacts.ShimQualifiedCall shim_key) -> emit_shim_call shim_key
+  | _ -> (
+      match func.expr with
+      | AST.Identifier type_name
+        when (not (Infer.TypeEnv.mem type_name env)) && Type_registry.is_named_type_name type_name -> (
+          match named_constructor_result_type () with
+          | Some (_resolved_name, type_args) ->
+              let result_type = Types.TNamed (type_name, type_args) in
+              let representation_type = named_type_representation_exn type_name type_args in
+              let constructor_name = type_to_go state.mono result_type in
+              let args_str = emit_args_with_expected_types [ representation_type ] in
+              Printf.sprintf "%s(%s)" constructor_name args_str
+          | None ->
+              let func_str = emit_expr state type_map env func in
+              let args_str = emit_args_with_expected_types call_param_types in
+              Printf.sprintf "%s(%s)" func_str args_str)
+      | AST.Identifier "len"
+        when match args with
+             | [ _ ] -> true
+             | _ -> false ->
+          let arg_str = emit_expr state type_map env (List.hd args) in
+          Printf.sprintf "int64(len(%s))" arg_str
+      | AST.Identifier "first"
+        when match args with
+             | [ _ ] -> true
+             | _ -> false ->
+          let arg_str = emit_expr state type_map env (List.hd args) in
+          Printf.sprintf "%s(%s)" (marmoset_runtime_helper state.mono "First") arg_str
+      | AST.Identifier "last"
+        when match args with
+             | [ _ ] -> true
+             | _ -> false ->
+          let arg_str = emit_expr state type_map env (List.hd args) in
+          Printf.sprintf "%s(%s)" (marmoset_runtime_helper state.mono "Last") arg_str
+      | AST.Identifier "rest"
+        when match args with
+             | [ _ ] -> true
+             | _ -> false ->
+          let arg_str = emit_expr state type_map env (List.hd args) in
+          Printf.sprintf "%s(%s)" (marmoset_runtime_helper state.mono "Rest") arg_str
+      | AST.Identifier "push"
+        when match args with
+             | [ _; _ ] -> true
+             | _ -> false ->
+          let arr_str = emit_expr state type_map env (List.hd args) in
+          let val_str = emit_expr state type_map env (List.nth args 1) in
+          Printf.sprintf "%s(%s, %s)" (marmoset_runtime_helper state.mono "Push") arr_str val_str
+      | _ when Option.is_some user_call_target ->
+          let target_name = Option.get user_call_target in
+          let actual_arg_types = List.map (arg_type_for_specialization state.mono env type_map) args in
+          let param_types, mangled_name =
+            if List.exists has_type_vars call_param_types then
+              match instantiated_func_for_args state.mono target_name actual_arg_types with
+              | Some inst -> (inst.concrete_types, mangle_func_name target_name inst.concrete_types)
+              | None -> (
+                  match instantiated_func_name_for_args state.mono target_name call_param_types with
+                  | Some resolved_name -> (call_param_types, resolved_name)
+                  | None -> (
+                      match unique_instantiated_func_name state.mono target_name with
+                      | Some resolved_name -> (call_param_types, resolved_name)
+                      | None -> (call_param_types, go_safe_ident target_name)))
+            else
+              (call_param_types, mangle_func_name target_name call_param_types)
+          in
+          let () =
+            if not (List.exists has_type_vars param_types) then
+              match lookup_func_def_for_call state.mono target_name (List.length args) with
+              | Some func_def ->
+                  add_instantiation state.mono
+                    {
+                      func_name = target_name;
+                      module_path = state.mono.module_path;
+                      func_expr_id = func_def.func_expr_id;
+                      func_arity = List.length args;
+                      concrete_only_mode = state.mono.concrete_only;
+                      concrete_types = param_types;
+                      type_fingerprint = fingerprint_types param_types;
+                      return_type = get_type type_map call_expr;
+                    }
+              | None -> ()
+          in
+          let args_str = emit_args_with_expected_types param_types in
+          Printf.sprintf "%s(%s)" mangled_name args_str
+      | _ -> (
           let func_str = emit_expr state type_map env func in
           let args_str = emit_args_with_expected_types call_param_types in
-          Printf.sprintf "%s(%s)" func_str args_str)
-  | AST.Identifier "len"
-    when match args with
-         | [ _ ] -> true
-         | _ -> false ->
-      let arg_str = emit_expr state type_map env (List.hd args) in
-      Printf.sprintf "int64(len(%s))" arg_str
-  | AST.Identifier "first"
-    when match args with
-         | [ _ ] -> true
-         | _ -> false ->
-      let arg_str = emit_expr state type_map env (List.hd args) in
-      Printf.sprintf "%s(%s)" (marmoset_runtime_helper state.mono "First") arg_str
-  | AST.Identifier "last"
-    when match args with
-         | [ _ ] -> true
-         | _ -> false ->
-      let arg_str = emit_expr state type_map env (List.hd args) in
-      Printf.sprintf "%s(%s)" (marmoset_runtime_helper state.mono "Last") arg_str
-  | AST.Identifier "rest"
-    when match args with
-         | [ _ ] -> true
-         | _ -> false ->
-      let arg_str = emit_expr state type_map env (List.hd args) in
-      Printf.sprintf "%s(%s)" (marmoset_runtime_helper state.mono "Rest") arg_str
-  | AST.Identifier "push"
-    when match args with
-         | [ _; _ ] -> true
-         | _ -> false ->
-      let arr_str = emit_expr state type_map env (List.hd args) in
-      let val_str = emit_expr state type_map env (List.nth args 1) in
-      Printf.sprintf "%s(%s, %s)" (marmoset_runtime_helper state.mono "Push") arr_str val_str
-  | _ when Option.is_some user_call_target ->
-      let target_name = Option.get user_call_target in
-      let actual_arg_types = List.map (arg_type_for_specialization state.mono env type_map) args in
-      let param_types, mangled_name =
-        if List.exists has_type_vars call_param_types then
-          match instantiated_func_for_args state.mono target_name actual_arg_types with
-          | Some inst -> (inst.concrete_types, mangle_func_name target_name inst.concrete_types)
-          | None -> (
-              match instantiated_func_name_for_args state.mono target_name call_param_types with
-              | Some resolved_name -> (call_param_types, resolved_name)
-              | None -> (
-                  match unique_instantiated_func_name state.mono target_name with
-                  | Some resolved_name -> (call_param_types, resolved_name)
-                  | None -> (call_param_types, go_safe_ident target_name)))
-        else
-          (call_param_types, mangle_func_name target_name call_param_types)
-      in
-      let () =
-        if not (List.exists has_type_vars param_types) then
-          match lookup_func_def_for_call state.mono target_name (List.length args) with
-          | Some func_def ->
-              add_instantiation state.mono
-                {
-                  func_name = target_name;
-                  module_path = state.mono.module_path;
-                  func_expr_id = func_def.func_expr_id;
-                  func_arity = List.length args;
-                  concrete_only_mode = state.mono.concrete_only;
-                  concrete_types = param_types;
-                  type_fingerprint = fingerprint_types param_types;
-                  return_type = get_type type_map call_expr;
-                }
-          | None -> ()
-      in
-      let args_str = emit_args_with_expected_types param_types in
-      Printf.sprintf "%s(%s)" mangled_name args_str
-  | _ -> (
-      let func_str = emit_expr state type_map env func in
-      let args_str = emit_args_with_expected_types call_param_types in
-      match (callee_type_opt, call_signature_opt) with
-      | Some (Types.TUnion _), Some (params, ret) ->
-          let callable_type = List.fold_right (fun p acc -> Types.TFun (p, acc, false)) params ret in
-          let callable_go_type = type_to_go state.mono callable_type in
-          Printf.sprintf "(%s.(%s))(%s)" func_str callable_go_type args_str
-      | _ -> Printf.sprintf "%s(%s)" func_str args_str)
+          match (callee_type_opt, call_signature_opt) with
+          | Some (Types.TUnion _), Some (params, ret) ->
+              let callable_type = List.fold_right (fun p acc -> Types.TFun (p, acc, false)) params ret in
+              let callable_go_type = type_to_go state.mono callable_type in
+              Printf.sprintf "(%s.(%s))(%s)" func_str callable_go_type args_str
+          | _ -> Printf.sprintf "%s(%s)" func_str args_str))
 
 and emit_array ?expected_elem_type state type_map env elements =
   match elements with
@@ -6187,7 +6210,8 @@ and emit_index state type_map env container index =
       (* Literal negative: transform to len-based *)
       | Some i -> Printf.sprintf "string(%s[len(%s)%Ld])" container_str container_str i
       (* Variable: use runtime helper *)
-      | None -> Printf.sprintf "%s(%s, %s)" (marmoset_runtime_helper state.mono "IndexStr") container_str index_str)
+      | None ->
+          Printf.sprintf "%s(%s, %s)" (marmoset_runtime_helper state.mono "IndexStr") container_str index_str)
   | Types.TArray _ -> (
       match literal_int with
       (* Literal positive: direct access *)
@@ -6195,7 +6219,8 @@ and emit_index state type_map env container index =
       (* Literal negative: transform to len-based *)
       | Some i -> Printf.sprintf "%s[len(%s)%Ld]" container_str container_str i
       (* Variable: use runtime helper *)
-      | None -> Printf.sprintf "%s(%s, %s)" (marmoset_runtime_helper state.mono "IndexArr") container_str index_str)
+      | None ->
+          Printf.sprintf "%s(%s, %s)" (marmoset_runtime_helper state.mono "IndexArr") container_str index_str)
   | Types.THash _ -> Printf.sprintf "%s[%s]" container_str index_str
   | _ -> Printf.sprintf "%s[%s]" container_str index_str
 
@@ -8845,8 +8870,7 @@ let go_output_files (output : build_output) : (go_aux_file list, string) result 
   | Ok aux_go_files ->
       Ok
         ([
-           { rel_path = "go.mod"; contents = output.go_mod };
-           { rel_path = "main.go"; contents = output.main_go };
+           { rel_path = "go.mod"; contents = output.go_mod }; { rel_path = "main.go"; contents = output.main_go };
          ]
         @ aux_go_files)
 
@@ -8902,11 +8926,12 @@ let marmoset_support_files ?toolchain_root () : go_aux_file list =
           match read_file_if_exists source_path with
           | Some contents -> { rel_path; contents }
           | None ->
-              failwith
-                (Printf.sprintf "Codegen error: missing checked-in Go runtime support file %S" source_path))
+              failwith (Printf.sprintf "Codegen error: missing checked-in Go runtime support file %S" source_path)
+          )
       | None ->
           failwith
-            (Printf.sprintf "Codegen error: missing checked-in Go runtime support file runtime/go/marmoset/%s" name))
+            (Printf.sprintf "Codegen error: missing checked-in Go runtime support file runtime/go/marmoset/%s"
+               name))
     marmoset_support_file_specs
 
 let runtime_go_shim_dir ?toolchain_root (shim_id : string) : string option =
@@ -9203,8 +9228,7 @@ let is_deterministic source =
       (fun () -> compile_to_build ~file_id:"<codegen>" source)
   in
   match (build (), build ()) with
-  | Ok a, Ok b ->
-      a.go_mod = b.go_mod && a.main_go = b.main_go && a.aux_go_files = b.aux_go_files
+  | Ok a, Ok b -> a.go_mod = b.go_mod && a.main_go = b.main_go && a.aux_go_files = b.aux_go_files
   | _ -> false
 
 let%test "aux go file validation sorts deterministic relative paths" =
@@ -9224,8 +9248,7 @@ let%test "aux go file validation rejects unsafe or reserved paths" =
     | Ok _ -> false
     | Error _ -> true
   in
-  List.for_all rejects
-    [ ""; "/abs.go"; "C:/abs.go"; "a//b.go"; "./a.go"; "a/../b.go"; "main.go"; "go.mod" ]
+  List.for_all rejects [ ""; "/abs.go"; "C:/abs.go"; "a//b.go"; "./a.go"; "a/../b.go"; "main.go"; "go.mod" ]
 
 let%test "aux go file validation rejects duplicate normalized paths" =
   match

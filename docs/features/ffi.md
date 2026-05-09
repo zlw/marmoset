@@ -24,10 +24,6 @@ type FileReadError = { NotFound, PermissionDenied, IsDirectory, Other(Str) }
 extern "std/file" as file_shim = {
   fn read(path: Str) => Result[Bytes, FileReadError]
 }
-
-fn read(path: Str) => Result[Bytes, FileReadError] = {
-  file_shim.read(path)
-}
 ```
 
 Phase one requires shim ids to use the `std` root and at least two slash-separated segments. Valid examples include `std/bytes` and `std/file`. Single-segment ids such as `strings` are rejected with `shim-id-invalid`; syntactically valid but unknown ids such as `std/missing` fail with `shim-id-not-found`.
@@ -64,9 +60,9 @@ Unsupported boundary types fail during typechecking instead of leaking Go repres
 
 ## Ownership
 
-Extern declarations are module-local. Importing a wrapper module never imports its shim qualifier; callers use the exported Marmoset wrapper API.
+Extern qualifiers are module-local. Importing a shim-backed stdlib module never imports its private shim qualifier. If an extern function name appears in the module's `export` list, callers use that exported module API directly and codegen lowers the call through the generated shim adapter.
 
-Each shim id has exactly one owning Marmoset module in a project. In phase one, the owner module id must match the shim id with `/` converted to `.`, so `std/file` is owned by `std.file`. Duplicate owners, duplicate blocks for the same shim id, direct export of shim functions, qualifier collisions, Go symbol collisions, malformed shim ids, and missing shim ids produce explicit diagnostics.
+Each shim id has exactly one owning Marmoset module in a project. In phase one, the owner module id must match the shim id with `/` converted to `.`, so `std/file` is owned by `std.file`. Duplicate owners, duplicate blocks for the same shim id, qualifier collisions, Go symbol collisions, malformed shim ids, and missing shim ids produce explicit diagnostics.
 
 ## Trust Boundary
 

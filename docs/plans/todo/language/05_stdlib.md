@@ -14,7 +14,7 @@
 
 Marmoset compiles to Go but is not Go's sibling. The stdlib should expose idiomatic Marmoset APIs: module functions, pipe-friendly data-first argument order, immutable-by-default values, Ruby-inspired naming, `?` suffix predicates, and explicit effect/failure surfaces.
 
-The old stdlib draft assumed direct FFI wrappers around Go packages. That is no longer the interop direction. Go-backed stdlib modules now use checked-in Go shims under `runtime/go/shims/std/...`, typed generated ABI packages, and public Marmoset wrapper modules under `std/*.mr`.
+The old stdlib draft assumed direct FFI wrappers around Go packages. That is no longer the interop direction. Go-backed stdlib modules now use checked-in Go shims under `runtime/go/shims/std/...`, typed generated ABI packages, and public Marmoset modules under `std/*.mr`.
 
 Dependency order:
 
@@ -33,7 +33,7 @@ Modules -> Prelude -> Shim-first Go interop -> Stdlib
 
 ## Non-Goals
 
-1. Do not use direct Go FFI or direct emitter special cases for new stdlib wrappers.
+1. Do not use direct Go FFI or direct emitter special cases for new stdlib modules.
 2. Do not expose raw Go errors. Domain errors are explicit Marmoset enums.
 3. Do not expose raw Go handles, pointers, channels, readers, writers, or mutable byte slices.
 4. Do not implement a full batteries-included stdlib in one milestone.
@@ -390,3 +390,5 @@ HTTP, SQL, and framework-style wrappers likely need follow-up shim features such
 - 2026-05-09 05:07 CEST: Stdlib-basics dogfooding slice committed.
 - 2026-05-09 16:05 CEST: Follow-up cleanup moved the public implicit `puts` definition out of `std.prelude` and into `std.basics`; `std.basics` is now a core stdlib module loaded for implicit bindings, with only a private monomorphic `puts_str` adapter at the shim boundary. Verification passed with `dune runtest lib/frontend lib/backend/go`, `make integration runtime/g41a_puts_int.mr prelude hardening snapshots`, `make integration ffi`, `make integration all`, and `git diff --check`.
 - 2026-05-09 16:24 CEST: Fixed generic direct shim calls so nested trait arguments prefer the concrete specialized environment over stale unresolved type-map entries. Collapsed `std.basics.puts` to call `basics_shim.puts_str(Show.show(value))` directly and added a regression test for the former `show_show_union_empty` emission.
+- 2026-05-09 16:31 CEST: Started the exported-shim-function cleanup slice. Goal: keep shim qualifiers private while letting explicitly exported shim functions serve as the public module API, so identity Marmoset wrappers in `std.bytes` and `std.file` can be deleted.
+- 2026-05-09 16:43 CEST: Exported shim functions now serve directly as std module APIs while shim qualifiers remain private and direct-call-only. Removed identity wrappers from `std.bytes`/`std.file`, refreshed the shim-runtime tree snapshot, and verified with `dune runtest lib/frontend`, `dune runtest lib/backend/go`, `make integration ffi stdlib-shims snapshots`, `make integration all`, and `git diff --check`.

@@ -9,6 +9,7 @@ type member_binding = {
   value_type : Types.poly_type option;
   value_constraints : (string * Constraints.t list) list;
   value_definition : definition_site option;
+  extern_func : Resolution_artifacts.extern_func option;
   enum_def : Enum_registry.enum_def option;
   enum_definition : definition_site option;
   named_type_def : Type_registry.named_type_def option;

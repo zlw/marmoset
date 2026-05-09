@@ -174,12 +174,16 @@ let sanitize_signature_type_var_component (s : string) : string =
     | 'a' .. 'z' | 'A' .. 'Z' | '0' .. '9' | '_' -> true
     | _ -> false
   in
-  String.map (fun ch -> if is_ident_char ch then ch else '_') s
+  String.map
+    (fun ch ->
+      if is_ident_char ch then
+        ch
+      else
+        '_')
+    s
 
-let namespaced_exported_value_type
-    ~(module_id : string)
-    ~(internal_name : string)
-    (poly : Types.poly_type) : Types.poly_type * (string * Typecheck.Constraints.t list) list =
+let namespaced_exported_value_type ~(module_id : string) ~(internal_name : string) (poly : Types.poly_type) :
+    Types.poly_type * (string * Typecheck.Constraints.t list) list =
   let (Types.Forall (vars, mono)) = poly in
   let prefix =
     Printf.sprintf "__sig_%s__%s__"
@@ -206,6 +210,15 @@ let namespaced_exported_value_type
   in
   (Types.Forall (List.map snd mapping, Types.apply_substitution subst mono), value_constraints)
 
+let poly_type_of_extern_func (func : Typecheck.Resolution_artifacts.extern_func) : Types.poly_type =
+  let param_types = List.map Typecheck.Shim_boundary.to_mono_type func.param_boundary_types in
+  let return_type = Typecheck.Shim_boundary.to_mono_type func.return_boundary_type in
+  Types.Forall
+    ( [],
+      List.fold_right
+        (fun param_type acc -> Types.TFun (param_type, acc, func.is_effectful))
+        param_types return_type )
+
 let has_module_headers (program : AST.program) : bool =
   List.exists
     (fun (stmt : AST.statement) ->
@@ -217,6 +230,9 @@ let has_module_headers (program : AST.program) : bool =
 let seed_signature_exports (signature : Module_sig.module_signature) (env : Infer.type_env) : Infer.type_env =
   Hashtbl.fold
     (fun _name (binding : Module_sig.member_binding) env_acc ->
+      Option.iter
+        (fun func -> Extern_registry.register_exported_binding ~internal_name:binding.internal_name func)
+        binding.extern_func;
       let env_acc =
         match binding.value_type with
         | Some poly ->
@@ -532,15 +548,18 @@ let extract_module_signature
       Import_resolver.StringMap.empty locals.traits
   in
   let add_export surface_name (presence : Import_resolver.member_presence) =
+    let extern_func = Option.bind presence.extern_func_key Extern_registry.lookup_by_key in
     let value_type, value_constraints =
       if presence.has_value then
-        match Infer.TypeEnv.find_opt presence.internal_name environment with
-        | None -> (None, [])
-        | Some poly ->
+        match (Infer.TypeEnv.find_opt presence.internal_name environment, extern_func) with
+        | Some poly, _ ->
             let poly, constraints =
-              namespaced_exported_value_type ~module_id:surface.module_id ~internal_name:presence.internal_name poly
+              namespaced_exported_value_type ~module_id:surface.module_id ~internal_name:presence.internal_name
+                poly
             in
             (Some poly, constraints)
+        | None, Some func -> (Some (poly_type_of_extern_func func), [])
+        | None, None -> (None, [])
       else
         (None, [])
     in
@@ -550,6 +569,7 @@ let extract_module_signature
         value_type;
         value_constraints;
         value_definition = presence.value_definition;
+        extern_func;
         enum_def =
           (if presence.has_enum then
              Import_resolver.StringMap.find_opt presence.internal_name enum_map
@@ -715,7 +735,8 @@ let compile_module
           ]
   in
   let* signature =
-    Infer.with_inference_state state (fun () -> extract_module_signature ~surface ~environment:result.environment ~locals)
+    Infer.with_inference_state state (fun () ->
+        extract_module_signature ~surface ~environment:result.environment ~locals)
     |> Result.map_error (fun diag -> [ diag ])
   in
   Ok
@@ -1555,12 +1576,9 @@ let%test "shim S2: extern qualifier collides with implicit core binding" =
       | Error diags ->
           List.exists (fun (diag : Diagnostic.t) -> diag.code = "module-extern-qualifier-collision") diags)
 
-let%test "shim S2: extern declarations remain module-local" =
+let%test "shim S2: shim qualifiers remain module-local" =
   Discovery.with_temp_project
-    [
-      ( "main.mr",
-        "import std.bytes.from_str\nimport std.bytes.to_str_lossy\nbytes.to_str_lossy(from_str(\"x\"))\n" );
-    ]
+    [ ("main.mr", "import std.bytes\nbyte_shim.to_str_lossy(byte_shim.from_str(\"x\"))\n") ]
     (fun root ->
       match check_entry ~entry_file:(Filename.concat root "main.mr") () with
       | Ok _ -> false
@@ -1582,7 +1600,7 @@ let%test "shim S2: compile_project merges shim artifacts" =
               Hashtbl.length project.artifacts.extern_declarations >= 2
               && Hashtbl.length project.artifacts.extern_calls >= 2))
 
-let%test "shim S2: std wrapper module exports ordinary API backed by private shim" =
+let%test "shim S2: std module exports ordinary API backed by private shim" =
   Discovery.with_temp_project
     [ ("main.mr", "import std.bytes\nputs(bytes.to_str_lossy(bytes.from_str(\"hi\")))\n") ]
     (fun root ->
@@ -1594,6 +1612,24 @@ let%test "shim S2: std wrapper module exports ordinary API backed by private shi
           && string_contains build_output.main_go "mshim_std_bytes.FromStr(input)"
           && not (string_contains build_output.main_go "shim adapter not implemented"))
 
+let%test "shim exports lower without Marmoset identity wrappers" =
+  Discovery.with_temp_project
+    [
+      ( "main.mr",
+        "import std.bytes\nimport std.file\nlet payload = bytes.from_str(\"hi\")\nlet _ = file.write(\"marmoset.tmp\", payload)\nputs(bytes.to_str_lossy(payload))\n"
+      );
+    ]
+    (fun root ->
+      match compile_entry_to_build ~entry_file:(Filename.concat root "main.mr") () with
+      | Error _ -> false
+      | Ok build_output ->
+          string_contains build_output.main_go "main__payload := extern__std_bytes__from_str(\"hi\")"
+          && string_contains build_output.main_go "_ = extern__std_file__write(\"marmoset.tmp\", main__payload)"
+          && string_contains build_output.main_go "puts_string(extern__std_bytes__to_str_lossy(main__payload))"
+          && (not (string_contains build_output.main_go "func std__bytes__from_u005fstr"))
+          && (not (string_contains build_output.main_go "func std__bytes__to_u005fstr_u005flossy"))
+          && not (string_contains build_output.main_go "func std__file__write"))
+
 let%test "implicit puts is std.basics code backed by basics shim" =
   Discovery.with_temp_project
     [ ("main.mr", "puts(42)\n") ]
@@ -1602,13 +1638,14 @@ let%test "implicit puts is std.basics code backed by basics shim" =
       | Error _ -> false
       | Ok build_output ->
           string_contains build_output.main_go "func puts_int64(value int64) struct{}"
-          && string_contains build_output.main_go
-               "return extern__std_basics__puts_str(show_show_int64(value))"
+          && string_contains build_output.main_go "return extern__std_basics__puts_str(show_show_int64(value))"
           && string_contains build_output.main_go "func extern__std_basics__puts_str(value string) struct{}"
           && string_contains build_output.main_go {|mshim_std_basics "marmoset_out/shims/std/basics"|}
-          && Option.is_some (List.find_opt (fun (file : Codegen.go_aux_file) ->
-                 String.equal file.rel_path "shims/std/basics/basics.go") build_output.aux_go_files)
-          && not (string_contains build_output.main_go "marmoset.Puts")
+          && Option.is_some
+               (List.find_opt
+                  (fun (file : Codegen.go_aux_file) -> String.equal file.rel_path "shims/std/basics/basics.go")
+                  build_output.aux_go_files)
+          && (not (string_contains build_output.main_go "marmoset.Puts"))
           && not (string_contains build_output.main_go "std__basics__puts_u005fstr"))
 
 let%test "generic direct shim call specializes nested trait argument" =
@@ -1622,7 +1659,7 @@ let%test "generic direct shim call specializes nested trait argument" =
           Discovery.mkdir_p (Filename.concat stdlib_root "std");
           match Discovery.resolve_toolchain_root () with
           | Error _ -> false
-          | Ok toolchain_root ->
+          | Ok toolchain_root -> (
               Discovery.write_file
                 (Filename.concat stdlib_root "std/prelude.mr")
                 (read_source_file (Filename.concat toolchain_root "std/prelude.mr"));
@@ -1634,28 +1671,21 @@ let%test "generic direct shim call specializes nested trait argument" =
                 (read_source_file (Filename.concat toolchain_root "std/result.mr"));
               Discovery.write_file
                 (Filename.concat stdlib_root "std/basics.mr")
-                "import std.prelude.Show\n\n\
-                 export puts\n\n\
-                 extern \"std/basics\" as basics_shim = {\n\
-                 \  fn puts_str(value: Str) => Unit\n\
-                 }\n\n\
-                 fn puts[a: Show](value: a) => Unit = basics_shim.puts_str(Show.show(value))\n";
+                "import std.prelude.Show\n\nexport puts\n\nextern \"std/basics\" as basics_shim = {\n\  fn puts_str(value: Str) => Unit\n}\n\nfn puts[a: Show](value: a) => Unit = basics_shim.puts_str(Show.show(value))\n";
               match compile_entry_to_build ~stdlib_root ~entry_file:(Filename.concat root "main.mr") () with
               | Error _ -> false
               | Ok build_output ->
                   string_contains build_output.main_go
                     "return extern__std_basics__puts_str(show_show_int64(value))"
-                  && not (string_contains build_output.main_go "show_show_union_empty")
-                  && not (string_contains build_output.main_go "std__basics__puts_u005fstr")))
+                  && (not (string_contains build_output.main_go "show_show_union_empty"))
+                  && not (string_contains build_output.main_go "std__basics__puts_u005fstr"))))
 
 let%test "imported constrained generics do not inherit local type variable constraints" =
   Discovery.with_temp_project
     [
       ( "main.mr",
-        "shape Named = { name: Str }\n\
-         fn describe[t: Named](x: t) -> Str = x.name\n\
-         let p = { name: \"milo\", age: 3 }\n\
-         puts(describe(p))\n" );
+        "shape Named = { name: Str }\nfn describe[t: Named](x: t) -> Str = x.name\nlet p = { name: \"milo\", age: 3 }\nputs(describe(p))\n"
+      );
     ]
     (fun root ->
       match compile_entry_to_build ~entry_file:(Filename.concat root "main.mr") () with

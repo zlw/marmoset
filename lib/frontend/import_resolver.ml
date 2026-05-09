@@ -14,6 +14,7 @@ type member_presence = {
   internal_name : string;
   has_value : bool;
   value_definition : Module_sig.definition_site option;
+  extern_func_key : string option;
   has_enum : bool;
   enum_definition : Module_sig.definition_site option;
   has_named_type : bool;
@@ -106,16 +107,15 @@ let is_std_module_id (module_id : string) : bool =
 let is_locked_std_core_name ~(module_id : string) (name : string) : bool =
   match (module_id, name) with
   | "std.basics", "puts" -> true
-  | "std.prelude", ("Ordering" | "Eq" | "Show" | "Debug" | "Ord" | "Hash" | "Num" | "Rem" | "Neg") ->
-      true
+  | "std.prelude", ("Ordering" | "Eq" | "Show" | "Debug" | "Ord" | "Hash" | "Num" | "Rem" | "Neg") -> true
   | "std.option", "Option" -> true
   | "std.result", "Result" -> true
   | _ -> false
 
 let is_implicit_std_core_name (name : string) : bool =
   match name with
-  | "Ordering" | "Eq" | "Show" | "Debug" | "Ord" | "Hash" | "Num" | "Rem" | "Neg" | "puts" | "Option"
-  | "Result" ->
+  | "Ordering" | "Eq" | "Show" | "Debug" | "Ord" | "Hash" | "Num" | "Rem" | "Neg" | "puts" | "Option" | "Result"
+    ->
       true
   | _ -> false
 
@@ -137,6 +137,7 @@ let merge_presence
     ~(internal_name : string)
     ?(has_value = false)
     ?value_definition
+    ?extern_func_key
     ?(has_enum = false)
     ?enum_definition
     ?(has_named_type = false)
@@ -154,6 +155,7 @@ let merge_presence
         internal_name;
         has_value;
         value_definition;
+        extern_func_key;
         has_enum;
         enum_definition;
         has_named_type;
@@ -170,6 +172,7 @@ let merge_presence
         internal_name = prior.internal_name;
         has_value = prior.has_value || has_value;
         value_definition = Option.fold ~none:value_definition ~some:(fun site -> Some site) prior.value_definition;
+        extern_func_key = Option.fold ~none:extern_func_key ~some:(fun key -> Some key) prior.extern_func_key;
         has_enum = prior.has_enum || has_enum;
         enum_definition = Option.fold ~none:enum_definition ~some:(fun site -> Some site) prior.enum_definition;
         has_named_type = prior.has_named_type || has_named_type;
@@ -195,6 +198,15 @@ let definition_site_of_stmt ~(fallback_file_path : string) (stmt : AST.statement
     end_pos = stmt.end_pos;
   }
 
+let definition_site_of_extern_fn
+    ~(fallback_file_path : string) (stmt : AST.statement) (fn_sig : AST.extern_fn_sig) :
+    Module_sig.definition_site =
+  {
+    file_path = Option.value stmt.file_id ~default:fallback_file_path;
+    start_pos = fn_sig.extern_fn_pos;
+    end_pos = fn_sig.extern_fn_end_pos;
+  }
+
 let presence_of_decl
     module_id
     ~(preserve_top_level_names : bool)
@@ -206,6 +218,7 @@ let presence_of_decl
       name
       ~has_value
       ?value_definition
+      ?extern_func_key
       ~has_enum
       ?enum_definition
       ~has_named_type
@@ -220,7 +233,7 @@ let presence_of_decl
     let internal_name = binding_internal_name ~preserve_source_name:preserve_top_level_names ~module_id name in
     let presence =
       merge_presence (StringMap.find_opt name decls) ~internal_name ~has_value ~has_enum ~has_named_type
-        ?value_definition ?enum_definition ?named_type_definition ?transparent_type_definition
+        ?value_definition ?extern_func_key ?enum_definition ?named_type_definition ?transparent_type_definition
         ~has_transparent_type ?shape_definition ~has_shape ?trait_definition ~has_trait ()
     in
     add_presence decls name presence
@@ -247,6 +260,24 @@ let presence_of_decl
   | AST.TypeAlias { alias_name; _ } ->
       add alias_name ~has_value:false ~has_enum:false ~has_named_type:false ~has_transparent_type:true
         ~transparent_type_definition:definition_site ~has_shape:false ~has_trait:false ()
+  | AST.ExternBlock block ->
+      List.fold_left
+        (fun decls_acc (fn_sig : AST.extern_fn_sig) ->
+          let value_definition = definition_site_of_extern_fn ~fallback_file_path:file_path stmt fn_sig in
+          let extern_func_key =
+            Typecheck.Extern_registry.shim_key ~shim_id:block.extern_shim_id ~func_name:fn_sig.extern_fn_name
+          in
+          let internal_name =
+            binding_internal_name ~preserve_source_name:preserve_top_level_names ~module_id fn_sig.extern_fn_name
+          in
+          let presence =
+            merge_presence
+              (StringMap.find_opt fn_sig.extern_fn_name decls_acc)
+              ~internal_name ~has_value:true ~value_definition ~extern_func_key ~has_enum:false
+              ~has_named_type:false ~has_transparent_type:false ~has_shape:false ~has_trait:false ()
+          in
+          add_presence decls_acc fn_sig.extern_fn_name presence)
+        decls block.extern_fns
   | _ -> decls
 
 let export_error (module_info : Module_context.parsed_module) ~(name : string) : Diagnostic.t =
@@ -759,12 +790,13 @@ let namespace_resolution_error
         ~end_pos:expr.end_pos ()
   | None -> Diagnostic.error_no_span ~code:"module-qualified-name" ~message
 
-let extern_qualifier_collision_error (stmt : AST.statement) ~(qualifier : string) ~(reason : string) : Diagnostic.t =
+let extern_qualifier_collision_error (stmt : AST.statement) ~(qualifier : string) ~(reason : string) :
+    Diagnostic.t =
   let message = Printf.sprintf "extern qualifier '%s' conflicts with %s" qualifier reason in
   match stmt.file_id with
   | Some file_id ->
-      Diagnostic.error_with_span ~code:"module-extern-qualifier-collision" ~message ~file_id
-        ~start_pos:stmt.pos ~end_pos:stmt.end_pos ()
+      Diagnostic.error_with_span ~code:"module-extern-qualifier-collision" ~message ~file_id ~start_pos:stmt.pos
+        ~end_pos:stmt.end_pos ()
   | None -> Diagnostic.error_no_span ~code:"module-extern-qualifier-collision" ~message
 
 let rewrite_program
@@ -842,9 +874,7 @@ let rewrite_program
       |> canonicalize_std_extern_type_expr
     in
     let rewrite_param (param : AST.extern_param) : AST.extern_param =
-      {
-        param with extern_param_type = rewrite_extern_type_expr param.extern_param_type;
-      }
+      { param with extern_param_type = rewrite_extern_type_expr param.extern_param_type }
     in
     let rewrite_fn (fn_sig : AST.extern_fn_sig) : AST.extern_fn_sig =
       {
@@ -939,10 +969,7 @@ let rewrite_program
     | AST.ExternTypeDef { extern_type_name } ->
         Ok
           ( AST.
-              {
-                stmt with
-                stmt = ExternTypeDef { extern_type_name = declaration_internal_name extern_type_name };
-              },
+              { stmt with stmt = ExternTypeDef { extern_type_name = declaration_internal_name extern_type_name } },
             value_scope )
     | AST.ShapeDef { shape_name; shape_type_params; shape_fields } ->
         let type_bindings =

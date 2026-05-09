@@ -1057,8 +1057,12 @@ let should_monomorphize_let_binding_value (value_expr : AST.expression) : bool =
   | AST.FieldAccess _ -> (
       match lookup_call_resolution value_expr.id with
       | Some (QualifiedTraitMethod _) | Some QualifiedInherentMethod -> false
-      | Some (TraitMethod _) | Some (DynamicTraitMethod _) | Some InherentMethod | Some FieldFunctionCall
-      | Some (ShimQualifiedCall _) | None ->
+      | Some (TraitMethod _)
+      | Some (DynamicTraitMethod _)
+      | Some InherentMethod
+      | Some FieldFunctionCall
+      | Some (ShimQualifiedCall _)
+      | None ->
           true)
   | _ -> false
 
@@ -1961,22 +1965,31 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
         | AST.String _ -> Ok (empty_substitution, TString)
         (* Variable lookup - instantiate its poly_type *)
         | AST.Identifier name -> (
-            match TypeEnv.find_opt name env with
+            match Extern_registry.lookup_exported_binding name with
+            | Some func ->
+                Error
+                  (error_at ~code:"type-extern"
+                     ~message:
+                       (Printf.sprintf "shim function '%s' can only be used as a direct call"
+                          func.marmoset_func_name)
+                     expr)
             | None -> (
-                match lookup_top_level_placeholder name with
-                | Some placeholder -> Ok (empty_substitution, instantiate (mono_to_poly placeholder))
-                | None ->
-                    if Extern_registry.is_qualifier name then
-                      Error
-                        (error_at ~code:"type-extern"
-                           ~message:
-                             (Printf.sprintf "extern qualifier '%s' can only be used in direct calls" name)
-                           expr)
-                    else
-                      Error (error_at ~code:"type-unbound-var" ~message:("Unbound variable: " ^ name) expr))
-            | Some poly_type ->
-                let instantiated = instantiate poly_type in
-                Ok (empty_substitution, instantiated))
+                match TypeEnv.find_opt name env with
+                | None -> (
+                    match lookup_top_level_placeholder name with
+                    | Some placeholder -> Ok (empty_substitution, instantiate (mono_to_poly placeholder))
+                    | None ->
+                        if Extern_registry.is_qualifier name then
+                          Error
+                            (error_at ~code:"type-extern"
+                               ~message:
+                                 (Printf.sprintf "extern qualifier '%s' can only be used in direct calls" name)
+                               expr)
+                        else
+                          Error (error_at ~code:"type-unbound-var" ~message:("Unbound variable: " ^ name) expr))
+                | Some poly_type ->
+                    let instantiated = instantiate poly_type in
+                    Ok (empty_substitution, instantiated)))
         (* Prefix operators *)
         | AST.Prefix (op, operand) -> infer_prefix type_map env op operand
         (* Infix operators *)
@@ -2423,8 +2436,7 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                     Error
                       (error_at ~code:"type-extern"
                          ~message:
-                           (Printf.sprintf
-                              "extern function '%s.%s' can only be used as a direct call" name
+                           (Printf.sprintf "extern function '%s.%s' can only be used as a direct call" name
                               variant_name)
                          expr)
                 | `ExternNamespace None ->
@@ -2801,8 +2813,8 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                   Error
                     (mk_error ~code:"type-extern"
                        ~message:
-                         (Printf.sprintf "shim function '%s.%s' takes no type arguments"
-                            func.source_qualifier func.marmoset_func_name))
+                         (Printf.sprintf "shim function '%s.%s' takes no type arguments" func.source_qualifier
+                            func.marmoset_func_name))
               | _ -> (
                   let call_target = Printf.sprintf "%s.%s" func.source_qualifier func.marmoset_func_name in
                   let param_types = List.map Shim_boundary.to_mono_type func.param_boundary_types in
@@ -3416,8 +3428,7 @@ and body_has_effectful_call (type_map : type_map) (stmt : AST.statement) : bool 
   | AST.Return expr -> expr_has_effectful_call type_map expr
   | AST.ExpressionStmt expr -> expr_has_effectful_call type_map expr
   | AST.Block stmts -> List.exists (body_has_effectful_call type_map) stmts
-  | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ | AST.TraitDef _ | AST.ImplDef _
-  | AST.InherentImplDef _
+  | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ | AST.TraitDef _ | AST.ImplDef _ | AST.InherentImplDef _
   | AST.DeriveDef _ | AST.TypeAlias _ ->
       false
 
@@ -3814,8 +3825,7 @@ and collect_used_names_stmt (used : StringSet.t) (stmt : AST.statement) : String
   | AST.Let { name; value; _ } -> collect_used_names_expr (StringSet.add name used) value
   | AST.Return expr | AST.ExpressionStmt expr -> collect_used_names_expr used expr
   | AST.Block stmts -> collect_used_names_stmts used stmts
-  | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ | AST.TraitDef _ | AST.ImplDef _
-  | AST.InherentImplDef _
+  | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ | AST.TraitDef _ | AST.ImplDef _ | AST.InherentImplDef _
   | AST.DeriveDef _ | AST.TypeAlias _ ->
       used
 
@@ -4502,7 +4512,53 @@ and infer_named_type_constructor_call
                ~message:(Printf.sprintf "Extern type %s cannot be constructed" type_name)
                call_expr))
 
+and infer_exported_extern_call
+    (type_map : type_map)
+    (env : type_env)
+    (call_expr : AST.expression)
+    (func : Resolution_artifacts.extern_func)
+    (args : AST.expression list) : (substitution * mono_type) infer_result =
+  let param_types = List.map Shim_boundary.to_mono_type func.param_boundary_types in
+  let return_type = Shim_boundary.to_mono_type func.return_boundary_type in
+  if List.length args <> List.length param_types then
+    Error
+      (error_at ~code:"type-constructor"
+         ~message:
+           (Printf.sprintf "shim function '%s' expects %d argument(s), got %d" func.marmoset_func_name
+              (List.length param_types) (List.length args))
+         call_expr)
+  else
+    match infer_args_against_expected type_map env empty_substitution args param_types with
+    | Error e -> Error e
+    | Ok (subst, _arg_types) ->
+        record_call_resolution call_expr (ShimQualifiedCall func.shim_key);
+        record_effectful_method_call call_expr func.is_effectful;
+        Extern_registry.record_call call_expr.id
+          {
+            Resolution_artifacts.call_func_key = func.shim_key;
+            call_arg_boundary_types = func.param_boundary_types;
+            call_return_boundary_type = func.return_boundary_type;
+            call_effectful = func.is_effectful;
+          };
+        Ok (subst, apply_substitution subst return_type)
+
 and infer_call type_map env (call_expr : AST.expression) func args =
+  match func.expr with
+  | AST.Identifier name -> (
+      match Extern_registry.lookup_exported_binding name with
+      | Some func -> infer_exported_extern_call type_map env call_expr func args
+      | None when (not (TypeEnv.mem name env)) && Type_registry.is_named_type_name name ->
+          infer_named_type_constructor_call type_map env call_expr name args
+      | None -> infer_regular_call type_map env call_expr func args)
+  | AST.TypeApply ({ expr = AST.Identifier name; _ }, _type_args)
+    when Option.is_some (Extern_registry.lookup_exported_binding name) ->
+      Error
+        (error_at ~code:"type-extern"
+           ~message:(Printf.sprintf "shim function '%s' takes no type arguments" name)
+           call_expr)
+  | _ -> infer_regular_call type_map env call_expr func args
+
+and infer_regular_call type_map env (call_expr : AST.expression) func args =
   match func.expr with
   | AST.Identifier type_name when (not (TypeEnv.mem type_name env)) && Type_registry.is_named_type_name type_name
     ->
@@ -4579,12 +4635,18 @@ and infer_type_apply _type_map env (type_apply_expr : AST.expression) func type_
   let mk_error ~code ~message = error_at ~code ~message type_apply_expr in
   match func.expr with
   | AST.Identifier name -> (
-      match TypeEnv.find_opt name env with
-      | None -> Error (mk_error ~code:"type-unbound-var" ~message:("Unbound variable: " ^ name))
-      | Some poly_type -> (
-          match instantiate_with_explicit_type_args ~mk_error poly_type type_args with
-          | Error e -> Error e
-          | Ok specialized_type -> Ok (empty_substitution, specialized_type)))
+      match Extern_registry.lookup_exported_binding name with
+      | Some _ ->
+          Error
+            (mk_error ~code:"type-extern"
+               ~message:(Printf.sprintf "shim function '%s' takes no type arguments" name))
+      | None -> (
+          match TypeEnv.find_opt name env with
+          | None -> Error (mk_error ~code:"type-unbound-var" ~message:("Unbound variable: " ^ name))
+          | Some poly_type -> (
+              match instantiate_with_explicit_type_args ~mk_error poly_type type_args with
+              | Error e -> Error e
+              | Ok specialized_type -> Ok (empty_substitution, specialized_type))))
   | _ ->
       Error
         (mk_error ~code:"type-constructor"
@@ -4729,7 +4791,8 @@ and classify_dotted_receiver (env : type_env) (name : string) (member_name : str
     | `EnumType
     | `TypeName of mono_type
     | `TraitName
-    | `Unknown ] =
+    | `Unknown
+    ] =
   if TypeEnv.mem name env then
     `BoundVar
   else if Extern_registry.is_qualifier name then
@@ -6052,8 +6115,7 @@ and record_tail_trait_object_coercions (type_map : type_map) (expected_type : mo
   | AST.ExpressionStmt expr -> record_expected_trait_object_coercions type_map expr expected_type
   | AST.Block [] -> Ok ()
   | AST.Block stmts -> record_tail_trait_object_coercions type_map expected_type (List.hd (List.rev stmts))
-  | AST.Let _ | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ | AST.TraitDef _
-  | AST.ImplDef _
+  | AST.Let _ | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ | AST.TraitDef _ | AST.ImplDef _
   | AST.InherentImplDef _ | AST.DeriveDef _ | AST.TypeAlias _ ->
       Ok ()
 
@@ -6072,8 +6134,7 @@ and record_explicit_return_trait_object_coercions
       in
       loop stmts
   | AST.ExpressionStmt _ -> Ok ()
-  | AST.Let _ | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ | AST.TraitDef _
-  | AST.ImplDef _
+  | AST.Let _ | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ | AST.TraitDef _ | AST.ImplDef _
   | AST.InherentImplDef _ | AST.DeriveDef _ | AST.TypeAlias _ ->
       Ok ()
 
@@ -6931,7 +6992,8 @@ let infer_program
                                       seen_aliases,
                                       seen_types,
                                       seen_shapes )
-                            | AST.ExternBlock _ -> Ok (seen_traits, seen_enums, seen_aliases, seen_types, seen_shapes)
+                            | AST.ExternBlock _ ->
+                                Ok (seen_traits, seen_enums, seen_aliases, seen_types, seen_shapes)
                             | _ -> Ok (seen_traits, seen_enums, seen_aliases, seen_types, seen_shapes)
                           in
                           let rec register_top_level_externs = function
@@ -7139,9 +7201,7 @@ module Test = struct
         List.concat_map
           (fun (m : AST.method_impl) -> identifier_occurrences_in_stmt name m.impl_method_body)
           impl_def.inherent_methods
-    | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ | AST.TraitDef _ | AST.DeriveDef _
-    | AST.TypeAlias _ ->
-        []
+    | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ | AST.TraitDef _ | AST.DeriveDef _ | AST.TypeAlias _ -> []
 
   let identifier_occurrences_in_program (name : string) (program : AST.program) : (int * int) list =
     List.concat_map (identifier_occurrences_in_stmt name) program

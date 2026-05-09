@@ -8,8 +8,3 @@ extern "std/bytes" as byte_shim = {
   fn length(input: Bytes) -> Int
   fn equal?(left: Bytes, right: Bytes) -> Bool
 }
-
-fn from_str(input: Str) -> Bytes = byte_shim.from_str(input)
-fn to_str_lossy(input: Bytes) -> Str = byte_shim.to_str_lossy(input)
-fn length(input: Bytes) -> Int = byte_shim.length(input)
-fn equal?(left: Bytes, right: Bytes) -> Bool = byte_shim.equal?(left, right)

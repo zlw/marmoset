@@ -15,6 +15,7 @@ let map_result f xs =
 
 let declaration_by_source : (string * string, Artifacts.extern_func) Hashtbl.t = Hashtbl.create 64
 let declaration_by_key : (string, Artifacts.extern_func) Hashtbl.t = Hashtbl.create 64
+let exported_binding_by_internal_name : (string, Artifacts.extern_func) Hashtbl.t = Hashtbl.create 64
 let shim_id_by_qualifier : (string, string) Hashtbl.t = Hashtbl.create 32
 let registered_block_shim_ids : (string, Diagnostic.span) Hashtbl.t = Hashtbl.create 16
 let extern_calls : (int, Artifacts.extern_call) Hashtbl.t = Hashtbl.create 128
@@ -23,6 +24,7 @@ let current_module_id : string option ref = ref None
 let clear () : unit =
   Hashtbl.clear declaration_by_source;
   Hashtbl.clear declaration_by_key;
+  Hashtbl.clear exported_binding_by_internal_name;
   Hashtbl.clear shim_id_by_qualifier;
   Hashtbl.clear registered_block_shim_ids;
   Hashtbl.clear extern_calls;
@@ -234,6 +236,15 @@ let register_block ~(declaring_module : string) ~(file_id : string option) (bloc
 
 let lookup ~(source_qualifier : string) ~(func_name : string) : Artifacts.extern_func option =
   Hashtbl.find_opt declaration_by_source (source_qualifier, func_name)
+
+let lookup_by_key (shim_key : string) : Artifacts.extern_func option =
+  Hashtbl.find_opt declaration_by_key shim_key
+
+let register_exported_binding ~(internal_name : string) (func : Artifacts.extern_func) : unit =
+  Hashtbl.replace exported_binding_by_internal_name internal_name func
+
+let lookup_exported_binding (internal_name : string) : Artifacts.extern_func option =
+  Hashtbl.find_opt exported_binding_by_internal_name internal_name
 
 let is_qualifier (source_qualifier : string) : bool = Hashtbl.mem shim_id_by_qualifier source_qualifier
 let record_call (expr_id : int) (call : Artifacts.extern_call) : unit = Hashtbl.replace extern_calls expr_id call

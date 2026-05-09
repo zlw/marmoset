@@ -15,8 +15,3 @@ extern "std/file" as file_shim = {
   fn open(path: Str) => Result[File, FileOpenError]
   fn close(file: File) => Result[Unit, FileCloseError]
 }
-
-fn read(path: Str) => Result[Bytes, FileReadError] = file_shim.read(path)
-fn write(path: Str, bytes: Bytes) => Result[Unit, FileWriteError] = file_shim.write(path, bytes)
-fn open(path: Str) => Result[File, FileOpenError] = file_shim.open(path)
-fn close(file: File) => Result[Unit, FileCloseError] = file_shim.close(file)
