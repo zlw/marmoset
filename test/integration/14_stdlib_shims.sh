@@ -41,6 +41,40 @@ run_source_expect_output() {
     rm -rf "$root"
 }
 
+run_source_with_stdin_expect_output() {
+    local name="$1"
+    local stdin="$2"
+    local expected_output="$3"
+    local source
+    source="$(cat)"
+
+    TOTAL=$((TOTAL + 1))
+    echo -n "TEST [$TOTAL] $name ... "
+
+    local root binpath build_output output
+    root=$(mktemp -d marmoset_stdlib_shims.XXXXXX)
+    binpath=$(mktemp "$REPO_ROOT/.marmoset/build/marmoset_stdlib_bin.XXXXXX")
+    rm -f "$binpath"
+    printf "%s\n" "$source" > "$root/main.mr"
+
+    if build_output=$($EXECUTABLE build "$root/main.mr" -o "$binpath" 2>&1) && output=$(printf "%s" "$stdin" | "$binpath" 2>&1); then
+        if [ "$output" = "$expected_output" ]; then
+            echo "✓ PASS"
+            PASS=$((PASS + 1))
+        else
+            echo "✗ FAIL (expected '$expected_output', got '$output')"
+            FAIL=$((FAIL + 1))
+        fi
+    else
+        echo "✗ FAIL (build or execution failed)"
+        echo "  Output: $build_output"
+        FAIL=$((FAIL + 1))
+    fi
+
+    rm -f "$binpath"
+    rm -rf "$root"
+}
+
 run_source_expect_build_failure() {
     local name="$1"
     local expected_fragment="$2"
@@ -242,6 +276,44 @@ run_source_expect_build_failure \
 import std.file.write_str
 
 puts(0)
+EOF
+
+run_source_expect_output \
+    "std.io prints shown values" \
+    $'value:42\nnext' <<'EOF'
+import std.io
+
+io.print("value:")
+io.println(42)
+io.print("next")
+EOF
+
+run_source_with_stdin_expect_output \
+    "std.io reads stdin lines and EOF" \
+    $'alpha\nbeta\n' \
+    $'line:alpha\nline:beta\neof' <<'EOF'
+import std.io
+import std.io.ReadLineError
+
+fn read_error_label(err: ReadLineError) -> Str = match err {
+  case ReadLineError.EndOfFile: "eof"
+  case ReadLineError.Other(message): "other:" + message
+}
+
+match io.read_line() {
+  case Result.Success(line): io.println("line:" + line)
+  case Result.Failure(err): io.println(read_error_label(err))
+}
+
+match io.read_line() {
+  case Result.Success(line): io.println("line:" + line)
+  case Result.Failure(err): io.println(read_error_label(err))
+}
+
+match io.read_line() {
+  case Result.Success(line): io.println("line:" + line)
+  case Result.Failure(err): io.println(read_error_label(err))
+}
 EOF
 
 rm -rf "$DATA_DIR"

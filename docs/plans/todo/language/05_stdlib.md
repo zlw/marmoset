@@ -43,11 +43,11 @@ Modules -> Prelude -> Shim-first Go interop -> Stdlib
 
 1. **Module-function-first APIs.** Collections and strings use qualified functions such as `list.map(xs, f)` and `str.upcase(s)`. Dot syntax is not the primary stdlib abstraction surface.
 2. **Immutable wrappers.** `Bytes`, `List`, and `Map` APIs must not expose Go mutation or aliasing.
-3. **All IO is effectful.** Filesystem, console, environment, time, and similar operations use `=>`.
+3. **All IO is effectful.** Filesystem, terminal, environment, time, and similar operations use `=>`.
 4. **Failable IO returns domain errors.** Prefer `Result[T, FileReadError]` over `Result[T, Str]` when the module can define meaningful error categories.
 5. **Ruby-inspired naming.** `select`/`reject`, `upcase`/`downcase`, `include?`, `strip`, and related names remain preferred.
 6. **`?` suffix for predicates.** This is already relevant to stdlib naming and must be supported by parser/emitter before predicate-heavy modules land.
-7. **Separate modules for distinct domains.** `console` is terminal IO; `file` is filesystem IO; `bytes` is immutable byte data; `str` is Unicode/string helpers.
+7. **Separate modules for distinct domains.** `io` is terminal IO; `file` is filesystem IO; `bytes` is immutable byte data; `str` is Unicode/string helpers.
 8. **Concurrency model TBD.** No raw Go channels. Future concurrency should use Marmoset-owned abstractions such as `Task`, `Stream`, or `Mailbox`.
 
 ## Current State
@@ -56,8 +56,10 @@ Modules -> Prelude -> Shim-first Go interop -> Stdlib
 - `Option` and `Result` are canonical stdlib nominal types with inherent helper APIs.
 - `09_shim-first-go-interop.md` has introduced `extern type`, checked-in Go shims, canonical immutable `std.bytes.Bytes`, and the initial `std.file` proof slice.
 - `std.basics` now owns the implicit terminal output function `puts`; the compiler no longer lowers `puts` as an emitter special case.
+- `std.file` now exposes text-first whole-file helpers, explicit byte helpers, and scoped handle callbacks backed by private shim plumbing.
+- `std.io` now exposes terminal `print`, `println`, and `read_line`.
 - `docs/features/ffi.md` now documents shim-first interop as the current direction, with direct package externs retained only as historical context.
-- Existing list/map/str examples are mostly fixtures and exploratory docs; there is no committed full stdlib module set yet.
+- Existing list/map/str examples are mostly fixtures and exploratory docs; they are not committed full stdlib modules yet.
 
 ## Core Modules
 
@@ -80,7 +82,7 @@ fn puts[a: Show](value: a) => Unit
 Rules:
 
 - Public code should keep using implicit `puts`; `std.basics.puts` is the generic `Show`-based function and calls the private `puts_str` shim directly.
-- This module should stay small. Domain-specific IO belongs in `std.console` or other explicit modules.
+- This module should stay small. Domain-specific IO belongs in `std.io`, `std.file`, or other explicit modules.
 
 ### `std.bytes`
 
@@ -147,21 +149,30 @@ Rules:
 - `FileCloseError` currently uses `AlreadyClosed` and `Other(Str)` for private close failures surfaced through `FileUseError.Close` or `FileUseError.UseAndClose`.
 - `FileUseError[e]` flattens the open failure, callback failure, close failure, and combined callback-plus-close failure cases for failable callback APIs.
 
-### `std.console`
+### `std.io`
 
 Terminal IO. All effectful. This should use checked-in shims rather than direct FFI.
 
-Candidate API:
+Current API:
 
 ```marmoset
-export stdout, stdin, errout
+import std.prelude.Show
 
-fn stdout(value: Str) => Unit
-fn stdin() => Result[Str, ConsoleReadError]
-fn errout(value: Str) => Unit
+export ReadLineError, print, println, read_line
+
+type ReadLineError = { EndOfFile, Other(Str) }
+
+fn print[a: Show](value: a) => Unit
+fn println[a: Show](value: a) => Unit
+fn read_line() => Result[Str, ReadLineError]
 ```
 
-`stdin` is failable because scanner/readline behavior can fail. The exact error enum should be locked before implementation.
+Rules:
+
+- `print` writes the `Show.show` rendering without a trailing newline.
+- `println` writes the `Show.show` rendering with a trailing newline.
+- `read_line` returns a line without the trailing newline. End-of-input is `ReadLineError.EndOfFile`; unexpected reader failures are `ReadLineError.Other(Str)`.
+- Private shim functions are `print_str` and `println_str`; public generic rendering stays in Marmoset.
 
 ### `std.str`
 
@@ -277,22 +288,22 @@ Gate:
 make integration stdlib-shims
 ```
 
-### Phase L2: Console And String Modules
+### Phase L2: IO And String Modules
 
 **Goal:** Add common terminal and string APIs using shims only where Go runtime support is needed.
 
 Files:
 
-- `std/console.mr`
+- `std/io.mr`
 - `std/str.mr`
-- `runtime/go/shims/std/console/**`
+- `runtime/go/shims/std/io/**`
 - `runtime/go/shims/std/str/**`
 - `test/integration/14_stdlib_shims.sh` or split stdlib suites
 
 Tests:
 
-- Console stdout/stderr smoke tests.
-- Stdin fixture or deterministic test harness path.
+- Terminal print/println smoke tests.
+- Stdin fixture or deterministic test harness path for `read_line`.
 - String edge cases: empty strings, Unicode, missing delimiters, prefix/suffix, out-of-range slicing.
 
 Gate:
@@ -374,7 +385,7 @@ HTTP, SQL, and framework-style wrappers likely need follow-up shim features such
 
 1. Sync docs and tests with landed `std.bytes`/`std.file`.
 2. Harden `std.bytes` and `std.file`.
-3. Add `std.console`.
+3. Add `std.io`.
 4. Add `std.str`.
 5. Add `std.list`.
 6. Add `std.map`.
@@ -414,3 +425,5 @@ HTTP, SQL, and framework-style wrappers likely need follow-up shim features such
 - 2026-05-10 00:29 CEST: Generic callback-result hardening reached green. Go enum collection now ignores codegen-unresolved enum instantiations instead of erasing them into `union_empty` artifacts, and the new callback wrapper fixture plus backend unit assertion verify the concrete `Result[a, UseError[e]]` specialization. Verification passed with `dune runtest lib/backend/go`, `make integration codegen_mono/cm55_generic_result_callback_error_wrapper.mr`, `make integration codegen_mono`, and `git diff --check`.
 - 2026-05-10 00:30 CEST: Started the high-level `std.file` API slice on top of the callback-result compiler fix. Target: hide the named handle type from importers, add string convenience helpers, and make `file.open` flatten callback failures into `FileUseError[e]` instead of returning nested `Result` values.
 - 2026-05-10 00:37 CEST: High-level `std.file` slice reached green. `read`/`write` are now the common text APIs, `read_bytes`/`write_bytes` are explicit binary APIs, `Handle` remains private, and `file.open` flattens callback failures through `FileUseError[e]`. Verification passed with `make integration stdlib-shims`, `dune runtest lib/frontend`, `dune runtest lib/backend/go`, `make integration ffi`, and `git diff --check`.
+- 2026-05-10 00:39 CEST: Started the `std.io` terminal IO slice. Red coverage first: `std.io` must provide `print`, `println`, and `read_line` over stdin with explicit `ReadLineError.EndOfFile`.
+- 2026-05-10 00:39 CEST: Implemented `std.io` with generic `Show`-based `print`/`println`, direct shim-backed `read_line`, checked-in `runtime/go/shims/std/io`, and install metadata. Focused stdlib-shim tests now pass.
