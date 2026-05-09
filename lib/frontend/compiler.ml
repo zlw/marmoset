@@ -1594,7 +1594,7 @@ let%test "shim S2: std wrapper module exports ordinary API backed by private shi
           && string_contains build_output.main_go "mshim_std_bytes.FromStr(input)"
           && not (string_contains build_output.main_go "shim adapter not implemented"))
 
-let%test "prelude puts is stdlib code backed by basics shim" =
+let%test "implicit puts is std.basics code backed by basics shim" =
   Discovery.with_temp_project
     [ ("main.mr", "puts(42)\n") ]
     (fun root ->
@@ -1893,6 +1893,9 @@ let%test "std.option signature exports Option as an enum for downstream modules"
             (Filename.concat stdlib_root "std/prelude.mr")
             "export Ordering, Eq, Show, Debug, Ord, Hash, Num, Rem, Neg\ntype Ordering = { Less, Equal, Greater }\ntrait Eq[a] = { fn eq(x: a, y: a) -> Bool }\ntrait Show[a] = { fn show(x: a) -> Str }\ntrait Debug[a] = { fn debug(x: a) -> Str }\ntrait Ord[a]: Eq = { fn compare(x: a, y: a) -> Ordering }\ntrait Hash[a] = { fn hash(x: a) -> Int }\ntrait Num[a] = {\n\  fn add(x: a, y: a) -> a\n\  fn sub(x: a, y: a) -> a\n\  fn mul(x: a, y: a) -> a\n\  fn div(x: a, y: a) -> a\n}\ntrait Rem[a] = { fn rem(x: a, y: a) -> a }\ntrait Neg[a] = { fn neg(x: a) -> a }\n";
           Discovery.write_file
+            (Filename.concat stdlib_root "std/basics.mr")
+            "import std.prelude.Show\nexport puts\nfn puts[a: Show](value: a) => Unit = {}\n";
+          Discovery.write_file
             (Filename.concat stdlib_root "std/option.mr")
             "export Option\ntype Option[a] = { Some(a), None }\nimpl[a] Option[a] = {\n\  fn unwrap_or(self: Option[a], fallback: a) -> a = match self {\n\    case Option.Some(v): v\n\    case Option.None: fallback\n\  }\n}\n";
           Discovery.write_file
@@ -1947,6 +1950,9 @@ let%test "source-backed module compilation sees std.option and std.result signat
           Discovery.write_file
             (Filename.concat stdlib_root "std/prelude.mr")
             "export Ordering, Eq, Show, Debug, Ord, Hash, Num, Rem, Neg\ntype Ordering = { Less, Equal, Greater }\ntrait Eq[a] = { fn eq(x: a, y: a) -> Bool }\ntrait Show[a] = { fn show(x: a) -> Str }\ntrait Debug[a] = { fn debug(x: a) -> Str }\ntrait Ord[a]: Eq = { fn compare(x: a, y: a) -> Ordering }\ntrait Hash[a] = { fn hash(x: a) -> Int }\ntrait Num[a] = {\n\  fn add(x: a, y: a) -> a\n\  fn sub(x: a, y: a) -> a\n\  fn mul(x: a, y: a) -> a\n\  fn div(x: a, y: a) -> a\n}\ntrait Rem[a] = { fn rem(x: a, y: a) -> a }\ntrait Neg[a] = { fn neg(x: a) -> a }\n";
+          Discovery.write_file
+            (Filename.concat stdlib_root "std/basics.mr")
+            "import std.prelude.Show\nexport puts\nfn puts[a: Show](value: a) => Unit = {}\n";
           Discovery.write_file
             (Filename.concat stdlib_root "std/option.mr")
             "export Option\ntype Option[a] = { Some(a), None }\nimpl[a] Option[a] = {\n\  fn unwrap_or(self: Option[a], fallback: a) -> a = match self {\n\    case Option.Some(v): v\n\    case Option.None: fallback\n\  }\n}\n";
@@ -2009,6 +2015,9 @@ let%test "non-core stdlib modules implicitly see Option and Result" =
           Discovery.write_file
             (Filename.concat stdlib_root "std/prelude.mr")
             "export Ordering, Eq, Show, Debug, Ord, Hash, Num, Rem, Neg\ntype Ordering = { Less, Equal, Greater }\ntrait Eq[a] = { fn eq(x: a, y: a) -> Bool }\ntrait Show[a] = { fn show(x: a) -> Str }\ntrait Debug[a] = { fn debug(x: a) -> Str }\ntrait Ord[a]: Eq = { fn compare(x: a, y: a) -> Ordering }\ntrait Hash[a] = { fn hash(x: a) -> Int }\ntrait Num[a] = {\n\  fn add(x: a, y: a) -> a\n\  fn sub(x: a, y: a) -> a\n\  fn mul(x: a, y: a) -> a\n\  fn div(x: a, y: a) -> a\n}\ntrait Rem[a] = { fn rem(x: a, y: a) -> a }\ntrait Neg[a] = { fn neg(x: a) -> a }\n";
+          Discovery.write_file
+            (Filename.concat stdlib_root "std/basics.mr")
+            "import std.prelude.Show\nexport puts\nfn puts[a: Show](value: a) => Unit = {}\n";
           Discovery.write_file
             (Filename.concat stdlib_root "std/option.mr")
             "export Option\ntype Option[a] = { Some(a), None }\nimpl[a] Option[a] = {\n\  fn unwrap_or(self: Option[a], fallback: a) -> a = match self {\n\    case Option.Some(v): v\n\    case Option.None: fallback\n\  }\n}\n";

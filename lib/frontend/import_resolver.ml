@@ -8,7 +8,7 @@ let prelude_module_id = "std.prelude"
 let option_module_id = "std.option"
 let result_module_id = "std.result"
 let prelude_support_module_id = "std.basics"
-let core_stdlib_modules = [ prelude_module_id; option_module_id; result_module_id ]
+let core_stdlib_modules = [ prelude_module_id; prelude_support_module_id; option_module_id; result_module_id ]
 
 type member_presence = {
   internal_name : string;
@@ -105,8 +105,8 @@ let is_std_module_id (module_id : string) : bool =
 
 let is_locked_std_core_name ~(module_id : string) (name : string) : bool =
   match (module_id, name) with
-  | "std.prelude", ("Ordering" | "Eq" | "Show" | "Debug" | "Ord" | "Hash" | "Num" | "Rem" | "Neg" | "puts")
-    ->
+  | "std.basics", "puts" -> true
+  | "std.prelude", ("Ordering" | "Eq" | "Show" | "Debug" | "Ord" | "Hash" | "Num" | "Rem" | "Neg") ->
       true
   | "std.option", "Option" -> true
   | "std.result", "Result" -> true
@@ -403,6 +403,11 @@ let implicit_direct_bindings_for_module
     | Some prelude_surface -> StringMap.fold StringMap.add prelude_surface.exports bindings
     | None -> bindings
   in
+  let add_basics_exports bindings =
+    match Hashtbl.find_opt surfaces prelude_support_module_id with
+    | Some basics_surface -> add_named_export_if_present ~surface:basics_surface ~export_name:"puts" bindings
+    | None -> bindings
+  in
   let add_type_export module_id export_name bindings =
     match Hashtbl.find_opt surfaces module_id with
     | Some surface -> add_named_export_if_present ~surface ~export_name bindings
@@ -416,9 +421,10 @@ let implicit_direct_bindings_for_module
     String.equal current_module.module_id option_module_id
     || String.equal current_module.module_id result_module_id
   then
-    add_prelude_exports StringMap.empty
+    add_prelude_exports StringMap.empty |> add_basics_exports
   else
     add_prelude_exports StringMap.empty
+    |> add_basics_exports
     |> add_type_export option_module_id "Option"
     |> add_type_export result_module_id "Result"
 
@@ -1511,6 +1517,9 @@ let%test "non-core stdlib modules implicitly see std option/result modules" =
           Discovery.write_file
             (Filename.concat stdlib_root "std/prelude.mr")
             "export Ordering, Eq, Show, Debug, Ord, Hash, Num, Rem, Neg\ntype Ordering = { Less, Equal, Greater }\ntrait Eq[a] = { fn eq(x: a, y: a) -> Bool }\ntrait Show[a] = { fn show(x: a) -> Str }\ntrait Debug[a] = { fn debug(x: a) -> Str }\ntrait Ord[a]: Eq = { fn compare(x: a, y: a) -> Ordering }\ntrait Hash[a] = { fn hash(x: a) -> Int }\ntrait Num[a] = {\n\  fn add(x: a, y: a) -> a\n\  fn sub(x: a, y: a) -> a\n\  fn mul(x: a, y: a) -> a\n\  fn div(x: a, y: a) -> a\n}\ntrait Rem[a] = { fn rem(x: a, y: a) -> a }\ntrait Neg[a] = { fn neg(x: a) -> a }\n";
+          Discovery.write_file
+            (Filename.concat stdlib_root "std/basics.mr")
+            "import std.prelude.Show\nexport puts\nfn puts[a: Show](value: a) => Unit = {}\n";
           Discovery.write_file
             (Filename.concat stdlib_root "std/option.mr")
             "export Option\ntype Option[a] = { Some(a), None }\n";

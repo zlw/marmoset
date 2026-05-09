@@ -77,8 +77,8 @@ let option_module_id = "std.option"
 let result_module_id = "std.result"
 let prelude_relative_path = Filename.concat "std" "prelude.mr"
 let toolchain_root_env_var = "MARMOSET_ROOT"
-let core_stdlib_modules = [ prelude_module_id; option_module_id; result_module_id ]
 let prelude_support_module_id = "std.basics"
+let core_stdlib_modules = [ prelude_module_id; prelude_support_module_id; option_module_id; result_module_id ]
 
 let is_std_import_path = function
   | "std" :: _ -> true
@@ -489,6 +489,9 @@ let%test "discover_project resolves std modules from an explicit toolchain stdli
             (Filename.concat stdlib_root "std/prelude.mr")
             "export Ordering, Eq, Show, Debug, Ord, Hash, Num, Rem, Neg\ntype Ordering = { Less, Equal, Greater }\ntrait Eq[a] = { fn eq(x: a, y: a) -> Bool }\ntrait Show[a] = { fn show(x: a) -> Str }\ntrait Debug[a] = { fn debug(x: a) -> Str }\ntrait Ord[a]: Eq = { fn compare(x: a, y: a) -> Ordering }\ntrait Hash[a] = { fn hash(x: a) -> Int }\ntrait Num[a] = {\n\  fn add(x: a, y: a) -> a\n\  fn sub(x: a, y: a) -> a\n\  fn mul(x: a, y: a) -> a\n\  fn div(x: a, y: a) -> a\n}\ntrait Rem[a] = { fn rem(x: a, y: a) -> a }\ntrait Neg[a] = { fn neg(x: a) -> a }\n";
           write_file
+            (Filename.concat stdlib_root "std/basics.mr")
+            "import std.prelude.Show\nexport puts\nfn puts[a: Show](value: a) => Unit = {}\n";
+          write_file
             (Filename.concat stdlib_root "std/option.mr")
             "export Option\ntype Option[a] = { Some(a), None }\nimpl[a] Option[a] = {\n\  fn unwrap_or(self: Option[a], fallback: a) -> a = match self {\n\    case Option.Some(v): v\n\    case Option.None: fallback\n\  }\n}\n";
           write_file
@@ -498,6 +501,7 @@ let%test "discover_project resolves std modules from an explicit toolchain stdli
           | Error _ -> false
           | Ok graph ->
               Hashtbl.mem graph.modules "std.prelude"
+              && Hashtbl.mem graph.modules "std.basics"
               && Hashtbl.mem graph.modules "std.option"
               && Hashtbl.mem graph.modules "std.result"))
 
@@ -513,6 +517,9 @@ let%test "resolve_toolchain_root honors MARMOSET_ROOT before installed probing" 
       write_file
         (Filename.concat stdlib_root "std/prelude.mr")
         "export Ordering\ntype Ordering = { Less, Equal, Greater }\n";
+      write_file
+        (Filename.concat stdlib_root "std/basics.mr")
+        "import std.prelude.Ordering\nexport puts\nfn puts(value: Int) => Unit = {}\n";
       write_file
         (Filename.concat stdlib_root "std/option.mr")
         "export Option\ntype Option[a] = { Some(a), None }\n";
@@ -537,6 +544,9 @@ let%test "discover_project orders non-core stdlib modules after core stdlib modu
             (Filename.concat stdlib_root "std/prelude.mr")
             "export Ordering, Eq, Show, Debug, Ord, Hash, Num, Rem, Neg\ntype Ordering = { Less, Equal, Greater }\ntrait Eq[a] = { fn eq(x: a, y: a) -> Bool }\ntrait Show[a] = { fn show(x: a) -> Str }\ntrait Debug[a] = { fn debug(x: a) -> Str }\ntrait Ord[a]: Eq = { fn compare(x: a, y: a) -> Ordering }\ntrait Hash[a] = { fn hash(x: a) -> Int }\ntrait Num[a] = {\n\  fn add(x: a, y: a) -> a\n\  fn sub(x: a, y: a) -> a\n\  fn mul(x: a, y: a) -> a\n\  fn div(x: a, y: a) -> a\n}\ntrait Rem[a] = { fn rem(x: a, y: a) -> a }\ntrait Neg[a] = { fn neg(x: a) -> a }\n";
           write_file
+            (Filename.concat stdlib_root "std/basics.mr")
+            "import std.prelude.Show\nexport puts\nfn puts[a: Show](value: a) => Unit = {}\n";
+          write_file
             (Filename.concat stdlib_root "std/option.mr")
             "export Option\ntype Option[a] = { Some(a), None }\n";
           write_file
@@ -560,9 +570,11 @@ let%test "discover_project orders non-core stdlib modules after core stdlib modu
               | None -> false
               | Some deps ->
                   List.mem "std.prelude" deps
+                  && List.mem "std.basics" deps
                   && List.mem "std.option" deps
                   && List.mem "std.result" deps
                   && Option.get (index_of "std.prelude") < Option.get (index_of "std.foo")
+                  && Option.get (index_of "std.basics") < Option.get (index_of "std.foo")
                   && Option.get (index_of "std.option") < Option.get (index_of "std.foo")
                   && Option.get (index_of "std.result") < Option.get (index_of "std.foo"))))
 

@@ -28,12 +28,12 @@ func extern__std_basics__puts_str(value string) struct{} {
 	return struct{}{}
 }
 
-func puts_string(value string) struct{} {
-    return std__basics__puts_u005fstr_string(show_show_string(value))
-}
-
 func std__basics__puts_u005fstr_string(value string) struct{} {
     return extern__std_basics__puts_str(value)
+}
+
+func puts_string(value string) struct{} {
+    return std__basics__puts_u005fstr_string(show_show_string(value))
 }
 
 func show_show_int64(x int64) string {
