@@ -8,7 +8,7 @@
 - Prerequisites:
   - `docs/plans/done/language/06_module-system.md`
   - `docs/plans/done/language/07_prelude.md`
-  - `docs/plans/todo/language/04_shim-first-go-interop.md`
+  - `docs/plans/done/language/09_shim-first-go-interop.md`
 
 ## Context
 
@@ -54,7 +54,7 @@ Modules -> Prelude -> Shim-first Go interop -> Stdlib
 
 - `std/prelude.mr`, `std/option.mr`, and `std/result.mr` are toolchain stdlib modules loaded through the normal module pipeline.
 - `Option` and `Result` are canonical stdlib nominal types with inherent helper APIs.
-- `04_shim-first-go-interop.md` has introduced `extern type`, checked-in Go shims, canonical immutable `std.bytes.Bytes`, and the initial `std.file` proof slice.
+- `09_shim-first-go-interop.md` has introduced `extern type`, checked-in Go shims, canonical immutable `std.bytes.Bytes`, and the initial `std.file` proof slice.
 - `docs/features/ffi.md` now documents shim-first interop as the current direction, with direct package externs retained only as historical context.
 - Existing list/map/str examples are mostly fixtures and exploratory docs; there is no committed full stdlib module set yet.
 
@@ -62,7 +62,7 @@ Modules -> Prelude -> Shim-first Go interop -> Stdlib
 
 ### `std.bytes`
 
-Canonical immutable byte data. Introduced by `04_shim-first-go-interop.md` and hardened here.
+Canonical immutable byte data. Introduced by `09_shim-first-go-interop.md` and hardened here.
 
 Minimum API:
 
@@ -85,7 +85,7 @@ Rules:
 
 ### `std.file`
 
-Filesystem operations. Introduced as a proof slice by `04_shim-first-go-interop.md`, then expanded here.
+Filesystem operations. Introduced as a proof slice by `09_shim-first-go-interop.md`, then expanded here.
 
 Initial API:
 
@@ -213,7 +213,7 @@ Mutation must not leak. `put`, `delete`, and `merge` return new values.
 
 ### Phase L0: Sync With Shim Proof Outputs
 
-**Goal:** Treat `04_shim-first-go-interop.md` as the source of truth for `std.bytes`, `std.file`, `extern type`, `Bytes`, and Go shim layout.
+**Goal:** Treat `09_shim-first-go-interop.md` as the source of truth for `std.bytes`, `std.file`, `extern type`, `Bytes`, and Go shim layout.
 
 Changes:
 
@@ -333,7 +333,7 @@ HTTP, SQL, and framework-style wrappers likely need follow-up shim features such
 ## Testing Strategy
 
 - Go-backed stdlib modules use focused integration fixtures that exercise the public Marmoset module, not direct shim functions.
-- Shim details are covered by `04_shim-first-go-interop.md`; this plan tests the stdlib API contract.
+- Shim details are covered by `09_shim-first-go-interop.md`; this plan tests the stdlib API contract.
 - Pure helper modules get typechecker and integration coverage for polymorphism, effect sequencing, and edge cases.
 - File/bytes tests use temp dirs and binary-safe fixtures.
 - Tree snapshots are useful only when stdlib changes affect generated shim/API packages.
@@ -358,9 +358,9 @@ HTTP, SQL, and framework-style wrappers likely need follow-up shim features such
 
 ## Related Plans
 
-- `docs/plans/todo/language/04_shim-first-go-interop.md` provides the shim interop substrate and the initial `std.bytes`/`std.file` proof.
+- `docs/plans/done/language/09_shim-first-go-interop.md` provides the shim interop substrate and the initial `std.bytes`/`std.file` proof.
 - `docs/plans/todo/language/09_hof_optimization.md` depends on stable stdlib higher-order function identities.
 
 ## Progress
 
-- 2026-05-08 23:52 CEST: Renumbered from `04_stdlib.md` to `05_stdlib.md` and rewritten around shim-first interop. Direct FFI wrapper assumptions were removed; `std.bytes` and `std.file` now depend on `04_shim-first-go-interop.md`.
+- 2026-05-08 23:52 CEST: Renumbered from `04_stdlib.md` to `05_stdlib.md` and rewritten around shim-first interop. Direct FFI wrapper assumptions were removed; `std.bytes` and `std.file` now depend on `09_shim-first-go-interop.md`.

@@ -2,8 +2,8 @@
 
 ## Maintenance
 
-- Last verified: 2026-05-08
-- Implementation status: Planning
+- Last verified: 2026-05-09
+- Implementation status: Complete
 - Prerequisites:
   - `docs/plans/done/language/06_module-system.md`
   - `docs/plans/done/language/07_prelude.md`
@@ -14,7 +14,7 @@
 
 ## Context
 
-Marmoset currently has FFI v1: trusted direct calls to scalar Go package functions.
+Before this milestone, Marmoset had FFI v1: trusted direct calls to scalar Go package functions.
 
 ```marmoset
 extern "strings" = {
@@ -22,9 +22,9 @@ extern "strings" = {
 }
 ```
 
-That implementation is intentionally narrow. It works for simple scalar calls, but it is the wrong long-term abstraction for real Go libraries. Expanding it would push Go-specific concepts into Marmoset source: multi-return tuples, nullable pointers, `error`, raw package paths, methods, channels, interfaces, variadics, and generated Go representation types.
+That implementation was intentionally narrow. It worked for simple scalar calls, but it was the wrong long-term abstraction for real Go libraries. Expanding it would have pushed Go-specific concepts into Marmoset source: multi-return tuples, nullable pointers, `error`, raw package paths, methods, channels, interfaces, variadics, and generated Go representation types.
 
-This plan replaces direct Go package externs with shim externs as the single interop surface. A shim is ordinary Go code written against a small typed ABI. The shim handles Go-specific details. The Marmoset module exposes normal Marmoset APIs.
+This milestone replaced direct Go package externs with shim externs as the single interop surface. A shim is ordinary Go code written against a small typed ABI. The shim handles Go-specific details. The Marmoset module exposes normal Marmoset APIs.
 
 ```text
 Go package / stdlib / framework / sqlc output
@@ -1146,3 +1146,5 @@ Each commit should add failing tests first, make only the targeted slice pass, a
 - 2026-05-09 01:19 CEST: S7 reached focused green state: added `std/file.mr`, installed it in the toolchain stdlib, added checked-in `std/file` Go shim code with explicit `NotFound`, `PermissionDenied`, `IsDirectory`, `Other(Str)`, and `AlreadyClosed` mappings, tested read/write Bytes round trips, missing/directory error mapping, open/close handle flow, double-close behavior, and public `File` construction rejection. Fixed generated `Option`/`Result` adapter inspectors to avoid unused payload locals for erased payload conversions such as `Result[Unit, E]`. Verification passed with `make integration stdlib-shims`, `make integration ffi`, and `dune runtest lib/backend/go`.
 - 2026-05-09 01:22 CEST: S7 committed as `6ef7848` (`Add std.file shim proof`).
 - 2026-05-09 01:22 CEST: Final verification for shim-first Go interop completed with `dune runtest lib/frontend/syntax`, `dune runtest lib/frontend/typecheck`, `dune runtest lib/backend/go`, `dune runtest tools/lsp/lib`, `make integration ffi`, `make integration snapshots`, and `make integration stdlib-shims`.
+- 2026-05-09 02:58 CEST: Cleanup pass removed stale direct-FFI fixture and exact Go snapshot files, rewrote active FFI/architecture/roadmap docs around the implemented shim model, moved this plan to `docs/plans/done/language/09_shim-first-go-interop.md`, and kept only rejection tests plus archived historical plan text for old direct Go package externs.
+- 2026-05-09 03:00 CEST: Cleanup verification passed with `dune runtest lib/frontend/typecheck`, `dune runtest lib/backend/go`, `make integration ffi`, `make integration snapshots`, `make integration stdlib-shims`, and `git diff --check`.

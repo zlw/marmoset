@@ -1,5 +1,0 @@
-extern "strings" = {
-  fn ToUpper(s: Str) -> Str
-}
-
-"ok"

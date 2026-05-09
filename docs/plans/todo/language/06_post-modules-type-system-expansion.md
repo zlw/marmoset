@@ -8,7 +8,7 @@
   - `docs/plans/done/language/06_module-system.md`
   - `docs/plans/done/language/07_prelude.md`
   - `docs/plans/done/language/08_ffi.md`
-  - `docs/plans/todo/language/04_shim-first-go-interop.md`
+  - `docs/plans/done/language/09_shim-first-go-interop.md`
   - `docs/plans/todo/language/05_stdlib.md`
 
 ## Summary
@@ -68,7 +68,7 @@ After modules, shim interop, and public stdlib APIs exist, revisit the type-syst
 
 ## Related Plans
 
-- `docs/plans/done/language/06_module-system.md`, `07_prelude.md`, `08_ffi.md`, plus `04_shim-first-go-interop.md` and `05_stdlib.md` create the public-API pressure that justifies this later work.
+- `docs/plans/done/language/06_module-system.md`, `07_prelude.md`, `08_ffi.md`, and `09_shim-first-go-interop.md`, plus `05_stdlib.md`, create the public-API pressure that justifies this later work.
 - `docs/ROADMAP.md` should keep more speculative ideas deferred until they are concrete enough to deserve their own plan.
 
 ## Progress

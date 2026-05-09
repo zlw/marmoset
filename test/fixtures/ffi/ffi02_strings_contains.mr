@@ -1,5 +1,0 @@
-extern "strings" = {
-  fn Contains(s: Str, substr: Str) -> Bool
-}
-
-puts(strings.Contains("marmoset", "set"))  # output: true

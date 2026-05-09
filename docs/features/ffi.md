@@ -3,79 +3,53 @@
 ## Maintenance
 
 - Last verified: 2026-05-09
-- Implementation status: Shim-first rollout in progress
+- Implementation status: Shim-first interop implemented
 - Update trigger: Any change to extern syntax, supported FFI types, typechecking, module visibility, or Go codegen
 
-Marmoset interop is now shim-first. An `extern` declaration names a Marmoset shim id such as `std/bytes` or `test/scalar`, not an arbitrary Go import path. Go-specific details stay inside checked-in or project-provided shim packages, and public Marmoset modules expose ordinary Marmoset APIs built from `Result`, `Option`, `Bytes`, opaque handles, enums, records, and effects.
+Marmoset interop is shim-first. An `extern` declaration names a Marmoset shim id such as `std/bytes`, `std/file`, or `test/scalar`, not an arbitrary Go import path. Go-specific details stay inside checked-in or project-provided shim packages, and public Marmoset modules expose ordinary Marmoset APIs built from `Result`, `Option`, `Bytes`, opaque handles, enums, records, and effects.
 
-Direct arbitrary Go package externs are historical behavior. New interop and stdlib work should target the shim model instead of extending direct FFI with Go-shaped concepts such as `(T, error)`, pointers, channels, interfaces, variadics, or Go package representation types.
+Direct arbitrary Go package externs have been removed. A declaration such as `extern "strings"` is rejected as a malformed shim id before catalog lookup.
 
 ## Syntax
 
-### Historical Direct Externs
-
-```marmoset
-extern "strings" = {
-  fn ToUpper(s: Str) -> Str
-  fn Contains(s: Str, substr: Str) -> Bool
-}
-```
-
-Use `as` when the package path is not a valid Marmoset qualifier or when a different source qualifier is clearer:
-
-```marmoset
-extern "path/filepath" as fp = {
-  fn Base(path: Str) -> Str
-}
-```
-
-Pure extern functions use `->`. Effectful extern functions use `=>`:
-
-```marmoset
-extern "fmt" = {
-  fn Println(s: Str) => Unit
-}
-```
-
-### Shim Externs
-
-Shim externs reuse the same top-level form, but the string is a slash-separated shim id. The owner module exports ordinary wrapper functions rather than exporting shim functions directly:
+Shim externs use the top-level `extern` form. The string is a slash-separated shim id, and the optional `as` qualifier controls the source qualifier used inside the owning module:
 
 ```marmoset
 export FileReadError, read
 
-type FileReadError = { NotFound, PermissionDenied, Other(Str) }
+import std.bytes.Bytes
 
-extern "std/file" as fs = {
+type FileReadError = { NotFound, PermissionDenied, IsDirectory, Other(Str) }
+
+extern "std/file" as file_shim = {
   fn read(path: Str) => Result[Bytes, FileReadError]
 }
 
 fn read(path: Str) => Result[Bytes, FileReadError] = {
-  fs.read(path)
+  file_shim.read(path)
 }
 ```
 
-Phase one requires shim ids to have an allowed root and at least two segments, such as `std/bytes`, `std/file`, or synthetic `test/scalar`. A single segment such as `strings` is rejected as a malformed shim id.
+Phase one requires shim ids to have an allowed root and at least two slash-separated segments. Valid examples include `std/bytes`, `std/file`, and synthetic test-only ids such as `test/scalar`. Single-segment ids such as `strings` are rejected with `shim-id-invalid`; syntactically valid but unknown ids such as `std/missing` fail with `shim-id-not-found`.
+
+Opaque resource handles use `extern type` in the owning shim module:
+
+```marmoset
+export File, open, close
+
+extern type File
+
+extern "std/file" as file_shim = {
+  fn open(path: Str) => Result[File, FileOpenError]
+  fn close(file: File) => Result[Unit, FileCloseError]
+}
+```
+
+`extern type` values cannot be constructed, field-inspected, record-pattern matched, or given derived trait implementations in Marmoset. Shim code owns their representation and lifecycle.
 
 ## Supported Types
 
-### Historical Direct Boundary
-
-FFI v1 supports only scalar boundary types:
-
-| Marmoset | Go |
-|---|---|
-| `Int` | `int64` |
-| `Float` | `float64` |
-| `Bool` | `bool` |
-| `Str` | `string` |
-| `Unit` return | `struct{}` |
-
-`Unit` parameters are rejected. Lists, maps, records, enums, unions, `Dyn`, `Option`, `Result`, functions, and generic extern declarations are not supported at the FFI boundary in v1.
-
-### Shim Boundary
-
-Shim boundaries are classified by resolved Marmoset type identity before Go codegen. The first supported boundary set is:
+Shim boundaries are classified by resolved Marmoset type identity before Go codegen. The supported boundary set is:
 
 - `Unit`, `Bool`, `Int`, `Float`, and `Str`
 - canonical `std.option.Option[T]`
@@ -88,49 +62,19 @@ Only canonical `std.bytes.Bytes` maps to the Go `marmoset.Bytes` ABI type. Other
 
 Unsupported boundary types fail during typechecking instead of leaking Go representation details into Marmoset source.
 
-## Module Visibility
+## Ownership
 
-### Historical Direct Visibility
+Extern declarations are module-local. Importing a wrapper module never imports its shim qualifier; callers use the exported Marmoset wrapper API.
 
-Extern declarations are module-local. Importing a module that declares an extern does not import its Go package qualifier.
-
-The intended pattern is a small wrapper module:
-
-```marmoset
-export upcase
-
-extern "strings" = {
-  fn ToUpper(s: Str) -> Str
-}
-
-fn upcase(s: Str) -> Str = strings.ToUpper(s)
-```
-
-Other modules import and call `upcase` like any ordinary Marmoset API. They cannot call `strings.ToUpper` unless they declare their own extern block.
-
-### Shim Ownership
-
-Shim externs remain module-local, but each shim id has exactly one owning Marmoset module in a project. In phase one, the owner module id must match the shim id with `/` converted to `.`, so `std/file` is owned by `std.file`. Duplicate owners, duplicate blocks for the same shim id, direct export of shim functions, and malformed or missing shim ids produce explicit diagnostics.
+Each shim id has exactly one owning Marmoset module in a project. In phase one, the owner module id must match the shim id with `/` converted to `.`, so `std/file` is owned by `std.file`. Duplicate owners, duplicate blocks for the same shim id, direct export of shim functions, qualifier collisions, Go symbol collisions, malformed shim ids, and missing shim ids produce explicit diagnostics.
 
 ## Trust Boundary
 
-### Historical Direct Trust Boundary
+Shim signatures are trusted Marmoset declarations, but the shim package must compile against generated typed Go API packages. The typechecker verifies Marmoset-side calls against the declared signature, and the Go compiler verifies that checked-in shim functions match the generated ABI.
 
-Extern signatures are trusted Marmoset declarations. The typechecker verifies Marmoset-side calls against the declared signature, and the Go compiler remains the final authority that the declaration matches the real Go function.
-
-Semantic adapters are explicit. Go patterns such as `(T, error)`, `(T, bool)`, nil returns, or panics are not automatically converted to Marmoset `Result`, `Option`, or effects. Wrap those semantics in ordinary Marmoset or Go code and expose the intended shape deliberately.
-
-### Shim ABI
-
-Shim packages compile against a generated typed Go API package plus a support package named `marmoset`. Go errors, pointers, methods, channels, interfaces, panics, and sentinel values are handled by the shim author and mapped into explicit Marmoset domain types. ABI violations such as invalid zero-value `Result`/`Option`, nil enum interface values, zero handles, stale handles, bytes invariant failures, or shim panics are fatal runtime diagnostics from generated adapters, not domain errors.
+Go errors, pointers, methods, channels, interfaces, panics, sentinel values, and variadic APIs are handled by the shim author and mapped into explicit Marmoset domain types. ABI violations such as invalid zero-value `Result`/`Option`, nil enum interface values, zero handles, stale handles, bytes invariant failures, or shim panics are fatal runtime diagnostics from generated adapters, not domain errors.
 
 ## Codegen
-
-### Historical Direct Codegen
-
-The Go backend emits wrappers only for extern functions that are actually called. Imports use deterministic generated aliases such as `mext_strings` or `mext_path_filepath`, and wrapper names are based on the full Go import path plus function name so packages with the same basename do not collide.
-
-### Shim Codegen
 
 Shim codegen emits a complete Go module tree rather than only `main.go` and `runtime.go`. Called shims cause the build tree to include:
 
@@ -143,4 +87,4 @@ api/<shim-id>/api.go
 shims/<shim-id>/
 ```
 
-Generated adapter wrappers call exported Go shim symbols, convert between concrete Marmoset representations and typed ABI values, and copy checked-in runtime support from `runtime/go/marmoset` plus checked-in toolchain shims from `runtime/go/shims`.
+Generated adapter wrappers call exported Go shim symbols, convert between concrete Marmoset representations and typed ABI values, recover shim panics as ABI violations, and copy checked-in runtime support from `runtime/go/marmoset` plus checked-in toolchain shims from `runtime/go/shims`.

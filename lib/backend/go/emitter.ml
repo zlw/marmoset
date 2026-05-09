@@ -339,7 +339,7 @@ let trait_method_func_name (trait_name : string) (method_name : string) (type_su
 let inherent_method_func_name (method_name : string) (type_suffix : string) : string =
   Printf.sprintf "inherent_%s_%s" (go_safe_ident method_name) type_suffix
 
-let encoded_go_path_fragment (path : string) : string =
+let encoded_path_fragment (path : string) : string =
   let buf = Buffer.create (String.length path) in
   String.iter
     (function
@@ -353,8 +353,8 @@ let encoded_go_path_fragment (path : string) : string =
   | "" -> "pkg"
   | fragment -> fragment
 
-let go_path_name_fragment (path : string) : string =
-  go_safe_ident (encoded_go_path_fragment path)
+let path_name_fragment (path : string) : string =
+  go_safe_ident (encoded_path_fragment path)
 
 let exported_go_ident (name : string) : string =
   let ident = go_safe_ident name in
@@ -364,9 +364,9 @@ let exported_go_ident (name : string) : string =
     let first = Char.uppercase_ascii ident.[0] in
     String.make 1 first ^ String.sub ident 1 (String.length ident - 1)
 
-let api_package_name (shim_id : string) : string = "mapi_" ^ go_path_name_fragment shim_id
+let api_package_name (shim_id : string) : string = "mapi_" ^ path_name_fragment shim_id
 let api_import_path (shim_id : string) : string = "marmoset_out/api/" ^ shim_id
-let shim_import_alias (shim_id : string) : string = "mshim_" ^ go_path_name_fragment shim_id
+let shim_import_alias (shim_id : string) : string = "mshim_" ^ path_name_fragment shim_id
 let shim_import_path (shim_id : string) : string = "marmoset_out/shims/" ^ shim_id
 
 let shim_id_of_owner_module_id (owner_module_id : string) : string =
@@ -376,7 +376,7 @@ let extern_handle_api_type_name (type_name : string) : string =
   exported_go_ident (Typecheck.Display_names.display_binding_name type_name)
 
 let extern_wrapper_name (func : Typecheck.Resolution_artifacts.extern_func) : string =
-  Printf.sprintf "extern__%s__%s" (go_path_name_fragment func.shim_id) (go_safe_ident func.marmoset_func_name)
+  Printf.sprintf "extern__%s__%s" (path_name_fragment func.shim_id) (go_safe_ident func.marmoset_func_name)
 
 type dyn_callable_method = {
   dyn_trait_name : string;
@@ -666,11 +666,11 @@ type mono_state = {
   call_resolution_map : (int, Typecheck.Resolution_artifacts.call_resolution) Hashtbl.t;
       (* Phase 5: explicit call-resolution metadata from typechecker *)
   extern_declarations : (string, Typecheck.Resolution_artifacts.extern_func) Hashtbl.t;
-      (* FFI declarations keyed by full Go path plus function name *)
+      (* Shim extern declarations keyed by shim id plus function name *)
   extern_wrapper_names : (string, string) Hashtbl.t;
-      (* FFI wrapper names keyed by extern_key after resolving codegen name collisions *)
+      (* Shim adapter wrapper names keyed by shim_key after resolving codegen name collisions *)
   extern_calls : (int, Typecheck.Resolution_artifacts.extern_call) Hashtbl.t;
-      (* FFI call artifacts keyed by call expression id *)
+      (* Shim extern call artifacts keyed by call expression id *)
   method_type_args_map : (int, Types.mono_type list) Hashtbl.t;
       (* Phase 6.4: resolved method-level type args per call site *)
   method_def_map : (int, Typecheck.Resolution_artifacts.typed_method_def) Hashtbl.t;
@@ -3770,12 +3770,12 @@ let fresh_temp_name (state : emit_state) (prefix : string) : string =
   state.mono.name_counter <- n + 1;
   Printf.sprintf "%s_%d" prefix n
 
-let extern_func_exn (state : mono_state) (extern_key : string) : Typecheck.Resolution_artifacts.extern_func =
-  match Hashtbl.find_opt state.extern_declarations extern_key with
+let extern_func_exn (state : mono_state) (shim_key : string) : Typecheck.Resolution_artifacts.extern_func =
+  match Hashtbl.find_opt state.extern_declarations shim_key with
   | Some func -> func
   | None ->
       failwith
-        (Printf.sprintf "Codegen error: missing extern declaration artifact for key %S" extern_key)
+        (Printf.sprintf "Codegen error: missing shim extern declaration artifact for key %S" shim_key)
 
 let with_indent_delta (state : emit_state) (delta : int) (f : unit -> 'a) : 'a =
   state.indent <- state.indent + delta;

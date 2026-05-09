@@ -5,7 +5,7 @@
 - Last verified: 2026-04-03
 - Implementation status: Planning
 - Prerequisites:
-  - `docs/plans/todo/language/04_shim-first-go-interop.md`
+  - `docs/plans/done/language/09_shim-first-go-interop.md`
   - `docs/plans/todo/language/05_stdlib.md`
   - `docs/plans/todo/language/06_post-modules-type-system-expansion.md`
   - current data-first declaration semantics

@@ -241,35 +241,27 @@ Current backend policy:
 - Trait impl emission assumes single-package visibility; cross-package impl stitching is out of scope.
 - No trait-object ABI is exposed across boundaries.
 
-Extern calls are compiled through generated Go wrappers:
-- Typechecking records extern declaration and call artifacts; the emitter consumes those artifacts instead of rediscovering extern calls from syntax.
-- Imports are accumulated structurally and rendered with deterministic generated aliases such as `mext_strings`.
-- Wrappers are emitted only for used extern functions and are keyed by full Go import path plus Go function name.
+Interop calls are compiled through generated shim adapters:
+- Typechecking records shim declaration and call artifacts; the emitter consumes those artifacts instead of rediscovering extern calls from syntax.
+- `extern "std/file"` names a shim id, not a Go import path.
+- Adapter wrappers are emitted only for used shim functions and are keyed by shim id plus Marmoset function name.
 - Extern declarations remain module-local; wrapper modules export ordinary Marmoset functions as the public API.
+- Direct arbitrary Go package externs are rejected before catalog lookup.
 
-Extern ABI mapping constraints:
-- Allowed v1 boundary types: `Int`, `Float`, `Bool`, `Str`, and `Unit` return.
-- `Unit` parameters are rejected.
-- Deferred until representation freeze: records, enums, unions, trait objects, and unconstrained polymorphic values.
-- Deferred until ownership rules are explicit: arrays/maps with mutation/aliasing semantics across boundary.
+Shim ABI mapping constraints:
+- Allowed scalar boundary types: `Int`, `Float`, `Bool`, `Str`, and `Unit`.
+- Canonical `std.option.Option[T]` and `std.result.Result[T, E]` cross the boundary through checked inspector helpers.
+- Closed enums and opaque `extern type` handles are supported only when declared by the owning shim module.
+- Only canonical `std.bytes.Bytes` maps to the immutable Go `marmoset.Bytes` ABI type.
+- Go package paths, Go errors, pointers, channels, interfaces, methods, variadics, and generated ABI helper names stay outside Marmoset source.
 
-Rationale:
-- keeps codegen coherent while modules and FFI share a single-package backend,
-- avoids locking an unstable runtime layout into public ABI,
-- reduces rewrite risk for future IR and dispatch changes.
-
-Active interop direction:
-- `docs/plans/todo/language/04_shim-first-go-interop.md` supersedes direct arbitrary Go package externs with shim externs.
-- In the shim model, `extern "std/file"` names a shim id, not a Go import path.
-- Public modules expose ordinary Marmoset wrapper APIs; Go package paths, Go errors, pointers, channels, interfaces, and generated ABI helper names stay outside Marmoset source.
-
-Planned shim build layout:
-- Go output becomes a complete module tree, not just `main.go` and `runtime.go`.
+Shim build layout:
+- Go output is a complete module tree, not just `main.go` and `runtime.go`.
 - The CLI writes `go.mod`, `main.go`, `runtime.go`, and deterministic auxiliary Go files under the temporary build directory.
 - `--emit-go` writes the same complete tree so snapshots and users inspect the exact build input.
 - Auxiliary paths are normalized and rejected if they are absolute, escape the build root, duplicate another normalized output path, or overwrite reserved root files.
 
-Planned shim package graph:
+Shim package graph:
 - `runtime/go/marmoset` contains the typed Go ABI support package named `marmoset`.
 - `runtime/go/shims/<shim-id>/` contains checked-in toolchain shim packages.
 - Generated `api/<shim-id>/api.go` packages expose typed Go interfaces and structs for the Marmoset boundary declared by each shim-owning module.
@@ -280,6 +272,11 @@ Shim catalog and ownership:
 - Synthetic `test/*` shim ids are available only to tests.
 - Each shim id has one project owner module; in phase one, `std/file` is owned by `std.file`.
 - The typechecker validates shim id shape, catalog presence, duplicate ownership, duplicate shim blocks/functions, qualifier collisions, Go symbol collisions, and boundary-type support before codegen.
+
+Rationale:
+- keeps codegen coherent while modules and interop share a single-package application backend plus auxiliary ABI packages,
+- avoids exposing unstable Go representation details as source-level Marmoset API,
+- makes Go-specific behavior explicit in checked-in shim packages.
 
 ## 5. Error Architecture
 

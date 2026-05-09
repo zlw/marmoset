@@ -19,9 +19,9 @@ type typecheck_result = {
   call_resolution_map : (int, Resolution_artifacts.call_resolution) Hashtbl.t;
       (* Phase 5: Explicit call-resolution metadata for emitter *)
   extern_declarations : (string, Resolution_artifacts.extern_func) Hashtbl.t;
-      (* FFI: extern declarations keyed by Go path/function identity *)
+      (* Shim extern declarations keyed by shim id/function identity *)
   extern_calls : (int, Resolution_artifacts.extern_call) Hashtbl.t;
-      (* FFI: extern call artifacts keyed by expression id *)
+      (* Shim extern call artifacts keyed by expression id *)
   method_def_map : (int, Resolution_artifacts.typed_method_def) Hashtbl.t;
       (* Phase 5.4: Typed method definitions for emitter. Populated during Phase 6. *)
   method_type_args_map : (int, Types.mono_type list) Hashtbl.t;

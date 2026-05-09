@@ -112,7 +112,7 @@ Why:
 
 This plan is now queued after:
 
-- [04_shim-first-go-interop.md](/Users/zlw/src/marmoset/marmoset/docs/plans/todo/language/04_shim-first-go-interop.md)
+- [09_shim-first-go-interop.md](/Users/zlw/src/marmoset/marmoset/docs/plans/done/language/09_shim-first-go-interop.md)
 - [05_stdlib.md](/Users/zlw/src/marmoset/marmoset/docs/plans/todo/language/05_stdlib.md)
 - [06_post-modules-type-system-expansion.md](/Users/zlw/src/marmoset/marmoset/docs/plans/todo/language/06_post-modules-type-system-expansion.md)
 

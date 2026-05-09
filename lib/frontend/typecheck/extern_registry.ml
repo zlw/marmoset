@@ -32,7 +32,6 @@ let set_current_module_id module_id = current_module_id := Some module_id
 let declaring_module_or fallback = Option.value !current_module_id ~default:fallback
 
 let shim_key ~(shim_id : string) ~(func_name : string) : string = shim_id ^ "\x00" ^ func_name
-let extern_key = shim_key
 
 let source_span ~(file_id : string option) ~(start_pos : int) ~(end_pos : int) : Diagnostic.span =
   match file_id with

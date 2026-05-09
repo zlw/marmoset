@@ -2,7 +2,7 @@
 
 ## Maintenance
 
-- Last verified: 2026-05-08
+- Last verified: 2026-05-09
 - Implementation status: Canonical (actively maintained)
 - Update trigger: Any change to milestone status, plan ordering, or deferred-ideas ownership
 
@@ -26,6 +26,7 @@
 6. [Module system](docs/plans/done/language/06_module-system.md)
 7. [Prelude](docs/plans/done/language/07_prelude.md)
 8. [FFI](docs/plans/done/language/08_ffi.md)
+9. [Shim-first Go interop](docs/plans/done/language/09_shim-first-go-interop.md)
 
 ### Tooling
 
@@ -43,13 +44,12 @@
 
 ### Main Language Track
 
-1. [Shim-first Go interop](docs/plans/todo/language/04_shim-first-go-interop.md)
-2. [Stdlib](docs/plans/todo/language/05_stdlib.md)
-3. [Post-modules type-system expansion](docs/plans/todo/language/06_post-modules-type-system-expansion.md)
+1. [Stdlib](docs/plans/todo/language/05_stdlib.md)
+2. [Post-modules type-system expansion](docs/plans/todo/language/06_post-modules-type-system-expansion.md)
 
 Current status:
 - Prelude infrastructure is complete: the compiler resolves a toolchain-owned stdlib root, auto-loads `std.prelude`, `std.option`, and `std.result` through the normal module pipeline, and uses the same discovery/orchestration path for headerless entries.
-- FFI v1 is complete as the current implementation, but the active interop direction is [Shim-first Go interop](docs/plans/todo/language/04_shim-first-go-interop.md), which removes direct arbitrary Go package externs instead of expanding them.
+- Shim-first Go interop is complete as the current implementation: direct arbitrary Go package externs are removed, and Go-backed library work uses checked-in shim packages plus generated typed ABI packages.
 - Broader library expansion belongs to the later [Stdlib](docs/plans/todo/language/05_stdlib.md) milestone and should use shim-backed modules where Go integration is needed.
 
 ### Queued Language Work
@@ -82,7 +82,7 @@ These areas already have a concrete plan or completed milestone and should not a
 - core language/library platform milestones:
   [Prelude](docs/plans/done/language/07_prelude.md),
   [FFI](docs/plans/done/language/08_ffi.md),
-  [Shim-first Go interop](docs/plans/todo/language/04_shim-first-go-interop.md),
+  [Shim-first Go interop](docs/plans/done/language/09_shim-first-go-interop.md),
   [Stdlib](docs/plans/todo/language/05_stdlib.md)
 - associated types, open rows, post-module coherence work, and later lowering expansion:
   [Post-modules type-system expansion](docs/plans/todo/language/06_post-modules-type-system-expansion.md)
