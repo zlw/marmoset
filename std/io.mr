@@ -1,6 +1,6 @@
 import std.prelude.Show
 
-export ReadLineError, print, println, read_line
+export ReadLineError, print, println, read_line, map_line, with_line
 
 type ReadLineError = { EndOfFile, Other(Str) }
 
@@ -8,6 +8,8 @@ extern "std/io" as io_shim = {
   fn print_str(value: Str) => Unit
   fn println_str(value: Str) => Unit
   fn read_line() => Result[Str, ReadLineError]
+  fn map_line(body: (Str) -> Str) => Result[Str, ReadLineError]
+  fn with_line(body: (Str) => Unit) => Result[Unit, ReadLineError]
 }
 
 fn print[a: Show](value: a) => Unit = io_shim.print_str(Show.show(value))

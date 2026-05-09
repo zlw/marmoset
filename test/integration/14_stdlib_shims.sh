@@ -316,6 +316,38 @@ match io.read_line() {
 }
 EOF
 
+run_source_with_stdin_expect_output \
+    "std.io shim calls Marmoset callback synchronously" \
+    $'alpha\n' \
+    $'mapped:ALPHA' <<'EOF'
+import std.io
+import std.io.ReadLineError
+
+match io.map_line((line: Str) -> if (line == "alpha") { "ALPHA" } else { line }) {
+  case Result.Success(value): io.println("mapped:" + value)
+  case Result.Failure(err): match err {
+    case ReadLineError.EndOfFile: io.println("eof")
+    case ReadLineError.Other(message): io.println("other:" + message)
+  }
+}
+EOF
+
+run_source_with_stdin_expect_output \
+    "std.io shim calls effectful Unit callback synchronously" \
+    $'beta\n' \
+    $'line:beta\ndone' <<'EOF'
+import std.io
+import std.io.ReadLineError
+
+match io.with_line((line: Str) => io.println("line:" + line)) {
+  case Result.Success(_): io.println("done")
+  case Result.Failure(err): match err {
+    case ReadLineError.EndOfFile: io.println("eof")
+    case ReadLineError.Other(message): io.println("other:" + message)
+  }
+}
+EOF
+
 rm -rf "$DATA_DIR"
 
 suite_end

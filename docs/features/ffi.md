@@ -71,8 +71,11 @@ Shim boundaries are classified by resolved Marmoset type identity before Go code
 - closed enums declared by the owning shim module
 - opaque `extern type` handles declared by the owning shim module
 - canonical immutable `std.bytes.Bytes`
+- direct callback parameters whose argument and return types are supported shim boundary types
 
 Only canonical `std.bytes.Bytes` maps to the Go `marmoset.Bytes` ABI type. Other `extern type Bytes` declarations remain ordinary opaque handles. Bytes crossing a shim boundary are copied on entry and return so shim code cannot mutate Marmoset-visible byte values through slice aliasing.
+
+Callback parameters lower to typed Go `func(...) ...` values. The supported callback shape is synchronous and non-escaping: the Go shim may call the callback during the shim call, but storing it, calling it later, or invoking it concurrently is outside the supported ABI. Callback return types are converted back through the same adapter rules, including `Result`, `Option`, owner enums, handles, `Bytes`, and `Unit`.
 
 Unsupported boundary types fail during typechecking instead of leaking Go representation details into Marmoset source.
 

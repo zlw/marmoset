@@ -8197,6 +8197,11 @@ let rec abi_type_go_for_main ~(api_alias : string) (boundary : Typecheck.Shim_bo
         (exported_go_ident (Typecheck.Display_names.display_binding_name enum.enum_name))
   | BStdBytes -> "marmoset.Bytes"
   | BExternHandle handle -> Printf.sprintf "%s.%s" api_alias (extern_handle_api_type_name handle.extern_type_name)
+  | BCallback callback ->
+      let params =
+        callback.callback_params |> List.map (abi_type_go_for_main ~api_alias) |> String.concat ", "
+      in
+      Printf.sprintf "func(%s) %s" params (abi_type_go_for_main ~api_alias callback.callback_return)
 
 let rec track_boundary_marmoset_types (state : mono_state) (boundary : Typecheck.Shim_boundary.boundary_type) :
     unit =
@@ -8212,6 +8217,9 @@ let rec track_boundary_marmoset_types (state : mono_state) (boundary : Typecheck
   | BOwnerEnum enum ->
       track_enum_inst state (Typecheck.Shim_boundary.to_mono_type boundary);
       List.iter (track_boundary_marmoset_types state) enum.enum_type_args
+  | BCallback callback ->
+      List.iter (track_boundary_marmoset_types state) callback.callback_params;
+      track_boundary_marmoset_types state callback.callback_return
 
 let register_shim_boundary_imports
     (state : mono_state)
@@ -8234,6 +8242,9 @@ let register_shim_boundary_imports
     | BOwnerEnum enum ->
         add_go_import ~alias:api_alias state (api_import_path shim_id);
         List.iter go enum.enum_type_args
+    | BCallback callback ->
+        List.iter go callback.callback_params;
+        go callback.callback_return
     | BBool | BInt | BFloat | BStr -> ()
   in
   go boundary
@@ -8391,6 +8402,34 @@ let rec to_abi_expr
         (Printf.sprintf "%s: invalid zero-value handle passed to shim" context)
         expr
   | BStdBytes -> Printf.sprintf "marmoset.BytesCopy(%s.Copy())" expr
+  | BCallback callback ->
+      let value_type = boundary_marmoset_go_type state boundary in
+      let api_type = abi_type_go_for_main ~api_alias boundary in
+      let params =
+        callback.callback_params
+        |> List.mapi (fun idx param_boundary ->
+               Printf.sprintf "__arg%d %s" idx (abi_type_go_for_main ~api_alias param_boundary))
+        |> String.concat ", "
+      in
+      let call_args =
+        callback.callback_params
+        |> List.mapi (fun idx param_boundary ->
+               from_abi_expr state ~api_alias ~owner_module_id ~context param_boundary
+                 (Printf.sprintf "__arg%d" idx))
+        |> String.concat ", "
+      in
+      let callback_body =
+        match callback.callback_return with
+        | BUnit -> Printf.sprintf "\t\t\t__callback(%s)\n\t\t\treturn marmoset.NewUnit()" call_args
+        | return_boundary ->
+            let result_expr =
+              to_abi_expr state ~api_alias ~owner_module_id ~context return_boundary "__result"
+            in
+            Printf.sprintf "\t\t\t__result := __callback(%s)\n\t\t\treturn %s" call_args result_expr
+      in
+      Printf.sprintf
+        "(func(__callback %s) %s {\n\t\treturn func(%s) %s {\n%s\n\t\t}\n\t})(%s)"
+        value_type api_type params (abi_type_go_for_main ~api_alias callback.callback_return) callback_body expr
 
 and from_abi_expr
     (state : mono_state)
@@ -8463,6 +8502,7 @@ and from_abi_expr
         (Printf.sprintf "%s: invalid zero-value handle returned by shim" context)
         expr
   | BStdBytes -> Printf.sprintf "marmoset.BytesCopy(%s.Copy())" expr
+  | BCallback _ -> failwith "Codegen error: shim callbacks are supported as parameters only"
 
 let emit_extern_wrapper (state : mono_state) (func : Typecheck.Resolution_artifacts.extern_func) : string =
   let shim_alias = shim_import_alias func.shim_id in
@@ -9026,6 +9066,10 @@ let rec collect_boundary_enums (acc : string list) (boundary : Typecheck.Shim_bo
   | BStdOption inner -> collect_boundary_enums acc inner
   | BStdResult (ok_type, err_type) -> collect_boundary_enums (collect_boundary_enums acc ok_type) err_type
   | BOwnerEnum enum -> List.fold_left collect_boundary_enums (enum.enum_name :: acc) enum.enum_type_args
+  | BCallback callback ->
+      collect_boundary_enums
+        (List.fold_left collect_boundary_enums acc callback.callback_params)
+        callback.callback_return
 
 let collect_func_boundary_enums (func : Typecheck.Resolution_artifacts.extern_func) : string list =
   List.fold_left collect_boundary_enums [] (func.return_boundary_type :: func.param_boundary_types)
@@ -9040,6 +9084,10 @@ let rec collect_boundary_handles
   | BStdResult (ok_type, err_type) -> collect_boundary_handles (collect_boundary_handles acc ok_type) err_type
   | BOwnerEnum enum -> List.fold_left collect_boundary_handles acc enum.enum_type_args
   | BExternHandle handle -> handle :: acc
+  | BCallback callback ->
+      collect_boundary_handles
+        (List.fold_left collect_boundary_handles acc callback.callback_params)
+        callback.callback_return
 
 let collect_func_boundary_handles (func : Typecheck.Resolution_artifacts.extern_func) :
     Typecheck.Shim_boundary.extern_type_identity list =
@@ -9066,6 +9114,17 @@ let rec abi_type_go (boundary : Typecheck.Shim_boundary.boundary_type) : string 
   | BOwnerEnum enum -> (exported_go_ident (Typecheck.Display_names.display_binding_name enum.enum_name), false)
   | BStdBytes -> ("marmoset.Bytes", true)
   | BExternHandle handle -> (extern_handle_api_type_name handle.extern_type_name, false)
+  | BCallback callback ->
+      let params =
+        callback.callback_params
+        |> List.map (fun boundary -> fst (abi_type_go boundary))
+        |> String.concat ", "
+      in
+      let return_go, return_needs_import = abi_type_go callback.callback_return in
+      let params_need_import =
+        List.exists (fun boundary -> snd (abi_type_go boundary)) callback.callback_params
+      in
+      (Printf.sprintf "func(%s) %s" params return_go, return_needs_import || params_need_import)
 
 let enum_field_boundary ~(owner_module_id : string) (field_type : Types.mono_type) :
     Typecheck.Shim_boundary.boundary_type option =

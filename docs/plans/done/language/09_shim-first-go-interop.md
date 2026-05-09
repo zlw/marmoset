@@ -71,7 +71,7 @@ runtime/
 6. Do not require Go signature discovery, reflection, CGO, plugins, or runtime dynamic loading.
 7. Do not implement project-local user shim packaging in this milestone. Phase one supports shipped toolchain `std/*` shims only; user shims need a follow-up plan.
 8. Do not solve full async/concurrency semantics in this milestone. Channels stay hidden behind later Marmoset-owned abstractions such as `Task`, `Stream`, or `Mailbox`.
-9. Do not implement callbacks in this milestone. Callback policy is specified as follow-up design work, not part of the core landing path.
+9. Do not implement async, stored, concurrent, or Go-interface callbacks in this milestone. Synchronous shim callback parameters are part of the core landing path.
 
 ## Current State
 
@@ -285,6 +285,7 @@ type boundary_type =
   | BOwnerEnum of enum_identity * boundary_type list
   | BStdBytes
   | BExternHandle of extern_type_identity
+  | BCallback of callback_type
 ```
 
 The classifier is keyed by resolved module/type identity after import rewriting, not by source spelling alone. This matters because user code can define or import impostor types named `Option` or `Result`. Only canonical `std.option.Option` and `std.result.Result` map to `BStdOption` and `BStdResult`.
@@ -299,6 +300,7 @@ Phase-one allowed boundary types:
 - canonical `Option[T]` where `T` is supported
 - canonical `Result[T, E]` where `T` and `E` are supported
 - closed enums declared by the owning shim module, with supported positional payloads
+- direct callback parameters whose parameter and return types are supported boundary types
 
 Later phases in this plan add:
 
@@ -308,7 +310,8 @@ Later phases in this plan add:
 Rejected until follow-up plans:
 
 - imported user-defined enums and records;
-- records, lists, maps, unions, intersections, traits, `Dyn`, generic function values, and callbacks;
+- records, lists, maps, unions, intersections, traits, `Dyn`, and generic function values;
+- callbacks returned from shims or nested inside other boundary types;
 - generic shim extern declarations with unresolved type variables.
 
 Unsupported boundary types fail in typechecking with `type-shim-boundary`. Boundary diagnostics should preserve spans for the specific offending param/return type and nested type when possible. If retaining type spans through lowering is too broad, shim-boundary validation must run before spans are discarded.
@@ -585,16 +588,13 @@ Go generics are not exposed. Shim authors instantiate or wrap generic Go APIs in
 
 Implementing Go interfaces from Marmoset is deferred. Consuming Go interfaces behind shims is fine; producing Go method sets from Marmoset callbacks requires a separate adapter feature.
 
-### Callback Follow-Up Policy
+### Callback Policy
 
-Callbacks are not part of this milestone. The follow-up callback plan should start with pure, monomorphic, non-concurrent, non-reentrant, non-escaping callbacks only:
+Shim callbacks are synchronous function parameters. A shim may call the generated Go `func(...) ...` adapter while the shim call is active, and the adapter converts callback arguments from ABI values into Marmoset values, invokes the closure, then converts the callback result back into ABI values.
 
-- reject effectful `=>` callbacks at the shim boundary in the first callback slice;
-- callback handles are invalid after the shim call returns;
-- late, concurrent, or reentrant callback invocation is diagnosed;
-- panics from Marmoset callbacks are recovered at the adapter boundary and become ABI diagnostics.
+The first supported callback slice includes pure and effectful callbacks, because resource scopes and terminal/file IO callbacks need `=>` in public stdlib APIs. Callback parameter and return types use the same boundary classifier as other shim values. Returning callbacks from shims, nesting callbacks inside `Option`/`Result`/enums, storing callbacks for later use, calling callbacks from goroutines after the shim returns, and implementing Go interfaces from Marmoset callbacks remain follow-up work.
 
-This policy should be recorded now so the core shim ABI does not accidentally design against impossible callback requirements.
+Panics from Marmoset callbacks are recovered by the generated shim wrapper around the active shim call and reported as ABI violations.
 
 ## Implementation Plan
 
@@ -1095,7 +1095,7 @@ Each commit should add failing tests first, make only the targeted slice pass, a
 6. **Copying cost.** Bytes immutability requires copies. Optimize only after correctness is pinned.
 7. **Handle lifecycle.** The compiler can enforce opaqueness, but close/idempotency/error policy belongs to each stdlib shim.
 8. **User shim packaging.** Project-local shims need conventions for source layout, generated API discovery, and security review. This milestone starts with shipped toolchain `std/*` shims only.
-9. **Framework callbacks.** HTTP-style callbacks involve concurrency and effects. They are deliberately follow-up work.
+9. **Framework callbacks.** Synchronous callbacks are supported, but HTTP-style callback lifetimes and concurrency still require a follow-up design.
 
 ## Resolved Questions
 
@@ -1108,7 +1108,7 @@ Each commit should add failing tests first, make only the targeted slice pass, a
 7. Phase one supports shipped toolchain `std/*` shims only; project-local shims are a follow-up plan.
 8. API packages are keyed by shim id, and phase-one owner module id must match shim id after `/` to `.` conversion.
 9. Canonical `Result` ABI uses `Success`/`Failure`, matching `std/result.mr`.
-10. Callbacks are not part of this milestone.
+10. Synchronous callback parameters are part of this milestone; async/stored/concurrent callbacks are not.
 
 ## Open Questions
 
@@ -1155,3 +1155,5 @@ Each commit should add failing tests first, make only the targeted slice pass, a
 - 2026-05-09 03:11 CEST: Follow-up cleanup slice started to remove the synthetic non-`std` shim root entirely. Active fixtures and positive tests now must use production `std/*` shims only; the old root may remain only in invalid-root rejection assertions.
 - 2026-05-09 03:23 CEST: Synthetic shim-root removal reached green state: deleted checked-in `runtime/go/shims/test/**` and fixture shim modules, restricted the catalog to `std`, rewired unit/LSP/integration coverage to production `std.bytes`/`std.file` where positive behavior is tested, kept only invalid-root rejection assertions for the removed root, regenerated the FFI Go-tree snapshot, and verified with `dune runtest lib/frontend`, `dune runtest lib/backend/go`, `dune runtest tools/lsp/lib`, `make integration ffi`, `make integration 08_cli.sh`, `make integration stdlib-shims`, `make integration snapshots`, and `git diff --check`.
 - 2026-05-10 00:14 CEST: Reconciled the historical `std.file` proof text with the hardened stdlib design from `05_stdlib.md`: public examples now show callback-based `file.open` and private raw `open_handle`/`close_handle` shim plumbing.
+- 2026-05-10 01:41 CEST: Started the synchronous callback-interop slice inside the FFI PR. The new scope replaces the old "callbacks deferred" policy with function parameters in shim signatures, backed by generated Go adapters that call Marmoset closures synchronously during the shim call.
+- 2026-05-10 01:45 CEST: Synchronous callback parameters reached focused green state. `BCallback` now classifies direct function parameters, generated adapters convert callback arguments/results across the ABI, callback returns remain rejected, and `std.io.map_line`/`std.io.with_line` dogfood pure and effectful callbacks through checked-in production shims. Verification passed with `dune runtest lib/frontend/typecheck`, `dune runtest lib/backend/go`, and `make integration stdlib-shims`.

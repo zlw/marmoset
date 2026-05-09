@@ -141,7 +141,9 @@ let build_func
   in
   let* () = validate_unique_param_names span ~fn_name:fn_sig.extern_fn_name fn_sig.extern_fn_params in
   let* param_boundary_types =
-    map_result (fun typ -> Shim_boundary.classify ~source_span:span ~owner_module_id typ) param_types
+    map_result
+      (fun typ -> Shim_boundary.classify ~source_span:span ~allow_callback:true ~owner_module_id typ)
+      param_types
   in
   let* return_boundary_type = Shim_boundary.classify ~source_span:span ~owner_module_id return_type in
   Ok

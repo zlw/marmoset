@@ -1820,7 +1820,6 @@ let%test "shim S2: checker rejects unsupported shim boundary type families" =
       "extern \"std/bytes\" = { fn bad(x: Dyn[Show]) -> Str }";
       "type Option[a] = { Some(a), None }\nextern \"std/bytes\" = { fn bad(x: Option[Int]) -> Str }";
       "type Result[a, e] = { Success(a), Failure(e) }\nextern \"std/bytes\" = { fn bad(x: Result[Int, Str]) -> Str }";
-      "extern \"std/bytes\" = { fn bad(f: (Str) -> Str) -> Str }";
       "extern \"std/bytes\" = { fn bad(s: Str) -> List[Str] }";
       "extern \"std/bytes\" = { fn bad(s: Str) -> Map[Str, Int] }";
       "extern \"std/bytes\" = { fn bad(s: Str) -> { name: Str } }";
@@ -1838,6 +1837,23 @@ let%test "shim S2: checker rejects unsupported shim boundary type families" =
       | Ok _ -> false
       | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-shim-boundary") diags)
     cases
+
+let%test "shim callbacks: checker accepts function parameters and rejects function returns" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  let accepted =
+    match check_string ~file_id:"std.bytes" "extern \"std/bytes\" = { fn map(input: Str, f: (Str) -> Str) -> Str }" with
+    | Ok _ -> true
+    | Error _ -> false
+  in
+  let rejected =
+    Infer.reset_fresh_counter ();
+    Trait_registry.clear ();
+    match check_string ~file_id:"std.bytes" "extern \"std/bytes\" = { fn bad(s: Str) -> (Str) -> Str }" with
+    | Ok _ -> false
+    | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-shim-boundary") diags
+  in
+  accepted && rejected
 
 let%test "shim S2: checker normalizes primitive aliases in shim signatures" =
   Infer.reset_fresh_counter ();

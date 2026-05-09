@@ -24,18 +24,43 @@ func PrintlnStr(value string) marmoset.Unit {
 	return marmoset.NewUnit()
 }
 
-func ReadLine() marmoset.Result[string, ioapi.ReadLineError] {
+func readLineValue() (string, ioapi.ReadLineError, bool) {
 	line, err := stdin.ReadString('\n')
 	if err != nil {
 		if errors.Is(err, goio.EOF) && len(line) > 0 {
-			return marmoset.Success[string, ioapi.ReadLineError](trimLineEnding(line))
+			return trimLineEnding(line), nil, true
 		}
 		if errors.Is(err, goio.EOF) {
-			return marmoset.Failure[string, ioapi.ReadLineError](ioapi.ReadLineErrorEndOfFile{})
+			return "", ioapi.ReadLineErrorEndOfFile{}, false
 		}
-		return marmoset.Failure[string, ioapi.ReadLineError](ioapi.ReadLineErrorOther{Field0: err.Error()})
+		return "", ioapi.ReadLineErrorOther{Field0: err.Error()}, false
 	}
-	return marmoset.Success[string, ioapi.ReadLineError](trimLineEnding(line))
+	return trimLineEnding(line), nil, true
+}
+
+func ReadLine() marmoset.Result[string, ioapi.ReadLineError] {
+	line, readErr, ok := readLineValue()
+	if !ok {
+		return marmoset.Failure[string, ioapi.ReadLineError](readErr)
+	}
+	return marmoset.Success[string, ioapi.ReadLineError](line)
+}
+
+func MapLine(body func(string) string) marmoset.Result[string, ioapi.ReadLineError] {
+	line, readErr, ok := readLineValue()
+	if !ok {
+		return marmoset.Failure[string, ioapi.ReadLineError](readErr)
+	}
+	return marmoset.Success[string, ioapi.ReadLineError](body(line))
+}
+
+func WithLine(body func(string) marmoset.Unit) marmoset.Result[marmoset.Unit, ioapi.ReadLineError] {
+	line, readErr, ok := readLineValue()
+	if !ok {
+		return marmoset.Failure[marmoset.Unit, ioapi.ReadLineError](readErr)
+	}
+	body(line)
+	return marmoset.Success[marmoset.Unit, ioapi.ReadLineError](marmoset.NewUnit())
 }
 
 func trimLineEnding(line string) string {
