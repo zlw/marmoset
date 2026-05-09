@@ -25,10 +25,25 @@ let option_map_default opt ~default ~f =
   | Some value -> f value
 
 let normalize_path (path : string) : string =
-  if Filename.is_relative path then
-    Filename.concat (Sys.getcwd ()) path
-  else
-    path
+  let absolute =
+    if Filename.is_relative path then
+      Filename.concat (Sys.getcwd ()) path
+    else
+      path
+  in
+  let parts = String.split_on_char Filename.dir_sep.[0] absolute in
+  let rec normalize_parts acc = function
+    | [] -> List.rev acc
+    | ("" | ".") :: rest -> normalize_parts acc rest
+    | ".." :: rest -> (
+        match acc with
+        | [] -> normalize_parts acc rest
+        | _ :: parent -> normalize_parts parent rest)
+    | part :: rest -> normalize_parts (part :: acc) rest
+  in
+  match normalize_parts [] parts with
+  | [] -> Filename.dir_sep
+  | normalized_parts -> Filename.dir_sep ^ String.concat Filename.dir_sep normalized_parts
 
 let normalize_source_overrides (source_overrides : (string, string) Hashtbl.t) : (string, string) Hashtbl.t =
   let normalized = Hashtbl.create (Hashtbl.length source_overrides) in
@@ -57,6 +72,9 @@ let relative_to_root ~(root_dir : string) (path : string) : string =
     ""
   else
     failwith (Printf.sprintf "Path %s is not under root %s" path root_dir)
+
+let path_is_under_root ~(root_dir : string) (path : string) : bool =
+  String.equal root_dir path || starts_with ~prefix:(root_dir ^ Filename.dir_sep) path
 
 let module_id_of_file ~(root_dir : string) (file_path : string) : string =
   let relative = relative_to_root ~root_dir file_path in
@@ -335,12 +353,13 @@ let discover_project_with_overrides
     ?source_root ?stdlib_root ~(entry_file : string) ~(source_overrides : (string, string) Hashtbl.t) () :
     (Module_context.module_graph, Diagnostic.t) result =
   let entry_file = normalize_path entry_file in
+  let* stdlib_root = resolve_toolchain_root ?stdlib_root () in
   let project_root =
     match source_root with
     | Some root -> normalize_path root
+    | None when path_is_under_root ~root_dir:stdlib_root entry_file -> stdlib_root
     | None -> Filename.dirname entry_file
   in
-  let* stdlib_root = resolve_toolchain_root ?stdlib_root () in
   let entry_module = module_id_of_file ~root_dir:project_root entry_file in
   let state =
     {

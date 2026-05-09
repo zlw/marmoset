@@ -1532,6 +1532,33 @@ let%test "compile_entry_to_build keeps legacy single-file path working" =
       | Error _ -> false
       | Ok build_output -> Diagnostics.String_utils.contains_substring ~needle:"func add_" build_output.main_go)
 
+let%test "check_entry treats direct stdlib entries as std modules" =
+  let stdlib_root = Discovery.make_temp_dir "marmoset_direct_std_entry_" in
+  Fun.protect
+    ~finally:(fun () -> ignore (Sys.command ("rm -rf " ^ Filename.quote stdlib_root)))
+    (fun () ->
+      Discovery.mkdir_p (Filename.concat stdlib_root "std");
+      Discovery.write_file
+        (Filename.concat stdlib_root "std/prelude.mr")
+        "export Show\ntrait Show[a] = { fn show(value: a) -> Str }\n";
+      Discovery.write_file
+        (Filename.concat stdlib_root "std/basics.mr")
+        "import std.prelude.Show\n\nexport puts\n\nextern \"std/basics\" as basics_shim = {\n\  fn puts_str(value: Str) => Unit\n}\n\nfn puts[a: Show](value: a) => Unit = basics_shim.puts_str(Show.show(value))\n";
+      Discovery.write_file
+        (Filename.concat stdlib_root "std/option.mr")
+        "export Option\ntype Option[a] = { Some(a), None }\n";
+      Discovery.write_file
+        (Filename.concat stdlib_root "std/result.mr")
+        "export Result\ntype Result[a, e] = { Success(a), Failure(e) }\n";
+      let entry_file = Filename.concat stdlib_root "std/basics.mr" in
+      let stdlib_root = Filename.concat stdlib_root "." in
+      let analysis = analyze_entry ~stdlib_root ~entry_file () in
+      analysis.active_file.module_id = Some "std.basics"
+      &&
+      match check_entry ~stdlib_root ~entry_file () with
+      | Ok _ -> true
+      | Error _ -> false)
+
 let%test "check_entry rejects colliding direct imports" =
   Discovery.with_temp_project
     [
