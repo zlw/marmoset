@@ -27,7 +27,7 @@ Modules -> Prelude -> Shim-first Go interop -> Stdlib
 1. Build stdlib modules as ordinary Marmoset modules with backend-neutral public APIs.
 2. Use shim externs for Go-backed modules; do not expose Go package paths, errors, pointers, channels, or ABI helper types.
 3. Keep IO effectful and failable operations explicit with `Result[T, DomainError]`.
-4. Establish canonical `Bytes` and `File` surfaces from the shim-first proof and harden them into the broader stdlib.
+4. Establish canonical `Bytes` and high-level file surfaces from the shim-first proof and harden them into the broader stdlib.
 5. Add pure collection/string helpers with stable module-qualified identities that later optimization plans can target.
 6. Keep concurrency, HTTP server callbacks, SQL/sqlc, and project-local shim packaging out of this first stdlib pass unless separate plans make them concrete.
 
@@ -112,35 +112,40 @@ Filesystem operations. Introduced as a proof slice by `09_shim-first-go-interop.
 Current API:
 
 ```marmoset
+import std.bytes
 import std.bytes.Bytes
 
-export File, FileReadError, FileWriteError, FileOpenError, FileCloseError, FileScopeError, read, write, read_all, open
+export FileReadError, FileWriteError, FileOpenError, FileCloseError, FileUseError, read, read_bytes, write, write_bytes, read_all, open
 
-extern type File
+extern type Handle
 
 type FileReadError = { NotFound, PermissionDenied, IsDirectory, AlreadyClosed, Other(Str) }
 type FileWriteError = { NotFound, PermissionDenied, IsDirectory, Other(Str) }
 type FileOpenError = { NotFound, PermissionDenied, IsDirectory, Other(Str) }
 type FileCloseError = { AlreadyClosed, Other(Str) }
-type FileScopeError = { Open(FileOpenError), Close(FileCloseError) }
+type FileUseError[e] = { Open(FileOpenError), Use(e), Close(FileCloseError), UseAndClose(e, FileCloseError) }
 
-fn read(path: Str) => Result[Bytes, FileReadError]
-fn write(path: Str, bytes: Bytes) => Result[Unit, FileWriteError]
-fn read_all(file: File) => Result[Bytes, FileReadError]
-fn open[a](path: Str, body: (File) => a) => Result[a, FileScopeError]
+fn read(path: Str) => Result[Str, FileReadError]
+fn read_bytes(path: Str) => Result[Bytes, FileReadError]
+fn write(path: Str, value: Str) => Result[Unit, FileWriteError]
+fn write_bytes(path: Str, bytes: Bytes) => Result[Unit, FileWriteError]
+fn read_all(file: Handle) => Result[Bytes, FileReadError]
+fn open[a, e](path: Str, body: (Handle) => Result[a, e]) => Result[a, FileUseError[e]]
 ```
 
 Rules:
 
 - Go errors map to domain enums in `runtime/go/shims/std/file`.
-- `read` and `write` are the simple whole-file APIs for callers that do not need a scoped handle.
-- `open` is the normal handle-lifecycle API. It opens the file, calls the callback, then closes the handle on normal callback return.
-- `File` is an opaque Marmoset token for values passed into scoped callbacks. It is not constructible or inspectable in Marmoset.
+- `read` and `write` are the simple whole-file text APIs for the common path.
+- `read_bytes` and `write_bytes` are the explicit binary whole-file APIs for callers that need `Bytes`.
+- `open` is the normal handle-lifecycle API. It opens the file, calls the callback, then closes the handle after the callback returns.
+- `Handle` is private shim plumbing, not an exported stdlib type. Importers can receive handle values through callback inference but cannot import, construct, or inspect the type by name.
 - `read_all` is the scoped-handle read helper. Reading a closed, leaked, or unknown handle returns `FileReadError.AlreadyClosed`.
 - Raw handle operations stay in the private `file_shim` extern block as `open_handle` and `close_handle`; `std.file` does not export a raw close or one-argument open.
 - `FileReadError` currently uses `NotFound`, `PermissionDenied`, `IsDirectory`, `AlreadyClosed`, and `Other(Str)`.
 - `FileWriteError` and `FileOpenError` currently use `NotFound`, `PermissionDenied`, `IsDirectory`, and `Other(Str)`.
-- `FileCloseError` currently uses `AlreadyClosed` and `Other(Str)` for private close failures surfaced through `FileScopeError.Close`.
+- `FileCloseError` currently uses `AlreadyClosed` and `Other(Str)` for private close failures surfaced through `FileUseError.Close` or `FileUseError.UseAndClose`.
+- `FileUseError[e]` flattens the open failure, callback failure, close failure, and combined callback-plus-close failure cases for failable callback APIs.
 
 ### `std.console`
 
@@ -407,3 +412,5 @@ HTTP, SQL, and framework-style wrappers likely need follow-up shim features such
 - 2026-05-10 00:18 CEST: Tightened the public/private naming boundary: the user-facing scoped helper is `file.open(path, callback)`, while private Go shim plumbing is named `open_handle`/`close_handle`. Re-ran `make integration stdlib-shims`, `make integration ffi`, `dune runtest lib/frontend lib/backend/go`, and `git diff --check`.
 - 2026-05-10 00:24 CEST: Started the generic callback-result compiler hardening slice before building more stdlib API on top of it. Red target: a generic helper that accepts `(Int) -> Result[a, e]` and returns `Result[a, UseError[e]]` must compile and run instead of reaching Go codegen with an unresolved type variable.
 - 2026-05-10 00:29 CEST: Generic callback-result hardening reached green. Go enum collection now ignores codegen-unresolved enum instantiations instead of erasing them into `union_empty` artifacts, and the new callback wrapper fixture plus backend unit assertion verify the concrete `Result[a, UseError[e]]` specialization. Verification passed with `dune runtest lib/backend/go`, `make integration codegen_mono/cm55_generic_result_callback_error_wrapper.mr`, `make integration codegen_mono`, and `git diff --check`.
+- 2026-05-10 00:30 CEST: Started the high-level `std.file` API slice on top of the callback-result compiler fix. Target: hide the named handle type from importers, add string convenience helpers, and make `file.open` flatten callback failures into `FileUseError[e]` instead of returning nested `Result` values.
+- 2026-05-10 00:37 CEST: High-level `std.file` slice reached green. `read`/`write` are now the common text APIs, `read_bytes`/`write_bytes` are explicit binary APIs, `Handle` remains private, and `file.open` flattens callback failures through `FileUseError[e]`. Verification passed with `make integration stdlib-shims`, `dune runtest lib/frontend`, `dune runtest lib/backend/go`, `make integration ffi`, and `git diff --check`.

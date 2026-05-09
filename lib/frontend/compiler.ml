@@ -1648,7 +1648,7 @@ let%test "shim exports lower without Marmoset identity wrappers" =
   Discovery.with_temp_project
     [
       ( "main.mr",
-        "import std.bytes\nimport std.file\nlet payload = bytes.from_str(\"hi\")\nlet _ = file.write(\"marmoset.tmp\", payload)\nputs(bytes.to_str_lossy(payload))\n"
+        "import std.bytes\nimport std.file\nlet payload = bytes.from_str(\"hi\")\nlet _ = file.write_bytes(\"marmoset.tmp\", payload)\nputs(bytes.to_str_lossy(payload))\n"
       );
     ]
     (fun root ->
@@ -1656,17 +1656,17 @@ let%test "shim exports lower without Marmoset identity wrappers" =
       | Error _ -> false
       | Ok build_output ->
           string_contains build_output.main_go "main__payload := extern__std_bytes__from_str(\"hi\")"
-          && string_contains build_output.main_go "_ = extern__std_file__write(\"marmoset.tmp\", main__payload)"
+          && string_contains build_output.main_go "_ = extern__std_file__write_bytes(\"marmoset.tmp\", main__payload)"
           && string_contains build_output.main_go "puts_string(extern__std_bytes__to_str_lossy(main__payload))"
           && (not (string_contains build_output.main_go "func std__bytes__from_u005fstr"))
           && (not (string_contains build_output.main_go "func std__bytes__to_u005fstr_u005flossy"))
-          && not (string_contains build_output.main_go "func std__file__write"))
+          && not (string_contains build_output.main_go "func std__file__write_u005fbytes"))
 
 let%test "exported shim functions are ordinary first-class values" =
   Discovery.with_temp_project
     [
       ( "main.mr",
-        "import std.bytes\nimport std.file\nfn apply(make, value) = make(value)\nlet make_bytes = bytes.from_str\nlet render = bytes.to_str_lossy\nlet payload = apply(make_bytes, \"hi\")\nlet write_bytes = file.write\nlet _ = write_bytes(\"marmoset.tmp\", payload)\nputs(render(payload))\n"
+        "import std.bytes\nimport std.file\nfn apply(make, value) = make(value)\nlet make_bytes = bytes.from_str\nlet render = bytes.to_str_lossy\nlet payload = apply(make_bytes, \"hi\")\nlet write_bytes = file.write_bytes\nlet _ = write_bytes(\"marmoset.tmp\", payload)\nputs(render(payload))\n"
       );
     ]
     (fun root ->
@@ -1675,18 +1675,18 @@ let%test "exported shim functions are ordinary first-class values" =
       | Ok build_output ->
           string_contains build_output.main_go "main__make_u005fbytes := extern__std_bytes__from_str"
           && string_contains build_output.main_go "main__render := extern__std_bytes__to_str_lossy"
-          && string_contains build_output.main_go "main__write_u005fbytes := extern__std_file__write"
+          && string_contains build_output.main_go "main__write_u005fbytes := extern__std_file__write_bytes"
           && string_contains build_output.main_go "func extern__std_bytes__from_str(input string) marmoset.Bytes"
           && string_contains build_output.main_go
-               "func extern__std_file__write(path string, bytes marmoset.Bytes) Result_unit_std__file__FileWriteError"
+               "func extern__std_file__write_bytes(path string, bytes marmoset.Bytes) Result_unit_std__file__FileWriteError"
           && (not (string_contains build_output.main_go "func std__bytes__from_u005fstr"))
-          && not (string_contains build_output.main_go "func std__file__write"))
+          && not (string_contains build_output.main_go "func std__file__write_u005fbytes"))
 
 let%test "exported shim function value preserves effect checking" =
   Discovery.with_temp_project
     [
       ( "main.mr",
-        "import std.bytes.Bytes\nimport std.file\nfn pure_write(path: Str, bytes: Bytes) -> Unit = {\n  let write_bytes = file.write\n  let _ = write_bytes(path, bytes)\n}\n"
+        "import std.bytes.Bytes\nimport std.file\nfn pure_write(path: Str, bytes: Bytes) -> Unit = {\n  let write_bytes = file.write_bytes\n  let _ = write_bytes(path, bytes)\n}\n"
       );
     ]
     (fun root ->
@@ -1774,7 +1774,7 @@ let%test "shim S2: distinct std shim ids emit distinct adapter wrappers" =
   Discovery.with_temp_project
     [
       ( "main.mr",
-        "import std.bytes\nimport std.file\nlet payload = bytes.from_str(\"hi\")\nlet _ = file.write(\"marmoset.tmp\", payload)\nputs(bytes.to_str_lossy(payload))\n"
+        "import std.bytes\nimport std.file\nlet payload = bytes.from_str(\"hi\")\nlet _ = file.write_bytes(\"marmoset.tmp\", payload)\nputs(bytes.to_str_lossy(payload))\n"
       );
     ]
     (fun root ->
@@ -1784,10 +1784,10 @@ let%test "shim S2: distinct std shim ids emit distinct adapter wrappers" =
           count_occurrences build_output.main_go "func extern__std_bytes__from_str(input string) marmoset.Bytes"
           = 1
           && count_occurrences build_output.main_go
-               "func extern__std_file__write(path string, bytes marmoset.Bytes) Result_unit_std__file__FileWriteError"
+               "func extern__std_file__write_bytes(path string, bytes marmoset.Bytes) Result_unit_std__file__FileWriteError"
              = 1
           && string_contains build_output.main_go "extern__std_bytes__from_str"
-          && string_contains build_output.main_go "extern__std_file__write")
+          && string_contains build_output.main_go "extern__std_file__write_bytes")
 
 let%test "shim S2: direct Go package externs are rejected at project compile" =
   Discovery.with_temp_project

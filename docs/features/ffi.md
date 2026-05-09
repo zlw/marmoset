@@ -15,40 +15,48 @@ Direct arbitrary Go package externs have been removed. A declaration such as `ex
 Shim externs use the top-level `extern` form. The string is a slash-separated shim id, and the optional `as` qualifier controls the source qualifier used inside the owning module:
 
 ```marmoset
-export FileReadError, read
+export FileReadError, read_bytes
 
 import std.bytes.Bytes
 
 type FileReadError = { NotFound, PermissionDenied, IsDirectory, Other(Str) }
 
 extern "std/file" as file_shim = {
-  fn read(path: Str) => Result[Bytes, FileReadError]
+  fn read_bytes(path: Str) => Result[Bytes, FileReadError]
 }
 ```
 
 Phase one requires shim ids to use the `std` root and at least two slash-separated segments. Valid examples include `std/bytes` and `std/file`. Single-segment ids such as `strings` are rejected with `shim-id-invalid`; syntactically valid but unknown ids such as `std/missing` fail with `shim-id-not-found`.
 
-Opaque resource handles use `extern type` in the owning shim module. Public modules should still expose the highest-level Marmoset API they can. For example, `std.file` keeps raw handle open/close calls private and exports a callback-based `open` helper:
+Opaque resource handles use `extern type` in the owning shim module. Public modules should still expose the highest-level Marmoset API they can. For example, `std.file` keeps the handle type and raw open/close calls private, then exports callback-based helpers:
 
 ```marmoset
+import std.bytes
 import std.bytes.Bytes
 
-export File, FileScopeError, read_all, open
+export FileUseError, read, read_bytes, write, write_bytes, read_all, open
 
-extern type File
+extern type Handle
 
 type FileReadError = { NotFound, PermissionDenied, IsDirectory, AlreadyClosed, Other(Str) }
+type FileWriteError = { NotFound, PermissionDenied, IsDirectory, Other(Str) }
 type FileOpenError = { NotFound, PermissionDenied, IsDirectory, Other(Str) }
 type FileCloseError = { AlreadyClosed, Other(Str) }
-type FileScopeError = { Open(FileOpenError), Close(FileCloseError) }
+type FileUseError[e] = { Open(FileOpenError), Use(e), Close(FileCloseError), UseAndClose(e, FileCloseError) }
 
 extern "std/file" as file_shim = {
-  fn open_handle(path: Str) => Result[File, FileOpenError]
-  fn close_handle(file: File) => Result[Unit, FileCloseError]
-  fn read_all(file: File) => Result[Bytes, FileReadError]
+  fn read_bytes(path: Str) => Result[Bytes, FileReadError]
+  fn write_bytes(path: Str, bytes: Bytes) => Result[Unit, FileWriteError]
+  fn open_handle(path: Str) => Result[Handle, FileOpenError]
+  fn close_handle(file: Handle) => Result[Unit, FileCloseError]
+  fn read_all(file: Handle) => Result[Bytes, FileReadError]
 }
 
-fn open[a](path: Str, body: (File) => a) => Result[a, FileScopeError]
+fn read(path: Str) => Result[Str, FileReadError]
+fn read_bytes(path: Str) => Result[Bytes, FileReadError]
+fn write(path: Str, value: Str) => Result[Unit, FileWriteError]
+fn write_bytes(path: Str, bytes: Bytes) => Result[Unit, FileWriteError]
+fn open[a, e](path: Str, body: (Handle) => Result[a, e]) => Result[a, FileUseError[e]]
 ```
 
 `extern type` values cannot be constructed, field-inspected, record-pattern matched, or given derived trait implementations in Marmoset. Shim code owns their representation and lifecycle.

@@ -472,28 +472,28 @@ Do not silently convert ABI violations into domain enum errors.
 Resource handles use `extern type`:
 
 ```marmoset
-export File, FileScopeError, open
+export FileUseError, open
 
-extern type File
+extern type Handle
 
 type FileOpenError = { NotFound, PermissionDenied, IsDirectory, Other(Str) }
 type FileCloseError = { AlreadyClosed, Other(Str) }
-type FileScopeError = { Open(FileOpenError), Close(FileCloseError) }
+type FileUseError[e] = { Open(FileOpenError), Use(e), Close(FileCloseError), UseAndClose(e, FileCloseError) }
 
 extern "std/file" as fs = {
-  fn open_handle(path: Str) => Result[File, FileOpenError]
-  fn close_handle(file: File) => Result[Unit, FileCloseError]
+  fn open_handle(path: Str) => Result[Handle, FileOpenError]
+  fn close_handle(file: Handle) => Result[Unit, FileCloseError]
 }
 
-fn open[a](path: Str, body: (File) => a) => Result[a, FileScopeError]
+fn open[a, e](path: Str, body: (Handle) => Result[a, e]) => Result[a, FileUseError[e]]
 ```
 
-`extern type File` means:
+`extern type Handle` means:
 
-- the declaring module introduces a nominal Marmoset type named `File`;
-- the type can be exported and imported like any other public type;
+- the declaring module introduces a nominal Marmoset type named `Handle`;
+- the type may remain private even while exported functions use it in callback signatures;
 - no Marmoset code can construct, deconstruct, pattern-match, derive equality for, or inspect it;
-- generated API packages represent it as `marmoset.Handle[FileTag]`;
+- generated API packages represent it as `marmoset.Handle[HandleTag]`;
 - Go shims own the actual Go value and lifecycle policy;
 - backend-specific names such as `GoFile` never appear in public Marmoset APIs.
 
@@ -993,18 +993,20 @@ Files:
 - `test/integration/common.sh`
 - `docs/plans/todo/language/05_stdlib.md`
 
-Current hardened API:
+Current hardened stdlib API:
 
 ```marmoset
 import std.bytes.Bytes
 
-file.read(path: Str) => Result[Bytes, FileReadError]
-file.write(path: Str, bytes: Bytes) => Result[Unit, FileWriteError]
-file.read_all(file: File) => Result[Bytes, FileReadError]
-file.open(path: Str, body: (File) => a) => Result[a, FileScopeError]
+file.read(path: Str) => Result[Str, FileReadError]
+file.read_bytes(path: Str) => Result[Bytes, FileReadError]
+file.write(path: Str, value: Str) => Result[Unit, FileWriteError]
+file.write_bytes(path: Str, bytes: Bytes) => Result[Unit, FileWriteError]
+file.read_all(handle: Handle) => Result[Bytes, FileReadError]
+file.open(path: Str, body: (Handle) => Result[a, e]) => Result[a, FileUseError[e]]
 ```
 
-The original proof slice exposed low-level `open`/`close` while proving handles. `docs/plans/todo/language/05_stdlib.md` hardens `std.file` into the public scoped API above, with raw handle operations kept as private `open_handle`/`close_handle` shim plumbing inside the owning module.
+The original proof slice exposed low-level `open`/`close` while proving handles. `docs/plans/todo/language/05_stdlib.md` hardens `std.file` into the public scoped API above, with the named handle type and raw handle operations kept as private shim plumbing inside the owning module.
 
 Candidate domain errors for the proof:
 
@@ -1013,7 +1015,7 @@ type FileReadError = { NotFound, PermissionDenied, IsDirectory, AlreadyClosed, O
 type FileWriteError = { NotFound, PermissionDenied, IsDirectory, Other(Str) }
 type FileOpenError = { NotFound, PermissionDenied, IsDirectory, Other(Str) }
 type FileCloseError = { AlreadyClosed, Other(Str) }
-type FileScopeError = { Open(FileOpenError), Close(FileCloseError) }
+type FileUseError[e] = { Open(FileOpenError), Use(e), Close(FileCloseError), UseAndClose(e, FileCloseError) }
 ```
 
 These variants may be tightened by the stdlib plan, but S7 must lock the exact variants it tests before implementation starts.

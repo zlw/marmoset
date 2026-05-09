@@ -14,7 +14,7 @@ type fileResource struct {
 	file *os.File
 }
 
-var files = marmoset.NewHandleTable[fileapi.FileTag, *fileResource]()
+var files = marmoset.NewHandleTable[fileapi.HandleTag, *fileResource]()
 
 func isDirectoryPath(path string) bool {
 	info, err := os.Stat(path)
@@ -79,7 +79,7 @@ func closeError(err error) fileapi.FileCloseError {
 	return fileapi.FileCloseErrorOther{Field0: err.Error()}
 }
 
-func Read(path string) marmoset.Result[marmoset.Bytes, fileapi.FileReadError] {
+func ReadBytes(path string) marmoset.Result[marmoset.Bytes, fileapi.FileReadError] {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return marmoset.Failure[marmoset.Bytes, fileapi.FileReadError](readError(path, err))
@@ -87,7 +87,7 @@ func Read(path string) marmoset.Result[marmoset.Bytes, fileapi.FileReadError] {
 	return marmoset.Success[marmoset.Bytes, fileapi.FileReadError](marmoset.BytesCopy(data))
 }
 
-func Write(path string, bytes marmoset.Bytes) marmoset.Result[marmoset.Unit, fileapi.FileWriteError] {
+func WriteBytes(path string, bytes marmoset.Bytes) marmoset.Result[marmoset.Unit, fileapi.FileWriteError] {
 	err := os.WriteFile(path, bytes.Copy(), 0o666)
 	if err != nil {
 		return marmoset.Failure[marmoset.Unit, fileapi.FileWriteError](writeError(path, err))
@@ -95,7 +95,7 @@ func Write(path string, bytes marmoset.Bytes) marmoset.Result[marmoset.Unit, fil
 	return marmoset.Success[marmoset.Unit, fileapi.FileWriteError](marmoset.NewUnit())
 }
 
-func ReadAll(file fileapi.File) marmoset.Result[marmoset.Bytes, fileapi.FileReadError] {
+func ReadAll(file fileapi.Handle) marmoset.Result[marmoset.Bytes, fileapi.FileReadError] {
 	resource, ok := files.Get(file)
 	if !ok {
 		return marmoset.Failure[marmoset.Bytes, fileapi.FileReadError](fileapi.FileReadErrorAlreadyClosed{})
@@ -107,18 +107,18 @@ func ReadAll(file fileapi.File) marmoset.Result[marmoset.Bytes, fileapi.FileRead
 	return marmoset.Success[marmoset.Bytes, fileapi.FileReadError](marmoset.BytesCopy(data))
 }
 
-func OpenHandle(path string) marmoset.Result[fileapi.File, fileapi.FileOpenError] {
+func OpenHandle(path string) marmoset.Result[fileapi.Handle, fileapi.FileOpenError] {
 	if isDirectoryPath(path) {
-		return marmoset.Failure[fileapi.File, fileapi.FileOpenError](fileapi.FileOpenErrorIsDirectory{})
+		return marmoset.Failure[fileapi.Handle, fileapi.FileOpenError](fileapi.FileOpenErrorIsDirectory{})
 	}
 	file, err := os.Open(path)
 	if err != nil {
-		return marmoset.Failure[fileapi.File, fileapi.FileOpenError](openError(path, err))
+		return marmoset.Failure[fileapi.Handle, fileapi.FileOpenError](openError(path, err))
 	}
-	return marmoset.Success[fileapi.File, fileapi.FileOpenError](files.Insert(&fileResource{file: file}))
+	return marmoset.Success[fileapi.Handle, fileapi.FileOpenError](files.Insert(&fileResource{file: file}))
 }
 
-func CloseHandle(file fileapi.File) marmoset.Result[marmoset.Unit, fileapi.FileCloseError] {
+func CloseHandle(file fileapi.Handle) marmoset.Result[marmoset.Unit, fileapi.FileCloseError] {
 	resource, ok := files.Get(file)
 	if !ok {
 		return marmoset.Failure[marmoset.Unit, fileapi.FileCloseError](fileapi.FileCloseErrorAlreadyClosed{})

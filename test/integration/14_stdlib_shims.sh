@@ -79,11 +79,14 @@ EXISTING_PATH="$DATA_DIR/existing.txt"
 printf "opened" > "$EXISTING_PATH"
 
 run_source_expect_output \
-    "std.file maps bytes and filesystem errors" \
-    $'roundtrip\nread:not-found\nread:is-directory\nwrite:is-directory' <<EOF
+    "std.file maps text, bytes and filesystem errors" \
+    $'roundtrip\nstr:hello\nread:not-found\nread:is-directory\nwrite:is-directory' <<EOF
 import std.bytes
+import std.file
 import std.file.read
 import std.file.write
+import std.file.read_bytes
+import std.file.write_bytes
 import std.file.FileReadError
 import std.file.FileWriteError
 
@@ -102,9 +105,17 @@ fn write_error_label(err: FileWriteError) -> Str = match err {
   case FileWriteError.Other(message): "write:other:" + message
 }
 
-match write("$ROUNDTRIP_PATH", bytes.from_str("roundtrip")) {
-  case Result.Success(_): match read("$ROUNDTRIP_PATH") {
+match write_bytes("$ROUNDTRIP_PATH", bytes.from_str("roundtrip")) {
+  case Result.Success(_): match read_bytes("$ROUNDTRIP_PATH") {
     case Result.Success(payload): puts(bytes.to_str_lossy(payload))
+    case Result.Failure(err): puts(read_error_label(err))
+  }
+  case Result.Failure(err): puts(write_error_label(err))
+}
+
+match write("$ROUNDTRIP_PATH", "hello") {
+  case Result.Success(_): match read("$ROUNDTRIP_PATH") {
+    case Result.Success(payload): puts("str:" + payload)
     case Result.Failure(err): puts(read_error_label(err))
   }
   case Result.Failure(err): puts(write_error_label(err))
@@ -120,21 +131,21 @@ match read("$DATA_DIR") {
   case Result.Failure(err): puts(read_error_label(err))
 }
 
-match write("$DATA_DIR", bytes.from_str("x")) {
+match write_bytes("$DATA_DIR", bytes.from_str("x")) {
   case Result.Success(_): puts("write-dir:unexpected-success")
   case Result.Failure(err): puts(write_error_label(err))
 }
 EOF
 
 run_source_expect_output \
-    "std.file scopes open handles through managed callbacks" \
-    $'scoped:opened\nopen:not-found\nleaked:read:already-closed' <<EOF
+    "std.file scopes handles and flattens callback errors" \
+    $'scoped:opened\nopen:not-found\nuse:read:is-directory\nleaked:read:already-closed' <<EOF
 import std.bytes
 import std.file
-import std.file.File
 import std.file.FileReadError
 import std.file.FileOpenError
-import std.file.FileScopeError
+import std.file.FileCloseError
+import std.file.FileUseError
 
 fn read_error_label(err: FileReadError) -> Str = match err {
   case FileReadError.NotFound: "read:not-found"
@@ -151,41 +162,53 @@ fn open_error_label(err: FileOpenError) -> Str = match err {
   case FileOpenError.Other(message): "open:other:" + message
 }
 
-fn scope_error_label(err: FileScopeError) -> Str = match err {
-  case FileScopeError.Open(open_err): open_error_label(open_err)
-  case FileScopeError.Close(_): "close"
+fn close_error_label(err: FileCloseError) -> Str = match err {
+  case FileCloseError.AlreadyClosed: "close:already-closed"
+  case FileCloseError.Other(message): "close:other:" + message
 }
 
-match file.open("$EXISTING_PATH", (handle: File) => match file.read_all(handle) {
-  case Result.Success(payload): "scoped:" + bytes.to_str_lossy(payload)
-  case Result.Failure(err): read_error_label(err)
-}) {
-  case Result.Success(label): puts(label)
-  case Result.Failure(err): puts(scope_error_label(err))
+fn use_error_label(err: FileUseError[FileReadError]) -> Str = match err {
+  case FileUseError.Open(open_err): open_error_label(open_err)
+  case FileUseError.Use(read_err): "use:" + read_error_label(read_err)
+  case FileUseError.Close(close_err): close_error_label(close_err)
+  case FileUseError.UseAndClose(read_err, close_err): "use:" + read_error_label(read_err) + "+" + close_error_label(close_err)
 }
 
-match file.open("$MISSING_PATH", (handle: File) => bytes.length(bytes.from_str("unused"))) {
+match file.open("$EXISTING_PATH", (handle) => file.read_all(handle)) {
+  case Result.Success(payload): puts("scoped:" + bytes.to_str_lossy(payload))
+  case Result.Failure(err): puts(use_error_label(err))
+}
+
+match file.open("$MISSING_PATH", (handle) => file.read_all(handle)) {
   case Result.Success(_): puts("open:unexpected-success")
-  case Result.Failure(err): puts(scope_error_label(err))
+  case Result.Failure(err): puts(use_error_label(err))
 }
 
-match file.open("$EXISTING_PATH", (handle: File) => handle) {
+match file.open("$EXISTING_PATH", (_handle) => file.read("$DATA_DIR")) {
+  case Result.Success(_): puts("use:unexpected-success")
+  case Result.Failure(err): puts(use_error_label(err))
+}
+
+match file.open("$EXISTING_PATH", (handle) => if (true) {
+  Result.Success(handle)
+} else {
+  Result.Failure(FileReadError.NotFound)
+}) {
   case Result.Success(leaked): {
     match file.read_all(leaked) {
       case Result.Success(_): puts("leaked:unexpected-success")
       case Result.Failure(err): puts("leaked:" + read_error_label(err))
     }
   }
-  case Result.Failure(err): puts(scope_error_label(err))
+  case Result.Failure(err): puts(use_error_label(err))
 }
 EOF
 
 run_source_expect_build_failure \
-    "std.file File cannot be constructed by importers" \
-    "cannot be constructed" <<'EOF'
-import std.file.File
+    "std.file handle type is private" \
+    "does not export 'Handle'" <<'EOF'
+import std.file.Handle
 
-let file = File(0)
 puts(0)
 EOF
 
@@ -193,6 +216,30 @@ run_source_expect_build_failure \
     "std.file close is private shim plumbing" \
     "does not export 'close'" <<'EOF'
 import std.file.close
+
+puts(0)
+EOF
+
+run_source_expect_build_failure \
+    "std.file open_handle is private shim plumbing" \
+    "does not export 'open_handle'" <<'EOF'
+import std.file.open_handle
+
+puts(0)
+EOF
+
+run_source_expect_build_failure \
+    "std.file old read_str helper is gone" \
+    "does not export 'read_str'" <<'EOF'
+import std.file.read_str
+
+puts(0)
+EOF
+
+run_source_expect_build_failure \
+    "std.file old write_str helper is gone" \
+    "does not export 'write_str'" <<'EOF'
+import std.file.write_str
 
 puts(0)
 EOF
