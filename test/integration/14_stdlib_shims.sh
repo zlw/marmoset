@@ -286,18 +286,40 @@ EOF
 
 run_source_expect_output \
     "std.io writes, flushes, prints and exposes stderr helpers" \
-    $'value:42\nerr:bad' <<'EOF'
+    $'value:42\nerr:bad\ntrait:ok\ntrait-err:nope' <<'EOF'
 import std.io
 import std.io.err
 
+let _ = io.write("value:")
+let _ = io.print(42)
+let _ = err.write("err:")
+let _ = err.print("bad")
 let stdout = io.stdout()
 let stderr = err.stderr()
-let _ = io.Write.write(stdout, "value:")
-let _ = io.Write.print(stdout, 42)
+let _ = io.Write.write(stdout, "trait:")
+let _ = io.Write.print(stdout, "ok")
 let _ = io.Write.flush(stdout)
-let _ = io.Write.write(stderr, "err:")
-let _ = io.Write.print(stderr, "bad")
+let _ = io.Write.write(stderr, "trait-err:")
+let _ = io.Write.print(stderr, "nope")
 let _ = io.Write.flush(stderr)
+EOF
+
+run_source_expect_build_failure \
+    "std.io Stdin token is opaque" \
+    "No inherent method 'Stdin'" <<'EOF'
+import std.io.Stdin
+
+let input = Stdin.Stdin
+puts(0)
+EOF
+
+run_source_expect_build_failure \
+    "std.io stderr token is opaque" \
+    "No inherent method 'Stderr'" <<'EOF'
+import std.io.err.Stderr
+
+let output = Stderr.Stderr
+puts(0)
 EOF
 
 run_source_with_stdin_expect_output \

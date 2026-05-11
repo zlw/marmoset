@@ -14,6 +14,14 @@ import (
 
 var stdin = bufio.NewReader(os.Stdin)
 
+func Stdin() ioapi.Stdin {
+	return marmoset.NewHandle[ioapi.StdinTag]()
+}
+
+func Stdout() ioapi.Stdout {
+	return marmoset.NewHandle[ioapi.StdoutTag]()
+}
+
 func Read() marmoset.Result[string, ioapi.Error] {
 	line, err := stdin.ReadString('\n')
 	if err != nil {

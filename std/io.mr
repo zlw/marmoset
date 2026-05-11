@@ -3,8 +3,8 @@ import std.prelude.Show
 export Error, Stdin, Stdout, Read, Write, stdin, stdout, read, write, flush, print
 
 type Error = { EndOfFile, BrokenPipe, Interrupted, Other(Str) }
-type Stdin = { Stdin }
-type Stdout = { Stdout }
+extern type Stdin
+extern type Stdout
 
 trait Read[r, e] = {
   fn read(reader: r) => Result[Str, e]
@@ -21,14 +21,16 @@ trait Write[w, e] = {
 }
 
 extern "std/io" as io_shim = {
+  fn stdin() => Stdin
+  fn stdout() => Stdout
   fn read() => Result[Str, Error]
   fn write(value: Str) => Result[Unit, Error]
   fn flush() => Result[Unit, Error]
 }
 
-fn stdin() => Stdin = Stdin.Stdin
+fn stdin() => Stdin = io_shim.stdin()
 
-fn stdout() => Stdout = Stdout.Stdout
+fn stdout() => Stdout = io_shim.stdout()
 
 impl Read[Stdin, Error] = {
   fn read(_reader: Stdin) => Result[Str, Error] = io_shim.read()
@@ -38,11 +40,6 @@ impl Write[Stdout, Error] = {
   fn write(_writer: Stdout, value: Str) => Result[Unit, Error] = io_shim.write(value)
 
   fn flush(_writer: Stdout) => Result[Unit, Error] = io_shim.flush()
-
-  override fn print[a: Show](_writer: Stdout, value: a) => Result[Unit, Error] = match io_shim.write(Show.show(value) + "\n") {
-    case Result.Success(_): io_shim.flush()
-    case Result.Failure(err): Result.Failure(err)
-  }
 }
 
 fn read() => Result[Str, Error] = Read.read(stdin())
@@ -51,7 +48,4 @@ fn write(value: Str) => Result[Unit, Error] = Write.write(stdout(), value)
 
 fn flush() => Result[Unit, Error] = Write.flush(stdout())
 
-fn print[a: Show](value: a) => Result[Unit, Error] = match write(Show.show(value) + "\n") {
-  case Result.Success(_): flush()
-  case Result.Failure(err): Result.Failure(err)
-}
+fn print[a: Show](value: a) => Result[Unit, Error] = Write.print(stdout(), Show.show(value))

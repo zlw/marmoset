@@ -162,8 +162,8 @@ import std.prelude.Show
 export Error, Stdin, Stdout, Read, Write, stdin, stdout, read, write, flush, print
 
 type Error = { EndOfFile, BrokenPipe, Interrupted, Other(Str) }
-type Stdin = { Stdin }
-type Stdout = { Stdout }
+extern type Stdin
+extern type Stdout
 
 trait Read[r, e] = {
   fn read(reader: r) => Result[Str, e]
@@ -188,8 +188,9 @@ Rules:
 - `io.read` reads one stdin line without the trailing newline. End-of-input is `Error.EndOfFile`.
 - `io.write` writes the string to stdout without adding a newline.
 - `io.print` writes `Show.show(value)` plus a trailing newline, then flushes.
-- `stdin()` implements `Read[Stdin, Error]`; `stdout()` implements `Write[Stdout, Error]`.
-- `std.io.err` exports `Error`, `Stderr`, `stderr`, `write`, `flush`, and `print` for stderr. Its error enum omits `EndOfFile`, and `stderr()` implements `Write[Stderr, std.io.err.Error]`.
+- `Stdin`, `Stdout`, and `std.io.err.Stderr` are opaque extern token types, not constructible Marmoset enums.
+- `stdin()` implements `Read[Stdin, Error]`; `stdout()` implements `Write[Stdout, Error]`; public helpers route through those protocols.
+- `std.io.err` exports `Error`, opaque extern type `Stderr`, `stderr`, `write`, `flush`, and `print` for stderr. Its error enum omits `EndOfFile`, and `stderr()` implements `Write[Stderr, std.io.err.Error]`.
 - File values implement `io.Read[File, FileReadError]` privately inside `std.file`; users call it through `io.Read.read(file)` inside `file.open` callbacks.
 
 ### `std.str`
@@ -455,3 +456,4 @@ HTTP, SQL, and framework-style wrappers likely need follow-up shim features such
 - 2026-05-11 23:57 CEST: IO shim naming cleanup reached green. Verification passed with `make integration stdlib-shims`, `make integration ffi stdlib-shims`, and `git diff --check`; preparing the cleanup commit.
 - 2026-05-12 00:05 CEST: Extended the cleanup so stdio/stderr now expose real `Read`/`Write` receiver values, `std.file` renames its private resource from `Handle` to `File`, and file path helpers route through private `Read[Path, FileReadError]`/`Write[Path, FileWriteError]` impls. Focused `make integration stdlib-shims` is green.
 - 2026-05-12 01:35 CEST: Refined the private `std.file.Path` helper from a one-variant sum to the existing nominal wrapper syntax `type Path = Path(Str)`. This exposed and fixed missing wrapper-constructor pattern support in typechecking, exhaustiveness, and Go emission. A trial `Result.map` cleanup for file read conversions was reverted because generic stdlib method specialization still leaks unresolved type variables in codegen; keep that for a dedicated compiler-hardening slice.
+- 2026-05-12 01:41 CEST: Started and greened the stdio handle/protocol cleanup. `Stdin`, `Stdout`, and `Stderr` are now opaque extern token types returned by production shims, fake singleton enum constructors are gone, and public `print` helpers delegate through `Write.print` instead of duplicating newline/flush matches. Focused `make integration stdlib-shims` is green; preparing the cleanup commit.
