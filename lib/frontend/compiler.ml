@@ -154,6 +154,15 @@ let iter_result f xs =
   in
   go xs
 
+let map_result f xs =
+  let rec go acc = function
+    | [] -> Ok (List.rev acc)
+    | x :: rest ->
+        let* y = f x in
+        go (y :: acc) rest
+  in
+  go [] xs
+
 let error_at_stmt ~(code : string) ~(message : string) (stmt : AST.statement) : Diagnostic.t =
   match stmt.file_id with
   | Some file_id ->
@@ -671,12 +680,24 @@ let validate_build_wide_trait_impl_coherence
           |> Result.map_error (fun (diag : Diagnostic.t) ->
                  [ error_at_stmt ~code:"module-trait-impl-register" ~message:diag.message stmt ])
         in
+        let* impl_trait_args =
+          match impl_def.impl_trait_args with
+          | [] -> Ok [ for_type ]
+          | args ->
+              map_result
+                (fun arg ->
+                  Annotation.type_expr_to_mono_type_with type_bindings arg
+                  |> Result.map_error (fun (diag : Diagnostic.t) ->
+                         [ error_at_stmt ~code:"module-trait-impl-register" ~message:diag.message stmt ]))
+                args
+        in
         try
           Trait_registry.register_impl
             {
               Trait_registry.impl_trait_name = impl_def.impl_trait_name;
               impl_type_params = impl_def.impl_type_params;
               impl_for_type = for_type;
+              impl_trait_args;
               impl_methods = [];
             };
           Ok ()
@@ -1656,7 +1677,8 @@ let%test "shim exports lower without Marmoset identity wrappers" =
       | Error _ -> false
       | Ok build_output ->
           string_contains build_output.main_go "main__payload := extern__std_bytes__from_str(\"hi\")"
-          && string_contains build_output.main_go "_ = extern__std_file__write_bytes(\"marmoset.tmp\", main__payload)"
+          && string_contains build_output.main_go
+               "_ = extern__std_file__write_bytes(\"marmoset.tmp\", main__payload)"
           && string_contains build_output.main_go "puts_string(extern__std_bytes__to_str_lossy(main__payload))"
           && (not (string_contains build_output.main_go "func std__bytes__from_u005fstr"))
           && (not (string_contains build_output.main_go "func std__bytes__to_u005fstr_u005flossy"))

@@ -59,6 +59,7 @@ module AST = struct
   and trait_def = {
     name : string;
     type_param : string option; (* The 'a' in trait Show[a], or None for non-generic traits *)
+    type_params : string list; (* All trait type parameters; first one is the dispatch receiver *)
     supertraits : string list; (* trait Ord[a]: Eq & Hash *)
     methods : method_sig list;
   }
@@ -83,6 +84,7 @@ module AST = struct
     impl_type_params : generic_param list; (* impl[a: Eq] Show[List[a]] = { ... } *)
     impl_trait_name : string;
     impl_for_type : type_expr;
+    impl_trait_args : type_expr list; (* Full trait application args; first equals impl_for_type *)
     impl_methods : method_impl list;
   }
 
@@ -366,7 +368,8 @@ module AST = struct
           match import_alias with
           | None -> base
           | Some alias -> base ^ " as " ^ alias)
-      | ExternBlock block -> Printf.sprintf "extern %S as %s = { ... }" block.extern_shim_id block.extern_qualifier
+      | ExternBlock block ->
+          Printf.sprintf "extern %S as %s = { ... }" block.extern_shim_id block.extern_qualifier
       | ExternTypeDef { extern_type_name } -> Printf.sprintf "extern type %s" extern_type_name
       | Let l -> Printf.sprintf "let %s = %s;" l.name (expression_to_string l.value)
       | Return expr -> Printf.sprintf "return %s;" (expression_to_string expr)
@@ -401,15 +404,24 @@ module AST = struct
               "[" ^ String.concat ", " shape_type_params ^ "]"
           in
           Printf.sprintf "shape %s%s = { ... }" shape_name params_str
-      | TraitDef { name; type_param; _ } ->
+      | TraitDef { name; type_param; type_params; _ } ->
           let params =
-            match type_param with
-            | None -> ""
-            | Some p -> Printf.sprintf "[%s]" p
+            match type_params with
+            | [] -> (
+                match type_param with
+                | None -> ""
+                | Some p -> Printf.sprintf "[%s]" p)
+            | params -> Printf.sprintf "[%s]" (String.concat ", " params)
           in
           Printf.sprintf "trait %s%s { ... }" name params
-      | ImplDef { impl_trait_name; impl_for_type; _ } ->
-          Printf.sprintf "impl %s[%s] = { ... }" impl_trait_name (show_type_expr impl_for_type)
+      | ImplDef { impl_trait_name; impl_for_type; impl_trait_args; _ } ->
+          let args =
+            match impl_trait_args with
+            | [] -> [ impl_for_type ]
+            | args -> args
+          in
+          Printf.sprintf "impl %s[%s] = { ... }" impl_trait_name
+            (String.concat ", " (List.map show_type_expr args))
       | InherentImplDef { inherent_for_type; _ } ->
           Printf.sprintf "impl %s = { ... }" (show_type_expr inherent_for_type)
       | DeriveDef { derive_traits; derive_for_type } ->

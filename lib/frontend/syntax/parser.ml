@@ -47,6 +47,29 @@ type string_interp_part =
   | StringText of string * int
   | StringExpr of Surface.surface_expr
 
+let unescape_string_text (content : string) : string =
+  let buffer = Buffer.create (String.length content) in
+  let rec loop idx =
+    if idx >= String.length content then
+      Buffer.contents buffer
+    else if content.[idx] = '\\' && idx + 1 < String.length content then (
+      let escaped =
+        match content.[idx + 1] with
+        | 'n' -> '\n'
+        | 'r' -> '\r'
+        | 't' -> '\t'
+        | '"' -> '"'
+        | '\\' -> '\\'
+        | other -> other
+      in
+      Buffer.add_char buffer escaped;
+      loop (idx + 2))
+    else (
+      Buffer.add_char buffer content.[idx];
+      loop (idx + 1))
+  in
+  loop 0
+
 let first_some a b =
   match a with
   | Some _ -> a
@@ -266,7 +289,8 @@ let concat_string_parts (p : parser) (parts : string_interp_part list) : Surface
   let lower_part = function
     | StringText (text, pos) ->
         let end_pos = max pos (pos + String.length text - 1) in
-        synth_expr ~file_id:p.file_id ~id:(fresh_id p) ~pos ~end_pos (Surface.SEString text)
+        synth_expr ~file_id:p.file_id ~id:(fresh_id p) ~pos ~end_pos
+          (Surface.SEString (unescape_string_text text))
     | StringExpr expr -> wrap_expr_with_show_call p expr
   in
   match
@@ -1236,18 +1260,20 @@ and parse_trait_definition (p : parser) : (parser * Surface.top_decl, parser) re
   let name = p2.curr_token.literal in
   let name_ref = current_name_ref p2 in
 
-  (* Parse optional type parameter: [a] *)
-  let* p3, type_param_ref =
+  (* Parse optional type parameters: [a] or [reader, error] *)
+  let* p3, type_param_refs =
     if peek_token_is p2 Token.LBracket then
-      let* p3 = expect_peek p2 Token.LBracket in
-      let* p4 = expect_peek p3 Token.Ident in
-      let type_param = Some (current_name_ref p4) in
-      let* p5 = expect_peek p4 Token.RBracket in
-      Ok (p5, type_param)
+      parse_type_param_list (next_token (next_token p2))
     else
-      Ok (next_token p2, None)
+      Ok (next_token p2, [])
+  in
+  let type_param_ref =
+    match type_param_refs with
+    | [] -> None
+    | first :: _ -> Some first
   in
   let type_param = Option.map (fun (ref_ : Surface.name_ref) -> ref_.text) type_param_ref in
+  let type_params = name_texts type_param_refs in
 
   (* Parse optional supertraits: : Eq or : Eq & Show *)
   let* p4, supertrait_refs =
@@ -1285,7 +1311,20 @@ and parse_trait_definition (p : parser) : (parser * Surface.top_decl, parser) re
       expect_peek p7 Token.RBrace
   in
 
-  Ok (p8, Surface.STraitDef { name; name_ref; type_param; type_param_ref; supertraits; supertrait_refs; methods })
+  Ok
+    ( p8,
+      Surface.STraitDef
+        {
+          name;
+          name_ref;
+          type_param;
+          type_param_ref;
+          type_params;
+          type_param_refs;
+          supertraits;
+          supertrait_refs;
+          methods;
+        } )
 
 and parse_supertrait_list (p : parser) : (parser * Surface.name_ref list, parser) result =
   let rec loop lp rev_traits =
@@ -1763,7 +1802,7 @@ and parse_string_literal (p : parser) : (parser * Surface.surface_expr, parser) 
   let content = p.curr_token.literal in
   if not (contains_interpolation_marker content) then
     let id = fresh_id p in
-    Ok (p, mk_surface_expr id pos (Surface.SEString content))
+    Ok (p, mk_surface_expr id pos (Surface.SEString (unescape_string_text content)))
   else
     let body_start_pos = pos + 1 in
     let* parts = split_string_interpolation_parts p content ~body_start_pos in
@@ -2652,7 +2691,10 @@ and parse_pattern (p : parser) : (parser * Surface.surface_pattern, parser) resu
         Error
           (add_error ~code:"parse-invalid-pattern" p "interpolated strings are not allowed in pattern position")
       else
-        Ok (p, mk_surface_pat p.curr_token.pos (Surface.SPLiteral (AST.LString p.curr_token.literal)))
+        Ok
+          ( p,
+            mk_surface_pat p.curr_token.pos
+              (Surface.SPLiteral (AST.LString (unescape_string_text p.curr_token.literal))) )
   | Token.True -> Ok (p, mk_surface_pat p.curr_token.pos (Surface.SPLiteral (AST.LBool true)))
   | Token.False -> Ok (p, mk_surface_pat p.curr_token.pos (Surface.SPLiteral (AST.LBool false)))
   | Token.LBrace -> parse_record_pattern p
@@ -2943,6 +2985,13 @@ module Test = struct
 
   let%test "test_string_literal_expressions" =
     [ { input = "\"hello world\";"; output = [ s (AST.ExpressionStmt (e (AST.String "hello world"))) ] } ] |> run
+
+  let%test "string literal escapes are decoded" =
+    [
+      { input = "\"hello\\nworld\";"; output = [ s (AST.ExpressionStmt (e (AST.String "hello\nworld"))) ] };
+      { input = "\"a\\\"b\";"; output = [ s (AST.ExpressionStmt (e (AST.String "a\"b"))) ] };
+    ]
+    |> run
 
   let%test "string interpolation lowers to show call plus concat" =
     match parse ~file_id:"<test>" "\"hello #{name}\";" with
@@ -4143,6 +4192,7 @@ module Test = struct
                   impl_trait_name = "Show";
                   impl_type_params = [ { AST.name = "a"; constraints = [] } ];
                   impl_for_type = AST.TApp ("Option", [ AST.TVar "a" ]);
+                  impl_trait_args = [ AST.TApp ("Option", [ AST.TVar "a" ]) ];
                   impl_methods;
                 };
             _;
@@ -4319,6 +4369,17 @@ let%test "parse simple trait definition" =
           | _ -> false)
       | _ -> false)
   | Error _ -> false
+
+let%test "parse trait with multiple type parameters" =
+  let input = "trait Read[r, e] = { fn read(reader: r) -> Result[Str, e] }" in
+  let lexer = Lexer.init input in
+  match parse_program (init ~file_id:"<test>" lexer) with
+  | Ok (_p, [ { AST.stmt = AST.TraitDef trait_def; _ } ]) ->
+      trait_def.name = "Read"
+      && trait_def.type_param = Some "r"
+      && trait_def.type_params = [ "r"; "e" ]
+      && List.length trait_def.methods = 1
+  | _ -> false
 
 let%test "parse trait with multiple methods" =
   let input = "trait Num[a] = { fn add(x: a, y: a) -> a fn sub(x: a, y: a) -> a }" in

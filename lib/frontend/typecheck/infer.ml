@@ -1217,9 +1217,9 @@ let instantiate_dynamic_trait_method_sig
               "Method '%s' from trait '%s' is not callable through %s because Dyn[...] does not support method-generic dispatch"
               method_name trait_name dyn_type))
   else
-    match trait_def.Trait_registry.trait_type_param with
-    | None -> Ok method_sig
-    | Some type_param ->
+    match Trait_registry.trait_type_params trait_def with
+    | [] -> Ok method_sig
+    | [ type_param ] ->
         let mentions_self ty = TypeVarSet.mem type_param (free_type_vars ty) in
         let additional_params =
           match method_sig.Trait_registry.method_params with
@@ -1244,6 +1244,13 @@ let instantiate_dynamic_trait_method_sig
                 List.map (fun (name, ty) -> (name, apply_substitution subst ty)) method_sig.method_params;
               method_return_type = apply_substitution subst method_sig.method_return_type;
             }
+    | _ ->
+        Error
+          (mk_error ~code:"type-trait-object-object-unsafe"
+             ~message:
+               (Printf.sprintf
+                  "Method '%s' from trait '%s' is not callable through %s because Dyn[...] does not support multi-parameter traits"
+                  method_name trait_name dyn_type))
 
 let instantiate_dynamic_trait_method
     ~(mk_error : code:string -> message:string -> Diagnostic.t) (receiver_type : mono_type) (method_name : string)
@@ -2140,12 +2147,19 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                            expr)
                   | Some (source_trait_def, method_sig) ->
                       let trait_instantiated_sig =
-                        match source_trait_def.Trait_registry.trait_type_param with
-                        | None -> method_sig
-                        | Some type_param ->
-                            let fresh = fresh_type_var () in
-                            attach_constraint_refs_if_tvar fresh (Constraints.of_names [ trait_name ]);
-                            let subst = substitution_singleton type_param fresh in
+                        match Trait_registry.trait_type_params source_trait_def with
+                        | [] -> method_sig
+                        | type_params ->
+                            let fresh_args =
+                              List.mapi
+                                (fun idx _param ->
+                                  let fresh = fresh_type_var () in
+                                  if idx = 0 then
+                                    attach_constraint_refs_if_tvar fresh (Constraints.of_names [ trait_name ]);
+                                  fresh)
+                                type_params
+                            in
+                            let subst = substitution_of_list (List.combine type_params fresh_args) in
                             {
                               method_sig with
                               method_params =
@@ -2959,22 +2973,47 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                         (mk_error ~code:"type-constructor"
                            ~message:(Printf.sprintf "Trait '%s' has no method '%s'" trait_name method_name))
                   | Some (source_trait_def, method_sig) -> (
-                      let infer_static_qualified_trait_call () : (substitution * mono_type) infer_result =
-                        let trait_instantiated_sig =
-                          match source_trait_def.Trait_registry.trait_type_param with
-                          | None -> method_sig
-                          | Some type_param ->
-                              let fresh = fresh_type_var () in
-                              let s = substitution_singleton type_param fresh in
-                              {
-                                method_sig with
-                                method_params =
-                                  List.map
-                                    (fun (name, ty) -> (name, apply_substitution s ty))
-                                    method_sig.method_params;
-                                method_return_type = apply_substitution s method_sig.method_return_type;
-                              }
-                        in
+                      let instantiate_trait_method_with_fresh receiver_type_opt =
+                        match Trait_registry.trait_type_params source_trait_def with
+                        | [] -> method_sig
+                        | type_params ->
+                            let fresh_args =
+                              List.mapi
+                                (fun idx param ->
+                                  match (idx, receiver_type_opt) with
+                                  | 0, Some receiver_type -> receiver_type
+                                  | _, Some (TVar _) -> TVar param
+                                  | _ -> fresh_type_var ())
+                                type_params
+                            in
+                            let s = substitution_of_list (List.combine type_params fresh_args) in
+                            {
+                              method_sig with
+                              method_params =
+                                List.map
+                                  (fun (name, ty) -> (name, apply_substitution s ty))
+                                  method_sig.method_params;
+                              method_return_type = apply_substitution s method_sig.method_return_type;
+                            }
+                      in
+                      let trait_sig_for_receiver receiver_type_opt =
+                        match receiver_type_opt with
+                        | None -> instantiate_trait_method_with_fresh None
+                        | Some receiver_type -> (
+                            match Trait_registry.lookup_impl trait_name receiver_type with
+                            | Some impl_def -> (
+                                match
+                                  List.find_opt
+                                    (fun (m : Trait_registry.method_sig) -> m.method_name = method_name)
+                                    impl_def.impl_methods
+                                with
+                                | Some impl_method -> impl_method
+                                | None -> instantiate_trait_method_with_fresh (Some receiver_type))
+                            | None -> instantiate_trait_method_with_fresh (Some receiver_type))
+                      in
+                      let infer_static_qualified_trait_call ?receiver_type () :
+                          (substitution * mono_type) infer_result =
+                        let trait_instantiated_sig = trait_sig_for_receiver receiver_type in
                         let check_trait_receiver receiver_type =
                           match receiver_type with
                           | TVar _ -> Ok ()
@@ -3047,7 +3086,7 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                                                   ( final_subst,
                                                     apply_substitution final_subst dynamic_sig.method_return_type
                                                   )))))
-                              | _ -> infer_static_qualified_trait_call ()))
+                              | _ -> infer_static_qualified_trait_call ~receiver_type:receiver_arg_type ()))
                       | [] -> infer_static_qualified_trait_call ()))
             in
             let infer_qualified_type_call
@@ -5154,15 +5193,16 @@ and infer_statement type_map env stmt =
       | Ok variant_defs ->
           Enum_registry.register { Enum_registry.name; type_params; variants = variant_defs };
           Ok (empty_substitution, TNull))
-  | AST.TraitDef { name; type_param; supertraits; methods } -> (
+  | AST.TraitDef { name; type_param; type_params; supertraits; methods } -> (
+      let type_params =
+        match type_params with
+        | [] -> Option.to_list type_param
+        | _ -> type_params
+      in
       (* Convert AST method signatures to trait registry method signatures *)
-      (* We need to treat type_param as a type variable, not a type constructor *)
+      (* We need to treat trait parameters as type variables, not type constructors. *)
       let convert_type_expr (te : AST.type_expr) : (mono_type, Diagnostic.t) result =
-        let is_trait_type_param (type_name : string) : bool =
-          match type_param with
-          | Some tp -> type_name = tp
-          | None -> false
-        in
+        let is_trait_type_param (type_name : string) : bool = List.mem type_name type_params in
         let trait_err msg = Error (error ~code:"type-constructor" ~message:msg) in
         let rec convert = function
           | AST.TVar v -> Ok (TVar v)
@@ -5240,11 +5280,7 @@ and infer_statement type_map env stmt =
             convert_type_expr te
           else
             let method_bindings = List.map (fun n -> (n, TVar n)) method_generic_names in
-            let trait_bindings =
-              match type_param with
-              | Some tp -> [ (tp, TVar tp) ]
-              | None -> []
-            in
+            let trait_bindings = List.map (fun tp -> (tp, TVar tp)) type_params in
             Annotation.type_expr_to_mono_type_with (method_bindings @ trait_bindings) te
         in
         let* param_types =
@@ -5276,11 +5312,7 @@ and infer_statement type_map env stmt =
           match m.method_default_impl with
           | None -> Ok []
           | Some default_expr -> (
-              let trait_bindings =
-                match type_param with
-                | Some tp -> [ (tp, TVar tp) ]
-                | None -> []
-              in
+              let trait_bindings = List.map (fun tp -> (tp, TVar tp)) type_params in
               let method_bindings = List.map (fun n -> (n, TVar n)) method_generic_names in
               let known_param_types = List.mapi (fun i (_name, ty) -> (i, ty)) param_types in
               let body_stmt =
@@ -5294,13 +5326,13 @@ and infer_statement type_map env stmt =
               let constraint_store = current_constraint_store () in
               let constrained_field_store = current_constrained_field_store () in
               let trait_constraint_snapshot =
-                match type_param with
-                | Some tp ->
+                match type_params with
+                | tp :: _ ->
                     let old_constraints = Hashtbl.find_opt constraint_store tp in
                     let old_fields = Hashtbl.find_opt constrained_field_store tp in
                     add_type_var_constraints tp (name :: supertraits);
                     Some (tp, old_constraints, old_fields)
-                | None -> None
+                | [] -> None
               in
               let method_constraint_snapshots =
                 match m.method_generics with
@@ -5403,6 +5435,7 @@ and infer_statement type_map env stmt =
         {
           Trait_registry.trait_name = name;
           trait_type_param = type_param;
+          trait_type_params = type_params;
           trait_supertraits = supertraits;
           trait_methods = provisional_method_sigs;
         };
@@ -5411,6 +5444,7 @@ and infer_statement type_map env stmt =
         {
           Trait_registry.trait_name = name;
           trait_type_param = type_param;
+          trait_type_params = type_params;
           trait_supertraits = supertraits;
           trait_methods = method_sigs;
         }
@@ -5421,7 +5455,7 @@ and infer_statement type_map env stmt =
       | Ok () ->
           Trait_registry.register_trait trait_def;
           Ok (empty_substitution, TNull))
-  | AST.ImplDef { impl_trait_name; impl_type_params; impl_for_type; impl_methods } ->
+  | AST.ImplDef { impl_trait_name; impl_type_params; impl_for_type; impl_trait_args; impl_methods } ->
       let type_param_names = List.map (fun (p : AST.generic_param) -> p.name) impl_type_params in
       let unique_param_names = List.sort_uniq String.compare type_param_names in
       let impl_origin =
@@ -5472,6 +5506,11 @@ and infer_statement type_map env stmt =
             match convert_impl_type_expr impl_for_type with
             | Error e -> Error e
             | Ok for_type_mono -> (
+                let* impl_trait_args_mono =
+                  match impl_trait_args with
+                  | [] -> Ok [ for_type_mono ]
+                  | args -> map_result convert_impl_type_expr args
+                in
                 (* Phase 7: Trait impl method adapter — routes through type_callable.
                    Looks up trait signature for known types so annotations are optional. *)
                 let find_trait_method_sig method_name =
@@ -5502,9 +5541,7 @@ and infer_statement type_map env stmt =
                     | None -> []
                     | Some (source_trait_def, tm) ->
                         let source_trait_subst =
-                          match source_trait_def.Trait_registry.trait_type_param with
-                          | None -> SubstMap.empty
-                          | Some tp -> SubstMap.singleton tp for_type_mono
+                          Trait_registry.trait_substitution_for_args source_trait_def impl_trait_args_mono
                         in
                         List.mapi
                           (fun i (_name, ty) -> (i, apply_substitution source_trait_subst ty))
@@ -5515,9 +5552,7 @@ and infer_statement type_map env stmt =
                     | None -> None
                     | Some (source_trait_def, tm) ->
                         let source_trait_subst =
-                          match source_trait_def.Trait_registry.trait_type_param with
-                          | None -> SubstMap.empty
-                          | Some tp -> SubstMap.singleton tp for_type_mono
+                          Trait_registry.trait_substitution_for_args source_trait_def impl_trait_args_mono
                         in
                         Some (apply_substitution source_trait_subst tm.method_return_type)
                   in
@@ -5623,6 +5658,7 @@ and infer_statement type_map env stmt =
                 | Error e -> Error e
                 | Ok (methods, method_subst) -> (
                     let for_type_mono' = apply_substitution method_subst for_type_mono in
+                    let impl_trait_args_mono' = List.map (apply_substitution method_subst) impl_trait_args_mono in
                     let methods' =
                       List.map
                         (fun (m : Trait_registry.method_sig) ->
@@ -5649,6 +5685,7 @@ and infer_statement type_map env stmt =
                         Trait_registry.impl_trait_name;
                         impl_type_params;
                         impl_for_type = for_type_mono';
+                        impl_trait_args = impl_trait_args_mono';
                         impl_methods = methods';
                       }
                     in
@@ -6905,6 +6942,7 @@ let infer_program
                                             Trait_registry.impl_trait_name = impl_def.impl_trait_name;
                                             impl_type_params = [];
                                             impl_for_type = for_type;
+                                            impl_trait_args = [ for_type ];
                                             impl_methods = [];
                                           }
                                     | Error _ -> ())
@@ -8036,6 +8074,7 @@ f"
       {
         trait_name = "labeled";
         trait_type_param = Some "a";
+        trait_type_params = [ "a" ];
         trait_supertraits = [ "named" ];
         trait_methods =
           [ Trait_registry.mk_method_sig ~name:"label" ~params:[ ("x", TVar "a") ] ~return_type:TString () ];
@@ -8095,6 +8134,7 @@ f"
       {
         trait_name = "T1";
         trait_type_param = Some "a";
+        trait_type_params = [ "a" ];
         trait_supertraits = [];
         trait_methods =
           [ Trait_registry.mk_method_sig ~name:"render" ~params:[ ("x", TVar "a") ] ~return_type:TString () ];
@@ -8103,6 +8143,7 @@ f"
       {
         trait_name = "T2";
         trait_type_param = Some "a";
+        trait_type_params = [ "a" ];
         trait_supertraits = [];
         trait_methods =
           [ Trait_registry.mk_method_sig ~name:"render" ~params:[ ("x", TVar "a") ] ~return_type:TString () ];
@@ -8265,6 +8306,7 @@ f"
       {
         Trait_registry.trait_name = "Show";
         trait_type_param = Some "a";
+        trait_type_params = [ "a" ];
         trait_supertraits = [];
         trait_methods =
           [ Trait_registry.mk_method_sig ~name:"show" ~params:[ ("x", TVar "a") ] ~return_type:TString () ];
@@ -8274,6 +8316,7 @@ f"
         impl_trait_name = "Show";
         impl_type_params = [];
         impl_for_type = TInt;
+        impl_trait_args = [ TInt ];
         impl_methods =
           [ Trait_registry.mk_method_sig ~name:"show" ~params:[ ("x", TInt) ] ~return_type:TString () ];
       };

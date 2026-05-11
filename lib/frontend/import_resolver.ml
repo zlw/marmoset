@@ -992,11 +992,14 @@ let rewrite_program
                   ShapeDef { shape_name = declaration_internal_name shape_name; shape_type_params; shape_fields };
               },
             value_scope )
-    | AST.TraitDef { name; type_param; supertraits; methods } ->
+    | AST.TraitDef { name; type_param; type_params; supertraits; methods } ->
+        let type_params =
+          match type_params with
+          | [] -> Option.to_list type_param
+          | _ -> type_params
+        in
         let type_bindings =
-          match type_param with
-          | Some param -> StringSet.singleton param
-          | None -> StringSet.empty
+          List.fold_left (fun acc param -> StringSet.add param acc) StringSet.empty type_params
         in
         let supertraits = rewrite_constraints ~imports ~type_bindings ~available_bindings supertraits in
         let* methods = map_result (rewrite_method_sig ~value_scope ~parent_type_bindings:type_bindings) methods in
@@ -1004,10 +1007,12 @@ let rewrite_program
           ( AST.
               {
                 stmt with
-                stmt = TraitDef { name = declaration_internal_name name; type_param; supertraits; methods };
+                stmt =
+                  TraitDef
+                    { name = declaration_internal_name name; type_param; type_params; supertraits; methods };
               },
             value_scope )
-    | AST.ImplDef { impl_type_params; impl_trait_name; impl_for_type; impl_methods } ->
+    | AST.ImplDef { impl_type_params; impl_trait_name; impl_for_type; impl_trait_args; impl_methods } ->
         let type_bindings = type_bindings_of_generic_params impl_type_params in
         let impl_type_params =
           List.map
@@ -1030,11 +1035,20 @@ let rewrite_program
                   | _ -> impl_trait_name))
         in
         let impl_for_type = rewrite_type_expr ~imports ~type_bindings ~available_bindings impl_for_type in
+        let impl_trait_args =
+          match impl_trait_args with
+          | [] -> [ impl_for_type ]
+          | args -> List.map (rewrite_type_expr ~imports ~type_bindings ~available_bindings) args
+        in
         let* impl_methods =
           map_result (rewrite_method_impl ~value_scope ~parent_type_bindings:type_bindings) impl_methods
         in
         Ok
-          ( AST.{ stmt with stmt = ImplDef { impl_type_params; impl_trait_name; impl_for_type; impl_methods } },
+          ( AST.
+              {
+                stmt with
+                stmt = ImplDef { impl_type_params; impl_trait_name; impl_for_type; impl_trait_args; impl_methods };
+              },
             value_scope )
     | AST.InherentImplDef { inherent_for_type; inherent_methods } ->
         let target_generics = collect_inherent_target_generics inherent_for_type in

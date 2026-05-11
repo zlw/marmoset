@@ -1,17 +1,36 @@
 import std.prelude.Show
 
-export ReadLineError, print, println, read_line, map_line, with_line
+export Error, Read, Write, read, write, flush, print
 
-type ReadLineError = { EndOfFile, Other(Str) }
+type Error = { EndOfFile, BrokenPipe, Interrupted, Other(Str) }
 
-extern "std/io" as io_shim = {
-  fn print_str(value: Str) => Unit
-  fn println_str(value: Str) => Unit
-  fn read_line() => Result[Str, ReadLineError]
-  fn map_line(body: (Str) -> Str) => Result[Str, ReadLineError]
-  fn with_line(body: (Str) => Unit) => Result[Unit, ReadLineError]
+trait Read[r, e] = {
+  fn read(reader: r) => Result[Str, e]
 }
 
-fn print[a: Show](value: a) => Unit = io_shim.print_str(Show.show(value))
+trait Write[w, e] = {
+  fn write(writer: w, value: Str) => Result[Unit, e]
+  fn flush(writer: w) => Result[Unit, e]
 
-fn println[a: Show](value: a) => Unit = io_shim.println_str(Show.show(value))
+  fn print[a: Show](writer: w, value: a) => Result[Unit, e] = match Write.write(writer, Show.show(value) + "\n") {
+    case Result.Success(_): Write.flush(writer)
+    case Result.Failure(err): Result.Failure(err)
+  }
+}
+
+extern "std/io" as io_shim = {
+  fn read() => Result[Str, Error]
+  fn write_str(value: Str) => Result[Unit, Error]
+  fn flush() => Result[Unit, Error]
+}
+
+fn read() => Result[Str, Error] = io_shim.read()
+
+fn write(value: Str) => Result[Unit, Error] = io_shim.write_str(value)
+
+fn flush() => Result[Unit, Error] = io_shim.flush()
+
+fn print[a: Show](value: a) => Result[Unit, Error] = match write(Show.show(value) + "\n") {
+  case Result.Success(_): flush()
+  case Result.Failure(err): Result.Failure(err)
+}

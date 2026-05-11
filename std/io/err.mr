@@ -1,0 +1,19 @@
+import std.prelude.Show
+
+export Error, write, flush, print
+
+type Error = { BrokenPipe, Interrupted, Other(Str) }
+
+extern "std/io/err" as err_shim = {
+  fn write_str(value: Str) => Result[Unit, Error]
+  fn flush() => Result[Unit, Error]
+}
+
+fn write(value: Str) => Result[Unit, Error] = err_shim.write_str(value)
+
+fn flush() => Result[Unit, Error] = err_shim.flush()
+
+fn print[a: Show](value: a) => Result[Unit, Error] = match write(Show.show(value) + "\n") {
+  case Result.Success(_): flush()
+  case Result.Failure(err): Result.Failure(err)
+}

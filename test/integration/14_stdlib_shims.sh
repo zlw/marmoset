@@ -173,9 +173,10 @@ EOF
 
 run_source_expect_output \
     "std.file scopes handles and flattens callback errors" \
-    $'scoped:opened\nopen:not-found\nuse:read:is-directory\nleaked:read:already-closed' <<EOF
+    $'scoped:opened\nprotocol:opened\nopen:not-found\nuse:read:is-directory\nleaked:read:already-closed' <<EOF
 import std.bytes
 import std.file
+import std.io
 import std.file.FileReadError
 import std.file.FileOpenError
 import std.file.FileCloseError
@@ -210,6 +211,11 @@ fn use_error_label(err: FileUseError[FileReadError]) -> Str = match err {
 
 match file.open("$EXISTING_PATH", (handle) => file.read_all(handle)) {
   case Result.Success(payload): puts("scoped:" + bytes.to_str_lossy(payload))
+  case Result.Failure(err): puts(use_error_label(err))
+}
+
+match file.open("$EXISTING_PATH", (handle) => io.Read.read(handle)) {
+  case Result.Success(payload): puts("protocol:" + payload)
   case Result.Failure(err): puts(use_error_label(err))
 }
 
@@ -279,13 +285,17 @@ puts(0)
 EOF
 
 run_source_expect_output \
-    "std.io prints shown values" \
-    $'value:42\nnext' <<'EOF'
+    "std.io writes, flushes, prints and exposes stderr helpers" \
+    $'value:42\nerr:bad' <<'EOF'
 import std.io
+import std.io.err
 
-io.print("value:")
-io.println(42)
-io.print("next")
+let _ = io.write("value:")
+let _ = io.print(42)
+let _ = io.flush()
+let _ = err.write("err:")
+let _ = err.print("bad")
+let _ = err.flush()
 EOF
 
 run_source_with_stdin_expect_output \
@@ -293,59 +303,61 @@ run_source_with_stdin_expect_output \
     $'alpha\nbeta\n' \
     $'line:alpha\nline:beta\neof' <<'EOF'
 import std.io
-import std.io.ReadLineError
+import std.io.Error
 
-fn read_error_label(err: ReadLineError) -> Str = match err {
-  case ReadLineError.EndOfFile: "eof"
-  case ReadLineError.Other(message): "other:" + message
+fn read_error_label(err: Error) -> Str = match err {
+  case Error.EndOfFile: "eof"
+  case Error.BrokenPipe: "broken-pipe"
+  case Error.Interrupted: "interrupted"
+  case Error.Other(message): "other:" + message
 }
 
-match io.read_line() {
-  case Result.Success(line): io.println("line:" + line)
-  case Result.Failure(err): io.println(read_error_label(err))
+match io.read() {
+  case Result.Success(line): io.print("line:" + line)
+  case Result.Failure(err): io.print(read_error_label(err))
 }
 
-match io.read_line() {
-  case Result.Success(line): io.println("line:" + line)
-  case Result.Failure(err): io.println(read_error_label(err))
+match io.read() {
+  case Result.Success(line): io.print("line:" + line)
+  case Result.Failure(err): io.print(read_error_label(err))
 }
 
-match io.read_line() {
-  case Result.Success(line): io.println("line:" + line)
-  case Result.Failure(err): io.println(read_error_label(err))
-}
-EOF
-
-run_source_with_stdin_expect_output \
-    "std.io shim calls Marmoset callback synchronously" \
-    $'alpha\n' \
-    $'mapped:ALPHA' <<'EOF'
-import std.io
-import std.io.ReadLineError
-
-match io.map_line((line: Str) -> if (line == "alpha") { "ALPHA" } else { line }) {
-  case Result.Success(value): io.println("mapped:" + value)
-  case Result.Failure(err): match err {
-    case ReadLineError.EndOfFile: io.println("eof")
-    case ReadLineError.Other(message): io.println("other:" + message)
-  }
+match io.read() {
+  case Result.Success(line): io.print("line:" + line)
+  case Result.Failure(err): io.print(read_error_label(err))
 }
 EOF
 
-run_source_with_stdin_expect_output \
-    "std.io shim calls effectful Unit callback synchronously" \
-    $'beta\n' \
-    $'line:beta\ndone' <<'EOF'
-import std.io
-import std.io.ReadLineError
+run_source_expect_build_failure \
+    "std.io old println helper is gone" \
+    "does not export 'println'" <<'EOF'
+import std.io.println
 
-match io.with_line((line: Str) => io.println("line:" + line)) {
-  case Result.Success(_): io.println("done")
-  case Result.Failure(err): match err {
-    case ReadLineError.EndOfFile: io.println("eof")
-    case ReadLineError.Other(message): io.println("other:" + message)
-  }
-}
+puts(0)
+EOF
+
+run_source_expect_build_failure \
+    "std.io old read_line helper is gone" \
+    "does not export 'read_line'" <<'EOF'
+import std.io.read_line
+
+puts(0)
+EOF
+
+run_source_expect_build_failure \
+    "std.io old callback helper is gone" \
+    "does not export 'map_line'" <<'EOF'
+import std.io.map_line
+
+puts(0)
+EOF
+
+run_source_expect_build_failure \
+    "std.io old effect callback helper is gone" \
+    "does not export 'with_line'" <<'EOF'
+import std.io.with_line
+
+puts(0)
 EOF
 
 rm -rf "$DATA_DIR"

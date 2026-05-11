@@ -10,4 +10,6 @@
   (marmoset/helpers.go as runtime/go/marmoset/helpers.go)
   (shims/std/basics/basics.go as runtime/go/shims/std/basics/basics.go)
   (shims/std/bytes/bytes.go as runtime/go/shims/std/bytes/bytes.go)
-  (shims/std/file/file.go as runtime/go/shims/std/file/file.go)))
+  (shims/std/file/file.go as runtime/go/shims/std/file/file.go)
+  (shims/std/io/io.go as runtime/go/shims/std/io/io.go)
+  (shims/std/io/err/err.go as runtime/go/shims/std/io/err/err.go)))

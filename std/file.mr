@@ -1,5 +1,6 @@
 import std.bytes
 import std.bytes.Bytes
+import std.io
 
 export FileReadError, FileWriteError,
        FileOpenError, FileCloseError, FileUseError,
@@ -19,6 +20,13 @@ extern "std/file" as file_shim = {
   fn read_all(file: Handle) => Result[Bytes, FileReadError]
   fn open_handle(path: Str) => Result[Handle, FileOpenError]
   fn close_handle(file: Handle) => Result[Unit, FileCloseError]
+}
+
+impl io.Read[Handle, FileReadError] = {
+  fn read(file: Handle) => Result[Str, FileReadError] = match file_shim.read_all(file) {
+    case Result.Success(payload): Result.Success(bytes.to_str_lossy(payload))
+    case Result.Failure(err): Result.Failure(err)
+  }
 }
 
 fn read(path: Str) => Result[Str, FileReadError] = match file_shim.read_bytes(path) {

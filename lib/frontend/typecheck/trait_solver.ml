@@ -293,6 +293,7 @@ let setup_builtins () =
     {
       trait_name = "show";
       trait_type_param = Some "a";
+      trait_type_params = [ "a" ];
       trait_supertraits = [];
       trait_methods =
         [
@@ -306,6 +307,7 @@ let setup_builtins () =
     {
       trait_name = "eq";
       trait_type_param = Some "a";
+      trait_type_params = [ "a" ];
       trait_supertraits = [];
       trait_methods =
         [
@@ -320,6 +322,7 @@ let setup_builtins () =
       impl_trait_name = "show";
       impl_type_params = [];
       impl_for_type = Types.TInt;
+      impl_trait_args = [ Types.TInt ];
       impl_methods =
         [ Trait_registry.mk_method_sig ~name:"show" ~params:[ ("x", Types.TInt) ] ~return_type:Types.TString () ];
     };
@@ -328,6 +331,7 @@ let setup_builtins () =
       impl_trait_name = "eq";
       impl_type_params = [];
       impl_for_type = Types.TInt;
+      impl_trait_args = [ Types.TInt ];
       impl_methods =
         [
           Trait_registry.mk_method_sig ~name:"eq"
@@ -341,6 +345,7 @@ let setup_builtins () =
       impl_trait_name = "show";
       impl_type_params = [];
       impl_for_type = Types.TString;
+      impl_trait_args = [ Types.TString ];
       impl_methods =
         [
           Trait_registry.mk_method_sig ~name:"show" ~params:[ ("x", Types.TString) ] ~return_type:Types.TString ();
@@ -409,6 +414,7 @@ let%test "check_constraints enforces supertrait obligations transitively" =
     {
       trait_name = "eq";
       trait_type_param = Some "a";
+      trait_type_params = [ "a" ];
       trait_supertraits = [];
       trait_methods =
         [
@@ -421,6 +427,7 @@ let%test "check_constraints enforces supertrait obligations transitively" =
     {
       trait_name = "ord";
       trait_type_param = Some "a";
+      trait_type_params = [ "a" ];
       trait_supertraits = [ "eq" ];
       trait_methods =
         [
@@ -434,6 +441,7 @@ let%test "check_constraints enforces supertrait obligations transitively" =
       impl_trait_name = "ord";
       impl_type_params = [];
       impl_for_type = Types.TString;
+      impl_trait_args = [ Types.TString ];
       impl_methods =
         [
           Trait_registry.mk_method_sig ~name:"compare"
@@ -451,6 +459,7 @@ let%test "satisfies_trait enforces supertrait obligations transitively" =
     {
       trait_name = "eq";
       trait_type_param = Some "a";
+      trait_type_params = [ "a" ];
       trait_supertraits = [];
       trait_methods =
         [
@@ -463,6 +472,7 @@ let%test "satisfies_trait enforces supertrait obligations transitively" =
     {
       trait_name = "ord";
       trait_type_param = Some "a";
+      trait_type_params = [ "a" ];
       trait_supertraits = [ "eq" ];
       trait_methods =
         [
@@ -476,6 +486,7 @@ let%test "satisfies_trait enforces supertrait obligations transitively" =
       impl_trait_name = "ord";
       impl_type_params = [];
       impl_for_type = Types.TString;
+      impl_trait_args = [ Types.TString ];
       impl_methods =
         [
           Trait_registry.mk_method_sig ~name:"compare"
@@ -542,6 +553,7 @@ let%test "trait with shape superconstraint requires both structural fields and n
     {
       trait_name = "named_show";
       trait_type_param = Some "a";
+      trait_type_params = [ "a" ];
       trait_supertraits = [ "named" ];
       trait_methods =
         [
@@ -560,6 +572,7 @@ let%test "trait with shape superconstraint requires both structural fields and n
       impl_trait_name = "named_show";
       impl_type_params = [];
       impl_for_type = person_type;
+      impl_trait_args = [ person_type ];
       impl_methods =
         [ Trait_registry.mk_method_sig ~name:"show" ~params:[ ("x", person_type) ] ~return_type:Types.TString () ];
     };

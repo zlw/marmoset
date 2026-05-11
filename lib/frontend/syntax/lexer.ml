@@ -126,6 +126,7 @@ and read_string (l : lexer) : lexer * string =
   let rec scan_string (ll : lexer) : lexer =
     match ll.ch with
     | '\000' | '"' -> ll
+    | '\\' -> scan_string (read_char (read_char ll))
     | '#' when peek_char ll = '{' ->
         let after_open = read_char (read_char ll) in
         scan_string (scan_interpolation after_open 1)
@@ -133,6 +134,7 @@ and read_string (l : lexer) : lexer * string =
   and scan_interpolation (ll : lexer) (depth : int) : lexer =
     match ll.ch with
     | '\000' -> ll
+    | '\\' -> scan_interpolation (read_char (read_char ll)) depth
     | '"' ->
         let nested_end = scan_string (read_char ll) in
         let after_nested =

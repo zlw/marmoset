@@ -1041,6 +1041,7 @@ let%test "env reuse with shared inference state preserves constrained generic ob
     {
       Trait_registry.trait_name = "Show";
       trait_type_param = Some "a";
+      trait_type_params = [ "a" ];
       trait_supertraits = [];
       trait_methods =
         [ Trait_registry.mk_method_sig ~name:"show" ~params:[ ("x", TVar "a") ] ~return_type:TString () ];
@@ -1050,6 +1051,7 @@ let%test "env reuse with shared inference state preserves constrained generic ob
       impl_trait_name = "Show";
       impl_type_params = [];
       impl_for_type = TInt;
+      impl_trait_args = [ TInt ];
       impl_methods = [ Trait_registry.mk_method_sig ~name:"show" ~params:[ ("x", TInt) ] ~return_type:TString () ];
     };
   let shared_state = Infer.create_inference_state () in
@@ -1096,6 +1098,7 @@ let%test "Phase3: trait default method - impl without method succeeds if default
     {
       Trait_registry.trait_name = "greetable";
       trait_type_param = None;
+      trait_type_params = [];
       trait_supertraits = [];
       trait_methods =
         [
@@ -1113,7 +1116,13 @@ let%test "Phase3: trait default method - impl without method succeeds if default
     };
   (* Register an impl that does NOT provide the method (uses default) *)
   Trait_registry.register_impl ~builtin:true
-    { impl_trait_name = "greetable"; impl_type_params = []; impl_for_type = Types.TInt; impl_methods = [] };
+    {
+      impl_trait_name = "greetable";
+      impl_type_params = [];
+      impl_for_type = Types.TInt;
+      impl_trait_args = [ Types.TInt ];
+      impl_methods = [];
+    };
   (* Should be able to call greet on int via explicit qualification *)
   match check_string ~file_id:"<test>" "greetable.greet(1)" with
   | Ok result -> result.result_type = Types.TString
@@ -1842,7 +1851,9 @@ let%test "shim callbacks: checker accepts function parameters and rejects functi
   Infer.reset_fresh_counter ();
   Trait_registry.clear ();
   let accepted =
-    match check_string ~file_id:"std.bytes" "extern \"std/bytes\" = { fn map(input: Str, f: (Str) -> Str) -> Str }" with
+    match
+      check_string ~file_id:"std.bytes" "extern \"std/bytes\" = { fn map(input: Str, f: (Str) -> Str) -> Str }"
+    with
     | Ok _ -> true
     | Error _ -> false
   in

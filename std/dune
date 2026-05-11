@@ -8,4 +8,5 @@
   (result.mr as std/result.mr)
   (bytes.mr as std/bytes.mr)
   (file.mr as std/file.mr)
-  (io.mr as std/io.mr)))
+  (io.mr as std/io.mr)
+  (io/err.mr as std/io/err.mr)))

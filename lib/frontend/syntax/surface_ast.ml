@@ -289,6 +289,8 @@ module Surface = struct
         name_ref : name_ref;
         type_param : string option;
         type_param_ref : name_ref option;
+        type_params : string list;
+        type_param_refs : name_ref list;
         supertraits : string list;
         supertrait_refs : name_ref list;
         methods : surface_method_sig list;

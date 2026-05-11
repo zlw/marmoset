@@ -26,7 +26,7 @@ extern "std/file" as file_shim = {
 }
 ```
 
-Phase one requires shim ids to use the `std` root and at least two slash-separated segments. Valid examples include `std/bytes`, `std/file`, and `std/io`. Single-segment ids such as `strings` are rejected with `shim-id-invalid`; syntactically valid but unknown ids such as `std/missing` fail with `shim-id-not-found`.
+Phase one requires shim ids to use the `std` root and at least two slash-separated segments. Valid examples include `std/bytes`, `std/file`, `std/io`, and nested packages such as `std/io/err`. Single-segment ids such as `strings` are rejected with `shim-id-invalid`; syntactically valid but unknown ids such as `std/missing` fail with `shim-id-not-found`.
 
 Opaque resource handles use `extern type` in the owning shim module. Public modules should still expose the highest-level Marmoset API they can. For example, `std.file` keeps the handle type and raw open/close calls private, then exports callback-based helpers:
 

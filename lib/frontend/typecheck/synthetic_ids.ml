@@ -89,6 +89,7 @@ let%test "create_from_program seeds expr and method ids independently" =
            {
              name = "Show";
              type_param = Some "a";
+             type_params = [ "a" ];
              supertraits = [];
              methods =
                [
@@ -109,6 +110,7 @@ let%test "create_from_program seeds expr and method ids independently" =
              impl_type_params = [];
              impl_trait_name = "Show";
              impl_for_type = AST.TCon "Int";
+             impl_trait_args = [ AST.TCon "Int" ];
              impl_methods =
                [
                  {

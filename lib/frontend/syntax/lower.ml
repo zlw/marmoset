@@ -147,6 +147,15 @@ let infer_impl_type_params (ctx : lower_context) (impl_for_type : Surface.surfac
   let _, rev_names = collect StringSet.empty [] impl_for_type in
   List.rev_map (fun name -> AST.{ name; constraints = [] }) rev_names
 
+let infer_impl_type_params_from_args (ctx : lower_context) (impl_trait_args : Surface.surface_type_expr list) :
+    AST.generic_param list =
+  let head =
+    match impl_trait_args with
+    | first :: _ -> first
+    | [] -> Surface.mk_surface_type (Surface.STCon (Surface.mk_name_ref "Unit"))
+  in
+  infer_impl_type_params ctx head
+
 (* ── Type expressions ── *)
 
 let rec lower_type_expr_with_bound_vars (bound_type_vars : StringSet.t) (st : Surface.surface_type_expr) :
@@ -661,11 +670,16 @@ let lower_top_decl_with_ctx
   let lower_trait_impl_decl
       (impl_type_params : AST.generic_param list)
       (impl_trait_name : string)
-      (impl_for_type : Surface.surface_type_expr)
+      (impl_trait_args : Surface.surface_type_expr list)
       (impl_methods : Surface.surface_method_impl list) =
+    let impl_for_type =
+      match impl_trait_args with
+      | first :: _ -> first
+      | [] -> failwith "Lower: trait impl escaped without a receiver type"
+    in
     let impl_type_params =
       match impl_type_params with
-      | [] -> infer_impl_type_params ctx impl_for_type
+      | [] -> infer_impl_type_params_from_args ctx impl_trait_args
       | _ -> impl_type_params
     in
     let impl_bound_type_vars =
@@ -699,6 +713,7 @@ let lower_top_decl_with_ctx
           impl_type_params;
           impl_trait_name;
           impl_for_type = lower_type_expr_with_bound_vars impl_bound_type_vars impl_for_type;
+          impl_trait_args = List.map (lower_type_expr_with_bound_vars impl_bound_type_vars) impl_trait_args;
           impl_methods = List.map lower_method_impl_with_impl_bindings impl_methods;
         }
     in
@@ -868,12 +883,13 @@ let lower_top_decl_with_ctx
              })
       in
       [ shape_stmt ]
-  | Surface.STraitDef { name; type_param; supertraits; methods; _ } ->
-      let trait_bound_type_vars =
-        match type_param with
-        | None -> StringSet.empty
-        | Some param -> StringSet.singleton param
+  | Surface.STraitDef { name; type_param; type_params; supertraits; methods; _ } ->
+      let type_params =
+        match type_params with
+        | [] -> Option.to_list type_param
+        | _ -> type_params
       in
+      let trait_bound_type_vars = bound_type_vars_of_names type_params in
       let lower_method_sig_with_trait_bindings (sm : Surface.surface_method_sig) =
         let method_generics, method_params =
           lower_callable_signature ctx ~extra_bound_names:trait_bound_type_vars sm.sm_generics
@@ -901,16 +917,23 @@ let lower_top_decl_with_ctx
           }
       in
       let td =
-        AST.{ name; type_param; supertraits; methods = List.map lower_method_sig_with_trait_bindings methods }
+        AST.
+          {
+            name;
+            type_param;
+            type_params;
+            supertraits;
+            methods = List.map lower_method_sig_with_trait_bindings methods;
+          }
       in
       [ AST.mk_stmt ~pos ~end_pos ~file_id (AST.TraitDef td) ]
   | Surface.SAmbiguousImplDef { impl_type_params; impl_head_type; impl_methods } -> (
       match impl_head_type.ste_desc with
-      | Surface.STApp (head_name, [ impl_for_type ]) when not (StringSet.mem (name_text head_name) ctx.type_names)
-        ->
+      | Surface.STApp (head_name, impl_trait_args)
+        when impl_trait_args <> [] && not (StringSet.mem (name_text head_name) ctx.type_names) ->
           lower_trait_impl_decl
             (List.map lower_generic_param impl_type_params)
-            (name_text head_name) impl_for_type impl_methods
+            (name_text head_name) impl_trait_args impl_methods
       | _ -> lower_inherent_impl_decl impl_head_type impl_methods)
   | Surface.SInherentImplDef { inherent_for_type; inherent_methods } ->
       lower_inherent_impl_decl inherent_for_type inherent_methods
@@ -987,12 +1010,15 @@ let test_stypedef ?(type_type_params = []) ~type_name ~type_body ~derive () =
     }
 
 let test_traitdef ?type_param ~name ~supertraits ~methods () =
+  let type_params = Option.to_list type_param in
   Surface.STraitDef
     {
       name;
       name_ref = test_name_ref name;
       type_param;
       type_param_ref = Option.map test_name_ref type_param;
+      type_params;
+      type_param_refs = List.map test_name_ref type_params;
       supertraits;
       supertrait_refs = List.map test_name_ref supertraits;
       methods;
@@ -1632,6 +1658,7 @@ let%test "explicit impl binders lower lowercase names in impl target and method 
            impl_type_params = [ { AST.name = "a"; constraints = [] } ];
            impl_trait_name = "Show";
            impl_for_type = AST.TApp ("Option", [ AST.TVar "a" ]);
+           impl_trait_args = [ AST.TApp ("Option", [ AST.TVar "a" ]) ];
            impl_methods =
              [
                {
@@ -1673,6 +1700,7 @@ let%test "omitted impl binders are inferred from free vars in impl target" =
            impl_type_params = [ { AST.name = "a"; constraints = [] } ];
            impl_trait_name = "Show";
            impl_for_type = AST.TApp ("List", [ AST.TVar "a" ]);
+           impl_trait_args = [ AST.TApp ("List", [ AST.TVar "a" ]) ];
            impl_methods =
              [
                {
@@ -1708,6 +1736,7 @@ let%test "omitted impl binders do not infer dotted qualified target names as typ
            impl_trait_name = "geometry.Drawable";
            impl_type_params = [];
            impl_for_type = AST.TCon "geometry.Point";
+           impl_trait_args = [ AST.TCon "geometry.Point" ];
            impl_methods = [];
          };
      _;
@@ -1763,6 +1792,7 @@ let%test "ambiguous vNext impl head lowers to trait impl when head names a trait
            impl_trait_name = "Show";
            impl_type_params = [ { AST.name = "a"; constraints = [] } ];
            impl_for_type = AST.TApp ("Option", [ AST.TVar "a" ]);
+           impl_trait_args = [ AST.TApp ("Option", [ AST.TVar "a" ]) ];
            impl_methods = [];
          };
      _;

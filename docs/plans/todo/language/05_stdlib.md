@@ -57,7 +57,7 @@ Modules -> Prelude -> Shim-first Go interop -> Stdlib
 - `09_shim-first-go-interop.md` has introduced `extern type`, checked-in Go shims, canonical immutable `std.bytes.Bytes`, and the initial `std.file` proof slice.
 - `std.basics` now owns the implicit terminal output function `puts`; the compiler no longer lowers `puts` as an emitter special case.
 - `std.file` now exposes text-first whole-file helpers, explicit byte helpers, and scoped handle callbacks backed by private shim plumbing.
-- `std.io` now exposes terminal `print`, `println`, `read_line`, and synchronous callback helpers for a single stdin line.
+- `std.io` now exposes low-level `Read[r, e]`/`Write[w, e]` protocols plus default stdin/stdout helpers. Stderr helpers live in `std.io.err`.
 - `docs/features/ffi.md` now documents shim-first interop as the current direction, with direct package externs retained only as historical context.
 - Existing list/map/str examples are mostly fixtures and exploratory docs; they are not committed full stdlib modules yet.
 
@@ -151,32 +151,40 @@ Rules:
 
 ### `std.io`
 
-Terminal IO. All effectful. This should use checked-in shims rather than direct FFI.
+Terminal IO. All effectful. This should use checked-in shims rather than direct FFI. `std.io` owns the shared IO protocols and the default stdin/stdout surface; `std.io.err` owns stderr helpers.
 
 Current API:
 
 ```marmoset
 import std.prelude.Show
 
-export ReadLineError, print, println, read_line, map_line, with_line
+export Error, Read, Write, read, write, flush, print
 
-type ReadLineError = { EndOfFile, Other(Str) }
+type Error = { EndOfFile, BrokenPipe, Interrupted, Other(Str) }
 
-fn print[a: Show](value: a) => Unit
-fn println[a: Show](value: a) => Unit
-fn read_line() => Result[Str, ReadLineError]
-fn map_line(body: (Str) -> Str) => Result[Str, ReadLineError]
-fn with_line(body: (Str) => Unit) => Result[Unit, ReadLineError]
+trait Read[r, e] = {
+  fn read(reader: r) => Result[Str, e]
+}
+
+trait Write[w, e] = {
+  fn write(writer: w, value: Str) => Result[Unit, e]
+  fn flush(writer: w) => Result[Unit, e]
+  fn print[a: Show](writer: w, value: a) => Result[Unit, e]
+}
+
+fn read() => Result[Str, Error]
+fn write(value: Str) => Result[Unit, Error]
+fn flush() => Result[Unit, Error]
+fn print[a: Show](value: a) => Result[Unit, Error]
 ```
 
 Rules:
 
-- `print` writes the `Show.show` rendering without a trailing newline.
-- `println` writes the `Show.show` rendering with a trailing newline.
-- `read_line` returns a line without the trailing newline. End-of-input is `ReadLineError.EndOfFile`; unexpected reader failures are `ReadLineError.Other(Str)`.
-- `map_line` reads one line and returns the pure callback result.
-- `with_line` reads one line, runs an effectful callback, and returns `Unit` on success.
-- Private shim functions are `print_str` and `println_str`; public generic rendering stays in Marmoset.
+- `io.read` reads one stdin line without the trailing newline. End-of-input is `Error.EndOfFile`.
+- `io.write` writes the string to stdout without adding a newline.
+- `io.print` writes `Show.show(value)` plus a trailing newline, then flushes.
+- `std.io.err` exports `Error`, `write`, `flush`, and `print` for stderr. Its error enum omits `EndOfFile`.
+- File handles implement `io.Read[Handle, FileReadError]` privately inside `std.file`; users call it through `io.Read.read(handle)` inside `file.open` callbacks.
 
 ### `std.str`
 
@@ -433,3 +441,7 @@ HTTP, SQL, and framework-style wrappers likely need follow-up shim features such
 - 2026-05-10 00:39 CEST: Implemented `std.io` with generic `Show`-based `print`/`println`, direct shim-backed `read_line`, checked-in `runtime/go/shims/std/io`, and install metadata. Focused stdlib-shim tests now pass.
 - 2026-05-10 01:41 CEST: Started callback-interop dogfooding for stdlib shims. Added red coverage for `std.io.map_line` and `std.io.with_line`, where checked-in Go shims must call Marmoset closures synchronously through the generated adapter.
 - 2026-05-10 01:45 CEST: Callback-interop dogfooding reached focused green state. `std.io.map_line` covers pure callback return conversion and `std.io.with_line` covers effectful `Unit` callbacks through production shims.
+- 2026-05-11 23:31 CEST: Started the trait-shaped IO redesign slice. Target: make `std.io` expose `Read[r, e]`/`Write[w, e]` protocols plus default stdin/stdout helpers, move stderr helpers to `std.io.err`, and keep concrete filesystem APIs under `std.file` while implementing the IO protocols.
+- 2026-05-11 23:34 CEST: Added red stdlib-shim coverage for trait-shaped IO. Expected failures observed: `std.io.Read`, `std.io.Error`, and `std.io.err` are missing, while the old `println`/`read_line`/callback helpers are still exported.
+- 2026-05-11 23:51 CEST: Trait-shaped IO reached focused green. The compiler now accepts multi-parameter traits/impl heads such as `Read[r, e]` and `impl io.Read[Handle, FileReadError]`, `std.io` exports `read`/`write`/`flush`/`print` plus IO protocols, stderr lives in `std.io.err`, and `std.file` implements the read protocol for scoped handles. Verification passed with `dune runtest lib/frontend/syntax lib/frontend/typecheck lib/backend/go` and `make integration stdlib-shims`.
+- 2026-05-11 23:54 CEST: Final trait-shaped IO quality gate passed with `dune runtest lib/frontend/syntax lib/frontend/typecheck lib/backend/go`, `make integration ffi stdlib-shims`, and `git diff --check`; preparing the slice commit.

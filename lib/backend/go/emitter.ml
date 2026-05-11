@@ -413,15 +413,16 @@ let dynamic_trait_method_supported
     (trait_def : Typecheck.Trait_registry.trait_def) (method_sig : Typecheck.Trait_registry.method_sig) : bool =
   method_sig.method_generics = []
   &&
-  match trait_def.trait_type_param with
-  | None -> method_sig.method_params <> []
-  | Some type_param -> (
+  match Typecheck.Trait_registry.trait_type_params trait_def with
+  | [] -> method_sig.method_params <> []
+  | [ type_param ] -> (
       match method_sig.method_params with
       | [] -> false
       | _receiver :: rest ->
           let self_in_rest = List.exists (fun (_, ty) -> type_mentions_trait_self type_param ty) rest in
           let self_in_return = type_mentions_trait_self type_param method_sig.method_return_type in
           (not self_in_rest) && not self_in_return)
+  | _ -> false
 
 let trait_object_method_candidates (traits : string list) :
     (string * Typecheck.Trait_registry.trait_def * Typecheck.Trait_registry.method_sig) list =
@@ -1881,6 +1882,16 @@ let type_expr_to_mono_type_with_impl_bindings
   let bindings = impl_type_bindings impl_type_params in
   annotation_exn (Annotation.type_expr_to_mono_type_with bindings type_expr)
 
+let impl_trait_args_to_mono_types (impl : AST.impl_def) (for_type : Types.mono_type) : Types.mono_type list =
+  match impl.impl_trait_args with
+  | [] -> [ for_type ]
+  | args -> List.map (type_expr_to_mono_type_with_impl_bindings impl.impl_type_params) args
+
+let trait_substitution_for_codegen
+    (source_trait_def : Typecheck.Trait_registry.trait_def) (impl_trait_args : Types.mono_type list) :
+    Types.substitution =
+  Typecheck.Trait_registry.trait_substitution_for_args source_trait_def impl_trait_args
+
 let is_known_inherent_type_name (name : string) : bool =
   Annotation.builtin_primitive_type name <> None
   || Annotation.builtin_type_constructor_name name <> None
@@ -1932,6 +1943,7 @@ let inherent_type_bindings (inherent_for_type : AST.type_expr) : (string * Types
 
 let register_impl_template (state : mono_state) (impl : AST.impl_def) : impl_template =
   let for_type = type_expr_to_mono_type_with_impl_bindings impl.impl_type_params impl.impl_for_type in
+  let impl_trait_args = impl_trait_args_to_mono_types impl for_type in
   let registered_impl_opt = Typecheck.Trait_registry.lookup_impl impl.impl_trait_name for_type in
   let explicit_methods =
     List.map
@@ -1993,7 +2005,6 @@ let register_impl_template (state : mono_state) (impl : AST.impl_def) : impl_tem
     | None -> []
     | Some _trait_def ->
         let explicit_names = List.map (fun (m : AST.method_impl) -> m.impl_method_name) impl.impl_methods in
-        let concrete_for_type = Types.canonicalize_mono_type for_type in
         List.filter_map
           (fun ((source_trait_def, m) : Typecheck.Trait_registry.trait_def * Typecheck.Trait_registry.method_sig)
              ->
@@ -2004,11 +2015,11 @@ let register_impl_template (state : mono_state) (impl : AST.impl_def) : impl_tem
                   None
                 else
                   let substitute =
-                    match source_trait_def.Typecheck.Trait_registry.trait_type_param with
-                    | None -> fun t -> t
-                    | Some tp ->
-                        let subst = Types.substitution_singleton tp concrete_for_type in
-                        fun t -> Types.apply_substitution subst t
+                    let subst =
+                      trait_substitution_for_codegen source_trait_def
+                        (List.map Types.canonicalize_mono_type impl_trait_args)
+                    in
+                    fun t -> Types.apply_substitution subst t
                   in
                   let param_names = List.map fst m.method_params in
                   let param_types = List.map (fun (_, t) -> substitute t) m.method_params in
@@ -3112,6 +3123,7 @@ let rec collect_insts_stmt
       ignore (register_impl_template state impl);
       if impl.impl_type_params = [] then (
         let for_type = annotation_exn (Annotation.type_expr_to_mono_type impl.impl_for_type) in
+        let impl_trait_args = impl_trait_args_to_mono_types impl for_type in
         let for_type_fingerprint = fingerprint_types [ for_type ] in
         let explicit_method_names =
           List.map (fun (m : AST.method_impl) -> m.impl_method_name) impl.impl_methods
@@ -3190,11 +3202,8 @@ let rec collect_insts_stmt
                       (* Method-level generics: specialized per call site, not eagerly *)
                     else
                       let substitute =
-                        match source_trait_def.Typecheck.Trait_registry.trait_type_param with
-                        | None -> fun t -> t
-                        | Some tp ->
-                            let subst = Types.substitution_singleton tp for_type in
-                            fun t -> Types.apply_substitution subst t
+                        let subst = trait_substitution_for_codegen source_trait_def impl_trait_args in
+                        fun t -> Types.apply_substitution subst t
                       in
                       let param_names = List.map fst m.method_params in
                       let param_types = List.map (fun (_, t) -> substitute t) m.method_params in
@@ -3220,9 +3229,7 @@ let rec collect_insts_stmt
                         }
                       in
                       let specialization_subst =
-                        match source_trait_def.Typecheck.Trait_registry.trait_type_param with
-                        | None -> Types.empty_substitution
-                        | Some tp -> Types.substitution_singleton tp for_type
+                        trait_substitution_for_codegen source_trait_def impl_trait_args
                       in
                       let payload : impl_inst_payload =
                         { param_names; param_types; return_type; body_stmt; specialization_subst }
@@ -8198,9 +8205,7 @@ let rec abi_type_go_for_main ~(api_alias : string) (boundary : Typecheck.Shim_bo
   | BStdBytes -> "marmoset.Bytes"
   | BExternHandle handle -> Printf.sprintf "%s.%s" api_alias (extern_handle_api_type_name handle.extern_type_name)
   | BCallback callback ->
-      let params =
-        callback.callback_params |> List.map (abi_type_go_for_main ~api_alias) |> String.concat ", "
-      in
+      let params = callback.callback_params |> List.map (abi_type_go_for_main ~api_alias) |> String.concat ", " in
       Printf.sprintf "func(%s) %s" params (abi_type_go_for_main ~api_alias callback.callback_return)
 
 let rec track_boundary_marmoset_types (state : mono_state) (boundary : Typecheck.Shim_boundary.boundary_type) :
@@ -8422,14 +8427,13 @@ let rec to_abi_expr
         match callback.callback_return with
         | BUnit -> Printf.sprintf "\t\t\t__callback(%s)\n\t\t\treturn marmoset.NewUnit()" call_args
         | return_boundary ->
-            let result_expr =
-              to_abi_expr state ~api_alias ~owner_module_id ~context return_boundary "__result"
-            in
+            let result_expr = to_abi_expr state ~api_alias ~owner_module_id ~context return_boundary "__result" in
             Printf.sprintf "\t\t\t__result := __callback(%s)\n\t\t\treturn %s" call_args result_expr
       in
-      Printf.sprintf
-        "(func(__callback %s) %s {\n\t\treturn func(%s) %s {\n%s\n\t\t}\n\t})(%s)"
-        value_type api_type params (abi_type_go_for_main ~api_alias callback.callback_return) callback_body expr
+      Printf.sprintf "(func(__callback %s) %s {\n\t\treturn func(%s) %s {\n%s\n\t\t}\n\t})(%s)" value_type
+        api_type params
+        (abi_type_go_for_main ~api_alias callback.callback_return)
+        callback_body expr
 
 and from_abi_expr
     (state : mono_state)
@@ -9017,7 +9021,13 @@ let shim_package_files ?toolchain_root (shim_id : string) : go_aux_file list =
     | Some source_root when Sys.is_directory source_root -> source_root
     | _ -> failwith (Printf.sprintf "Codegen error: missing checked-in Go shim package for shim id %S" shim_id)
   in
-  match collect_regular_files ~root:source_root ~rel_dir:"" with
+  let files =
+    Sys.readdir source_root
+    |> Array.to_list
+    |> List.sort String.compare
+    |> List.filter (fun name -> not (Sys.is_directory (Filename.concat source_root name)))
+  in
+  match files with
   | [] -> failwith (Printf.sprintf "Codegen error: empty checked-in Go shim package for shim id %S" shim_id)
   | files ->
       files
@@ -9116,9 +9126,7 @@ let rec abi_type_go (boundary : Typecheck.Shim_boundary.boundary_type) : string 
   | BExternHandle handle -> (extern_handle_api_type_name handle.extern_type_name, false)
   | BCallback callback ->
       let params =
-        callback.callback_params
-        |> List.map (fun boundary -> fst (abi_type_go boundary))
-        |> String.concat ", "
+        callback.callback_params |> List.map (fun boundary -> fst (abi_type_go boundary)) |> String.concat ", "
       in
       let return_go, return_needs_import = abi_type_go callback.callback_return in
       let params_need_import =
@@ -9519,6 +9527,41 @@ let%test "generated shim api package includes owner enum variants" =
       && string_contains file.contents "type StatusOther struct"
       && string_contains file.contents "Field0 string"
       && string_contains file.contents "Field1 int64"
+
+let%test "nested shim packages are copied as distinct packages" =
+  let extern_declarations = Hashtbl.create 2 in
+  let extern_calls = Hashtbl.create 2 in
+  let add_call id shim_id func_name =
+    let shim_key = Typecheck.Extern_registry.shim_key ~shim_id ~func_name in
+    Hashtbl.add extern_declarations shim_key
+      {
+        Typecheck.Resolution_artifacts.shim_key;
+        shim_id;
+        owner_module_id = String.concat "." (String.split_on_char '/' shim_id);
+        source_qualifier = "shim";
+        marmoset_func_name = func_name;
+        go_symbol_name = String.capitalize_ascii func_name;
+        param_names = [];
+        param_boundary_types = [];
+        return_boundary_type = Typecheck.Shim_boundary.BUnit;
+        is_effectful = true;
+        source_span = Diagnostic.NoSpan;
+        boundary_spans = [ Diagnostic.NoSpan ];
+      };
+    Hashtbl.add extern_calls id
+      {
+        Typecheck.Resolution_artifacts.call_func_key = shim_key;
+        call_arg_boundary_types = [];
+        call_return_boundary_type = Typecheck.Shim_boundary.BUnit;
+        call_effectful = true;
+      }
+  in
+  add_call 1 "std/io" "flush";
+  add_call 2 "std/io/err" "flush";
+  let paths = aux_rel_paths (shim_aux_go_files ~extern_declarations ~extern_calls ()) in
+  List.mem "shims/std/io/io.go" paths
+  && List.mem "shims/std/io/err/err.go" paths
+  && List.length (List.filter (String.equal "shims/std/io/err/err.go") paths) = 1
 
 let%test "shim support and generated std api packages compile with go 1.18" =
   let shim_key = Typecheck.Extern_registry.shim_key ~shim_id:"std/bytes" ~func_name:"from_str" in

@@ -819,11 +819,18 @@ let%test "transparent type annotation resolves generic type application" =
 let setup_trait_annotation_tests () =
   Trait_registry.clear ();
   Trait_registry.register_trait
-    { trait_name = "Named"; trait_type_param = None; trait_supertraits = []; trait_methods = [] };
+    {
+      trait_name = "Named";
+      trait_type_param = None;
+      trait_type_params = [];
+      trait_supertraits = [];
+      trait_methods = [];
+    };
   Trait_registry.register_trait
     {
       trait_name = "Show";
       trait_type_param = Some "a";
+      trait_type_params = [ "a" ];
       trait_supertraits = [];
       trait_methods =
         [

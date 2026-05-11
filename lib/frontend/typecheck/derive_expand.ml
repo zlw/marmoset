@@ -487,6 +487,7 @@ let synthesize_user_impl
             impl_type_params;
             impl_trait_name = trait_summary.name;
             impl_for_type = for_type;
+            impl_trait_args = [ for_type ];
             impl_methods = methods;
           }))
 
@@ -710,6 +711,7 @@ let%test "expand_user_derives rewrites user derive into synthetic impl" =
          {
            name = "Printable";
            type_param = Some "a";
+           type_params = [ "a" ];
            supertraits = [];
            methods =
              [
@@ -756,6 +758,7 @@ let%test "expand_user_derives keeps builtin residual before synthetic impl" =
          {
            name = "Printable";
            type_param = Some "a";
+           type_params = [ "a" ];
            supertraits = [];
            methods =
              [
@@ -801,6 +804,7 @@ let%test "expand_user_derives rejects required-method traits" =
          {
            name = "Needful";
            type_param = Some "a";
+           type_params = [ "a" ];
            supertraits = [];
            methods =
              [
@@ -836,6 +840,7 @@ let%test "expand_user_derives orders supertraits before dependent user traits" =
          {
            name = "Base";
            type_param = Some "a";
+           type_params = [ "a" ];
            supertraits = [];
            methods =
              [
@@ -857,6 +862,7 @@ let%test "expand_user_derives orders supertraits before dependent user traits" =
          {
            name = "Child";
            type_param = Some "a";
+           type_params = [ "a" ];
            supertraits = [ "Base" ];
            methods =
              [
@@ -903,6 +909,7 @@ let%test "expand_user_derives rejects duplicate traits in one derive clause" =
          {
            name = "Printable";
            type_param = Some "a";
+           type_params = [ "a" ];
            supertraits = [];
            methods =
              [
@@ -953,6 +960,7 @@ let%test "expand_user_derives accepts shape superconstraints satisfied by transp
          {
            name = "Greeter";
            type_param = Some "a";
+           type_params = [ "a" ];
            supertraits = [ "Named" ];
            methods =
              [
