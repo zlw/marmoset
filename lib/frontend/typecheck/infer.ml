@@ -6475,6 +6475,26 @@ and check_pattern pattern scrutinee_type =
                     match check_fields [] field_patterns field_types with
                     | Error e -> Error e
                     | Ok bindings -> Ok (bindings, scrutinee_type)))
+          | TNamed (type_name, type_args)
+            when let source_name = Display_names.display_binding_name type_name in
+                 (enum_name = type_name || enum_name = source_name) && variant_name = source_name -> (
+              match Type_registry.instantiate_named_wrapper_representation type_name type_args with
+              | Some (Ok representation_type) -> (
+                  match field_patterns with
+                  | [ payload_pattern ] -> (
+                      match check_pattern payload_pattern representation_type with
+                      | Error e -> Error e
+                      | Ok (bindings, _payload_type) -> Ok (bindings, scrutinee_type))
+                  | _ ->
+                      Error
+                        (error ~code:"type-pattern"
+                           ~message:
+                             (Printf.sprintf "Pattern %s expects 1 field, got %d" type_name
+                                (List.length field_patterns))))
+              | Some (Error msg) -> Error (error ~code:"type-pattern" ~message:msg)
+              | None ->
+                  Error
+                    (error ~code:"type-pattern" ~message:(Printf.sprintf "Unknown named wrapper: %s" type_name)))
           | _ ->
               Error
                 (error ~code:"type-pattern"

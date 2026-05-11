@@ -7,7 +7,7 @@ export FileReadError, FileWriteError,
        read, read_bytes, write, write_bytes, read_all, open
 
 extern type File
-type Path = { Path(Str) }
+type Path = Path(Str)
 
 type FileReadError = { NotFound, PermissionDenied, IsDirectory, AlreadyClosed, Other(Str) }
 type FileWriteError = { NotFound, PermissionDenied, IsDirectory, Other(Str) }
@@ -33,7 +33,7 @@ impl io.Read[File, FileReadError] = {
 
 impl io.Read[Path, FileReadError] = {
   fn read(path: Path) => Result[Str, FileReadError] = match path {
-    case Path.Path(value): match file_shim.read_bytes(value) {
+    case Path(value): match file_shim.read_bytes(value) {
       case Result.Success(payload): Result.Success(bytes.to_str_lossy(payload))
       case Result.Failure(err): Result.Failure(err)
     }
@@ -42,17 +42,17 @@ impl io.Read[Path, FileReadError] = {
 
 impl io.Write[Path, FileWriteError] = {
   fn write(path: Path, value: Str) => Result[Unit, FileWriteError] = match path {
-    case Path.Path(target): file_shim.write_bytes(target, bytes.from_str(value))
+    case Path(target): file_shim.write_bytes(target, bytes.from_str(value))
   }
 
   fn flush(path: Path) => Result[Unit, FileWriteError] = match path {
-    case Path.Path(target): file_shim.flush_path(target)
+    case Path(target): file_shim.flush_path(target)
   }
 }
 
-fn read(path: Str) => Result[Str, FileReadError] = io.Read.read(Path.Path(path))
+fn read(path: Str) => Result[Str, FileReadError] = io.Read.read(Path(path))
 
-fn write(path: Str, value: Str) => Result[Unit, FileWriteError] = io.Write.write(Path.Path(path), value)
+fn write(path: Str, value: Str) => Result[Unit, FileWriteError] = io.Write.write(Path(path), value)
 
 fn open[a, e](path: Str, body: (File) => Result[a, e]) => Result[a, FileUseError[e]] = match file_shim.open_handle(path) {
   case Result.Failure(err): Result.Failure(FileUseError.Open(err))

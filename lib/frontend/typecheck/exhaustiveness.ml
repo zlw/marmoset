@@ -57,6 +57,24 @@ let check_exhaustive (scrutinee_type : mono_type) (arms : AST.match_arm list) : 
             else
               let names = List.map (fun (v : Enum_registry.variant_def) -> enum_name ^ "." ^ v.name) uncovered in
               Error (Printf.sprintf "Non-exhaustive match. Missing: %s" (String.concat ", " names)))
+    | TNamed (type_name, type_args) -> (
+        match Type_registry.instantiate_named_wrapper_representation type_name type_args with
+        | Some (Ok _) ->
+            let source_name = Display_names.display_binding_name type_name in
+            let covers_wrapper =
+              List.exists
+                (fun (p : AST.pattern) ->
+                  match p.pat with
+                  | AST.PConstructor (enum_name, variant_name, _) ->
+                      (enum_name = type_name || enum_name = source_name) && variant_name = source_name
+                  | _ -> false)
+                all_patterns
+            in
+            if covers_wrapper then
+              Ok ()
+            else
+              Error (Printf.sprintf "Non-exhaustive match. Missing: %s" type_name)
+        | Some (Error _) | None -> Error "Non-exhaustive match. Add wildcard pattern.")
     | TInt | TString ->
         (* For primitives, need wildcard unless all literals covered *)
         Error "Non-exhaustive match on primitive type. Add wildcard pattern."

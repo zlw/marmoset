@@ -1002,6 +1002,15 @@ let%test "record match pattern typechecks" =
   | Ok { result_type = TInt; _ } -> true
   | _ -> false
 
+let%test "constructor-bearing wrapper pattern unwraps payload" =
+  Infer.reset_fresh_counter ();
+  let code =
+    "type Path = Path(Str)\nfn unwrap(path: Path) -> Str = match path { case Path(value): value }\nunwrap(Path(\"x\"))"
+  in
+  match check code with
+  | Ok { result_type = TString; _ } -> true
+  | _ -> false
+
 let%test "or-pattern alternatives must bind the same names" =
   Infer.reset_fresh_counter ();
   let code =

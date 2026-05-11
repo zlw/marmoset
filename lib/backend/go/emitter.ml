@@ -4819,6 +4819,11 @@ and emit_match ?target state type_map env match_expr scrutinee arms =
       emit_match_primitive ?target state type_map env scrutinee scrutinee_type arms match_result_type
   | Types.TRecord _ ->
       emit_match_record ?target state type_map env scrutinee scrutinee_type arms match_result_type
+  | Types.TNamed (name, args)
+    when match Type_registry.instantiate_named_wrapper_representation name args with
+         | Some (Ok _) -> true
+         | Some (Error _) | None -> false ->
+      emit_match_record ?target state type_map env scrutinee scrutinee_type arms match_result_type
   | Types.TNamed _ when Option.is_some (Structural.fields_of_type scrutinee_type) ->
       emit_match_record ?target state type_map env scrutinee scrutinee_type arms match_result_type
   | _ -> failwith (Printf.sprintf "Match on type %s not yet supported" (Types.to_string scrutinee_type))
@@ -5007,6 +5012,23 @@ and emit_pattern_plan
               [ Printf.sprintf "(%s == %s)" (go_field_access scrutinee_expr "Tag") tag_constant ]
           in
           (tag_conditions @ List.concat nested_conditions, List.concat nested_bindings)
+      | Types.TNamed (type_name, type_args)
+        when let source_name = Typecheck.Display_names.display_binding_name type_name in
+             (enum_name_pat = type_name || enum_name_pat = source_name) && variant_name = source_name -> (
+          match Type_registry.instantiate_named_wrapper_representation type_name type_args with
+          | Some (Ok representation_type) -> (
+              match field_patterns with
+              | [ payload_pattern ] ->
+                  let representation_go_type = type_to_go state.mono representation_type in
+                  let payload_expr = Printf.sprintf "%s(%s)" representation_go_type scrutinee_expr in
+                  emit_pattern_plan state payload_pattern payload_expr representation_type
+              | _ ->
+                  failwith
+                    (Printf.sprintf "Codegen error: wrapper pattern %s expects 1 field, got %d" type_name
+                       (List.length field_patterns)))
+          | Some (Error msg) ->
+              failwith (Printf.sprintf "Codegen error: cannot unwrap named wrapper %s: %s" type_name msg)
+          | None -> failwith (Printf.sprintf "Codegen error: unknown named wrapper %s" type_name))
       | _ ->
           failwith
             (Printf.sprintf "Codegen error: constructor pattern %s.%s doesn't match scrutinee type %s"
@@ -10203,6 +10225,14 @@ let%test "explicit wrapper emits distinct Go type and explicit constructor" =
 let%test "explicit scalar wrapper emits distinct Go type and explicit constructor" =
   match compile_string ~file_id:"<codegen>" "type UserId = UserId(Int)\nlet id = UserId(42)\nid" with
   | Ok (code, _) -> string_contains code "type UserId int64" && string_contains code "UserId(int64(42))"
+  | Error _ -> false
+
+let%test "explicit scalar wrapper pattern unwraps payload" =
+  match
+    compile_string ~file_id:"<codegen>"
+      "type Path = Path(Str)\nfn unwrap(path: Path) -> Str = match path { case Path(value): value }\nunwrap(Path(\"x\"))"
+  with
+  | Ok (code, _) -> string_contains code "string(__scrutinee"
   | Error _ -> false
 
 let%test "case-distinct record fields compile to distinct Go fields" =
