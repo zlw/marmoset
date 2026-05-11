@@ -9,7 +9,7 @@ import (
 	"marmoset_out/marmoset"
 )
 
-func WriteStr(value string) marmoset.Result[marmoset.Unit, errapi.Error] {
+func Write(value string) marmoset.Result[marmoset.Unit, errapi.Error] {
 	if _, err := os.Stderr.WriteString(value); err != nil {
 		return marmoset.Failure[marmoset.Unit, errapi.Error](writeError(err))
 	}

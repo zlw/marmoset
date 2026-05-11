@@ -245,9 +245,9 @@ match file.open("$EXISTING_PATH", (handle) => if (true) {
 EOF
 
 run_source_expect_build_failure \
-    "std.file handle type is private" \
-    "does not export 'Handle'" <<'EOF'
-import std.file.Handle
+    "std.file File type is private" \
+    "does not export 'File'" <<'EOF'
+import std.file.File
 
 puts(0)
 EOF
@@ -290,12 +290,14 @@ run_source_expect_output \
 import std.io
 import std.io.err
 
-let _ = io.write("value:")
-let _ = io.print(42)
-let _ = io.flush()
-let _ = err.write("err:")
-let _ = err.print("bad")
-let _ = err.flush()
+let stdout = io.stdout()
+let stderr = err.stderr()
+let _ = io.Write.write(stdout, "value:")
+let _ = io.Write.print(stdout, 42)
+let _ = io.Write.flush(stdout)
+let _ = io.Write.write(stderr, "err:")
+let _ = io.Write.print(stderr, "bad")
+let _ = io.Write.flush(stderr)
 EOF
 
 run_source_with_stdin_expect_output \
@@ -312,7 +314,7 @@ fn read_error_label(err: Error) -> Str = match err {
   case Error.Other(message): "other:" + message
 }
 
-match io.read() {
+match io.Read.read(io.stdin()) {
   case Result.Success(line): io.print("line:" + line)
   case Result.Failure(err): io.print(read_error_label(err))
 }

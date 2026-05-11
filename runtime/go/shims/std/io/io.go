@@ -28,7 +28,7 @@ func Read() marmoset.Result[string, ioapi.Error] {
 	return marmoset.Success[string, ioapi.Error](trimLineEnding(line))
 }
 
-func WriteStr(value string) marmoset.Result[marmoset.Unit, ioapi.Error] {
+func Write(value string) marmoset.Result[marmoset.Unit, ioapi.Error] {
 	if _, err := os.Stdout.WriteString(value); err != nil {
 		return marmoset.Failure[marmoset.Unit, ioapi.Error](writeError(err))
 	}

@@ -119,7 +119,7 @@ import std.bytes.Bytes
 
 export FileReadError, FileWriteError, FileOpenError, FileCloseError, FileUseError, read, read_bytes, write, write_bytes, read_all, open
 
-extern type Handle
+extern type File
 
 type FileReadError = { NotFound, PermissionDenied, IsDirectory, AlreadyClosed, Other(Str) }
 type FileWriteError = { NotFound, PermissionDenied, IsDirectory, Other(Str) }
@@ -131,8 +131,8 @@ fn read(path: Str) => Result[Str, FileReadError]
 fn read_bytes(path: Str) => Result[Bytes, FileReadError]
 fn write(path: Str, value: Str) => Result[Unit, FileWriteError]
 fn write_bytes(path: Str, bytes: Bytes) => Result[Unit, FileWriteError]
-fn read_all(file: Handle) => Result[Bytes, FileReadError]
-fn open[a, e](path: Str, body: (Handle) => Result[a, e]) => Result[a, FileUseError[e]]
+fn read_all(file: File) => Result[Bytes, FileReadError]
+fn open[a, e](path: Str, body: (File) => Result[a, e]) => Result[a, FileUseError[e]]
 ```
 
 Rules:
@@ -141,9 +141,10 @@ Rules:
 - `read` and `write` are the simple whole-file text APIs for the common path.
 - `read_bytes` and `write_bytes` are the explicit binary whole-file APIs for callers that need `Bytes`.
 - `open` is the normal handle-lifecycle API. It opens the file, calls the callback, then closes the handle after the callback returns.
-- `Handle` is private shim plumbing, not an exported stdlib type. Importers can receive handle values through callback inference but cannot import, construct, or inspect the type by name.
-- `read_all` is the scoped-handle read helper. Reading a closed, leaked, or unknown handle returns `FileReadError.AlreadyClosed`.
-- Raw handle operations stay in the private `file_shim` extern block as `open_handle` and `close_handle`; `std.file` does not export a raw close or one-argument open.
+- `File` is private shim plumbing, not an exported stdlib type. Importers can receive file values through callback inference but cannot import, construct, or inspect the type by name.
+- `read_all` is the scoped-file read helper. Reading a closed, leaked, or unknown file value returns `FileReadError.AlreadyClosed`.
+- Raw resource operations stay in the private `file_shim` extern block as `open_handle` and `close_handle`; `std.file` does not export a raw close or one-argument open.
+- The path helpers are backed by private `io.Read[Path, FileReadError]` and `io.Write[Path, FileWriteError]` impls; `flush_path` is a private no-op shim used only to satisfy `Write.flush`.
 - `FileReadError` currently uses `NotFound`, `PermissionDenied`, `IsDirectory`, `AlreadyClosed`, and `Other(Str)`.
 - `FileWriteError` and `FileOpenError` currently use `NotFound`, `PermissionDenied`, `IsDirectory`, and `Other(Str)`.
 - `FileCloseError` currently uses `AlreadyClosed` and `Other(Str)` for private close failures surfaced through `FileUseError.Close` or `FileUseError.UseAndClose`.
@@ -158,9 +159,11 @@ Current API:
 ```marmoset
 import std.prelude.Show
 
-export Error, Read, Write, read, write, flush, print
+export Error, Stdin, Stdout, Read, Write, stdin, stdout, read, write, flush, print
 
 type Error = { EndOfFile, BrokenPipe, Interrupted, Other(Str) }
+type Stdin = { Stdin }
+type Stdout = { Stdout }
 
 trait Read[r, e] = {
   fn read(reader: r) => Result[Str, e]
@@ -176,6 +179,8 @@ fn read() => Result[Str, Error]
 fn write(value: Str) => Result[Unit, Error]
 fn flush() => Result[Unit, Error]
 fn print[a: Show](value: a) => Result[Unit, Error]
+fn stdin() => Stdin
+fn stdout() => Stdout
 ```
 
 Rules:
@@ -183,8 +188,9 @@ Rules:
 - `io.read` reads one stdin line without the trailing newline. End-of-input is `Error.EndOfFile`.
 - `io.write` writes the string to stdout without adding a newline.
 - `io.print` writes `Show.show(value)` plus a trailing newline, then flushes.
-- `std.io.err` exports `Error`, `write`, `flush`, and `print` for stderr. Its error enum omits `EndOfFile`.
-- File handles implement `io.Read[Handle, FileReadError]` privately inside `std.file`; users call it through `io.Read.read(handle)` inside `file.open` callbacks.
+- `stdin()` implements `Read[Stdin, Error]`; `stdout()` implements `Write[Stdout, Error]`.
+- `std.io.err` exports `Error`, `Stderr`, `stderr`, `write`, `flush`, and `print` for stderr. Its error enum omits `EndOfFile`, and `stderr()` implements `Write[Stderr, std.io.err.Error]`.
+- File values implement `io.Read[File, FileReadError]` privately inside `std.file`; users call it through `io.Read.read(file)` inside `file.open` callbacks.
 
 ### `std.str`
 
@@ -436,12 +442,15 @@ HTTP, SQL, and framework-style wrappers likely need follow-up shim features such
 - 2026-05-10 00:24 CEST: Started the generic callback-result compiler hardening slice before building more stdlib API on top of it. Red target: a generic helper that accepts `(Int) -> Result[a, e]` and returns `Result[a, UseError[e]]` must compile and run instead of reaching Go codegen with an unresolved type variable.
 - 2026-05-10 00:29 CEST: Generic callback-result hardening reached green. Go enum collection now ignores codegen-unresolved enum instantiations instead of erasing them into `union_empty` artifacts, and the new callback wrapper fixture plus backend unit assertion verify the concrete `Result[a, UseError[e]]` specialization. Verification passed with `dune runtest lib/backend/go`, `make integration codegen_mono/cm55_generic_result_callback_error_wrapper.mr`, `make integration codegen_mono`, and `git diff --check`.
 - 2026-05-10 00:30 CEST: Started the high-level `std.file` API slice on top of the callback-result compiler fix. Target: hide the named handle type from importers, add string convenience helpers, and make `file.open` flatten callback failures into `FileUseError[e]` instead of returning nested `Result` values.
-- 2026-05-10 00:37 CEST: High-level `std.file` slice reached green. `read`/`write` are now the common text APIs, `read_bytes`/`write_bytes` are explicit binary APIs, `Handle` remains private, and `file.open` flattens callback failures through `FileUseError[e]`. Verification passed with `make integration stdlib-shims`, `dune runtest lib/frontend`, `dune runtest lib/backend/go`, `make integration ffi`, and `git diff --check`.
+- 2026-05-10 00:37 CEST: High-level `std.file` slice reached green. `read`/`write` are now the common text APIs, `read_bytes`/`write_bytes` are explicit binary APIs, `File` remains private, and `file.open` flattens callback failures through `FileUseError[e]`. Verification passed with `make integration stdlib-shims`, `dune runtest lib/frontend`, `dune runtest lib/backend/go`, `make integration ffi`, and `git diff --check`.
 - 2026-05-10 00:39 CEST: Started the `std.io` terminal IO slice. Red coverage first: `std.io` must provide `print`, `println`, and `read_line` over stdin with explicit `ReadLineError.EndOfFile`.
 - 2026-05-10 00:39 CEST: Implemented `std.io` with generic `Show`-based `print`/`println`, direct shim-backed `read_line`, checked-in `runtime/go/shims/std/io`, and install metadata. Focused stdlib-shim tests now pass.
 - 2026-05-10 01:41 CEST: Started callback-interop dogfooding for stdlib shims. Added red coverage for `std.io.map_line` and `std.io.with_line`, where checked-in Go shims must call Marmoset closures synchronously through the generated adapter.
 - 2026-05-10 01:45 CEST: Callback-interop dogfooding reached focused green state. `std.io.map_line` covers pure callback return conversion and `std.io.with_line` covers effectful `Unit` callbacks through production shims.
 - 2026-05-11 23:31 CEST: Started the trait-shaped IO redesign slice. Target: make `std.io` expose `Read[r, e]`/`Write[w, e]` protocols plus default stdin/stdout helpers, move stderr helpers to `std.io.err`, and keep concrete filesystem APIs under `std.file` while implementing the IO protocols.
 - 2026-05-11 23:34 CEST: Added red stdlib-shim coverage for trait-shaped IO. Expected failures observed: `std.io.Read`, `std.io.Error`, and `std.io.err` are missing, while the old `println`/`read_line`/callback helpers are still exported.
-- 2026-05-11 23:51 CEST: Trait-shaped IO reached focused green. The compiler now accepts multi-parameter traits/impl heads such as `Read[r, e]` and `impl io.Read[Handle, FileReadError]`, `std.io` exports `read`/`write`/`flush`/`print` plus IO protocols, stderr lives in `std.io.err`, and `std.file` implements the read protocol for scoped handles. Verification passed with `dune runtest lib/frontend/syntax lib/frontend/typecheck lib/backend/go` and `make integration stdlib-shims`.
+- 2026-05-11 23:51 CEST: Trait-shaped IO reached focused green. The compiler now accepts multi-parameter traits/impl heads such as `Read[r, e]` and `impl io.Read[File, FileReadError]`, `std.io` exports `read`/`write`/`flush`/`print` plus IO protocols, stderr lives in `std.io.err`, and `std.file` implements the read protocol for scoped file values. Verification passed with `dune runtest lib/frontend/syntax lib/frontend/typecheck lib/backend/go` and `make integration stdlib-shims`.
 - 2026-05-11 23:54 CEST: Final trait-shaped IO quality gate passed with `dune runtest lib/frontend/syntax lib/frontend/typecheck lib/backend/go`, `make integration ffi stdlib-shims`, and `git diff --check`; preparing the slice commit.
+- 2026-05-11 23:57 CEST: Started a shim naming cleanup for IO: rename private `write_str` shim entries to `write` so the extern blocks mirror the public helper names.
+- 2026-05-11 23:57 CEST: IO shim naming cleanup reached green. Verification passed with `make integration stdlib-shims`, `make integration ffi stdlib-shims`, and `git diff --check`; preparing the cleanup commit.
+- 2026-05-12 00:05 CEST: Extended the cleanup so stdio/stderr now expose real `Read`/`Write` receiver values, `std.file` renames its private resource from `Handle` to `File`, and file path helpers route through private `Read[Path, FileReadError]`/`Write[Path, FileWriteError]` impls. Focused `make integration stdlib-shims` is green.

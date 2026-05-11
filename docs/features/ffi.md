@@ -28,7 +28,7 @@ extern "std/file" as file_shim = {
 
 Phase one requires shim ids to use the `std` root and at least two slash-separated segments. Valid examples include `std/bytes`, `std/file`, `std/io`, and nested packages such as `std/io/err`. Single-segment ids such as `strings` are rejected with `shim-id-invalid`; syntactically valid but unknown ids such as `std/missing` fail with `shim-id-not-found`.
 
-Opaque resource handles use `extern type` in the owning shim module. Public modules should still expose the highest-level Marmoset API they can. For example, `std.file` keeps the handle type and raw open/close calls private, then exports callback-based helpers:
+Opaque resources use `extern type` in the owning shim module. Public modules should still expose the highest-level Marmoset API they can. For example, `std.file` keeps the file resource type and raw open/close calls private, then exports callback-based helpers:
 
 ```marmoset
 import std.bytes
@@ -36,7 +36,7 @@ import std.bytes.Bytes
 
 export FileUseError, read, read_bytes, write, write_bytes, read_all, open
 
-extern type Handle
+extern type File
 
 type FileReadError = { NotFound, PermissionDenied, IsDirectory, AlreadyClosed, Other(Str) }
 type FileWriteError = { NotFound, PermissionDenied, IsDirectory, Other(Str) }
@@ -47,16 +47,17 @@ type FileUseError[e] = { Open(FileOpenError), Use(e), Close(FileCloseError), Use
 extern "std/file" as file_shim = {
   fn read_bytes(path: Str) => Result[Bytes, FileReadError]
   fn write_bytes(path: Str, bytes: Bytes) => Result[Unit, FileWriteError]
-  fn open_handle(path: Str) => Result[Handle, FileOpenError]
-  fn close_handle(file: Handle) => Result[Unit, FileCloseError]
-  fn read_all(file: Handle) => Result[Bytes, FileReadError]
+  fn flush_path(path: Str) => Result[Unit, FileWriteError]
+  fn open_handle(path: Str) => Result[File, FileOpenError]
+  fn close_handle(file: File) => Result[Unit, FileCloseError]
+  fn read_all(file: File) => Result[Bytes, FileReadError]
 }
 
 fn read(path: Str) => Result[Str, FileReadError]
 fn read_bytes(path: Str) => Result[Bytes, FileReadError]
 fn write(path: Str, value: Str) => Result[Unit, FileWriteError]
 fn write_bytes(path: Str, bytes: Bytes) => Result[Unit, FileWriteError]
-fn open[a, e](path: Str, body: (Handle) => Result[a, e]) => Result[a, FileUseError[e]]
+fn open[a, e](path: Str, body: (File) => Result[a, e]) => Result[a, FileUseError[e]]
 ```
 
 `extern type` values cannot be constructed, field-inspected, record-pattern matched, or given derived trait implementations in Marmoset. Shim code owns their representation and lifecycle.
