@@ -120,6 +120,7 @@ import std.bytes.Bytes
 export FileReadError, FileWriteError, FileOpenError, FileCloseError, FileUseError, read, read_bytes, write, write_bytes, read_all, open
 
 extern type File
+type Path = Path(Str)  # private whole-path receiver
 
 type FileReadError = { NotFound, PermissionDenied, IsDirectory, AlreadyClosed, Other(Str) }
 type FileWriteError = { NotFound, PermissionDenied, IsDirectory, Other(Str) }
@@ -133,6 +134,10 @@ fn write(path: Str, value: Str) => Result[Unit, FileWriteError]
 fn write_bytes(path: Str, bytes: Bytes) => Result[Unit, FileWriteError]
 fn read_all(file: File) => Result[Bytes, FileReadError]
 fn open[a, e](path: Str, body: (File) => Result[a, e]) => Result[a, FileUseError[e]]
+
+impl io.Read[Path, FileReadError]
+impl io.Write[Path, FileWriteError]
+impl io.Read[File, FileReadError]
 ```
 
 Rules:
@@ -144,7 +149,8 @@ Rules:
 - `File` is private shim plumbing, not an exported stdlib type. Importers can receive file values through callback inference but cannot import, construct, or inspect the type by name.
 - `read_all` is the scoped-file read helper. Reading a closed, leaked, or unknown file value returns `FileReadError.AlreadyClosed`.
 - Raw resource operations stay in the private `file_shim` extern block as `open_handle` and `close_handle`; `std.file` does not export a raw close or one-argument open.
-- The whole-path helpers call private byte shims directly. `std.file` does not invent a path resource just to satisfy `io.Read`/`io.Write`.
+- The whole-path helpers use a private nominal `Path` receiver so `read`/`write` route through `io.Read[Path, FileReadError]` and `io.Write[Path, FileWriteError]`. `Path` is not exported.
+- `io.Write.flush(Path)` is a Marmoset no-op because whole-file writes complete synchronously once the private `write_bytes` shim returns; there is no fake `FlushPath` shim.
 - `FileReadError` currently uses `NotFound`, `PermissionDenied`, `IsDirectory`, `AlreadyClosed`, and `Other(Str)`.
 - `FileWriteError` and `FileOpenError` currently use `NotFound`, `PermissionDenied`, `IsDirectory`, and `Other(Str)`.
 - `FileCloseError` currently uses `AlreadyClosed` and `Other(Str)` for private close failures surfaced through `FileUseError.Close` or `FileUseError.UseAndClose`.
@@ -463,3 +469,4 @@ HTTP, SQL, and framework-style wrappers likely need follow-up shim features such
 - 2026-05-12 02:35 CEST: Started the stdio token removal cleanup. Red coverage now requires `std.io`/`std.io.err` to keep default terminal IO direct, with no exported `Stdin`/`Stdout`/`Stderr` types and no `stdin`/`stdout`/`stderr` token helpers.
 - 2026-05-12 02:35 CEST: Stdio token removal reached focused green. `std.io` now exports only `Error`, `Read`, `Write`, and terminal helpers; `std.io.err` exports only stderr helpers; copied Go shims no longer include Marmoset stdio token APIs. Focused `make integration stdlib-shims` is green.
 - 2026-05-12 15:56 CEST: Reworked stdio around private singleton extern receivers instead of public token helpers or direct helper shims. `std.io` now implements `Read[Stdin, Error]`/`Write[Stdout, Error]`, `std.io.err` implements `io.Write[Stderr, Error]`, and public helpers route through those trait impls. The compiler now supports module-local singleton values for private extern types and concrete method-generic default trait specialization from generic wrapper bodies, including interpolation-backed `Write.print`. Verification passed with `dune runtest lib/frontend/typecheck`, `dune runtest lib/backend/go`, `make integration stdlib-shims`, `make integration ffi stdlib-shims`, broader `MARMOSET_ROOT=<temp with HEAD std/option.mr> dune runtest lib/frontend lib/backend/go`, and `git diff --check`.
+- 2026-05-12 16:07 CEST: Refactored `std.file` whole-path helpers to use the same private receiver/protocol style as stdio. A private `Path` wrapper now implements `io.Read[Path, FileReadError]` and `io.Write[Path, FileWriteError]`; public `file.read`/`file.write` and byte helpers route through that wrapper while raw byte/open/close operations stay in private shims. Focused verification passed with `make integration stdlib-shims` and `make integration ffi stdlib-shims`.

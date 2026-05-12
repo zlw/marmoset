@@ -128,7 +128,10 @@ run_source_emit_go_expect_stdio_shape() {
         grep -qF 'func Flush(writer ioapi.Stdout)' "$outdir/shims/std/io/io.go" || failures=$((failures + 1))
         grep -qF 'func Write(writer errapi.Stderr, value string)' "$outdir/shims/std/io/err/err.go" || failures=$((failures + 1))
         grep -qF 'func Flush(writer errapi.Stderr)' "$outdir/shims/std/io/err/err.go" || failures=$((failures + 1))
-        if rg -q 'std__file__Path|flush_path|FlushPath|func Stdin|func Stdout|func Stderr' "$outdir"; then
+        grep -qF 'type std__file__Path string' "$outdir/main.go" || failures=$((failures + 1))
+        grep -qF 'func std__io__Read_read_std__file__Path' "$outdir/main.go" || failures=$((failures + 1))
+        grep -qF 'func std__io__Write_write_std__file__Path' "$outdir/main.go" || failures=$((failures + 1))
+        if rg -q 'flush_path|FlushPath|func Stdin|func Stdout|func Stderr' "$outdir"; then
             failures=$((failures + 1))
         fi
 
@@ -328,7 +331,7 @@ puts(0)
 EOF
 
 run_source_emit_go_expect_stdio_shape \
-    "std.io terminal helpers stay direct and std.file path helpers stay direct" <<EOF
+    "std.io terminal helpers and std.file path helpers use private receivers" <<EOF
 import std.file
 import std.io
 import std.io.err
