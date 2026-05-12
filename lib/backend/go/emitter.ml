@@ -672,7 +672,7 @@ type mono_state = {
   extern_calls : (int, Typecheck.Resolution_artifacts.extern_call) Hashtbl.t;
       (* Shim extern call artifacts keyed by call expression id *)
   extern_func_refs : (int, string) Hashtbl.t; (* Shim extern function-value references keyed by expression id *)
-  method_type_args_map : (int, Types.mono_type list) Hashtbl.t;
+  mutable method_type_args_map : (int, Types.mono_type list) Hashtbl.t;
       (* Phase 6.4: resolved method-level type args per call site *)
   method_def_map : (int, Typecheck.Resolution_artifacts.typed_method_def) Hashtbl.t;
       (* Phase 6.3: typed method definitions keyed by method id *)
@@ -750,6 +750,13 @@ let create_mono_state
     go_imports = GoImportSet.empty;
     placeholder_rewrite_map;
   }
+
+let overlay_method_type_args_map
+    (base : (int, Types.mono_type list) Hashtbl.t)
+    (overlay : (int, Types.mono_type list) Hashtbl.t) : (int, Types.mono_type list) Hashtbl.t =
+  let merged = Hashtbl.copy base in
+  Hashtbl.iter (fun expr_id type_args -> Hashtbl.replace merged expr_id type_args) overlay;
+  merged
 
 let used_emitted_function_names (state : mono_state) : StringSet.t =
   let names =
@@ -979,6 +986,16 @@ let extern_handle_go_type (state : mono_state) (type_name : string) : string =
       let api_alias = api_package_name shim_id in
       add_go_import ~alias:api_alias state (api_import_path shim_id);
       Printf.sprintf "%s.%s" api_alias (extern_handle_api_type_name type_name)
+  | None -> failwith (Printf.sprintf "Codegen error: unknown extern type '%s'" type_name)
+
+let extern_handle_singleton_go_value (state : mono_state) (type_name : string) : string =
+  match Type_registry.extern_type_owner_module_id type_name with
+  | Some owner_module_id ->
+      let shim_id = shim_id_of_owner_module_id owner_module_id in
+      let api_alias = api_package_name shim_id in
+      add_go_import state "marmoset_out/marmoset";
+      add_go_import ~alias:api_alias state (api_import_path shim_id);
+      Printf.sprintf "marmoset.NewHandle[%s.%sTag]()" api_alias (extern_handle_api_type_name type_name)
   | None -> failwith (Printf.sprintf "Codegen error: unknown extern type '%s'" type_name)
 
 let named_type_codegen_body_exn (type_name : string) (type_args : Types.mono_type list) :
@@ -1630,10 +1647,11 @@ let get_type (type_map : Infer.type_map) (expr : AST.expression) : Types.mono_ty
   match Hashtbl.find_opt type_map expr.id with
   | Some t -> t
   | None ->
+      let file_id = Option.value expr.file_id ~default:"<unknown>" in
       failwith
         (Printf.sprintf
-           "Codegen error: missing type for expression id %d (%s). Type map should be complete before emission."
-           expr.id (AST.type_of expr))
+           "Codegen error: missing type for expression id %d (%s) at %s:%d-%d. Type map should be complete before emission."
+           expr.id (AST.type_of expr) file_id expr.pos expr.end_pos)
 
 let enum_constructor_codegen_type
     (type_map : Infer.type_map)
@@ -3277,7 +3295,7 @@ and collect_insts_stmt_list
 
 and register_impl_method_use
     (state : mono_state)
-    (type_map : Infer.type_map)
+    (_type_map : Infer.type_map)
     (env : Infer.type_env)
     ~(trait_name : string)
     ~(method_name : string)
@@ -3285,7 +3303,8 @@ and register_impl_method_use
     ~(method_type_args : Types.mono_type list) : unit =
   let trait_name = canonical_codegen_trait_name trait_name in
   let raw_for_type = Types.canonicalize_mono_type for_type in
-  if state.concrete_only && has_type_vars raw_for_type then
+  let method_type_args = List.map Types.canonicalize_mono_type method_type_args in
+  if state.concrete_only && (has_type_vars raw_for_type || List.exists has_type_vars method_type_args) then
     ()
   else
     let for_type' = normalize_type_for_codegen ~concrete_only:state.concrete_only raw_for_type in
@@ -3367,7 +3386,23 @@ and register_impl_method_use
           in
           add_impl_instantiation state impl_inst payload;
           let method_env = add_param_bindings env payload.param_names payload.param_types in
-          ignore (collect_insts_stmt state type_map method_env payload.body_stmt)
+          let inferred_map = Infer.create_type_map () in
+          let infer_state = Infer.create_inference_state () in
+          match
+            Infer.with_inference_state infer_state (fun () ->
+                Infer.infer_statement inferred_map method_env payload.body_stmt)
+          with
+          | Ok (subst, _body_type) ->
+              Infer.apply_substitution_type_map subst inferred_map;
+              let method_type_args_map =
+                overlay_method_type_args_map state.method_type_args_map (Infer.snapshot_method_type_args_store ())
+              in
+              let previous_method_type_args_map = state.method_type_args_map in
+              state.method_type_args_map <- method_type_args_map;
+              Fun.protect
+                ~finally:(fun () -> state.method_type_args_map <- previous_method_type_args_map)
+                (fun () -> ignore (collect_insts_stmt state inferred_map method_env payload.body_stmt))
+          | Error _ -> ()
 
 and register_trait_object_support_for_type
     (state : mono_state)
@@ -3780,6 +3815,14 @@ type emit_state = {
 }
 
 let create_emit_state mono = { indent = 1; current_return_type = None; mono }
+
+let with_method_type_args_map
+    (state : emit_state) (method_type_args_map : (int, Types.mono_type list) Hashtbl.t) (f : unit -> 'a) :
+    'a =
+  let previous = state.mono.method_type_args_map in
+  state.mono.method_type_args_map <- method_type_args_map;
+  Fun.protect ~finally:(fun () -> state.mono.method_type_args_map <- previous) f
+
 let indent_str state = String.make (state.indent * 4) ' '
 
 let fresh_temp_name (state : emit_state) (prefix : string) : string =
@@ -4235,7 +4278,12 @@ let rec emit_expr
                   | None -> go_safe_ident target_name
                 else
                   mangle_func_name target_name param_types
-            | None -> go_safe_ident name))
+            | None -> (
+                match Hashtbl.find_opt type_map expr.id with
+                | Some (Types.TNamed (type_name, []))
+                  when String.equal name type_name && Type_registry.is_extern_type_name type_name ->
+                    extern_handle_singleton_go_value state.mono type_name
+                | _ -> go_safe_ident name)))
     | AST.Prefix (op, operand) -> emit_prefix state type_map env op operand
     | AST.Infix (left, op, right) -> emit_infix state type_map env left op right
     | AST.TypeCheck (expr, type_ann) -> emit_type_check state type_map env expr type_ann
@@ -6928,7 +6976,7 @@ let emit_specialized_func
   let provisional_env_with_func =
     Infer.TypeEnv.add inst.func_name (Types.Forall ([], concrete_func_type)) typed_env
   in
-  let specialized_type_map, inferred_body_type_opt =
+  let specialized_type_map, specialized_method_type_args_map, inferred_body_type_opt =
     let inferred_map = Infer.create_type_map () in
     let infer_state = Infer.create_inference_state () in
     match
@@ -6946,11 +6994,14 @@ let emit_specialized_func
     with
     | Ok (_param_names, _param_types, inferred_body_type, _actual_effectful, subst) ->
         Infer.apply_substitution_type_map subst inferred_map;
+        let method_type_args_map =
+          overlay_method_type_args_map state.mono.method_type_args_map (Infer.snapshot_method_type_args_store ())
+        in
         let inferred_body_type =
           Types.canonicalize_mono_type (Types.apply_substitution subst inferred_body_type)
         in
-        (inferred_map, Some inferred_body_type)
-    | Error _ -> (copied_specialized_type_map, None)
+        (inferred_map, method_type_args_map, Some inferred_body_type)
+    | Error _ -> (copied_specialized_type_map, state.mono.method_type_args_map, None)
   in
   let terminal_return_type_opt =
     match terminal_expr_of_stmt func_def.body with
@@ -6984,14 +7035,16 @@ let emit_specialized_func
   let body_env = add_param_bindings env_with_func param_names inst.concrete_types in
   (* Collect impl uses from the concrete body so generic trait-method calls
      register the needed concrete impl instantiations before final emission. *)
-  ignore (collect_insts_stmt state.mono specialized_type_map body_env func_def.body);
+  with_method_type_args_map state specialized_method_type_args_map (fun () ->
+      ignore (collect_insts_stmt state.mono specialized_type_map body_env func_def.body));
 
   (* Save and reset indent for top-level function *)
   let saved_indent = state.indent in
   state.indent <- 0;
   let body_str =
-    with_return_type state effective_return_type (fun () ->
-        emit_func_body state specialized_type_map body_env func_def.body)
+    with_method_type_args_map state specialized_method_type_args_map (fun () ->
+        with_return_type state effective_return_type (fun () ->
+            emit_func_body state specialized_type_map body_env func_def.body))
   in
   state.indent <- saved_indent;
 
@@ -7214,7 +7267,7 @@ let emit_cached_impl_method
   (* Generic impl-method specializations can leave fresh inference vars in the
      global type_map. Re-infer the concrete body when possible so nested block
      expressions and calls recover precise concrete types. *)
-  let effective_type_map =
+  let effective_type_map, effective_method_type_args_map =
     let inferred_map = Infer.create_type_map () in
     let infer_state = Infer.create_inference_state () in
     match
@@ -7223,13 +7276,18 @@ let emit_cached_impl_method
     with
     | Ok (subst, _body_type) ->
         Infer.apply_substitution_type_map subst inferred_map;
-        inferred_map
-    | Error _ -> copied_specialized_type_map ()
+        let method_type_args_map =
+          overlay_method_type_args_map state.mono.method_type_args_map (Infer.snapshot_method_type_args_store ())
+        in
+        (inferred_map, method_type_args_map)
+    | Error _ -> (copied_specialized_type_map (), state.mono.method_type_args_map)
   in
-  ignore (collect_insts_stmt state.mono effective_type_map method_env payload.body_stmt);
+  with_method_type_args_map state effective_method_type_args_map (fun () ->
+      ignore (collect_insts_stmt state.mono effective_type_map method_env payload.body_stmt));
   let body_str =
-    with_return_type state payload.return_type (fun () ->
-        emit_func_body state effective_type_map method_env payload.body_stmt)
+    with_method_type_args_map state effective_method_type_args_map (fun () ->
+        with_return_type state payload.return_type (fun () ->
+            emit_func_body state effective_type_map method_env payload.body_stmt))
   in
   Printf.sprintf "func %s(%s) %s {\n%s}\n" func_name params_str return_type_str body_str
 
@@ -7259,7 +7317,7 @@ let collect_cached_impl_method_deps
             type_map;
           copied
       in
-      let effective_type_map =
+      let effective_type_map, effective_method_type_args_map =
         let inferred_map = Infer.create_type_map () in
         let infer_state = Infer.create_inference_state () in
         match
@@ -7268,10 +7326,15 @@ let collect_cached_impl_method_deps
         with
         | Ok (subst, _body_type) ->
             Infer.apply_substitution_type_map subst inferred_map;
-            inferred_map
-        | Error _ -> copied_specialized_type_map ()
+            let method_type_args_map =
+              overlay_method_type_args_map state.mono.method_type_args_map
+                (Infer.snapshot_method_type_args_store ())
+            in
+            (inferred_map, method_type_args_map)
+        | Error _ -> (copied_specialized_type_map (), state.mono.method_type_args_map)
       in
-      ignore (collect_insts_stmt state.mono effective_type_map method_env payload.body_stmt)
+      with_method_type_args_map state effective_method_type_args_map (fun () ->
+          ignore (collect_insts_stmt state.mono effective_type_map method_env payload.body_stmt))
 
 let emit_inherent_method
     (state : emit_state)
@@ -11535,6 +11598,36 @@ puts(id(1))|}
       match compile_string ~file_id:"<codegen>" source with
       | Ok (code, _) -> string_not_contains code "_any"
       | Error _ -> false)
+
+let%test "generic default trait method specializes from generic wrapper body" =
+  let source =
+    {|trait Writer[w] = {
+  fn write(writer: w, value: Str) -> Str
+  fn print[a: Show](writer: w, value: a) -> Str = Writer.write(writer, "#{value}")
+}
+
+impl Writer[Int] = {
+  fn write(writer: Int, value: Str) -> Str = value
+}
+
+fn print[a: Show](value: a) -> Str = Writer.print(0, value)
+
+puts(print(1))|}
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      Typecheck.Trait_registry.clear ();
+      Typecheck.Builtins.init_builtin_impls ())
+    (fun () ->
+      match compile_string ~file_id:"<codegen>" source with
+      | Ok (code, _) ->
+          string_contains code "func Writer_print_" && string_not_contains code "codegen-unresolved-tvar"
+      | Error diags ->
+          List.iter
+            (fun (diag : Diagnostic.t) ->
+              Printf.printf "Diagnostic: [%s] %s\n" diag.code diag.message)
+            diags;
+          false)
 
 (* --- run_build_ok_not_contains_from_stdin --- *)
 

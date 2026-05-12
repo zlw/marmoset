@@ -6788,6 +6788,14 @@ let check_expression (type_map : type_map) (env : type_env) (expr : AST.expressi
    ============================================================ *)
 
 let predeclare_top_level_lets (env : type_env) (program : AST.program) : (type_env, Diagnostic.t) result =
+  let exported_names =
+    List.fold_left
+      (fun acc (stmt : AST.statement) ->
+        match stmt.stmt with
+        | AST.ExportDecl names -> List.fold_left (fun names name -> StringSet.add name names) acc names
+        | _ -> acc)
+      StringSet.empty program
+  in
   let rec go (seen : StringSet.t) (env_acc : type_env) (stmts : AST.statement list) :
       (type_env, Diagnostic.t) result =
     match stmts with
@@ -6827,6 +6835,15 @@ let predeclare_top_level_lets (env : type_env) (program : AST.program) : (type_e
                        declarations and placeholder sections participate in top-level
                        forward references. *)
                     go seen' env_acc rest)
+        | AST.ExternTypeDef extern_type_def
+          when not (StringSet.mem extern_type_def.extern_type_name exported_names) ->
+            let name = extern_type_def.extern_type_name in
+            if TypeEnv.mem name env_acc || StringSet.mem name seen then
+              go seen env_acc rest
+            else
+              go (StringSet.add name seen)
+                (TypeEnv.add name (mono_to_poly (TNamed (name, []))) env_acc)
+                rest
         | _ -> go seen env_acc rest)
   in
   go StringSet.empty env program
@@ -7200,6 +7217,21 @@ module Test = struct
       Option.value (first_primary diag.labels) ~default:(Option.value (first_any diag.labels) ~default:"")
     in
     String.equal file_id target
+
+  let%test "private extern type can be used as module-local singleton value" =
+    match infer_string "extern type Token\nlet token = Token\ntoken\n" with
+    | Ok (_, _type_map, TNamed ("Token", [])) -> true
+    | Ok (_, _, t) ->
+        Printf.printf "Expected Token but got %s\n" (to_string t);
+        false
+    | Error diag ->
+        Printf.printf "Error: %s\n" diag.message;
+        false
+
+  let%test "exported extern type does not create singleton value binding" =
+    match infer_string "export Token\nextern type Token\nlet token = Token\ntoken\n" with
+    | Error diag -> is_code diag "type-unbound-var" && contains_substring diag.message "Unbound variable: Token"
+    | Ok _ -> false
 
   let rec identifier_occurrences_in_expr (name : string) (expr : AST.expression) : (int * int) list =
     match expr.expr with

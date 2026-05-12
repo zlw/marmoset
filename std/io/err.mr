@@ -1,19 +1,26 @@
 import std.prelude.Show
+import std.io
 
 export Error, write, flush, print
 
 type Error = { BrokenPipe, Interrupted, Other(Str) }
+extern type Stderr
 
 extern "std/io/err" as err_shim = {
-  fn write(value: Str) => Result[Unit, Error]
-  fn flush() => Result[Unit, Error]
+  fn write(writer: Stderr, value: Str) => Result[Unit, Error]
+  fn flush(writer: Stderr) => Result[Unit, Error]
 }
 
-fn write(value: Str) => Result[Unit, Error] = err_shim.write(value)
-
-fn flush() => Result[Unit, Error] = err_shim.flush()
-
-fn print[a: Show](value: a) => Result[Unit, Error] = match write(Show.show(value) + "\n") {
-  case Result.Success(_): flush()
-  case Result.Failure(err): Result.Failure(err)
+impl io.Write[Stderr, Error] = {
+  fn write(writer: Stderr, value: Str) => Result[Unit, Error] = err_shim.write(writer, value)
+  fn flush(writer: Stderr) => Result[Unit, Error] = err_shim.flush(writer)
 }
+
+fn write(value: Str) => Result[Unit, Error] =
+  io.Write.write(Stderr, value)
+
+fn flush() => Result[Unit, Error] =
+  io.Write.flush(Stderr)
+
+fn print[a: Show](value: a) => Result[Unit, Error] =
+  io.Write.print(Stderr, value)

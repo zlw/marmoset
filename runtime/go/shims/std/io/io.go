@@ -14,7 +14,7 @@ import (
 
 var stdin = bufio.NewReader(os.Stdin)
 
-func Read() marmoset.Result[string, ioapi.Error] {
+func Read(reader ioapi.Stdin) marmoset.Result[string, ioapi.Error] {
 	line, err := stdin.ReadString('\n')
 	if err != nil {
 		if errors.Is(err, goio.EOF) && len(line) > 0 {
@@ -28,14 +28,14 @@ func Read() marmoset.Result[string, ioapi.Error] {
 	return marmoset.Success[string, ioapi.Error](trimLineEnding(line))
 }
 
-func Write(value string) marmoset.Result[marmoset.Unit, ioapi.Error] {
+func Write(writer ioapi.Stdout, value string) marmoset.Result[marmoset.Unit, ioapi.Error] {
 	if _, err := os.Stdout.WriteString(value); err != nil {
 		return marmoset.Failure[marmoset.Unit, ioapi.Error](writeError(err))
 	}
 	return marmoset.Success[marmoset.Unit, ioapi.Error](marmoset.NewUnit())
 }
 
-func Flush() marmoset.Result[marmoset.Unit, ioapi.Error] {
+func Flush(writer ioapi.Stdout) marmoset.Result[marmoset.Unit, ioapi.Error] {
 	return marmoset.Success[marmoset.Unit, ioapi.Error](marmoset.NewUnit())
 }
 

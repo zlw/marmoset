@@ -123,12 +123,12 @@ run_source_emit_go_expect_stdio_shape() {
 
     failures=0
     if build_output=$($EXECUTABLE build "$root/main.mr" --emit-go "$outdir" -o "$binpath" 2>&1); then
-        grep -qF 'func Read()' "$outdir/shims/std/io/io.go" || failures=$((failures + 1))
-        grep -qF 'func Write(value string)' "$outdir/shims/std/io/io.go" || failures=$((failures + 1))
-        grep -qF 'func Flush()' "$outdir/shims/std/io/io.go" || failures=$((failures + 1))
-        grep -qF 'func Write(value string)' "$outdir/shims/std/io/err/err.go" || failures=$((failures + 1))
-        grep -qF 'func Flush()' "$outdir/shims/std/io/err/err.go" || failures=$((failures + 1))
-        if rg -q 'std__file__Path|flush_path|FlushPath|StdinTag|StdoutTag|StderrTag|std__io__Stdin|std__io__Stdout|std__io__err__Stderr|func Stdin|func Stdout|func Stderr' "$outdir"; then
+        grep -qF 'func Read(reader ioapi.Stdin)' "$outdir/shims/std/io/io.go" || failures=$((failures + 1))
+        grep -qF 'func Write(writer ioapi.Stdout, value string)' "$outdir/shims/std/io/io.go" || failures=$((failures + 1))
+        grep -qF 'func Flush(writer ioapi.Stdout)' "$outdir/shims/std/io/io.go" || failures=$((failures + 1))
+        grep -qF 'func Write(writer errapi.Stderr, value string)' "$outdir/shims/std/io/err/err.go" || failures=$((failures + 1))
+        grep -qF 'func Flush(writer errapi.Stderr)' "$outdir/shims/std/io/err/err.go" || failures=$((failures + 1))
+        if rg -q 'std__file__Path|flush_path|FlushPath|func Stdin|func Stdout|func Stderr' "$outdir"; then
             failures=$((failures + 1))
         fi
 
@@ -136,7 +136,7 @@ run_source_emit_go_expect_stdio_shape() {
             echo "✓ PASS"
             PASS=$((PASS + 1))
         else
-            echo "✗ FAIL (emitted Go still has stdio token or path protocol plumbing)"
+            echo "✗ FAIL (emitted Go stdio/path protocol shape drifted)"
             FAIL=$((FAIL + 1))
         fi
     else

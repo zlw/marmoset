@@ -2,8 +2,8 @@
 
 ## Maintenance
 
-- Last verified: 2026-05-10
-- Implementation status: In progress (`std.basics`, `std.bytes`, and `std.file` proof slices landed; broader stdlib expansion pending)
+- Last verified: 2026-05-12
+- Implementation status: In progress (`std.basics`, `std.bytes`, `std.file`, and trait-shaped `std.io` proof slices landed; broader stdlib expansion pending)
 - Update trigger: Any stdlib, shim interop, prelude, module discovery, `Bytes`, resource-handle, or collection representation change
 - Prerequisites:
   - `docs/plans/done/language/06_module-system.md`
@@ -57,7 +57,7 @@ Modules -> Prelude -> Shim-first Go interop -> Stdlib
 - `09_shim-first-go-interop.md` has introduced `extern type`, checked-in Go shims, canonical immutable `std.bytes.Bytes`, and the initial `std.file` proof slice.
 - `std.basics` now owns the implicit terminal output function `puts`; the compiler no longer lowers `puts` as an emitter special case.
 - `std.file` now exposes text-first whole-file helpers, explicit byte helpers, and scoped handle callbacks backed by private shim plumbing.
-- `std.io` now exposes low-level `Read[r, e]`/`Write[w, e]` protocols plus direct default terminal helpers. Stderr helpers live in `std.io.err`.
+- `std.io` now exposes low-level `Read[r, e]`/`Write[w, e]` protocols plus default terminal helpers backed by private singleton extern receiver values. Stderr helpers live in `std.io.err`.
 - `docs/features/ffi.md` now documents shim-first interop as the current direction, with direct package externs retained only as historical context.
 - Existing list/map/str examples are mostly fixtures and exploratory docs; they are not committed full stdlib modules yet.
 
@@ -173,6 +173,12 @@ trait Write[w, e] = {
   fn print[a: Show](writer: w, value: a) => Result[Unit, e]
 }
 
+extern type Stdin   # private singleton receiver
+extern type Stdout  # private singleton receiver
+
+impl Read[Stdin, Error]
+impl Write[Stdout, Error]
+
 fn read() => Result[Str, Error]
 fn write(value: Str) => Result[Unit, Error]
 fn flush() => Result[Unit, Error]
@@ -184,8 +190,9 @@ Rules:
 - `io.read` reads one stdin line without the trailing newline. End-of-input is `Error.EndOfFile`.
 - `io.write` writes the string to stdout without adding a newline.
 - `io.print` writes `Show.show(value)` plus a trailing newline, then flushes.
-- `std.io` does not export stdin/stdout handle values. The default terminal helpers call private terminal shims directly; the shared `Read`/`Write` protocols are for real values owned by other modules.
-- `std.io.err` exports `Error`, `write`, `flush`, and `print` for stderr. Its error enum omits `EndOfFile`.
+- `std.io` does not export stdin/stdout handle values or types. It keeps private `Stdin`/`Stdout` extern singleton receivers so default terminal helpers can dogfood `Read[Stdin, Error]` and `Write[Stdout, Error]`.
+- `std.io` terminal shims accept the private receiver token at the Go boundary. The Go shim may ignore the token internally, but the Marmoset trait receiver still reaches the implementation boundary.
+- `std.io.err` exports `Error`, `write`, `flush`, and `print` for stderr. Its error enum omits `EndOfFile`; its private `Stderr` singleton implements `io.Write[Stderr, Error]`.
 - File values implement `io.Read[File, FileReadError]` privately inside `std.file`; users call it through `io.Read.read(file)` inside `file.open` callbacks.
 
 ### `std.str`
@@ -455,3 +462,4 @@ HTTP, SQL, and framework-style wrappers likely need follow-up shim features such
 - 2026-05-12 01:59 CEST: Started and greened the phantom receiver/path cleanup. Stdio and stderr shim methods now take the opaque receiver token instead of dropping it in `std.io`, whole-path `std.file.read/write` call private byte shims directly instead of manufacturing a `Path` protocol receiver, and import resolution now lets a real Marmoset wrapper shadow a same-named private extern entry in exported module metadata. Focused `make integration stdlib-shims` is green.
 - 2026-05-12 02:35 CEST: Started the stdio token removal cleanup. Red coverage now requires `std.io`/`std.io.err` to keep default terminal IO direct, with no exported `Stdin`/`Stdout`/`Stderr` types and no `stdin`/`stdout`/`stderr` token helpers.
 - 2026-05-12 02:35 CEST: Stdio token removal reached focused green. `std.io` now exports only `Error`, `Read`, `Write`, and terminal helpers; `std.io.err` exports only stderr helpers; copied Go shims no longer include Marmoset stdio token APIs. Focused `make integration stdlib-shims` is green.
+- 2026-05-12 15:56 CEST: Reworked stdio around private singleton extern receivers instead of public token helpers or direct helper shims. `std.io` now implements `Read[Stdin, Error]`/`Write[Stdout, Error]`, `std.io.err` implements `io.Write[Stderr, Error]`, and public helpers route through those trait impls. The compiler now supports module-local singleton values for private extern types and concrete method-generic default trait specialization from generic wrapper bodies, including interpolation-backed `Write.print`. Verification passed with `dune runtest lib/frontend/typecheck`, `dune runtest lib/backend/go`, `make integration stdlib-shims`, `make integration ffi stdlib-shims`, broader `MARMOSET_ROOT=<temp with HEAD std/option.mr> dune runtest lib/frontend lib/backend/go`, and `git diff --check`.
