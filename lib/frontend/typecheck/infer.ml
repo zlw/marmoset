@@ -1446,13 +1446,20 @@ let rec record_expected_trait_object_coercions
       | AST.MethodCall
           { mc_receiver = { expr = AST.Identifier enum_name; _ }; mc_method = variant_name; mc_args = args; _ } ->
           record_enum_constructor_args enum_name variant_name args
-      | AST.Call ({ expr = AST.Identifier type_name; _ }, [ arg ]) when Type_registry.is_named_type_name type_name
+      | AST.Call ({ expr = AST.Identifier type_name; _ }, args) when Type_registry.is_named_type_name type_name
         -> (
           match canonicalize_mono_type expected_type with
           | TNamed (expected_name, type_args) when expected_name = type_name -> (
               match Type_registry.instantiate_named_wrapper_representation type_name type_args with
-              | Some (Ok representation_type) ->
-                  record_expected_trait_object_coercions type_map arg representation_type
+              | Some (Ok payload_types) ->
+                  let rec loop remaining_args remaining_payloads =
+                    match (remaining_args, remaining_payloads) with
+                    | [], _ | _, [] -> Ok ()
+                    | arg :: rest_args, payload_type :: rest_payloads ->
+                        let* () = record_expected_trait_object_coercions type_map arg payload_type in
+                        loop rest_args rest_payloads
+                  in
+                  loop args payload_types
               | Some (Error msg) -> Error (error_at ~code:"type-constructor" ~message:msg expr)
               | None -> Ok ())
           | _ -> Ok ())
@@ -4377,23 +4384,23 @@ and infer_named_type_constructor_call_against_expected
                ~message:(Printf.sprintf "Unknown named type constructor: %s" type_name)
                call_expr)
       | Some named_type_def -> (
-          let expect_single_argument (expected_arg_type : mono_type) =
-            if List.length args <> 1 then
+          let expect_arguments (expected_arg_types : mono_type list) =
+            if List.length args <> List.length expected_arg_types then
               Error
                 (error_at ~code:"type-constructor"
                    ~message:
-                     (Printf.sprintf "Named type constructor %s expects 1 argument, got %d" type_name
-                        (List.length args))
+                     (Printf.sprintf "Named type constructor %s expects %d argument(s), got %d" type_name
+                        (List.length expected_arg_types) (List.length args))
                    call_expr)
             else
-              match infer_args_against_expected type_map env empty_substitution args [ expected_arg_type ] with
+              match infer_args_against_expected type_map env empty_substitution args expected_arg_types with
               | Error e -> Error e
               | Ok (subst, _arg_types) -> Ok (subst, apply_substitution subst expected_type)
           in
           match named_type_def.named_type_body with
           | Type_registry.NamedProduct _ -> (
               match Type_registry.instantiate_named_product_fields type_name type_args with
-              | Some (Ok fields) -> expect_single_argument (TRecord (fields, None))
+              | Some (Ok fields) -> expect_arguments [ TRecord (fields, None) ]
               | Some (Error msg) -> Error (error_at ~code:"type-constructor" ~message:msg call_expr)
               | None ->
                   Error
@@ -4402,7 +4409,7 @@ and infer_named_type_constructor_call_against_expected
                        call_expr))
           | Type_registry.NamedWrapper _ -> (
               match Type_registry.instantiate_named_wrapper_representation type_name type_args with
-              | Some (Ok representation_type) -> expect_single_argument representation_type
+              | Some (Ok payload_types) -> expect_arguments payload_types
               | Some (Error msg) -> Error (error_at ~code:"type-constructor" ~message:msg call_expr)
               | None ->
                   Error
@@ -4536,23 +4543,23 @@ and infer_named_type_constructor_call
   | Some named_type_def -> (
       let type_args = List.map (fun _ -> fresh_type_var ()) named_type_def.named_type_params in
       let result_type = TNamed (type_name, type_args) in
-      let expect_single_argument (expected_arg_type : mono_type) =
-        if List.length args <> 1 then
+      let expect_arguments (expected_arg_types : mono_type list) =
+        if List.length args <> List.length expected_arg_types then
           Error
             (error_at ~code:"type-constructor"
                ~message:
-                 (Printf.sprintf "Named type constructor %s expects 1 argument, got %d" type_name
-                    (List.length args))
+                 (Printf.sprintf "Named type constructor %s expects %d argument(s), got %d" type_name
+                    (List.length expected_arg_types) (List.length args))
                call_expr)
         else
-          match infer_args_against_expected type_map env empty_substitution args [ expected_arg_type ] with
+          match infer_args_against_expected type_map env empty_substitution args expected_arg_types with
           | Error e -> Error e
           | Ok (subst, _arg_types) -> Ok (subst, apply_substitution subst result_type)
       in
       match named_type_def.named_type_body with
       | Type_registry.NamedProduct _ -> (
           match Type_registry.instantiate_named_product_fields type_name type_args with
-          | Some (Ok fields) -> expect_single_argument (TRecord (fields, None))
+          | Some (Ok fields) -> expect_arguments [ TRecord (fields, None) ]
           | Some (Error msg) -> Error (error_at ~code:"type-constructor" ~message:msg call_expr)
           | None ->
               Error
@@ -4561,7 +4568,7 @@ and infer_named_type_constructor_call
                    call_expr))
       | Type_registry.NamedWrapper _ -> (
           match Type_registry.instantiate_named_wrapper_representation type_name type_args with
-          | Some (Ok representation_type) -> expect_single_argument representation_type
+          | Some (Ok payload_types) -> expect_arguments payload_types
           | Some (Error msg) -> Error (error_at ~code:"type-constructor" ~message:msg call_expr)
           | None ->
               Error
@@ -5164,10 +5171,11 @@ and infer_statement ?(type_bindings = []) type_map env stmt =
               named_type_body = Type_registry.NamedProduct field_types;
             };
           Ok (empty_substitution, TNull)
-      | AST.NamedTypeWrapper wrapper_body -> (
-          let* wrapper_type = convert_type_expr wrapper_body in
-          match canonicalize_mono_type wrapper_type with
-          | TUnion _ ->
+      | AST.NamedTypeWrapper wrapper_bodies -> (
+          let* wrapper_types = map_result convert_type_expr wrapper_bodies in
+          let wrapper_types = List.map canonicalize_mono_type wrapper_types in
+          match List.find_opt (function TUnion _ -> true | _ -> false) wrapper_types with
+          | Some _ ->
               Error
                 (error_at_stmt ~code:"type-invalid-wrapper"
                    ~message:
@@ -5175,12 +5183,12 @@ and infer_statement ?(type_bindings = []) type_map env stmt =
                         "Named type '%s' cannot wrap a raw structural union in this milestone; use a transparent type for the union or a named sum type instead"
                         type_name)
                    stmt)
-          | wrapper_type' ->
+          | None ->
               Type_registry.register_named_type
                 {
                   Type_registry.named_type_name = type_name;
                   named_type_params = type_type_params;
-                  named_type_body = Type_registry.NamedWrapper wrapper_type';
+                  named_type_body = Type_registry.NamedWrapper wrapper_types;
                 };
               Ok (empty_substitution, TNull)))
   | AST.ShapeDef { shape_name; shape_type_params; shape_fields } ->
@@ -6502,18 +6510,27 @@ and check_pattern pattern scrutinee_type =
             when let source_name = Display_names.display_binding_name type_name in
                  (enum_name = type_name || enum_name = source_name) && variant_name = source_name -> (
               match Type_registry.instantiate_named_wrapper_representation type_name type_args with
-              | Some (Ok representation_type) -> (
-                  match field_patterns with
-                  | [ payload_pattern ] -> (
-                      match check_pattern payload_pattern representation_type with
-                      | Error e -> Error e
-                      | Ok (bindings, _payload_type) -> Ok (bindings, scrutinee_type))
-                  | _ ->
-                      Error
-                        (error ~code:"type-pattern"
-                           ~message:
-                             (Printf.sprintf "Pattern %s expects 1 field, got %d" type_name
-                                (List.length field_patterns))))
+              | Some (Ok payload_types) ->
+                  if List.length field_patterns <> List.length payload_types then
+                    Error
+                      (error ~code:"type-pattern"
+                         ~message:
+                           (Printf.sprintf "Pattern %s expects %d field(s), got %d" type_name
+                              (List.length payload_types) (List.length field_patterns)))
+                  else
+                    let rec check_fields bindings_acc pats types =
+                      match (pats, types) with
+                      | [], [] -> Ok bindings_acc
+                      | pat :: rest_pats, ty :: rest_types -> (
+                          match check_pattern pat ty with
+                          | Error e -> Error e
+                          | Ok (field_bindings, _field_type) ->
+                              check_fields (bindings_acc @ field_bindings) rest_pats rest_types)
+                      | _ -> Error (error ~code:"type-pattern" ~message:"Field pattern count mismatch")
+                    in
+                    (match check_fields [] field_patterns payload_types with
+                    | Error e -> Error e
+                    | Ok bindings -> Ok (bindings, scrutinee_type))
               | Some (Error msg) -> Error (error ~code:"type-pattern" ~message:msg)
               | None ->
                   Error

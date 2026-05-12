@@ -3,7 +3,7 @@ module AST = Syntax.Ast.AST
 
 type named_type_body =
   | NamedProduct of record_field_type list
-  | NamedWrapper of mono_type
+  | NamedWrapper of mono_type list
   | NamedExtern of { extern_type_owner_module_id : string }
 
 type named_type_def = {
@@ -94,7 +94,7 @@ let register_named_type (def : named_type_def) : unit =
               (fields
               |> List.map (fun (f : record_field_type) -> { f with typ = canonicalize_mono_type f.typ })
               |> normalize_record_fields)
-        | NamedWrapper mono -> NamedWrapper (canonicalize_mono_type mono)
+        | NamedWrapper payload_types -> NamedWrapper (List.map canonicalize_mono_type payload_types)
         | NamedExtern metadata -> NamedExtern metadata);
     }
   in
@@ -190,7 +190,7 @@ let instantiate_named_product_fields (name : string) (args : mono_type list) :
               Some (Error (Printf.sprintf "Extern type %s has no fields to inspect" name))))
 
 let instantiate_named_wrapper_representation (name : string) (args : mono_type list) :
-    (mono_type, string) result option =
+    (mono_type list, string) result option =
   match lookup_named_type name with
   | None -> None
   | Some def -> (
@@ -200,7 +200,7 @@ let instantiate_named_wrapper_representation (name : string) (args : mono_type l
           match def.named_type_body with
           | NamedProduct _ ->
               Some (Error (Printf.sprintf "Named type %s is a product type, not a wrapper type" name))
-          | NamedWrapper mono -> Some (Ok (apply_substitution subst mono))
+          | NamedWrapper payload_types -> Some (Ok (List.map (apply_substitution subst) payload_types))
           | NamedExtern _ ->
               Some (Error (Printf.sprintf "Extern type %s has no Marmoset representation to construct" name))))
 

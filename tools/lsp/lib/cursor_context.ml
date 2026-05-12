@@ -238,8 +238,8 @@ let build_scope_index (program : Surface.surface_program) : scope_index =
           in
           let acc =
             match type_body with
-            | Surface.STTransparent type_expr | Surface.STNamedWrapper type_expr ->
-                build_scope_index_type acc type_expr
+            | Surface.STTransparent type_expr -> build_scope_index_type acc type_expr
+            | Surface.STNamedWrapper type_exprs -> List.fold_left build_scope_index_type acc type_exprs
             | Surface.STNamedProduct fields ->
                 List.fold_left
                   (fun acc (field : Surface.surface_record_type_field) ->
@@ -628,8 +628,9 @@ let reference_in_top_stmt ~(scope_index : scope_index) ~(offset : int) (stmt : S
         (first_some type_param_ref
            (first_some
               (match type_body with
-              | Surface.STTransparent type_expr | Surface.STNamedWrapper type_expr ->
-                  reference_in_type ~scope_index ~offset type_expr
+              | Surface.STTransparent type_expr -> reference_in_type ~scope_index ~offset type_expr
+              | Surface.STNamedWrapper type_exprs ->
+                  List.find_map (reference_in_type ~scope_index ~offset) type_exprs
               | Surface.STNamedProduct fields ->
                   List.find_map
                     (fun (field : Surface.surface_record_type_field) ->
@@ -842,8 +843,10 @@ let collect_references ~(input : cursor_context_input) : reference list =
           @ collect_expr_or_block_references ~scope_index:input.scope_index body
       | Surface.STypeDef { type_body; derive; _ } ->
           (match type_body with
-          | Surface.STTransparent type_expr | Surface.STNamedWrapper type_expr ->
+          | Surface.STTransparent type_expr ->
               collect_type_references ~scope_index:input.scope_index type_expr
+          | Surface.STNamedWrapper type_exprs ->
+              List.concat_map (collect_type_references ~scope_index:input.scope_index) type_exprs
           | Surface.STNamedProduct fields ->
               List.concat_map
                 (fun (field : Surface.surface_record_type_field) ->

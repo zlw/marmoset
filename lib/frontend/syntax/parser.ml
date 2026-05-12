@@ -1186,8 +1186,12 @@ and parse_type_definition (p : parser) : (parser * Surface.top_decl, parser) res
       else
         expect_peek p_payload_end Token.RParen
     in
-    match payload_types with
-    | [ wrapper_body ] ->
+    (match payload_types with
+    | [] ->
+        Error
+          (add_error ~code:"parse-invalid-type-definition" p_body
+             (Printf.sprintf "Wrapper type '%s' expects at least one payload type" type_name))
+    | wrapper_bodies ->
         let* p6, derive = parse_postfix_derive p_after_paren in
         Ok
           ( p6,
@@ -1197,13 +1201,9 @@ and parse_type_definition (p : parser) : (parser * Surface.top_decl, parser) res
                 type_name_ref;
                 type_type_params;
                 type_type_param_refs;
-                type_body = Surface.STNamedWrapper wrapper_body;
+                type_body = Surface.STNamedWrapper wrapper_bodies;
                 derive;
-              } )
-    | _ ->
-        Error
-          (add_error ~code:"parse-invalid-type-definition" p_body
-             (Printf.sprintf "Wrapper type '%s' expects exactly one payload type" type_name))
+              } ))
   else if curr_token_is p_body Token.LBrace then
     let p_members = next_token p_body in
     if
@@ -4116,7 +4116,30 @@ module Test = struct
           {
             AST.stmt =
               AST.TypeDef
-                { type_name = "UserId"; type_type_params = []; type_body = AST.NamedTypeWrapper (AST.TCon "Int") };
+                {
+                  type_name = "UserId";
+                  type_type_params = [];
+                  type_body = AST.NamedTypeWrapper [ AST.TCon "Int" ];
+                };
+            _;
+          };
+        ] ->
+        true
+    | _ -> false
+
+  let%test "parse explicit multi-payload wrapper type syntax" =
+    let input = "type Entry = Entry(Path, Kind)" in
+    match parse ~file_id:"<test>" input with
+    | Ok
+        [
+          {
+            AST.stmt =
+              AST.TypeDef
+                {
+                  type_name = "Entry";
+                  type_type_params = [];
+                  type_body = AST.NamedTypeWrapper [ AST.TCon "Path"; AST.TCon "Kind" ];
+                };
             _;
           };
         ] ->

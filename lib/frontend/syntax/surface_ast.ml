@@ -48,7 +48,7 @@ module Surface = struct
   and surface_type_def_kind =
     | STTransparent of surface_type_expr
     | STNamedProduct of surface_record_type_field list
-    | STNamedWrapper of surface_type_expr
+    | STNamedWrapper of surface_type_expr list
     | STNamedSum of surface_variant_def list
 
   and surface_generic_param = {

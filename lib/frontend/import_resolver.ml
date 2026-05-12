@@ -964,8 +964,9 @@ let rewrite_program
                        field_type = rewrite_type_expr ~imports ~type_bindings ~available_bindings field.field_type;
                      })
                    fields)
-          | AST.NamedTypeWrapper te ->
-              AST.NamedTypeWrapper (rewrite_type_expr ~imports ~type_bindings ~available_bindings te)
+          | AST.NamedTypeWrapper types ->
+              AST.NamedTypeWrapper
+                (List.map (rewrite_type_expr ~imports ~type_bindings ~available_bindings) types)
         in
         Ok
           ( AST.

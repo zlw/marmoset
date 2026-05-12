@@ -69,7 +69,7 @@ func Read(path string) marmoset.Result[[]dirapi.RawEntry, dirapi.Error] {
 		if err != nil {
 			return marmoset.Failure[[]dirapi.RawEntry, dirapi.Error](dirError(err))
 		}
-		out = append(out, dirapi.RawEntryRawEntry{
+		out = append(out, dirapi.RawEntry{
 			Field0: filepath.Join(path, entry.Name()),
 			Field1: kindOf(info),
 		})

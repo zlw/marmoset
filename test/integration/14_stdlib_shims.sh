@@ -134,7 +134,8 @@ run_source_emit_go_expect_stdio_shape() {
         grep -qF 'func std__io__Read_read_std__file__File' "$outdir/main.go" || failures=$((failures + 1))
         grep -qF 'func std__io__Write_write_std__file__File' "$outdir/main.go" || failures=$((failures + 1))
         grep -qF 'func std__io__Write_flush_std__file__File' "$outdir/main.go" || failures=$((failures + 1))
-        if rg -q 'std__file__Path|flush_path|FlushPath|func Stdin|func Stdout|func Stderr' "$outdir"; then
+        grep -qF 'func std__dir__read_string' "$outdir/main.go" || failures=$((failures + 1))
+        if rg -q 'std__file__Path|flush_path|FlushPath|func Stdin|func Stdout|func Stderr|std__dir__Entry_Entry_tag|std__dir__RawEntry_RawEntry_tag' "$outdir"; then
             failures=$((failures + 1))
         fi
 
@@ -429,7 +430,7 @@ fn error_label(prefix: Str, err: Error) -> Str = match err {
 }
 
 fn entry_label(entry: Entry) -> Str = match entry {
-  case Entry.Entry(path_value, kind): path.basename(path_value) + ":" + kind_label(kind)
+  case Entry(path_value, kind): path.basename(path_value) + ":" + kind_label(kind)
 }
 
 match dir.exists?("$CHILD_DIR") {
@@ -530,6 +531,7 @@ import std.file
 import std.file.Error
 import std.io
 import std.io.err
+import std.dir
 
 let _ = io.write("out")
 let _ = io.flush()
@@ -537,6 +539,7 @@ let _ = err.write("err")
 let _ = err.flush()
 let _ = file.write("$ROUNDTRIP_PATH", "path")
 let read_text: Result[Str, Error] = file.read("$ROUNDTRIP_PATH")
+let dir_entries: Result[List[dir.Entry], dir.Error] = dir.read("$LISTING_DIR")
 let file_protocol: Result[Unit, file.UseError[Error]] = file.open("$ROUNDTRIP_PATH", file.Mode.Append, (handle) => {
   match io.Write.write(handle, "x") {
     case Result.Success(_): io.Write.flush(handle)

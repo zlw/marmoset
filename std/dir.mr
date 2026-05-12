@@ -4,8 +4,8 @@ import std.path.PathLike
 export Entry, Kind, Error, read, make, make_all, remove, remove_all, exists?, current
 
 type Kind = { File, Directory, Symlink, Other }
-type Entry = { Entry(path.Path, Kind) }
-type RawEntry = { RawEntry(Str, Kind) }
+type Entry = Entry(path.Path, Kind)
+type RawEntry = RawEntry(Str, Kind)
 
 type Error = {
   NotFound,
@@ -31,7 +31,7 @@ fn path_value[p: PathLike](value: p) -> Str =
   path.to_str(path.PathLike.path(value))
 
 fn raw_entry(raw: RawEntry) -> Entry = match raw {
-  case RawEntry.RawEntry(path_value, kind): Entry.Entry(path.from_str(path_value), kind)
+  case RawEntry(path_value, kind): Entry(path.from_str(path_value), kind)
 }
 
 fn map_entries(input: List[RawEntry], output: List[Entry]) -> List[Entry] =

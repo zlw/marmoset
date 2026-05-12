@@ -826,13 +826,15 @@ let lower_top_decl_with_ctx
                      AST.NamedTypeProduct
                        (List.map (lower_record_type_field_with_bound_vars bound_type_vars) fields);
                  })
-        | Surface.STNamedWrapper wrapper_body ->
+        | Surface.STNamedWrapper wrapper_bodies ->
             AST.mk_stmt ~pos ~end_pos ~file_id
               (AST.TypeDef
                  {
                    type_name;
                    type_type_params;
-                   type_body = AST.NamedTypeWrapper (lower_type_expr_with_bound_vars bound_type_vars wrapper_body);
+                   type_body =
+                     AST.NamedTypeWrapper
+                       (List.map (lower_type_expr_with_bound_vars bound_type_vars) wrapper_bodies);
                  })
         | Surface.STNamedSum variants ->
             AST.mk_stmt ~pos ~end_pos ~file_id
@@ -1390,7 +1392,7 @@ let%test "STypeDef with postfix derive generates DeriveDef" =
   let id_supply = Id_supply.Id_supply.create 0 in
   let decl =
     test_stypedef ~type_name:"MyInt"
-      ~type_body:(Surface.STNamedWrapper (test_stcon "Int"))
+      ~type_body:(Surface.STNamedWrapper [ test_stcon "Int" ])
       ~derive:[ test_derive "Eq" ]
       ()
   in

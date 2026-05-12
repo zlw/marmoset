@@ -1029,8 +1029,16 @@ let extern_handle_singleton_go_value (state : mono_state) (type_name : string) :
       Printf.sprintf "marmoset.NewHandle[%s.%sTag]()" api_alias (extern_handle_api_type_name type_name)
   | None -> failwith (Printf.sprintf "Codegen error: unknown extern type '%s'" type_name)
 
+let wrapper_payload_field_name (index : int) : string = Printf.sprintf "Field%d" index
+
+let wrapper_payload_fields (payload_types : Types.mono_type list) : Types.record_field_type list =
+  List.mapi (fun index typ -> { Types.name = wrapper_payload_field_name index; typ }) payload_types
+
+let wrapper_payload_record_type (payload_types : Types.mono_type list) : Types.mono_type =
+  Types.TRecord (wrapper_payload_fields payload_types, None)
+
 let named_type_codegen_body_exn (type_name : string) (type_args : Types.mono_type list) :
-    [ `Product of Types.record_field_type list | `Wrapper of Types.mono_type ] =
+    [ `Product of Types.record_field_type list | `Wrapper of Types.mono_type list ] =
   match Type_registry.lookup_named_type type_name with
   | None -> failwith (Printf.sprintf "Codegen error: unknown named type '%s'" type_name)
   | Some def -> (
@@ -1044,7 +1052,7 @@ let named_type_codegen_body_exn (type_name : string) (type_args : Types.mono_typ
           )
       | Type_registry.NamedWrapper _ -> (
           match Type_registry.instantiate_named_wrapper_representation type_name type_args with
-          | Some (Ok representation) -> `Wrapper representation
+          | Some (Ok payload_types) -> `Wrapper payload_types
           | Some (Error msg) ->
               failwith (Printf.sprintf "Codegen error: cannot instantiate named wrapper '%s': %s" type_name msg)
           | None -> failwith (Printf.sprintf "Codegen error: missing named wrapper definition for '%s'" type_name)
@@ -1055,7 +1063,8 @@ let named_type_codegen_body_exn (type_name : string) (type_args : Types.mono_typ
 let named_type_representation_exn (type_name : string) (type_args : Types.mono_type list) : Types.mono_type =
   match named_type_codegen_body_exn type_name type_args with
   | `Product fields -> Types.TRecord (fields, None)
-  | `Wrapper representation -> representation
+  | `Wrapper [ representation ] -> representation
+  | `Wrapper payload_types -> wrapper_payload_record_type payload_types
 
 let rec shape_field_type_to_go (state : mono_state) (t : Types.mono_type) : string =
   match t with
@@ -1345,8 +1354,9 @@ and enum_payload_needs_boxing (state : mono_state) ?(visited_named = StringSet.e
       else
         match named_type_codegen_body_exn name args with
         | `Product _ -> true
-        | `Wrapper representation ->
-            enum_payload_needs_boxing state ~visited_named:(StringSet.add key visited_named) representation)
+        | `Wrapper [ representation ] ->
+            enum_payload_needs_boxing state ~visited_named:(StringSet.add key visited_named) representation
+        | `Wrapper _ -> true)
   | Types.TIntersection members ->
       enum_payload_needs_boxing state ~visited_named (collapse_intersection_for_codegen_exn members)
   | Types.TInt | Types.TFloat | Types.TBool | Types.TString | Types.TNull | Types.TVar _ | Types.TFun _
@@ -5282,16 +5292,28 @@ and emit_pattern_plan
         when let source_name = Typecheck.Display_names.display_binding_name type_name in
              (enum_name_pat = type_name || enum_name_pat = source_name) && variant_name = source_name -> (
           match Type_registry.instantiate_named_wrapper_representation type_name type_args with
-          | Some (Ok representation_type) -> (
-              match field_patterns with
-              | [ payload_pattern ] ->
-                  let representation_go_type = type_to_go state.mono representation_type in
-                  let payload_expr = Printf.sprintf "%s(%s)" representation_go_type scrutinee_expr in
-                  emit_pattern_plan state payload_pattern payload_expr representation_type
-              | _ ->
-                  failwith
-                    (Printf.sprintf "Codegen error: wrapper pattern %s expects 1 field, got %d" type_name
-                       (List.length field_patterns)))
+          | Some (Ok payload_types) ->
+              if List.length field_patterns <> List.length payload_types then
+                failwith
+                  (Printf.sprintf "Codegen error: wrapper pattern %s expects %d field(s), got %d" type_name
+                     (List.length payload_types) (List.length field_patterns))
+              else
+                let nested_conditions, nested_bindings =
+                  List.mapi
+                    (fun index field_pattern ->
+                      let payload_type = List.nth payload_types index in
+                      let payload_expr =
+                        match payload_types with
+                        | [ single_payload_type ] ->
+                            let representation_go_type = type_to_go state.mono single_payload_type in
+                            Printf.sprintf "%s(%s)" representation_go_type scrutinee_expr
+                        | _ -> go_field_access scrutinee_expr (wrapper_payload_field_name index)
+                      in
+                      emit_pattern_plan state field_pattern payload_expr payload_type)
+                    field_patterns
+                  |> List.split
+                in
+                (List.concat nested_conditions, List.concat nested_bindings)
           | Some (Error msg) ->
               failwith (Printf.sprintf "Codegen error: cannot unwrap named wrapper %s: %s" type_name msg)
           | None -> failwith (Printf.sprintf "Codegen error: unknown named wrapper %s" type_name))
@@ -6393,12 +6415,30 @@ and emit_call ?expected_type state type_map env call_expr func args =
       | AST.Identifier type_name
         when (not (Infer.TypeEnv.mem type_name env)) && Type_registry.is_named_type_name type_name -> (
           match named_constructor_result_type () with
-          | Some (_resolved_name, type_args) ->
-              let result_type = Types.TNamed (type_name, type_args) in
-              let representation_type = named_type_representation_exn type_name type_args in
+          | Some (resolved_name, type_args) ->
+              let result_type = Types.TNamed (resolved_name, type_args) in
               let constructor_name = type_to_go state.mono result_type in
-              let args_str = emit_args_with_expected_types [ representation_type ] in
-              Printf.sprintf "%s(%s)" constructor_name args_str
+              (match named_type_codegen_body_exn resolved_name type_args with
+              | `Product fields ->
+                  let args_str = emit_args_with_expected_types [ Types.TRecord (fields, None) ] in
+                  Printf.sprintf "%s(%s)" constructor_name args_str
+              | `Wrapper [ representation_type ] ->
+                  let args_str = emit_args_with_expected_types [ representation_type ] in
+                  Printf.sprintf "%s(%s)" constructor_name args_str
+              | `Wrapper payload_types ->
+                  let args_strs =
+                    match List.combine args payload_types with
+                    | pairs ->
+                        pairs
+                        |> List.mapi (fun index (arg, payload_type) ->
+                               Printf.sprintf "%s: %s" (wrapper_payload_field_name index)
+                                 (emit_expr_for_expected_type state type_map env payload_type arg))
+                    | exception Invalid_argument _ ->
+                        failwith
+                          (Printf.sprintf
+                             "Codegen error: named wrapper constructor %s argument artifact mismatch" type_name)
+                  in
+                  Printf.sprintf "%s{%s}" constructor_name (String.concat ", " args_strs))
           | None ->
               let func_str = emit_expr state type_map env func in
               let args_str = emit_args_with_expected_types call_param_types in
@@ -7508,9 +7548,21 @@ let emit_named_type_def (state : mono_state) (type_name : string) (type_args : T
     ""
   else
     let go_type_name = mangle_type (Types.TNamed (type_name, type_args)) in
-    let representation_type = named_type_representation_exn type_name type_args in
-    let representation_go_type = type_to_go state representation_type in
-    Printf.sprintf "type %s %s\n" go_type_name representation_go_type
+    match named_type_codegen_body_exn type_name type_args with
+    | `Product fields ->
+        let representation_go_type = type_to_go state (Types.TRecord (fields, None)) in
+        Printf.sprintf "type %s %s\n" go_type_name representation_go_type
+    | `Wrapper [ representation_type ] ->
+        let representation_go_type = type_to_go state representation_type in
+        Printf.sprintf "type %s %s\n" go_type_name representation_go_type
+    | `Wrapper payload_types ->
+        let fields =
+          payload_types
+          |> List.mapi (fun index payload_type ->
+                 Printf.sprintf "%s %s" (wrapper_payload_field_name index) (type_to_go state payload_type))
+          |> String.concat "; "
+        in
+        Printf.sprintf "type %s struct{%s}\n" go_type_name fields
 
 let emit_named_type_defs (state : mono_state) : string =
   let rec emit_pending (emitted : NamedTypeInstSet.t) (acc : string list) =
@@ -8330,8 +8382,11 @@ let emit_registry_derived_impls (state : emit_state) (program : AST.program) : s
               | Types.TNamed (type_name, type_args) -> (
                   match named_type_codegen_body_exn type_name type_args with
                   | `Product fields -> emit_named_product_derived_impl state derive_kind impl.impl_for_type fields
-                  | `Wrapper representation ->
-                      emit_named_wrapper_derived_impl state derive_kind impl.impl_for_type representation)
+                  | `Wrapper [ representation ] ->
+                      emit_named_wrapper_derived_impl state derive_kind impl.impl_for_type representation
+                  | `Wrapper payload_types ->
+                      emit_named_wrapper_derived_impl state derive_kind impl.impl_for_type
+                        (wrapper_payload_record_type payload_types))
               | _ -> None)
           | None -> None
         else
@@ -8616,6 +8671,9 @@ let rec abi_type_go_for_main ~(api_alias : string) (boundary : Typecheck.Shim_bo
   | BOwnerEnum enum ->
       Printf.sprintf "%s.%s" api_alias
         (exported_go_ident (Typecheck.Display_names.display_binding_name enum.enum_name))
+  | BOwnerWrapper wrapper ->
+      Printf.sprintf "%s.%s" api_alias
+        (exported_go_ident (Typecheck.Display_names.display_binding_name wrapper.wrapper_name))
   | BStdBytes -> "marmoset.Bytes"
   | BExternHandle handle -> Printf.sprintf "%s.%s" api_alias (extern_handle_api_type_name handle.extern_type_name)
   | BCallback callback ->
@@ -8637,6 +8695,10 @@ let rec track_boundary_marmoset_types (state : mono_state) (boundary : Typecheck
   | BOwnerEnum enum ->
       track_enum_inst state (Typecheck.Shim_boundary.to_mono_type boundary);
       List.iter (track_boundary_marmoset_types state) enum.enum_type_args
+  | BOwnerWrapper wrapper ->
+      track_named_type_inst state (Typecheck.Shim_boundary.to_mono_type boundary);
+      List.iter (track_boundary_marmoset_types state) wrapper.wrapper_type_args;
+      List.iter (track_boundary_marmoset_types state) wrapper.wrapper_payloads
   | BCallback callback ->
       List.iter (track_boundary_marmoset_types state) callback.callback_params;
       track_boundary_marmoset_types state callback.callback_return
@@ -8663,6 +8725,10 @@ let register_shim_boundary_imports
     | BOwnerEnum enum ->
         add_go_import ~alias:api_alias state (api_import_path shim_id);
         List.iter go enum.enum_type_args
+    | BOwnerWrapper wrapper ->
+        add_go_import ~alias:api_alias state (api_import_path shim_id);
+        List.iter go wrapper.wrapper_type_args;
+        List.iter go wrapper.wrapper_payloads
     | BCallback callback ->
         List.iter go callback.callback_params;
         go callback.callback_return
@@ -8821,6 +8887,27 @@ let rec to_abi_expr
         value_type api_type cases
         (Printf.sprintf "%s: invalid Marmoset enum tag crossing shim boundary" context)
         expr
+  | BOwnerWrapper wrapper ->
+      let value_type = boundary_marmoset_go_type state boundary in
+      let api_type = abi_type_go_for_main ~api_alias boundary in
+      let fields =
+        wrapper.wrapper_payloads
+        |> List.mapi (fun index payload_boundary ->
+               let payload_expr =
+                 match wrapper.wrapper_payloads with
+                 | [ single_payload ] ->
+                     let representation_go_type =
+                       type_to_go state (Typecheck.Shim_boundary.to_mono_type single_payload)
+                     in
+                     Printf.sprintf "%s(__value)" representation_go_type
+                 | _ -> Printf.sprintf "__value.%s" (wrapper_payload_field_name index)
+               in
+               Printf.sprintf "%s: %s" (wrapper_payload_field_name index)
+                 (to_abi_expr state ~api_alias ~owner_module_id ~context payload_boundary payload_expr))
+        |> String.concat ", "
+      in
+      Printf.sprintf "(func(__value %s) %s {\n\t\treturn %s{%s}\n\t})(%s)" value_type api_type
+        api_type fields expr
   | BExternHandle _ ->
       let value_type = boundary_marmoset_go_type state boundary in
       let api_type = abi_type_go_for_main ~api_alias boundary in
@@ -8928,6 +9015,28 @@ and from_abi_expr
         cases
         (Printf.sprintf "%s: unknown enum variant returned by shim" context)
         expr
+  | BOwnerWrapper wrapper ->
+      let value_type = boundary_marmoset_go_type state boundary in
+      let api_type = abi_type_go_for_main ~api_alias boundary in
+      let payload_exprs =
+        wrapper.wrapper_payloads
+        |> List.mapi (fun index payload_boundary ->
+               from_abi_expr state ~api_alias ~owner_module_id ~context payload_boundary
+                 (Printf.sprintf "__value.%s" (wrapper_payload_field_name index)))
+      in
+      let construct =
+        match payload_exprs with
+        | [ single ] -> Printf.sprintf "%s(%s)" value_type single
+        | _ ->
+            let fields =
+              payload_exprs
+              |> List.mapi (fun index payload_expr ->
+                     Printf.sprintf "%s: %s" (wrapper_payload_field_name index) payload_expr)
+              |> String.concat ", "
+            in
+            Printf.sprintf "%s{%s}" value_type fields
+      in
+      Printf.sprintf "(func(__value %s) %s {\n\t\treturn %s\n\t})(%s)" api_type value_type construct expr
   | BExternHandle _ ->
       let value_type = boundary_marmoset_go_type state boundary in
       let api_type = abi_type_go_for_main ~api_alias boundary in
@@ -9508,6 +9617,10 @@ let rec collect_boundary_enums (acc : string list) (boundary : Typecheck.Shim_bo
   | BStdResult (ok_type, err_type) -> collect_boundary_enums (collect_boundary_enums acc ok_type) err_type
   | BList inner -> collect_boundary_enums acc inner
   | BOwnerEnum enum -> List.fold_left collect_boundary_enums (enum.enum_name :: acc) enum.enum_type_args
+  | BOwnerWrapper wrapper ->
+      List.fold_left collect_boundary_enums
+        (List.fold_left collect_boundary_enums acc wrapper.wrapper_type_args)
+        wrapper.wrapper_payloads
   | BCallback callback ->
       collect_boundary_enums
         (List.fold_left collect_boundary_enums acc callback.callback_params)
@@ -9526,6 +9639,10 @@ let rec collect_boundary_handles
   | BStdResult (ok_type, err_type) -> collect_boundary_handles (collect_boundary_handles acc ok_type) err_type
   | BList inner -> collect_boundary_handles acc inner
   | BOwnerEnum enum -> List.fold_left collect_boundary_handles acc enum.enum_type_args
+  | BOwnerWrapper wrapper ->
+      List.fold_left collect_boundary_handles
+        (List.fold_left collect_boundary_handles acc wrapper.wrapper_type_args)
+        wrapper.wrapper_payloads
   | BExternHandle handle -> handle :: acc
   | BCallback callback ->
       collect_boundary_handles
@@ -9539,6 +9656,36 @@ let collect_func_boundary_handles (func : Typecheck.Resolution_artifacts.extern_
          match String.compare a.extern_type_name b.extern_type_name with
          | 0 -> String.compare a.owner_module_id b.owner_module_id
          | cmp -> cmp)
+
+let rec collect_boundary_wrappers
+    (acc : Typecheck.Shim_boundary.wrapper_identity list) (boundary : Typecheck.Shim_boundary.boundary_type) :
+    Typecheck.Shim_boundary.wrapper_identity list =
+  match boundary with
+  | BUnit | BBool | BInt | BFloat | BStr | BStdBytes | BExternHandle _ -> acc
+  | BStdOption inner -> collect_boundary_wrappers acc inner
+  | BStdResult (ok_type, err_type) -> collect_boundary_wrappers (collect_boundary_wrappers acc ok_type) err_type
+  | BList inner -> collect_boundary_wrappers acc inner
+  | BOwnerEnum enum -> List.fold_left collect_boundary_wrappers acc enum.enum_type_args
+  | BOwnerWrapper wrapper ->
+      List.fold_left collect_boundary_wrappers
+        (List.fold_left collect_boundary_wrappers (wrapper :: acc) wrapper.wrapper_type_args)
+        wrapper.wrapper_payloads
+  | BCallback callback ->
+      collect_boundary_wrappers
+        (List.fold_left collect_boundary_wrappers acc callback.callback_params)
+        callback.callback_return
+
+let compare_boundary_wrapper
+    (a : Typecheck.Shim_boundary.wrapper_identity) (b : Typecheck.Shim_boundary.wrapper_identity) : int =
+  match String.compare a.wrapper_name b.wrapper_name with
+  | 0 -> String.compare (Typecheck.Shim_boundary.to_string (BOwnerWrapper a))
+           (Typecheck.Shim_boundary.to_string (BOwnerWrapper b))
+  | cmp -> cmp
+
+let collect_func_boundary_wrappers (func : Typecheck.Resolution_artifacts.extern_func) :
+    Typecheck.Shim_boundary.wrapper_identity list =
+  List.fold_left collect_boundary_wrappers [] (func.return_boundary_type :: func.param_boundary_types)
+  |> List.sort_uniq compare_boundary_wrapper
 
 let rec abi_type_go (boundary : Typecheck.Shim_boundary.boundary_type) : string * bool =
   match boundary with
@@ -9558,6 +9705,8 @@ let rec abi_type_go (boundary : Typecheck.Shim_boundary.boundary_type) : string 
       let inner_go, inner_needs_import = abi_type_go inner in
       ("[]" ^ inner_go, inner_needs_import)
   | BOwnerEnum enum -> (exported_go_ident (Typecheck.Display_names.display_binding_name enum.enum_name), false)
+  | BOwnerWrapper wrapper ->
+      (exported_go_ident (Typecheck.Display_names.display_binding_name wrapper.wrapper_name), false)
   | BStdBytes -> ("marmoset.Bytes", true)
   | BExternHandle handle -> (extern_handle_api_type_name handle.extern_type_name, false)
   | BCallback callback ->
@@ -9613,6 +9762,24 @@ let emit_api_handle (handle : Typecheck.Shim_boundary.extern_type_identity) : st
   let type_name = extern_handle_api_type_name handle.extern_type_name in
   Printf.sprintf "type %sTag struct{}\n\ntype %s = marmoset.Handle[%sTag]\n" type_name type_name type_name
 
+let emit_api_wrapper (wrapper : Typecheck.Shim_boundary.wrapper_identity) : string * bool =
+  let type_name = exported_go_ident (Typecheck.Display_names.display_binding_name wrapper.wrapper_name) in
+  let import_needed = ref false in
+  let fields =
+    wrapper.wrapper_payloads
+    |> List.mapi (fun index payload ->
+           let go_type, needs_import = abi_type_go payload in
+           if needs_import then
+             import_needed := true;
+           Printf.sprintf "\t%s %s" (wrapper_payload_field_name index) go_type)
+  in
+  let struct_body =
+    match fields with
+    | [] -> "struct{}"
+    | _ -> Printf.sprintf "struct {\n%s\n}" (String.concat "\n" fields)
+  in
+  (Printf.sprintf "type %s %s\n" type_name struct_body, !import_needed)
+
 let close_api_enum_names ~(owner_module_id : string) (enum_names : string list) : string list =
   let dependencies_of_enum acc enum_name =
     match Typecheck.Enum_registry.lookup enum_name with
@@ -9651,6 +9818,9 @@ let emit_api_package (shim_id : string) (funcs : Typecheck.Resolution_artifacts.
            | 0 -> String.compare a.owner_module_id b.owner_module_id
            | cmp -> cmp)
   in
+  let wrappers =
+    funcs |> List.concat_map collect_func_boundary_wrappers |> List.sort_uniq compare_boundary_wrapper
+  in
   let owner_module_id =
     match funcs with
     | func :: _ -> func.owner_module_id
@@ -9666,6 +9836,17 @@ let emit_api_package (shim_id : string) (funcs : Typecheck.Resolution_artifacts.
     |> close_api_enum_names ~owner_module_id
   in
   let handle_bodies = handles |> List.map emit_api_handle in
+  let wrapper_bodies, wrapper_needs_marmoset =
+    wrappers
+    |> List.map emit_api_wrapper
+    |> List.fold_left
+         (fun (bodies, needs_import) (body, body_needs_import) ->
+           if body = "" then
+             (bodies, needs_import || body_needs_import)
+           else
+             (body :: bodies, needs_import || body_needs_import))
+         ([], false)
+  in
   let enum_bodies, enum_needs_marmoset =
     enum_names
     |> List.map (emit_api_enum ~owner_module_id)
@@ -9677,7 +9858,7 @@ let emit_api_package (shim_id : string) (funcs : Typecheck.Resolution_artifacts.
              (body :: bodies, needs_import || body_needs_import))
          ([], false)
   in
-  let needs_marmoset = enum_needs_marmoset || handle_bodies <> [] in
+  let needs_marmoset = enum_needs_marmoset || wrapper_needs_marmoset || handle_bodies <> [] in
   let package_line = Printf.sprintf "package %s\n\n" (api_package_name shim_id) in
   let imports =
     if needs_marmoset then
@@ -9685,7 +9866,7 @@ let emit_api_package (shim_id : string) (funcs : Typecheck.Resolution_artifacts.
     else
       ""
   in
-  let body = String.concat "\n" (handle_bodies @ (enum_bodies |> List.rev)) in
+  let body = String.concat "\n" (handle_bodies @ (wrapper_bodies |> List.rev) @ (enum_bodies |> List.rev)) in
   { rel_path = Printf.sprintf "api/%s/api.go" shim_id; contents = package_line ^ imports ^ body }
 
 let group_funcs_by_shim_id (funcs : Typecheck.Resolution_artifacts.extern_func list) :
@@ -10714,6 +10895,18 @@ let%test "explicit scalar wrapper pattern unwraps payload" =
       "type Path = Path(Str)\nfn unwrap(path: Path) -> Str = match path { case Path(value): value }\nunwrap(Path(\"x\"))"
   with
   | Ok (code, _) -> string_contains code "string(__scrutinee"
+  | Error _ -> false
+
+let%test "explicit multi-payload wrapper emits struct constructor without enum tags" =
+  match
+    compile_string ~file_id:"<codegen>"
+      "type Entry = Entry(Str, Int)\nfn read(entry: Entry) -> Int = match entry { case Entry(_, kind): kind }\nlet entry = Entry(\"x\", 1)\nread(entry)"
+  with
+  | Ok (code, _) ->
+      string_contains code "type Entry struct{Field0 string; Field1 int64}"
+      && string_contains code "Entry{Field0: \"x\", Field1: int64(1)}"
+      && string_contains code "(__scrutinee_0).Field1"
+      && string_not_contains code "Entry_Entry_tag"
   | Error _ -> false
 
 let%test "case-distinct record fields compile to distinct Go fields" =

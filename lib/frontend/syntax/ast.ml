@@ -36,7 +36,7 @@ module AST = struct
 
   and named_type_body =
     | NamedTypeProduct of record_type_field list
-    | NamedTypeWrapper of type_expr
+    | NamedTypeWrapper of type_expr list
   [@@deriving show]
 
   and named_type_def = {
@@ -393,7 +393,7 @@ module AST = struct
           let body_str =
             match type_body with
             | NamedTypeProduct _ -> "{ ... }"
-            | NamedTypeWrapper inner -> show_type_expr inner
+            | NamedTypeWrapper inners -> String.concat ", " (List.map show_type_expr inners)
           in
           Printf.sprintf "type %s%s = %s" type_name params_str body_str
       | ShapeDef { shape_name; shape_type_params; _ } ->
