@@ -173,6 +173,34 @@ trait Ord[a]: Eq = {
       return_type: (type_identifier))))
 
 ================================================================================
+Trait with multiple type parameters
+================================================================================
+
+trait Read[r, e] = {
+  fn read(reader: r) => Result[Str, e]
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (trait_definition
+    name: (identifier)
+    type_params: (type_parameter_list
+      (identifier)
+      (identifier))
+    (trait_method_signature
+      name: (identifier)
+      (trait_named_param
+        name: (identifier)
+        type: (type_variable
+          (identifier)))
+      return_type: (generic_type
+        name: (identifier)
+        arg: (type_identifier)
+        arg: (type_variable
+          (identifier))))))
+
+================================================================================
 Shape definition
 ================================================================================
 

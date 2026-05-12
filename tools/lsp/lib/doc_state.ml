@@ -226,6 +226,25 @@ let%test "analyze with builtins works" =
   let result = analyze ~source:"len([1, 2, 3])" in
   result.diagnostics = [] && result.type_map <> None
 
+let%test "analyze modern trait and predicate syntax" =
+  let result =
+    analyze
+      ~source:
+        {|
+          trait Read[r, e] = {
+            fn read(reader: r) => Result[Str, e]
+          }
+
+          type Path = Path(Str)
+
+          fn absolute?(path: Path) -> Bool = true
+
+          let path = Path("/tmp")
+          absolute?(path)
+        |}
+  in
+  result.diagnostics = [] && result.surface_program <> None && result.program <> None
+
 let%test "analyze successful code surfaces warning diagnostics" =
   let result =
     analyze
@@ -309,7 +328,7 @@ let%test "analyze_with_file_id treats direct stdlib entries as std modules" =
 
 let%test "analyze_with_file_id treats direct non-core stdlib shim entries as std modules" =
   let file_source =
-    "import std.bytes.Bytes\n\nexport File, FileReadError, FileWriteError, FileOpenError, FileCloseError, read, write, open, close\n\nextern type File\n\ntype FileReadError = { NotFound, PermissionDenied, IsDirectory, Other(Str) }\ntype FileWriteError = { NotFound, PermissionDenied, IsDirectory, Other(Str) }\ntype FileOpenError = { NotFound, PermissionDenied, IsDirectory, Other(Str) }\ntype FileCloseError = { AlreadyClosed, Other(Str) }\n\nextern \"std/file\" as file_shim = {\n  fn read(path: Str) => Result[Bytes, FileReadError]\n  fn write(path: Str, bytes: Bytes) => Result[Unit, FileWriteError]\n  fn open(path: Str) => Result[File, FileOpenError]\n  fn close(file: File) => Result[Unit, FileCloseError]\n}\n"
+    "import std.bytes.Bytes\n\nexport File, Mode, Error, UseError\n\nextern type File\n\ntype Mode = { Read, Write, Append }\ntype Error = { NotFound, PermissionDenied, IsDirectory, AlreadyClosed, Other(Str) }\ntype UseError[e] = { Open(Error), Use(e), Close(Error), UseAndClose(e, Error) }\n\nextern \"std/file\" as file_shim = {\n  fn read_data(path: Str) => Result[Bytes, Error]\n  fn write_data(path: Str, bytes: Bytes) => Result[Unit, Error]\n  fn open_handle(path: Str, mode: Mode) => Result[File, Error]\n  fn close_handle(file: File) => Result[Unit, Error]\n}\n"
   in
   with_temp_project
     [
