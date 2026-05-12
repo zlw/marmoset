@@ -8655,6 +8655,11 @@ let format_go_imports (imports : GoImportSet.t) : string =
       let body = specs |> List.map (fun spec -> "\t" ^ format_go_import_spec spec) |> String.concat "\n" in
       Printf.sprintf "import (\n%s\n)\n\n" body
 
+let wrapper_needs_api_struct (wrapper : Typecheck.Shim_boundary.wrapper_identity) : bool =
+  match wrapper.wrapper_payloads with
+  | [ _ ] -> false
+  | _ -> true
+
 let rec abi_type_go_for_main ~(api_alias : string) (boundary : Typecheck.Shim_boundary.boundary_type) : string =
   match boundary with
   | BUnit -> "marmoset.Unit"
@@ -8671,9 +8676,12 @@ let rec abi_type_go_for_main ~(api_alias : string) (boundary : Typecheck.Shim_bo
   | BOwnerEnum enum ->
       Printf.sprintf "%s.%s" api_alias
         (exported_go_ident (Typecheck.Display_names.display_binding_name enum.enum_name))
-  | BOwnerWrapper wrapper ->
-      Printf.sprintf "%s.%s" api_alias
-        (exported_go_ident (Typecheck.Display_names.display_binding_name wrapper.wrapper_name))
+  | BNamedWrapper wrapper -> (
+      match wrapper.wrapper_payloads with
+      | [ payload ] -> abi_type_go_for_main ~api_alias payload
+      | _ ->
+          Printf.sprintf "%s.%s" api_alias
+            (exported_go_ident (Typecheck.Display_names.display_binding_name wrapper.wrapper_name)))
   | BStdBytes -> "marmoset.Bytes"
   | BExternHandle handle -> Printf.sprintf "%s.%s" api_alias (extern_handle_api_type_name handle.extern_type_name)
   | BCallback callback ->
@@ -8695,7 +8703,7 @@ let rec track_boundary_marmoset_types (state : mono_state) (boundary : Typecheck
   | BOwnerEnum enum ->
       track_enum_inst state (Typecheck.Shim_boundary.to_mono_type boundary);
       List.iter (track_boundary_marmoset_types state) enum.enum_type_args
-  | BOwnerWrapper wrapper ->
+  | BNamedWrapper wrapper ->
       track_named_type_inst state (Typecheck.Shim_boundary.to_mono_type boundary);
       List.iter (track_boundary_marmoset_types state) wrapper.wrapper_type_args;
       List.iter (track_boundary_marmoset_types state) wrapper.wrapper_payloads
@@ -8725,8 +8733,9 @@ let register_shim_boundary_imports
     | BOwnerEnum enum ->
         add_go_import ~alias:api_alias state (api_import_path shim_id);
         List.iter go enum.enum_type_args
-    | BOwnerWrapper wrapper ->
-        add_go_import ~alias:api_alias state (api_import_path shim_id);
+    | BNamedWrapper wrapper ->
+        if wrapper_needs_api_struct wrapper then
+          add_go_import ~alias:api_alias state (api_import_path shim_id);
         List.iter go wrapper.wrapper_type_args;
         List.iter go wrapper.wrapper_payloads
     | BCallback callback ->
@@ -8887,27 +8896,31 @@ let rec to_abi_expr
         value_type api_type cases
         (Printf.sprintf "%s: invalid Marmoset enum tag crossing shim boundary" context)
         expr
-  | BOwnerWrapper wrapper ->
+  | BNamedWrapper wrapper ->
       let value_type = boundary_marmoset_go_type state boundary in
       let api_type = abi_type_go_for_main ~api_alias boundary in
-      let fields =
-        wrapper.wrapper_payloads
-        |> List.mapi (fun index payload_boundary ->
-               let payload_expr =
-                 match wrapper.wrapper_payloads with
-                 | [ single_payload ] ->
-                     let representation_go_type =
-                       type_to_go state (Typecheck.Shim_boundary.to_mono_type single_payload)
-                     in
-                     Printf.sprintf "%s(__value)" representation_go_type
-                 | _ -> Printf.sprintf "__value.%s" (wrapper_payload_field_name index)
-               in
-               Printf.sprintf "%s: %s" (wrapper_payload_field_name index)
-                 (to_abi_expr state ~api_alias ~owner_module_id ~context payload_boundary payload_expr))
-        |> String.concat ", "
-      in
-      Printf.sprintf "(func(__value %s) %s {\n\t\treturn %s{%s}\n\t})(%s)" value_type api_type
-        api_type fields expr
+      (match wrapper.wrapper_payloads with
+      | [ payload_boundary ] ->
+          let representation_go_type =
+            type_to_go state (Typecheck.Shim_boundary.to_mono_type payload_boundary)
+          in
+          let payload_expr = Printf.sprintf "%s(__value)" representation_go_type in
+          let converted =
+            to_abi_expr state ~api_alias ~owner_module_id ~context payload_boundary payload_expr
+          in
+          Printf.sprintf "(func(__value %s) %s {\n\t\treturn %s\n\t})(%s)" value_type api_type converted
+            expr
+      | _ ->
+          let fields =
+            wrapper.wrapper_payloads
+            |> List.mapi (fun index payload_boundary ->
+                   let payload_expr = Printf.sprintf "__value.%s" (wrapper_payload_field_name index) in
+                   Printf.sprintf "%s: %s" (wrapper_payload_field_name index)
+                     (to_abi_expr state ~api_alias ~owner_module_id ~context payload_boundary payload_expr))
+            |> String.concat ", "
+          in
+          Printf.sprintf "(func(__value %s) %s {\n\t\treturn %s{%s}\n\t})(%s)" value_type api_type
+            api_type fields expr)
   | BExternHandle _ ->
       let value_type = boundary_marmoset_go_type state boundary in
       let api_type = abi_type_go_for_main ~api_alias boundary in
@@ -9015,28 +9028,30 @@ and from_abi_expr
         cases
         (Printf.sprintf "%s: unknown enum variant returned by shim" context)
         expr
-  | BOwnerWrapper wrapper ->
+  | BNamedWrapper wrapper ->
       let value_type = boundary_marmoset_go_type state boundary in
       let api_type = abi_type_go_for_main ~api_alias boundary in
-      let payload_exprs =
-        wrapper.wrapper_payloads
-        |> List.mapi (fun index payload_boundary ->
-               from_abi_expr state ~api_alias ~owner_module_id ~context payload_boundary
-                 (Printf.sprintf "__value.%s" (wrapper_payload_field_name index)))
-      in
-      let construct =
-        match payload_exprs with
-        | [ single ] -> Printf.sprintf "%s(%s)" value_type single
-        | _ ->
-            let fields =
-              payload_exprs
-              |> List.mapi (fun index payload_expr ->
-                     Printf.sprintf "%s: %s" (wrapper_payload_field_name index) payload_expr)
-              |> String.concat ", "
-            in
-            Printf.sprintf "%s{%s}" value_type fields
-      in
-      Printf.sprintf "(func(__value %s) %s {\n\t\treturn %s\n\t})(%s)" api_type value_type construct expr
+      (match wrapper.wrapper_payloads with
+      | [ payload_boundary ] ->
+          let payload_expr = from_abi_expr state ~api_alias ~owner_module_id ~context payload_boundary "__value" in
+          Printf.sprintf "(func(__value %s) %s {\n\t\treturn %s(%s)\n\t})(%s)" api_type value_type
+            value_type payload_expr expr
+      | _ ->
+          let payload_exprs =
+            wrapper.wrapper_payloads
+            |> List.mapi (fun index payload_boundary ->
+                   from_abi_expr state ~api_alias ~owner_module_id ~context payload_boundary
+                     (Printf.sprintf "__value.%s" (wrapper_payload_field_name index)))
+          in
+          let fields =
+            payload_exprs
+            |> List.mapi (fun index payload_expr ->
+                   Printf.sprintf "%s: %s" (wrapper_payload_field_name index) payload_expr)
+            |> String.concat ", "
+          in
+          let construct = Printf.sprintf "%s{%s}" value_type fields in
+          Printf.sprintf "(func(__value %s) %s {\n\t\treturn %s\n\t})(%s)" api_type value_type construct
+            expr)
   | BExternHandle _ ->
       let value_type = boundary_marmoset_go_type state boundary in
       let api_type = abi_type_go_for_main ~api_alias boundary in
@@ -9617,7 +9632,7 @@ let rec collect_boundary_enums (acc : string list) (boundary : Typecheck.Shim_bo
   | BStdResult (ok_type, err_type) -> collect_boundary_enums (collect_boundary_enums acc ok_type) err_type
   | BList inner -> collect_boundary_enums acc inner
   | BOwnerEnum enum -> List.fold_left collect_boundary_enums (enum.enum_name :: acc) enum.enum_type_args
-  | BOwnerWrapper wrapper ->
+  | BNamedWrapper wrapper ->
       List.fold_left collect_boundary_enums
         (List.fold_left collect_boundary_enums acc wrapper.wrapper_type_args)
         wrapper.wrapper_payloads
@@ -9639,7 +9654,7 @@ let rec collect_boundary_handles
   | BStdResult (ok_type, err_type) -> collect_boundary_handles (collect_boundary_handles acc ok_type) err_type
   | BList inner -> collect_boundary_handles acc inner
   | BOwnerEnum enum -> List.fold_left collect_boundary_handles acc enum.enum_type_args
-  | BOwnerWrapper wrapper ->
+  | BNamedWrapper wrapper ->
       List.fold_left collect_boundary_handles
         (List.fold_left collect_boundary_handles acc wrapper.wrapper_type_args)
         wrapper.wrapper_payloads
@@ -9666,9 +9681,15 @@ let rec collect_boundary_wrappers
   | BStdResult (ok_type, err_type) -> collect_boundary_wrappers (collect_boundary_wrappers acc ok_type) err_type
   | BList inner -> collect_boundary_wrappers acc inner
   | BOwnerEnum enum -> List.fold_left collect_boundary_wrappers acc enum.enum_type_args
-  | BOwnerWrapper wrapper ->
+  | BNamedWrapper wrapper ->
+      let acc =
+        if wrapper_needs_api_struct wrapper then
+          wrapper :: acc
+        else
+          acc
+      in
       List.fold_left collect_boundary_wrappers
-        (List.fold_left collect_boundary_wrappers (wrapper :: acc) wrapper.wrapper_type_args)
+        (List.fold_left collect_boundary_wrappers acc wrapper.wrapper_type_args)
         wrapper.wrapper_payloads
   | BCallback callback ->
       collect_boundary_wrappers
@@ -9678,8 +9699,8 @@ let rec collect_boundary_wrappers
 let compare_boundary_wrapper
     (a : Typecheck.Shim_boundary.wrapper_identity) (b : Typecheck.Shim_boundary.wrapper_identity) : int =
   match String.compare a.wrapper_name b.wrapper_name with
-  | 0 -> String.compare (Typecheck.Shim_boundary.to_string (BOwnerWrapper a))
-           (Typecheck.Shim_boundary.to_string (BOwnerWrapper b))
+  | 0 -> String.compare (Typecheck.Shim_boundary.to_string (BNamedWrapper a))
+           (Typecheck.Shim_boundary.to_string (BNamedWrapper b))
   | cmp -> cmp
 
 let collect_func_boundary_wrappers (func : Typecheck.Resolution_artifacts.extern_func) :
@@ -9705,8 +9726,10 @@ let rec abi_type_go (boundary : Typecheck.Shim_boundary.boundary_type) : string 
       let inner_go, inner_needs_import = abi_type_go inner in
       ("[]" ^ inner_go, inner_needs_import)
   | BOwnerEnum enum -> (exported_go_ident (Typecheck.Display_names.display_binding_name enum.enum_name), false)
-  | BOwnerWrapper wrapper ->
-      (exported_go_ident (Typecheck.Display_names.display_binding_name wrapper.wrapper_name), false)
+  | BNamedWrapper wrapper -> (
+      match wrapper.wrapper_payloads with
+      | [ payload ] -> abi_type_go payload
+      | _ -> (exported_go_ident (Typecheck.Display_names.display_binding_name wrapper.wrapper_name), false))
   | BStdBytes -> ("marmoset.Bytes", true)
   | BExternHandle handle -> (extern_handle_api_type_name handle.extern_type_name, false)
   | BCallback callback ->

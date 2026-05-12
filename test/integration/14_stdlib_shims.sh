@@ -135,7 +135,7 @@ run_source_emit_go_expect_stdio_shape() {
         grep -qF 'func std__io__Write_write_std__file__File' "$outdir/main.go" || failures=$((failures + 1))
         grep -qF 'func std__io__Write_flush_std__file__File' "$outdir/main.go" || failures=$((failures + 1))
         grep -qF 'func std__dir__read_string' "$outdir/main.go" || failures=$((failures + 1))
-        if rg -q 'std__file__Path|flush_path|FlushPath|func Stdin|func Stdout|func Stderr|std__dir__Entry_Entry_tag|std__dir__RawEntry_RawEntry_tag' "$outdir"; then
+        if rg -q 'std__file__Path|flush_path|FlushPath|func Stdin|func Stdout|func Stderr|std__dir__Entry_Entry_tag|std__dir__RawEntry_RawEntry_tag|RawEntry' "$outdir"; then
             failures=$((failures + 1))
         fi
 

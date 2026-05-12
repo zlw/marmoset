@@ -33,7 +33,7 @@ and boundary_type =
   | BStdResult of boundary_type * boundary_type
   | BList of boundary_type
   | BOwnerEnum of enum_identity
-  | BOwnerWrapper of wrapper_identity
+  | BNamedWrapper of wrapper_identity
   | BStdBytes
   | BExternHandle of extern_type_identity
   | BCallback of callback_type
@@ -53,7 +53,7 @@ let rec equal_boundary_type a b =
       String.equal a.enum_name b.enum_name
       && List.length a.enum_type_args = List.length b.enum_type_args
       && List.for_all2 equal_boundary_type a.enum_type_args b.enum_type_args
-  | BOwnerWrapper a, BOwnerWrapper b ->
+  | BNamedWrapper a, BNamedWrapper b ->
       String.equal a.wrapper_name b.wrapper_name
       && List.length a.wrapper_type_args = List.length b.wrapper_type_args
       && List.for_all2 equal_boundary_type a.wrapper_type_args b.wrapper_type_args
@@ -82,7 +82,7 @@ let rec to_string = function
         enum.enum_name
       else
         Printf.sprintf "%s[%s]" enum.enum_name (String.concat ", " (List.map to_string enum.enum_type_args))
-  | BOwnerWrapper wrapper ->
+  | BNamedWrapper wrapper ->
       if wrapper.wrapper_type_args = [] then
         wrapper.wrapper_name
       else
@@ -114,7 +114,7 @@ let rec to_mono_type = function
   | BStdResult (ok_type, err_type) -> TEnum ("Result", [ to_mono_type ok_type; to_mono_type err_type ])
   | BList inner -> TArray (to_mono_type inner)
   | BOwnerEnum enum -> TEnum (enum.enum_name, List.map to_mono_type enum.enum_type_args)
-  | BOwnerWrapper wrapper -> TNamed (wrapper.wrapper_name, List.map to_mono_type wrapper.wrapper_type_args)
+  | BNamedWrapper wrapper -> TNamed (wrapper.wrapper_name, List.map to_mono_type wrapper.wrapper_type_args)
   | BStdBytes -> TNamed (std_bytes_type_name, [])
   | BExternHandle handle -> TNamed (handle.extern_type_name, [])
   | BCallback callback ->
@@ -133,9 +133,7 @@ let owner_internal_prefix (owner_module_id : string) : string =
 let is_owner_enum ~(owner_module_id : string) (enum_name : string) : bool =
   starts_with ~prefix:(owner_internal_prefix owner_module_id ^ "__") enum_name
 
-let is_owner_named_wrapper ~(owner_module_id : string) (type_name : string) : bool =
-  starts_with ~prefix:(owner_internal_prefix owner_module_id ^ "__") type_name
-  &&
+let is_named_wrapper (type_name : string) : bool =
   match Type_registry.lookup_named_type type_name with
   | Some { named_type_body = Type_registry.NamedWrapper _; _ } -> true
   | _ -> false
@@ -189,7 +187,7 @@ let rec classify ?source_span ?(allow_callback = false) ~(owner_module_id : stri
       let* enum_type_args = classify_args [] args in
       Ok (BOwnerEnum { enum_name = name; enum_type_args })
   | TNamed (name, []) when String.equal name std_bytes_type_name -> Ok BStdBytes
-  | TNamed (name, args) when is_owner_named_wrapper ~owner_module_id name -> (
+  | TNamed (name, args) when is_named_wrapper name -> (
       let ( let* ) = Result.bind in
       let rec classify_types acc = function
         | [] -> Ok (List.rev acc)
@@ -201,7 +199,7 @@ let rec classify ?source_span ?(allow_callback = false) ~(owner_module_id : stri
       | Some (Ok payload_types) ->
           let* wrapper_type_args = classify_types [] args in
           let* wrapper_payloads = classify_types [] payload_types in
-          Ok (BOwnerWrapper { wrapper_name = name; wrapper_type_args; wrapper_payloads })
+          Ok (BNamedWrapper { wrapper_name = name; wrapper_type_args; wrapper_payloads })
       | Some (Error msg) ->
           let code = "type-shim-boundary" in
           Error (Diagnostic.error_no_span ~code ~message:msg)

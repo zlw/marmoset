@@ -57,25 +57,25 @@ func kindOf(info os.FileInfo) dirapi.Kind {
 	}
 }
 
-func Read(path string) marmoset.Result[[]dirapi.RawEntry, dirapi.Error] {
+func Read(path string) marmoset.Result[[]dirapi.Entry, dirapi.Error] {
 	entries, err := os.ReadDir(path)
 	if err != nil {
-		return marmoset.Failure[[]dirapi.RawEntry, dirapi.Error](dirError(err))
+		return marmoset.Failure[[]dirapi.Entry, dirapi.Error](dirError(err))
 	}
 
-	out := make([]dirapi.RawEntry, 0, len(entries))
+	out := make([]dirapi.Entry, 0, len(entries))
 	for _, entry := range entries {
 		info, err := entry.Info()
 		if err != nil {
-			return marmoset.Failure[[]dirapi.RawEntry, dirapi.Error](dirError(err))
+			return marmoset.Failure[[]dirapi.Entry, dirapi.Error](dirError(err))
 		}
-		out = append(out, dirapi.RawEntry{
+		out = append(out, dirapi.Entry{
 			Field0: filepath.Join(path, entry.Name()),
 			Field1: kindOf(info),
 		})
 	}
 
-	return marmoset.Success[[]dirapi.RawEntry, dirapi.Error](out)
+	return marmoset.Success[[]dirapi.Entry, dirapi.Error](out)
 }
 
 func Make(path string) marmoset.Result[marmoset.Unit, dirapi.Error] {

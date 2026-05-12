@@ -5,7 +5,6 @@ export Entry, Kind, Error, read, make, make_all, remove, remove_all, exists?, cu
 
 type Kind = { File, Directory, Symlink, Other }
 type Entry = Entry(path.Path, Kind)
-type RawEntry = RawEntry(Str, Kind)
 
 type Error = {
   NotFound,
@@ -18,7 +17,7 @@ type Error = {
 }
 
 extern "std/dir" as dir_shim = {
-  fn read(path: Str) => Result[List[RawEntry], Error]
+  fn read(path: Str) => Result[List[Entry], Error]
   fn make(path: Str) => Result[Unit, Error]
   fn make_all(path: Str) => Result[Unit, Error]
   fn remove(path: Str) => Result[Unit, Error]
@@ -30,22 +29,8 @@ extern "std/dir" as dir_shim = {
 fn path_value[p: PathLike](value: p) -> Str =
   path.to_str(path.PathLike.path(value))
 
-fn raw_entry(raw: RawEntry) -> Entry = match raw {
-  case RawEntry(path_value, kind): Entry(path.from_str(path_value), kind)
-}
-
-fn map_entries(input: List[RawEntry], output: List[Entry]) -> List[Entry] =
-  if (len(input) == 0) {
-    output
-  } else {
-    map_entries(rest(input), push(output, raw_entry(first(input))))
-  }
-
 fn read[p: PathLike](path: p) => Result[List[Entry], Error] =
-  match dir_shim.read(path_value(path)) {
-    case Result.Success(entries): Result.Success(map_entries(entries, []))
-    case Result.Failure(err): Result.Failure(err)
-  }
+  dir_shim.read(path_value(path))
 
 fn make[p: PathLike](path: p) => Result[Unit, Error] =
   dir_shim.make(path_value(path))
