@@ -15,11 +15,15 @@ if command -v rg >/dev/null 2>&1; then
   ! rg -Fq '_build/default/bin/main.exe' src/marmoset.rs
   ! rg -Fq '_build/install/default/bin/marmoset' src/marmoset.rs
   ! rg -Fq 'std::env::split_paths' src/marmoset.rs
+  ! rg -Fq 'worktree.which' src/marmoset.rs
+  ! rg -Fq 'repo_dev_binary' src/marmoset.rs
 else
   grep -Fq 'repo_root.join("marmoset")' src/marmoset.rs
   ! grep -Fq '_build/default/bin/main.exe' src/marmoset.rs
   ! grep -Fq '_build/install/default/bin/marmoset' src/marmoset.rs
   ! grep -Fq 'std::env::split_paths' src/marmoset.rs
+  ! grep -Fq 'worktree.which' src/marmoset.rs
+  ! grep -Fq 'repo_dev_binary' src/marmoset.rs
 fi
 
 python3 - <<'PY'
