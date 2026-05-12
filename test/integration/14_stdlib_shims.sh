@@ -129,12 +129,12 @@ run_source_emit_go_expect_stdio_shape() {
         grep -qF 'func Write(writer errapi.Stderr, value string)' "$outdir/shims/std/io/err/err.go" || failures=$((failures + 1))
         grep -qF 'func Flush(writer errapi.Stderr)' "$outdir/shims/std/io/err/err.go" || failures=$((failures + 1))
         grep -qF 'type std__path__Path string' "$outdir/main.go" || failures=$((failures + 1))
-        grep -qF 'func std__file__read_string_ret_Result_string_std__file__Error' "$outdir/main.go" || failures=$((failures + 1))
-        grep -qF 'func std__file__write_string_string' "$outdir/main.go" || failures=$((failures + 1))
+        grep -qF 'func std__file__read_std__path__Path_ret_Result_string_std__file__Error' "$outdir/main.go" || failures=$((failures + 1))
+        grep -qF 'func std__file__write_std__path__Path_string' "$outdir/main.go" || failures=$((failures + 1))
         grep -qF 'func std__io__Read_read_std__file__File' "$outdir/main.go" || failures=$((failures + 1))
         grep -qF 'func std__io__Write_write_std__file__File' "$outdir/main.go" || failures=$((failures + 1))
         grep -qF 'func std__io__Write_flush_std__file__File' "$outdir/main.go" || failures=$((failures + 1))
-        grep -qF 'func std__dir__read_string' "$outdir/main.go" || failures=$((failures + 1))
+        grep -qF 'func extern__std_dir__read(path std__path__Path)' "$outdir/main.go" || failures=$((failures + 1))
         if rg -q 'std__file__Path|flush_path|FlushPath|func Stdin|func Stdout|func Stderr|std__dir__Entry_Entry_tag|std__dir__RawEntry_RawEntry_tag|RawEntry' "$outdir"; then
             failures=$((failures + 1))
         fi
@@ -209,16 +209,28 @@ run_source_expect_output \
 import std.path
 import std.path.Path
 
-let root: Path = path.from_str("/tmp/marmoset/example.txt")
-let joined: Path = path.join(path.dirname(root), "child")
+fn path_label(value: Path) -> Str = match value {
+  case Path(raw): raw
+}
+
+let root: Path = Path("/tmp/marmoset/example.txt")
+let joined: Path = path.join(path.dirname(root), Path("child"))
 
 puts("base:" + path.basename(root))
-puts("dir:" + path.to_str(path.dirname(root)))
+puts("dir:" + path_label(path.dirname(root)))
 puts("ext:" + path.extname(root))
-puts("join:" + path.to_str(joined))
-puts("clean:" + path.to_str(path.clean(path.from_str("/tmp/a/../b"))))
+puts("join:" + path_label(joined))
+puts("clean:" + path_label(path.clean(Path("/tmp/a/../b"))))
 puts("abs:" + Show.show(path.absolute?(root)))
-puts("rel:" + Show.show(path.relative?(path.from_str("notes/today.md"))))
+puts("rel:" + Show.show(path.relative?(Path("notes/today.md"))))
+EOF
+
+run_source_expect_build_failure \
+    "std.path old structural path helper is gone" \
+    "does not export" <<'EOF'
+import std.path.PathLike
+
+puts(0)
 EOF
 
 run_source_expect_output \
@@ -243,7 +255,7 @@ fn error_label(prefix: Str, err: Error) -> Str = match err {
   case Error.Other(message): prefix + ":other:" + message
 }
 
-let output_path: Path = path.from_str("$ROUNDTRIP_PATH")
+let output_path: Path = Path("$ROUNDTRIP_PATH")
 
 match file.write(output_path, bytes.from_str("roundtrip")) {
   case Result.Success(_): {
@@ -278,25 +290,25 @@ match file.append(output_path, "!") {
   case Result.Failure(err): puts(error_label("write", err))
 }
 
-let invalid_text: Result[Str, Error] = file.read("$INVALID_UTF8_PATH")
+let invalid_text: Result[Str, Error] = file.read(Path("$INVALID_UTF8_PATH"))
 match invalid_text {
   case Result.Success(_): puts("invalid:unexpected-success")
   case Result.Failure(err): puts(error_label("read", err))
 }
 
-let missing_text: Result[Str, Error] = file.read("$MISSING_PATH")
+let missing_text: Result[Str, Error] = file.read(Path("$MISSING_PATH"))
 match missing_text {
   case Result.Success(_): puts("read:unexpected-success")
   case Result.Failure(err): puts(error_label("read", err))
 }
 
-let dir_text: Result[Str, Error] = file.read("$DATA_DIR")
+let dir_text: Result[Str, Error] = file.read(Path("$DATA_DIR"))
 match dir_text {
   case Result.Success(_): puts("read-dir:unexpected-success")
   case Result.Failure(err): puts(error_label("read", err))
 }
 
-match file.write("$DATA_DIR", bytes.from_str("x")) {
+match file.write(Path("$DATA_DIR"), bytes.from_str("x")) {
   case Result.Success(_): puts("write-dir:unexpected-success")
   case Result.Failure(err): puts(error_label("write", err))
 }
@@ -310,6 +322,7 @@ import std.file
 import std.file.Error
 import std.file.UseError
 import std.io
+import std.path.Path
 
 fn error_label(prefix: Str, err: Error) -> Str = match err {
   case Error.NotFound: prefix + ":not-found"
@@ -330,28 +343,28 @@ fn use_error_label(err: UseError[Error]) -> Str = match err {
   case UseError.UseAndClose(use_err, close_err): "use:" + error_label("read", use_err) + "+" + error_label("close", close_err)
 }
 
-fn use_file[a, e](target: Str, body: (file.File) => Result[a, e]) => Result[a, UseError[e]] =
+fn use_file[a, e](target: Path, body: (file.File) => Result[a, e]) => Result[a, UseError[e]] =
   file.open(target, file.Mode.Read, body)
 
-let opened_text: Result[Str, UseError[Error]] = file.open("$EXISTING_PATH", file.Mode.Read, (handle) => file.read_all(handle))
+let opened_text: Result[Str, UseError[Error]] = file.open(Path("$EXISTING_PATH"), file.Mode.Read, (handle) => file.read_all(handle))
 match opened_text {
   case Result.Success(payload): puts("read:" + payload)
   case Result.Failure(err): puts(use_error_label(err))
 }
 
-let protocol_text: Result[Str, UseError[Error]] = file.open("$EXISTING_PATH", file.Mode.Read, (handle) => io.Read.read(handle))
+let protocol_text: Result[Str, UseError[Error]] = file.open(Path("$EXISTING_PATH"), file.Mode.Read, (handle) => io.Read.read(handle))
 match protocol_text {
   case Result.Success(payload): puts("protocol:" + payload)
   case Result.Failure(err): puts(use_error_label(err))
 }
 
-let generic_text: Result[Str, UseError[Error]] = use_file("$EXISTING_PATH", (handle) => io.Read.read(handle))
+let generic_text: Result[Str, UseError[Error]] = use_file(Path("$EXISTING_PATH"), (handle) => io.Read.read(handle))
 match generic_text {
   case Result.Success(payload): puts("generic:" + payload)
   case Result.Failure(err): puts(use_error_label(err))
 }
 
-let write_result: Result[Unit, UseError[Error]] = file.open("$ROUNDTRIP_PATH", file.Mode.Write, (handle) => {
+let write_result: Result[Unit, UseError[Error]] = file.open(Path("$ROUNDTRIP_PATH"), file.Mode.Write, (handle) => {
   match io.Write.write(handle, "scoped") {
     case Result.Success(_): match io.Write.write(handle, "!") {
       case Result.Success(_): io.Write.flush(handle)
@@ -362,7 +375,7 @@ let write_result: Result[Unit, UseError[Error]] = file.open("$ROUNDTRIP_PATH", f
 })
 match write_result {
   case Result.Success(_): {
-    let text: Result[Str, Error] = file.read("$ROUNDTRIP_PATH")
+    let text: Result[Str, Error] = file.read(Path("$ROUNDTRIP_PATH"))
     match text {
       case Result.Success(value): puts("written:" + value)
       case Result.Failure(err): puts(error_label("read", err))
@@ -371,14 +384,14 @@ match write_result {
   case Result.Failure(err): puts(use_error_label(err))
 }
 
-let missing_result: Result[Str, UseError[Error]] = file.open("$MISSING_PATH", file.Mode.Read, (handle) => file.read_all(handle))
+let missing_result: Result[Str, UseError[Error]] = file.open(Path("$MISSING_PATH"), file.Mode.Read, (handle) => file.read_all(handle))
 match missing_result {
   case Result.Success(_): puts("open:unexpected-success")
   case Result.Failure(err): puts(use_error_label(err))
 }
 
-let use_result: Result[Str, UseError[Error]] = file.open("$EXISTING_PATH", file.Mode.Read, (_handle) => {
-  let dir_read: Result[Str, Error] = file.read("$DATA_DIR")
+let use_result: Result[Str, UseError[Error]] = file.open(Path("$EXISTING_PATH"), file.Mode.Read, (_handle) => {
+  let dir_read: Result[Str, Error] = file.read(Path("$DATA_DIR"))
   dir_read
 })
 match use_result {
@@ -386,7 +399,7 @@ match use_result {
   case Result.Failure(err): puts(use_error_label(err))
 }
 
-let leaked_result: Result[file.File, UseError[Error]] = file.open("$EXISTING_PATH", file.Mode.Read, (handle) => if (true) {
+let leaked_result: Result[file.File, UseError[Error]] = file.open(Path("$EXISTING_PATH"), file.Mode.Read, (handle) => if (true) {
   Result.Success(handle)
 } else {
   Result.Failure(Error.NotFound)
@@ -411,6 +424,7 @@ import std.dir.Entry
 import std.dir.Error
 import std.dir.Kind
 import std.path
+import std.path.Path
 
 fn kind_label(kind: Kind) -> Str = match kind {
   case Kind.File: "file"
@@ -430,30 +444,30 @@ fn error_label(prefix: Str, err: Error) -> Str = match err {
 }
 
 fn entry_label(entry: Entry) -> Str = match entry {
-  case Entry(path_value, kind): path.basename(path_value) + ":" + kind_label(kind)
+  case Entry(entry_path, kind): path.basename(entry_path) + ":" + kind_label(kind)
 }
 
-match dir.exists?("$CHILD_DIR") {
+match dir.exists?(Path("$CHILD_DIR")) {
   case Result.Success(value): puts("exists:" + Show.show(value))
   case Result.Failure(err): puts(error_label("exists", err))
 }
 
-match dir.make("$CHILD_DIR") {
+match dir.make(Path("$CHILD_DIR")) {
   case Result.Success(_): puts("make:ok")
   case Result.Failure(err): puts(error_label("make", err))
 }
 
-match dir.exists?("$CHILD_DIR") {
+match dir.exists?(Path("$CHILD_DIR")) {
   case Result.Success(value): puts("exists:" + Show.show(value))
   case Result.Failure(err): puts(error_label("exists", err))
 }
 
-match dir.make_all("$NESTED_DIR") {
+match dir.make_all(Path("$NESTED_DIR")) {
   case Result.Success(_): puts("make-all:ok")
   case Result.Failure(err): puts(error_label("make-all", err))
 }
 
-match dir.read("$LISTING_DIR") {
+match dir.read(Path("$LISTING_DIR")) {
   case Result.Success(entries): puts("entry:" + entry_label(first(entries)))
   case Result.Failure(err): puts(error_label("read", err))
 }
@@ -463,13 +477,13 @@ match dir.current() {
   case Result.Failure(err): puts(error_label("current", err))
 }
 
-match dir.remove("$NONEMPTY_DIR") {
+match dir.remove(Path("$NONEMPTY_DIR")) {
   case Result.Success(_): puts("remove-nonempty:unexpected")
   case Result.Failure(err): puts(error_label("remove-nonempty", err))
 }
 
-match dir.remove_all("$CHILD_DIR") {
-  case Result.Success(_): match dir.remove_all("$DATA_DIR/nested") {
+match dir.remove_all(Path("$CHILD_DIR")) {
+  case Result.Success(_): match dir.remove_all(Path("$DATA_DIR/nested")) {
     case Result.Success(_): puts("remove-all:ok")
     case Result.Failure(err): puts(error_label("remove-all", err))
   }
@@ -532,15 +546,16 @@ import std.file.Error
 import std.io
 import std.io.err
 import std.dir
+import std.path.Path
 
 let _ = io.write("out")
 let _ = io.flush()
 let _ = err.write("err")
 let _ = err.flush()
-let _ = file.write("$ROUNDTRIP_PATH", "path")
-let read_text: Result[Str, Error] = file.read("$ROUNDTRIP_PATH")
-let dir_entries: Result[List[dir.Entry], dir.Error] = dir.read("$LISTING_DIR")
-let file_protocol: Result[Unit, file.UseError[Error]] = file.open("$ROUNDTRIP_PATH", file.Mode.Append, (handle) => {
+let _ = file.write(Path("$ROUNDTRIP_PATH"), "path")
+let read_text: Result[Str, Error] = file.read(Path("$ROUNDTRIP_PATH"))
+let dir_entries: Result[List[dir.Entry], dir.Error] = dir.read(Path("$LISTING_DIR"))
+let file_protocol: Result[Unit, file.UseError[Error]] = file.open(Path("$ROUNDTRIP_PATH"), file.Mode.Append, (handle) => {
   match io.Write.write(handle, "x") {
     case Result.Success(_): io.Write.flush(handle)
     case Result.Failure(err): Result.Failure(err)

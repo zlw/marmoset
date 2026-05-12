@@ -35,7 +35,7 @@ Opaque resources use `extern type` in the owning shim module. Public modules sho
 import std.bytes
 import std.bytes.Bytes
 import std.path
-import std.path.PathLike
+import std.path.Path
 
 export File, Mode, Error, UseError,
        read, write, append, open,
@@ -58,20 +58,20 @@ type Error = {
 type UseError[e] = { Open(Error), Use(e), Close(Error), UseAndClose(e, Error) }
 
 extern "std/file" as file_shim = {
-  fn read_data(path: Str) => Result[Bytes, Error]
-  fn write_data(path: Str, bytes: Bytes) => Result[Unit, Error]
-  fn append_data(path: Str, bytes: Bytes) => Result[Unit, Error]
-  fn open_handle(path: Str, mode: Mode) => Result[File, Error]
+  fn read_data(path: Path) => Result[Bytes, Error]
+  fn write_data(path: Path, bytes: Bytes) => Result[Unit, Error]
+  fn append_data(path: Path, bytes: Bytes) => Result[Unit, Error]
+  fn open_handle(path: Path, mode: Mode) => Result[File, Error]
   fn close_handle(file: File) => Result[Unit, Error]
   fn read_all_data(file: File) => Result[Bytes, Error]
   fn write_all_data(file: File, bytes: Bytes) => Result[Unit, Error]
   fn flush_handle(file: File) => Result[Unit, Error]
 }
 
-fn read[a: bytes.Decode, p: PathLike](path: p) => Result[a, Error]
-fn write[a: bytes.Encode, p: PathLike](path: p, value: a) => Result[Unit, Error]
-fn append[a: bytes.Encode, p: PathLike](path: p, value: a) => Result[Unit, Error]
-fn open[p: PathLike, a, e](path: p, mode: Mode, body: (File) => Result[a, e]) => Result[a, UseError[e]]
+fn read[a: bytes.Decode](path: Path) => Result[a, Error]
+fn write[a: bytes.Encode](path: Path, value: a) => Result[Unit, Error]
+fn append[a: bytes.Encode](path: Path, value: a) => Result[Unit, Error]
+fn open[a, e](path: Path, mode: Mode, body: (File) => Result[a, e]) => Result[a, UseError[e]]
 fn read_all[a: bytes.Decode](file: File) => Result[a, Error]
 fn write_all[a: bytes.Encode](file: File, value: a) => Result[Unit, Error]
 fn flush(file: File) => Result[Unit, Error]
@@ -88,6 +88,7 @@ Shim boundaries are classified by resolved Marmoset type identity before Go code
 - canonical `std.result.Result[T, E]`
 - canonical immutable `List[T]` when `T` is a supported boundary type
 - closed enums declared by the owning shim module
+- nominal wrapper types whose payloads are supported boundary types; single-payload wrappers flatten to their payload ABI, while multi-payload wrappers use generated shim API structs
 - opaque `extern type` handles declared by the owning shim module
 - canonical immutable `std.bytes.Bytes`
 - direct callback parameters whose argument and return types are supported shim boundary types

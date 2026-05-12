@@ -1,5 +1,4 @@
 import std.path
-import std.path.PathLike
 
 export Entry, Kind, Error, read, make, make_all, remove, remove_all, exists?, current
 
@@ -17,38 +16,11 @@ type Error = {
 }
 
 extern "std/dir" as dir_shim = {
-  fn read(path: Str) => Result[List[Entry], Error]
-  fn make(path: Str) => Result[Unit, Error]
-  fn make_all(path: Str) => Result[Unit, Error]
-  fn remove(path: Str) => Result[Unit, Error]
-  fn remove_all(path: Str) => Result[Unit, Error]
-  fn exists?(path: Str) => Result[Bool, Error]
-  fn current() => Result[Str, Error]
+  fn read(path: path.Path) => Result[List[Entry], Error]
+  fn make(path: path.Path) => Result[Unit, Error]
+  fn make_all(path: path.Path) => Result[Unit, Error]
+  fn remove(path: path.Path) => Result[Unit, Error]
+  fn remove_all(path: path.Path) => Result[Unit, Error]
+  fn exists?(path: path.Path) => Result[Bool, Error]
+  fn current() => Result[path.Path, Error]
 }
-
-fn path_value[p: PathLike](value: p) -> Str =
-  path.to_str(path.PathLike.path(value))
-
-fn read[p: PathLike](path: p) => Result[List[Entry], Error] =
-  dir_shim.read(path_value(path))
-
-fn make[p: PathLike](path: p) => Result[Unit, Error] =
-  dir_shim.make(path_value(path))
-
-fn make_all[p: PathLike](path: p) => Result[Unit, Error] =
-  dir_shim.make_all(path_value(path))
-
-fn remove[p: PathLike](path: p) => Result[Unit, Error] =
-  dir_shim.remove(path_value(path))
-
-fn remove_all[p: PathLike](path: p) => Result[Unit, Error] =
-  dir_shim.remove_all(path_value(path))
-
-fn exists?[p: PathLike](path: p) => Result[Bool, Error] =
-  dir_shim.exists?(path_value(path))
-
-fn current() => Result[path.Path, Error] =
-  match dir_shim.current() {
-    case Result.Success(value): Result.Success(path.from_str(value))
-    case Result.Failure(err): Result.Failure(err)
-  }

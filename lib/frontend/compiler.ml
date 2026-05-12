@@ -1827,7 +1827,7 @@ let%test "imported constrained generic APIs seed hidden dependency traits" =
   Discovery.with_temp_project
     [
       ( "main.mr",
-        "import std.file\nlet _ = file.write(\"marmoset.tmp\", \"hi\")\nlet read_text: Result[Str, file.Error] = file.read(\"marmoset.tmp\")\nputs(0)\n"
+        "import std.file\nimport std.path.Path\nlet target = Path(\"marmoset.tmp\")\nlet _ = file.write(target, \"hi\")\nlet read_text: Result[Str, file.Error] = file.read(target)\nputs(0)\n"
       );
     ]
     (fun root ->
@@ -1853,7 +1853,7 @@ let%test "shim S2: distinct std shim ids emit distinct adapter wrappers" =
   Discovery.with_temp_project
     [
       ( "main.mr",
-        "import std.bytes\nimport std.file\nlet payload = bytes.from_str(\"hi\")\nlet _ = file.write(\"marmoset.tmp\", payload)\nputs(bytes.to_str_lossy(payload))\n"
+        "import std.bytes\nimport std.file\nimport std.path.Path\nlet payload = bytes.from_str(\"hi\")\nlet _ = file.write(Path(\"marmoset.tmp\"), payload)\nputs(bytes.to_str_lossy(payload))\n"
       );
     ]
     (fun root ->
@@ -1863,7 +1863,7 @@ let%test "shim S2: distinct std shim ids emit distinct adapter wrappers" =
 	          count_occurrences build_output.main_go "func extern__std_bytes__from_str(input string) marmoset.Bytes"
 	          = 1
 	          && count_occurrences build_output.main_go
-	               "func extern__std_file__write_data(path string, bytes marmoset.Bytes) Result_unit_std__file__Error"
+	               "func extern__std_file__write_data(path std__path__Path, bytes marmoset.Bytes) Result_unit_std__file__Error"
 	             = 1
 	          && string_contains build_output.main_go "extern__std_bytes__from_str"
 	          && string_contains build_output.main_go "extern__std_file__write_data")

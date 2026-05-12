@@ -133,23 +133,13 @@ Pure path values and path manipulation. This module does not touch the filesyste
 Target API:
 
 ```marmoset
-export Path, PathLike,
-       from_str, to_str,
+export Path,
        join, dirname, basename, extname,
        clean, absolute?, relative?
 
 type Path = Path(Str)
 
-trait PathLike[p] = {
-  fn path(value: p) -> Path
-}
-
-impl PathLike[Path]
-impl PathLike[Str]
-
-fn from_str(value: Str) -> Path
-fn to_str(path: Path) -> Str
-fn join[p: PathLike](left: Path, right: p) -> Path
+fn join(left: Path, right: Path) -> Path
 fn dirname(path: Path) -> Path
 fn basename(path: Path) -> Str
 fn extname(path: Path) -> Str
@@ -161,7 +151,8 @@ fn relative?(path: Path) -> Bool
 Rules:
 
 - `Path` is a nominal wrapper around a whole path string.
-- `PathLike` allows ergonomic public APIs to accept either `Str` or `Path`.
+- Raw strings become paths explicitly through the public `Path(value)` constructor; filesystem APIs do not accept `Str` directly.
+- Shim ABI conversion unwraps `Path(Str)` to the Go string ABI, so stdlib modules do not need repeated path-to-string plumbing.
 - A path is not an IO resource. Do not implement `io.Read` or `io.Write` for `Path`.
 - `extname` follows Ruby/Elixir-style empty-string behavior for paths with no extension.
 
@@ -199,11 +190,11 @@ type Error = {
 
 type UseError[e] = { Open(Error), Use(e), Close(Error), UseAndClose(e, Error) }
 
-fn read[a: bytes.Decode, p: path.PathLike](path: p) => Result[a, Error]
-fn write[a: bytes.Encode, p: path.PathLike](path: p, value: a) => Result[Unit, Error]
-fn append[a: bytes.Encode, p: path.PathLike](path: p, value: a) => Result[Unit, Error]
+fn read[a: bytes.Decode](path: path.Path) => Result[a, Error]
+fn write[a: bytes.Encode](path: path.Path, value: a) => Result[Unit, Error]
+fn append[a: bytes.Encode](path: path.Path, value: a) => Result[Unit, Error]
 
-fn open[p: path.PathLike, a, e](path: p, mode: Mode, body: (File) => Result[a, e]) => Result[a, UseError[e]]
+fn open[a, e](path: path.Path, mode: Mode, body: (File) => Result[a, e]) => Result[a, UseError[e]]
 
 fn read_all[a: bytes.Decode](file: File) => Result[a, Error]
 fn write_all[a: bytes.Encode](file: File, value: a) => Result[Unit, Error]
@@ -223,7 +214,7 @@ Rules:
 - Reading, writing, or flushing a closed, leaked, or unknown file value returns `Error.AlreadyClosed`.
 - Raw resource operations stay in the private `file_shim` extern block as `open_handle` and `close_handle`; `std.file` does not export a raw close or one-argument open.
 - `UseError[e]` flattens the open failure, callback failure, close failure, and combined callback-plus-close failure cases for failable callback APIs.
-- `Path` values are handled through `std.path.PathLike`; `std.file` does not own a private path receiver and does not implement IO protocols for paths.
+- `Path` values are explicit at the public boundary; `std.file` does not accept raw `Str`, does not own a private path receiver, and does not implement IO protocols for paths.
 
 ### `std.dir`
 
@@ -254,12 +245,12 @@ type Error = {
   Other(Str),
 }
 
-fn read[p: path.PathLike](path: p) => Result[List[Entry], Error]
-fn make[p: path.PathLike](path: p) => Result[Unit, Error]
-fn make_all[p: path.PathLike](path: p) => Result[Unit, Error]
-fn remove[p: path.PathLike](path: p) => Result[Unit, Error]
-fn remove_all[p: path.PathLike](path: p) => Result[Unit, Error]
-fn exists?[p: path.PathLike](path: p) => Result[Bool, Error]
+fn read(path: path.Path) => Result[List[Entry], Error]
+fn make(path: path.Path) => Result[Unit, Error]
+fn make_all(path: path.Path) => Result[Unit, Error]
+fn remove(path: path.Path) => Result[Unit, Error]
+fn remove_all(path: path.Path) => Result[Unit, Error]
+fn exists?(path: path.Path) => Result[Bool, Error]
 fn current() => Result[path.Path, Error]
 ```
 
@@ -592,8 +583,9 @@ HTTP, SQL, and framework-style wrappers likely need follow-up shim features such
 - 2026-05-12 18:47 CEST: Editor/LSP syntax coverage reached green. Added explicit tree-sitter corpus coverage for multi-parameter traits and LSP analysis coverage for multi-parameter traits, predicate identifiers, nominal wrapper constructors, and std-owned extern shim blocks. Verification passed with `dune runtest tools/lsp/lib`, `npm test` in `tools/tree-sitter-marmoset`, `npm run check-grammar` and `npm run compile` in `tools/vscode-marmoset`, `tools/scripts/sync_textmate_grammars.sh --check`, and `cargo test --locked` in `tools/zed-marmoset`.
 - 2026-05-12 18:48 CEST: Started three-round bugbash. Round 1 targets stdlib behavior edge cases, Round 2 targets compiler/shim interop specialization edges, and Round 3 targets editor/LSP/tooling syntax coverage.
 - 2026-05-12 19:06 CEST: Bugbash Round 1 found a std.dir error-precedence bug: removing a non-empty directory returned `AlreadyExists` on this platform because the shim checked Go's broad existence predicate before `ENOTEMPTY`. Reordered specific filesystem errors before broad existence checks in `std.dir` and `std.file`, and added a regression to the stdlib-shim fixture. Focused `make integration stdlib-shims` is green.
-- 2026-05-12 19:09 CEST: Bugbash Round 2 covered generic callback-result specialization through a helper around `file.open`, `io.Read.read(handle)`, `std.path.PathLike`, and `List[Entry]` directory shim returns. Folded the generic file-open helper into the permanent stdlib fixture; focused `make integration stdlib-shims` is green.
+- 2026-05-12 19:09 CEST: Bugbash Round 2 covered generic callback-result specialization through a helper around `file.open`, `io.Read.read(handle)`, explicit `std.path.Path` values, and `List[Entry]` directory shim returns. Folded the generic file-open helper into the permanent stdlib fixture; focused `make integration stdlib-shims` is green.
 - 2026-05-12 19:12 CEST: Bugbash Round 3 re-ran editor and LSP coverage for the new syntax surface. Verification passed with `dune runtest tools/lsp/lib`, `npm test` in `tools/tree-sitter-marmoset`, `npm run check-grammar` and `npm run compile` in `tools/vscode-marmoset`, `tools/scripts/sync_textmate_grammars.sh --check`, and `cargo test --locked` in `tools/zed-marmoset`.
 - 2026-05-12 19:20 CEST: Broad integration probing exposed a branch-local project-root regression from the stdlib-root split: files under `MARMOSET_ROOT` but outside `MARMOSET_ROOT/std` were being treated as stdlib modules, which broke local module imports from repo-hosted fixtures. Narrowed stdlib module detection to the `std/` subtree, added discovery coverage for projects that live under the toolchain root, refreshed the FFI Go-tree snapshot back to project-local names, and verified module fixture groups plus `make integration ffi stdlib-shims`.
 - 2026-05-12 20:25 CEST: Fixed the std.dir nominal-wrapper regression exposed by replacing one-variant directory-entry carrier sums with proper multi-payload wrappers. The parser, type registry, typechecker, Go emitter, shim boundary adapter, generated shim API, and LSP surface traversal now support `type Entry = Entry(path.Path, Kind)` without enum tags. Verification passed with `dune runtest lib/frontend/syntax`, `dune runtest lib/frontend/typecheck`, `dune runtest lib/backend/go`, `dune runtest tools/lsp`, `make integration ffi stdlib-shims`, `test/ci/tree-sitter.sh`, `test/ci/editor-vscode.sh`, `test/ci/editor-nvim.sh`, `test/ci/editor-jetbrains.sh`, and `git diff --check`; `test/ci/editor-zed.sh` was blocked only by the local uncommitted `extension.toml` grammar-source override.
 - 2026-05-12 20:43 CEST: Extended shim ABI conversion so named wrappers can cross shim boundaries by shape instead of requiring owner-local raw carrier types. Single-payload wrappers flatten to their payload ABI, multi-payload wrappers keep generated shim API structs with recursively converted fields, and `std.dir` now has its Go shim return `Entry` directly instead of private carrier values. Verification passed with `dune runtest lib/frontend/typecheck`, `dune runtest lib/backend/go`, `make integration ffi stdlib-shims`, and `git diff --check`.
+- 2026-05-12 22:35 CEST: Simplified the path-facing stdlib API around explicit `Path(...)` construction. Removed the old structural path protocol, redundant path constructor/stringifier helpers, and duplicated filesystem path-to-string adapters; `std.file` and `std.dir` now take `path.Path` directly while shim ABI flattening keeps Go shims on string parameters. Focused `make integration stdlib-shims` is green.

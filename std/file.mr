@@ -5,7 +5,6 @@ import std.bytes.DecodeError
 import std.bytes.Encode
 import std.io
 import std.path
-import std.path.PathLike
 
 export File, Mode, Error, UseError, read, write, append, open, read_all, write_all, flush
 
@@ -28,18 +27,15 @@ type Error = {
 type UseError[e] = { Open(Error), Use(e), Close(Error), UseAndClose(e, Error) }
 
 extern "std/file" as file_shim = {
-  fn read_data(path: Str) => Result[Bytes, Error]
-  fn write_data(path: Str, bytes: Bytes) => Result[Unit, Error]
-  fn append_data(path: Str, bytes: Bytes) => Result[Unit, Error]
-  fn open_handle(path: Str, mode: Mode) => Result[File, Error]
+  fn read_data(path: path.Path) => Result[Bytes, Error]
+  fn write_data(path: path.Path, bytes: Bytes) => Result[Unit, Error]
+  fn append_data(path: path.Path, bytes: Bytes) => Result[Unit, Error]
+  fn open_handle(path: path.Path, mode: Mode) => Result[File, Error]
   fn close_handle(file: File) => Result[Unit, Error]
   fn read_all_data(file: File) => Result[Bytes, Error]
   fn write_all_data(file: File, bytes: Bytes) => Result[Unit, Error]
   fn flush_handle(file: File) => Result[Unit, Error]
 }
-
-fn path_value[p: PathLike](value: p) -> Str =
-  path.to_str(path.PathLike.path(value))
 
 fn decode_error(err: DecodeError) -> Error = match err {
   case DecodeError.InvalidUtf8: Error.InvalidData("invalid utf-8")
@@ -54,17 +50,17 @@ fn decode_bytes[a: Decode](payload: Bytes) -> Result[a, Error] =
     }
   }
 
-fn read[a: Decode, p: PathLike](path: p) => Result[a, Error] =
-  match file_shim.read_data(path_value(path)) {
+fn read[a: Decode](path: path.Path) => Result[a, Error] =
+  match file_shim.read_data(path) {
     case Result.Success(payload): decode_bytes(payload)
     case Result.Failure(err): Result.Failure(err)
   }
 
-fn write[a: Encode, p: PathLike](path: p, value: a) => Result[Unit, Error] =
-  file_shim.write_data(path_value(path), bytes.Encode.encode(value))
+fn write[a: Encode](path: path.Path, value: a) => Result[Unit, Error] =
+  file_shim.write_data(path, bytes.Encode.encode(value))
 
-fn append[a: Encode, p: PathLike](path: p, value: a) => Result[Unit, Error] =
-  file_shim.append_data(path_value(path), bytes.Encode.encode(value))
+fn append[a: Encode](path: path.Path, value: a) => Result[Unit, Error] =
+  file_shim.append_data(path, bytes.Encode.encode(value))
 
 fn read_all[a: Decode](file: File) => Result[a, Error] =
   match file_shim.read_all_data(file) {
@@ -93,8 +89,8 @@ impl io.Write[File, Error] = {
     file_shim.flush_handle(file)
 }
 
-fn open[p: PathLike, a, e](path: p, mode: Mode, body: (File) => Result[a, e]) => Result[a, UseError[e]] =
-  match file_shim.open_handle(path_value(path), mode) {
+fn open[a, e](path: path.Path, mode: Mode, body: (File) => Result[a, e]) => Result[a, UseError[e]] =
+  match file_shim.open_handle(path, mode) {
     case Result.Failure(err): Result.Failure(UseError.Open(err))
     case Result.Success(file): {
       let body_result = body(file)
