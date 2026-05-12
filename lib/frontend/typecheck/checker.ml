@@ -135,7 +135,10 @@ let annotation_matches_inferred_type (annotated_type : mono_type) (inferred_type
   if Annotation.check_annotation annotated_type inferred_type then
     true
   else if
-    Infer.mono_type_contains_intersection annotated_type || Infer.mono_type_contains_intersection inferred_type
+    Infer.has_unresolved_var annotated_type
+    || Infer.has_unresolved_var inferred_type
+    || Infer.mono_type_contains_intersection annotated_type
+    || Infer.mono_type_contains_intersection inferred_type
   then
     match Unify.unify inferred_type annotated_type with
     | Ok _ -> true
@@ -145,14 +148,15 @@ let annotation_matches_inferred_type (annotated_type : mono_type) (inferred_type
 
 (* Check if a let binding's annotation matches its inferred type *)
 let check_let_annotation
-    (name : string) (annotation : Syntax.Ast.AST.type_expr option) (inferred_type : mono_type) :
+    ?(type_bindings = []) (name : string) (annotation : Syntax.Ast.AST.type_expr option)
+    (inferred_type : mono_type) :
     (unit, Diagnostic.t) result =
   match annotation with
   | None ->
       (* No annotation, nothing to check *)
       Ok ()
   | Some type_annot -> (
-      match Annotation.type_expr_to_mono_type type_annot with
+      match Annotation.type_expr_to_mono_type_with type_bindings type_annot with
       | Error d -> Error d
       | Ok annotated_type ->
           if annotation_matches_inferred_type annotated_type inferred_type then
@@ -166,14 +170,15 @@ let check_let_annotation
                       (Annotation.format_mono_type inferred_type))))
 
 (* Check if a function expression's return type annotation matches its inferred type *)
-let check_function_annotation (return_annotation : Syntax.Ast.AST.type_expr option) (inferred_type : mono_type) :
+let check_function_annotation
+    ?(type_bindings = []) (return_annotation : Syntax.Ast.AST.type_expr option) (inferred_type : mono_type) :
     (unit, Diagnostic.t) result =
   match return_annotation with
   | None ->
       (* No annotation, nothing to check *)
       Ok ()
   | Some type_annot -> (
-      match Annotation.type_expr_to_mono_type type_annot with
+      match Annotation.type_expr_to_mono_type_with type_bindings type_annot with
       | Error d -> Error d
       | Ok annotated_return_type ->
           let rec extract_return_type (t : mono_type) : mono_type =
@@ -208,7 +213,8 @@ let check_program_with_annotations
   | Error e -> Error (merge_diagnostics e)
   | Ok (final_env, type_map, result_type) -> (
       (* Phase 2: Validate annotations against inferred types *)
-      let rec check_stmts_with_infer (stmts : Syntax.Ast.AST.statement list) : (unit, Diagnostic.t) result =
+      let rec check_stmts_with_infer
+          ?(type_bindings = []) (stmts : Syntax.Ast.AST.statement list) : (unit, Diagnostic.t) result =
         match stmts with
         | [] -> Ok ()
         | stmt :: rest -> (
@@ -232,22 +238,26 @@ let check_program_with_annotations
                               let_binding.name let_binding.value.id))
                 | Some mono_type -> (
                     (* Check let binding annotation *)
-                    match check_let_annotation let_binding.name let_binding.type_annotation mono_type with
+                    match
+                      check_let_annotation ~type_bindings let_binding.name let_binding.type_annotation
+                        mono_type
+                    with
                     | Error e -> Error e
                     | Ok () -> (
                         (* Also check function expression annotation if present *)
-                        match check_expr_annotations let_binding.value mono_type with
+                        match check_expr_annotations ~type_bindings let_binding.value mono_type with
                         | Error e -> Error e
-                        | Ok () -> check_stmts_with_infer rest)))
+                        | Ok () -> check_stmts_with_infer ~type_bindings rest)))
             | Syntax.Ast.AST.Block nested_stmts -> (
                 (* Recursively check block statements *)
-                match check_stmts_with_infer nested_stmts with
+                match check_stmts_with_infer ~type_bindings nested_stmts with
                 | Error e -> Error e
-                | Ok () -> check_stmts_with_infer rest)
+                | Ok () -> check_stmts_with_infer ~type_bindings rest)
             | _ ->
                 (* Other statements don't have annotations to check *)
-                check_stmts_with_infer rest)
-      and check_expr_annotations (expr : Syntax.Ast.AST.expression) (inferred : mono_type) :
+                check_stmts_with_infer ~type_bindings rest)
+      and check_expr_annotations
+          ?(type_bindings = []) (expr : Syntax.Ast.AST.expression) (inferred : mono_type) :
           (unit, Diagnostic.t) result =
         match expr.expr with
         | Syntax.Ast.AST.Function { return_type; params = _; body; generics; is_effectful = _; _ } -> (
@@ -259,17 +269,26 @@ let check_program_with_annotations
               | Some (_ :: _) -> true
               | _ -> false
             in
+            let function_type_bindings =
+              match generics with
+              | None -> type_bindings
+              | Some generics ->
+                  List.map
+                    (fun (generic : Syntax.Ast.AST.generic_param) -> (generic.name, TVar generic.name))
+                    generics
+                  @ type_bindings
+            in
             let annot_check =
               if has_generics then
                 Ok ()
               else
-                check_function_annotation return_type inferred
+                check_function_annotation ~type_bindings:function_type_bindings return_type inferred
             in
             match annot_check with
             | Error e -> Error e
             | Ok () ->
                 (* Also recursively check body statements *)
-                check_stmts_with_infer [ body ])
+                check_stmts_with_infer ~type_bindings:function_type_bindings [ body ])
         | _ -> Ok () (* Other expressions don't have annotations to check *)
       in
       match check_stmts_with_infer program with
@@ -1832,13 +1851,11 @@ let%test "shim S2: checker rejects direct Go import style extern ids" =
 let%test "shim S2: checker rejects unsupported shim boundary type families" =
   let cases =
     [
-      "extern \"std/bytes\" = { fn bad(xs: List[Str]) -> Str }";
       "extern \"std/bytes\" = { fn bad(m: Map[Str, Int]) -> Str }";
       "extern \"std/bytes\" = { fn bad(r: { name: Str }) -> Str }";
       "extern \"std/bytes\" = { fn bad(x: Dyn[Show]) -> Str }";
       "type Option[a] = { Some(a), None }\nextern \"std/bytes\" = { fn bad(x: Option[Int]) -> Str }";
       "type Result[a, e] = { Success(a), Failure(e) }\nextern \"std/bytes\" = { fn bad(x: Result[Int, Str]) -> Str }";
-      "extern \"std/bytes\" = { fn bad(s: Str) -> List[Str] }";
       "extern \"std/bytes\" = { fn bad(s: Str) -> Map[Str, Int] }";
       "extern \"std/bytes\" = { fn bad(s: Str) -> { name: Str } }";
       "extern \"std/bytes\" = { fn bad(s: Str) -> Dyn[Show] }";
@@ -1855,6 +1872,26 @@ let%test "shim S2: checker rejects unsupported shim boundary type families" =
       | Ok _ -> false
       | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-shim-boundary") diags)
     cases
+
+let%test "shim S2: checker accepts list boundary values" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  match
+    check_string ~file_id:"std.bytes"
+      "extern \"std/bytes\" = { fn collect(input: List[Str]) -> List[Str] }"
+  with
+  | Ok result -> (
+      match
+        Hashtbl.find_opt result.extern_declarations
+          (Extern_registry.shim_key ~shim_id:"std/bytes" ~func_name:"collect")
+      with
+      | Some func -> (
+          match (func.param_boundary_types, func.return_boundary_type) with
+          | [ Shim_boundary.BList Shim_boundary.BStr ], Shim_boundary.BList Shim_boundary.BStr ->
+              true
+          | _ -> false)
+      | None -> false)
+  | Error _ -> false
 
 let%test "shim callbacks: checker accepts function parameters and rejects function returns" =
   Infer.reset_fresh_counter ();

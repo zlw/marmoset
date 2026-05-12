@@ -25,6 +25,7 @@ and boundary_type =
   | BStr
   | BStdOption of boundary_type
   | BStdResult of boundary_type * boundary_type
+  | BList of boundary_type
   | BOwnerEnum of enum_identity
   | BStdBytes
   | BExternHandle of extern_type_identity
@@ -40,6 +41,7 @@ let rec equal_boundary_type a b =
   | BStdOption a, BStdOption b -> equal_boundary_type a b
   | BStdResult (a_ok, a_err), BStdResult (b_ok, b_err) ->
       equal_boundary_type a_ok b_ok && equal_boundary_type a_err b_err
+  | BList a, BList b -> equal_boundary_type a b
   | BOwnerEnum a, BOwnerEnum b ->
       String.equal a.enum_name b.enum_name
       && List.length a.enum_type_args = List.length b.enum_type_args
@@ -61,6 +63,7 @@ let rec to_string = function
   | BStr -> "Str"
   | BStdOption inner -> Printf.sprintf "Option[%s]" (to_string inner)
   | BStdResult (ok_type, err_type) -> Printf.sprintf "Result[%s, %s]" (to_string ok_type) (to_string err_type)
+  | BList inner -> Printf.sprintf "List[%s]" (to_string inner)
   | BOwnerEnum enum ->
       if enum.enum_type_args = [] then
         enum.enum_name
@@ -90,6 +93,7 @@ let rec to_mono_type = function
   | BStr -> TString
   | BStdOption inner -> TEnum ("Option", [ to_mono_type inner ])
   | BStdResult (ok_type, err_type) -> TEnum ("Result", [ to_mono_type ok_type; to_mono_type err_type ])
+  | BList inner -> TArray (to_mono_type inner)
   | BOwnerEnum enum -> TEnum (enum.enum_name, List.map to_mono_type enum.enum_type_args)
   | BStdBytes -> TNamed (std_bytes_type_name, [])
   | BExternHandle handle -> TNamed (handle.extern_type_name, [])
@@ -145,6 +149,8 @@ let rec classify ?source_span ?(allow_callback = false) ~(owner_module_id : stri
       let* ok_boundary = classify ?source_span ~owner_module_id ok_type in
       let* err_boundary = classify ?source_span ~owner_module_id err_type in
       Ok (BStdResult (ok_boundary, err_boundary))
+  | TArray inner ->
+      Result.map (fun classified -> BList classified) (classify ?source_span ~owner_module_id inner)
   | TEnum (name, args) when is_owner_enum ~owner_module_id name ->
       let ( let* ) = Result.bind in
       let rec classify_args acc = function
@@ -194,6 +200,11 @@ let%test "classifies canonical option and result identities" =
       (TEnum (result_enum_name, [ TEnum (option_enum_name, [ TInt ]); TString ]))
   with
   | Ok (BStdResult (BStdOption BInt, BStr)) -> true
+  | _ -> false
+
+let%test "classifies immutable list boundaries" =
+  match classify ~owner_module_id:"std.bytes" (TArray (TEnum (option_enum_name, [ TString ]))) with
+  | Ok (BList (BStdOption BStr)) -> true
   | _ -> false
 
 let%test "classifies canonical std bytes identity" =

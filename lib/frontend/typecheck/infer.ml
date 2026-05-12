@@ -1040,14 +1040,15 @@ let compatible_with_expected_type (actual : mono_type) (expected : mono_type) :
     Error (type_mismatch actual expected)
 
 let binding_type_for_env
-    ~(value_expr : AST.expression) ~(type_annotation : AST.type_expr option) (stmt_type : mono_type) : mono_type =
+    ?(type_bindings = []) ~(value_expr : AST.expression) ~(type_annotation : AST.type_expr option)
+    (stmt_type : mono_type) : mono_type =
   match value_expr.expr with
   | AST.Function _ -> stmt_type
   | _ -> (
       match type_annotation with
       | None -> stmt_type
       | Some type_expr -> (
-          match Annotation.type_expr_to_mono_type type_expr with
+          match Annotation.type_expr_to_mono_type_with type_bindings type_expr with
           | Ok annotated_type -> annotated_type
           | Error _ -> stmt_type))
 
@@ -2973,6 +2974,12 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                         (mk_error ~code:"type-constructor"
                            ~message:(Printf.sprintf "Trait '%s' has no method '%s'" trait_name method_name))
                   | Some (source_trait_def, method_sig) -> (
+                      let first_method_param_mentions_primary_trait_param =
+                        match (Trait_registry.trait_type_params source_trait_def, method_sig.method_params) with
+                        | primary_trait_param :: _, (_, first_param_type) :: _ ->
+                            occurs_in primary_trait_param first_param_type
+                        | _ -> false
+                      in
                       let instantiate_trait_method_with_fresh receiver_type_opt =
                         match Trait_registry.trait_type_params source_trait_def with
                         | [] -> method_sig
@@ -2983,7 +2990,14 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                                   match (idx, receiver_type_opt) with
                                   | 0, Some receiver_type -> receiver_type
                                   | _, Some (TVar _) -> TVar param
-                                  | _ -> fresh_type_var ())
+                                  | _ ->
+                                      let fresh = fresh_type_var () in
+                                      (match (receiver_type_opt, fresh) with
+                                      | None, TVar fresh_name ->
+                                          add_type_var_constraints fresh_name [ trait_name ];
+                                          record_type_var_user_name ~fresh_name ~user_name:param
+                                      | _ -> ());
+                                      fresh)
                                 type_params
                             in
                             let s = substitution_of_list (List.combine type_params fresh_args) in
@@ -3025,7 +3039,11 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                         match
                           infer_static_qualified_method_call ~mk_error
                             ~call_target:(Printf.sprintf "%s.%s" trait_name method_name)
-                            ~receiver_check:(Some check_trait_receiver) trait_instantiated_sig
+                            ~receiver_check:
+                              (match receiver_type with
+                              | Some _ -> Some check_trait_receiver
+                              | None -> None)
+                            trait_instantiated_sig
                         with
                         | Error e -> Error e
                         | Ok (final_subst, return_type, resolved_method_type_args) ->
@@ -3034,7 +3052,7 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                             Ok (final_subst, return_type)
                       in
                       match args with
-                      | receiver_arg :: rest -> (
+                      | receiver_arg :: rest when first_method_param_mentions_primary_trait_param -> (
                           match infer_expression type_map env receiver_arg with
                           | Error e -> Error e
                           | Ok (subst_receiver, receiver_arg_type) -> (
@@ -3087,6 +3105,7 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                                                     apply_substitution final_subst dynamic_sig.method_return_type
                                                   )))))
                               | _ -> infer_static_qualified_trait_call ~receiver_type:receiver_arg_type ()))
+                      | _ :: _ -> infer_static_qualified_trait_call ()
                       | [] -> infer_static_qualified_trait_call ()))
             in
             let infer_qualified_type_call
@@ -3601,7 +3620,7 @@ and type_callable
       | Error e -> Error e
       | Ok expected_return_opt -> (
           (* 4. Infer body type *)
-          match infer_statement type_map env' body with
+	          match infer_statement ~type_bindings type_map env' body with
           | Error e -> Error e
           | Ok (subst, body_type) -> (
               let body_type' = apply_substitution subst body_type in
@@ -4111,15 +4130,15 @@ and infer_placeholder_section_expr (type_map : type_map) (env : type_env) (expr 
             Ok (subst, func_type))
   | _ -> failwith "placeholder section rewrite must produce a function literal"
 
-and infer_block_against_expected type_map env stmts expected_type =
+and infer_block_against_expected ?(type_bindings = []) type_map env stmts expected_type =
   match stmts with
   | [] -> (
       match compatible_with_expected_type TNull expected_type with
       | Error e -> Error e
       | Ok subst -> Ok (subst, apply_substitution subst expected_type))
-  | [ stmt ] -> infer_statement_against_expected type_map env stmt expected_type
+  | [ stmt ] -> infer_statement_against_expected ~type_bindings type_map env stmt expected_type
   | stmt :: rest -> (
-      match infer_statement type_map env stmt with
+      match infer_statement ~type_bindings type_map env stmt with
       | Error e -> Error e
       | Ok (subst1, stmt_type) -> (
           let env' =
@@ -4130,7 +4149,7 @@ and infer_block_against_expected type_map env stmts expected_type =
                   env_subst
                 else
                   let binding_type =
-                    binding_type_for_env ~value_expr:let_binding.value
+                    binding_type_for_env ~type_bindings ~value_expr:let_binding.value
                       ~type_annotation:let_binding.type_annotation stmt_type
                   in
                   let poly =
@@ -4142,17 +4161,20 @@ and infer_block_against_expected type_map env stmts expected_type =
                   TypeEnv.add let_binding.name poly env_subst
             | _ -> apply_substitution_env subst1 env
           in
-          match infer_block_against_expected type_map env' rest (apply_substitution subst1 expected_type) with
+          match
+            infer_block_against_expected ~type_bindings type_map env' rest
+              (apply_substitution subst1 expected_type)
+          with
           | Error e -> Error e
           | Ok (subst2, result_type) -> Ok (compose_substitution subst1 subst2, result_type)))
 
-and infer_statement_against_expected type_map env stmt expected_type =
+and infer_statement_against_expected ?(type_bindings = []) type_map env stmt expected_type =
   match stmt.stmt with
   | AST.ExpressionStmt expr | AST.Return expr ->
       infer_arg_against_expected type_map env empty_substitution expr expected_type
-  | AST.Block stmts -> infer_block_against_expected type_map env stmts expected_type
+  | AST.Block stmts -> infer_block_against_expected ~type_bindings type_map env stmts expected_type
   | _ -> (
-      match infer_statement type_map env stmt with
+      match infer_statement ~type_bindings type_map env stmt with
       | Error e -> Error e
       | Ok (subst, inferred_type) -> (
           let inferred_type' = apply_substitution subst inferred_type in
@@ -5110,7 +5132,7 @@ and infer_index type_map env container index_expr =
    Statements
    ============================================================ *)
 
-and infer_statement type_map env stmt =
+and infer_statement ?(type_bindings = []) type_map env stmt =
   match stmt.stmt with
   | AST.ExportDecl _ | AST.ImportDecl _ | AST.ExternBlock _ -> Ok (empty_substitution, TNull)
   | AST.ExternTypeDef def ->
@@ -5118,8 +5140,9 @@ and infer_statement type_map env stmt =
       Ok (empty_substitution, TNull)
   | AST.ExpressionStmt expr -> infer_expression type_map env expr
   | AST.Return expr -> infer_expression type_map env expr
-  | AST.Block stmts -> infer_block type_map env stmts
-  | AST.Let let_binding -> infer_let type_map env let_binding.name let_binding.value let_binding.type_annotation
+  | AST.Block stmts -> infer_block ~type_bindings type_map env stmts
+  | AST.Let let_binding ->
+      infer_let ~type_bindings type_map env let_binding.name let_binding.value let_binding.type_annotation
   | AST.TypeDef { type_name; type_type_params; type_body } -> (
       let type_bindings = List.map (fun name -> (name, TVar name)) type_type_params in
       let convert_type_expr (te : AST.type_expr) : (mono_type, Diagnostic.t) result =
@@ -6593,8 +6616,8 @@ and unify_function_shape_ignoring_effect (left : mono_type) (right : mono_type) 
     We treat ALL let bindings this way for simplicity - it's harmless
     for non-recursive bindings and enables recursion for functions.
 *)
-and infer_let ?(prefer_existing_self = false) type_map env name expr type_annotation =
-  let outer_type_bindings = user_named_type_bindings_in_env env in
+and infer_let ?(prefer_existing_self = false) ?(type_bindings = []) type_map env name expr type_annotation =
+  let outer_type_bindings = type_bindings @ user_named_type_bindings_in_env env in
   let callable_context_result =
     match expr.expr with
     | AST.Function { params; _ } ->
@@ -6611,7 +6634,7 @@ and infer_let ?(prefer_existing_self = false) type_map env name expr type_annota
         | AST.Function _, Some (annotated_type, _), _ -> Ok annotated_type
         | AST.Function f, None, _ ->
             provisional_function_type ~outer_type_bindings f.generics f.params f.return_type f.is_effectful
-        | _, _, Some type_expr -> annotation_or_fresh type_expr
+        | _, _, Some type_expr -> Annotation.type_expr_to_mono_type_with outer_type_bindings type_expr
         | _, _, None -> Ok (fresh_type_var ())
       in
       match inferred_self_type_result with
@@ -6643,7 +6666,7 @@ and infer_let ?(prefer_existing_self = false) type_map env name expr type_annota
                 infer_function_literal type_map env_with_self expr ~origin ~generics ~params ~return_type
                   ~is_effectful ~body
             | _, _, Some type_expr -> (
-                match Annotation.type_expr_to_mono_type type_expr with
+                match Annotation.type_expr_to_mono_type_with outer_type_bindings type_expr with
                 | Error d -> Error d
                 | Ok annotated_type ->
                     infer_expression_against_expected type_map env_with_self expr annotated_type)
@@ -6682,7 +6705,7 @@ and infer_let ?(prefer_existing_self = false) type_map env name expr type_annota
                     match type_annotation with
                     | None -> Ok inferred_final_type
                     | Some type_expr -> (
-                        match Annotation.type_expr_to_mono_type type_expr with
+                        match Annotation.type_expr_to_mono_type_with outer_type_bindings type_expr with
                         | Error d -> Error d
                         | Ok annotated_type ->
                             if
@@ -6721,12 +6744,12 @@ and infer_let ?(prefer_existing_self = false) type_map env name expr type_annota
                           let _ = poly_type in
                           Ok (final_subst, final_type))))))
 
-and infer_block type_map env stmts =
+and infer_block ?(type_bindings = []) type_map env stmts =
   match stmts with
   | [] -> Ok (empty_substitution, TNull)
-  | [ stmt ] -> infer_statement type_map env stmt
+  | [ stmt ] -> infer_statement ~type_bindings type_map env stmt
   | stmt :: rest -> (
-      match infer_statement type_map env stmt with
+      match infer_statement ~type_bindings type_map env stmt with
       | Error e -> Error e
       | Ok (subst1, stmt_type) -> (
           (* For let statements, add the binding to the environment *)
@@ -6738,7 +6761,7 @@ and infer_block type_map env stmts =
                   env_subst
                 else
                   let binding_type =
-                    binding_type_for_env ~value_expr:let_binding.value
+                    binding_type_for_env ~type_bindings ~value_expr:let_binding.value
                       ~type_annotation:let_binding.type_annotation stmt_type
                   in
                   let poly =
@@ -6750,7 +6773,7 @@ and infer_block type_map env stmts =
                   TypeEnv.add let_binding.name poly env_subst
             | _ -> apply_substitution_env subst1 env
           in
-          match infer_block type_map env' rest with
+          match infer_block ~type_bindings type_map env' rest with
           | Error e -> Error e
           | Ok (subst2, result_type) -> Ok (compose_substitution subst1 subst2, result_type)))
 

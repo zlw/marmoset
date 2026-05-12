@@ -128,10 +128,13 @@ run_source_emit_go_expect_stdio_shape() {
         grep -qF 'func Flush(writer ioapi.Stdout)' "$outdir/shims/std/io/io.go" || failures=$((failures + 1))
         grep -qF 'func Write(writer errapi.Stderr, value string)' "$outdir/shims/std/io/err/err.go" || failures=$((failures + 1))
         grep -qF 'func Flush(writer errapi.Stderr)' "$outdir/shims/std/io/err/err.go" || failures=$((failures + 1))
-        grep -qF 'type std__file__Path string' "$outdir/main.go" || failures=$((failures + 1))
-        grep -qF 'func std__io__Read_read_std__file__Path' "$outdir/main.go" || failures=$((failures + 1))
-        grep -qF 'func std__io__Write_write_std__file__Path' "$outdir/main.go" || failures=$((failures + 1))
-        if rg -q 'flush_path|FlushPath|func Stdin|func Stdout|func Stderr' "$outdir"; then
+        grep -qF 'type std__path__Path string' "$outdir/main.go" || failures=$((failures + 1))
+        grep -qF 'func std__file__read_string_ret_Result_string_std__file__Error' "$outdir/main.go" || failures=$((failures + 1))
+        grep -qF 'func std__file__write_string_string' "$outdir/main.go" || failures=$((failures + 1))
+        grep -qF 'func std__io__Read_read_std__file__File' "$outdir/main.go" || failures=$((failures + 1))
+        grep -qF 'func std__io__Write_write_std__file__File' "$outdir/main.go" || failures=$((failures + 1))
+        grep -qF 'func std__io__Write_flush_std__file__File' "$outdir/main.go" || failures=$((failures + 1))
+        if rg -q 'std__file__Path|flush_path|FlushPath|func Stdin|func Stdout|func Stderr' "$outdir"; then
             failures=$((failures + 1))
         fi
 
@@ -156,160 +159,333 @@ DATA_DIR=$(mktemp -d "$REPO_ROOT/.marmoset/build/stdlib_shims_data.XXXXXX")
 ROUNDTRIP_PATH="$DATA_DIR/roundtrip.txt"
 MISSING_PATH="$DATA_DIR/missing.txt"
 EXISTING_PATH="$DATA_DIR/existing.txt"
+INVALID_UTF8_PATH="$DATA_DIR/invalid.bin"
+CHILD_DIR="$DATA_DIR/child"
+NESTED_DIR="$DATA_DIR/nested/inner"
+LISTING_DIR="$DATA_DIR/listing"
+LISTING_FILE="$LISTING_DIR/entry.txt"
 printf "opened" > "$EXISTING_PATH"
+printf '\377' > "$INVALID_UTF8_PATH"
+mkdir "$LISTING_DIR"
+printf "entry" > "$LISTING_FILE"
 
 run_source_expect_output \
-    "std.file maps text, bytes and filesystem errors" \
-    $'roundtrip\nstr:hello\nread:not-found\nread:is-directory\nwrite:is-directory' <<EOF
+    "std.bytes codecs expose strict decode and encode traits" \
+    $'strict:hello\ntrait:hello\nbytes:5\nlossy:hello' <<'EOF'
 import std.bytes
+import std.bytes.Bytes
+import std.bytes.DecodeError
+
+fn decode_error_label(err: DecodeError) -> Str = match err {
+  case DecodeError.InvalidUtf8: "invalid-utf8"
+}
+
+let encoded: Bytes = bytes.Encode.encode("hello")
+
+match bytes.to_str(encoded) {
+  case Result.Success(value): puts("strict:" + value)
+  case Result.Failure(err): puts(decode_error_label(err))
+}
+
+let decoded: Result[Str, DecodeError] = bytes.Decode.decode(encoded)
+match decoded {
+  case Result.Success(value): puts("trait:" + value)
+  case Result.Failure(err): puts(decode_error_label(err))
+}
+
+let raw: Bytes = encoded
+puts("bytes:" + Show.show(bytes.length(raw)))
+puts("lossy:" + bytes.to_str_lossy(raw))
+EOF
+
+run_source_expect_output \
+    "std.path manipulates pure path values" \
+    $'base:example.txt\ndir:/tmp/marmoset\next:.txt\njoin:/tmp/marmoset/child\nclean:/tmp/b\nabs:true\nrel:true' <<'EOF'
+import std.path
+import std.path.Path
+
+let root: Path = path.from_str("/tmp/marmoset/example.txt")
+let joined: Path = path.join(path.dirname(root), "child")
+
+puts("base:" + path.basename(root))
+puts("dir:" + path.to_str(path.dirname(root)))
+puts("ext:" + path.extname(root))
+puts("join:" + path.to_str(joined))
+puts("clean:" + path.to_str(path.clean(path.from_str("/tmp/a/../b"))))
+puts("abs:" + Show.show(path.absolute?(root)))
+puts("rel:" + Show.show(path.relative?(path.from_str("notes/today.md"))))
+EOF
+
+run_source_expect_output \
+    "std.file uses traits for text, bytes and filesystem errors" \
+    $'bytes:9\ntext:hello\nappend:hello!\ninvalid-data\nread:not-found\nread:is-directory\nwrite:is-directory' <<EOF
+import std.bytes
+import std.bytes.Bytes
 import std.file
-import std.file.read
-import std.file.write
-import std.file.read_bytes
-import std.file.write_bytes
-import std.file.FileReadError
-import std.file.FileWriteError
+import std.file.Error
+import std.path
+import std.path.Path
 
-fn read_error_label(err: FileReadError) -> Str = match err {
-  case FileReadError.NotFound: "read:not-found"
-  case FileReadError.PermissionDenied: "read:permission-denied"
-  case FileReadError.IsDirectory: "read:is-directory"
-  case FileReadError.AlreadyClosed: "read:already-closed"
-  case FileReadError.Other(message): "read:other:" + message
+fn error_label(prefix: Str, err: Error) -> Str = match err {
+  case Error.NotFound: prefix + ":not-found"
+  case Error.PermissionDenied: prefix + ":permission-denied"
+  case Error.AlreadyExists: prefix + ":already-exists"
+  case Error.IsDirectory: prefix + ":is-directory"
+  case Error.NotDirectory: prefix + ":not-directory"
+  case Error.InvalidPath(message): prefix + ":invalid-path:" + message
+  case Error.InvalidData(_): "invalid-data"
+  case Error.AlreadyClosed: prefix + ":already-closed"
+  case Error.Other(message): prefix + ":other:" + message
 }
 
-fn write_error_label(err: FileWriteError) -> Str = match err {
-  case FileWriteError.NotFound: "write:not-found"
-  case FileWriteError.PermissionDenied: "write:permission-denied"
-  case FileWriteError.IsDirectory: "write:is-directory"
-  case FileWriteError.Other(message): "write:other:" + message
-}
+let output_path: Path = path.from_str("$ROUNDTRIP_PATH")
 
-match write_bytes("$ROUNDTRIP_PATH", bytes.from_str("roundtrip")) {
-  case Result.Success(_): match read_bytes("$ROUNDTRIP_PATH") {
-    case Result.Success(payload): puts(bytes.to_str_lossy(payload))
-    case Result.Failure(err): puts(read_error_label(err))
+match file.write(output_path, bytes.from_str("roundtrip")) {
+  case Result.Success(_): {
+    let payload: Result[Bytes, Error] = file.read(output_path)
+    match payload {
+      case Result.Success(payload): puts("bytes:" + Show.show(bytes.length(payload)))
+      case Result.Failure(err): puts(error_label("read", err))
+    }
   }
-  case Result.Failure(err): puts(write_error_label(err))
+  case Result.Failure(err): puts(error_label("write", err))
 }
 
-match write("$ROUNDTRIP_PATH", "hello") {
-  case Result.Success(_): match read("$ROUNDTRIP_PATH") {
-    case Result.Success(payload): puts("str:" + payload)
-    case Result.Failure(err): puts(read_error_label(err))
+match file.write(output_path, "hello") {
+  case Result.Success(_): {
+    let text: Result[Str, Error] = file.read(output_path)
+    match text {
+      case Result.Success(value): puts("text:" + value)
+      case Result.Failure(err): puts(error_label("read", err))
+    }
   }
-  case Result.Failure(err): puts(write_error_label(err))
+  case Result.Failure(err): puts(error_label("write", err))
 }
 
-match read("$MISSING_PATH") {
+match file.append(output_path, "!") {
+  case Result.Success(_): {
+    let text: Result[Str, Error] = file.read(output_path)
+    match text {
+      case Result.Success(value): puts("append:" + value)
+      case Result.Failure(err): puts(error_label("read", err))
+    }
+  }
+  case Result.Failure(err): puts(error_label("write", err))
+}
+
+let invalid_text: Result[Str, Error] = file.read("$INVALID_UTF8_PATH")
+match invalid_text {
+  case Result.Success(_): puts("invalid:unexpected-success")
+  case Result.Failure(err): puts(error_label("read", err))
+}
+
+let missing_text: Result[Str, Error] = file.read("$MISSING_PATH")
+match missing_text {
   case Result.Success(_): puts("read:unexpected-success")
-  case Result.Failure(err): puts(read_error_label(err))
+  case Result.Failure(err): puts(error_label("read", err))
 }
 
-match read("$DATA_DIR") {
+let dir_text: Result[Str, Error] = file.read("$DATA_DIR")
+match dir_text {
   case Result.Success(_): puts("read-dir:unexpected-success")
-  case Result.Failure(err): puts(read_error_label(err))
+  case Result.Failure(err): puts(error_label("read", err))
 }
 
-match write_bytes("$DATA_DIR", bytes.from_str("x")) {
+match file.write("$DATA_DIR", bytes.from_str("x")) {
   case Result.Success(_): puts("write-dir:unexpected-success")
-  case Result.Failure(err): puts(write_error_label(err))
+  case Result.Failure(err): puts(error_label("write", err))
 }
 EOF
 
 run_source_expect_output \
-    "std.file scopes handles and flattens callback errors" \
-    $'scoped:opened\nprotocol:opened\nopen:not-found\nuse:read:is-directory\nleaked:read:already-closed' <<EOF
+    "std.file scopes file handles and implements io protocols" \
+    $'read:opened\nprotocol:opened\nwritten:scoped!\nopen:not-found\nuse:read:is-directory\nleaked:read:already-closed' <<EOF
 import std.bytes
 import std.file
+import std.file.Error
+import std.file.UseError
 import std.io
-import std.file.FileReadError
-import std.file.FileOpenError
-import std.file.FileCloseError
-import std.file.FileUseError
 
-fn read_error_label(err: FileReadError) -> Str = match err {
-  case FileReadError.NotFound: "read:not-found"
-  case FileReadError.PermissionDenied: "read:permission-denied"
-  case FileReadError.IsDirectory: "read:is-directory"
-  case FileReadError.AlreadyClosed: "read:already-closed"
-  case FileReadError.Other(message): "read:other:" + message
+fn error_label(prefix: Str, err: Error) -> Str = match err {
+  case Error.NotFound: prefix + ":not-found"
+  case Error.PermissionDenied: prefix + ":permission-denied"
+  case Error.AlreadyExists: prefix + ":already-exists"
+  case Error.IsDirectory: prefix + ":is-directory"
+  case Error.NotDirectory: prefix + ":not-directory"
+  case Error.InvalidPath(message): prefix + ":invalid-path:" + message
+  case Error.InvalidData(message): prefix + ":invalid-data:" + message
+  case Error.AlreadyClosed: prefix + ":already-closed"
+  case Error.Other(message): prefix + ":other:" + message
 }
 
-fn open_error_label(err: FileOpenError) -> Str = match err {
-  case FileOpenError.NotFound: "open:not-found"
-  case FileOpenError.PermissionDenied: "open:permission-denied"
-  case FileOpenError.IsDirectory: "open:is-directory"
-  case FileOpenError.Other(message): "open:other:" + message
+fn use_error_label(err: UseError[Error]) -> Str = match err {
+  case UseError.Open(open_err): error_label("open", open_err)
+  case UseError.Use(use_err): "use:" + error_label("read", use_err)
+  case UseError.Close(close_err): error_label("close", close_err)
+  case UseError.UseAndClose(use_err, close_err): "use:" + error_label("read", use_err) + "+" + error_label("close", close_err)
 }
 
-fn close_error_label(err: FileCloseError) -> Str = match err {
-  case FileCloseError.AlreadyClosed: "close:already-closed"
-  case FileCloseError.Other(message): "close:other:" + message
-}
-
-fn use_error_label(err: FileUseError[FileReadError]) -> Str = match err {
-  case FileUseError.Open(open_err): open_error_label(open_err)
-  case FileUseError.Use(read_err): "use:" + read_error_label(read_err)
-  case FileUseError.Close(close_err): close_error_label(close_err)
-  case FileUseError.UseAndClose(read_err, close_err): "use:" + read_error_label(read_err) + "+" + close_error_label(close_err)
-}
-
-match file.open("$EXISTING_PATH", (handle) => file.read_all(handle)) {
-  case Result.Success(payload): puts("scoped:" + bytes.to_str_lossy(payload))
+let opened_text: Result[Str, UseError[Error]] = file.open("$EXISTING_PATH", file.Mode.Read, (handle) => file.read_all(handle))
+match opened_text {
+  case Result.Success(payload): puts("read:" + payload)
   case Result.Failure(err): puts(use_error_label(err))
 }
 
-match file.open("$EXISTING_PATH", (handle) => io.Read.read(handle)) {
+let protocol_text: Result[Str, UseError[Error]] = file.open("$EXISTING_PATH", file.Mode.Read, (handle) => io.Read.read(handle))
+match protocol_text {
   case Result.Success(payload): puts("protocol:" + payload)
   case Result.Failure(err): puts(use_error_label(err))
 }
 
-match file.open("$MISSING_PATH", (handle) => file.read_all(handle)) {
+let write_result: Result[Unit, UseError[Error]] = file.open("$ROUNDTRIP_PATH", file.Mode.Write, (handle) => {
+  match io.Write.write(handle, "scoped") {
+    case Result.Success(_): match io.Write.write(handle, "!") {
+      case Result.Success(_): io.Write.flush(handle)
+      case Result.Failure(err): Result.Failure(err)
+    }
+    case Result.Failure(err): Result.Failure(err)
+  }
+})
+match write_result {
+  case Result.Success(_): {
+    let text: Result[Str, Error] = file.read("$ROUNDTRIP_PATH")
+    match text {
+      case Result.Success(value): puts("written:" + value)
+      case Result.Failure(err): puts(error_label("read", err))
+    }
+  }
+  case Result.Failure(err): puts(use_error_label(err))
+}
+
+let missing_result: Result[Str, UseError[Error]] = file.open("$MISSING_PATH", file.Mode.Read, (handle) => file.read_all(handle))
+match missing_result {
   case Result.Success(_): puts("open:unexpected-success")
   case Result.Failure(err): puts(use_error_label(err))
 }
 
-match file.open("$EXISTING_PATH", (_handle) => file.read("$DATA_DIR")) {
+let use_result: Result[Str, UseError[Error]] = file.open("$EXISTING_PATH", file.Mode.Read, (_handle) => {
+  let dir_read: Result[Str, Error] = file.read("$DATA_DIR")
+  dir_read
+})
+match use_result {
   case Result.Success(_): puts("use:unexpected-success")
   case Result.Failure(err): puts(use_error_label(err))
 }
 
-match file.open("$EXISTING_PATH", (handle) => if (true) {
+let leaked_result: Result[file.File, UseError[Error]] = file.open("$EXISTING_PATH", file.Mode.Read, (handle) => if (true) {
   Result.Success(handle)
 } else {
-  Result.Failure(FileReadError.NotFound)
-}) {
+  Result.Failure(Error.NotFound)
+})
+match leaked_result {
   case Result.Success(leaked): {
-    match file.read_all(leaked) {
+    let leaked_text: Result[Str, Error] = file.read_all(leaked)
+    match leaked_text {
       case Result.Success(_): puts("leaked:unexpected-success")
-      case Result.Failure(err): puts("leaked:" + read_error_label(err))
+      case Result.Failure(err): puts("leaked:" + error_label("read", err))
     }
   }
   case Result.Failure(err): puts(use_error_label(err))
 }
 EOF
 
+run_source_expect_output \
+    "std.dir exposes scalar operations and directory listings" \
+    $'exists:false\nmake:ok\nexists:true\nmake-all:ok\nentry:entry.txt:file\ncurrent:true\nremove-all:ok' <<EOF
+import std.dir
+import std.dir.Entry
+import std.dir.Error
+import std.dir.Kind
+import std.path
+
+fn kind_label(kind: Kind) -> Str = match kind {
+  case Kind.File: "file"
+  case Kind.Directory: "dir"
+  case Kind.Symlink: "symlink"
+  case Kind.Other: "other"
+}
+
+fn error_label(prefix: Str, err: Error) -> Str = match err {
+  case Error.NotFound: prefix + ":not-found"
+  case Error.PermissionDenied: prefix + ":permission-denied"
+  case Error.AlreadyExists: prefix + ":already-exists"
+  case Error.NotDirectory: prefix + ":not-directory"
+  case Error.NotEmpty: prefix + ":not-empty"
+  case Error.InvalidPath(message): prefix + ":invalid-path:" + message
+  case Error.Other(message): prefix + ":other:" + message
+}
+
+fn entry_label(entry: Entry) -> Str = match entry {
+  case Entry.Entry(path_value, kind): path.basename(path_value) + ":" + kind_label(kind)
+}
+
+match dir.exists?("$CHILD_DIR") {
+  case Result.Success(value): puts("exists:" + Show.show(value))
+  case Result.Failure(err): puts(error_label("exists", err))
+}
+
+match dir.make("$CHILD_DIR") {
+  case Result.Success(_): puts("make:ok")
+  case Result.Failure(err): puts(error_label("make", err))
+}
+
+match dir.exists?("$CHILD_DIR") {
+  case Result.Success(value): puts("exists:" + Show.show(value))
+  case Result.Failure(err): puts(error_label("exists", err))
+}
+
+match dir.make_all("$NESTED_DIR") {
+  case Result.Success(_): puts("make-all:ok")
+  case Result.Failure(err): puts(error_label("make-all", err))
+}
+
+match dir.read("$LISTING_DIR") {
+  case Result.Success(entries): puts("entry:" + entry_label(first(entries)))
+  case Result.Failure(err): puts(error_label("read", err))
+}
+
+match dir.current() {
+  case Result.Success(value): puts("current:" + Show.show(path.absolute?(value)))
+  case Result.Failure(err): puts(error_label("current", err))
+}
+
+match dir.remove_all("$CHILD_DIR") {
+  case Result.Success(_): match dir.remove_all("$DATA_DIR/nested") {
+    case Result.Success(_): puts("remove-all:ok")
+    case Result.Failure(err): puts(error_label("remove-all", err))
+  }
+  case Result.Failure(err): puts(error_label("remove-all", err))
+}
+EOF
+
 run_source_expect_build_failure \
-    "std.file File type is private" \
-    "does not export 'File'" <<'EOF'
-import std.file.File
+    "std.file raw close is private shim plumbing" \
+    "does not export 'close_handle'" <<'EOF'
+import std.file.close_handle
 
 puts(0)
 EOF
 
 run_source_expect_build_failure \
-    "std.file close is private shim plumbing" \
-    "does not export 'close'" <<'EOF'
-import std.file.close
-
-puts(0)
-EOF
-
-run_source_expect_build_failure \
-    "std.file open_handle is private shim plumbing" \
+    "std.file raw open is private shim plumbing" \
     "does not export 'open_handle'" <<'EOF'
 import std.file.open_handle
+
+puts(0)
+EOF
+
+run_source_expect_build_failure \
+    "std.file old read_bytes helper is gone" \
+    "does not export 'read_bytes'" <<'EOF'
+import std.file.read_bytes
+
+puts(0)
+EOF
+
+run_source_expect_build_failure \
+    "std.file old write_bytes helper is gone" \
+    "does not export 'write_bytes'" <<'EOF'
+import std.file.write_bytes
 
 puts(0)
 EOF
@@ -331,8 +507,9 @@ puts(0)
 EOF
 
 run_source_emit_go_expect_stdio_shape \
-    "std.io terminal helpers and std.file path helpers use private receivers" <<EOF
+    "std.io terminal helpers and std.file handles use private shims" <<EOF
 import std.file
+import std.file.Error
 import std.io
 import std.io.err
 
@@ -341,7 +518,13 @@ let _ = io.flush()
 let _ = err.write("err")
 let _ = err.flush()
 let _ = file.write("$ROUNDTRIP_PATH", "path")
-let _ = file.read("$ROUNDTRIP_PATH")
+let read_text: Result[Str, Error] = file.read("$ROUNDTRIP_PATH")
+let file_protocol: Result[Unit, file.UseError[Error]] = file.open("$ROUNDTRIP_PATH", file.Mode.Append, (handle) => {
+  match io.Write.write(handle, "x") {
+    case Result.Success(_): io.Write.flush(handle)
+    case Result.Failure(err): Result.Failure(err)
+  }
+})
 puts(0)
 EOF
 

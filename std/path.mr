@@ -1,0 +1,56 @@
+export Path, PathLike, from_str, to_str, join, dirname, basename, extname, clean, absolute?, relative?
+
+type Path = Path(Str)
+
+trait PathLike[p] = {
+  fn path(value: p) -> Path
+}
+
+extern "std/path" as path_shim = {
+  fn join(left: Str, right: Str) -> Str
+  fn dirname(path: Str) -> Str
+  fn basename(path: Str) -> Str
+  fn extname(path: Str) -> Str
+  fn clean(path: Str) -> Str
+  fn absolute?(path: Str) -> Bool
+}
+
+fn from_str(value: Str) -> Path =
+  Path(value)
+
+fn to_str(path: Path) -> Str = match path {
+  case Path(value): value
+}
+
+impl PathLike[Path] = {
+  fn path(value: Path) -> Path = value
+}
+
+impl PathLike[Str] = {
+  fn path(value: Str) -> Path = from_str(value)
+}
+
+fn join[p: PathLike](left: Path, right: p) -> Path =
+  from_str(path_shim.join(to_str(left), to_str(PathLike.path(right))))
+
+fn dirname(path: Path) -> Path =
+  from_str(path_shim.dirname(to_str(path)))
+
+fn basename(path: Path) -> Str =
+  path_shim.basename(to_str(path))
+
+fn extname(path: Path) -> Str =
+  path_shim.extname(to_str(path))
+
+fn clean(path: Path) -> Path =
+  from_str(path_shim.clean(to_str(path)))
+
+fn absolute?(path: Path) -> Bool =
+  path_shim.absolute?(to_str(path))
+
+fn relative?(path: Path) -> Bool =
+  if (absolute?(path)) {
+    false
+  } else {
+    true
+  }

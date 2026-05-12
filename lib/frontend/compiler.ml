@@ -262,6 +262,16 @@ let seed_signature_exports (signature : Module_sig.module_signature) (env : Infe
       env_acc)
     signature.exports env
 
+let seed_signature_metadata (signature : Module_sig.module_signature) : unit =
+  Hashtbl.iter
+    (fun _name (binding : Module_sig.member_binding) ->
+      Option.iter Enum_registry.register binding.enum_def;
+      Option.iter Type_registry.register_named_type binding.named_type_def;
+      Option.iter (Annotation.register_type_alias_info ~name:binding.internal_name) binding.transparent_type;
+      Option.iter Type_registry.register_shape binding.shape_def;
+      Option.iter Trait_registry.register_trait binding.trait_def)
+    signature.exports
+
 let prebound_value_symbols_of_signature (signature : Module_sig.module_signature) :
     (string * Infer.prebound_symbol_info) list =
   Hashtbl.fold
@@ -714,6 +724,7 @@ let validate_build_wide_trait_impl_coherence
 let compile_module
     ~(surfaces : (string, Import_resolver.module_surface) Hashtbl.t)
     ~(typed_signatures : (string, Module_sig.module_signature) Hashtbl.t)
+    ~(visible_dependency_modules : string list)
     ~(rewrite : Import_resolver.rewrite_result)
     (module_info : Module_context.parsed_module) : (checked_module, Diagnostic.t list) result =
   reset_module_state ();
@@ -723,6 +734,28 @@ let compile_module
   let state = Infer.create_inference_state () in
   let* env, prebound_symbols =
     Infer.with_inference_state state (fun () ->
+        let direct_module_set =
+          List.fold_left
+            (fun acc module_id -> Import_resolver.StringSet.add module_id acc)
+            Import_resolver.StringSet.empty rewrite.resolved_imports.direct_modules
+        in
+        let hidden_dependency_modules =
+          (visible_dependency_modules @ (Hashtbl.to_seq_keys typed_signatures |> List.of_seq))
+          |> List.filter (fun module_id ->
+                 (not (String.equal module_id module_info.module_id))
+                 && not (Import_resolver.StringSet.mem module_id direct_module_set))
+          |> List.sort_uniq String.compare
+        in
+        let rec seed_hidden_dependencies = function
+          | [] -> Ok ()
+          | module_id :: rest -> (
+              match Hashtbl.find_opt typed_signatures module_id with
+              | None -> seed_hidden_dependencies rest
+              | Some signature ->
+                  seed_signature_metadata signature;
+                  let* () = seed_visible_impls signature |> Result.map_error (fun diag -> [ diag ]) in
+                  seed_hidden_dependencies rest)
+        in
         let rec seed_imports env_acc prebound_symbols_acc = function
           | [] -> Ok (env_acc, List.rev prebound_symbols_acc)
           | module_id :: rest -> (
@@ -735,6 +768,7 @@ let compile_module
                     (List.rev_append (prebound_value_symbols_of_signature signature) prebound_symbols_acc)
                     rest)
         in
+        let* () = seed_hidden_dependencies hidden_dependency_modules in
         seed_imports (Builtins.primitive_value_env ()) [] rewrite.resolved_imports.direct_modules)
   in
   if not (is_prelude_module module_info.module_id) then
@@ -865,6 +899,20 @@ let compile_project (graph : Module_context.module_graph) : (compiled_project, D
       let* rewrites = rewrite_project_modules ~surfaces graph in
       let* () = validate_build_wide_trait_impl_coherence ~rewrites graph in
       let typed_signatures = Hashtbl.create (List.length graph.topo_order) in
+      let dependency_closure_for_module module_id =
+        let seen = Hashtbl.create 16 in
+        let rec visit acc dep =
+          if Hashtbl.mem seen dep then
+            acc
+          else (
+            Hashtbl.replace seen dep ();
+            let deps = Option.value (Hashtbl.find_opt graph.dependencies dep) ~default:[] in
+            List.fold_left visit (dep :: acc) deps)
+        in
+        Option.value (Hashtbl.find_opt graph.dependencies module_id) ~default:[]
+        |> List.fold_left visit []
+        |> List.rev
+      in
       let rec go acc = function
         | [] ->
             let modules = List.rev acc in
@@ -889,7 +937,10 @@ let compile_project (graph : Module_context.module_graph) : (compiled_project, D
                             ~message:(Printf.sprintf "Missing rewrite for '%s'" module_id);
                         ]
                 in
-                let* checked_module = compile_module ~surfaces ~typed_signatures ~rewrite module_info in
+                let visible_dependency_modules = dependency_closure_for_module module_id in
+                let* checked_module =
+                  compile_module ~surfaces ~typed_signatures ~visible_dependency_modules ~rewrite module_info
+                in
                 Hashtbl.replace typed_signatures module_id checked_module.signature;
                 go (checked_module :: acc) rest)
       in
@@ -1669,7 +1720,7 @@ let%test "shim exports lower without Marmoset identity wrappers" =
   Discovery.with_temp_project
     [
       ( "main.mr",
-        "import std.bytes\nimport std.file\nlet payload = bytes.from_str(\"hi\")\nlet _ = file.write_bytes(\"marmoset.tmp\", payload)\nputs(bytes.to_str_lossy(payload))\n"
+        "import std.bytes\nlet payload = bytes.from_str(\"hi\")\nputs(bytes.to_str_lossy(payload))\n"
       );
     ]
     (fun root ->
@@ -1677,18 +1728,15 @@ let%test "shim exports lower without Marmoset identity wrappers" =
       | Error _ -> false
       | Ok build_output ->
           string_contains build_output.main_go "main__payload := extern__std_bytes__from_str(\"hi\")"
-          && string_contains build_output.main_go
-               "_ = extern__std_file__write_bytes(\"marmoset.tmp\", main__payload)"
           && string_contains build_output.main_go "puts_string(extern__std_bytes__to_str_lossy(main__payload))"
           && (not (string_contains build_output.main_go "func std__bytes__from_u005fstr"))
-          && (not (string_contains build_output.main_go "func std__bytes__to_u005fstr_u005flossy"))
-          && not (string_contains build_output.main_go "func std__file__write_u005fbytes"))
+          && not (string_contains build_output.main_go "func std__bytes__to_u005fstr_u005flossy"))
 
 let%test "exported shim functions are ordinary first-class values" =
   Discovery.with_temp_project
     [
       ( "main.mr",
-        "import std.bytes\nimport std.file\nfn apply(make, value) = make(value)\nlet make_bytes = bytes.from_str\nlet render = bytes.to_str_lossy\nlet payload = apply(make_bytes, \"hi\")\nlet write_bytes = file.write_bytes\nlet _ = write_bytes(\"marmoset.tmp\", payload)\nputs(render(payload))\n"
+        "import std.bytes\nfn apply(make, value) = make(value)\nlet make_bytes = bytes.from_str\nlet render = bytes.to_str_lossy\nlet payload = apply(make_bytes, \"hi\")\nputs(render(payload))\n"
       );
     ]
     (fun root ->
@@ -1697,18 +1745,15 @@ let%test "exported shim functions are ordinary first-class values" =
       | Ok build_output ->
           string_contains build_output.main_go "main__make_u005fbytes := extern__std_bytes__from_str"
           && string_contains build_output.main_go "main__render := extern__std_bytes__to_str_lossy"
-          && string_contains build_output.main_go "main__write_u005fbytes := extern__std_file__write_bytes"
           && string_contains build_output.main_go "func extern__std_bytes__from_str(input string) marmoset.Bytes"
-          && string_contains build_output.main_go
-               "func extern__std_file__write_bytes(path string, bytes marmoset.Bytes) Result_unit_std__file__FileWriteError"
           && (not (string_contains build_output.main_go "func std__bytes__from_u005fstr"))
-          && not (string_contains build_output.main_go "func std__file__write_u005fbytes"))
+          && not (string_contains build_output.main_go "func std__bytes__to_u005fstr_u005flossy"))
 
 let%test "exported shim function value preserves effect checking" =
   Discovery.with_temp_project
     [
       ( "main.mr",
-        "import std.bytes.Bytes\nimport std.file\nfn pure_write(path: Str, bytes: Bytes) -> Unit = {\n  let write_bytes = file.write_bytes\n  let _ = write_bytes(path, bytes)\n}\n"
+        "import std.io\nfn pure_write(value: Str) -> Unit = {\n  let write = io.write\n  let _ = write(value)\n}\n"
       );
     ]
     (fun root ->
@@ -1778,6 +1823,18 @@ let%test "imported constrained generics do not inherit local type variable const
       | Ok _ -> true
       | Error _ -> false)
 
+let%test "imported constrained generic APIs seed hidden dependency traits" =
+  Discovery.with_temp_project
+    [
+      ( "main.mr",
+        "import std.file\nlet _ = file.write(\"marmoset.tmp\", \"hi\")\nlet read_text: Result[Str, file.Error] = file.read(\"marmoset.tmp\")\nputs(0)\n"
+      );
+    ]
+    (fun root ->
+      match compile_entry_to_build ~entry_file:(Filename.concat root "main.mr") () with
+      | Ok _ -> true
+      | Error _ -> false)
+
 let%test "shim S3: compile_entry_to_build emits support and api aux files for called std shim" =
   Discovery.with_temp_project
     [ ("main.mr", "import std.bytes\nputs(bytes.to_str_lossy(bytes.from_str(\"hi\")))\n") ]
@@ -1796,20 +1853,20 @@ let%test "shim S2: distinct std shim ids emit distinct adapter wrappers" =
   Discovery.with_temp_project
     [
       ( "main.mr",
-        "import std.bytes\nimport std.file\nlet payload = bytes.from_str(\"hi\")\nlet _ = file.write_bytes(\"marmoset.tmp\", payload)\nputs(bytes.to_str_lossy(payload))\n"
+        "import std.bytes\nimport std.file\nlet payload = bytes.from_str(\"hi\")\nlet _ = file.write(\"marmoset.tmp\", payload)\nputs(bytes.to_str_lossy(payload))\n"
       );
     ]
     (fun root ->
       match compile_entry_to_build ~entry_file:(Filename.concat root "main.mr") () with
       | Error _ -> false
       | Ok build_output ->
-          count_occurrences build_output.main_go "func extern__std_bytes__from_str(input string) marmoset.Bytes"
-          = 1
-          && count_occurrences build_output.main_go
-               "func extern__std_file__write_bytes(path string, bytes marmoset.Bytes) Result_unit_std__file__FileWriteError"
-             = 1
-          && string_contains build_output.main_go "extern__std_bytes__from_str"
-          && string_contains build_output.main_go "extern__std_file__write_bytes")
+	          count_occurrences build_output.main_go "func extern__std_bytes__from_str(input string) marmoset.Bytes"
+	          = 1
+	          && count_occurrences build_output.main_go
+	               "func extern__std_file__write_data(path string, bytes marmoset.Bytes) Result_unit_std__file__Error"
+	             = 1
+	          && string_contains build_output.main_go "extern__std_bytes__from_str"
+	          && string_contains build_output.main_go "extern__std_file__write_data")
 
 let%test "shim S2: direct Go package externs are rejected at project compile" =
   Discovery.with_temp_project
@@ -1937,7 +1994,7 @@ let%test "analyze_entry_with_source auto-loads std.prelude for headerless entrie
   Discovery.with_temp_project
     [
       ( "main.mr",
-        "let opt: Option[Int] = Option.Some(42)\nlet status: Result[Str, Int] = Result.Success(\"ok\")\nputs(Option.unwrap_or(opt, 0))\nputs(Result.value_or(Result.map(status, (msg: Str) -> msg + \"!\"), \"bad\"))\nputs(10 % 3)\n"
+        "let opt: Option[Int] = Option.Some(42)\nlet status: Result[Str, Int] = Result.Success(\"ok\")\nputs(Option.value_or(opt, 0))\nputs(Result.value_or(Result.map(status, (msg: Str) -> msg + \"!\"), \"bad\"))\nputs(10 % 3)\n"
       );
     ]
     (fun root ->
@@ -1945,7 +2002,7 @@ let%test "analyze_entry_with_source auto-loads std.prelude for headerless entrie
       let analysis =
         analyze_entry_with_source ~entry_file
           ~entry_source:
-            "let opt: Option[Int] = Option.Some(42)\nlet status: Result[Str, Int] = Result.Success(\"ok\")\nputs(Option.unwrap_or(opt, 0))\nputs(Result.value_or(Result.map(status, (msg: Str) -> msg + \"!\"), \"bad\"))\nputs(10 % 3)\n"
+            "let opt: Option[Int] = Option.Some(42)\nlet status: Result[Str, Int] = Result.Success(\"ok\")\nputs(Option.value_or(opt, 0))\nputs(Result.value_or(Result.map(status, (msg: Str) -> msg + \"!\"), \"bad\"))\nputs(10 % 3)\n"
           ()
       in
       match (analysis.graph, analysis.project) with
@@ -2077,7 +2134,10 @@ let%test "std.option signature exports Option as an enum for downstream modules"
                                 match Hashtbl.find_opt rewrites module_id with
                                 | None -> false
                                 | Some rewrite -> (
-                                    match compile_module ~surfaces ~typed_signatures ~rewrite module_info with
+                                    match
+                                      compile_module ~surfaces ~typed_signatures ~visible_dependency_modules:[] ~rewrite
+                                        module_info
+                                    with
                                     | Error _ -> false
                                     | Ok checked_module ->
                                         Hashtbl.replace typed_signatures module_id checked_module.signature;
@@ -2149,7 +2209,10 @@ let%test "source-backed module compilation sees std.option and std.result signat
                                   match Hashtbl.find_opt rewrites module_id with
                                   | None -> false
                                   | Some rewrite -> (
-                                      match compile_module ~surfaces ~typed_signatures ~rewrite module_info with
+                                      match
+                                        compile_module ~surfaces ~typed_signatures ~visible_dependency_modules:[] ~rewrite
+                                          module_info
+                                      with
                                       | Error _ -> false
                                       | Ok checked_module ->
                                           Hashtbl.replace typed_signatures module_id checked_module.signature;

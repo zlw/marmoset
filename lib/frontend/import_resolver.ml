@@ -895,14 +895,14 @@ let rewrite_program
     in
     { block with extern_fns = List.map rewrite_fn block.extern_fns }
   in
-  let rec rewrite_statements ~at_top_level value_scope stmts =
+  let rec rewrite_statements ~at_top_level ~type_bindings value_scope stmts =
     match stmts with
     | [] -> Ok []
     | stmt :: rest ->
-        let* stmt', value_scope' = rewrite_statement ~at_top_level value_scope stmt in
-        let* rest' = rewrite_statements ~at_top_level value_scope' rest in
+        let* stmt', value_scope' = rewrite_statement ~at_top_level ~type_bindings value_scope stmt in
+        let* rest' = rewrite_statements ~at_top_level ~type_bindings value_scope' rest in
         Ok (stmt' :: rest')
-  and rewrite_statement ~at_top_level value_scope (stmt : AST.statement) :
+  and rewrite_statement ~at_top_level ~type_bindings value_scope (stmt : AST.statement) :
       (AST.statement * string StringMap.t, Diagnostic.t) result =
     let type_bindings_of_generic_params params =
       List.fold_left (fun acc (p : AST.generic_param) -> StringSet.add p.name acc) StringSet.empty params
@@ -920,21 +920,19 @@ let rewrite_program
             declaration_internal_name name
         in
         let value_scope_for_value = bind_value value_scope ~name ~rewritten_name in
-        let* value = rewrite_expr ~value_scope:value_scope_for_value ~type_bindings:StringSet.empty value in
+        let* value = rewrite_expr ~value_scope:value_scope_for_value ~type_bindings value in
         let type_annotation =
-          Option.map
-            (rewrite_type_expr ~imports ~type_bindings:StringSet.empty ~available_bindings)
-            type_annotation
+          Option.map (rewrite_type_expr ~imports ~type_bindings ~available_bindings) type_annotation
         in
         Ok (AST.{ stmt with stmt = Let { name = rewritten_name; value; type_annotation } }, value_scope_for_value)
     | AST.Return expr ->
-        let* expr = rewrite_expr ~value_scope ~type_bindings:StringSet.empty expr in
+        let* expr = rewrite_expr ~value_scope ~type_bindings expr in
         Ok (AST.{ stmt with stmt = Return expr }, value_scope)
     | AST.ExpressionStmt expr ->
-        let* expr = rewrite_expr ~value_scope ~type_bindings:StringSet.empty expr in
+        let* expr = rewrite_expr ~value_scope ~type_bindings expr in
         Ok (AST.{ stmt with stmt = ExpressionStmt expr }, value_scope)
     | AST.Block stmts ->
-        let* stmts = rewrite_block value_scope stmts in
+        let* stmts = rewrite_block ~type_bindings value_scope stmts in
         Ok (AST.{ stmt with stmt = Block stmts }, value_scope)
     | AST.EnumDef { name; type_params; variants } ->
         let type_bindings = List.fold_left (fun acc name -> StringSet.add name acc) StringSet.empty type_params in
@@ -1115,8 +1113,8 @@ let rewrite_program
                   TypeAlias { alias_name = declaration_internal_name alias_name; alias_type_params; alias_body };
               },
             value_scope )
-  and rewrite_block value_scope stmts =
-    let* stmts = rewrite_statements ~at_top_level:false value_scope stmts in
+  and rewrite_block ~type_bindings value_scope stmts =
+    let* stmts = rewrite_statements ~at_top_level:false ~type_bindings value_scope stmts in
     Ok
       (List.filter
          (fun (stmt : AST.statement) ->
@@ -1199,7 +1197,10 @@ let rewrite_program
         (rewrite_type_expr ~imports ~type_bindings:method_type_bindings ~available_bindings)
         method_impl.impl_method_return_type
     in
-    let* impl_method_body = rewrite_statement ~at_top_level:false body_scope method_impl.impl_method_body in
+      let* impl_method_body =
+        rewrite_statement ~at_top_level:false ~type_bindings:method_type_bindings body_scope
+          method_impl.impl_method_body
+      in
     let impl_method_body = fst impl_method_body in
     Ok { method_impl with impl_method_generics; impl_method_params; impl_method_return_type; impl_method_body }
   and rewrite_pattern (pat : AST.pattern) : AST.pattern =
@@ -1278,13 +1279,13 @@ let rewrite_program
         Ok AST.{ expr with expr = TypeCheck (inner, te) }
     | AST.If (cond, cons, alt) ->
         let* cond = rewrite_expr ~value_scope ~type_bindings cond in
-        let* cons = rewrite_statement ~at_top_level:false value_scope cons in
+        let* cons = rewrite_statement ~at_top_level:false ~type_bindings value_scope cons in
         let cons = fst cons in
         let* alt =
           match alt with
           | None -> Ok None
           | Some stmt ->
-              let* stmt = rewrite_statement ~at_top_level:false value_scope stmt in
+              let* stmt = rewrite_statement ~at_top_level:false ~type_bindings value_scope stmt in
               Ok (Some (fst stmt))
         in
         Ok AST.{ expr with expr = If (cond, cons, alt) }
@@ -1314,7 +1315,7 @@ let rewrite_program
         let return_type =
           Option.map (rewrite_type_expr ~imports ~type_bindings ~available_bindings) return_type
         in
-        let* body = rewrite_statement ~at_top_level:false value_scope body in
+	        let* body = rewrite_statement ~at_top_level:false ~type_bindings value_scope body in
         let body = fst body in
         Ok AST.{ expr with expr = Function { origin; generics; params; return_type; is_effectful; body } }
     | AST.Call (callee, args) ->
@@ -1457,10 +1458,10 @@ let rewrite_program
             in
             Ok AST.{ expr with expr = MethodCall { mc_receiver; mc_method; mc_type_args; mc_args } })
     | AST.BlockExpr stmts ->
-        let* stmts = rewrite_block value_scope stmts in
+        let* stmts = rewrite_block ~type_bindings value_scope stmts in
         Ok AST.{ expr with expr = BlockExpr stmts }
   in
-  rewrite_statements ~at_top_level:true StringMap.empty program
+  rewrite_statements ~at_top_level:true ~type_bindings:StringSet.empty StringMap.empty program
 
 let available_bindings_for_module ~(current_module : module_surface) ~(imports : resolved_imports) :
     member_presence StringMap.t =

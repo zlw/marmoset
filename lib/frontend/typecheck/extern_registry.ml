@@ -306,9 +306,15 @@ let%test "shim registry rejects owner mismatch" =
 
 let%test "shim registry rejects unsupported boundary types" =
   clear ();
-  match register_source "extern \"std/bytes\" = { fn bad(xs: List[Str]) -> Str }" with
+  match register_source "extern \"std/bytes\" = { fn bad(xs: Map[Str, Int]) -> Str }" with
   | Error diag -> diag.code = "type-shim-boundary"
   | Ok () -> false
+
+let%test "shim registry accepts list boundary types" =
+  clear ();
+  match register_source "extern \"std/bytes\" = { fn collect(xs: List[Str]) -> List[Str] }" with
+  | Ok () -> true
+  | Error _ -> false
 
 let%test "shim registry rejects post-mangle symbol collisions" =
   clear ();

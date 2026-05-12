@@ -1,12 +1,9 @@
 import std.bytes
-import std.file
 
 fn apply(make, value) = make(value)
 
 let make_bytes = bytes.from_str
 let render = bytes.to_str_lossy
 let payload = apply(make_bytes, "hi")
-let write_bytes = file.write_bytes
-let _ = write_bytes(".marmoset/build/marmoset_ffi_function_values.tmp", payload)
 
 puts(render(payload))

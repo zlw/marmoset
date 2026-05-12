@@ -1,0 +1,69 @@
+import std.path
+import std.path.PathLike
+
+export Entry, Kind, Error, read, make, make_all, remove, remove_all, exists?, current
+
+type Kind = { File, Directory, Symlink, Other }
+type Entry = { Entry(path.Path, Kind) }
+type RawEntry = { RawEntry(Str, Kind) }
+
+type Error = {
+  NotFound,
+  PermissionDenied,
+  AlreadyExists,
+  NotDirectory,
+  NotEmpty,
+  InvalidPath(Str),
+  Other(Str),
+}
+
+extern "std/dir" as dir_shim = {
+  fn read(path: Str) => Result[List[RawEntry], Error]
+  fn make(path: Str) => Result[Unit, Error]
+  fn make_all(path: Str) => Result[Unit, Error]
+  fn remove(path: Str) => Result[Unit, Error]
+  fn remove_all(path: Str) => Result[Unit, Error]
+  fn exists?(path: Str) => Result[Bool, Error]
+  fn current() => Result[Str, Error]
+}
+
+fn path_value[p: PathLike](value: p) -> Str =
+  path.to_str(path.PathLike.path(value))
+
+fn raw_entry(raw: RawEntry) -> Entry = match raw {
+  case RawEntry.RawEntry(path_value, kind): Entry.Entry(path.from_str(path_value), kind)
+}
+
+fn map_entries(input: List[RawEntry], output: List[Entry]) -> List[Entry] =
+  if (len(input) == 0) {
+    output
+  } else {
+    map_entries(rest(input), push(output, raw_entry(first(input))))
+  }
+
+fn read[p: PathLike](path: p) => Result[List[Entry], Error] =
+  match dir_shim.read(path_value(path)) {
+    case Result.Success(entries): Result.Success(map_entries(entries, []))
+    case Result.Failure(err): Result.Failure(err)
+  }
+
+fn make[p: PathLike](path: p) => Result[Unit, Error] =
+  dir_shim.make(path_value(path))
+
+fn make_all[p: PathLike](path: p) => Result[Unit, Error] =
+  dir_shim.make_all(path_value(path))
+
+fn remove[p: PathLike](path: p) => Result[Unit, Error] =
+  dir_shim.remove(path_value(path))
+
+fn remove_all[p: PathLike](path: p) => Result[Unit, Error] =
+  dir_shim.remove_all(path_value(path))
+
+fn exists?[p: PathLike](path: p) => Result[Bool, Error] =
+  dir_shim.exists?(path_value(path))
+
+fn current() => Result[path.Path, Error] =
+  match dir_shim.current() {
+    case Result.Success(value): Result.Success(path.from_str(value))
+    case Result.Failure(err): Result.Failure(err)
+  }

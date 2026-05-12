@@ -7,6 +7,8 @@
   (option.mr as std/option.mr)
   (result.mr as std/result.mr)
   (bytes.mr as std/bytes.mr)
+  (path.mr as std/path.mr)
   (file.mr as std/file.mr)
+  (dir.mr as std/dir.mr)
   (io.mr as std/io.mr)
   (io/err.mr as std/io/err.mr)))

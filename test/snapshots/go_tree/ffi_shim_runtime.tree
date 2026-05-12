@@ -5,6 +5,13 @@ package mapi_std_basics
 ===== api/std/bytes/api.go =====
 package mapi_std_bytes
 
+type DecodeError interface {
+	isDecodeError()
+}
+
+type DecodeErrorInvalidUtf8 struct{}
+
+func (DecodeErrorInvalidUtf8) isDecodeError() {}
 
 ===== go.mod =====
 module marmoset_out
@@ -16,11 +23,90 @@ package main
 
 import (
 	"fmt"
+	mapi_std_bytes "marmoset_out/api/std/bytes"
 	"marmoset_out/marmoset"
 	mshim_std_basics "marmoset_out/shims/std/basics"
 	mshim_std_bytes "marmoset_out/shims/std/bytes"
 	"strconv"
 )
+
+type Result_string_std__bytes__DecodeError struct {
+	Data0 string
+	Data1 *std__bytes__DecodeError
+	Tag int8
+}
+
+const Result_string_std__bytes__DecodeError_Success_tag = 0
+const Result_string_std__bytes__DecodeError_Failure_tag = 1
+
+func Result_string_std__bytes__DecodeError_Success(v0 string) Result_string_std__bytes__DecodeError {
+	return Result_string_std__bytes__DecodeError{Tag: Result_string_std__bytes__DecodeError_Success_tag, Data0: v0}
+}
+
+func Result_string_std__bytes__DecodeError_Failure(v0 std__bytes__DecodeError) Result_string_std__bytes__DecodeError {
+	return Result_string_std__bytes__DecodeError{Tag: Result_string_std__bytes__DecodeError_Failure_tag, Data1: &v0}
+}
+
+func (e Result_string_std__bytes__DecodeError) String() string {
+	switch e.Tag {
+	case Result_string_std__bytes__DecodeError_Success_tag:
+		return fmt.Sprintf("Success(%v)", e.Data0)
+	case Result_string_std__bytes__DecodeError_Failure_tag:
+		return fmt.Sprintf("Failure(%v)", (*e.Data1))
+	default:
+		panic("unreachable: invalid enum tag")
+	}
+}
+
+
+type Result_std__bytes__Bytes_std__bytes__DecodeError struct {
+	Data0 *std__bytes__DecodeError
+	Data1 marmoset.Bytes
+	Tag int8
+}
+
+const Result_std__bytes__Bytes_std__bytes__DecodeError_Success_tag = 0
+const Result_std__bytes__Bytes_std__bytes__DecodeError_Failure_tag = 1
+
+func Result_std__bytes__Bytes_std__bytes__DecodeError_Success(v0 marmoset.Bytes) Result_std__bytes__Bytes_std__bytes__DecodeError {
+	return Result_std__bytes__Bytes_std__bytes__DecodeError{Tag: Result_std__bytes__Bytes_std__bytes__DecodeError_Success_tag, Data1: v0}
+}
+
+func Result_std__bytes__Bytes_std__bytes__DecodeError_Failure(v0 std__bytes__DecodeError) Result_std__bytes__Bytes_std__bytes__DecodeError {
+	return Result_std__bytes__Bytes_std__bytes__DecodeError{Tag: Result_std__bytes__Bytes_std__bytes__DecodeError_Failure_tag, Data0: &v0}
+}
+
+func (e Result_std__bytes__Bytes_std__bytes__DecodeError) String() string {
+	switch e.Tag {
+	case Result_std__bytes__Bytes_std__bytes__DecodeError_Success_tag:
+		return fmt.Sprintf("Success(%v)", e.Data1)
+	case Result_std__bytes__Bytes_std__bytes__DecodeError_Failure_tag:
+		return fmt.Sprintf("Failure(%v)", (*e.Data0))
+	default:
+		panic("unreachable: invalid enum tag")
+	}
+}
+
+
+type std__bytes__DecodeError struct {
+	Tag int8
+}
+
+const std__bytes__DecodeError_InvalidUtf8_tag = 0
+
+func std__bytes__DecodeError_InvalidUtf8() std__bytes__DecodeError {
+	return std__bytes__DecodeError{Tag: std__bytes__DecodeError_InvalidUtf8_tag}
+}
+
+func (e std__bytes__DecodeError) String() string {
+	switch e.Tag {
+	case std__bytes__DecodeError_InvalidUtf8_tag:
+		return "InvalidUtf8"
+	default:
+		panic("unreachable: invalid enum tag")
+	}
+}
+
 
 func extern__std_basics__puts_str(value string) struct{} {
 	defer func() {
@@ -62,6 +148,39 @@ func extern__std_bytes__length(input marmoset.Bytes) int64 {
 	return __ret
 }
 
+func extern__std_bytes__to_str(input marmoset.Bytes) Result_string_std__bytes__DecodeError {
+	defer func() {
+		if __panic := recover(); __panic != nil {
+			panic(fmt.Sprintf("shim ABI violation at std/bytes.to_str: %v", __panic))
+		}
+	}()
+	__ret := mshim_std_bytes.ToStr(marmoset.BytesCopy(input.Copy()))
+	return (func(__value marmoset.Result[string, mapi_std_bytes.DecodeError]) Result_string_std__bytes__DecodeError {
+		__state, __success, __failure := marmoset.InspectResult(__value)
+		_ = __success
+		_ = __failure
+		switch __state {
+		case marmoset.ResultSuccess:
+			return Result_string_std__bytes__DecodeError_Success(__success)
+		case marmoset.ResultFailure:
+			return Result_string_std__bytes__DecodeError_Failure((func(__value mapi_std_bytes.DecodeError) std__bytes__DecodeError {
+		if __value == nil {
+			panic("std/bytes.to_str: nil enum returned by shim")
+		}
+		switch __variant := __value.(type) {
+		case mapi_std_bytes.DecodeErrorInvalidUtf8:
+			_ = __variant
+			return std__bytes__DecodeError_InvalidUtf8()
+		default:
+			panic("std/bytes.to_str: unknown enum variant returned by shim")
+		}
+	})(__failure))
+		default:
+			panic("std/bytes.to_str: invalid zero-value Result returned by shim")
+		}
+	})(__ret)
+}
+
 func extern__std_bytes__to_str_lossy(input marmoset.Bytes) string {
 	defer func() {
 		if __panic := recover(); __panic != nil {
@@ -87,6 +206,26 @@ func show_show_int64(x int64) string {
 func show_show_string(x string) string {
 	return x
 }
+func std__bytes__Decode_decode_std__bytes__Bytes(input marmoset.Bytes) Result_std__bytes__Bytes_std__bytes__DecodeError {
+        if true {
+            return Result_std__bytes__Bytes_std__bytes__DecodeError_Success(input)
+        } else {
+            return Result_std__bytes__Bytes_std__bytes__DecodeError_Failure(std__bytes__DecodeError_InvalidUtf8())
+        }
+}
+
+func std__bytes__Decode_decode_string(input marmoset.Bytes) Result_string_std__bytes__DecodeError {
+        return extern__std_bytes__to_str(input)
+}
+
+func std__bytes__Encode_encode_std__bytes__Bytes(input marmoset.Bytes) marmoset.Bytes {
+        return input
+}
+
+func std__bytes__Encode_encode_string(input string) marmoset.Bytes {
+        return extern__std_bytes__from_str(input)
+}
+
 func main() {
     test__fixtures__ffi__shim_u005fruntime__main__payload := extern__std_bytes__from_str("hi")
     _ = test__fixtures__ffi__shim_u005fruntime__main__payload
@@ -336,7 +475,9 @@ package bytes
 
 import (
 	stdbytes "bytes"
+	"unicode/utf8"
 
+	bytesapi "marmoset_out/api/std/bytes"
 	"marmoset_out/marmoset"
 )
 
@@ -346,6 +487,14 @@ func FromStr(input string) marmoset.Bytes {
 
 func ToStrLossy(input marmoset.Bytes) string {
 	return string(input.Copy())
+}
+
+func ToStr(input marmoset.Bytes) marmoset.Result[string, bytesapi.DecodeError] {
+	data := input.Copy()
+	if !utf8.Valid(data) {
+		return marmoset.Failure[string, bytesapi.DecodeError](bytesapi.DecodeErrorInvalidUtf8{})
+	}
+	return marmoset.Success[string, bytesapi.DecodeError](string(data))
 }
 
 func Length(input marmoset.Bytes) int64 {

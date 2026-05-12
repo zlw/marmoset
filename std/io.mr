@@ -40,14 +40,7 @@ impl Write[Stdout, Error] = {
   fn flush(writer: Stdout) => Result[Unit, Error] = io_shim.flush(writer)
 }
 
-fn read() => Result[Str, Error] =
-  Read.read(Stdin)
-
-fn write(value: Str) => Result[Unit, Error] =
-  Write.write(Stdout, value)
-
-fn flush() => Result[Unit, Error] =
-  Write.flush(Stdout)
-
-fn print[a: Show](value: a) => Result[Unit, Error] =
-  Write.print(Stdout, value)
+fn read() => Result[Str, Error] = Read.read(Stdin)
+fn write(value: Str) => Result[Unit, Error] = Write.write(Stdout, value)
+fn flush() => Result[Unit, Error] = Write.flush(Stdout)
+fn print[a: Show](value: a) => Result[Unit, Error] = Write.print(Stdout, value)
