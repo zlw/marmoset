@@ -168,11 +168,21 @@ let merge_presence
         trait_definition;
       }
   | Some prior ->
+      let incoming_concrete_value = has_value && Option.is_none extern_func_key in
+      let prior_concrete_value = prior.has_value && Option.is_none prior.extern_func_key in
+      let merged_value_definition =
+        if incoming_concrete_value then value_definition
+        else Option.fold ~none:value_definition ~some:(fun site -> Some site) prior.value_definition
+      in
+      let merged_extern_func_key =
+        if incoming_concrete_value || prior_concrete_value then None
+        else Option.fold ~none:extern_func_key ~some:(fun key -> Some key) prior.extern_func_key
+      in
       {
         internal_name = prior.internal_name;
         has_value = prior.has_value || has_value;
-        value_definition = Option.fold ~none:value_definition ~some:(fun site -> Some site) prior.value_definition;
-        extern_func_key = Option.fold ~none:extern_func_key ~some:(fun key -> Some key) prior.extern_func_key;
+        value_definition = merged_value_definition;
+        extern_func_key = merged_extern_func_key;
         has_enum = prior.has_enum || has_enum;
         enum_definition = Option.fold ~none:enum_definition ~some:(fun site -> Some site) prior.enum_definition;
         has_named_type = prior.has_named_type || has_named_type;
@@ -1673,6 +1683,29 @@ let%test "extern signatures rewrite imported type annotations" =
                               | _ -> false)
                           | _ -> false)
                         rewrite.program))))
+
+let%test "concrete wrapper shadows same-named extern export metadata" =
+  Discovery.with_temp_project
+    [
+      ("main.mr", "import api.foo\nputs(foo())\n");
+      ("api.mr", "export foo\nextern \"strings\" as shim = { fn foo(value: Str) -> Str }\nfn foo() -> Str = \"ok\"\n");
+    ]
+    (fun root ->
+      let entry_file = Filename.concat root "main.mr" in
+      match Discovery.discover_project ~source_root:root ~entry_file () with
+      | Error _ -> false
+      | Ok graph -> (
+          match build_module_surfaces graph with
+          | Error _ -> false
+          | Ok surfaces -> (
+              match Hashtbl.find_opt surfaces "api" with
+              | None -> false
+              | Some surface -> (
+                  match StringMap.find_opt "foo" surface.exports with
+                  | None -> false
+                  | Some presence ->
+                      String.equal presence.internal_name "api__foo"
+                      && Option.is_none presence.extern_func_key))))
 
 let%test "headerless entry local Result shadows injected std.result in constructors and annotations" =
   Discovery.with_temp_project

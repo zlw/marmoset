@@ -106,6 +106,49 @@ run_source_expect_build_failure() {
     rm -rf "$root"
 }
 
+run_source_emit_go_expect_protocol_shape() {
+    local name="$1"
+    local source
+    source="$(cat)"
+
+    TOTAL=$((TOTAL + 1))
+    echo -n "TEST [$TOTAL] $name ... "
+
+    local root outdir binpath build_output failures
+    root=$(mktemp -d marmoset_stdlib_shims.XXXXXX)
+    outdir=$(mktemp -d marmoset_stdlib_go.XXXXXX)
+    binpath=$(mktemp "$REPO_ROOT/.marmoset/build/marmoset_stdlib_bin.XXXXXX")
+    rm -f "$binpath"
+    printf "%s\n" "$source" > "$root/main.mr"
+
+    failures=0
+    if build_output=$($EXECUTABLE build "$root/main.mr" --emit-go "$outdir" -o "$binpath" 2>&1); then
+        grep -qF 'func Read(reader ioapi.Stdin)' "$outdir/shims/std/io/io.go" || failures=$((failures + 1))
+        grep -qF 'func Write(writer ioapi.Stdout, value string)' "$outdir/shims/std/io/io.go" || failures=$((failures + 1))
+        grep -qF 'func Flush(writer ioapi.Stdout)' "$outdir/shims/std/io/io.go" || failures=$((failures + 1))
+        grep -qF 'func Write(writer errapi.Stderr, value string)' "$outdir/shims/std/io/err/err.go" || failures=$((failures + 1))
+        grep -qF 'func Flush(writer errapi.Stderr)' "$outdir/shims/std/io/err/err.go" || failures=$((failures + 1))
+        if rg -q 'std__file__Path|flush_path|FlushPath' "$outdir"; then
+            failures=$((failures + 1))
+        fi
+
+        if [ "$failures" -eq 0 ]; then
+            echo "✓ PASS"
+            PASS=$((PASS + 1))
+        else
+            echo "✗ FAIL (emitted Go still has phantom protocol plumbing)"
+            FAIL=$((FAIL + 1))
+        fi
+    else
+        echo "✗ FAIL (build failed)"
+        echo "  Output: $build_output"
+        FAIL=$((FAIL + 1))
+    fi
+
+    rm -f "$binpath"
+    rm -rf "$root" "$outdir"
+}
+
 DATA_DIR=$(mktemp -d "$REPO_ROOT/.marmoset/build/stdlib_shims_data.XXXXXX")
 ROUNDTRIP_PATH="$DATA_DIR/roundtrip.txt"
 MISSING_PATH="$DATA_DIR/missing.txt"
@@ -281,6 +324,22 @@ run_source_expect_build_failure \
     "does not export 'write_str'" <<'EOF'
 import std.file.write_str
 
+puts(0)
+EOF
+
+run_source_emit_go_expect_protocol_shape \
+    "std.io receivers reach shims and std.file path helpers stay direct" <<EOF
+import std.file
+import std.io
+import std.io.err
+
+let _ = io.Read.read(io.stdin())
+let _ = io.Write.write(io.stdout(), "out")
+let _ = io.Write.flush(io.stdout())
+let _ = io.Write.write(err.stderr(), "err")
+let _ = io.Write.flush(err.stderr())
+let _ = file.write("$ROUNDTRIP_PATH", "path")
+let _ = file.read("$ROUNDTRIP_PATH")
 puts(0)
 EOF
 

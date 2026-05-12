@@ -8,16 +8,16 @@ extern type Stderr
 
 extern "std/io/err" as err_shim = {
   fn stderr() => Stderr
-  fn write(value: Str) => Result[Unit, Error]
-  fn flush() => Result[Unit, Error]
+  fn write(writer: Stderr, value: Str) => Result[Unit, Error]
+  fn flush(writer: Stderr) => Result[Unit, Error]
 }
 
 fn stderr() => Stderr = err_shim.stderr()
 
 impl io.Write[Stderr, Error] = {
-  fn write(_writer: Stderr, value: Str) => Result[Unit, Error] = err_shim.write(value)
+  fn write(writer: Stderr, value: Str) => Result[Unit, Error] = err_shim.write(writer, value)
 
-  fn flush(_writer: Stderr) => Result[Unit, Error] = err_shim.flush()
+  fn flush(writer: Stderr) => Result[Unit, Error] = err_shim.flush(writer)
 }
 
 fn write(value: Str) => Result[Unit, Error] = io.Write.write(stderr(), value)

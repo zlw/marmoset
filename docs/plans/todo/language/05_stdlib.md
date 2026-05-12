@@ -144,7 +144,7 @@ Rules:
 - `File` is private shim plumbing, not an exported stdlib type. Importers can receive file values through callback inference but cannot import, construct, or inspect the type by name.
 - `read_all` is the scoped-file read helper. Reading a closed, leaked, or unknown file value returns `FileReadError.AlreadyClosed`.
 - Raw resource operations stay in the private `file_shim` extern block as `open_handle` and `close_handle`; `std.file` does not export a raw close or one-argument open.
-- The path helpers are backed by private `io.Read[Path, FileReadError]` and `io.Write[Path, FileWriteError]` impls; `flush_path` is a private no-op shim used only to satisfy `Write.flush`.
+- The whole-path helpers call private byte shims directly. `std.file` does not invent a path resource just to satisfy `io.Read`/`io.Write`.
 - `FileReadError` currently uses `NotFound`, `PermissionDenied`, `IsDirectory`, `AlreadyClosed`, and `Other(Str)`.
 - `FileWriteError` and `FileOpenError` currently use `NotFound`, `PermissionDenied`, `IsDirectory`, and `Other(Str)`.
 - `FileCloseError` currently uses `AlreadyClosed` and `Other(Str)` for private close failures surfaced through `FileUseError.Close` or `FileUseError.UseAndClose`.
@@ -190,6 +190,7 @@ Rules:
 - `io.print` writes `Show.show(value)` plus a trailing newline, then flushes.
 - `Stdin`, `Stdout`, and `std.io.err.Stderr` are opaque extern token types, not constructible Marmoset enums.
 - `stdin()` implements `Read[Stdin, Error]`; `stdout()` implements `Write[Stdout, Error]`; public helpers route through those protocols.
+- Stdio/stderr shim methods receive the opaque token argument. The Go shim may still map those tokens to process stdio, but the Marmoset protocol receiver must flow across the shim boundary instead of being ignored in `std.io`.
 - `std.io.err` exports `Error`, opaque extern type `Stderr`, `stderr`, `write`, `flush`, and `print` for stderr. Its error enum omits `EndOfFile`, and `stderr()` implements `Write[Stderr, std.io.err.Error]`.
 - File values implement `io.Read[File, FileReadError]` privately inside `std.file`; users call it through `io.Read.read(file)` inside `file.open` callbacks.
 
@@ -457,3 +458,4 @@ HTTP, SQL, and framework-style wrappers likely need follow-up shim features such
 - 2026-05-12 00:05 CEST: Extended the cleanup so stdio/stderr now expose real `Read`/`Write` receiver values, `std.file` renames its private resource from `Handle` to `File`, and file path helpers route through private `Read[Path, FileReadError]`/`Write[Path, FileWriteError]` impls. Focused `make integration stdlib-shims` is green.
 - 2026-05-12 01:35 CEST: Refined the private `std.file.Path` helper from a one-variant sum to the existing nominal wrapper syntax `type Path = Path(Str)`. This exposed and fixed missing wrapper-constructor pattern support in typechecking, exhaustiveness, and Go emission. A trial `Result.map` cleanup for file read conversions was reverted because generic stdlib method specialization still leaks unresolved type variables in codegen; keep that for a dedicated compiler-hardening slice.
 - 2026-05-12 01:41 CEST: Started and greened the stdio handle/protocol cleanup. `Stdin`, `Stdout`, and `Stderr` are now opaque extern token types returned by production shims, fake singleton enum constructors are gone, and public `print` helpers delegate through `Write.print` instead of duplicating newline/flush matches. Focused `make integration stdlib-shims` is green; preparing the cleanup commit.
+- 2026-05-12 01:59 CEST: Started and greened the phantom receiver/path cleanup. Stdio and stderr shim methods now take the opaque receiver token instead of dropping it in `std.io`, whole-path `std.file.read/write` call private byte shims directly instead of manufacturing a `Path` protocol receiver, and import resolution now lets a real Marmoset wrapper shadow a same-named private extern entry in exported module metadata. Focused `make integration stdlib-shims` is green.

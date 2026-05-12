@@ -95,10 +95,6 @@ func WriteBytes(path string, bytes marmoset.Bytes) marmoset.Result[marmoset.Unit
 	return marmoset.Success[marmoset.Unit, fileapi.FileWriteError](marmoset.NewUnit())
 }
 
-func FlushPath(path string) marmoset.Result[marmoset.Unit, fileapi.FileWriteError] {
-	return marmoset.Success[marmoset.Unit, fileapi.FileWriteError](marmoset.NewUnit())
-}
-
 func ReadAll(file fileapi.File) marmoset.Result[marmoset.Bytes, fileapi.FileReadError] {
 	resource, ok := files.Get(file)
 	if !ok {
