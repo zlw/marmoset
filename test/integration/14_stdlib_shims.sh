@@ -161,12 +161,16 @@ MISSING_PATH="$DATA_DIR/missing.txt"
 EXISTING_PATH="$DATA_DIR/existing.txt"
 INVALID_UTF8_PATH="$DATA_DIR/invalid.bin"
 CHILD_DIR="$DATA_DIR/child"
+NONEMPTY_DIR="$DATA_DIR/nonempty"
 NESTED_DIR="$DATA_DIR/nested/inner"
 LISTING_DIR="$DATA_DIR/listing"
 LISTING_FILE="$LISTING_DIR/entry.txt"
+NONEMPTY_FILE="$NONEMPTY_DIR/child.txt"
 printf "opened" > "$EXISTING_PATH"
 printf '\377' > "$INVALID_UTF8_PATH"
+mkdir "$NONEMPTY_DIR"
 mkdir "$LISTING_DIR"
+printf "child" > "$NONEMPTY_FILE"
 printf "entry" > "$LISTING_FILE"
 
 run_source_expect_output \
@@ -299,7 +303,7 @@ EOF
 
 run_source_expect_output \
     "std.file scopes file handles and implements io protocols" \
-    $'read:opened\nprotocol:opened\nwritten:scoped!\nopen:not-found\nuse:read:is-directory\nleaked:read:already-closed' <<EOF
+    $'read:opened\nprotocol:opened\ngeneric:opened\nwritten:scoped!\nopen:not-found\nuse:read:is-directory\nleaked:read:already-closed' <<EOF
 import std.bytes
 import std.file
 import std.file.Error
@@ -325,6 +329,9 @@ fn use_error_label(err: UseError[Error]) -> Str = match err {
   case UseError.UseAndClose(use_err, close_err): "use:" + error_label("read", use_err) + "+" + error_label("close", close_err)
 }
 
+fn use_file[a, e](target: Str, body: (file.File) => Result[a, e]) => Result[a, UseError[e]] =
+  file.open(target, file.Mode.Read, body)
+
 let opened_text: Result[Str, UseError[Error]] = file.open("$EXISTING_PATH", file.Mode.Read, (handle) => file.read_all(handle))
 match opened_text {
   case Result.Success(payload): puts("read:" + payload)
@@ -334,6 +341,12 @@ match opened_text {
 let protocol_text: Result[Str, UseError[Error]] = file.open("$EXISTING_PATH", file.Mode.Read, (handle) => io.Read.read(handle))
 match protocol_text {
   case Result.Success(payload): puts("protocol:" + payload)
+  case Result.Failure(err): puts(use_error_label(err))
+}
+
+let generic_text: Result[Str, UseError[Error]] = use_file("$EXISTING_PATH", (handle) => io.Read.read(handle))
+match generic_text {
+  case Result.Success(payload): puts("generic:" + payload)
   case Result.Failure(err): puts(use_error_label(err))
 }
 
@@ -391,7 +404,7 @@ EOF
 
 run_source_expect_output \
     "std.dir exposes scalar operations and directory listings" \
-    $'exists:false\nmake:ok\nexists:true\nmake-all:ok\nentry:entry.txt:file\ncurrent:true\nremove-all:ok' <<EOF
+    $'exists:false\nmake:ok\nexists:true\nmake-all:ok\nentry:entry.txt:file\ncurrent:true\nremove-nonempty:not-empty\nremove-all:ok' <<EOF
 import std.dir
 import std.dir.Entry
 import std.dir.Error
@@ -447,6 +460,11 @@ match dir.read("$LISTING_DIR") {
 match dir.current() {
   case Result.Success(value): puts("current:" + Show.show(path.absolute?(value)))
   case Result.Failure(err): puts(error_label("current", err))
+}
+
+match dir.remove("$NONEMPTY_DIR") {
+  case Result.Success(_): puts("remove-nonempty:unexpected")
+  case Result.Failure(err): puts(error_label("remove-nonempty", err))
 }
 
 match dir.remove_all("$CHILD_DIR") {

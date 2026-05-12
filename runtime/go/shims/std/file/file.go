@@ -53,14 +53,14 @@ func fileError(path string, err error) fileapi.Error {
 		return fileapi.ErrorNotFound{}
 	case isPermission(err):
 		return fileapi.ErrorPermissionDenied{}
-	case isAlreadyExist(err):
-		return fileapi.ErrorAlreadyExists{}
 	case isDirectoryError(path, err):
 		return fileapi.ErrorIsDirectory{}
 	case isNotDirectory(err):
 		return fileapi.ErrorNotDirectory{}
 	case isInvalidPath(err):
 		return fileapi.ErrorInvalidPath{Field0: err.Error()}
+	case isAlreadyExist(err):
+		return fileapi.ErrorAlreadyExists{}
 	default:
 		return fileapi.ErrorOther{Field0: err.Error()}
 	}

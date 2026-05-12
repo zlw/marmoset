@@ -227,12 +227,12 @@ func std__bytes__Encode_encode_string(input string) marmoset.Bytes {
 }
 
 func main() {
-    test__fixtures__ffi__shim_u005fruntime__main__payload := extern__std_bytes__from_str("hi")
-    _ = test__fixtures__ffi__shim_u005fruntime__main__payload
-    _ = puts_string(extern__std_bytes__to_str_lossy(test__fixtures__ffi__shim_u005fruntime__main__payload))
-    _ = puts_int64(extern__std_bytes__length(test__fixtures__ffi__shim_u005fruntime__main__payload))
+    main__payload := extern__std_bytes__from_str("hi")
+    _ = main__payload
+    _ = puts_string(extern__std_bytes__to_str_lossy(main__payload))
+    _ = puts_int64(extern__std_bytes__length(main__payload))
     _ = puts_string(func() string {
-        if extern__std_bytes__equal_q(test__fixtures__ffi__shim_u005fruntime__main__payload, extern__std_bytes__from_str("hi")) {
+        if extern__std_bytes__equal_q(main__payload, extern__std_bytes__from_str("hi")) {
             return "equal"
         } else {
             return "different"

@@ -30,14 +30,14 @@ func dirError(err error) dirapi.Error {
 		return dirapi.ErrorNotFound{}
 	case isPermission(err):
 		return dirapi.ErrorPermissionDenied{}
-	case isAlreadyExist(err):
-		return dirapi.ErrorAlreadyExists{}
 	case errors.Is(err, syscall.ENOTDIR):
 		return dirapi.ErrorNotDirectory{}
 	case errors.Is(err, syscall.ENOTEMPTY):
 		return dirapi.ErrorNotEmpty{}
 	case errors.Is(err, syscall.EINVAL):
 		return dirapi.ErrorInvalidPath{Field0: err.Error()}
+	case isAlreadyExist(err):
+		return dirapi.ErrorAlreadyExists{}
 	default:
 		return dirapi.ErrorOther{Field0: err.Error()}
 	}

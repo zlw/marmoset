@@ -2,7 +2,7 @@
 
 ## Maintenance
 
-- Last verified: 2026-05-10
+- Last verified: 2026-05-12
 - Implementation status: Shim-first interop implemented
 - Update trigger: Any change to extern syntax, supported FFI types, typechecking, module visibility, or Go codegen
 
@@ -15,49 +15,66 @@ Direct arbitrary Go package externs have been removed. A declaration such as `ex
 Shim externs use the top-level `extern` form. The string is a slash-separated shim id, and the optional `as` qualifier controls the source qualifier used inside the owning module:
 
 ```marmoset
-export FileReadError, read_bytes
+export Bytes, DecodeError, Decode, Encode, from_str, to_str
 
-import std.bytes.Bytes
+extern type Bytes
 
-type FileReadError = { NotFound, PermissionDenied, IsDirectory, Other(Str) }
+type DecodeError = { InvalidUtf8 }
 
-extern "std/file" as file_shim = {
-  fn read_bytes(path: Str) => Result[Bytes, FileReadError]
+extern "std/bytes" as byte_shim = {
+  fn from_str(value: Str) -> Bytes
+  fn to_str(input: Bytes) -> Result[Str, DecodeError]
 }
 ```
 
 Phase one requires shim ids to use the `std` root and at least two slash-separated segments. Valid examples include `std/bytes`, `std/file`, `std/io`, and nested packages such as `std/io/err`. Single-segment ids such as `strings` are rejected with `shim-id-invalid`; syntactically valid but unknown ids such as `std/missing` fail with `shim-id-not-found`.
 
-Opaque resources use `extern type` in the owning shim module. Public modules should still expose the highest-level Marmoset API they can. For example, `std.file` keeps the file resource type and raw open/close calls private, then exports callback-based helpers:
+Opaque resources use `extern type` in the owning shim module. Public modules should still expose the highest-level Marmoset API they can. For example, `std.file` exports the opaque `File` resource so users can type scoped callbacks, but keeps raw open/close and byte transport private:
 
 ```marmoset
 import std.bytes
 import std.bytes.Bytes
+import std.path
+import std.path.PathLike
 
-export FileUseError, read, read_bytes, write, write_bytes, read_all, open
+export File, Mode, Error, UseError,
+       read, write, append, open,
+       read_all, write_all, flush
 
 extern type File
 
-type FileReadError = { NotFound, PermissionDenied, IsDirectory, AlreadyClosed, Other(Str) }
-type FileWriteError = { NotFound, PermissionDenied, IsDirectory, Other(Str) }
-type FileOpenError = { NotFound, PermissionDenied, IsDirectory, Other(Str) }
-type FileCloseError = { AlreadyClosed, Other(Str) }
-type FileUseError[e] = { Open(FileOpenError), Use(e), Close(FileCloseError), UseAndClose(e, FileCloseError) }
+type Mode = { Read, Write, Append }
+type Error = {
+  NotFound,
+  PermissionDenied,
+  AlreadyExists,
+  IsDirectory,
+  NotDirectory,
+  InvalidPath(Str),
+  InvalidData(Str),
+  AlreadyClosed,
+  Other(Str),
+}
+type UseError[e] = { Open(Error), Use(e), Close(Error), UseAndClose(e, Error) }
 
 extern "std/file" as file_shim = {
-  fn read_bytes(path: Str) => Result[Bytes, FileReadError]
-  fn write_bytes(path: Str, bytes: Bytes) => Result[Unit, FileWriteError]
-  fn flush_path(path: Str) => Result[Unit, FileWriteError]
-  fn open_handle(path: Str) => Result[File, FileOpenError]
-  fn close_handle(file: File) => Result[Unit, FileCloseError]
-  fn read_all(file: File) => Result[Bytes, FileReadError]
+  fn read_data(path: Str) => Result[Bytes, Error]
+  fn write_data(path: Str, bytes: Bytes) => Result[Unit, Error]
+  fn append_data(path: Str, bytes: Bytes) => Result[Unit, Error]
+  fn open_handle(path: Str, mode: Mode) => Result[File, Error]
+  fn close_handle(file: File) => Result[Unit, Error]
+  fn read_all_data(file: File) => Result[Bytes, Error]
+  fn write_all_data(file: File, bytes: Bytes) => Result[Unit, Error]
+  fn flush_handle(file: File) => Result[Unit, Error]
 }
 
-fn read(path: Str) => Result[Str, FileReadError]
-fn read_bytes(path: Str) => Result[Bytes, FileReadError]
-fn write(path: Str, value: Str) => Result[Unit, FileWriteError]
-fn write_bytes(path: Str, bytes: Bytes) => Result[Unit, FileWriteError]
-fn open[a, e](path: Str, body: (File) => Result[a, e]) => Result[a, FileUseError[e]]
+fn read[a: bytes.Decode, p: PathLike](path: p) => Result[a, Error]
+fn write[a: bytes.Encode, p: PathLike](path: p, value: a) => Result[Unit, Error]
+fn append[a: bytes.Encode, p: PathLike](path: p, value: a) => Result[Unit, Error]
+fn open[p: PathLike, a, e](path: p, mode: Mode, body: (File) => Result[a, e]) => Result[a, UseError[e]]
+fn read_all[a: bytes.Decode](file: File) => Result[a, Error]
+fn write_all[a: bytes.Encode](file: File, value: a) => Result[Unit, Error]
+fn flush(file: File) => Result[Unit, Error]
 ```
 
 `extern type` values cannot be constructed, field-inspected, record-pattern matched, or given derived trait implementations in Marmoset. Shim code owns their representation and lifecycle.
@@ -69,6 +86,7 @@ Shim boundaries are classified by resolved Marmoset type identity before Go code
 - `Unit`, `Bool`, `Int`, `Float`, and `Str`
 - canonical `std.option.Option[T]`
 - canonical `std.result.Result[T, E]`
+- canonical immutable `List[T]` when `T` is a supported boundary type
 - closed enums declared by the owning shim module
 - opaque `extern type` handles declared by the owning shim module
 - canonical immutable `std.bytes.Bytes`

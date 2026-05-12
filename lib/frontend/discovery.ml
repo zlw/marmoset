@@ -354,8 +354,9 @@ let discover_project_with_overrides
     (Module_context.module_graph, Diagnostic.t) result =
   let entry_file = normalize_path entry_file in
   let* stdlib_root = resolve_toolchain_root ?stdlib_root () in
+  let stdlib_source_root = Filename.concat stdlib_root "std" in
   let project_root =
-    if path_is_under_root ~root_dir:stdlib_root entry_file then
+    if path_is_under_root ~root_dir:stdlib_source_root entry_file then
       stdlib_root
     else
       match source_root with
@@ -525,6 +526,30 @@ let%test "discover_project resolves std modules from an explicit toolchain stdli
               && Hashtbl.mem graph.modules "std.basics"
               && Hashtbl.mem graph.modules "std.option"
               && Hashtbl.mem graph.modules "std.result"))
+
+let%test "discover_project keeps projects under toolchain root separate from stdlib modules" =
+  let stdlib_root = make_temp_dir "marmoset_stdlib_project_" in
+  Fun.protect
+    ~finally:(fun () -> ignore (Sys.command ("rm -rf " ^ Filename.quote stdlib_root)))
+    (fun () ->
+      mkdir_p (Filename.concat stdlib_root "std");
+      write_file (Filename.concat stdlib_root "std/prelude.mr")
+        "export Ordering\ntype Ordering = { Less, Equal, Greater }\n";
+      write_file (Filename.concat stdlib_root "std/basics.mr") "export puts\nfn puts(value: Int) => Unit = {}\n";
+      write_file (Filename.concat stdlib_root "std/option.mr") "export Option\ntype Option[a] = { Some(a), None }\n";
+      write_file (Filename.concat stdlib_root "std/result.mr")
+        "export Result\ntype Result[a, e] = { Success(a), Failure(e) }\n";
+      let project_root = Filename.concat stdlib_root "examples" in
+      mkdir_p project_root;
+      write_file (Filename.concat project_root "main.mr") "import math\nlet value = math.value\n";
+      write_file (Filename.concat project_root "math.mr") "export value\nlet value = 1\n";
+      match discover_project ~stdlib_root ~entry_file:(Filename.concat project_root "main.mr") () with
+      | Error _ -> false
+      | Ok graph ->
+          String.equal graph.root_dir project_root
+          && String.equal graph.entry_module "main"
+          && Hashtbl.mem graph.modules "math"
+          && Hashtbl.mem graph.modules "std.prelude")
 
 let%test "resolve_toolchain_root honors MARMOSET_ROOT before installed probing" =
   let stdlib_root = make_temp_dir "marmoset_stdlib_env_" in
