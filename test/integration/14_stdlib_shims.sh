@@ -134,7 +134,7 @@ run_source_emit_go_expect_stdio_shape() {
         grep -qF 'func std__io__Read_read_std__file__File' "$outdir/main.go" || failures=$((failures + 1))
         grep -qF 'func std__io__Write_write_std__file__File' "$outdir/main.go" || failures=$((failures + 1))
         grep -qF 'func std__io__Write_flush_std__file__File' "$outdir/main.go" || failures=$((failures + 1))
-        grep -qF 'func extern__std_dir__read(path std__path__Path)' "$outdir/main.go" || failures=$((failures + 1))
+        grep -qF 'func extern__std_dir__ls(path std__path__Path)' "$outdir/main.go" || failures=$((failures + 1))
         if rg -q 'std__file__Path|flush_path|FlushPath|func Stdin|func Stdout|func Stderr|std__dir__Entry_Entry_tag|std__dir__RawEntry_RawEntry_tag|RawEntry' "$outdir"; then
             failures=$((failures + 1))
         fi
@@ -418,11 +418,15 @@ EOF
 
 run_source_expect_output \
     "std.dir exposes scalar operations and directory listings" \
-    $'exists:false\nmake:ok\nexists:true\nmake-all:ok\nentry:entry.txt:file\ncurrent:true\nremove-nonempty:not-empty\nremove-all:ok' <<EOF
+    $'exists:false\nexists-file:false\nmkdir:ok\nexists:true\nmkdir-tree:ok\nentry:entry.txt:file\npwd:true\nrmdir-file:not-directory\nrmdir-nonempty:not-empty\nrmdir-tree-file:not-directory\nrmdir-tree:ok' <<EOF
 import std.dir
 import std.dir.Entry
-import std.dir.Error
+import std.dir.ExistsError
 import std.dir.Kind
+import std.dir.LsError
+import std.dir.MkdirError
+import std.dir.PwdError
+import std.dir.RmdirError
 import std.path
 import std.path.Path
 
@@ -433,14 +437,42 @@ fn kind_label(kind: Kind) -> Str = match kind {
   case Kind.Other: "other"
 }
 
-fn error_label(prefix: Str, err: Error) -> Str = match err {
-  case Error.NotFound: prefix + ":not-found"
-  case Error.PermissionDenied: prefix + ":permission-denied"
-  case Error.AlreadyExists: prefix + ":already-exists"
-  case Error.NotDirectory: prefix + ":not-directory"
-  case Error.NotEmpty: prefix + ":not-empty"
-  case Error.InvalidPath(message): prefix + ":invalid-path:" + message
-  case Error.Other(message): prefix + ":other:" + message
+fn ls_error_label(prefix: Str, err: LsError) -> Str = match err {
+  case LsError.NotFound: prefix + ":not-found"
+  case LsError.PermissionDenied: prefix + ":permission-denied"
+  case LsError.NotDirectory: prefix + ":not-directory"
+  case LsError.InvalidPath(message): prefix + ":invalid-path:" + message
+  case LsError.Other(message): prefix + ":other:" + message
+}
+
+fn mkdir_error_label(prefix: Str, err: MkdirError) -> Str = match err {
+  case MkdirError.NotFound: prefix + ":not-found"
+  case MkdirError.PermissionDenied: prefix + ":permission-denied"
+  case MkdirError.AlreadyExists: prefix + ":already-exists"
+  case MkdirError.NotDirectory: prefix + ":not-directory"
+  case MkdirError.InvalidPath(message): prefix + ":invalid-path:" + message
+  case MkdirError.Other(message): prefix + ":other:" + message
+}
+
+fn rmdir_error_label(prefix: Str, err: RmdirError) -> Str = match err {
+  case RmdirError.NotFound: prefix + ":not-found"
+  case RmdirError.PermissionDenied: prefix + ":permission-denied"
+  case RmdirError.NotDirectory: prefix + ":not-directory"
+  case RmdirError.NotEmpty: prefix + ":not-empty"
+  case RmdirError.InvalidPath(message): prefix + ":invalid-path:" + message
+  case RmdirError.Other(message): prefix + ":other:" + message
+}
+
+fn exists_error_label(prefix: Str, err: ExistsError) -> Str = match err {
+  case ExistsError.PermissionDenied: prefix + ":permission-denied"
+  case ExistsError.InvalidPath(message): prefix + ":invalid-path:" + message
+  case ExistsError.Other(message): prefix + ":other:" + message
+}
+
+fn pwd_error_label(prefix: Str, err: PwdError) -> Str = match err {
+  case PwdError.NotFound: prefix + ":not-found"
+  case PwdError.PermissionDenied: prefix + ":permission-denied"
+  case PwdError.Other(message): prefix + ":other:" + message
 }
 
 fn entry_label(entry: Entry) -> Str = match entry {
@@ -449,45 +481,60 @@ fn entry_label(entry: Entry) -> Str = match entry {
 
 match dir.exists?(Path("$CHILD_DIR")) {
   case Result.Success(value): puts("exists:" + Show.show(value))
-  case Result.Failure(err): puts(error_label("exists", err))
+  case Result.Failure(err): puts(exists_error_label("exists", err))
 }
 
-match dir.make(Path("$CHILD_DIR")) {
-  case Result.Success(_): puts("make:ok")
-  case Result.Failure(err): puts(error_label("make", err))
+match dir.exists?(Path("$LISTING_FILE")) {
+  case Result.Success(value): puts("exists-file:" + Show.show(value))
+  case Result.Failure(err): puts(exists_error_label("exists-file", err))
+}
+
+match dir.mkdir(Path("$CHILD_DIR")) {
+  case Result.Success(_): puts("mkdir:ok")
+  case Result.Failure(err): puts(mkdir_error_label("mkdir", err))
 }
 
 match dir.exists?(Path("$CHILD_DIR")) {
   case Result.Success(value): puts("exists:" + Show.show(value))
-  case Result.Failure(err): puts(error_label("exists", err))
+  case Result.Failure(err): puts(exists_error_label("exists", err))
 }
 
-match dir.make_all(Path("$NESTED_DIR")) {
-  case Result.Success(_): puts("make-all:ok")
-  case Result.Failure(err): puts(error_label("make-all", err))
+match dir.mkdir_tree(Path("$NESTED_DIR")) {
+  case Result.Success(_): puts("mkdir-tree:ok")
+  case Result.Failure(err): puts(mkdir_error_label("mkdir-tree", err))
 }
 
-match dir.read(Path("$LISTING_DIR")) {
+match dir.ls(Path("$LISTING_DIR")) {
   case Result.Success(entries): puts("entry:" + entry_label(first(entries)))
-  case Result.Failure(err): puts(error_label("read", err))
+  case Result.Failure(err): puts(ls_error_label("ls", err))
 }
 
-match dir.current() {
-  case Result.Success(value): puts("current:" + Show.show(path.absolute?(value)))
-  case Result.Failure(err): puts(error_label("current", err))
+match dir.pwd() {
+  case Result.Success(value): puts("pwd:" + Show.show(path.absolute?(value)))
+  case Result.Failure(err): puts(pwd_error_label("pwd", err))
 }
 
-match dir.remove(Path("$NONEMPTY_DIR")) {
-  case Result.Success(_): puts("remove-nonempty:unexpected")
-  case Result.Failure(err): puts(error_label("remove-nonempty", err))
+match dir.rmdir(Path("$LISTING_FILE")) {
+  case Result.Success(_): puts("rmdir-file:unexpected")
+  case Result.Failure(err): puts(rmdir_error_label("rmdir-file", err))
 }
 
-match dir.remove_all(Path("$CHILD_DIR")) {
-  case Result.Success(_): match dir.remove_all(Path("$DATA_DIR/nested")) {
-    case Result.Success(_): puts("remove-all:ok")
-    case Result.Failure(err): puts(error_label("remove-all", err))
+match dir.rmdir(Path("$NONEMPTY_DIR")) {
+  case Result.Success(_): puts("rmdir-nonempty:unexpected")
+  case Result.Failure(err): puts(rmdir_error_label("rmdir-nonempty", err))
+}
+
+match dir.rmdir_tree(Path("$LISTING_FILE")) {
+  case Result.Success(_): puts("rmdir-tree-file:unexpected")
+  case Result.Failure(err): puts(rmdir_error_label("rmdir-tree-file", err))
+}
+
+match dir.rmdir_tree(Path("$CHILD_DIR")) {
+  case Result.Success(_): match dir.rmdir_tree(Path("$DATA_DIR/nested")) {
+    case Result.Success(_): puts("rmdir-tree:ok")
+    case Result.Failure(err): puts(rmdir_error_label("rmdir-tree", err))
   }
-  case Result.Failure(err): puts(error_label("remove-all", err))
+  case Result.Failure(err): puts(rmdir_error_label("rmdir-tree", err))
 }
 EOF
 
@@ -554,7 +601,7 @@ let _ = err.write("err")
 let _ = err.flush()
 let _ = file.write(Path("$ROUNDTRIP_PATH"), "path")
 let read_text: Result[Str, Error] = file.read(Path("$ROUNDTRIP_PATH"))
-let dir_entries: Result[List[dir.Entry], dir.Error] = dir.read(Path("$LISTING_DIR"))
+let dir_entries: Result[List[dir.Entry], dir.LsError] = dir.ls(Path("$LISTING_DIR"))
 let file_protocol: Result[Unit, file.UseError[Error]] = file.open(Path("$ROUNDTRIP_PATH"), file.Mode.Append, (handle) => {
   match io.Write.write(handle, "x") {
     case Result.Success(_): io.Write.flush(handle)

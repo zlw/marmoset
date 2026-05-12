@@ -1,26 +1,54 @@
 import std.path
 
-export Entry, Kind, Error, read, make, make_all, remove, remove_all, exists?, current
+export Entry, Kind, LsError, MkdirError, RmdirError, ExistsError, PwdError, ls, mkdir, mkdir_tree, rmdir, rmdir_tree, exists?, pwd
 
 type Kind = { File, Directory, Symlink, Other }
 type Entry = Entry(path.Path, Kind)
 
-type Error = {
+type LsError = {
+  NotFound,
+  PermissionDenied,
+  NotDirectory,
+  InvalidPath(Str),
+  Other(Str),
+}
+
+type MkdirError = {
   NotFound,
   PermissionDenied,
   AlreadyExists,
+  NotDirectory,
+  InvalidPath(Str),
+  Other(Str),
+}
+
+type RmdirError = {
+  NotFound,
+  PermissionDenied,
   NotDirectory,
   NotEmpty,
   InvalidPath(Str),
   Other(Str),
 }
 
+type ExistsError = {
+  PermissionDenied,
+  InvalidPath(Str),
+  Other(Str),
+}
+
+type PwdError = {
+  NotFound,
+  PermissionDenied,
+  Other(Str),
+}
+
 extern "std/dir" as dir_shim = {
-  fn read(path: path.Path) => Result[List[Entry], Error]
-  fn make(path: path.Path) => Result[Unit, Error]
-  fn make_all(path: path.Path) => Result[Unit, Error]
-  fn remove(path: path.Path) => Result[Unit, Error]
-  fn remove_all(path: path.Path) => Result[Unit, Error]
-  fn exists?(path: path.Path) => Result[Bool, Error]
-  fn current() => Result[path.Path, Error]
+  fn ls(path: path.Path) => Result[List[Entry], LsError]
+  fn mkdir(path: path.Path) => Result[Unit, MkdirError]
+  fn mkdir_tree(path: path.Path) => Result[Unit, MkdirError]
+  fn rmdir(path: path.Path) => Result[Unit, RmdirError]
+  fn rmdir_tree(path: path.Path) => Result[Unit, RmdirError]
+  fn exists?(path: path.Path) => Result[Bool, ExistsError]
+  fn pwd() => Result[path.Path, PwdError]
 }

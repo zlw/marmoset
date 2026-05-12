@@ -22,24 +22,86 @@ func isPermission(err error) bool {
 	return errors.Is(err, os.ErrPermission) || os.IsPermission(err)
 }
 
-func dirError(err error) dirapi.Error {
+func isNotDirectory(err error) bool {
+	return errors.Is(err, syscall.ENOTDIR)
+}
+
+func isNotEmpty(err error) bool {
+	return errors.Is(err, syscall.ENOTEMPTY)
+}
+
+func isInvalidPath(err error) bool {
+	return errors.Is(err, syscall.EINVAL)
+}
+
+func lsError(err error) dirapi.LsError {
 	switch {
-	case err == nil:
-		return dirapi.ErrorOther{Field0: ""}
 	case isNotExist(err):
-		return dirapi.ErrorNotFound{}
+		return dirapi.LsErrorNotFound{}
 	case isPermission(err):
-		return dirapi.ErrorPermissionDenied{}
-	case errors.Is(err, syscall.ENOTDIR):
-		return dirapi.ErrorNotDirectory{}
-	case errors.Is(err, syscall.ENOTEMPTY):
-		return dirapi.ErrorNotEmpty{}
-	case errors.Is(err, syscall.EINVAL):
-		return dirapi.ErrorInvalidPath{Field0: err.Error()}
-	case isAlreadyExist(err):
-		return dirapi.ErrorAlreadyExists{}
+		return dirapi.LsErrorPermissionDenied{}
+	case isNotDirectory(err):
+		return dirapi.LsErrorNotDirectory{}
+	case isInvalidPath(err):
+		return dirapi.LsErrorInvalidPath{Field0: err.Error()}
 	default:
-		return dirapi.ErrorOther{Field0: err.Error()}
+		return dirapi.LsErrorOther{Field0: err.Error()}
+	}
+}
+
+func mkdirError(err error) dirapi.MkdirError {
+	switch {
+	case isNotExist(err):
+		return dirapi.MkdirErrorNotFound{}
+	case isPermission(err):
+		return dirapi.MkdirErrorPermissionDenied{}
+	case isAlreadyExist(err):
+		return dirapi.MkdirErrorAlreadyExists{}
+	case isNotDirectory(err):
+		return dirapi.MkdirErrorNotDirectory{}
+	case isInvalidPath(err):
+		return dirapi.MkdirErrorInvalidPath{Field0: err.Error()}
+	default:
+		return dirapi.MkdirErrorOther{Field0: err.Error()}
+	}
+}
+
+func rmdirError(err error) dirapi.RmdirError {
+	switch {
+	case isNotExist(err):
+		return dirapi.RmdirErrorNotFound{}
+	case isPermission(err):
+		return dirapi.RmdirErrorPermissionDenied{}
+	case isNotDirectory(err):
+		return dirapi.RmdirErrorNotDirectory{}
+	case isNotEmpty(err):
+		return dirapi.RmdirErrorNotEmpty{}
+	case isInvalidPath(err):
+		return dirapi.RmdirErrorInvalidPath{Field0: err.Error()}
+	default:
+		return dirapi.RmdirErrorOther{Field0: err.Error()}
+	}
+}
+
+func existsError(err error) dirapi.ExistsError {
+	switch {
+	case isPermission(err):
+		return dirapi.ExistsErrorPermissionDenied{}
+	case isInvalidPath(err):
+		return dirapi.ExistsErrorInvalidPath{Field0: err.Error()}
+	default:
+		return dirapi.ExistsErrorOther{Field0: err.Error()}
+	}
+}
+
+func pwdError(err error) dirapi.PwdError {
+	switch {
+	case isNotExist(err):
+		return dirapi.PwdErrorNotFound{}
+	case isPermission(err):
+		return dirapi.PwdErrorPermissionDenied{}
+	default:
+		return dirapi.PwdErrorOther{Field0: err.Error()}
 	}
 }
 
@@ -57,17 +119,17 @@ func kindOf(info os.FileInfo) dirapi.Kind {
 	}
 }
 
-func Read(path string) marmoset.Result[[]dirapi.Entry, dirapi.Error] {
+func Ls(path string) marmoset.Result[[]dirapi.Entry, dirapi.LsError] {
 	entries, err := os.ReadDir(path)
 	if err != nil {
-		return marmoset.Failure[[]dirapi.Entry, dirapi.Error](dirError(err))
+		return marmoset.Failure[[]dirapi.Entry, dirapi.LsError](lsError(err))
 	}
 
 	out := make([]dirapi.Entry, 0, len(entries))
 	for _, entry := range entries {
 		info, err := entry.Info()
 		if err != nil {
-			return marmoset.Failure[[]dirapi.Entry, dirapi.Error](dirError(err))
+			return marmoset.Failure[[]dirapi.Entry, dirapi.LsError](lsError(err))
 		}
 		out = append(out, dirapi.Entry{
 			Field0: filepath.Join(path, entry.Name()),
@@ -75,52 +137,66 @@ func Read(path string) marmoset.Result[[]dirapi.Entry, dirapi.Error] {
 		})
 	}
 
-	return marmoset.Success[[]dirapi.Entry, dirapi.Error](out)
+	return marmoset.Success[[]dirapi.Entry, dirapi.LsError](out)
 }
 
-func Make(path string) marmoset.Result[marmoset.Unit, dirapi.Error] {
+func Mkdir(path string) marmoset.Result[marmoset.Unit, dirapi.MkdirError] {
 	if err := os.Mkdir(path, 0o777); err != nil {
-		return marmoset.Failure[marmoset.Unit, dirapi.Error](dirError(err))
+		return marmoset.Failure[marmoset.Unit, dirapi.MkdirError](mkdirError(err))
 	}
-	return marmoset.Success[marmoset.Unit, dirapi.Error](marmoset.NewUnit())
+	return marmoset.Success[marmoset.Unit, dirapi.MkdirError](marmoset.NewUnit())
 }
 
-func MakeAll(path string) marmoset.Result[marmoset.Unit, dirapi.Error] {
+func MkdirTree(path string) marmoset.Result[marmoset.Unit, dirapi.MkdirError] {
 	if err := os.MkdirAll(path, 0o777); err != nil {
-		return marmoset.Failure[marmoset.Unit, dirapi.Error](dirError(err))
+		return marmoset.Failure[marmoset.Unit, dirapi.MkdirError](mkdirError(err))
 	}
-	return marmoset.Success[marmoset.Unit, dirapi.Error](marmoset.NewUnit())
+	return marmoset.Success[marmoset.Unit, dirapi.MkdirError](marmoset.NewUnit())
 }
 
-func Remove(path string) marmoset.Result[marmoset.Unit, dirapi.Error] {
+func Rmdir(path string) marmoset.Result[marmoset.Unit, dirapi.RmdirError] {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return marmoset.Failure[marmoset.Unit, dirapi.RmdirError](rmdirError(err))
+	}
+	if !info.IsDir() {
+		return marmoset.Failure[marmoset.Unit, dirapi.RmdirError](dirapi.RmdirErrorNotDirectory{})
+	}
 	if err := os.Remove(path); err != nil {
-		return marmoset.Failure[marmoset.Unit, dirapi.Error](dirError(err))
+		return marmoset.Failure[marmoset.Unit, dirapi.RmdirError](rmdirError(err))
 	}
-	return marmoset.Success[marmoset.Unit, dirapi.Error](marmoset.NewUnit())
+	return marmoset.Success[marmoset.Unit, dirapi.RmdirError](marmoset.NewUnit())
 }
 
-func RemoveAll(path string) marmoset.Result[marmoset.Unit, dirapi.Error] {
+func RmdirTree(path string) marmoset.Result[marmoset.Unit, dirapi.RmdirError] {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return marmoset.Failure[marmoset.Unit, dirapi.RmdirError](rmdirError(err))
+	}
+	if !info.IsDir() {
+		return marmoset.Failure[marmoset.Unit, dirapi.RmdirError](dirapi.RmdirErrorNotDirectory{})
+	}
 	if err := os.RemoveAll(path); err != nil {
-		return marmoset.Failure[marmoset.Unit, dirapi.Error](dirError(err))
+		return marmoset.Failure[marmoset.Unit, dirapi.RmdirError](rmdirError(err))
 	}
-	return marmoset.Success[marmoset.Unit, dirapi.Error](marmoset.NewUnit())
+	return marmoset.Success[marmoset.Unit, dirapi.RmdirError](marmoset.NewUnit())
 }
 
-func ExistsQ(path string) marmoset.Result[bool, dirapi.Error] {
-	_, err := os.Stat(path)
+func ExistsQ(path string) marmoset.Result[bool, dirapi.ExistsError] {
+	info, err := os.Stat(path)
 	if err == nil {
-		return marmoset.Success[bool, dirapi.Error](true)
+		return marmoset.Success[bool, dirapi.ExistsError](info.IsDir())
 	}
-	if isNotExist(err) {
-		return marmoset.Success[bool, dirapi.Error](false)
+	if isNotExist(err) || isNotDirectory(err) {
+		return marmoset.Success[bool, dirapi.ExistsError](false)
 	}
-	return marmoset.Failure[bool, dirapi.Error](dirError(err))
+	return marmoset.Failure[bool, dirapi.ExistsError](existsError(err))
 }
 
-func Current() marmoset.Result[string, dirapi.Error] {
+func Pwd() marmoset.Result[string, dirapi.PwdError] {
 	cwd, err := os.Getwd()
 	if err != nil {
-		return marmoset.Failure[string, dirapi.Error](dirError(err))
+		return marmoset.Failure[string, dirapi.PwdError](pwdError(err))
 	}
-	return marmoset.Success[string, dirapi.Error](cwd)
+	return marmoset.Success[string, dirapi.PwdError](cwd)
 }
