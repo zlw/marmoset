@@ -109,6 +109,14 @@ fn push_candidate_root(candidate_roots: &mut Vec<PathBuf>, repo_root: PathBuf) {
     }
 }
 
+fn push_nested_repo_candidates(candidate_roots: &mut Vec<PathBuf>, root: &Path) {
+    if root.as_os_str().is_empty() {
+        return;
+    }
+
+    push_candidate_root(candidate_roots, root.join("marmoset"));
+}
+
 fn repo_dev_binary(
     worktree_root: &Path,
     shell_env: &[(String, String)],
@@ -124,8 +132,17 @@ fn repo_dev_binary(
         push_candidate_root(&mut candidate_roots, repo_root);
     }
 
+    if let Some(repo_root) = marmoset_root_from_env(shell_env) {
+        push_nested_repo_candidates(&mut candidate_roots, repo_root.as_path());
+    }
+
+    if let Some(repo_root) = pwd_from_env(shell_env) {
+        push_nested_repo_candidates(&mut candidate_roots, repo_root.as_path());
+    }
+
     for repo_root in ancestor_dirs(worktree_root) {
-        push_candidate_root(&mut candidate_roots, repo_root);
+        push_candidate_root(&mut candidate_roots, repo_root.clone());
+        push_nested_repo_candidates(&mut candidate_roots, repo_root.as_path());
     }
 
     for repo_root in marmoset_roots_from_path_binary_entries(shell_env) {
@@ -331,6 +348,33 @@ mod tests {
     }
 
     #[test]
+    fn finds_repo_binary_when_parent_directory_is_opened_as_worktree() {
+        let worktree_root = PathBuf::from("/tmp/marmoset-dev");
+        let repo_binary = "/tmp/marmoset-dev/marmoset/marmoset".to_string();
+        let mut probed = Vec::new();
+
+        let selected = repo_dev_binary(worktree_root.as_path(), &[], |path, env| {
+            probed.push((path.to_string(), env.to_vec()));
+            path == repo_binary
+                && env.iter().any(|(name, value)| {
+                    name == "MARMOSET_ROOT" && value == "/tmp/marmoset-dev/marmoset"
+                })
+        });
+
+        assert_eq!(
+            selected,
+            Some(RepoBinaryLaunch {
+                path: repo_binary.clone(),
+                marmoset_root: "/tmp/marmoset-dev/marmoset".to_string(),
+            })
+        );
+        assert!(probed.iter().any(|(path, env)| path == &repo_binary
+            && env.iter().any(|(name, value)| {
+                name == "MARMOSET_ROOT" && value == "/tmp/marmoset-dev/marmoset"
+            })));
+    }
+
+    #[test]
     fn finds_repo_root_binary_from_nested_worktree_root() {
         let worktree_root = worktree_root();
         let repo_binary = "/tmp/marmoset-dev/marmoset".to_string();
@@ -378,7 +422,9 @@ mod tests {
             probed,
             vec![
                 "/tmp/marmoset-dev/test/fixtures/modules/marmoset".to_string(),
+                "/tmp/marmoset-dev/test/fixtures/modules/marmoset/marmoset".to_string(),
                 "/tmp/marmoset-dev/test/fixtures/marmoset".to_string(),
+                "/tmp/marmoset-dev/test/fixtures/marmoset/marmoset".to_string(),
                 "/tmp/marmoset-dev/test/marmoset".to_string()
             ]
         );
@@ -399,11 +445,17 @@ mod tests {
             probed,
             vec![
                 "/tmp/marmoset-dev/test/fixtures/modules/marmoset".to_string(),
+                "/tmp/marmoset-dev/test/fixtures/modules/marmoset/marmoset".to_string(),
                 "/tmp/marmoset-dev/test/fixtures/marmoset".to_string(),
+                "/tmp/marmoset-dev/test/fixtures/marmoset/marmoset".to_string(),
                 "/tmp/marmoset-dev/test/marmoset".to_string(),
+                "/tmp/marmoset-dev/test/marmoset/marmoset".to_string(),
                 "/tmp/marmoset-dev/marmoset".to_string(),
+                "/tmp/marmoset-dev/marmoset/marmoset".to_string(),
                 "/tmp/marmoset".to_string(),
+                "/tmp/marmoset/marmoset".to_string(),
                 "/marmoset".to_string(),
+                "/marmoset/marmoset".to_string(),
             ]
         );
     }
