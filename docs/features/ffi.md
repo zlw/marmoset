@@ -58,13 +58,13 @@ type Error = {
 type UseError[e] = { Open(Error), Use(e), Close(Error), UseAndClose(e, Error) }
 
 extern "std/file" as file_shim = {
-  fn read_data(path: Path) => Result[Bytes, Error]
-  fn write_data(path: Path, bytes: Bytes) => Result[Unit, Error]
-  fn append_data(path: Path, bytes: Bytes) => Result[Unit, Error]
+  fn read_path(path: Path) => Result[Bytes, Error]
+  fn write_path(path: Path, bytes: Bytes) => Result[Unit, Error]
+  fn append_path(path: Path, bytes: Bytes) => Result[Unit, Error]
   fn open_handle(path: Path, mode: Mode) => Result[File, Error]
   fn close_handle(file: File) => Result[Unit, Error]
-  fn read_all_data(file: File) => Result[Bytes, Error]
-  fn write_all_data(file: File, bytes: Bytes) => Result[Unit, Error]
+  fn read_handle(file: File) => Result[Bytes, Error]
+  fn write_handle(file: File, bytes: Bytes) => Result[Unit, Error]
   fn flush_handle(file: File) => Result[Unit, Error]
 }
 
@@ -72,8 +72,8 @@ fn read[a: bytes.Decode](path: Path) => Result[a, Error]
 fn write[a: bytes.Encode](path: Path, value: a) => Result[Unit, Error]
 fn append[a: bytes.Encode](path: Path, value: a) => Result[Unit, Error]
 fn open[a, e](path: Path, mode: Mode, body: (File) => Result[a, e]) => Result[a, UseError[e]]
-fn read_all[a: bytes.Decode](file: File) => Result[a, Error]
-fn write_all[a: bytes.Encode](file: File, value: a) => Result[Unit, Error]
+fn read_all(file: File) => Result[Str, Error]
+fn write_all(file: File, value: Str) => Result[Unit, Error]
 fn flush(file: File) => Result[Unit, Error]
 ```
 

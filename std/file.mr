@@ -27,13 +27,13 @@ type Error = {
 type UseError[e] = { Open(Error), Use(e), Close(Error), UseAndClose(e, Error) }
 
 extern "std/file" as file_shim = {
-  fn read_data(path: path.Path) => Result[Bytes, Error]
-  fn write_data(path: path.Path, bytes: Bytes) => Result[Unit, Error]
-  fn append_data(path: path.Path, bytes: Bytes) => Result[Unit, Error]
+  fn read_path(path: path.Path) => Result[Bytes, Error]
+  fn write_path(path: path.Path, bytes: Bytes) => Result[Unit, Error]
+  fn append_path(path: path.Path, bytes: Bytes) => Result[Unit, Error]
   fn open_handle(path: path.Path, mode: Mode) => Result[File, Error]
   fn close_handle(file: File) => Result[Unit, Error]
-  fn read_all_data(file: File) => Result[Bytes, Error]
-  fn write_all_data(file: File, bytes: Bytes) => Result[Unit, Error]
+  fn read_handle(file: File) => Result[Bytes, Error]
+  fn write_handle(file: File, bytes: Bytes) => Result[Unit, Error]
   fn flush_handle(file: File) => Result[Unit, Error]
 }
 
@@ -42,54 +42,43 @@ fn decode_error(err: DecodeError) -> Error = match err {
 }
 
 fn decode_bytes[a: Decode](payload: Bytes) -> Result[a, Error] =
-  {
-    let decoded: Result[a, DecodeError] = bytes.Decode.decode(payload)
-    match decoded {
-    case Result.Success(value): Result.Success(value)
-    case Result.Failure(err): Result.Failure(decode_error(err))
-    }
-  }
+  bytes.Decode.decode(payload) |> Result.or(decode_error)
 
 fn read[a: Decode](path: path.Path) => Result[a, Error] =
-  match file_shim.read_data(path) {
-    case Result.Success(payload): decode_bytes(payload)
-    case Result.Failure(err): Result.Failure(err)
-  }
+  file_shim.read_path(path) |> Result.bind(decode_bytes(_))
 
 fn write[a: Encode](path: path.Path, value: a) => Result[Unit, Error] =
-  file_shim.write_data(path, bytes.Encode.encode(value))
+  bytes.Encode.encode(value) |> file_shim.write_path(path, _)
 
 fn append[a: Encode](path: path.Path, value: a) => Result[Unit, Error] =
-  file_shim.append_data(path, bytes.Encode.encode(value))
-
-fn read_all[a: Decode](file: File) => Result[a, Error] =
-  match file_shim.read_all_data(file) {
-    case Result.Success(payload): decode_bytes(payload)
-    case Result.Failure(err): Result.Failure(err)
-  }
-
-fn write_all[a: Encode](file: File, value: a) => Result[Unit, Error] =
-  file_shim.write_all_data(file, bytes.Encode.encode(value))
-
-fn flush(file: File) => Result[Unit, Error] =
-  file_shim.flush_handle(file)
+  bytes.Encode.encode(value) |> file_shim.append_path(path, _)
 
 impl io.Read[File, Error] = {
   fn read(file: File) => Result[Str, Error] = {
-    let result: Result[Str, Error] = read_all(file)
-    result
+    file_shim.read_handle(file) |> Result.bind(decode_bytes(_))
   }
 }
 
 impl io.Write[File, Error] = {
-  fn write(file: File, value: Str) => Result[Unit, Error] =
-    write_all(file, value)
+  fn write(file: File, value: Str) => Result[Unit, Error] = {
+    bytes.Encode.encode(value) |> file_shim.write_handle(file, _)
+  }
 
-  fn flush(file: File) => Result[Unit, Error] =
+  fn flush(file: File) => Result[Unit, Error] = {
     file_shim.flush_handle(file)
+  }
 }
 
-fn open[a, e](path: path.Path, mode: Mode, body: (File) => Result[a, e]) => Result[a, UseError[e]] =
+fn read_all(file: File) => Result[Str, Error] =
+  io.Read.read(file)
+
+fn write_all(file: File, value: Str) => Result[Unit, Error] =
+  io.Write.write(file, value)
+
+fn flush(file: File) => Result[Unit, Error] =
+  io.Write.flush(file)
+
+fn open[a, e](path: path.Path, mode: Mode, body: (File) => Result[a, e]) => Result[a, UseError[e]] = {
   match file_shim.open_handle(path, mode) {
     case Result.Failure(err): Result.Failure(UseError.Open(err))
     case Result.Success(file): {
@@ -106,3 +95,4 @@ fn open[a, e](path: path.Path, mode: Mode, body: (File) => Result[a, e]) => Resu
       }
     }
   }
+}

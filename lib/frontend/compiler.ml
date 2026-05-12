@@ -1860,13 +1860,13 @@ let%test "shim S2: distinct std shim ids emit distinct adapter wrappers" =
       match compile_entry_to_build ~entry_file:(Filename.concat root "main.mr") () with
       | Error _ -> false
       | Ok build_output ->
-	          count_occurrences build_output.main_go "func extern__std_bytes__from_str(input string) marmoset.Bytes"
-	          = 1
-	          && count_occurrences build_output.main_go
-	               "func extern__std_file__write_data(path std__path__Path, bytes marmoset.Bytes) Result_unit_std__file__Error"
-	             = 1
-	          && string_contains build_output.main_go "extern__std_bytes__from_str"
-	          && string_contains build_output.main_go "extern__std_file__write_data")
+          count_occurrences build_output.main_go "func extern__std_bytes__from_str(input string) marmoset.Bytes"
+          = 1
+          && count_occurrences build_output.main_go
+               "func extern__std_file__write_path(path std__path__Path, bytes marmoset.Bytes) Result_unit_std__file__Error"
+             = 1
+          && string_contains build_output.main_go "extern__std_bytes__from_str"
+          && string_contains build_output.main_go "extern__std_file__write_path")
 
 let%test "shim S2: direct Go package externs are rejected at project compile" =
   Discovery.with_temp_project

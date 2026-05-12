@@ -934,6 +934,10 @@ let synthetic_helper_suffix (expr_id : int) : string =
 
 let hoisted_section_func_name (expr_id : int) : string = "__section_" ^ synthetic_helper_suffix expr_id
 
+let is_hoisted_section_func_name (name : string) : bool =
+  let prefix = "__section_" in
+  String.length name >= String.length prefix && String.sub name 0 (String.length prefix) = prefix
+
 let lookup_method_def_exn
     (method_def_map : (int, Typecheck.Resolution_artifacts.typed_method_def) Hashtbl.t)
     ~(method_id : int)
@@ -4608,9 +4612,30 @@ let rec emit_expr
 	            let has_unresolved = List.exists has_type_vars (return_type :: param_types) in
 	            if List.length param_types > 0 && not has_unresolved then (
 	              register_user_function_value_instantiation state.mono ~target_name ~param_types ~return_type;
-	              match instantiated_func_for_signature state.mono target_name param_types return_type with
-	              | Some inst -> mangle_instantiated_func_name state.mono.instantiations inst
-	              | None -> mangle_func_name target_name param_types)
+	              let mangle_inst func_def inst =
+	                if is_hoisted_section_func_name inst.func_name || func_def_requires_return_mangle func_def then
+	                  mangle_func_name_with_return inst.func_name inst.concrete_types inst.return_type
+	                else
+	                  mangle_instantiated_func_name state.mono.instantiations inst
+	              in
+	              match (lookup_func_def_for_call state.mono target_name arity, instantiated_func_for_signature state.mono target_name param_types return_type) with
+	              | Some func_def, Some inst -> mangle_inst func_def inst
+	              | Some func_def, None ->
+	                  let inst =
+	                    {
+	                      func_name = target_name;
+	                      module_path = state.mono.module_path;
+	                      func_expr_id = func_def.func_expr_id;
+	                      func_arity = arity;
+	                      concrete_only_mode = state.mono.concrete_only;
+	                      concrete_types = param_types;
+	                      type_fingerprint = fingerprint_types param_types;
+	                      return_type;
+	                    }
+	                  in
+	                  add_instantiation state.mono inst;
+	                  mangle_inst func_def inst
+	              | None, _ -> mangle_func_name target_name param_types)
 	            else
 	              emit_function_expr ~func_type_override:selected_func_type state type_map env expr param_exprs f.body
         | _ ->
@@ -6568,7 +6593,7 @@ and emit_call ?expected_type state type_map env call_expr func args =
 	          in
 	          let mangle_user_instantiation (inst : instantiation) =
 	            match lookup_func_def_for_call state.mono target_name (List.length args) with
-	            | Some func_def when func_def_requires_return_mangle func_def ->
+	            | Some func_def when is_hoisted_section_func_name inst.func_name || func_def_requires_return_mangle func_def ->
 	                mangle_func_name_with_return inst.func_name inst.concrete_types inst.return_type
 	            | _ -> mangle_instantiated_func_name state.mono.instantiations inst
 	          in
@@ -7314,7 +7339,7 @@ let emit_specialized_func
   in
 
   let mangled_name =
-    if func_def_requires_return_mangle func_def then
+    if is_hoisted_section_func_name inst.func_name || func_def_requires_return_mangle func_def then
       mangle_func_name_with_return inst.func_name inst.concrete_types inst.return_type
     else
       mangle_instantiated_func_name state.mono.instantiations inst
@@ -10690,6 +10715,19 @@ let%test "placeholder callback in return-specialized helper keeps type map" =
       "type Result[a, e] = { Success(a), Failure(e) }\ntype Error = { Problem }\nimpl[a, e] Result[a, e] = {\n  fn bind[b](self: Result[a, e], f: (a) -> Result[b, e]) -> Result[b, e] = match self {\n    case Result.Success(value): f(value)\n    case Result.Failure(err): Result.Failure(err)\n  }\n}\ntrait Reader[r, e] = { fn read(value: r) -> Result[Str, e] }\nfn source(value: Int) -> Result[Int, Error] = Result.Success(value)\nfn decode[a](value: Int) -> Result[a, Error] = Result.Failure(Error.Problem)\nfn read_all[a](value: Int) -> Result[a, Error] = {\n  Result.bind(source(value), decode(_))\n}\nimpl Reader[Int, Error] = {\n  fn read(value: Int) -> Result[Str, Error] = {\n    read_all(value)\n  }\n}\nmatch Reader.read(1) {\n  case Result.Success(_): 1\n  case Result.Failure(_): 0\n}"
   with
   | Ok (_, _) -> true
+  | Error _ -> false
+
+let%test "placeholder callback with shared params and different returns mangles call sites by return" =
+  Typecheck.Trait_registry.clear ();
+  Typecheck.Enum_registry.clear ();
+  Typecheck.Inherent_registry.clear ();
+  match
+    compile_string ~file_id:"<codegen>"
+      "type Result[a, e] = { Success(a), Failure(e) }\ntype Error = { Problem }\nimpl[a, e] Result[a, e] = {\n  fn bind[b](self: Result[a, e], f: (a) -> Result[b, e]) -> Result[b, e] = match self {\n    case Result.Success(value): f(value)\n    case Result.Failure(err): Result.Failure(err)\n  }\n}\nfn source(value: Int) -> Result[Int, Error] = Result.Success(value)\nfn decode[a](value: Int) -> Result[a, Error] = Result.Failure(Error.Problem)\nfn read[a](value: Int) -> Result[a, Error] = source(value) |> Result.bind(decode(_))\nlet one: Result[Str, Error] = read(1)\nlet two: Result[Int, Error] = read(2)\n0"
+  with
+  | Ok (code, _) ->
+      string_contains code "__section_neg46_int64_ret_"
+      && string_not_contains code "source_int64(value), __section_neg46_int64)"
   | Error _ -> false
 
 let%test "identifier suffix methods compile through codegen" =

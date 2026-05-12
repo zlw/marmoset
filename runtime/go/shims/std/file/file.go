@@ -70,7 +70,7 @@ func handleFile(file fileapi.File) (*fileResource, bool) {
 	return files.Get(file)
 }
 
-func ReadData(path string) marmoset.Result[marmoset.Bytes, fileapi.Error] {
+func ReadPath(path string) marmoset.Result[marmoset.Bytes, fileapi.Error] {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return marmoset.Failure[marmoset.Bytes, fileapi.Error](fileError(path, err))
@@ -78,7 +78,7 @@ func ReadData(path string) marmoset.Result[marmoset.Bytes, fileapi.Error] {
 	return marmoset.Success[marmoset.Bytes, fileapi.Error](marmoset.BytesCopy(data))
 }
 
-func WriteData(path string, bytes marmoset.Bytes) marmoset.Result[marmoset.Unit, fileapi.Error] {
+func WritePath(path string, bytes marmoset.Bytes) marmoset.Result[marmoset.Unit, fileapi.Error] {
 	err := os.WriteFile(path, bytes.Copy(), 0o666)
 	if err != nil {
 		return marmoset.Failure[marmoset.Unit, fileapi.Error](fileError(path, err))
@@ -86,7 +86,7 @@ func WriteData(path string, bytes marmoset.Bytes) marmoset.Result[marmoset.Unit,
 	return marmoset.Success[marmoset.Unit, fileapi.Error](marmoset.NewUnit())
 }
 
-func AppendData(path string, bytes marmoset.Bytes) marmoset.Result[marmoset.Unit, fileapi.Error] {
+func AppendPath(path string, bytes marmoset.Bytes) marmoset.Result[marmoset.Unit, fileapi.Error] {
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o666)
 	if err != nil {
 		return marmoset.Failure[marmoset.Unit, fileapi.Error](fileError(path, err))
@@ -145,7 +145,7 @@ func CloseHandle(file fileapi.File) marmoset.Result[marmoset.Unit, fileapi.Error
 	return marmoset.Success[marmoset.Unit, fileapi.Error](marmoset.NewUnit())
 }
 
-func ReadAllData(file fileapi.File) marmoset.Result[marmoset.Bytes, fileapi.Error] {
+func ReadHandle(file fileapi.File) marmoset.Result[marmoset.Bytes, fileapi.Error] {
 	resource, ok := handleFile(file)
 	if !ok {
 		return marmoset.Failure[marmoset.Bytes, fileapi.Error](fileapi.ErrorAlreadyClosed{})
@@ -157,7 +157,7 @@ func ReadAllData(file fileapi.File) marmoset.Result[marmoset.Bytes, fileapi.Erro
 	return marmoset.Success[marmoset.Bytes, fileapi.Error](marmoset.BytesCopy(data))
 }
 
-func WriteAllData(file fileapi.File, bytes marmoset.Bytes) marmoset.Result[marmoset.Unit, fileapi.Error] {
+func WriteHandle(file fileapi.File, bytes marmoset.Bytes) marmoset.Result[marmoset.Unit, fileapi.Error] {
 	resource, ok := handleFile(file)
 	if !ok {
 		return marmoset.Failure[marmoset.Unit, fileapi.Error](fileapi.ErrorAlreadyClosed{})

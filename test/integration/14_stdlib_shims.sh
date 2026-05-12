@@ -131,11 +131,15 @@ run_source_emit_go_expect_stdio_shape() {
         grep -qF 'type std__path__Path string' "$outdir/main.go" || failures=$((failures + 1))
         grep -qF 'func std__file__read_std__path__Path_ret_Result_string_std__file__Error' "$outdir/main.go" || failures=$((failures + 1))
         grep -qF 'func std__file__write_std__path__Path_string' "$outdir/main.go" || failures=$((failures + 1))
+        grep -qF 'func extern__std_file__read_path(path std__path__Path)' "$outdir/main.go" || failures=$((failures + 1))
+        grep -qF 'func extern__std_file__write_path(path std__path__Path, bytes marmoset.Bytes)' "$outdir/main.go" || failures=$((failures + 1))
+        grep -qF 'func extern__std_file__read_handle(file mapi_std_file.File)' "$outdir/main.go" || failures=$((failures + 1))
+        grep -qF 'func extern__std_file__write_handle(file mapi_std_file.File, bytes marmoset.Bytes)' "$outdir/main.go" || failures=$((failures + 1))
         grep -qF 'func std__io__Read_read_std__file__File' "$outdir/main.go" || failures=$((failures + 1))
         grep -qF 'func std__io__Write_write_std__file__File' "$outdir/main.go" || failures=$((failures + 1))
         grep -qF 'func std__io__Write_flush_std__file__File' "$outdir/main.go" || failures=$((failures + 1))
         grep -qF 'func extern__std_dir__ls(path std__path__Path)' "$outdir/main.go" || failures=$((failures + 1))
-        if rg -q 'std__file__Path|flush_path|FlushPath|func Stdin|func Stdout|func Stderr|std__dir__Entry_Entry_tag|std__dir__RawEntry_RawEntry_tag|RawEntry' "$outdir"; then
+        if rg -q 'read_data|write_data|append_data|read_all_data|write_all_data|ReadData|WriteData|AppendData|ReadAllData|WriteAllData|std__file__Path|flush_path|FlushPath|func Stdin|func Stdout|func Stderr|std__dir__Entry_Entry_tag|std__dir__RawEntry_RawEntry_tag|RawEntry' "$outdir"; then
             failures=$((failures + 1))
         fi
 
@@ -365,9 +369,9 @@ match generic_text {
 }
 
 let write_result: Result[Unit, UseError[Error]] = file.open(Path("$ROUNDTRIP_PATH"), file.Mode.Write, (handle) => {
-  match io.Write.write(handle, "scoped") {
+  match file.write_all(handle, "scoped") {
     case Result.Success(_): match io.Write.write(handle, "!") {
-      case Result.Success(_): io.Write.flush(handle)
+      case Result.Success(_): file.flush(handle)
       case Result.Failure(err): Result.Failure(err)
     }
     case Result.Failure(err): Result.Failure(err)
