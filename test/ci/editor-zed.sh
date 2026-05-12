@@ -7,40 +7,59 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 ZED_DIR="$REPO_ROOT/tools/zed-marmoset"
 TREE_SITTER_DIR="$REPO_ROOT/tools/tree-sitter-marmoset"
 
+search_fixed() {
+  local needle="$1"
+  local file="$2"
+  if command -v rg >/dev/null 2>&1; then
+    rg -Fq -- "$needle" "$file"
+  else
+    grep -Fq -- "$needle" "$file"
+  fi
+}
+
+reject_fixed() {
+  local needle="$1"
+  local file="$2"
+  if search_fixed "$needle" "$file"; then
+    echo "Forbidden editor launcher fallback found: $needle" >&2
+    exit 1
+  fi
+}
+
 cd "$ZED_DIR"
 cargo test --locked
 
-if command -v rg >/dev/null 2>&1; then
-  rg -Fq 'repo_root.join("marmoset")' src/marmoset.rs
-  ! rg -Fq '_build/default/bin/main.exe' src/marmoset.rs
-  ! rg -Fq '_build/install/default/bin/marmoset' src/marmoset.rs
-  ! rg -Fq 'std::env::split_paths' src/marmoset.rs
-  ! rg -Fq 'worktree.which' src/marmoset.rs
-  ! rg -Fq 'repo_dev_binary' src/marmoset.rs
-else
-  grep -Fq 'repo_root.join("marmoset")' src/marmoset.rs
-  ! grep -Fq '_build/default/bin/main.exe' src/marmoset.rs
-  ! grep -Fq '_build/install/default/bin/marmoset' src/marmoset.rs
-  ! grep -Fq 'std::env::split_paths' src/marmoset.rs
-  ! grep -Fq 'worktree.which' src/marmoset.rs
-  ! grep -Fq 'repo_dev_binary' src/marmoset.rs
+search_fixed 'repo_root.join("marmoset")' src/marmoset.rs
+reject_fixed '_build/default/bin/main.exe' src/marmoset.rs
+reject_fixed '_build/install/default/bin/marmoset' src/marmoset.rs
+reject_fixed 'std::env::split_paths' src/marmoset.rs
+reject_fixed 'worktree.which' src/marmoset.rs
+reject_fixed 'repo_dev_binary' src/marmoset.rs
+reject_fixed 'launchable_binary' src/marmoset.rs
+reject_fixed '.arg("--version")' src/marmoset.rs
+reject_fixed 'not launchable' src/marmoset.rs
+
+search_fixed 'repository = "https://github.com/zlw/marmoset"' extension.toml
+search_fixed 'path = "tools/tree-sitter-marmoset"' extension.toml
+search_fixed 'languages = ["languages/marmoset"]' extension.toml
+search_fixed 'kind = "Rust"' extension.toml
+search_fixed 'version = "0.7.0"' extension.toml
+
+PINNED_REV="$(sed -n '/^\[grammars\.marmoset\]/,/^\[/s/^rev = "\(.*\)"/\1/p' extension.toml)"
+if [[ ! "$PINNED_REV" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "Pinned grammar rev is not a full Git SHA: $PINNED_REV" >&2
+  exit 1
+fi
+
+if sed -n '/^\[grammars\.marmoset\]/,/^\[/p' extension.toml | grep -Eq '^commit[[:space:]]*='; then
+  echo "Zed grammar manifest must use rev, not commit" >&2
+  exit 1
 fi
 
 python3 - <<'PY'
 import json
 import pathlib
 import re
-import tomllib
-
-data = tomllib.loads(pathlib.Path("extension.toml").read_text())
-grammar = data["grammars"]["marmoset"]
-
-assert grammar["repository"] == "https://github.com/zlw/marmoset", grammar
-assert grammar["path"] == "tools/tree-sitter-marmoset", grammar
-assert re.fullmatch(r"[0-9a-f]{40}", grammar["rev"]), grammar
-assert "commit" not in grammar, grammar
-assert data["languages"] == ["languages/marmoset"], data
-assert data["lib"] == {"kind": "Rust", "version": "0.7.0"}, data
 
 node_types = {
     item["type"]: item.get("fields", {})
@@ -105,35 +124,11 @@ for query_path in pathlib.Path("languages/marmoset").glob("*.scm"):
         raise AssertionError(f"{query_path}: unknown query tokens {unknown_tokens}")
 PY
 
-PINNED_REV="$(
-  python3 - <<'PY'
-import pathlib
-import tomllib
-
-data = tomllib.loads(pathlib.Path("extension.toml").read_text())
-print(data["grammars"]["marmoset"]["rev"])
-PY
-)"
-
 if ! git merge-base --is-ancestor "$PINNED_REV" HEAD; then
   echo "Pinned grammar rev is not reachable from HEAD: $PINNED_REV" >&2
   exit 1
 fi
 
-search_fixed() {
-  local needle="$1"
-  local file="$2"
-  if command -v rg >/dev/null 2>&1; then
-    rg -Fq -- "$needle" "$file"
-  else
-    grep -Fq -- "$needle" "$file"
-  fi
-}
-
-search_fixed 'repository = "https://github.com/zlw/marmoset"' extension.toml
-search_fixed 'path = "tools/tree-sitter-marmoset"' extension.toml
-search_fixed 'languages = ["languages/marmoset"]' extension.toml
-search_fixed 'kind = "Rust"' extension.toml
 search_fixed 'portable instead of depending on a machine-specific local `file://`' README.md
 search_fixed 'set-grammar-source.sh local --reset-cache' README.md
 search_fixed 'sync-local-grammar-cache.sh' README.md

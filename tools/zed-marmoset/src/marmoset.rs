@@ -55,35 +55,9 @@ fn marmoset_root_from_env(env: &[(String, String)]) -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
-fn marmoset_root_launch(
-    shell_env: &[(String, String)],
-    mut is_launchable: impl FnMut(&str, &[(String, String)]) -> bool,
-) -> Option<std::result::Result<RepoBinaryLaunch, String>> {
+fn marmoset_root_launch(shell_env: &[(String, String)]) -> Option<RepoBinaryLaunch> {
     let repo_root = marmoset_root_from_env(shell_env)?;
-    let launch = repo_binary_launch(repo_root.as_path());
-    let env = env_with_marmoset_root(shell_env, &launch.marmoset_root);
-
-    if is_launchable(&launch.path, &env) {
-        Some(Ok(launch))
-    } else {
-        Some(Err(format!(
-            "MARMOSET_ROOT is set to {}, but {} is not launchable",
-            launch.marmoset_root, launch.path
-        )))
-    }
-}
-
-// Zed runs this extension as wasm, so std::fs metadata checks do not reliably
-// reflect which host binaries are actually launchable.
-fn launchable_binary(path: &str, env: &[(String, String)]) -> bool {
-    let mut command = zed::process::Command::new(path)
-        .arg("--version")
-        .envs(env.iter().cloned());
-
-    match command.output() {
-        Ok(output) => output.status == Some(0),
-        Err(_) => false,
-    }
+    Some(repo_binary_launch(repo_root.as_path()))
 }
 
 fn path_to_string(path: PathBuf) -> String {
@@ -101,11 +75,8 @@ impl zed::Extension for MarmosetExtension {
         worktree: &zed::Worktree,
     ) -> Result<zed::Command> {
         let shell_env = worktree.shell_env();
-        let launch = match marmoset_root_launch(&shell_env, |path, env| {
-            launchable_binary(path, env)
-        }) {
-            Some(Ok(launch)) => launch,
-            Some(Err(message)) => return Err(message),
+        let launch = match marmoset_root_launch(&shell_env) {
+            Some(launch) => launch,
             None => {
                 return Err("MARMOSET_ROOT is not set; set it to the Marmoset repo root".to_string())
             }
@@ -162,54 +133,22 @@ mod tests {
     fn marmoset_root_env_uses_exact_configured_repo_binary() {
         let shell_env = vec![("MARMOSET_ROOT".to_string(), "/tmp/marmoset-dev".to_string())];
         let repo_binary = "/tmp/marmoset-dev/marmoset".to_string();
-        let mut probed = Vec::new();
-
-        let selected = marmoset_root_launch(&shell_env, |path, env| {
-            probed.push((path.to_string(), env.to_vec()));
-            path == repo_binary
-                && env
-                    .iter()
-                    .any(|(name, value)| name == "MARMOSET_ROOT" && value == "/tmp/marmoset-dev")
-        });
+        let selected = marmoset_root_launch(&shell_env);
 
         assert_eq!(
             selected,
-            Some(Ok(RepoBinaryLaunch {
+            Some(RepoBinaryLaunch {
                 path: repo_binary.clone(),
                 marmoset_root: "/tmp/marmoset-dev".to_string(),
-            }))
+            })
         );
-        assert_eq!(probed.first().map(|(path, _env)| path), Some(&repo_binary));
-        assert_eq!(probed.len(), 1);
-    }
-
-    #[test]
-    fn marmoset_root_env_failure_does_not_probe_nested_or_fallback_roots() {
-        let shell_env = vec![("MARMOSET_ROOT".to_string(), "/tmp/marmoset-dev".to_string())];
-        let mut probed = Vec::new();
-
-        let selected = marmoset_root_launch(&shell_env, |path, _env| {
-            probed.push(path.to_string());
-            false
-        });
-
-        assert_eq!(
-            selected,
-            Some(Err(
-                "MARMOSET_ROOT is set to /tmp/marmoset-dev, but /tmp/marmoset-dev/marmoset is not launchable"
-                    .to_string()
-            ))
-        );
-        assert_eq!(probed, vec!["/tmp/marmoset-dev/marmoset".to_string()]);
     }
 
     #[test]
     fn missing_marmoset_root_has_no_launcher_candidate() {
         let shell_env = vec![("PATH".to_string(), "/tmp/marmoset-dev/marmoset".to_string())];
 
-        let selected = marmoset_root_launch(&shell_env, |_path, _env| {
-            panic!("PATH must not be probed without MARMOSET_ROOT");
-        });
+        let selected = marmoset_root_launch(&shell_env);
 
         assert_eq!(selected, None);
     }

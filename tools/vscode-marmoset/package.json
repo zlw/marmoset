@@ -30,17 +30,7 @@
         "scopeName": "source.marmoset",
         "path": "./syntaxes/marmoset.tmLanguage.json"
       }
-    ],
-    "configuration": {
-      "title": "Marmoset",
-      "properties": {
-        "marmoset.lsp.path": {
-          "type": "string",
-          "default": "marmoset",
-          "description": "Path to the marmoset binary"
-        }
-      }
-    }
+    ]
   },
   "dependencies": {
     "vscode-languageclient": "^9.0.1"
