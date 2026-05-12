@@ -1039,6 +1039,9 @@ let compatible_with_expected_type (actual : mono_type) (expected : mono_type) :
   else
     Error (type_mismatch actual expected)
 
+let substitution_binds_any (protected_vars : StringSet.t) (subst : substitution) : bool =
+  SubstMap.exists (fun name _ -> StringSet.mem name protected_vars) subst
+
 let binding_type_for_env
     ?(type_bindings = []) ~(value_expr : AST.expression) ~(type_annotation : AST.type_expr option)
     (stmt_type : mono_type) : mono_type =
@@ -3627,7 +3630,7 @@ and type_callable
       | Error e -> Error e
       | Ok expected_return_opt -> (
           (* 4. Infer body type *)
-	          match infer_statement ~type_bindings type_map env' body with
+          match infer_statement ~type_bindings type_map env' body with
           | Error e -> Error e
           | Ok (subst, body_type) -> (
               let body_type' = apply_substitution subst body_type in
@@ -3684,14 +3687,27 @@ and type_callable
                       if strict_return_ok then
                         Ok (param_names, param_types, expected_ret, actual_effectful, subst)
                       else
-                        Error
-                          (error_at_stmt ~code:"type-return-mismatch"
-                             ~message:
-                               ("Function return type annotation mismatch: expected "
-                               ^ to_string expected_ret'
-                               ^ " but inferred "
-                               ^ to_string body_type')
-                             body)
+                        let protected_type_vars =
+                          List.fold_left
+                            (fun acc (name, _) -> StringSet.add name acc)
+                            StringSet.empty type_bindings
+                        in
+                        match unify body_type' expected_ret' with
+                        | Ok subst2 when not (substitution_binds_any protected_type_vars subst2) ->
+                            let final_subst = compose_substitution subst subst2 in
+                            let* () = verify_constraints_in_substitution final_subst in
+                            propagate_type_var_constraints_through_substitution final_subst;
+                            apply_substitution_type_map subst2 type_map;
+                            Ok (param_names, param_types, expected_ret, actual_effectful, final_subst)
+                        | Ok _ | Error _ ->
+                            Error
+                              (error_at_stmt ~code:"type-return-mismatch"
+                                 ~message:
+                                   ("Function return type annotation mismatch: expected "
+                                   ^ to_string expected_ret'
+                                   ^ " but inferred "
+                                   ^ to_string body_type')
+                                 body)
                     else
                       (* Permissive mode (top-level functions): subtype + unification fallback.
                          Top-level generic type vars use fresh names that can be specialized. *)
@@ -4121,7 +4137,6 @@ and callable_annotation_context ?(type_bindings = []) ?arity (type_annotation : 
 and infer_placeholder_section_expr (type_map : type_map) (env : type_env) (expr : AST.expression) :
     (substitution * mono_type) infer_result =
   let rewritten_expr = placeholder_lambda_expr expr in
-  record_placeholder_rewrite expr rewritten_expr;
   match rewritten_expr.expr with
   | AST.Function { origin; generics; params; return_type; is_effectful; body } -> (
       match
@@ -4133,8 +4148,9 @@ and infer_placeholder_section_expr (type_map : type_map) (env : type_env) (expr 
           let inferred_type = apply_substitution subst func_type in
           if placeholder_callable_is_effectful inferred_type then
             Error (placeholder_effectful_error expr)
-          else
-            Ok (subst, func_type))
+          else (
+            record_placeholder_rewrite expr rewritten_expr;
+            Ok (subst, func_type)))
   | _ -> failwith "placeholder section rewrite must produce a function literal"
 
 and infer_block_against_expected ?(type_bindings = []) type_map env stmts expected_type =
@@ -4470,13 +4486,15 @@ and infer_arg_against_expected type_map env subst (arg : AST.expression) (expect
     match (placeholder_count, placeholder_expectation) with
     | 1, PlaceholderCallbackEffectfulOnly -> Error (placeholder_effectful_error arg)
     | _ -> (
-        let inferred_arg =
+        let rewrite, inferred_arg =
           match (placeholder_count, placeholder_expectation) with
           | 1, PlaceholderCallbackPureAllowed ->
               let rewritten_arg = placeholder_lambda_expr arg in
-              record_placeholder_rewrite arg rewritten_arg;
-              rewritten_arg
-          | _ -> arg
+              (Some rewritten_arg, rewritten_arg)
+          | _ -> (None, arg)
+        in
+        let record_rewrite () =
+          Option.iter (fun rewritten_arg -> record_placeholder_rewrite arg rewritten_arg) rewrite
         in
         let env' = apply_substitution_env subst env in
         let infer_arg_expr () = infer_expression_against_expected type_map env' inferred_arg expected_type' in
@@ -4498,6 +4516,7 @@ and infer_arg_against_expected type_map env subst (arg : AST.expression) (expect
                   match record_expected_trait_object_coercions type_map arg expected_type'' with
                   | Error e -> Error e
                   | Ok () ->
+                      record_rewrite ();
                       propagate_type_var_constraints_through_substitution subst';
                       Ok (subst' (* coercion is metadata-only *), expected_type''))
               | _ -> (
@@ -4509,6 +4528,7 @@ and infer_arg_against_expected type_map env subst (arg : AST.expression) (expect
                       match record_expected_trait_object_coercions type_map arg expected_type'' with
                       | Error e -> Error e
                       | Ok () ->
+                          record_rewrite ();
                           propagate_type_var_constraints_through_substitution final_subst;
                           Ok (final_subst, final_type)))))
 
@@ -6216,22 +6236,25 @@ and validate_return_statements
   | AST.Return expr -> (
       match infer_expression type_map env expr with
       | Error e -> Error e
-      | Ok (_subst, inferred_type) ->
-          (* Use subtyping check: inferred must be subtype of expected *)
+      | Ok (_subst, inferred_type) -> (
           if
+            (* Use subtyping check: inferred must be subtype of expected *)
             Annotation.is_subtype_of inferred_type expected_type
             || intersection_annotation_compatible inferred_type expected_type
           then
             Ok ()
           else
-            Error
-              (error_at_stmt ~code:"type-return-mismatch"
-                 ~message:
-                   ("Function return type annotation mismatch: expected "
-                   ^ to_string expected_type
-                   ^ " but inferred "
-                   ^ to_string inferred_type)
-                 stmt))
+            match compatible_with_expected_type inferred_type expected_type with
+            | Ok _ -> Ok ()
+            | Error _ ->
+                Error
+                  (error_at_stmt ~code:"type-return-mismatch"
+                     ~message:
+                       ("Function return type annotation mismatch: expected "
+                       ^ to_string expected_type
+                       ^ " but inferred "
+                       ^ to_string inferred_type)
+                     stmt)))
   | AST.Block stmts ->
       let rec check_all stmts =
         match stmts with
@@ -7772,6 +7795,11 @@ module Test = struct
     with
     | Error diag -> is_code diag "type-return-mismatch"
     | _ -> false
+
+  let%test "trait impl return annotation specializes return-only helper generic" =
+    infers_to
+      "type Result[a, e] = { Success(a), Failure(e) }\ntype Error = { Problem }\ntrait Reader[r, e] = { fn read(value: r) -> Result[Str, e] }\nfn read_all[a](value: Int) -> Result[a, Error] = Result.Failure(Error.Problem)\nimpl Reader[Int, Error] = {\n  fn read(value: Int) -> Result[Str, Error] = {\n    read_all(value)\n  }\n}\n1"
+      TInt
 
   let%test "explicit row-polymorphic annotation is rejected in v1" =
     reset_fresh_counter ();

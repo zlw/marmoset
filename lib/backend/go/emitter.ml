@@ -788,6 +788,17 @@ let overlay_method_type_args_map
   Hashtbl.iter (fun expr_id type_args -> Hashtbl.replace merged expr_id type_args) overlay;
   merged
 
+let apply_substitution_method_type_args_map
+    (subst : Types.substitution)
+    (method_type_args_map : (int, Types.mono_type list) Hashtbl.t) :
+    (int, Types.mono_type list) Hashtbl.t =
+  let substituted = Hashtbl.create (Hashtbl.length method_type_args_map) in
+  Hashtbl.iter
+    (fun expr_id type_args ->
+      Hashtbl.replace substituted expr_id (List.map (Types.apply_substitution subst) type_args))
+    method_type_args_map;
+  substituted
+
 let used_emitted_function_names (state : mono_state) : StringSet.t =
   let names =
     InstSet.fold
@@ -2041,6 +2052,29 @@ let add_param_bindings (env : Infer.type_env) (param_names : string list) (param
   in
   go env param_names param_types
 
+let infer_callable_body_with_signature
+    (env : Infer.type_env)
+    ~(param_names : string list)
+    ~(param_types : Types.mono_type list)
+    ~(return_type : Types.mono_type)
+    (body_stmt : AST.statement) :
+    (Infer.type_map * (int, Types.mono_type list) Hashtbl.t) option =
+  let inferred_map = Infer.create_type_map () in
+  let infer_state = Infer.create_inference_state () in
+  let known_param_types = List.mapi (fun idx param_type -> (idx, param_type)) param_types in
+  let params = List.map (fun param_name -> (param_name, None)) param_names in
+  match
+    Infer.with_inference_state infer_state (fun () ->
+        Infer.type_callable inferred_map env ~type_bindings:[] ~known_param_types ~params ~return_annot:None
+          ~known_return:(Some return_type) ~effect_annot:`Unspecified ~strict_return_check:false
+          ~body:body_stmt)
+  with
+  | Ok (_param_names, _param_types, _inferred_return, _actual_effectful, subst) ->
+      Infer.apply_substitution_type_map subst inferred_map;
+      Infer.apply_substitution_method_type_args_store subst;
+      Some (inferred_map, Infer.snapshot_method_type_args_store ())
+  | Error _ -> None
+
 let impl_type_bindings (impl_type_params : AST.generic_param list) : (string * Types.mono_type) list =
   List.map (fun (p : AST.generic_param) -> (p.name, Types.TVar p.name)) impl_type_params
 
@@ -2613,6 +2647,28 @@ let resolved_method_type_args_for_expr
   | Some method_type_args ->
       List.map (fun typ -> Types.apply_substitution subst typ |> Types.canonicalize_mono_type) method_type_args
   | None -> []
+
+let method_generic_substitution
+    (method_sig : Typecheck.Trait_registry.method_sig)
+    (method_type_args : Types.mono_type list) : Types.substitution =
+  let method_generic_names = List.map fst method_sig.method_generics in
+  let generic_pairs =
+    if List.length method_generic_names = List.length method_type_args then
+      List.combine method_generic_names method_type_args
+    else
+      []
+  in
+  let generic_subst =
+    List.fold_left
+      (fun acc (name, concrete) -> Types.SubstMap.add name concrete acc)
+      Types.SubstMap.empty generic_pairs
+  in
+  List.fold_left
+    (fun acc (generic_name, internal_name) ->
+      match List.assoc_opt generic_name generic_pairs with
+      | Some concrete -> Types.SubstMap.add internal_name concrete acc
+      | None -> acc)
+    generic_subst method_sig.method_generic_internal_vars
 
 let trait_impl_type_from_resolved_method_type
     (trait_name : string) (method_name : string) (resolved_method_type : Types.mono_type) :
@@ -3581,23 +3637,20 @@ and register_impl_method_use
           in
           add_impl_instantiation state impl_inst payload;
           let method_env = add_param_bindings env payload.param_names payload.param_types in
-          let inferred_map = Infer.create_type_map () in
-          let infer_state = Infer.create_inference_state () in
           match
-            Infer.with_inference_state infer_state (fun () ->
-                Infer.infer_statement inferred_map method_env payload.body_stmt)
+            infer_callable_body_with_signature env ~param_names:payload.param_names
+              ~param_types:payload.param_types ~return_type:payload.return_type payload.body_stmt
           with
-          | Ok (subst, _body_type) ->
-              Infer.apply_substitution_type_map subst inferred_map;
+          | Some (inferred_map, inferred_method_type_args_map) ->
               let method_type_args_map =
-                overlay_method_type_args_map state.method_type_args_map (Infer.snapshot_method_type_args_store ())
+                overlay_method_type_args_map state.method_type_args_map inferred_method_type_args_map
               in
               let previous_method_type_args_map = state.method_type_args_map in
               state.method_type_args_map <- method_type_args_map;
               Fun.protect
                 ~finally:(fun () -> state.method_type_args_map <- previous_method_type_args_map)
                 (fun () -> ignore (collect_insts_stmt state inferred_map method_env payload.body_stmt))
-          | Error _ -> ()
+          | None -> ()
 
 and register_trait_object_support_for_type
     (state : mono_state)
@@ -4366,6 +4419,16 @@ and copy_specialized_stmt_types
   | AST.InherentImplDef _ | AST.DeriveDef _ | AST.TypeAlias _ | AST.ExternBlock _ ->
       ()
 
+let copy_specialized_synthetic_types
+    (source_map : Infer.type_map)
+    (target_map : Infer.type_map)
+    (specialization_subst : Types.substitution) : unit =
+  Hashtbl.iter
+    (fun expr_id ty ->
+      if expr_id < 0 then
+        Hashtbl.replace target_map expr_id (Types.apply_substitution specialization_subst ty))
+    source_map
+
 type type_check_info = {
   path : Type_narrowing.path;
   checked_expr : AST.expression;
@@ -4757,10 +4820,11 @@ let rec emit_expr
         | _ -> (
             (* Real method call - emit using typechecker-selected method source *)
             (* Use method-resolution metadata from typechecking; codegen must not re-resolve. *)
+            let _resolved_method_result_type, method_expected_subst =
+              refined_expr_type_for_expected type_map expr expected_type
+            in
             let method_type_args =
-              match Hashtbl.find_opt state.mono.method_type_args_map expr.id with
-              | Some args -> args
-              | None -> []
+              resolved_method_type_args_for_expr state.mono.method_type_args_map method_expected_subst expr
             in
             let type_suffix_with_mta for_type =
               if method_type_args = [] then
@@ -4810,12 +4874,33 @@ let rec emit_expr
                 in
                 let type_suffix = type_suffix_with_mta first_arg_type in
                 let func_name = inherent_method_func_name variant_name type_suffix in
+                let expected_arg_types =
+                  match Typecheck.Inherent_registry.lookup_method first_arg_type variant_name with
+                  | Some method_sig ->
+                      let subst = method_generic_substitution method_sig method_type_args in
+                      List.map (fun (_name, typ) -> Types.apply_substitution subst typ) method_sig.method_params
+                  | None -> []
+                in
+                let expected_rest_arg_types =
+                  match expected_arg_types with
+                  | _receiver :: expected_tail -> expected_tail
+                  | [] -> []
+                in
+                let rec emit_rest_args acc remaining_args remaining_expected =
+                  match (remaining_args, remaining_expected) with
+                  | [], _ -> List.rev acc
+                  | arg :: tail_args, expected :: tail_expected ->
+                      emit_rest_args
+                        (emit_expr_for_expected_type state type_map env expected arg :: acc)
+                        tail_args tail_expected
+                  | arg :: tail_args, [] -> emit_rest_args (emit_expr state type_map env arg :: acc) tail_args []
+                in
                 let arg_strs =
                   match args with
                   | [] -> []
                   | receiver_arg :: rest ->
                       emit_expr_for_expected_type state type_map env first_arg_type receiver_arg
-                      :: List.map (emit_expr state type_map env) rest
+                      :: emit_rest_args [] rest expected_rest_arg_types
                 in
                 Printf.sprintf "%s(%s)" func_name (String.concat ", " arg_strs)
             | Some (Typecheck.Resolution_artifacts.TraitMethod trait_name) ->
@@ -6667,6 +6752,7 @@ and emit_function_expr ?func_type_override state type_map env func_expr params b
     | Ok subst ->
         let specialized_type_map = Infer.create_type_map () in
         copy_specialized_stmt_types type_map specialized_type_map subst body;
+        copy_specialized_synthetic_types type_map specialized_type_map subst;
         specialized_type_map
     | Error _ -> type_map
   in
@@ -7335,6 +7421,10 @@ let emit_specialized_func
 
   let copied_specialized_type_map = Infer.create_type_map () in
   copy_specialized_stmt_types global_type_map copied_specialized_type_map specialization_subst func_def.body;
+  copy_specialized_synthetic_types global_type_map copied_specialized_type_map specialization_subst;
+  let copied_specialized_method_type_args_map =
+    apply_substitution_method_type_args_map specialization_subst state.mono.method_type_args_map
+  in
 
   (* Re-infer the specialized body with concrete parameters to recover the most precise
      concrete types for nested calls and function return when substitution leaves row vars open. *)
@@ -7359,6 +7449,7 @@ let emit_specialized_func
     with
     | Ok (_param_names, _param_types, inferred_body_type, _actual_effectful, subst) ->
         Infer.apply_substitution_type_map subst inferred_map;
+        Infer.apply_substitution_method_type_args_store subst;
         let method_type_args_map =
           overlay_method_type_args_map state.mono.method_type_args_map (Infer.snapshot_method_type_args_store ())
         in
@@ -7366,7 +7457,7 @@ let emit_specialized_func
           Types.canonicalize_mono_type (Types.apply_substitution subst inferred_body_type)
         in
         (inferred_map, method_type_args_map, Some inferred_body_type)
-    | Error _ -> (copied_specialized_type_map, state.mono.method_type_args_map, None)
+    | Error _ -> (copied_specialized_type_map, copied_specialized_method_type_args_map, None)
   in
   let terminal_return_type_opt =
     match terminal_expr_of_stmt func_def.body with
@@ -7648,19 +7739,16 @@ let emit_cached_impl_method
      global type_map. Re-infer the concrete body when possible so nested block
      expressions and calls recover precise concrete types. *)
   let effective_type_map, effective_method_type_args_map =
-    let inferred_map = Infer.create_type_map () in
-    let infer_state = Infer.create_inference_state () in
     match
-      Infer.with_inference_state infer_state (fun () ->
-          Infer.infer_statement inferred_map method_env payload.body_stmt)
+      infer_callable_body_with_signature typed_env ~param_names:payload.param_names
+        ~param_types:payload.param_types ~return_type:payload.return_type payload.body_stmt
     with
-    | Ok (subst, _body_type) ->
-        Infer.apply_substitution_type_map subst inferred_map;
+    | Some (inferred_map, inferred_method_type_args_map) ->
         let method_type_args_map =
-          overlay_method_type_args_map state.mono.method_type_args_map (Infer.snapshot_method_type_args_store ())
+          overlay_method_type_args_map state.mono.method_type_args_map inferred_method_type_args_map
         in
         (inferred_map, method_type_args_map)
-    | Error _ -> (copied_specialized_type_map (), state.mono.method_type_args_map)
+    | None -> (copied_specialized_type_map (), state.mono.method_type_args_map)
   in
   with_method_type_args_map state effective_method_type_args_map (fun () ->
       ignore (collect_insts_stmt state.mono effective_type_map method_env payload.body_stmt));
@@ -7698,20 +7786,16 @@ let collect_cached_impl_method_deps
           copied
       in
       let effective_type_map, effective_method_type_args_map =
-        let inferred_map = Infer.create_type_map () in
-        let infer_state = Infer.create_inference_state () in
         match
-          Infer.with_inference_state infer_state (fun () ->
-              Infer.infer_statement inferred_map method_env payload.body_stmt)
+          infer_callable_body_with_signature typed_env ~param_names:payload.param_names
+            ~param_types:payload.param_types ~return_type:payload.return_type payload.body_stmt
         with
-        | Ok (subst, _body_type) ->
-            Infer.apply_substitution_type_map subst inferred_map;
+        | Some (inferred_map, inferred_method_type_args_map) ->
             let method_type_args_map =
-              overlay_method_type_args_map state.mono.method_type_args_map
-                (Infer.snapshot_method_type_args_store ())
+              overlay_method_type_args_map state.mono.method_type_args_map inferred_method_type_args_map
             in
             (inferred_map, method_type_args_map)
-        | Error _ -> (copied_specialized_type_map (), state.mono.method_type_args_map)
+        | None -> (copied_specialized_type_map (), state.mono.method_type_args_map)
       in
       with_method_type_args_map state effective_method_type_args_map (fun () ->
           ignore (collect_insts_stmt state.mono effective_type_map method_env payload.body_stmt))
@@ -7798,16 +7882,12 @@ let emit_inherent_method
     if Types.SubstMap.is_empty combined_subst then
       type_map
     else
-      let inferred_map = Infer.create_type_map () in
-      let infer_state = Infer.create_inference_state () in
       match
-        Infer.with_inference_state infer_state (fun () ->
-            Infer.infer_statement inferred_map method_env method_impl.impl_method_body)
+        infer_callable_body_with_signature typed_env ~param_names:method_param_names
+          ~param_types:method_param_types ~return_type method_impl.impl_method_body
       with
-      | Ok (subst, _body_type) ->
-          Infer.apply_substitution_type_map subst inferred_map;
-          inferred_map
-      | Error _ ->
+      | Some (inferred_map, _method_type_args_map) -> inferred_map
+      | None ->
           let copied = Hashtbl.create (Hashtbl.length type_map) in
           Hashtbl.iter
             (fun expr_id mono ->
@@ -10586,6 +10666,28 @@ let%test "placeholder shorthand callback compiles through codegen" =
   match
     compile_string ~file_id:"<codegen>"
       "fn apply[a, b](x: a, f: (a) -> b) -> b = f(x)\nlet result = apply(21, _ * 2)\nresult"
+  with
+  | Ok (_, _) -> true
+  | Error _ -> false
+
+let%test "placeholder callback in return-specialized impl method keeps type map" =
+  Typecheck.Trait_registry.clear ();
+  Typecheck.Enum_registry.clear ();
+  Typecheck.Inherent_registry.clear ();
+  match
+    compile_string ~file_id:"<codegen>"
+      "type Result[a, e] = { Success(a), Failure(e) }\ntype Error = { Problem }\nimpl[a, e] Result[a, e] = {\n  fn bind[b](self: Result[a, e], f: (a) -> Result[b, e]) -> Result[b, e] = match self {\n    case Result.Success(value): f(value)\n    case Result.Failure(err): Result.Failure(err)\n  }\n}\ntrait Reader[r, e] = { fn read(value: r) -> Result[Str, e] }\nfn source(value: Int) -> Result[Int, Error] = Result.Success(value)\nfn decode[a](value: Int) -> Result[a, Error] = Result.Failure(Error.Problem)\nimpl Reader[Int, Error] = {\n  fn read(value: Int) -> Result[Str, Error] = {\n    source(value) |> Result.bind(decode(_))\n  }\n}\nmatch Reader.read(1) {\n  case Result.Success(_): 1\n  case Result.Failure(_): 0\n}"
+  with
+  | Ok (_, _) -> true
+  | Error _ -> false
+
+let%test "placeholder callback in return-specialized helper keeps type map" =
+  Typecheck.Trait_registry.clear ();
+  Typecheck.Enum_registry.clear ();
+  Typecheck.Inherent_registry.clear ();
+  match
+    compile_string ~file_id:"<codegen>"
+      "type Result[a, e] = { Success(a), Failure(e) }\ntype Error = { Problem }\nimpl[a, e] Result[a, e] = {\n  fn bind[b](self: Result[a, e], f: (a) -> Result[b, e]) -> Result[b, e] = match self {\n    case Result.Success(value): f(value)\n    case Result.Failure(err): Result.Failure(err)\n  }\n}\ntrait Reader[r, e] = { fn read(value: r) -> Result[Str, e] }\nfn source(value: Int) -> Result[Int, Error] = Result.Success(value)\nfn decode[a](value: Int) -> Result[a, Error] = Result.Failure(Error.Problem)\nfn read_all[a](value: Int) -> Result[a, Error] = {\n  Result.bind(source(value), decode(_))\n}\nimpl Reader[Int, Error] = {\n  fn read(value: Int) -> Result[Str, Error] = {\n    read_all(value)\n  }\n}\nmatch Reader.read(1) {\n  case Result.Success(_): 1\n  case Result.Failure(_): 0\n}"
   with
   | Ok (_, _) -> true
   | Error _ -> false
