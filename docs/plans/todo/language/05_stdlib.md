@@ -91,70 +91,183 @@ Canonical immutable byte data. Introduced by `09_shim-first-go-interop.md` and h
 Minimum API:
 
 ```marmoset
-export Bytes, from_str, to_str_lossy, length, equal?
+export Bytes, DecodeError, Decode, Encode,
+       from_str, to_str, to_str_lossy, length, equal?
 
 extern type Bytes
+type DecodeError = { InvalidUtf8 }
+
+trait Decode[a] = {
+  fn decode(bytes: Bytes) -> Result[a, DecodeError]
+}
+
+trait Encode[a] = {
+  fn encode(value: a) -> Bytes
+}
 
 fn from_str(s: Str) -> Bytes
+fn to_str(bytes: Bytes) -> Result[Str, DecodeError]
 fn to_str_lossy(bytes: Bytes) -> Str
 fn length(bytes: Bytes) -> Int
 fn equal?(a: Bytes, b: Bytes) -> Bool
+
+impl Decode[Bytes]
+impl Encode[Bytes]
+impl Decode[Str]
+impl Encode[Str]
 ```
 
 Rules:
 
 - `Bytes` is immutable.
 - Go shims copy on ingress and egress.
+- `to_str` is strict UTF-8; `to_str_lossy` is explicit when callers want replacement behavior.
+- File APIs use `Decode`/`Encode` so public file helpers do not need text and byte variants.
 - No mutable buffer API in this milestone.
+
+### `std.path`
+
+Pure path values and path manipulation. This module does not touch the filesystem.
+
+Target API:
+
+```marmoset
+export Path, PathLike,
+       from_str, to_str,
+       join, dirname, basename, extname,
+       clean, absolute?, relative?
+
+type Path = Path(Str)
+
+trait PathLike[p] = {
+  fn path(value: p) -> Path
+}
+
+impl PathLike[Path]
+impl PathLike[Str]
+
+fn from_str(value: Str) -> Path
+fn to_str(path: Path) -> Str
+fn join[p: PathLike](left: Path, right: p) -> Path
+fn dirname(path: Path) -> Path
+fn basename(path: Path) -> Str
+fn extname(path: Path) -> Str
+fn clean(path: Path) -> Path
+fn absolute?(path: Path) -> Bool
+fn relative?(path: Path) -> Bool
+```
+
+Rules:
+
+- `Path` is a nominal wrapper around a whole path string.
+- `PathLike` allows ergonomic public APIs to accept either `Str` or `Path`.
+- A path is not an IO resource. Do not implement `io.Read` or `io.Write` for `Path`.
+- `extname` follows Ruby/Elixir-style empty-string behavior for paths with no extension.
 
 ### `std.file`
 
 Filesystem operations. Introduced as a proof slice by `09_shim-first-go-interop.md`, then expanded here.
 
-Current API:
+Target API:
 
 ```marmoset
 import std.bytes
 import std.bytes.Bytes
+import std.io
+import std.path
 
-export FileReadError, FileWriteError, FileOpenError, FileCloseError, FileUseError, read, read_bytes, write, write_bytes, read_all, open
+export File, Mode, Error, UseError,
+       read, write, append, open,
+       read_all, write_all, flush
 
 extern type File
-type Path = Path(Str)  # private whole-path receiver
 
-type FileReadError = { NotFound, PermissionDenied, IsDirectory, AlreadyClosed, Other(Str) }
-type FileWriteError = { NotFound, PermissionDenied, IsDirectory, Other(Str) }
-type FileOpenError = { NotFound, PermissionDenied, IsDirectory, Other(Str) }
-type FileCloseError = { AlreadyClosed, Other(Str) }
-type FileUseError[e] = { Open(FileOpenError), Use(e), Close(FileCloseError), UseAndClose(e, FileCloseError) }
+type Mode = { Read, Write, Append }
 
-fn read(path: Str) => Result[Str, FileReadError]
-fn read_bytes(path: Str) => Result[Bytes, FileReadError]
-fn write(path: Str, value: Str) => Result[Unit, FileWriteError]
-fn write_bytes(path: Str, bytes: Bytes) => Result[Unit, FileWriteError]
-fn read_all(file: File) => Result[Bytes, FileReadError]
-fn open[a, e](path: Str, body: (File) => Result[a, e]) => Result[a, FileUseError[e]]
+type Error = {
+  NotFound,
+  PermissionDenied,
+  AlreadyExists,
+  IsDirectory,
+  NotDirectory,
+  InvalidPath(Str),
+  InvalidData(Str),
+  AlreadyClosed,
+  Other(Str),
+}
 
-impl io.Read[Path, FileReadError]
-impl io.Write[Path, FileWriteError]
-impl io.Read[File, FileReadError]
+type UseError[e] = { Open(Error), Use(e), Close(Error), UseAndClose(e, Error) }
+
+fn read[a: bytes.Decode, p: path.PathLike](path: p) => Result[a, Error]
+fn write[a: bytes.Encode, p: path.PathLike](path: p, value: a) => Result[Unit, Error]
+fn append[a: bytes.Encode, p: path.PathLike](path: p, value: a) => Result[Unit, Error]
+
+fn open[p: path.PathLike, a, e](path: p, mode: Mode, body: (File) => Result[a, e]) => Result[a, UseError[e]]
+
+fn read_all[a: bytes.Decode](file: File) => Result[a, Error]
+fn write_all[a: bytes.Encode](file: File, value: a) => Result[Unit, Error]
+fn flush(file: File) => Result[Unit, Error]
+
+impl io.Read[File, Error]
+impl io.Write[File, Error]
 ```
 
 Rules:
 
 - Go errors map to domain enums in `runtime/go/shims/std/file`.
-- `read` and `write` are the simple whole-file text APIs for the common path.
-- `read_bytes` and `write_bytes` are the explicit binary whole-file APIs for callers that need `Bytes`.
-- `open` is the normal handle-lifecycle API. It opens the file, calls the callback, then closes the handle after the callback returns.
-- `File` is private shim plumbing, not an exported stdlib type. Importers can receive file values through callback inference but cannot import, construct, or inspect the type by name.
-- `read_all` is the scoped-file read helper. Reading a closed, leaked, or unknown file value returns `FileReadError.AlreadyClosed`.
+- `read`, `write`, and `append` are the simple whole-file APIs. The value type chooses the byte/text conversion through `bytes.Decode`/`bytes.Encode`.
+- `File` is an exported opaque Marmoset resource type. Users can name it in annotations and pass it through callbacks, but cannot construct or inspect it.
+- `open` is the normal handle-lifecycle API. It opens the file in an explicit `Mode`, calls the callback, then closes the handle after the callback returns.
+- `read_all`, `write_all`, and `flush` are scoped-file helpers and back the `io.Read[File, Error]` / `io.Write[File, Error]` impls.
+- Reading, writing, or flushing a closed, leaked, or unknown file value returns `Error.AlreadyClosed`.
 - Raw resource operations stay in the private `file_shim` extern block as `open_handle` and `close_handle`; `std.file` does not export a raw close or one-argument open.
-- The whole-path helpers use a private nominal `Path` receiver so `read`/`write` route through `io.Read[Path, FileReadError]` and `io.Write[Path, FileWriteError]`. `Path` is not exported.
-- `io.Write.flush(Path)` is a Marmoset no-op because whole-file writes complete synchronously once the private `write_bytes` shim returns; there is no fake `FlushPath` shim.
-- `FileReadError` currently uses `NotFound`, `PermissionDenied`, `IsDirectory`, `AlreadyClosed`, and `Other(Str)`.
-- `FileWriteError` and `FileOpenError` currently use `NotFound`, `PermissionDenied`, `IsDirectory`, and `Other(Str)`.
-- `FileCloseError` currently uses `AlreadyClosed` and `Other(Str)` for private close failures surfaced through `FileUseError.Close` or `FileUseError.UseAndClose`.
-- `FileUseError[e]` flattens the open failure, callback failure, close failure, and combined callback-plus-close failure cases for failable callback APIs.
+- `UseError[e]` flattens the open failure, callback failure, close failure, and combined callback-plus-close failure cases for failable callback APIs.
+- `Path` values are handled through `std.path.PathLike`; `std.file` does not own a private path receiver and does not implement IO protocols for paths.
+
+### `std.dir`
+
+Directory operations. This module is effectful and filesystem-backed, but it is not file-content IO.
+
+Target API:
+
+```marmoset
+import std.path
+
+export Entry, Kind, Error,
+       read,
+       make, make_all,
+       remove, remove_all,
+       exists?,
+       current
+
+type Kind = { File, Directory, Symlink, Other }
+type Entry = Entry(path.Path, Kind)
+
+type Error = {
+  NotFound,
+  PermissionDenied,
+  AlreadyExists,
+  NotDirectory,
+  NotEmpty,
+  InvalidPath(Str),
+  Other(Str),
+}
+
+fn read[p: path.PathLike](path: p) => Result[List[Entry], Error]
+fn make[p: path.PathLike](path: p) => Result[Unit, Error]
+fn make_all[p: path.PathLike](path: p) => Result[Unit, Error]
+fn remove[p: path.PathLike](path: p) => Result[Unit, Error]
+fn remove_all[p: path.PathLike](path: p) => Result[Unit, Error]
+fn exists?[p: path.PathLike](path: p) => Result[Bool, Error]
+fn current() => Result[path.Path, Error]
+```
+
+Rules:
+
+- Directory entries carry a `path.Path` plus coarse kind.
+- `read` returns immediate children, not a recursive walk.
+- Keep `chdir` out of the first pass because it mutates process-global state.
+- File-content operations stay in `std.file`; path manipulation stays in `std.path`.
 
 ### `std.io`
 
@@ -410,12 +523,12 @@ HTTP, SQL, and framework-style wrappers likely need follow-up shim features such
 
 ## Commit Plan
 
-1. Sync docs and tests with landed `std.bytes`/`std.file`.
-2. Harden `std.bytes` and `std.file`.
-3. Add `std.io`.
-4. Add `std.str`.
-5. Add `std.list`.
-6. Add `std.map`.
+1. Refactor `std.bytes` with encode/decode traits and strict UTF-8 conversion.
+2. Add `std.path` plus path shims and tests.
+3. Refactor `std.file` around unified `read`/`write`/`append`, exported opaque `File`, `Mode`, unified `Error`, and `io.Read`/`io.Write` impls for file handles only.
+4. Add `std.dir` plus directory shims and tests.
+5. Verify LSP, tree-sitter, Zed, VS Code, and JetBrains grammar support for extern blocks, extern types, predicate identifiers, singleton extern values, and multi-parameter trait syntax.
+6. Run three bugbash rounds and commit fixes found by the hunt.
 7. Regroup and create follow-up plans for app-oriented modules.
 
 ## Risks
@@ -470,3 +583,4 @@ HTTP, SQL, and framework-style wrappers likely need follow-up shim features such
 - 2026-05-12 02:35 CEST: Stdio token removal reached focused green. `std.io` now exports only `Error`, `Read`, `Write`, and terminal helpers; `std.io.err` exports only stderr helpers; copied Go shims no longer include Marmoset stdio token APIs. Focused `make integration stdlib-shims` is green.
 - 2026-05-12 15:56 CEST: Reworked stdio around private singleton extern receivers instead of public token helpers or direct helper shims. `std.io` now implements `Read[Stdin, Error]`/`Write[Stdout, Error]`, `std.io.err` implements `io.Write[Stderr, Error]`, and public helpers route through those trait impls. The compiler now supports module-local singleton values for private extern types and concrete method-generic default trait specialization from generic wrapper bodies, including interpolation-backed `Write.print`. Verification passed with `dune runtest lib/frontend/typecheck`, `dune runtest lib/backend/go`, `make integration stdlib-shims`, `make integration ffi stdlib-shims`, broader `MARMOSET_ROOT=<temp with HEAD std/option.mr> dune runtest lib/frontend lib/backend/go`, and `git diff --check`.
 - 2026-05-12 16:07 CEST: Refactored `std.file` whole-path helpers to use the same private receiver/protocol style as stdio. A private `Path` wrapper now implements `io.Read[Path, FileReadError]` and `io.Write[Path, FileWriteError]`; public `file.read`/`file.write` and byte helpers route through that wrapper while raw byte/open/close operations stay in private shims. Focused verification passed with `make integration stdlib-shims` and `make integration ffi stdlib-shims`.
+- 2026-05-12 16:42 CEST: Started the File/Path/Dir poster-child redesign. The plan now targets `bytes.Decode`/`bytes.Encode` instead of public `read_bytes`/`write_bytes`, introduces pure `std.path`, moves `std.file` to unified `Error` plus explicit `Mode`, makes `File` the only filesystem IO resource, and adds a `std.dir` first slice plus editor/LSP and three-round bugbash checkpoints.
