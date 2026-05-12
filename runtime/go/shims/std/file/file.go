@@ -1,6 +1,7 @@
 package file
 
 import (
+	"bufio"
 	"errors"
 	"io"
 	"os"
@@ -11,7 +12,8 @@ import (
 )
 
 type fileResource struct {
-	file *os.File
+	file   *os.File
+	reader *bufio.Reader
 }
 
 var files = marmoset.NewHandleTable[fileapi.FileTag, *fileResource]()
@@ -68,6 +70,23 @@ func fileError(path string, err error) fileapi.Error {
 
 func handleFile(file fileapi.File) (*fileResource, bool) {
 	return files.Get(file)
+}
+
+func (resource *fileResource) readBuffer() *bufio.Reader {
+	if resource.reader == nil {
+		resource.reader = bufio.NewReader(resource.file)
+	}
+	return resource.reader
+}
+
+func trimLineEnding(line []byte) []byte {
+	if len(line) > 0 && line[len(line)-1] == '\n' {
+		line = line[:len(line)-1]
+	}
+	if len(line) > 0 && line[len(line)-1] == '\r' {
+		line = line[:len(line)-1]
+	}
+	return line
 }
 
 func ReadPath(path string) marmoset.Result[marmoset.Bytes, fileapi.Error] {
@@ -150,11 +169,68 @@ func ReadHandle(file fileapi.File) marmoset.Result[marmoset.Bytes, fileapi.Error
 	if !ok {
 		return marmoset.Failure[marmoset.Bytes, fileapi.Error](fileapi.ErrorAlreadyClosed{})
 	}
-	data, err := io.ReadAll(resource.file)
+	data, err := io.ReadAll(resource.readBuffer())
 	if err != nil {
 		return marmoset.Failure[marmoset.Bytes, fileapi.Error](fileError("", err))
 	}
 	return marmoset.Success[marmoset.Bytes, fileapi.Error](marmoset.BytesCopy(data))
+}
+
+func ReadLineHandle(file fileapi.File) marmoset.Result[marmoset.Option[marmoset.Bytes], fileapi.Error] {
+	resource, ok := handleFile(file)
+	if !ok {
+		return marmoset.Failure[marmoset.Option[marmoset.Bytes], fileapi.Error](fileapi.ErrorAlreadyClosed{})
+	}
+	line, err := resource.readBuffer().ReadBytes('\n')
+	if err != nil {
+		if errors.Is(err, io.EOF) {
+			if len(line) == 0 {
+				return marmoset.Success[marmoset.Option[marmoset.Bytes], fileapi.Error](marmoset.None[marmoset.Bytes]())
+			}
+			return marmoset.Success[marmoset.Option[marmoset.Bytes], fileapi.Error](
+				marmoset.Some[marmoset.Bytes](marmoset.BytesCopy(trimLineEnding(line))),
+			)
+		}
+		return marmoset.Failure[marmoset.Option[marmoset.Bytes], fileapi.Error](fileError("", err))
+	}
+	return marmoset.Success[marmoset.Option[marmoset.Bytes], fileapi.Error](
+		marmoset.Some[marmoset.Bytes](marmoset.BytesCopy(trimLineEnding(line))),
+	)
+}
+
+func ReadChunkHandle(file fileapi.File, size int64) marmoset.Result[marmoset.Option[marmoset.Bytes], fileapi.Error] {
+	resource, ok := handleFile(file)
+	if !ok {
+		return marmoset.Failure[marmoset.Option[marmoset.Bytes], fileapi.Error](fileapi.ErrorAlreadyClosed{})
+	}
+	if size <= 0 {
+		return marmoset.Success[marmoset.Option[marmoset.Bytes], fileapi.Error](marmoset.None[marmoset.Bytes]())
+	}
+	maxInt := int64(^uint(0) >> 1)
+	if size > maxInt {
+		return marmoset.Failure[marmoset.Option[marmoset.Bytes], fileapi.Error](
+			fileapi.ErrorOther{Field0: "chunk size exceeds host int"},
+		)
+	}
+	buf := make([]byte, int(size))
+	n, err := resource.readBuffer().Read(buf)
+	if err != nil {
+		if errors.Is(err, io.EOF) {
+			if n == 0 {
+				return marmoset.Success[marmoset.Option[marmoset.Bytes], fileapi.Error](marmoset.None[marmoset.Bytes]())
+			}
+			return marmoset.Success[marmoset.Option[marmoset.Bytes], fileapi.Error](
+				marmoset.Some[marmoset.Bytes](marmoset.BytesCopy(buf[:n])),
+			)
+		}
+		return marmoset.Failure[marmoset.Option[marmoset.Bytes], fileapi.Error](fileError("", err))
+	}
+	if n == 0 {
+		return marmoset.Success[marmoset.Option[marmoset.Bytes], fileapi.Error](marmoset.None[marmoset.Bytes]())
+	}
+	return marmoset.Success[marmoset.Option[marmoset.Bytes], fileapi.Error](
+		marmoset.Some[marmoset.Bytes](marmoset.BytesCopy(buf[:n])),
+	)
 }
 
 func WriteHandle(file fileapi.File, bytes marmoset.Bytes) marmoset.Result[marmoset.Unit, fileapi.Error] {

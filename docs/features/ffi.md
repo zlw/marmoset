@@ -64,6 +64,8 @@ extern "std/file" as file_shim = {
   fn open_handle(path: Path, mode: Mode) => Result[File, Error]
   fn close_handle(file: File) => Result[Unit, Error]
   fn read_handle(file: File) => Result[Bytes, Error]
+  fn read_line_handle(file: File) => Result[Option[Bytes], Error]
+  fn read_chunk_handle(file: File, size: Int) => Result[Option[Bytes], Error]
   fn write_handle(file: File, bytes: Bytes) => Result[Unit, Error]
   fn flush_handle(file: File) => Result[Unit, Error]
 }
@@ -73,6 +75,8 @@ fn write[a: bytes.Encode](path: Path, value: a) => Result[Unit, Error]
 fn append[a: bytes.Encode](path: Path, value: a) => Result[Unit, Error]
 fn open[a, e](path: Path, mode: Mode, body: (File) => Result[a, e]) => Result[a, UseError[e]]
 fn read_all(file: File) => Result[Str, Error]
+fn read_line(file: File) => Result[Option[Str], Error]
+fn read_chunk(file: File, size: Int) => Result[Option[Bytes], Error]
 fn write_all(file: File, value: Str) => Result[Unit, Error]
 fn flush(file: File) => Result[Unit, Error]
 ```

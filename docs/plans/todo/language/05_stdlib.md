@@ -170,7 +170,8 @@ import std.path
 
 export File, Mode, Error, UseError,
        read, write, append, open,
-       read_all, write_all, flush
+       read_all, read_line, read_chunk,
+       write_all, flush
 
 extern type File
 
@@ -197,6 +198,8 @@ fn append[a: bytes.Encode](path: path.Path, value: a) => Result[Unit, Error]
 fn open[a, e](path: path.Path, mode: Mode, body: (File) => Result[a, e]) => Result[a, UseError[e]]
 
 fn read_all(file: File) => Result[Str, Error]
+fn read_line(file: File) => Result[Option[Str], Error]
+fn read_chunk(file: File, size: Int) => Result[Option[Bytes], Error]
 fn write_all(file: File, value: Str) => Result[Unit, Error]
 fn flush(file: File) => Result[Unit, Error]
 
@@ -210,6 +213,7 @@ Rules:
 - `read`, `write`, and `append` are the simple whole-file APIs. The value type chooses the byte/text conversion through `bytes.Decode`/`bytes.Encode`.
 - `File` is an exported opaque Marmoset resource type. Users can name it in annotations and pass it through callbacks, but cannot construct or inspect it.
 - `open` is the normal handle-lifecycle API. It opens the file in an explicit `Mode`, calls the callback, then closes the handle after the callback returns.
+- `read_all`, `read_line`, `read_chunk`, `write_all`, and `flush` are scoped-file operations that make `open` useful for streaming and incremental IO. `read_line` returns `Option.None` at EOF and strips line terminators; `read_chunk` returns raw bytes so callers do not accidentally split UTF-8 text.
 - `read_all`, `write_all`, and `flush` are scoped-file convenience helpers over the `io.Read[File, Error]` / `io.Write[File, Error]` impls; the trait impls own handle behavior.
 - Reading, writing, or flushing a closed, leaked, or unknown file value returns `Error.AlreadyClosed`.
 - Raw resource operations stay in the private `file_shim` extern block as `open_handle` and `close_handle`; `std.file` does not export a raw close or one-argument open.
@@ -595,3 +599,5 @@ HTTP, SQL, and framework-style wrappers likely need follow-up shim features such
 - 2026-05-12 23:32 CEST: Fixed the strict-return/helper-generic regression exposed by `std.file.read_all`. Trait impl return annotations can now specialize return-only helper generics without letting impl-owned generic variables collapse, placeholder rewrites are only recorded after successful inference, and Go emission carries concrete method-generic expected types into qualified inherent callback arguments. Verification passed with `dune runtest lib/frontend/typecheck`, `dune runtest lib/backend/go`, `MARMOSET_ROOT=$PWD dune exec -- bin/main.exe check std/file.mr`, `make integration stdlib-shims`, and `git diff --check`.
 - 2026-05-13 00:00 CEST: Started the `std.file` cleanup slice. Target: keep `File` as the public scoped callback value, keep raw handle/path operations private, rename shim byte primitives by path-vs-handle role, make `io.Read[File, Error]` / `io.Write[File, Error]` own handle behavior, and leave module helpers as convenience wrappers.
 - 2026-05-13 00:41 CEST: `std.file` cleanup reached focused green. Private file shims now use `read_path`/`write_path`/`append_path` and `read_handle`/`write_handle`; scoped handle helpers delegate through `io.Read`/`io.Write`; decode error adaptation uses `Result.or`; and the Go emitter now return-mangles hoisted placeholder-section callbacks when return type disambiguation is required. Verification passed with `dune runtest lib/backend/go`, `dune runtest lib/frontend`, `dune runtest tools/lsp/lib`, `MARMOSET_ROOT=$PWD dune exec -- bin/main.exe check std/file.mr`, `make integration stdlib-shims`, `make integration ffi`, and `git diff --check`.
+- 2026-05-13 01:02 CEST: Started the scoped file-handle operations slice. Target: make `file.open` earn its public API space with line reads, bounded byte chunks, and handle write/flush helpers covered by stdlib-shim integration tests.
+- 2026-05-13 01:12 CEST: Scoped file-handle operations reached focused green. `std.file` now exposes `read_line` and `read_chunk`; the Go file shim keeps a buffered reader per scoped handle so line/chunk/all reads share position; EOF is `Option.None`; and line reads strip `\n`/`\r\n` while chunk reads stay byte-oriented. Verification passed with `make integration stdlib-shims`, `MARMOSET_ROOT=$PWD dune exec -- bin/main.exe check std/file.mr`, `dune runtest lib/backend/go`, and `make integration ffi`.

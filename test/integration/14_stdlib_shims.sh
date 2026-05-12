@@ -135,6 +135,8 @@ run_source_emit_go_expect_stdio_shape() {
         grep -qF 'func extern__std_file__write_path(path std__path__Path, bytes marmoset.Bytes)' "$outdir/main.go" || failures=$((failures + 1))
         grep -qF 'func extern__std_file__read_handle(file mapi_std_file.File)' "$outdir/main.go" || failures=$((failures + 1))
         grep -qF 'func extern__std_file__write_handle(file mapi_std_file.File, bytes marmoset.Bytes)' "$outdir/main.go" || failures=$((failures + 1))
+        grep -qF 'func extern__std_file__read_line_handle(file mapi_std_file.File)' "$outdir/main.go" || failures=$((failures + 1))
+        grep -qF 'func extern__std_file__read_chunk_handle(file mapi_std_file.File, size int64)' "$outdir/main.go" || failures=$((failures + 1))
         grep -qF 'func std__io__Read_read_std__file__File' "$outdir/main.go" || failures=$((failures + 1))
         grep -qF 'func std__io__Write_write_std__file__File' "$outdir/main.go" || failures=$((failures + 1))
         grep -qF 'func std__io__Write_flush_std__file__File' "$outdir/main.go" || failures=$((failures + 1))
@@ -164,6 +166,8 @@ DATA_DIR=$(mktemp -d "$REPO_ROOT/.marmoset/build/stdlib_shims_data.XXXXXX")
 ROUNDTRIP_PATH="$DATA_DIR/roundtrip.txt"
 MISSING_PATH="$DATA_DIR/missing.txt"
 EXISTING_PATH="$DATA_DIR/existing.txt"
+LINE_PATH="$DATA_DIR/lines.txt"
+CHUNK_PATH="$DATA_DIR/chunk.txt"
 INVALID_UTF8_PATH="$DATA_DIR/invalid.bin"
 CHILD_DIR="$DATA_DIR/child"
 NONEMPTY_DIR="$DATA_DIR/nonempty"
@@ -172,6 +176,8 @@ LISTING_DIR="$DATA_DIR/listing"
 LISTING_FILE="$LISTING_DIR/entry.txt"
 NONEMPTY_FILE="$NONEMPTY_DIR/child.txt"
 printf "opened" > "$EXISTING_PATH"
+printf "alpha\nbeta\r\ngamma" > "$LINE_PATH"
+printf "abcdef" > "$CHUNK_PATH"
 printf '\377' > "$INVALID_UTF8_PATH"
 mkdir "$NONEMPTY_DIR"
 mkdir "$LISTING_DIR"
@@ -320,8 +326,9 @@ EOF
 
 run_source_expect_output \
     "std.file scopes file handles and implements io protocols" \
-    $'read:opened\nprotocol:opened\ngeneric:opened\nwritten:scoped!\nopen:not-found\nuse:read:is-directory\nleaked:read:already-closed' <<EOF
+    $'read:opened\nprotocol:opened\ngeneric:opened\nline1:alpha\nline2:beta\nline3:gamma\nline4:none\nchunk1:ab\nchunk2:cde\nchunk3:f\nchunk4:none\nwritten:scoped!\nopen:not-found\nuse:read:is-directory\nleaked:read:already-closed' <<EOF
 import std.bytes
+import std.bytes.Bytes
 import std.file
 import std.file.Error
 import std.file.UseError
@@ -350,6 +357,22 @@ fn use_error_label(err: UseError[Error]) -> Str = match err {
 fn use_file[a, e](target: Path, body: (file.File) => Result[a, e]) => Result[a, UseError[e]] =
   file.open(target, file.Mode.Read, body)
 
+fn line_label(prefix: Str, result: Result[Option[Str], Error]) -> Str = match result {
+  case Result.Success(option): match option {
+    case Option.Some(value): prefix + ":" + value
+    case Option.None: prefix + ":none"
+  }
+  case Result.Failure(err): error_label(prefix, err)
+}
+
+fn chunk_label(prefix: Str, result: Result[Option[Bytes], Error]) -> Str = match result {
+  case Result.Success(option): match option {
+    case Option.Some(value): prefix + ":" + bytes.to_str_lossy(value)
+    case Option.None: prefix + ":none"
+  }
+  case Result.Failure(err): error_label(prefix, err)
+}
+
 let opened_text: Result[Str, UseError[Error]] = file.open(Path("$EXISTING_PATH"), file.Mode.Read, (handle) => file.read_all(handle))
 match opened_text {
   case Result.Success(payload): puts("read:" + payload)
@@ -365,6 +388,30 @@ match protocol_text {
 let generic_text: Result[Str, UseError[Error]] = use_file(Path("$EXISTING_PATH"), (handle) => io.Read.read(handle))
 match generic_text {
   case Result.Success(payload): puts("generic:" + payload)
+  case Result.Failure(err): puts(use_error_label(err))
+}
+
+let line_result: Result[Str, UseError[Error]] = file.open(Path("$LINE_PATH"), file.Mode.Read, (handle) => {
+  puts(line_label("line1", file.read_line(handle)))
+  puts(line_label("line2", file.read_line(handle)))
+  puts(line_label("line3", file.read_line(handle)))
+  puts(line_label("line4", file.read_line(handle)))
+  Result.Success("ok")
+})
+match line_result {
+  case Result.Success(_): {}
+  case Result.Failure(err): puts(use_error_label(err))
+}
+
+let chunk_result: Result[Str, UseError[Error]] = file.open(Path("$CHUNK_PATH"), file.Mode.Read, (handle) => {
+  puts(chunk_label("chunk1", file.read_chunk(handle, 2)))
+  puts(chunk_label("chunk2", file.read_chunk(handle, 3)))
+  puts(chunk_label("chunk3", file.read_chunk(handle, 3)))
+  puts(chunk_label("chunk4", file.read_chunk(handle, 3)))
+  Result.Success("ok")
+})
+match chunk_result {
+  case Result.Success(_): {}
   case Result.Failure(err): puts(use_error_label(err))
 }
 
