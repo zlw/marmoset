@@ -9,18 +9,14 @@ import (
 	"marmoset_out/marmoset"
 )
 
-func Stderr() errapi.Stderr {
-	return marmoset.NewHandle[errapi.StderrTag]()
-}
-
-func Write(writer errapi.Stderr, value string) marmoset.Result[marmoset.Unit, errapi.Error] {
+func Write(value string) marmoset.Result[marmoset.Unit, errapi.Error] {
 	if _, err := os.Stderr.WriteString(value); err != nil {
 		return marmoset.Failure[marmoset.Unit, errapi.Error](writeError(err))
 	}
 	return marmoset.Success[marmoset.Unit, errapi.Error](marmoset.NewUnit())
 }
 
-func Flush(writer errapi.Stderr) marmoset.Result[marmoset.Unit, errapi.Error] {
+func Flush() marmoset.Result[marmoset.Unit, errapi.Error] {
 	return marmoset.Success[marmoset.Unit, errapi.Error](marmoset.NewUnit())
 }
 

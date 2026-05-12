@@ -106,7 +106,7 @@ run_source_expect_build_failure() {
     rm -rf "$root"
 }
 
-run_source_emit_go_expect_protocol_shape() {
+run_source_emit_go_expect_stdio_shape() {
     local name="$1"
     local source
     source="$(cat)"
@@ -123,12 +123,12 @@ run_source_emit_go_expect_protocol_shape() {
 
     failures=0
     if build_output=$($EXECUTABLE build "$root/main.mr" --emit-go "$outdir" -o "$binpath" 2>&1); then
-        grep -qF 'func Read(reader ioapi.Stdin)' "$outdir/shims/std/io/io.go" || failures=$((failures + 1))
-        grep -qF 'func Write(writer ioapi.Stdout, value string)' "$outdir/shims/std/io/io.go" || failures=$((failures + 1))
-        grep -qF 'func Flush(writer ioapi.Stdout)' "$outdir/shims/std/io/io.go" || failures=$((failures + 1))
-        grep -qF 'func Write(writer errapi.Stderr, value string)' "$outdir/shims/std/io/err/err.go" || failures=$((failures + 1))
-        grep -qF 'func Flush(writer errapi.Stderr)' "$outdir/shims/std/io/err/err.go" || failures=$((failures + 1))
-        if rg -q 'std__file__Path|flush_path|FlushPath' "$outdir"; then
+        grep -qF 'func Read()' "$outdir/shims/std/io/io.go" || failures=$((failures + 1))
+        grep -qF 'func Write(value string)' "$outdir/shims/std/io/io.go" || failures=$((failures + 1))
+        grep -qF 'func Flush()' "$outdir/shims/std/io/io.go" || failures=$((failures + 1))
+        grep -qF 'func Write(value string)' "$outdir/shims/std/io/err/err.go" || failures=$((failures + 1))
+        grep -qF 'func Flush()' "$outdir/shims/std/io/err/err.go" || failures=$((failures + 1))
+        if rg -q 'std__file__Path|flush_path|FlushPath|StdinTag|StdoutTag|StderrTag|std__io__Stdin|std__io__Stdout|std__io__err__Stderr|func Stdin|func Stdout|func Stderr' "$outdir"; then
             failures=$((failures + 1))
         fi
 
@@ -136,7 +136,7 @@ run_source_emit_go_expect_protocol_shape() {
             echo "✓ PASS"
             PASS=$((PASS + 1))
         else
-            echo "✗ FAIL (emitted Go still has phantom protocol plumbing)"
+            echo "✗ FAIL (emitted Go still has stdio token or path protocol plumbing)"
             FAIL=$((FAIL + 1))
         fi
     else
@@ -327,17 +327,16 @@ import std.file.write_str
 puts(0)
 EOF
 
-run_source_emit_go_expect_protocol_shape \
-    "std.io receivers reach shims and std.file path helpers stay direct" <<EOF
+run_source_emit_go_expect_stdio_shape \
+    "std.io terminal helpers stay direct and std.file path helpers stay direct" <<EOF
 import std.file
 import std.io
 import std.io.err
 
-let _ = io.Read.read(io.stdin())
-let _ = io.Write.write(io.stdout(), "out")
-let _ = io.Write.flush(io.stdout())
-let _ = io.Write.write(err.stderr(), "err")
-let _ = io.Write.flush(err.stderr())
+let _ = io.write("out")
+let _ = io.flush()
+let _ = err.write("err")
+let _ = err.flush()
 let _ = file.write("$ROUNDTRIP_PATH", "path")
 let _ = file.read("$ROUNDTRIP_PATH")
 puts(0)
@@ -345,7 +344,7 @@ EOF
 
 run_source_expect_output \
     "std.io writes, flushes, prints and exposes stderr helpers" \
-    $'value:42\nerr:bad\ntrait:ok\ntrait-err:nope' <<'EOF'
+    $'value:42\nerr:bad' <<'EOF'
 import std.io
 import std.io.err
 
@@ -353,31 +352,53 @@ let _ = io.write("value:")
 let _ = io.print(42)
 let _ = err.write("err:")
 let _ = err.print("bad")
-let stdout = io.stdout()
-let stderr = err.stderr()
-let _ = io.Write.write(stdout, "trait:")
-let _ = io.Write.print(stdout, "ok")
-let _ = io.Write.flush(stdout)
-let _ = io.Write.write(stderr, "trait-err:")
-let _ = io.Write.print(stderr, "nope")
-let _ = io.Write.flush(stderr)
 EOF
 
 run_source_expect_build_failure \
-    "std.io Stdin token is opaque" \
-    "No inherent method 'Stdin'" <<'EOF'
-import std.io.Stdin
+    "std.io stdin helper is private shim plumbing" \
+    "does not export 'stdin'" <<'EOF'
+import std.io.stdin
 
-let input = Stdin.Stdin
 puts(0)
 EOF
 
 run_source_expect_build_failure \
-    "std.io stderr token is opaque" \
-    "No inherent method 'Stderr'" <<'EOF'
+    "std.io stdout helper is private shim plumbing" \
+    "does not export 'stdout'" <<'EOF'
+import std.io.stdout
+
+puts(0)
+EOF
+
+run_source_expect_build_failure \
+    "std.io Stdin token is private" \
+    "does not export 'Stdin'" <<'EOF'
+import std.io.Stdin
+
+puts(0)
+EOF
+
+run_source_expect_build_failure \
+    "std.io Stdout token is private" \
+    "does not export 'Stdout'" <<'EOF'
+import std.io.Stdout
+
+puts(0)
+EOF
+
+run_source_expect_build_failure \
+    "std.io stderr helper is private shim plumbing" \
+    "does not export 'stderr'" <<'EOF'
+import std.io.err.stderr
+
+puts(0)
+EOF
+
+run_source_expect_build_failure \
+    "std.io stderr token is private" \
+    "does not export 'Stderr'" <<'EOF'
 import std.io.err.Stderr
 
-let output = Stderr.Stderr
 puts(0)
 EOF
 
@@ -395,7 +416,7 @@ fn read_error_label(err: Error) -> Str = match err {
   case Error.Other(message): "other:" + message
 }
 
-match io.Read.read(io.stdin()) {
+match io.read() {
   case Result.Success(line): io.print("line:" + line)
   case Result.Failure(err): io.print(read_error_label(err))
 }
