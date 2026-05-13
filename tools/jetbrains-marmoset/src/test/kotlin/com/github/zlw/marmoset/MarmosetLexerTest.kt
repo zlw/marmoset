@@ -21,6 +21,15 @@ class MarmosetLexerTest {
         assertEquals(MarmosetTokenTypes.COMMENT, tokens["# fallback"])
     }
 
+    @Test
+    fun `string interpolation exposes embedded expression tokens`() {
+        val tokens = lex("""let result = Write.write(writer, "#{value}\n")""")
+
+        assertEquals(MarmosetTokenTypes.INTERPOLATION_START, tokens["#{"])
+        assertEquals(MarmosetTokenTypes.IDENTIFIER, tokens["value"])
+        assertEquals(MarmosetTokenTypes.INTERPOLATION_END, tokens["}"])
+    }
+
     private fun lex(source: String): Map<String, IElementType> {
         val lexer = MarmosetLexer()
         lexer.start(source)

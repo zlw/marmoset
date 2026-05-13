@@ -22,6 +22,8 @@ class MarmosetSyntaxHighlighter : SyntaxHighlighterBase() {
             MarmosetTokenTypes.FUNCTION_DECLARATION -> FUNCTION_DECLARATION_KEYS
             MarmosetTokenTypes.FUNCTION_CALL -> FUNCTION_CALL_KEYS
             MarmosetTokenTypes.METHOD_CALL -> METHOD_CALL_KEYS
+            MarmosetTokenTypes.INTERPOLATION_START -> OPERATOR_KEYS
+            MarmosetTokenTypes.INTERPOLATION_END -> OPERATOR_KEYS
             MarmosetTokenTypes.OPERATOR -> OPERATOR_KEYS
             MarmosetTokenTypes.PUNCTUATION -> PUNCTUATION_KEYS
             TokenType.BAD_CHARACTER -> BAD_CHARACTER_KEYS
