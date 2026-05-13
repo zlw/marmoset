@@ -10,6 +10,9 @@ object MarmosetTokenTypes {
     val BUILTIN = IElementType("MARMOSSET_BUILTIN", MarmosetLanguage)
     val TYPE = IElementType("MARMOSSET_TYPE", MarmosetLanguage)
     val IDENTIFIER = IElementType("MARMOSSET_IDENTIFIER", MarmosetLanguage)
+    val FUNCTION_DECLARATION = IElementType("MARMOSSET_FUNCTION_DECLARATION", MarmosetLanguage)
+    val FUNCTION_CALL = IElementType("MARMOSSET_FUNCTION_CALL", MarmosetLanguage)
+    val METHOD_CALL = IElementType("MARMOSSET_METHOD_CALL", MarmosetLanguage)
     val OPERATOR = IElementType("MARMOSSET_OPERATOR", MarmosetLanguage)
     val PUNCTUATION = IElementType("MARMOSSET_PUNCTUATION", MarmosetLanguage)
 }

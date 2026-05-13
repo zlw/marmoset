@@ -19,6 +19,9 @@ class MarmosetSyntaxHighlighter : SyntaxHighlighterBase() {
             MarmosetTokenTypes.KEYWORD -> KEYWORD_KEYS
             MarmosetTokenTypes.BUILTIN -> BUILTIN_KEYS
             MarmosetTokenTypes.TYPE -> TYPE_KEYS
+            MarmosetTokenTypes.FUNCTION_DECLARATION -> FUNCTION_DECLARATION_KEYS
+            MarmosetTokenTypes.FUNCTION_CALL -> FUNCTION_CALL_KEYS
+            MarmosetTokenTypes.METHOD_CALL -> METHOD_CALL_KEYS
             MarmosetTokenTypes.OPERATOR -> OPERATOR_KEYS
             MarmosetTokenTypes.PUNCTUATION -> PUNCTUATION_KEYS
             TokenType.BAD_CHARACTER -> BAD_CHARACTER_KEYS
@@ -33,6 +36,9 @@ class MarmosetSyntaxHighlighter : SyntaxHighlighterBase() {
         private val KEYWORD_KEYS = pack(DefaultLanguageHighlighterColors.KEYWORD)
         private val BUILTIN_KEYS = pack(DefaultLanguageHighlighterColors.PREDEFINED_SYMBOL)
         private val TYPE_KEYS = pack(DefaultLanguageHighlighterColors.CLASS_REFERENCE)
+        private val FUNCTION_DECLARATION_KEYS = pack(DefaultLanguageHighlighterColors.FUNCTION_DECLARATION)
+        private val FUNCTION_CALL_KEYS = pack(DefaultLanguageHighlighterColors.FUNCTION_CALL)
+        private val METHOD_CALL_KEYS = pack(DefaultLanguageHighlighterColors.INSTANCE_METHOD)
         private val OPERATOR_KEYS = pack(DefaultLanguageHighlighterColors.OPERATION_SIGN)
         private val PUNCTUATION_KEYS = pack(DefaultLanguageHighlighterColors.BRACES)
         private val BAD_CHARACTER_KEYS = pack(HighlighterColors.BAD_CHARACTER)

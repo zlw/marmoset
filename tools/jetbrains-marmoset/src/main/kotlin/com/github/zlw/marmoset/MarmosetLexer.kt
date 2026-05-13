@@ -101,6 +101,9 @@ class MarmosetLexer : LexerBase() {
             text in KEYWORDS -> MarmosetTokenTypes.KEYWORD
             text in BUILTINS -> MarmosetTokenTypes.BUILTIN
             text.first().isUpperCase() -> MarmosetTokenTypes.TYPE
+            isAfterKeyword("fn") -> MarmosetTokenTypes.FUNCTION_DECLARATION
+            isAfterDot() && isFollowedByCall(cursor) -> MarmosetTokenTypes.METHOD_CALL
+            isFollowedByCall(cursor) -> MarmosetTokenTypes.FUNCTION_CALL
             else -> MarmosetTokenTypes.IDENTIFIER
         }
         scanFixed(type, cursor)
@@ -117,6 +120,38 @@ class MarmosetLexer : LexerBase() {
     private fun scanFixed(type: IElementType, end: Int) {
         tokenType = type
         tokenEnd = end
+    }
+
+    private fun isAfterKeyword(keyword: String): Boolean {
+        var cursor = tokenStart - 1
+        while (cursor >= startOffset && buffer[cursor].isWhitespace()) {
+            cursor--
+        }
+        val end = cursor + 1
+        while (cursor >= startOffset && isIdentifierPart(buffer[cursor])) {
+            cursor--
+        }
+        if (end == cursor + 1) {
+            return false
+        }
+        val start = cursor + 1
+        return buffer.subSequence(start, end).toString() == keyword
+    }
+
+    private fun isAfterDot(): Boolean {
+        var cursor = tokenStart - 1
+        while (cursor >= startOffset && buffer[cursor].isWhitespace()) {
+            cursor--
+        }
+        return cursor >= startOffset && buffer[cursor] == '.'
+    }
+
+    private fun isFollowedByCall(identifierEnd: Int): Boolean {
+        var cursor = identifierEnd
+        while (cursor < endOffset && buffer[cursor].isWhitespace()) {
+            cursor++
+        }
+        return cursor < endOffset && buffer[cursor] == '('
     }
 
     companion object {

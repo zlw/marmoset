@@ -7,15 +7,17 @@ import kotlin.test.assertEquals
 class MarmosetLexerTest {
     @Test
     fun `native lexer recognizes core token classes`() {
-        val tokens = lex("""fn read(path: Str) -> Result[Int, Error] = try parse(path) or 0 # fallback""")
+        val tokens = lex("""fn read(path: Str) -> Result[Int, Error] = try parse(path) or io_shim.read(path) # fallback""")
 
         assertEquals(MarmosetTokenTypes.KEYWORD, tokens["fn"])
+        assertEquals(MarmosetTokenTypes.FUNCTION_DECLARATION, tokens["read"])
         assertEquals(MarmosetTokenTypes.TYPE, tokens["Str"])
         assertEquals(MarmosetTokenTypes.TYPE, tokens["Result"])
         assertEquals(MarmosetTokenTypes.OPERATOR, tokens["->"])
         assertEquals(MarmosetTokenTypes.KEYWORD, tokens["try"])
+        assertEquals(MarmosetTokenTypes.FUNCTION_CALL, tokens["parse"])
         assertEquals(MarmosetTokenTypes.KEYWORD, tokens["or"])
-        assertEquals(MarmosetTokenTypes.NUMBER, tokens["0"])
+        assertEquals(MarmosetTokenTypes.METHOD_CALL, tokens["io_shim.read"])
         assertEquals(MarmosetTokenTypes.COMMENT, tokens["# fallback"])
     }
 
@@ -24,7 +26,7 @@ class MarmosetLexerTest {
         lexer.start(source)
         val tokens = linkedMapOf<String, IElementType>()
         while (lexer.tokenType != null) {
-            val tokenText = source.substring(lexer.tokenStart, lexer.tokenEnd)
+            val tokenText = tokenText(source, lexer.tokenStart, lexer.tokenEnd)
             if (tokenText.isNotBlank()) {
                 tokens[tokenText] = lexer.tokenType!!
             }
@@ -32,4 +34,18 @@ class MarmosetLexerTest {
         }
         return tokens
     }
+
+    private fun tokenText(source: String, tokenStart: Int, tokenEnd: Int): String {
+        if (tokenStart >= 2 && source[tokenStart - 1] == '.' && isIdentifierPart(source[tokenStart - 2])) {
+            var receiverStart = tokenStart - 2
+            while (receiverStart > 0 && isIdentifierPart(source[receiverStart - 1])) {
+                receiverStart--
+            }
+            return source.substring(receiverStart, tokenEnd)
+        }
+        return source.substring(tokenStart, tokenEnd)
+    }
+
+    private fun isIdentifierPart(ch: Char): Boolean =
+        ch == '_' || ch == '?' || ch.isLetterOrDigit()
 }
