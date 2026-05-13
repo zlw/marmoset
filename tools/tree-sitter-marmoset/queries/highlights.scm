@@ -10,6 +10,7 @@
 "case" @keyword.conditional
 "try" @keyword
 "wrap" @keyword
+"or" @keyword
 "fn" @keyword.function
 "enum" @keyword.type
 "shape" @keyword.type

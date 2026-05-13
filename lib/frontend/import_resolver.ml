@@ -1378,16 +1378,23 @@ let rewrite_program
             arms
         in
         Ok AST.{ expr with expr = Match (scrutinee, arms) }
-    | AST.Try { tried; wrap } ->
+    | AST.Try { tried; wrap; fallback } ->
         let* tried = rewrite_expr ~value_scope ~type_bindings tried in
+        let* fallback =
+          match fallback with
+          | None -> Ok None
+          | Some expr -> Result.map Option.some (rewrite_expr ~value_scope ~type_bindings expr)
+        in
         let wrap =
           Option.map
             (fun (type_name, variant_name) ->
-              let type_name = rewrite_named_type_reference ~imports ~type_bindings ~available_bindings type_name in
+              let type_name =
+                rewrite_named_type_reference ~imports ~type_bindings ~available_bindings type_name
+              in
               (type_name, variant_name))
             wrap
         in
-        Ok AST.{ expr with expr = Try { tried; wrap } }
+        Ok AST.{ expr with expr = Try { tried; wrap; fallback } }
     | AST.RecordLit (fields, spread) ->
         let* fields =
           map_result

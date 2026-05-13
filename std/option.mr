@@ -17,14 +17,4 @@ impl[a] Option[a] = {
     case Option.Some(v): f(v)
     case Option.None: Option.None
   }
-
-  fn some?(self: Option[a]) -> Bool = match self {
-    case Option.Some(_): true
-    case Option.None: false
-  }
-
-  fn none?(self: Option[a]) -> Bool = match self {
-    case Option.Some(_): false
-    case Option.None: true
-  }
 }

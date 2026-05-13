@@ -51,8 +51,13 @@ run_project_expect_output \
 
 run_project_expect_output \
     "Option helpers are available as inherent methods without extra imports" \
-    $'43\n7\ntrue\ntrue' \
-    $'let absent: Option[Int] = Option.None\nlet lifted = Option.map(Option.Some(41), (x: Int) -> x + 1)\nlet bound = Option.bind(lifted, (x: Int) -> Option.Some(x + 1))\nmatch bound {\n  case Option.Some(v): puts(v)\n  case Option.None: puts(0)\n}\nputs(Option.value_or(absent, 7))\nputs(Option.some?(bound))\nputs(Option.none?(absent))\n'
+    $'43\n7' \
+    $'let absent: Option[Int] = Option.None\nlet lifted = Option.map(Option.Some(41), (x: Int) -> x + 1)\nlet bound = Option.bind(lifted, (x: Int) -> Option.Some(x + 1))\nmatch bound {\n  case Option.Some(v): puts(v)\n  case Option.None: puts(0)\n}\nputs(Option.value_or(absent, 7))\n'
+
+expect_reject \
+    "Option predicate helpers are not part of the minimal API" \
+    "Type 'Option' has no constructor or inherent method 'some?'" \
+    $'let present = Option.Some(1)\nputs(Option.some?(present))\n'
 
 run_project_expect_output \
     "Result helpers are available as inherent methods without extra imports" \

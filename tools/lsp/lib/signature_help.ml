@@ -204,7 +204,9 @@ let find_enclosing_call ~(source : string) (offset : int) (program : Ast.AST.pro
         List.iter (fun (f : Ast.AST.record_field) -> Option.iter visit_expr f.field_value) fields;
         Option.iter visit_expr spread
     | Ast.AST.EnumConstructor (_, _, args) -> List.iter visit_expr args
-    | Ast.AST.Try { tried; _ } -> visit_expr tried
+    | Ast.AST.Try { tried; fallback; _ } ->
+        visit_expr tried;
+        Option.iter visit_expr fallback
     | Ast.AST.TypeCheck (e, _) -> visit_expr e
     | Ast.AST.BlockExpr stmts -> List.iter visit_stmt stmts
     | Ast.AST.Identifier _ | Ast.AST.Integer _ | Ast.AST.Float _ | Ast.AST.Boolean _ | Ast.AST.String _ -> ()

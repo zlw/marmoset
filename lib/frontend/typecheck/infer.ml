@@ -930,13 +930,22 @@ let result_type_args (typ : mono_type) : (mono_type * mono_type) option =
       | _ -> None)
   | _ -> None
 
+let option_type_arg (typ : mono_type) : mono_type option =
+  match canonicalize_mono_type typ with
+  | TEnum (enum_name, [ value_type ]) -> (
+      match Enum_registry.lookup enum_name with
+      | Some def when Enum_registry.source_name def = "Option" -> Some value_type
+      | _ when Display_names.display_binding_name enum_name = "Option" -> Some value_type
+      | _ -> None)
+  | _ -> None
+
 let error_enum_name (typ : mono_type) : string option =
   match canonicalize_mono_type typ with
   | TEnum (enum_name, _) when Enum_registry.is_error_enum enum_name -> Some enum_name
   | _ -> None
 
-let instantiate_variant_fields (enum_name : string) (type_args : mono_type list)
-    (variant : Enum_registry.variant_def) : mono_type list =
+let instantiate_variant_fields
+    (enum_name : string) (type_args : mono_type list) (variant : Enum_registry.variant_def) : mono_type list =
   match Enum_registry.lookup enum_name with
   | None -> variant.fields
   | Some enum_def ->
@@ -1096,7 +1105,9 @@ let substitution_binds_any (protected_vars : StringSet.t) (subst : substitution)
   SubstMap.exists (fun name _ -> StringSet.mem name protected_vars) subst
 
 let binding_type_for_env
-    ?(type_bindings = []) ~(value_expr : AST.expression) ~(type_annotation : AST.type_expr option)
+    ?(type_bindings = [])
+    ~(value_expr : AST.expression)
+    ~(type_annotation : AST.type_expr option)
     (stmt_type : mono_type) : mono_type =
   match value_expr.expr with
   | AST.Function _ -> stmt_type
@@ -1640,7 +1651,9 @@ let rec placeholder_identifier_count_expr (expr : AST.expression) : int =
   | AST.Match (scrutinee, arms) ->
       placeholder_identifier_count_expr scrutinee
       + List.fold_left (fun acc arm -> acc + placeholder_identifier_count_expr arm.AST.body) 0 arms
-  | AST.Try { tried; _ } -> placeholder_identifier_count_expr tried
+  | AST.Try { tried; fallback; _ } ->
+      placeholder_identifier_count_expr tried
+      + (fallback |> Option.map placeholder_identifier_count_expr |> Option.value ~default:0)
   | AST.RecordLit (fields, spread) -> (
       let fields_count =
         List.fold_left
@@ -1905,7 +1918,9 @@ let rec resolve_expr_symbols (stack : symbol_scope_stack) (expr : AST.expression
   | AST.Match (scrutinee, arms) ->
       resolve_expr_symbols stack scrutinee;
       List.iter (resolve_match_arm_symbols stack) arms
-  | AST.Try { tried; _ } -> resolve_expr_symbols stack tried
+  | AST.Try { tried; fallback; _ } ->
+      resolve_expr_symbols stack tried;
+      Option.iter (resolve_expr_symbols stack) fallback
   | AST.RecordLit (fields, spread) -> (
       List.iter
         (fun (f : AST.record_field) ->
@@ -2169,7 +2184,7 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                 | Ok () ->
                     (* Check each arm and collect body types *)
                     infer_match_arms type_map env' scrutinee scrutinee_type arms subst expr))
-        | AST.Try { tried; wrap } -> infer_try type_map env expr tried wrap
+        | AST.Try { tried; wrap; fallback } -> infer_try type_map env expr tried wrap fallback
         | AST.RecordLit (fields, spread) -> infer_record_literal type_map env fields spread expr
         | AST.FieldAccess (receiver, variant_name) -> (
             let infer_enum_constructor_value (enum_source_name : string) : (substitution * mono_type) infer_result
@@ -3253,58 +3268,82 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
       Ok (subst, t)
   | Error e -> Error e
 
-and infer_try type_map env expr tried wrap : (substitution * mono_type) infer_result =
+and infer_try type_map env expr tried wrap fallback : (substitution * mono_type) infer_result =
+  let* subst, tried_type = infer_expression type_map env tried in
+  let tried_type' = apply_substitution subst tried_type in
+  match fallback with
+  | Some fallback_expr ->
+      if Option.is_some wrap then
+        Error (error_at ~code:"type-try" ~message:"try cannot use both wrap and or" expr)
+      else
+        let success_type =
+          match (result_type_args tried_type', option_type_arg tried_type') with
+          | Some (success_type, _), _ -> Ok success_type
+          | None, Some success_type -> Ok success_type
+          | None, None ->
+              Error (error_at ~code:"type-try" ~message:"tried expression must have type Result or Option" tried)
+        in
+        let* success_type = success_type in
+        let* final_subst, _fallback_type =
+          infer_arg_against_expected type_map env subst fallback_expr success_type
+        in
+        Ok (final_subst, apply_substitution final_subst success_type)
+  | None -> (
+      match (result_type_args tried_type', option_type_arg tried_type') with
+      | None, Some success_type ->
+          let outer_value =
+            match current_function_return_type () with
+            | None ->
+                Error
+                  (error_at ~code:"type-try" ~message:"try expression is only valid inside function bodies" expr)
+            | Some None ->
+                Error
+                  (error_at ~code:"type-try" ~message:"try on Option requires enclosing function to return Option"
+                     expr)
+            | Some (Some enclosing_return) -> (
+                match option_type_arg enclosing_return with
+                | Some value_type -> Ok value_type
+                | None ->
+                    Error
+                      (error_at ~code:"type-try"
+                         ~message:"try on Option requires enclosing function to return Option" expr))
+          in
+          let* _outer_value = outer_value in
+          Ok (subst, success_type)
+      | Some (success_type, inner_error), _ ->
+          infer_result_try type_map expr tried subst success_type inner_error wrap
+      | None, None ->
+          Error (error_at ~code:"type-try" ~message:"tried expression must have type Result or Option" tried))
+
+and infer_result_try _type_map expr _tried subst success_type inner_error wrap :
+    (substitution * mono_type) infer_result =
   let* _outer_ok, outer_error =
     match current_function_return_type () with
     | None ->
-        Error
-          (error_at ~code:"type-try"
-             ~message:"try expression is only valid inside function bodies"
-             expr)
-    | Some None ->
-        Error
-          (error_at ~code:"type-try" ~message:"enclosing function must return Result" expr)
+        Error (error_at ~code:"type-try" ~message:"try expression is only valid inside function bodies" expr)
+    | Some None -> Error (error_at ~code:"type-try" ~message:"enclosing function must return Result" expr)
     | Some (Some enclosing_return) -> (
         match result_type_args enclosing_return with
         | Some args -> Ok args
-        | None ->
-            Error
-              (error_at ~code:"type-try" ~message:"enclosing function must return Result" expr))
+        | None -> Error (error_at ~code:"type-try" ~message:"enclosing function must return Result" expr))
   in
-  let* subst, tried_type = infer_expression type_map env tried in
-  let tried_type' = apply_substitution subst tried_type in
   let outer_error' = apply_substitution subst outer_error in
-  let* success_type, inner_error =
-    match result_type_args tried_type' with
-    | Some args -> Ok args
-    | None ->
-        Error
-          (error_at ~code:"type-try"
-             ~message:"tried expression must have type Result"
-             tried)
-  in
   let inner_error' = apply_substitution subst inner_error in
   match wrap with
   | None ->
       if Option.is_none (error_enum_name inner_error') || Option.is_none (error_enum_name outer_error') then
         Error
-          (error_at ~code:"type-try"
-             ~message:"try requires Result error types to be Error or *Error enums"
-             expr)
+          (error_at ~code:"type-try" ~message:"try requires Result error types to be Error or *Error enums" expr)
       else if mono_types_unify inner_error' outer_error' then
         Ok (subst, success_type)
       else
-        Error
-          (error_at ~code:"type-try"
-             ~message:"try without wrap requires matching error types"
-             expr)
+        Error (error_at ~code:"type-try" ~message:"try without wrap requires matching error types" expr)
   | Some (target_type, target_variant) -> (
       let target_enum_name = canonical_enum_name_of_source_name target_type in
       match canonicalize_mono_type outer_error' with
       | TEnum (outer_enum_name, outer_args) when target_enum_name = outer_enum_name -> (
           if not (Enum_registry.is_error_enum target_enum_name) then
-            Error
-              (error_at ~code:"type-try" ~message:"wrap target type must be an error type" expr)
+            Error (error_at ~code:"type-try" ~message:"wrap target type must be an error type" expr)
           else
             match Enum_registry.lookup_variant target_enum_name target_variant with
             | None ->
@@ -3324,13 +3363,8 @@ and infer_try type_map env expr tried wrap : (substitution * mono_type) infer_re
                             (Types.to_string (canonicalize_mono_type inner_error')))
                        expr))
       | TEnum _ ->
-          Error
-            (error_at ~code:"type-try"
-               ~message:"wrap target must match enclosing Result error type"
-               expr)
-      | _ ->
-          Error
-            (error_at ~code:"type-try" ~message:"enclosing function must return Result" expr))
+          Error (error_at ~code:"type-try" ~message:"wrap target must match enclosing Result error type" expr)
+      | _ -> Error (error_at ~code:"type-try" ~message:"enclosing function must return Result" expr))
 (* ============================================================
    Prefix Operators: !, -
    ============================================================ *)
@@ -3675,7 +3709,9 @@ and expr_has_effectful_call (type_map : type_map) (expr : AST.expression) : bool
   | AST.Match (scrutinee, arms) ->
       expr_has_effectful_call type_map scrutinee
       || List.exists (fun (arm : AST.match_arm) -> expr_has_effectful_call type_map arm.body) arms
-  | AST.Try { tried; _ } -> expr_has_effectful_call type_map tried
+  | AST.Try { tried; fallback; _ } ->
+      expr_has_effectful_call type_map tried
+      || fallback |> Option.map (expr_has_effectful_call type_map) |> Option.value ~default:false
   | AST.RecordLit (fields, spread) -> (
       List.exists
         (fun (f : AST.record_field) ->
@@ -4023,7 +4059,9 @@ and collect_used_names_expr (used : StringSet.t) (expr : AST.expression) : Strin
         (fun acc arm -> collect_used_names_expr acc arm.AST.body)
         (collect_used_names_expr used scrutinee)
         arms
-  | AST.Try { tried; _ } -> collect_used_names_expr used tried
+  | AST.Try { tried; fallback; _ } ->
+      let used = collect_used_names_expr used tried in
+      fallback |> Option.map (collect_used_names_expr used) |> Option.value ~default:used
   | AST.RecordLit (fields, spread) -> (
       let used =
         List.fold_left
@@ -4118,8 +4156,13 @@ and replace_placeholder_identifier_expr (param_name : string) (expr : AST.expres
               (fun (arm : AST.match_arm) ->
                 { arm with body = replace_placeholder_identifier_expr param_name arm.body })
               arms )
-    | AST.Try { tried; wrap } ->
-        AST.Try { tried = replace_placeholder_identifier_expr param_name tried; wrap }
+    | AST.Try { tried; wrap; fallback } ->
+        AST.Try
+          {
+            tried = replace_placeholder_identifier_expr param_name tried;
+            wrap;
+            fallback = Option.map (replace_placeholder_identifier_expr param_name) fallback;
+          }
     | AST.RecordLit (fields, spread) ->
         AST.RecordLit
           ( List.map
@@ -5318,46 +5361,52 @@ and infer_statement ?(type_bindings = []) type_map env stmt =
       if is_error_type_name type_name then
         Error (error_name_reserved_diagnostic stmt type_name)
       else
-      let type_bindings = List.map (fun name -> (name, TVar name)) type_type_params in
-      let convert_type_expr (te : AST.type_expr) : (mono_type, Diagnostic.t) result =
-        Annotation.type_expr_to_mono_type_with type_bindings te
-      in
-      match type_body with
-      | AST.NamedTypeProduct fields ->
-          let* field_types =
-            map_result
-              (fun (f : AST.record_type_field) ->
-                let* typ = convert_type_expr f.field_type in
-                Ok { Types.name = f.field_name; typ })
-              fields
-          in
-          Type_registry.register_named_type
-            {
-              Type_registry.named_type_name = type_name;
-              named_type_params = type_type_params;
-              named_type_body = Type_registry.NamedProduct field_types;
-            };
-          Ok (empty_substitution, TNull)
-      | AST.NamedTypeWrapper wrapper_bodies -> (
-          let* wrapper_types = map_result convert_type_expr wrapper_bodies in
-          let wrapper_types = List.map canonicalize_mono_type wrapper_types in
-          match List.find_opt (function TUnion _ -> true | _ -> false) wrapper_types with
-          | Some _ ->
-              Error
-                (error_at_stmt ~code:"type-invalid-wrapper"
-                   ~message:
-                     (Printf.sprintf
-                        "Named type '%s' cannot wrap a raw structural union in this milestone; use a transparent type for the union or a named sum type instead"
-                        type_name)
-                   stmt)
-          | None ->
-              Type_registry.register_named_type
-                {
-                  Type_registry.named_type_name = type_name;
-                  named_type_params = type_type_params;
-                  named_type_body = Type_registry.NamedWrapper wrapper_types;
-                };
-              Ok (empty_substitution, TNull)))
+        let type_bindings = List.map (fun name -> (name, TVar name)) type_type_params in
+        let convert_type_expr (te : AST.type_expr) : (mono_type, Diagnostic.t) result =
+          Annotation.type_expr_to_mono_type_with type_bindings te
+        in
+        match type_body with
+        | AST.NamedTypeProduct fields ->
+            let* field_types =
+              map_result
+                (fun (f : AST.record_type_field) ->
+                  let* typ = convert_type_expr f.field_type in
+                  Ok { Types.name = f.field_name; typ })
+                fields
+            in
+            Type_registry.register_named_type
+              {
+                Type_registry.named_type_name = type_name;
+                named_type_params = type_type_params;
+                named_type_body = Type_registry.NamedProduct field_types;
+              };
+            Ok (empty_substitution, TNull)
+        | AST.NamedTypeWrapper wrapper_bodies -> (
+            let* wrapper_types = map_result convert_type_expr wrapper_bodies in
+            let wrapper_types = List.map canonicalize_mono_type wrapper_types in
+            match
+              List.find_opt
+                (function
+                  | TUnion _ -> true
+                  | _ -> false)
+                wrapper_types
+            with
+            | Some _ ->
+                Error
+                  (error_at_stmt ~code:"type-invalid-wrapper"
+                     ~message:
+                       (Printf.sprintf
+                          "Named type '%s' cannot wrap a raw structural union in this milestone; use a transparent type for the union or a named sum type instead"
+                          type_name)
+                     stmt)
+            | None ->
+                Type_registry.register_named_type
+                  {
+                    Type_registry.named_type_name = type_name;
+                    named_type_params = type_type_params;
+                    named_type_body = Type_registry.NamedWrapper wrapper_types;
+                  };
+                Ok (empty_substitution, TNull)))
   | AST.ShapeDef { shape_name; shape_type_params; shape_fields } ->
       let type_bindings = List.map (fun name -> (name, TVar name)) shape_type_params in
       let* field_types =
@@ -5401,7 +5450,8 @@ and infer_statement ?(type_bindings = []) type_map env stmt =
             | None -> Ok ())
       in
       (* Predeclare the type name so recursive constructor payloads can resolve. *)
-      Enum_registry.register { Enum_registry.name; source_name = Some source_name; type_params; variants = []; kind };
+      Enum_registry.register
+        { Enum_registry.name; source_name = Some source_name; type_params; variants = []; kind };
       let type_bindings = List.map (fun type_param -> (type_param, TVar type_param)) type_params in
       let convert_type_expr (te : AST.type_expr) : (mono_type, Diagnostic.t) result =
         match Annotation.type_expr_to_mono_type_with type_bindings te with
@@ -5419,7 +5469,8 @@ and infer_statement ?(type_bindings = []) type_map env stmt =
       match variant_defs_result with
       | Error e -> Error e
       | Ok variant_defs ->
-          Enum_registry.register { Enum_registry.name; source_name = Some source_name; type_params; variants = variant_defs; kind };
+          Enum_registry.register
+            { Enum_registry.name; source_name = Some source_name; type_params; variants = variant_defs; kind };
           Ok (empty_substitution, TNull))
   | AST.TraitDef { name; type_param; type_params; supertraits; methods } -> (
       let type_params =
@@ -6710,7 +6761,7 @@ and check_pattern pattern scrutinee_type =
             when let source_name = Display_names.display_binding_name type_name in
                  (enum_name = type_name || enum_name = source_name) && variant_name = source_name -> (
               match Type_registry.instantiate_named_wrapper_representation type_name type_args with
-              | Some (Ok payload_types) ->
+              | Some (Ok payload_types) -> (
                   if List.length field_patterns <> List.length payload_types then
                     Error
                       (error ~code:"type-pattern"
@@ -6728,7 +6779,7 @@ and check_pattern pattern scrutinee_type =
                               check_fields (bindings_acc @ field_bindings) rest_pats rest_types)
                       | _ -> Error (error ~code:"type-pattern" ~message:"Field pattern count mismatch")
                     in
-                    (match check_fields [] field_patterns payload_types with
+                    match check_fields [] field_patterns payload_types with
                     | Error e -> Error e
                     | Ok bindings -> Ok (bindings, scrutinee_type))
               | Some (Error msg) -> Error (error ~code:"type-pattern" ~message:msg)
@@ -7081,9 +7132,7 @@ let predeclare_top_level_lets (env : type_env) (program : AST.program) : (type_e
             if TypeEnv.mem name env_acc || StringSet.mem name seen then
               go seen env_acc rest
             else
-              go (StringSet.add name seen)
-                (TypeEnv.add name (mono_to_poly (TNamed (name, []))) env_acc)
-                rest
+              go (StringSet.add name seen) (TypeEnv.add name (mono_to_poly (TNamed (name, []))) env_acc) rest
         | _ -> go seen env_acc rest)
   in
   go StringSet.empty env program
@@ -7196,7 +7245,8 @@ let validate_error_type_aliases (program : AST.program) : (unit, Diagnostic.t) r
               Error
                 (error_at_stmt ~code:"error-alias-name"
                    ~message:
-                     (Printf.sprintf "Type '%s' aliases an error type, but error aliases must be named Error or *Error."
+                     (Printf.sprintf
+                        "Type '%s' aliases an error type, but error aliases must be named Error or *Error."
                         alias_source_name)
                    stmt)
             else
@@ -7243,216 +7293,226 @@ let infer_program
                       match validate_error_type_aliases expanded_program with
                       | Error e -> Error e
                       | Ok () -> (
-                      match resolve_program_symbols ~prebound_symbols env expanded_program with
-                      | Error e -> Error e
-                      | Ok () -> (
-                          let predeclare_top_level_impl_headers (program : AST.program) : unit =
-                            List.iter
-                              (fun (stmt : AST.statement) ->
-                                match stmt.stmt with
-                                | AST.ImplDef impl_def when impl_def.impl_type_params = [] -> (
-                                    match Annotation.type_expr_to_mono_type impl_def.impl_for_type with
-                                    | Ok for_type ->
-                                        Trait_registry.predeclare_impl_header
-                                          {
-                                            Trait_registry.impl_trait_name = impl_def.impl_trait_name;
-                                            impl_type_params = [];
-                                            impl_for_type = for_type;
-                                            impl_trait_args = [ for_type ];
-                                            impl_methods = [];
-                                          }
-                                    | Error _ -> ())
-                                | _ -> ())
-                              program
-                          in
-                          predeclare_top_level_impl_headers expanded_program;
-                          let type_map = create_type_map () in
-                          let register_top_level_declaration
-                              seen_traits seen_enums seen_aliases seen_types seen_shapes (stmt : AST.statement) =
-                            match stmt.stmt with
-                            | AST.TypeAlias alias_def ->
-                                if StringSet.mem alias_def.alias_name seen_aliases then
-                                  Error
-                                    (error ~code:"type-constructor"
-                                       ~message:
-                                         (Printf.sprintf "Duplicate type definition: %s" alias_def.alias_name))
-                                else
-                                  Ok
-                                    ( seen_traits,
-                                      seen_enums,
-                                      StringSet.add alias_def.alias_name seen_aliases,
-                                      seen_types,
-                                      seen_shapes )
-                            | AST.TypeDef type_def ->
-                                if StringSet.mem type_def.type_name seen_types then
-                                  Error
-                                    (error ~code:"type-constructor"
-                                       ~message:
-                                         (Printf.sprintf "Duplicate type definition: %s" type_def.type_name))
-                                else
-                                  Ok
-                                    ( seen_traits,
-                                      seen_enums,
-                                      seen_aliases,
-                                      StringSet.add type_def.type_name seen_types,
-                                      seen_shapes )
-                            | AST.ExternTypeDef extern_type_def ->
-                                if StringSet.mem extern_type_def.extern_type_name seen_types then
-                                  Error
-                                    (error ~code:"type-constructor"
-                                       ~message:
-                                         (Printf.sprintf "Duplicate type definition: %s"
-                                            extern_type_def.extern_type_name))
-                                else
-                                  Ok
-                                    ( seen_traits,
-                                      seen_enums,
-                                      seen_aliases,
-                                      StringSet.add extern_type_def.extern_type_name seen_types,
-                                      seen_shapes )
-                            | AST.ShapeDef shape_def ->
-                                if StringSet.mem shape_def.shape_name seen_shapes then
-                                  Error
-                                    (error ~code:"type-constructor"
-                                       ~message:
-                                         (Printf.sprintf "Duplicate shape definition: %s" shape_def.shape_name))
-                                else
-                                  Ok
-                                    ( seen_traits,
-                                      seen_enums,
-                                      seen_aliases,
-                                      seen_types,
-                                      StringSet.add shape_def.shape_name seen_shapes )
-                            | AST.TraitDef trait_def ->
-                                if StringSet.mem trait_def.name seen_traits then
-                                  Error
-                                    (error ~code:"type-constructor"
-                                       ~message:(Printf.sprintf "Duplicate trait definition: %s" trait_def.name))
-                                else
-                                  Ok
-                                    ( StringSet.add trait_def.name seen_traits,
-                                      seen_enums,
-                                      seen_aliases,
-                                      seen_types,
-                                      seen_shapes )
-                            | AST.EnumDef enum_def ->
-                                if StringSet.mem enum_def.name seen_enums then
-                                  Error
-                                    (error ~code:"type-constructor"
-                                       ~message:(Printf.sprintf "Duplicate type definition: %s" enum_def.name))
-                                else
-                                  Ok
-                                    ( seen_traits,
-                                      StringSet.add enum_def.name seen_enums,
-                                      seen_aliases,
-                                      seen_types,
-                                      seen_shapes )
-                            | AST.ExternBlock _ ->
-                                Ok (seen_traits, seen_enums, seen_aliases, seen_types, seen_shapes)
-                            | _ -> Ok (seen_traits, seen_enums, seen_aliases, seen_types, seen_shapes)
-                          in
-                          let rec register_top_level_externs = function
-                            | [] -> Ok ()
-                            | (stmt : AST.statement) :: rest -> (
-                                match stmt.stmt with
-                                | AST.ExternBlock block ->
-                                    let declaring_module =
-                                      Extern_registry.declaring_module_or
-                                        (Option.value stmt.file_id ~default:"<unknown>")
-                                    in
-                                    let file_id = stmt.file_id in
-                                    let* () = Extern_registry.register_block ~declaring_module ~file_id block in
-                                    register_top_level_externs rest
-                                | _ -> register_top_level_externs rest)
-                          in
-                          let infer_top_level_stmt env (stmt : AST.statement) =
-                            match stmt.stmt with
-                            | AST.Let let_binding ->
-                                infer_let ~prefer_existing_self:true type_map env let_binding.name
-                                  let_binding.value let_binding.type_annotation
-                            | _ -> infer_statement type_map env stmt
-                          in
-                          let add_let_binding env (stmt : AST.statement) stmt_type =
-                            match stmt.stmt with
-                            | AST.Let let_binding ->
-                                if let_binding.name = "_" then
-                                  env
-                                else
-                                  let binding_type =
-                                    binding_type_for_env ~value_expr:let_binding.value
-                                      ~type_annotation:let_binding.type_annotation stmt_type
-                                  in
-                                  (match current_top_level_placeholder_type env let_binding.name with
-                                  | Some _ -> set_top_level_placeholder let_binding.name binding_type
-                                  | None -> ());
-                                  let env_for_generalize = TypeEnv.remove let_binding.name env in
-                                  let poly =
-                                    if should_monomorphize_let_binding_value let_binding.value then
-                                      mono_to_poly binding_type
-                                    else
-                                      generalize env_for_generalize binding_type
-                                  in
-                                  TypeEnv.add let_binding.name poly env
-                            | _ -> env
-                          in
-                          let rec go
-                              env
-                              subst
-                              seen_traits
-                              seen_enums
-                              seen_aliases
-                              seen_types
-                              seen_shapes
-                              (stmts : AST.statement list) =
-                            match stmts with
-                            | [] -> Ok (env, subst, TNull)
-                            | [ stmt ] -> (
-                                match
-                                  register_top_level_declaration seen_traits seen_enums seen_aliases seen_types
-                                    seen_shapes stmt
-                                with
-                                | Error e -> Error e
-                                | Ok (_seen_traits', _seen_enums', _seen_aliases', _seen_types', _seen_shapes')
-                                  -> (
-                                    match infer_top_level_stmt env stmt with
-                                    | Error e -> Error e
-                                    | Ok (stmt_subst, stmt_type) ->
-                                        let final_subst = compose_substitution subst stmt_subst in
-                                        let env' = apply_substitution_env final_subst env in
-                                        let stmt_type' = apply_substitution final_subst stmt_type in
-                                        let env'' = add_let_binding env' stmt stmt_type' in
-                                        Ok (env'', final_subst, stmt_type')))
-                            | stmt :: rest -> (
-                                match
-                                  register_top_level_declaration seen_traits seen_enums seen_aliases seen_types
-                                    seen_shapes stmt
-                                with
-                                | Error e -> Error e
-                                | Ok (seen_traits', seen_enums', seen_aliases', seen_types', seen_shapes') -> (
-                                    match infer_top_level_stmt env stmt with
-                                    | Error e -> Error e
-                                    | Ok (stmt_subst, stmt_type) ->
-                                        let subst' = compose_substitution subst stmt_subst in
-                                        let env' = apply_substitution_env stmt_subst env in
-                                        let env'' = add_let_binding env' stmt stmt_type in
-                                        go env'' subst' seen_traits' seen_enums' seen_aliases' seen_types'
-                                          seen_shapes' rest))
-                          in
-                          match predeclare_top_level_lets env expanded_program with
+                          match resolve_program_symbols ~prebound_symbols env expanded_program with
                           | Error e -> Error e
-                          | Ok env_with_placeholders -> (
-                              match register_top_level_externs expanded_program with
+                          | Ok () -> (
+                              let predeclare_top_level_impl_headers (program : AST.program) : unit =
+                                List.iter
+                                  (fun (stmt : AST.statement) ->
+                                    match stmt.stmt with
+                                    | AST.ImplDef impl_def when impl_def.impl_type_params = [] -> (
+                                        match Annotation.type_expr_to_mono_type impl_def.impl_for_type with
+                                        | Ok for_type ->
+                                            Trait_registry.predeclare_impl_header
+                                              {
+                                                Trait_registry.impl_trait_name = impl_def.impl_trait_name;
+                                                impl_type_params = [];
+                                                impl_for_type = for_type;
+                                                impl_trait_args = [ for_type ];
+                                                impl_methods = [];
+                                              }
+                                        | Error _ -> ())
+                                    | _ -> ())
+                                  program
+                              in
+                              predeclare_top_level_impl_headers expanded_program;
+                              let type_map = create_type_map () in
+                              let register_top_level_declaration
+                                  seen_traits
+                                  seen_enums
+                                  seen_aliases
+                                  seen_types
+                                  seen_shapes
+                                  (stmt : AST.statement) =
+                                match stmt.stmt with
+                                | AST.TypeAlias alias_def ->
+                                    if StringSet.mem alias_def.alias_name seen_aliases then
+                                      Error
+                                        (error ~code:"type-constructor"
+                                           ~message:
+                                             (Printf.sprintf "Duplicate type definition: %s" alias_def.alias_name))
+                                    else
+                                      Ok
+                                        ( seen_traits,
+                                          seen_enums,
+                                          StringSet.add alias_def.alias_name seen_aliases,
+                                          seen_types,
+                                          seen_shapes )
+                                | AST.TypeDef type_def ->
+                                    if StringSet.mem type_def.type_name seen_types then
+                                      Error
+                                        (error ~code:"type-constructor"
+                                           ~message:
+                                             (Printf.sprintf "Duplicate type definition: %s" type_def.type_name))
+                                    else
+                                      Ok
+                                        ( seen_traits,
+                                          seen_enums,
+                                          seen_aliases,
+                                          StringSet.add type_def.type_name seen_types,
+                                          seen_shapes )
+                                | AST.ExternTypeDef extern_type_def ->
+                                    if StringSet.mem extern_type_def.extern_type_name seen_types then
+                                      Error
+                                        (error ~code:"type-constructor"
+                                           ~message:
+                                             (Printf.sprintf "Duplicate type definition: %s"
+                                                extern_type_def.extern_type_name))
+                                    else
+                                      Ok
+                                        ( seen_traits,
+                                          seen_enums,
+                                          seen_aliases,
+                                          StringSet.add extern_type_def.extern_type_name seen_types,
+                                          seen_shapes )
+                                | AST.ShapeDef shape_def ->
+                                    if StringSet.mem shape_def.shape_name seen_shapes then
+                                      Error
+                                        (error ~code:"type-constructor"
+                                           ~message:
+                                             (Printf.sprintf "Duplicate shape definition: %s" shape_def.shape_name))
+                                    else
+                                      Ok
+                                        ( seen_traits,
+                                          seen_enums,
+                                          seen_aliases,
+                                          seen_types,
+                                          StringSet.add shape_def.shape_name seen_shapes )
+                                | AST.TraitDef trait_def ->
+                                    if StringSet.mem trait_def.name seen_traits then
+                                      Error
+                                        (error ~code:"type-constructor"
+                                           ~message:
+                                             (Printf.sprintf "Duplicate trait definition: %s" trait_def.name))
+                                    else
+                                      Ok
+                                        ( StringSet.add trait_def.name seen_traits,
+                                          seen_enums,
+                                          seen_aliases,
+                                          seen_types,
+                                          seen_shapes )
+                                | AST.EnumDef enum_def ->
+                                    if StringSet.mem enum_def.name seen_enums then
+                                      Error
+                                        (error ~code:"type-constructor"
+                                           ~message:(Printf.sprintf "Duplicate type definition: %s" enum_def.name))
+                                    else
+                                      Ok
+                                        ( seen_traits,
+                                          StringSet.add enum_def.name seen_enums,
+                                          seen_aliases,
+                                          seen_types,
+                                          seen_shapes )
+                                | AST.ExternBlock _ ->
+                                    Ok (seen_traits, seen_enums, seen_aliases, seen_types, seen_shapes)
+                                | _ -> Ok (seen_traits, seen_enums, seen_aliases, seen_types, seen_shapes)
+                              in
+                              let rec register_top_level_externs = function
+                                | [] -> Ok ()
+                                | (stmt : AST.statement) :: rest -> (
+                                    match stmt.stmt with
+                                    | AST.ExternBlock block ->
+                                        let declaring_module =
+                                          Extern_registry.declaring_module_or
+                                            (Option.value stmt.file_id ~default:"<unknown>")
+                                        in
+                                        let file_id = stmt.file_id in
+                                        let* () =
+                                          Extern_registry.register_block ~declaring_module ~file_id block
+                                        in
+                                        register_top_level_externs rest
+                                    | _ -> register_top_level_externs rest)
+                              in
+                              let infer_top_level_stmt env (stmt : AST.statement) =
+                                match stmt.stmt with
+                                | AST.Let let_binding ->
+                                    infer_let ~prefer_existing_self:true type_map env let_binding.name
+                                      let_binding.value let_binding.type_annotation
+                                | _ -> infer_statement type_map env stmt
+                              in
+                              let add_let_binding env (stmt : AST.statement) stmt_type =
+                                match stmt.stmt with
+                                | AST.Let let_binding ->
+                                    if let_binding.name = "_" then
+                                      env
+                                    else
+                                      let binding_type =
+                                        binding_type_for_env ~value_expr:let_binding.value
+                                          ~type_annotation:let_binding.type_annotation stmt_type
+                                      in
+                                      (match current_top_level_placeholder_type env let_binding.name with
+                                      | Some _ -> set_top_level_placeholder let_binding.name binding_type
+                                      | None -> ());
+                                      let env_for_generalize = TypeEnv.remove let_binding.name env in
+                                      let poly =
+                                        if should_monomorphize_let_binding_value let_binding.value then
+                                          mono_to_poly binding_type
+                                        else
+                                          generalize env_for_generalize binding_type
+                                      in
+                                      TypeEnv.add let_binding.name poly env
+                                | _ -> env
+                              in
+                              let rec go
+                                  env
+                                  subst
+                                  seen_traits
+                                  seen_enums
+                                  seen_aliases
+                                  seen_types
+                                  seen_shapes
+                                  (stmts : AST.statement list) =
+                                match stmts with
+                                | [] -> Ok (env, subst, TNull)
+                                | [ stmt ] -> (
+                                    match
+                                      register_top_level_declaration seen_traits seen_enums seen_aliases
+                                        seen_types seen_shapes stmt
+                                    with
+                                    | Error e -> Error e
+                                    | Ok (_seen_traits', _seen_enums', _seen_aliases', _seen_types', _seen_shapes')
+                                      -> (
+                                        match infer_top_level_stmt env stmt with
+                                        | Error e -> Error e
+                                        | Ok (stmt_subst, stmt_type) ->
+                                            let final_subst = compose_substitution subst stmt_subst in
+                                            let env' = apply_substitution_env final_subst env in
+                                            let stmt_type' = apply_substitution final_subst stmt_type in
+                                            let env'' = add_let_binding env' stmt stmt_type' in
+                                            Ok (env'', final_subst, stmt_type')))
+                                | stmt :: rest -> (
+                                    match
+                                      register_top_level_declaration seen_traits seen_enums seen_aliases
+                                        seen_types seen_shapes stmt
+                                    with
+                                    | Error e -> Error e
+                                    | Ok (seen_traits', seen_enums', seen_aliases', seen_types', seen_shapes')
+                                      -> (
+                                        match infer_top_level_stmt env stmt with
+                                        | Error e -> Error e
+                                        | Ok (stmt_subst, stmt_type) ->
+                                            let subst' = compose_substitution subst stmt_subst in
+                                            let env' = apply_substitution_env stmt_subst env in
+                                            let env'' = add_let_binding env' stmt stmt_type in
+                                            go env'' subst' seen_traits' seen_enums' seen_aliases' seen_types'
+                                              seen_shapes' rest))
+                              in
+                              match predeclare_top_level_lets env expanded_program with
                               | Error e -> Error e
-                              | Ok () -> (
-                                  match
-                                    go env_with_placeholders empty_substitution StringSet.empty StringSet.empty
-                                      StringSet.empty StringSet.empty StringSet.empty expanded_program
-                                  with
+                              | Ok env_with_placeholders -> (
+                                  match register_top_level_externs expanded_program with
                                   | Error e -> Error e
-                                  | Ok (env', final_subst, result_type) ->
-                                      apply_substitution_type_map final_subst type_map;
-                                      apply_substitution_method_type_args_store final_subst;
-                                      Ok (env', type_map, result_type))))))))))
+                                  | Ok () -> (
+                                      match
+                                        go env_with_placeholders empty_substitution StringSet.empty
+                                          StringSet.empty StringSet.empty StringSet.empty StringSet.empty
+                                          expanded_program
+                                      with
+                                      | Error e -> Error e
+                                      | Ok (env', final_subst, result_type) ->
+                                          apply_substitution_type_map final_subst type_map;
+                                          apply_substitution_method_type_args_store final_subst;
+                                          Ok (env', type_map, result_type))))))))))
 
 module Test = struct
   (* Helper to parse and infer *)
@@ -7540,7 +7600,9 @@ module Test = struct
     | AST.Match (scrutinee, arms) ->
         identifier_occurrences_in_expr name scrutinee
         @ List.concat_map (fun (arm : AST.match_arm) -> identifier_occurrences_in_expr name arm.body) arms
-    | AST.Try { tried; _ } -> identifier_occurrences_in_expr name tried
+    | AST.Try { tried; fallback; _ } ->
+        identifier_occurrences_in_expr name tried
+        @ (fallback |> Option.map (identifier_occurrences_in_expr name) |> Option.value ~default:[])
     | AST.RecordLit (fields, spread) -> (
         List.concat_map
           (fun (f : AST.record_field) ->
@@ -8184,8 +8246,12 @@ module Test = struct
     match infer_string "type FileError = { NotFound = \"File not found\" }\nFileError.NotFound" with
     | Ok _ -> (
         match Enum_registry.lookup "FileError" with
-        | Some { Enum_registry.kind = Enum_registry.ErrorEnum; variants = [ { message = Some "File not found"; _ } ]; _ }
-          ->
+        | Some
+            {
+              Enum_registry.kind = Enum_registry.ErrorEnum;
+              variants = [ { message = Some "File not found"; _ } ];
+              _;
+            } ->
             true
         | _ -> false)
     | Error _ -> false
@@ -8211,7 +8277,9 @@ module Test = struct
     | Ok _ -> false
 
   let%test "alias to error type must use error name" =
-    match infer_string "type PgError = { Down = \"Database unavailable\" }\ntype Problem = PgError\nProblem.Down" with
+    match
+      infer_string "type PgError = { Down = \"Database unavailable\" }\ntype Problem = PgError\nProblem.Down"
+    with
     | Error diag -> is_code diag "error-alias-name"
     | Ok _ -> false
 
@@ -8221,7 +8289,9 @@ module Test = struct
     | Ok _ -> false
 
   let%test "error alias to error type is accepted" =
-    match infer_string "type PgError = { Down = \"Database unavailable\" }\ntype DbError = PgError\nPgError.Down" with
+    match
+      infer_string "type PgError = { Down = \"Database unavailable\" }\ntype DbError = PgError\nPgError.Down"
+    with
     | Ok (_, _, TEnum ("PgError", [])) -> true
     | _ -> false
 

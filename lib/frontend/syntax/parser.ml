@@ -1083,13 +1083,13 @@ and parse_variant_list (p : parser) : (parser * Surface.surface_variant_def list
               "variant messages belong after the payload as '= \"message\"', not inside payload parentheses"
           else
             let* lp3, fields = parse_type_expr_list field_start in
-          let* lp4 =
-            if curr_token_is lp3 Token.RParen then
-              Ok lp3
-            else
-              expect_peek lp3 Token.RParen
-          in
-          Ok (next_token lp4, fields)
+            let* lp4 =
+              if curr_token_is lp3 Token.RParen then
+                Ok lp3
+              else
+                expect_peek lp3 Token.RParen
+            in
+            Ok (next_token lp4, fields)
         else
           Ok (lp2, [])
       in
@@ -2554,8 +2554,7 @@ and parse_try_expression (p : parser) : (parser * Surface.surface_expr, parser) 
         Ok (p_last, Some (type_ref, variant_ref))
     | _ ->
         Error
-          (add_error ~code:"parse-invalid-try-wrap" p_first
-             "expected wrap target in the form ErrorType.Variant")
+          (add_error ~code:"parse-invalid-try-wrap" p_first "expected wrap target in the form ErrorType.Variant")
   in
   let pos = p.curr_token.pos in
   let* p_tried, tried = parse_expression (next_token p) prec_lowest in
@@ -2565,8 +2564,22 @@ and parse_try_expression (p : parser) : (parser * Surface.surface_expr, parser) 
     else
       Ok (p_tried, None)
   in
+  let* p_end, fallback =
+    if peek_token_is p_end Token.Ident && p_end.peek_token.literal = "or" then
+      if Option.is_some wrap then
+        Error (add_error ~code:"parse-invalid-try-or" p_end "try cannot use both wrap and or")
+      else
+        let p_or = next_token p_end in
+        let* p_fallback, fallback = parse_expression (next_token p_or) prec_lowest in
+        Ok (p_fallback, Some fallback)
+    else
+      Ok (p_end, None)
+  in
   let id = fresh_id p_end in
-  Ok (p_end, with_surface_expr_end p_end (mk_surface_expr id pos (Surface.SETry { se_tried = tried; se_wrap = wrap })))
+  Ok
+    ( p_end,
+      with_surface_expr_end p_end
+        (mk_surface_expr id pos (Surface.SETry { se_tried = tried; se_wrap = wrap; se_fallback = fallback })) )
 
 and parse_match_arms (p : parser) : (parser * Surface.surface_match_arm list, parser) result =
   let rec loop lp arms =
@@ -3674,7 +3687,8 @@ module Test = struct
       | AST.Match (scrutinee, arms) ->
           collect_expr_ids scrutinee
           @ List.concat_map (fun (arm : AST.match_arm) -> collect_expr_ids arm.body) arms
-      | AST.Try { tried; _ } -> collect_expr_ids tried
+      | AST.Try { tried; fallback; _ } ->
+          collect_expr_ids tried @ (fallback |> Option.map collect_expr_ids |> Option.value ~default:[])
       | AST.RecordLit (fields, spread) -> (
           List.concat_map
             (fun (field : AST.record_field) ->
@@ -3732,7 +3746,9 @@ module Test = struct
           @ List.concat_map
               (fun (arm : Surface.surface_match_arm) -> collect_surface_expr_or_block_ids arm.se_arm_body)
               arms
-      | Surface.SETry { se_tried; _ } -> collect_surface_expr_ids se_tried
+      | Surface.SETry { se_tried; se_fallback; _ } ->
+          collect_surface_expr_ids se_tried
+          @ (se_fallback |> Option.map collect_surface_expr_ids |> Option.value ~default:[])
       | Surface.SERecordLit (fields, spread) -> (
           List.concat_map
             (fun (field : Surface.surface_record_field) ->
@@ -4146,7 +4162,8 @@ module Test = struct
              Surface.STypeDef
                {
                  type_name = "Error";
-                 type_body = Surface.STNamedSum [ { sv_name = "NotFound"; sv_fields = []; sv_message = Some msg; _ } ];
+                 type_body =
+                   Surface.STNamedSum [ { sv_name = "NotFound"; sv_fields = []; sv_message = Some msg; _ } ];
                  _;
                };
            _;
@@ -4189,7 +4206,10 @@ module Test = struct
               {
                 Surface.std_decl =
                   Surface.SLet
-                    { value = { Surface.se_expr = Surface.SETry { se_wrap = None; _ }; _ }; _ };
+                    {
+                      value = { Surface.se_expr = Surface.SETry { se_wrap = None; se_fallback = None; _ }; _ };
+                      _;
+                    };
                 _;
               };
             ];
@@ -4213,10 +4233,7 @@ module Test = struct
                           Surface.se_expr =
                             Surface.SETry
                               {
-                                se_wrap =
-                                  Some
-                                    ( { Surface.text = "ConfigError"; _ },
-                                      { Surface.text = "File"; _ } );
+                                se_wrap = Some ({ Surface.text = "ConfigError"; _ }, { Surface.text = "File"; _ });
                                 _;
                               };
                           _;
@@ -4247,9 +4264,7 @@ module Test = struct
                             Surface.SETry
                               {
                                 se_wrap =
-                                  Some
-                                    ( { Surface.text = "file.Error"; _ },
-                                      { Surface.text = "InvalidData"; _ } );
+                                  Some ({ Surface.text = "file.Error"; _ }, { Surface.text = "InvalidData"; _ });
                                 _;
                               };
                           _;
@@ -4331,6 +4346,42 @@ module Test = struct
         alias_def.alias_name = "Box"
         && alias_def.alias_type_params = [ "t" ]
         && derive_trait.derive_trait_name = "Show"
+    | _ -> false
+
+  let%test "parse try expression with fallback" =
+    match parse_surface ~file_id:"<test>" "let value = try read() or 5" with
+    | Ok
+        {
+          program =
+            [
+              {
+                Surface.std_decl =
+                  Surface.SLet
+                    {
+                      value =
+                        {
+                          Surface.se_expr =
+                            Surface.SETry
+                              {
+                                se_wrap = None;
+                                se_fallback = Some { Surface.se_expr = Surface.SEInteger 5L; _ };
+                                _;
+                              };
+                          _;
+                        };
+                      _;
+                    };
+                _;
+              };
+            ];
+          _;
+        } ->
+        true
+    | _ -> false
+
+  let%test "parse try expression rejects wrap and or together" =
+    match parse_surface ~file_id:"<test>" "let value = try read() wrap ConfigError.File or 5" with
+    | Error errs -> List.exists (fun (d : Diagnostic.t) -> d.code = "parse-invalid-try-or") errs
     | _ -> false
 
   let%test "parse explicit wrapper type syntax" =

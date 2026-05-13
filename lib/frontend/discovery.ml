@@ -439,7 +439,8 @@ let collect_expr_ids (program : AST.program) : int list =
       | AST.EnumConstructor (_, _, args) -> List.concat_map expr_ids args
       | AST.Match (scrutinee, arms) ->
           expr_ids scrutinee @ List.concat_map (fun (arm : AST.match_arm) -> expr_ids arm.body) arms
-      | AST.Try { tried; _ } -> expr_ids tried
+      | AST.Try { tried; fallback; _ } ->
+          expr_ids tried @ (fallback |> Option.map expr_ids |> Option.value ~default:[])
       | AST.RecordLit (fields, spread) ->
           List.concat_map
             (fun (field : AST.record_field) -> option_map_default field.field_value ~default:[] ~f:expr_ids)

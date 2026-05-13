@@ -516,7 +516,12 @@ module.exports = grammar({
         seq(
           "try",
           field("value", $._expression),
-          optional(seq("wrap", field("target", $.wrap_target))),
+          optional(
+            choice(
+              seq("wrap", field("target", $.wrap_target)),
+              seq("or", field("fallback", $._expression)),
+            ),
+          ),
         ),
       ),
 

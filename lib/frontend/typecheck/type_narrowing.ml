@@ -58,7 +58,11 @@ let substitute_path_in_expr
                 ( subst_expr scrutinee,
                   List.map (fun (arm : AST.match_arm) -> { arm with body = subst_expr arm.body }) arms );
           }
-      | AST.Try { tried; wrap } -> { expr with expr = AST.Try { tried = subst_expr tried; wrap } }
+      | AST.Try { tried; wrap; fallback } ->
+          {
+            expr with
+            expr = AST.Try { tried = subst_expr tried; wrap; fallback = Option.map subst_expr fallback };
+          }
       | AST.RecordLit (fields, spread) ->
           {
             expr with

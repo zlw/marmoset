@@ -6,41 +6,41 @@ type Kind = { File, Directory, Symlink, Other }
 type Entry = Entry(path.Path, Kind)
 
 type LsError = {
-  NotFound = "Directory not found",
+  NotFound         = "Directory not found",
   PermissionDenied = "You do not have permission to read this directory",
-  NotDirectory = "Expected a directory but found a file",
+  NotDirectory     = "Expected a directory but found a file",
   InvalidPath(Str) = "Path is invalid",
-  Other(Str) = "Directory listing failed",
+  Other(Str)       = "Directory listing failed",
 }
 
 type MkdirError = {
-  NotFound = "Parent directory not found",
+  NotFound         = "Parent directory not found",
   PermissionDenied = "You do not have permission to create this directory",
-  AlreadyExists = "Directory already exists",
-  NotDirectory = "Expected a directory but found a file",
+  AlreadyExists    = "Directory already exists",
+  NotDirectory     = "Expected a directory but found a file",
   InvalidPath(Str) = "Path is invalid",
-  Other(Str) = "Directory creation failed",
+  Other(Str)       = "Directory creation failed",
 }
 
 type RmdirError = {
-  NotFound = "Directory not found",
+  NotFound         = "Directory not found",
   PermissionDenied = "You do not have permission to remove this directory",
-  NotDirectory = "Expected a directory but found a file",
-  NotEmpty = "Directory is not empty",
+  NotDirectory     = "Expected a directory but found a file",
+  NotEmpty         = "Directory is not empty",
   InvalidPath(Str) = "Path is invalid",
-  Other(Str) = "Directory removal failed",
+  Other(Str)       = "Directory removal failed",
 }
 
 type ExistsError = {
   PermissionDenied = "You do not have permission to inspect this path",
   InvalidPath(Str) = "Path is invalid",
-  Other(Str) = "Path existence check failed",
+  Other(Str)       = "Path existence check failed",
 }
 
 type PwdError = {
-  NotFound = "Current directory was not found",
+  NotFound         = "Current directory was not found",
   PermissionDenied = "You do not have permission to inspect the current directory",
-  Other(Str) = "Current directory lookup failed",
+  Other(Str)       = "Current directory lookup failed",
 }
 
 extern "std/dir" as dir_shim = {

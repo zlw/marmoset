@@ -228,6 +228,7 @@ module AST = struct
     | Try of {
         tried : expression;
         wrap : (string * string) option;
+        fallback : expression option;
       }
     | RecordLit of record_field list * expression option (* { x: 1, y: 2, ...base } - fields + optional spread *)
     | FieldAccess of expression * string (* expr.field_name *)
@@ -478,13 +479,18 @@ module AST = struct
       | EnumConstructor (enum_name, variant_name, args) ->
           Printf.sprintf "%s.%s(%s)" enum_name variant_name (args_to_string args)
       | Match (scrutinee, _arms) -> Printf.sprintf "match %s { ... }" (expression_to_string scrutinee)
-      | Try { tried; wrap } ->
+      | Try { tried; wrap; fallback } ->
           let wrap_str =
             match wrap with
             | None -> ""
             | Some (type_name, variant_name) -> Printf.sprintf " wrap %s.%s" type_name variant_name
           in
-          Printf.sprintf "try %s%s" (expression_to_string tried) wrap_str
+          let fallback_str =
+            match fallback with
+            | None -> ""
+            | Some expr -> Printf.sprintf " or %s" (expression_to_string expr)
+          in
+          Printf.sprintf "try %s%s%s" (expression_to_string tried) wrap_str fallback_str
       | RecordLit (fields, spread) ->
           let fields_str =
             fields

@@ -2,7 +2,7 @@
 
 ## Maintenance
 
-- Last verified: 2026-04-04
+- Last verified: 2026-05-13
 - Implementation status: Complete
 - Update trigger: Any prelude/stdlib, builtin, or module system change
 - Prerequisites: Module system (docs/plans/done/language/06_module-system.md) must be implemented first
@@ -21,7 +21,7 @@ Users must redefine `type Option[a] = { Some(a), None }` and `type Result[a, e] 
 2. **Auto-import.** Prelude exports are available in every module without explicit `import`.
 3. **Primitive impls stay in OCaml.** `builtins.ml` continues to register builtin primitive impls (`Eq[Int]`, `Show[Str]`, etc.) with `~builtin:true`. The emitter's hardcoded Go strings are unchanged. No stub bodies, no migration. Post-FFI these could move to `std/prelude.mr` using `extern` blocks.
 4. **Builtin functions stay in OCaml.** `puts`, `len`, `first`, `last`, `rest`, `push` keep their registrations in `builtins.ml` and their Go implementations in `runtime.go`. They move to stdlib modules after FFI.
-5. **Option/Result live in their own stdlib modules and expose inherent methods.** `Option` is defined in `std.option`, `Result` in `std.result`, and helper APIs (`value_or`, `map`, `bind`, `some?`, `none?`, `or`, etc.) are implemented as inherent methods on those nominal types.
+5. **Option/Result live in their own stdlib modules and expose minimal inherent methods.** `Option` is defined in `std.option`, `Result` in `std.result`, and helper APIs are limited to the currently intentional core: `value_or`, `map`, `bind`, plus `Result.wrap`.
 6. **`Rem` is core prelude surface.** The `%` operator remains driven by the `Rem` trait, so `trait Rem[a]` ships in `std/prelude.mr` alongside `Num` and `Neg`.
 7. **One compilation pipeline, no compiler fallback.** Headerless single-file programs do not keep a separate prelude/builtin shortcut. All file-backed entry files go through the same project discovery + compiler orchestration path, and missing required toolchain stdlib files are a hard error.
 8. **Split builtin bootstrap responsibilities explicitly.** Replace the current monolithic `Builtins.prelude_env()` behavior with separate helpers for builtin value bindings, builtin trait declarations, and builtin primitive impl registration so compiler and tests can control them independently.
@@ -209,6 +209,11 @@ impl Option[a] = {
     case Option.Some(v): Option.Some(f(v))
     case Option.None: Option.None
   }
+
+  fn bind[b](self: Option[a], f: (a) -> Option[b]) -> Option[b] = match self {
+    case Option.Some(v): f(v)
+    case Option.None: Option.None
+  }
 }
 ```
 
@@ -301,3 +306,4 @@ These are ordinary stdlib modules, but their APIs surface as inherent methods on
 - 2026-04-04 06:56 CEST: Direction corrected after implementation review. Prelude/std lookup now targets a toolchain-owned stdlib root instead of project-local `std/`; file-backed compilation no longer uses builtin prelude fallback; `Option`/`Result` moved out of `std.prelude` into `std.option` / `std.result`; helper APIs are inherent methods resolved via direct stdlib injection rather than re-export semantics.
 - 2026-04-04 15:27 CEST: Follow-up emitter trimming slice is green. Removed an over-broad enum-registration pass from `emit_inherent_method` so concrete inherent emission no longer pulls ambient `Option`/`Result` into unrelated Go output. Verification is green under `make unit compiler`, `make integration 10_codegen_snapshots.sh 11_pre_modules_hardening.sh`, and full `make integration` (1585 fixture tests, 16 exact snapshots, 16 hardening tests).
 - 2026-04-04 17:52 CEST: Codex-only issue hunt across module system + prelude completed three rounds and produced three real regressions. Round 1 added namespace-type-position coverage and fixed dotted type parsing/resolution so `geo.Point` / `wrappers.Users` work in annotations and aliases. Round 2 hardened shadowing diagnostics so local `type Option` / `type Result` misses report source-facing names instead of mangled internals. Round 3 found that qualified impl headers like `impl geometry.Drawable[geometry.Point]` inferred `geometry.Point` as a bogus generic binder, which bypassed duplicate-impl coherence; lowering now treats dotted names as concrete, and qualified duplicate impls are rejected again. Verification is green under `make unit compiler`, `./test/integration.sh modules modules_edge modules_codegen modules_codegen_edge snapshots`, and `make integration 11_pre_modules_hardening.sh 12_prelude.sh`.
+- 2026-05-13 20:20 CEST: Post-error-model API cleanup keeps `Option` aligned with the minimal `Result` surface. `std.option` exposes only `value_or`, `map`, and `bind`; predicate helpers are intentionally absent and covered by prelude integration rejection tests.

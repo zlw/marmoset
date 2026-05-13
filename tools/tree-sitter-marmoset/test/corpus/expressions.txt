@@ -532,6 +532,21 @@ try parse(text) wrap file.Error.InvalidData
           variant: (identifier))))))
 
 ================================================================================
+Try expression with fallback
+================================================================================
+
+try maybe() or 5
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (expression_statement
+    (try_expression
+      value: (call_expression
+        function: (identifier))
+      fallback: (integer_literal))))
+
+================================================================================
 Enum constructor call
 ================================================================================
 

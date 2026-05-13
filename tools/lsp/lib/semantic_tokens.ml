@@ -228,7 +228,9 @@ let rec collect_expr ~source ~type_map ~environment ~params ~tokens (expr : Ast.
             { pos = vstart; end_pos = vstart + vlen - 1; token_type = enum_member_type; modifiers = 0 } :: !tokens
       | None -> ());
       List.iter (collect_expr ~source ~type_map ~environment ~params ~tokens) args
-  | Ast.AST.Try { tried; _ } -> collect_expr ~source ~type_map ~environment ~params ~tokens tried
+  | Ast.AST.Try { tried; fallback; _ } ->
+      collect_expr ~source ~type_map ~environment ~params ~tokens tried;
+      Option.iter (collect_expr ~source ~type_map ~environment ~params ~tokens) fallback
   | Ast.AST.TypeCheck (e, _te) -> collect_expr ~source ~type_map ~environment ~params ~tokens e
   | Ast.AST.BlockExpr stmts -> List.iter (collect_stmt ~source ~type_map ~environment ~params ~tokens) stmts
 

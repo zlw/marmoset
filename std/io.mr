@@ -3,10 +3,10 @@ import std.prelude.Show
 export Error, Read, Write, read, write, flush, print
 
 type Error = {
-  EndOfFile = "Input ended",
-  BrokenPipe = "Pipe is broken",
+  EndOfFile   = "Input ended",
+  BrokenPipe  = "Pipe is broken",
   Interrupted = "I/O operation was interrupted",
-  Other(Str) = "I/O operation failed",
+  Other(Str)  = "I/O operation failed",
 }
 
 extern type Stdin

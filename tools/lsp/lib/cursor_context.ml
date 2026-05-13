@@ -152,7 +152,9 @@ let rec build_scope_index_expr (acc : scope_index) (expr : Surface.surface_expr)
       List.fold_left
         (fun acc (arm : Surface.surface_match_arm) -> build_scope_index_expr_or_block acc arm.se_arm_body)
         acc arms
-  | Surface.SETry { se_tried; _ } -> build_scope_index_expr acc se_tried
+  | Surface.SETry { se_tried; se_fallback; _ } ->
+      let acc = build_scope_index_expr acc se_tried in
+      Option.fold ~none:acc ~some:(build_scope_index_expr acc) se_fallback
   | Surface.SERecordLit (fields, spread) ->
       let acc =
         List.fold_left
@@ -479,15 +481,17 @@ let rec reference_in_expr ~(scope_index : scope_index) ~(offset : int) (expr : S
            (fun (arm : Surface.surface_match_arm) ->
              reference_in_expr_or_block ~scope_index ~offset arm.se_arm_body)
            arms)
-  | Surface.SETry { se_tried; se_wrap } ->
+  | Surface.SETry { se_tried; se_wrap; se_fallback } ->
       first_some
         (reference_in_expr ~scope_index ~offset se_tried)
-        (match se_wrap with
-        | Some (root_ref, member_ref) when name_ref_contains ~offset member_ref ->
-            Some (Qualified_member { root_ref; root_expr_id = None; member_ref; access_expr_id = expr.se_id })
-        | Some (root_ref, member_ref) when name_ref_contains ~offset root_ref ->
-            Some (Qualified_root { root_ref; root_expr_id = None; member_ref; access_expr_id = expr.se_id })
-        | _ -> None)
+        (first_some
+           (match se_wrap with
+           | Some (root_ref, member_ref) when name_ref_contains ~offset member_ref ->
+               Some (Qualified_member { root_ref; root_expr_id = None; member_ref; access_expr_id = expr.se_id })
+           | Some (root_ref, member_ref) when name_ref_contains ~offset root_ref ->
+               Some (Qualified_root { root_ref; root_expr_id = None; member_ref; access_expr_id = expr.se_id })
+           | _ -> None)
+           (Option.bind se_fallback (reference_in_expr ~scope_index ~offset)))
   | Surface.SERecordLit (fields, spread) ->
       first_some
         (List.find_map
@@ -758,7 +762,7 @@ let rec collect_expr_references ~(scope_index : scope_index) (expr : Surface.sur
       @ List.concat_map
           (fun (arm : Surface.surface_match_arm) -> collect_expr_or_block_references ~scope_index arm.se_arm_body)
           arms
-  | Surface.SETry { se_tried; se_wrap } ->
+  | Surface.SETry { se_tried; se_wrap; se_fallback } -> (
       collect_expr_references ~scope_index se_tried
       @ (match se_wrap with
         | Some (root_ref, member_ref) ->
@@ -767,6 +771,10 @@ let rec collect_expr_references ~(scope_index : scope_index) (expr : Surface.sur
               Qualified_member { root_ref; root_expr_id = None; member_ref; access_expr_id = expr.se_id };
             ]
         | None -> [])
+      @
+      match se_fallback with
+      | None -> []
+      | Some fallback -> collect_expr_references ~scope_index fallback)
   | Surface.SERecordLit (fields, spread) ->
       List.concat_map
         (fun (field : Surface.surface_record_field) ->

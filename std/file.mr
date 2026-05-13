@@ -13,21 +13,21 @@ extern type File
 type Mode = { Read, Write, Append }
 
 type Error = {
-  NotFound = "File not found",
-  PermissionDenied = "You do not have permission to access this file",
-  AlreadyExists = "File already exists",
-  IsDirectory = "Expected a file but found a directory",
-  NotDirectory = "Expected a directory but found a file",
-  InvalidPath(Str) = "Path is invalid",
+  NotFound                 = "File not found",
+  PermissionDenied         = "You do not have permission to access this file",
+  AlreadyExists            = "File already exists",
+  IsDirectory              = "Expected a file but found a directory",
+  NotDirectory             = "Expected a directory but found a file",
+  InvalidPath(Str)         = "Path is invalid",
   InvalidData(DecodeError) = "File contains invalid data",
-  AlreadyClosed = "File is already closed",
-  Other(Str) = "File operation failed",
+  AlreadyClosed            = "File is already closed",
+  Other(Str)               = "File operation failed",
 }
 
 type UseError[e] = {
-  Open(Error) = "Could not open file",
-  Use(e) = "File callback failed",
-  Close(Error) = "Could not close file",
+  Open(Error)           = "Could not open file",
+  Use(e)                = "File callback failed",
+  Close(Error)          = "Could not close file",
   UseAndClose(e, Error) = "File callback failed and close also failed",
 }
 

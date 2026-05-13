@@ -283,7 +283,12 @@ let rec placeholder_count_expr (expr : AST.expression) : int =
   | AST.Match (scrutinee, arms) ->
       placeholder_count_expr scrutinee
       + List.fold_left (fun acc arm -> acc + placeholder_count_expr arm.AST.body) 0 arms
-  | AST.Try { tried; _ } -> placeholder_count_expr tried
+  | AST.Try { tried; fallback; _ } -> (
+      placeholder_count_expr tried
+      +
+      match fallback with
+      | None -> 0
+      | Some expr -> placeholder_count_expr expr)
   | AST.RecordLit (fields, spread) -> (
       List.fold_left
         (fun acc (field : AST.record_field) ->
@@ -391,8 +396,17 @@ let rec replace_placeholder_with_expr (replacement : AST.expression) (expr : AST
                   { arm with body = replace_placeholder_with_expr replacement arm.body })
                 arms );
       }
-  | AST.Try { tried; wrap } ->
-      { expr with expr = AST.Try { tried = replace_placeholder_with_expr replacement tried; wrap } }
+  | AST.Try { tried; wrap; fallback } ->
+      {
+        expr with
+        expr =
+          AST.Try
+            {
+              tried = replace_placeholder_with_expr replacement tried;
+              wrap;
+              fallback = Option.map (replace_placeholder_with_expr replacement) fallback;
+            };
+      }
   | AST.RecordLit (fields, spread) ->
       {
         expr with
@@ -497,14 +511,12 @@ let rec lower_expr_with_ctx (ctx : lower_context) (id_supply : Id_supply.Id_supp
     | Surface.SEMatch (scrutinee, arms) ->
         AST.Match
           (lower_expr_with_ctx ctx id_supply scrutinee, List.map (lower_match_arm_with_ctx ctx id_supply) arms)
-    | Surface.SETry { se_tried; se_wrap } ->
+    | Surface.SETry { se_tried; se_wrap; se_fallback } ->
         AST.Try
           {
             tried = lower_expr_with_ctx ctx id_supply se_tried;
-            wrap =
-              Option.map
-                (fun (type_ref, variant_ref) -> (name_text type_ref, name_text variant_ref))
-                se_wrap;
+            wrap = Option.map (fun (type_ref, variant_ref) -> (name_text type_ref, name_text variant_ref)) se_wrap;
+            fallback = Option.map (lower_expr_with_ctx ctx id_supply) se_fallback;
           }
     | Surface.SERecordLit (fields, spread) ->
         let lower_field f =
@@ -1003,8 +1015,10 @@ let test_starrow params ret effectful = Surface.mk_surface_type (Surface.STArrow
 let test_stintersection members = Surface.mk_surface_type (Surface.STIntersection members)
 let test_strecord fields row = Surface.mk_surface_type (Surface.STRecord (fields, row))
 let test_record_type_field name sf_type = Surface.{ sf_name = name; sf_name_ref = test_name_ref name; sf_type }
+
 let test_variant ?sv_message name sv_fields =
   Surface.{ sv_name = name; sv_name_ref = test_name_ref name; sv_fields; sv_message }
+
 let test_value_param ?typ name = Surface.{ svp_name = name; svp_name_ref = test_name_ref name; svp_type = typ }
 let test_typed_param name stp_type = Surface.{ stp_name = name; stp_name_ref = test_name_ref name; stp_type }
 
@@ -1259,19 +1273,18 @@ let%test "lower SEBlockExpr to AST.BlockExpr" =
 
 let%test "lower SETry to AST.Try" =
   let id_supply = Id_supply.Id_supply.create 0 in
-  let tried =
-    Surface.mk_surface_expr ~id:1 ~pos:0 (Surface.SEIdentifier (Surface.mk_name_ref "read"))
-  in
+  let tried = Surface.mk_surface_expr ~id:1 ~pos:0 (Surface.SEIdentifier (Surface.mk_name_ref "read")) in
   let se =
     Surface.mk_surface_expr ~id:2 ~pos:0
       (Surface.SETry
          {
            se_tried = tried;
            se_wrap = Some (Surface.mk_name_ref "ConfigError", Surface.mk_name_ref "File");
+           se_fallback = None;
          })
   in
   match (lower_expr id_supply se).expr with
-  | AST.Try { wrap = Some ("ConfigError", "File"); _ } -> true
+  | AST.Try { wrap = Some ("ConfigError", "File"); fallback = None; _ } -> true
   | _ -> false
 
 let%test "lower pipe desugars rhs callable into Call" =

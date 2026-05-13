@@ -2,7 +2,7 @@ export Result
 
 type Result[a, e] = { Success(a), Failure(e) }
 
-impl[a, e] Result[a, e] = {
+impl Result[a, e] = {
   fn value_or(self: Result[a, e], fallback: a) -> a = match self {
     case Result.Success(v): v
     case Result.Failure(_): fallback

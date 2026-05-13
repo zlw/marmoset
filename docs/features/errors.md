@@ -16,7 +16,7 @@ This doc covers production error values:
 - hidden source context,
 - `std.error` helpers,
 - `Result.wrap`,
-- `try` and `try ... wrap ...`,
+- `try`, `try ... wrap ...`, and `try ... or ...`,
 - shim boundary context.
 
 ## Error Enums
@@ -119,6 +119,21 @@ fn load(path: std.path.Path) -> Result[Str, ConfigError] = {
 ```
 
 The wrap variant must belong to the enclosing error enum and accept the inner error type.
+
+`try` also works with `Option` inside functions that return `Option`:
+
+```marmoset
+fn display_name(name: Option[Str]) -> Option[Str] = {
+  let value = try name
+  Option.Some(value)
+}
+```
+
+Use `try ... or ...` to recover to a fallback value instead of propagating. It works for both `Result` failures and `Option.None`, and it is an ordinary expression, so it can be used at top level:
+
+```marmoset
+let remote_port = try read_port() or 8080
+```
 
 ## Shims
 

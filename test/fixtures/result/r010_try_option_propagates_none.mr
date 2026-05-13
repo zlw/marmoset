@@ -1,0 +1,21 @@
+# R010: try propagates Option.None from Option-returning functions
+fn pick(ok: Bool) -> Option[Int] = if (ok) {
+  Option.Some(41)
+} else {
+  Option.None
+}
+
+fn render(ok: Bool) -> Option[Str] = {
+  let value = try pick(ok)
+  Option.Some(Show.show(value + 1))
+}
+
+match render(false) {
+  case Option.Some(_): puts("unexpected")
+  case Option.None: puts("none")  # output: none
+}
+
+match render(true) {
+  case Option.Some(value): puts(value)  # output: 42
+  case Option.None: puts("unexpected")
+}

@@ -266,7 +266,7 @@ fn wrap[b](self: Result[a, e], f: (e) -> b) -> Result[a, b]
 
 ### Propagation Sugar
 
-Add a `try` expression for `Result` propagation.
+Add a `try` expression for `Result` and `Option` propagation, plus fallback recovery.
 
 Same error type:
 
@@ -300,7 +300,7 @@ fn load(path: path.Path) -> Result[Config, ConfigError] = {
 }
 ```
 
-Checks:
+Checks for `Result` propagation:
 
 1. The tried expression must have type `Result[a, InnerError]`.
 2. The enclosing function must return `Result[b, OuterError]`.
@@ -313,9 +313,12 @@ The exact parser form is:
 ```marmoset
 try <expr>
 try <expr> wrap <ErrorType>.<Variant>
+try <expr> or <fallback>
 ```
 
-`try` is valid only inside function bodies in the first implementation. It does not make a pure function effectful; it is typed control flow over `Result`.
+Plain `try` is valid only inside function bodies whose return type matches the propagated container: `Result` propagates `Result.Failure`, and `Option` propagates `Option.None`.
+`try ... wrap ...` is Result-only and wraps a failure into the enclosing error enum.
+`try ... or ...` is recovery, not propagation: it unwraps `Result.Success` / `Option.Some` and evaluates to the fallback value for `Result.Failure` / `Option.None`, so it is valid anywhere an expression is valid.
 
 ## Implementation Phases
 
@@ -849,3 +852,5 @@ The implementation can start without resolving all five. Questions 1, 2, and 4 m
 - 2026-05-13 19:22 CEST: E6 gate is green: `dune runtest lib/frontend lib/backend/go tools/lsp/lib`, `make integration ffi stdlib-shims`, `test/ci/tree-sitter.sh`, `test/ci/editor-vscode.sh`, `test/ci/editor-nvim.sh`, `test/ci/editor-jetbrains.sh`, `cargo fmt --check --manifest-path tools/zed-marmoset/Cargo.toml`, `cargo test --locked --manifest-path tools/zed-marmoset/Cargo.toml`, and `git diff --check` pass after adding error docs and LSP hover/definition coverage.
 - 2026-05-13 19:22 CEST: E6 commit created for canonical error documentation, stdlib/FFI doc refreshes, and LSP hover/definition support for messaged error variants.
 - 2026-05-13 20:01 CEST: Post-E6 Result API cleanup is green. The prelude integration RED first showed `Result.wrap` missing after replacing the old failure-mapping names; `std.result` now exposes only `value_or`, `map`, `wrap`, and `bind`, `std.file` decode adaptation uses `Result.wrap`, and current docs align pipeline-style `Result.wrap` with `try ... wrap ...`. Verification passed with `MARMOSET_ROOT=$PWD dune exec -- bin/main.exe check std/result.mr`, `MARMOSET_ROOT=$PWD dune exec -- bin/main.exe check std/file.mr`, `make integration prelude ffi stdlib-shims`, `make integration result`, `dune runtest lib/frontend lib/backend/go tools/lsp/lib`, targeted stale-name `rg`, and `git diff --check`.
+- 2026-05-13 20:20 CEST: Follow-up RED/GREEN slice for unified `try` semantics is in progress. RED first showed `Option.some?` still compiling, `try Option` rejected as non-Result, and top-level `try ... or ...` rejected as outside a function. The implementation now simplifies `std.option`, adds `try` propagation for `Option`, adds expression-level `try ... or ...` recovery for `Result` and `Option`, and updates parser/LSP/editor traversal to include fallback expressions.
+- 2026-05-13 20:49 CEST: Follow-up unified `try` slice is green. Verification passed with `dune runtest lib/frontend/syntax lib/frontend/typecheck lib/backend/go tools/lsp/lib`, `make integration prelude result`, `MARMOSET_ROOT=$PWD dune exec -- bin/main.exe check std/option.mr`, and `npm test` in `tools/tree-sitter-marmoset`. The commit intentionally keeps the working formatter/local-manifest churn instead of trimming the diff, per follow-up direction.

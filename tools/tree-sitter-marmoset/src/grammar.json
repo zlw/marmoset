@@ -3519,19 +3519,41 @@
             "type": "CHOICE",
             "members": [
               {
-                "type": "SEQ",
+                "type": "CHOICE",
                 "members": [
                   {
-                    "type": "STRING",
-                    "value": "wrap"
+                    "type": "SEQ",
+                    "members": [
+                      {
+                        "type": "STRING",
+                        "value": "wrap"
+                      },
+                      {
+                        "type": "FIELD",
+                        "name": "target",
+                        "content": {
+                          "type": "SYMBOL",
+                          "name": "wrap_target"
+                        }
+                      }
+                    ]
                   },
                   {
-                    "type": "FIELD",
-                    "name": "target",
-                    "content": {
-                      "type": "SYMBOL",
-                      "name": "wrap_target"
-                    }
+                    "type": "SEQ",
+                    "members": [
+                      {
+                        "type": "STRING",
+                        "value": "or"
+                      },
+                      {
+                        "type": "FIELD",
+                        "name": "fallback",
+                        "content": {
+                          "type": "SYMBOL",
+                          "name": "_expression"
+                        }
+                      }
+                    ]
                   }
                 ]
               },
