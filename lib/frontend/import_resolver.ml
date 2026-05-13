@@ -171,12 +171,16 @@ let merge_presence
       let incoming_concrete_value = has_value && Option.is_none extern_func_key in
       let prior_concrete_value = prior.has_value && Option.is_none prior.extern_func_key in
       let merged_value_definition =
-        if incoming_concrete_value then value_definition
-        else Option.fold ~none:value_definition ~some:(fun site -> Some site) prior.value_definition
+        if incoming_concrete_value then
+          value_definition
+        else
+          Option.fold ~none:value_definition ~some:(fun site -> Some site) prior.value_definition
       in
       let merged_extern_func_key =
-        if incoming_concrete_value || prior_concrete_value then None
-        else Option.fold ~none:extern_func_key ~some:(fun key -> Some key) prior.extern_func_key
+        if incoming_concrete_value || prior_concrete_value then
+          None
+        else
+          Option.fold ~none:extern_func_key ~some:(fun key -> Some key) prior.extern_func_key
       in
       {
         internal_name = prior.internal_name;
@@ -1198,10 +1202,10 @@ let rewrite_program
         (rewrite_type_expr ~imports ~type_bindings:method_type_bindings ~available_bindings)
         method_impl.impl_method_return_type
     in
-      let* impl_method_body =
-        rewrite_statement ~at_top_level:false ~type_bindings:method_type_bindings body_scope
-          method_impl.impl_method_body
-      in
+    let* impl_method_body =
+      rewrite_statement ~at_top_level:false ~type_bindings:method_type_bindings body_scope
+        method_impl.impl_method_body
+    in
     let impl_method_body = fst impl_method_body in
     Ok { method_impl with impl_method_generics; impl_method_params; impl_method_return_type; impl_method_body }
   and rewrite_pattern (pat : AST.pattern) : AST.pattern =
@@ -1316,7 +1320,7 @@ let rewrite_program
         let return_type =
           Option.map (rewrite_type_expr ~imports ~type_bindings ~available_bindings) return_type
         in
-	        let* body = rewrite_statement ~at_top_level:false ~type_bindings value_scope body in
+        let* body = rewrite_statement ~at_top_level:false ~type_bindings value_scope body in
         let body = fst body in
         Ok AST.{ expr with expr = Function { origin; generics; params; return_type; is_effectful; body } }
     | AST.Call (callee, args) ->
@@ -1536,7 +1540,7 @@ let%test "toolchain std.option and std.result export canonical type names" =
 
 let%test "user modules implicitly see prelude traits and std option/result modules" =
   Discovery.with_temp_project
-    [ ("main.mr", "let opt: Option[Int] = Option.Some(41)\nputs(Option.unwrap_or(opt, 0))\n") ]
+    [ ("main.mr", "let opt: Option[Int] = Option.Some(41)\nputs(Option.value_or(opt, 0))\n") ]
     (fun root ->
       let entry_file = Filename.concat root "main.mr" in
       match Discovery.discover_project ~source_root:root ~entry_file () with
@@ -1690,7 +1694,8 @@ let%test "concrete wrapper shadows same-named extern export metadata" =
   Discovery.with_temp_project
     [
       ("main.mr", "import api.foo\nputs(foo())\n");
-      ("api.mr", "export foo\nextern \"strings\" as shim = { fn foo(value: Str) -> Str }\nfn foo() -> Str = \"ok\"\n");
+      ( "api.mr",
+        "export foo\nextern \"strings\" as shim = { fn foo(value: Str) -> Str }\nfn foo() -> Str = \"ok\"\n" );
     ]
     (fun root ->
       let entry_file = Filename.concat root "main.mr" in
@@ -1706,8 +1711,7 @@ let%test "concrete wrapper shadows same-named extern export metadata" =
                   match StringMap.find_opt "foo" surface.exports with
                   | None -> false
                   | Some presence ->
-                      String.equal presence.internal_name "api__foo"
-                      && Option.is_none presence.extern_func_key))))
+                      String.equal presence.internal_name "api__foo" && Option.is_none presence.extern_func_key))))
 
 let%test "headerless entry local Result shadows injected std.result in constructors and annotations" =
   Discovery.with_temp_project

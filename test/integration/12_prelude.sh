@@ -47,12 +47,12 @@ run_project_expect_output() {
 run_project_expect_output \
     "headerless entry auto-loads prelude sums, traits, and operators" \
     $'1\n42\nok\ntrue' \
-    $'let opt: Option[Int] = Option.Some(42)\nlet status: Result[Str, Int] = Result.Success("ok")\nputs(Show.show(10 % 3))\nputs(Option.unwrap_or(opt, 0))\nputs(Result.value_or(status, "bad"))\nputs(Eq.eq(1 + 2, 3))\n'
+    $'let opt: Option[Int] = Option.Some(42)\nlet status: Result[Str, Int] = Result.Success("ok")\nputs(Show.show(10 % 3))\nputs(Option.value_or(opt, 0))\nputs(Result.value_or(status, "bad"))\nputs(Eq.eq(1 + 2, 3))\n'
 
 run_project_expect_output \
     "Option helpers are available as inherent methods without extra imports" \
     $'43\n7\ntrue\ntrue' \
-    $'let absent: Option[Int] = Option.None\nlet lifted = Option.map(Option.Some(41), (x: Int) -> x + 1)\nlet bound = Option.bind(lifted, (x: Int) -> Option.Some(x + 1))\nmatch bound {\n  case Option.Some(v): puts(v)\n  case Option.None: puts(0)\n}\nputs(Option.unwrap_or(absent, 7))\nputs(Option.is_some(bound))\nputs(Option.is_none(absent))\n'
+    $'let absent: Option[Int] = Option.None\nlet lifted = Option.map(Option.Some(41), (x: Int) -> x + 1)\nlet bound = Option.bind(lifted, (x: Int) -> Option.Some(x + 1))\nmatch bound {\n  case Option.Some(v): puts(v)\n  case Option.None: puts(0)\n}\nputs(Option.value_or(absent, 7))\nputs(Option.some?(bound))\nputs(Option.none?(absent))\n'
 
 run_project_expect_output \
     "Result helpers are available as inherent methods without extra imports" \

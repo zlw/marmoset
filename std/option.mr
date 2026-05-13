@@ -3,7 +3,7 @@ export Option
 type Option[a] = { Some(a), None }
 
 impl[a] Option[a] = {
-  fn unwrap_or(self: Option[a], fallback: a) -> a = match self {
+  fn value_or(self: Option[a], fallback: a) -> a = match self {
     case Option.Some(v): v
     case Option.None: fallback
   }
@@ -18,12 +18,12 @@ impl[a] Option[a] = {
     case Option.None: Option.None
   }
 
-  fn is_some(self: Option[a]) -> Bool = match self {
+  fn some?(self: Option[a]) -> Bool = match self {
     case Option.Some(_): true
     case Option.None: false
   }
 
-  fn is_none(self: Option[a]) -> Bool = match self {
+  fn none?(self: Option[a]) -> Bool = match self {
     case Option.Some(_): false
     case Option.None: true
   }

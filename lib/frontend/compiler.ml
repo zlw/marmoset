@@ -740,7 +740,7 @@ let compile_module
             Import_resolver.StringSet.empty rewrite.resolved_imports.direct_modules
         in
         let hidden_dependency_modules =
-          (visible_dependency_modules @ (Hashtbl.to_seq_keys typed_signatures |> List.of_seq))
+          visible_dependency_modules @ (Hashtbl.to_seq_keys typed_signatures |> List.of_seq)
           |> List.filter (fun module_id ->
                  (not (String.equal module_id module_info.module_id))
                  && not (Import_resolver.StringSet.mem module_id direct_module_set))
@@ -1718,11 +1718,7 @@ let%test "shim S2: std module exports ordinary API backed by private shim" =
 
 let%test "shim exports lower without Marmoset identity wrappers" =
   Discovery.with_temp_project
-    [
-      ( "main.mr",
-        "import std.bytes\nlet payload = bytes.from_str(\"hi\")\nputs(bytes.to_str_lossy(payload))\n"
-      );
-    ]
+    [ ("main.mr", "import std.bytes\nlet payload = bytes.from_str(\"hi\")\nputs(bytes.to_str_lossy(payload))\n") ]
     (fun root ->
       match compile_entry_to_build ~entry_file:(Filename.concat root "main.mr") () with
       | Error _ -> false
@@ -2108,13 +2104,13 @@ let%test "std.option signature exports Option as an enum for downstream modules"
             "import std.prelude.Show\nexport puts\nfn puts[a: Show](value: a) => Unit = {}\n";
           Discovery.write_file
             (Filename.concat stdlib_root "std/option.mr")
-            "export Option\ntype Option[a] = { Some(a), None }\nimpl[a] Option[a] = {\n\  fn unwrap_or(self: Option[a], fallback: a) -> a = match self {\n\    case Option.Some(v): v\n\    case Option.None: fallback\n\  }\n}\n";
+            "export Option\ntype Option[a] = { Some(a), None }\nimpl[a] Option[a] = {\n\  fn value_or(self: Option[a], fallback: a) -> a = match self {\n\    case Option.Some(v): v\n\    case Option.None: fallback\n\  }\n}\n";
           Discovery.write_file
             (Filename.concat stdlib_root "std/result.mr")
             "export Result\ntype Result[a, e] = { Success(a), Failure(e) }\nimpl[a, e] Result[a, e] = {\n\  fn value_or(self: Result[a, e], fallback: a) -> a = match self {\n\    case Result.Success(v): v\n\    case Result.Failure(_): fallback\n\  }\n}\n";
           Discovery.write_file
             (Filename.concat stdlib_root "std/foo.mr")
-            "export value\nfn value() -> Int = Option.unwrap_or(Option.Some(1), 0)\n";
+            "export value\nfn value() -> Int = Option.value_or(Option.Some(1), 0)\n";
           match Discovery.discover_project ~stdlib_root ~entry_file:(Filename.concat root "main.mr") () with
           | Error _ -> false
           | Ok graph -> (
@@ -2135,8 +2131,8 @@ let%test "std.option signature exports Option as an enum for downstream modules"
                                 | None -> false
                                 | Some rewrite -> (
                                     match
-                                      compile_module ~surfaces ~typed_signatures ~visible_dependency_modules:[] ~rewrite
-                                        module_info
+                                      compile_module ~surfaces ~typed_signatures ~visible_dependency_modules:[]
+                                        ~rewrite module_info
                                     with
                                     | Error _ -> false
                                     | Ok checked_module ->
@@ -2169,13 +2165,13 @@ let%test "source-backed module compilation sees std.option and std.result signat
             "import std.prelude.Show\nexport puts\nfn puts[a: Show](value: a) => Unit = {}\n";
           Discovery.write_file
             (Filename.concat stdlib_root "std/option.mr")
-            "export Option\ntype Option[a] = { Some(a), None }\nimpl[a] Option[a] = {\n\  fn unwrap_or(self: Option[a], fallback: a) -> a = match self {\n\    case Option.Some(v): v\n\    case Option.None: fallback\n\  }\n}\n";
+            "export Option\ntype Option[a] = { Some(a), None }\nimpl[a] Option[a] = {\n\  fn value_or(self: Option[a], fallback: a) -> a = match self {\n\    case Option.Some(v): v\n\    case Option.None: fallback\n\  }\n}\n";
           Discovery.write_file
             (Filename.concat stdlib_root "std/result.mr")
             "export Result\ntype Result[a, e] = { Success(a), Failure(e) }\nimpl[a, e] Result[a, e] = {\n\  fn value_or(self: Result[a, e], fallback: a) -> a = match self {\n\    case Result.Success(v): v\n\    case Result.Failure(_): fallback\n\  }\n}\n";
           Discovery.write_file
             (Filename.concat stdlib_root "std/foo.mr")
-            "export value\nfn value() -> Int = Option.unwrap_or(Option.Some(1), 0)\n";
+            "export value\nfn value() -> Int = Option.value_or(Option.Some(1), 0)\n";
           let entry_file = Filename.concat root "main.mr" in
           match
             Discovery.discover_project_with_entry_source ~stdlib_root ~entry_file
@@ -2210,8 +2206,8 @@ let%test "source-backed module compilation sees std.option and std.result signat
                                   | None -> false
                                   | Some rewrite -> (
                                       match
-                                        compile_module ~surfaces ~typed_signatures ~visible_dependency_modules:[] ~rewrite
-                                          module_info
+                                        compile_module ~surfaces ~typed_signatures ~visible_dependency_modules:[]
+                                          ~rewrite module_info
                                       with
                                       | Error _ -> false
                                       | Ok checked_module ->
@@ -2237,13 +2233,13 @@ let%test "non-core stdlib modules implicitly see Option and Result" =
             "import std.prelude.Show\nexport puts\nfn puts[a: Show](value: a) => Unit = {}\n";
           Discovery.write_file
             (Filename.concat stdlib_root "std/option.mr")
-            "export Option\ntype Option[a] = { Some(a), None }\nimpl[a] Option[a] = {\n\  fn unwrap_or(self: Option[a], fallback: a) -> a = match self {\n\    case Option.Some(v): v\n\    case Option.None: fallback\n\  }\n}\n";
+            "export Option\ntype Option[a] = { Some(a), None }\nimpl[a] Option[a] = {\n\  fn value_or(self: Option[a], fallback: a) -> a = match self {\n\    case Option.Some(v): v\n\    case Option.None: fallback\n\  }\n}\n";
           Discovery.write_file
             (Filename.concat stdlib_root "std/result.mr")
             "export Result\ntype Result[a, e] = { Success(a), Failure(e) }\nimpl[a, e] Result[a, e] = {\n\  fn value_or(self: Result[a, e], fallback: a) -> a = match self {\n\    case Result.Success(v): v\n\    case Result.Failure(_): fallback\n\  }\n}\n";
           Discovery.write_file
             (Filename.concat stdlib_root "std/foo.mr")
-            "export value\nfn value() -> Int = Option.unwrap_or(Option.Some(1), 0)\n";
+            "export value\nfn value() -> Int = Option.value_or(Option.Some(1), 0)\n";
           match check_entry ~stdlib_root ~entry_file:(Filename.concat root "main.mr") () with
           | Error _ -> false
           | Ok diagnostics -> diagnostics = []))

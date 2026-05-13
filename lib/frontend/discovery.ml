@@ -515,7 +515,7 @@ let%test "discover_project resolves std modules from an explicit toolchain stdli
             "import std.prelude.Show\nexport puts\nfn puts[a: Show](value: a) => Unit = {}\n";
           write_file
             (Filename.concat stdlib_root "std/option.mr")
-            "export Option\ntype Option[a] = { Some(a), None }\nimpl[a] Option[a] = {\n\  fn unwrap_or(self: Option[a], fallback: a) -> a = match self {\n\    case Option.Some(v): v\n\    case Option.None: fallback\n\  }\n}\n";
+            "export Option\ntype Option[a] = { Some(a), None }\nimpl[a] Option[a] = {\n\  fn value_or(self: Option[a], fallback: a) -> a = match self {\n\    case Option.Some(v): v\n\    case Option.None: fallback\n\  }\n}\n";
           write_file
             (Filename.concat stdlib_root "std/result.mr")
             "export Result\ntype Result[a, e] = { Success(a), Failure(e) }\nimpl[a, e] Result[a, e] = {\n\  fn value_or(self: Result[a, e], fallback: a) -> a = match self {\n\    case Result.Success(v): v\n\    case Result.Failure(_): fallback\n\  }\n}\n";
@@ -533,11 +533,15 @@ let%test "discover_project keeps projects under toolchain root separate from std
     ~finally:(fun () -> ignore (Sys.command ("rm -rf " ^ Filename.quote stdlib_root)))
     (fun () ->
       mkdir_p (Filename.concat stdlib_root "std");
-      write_file (Filename.concat stdlib_root "std/prelude.mr")
+      write_file
+        (Filename.concat stdlib_root "std/prelude.mr")
         "export Ordering\ntype Ordering = { Less, Equal, Greater }\n";
       write_file (Filename.concat stdlib_root "std/basics.mr") "export puts\nfn puts(value: Int) => Unit = {}\n";
-      write_file (Filename.concat stdlib_root "std/option.mr") "export Option\ntype Option[a] = { Some(a), None }\n";
-      write_file (Filename.concat stdlib_root "std/result.mr")
+      write_file
+        (Filename.concat stdlib_root "std/option.mr")
+        "export Option\ntype Option[a] = { Some(a), None }\n";
+      write_file
+        (Filename.concat stdlib_root "std/result.mr")
         "export Result\ntype Result[a, e] = { Success(a), Failure(e) }\n";
       let project_root = Filename.concat stdlib_root "examples" in
       mkdir_p project_root;

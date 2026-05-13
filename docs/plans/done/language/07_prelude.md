@@ -21,7 +21,7 @@ Users must redefine `type Option[a] = { Some(a), None }` and `type Result[a, e] 
 2. **Auto-import.** Prelude exports are available in every module without explicit `import`.
 3. **Primitive impls stay in OCaml.** `builtins.ml` continues to register builtin primitive impls (`Eq[Int]`, `Show[Str]`, etc.) with `~builtin:true`. The emitter's hardcoded Go strings are unchanged. No stub bodies, no migration. Post-FFI these could move to `std/prelude.mr` using `extern` blocks.
 4. **Builtin functions stay in OCaml.** `puts`, `len`, `first`, `last`, `rest`, `push` keep their registrations in `builtins.ml` and their Go implementations in `runtime.go`. They move to stdlib modules after FFI.
-5. **Option/Result live in their own stdlib modules and expose inherent methods.** `Option` is defined in `std.option`, `Result` in `std.result`, and helper APIs (`unwrap_or`, `map`, `bind`, `value_or`, `or`, etc.) are implemented as inherent methods on those nominal types.
+5. **Option/Result live in their own stdlib modules and expose inherent methods.** `Option` is defined in `std.option`, `Result` in `std.result`, and helper APIs (`value_or`, `map`, `bind`, `some?`, `none?`, `or`, etc.) are implemented as inherent methods on those nominal types.
 6. **`Rem` is core prelude surface.** The `%` operator remains driven by the `Rem` trait, so `trait Rem[a]` ships in `std/prelude.mr` alongside `Num` and `Neg`.
 7. **One compilation pipeline, no compiler fallback.** Headerless single-file programs do not keep a separate prelude/builtin shortcut. All file-backed entry files go through the same project discovery + compiler orchestration path, and missing required toolchain stdlib files are a hard error.
 8. **Split builtin bootstrap responsibilities explicitly.** Replace the current monolithic `Builtins.prelude_env()` behavior with separate helpers for builtin value bindings, builtin trait declarations, and builtin primitive impl registration so compiler and tests can control them independently.
@@ -159,7 +159,7 @@ Core declarations stay small. `Option` and `Result` live in `std.option` / `std.
 - Match on option/result works
 - All 8 traits available without user trait definition
 - Operators still work (`42 == 42`, `1 + 2`, `10 % 3`, `Show.show(x)`)
-- `Option.map(...)`, `Option.unwrap_or(...)`, `Result.map(...)`, and `Result.bind(...)` resolve without explicit imports
+- `Option.map(...)`, `Option.value_or(...)`, `Result.map(...)`, and `Result.bind(...)` resolve without explicit imports
 - Headerless single-file entrypoints use the same prelude-aware compilation path as module-based entrypoints
 - Existing tests with local `enum Option[a] = { Some(a), None }` still pass until the fixture migration prefers canonical `type` examples
 - Missing required toolchain stdlib files fail with a clear `stdlib-not-found` diagnostic
@@ -200,7 +200,7 @@ export Option
 type Option[a] = { Some(a), None }
 
 impl Option[a] = {
-  fn unwrap_or(self: Option[a], fallback: a) -> a = match self {
+  fn value_or(self: Option[a], fallback: a) -> a = match self {
     case Option.Some(v): v
     case Option.None: fallback
   }
@@ -235,8 +235,8 @@ impl Result[a, e] = {
 These are ordinary stdlib modules, but their APIs surface as inherent methods on the nominal types and are callable via type qualification (`Option.map(...)`, `Result.bind(...)`).
 
 **Tests:**
-- `Option.unwrap_or(Option.Some(42), 0)` → 42
-- `Option.unwrap_or(Option.None, 7)` → 7
+- `Option.value_or(Option.Some(42), 0)` → 42
+- `Option.value_or(Option.None, 7)` → 7
 - `Option.map(Option.Some(42), Show.show)` → `Option.Some("42")`
 - `Option.bind(Option.Some(42), (x) -> Option.Some(x + 1))` → `Option.Some(43)`
 - `Option.map(Option.None, (x: Int) -> x + 1)` → `Option.None`
