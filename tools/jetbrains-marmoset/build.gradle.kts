@@ -23,6 +23,14 @@ dependencies {
         intellijIdea(providers.gradleProperty("platformVersion"))
         bundledPlugin("org.jetbrains.plugins.textmate")
     }
+
+    testImplementation(kotlin("test-junit5"))
+    testImplementation("junit:junit:4.13.2")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+}
+
+tasks.test {
+    useJUnitPlatform()
 }
 
 intellijPlatform {

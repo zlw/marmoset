@@ -5,13 +5,13 @@
     <description><![CDATA[
         Language support for the <a href="https://github.com/zlw/marmoset">Marmoset</a> programming language.
         <ul>
-            <li>Syntax highlighting via TextMate grammar</li>
+            <li>Optional syntax highlighting via TextMate grammar</li>
             <li>LSP-powered diagnostics, hover, and completions via <code>$MARMOSET_ROOT/marmoset lsp</code></li>
         </ul>
     ]]></description>
 
     <depends>com.intellij.modules.platform</depends>
-    <depends>org.jetbrains.plugins.textmate</depends>
+    <depends optional="true" config-file="textmate.xml">org.jetbrains.plugins.textmate</depends>
 
     <extensions defaultExtensionNs="com.intellij">
         <fileType
@@ -23,8 +23,5 @@
 
         <platform.lsp.serverSupportProvider
             implementation="com.github.zlw.marmoset.lsp.MarmosetLspServerSupportProvider"/>
-
-        <textmate.bundleProvider
-            implementation="com.github.zlw.marmoset.MarmosetTextMateBundleProvider"/>
     </extensions>
 </idea-plugin>

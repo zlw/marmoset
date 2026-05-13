@@ -10,6 +10,8 @@ cd "$JETBRAINS_DIR"
 ./gradlew --no-daemon check
 
 DESCRIPTOR="src/main/kotlin/com/github/zlw/marmoset/lsp/MarmosetLspServerDescriptor.kt"
+PLUGIN_XML="src/main/resources/META-INF/plugin.xml"
+TEXTMATE_XML="src/main/resources/META-INF/textmate.xml"
 
 search_fixed() {
   local needle="$1"
@@ -38,3 +40,7 @@ reject_fixed 'GeneralCommandLine("marmoset", "lsp")' "$DESCRIPTOR"
 reject_fixed '_build/default/bin/main.exe' "$DESCRIPTOR"
 reject_fixed '_build/install/default/bin/marmoset' "$DESCRIPTOR"
 reject_fixed 'std/prelude.mr' "$DESCRIPTOR"
+
+search_fixed '<depends optional="true" config-file="textmate.xml">org.jetbrains.plugins.textmate</depends>' "$PLUGIN_XML"
+reject_fixed '<textmate.bundleProvider' "$PLUGIN_XML"
+search_fixed '<textmate.bundleProvider' "$TEXTMATE_XML"
