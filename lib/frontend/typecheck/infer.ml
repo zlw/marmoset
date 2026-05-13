@@ -1126,6 +1126,7 @@ let mono_type_of_extern_func (func : Resolution_artifacts.extern_func) : mono_ty
 
 let should_monomorphize_let_binding_value (value_expr : AST.expression) : bool =
   match value_expr.expr with
+  | AST.Try _ -> true
   | AST.RecordLit _ -> true
   | AST.FieldAccess _ -> (
       match lookup_call_resolution value_expr.id with
@@ -3913,9 +3914,7 @@ and type_callable
                         | Ok _ -> true
                         | Error _ -> false
                       in
-                      if subtype_ok then
-                        Ok (param_names, param_types, expected_ret, actual_effectful, subst)
-                      else if unify_compatible then
+                      if unify_compatible then (
                         match unify body_type' expected_ret with
                         | Error _e ->
                             Error
@@ -3929,7 +3928,10 @@ and type_callable
                         | Ok subst2 ->
                             let final_subst = compose_substitution subst subst2 in
                             let final_return_type = expected_ret in
-                            Ok (param_names, param_types, final_return_type, actual_effectful, final_subst)
+                            apply_substitution_type_map subst2 type_map;
+                            Ok (param_names, param_types, final_return_type, actual_effectful, final_subst))
+                      else if subtype_ok then
+                        Ok (param_names, param_types, expected_ret, actual_effectful, subst)
                       else
                         Error
                           (error_at_stmt ~code:"type-return-mismatch"
@@ -4373,7 +4375,9 @@ and infer_block_against_expected ?(type_bindings = []) type_map env stmts expect
               (apply_substitution subst1 expected_type)
           with
           | Error e -> Error e
-          | Ok (subst2, result_type) -> Ok (compose_substitution subst1 subst2, result_type)))
+          | Ok (subst2, result_type) ->
+              apply_substitution_type_map subst2 type_map;
+              Ok (compose_substitution subst1 subst2, result_type)))
 
 and infer_statement_against_expected ?(type_bindings = []) type_map env stmt expected_type =
   match stmt.stmt with
@@ -4709,6 +4713,7 @@ and infer_arg_against_expected type_map env subst (arg : AST.expression) (expect
                   | Ok subst2 -> (
                       let final_subst = compose_substitution subst' subst2 in
                       let final_type = apply_substitution final_subst arg_type in
+                      apply_substitution_type_map subst2 type_map;
                       match record_expected_trait_object_coercions type_map arg expected_type'' with
                       | Error e -> Error e
                       | Ok () ->

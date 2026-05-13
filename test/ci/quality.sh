@@ -14,3 +14,6 @@ opam install ocamlformat.0.27.0 odoc
 dune build --root "$REPO_ROOT" @fmt
 dune build --root "$REPO_ROOT" @doc
 opam lint marmoset.opam
+
+# Keep stdlib examples aligned with the production error idioms.
+./test/ci/std-style.sh

@@ -1910,15 +1910,30 @@ let enum_allows_unresolved_erasure (enum_name : string) : bool =
          | Types.TEnum (name, args) -> name = enum_name && List.exists has_type_vars args
          | _ -> false)
 
-(* Track an enum instantiation *)
-let track_enum_inst state (t : Types.mono_type) =
-  match t with
+(* Track an enum instantiation and any enum payload types it references. *)
+let rec track_enum_inst state (t : Types.mono_type) =
+  match Types.canonicalize_mono_type t with
   | Types.TEnum (name, args) ->
+      List.iter (track_enum_inst state) args;
       if state.concrete_only && List.exists has_unresolved_codegen_type args then
         ()
       else
         state.enum_insts <- EnumInstSet.add (name, args) state.enum_insts
-  | _ -> ()
+  | Types.TNamed (_, args) | Types.TUnion args | Types.TIntersection args ->
+      List.iter (track_enum_inst state) args
+  | Types.TFun (arg, ret, _) ->
+      track_enum_inst state arg;
+      track_enum_inst state ret
+  | Types.TArray elem -> track_enum_inst state elem
+  | Types.THash (key, value) ->
+      track_enum_inst state key;
+      track_enum_inst state value
+  | Types.TRecord (fields, row) ->
+      List.iter (fun (field : Types.record_field_type) -> track_enum_inst state field.typ) fields;
+      Option.iter (track_enum_inst state) row
+  | Types.TInt | Types.TFloat | Types.TBool | Types.TString | Types.TNull | Types.TVar _ | Types.TRowVar _
+  | Types.TTraitObject _ ->
+      ()
 
 let is_user_func (state : mono_state) (name : string) : bool =
   List.exists (fun fd -> fd.name = name) state.func_defs

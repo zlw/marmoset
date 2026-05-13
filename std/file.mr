@@ -44,16 +44,20 @@ extern "std/file" as file_shim = {
   fn flush_handle(file: File) => Result[Unit, Error]
 }
 
-fn decode_bytes[a: Decode](payload: Bytes) -> Result[a, Error] =
-  bytes.Decode.decode(payload) |> Result.wrap((err: DecodeError) -> Error.InvalidData(err))
+fn decode_bytes[a: Decode](payload: Bytes) -> Result[a, Error] = {
+  let value = try bytes.Decode.decode(payload) wrap Error.InvalidData
+  Result.Success(value)
+}
 
 fn decode_optional_bytes[a: Decode](payload: Option[Bytes]) -> Result[Option[a], Error] = match payload {
   case Option.Some(bytes): decode_bytes(bytes) |> Result.map(Option.Some(_))
   case Option.None: Result.Success(Option.None)
 }
 
-fn read[a: Decode](path: path.Path) => Result[a, Error] =
-  file_shim.read_path(path) |> Result.bind(decode_bytes(_))
+fn read[a: Decode](path: path.Path) => Result[a, Error] = {
+  let payload = try file_shim.read_path(path)
+  decode_bytes(payload)
+}
 
 fn write[a: Encode](path: path.Path, value: a) => Result[Unit, Error] =
   bytes.Encode.encode(value) |> file_shim.write_path(path, _)
@@ -63,7 +67,9 @@ fn append[a: Encode](path: path.Path, value: a) => Result[Unit, Error] =
 
 impl io.Read[File, Error] = {
   fn read(file: File) => Result[Str, Error] = {
-    file_shim.read_handle(file) |> Result.bind(decode_bytes(_))
+    let payload = try file_shim.read_handle(file)
+    let value = try decode_bytes(payload)
+    Result.Success(value)
   }
 }
 
@@ -80,8 +86,10 @@ impl io.Write[File, Error] = {
 fn read_all(file: File) => Result[Str, Error] =
   io.Read.read(file)
 
-fn read_line(file: File) => Result[Option[Str], Error] =
-  file_shim.read_line_handle(file) |> Result.bind(decode_optional_bytes(_))
+fn read_line(file: File) => Result[Option[Str], Error] = {
+  let payload = try file_shim.read_line_handle(file)
+  decode_optional_bytes(payload)
+}
 
 fn read_chunk(file: File, size: Int) => Result[Option[Bytes], Error] =
   file_shim.read_chunk_handle(file, size)
@@ -93,20 +101,17 @@ fn flush(file: File) => Result[Unit, Error] =
   io.Write.flush(file)
 
 fn open[a, e](path: path.Path, mode: Mode, body: (File) => Result[a, e]) => Result[a, UseError[e]] = {
-  match file_shim.open_handle(path, mode) {
-    case Result.Failure(err): Result.Failure(UseError.Open(err))
-    case Result.Success(file): {
-      let body_result = body(file)
-      match file_shim.close_handle(file) {
-        case Result.Success(_): match body_result {
-          case Result.Success(value): Result.Success(value)
-          case Result.Failure(err): Result.Failure(UseError.Use(err))
-        }
-        case Result.Failure(close_err): match body_result {
-          case Result.Success(_): Result.Failure(UseError.Close(close_err))
-          case Result.Failure(err): Result.Failure(UseError.UseAndClose(err, close_err))
-        }
-      }
+  let file = try file_shim.open_handle(path, mode) wrap UseError.Open
+  let body_result = body(file)
+
+  match file_shim.close_handle(file) {
+    case Result.Success(_): match body_result {
+      case Result.Success(value): Result.Success(value)
+      case Result.Failure(err): Result.Failure(UseError.Use(err))
+    }
+    case Result.Failure(close_err): match body_result {
+      case Result.Success(_): Result.Failure(UseError.Close(close_err))
+      case Result.Failure(err): Result.Failure(UseError.UseAndClose(err, close_err))
     }
   }
 }

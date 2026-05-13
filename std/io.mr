@@ -21,12 +21,7 @@ trait Write[w, e] = {
   fn flush(writer: w) => Result[Unit, e]
 
   fn print[a: Show](writer: w, value: a) => Result[Unit, e] = {
-    let result = Write.write(writer, "#{value}\n")
-
-    match result {
-      case Result.Success(_): Write.flush(writer)
-      case Result.Failure(err): Result.Failure(err)
-    }
+    Write.write(writer, "#{value}\n") |> Result.bind((_) -> Write.flush(writer))
   }
 }
 
