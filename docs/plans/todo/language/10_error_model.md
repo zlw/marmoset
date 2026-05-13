@@ -31,7 +31,7 @@ That is fine for toy examples, but it fails several production needs:
 2. Wrapping lower-level errors is manual and lossy. `std.file` currently maps `DecodeError.InvalidUtf8` into `Error.InvalidData("invalid utf-8")`, losing the typed cause.
 3. Deep app layers would need to hand-write repetitive wrapper enums and nested matches.
 4. Go shims return domain enum values, but the boundary has no standard way to attach Marmoset-level origin frames.
-5. `Result.or` exists as a generic error-mapping helper, but the intended operation is really `map_error`; propagation sugar does not exist.
+5. The old generic error-mapping helper was poorly named; the intended operation is really failure wrapping, and propagation sugar does not exist.
 
 Marmoset should make production-grade error handling a language and stdlib convention, not an application-level reinvention. The target is "best of Zig plus best of Go":
 
@@ -49,7 +49,7 @@ Marmoset should make production-grade error handling a language and stdlib conve
 3. Attach hidden `std.error.Context` metadata to every constructed error value without making callers pass it manually.
 4. Preserve typed causes by keeping lower-level errors as normal variant payloads.
 5. Provide `std.error` helpers for `message`, `context`, frame inspection, and formatting.
-6. Add `Result.map_error` as the explicit non-lossy error-mapping helper.
+6. Add `Result.wrap` as the explicit non-lossy failure-wrapping helper.
 7. Add checked propagation sugar for `Result` values, including wrapping into an outer error variant.
 8. Teach shim ABI adapters to attach Marmoset-level origin context when Go shims return error values.
 9. Migrate `std.bytes`, `std.io`, `std.file`, and `std.dir` onto the new error model.
@@ -71,7 +71,7 @@ Marmoset should make production-grade error handling a language and stdlib conve
 - `Enum_registry.variant_def` tracks only `name` and `fields`.
 - `Types.TEnum` has no metadata for "this enum is an error".
 - `Type_registry` owns named products, wrappers, and extern types; error sums currently live only in `Enum_registry`.
-- `std/result.mr` exports `Result` with `value_or`, `map`, `or`, `bind`, `success?`, and `failure?`.
+- `std/result.mr` exports `Result` with `value_or`, `map`, `wrap`, and `bind`.
 - `std/file.mr` imports `std.bytes.DecodeError`, but `decode_error` converts it into `Error.InvalidData("invalid utf-8")`.
 - Go shim API packages emit enum interfaces and per-variant structs such as `fileapi.ErrorNotFound{}` with no context field.
 - Shim boundary conversion in `lib/backend/go/emitter.ml` maps Go API owner enums to internal Marmoset enum values in `emit_boundary_to_value`.
@@ -254,15 +254,15 @@ For errors returned by Go shims, the first Marmoset frame should be the extern f
 
 This plan chooses **shim adapter frame first**, because the generated adapter is the precise boundary where foreign data becomes a Marmoset error. Public wrappers and `try wrap` can add additional frames later.
 
-### `Result.map_error`
+### `Result.wrap`
 
-`std.result` gains the clearer helper:
+`std.result` gains a helper that mirrors `try ... wrap ...` in pipeline-style code:
 
 ```marmoset
-fn map_error[b](self: Result[a, e], f: (e) -> b) -> Result[a, b]
+fn wrap[b](self: Result[a, e], f: (e) -> b) -> Result[a, b]
 ```
 
-`Result.or` remains as a compatibility alias during migration, but new stdlib code should use `map_error`.
+`Result.wrap` preserves successes and converts failures with the supplied error constructor or mapper.
 
 ### Propagation Sugar
 
@@ -467,7 +467,7 @@ Changes:
 
 1. Add `std.error` with nominal `Frame`, nominal `Context`, and trait `Error[e]`.
 2. Add generated/synthetic trait satisfaction for `error.Error[e]` when `e` is an error enum.
-3. Add `Result.map_error` to `std.result.mr`; keep `or` as compatibility alias.
+3. Add `Result.wrap` to `std.result.mr`; remove the confusing `or` alias.
 4. Extend Go enum layout for error enums with a hidden context slot.
 5. Make source constructors for error variants inject context automatically:
    - canonical message;
@@ -503,7 +503,7 @@ Tests:
   ```
 
 - Frames contain at least one Marmoset frame with the declaring file/function.
-- `Result.map_error` preserves success and maps failure.
+- `Result.wrap` preserves success and wraps failure.
 
 Gate:
 
@@ -662,7 +662,7 @@ Rules:
 2. Filesystem shims should include path payloads where useful and cheap, but should not expose Go errors directly.
 3. `std.dir` should use operation-specific errors if the stdlib plan has already split them, and each must have messages.
 4. Generic wrapper errors such as `UseError[e]` must declare messages and keep payloads typed.
-5. New stdlib code should use `Result.map_error`, `try`, or `try ... wrap ...` instead of nested matches where possible.
+5. New stdlib code should use `Result.wrap`, `try`, or `try ... wrap ...` instead of nested matches where possible.
 6. Existing public APIs may keep module-local `Error` names; `Error` itself is a valid error type name.
 
 Tests:
@@ -710,7 +710,7 @@ Changes:
    - hidden context;
    - typed causes;
    - `error.message`, `error.context`, `error.frames`, `error.format`;
-   - `Result.map_error`;
+   - `Result.wrap`;
    - `try` and `try ... wrap ...`;
    - shim boundary context.
 2. Update examples in stdlib and FFI docs away from bare no-message errors.
@@ -784,7 +784,7 @@ match load(path.Path("bad.txt")) {
 
 1. Parse and highlight error variant messages.
 2. Add error enum classification and naming/message diagnostics.
-3. Add `std.error`, `Result.map_error`, and hidden context runtime support.
+3. Add `std.error`, `Result.wrap`, and hidden context runtime support.
 4. Attach context at shim boundaries.
 5. Add `try` and `try ... wrap ...`.
 6. Migrate stdlib errors and remove lossy decode-error mapping.
@@ -814,8 +814,8 @@ The implementation can start without resolving all five. Questions 1, 2, and 4 m
 
 ## Progress
 
-- 2026-05-13 17:26 CEST: Drafted the production error model plan after the stdlib file/dir work exposed lossy decode-error wrapping and missing canonical domain messages. The draft chooses `Error`/`*Error` naming as semantic syntax, required per-variant messages, hidden context, typed payload causes, `Result.map_error`, `try ... wrap ...`, shim-boundary context injection, and a stdlib migration path.
-- 2026-05-13 17:48 CEST: `$feature-implement` started. Reconstructed the implementation into seven green slices matching the commit plan: E0 parser/AST/editor metadata, E1 error enum classification and diagnostics, E2 `std.error`/hidden context/`Result.map_error`, E3 shim-boundary context, E4 `try`/`wrap` propagation, E5 stdlib migration, and E6 docs/editor bugbash. Starting with E0 tests before parser and AST changes.
+- 2026-05-13 17:26 CEST: Drafted the production error model plan after the stdlib file/dir work exposed lossy decode-error wrapping and missing canonical domain messages. The draft chooses `Error`/`*Error` naming as semantic syntax, required per-variant messages, hidden context, typed payload causes, `Result.wrap`, `try ... wrap ...`, shim-boundary context injection, and a stdlib migration path.
+- 2026-05-13 17:48 CEST: `$feature-implement` started. Reconstructed the implementation into seven green slices matching the commit plan: E0 parser/AST/editor metadata, E1 error enum classification and diagnostics, E2 `std.error`/hidden context/`Result.wrap`, E3 shim-boundary context, E4 `try`/`wrap` propagation, E5 stdlib migration, and E6 docs/editor bugbash. Starting with E0 tests before parser and AST changes.
 - 2026-05-13 17:51 CEST: E0 RED observed with `dune runtest lib/frontend/syntax`: new parser tests fail to compile because `Surface.surface_variant_def` has no `sv_message` field yet.
 - 2026-05-13 17:55 CEST: E0 compiler parser/AST work is green under `dune runtest lib/frontend/syntax`: variant messages now parse into surface/core AST metadata, lower into `AST.variant_def`, and malformed message syntax reports `parse-invalid-variant-message`.
 - 2026-05-13 17:58 CEST: E0 editor RED observed: `npm test -- --include 'Message-bearing error sum type'` in `tools/tree-sitter-marmoset` reports error nodes around `= "..."`, and `npm run check-grammar` in `tools/vscode-marmoset` reports missing enum-variant string-message highlighting.
@@ -825,10 +825,10 @@ The implementation can start without resolving all five. Questions 1, 2, and 4 m
 - 2026-05-13 18:18 CEST: E1 RED observed with `dune runtest lib/frontend/typecheck`: new classification tests fail to compile because `Enum_registry.enum_def` has no `kind` metadata yet.
 - 2026-05-13 18:20 CEST: E1 gate is green: `dune runtest lib/frontend`, `dune runtest lib/frontend/syntax lib/frontend/typecheck`, `make integration enums modules`, `dune runtest lib/backend/go tools/lsp/lib`, and `git diff --check` all passed after adding error enum classification, alias/name diagnostics, imported error alias coverage, and stdlib/fixture messages.
 - 2026-05-13 18:21 CEST: E1 commit created for error enum classification, reserved-name diagnostics, error alias validation, and migrated stdlib/fixture canonical messages.
-- 2026-05-13 18:22 CEST: E2 started. Adding RED coverage for `Result.map_error`, `std.error.message`/`frames`, source constructor and pattern arity with hidden context, and generated Go hidden context layout.
-- 2026-05-13 18:23 CEST: E2 RED observed: `dune runtest lib/backend/go` fails the hidden context codegen assertion, and `make integration prelude` fails because `Result.map_error` and `std.error` do not exist yet.
-- 2026-05-13 18:25 CEST: E2 gate is green: `dune runtest lib/backend/go`, `dune runtest lib/frontend/typecheck`, `make integration prelude`, `dune runtest lib/frontend lib/backend/go`, `make integration prelude stdlib-shims`, and `git diff --check` all passed after adding `std.error`, `Result.map_error`, hidden Go error context, source constructor context injection, and synthetic `std.error.Error` impl emission.
-- 2026-05-13 18:26 CEST: E2 commit created for `std.error`, hidden error context runtime/codegen, synthetic error trait helpers, and `Result.map_error`.
+- 2026-05-13 18:22 CEST: E2 started. Adding RED coverage for `Result.wrap`, `std.error.message`/`frames`, source constructor and pattern arity with hidden context, and generated Go hidden context layout.
+- 2026-05-13 18:23 CEST: E2 RED observed: `dune runtest lib/backend/go` fails the hidden context codegen assertion, and `make integration prelude` fails because `Result.wrap` and `std.error` do not exist yet.
+- 2026-05-13 18:25 CEST: E2 gate is green: `dune runtest lib/backend/go`, `dune runtest lib/frontend/typecheck`, `make integration prelude`, `dune runtest lib/frontend lib/backend/go`, `make integration prelude stdlib-shims`, and `git diff --check` all passed after adding `std.error`, `Result.wrap`, hidden Go error context, source constructor context injection, and synthetic `std.error.Error` impl emission.
+- 2026-05-13 18:26 CEST: E2 commit created for `std.error`, hidden error context runtime/codegen, synthetic error trait helpers, and `Result.wrap`.
 - 2026-05-13 18:29 CEST: E3 started. Adding RED coverage that shim-returned error enums get extern-boundary context rather than only the generated constructor fallback, plus stdlib shim message coverage for shim-produced decode errors.
 - 2026-05-13 18:30 CEST: E3 RED observed with `dune runtest lib/backend/go`: the new shim boundary context assertion fails because generated adapters still call the normal error constructor fallback without overriding context from the extern declaration span.
 - 2026-05-13 18:33 CEST: E3 gate is green: `dune runtest lib/backend/go`, `make integration ffi`, `make integration stdlib-shims`, and `git diff --check` all passed after shim ABI return conversion started overwriting error enum context with extern declaration frames and the FFI Go tree snapshot was refreshed.
@@ -842,9 +842,10 @@ The implementation can start without resolving all five. Questions 1, 2, and 4 m
 - 2026-05-13 19:06 CEST: E4 commit created for parser/AST/typechecker/codegen support for `try` and `try ... wrap ...`, same-error and wrapping fixtures, nested early-return coverage, nested function context diagnostics, and editor parser updates.
 - 2026-05-13 19:08 CEST: E5 started. Adding RED stdlib-shim coverage that `std.file.read[Str]` preserves `std.bytes.DecodeError.InvalidUtf8` inside `std.file.Error.InvalidData` instead of converting it to a lossy string.
 - 2026-05-13 19:09 CEST: E5 RED observed with `make integration stdlib-shims`: the updated file tests fail because `Error.InvalidData` still has a `String` payload and cannot match `DecodeError.InvalidUtf8`.
-- 2026-05-13 19:13 CEST: E5 gate is green: `MARMOSET_ROOT=$PWD dune exec -- bin/main.exe check std/file.mr`, `MARMOSET_ROOT=$PWD dune exec -- bin/main.exe check std/dir.mr`, `make integration stdlib-shims`, `make integration ffi`, `dune runtest lib/frontend lib/backend/go tools/lsp/lib`, and `git diff --check` pass after migrating `std.file.Error.InvalidData` to `DecodeError`, switching decode adaptation to `Result.map_error`, and allowing module-qualified enum payloads through shim API generation.
+- 2026-05-13 19:13 CEST: E5 gate is green: `MARMOSET_ROOT=$PWD dune exec -- bin/main.exe check std/file.mr`, `MARMOSET_ROOT=$PWD dune exec -- bin/main.exe check std/dir.mr`, `make integration stdlib-shims`, `make integration ffi`, `dune runtest lib/frontend lib/backend/go tools/lsp/lib`, and `git diff --check` pass after migrating `std.file.Error.InvalidData` to `DecodeError`, switching decode adaptation to `Result.wrap`, and allowing module-qualified enum payloads through shim API generation.
 - 2026-05-13 19:13 CEST: E5 commit created for stdlib typed decode-error causes, stdlib-shim fixture updates, cross-module enum payload shim boundaries, and refreshed FFI/stdlib docs.
 - 2026-05-13 19:15 CEST: E6 started. Adding docs plus RED LSP coverage for error variant definitions with canonical messages: definition should still resolve to the variant head, and hover should show both the variant type and message metadata.
 - 2026-05-13 19:15 CEST: E6 RED observed with `dune runtest tools/lsp/lib`: the definition regression passes, but the new hover tests fail because declaration hover does not yet parse sum variants or message string ranges.
 - 2026-05-13 19:22 CEST: E6 gate is green: `dune runtest lib/frontend lib/backend/go tools/lsp/lib`, `make integration ffi stdlib-shims`, `test/ci/tree-sitter.sh`, `test/ci/editor-vscode.sh`, `test/ci/editor-nvim.sh`, `test/ci/editor-jetbrains.sh`, `cargo fmt --check --manifest-path tools/zed-marmoset/Cargo.toml`, `cargo test --locked --manifest-path tools/zed-marmoset/Cargo.toml`, and `git diff --check` pass after adding error docs and LSP hover/definition coverage.
 - 2026-05-13 19:22 CEST: E6 commit created for canonical error documentation, stdlib/FFI doc refreshes, and LSP hover/definition support for messaged error variants.
+- 2026-05-13 20:01 CEST: Post-E6 Result API cleanup is green. The prelude integration RED first showed `Result.wrap` missing after replacing the old failure-mapping names; `std.result` now exposes only `value_or`, `map`, `wrap`, and `bind`, `std.file` decode adaptation uses `Result.wrap`, and current docs align pipeline-style `Result.wrap` with `try ... wrap ...`. Verification passed with `MARMOSET_ROOT=$PWD dune exec -- bin/main.exe check std/result.mr`, `MARMOSET_ROOT=$PWD dune exec -- bin/main.exe check std/file.mr`, `make integration prelude ffi stdlib-shims`, `make integration result`, `dune runtest lib/frontend lib/backend/go tools/lsp/lib`, targeted stale-name `rg`, and `git diff --check`.

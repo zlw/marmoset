@@ -56,13 +56,13 @@ run_project_expect_output \
 
 run_project_expect_output \
     "Result helpers are available as inherent methods without extra imports" \
-    $'42\nerr!\n43\n0\ntrue\ntrue' \
-    $'let ok_num: Result[Int, Str] = Result.Success(42)\nlet failed: Result[Int, Str] = Result.Failure("err")\nlet rendered = Result.map(ok_num, (n: Int) -> Show.show(n))\nmatch rendered {\n  case Result.Success(v): puts(v)\n  case Result.Failure(_): puts("bad")\n}\nlet boom = Result.or(failed, (e: Str) -> e + "!")\nmatch boom {\n  case Result.Success(_): puts("bad")\n  case Result.Failure(msg): puts(msg)\n}\nlet next = Result.bind(ok_num, (x: Int) -> Result.Success(x + 1))\nmatch next {\n  case Result.Success(v): puts(v)\n  case Result.Failure(_): puts(0)\n}\nputs(Result.value_or(failed, 0))\nputs(Result.success?(ok_num))\nputs(Result.failure?(failed))\n'
+    $'42\nerr!\n43\n0' \
+    $'let ok_num: Result[Int, Str] = Result.Success(42)\nlet failed: Result[Int, Str] = Result.Failure("err")\nlet rendered = Result.map(ok_num, (n: Int) -> Show.show(n))\nmatch rendered {\n  case Result.Success(v): puts(v)\n  case Result.Failure(_): puts("bad")\n}\nlet boom = Result.wrap(failed, (e: Str) -> e + "!")\nmatch boom {\n  case Result.Success(_): puts("bad")\n  case Result.Failure(msg): puts(msg)\n}\nlet next = Result.bind(ok_num, (x: Int) -> Result.Success(x + 1))\nmatch next {\n  case Result.Success(v): puts(v)\n  case Result.Failure(_): puts(0)\n}\nputs(Result.value_or(failed, 0))\n'
 
 run_project_expect_output \
-    "Result.map_error preserves successes and maps failures" \
+    "Result.wrap preserves successes and wraps failures" \
     $'ok:42\nfail:err!' \
-    $'let ok_num: Result[Int, Str] = Result.Success(42)\nlet failed: Result[Int, Str] = Result.Failure("err")\nmatch Result.map_error(ok_num, (e: Str) -> e + "!") {\n  case Result.Success(v): puts("ok:" + Show.show(v))\n  case Result.Failure(_): puts("bad")\n}\nmatch Result.map_error(failed, (e: Str) -> e + "!") {\n  case Result.Success(_): puts("bad")\n  case Result.Failure(msg): puts("fail:" + msg)\n}\n'
+    $'let ok_num: Result[Int, Str] = Result.Success(42)\nlet failed: Result[Int, Str] = Result.Failure("err")\nmatch Result.wrap(ok_num, (e: Str) -> e + "!") {\n  case Result.Success(v): puts("ok:" + Show.show(v))\n  case Result.Failure(_): puts("bad")\n}\nmatch Result.wrap(failed, (e: Str) -> e + "!") {\n  case Result.Success(_): puts("bad")\n  case Result.Failure(msg): puts("fail:" + msg)\n}\n'
 
 run_project_expect_output \
     "std.error exposes canonical messages and hidden construction frames" \

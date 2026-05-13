@@ -45,7 +45,7 @@ extern "std/file" as file_shim = {
 }
 
 fn decode_bytes[a: Decode](payload: Bytes) -> Result[a, Error] =
-  bytes.Decode.decode(payload) |> Result.map_error((err: DecodeError) -> Error.InvalidData(err))
+  bytes.Decode.decode(payload) |> Result.wrap((err: DecodeError) -> Error.InvalidData(err))
 
 fn decode_optional_bytes[a: Decode](payload: Option[Bytes]) -> Result[Option[a], Error] = match payload {
   case Option.Some(bytes): decode_bytes(bytes) |> Result.map(Option.Some(_))

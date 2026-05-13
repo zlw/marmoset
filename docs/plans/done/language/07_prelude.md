@@ -229,6 +229,16 @@ impl Result[a, e] = {
     case Result.Success(v): Result.Success(f(v))
     case Result.Failure(err): Result.Failure(err)
   }
+
+  fn wrap[b](self: Result[a, e], f: (e) -> b) -> Result[a, b] = match self {
+    case Result.Success(v): Result.Success(v)
+    case Result.Failure(err): Result.Failure(f(err))
+  }
+
+  fn bind[b](self: Result[a, e], f: (a) -> Result[b, e]) -> Result[b, e] = match self {
+    case Result.Success(v): f(v)
+    case Result.Failure(err): Result.Failure(err)
+  }
 }
 ```
 
@@ -241,7 +251,7 @@ These are ordinary stdlib modules, but their APIs surface as inherent methods on
 - `Option.bind(Option.Some(42), (x) -> Option.Some(x + 1))` → `Option.Some(43)`
 - `Option.map(Option.None, (x: Int) -> x + 1)` → `Option.None`
 - `Result.map(Result.Success(42), Show.show)` → `Result.Success("42")`
-- `Result.or(Result.Failure("err"), (e) -> e + "!")` → `Result.Failure("err!")`
+- `Result.wrap(Result.Failure("err"), (e) -> e + "!")` → `Result.Failure("err!")`
 - `Result.bind(Result.Success(42), (x) -> Result.Success(x + 1))` → `Result.Success(43)`
 - `Result.value_or(Result.Failure("err"), 0)` → 0
 

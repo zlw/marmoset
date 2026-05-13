@@ -13,12 +13,7 @@ impl[a, e] Result[a, e] = {
     case Result.Failure(err): Result.Failure(err)
   }
 
-  fn map_error[b](self: Result[a, e], f: (e) -> b) -> Result[a, b] = match self {
-    case Result.Success(v): Result.Success(v)
-    case Result.Failure(err): Result.Failure(f(err))
-  }
-
-  fn or[b](self: Result[a, e], f: (e) -> b) -> Result[a, b] = match self {
+  fn wrap[b](self: Result[a, e], f: (e) -> b) -> Result[a, b] = match self {
     case Result.Success(v): Result.Success(v)
     case Result.Failure(err): Result.Failure(f(err))
   }
@@ -26,15 +21,5 @@ impl[a, e] Result[a, e] = {
   fn bind[b](self: Result[a, e], f: (a) -> Result[b, e]) -> Result[b, e] = match self {
     case Result.Success(v): f(v)
     case Result.Failure(err): Result.Failure(err)
-  }
-
-  fn success?(self: Result[a, e]) -> Bool = match self {
-    case Result.Success(_): true
-    case Result.Failure(_): false
-  }
-
-  fn failure?(self: Result[a, e]) -> Bool = match self {
-    case Result.Success(_): false
-    case Result.Failure(_): true
   }
 }

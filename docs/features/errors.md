@@ -15,7 +15,7 @@ This doc covers production error values:
 - typed causes,
 - hidden source context,
 - `std.error` helpers,
-- `Result.map_error`,
+- `Result.wrap`,
 - `try` and `try ... wrap ...`,
 - shim boundary context.
 
@@ -83,13 +83,13 @@ let frames = error.frames(err)
 
 ## Result Helpers
 
-`Result.map_error` maps failures and preserves successes:
+`Result.wrap` wraps failures and preserves successes:
 
 ```marmoset
-Result.map_error(std.file.read[Str](path), (err: std.file.Error) -> ConfigError.File(err))
+Result.wrap(std.file.read[Str](path), (err: std.file.Error) -> ConfigError.File(err))
 ```
 
-`Result.or` remains as a compatibility alias, but new code should use `map_error`.
+Use `Result.wrap` for explicit pipeline-style error wrapping, and `try ... wrap ...` for early-return propagation.
 
 ## Try Propagation
 
