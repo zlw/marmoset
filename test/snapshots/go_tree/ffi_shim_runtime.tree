@@ -89,19 +89,20 @@ func (e Result_std__bytes__Bytes_std__bytes__DecodeError) String() string {
 
 
 type std__bytes__DecodeError struct {
+	Context marmoset.ErrorContext
 	Tag int8
 }
 
 const std__bytes__DecodeError_InvalidUtf8_tag = 0
 
 func std__bytes__DecodeError_InvalidUtf8() std__bytes__DecodeError {
-	return std__bytes__DecodeError{Tag: std__bytes__DecodeError_InvalidUtf8_tag}
+	return std__bytes__DecodeError{Tag: std__bytes__DecodeError_InvalidUtf8_tag, Context: marmoset.NewErrorContext("Invalid UTF-8", "<generated>", "DecodeError.InvalidUtf8", int64(0))}
 }
 
 func (e std__bytes__DecodeError) String() string {
 	switch e.Tag {
 	case std__bytes__DecodeError_InvalidUtf8_tag:
-		return "InvalidUtf8"
+		return marmoset.ErrorMessage(e.Context)
 	default:
 		panic("unreachable: invalid enum tag")
 	}
@@ -170,7 +171,7 @@ func extern__std_bytes__to_str(input marmoset.Bytes) Result_string_std__bytes__D
 		switch __variant := __value.(type) {
 		case mapi_std_bytes.DecodeErrorInvalidUtf8:
 			_ = __variant
-			return std__bytes__DecodeError_InvalidUtf8()
+			return (func(__err std__bytes__DecodeError) std__bytes__DecodeError { __err.Context = marmoset.NewErrorContext("Invalid UTF-8", "std/bytes.mr", "std.bytes.to_str", int64(237)); return __err })(std__bytes__DecodeError_InvalidUtf8())
 		default:
 			panic("std/bytes.to_str: unknown enum variant returned by shim")
 		}
@@ -210,7 +211,7 @@ func std__bytes__Decode_decode_std__bytes__Bytes(input marmoset.Bytes) Result_st
         if true {
             return Result_std__bytes__Bytes_std__bytes__DecodeError_Success(input)
         } else {
-            return Result_std__bytes__Bytes_std__bytes__DecodeError_Failure(std__bytes__DecodeError_InvalidUtf8())
+            return Result_std__bytes__Bytes_std__bytes__DecodeError_Failure((func(__err std__bytes__DecodeError) std__bytes__DecodeError { __err.Context = marmoset.NewErrorContext("Invalid UTF-8", "std/bytes.mr", "Decode.decode", int64(710)); return __err })(std__bytes__DecodeError_InvalidUtf8()))
         }
 }
 
@@ -258,6 +259,61 @@ func BytesFromString(input string) Bytes {
 
 func (bytes Bytes) Copy() []byte {
 	return append([]byte(nil), bytes.data...)
+}
+
+===== marmoset/error.go =====
+package marmoset
+
+import "strconv"
+
+type ErrorFrame struct {
+	File     string
+	Function string
+	Position int64
+}
+
+type ErrorContext struct {
+	Message string
+	Frames  []ErrorFrame
+}
+
+func NewErrorContext(message string, file string, function string, position int64) ErrorContext {
+	return ErrorContext{
+		Message: message,
+		Frames: []ErrorFrame{
+			{File: file, Function: function, Position: position},
+		},
+	}
+}
+
+func ErrorMessage(ctx ErrorContext) string {
+	return ctx.Message
+}
+
+func ErrorFrames(ctx ErrorContext) []ErrorFrame {
+	out := make([]ErrorFrame, len(ctx.Frames))
+	copy(out, ctx.Frames)
+	return out
+}
+
+func ErrorFrameString(frame ErrorFrame) string {
+	location := frame.File
+	if frame.Position > 0 {
+		location = location + ":" + strconv.FormatInt(frame.Position, 10)
+	}
+	if frame.Function == "" {
+		return location
+	}
+	return location + " in " + frame.Function
+}
+
+func ErrorFrameStrings(ctx ErrorContext) []string {
+	frames := ErrorFrames(ctx)
+	out := make([]string, len(frames))
+	for i, frame := range frames {
+		out[i] = ErrorFrameString(frame)
+	}
+	return out
 }
 
 ===== marmoset/handle.go =====

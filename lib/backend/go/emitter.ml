@@ -1016,6 +1016,14 @@ let error_variant_message (enum_name : string) (variant : Typecheck.Enum_registr
         (Printf.sprintf "Codegen error: error variant %s.%s is missing a canonical message" enum_name
            variant.name)
 
+let stable_error_file_id (file_id : string) : string =
+  let cwd_prefix = Sys.getcwd () ^ Filename.dir_sep in
+  let prefix_len = String.length cwd_prefix in
+  if String.length file_id > prefix_len && String.sub file_id 0 prefix_len = cwd_prefix then
+    String.sub file_id prefix_len (String.length file_id - prefix_len)
+  else
+    file_id
+
 let error_context_expr
     (state : mono_state)
     ~(message : string)
@@ -1023,7 +1031,8 @@ let error_context_expr
     ~(function_name : string)
     ~(position : int) : string =
   let helper = marmoset_runtime_helper state "NewErrorContext" in
-  Printf.sprintf "%s(%S, %S, %S, int64(%d))" helper message file_id function_name position
+  Printf.sprintf "%s(%S, %S, %S, int64(%d))" helper message (stable_error_file_id file_id)
+    function_name position
 
 (* Get size/alignment of a type for sorting (used for optimal field layout) *)
 let type_size (t : Types.mono_type) : int =
@@ -9099,6 +9108,42 @@ let variant_payload_expr
           else
             field_expr)
 
+type shim_error_frame = {
+  shim_frame_file_id : string;
+  shim_frame_function_name : string;
+  shim_frame_position : int;
+}
+
+let shim_error_frame_of_func (func : Typecheck.Resolution_artifacts.extern_func) : shim_error_frame =
+  let file_id, position =
+    match func.source_span with
+    | Diagnostic.Span { file_id; start_pos; _ } -> (file_id, start_pos)
+    | Diagnostic.NoSpan -> ("<shim>", 0)
+  in
+  {
+    shim_frame_file_id = file_id;
+    shim_frame_function_name = func.owner_module_id ^ "." ^ func.marmoset_func_name;
+    shim_frame_position = position;
+  }
+
+let maybe_attach_shim_error_context
+    (state : mono_state)
+    ?error_frame
+    ~(enum_name : string)
+    ~(variant : Typecheck.Enum_registry.variant_def)
+    ~(value_type : string)
+    (value_expr : string) : string =
+  match (Typecheck.Enum_registry.lookup enum_name, error_frame) with
+  | Some enum_def, Some frame when enum_def_is_error enum_def ->
+      let context_expr =
+        error_context_expr state ~message:(error_variant_message enum_name variant)
+          ~file_id:frame.shim_frame_file_id ~function_name:frame.shim_frame_function_name
+          ~position:frame.shim_frame_position
+      in
+      Printf.sprintf "(func(__err %s) %s { __err.Context = %s; return __err })(%s)" value_type value_type
+        context_expr value_expr
+  | _ -> value_expr
+
 let rec to_abi_expr
     (state : mono_state)
     ~(api_alias : string)
@@ -9272,6 +9317,7 @@ and from_abi_expr
     ~(api_alias : string)
     ~(owner_module_id : string)
     ~(context : string)
+    ?error_frame
     (boundary : Typecheck.Shim_boundary.boundary_type)
     (expr : string) : string =
   match boundary with
@@ -9280,7 +9326,7 @@ and from_abi_expr
   | BStdOption inner ->
       let value_type = boundary_marmoset_go_type state boundary in
       let inner_abi_type = abi_type_go_for_main ~api_alias inner in
-      let some_expr = from_abi_expr state ~api_alias ~owner_module_id ~context inner "__some" in
+      let some_expr = from_abi_expr state ~api_alias ~owner_module_id ~context ?error_frame inner "__some" in
       Printf.sprintf
         "(func(__value marmoset.Option[%s]) %s {\n\t\t__state, __some := marmoset.InspectOption(__value)\n\t\t_ = __some\n\t\tswitch __state {\n\t\tcase marmoset.OptionSome:\n\t\t\treturn %s_Some(%s)\n\t\tcase marmoset.OptionNone:\n\t\t\treturn %s_None()\n\t\tdefault:\n\t\t\tpanic(%S)\n\t\t}\n\t})(%s)"
         inner_abi_type value_type value_type some_expr value_type
@@ -9290,8 +9336,8 @@ and from_abi_expr
       let value_type = boundary_marmoset_go_type state boundary in
       let ok_abi_type = abi_type_go_for_main ~api_alias ok_type in
       let err_abi_type = abi_type_go_for_main ~api_alias err_type in
-      let ok_expr = from_abi_expr state ~api_alias ~owner_module_id ~context ok_type "__success" in
-      let err_expr = from_abi_expr state ~api_alias ~owner_module_id ~context err_type "__failure" in
+      let ok_expr = from_abi_expr state ~api_alias ~owner_module_id ~context ?error_frame ok_type "__success" in
+      let err_expr = from_abi_expr state ~api_alias ~owner_module_id ~context ?error_frame err_type "__failure" in
       Printf.sprintf
         "(func(__value marmoset.Result[%s, %s]) %s {\n\t\t__state, __success, __failure := marmoset.InspectResult(__value)\n\t\t_ = __success\n\t\t_ = __failure\n\t\tswitch __state {\n\t\tcase marmoset.ResultSuccess:\n\t\t\treturn %s_Success(%s)\n\t\tcase marmoset.ResultFailure:\n\t\t\treturn %s_Failure(%s)\n\t\tdefault:\n\t\t\tpanic(%S)\n\t\t}\n\t})(%s)"
         ok_abi_type err_abi_type value_type value_type ok_expr value_type err_expr
@@ -9300,7 +9346,7 @@ and from_abi_expr
   | BList inner ->
       let value_type = boundary_marmoset_go_type state boundary in
       let abi_type = abi_type_go_for_main ~api_alias boundary in
-      let convert_item = from_abi_expr state ~api_alias ~owner_module_id ~context inner "__item" in
+      let convert_item = from_abi_expr state ~api_alias ~owner_module_id ~context ?error_frame inner "__item" in
       Printf.sprintf
         "(func(__value %s) %s {\n\t\t__out := make(%s, len(__value))\n\t\tfor __i, __item := range __value {\n\t\t\t__out[__i] = %s\n\t\t}\n\t\treturn __out\n\t})(%s)"
         abi_type value_type value_type convert_item expr
@@ -9322,12 +9368,17 @@ and from_abi_expr
                  |> List.mapi (fun idx field_type ->
                         let field_type = Types.apply_substitution subst field_type in
                         let field_boundary = enum_field_boundary_exn ~owner_module_id field_type in
-                        from_abi_expr state ~api_alias ~owner_module_id ~context field_boundary
+                        from_abi_expr state ~api_alias ~owner_module_id ~context ?error_frame field_boundary
                           (Printf.sprintf "__variant.Field%d" idx))
                  |> String.concat ", "
                in
-               Printf.sprintf "\t\tcase %s:\n\t\t\t_ = __variant\n\t\t\treturn %s_%s(%s)" api_variant_type
-                 value_type variant.name args)
+               let constructed = Printf.sprintf "%s_%s(%s)" value_type variant.name args in
+               let constructed =
+                 maybe_attach_shim_error_context state ?error_frame ~enum_name:enum.enum_name ~variant
+                   ~value_type constructed
+               in
+               Printf.sprintf "\t\tcase %s:\n\t\t\t_ = __variant\n\t\t\treturn %s" api_variant_type
+                 constructed)
         |> String.concat "\n"
       in
       Printf.sprintf
@@ -9342,14 +9393,16 @@ and from_abi_expr
       let api_type = abi_type_go_for_main ~api_alias boundary in
       (match wrapper.wrapper_payloads with
       | [ payload_boundary ] ->
-          let payload_expr = from_abi_expr state ~api_alias ~owner_module_id ~context payload_boundary "__value" in
+          let payload_expr =
+            from_abi_expr state ~api_alias ~owner_module_id ~context ?error_frame payload_boundary "__value"
+          in
           Printf.sprintf "(func(__value %s) %s {\n\t\treturn %s(%s)\n\t})(%s)" api_type value_type
             value_type payload_expr expr
       | _ ->
           let payload_exprs =
             wrapper.wrapper_payloads
             |> List.mapi (fun index payload_boundary ->
-                   from_abi_expr state ~api_alias ~owner_module_id ~context payload_boundary
+                   from_abi_expr state ~api_alias ~owner_module_id ~context ?error_frame payload_boundary
                      (Printf.sprintf "__value.%s" (wrapper_payload_field_name index)))
           in
           let fields =
@@ -9411,8 +9464,8 @@ let emit_extern_wrapper (state : mono_state) (func : Typecheck.Resolution_artifa
     | BUnit -> Printf.sprintf "%s\n\t%s\n\treturn struct{}{}" panic_guard call
     | _ ->
         let return_expr =
-          from_abi_expr state ~api_alias ~owner_module_id:func.owner_module_id ~context func.return_boundary_type
-            "__ret"
+          from_abi_expr state ~api_alias ~owner_module_id:func.owner_module_id ~context
+            ~error_frame:(shim_error_frame_of_func func) func.return_boundary_type "__ret"
         in
         Printf.sprintf "%s\n\t__ret := %s\n\treturn %s" panic_guard call return_expr
   in
@@ -10577,7 +10630,7 @@ let register_std_bytes_decode_error_for_test () =
       variants = [ { Typecheck.Enum_registry.name = "InvalidUtf8"; fields = []; message = Some "Invalid UTF-8" } ];
     }
 
-let add_std_bytes_to_str_decl_for_test extern_declarations =
+let add_std_bytes_to_str_decl_for_test ?(source_span = Diagnostic.NoSpan) extern_declarations =
   let shim_key = Typecheck.Extern_registry.shim_key ~shim_id:"std/bytes" ~func_name:"to_str" in
   let decode_error =
     Typecheck.Shim_boundary.BOwnerEnum { enum_name = "std__bytes__DecodeError"; enum_type_args = [] }
@@ -10594,8 +10647,8 @@ let add_std_bytes_to_str_decl_for_test extern_declarations =
       param_boundary_types = [ Typecheck.Shim_boundary.BStdBytes ];
       return_boundary_type = Typecheck.Shim_boundary.BStdResult (Typecheck.Shim_boundary.BStr, decode_error);
       is_effectful = false;
-      source_span = Diagnostic.NoSpan;
-      boundary_spans = [ Diagnostic.NoSpan; Diagnostic.NoSpan ];
+      source_span;
+      boundary_spans = [ source_span; source_span ];
     }
 
 let%test "shim support and generated std api packages compile with go 1.18" =
@@ -10654,6 +10707,21 @@ func Mutate(input marmoset.Bytes) {
     (({ rel_path = "go.mod"; contents = default_go_mod } :: marmoset_support_files ())
     @ [ { rel_path = "shims/std/bytes_bad/bytes_bad.go"; contents = bad_shim } ])
     ~needle:"unexported field data"
+
+let%test "shim error enum return injects extern boundary context" =
+  Typecheck.Enum_registry.clear ();
+  register_std_bytes_decode_error_for_test ();
+  let extern_declarations = Hashtbl.create 1 in
+  let source_span = Diagnostic.Span { file_id = "std/bytes.mr"; start_pos = 17; end_pos = Some 42 } in
+  add_std_bytes_to_str_decl_for_test ~source_span extern_declarations;
+  let shim_key = Typecheck.Extern_registry.shim_key ~shim_id:"std/bytes" ~func_name:"to_str" in
+  match Hashtbl.find_opt extern_declarations shim_key with
+  | None -> false
+  | Some func ->
+      let state = create_mono_state ~extern_declarations () in
+      let code = emit_extern_wrapper state func in
+      string_contains code
+        {|marmoset.NewErrorContext("Invalid UTF-8", "std/bytes.mr", "std.bytes.to_str", int64(17))|}
 
 let%test "generated shim api package names are keyword safe" =
   Typecheck.Enum_registry.clear ();

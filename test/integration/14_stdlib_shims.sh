@@ -214,6 +214,24 @@ puts("lossy:" + bytes.to_str_lossy(raw))
 EOF
 
 run_source_expect_output \
+    "std.bytes shim decode errors expose canonical message" \
+    $'Invalid UTF-8' <<EOF
+import std.bytes
+import std.bytes.Bytes
+import std.error
+import std.file
+import std.path.Path
+
+match file.read(Path("$INVALID_UTF8_PATH")) {
+  case Result.Success(raw): match bytes.to_str(raw) {
+    case Result.Success(_): puts("unexpected-success")
+    case Result.Failure(err): puts(error.message(err))
+  }
+  case Result.Failure(_): puts("read-failed")
+}
+EOF
+
+run_source_expect_output \
     "std.path manipulates pure path values" \
     $'base:example.txt\ndir:/tmp/marmoset\next:.txt\njoin:/tmp/marmoset/child\nclean:/tmp/b\nabs:true\nrel:true' <<'EOF'
 import std.path
