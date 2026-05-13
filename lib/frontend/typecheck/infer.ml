@@ -883,6 +883,15 @@ let error_at_stmt ~code ~message (stmt : AST.statement) =
 let warning_at_stmt ~code ~message (stmt : AST.statement) =
   { (error_at_stmt ~code ~message stmt) with severity = Diagnostic.Warning }
 
+let source_type_name (name : string) : string = Display_names.display_binding_name name
+let is_error_type_name (name : string) : bool = Enum_registry.is_error_type_name (source_type_name name)
+
+let error_name_reserved_diagnostic (stmt : AST.statement) (name : string) =
+  let source_name = source_type_name name in
+  error_at_stmt ~code:"error-name-reserved"
+    ~message:(Printf.sprintf "Type '%s' ends with Error, so it must be an error sum." source_name)
+    stmt
+
 let unknown_constructor_message (type_name : string) (constructor_name : string) : string =
   Printf.sprintf "Unknown constructor: %s.%s" (Display_names.display_binding_name type_name) constructor_name
 
@@ -5163,14 +5172,20 @@ and infer_statement ?(type_bindings = []) type_map env stmt =
   match stmt.stmt with
   | AST.ExportDecl _ | AST.ImportDecl _ | AST.ExternBlock _ -> Ok (empty_substitution, TNull)
   | AST.ExternTypeDef def ->
-      Type_registry.register_extern_type def;
-      Ok (empty_substitution, TNull)
+      if is_error_type_name def.extern_type_name then
+        Error (error_name_reserved_diagnostic stmt def.extern_type_name)
+      else (
+        Type_registry.register_extern_type def;
+        Ok (empty_substitution, TNull))
   | AST.ExpressionStmt expr -> infer_expression type_map env expr
   | AST.Return expr -> infer_expression type_map env expr
   | AST.Block stmts -> infer_block ~type_bindings type_map env stmts
   | AST.Let let_binding ->
       infer_let ~type_bindings type_map env let_binding.name let_binding.value let_binding.type_annotation
   | AST.TypeDef { type_name; type_type_params; type_body } -> (
+      if is_error_type_name type_name then
+        Error (error_name_reserved_diagnostic stmt type_name)
+      else
       let type_bindings = List.map (fun name -> (name, TVar name)) type_type_params in
       let convert_type_expr (te : AST.type_expr) : (mono_type, Diagnostic.t) result =
         Annotation.type_expr_to_mono_type_with type_bindings te
@@ -5223,8 +5238,38 @@ and infer_statement ?(type_bindings = []) type_map env stmt =
       Type_registry.register_shape { Type_registry.shape_name; shape_type_params; shape_fields = field_types };
       Ok (empty_substitution, TNull)
   | AST.EnumDef { name; type_params; variants } -> (
+      let source_name = source_type_name name in
+      let kind =
+        if Enum_registry.is_error_type_name source_name then
+          Enum_registry.ErrorEnum
+        else
+          Enum_registry.OrdinaryEnum
+      in
+      let* () =
+        match kind with
+        | Enum_registry.ErrorEnum -> (
+            match List.find_opt (fun (v : AST.variant_def) -> Option.is_none v.variant_message) variants with
+            | Some variant ->
+                Error
+                  (error_at_stmt ~code:"error-message-required"
+                     ~message:
+                       (Printf.sprintf "Error variant '%s.%s' must declare a canonical message." source_name
+                          variant.variant_name)
+                     stmt)
+            | None -> Ok ())
+        | Enum_registry.OrdinaryEnum -> (
+            match List.find_opt (fun (v : AST.variant_def) -> Option.is_some v.variant_message) variants with
+            | Some variant ->
+                Error
+                  (error_at_stmt ~code:"error-message-not-allowed"
+                     ~message:
+                       (Printf.sprintf "Non-error variant '%s.%s' cannot declare an error message." source_name
+                          variant.variant_name)
+                     stmt)
+            | None -> Ok ())
+      in
       (* Predeclare the type name so recursive constructor payloads can resolve. *)
-      Enum_registry.register { Enum_registry.name; type_params; variants = [] };
+      Enum_registry.register { Enum_registry.name; source_name = Some source_name; type_params; variants = []; kind };
       let type_bindings = List.map (fun type_param -> (type_param, TVar type_param)) type_params in
       let convert_type_expr (te : AST.type_expr) : (mono_type, Diagnostic.t) result =
         match Annotation.type_expr_to_mono_type_with type_bindings te with
@@ -5242,7 +5287,7 @@ and infer_statement ?(type_bindings = []) type_map env stmt =
       match variant_defs_result with
       | Error e -> Error e
       | Ok variant_defs ->
-          Enum_registry.register { Enum_registry.name; type_params; variants = variant_defs };
+          Enum_registry.register { Enum_registry.name; source_name = Some source_name; type_params; variants = variant_defs; kind };
           Ok (empty_substitution, TNull))
   | AST.TraitDef { name; type_param; type_params; supertraits; methods } -> (
       let type_params =
@@ -6992,6 +7037,42 @@ let register_top_level_named_declarations (program : AST.program) : (unit, Diagn
   let* () = register_enums program in
   register_named program
 
+let validate_error_type_aliases (program : AST.program) : (unit, Diagnostic.t) result =
+  let alias_resolves_to_error_type alias_type_params alias_body =
+    let type_bindings = List.map (fun name -> (name, TVar name)) alias_type_params in
+    match Annotation.type_expr_to_mono_type_with type_bindings alias_body with
+    | Ok (TEnum (enum_name, _)) -> Ok (Enum_registry.is_error_enum enum_name)
+    | Ok _ -> Ok false
+    | Error diag -> Error (error ~code:diag.code ~message:diag.message)
+  in
+  let rec go = function
+    | [] -> Ok ()
+    | (stmt : AST.statement) :: rest -> (
+        match stmt.stmt with
+        | AST.TypeAlias { alias_name; alias_type_params; alias_body } ->
+            let alias_source_name = source_type_name alias_name in
+            let alias_has_error_name = Enum_registry.is_error_type_name alias_source_name in
+            let* aliases_error = alias_resolves_to_error_type alias_type_params alias_body in
+            if alias_has_error_name && not aliases_error then
+              Error
+                (error_at_stmt ~code:"error-alias-name"
+                   ~message:
+                     (Printf.sprintf "Type '%s' uses an error name, but it does not alias an error type."
+                        alias_source_name)
+                   stmt)
+            else if aliases_error && not alias_has_error_name then
+              Error
+                (error_at_stmt ~code:"error-alias-name"
+                   ~message:
+                     (Printf.sprintf "Type '%s' aliases an error type, but error aliases must be named Error or *Error."
+                        alias_source_name)
+                   stmt)
+            else
+              go rest
+        | _ -> go rest)
+  in
+  go program
+
 let infer_program
     ?(env = empty_env)
     ?(prebound_symbols = [])
@@ -7027,6 +7108,9 @@ let infer_program
                   match register_top_level_named_declarations expanded_program with
                   | Error e -> Error e
                   | Ok () -> (
+                      match validate_error_type_aliases expanded_program with
+                      | Error e -> Error e
+                      | Ok () -> (
                       match resolve_program_symbols ~prebound_symbols env expanded_program with
                       | Error e -> Error e
                       | Ok () -> (
@@ -7236,7 +7320,7 @@ let infer_program
                                   | Ok (env', final_subst, result_type) ->
                                       apply_substitution_type_map final_subst type_map;
                                       apply_substitution_method_type_args_store final_subst;
-                                      Ok (env', type_map, result_type)))))))))
+                                      Ok (env', type_map, result_type))))))))))
 
 module Test = struct
   (* Helper to parse and infer *)
@@ -7798,7 +7882,7 @@ module Test = struct
 
   let%test "trait impl return annotation specializes return-only helper generic" =
     infers_to
-      "type Result[a, e] = { Success(a), Failure(e) }\ntype Error = { Problem }\ntrait Reader[r, e] = { fn read(value: r) -> Result[Str, e] }\nfn read_all[a](value: Int) -> Result[a, Error] = Result.Failure(Error.Problem)\nimpl Reader[Int, Error] = {\n  fn read(value: Int) -> Result[Str, Error] = {\n    read_all(value)\n  }\n}\n1"
+      "type Result[a, e] = { Success(a), Failure(e) }\ntype Error = { Problem = \"Problem\" }\ntrait Reader[r, e] = { fn read(value: r) -> Result[Str, e] }\nfn read_all[a](value: Int) -> Result[a, Error] = Result.Failure(Error.Problem)\nimpl Reader[Int, Error] = {\n  fn read(value: Int) -> Result[Str, Error] = {\n    read_all(value)\n  }\n}\n1"
       TInt
 
   let%test "explicit row-polymorphic annotation is rejected in v1" =
@@ -7962,6 +8046,51 @@ module Test = struct
   let%test "infer canonical sum type with record payloads" =
     let code = "type Event = { Click({ x: Int, y: Int }), Quit }\nEvent.Click({ x: 1, y: 2 })" in
     infers_to code (TEnum ("Event", []))
+
+  let%test "error enum with messages is classified in registry" =
+    match infer_string "type FileError = { NotFound = \"File not found\" }\nFileError.NotFound" with
+    | Ok _ -> (
+        match Enum_registry.lookup "FileError" with
+        | Some { Enum_registry.kind = Enum_registry.ErrorEnum; variants = [ { message = Some "File not found"; _ } ]; _ }
+          ->
+            true
+        | _ -> false)
+    | Error _ -> false
+
+  let%test "error enum variant requires canonical message" =
+    match infer_string "type FileError = { NotFound }" with
+    | Error diag -> is_code diag "error-message-required"
+    | Ok _ -> false
+
+  let%test "non-error enum rejects canonical message metadata" =
+    match infer_string "type Status = { Ok = \"Fine\" }" with
+    | Error diag -> is_code diag "error-message-not-allowed"
+    | Ok _ -> false
+
+  let%test "wrapper type cannot use reserved error name" =
+    match infer_string "type Error = Error(Str)" with
+    | Error diag -> is_code diag "error-name-reserved"
+    | Ok _ -> false
+
+  let%test "extern type cannot use reserved error name" =
+    match infer_string "extern type FileError" with
+    | Error diag -> is_code diag "error-name-reserved"
+    | Ok _ -> false
+
+  let%test "alias to error type must use error name" =
+    match infer_string "type PgError = { Down = \"Database unavailable\" }\ntype Problem = PgError\nProblem.Down" with
+    | Error diag -> is_code diag "error-alias-name"
+    | Ok _ -> false
+
+  let%test "error alias must resolve to error type" =
+    match infer_string "type Error = Int\n1" with
+    | Error diag -> is_code diag "error-alias-name"
+    | Ok _ -> false
+
+  let%test "error alias to error type is accepted" =
+    match infer_string "type PgError = { Down = \"Database unavailable\" }\ntype DbError = PgError\nPgError.Down" with
+    | Ok (_, _, TEnum ("PgError", [])) -> true
+    | _ -> false
 
   (* Match expression tests *)
   let%test "infer simple match with option" =

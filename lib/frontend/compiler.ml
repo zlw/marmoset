@@ -2148,6 +2148,48 @@ let%test "std.option signature exports Option as an enum for downstream modules"
                       in
                       compile_until_option graph.topo_order))))
 
+let with_temp_error_stdlib main_source f =
+  Discovery.with_temp_project
+    [ ("main.mr", main_source) ]
+    (fun root ->
+      let stdlib_root = Discovery.make_temp_dir "marmoset_error_model_stdlib_" in
+      Fun.protect
+        ~finally:(fun () -> ignore (Sys.command ("rm -rf " ^ Filename.quote stdlib_root)))
+        (fun () ->
+          Discovery.mkdir_p (Filename.concat stdlib_root "std");
+          Discovery.write_file
+            (Filename.concat stdlib_root "std/prelude.mr")
+            "export Ordering, Eq, Show, Debug, Ord, Hash, Num, Rem, Neg\ntype Ordering = { Less, Equal, Greater }\ntrait Eq[a] = { fn eq(x: a, y: a) -> Bool }\ntrait Show[a] = { fn show(x: a) -> Str }\ntrait Debug[a] = { fn debug(x: a) -> Str }\ntrait Ord[a]: Eq = { fn compare(x: a, y: a) -> Ordering }\ntrait Hash[a] = { fn hash(x: a) -> Int }\ntrait Num[a] = {\n\  fn add(x: a, y: a) -> a\n\  fn sub(x: a, y: a) -> a\n\  fn mul(x: a, y: a) -> a\n\  fn div(x: a, y: a) -> a\n}\ntrait Rem[a] = { fn rem(x: a, y: a) -> a }\ntrait Neg[a] = { fn neg(x: a) -> a }\n";
+          Discovery.write_file
+            (Filename.concat stdlib_root "std/basics.mr")
+            "import std.prelude.Show\nexport puts\nfn puts[a: Show](value: a) => Unit = {}\n";
+          Discovery.write_file
+            (Filename.concat stdlib_root "std/option.mr")
+            "export Option\ntype Option[a] = { Some(a), None }\n";
+          Discovery.write_file
+            (Filename.concat stdlib_root "std/result.mr")
+            "export Result\ntype Result[a, e] = { Success(a), Failure(e) }\n";
+          Discovery.write_file
+            (Filename.concat stdlib_root "std/file.mr")
+            "export Error\ntype Error = { NotFound = \"File not found\" }\n";
+          f ~stdlib_root ~entry_file:(Filename.concat root "main.mr")))
+
+let%test "imported std.file.Error can be aliased only under an error name" =
+  with_temp_error_stdlib
+    "import std.file.Error\ntype FileError = Error\nlet value = 1\nvalue\n"
+    (fun ~stdlib_root ~entry_file ->
+      match check_entry ~stdlib_root ~entry_file () with
+      | Ok diagnostics -> diagnostics = []
+      | Error _ -> false)
+
+let%test "imported std.file.Error rejects non-error alias name" =
+  with_temp_error_stdlib
+    "import std.file.Error\ntype Problem = Error\nlet value = 1\nvalue\n"
+    (fun ~stdlib_root ~entry_file ->
+      match check_entry ~stdlib_root ~entry_file () with
+      | Error ({ Diagnostic.code = "error-alias-name"; _ } :: _) -> true
+      | _ -> false)
+
 let%test "source-backed module compilation sees std.option and std.result signatures before std.foo" =
   Discovery.with_temp_project
     [ ("main.mr", "import std.foo as foo\nputs(foo.value())\n") ]

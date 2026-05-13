@@ -3,7 +3,11 @@ import std.io
 
 export Error, write, flush, print
 
-type Error = { BrokenPipe, Interrupted, Other(Str) }
+type Error = {
+  BrokenPipe = "Pipe is broken",
+  Interrupted = "I/O operation was interrupted",
+  Other(Str) = "I/O operation failed",
+}
 extern type Stderr
 
 extern "std/io/err" as err_shim = {

@@ -10262,7 +10262,9 @@ let%test "generated shim api package includes owner enum variants" =
   Typecheck.Enum_registry.register
     {
       Typecheck.Enum_registry.name = "std__bytes__Status";
+      source_name = Some "Status";
       type_params = [];
+      kind = Typecheck.Enum_registry.OrdinaryEnum;
       variants =
         [
           { Typecheck.Enum_registry.name = "Ok"; fields = []; message = None };
@@ -10346,8 +10348,10 @@ let register_std_bytes_decode_error_for_test () =
   Typecheck.Enum_registry.register
     {
       Typecheck.Enum_registry.name = "std__bytes__DecodeError";
+      source_name = Some "DecodeError";
       type_params = [];
-      variants = [ { Typecheck.Enum_registry.name = "InvalidUtf8"; fields = []; message = None } ];
+      kind = Typecheck.Enum_registry.ErrorEnum;
+      variants = [ { Typecheck.Enum_registry.name = "InvalidUtf8"; fields = []; message = Some "Invalid UTF-8" } ];
     }
 
 let add_std_bytes_to_str_decl_for_test extern_declarations =
@@ -10434,7 +10438,9 @@ let%test "generated shim api package names are keyword safe" =
   Typecheck.Enum_registry.register
     {
       Typecheck.Enum_registry.name = "std__bytes__Map";
+      source_name = Some "Map";
       type_params = [];
+      kind = Typecheck.Enum_registry.OrdinaryEnum;
       variants =
         [
           { Typecheck.Enum_registry.name = "type"; fields = []; message = None };
@@ -10701,7 +10707,7 @@ let%test "placeholder callback in return-specialized impl method keeps type map"
   Typecheck.Inherent_registry.clear ();
   match
     compile_string ~file_id:"<codegen>"
-      "type Result[a, e] = { Success(a), Failure(e) }\ntype Error = { Problem }\nimpl[a, e] Result[a, e] = {\n  fn bind[b](self: Result[a, e], f: (a) -> Result[b, e]) -> Result[b, e] = match self {\n    case Result.Success(value): f(value)\n    case Result.Failure(err): Result.Failure(err)\n  }\n}\ntrait Reader[r, e] = { fn read(value: r) -> Result[Str, e] }\nfn source(value: Int) -> Result[Int, Error] = Result.Success(value)\nfn decode[a](value: Int) -> Result[a, Error] = Result.Failure(Error.Problem)\nimpl Reader[Int, Error] = {\n  fn read(value: Int) -> Result[Str, Error] = {\n    source(value) |> Result.bind(decode(_))\n  }\n}\nmatch Reader.read(1) {\n  case Result.Success(_): 1\n  case Result.Failure(_): 0\n}"
+      "type Result[a, e] = { Success(a), Failure(e) }\ntype Error = { Problem = \"Problem\" }\nimpl[a, e] Result[a, e] = {\n  fn bind[b](self: Result[a, e], f: (a) -> Result[b, e]) -> Result[b, e] = match self {\n    case Result.Success(value): f(value)\n    case Result.Failure(err): Result.Failure(err)\n  }\n}\ntrait Reader[r, e] = { fn read(value: r) -> Result[Str, e] }\nfn source(value: Int) -> Result[Int, Error] = Result.Success(value)\nfn decode[a](value: Int) -> Result[a, Error] = Result.Failure(Error.Problem)\nimpl Reader[Int, Error] = {\n  fn read(value: Int) -> Result[Str, Error] = {\n    source(value) |> Result.bind(decode(_))\n  }\n}\nmatch Reader.read(1) {\n  case Result.Success(_): 1\n  case Result.Failure(_): 0\n}"
   with
   | Ok (_, _) -> true
   | Error _ -> false
@@ -10712,7 +10718,7 @@ let%test "placeholder callback in return-specialized helper keeps type map" =
   Typecheck.Inherent_registry.clear ();
   match
     compile_string ~file_id:"<codegen>"
-      "type Result[a, e] = { Success(a), Failure(e) }\ntype Error = { Problem }\nimpl[a, e] Result[a, e] = {\n  fn bind[b](self: Result[a, e], f: (a) -> Result[b, e]) -> Result[b, e] = match self {\n    case Result.Success(value): f(value)\n    case Result.Failure(err): Result.Failure(err)\n  }\n}\ntrait Reader[r, e] = { fn read(value: r) -> Result[Str, e] }\nfn source(value: Int) -> Result[Int, Error] = Result.Success(value)\nfn decode[a](value: Int) -> Result[a, Error] = Result.Failure(Error.Problem)\nfn read_all[a](value: Int) -> Result[a, Error] = {\n  Result.bind(source(value), decode(_))\n}\nimpl Reader[Int, Error] = {\n  fn read(value: Int) -> Result[Str, Error] = {\n    read_all(value)\n  }\n}\nmatch Reader.read(1) {\n  case Result.Success(_): 1\n  case Result.Failure(_): 0\n}"
+      "type Result[a, e] = { Success(a), Failure(e) }\ntype Error = { Problem = \"Problem\" }\nimpl[a, e] Result[a, e] = {\n  fn bind[b](self: Result[a, e], f: (a) -> Result[b, e]) -> Result[b, e] = match self {\n    case Result.Success(value): f(value)\n    case Result.Failure(err): Result.Failure(err)\n  }\n}\ntrait Reader[r, e] = { fn read(value: r) -> Result[Str, e] }\nfn source(value: Int) -> Result[Int, Error] = Result.Success(value)\nfn decode[a](value: Int) -> Result[a, Error] = Result.Failure(Error.Problem)\nfn read_all[a](value: Int) -> Result[a, Error] = {\n  Result.bind(source(value), decode(_))\n}\nimpl Reader[Int, Error] = {\n  fn read(value: Int) -> Result[Str, Error] = {\n    read_all(value)\n  }\n}\nmatch Reader.read(1) {\n  case Result.Success(_): 1\n  case Result.Failure(_): 0\n}"
   with
   | Ok (_, _) -> true
   | Error _ -> false
@@ -10723,7 +10729,7 @@ let%test "placeholder callback with shared params and different returns mangles 
   Typecheck.Inherent_registry.clear ();
   match
     compile_string ~file_id:"<codegen>"
-      "type Result[a, e] = { Success(a), Failure(e) }\ntype Error = { Problem }\nimpl[a, e] Result[a, e] = {\n  fn bind[b](self: Result[a, e], f: (a) -> Result[b, e]) -> Result[b, e] = match self {\n    case Result.Success(value): f(value)\n    case Result.Failure(err): Result.Failure(err)\n  }\n}\nfn source(value: Int) -> Result[Int, Error] = Result.Success(value)\nfn decode[a](value: Int) -> Result[a, Error] = Result.Failure(Error.Problem)\nfn read[a](value: Int) -> Result[a, Error] = source(value) |> Result.bind(decode(_))\nlet one: Result[Str, Error] = read(1)\nlet two: Result[Int, Error] = read(2)\n0"
+      "type Result[a, e] = { Success(a), Failure(e) }\ntype Error = { Problem = \"Problem\" }\nimpl[a, e] Result[a, e] = {\n  fn bind[b](self: Result[a, e], f: (a) -> Result[b, e]) -> Result[b, e] = match self {\n    case Result.Success(value): f(value)\n    case Result.Failure(err): Result.Failure(err)\n  }\n}\nfn source(value: Int) -> Result[Int, Error] = Result.Success(value)\nfn decode[a](value: Int) -> Result[a, Error] = Result.Failure(Error.Problem)\nfn read[a](value: Int) -> Result[a, Error] = source(value) |> Result.bind(decode(_))\nlet one: Result[Str, Error] = read(1)\nlet two: Result[Int, Error] = read(2)\n0"
   with
   | Ok (code, _) ->
       string_contains code "__section_neg46_int64_ret_"
@@ -11955,7 +11961,7 @@ let%test "explicit primitive trait calls emit only referenced builtin helpers" =
 let%test "generic callback result wrapper emits only concrete enum instantiations" =
   match
     compile_string ~file_id:"<codegen>"
-      {|type UseError[e] = { Use(e) }
+      {|type UseError[e] = { Use(e) = "Use failed" }
 type Problem = { Bad }
 type Result[a, e] = { Success(a), Failure(e) }
 

@@ -2,7 +2,7 @@ export Bytes, DecodeError, Decode, Encode, from_str, to_str, to_str_lossy, lengt
 
 extern type Bytes
 
-type DecodeError = { InvalidUtf8 }
+type DecodeError = { InvalidUtf8 = "Invalid UTF-8" }
 
 extern "std/bytes" as byte_shim = {
   fn from_str(input: Str) -> Bytes

@@ -1,5 +1,5 @@
 # CM55: Generic callback Result failures can be wrapped in another generic enum
-type UseError[e] = { Use(e) }
+type UseError[e] = { Use(e) = "Use failed" }
 type Problem = { Bad }
 
 fn wrap[a, e](seed: Int, body: (Int) -> Result[a, e]) -> Result[a, UseError[e]] = match body(seed) {

@@ -709,7 +709,9 @@ let setup_test_enums () =
   Enum_registry.register
     {
       name = "Option";
+      source_name = Some "Option";
       type_params = [ "a" ];
+      kind = Enum_registry.OrdinaryEnum;
       variants =
         [
           { name = "Some"; fields = [ Types.TVar "a" ]; message = None };
@@ -720,7 +722,9 @@ let setup_test_enums () =
   Enum_registry.register
     {
       name = "Result";
+      source_name = Some "Result";
       type_params = [ "a"; "b" ];
+      kind = Enum_registry.OrdinaryEnum;
       variants =
         [
           { name = "Success"; fields = [ Types.TVar "a" ]; message = None };

@@ -6,41 +6,41 @@ type Kind = { File, Directory, Symlink, Other }
 type Entry = Entry(path.Path, Kind)
 
 type LsError = {
-  NotFound,
-  PermissionDenied,
-  NotDirectory,
-  InvalidPath(Str),
-  Other(Str),
+  NotFound = "Directory not found",
+  PermissionDenied = "You do not have permission to read this directory",
+  NotDirectory = "Expected a directory but found a file",
+  InvalidPath(Str) = "Path is invalid",
+  Other(Str) = "Directory listing failed",
 }
 
 type MkdirError = {
-  NotFound,
-  PermissionDenied,
-  AlreadyExists,
-  NotDirectory,
-  InvalidPath(Str),
-  Other(Str),
+  NotFound = "Parent directory not found",
+  PermissionDenied = "You do not have permission to create this directory",
+  AlreadyExists = "Directory already exists",
+  NotDirectory = "Expected a directory but found a file",
+  InvalidPath(Str) = "Path is invalid",
+  Other(Str) = "Directory creation failed",
 }
 
 type RmdirError = {
-  NotFound,
-  PermissionDenied,
-  NotDirectory,
-  NotEmpty,
-  InvalidPath(Str),
-  Other(Str),
+  NotFound = "Directory not found",
+  PermissionDenied = "You do not have permission to remove this directory",
+  NotDirectory = "Expected a directory but found a file",
+  NotEmpty = "Directory is not empty",
+  InvalidPath(Str) = "Path is invalid",
+  Other(Str) = "Directory removal failed",
 }
 
 type ExistsError = {
-  PermissionDenied,
-  InvalidPath(Str),
-  Other(Str),
+  PermissionDenied = "You do not have permission to inspect this path",
+  InvalidPath(Str) = "Path is invalid",
+  Other(Str) = "Path existence check failed",
 }
 
 type PwdError = {
-  NotFound,
-  PermissionDenied,
-  Other(Str),
+  NotFound = "Current directory was not found",
+  PermissionDenied = "You do not have permission to inspect the current directory",
+  Other(Str) = "Current directory lookup failed",
 }
 
 extern "std/dir" as dir_shim = {

@@ -327,7 +327,7 @@ let%test "analyze_with_file_id treats direct stdlib entries as std modules" =
 
 let%test "analyze_with_file_id treats direct non-core stdlib shim entries as std modules" =
   let file_source =
-    "import std.bytes.Bytes\n\nexport File, Mode, Error, UseError\n\nextern type File\n\ntype Mode = { Read, Write, Append }\ntype Error = { NotFound, PermissionDenied, IsDirectory, AlreadyClosed, Other(Str) }\ntype UseError[e] = { Open(Error), Use(e), Close(Error), UseAndClose(e, Error) }\n\nextern \"std/file\" as file_shim = {\n  fn read_path(path: Str) => Result[Bytes, Error]\n  fn write_path(path: Str, bytes: Bytes) => Result[Unit, Error]\n  fn open_handle(path: Str, mode: Mode) => Result[File, Error]\n  fn close_handle(file: File) => Result[Unit, Error]\n}\n"
+    "import std.bytes.Bytes\n\nexport File, Mode, Error, UseError\n\nextern type File\n\ntype Mode = { Read, Write, Append }\ntype Error = { NotFound = \"File not found\", PermissionDenied = \"Permission denied\", IsDirectory = \"Path is a directory\", AlreadyClosed = \"File is already closed\", Other(Str) = \"File error\" }\ntype UseError[e] = { Open(Error) = \"Failed to open file\", Use(e) = \"File operation failed\", Close(Error) = \"Failed to close file\", UseAndClose(e, Error) = \"File operation and close failed\" }\n\nextern \"std/file\" as file_shim = {\n  fn read_path(path: Str) => Result[Bytes, Error]\n  fn write_path(path: Str, bytes: Bytes) => Result[Unit, Error]\n  fn open_handle(path: Str, mode: Mode) => Result[File, Error]\n  fn close_handle(file: File) => Result[Unit, Error]\n}\n"
   in
   with_temp_project
     [

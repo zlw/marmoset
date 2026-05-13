@@ -19,7 +19,7 @@ export Bytes, DecodeError, Decode, Encode, from_str, to_str
 
 extern type Bytes
 
-type DecodeError = { InvalidUtf8 }
+type DecodeError = { InvalidUtf8 = "Invalid UTF-8" }
 
 extern "std/bytes" as byte_shim = {
   fn from_str(value: Str) -> Bytes
@@ -45,17 +45,22 @@ extern type File
 
 type Mode = { Read, Write, Append }
 type Error = {
-  NotFound,
-  PermissionDenied,
-  AlreadyExists,
-  IsDirectory,
-  NotDirectory,
-  InvalidPath(Str),
-  InvalidData(Str),
-  AlreadyClosed,
-  Other(Str),
+  NotFound = "File not found",
+  PermissionDenied = "You do not have permission to access this file",
+  AlreadyExists = "File already exists",
+  IsDirectory = "Expected a file but found a directory",
+  NotDirectory = "Expected a directory but found a file",
+  InvalidPath(Str) = "Path is invalid",
+  InvalidData(Str) = "File contains invalid data",
+  AlreadyClosed = "File is already closed",
+  Other(Str) = "File operation failed",
 }
-type UseError[e] = { Open(Error), Use(e), Close(Error), UseAndClose(e, Error) }
+type UseError[e] = {
+  Open(Error) = "Could not open file",
+  Use(e) = "File callback failed",
+  Close(Error) = "Could not close file",
+  UseAndClose(e, Error) = "File callback failed and close also failed",
+}
 
 extern "std/file" as file_shim = {
   fn read_path(path: Path) => Result[Bytes, Error]
