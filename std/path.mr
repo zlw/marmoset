@@ -11,9 +11,4 @@ extern "std/path" as path_shim = {
   fn absolute?(path: Path) -> Bool
 }
 
-fn relative?(path: Path) -> Bool =
-  if (path_shim.absolute?(path)) {
-    false
-  } else {
-    true
-  }
+fn relative?(path: Path) -> Bool = !path_shim.absolute?(path)
