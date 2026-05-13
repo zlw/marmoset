@@ -101,5 +101,7 @@ let lookup_ident s =
   | _ -> Ident
 
 let%test "lookup_ident recognizes module-system keywords" =
-  lookup_ident "import" = Import && lookup_ident "export" = Export && lookup_ident "extern" = Extern
+  lookup_ident "import" = Import
+  && lookup_ident "export" = Export
+  && lookup_ident "extern" = Extern
   && lookup_ident "as" = As

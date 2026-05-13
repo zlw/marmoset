@@ -843,8 +843,7 @@ let collect_references ~(input : cursor_context_input) : reference list =
           @ collect_expr_or_block_references ~scope_index:input.scope_index body
       | Surface.STypeDef { type_body; derive; _ } ->
           (match type_body with
-          | Surface.STTransparent type_expr ->
-              collect_type_references ~scope_index:input.scope_index type_expr
+          | Surface.STTransparent type_expr -> collect_type_references ~scope_index:input.scope_index type_expr
           | Surface.STNamedWrapper type_exprs ->
               List.concat_map (collect_type_references ~scope_index:input.scope_index) type_exprs
           | Surface.STNamedProduct fields ->

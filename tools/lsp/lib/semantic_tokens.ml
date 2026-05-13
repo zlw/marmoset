@@ -457,7 +457,10 @@ and collect_stmt ~source ~type_map ~environment ~params ~tokens (stmt : Ast.AST.
       List.iter
         (fun (fn_sig : Ast.AST.extern_fn_sig) ->
           let fn_len = String.length fn_sig.extern_fn_name in
-          (match find_name ~source ~start:fn_sig.extern_fn_pos ~limit:(fn_sig.extern_fn_end_pos + 1) fn_sig.extern_fn_name with
+          (match
+             find_name ~source ~start:fn_sig.extern_fn_pos ~limit:(fn_sig.extern_fn_end_pos + 1)
+               fn_sig.extern_fn_name
+           with
           | Some (fn_start, _) ->
               tokens :=
                 {
@@ -471,7 +474,10 @@ and collect_stmt ~source ~type_map ~environment ~params ~tokens (stmt : Ast.AST.
           List.iter
             (fun (param : Ast.AST.extern_param) ->
               let param_len = String.length param.extern_param_name in
-              match find_name ~source ~start:fn_sig.extern_fn_pos ~limit:(fn_sig.extern_fn_end_pos + 1) param.extern_param_name with
+              match
+                find_name ~source ~start:fn_sig.extern_fn_pos ~limit:(fn_sig.extern_fn_end_pos + 1)
+                  param.extern_param_name
+              with
               | Some (param_start, _) ->
                   tokens :=
                     {
@@ -633,7 +639,9 @@ let%test "method call produces method token" =
 
 let%test "extern signatures produce function and parameter declaration tokens" =
   let source = "extern \"std/bytes\" = { fn from_str(input: Str) -> Str }" in
-  Doc_state.with_temp_project [ ("std/bytes.mr", source) ] (fun root ->
+  Doc_state.with_temp_project
+    [ ("std/bytes.mr", source) ]
+    (fun root ->
       let file_id = Filename.concat root "std/bytes.mr" in
       let result = Doc_state.analyze_with_file_id ~source_root:root ~file_id ~source () in
       match (result.program, result.type_map, result.environment) with

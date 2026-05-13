@@ -321,8 +321,7 @@ let%test "analyze_with_file_id treats direct stdlib entries as std modules" =
                   (fun (diag : Lsp_t.Diagnostic.t) ->
                     match diag.message with
                     | `String message ->
-                        Diagnostics.String_utils.contains_substring ~needle:"shim \"std/basics\""
-                          message
+                        Diagnostics.String_utils.contains_substring ~needle:"shim \"std/basics\"" message
                     | _ -> false)
                   result.diagnostics)))
 

@@ -551,7 +551,9 @@ let cursor_reference_target
             | Typecheck.Resolution_artifacts.QualifiedTraitMethod trait_name ) ->
             definition_target_of_exact_site
               (Compiler.find_trait_method_declaration_site analysis ~trait_name ~method_name:member_ref.text)
-        | Some (Typecheck.Resolution_artifacts.InherentMethod | Typecheck.Resolution_artifacts.QualifiedInherentMethod) ->
+        | Some
+            ( Typecheck.Resolution_artifacts.InherentMethod
+            | Typecheck.Resolution_artifacts.QualifiedInherentMethod ) ->
             Option.bind
               (Compiler.resolve_visible_type_name_to_mono analysis ~file_path:active_file_path
                  ~surface_name:root_ref.text) (fun receiver_type ->

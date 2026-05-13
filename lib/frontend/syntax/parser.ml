@@ -1186,7 +1186,7 @@ and parse_type_definition (p : parser) : (parser * Surface.top_decl, parser) res
       else
         expect_peek p_payload_end Token.RParen
     in
-    (match payload_types with
+    match payload_types with
     | [] ->
         Error
           (add_error ~code:"parse-invalid-type-definition" p_body
@@ -1203,7 +1203,7 @@ and parse_type_definition (p : parser) : (parser * Surface.top_decl, parser) res
                 type_type_param_refs;
                 type_body = Surface.STNamedWrapper wrapper_bodies;
                 derive;
-              } ))
+              } )
   else if curr_token_is p_body Token.LBrace then
     let p_members = next_token p_body in
     if

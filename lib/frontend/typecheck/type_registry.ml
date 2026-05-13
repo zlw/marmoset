@@ -186,8 +186,7 @@ let instantiate_named_product_fields (name : string) (args : mono_type list) :
                    |> normalize_record_fields))
           | NamedWrapper _ ->
               Some (Error (Printf.sprintf "Named type %s is a wrapper type, not a product type" name))
-          | NamedExtern _ ->
-              Some (Error (Printf.sprintf "Extern type %s has no fields to inspect" name))))
+          | NamedExtern _ -> Some (Error (Printf.sprintf "Extern type %s has no fields to inspect" name))))
 
 let instantiate_named_wrapper_representation (name : string) (args : mono_type list) :
     (mono_type list, string) result option =

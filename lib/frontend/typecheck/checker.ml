@@ -148,9 +148,10 @@ let annotation_matches_inferred_type (annotated_type : mono_type) (inferred_type
 
 (* Check if a let binding's annotation matches its inferred type *)
 let check_let_annotation
-    ?(type_bindings = []) (name : string) (annotation : Syntax.Ast.AST.type_expr option)
-    (inferred_type : mono_type) :
-    (unit, Diagnostic.t) result =
+    ?(type_bindings = [])
+    (name : string)
+    (annotation : Syntax.Ast.AST.type_expr option)
+    (inferred_type : mono_type) : (unit, Diagnostic.t) result =
   match annotation with
   | None ->
       (* No annotation, nothing to check *)
@@ -213,8 +214,8 @@ let check_program_with_annotations
   | Error e -> Error (merge_diagnostics e)
   | Ok (final_env, type_map, result_type) -> (
       (* Phase 2: Validate annotations against inferred types *)
-      let rec check_stmts_with_infer
-          ?(type_bindings = []) (stmts : Syntax.Ast.AST.statement list) : (unit, Diagnostic.t) result =
+      let rec check_stmts_with_infer ?(type_bindings = []) (stmts : Syntax.Ast.AST.statement list) :
+          (unit, Diagnostic.t) result =
         match stmts with
         | [] -> Ok ()
         | stmt :: rest -> (
@@ -239,8 +240,7 @@ let check_program_with_annotations
                 | Some mono_type -> (
                     (* Check let binding annotation *)
                     match
-                      check_let_annotation ~type_bindings let_binding.name let_binding.type_annotation
-                        mono_type
+                      check_let_annotation ~type_bindings let_binding.name let_binding.type_annotation mono_type
                     with
                     | Error e -> Error e
                     | Ok () -> (
@@ -256,8 +256,7 @@ let check_program_with_annotations
             | _ ->
                 (* Other statements don't have annotations to check *)
                 check_stmts_with_infer ~type_bindings rest)
-      and check_expr_annotations
-          ?(type_bindings = []) (expr : Syntax.Ast.AST.expression) (inferred : mono_type) :
+      and check_expr_annotations ?(type_bindings = []) (expr : Syntax.Ast.AST.expression) (inferred : mono_type) :
           (unit, Diagnostic.t) result =
         match expr.expr with
         | Syntax.Ast.AST.Function { return_type; params = _; body; generics; is_effectful = _; _ } -> (
@@ -1877,8 +1876,7 @@ let%test "shim S2: checker accepts list boundary values" =
   Infer.reset_fresh_counter ();
   Trait_registry.clear ();
   match
-    check_string ~file_id:"std.bytes"
-      "extern \"std/bytes\" = { fn collect(input: List[Str]) -> List[Str] }"
+    check_string ~file_id:"std.bytes" "extern \"std/bytes\" = { fn collect(input: List[Str]) -> List[Str] }"
   with
   | Ok result -> (
       match
@@ -1887,8 +1885,7 @@ let%test "shim S2: checker accepts list boundary values" =
       with
       | Some func -> (
           match (func.param_boundary_types, func.return_boundary_type) with
-          | [ Shim_boundary.BList Shim_boundary.BStr ], Shim_boundary.BList Shim_boundary.BStr ->
-              true
+          | [ Shim_boundary.BList Shim_boundary.BStr ], Shim_boundary.BList Shim_boundary.BStr -> true
           | _ -> false)
       | None -> false)
   | Error _ -> false

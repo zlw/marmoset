@@ -174,8 +174,7 @@ let rec classify ?source_span ?(allow_callback = false) ~(owner_module_id : stri
       let* ok_boundary = classify ?source_span ~owner_module_id ok_type in
       let* err_boundary = classify ?source_span ~owner_module_id err_type in
       Ok (BStdResult (ok_boundary, err_boundary))
-  | TArray inner ->
-      Result.map (fun classified -> BList classified) (classify ?source_span ~owner_module_id inner)
+  | TArray inner -> Result.map (fun classified -> BList classified) (classify ?source_span ~owner_module_id inner)
   | TEnum (name, args) when is_owner_enum ~owner_module_id name ->
       let ( let* ) = Result.bind in
       let rec classify_args acc = function
@@ -257,8 +256,7 @@ let%test "classifies canonical std bytes identity" =
 let%test "classifies direct callback parameters only when allowed" =
   let callback = TFun (TString, TFun (TInt, TString, false), false) in
   match classify ~owner_module_id:"std.bytes" ~allow_callback:true callback with
-  | Ok (BCallback { callback_params = [ BStr; BInt ]; callback_return = BStr; callback_effectful = false })
-    -> (
+  | Ok (BCallback { callback_params = [ BStr; BInt ]; callback_return = BStr; callback_effectful = false }) -> (
       match classify ~owner_module_id:"std.bytes" callback with
       | Error diag -> diag.code = "type-shim-boundary"
       | Ok _ -> false)

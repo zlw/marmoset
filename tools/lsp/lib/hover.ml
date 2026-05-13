@@ -386,8 +386,8 @@ and find_expr_in_stmt (offset : int) (stmt : Ast.AST.statement) : Ast.AST.expres
         (fun (m : Ast.AST.method_sig) -> Option.bind m.method_default_impl (find_expr_at offset))
         methods
   | Ast.AST.ExportDecl _ | Ast.AST.ImportDecl _ -> None
-  | Ast.AST.EnumDef _ | Ast.AST.TypeDef _ | Ast.AST.ExternTypeDef _ | Ast.AST.ShapeDef _
-  | Ast.AST.DeriveDef _ | Ast.AST.TypeAlias _ | Ast.AST.ExternBlock _ ->
+  | Ast.AST.EnumDef _ | Ast.AST.TypeDef _ | Ast.AST.ExternTypeDef _ | Ast.AST.ShapeDef _ | Ast.AST.DeriveDef _
+  | Ast.AST.TypeAlias _ | Ast.AST.ExternBlock _ ->
       None
 
 (* Find an expression at a given offset across the entire program *)
@@ -421,8 +421,8 @@ let rec find_let_binding_in_stmt ~(source : string) ~(offset : int) (stmt : Ast.
   | Ast.AST.ExportDecl _ | Ast.AST.ImportDecl _ -> None
   | Ast.AST.ExpressionStmt e -> find_let_binding_in_expr ~source ~offset e
   | Ast.AST.Return e -> find_let_binding_in_expr ~source ~offset e
-  | Ast.AST.EnumDef _ | Ast.AST.TypeDef _ | Ast.AST.ExternTypeDef _ | Ast.AST.ShapeDef _
-  | Ast.AST.DeriveDef _ | Ast.AST.TypeAlias _ | Ast.AST.ExternBlock _ ->
+  | Ast.AST.EnumDef _ | Ast.AST.TypeDef _ | Ast.AST.ExternTypeDef _ | Ast.AST.ShapeDef _ | Ast.AST.DeriveDef _
+  | Ast.AST.TypeAlias _ | Ast.AST.ExternBlock _ ->
       None
 
 and find_let_binding_in_expr ~(source : string) ~(offset : int) (expr : Ast.AST.expression) :
@@ -553,8 +553,8 @@ and find_pattern_in_stmt ~(offset : int) ~(type_map : Infer.type_map) (stmt : As
           Option.bind m.method_default_impl (find_pattern_in_expr ~offset ~type_map))
         methods
   | Ast.AST.ExportDecl _ | Ast.AST.ImportDecl _ -> None
-  | Ast.AST.EnumDef _ | Ast.AST.TypeDef _ | Ast.AST.ExternTypeDef _ | Ast.AST.ShapeDef _
-  | Ast.AST.DeriveDef _ | Ast.AST.TypeAlias _ | Ast.AST.ExternBlock _ ->
+  | Ast.AST.EnumDef _ | Ast.AST.TypeDef _ | Ast.AST.ExternTypeDef _ | Ast.AST.ShapeDef _ | Ast.AST.DeriveDef _
+  | Ast.AST.TypeAlias _ | Ast.AST.ExternBlock _ ->
       None
 
 let find_pattern_in_program ~(offset : int) ~(type_map : Infer.type_map) (program : Ast.AST.program) :

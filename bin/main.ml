@@ -143,11 +143,11 @@ let write_file path content =
 let rec mkdir_p dir =
   if dir = "" || dir = "." || Sys.file_exists dir then
     ()
-  else (
+  else
     let parent = Filename.dirname dir in
-    if parent <> dir then mkdir_p parent;
-    try Unix.mkdir dir 0o755 with
-    | Unix.Unix_error (Unix.EEXIST, _, _) -> ())
+    if parent <> dir then
+      mkdir_p parent;
+    try Unix.mkdir dir 0o755 with Unix.Unix_error (Unix.EEXIST, _, _) -> ()
 
 let ensure_parent_dir path = mkdir_p (Filename.dirname path)
 
@@ -221,18 +221,18 @@ let compile_to_binary
     (Diagnostic.t list, Diagnostic.t list) result =
   match Marmoset.Lib.Frontend_compiler.compile_entry_to_build ~entry_file:input_file () with
   | Error diags -> Error diags
-  | Ok build_output ->
+  | Ok build_output -> (
       let diagnostics = build_output.diagnostics in
       let temp_dir = ".marmoset/build/" ^ string_of_int (Unix.getpid ()) in
-      (match write_go_output_tree ~root:temp_dir build_output with
+      match write_go_output_tree ~root:temp_dir build_output with
       | Error diags -> Error (diagnostics @ diags)
-      | Ok () ->
+      | Ok () -> (
           let emit_result =
             match emit_go_dir with
             | Some dir -> write_go_output_tree ~root:dir build_output
             | None -> Ok ()
           in
-          (match emit_result with
+          match emit_result with
           | Error diags -> Error (diagnostics @ diags)
           | Ok () ->
               let output_abs = output_absolute_path output_bin in

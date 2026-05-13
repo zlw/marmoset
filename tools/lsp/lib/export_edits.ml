@@ -35,8 +35,7 @@ let exportable_declarations (program : Surface.surface_program) : exportable_dec
       | Surface.STraitDef { name; name_ref; _ } ->
           Some { surface_name = name; declaration_kind = Trait_decl; name_ref }
       | Surface.SExportDecl _ | Surface.SImportDecl _ | Surface.SExternBlock _ | Surface.SAmbiguousImplDef _
-      | Surface.SInherentImplDef _
-      | Surface.SExpressionStmt _ | Surface.SReturn _ | Surface.SBlock _ ->
+      | Surface.SInherentImplDef _ | Surface.SExpressionStmt _ | Surface.SReturn _ | Surface.SBlock _ ->
           None)
     program
 

@@ -87,7 +87,9 @@ let document_symbols ~(source : string) ~(program : Ast.AST.program) : Lsp_t.Doc
                 symbol ~name:fn_sig.extern_fn_name ~kind:Lsp_t.SymbolKind.Function ~range:(range_of_stmt stmt) ())
               extern_fns
           in
-          Some (symbol ~name:extern_qualifier ~kind:Lsp_t.SymbolKind.Namespace ~range:(range_of_stmt stmt) ~children ())
+          Some
+            (symbol ~name:extern_qualifier ~kind:Lsp_t.SymbolKind.Namespace ~range:(range_of_stmt stmt) ~children
+               ())
       | Ast.AST.ExportDecl _ | Ast.AST.ImportDecl _ -> None
       | Ast.AST.DeriveDef _ | Ast.AST.ExpressionStmt _ | Ast.AST.Return _ | Ast.AST.Block _ -> None)
     program
@@ -184,7 +186,8 @@ let%test "extern type produces Interface symbol" =
 
 let%test "extern block produces namespace symbol with function children" =
   let symbols =
-    get_symbols "extern \"std/file\" as file_shim = {\n  fn read(path: Str) -> Bytes\n  fn write!(path: Str, bytes: Bytes) => Unit\n}"
+    get_symbols
+      "extern \"std/file\" as file_shim = {\n  fn read(path: Str) -> Bytes\n  fn write!(path: Str, bytes: Bytes) => Unit\n}"
   in
   match symbols with
   | [ s ] -> (
@@ -193,7 +196,9 @@ let%test "extern block produces namespace symbol with function children" =
       &&
       match s.children with
       | Some [ read; write ] ->
-          read.name = "read" && read.kind = Lsp_t.SymbolKind.Function && write.name = "write!"
+          read.name = "read"
+          && read.kind = Lsp_t.SymbolKind.Function
+          && write.name = "write!"
           && write.kind = Lsp_t.SymbolKind.Function
       | _ -> false)
   | _ -> false
