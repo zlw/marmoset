@@ -374,6 +374,7 @@ let rec find_expr_at (offset : int) (expr : Ast.AST.expression) : Ast.AST.expres
       | Ast.AST.EnumConstructor (_, _, args) -> List.find_map (find_expr_at offset) args
       | Ast.AST.Try { tried; fallback; _ } ->
           first_some (find_expr_at offset tried) (Option.bind fallback (find_expr_at offset))
+      | Ast.AST.Wrap { wrapped; _ } -> find_expr_at offset wrapped
       | Ast.AST.TypeCheck (e, _) -> find_expr_at offset e
       | Ast.AST.BlockExpr stmts -> List.find_map (find_expr_in_stmt offset) stmts
       | Ast.AST.Identifier _ | Ast.AST.Integer _ | Ast.AST.Float _ | Ast.AST.Boolean _ | Ast.AST.String _ -> None
@@ -519,6 +520,7 @@ and find_let_binding_in_expr ~(source : string) ~(offset : int) (expr : Ast.AST.
       first_some
         (find_let_binding_in_expr ~source ~offset tried)
         (Option.bind fallback (find_let_binding_in_expr ~source ~offset))
+  | Ast.AST.Wrap { wrapped; _ } -> find_let_binding_in_expr ~source ~offset wrapped
   | Ast.AST.BlockExpr stmts -> List.find_map (find_let_binding_in_stmt ~source ~offset) stmts
   | Ast.AST.Identifier _ | Ast.AST.Integer _ | Ast.AST.Float _ | Ast.AST.Boolean _ | Ast.AST.String _ -> None
 
@@ -585,6 +587,7 @@ let rec find_pattern_in_expr ~(offset : int) ~(type_map : Infer.type_map) (expr 
       first_some
         (find_pattern_in_expr ~offset ~type_map tried)
         (Option.bind fallback (find_pattern_in_expr ~offset ~type_map))
+  | Ast.AST.Wrap { wrapped; _ } -> find_pattern_in_expr ~offset ~type_map wrapped
   | Ast.AST.BlockExpr stmts -> List.find_map (find_pattern_in_stmt ~offset ~type_map) stmts
   | Ast.AST.Identifier _ | Ast.AST.Integer _ | Ast.AST.Float _ | Ast.AST.Boolean _ | Ast.AST.String _ -> None
 

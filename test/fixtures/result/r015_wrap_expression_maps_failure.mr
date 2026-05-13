@@ -1,0 +1,18 @@
+# R015: bare wrap maps Result failures without unwrapping
+type DecodeError = {
+  Bad = "Bad decode",
+}
+
+type Error = {
+  Decode(DecodeError) = "Decode failed",
+}
+
+fn decode() -> Result[Str, DecodeError] = Result.Failure(DecodeError.Bad)
+
+fn adapt() -> Result[Str, Error] =
+  decode() wrap Error.Decode
+
+match adapt() {
+  case Result.Success(_): puts("unexpected")
+  case Result.Failure(Error.Decode(DecodeError.Bad)): puts("wrapped")  # output: wrapped
+}

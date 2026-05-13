@@ -43,6 +43,7 @@ let create_from_program (program : AST.program) : t =
     | AST.Try { tried; fallback; _ } ->
         visit_expr tried;
         Option.iter visit_expr fallback
+    | AST.Wrap { wrapped; _ } -> visit_expr wrapped
     | AST.RecordLit (fields, spread) ->
         List.iter (fun (field : AST.record_field) -> Option.iter visit_expr field.field_value) fields;
         Option.iter visit_expr spread

@@ -230,6 +230,10 @@ module AST = struct
         wrap : (string * string) option;
         fallback : expression option;
       }
+    | Wrap of {
+        wrapped : expression;
+        target : string * string;
+      }
     | RecordLit of record_field list * expression option (* { x: 1, y: 2, ...base } - fields + optional spread *)
     | FieldAccess of expression * string (* expr.field_name *)
     | MethodCall of {
@@ -328,6 +332,7 @@ module AST = struct
     | Call (f1, a1), Call (f2, a2) ->
         expr_equal f1 f2 && List.length a1 = List.length a2 && List.for_all2 expr_equal a1 a2
     | Try t1, Try t2 -> t1.wrap = t2.wrap && expr_equal t1.tried t2.tried
+    | Wrap w1, Wrap w2 -> w1.target = w2.target && expr_equal w1.wrapped w2.wrapped
     | BlockExpr ss1, BlockExpr ss2 -> List.length ss1 = List.length ss2 && List.for_all2 stmt_equal ss1 ss2
     | _ -> false
 
@@ -362,6 +367,7 @@ module AST = struct
     | EnumConstructor _ -> "EnumConstructor"
     | Match _ -> "Match"
     | Try _ -> "Try"
+    | Wrap _ -> "Wrap"
     | RecordLit _ -> "RecordLit"
     | FieldAccess _ -> "FieldAccess"
     | MethodCall _ -> "MethodCall"
@@ -491,6 +497,8 @@ module AST = struct
             | Some expr -> Printf.sprintf " or %s" (expression_to_string expr)
           in
           Printf.sprintf "try %s%s%s" (expression_to_string tried) wrap_str fallback_str
+      | Wrap { wrapped; target = type_name, variant_name } ->
+          Printf.sprintf "%s wrap %s.%s" (expression_to_string wrapped) type_name variant_name
       | RecordLit (fields, spread) ->
           let fields_str =
             fields

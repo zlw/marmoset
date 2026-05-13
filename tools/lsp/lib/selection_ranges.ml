@@ -71,6 +71,7 @@ let rec find_in_expr ~source ~offset ~parent (expr : Ast.AST.expression) : Lsp_t
       | Ast.AST.Try { tried; fallback; _ } ->
           first_some (find_in_expr ~source ~offset ~parent:current tried) (fun () ->
               Option.bind fallback (find_in_expr ~source ~offset ~parent:current))
+      | Ast.AST.Wrap { wrapped; _ } -> find_in_expr ~source ~offset ~parent:current wrapped
       | Ast.AST.TypeCheck (e, _) -> find_in_expr ~source ~offset ~parent:current e
       | Ast.AST.BlockExpr stmts -> find_first_in_stmts ~source ~offset ~parent:current stmts
       | Ast.AST.Identifier _ | Ast.AST.Integer _ | Ast.AST.Float _ | Ast.AST.Boolean _ | Ast.AST.String _ -> None

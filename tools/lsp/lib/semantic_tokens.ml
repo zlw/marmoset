@@ -231,6 +231,7 @@ let rec collect_expr ~source ~type_map ~environment ~params ~tokens (expr : Ast.
   | Ast.AST.Try { tried; fallback; _ } ->
       collect_expr ~source ~type_map ~environment ~params ~tokens tried;
       Option.iter (collect_expr ~source ~type_map ~environment ~params ~tokens) fallback
+  | Ast.AST.Wrap { wrapped; _ } -> collect_expr ~source ~type_map ~environment ~params ~tokens wrapped
   | Ast.AST.TypeCheck (e, _te) -> collect_expr ~source ~type_map ~environment ~params ~tokens e
   | Ast.AST.BlockExpr stmts -> List.iter (collect_stmt ~source ~type_map ~environment ~params ~tokens) stmts
 

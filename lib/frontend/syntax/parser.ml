@@ -83,6 +83,19 @@ let current_name_ref (p : parser) : Surface.name_ref = name_ref_of_token p p.cur
 let name_texts (refs : Surface.name_ref list) : string list =
   List.map (fun (ref_ : Surface.name_ref) -> ref_.text) refs
 
+let combine_name_refs (refs : Surface.name_ref list) : Surface.name_ref =
+  match refs with
+  | [] -> invalid_arg "combine_name_refs"
+  | first :: rest ->
+      let last = List.fold_left (fun _ ref_ -> ref_) first rest in
+      Surface.
+        {
+          text = String.concat "." (List.map (fun (ref_ : name_ref) -> ref_.text) refs);
+          pos = first.pos;
+          end_pos = last.end_pos;
+          file_id = first.file_id;
+        }
+
 let with_surface_type_end p (te : Surface.surface_type_expr) : Surface.surface_type_expr =
   Surface.
     {
@@ -164,7 +177,9 @@ let prec_prefix = 9 (* ! - (prefix) *)
 let prec_call = 10 (* f(args) *)
 let prec_index = 11 (* a[i] a.b *)
 
-let precedences = function
+let token_precedence (t : Token.token) : precedence =
+  match t.token_type with
+  | Token.Ident when t.literal = "wrap" -> prec_pipe
   | Token.PipeForward -> prec_pipe
   | Token.PipePipe -> prec_or
   | Token.AmpAmp -> prec_and
@@ -177,8 +192,8 @@ let precedences = function
   | Token.Dot -> prec_index (* Same precedence as indexing *)
   | _ -> prec_lowest
 
-let peek_precedence (p : parser) : precedence = precedences p.peek_token.token_type
-let curr_precedence (p : parser) : precedence = precedences p.curr_token.token_type
+let peek_precedence (p : parser) : precedence = token_precedence p.peek_token
+let curr_precedence (p : parser) : precedence = token_precedence p.curr_token
 
 let next_token (p : parser) : parser =
   let curr_token = p.peek_token in
@@ -1779,6 +1794,7 @@ and infixFn (p : parser) (left_expr : Surface.surface_expr) (prec : precedence) 
       &&
       match lp.peek_token.token_type with
       | Token.LParen | Token.LBracket -> true
+      | Token.Ident when lp.peek_token.literal = "wrap" -> true
       | Token.Dot -> false
       | _ -> false
     in
@@ -1788,6 +1804,7 @@ and infixFn (p : parser) (left_expr : Surface.surface_expr) (prec : precedence) 
         | Token.Plus | Token.Minus | Token.Slash | Token.Asterisk | Token.Eq | Token.NotEq | Token.Lt | Token.Gt
         | Token.Le | Token.Ge | Token.Is | Token.PipeForward | Token.PipePipe | Token.AmpAmp | Token.Percent ->
             parse_infix_expression (next_token lp) left
+        | Token.Ident when lp.peek_token.literal = "wrap" -> parse_wrap_expression (next_token lp) left
         | LParen -> parse_call_expression (next_token lp) left
         | LBracket -> parse_index_expression (next_token lp) left
         | Dot -> parse_dot_expression (next_token lp) left
@@ -1950,6 +1967,34 @@ and parse_infix_expression (p : parser) (left : Surface.surface_expr) :
       let* p3, right = parse_expression p2 prec in
       let id = fresh_id p3 in
       Ok (p3, with_surface_expr_end p3 (mk_surface_expr id pos (Surface.SEInfix (left, op, right))))
+
+and parse_wrap_target (p_wrap : parser) : (parser * (Surface.name_ref * Surface.name_ref), parser) result =
+  let* p_first = expect_peek p_wrap Token.Ident in
+  let rec collect_segments lp rev_refs =
+    if peek_token_is lp Token.Dot then
+      let* p_next = expect_peek (next_token lp) Token.Ident in
+      collect_segments p_next (current_name_ref p_next :: rev_refs)
+    else
+      Ok (lp, List.rev rev_refs)
+  in
+  let* p_last, refs = collect_segments p_first [ current_name_ref p_first ] in
+  match List.rev refs with
+  | variant_ref :: rev_type_refs when rev_type_refs <> [] ->
+      let type_ref = combine_name_refs (List.rev rev_type_refs) in
+      Ok (p_last, (type_ref, variant_ref))
+  | _ ->
+      Error
+        (add_error ~code:"parse-invalid-wrap" p_first "expected wrap target in the form ErrorType.Variant")
+
+and parse_wrap_expression (p : parser) (left : Surface.surface_expr) :
+    (parser * Surface.surface_expr, parser) result =
+  let pos = left.Surface.se_pos in
+  let* p_target, target = parse_wrap_target p in
+  let id = fresh_id p_target in
+  Ok
+    ( p_target,
+      with_surface_expr_end p_target
+        (mk_surface_expr id pos (Surface.SEWrap { se_wrapped = left; se_wrap = target })) )
 
 and parse_boolean (p : parser) : (parser * Surface.surface_expr, parser) result =
   let pos = p.curr_token.pos in
@@ -2525,44 +2570,22 @@ and parse_match_expression (p : parser) : (parser * Surface.surface_expr, parser
   Ok (p5, with_surface_expr_end p5 (mk_surface_expr id pos (Surface.SEMatch (scrutinee, arms))))
 
 and parse_try_expression (p : parser) : (parser * Surface.surface_expr, parser) result =
-  let combine_name_refs (refs : Surface.name_ref list) : Surface.name_ref =
-    match refs with
-    | [] -> invalid_arg "combine_name_refs"
-    | first :: rest ->
-        let last = List.fold_left (fun _ ref_ -> ref_) first rest in
-        Surface.
-          {
-            text = String.concat "." (List.map (fun (ref_ : name_ref) -> ref_.text) refs);
-            pos = first.pos;
-            end_pos = last.end_pos;
-            file_id = first.file_id;
-          }
-  in
-  let parse_wrap_target p_wrap =
-    let* p_first = expect_peek p_wrap Token.Ident in
-    let rec collect_segments lp rev_refs =
-      if peek_token_is lp Token.Dot then
-        let* p_next = expect_peek (next_token lp) Token.Ident in
-        collect_segments p_next (current_name_ref p_next :: rev_refs)
-      else
-        Ok (lp, List.rev rev_refs)
-    in
-    let* p_last, refs = collect_segments p_first [ current_name_ref p_first ] in
-    match List.rev refs with
-    | variant_ref :: rev_type_refs when rev_type_refs <> [] ->
-        let type_ref = combine_name_refs (List.rev rev_type_refs) in
-        Ok (p_last, Some (type_ref, variant_ref))
-    | _ ->
-        Error
-          (add_error ~code:"parse-invalid-try-wrap" p_first "expected wrap target in the form ErrorType.Variant")
-  in
   let pos = p.curr_token.pos in
   let* p_tried, tried = parse_expression (next_token p) prec_lowest in
+  let tried, parsed_wrap =
+    match tried.Surface.se_expr with
+    | Surface.SEWrap { se_wrapped; se_wrap } -> (se_wrapped, Some se_wrap)
+    | _ -> (tried, None)
+  in
   let* p_end, wrap =
-    if peek_token_is p_tried Token.Ident && p_tried.peek_token.literal = "wrap" then
-      parse_wrap_target (next_token p_tried)
-    else
-      Ok (p_tried, None)
+    match parsed_wrap with
+    | Some wrap -> Ok (p_tried, Some wrap)
+    | None ->
+        if peek_token_is p_tried Token.Ident && p_tried.peek_token.literal = "wrap" then
+          let* p_wrap, target = parse_wrap_target (next_token p_tried) in
+          Ok (p_wrap, Some target)
+        else
+          Ok (p_tried, None)
   in
   let* p_end, fallback =
     if peek_token_is p_end Token.Ident && p_end.peek_token.literal = "or" then
@@ -3689,6 +3712,7 @@ module Test = struct
           @ List.concat_map (fun (arm : AST.match_arm) -> collect_expr_ids arm.body) arms
       | AST.Try { tried; fallback; _ } ->
           collect_expr_ids tried @ (fallback |> Option.map collect_expr_ids |> Option.value ~default:[])
+      | AST.Wrap { wrapped; _ } -> collect_expr_ids wrapped
       | AST.RecordLit (fields, spread) -> (
           List.concat_map
             (fun (field : AST.record_field) ->
@@ -3749,6 +3773,7 @@ module Test = struct
       | Surface.SETry { se_tried; se_fallback; _ } ->
           collect_surface_expr_ids se_tried
           @ (se_fallback |> Option.map collect_surface_expr_ids |> Option.value ~default:[])
+      | Surface.SEWrap { se_wrapped; _ } -> collect_surface_expr_ids se_wrapped
       | Surface.SERecordLit (fields, spread) -> (
           List.concat_map
             (fun (field : Surface.surface_record_field) ->
@@ -4278,6 +4303,75 @@ module Test = struct
         } ->
         true
     | _ -> false
+
+  let%test "parse wrap expression with target" =
+    match parse_surface ~file_id:"<test>" "let result = read() wrap ConfigError.File" with
+    | Ok
+        {
+          program =
+            [
+              {
+                Surface.std_decl =
+                  Surface.SLet
+                    {
+                      value =
+                        {
+                          Surface.se_expr =
+                            Surface.SEWrap
+                              {
+                                se_wrap = ({ Surface.text = "ConfigError"; _ }, { Surface.text = "File"; _ });
+                                _;
+                              };
+                          _;
+                        };
+                      _;
+                    };
+                _;
+              };
+            ];
+          _;
+        } ->
+        true
+    | _ -> false
+
+  let%test "parse wrap expression with qualified target" =
+    match parse_surface ~file_id:"<test>" "let result = read() wrap file.Error.InvalidData" with
+    | Ok
+        {
+          program =
+            [
+              {
+                Surface.std_decl =
+                  Surface.SLet
+                    {
+                      value =
+                        {
+                          Surface.se_expr =
+                            Surface.SEWrap
+                              {
+                                se_wrap =
+                                  ({ Surface.text = "file.Error"; _ }, { Surface.text = "InvalidData"; _ });
+                                _;
+                              };
+                          _;
+                        };
+                      _;
+                    };
+                _;
+              };
+            ];
+          _;
+        } ->
+        true
+    | _ -> false
+
+  let%test "wrap remains usable as an identifier at statement start" =
+    match
+      parse_surface ~file_id:"<test>"
+        "type Runner = ((Int) -> Str) -> ((Int) => Str)\nlet wrap: Runner = (f: (Int) -> Str) -> (n: Int) => f(n)\nwrap((n: Int) -> Show.show(n))(42)"
+    with
+    | Ok _ -> true
+    | Error _ -> false
 
   let%test "ordinary enum variants remain message-less" =
     match parse ~file_id:"<test>" "type Option[a] = { Some(a), None }" with

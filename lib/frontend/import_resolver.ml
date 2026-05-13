@@ -1395,6 +1395,10 @@ let rewrite_program
             wrap
         in
         Ok AST.{ expr with expr = Try { tried; wrap; fallback } }
+    | AST.Wrap { wrapped; target = type_name, variant_name } ->
+        let* wrapped = rewrite_expr ~value_scope ~type_bindings wrapped in
+        let type_name = rewrite_named_type_reference ~imports ~type_bindings ~available_bindings type_name in
+        Ok AST.{ expr with expr = Wrap { wrapped; target = (type_name, variant_name) } }
     | AST.RecordLit (fields, spread) ->
         let* fields =
           map_result

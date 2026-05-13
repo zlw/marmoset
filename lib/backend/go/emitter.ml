@@ -1587,6 +1587,7 @@ let rec captures_top_level_values_expr
         :: (fallback
            |> Option.map (fun expr -> [ captures_top_level_values_expr top_level_values bound expr ])
            |> Option.value ~default:[]))
+  | AST.Wrap { wrapped; _ } -> captures_top_level_values_expr top_level_values bound wrapped
   | AST.RecordLit (fields, spread) ->
       merge_sets
         (List.concat_map
@@ -1791,6 +1792,7 @@ and collect_funcs_expr ?(available_bindings = StringSet.empty) (state : mono_sta
   | AST.Try { tried; fallback; _ } ->
       collect_funcs_expr ~available_bindings state tried;
       Option.iter (collect_funcs_expr ~available_bindings state) fallback
+  | AST.Wrap { wrapped; _ } -> collect_funcs_expr ~available_bindings state wrapped
   | AST.RecordLit (fields, spread) -> (
       List.iter
         (fun field ->
@@ -3298,6 +3300,7 @@ let rec collect_forward_call_arg_types_expr
         @ (fallback
           |> Option.map (collect_forward_call_arg_types_expr name type_map env)
           |> Option.value ~default:[])
+    | AST.Wrap { wrapped; _ } -> collect_forward_call_arg_types_expr name type_map env wrapped
     | AST.RecordLit (fields, spread) -> (
         List.concat_map
           (fun (field : AST.record_field) ->
@@ -4012,6 +4015,9 @@ and collect_insts_expr
   | AST.Try { tried; fallback; _ } ->
       collect_insts_expr state type_map env tried;
       Option.iter (collect_insts_expr state type_map env) fallback
+  | AST.Wrap { wrapped; _ } ->
+      collect_insts_expr state type_map env wrapped;
+      track_enum_inst state (get_type type_map expr)
   | AST.RecordLit (fields, spread) -> (
       let record_type =
         match expected_type with
@@ -4528,6 +4534,7 @@ let rec copy_specialized_expr_types
   | AST.Try { tried; fallback; _ } ->
       copy_specialized_expr_types source_map target_map specialization_subst tried;
       Option.iter (copy_specialized_expr_types source_map target_map specialization_subst) fallback
+  | AST.Wrap { wrapped; _ } -> copy_specialized_expr_types source_map target_map specialization_subst wrapped
   | AST.RecordLit (fields, spread) ->
       List.iter
         (fun (field : AST.record_field) ->
@@ -4804,6 +4811,7 @@ let rec emit_expr
     | AST.Match (scrutinee, arms) -> emit_match state type_map env expr scrutinee arms
     | AST.Try { tried; fallback = Some fallback; _ } -> emit_try_or_expr state type_map env ~try_expr:expr ~tried ~fallback
     | AST.Try _ -> failwith "try expression can only be emitted from statement context"
+    | AST.Wrap { wrapped; target } -> emit_wrap_expr state type_map env ~wrap_expr:expr ~wrapped ~target
     | AST.RecordLit (fields, spread) -> (
         let record_type = get_type type_map expr in
         let declared_fields, _result_row =
@@ -7166,6 +7174,62 @@ and emit_option_try_binding
     binding_name some_payload ind result_go_name ind outer_option_go_name ind ind
     "unexpected Option tag in try expression" ind ind binding_name
 
+and emit_wrap_expr
+    (state : emit_state)
+    (type_map : Infer.type_map)
+    (env : Infer.type_env)
+    ~(wrap_expr : AST.expression)
+    ~(wrapped : AST.expression)
+    ~(target : string * string) : string =
+  let expr_type = Types.canonicalize_mono_type (get_type type_map wrap_expr) in
+  let wrapped_type = Types.canonicalize_mono_type (get_type type_map wrapped) in
+  let result_enum_name, result_type_args, _success_type, _inner_error_type =
+    match result_type_parts_for_codegen wrapped_type with
+    | Some parts -> parts
+    | None -> failwith "Codegen error: wrap expression expected Result wrapped type"
+  in
+  let _outer_result_enum_name, _outer_result_type_args, _outer_success_type, outer_error_type =
+    match result_type_parts_for_codegen expr_type with
+    | Some parts -> parts
+    | None -> failwith "Codegen error: wrap expression expected Result result type"
+  in
+  track_enum_inst state.mono wrapped_type;
+  track_enum_inst state.mono expr_type;
+  track_enum_inst state.mono outer_error_type;
+  let result_var = fresh_temp_name state "__wrap_result" in
+  let result_expr = emit_expr_for_expected_type state type_map env wrapped_type wrapped in
+  let result_go_name = mangle_type wrapped_type in
+  let success_payload =
+    enum_payload_expr_for_codegen state ~enum_name:result_enum_name ~type_args:result_type_args
+      ~variant_name:"Success" ~position:0 ~value_expr:result_var
+  in
+  let failure_payload =
+    enum_payload_expr_for_codegen state ~enum_name:result_enum_name ~type_args:result_type_args
+      ~variant_name:"Failure" ~position:0 ~value_expr:result_var
+  in
+  let target_type, target_variant = target in
+  let target_enum_name = canonical_enum_name_for_codegen target_type in
+  let target_variant = canonical_variant_name_for_codegen target_enum_name target_variant in
+  let constructor_name = Printf.sprintf "%s_%s" (mangle_type outer_error_type) target_variant in
+  let failure_value =
+    maybe_attach_source_error_context state wrap_expr outer_error_type target_enum_name target_variant
+      (Printf.sprintf "%s(%s)" constructor_name failure_payload)
+  in
+  let outer_result_go_name = mangle_type expr_type in
+  Printf.sprintf
+    "(func() %s {\n%s%s := %s\n%sswitch %s.Tag {\n%scase %s_Success_tag:\n%s    return %s_Success(%s)\n%scase %s_Failure_tag:\n%s    return %s_Failure(%s)\n%sdefault:\n%s    panic(%S)\n%s}\n%s})()"
+    (type_to_go state.mono expr_type) (indent_str { state with indent = state.indent + 1 }) result_var
+    result_expr (indent_str { state with indent = state.indent + 1 }) result_var
+    (indent_str { state with indent = state.indent + 1 }) result_go_name
+    (indent_str { state with indent = state.indent + 2 }) outer_result_go_name success_payload
+    (indent_str { state with indent = state.indent + 1 }) result_go_name
+    (indent_str { state with indent = state.indent + 2 }) outer_result_go_name failure_value
+    (indent_str { state with indent = state.indent + 1 })
+    (indent_str { state with indent = state.indent + 2 })
+    "unexpected Result tag in wrap expression"
+    (indent_str { state with indent = state.indent + 1 })
+    (indent_str state)
+
 and emit_try_or_expr
     (state : emit_state)
     (type_map : Infer.type_map)
@@ -7281,6 +7345,7 @@ and collect_local_call_arg_types_expr
         (match fallback with
         | None -> []
         | Some expr -> collect_local_call_arg_types_expr name type_map env expr)
+    | AST.Wrap { wrapped; _ } -> collect_local_call_arg_types_expr name type_map env wrapped
     | AST.RecordLit (fields, spread) -> (
         List.concat_map
           (fun (field : AST.record_field) ->
@@ -8508,6 +8573,7 @@ let collect_inherent_call_sites
     | AST.Try { tried; fallback; _ } ->
         let acc' = collect_expr acc env tried in
         Option.fold ~none:acc' ~some:(collect_expr acc' env) fallback
+    | AST.Wrap { wrapped; _ } -> collect_expr acc env wrapped
     | AST.RecordLit (fields, spread) -> (
         let record_type =
           match expected_type with

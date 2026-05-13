@@ -289,6 +289,7 @@ let rec placeholder_count_expr (expr : AST.expression) : int =
       match fallback with
       | None -> 0
       | Some expr -> placeholder_count_expr expr)
+  | AST.Wrap { wrapped; _ } -> placeholder_count_expr wrapped
   | AST.RecordLit (fields, spread) -> (
       List.fold_left
         (fun acc (field : AST.record_field) ->
@@ -407,6 +408,8 @@ let rec replace_placeholder_with_expr (replacement : AST.expression) (expr : AST
               fallback = Option.map (replace_placeholder_with_expr replacement) fallback;
             };
       }
+  | AST.Wrap { wrapped; target } ->
+      { expr with expr = AST.Wrap { wrapped = replace_placeholder_with_expr replacement wrapped; target } }
   | AST.RecordLit (fields, spread) ->
       {
         expr with
@@ -517,6 +520,12 @@ let rec lower_expr_with_ctx (ctx : lower_context) (id_supply : Id_supply.Id_supp
             tried = lower_expr_with_ctx ctx id_supply se_tried;
             wrap = Option.map (fun (type_ref, variant_ref) -> (name_text type_ref, name_text variant_ref)) se_wrap;
             fallback = Option.map (lower_expr_with_ctx ctx id_supply) se_fallback;
+          }
+    | Surface.SEWrap { se_wrapped; se_wrap = type_ref, variant_ref } ->
+        AST.Wrap
+          {
+            wrapped = lower_expr_with_ctx ctx id_supply se_wrapped;
+            target = (name_text type_ref, name_text variant_ref);
           }
     | Surface.SERecordLit (fields, spread) ->
         let lower_field f =
@@ -1285,6 +1294,21 @@ let%test "lower SETry to AST.Try" =
   in
   match (lower_expr id_supply se).expr with
   | AST.Try { wrap = Some ("ConfigError", "File"); fallback = None; _ } -> true
+  | _ -> false
+
+let%test "lower SEWrap to AST.Wrap" =
+  let id_supply = Id_supply.Id_supply.create 0 in
+  let wrapped = Surface.mk_surface_expr ~id:1 ~pos:0 (Surface.SEIdentifier (Surface.mk_name_ref "read")) in
+  let se =
+    Surface.mk_surface_expr ~id:2 ~pos:0
+      (Surface.SEWrap
+         {
+           se_wrapped = wrapped;
+           se_wrap = (Surface.mk_name_ref "ConfigError", Surface.mk_name_ref "File");
+         })
+  in
+  match (lower_expr id_supply se).expr with
+  | AST.Wrap { target = ("ConfigError", "File"); _ } -> true
   | _ -> false
 
 let%test "lower pipe desugars rhs callable into Call" =

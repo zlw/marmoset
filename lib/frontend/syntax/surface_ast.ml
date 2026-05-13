@@ -153,6 +153,10 @@ module Surface = struct
         se_wrap : (name_ref * name_ref) option;
         se_fallback : surface_expr option;
       }
+    | SEWrap of {
+        se_wrapped : surface_expr;
+        se_wrap : name_ref * name_ref;
+      }
     | SERecordLit of surface_record_field list * surface_expr option
     | SEFieldAccess of surface_expr * name_ref
     | SEMethodCall of {

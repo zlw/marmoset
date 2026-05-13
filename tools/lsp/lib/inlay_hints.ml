@@ -294,6 +294,7 @@ and walk_expr ~source ~type_map ~range_start ~range_end ~hints (expr : Ast.AST.e
     | Ast.AST.Try { tried; fallback; _ } ->
         walk_expr ~source ~type_map ~range_start ~range_end ~hints tried;
         Option.iter (walk_expr ~source ~type_map ~range_start ~range_end ~hints) fallback
+    | Ast.AST.Wrap { wrapped; _ } -> walk_expr ~source ~type_map ~range_start ~range_end ~hints wrapped
     | Ast.AST.TypeCheck (e, _) -> walk_expr ~source ~type_map ~range_start ~range_end ~hints e
     | Ast.AST.BlockExpr stmts -> List.iter (walk_stmt ~source ~type_map ~range_start ~range_end ~hints) stmts
     | Ast.AST.Identifier _ | Ast.AST.Integer _ | Ast.AST.Float _ | Ast.AST.Boolean _ | Ast.AST.String _ -> ()

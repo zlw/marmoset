@@ -300,6 +300,8 @@ and walk_expr ~source ~program ~type_map ~environment ~range_start ~range_end ~s
     | Ast.AST.Try { tried; fallback; _ } ->
         walk_expr ~source ~program ~type_map ~environment ~range_start ~range_end ~sites tried;
         Option.iter (walk_expr ~source ~program ~type_map ~environment ~range_start ~range_end ~sites) fallback
+    | Ast.AST.Wrap { wrapped; _ } ->
+        walk_expr ~source ~program ~type_map ~environment ~range_start ~range_end ~sites wrapped
     | Ast.AST.TypeCheck (e, _) ->
         walk_expr ~source ~program ~type_map ~environment ~range_start ~range_end ~sites e
     | Ast.AST.BlockExpr stmts ->

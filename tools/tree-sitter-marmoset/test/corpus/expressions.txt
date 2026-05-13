@@ -547,6 +547,25 @@ try maybe() or 5
       fallback: (integer_literal))))
 
 ================================================================================
+Wrap expression
+================================================================================
+
+parse(text) wrap Error.InvalidData
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (expression_statement
+    (wrap_expression
+      value: (call_expression
+        function: (identifier)
+        (identifier))
+      target: (wrap_target
+        (simple_wrap_target
+          type: (identifier)
+          variant: (identifier))))))
+
+================================================================================
 Enum constructor call
 ================================================================================
 

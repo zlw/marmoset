@@ -63,6 +63,7 @@ let substitute_path_in_expr
             expr with
             expr = AST.Try { tried = subst_expr tried; wrap; fallback = Option.map subst_expr fallback };
           }
+      | AST.Wrap { wrapped; target } -> { expr with expr = AST.Wrap { wrapped = subst_expr wrapped; target } }
       | AST.RecordLit (fields, spread) ->
           {
             expr with

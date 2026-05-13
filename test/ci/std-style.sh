@@ -29,9 +29,10 @@ reject_snippet() {
     fi
 }
 
-require_snippet std/file.mr "let value = try bytes.Decode.decode(payload) wrap Error.InvalidData"
+require_snippet std/file.mr "bytes.Decode.decode(payload) wrap Error.InvalidData"
 require_snippet std/file.mr "let file = try file_shim.open_handle(path, mode) wrap UseError.Open"
 require_snippet std/io.mr "Result.bind((_) -> Write.flush(writer))"
 
+reject_snippet std/file.mr "let value = try bytes.Decode.decode(payload) wrap Error.InvalidData"
 reject_snippet std/file.mr "Result.wrap((err: DecodeError) -> Error.InvalidData(err))"
 reject_snippet std/io.mr "case Result.Failure(err): Result.Failure(err)"

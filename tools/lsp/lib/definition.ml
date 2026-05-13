@@ -281,6 +281,7 @@ and find_namespace_ref_in_children ~(source : string) ~(offset : int) (expr : As
       first_some
         (find_namespace_ref_in_expr ~source ~offset tried)
         (Option.bind fallback (find_namespace_ref_in_expr ~source ~offset))
+  | Ast.AST.Wrap { wrapped; _ } -> find_namespace_ref_in_expr ~source ~offset wrapped
   | Ast.AST.BlockExpr stmts -> List.find_map (find_namespace_ref_in_stmt ~source ~offset) stmts
   | Ast.AST.Identifier _ | Ast.AST.Integer _ | Ast.AST.Float _ | Ast.AST.Boolean _ | Ast.AST.String _ -> None
 
@@ -908,6 +909,24 @@ let%test "error enum constructor member resolves to the messaged variant declara
           (definition_at ~file_id:main_path ~source:main_source ~needle:"FileError.NotFound"
              ~offset_in_needle:10 ())
         ~expected:(target_span_of_substring ~file_path:main_path ~source:main_source ~needle:"NotFound" ()))
+
+let%test "bare wrap target resolves to the messaged variant declaration head" =
+  Doc_state.with_temp_project
+    [
+      ( "main.mr",
+        "type DecodeError = { Bad = \"Bad decode\" }\ntype FileError = { InvalidData(DecodeError) = \"File contains invalid data\" }\nfn decode() -> Result[Str, DecodeError] = Result.Failure(DecodeError.Bad)\nlet result = decode() wrap FileError.InvalidData\nresult\n"
+      );
+    ]
+    (fun root ->
+      let main_path = Filename.concat root "main.mr" in
+      let main_source =
+        "type DecodeError = { Bad = \"Bad decode\" }\ntype FileError = { InvalidData(DecodeError) = \"File contains invalid data\" }\nfn decode() -> Result[Str, DecodeError] = Result.Failure(DecodeError.Bad)\nlet result = decode() wrap FileError.InvalidData\nresult\n"
+      in
+      expect_target ~label:"bare wrap target"
+        ~actual:
+          (definition_at ~file_id:main_path ~source:main_source ~needle:"FileError.InvalidData"
+             ~offset_in_needle:10 ())
+        ~expected:(target_span_of_substring ~file_path:main_path ~source:main_source ~needle:"InvalidData" ()))
 
 let%test "constraint annotation resolves to trait declaration head" =
   Doc_state.with_temp_project

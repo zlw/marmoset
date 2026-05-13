@@ -1,0 +1,13 @@
+# R017: bare wrap target must accept the inner error payload
+type DecodeError = {
+  Bad = "Bad decode",
+}
+
+type Error = {
+  Text(Str) = "Text failed",
+}
+
+fn decode() -> Result[Str, DecodeError] = Result.Failure(DecodeError.Bad)
+
+fn bad() -> Result[Str, Error] =
+  decode() wrap Error.Text  # error: wrap variant must accept DecodeError

@@ -155,6 +155,7 @@ let rec build_scope_index_expr (acc : scope_index) (expr : Surface.surface_expr)
   | Surface.SETry { se_tried; se_fallback; _ } ->
       let acc = build_scope_index_expr acc se_tried in
       Option.fold ~none:acc ~some:(build_scope_index_expr acc) se_fallback
+  | Surface.SEWrap { se_wrapped; _ } -> build_scope_index_expr acc se_wrapped
   | Surface.SERecordLit (fields, spread) ->
       let acc =
         List.fold_left
@@ -492,6 +493,15 @@ let rec reference_in_expr ~(scope_index : scope_index) ~(offset : int) (expr : S
                Some (Qualified_root { root_ref; root_expr_id = None; member_ref; access_expr_id = expr.se_id })
            | _ -> None)
            (Option.bind se_fallback (reference_in_expr ~scope_index ~offset)))
+  | Surface.SEWrap { se_wrapped; se_wrap = root_ref, member_ref } ->
+      first_some
+        (reference_in_expr ~scope_index ~offset se_wrapped)
+        (if name_ref_contains ~offset member_ref then
+           Some (Qualified_member { root_ref; root_expr_id = None; member_ref; access_expr_id = expr.se_id })
+         else if name_ref_contains ~offset root_ref then
+           Some (Qualified_root { root_ref; root_expr_id = None; member_ref; access_expr_id = expr.se_id })
+         else
+           None)
   | Surface.SERecordLit (fields, spread) ->
       first_some
         (List.find_map
@@ -775,6 +785,12 @@ let rec collect_expr_references ~(scope_index : scope_index) (expr : Surface.sur
       match se_fallback with
       | None -> []
       | Some fallback -> collect_expr_references ~scope_index fallback)
+  | Surface.SEWrap { se_wrapped; se_wrap = root_ref, member_ref } ->
+      collect_expr_references ~scope_index se_wrapped
+      @ [
+          Qualified_root { root_ref; root_expr_id = None; member_ref; access_expr_id = expr.se_id };
+          Qualified_member { root_ref; root_expr_id = None; member_ref; access_expr_id = expr.se_id };
+        ]
   | Surface.SERecordLit (fields, spread) ->
       List.concat_map
         (fun (field : Surface.surface_record_field) ->

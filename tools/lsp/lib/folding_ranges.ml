@@ -65,6 +65,7 @@ let rec walk_expr ~source ~ranges (expr : Ast.AST.expression) =
   | Ast.AST.Try { tried; fallback; _ } ->
       walk_expr ~source ~ranges tried;
       Option.iter (walk_expr ~source ~ranges) fallback
+  | Ast.AST.Wrap { wrapped; _ } -> walk_expr ~source ~ranges wrapped
   | Ast.AST.TypeCheck (e, _) -> walk_expr ~source ~ranges e
   | Ast.AST.BlockExpr stmts -> List.iter (walk_stmt ~source ~ranges) stmts
   | Ast.AST.Identifier _ | Ast.AST.Integer _ | Ast.AST.Float _ | Ast.AST.Boolean _ | Ast.AST.String _ -> ()

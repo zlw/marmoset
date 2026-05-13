@@ -389,6 +389,7 @@ let clone_default_body
               List.map (fun (arm : AST.match_arm) -> AST.{ arm with body = clone_expr arm.body }) arms )
       | AST.Try { tried; wrap; fallback } ->
           AST.Try { tried = clone_expr tried; wrap; fallback = Option.map clone_expr fallback }
+      | AST.Wrap { wrapped; target } -> AST.Wrap { wrapped = clone_expr wrapped; target }
       | AST.RecordLit (fields, spread) ->
           AST.RecordLit
             ( List.map

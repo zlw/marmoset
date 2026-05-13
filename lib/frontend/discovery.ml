@@ -441,6 +441,7 @@ let collect_expr_ids (program : AST.program) : int list =
           expr_ids scrutinee @ List.concat_map (fun (arm : AST.match_arm) -> expr_ids arm.body) arms
       | AST.Try { tried; fallback; _ } ->
           expr_ids tried @ (fallback |> Option.map expr_ids |> Option.value ~default:[])
+      | AST.Wrap { wrapped; _ } -> expr_ids wrapped
       | AST.RecordLit (fields, spread) ->
           List.concat_map
             (fun (field : AST.record_field) -> option_map_default field.field_value ~default:[] ~f:expr_ids)

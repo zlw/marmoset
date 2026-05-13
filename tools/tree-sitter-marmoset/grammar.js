@@ -30,6 +30,7 @@ module.exports = grammar({
 
   conflicts: ($) => [
     [$._expression, $.lambda_parameter],
+    [$._expression, $._wrap_operand],
     [$.block, $.object_literal],
   ],
 
@@ -390,6 +391,30 @@ module.exports = grammar({
         $.if_expression,
         $.match_expression,
         $.try_expression,
+        $.wrap_expression,
+        $.call_expression,
+        $.field_access,
+        $.index_expression,
+      ),
+
+    _wrap_operand: ($) =>
+      choice(
+        $.placeholder,
+        $.identifier,
+        $.integer_literal,
+        $.float_literal,
+        $.string_literal,
+        $.boolean_literal,
+        $.array_literal,
+        $.object_literal,
+        $.prefix_expression,
+        $.infix_expression,
+        $.is_expression,
+        $.lambda_expression,
+        $.parenthesized_expression,
+        $.if_expression,
+        $.match_expression,
+        $.wrap_expression,
         $.call_expression,
         $.field_access,
         $.index_expression,
@@ -511,17 +536,31 @@ module.exports = grammar({
       seq("case", field("pattern", $._pattern), ":", field("body", $.expr_or_block)),
 
     try_expression: ($) =>
-      prec.right(
-        PREC.PREFIX,
-        seq(
-          "try",
-          field("value", $._expression),
-          optional(
-            choice(
-              seq("wrap", field("target", $.wrap_target)),
-              seq("or", field("fallback", $._expression)),
-            ),
+      choice(
+        prec.dynamic(
+          1,
+          prec.right(
+            PREC.PREFIX,
+            seq("try", field("value", $._expression), "wrap", field("target", $.wrap_target)),
           ),
+        ),
+        prec.right(
+          PREC.PREFIX,
+          seq("try", field("value", $._expression), "or", field("fallback", $._expression)),
+        ),
+        prec.right(
+          PREC.PREFIX,
+          seq("try", field("value", $._expression)),
+        ),
+      ),
+
+    wrap_expression: ($) =>
+      prec.left(
+        PREC.PIPE,
+        seq(
+          field("value", $._wrap_operand),
+          "wrap",
+          field("target", $.wrap_target),
         ),
       ),
 

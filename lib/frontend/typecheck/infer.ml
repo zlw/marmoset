@@ -1127,6 +1127,7 @@ let mono_type_of_extern_func (func : Resolution_artifacts.extern_func) : mono_ty
 let should_monomorphize_let_binding_value (value_expr : AST.expression) : bool =
   match value_expr.expr with
   | AST.Try _ -> true
+  | AST.Wrap _ -> true
   | AST.RecordLit _ -> true
   | AST.FieldAccess _ -> (
       match lookup_call_resolution value_expr.id with
@@ -1655,6 +1656,7 @@ let rec placeholder_identifier_count_expr (expr : AST.expression) : int =
   | AST.Try { tried; fallback; _ } ->
       placeholder_identifier_count_expr tried
       + (fallback |> Option.map placeholder_identifier_count_expr |> Option.value ~default:0)
+  | AST.Wrap { wrapped; _ } -> placeholder_identifier_count_expr wrapped
   | AST.RecordLit (fields, spread) -> (
       let fields_count =
         List.fold_left
@@ -1922,6 +1924,7 @@ let rec resolve_expr_symbols (stack : symbol_scope_stack) (expr : AST.expression
   | AST.Try { tried; fallback; _ } ->
       resolve_expr_symbols stack tried;
       Option.iter (resolve_expr_symbols stack) fallback
+  | AST.Wrap { wrapped; _ } -> resolve_expr_symbols stack wrapped
   | AST.RecordLit (fields, spread) -> (
       List.iter
         (fun (f : AST.record_field) ->
@@ -2186,6 +2189,7 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                     (* Check each arm and collect body types *)
                     infer_match_arms type_map env' scrutinee scrutinee_type arms subst expr))
         | AST.Try { tried; wrap; fallback } -> infer_try type_map env expr tried wrap fallback
+        | AST.Wrap { wrapped; target } -> infer_wrap type_map env expr wrapped target
         | AST.RecordLit (fields, spread) -> infer_record_literal type_map env fields spread expr
         | AST.FieldAccess (receiver, variant_name) -> (
             let infer_enum_constructor_value (enum_source_name : string) : (substitution * mono_type) infer_result
@@ -3366,6 +3370,61 @@ and infer_result_try _type_map expr _tried subst success_type inner_error wrap :
       | TEnum _ ->
           Error (error_at ~code:"type-try" ~message:"wrap target must match enclosing Result error type" expr)
       | _ -> Error (error_at ~code:"type-try" ~message:"enclosing function must return Result" expr))
+
+and infer_wrap type_map env expr wrapped (target_type, target_variant) : (substitution * mono_type) infer_result =
+  let* subst, wrapped_type = infer_expression type_map env wrapped in
+  let wrapped_type' = apply_substitution subst wrapped_type in
+  match result_type_args wrapped_type' with
+  | None ->
+      Error (error_at ~code:"type-wrap" ~message:"wrapped expression must have type Result" wrapped)
+  | Some (success_type, inner_error) -> (
+      let target_enum_name = canonical_enum_name_of_source_name target_type in
+      let inner_error' = apply_substitution subst inner_error in
+      if Option.is_none (error_enum_name inner_error') then
+        Error
+          (error_at ~code:"type-wrap"
+             ~message:"wrap requires Result error type to be an Error or *Error enum" expr)
+      else
+        match Enum_registry.lookup target_enum_name with
+        | None -> Error (error_at ~code:"type-wrap" ~message:(unknown_type_message target_type) expr)
+        | Some _ when not (Enum_registry.is_error_enum target_enum_name) ->
+            Error (error_at ~code:"type-wrap" ~message:"wrap target type must be an error type" expr)
+        | Some enum_def -> (
+            match Enum_registry.lookup_variant target_enum_name target_variant with
+            | None ->
+                Error
+                  (error_at ~code:"type-wrap"
+                     ~message:(Printf.sprintf "Unknown constructor: %s.%s" target_type target_variant)
+                     expr)
+            | Some variant ->
+                let fresh_vars = List.map (fun _ -> fresh_type_var ()) enum_def.type_params in
+                let field_types = instantiate_variant_fields target_enum_name fresh_vars variant in
+                let rec first_unifying_field = function
+                  | [] ->
+                      Error
+                        (error_at ~code:"type-wrap"
+                           ~message:
+                             (Printf.sprintf "wrap variant must accept %s"
+                                (Types.to_string (canonicalize_mono_type inner_error')))
+                           expr)
+                  | field_type :: rest -> (
+                      match unify inner_error' field_type with
+                      | Ok field_subst -> Ok field_subst
+                      | Error _ -> first_unifying_field rest)
+                in
+                let* field_subst = first_unifying_field field_types in
+                let final_subst = compose_substitution subst field_subst in
+                let wrapped_type_canon = canonicalize_mono_type (apply_substitution final_subst wrapped_type') in
+                let result_enum_name =
+                  match wrapped_type_canon with
+                  | TEnum (enum_name, _) -> enum_name
+                  | _ -> "Result"
+                in
+                let success_type' = apply_substitution final_subst success_type in
+                let outer_error_type =
+                  TEnum (target_enum_name, List.map (apply_substitution final_subst) fresh_vars)
+                in
+                Ok (final_subst, TEnum (result_enum_name, [ success_type'; outer_error_type ]))))
 (* ============================================================
    Prefix Operators: !, -
    ============================================================ *)
@@ -3713,6 +3772,7 @@ and expr_has_effectful_call (type_map : type_map) (expr : AST.expression) : bool
   | AST.Try { tried; fallback; _ } ->
       expr_has_effectful_call type_map tried
       || fallback |> Option.map (expr_has_effectful_call type_map) |> Option.value ~default:false
+  | AST.Wrap { wrapped; _ } -> expr_has_effectful_call type_map wrapped
   | AST.RecordLit (fields, spread) -> (
       List.exists
         (fun (f : AST.record_field) ->
@@ -4064,6 +4124,7 @@ and collect_used_names_expr (used : StringSet.t) (expr : AST.expression) : Strin
   | AST.Try { tried; fallback; _ } ->
       let used = collect_used_names_expr used tried in
       fallback |> Option.map (collect_used_names_expr used) |> Option.value ~default:used
+  | AST.Wrap { wrapped; _ } -> collect_used_names_expr used wrapped
   | AST.RecordLit (fields, spread) -> (
       let used =
         List.fold_left
@@ -4165,6 +4226,8 @@ and replace_placeholder_identifier_expr (param_name : string) (expr : AST.expres
             wrap;
             fallback = Option.map (replace_placeholder_identifier_expr param_name) fallback;
           }
+    | AST.Wrap { wrapped; target } ->
+        AST.Wrap { wrapped = replace_placeholder_identifier_expr param_name wrapped; target }
     | AST.RecordLit (fields, spread) ->
         AST.RecordLit
           ( List.map
@@ -7608,6 +7671,7 @@ module Test = struct
     | AST.Try { tried; fallback; _ } ->
         identifier_occurrences_in_expr name tried
         @ (fallback |> Option.map (identifier_occurrences_in_expr name) |> Option.value ~default:[])
+    | AST.Wrap { wrapped; _ } -> identifier_occurrences_in_expr name wrapped
     | AST.RecordLit (fields, spread) -> (
         List.concat_map
           (fun (f : AST.record_field) ->
