@@ -1047,6 +1047,27 @@ and parse_type_param_list (p : parser) : (parser * Surface.name_ref list, parser
   loop p []
 
 and parse_variant_list (p : parser) : (parser * Surface.surface_variant_def list, parser) result =
+  let invalid_variant_message ?token lp msg =
+    Error (add_error ~code:"parse-invalid-variant-message" ?token lp msg)
+  in
+  let parse_variant_message lp =
+    if curr_token_is lp Token.Assign then
+      let message_parser = next_token lp in
+      if curr_token_is message_parser Token.String then
+        let message = message_parser.curr_token.literal in
+        if contains_interpolation_marker message then
+          invalid_variant_message message_parser "variant messages must be static string literals"
+        else
+          let after_message = next_token message_parser in
+          if curr_token_is after_message Token.Comma || curr_token_is after_message Token.RBrace then
+            Ok (after_message, Some message)
+          else
+            invalid_variant_message after_message "variant messages must be a single string literal"
+      else
+        invalid_variant_message message_parser "variant messages must be string literals"
+    else
+      Ok (lp, None)
+  in
   let rec loop lp variants =
     if curr_token_is lp Token.RBrace then
       Ok (lp, List.rev variants)
@@ -1056,7 +1077,12 @@ and parse_variant_list (p : parser) : (parser * Surface.surface_variant_def list
       (* Check for variant data: some(a) *)
       let* lp3, sv_fields =
         if curr_token_is lp2 Token.LParen then
-          let* lp3, fields = parse_type_expr_list (next_token lp2) in
+          let field_start = next_token lp2 in
+          if curr_token_is field_start Token.String then
+            invalid_variant_message field_start
+              "variant messages belong after the payload as '= \"message\"', not inside payload parentheses"
+          else
+            let* lp3, fields = parse_type_expr_list field_start in
           let* lp4 =
             if curr_token_is lp3 Token.RParen then
               Ok lp3
@@ -1067,15 +1093,16 @@ and parse_variant_list (p : parser) : (parser * Surface.surface_variant_def list
         else
           Ok (lp2, [])
       in
-      let variant = Surface.{ sv_name = sv_name_ref.text; sv_name_ref; sv_fields } in
+      let* lp4, sv_message = parse_variant_message lp3 in
+      let variant = Surface.{ sv_name = sv_name_ref.text; sv_name_ref; sv_fields; sv_message } in
       (* Skip optional comma between variants *)
-      let lp4 =
-        if curr_token_is lp3 Token.Comma then
-          next_token lp3
+      let lp5 =
+        if curr_token_is lp4 Token.Comma then
+          next_token lp4
         else
-          lp3
+          lp4
       in
-      loop lp4 (variant :: variants)
+      loop lp5 (variant :: variants)
     else
       Error (no_prefix_parse_fn_error lp lp.curr_token.token_type)
   in
@@ -4059,6 +4086,73 @@ module Test = struct
         | [ { Surface.std_decl = Surface.STypeDef { type_body = Surface.STNamedSum _; derive; _ }; _ } ] ->
             List.map (fun (trait_ : Surface.surface_derive_trait) -> trait_.sdt_name) derive = [ "Eq"; "Show" ]
         | _ -> false)
+
+  let%test "parse error variant message on nullary constructor" =
+    let input = "type Error = { NotFound = \"File not found\" }" in
+    match parse_surface ~file_id:"<test>" input with
+    | Error _ -> false
+    | Ok result -> (
+        match result.program with
+        | [
+         {
+           Surface.std_decl =
+             Surface.STypeDef
+               {
+                 type_name = "Error";
+                 type_body = Surface.STNamedSum [ { sv_name = "NotFound"; sv_fields = []; sv_message = Some msg; _ } ];
+                 _;
+               };
+           _;
+         };
+        ] ->
+            msg = "File not found"
+        | _ -> false)
+
+  let%test "parse error variant message on payload constructor" =
+    let input = "type Error = { InvalidData(bytes.DecodeError) = \"File contains invalid data\" }" in
+    match parse ~file_id:"<test>" input with
+    | Ok
+        [
+          {
+            AST.stmt =
+              AST.EnumDef
+                {
+                  variants =
+                    [
+                      {
+                        AST.variant_name = "InvalidData";
+                        variant_fields = [ AST.TCon "bytes.DecodeError" ];
+                        variant_message = Some msg;
+                      };
+                    ];
+                  _;
+                };
+            _;
+          };
+        ] ->
+        msg = "File contains invalid data"
+    | _ -> false
+
+  let%test "ordinary enum variants remain message-less" =
+    match parse ~file_id:"<test>" "type Option[a] = { Some(a), None }" with
+    | Ok [ { AST.stmt = AST.EnumDef { variants; _ }; _ } ] ->
+        List.for_all (fun (variant : AST.variant_def) -> Option.is_none variant.variant_message) variants
+    | _ -> false
+
+  let%test "parse rejects non-string variant message" =
+    match parse_surface ~file_id:"<test>" "type Error = { NotFound = 1 }" with
+    | Ok _ -> false
+    | Error errs -> List.exists (fun (d : Diagnostic.t) -> d.code = "parse-invalid-variant-message") errs
+
+  let%test "parse rejects computed variant message" =
+    match parse_surface ~file_id:"<test>" "type Error = { NotFound = \"a\" + \"b\" }" with
+    | Ok _ -> false
+    | Error errs -> List.exists (fun (d : Diagnostic.t) -> d.code = "parse-invalid-variant-message") errs
+
+  let%test "parse rejects string payload parsed as variant field" =
+    match parse_surface ~file_id:"<test>" "type Error = { NotFound(\"x\") }" with
+    | Ok _ -> false
+    | Error errs -> List.exists (fun (d : Diagnostic.t) -> d.code = "parse-invalid-variant-message") errs
 
   let%test "parse enum rejects missing equals" =
     match parse ~file_id:"<test>" "enum Color { Red, Green }" with

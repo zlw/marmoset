@@ -161,6 +161,14 @@ assert(
   repo["type-definition"].patterns.some((entry) => entry?.include === "#wrapper-type"),
   "type-definition should highlight wrapper bodies",
 );
+assert(
+  JSON.stringify(repo["enum-variant"]).includes("#string"),
+  "enum-variant should highlight canonical message strings",
+);
+assert(
+  JSON.stringify(repo["enum-variant"]).includes("keyword.operator.assignment.marmoset"),
+  "enum-variant should highlight message assignment",
+);
 assert(repo.interpolation, "interpolation repository entry is missing");
 assertRegexMatches(repo.interpolation, "begin", "#{name}", "interpolation begin");
 assertRegexMatches(repo.interpolation, "end", "}", "interpolation end");

@@ -96,6 +96,10 @@
 (generic_type
   name: (type_identifier) @type.builtin)
 
+(qualified_type
+  module: (identifier) @namespace
+  name: (identifier) @type)
+
 ; Module imports
 (import_statement
   path: (module_path

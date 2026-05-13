@@ -223,6 +223,30 @@ type Event = { Click({ x: Int, y: Int }), Quit }
         name: (identifier)))))
 
 ================================================================================
+Message-bearing error sum type
+================================================================================
+
+type Error = { NotFound = "File not found", InvalidData(bytes.DecodeError) = "File contains invalid data" }
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (type_definition
+    name: (identifier)
+    type: (constructor_type_body
+      (enum_variant
+        name: (identifier)
+        message: (string_literal
+          (string_content)))
+      (enum_variant
+        name: (identifier)
+        (qualified_type
+          module: (identifier)
+          name: (identifier))
+        message: (string_literal
+          (string_content))))))
+
+================================================================================
 Record type with row variable
 ================================================================================
 

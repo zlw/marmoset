@@ -710,7 +710,11 @@ let setup_test_enums () =
     {
       name = "Option";
       type_params = [ "a" ];
-      variants = [ { name = "Some"; fields = [ Types.TVar "a" ] }; { name = "None"; fields = [] } ];
+      variants =
+        [
+          { name = "Some"; fields = [ Types.TVar "a" ]; message = None };
+          { name = "None"; fields = []; message = None };
+        ];
     };
   (* Register Result[a, b] *)
   Enum_registry.register
@@ -718,7 +722,10 @@ let setup_test_enums () =
       name = "Result";
       type_params = [ "a"; "b" ];
       variants =
-        [ { name = "Success"; fields = [ Types.TVar "a" ] }; { name = "Failure"; fields = [ Types.TVar "b" ] } ];
+        [
+          { name = "Success"; fields = [ Types.TVar "a" ]; message = None };
+          { name = "Failure"; fields = [ Types.TVar "b" ]; message = None };
+        ];
     }
 
 let%test "enum annotation Option[Int]" =

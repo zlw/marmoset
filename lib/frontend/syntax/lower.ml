@@ -653,6 +653,7 @@ let lower_variant_with_bound_vars (bound_type_vars : StringSet.t) (sv : Surface.
     {
       variant_name = sv.sv_name;
       variant_fields = List.map (lower_type_expr_with_bound_vars bound_type_vars) sv.sv_fields;
+      variant_message = sv.sv_message;
     }
 
 let lower_record_type_field_with_bound_vars
@@ -990,7 +991,8 @@ let test_starrow params ret effectful = Surface.mk_surface_type (Surface.STArrow
 let test_stintersection members = Surface.mk_surface_type (Surface.STIntersection members)
 let test_strecord fields row = Surface.mk_surface_type (Surface.STRecord (fields, row))
 let test_record_type_field name sf_type = Surface.{ sf_name = name; sf_name_ref = test_name_ref name; sf_type }
-let test_variant name sv_fields = Surface.{ sv_name = name; sv_name_ref = test_name_ref name; sv_fields }
+let test_variant ?sv_message name sv_fields =
+  Surface.{ sv_name = name; sv_name_ref = test_name_ref name; sv_fields; sv_message }
 let test_value_param ?typ name = Surface.{ svp_name = name; svp_name_ref = test_name_ref name; svp_type = typ }
 let test_typed_param name stp_type = Surface.{ stp_name = name; stp_name_ref = test_name_ref name; stp_type }
 

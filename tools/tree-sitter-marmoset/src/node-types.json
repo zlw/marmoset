@@ -644,6 +644,16 @@
     "type": "enum_variant",
     "named": true,
     "fields": {
+      "message": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "string_literal",
+            "named": true
+          }
+        ]
+      },
       "name": {
         "multiple": false,
         "required": true,
@@ -673,6 +683,10 @@
         },
         {
           "type": "parenthesized_type",
+          "named": true
+        },
+        {
+          "type": "qualified_type",
           "named": true
         },
         {
@@ -955,6 +969,10 @@
             "named": true
           },
           {
+            "type": "qualified_type",
+            "named": true
+          },
+          {
             "type": "record_type",
             "named": true
           },
@@ -1020,6 +1038,10 @@
           },
           {
             "type": "parenthesized_type",
+            "named": true
+          },
+          {
+            "type": "qualified_type",
             "named": true
           },
           {
@@ -1201,6 +1223,10 @@
             "named": true
           },
           {
+            "type": "qualified_type",
+            "named": true
+          },
+          {
             "type": "record_type",
             "named": true
           },
@@ -1269,6 +1295,10 @@
             "named": true
           },
           {
+            "type": "qualified_type",
+            "named": true
+          },
+          {
             "type": "record_type",
             "named": true
           },
@@ -1309,6 +1339,10 @@
         },
         {
           "type": "parenthesized_type",
+          "named": true
+        },
+        {
+          "type": "qualified_type",
           "named": true
         },
         {
@@ -1359,6 +1393,10 @@
             "named": true
           },
           {
+            "type": "qualified_type",
+            "named": true
+          },
+          {
             "type": "record_type",
             "named": true
           },
@@ -1386,6 +1424,10 @@
         "types": [
           {
             "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "qualified_type",
             "named": true
           },
           {
@@ -1530,6 +1572,10 @@
           },
           {
             "type": "parenthesized_type",
+            "named": true
+          },
+          {
+            "type": "qualified_type",
             "named": true
           },
           {
@@ -2112,6 +2158,10 @@
           "named": true
         },
         {
+          "type": "qualified_type",
+          "named": true
+        },
+        {
           "type": "record_type",
           "named": true
         },
@@ -2148,6 +2198,10 @@
           },
           {
             "type": "parenthesized_type",
+            "named": true
+          },
+          {
+            "type": "qualified_type",
             "named": true
           },
           {
@@ -2309,6 +2363,10 @@
             "named": true
           },
           {
+            "type": "qualified_type",
+            "named": true
+          },
+          {
             "type": "record_type",
             "named": true
           },
@@ -2364,6 +2422,10 @@
           },
           {
             "type": "parenthesized_type",
+            "named": true
+          },
+          {
+            "type": "qualified_type",
             "named": true
           },
           {
@@ -2680,6 +2742,10 @@
             "named": true
           },
           {
+            "type": "qualified_type",
+            "named": true
+          },
+          {
             "type": "record_type",
             "named": true
           },
@@ -2961,6 +3027,10 @@
             "named": true
           },
           {
+            "type": "qualified_type",
+            "named": true
+          },
+          {
             "type": "record_type",
             "named": true
           },
@@ -3092,6 +3162,10 @@
           "named": true
         },
         {
+          "type": "qualified_type",
+          "named": true
+        },
+        {
           "type": "record_type",
           "named": true
         },
@@ -3212,6 +3286,32 @@
           {
             "type": "-",
             "named": false
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "qualified_type",
+    "named": true,
+    "fields": {
+      "module": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "name": {
+        "multiple": true,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
           }
         ]
       }
@@ -3353,6 +3453,10 @@
           },
           {
             "type": "parenthesized_type",
+            "named": true
+          },
+          {
+            "type": "qualified_type",
             "named": true
           },
           {
@@ -3629,6 +3733,10 @@
           },
           {
             "type": "parenthesized_type",
+            "named": true
+          },
+          {
+            "type": "qualified_type",
             "named": true
           },
           {
@@ -3946,6 +4054,10 @@
             "named": true
           },
           {
+            "type": "qualified_type",
+            "named": true
+          },
+          {
             "type": "record_type",
             "named": true
           },
@@ -3996,6 +4108,10 @@
         },
         {
           "type": "parenthesized_type",
+          "named": true
+        },
+        {
+          "type": "qualified_type",
           "named": true
         },
         {
@@ -4057,6 +4173,10 @@
           },
           {
             "type": "parenthesized_type",
+            "named": true
+          },
+          {
+            "type": "qualified_type",
             "named": true
           },
           {
@@ -4145,6 +4265,10 @@
           },
           {
             "type": "parenthesized_type",
+            "named": true
+          },
+          {
+            "type": "qualified_type",
             "named": true
           },
           {
@@ -4244,6 +4368,10 @@
           "named": true
         },
         {
+          "type": "qualified_type",
+          "named": true
+        },
+        {
           "type": "record_type",
           "named": true
         },
@@ -4314,6 +4442,10 @@
           },
           {
             "type": "parenthesized_type",
+            "named": true
+          },
+          {
+            "type": "qualified_type",
             "named": true
           },
           {

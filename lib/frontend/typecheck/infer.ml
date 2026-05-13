@@ -5236,7 +5236,7 @@ and infer_statement ?(type_bindings = []) type_map env stmt =
         map_result
           (fun (v : AST.variant_def) ->
             let* field_types = map_result convert_type_expr v.variant_fields in
-            Ok { Enum_registry.name = v.variant_name; fields = field_types })
+            Ok { Enum_registry.name = v.variant_name; fields = field_types; message = v.variant_message })
           variants
       in
       match variant_defs_result with

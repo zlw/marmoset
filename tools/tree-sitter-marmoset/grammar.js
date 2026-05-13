@@ -126,6 +126,7 @@ module.exports = grammar({
       seq(
         field("name", alias($.constructor_name, $.identifier)),
         optional(seq("(", commaSep1($._type), ")")),
+        optional(seq("=", field("message", $.string_literal))),
       ),
 
     trait_definition: ($) =>
@@ -292,16 +293,22 @@ module.exports = grammar({
         $.parenthesized_type,
       ),
 
-    _simple_type: ($) => choice($.type_identifier, $.type_variable),
+    _simple_type: ($) => choice($.type_identifier, $.qualified_type, $.type_variable),
 
     type_identifier: ($) =>
       token(choice("Int", "Str", "Bool", "Float", "Unit", "List", "Map")),
 
     type_variable: ($) => choice(alias($.constructor_name, $.identifier), $.identifier),
 
+    qualified_type: ($) =>
+      prec(2, seq(
+        field("module", $.identifier),
+        repeat1(seq(".", field("name", choice(alias($.constructor_name, $.identifier), $.identifier)))),
+      )),
+
     generic_type: ($) =>
       prec(1, seq(
-        field("name", choice($.type_identifier, alias($.constructor_name, $.identifier), $.identifier)),
+        field("name", choice($.type_identifier, $.qualified_type, alias($.constructor_name, $.identifier), $.identifier)),
         "[",
         commaSep1(field("arg", $._type)),
         "]",

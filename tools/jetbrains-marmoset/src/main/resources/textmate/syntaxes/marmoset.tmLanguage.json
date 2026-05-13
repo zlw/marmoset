@@ -406,6 +406,44 @@
       "comment": "Enum variant: some(a) or none",
       "patterns": [
         {
+          "comment": "Variant with fields and a canonical message: some(a, b) = \"message\"",
+          "begin": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*(\\()(?=[^{}\\n]*\\)\\s*=)",
+          "beginCaptures": {
+            "1": { "name": "entity.name.tag.variant.marmoset" },
+            "2": { "name": "punctuation.bracket.round.begin.marmoset" }
+          },
+          "end": "(?=,|\\})",
+          "patterns": [
+            {
+              "name": "punctuation.bracket.round.end.marmoset",
+              "match": "\\)"
+            },
+            {
+              "name": "keyword.operator.assignment.marmoset",
+              "match": "="
+            },
+            { "include": "#string" },
+            { "include": "#type-annotation" },
+            { "include": "#punctuation" }
+          ]
+        },
+        {
+          "comment": "Variant without fields and with a canonical message: none = \"message\"",
+          "begin": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\b(?=\\s*=)",
+          "beginCaptures": {
+            "1": { "name": "entity.name.tag.variant.marmoset" }
+          },
+          "end": "(?=,|\\})",
+          "patterns": [
+            {
+              "name": "keyword.operator.assignment.marmoset",
+              "match": "="
+            },
+            { "include": "#string" },
+            { "include": "#punctuation" }
+          ]
+        },
+        {
           "comment": "Variant with fields: some(a, b)",
           "begin": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*(\\()",
           "beginCaptures": {

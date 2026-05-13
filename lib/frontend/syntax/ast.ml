@@ -25,6 +25,7 @@ module AST = struct
   and variant_def = {
     variant_name : string;
     variant_fields : type_expr list;
+    variant_message : string option;
   }
   [@@deriving show]
 

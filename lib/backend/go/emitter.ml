@@ -10265,8 +10265,8 @@ let%test "generated shim api package includes owner enum variants" =
       type_params = [];
       variants =
         [
-          { Typecheck.Enum_registry.name = "Ok"; fields = [] };
-          { Typecheck.Enum_registry.name = "Other"; fields = [ Types.TString; Types.TInt ] };
+          { Typecheck.Enum_registry.name = "Ok"; fields = []; message = None };
+          { Typecheck.Enum_registry.name = "Other"; fields = [ Types.TString; Types.TInt ]; message = None };
         ];
     };
   let shim_key = Typecheck.Extern_registry.shim_key ~shim_id:"std/bytes" ~func_name:"read" in
@@ -10347,7 +10347,7 @@ let register_std_bytes_decode_error_for_test () =
     {
       Typecheck.Enum_registry.name = "std__bytes__DecodeError";
       type_params = [];
-      variants = [ { Typecheck.Enum_registry.name = "InvalidUtf8"; fields = [] } ];
+      variants = [ { Typecheck.Enum_registry.name = "InvalidUtf8"; fields = []; message = None } ];
     }
 
 let add_std_bytes_to_str_decl_for_test extern_declarations =
@@ -10437,8 +10437,8 @@ let%test "generated shim api package names are keyword safe" =
       type_params = [];
       variants =
         [
-          { Typecheck.Enum_registry.name = "type"; fields = [] };
-          { Typecheck.Enum_registry.name = "func"; fields = [ Types.TString ] };
+          { Typecheck.Enum_registry.name = "type"; fields = []; message = None };
+          { Typecheck.Enum_registry.name = "func"; fields = [ Types.TString ]; message = None };
         ];
     };
   let shim_key = Typecheck.Extern_registry.shim_key ~shim_id:"std/bytes" ~func_name:"decode" in

@@ -43,6 +43,7 @@ module Surface = struct
     sv_name : string;
     sv_name_ref : name_ref;
     sv_fields : surface_type_expr list;
+    sv_message : string option;
   }
 
   and surface_type_def_kind =
