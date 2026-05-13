@@ -34,6 +34,7 @@ Opaque resources use `extern type` in the owning shim module. Public modules sho
 ```marmoset
 import std.bytes
 import std.bytes.Bytes
+import std.bytes.DecodeError
 import std.path
 import std.path.Path
 
@@ -51,7 +52,7 @@ type Error = {
   IsDirectory = "Expected a file but found a directory",
   NotDirectory = "Expected a directory but found a file",
   InvalidPath(Str) = "Path is invalid",
-  InvalidData(Str) = "File contains invalid data",
+  InvalidData(DecodeError) = "File contains invalid data",
   AlreadyClosed = "File is already closed",
   Other(Str) = "File operation failed",
 }

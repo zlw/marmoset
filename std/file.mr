@@ -19,7 +19,7 @@ type Error = {
   IsDirectory = "Expected a file but found a directory",
   NotDirectory = "Expected a directory but found a file",
   InvalidPath(Str) = "Path is invalid",
-  InvalidData(Str) = "File contains invalid data",
+  InvalidData(DecodeError) = "File contains invalid data",
   AlreadyClosed = "File is already closed",
   Other(Str) = "File operation failed",
 }
@@ -44,12 +44,8 @@ extern "std/file" as file_shim = {
   fn flush_handle(file: File) => Result[Unit, Error]
 }
 
-fn decode_error(err: DecodeError) -> Error = match err {
-  case DecodeError.InvalidUtf8: Error.InvalidData("invalid utf-8")
-}
-
 fn decode_bytes[a: Decode](payload: Bytes) -> Result[a, Error] =
-  bytes.Decode.decode(payload) |> Result.or(decode_error)
+  bytes.Decode.decode(payload) |> Result.map_error((err: DecodeError) -> Error.InvalidData(err))
 
 fn decode_optional_bytes[a: Decode](payload: Option[Bytes]) -> Result[Option[a], Error] = match payload {
   case Option.Some(bytes): decode_bytes(bytes) |> Result.map(Option.Some(_))

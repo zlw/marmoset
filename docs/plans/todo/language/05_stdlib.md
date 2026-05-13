@@ -96,7 +96,7 @@ export Bytes, DecodeError, Decode, Encode,
        from_str, to_str, to_str_lossy, length, equal?
 
 extern type Bytes
-type DecodeError = { InvalidUtf8 }
+type DecodeError = { InvalidUtf8 = "Invalid UTF-8" }
 
 trait Decode[a] = {
   fn decode(bytes: Bytes) -> Result[a, DecodeError]
@@ -165,6 +165,7 @@ Target API:
 ```marmoset
 import std.bytes
 import std.bytes.Bytes
+import std.bytes.DecodeError
 import std.io
 import std.path
 
@@ -184,7 +185,7 @@ type Error = {
   IsDirectory,
   NotDirectory,
   InvalidPath(Str),
-  InvalidData(Str),
+  InvalidData(DecodeError),
   AlreadyClosed,
   Other(Str),
 }
@@ -601,3 +602,4 @@ HTTP, SQL, and framework-style wrappers likely need follow-up shim features such
 - 2026-05-13 00:41 CEST: `std.file` cleanup reached focused green. Private file shims now use `read_path`/`write_path`/`append_path` and `read_handle`/`write_handle`; scoped handle helpers delegate through `io.Read`/`io.Write`; decode error adaptation uses `Result.or`; and the Go emitter now return-mangles hoisted placeholder-section callbacks when return type disambiguation is required. Verification passed with `dune runtest lib/backend/go`, `dune runtest lib/frontend`, `dune runtest tools/lsp/lib`, `MARMOSET_ROOT=$PWD dune exec -- bin/main.exe check std/file.mr`, `make integration stdlib-shims`, `make integration ffi`, and `git diff --check`.
 - 2026-05-13 01:02 CEST: Started the scoped file-handle operations slice. Target: make `file.open` earn its public API space with line reads, bounded byte chunks, and handle write/flush helpers covered by stdlib-shim integration tests.
 - 2026-05-13 01:12 CEST: Scoped file-handle operations reached focused green. `std.file` now exposes `read_line` and `read_chunk`; the Go file shim keeps a buffered reader per scoped handle so line/chunk/all reads share position; EOF is `Option.None`; and line reads strip `\n`/`\r\n` while chunk reads stay byte-oriented. Verification passed with `make integration stdlib-shims`, `MARMOSET_ROOT=$PWD dune exec -- bin/main.exe check std/file.mr`, `dune runtest lib/backend/go`, and `make integration ffi`.
+- 2026-05-13 19:09 CEST: Updated the target stdlib error surface for the production error model: `bytes.DecodeError.InvalidUtf8` has a canonical message, and `std.file.Error.InvalidData` now preserves `DecodeError` as a typed cause instead of storing a lossy string.

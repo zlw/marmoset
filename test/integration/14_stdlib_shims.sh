@@ -263,9 +263,10 @@ EOF
 
 run_source_expect_output \
     "std.file uses traits for text, bytes and filesystem errors" \
-    $'bytes:9\ntext:hello\nappend:hello!\ninvalid-data\nread:not-found\nread:is-directory\nwrite:is-directory' <<EOF
+    $'bytes:9\ntext:hello\nappend:hello!\nread:invalid-data:invalid-utf8\nread:not-found\nread:is-directory\nwrite:is-directory' <<EOF
 import std.bytes
 import std.bytes.Bytes
+import std.bytes.DecodeError
 import std.file
 import std.file.Error
 import std.path
@@ -278,7 +279,7 @@ fn error_label(prefix: Str, err: Error) -> Str = match err {
   case Error.IsDirectory: prefix + ":is-directory"
   case Error.NotDirectory: prefix + ":not-directory"
   case Error.InvalidPath(message): prefix + ":invalid-path:" + message
-  case Error.InvalidData(_): "invalid-data"
+  case Error.InvalidData(DecodeError.InvalidUtf8): prefix + ":invalid-data:invalid-utf8"
   case Error.AlreadyClosed: prefix + ":already-closed"
   case Error.Other(message): prefix + ":other:" + message
 }
@@ -347,6 +348,7 @@ run_source_expect_output \
     $'read:opened\nprotocol:opened\ngeneric:opened\nline1:alpha\nline2:beta\nline3:gamma\nline4:none\nchunk1:ab\nchunk2:cde\nchunk3:f\nchunk4:none\nwritten:scoped!\nopen:not-found\nuse:read:is-directory\nleaked:read:already-closed' <<EOF
 import std.bytes
 import std.bytes.Bytes
+import std.bytes.DecodeError
 import std.file
 import std.file.Error
 import std.file.UseError
@@ -360,7 +362,7 @@ fn error_label(prefix: Str, err: Error) -> Str = match err {
   case Error.IsDirectory: prefix + ":is-directory"
   case Error.NotDirectory: prefix + ":not-directory"
   case Error.InvalidPath(message): prefix + ":invalid-path:" + message
-  case Error.InvalidData(message): prefix + ":invalid-data:" + message
+  case Error.InvalidData(DecodeError.InvalidUtf8): prefix + ":invalid-data:invalid-utf8"
   case Error.AlreadyClosed: prefix + ":already-closed"
   case Error.Other(message): prefix + ":other:" + message
 }

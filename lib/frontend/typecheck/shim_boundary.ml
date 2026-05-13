@@ -133,6 +133,11 @@ let owner_internal_prefix (owner_module_id : string) : string =
 let is_owner_enum ~(owner_module_id : string) (enum_name : string) : bool =
   starts_with ~prefix:(owner_internal_prefix owner_module_id ^ "__") enum_name
 
+let is_module_qualified_enum (enum_name : string) : bool =
+  match Type_registry.owner_module_id_of_internal_name enum_name with
+  | Some _ -> Option.is_some (Enum_registry.lookup enum_name)
+  | None -> false
+
 let is_named_wrapper (type_name : string) : bool =
   match Type_registry.lookup_named_type type_name with
   | Some { named_type_body = Type_registry.NamedWrapper _; _ } -> true
@@ -175,7 +180,7 @@ let rec classify ?source_span ?(allow_callback = false) ~(owner_module_id : stri
       let* err_boundary = classify ?source_span ~owner_module_id err_type in
       Ok (BStdResult (ok_boundary, err_boundary))
   | TArray inner -> Result.map (fun classified -> BList classified) (classify ?source_span ~owner_module_id inner)
-  | TEnum (name, args) when is_owner_enum ~owner_module_id name ->
+  | TEnum (name, args) when is_owner_enum ~owner_module_id name || is_module_qualified_enum name ->
       let ( let* ) = Result.bind in
       let rec classify_args acc = function
         | [] -> Ok (List.rev acc)
@@ -251,6 +256,19 @@ let%test "classifies immutable list boundaries" =
 let%test "classifies canonical std bytes identity" =
   match classify ~owner_module_id:"std.bytes" (TNamed ("std__bytes__Bytes", [])) with
   | Ok BStdBytes -> true
+  | _ -> false
+
+let%test "classifies imported module enum payloads" =
+  Enum_registry.register
+    {
+      Enum_registry.name = "std__bytes__DecodeError";
+      source_name = Some "DecodeError";
+      type_params = [];
+      kind = Enum_registry.ErrorEnum;
+      variants = [ { name = "InvalidUtf8"; fields = []; message = Some "Invalid UTF-8" } ];
+    };
+  match classify ~owner_module_id:"std.file" (TEnum ("std__bytes__DecodeError", [])) with
+  | Ok (BOwnerEnum { enum_name = "std__bytes__DecodeError"; enum_type_args = [] }) -> true
   | _ -> false
 
 let%test "classifies direct callback parameters only when allowed" =
