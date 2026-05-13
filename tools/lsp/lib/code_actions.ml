@@ -297,6 +297,8 @@ and walk_expr ~source ~program ~type_map ~environment ~range_start ~range_end ~s
         Option.iter (walk_expr ~source ~program ~type_map ~environment ~range_start ~range_end ~sites) spread
     | Ast.AST.EnumConstructor (_, _, args) ->
         List.iter (walk_expr ~source ~program ~type_map ~environment ~range_start ~range_end ~sites) args
+    | Ast.AST.Try { tried; _ } ->
+        walk_expr ~source ~program ~type_map ~environment ~range_start ~range_end ~sites tried
     | Ast.AST.TypeCheck (e, _) ->
         walk_expr ~source ~program ~type_map ~environment ~range_start ~range_end ~sites e
     | Ast.AST.BlockExpr stmts ->

@@ -389,6 +389,7 @@ module.exports = grammar({
         $.parenthesized_expression,
         $.if_expression,
         $.match_expression,
+        $.try_expression,
         $.call_expression,
         $.field_access,
         $.index_expression,
@@ -508,6 +509,36 @@ module.exports = grammar({
 
     match_arm: ($) =>
       seq("case", field("pattern", $._pattern), ":", field("body", $.expr_or_block)),
+
+    try_expression: ($) =>
+      prec.right(
+        PREC.PREFIX,
+        seq(
+          "try",
+          field("value", $._expression),
+          optional(seq("wrap", field("target", $.wrap_target))),
+        ),
+      ),
+
+    wrap_target: ($) =>
+      choice($.simple_wrap_target, $.qualified_wrap_target),
+
+    simple_wrap_target: ($) =>
+      seq(
+        field("type", alias($.constructor_name, $.identifier)),
+        ".",
+        field("variant", alias($.constructor_name, $.identifier)),
+      ),
+
+    qualified_wrap_target: ($) =>
+      seq(
+        field("module", $.identifier),
+        repeat(seq(".", field("module", $.identifier))),
+        ".",
+        field("type", alias($.constructor_name, $.identifier)),
+        ".",
+        field("variant", alias($.constructor_name, $.identifier)),
+      ),
 
     lambda_expression: ($) =>
       prec.right(

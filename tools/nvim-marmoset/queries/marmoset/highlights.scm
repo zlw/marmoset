@@ -12,6 +12,8 @@
 "else" @keyword.conditional
 "match" @keyword.conditional
 "case" @keyword.conditional
+"try" @keyword
+"wrap" @keyword
 "fn" @keyword.function
 "enum" @keyword.type
 "shape" @keyword.type
@@ -189,6 +191,15 @@
 
 (enum_variant
   name: (identifier) @constructor)
+
+(simple_wrap_target
+  type: (identifier) @type
+  variant: (identifier) @constructor)
+
+(qualified_wrap_target
+  module: (identifier) @namespace
+  type: (identifier) @type
+  variant: (identifier) @constructor)
 
 (wrapper_type
   constructor: (identifier) @constructor)

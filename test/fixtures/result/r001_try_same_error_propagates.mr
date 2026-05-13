@@ -1,0 +1,30 @@
+# R001: try propagates failures with the same error type
+import std.error
+
+type Error = {
+  Missing = "Missing value",
+  Broken = "Broken value",
+}
+
+fn lookup(ok: Bool) -> Result[Str, Error] = {
+  if (ok) {
+    Result.Success("value")
+  } else {
+    Result.Failure(Error.Missing)
+  }
+}
+
+fn render(ok: Bool) -> Result[Str, Error] = {
+  let value = try lookup(ok)
+  Result.Success(value + "!")
+}
+
+match render(false) {
+  case Result.Success(_): puts("unexpected")
+  case Result.Failure(err): puts(error.message(err))  # output: Missing value
+}
+
+match render(true) {
+  case Result.Success(value): puts(value)  # output: value!
+  case Result.Failure(_): puts("unexpected")
+}

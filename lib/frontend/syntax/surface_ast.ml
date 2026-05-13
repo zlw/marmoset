@@ -148,6 +148,10 @@ module Surface = struct
     | SECall of surface_expr * surface_expr list
     | SEEnumConstructor of name_ref * name_ref * surface_expr list
     | SEMatch of surface_expr * surface_match_arm list
+    | SETry of {
+        se_tried : surface_expr;
+        se_wrap : (name_ref * name_ref) option;
+      }
     | SERecordLit of surface_record_field list * surface_expr option
     | SEFieldAccess of surface_expr * name_ref
     | SEMethodCall of {

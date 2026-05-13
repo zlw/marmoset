@@ -387,6 +387,7 @@ let clone_default_body
           AST.Match
             ( clone_expr scrutinee,
               List.map (fun (arm : AST.match_arm) -> AST.{ arm with body = clone_expr arm.body }) arms )
+      | AST.Try { tried; wrap } -> AST.Try { tried = clone_expr tried; wrap }
       | AST.RecordLit (fields, spread) ->
           AST.RecordLit
             ( List.map

@@ -1,0 +1,6 @@
+# R003: try is only valid inside function bodies
+type Error = {
+  Missing = "Missing value",
+}
+
+let value = try Result.Success("value")  # error: try expression is only valid inside function bodies

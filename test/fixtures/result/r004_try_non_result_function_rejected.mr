@@ -1,0 +1,9 @@
+# R004: try requires an enclosing Result-returning function
+type Error = {
+  Missing = "Missing value",
+}
+
+fn bad() -> Str = {
+  let value = try Result.Success("value")  # error: enclosing function must return Result
+  value
+}

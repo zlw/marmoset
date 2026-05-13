@@ -1,0 +1,15 @@
+# R006: try without wrap requires matching inner and outer error types
+type InnerError = {
+  Missing = "Inner missing",
+}
+
+type OuterError = {
+  Missing = "Outer missing",
+}
+
+fn inner() -> Result[Str, InnerError] = Result.Failure(InnerError.Missing)
+
+fn bad() -> Result[Str, OuterError] = {
+  let value = try inner()  # error: try without wrap requires matching error types
+  Result.Success(value)
+}

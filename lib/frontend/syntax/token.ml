@@ -68,6 +68,8 @@ and token_type =
   | Export
   | Extern
   | As
+  | Try
+  | Wrap
 [@@deriving show]
 
 let init ?(pos = 0) t l = { token_type = t; literal = l; pos }
@@ -98,6 +100,7 @@ let lookup_ident s =
   | "export" -> Export
   | "extern" -> Extern
   | "as" -> As
+  | "try" -> Try
   | _ -> Ident
 
 let%test "lookup_ident recognizes module-system keywords" =
@@ -105,3 +108,6 @@ let%test "lookup_ident recognizes module-system keywords" =
   && lookup_ident "export" = Export
   && lookup_ident "extern" = Extern
   && lookup_ident "as" = As
+
+let%test "lookup_ident recognizes result propagation keyword and leaves wrap soft" =
+  lookup_ident "try" = Try && lookup_ident "wrap" = Ident

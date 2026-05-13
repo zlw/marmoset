@@ -780,6 +780,11 @@ let rec rewrite_type_expr
             fields,
           Option.map (rewrite_type_expr ~imports ~type_bindings ~available_bindings) row )
 
+let rewrite_named_type_reference ~imports ~type_bindings ~available_bindings name =
+  match rewrite_type_expr ~imports ~type_bindings ~available_bindings (AST.TCon name) with
+  | AST.TCon rewritten -> rewritten
+  | _ -> name
+
 let identifier_expr_like original name = { original with AST.expr = AST.Identifier name }
 
 let builtin_value_names : StringSet.t =
@@ -1373,6 +1378,16 @@ let rewrite_program
             arms
         in
         Ok AST.{ expr with expr = Match (scrutinee, arms) }
+    | AST.Try { tried; wrap } ->
+        let* tried = rewrite_expr ~value_scope ~type_bindings tried in
+        let wrap =
+          Option.map
+            (fun (type_name, variant_name) ->
+              let type_name = rewrite_named_type_reference ~imports ~type_bindings ~available_bindings type_name in
+              (type_name, variant_name))
+            wrap
+        in
+        Ok AST.{ expr with expr = Try { tried; wrap } }
     | AST.RecordLit (fields, spread) ->
         let* fields =
           map_result

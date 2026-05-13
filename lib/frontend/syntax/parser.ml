@@ -1760,6 +1760,7 @@ and prefixFn (p : parser) : (parser * Surface.surface_expr, parser) result =
   | Token.LParen -> parse_lambda_or_grouped p
   | Token.If -> parse_if_expression p
   | Token.Match -> parse_match_expression p
+  | Token.Try -> parse_try_expression p
   | Token.LBracket -> parse_array_literal p
   | Token.LBrace ->
       if is_block_body_start p then
@@ -2522,6 +2523,50 @@ and parse_match_expression (p : parser) : (parser * Surface.surface_expr, parser
 
   let id = fresh_id p5 in
   Ok (p5, with_surface_expr_end p5 (mk_surface_expr id pos (Surface.SEMatch (scrutinee, arms))))
+
+and parse_try_expression (p : parser) : (parser * Surface.surface_expr, parser) result =
+  let combine_name_refs (refs : Surface.name_ref list) : Surface.name_ref =
+    match refs with
+    | [] -> invalid_arg "combine_name_refs"
+    | first :: rest ->
+        let last = List.fold_left (fun _ ref_ -> ref_) first rest in
+        Surface.
+          {
+            text = String.concat "." (List.map (fun (ref_ : name_ref) -> ref_.text) refs);
+            pos = first.pos;
+            end_pos = last.end_pos;
+            file_id = first.file_id;
+          }
+  in
+  let parse_wrap_target p_wrap =
+    let* p_first = expect_peek p_wrap Token.Ident in
+    let rec collect_segments lp rev_refs =
+      if peek_token_is lp Token.Dot then
+        let* p_next = expect_peek (next_token lp) Token.Ident in
+        collect_segments p_next (current_name_ref p_next :: rev_refs)
+      else
+        Ok (lp, List.rev rev_refs)
+    in
+    let* p_last, refs = collect_segments p_first [ current_name_ref p_first ] in
+    match List.rev refs with
+    | variant_ref :: rev_type_refs when rev_type_refs <> [] ->
+        let type_ref = combine_name_refs (List.rev rev_type_refs) in
+        Ok (p_last, Some (type_ref, variant_ref))
+    | _ ->
+        Error
+          (add_error ~code:"parse-invalid-try-wrap" p_first
+             "expected wrap target in the form ErrorType.Variant")
+  in
+  let pos = p.curr_token.pos in
+  let* p_tried, tried = parse_expression (next_token p) prec_lowest in
+  let* p_end, wrap =
+    if peek_token_is p_tried Token.Ident && p_tried.peek_token.literal = "wrap" then
+      parse_wrap_target (next_token p_tried)
+    else
+      Ok (p_tried, None)
+  in
+  let id = fresh_id p_end in
+  Ok (p_end, with_surface_expr_end p_end (mk_surface_expr id pos (Surface.SETry { se_tried = tried; se_wrap = wrap })))
 
 and parse_match_arms (p : parser) : (parser * Surface.surface_match_arm list, parser) result =
   let rec loop lp arms =
@@ -3629,6 +3674,7 @@ module Test = struct
       | AST.Match (scrutinee, arms) ->
           collect_expr_ids scrutinee
           @ List.concat_map (fun (arm : AST.match_arm) -> collect_expr_ids arm.body) arms
+      | AST.Try { tried; _ } -> collect_expr_ids tried
       | AST.RecordLit (fields, spread) -> (
           List.concat_map
             (fun (field : AST.record_field) ->
@@ -3686,6 +3732,7 @@ module Test = struct
           @ List.concat_map
               (fun (arm : Surface.surface_match_arm) -> collect_surface_expr_or_block_ids arm.se_arm_body)
               arms
+      | Surface.SETry { se_tried; _ } -> collect_surface_expr_ids se_tried
       | Surface.SERecordLit (fields, spread) -> (
           List.concat_map
             (fun (field : Surface.surface_record_field) ->
@@ -4131,6 +4178,90 @@ module Test = struct
           };
         ] ->
         msg = "File contains invalid data"
+    | _ -> false
+
+  let%test "parse try expression without wrap" =
+    match parse_surface ~file_id:"<test>" "let value = try read()" with
+    | Ok
+        {
+          program =
+            [
+              {
+                Surface.std_decl =
+                  Surface.SLet
+                    { value = { Surface.se_expr = Surface.SETry { se_wrap = None; _ }; _ }; _ };
+                _;
+              };
+            ];
+          _;
+        } ->
+        true
+    | _ -> false
+
+  let%test "parse try expression with wrap target" =
+    match parse_surface ~file_id:"<test>" "let value = try read() wrap ConfigError.File" with
+    | Ok
+        {
+          program =
+            [
+              {
+                Surface.std_decl =
+                  Surface.SLet
+                    {
+                      value =
+                        {
+                          Surface.se_expr =
+                            Surface.SETry
+                              {
+                                se_wrap =
+                                  Some
+                                    ( { Surface.text = "ConfigError"; _ },
+                                      { Surface.text = "File"; _ } );
+                                _;
+                              };
+                          _;
+                        };
+                      _;
+                    };
+                _;
+              };
+            ];
+          _;
+        } ->
+        true
+    | _ -> false
+
+  let%test "parse try expression with qualified wrap target" =
+    match parse_surface ~file_id:"<test>" "let value = try read() wrap file.Error.InvalidData" with
+    | Ok
+        {
+          program =
+            [
+              {
+                Surface.std_decl =
+                  Surface.SLet
+                    {
+                      value =
+                        {
+                          Surface.se_expr =
+                            Surface.SETry
+                              {
+                                se_wrap =
+                                  Some
+                                    ( { Surface.text = "file.Error"; _ },
+                                      { Surface.text = "InvalidData"; _ } );
+                                _;
+                              };
+                          _;
+                        };
+                      _;
+                    };
+                _;
+              };
+            ];
+          _;
+        } ->
+        true
     | _ -> false
 
   let%test "ordinary enum variants remain message-less" =

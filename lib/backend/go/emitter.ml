@@ -1581,6 +1581,7 @@ let rec captures_top_level_values_expr
         :: List.map
              (fun (arm : AST.match_arm) -> captures_top_level_values_expr top_level_values bound arm.body)
              arms)
+  | AST.Try { tried; _ } -> captures_top_level_values_expr top_level_values bound tried
   | AST.RecordLit (fields, spread) ->
       merge_sets
         (List.concat_map
@@ -1782,6 +1783,7 @@ and collect_funcs_expr ?(available_bindings = StringSet.empty) (state : mono_sta
   | AST.Match (scrutinee, arms) ->
       collect_funcs_expr ~available_bindings state scrutinee;
       List.iter (fun arm -> collect_funcs_expr ~available_bindings state arm.AST.body) arms
+  | AST.Try { tried; _ } -> collect_funcs_expr ~available_bindings state tried
   | AST.RecordLit (fields, spread) -> (
       List.iter
         (fun field ->
@@ -3269,6 +3271,7 @@ let rec collect_forward_call_arg_types_expr
         @ List.concat_map
             (fun (arm : AST.match_arm) -> collect_forward_call_arg_types_expr name type_map env arm.body)
             arms
+    | AST.Try { tried; _ } -> collect_forward_call_arg_types_expr name type_map env tried
     | AST.RecordLit (fields, spread) -> (
         List.concat_map
           (fun (field : AST.record_field) ->
@@ -3980,6 +3983,7 @@ and collect_insts_expr
       let scrutinee_type = get_type type_map scrutinee in
       track_enum_inst state scrutinee_type;
       List.iter (fun arm -> collect_insts_expr state type_map env arm.AST.body) arms
+  | AST.Try { tried; _ } -> collect_insts_expr state type_map env tried
   | AST.RecordLit (fields, spread) -> (
       let record_type =
         match expected_type with
@@ -4493,6 +4497,7 @@ let rec copy_specialized_expr_types
         (fun (arm : AST.match_arm) ->
           copy_specialized_expr_types source_map target_map specialization_subst arm.body)
         arms
+  | AST.Try { tried; _ } -> copy_specialized_expr_types source_map target_map specialization_subst tried
   | AST.RecordLit (fields, spread) ->
       List.iter
         (fun (field : AST.record_field) ->
@@ -4767,6 +4772,7 @@ let rec emit_expr
         in
         maybe_attach_source_error_context state expr enum_type enum_name variant_name emitted
     | AST.Match (scrutinee, arms) -> emit_match state type_map env expr scrutinee arms
+    | AST.Try _ -> failwith "try expression can only be emitted from statement context"
     | AST.RecordLit (fields, spread) -> (
         let record_type = get_type type_map expr in
         let declared_fields, _result_row =
@@ -6976,6 +6982,106 @@ and type_from_env_or_map (env : Infer.type_env) (type_map : Infer.type_map) (exp
       | None -> Hashtbl.find_opt type_map expr.id)
   | _ -> Hashtbl.find_opt type_map expr.id
 
+and result_type_parts_for_codegen (typ : Types.mono_type) :
+    (string * Types.mono_type list * Types.mono_type * Types.mono_type) option =
+  match Types.canonicalize_mono_type typ with
+  | Types.TEnum (enum_name, [ ok_type; error_type ]) -> (
+      match Typecheck.Enum_registry.lookup enum_name with
+      | Some enum_def when Typecheck.Enum_registry.source_name enum_def = "Result" ->
+          Some (enum_name, [ ok_type; error_type ], ok_type, error_type)
+      | _ when Typecheck.Display_names.display_binding_name enum_name = "Result" ->
+          Some (enum_name, [ ok_type; error_type ], ok_type, error_type)
+      | _ -> None)
+  | _ -> None
+
+and enum_payload_expr_for_codegen
+    (state : emit_state)
+    ~(enum_name : string)
+    ~(type_args : Types.mono_type list)
+    ~(variant_name : string)
+    ~(position : int)
+    ~(value_expr : string) : string =
+  let enum_def =
+    match Typecheck.Enum_registry.lookup enum_name with
+    | Some enum_def -> enum_def
+    | None -> failwith (Printf.sprintf "Codegen error: unknown enum %s" enum_name)
+  in
+  let layout = analyze_enum_layout state.mono enum_def type_args in
+  match List.assoc_opt variant_name layout.variant_maps with
+  | None ->
+      failwith (Printf.sprintf "Codegen error: missing enum layout for variant %s.%s" enum_name variant_name)
+  | Some mappings -> (
+      match List.find_opt (fun (pos, _) -> pos = position) mappings with
+      | None ->
+          failwith
+            (Printf.sprintf "Codegen error: missing enum payload layout for variant %s.%s field %d" enum_name
+               variant_name position)
+      | Some (_, mapping) ->
+          let field_expr = Printf.sprintf "%s.%s" value_expr mapping.data_field_name in
+          if mapping.boxed then
+            Printf.sprintf "(*%s)" field_expr
+          else
+            field_expr)
+
+and emit_try_binding
+    (state : emit_state)
+    (type_map : Infer.type_map)
+    (env : Infer.type_env)
+    ~(binding_name : string)
+    ~(binding_type : Types.mono_type)
+    ~(try_expr : AST.expression)
+    ~(tried : AST.expression)
+    ~(wrap : (string * string) option) : string =
+  let ind = indent_str state in
+  let tried_type = Types.canonicalize_mono_type (get_type type_map tried) in
+  let result_enum_name, result_type_args, _success_type, _inner_error_type =
+    match result_type_parts_for_codegen tried_type with
+    | Some parts -> parts
+    | None -> failwith "Codegen error: try expression expected Result tried type"
+  in
+  let outer_result_type =
+    match state.current_return_type with
+    | Some return_type -> Types.canonicalize_mono_type return_type
+    | None -> failwith "Codegen error: try expression emitted without current return type"
+  in
+  let _outer_enum_name, _outer_type_args, _outer_ok_type, outer_error_type =
+    match result_type_parts_for_codegen outer_result_type with
+    | Some parts -> parts
+    | None -> failwith "Codegen error: try expression expected Result current return type"
+  in
+  track_enum_inst state.mono tried_type;
+  track_enum_inst state.mono outer_result_type;
+  track_enum_inst state.mono outer_error_type;
+  let result_var = fresh_temp_name state "__try_result" in
+  let result_expr = emit_expr_for_expected_type state type_map env tried_type tried in
+  let result_go_name = mangle_type tried_type in
+  let success_payload =
+    enum_payload_expr_for_codegen state ~enum_name:result_enum_name ~type_args:result_type_args
+      ~variant_name:"Success" ~position:0 ~value_expr:result_var
+  in
+  let failure_payload =
+    enum_payload_expr_for_codegen state ~enum_name:result_enum_name ~type_args:result_type_args
+      ~variant_name:"Failure" ~position:0 ~value_expr:result_var
+  in
+  let failure_value =
+    match wrap with
+    | None -> failure_payload
+    | Some (target_type, target_variant) ->
+        let target_enum_name = canonical_enum_name_for_codegen target_type in
+        let target_variant = canonical_variant_name_for_codegen target_enum_name target_variant in
+        let outer_error_type = Types.canonicalize_mono_type outer_error_type in
+        let constructor_name = Printf.sprintf "%s_%s" (mangle_type outer_error_type) target_variant in
+        maybe_attach_source_error_context state try_expr outer_error_type target_enum_name target_variant
+          (Printf.sprintf "%s(%s)" constructor_name failure_payload)
+  in
+  let outer_result_go_name = mangle_type outer_result_type in
+  let binding_go_type = type_to_go state.mono binding_type in
+  Printf.sprintf
+    "%svar %s %s\n%s%s := %s\n%sswitch %s.Tag {\n%scase %s_Success_tag:\n%s    %s = %s\n%scase %s_Failure_tag:\n%s    return %s_Failure(%s)\n%sdefault:\n%s    panic(%S)\n%s}\n%s_ = %s\n"
+    ind binding_name binding_go_type ind result_var result_expr ind result_var ind result_go_name ind
+    binding_name success_payload ind result_go_name ind outer_result_go_name failure_value ind ind
+    "unexpected Result tag in try expression" ind ind binding_name
+
 and collect_local_call_arg_types_expr
     (name : string) (type_map : Infer.type_map) (env : Infer.type_env) (expr : AST.expression) :
     Types.mono_type list list =
@@ -7026,6 +7132,7 @@ and collect_local_call_arg_types_expr
         @ List.concat_map
             (fun (arm : AST.match_arm) -> collect_local_call_arg_types_expr name type_map env arm.body)
             arms
+    | AST.Try { tried; _ } -> collect_local_call_arg_types_expr name type_map env tried
     | AST.RecordLit (fields, spread) -> (
         List.concat_map
           (fun (field : AST.record_field) ->
@@ -7188,6 +7295,13 @@ and emit_stmt
                     go_binding_name expr_str ind go_binding_name
                 in
                 (binding_code, env'))
+        | AST.Try { tried; wrap } ->
+            let binding_code =
+              emit_try_binding state type_map env ~binding_name:go_binding_name ~binding_type:expr_type
+                ~try_expr:let_binding.value ~tried ~wrap
+            in
+            let env' = Infer.TypeEnv.add let_binding.name (Types.Forall ([], expr_type)) env in
+            (binding_code, env')
         | AST.If (cond, cons, alt) ->
             let go_type = type_to_go state.mono expr_type in
             let decl = Printf.sprintf "%svar %s %s\n" ind go_binding_name go_type in
@@ -8238,6 +8352,7 @@ let collect_inherent_call_sites
     | AST.Match (scrutinee, arms) ->
         let acc' = collect_expr acc env scrutinee in
         List.fold_left (fun acc' (arm : AST.match_arm) -> collect_expr acc' env arm.body) acc' arms
+    | AST.Try { tried; _ } -> collect_expr acc env tried
     | AST.RecordLit (fields, spread) -> (
         let record_type =
           match expected_type with

@@ -74,6 +74,20 @@ let apply_substitution_type_map (subst : substitution) (type_map : type_map) : u
       Hashtbl.replace type_map id ty')
     type_map
 
+let current_function_return_stack : mono_type option list ref = ref []
+
+let with_current_function_return return_type f =
+  current_function_return_stack := return_type :: !current_function_return_stack;
+  Fun.protect f ~finally:(fun () ->
+      match !current_function_return_stack with
+      | _ :: rest -> current_function_return_stack := rest
+      | [] -> ())
+
+let current_function_return_type () : mono_type option option =
+  match !current_function_return_stack with
+  | return_type :: _ -> Some return_type
+  | [] -> None
+
 type symbol_id = int
 
 type symbol_kind =
@@ -907,6 +921,36 @@ let canonical_enum_name_of_source_name (enum_name : string) : string =
   | Some enum_def -> enum_def.name
   | None -> enum_name
 
+let result_type_args (typ : mono_type) : (mono_type * mono_type) option =
+  match canonicalize_mono_type typ with
+  | TEnum (enum_name, [ ok_type; error_type ]) -> (
+      match Enum_registry.lookup enum_name with
+      | Some def when Enum_registry.source_name def = "Result" -> Some (ok_type, error_type)
+      | _ when Display_names.display_binding_name enum_name = "Result" -> Some (ok_type, error_type)
+      | _ -> None)
+  | _ -> None
+
+let error_enum_name (typ : mono_type) : string option =
+  match canonicalize_mono_type typ with
+  | TEnum (enum_name, _) when Enum_registry.is_error_enum enum_name -> Some enum_name
+  | _ -> None
+
+let instantiate_variant_fields (enum_name : string) (type_args : mono_type list)
+    (variant : Enum_registry.variant_def) : mono_type list =
+  match Enum_registry.lookup enum_name with
+  | None -> variant.fields
+  | Some enum_def ->
+      if List.length enum_def.type_params <> List.length type_args then
+        variant.fields
+      else
+        let subst = substitution_of_list (List.combine enum_def.type_params type_args) in
+        List.map (apply_substitution subst) variant.fields
+
+let mono_types_unify (left : mono_type) (right : mono_type) : bool =
+  match unify left right with
+  | Ok _ -> true
+  | Error _ -> false
+
 let attach_constraint_refs_if_tvar (typ : mono_type) (constraints : Constraints.t list) : unit =
   match typ with
   | TVar type_var_name when constraints <> [] -> add_type_var_constraint_refs type_var_name constraints
@@ -1596,6 +1640,7 @@ let rec placeholder_identifier_count_expr (expr : AST.expression) : int =
   | AST.Match (scrutinee, arms) ->
       placeholder_identifier_count_expr scrutinee
       + List.fold_left (fun acc arm -> acc + placeholder_identifier_count_expr arm.AST.body) 0 arms
+  | AST.Try { tried; _ } -> placeholder_identifier_count_expr tried
   | AST.RecordLit (fields, spread) -> (
       let fields_count =
         List.fold_left
@@ -1860,6 +1905,7 @@ let rec resolve_expr_symbols (stack : symbol_scope_stack) (expr : AST.expression
   | AST.Match (scrutinee, arms) ->
       resolve_expr_symbols stack scrutinee;
       List.iter (resolve_match_arm_symbols stack) arms
+  | AST.Try { tried; _ } -> resolve_expr_symbols stack tried
   | AST.RecordLit (fields, spread) -> (
       List.iter
         (fun (f : AST.record_field) ->
@@ -2123,6 +2169,7 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                 | Ok () ->
                     (* Check each arm and collect body types *)
                     infer_match_arms type_map env' scrutinee scrutinee_type arms subst expr))
+        | AST.Try { tried; wrap } -> infer_try type_map env expr tried wrap
         | AST.RecordLit (fields, spread) -> infer_record_literal type_map env fields spread expr
         | AST.FieldAccess (receiver, variant_name) -> (
             let infer_enum_constructor_value (enum_source_name : string) : (substitution * mono_type) infer_result
@@ -3205,6 +3252,85 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
       record_type type_map expr t';
       Ok (subst, t)
   | Error e -> Error e
+
+and infer_try type_map env expr tried wrap : (substitution * mono_type) infer_result =
+  let* _outer_ok, outer_error =
+    match current_function_return_type () with
+    | None ->
+        Error
+          (error_at ~code:"type-try"
+             ~message:"try expression is only valid inside function bodies"
+             expr)
+    | Some None ->
+        Error
+          (error_at ~code:"type-try" ~message:"enclosing function must return Result" expr)
+    | Some (Some enclosing_return) -> (
+        match result_type_args enclosing_return with
+        | Some args -> Ok args
+        | None ->
+            Error
+              (error_at ~code:"type-try" ~message:"enclosing function must return Result" expr))
+  in
+  let* subst, tried_type = infer_expression type_map env tried in
+  let tried_type' = apply_substitution subst tried_type in
+  let outer_error' = apply_substitution subst outer_error in
+  let* success_type, inner_error =
+    match result_type_args tried_type' with
+    | Some args -> Ok args
+    | None ->
+        Error
+          (error_at ~code:"type-try"
+             ~message:"tried expression must have type Result"
+             tried)
+  in
+  let inner_error' = apply_substitution subst inner_error in
+  match wrap with
+  | None ->
+      if Option.is_none (error_enum_name inner_error') || Option.is_none (error_enum_name outer_error') then
+        Error
+          (error_at ~code:"type-try"
+             ~message:"try requires Result error types to be Error or *Error enums"
+             expr)
+      else if mono_types_unify inner_error' outer_error' then
+        Ok (subst, success_type)
+      else
+        Error
+          (error_at ~code:"type-try"
+             ~message:"try without wrap requires matching error types"
+             expr)
+  | Some (target_type, target_variant) -> (
+      let target_enum_name = canonical_enum_name_of_source_name target_type in
+      match canonicalize_mono_type outer_error' with
+      | TEnum (outer_enum_name, outer_args) when target_enum_name = outer_enum_name -> (
+          if not (Enum_registry.is_error_enum target_enum_name) then
+            Error
+              (error_at ~code:"type-try" ~message:"wrap target type must be an error type" expr)
+          else
+            match Enum_registry.lookup_variant target_enum_name target_variant with
+            | None ->
+                Error
+                  (error_at ~code:"type-try"
+                     ~message:(Printf.sprintf "Unknown constructor: %s.%s" target_type target_variant)
+                     expr)
+            | Some variant ->
+                let field_types = instantiate_variant_fields target_enum_name outer_args variant in
+                if List.exists (mono_types_unify inner_error') field_types then
+                  Ok (subst, success_type)
+                else
+                  Error
+                    (error_at ~code:"type-try"
+                       ~message:
+                         (Printf.sprintf "wrap variant must accept %s"
+                            (Types.to_string (canonicalize_mono_type inner_error')))
+                       expr))
+      | TEnum _ ->
+          Error
+            (error_at ~code:"type-try"
+               ~message:"wrap target must match enclosing Result error type"
+               expr)
+      | _ ->
+          Error
+            (error_at ~code:"type-try" ~message:"enclosing function must return Result" expr))
 (* ============================================================
    Prefix Operators: !, -
    ============================================================ *)
@@ -3549,6 +3675,7 @@ and expr_has_effectful_call (type_map : type_map) (expr : AST.expression) : bool
   | AST.Match (scrutinee, arms) ->
       expr_has_effectful_call type_map scrutinee
       || List.exists (fun (arm : AST.match_arm) -> expr_has_effectful_call type_map arm.body) arms
+  | AST.Try { tried; _ } -> expr_has_effectful_call type_map tried
   | AST.RecordLit (fields, spread) -> (
       List.exists
         (fun (f : AST.record_field) ->
@@ -3639,7 +3766,9 @@ and type_callable
       | Error e -> Error e
       | Ok expected_return_opt -> (
           (* 4. Infer body type *)
-          match infer_statement ~type_bindings type_map env' body with
+          let infer_body () = infer_statement ~type_bindings type_map env' body in
+          let body_result = with_current_function_return expected_return_opt infer_body in
+          match body_result with
           | Error e -> Error e
           | Ok (subst, body_type) -> (
               let body_type' = apply_substitution subst body_type in
@@ -3894,6 +4023,7 @@ and collect_used_names_expr (used : StringSet.t) (expr : AST.expression) : Strin
         (fun acc arm -> collect_used_names_expr acc arm.AST.body)
         (collect_used_names_expr used scrutinee)
         arms
+  | AST.Try { tried; _ } -> collect_used_names_expr used tried
   | AST.RecordLit (fields, spread) -> (
       let used =
         List.fold_left
@@ -3988,6 +4118,8 @@ and replace_placeholder_identifier_expr (param_name : string) (expr : AST.expres
               (fun (arm : AST.match_arm) ->
                 { arm with body = replace_placeholder_identifier_expr param_name arm.body })
               arms )
+    | AST.Try { tried; wrap } ->
+        AST.Try { tried = replace_placeholder_identifier_expr param_name tried; wrap }
     | AST.RecordLit (fields, spread) ->
         AST.RecordLit
           ( List.map
@@ -7408,6 +7540,7 @@ module Test = struct
     | AST.Match (scrutinee, arms) ->
         identifier_occurrences_in_expr name scrutinee
         @ List.concat_map (fun (arm : AST.match_arm) -> identifier_occurrences_in_expr name arm.body) arms
+    | AST.Try { tried; _ } -> identifier_occurrences_in_expr name tried
     | AST.RecordLit (fields, spread) -> (
         List.concat_map
           (fun (f : AST.record_field) ->

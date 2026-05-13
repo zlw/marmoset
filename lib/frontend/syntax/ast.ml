@@ -225,6 +225,10 @@ module AST = struct
     | EnumConstructor of string * string * expression list
     (* enum_name, variant_name, arguments; e.g., Option.Some(42) *)
     | Match of expression * match_arm list (* match scrutinee { arm1, arm2, ... } *)
+    | Try of {
+        tried : expression;
+        wrap : (string * string) option;
+      }
     | RecordLit of record_field list * expression option (* { x: 1, y: 2, ...base } - fields + optional spread *)
     | FieldAccess of expression * string (* expr.field_name *)
     | MethodCall of {
@@ -322,6 +326,7 @@ module AST = struct
     | Function f1, Function f2 -> List.length f1.params = List.length f2.params && stmt_equal f1.body f2.body
     | Call (f1, a1), Call (f2, a2) ->
         expr_equal f1 f2 && List.length a1 = List.length a2 && List.for_all2 expr_equal a1 a2
+    | Try t1, Try t2 -> t1.wrap = t2.wrap && expr_equal t1.tried t2.tried
     | BlockExpr ss1, BlockExpr ss2 -> List.length ss1 = List.length ss2 && List.for_all2 stmt_equal ss1 ss2
     | _ -> false
 
@@ -355,6 +360,7 @@ module AST = struct
     | Call _ -> "Call"
     | EnumConstructor _ -> "EnumConstructor"
     | Match _ -> "Match"
+    | Try _ -> "Try"
     | RecordLit _ -> "RecordLit"
     | FieldAccess _ -> "FieldAccess"
     | MethodCall _ -> "MethodCall"
@@ -472,6 +478,13 @@ module AST = struct
       | EnumConstructor (enum_name, variant_name, args) ->
           Printf.sprintf "%s.%s(%s)" enum_name variant_name (args_to_string args)
       | Match (scrutinee, _arms) -> Printf.sprintf "match %s { ... }" (expression_to_string scrutinee)
+      | Try { tried; wrap } ->
+          let wrap_str =
+            match wrap with
+            | None -> ""
+            | Some (type_name, variant_name) -> Printf.sprintf " wrap %s.%s" type_name variant_name
+          in
+          Printf.sprintf "try %s%s" (expression_to_string tried) wrap_str
       | RecordLit (fields, spread) ->
           let fields_str =
             fields

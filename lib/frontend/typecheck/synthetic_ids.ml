@@ -40,6 +40,7 @@ let create_from_program (program : AST.program) : t =
     | AST.Match (scrutinee, arms) ->
         visit_expr scrutinee;
         List.iter (fun (arm : AST.match_arm) -> visit_expr arm.body) arms
+    | AST.Try { tried; _ } -> visit_expr tried
     | AST.RecordLit (fields, spread) ->
         List.iter (fun (field : AST.record_field) -> Option.iter visit_expr field.field_value) fields;
         Option.iter visit_expr spread

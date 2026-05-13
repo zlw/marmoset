@@ -283,6 +283,7 @@ let rec placeholder_count_expr (expr : AST.expression) : int =
   | AST.Match (scrutinee, arms) ->
       placeholder_count_expr scrutinee
       + List.fold_left (fun acc arm -> acc + placeholder_count_expr arm.AST.body) 0 arms
+  | AST.Try { tried; _ } -> placeholder_count_expr tried
   | AST.RecordLit (fields, spread) -> (
       List.fold_left
         (fun acc (field : AST.record_field) ->
@@ -390,6 +391,8 @@ let rec replace_placeholder_with_expr (replacement : AST.expression) (expr : AST
                   { arm with body = replace_placeholder_with_expr replacement arm.body })
                 arms );
       }
+  | AST.Try { tried; wrap } ->
+      { expr with expr = AST.Try { tried = replace_placeholder_with_expr replacement tried; wrap } }
   | AST.RecordLit (fields, spread) ->
       {
         expr with
@@ -494,6 +497,15 @@ let rec lower_expr_with_ctx (ctx : lower_context) (id_supply : Id_supply.Id_supp
     | Surface.SEMatch (scrutinee, arms) ->
         AST.Match
           (lower_expr_with_ctx ctx id_supply scrutinee, List.map (lower_match_arm_with_ctx ctx id_supply) arms)
+    | Surface.SETry { se_tried; se_wrap } ->
+        AST.Try
+          {
+            tried = lower_expr_with_ctx ctx id_supply se_tried;
+            wrap =
+              Option.map
+                (fun (type_ref, variant_ref) -> (name_text type_ref, name_text variant_ref))
+                se_wrap;
+          }
     | Surface.SERecordLit (fields, spread) ->
         let lower_field f =
           AST.
@@ -1243,6 +1255,23 @@ let%test "lower SEBlockExpr to AST.BlockExpr" =
   let se = Surface.mk_surface_expr ~id:2 ~pos:0 (Surface.SEBlockExpr block) in
   match (lower_expr id_supply se).expr with
   | AST.BlockExpr [ { stmt = AST.ExpressionStmt { expr = AST.Integer 7L; _ }; _ } ] -> true
+  | _ -> false
+
+let%test "lower SETry to AST.Try" =
+  let id_supply = Id_supply.Id_supply.create 0 in
+  let tried =
+    Surface.mk_surface_expr ~id:1 ~pos:0 (Surface.SEIdentifier (Surface.mk_name_ref "read"))
+  in
+  let se =
+    Surface.mk_surface_expr ~id:2 ~pos:0
+      (Surface.SETry
+         {
+           se_tried = tried;
+           se_wrap = Some (Surface.mk_name_ref "ConfigError", Surface.mk_name_ref "File");
+         })
+  in
+  match (lower_expr id_supply se).expr with
+  | AST.Try { wrap = Some ("ConfigError", "File"); _ } -> true
   | _ -> false
 
 let%test "lower pipe desugars rhs callable into Call" =

@@ -62,6 +62,7 @@ let rec walk_expr ~source ~ranges (expr : Ast.AST.expression) =
       walk_expr ~source ~ranges mc_receiver;
       List.iter (walk_expr ~source ~ranges) mc_args
   | Ast.AST.EnumConstructor (_, _, args) -> List.iter (walk_expr ~source ~ranges) args
+  | Ast.AST.Try { tried; _ } -> walk_expr ~source ~ranges tried
   | Ast.AST.TypeCheck (e, _) -> walk_expr ~source ~ranges e
   | Ast.AST.BlockExpr stmts -> List.iter (walk_stmt ~source ~ranges) stmts
   | Ast.AST.Identifier _ | Ast.AST.Integer _ | Ast.AST.Float _ | Ast.AST.Boolean _ | Ast.AST.String _ -> ()

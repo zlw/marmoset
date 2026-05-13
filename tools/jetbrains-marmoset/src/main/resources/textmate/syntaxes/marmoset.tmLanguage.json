@@ -81,7 +81,11 @@
       "patterns": [
         {
           "name": "keyword.control.marmoset",
-          "match": "\\b(if|else|match|case|return)\\b"
+          "match": "\\b(if|else|match|case|return|try)\\b"
+        },
+        {
+          "name": "keyword.other.wrap.marmoset",
+          "match": "\\bwrap\\b"
         },
         {
           "name": "keyword.other.let.marmoset",

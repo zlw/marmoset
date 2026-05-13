@@ -277,6 +277,7 @@ and find_namespace_ref_in_children ~(source : string) ~(offset : int) (expr : As
            fields)
         (Option.bind spread (find_namespace_ref_in_expr ~source ~offset))
   | Ast.AST.EnumConstructor (_, _, args) -> List.find_map (find_namespace_ref_in_expr ~source ~offset) args
+  | Ast.AST.Try { tried; _ } -> find_namespace_ref_in_expr ~source ~offset tried
   | Ast.AST.BlockExpr stmts -> List.find_map (find_namespace_ref_in_stmt ~source ~offset) stmts
   | Ast.AST.Identifier _ | Ast.AST.Integer _ | Ast.AST.Float _ | Ast.AST.Boolean _ | Ast.AST.String _ -> None
 

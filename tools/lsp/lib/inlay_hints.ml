@@ -291,6 +291,7 @@ and walk_expr ~source ~type_map ~range_start ~range_end ~hints (expr : Ast.AST.e
         Option.iter (walk_expr ~source ~type_map ~range_start ~range_end ~hints) spread
     | Ast.AST.EnumConstructor (_, _, args) ->
         List.iter (walk_expr ~source ~type_map ~range_start ~range_end ~hints) args
+    | Ast.AST.Try { tried; _ } -> walk_expr ~source ~type_map ~range_start ~range_end ~hints tried
     | Ast.AST.TypeCheck (e, _) -> walk_expr ~source ~type_map ~range_start ~range_end ~hints e
     | Ast.AST.BlockExpr stmts -> List.iter (walk_stmt ~source ~type_map ~range_start ~range_end ~hints) stmts
     | Ast.AST.Identifier _ | Ast.AST.Integer _ | Ast.AST.Float _ | Ast.AST.Boolean _ | Ast.AST.String _ -> ()

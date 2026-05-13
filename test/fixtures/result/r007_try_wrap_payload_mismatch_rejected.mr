@@ -1,0 +1,15 @@
+# R007: try wrap target must accept the inner error payload
+type InnerError = {
+  Missing = "Inner missing",
+}
+
+type OuterError = {
+  Text(Str) = "Text failed",
+}
+
+fn inner() -> Result[Str, InnerError] = Result.Failure(InnerError.Missing)
+
+fn bad() -> Result[Str, OuterError] = {
+  let value = try inner() wrap OuterError.Text  # error: wrap variant must accept InnerError
+  Result.Success(value)
+}

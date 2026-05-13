@@ -498,6 +498,40 @@ match x {
             (string_content)))))))
 
 ================================================================================
+Try expression
+================================================================================
+
+try read()
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (expression_statement
+    (try_expression
+      value: (call_expression
+        function: (identifier)))))
+
+================================================================================
+Try expression with wrap target
+================================================================================
+
+try parse(text) wrap file.Error.InvalidData
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (expression_statement
+    (try_expression
+      value: (call_expression
+        function: (identifier)
+        (identifier))
+      target: (wrap_target
+        (qualified_wrap_target
+          module: (identifier)
+          type: (identifier)
+          variant: (identifier))))))
+
+================================================================================
 Enum constructor call
 ================================================================================
 
