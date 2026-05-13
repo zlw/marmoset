@@ -14,7 +14,7 @@ version = "0.7.0"
 [grammars.marmoset]
 repository = "https://github.com/zlw/marmoset"
 path = "tools/tree-sitter-marmoset"
-rev = "189eeb40841e386ea73e1e0e4cbea47a7810db39"
+rev = "d3a1f331d9ce3025bcd8415737d47feafed47acb"
 
 [language_servers.marmoset-lsp]
 languages = ["Marmoset"]

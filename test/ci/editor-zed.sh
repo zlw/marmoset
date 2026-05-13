@@ -129,6 +129,11 @@ if ! git merge-base --is-ancestor "$PINNED_REV" HEAD; then
   exit 1
 fi
 
+if ! git -C "$REPO_ROOT" show "${PINNED_REV}:tools/tree-sitter-marmoset/grammar.js" | grep -Fq "wrap_expression"; then
+  echo "Pinned Zed grammar rev does not include bare wrap expression support: $PINNED_REV" >&2
+  exit 1
+fi
+
 search_fixed 'portable instead of depending on a machine-specific local `file://`' README.md
 search_fixed 'set-grammar-source.sh local --reset-cache' README.md
 search_fixed 'sync-local-grammar-cache.sh' README.md
@@ -138,6 +143,7 @@ search_fixed '"case" @keyword.conditional' languages/marmoset/highlights.scm
 search_fixed '"shape" @keyword.type' languages/marmoset/highlights.scm
 search_fixed '"extern" @keyword.type' languages/marmoset/highlights.scm
 search_fixed '"override" @keyword.modifier' languages/marmoset/highlights.scm
+search_fixed '"wrap" @keyword' languages/marmoset/highlights.scm
 search_fixed '"=>" @operator' languages/marmoset/highlights.scm
 search_fixed '"|>" @operator' languages/marmoset/highlights.scm
 search_fixed '"&" @operator' languages/marmoset/highlights.scm
@@ -149,6 +155,8 @@ search_fixed '(shape_definition' languages/marmoset/highlights.scm
 search_fixed '(extern_type_definition' languages/marmoset/highlights.scm
 search_fixed '(extern_block' languages/marmoset/highlights.scm
 search_fixed '(extern_fn_signature' languages/marmoset/highlights.scm
+search_fixed '(simple_wrap_target' languages/marmoset/highlights.scm
+search_fixed '(qualified_wrap_target' languages/marmoset/highlights.scm
 search_fixed '(wrapper_type' languages/marmoset/highlights.scm
 search_fixed '(fn_declaration' languages/marmoset/outline.scm
 search_fixed '(shape_definition' languages/marmoset/outline.scm
@@ -209,6 +217,17 @@ with tempfile.TemporaryDirectory() as tmpdir:
               puts(fallback)
             }
 
+            type DecodeError = {
+              Bad = "Bad decode",
+            }
+
+            type FileError = {
+              InvalidData(DecodeError) = "Invalid file data",
+            }
+
+            fn decode() -> Result[Str, DecodeError] = Result.Failure(DecodeError.Bad)
+            fn adapt() -> Result[Str, FileError] = decode() wrap FileError.InvalidData
+
             extern type File
 
             extern "std/file" as file_shim = {
@@ -231,6 +250,9 @@ with tempfile.TemporaryDirectory() as tmpdir:
         ("function", "read"),
         ("function", "write!"),
         ("variable.parameter", "bytes"),
+        ("keyword", "wrap"),
+        ("type", "FileError"),
+        ("constructor", "InvalidData"),
     ]:
         assert_capture(monkey_highlights, *expected)
 

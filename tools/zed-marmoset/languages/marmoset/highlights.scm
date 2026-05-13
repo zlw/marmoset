@@ -187,6 +187,15 @@
 (enum_variant
   name: (identifier) @constructor)
 
+(simple_wrap_target
+  type: (identifier) @type
+  variant: (identifier) @constructor)
+
+(qualified_wrap_target
+  module: (identifier) @namespace
+  type: (identifier) @type
+  variant: (identifier) @constructor)
+
 (wrapper_type
   constructor: (identifier) @constructor)
 

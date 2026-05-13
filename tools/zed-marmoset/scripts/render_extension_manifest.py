@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 PINNED_REPOSITORY = "https://github.com/zlw/marmoset"
-PINNED_REV = "189eeb40841e386ea73e1e0e4cbea47a7810db39"
+PINNED_REV = "d3a1f331d9ce3025bcd8415737d47feafed47acb"
 
 
 def repo_root_from_script() -> Path:
