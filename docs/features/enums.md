@@ -199,6 +199,7 @@ Cons:
 
 - `docs/features/pattern-matching.md`
 - `docs/features/unions.md`
+- `docs/features/errors.md`
 - `docs/ROADMAP.md`
 
 ## Implementation Touchpoints

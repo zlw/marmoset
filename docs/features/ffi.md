@@ -2,7 +2,7 @@
 
 ## Maintenance
 
-- Last verified: 2026-05-12
+- Last verified: 2026-05-13
 - Implementation status: Shim-first interop implemented
 - Update trigger: Any change to extern syntax, supported FFI types, typechecking, module visibility, or Go codegen
 
@@ -97,7 +97,7 @@ Shim boundaries are classified by resolved Marmoset type identity before Go code
 - canonical `std.option.Option[T]`
 - canonical `std.result.Result[T, E]`
 - canonical immutable `List[T]` when `T` is a supported boundary type
-- closed enums declared by the owning shim module
+- closed enums declared by the owning shim module, including module-qualified enum payloads used as typed causes
 - nominal wrapper types whose payloads are supported boundary types; single-payload wrappers flatten to their payload ABI, while multi-payload wrappers use generated shim API structs
 - opaque `extern type` handles declared by the owning shim module
 - canonical immutable `std.bytes.Bytes`
@@ -119,7 +119,7 @@ Each shim id has exactly one owning Marmoset module in a project. In phase one, 
 
 Shim signatures are trusted Marmoset declarations, but the shim package must compile against generated typed Go API packages. The typechecker verifies Marmoset-side calls against the declared signature, and the Go compiler verifies that checked-in shim functions match the generated ABI.
 
-Go errors, pointers, methods, channels, interfaces, panics, sentinel values, and variadic APIs are handled by the shim author and mapped into explicit Marmoset domain types. ABI violations such as invalid zero-value `Result`/`Option`, nil enum interface values, zero handles, stale handles, bytes invariant failures, or shim panics are fatal runtime diagnostics from generated adapters, not domain errors.
+Go errors, pointers, methods, channels, interfaces, panics, sentinel values, and variadic APIs are handled by the shim author and mapped into explicit Marmoset domain types. When a shim returns an error enum, the generated adapter attaches a source frame at the extern declaration boundary. ABI violations such as invalid zero-value `Result`/`Option`, nil enum interface values, zero handles, stale handles, bytes invariant failures, or shim panics are fatal runtime diagnostics from generated adapters, not domain errors.
 
 ## Codegen
 

@@ -2,7 +2,7 @@
 
 ## Maintenance
 
-- Last verified: 2026-03-28
+- Last verified: 2026-05-13
 - Implementation status: Canonical (actively maintained)
 - Update trigger: Any parser, typechecker, or codegen change affecting annotations or `type`
 
@@ -14,6 +14,7 @@ This doc covers:
 - generic parameters and constraint syntax,
 - transparent naming via plain `type`,
 - constructor-bearing nominal wrappers and sums.
+- error enum naming and variant-message syntax.
 
 ## Status Note
 
@@ -39,6 +40,11 @@ type Reducer[a] = (a, a) -> a
 
 type UserId = UserId(Int)
 
+type FileError = {
+  NotFound = "File not found",
+  InvalidData(Str) = "File contains invalid data",
+}
+
 let p: Point = { x: 1, y: 2 }
 let id = UserId(42)
 ```
@@ -50,6 +56,7 @@ let id = UserId(42)
 - Constructor-bearing `type` forms introduce nominal identity.
 - Exact structural record names do not create a distinct product identity by themselves.
 - Trait impls, inherent impls, and derives for exact records attach to the exact structural type named by `type`.
+- Sum types named `Error` or ending in `Error` are error enums. Their variants must include canonical message strings.
 
 ## When To Use Which
 
@@ -78,6 +85,7 @@ Style convention:
 ## Related Docs
 
 - `docs/features/records.md`
+- `docs/features/errors.md`
 - `docs/features/traits.md`
 - `docs/features/inherent-methods.md`
 

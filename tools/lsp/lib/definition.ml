@@ -888,6 +888,24 @@ let%test "enum constructor member resolves to the variant declaration head" =
           (definition_at ~file_id:main_path ~source:main_source ~needle:"Option.Some" ~offset_in_needle:7 ())
         ~expected:(target_span_of_substring ~file_path:main_path ~source:main_source ~needle:"Some" ()))
 
+let%test "error enum constructor member resolves to the messaged variant declaration head" =
+  Doc_state.with_temp_project
+    [
+      ( "main.mr",
+        "type FileError = { NotFound = \"File not found\", InvalidData(Str) = \"File contains invalid data\" }\nlet err = FileError.NotFound\nerr\n"
+      );
+    ]
+    (fun root ->
+      let main_path = Filename.concat root "main.mr" in
+      let main_source =
+        "type FileError = { NotFound = \"File not found\", InvalidData(Str) = \"File contains invalid data\" }\nlet err = FileError.NotFound\nerr\n"
+      in
+      expect_target ~label:"error enum constructor member"
+        ~actual:
+          (definition_at ~file_id:main_path ~source:main_source ~needle:"FileError.NotFound"
+             ~offset_in_needle:10 ())
+        ~expected:(target_span_of_substring ~file_path:main_path ~source:main_source ~needle:"NotFound" ()))
+
 let%test "constraint annotation resolves to trait declaration head" =
   Doc_state.with_temp_project
     [ ("main.mr", "trait Named[a] = { fn label(self: a) -> Str }\nfn show[t: Named](x: t) -> t = x\nshow\n") ]

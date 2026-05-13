@@ -179,18 +179,23 @@ extern type File
 type Mode = { Read, Write, Append }
 
 type Error = {
-  NotFound,
-  PermissionDenied,
-  AlreadyExists,
-  IsDirectory,
-  NotDirectory,
-  InvalidPath(Str),
-  InvalidData(DecodeError),
-  AlreadyClosed,
-  Other(Str),
+  NotFound = "File not found",
+  PermissionDenied = "You do not have permission to access this file",
+  AlreadyExists = "File already exists",
+  IsDirectory = "Expected a file but found a directory",
+  NotDirectory = "Expected a directory but found a file",
+  InvalidPath(Str) = "Path is invalid",
+  InvalidData(DecodeError) = "File contains invalid data",
+  AlreadyClosed = "File is already closed",
+  Other(Str) = "File operation failed",
 }
 
-type UseError[e] = { Open(Error), Use(e), Close(Error), UseAndClose(e, Error) }
+type UseError[e] = {
+  Open(Error) = "Could not open file",
+  Use(e) = "File callback failed",
+  Close(Error) = "Could not close file",
+  UseAndClose(e, Error) = "File callback failed and close also failed",
+}
 
 fn read[a: bytes.Decode](path: path.Path) => Result[a, Error]
 fn write[a: bytes.Encode](path: path.Path, value: a) => Result[Unit, Error]
@@ -241,13 +246,13 @@ type Kind = { File, Directory, Symlink, Other }
 type Entry = Entry(path.Path, Kind)
 
 type Error = {
-  NotFound,
-  PermissionDenied,
-  AlreadyExists,
-  NotDirectory,
-  NotEmpty,
-  InvalidPath(Str),
-  Other(Str),
+  NotFound = "Directory not found",
+  PermissionDenied = "You do not have permission to access this directory",
+  AlreadyExists = "Directory already exists",
+  NotDirectory = "Expected a directory but found a file",
+  NotEmpty = "Directory is not empty",
+  InvalidPath(Str) = "Path is invalid",
+  Other(Str) = "Directory operation failed",
 }
 
 fn read(path: path.Path) => Result[List[Entry], Error]
@@ -277,7 +282,12 @@ import std.prelude.Show
 
 export Error, Read, Write, read, write, flush, print
 
-type Error = { EndOfFile, BrokenPipe, Interrupted, Other(Str) }
+type Error = {
+  EndOfFile = "Input ended",
+  BrokenPipe = "Pipe is broken",
+  Interrupted = "I/O operation was interrupted",
+  Other(Str) = "I/O operation failed",
+}
 
 trait Read[r, e] = {
   fn read(reader: r) => Result[Str, e]
