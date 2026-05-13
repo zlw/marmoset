@@ -89,6 +89,10 @@ let builtin_generic_impl_keys : (string * mono_type, unit) Hashtbl.t = Hashtbl.c
 let canonical_type (t : mono_type) : mono_type = canonicalize_mono_type t
 let builtin_trait_internal_name = Constraints.builtin_trait_internal_name
 let canonical_trait_name = Constraints.canonical_trait_name
+let error_trait_internal_name = "std__error__Error"
+
+let is_error_trait_name (trait_name : string) : bool =
+  String.equal (canonical_trait_name trait_name) error_trait_internal_name
 
 let display_trait_name (trait_name : string) : string =
   Display_names.display_trait_name ~builtin_trait_internal_name trait_name
@@ -383,6 +387,48 @@ let resolved_concrete_impl_record (trait_name : string) (_for_type : mono_type) 
     source_site = format_concrete_impl_site trait_name candidate_for_type;
   }
 
+let resolve_synthetic_error_impl (trait_name : string) (for_type : mono_type) : resolved_impl option =
+  let trait_name = canonical_trait_name trait_name in
+  let for_type' = canonical_type for_type in
+  if not (is_error_trait_name trait_name) then
+    None
+  else
+    match for_type' with
+    | TEnum (enum_name, _) when Enum_registry.is_error_enum enum_name -> (
+        match lookup_trait trait_name with
+        | None -> None
+        | Some trait_def ->
+            let subst = trait_substitution_for_args trait_def [ for_type' ] in
+            let methods =
+              List.map
+                (fun (m : method_sig) ->
+                  {
+                    m with
+                    method_params =
+                      List.map (fun (name, ty) -> (name, canonical_type (apply_substitution subst ty)))
+                        m.method_params;
+                    method_return_type = canonical_type (apply_substitution subst m.method_return_type);
+                  })
+                trait_def.trait_methods
+            in
+            let impl =
+              {
+                impl_trait_name = trait_name;
+                impl_type_params = [];
+                impl_for_type = for_type';
+                impl_trait_args = [ for_type' ];
+                impl_methods = methods;
+              }
+            in
+            Some
+              {
+                impl;
+                origin = BuiltinDerivedImpl;
+                specialization_subst = empty_substitution;
+                source_site = trait_name ^ "@<synthetic-error>";
+              })
+    | _ -> None
+
 let rec concrete_receiver_matches_impl_target (actual_type : mono_type) (impl_target_type : mono_type) : bool =
   let actual_type = canonical_type actual_type in
   let impl_target_type = canonical_type impl_target_type in
@@ -530,8 +576,14 @@ let resolve_impl (trait_name : string) (for_type : mono_type) : (resolved_impl o
               match resolve_structural_concrete_impl trait_name for_type' with
               | Ok (Some _ as resolved) -> Ok resolved
               | Error _ as err -> err
-              | Ok None -> resolve_predeclared ())
-          | _ -> resolve_predeclared ()))
+              | Ok None -> (
+                  match resolve_synthetic_error_impl trait_name for_type' with
+                  | Some resolved -> Ok (Some resolved)
+                  | None -> resolve_predeclared ()))
+          | _ -> (
+              match resolve_synthetic_error_impl trait_name for_type' with
+              | Some resolved -> Ok (Some resolved)
+              | None -> resolve_predeclared ())))
 
 (* Lookup an impl for a specific trait and type *)
 let lookup_impl (trait_name : string) (for_type : mono_type) : impl_def option =

@@ -667,6 +667,12 @@ module BuiltinImplUseSet = Set.Make (struct
   let compare = compare
 end)
 
+module ErrorImplUseSet = Set.Make (struct
+  type t = string * Types.mono_type
+
+  let compare = compare
+end)
+
 module InherentCallUseSet = Set.Make (struct
   type t = string * Types.mono_type * Types.mono_type list
 
@@ -714,6 +720,8 @@ type mono_state = {
       (* Concrete builtin-derived impls reached only through registry resolution *)
   mutable builtin_impl_uses : BuiltinImplUseSet.t;
       (* Concrete builtin primitive impl helpers reached through actual codegen use sites *)
+  mutable error_impl_uses : ErrorImplUseSet.t;
+      (* Synthetic std.error.Error impl helpers reached through actual codegen use sites *)
   mutable inherent_call_uses : InherentCallUseSet.t;
       (* Concrete inherent method helpers reached through actual codegen use sites *)
   mutable go_imports : GoImportSet.t; (* Structured package imports required by emitted main-package code *)
@@ -776,6 +784,7 @@ let create_mono_state
     trait_object_adapter_insts = TraitObjectAdapterInstSet.empty;
     derived_impl_uses = DerivedImplUseSet.empty;
     builtin_impl_uses = BuiltinImplUseSet.empty;
+    error_impl_uses = ErrorImplUseSet.empty;
     inherent_call_uses = InherentCallUseSet.empty;
     go_imports = GoImportSet.empty;
     placeholder_rewrite_map;
@@ -874,6 +883,31 @@ let register_builtin_impl_use
       state.builtin_impl_uses <-
         BuiltinImplUseSet.add (trait_name, method_name, type_suffix) state.builtin_impl_uses
 
+let std_error_frame_type_name = "std__error__Frame"
+let std_error_context_type_name = "std__error__Context"
+
+let is_error_enum_type = function
+  | Types.TEnum (enum_name, _) -> Typecheck.Enum_registry.is_error_enum enum_name
+  | _ -> false
+
+let is_error_trait_method ~(trait_name : string) ~(method_name : string) ~(for_type : Types.mono_type) : bool =
+  Typecheck.Trait_registry.is_error_trait_name trait_name
+  && is_error_enum_type (Types.canonicalize_mono_type for_type)
+  &&
+  match method_name with
+  | "message" | "context" | "frames" -> true
+  | _ -> false
+
+let register_error_impl_use (state : mono_state) ~(method_name : string) ~(for_type : Types.mono_type) : unit =
+  let normalized_for_type =
+    normalize_type_for_codegen ~concrete_only:state.concrete_only (Types.canonicalize_mono_type for_type)
+  in
+  if
+    is_error_enum_type normalized_for_type
+    && not (state.concrete_only && not (Types.TypeVarSet.is_empty (Types.free_type_vars normalized_for_type)))
+  then
+    state.error_impl_uses <- ErrorImplUseSet.add (method_name, normalized_for_type) state.error_impl_uses
+
 let register_inherent_call_use
     ?(allow_erased_unresolved = false)
     (state : mono_state)
@@ -968,6 +1002,28 @@ type enum_layout = {
   fields : field_mapping list; (* All DataN fields in order *)
   variant_maps : (string * variant_field_map) list; (* variant_name -> mappings *)
 }
+
+let enum_def_is_error (enum_def : Typecheck.Enum_registry.enum_def) : bool =
+  match enum_def.kind with
+  | Typecheck.Enum_registry.ErrorEnum -> true
+  | Typecheck.Enum_registry.OrdinaryEnum -> false
+
+let error_variant_message (enum_name : string) (variant : Typecheck.Enum_registry.variant_def) : string =
+  match variant.message with
+  | Some message -> message
+  | None ->
+      failwith
+        (Printf.sprintf "Codegen error: error variant %s.%s is missing a canonical message" enum_name
+           variant.name)
+
+let error_context_expr
+    (state : mono_state)
+    ~(message : string)
+    ~(file_id : string)
+    ~(function_name : string)
+    ~(position : int) : string =
+  let helper = marmoset_runtime_helper state "NewErrorContext" in
+  Printf.sprintf "%s(%S, %S, %S, int64(%d))" helper message file_id function_name position
 
 (* Get size/alignment of a type for sorting (used for optimal field layout) *)
 let type_size (t : Types.mono_type) : int =
@@ -3566,7 +3622,9 @@ and register_impl_method_use
     match select_impl_template_for_type state trait_name method_name for_type' with
     | None ->
         let type_suffix = mangle_type for_type' in
-        if StringPairSet.mem (trait_name, type_suffix) builtin_impl_keys then
+        if is_error_trait_method ~trait_name ~method_name ~for_type:for_type' then
+          register_error_impl_use state ~method_name ~for_type:for_type'
+        else if StringPairSet.mem (trait_name, type_suffix) builtin_impl_keys then
           register_builtin_impl_use state ~trait_name ~method_name ~for_type:for_type'
         else
           register_registry_derived_impl_use state ~trait_name ~for_type:for_type'
@@ -4072,10 +4130,12 @@ type emit_state = {
   mutable indent : int;
   mutable current_return_type : Types.mono_type option;
   mutable current_type_bindings : (string * Types.mono_type) list;
+  mutable current_function_name : string option;
   mono : mono_state;
 }
 
-let create_emit_state mono = { indent = 1; current_return_type = None; current_type_bindings = []; mono }
+let create_emit_state mono =
+  { indent = 1; current_return_type = None; current_type_bindings = []; current_function_name = None; mono }
 
 let with_method_type_args_map
     (state : emit_state) (method_type_args_map : (int, Types.mono_type list) Hashtbl.t) (f : unit -> 'a) :
@@ -4111,6 +4171,39 @@ let with_return_type (state : emit_state) (return_type : Types.mono_type) (f : u
   let previous = state.current_return_type in
   state.current_return_type <- Some return_type;
   Fun.protect ~finally:(fun () -> state.current_return_type <- previous) f
+
+let with_function_name (state : emit_state) (function_name : string) (f : unit -> 'a) : 'a =
+  let previous = state.current_function_name in
+  state.current_function_name <- Some function_name;
+  Fun.protect ~finally:(fun () -> state.current_function_name <- previous) f
+
+let source_error_context_expr
+    (state : emit_state)
+    (expr : AST.expression)
+    (enum_name : string)
+    (variant_name : string) : string option =
+  match (Typecheck.Enum_registry.lookup enum_name, Typecheck.Enum_registry.lookup_variant enum_name variant_name) with
+  | Some enum_def, Some variant when enum_def_is_error enum_def ->
+      let file_id = Option.value expr.file_id ~default:"<unknown>" in
+      let function_name = Option.value state.current_function_name ~default:"<top-level>" in
+      Some
+        (error_context_expr state.mono ~message:(error_variant_message enum_name variant) ~file_id ~function_name
+           ~position:expr.pos)
+  | _ -> None
+
+let maybe_attach_source_error_context
+    (state : emit_state)
+    (expr : AST.expression)
+    (enum_type : Types.mono_type)
+    (enum_name : string)
+    (variant_name : string)
+    (emitted : string) : string =
+  match source_error_context_expr state expr enum_name variant_name with
+  | None -> emitted
+  | Some context_expr ->
+      let go_type = type_to_go state.mono enum_type in
+      Printf.sprintf "(func(__err %s) %s { __err.Context = %s; return __err })(%s)" go_type go_type
+        context_expr emitted
 
 type emit_target =
   | ReturnTarget
@@ -4657,10 +4750,13 @@ let rec emit_expr
         let constructor_name = Printf.sprintf "%s_%s" go_type_name variant_name in
         (* Emit arguments *)
         let arg_strs = emit_enum_constructor_args state type_map env enum_type enum_name variant_name args in
-        if arg_strs = [] then
-          Printf.sprintf "%s()" constructor_name
-        else
-          Printf.sprintf "%s(%s)" constructor_name (String.concat ", " arg_strs)
+        let emitted =
+          if arg_strs = [] then
+            Printf.sprintf "%s()" constructor_name
+          else
+            Printf.sprintf "%s(%s)" constructor_name (String.concat ", " arg_strs)
+        in
+        maybe_attach_source_error_context state expr enum_type enum_name variant_name emitted
     | AST.Match (scrutinee, arms) -> emit_match state type_map env expr scrutinee arms
     | AST.RecordLit (fields, spread) -> (
         let record_type = get_type type_map expr in
@@ -4783,7 +4879,8 @@ let rec emit_expr
             let go_type_name = mangle_type enum_type in
             let constructor_name = Printf.sprintf "%s_%s" go_type_name variant_name in
             if constructor_arity = 0 then
-              Printf.sprintf "%s()" constructor_name
+              maybe_attach_source_error_context state expr enum_type enum_name variant_name
+                (Printf.sprintf "%s()" constructor_name)
             else
               constructor_name
         | QualifiedTraitValue { trait_name; method_name; receiver_type; method_type_args } ->
@@ -4838,10 +4935,13 @@ let rec emit_expr
             let constructor_name = Printf.sprintf "%s_%s" go_type_name variant_name in
             (* Emit arguments *)
             let arg_strs = emit_enum_constructor_args state type_map env enum_type enum_name variant_name args in
-            if arg_strs = [] then
-              Printf.sprintf "%s()" constructor_name
-            else
-              Printf.sprintf "%s(%s)" constructor_name (String.concat ", " arg_strs)
+            let emitted =
+              if arg_strs = [] then
+                Printf.sprintf "%s()" constructor_name
+              else
+                Printf.sprintf "%s(%s)" constructor_name (String.concat ", " arg_strs)
+            in
+            maybe_attach_source_error_context state expr enum_type enum_name variant_name emitted
         | _ -> (
             (* Real method call - emit using typechecker-selected method source *)
             (* Use method-resolution metadata from typechecking; codegen must not re-resolve. *)
@@ -7527,8 +7627,9 @@ let emit_specialized_func
   let body_str =
     with_method_type_args_map state specialized_method_type_args_map (fun () ->
         with_type_bindings state function_type_bindings (fun () ->
-            with_return_type state effective_return_type (fun () ->
-                emit_func_body state specialized_type_map body_env func_def.body)))
+            with_function_name state (Typecheck.Display_names.display_binding_name func_def.name) (fun () ->
+                with_return_type state effective_return_type (fun () ->
+                    emit_func_body state specialized_type_map body_env func_def.body))))
   in
   state.indent <- saved_indent;
 
@@ -7549,19 +7650,36 @@ let emit_enum_type (state : mono_state) (enum_name : string) (type_args : Types.
   | Some enum_def ->
       (* Analyze layout for multi-field and heterogeneous support *)
       let layout = analyze_enum_layout state enum_def type_args in
+      let is_error_enum = enum_def_is_error enum_def in
+      let context_go_type =
+        if is_error_enum then
+          Some (marmoset_runtime_helper state "ErrorContext")
+        else
+          None
+      in
 
       (* Generate struct type with optimal field ordering *)
       let struct_def =
-        if layout.fields = [] then
+        match (layout.fields, context_go_type) with
+        | [], None ->
           (* Nullary enum - only Tag field *)
           Printf.sprintf "type %s struct {\n\tTag int8\n}\n\n" go_type_name
-        else
+        | [], Some context_go_type ->
+            Printf.sprintf "type %s struct {\n\tContext %s\n\tTag int8\n}\n\n" go_type_name context_go_type
+        | fields, None ->
           (* Generate DataN fields, sorted by size (already sorted in layout) *)
           let fields_str =
-            List.map (fun fm -> Printf.sprintf "\t%s %s" fm.data_field_name fm.go_type) layout.fields
+            List.map (fun fm -> Printf.sprintf "\t%s %s" fm.data_field_name fm.go_type) fields
             |> String.concat "\n"
           in
           Printf.sprintf "type %s struct {\n%s\n\tTag int8\n}\n\n" go_type_name fields_str
+        | fields, Some context_go_type ->
+            let fields_str =
+              List.map (fun fm -> Printf.sprintf "\t%s %s" fm.data_field_name fm.go_type) fields
+              |> String.concat "\n"
+            in
+            Printf.sprintf "type %s struct {\n%s\n\tContext %s\n\tTag int8\n}\n\n" go_type_name fields_str
+              context_go_type
       in
 
       (* Generate tag constants *)
@@ -7580,10 +7698,25 @@ let emit_enum_type (state : mono_state) (enum_name : string) (type_args : Types.
           (List.map
              (fun (v : Typecheck.Enum_registry.variant_def) ->
                let constructor_name = Printf.sprintf "%s_%s" go_type_name v.name in
+               let error_context_init () =
+                 let message = error_variant_message enum_name v in
+                 let function_name = Typecheck.Display_names.display_binding_name enum_def.name ^ "." ^ v.name in
+                 Printf.sprintf "Context: %s"
+                   (error_context_expr state ~message ~file_id:"<generated>" ~function_name ~position:0)
+               in
                if v.fields = [] then
                  (* Nullary constructor *)
-                 Printf.sprintf "func %s() %s {\n\treturn %s{Tag: %s_%s_tag}\n}\n" constructor_name go_type_name
-                   go_type_name go_type_name v.name
+                 let context_inits =
+                   if is_error_enum then
+                     [ error_context_init () ]
+                   else
+                     []
+                 in
+                 let inits =
+                   [ Printf.sprintf "Tag: %s_%s_tag" go_type_name v.name ] @ context_inits
+                 in
+                 Printf.sprintf "func %s() %s {\n\treturn %s{%s}\n}\n" constructor_name go_type_name
+                   go_type_name (String.concat ", " inits)
                else
                  (* Constructor with fields - use layout mapping *)
                  let subst = Types.substitution_of_list (List.combine enum_def.type_params type_args) in
@@ -7606,11 +7739,19 @@ let emit_enum_type (state : mono_state) (enum_name : string) (type_args : Types.
                        in
                        Printf.sprintf "%s: %s" mapping.data_field_name init_expr)
                      variant_field_map
-                   |> String.concat ", "
+                 in
+                 let context_inits =
+                   if is_error_enum then
+                     [ error_context_init () ]
+                   else
+                     []
+                 in
+                 let inits =
+                   [ Printf.sprintf "Tag: %s_%s_tag" go_type_name v.name ] @ context_inits @ field_inits
                  in
 
-                 Printf.sprintf "func %s(%s) %s {\n\treturn %s{Tag: %s_%s_tag, %s}\n}\n" constructor_name params
-                   go_type_name go_type_name go_type_name v.name field_inits)
+                 Printf.sprintf "func %s(%s) %s {\n\treturn %s{%s}\n}\n" constructor_name params
+                   go_type_name go_type_name (String.concat ", " inits))
              enum_def.variants)
         ^ "\n"
       in
@@ -7626,23 +7767,31 @@ let emit_enum_type (state : mono_state) (enum_name : string) (type_args : Types.
                 | None -> []
               in
               if v.fields = [] then
-                (* Nullary variant - just print name *)
-                Printf.sprintf "\tcase %s_%s_tag:\n\t\treturn \"%s\"" go_type_name v.name v.name
+                if is_error_enum then
+                  Printf.sprintf "\tcase %s_%s_tag:\n\t\treturn %s(e.Context)" go_type_name v.name
+                    (marmoset_runtime_helper state "ErrorMessage")
+                else
+                  (* Nullary variant - just print name *)
+                  Printf.sprintf "\tcase %s_%s_tag:\n\t\treturn \"%s\"" go_type_name v.name v.name
               else
-                (* Variant with fields - print name and fields *)
-                let field_formats = List.map (fun _ -> "%v") v.fields |> String.concat ", " in
-                let field_args =
-                  List.map
-                    (fun (_, mapping) ->
-                      if mapping.boxed then
-                        Printf.sprintf "(*e.%s)" mapping.data_field_name
-                      else
-                        Printf.sprintf "e.%s" mapping.data_field_name)
-                    variant_field_map
-                  |> String.concat ", "
-                in
-                Printf.sprintf "\tcase %s_%s_tag:\n\t\treturn fmt.Sprintf(\"%s(%s)\", %s)" go_type_name v.name
-                  v.name field_formats field_args)
+                if is_error_enum then
+                  Printf.sprintf "\tcase %s_%s_tag:\n\t\treturn %s(e.Context)" go_type_name v.name
+                    (marmoset_runtime_helper state "ErrorMessage")
+                else
+                  (* Variant with fields - print name and fields *)
+                  let field_formats = List.map (fun _ -> "%v") v.fields |> String.concat ", " in
+                  let field_args =
+                    List.map
+                      (fun (_, mapping) ->
+                        if mapping.boxed then
+                          Printf.sprintf "(*e.%s)" mapping.data_field_name
+                        else
+                          Printf.sprintf "e.%s" mapping.data_field_name)
+                      variant_field_map
+                    |> String.concat ", "
+                  in
+                  Printf.sprintf "\tcase %s_%s_tag:\n\t\treturn fmt.Sprintf(\"%s(%s)\", %s)" go_type_name v.name
+                    v.name field_formats field_args)
             enum_def.variants
           |> String.concat "\n"
         in
@@ -7653,7 +7802,8 @@ let emit_enum_type (state : mono_state) (enum_name : string) (type_args : Types.
 
       (* Check if any variant has fields (needs fmt.Sprintf) *)
       let needs_fmt =
-        List.exists (fun (v : Typecheck.Enum_registry.variant_def) -> v.fields <> []) enum_def.variants
+        (not is_error_enum)
+        && List.exists (fun (v : Typecheck.Enum_registry.variant_def) -> v.fields <> []) enum_def.variants
       in
       if needs_fmt then
         add_go_import state "fmt";
@@ -7779,8 +7929,11 @@ let emit_cached_impl_method
       ignore (collect_insts_stmt state.mono effective_type_map method_env payload.body_stmt));
   let body_str =
     with_method_type_args_map state effective_method_type_args_map (fun () ->
-        with_return_type state payload.return_type (fun () ->
-            emit_func_body state effective_type_map method_env payload.body_stmt))
+        with_function_name state
+          (Typecheck.Trait_registry.display_trait_name impl_inst.trait_name ^ "." ^ impl_inst.method_name)
+          (fun () ->
+            with_return_type state payload.return_type (fun () ->
+                emit_func_body state effective_type_map method_env payload.body_stmt)))
   in
   Printf.sprintf "func %s(%s) %s {\n%s}\n" func_name params_str return_type_str body_str
 
@@ -7934,8 +8087,9 @@ let emit_inherent_method
     (List.combine method_param_names method_param_types);
   ignore (collect_insts_stmt state.mono method_type_map method_env method_impl.impl_method_body);
   let body_str =
-    with_return_type state return_type (fun () ->
-        emit_func_body state method_type_map method_env method_impl.impl_method_body)
+    with_function_name state method_impl.impl_method_name (fun () ->
+        with_return_type state return_type (fun () ->
+            emit_func_body state method_type_map method_env method_impl.impl_method_body))
   in
   Printf.sprintf "func %s(%s) %s {\n%s}\n" func_name params_str return_type_str body_str
 
@@ -8747,6 +8901,56 @@ let emit_builtin_impls (state : mono_state) (program : AST.program) : string =
   let impl_codes = List.map snd needed_impls in
   String.concat "\n\n" impl_codes
 
+let emit_error_frames_conversion
+    (state : mono_state)
+    ~(context_expr : string)
+    ~(frame_type : string)
+    ~(return_expr : string) : string =
+  let frame_strings_helper = marmoset_runtime_helper state "ErrorFrameStrings" in
+  Printf.sprintf
+    "\t__frames := %s(%s)\n\t__out := make([]%s, len(__frames))\n\tfor __i, __frame := range __frames {\n\t\t__out[__i] = %s(__frame)\n\t}\n\treturn %s"
+    frame_strings_helper context_expr frame_type frame_type return_expr
+
+let emit_error_impls (state : mono_state) : string =
+  let frame_type () =
+    track_named_type_inst state (Types.TNamed (std_error_frame_type_name, []));
+    type_to_go state (Types.TNamed (std_error_frame_type_name, []))
+  in
+  let context_type () =
+    track_named_type_inst state (Types.TNamed (std_error_context_type_name, []));
+    type_to_go state (Types.TNamed (std_error_context_type_name, []))
+  in
+  ErrorImplUseSet.elements state.error_impl_uses
+  |> List.filter_map (fun (method_name, for_type) ->
+         match Types.canonicalize_mono_type for_type with
+         | Types.TEnum (enum_name, _) when Typecheck.Enum_registry.is_error_enum enum_name ->
+             let type_suffix = mangle_type for_type in
+             let func_name =
+               trait_method_func_name Typecheck.Trait_registry.error_trait_internal_name method_name type_suffix
+             in
+             let go_type = type_to_go state for_type in
+             let code =
+               match method_name with
+               | "message" ->
+                   Printf.sprintf "func %s(value %s) string {\n\treturn %s(value.Context)\n}" func_name go_type
+                     (marmoset_runtime_helper state "ErrorMessage")
+               | "frames" ->
+                   let frame_go_type = frame_type () in
+                   Printf.sprintf "func %s(value %s) []%s {\n%s\n}" func_name go_type frame_go_type
+                     (emit_error_frames_conversion state ~context_expr:"value.Context" ~frame_type:frame_go_type
+                        ~return_expr:"__out")
+               | "context" ->
+                   let frame_go_type = frame_type () in
+                   let context_go_type = context_type () in
+                   Printf.sprintf "func %s(value %s) %s {\n%s\n}" func_name go_type context_go_type
+                     (emit_error_frames_conversion state ~context_expr:"value.Context" ~frame_type:frame_go_type
+                        ~return_expr:(Printf.sprintf "%s(__out)" context_go_type))
+               | _ -> failwith (Printf.sprintf "Codegen error: unsupported synthetic error method '%s'" method_name)
+             in
+             Some code
+         | _ -> None)
+  |> String.concat "\n\n"
+
 let format_go_import_spec (spec : go_import_spec) : string =
   match spec.import_alias with
   | None -> Printf.sprintf "%S" spec.import_path
@@ -9320,6 +9524,7 @@ let emit_program_with_typed_env
   let derived_impl_funcs = emit_registry_derived_impls emit_state program in
   let trait_object_type_defs = emit_trait_object_type_defs mono_state type_map typed_env in
   let builtin_impl_funcs = emit_builtin_impls mono_state program in
+  let error_impl_funcs = emit_error_impls mono_state in
   let extern_wrapper_funcs = emit_extern_wrappers mono_state in
 
   (* Generate enum types AFTER all function body emissions so that
@@ -9369,6 +9574,12 @@ let emit_program_with_typed_env
       specialized_funcs ^ "\n"
   in
   let builtin_impl_funcs_str = builtin_impl_funcs ^ "\n" in
+  let error_impl_funcs_str =
+    if error_impl_funcs = "" then
+      ""
+    else
+      error_impl_funcs ^ "\n"
+  in
   let extern_wrapper_funcs_str =
     if extern_wrapper_funcs = "" then
       ""
@@ -9395,7 +9606,7 @@ let emit_program_with_typed_env
   in
   let top_funcs =
     extern_wrapper_funcs_str ^ specialized_funcs_str ^ builtin_impl_funcs_str ^ impl_funcs_str
-    ^ inherent_funcs_str ^ derived_impl_funcs_str
+    ^ error_impl_funcs_str ^ inherent_funcs_str ^ derived_impl_funcs_str
   in
   let imports = format_go_imports mono_state.go_imports in
 
@@ -9630,7 +9841,8 @@ let find_existing_path_upwards ?toolchain_root (parts : string list) : string op
   | Some path -> Some path
   | None -> search (Sys.getcwd ()) 10
 
-let marmoset_support_file_specs = [ "result.go"; "option.go"; "unit.go"; "bytes.go"; "handle.go"; "helpers.go" ]
+let marmoset_support_file_specs =
+  [ "result.go"; "option.go"; "unit.go"; "bytes.go"; "handle.go"; "error.go"; "helpers.go" ]
 
 let marmoset_support_files ?toolchain_root () : go_aux_file list =
   List.map
@@ -10061,11 +10273,21 @@ let compile_to_build ~file_id (source : string) : (build_output, Diagnostic.t li
                 ~extern_declarations ~extern_calls ~extern_func_refs ~trait_object_coercion_map
                 ~placeholder_rewrite_map type_map typed_env program
             in
+            let shim_aux_files = shim_aux_go_files ~extern_declarations ~extern_calls ~extern_func_refs () in
+            let aux_go_files =
+              if
+                shim_aux_files = []
+                && String_utils.contains_substring ~needle:"\"marmoset_out/marmoset\"" main_go
+              then
+                marmoset_support_files ()
+              else
+                shim_aux_files
+            in
             let output =
               {
                 go_mod = default_go_mod;
                 main_go;
-                aux_go_files = shim_aux_go_files ~extern_declarations ~extern_calls ~extern_func_refs ();
+                aux_go_files;
                 diagnostics;
               }
             in
@@ -10243,6 +10465,7 @@ bytes.from_str("ok")
       && List.mem "marmoset/unit.go" paths
       && List.mem "marmoset/bytes.go" paths
       && List.mem "marmoset/handle.go" paths
+      && List.mem "marmoset/error.go" paths
 
 let%test "unused shim declaration emits no marmoset support package" =
   match
@@ -11981,6 +12204,22 @@ match wrap(1, (n: Int) -> if (n == 0) { Result.Success("ok") } else { Result.Fai
       string_contains code "type Result_string_UseError_Problem struct"
       && string_contains code "type UseError_Problem struct"
       && string_not_contains code "union_empty"
+  | Error _ -> false
+
+let%test "error enum codegen stores hidden context while preserving source arity" =
+  match
+    compile_string ~file_id:"error_model.mr"
+      {|type FileError = { NotFound(Str) = "File not found" }
+let err = FileError.NotFound("missing")
+match err {
+  case FileError.NotFound(_): 1
+}|}
+  with
+  | Ok (code, _) ->
+      string_contains code "Context marmoset.ErrorContext"
+      && string_contains code "func FileError_NotFound(v0 string) FileError"
+      && string_contains code "marmoset.NewErrorContext(\"File not found\""
+      && string_contains code "case FileError_NotFound_tag"
   | Error _ -> false
 
 (* ============================================================

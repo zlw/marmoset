@@ -13,6 +13,11 @@ impl[a, e] Result[a, e] = {
     case Result.Failure(err): Result.Failure(err)
   }
 
+  fn map_error[b](self: Result[a, e], f: (e) -> b) -> Result[a, b] = match self {
+    case Result.Success(v): Result.Success(v)
+    case Result.Failure(err): Result.Failure(f(err))
+  }
+
   fn or[b](self: Result[a, e], f: (e) -> b) -> Result[a, b] = match self {
     case Result.Success(v): Result.Success(v)
     case Result.Failure(err): Result.Failure(f(err))

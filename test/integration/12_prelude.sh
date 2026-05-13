@@ -59,4 +59,14 @@ run_project_expect_output \
     $'42\nerr!\n43\n0\ntrue\ntrue' \
     $'let ok_num: Result[Int, Str] = Result.Success(42)\nlet failed: Result[Int, Str] = Result.Failure("err")\nlet rendered = Result.map(ok_num, (n: Int) -> Show.show(n))\nmatch rendered {\n  case Result.Success(v): puts(v)\n  case Result.Failure(_): puts("bad")\n}\nlet boom = Result.or(failed, (e: Str) -> e + "!")\nmatch boom {\n  case Result.Success(_): puts("bad")\n  case Result.Failure(msg): puts(msg)\n}\nlet next = Result.bind(ok_num, (x: Int) -> Result.Success(x + 1))\nmatch next {\n  case Result.Success(v): puts(v)\n  case Result.Failure(_): puts(0)\n}\nputs(Result.value_or(failed, 0))\nputs(Result.success?(ok_num))\nputs(Result.failure?(failed))\n'
 
+run_project_expect_output \
+    "Result.map_error preserves successes and maps failures" \
+    $'ok:42\nfail:err!' \
+    $'let ok_num: Result[Int, Str] = Result.Success(42)\nlet failed: Result[Int, Str] = Result.Failure("err")\nmatch Result.map_error(ok_num, (e: Str) -> e + "!") {\n  case Result.Success(v): puts("ok:" + Show.show(v))\n  case Result.Failure(_): puts("bad")\n}\nmatch Result.map_error(failed, (e: Str) -> e + "!") {\n  case Result.Success(_): puts("bad")\n  case Result.Failure(msg): puts("fail:" + msg)\n}\n'
+
+run_project_expect_output \
+    "std.error exposes canonical messages and hidden construction frames" \
+    $'File not found\ntrue\nmatched' \
+    $'import std.error\n\ntype FileError = { NotFound(Str) = "File not found" }\n\nlet err = FileError.NotFound("missing")\nlet _ = error.context(err)\nputs(error.message(err))\nputs(Show.show(len(error.frames(err)) > 0))\nmatch err {\n  case FileError.NotFound(_): puts("matched")\n}\n'
+
 suite_end

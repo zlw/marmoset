@@ -1,0 +1,14 @@
+export Frame, Context, Error, message, context, frames
+
+type Frame = Frame(Str)
+type Context = Context(List[Frame])
+
+trait Error[e] = {
+  fn message(value: e) -> Str
+  fn context(value: e) -> Context
+  fn frames(value: e) -> List[Frame]
+}
+
+fn message[e: Error](value: e) -> Str = Error.message(value)
+fn context[e: Error](value: e) -> Context = Error.context(value)
+fn frames[e: Error](value: e) -> List[Frame] = Error.frames(value)

@@ -7,6 +7,7 @@
   (marmoset/unit.go as runtime/go/marmoset/unit.go)
   (marmoset/bytes.go as runtime/go/marmoset/bytes.go)
   (marmoset/handle.go as runtime/go/marmoset/handle.go)
+  (marmoset/error.go as runtime/go/marmoset/error.go)
   (marmoset/helpers.go as runtime/go/marmoset/helpers.go)
   (shims/std/basics/basics.go as runtime/go/shims/std/basics/basics.go)
   (shims/std/bytes/bytes.go as runtime/go/shims/std/bytes/bytes.go)
