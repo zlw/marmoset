@@ -11,7 +11,6 @@ cd "$JETBRAINS_DIR"
 
 DESCRIPTOR="src/main/kotlin/com/github/zlw/marmoset/lsp/MarmosetLspServerDescriptor.kt"
 PLUGIN_XML="src/main/resources/META-INF/plugin.xml"
-TEXTMATE_XML="src/main/resources/META-INF/textmate.xml"
 PATCHED_PLUGIN_XML="build/tmp/patchPluginXml/plugin.xml"
 
 search_fixed() {
@@ -42,8 +41,10 @@ reject_fixed '_build/default/bin/main.exe' "$DESCRIPTOR"
 reject_fixed '_build/install/default/bin/marmoset' "$DESCRIPTOR"
 reject_fixed 'std/prelude.mr' "$DESCRIPTOR"
 
-search_fixed '<depends optional="true" config-file="textmate.xml">org.jetbrains.plugins.textmate</depends>' "$PLUGIN_XML"
+search_fixed '<lang.syntaxHighlighterFactory' "$PLUGIN_XML"
+search_fixed 'MarmosetSyntaxHighlighterFactory' "$PLUGIN_XML"
+reject_fixed 'org.jetbrains.plugins.textmate' "$PLUGIN_XML" build.gradle.kts
 reject_fixed '<textmate.bundleProvider' "$PLUGIN_XML"
-search_fixed '<textmate.bundleProvider' "$TEXTMATE_XML"
 search_fixed 'since-build="252"' "$PATCHED_PLUGIN_XML"
 reject_fixed 'until-build=' "$PATCHED_PLUGIN_XML"
+reject_fixed 'textmate.bundleProvider' "$PATCHED_PLUGIN_XML"

@@ -5,7 +5,6 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 SOURCE="$REPO_ROOT/tools/vscode-marmoset/syntaxes/marmoset.tmLanguage.json"
-TARGET="$REPO_ROOT/tools/jetbrains-marmoset/src/main/resources/textmate/syntaxes/marmoset.tmLanguage.json"
 
 usage() {
   echo "Usage: $0 [--check]" >&2
@@ -13,13 +12,17 @@ usage() {
 
 case "${1:-}" in
   "")
-    cp "$SOURCE" "$TARGET"
+    echo "VS Code is the only TextMate consumer; JetBrains uses a native highlighter." >&2
     ;;
   "--check")
-    if ! cmp -s "$SOURCE" "$TARGET"; then
-      echo "TextMate grammars are out of sync." >&2
-      echo "Run: tools/scripts/sync_textmate_grammars.sh" >&2
-      diff -u "$SOURCE" "$TARGET" || true
+    if [ ! -f "$SOURCE" ]; then
+      echo "Missing VS Code TextMate grammar: $SOURCE" >&2
+      exit 1
+    fi
+    if find "$REPO_ROOT/tools/jetbrains-marmoset" \
+        -path "$REPO_ROOT/tools/jetbrains-marmoset/build" -prune -o \
+        \( -path '*/textmate/*' -o -name '*TextMate*' \) -print | grep -q .; then
+      echo "JetBrains plugin should not depend on TextMate resources." >&2
       exit 1
     fi
     ;;

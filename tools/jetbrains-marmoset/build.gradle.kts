@@ -21,7 +21,6 @@ kotlin {
 dependencies {
     intellijPlatform {
         intellijIdea(providers.gradleProperty("platformVersion"))
-        bundledPlugin("org.jetbrains.plugins.textmate")
     }
 
     testImplementation(kotlin("test-junit5"))
