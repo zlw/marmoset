@@ -134,6 +134,11 @@ if ! git -C "$REPO_ROOT" show "${PINNED_REV}:tools/tree-sitter-marmoset/grammar.
   exit 1
 fi
 
+if ! git -C "$REPO_ROOT" show "${PINNED_REV}:tools/tree-sitter-marmoset/grammar.js" | grep -Fq '"~>"'; then
+  echo "Pinned Zed grammar rev does not include effect-polymorphic arrow support: $PINNED_REV" >&2
+  exit 1
+fi
+
 search_fixed 'portable instead of depending on a machine-specific local `file://`' README.md
 search_fixed 'set-grammar-source.sh local --reset-cache' README.md
 search_fixed 'sync-local-grammar-cache.sh' README.md

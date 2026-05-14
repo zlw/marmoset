@@ -55,8 +55,20 @@ fn marmoset_root_from_env(env: &[(String, String)]) -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
-fn marmoset_root_launch(shell_env: &[(String, String)]) -> Option<RepoBinaryLaunch> {
-    let repo_root = marmoset_root_from_env(shell_env)?;
+fn marmoset_root_from_worktree_root(worktree_root: &str) -> Option<PathBuf> {
+    if worktree_root.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(worktree_root))
+    }
+}
+
+fn marmoset_root_launch(
+    shell_env: &[(String, String)],
+    worktree_root: &str,
+) -> Option<RepoBinaryLaunch> {
+    let repo_root = marmoset_root_from_env(shell_env)
+        .or_else(|| marmoset_root_from_worktree_root(worktree_root))?;
     Some(repo_binary_launch(repo_root.as_path()))
 }
 
@@ -75,10 +87,14 @@ impl zed::Extension for MarmosetExtension {
         worktree: &zed::Worktree,
     ) -> Result<zed::Command> {
         let shell_env = worktree.shell_env();
-        let launch = match marmoset_root_launch(&shell_env) {
+        let worktree_root = worktree.root_path();
+        let launch = match marmoset_root_launch(&shell_env, &worktree_root) {
             Some(launch) => launch,
             None => {
-                return Err("MARMOSET_ROOT is not set; set it to the Marmoset repo root".to_string())
+                return Err(
+                    "Could not resolve Marmoset repo root; set MARMOSET_ROOT or open the Marmoset repo root in Zed"
+                        .to_string(),
+                )
             }
         };
         let env = env_with_marmoset_root(&shell_env, &launch.marmoset_root);
@@ -133,7 +149,7 @@ mod tests {
     fn marmoset_root_env_uses_exact_configured_repo_binary() {
         let shell_env = vec![("MARMOSET_ROOT".to_string(), "/tmp/marmoset-dev".to_string())];
         let repo_binary = "/tmp/marmoset-dev/marmoset".to_string();
-        let selected = marmoset_root_launch(&shell_env);
+        let selected = marmoset_root_launch(&shell_env, "/tmp/marmoset-worktree");
 
         assert_eq!(
             selected,
@@ -145,10 +161,25 @@ mod tests {
     }
 
     #[test]
-    fn missing_marmoset_root_has_no_launcher_candidate() {
+    fn missing_marmoset_root_uses_worktree_repo_binary() {
         let shell_env = vec![("PATH".to_string(), "/tmp/marmoset-dev/marmoset".to_string())];
 
-        let selected = marmoset_root_launch(&shell_env);
+        let selected = marmoset_root_launch(&shell_env, "/tmp/marmoset-worktree");
+
+        assert_eq!(
+            selected,
+            Some(RepoBinaryLaunch {
+                path: "/tmp/marmoset-worktree/marmoset".to_string(),
+                marmoset_root: "/tmp/marmoset-worktree".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn empty_worktree_root_has_no_launcher_candidate() {
+        let shell_env = vec![("PATH".to_string(), "/tmp/marmoset-dev/marmoset".to_string())];
+
+        let selected = marmoset_root_launch(&shell_env, "");
 
         assert_eq!(selected, None);
     }
